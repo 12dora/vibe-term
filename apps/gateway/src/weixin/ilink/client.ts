@@ -1,6 +1,7 @@
 // WeixinClient：iLink bot 协议的高层客户端。
 // 负责登录（扫码）、长轮询收消息、context_token 缓存、发送文本。
 
+import { sleepOrAbort } from '@tmex/shared';
 import { type FetchImpl, getBotQrcode, getQrcodeStatus, sendMessage } from './api';
 import {
   CLIENT_ID_PREFIX,
@@ -11,13 +12,7 @@ import {
   type WeixinInboundMessage,
   type WeixinMessage,
 } from './types';
-import {
-  AbortError,
-  WeixinSessionExpiredError,
-  isAbort,
-  runUpdateLoop,
-  sleep,
-} from './update-loop';
+import { AbortError, WeixinSessionExpiredError, isAbort, runUpdateLoop } from './update-loop';
 
 export { WeixinSessionExpiredError };
 
@@ -121,7 +116,7 @@ export class WeixinClient {
 
     while (Date.now() < deadline) {
       if (signal?.aborted) throw new AbortError();
-      await sleep(pollIntervalMs, signal);
+      if (!(await sleepOrAbort(pollIntervalMs, signal))) throw new AbortError();
 
       let status: GetQrcodeStatusResp;
       try {

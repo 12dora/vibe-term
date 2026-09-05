@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { t } from '../i18n';
 import type { InstallMeta, ServiceMode } from '../types';
 import { defaultBunBinDir, defaultLocalBinDir } from './cli-shim';
+import { errorMessage } from './error-message';
 import { pathExists } from './fs-utils';
 import { createInstallLayout, packageLayoutFromRoot } from './install-layout';
 import { readJsonFile } from './json-file';
@@ -231,7 +232,7 @@ async function repairVerifyOrRollback(
       serviceMode
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     await rollbackToOld(
       installDir,
       journal,

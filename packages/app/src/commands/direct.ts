@@ -3,6 +3,7 @@ import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import { ensureDir, pathExists } from '../lib/fs-utils';
 import { type InstallLayout, createInstallLayout, resolveInstallDir } from '../lib/install-layout';
@@ -255,7 +256,7 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
     if (stagingDir) {
       await removeDir(stagingDir).catch(() => undefined);
     }
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     log(`direct enable failed: ${reason}`);
     const kind =
       isAbortError(error) || phase === 'download' || error instanceof TypeError

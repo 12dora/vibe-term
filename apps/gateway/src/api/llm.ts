@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type {
   AgentLlmSettingsDto,
   CreateLlmProviderRequest,
@@ -102,7 +103,7 @@ async function refreshModelsCache(
     );
     return {
       provider,
-      modelsError: error instanceof Error ? error.message : String(error),
+      modelsError: errorMessage(error),
     };
   }
 }

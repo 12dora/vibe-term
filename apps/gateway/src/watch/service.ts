@@ -4,6 +4,7 @@ import type {
   WatchRuleSampleDto,
   WebhookEvent,
 } from '@tmex/shared';
+import { errorMessage } from '@tmex/shared';
 import type { LanguageModel } from 'ai';
 import { agentWsHub } from '../agent/ws-hub';
 import { getDeviceById, getSiteSettings } from '../db';
@@ -29,7 +30,7 @@ import {
   passesLlmCooldownGate,
 } from './evaluation-pipeline';
 import { type WatchEvalOutput, evaluateWatchRule } from './evaluator';
-import { WatchNotifier, toErrorMessage } from './notifier';
+import { WatchNotifier } from './notifier';
 import { type WatchRuntimeLike, WatchRuntimePool } from './runtime-pool';
 import { WatchSampleStore } from './sample-store';
 import { WatchRuleScheduler, effectiveIntervalSeconds } from './scheduler';
@@ -294,7 +295,7 @@ export class WatchService {
     if (!rule) {
       return;
     }
-    const message = toErrorMessage(error);
+    const message = errorMessage(error);
     if (isTargetMissingMessage(message)) {
       await this.handlePaneGone(rule);
       return;
@@ -427,7 +428,7 @@ export class WatchService {
       if (!this.scheduler.has(rule.id)) {
         return;
       }
-      const message = toErrorMessage(error);
+      const message = errorMessage(error);
       notified = await this.notifier.raiseModelUnavailable(rule, notified, error);
       updates.modelUnavailableNotified = notified;
       const errors = (state?.consecutiveErrors ?? 0) + 1;

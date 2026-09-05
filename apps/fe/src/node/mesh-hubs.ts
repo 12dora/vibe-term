@@ -14,6 +14,7 @@ import type {
   MeshHubsResponse,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingTimingOptions,
@@ -128,7 +129,7 @@ export async function refreshMeshHubs(api: AuthApi = defaultAuthApi): Promise<vo
       });
     } catch (err) {
       // 失败保留上一份集合：一次网络抖动不该把已经展示出来的 hub 集合抹掉。
-      setState({ loading: false, error: err instanceof Error ? err.message : String(err) });
+      setState({ loading: false, error: errorMessage(err) });
     } finally {
       inFlight = null;
     }

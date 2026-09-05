@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { Device, TestConnectionResult } from '@tmex/shared';
 
 import { getDeviceById } from '../db';
@@ -48,7 +49,7 @@ export async function handleDeviceTestConnection(
   }
 
   const classifyErrorResponse = (error: unknown): Response => {
-    const rawMessage = error instanceof Error ? error.message : String(error);
+    const rawMessage = errorMessage(error);
     const classified = classifySshError(new Error(rawMessage));
     const payload: TestConnectionResult = {
       success: false,

@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import { useUIStore } from '@tmex/stores/react';
 import { THEME_PRESET_META } from '@tmex/theme';
 import { useEffect, useId, useRef, useState } from 'react';
@@ -35,7 +36,7 @@ export function MermaidBlock({ code }: { code: string }) {
       } catch (err) {
         if (cancelled) return;
         if (containerRef.current) containerRef.current.innerHTML = '';
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
       }
     }
 

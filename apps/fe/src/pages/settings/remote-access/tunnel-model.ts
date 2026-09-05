@@ -2,6 +2,7 @@
 // 全部与 React 无关，便于脱离 DOM 直接测。
 
 import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
+import { errorMessage } from '@tmex/shared';
 import type {
   LocalAuthStatus,
   TunnelActionRequest,
@@ -412,7 +413,7 @@ export function toTunnelError(error: unknown): TunnelError {
   if (error instanceof TunnelApiError) {
     return { code: error.code, message: error.message || error.code };
   }
-  return { code: 'unknown', message: error instanceof Error ? error.message : String(error) };
+  return { code: 'unknown', message: errorMessage(error) };
 }
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;

@@ -1,4 +1,5 @@
 import type { AuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
 import { Input } from '@tmex/ui/input';
@@ -180,7 +181,7 @@ export function PasswordSection({
       publishFeedback({ ...outcome, section: 'password' });
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

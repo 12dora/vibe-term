@@ -10,6 +10,7 @@ import {
   stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { errorMessage } from '../lib/error-message';
 import { type TmexRoles, isStandaloneRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
 
 export const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
@@ -93,7 +94,7 @@ export async function withSetupTransition<T>(
 }
 
 export function errorCause(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 export function wrapEnvWriteError(error: unknown): SetupError {

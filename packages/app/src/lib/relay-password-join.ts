@@ -1,5 +1,6 @@
 import { RelayPackError, normalizeRelayUrl } from '../../../shared/src/relay';
 import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
+import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
 import { RelayCaError, fetchPinnedRelayCa, pinRelayCa } from './relay-ca';
@@ -101,10 +102,7 @@ export function wrapRelayPasswordJoinError(error: unknown): RelayPasswordJoinErr
     }
     return new RelayPasswordJoinError('join_failed', error.message);
   }
-  return new RelayPasswordJoinError(
-    'join_failed',
-    error instanceof Error ? error.message : String(error)
-  );
+  return new RelayPasswordJoinError('join_failed', errorMessage(error));
 }
 
 function wrapJoinError(error: unknown): RelayPasswordJoinError {

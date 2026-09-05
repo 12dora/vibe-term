@@ -7,6 +7,7 @@ import {
 } from '../../../shared/src/release/source';
 import { parseSha256Sums } from '../../../shared/src/release/verify';
 import { t } from '../i18n';
+import { errorMessage } from './error-message';
 import { writeBytesAtomic } from './fs-utils';
 
 const GITHUB_HEADERS = {
@@ -59,7 +60,7 @@ async function githubFetch(
   try {
     response = await fetchFn(url, { headers: GITHUB_HEADERS, redirect: 'follow' });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     throw networkError(detail);
   }
   if (response.status === 404) {
@@ -110,7 +111,7 @@ export async function fetchReleaseSha256Sums(
       redirect: 'follow',
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     throw new Error(t('upgrade.checksumHttpFailed', { detail }));
   }
   if (response.status === 404) return { hex: null, missing: true, unpublished: true };

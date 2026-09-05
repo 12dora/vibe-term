@@ -19,6 +19,7 @@ import {
   planTmuxInstall,
 } from '../lib/dep-install';
 import { writeEnvFile } from '../lib/env-file';
+import { errorMessage } from '../lib/error-message';
 import { ensureDir, pathExists } from '../lib/fs-utils';
 import {
   buildAppEnvValues,
@@ -84,7 +85,7 @@ export async function enableDirectAfterInit(
       log(`direct enable skipped: ${result.reason}`);
     }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     log(`direct enable skipped: ${reason}`);
   }
 }
@@ -241,7 +242,7 @@ async function resolveRelayPublicUrl(nonInteractive: boolean, current: string): 
     try {
       return normalizeRelayPublicUrl(answer);
     } catch (error) {
-      console.error(error instanceof Error ? error.message : String(error));
+      console.error(errorMessage(error));
     }
   }
   throw new Error('init --role relay requires a valid https --relay-public-url');
@@ -255,9 +256,7 @@ export function normalizeRelayPublicUrl(raw: string): string {
   try {
     return normalizeRelayUrl(value);
   } catch (error) {
-    throw new Error(
-      `invalid relay public URL: ${error instanceof Error ? error.message : String(error)}`
-    );
+    throw new Error(`invalid relay public URL: ${errorMessage(error)}`);
   }
 }
 

@@ -25,6 +25,7 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import type { KeyLogHead } from '@tmex/shared/auth';
 import { encodeBase64url } from '@tmex/shared/auth';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
@@ -552,7 +553,7 @@ async function runAdmit(op: OperationContext, id: string, run: () => Promise<voi
     commitBusy();
     await withKeyLogLock(run);
   } catch (err) {
-    if (opAlive(op)) toast.error(err instanceof Error ? err.message : String(err));
+    if (opAlive(op)) toast.error(errorMessage(err));
   } finally {
     if (transactions.get(id) === txn) transactions.delete(id);
     // 引擎已被重置：这条操作属于上一代，不再往新状态上写任何东西。
@@ -739,7 +740,7 @@ async function confirmFromSlot(slot: ContextSlot, id: string): Promise<void> {
     // request() 会把签名者放进 5 分钟复用窗口，后续自动 admit 直接用它。
     signer = await op.prompt.request({ purpose: 'admit', reuse: true });
   } catch (err) {
-    toast.error(err instanceof Error ? err.message : String(err));
+    toast.error(errorMessage(err));
     return;
   }
   if (!signer) return;

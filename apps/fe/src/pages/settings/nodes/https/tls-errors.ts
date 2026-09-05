@@ -1,4 +1,5 @@
 import { TlsApiError } from '@tmex/api-client/local/tls-api';
+import { errorMessage } from '@tmex/shared';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -31,6 +32,6 @@ export function describeTlsError(t: Translate, error: unknown): string {
     if (key) return t(key);
     return t(`${ERROR_PREFIX}unknown`, { message: error.message || error.code });
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return t(`${ERROR_PREFIX}unknown`, { message });
 }

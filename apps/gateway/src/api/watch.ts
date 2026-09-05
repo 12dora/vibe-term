@@ -2,6 +2,7 @@
 // CRUD 后通过 watchService.refreshRule/removeRule 热更新调度；
 // assist-regex 用 LLM 生成正则（可带当前屏幕做上下文），返回前服务端试编译 + 试跑 preview。
 
+import { errorMessage } from '@tmex/shared';
 import type {
   CreateWatchRuleRequest,
   UpdateWatchRuleRequest,
@@ -349,7 +350,7 @@ async function generateAssistRegexObject(
     });
     return { ok: true, object: result.object };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     return {
       ok: false,
       response: json({ error: t('apiError.watchAssistModelUnavailable', { detail }) }, 502),
@@ -363,7 +364,7 @@ function compileAssistRegex(
   try {
     return { ok: true, regex: compileWatchPattern(object.pattern, object.flags) };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     return {
       ok: false,
       response: json({ error: t('apiError.watchPatternInvalid', { detail }) }, 502),

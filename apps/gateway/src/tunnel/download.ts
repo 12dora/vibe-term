@@ -1,5 +1,6 @@
 import { chmod, mkdir, readdir, rename, rm, stat } from 'node:fs/promises';
 import { join } from 'node:path';
+import { errorMessage } from '@tmex/shared';
 import { TunnelError } from './errors';
 import { cloudflaredDownloadSpec } from './platform';
 
@@ -70,9 +71,6 @@ export async function installCloudflaredBinary(opts: {
   } catch (error) {
     await rm(tmpPath, { force: true }).catch(() => {});
     if (error instanceof TunnelError) throw error;
-    throw new TunnelError(
-      'download_failed',
-      error instanceof Error ? error.message : String(error)
-    );
+    throw new TunnelError('download_failed', errorMessage(error));
   }
 }

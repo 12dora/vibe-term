@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type {
   StartWeixinLoginResponse,
   WeixinAccountUser,
@@ -382,7 +383,7 @@ export class WeixinService {
           await this.refresh();
         })
         .catch((err) => {
-          const message = err instanceof Error ? err.message : String(err);
+          const message = errorMessage(err);
           const status: WeixinLoginStatus = /expired|timed out/i.test(message)
             ? 'expired'
             : 'error';

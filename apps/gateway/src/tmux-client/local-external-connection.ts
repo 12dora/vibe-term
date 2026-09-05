@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import type { Device } from '@tmex/shared';
+import { type Device, errorMessage } from '@tmex/shared';
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { logAt, shouldLog } from '../log/level';
@@ -331,7 +331,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       return await this.deps.run(buildLocalTmuxArgv(argv));
     } catch (error) {
       if (isTransientSpawnError(error)) {
-        const message = error instanceof Error ? error.message : String(error);
+        const message = errorMessage(error);
         return { exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT, stdout: '', stderr: message };
       }
       throw error;
@@ -413,7 +413,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
         result = {
           exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT,
           stdout: '',
-          stderr: error instanceof Error ? error.message : String(error),
+          stderr: errorMessage(error),
         };
       } else {
         throw error;
@@ -444,7 +444,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   protected override handleSnapshotFailure(error: unknown): void {
     if (isTransientSpawnError(error)) {
-      this.handleSpawnUnavailable(error instanceof Error ? error.message : String(error));
+      this.handleSpawnUnavailable(errorMessage(error));
       return;
     }
     this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));

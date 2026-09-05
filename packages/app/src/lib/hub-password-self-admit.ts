@@ -9,6 +9,7 @@ import {
   encodeBase64url,
 } from '../../../shared/src/auth';
 import { JoinError } from '../commands/hub';
+import { errorMessage } from './error-message';
 import {
   type HubFetch,
   type HubLoginResult,
@@ -90,7 +91,7 @@ function asJoinError(error: unknown, fallback: string): JoinError {
 }
 
 function isPasskeyRequiredError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return message.includes('PASSKEY_REQUIRED') || /requires passkey second-factor/i.test(message);
 }
 

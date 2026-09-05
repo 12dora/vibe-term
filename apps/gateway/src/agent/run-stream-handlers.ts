@@ -1,6 +1,5 @@
 import type { AgentEventPayloadMap } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import { toErrorMessage } from './retry-policy';
+import { errorMessage, wsBorsh } from '@tmex/shared';
 import type { StreamPartHandlers } from './stream-part-router';
 
 export interface PendingApproval {
@@ -54,7 +53,7 @@ export function createRunStreamHandlers(params: {
       params.broadcast(wsBorsh.AGENT_EVENT_TOOL_RESULT, {
         toolCallId: part.toolCallId,
         toolName: part.toolName,
-        output: toErrorMessage(part.error),
+        output: errorMessage(part.error),
         isError: true,
       });
     },

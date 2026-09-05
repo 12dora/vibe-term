@@ -2,6 +2,7 @@
 //
 // 不走 react-query 的 mutation：这些写接口没有缓存语义，成功后一律重拉 status 取权威值。
 
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useState } from 'react';
 
 export interface RelayAction {
@@ -26,7 +27,7 @@ export function useRelayAction(): RelayAction {
       await task();
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
       return false;
     } finally {
       setBusy(false);

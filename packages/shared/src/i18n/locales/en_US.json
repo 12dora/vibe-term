@@ -21,26 +21,14 @@
       "send": "Send",
       "success": "Success",
       "error": "Error",
-      "warning": "Warning",
-      "info": "Info",
       "yes": "Yes",
       "no": "No",
-      "enabled": "Enabled",
-      "disabled": "Disabled",
-      "pending": "Pending",
-      "authorized": "Authorized",
-      "unknown": "Unknown",
-      "empty": "Empty",
-      "none": "None",
-      "default": "Default",
-      "optional": "Optional",
-      "required": "Required"
+      "unknown": "Unknown"
     },
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect More Devices",
       "connectDevicesShort": "Connect Devices",
-      "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
       "openSidebar": "Open Sidebar",
@@ -67,7 +55,6 @@
       "version": "Version {{version}}"
     },
     "connectDevices": {
-      "title": "Connect more devices",
       "tabs": {
         "mobile": "Mobile device (control only)",
         "computer": "Server or computer"
@@ -274,8 +261,6 @@
       }
     },
     "device": {
-      "title": "Device Management",
-      "devices": "Devices",
       "addDevice": "Add Device",
       "addDeviceDescription": "Fill in device details and choose a connection method",
       "editDevice": "Edit Device",
@@ -330,9 +315,6 @@
       "loadFailedLoginRequired": "Failed to load devices: sign in to this node again",
       "loadFailedUnreachable": "Failed to load devices: node unreachable",
       "loadFailedUnreachableReason": "Failed to load devices: node unreachable ({{reason}})",
-      "localDevice": "Local Device",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "Modify Device",
       "delete": "Delete",
       "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
       "sidebar": {
@@ -376,7 +358,6 @@
         "modeFollow": "Follow cursor",
         "modeFollowDesc": "Shift just enough to keep the cursor right above the keyboard; terminal size stays the same"
       },
-      "initializing": "Initializing terminal...",
       "connecting": "Connecting to device...",
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
@@ -387,13 +368,9 @@
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
       "paneTitle": "Terminal {{index}}",
-      "activePane": "Current terminal",
-      "activeWindow": "Current Window",
       "editorSendWithEnter": "Send with Enter",
       "editorSendLineByLine": "Send Line by Line",
       "editorSend": "Send",
-      "closeWindow": "Close Window",
-      "closePane": "Close terminal",
       "copy": "Copy",
       "paste": "Paste",
       "copied": "Copied to clipboard",
@@ -405,7 +382,6 @@
       "linkOpenFailed": "Could not open link"
     },
     "settings": {
-      "title": "System Settings",
       "siteSettings": "Site Settings",
       "siteName": "Site Name",
       "siteNamePlaceholder": "tmex",
@@ -1156,7 +1132,6 @@
       "sendTestMessage": "Send Test Message",
       "deleteBot": "Delete Bot",
       "tokenPlaceholder": "Enter new token",
-      "testMessageSent": "Test message sent",
       "createFailed": "Failed to create bot",
       "updateFailed": "Failed to update bot",
       "deleteFailed": "Failed to delete bot",
@@ -1166,8 +1141,6 @@
       "loadBotsFailed": "Failed to load bot list",
       "loadChatsFailed": "Failed to load chat list",
       "noBots": "No bots yet, add one first.",
-      "expand": "Expand",
-      "collapse": "Collapse",
       "authCount": "{{authorized}} authorized / {{pending}} pending (max 8)",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
@@ -1178,7 +1151,6 @@
       "authFailed": "❌ Authorization request failed. Please contact administrator.",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
       "approveMessageTemplate": "✅ Authorized via tmex.\nBot: {{botName}}\nTime: {{time}}",
-      "botNotFound": "Bot not found or unavailable",
       "botNotRunning": "Bot is not running or unavailable"
     },
     "weixin": {
@@ -1190,13 +1162,11 @@
       "addAccount": "Add Account",
       "editAccount": "Edit Account",
       "enableAccount": "Enable Account",
-      "allowAuthRequests": "Allow Authorization Requests",
       "allowCommands": "Allow Chat Commands",
       "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
       "commandsBadge": "Chat Commands",
       "scanToLogin": "Scan to Log In",
       "relogin": "Re-login (Re-scan)",
-      "loggedIn": "Logged in",
       "notLoggedIn": "Not logged in",
       "scanQrcodeHint": "Open WeChat, scan the QR code, and confirm on your phone.",
       "loginExpired": "QR code expired. Please retry.",
@@ -1208,7 +1178,6 @@
       "reactivationHint": "Ask this user to send the bot any message to re-activate alerts.",
       "approve": "Approve",
       "testMessage": "Test Message",
-      "sendTestMessage": "Send Test Message",
       "deleteAccount": "Delete Account",
       "accountCreated": "Account created",
       "accountUpdated": "Account updated",
@@ -1218,19 +1187,13 @@
       "updateFailed": "Failed to update account",
       "deleteFailed": "Failed to delete account",
       "approveFailed": "Failed to approve",
-      "removeFailed": "Failed to remove user",
       "testMessageFailed": "Failed to send test message",
       "loadAccountsFailed": "Failed to load accounts",
       "noAccounts": "No accounts yet, add one first.",
-      "userId": "WeChat User ID",
-      "expand": "Expand",
-      "collapse": "Collapse",
       "accountNameRequired": "Account name is required",
       "accountNotFound": "Account not found or unavailable",
       "accountNotRunning": "Account is not logged in or not running",
       "userNotFound": "User not found",
-      "authSuccess": "✅ Authorized. You will now receive notifications.",
-      "authPending": "⏳ Authorization request received. Please approve in tmex settings.",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
       "approveMessageTemplate": "✅ Authorized via tmex.\nAccount: {{accountName}}\nTime: {{time}}",
       "keepalivePrompt": "【tmex】To keep notifications flowing, just reply with anything to keep the session alive 🙏",
@@ -1248,7 +1211,6 @@
       "secret": "Secret",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "Used to sign payloads (HMAC-SHA256)",
-      "enabled": "Enabled",
       "eventMask": "Events",
       "add": "Add Webhook",
       "empty": "No webhooks yet.",
@@ -1259,13 +1221,11 @@
     "sshError": {
       "configRefNotSupported": "SSH Config reference is not supported in this version. Please use host + username with Agent/Key/Password authentication.",
       "agentUnavailable": "SSH Agent unavailable: SSH_AUTH_SOCK not detected. Please check agent environment.",
-      "agentNoIdentity": "SSH Agent has no available keys. Please run ssh-add first.",
       "agentNoIdentities": "SSH Agent has no available keys. Please run ssh-add first.",
       "authFailed": "Authentication failed: incorrect username, password, or key. Please check device configuration.",
       "authFailedGeneric": "Authentication failed: incorrect username, password, or key. Please check device configuration.",
       "networkUnreachable": "Network unreachable: Please check routing, firewall, or VPN configuration.",
       "connectionRefused": "Connection refused: Unable to connect to target host. Please check host address and port.",
-      "timeout": "Connection timeout: Unable to connect to device. Please check network or firewall settings.",
       "connectionTimeout": "Connection timeout: Unable to connect to device. Please check network or firewall settings.",
       "hostNotFound": "Host not found: Unable to resolve hostname. Please check DNS or hostname configuration.",
       "handshakeFailed": "Handshake failed: Unable to establish secure connection. Possibly incompatible key exchange algorithm.",
@@ -1277,8 +1237,6 @@
       "reconnected": "Device reconnected automatically"
     },
     "deviceStatus": {
-      "reconnecting": "Reconnecting {{delay}}s",
-      "offline": "Offline",
       "errorBadge": {
         "authFailed": "Auth failed",
         "agentUnavailable": "Agent unavailable",
@@ -1295,8 +1253,6 @@
       }
     },
     "websocket": {
-      "error": "WebSocket connection error",
-      "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
       "gatewayTooOld": "Terminal connection failed: Gateway {{version}} is too old, please upgrade it to {{minVersion}} or newer.",
       "nodeTooOld": "Terminal connection failed: node {{name}} runs tmex {{version}}, please upgrade it to {{minVersion}} or newer.",
@@ -1430,13 +1386,9 @@
       }
     },
     "sidebar": {
-      "noWindows": "No windows",
       "noDevices": "No devices",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
-      "currentPane": "Current terminal",
-      "closeWindow": "Close Window",
-      "closePane": "Close terminal",
       "addDevice": "Add Device",
       "tab": {
         "panes": "Terminals",
@@ -1466,12 +1418,9 @@
       },
       "orphan": {
         "readonly": "This session is orphaned (its terminal is gone) — read-only",
-        "title": "Orphaned",
-        "process": "Process",
-        "startedAt": "Started"
+        "title": "Orphaned"
       },
       "panel": {
-        "title": "Agent",
         "empty": "Select or create a session",
         "inputPlaceholder": "Type a message…",
         "send": "Send",
@@ -1485,11 +1434,9 @@
         "subtitle": "Describe your task to start working in the selected terminal"
       },
       "session": {
-        "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
         "selectPaneHint": "Select a session",
-        "showAll": "Show all sessions",
         "menu": "Session actions",
         "rename": "Rename session",
         "renameTitle": "Rename session",
@@ -1638,7 +1585,6 @@
         "fireOnce": "Once (auto-disable after firing)",
         "fireRepeat": "Repeat",
         "cooldownSeconds": "Cooldown (seconds)",
-        "enabled": "Enabled",
         "assistLabel": "Generate regex from a description",
         "assistPlaceholder": "e.g. match the download progress percentage",
         "assistButton": "Generate",
@@ -1753,7 +1699,6 @@
         "legServerToTmex": "Server → tmex",
         "legTmexToUser": "tmex → Browser",
         "cancel": "Cancel",
-        "canceled": "Canceled {{name}}",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
         "dragDownloadStarted": "Started downloading {{name}} (handled by browser)",
@@ -1776,12 +1721,9 @@
     },
     "file": {
       "invalidRef": "Invalid file reference",
-      "notFound": "File no longer exists",
       "loadFailed": "Failed to load file",
       "isDirectory": "This is a directory",
       "notPreviewable": "Preview is not available for this file type",
-      "tooLarge": "File is too large to preview",
-      "binary": "Binary file cannot be previewed",
       "download": "Download",
       "openRaw": "Open raw"
     },
@@ -2344,7 +2286,6 @@
       },
       "actions": {
         "add": "Add",
-        "rename": "Rename",
         "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
@@ -2450,8 +2391,6 @@
         "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
       },
       "rename": {
-        "save": "Save",
-        "done": "Renamed",
         "cancelled": "Cancelled."
       },
       "revoke": {

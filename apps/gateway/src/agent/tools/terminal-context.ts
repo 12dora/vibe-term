@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { PaneInfo } from '../../tmux-client/capture-history';
 import type { PaneEmulator } from '../../tmux-client/pane-emulator';
 import type { PaneSnapshotLookup } from './pane-info';
@@ -47,7 +48,7 @@ export interface TerminalToolContext {
 }
 
 export function toToolErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }
 
 export function createTerminalToolContext(

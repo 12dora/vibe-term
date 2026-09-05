@@ -22,6 +22,7 @@ import {
   stringifyEnv,
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { errorMessage } from '../lib/error-message';
 import {
   requestEnrollmentByPassword as defaultRequestEnrollmentByPassword,
   wipeRootKey,
@@ -227,7 +228,7 @@ function asSetupJoinError(error: unknown): SetupError {
   if (error instanceof JoinError) {
     return new SetupError(error.code, error.message, joinErrorHttpStatus(error.code));
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return new SetupError('join_failed', message, 400);
 }
 
@@ -308,7 +309,7 @@ async function removeDirectAddon(deps: SetupServiceDeps): Promise<void> {
   try {
     await disableFn({ installDir: deps.installDir });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     throw new SetupError('direct_failed', message, 500);
   }
 }
@@ -412,7 +413,7 @@ export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promi
       reachable: false,
       isSelf: false,
       status: null,
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
     };
   }
 }

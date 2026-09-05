@@ -22,6 +22,7 @@ import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
+import { errorMessage } from '@tmex/shared';
 import type { RootKey } from '@tmex/shared/auth';
 import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import { signRelayEnrollProof } from '@tmex/shared/relay';
@@ -81,7 +82,7 @@ export interface RelayFlowDeps {
 function failure(err: unknown): RelayFlowResult {
   const code = relayErrorCode(err);
   if (code) return { ok: false, code };
-  return { ok: false, code: err instanceof Error ? err.message : String(err) };
+  return { ok: false, code: errorMessage(err) };
 }
 
 /**

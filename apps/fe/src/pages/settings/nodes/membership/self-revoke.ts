@@ -11,6 +11,7 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import { headFromResponse } from '@/auth/key-log-actions';
 import { buildRevokeNodeRecord } from '@/node/enrollment';
 import type { AuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
 
 export type SelfRevokeOutcome =
@@ -65,6 +66,6 @@ export async function selfRevokeNode(input: SelfRevokeInput): Promise<SelfRevoke
   } catch (error) {
     const code = (error as { code?: unknown })?.code;
     if (typeof code === 'string' && code) return { kind: 'failed', reason: code };
-    return { kind: 'failed', reason: error instanceof Error ? error.message : String(error) };
+    return { kind: 'failed', reason: errorMessage(error) };
   }
 }

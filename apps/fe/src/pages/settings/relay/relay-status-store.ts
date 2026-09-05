@@ -21,6 +21,7 @@ import {
   isRelayNotEnabled,
   isRelayUnauthorized,
 } from '@tmex/api-client/relay/admin-api';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 /** 中继状态与 hub 管理面同一档：30 秒一拍。 */
@@ -82,7 +83,7 @@ function failurePatch(error: unknown): Partial<RelayAdminState> {
       return { availability: 'unauthorized', loading: false, error: null };
     default:
       // 网络抖动不该抹掉已经摆出来的租户表，只记错误。
-      return { loading: false, error: error instanceof Error ? error.message : String(error) };
+      return { loading: false, error: errorMessage(error) };
   }
 }
 

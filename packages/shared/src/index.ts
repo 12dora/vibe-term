@@ -41,7 +41,9 @@ export { BRAND_LOGO_SRC, PRODUCT_NAME } from './brand';
 // ==================== 通用工具 ====================
 
 export { combineAbortSignals } from './async/abort';
+export { sleep, sleepOrAbort } from './async/sleep';
 export { withTimeout } from './async/with-timeout';
+export { errorMessage } from './errors';
 export {
   type NormalizePosixPathOptions,
   basename,

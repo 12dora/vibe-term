@@ -2,6 +2,7 @@
 
 import type { ApiClient } from '@tmex/api-client';
 import type { NotificationSink } from '@tmex/notifications';
+import { errorMessage } from '@tmex/shared';
 import type { AgentHistorySync } from './agent-history-sync';
 import type { AgentGetState, AgentSetState } from './agent-state';
 
@@ -20,5 +21,5 @@ export interface AgentSessionActionsDeps {
 }
 
 export function reportActionError(notifications: NotificationSink, error: unknown): void {
-  notifications.error(error instanceof Error ? error.message : String(error));
+  notifications.error(errorMessage(error));
 }

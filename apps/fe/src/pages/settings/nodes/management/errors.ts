@@ -1,5 +1,6 @@
 import { RELAY_ENROLLMENT_NO_RELAY, RELAY_ENROLL_FANOUT_FAILED } from '@/node/relay-join';
 import { HUB_NOT_WRITER } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 
 export interface ActionErrorContext {
   /** writer hub 的对外地址；`HUB_NOT_WRITER` 的文案靠它指路，未知时退回不带地址的那句。 */
@@ -24,5 +25,5 @@ export function actionErrorText(
     return t('nodes.enrollment.relayNoneAccepted');
   }
   if (code) return t(`auth.errors.${code}`, { defaultValue: code });
-  return err instanceof Error ? err.message : String(err);
+  return errorMessage(err);
 }

@@ -21,26 +21,14 @@
       "send": "发送",
       "success": "成功",
       "error": "错误",
-      "warning": "警告",
-      "info": "信息",
       "yes": "是",
       "no": "否",
-      "enabled": "已启用",
-      "disabled": "已禁用",
-      "pending": "待授权",
-      "authorized": "已授权",
-      "unknown": "未知",
-      "empty": "空",
-      "none": "无",
-      "default": "默认",
-      "optional": "可选",
-      "required": "必填"
+      "unknown": "未知"
     },
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
       "connectDevicesShort": "接入设备",
-      "settings": "设置",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
@@ -67,8 +55,6 @@
       "version": "版本 {{version}}"
     },
     "device": {
-      "title": "设备管理",
-      "devices": "设备",
       "addDevice": "添加设备",
       "addDeviceDescription": "填写设备信息并选择连接方式",
       "editDevice": "修改设备",
@@ -123,9 +109,6 @@
       "loadFailedLoginRequired": "加载设备列表失败：该节点需重新登录",
       "loadFailedUnreachable": "加载设备列表失败：节点不可达",
       "loadFailedUnreachableReason": "加载设备列表失败：节点不可达（{{reason}}）",
-      "localDevice": "本地设备",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "修改设备",
       "delete": "删除",
       "directFallbackToast": "直连已断开，最近输入可能未送达",
       "sidebar": {
@@ -169,7 +152,6 @@
         "modeFollow": "光标对齐",
         "modeFollowDesc": "按光标位置上移，光标始终在键盘正上方，终端大小不变"
       },
-      "initializing": "初始化终端...",
       "connecting": "连接设备...",
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -180,13 +162,9 @@
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
       "paneTitle": "终端 {{index}}",
-      "activePane": "当前终端",
-      "activeWindow": "当前窗口",
       "editorSendWithEnter": "发送附带回车",
       "editorSendLineByLine": "逐行发送",
       "editorSend": "发送",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "copy": "复制",
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
@@ -209,8 +187,6 @@
       }
     },
     "deviceStatus": {
-      "reconnecting": "重连中 {{delay}}s",
-      "offline": "离线",
       "errorBadge": {
         "authFailed": "认证失败",
         "agentUnavailable": "Agent 不可用",
@@ -227,8 +203,6 @@
       }
     },
     "websocket": {
-      "error": "WebSocket 连接错误",
-      "checkGateway": "请检查 Gateway 状态",
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "gatewayTooOld": "终端连接失败：Gateway 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
       "nodeTooOld": "终端连接失败：节点 {{name}} 的 tmex 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
@@ -288,13 +262,9 @@
       }
     },
     "sidebar": {
-      "noWindows": "暂无窗口",
       "noDevices": "暂无设备",
       "manageDevices": "管理设备",
       "settings": "设置",
-      "currentPane": "当前终端",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "addDevice": "添加设备",
       "tab": {
         "panes": "终端",
@@ -324,12 +294,9 @@
       },
       "orphan": {
         "readonly": "该会话已孤立（绑定终端已不存在），仅可只读查看",
-        "title": "孤立会话",
-        "process": "进程",
-        "startedAt": "创建于"
+        "title": "孤立会话"
       },
       "panel": {
-        "title": "智能体",
         "empty": "选择或创建一个会话",
         "inputPlaceholder": "输入消息…",
         "send": "发送",
@@ -343,11 +310,9 @@
         "subtitle": "向智能体描述你的需求，在所选终端中协作"
       },
       "session": {
-        "none": "未选择会话",
         "new": "新建智能体会话",
         "switch": "切换会话",
         "selectPaneHint": "选择一个会话",
-        "showAll": "显示全部会话",
         "menu": "会话操作",
         "rename": "重命名会话",
         "renameTitle": "重命名会话",
@@ -496,7 +461,6 @@
         "fireOnce": "单次（触发后自动停用）",
         "fireRepeat": "重复",
         "cooldownSeconds": "冷却时间（秒）",
-        "enabled": "启用",
         "assistLabel": "用描述生成正则",
         "assistPlaceholder": "如：匹配下载进度百分比",
         "assistButton": "生成",
@@ -605,7 +569,6 @@
         "legServerToTmex": "服务器 → tmex",
         "legTmexToUser": "tmex → 用户",
         "cancel": "取消",
-        "canceled": "已取消 {{name}}",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
         "dragDownloadStarted": "已开始下载 {{name}}（由浏览器接管）",

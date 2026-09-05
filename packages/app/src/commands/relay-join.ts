@@ -18,6 +18,7 @@ import {
 } from '../../../shared/src/relay';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import { joinUserKeyService, makeReplayPasskeyVerifier } from '../lib/keylog-passkey-replay';
 import type { LocalAuthContext } from '../lib/local-auth';
@@ -298,7 +299,7 @@ async function redeemAgainstRelays(input: {
       if (!shouldTryNextRelay(error)) break;
     }
   }
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  const message = errorMessage(lastError);
   throw new JoinError(
     isRelayTransportError(lastError) ? 'hub_unreachable' : 'join_failed',
     `relay join failed: ${message}`

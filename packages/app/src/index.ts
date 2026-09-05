@@ -5,6 +5,7 @@ import { runUpgrade } from './commands/upgrade';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
 import { assertKnownFlags, parseArgs, resolveNestedCommand } from './lib/args';
 import { AUTH_COMMANDS, resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
+import { errorMessage } from './lib/error-message';
 import type { ParsedArgs } from './types';
 
 function printHelp(): void {
@@ -21,7 +22,7 @@ async function dispatchDirect(parsed: ParsedArgs): Promise<void> {
     }
     await mod.runDirect(parsed);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     if (message.includes('Cannot find module') || message.includes('not available')) {
       throw new Error('direct enable|disable is not available in this build (owned by C5-2)');
     }

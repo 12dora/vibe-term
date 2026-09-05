@@ -1,11 +1,5 @@
+import { errorMessage } from '@tmex/shared';
 import { APICallError, RetryError } from 'ai';
-
-export function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
 
 const NETWORK_ERROR_PATTERNS = [
   'fetch failed',

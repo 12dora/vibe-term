@@ -72,7 +72,6 @@ export function TunnelStatusCard({
     status.process.state === 'running' ||
     status.process.state === 'starting' ||
     status.process.state === 'degraded';
-  const { busy, pending } = actions;
   // 命名隧道的移除会连 Cloudflare 上的隧道一起删掉，不可撤销，必须二次确认。
   const [confirmRemove, setConfirmRemove] = useState(false);
   const remove = () => actions.run({ action: 'remove' });
@@ -89,27 +88,14 @@ export function TunnelStatusCard({
     <Card data-testid="remote-access-status">
       <StatusHeader status={status} pill={pill} adopted={adopted} />
       <CardContent className="space-y-3">
-        {actions.error && !ackError && (
-          <SetupNotice tone="error" testId="remote-access-error">
-            {describeTunnelError(t, actions.error)}
-          </SetupNotice>
-        )}
-
-        {/* 启动按钮旁那条警示已经带了确认勾选与「请先勾选」提示，这里不再重复一遍。 */}
-        {ackError && !startAck.shown && (
-          <ExposureWarning
-            exposure={{ ...exposure, ackRequired: true }}
-            testId="remote-access-status-exposure"
-          />
-        )}
-
-        {status.process.state === 'error' && status.process.lastError && (
-          <SetupNotice tone="error" testId="remote-access-process-error">
-            {status.process.lastError}
-          </SetupNotice>
-        )}
-
-        {pill === 'degraded' && <DegradedNotice status={status} />}
+        <TunnelStatusNotices
+          status={status}
+          actions={actions}
+          exposure={exposure}
+          pill={pill}
+          ackError={ackError}
+          startAckShown={startAck.shown}
+        />
 
         {configured && <TunnelDetails status={status} />}
 
@@ -130,71 +116,17 @@ export function TunnelStatusCard({
         )}
 
         {configured && (
-          <div className="flex flex-wrap gap-2">
-            {startable && (
-              <Button
-                type="button"
-                size="sm"
-                disabled={busy}
-                onClick={() => startAck.submit(actions.run, { action: 'start' })}
-                data-testid="remote-access-start"
-              >
-                {pending === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
-                {t('settings.remoteAccess.actions.start')}
-              </Button>
-            )}
-            {!adopted && stoppable && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => actions.run({ action: 'stop' })}
-                data-testid="remote-access-stop"
-              >
-                {pending === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
-                {t('settings.remoteAccess.actions.stop')}
-              </Button>
-            )}
-            {(adopted || pill === 'running' || pill === 'degraded') && (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={() => actions.run({ action: 'check' })}
-                data-testid="remote-access-check"
-              >
-                {pending === 'check' ? <Loader2 className="animate-spin" /> : <Radar />}
-                {t('settings.remoteAccess.actions.check')}
-              </Button>
-            )}
-            {adopted ? (
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                disabled={busy}
-                onClick={remove}
-                data-testid="remote-access-release"
-              >
-                {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Unplug />}
-                {t('settings.remoteAccess.actions.release')}
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                size="sm"
-                variant="destructive"
-                disabled={busy}
-                onClick={() => (status.config.mode === 'named' ? setConfirmRemove(true) : remove())}
-                data-testid="remote-access-remove"
-              >
-                {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Trash2 />}
-                {t('settings.remoteAccess.actions.remove')}
-              </Button>
-            )}
-          </div>
+          <TunnelStatusActions
+            status={status}
+            actions={actions}
+            pill={pill}
+            adopted={adopted}
+            startable={startable}
+            stoppable={stoppable}
+            onStart={() => startAck.submit(actions.run, { action: 'start' })}
+            onRemove={remove}
+            onConfirmRemove={() => setConfirmRemove(true)}
+          />
         )}
 
         {actions.checking && (
@@ -216,6 +148,148 @@ export function TunnelStatusCard({
         }}
       />
     </Card>
+  );
+}
+
+/**
+ * 动作按钮行。「移除」在命名隧道下先弹二次确认（会连 Cloudflare 上的隧道一起删），
+ * 接管来的隧道只能「释放」——启停由系统服务管，tmex 这边发过去会被后端 409 挡回来。
+ */
+function TunnelStatusActions({
+  status,
+  actions,
+  pill,
+  adopted,
+  startable,
+  stoppable,
+  onStart,
+  onRemove,
+  onConfirmRemove,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  pill: TunnelPill;
+  adopted: boolean;
+  startable: boolean;
+  stoppable: boolean;
+  onStart: () => void;
+  onRemove: () => void;
+  onConfirmRemove: () => void;
+}) {
+  const { t } = useTranslation();
+  const { busy, pending } = actions;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {startable && (
+        <Button
+          type="button"
+          size="sm"
+          disabled={busy}
+          onClick={onStart}
+          data-testid="remote-access-start"
+        >
+          {pending === 'start' ? <Loader2 className="animate-spin" /> : <Play />}
+          {t('settings.remoteAccess.actions.start')}
+        </Button>
+      )}
+      {!adopted && stoppable && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => actions.run({ action: 'stop' })}
+          data-testid="remote-access-stop"
+        >
+          {pending === 'stop' ? <Loader2 className="animate-spin" /> : <Square />}
+          {t('settings.remoteAccess.actions.stop')}
+        </Button>
+      )}
+      {(adopted || pill === 'running' || pill === 'degraded') && (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={() => actions.run({ action: 'check' })}
+          data-testid="remote-access-check"
+        >
+          {pending === 'check' ? <Loader2 className="animate-spin" /> : <Radar />}
+          {t('settings.remoteAccess.actions.check')}
+        </Button>
+      )}
+      {adopted ? (
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={busy}
+          onClick={onRemove}
+          data-testid="remote-access-release"
+        >
+          {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Unplug />}
+          {t('settings.remoteAccess.actions.release')}
+        </Button>
+      ) : (
+        <Button
+          type="button"
+          size="sm"
+          variant="destructive"
+          disabled={busy}
+          onClick={() => (status.config.mode === 'named' ? onConfirmRemove() : onRemove())}
+          data-testid="remote-access-remove"
+        >
+          {pending === 'remove' ? <Loader2 className="animate-spin" /> : <Trash2 />}
+          {t('settings.remoteAccess.actions.remove')}
+        </Button>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 卡片顶部的四条提示，按优先级排开：动作报错、暴露确认、进程最近一条错误、降级说明。
+ * 暴露确认只在「启动按钮旁那条」没出现时才补一条，避免同一句话说两遍。
+ */
+function TunnelStatusNotices({
+  status,
+  actions,
+  exposure,
+  pill,
+  ackError,
+  startAckShown,
+}: {
+  status: TunnelStatusResponse;
+  actions: TunnelActions;
+  exposure: ExposureState;
+  pill: TunnelPill;
+  ackError: boolean;
+  startAckShown: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      {actions.error && !ackError && (
+        <SetupNotice tone="error" testId="remote-access-error">
+          {describeTunnelError(t, actions.error)}
+        </SetupNotice>
+      )}
+
+      {ackError && !startAckShown && (
+        <ExposureWarning
+          exposure={{ ...exposure, ackRequired: true }}
+          testId="remote-access-status-exposure"
+        />
+      )}
+
+      {status.process.state === 'error' && status.process.lastError && (
+        <SetupNotice tone="error" testId="remote-access-process-error">
+          {status.process.lastError}
+        </SetupNotice>
+      )}
+
+      {pill === 'degraded' && <DegradedNotice status={status} />}
+    </>
   );
 }
 

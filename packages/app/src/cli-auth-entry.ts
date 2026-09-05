@@ -1,3 +1,4 @@
+import { errorMessage } from './lib/error-message';
 import 'reflect-metadata';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
 import {
@@ -82,7 +83,7 @@ export async function main(): Promise<void> {
 const isMain = Boolean((import.meta as ImportMeta & { main?: boolean }).main);
 if (isMain) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(errorMessage(error));
     process.exitCode = 1;
   });
 }

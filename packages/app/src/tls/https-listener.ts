@@ -1,3 +1,5 @@
+import { errorMessage } from '../lib/error-message';
+
 export type HttpsFetchHandler = (
   req: Request,
   server: Bun.Server<unknown>
@@ -53,7 +55,7 @@ export class HttpsListener {
       this.lastError = null;
     } catch (error) {
       this.server = null;
-      this.lastError = error instanceof Error ? error.message : String(error);
+      this.lastError = errorMessage(error);
       this.opts.log?.(`https listener failed to bind: ${this.lastError}`);
     }
   }
@@ -65,9 +67,7 @@ export class HttpsListener {
     try {
       await server.stop(true);
     } catch (error) {
-      this.opts.log?.(
-        `https listener stop failed: ${error instanceof Error ? error.message : String(error)}`
-      );
+      this.opts.log?.(`https listener stop failed: ${errorMessage(error)}`);
     }
   }
 }

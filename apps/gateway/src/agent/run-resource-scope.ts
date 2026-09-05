@@ -1,16 +1,10 @@
+import { errorMessage } from '@tmex/shared';
 import type { EmulatorStreamSource, PaneEmulator } from '../tmux-client/pane-emulator';
 import { PaneEmulatorRegistry } from '../tmux-client/pane-emulator';
 import type { TerminalRuntimeLike } from './tools/terminal-context';
 
 /** 全局 per-pane 模拟器池（引用计数复用 + 显式 free，见 pane-emulator.ts）。 */
 export const paneEmulatorRegistry = new PaneEmulatorRegistry();
-
-function toErrorMessage(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  return String(error);
-}
 
 /** runtime 是否具备模拟器所需的流订阅能力（stub runtime 没有则退回 capture）。 */
 export function asEmulatorSource(runtime: unknown): EmulatorStreamSource | null {
@@ -58,7 +52,7 @@ export async function acquireRunResources(
     return {
       runtime: null,
       emulator: null,
-      runtimeError: `failed to acquire terminal runtime: ${toErrorMessage(error)}`,
+      runtimeError: `failed to acquire terminal runtime: ${errorMessage(error)}`,
     };
   }
 
@@ -68,7 +62,7 @@ export async function acquireRunResources(
     try {
       emulator = await acquireEmulator(params.deviceId, params.paneId, source);
     } catch (error) {
-      console.error(`[agent-run] failed to acquire pane emulator: ${toErrorMessage(error)}`);
+      console.error(`[agent-run] failed to acquire pane emulator: ${errorMessage(error)}`);
       emulator = null;
     }
   }

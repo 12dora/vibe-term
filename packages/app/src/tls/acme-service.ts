@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import acme from 'acme-client';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type { AcmeChallengeType } from '../../../../apps/gateway/src/tls/types';
+import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
 import { parseCertificate } from './cert-authority';
@@ -90,10 +91,6 @@ type AccountRow = { acmeAccountUrl: string | null; acmeAccountDirectory: string 
 
 function asPem(value: string | Buffer): string {
   return Buffer.isBuffer(value) ? value.toString('utf8') : value;
-}
-
-function errMsg(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }
 
 export function acmeDirectoryUrl(staging: boolean): string {
@@ -292,7 +289,7 @@ async function createChallenge(
       nameservers = await input.dns.getNameServers(creds, ref.zone);
     } catch (error) {
       input.log?.(
-        `${dnsLogPrefix(providerId)} nameserver lookup failed, using system resolver: ${errMsg(error)}`
+        `${dnsLogPrefix(providerId)} nameserver lookup failed, using system resolver: ${errorMessage(error)}`
       );
     }
   }
@@ -331,7 +328,7 @@ async function removeChallenge(
     pending.dns.splice(storedIdx, 1);
   } catch (error) {
     input.log?.(
-      `${dnsLogPrefix(providerId)} challengeRemoveFn failed for ${stored.ref.recordId}: ${errMsg(error)}`
+      `${dnsLogPrefix(providerId)} challengeRemoveFn failed for ${stored.ref.recordId}: ${errorMessage(error)}`
     );
   }
 }
@@ -352,9 +349,9 @@ async function cleanupChallenges(
     try {
       await input.dns.deleteTxt(creds, rec.ref);
     } catch (error) {
-      pending.failures.push(`${rec.ref.recordId}: ${errMsg(error)}`);
+      pending.failures.push(`${rec.ref.recordId}: ${errorMessage(error)}`);
       input.log?.(
-        `${dnsLogPrefix(providerId)} cleanup failed for ${rec.ref.recordId}: ${errMsg(error)}`
+        `${dnsLogPrefix(providerId)} cleanup failed for ${rec.ref.recordId}: ${errorMessage(error)}`
       );
     }
   }
@@ -503,7 +500,7 @@ export class RenewalScheduler {
       this.backoffMs = RENEWAL_BACKOFF_MIN_MS;
       this.arm(this.checkIntervalMs);
     } catch (error) {
-      this.retryAfterFailure(errMsg(error));
+      this.retryAfterFailure(errorMessage(error));
     }
   }
 }

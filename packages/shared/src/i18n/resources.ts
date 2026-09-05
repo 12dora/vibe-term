@@ -27,26 +27,14 @@ export const I18N_RESOURCES = {
       "send": "Send",
       "success": "Success",
       "error": "Error",
-      "warning": "Warning",
-      "info": "Info",
       "yes": "Yes",
       "no": "No",
-      "enabled": "Enabled",
-      "disabled": "Disabled",
-      "pending": "Pending",
-      "authorized": "Authorized",
-      "unknown": "Unknown",
-      "empty": "Empty",
-      "none": "None",
-      "default": "Default",
-      "optional": "Optional",
-      "required": "Required"
+      "unknown": "Unknown"
     },
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect More Devices",
       "connectDevicesShort": "Connect Devices",
-      "settings": "Settings",
       "sidebarExpand": "Expand Sidebar",
       "sidebarCollapse": "Collapse Sidebar",
       "openSidebar": "Open Sidebar",
@@ -73,7 +61,6 @@ export const I18N_RESOURCES = {
       "version": "Version {{version}}"
     },
     "connectDevices": {
-      "title": "Connect more devices",
       "tabs": {
         "mobile": "Mobile device (control only)",
         "computer": "Server or computer"
@@ -280,8 +267,6 @@ export const I18N_RESOURCES = {
       }
     },
     "device": {
-      "title": "Device Management",
-      "devices": "Devices",
       "addDevice": "Add Device",
       "addDeviceDescription": "Fill in device details and choose a connection method",
       "editDevice": "Edit Device",
@@ -336,9 +321,6 @@ export const I18N_RESOURCES = {
       "loadFailedLoginRequired": "Failed to load devices: sign in to this node again",
       "loadFailedUnreachable": "Failed to load devices: node unreachable",
       "loadFailedUnreachableReason": "Failed to load devices: node unreachable ({{reason}})",
-      "localDevice": "Local Device",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "Modify Device",
       "delete": "Delete",
       "directFallbackToast": "Direct connection dropped; recent input may not have been delivered",
       "sidebar": {
@@ -382,7 +364,6 @@ export const I18N_RESOURCES = {
         "modeFollow": "Follow cursor",
         "modeFollowDesc": "Shift just enough to keep the cursor right above the keyboard; terminal size stays the same"
       },
-      "initializing": "Initializing terminal...",
       "connecting": "Connecting to device...",
       "inputPlaceholder": "Type command here...",
       "clear": "Clear",
@@ -393,13 +374,9 @@ export const I18N_RESOURCES = {
       "notificationSourceLabel": "From {{source}}",
       "notificationFallbackDetail": "Terminal notification",
       "paneTitle": "Terminal {{index}}",
-      "activePane": "Current terminal",
-      "activeWindow": "Current Window",
       "editorSendWithEnter": "Send with Enter",
       "editorSendLineByLine": "Send Line by Line",
       "editorSend": "Send",
-      "closeWindow": "Close Window",
-      "closePane": "Close terminal",
       "copy": "Copy",
       "paste": "Paste",
       "copied": "Copied to clipboard",
@@ -411,7 +388,6 @@ export const I18N_RESOURCES = {
       "linkOpenFailed": "Could not open link"
     },
     "settings": {
-      "title": "System Settings",
       "siteSettings": "Site Settings",
       "siteName": "Site Name",
       "siteNamePlaceholder": "tmex",
@@ -1162,7 +1138,6 @@ export const I18N_RESOURCES = {
       "sendTestMessage": "Send Test Message",
       "deleteBot": "Delete Bot",
       "tokenPlaceholder": "Enter new token",
-      "testMessageSent": "Test message sent",
       "createFailed": "Failed to create bot",
       "updateFailed": "Failed to update bot",
       "deleteFailed": "Failed to delete bot",
@@ -1172,8 +1147,6 @@ export const I18N_RESOURCES = {
       "loadBotsFailed": "Failed to load bot list",
       "loadChatsFailed": "Failed to load chat list",
       "noBots": "No bots yet, add one first.",
-      "expand": "Expand",
-      "collapse": "Collapse",
       "authCount": "{{authorized}} authorized / {{pending}} pending (max 8)",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 Gateway online @ {{siteName}}",
@@ -1184,7 +1157,6 @@ export const I18N_RESOURCES = {
       "authFailed": "❌ Authorization request failed. Please contact administrator.",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
       "approveMessageTemplate": "✅ Authorized via tmex.\nBot: {{botName}}\nTime: {{time}}",
-      "botNotFound": "Bot not found or unavailable",
       "botNotRunning": "Bot is not running or unavailable"
     },
     "weixin": {
@@ -1196,13 +1168,11 @@ export const I18N_RESOURCES = {
       "addAccount": "Add Account",
       "editAccount": "Edit Account",
       "enableAccount": "Enable Account",
-      "allowAuthRequests": "Allow Authorization Requests",
       "allowCommands": "Allow Chat Commands",
       "allowCommandsHelp": "Authorized chats can type into terminals on this machine and approve agent actions.",
       "commandsBadge": "Chat Commands",
       "scanToLogin": "Scan to Log In",
       "relogin": "Re-login (Re-scan)",
-      "loggedIn": "Logged in",
       "notLoggedIn": "Not logged in",
       "scanQrcodeHint": "Open WeChat, scan the QR code, and confirm on your phone.",
       "loginExpired": "QR code expired. Please retry.",
@@ -1214,7 +1184,6 @@ export const I18N_RESOURCES = {
       "reactivationHint": "Ask this user to send the bot any message to re-activate alerts.",
       "approve": "Approve",
       "testMessage": "Test Message",
-      "sendTestMessage": "Send Test Message",
       "deleteAccount": "Delete Account",
       "accountCreated": "Account created",
       "accountUpdated": "Account updated",
@@ -1224,19 +1193,13 @@ export const I18N_RESOURCES = {
       "updateFailed": "Failed to update account",
       "deleteFailed": "Failed to delete account",
       "approveFailed": "Failed to approve",
-      "removeFailed": "Failed to remove user",
       "testMessageFailed": "Failed to send test message",
       "loadAccountsFailed": "Failed to load accounts",
       "noAccounts": "No accounts yet, add one first.",
-      "userId": "WeChat User ID",
-      "expand": "Expand",
-      "collapse": "Collapse",
       "accountNameRequired": "Account name is required",
       "accountNotFound": "Account not found or unavailable",
       "accountNotRunning": "Account is not logged in or not running",
       "userNotFound": "User not found",
-      "authSuccess": "✅ Authorized. You will now receive notifications.",
-      "authPending": "⏳ Authorization request received. Please approve in tmex settings.",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
       "approveMessageTemplate": "✅ Authorized via tmex.\nAccount: {{accountName}}\nTime: {{time}}",
       "keepalivePrompt": "【tmex】To keep notifications flowing, just reply with anything to keep the session alive 🙏",
@@ -1254,7 +1217,6 @@ export const I18N_RESOURCES = {
       "secret": "Secret",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "Used to sign payloads (HMAC-SHA256)",
-      "enabled": "Enabled",
       "eventMask": "Events",
       "add": "Add Webhook",
       "empty": "No webhooks yet.",
@@ -1265,13 +1227,11 @@ export const I18N_RESOURCES = {
     "sshError": {
       "configRefNotSupported": "SSH Config reference is not supported in this version. Please use host + username with Agent/Key/Password authentication.",
       "agentUnavailable": "SSH Agent unavailable: SSH_AUTH_SOCK not detected. Please check agent environment.",
-      "agentNoIdentity": "SSH Agent has no available keys. Please run ssh-add first.",
       "agentNoIdentities": "SSH Agent has no available keys. Please run ssh-add first.",
       "authFailed": "Authentication failed: incorrect username, password, or key. Please check device configuration.",
       "authFailedGeneric": "Authentication failed: incorrect username, password, or key. Please check device configuration.",
       "networkUnreachable": "Network unreachable: Please check routing, firewall, or VPN configuration.",
       "connectionRefused": "Connection refused: Unable to connect to target host. Please check host address and port.",
-      "timeout": "Connection timeout: Unable to connect to device. Please check network or firewall settings.",
       "connectionTimeout": "Connection timeout: Unable to connect to device. Please check network or firewall settings.",
       "hostNotFound": "Host not found: Unable to resolve hostname. Please check DNS or hostname configuration.",
       "handshakeFailed": "Handshake failed: Unable to establish secure connection. Possibly incompatible key exchange algorithm.",
@@ -1283,8 +1243,6 @@ export const I18N_RESOURCES = {
       "reconnected": "Device reconnected automatically"
     },
     "deviceStatus": {
-      "reconnecting": "Reconnecting {{delay}}s",
-      "offline": "Offline",
       "errorBadge": {
         "authFailed": "Auth failed",
         "agentUnavailable": "Agent unavailable",
@@ -1301,8 +1259,6 @@ export const I18N_RESOURCES = {
       }
     },
     "websocket": {
-      "error": "WebSocket connection error",
-      "checkGateway": "Please check Gateway status",
       "inputDropped": "Connection interrupted — your recent input could not be sent. Please type or paste it again once reconnected.",
       "gatewayTooOld": "Terminal connection failed: Gateway {{version}} is too old, please upgrade it to {{minVersion}} or newer.",
       "nodeTooOld": "Terminal connection failed: node {{name}} runs tmex {{version}}, please upgrade it to {{minVersion}} or newer.",
@@ -1436,13 +1392,9 @@ export const I18N_RESOURCES = {
       }
     },
     "sidebar": {
-      "noWindows": "No windows",
       "noDevices": "No devices",
       "manageDevices": "Manage Devices",
       "settings": "Settings",
-      "currentPane": "Current terminal",
-      "closeWindow": "Close Window",
-      "closePane": "Close terminal",
       "addDevice": "Add Device",
       "tab": {
         "panes": "Terminals",
@@ -1472,12 +1424,9 @@ export const I18N_RESOURCES = {
       },
       "orphan": {
         "readonly": "This session is orphaned (its terminal is gone) — read-only",
-        "title": "Orphaned",
-        "process": "Process",
-        "startedAt": "Started"
+        "title": "Orphaned"
       },
       "panel": {
-        "title": "Agent",
         "empty": "Select or create a session",
         "inputPlaceholder": "Type a message…",
         "send": "Send",
@@ -1491,11 +1440,9 @@ export const I18N_RESOURCES = {
         "subtitle": "Describe your task to start working in the selected terminal"
       },
       "session": {
-        "none": "No session selected",
         "new": "New agent session",
         "switch": "Switch session",
         "selectPaneHint": "Select a session",
-        "showAll": "Show all sessions",
         "menu": "Session actions",
         "rename": "Rename session",
         "renameTitle": "Rename session",
@@ -1644,7 +1591,6 @@ export const I18N_RESOURCES = {
         "fireOnce": "Once (auto-disable after firing)",
         "fireRepeat": "Repeat",
         "cooldownSeconds": "Cooldown (seconds)",
-        "enabled": "Enabled",
         "assistLabel": "Generate regex from a description",
         "assistPlaceholder": "e.g. match the download progress percentage",
         "assistButton": "Generate",
@@ -1759,7 +1705,6 @@ export const I18N_RESOURCES = {
         "legServerToTmex": "Server → tmex",
         "legTmexToUser": "tmex → Browser",
         "cancel": "Cancel",
-        "canceled": "Canceled {{name}}",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
         "dragDownloadStarted": "Started downloading {{name}} (handled by browser)",
@@ -1782,12 +1727,9 @@ export const I18N_RESOURCES = {
     },
     "file": {
       "invalidRef": "Invalid file reference",
-      "notFound": "File no longer exists",
       "loadFailed": "Failed to load file",
       "isDirectory": "This is a directory",
       "notPreviewable": "Preview is not available for this file type",
-      "tooLarge": "File is too large to preview",
-      "binary": "Binary file cannot be previewed",
       "download": "Download",
       "openRaw": "Open raw"
     },
@@ -2350,7 +2292,6 @@ export const I18N_RESOURCES = {
       },
       "actions": {
         "add": "Add",
-        "rename": "Rename",
         "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
@@ -2456,8 +2397,6 @@ export const I18N_RESOURCES = {
         "relayNoneAccepted": "No relay accepted the join code. Check the relay connection and try again."
       },
       "rename": {
-        "save": "Save",
-        "done": "Renamed",
         "cancelled": "Cancelled."
       },
       "revoke": {
@@ -3150,26 +3089,14 @@ export const I18N_RESOURCES = {
       "send": "发送",
       "success": "成功",
       "error": "错误",
-      "warning": "警告",
-      "info": "信息",
       "yes": "是",
       "no": "否",
-      "enabled": "已启用",
-      "disabled": "已禁用",
-      "pending": "待授权",
-      "authorized": "已授权",
-      "unknown": "未知",
-      "empty": "空",
-      "none": "无",
-      "default": "默认",
-      "optional": "可选",
-      "required": "必填"
+      "unknown": "未知"
     },
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
       "connectDevicesShort": "接入设备",
-      "settings": "设置",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
@@ -3196,7 +3123,6 @@ export const I18N_RESOURCES = {
       "version": "版本 {{version}}"
     },
     "connectDevices": {
-      "title": "接入更多设备",
       "tabs": {
         "mobile": "移动设备（仅控制）",
         "computer": "服务器或电脑"
@@ -3403,8 +3329,6 @@ export const I18N_RESOURCES = {
       }
     },
     "device": {
-      "title": "设备管理",
-      "devices": "设备",
       "addDevice": "添加设备",
       "addDeviceDescription": "填写设备信息并选择连接方式",
       "editDevice": "修改设备",
@@ -3459,9 +3383,6 @@ export const I18N_RESOURCES = {
       "loadFailedLoginRequired": "加载设备列表失败：该节点需重新登录",
       "loadFailedUnreachable": "加载设备列表失败：节点不可达",
       "loadFailedUnreachableReason": "加载设备列表失败：节点不可达（{{reason}}）",
-      "localDevice": "本地设备",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "修改设备",
       "delete": "删除",
       "directFallbackToast": "直连已断开，最近输入可能未送达",
       "sidebar": {
@@ -3505,7 +3426,6 @@ export const I18N_RESOURCES = {
         "modeFollow": "光标对齐",
         "modeFollowDesc": "按光标位置上移，光标始终在键盘正上方，终端大小不变"
       },
-      "initializing": "初始化终端...",
       "connecting": "连接设备...",
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -3516,13 +3436,9 @@ export const I18N_RESOURCES = {
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
       "paneTitle": "终端 {{index}}",
-      "activePane": "当前终端",
-      "activeWindow": "当前窗口",
       "editorSendWithEnter": "发送附带回车",
       "editorSendLineByLine": "逐行发送",
       "editorSend": "发送",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "copy": "复制",
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
@@ -3534,7 +3450,6 @@ export const I18N_RESOURCES = {
       "linkOpenFailed": "无法打开链接"
     },
     "settings": {
-      "title": "系统设置",
       "siteSettings": "站点设置",
       "siteName": "站点名称",
       "siteNamePlaceholder": "tmex",
@@ -4285,7 +4200,6 @@ export const I18N_RESOURCES = {
       "sendTestMessage": "发送测试消息",
       "deleteBot": "删除 Bot",
       "tokenPlaceholder": "输入新 token",
-      "testMessageSent": "测试消息已发送",
       "createFailed": "新增 Bot 失败",
       "updateFailed": "更新 Bot 失败",
       "deleteFailed": "删除 Bot 失败",
@@ -4295,8 +4209,6 @@ export const I18N_RESOURCES = {
       "loadBotsFailed": "加载 Bot 列表失败",
       "loadChatsFailed": "加载 chat 列表失败",
       "noBots": "暂无 Bot，先添加一个。",
-      "expand": "展开",
-      "collapse": "收起",
       "authCount": "已授权 {{authorized}} / 待授权 {{pending}}（总上限 8）",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 网关已上线 @ {{siteName}}",
@@ -4307,7 +4219,6 @@ export const I18N_RESOURCES = {
       "authFailed": "❌ 授权申请失败，请联系管理员。",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
       "approveMessageTemplate": "✅ 已通过 tmex 授权。\nBot：{{botName}}\n时间：{{time}}",
-      "botNotFound": "Bot 未启动或不可用",
       "botNotRunning": "Bot 未启动或不可用"
     },
     "weixin": {
@@ -4319,13 +4230,11 @@ export const I18N_RESOURCES = {
       "addAccount": "添加账号",
       "editAccount": "编辑账号",
       "enableAccount": "启用账号",
-      "allowAuthRequests": "允许授权申请",
       "allowCommands": "允许聊天指令",
       "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
       "commandsBadge": "聊天指令",
       "scanToLogin": "扫码登录",
       "relogin": "重新登录（重新扫码）",
-      "loggedIn": "已登录",
       "notLoggedIn": "未登录",
       "scanQrcodeHint": "打开微信扫描二维码，并在手机上确认。",
       "loginExpired": "二维码已过期，请重试。",
@@ -4337,7 +4246,6 @@ export const I18N_RESOURCES = {
       "reactivationHint": "请该用户给 bot 发条消息以重新激活告警。",
       "approve": "批准",
       "testMessage": "测试消息",
-      "sendTestMessage": "发送测试消息",
       "deleteAccount": "删除账号",
       "accountCreated": "账号已创建",
       "accountUpdated": "账号已更新",
@@ -4347,19 +4255,13 @@ export const I18N_RESOURCES = {
       "updateFailed": "更新账号失败",
       "deleteFailed": "删除账号失败",
       "approveFailed": "批准失败",
-      "removeFailed": "移除用户失败",
       "testMessageFailed": "发送测试消息失败",
       "loadAccountsFailed": "加载账号列表失败",
       "noAccounts": "还没有账号，先添加一个。",
-      "userId": "微信用户 ID",
-      "expand": "展开",
-      "collapse": "收起",
       "accountNameRequired": "账号名称不能为空",
       "accountNotFound": "账号不存在或不可用",
       "accountNotRunning": "账号未登录或未运行",
       "userNotFound": "用户不存在",
-      "authSuccess": "✅ 已授权，你将开始收到通知。",
-      "authPending": "⏳ 已收到授权申请，请在 tmex 设置中批准。",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
       "approveMessageTemplate": "✅ 已通过 tmex 授权。\n账号：{{accountName}}\n时间：{{time}}",
       "keepalivePrompt": "【tmex】为确保你能正常收到通知，请回复任意内容即可保持连接 🙏",
@@ -4377,7 +4279,6 @@ export const I18N_RESOURCES = {
       "secret": "密钥",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "用于签名（HMAC-SHA256）",
-      "enabled": "启用",
       "eventMask": "事件",
       "add": "添加 Webhook",
       "empty": "暂无 Webhook。",
@@ -4388,13 +4289,11 @@ export const I18N_RESOURCES = {
     "sshError": {
       "configRefNotSupported": "当前版本暂不支持 SSH Config 引用，请改为填写 host + username，并选择 Agent/私钥/密码认证",
       "agentUnavailable": "SSH Agent 不可用：未检测到 SSH_AUTH_SOCK，请检查 agent 环境",
-      "agentNoIdentity": "SSH Agent 未加载可用密钥，请先执行 ssh-add",
       "agentNoIdentities": "SSH Agent 未加载可用密钥，请先执行 ssh-add",
       "authFailed": "认证失败：用户名、密码或密钥不正确，请检查设备配置",
       "authFailedGeneric": "认证失败：用户名、密码或密钥不正确，请检查设备配置",
       "networkUnreachable": "网络不可达：请检查路由、防火墙或 VPN 配置",
       "connectionRefused": "连接被拒绝：无法连接到目标主机，请检查主机地址和端口是否正确",
-      "timeout": "连接超时：无法连接到设备，请检查网络或防火墙设置",
       "connectionTimeout": "连接超时：无法连接到设备，请检查网络或防火墙设置",
       "hostNotFound": "主机未找到：无法解析主机地址，请检查 DNS 或主机名是否正确",
       "handshakeFailed": "握手失败：无法建立安全连接，可能是密钥交换算法不兼容",
@@ -4406,8 +4305,6 @@ export const I18N_RESOURCES = {
       "reconnected": "设备已自动重连"
     },
     "deviceStatus": {
-      "reconnecting": "重连中 {{delay}}s",
-      "offline": "离线",
       "errorBadge": {
         "authFailed": "认证失败",
         "agentUnavailable": "Agent 不可用",
@@ -4424,8 +4321,6 @@ export const I18N_RESOURCES = {
       }
     },
     "websocket": {
-      "error": "WebSocket 连接错误",
-      "checkGateway": "请检查 Gateway 状态",
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "gatewayTooOld": "终端连接失败：Gateway 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
       "nodeTooOld": "终端连接失败：节点 {{name}} 的 tmex 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
@@ -4559,13 +4454,9 @@ export const I18N_RESOURCES = {
       }
     },
     "sidebar": {
-      "noWindows": "暂无窗口",
       "noDevices": "暂无设备",
       "manageDevices": "管理设备",
       "settings": "设置",
-      "currentPane": "当前终端",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "addDevice": "添加设备",
       "tab": {
         "panes": "终端",
@@ -4595,12 +4486,9 @@ export const I18N_RESOURCES = {
       },
       "orphan": {
         "readonly": "该会话已孤立（绑定终端已不存在），仅可只读查看",
-        "title": "孤立会话",
-        "process": "进程",
-        "startedAt": "创建于"
+        "title": "孤立会话"
       },
       "panel": {
-        "title": "智能体",
         "empty": "选择或创建一个会话",
         "inputPlaceholder": "输入消息…",
         "send": "发送",
@@ -4614,11 +4502,9 @@ export const I18N_RESOURCES = {
         "subtitle": "向智能体描述你的需求，在所选终端中协作"
       },
       "session": {
-        "none": "未选择会话",
         "new": "新建智能体会话",
         "switch": "切换会话",
         "selectPaneHint": "选择一个会话",
-        "showAll": "显示全部会话",
         "menu": "会话操作",
         "rename": "重命名会话",
         "renameTitle": "重命名会话",
@@ -4767,7 +4653,6 @@ export const I18N_RESOURCES = {
         "fireOnce": "单次（触发后自动停用）",
         "fireRepeat": "重复",
         "cooldownSeconds": "冷却时间（秒）",
-        "enabled": "启用",
         "assistLabel": "用描述生成正则",
         "assistPlaceholder": "如：匹配下载进度百分比",
         "assistButton": "生成",
@@ -4882,7 +4767,6 @@ export const I18N_RESOURCES = {
         "legServerToTmex": "服务器 → tmex",
         "legTmexToUser": "tmex → 用户",
         "cancel": "取消",
-        "canceled": "已取消 {{name}}",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
         "dragDownloadStarted": "已开始下载 {{name}}（由浏览器接管）",
@@ -4905,12 +4789,9 @@ export const I18N_RESOURCES = {
     },
     "file": {
       "invalidRef": "无效的文件引用",
-      "notFound": "文件已不存在",
       "loadFailed": "加载文件失败",
       "isDirectory": "这是一个目录",
       "notPreviewable": "该文件类型不支持预览",
-      "tooLarge": "文件过大，无法预览",
-      "binary": "二进制文件无法预览",
       "download": "下载",
       "openRaw": "打开原始文件"
     },
@@ -5473,7 +5354,6 @@ export const I18N_RESOURCES = {
       },
       "actions": {
         "add": "添加",
-        "rename": "重命名",
         "more": "更多",
         "revoke": "移除",
         "refresh": "刷新",
@@ -5578,8 +5458,6 @@ export const I18N_RESOURCES = {
         "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
-        "save": "保存",
-        "done": "已重命名",
         "cancelled": "已取消。"
       },
       "revoke": {
@@ -6268,26 +6146,14 @@ export const I18N_RESOURCES = {
       "send": "送信",
       "success": "成功",
       "error": "エラー",
-      "warning": "警告",
-      "info": "情報",
       "yes": "はい",
       "no": "いいえ",
-      "enabled": "有効",
-      "disabled": "無効",
-      "pending": "保留中",
-      "authorized": "承認済み",
-      "unknown": "不明",
-      "empty": "空",
-      "none": "なし",
-      "default": "デフォルト",
-      "optional": "任意",
-      "required": "必須"
+      "unknown": "不明"
     },
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
       "connectDevicesShort": "デバイス接続",
-      "settings": "設定",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
@@ -6314,7 +6180,6 @@ export const I18N_RESOURCES = {
       "version": "バージョン {{version}}"
     },
     "connectDevices": {
-      "title": "デバイスを追加",
       "tabs": {
         "mobile": "モバイル端末（操作のみ）",
         "computer": "サーバーまたはパソコン"
@@ -6521,8 +6386,6 @@ export const I18N_RESOURCES = {
       }
     },
     "device": {
-      "title": "デバイス管理",
-      "devices": "デバイス",
       "addDevice": "デバイスを追加",
       "addDeviceDescription": "デバイス情報を入力し、接続方法を選択してください",
       "editDevice": "デバイスを編集",
@@ -6577,9 +6440,6 @@ export const I18N_RESOURCES = {
       "loadFailedLoginRequired": "デバイス一覧の読み込みに失敗しました：このノードへの再サインインが必要です",
       "loadFailedUnreachable": "デバイス一覧の読み込みに失敗しました：ノードに到達できません",
       "loadFailedUnreachableReason": "デバイス一覧の読み込みに失敗しました：ノードに到達できません（{{reason}}）",
-      "localDevice": "ローカルデバイス",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "デバイスを変更",
       "delete": "削除",
       "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
       "sidebar": {
@@ -6623,7 +6483,6 @@ export const I18N_RESOURCES = {
         "modeFollow": "カーソル追従",
         "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
-      "initializing": "ターミナルを初期化中...",
       "connecting": "デバイスに接続中...",
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
@@ -6634,13 +6493,9 @@ export const I18N_RESOURCES = {
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
       "paneTitle": "ターミナル {{index}}",
-      "activePane": "現在のターミナル",
-      "activeWindow": "現在のウィンドウ",
       "editorSendWithEnter": "Enter で送信",
       "editorSendLineByLine": "1行ずつ送信",
       "editorSend": "送信",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "copy": "コピー",
       "paste": "貼り付け",
       "copied": "クリップボードにコピーしました",
@@ -6652,7 +6507,6 @@ export const I18N_RESOURCES = {
       "linkOpenFailed": "リンクを開けませんでした"
     },
     "settings": {
-      "title": "システム設定",
       "siteSettings": "サイト設定",
       "siteName": "サイト名",
       "siteNamePlaceholder": "tmex",
@@ -7403,7 +7257,6 @@ export const I18N_RESOURCES = {
       "sendTestMessage": "テストメッセージを送信",
       "deleteBot": "Bot を削除",
       "tokenPlaceholder": "新しい token を入力",
-      "testMessageSent": "テストメッセージを送信しました",
       "createFailed": "Bot の作成に失敗しました",
       "updateFailed": "Bot の更新に失敗しました",
       "deleteFailed": "Bot の削除に失敗しました",
@@ -7413,8 +7266,6 @@ export const I18N_RESOURCES = {
       "loadBotsFailed": "Bot 一覧の読み込みに失敗しました",
       "loadChatsFailed": "チャット一覧の読み込みに失敗しました",
       "noBots": "Bot がありません。まず追加してください。",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "authCount": "承認済み {{authorized}} / 承認待ち {{pending}}（最大 8）",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 ゲートウェイがオンラインになりました @ {{siteName}}",
@@ -7425,7 +7276,6 @@ export const I18N_RESOURCES = {
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時間：{{time}}",
       "approveMessageTemplate": "✅ tmex で承認されました。\nBot：{{botName}}\n時間：{{time}}",
-      "botNotFound": "Bot が見つからないか利用できません",
       "botNotRunning": "Bot が起動していないか利用できません"
     },
     "weixin": {
@@ -7437,13 +7287,11 @@ export const I18N_RESOURCES = {
       "addAccount": "アカウントを追加",
       "editAccount": "アカウントを編集",
       "enableAccount": "アカウントを有効化",
-      "allowAuthRequests": "認証リクエストを許可",
       "allowCommands": "チャットコマンドを許可",
       "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
       "commandsBadge": "チャットコマンド",
       "scanToLogin": "スキャンしてログイン",
       "relogin": "再ログイン（再スキャン）",
-      "loggedIn": "ログイン済み",
       "notLoggedIn": "未ログイン",
       "scanQrcodeHint": "WeChat を開いて QR コードをスキャンし、スマホで確認してください。",
       "loginExpired": "QR コードの有効期限が切れました。再試行してください。",
@@ -7455,7 +7303,6 @@ export const I18N_RESOURCES = {
       "reactivationHint": "このユーザーに bot へメッセージを送ってもらい、アラートを再有効化してください。",
       "approve": "承認",
       "testMessage": "テストメッセージ",
-      "sendTestMessage": "テストメッセージを送信",
       "deleteAccount": "アカウントを削除",
       "accountCreated": "アカウントを作成しました",
       "accountUpdated": "アカウントを更新しました",
@@ -7465,19 +7312,13 @@ export const I18N_RESOURCES = {
       "updateFailed": "アカウントの更新に失敗しました",
       "deleteFailed": "アカウントの削除に失敗しました",
       "approveFailed": "承認に失敗しました",
-      "removeFailed": "ユーザーの削除に失敗しました",
       "testMessageFailed": "テストメッセージの送信に失敗しました",
       "loadAccountsFailed": "アカウント一覧の読み込みに失敗しました",
       "noAccounts": "アカウントがまだありません。まず追加してください。",
-      "userId": "WeChat ユーザー ID",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "accountNameRequired": "アカウント名は必須です",
       "accountNotFound": "アカウントが見つからないか利用できません",
       "accountNotRunning": "アカウントが未ログインまたは未起動です",
       "userNotFound": "ユーザーが見つかりません",
-      "authSuccess": "✅ 認証されました。通知を受け取れます。",
-      "authPending": "⏳ 認証リクエストを受け取りました。tmex の設定で承認してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時刻：{{time}}",
       "approveMessageTemplate": "✅ tmex 経由で認証しました。\nアカウント：{{accountName}}\n時刻：{{time}}",
       "keepalivePrompt": "【tmex】通知を確実に受け取るため、任意の内容を返信して接続を維持してください 🙏",
@@ -7495,7 +7336,6 @@ export const I18N_RESOURCES = {
       "secret": "シークレット",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "署名に使用（HMAC-SHA256）",
-      "enabled": "有効",
       "eventMask": "イベント",
       "add": "Webhook を追加",
       "empty": "Webhook がありません。",
@@ -7506,13 +7346,11 @@ export const I18N_RESOURCES = {
     "sshError": {
       "configRefNotSupported": "このバージョンでは SSH Config 参照はサポートされていません。host + username を使用し、Agent/秘密鍵/パスワード認証を選択してください。",
       "agentUnavailable": "SSH Agent が利用できません：SSH_AUTH_SOCK が検出されません。agent 環境を確認してください。",
-      "agentNoIdentity": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "agentNoIdentities": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "authFailed": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "authFailedGeneric": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "networkUnreachable": "ネットワークに到達できません：ルーティング、ファイアウォール、または VPN 設定を確認してください。",
       "connectionRefused": "接続が拒否されました：ターゲットホストに接続できません。ホストアドレスとポートを確認してください。",
-      "timeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "connectionTimeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "hostNotFound": "ホストが見つかりません：ホスト名を解決できません。DNS またはホスト名設定を確認してください。",
       "handshakeFailed": "ハンドシェイクに失敗しました：安全な接続を確立できません。キー交換アルゴリズムが互換性がない可能性があります。",
@@ -7524,8 +7362,6 @@ export const I18N_RESOURCES = {
       "reconnected": "デバイスが自動的に再接続されました"
     },
     "deviceStatus": {
-      "reconnecting": "再接続中 {{delay}}s",
-      "offline": "オフライン",
       "errorBadge": {
         "authFailed": "認証失敗",
         "agentUnavailable": "Agent 利用不可",
@@ -7542,8 +7378,6 @@ export const I18N_RESOURCES = {
       }
     },
     "websocket": {
-      "error": "WebSocket 接続エラー",
-      "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "gatewayTooOld": "端末接続に失敗しました：Gateway のバージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
       "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
@@ -7677,13 +7511,9 @@ export const I18N_RESOURCES = {
       }
     },
     "sidebar": {
-      "noWindows": "ウィンドウがありません",
       "noDevices": "デバイスがありません",
       "manageDevices": "デバイス管理",
       "settings": "設定",
-      "currentPane": "現在のターミナル",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
         "panes": "ターミナル",
@@ -7713,12 +7543,9 @@ export const I18N_RESOURCES = {
       },
       "orphan": {
         "readonly": "このセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
-        "title": "孤立セッション",
-        "process": "プロセス",
-        "startedAt": "作成日時"
+        "title": "孤立セッション"
       },
       "panel": {
-        "title": "エージェント",
         "empty": "セッションを選択または作成してください",
         "inputPlaceholder": "メッセージを入力…",
         "send": "送信",
@@ -7732,11 +7559,9 @@ export const I18N_RESOURCES = {
         "subtitle": "タスクを入力して、選択したターミナルでの作業を始めましょう"
       },
       "session": {
-        "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
         "selectPaneHint": "セッションを選択",
-        "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
         "rename": "セッション名を変更",
         "renameTitle": "セッション名を変更",
@@ -7885,7 +7710,6 @@ export const I18N_RESOURCES = {
         "fireOnce": "一回（発火後に自動停止）",
         "fireRepeat": "繰り返し",
         "cooldownSeconds": "クールダウン（秒）",
-        "enabled": "有効",
         "assistLabel": "説明から正規表現を生成",
         "assistPlaceholder": "例：ダウンロード進捗のパーセンテージにマッチ",
         "assistButton": "生成",
@@ -8000,7 +7824,6 @@ export const I18N_RESOURCES = {
         "legServerToTmex": "サーバー → tmex",
         "legTmexToUser": "tmex → ブラウザ",
         "cancel": "キャンセル",
-        "canceled": "{{name}} をキャンセルしました",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
         "dragDownloadStarted": "{{name}} のダウンロードを開始（ブラウザが処理）",
@@ -8023,12 +7846,9 @@ export const I18N_RESOURCES = {
     },
     "file": {
       "invalidRef": "無効なファイル参照です",
-      "notFound": "ファイルは存在しません",
       "loadFailed": "ファイルの読み込みに失敗しました",
       "isDirectory": "これはディレクトリです",
       "notPreviewable": "このファイル形式はプレビューできません",
-      "tooLarge": "ファイルが大きすぎてプレビューできません",
-      "binary": "バイナリファイルはプレビューできません",
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
     },
@@ -8591,7 +8411,6 @@ export const I18N_RESOURCES = {
       },
       "actions": {
         "add": "追加",
-        "rename": "名前を変更",
         "more": "その他",
         "revoke": "削除",
         "refresh": "更新",
@@ -8696,8 +8515,6 @@ export const I18N_RESOURCES = {
         "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
-        "save": "保存",
-        "done": "名前を変更しました",
         "cancelled": "キャンセルしました。"
       },
       "revoke": {

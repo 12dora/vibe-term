@@ -10,6 +10,7 @@ import { type ApiClient, defaultApiClient } from '@tmex/api-client';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
 import { LocalApiError } from '@tmex/api-client/local/local-api';
+import { errorMessage } from '@tmex/shared';
 import type { ReactElement } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -54,7 +55,7 @@ export function describeLeaveError(t: Translate, error: unknown): string {
     (error instanceof LocalApiError && LEAVE_ERROR_KEY[error.code]) ||
       'nodes.membership.leaveFailed'
   );
-  const detail = (error instanceof Error ? error.message : String(error)).trim();
+  const detail = errorMessage(error).trim();
   const code = error instanceof LocalApiError ? error.code : '';
   if (!detail || detail === code || LEAVE_ERROR_KEY[code]) return base;
   return t('nodes.membership.errorDetail', { base, detail });

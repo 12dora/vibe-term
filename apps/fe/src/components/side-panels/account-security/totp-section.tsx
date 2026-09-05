@@ -6,6 +6,7 @@ import {
 } from '@/auth/account-security-actions';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { AuthApi, PasskeySummary } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { OtpInput } from '@tmex/ui/otp-input';
@@ -97,7 +98,7 @@ export function TotpSection({
       publishFeedback({ section: 'totp', tone: 'ok', text: t('auth.security.totpDone') });
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -127,7 +128,7 @@ export function TotpSection({
       cancel();
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

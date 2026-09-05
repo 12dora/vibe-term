@@ -54,12 +54,8 @@
     "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts": {
-    "fileLines": 1362,
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）；round28 T4 加入推包进度与预算重算"
-  },
-  "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts:useNodeUpgrade": {
-    "lines": 453,
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
+    "fileLines": 864,
+    "reason": "升级执行流程内聚体（POST / 轮询 / 回读 / 取消闸门）；round28 T10 把 React 编排层拆到 use-node-upgrade-controller.ts 后剩余部分"
   },
   "apps/fe/src/pages/settings/nodes/membership/use-leave-mesh.ts:useLeaveMesh": {
     "lines": 184,

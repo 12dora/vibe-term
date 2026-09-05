@@ -1,3 +1,4 @@
+import { combineAbortSignals, sleepOrAbort } from '@tmex/shared';
 import { type FetchImpl, getUpdates } from './api';
 import {
   type GetUpdatesResp,
@@ -62,24 +63,6 @@ export function isAbort(err: unknown, signal?: AbortSignal): boolean {
   return false;
 }
 
-export function sleep(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal?.aborted) {
-      reject(new AbortError());
-      return;
-    }
-    const timer = setTimeout(() => {
-      signal?.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    const onAbort = () => {
-      clearTimeout(timer);
-      reject(new AbortError());
-    };
-    signal?.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
 export async function runUpdateLoop(opts: RunUpdateLoopOpts): Promise<void> {
   let cursor = (await opts.loadCursor?.()) ?? '';
   let failures = 0;
@@ -133,7 +116,7 @@ async function fetchUpdates(
   // per-request 超时 = 服务端长轮询窗口 + margin（首请求用默认 60s）。
   // 超时只 abort 本次请求、不 abort 收信循环的 stop signal，故落入 catch 走 backoff，
   // 避免半开 / 黑洞连接让 await getUpdates 永久挂起。
-  const perRequestSignal = AbortSignal.any([opts.signal, AbortSignal.timeout(longpollTimeoutMs)]);
+  const perRequestSignal = combineAbortSignals(opts.signal, AbortSignal.timeout(longpollTimeoutMs));
   return getUpdates({
     baseUrl: opts.credentials.baseUrl,
     botToken: opts.credentials.botToken,
@@ -191,9 +174,6 @@ async function persistCursor(
 }
 
 async function backoffSleep(failures: number, signal: AbortSignal): Promise<void> {
-  try {
-    await sleep(computeBackoffMs(failures), signal);
-  } catch {
-    // abort 期间被打断，交由 while 条件收尾
-  }
+  // 被 abort 打断时返回 false，交由 while 条件收尾
+  await sleepOrAbort(computeBackoffMs(failures), signal);
 }

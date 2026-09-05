@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { WatchFireMode, WatchNoMatchBehavior, WatchTriggerType } from '@tmex/shared';
 import { getLlmProviderById } from '../db/llm';
 import type { WatchRuleRecord } from '../db/watch';
@@ -180,7 +181,7 @@ function validatePatternTrigger(input: WatchRuleEffective): string | null {
     compileWatchPattern(input.pattern, input.patternFlags);
   } catch (error) {
     return t('apiError.watchPatternInvalid', {
-      detail: error instanceof Error ? error.message : String(error),
+      detail: errorMessage(error),
     });
   }
   if (

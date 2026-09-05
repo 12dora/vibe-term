@@ -1,4 +1,5 @@
 import { performRelayPasswordJoin as defaultPerformRelayPasswordJoin } from '../commands/relay-password-join';
+import { errorMessage } from '../lib/error-message';
 import { RelayPasswordJoinError } from '../lib/relay-password-join-flow';
 import { jsonOk } from './http';
 import { DIRECT_ENABLED_KEY, type SetupServiceDeps, maybeEnableDirect } from './setup-service';
@@ -36,7 +37,7 @@ export function asSetupRelayJoinError(error: unknown): SetupError {
     }
     return new SetupError('join_failed', error.message, 400);
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return new SetupError('join_failed', message, 400);
 }
 
@@ -61,11 +62,7 @@ export async function handleRelayJoinRequest(
     normalizedUrl = assertSetupUrl(relayUrl, deps.nodeEnv).toString().replace(/\/+$/, '');
   } catch (error) {
     if (error instanceof SetupError) throw error;
-    throw new SetupError(
-      'invalid_url',
-      error instanceof Error ? error.message : String(error),
-      400
-    );
+    throw new SetupError('invalid_url', errorMessage(error), 400);
   }
   const caFingerprint = readString(body, 'caFingerprint') || undefined;
   const perform = deps.performRelayPasswordJoin ?? defaultPerformRelayPasswordJoin;

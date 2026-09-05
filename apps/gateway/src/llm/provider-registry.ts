@@ -1,5 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { errorMessage } from '@tmex/shared';
 import type { LanguageModel, Tool } from 'ai';
 import { HOSTED_TOOL_FACTORIES } from '../agent/tools/hosted';
 import { decrypt, decryptWithContext } from '../crypto';
@@ -156,9 +157,7 @@ export async function fetchProviderModels(
     const detail =
       error instanceof DOMException && error.name === 'TimeoutError'
         ? 'timeout'
-        : error instanceof Error
-          ? error.message
-          : String(error);
+        : errorMessage(error);
     throw fetchModelsError(detail, error);
   }
 

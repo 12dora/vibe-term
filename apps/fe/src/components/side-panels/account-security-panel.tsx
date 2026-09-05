@@ -12,6 +12,7 @@ import type {
   PasskeySummary,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -115,7 +116,7 @@ function AccountSecurity({
       })
       .catch((err: unknown) => {
         setPasskeys([]);
-        setPasskeysError(err instanceof Error ? err.message : String(err));
+        setPasskeysError(errorMessage(err));
       });
   }, [api]);
 

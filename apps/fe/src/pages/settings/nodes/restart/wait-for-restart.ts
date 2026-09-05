@@ -8,6 +8,7 @@
 // 挂住到天荒地老，只靠外层 60 秒截止是拦不住的。
 
 import type { FetchLike } from '@tmex/api-client';
+import { sleepOrAbort } from '@tmex/shared';
 
 export type RestartOutcome = 'restarted' | 'timeout' | 'aborted';
 
@@ -31,20 +32,8 @@ export interface WaitForRestartOptions {
   /** 外层取消（组件卸载）：立即中断在途请求并返回 `aborted`。 */
   signal?: AbortSignal;
   now?: () => number;
-  sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  sleep?: (ms: number, signal?: AbortSignal) => Promise<unknown>;
   onElapsed?: (elapsedMs: number) => void;
-}
-
-export function delay(ms: number, signal?: AbortSignal): Promise<void> {
-  return new Promise((resolve) => {
-    const finish = () => {
-      clearTimeout(timer);
-      signal?.removeEventListener('abort', finish);
-      resolve();
-    };
-    const timer = setTimeout(finish, ms);
-    signal?.addEventListener('abort', finish, { once: true });
-  });
 }
 
 /** 探活：网络错误、非 2xx、被中断都不抛，交给调用方按状态机处理。 */
@@ -93,7 +82,7 @@ export async function waitForRestart(options: WaitForRestartOptions): Promise<Re
     intervalMs = RESTART_POLL_INTERVAL_MS,
     signal,
     now = () => Date.now(),
-    sleep = delay,
+    sleep = sleepOrAbort,
     onElapsed,
   } = options;
 

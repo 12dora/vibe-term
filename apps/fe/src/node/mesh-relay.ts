@@ -14,6 +14,7 @@ import type {
   RelayUplinkMode,
 } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi, isRelayRoutesMissing } from '@tmex/api-client/relay/tenant-api';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingTimingOptions,
@@ -154,7 +155,7 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
         return;
       }
       // 失败保留上一份链路：一次网络抖动不该把已经展示出来的中继列表抹掉。
-      store.set({ loading: false, error: err instanceof Error ? err.message : String(err) });
+      store.set({ loading: false, error: errorMessage(err) });
     } finally {
       if (inFlight?.generation === started) inFlight = null;
     }

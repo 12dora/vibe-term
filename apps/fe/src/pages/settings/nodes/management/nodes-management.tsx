@@ -39,7 +39,7 @@ import { UninstallDialog } from './uninstall-dialog';
 import { useHubRoleSwitch } from './use-hub-role-switch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { useNodeUninstall } from './use-node-uninstall';
-import { useNodeUpgrade } from './use-node-upgrade';
+import { useNodeUpgrade } from './use-node-upgrade-controller';
 
 /** 上级链路的只读视图：本页不再自己轮询 hub 集合与中继，一律取本机卡建好的那一份。 */
 export type NodesManagementUplink = Pick<

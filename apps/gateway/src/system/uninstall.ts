@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { cpSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir as osTmpdir } from 'node:os';
 import { join } from 'node:path';
+import { errorMessage } from '@tmex/shared';
 import type { StartUninstallRequest, UninstallStatus, UpgradeState } from '@tmex/shared';
 import { json } from '../api/http';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
@@ -100,7 +101,7 @@ export class UninstallController {
       await this.spawnUninstall(installDir, install.serviceName);
     } catch (err) {
       this.state = 'failed';
-      this.error = err instanceof Error ? err.message : String(err);
+      this.error = errorMessage(err);
       return json(this.status(), 500);
     }
     return json(this.status(), 202);

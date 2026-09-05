@@ -2,6 +2,7 @@ import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
+import { errorMessage } from '@tmex/shared';
 import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse, Device } from '@tmex/shared';
 import { getDeviceById } from '../db';
 import { quoteShellArg } from '../tmux-client/command-builder';
@@ -195,7 +196,7 @@ export async function execSshCommand(
   } catch (err) {
     return {
       stdout: new Uint8Array(),
-      stderr: err instanceof Error ? err.message : String(err),
+      stderr: errorMessage(err),
       exitCode: 255,
     };
   }

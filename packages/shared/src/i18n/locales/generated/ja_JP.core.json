@@ -21,26 +21,14 @@
       "send": "送信",
       "success": "成功",
       "error": "エラー",
-      "warning": "警告",
-      "info": "情報",
       "yes": "はい",
       "no": "いいえ",
-      "enabled": "有効",
-      "disabled": "無効",
-      "pending": "保留中",
-      "authorized": "承認済み",
-      "unknown": "不明",
-      "empty": "空",
-      "none": "なし",
-      "default": "デフォルト",
-      "optional": "任意",
-      "required": "必須"
+      "unknown": "不明"
     },
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
       "connectDevicesShort": "デバイス接続",
-      "settings": "設定",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
@@ -67,8 +55,6 @@
       "version": "バージョン {{version}}"
     },
     "device": {
-      "title": "デバイス管理",
-      "devices": "デバイス",
       "addDevice": "デバイスを追加",
       "addDeviceDescription": "デバイス情報を入力し、接続方法を選択してください",
       "editDevice": "デバイスを編集",
@@ -123,9 +109,6 @@
       "loadFailedLoginRequired": "デバイス一覧の読み込みに失敗しました：このノードへの再サインインが必要です",
       "loadFailedUnreachable": "デバイス一覧の読み込みに失敗しました：ノードに到達できません",
       "loadFailedUnreachableReason": "デバイス一覧の読み込みに失敗しました：ノードに到達できません（{{reason}}）",
-      "localDevice": "ローカルデバイス",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "デバイスを変更",
       "delete": "削除",
       "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
       "sidebar": {
@@ -169,7 +152,6 @@
         "modeFollow": "カーソル追従",
         "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
-      "initializing": "ターミナルを初期化中...",
       "connecting": "デバイスに接続中...",
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
@@ -180,13 +162,9 @@
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
       "paneTitle": "ターミナル {{index}}",
-      "activePane": "現在のターミナル",
-      "activeWindow": "現在のウィンドウ",
       "editorSendWithEnter": "Enter で送信",
       "editorSendLineByLine": "1行ずつ送信",
       "editorSend": "送信",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "copy": "コピー",
       "paste": "貼り付け",
       "copied": "クリップボードにコピーしました",
@@ -209,8 +187,6 @@
       }
     },
     "deviceStatus": {
-      "reconnecting": "再接続中 {{delay}}s",
-      "offline": "オフライン",
       "errorBadge": {
         "authFailed": "認証失敗",
         "agentUnavailable": "Agent 利用不可",
@@ -227,8 +203,6 @@
       }
     },
     "websocket": {
-      "error": "WebSocket 接続エラー",
-      "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "gatewayTooOld": "端末接続に失敗しました：Gateway のバージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
       "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
@@ -288,13 +262,9 @@
       }
     },
     "sidebar": {
-      "noWindows": "ウィンドウがありません",
       "noDevices": "デバイスがありません",
       "manageDevices": "デバイス管理",
       "settings": "設定",
-      "currentPane": "現在のターミナル",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
         "panes": "ターミナル",
@@ -324,12 +294,9 @@
       },
       "orphan": {
         "readonly": "このセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
-        "title": "孤立セッション",
-        "process": "プロセス",
-        "startedAt": "作成日時"
+        "title": "孤立セッション"
       },
       "panel": {
-        "title": "エージェント",
         "empty": "セッションを選択または作成してください",
         "inputPlaceholder": "メッセージを入力…",
         "send": "送信",
@@ -343,11 +310,9 @@
         "subtitle": "タスクを入力して、選択したターミナルでの作業を始めましょう"
       },
       "session": {
-        "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
         "selectPaneHint": "セッションを選択",
-        "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
         "rename": "セッション名を変更",
         "renameTitle": "セッション名を変更",
@@ -496,7 +461,6 @@
         "fireOnce": "一回（発火後に自動停止）",
         "fireRepeat": "繰り返し",
         "cooldownSeconds": "クールダウン（秒）",
-        "enabled": "有効",
         "assistLabel": "説明から正規表現を生成",
         "assistPlaceholder": "例：ダウンロード進捗のパーセンテージにマッチ",
         "assistButton": "生成",
@@ -605,7 +569,6 @@
         "legServerToTmex": "サーバー → tmex",
         "legTmexToUser": "tmex → ブラウザ",
         "cancel": "キャンセル",
-        "canceled": "{{name}} をキャンセルしました",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
         "dragDownloadStarted": "{{name}} のダウンロードを開始（ブラウザが処理）",

@@ -1,6 +1,7 @@
 // Watch 规则纯函数求值器（match / unchanged 两型；llm 型由 service 编排）。
 // 不做任何 IO：输入屏幕文本 + 规则 + 持久化状态 + 当前时间，输出命中判定与状态增量。
 
+import { errorMessage } from '@tmex/shared';
 import type { WatchRuleRecord, WatchRuleStateRecord } from '../db/watch';
 import { evaluateMatchRule } from './evaluator-match';
 import { evaluateUnchangedRule } from './evaluator-unchanged';
@@ -103,7 +104,7 @@ function compileCachedRuleRegex(
     ruleRegexCache.set(rule.id, { pattern, flags, regex });
     return { ok: true, regex };
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     return { ok: false, error: `invalid pattern: ${detail}` };
   }
 }

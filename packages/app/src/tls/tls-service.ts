@@ -10,6 +10,7 @@ import type {
 } from '../../../../apps/gateway/src/tls/types';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
+import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { AcmeHttp01Challenge } from './acme-challenge';
 import { resolveAcmeDnsPatch } from './acme-dns-patch';
@@ -128,12 +129,10 @@ class SerialQueue {
   }
 }
 
-function errMsg(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function asTlsFailed(error: unknown): TlsApiError {
-  return error instanceof TlsApiError ? error : new TlsApiError('tls_failed', 500, errMsg(error));
+  return error instanceof TlsApiError
+    ? error
+    : new TlsApiError('tls_failed', 500, errorMessage(error));
 }
 
 export class TlsService {
@@ -160,7 +159,7 @@ export class TlsService {
       opts.scheduleBackground ??
       ((work) => {
         void work().catch((error) => {
-          opts.log?.(`tls background task failed: ${errMsg(error)}`);
+          opts.log?.(`tls background task failed: ${errorMessage(error)}`);
         });
       });
     this.scheduler = new RenewalScheduler({
@@ -367,7 +366,7 @@ export class TlsService {
           this.trustProxy = input.trustProxy;
         });
       } catch (error) {
-        throw new TlsApiError('tls_failed', 500, errMsg(error));
+        throw new TlsApiError('tls_failed', 500, errorMessage(error));
       }
       this.invalidateActiveWork();
       await this.stopTls('external');
@@ -515,7 +514,7 @@ export class TlsService {
       });
     } catch (error) {
       await this.runIfJob(epoch, tuple, async () => {
-        await this.persistAcmeFailure(errMsg(error));
+        await this.persistAcmeFailure(errorMessage(error));
       });
       throw error;
     }

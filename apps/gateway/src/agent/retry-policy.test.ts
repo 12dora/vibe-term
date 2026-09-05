@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { APICallError, RetryError } from 'ai';
-import { decideRunRetry, isRetryableLlmError, toErrorMessage } from './retry-policy';
+import { decideRunRetry, isRetryableLlmError } from './retry-policy';
 
 function apiError(statusCode: number | undefined, isRetryable?: boolean): APICallError {
   return new APICallError({
@@ -11,14 +11,6 @@ function apiError(statusCode: number | undefined, isRetryable?: boolean): APICal
     isRetryable,
   });
 }
-
-describe('toErrorMessage', () => {
-  test('Error 取 message，其它值 String()', () => {
-    expect(toErrorMessage(new Error('boom'))).toBe('boom');
-    expect(toErrorMessage('plain')).toBe('plain');
-    expect(toErrorMessage(404)).toBe('404');
-  });
-});
 
 describe('isRetryableLlmError', () => {
   test('RetryError 整轮可重试', () => {

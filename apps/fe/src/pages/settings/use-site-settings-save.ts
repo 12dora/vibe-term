@@ -1,7 +1,7 @@
 import { refreshMeshNodes } from '@/node/mesh-nodes';
 import { useMutation } from '@tanstack/react-query';
 import { parseApiError } from '@tmex/api-client';
-import type { SiteSettings } from '@tmex/shared';
+import { type SiteSettings, sleep } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,10 +14,6 @@ import type {
 } from './site-settings-form';
 import { refreshUntilRenamed } from './site-settings-form';
 import type { RenameNodeFn } from './use-node-rename-channel';
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 export interface SiteSettingsSaveOptions {
   plan: SiteSettingsSavePlan | null;

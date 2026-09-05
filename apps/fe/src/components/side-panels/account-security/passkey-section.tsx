@@ -5,6 +5,7 @@ import {
 } from '@/auth/account-security-actions';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { AuthApi, PasskeySummary } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
 import { Fingerprint, Loader2, Trash2 } from 'lucide-react';
@@ -56,7 +57,7 @@ export function PasskeySection({
       setName('');
       onDone();
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -79,7 +80,7 @@ export function PasskeySection({
         }
         onDone();
       } catch (err) {
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
       } finally {
         setBusy(false);
       }

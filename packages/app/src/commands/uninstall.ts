@@ -5,6 +5,7 @@ import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { removeTmexShims } from '../lib/cli-shim';
 import { readEnvFile } from '../lib/env-file';
+import { errorMessage } from '../lib/error-message';
 import { pathExists, resolvePath } from '../lib/fs-utils';
 import { createInstallLayout, resolveInstallDir } from '../lib/install-layout';
 import { readJsonFile } from '../lib/json-file';
@@ -152,7 +153,7 @@ async function uninstallServiceStep(plan: UninstallPlan): Promise<void> {
   try {
     await uninstall({ serviceName: plan.serviceName, installDir: plan.installDir });
   } catch (err) {
-    plan.log(`service failed: ${err instanceof Error ? err.message : String(err)}`);
+    plan.log(`service failed: ${errorMessage(err)}`);
   }
 }
 
@@ -182,7 +183,7 @@ async function removeProgramStep(plan: UninstallPlan): Promise<void> {
   try {
     await removeShims({ installDir: plan.installDir });
   } catch (err) {
-    plan.log(`shims failed: ${err instanceof Error ? err.message : String(err)}`);
+    plan.log(`shims failed: ${errorMessage(err)}`);
   }
 }
 

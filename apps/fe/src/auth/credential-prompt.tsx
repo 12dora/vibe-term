@@ -11,6 +11,7 @@
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
 import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@tmex/api-client/auth/index';
 import { WebAuthnError, defaultAuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { bytesEqual, decodeBase64url } from '@tmex/shared/auth';
 import { Button } from '@tmex/ui/button';
 import { Input } from '@tmex/ui/input';
@@ -250,7 +251,7 @@ export function usePasskeys(
       .catch((err: unknown) => {
         if (cancelled) return;
         setPasskeys([]);
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
       });
     return () => {
       cancelled = true;
@@ -562,5 +563,5 @@ export function useCredentialPrompt(config: CredentialPromptConfig): CredentialP
 export function credentialErrorText(error: unknown): string {
   if (error instanceof WrongPasswordError) return 'auth.errors.ROOT_KEY_MISMATCH';
   if (error instanceof WebAuthnError) return 'auth.errors.PASSKEY_ABORTED';
-  return error instanceof Error ? error.message : String(error);
+  return errorMessage(error);
 }

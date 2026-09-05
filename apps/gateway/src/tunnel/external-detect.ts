@@ -2,6 +2,7 @@ import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@tmex/shared';
+import { errorMessage } from '@tmex/shared';
 import { normalizeTunnelHostname } from './hostname';
 
 export type ExternalProcess = { pid: number; command: string };
@@ -589,8 +590,7 @@ async function probeExternalAccess(opts: {
       teamDomain,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    opts.warn?.(`external Access probe failed: ${message}`);
+    opts.warn?.(`external Access probe failed: ${errorMessage(error)}`);
     return { ...EMPTY_EXTERNAL_ACCESS };
   }
 }
@@ -907,7 +907,7 @@ export class ExternalTunnelDetector {
         if (epoch !== this.epoch) return this.refresh(this.epoch, true);
         throw error;
       }
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       this.deps.warn?.(`external tunnel detection failed: ${message}`);
       return this.localCache?.value ?? { ...EMPTY_EXTERNAL, probing: true };
     } finally {

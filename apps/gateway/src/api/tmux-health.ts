@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import { config } from '../config';
 import {
   isControlModeSupported,
@@ -52,7 +53,7 @@ async function defaultRunner(argv: string[]): Promise<CommandResult> {
     return {
       exitCode: -1,
       stdout: '',
-      stderr: error instanceof Error ? error.message : String(error),
+      stderr: errorMessage(error),
     };
   }
   let timedOut = false;

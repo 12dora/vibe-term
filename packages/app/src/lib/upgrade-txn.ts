@@ -9,6 +9,7 @@ import { RUNTIME_MODE_ENV } from '../runtime/mode';
 import type { InstallMeta, ServiceMode } from '../types';
 import { deployCliPackage } from './cli-shim';
 import { readEnvFile } from './env-file';
+import { errorMessage } from './error-message';
 import { ensureDir, pathExists } from './fs-utils';
 import { deployRuntimeFiles, writeInstallMeta, writeRunScript } from './install';
 import { type PackageLayout, createInstallLayout, createVersionLayout } from './install-layout';
@@ -358,7 +359,7 @@ async function runPreflight(
     });
   } catch (err) {
     const detail = handle.logTail?.();
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     throw new Error(detail ? `${message}\n${detail}` : message);
   } finally {
     await handle.stop();
@@ -492,7 +493,7 @@ export async function executeUpgradeTxn(
         deps
       );
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       await killRecordedCandidate(ctx.installDir, journal);
       await removeCandidateVersion(ctx.installDir, ctx.toVersion);
       await removeTxnDirs(ctx.installDir, ctx.txnId);
@@ -534,7 +535,7 @@ export async function executeUpgradeTxn(
   } catch (error) {
     const latest = (await readJournal(ctx.installDir)) ?? journal;
     if (latest.phase === 'started' || latest.phase === 'switching') {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       await rollbackToOld(
         ctx.installDir,
         latest,

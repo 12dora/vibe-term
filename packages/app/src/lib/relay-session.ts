@@ -22,6 +22,7 @@ import {
   requestRelayJson,
 } from '../commands/relay-shared';
 import type { ParsedArgs } from '../types';
+import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import { fetchAuthMode, loginWithRootKey } from './hub-client';
 import type { LocalAuthContext } from './local-auth';
@@ -370,7 +371,7 @@ export async function reaffirmStaleMembers(
         }),
       });
     } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
+      const reason = errorMessage(error);
       throw new Error(`failed to re-affirm member ${entry.nodeId}: ${reason}`);
     }
   }

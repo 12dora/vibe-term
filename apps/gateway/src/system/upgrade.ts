@@ -12,7 +12,7 @@ import {
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
-import { releaseTarballName } from '@tmex/shared';
+import { errorMessage, releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
@@ -782,7 +782,7 @@ export class UpgradeController {
           await this.cleanupCancelledUpgrade(installDir, stageDir, version);
           return;
         }
-        this.error = err instanceof Error ? err.message : String(err);
+        this.error = errorMessage(err);
         this.state = 'idle';
         this.targetVersion = null;
         this.activeTxnDir = null;

@@ -1,4 +1,5 @@
 import { promises as dnsPromises } from 'node:dns';
+import { errorMessage } from '@tmex/shared';
 import type { TunnelEdgeResolution } from '@tmex/shared';
 
 export const EDGE_SRV_NAME = '_v2-origintunneld._tcp.argotunnel.com';
@@ -74,7 +75,7 @@ export function isUnusableEdgeIp(ip: string): boolean {
 }
 
 function shortError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   const trimmed = message.trim().replace(/\s+/g, ' ');
   return trimmed.length > MAX_ERROR_LEN ? `${trimmed.slice(0, MAX_ERROR_LEN)}…` : trimmed;
 }

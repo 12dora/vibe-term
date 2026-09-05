@@ -4,16 +4,12 @@ import type {
   WatchEventPayloadMap,
   WebhookEvent,
 } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import { errorMessage, wsBorsh } from '@tmex/shared';
 import type { getDeviceById, getSiteSettings } from '../db';
 import type { WatchRuleRecord } from '../db/watch';
 import { t } from '../i18n';
 import { type PaneLocationContext, resolvePaneContext } from '../tmux/bell-context';
 import type { WatchEvalOutput } from './evaluator';
-
-export function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
 
 export interface WatchNotifierDeps {
   notify: (
@@ -118,7 +114,7 @@ export class WatchNotifier {
     }
     const message = t('notification.watch.modelUnavailable', {
       name: rule.name,
-      message: toErrorMessage(error),
+      message: errorMessage(error),
     });
     await this.safeNotify('watch_model_unavailable', rule, {
       message,

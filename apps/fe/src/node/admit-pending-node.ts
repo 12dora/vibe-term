@@ -12,6 +12,7 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
 import {
   type AdmitDisposition,
@@ -98,7 +99,7 @@ async function guard(
 }
 
 function failure(err: unknown): AdmitPendingResult {
-  return { kind: 'failed', message: err instanceof Error ? err.message : String(err) };
+  return { kind: 'failed', message: errorMessage(err) };
 }
 
 /**

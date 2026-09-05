@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { TunnelErrorCode } from '@tmex/shared';
 
 export const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
@@ -22,7 +23,7 @@ export function tunnelErrorFrom(error: unknown): { code: TunnelErrorCode; messag
   }
   return {
     code: 'unknown',
-    message: error instanceof Error ? error.message : String(error),
+    message: errorMessage(error),
   };
 }
 

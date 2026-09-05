@@ -8,6 +8,7 @@ import type {
   LocalDirectResponse,
   LocalDirectStatus,
 } from '@tmex/api-client/local/types';
+import { errorMessage } from '@tmex/shared';
 import { Badge } from '@tmex/ui/badge';
 import { Button } from '@tmex/ui/button';
 import { Switch } from '@tmex/ui/switch';
@@ -36,7 +37,7 @@ export function describeDirectError(t: Translate, error: unknown): string {
   const base = t(
     (error instanceof LocalApiError && DIRECT_ERROR_KEY[error.code]) || 'nodes.machine.directFailed'
   );
-  const detail = (error instanceof Error ? error.message : String(error)).trim();
+  const detail = errorMessage(error).trim();
   const code = error instanceof LocalApiError ? error.code : '';
   if (!detail || detail === code) return base;
   return t('nodes.machine.directErrorDetail', { base, detail });

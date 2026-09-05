@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { FileErrorCode } from '@tmex/shared';
 
 export interface RsyncResult {
@@ -142,7 +143,7 @@ export async function runRsync(
     });
   } catch (error) {
     // rsync 不在 PATH → 本地缺 rsync
-    throw new RsyncMissingLocalError(error instanceof Error ? error.message : String(error));
+    throw new RsyncMissingLocalError(errorMessage(error));
   }
 
   let timedOut = false;

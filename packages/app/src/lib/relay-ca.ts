@@ -1,6 +1,7 @@
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import type { AuthDb } from '../../../../apps/gateway/src/auth/types';
 import { RELAY_REQUEST_TIMEOUT_MS } from '../commands/relay-shared';
+import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import { isNetworkFetchError } from './hub-client';
 import { parseAndValidateCaPem, readBoundedResponseText } from './pem';
@@ -51,7 +52,7 @@ export async function fetchPinnedRelayCa(input: {
         tls: { rejectUnauthorized: false },
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       throw new RelayCaError(
         'ca_unavailable',
         `relay ca download failed: ${timedOut ? `timed out after ${timeoutMs}ms` : message}`,
@@ -65,7 +66,7 @@ export async function fetchPinnedRelayCa(input: {
     try {
       raw = await readBoundedResponseText(response);
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       if (message === 'ca_response_too_large') {
         throw new RelayCaError('ca_response_too_large', 'relay ca response is too large');
       }

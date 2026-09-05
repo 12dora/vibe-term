@@ -21,26 +21,14 @@
       "send": "发送",
       "success": "成功",
       "error": "错误",
-      "warning": "警告",
-      "info": "信息",
       "yes": "是",
       "no": "否",
-      "enabled": "已启用",
-      "disabled": "已禁用",
-      "pending": "待授权",
-      "authorized": "已授权",
-      "unknown": "未知",
-      "empty": "空",
-      "none": "无",
-      "default": "默认",
-      "optional": "可选",
-      "required": "必填"
+      "unknown": "未知"
     },
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
       "connectDevicesShort": "接入设备",
-      "settings": "设置",
       "sidebarExpand": "展开侧边栏",
       "sidebarCollapse": "收起侧边栏",
       "openSidebar": "打开侧边栏",
@@ -67,7 +55,6 @@
       "version": "版本 {{version}}"
     },
     "connectDevices": {
-      "title": "接入更多设备",
       "tabs": {
         "mobile": "移动设备（仅控制）",
         "computer": "服务器或电脑"
@@ -274,8 +261,6 @@
       }
     },
     "device": {
-      "title": "设备管理",
-      "devices": "设备",
       "addDevice": "添加设备",
       "addDeviceDescription": "填写设备信息并选择连接方式",
       "editDevice": "修改设备",
@@ -330,9 +315,6 @@
       "loadFailedLoginRequired": "加载设备列表失败：该节点需重新登录",
       "loadFailedUnreachable": "加载设备列表失败：节点不可达",
       "loadFailedUnreachableReason": "加载设备列表失败：节点不可达（{{reason}}）",
-      "localDevice": "本地设备",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "修改设备",
       "delete": "删除",
       "directFallbackToast": "直连已断开，最近输入可能未送达",
       "sidebar": {
@@ -376,7 +358,6 @@
         "modeFollow": "光标对齐",
         "modeFollowDesc": "按光标位置上移，光标始终在键盘正上方，终端大小不变"
       },
-      "initializing": "初始化终端...",
       "connecting": "连接设备...",
       "inputPlaceholder": "在此输入命令...",
       "clear": "清空",
@@ -387,13 +368,9 @@
       "notificationSourceLabel": "来自 {{source}}",
       "notificationFallbackDetail": "终端通知",
       "paneTitle": "终端 {{index}}",
-      "activePane": "当前终端",
-      "activeWindow": "当前窗口",
       "editorSendWithEnter": "发送附带回车",
       "editorSendLineByLine": "逐行发送",
       "editorSend": "发送",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "copy": "复制",
       "paste": "粘贴",
       "copied": "已复制到剪贴板",
@@ -405,7 +382,6 @@
       "linkOpenFailed": "无法打开链接"
     },
     "settings": {
-      "title": "系统设置",
       "siteSettings": "站点设置",
       "siteName": "站点名称",
       "siteNamePlaceholder": "tmex",
@@ -1156,7 +1132,6 @@
       "sendTestMessage": "发送测试消息",
       "deleteBot": "删除 Bot",
       "tokenPlaceholder": "输入新 token",
-      "testMessageSent": "测试消息已发送",
       "createFailed": "新增 Bot 失败",
       "updateFailed": "更新 Bot 失败",
       "deleteFailed": "删除 Bot 失败",
@@ -1166,8 +1141,6 @@
       "loadBotsFailed": "加载 Bot 列表失败",
       "loadChatsFailed": "加载 chat 列表失败",
       "noBots": "暂无 Bot，先添加一个。",
-      "expand": "展开",
-      "collapse": "收起",
       "authCount": "已授权 {{authorized}} / 待授权 {{pending}}（总上限 8）",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 网关已上线 @ {{siteName}}",
@@ -1178,7 +1151,6 @@
       "authFailed": "❌ 授权申请失败，请联系管理员。",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
       "approveMessageTemplate": "✅ 已通过 tmex 授权。\nBot：{{botName}}\n时间：{{time}}",
-      "botNotFound": "Bot 未启动或不可用",
       "botNotRunning": "Bot 未启动或不可用"
     },
     "weixin": {
@@ -1190,13 +1162,11 @@
       "addAccount": "添加账号",
       "editAccount": "编辑账号",
       "enableAccount": "启用账号",
-      "allowAuthRequests": "允许授权申请",
       "allowCommands": "允许聊天指令",
       "allowCommandsHelp": "已授权会话可在本机终端输入指令并批准智能体操作。",
       "commandsBadge": "聊天指令",
       "scanToLogin": "扫码登录",
       "relogin": "重新登录（重新扫码）",
-      "loggedIn": "已登录",
       "notLoggedIn": "未登录",
       "scanQrcodeHint": "打开微信扫描二维码，并在手机上确认。",
       "loginExpired": "二维码已过期，请重试。",
@@ -1208,7 +1178,6 @@
       "reactivationHint": "请该用户给 bot 发条消息以重新激活告警。",
       "approve": "批准",
       "testMessage": "测试消息",
-      "sendTestMessage": "发送测试消息",
       "deleteAccount": "删除账号",
       "accountCreated": "账号已创建",
       "accountUpdated": "账号已更新",
@@ -1218,19 +1187,13 @@
       "updateFailed": "更新账号失败",
       "deleteFailed": "删除账号失败",
       "approveFailed": "批准失败",
-      "removeFailed": "移除用户失败",
       "testMessageFailed": "发送测试消息失败",
       "loadAccountsFailed": "加载账号列表失败",
       "noAccounts": "还没有账号，先添加一个。",
-      "userId": "微信用户 ID",
-      "expand": "展开",
-      "collapse": "收起",
       "accountNameRequired": "账号名称不能为空",
       "accountNotFound": "账号不存在或不可用",
       "accountNotRunning": "账号未登录或未运行",
       "userNotFound": "用户不存在",
-      "authSuccess": "✅ 已授权，你将开始收到通知。",
-      "authPending": "⏳ 已收到授权申请，请在 tmex 设置中批准。",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
       "approveMessageTemplate": "✅ 已通过 tmex 授权。\n账号：{{accountName}}\n时间：{{time}}",
       "keepalivePrompt": "【tmex】为确保你能正常收到通知，请回复任意内容即可保持连接 🙏",
@@ -1248,7 +1211,6 @@
       "secret": "密钥",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "用于签名（HMAC-SHA256）",
-      "enabled": "启用",
       "eventMask": "事件",
       "add": "添加 Webhook",
       "empty": "暂无 Webhook。",
@@ -1259,13 +1221,11 @@
     "sshError": {
       "configRefNotSupported": "当前版本暂不支持 SSH Config 引用，请改为填写 host + username，并选择 Agent/私钥/密码认证",
       "agentUnavailable": "SSH Agent 不可用：未检测到 SSH_AUTH_SOCK，请检查 agent 环境",
-      "agentNoIdentity": "SSH Agent 未加载可用密钥，请先执行 ssh-add",
       "agentNoIdentities": "SSH Agent 未加载可用密钥，请先执行 ssh-add",
       "authFailed": "认证失败：用户名、密码或密钥不正确，请检查设备配置",
       "authFailedGeneric": "认证失败：用户名、密码或密钥不正确，请检查设备配置",
       "networkUnreachable": "网络不可达：请检查路由、防火墙或 VPN 配置",
       "connectionRefused": "连接被拒绝：无法连接到目标主机，请检查主机地址和端口是否正确",
-      "timeout": "连接超时：无法连接到设备，请检查网络或防火墙设置",
       "connectionTimeout": "连接超时：无法连接到设备，请检查网络或防火墙设置",
       "hostNotFound": "主机未找到：无法解析主机地址，请检查 DNS 或主机名是否正确",
       "handshakeFailed": "握手失败：无法建立安全连接，可能是密钥交换算法不兼容",
@@ -1277,8 +1237,6 @@
       "reconnected": "设备已自动重连"
     },
     "deviceStatus": {
-      "reconnecting": "重连中 {{delay}}s",
-      "offline": "离线",
       "errorBadge": {
         "authFailed": "认证失败",
         "agentUnavailable": "Agent 不可用",
@@ -1295,8 +1253,6 @@
       }
     },
     "websocket": {
-      "error": "WebSocket 连接错误",
-      "checkGateway": "请检查 Gateway 状态",
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "gatewayTooOld": "终端连接失败：Gateway 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
       "nodeTooOld": "终端连接失败：节点 {{name}} 的 tmex 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
@@ -1430,13 +1386,9 @@
       }
     },
     "sidebar": {
-      "noWindows": "暂无窗口",
       "noDevices": "暂无设备",
       "manageDevices": "管理设备",
       "settings": "设置",
-      "currentPane": "当前终端",
-      "closeWindow": "关闭窗口",
-      "closePane": "关闭终端",
       "addDevice": "添加设备",
       "tab": {
         "panes": "终端",
@@ -1466,12 +1418,9 @@
       },
       "orphan": {
         "readonly": "该会话已孤立（绑定终端已不存在），仅可只读查看",
-        "title": "孤立会话",
-        "process": "进程",
-        "startedAt": "创建于"
+        "title": "孤立会话"
       },
       "panel": {
-        "title": "智能体",
         "empty": "选择或创建一个会话",
         "inputPlaceholder": "输入消息…",
         "send": "发送",
@@ -1485,11 +1434,9 @@
         "subtitle": "向智能体描述你的需求，在所选终端中协作"
       },
       "session": {
-        "none": "未选择会话",
         "new": "新建智能体会话",
         "switch": "切换会话",
         "selectPaneHint": "选择一个会话",
-        "showAll": "显示全部会话",
         "menu": "会话操作",
         "rename": "重命名会话",
         "renameTitle": "重命名会话",
@@ -1638,7 +1585,6 @@
         "fireOnce": "单次（触发后自动停用）",
         "fireRepeat": "重复",
         "cooldownSeconds": "冷却时间（秒）",
-        "enabled": "启用",
         "assistLabel": "用描述生成正则",
         "assistPlaceholder": "如：匹配下载进度百分比",
         "assistButton": "生成",
@@ -1753,7 +1699,6 @@
         "legServerToTmex": "服务器 → tmex",
         "legTmexToUser": "tmex → 用户",
         "cancel": "取消",
-        "canceled": "已取消 {{name}}",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
         "dragDownloadStarted": "已开始下载 {{name}}（由浏览器接管）",
@@ -1776,12 +1721,9 @@
     },
     "file": {
       "invalidRef": "无效的文件引用",
-      "notFound": "文件已不存在",
       "loadFailed": "加载文件失败",
       "isDirectory": "这是一个目录",
       "notPreviewable": "该文件类型不支持预览",
-      "tooLarge": "文件过大，无法预览",
-      "binary": "二进制文件无法预览",
       "download": "下载",
       "openRaw": "打开原始文件"
     },
@@ -2344,7 +2286,6 @@
       },
       "actions": {
         "add": "添加",
-        "rename": "重命名",
         "more": "更多",
         "revoke": "移除",
         "refresh": "刷新",
@@ -2449,8 +2390,6 @@
         "relayNoneAccepted": "中继未接受加入码，请检查中继连接后重试。"
       },
       "rename": {
-        "save": "保存",
-        "done": "已重命名",
         "cancelled": "已取消。"
       },
       "revoke": {

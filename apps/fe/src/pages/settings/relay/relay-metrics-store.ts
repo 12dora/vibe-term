@@ -15,6 +15,7 @@ import {
 import type { ApiClient } from '@tmex/api-client/client';
 import { RelayAdminApi, defaultRelayAdminApi } from '@tmex/api-client/relay/admin-api';
 import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { classifyRelayFailure } from './relay-status-store';
 
@@ -73,7 +74,7 @@ export const resetRelayMetricsStateForTest = store.reset;
 function failurePatch(error: unknown): Partial<RelayMetricsState> {
   const kind = classifyRelayFailure(error);
   if (kind === 'error') {
-    return { loading: false, lastError: error instanceof Error ? error.message : String(error) };
+    return { loading: false, lastError: errorMessage(error) };
   }
   // 角色缺席 / 未登录：清掉上一份采样，别让隐藏的面板还留着旧数字。
   return { loading: false, lastError: null, availability: kind, data: null };

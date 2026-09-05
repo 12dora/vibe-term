@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
+import { errorMessage } from '@tmex/shared';
 import type {
   TunnelAccessMode,
   TunnelAccessStatus,
@@ -964,7 +965,7 @@ export class TunnelManager {
       step('ok');
     } catch (error) {
       if (error instanceof TunnelError) throw error;
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       throw new TunnelError(
         'unknown',
         `health check failed: ${message}${this.connectorHint(connector)}`

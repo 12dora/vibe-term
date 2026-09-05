@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
+import { combineAbortSignals, errorMessage } from '@tmex/shared';
 import { RELEASE_REPO_URL, releaseTag, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import {
   assertReleaseChecksum,
@@ -122,10 +123,10 @@ export async function fetchReleaseSha256Sums(
     response = await fetchFn(resolveReleaseSha256SumsUrl(version), {
       redirect: 'follow',
       cache: 'no-store',
-      signal: mergeAbortSignals(AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS), signal),
+      signal: combineAbortSignals(AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS), signal),
     });
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
+    const detail = errorMessage(error);
     throw new Error(`SHA256SUMS network error: ${detail}`);
   }
   if (response.status === 404) return { hex: null, missing: true };
@@ -292,17 +293,6 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
   }
 }
 
-function mergeAbortSignals(timeout: AbortSignal, user?: AbortSignal): AbortSignal {
-  if (!user) return timeout;
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, user]);
-  if (user.aborted) return user;
-  const ac = new AbortController();
-  const onAbort = (): void => ac.abort();
-  timeout.addEventListener('abort', onAbort, { once: true });
-  user.addEventListener('abort', onAbort, { once: true });
-  return ac.signal;
-}
-
 function throwIfAborted(signal?: AbortSignal): void {
   if (!signal?.aborted) return;
   throw abortError();
@@ -314,7 +304,8 @@ async function downloadTarballToFile(
   fetchFn: typeof fetch,
   signal?: AbortSignal
 ): Promise<{ sha256: string; bytes: number }> {
-  const combined = mergeAbortSignals(AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS), signal);
+  const timeout = AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS);
+  const combined = combineAbortSignals(timeout, signal) ?? timeout;
   const res = await fetchFn(url, {
     cache: 'no-store',
     redirect: 'follow',

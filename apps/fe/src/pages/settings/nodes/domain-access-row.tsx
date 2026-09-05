@@ -10,6 +10,7 @@ import {
   updateDomainAccess,
 } from '@tmex/api-client';
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import { errorMessage } from '@tmex/shared';
 import { Switch } from '@tmex/ui/switch';
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -125,7 +126,7 @@ function useDomainAccessController(api: DomainAccessApi, callbacks: DomainAccess
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
 function describeDomainAccessError(t: Translate, error: unknown): string {
-  const detail = (error instanceof Error ? error.message : String(error)).trim();
+  const detail = errorMessage(error).trim();
   return t('nodes.machine.domainAccess.failed', { detail });
 }
 

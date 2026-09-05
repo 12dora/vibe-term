@@ -21,26 +21,14 @@
       "send": "送信",
       "success": "成功",
       "error": "エラー",
-      "warning": "警告",
-      "info": "情報",
       "yes": "はい",
       "no": "いいえ",
-      "enabled": "有効",
-      "disabled": "無効",
-      "pending": "保留中",
-      "authorized": "承認済み",
-      "unknown": "不明",
-      "empty": "空",
-      "none": "なし",
-      "default": "デフォルト",
-      "optional": "任意",
-      "required": "必須"
+      "unknown": "不明"
     },
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
       "connectDevicesShort": "デバイス接続",
-      "settings": "設定",
       "sidebarExpand": "サイドバーを展開",
       "sidebarCollapse": "サイドバーを折りたたむ",
       "openSidebar": "サイドバーを開く",
@@ -67,7 +55,6 @@
       "version": "バージョン {{version}}"
     },
     "connectDevices": {
-      "title": "デバイスを追加",
       "tabs": {
         "mobile": "モバイル端末（操作のみ）",
         "computer": "サーバーまたはパソコン"
@@ -274,8 +261,6 @@
       }
     },
     "device": {
-      "title": "デバイス管理",
-      "devices": "デバイス",
       "addDevice": "デバイスを追加",
       "addDeviceDescription": "デバイス情報を入力し、接続方法を選択してください",
       "editDevice": "デバイスを編集",
@@ -330,9 +315,6 @@
       "loadFailedLoginRequired": "デバイス一覧の読み込みに失敗しました：このノードへの再サインインが必要です",
       "loadFailedUnreachable": "デバイス一覧の読み込みに失敗しました：ノードに到達できません",
       "loadFailedUnreachableReason": "デバイス一覧の読み込みに失敗しました：ノードに到達できません（{{reason}}）",
-      "localDevice": "ローカルデバイス",
-      "subtitle": "{{username}}@{{host}}:{{port}}",
-      "modify": "デバイスを変更",
       "delete": "削除",
       "directFallbackToast": "直接接続が切断されました。直近の入力が届いていない可能性があります",
       "sidebar": {
@@ -376,7 +358,6 @@
         "modeFollow": "カーソル追従",
         "modeFollowDesc": "カーソルがキーボードの真上に来るよう移動（ターミナルサイズは不変）"
       },
-      "initializing": "ターミナルを初期化中...",
       "connecting": "デバイスに接続中...",
       "inputPlaceholder": "ここにコマンドを入力...",
       "clear": "クリア",
@@ -387,13 +368,9 @@
       "notificationSourceLabel": "{{source}} から",
       "notificationFallbackDetail": "ターミナル通知",
       "paneTitle": "ターミナル {{index}}",
-      "activePane": "現在のターミナル",
-      "activeWindow": "現在のウィンドウ",
       "editorSendWithEnter": "Enter で送信",
       "editorSendLineByLine": "1行ずつ送信",
       "editorSend": "送信",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "copy": "コピー",
       "paste": "貼り付け",
       "copied": "クリップボードにコピーしました",
@@ -405,7 +382,6 @@
       "linkOpenFailed": "リンクを開けませんでした"
     },
     "settings": {
-      "title": "システム設定",
       "siteSettings": "サイト設定",
       "siteName": "サイト名",
       "siteNamePlaceholder": "tmex",
@@ -1156,7 +1132,6 @@
       "sendTestMessage": "テストメッセージを送信",
       "deleteBot": "Bot を削除",
       "tokenPlaceholder": "新しい token を入力",
-      "testMessageSent": "テストメッセージを送信しました",
       "createFailed": "Bot の作成に失敗しました",
       "updateFailed": "Bot の更新に失敗しました",
       "deleteFailed": "Bot の削除に失敗しました",
@@ -1166,8 +1141,6 @@
       "loadBotsFailed": "Bot 一覧の読み込みに失敗しました",
       "loadChatsFailed": "チャット一覧の読み込みに失敗しました",
       "noBots": "Bot がありません。まず追加してください。",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "authCount": "承認済み {{authorized}} / 承認待ち {{pending}}（最大 8）",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 ゲートウェイがオンラインになりました @ {{siteName}}",
@@ -1178,7 +1151,6 @@
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時間：{{time}}",
       "approveMessageTemplate": "✅ tmex で承認されました。\nBot：{{botName}}\n時間：{{time}}",
-      "botNotFound": "Bot が見つからないか利用できません",
       "botNotRunning": "Bot が起動していないか利用できません"
     },
     "weixin": {
@@ -1190,13 +1162,11 @@
       "addAccount": "アカウントを追加",
       "editAccount": "アカウントを編集",
       "enableAccount": "アカウントを有効化",
-      "allowAuthRequests": "認証リクエストを許可",
       "allowCommands": "チャットコマンドを許可",
       "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
       "commandsBadge": "チャットコマンド",
       "scanToLogin": "スキャンしてログイン",
       "relogin": "再ログイン（再スキャン）",
-      "loggedIn": "ログイン済み",
       "notLoggedIn": "未ログイン",
       "scanQrcodeHint": "WeChat を開いて QR コードをスキャンし、スマホで確認してください。",
       "loginExpired": "QR コードの有効期限が切れました。再試行してください。",
@@ -1208,7 +1178,6 @@
       "reactivationHint": "このユーザーに bot へメッセージを送ってもらい、アラートを再有効化してください。",
       "approve": "承認",
       "testMessage": "テストメッセージ",
-      "sendTestMessage": "テストメッセージを送信",
       "deleteAccount": "アカウントを削除",
       "accountCreated": "アカウントを作成しました",
       "accountUpdated": "アカウントを更新しました",
@@ -1218,19 +1187,13 @@
       "updateFailed": "アカウントの更新に失敗しました",
       "deleteFailed": "アカウントの削除に失敗しました",
       "approveFailed": "承認に失敗しました",
-      "removeFailed": "ユーザーの削除に失敗しました",
       "testMessageFailed": "テストメッセージの送信に失敗しました",
       "loadAccountsFailed": "アカウント一覧の読み込みに失敗しました",
       "noAccounts": "アカウントがまだありません。まず追加してください。",
-      "userId": "WeChat ユーザー ID",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "accountNameRequired": "アカウント名は必須です",
       "accountNotFound": "アカウントが見つからないか利用できません",
       "accountNotRunning": "アカウントが未ログインまたは未起動です",
       "userNotFound": "ユーザーが見つかりません",
-      "authSuccess": "✅ 認証されました。通知を受け取れます。",
-      "authPending": "⏳ 認証リクエストを受け取りました。tmex の設定で承認してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時刻：{{time}}",
       "approveMessageTemplate": "✅ tmex 経由で認証しました。\nアカウント：{{accountName}}\n時刻：{{time}}",
       "keepalivePrompt": "【tmex】通知を確実に受け取るため、任意の内容を返信して接続を維持してください 🙏",
@@ -1248,7 +1211,6 @@
       "secret": "シークレット",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "署名に使用（HMAC-SHA256）",
-      "enabled": "有効",
       "eventMask": "イベント",
       "add": "Webhook を追加",
       "empty": "Webhook がありません。",
@@ -1259,13 +1221,11 @@
     "sshError": {
       "configRefNotSupported": "このバージョンでは SSH Config 参照はサポートされていません。host + username を使用し、Agent/秘密鍵/パスワード認証を選択してください。",
       "agentUnavailable": "SSH Agent が利用できません：SSH_AUTH_SOCK が検出されません。agent 環境を確認してください。",
-      "agentNoIdentity": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "agentNoIdentities": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "authFailed": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "authFailedGeneric": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "networkUnreachable": "ネットワークに到達できません：ルーティング、ファイアウォール、または VPN 設定を確認してください。",
       "connectionRefused": "接続が拒否されました：ターゲットホストに接続できません。ホストアドレスとポートを確認してください。",
-      "timeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "connectionTimeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "hostNotFound": "ホストが見つかりません：ホスト名を解決できません。DNS またはホスト名設定を確認してください。",
       "handshakeFailed": "ハンドシェイクに失敗しました：安全な接続を確立できません。キー交換アルゴリズムが互換性がない可能性があります。",
@@ -1277,8 +1237,6 @@
       "reconnected": "デバイスが自動的に再接続されました"
     },
     "deviceStatus": {
-      "reconnecting": "再接続中 {{delay}}s",
-      "offline": "オフライン",
       "errorBadge": {
         "authFailed": "認証失敗",
         "agentUnavailable": "Agent 利用不可",
@@ -1295,8 +1253,6 @@
       }
     },
     "websocket": {
-      "error": "WebSocket 接続エラー",
-      "checkGateway": "Gateway 状態を確認してください",
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "gatewayTooOld": "端末接続に失敗しました：Gateway のバージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
       "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
@@ -1430,13 +1386,9 @@
       }
     },
     "sidebar": {
-      "noWindows": "ウィンドウがありません",
       "noDevices": "デバイスがありません",
       "manageDevices": "デバイス管理",
       "settings": "設定",
-      "currentPane": "現在のターミナル",
-      "closeWindow": "ウィンドウを閉じる",
-      "closePane": "ターミナルを閉じる",
       "addDevice": "デバイスを追加",
       "tab": {
         "panes": "ターミナル",
@@ -1466,12 +1418,9 @@
       },
       "orphan": {
         "readonly": "このセッションは孤立しており（ターミナルが存在しません）、読み取り専用です",
-        "title": "孤立セッション",
-        "process": "プロセス",
-        "startedAt": "作成日時"
+        "title": "孤立セッション"
       },
       "panel": {
-        "title": "エージェント",
         "empty": "セッションを選択または作成してください",
         "inputPlaceholder": "メッセージを入力…",
         "send": "送信",
@@ -1485,11 +1434,9 @@
         "subtitle": "タスクを入力して、選択したターミナルでの作業を始めましょう"
       },
       "session": {
-        "none": "セッション未選択",
         "new": "新規エージェントセッション",
         "switch": "セッションを切り替え",
         "selectPaneHint": "セッションを選択",
-        "showAll": "すべてのセッションを表示",
         "menu": "セッション操作",
         "rename": "セッション名を変更",
         "renameTitle": "セッション名を変更",
@@ -1638,7 +1585,6 @@
         "fireOnce": "一回（発火後に自動停止）",
         "fireRepeat": "繰り返し",
         "cooldownSeconds": "クールダウン（秒）",
-        "enabled": "有効",
         "assistLabel": "説明から正規表現を生成",
         "assistPlaceholder": "例：ダウンロード進捗のパーセンテージにマッチ",
         "assistButton": "生成",
@@ -1753,7 +1699,6 @@
         "legServerToTmex": "サーバー → tmex",
         "legTmexToUser": "tmex → ブラウザ",
         "cancel": "キャンセル",
-        "canceled": "{{name}} をキャンセルしました",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
         "dragDownloadStarted": "{{name}} のダウンロードを開始（ブラウザが処理）",
@@ -1776,12 +1721,9 @@
     },
     "file": {
       "invalidRef": "無効なファイル参照です",
-      "notFound": "ファイルは存在しません",
       "loadFailed": "ファイルの読み込みに失敗しました",
       "isDirectory": "これはディレクトリです",
       "notPreviewable": "このファイル形式はプレビューできません",
-      "tooLarge": "ファイルが大きすぎてプレビューできません",
-      "binary": "バイナリファイルはプレビューできません",
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
     },
@@ -2344,7 +2286,6 @@
       },
       "actions": {
         "add": "追加",
-        "rename": "名前を変更",
         "more": "その他",
         "revoke": "削除",
         "refresh": "更新",
@@ -2449,8 +2390,6 @@
         "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
-        "save": "保存",
-        "done": "名前を変更しました",
         "cancelled": "キャンセルしました。"
       },
       "revoke": {

@@ -2,6 +2,7 @@
 
 import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
 import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useState } from 'react';
 
 export interface AuthModeState {
@@ -37,7 +38,7 @@ export function useAuthMode(
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        setError(err instanceof Error ? err.message : String(err));
+        setError(errorMessage(err));
       })
       .finally(() => {
         if (!cancelled) setLoading(false);

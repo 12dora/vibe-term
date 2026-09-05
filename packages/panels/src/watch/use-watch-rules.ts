@@ -7,6 +7,7 @@ import {
   watchRuleStateQueryKey,
   watchRulesQueryKey,
 } from '@tmex/api-client';
+import { errorMessage } from '@tmex/shared';
 import type { WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { toast } from '@tmex/ui/toast';
@@ -101,10 +102,6 @@ export interface WatchRuleMutations {
   remove: (rule: WatchRuleDto) => void;
 }
 
-function toErrorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
-}
-
 export function useWatchRuleMutations(): WatchRuleMutations {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
@@ -120,7 +117,7 @@ export function useWatchRuleMutations(): WatchRuleMutations {
     },
     onSuccess: invalidateRules,
     onError: (error) => {
-      toast.error(toErrorMessage(error));
+      toast.error(errorMessage(error));
       invalidateRules();
     },
   });
@@ -134,7 +131,7 @@ export function useWatchRuleMutations(): WatchRuleMutations {
       invalidateRules();
     },
     onError: (error) => {
-      toast.error(toErrorMessage(error));
+      toast.error(errorMessage(error));
     },
   });
 

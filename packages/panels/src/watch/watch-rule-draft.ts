@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type {
   AssistRegexRequest,
   AssistRegexResponse,
@@ -184,7 +185,7 @@ export function validateWatchRuleDraft(draft: WatchRuleDraft): WatchRuleValidati
     } catch (error) {
       return {
         key: 'watch.validation.patternInvalid',
-        params: { detail: error instanceof Error ? error.message : String(error) },
+        params: { detail: errorMessage(error) },
       };
     }
     if (

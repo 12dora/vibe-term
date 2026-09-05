@@ -9,6 +9,7 @@
 // 「已卸载」与「过期响应」是两回事，分别判定：前者永不写状态（组件没了），
 // 后者只是被更新的一代取代。
 
+import { errorMessage } from '@tmex/shared';
 import { HubApiError, type HubNodeRow } from './hub-api';
 
 export type HubRequest = () => Promise<HubNodeRow[]>;
@@ -85,10 +86,6 @@ export function classifyHubFailure(err: unknown): HubFailureReason {
     return { kind: 'unreachable', code: err.code, message };
   }
   return { kind: 'unreachable', code: null, message };
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 export class HubLoadCoordinator {

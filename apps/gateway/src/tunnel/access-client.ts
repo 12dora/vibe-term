@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { TunnelAccessPolicyRule } from '@tmex/shared';
 import {
   ACCESS_BYPASS_PATH_PREFIXES,
@@ -504,7 +505,7 @@ export class CloudflareAccessClient {
         signal: this.requestSignal(opts?.deadlineAt, method),
       });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
+      const message = errorMessage(error);
       const wrapped = new TunnelError('access_api_failed', sanitizeAccessMessage(message));
       if (isAbortLike(error)) Object.assign(wrapped, { abortLike: true });
       throw wrapped;
@@ -560,7 +561,7 @@ function isAbortLike(error: unknown): boolean {
   if (nestedAbort(rec.reason, error) || nestedAbort(rec.cause, error)) return true;
   if (rec.signal?.aborted) return true;
   if (nestedAbort(rec.signal?.reason, error)) return true;
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return /aborted|timed?\s*out|timeout/i.test(message);
 }
 

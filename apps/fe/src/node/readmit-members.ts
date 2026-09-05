@@ -20,6 +20,7 @@ import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
 import type { RelayReadmitEntry, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
+import { errorMessage } from '@tmex/shared';
 import type { Authorization } from '@tmex/shared/auth';
 import {
   buildRootReadmitAuthorization,
@@ -222,5 +223,5 @@ async function signAuthorization(
 
 function failureCode(err: unknown): string {
   if (err instanceof ReadmitError) return err.code;
-  return relayErrorCode(err) ?? (err instanceof Error ? err.message : String(err));
+  return relayErrorCode(err) ?? errorMessage(err);
 }

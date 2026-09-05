@@ -1,4 +1,5 @@
 import { publicRequestUrl } from '../../../../apps/gateway/src/mesh/session-middleware';
+import { errorMessage } from '../lib/error-message';
 import {
   type DnsCredentials,
   type DnsProviderId,
@@ -107,7 +108,7 @@ export function createTlsRoutes(deps: {
       if (error instanceof TlsApiError) {
         return errorJson(error.code, error.status, error.message);
       }
-      return errorJson('tls_failed', 500, error instanceof Error ? error.message : String(error));
+      return errorJson('tls_failed', 500, errorMessage(error));
     }
   };
 }

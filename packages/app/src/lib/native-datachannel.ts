@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { sha256Hex } from './artifacts-manifest';
+import { errorMessage } from './error-message';
 import { pathExists, readText } from './fs-utils';
 
 const ADDON_FILENAME = 'node_datachannel.node';
@@ -124,7 +125,7 @@ export async function loadNodeDatachannel(
   try {
     requireNative(addon);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     log(`failed to require native addon: ${message}`);
     return null;
   }
@@ -141,7 +142,7 @@ export async function loadNodeDatachannel(
       getLibraryVersion: imported.getLibraryVersion,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     log(`failed to load vendored node-datachannel JS: ${message}`);
     return null;
   }

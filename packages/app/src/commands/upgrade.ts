@@ -7,6 +7,7 @@ import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
 import { getInstallHint } from '../lib/dep-install';
 import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
+import { errorMessage } from '../lib/error-message';
 import { ensureDir, pathExists } from '../lib/fs-utils';
 import { hubEnvDefaults } from '../lib/install';
 import {
@@ -60,7 +61,7 @@ export async function reenableDirectAfterUpgrade(
       log(`direct re-enable skipped: ${result.reason}`);
     }
   } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
+    const reason = errorMessage(error);
     log(`direct re-enable skipped: ${reason}`);
   }
 }

@@ -7,6 +7,7 @@
 import { type RecordSigner, buildSignedRecord, headFromResponse } from '@/auth/key-log-actions';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import { requireRootEpoch } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { buildRenameNodePayload, encodeBase64url, hexToBytes } from '@tmex/shared/auth';
 import { classifyKeyLogFailure } from './enrollment';
 import { withKeyLogLock } from './enrollment-engine';
@@ -80,7 +81,7 @@ export async function renameNodeViaKeyLog(
       return { ok: true as const };
     });
   } catch (err) {
-    return { ok: false, code: err instanceof Error ? err.message : String(err) };
+    return { ok: false, code: errorMessage(err) };
   }
 }
 

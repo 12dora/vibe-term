@@ -1,4 +1,5 @@
 import { SetupApiError } from '@tmex/api-client/local/setup-api';
+import { errorMessage } from '@tmex/shared';
 import { setupErrorKey } from './validation';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -59,6 +60,6 @@ export function describeSetupError(
     }
     return base;
   }
-  const message = error instanceof Error ? error.message : String(error);
+  const message = errorMessage(error);
   return t('nodes.setup.errors.unknown', { message });
 }

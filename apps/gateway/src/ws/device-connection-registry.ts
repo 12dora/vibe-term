@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { EventDevicePayload, ThemeMode } from '@tmex/shared';
 import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
 import { getSiteSettings } from '../db';
@@ -184,7 +185,7 @@ export class DeviceConnectionRegistry {
           type: 'error',
           errorType: errorInfo.type,
           message: t(errorInfo.messageKey, { ...errorInfo.messageParams }),
-          rawMessage: err instanceof Error ? err.message : String(err),
+          rawMessage: errorMessage(err),
         })
       );
       return null;

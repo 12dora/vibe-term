@@ -4,17 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { deleteDevice as deleteDeviceApi } from '@tmex/api-client';
 import type { Device } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
 import { Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -43,32 +33,21 @@ export function DeviceDeleteDialog({ device, queryKey, onClose }: DeviceDeleteDi
   });
 
   return (
-    <AlertDialog open={device !== null} onOpenChange={(open) => !open && onClose()}>
-      <AlertDialogContent>
-        <AlertDialogHeader>
-          <AlertDialogMedia className="bg-destructive/10">
-            <Trash2 className="h-5 w-5 text-destructive" />
-          </AlertDialogMedia>
-          <AlertDialogTitle>{t('device.deleteConfirm')}</AlertDialogTitle>
-          <AlertDialogDescription>
-            {t('device.deleteDescription', { name: device?.name ?? '' })}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
-        <AlertDialogFooter>
-          <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-          <AlertDialogAction
-            variant="destructive"
-            disabled={!device || deleteDevice.isPending}
-            onClick={() => {
-              if (!device) return;
-              deleteDevice.mutate(device.id);
-              onClose();
-            }}
-          >
-            {t('common.delete')}
-          </AlertDialogAction>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+    <ConfirmDialog
+      open={device !== null}
+      onOpenChange={(open) => !open && onClose()}
+      media={<Trash2 className="h-5 w-5 text-destructive" />}
+      title={t('device.deleteConfirm')}
+      cancelLabel={t('common.cancel')}
+      confirmLabel={t('common.delete')}
+      confirmDisabled={!device || deleteDevice.isPending}
+      onConfirm={() => {
+        if (!device) return;
+        deleteDevice.mutate(device.id);
+        onClose();
+      }}
+    >
+      {t('device.deleteDescription', { name: device?.name ?? '' })}
+    </ConfirmDialog>
   );
 }

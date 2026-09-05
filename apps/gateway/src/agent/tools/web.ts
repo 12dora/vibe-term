@@ -1,5 +1,6 @@
 // Web 工具：web_search（tavily/brave 分发）与 fetch_url（含 SSRF 防护）
 
+import { errorMessage } from '@tmex/shared';
 import { type Tool, tool } from 'ai';
 import { z } from 'zod';
 import { decrypt } from '../../crypto';
@@ -269,7 +270,7 @@ export async function createWebSearchTool(
         const results = await searchFn(query);
         return truncateUtf8(JSON.stringify(results), WEB_SEARCH_RESULT_MAX_BYTES);
       } catch (error) {
-        return `Web search failed: ${error instanceof Error ? error.message : String(error)}`;
+        return `Web search failed: ${errorMessage(error)}`;
       }
     },
   });
@@ -397,7 +398,7 @@ export function createFetchUrlTool(options: CreateFetchUrlToolOptions = {}): Too
         if (error instanceof DOMException && error.name === 'TimeoutError') {
           return `Fetch failed: timeout after ${FETCH_URL_TIMEOUT_MS}ms`;
         }
-        return `Fetch failed: ${error instanceof Error ? error.message : String(error)}`;
+        return `Fetch failed: ${errorMessage(error)}`;
       }
     },
   });

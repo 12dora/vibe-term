@@ -1,3 +1,4 @@
+import { errorMessage } from '@tmex/shared';
 import type { Device } from '@tmex/shared';
 import { Client, type ClientChannel } from 'ssh2';
 
@@ -569,7 +570,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       return {
         exitCode: 1,
         stdout: '',
-        stderr: error instanceof Error ? error.message : String(error),
+        stderr: errorMessage(error),
       };
     }
   }

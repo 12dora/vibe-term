@@ -2,7 +2,7 @@
 // 一次 run = 一次 streamText 多步循环（直到 stepCountIs / 等待审批 / abort / 出错）。
 // 只在 step 边界落库完整 ModelMessage；流式 delta 仅聚合节流广播，不持久化。
 
-import { type AgentEventPayloadMap, type EventType, wsBorsh } from '@tmex/shared';
+import { type AgentEventPayloadMap, type EventType, errorMessage, wsBorsh } from '@tmex/shared';
 import { type LanguageModel, type ModelMessage, streamText } from 'ai';
 import { getDeviceById } from '../db';
 import {
@@ -28,7 +28,7 @@ import {
   type RunOnceDecision,
   resolveRunOnceOutcome,
 } from './outcome-resolver';
-import { decideRunRetry, toErrorMessage } from './retry-policy';
+import { decideRunRetry } from './retry-policy';
 import { type AgentRunDeps, defaultAgentRunDeps } from './run-deps';
 import {
   type AgentRunOutcome,
@@ -199,7 +199,7 @@ export class AgentRun {
           await this.deps.sleepMs(decision.delayMs);
           continue;
         }
-        return finishErrorRun(this.finishSink(), session, toErrorMessage(error));
+        return finishErrorRun(this.finishSink(), session, errorMessage(error));
       }
     }
   }

@@ -1,5 +1,6 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
 import { assistRegex, createWatchRule, fetchLlmProviders, updateWatchRule } from '@tmex/api-client';
+import { errorMessage } from '@tmex/shared';
 import type { AssistRegexResponse, WatchRuleDto } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
@@ -68,7 +69,7 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
       onSaved(created);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(errorMessage(error));
     },
   });
 
@@ -80,7 +81,7 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
       setAssistResult(result);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : String(error));
+      toast.error(errorMessage(error));
     },
   });
 

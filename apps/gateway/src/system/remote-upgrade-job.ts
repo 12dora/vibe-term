@@ -1,6 +1,6 @@
 import { createReadStream, statSync } from 'node:fs';
 import { Readable } from 'node:stream';
-import { UPGRADE_CANCELLED } from '@tmex/shared';
+import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
 import { getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir } from './release-download';
 import { resolveUpgradeInstallDir } from './upgrade';
@@ -307,11 +307,7 @@ async function runDownloadPhase(
     }
     return {
       done: true,
-      snapshot: fail(
-        job,
-        `download failed: ${err instanceof Error ? err.message : String(err)}`,
-        deps.nowFn
-      ),
+      snapshot: fail(job, `download failed: ${errorMessage(err)}`, deps.nowFn),
     };
   }
 }
@@ -448,7 +444,7 @@ async function attemptPush(
         'content-type': 'application/octet-stream',
         'content-length': String(downloaded.bytes - offset),
       },
-      signal: mergeAbortSignals(AbortSignal.timeout(remaining), job.abort.signal),
+      signal: combineAbortSignals(AbortSignal.timeout(remaining), job.abort.signal),
     });
     job.pushPromise = pushReq;
     const pushed = await withTimeout(pushReq, remaining, 'push timeout');
@@ -462,7 +458,7 @@ async function attemptPush(
     if (job.abort.signal.aborted) {
       return { kind: 'cancelled', snapshot: await cancelPush(job, deps) };
     }
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       kind: 'retry',
       error: `push failed: ${message.includes('push timeout') ? 'push timeout' : message}`,
@@ -546,7 +542,7 @@ async function runStartPhase(
     await started.text().catch(() => '');
   } catch (err) {
     if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
-    const message = err instanceof Error ? err.message : String(err);
+    const message = errorMessage(err);
     return {
       done: true,
       snapshot: fail(
@@ -601,32 +597,10 @@ async function deleteStagedBestEffort(
       );
     }
   } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
+    const detail = errorMessage(err);
     console.warn(
       `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} err=${detail}`
     );
-  }
-}
-
-function mergeAbortSignals(timeout: AbortSignal, user: AbortSignal): AbortSignal {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([timeout, user]);
-  if (user.aborted) return user;
-  const ac = new AbortController();
-  const onAbort = (): void => ac.abort();
-  timeout.addEventListener('abort', onAbort, { once: true });
-  user.addEventListener('abort', onAbort, { once: true });
-  return ac.signal;
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(message)), ms);
-  });
-  try {
-    return await Promise.race([promise, timeout]);
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
   }
 }
 

@@ -1,7 +1,6 @@
 {
   "translation": {
     "connectDevices": {
-      "title": "デバイスを追加",
       "tabs": {
         "mobile": "モバイル端末（操作のみ）",
         "computer": "サーバーまたはパソコン"
@@ -208,7 +207,6 @@
       }
     },
     "settings": {
-      "title": "システム設定",
       "siteSettings": "サイト設定",
       "siteName": "サイト名",
       "siteNamePlaceholder": "tmex",
@@ -952,7 +950,6 @@
       "sendTestMessage": "テストメッセージを送信",
       "deleteBot": "Bot を削除",
       "tokenPlaceholder": "新しい token を入力",
-      "testMessageSent": "テストメッセージを送信しました",
       "createFailed": "Bot の作成に失敗しました",
       "updateFailed": "Bot の更新に失敗しました",
       "deleteFailed": "Bot の削除に失敗しました",
@@ -962,8 +959,6 @@
       "loadBotsFailed": "Bot 一覧の読み込みに失敗しました",
       "loadChatsFailed": "チャット一覧の読み込みに失敗しました",
       "noBots": "Bot がありません。まず追加してください。",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "authCount": "承認済み {{authorized}} / 承認待ち {{pending}}（最大 8）",
       "chatId": "Chat ID",
       "gatewayOnline": "🟢 ゲートウェイがオンラインになりました @ {{siteName}}",
@@ -974,7 +969,6 @@
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時間：{{time}}",
       "approveMessageTemplate": "✅ tmex で承認されました。\nBot：{{botName}}\n時間：{{time}}",
-      "botNotFound": "Bot が見つからないか利用できません",
       "botNotRunning": "Bot が起動していないか利用できません"
     },
     "weixin": {
@@ -986,13 +980,11 @@
       "addAccount": "アカウントを追加",
       "editAccount": "アカウントを編集",
       "enableAccount": "アカウントを有効化",
-      "allowAuthRequests": "認証リクエストを許可",
       "allowCommands": "チャットコマンドを許可",
       "allowCommandsHelp": "承認済みのチャットが本機のターミナルにコマンドを入力し、エージェント操作を承認できます。",
       "commandsBadge": "チャットコマンド",
       "scanToLogin": "スキャンしてログイン",
       "relogin": "再ログイン（再スキャン）",
-      "loggedIn": "ログイン済み",
       "notLoggedIn": "未ログイン",
       "scanQrcodeHint": "WeChat を開いて QR コードをスキャンし、スマホで確認してください。",
       "loginExpired": "QR コードの有効期限が切れました。再試行してください。",
@@ -1004,7 +996,6 @@
       "reactivationHint": "このユーザーに bot へメッセージを送ってもらい、アラートを再有効化してください。",
       "approve": "承認",
       "testMessage": "テストメッセージ",
-      "sendTestMessage": "テストメッセージを送信",
       "deleteAccount": "アカウントを削除",
       "accountCreated": "アカウントを作成しました",
       "accountUpdated": "アカウントを更新しました",
@@ -1014,19 +1005,13 @@
       "updateFailed": "アカウントの更新に失敗しました",
       "deleteFailed": "アカウントの削除に失敗しました",
       "approveFailed": "承認に失敗しました",
-      "removeFailed": "ユーザーの削除に失敗しました",
       "testMessageFailed": "テストメッセージの送信に失敗しました",
       "loadAccountsFailed": "アカウント一覧の読み込みに失敗しました",
       "noAccounts": "アカウントがまだありません。まず追加してください。",
-      "userId": "WeChat ユーザー ID",
-      "expand": "展開",
-      "collapse": "折りたたむ",
       "accountNameRequired": "アカウント名は必須です",
       "accountNotFound": "アカウントが見つからないか利用できません",
       "accountNotRunning": "アカウントが未ログインまたは未起動です",
       "userNotFound": "ユーザーが見つかりません",
-      "authSuccess": "✅ 認証されました。通知を受け取れます。",
-      "authPending": "⏳ 認証リクエストを受け取りました。tmex の設定で承認してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時刻：{{time}}",
       "approveMessageTemplate": "✅ tmex 経由で認証しました。\nアカウント：{{accountName}}\n時刻：{{time}}",
       "keepalivePrompt": "【tmex】通知を確実に受け取るため、任意の内容を返信して接続を維持してください 🙏",
@@ -1044,7 +1029,6 @@
       "secret": "シークレット",
       "urlPlaceholder": "https://example.com/webhook",
       "secretPlaceholder": "署名に使用（HMAC-SHA256）",
-      "enabled": "有効",
       "eventMask": "イベント",
       "add": "Webhook を追加",
       "empty": "Webhook がありません。",
@@ -1055,13 +1039,11 @@
     "sshError": {
       "configRefNotSupported": "このバージョンでは SSH Config 参照はサポートされていません。host + username を使用し、Agent/秘密鍵/パスワード認証を選択してください。",
       "agentUnavailable": "SSH Agent が利用できません：SSH_AUTH_SOCK が検出されません。agent 環境を確認してください。",
-      "agentNoIdentity": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "agentNoIdentities": "SSH Agent に利用可能な鍵がありません。ssh-add を実行してください。",
       "authFailed": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "authFailedGeneric": "認証に失敗しました：ユーザー名、パスワード、または鍵が正しくありません。デバイス設定を確認してください。",
       "networkUnreachable": "ネットワークに到達できません：ルーティング、ファイアウォール、または VPN 設定を確認してください。",
       "connectionRefused": "接続が拒否されました：ターゲットホストに接続できません。ホストアドレスとポートを確認してください。",
-      "timeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "connectionTimeout": "接続タイムアウト：デバイスに接続できません。ネットワークまたはファイアウォール設定を確認してください。",
       "hostNotFound": "ホストが見つかりません：ホスト名を解決できません。DNS またはホスト名設定を確認してください。",
       "handshakeFailed": "ハンドシェイクに失敗しました：安全な接続を確立できません。キー交換アルゴリズムが互換性がない可能性があります。",
@@ -1154,12 +1136,9 @@
     },
     "file": {
       "invalidRef": "無効なファイル参照です",
-      "notFound": "ファイルは存在しません",
       "loadFailed": "ファイルの読み込みに失敗しました",
       "isDirectory": "これはディレクトリです",
       "notPreviewable": "このファイル形式はプレビューできません",
-      "tooLarge": "ファイルが大きすぎてプレビューできません",
-      "binary": "バイナリファイルはプレビューできません",
       "download": "ダウンロード",
       "openRaw": "元ファイルを開く"
     },
@@ -1601,7 +1580,6 @@
       },
       "actions": {
         "add": "追加",
-        "rename": "名前を変更",
         "more": "その他",
         "revoke": "削除",
         "refresh": "更新",
@@ -1706,8 +1684,6 @@
         "relayNoneAccepted": "中継が参加コードを受け付けませんでした。中継の接続を確認してからもう一度お試しください。"
       },
       "rename": {
-        "save": "保存",
-        "done": "名前を変更しました",
         "cancelled": "キャンセルしました。"
       },
       "revoke": {

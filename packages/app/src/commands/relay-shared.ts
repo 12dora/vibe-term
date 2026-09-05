@@ -3,6 +3,7 @@ import {
   RELAY_QUOTA_MAX_NODES_LIMIT,
   RELAY_QUOTA_MAX_STREAMS_LIMIT,
 } from '../../../../apps/gateway/src/relay/relay-quota';
+import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readBoundedResponseText } from '../lib/pem';
@@ -101,7 +102,7 @@ async function readRelayBody(
   try {
     text = await readBoundedResponseText(response, maxBytes);
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = errorMessage(error);
     throw new Error(
       message === 'ca_response_too_large'
         ? `${label} response exceeds ${maxBytes} bytes`

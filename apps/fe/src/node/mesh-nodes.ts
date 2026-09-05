@@ -14,6 +14,7 @@ import type {
   MeshNode,
 } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
+import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type PollingControls,
@@ -287,7 +288,7 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
       const nodes = await api.listNodes();
       setState({ nodes, loading: false, error: null, loadedAt: Date.now() });
     } catch (err) {
-      setState({ loading: false, error: err instanceof Error ? err.message : String(err) });
+      setState({ loading: false, error: errorMessage(err) });
     } finally {
       inFlight = null;
       if (trailingRequested) {

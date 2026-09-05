@@ -6,13 +6,13 @@ import { getMeshHubsState, refreshMeshHubs } from '@/node/mesh-hubs';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { defaultApiClient } from '@tmex/api-client';
 import type { HubAuthorizationKind, MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import { errorMessage, sleepOrAbort } from '@tmex/shared';
 import type { HubRoleErrorCode, HubRoleRequest, HubRoleTransitionPhase } from '@tmex/shared';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
   encodeBase64url,
 } from '@tmex/shared/auth';
-import { delay } from '../restart/wait-for-restart';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -281,7 +281,7 @@ export async function submitAdmitHubRecord(
 }
 
 function roleOutcomeOf(err: unknown): HubRoleOutcome {
-  const code = err instanceof Error ? err.message : String(err);
+  const code = errorMessage(err);
   const status = (err as { status?: unknown })?.status;
   // 5xx / 网络异常是「暂时打不通」，4xx 才是结论。
   if (typeof status !== 'number' || status >= 500) return { kind: 'unreachable' };
@@ -312,10 +312,7 @@ export function createHubRoleIo(hubApi: HubApi = defaultHubApi): HubRoleIo {
       const snapshot = getMeshHubsState();
       return { hubs: snapshot.hubs, writerHubId: snapshot.writerHubId };
     },
-    wait: async (ms, signal) => {
-      await delay(ms, signal);
-      return !signal.aborted;
-    },
+    wait: sleepOrAbort,
     now: () => Date.now(),
   };
 }
