@@ -9,6 +9,7 @@ import {
   RotateCcw,
   Server,
   Settings as SettingsIcon,
+  Share2,
   Sparkles,
 } from 'lucide-react';
 import { Suspense, memo, useCallback, useEffect, useRef, useState } from 'react';
@@ -56,6 +57,7 @@ const loadTerminalSettingsTab = () =>
 const loadRemoteAccessTab = () =>
   import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab);
 const loadRelayTab = () => import('./settings/relay/relay-tab').then((m) => m.RelayTab);
+const loadShareTab = () => import('./settings/share/share-tab').then((m) => m.ShareTab);
 
 const GeneralSettingsTab = lazyChunk(loadGeneralSettingsTab);
 const DevicesAndFilesTab = lazyChunk(loadDevicesAndFilesTab);
@@ -65,6 +67,7 @@ const AISettingsTab = lazyChunk(loadAISettingsTab);
 const TerminalSettingsTab = lazyChunk(loadTerminalSettingsTab);
 const RemoteAccessTab = lazyChunk(loadRemoteAccessTab);
 const RelayTab = lazyChunk(loadRelayTab);
+const ShareTab = lazyChunk(loadShareTab);
 
 export type SettingsTab =
   | 'general'
@@ -74,13 +77,15 @@ export type SettingsTab =
   | 'ai'
   | 'terminal'
   | 'remoteAccess'
-  | 'relay';
+  | 'relay'
+  | 'share';
 
 /** 每台机器都有的标签：空闲预热与 `chunkPreloadOrder` 只认这一组。 */
 const SETTINGS_TABS: SettingsTab[] = [
   'general',
   'devicesAndFiles',
   'nodes',
+  'share',
   'notifications',
   'ai',
   'terminal',
@@ -102,6 +107,7 @@ const TAB_CHUNK_LOADERS: Record<SettingsTab, ChunkPreloadTarget> = {
   terminal: loadTerminalSettingsTab,
   remoteAccess: loadRemoteAccessTab,
   relay: loadRelayTab,
+  share: loadShareTab,
 };
 
 /** 预热顺序：当前标签自己在加载，排除掉；其余按标签栏顺序逐个排队。 */
@@ -122,6 +128,7 @@ const SETTINGS_TAB_BAR = [
   { value: 'devicesAndFiles', labelKey: 'settings.tabGroup.devicesAndFiles', icon: Server },
   { value: 'remoteAccess', labelKey: 'settings.tabGroup.remoteAccess', icon: Globe },
   { value: 'nodes', labelKey: 'settings.tabGroup.nodes', icon: Network },
+  { value: 'share', labelKey: 'settings.tabGroup.share', icon: Share2 },
   { value: 'notifications', labelKey: 'settings.tabGroup.notifications', icon: Bell },
   { value: 'ai', labelKey: 'settings.tabGroup.ai', icon: Sparkles },
 ] as const satisfies readonly {
@@ -253,6 +260,8 @@ function SettingsTabPanels({ activeTab }: { activeTab: SettingsTab }) {
         {activeTab === 'remoteAccess' && <RemoteAccessTab />}
 
         {activeTab === 'relay' && <RelayTab />}
+
+        {activeTab === 'share' && <ShareTab />}
       </Suspense>
     </Reveal>
   );

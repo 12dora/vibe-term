@@ -261,6 +261,29 @@
         "paneGone": "モニター「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
     },
+    "shareAccess": {
+      "defaultName": "共有ターミナル",
+      "loading": "読み込み中",
+      "passwordTitle": "パスワードを入力",
+      "password": "パスワード",
+      "showPassword": "パスワードを表示",
+      "hidePassword": "パスワードを非表示",
+      "continue": "続行",
+      "passwordRequired": "パスワードを入力してください。",
+      "passwordInvalid": "パスワードが正しくありません。",
+      "locked": "試行回数が多すぎます。{{seconds}} 秒後に再試行できます。",
+      "requestFailed": "リクエストに失敗しました。再試行してください。",
+      "ended": "この共有は終了しました。",
+      "notFound": "共有が見つかりません。",
+      "unavailable": "共有を利用できません。",
+      "expiresIn": "残り",
+      "expired": "期限切れ",
+      "permanent": "無期限",
+      "remainingDays": "{{days}}日{{hours}}時間",
+      "remainingHours": "{{hours}}時間{{minutes}}分",
+      "remainingMinutes": "{{minutes}}分{{seconds}}秒",
+      "disconnect": "切断"
+    },
     "sidebar": {
       "noDevices": "デバイスがありません",
       "manageDevices": "デバイス管理",

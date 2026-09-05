@@ -407,6 +407,7 @@
         "general": "一般",
         "devicesAndFiles": "デバイスとファイル",
         "nodes": "マルチノード連携",
+        "share": "共有",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "ターミナル",
@@ -871,6 +872,96 @@
           "adopt": "既存のトンネルを引き継ぐ",
           "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。",
           "dismiss": "無視して新規作成"
+        }
+      },
+      "share": {
+        "title": "ターミナル共有",
+        "description": "リンクでターミナルタブを共有します。いつでも停止できます。",
+        "loadFailed": "共有一覧の読み込みに失敗しました：{{message}}",
+        "permanent": "無期限",
+        "expired": "期限切れ",
+        "time": {
+          "justNow": "たった今",
+          "minutesAgo": "{{n}} 分前",
+          "hoursAgo": "{{n}} 時間前",
+          "daysAgo": "{{n}} 日前",
+          "minutesLeft": "残り {{n}} 分",
+          "hoursLeft": "残り {{n}} 時間",
+          "daysLeft": "残り {{n}} 日"
+        },
+        "active": {
+          "title": "進行中",
+          "empty": "進行中の共有はありません",
+          "columns": {
+            "name": "名前",
+            "terminal": "ターミナル",
+            "viewers": "接続数",
+            "created": "作成",
+            "expires": "期限",
+            "address": "アドレス",
+            "actions": "操作"
+          },
+          "copyLink": "リンクをコピー",
+          "linkCopied": "コピーしました",
+          "stop": "停止",
+          "stopTitle": "共有を停止",
+          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。"
+        },
+        "history": {
+          "title": "履歴",
+          "empty": "履歴はありません",
+          "columns": {
+            "name": "名前",
+            "terminal": "ターミナル",
+            "ended": "終了",
+            "duration": "時間",
+            "log": "ログ",
+            "actions": "操作"
+          },
+          "reason": {
+            "ended": "終了",
+            "revoked": "停止済み",
+            "expired": "期限切れ",
+            "windowClosed": "ウィンドウ終了",
+            "deviceRemoved": "デバイス削除"
+          },
+          "noLog": "ログなし",
+          "logTruncated": "{{size}}（上限到達）",
+          "replay": "再生",
+          "deleteTitle": "記録を削除",
+          "deleteConfirm": "「{{name}}」を削除するとログも削除され、元に戻せません。"
+        },
+        "form": {
+          "title": "共有設定",
+          "recordLogs": "ログを記録",
+          "recordLogsHint": "共有中の出力と入力を記録し、後から再生できます。",
+          "retentionDays": "ログ保持日数",
+          "retentionHint": "0 は自動削除なし（共有記録と同じ寿命）。",
+          "retentionError": "0 から 3650 の整数を入力してください。",
+          "logMax": "ログ上限（MB）",
+          "logMaxHint": "上限に達すると記録を停止し、記録済みの分は残ります。",
+          "logMaxError": "1 から 1024 の整数を入力してください。",
+          "defaultOrigin": "既定の共有アドレス",
+          "defaultOriginHint": "共有作成時に選ばれるアドレス。「自動」は優先度順に選びます。",
+          "originAuto": "自動",
+          "originCustom": "カスタム",
+          "originError": "完全な HTTPS アドレスを入力してください。",
+          "loadFailed": "共有設定の読み込みに失敗しました：{{message}}",
+          "saveFailed": "保存に失敗しました：{{message}}"
+        },
+        "replay": {
+          "title": "ログ再生",
+          "loading": "ログを読み込み中（{{loaded}}/{{total}}）…",
+          "loadFailed": "ログの読み込みに失敗しました：{{message}}",
+          "empty": "この共有にログはありません。",
+          "truncatedNotice": "ログが上限に達したため、以降は記録されていません。",
+          "play": "再生",
+          "pause": "一時停止",
+          "seek": "シーク",
+          "speedValue": "{{n}}x",
+          "paneValue": "ペイン {{id}}",
+          "input": "入力",
+          "inputEmpty": "なし"
         }
       },
       "deviceManagement": {
@@ -1384,6 +1475,29 @@
         "ruleError": "モニター「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
         "paneGone": "モニター「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
+    },
+    "shareAccess": {
+      "defaultName": "共有ターミナル",
+      "loading": "読み込み中",
+      "passwordTitle": "パスワードを入力",
+      "password": "パスワード",
+      "showPassword": "パスワードを表示",
+      "hidePassword": "パスワードを非表示",
+      "continue": "続行",
+      "passwordRequired": "パスワードを入力してください。",
+      "passwordInvalid": "パスワードが正しくありません。",
+      "locked": "試行回数が多すぎます。{{seconds}} 秒後に再試行できます。",
+      "requestFailed": "リクエストに失敗しました。再試行してください。",
+      "ended": "この共有は終了しました。",
+      "notFound": "共有が見つかりません。",
+      "unavailable": "共有を利用できません。",
+      "expiresIn": "残り",
+      "expired": "期限切れ",
+      "permanent": "無期限",
+      "remainingDays": "{{days}}日{{hours}}時間",
+      "remainingHours": "{{hours}}時間{{minutes}}分",
+      "remainingMinutes": "{{minutes}}分{{seconds}}秒",
+      "disconnect": "切断"
     },
     "sidebar": {
       "noDevices": "デバイスがありません",
@@ -2414,6 +2528,8 @@
         "stateExecuting": "適用中",
         "stateRestarting": "再起動中",
         "statePushing": "送信中 {{progress}}",
+        "stateDownloadingBytes": "ダウンロード中 {{progress}}",
+        "stateDownloadingSize": "ダウンロード中 {{size}}",
         "done": "「{{name}}」を {{version}} にアップグレードしました",
         "failed": "アップグレードに失敗しました：{{error}}",
         "alreadyLatest": "「{{name}}」はすでに最新バージョンです。",
@@ -2477,6 +2593,46 @@
         "directFailureTitle": "直接接続できない理由",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "接続タイムアウト",
+          "refused": "接続拒否",
+          "unreachable": "アドレス到達不能",
+          "reset": "接続リセット",
+          "tls": "証明書エラー",
+          "handshake": "ハンドシェイク失敗",
+          "revoked": "対向の資格情報が失効",
+          "untrusted": "対向が未信頼",
+          "backoff": "{{seconds}} 秒後に再試行",
+          "no_endpoints": "直接接続アドレス未公開",
+          "ice_failed": "ICE ネゴシエーション失敗",
+          "no_candidates": "ICE 候補なし",
+          "dc_open_timeout": "DataChannel 確立タイムアウト",
+          "dc_closed": "DataChannel 切断",
+          "liveness_timeout": "対向から応答なし",
+          "signal_dropped": "シグナリング消失",
+          "signaling_state": "シグナリング状態の不一致",
+          "rtc_unavailable": "このマシンで WebRTC 利用不可",
+          "not_direct_capable": "対向がダイレクト接続に非対応",
+          "breaker_cooling": "{{until}} まで停止中",
+          "aborted": "試行を中止",
+          "other": "接続失敗"
+        },
+        "ice": {
+          "new": "新規",
+          "connecting": "接続中",
+          "connected": "接続済み",
+          "disconnected": "切断",
+          "failed": "失敗",
+          "closed": "終了",
+          "checking": "確認中",
+          "completed": "完了"
+        },
+        "candidate": {
+          "host": "ローカル",
+          "srflx": "パブリック（STUN）",
+          "prflx": "対向検出",
+          "relay": "TURN 中継"
+        },
         "unknown": "不明"
       },
       "setup": {
@@ -2825,7 +2981,7 @@
           "heartbeat-lost": "ハートビートが途絶えました。再接続中",
           "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
           "dns": "ドメイン名を解決できません",
-          "refused": "接続が拒否されました",
+          "refused": "接続拒否",
           "tls": "TLS ハンドシェイクに失敗しました",
           "protocol": "プロトコルが非互換です。中継か本機を更新してください",
           "unknown": "接続に失敗しました"
@@ -3051,6 +3207,61 @@
           "hours": "{{n}} 時間前",
           "days": "{{n}} 日前"
         }
+      }
+    },
+    "share": {
+      "toolbar": {
+        "share": "共有",
+        "active": "共有中・{{count}} 人接続中"
+      },
+      "dialog": {
+        "title": "ターミナルを共有",
+        "desc": "リンクとパスワードがあれば、このウィンドウのみ表示・操作できます。",
+        "name": "名前",
+        "namePlaceholder": "共有名",
+        "duration": {
+          "label": "有効期限",
+          "hour": "1 時間",
+          "day": "24 時間",
+          "week": "7 日",
+          "permanent": "無期限",
+          "custom": "カスタム",
+          "unit": {
+            "hours": "時間",
+            "days": "日"
+          }
+        },
+        "password": "パスワード",
+        "regenerate": "再生成",
+        "address": "アドレス",
+        "noAddress": "公開アドレスが未設定のため、共有できません。",
+        "create": "共有を作成",
+        "link": "リンク",
+        "copy": "コピー",
+        "copied": "コピーしました",
+        "copyFailed": "コピーに失敗しました",
+        "passwordOnce": "パスワードは作成時のみ表示されます。",
+        "viewers": "{{count}} 人接続中",
+        "expires": "有効期限",
+        "permanent": "無期限",
+        "remaining": {
+          "days": "残り {{value}} 日",
+          "hours": "残り {{value}} 時間",
+          "minutes": "残り {{value}} 分",
+          "expired": "期限切れ"
+        },
+        "stop": "共有を停止",
+        "stopConfirmTitle": "共有を停止しますか？",
+        "stopConfirm": "リンクは直ちに無効になり、接続中のユーザーは切断されます。",
+        "created": "共有を作成しました",
+        "stopped": "共有を停止しました",
+        "loadFailed": "共有パネルの読み込みに失敗しました"
+      },
+      "error": {
+        "nameRequired": "名前を入力してください。",
+        "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
+        "noOrigin": "アドレスを選択してください。",
+        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。"
       }
     }
   }

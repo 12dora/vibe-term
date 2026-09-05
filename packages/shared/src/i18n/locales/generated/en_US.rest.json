@@ -229,6 +229,7 @@
         "general": "General",
         "devicesAndFiles": "Devices & Files",
         "nodes": "Multi-node Mesh",
+        "share": "Sharing",
         "notifications": "Notifications",
         "ai": "AI",
         "terminal": "Terminal",
@@ -689,6 +690,96 @@
           "adopt": "Adopt the existing tunnel",
           "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here.",
           "dismiss": "Ignore and create a new tunnel"
+        }
+      },
+      "share": {
+        "title": "Terminal Sharing",
+        "description": "Share a terminal tab by link, and stop it at any time.",
+        "loadFailed": "Failed to load shares: {{message}}",
+        "permanent": "Permanent",
+        "expired": "Expired",
+        "time": {
+          "justNow": "Just now",
+          "minutesAgo": "{{n}} min ago",
+          "hoursAgo": "{{n}} h ago",
+          "daysAgo": "{{n}} d ago",
+          "minutesLeft": "{{n}} min left",
+          "hoursLeft": "{{n}} h left",
+          "daysLeft": "{{n}} d left"
+        },
+        "active": {
+          "title": "Active",
+          "empty": "No active shares",
+          "columns": {
+            "name": "Name",
+            "terminal": "Terminal",
+            "viewers": "Viewers",
+            "created": "Created",
+            "expires": "Expires",
+            "address": "Address",
+            "actions": "Actions"
+          },
+          "copyLink": "Copy Link",
+          "linkCopied": "Copied",
+          "stop": "Stop",
+          "stopTitle": "Stop Share",
+          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it."
+        },
+        "history": {
+          "title": "History",
+          "empty": "No past shares",
+          "columns": {
+            "name": "Name",
+            "terminal": "Terminal",
+            "ended": "Ended",
+            "duration": "Duration",
+            "log": "Log",
+            "actions": "Actions"
+          },
+          "reason": {
+            "ended": "Ended",
+            "revoked": "Stopped",
+            "expired": "Expired",
+            "windowClosed": "Window closed",
+            "deviceRemoved": "Device removed"
+          },
+          "noLog": "No log",
+          "logTruncated": "{{size}} (limit reached)",
+          "replay": "Replay",
+          "deleteTitle": "Delete Record",
+          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone."
+        },
+        "form": {
+          "title": "Share Settings",
+          "recordLogs": "Record logs",
+          "recordLogsHint": "Record output and input during a share for later replay.",
+          "retentionDays": "Log retention (days)",
+          "retentionHint": "0 keeps logs as long as the share record.",
+          "retentionError": "Enter a whole number between 0 and 3650.",
+          "logMax": "Log size limit (MB)",
+          "logMaxHint": "Recording stops at the limit; what was recorded is kept.",
+          "logMaxError": "Enter a whole number between 1 and 1024.",
+          "defaultOrigin": "Default share address",
+          "defaultOriginHint": "Preselected when creating a share. \"Automatic\" picks the best available address.",
+          "originAuto": "Automatic",
+          "originCustom": "Custom",
+          "originError": "Enter a full HTTPS address.",
+          "loadFailed": "Failed to load share settings: {{message}}",
+          "saveFailed": "Failed to save: {{message}}"
+        },
+        "replay": {
+          "title": "Log Replay",
+          "loading": "Loading log ({{loaded}}/{{total}})...",
+          "loadFailed": "Failed to load the log: {{message}}",
+          "empty": "This share has no log.",
+          "truncatedNotice": "The log hit its size limit; later output was not recorded.",
+          "play": "Play",
+          "pause": "Pause",
+          "seek": "Seek",
+          "speedValue": "{{n}}x",
+          "paneValue": "Pane {{id}}",
+          "input": "Input",
+          "inputEmpty": "None"
         }
       },
       "deviceManagement": {
@@ -1711,6 +1802,8 @@
         "stateExecuting": "Installing",
         "stateRestarting": "Restarting",
         "statePushing": "Pushing {{progress}}",
+        "stateDownloadingBytes": "Downloading {{progress}}",
+        "stateDownloadingSize": "Downloading {{size}}",
         "done": "“{{name}}” upgraded to {{version}}",
         "failed": "Upgrade failed: {{error}}",
         "alreadyLatest": "“{{name}}” is already on the latest version.",
@@ -1775,6 +1868,46 @@
         "directFailureTitle": "Why not direct",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "Connection timed out",
+          "refused": "Connection refused",
+          "unreachable": "Address unreachable",
+          "reset": "Connection reset",
+          "tls": "Certificate rejected",
+          "handshake": "Handshake failed",
+          "revoked": "Peer credential revoked",
+          "untrusted": "Peer not trusted",
+          "backoff": "Retrying in {{seconds}}s",
+          "no_endpoints": "No direct address advertised",
+          "ice_failed": "ICE negotiation failed",
+          "no_candidates": "No ICE candidates",
+          "dc_open_timeout": "DataChannel open timed out",
+          "dc_closed": "DataChannel closed",
+          "liveness_timeout": "No response from peer",
+          "signal_dropped": "Signaling dropped",
+          "signaling_state": "Signaling state mismatch",
+          "rtc_unavailable": "WebRTC unavailable on this node",
+          "not_direct_capable": "Peer does not support direct links",
+          "breaker_cooling": "Paused until {{until}}",
+          "aborted": "Attempt cancelled",
+          "other": "Connection failed"
+        },
+        "ice": {
+          "new": "New",
+          "connecting": "Connecting",
+          "connected": "Connected",
+          "disconnected": "Disconnected",
+          "failed": "Failed",
+          "closed": "Closed",
+          "checking": "Checking",
+          "completed": "Completed"
+        },
+        "candidate": {
+          "host": "Local",
+          "srflx": "Public (STUN)",
+          "prflx": "Peer-discovered",
+          "relay": "TURN relay"
+        },
         "unknown": "unknown"
       },
       "setup": {
@@ -2350,6 +2483,61 @@
           "hours": "{{n}} h ago",
           "days": "{{n}} d ago"
         }
+      }
+    },
+    "share": {
+      "toolbar": {
+        "share": "Share",
+        "active": "Sharing · {{count}} online"
+      },
+      "dialog": {
+        "title": "Share Terminal",
+        "desc": "The link and password grant view and control of this window only.",
+        "name": "Name",
+        "namePlaceholder": "Share name",
+        "duration": {
+          "label": "Duration",
+          "hour": "1 hour",
+          "day": "24 hours",
+          "week": "7 days",
+          "permanent": "Permanent",
+          "custom": "Custom",
+          "unit": {
+            "hours": "Hours",
+            "days": "Days"
+          }
+        },
+        "password": "Password",
+        "regenerate": "Regenerate",
+        "address": "Address",
+        "noAddress": "No public address is configured, so sharing is unavailable.",
+        "create": "Create Share",
+        "link": "Link",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyFailed": "Copy failed",
+        "passwordOnce": "The password is shown only at creation.",
+        "viewers": "{{count}} online",
+        "expires": "Expires at",
+        "permanent": "Never expires",
+        "remaining": {
+          "days": "{{value}} d left",
+          "hours": "{{value}} h left",
+          "minutes": "{{value}} min left",
+          "expired": "Expired"
+        },
+        "stop": "Stop Sharing",
+        "stopConfirmTitle": "Stop sharing?",
+        "stopConfirm": "The link stops working immediately and connected viewers are disconnected.",
+        "created": "Share created",
+        "stopped": "Sharing stopped",
+        "loadFailed": "Could not load the share panel"
+      },
+      "error": {
+        "nameRequired": "Enter a name.",
+        "passwordTooShort": "Password must be at least {{min}} characters.",
+        "noOrigin": "Select an address.",
+        "invalidDuration": "Duration must be a whole number of days up to 365."
       }
     }
   }

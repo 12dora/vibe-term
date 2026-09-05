@@ -40,6 +40,7 @@ const TAB_IDS = [
   'devicesAndFiles',
   'remoteAccess',
   'nodes',
+  'share',
   'notifications',
   'ai',
 ];
@@ -60,7 +61,7 @@ async function renderResolved(entry = '/settings'): Promise<string> {
 }
 
 describe('SettingsPage 标签栏', () => {
-  test('七个标签都在，「节点」排在远程访问与通知之间', () => {
+  test('八个标签都在，「节点」排在远程访问与「分享」之间', () => {
     const html = render();
     for (const tab of TAB_IDS) {
       expect(html).toContain(`data-testid="settings-tab-${tab}"`);
@@ -68,10 +69,12 @@ describe('SettingsPage 标签栏', () => {
     expect(html.indexOf('settings-tab-nodes')).toBeGreaterThan(
       html.indexOf('settings-tab-remoteAccess')
     );
-    expect(html.indexOf('settings-tab-nodes')).toBeLessThan(
+    expect(html.indexOf('settings-tab-nodes')).toBeLessThan(html.indexOf('settings-tab-share'));
+    expect(html.indexOf('settings-tab-share')).toBeLessThan(
       html.indexOf('settings-tab-notifications')
     );
     expect(html).toContain('settings.tabGroup.nodes');
+    expect(html).toContain('settings.tabGroup.share');
   });
 
   test('「设备与文件」紧挨在「终端」右侧，「远程访问」在其后', () => {
@@ -110,15 +113,15 @@ describe('SettingsPage 标签栏', () => {
 
 // 中继标签只在本机带中继角色时挂上，门禁本身在 settings/relay/settings-tab-gating.test.tsx 里覆盖。
 describe('settingsTabBarItems', () => {
-  test('没有中继角色时就是七个常规标签', () => {
+  test('没有中继角色时就是八个常规标签', () => {
     expect(settingsTabBarItems(false).map((item) => String(item.value))).toEqual(TAB_IDS);
   });
 
-  test('有中继角色时插在「多节点互联」右侧、「通知」左侧', () => {
+  test('有中继角色时插在「多节点互联」右侧、「分享」左侧', () => {
     const values = settingsTabBarItems(true).map((item) => String(item.value));
     expect(values).toHaveLength(TAB_IDS.length + 1);
     expect(values[values.indexOf('nodes') + 1]).toBe('relay');
-    expect(values.indexOf('relay')).toBeLessThan(values.indexOf('notifications'));
+    expect(values.indexOf('relay')).toBeLessThan(values.indexOf('share'));
   });
 });
 

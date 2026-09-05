@@ -1,6 +1,7 @@
 // 操作区按钮的表驱动渲染：按钮模型由纯函数构建，组件只负责映射成 <Button>。
 
 import { PaneSwitcherMenu } from '@tmex/terminal-ui';
+import { cn } from '@tmex/ui';
 import { Button } from '@tmex/ui/button';
 import { IconTooltip } from '@tmex/ui/icon-tooltip';
 import {
@@ -9,6 +10,7 @@ import {
   Radar,
   RefreshCw,
   Settings2,
+  Share2,
   Smartphone,
   SquareSplitHorizontal,
   SquareSplitVertical,
@@ -16,7 +18,7 @@ import {
 import { useTranslation } from 'react-i18next';
 import type { DeviceConsoleActionsModel } from './use-device-console-actions';
 
-export type TranslateFn = (key: string) => string;
+export type TranslateFn = (key: string, params?: Record<string, unknown>) => string;
 
 export interface ToolbarButton {
   key: string;
@@ -25,8 +27,10 @@ export interface ToolbarButton {
   label: string;
   onClick: () => void;
   disabled?: boolean;
-  /** 仅 watch 按钮带角标：visible 控制小圆点显示 */
-  badge?: { testId: string; visible: boolean };
+  /** 角标：visible 控制显示；给了 count 就显示数字（分享在线人数），否则是个小圆点 */
+  badge?: { testId: string; visible: boolean; count?: number };
+  /** 功能正在生效（如该 tab 正在分享），按钮以高亮态渲染 */
+  active?: boolean;
 }
 
 export interface ToolbarButtonsInput {
@@ -35,6 +39,7 @@ export interface ToolbarButtonsInput {
   onOpenRefreshConfirm: () => void;
   onOpenWatchDialog: () => void;
   onOpenTerminalSettings: () => void;
+  onOpenShareDialog: () => void;
 }
 
 function splitButtons({ model, t }: ToolbarButtonsInput): ToolbarButton[] {
@@ -90,6 +95,22 @@ function watchButton({ model, t, onOpenWatchDialog }: ToolbarButtonsInput): Tool
   };
 }
 
+function shareButton({ model, t, onOpenShareDialog }: ToolbarButtonsInput): ToolbarButton {
+  const sharing = model.hasActiveShare;
+  return {
+    key: 'share',
+    testId: 'share-open-button',
+    icon: Share2,
+    label: sharing
+      ? t('share.toolbar.active', { count: model.shareViewers })
+      : t('share.toolbar.share'),
+    disabled: !(model.deviceId && model.windowId),
+    active: sharing,
+    onClick: onOpenShareDialog,
+    badge: { testId: 'share-active-indicator', visible: sharing, count: model.shareViewers },
+  };
+}
+
 function terminalSettingsButton({ t, onOpenTerminalSettings }: ToolbarButtonsInput): ToolbarButton {
   return {
     key: 'terminal-settings',
@@ -104,9 +125,29 @@ export function buildToolbarButtons(input: ToolbarButtonsInput): ToolbarButton[]
   return [
     ...(input.model.isMobileViewport ? [] : splitButtons(input)),
     ...coreButtons(input),
+    ...(input.model.shareUi ? [shareButton(input)] : []),
     ...(input.model.watchUi ? [watchButton(input)] : []),
     terminalSettingsButton(input),
   ];
+}
+
+function ToolbarBadge({ badge }: { badge: NonNullable<ToolbarButton['badge']> }) {
+  if (badge.count === undefined) {
+    return (
+      <span
+        className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
+        data-testid={badge.testId}
+      />
+    );
+  }
+  return (
+    <span
+      className="absolute -right-0.5 -top-0.5 min-w-3.5 rounded-full bg-primary px-1 text-[10px] font-medium leading-[14px] text-primary-foreground"
+      data-testid={badge.testId}
+    >
+      {badge.count}
+    </span>
+  );
 }
 
 /** 气泡文案与 aria-label 同源，且不再挂 title——否则原生提示会和气泡叠着出两层。 */
@@ -115,21 +156,17 @@ export function ToolbarIconButton({ button }: { button: ToolbarButton }) {
   return (
     <IconTooltip label={button.label}>
       <Button
-        variant="ghost"
+        variant={button.active ? 'secondary' : 'ghost'}
         size="icon-sm"
-        className={button.badge ? 'relative' : undefined}
+        className={cn(button.badge && 'relative', button.active && 'text-primary')}
         onClick={button.onClick}
         disabled={button.disabled}
         data-testid={button.testId}
+        data-active={button.active ? 'true' : undefined}
         aria-label={button.label}
       >
         <Icon className="h-4 w-4" />
-        {button.badge?.visible && (
-          <span
-            className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-primary"
-            data-testid={button.badge.testId}
-          />
-        )}
+        {button.badge?.visible && <ToolbarBadge badge={button.badge} />}
       </Button>
     </IconTooltip>
   );

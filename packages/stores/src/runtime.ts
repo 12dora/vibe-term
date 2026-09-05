@@ -121,6 +121,7 @@ export interface AppRuntimeOptions {
     watchUi?: boolean;
     filesUi?: boolean;
     hostManagedNotifications?: boolean;
+    shareViewer?: boolean;
   };
   /** 终端文件链接面；缺省走 gateway 文件 API 与 /file/:ref 路由 */
   terminalFileLinks?: TerminalFileLinksProvider;
@@ -140,6 +141,8 @@ export interface RuntimeFeatures {
   filesUi: boolean;
   /** 宿主接管通知呈现：终端 notification 不再由包内弹 toast（bell 声与高亮不受影响） */
   hostManagedNotifications: boolean;
+  /** 被分享人视角：只看得到一个 tmux window，分享入口与结构性操作一律不渲染 */
+  shareViewer: boolean;
 }
 
 /** store 工厂消费的已解析服务面 */
@@ -279,6 +282,7 @@ function resolveFeatures(features: AppRuntimeOptions['features']): RuntimeFeatur
     watchUi: features?.watchUi ?? true,
     filesUi: features?.filesUi ?? true,
     hostManagedNotifications: features?.hostManagedNotifications ?? false,
+    shareViewer: features?.shareViewer ?? false,
   };
 }
 

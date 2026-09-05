@@ -197,12 +197,13 @@ describe('服务面缺省与覆盖', () => {
 });
 
 describe('features 解析', () => {
-  test('缺省全开，hostManagedNotifications 关', () => {
+  test('缺省全开，hostManagedNotifications / shareViewer 关', () => {
     expect(resolveRuntimeCore({ features: {} }).features).toEqual({
       agentUi: true,
       watchUi: true,
       filesUi: true,
       hostManagedNotifications: false,
+      shareViewer: false,
     });
   });
 

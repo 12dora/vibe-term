@@ -29,6 +29,7 @@ import {
   llmSettingsQueryKey,
   terminalShortcutsQueryKey,
 } from '@tmex/api-client';
+import { listShares, shareQueryKey } from '@tmex/api-client/share';
 import {
   LOCAL_STATUS_QUERY_KEY,
   TLS_STATUS_QUERY_KEY,
@@ -91,11 +92,21 @@ export function tabPrefetchSpecs(tab: string, apiClient: ApiClient): TabPrefetch
       { queryKey: TLS_STATUS_QUERY_KEY, queryFn: fetchSelfTlsStatus },
     ];
   }
+  // 分享列表带在线人数与剩余期限，自身每 10 秒一拍：预取只为消掉首屏那一转，不给 staleTime。
+  if (tab === 'share') {
+    return [{ queryKey: shareQueryKey(), queryFn: () => listShares(apiClient) }];
+  }
   return [];
 }
 
 /** 能预取的标签，供测试与调用方判断（避免为没有 spec 的标签白跑一趟）。 */
-export const PREFETCHABLE_TABS: readonly string[] = ['ai', 'terminal', 'nodes', 'remoteAccess'];
+export const PREFETCHABLE_TABS: readonly string[] = [
+  'ai',
+  'terminal',
+  'nodes',
+  'remoteAccess',
+  'share',
+];
 
 /**
  * 预取一个标签的数据。`done` 记已经预取过的标签：鼠标扫过标签栏不该把请求发好几遍。

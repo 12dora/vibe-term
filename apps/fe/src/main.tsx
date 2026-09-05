@@ -34,6 +34,8 @@ import {
   settingsPageModule,
 } from '@/page-modules';
 import { PageWrapper } from '@/page-wrapper';
+import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
+import { ShareRouteElement } from '@/share/share-route-element';
 import { installSessionInterceptor } from '@tmex/api-client/auth/index';
 import { ConnectionIndicator } from '@tmex/panels';
 import { SettingsEventsInit } from '@tmex/panels/settings/events';
@@ -333,6 +335,9 @@ const router = createBrowserRouter([
         path: '/login',
         element: <PageWrapper moduleLoader={loginPageModule} withSidebar={false} />,
       },
+      // 被分享页同样挂在 RootLayout 之外：没有侧栏、没有 mesh 轮询、没有设备列表。
+      { path: SHARE_ROUTE_PATH, element: <ShareRouteElement /> },
+      { path: NODE_SHARE_ROUTE_PATH, element: <ShareRouteElement /> },
       // 独立的 /nodes、/account/security 两页已并入设置页与右侧滑出面板；老书签重定向过去，
       // 不要变成 404。
       { path: '/nodes', element: <Navigate to="/settings?tab=nodes" replace /> },
@@ -348,9 +353,13 @@ const router = createBrowserRouter([
 
 // 退出 mesh / 常规改密后重新登录这两段窗口里的自身 401 都是预期内的，
 // 跳 /login 会把还在进行的编排一起卸载掉（见 `createLoginRedirect`）。
+//
+// 被分享页更进一步：访客手上只有分享凭证，任何常规 `/api/*` 的 401 都是**预期内**的，
+// 把他踢去登录页只会给出一个他永远登不进去的表单，还会拆掉正在看的终端。
 installSessionInterceptor({
   navigate: createLoginRedirect({
     navigate: (to) => {
+      if (isSharePathname(window.location.pathname)) return;
       void router.navigate(to);
     },
     authTransitionActive: isAuthTransitionActive,

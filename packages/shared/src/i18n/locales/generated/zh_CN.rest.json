@@ -229,6 +229,7 @@
         "general": "通用",
         "devicesAndFiles": "设备与文件",
         "nodes": "多节点互联",
+        "share": "分享",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "终端",
@@ -689,6 +690,96 @@
           "adopt": "接管已有隧道",
           "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。",
           "dismiss": "忽略并新建隧道"
+        }
+      },
+      "share": {
+        "title": "终端分享",
+        "description": "通过链接把终端标签分享给他人，可随时终止。",
+        "loadFailed": "分享列表加载失败：{{message}}",
+        "permanent": "永久",
+        "expired": "已到期",
+        "time": {
+          "justNow": "刚刚",
+          "minutesAgo": "{{n}} 分钟前",
+          "hoursAgo": "{{n}} 小时前",
+          "daysAgo": "{{n}} 天前",
+          "minutesLeft": "剩余 {{n}} 分钟",
+          "hoursLeft": "剩余 {{n}} 小时",
+          "daysLeft": "剩余 {{n}} 天"
+        },
+        "active": {
+          "title": "进行中",
+          "empty": "暂无进行中的分享",
+          "columns": {
+            "name": "名称",
+            "terminal": "终端",
+            "viewers": "在线",
+            "created": "创建",
+            "expires": "到期",
+            "address": "地址",
+            "actions": "操作"
+          },
+          "copyLink": "复制链接",
+          "linkCopied": "已复制",
+          "stop": "终止",
+          "stopTitle": "终止分享",
+          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。"
+        },
+        "history": {
+          "title": "历史",
+          "empty": "暂无历史记录",
+          "columns": {
+            "name": "名称",
+            "terminal": "终端",
+            "ended": "结束",
+            "duration": "时长",
+            "log": "日志",
+            "actions": "操作"
+          },
+          "reason": {
+            "ended": "已结束",
+            "revoked": "已终止",
+            "expired": "已到期",
+            "windowClosed": "窗口已关闭",
+            "deviceRemoved": "设备已删除"
+          },
+          "noLog": "无日志",
+          "logTruncated": "{{size}}（已达上限）",
+          "replay": "回放",
+          "deleteTitle": "删除记录",
+          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。"
+        },
+        "form": {
+          "title": "分享设置",
+          "recordLogs": "记录日志",
+          "recordLogsHint": "记录分享期间的输出与输入，可事后回放。",
+          "retentionDays": "日志保留天数",
+          "retentionHint": "0 表示不自动清理，与分享记录同寿命。",
+          "retentionError": "请填 0 到 3650 之间的整数。",
+          "logMax": "单条日志上限（MB）",
+          "logMaxHint": "达到上限即停止记录，已记录的部分保留。",
+          "logMaxError": "请填 1 到 1024 之间的整数。",
+          "defaultOrigin": "默认分享地址",
+          "defaultOriginHint": "新建分享时预选的地址；「自动」按优先级择优。",
+          "originAuto": "自动",
+          "originCustom": "自定义",
+          "originError": "请填完整的 HTTPS 地址。",
+          "loadFailed": "分享设置加载失败：{{message}}",
+          "saveFailed": "保存失败：{{message}}"
+        },
+        "replay": {
+          "title": "日志回放",
+          "loading": "正在加载日志（{{loaded}}/{{total}}）…",
+          "loadFailed": "日志加载失败：{{message}}",
+          "empty": "该分享没有日志。",
+          "truncatedNotice": "日志已达上限，之后的内容未记录。",
+          "play": "播放",
+          "pause": "暂停",
+          "seek": "进度",
+          "speedValue": "{{n}}x",
+          "paneValue": "窗格 {{id}}",
+          "input": "输入",
+          "inputEmpty": "无"
         }
       },
       "deviceManagement": {
@@ -1708,6 +1799,8 @@
         "stateExecuting": "执行中",
         "stateRestarting": "重启中",
         "statePushing": "推送中 {{progress}}",
+        "stateDownloadingBytes": "下载中 {{progress}}",
+        "stateDownloadingSize": "下载中 {{size}}",
         "done": "「{{name}}」已升级到 {{version}}",
         "failed": "升级失败：{{error}}",
         "alreadyLatest": "「{{name}}」已是最新版本。",
@@ -1771,6 +1864,46 @@
         "directFailureTitle": "未直连原因",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "连接超时",
+          "refused": "连接被拒绝",
+          "unreachable": "地址不可达",
+          "reset": "连接被重置",
+          "tls": "证书校验失败",
+          "handshake": "握手失败",
+          "revoked": "对端凭据已失效",
+          "untrusted": "对端不受信任",
+          "backoff": "{{seconds}} 秒后重试",
+          "no_endpoints": "对端未公布直连地址",
+          "ice_failed": "ICE 协商失败",
+          "no_candidates": "没有可用的 ICE 候选",
+          "dc_open_timeout": "DataChannel 建立超时",
+          "dc_closed": "DataChannel 已关闭",
+          "liveness_timeout": "对端无响应",
+          "signal_dropped": "信令丢失",
+          "signaling_state": "信令状态不一致",
+          "rtc_unavailable": "本机不支持 WebRTC",
+          "not_direct_capable": "对端不支持直连",
+          "breaker_cooling": "暂停至 {{until}}",
+          "aborted": "尝试已取消",
+          "other": "连接失败"
+        },
+        "ice": {
+          "new": "新建",
+          "connecting": "连接中",
+          "connected": "已连接",
+          "disconnected": "已断开",
+          "failed": "失败",
+          "closed": "已关闭",
+          "checking": "探测中",
+          "completed": "已完成"
+        },
+        "candidate": {
+          "host": "本地",
+          "srflx": "公网（STUN）",
+          "prflx": "对端发现",
+          "relay": "TURN 中转"
+        },
         "unknown": "未知"
       },
       "setup": {
@@ -2345,6 +2478,61 @@
           "hours": "{{n}} 小时前",
           "days": "{{n}} 天前"
         }
+      }
+    },
+    "share": {
+      "toolbar": {
+        "share": "分享",
+        "active": "分享中（在线 {{count}} 人）"
+      },
+      "dialog": {
+        "title": "分享终端",
+        "desc": "拿到链接与密码即可查看并操作该窗口，其余内容不可见。",
+        "name": "名称",
+        "namePlaceholder": "分享名称",
+        "duration": {
+          "label": "有效期",
+          "hour": "1 小时",
+          "day": "24 小时",
+          "week": "7 天",
+          "permanent": "永久",
+          "custom": "自定义",
+          "unit": {
+            "hours": "小时",
+            "days": "天"
+          }
+        },
+        "password": "密码",
+        "regenerate": "重新生成",
+        "address": "地址",
+        "noAddress": "未配置公网地址，无法创建分享。",
+        "create": "创建分享",
+        "link": "链接",
+        "copy": "复制",
+        "copied": "已复制",
+        "copyFailed": "复制失败",
+        "passwordOnce": "密码仅在创建时显示一次。",
+        "viewers": "在线 {{count}} 人",
+        "expires": "到期时间",
+        "permanent": "永久有效",
+        "remaining": {
+          "days": "剩余 {{value}} 天",
+          "hours": "剩余 {{value}} 小时",
+          "minutes": "剩余 {{value}} 分钟",
+          "expired": "已过期"
+        },
+        "stop": "终止分享",
+        "stopConfirmTitle": "终止分享？",
+        "stopConfirm": "链接立即失效，已连接的人会被断开。",
+        "created": "分享已创建",
+        "stopped": "分享已终止",
+        "loadFailed": "加载分享面板失败"
+      },
+      "error": {
+        "nameRequired": "请填写名称。",
+        "passwordTooShort": "密码至少 {{min}} 位。",
+        "noOrigin": "请选择地址。",
+        "invalidDuration": "有效期需为 365 天以内的整数。"
       }
     }
   }

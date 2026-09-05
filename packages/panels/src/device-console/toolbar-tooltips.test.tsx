@@ -26,6 +26,7 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
   return {
     model: {
       deviceId: 'd1',
+      windowId: '@1',
       resolvedPaneId: '%1',
       selectedWindow: tmuxWindow([pane('%1')]),
       isMobileViewport: false,
@@ -33,6 +34,9 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
       canInteract: true,
       watchUi: true,
       hasEnabledWatchRule: false,
+      shareUi: true,
+      hasActiveShare: false,
+      shareViewers: 0,
       onSwitchPane: () => {},
       onSplitPane: () => {},
       onToggleInputMode: () => {},
@@ -43,6 +47,7 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
     onOpenRefreshConfirm: () => {},
     onOpenWatchDialog: () => {},
     onOpenTerminalSettings: () => {},
+    onOpenShareDialog: () => {},
   };
 }
 

@@ -413,6 +413,7 @@ export const I18N_RESOURCES = {
         "general": "General",
         "devicesAndFiles": "Devices & Files",
         "nodes": "Multi-node Mesh",
+        "share": "Sharing",
         "notifications": "Notifications",
         "ai": "AI",
         "terminal": "Terminal",
@@ -877,6 +878,96 @@ export const I18N_RESOURCES = {
           "adopt": "Adopt the existing tunnel",
           "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here.",
           "dismiss": "Ignore and create a new tunnel"
+        }
+      },
+      "share": {
+        "title": "Terminal Sharing",
+        "description": "Share a terminal tab by link, and stop it at any time.",
+        "loadFailed": "Failed to load shares: {{message}}",
+        "permanent": "Permanent",
+        "expired": "Expired",
+        "time": {
+          "justNow": "Just now",
+          "minutesAgo": "{{n}} min ago",
+          "hoursAgo": "{{n}} h ago",
+          "daysAgo": "{{n}} d ago",
+          "minutesLeft": "{{n}} min left",
+          "hoursLeft": "{{n}} h left",
+          "daysLeft": "{{n}} d left"
+        },
+        "active": {
+          "title": "Active",
+          "empty": "No active shares",
+          "columns": {
+            "name": "Name",
+            "terminal": "Terminal",
+            "viewers": "Viewers",
+            "created": "Created",
+            "expires": "Expires",
+            "address": "Address",
+            "actions": "Actions"
+          },
+          "copyLink": "Copy Link",
+          "linkCopied": "Copied",
+          "stop": "Stop",
+          "stopTitle": "Stop Share",
+          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it."
+        },
+        "history": {
+          "title": "History",
+          "empty": "No past shares",
+          "columns": {
+            "name": "Name",
+            "terminal": "Terminal",
+            "ended": "Ended",
+            "duration": "Duration",
+            "log": "Log",
+            "actions": "Actions"
+          },
+          "reason": {
+            "ended": "Ended",
+            "revoked": "Stopped",
+            "expired": "Expired",
+            "windowClosed": "Window closed",
+            "deviceRemoved": "Device removed"
+          },
+          "noLog": "No log",
+          "logTruncated": "{{size}} (limit reached)",
+          "replay": "Replay",
+          "deleteTitle": "Delete Record",
+          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone."
+        },
+        "form": {
+          "title": "Share Settings",
+          "recordLogs": "Record logs",
+          "recordLogsHint": "Record output and input during a share for later replay.",
+          "retentionDays": "Log retention (days)",
+          "retentionHint": "0 keeps logs as long as the share record.",
+          "retentionError": "Enter a whole number between 0 and 3650.",
+          "logMax": "Log size limit (MB)",
+          "logMaxHint": "Recording stops at the limit; what was recorded is kept.",
+          "logMaxError": "Enter a whole number between 1 and 1024.",
+          "defaultOrigin": "Default share address",
+          "defaultOriginHint": "Preselected when creating a share. \"Automatic\" picks the best available address.",
+          "originAuto": "Automatic",
+          "originCustom": "Custom",
+          "originError": "Enter a full HTTPS address.",
+          "loadFailed": "Failed to load share settings: {{message}}",
+          "saveFailed": "Failed to save: {{message}}"
+        },
+        "replay": {
+          "title": "Log Replay",
+          "loading": "Loading log ({{loaded}}/{{total}})...",
+          "loadFailed": "Failed to load the log: {{message}}",
+          "empty": "This share has no log.",
+          "truncatedNotice": "The log hit its size limit; later output was not recorded.",
+          "play": "Play",
+          "pause": "Pause",
+          "seek": "Seek",
+          "speedValue": "{{n}}x",
+          "paneValue": "Pane {{id}}",
+          "input": "Input",
+          "inputEmpty": "None"
         }
       },
       "deviceManagement": {
@@ -1390,6 +1481,29 @@ export const I18N_RESOURCES = {
         "ruleError": "Watch \"{{name}}\" failed {{count}} times in a row and has been disabled: {{message}}",
         "paneGone": "Watch \"{{name}}\" terminal ({{paneId}}) was destroyed; the rule has been removed"
       }
+    },
+    "shareAccess": {
+      "defaultName": "Shared terminal",
+      "loading": "Loading",
+      "passwordTitle": "Enter password",
+      "password": "Password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "continue": "Continue",
+      "passwordRequired": "Password required.",
+      "passwordInvalid": "Incorrect password.",
+      "locked": "Too many attempts. Try again in {{seconds}}s.",
+      "requestFailed": "Request failed. Try again.",
+      "ended": "This share has ended.",
+      "notFound": "Share not found.",
+      "unavailable": "Share unavailable.",
+      "expiresIn": "Expires in",
+      "expired": "Expired",
+      "permanent": "Permanent",
+      "remainingDays": "{{days}}d {{hours}}h",
+      "remainingHours": "{{hours}}h {{minutes}}m",
+      "remainingMinutes": "{{minutes}}m {{seconds}}s",
+      "disconnect": "Disconnect"
     },
     "sidebar": {
       "noDevices": "No devices",
@@ -2423,6 +2537,8 @@ export const I18N_RESOURCES = {
         "stateExecuting": "Installing",
         "stateRestarting": "Restarting",
         "statePushing": "Pushing {{progress}}",
+        "stateDownloadingBytes": "Downloading {{progress}}",
+        "stateDownloadingSize": "Downloading {{size}}",
         "done": "“{{name}}” upgraded to {{version}}",
         "failed": "Upgrade failed: {{error}}",
         "alreadyLatest": "“{{name}}” is already on the latest version.",
@@ -2487,6 +2603,46 @@ export const I18N_RESOURCES = {
         "directFailureTitle": "Why not direct",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "Connection timed out",
+          "refused": "Connection refused",
+          "unreachable": "Address unreachable",
+          "reset": "Connection reset",
+          "tls": "Certificate rejected",
+          "handshake": "Handshake failed",
+          "revoked": "Peer credential revoked",
+          "untrusted": "Peer not trusted",
+          "backoff": "Retrying in {{seconds}}s",
+          "no_endpoints": "No direct address advertised",
+          "ice_failed": "ICE negotiation failed",
+          "no_candidates": "No ICE candidates",
+          "dc_open_timeout": "DataChannel open timed out",
+          "dc_closed": "DataChannel closed",
+          "liveness_timeout": "No response from peer",
+          "signal_dropped": "Signaling dropped",
+          "signaling_state": "Signaling state mismatch",
+          "rtc_unavailable": "WebRTC unavailable on this node",
+          "not_direct_capable": "Peer does not support direct links",
+          "breaker_cooling": "Paused until {{until}}",
+          "aborted": "Attempt cancelled",
+          "other": "Connection failed"
+        },
+        "ice": {
+          "new": "New",
+          "connecting": "Connecting",
+          "connected": "Connected",
+          "disconnected": "Disconnected",
+          "failed": "Failed",
+          "closed": "Closed",
+          "checking": "Checking",
+          "completed": "Completed"
+        },
+        "candidate": {
+          "host": "Local",
+          "srflx": "Public (STUN)",
+          "prflx": "Peer-discovered",
+          "relay": "TURN relay"
+        },
         "unknown": "unknown"
       },
       "setup": {
@@ -3063,6 +3219,61 @@ export const I18N_RESOURCES = {
           "days": "{{n}} d ago"
         }
       }
+    },
+    "share": {
+      "toolbar": {
+        "share": "Share",
+        "active": "Sharing · {{count}} online"
+      },
+      "dialog": {
+        "title": "Share Terminal",
+        "desc": "The link and password grant view and control of this window only.",
+        "name": "Name",
+        "namePlaceholder": "Share name",
+        "duration": {
+          "label": "Duration",
+          "hour": "1 hour",
+          "day": "24 hours",
+          "week": "7 days",
+          "permanent": "Permanent",
+          "custom": "Custom",
+          "unit": {
+            "hours": "Hours",
+            "days": "Days"
+          }
+        },
+        "password": "Password",
+        "regenerate": "Regenerate",
+        "address": "Address",
+        "noAddress": "No public address is configured, so sharing is unavailable.",
+        "create": "Create Share",
+        "link": "Link",
+        "copy": "Copy",
+        "copied": "Copied",
+        "copyFailed": "Copy failed",
+        "passwordOnce": "The password is shown only at creation.",
+        "viewers": "{{count}} online",
+        "expires": "Expires at",
+        "permanent": "Never expires",
+        "remaining": {
+          "days": "{{value}} d left",
+          "hours": "{{value}} h left",
+          "minutes": "{{value}} min left",
+          "expired": "Expired"
+        },
+        "stop": "Stop Sharing",
+        "stopConfirmTitle": "Stop sharing?",
+        "stopConfirm": "The link stops working immediately and connected viewers are disconnected.",
+        "created": "Share created",
+        "stopped": "Sharing stopped",
+        "loadFailed": "Could not load the share panel"
+      },
+      "error": {
+        "nameRequired": "Enter a name.",
+        "passwordTooShort": "Password must be at least {{min}} characters.",
+        "noOrigin": "Select an address.",
+        "invalidDuration": "Duration must be a whole number of days up to 365."
+      }
     }
   }
 } as const,
@@ -3475,6 +3686,7 @@ export const I18N_RESOURCES = {
         "general": "通用",
         "devicesAndFiles": "设备与文件",
         "nodes": "多节点互联",
+        "share": "分享",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "终端",
@@ -3939,6 +4151,96 @@ export const I18N_RESOURCES = {
           "adopt": "接管已有隧道",
           "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。",
           "dismiss": "忽略并新建隧道"
+        }
+      },
+      "share": {
+        "title": "终端分享",
+        "description": "通过链接把终端标签分享给他人，可随时终止。",
+        "loadFailed": "分享列表加载失败：{{message}}",
+        "permanent": "永久",
+        "expired": "已到期",
+        "time": {
+          "justNow": "刚刚",
+          "minutesAgo": "{{n}} 分钟前",
+          "hoursAgo": "{{n}} 小时前",
+          "daysAgo": "{{n}} 天前",
+          "minutesLeft": "剩余 {{n}} 分钟",
+          "hoursLeft": "剩余 {{n}} 小时",
+          "daysLeft": "剩余 {{n}} 天"
+        },
+        "active": {
+          "title": "进行中",
+          "empty": "暂无进行中的分享",
+          "columns": {
+            "name": "名称",
+            "terminal": "终端",
+            "viewers": "在线",
+            "created": "创建",
+            "expires": "到期",
+            "address": "地址",
+            "actions": "操作"
+          },
+          "copyLink": "复制链接",
+          "linkCopied": "已复制",
+          "stop": "终止",
+          "stopTitle": "终止分享",
+          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。"
+        },
+        "history": {
+          "title": "历史",
+          "empty": "暂无历史记录",
+          "columns": {
+            "name": "名称",
+            "terminal": "终端",
+            "ended": "结束",
+            "duration": "时长",
+            "log": "日志",
+            "actions": "操作"
+          },
+          "reason": {
+            "ended": "已结束",
+            "revoked": "已终止",
+            "expired": "已到期",
+            "windowClosed": "窗口已关闭",
+            "deviceRemoved": "设备已删除"
+          },
+          "noLog": "无日志",
+          "logTruncated": "{{size}}（已达上限）",
+          "replay": "回放",
+          "deleteTitle": "删除记录",
+          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。"
+        },
+        "form": {
+          "title": "分享设置",
+          "recordLogs": "记录日志",
+          "recordLogsHint": "记录分享期间的输出与输入，可事后回放。",
+          "retentionDays": "日志保留天数",
+          "retentionHint": "0 表示不自动清理，与分享记录同寿命。",
+          "retentionError": "请填 0 到 3650 之间的整数。",
+          "logMax": "单条日志上限（MB）",
+          "logMaxHint": "达到上限即停止记录，已记录的部分保留。",
+          "logMaxError": "请填 1 到 1024 之间的整数。",
+          "defaultOrigin": "默认分享地址",
+          "defaultOriginHint": "新建分享时预选的地址；「自动」按优先级择优。",
+          "originAuto": "自动",
+          "originCustom": "自定义",
+          "originError": "请填完整的 HTTPS 地址。",
+          "loadFailed": "分享设置加载失败：{{message}}",
+          "saveFailed": "保存失败：{{message}}"
+        },
+        "replay": {
+          "title": "日志回放",
+          "loading": "正在加载日志（{{loaded}}/{{total}}）…",
+          "loadFailed": "日志加载失败：{{message}}",
+          "empty": "该分享没有日志。",
+          "truncatedNotice": "日志已达上限，之后的内容未记录。",
+          "play": "播放",
+          "pause": "暂停",
+          "seek": "进度",
+          "speedValue": "{{n}}x",
+          "paneValue": "窗格 {{id}}",
+          "input": "输入",
+          "inputEmpty": "无"
         }
       },
       "deviceManagement": {
@@ -4452,6 +4754,29 @@ export const I18N_RESOURCES = {
         "ruleError": "监控「{{name}}」连续失败 {{count}} 次，已自动停用：{{message}}",
         "paneGone": "监控「{{name}}」的终端（{{paneId}}）已销毁，规则已自动删除"
       }
+    },
+    "shareAccess": {
+      "defaultName": "终端分享",
+      "loading": "加载中",
+      "passwordTitle": "输入密码",
+      "password": "密码",
+      "showPassword": "显示密码",
+      "hidePassword": "隐藏密码",
+      "continue": "继续",
+      "passwordRequired": "密码不能为空。",
+      "passwordInvalid": "密码不正确。",
+      "locked": "尝试次数过多，{{seconds}} 秒后可重试。",
+      "requestFailed": "请求失败，请重试。",
+      "ended": "分享已结束。",
+      "notFound": "分享不存在。",
+      "unavailable": "分享不可用。",
+      "expiresIn": "剩余",
+      "expired": "已过期",
+      "permanent": "永久",
+      "remainingDays": "{{days}} 天 {{hours}} 小时",
+      "remainingHours": "{{hours}} 小时 {{minutes}} 分",
+      "remainingMinutes": "{{minutes}} 分 {{seconds}} 秒",
+      "disconnect": "断开"
     },
     "sidebar": {
       "noDevices": "暂无设备",
@@ -5482,6 +5807,8 @@ export const I18N_RESOURCES = {
         "stateExecuting": "执行中",
         "stateRestarting": "重启中",
         "statePushing": "推送中 {{progress}}",
+        "stateDownloadingBytes": "下载中 {{progress}}",
+        "stateDownloadingSize": "下载中 {{size}}",
         "done": "「{{name}}」已升级到 {{version}}",
         "failed": "升级失败：{{error}}",
         "alreadyLatest": "「{{name}}」已是最新版本。",
@@ -5545,6 +5872,46 @@ export const I18N_RESOURCES = {
         "directFailureTitle": "未直连原因",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "连接超时",
+          "refused": "连接被拒绝",
+          "unreachable": "地址不可达",
+          "reset": "连接被重置",
+          "tls": "证书校验失败",
+          "handshake": "握手失败",
+          "revoked": "对端凭据已失效",
+          "untrusted": "对端不受信任",
+          "backoff": "{{seconds}} 秒后重试",
+          "no_endpoints": "对端未公布直连地址",
+          "ice_failed": "ICE 协商失败",
+          "no_candidates": "没有可用的 ICE 候选",
+          "dc_open_timeout": "DataChannel 建立超时",
+          "dc_closed": "DataChannel 已关闭",
+          "liveness_timeout": "对端无响应",
+          "signal_dropped": "信令丢失",
+          "signaling_state": "信令状态不一致",
+          "rtc_unavailable": "本机不支持 WebRTC",
+          "not_direct_capable": "对端不支持直连",
+          "breaker_cooling": "暂停至 {{until}}",
+          "aborted": "尝试已取消",
+          "other": "连接失败"
+        },
+        "ice": {
+          "new": "新建",
+          "connecting": "连接中",
+          "connected": "已连接",
+          "disconnected": "已断开",
+          "failed": "失败",
+          "closed": "已关闭",
+          "checking": "探测中",
+          "completed": "已完成"
+        },
+        "candidate": {
+          "host": "本地",
+          "srflx": "公网（STUN）",
+          "prflx": "对端发现",
+          "relay": "TURN 中转"
+        },
         "unknown": "未知"
       },
       "setup": {
@@ -6120,6 +6487,61 @@ export const I18N_RESOURCES = {
           "days": "{{n}} 天前"
         }
       }
+    },
+    "share": {
+      "toolbar": {
+        "share": "分享",
+        "active": "分享中（在线 {{count}} 人）"
+      },
+      "dialog": {
+        "title": "分享终端",
+        "desc": "拿到链接与密码即可查看并操作该窗口，其余内容不可见。",
+        "name": "名称",
+        "namePlaceholder": "分享名称",
+        "duration": {
+          "label": "有效期",
+          "hour": "1 小时",
+          "day": "24 小时",
+          "week": "7 天",
+          "permanent": "永久",
+          "custom": "自定义",
+          "unit": {
+            "hours": "小时",
+            "days": "天"
+          }
+        },
+        "password": "密码",
+        "regenerate": "重新生成",
+        "address": "地址",
+        "noAddress": "未配置公网地址，无法创建分享。",
+        "create": "创建分享",
+        "link": "链接",
+        "copy": "复制",
+        "copied": "已复制",
+        "copyFailed": "复制失败",
+        "passwordOnce": "密码仅在创建时显示一次。",
+        "viewers": "在线 {{count}} 人",
+        "expires": "到期时间",
+        "permanent": "永久有效",
+        "remaining": {
+          "days": "剩余 {{value}} 天",
+          "hours": "剩余 {{value}} 小时",
+          "minutes": "剩余 {{value}} 分钟",
+          "expired": "已过期"
+        },
+        "stop": "终止分享",
+        "stopConfirmTitle": "终止分享？",
+        "stopConfirm": "链接立即失效，已连接的人会被断开。",
+        "created": "分享已创建",
+        "stopped": "分享已终止",
+        "loadFailed": "加载分享面板失败"
+      },
+      "error": {
+        "nameRequired": "请填写名称。",
+        "passwordTooShort": "密码至少 {{min}} 位。",
+        "noOrigin": "请选择地址。",
+        "invalidDuration": "有效期需为 365 天以内的整数。"
+      }
     }
   }
 } as const,
@@ -6532,6 +6954,7 @@ export const I18N_RESOURCES = {
         "general": "一般",
         "devicesAndFiles": "デバイスとファイル",
         "nodes": "マルチノード連携",
+        "share": "共有",
         "notifications": "通知",
         "ai": "AI",
         "terminal": "ターミナル",
@@ -6996,6 +7419,96 @@ export const I18N_RESOURCES = {
           "adopt": "既存のトンネルを引き継ぐ",
           "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。",
           "dismiss": "無視して新規作成"
+        }
+      },
+      "share": {
+        "title": "ターミナル共有",
+        "description": "リンクでターミナルタブを共有します。いつでも停止できます。",
+        "loadFailed": "共有一覧の読み込みに失敗しました：{{message}}",
+        "permanent": "無期限",
+        "expired": "期限切れ",
+        "time": {
+          "justNow": "たった今",
+          "minutesAgo": "{{n}} 分前",
+          "hoursAgo": "{{n}} 時間前",
+          "daysAgo": "{{n}} 日前",
+          "minutesLeft": "残り {{n}} 分",
+          "hoursLeft": "残り {{n}} 時間",
+          "daysLeft": "残り {{n}} 日"
+        },
+        "active": {
+          "title": "進行中",
+          "empty": "進行中の共有はありません",
+          "columns": {
+            "name": "名前",
+            "terminal": "ターミナル",
+            "viewers": "接続数",
+            "created": "作成",
+            "expires": "期限",
+            "address": "アドレス",
+            "actions": "操作"
+          },
+          "copyLink": "リンクをコピー",
+          "linkCopied": "コピーしました",
+          "stop": "停止",
+          "stopTitle": "共有を停止",
+          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。"
+        },
+        "history": {
+          "title": "履歴",
+          "empty": "履歴はありません",
+          "columns": {
+            "name": "名前",
+            "terminal": "ターミナル",
+            "ended": "終了",
+            "duration": "時間",
+            "log": "ログ",
+            "actions": "操作"
+          },
+          "reason": {
+            "ended": "終了",
+            "revoked": "停止済み",
+            "expired": "期限切れ",
+            "windowClosed": "ウィンドウ終了",
+            "deviceRemoved": "デバイス削除"
+          },
+          "noLog": "ログなし",
+          "logTruncated": "{{size}}（上限到達）",
+          "replay": "再生",
+          "deleteTitle": "記録を削除",
+          "deleteConfirm": "「{{name}}」を削除するとログも削除され、元に戻せません。"
+        },
+        "form": {
+          "title": "共有設定",
+          "recordLogs": "ログを記録",
+          "recordLogsHint": "共有中の出力と入力を記録し、後から再生できます。",
+          "retentionDays": "ログ保持日数",
+          "retentionHint": "0 は自動削除なし（共有記録と同じ寿命）。",
+          "retentionError": "0 から 3650 の整数を入力してください。",
+          "logMax": "ログ上限（MB）",
+          "logMaxHint": "上限に達すると記録を停止し、記録済みの分は残ります。",
+          "logMaxError": "1 から 1024 の整数を入力してください。",
+          "defaultOrigin": "既定の共有アドレス",
+          "defaultOriginHint": "共有作成時に選ばれるアドレス。「自動」は優先度順に選びます。",
+          "originAuto": "自動",
+          "originCustom": "カスタム",
+          "originError": "完全な HTTPS アドレスを入力してください。",
+          "loadFailed": "共有設定の読み込みに失敗しました：{{message}}",
+          "saveFailed": "保存に失敗しました：{{message}}"
+        },
+        "replay": {
+          "title": "ログ再生",
+          "loading": "ログを読み込み中（{{loaded}}/{{total}}）…",
+          "loadFailed": "ログの読み込みに失敗しました：{{message}}",
+          "empty": "この共有にログはありません。",
+          "truncatedNotice": "ログが上限に達したため、以降は記録されていません。",
+          "play": "再生",
+          "pause": "一時停止",
+          "seek": "シーク",
+          "speedValue": "{{n}}x",
+          "paneValue": "ペイン {{id}}",
+          "input": "入力",
+          "inputEmpty": "なし"
         }
       },
       "deviceManagement": {
@@ -7509,6 +8022,29 @@ export const I18N_RESOURCES = {
         "ruleError": "モニター「{{name}}」が {{count}} 回連続で失敗したため自動停止しました：{{message}}",
         "paneGone": "モニター「{{name}}」のターミナル（{{paneId}}）が破棄されたため、ルールを削除しました"
       }
+    },
+    "shareAccess": {
+      "defaultName": "共有ターミナル",
+      "loading": "読み込み中",
+      "passwordTitle": "パスワードを入力",
+      "password": "パスワード",
+      "showPassword": "パスワードを表示",
+      "hidePassword": "パスワードを非表示",
+      "continue": "続行",
+      "passwordRequired": "パスワードを入力してください。",
+      "passwordInvalid": "パスワードが正しくありません。",
+      "locked": "試行回数が多すぎます。{{seconds}} 秒後に再試行できます。",
+      "requestFailed": "リクエストに失敗しました。再試行してください。",
+      "ended": "この共有は終了しました。",
+      "notFound": "共有が見つかりません。",
+      "unavailable": "共有を利用できません。",
+      "expiresIn": "残り",
+      "expired": "期限切れ",
+      "permanent": "無期限",
+      "remainingDays": "{{days}}日{{hours}}時間",
+      "remainingHours": "{{hours}}時間{{minutes}}分",
+      "remainingMinutes": "{{minutes}}分{{seconds}}秒",
+      "disconnect": "切断"
     },
     "sidebar": {
       "noDevices": "デバイスがありません",
@@ -8539,6 +9075,8 @@ export const I18N_RESOURCES = {
         "stateExecuting": "適用中",
         "stateRestarting": "再起動中",
         "statePushing": "送信中 {{progress}}",
+        "stateDownloadingBytes": "ダウンロード中 {{progress}}",
+        "stateDownloadingSize": "ダウンロード中 {{size}}",
         "done": "「{{name}}」を {{version}} にアップグレードしました",
         "failed": "アップグレードに失敗しました：{{error}}",
         "alreadyLatest": "「{{name}}」はすでに最新バージョンです。",
@@ -8602,6 +9140,46 @@ export const I18N_RESOURCES = {
         "directFailureTitle": "直接接続できない理由",
         "directFailureWs": "WebSocket",
         "directFailureDc": "WebRTC",
+        "failure": {
+          "timeout": "接続タイムアウト",
+          "refused": "接続拒否",
+          "unreachable": "アドレス到達不能",
+          "reset": "接続リセット",
+          "tls": "証明書エラー",
+          "handshake": "ハンドシェイク失敗",
+          "revoked": "対向の資格情報が失効",
+          "untrusted": "対向が未信頼",
+          "backoff": "{{seconds}} 秒後に再試行",
+          "no_endpoints": "直接接続アドレス未公開",
+          "ice_failed": "ICE ネゴシエーション失敗",
+          "no_candidates": "ICE 候補なし",
+          "dc_open_timeout": "DataChannel 確立タイムアウト",
+          "dc_closed": "DataChannel 切断",
+          "liveness_timeout": "対向から応答なし",
+          "signal_dropped": "シグナリング消失",
+          "signaling_state": "シグナリング状態の不一致",
+          "rtc_unavailable": "このマシンで WebRTC 利用不可",
+          "not_direct_capable": "対向がダイレクト接続に非対応",
+          "breaker_cooling": "{{until}} まで停止中",
+          "aborted": "試行を中止",
+          "other": "接続失敗"
+        },
+        "ice": {
+          "new": "新規",
+          "connecting": "接続中",
+          "connected": "接続済み",
+          "disconnected": "切断",
+          "failed": "失敗",
+          "closed": "終了",
+          "checking": "確認中",
+          "completed": "完了"
+        },
+        "candidate": {
+          "host": "ローカル",
+          "srflx": "パブリック（STUN）",
+          "prflx": "対向検出",
+          "relay": "TURN 中継"
+        },
         "unknown": "不明"
       },
       "setup": {
@@ -8950,7 +9528,7 @@ export const I18N_RESOURCES = {
           "heartbeat-lost": "ハートビートが途絶えました。再接続中",
           "kicked": "トークンが失効しました。接続パスワードを入力し直してください",
           "dns": "ドメイン名を解決できません",
-          "refused": "接続が拒否されました",
+          "refused": "接続拒否",
           "tls": "TLS ハンドシェイクに失敗しました",
           "protocol": "プロトコルが非互換です。中継か本機を更新してください",
           "unknown": "接続に失敗しました"
@@ -9176,6 +9754,61 @@ export const I18N_RESOURCES = {
           "hours": "{{n}} 時間前",
           "days": "{{n}} 日前"
         }
+      }
+    },
+    "share": {
+      "toolbar": {
+        "share": "共有",
+        "active": "共有中・{{count}} 人接続中"
+      },
+      "dialog": {
+        "title": "ターミナルを共有",
+        "desc": "リンクとパスワードがあれば、このウィンドウのみ表示・操作できます。",
+        "name": "名前",
+        "namePlaceholder": "共有名",
+        "duration": {
+          "label": "有効期限",
+          "hour": "1 時間",
+          "day": "24 時間",
+          "week": "7 日",
+          "permanent": "無期限",
+          "custom": "カスタム",
+          "unit": {
+            "hours": "時間",
+            "days": "日"
+          }
+        },
+        "password": "パスワード",
+        "regenerate": "再生成",
+        "address": "アドレス",
+        "noAddress": "公開アドレスが未設定のため、共有できません。",
+        "create": "共有を作成",
+        "link": "リンク",
+        "copy": "コピー",
+        "copied": "コピーしました",
+        "copyFailed": "コピーに失敗しました",
+        "passwordOnce": "パスワードは作成時のみ表示されます。",
+        "viewers": "{{count}} 人接続中",
+        "expires": "有効期限",
+        "permanent": "無期限",
+        "remaining": {
+          "days": "残り {{value}} 日",
+          "hours": "残り {{value}} 時間",
+          "minutes": "残り {{value}} 分",
+          "expired": "期限切れ"
+        },
+        "stop": "共有を停止",
+        "stopConfirmTitle": "共有を停止しますか？",
+        "stopConfirm": "リンクは直ちに無効になり、接続中のユーザーは切断されます。",
+        "created": "共有を作成しました",
+        "stopped": "共有を停止しました",
+        "loadFailed": "共有パネルの読み込みに失敗しました"
+      },
+      "error": {
+        "nameRequired": "名前を入力してください。",
+        "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
+        "noOrigin": "アドレスを選択してください。",
+        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。"
       }
     }
   }

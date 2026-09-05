@@ -61,9 +61,7 @@ describe('「中继」标签的门禁', () => {
     expect(html).toContain('data-testid="settings-tab-relay"');
     expect(html).toContain('relay.admin.tabLabel');
     expect(html.indexOf('settings-tab-relay')).toBeGreaterThan(html.indexOf('settings-tab-nodes'));
-    expect(html.indexOf('settings-tab-relay')).toBeLessThan(
-      html.indexOf('settings-tab-notifications')
-    );
+    expect(html.indexOf('settings-tab-relay')).toBeLessThan(html.indexOf('settings-tab-share'));
   });
 
   test('未登录（401）同样不摆标签', () => {
@@ -78,9 +76,9 @@ describe('`?tab=relay` 深链', () => {
   });
 
   test('不进空闲预热队列：绝大多数机器不是中继，不该白拉这块 chunk', () => {
-    // 常规标签共 7 个，各自排出 6 个待预热；站在「中继」上时那 7 个一个不少——
+    // 常规标签共 8 个，各自排出 7 个待预热；站在「中继」上时那 8 个一个不少——
     // 说明预热池里从来没有中继自己。
-    expect(chunkPreloadOrder('general')).toHaveLength(6);
-    expect(chunkPreloadOrder('relay')).toHaveLength(7);
+    expect(chunkPreloadOrder('general')).toHaveLength(7);
+    expect(chunkPreloadOrder('relay')).toHaveLength(8);
   });
 });

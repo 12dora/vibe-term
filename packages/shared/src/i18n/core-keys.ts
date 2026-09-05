@@ -22,6 +22,7 @@ export const I18N_CORE_KEY_PREFIXES: readonly string[] = [
   'settings.theme',
   'settings.themeDark',
   'settings.themeLight',
+  'shareAccess',
   'sidebar',
   'terminal',
   'watch',

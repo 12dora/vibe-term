@@ -261,6 +261,29 @@
         "paneGone": "监控「{{name}}」的终端（{{paneId}}）已销毁，规则已自动删除"
       }
     },
+    "shareAccess": {
+      "defaultName": "终端分享",
+      "loading": "加载中",
+      "passwordTitle": "输入密码",
+      "password": "密码",
+      "showPassword": "显示密码",
+      "hidePassword": "隐藏密码",
+      "continue": "继续",
+      "passwordRequired": "密码不能为空。",
+      "passwordInvalid": "密码不正确。",
+      "locked": "尝试次数过多，{{seconds}} 秒后可重试。",
+      "requestFailed": "请求失败，请重试。",
+      "ended": "分享已结束。",
+      "notFound": "分享不存在。",
+      "unavailable": "分享不可用。",
+      "expiresIn": "剩余",
+      "expired": "已过期",
+      "permanent": "永久",
+      "remainingDays": "{{days}} 天 {{hours}} 小时",
+      "remainingHours": "{{hours}} 小时 {{minutes}} 分",
+      "remainingMinutes": "{{minutes}} 分 {{seconds}} 秒",
+      "disconnect": "断开"
+    },
     "sidebar": {
       "noDevices": "暂无设备",
       "manageDevices": "管理设备",

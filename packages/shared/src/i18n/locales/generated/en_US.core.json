@@ -261,6 +261,29 @@
         "paneGone": "Watch \"{{name}}\" terminal ({{paneId}}) was destroyed; the rule has been removed"
       }
     },
+    "shareAccess": {
+      "defaultName": "Shared terminal",
+      "loading": "Loading",
+      "passwordTitle": "Enter password",
+      "password": "Password",
+      "showPassword": "Show password",
+      "hidePassword": "Hide password",
+      "continue": "Continue",
+      "passwordRequired": "Password required.",
+      "passwordInvalid": "Incorrect password.",
+      "locked": "Too many attempts. Try again in {{seconds}}s.",
+      "requestFailed": "Request failed. Try again.",
+      "ended": "This share has ended.",
+      "notFound": "Share not found.",
+      "unavailable": "Share unavailable.",
+      "expiresIn": "Expires in",
+      "expired": "Expired",
+      "permanent": "Permanent",
+      "remainingDays": "{{days}}d {{hours}}h",
+      "remainingHours": "{{hours}}h {{minutes}}m",
+      "remainingMinutes": "{{minutes}}m {{seconds}}s",
+      "disconnect": "Disconnect"
+    },
     "sidebar": {
       "noDevices": "No devices",
       "manageDevices": "Manage Devices",

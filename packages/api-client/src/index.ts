@@ -11,6 +11,7 @@ export * from './llm-providers';
 export * from './node-url';
 export * from './relay/admin-api';
 export * from './relay/tenant-api';
+export * from './share';
 export * from './site';
 export * from './domain-access';
 export * from './terminal-shortcuts';

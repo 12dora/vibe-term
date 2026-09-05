@@ -39,6 +39,7 @@ function rule(enabled: boolean): WatchRuleDto {
 function model(overrides: Partial<DeviceConsoleActionsModel> = {}): DeviceConsoleActionsModel {
   return {
     deviceId: 'd1',
+    windowId: '@1',
     resolvedPaneId: '%1',
     selectedWindow: tmuxWindow([pane('%1')]),
     isMobileViewport: false,
@@ -46,6 +47,9 @@ function model(overrides: Partial<DeviceConsoleActionsModel> = {}): DeviceConsol
     canInteract: true,
     watchUi: true,
     hasEnabledWatchRule: false,
+    shareUi: true,
+    hasActiveShare: false,
+    shareViewers: 0,
     onSwitchPane: () => {},
     onSplitPane: () => {},
     onToggleInputMode: () => {},
@@ -61,6 +65,7 @@ function toolbarInput(overrides: Partial<DeviceConsoleActionsModel> = {}): Toolb
     onOpenRefreshConfirm: () => {},
     onOpenWatchDialog: () => {},
     onOpenTerminalSettings: () => {},
+    onOpenShareDialog: () => {},
   };
 }
 
@@ -108,6 +113,7 @@ describe('buildToolbarButtons', () => {
       'split-down-button',
       undefined,
       'terminal-input-mode-toggle',
+      'share-open-button',
       'watch-open-button',
       'keyboard-behavior-open-button',
     ]);
@@ -149,6 +155,41 @@ describe('buildToolbarButtons', () => {
     ).toBe(true);
   });
 
+  test('drops the share button when the runtime is a share viewer', () => {
+    expect(
+      findButton(buildToolbarButtons(toolbarInput({ shareUi: false })), 'share')
+    ).toBeUndefined();
+  });
+
+  test('disables share without a device or window', () => {
+    expect(
+      findButton(buildToolbarButtons(toolbarInput({ windowId: undefined })), 'share')?.disabled
+    ).toBe(true);
+    expect(
+      findButton(buildToolbarButtons(toolbarInput({ deviceId: undefined })), 'share')?.disabled
+    ).toBe(true);
+    expect(findButton(buildToolbarButtons(toolbarInput()), 'share')?.disabled).toBe(false);
+  });
+
+  test('highlights share and shows the viewer count only while a share is active', () => {
+    const idle = findButton(buildToolbarButtons(toolbarInput()), 'share');
+    expect(idle?.active).toBe(false);
+    expect(idle?.badge?.visible).toBe(false);
+    expect(idle?.label).toBe('share.toolbar.share');
+
+    const active = findButton(
+      buildToolbarButtons(toolbarInput({ hasActiveShare: true, shareViewers: 3 })),
+      'share'
+    );
+    expect(active?.active).toBe(true);
+    expect(active?.badge).toEqual({
+      testId: 'share-active-indicator',
+      visible: true,
+      count: 3,
+    });
+    expect(active?.label).toBe('share.toolbar.active');
+  });
+
   test('labels the input-mode button by the target mode', () => {
     expect(findButton(buildToolbarButtons(toolbarInput()), 'input-mode')?.label).toBe(
       'nav.switchToEditor'
@@ -169,6 +210,7 @@ describe('buildToolbarButtons', () => {
       onOpenRefreshConfirm: () => calls.push('refresh'),
       onOpenWatchDialog: () => calls.push('watch'),
       onOpenTerminalSettings: () => calls.push('terminal-settings'),
+      onOpenShareDialog: () => calls.push('share'),
     };
 
     for (const button of buildToolbarButtons(input)) button.onClick();
@@ -178,6 +220,7 @@ describe('buildToolbarButtons', () => {
       'split:down',
       'refresh',
       'input-mode',
+      'share',
       'watch',
       'terminal-settings',
     ]);

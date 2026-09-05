@@ -9,6 +9,7 @@ import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
 import { useIsMobile } from '@tmex/ui';
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
+import { useShareStatus } from '../share/use-share-status';
 
 export type InputMode = 'direct' | 'editor';
 export type SplitDirection = 'right' | 'down';
@@ -27,6 +28,7 @@ export interface ConsoleCommands {
 
 export interface DeviceConsoleActionsModel extends ConsoleCommands {
   deviceId?: string;
+  windowId?: string;
   resolvedPaneId?: string;
   selectedWindow?: TmuxWindow;
   isMobileViewport: boolean;
@@ -34,6 +36,10 @@ export interface DeviceConsoleActionsModel extends ConsoleCommands {
   canInteract: boolean;
   watchUi: boolean;
   hasEnabledWatchRule: boolean;
+  /** 分享入口是否可见：被分享人视角的 runtime 里一律关掉 */
+  shareUi: boolean;
+  hasActiveShare: boolean;
+  shareViewers: number;
   onToggleInputMode: () => void;
 }
 
@@ -153,10 +159,14 @@ export function useDeviceConsoleActions({
 
   const watchUi = runtime.features.watchUi;
   const hasWatchRule = useWatchRuleIndicator(deviceId, resolvedPaneId, watchUi);
+  // 被分享人视角的 runtime 不给分享入口：他自己就是被分享的那一方
+  const shareUi = !runtime.features.shareViewer;
+  const shareStatus = useShareStatus(deviceId, windowId, shareUi);
 
   return {
     ...commands,
     deviceId,
+    windowId,
     resolvedPaneId,
     selectedWindow,
     isMobileViewport,
@@ -164,6 +174,9 @@ export function useDeviceConsoleActions({
     canInteract: Boolean(resolvedPaneId && deviceConnected),
     watchUi,
     hasEnabledWatchRule: hasWatchRule,
+    shareUi,
+    hasActiveShare: shareStatus.activeShare !== null,
+    shareViewers: shareStatus.viewers,
     onToggleInputMode,
   };
 }

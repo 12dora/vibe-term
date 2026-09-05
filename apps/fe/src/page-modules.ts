@@ -8,6 +8,7 @@ export const devicePageModule: PageModuleLoader = () => import('./pages/DevicePa
 export const settingsPageModule: PageModuleLoader = () => import('./pages/SettingsPage');
 export const filePageModule: PageModuleLoader = () => import('./pages/FilePage');
 export const loginPageModule: PageModuleLoader = () => import('./pages/LoginPage');
+export const sharePageModule: PageModuleLoader = () => import('./pages/SharePage');
 
 /**
  * 首帧之后空闲预热的路由：只放侧栏一定会点到的设备页与设置页。

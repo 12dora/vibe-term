@@ -28,6 +28,7 @@ const ALL_TABS = [
   'general',
   'devicesAndFiles',
   'nodes',
+  'share',
   'notifications',
   'ai',
   'terminal',
@@ -48,6 +49,12 @@ describe('tabPrefetchSpecs', () => {
   test('远程访问标签预取隧道状态（首屏被它整块挡住）', () => {
     const specs = tabPrefetchSpecs('remoteAccess', apiClient);
     expect(specs.map((s) => s.queryKey)).toEqual([['tunnel-status']]);
+  });
+
+  test('分享标签预取分享列表（首屏两张表都等它）', () => {
+    const specs = tabPrefetchSpecs('share', apiClient);
+    expect(specs.map((s) => s.queryKey)).toEqual([['share', null, null]]);
+    expect(specs[0].staleTime).toBeUndefined();
   });
 
   test('节点标签预取本机运行态与 TLS 状态', () => {

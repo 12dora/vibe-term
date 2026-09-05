@@ -19,6 +19,7 @@ describe('runtime features resolution', () => {
       watchUi: true,
       filesUi: true,
       hostManagedNotifications: false,
+      shareViewer: false,
     });
   });
 
@@ -47,5 +48,13 @@ describe('runtime features resolution', () => {
     expect(core.features.filesUi).toBe(false);
     expect(core.features.agentUi).toBe(true);
     expect(core.features.watchUi).toBe(true);
+  });
+
+  test('shareViewer defaults to false and can be switched on alone', () => {
+    expect(resolveRuntimeCore().features.shareViewer).toBe(false);
+    const core = resolveRuntimeCore({ features: { shareViewer: true } });
+    expect(core.features.shareViewer).toBe(true);
+    expect(core.features.agentUi).toBe(true);
+    expect(core.features.filesUi).toBe(true);
   });
 });
