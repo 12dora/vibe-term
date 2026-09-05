@@ -93,6 +93,7 @@ import {
 } from './rtc';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
+import { decodeTerminalStreamClose } from './stream-close-code';
 import { openHttpStream, openWsStream } from './stream-targets';
 import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
 import { UplinkClient, type UplinkWsFactory } from './uplink-client';
@@ -420,6 +421,15 @@ async function openAdaptedWsStream(
       } catch {}
     }
   };
+  // RST 的 reason 会随帧到达；只有它能区分「节点端主动终止」和链路抖动。
+  const settledTerminalClose = async (): Promise<{ code: number; reason: string } | null> => {
+    const info = await Promise.race([
+      opened.stream.closed.catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), 0)),
+    ]);
+    if (!info || info.reason !== 'rst') return null;
+    return decodeTerminalStreamClose(info.message);
+  };
   const reader = opened.readable.getReader();
   void (async () => {
     try {
@@ -430,10 +440,14 @@ async function openAdaptedWsStream(
       }
       notifyClose({});
     } catch {
-      notifyClose({ code: 1011, reason: 'stream-error' });
+      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'stream-error' });
     }
   })();
-  opened.stream.onAbort(() => notifyClose({ code: 1011, reason: 'reset' }));
+  opened.stream.onAbort(() => {
+    void (async () => {
+      notifyClose((await settledTerminalClose()) ?? { code: 1011, reason: 'reset' });
+    })();
+  });
   return {
     muxStreamId: opened.stream.id,
     send(bytes) {

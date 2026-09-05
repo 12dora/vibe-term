@@ -111,3 +111,20 @@ describe('serveFrontend', () => {
     expect(again.status).toBe(304);
   });
 });
+
+describe('SPA fallback', () => {
+  test('/s/:id 与 /n/:node/s/:id 与 /n/:node/devices 一样回 index.html', async () => {
+    const root = await makeStaticRoot();
+    for (const path of [
+      '/devices',
+      '/n/aabbccddeeff00112233445566778899/devices',
+      '/s/AbCd1234',
+      '/n/aabbccddeeff00112233445566778899/s/AbCd1234',
+    ]) {
+      const res = await serveFrontend(new Request(`http://127.0.0.1${path}`), root);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('Content-Type')).toContain('text/html');
+      expect(await res.text()).toBe('<html>ok</html>');
+    }
+  });
+});

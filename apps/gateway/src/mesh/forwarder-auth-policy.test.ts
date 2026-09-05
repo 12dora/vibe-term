@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { AUTH_LOGIN_PATH, AUTH_SKIP, applyAuthPolicy, peekJsonCode } from './forwarder-auth-policy';
 import { AUTH_401_BODY_LIMIT, X_TMEX_SESSION_RENEWED, X_TMEX_SET_SESSION } from './mesh-deps';
+import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
 
 const OTHER = 'bb'.repeat(16);
 
@@ -241,5 +242,53 @@ describe('peekJsonCode', () => {
     );
     expect(await peekJsonCode(new Response('not-json'))).toBe('');
     expect(await peekJsonCode(new Response(JSON.stringify(['x'])))).toBe('');
+  });
+});
+
+describe('applyAuthPolicy 分享凭证', () => {
+  test('x-tmex-set-share 翻成 tmex_sh_<node> cookie 并抹掉内部头', async () => {
+    const upstream = new Response(JSON.stringify({ ok: true }), {
+      headers: {
+        'content-type': 'application/json',
+        [X_TMEX_SET_SHARE]: 'sh-1.secret',
+        [X_TMEX_SET_SHARE_MAX_AGE]: '86400',
+      },
+    });
+    const headers = headersFrom(upstream);
+    headers.set(X_TMEX_SET_SHARE, 'sh-1.secret');
+    headers.set(X_TMEX_SET_SHARE_MAX_AGE, '86400');
+    const res = await applyAuthPolicy(
+      new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/login`, { method: 'POST' }),
+      headers,
+      upstream,
+      OTHER,
+      true
+    );
+    expect(res).toBeNull();
+    const cookie = headers.get('set-cookie') ?? '';
+    expect(cookie).toContain(`tmex_sh_${OTHER}=sh-1.secret`);
+    expect(cookie).toContain('Max-Age=86400');
+    expect(cookie).toContain('HttpOnly');
+    expect(headers.get(X_TMEX_SET_SHARE)).toBeNull();
+    expect(headers.get(X_TMEX_SET_SHARE_MAX_AGE)).toBeNull();
+  });
+
+  test('x-tmex-clear-share 写过期 cookie', async () => {
+    const upstream = new Response('{}', {
+      headers: { 'content-type': 'application/json', [X_TMEX_CLEAR_SHARE]: '1' },
+    });
+    const headers = headersFrom(upstream);
+    headers.set(X_TMEX_CLEAR_SHARE, '1');
+    await applyAuthPolicy(
+      new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/logout`, { method: 'POST' }),
+      headers,
+      upstream,
+      OTHER,
+      true
+    );
+    const cookie = headers.get('set-cookie') ?? '';
+    expect(cookie).toContain(`tmex_sh_${OTHER}=;`);
+    expect(cookie).toContain('Max-Age=0');
+    expect(headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
   });
 });

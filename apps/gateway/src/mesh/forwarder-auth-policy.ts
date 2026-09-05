@@ -12,6 +12,7 @@ import {
   parseSetSessionHeader,
 } from './mesh-deps';
 import { isHttps } from './session-middleware';
+import { applyShareCookieHeaders } from './share-credential';
 
 export const AUTH_SKIP = AUTH_LOGIN_PUBLIC_PATHS;
 export const AUTH_CHALLENGE_PATHS = new Set([
@@ -36,6 +37,7 @@ export async function applyAuthPolicy(
 ): Promise<Response | null> {
   const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
   const secure = isHttps(req);
+  applyShareCookieHeaders(headers, upstream, nodeId, secure);
   const presented = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
   if (parsed) {
     appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });

@@ -1,3 +1,4 @@
+import type { ShareScope } from '@tmex/shared/share';
 import { agentSupervisor } from './agent/supervisor';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
@@ -22,6 +23,7 @@ import { createMessagingRuntimeHooks, setMessagingMeshRuntime } from './messagin
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
+import { getShareService } from './share';
 import { telegramService } from './telegram/service';
 import { tmuxRuntimeRegistry } from './tmux-client/registry';
 import { primeLocalShellPath } from './tmux/local-shell-path';
@@ -44,6 +46,9 @@ interface GatewayRuntimeOptions {
   liveStart?: () => Promise<void>;
 }
 
+/** 分享连接以只读的 window 作用域开启会话；常规连接不带该项。 */
+export type GatewayOpenOptions = { shareScope?: ShareScope };
+
 export interface GatewayRuntime {
   readonly port: number;
   readonly db: AuthDb;
@@ -56,7 +61,7 @@ export interface GatewayRuntime {
   websocket: {
     backpressureLimit: number;
     closeOnBackpressureLimit: boolean;
-    open: (ws: Bun.ServerWebSocket<unknown>) => void;
+    open: (ws: Bun.ServerWebSocket<unknown>, opts?: GatewayOpenOptions) => void;
     message: (ws: Bun.ServerWebSocket<unknown>, message: string | Buffer) => void;
     drain: (ws: Bun.ServerWebSocket<unknown>) => void;
     close: (ws: Bun.ServerWebSocket<unknown>, code: number, reason: string) => void;
@@ -203,6 +208,7 @@ export async function createGatewayRuntime(
     renamePane: (deviceId, paneId, name) => wsServer.renamePane(deviceId, paneId, name),
     getCustomNames: (deviceId) => wsServer.getCustomNames(deviceId),
   });
+  getShareService().startSweeper();
   await liveStart();
 
   return {
@@ -240,8 +246,8 @@ export async function createGatewayRuntime(
     websocket: {
       backpressureLimit: GATEWAY_WS_BACKPRESSURE_HARD_LIMIT_BYTES,
       closeOnBackpressureLimit: true,
-      open(ws) {
-        wsServer.handleOpen(ws as Bun.ServerWebSocket<GatewaySocketData>);
+      open(ws, opts) {
+        wsServer.handleOpen(ws as Bun.ServerWebSocket<GatewaySocketData>, opts);
       },
       message(ws, message) {
         wsServer.handleMessage(ws as Bun.ServerWebSocket<GatewaySocketData>, message);
@@ -279,6 +285,7 @@ export async function createGatewayRuntime(
       registerEventNotifyBroadcaster(null);
       registerTreeOverlayBridge(null);
       wsServer.closeAll();
+      await getShareService().stop();
       await tunnelManager.stop();
       await watchService.stop();
       await agentSupervisor.stop();

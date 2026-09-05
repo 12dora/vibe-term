@@ -1,6 +1,7 @@
 import { type BorshSessionState, createBorshSessionState } from './borsh/codec-borsh';
 import { type SessionState, createSessionState } from './borsh/session-state';
 import type { Carrier } from './carrier';
+import type { ShareScope } from './share-scope';
 import type { ViewportClaim } from './viewport-policy';
 
 export type CarrierRole = 'primary' | 'direct';
@@ -16,6 +17,8 @@ export class GatewaySession {
   direct: Carrier | null = null;
   activeCarrier: Carrier;
   closed = false;
+  /** 非空即「分享连接」：只看得到 scope 指定的 window，出入站都按 scope 过滤。 */
+  shareScope?: ShareScope;
   onCarrierDetached: ((carrier: Carrier) => void) | null = null;
   onDirectFallback: (() => void) | null = null;
   readonly viewportClaims = new Map<string, ViewportClaim>();

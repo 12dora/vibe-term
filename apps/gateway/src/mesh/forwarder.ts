@@ -1,6 +1,7 @@
 import { wsBorsh } from '@tmex/shared';
 import { readJsonObjectBody } from '../api/http';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { isShareAccessPath } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
 import {
@@ -36,6 +37,8 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { jsonError } from './session-middleware';
+import { readShareCookie, shareAuthValue } from './share-credential';
+import { isTerminalStreamClose } from './stream-close-code';
 import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 type ForwarderDeps = {
@@ -71,6 +74,27 @@ function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): num
   if (requested === undefined) return idempotent ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
   if (!Number.isFinite(requested)) return 1;
   return Math.min(Math.max(Math.trunc(requested), 1), HTTP_FAILOVER_MAX_ATTEMPTS);
+}
+
+/**
+ * 转发到目标节点的凭证：分享公开面用 `share:<token>`（`tmex_sh_<nodeId>` cookie），
+ * 登录前公开面不带凭证，其余用节点会话 cookie。
+ */
+function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | null {
+  if (isShareAccessPath(rest)) {
+    const token = readShareCookie(req, nodeId);
+    return token ? shareAuthValue(token) : null;
+  }
+  if (AUTH_SKIP.has(rest)) return null;
+  return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
+}
+
+/** `/n/<N>/ws`：优先常规会话，其次分享凭证。 */
+function remoteWsAuthFor(req: Request, nodeId: string): string | null {
+  const session = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
+  if (session) return session;
+  const token = readShareCookie(req, nodeId);
+  return token ? shareAuthValue(token) : null;
 }
 
 export function getSelfRewrite(req: Request): string | null {
@@ -366,6 +390,11 @@ export class Forwarder {
       pump.streamAlive = false;
       pump.helloWait?.();
       pump.helloWait = null;
+      // 节点端主动终止（会话失效 / 分享结束）：重连也不会成功，直接把关闭码透到浏览器。
+      if (isTerminalStreamClose(info)) {
+        this.closePump(pump, info);
+        return;
+      }
       if (pump.failingOver) return;
       void this.failover(pump, info ?? {});
     });
@@ -556,9 +585,7 @@ export class Forwarder {
     const gated = await this.gateForwardedAuth(req, rest);
     if (gated.response) return gated.response;
     const headers = filterRequestHeaders(req);
-    const auth = AUTH_SKIP.has(rest)
-      ? null
-      : (parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null);
+    const auth = forwardedAuthFor(req, nodeId, rest);
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
@@ -641,7 +668,7 @@ export class Forwarder {
     server: MeshUpgradeServer,
     nodeId: string
   ): Promise<Response | undefined> {
-    const auth = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
+    const auth = remoteWsAuthFor(req, nodeId);
     if (!auth) {
       const upgraded = server.upgrade(req, {
         data: { kind: MESH_REJECT_4401_KIND, nodeId, auth: null },
@@ -698,8 +725,13 @@ export class Forwarder {
     const headers = copyUpstreamHeaders(upstream);
     const rest = parseNodePrefix(new URL(req.url).pathname)?.rest ?? '';
     return (
-      (await applyAuthPolicy(req, headers, upstream, nodeId, AUTH_SKIP.has(rest))) ??
-      new Response(upstream.body, { status: upstream.status, headers })
+      (await applyAuthPolicy(
+        req,
+        headers,
+        upstream,
+        nodeId,
+        AUTH_SKIP.has(rest) || isShareAccessPath(rest)
+      )) ?? new Response(upstream.body, { status: upstream.status, headers })
     );
   }
 }

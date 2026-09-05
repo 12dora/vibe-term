@@ -24,6 +24,7 @@ import {
 import { CanonicalFrameSizer } from './canonical/frame-sizer';
 import { CanonicalPaneStream } from './canonical/pane-stream';
 import { applyCanonicalResize, normalizeResizeCommand } from './canonical/resize';
+import { CanonicalShareGuard } from './canonical/share-guard';
 import { CanonicalSubscriptionCoordinator } from './canonical/subscription-coordinator';
 import { CanonicalTransactionSender } from './canonical/transaction-sender';
 import {
@@ -69,6 +70,7 @@ export class CanonicalFeedSession {
   private readonly sender: CanonicalTransactionSender;
   private readonly stream: CanonicalPaneStream;
   private readonly subscriptions = new CanonicalSubscriptionCoordinator();
+  private readonly shareGuard: CanonicalShareGuard;
   private readySent = false;
   private bootstrapped = false;
   private closed = false;
@@ -80,6 +82,7 @@ export class CanonicalFeedSession {
   private awaitingSocketDrain = false;
 
   constructor(private readonly options: CanonicalFeedSessionOptions) {
+    this.shareGuard = new CanonicalShareGuard(options);
     this.maxFrameBytes = Math.min(
       Math.max(ENVELOPE_BYTES + 64, options.maxFrameBytes),
       wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES
@@ -162,7 +165,7 @@ export class CanonicalFeedSession {
   }
 
   async attachDevice(deviceId: string, runtime?: CanonicalFeedRuntime): Promise<boolean> {
-    if (this.closed) return false;
+    if (this.closed || !this.shareGuard.allowsDevice(deviceId)) return false;
     this.ensureReady();
     for (;;) {
       const inflight = this.attaching.get(deviceId);
@@ -368,6 +371,7 @@ export class CanonicalFeedSession {
   }
 
   private async ensureDevice(deviceId: string): Promise<AttachedDevice | null> {
+    if (!this.shareGuard.allowsDevice(deviceId)) return null;
     const existing = this.devices.get(deviceId);
     if (existing) return existing;
     return (await this.attachDevice(deviceId)) ? (this.devices.get(deviceId) ?? null) : null;
@@ -378,19 +382,19 @@ export class CanonicalFeedSession {
     activePanes: wsBorsh.CanonicalPaneSubscription[];
     hotPanes: wsBorsh.CanonicalPaneSubscription[];
   }): Promise<void> {
+    const scoped = this.shareGuard.partitionSubscriptions(command.activePanes, command.hotPanes);
     const requestedDeviceIds = new Set(
-      [...command.activePanes, ...command.hotPanes].map(
-        (subscription) => subscription.pane.deviceId
-      )
+      [...scoped.activePanes, ...scoped.hotPanes].map((subscription) => subscription.pane.deviceId)
     );
     await Promise.all(Array.from(requestedDeviceIds, (deviceId) => this.ensureDevice(deviceId)));
 
     const applied = this.subscriptions.apply(
       command.generation,
-      command.activePanes,
-      command.hotPanes,
+      scoped.activePanes,
+      scoped.hotPanes,
       this.devices.values()
     );
+    applied.rejected.push(...scoped.rejected);
 
     // raw 直通语义：订阅集合变化只取消「不再被订阅」pane 的首屏任务；
     // 仍在集合内的任务不受后续 pane 挂载影响。
@@ -552,7 +556,12 @@ export class CanonicalFeedSession {
     const device = await this.ensureDevice(target.deviceId);
     const serverEpoch = device?.runtime.getServerEpoch();
     const pane = device?.runtime.getPaneIdentity(target.paneId);
-    if (!device || !serverEpoch || !pane) {
+    if (
+      !device ||
+      !serverEpoch ||
+      !pane ||
+      !this.shareGuard.allowsPane(device.deviceId, pane.paneId)
+    ) {
       this.sender.sendError(
         requestId,
         wsBorsh.ERROR_TMUX_TARGET_NOT_FOUND,

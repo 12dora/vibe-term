@@ -41,6 +41,8 @@ import {
 } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
 import { closeGatewaySession, logWsClientConnected } from './session-close';
+import type { ShareScope } from './share-scope';
+import { ShareSessionIndex } from './share-session-index';
 import { type SnapshotOverlayHost, SnapshotOverlayStore } from './snapshot-overlays';
 import { TerminalOutputMetrics } from './terminal-output-metrics';
 import { ThemeSettingsBroadcaster, type ThemeSettingsHost } from './theme-settings-broadcaster';
@@ -83,6 +85,7 @@ export class WebSocketServer
   terminalOutputEventsUntilMetricsCheck = 1024;
 
   connectedClients = new Set<GatewaySession>();
+  readonly shareIndex = new ShareSessionIndex();
   readonly canonicalSessions = new Map<GatewaySession, CanonicalFeedSession>();
   readonly deps: WebSocketServerDeps;
   private readonly registry: DeviceConnectionRegistry;
@@ -139,6 +142,15 @@ export class WebSocketServer
     this.overlays = new SnapshotOverlayStore(this);
     this.feed = new DeviceFeedBroadcaster(this);
     this.borshHandlers = createBorshKindHandlers(this);
+    this.shareIndex.bind(this);
+  }
+
+  closeShareSessions(shareId: string, code?: number, reason?: string): number {
+    return this.shareIndex.closeAll(shareId, code, reason);
+  }
+
+  countShareSessions(shareId: string): number {
+    return this.shareIndex.count(shareId);
   }
 
   setOnCarrierSwitchAck(
@@ -171,7 +183,7 @@ export class WebSocketServer
     const carrier = new BunSocketCarrier(ws);
     const session = new GatewaySession({ primary: carrier });
     carrier.logContext.sessionId = session.id;
-    ws.data = { session, carrier };
+    ws.data = { ...ws.data, session, carrier };
     return session;
   }
 
@@ -188,8 +200,15 @@ export class WebSocketServer
     };
   }
 
-  handleOpen(ws: ServerWebSocket<GatewaySocketData> | GatewaySession): void {
+  handleOpen(
+    ws: ServerWebSocket<GatewaySocketData> | GatewaySession,
+    options: { shareScope?: ShareScope } = {}
+  ): void {
+    // bindSocket 会整体重写 ws.data，升级时带上的 scope 必须先取出来。
+    const upgraded = ws instanceof GatewaySession ? undefined : ws.data?.shareScope;
     const session = ws instanceof GatewaySession ? ws : this.bindSocket(ws);
+    const shareScope = options.shareScope ?? upgraded;
+    if (shareScope) this.shareIndex.add(session, shareScope);
     logWsClientConnected(session);
     session.onCarrierDetached = (carrier) => {
       gatewayWebSocketSendGuard.forget(carrier);
@@ -198,7 +217,10 @@ export class WebSocketServer
     this.connectedClients.add(session);
   }
 
-  attachStreamSession(carrier: Carrier): {
+  attachStreamSession(
+    carrier: Carrier,
+    options: { shareScope?: ShareScope } = {}
+  ): {
     session: GatewaySession;
     onMessage: (bytes: Uint8Array) => void;
     onDecodedEnvelope: (envelope: wsBorsh.Envelope) => void;
@@ -207,7 +229,7 @@ export class WebSocketServer
     const session = new GatewaySession({ primary: carrier });
     const ctx = carrier.logContext ?? { kind: 'physical_browser_ws' as const };
     carrier.logContext = { ...ctx, sessionId: session.id };
-    this.handleOpen(session);
+    this.handleOpen(session, options);
     carrier.onDrain(() => {
       this.handleDrain(session, carrier);
     });
@@ -324,7 +346,12 @@ export class WebSocketServer
     if (existing) return existing;
     const canonical = new CanonicalFeedSession({
       maxFrameBytes: session.borshState.maxFrameBytes,
-      sendEvent: (event) => this.sendCanonicalEvent(session, event),
+      shareScope: session.shareScope ?? null,
+      isPaneInShareScope: this.shareIndex.paneOracle(session),
+      sendEvent: (event) => {
+        const scoped = this.shareIndex.filterEvent(session, event);
+        return scoped ? this.sendCanonicalEvent(session, scoped) : true;
+      },
       resolveRuntime: async (deviceId) => {
         const entry = await this.getOrCreateConnectionEntry(deviceId, session);
         if (!entry) return null;
@@ -426,6 +453,7 @@ export class WebSocketServer
   }
 
   closeSession(session: GatewaySession, code: number, reason: string): void {
+    this.shareIndex.remove(session);
     closeGatewaySession(
       {
         onSessionClosed: this.sessionClosedHandler,
@@ -450,6 +478,10 @@ export class WebSocketServer
 
   getLastSnapshot(deviceId: string): StateSnapshotPayload | null {
     return this.connections.get(deviceId)?.lastSnapshot ?? null;
+  }
+
+  sharePaneOracle(session: GatewaySession): (deviceId: string, paneId: string) => boolean {
+    return this.shareIndex.paneOracle(session);
   }
 
   closeAll(): void {
@@ -546,7 +578,7 @@ export class WebSocketServer
     ws.borshState.clientImpl = hello.clientImpl.slice(0, 64);
     ws.borshState.clientVersion = clientVersion;
     ws.borshState.maxFrameBytes = effectiveMaxFrameBytes;
-    agentWsHub.registerClient(ws);
+    if (!ws.shareScope) agentWsHub.registerClient(ws);
 
     const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
       serverImpl: 'tmex-gateway',

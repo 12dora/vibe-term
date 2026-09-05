@@ -6,3 +6,4 @@ export * from './schema/users-auth';
 export * from './schema/mesh';
 export * from './schema/relay';
 export * from './schema/mesh-relay';
+export * from './schema/share';

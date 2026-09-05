@@ -16,6 +16,7 @@ import {
 } from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { setMeshRequestContext } from './mesh-deps';
+import { setShareAccessVerifier } from './share-credential';
 import {
   acceptHttpStream,
   acceptWsStream,
@@ -1150,5 +1151,121 @@ describe('LinkStreamCarrier with attachStreamSession', () => {
     const envelope = wsBorsh.decodeEnvelope(chunk.value?.bytes as Uint8Array);
     expect(envelope.kind).toBe(wsBorsh.KIND_HELLO_S2C);
     out.end();
+  });
+});
+
+describe('分享凭证的 mesh 流', () => {
+  const SHARE_SCOPE = { shareId: 'sh-1', deviceId: 'dev-1', windowId: 'win-1' };
+  const SHARE_TOKEN = 'sh-1.secret';
+  const denyAll = {
+    verify: () => ({ ok: false, reason: 'unknown' }),
+  } as unknown as NodeSessionStore;
+
+  afterEach(() => {
+    setShareAccessVerifier(null);
+  });
+
+  test('share: 凭证的 ws 流以分享作用域挂会话，不登记常规会话', async () => {
+    setShareAccessVerifier((token) =>
+      token === SHARE_TOKEN ? { scope: SHARE_SCOPE, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    const server = new WebSocketServer();
+    let registered = 0;
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        wsServer: server,
+        onGatewaySession: () => {
+          registered += 1;
+          return true;
+        },
+      });
+    });
+    const opened = await openWsStream(a, `share:${SHARE_TOKEN}`);
+    await waitUntil(() => server.countShareSessions('sh-1') === 1);
+    expect(registered).toBe(0);
+    opened.close();
+  });
+
+  test('无效 share: 凭证的 ws 流被 RST', async () => {
+    setShareAccessVerifier(() => null);
+    const server = new WebSocketServer();
+    const [a, b] = createInMemoryLinkPair();
+    let reason = '';
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        wsServer: server,
+      });
+    });
+    const opened = await openWsStream(a, 'share:bad.token');
+    const info = await opened.stream.closed;
+    reason = info.message ?? '';
+    expect(info.reason).toBe('rst');
+    expect(reason).toBe('share_invalid');
+  });
+
+  test('share: 凭证的 http 流只放行 /api/share-access/*，并合成 cookie', async () => {
+    setShareAccessVerifier((token) =>
+      token === SHARE_TOKEN ? { scope: SHARE_SCOPE, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    const seen: Array<{ cookie: string | null; uid: string | null }> = [];
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        dispatchHttp: async (req, ctx) => {
+          seen.push({ cookie: req.headers.get('cookie'), uid: ctx.uid });
+          return new Response('ok');
+        },
+      });
+    });
+    const ok = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/share-access/sh-1',
+      origin: 'http://localhost',
+      auth: `share:${SHARE_TOKEN}`,
+    });
+    expect(ok.status).toBe(200);
+    expect(seen[0]?.uid).toBeNull();
+    expect(seen[0]?.cookie).toBe(`tmex_sh_entry-1=${SHARE_TOKEN}`);
+
+    const denied = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/devices',
+      origin: 'http://localhost',
+      auth: `share:${SHARE_TOKEN}`,
+    });
+    expect(denied.status).toBe(401);
+    expect(await denied.json()).toEqual({ error: 'share_forbidden' });
+    expect(seen.length).toBe(1);
+  });
+
+  test('/api/share-access/* 无凭证时匿名放行', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    let dispatched = 0;
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: denyAll,
+        dispatchHttp: async (_req, ctx) => {
+          dispatched += 1;
+          expect(ctx.uid).toBeNull();
+          return new Response('ok');
+        },
+      });
+    });
+    const res = await openHttpStream(a, {
+      method: 'GET',
+      path: '/api/share-access/sh-1',
+      origin: 'http://localhost',
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    expect(dispatched).toBe(1);
   });
 });

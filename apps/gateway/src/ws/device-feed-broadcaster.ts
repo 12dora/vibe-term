@@ -13,6 +13,7 @@ import {
 } from './event-delivery';
 import type { GatewayActivityMetrics } from './gateway-activity-metrics';
 import type { GatewaySession } from './gateway-session';
+import type { ShareSessionIndex } from './share-session-index';
 import {
   TERMINAL_OUTPUT_METRICS_CHECK_EVERY,
   type TerminalOutputMetrics,
@@ -21,6 +22,7 @@ import type { DeviceConnectionEntry } from './types';
 
 export interface DeviceFeedHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
+  readonly shareIndex: ShareSessionIndex;
   readonly terminalOutputMetrics: TerminalOutputMetrics;
   readonly gatewayActivityMetrics: GatewayActivityMetrics;
   terminalOutputEventsUntilMetricsCheck: number;
@@ -33,8 +35,22 @@ export interface DeviceFeedHost {
  * 设备侧非终端流的广播：tmux 事件、剪贴板、设备错误。
  * 终端内容（屏幕/历史/增量）只走 canonical 流，不在这里。
  */
+function eventPaneId(data: unknown): string | null {
+  const paneId = (data as { paneId?: unknown } | null | undefined)?.paneId;
+  return typeof paneId === 'string' && paneId ? paneId : null;
+}
+
 export class DeviceFeedBroadcaster {
   constructor(private readonly host: DeviceFeedHost) {}
+
+  /** 分享连接只收 scope window 内 pane 的事件；无 pane 归属的事件（设备错误、重连）一律不发。 */
+  private recipients(
+    clients: Iterable<GatewaySession>,
+    deviceId: string,
+    paneId: string | null
+  ): Iterable<GatewaySession> {
+    return this.host.shareIndex.visibleClients(clients, deviceId, paneId);
+  }
 
   async broadcastTmuxEvent(deviceId: string, event: TmuxEvent): Promise<void> {
     const entry = this.host.connections.get(deviceId);
@@ -50,10 +66,11 @@ export class DeviceFeedBroadcaster {
     });
 
     const settings = getSiteSettings();
+    const clients = this.recipients(entry.clients, deviceId, eventPaneId(extendedEvent.data));
     let attempts: number;
     if (extendedEvent.type === 'bell') {
       attempts = deliverBell(
-        entry.clients,
+        clients,
         payloadBytes,
         deviceId,
         extendedEvent.data,
@@ -62,7 +79,7 @@ export class DeviceFeedBroadcaster {
       );
     } else if (extendedEvent.type === 'notification') {
       attempts = deliverNotification(
-        entry.clients,
+        clients,
         payloadBytes,
         deviceId,
         extendedEvent.data,
@@ -70,7 +87,7 @@ export class DeviceFeedBroadcaster {
         this.host
       );
     } else {
-      attempts = deliverGenericEvent(entry.clients, payloadBytes, this.host);
+      attempts = deliverGenericEvent(clients, payloadBytes, this.host);
     }
     this.host.gatewayActivityMetrics.recordTmuxEvent(extendedEvent.type, attempts);
   }
@@ -151,7 +168,7 @@ export class DeviceFeedBroadcaster {
       text,
     });
 
-    for (const client of entry.clients) {
+    for (const client of this.recipients(entry.clients, deviceId, paneId)) {
       this.host.sendEnvelope(client, wsBorsh.KIND_CLIPBOARD_WRITE, payloadBytes);
     }
   }
@@ -170,7 +187,7 @@ export class DeviceFeedBroadcaster {
       rawMessage: err.message,
     });
 
-    for (const client of entry.clients) {
+    for (const client of this.recipients(entry.clients, deviceId, null)) {
       this.host.sendEnvelope(client, wsBorsh.KIND_DEVICE_EVENT, payloadBytes);
     }
   }
@@ -180,7 +197,7 @@ export class DeviceFeedBroadcaster {
     if (!entry) return;
 
     const payloadBytes = wsBorsh.encodeDeviceEventPayload(payload);
-    for (const client of entry.clients) {
+    for (const client of this.recipients(entry.clients, deviceId, null)) {
       this.host.sendEnvelope(client, wsBorsh.KIND_DEVICE_EVENT, payloadBytes);
     }
   }
@@ -188,7 +205,7 @@ export class DeviceFeedBroadcaster {
   broadcastDeviceEvent(entry: DeviceConnectionEntry, payload: EventDevicePayload): void {
     const payloadBytes = wsBorsh.encodeDeviceEventPayload(payload);
 
-    for (const client of entry.clients) {
+    for (const client of this.recipients(entry.clients, payload.deviceId, null)) {
       this.host.sendEnvelope(client, wsBorsh.KIND_DEVICE_EVENT, payloadBytes);
     }
   }

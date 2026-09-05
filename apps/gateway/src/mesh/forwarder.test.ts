@@ -33,6 +33,7 @@ import {
   isMeshRewritten,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
+import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
 import { waitUntil } from './test-support';
 import { NodeUnreachableError, PeerHandshakeError } from './types';
 
@@ -2399,3 +2400,226 @@ async function openForwardWs(
   runtime.handleWebSocket.open(ws);
   return { ws, closed: () => browserClosed };
 }
+
+describe('forwarder 分享凭证', () => {
+  const SHARE_TOKEN = 'sh-1.secret';
+
+  test('/n/:id/api/share-access/* 用 tmex_sh_<node> 换 share: 凭证', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      });
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1`, {
+          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+        }),
+        dummyServer
+      );
+      expect(streams.lastOpen?.auth).toBe(`share:${SHARE_TOKEN}`);
+      expect(streams.lastOpen?.headers.cookie).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享 cookie 不能给常规 /api/*；分享路径缺 cookie 也照常匿名转发', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      });
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/api/devices`, {
+          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+        }),
+        dummyServer
+      );
+      expect(streams.lastOpen?.auth).toBeNull();
+
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json' },
+      });
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1`),
+        dummyServer
+      );
+      expect(streams.lastOpen?.auth).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('节点端的 x-tmex-set-share 在 Hub 翻成 cookie，不回给浏览器', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      streams.nextResponse = new Response(JSON.stringify({ ok: true }), {
+        headers: {
+          'content-type': 'application/json',
+          [X_TMEX_SET_SHARE]: SHARE_TOKEN,
+          [X_TMEX_SET_SHARE_MAX_AGE]: '86400',
+        },
+      });
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/login`, {
+            method: 'POST',
+            body: '{}',
+            headers: { 'content-type': 'application/json' },
+          }),
+          dummyServer
+        )
+      );
+      const cookie = res.headers.get('set-cookie') ?? '';
+      expect(cookie).toContain(`tmex_sh_${OTHER}=${SHARE_TOKEN}`);
+      expect(cookie).toContain('Max-Age=86400');
+      expect(res.headers.get(X_TMEX_SET_SHARE)).toBeNull();
+      expect(res.headers.get(X_TMEX_SET_SHARE_MAX_AGE)).toBeNull();
+
+      streams.nextResponse = new Response('{}', {
+        headers: { 'content-type': 'application/json', [X_TMEX_CLEAR_SHARE]: '1' },
+      });
+      const out = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/logout`, {
+            method: 'POST',
+            body: '{}',
+            headers: { 'content-type': 'application/json' },
+          }),
+          dummyServer
+        )
+      );
+      expect(out.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
+      expect(out.headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享路径的 401 不被改写成 NODE_LOGIN_REQUIRED', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      streams.nextResponse = new Response(JSON.stringify({ code: 'SHARE_PASSWORD_INVALID' }), {
+        status: 401,
+        headers: { 'content-type': 'application/json' },
+      });
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/login`, {
+            method: 'POST',
+            body: '{}',
+            headers: {
+              'content-type': 'application/json',
+              cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}`,
+            },
+          }),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(401);
+      expect(await res.json()).toEqual({ code: 'SHARE_PASSWORD_INVALID' });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/s/:id 与 /n/:id/s/:id 不被 mesh 接管，交给入口的静态前端', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      expect(
+        await mesh.runtime.handleRequest(new Request('http://localhost/s/sh-1'), dummyServer)
+      ).toBeNull();
+      const scoped = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/s/sh-1`),
+        dummyServer
+      );
+      expect(scoped).toBeNull();
+      expect(streams.httpOpenCount).toBe(0);
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/s/sh-1'))).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws 无节点会话时用分享 cookie 开流', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      expect(streams.wsAuth).toBe(`share:${SHARE_TOKEN}`);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('节点端终止性关闭码直接透给浏览器，不再 failover', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+        }),
+        server
+      );
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send(frame: Uint8Array) {
+          return frame.byteLength;
+        },
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      const opens = streams.wsOpens.length;
+      streams.lastWs?.close(4410, 'SHARE_ENDED');
+      await Promise.resolve();
+      expect(closes[0]).toEqual({ code: 4410, reason: 'SHARE_ENDED' });
+      expect(streams.wsOpens.length).toBe(opens);
+    } finally {
+      mesh.close();
+    }
+  });
+});

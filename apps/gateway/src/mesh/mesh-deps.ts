@@ -1,5 +1,6 @@
 import { type TmexRoles, isStandaloneRoles } from '@tmex/shared';
 import type { LinkSession } from '@tmex/shared/link';
+import type { ShareScope } from '@tmex/shared/share';
 import { type DispatchContext, requestDispatchContext } from './types';
 
 export { isStandaloneRoles, requestDispatchContext };
@@ -17,6 +18,8 @@ export const LOGIN_CHALLENGE_TTL_MS = 60_000;
 export const PASSKEY_REGISTER_TTL_MS = 60_000;
 export const RTC_AUTHORIZE_TTL_MS = 120_000;
 export const WS_SESSION_VERIFY_MS = 5 * 60 * 1000;
+/** 分享连接的凭证复验周期：比常规会话短，终止后最迟一帧内断开。 */
+export const SHARE_WS_VERIFY_MS = 60 * 1000;
 export const AUTH_401_BODY_LIMIT = 64 * 1024;
 export const STREAM_FAILOVER_BACKOFF_MS = [0, 50, 100, 200, 400, 800, 1600, 3200, 6400] as const;
 export const STREAM_FAILOVER_MAX_ATTEMPTS = STREAM_FAILOVER_BACKOFF_MS.length;
@@ -32,6 +35,7 @@ export const MESH_WS_KIND = 'mesh-event';
 export const MESH_FORWARD_WS_KIND = 'mesh-forward-ws';
 export const MESH_REJECT_4401_KIND = 'mesh-reject-4401';
 export const MESH_GATEWAY_WS_KIND = 'gateway-ws';
+export const MESH_SHARE_WS_KIND = 'gateway-share-ws';
 export const WS_CLOSE_LOGIN_REQUIRED = 4401;
 
 export const MESH_FORWARD_CSP = "sandbox; default-src 'none'; base-uri 'none'; form-action 'none'";
@@ -270,7 +274,8 @@ export type MeshSocketKind =
   | typeof MESH_WS_KIND
   | typeof MESH_FORWARD_WS_KIND
   | typeof MESH_REJECT_4401_KIND
-  | typeof MESH_GATEWAY_WS_KIND;
+  | typeof MESH_GATEWAY_WS_KIND
+  | typeof MESH_SHARE_WS_KIND;
 
 export type MeshSocketData = {
   kind: MeshSocketKind;
@@ -281,6 +286,13 @@ export type MeshSocketData = {
   uid?: string | null;
   via?: string;
   cid?: string;
+  /** 4401 拒绝连接的关闭原因；缺省 NODE_LOGIN_REQUIRED。 */
+  closeReason?: string;
+  /** 分享连接：作用域、访问记录 id、原始 token 与上次复验时刻。 */
+  scope?: ShareScope;
+  accessId?: string;
+  shareToken?: string;
+  shareVerifiedAt?: number;
 };
 
 export type MeshServerWebSocket = {

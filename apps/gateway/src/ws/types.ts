@@ -5,10 +5,12 @@ import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import type { BunSocketCarrier } from './carrier';
 import type { GatewaySession } from './gateway-session';
+import type { ShareScope } from './share-scope';
 
 export interface GatewaySocketData {
   session: GatewaySession;
   carrier: BunSocketCarrier;
+  shareScope?: ShareScope;
 }
 
 export interface DeviceConnectionEntry {

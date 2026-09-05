@@ -1,4 +1,5 @@
 import type { KeyLogEffect } from '@tmex/shared/auth';
+import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
 import type { HubMode } from '@tmex/shared/uplink';
 import type { ChallengeStore } from '../auth/challenge-store';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
@@ -13,6 +14,7 @@ import {
   MESH_FORWARD_WS_KIND,
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
+  MESH_SHARE_WS_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
   type MeshHandleResult,
@@ -21,6 +23,7 @@ import {
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type PeerLinkProvider,
+  SHARE_WS_VERIFY_MS,
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
@@ -39,6 +42,7 @@ import {
   jsonBody,
   jsonError,
 } from './session-middleware';
+import { readShareCookie, verifyShareAccessToken } from './share-credential';
 import type { UplinkStatus } from './types';
 import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 
@@ -230,29 +234,54 @@ export class MeshHttpRuntime {
       return null;
     }
     if (!auth.ok || !auth.sid || !auth.userId) {
-      const upgraded = server.upgrade(req, {
-        data: { kind: MESH_REJECT_4401_KIND, via: MESH_VIA_SELF },
-      });
-      if (!upgraded) {
-        return jsonError('UNAUTHORIZED', 401);
-      }
-      return undefined;
+      return this.upgradeShareWebSocket(req, server);
     }
-    const cid =
-      new URL(req.url).searchParams.get('cid')?.trim() ||
-      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
-      '';
     const upgraded = server.upgrade(req, {
       data: {
         kind: MESH_GATEWAY_WS_KIND,
         sid: auth.sid,
         uid: auth.userId,
         via: MESH_VIA_SELF,
-        ...(cid ? { cid } : {}),
+        ...(connectionIdOf(req) ? { cid: connectionIdOf(req) } : {}),
       },
     });
     if (!upgraded) {
       return jsonError('upgrade_failed', 500);
+    }
+    return undefined;
+  }
+
+  /** 无常规会话时的分享通道：`tmex_sh_self` 有效即以分享作用域升级，无效回 4401。 */
+  private upgradeShareWebSocket(
+    req: Request,
+    server: MeshUpgradeServer
+  ): Response | null | undefined {
+    const token = readShareCookie(req, MESH_VIA_SELF);
+    const verified = verifyShareAccessToken(token, this.now());
+    if (token && verified) {
+      const cid = connectionIdOf(req);
+      const upgraded = server.upgrade(req, {
+        data: {
+          kind: MESH_SHARE_WS_KIND,
+          scope: verified.scope,
+          accessId: verified.accessId,
+          shareToken: token,
+          shareVerifiedAt: this.now(),
+          via: MESH_VIA_SELF,
+          ...(cid ? { cid } : {}),
+        },
+      });
+      return upgraded ? undefined : jsonError('upgrade_failed', 500);
+    }
+    const upgraded = server.upgrade(req, {
+      data: {
+        kind: MESH_REJECT_4401_KIND,
+        via: MESH_VIA_SELF,
+        ...(token ? { closeReason: 'SHARE_LOGIN_REQUIRED' } : {}),
+      },
+    });
+    if (!upgraded) {
+      return jsonError('UNAUTHORIZED', 401);
     }
     return undefined;
   }
@@ -294,6 +323,9 @@ export class MeshHttpRuntime {
     if (ws.data?.kind === MESH_REJECT_4401_KIND) {
       return false;
     }
+    if (ws.data?.kind === MESH_SHARE_WS_KIND) {
+      return this.touchShareSocket(ws);
+    }
     const entry = this.findSocket(ws);
     if (!entry) {
       return true;
@@ -322,10 +354,13 @@ export class MeshHttpRuntime {
     open: (ws: MeshServerWebSocket): void => {
       if (ws.data?.kind === MESH_REJECT_4401_KIND) {
         try {
-          ws.close(WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+          ws.close(WS_CLOSE_LOGIN_REQUIRED, ws.data.closeReason ?? 'NODE_LOGIN_REQUIRED');
         } catch {
           // ignore
         }
+        return;
+      }
+      if (ws.data?.kind === MESH_SHARE_WS_KIND) {
         return;
       }
       if (ws.data?.kind === MESH_GATEWAY_WS_KIND) {
@@ -450,6 +485,27 @@ export class MeshHttpRuntime {
     return result;
   }
 
+  /** 分享连接不进 sockets 索引：按 SHARE_WS_VERIFY_MS 复验凭证，失效即 4410 断开。 */
+  private touchShareSocket(ws: MeshServerWebSocket): boolean {
+    const now = this.now();
+    const last = ws.data.shareVerifiedAt ?? 0;
+    if (now - last < SHARE_WS_VERIFY_MS) {
+      return true;
+    }
+    ws.data.shareVerifiedAt = now;
+    const verified = verifyShareAccessToken(ws.data.shareToken, now);
+    if (verified) {
+      ws.data.scope = verified.scope;
+      return true;
+    }
+    try {
+      ws.close(SHARE_WS_CLOSE_ENDED, 'SHARE_ENDED');
+    } catch {
+      // ignore
+    }
+    return false;
+  }
+
   private registerSocket(ws: MeshServerWebSocket, auth: { sid: string; uid: string }): void {
     this.unregisterSocket(ws);
     this.sockets.add({
@@ -497,6 +553,14 @@ export class MeshHttpRuntime {
       }
     }
   }
+}
+
+function connectionIdOf(req: Request): string {
+  return (
+    new URL(req.url).searchParams.get('cid')?.trim() ||
+    req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+    ''
+  );
 }
 
 function isStaticAsset(path: string): boolean {

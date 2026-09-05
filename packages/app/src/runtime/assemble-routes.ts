@@ -9,15 +9,10 @@ import {
 } from '../../../../apps/gateway/src/api/system-routes';
 import type { NodeSessionStore } from '../../../../apps/gateway/src/auth/node-session-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
-import type { HubRuntime, HubServerWebSocket } from '../../../../apps/gateway/src/hub';
+import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import {
-  MESH_FORWARD_WS_KIND,
-  MESH_GATEWAY_WS_KIND,
-  MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
-  MESH_WS_KIND,
   type MeshRewritten,
-  WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
   isMeshRewritten,
   setMeshRequestContext,
@@ -28,13 +23,12 @@ import {
   applyLocalRenewal,
   authenticateRequest,
 } from '../../../../apps/gateway/src/mesh/session-middleware';
-import type { RelayRuntime, RelayServerWebSocket } from '../../../../apps/gateway/src/relay';
+import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import { guardEntryAccess } from '../../../../apps/gateway/src/tunnel/access-guard';
 import { tunnelManager } from '../../../../apps/gateway/src/tunnel/manager';
-import type { GatewaySession } from '../../../../apps/gateway/src/ws/gateway-session';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { disableDirect, enableDirect } from '../commands/direct';
 import { performHubJoin } from '../commands/hub';
@@ -46,6 +40,7 @@ import type { TmexRoles } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
+import { type GatewayWsAuth, routeWebsocket } from './assemble-websocket';
 import { jsonErr } from './http';
 import { type LocalRouteDeps, handleLocalRequest } from './local-routes';
 import { handleSetupRequest } from './setup-routes';
@@ -82,11 +77,6 @@ type HttpAuthSurface = {
   ): ReturnType<MeshRuntime['handleRequest']>;
 };
 
-type GatewayWsAuth = Pick<MeshRuntime, 'websocket' | 'touchSocket'> & {
-  registerGatewaySession?: MeshRuntime['registerGatewaySession'];
-  unregisterGatewaySession?: MeshRuntime['unregisterGatewaySession'];
-};
-
 type TlsHandler = (req: Request) => Promise<Response | null>;
 
 export type HttpAndWs = {
@@ -107,23 +97,6 @@ function createRouteAuthenticate(
       return { ok: false };
     }
   };
-}
-
-function socketKind(ws: { data?: unknown }): string | undefined {
-  const kind = (ws.data as { kind?: unknown } | null)?.kind;
-  return typeof kind === 'string' ? kind : undefined;
-}
-
-/** hub/relay 判定上行链路只读 `data.kind`；bun 那边是 unknown，这里只换视图不复制。 */
-const uplinkView = (ws: { data?: unknown }) => ws as { data?: { kind?: string } };
-
-function isMeshKind(kind: string | undefined): boolean {
-  return (
-    kind === MESH_WS_KIND ||
-    kind === MESH_FORWARD_WS_KIND ||
-    kind === MESH_REJECT_4401_KIND ||
-    kind === MESH_GATEWAY_WS_KIND
-  );
 }
 
 function seedLocalContext(req: Request, bunServer: Bun.Server<unknown>): void {
@@ -223,108 +196,6 @@ function createHttpDispatch(handlers: HttpHandler[]): AssembledFetch {
     }
   };
   return (req, bunServer) => dispatch(req, bunServer, false);
-}
-
-function routeWebsocket(
-  gateway: GatewayRuntime,
-  mesh: GatewayWsAuth | null,
-  hub: HubRuntime | null,
-  relay: RelayRuntime | null
-): GatewayRuntime['websocket'] {
-  const gw = gateway.websocket;
-  return {
-    backpressureLimit: gw.backpressureLimit,
-    closeOnBackpressureLimit: gw.closeOnBackpressureLimit,
-    open(ws) {
-      if (relay?.isUplinkSocket(uplinkView(ws))) {
-        relay.handleUplinkOpen(ws as unknown as RelayServerWebSocket);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkOpen(ws as HubServerWebSocket);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (!(mesh && isMeshKind(kind))) {
-        gw.open(ws);
-        return;
-      }
-      const data = ws.data as { sid?: string; uid?: string; via?: string; cid?: string };
-      mesh.websocket.open(ws as never);
-      if (kind !== MESH_GATEWAY_WS_KIND) return;
-      gw.open(ws);
-      const session = (ws.data as { session?: GatewaySession }).session;
-      if (!data.sid || !data.uid || !session) return;
-      const cid = typeof data.cid === 'string' && data.cid.trim() ? data.cid.trim() : '';
-      const registered = mesh.registerGatewaySession?.({
-        sid: data.sid,
-        uid: data.uid,
-        via: data.via ?? MESH_VIA_SELF,
-        session,
-        ...(cid ? { cid } : {}),
-      });
-      if (registered && !registered.ok) {
-        gw.closeSession(session, WS_CLOSE_LOGIN_REQUIRED, registered.code);
-      }
-    },
-    message(ws, message) {
-      if (relay?.isUplinkSocket(uplinkView(ws))) {
-        relay.handleUplinkMessage(ws as unknown as RelayServerWebSocket, message);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkMessage(ws as HubServerWebSocket, message);
-        return;
-      }
-      const kind = socketKind(ws);
-      if (mesh && isMeshKind(kind)) {
-        if (kind === MESH_GATEWAY_WS_KIND) {
-          if (!mesh.touchSocket(ws as never)) return;
-          gw.message(ws, message);
-          return;
-        }
-        mesh.websocket.message(ws as never, message);
-        return;
-      }
-      if (mesh && !mesh.touchSocket(ws as never)) return;
-      gw.message(ws, message);
-    },
-    drain(ws) {
-      if (relay?.isUplinkSocket(uplinkView(ws))) {
-        relay.handleUplinkDrain(ws as unknown as RelayServerWebSocket);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkDrain(ws as HubServerWebSocket);
-        return;
-      }
-      if (mesh && isMeshKind(socketKind(ws)) && socketKind(ws) !== MESH_GATEWAY_WS_KIND) {
-        mesh.websocket.drain(ws as never);
-        return;
-      }
-      gw.drain(ws);
-    },
-    close(ws, code, reason) {
-      if (relay?.isUplinkSocket(uplinkView(ws))) {
-        relay.handleUplinkClose(ws as unknown as RelayServerWebSocket, code, reason);
-        return;
-      }
-      if (hub?.isUplinkSocket(uplinkView(ws))) {
-        hub.handleUplinkClose(ws as HubServerWebSocket, code, reason);
-        return;
-      }
-      if (mesh) {
-        const session = (ws.data as { session?: GatewaySession }).session;
-        if (session) mesh.unregisterGatewaySession?.(session);
-        mesh.websocket.close(ws as never, code, reason);
-        if (isMeshKind(socketKind(ws)) && socketKind(ws) !== MESH_GATEWAY_WS_KIND) return;
-      }
-      gw.close(ws, code, reason);
-    },
-    closeSession(session, code, reason) {
-      gw.closeSession(session, code, reason);
-    },
-  };
 }
 
 export async function advertisedTlsInfo(

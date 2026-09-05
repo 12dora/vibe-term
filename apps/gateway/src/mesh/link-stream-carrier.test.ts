@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
 import { LINK_STREAM_BACKPRESSURE_BYTES, LinkStreamCarrier } from './link-stream-carrier';
+import {
+  decodeTerminalStreamClose,
+  encodeTerminalStreamClose,
+  isTerminalStreamClose,
+} from './stream-close-code';
 
 describe('LinkStreamCarrier', () => {
   test('maps send queue above 1 MiB to backpressure and fires onDrain', async () => {
@@ -91,5 +97,61 @@ describe('LinkStreamCarrier', () => {
     a.close('link-down');
     await closed;
     expect(carrier.send(new Uint8Array([1]))).toBe('closed');
+  });
+});
+
+describe('LinkStreamCarrier 终止性关闭码', () => {
+  test('4410 以 RST 携带 code:reason，对端可解码', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const carrier = new LinkStreamCarrier(incoming);
+    let closed = 0;
+    carrier.onClose(() => {
+      closed += 1;
+    });
+    carrier.close(SHARE_WS_CLOSE_ENDED, 'SHARE_ENDED');
+    expect(closed).toBe(1);
+    const info = await out.closed;
+    expect(info.reason).toBe('rst');
+    expect(decodeTerminalStreamClose(info.message)).toEqual({
+      code: SHARE_WS_CLOSE_ENDED,
+      reason: 'SHARE_ENDED',
+    });
+  });
+
+  test('普通关闭码仍是干净半关闭，不带终止标记', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    new LinkStreamCarrier(incoming).close(1000, 'bye');
+    const reader = out.readable.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(true);
+    out.end();
+  });
+});
+
+describe('stream-close-code', () => {
+  test('编解码只认白名单里的终止码', () => {
+    expect(decodeTerminalStreamClose(encodeTerminalStreamClose(4410, 'SHARE_ENDED'))).toEqual({
+      code: 4410,
+      reason: 'SHARE_ENDED',
+    });
+    expect(
+      decodeTerminalStreamClose(encodeTerminalStreamClose(4401, 'NODE_LOGIN_REQUIRED'))
+    ).toEqual({ code: 4401, reason: 'NODE_LOGIN_REQUIRED' });
+    expect(decodeTerminalStreamClose('tmex-close:1011:boom')).toBeNull();
+    expect(decodeTerminalStreamClose('session-invalid')).toBeNull();
+    expect(decodeTerminalStreamClose(undefined)).toBeNull();
+    expect(isTerminalStreamClose({ code: 4410 })).toBe(true);
+    expect(isTerminalStreamClose({ code: 1011 })).toBe(false);
+    expect(isTerminalStreamClose(null)).toBe(false);
   });
 });

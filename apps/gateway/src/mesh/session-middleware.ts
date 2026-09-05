@@ -11,6 +11,7 @@ import {
   requestDispatchContext,
   setMeshRequestContext,
 } from './mesh-deps';
+import { applyShareCookieHeaders, hasShareCookieHeaders } from './share-credential';
 
 export type AuthenticateOk = {
   ok: true;
@@ -159,32 +160,32 @@ export function applyLocalRenewal(req: Request, response: Response): Response {
 
 export function consumeSetSessionForBrowser(req: Request, response: Response): Response {
   const via = getMeshRequestContext(req).via ?? MESH_VIA_SELF;
-  const raw = response.headers.get(X_TMEX_SET_SESSION);
-  if (!raw) {
+  const rawSession = response.headers.get(X_TMEX_SET_SESSION);
+  const share = hasShareCookieHeaders(response);
+  if (!rawSession && !share) {
     return response;
   }
   if (via !== MESH_VIA_SELF) {
     return response;
   }
-  const parsed = parseSetSessionHeader(raw);
-  if (!parsed) {
-    const headers = new Headers(response.headers);
-    headers.delete(X_TMEX_SET_SESSION);
-    return new Response(response.body, {
-      status: response.status,
-      statusText: response.statusText,
-      headers,
-    });
-  }
   const headers = new Headers(response.headers);
-  headers.delete(X_TMEX_SET_SESSION);
-  headers.append(
-    'set-cookie',
-    buildSetCookie(nodeSessionCookieName(MESH_VIA_SELF), parsed.sid, {
-      maxAgeSec: parsed.maxAgeSec,
-      secure: isHttps(req),
-    })
-  );
+  const secure = isHttps(req);
+  if (rawSession) {
+    headers.delete(X_TMEX_SET_SESSION);
+    const parsed = parseSetSessionHeader(rawSession);
+    if (parsed) {
+      headers.append(
+        'set-cookie',
+        buildSetCookie(nodeSessionCookieName(MESH_VIA_SELF), parsed.sid, {
+          maxAgeSec: parsed.maxAgeSec,
+          secure,
+        })
+      );
+    }
+  }
+  if (share) {
+    applyShareCookieHeaders(headers, response, MESH_VIA_SELF, secure);
+  }
   return new Response(response.body, {
     status: response.status,
     statusText: response.statusText,

@@ -1,16 +1,23 @@
 import { wsBorsh } from '@tmex/shared';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
-import type { NodeSessionStore } from '../auth/node-session-store';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
-import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { X_TMEX_SESSION_RENEWED } from './mesh-deps';
 import { parseOpenPayload } from './peer-protocol';
 import { X_TMEX_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
+import {
+  type StreamAuthContext,
+  authorizeHttpStream,
+  createStreamRecheck,
+  verifyStreamAuth,
+} from './stream-auth';
 import { pumpToLink } from './stream-pump';
 import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
+
+export type { StreamAuthContext };
+export { isAuthSkippedPath } from './stream-auth';
 
 const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
 let lastHttpForwardAbortLogAt = 0;
@@ -24,17 +31,6 @@ const BLOCKED_REQUEST_HEADERS = new Set([
   'x-tmex-via',
   X_TMEX_MESH_PEER,
 ]);
-
-export type StreamAuthContext = {
-  peerNodeId: string;
-  sessionStore: NodeSessionStore;
-  now?: () => number;
-};
-
-export function isAuthSkippedPath(path: string): boolean {
-  const bare = path.split('?')[0] ?? path;
-  return AUTH_LOGIN_PUBLIC_PATHS.has(bare) || bare.startsWith('/api/mesh-internal/');
-}
 
 function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {
   return new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);
@@ -149,26 +145,6 @@ function requestBodyFromLink(
   });
 }
 
-function verifyAuth(
-  auth: string | null | undefined,
-  path: string,
-  ctx: StreamAuthContext
-): { ok: true; uid: string | null; renewedExpiresAt?: number } | { ok: false; reason: string } {
-  const skipped = isAuthSkippedPath(path);
-  // 公开路径无 token 直接匿名放行；带了 token 仍照常校验，让 /api/auth/mode 之类能识别已登录会话。
-  if (!auth) return skipped ? { ok: true, uid: null } : { ok: false, reason: 'missing auth' };
-  const result = ctx.sessionStore.verify(auth, {
-    viaNodeId: ctx.peerNodeId,
-    now: ctx.now?.() ?? Date.now(),
-  });
-  if (!result.ok) return skipped ? { ok: true, uid: null } : { ok: false, reason: result.reason };
-  return {
-    ok: true,
-    uid: result.session.userId,
-    ...(result.renewedExpiresAt !== undefined ? { renewedExpiresAt: result.renewedExpiresAt } : {}),
-  };
-}
-
 export async function acceptHttpStream(
   stream: LinkStream,
   opts: StreamAuthContext & { dispatchHttp: DispatchHttp }
@@ -195,7 +171,7 @@ export async function acceptHttpStream(
     );
     return;
   }
-  const verified = verifyAuth(auth, url.pathname, opts);
+  const verified = authorizeHttpStream(auth, url.pathname, opts, headers);
   if (!verified.ok) {
     await writeHttpResponse(
       stream,
@@ -479,29 +455,48 @@ export async function acceptWsStream(
 ): Promise<void> {
   const open = parseOpenPayload(stream.openPayload) ?? {};
   const auth = str(open.auth);
-  const verified = verifyAuth(auth, '/ws', opts);
+  const verified = verifyStreamAuth(auth, '/ws', opts);
   if (!verified.ok) {
     stream.reset(verified.reason);
     return;
   }
-  const sid = auth;
-  const via = opts.peerNodeId;
-  const uid = verified.uid;
   const cid = (str(open.cid) || str(open.connectionId)).trim();
+  const share = verified.share;
   const carrier = new LinkStreamCarrier(stream, {
-    logContext: {
-      kind: 'mesh_link_stream',
-      nodeId: via,
-      ...(cid ? { cid } : {}),
-    },
+    logContext: { kind: 'mesh_link_stream', nodeId: opts.peerNodeId, ...(cid ? { cid } : {}) },
   });
-  const attached = opts.wsServer.attachStreamSession(carrier);
+  const attached = opts.wsServer.attachStreamSession(carrier, { shareScope: share?.scope });
+  const teardown = wsStreamTeardown(stream, attached, share ? undefined : opts);
+  if (!share && opts.onGatewaySession) {
+    const accepted = opts.onGatewaySession(attached.session, {
+      sid: auth,
+      uid: verified.uid ?? '',
+      via: opts.peerNodeId,
+      ...(cid ? { cid } : {}),
+    });
+    if (accepted === false) {
+      teardown('rst', 'duplicate-connection');
+      return;
+    }
+  }
+  stream.onAbort(() => teardown('rst', 'peer-rst'));
+  await pumpWsStreamFrames(stream, attached, teardown, createStreamRecheck(auth, share, opts));
+}
+
+type AttachedStreamSession = ReturnType<WebSocketServer['attachStreamSession']>;
+type WsStreamTeardown = (mode: 'end' | 'rst', reason?: string) => void;
+
+function wsStreamTeardown(
+  stream: LinkStream,
+  attached: AttachedStreamSession,
+  registry: Pick<AcceptWsStreamOptions, 'onGatewaySessionClose'> | undefined
+): WsStreamTeardown {
   let tornDown = false;
-  const teardown = (mode: 'end' | 'rst', reason?: string) => {
+  return (mode, reason) => {
     if (tornDown) return;
     tornDown = true;
     try {
-      opts.onGatewaySessionClose?.(attached.session);
+      registry?.onGatewaySessionClose?.(attached.session);
     } catch {
       // registry
     }
@@ -517,17 +512,14 @@ export async function acceptWsStream(
       // already closed
     }
   };
-  const accepted = opts.onGatewaySession?.(attached.session, {
-    sid,
-    uid: uid ?? '',
-    via,
-    ...(cid ? { cid } : {}),
-  });
-  if (accepted === false) {
-    teardown('rst', 'duplicate-connection');
-    return;
-  }
-  stream.onAbort(() => teardown('rst', 'peer-rst'));
+}
+
+async function pumpWsStreamFrames(
+  stream: LinkStream,
+  attached: AttachedStreamSession,
+  teardown: WsStreamTeardown,
+  recheck: () => string | null
+): Promise<void> {
   const reader = stream.readable.getReader();
   try {
     while (true) {
@@ -544,12 +536,9 @@ export async function acceptWsStream(
         teardown('rst', 'invalid-ws-frame');
         return;
       }
-      const check = opts.sessionStore.verify(sid, {
-        viaNodeId: via,
-        now: opts.now?.() ?? Date.now(),
-      });
-      if (!check.ok) {
-        teardown('rst', check.reason);
+      const invalid = recheck();
+      if (invalid) {
+        teardown('rst', invalid);
         return;
       }
       attached.onDecodedEnvelope(envelope);

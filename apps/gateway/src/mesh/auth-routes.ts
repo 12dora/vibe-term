@@ -55,7 +55,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
-import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
+import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
@@ -152,7 +152,7 @@ export function isAuthPublicPath(
   path: string,
   opts: { standalone: boolean; localAuthEffective: boolean }
 ): boolean {
-  if (AUTH_LOGIN_PUBLIC_PATHS.has(path)) return true;
+  if (isAuthLoginPublicPath(path)) return true;
   return opts.standalone && !opts.localAuthEffective && AUTH_LOCAL_PRESESSION_PATHS.has(path);
 }
 

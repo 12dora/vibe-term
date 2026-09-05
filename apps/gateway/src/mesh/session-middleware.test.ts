@@ -4,10 +4,12 @@ import { asResponse, bootMesh, call, challengeAndLogin } from './auth-routes.tes
 import { X_TMEX_SESSION_RENEWED, requestDispatchContext, setMeshRequestContext } from './mesh-deps';
 import {
   authenticateRequest,
+  consumeSetSessionForBrowser,
   isHttps,
   publicRequestUrl,
   requireSession,
 } from './session-middleware';
+import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
 
 describe('session-middleware', () => {
   test('standalone bypasses with uid=null', async () => {
@@ -211,5 +213,56 @@ describe('session-middleware', () => {
         mesh.close();
       }
     });
+  });
+  test('本机路径把 x-tmex-set-share 翻成 tmex_sh_self cookie 并抹掉内部头', () => {
+    const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
+    const upstream = new Response('{}', {
+      headers: {
+        [X_TMEX_SET_SHARE]: 'abc.secret',
+        [X_TMEX_SET_SHARE_MAX_AGE]: '3600',
+      },
+    });
+    const out = consumeSetSessionForBrowser(req, upstream);
+    const cookie = out.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('tmex_sh_self=abc.secret');
+    expect(cookie).toContain('Max-Age=3600');
+    expect(cookie).toContain('HttpOnly');
+    expect(cookie).toContain('SameSite=Lax');
+    expect(cookie).not.toContain('Secure');
+    expect(out.headers.get(X_TMEX_SET_SHARE)).toBeNull();
+    expect(out.headers.get(X_TMEX_SET_SHARE_MAX_AGE)).toBeNull();
+  });
+
+  test('https 请求的分享 cookie 带 Secure；clear 头写过期 cookie', () => {
+    const secureReq = new Request('https://example.com/api/share-access/abc/login', {
+      method: 'POST',
+    });
+    const set = consumeSetSessionForBrowser(
+      secureReq,
+      new Response('{}', {
+        headers: { [X_TMEX_SET_SHARE]: 'abc.secret', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+      })
+    );
+    expect(set.headers.get('set-cookie')).toContain('Secure');
+
+    const cleared = consumeSetSessionForBrowser(
+      new Request('http://localhost/api/share-access/abc/logout', { method: 'POST' }),
+      new Response('{}', { headers: { [X_TMEX_CLEAR_SHARE]: '1' } })
+    );
+    const cookie = cleared.headers.get('set-cookie') ?? '';
+    expect(cookie).toContain('tmex_sh_self=;');
+    expect(cookie).toContain('Max-Age=0');
+    expect(cleared.headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
+  });
+
+  test('非 self via 不翻译分享头（留给 Hub 的 forwarder）', () => {
+    const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
+    setMeshRequestContext(req, { via: 'aa'.repeat(16) });
+    const upstream = new Response('{}', {
+      headers: { [X_TMEX_SET_SHARE]: 'abc.secret', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+    });
+    const out = consumeSetSessionForBrowser(req, upstream);
+    expect(out.headers.get('set-cookie')).toBeNull();
+    expect(out.headers.get(X_TMEX_SET_SHARE)).toBe('abc.secret');
   });
 });

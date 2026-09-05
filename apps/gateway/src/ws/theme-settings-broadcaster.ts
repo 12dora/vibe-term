@@ -18,6 +18,7 @@ export interface ThemeSettingsHost {
   ): void;
 }
 
+/** 站点主题 / 设置 / 通知是全站广播，分享连接一律不参与（既不发也不允许写）。 */
 export class ThemeSettingsBroadcaster {
   currentTheme: ThemeMode | null = null;
   readonly themeSignalLast = new Map<string, { theme: 'dark' | 'light'; at: number }>();
@@ -91,6 +92,7 @@ export class ThemeSettingsBroadcaster {
       serverTimestamp: effectiveTimestamp,
     });
     for (const client of this.host.connectedClients) {
+      if (client.shareScope) continue;
       this.host.sendEnvelope(client, wsBorsh.KIND_SITE_THEME_UPDATE, payloadBytes);
     }
   }
@@ -108,6 +110,7 @@ export class ThemeSettingsBroadcaster {
       serverTimestamp: this.lastSettingsTimestamp,
     });
     for (const client of this.host.connectedClients) {
+      if (client.shareScope) continue;
       this.host.sendEnvelope(client, wsBorsh.KIND_SETTINGS_UPDATE, payloadBytes);
     }
   }
@@ -120,6 +123,7 @@ export class ThemeSettingsBroadcaster {
       timestamp: BigInt(Number.isNaN(eventTimeMs) ? Date.now() : eventTimeMs),
     });
     for (const client of this.host.connectedClients) {
+      if (client.shareScope) continue;
       this.host.sendEnvelope(client, wsBorsh.KIND_NOTIFY_EVENT, payloadBytes);
     }
   }

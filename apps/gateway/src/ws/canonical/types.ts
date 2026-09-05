@@ -9,6 +9,7 @@ import type {
   PaneReplayGap,
   PaneRetentionConsumerLease,
 } from '../../tmux-client/pane-retention';
+import type { SharePaneOracle, ShareScope } from '../share-scope';
 
 export const CANONICAL_MAX_SCREEN_BYTES = 512 * 1024;
 export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
@@ -58,6 +59,9 @@ export function canonicalSendContinue(result: CanonicalSendResult): boolean {
 
 export interface CanonicalFeedSessionOptions {
   maxFrameBytes: number;
+  /** 非空即分享连接：设备与 pane 都要落在 scope window 内。 */
+  shareScope?: ShareScope | null;
+  isPaneInShareScope?: SharePaneOracle;
   sendEvent: (event: CanonicalEvent) => CanonicalSendResult;
   resolveRuntime: (deviceId: string) => Promise<CanonicalFeedRuntime | null>;
   initialDeviceIds?: () => Iterable<string>;

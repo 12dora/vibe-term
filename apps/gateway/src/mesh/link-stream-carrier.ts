@@ -1,5 +1,6 @@
 import type { LinkStream } from '@tmex/shared/link';
 import type { Carrier, CarrierLogContext, CarrierSendResult } from '../ws/carrier';
+import { encodeTerminalStreamClose, isTerminalStreamCloseCode } from './stream-close-code';
 
 export const LINK_STREAM_BACKPRESSURE_BYTES = 1024 * 1024;
 
@@ -62,8 +63,25 @@ export class LinkStreamCarrier implements Carrier {
     this.closeCallbacks.push(cb);
   }
 
-  close(_code: number, _reason: string): void {
+  /**
+   * 终止性关闭码（会话失效 / 分享结束）用 RST 携带 `code:reason`，让 Hub 直接把关闭码
+   * 透给浏览器而不是当成链路抖动去 failover；其余关闭码保持原来的干净半关闭。
+   */
+  close(code: number, reason: string): void {
     if (this.closed || this.closing) return;
+    if (isTerminalStreamCloseCode(code)) {
+      this.closed = true;
+      this.closing = true;
+      this.queue.length = 0;
+      this.pending = 0;
+      try {
+        this.stream.reset(encodeTerminalStreamClose(code, reason));
+      } catch {
+        // already reset
+      }
+      this.emitClose();
+      return;
+    }
     this.closing = true;
     void this.pump();
   }

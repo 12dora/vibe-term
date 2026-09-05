@@ -53,6 +53,7 @@ import {
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { RtcPeerManager } from '../rtc';
 import { createFakeNativeModule } from '../rtc/test-fakes';
+import { setShareAccessVerifier } from '../share-credential';
 import { openHttpStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
 
@@ -1316,6 +1317,69 @@ describe('mesh phase-2 integration', () => {
     await waitUntil(() => restarted.uplink.state === 'online', 5_000);
     const mode2 = await callMesh(restarted, 'http://a/api/auth/mode');
     expect(((await mode2.json()) as { hubNodeId: string | null }).hubNodeId).toBe(hub.mesh.nodeId);
+  }, 30_000);
+
+  test('分享连接：/n/B/ws 用分享 cookie 建流，B 端终止后浏览器收到 4410', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const scope = { shareId: 'sh-1', deviceId: 'dev-b', windowId: 'win-1' };
+    setShareAccessVerifier((token) =>
+      token === 'sh-1.secret' ? { scope, accessId: 'acc-1', expiresAt: 9e12 } : null
+    );
+    try {
+      const upgraded: { data?: Record<string, unknown> } = {};
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          upgraded.data = (opts?.data ?? {}) as Record<string, unknown>;
+          return true;
+        },
+      };
+      const req = new Request(`http://entry/n/${b.mesh.nodeId}/ws`, {
+        headers: {
+          cookie: `tmex_sh_${b.mesh.nodeId}=sh-1.secret`,
+          upgrade: 'websocket',
+          connection: 'Upgrade',
+        },
+      });
+      setMeshRequestContext(req, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+      expect(await a.mesh.handleRequest(req, server)).toBeUndefined();
+      expect(upgraded.data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      expect(upgraded.data?.auth).toBe('share:sh-1.secret');
+
+      const sent: Uint8Array[] = [];
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      const ws = {
+        data: upgraded.data,
+        send(bytes: Uint8Array | string) {
+          if (typeof bytes !== 'string') sent.push(bytes);
+          return typeof bytes === 'string' ? bytes.length : bytes.byteLength;
+        },
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+      };
+      a.mesh.websocket.open(ws as never);
+      const hello = wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_HELLO_C2S,
+        wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+          clientImpl: 'test',
+          clientVersion: '1.1.23',
+          maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+          supportsCompression: false,
+          supportsDiffSnapshot: false,
+        }),
+        1
+      );
+      a.mesh.websocket.message(ws as never, Buffer.from(hello));
+      await waitUntil(() => sent.length > 0, 3_000);
+      await waitUntil(() => b.wsServer.countShareSessions('sh-1') === 1, 3_000);
+
+      expect(b.wsServer.closeShareSessions('sh-1')).toBe(1);
+      await waitUntil(() => closes.length > 0, 3_000);
+      expect(closes[0]).toEqual({ code: 4410, reason: 'SHARE_ENDED' });
+    } finally {
+      setShareAccessVerifier(null);
+    }
   }, 30_000);
 
   test('redeem-before-admit node catch-up applies own cert without explicit userId', async () => {

@@ -2,6 +2,7 @@ import { describe, expect, spyOn, test } from 'bun:test';
 
 import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
+import { ShareSessionIndex } from './share-session-index';
 import {
   TERMINAL_OUTPUT_METRICS_CHECK_EVERY,
   TerminalOutputMetrics,
@@ -10,6 +11,7 @@ import {
 function makeHost(metrics: TerminalOutputMetrics): DeviceFeedHost & { reports: number } {
   const host = {
     connections: new Map(),
+    shareIndex: new ShareSessionIndex(),
     terminalOutputMetrics: metrics,
     gatewayActivityMetrics: new GatewayActivityMetrics(),
     terminalOutputEventsUntilMetricsCheck: TERMINAL_OUTPUT_METRICS_CHECK_EVERY,

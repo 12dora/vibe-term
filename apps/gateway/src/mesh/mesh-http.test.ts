@@ -1,18 +1,22 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-routes.test';
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
+  MESH_SHARE_WS_KIND,
   MESH_VIA_SELF,
   MESH_WS_KIND,
   type MeshServerWebSocket,
+  SHARE_WS_VERIFY_MS,
   WS_CLOSE_LOGIN_REQUIRED,
   WS_SESSION_VERIFY_MS,
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
 import { X_TMEX_MESH_PEER } from './peer-request-marker';
+import { setShareAccessVerifier } from './share-credential';
 
 const LOGIN_PUBLIC = [
   '/api/auth/mode',
@@ -33,6 +37,153 @@ function upgradeSpy() {
   };
   return { server, dataOf: () => data };
 }
+
+const SHARE_SCOPE = { shareId: 'sh-1', deviceId: 'dev-1', windowId: 'win-1' };
+const SHARE_TOKEN = 'sh-1.secret';
+
+function shareSpy() {
+  let data: Record<string, unknown> | undefined;
+  const server = {
+    upgrade(_req: Request, opts?: { data?: unknown }) {
+      data = opts?.data as Record<string, unknown>;
+      return true;
+    },
+  };
+  return { server, dataOf: () => data };
+}
+
+function acceptOnly(tokens: Set<string>): void {
+  setShareAccessVerifier((token) =>
+    tokens.has(token) ? { scope: SHARE_SCOPE, accessId: 'acc-1', expiresAt: 2_000_000 } : null
+  );
+}
+
+describe('mesh-http share access', () => {
+  afterEach(() => {
+    setShareAccessVerifier(null);
+  });
+
+  test('localUiGuard 放行 /api/share-access/*，其余 /api/* 仍 401', async () => {
+    const mesh = await bootMesh();
+    try {
+      expect(
+        mesh.runtime.localUiGuard(new Request('http://localhost/api/share-access/abc'))
+      ).toBeNull();
+      expect(
+        mesh.runtime.localUiGuard(
+          new Request('http://localhost/api/share-access/abc/login', { method: 'POST' })
+        )
+      ).toBeNull();
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/devices'))?.status).toBe(
+        401
+      );
+      expect(mesh.runtime.localUiGuard(new Request('http://localhost/api/share'))?.status).toBe(
+        401
+      );
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('tmex_sh_self 有效 → 以分享作用域升级，不登记会话', async () => {
+    acceptOnly(new Set([SHARE_TOKEN]));
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      const res = mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws?cid=c1', {
+          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+        }),
+        spy.server
+      );
+      expect(res).toBeUndefined();
+      const data = spy.dataOf();
+      expect(data?.kind).toBe(MESH_SHARE_WS_KIND);
+      expect(data?.scope).toEqual(SHARE_SCOPE);
+      expect(data?.accessId).toBe('acc-1');
+      expect(data?.cid).toBe('c1');
+      expect(data?.sid).toBeUndefined();
+      expect(data?.uid).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享 cookie 无效 → 4401 SHARE_LOGIN_REQUIRED', async () => {
+    acceptOnly(new Set());
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws', { headers: { cookie: 'tmex_sh_self=stale.token' } }),
+        spy.server
+      );
+      const data = spy.dataOf();
+      expect(data?.kind).toBe(MESH_REJECT_4401_KIND);
+      expect(data?.closeReason).toBe('SHARE_LOGIN_REQUIRED');
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      mesh.runtime.handleWebSocket.open({
+        data,
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+        send: () => 0,
+      } as unknown as MeshServerWebSocket);
+      expect(closes[0]).toEqual({
+        code: WS_CLOSE_LOGIN_REQUIRED,
+        reason: 'SHARE_LOGIN_REQUIRED',
+      });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('无任何 cookie 仍是 NODE_LOGIN_REQUIRED', async () => {
+    acceptOnly(new Set());
+    const mesh = await bootMesh();
+    try {
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(new Request('http://localhost/ws'), spy.server);
+      expect(spy.dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
+      expect(spy.dataOf()?.closeReason).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('分享连接按 SHARE_WS_VERIFY_MS 复验；凭证失效即 4410', async () => {
+    const live = new Set([SHARE_TOKEN]);
+    acceptOnly(live);
+    let now = 10_000;
+    const mesh = await bootMesh({ now: () => now });
+    try {
+      const spy = shareSpy();
+      mesh.runtime.guardGatewayWebSocket(
+        new Request('http://localhost/ws', {
+          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+        }),
+        spy.server
+      );
+      const closes: Array<{ code?: number; reason?: string }> = [];
+      const ws = {
+        data: spy.dataOf(),
+        close(code?: number, reason?: string) {
+          closes.push({ code, reason });
+        },
+        send: () => 0,
+      } as unknown as MeshServerWebSocket;
+      expect(mesh.runtime.touchSocket(ws)).toBe(true);
+      live.delete(SHARE_TOKEN);
+      now += SHARE_WS_VERIFY_MS - 1;
+      expect(mesh.runtime.touchSocket(ws)).toBe(true);
+      now += 2;
+      expect(mesh.runtime.touchSocket(ws)).toBe(false);
+      expect(closes[0]).toEqual({ code: SHARE_WS_CLOSE_ENDED, reason: 'SHARE_ENDED' });
+    } finally {
+      mesh.close();
+    }
+  });
+});
 
 describe('mesh-http', () => {
   test('standalone localUiGuard always passes', async () => {
