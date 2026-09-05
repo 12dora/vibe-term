@@ -105,6 +105,8 @@ export type CtlDecodeProfile<Bytes, Seq, NodeList, Enroll> = {
   onJsonError(err: unknown): Error;
   notObject: string;
   unknownType(t: string): Error;
+  /** `t` 不是字符串时的报错：hub 线并入 unknown t，mesh 线视作「不是带 t 的对象」。 */
+  notStringType(value: unknown): Error;
   bytes(value: unknown, field: string, expectedLen?: number, maxLen?: number): Bytes;
   /** b64url 字段但本线以字符串承载（auth.challenge / auth.response）。 */
   text(value: unknown, field: string, expectedLen?: number): string;
@@ -118,6 +120,14 @@ export type CtlDecodeProfile<Bytes, Seq, NodeList, Enroll> = {
   endpoints(value: unknown): unknown;
   /** hub 线额外校验 key log 签名长度。 */
   keyLogSigLen?: number;
+  /** key.log.res 记录的报错文案与字段标签两条线不同。 */
+  keyLogRes: {
+    notArray: string;
+    notObject(index: number): string;
+    field(index: number, name: 'seq' | 'bytes' | 'sig'): string;
+  };
+  rtcFrom(value: unknown): 'browser' | 'node';
+  optSignalText(value: unknown, field: 'sdp' | 'candidate'): string | undefined;
   /** 只有 hub 线落地 enroll.redeemed 的 already_admitted。 */
   keepAlreadyAdmitted?: boolean;
   nodeList(parsed: Record<string, unknown>): NodeList;
@@ -157,6 +167,7 @@ function assertCtlPayloadBounds<B, S, NL, ER>(
       return;
     }
   }
+  if (byteLength > UPLINK_CTL_MAX_BYTES) throw profile.fail('ctl too large');
   if (!skipsCtlBounds(parsed.t)) assertCtlBounds(parsed, 0);
 }
 
@@ -176,7 +187,7 @@ function prepareCtl<B, S, NL, ER>(
   }
   if (!isRecord(parsed)) throw profile.fail(profile.notObject);
   const t = parsed.t;
-  if (typeof t !== 'string') throw profile.unknownType(String(t));
+  if (typeof t !== 'string') throw profile.notStringType(t);
   assertCtlPayloadBounds(parsed, byteLength, profile, opts);
   if (!TYPE_SET.has(t)) throw profile.unknownType(t);
   return parsed;
@@ -220,18 +231,18 @@ function decodeKeyLogRes<B, S, NL, ER>(
   parsed: Record<string, unknown>,
   p: AnyProfile<B, S, NL, ER>
 ): UplinkCtlDecoded<B, S> {
-  if (!Array.isArray(parsed.records)) throw p.fail('key.log.res records must be an array');
+  if (!Array.isArray(parsed.records)) throw p.fail(p.keyLogRes.notArray);
   if (parsed.records.length > KEY_LOG_PAGE_MAX_LIMIT) {
     throw p.fail('key.log.res too many records');
   }
   const res: Extract<UplinkCtlDecoded<B, S>, { t: 'key.log.res' }> = {
     t: 'key.log.res',
     records: parsed.records.map((row, i) => {
-      if (!isRecord(row)) throw p.fail(`key.log.res records[${i}] must be an object`);
+      if (!isRecord(row)) throw p.fail(p.keyLogRes.notObject(i));
       return {
-        seq: p.seq(row.seq, `records[${i}].seq`),
-        bytes: p.bytes(row.bytes, `records[${i}].bytes`),
-        sig: p.bytes(row.sig, `records[${i}].sig`, p.keyLogSigLen),
+        seq: p.seq(row.seq, p.keyLogRes.field(i, 'seq')),
+        bytes: p.bytes(row.bytes, p.keyLogRes.field(i, 'bytes')),
+        sig: p.bytes(row.sig, p.keyLogRes.field(i, 'sig'), p.keyLogSigLen),
       };
     }),
   };
@@ -284,17 +295,16 @@ function decodeRtcSignal<B, S, NL, ER>(
   parsed: Record<string, unknown>,
   p: AnyProfile<B, S, NL, ER>
 ): UplinkCtlDecoded<B, S> {
-  const from = parsed.from;
-  if (from !== 'browser' && from !== 'node') throw p.fail('rtc.signal from must be browser|node');
+  const from = p.rtcFrom(parsed.from);
   const msg: Extract<UplinkCtlDecoded<B, S>, { t: 'rtc.signal' }> = {
     t: 'rtc.signal',
     rtcSession: p.reqText(parsed.rtcSession, 'rtcSession'),
     from,
     to: p.reqText(parsed.to, 'to'),
   };
-  const sdp = p.readers.optStr(parsed.sdp, 'sdp');
+  const sdp = p.optSignalText(parsed.sdp, 'sdp');
   if (sdp !== undefined) msg.sdp = sdp;
-  const candidate = p.readers.optStr(parsed.candidate, 'candidate');
+  const candidate = p.optSignalText(parsed.candidate, 'candidate');
   if (candidate !== undefined) msg.candidate = candidate;
   return msg;
 }

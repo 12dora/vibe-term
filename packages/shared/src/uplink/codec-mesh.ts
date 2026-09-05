@@ -168,6 +168,7 @@ const meshProfile: CtlDecodeProfile<
   onJsonError: (err) => (err instanceof Error ? err : new Error('invalid json')),
   notObject: 'uplink ctl must be a JSON object with t',
   unknownType: (t) => new Error(`unknown uplink ctl t: ${t}`),
+  notStringType: () => new Error('uplink ctl must be a JSON object with t'),
   bytes(value, field, expectedLen, maxLen) {
     const raw = ctlRead.b64(value, field, expectedLen);
     if (maxLen !== undefined && raw.byteLength > maxLen) {
@@ -182,6 +183,19 @@ const meshProfile: CtlDecodeProfile<
   seq: (value, field) => ctlRead.seq(value, field),
   inventory: (value) => value ?? {},
   endpoints: (value) => value ?? [],
+  keyLogRes: {
+    notArray: 'key.log.res records must be an array',
+    notObject: (index) => `key.log.res records[${index}] must be an object`,
+    field: (index, name) => `records[${index}].${name}`,
+  },
+  rtcFrom(value) {
+    const from = ctlRead.str(value, 'from');
+    if (from !== 'browser' && from !== 'node') {
+      throw new Error('rtc.signal from must be browser|node');
+    }
+    return from;
+  },
+  optSignalText: (value, field) => ctlRead.optStr(value, field),
   nodeList: decodeMeshNodeList,
   enrollRedeemed(fields) {
     const msg: MeshUplinkEnrollRedeemed = {

@@ -1,7 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url } from '../auth/encoding';
 import {
+  KEY_LOG_PAGE_MAX_BYTES,
+  UPLINK_CTL_MAX_BYTES,
   UPLINK_CTL_TYPES,
+  UplinkCtlError,
   type UplinkCtlType,
   decodeHubUplinkCtl,
   decodeMeshUplinkCtl,
@@ -215,5 +218,131 @@ describe('hub / mesh ctl 编解码等价性', () => {
     expect(encodeBase64url(mesh.records[0]?.bytes as Uint8Array)).toBe(
       hub.records[0]?.bytes as string
     );
+  });
+});
+
+/** 补白到指定字节长度，用来打信封的尺寸门槛。 */
+function padTo(obj: Record<string, unknown>, target: number): Uint8Array {
+  const base = JSON.stringify(obj).length + ',"_pad":""'.length;
+  return te.encode(JSON.stringify({ ...obj, _pad: 'x'.repeat(Math.max(target - base, 0)) }));
+}
+
+const throwsWith = (fn: () => unknown): string => {
+  try {
+    fn();
+  } catch (e) {
+    return e instanceof Error ? e.message : String(e);
+  }
+  throw new Error('expected a throw');
+};
+
+/**
+ * 信封层报错文案必须与合并前逐字一致：`apps/gateway/src/mesh/uplink-reconnect.ts`
+ * 的 mapUplinkCtlError 按字面量把它们分到 ctl_too_large / ctl_too_long / unknown_type 等指标标签，
+ * 文案漂移会静默改变重连行为。
+ */
+describe('ctl 信封报错文案（对齐合并前实现）', () => {
+  const RES_ID = 'req-1';
+
+  test('mesh：尺寸门槛一律 "ctl too large"', () => {
+    expect(throwsWith(() => decodeMeshUplinkCtl(new Uint8Array(KEY_LOG_PAGE_MAX_BYTES + 1)))).toBe(
+      'ctl too large'
+    );
+    expect(
+      throwsWith(() => decodeMeshUplinkCtl(padTo({ t: 'ping' }, UPLINK_CTL_MAX_BYTES + 1)))
+    ).toBe('ctl too large');
+    // 超尺寸但不是 key.log.res：即便带着 pending id 也必须是 too large，不能落到 assertCtlBounds
+    expect(
+      throwsWith(() =>
+        decodeMeshUplinkCtl(padTo({ t: 'ping' }, KEY_LOG_PAGE_MAX_BYTES), {
+          pendingKeyLogId: RES_ID,
+        })
+      )
+    ).toBe('ctl too large');
+    const huge = padTo({ t: 'key.log.res', records: [], id: RES_ID }, KEY_LOG_PAGE_MAX_BYTES);
+    expect(throwsWith(() => decodeMeshUplinkCtl(huge))).toBe('ctl too large');
+    expect(throwsWith(() => decodeMeshUplinkCtl(huge, { pendingKeyLogId: 'other' }))).toBe(
+      'ctl too large'
+    );
+    expect(decodeMeshUplinkCtl(huge, { pendingKeyLogId: RES_ID }).t).toBe('key.log.res');
+  });
+
+  test('mesh：非对象 / 非法 t / 未知 t / 越界文案', () => {
+    const enc = (raw: string) => te.encode(raw);
+    const NOT_OBJECT = 'uplink ctl must be a JSON object with t';
+    expect(throwsWith(() => decodeMeshUplinkCtl(enc('"hello"')))).toBe(NOT_OBJECT);
+    expect(throwsWith(() => decodeMeshUplinkCtl(enc('[1,2]')))).toBe(NOT_OBJECT);
+    expect(throwsWith(() => decodeMeshUplinkCtl(enc('{}')))).toBe(NOT_OBJECT);
+    expect(throwsWith(() => decodeMeshUplinkCtl(enc('{"t":42}')))).toBe(NOT_OBJECT);
+    expect(throwsWith(() => decodeMeshUplinkCtl(enc('{"t":"nope"}')))).toBe(
+      'unknown uplink ctl t: nope'
+    );
+    expect(throwsWith(() => decodeMeshUplinkCtl(wire({ t: 'ping', pad: 'x'.repeat(5000) })))).toBe(
+      'ctl string too long'
+    );
+    expect(
+      throwsWith(() =>
+        decodeMeshUplinkCtl(wire({ t: 'ping', pad: Array.from({ length: 2000 }, (_, i) => i) }))
+      )
+    ).toBe('ctl array too long');
+    expect(
+      throwsWith(() =>
+        decodeMeshUplinkCtl(wire({ t: 'ping', pad: JSON.parse('[[[[[[[[[["x"]]]]]]]]]]') }))
+      )
+    ).toBe('ctl too deep');
+  });
+
+  test('mesh：字段层文案保持 "ctl field …" 前缀（映射到 invalid_field）', () => {
+    expect(
+      throwsWith(() =>
+        decodeMeshUplinkCtl(wire({ t: 'rtc.signal', rtcSession: 's', from: 0, to: 'n' }))
+      )
+    ).toBe('ctl field from must be a string');
+    expect(
+      throwsWith(() =>
+        decodeMeshUplinkCtl(wire({ t: 'rtc.signal', rtcSession: 's', from: 'peer', to: 'n' }))
+      )
+    ).toBe('rtc.signal from must be browser|node');
+    expect(throwsWith(() => decodeMeshUplinkCtl(wire({ t: 'key.log.res' })))).toBe(
+      'key.log.res records must be an array'
+    );
+    expect(throwsWith(() => decodeMeshUplinkCtl(wire({ t: 'key.log.res', records: [null] })))).toBe(
+      'key.log.res records[0] must be an object'
+    );
+  });
+
+  test('hub：信封与字段文案保持 UplinkCtlError 原样', () => {
+    const enc = (raw: string) => te.encode(raw);
+    expect(throwsWith(() => decodeHubUplinkCtl(new Uint8Array(UPLINK_CTL_MAX_BYTES + 1)))).toBe(
+      'ctl too large'
+    );
+    expect(throwsWith(() => decodeHubUplinkCtl(enc('not json')))).toBe('invalid json');
+    expect(throwsWith(() => decodeHubUplinkCtl(enc('"hello"')))).toBe('invalid ctl');
+    expect(throwsWith(() => decodeHubUplinkCtl(enc('{"t":42}')))).toBe('unknown t: 42');
+    expect(throwsWith(() => decodeHubUplinkCtl(enc('{"t":"nope"}')))).toBe('unknown t: nope');
+    expect(throwsWith(() => decodeHubUplinkCtl(wire({ t: 'key.log.res', records: [] })))).toBe(
+      'unexpected key.log.res'
+    );
+    expect(
+      throwsWith(() => decodeHubUplinkCtl(wire({ t: 'key.log.res' }), { allowKeyLogRes: true }))
+    ).toBe('invalid records');
+    expect(
+      throwsWith(() =>
+        decodeHubUplinkCtl(wire({ t: 'key.log.res', records: [null] }), { allowKeyLogRes: true })
+      )
+    ).toBe('invalid record');
+    expect(
+      throwsWith(() =>
+        decodeHubUplinkCtl(wire({ t: 'rtc.signal', rtcSession: 's', from: 'peer', to: 'n' }))
+      )
+    ).toBe('invalid rtc.from');
+    expect(
+      throwsWith(() =>
+        decodeHubUplinkCtl(
+          wire({ t: 'rtc.signal', rtcSession: 's', from: 'node', to: 'n', sdp: 0 })
+        )
+      )
+    ).toBe('invalid rtc.sdp');
+    expect(() => decodeHubUplinkCtl(te.encode('{"t":42}'))).toThrow(UplinkCtlError);
   });
 });

@@ -227,6 +227,7 @@ const hubProfile: CtlDecodeProfile<
   onJsonError: () => new UplinkCtlError('invalid json'),
   notObject: 'invalid ctl',
   unknownType: (t) => new UplinkCtlError(`unknown t: ${t}`),
+  notStringType: (value) => new UplinkCtlError(`unknown t: ${String(value)}`),
   bytes(value, field, expectedLen, maxLen) {
     const raw = b64urlToBytes(hubRead.str(value, field), expectedLen);
     if (maxLen !== undefined && raw.byteLength > maxLen) {
@@ -245,6 +246,20 @@ const hubProfile: CtlDecodeProfile<
   endpoints: hEndpoints,
   keyLogSigLen: 64,
   keepAlreadyAdmitted: true,
+  keyLogRes: {
+    notArray: 'invalid records',
+    notObject: () => 'invalid record',
+    field: (_index, name) => name,
+  },
+  rtcFrom(value) {
+    if (value !== 'browser' && value !== 'node') throw new UplinkCtlError('invalid rtc.from');
+    return value;
+  },
+  optSignalText(value, field) {
+    if (value === undefined || value === null) return undefined;
+    if (typeof value !== 'string') throw new UplinkCtlError(`invalid rtc.${field}`);
+    return value;
+  },
   nodeList: decodeHubNodeList,
   enrollRedeemed(fields) {
     const msg: EnrollRedeemedMessage = {
