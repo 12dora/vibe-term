@@ -318,7 +318,7 @@ describe('provider --edge args', () => {
         checkedAt: null,
         lastError: null,
       })
-    ).toEqual(['--edge', '1.2.3.4:7844', '--edge', '5.6.7.8:7844']);
+    ).toEqual(['--edge', '1.2.3.4:7844', '--edge', '5.6.7.8:7844', '--protocol', 'http2']);
   });
 
   test('named and quick spawns append --edge in static mode only', async () => {

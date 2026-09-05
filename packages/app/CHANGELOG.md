@@ -1,3 +1,23 @@
+# 1.1.32
+
+_2026-09-05_
+
+## English
+
+### Fixes
+
+- Remote access: when the tunnel runs with the static edge list (fake-IP bypass), cloudflared is now pinned to `--protocol http2`. In that environment UDP 7844 (QUIC) is swallowed by the local proxy and cloudflared's `auto` mode fell back to HTTP/2 too slowly, so 1.1.31 still reported zero edge connections; HTTP/2 to the real edge registers immediately.
+
+---
+
+## 中文
+
+### 修复
+
+- 远程访问：隧道以静态边缘列表（fake-IP 绕行）运行时，cloudflared 固定使用 `--protocol http2`。该环境下 UDP 7844（QUIC）会被本机代理吞掉，cloudflared 的 `auto` 模式回落 HTTP/2 太慢，1.1.31 仍显示 0 边缘连接；HTTP/2 直连真实边缘可立即注册。
+
+---
+
 # 1.1.31
 
 _2026-09-05_

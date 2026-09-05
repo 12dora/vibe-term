@@ -110,12 +110,17 @@ export type CloudflaredProviderOptions = {
   log?: (message: string) => void;
 };
 
+/**
+ * 静态边缘只在本机代理劫持 DNS 时启用，这类环境下 UDP 7844（QUIC）几乎必然被代理吞掉，
+ * 而 cloudflared 的 `auto` 协议要多次 QUIC 失败才回落，实测数分钟仍 0 连接；直接钉 http2。
+ */
 export function edgeArgs(edge: TunnelEdgeResolution | null): string[] {
   if (!edge || edge.mode !== 'static') return [];
   const args: string[] = [];
   for (const addr of edge.edgeAddrs) {
     args.push('--edge', addr);
   }
+  args.push('--protocol', 'http2');
   return args;
 }
 

@@ -15,6 +15,7 @@
 
 - `--dns-resolver-addrs` 是 WARP 虚拟 DNS 服务，不是边缘发现，不能用来绕过 fake-IP。
 - `--edge` 关闭 SRV 发现，只在检测到 fake-IP 时启用，正常环境行为不变。
+- 静态边缘模式同时钉 `--protocol http2`：实测真实边缘 IP 下 HTTP/2 立即注册两条连接，而 QUIC（UDP 7844）仍被代理吞掉，cloudflared `auto` 回落太慢（1.1.32 修正）。
 - 只查 A 不查 AAAA，IPv6-only 网络会回落 system。
 
 ## 排查法
