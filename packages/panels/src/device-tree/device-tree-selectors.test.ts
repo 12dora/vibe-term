@@ -157,6 +157,19 @@ describe('shouldHideSidebarNodeSection', () => {
     expect(shouldHideSidebarNodeSection({ total: 0, visible: 0 }, false)).toBe(true);
     expect(shouldHideSidebarNodeSection({ total: 0, visible: 0 }, true)).toBe(false);
   });
+
+  test('设备列表还没落地（pending）时一律不隐藏，节点头必须先出来', () => {
+    expect(shouldHideSidebarNodeSection({ total: 0, visible: 0, pending: true }, false)).toBe(
+      false
+    );
+    expect(shouldHideSidebarNodeSection({ total: 3, visible: 0, pending: true }, false)).toBe(
+      false
+    );
+    // 落地之后（pending=false）照旧
+    expect(shouldHideSidebarNodeSection({ total: 3, visible: 0, pending: false }, false)).toBe(
+      true
+    );
+  });
 });
 
 describe('mergeReorderedVisibleIds', () => {

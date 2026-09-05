@@ -16,10 +16,11 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
+import { restoreSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
-import { offlineDevices } from '@/pages/devices/device-snapshot-store';
+import { offlineDevices, writeDeviceSnapshot } from '@/pages/devices/device-snapshot-store';
 import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
 import {
   NodeBadge,
@@ -27,11 +28,12 @@ import {
   type SortableRow,
   shouldHideSidebarNodeSection,
 } from '@tmex/panels/device-tree';
+import type { Device } from '@tmex/shared';
 import { isSidebarDeviceVisible } from '@tmex/stores';
 import { useUIStore } from '@tmex/stores/react';
 import { cn } from '@tmex/ui';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, matchPath, useLocation } from 'react-router';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';
@@ -222,16 +224,58 @@ function SectionHeader({
  * 像是「登完就消失」。开启过设备的 node 才留这条紧凑行，供用户重新登录回来；正在浏览该 node
  * 某台设备时同样保留，否则页面上就没有登录入口可点了。
  */
+/**
+ * 已经自动登过一次的 node（每次页面加载一份）。
+ *
+ * 会话 18 小时到期后重开 PWA，每个远端 node 都会退回「登录此节点」按钮——但内存 / IndexedDB
+ * 里的会话钥往往还在，用户要做的只是点一下。这里替他点：**只点一次**，失败就老实退回按钮，
+ * 否则一串 401 会变成一轮又一轮的静默登录。用户手动点开时不受这条记账约束。
+ */
+const eagerSignInAttempted = new Set<string>();
+
+/** 领一次自动登录的名额；同一个 node 每次页面加载只发一次。 */
+export function claimEagerSignIn(runtimeNodeId: string): boolean {
+  if (eagerSignInAttempted.has(runtimeNodeId)) return false;
+  eagerSignInAttempted.add(runtimeNodeId);
+  return true;
+}
+
+/** 仅测试使用：清掉「已自动登过」的记账。 */
+export function resetEagerSignInForTest(): void {
+  eagerSignInAttempted.clear();
+}
+
+function useEagerNodeSignIn(runtimeNodeId: string, present: boolean): boolean {
+  const [eager, setEager] = useState(false);
+  useEffect(() => {
+    if (!present || eager || eagerSignInAttempted.has(runtimeNodeId)) return;
+    let cancelled = false;
+    // 冷启动时会话钥还在 IndexedDB 里（内存是空的），`restoreSessionKey()` 是那条恢复入口；
+    // 恢复不出来就别自动登，直接把「登录此节点」按钮留给用户。
+    void restoreSessionKey().then((info) => {
+      if (cancelled || !info || !claimEagerSignIn(runtimeNodeId)) return;
+      setEager(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [present, eager, runtimeNodeId]);
+  return eager;
+}
+
 function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: SidebarNodeSortable }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
-  const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded });
   const visibility = useUIStore((state) => state.sidebarDeviceVisibility);
   const selectedDeviceId = selectedDeviceIdForNode(useLocation().pathname, node.runtimeNodeId);
   const present =
     selectedDeviceId !== null || hasSidebarVisibleDeviceForNode(visibility, node.runtimeNodeId);
+  const eager = useEagerNodeSignIn(node.runtimeNodeId, present);
+  const gate = useNodeLoginGate(node.runtimeNodeId, { enabled: expanded || eager });
   const presence = useSectionPresence(present, null);
   if (!presence.rendered) return null;
+  // 自动登录进行中就别先闪一下「登录此节点」：那条按钮点下去做的正是同一件事。
+  const busy = gate.status === 'pending' && (expanded || eager);
 
   return (
     <div
@@ -242,7 +286,15 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
     >
       <SectionHeader node={node} drag={drag} />
       <div className="px-1 pb-0.5">
-        {!expanded ? (
+        {busy ? (
+          <div
+            className="tmex-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
+            data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
+          >
+            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
+            <span className="truncate">{t('auth.node.loggingIn')}</span>
+          </div>
+        ) : !expanded && gate.code === null ? (
           <button
             type="button"
             className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none"
@@ -252,14 +304,6 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
             <ChevronRight className="h-3.5 w-3.5 shrink-0" />
             <span className="truncate">{t('auth.node.loginToThisNode')}</span>
           </button>
-        ) : gate.status === 'pending' ? (
-          <div
-            className="tmex-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
-            data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
-          >
-            <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
-            <span className="truncate">{t('auth.node.loggingIn')}</span>
-          </div>
         ) : (
           <div className="tmex-fade flex flex-col gap-1">
             {gate.code ? (
@@ -389,6 +433,17 @@ const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
 }: SidebarNodeRuntimeSectionProps) {
   const { t } = useTranslation();
   const runtimeNodeId = node.runtimeNodeId;
+  // 首帧占位：本地快照优先，其次 node inventory。读 localStorage + 解析 JSON，按 node
+  // 与 inventory 记一次即可。
+  const placeholderDevices = useMemo(
+    () => offlineDevices(runtimeNodeId, node.inventory),
+    [runtimeNodeId, node.inventory]
+  );
+  // 侧边栏也负责维护快照：此前只有设备页写，从没进过设备页的用户永远没有首帧占位数据。
+  const handleDevicesLoaded = useCallback(
+    (devices: Device[]) => writeDeviceSnapshot(runtimeNodeId, devices),
+    [runtimeNodeId]
+  );
   // 恒等的 key 映射：panels 侧的设备树把它带进 `handleDeviceExpandedChange` 的依赖与两条
   // effect 的依赖，每渲染换一个新函数会让每台 DeviceRow 的 memo 全部失效，并对每台可见设备
   // 空跑一次 ensureDeviceSubscribed。
@@ -406,6 +461,8 @@ const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
           containerRef: drag?.sortable.setNodeRef,
           containerStyle: drag?.sortable.style,
           containerClassName: drag?.sortable.isDragging ? 'opacity-60' : undefined,
+          placeholderDevices,
+          onDevicesLoaded: handleDevicesLoaded,
         }}
         expansionKeyFor={runtimeNodeId === SELF_NODE_ID ? undefined : expansionKeyFor}
         emptyLabel={t('sidebar.node.noDevices')}

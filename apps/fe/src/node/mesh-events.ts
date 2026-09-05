@@ -10,6 +10,7 @@ import {
 } from '@tmex/api-client/auth/index';
 import { wsBorsh } from '@tmex/shared';
 import { encodeBase64url } from '@tmex/shared/auth';
+import { type RecoverySubscribe, isPageVisible, onPageRecovery } from './mesh-recovery';
 
 /** 会话在连接期间失效时服务端的关闭码（B2-2b 契约）。 */
 export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
@@ -221,11 +222,21 @@ export interface MeshEventSourceOptions {
   nowFn?: () => number;
   /** 4401（会话失效）时的处理；缺省派发全局未授权并跳登录页。 */
   onUnauthorized?: () => void;
+  /**
+   * 页面可见时的退避上限。后台待久了退避会爬到分钟级，用户切回来还要干等一整拍——
+   * 前台一律压到这个上限之内。
+   */
+  visibleMaxDelayMs?: number;
+  /** 「页面重新可见 / 网络恢复」信号（测试注入）；缺省订阅 document / window。 */
+  recovery?: RecoverySubscribe;
+  /** 页面此刻是否可见（测试注入）。 */
+  visible?: () => boolean;
 }
 
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
 const DEFAULT_STABLE_AFTER_MS = 10_000;
+const DEFAULT_VISIBLE_MAX_DELAY_MS = 5_000;
 
 function closeCodeOf(event: unknown): number | null {
   const code = (event as { code?: unknown } | null | undefined)?.code;
@@ -263,6 +274,10 @@ export class MeshEventSource {
   private readonly random: () => number;
   private readonly now: () => number;
   private readonly onUnauthorized: () => void;
+  private readonly visibleMaxDelayMs: number;
+  private readonly recovery: RecoverySubscribe;
+  private readonly visible: () => boolean;
+  private stopRecovery: (() => void) | null = null;
 
   private socket: MeshSocketLike | null = null;
   private timer: unknown = null;
@@ -292,6 +307,9 @@ export class MeshEventSource {
     this.random = options.random ?? Math.random;
     this.now = options.nowFn ?? Date.now;
     this.onUnauthorized = options.onUnauthorized ?? (() => handleGlobalUnauthorized('/mesh/ws'));
+    this.visibleMaxDelayMs = options.visibleMaxDelayMs ?? DEFAULT_VISIBLE_MAX_DELAY_MS;
+    this.recovery = options.recovery ?? onPageRecovery;
+    this.visible = options.visible ?? isPageVisible;
   }
 
   get connected(): boolean {
@@ -310,7 +328,10 @@ export class MeshEventSource {
    */
   retryDelay(attempt: number): number {
     const exponent = Math.max(0, attempt - 1);
-    const capped = Math.min(this.maxDelayMs, this.baseDelayMs * 2 ** exponent);
+    const ceiling = this.visible()
+      ? Math.min(this.maxDelayMs, this.visibleMaxDelayMs)
+      : this.maxDelayMs;
+    const capped = Math.min(ceiling, this.baseDelayMs * 2 ** exponent);
     return Math.round(capped * (0.5 + this.random() * 0.5));
   }
 
@@ -319,11 +340,28 @@ export class MeshEventSource {
     this.started = true;
     this.attempt = 0;
     this.unauthorizedFlag = false;
+    this.stopRecovery ??= this.recovery(() => this.reconnectNow());
+    this.open();
+  }
+
+  /**
+   * 页面重新可见 / 网络恢复：退避计数清零并立刻重连。锁屏几分钟后退避早就爬到分钟级，
+   * 用户切回来第一眼看到的却是「事件流未连接」，节点上下线全靠 5 分钟的兜底轮询。
+   */
+  private reconnectNow(): void {
+    if (!this.started || this.connectedFlag || this.socket) return;
+    this.attempt = 0;
+    if (this.timer != null) {
+      this.cancel(this.timer);
+      this.timer = null;
+    }
     this.open();
   }
 
   stop(): void {
     this.started = false;
+    this.stopRecovery?.();
+    this.stopRecovery = null;
     if (this.timer != null) {
       this.cancel(this.timer);
       this.timer = null;

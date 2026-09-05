@@ -1,26 +1,16 @@
-// mesh 节点视图：`GET /api/mesh/nodes` 的宿主级单例 store + `/mesh/ws` NODE_EVENT 实时投影
-// + hub 机 node 的发现与 `GET /n/<hub>/api/hub/nodes` 合并。
+// mesh 节点视图的 React 绑定：宿主级单例轮询回路、`useMeshNodes`，以及 hub 机 node 的
+// 发现与 `GET /n/<hub>/api/hub/nodes` 合并。
 //
-// 为什么不用 react-query：这份列表是**入口级**的（永远打 entry 自身，不带 `/n/:id` 前缀），
-// 而侧边栏/设备页可能挂在任意 node 的 QueryClient 下——放进某个 node 的缓存会在切 node 时
-// 重复拉取，也拿不到跨边界的实时事件。用一个模块级 store + useSyncExternalStore 更直接。
+// 状态本体（store、`/api/auth/mode`、`/api/mesh/nodes`、首帧缓存与有界重试）在
+// `./mesh-nodes-store`；这里原样再导出一遍，调用方仍然只 import 本模块。
 
-import { isAuthTransitionActive } from '@/auth/auth-transition';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type {
-  AuthApi,
-  AuthModeResponse,
-  AuthRequiredDetail,
-  MeshNode,
-} from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/auth/index';
 import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type PollingControls,
   type PollingTimingOptions,
   createPollingHandle,
-  createStateStore,
   startPollingLoop,
 } from './create-polling-store';
 import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
@@ -32,6 +22,53 @@ import {
 } from './hub-load-coordinator';
 import { HUB_POLL_MS, startHubPolling } from './hub-polling';
 import { type MeshEventSource, type NodeEventPayload, sharedMeshEvents } from './mesh-events';
+import {
+  applyMeshNodeEvent,
+  ensureAuthMode,
+  ensureFreshMeshNodes,
+  getMeshNodesState,
+  meshEnabledOf,
+  refreshMeshNodes,
+  subscribeMeshNodes,
+} from './mesh-nodes-store';
+
+import type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
+
+export type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
+export {
+  applyMeshNodeEvent,
+  ensureAuthMode,
+  ensureFreshMeshNodes,
+  getMeshNodesState,
+  hydrateMeshNodesFromCache,
+  markLoggedIn,
+  markLoggedOut,
+  meshEnabledOf,
+  patchNodesWithEvent,
+  refreshMeshNodes,
+  resetMeshNodesStateForTest,
+  retryUnsettledOnRecovery,
+  setEntryNodeId,
+  setMeshNodesStateForTest,
+  setRetrySchedulersForTest,
+  subscribeMeshNodes,
+} from './mesh-nodes-store';
+
+/**
+ * `/api/auth/mode` 的共享读法：任何消费方挂上来都会保证它被拉过一次。
+ */
+export function useSharedAuthMode(api: AuthApi = defaultAuthApi): SharedAuthMode {
+  const snapshot = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
+  useEffect(() => {
+    void ensureAuthMode(api);
+  }, [api]);
+  return {
+    mode: snapshot.mode,
+    loaded: snapshot.modeLoaded,
+    meshEnabled: meshEnabledOf(snapshot),
+    entryNodeId: snapshot.entryNodeId,
+  };
+}
 
 // ---------------------------------------------------------------------------
 // 纯函数
@@ -44,54 +81,6 @@ export {
   toRuntimeNodeId,
 } from './merge-nodes';
 export type { MergeContext, NodeRow, PendingAdmitMaterial } from './merge-nodes';
-
-/** NODE_EVENT 投影到列表：只改已知 node 的在线态 / 到达路径 / inventory，不新增行。 */
-export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload): MeshNode[] {
-  // revoked 的 node 直接从列表移除：证书已失效，任何操作都不该再指向它。
-  if (event.status === 'revoked') {
-    const filtered = nodes.filter((node) => node.id !== event.nodeId);
-    return filtered.length === nodes.length ? nodes : filtered;
-  }
-  let changed = false;
-  const next = nodes.map((node) => {
-    if (node.id !== event.nodeId) return node;
-    changed = true;
-    const online = event.status === 'online';
-    const transport = online ? pick(event.transport, node.transport) : null;
-    const reach = online ? event.reach : null;
-    // 只 REST 下发的链路现场（对端地址、建立时刻、未直连原因）：事件里没有这几段。承载与到达
-    // 路径都没变才是同一条链路，可以留用；一旦换了链路，旧地址与旧时长必须清掉，否则会一直显示
-    // 到下一次轮询。
-    const sameLink = online && transport === (node.transport ?? null) && reach === node.reach;
-    return {
-      ...node,
-      online,
-      reach,
-      transport,
-      rttMs: online ? pick(event.rttMs, node.rttMs) : null,
-      peerAddress: sameLink ? (node.peerAddress ?? null) : null,
-      linkSinceAt: sameLink ? (node.linkSinceAt ?? null) : null,
-      directFailure: sameLink ? (node.directFailure ?? null) : null,
-      inventory: event.inventory ?? node.inventory,
-      version: event.version ?? versionOf(event.inventory) ?? node.version,
-      direct_capable: event.direct_capable ?? node.direct_capable,
-      name: event.name ?? node.name,
-    } satisfies MeshNode;
-  });
-  return changed ? next : nodes;
-}
-
-/** 事件里没带这一段（老 node 的帧）时保留上一次列表里的值，别把已知信息清成未知。 */
-function pick<T>(fromEvent: T | undefined, previous: T | undefined): T | null {
-  if (fromEvent !== undefined) return fromEvent;
-  return previous ?? null;
-}
-
-function versionOf(inventory: unknown): string | null {
-  if (!inventory || typeof inventory !== 'object') return null;
-  const value = (inventory as { version?: unknown }).version;
-  return typeof value === 'string' ? value : null;
-}
 
 /**
  * hub 机 node 的 id。**只认契约字段**：`/api/mesh/nodes` 的 `isHub`（hub 经 `node.list`
@@ -187,174 +176,6 @@ export async function loadHubNodes(
 
 function silentNodeLogin(hubNodeId: string): Promise<{ ok: boolean }> {
   return import('@/auth/session-key-store').then((mod) => mod.ensureNodeLogin(hubNodeId));
-}
-
-// ---------------------------------------------------------------------------
-// 宿主级 store
-// ---------------------------------------------------------------------------
-
-export interface MeshNodesState {
-  nodes: MeshNode[];
-  /** entry 自身的 nodeId（来自 `/api/auth/mode`），未知为 `null`。 */
-  entryNodeId: string | null;
-  /** `/api/auth/mode` 的结果；standalone 时 `mode==='none'`，此时不发任何 `/api/mesh/*` 请求。 */
-  mode: AuthModeResponse | null;
-  modeLoaded: boolean;
-  loading: boolean;
-  error: string | null;
-  loadedAt: number | null;
-}
-
-const EMPTY_STATE: MeshNodesState = {
-  nodes: [],
-  entryNodeId: null,
-  mode: null,
-  modeLoaded: false,
-  loading: false,
-  error: null,
-  loadedAt: null,
-};
-
-const store = createStateStore<MeshNodesState>(EMPTY_STATE, () => {
-  modePromise = null;
-  inFlight = null;
-  trailingRequested = false;
-});
-const setState = store.set;
-
-export const getMeshNodesState = store.get;
-export const subscribeMeshNodes = store.subscribe;
-
-/** 仅测试使用：直接注入一份状态。 */
-export const setMeshNodesStateForTest = store.set;
-
-export const resetMeshNodesStateForTest = store.reset;
-
-let modePromise: Promise<void> | null = null;
-
-/** `/api/auth/mode` 全宿主只拉一次（standalone 判定与 entry nodeId 都从这里来）。 */
-export function ensureAuthMode(api: AuthApi = defaultAuthApi): Promise<void> {
-  if (modePromise) return modePromise;
-  modePromise = api
-    .getMode()
-    .then((mode) => {
-      setState({ mode, modeLoaded: true, entryNodeId: mode.nodeId || null });
-    })
-    .catch(() => {
-      // 拉不到就按「未知」处理：既不渲染 mesh UI，也不退化成 standalone 之外的形态。
-      setState({ modeLoaded: true });
-    });
-  return modePromise;
-}
-
-export interface SharedAuthMode {
-  mode: AuthModeResponse | null;
-  loaded: boolean;
-  /** mesh 模式（非 standalone）。未加载完成时为 `false`。 */
-  meshEnabled: boolean;
-  entryNodeId: string | null;
-}
-
-export function useSharedAuthMode(api: AuthApi = defaultAuthApi): SharedAuthMode {
-  const snapshot = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
-  useEffect(() => {
-    void ensureAuthMode(api);
-  }, [api]);
-  return {
-    mode: snapshot.mode,
-    loaded: snapshot.modeLoaded,
-    meshEnabled: snapshot.mode?.mode === 'mesh',
-    entryNodeId: snapshot.entryNodeId,
-  };
-}
-
-export function applyMeshNodeEvent(event: NodeEventPayload): void {
-  const { nodes } = store.get();
-  const next = patchNodesWithEvent(nodes, event);
-  if (next !== nodes) setState({ nodes: next });
-}
-
-let inFlight: Promise<void> | null = null;
-let trailingRequested = false;
-
-export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<void> {
-  // 退出 mesh 期间本机会话已被清空，再拉 `/api/mesh/nodes` 只会稳定拿 401：
-  // 白发一轮请求不说，还会把拦截器反复喊起来。
-  if (isAuthTransitionActive()) return;
-  if (inFlight) return inFlight;
-  setState({ loading: true });
-  inFlight = (async () => {
-    try {
-      const nodes = await api.listNodes();
-      setState({ nodes, loading: false, error: null, loadedAt: Date.now() });
-    } catch (err) {
-      setState({ loading: false, error: errorMessage(err) });
-    } finally {
-      inFlight = null;
-      if (trailingRequested) {
-        trailingRequested = false;
-        void refreshMeshNodes(api);
-      }
-    }
-  })();
-  return inFlight;
-}
-
-/**
- * 「一定要拿到比现在更新的一份列表」。
- *
- * 与 `refreshMeshNodes` 的区别只在**在途**那一刻：后者会直接复用在飞的请求，而事件驱动的
- * 补拉不能这么做——事件说明数据刚变了，在飞的那次请求可能早于变化就发出去了，复用它只会
- * 拿回一份仍然缺新成员的旧响应。这里改成排一次尾随请求，等在飞的落地后再发一次；
- * 期间重复触发只合并成同一次尾随。
- */
-export function ensureFreshMeshNodes(api: AuthApi = defaultAuthApi): void {
-  if (isAuthTransitionActive()) return;
-  if (inFlight) {
-    trailingRequested = true;
-    return;
-  }
-  void refreshMeshNodes(api);
-}
-
-/** 返回列表是否真的被改动过（调用方据此决定要不要回源）。 */
-function setLoggedIn(nodeId: string, loggedIn: boolean): boolean {
-  const snapshot = store.get();
-  const target = nodeId === SELF_NODE_ID ? snapshot.entryNodeId : nodeId;
-  if (!target) return false;
-  let changed = false;
-  const next = snapshot.nodes.map((node) => {
-    if (node.id !== target || node.loggedIn === loggedIn) return node;
-    changed = true;
-    return { ...node, loggedIn };
-  });
-  if (changed) setState({ nodes: next });
-  return changed;
-}
-
-/**
- * 某台 node 登录成功后就地把它标成已登录，不必等下一次 `/api/mesh/nodes` 轮询。
- * `self` 按 entry 自身的 nodeId 解析；列表里没有这一行时什么都不做。
- */
-export function markLoggedIn(nodeId: string): boolean {
-  return setLoggedIn(nodeId, true);
-}
-
-/**
- * 该 node 的会话确认作废（401 `NODE_LOGIN_REQUIRED` 之后连静默重登都没成功）时标未登录，
- * 让「用到才登录」的门闸退回登录入口。
- *
- * **只允许 `node-session-recovery` 在重登失败后调用**：光有一次 401 不足以判会话没了
- * （转发路径本身会产生会话仍有效的 401），就地登出会抽掉整棵 node 子树再静默登回来，
- * 表现为设备卡片闪断。
- */
-export function markLoggedOut(nodeId: string): boolean {
-  return setLoggedIn(nodeId, false);
-}
-
-export function setEntryNodeId(nodeId: string | null): void {
-  if (store.get().entryNodeId === nodeId) return;
-  setState({ entryNodeId: nodeId });
 }
 
 // ---------------------------------------------------------------------------
@@ -525,7 +346,9 @@ export function useMeshNodes(options: UseMeshNodesOptions = {}): UseMeshNodesRes
 
   // 非 owner 只订阅 store。唯一的例外是「一份数据都还没有」：常驻 owner 不在场时
   // （单测、或 standalone→mesh 刚切过来的一瞬）总得有人把首份列表拉回来。
-  const listUnknown = enabled && !owner && snapshot.loadedAt === null && snapshot.error === null;
+  // 失败过同样算「还没有」——`refreshMeshNodes` 单飞，且失败后只由有界重试兜着，
+  // 这里不会变成循环。
+  const listUnknown = enabled && !owner && snapshot.loadedAt === null;
   useEffect(() => {
     if (listUnknown) void refreshMeshNodes(api);
   }, [api, listUnknown]);

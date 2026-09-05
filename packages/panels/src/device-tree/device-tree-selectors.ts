@@ -75,6 +75,8 @@ export interface SidebarDeviceStats {
   total: number;
   /** 侧边栏实际会渲染的设备数 */
   visible: number;
+  /** `/api/devices` 还没落地（含只有占位数据）：此刻的 0 台不代表真的没有设备 */
+  pending?: boolean;
 }
 
 /**
@@ -82,11 +84,16 @@ export interface SidebarDeviceStats {
  *
  * 一台可显示的设备都没有时隐藏：全部未勾选显示的 node 只剩一个空标题，纯属噪声。
  * `keepWhenNoDevices` 是例外——本机分节即使一台设备都没有也要留着空态引导用户去添加。
+ *
+ * `pending` 期间一律不隐藏：设备列表要跨节点走一趟直连 / 中转，弱网下能等好几秒，
+ * 按那时的「零设备」把整节（含节点名与在线徽标）藏起来，正是「重开 PWA 后节点半天不出现」
+ * 的直接成因。
  */
 export function shouldHideSidebarNodeSection(
   stats: SidebarDeviceStats,
   keepWhenNoDevices: boolean
 ): boolean {
+  if (stats.pending === true) return false;
   if (stats.visible > 0) return false;
   return stats.total > 0 || !keepWhenNoDevices;
 }

@@ -349,11 +349,23 @@ describe('meshWsUrl', () => {
 });
 
 describe('MeshEventSource', () => {
-  function harness(options: { random?: () => number } = {}) {
+  function harness(
+    options: {
+      random?: () => number;
+      visible?: () => boolean;
+      visibleMaxDelayMs?: number;
+      maxDelayMs?: number;
+    } = {}
+  ) {
     const sockets: FakeSocket[] = [];
     const timers: { fn: () => void; ms: number }[] = [];
     const unauthorized: number[] = [];
     const clock = { now: 1_000_000 };
+    // 「页面重新可见 / 网络恢复」的注入口：测试直接调 `recover()` 触发。
+    const recoveryListeners = new Set<() => void>();
+    const recover = () => {
+      for (const listener of recoveryListeners) listener();
+    };
     const source = new MeshEventSource({
       url: 'ws://x/mesh/ws',
       socketFactory: () => {
@@ -362,8 +374,14 @@ describe('MeshEventSource', () => {
         return socket;
       },
       baseDelayMs: 100,
-      maxDelayMs: 1000,
+      maxDelayMs: options.maxDelayMs ?? 1000,
       stableAfterMs: 10_000,
+      visible: options.visible,
+      visibleMaxDelayMs: options.visibleMaxDelayMs,
+      recovery: (listener) => {
+        recoveryListeners.add(listener);
+        return () => recoveryListeners.delete(listener);
+      },
       // 抖动因子固定成 1 → 退避取上界，断言可确定。
       random: options.random ?? (() => 1),
       nowFn: () => clock.now,
@@ -374,7 +392,7 @@ describe('MeshEventSource', () => {
       },
       clearTimeoutFn: () => undefined,
     });
-    return { source, sockets, timers, unauthorized, clock };
+    return { source, sockets, timers, unauthorized, clock, recover, recoveryListeners };
   }
 
   test('NODE_EVENT 多播给全部订阅者，注销后不再收到', () => {
@@ -545,5 +563,109 @@ describe('MeshEventSource', () => {
     ).toBe(true);
     expect(sockets[0].sent).toHaveLength(1);
     source.stop();
+  });
+});
+
+describe('MeshEventSource 恢复重连', () => {
+  function harness(options: { visible?: () => boolean; maxDelayMs?: number } = {}) {
+    const sockets: FakeSocket[] = [];
+    const timers: { fn: () => void; ms: number }[] = [];
+    const cleared: unknown[] = [];
+    const clock = { now: 1_000_000 };
+    const recoveryListeners = new Set<() => void>();
+    const source = new MeshEventSource({
+      url: 'ws://x/mesh/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      baseDelayMs: 100,
+      maxDelayMs: options.maxDelayMs ?? 60_000,
+      visibleMaxDelayMs: 5_000,
+      stableAfterMs: 10_000,
+      random: () => 1,
+      nowFn: () => clock.now,
+      onUnauthorized: () => undefined,
+      visible: options.visible ?? (() => true),
+      recovery: (listener) => {
+        recoveryListeners.add(listener);
+        return () => recoveryListeners.delete(listener);
+      },
+      setTimeoutFn: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimeoutFn: (handle) => cleared.push(handle),
+    });
+    const recover = () => {
+      for (const listener of recoveryListeners) listener();
+    };
+    return { source, sockets, timers, cleared, recover, recoveryListeners };
+  }
+
+  test('页面可见时退避封顶到 visibleMaxDelayMs，后台仍走完整上限', () => {
+    const visible = { value: true };
+    const { source } = harness({ visible: () => visible.value });
+    // 退避爬到 51.2 s（base 100 × 2^9），前台压到 5 s
+    expect(source.retryDelay(10)).toBe(5_000);
+    visible.value = false;
+    expect(source.retryDelay(10)).toBe(51_200);
+  });
+
+  test('恢复信号把退避计数清零并立刻重连；已连上时什么都不做', () => {
+    const { source, sockets, timers, cleared, recover } = harness();
+    source.start();
+    sockets[0].open();
+
+    // 连断四次，退避已经爬到 800 ms
+    for (let i = 0; i < 4; i += 1) {
+      sockets.at(-1)?.drop();
+      const timer = timers.at(-1);
+      if (i < 3) timer?.fn();
+    }
+    expect(timers.at(-1)?.ms).toBe(800);
+    const socketsBefore = sockets.length;
+
+    recover();
+    // 在途的重连定时器被撤掉，立刻开了一条新连接
+    expect(cleared).toHaveLength(1);
+    expect(sockets).toHaveLength(socketsBefore + 1);
+
+    // 计数已清零：这条再断就是从 100 ms 重来
+    sockets.at(-1)?.drop();
+    expect(timers.at(-1)?.ms).toBe(100);
+
+    // 已经连上时恢复信号不再多开连接
+    const opened = sockets.length;
+    timers.at(-1)?.fn();
+    sockets.at(-1)?.open();
+    recover();
+    expect(sockets).toHaveLength(opened + 1);
+    source.stop();
+  });
+
+  test('stop 之后不再响应恢复信号，订阅一并注销', () => {
+    const { source, sockets, recover, recoveryListeners } = harness();
+    source.start();
+    expect(recoveryListeners.size).toBe(1);
+    source.stop();
+    expect(recoveryListeners.size).toBe(0);
+    const opened = sockets.length;
+    recover();
+    expect(sockets).toHaveLength(opened);
+  });
+
+  test('没有 document 的环境（单测 / SSR）里 start / stop 不抛', () => {
+    const source = new MeshEventSource({
+      url: 'ws://x/mesh/ws',
+      socketFactory: () => new FakeSocket(),
+      setTimeoutFn: () => 1,
+      clearTimeoutFn: () => undefined,
+    });
+    expect(() => {
+      source.start();
+      source.stop();
+    }).not.toThrow();
   });
 });
