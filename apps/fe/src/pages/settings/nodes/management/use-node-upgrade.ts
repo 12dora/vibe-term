@@ -19,7 +19,7 @@
 // 照样把升级跑起来。因此由 `createUpgradeCancelGate` 记账，等 POST 落地再补发（`UpgradeStartHandoff`）。
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
-import { defaultApiClient, formatBytesPair } from '@tmex/api-client';
+import { defaultApiClient, formatBytes, formatBytesPair } from '@tmex/api-client';
 import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@tmex/shared';
 import type {
   NodeUpgradeEntry,
@@ -35,7 +35,7 @@ import {
   launchUpgradeBatch,
   reportBatchSummary,
 } from './upgrade-batch';
-import { createProgressTracker, pushProgressOf, upgradeProgressMark } from './upgrade-budget';
+import { createProgressTracker, transferProgressOf, upgradeProgressMark } from './upgrade-budget';
 
 export {
   MIN_REMOTE_UPGRADE_VERSION,
@@ -45,7 +45,7 @@ export {
 };
 export type { Translate, UpgradeToasts };
 
-export { pushProgressOf, upgradeProgressMark };
+export { transferProgressOf, upgradeProgressMark };
 
 const POLL_MS = 2000;
 /** POST 之后目标迟迟不进入非 idle：判定没真正开始，不要空等满预算。 */
@@ -266,8 +266,8 @@ export interface UpgradeWatchContext {
   signal: AbortSignal;
   describeError: (code: string) => string;
   phase: (phase: NodeUpgradePhase) => void;
-  /** 入口代跑时的推包进度；本机升级与旧入口没有这一段，只在数值变化时回调。 */
-  progress?: (push: NodeUpgradeEntry['push']) => void;
+  /** 入口代跑时的下载 / 推包进度；本机升级与旧入口没有这一段，只在数值变化时回调。 */
+  progress?: (transfer: NodeUpgradeEntry['transfer']) => void;
 }
 
 /** `stopped`：目标已被中断（`error === 'UPGRADE_CANCELLED'`），是良性结论，不能报失败。 */
@@ -313,7 +313,7 @@ export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWat
   const tracker = createProgressTracker({
     startedAt,
     now: () => ctx.io.now(),
-    onPush: ctx.progress,
+    onTransfer: ctx.progress,
   });
   let sawActive = ctx.sawActive;
   while (ctx.io.now() < tracker.deadline()) {
@@ -427,7 +427,7 @@ function outcomeOf(result: UpgradeWatchResult): UpgradeRunOutcome {
 
 /** 一次升级的完整流程：POST → 轮询 → 结论。取消（组件卸载）后一律静默返回。 */
 export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOutcome> {
-  p.patch({ phase: 'pending', targetVersion: p.targetVersion, error: null, push: null });
+  p.patch({ phase: 'pending', targetVersion: p.targetVersion, error: null, transfer: null });
   p.handoff?.begin();
   let started: UpgradeStartOutcome;
   try {
@@ -457,7 +457,7 @@ export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOut
     signal: p.signal,
     describeError: (code) => upgradeErrorText(p.t, code),
     phase: (phase) => p.patch({ phase }),
-    progress: (push) => p.patch({ push }),
+    progress: (transfer) => p.patch({ transfer }),
   });
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
@@ -485,7 +485,7 @@ export async function resumeNodeUpgrade(p: UpgradeResumeParams): Promise<Upgrade
     signal: p.signal,
     describeError: (code) => upgradeErrorText(p.t, code),
     phase: (phase) => p.patch({ phase }),
-    progress: (push) => p.patch({ push }),
+    progress: (transfer) => p.patch({ transfer }),
   });
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
@@ -795,20 +795,23 @@ export function upgradeErrorText(t: Translate, code: string): string {
 export function upgradePhaseText(
   t: Translate,
   phase: NodeUpgradePhase,
-  push?: NodeUpgradeEntry['push']
+  transfer?: NodeUpgradeEntry['transfer']
 ): string | null {
-  if (phase === 'downloading') {
-    // 入口正在把包推给目标：摆出「已传 / 总量」，比一个不动的「下载中」有信息量。
-    if (push) {
-      return t('nodes.upgrade.statePushing', {
-        progress: formatBytesPair(push.pushedBytes, push.totalBytes),
-      });
-    }
-    return t('nodes.upgrade.stateDownloading');
-  }
+  if (phase === 'downloading') return downloadingText(t, transfer);
   if (phase === 'executing') return t('nodes.upgrade.stateExecuting');
   if (phase === 'restarting' || phase === 'pending') return t('nodes.upgrade.stateRestarting');
   return null;
+}
+
+/** 入口正在搬字节时摆出数量，比一个不动的「下载中」有信息量；总量未知就只摆已传量。 */
+function downloadingText(t: Translate, transfer?: NodeUpgradeEntry['transfer']): string {
+  if (!transfer) return t('nodes.upgrade.stateDownloading');
+  const pair = formatBytesPair(transfer.transferredBytes, transfer.totalBytes);
+  if (transfer.kind === 'push') return t('nodes.upgrade.statePushing', { progress: pair });
+  if (transfer.totalBytes > 0) return t('nodes.upgrade.stateDownloadingBytes', { progress: pair });
+  return t('nodes.upgrade.stateDownloadingSize', {
+    size: formatBytes(transfer.transferredBytes),
+  });
 }
 
 export function isUpgradeBusy(phase: NodeUpgradePhase): boolean {

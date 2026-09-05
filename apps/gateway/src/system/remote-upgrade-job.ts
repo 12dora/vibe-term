@@ -1,8 +1,16 @@
-import { createReadStream, statSync } from 'node:fs';
-import { Readable } from 'node:stream';
 import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
 import { getInstallInfo } from './install-info';
-import { downloadVerifiedRelease, resolveReleaseCacheDir } from './release-download';
+import {
+  type DownloadProgressFn,
+  downloadVerifiedRelease,
+  resolveReleaseCacheDir,
+} from './release-download';
+import {
+  abortableSleep,
+  describeUpstream,
+  detachRequest,
+  fileReadableStream,
+} from './remote-upgrade-io';
 import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
@@ -35,6 +43,10 @@ export type RemoteUpgradeJobSnapshot = {
   pushedBytes: number;
   /** 升级包总字节数；下载完成前为 0 */
   totalBytes: number;
+  /** 入口已从发行源下载的字节数 */
+  downloadedBytes: number;
+  /** 发行源给出的下载总量；没有 `content-length` 时为 0 */
+  downloadTotalBytes: number;
   /** 当前是第几次推送尝试，从 1 起 */
   attempt: number;
 };
@@ -46,6 +58,12 @@ export type RemoteUpgradeStartResult =
   | { ok: false; code: 'UPGRADE_IN_PROGRESS' };
 
 type DownloadedRelease = { path: string; sha256: string; bytes: number };
+
+type DownloadFn = (
+  version: string,
+  signal?: AbortSignal,
+  onProgress?: DownloadProgressFn
+) => Promise<DownloadedRelease>;
 
 type Job = {
   nodeId: string;
@@ -60,6 +78,8 @@ type Job = {
   pushed: boolean;
   pushedBytes: number;
   totalBytes: number;
+  downloadedBytes: number;
+  downloadTotalBytes: number;
   attempt: number;
   fileStream: ReadableStream<Uint8Array> | null;
   pushPromise: Promise<Response> | null;
@@ -122,7 +142,7 @@ export function startRemoteUpgradeJob(opts: {
   version: string;
   req: Request;
   forward: AuthorizedUpgradeForward;
-  download?: (version: string, signal?: AbortSignal) => Promise<DownloadedRelease>;
+  download?: DownloadFn;
   now?: () => number;
   timeouts?: Partial<RemoteUpgradeTimeouts>;
   upgradeCapabilities?: readonly string[];
@@ -152,6 +172,8 @@ export function startRemoteUpgradeJob(opts: {
     pushed: false,
     pushedBytes: 0,
     totalBytes: 0,
+    downloadedBytes: 0,
+    downloadTotalBytes: 0,
     attempt: 0,
     fileStream: null,
     pushPromise: null,
@@ -171,7 +193,7 @@ export function startRemoteUpgradeJob(opts: {
     download,
     timeouts,
     nowFn,
-    sleep: opts.sleep ?? defaultSleep,
+    sleep: opts.sleep ?? abortableSleep,
   }).then((snapshot) => resolveFinished(snapshot));
   return { ok: true, snapshot: snapshotOf(job) };
 }
@@ -270,7 +292,7 @@ type PhaseContinue<T> = { done: false; value: T };
 type JobDeps = {
   req: Request;
   forward: AuthorizedUpgradeForward;
-  download: (version: string, signal?: AbortSignal) => Promise<DownloadedRelease>;
+  download: DownloadFn;
   timeouts: RemoteUpgradeTimeouts;
   nowFn: () => number;
   sleep: SleepFn;
@@ -291,7 +313,10 @@ async function runDownloadPhase(
   job.phase = 'download';
   try {
     const downloaded = await withTimeout(
-      deps.download(job.version, job.abort.signal),
+      deps.download(job.version, job.abort.signal, (downloadedBytes, totalBytes) => {
+        job.downloadedBytes = downloadedBytes;
+        job.downloadTotalBytes = totalBytes;
+      }),
       deps.timeouts.downloadMs,
       'download timeout'
     );
@@ -637,73 +662,20 @@ function snapshotOf(job: Job): RemoteUpgradeJobSnapshot {
     phase: job.phase,
     pushedBytes: job.pushedBytes,
     totalBytes: job.totalBytes,
+    downloadedBytes: job.downloadedBytes,
+    downloadTotalBytes: job.downloadTotalBytes,
     attempt: job.attempt,
   };
 }
 
-function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new Error('aborted'));
-      return;
-    }
-    const onAbort = (): void => {
-      clearTimeout(timer);
-      reject(new Error('aborted'));
-    };
-    const timer = setTimeout(() => {
-      signal.removeEventListener('abort', onAbort);
-      resolve();
-    }, ms);
-    signal.addEventListener('abort', onAbort, { once: true });
-  });
-}
-
-async function defaultDownload(version: string, signal?: AbortSignal): Promise<DownloadedRelease> {
+async function defaultDownload(
+  version: string,
+  signal?: AbortSignal,
+  onProgress?: DownloadProgressFn
+): Promise<DownloadedRelease> {
   return downloadVerifiedRelease(version, {
     cacheDir: resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo())),
     signal,
+    onProgress,
   });
-}
-
-function detachRequest(req: Request): Request {
-  const headers = new Headers();
-  const cookie = req.headers.get('cookie');
-  if (cookie) headers.set('cookie', cookie);
-  const origin = req.headers.get('origin');
-  if (origin) headers.set('origin', origin);
-  return new Request(req.url, { headers });
-}
-
-/** `start` 用于续传：只读没推过去的那一段。 */
-function fileReadableStream(path: string, start = 0): ReadableStream<Uint8Array> {
-  const size = statSync(path).size;
-  if (size === 0 || start >= size) {
-    return new ReadableStream({
-      start(controller) {
-        controller.close();
-      },
-    });
-  }
-  return Readable.toWeb(
-    start > 0 ? createReadStream(path, { start }) : createReadStream(path)
-  ) as unknown as ReadableStream<Uint8Array>;
-}
-
-async function describeUpstream(res: Response): Promise<string> {
-  const text = (await res.text().catch(() => '')).slice(0, 800);
-  let extra = text;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-      const code = (parsed as { code?: unknown }).code;
-      const error = (parsed as { error?: unknown }).error;
-      extra = [typeof code === 'string' ? code : null, typeof error === 'string' ? error : null]
-        .filter(Boolean)
-        .join(' ');
-    }
-  } catch {
-    // keep raw text
-  }
-  return `HTTP ${res.status}${extra ? ` ${extra}` : ''}`.trim();
 }

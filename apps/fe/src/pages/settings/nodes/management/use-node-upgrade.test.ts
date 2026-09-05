@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { UpgradeStatus } from '@tmex/shared';
 import { createMemoryStorage } from '@tmex/stores/test-utils';
-import type { NodeUpgradeEntry, UpgradeRunOutcome } from './types';
+import type { NodeUpgradeEntry, NodeUpgradeTransfer, UpgradeRunOutcome } from './types';
 import {
   BATCH_CONCURRENCY,
   MIN_REMOTE_UPGRADE_VERSION,
@@ -44,12 +44,12 @@ import {
   createUpgradeCancelGate,
   launchRowUpgrade,
   launchUpgradeBatch,
-  pushProgressOf,
   reportBatchSummary,
   restorableRows,
   restoreUpgradeStates,
   retainKnownIds,
   runNodeUpgrade,
+  transferProgressOf,
   upgradeErrorText,
   upgradePhaseText,
   watchUpgrade,
@@ -838,7 +838,7 @@ describe('POST 在途时按下「停止升级」', () => {
       phase: 'idle',
       targetVersion: null,
       error: null,
-      push: null,
+      transfer: null,
       cancelling: false,
     });
     // 「已开始升级」不再弹：用户按下停止之后再报开始只会添乱
@@ -926,9 +926,9 @@ describe('推包进度与预算', () => {
     status: status({ state: 'downloading', targetVersion: '1.2.0' }),
   };
 
-  type PushProgress = { pushedBytes: number; totalBytes: number } | null | undefined;
+  type Transfer = NodeUpgradeTransfer | null | undefined;
 
-  function watch(io: UpgradeIo, progress?: (push: PushProgress) => void) {
+  function watch(io: UpgradeIo, progress?: (transfer: Transfer) => void) {
     return watchUpgrade({
       nodeId: 'n1',
       targetVersion: '1.2.0',
@@ -948,15 +948,19 @@ describe('推包进度与预算', () => {
     for (let i = 1; i <= 300; i += 1) polls.push(pushing(i * 40_000));
     polls.push({ kind: 'status', status: status({ state: 'idle' }) });
     const io = progressIo(polls);
-    const pushes: PushProgress[] = [];
+    const pushes: Transfer[] = [];
 
-    const result = await watch(io, (push) => pushes.push(push));
+    const result = await watch(io, (transfer) => pushes.push(transfer));
 
     expect(result).toEqual({ kind: 'done' });
     expect(io.clock()).toBeGreaterThan(6 * 60_000);
     // 300 轮推包各报一次，最后回到 idle 时再清一次，免得表格上留着过期进度。
     expect(pushes).toHaveLength(301);
-    expect(pushes.at(-2)).toEqual({ pushedBytes: 300 * 40_000, totalBytes: 13_500_000 });
+    expect(pushes.at(-2)).toEqual({
+      kind: 'push',
+      transferredBytes: 300 * 40_000,
+      totalBytes: 13_500_000,
+    });
     expect(pushes.at(-1)).toBeNull();
   });
 
@@ -993,25 +997,103 @@ describe('推包进度与预算', () => {
     expect(io.clock()).toBeLessThanOrEqual(6 * 60_000 + 2_000);
   });
 
-  test('下载阶段的进度不当推包展示：总量未知时不摆进度', () => {
-    expect(pushProgressOf(null)).toBeNull();
+  test('下载 / 推包进度各按各的规矩取：字节没动过就不摆进度', () => {
+    expect(transferProgressOf(null)).toBeNull();
+    // 旧入口不报 downloadedBytes：下载阶段照旧没有进度
     expect(
-      pushProgressOf({ phase: 'download', pushedBytes: 0, totalBytes: 0, attempt: 0 })
+      transferProgressOf({ phase: 'download', pushedBytes: 0, totalBytes: 0, attempt: 0 })
     ).toBeNull();
     expect(
-      pushProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 0, attempt: 1 })
+      transferProgressOf({
+        phase: 'download',
+        pushedBytes: 0,
+        totalBytes: 0,
+        downloadedBytes: 4096,
+        downloadTotalBytes: 8192,
+        attempt: 0,
+      })
+    ).toEqual({ kind: 'download', transferredBytes: 4096, totalBytes: 8192 });
+    // 发行源没给 content-length：总量 0 也照样摆已下载量
+    expect(
+      transferProgressOf({
+        phase: 'download',
+        pushedBytes: 0,
+        totalBytes: 0,
+        downloadedBytes: 4096,
+        downloadTotalBytes: 0,
+        attempt: 0,
+      })
+    ).toEqual({ kind: 'download', transferredBytes: 4096, totalBytes: 0 });
+    expect(
+      transferProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 0, attempt: 1 })
     ).toBeNull();
-    expect(pushProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 20, attempt: 2 })).toEqual({
-      pushedBytes: 10,
-      totalBytes: 20,
-    });
+    expect(
+      transferProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 20, attempt: 2 })
+    ).toEqual({ kind: 'push', transferredBytes: 10, totalBytes: 20 });
   });
 
-  test('推包阶段的按钮文案带上「已传 / 总量」', () => {
+  test('按钮文案：推包摆「已传 / 总量」，下载摆已下载量', () => {
     expect(upgradePhaseText(t, 'downloading')).toBe('nodes.upgrade.stateDownloading');
-    expect(upgradePhaseText(t, 'downloading', { pushedBytes: 1024, totalBytes: 2048 })).toBe(
-      'nodes.upgrade.statePushing:{"progress":"1.00 KB / 2.00 KB"}'
-    );
+    expect(
+      upgradePhaseText(t, 'downloading', {
+        kind: 'push',
+        transferredBytes: 1024,
+        totalBytes: 2048,
+      })
+    ).toBe('nodes.upgrade.statePushing:{"progress":"1.00 KB / 2.00 KB"}');
+    expect(
+      upgradePhaseText(t, 'downloading', {
+        kind: 'download',
+        transferredBytes: 1024,
+        totalBytes: 2048,
+      })
+    ).toBe('nodes.upgrade.stateDownloadingBytes:{"progress":"1.00 KB / 2.00 KB"}');
+    expect(
+      upgradePhaseText(t, 'downloading', {
+        kind: 'download',
+        transferredBytes: 1024,
+        totalBytes: 0,
+      })
+    ).toBe('nodes.upgrade.stateDownloadingSize:{"size":"1.00 KB"}');
+  });
+
+  /** 慢但在动的下载：字节一直在涨，看门狗按下载阶段预算重新计时，不能报未确认。 */
+  function downloading(downloadedBytes: number): UpgradePollOutcome {
+    return {
+      kind: 'status',
+      status: status({
+        state: 'downloading',
+        targetVersion: '1.2.0',
+        progress: {
+          phase: 'download',
+          pushedBytes: 0,
+          totalBytes: 0,
+          downloadedBytes,
+          downloadTotalBytes: 13_500_000,
+          attempt: 0,
+        },
+      }),
+    };
+  }
+
+  test('下载字节一直在涨：预算跟着重新计时，不会在六分钟处判超时', async () => {
+    const polls: UpgradePollOutcome[] = [];
+    for (let i = 1; i <= 300; i += 1) polls.push(downloading(i * 40_000));
+    polls.push({ kind: 'status', status: status({ state: 'idle' }) });
+    const io = progressIo(polls);
+    const seen: Transfer[] = [];
+
+    const result = await watch(io, (transfer) => seen.push(transfer));
+
+    expect(result).toEqual({ kind: 'done' });
+    expect(io.clock()).toBeGreaterThan(6 * 60_000);
+    expect(seen).toHaveLength(301);
+    expect(seen.at(-2)).toEqual({
+      kind: 'download',
+      transferredBytes: 300 * 40_000,
+      totalBytes: 13_500_000,
+    });
+    expect(seen.at(-1)).toBeNull();
   });
 
   test('后端原始失败串翻成人话，认不出的保持原样', () => {

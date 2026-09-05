@@ -384,6 +384,8 @@ function remoteUpgradeProgress(job: RemoteUpgradeJobSnapshot): RemoteUpgradeProg
     phase: job.phase,
     pushedBytes: job.pushedBytes,
     totalBytes: job.totalBytes,
+    downloadedBytes: job.downloadedBytes,
+    downloadTotalBytes: job.downloadTotalBytes,
     attempt: job.attempt,
   };
 }

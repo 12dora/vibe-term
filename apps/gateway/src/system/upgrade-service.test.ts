@@ -478,7 +478,14 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       state: string;
       targetVersion: string;
       error: null;
-      progress?: { phase: string; pushedBytes: number; totalBytes: number; attempt: number };
+      progress?: {
+        phase: string;
+        pushedBytes: number;
+        totalBytes: number;
+        downloadedBytes: number;
+        downloadTotalBytes: number;
+        attempt: number;
+      };
     };
     expect(body.state).toBe('downloading');
     expect(body.targetVersion).toBe('9.9.9');
@@ -487,6 +494,8 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       phase: 'download',
       pushedBytes: 0,
       totalBytes: 0,
+      downloadedBytes: 0,
+      downloadTotalBytes: 0,
       attempt: 0,
     });
     expect(forwarded.filter((c) => c === 'GET /api/system/upgrade')).toEqual([]);

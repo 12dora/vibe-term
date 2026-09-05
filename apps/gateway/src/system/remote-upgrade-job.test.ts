@@ -177,6 +177,65 @@ describe('RemoteUpgradeJob', () => {
     }
   });
 
+  test('下载阶段的字节进度进快照，与推包计数各记各的', async () => {
+    const nodeId = 'cd'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const seen: Array<{ downloadedBytes: number; downloadTotalBytes: number }> = [];
+    let releaseDownload!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releaseDownload = resolve;
+    });
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.rawBody) await new Response(input.rawBody).bytes();
+          return new Response('{}', {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      },
+      download: async (_version, _signal, onProgress) => {
+        await Promise.resolve();
+        onProgress?.(512, 4096);
+        seen.push({
+          downloadedBytes: getRemoteUpgradeJob(nodeId)?.downloadedBytes ?? -1,
+          downloadTotalBytes: getRemoteUpgradeJob(nodeId)?.downloadTotalBytes ?? -1,
+        });
+        onProgress?.(4096, 4096);
+        seen.push({
+          downloadedBytes: getRemoteUpgradeJob(nodeId)?.downloadedBytes ?? -1,
+          downloadTotalBytes: getRemoteUpgradeJob(nodeId)?.downloadTotalBytes ?? -1,
+        });
+        await gate;
+        return { path, sha256, bytes: bytes.byteLength };
+      },
+    });
+    expect(started.ok).toBe(true);
+    if (!started.ok) throw new Error('expected start');
+    // 起步快照：两个下载计数都在，且没有借用 pushedBytes
+    expect(started.snapshot.downloadedBytes).toBe(0);
+    expect(started.snapshot.downloadTotalBytes).toBe(0);
+    expect(started.snapshot.pushedBytes).toBe(0);
+
+    releaseDownload();
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(seen).toEqual([
+      { downloadedBytes: 512, downloadTotalBytes: 4096 },
+      { downloadedBytes: 4096, downloadTotalBytes: 4096 },
+    ]);
+    expect(done.state).toBe('handed-off');
+    // 推包字节走自己的计数：下载的 4096 没有污染 pushedBytes / totalBytes
+    expect(done.downloadedBytes).toBe(4096);
+    expect(done.pushedBytes).toBe(bytes.byteLength);
+    expect(done.totalBytes).toBe(bytes.byteLength);
+  });
+
   test('download failure records which step failed', async () => {
     const nodeId = 'bb'.repeat(16);
     const started = startRemoteUpgradeJob({

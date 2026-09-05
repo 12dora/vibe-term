@@ -18,6 +18,12 @@ export { parseSha256Sums, sha256Hex };
 
 const TARBALL_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
 const SHA256SUMS_FETCH_TIMEOUT_MS = 30_000;
+/** 进度上报节流：够前端看出「还在动」，又不会把每个 64 KiB 分片都变成一次回调。 */
+const PROGRESS_MIN_BYTES = 512 * 1024;
+const PROGRESS_MIN_MS = 500;
+
+/** 下载进度回调；`totalBytes` 为 0 表示发行源没给 `content-length`。 */
+export type DownloadProgressFn = (downloadedBytes: number, totalBytes: number) => void;
 
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
 export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
@@ -27,6 +33,7 @@ type InflightWaiter = {
   reject: (reason: unknown) => void;
   signal?: AbortSignal;
   onAbort?: () => void;
+  onProgress?: DownloadProgressFn;
 };
 
 type InflightDownload = {
@@ -34,6 +41,9 @@ type InflightDownload = {
   ac: AbortController;
   partPath: string;
   key: string;
+  /** 共享下载的当前计数：后来者订阅时先补发一次，不用干等下一个分片。 */
+  downloadedBytes: number;
+  totalBytes: number;
 };
 
 const inflight = new Map<string, InflightDownload>();
@@ -148,7 +158,12 @@ export type DownloadedRelease = {
 
 export async function downloadVerifiedRelease(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
+  opts: {
+    cacheDir: string;
+    fetchFn?: typeof fetch;
+    signal?: AbortSignal;
+    onProgress?: DownloadProgressFn;
+  }
 ): Promise<DownloadedRelease> {
   throwIfAborted(opts.signal);
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
@@ -160,7 +175,12 @@ export async function downloadVerifiedRelease(
   const key = `${opts.cacheDir}::${version}`;
   const partPath = `${dest}.part`;
   return new Promise<DownloadedRelease>((resolve, reject) => {
-    const waiter: InflightWaiter = { resolve, reject, signal: opts.signal };
+    const waiter: InflightWaiter = {
+      resolve,
+      reject,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+    };
     const onAbort = (): void => {
       void abortWaiter(key, waiter, reject);
     };
@@ -169,7 +189,14 @@ export async function downloadVerifiedRelease(
     let entry = inflight.get(key);
     const created = !entry;
     if (!entry) {
-      entry = { waiters: new Set(), ac: new AbortController(), partPath, key };
+      entry = {
+        waiters: new Set(),
+        ac: new AbortController(),
+        partPath,
+        key,
+        downloadedBytes: 0,
+        totalBytes: 0,
+      };
       inflight.set(key, entry);
     }
 
@@ -181,9 +208,19 @@ export async function downloadVerifiedRelease(
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     entry.waiters.add(waiter);
 
-    if (!created) return;
+    if (!created) {
+      if (entry.downloadedBytes > 0 || entry.totalBytes > 0) {
+        emitProgress(waiter, entry.downloadedBytes, entry.totalBytes);
+      }
+      return;
+    }
     const owned = entry;
-    void downloadVerifiedReleaseUncached(version, { ...opts, signal: owned.ac.signal }).then(
+    void downloadVerifiedReleaseUncached(version, {
+      ...opts,
+      signal: owned.ac.signal,
+      onProgress: (downloadedBytes, totalBytes) =>
+        publishProgress(owned, downloadedBytes, totalBytes),
+    }).then(
       (result) => {
         if (inflight.get(key) === owned) inflight.delete(key);
         settleInflight(owned, { ok: true, result });
@@ -213,6 +250,25 @@ async function abortWaiter(
   reject(abortError());
 }
 
+function publishProgress(
+  entry: InflightDownload,
+  downloadedBytes: number,
+  totalBytes: number
+): void {
+  entry.downloadedBytes = downloadedBytes;
+  entry.totalBytes = totalBytes;
+  for (const waiter of entry.waiters) emitProgress(waiter, downloadedBytes, totalBytes);
+}
+
+function emitProgress(waiter: InflightWaiter, downloadedBytes: number, totalBytes: number): void {
+  if (!waiter.onProgress) return;
+  try {
+    waiter.onProgress(downloadedBytes, totalBytes);
+  } catch {
+    // 订阅方自己的问题不该打断下载
+  }
+}
+
 function settleInflight(
   entry: InflightDownload,
   outcome: { ok: true; result: DownloadedRelease } | { ok: false; err: unknown }
@@ -236,7 +292,12 @@ function abortError(): Error {
 
 async function downloadVerifiedReleaseUncached(
   version: string,
-  opts: { cacheDir: string; fetchFn?: typeof fetch; signal?: AbortSignal }
+  opts: {
+    cacheDir: string;
+    fetchFn?: typeof fetch;
+    signal?: AbortSignal;
+    onProgress?: DownloadProgressFn;
+  }
 ): Promise<DownloadedRelease> {
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
   const fileName = releaseTarballName(version);
@@ -255,7 +316,8 @@ async function downloadVerifiedReleaseUncached(
       resolveReleaseTarballUrl(version),
       part,
       fetchFn,
-      opts.signal
+      opts.signal,
+      opts.onProgress
     );
     throwIfAborted(opts.signal);
     const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn, opts.signal);
@@ -302,7 +364,8 @@ async function downloadTarballToFile(
   url: string,
   destPath: string,
   fetchFn: typeof fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  onProgress?: DownloadProgressFn
 ): Promise<{ sha256: string; bytes: number }> {
   const timeout = AbortSignal.timeout(TARBALL_FETCH_TIMEOUT_MS);
   const combined = combineAbortSignals(timeout, signal) ?? timeout;
@@ -315,12 +378,24 @@ async function downloadTarballToFile(
     throw new Error(`GitHub release tarball HTTP ${res.status}`);
   }
   throwIfAborted(signal);
+  const total = parseContentLength(res.headers.get('content-length'));
   const hash = createHash('sha256');
   let bytes = 0;
+  let reportedBytes = 0;
+  let reportedAt = 0;
   const hasher = new Transform({
     transform(chunk, _enc, cb) {
       hash.update(chunk);
       bytes += chunk.byteLength;
+      const now = Date.now();
+      if (
+        onProgress &&
+        (bytes - reportedBytes >= PROGRESS_MIN_BYTES || now - reportedAt >= PROGRESS_MIN_MS)
+      ) {
+        reportedBytes = bytes;
+        reportedAt = now;
+        onProgress(bytes, total);
+      }
       cb(null, chunk);
     },
   });
@@ -344,5 +419,13 @@ async function downloadTarballToFile(
   } finally {
     combined.removeEventListener('abort', onAbort);
   }
+  if (onProgress && bytes !== reportedBytes) onProgress(bytes, total);
   return { sha256: hash.digest('hex'), bytes };
+}
+
+/** 缺失 / 不合法的 `content-length` 一律按 0（总量未知）处理，不去猜。 */
+function parseContentLength(raw: string | null): number {
+  if (!raw) return 0;
+  const value = Number.parseInt(raw.trim(), 10);
+  return Number.isFinite(value) && value > 0 ? value : 0;
 }

@@ -58,14 +58,24 @@ export type NodeUpgradePhase =
   | 'done'
   | 'failed';
 
+/**
+ * 入口传输升级包的进度。`download` 是入口从发行源取包（总量未知时 `totalBytes` 为 0），
+ * `push` 是入口把包推给目标。
+ */
+export interface NodeUpgradeTransfer {
+  kind: 'download' | 'push';
+  transferredBytes: number;
+  totalBytes: number;
+}
+
 export interface NodeUpgradeEntry {
   phase: NodeUpgradePhase;
   /** 目标版本；latest 还没拿到时为 `null`。 */
   targetVersion: string | null;
   /** 已本地化的失败原因；非 `failed` 阶段为 `null`。 */
   error: string | null;
-  /** 入口正在把升级包推给目标时的进度；其余阶段为 `null`。 */
-  push?: { pushedBytes: number; totalBytes: number } | null;
+  /** 入口正在下载 / 推送升级包时的进度；其余阶段为 `null`。 */
+  transfer?: NodeUpgradeTransfer | null;
   /**
    * 「停止升级」已发出、结论还没回来（含 POST 在途时排队等补发的那一档）。与阶段无关：
    * 停止按钮据此变灰转圈，双击不会发出第二条 DELETE。
@@ -113,7 +123,7 @@ export const IDLE_UPGRADE_ENTRY: NodeUpgradeEntry = {
   phase: 'idle',
   targetVersion: null,
   error: null,
-  push: null,
+  transfer: null,
   cancelling: false,
 };
 

@@ -365,3 +365,139 @@ describe('downloadVerifiedRelease', () => {
     expect(existsSync(join(cacheDir, `${releaseTarballName(version)}.part`))).toBe(false);
   });
 });
+
+/**
+ * 分片下发的假发行源：`pauseAfter` 之后卡住，直到调用 `release()`，
+ * 用来在下载在途时插入新的订阅者。
+ */
+function stubStreamedRelease(
+  version: string,
+  tarball: Uint8Array,
+  opts: { chunkSize: number; contentLength?: number | null; pauseAfter?: number }
+): { release: () => void } {
+  const hex = sha256Hex(tarball);
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('SHA256SUMS')) {
+      return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
+    }
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        for (let off = 0; off < tarball.byteLength; off += opts.chunkSize) {
+          if (opts.pauseAfter != null && sent === opts.pauseAfter) await gate;
+          controller.enqueue(tarball.subarray(off, off + opts.chunkSize));
+          sent += 1;
+        }
+        controller.close();
+      },
+    });
+    const headers = new Headers();
+    const length = opts.contentLength === undefined ? tarball.byteLength : opts.contentLength;
+    if (length !== null) headers.set('content-length', String(length));
+    return new Response(body, { status: 200, headers });
+  }) as typeof fetch;
+  return { release };
+}
+
+async function waitFor(predicate: () => boolean): Promise<void> {
+  for (let i = 0; i < 500 && !predicate(); i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+  if (!predicate()) throw new Error('condition never became true');
+}
+
+describe('downloadVerifiedRelease progress', () => {
+  test('content-length 作为总量，分片上报按节流合并，收尾补一次完整计数', async () => {
+    const version = '7.1.0';
+    const chunkSize = 64 * 1024;
+    const chunks = 100;
+    const tarball = new Uint8Array(chunkSize * chunks).fill(7);
+    stubStreamedRelease(version, tarball, { chunkSize });
+    const cacheDir = tempDir('tmex-rel-progress-');
+    const seen: Array<[number, number]> = [];
+
+    const result = await downloadVerifiedRelease(version, {
+      cacheDir,
+      onProgress: (downloaded, total) => seen.push([downloaded, total]),
+    });
+
+    expect(result.bytes).toBe(tarball.byteLength);
+    expect(seen.length).toBeGreaterThan(1);
+    // 节流：100 个 64 KiB 分片按 512 KiB 门槛合并到十几次回调，不是一片一报
+    expect(seen.length).toBeLessThanOrEqual(30);
+    for (let i = 1; i < seen.length; i += 1) {
+      expect(seen[i]?.[0] ?? 0).toBeGreaterThan(seen[i - 1]?.[0] ?? 0);
+    }
+    expect(seen.every(([, total]) => total === tarball.byteLength)).toBe(true);
+    expect(seen.at(-1)).toEqual([tarball.byteLength, tarball.byteLength]);
+  }, 8_000);
+
+  test('发行源没给 content-length：总量按 0 上报，不去猜', async () => {
+    const version = '7.2.0';
+    const tarball = new Uint8Array(4096).fill(3);
+    stubStreamedRelease(version, tarball, { chunkSize: 1024, contentLength: null });
+    const cacheDir = tempDir('tmex-rel-progress-nolen-');
+    const seen: Array<[number, number]> = [];
+
+    await downloadVerifiedRelease(version, {
+      cacheDir,
+      onProgress: (downloaded, total) => seen.push([downloaded, total]),
+    });
+
+    expect(seen.at(-1)).toEqual([tarball.byteLength, 0]);
+    expect(seen.every(([, total]) => total === 0)).toBe(true);
+  }, 8_000);
+
+  test('后来者立刻拿到当前计数，并接着收后续上报', async () => {
+    const version = '7.3.0';
+    const chunkSize = 1024 * 1024;
+    const tarball = new Uint8Array(chunkSize * 4).fill(5);
+    const streamed = stubStreamedRelease(version, tarball, { chunkSize, pauseAfter: 1 });
+    const cacheDir = tempDir('tmex-rel-progress-join-');
+    const first: Array<[number, number]> = [];
+    const late: Array<[number, number]> = [];
+
+    const pendingFirst = downloadVerifiedRelease(version, {
+      cacheDir,
+      onProgress: (downloaded, total) => first.push([downloaded, total]),
+    });
+    await waitFor(() => first.length > 0);
+
+    // 流卡在第一个分片后：这期间的任何回调都只可能是订阅时补发的那一次
+    const atJoin = first.at(-1) as [number, number];
+    const pendingLate = downloadVerifiedRelease(version, {
+      cacheDir,
+      onProgress: (downloaded, total) => late.push([downloaded, total]),
+    });
+    await waitFor(() => late.length > 0);
+    expect(late).toEqual([atJoin]);
+
+    streamed.release();
+    const [a, b] = await Promise.all([pendingFirst, pendingLate]);
+    expect(a.bytes).toBe(tarball.byteLength);
+    expect(b.path).toBe(a.path);
+    expect(late.at(-1)).toEqual([tarball.byteLength, tarball.byteLength]);
+    expect(late.length).toBeGreaterThan(1);
+  }, 8_000);
+
+  test('下载结束后不再回调订阅者', async () => {
+    const version = '7.4.0';
+    const tarball = new Uint8Array(2048).fill(9);
+    stubStreamedRelease(version, tarball, { chunkSize: 512 });
+    const cacheDir = tempDir('tmex-rel-progress-settle-');
+    const seen: Array<[number, number]> = [];
+
+    await downloadVerifiedRelease(version, {
+      cacheDir,
+      onProgress: (downloaded, total) => seen.push([downloaded, total]),
+    });
+    const settled = seen.length;
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(seen.length).toBe(settled);
+  }, 8_000);
+});

@@ -12,12 +12,6 @@
 判断某个分支是否引入回归时以**定向复跑**为准，不要拿本机全量 e2e 当唯一依据。gateway 全量单测在高负载
 下 `dc-handshake`、`run-command` 的 `--More--` 用例也偶发失败，隔离复跑通过。
 
-## KI-2：升级下载阶段没有持续进度
-
-`downloadVerifiedRelease` 走 inflight 共享，没有回调位，所以「下载安装包」这一段前端只有阶段名、没有
-字节进度；慢网下载超过 10 分钟时前端会先报未确认。推包阶段已有 `pushedBytes` 进度
-（见 [远程升级推包续传](./update/2026090502-resumable-remote-upgrade-push.md)）。
-
 ## KI-3：直连 ICE 候选无法按网卡过滤
 
 `node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。

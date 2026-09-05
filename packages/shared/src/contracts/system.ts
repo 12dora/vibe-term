@@ -69,6 +69,12 @@ export interface RemoteUpgradeProgress {
   pushedBytes: number;
   /** 升级包总字节数；下载未完成时为 0 */
   totalBytes: number;
+  /**
+   * `download` 阶段入口已从发行源取到的字节数。旧入口不上报这两个字段，前端按缺省处理。
+   */
+  downloadedBytes?: number;
+  /** 发行源给出的下载总量；没有 `content-length` 时为 0 */
+  downloadTotalBytes?: number;
   /** 当前是第几次推送尝试 */
   attempt: number;
 }
