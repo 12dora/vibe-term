@@ -1,3 +1,43 @@
+# 1.1.31
+
+_2026-09-05_
+
+## English
+
+### Changes
+
+- Remote access: when the system resolver hands cloudflared's edge hostnames a fake-IP (198.18.0.0/15, typical of local proxies in enhanced mode), the gateway now resolves the real edge addresses over DoH and starts cloudflared with a static `--edge` list, so the tunnel comes up even when the proxy swallows port 7844. The status card shows the new `edge` diagnosis ("bypass active" / "bypass failed" with the proxy-side fix), and a tunnel stuck at zero edge connections for 90 s re-resolves and restarts once by itself.
+- Multi-node mesh → node management: remote upgrades are resumable. The package staging endpoint accepts an `offset`, keeps its partial file on link loss (24 h TTL) and reports `receivedBytes`; the pusher queries the offset, sends only the missing tail and retries with back-off inside the push budget. Link resets are classified as `link_lost` instead of "no link", the upgrade row shows push progress, and the client budget no longer expires while bytes are still flowing.
+- Mesh direct links (WebRTC): stale answers are no longer replayed onto a fresh PeerConnection (per-attempt epoch, role/type filtering, one answer per attempt, 30 s inbox TTL) and a failed subscription no longer leaks the PeerConnection or its listener — the cause of the recurring "datachannel open timeout" / "Unexpected remote answer description" dial failures. ICE now enables TCP candidates, UDP mux and a 1200-byte MTU; `TMEX_RTC_PORT_RANGE=begin-end` pins the port range. Dials share one 15 s deadline; the breaker ignores local signaling-state errors and probes a disabled peer every 10 min.
+- Poor-network stability: peer links ping every 5 s and treat any inbound frame as liveness; links with in-flight streams drain before being retired or switched (relay nearest-switch, switch-back and reconfigure wait for them); the relay never counts heartbeat misses while bytes are flowing, its bandwidth limiter is fair per stream with a fast lane for frames ≤ 4 KiB, and stream resets carry a specific reason. DataChannel/bulk send fragments drop to 16 KiB (receivers still accept 64 KiB). Browser WebSocket reconnects use jitter, no longer give up after five attempts, and wake immediately on `online` / network-change events; the gateway corks multi-frame sends; pasting sends the whole block in one pipelined write.
+- UI smoothness: revisiting a page reuses its loaded module (no blank frame or replayed entry animation), navigation links prewarm route chunks on hover/touch and idle, large file trees and long agent threads skip off-screen rows via `content-visibility`, scroll measurements are coalesced per frame, and the React vendor bundle is split into its own long-lived chunk.
+- Multi-node mesh → this machine: byte rates everywhere show at most two decimals; an unlimited quota with usage reads "1.2 KB/s (Unlimited)" instead of "1.2 KB/s / Unlimited".
+- Connect devices → direct SSH: "Add device" now opens the dialog with the SSH type preselected.
+
+### Internal
+
+- Dead code and duplication sweep: 61 unused i18n keys, unused exports, duplicated tests and five copies of sliding-window rate limiters, three dial-failure classifiers, byte formatting, error-message / sleep / abort / timeout helpers and confirm dialogs consolidated into shared modules; the uplink codec is split by wire and node ids are case-normalized on both hub and mesh decoders.
+
+---
+
+## 中文
+
+### 变更
+
+- 远程访问：当系统解析器把 cloudflared 的边缘域名解析成 fake-IP（198.18.0.0/15，本机代理增强模式的典型现象）时，网关改用 DoH 解析真实边缘地址并以静态 `--edge` 列表拉起 cloudflared，即使代理吞掉 7844 端口隧道也能建立。状态卡片新增 `edge` 诊断（「已绕行」/「绕行失败」并给出代理侧修法）；隧道 0 边缘连接持续 90 秒会自动重解析并重启一次。
+- 多节点互联 → 节点管理：远程升级支持续传。暂存接口接受 `offset`，链路中断时保留半成品（24 小时过期）并返回 `receivedBytes`；入口先查偏移、只补发缺失部分，并在推送预算内退避重试。链路复位归类为 `link_lost` 而非「无链路」，升级行显示推送进度，字节仍在增长时前端预算不再超时。
+- 多节点直连（WebRTC）：陈旧 answer 不再被重放到新建的 PeerConnection（按次 epoch、角色/类型过滤、每次只接受一个 answer、inbox 30 秒过期），订阅失败不再泄漏 PeerConnection 与监听器——这是反复出现「datachannel open timeout」/「Unexpected remote answer description」的根因。ICE 启用 TCP 候选、UDP 复用与 1200 字节 MTU；`TMEX_RTC_PORT_RANGE=begin-end` 可固定端口范围。拨号共用一个 15 秒截止；熔断器忽略本地信令状态错误，被禁用的 peer 每 10 分钟探测一次。
+- 弱网稳定性：peer 链路每 5 秒 ping，任何入站帧都算活性；有在途流的链路先排空再退役或切换（中继就近切换、回切、重配置都会等待）；中继在有字节流动时不累计心跳丢失，带宽限速按流公平并给 ≤ 4 KiB 小帧开快速通道，流复位带具体原因。DataChannel / bulk 发送分片降到 16 KiB（接收仍兼容 64 KiB）。浏览器 WebSocket 重连带抖动、不再五次后放弃，并在 `online` / 网络变化事件时立即唤醒；网关多帧合批发送；粘贴整段一次流水线写入。
+- 界面流畅度：重访页面复用已加载模块（不再空白一帧或重播入场动画），导航链接在悬停/触摸与空闲时预热路由 chunk，大文件树与长会话通过 `content-visibility` 跳过屏外行，滚动测量按帧合并，React 系依赖拆成独立的长期缓存 chunk。
+- 多节点互联 → 本机：所有字节速率最多两位小数；有用量的无上限配额显示为「1.2 KB/s（不限）」而非「1.2 KB/s / 不限」。
+- 接入设备 → SSH 直连：「添加设备」打开对话框时已预选 SSH 类型。
+
+### 内部
+
+- 死代码与重复清理：删除 61 个无引用 i18n 键、无用导出与重复测试；五份滑动窗口限流器、三份拨号失败分类器、字节格式化、错误消息 / sleep / abort / 超时辅助函数与确认对话框统一到共享模块；uplink 编解码按线路拆分，hub 与 mesh 两侧解码器统一对节点 id 做大小写归一化。
+
+---
+
 # 1.1.30
 
 _2026-09-05_
