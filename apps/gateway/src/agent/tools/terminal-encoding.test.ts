@@ -1,23 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import {
-  KEY_SEQUENCES,
-  SEND_INPUT_KEYS,
-  encodeCombo,
-  encodeKeysToSequence,
-} from './terminal-encoding';
-
-describe('terminal encoding - keys', () => {
-  test('所有 key 枚举均有映射且为预期字节序列', () => {
-    expect(Object.keys(KEY_SEQUENCES).sort()).toEqual([...SEND_INPUT_KEYS].sort());
-    expect(KEY_SEQUENCES.enter).toBe('\r');
-    expect(KEY_SEQUENCES.ctrl_c).toBe('\x03');
-  });
-
-  test('encodeKeysToSequence 按顺序拼接', () => {
-    expect(encodeKeysToSequence(['ctrl_c', 'enter'])).toBe('\x03\r');
-    expect(encodeKeysToSequence([])).toBe('');
-  });
-});
+import { encodeCombo } from './terminal-encoding';
 
 describe('terminal encoding - combos', () => {
   test('Ctrl+字母编码为 control code', () => {

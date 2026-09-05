@@ -8,6 +8,7 @@ import type {
   TunnelStatusResponse,
 } from '@tmex/shared';
 import { type ApiClient, defaultApiClient } from '../client';
+import { readCodedError } from '../json-mutation';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
 
 export class TunnelApiError extends Error {
@@ -21,20 +22,26 @@ export class TunnelApiError extends Error {
   }
 }
 
-async function readError(res: Response, fallback: string): Promise<TunnelApiError> {
-  try {
-    const body = (await res.json()) as { error?: { code?: unknown; message?: unknown } };
-    const code = body.error?.code;
-    if (typeof code === 'string') {
-      const message = body.error?.message;
-      return new TunnelApiError(
-        code as TunnelErrorCode,
-        typeof message === 'string' ? message : code,
-        res.status
-      );
+/** 与默认契约的区别：不认顶层 `{ error: "..." }` 老形态，兜底 code 固定为 `unknown`。 */
+function readError(res: Response, fallback: string): Promise<TunnelApiError> {
+  return readCodedError(
+    res,
+    fallback,
+    (code, message, status) => new TunnelApiError(code as TunnelErrorCode, message, status),
+    (body) => {
+      const error = (body as { error?: { code?: unknown; message?: unknown } } | undefined)?.error;
+      const code = error?.code;
+      if (typeof code === 'string') {
+        const message = error?.message;
+        return new TunnelApiError(
+          code as TunnelErrorCode,
+          typeof message === 'string' ? message : code,
+          res.status
+        );
+      }
+      return new TunnelApiError('unknown', fallback, res.status);
     }
-  } catch {}
-  return new TunnelApiError('unknown', fallback, res.status);
+  );
 }
 
 export async function fetchTunnelStatus(

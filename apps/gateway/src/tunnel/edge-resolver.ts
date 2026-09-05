@@ -53,18 +53,24 @@ export function isFakeIp(ip: string): boolean {
   return octets[0] === 198 && (octets[1] === 18 || octets[1] === 19);
 }
 
+/** [首字节, 次字节下界, 次字节上界]：本地/私有/保留段，不能当 edge 地址用 */
+const UNUSABLE_V4_BLOCKS: ReadonlyArray<readonly [number, number, number]> = [
+  [0, 0, 255],
+  [10, 0, 255],
+  [127, 0, 255],
+  [100, 64, 127],
+  [169, 254, 254],
+  [172, 16, 31],
+  [192, 168, 168],
+];
+
 export function isUnusableEdgeIp(ip: string): boolean {
   const octets = ipv4Octets(ip);
   if (!octets) return true;
   if (isFakeIp(ip)) return true;
   const [a, b] = octets as [number, number, number, number];
-  if (a === 0 || a === 127 || a >= 224) return true;
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
-  if (a === 100 && b >= 64 && b <= 127) return true;
-  return false;
+  if (a >= 224) return true;
+  return UNUSABLE_V4_BLOCKS.some(([first, min, max]) => a === first && b >= min && b <= max);
 }
 
 function shortError(error: unknown): string {

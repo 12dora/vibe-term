@@ -5,14 +5,6 @@ import type { RuntimeCore } from './runtime';
 import { dispatchSelectPane, normalizeTerminalSize } from './select-pane-dispatch';
 import type { TmuxStoreAccess } from './tmux-state';
 
-export function snapshotPaneIds(snapshot: StateSnapshotPayload | undefined): Set<string> {
-  const ids = new Set<string>();
-  for (const window of snapshot?.session?.windows ?? []) {
-    for (const pane of window.panes) ids.add(pane.id);
-  }
-  return ids;
-}
-
 export function snapshotHasPane(
   snapshot: StateSnapshotPayload | undefined,
   paneId: string

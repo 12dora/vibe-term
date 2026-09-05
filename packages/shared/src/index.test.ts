@@ -38,6 +38,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'b',
   'basename',
   'collectLayoutLeaves',
+  'combineAbortSignals',
   'compareSemver',
   'compareSemverRequired',
   'compareTmuxVersion',
@@ -84,6 +85,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'toBCP47',
   'validateDeviceFolderName',
   'validateRoles',
+  'withTimeout',
   'writeTextToClipboard',
   'wsBorsh',
 ];

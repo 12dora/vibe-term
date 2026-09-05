@@ -166,6 +166,37 @@ describe('SetupApi.joinHub', () => {
   });
 });
 
+describe('SetupApi readError 折叠', () => {
+  test('JSON 契约错误体解出 code/message，非 JSON 退化为 fallbackCode', async () => {
+    const { client } = recorder([errorBody('setup_hub_failed', 'boom', 500)]);
+    const jsonErr = await new SetupApi(client)
+      .becomeHub({
+        hubPublicUrl: 'https://hub.example.com',
+        username: 'alice',
+        password: 'hunter2hunter2',
+        directEnable: false,
+      })
+      .catch((e) => e);
+    expect(jsonErr).toBeInstanceOf(SetupApiError);
+    expect((jsonErr as SetupApiError).code).toBe('setup_hub_failed');
+    expect((jsonErr as SetupApiError).message).toBe('boom');
+    expect((jsonErr as SetupApiError).status).toBe(500);
+
+    const { client: client2 } = recorder([new Response('<html>502</html>', { status: 502 })]);
+    const nonJsonErr = await new SetupApi(client2)
+      .becomeHub({
+        hubPublicUrl: 'https://hub.example.com',
+        username: 'alice',
+        password: 'hunter2hunter2',
+        directEnable: false,
+      })
+      .catch((e) => e);
+    expect((nonJsonErr as SetupApiError).code).toBe('setup_hub_failed');
+    expect((nonJsonErr as SetupApiError).message).toBe('setup_hub_failed');
+    expect((nonJsonErr as SetupApiError).status).toBe(502);
+  });
+});
+
 describe('SetupApi.setupRelay', () => {
   test('POST /api/setup/relay 透传请求体', async () => {
     const { client, calls } = recorder([

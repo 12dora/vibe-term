@@ -116,19 +116,5 @@ export type TlsUpdateRequest =
   | TlsUpdateSelfSignedRequest
   | TlsUpdateAcmeRequest;
 
-/** 契约列举的错误码；未列举的码由调用方退化成「未知错误 + message」。 */
-export type TlsErrorCode =
-  | 'invalid_sans'
-  | 'invalid_domain'
-  | 'invalid_email'
-  | 'cloudflare_token_required'
-  | 'dns_provider_required'
-  | 'dns_credentials_required'
-  | 'invalid_port'
-  | 'port_in_use'
-  | 'tls_failed'
-  | 'not_applicable'
-  | 'no_ca';
-
 export const DEFAULT_TLS_PORT = 9443;
 export const DEFAULT_TLS_BIND_HOST = '0.0.0.0';

@@ -233,6 +233,27 @@ describe('RelayTenantApi 接入', () => {
       .catch((err: unknown) => err);
     expect((error as RelayApiError).message).toBe('BAD_PROOF: ts_skew');
   });
+
+  test('readError 折叠：不含顶层 code 时退回通用 `{error:{code,message}}` 契约，非 JSON 退化为 fallback', async () => {
+    const { api } = recorder([
+      ok({ error: { code: 'unauthorized', message: 'login required' } }, 401),
+    ]);
+    const generic = await api
+      .enroll({ url: 'https://r.example', proof: { bytes: 'Ym8', sig: 'c2ln' } })
+      .catch((err: unknown) => err);
+    expect(generic).toBeInstanceOf(RelayApiError);
+    expect((generic as RelayApiError).code).toBe('unauthorized');
+    expect((generic as RelayApiError).message).toBe('login required');
+    expect((generic as RelayApiError).status).toBe(401);
+
+    const { api: api2 } = recorder([new Response('<html>502</html>', { status: 502 })]);
+    const fallback = await api2
+      .enroll({ url: 'https://r.example', proof: { bytes: 'Ym8', sig: 'c2ln' } })
+      .catch((err: unknown) => err);
+    expect((fallback as RelayApiError).code).toBe('relay_enroll_failed');
+    expect((fallback as RelayApiError).message).toBe('relay_enroll_failed');
+    expect((fallback as RelayApiError).status).toBe(502);
+  });
 });
 
 describe('RelayTenantApi 待签 payload', () => {

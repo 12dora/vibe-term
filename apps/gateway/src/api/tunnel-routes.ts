@@ -50,69 +50,92 @@ function parseAccessMode(value: unknown): TunnelAccessMode {
   throw new TunnelError('invalid_request', 'accessMode must be none, login, or cloudflare');
 }
 
+function withAck<T extends TunnelActionRequest>(base: T, body: Record<string, unknown>): T {
+  const acknowledgeExposure = optionalAck(body);
+  return acknowledgeExposure === undefined ? base : { ...base, acknowledgeExposure };
+}
+
+function requiredBool(body: Record<string, unknown>, key: string, message: string): boolean {
+  const value = body[key];
+  if (typeof value !== 'boolean') throw new TunnelError('invalid_request', message);
+  return value;
+}
+
+function requiredHostname(body: Record<string, unknown>): string {
+  if (typeof body.hostname !== 'string') {
+    throw new TunnelError('invalid_request', 'hostname is required');
+  }
+  const hostname = normalizeTunnelHostname(body.hostname);
+  if (!hostname) {
+    throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
+  }
+  return hostname;
+}
+
+function parseAccessCredentials(body: Record<string, unknown>): TunnelActionRequest {
+  if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
+    throw new TunnelError('invalid_request', 'apiToken and accountId are required');
+  }
+  return { action: 'set_access_credentials', apiToken: body.apiToken, accountId: body.accountId };
+}
+
+function parseConfigureAccess(body: Record<string, unknown>): TunnelActionRequest {
+  if (!Array.isArray(body.rules)) {
+    throw new TunnelError('invalid_request', 'rules must be an array');
+  }
+  const hostname = optionalHostname(body);
+  return {
+    action: 'configure_access',
+    rules: parseAccessRules(body.rules),
+    ...(hostname === undefined ? {} : { hostname }),
+  };
+}
+
 function parseAccessAction(body: Record<string, unknown>): TunnelActionRequest | null {
   switch (body.action) {
-    case 'remove_access': {
-      const acknowledgeExposure = optionalAck(body);
-      return acknowledgeExposure === undefined
-        ? { action: 'remove_access' }
-        : { action: 'remove_access', acknowledgeExposure };
-    }
+    case 'remove_access':
+      return withAck({ action: 'remove_access' }, body);
     case 'sync_access': {
       const hostname = optionalHostname(body);
       return hostname === undefined
         ? { action: 'sync_access' }
         : { action: 'sync_access', hostname };
     }
-    case 'set_access_credentials': {
-      if (typeof body.apiToken !== 'string' || typeof body.accountId !== 'string') {
-        throw new TunnelError('invalid_request', 'apiToken and accountId are required');
-      }
-      return {
-        action: 'set_access_credentials',
-        apiToken: body.apiToken,
-        accountId: body.accountId,
-      };
-    }
-    case 'configure_access': {
-      if (!Array.isArray(body.rules)) {
-        throw new TunnelError('invalid_request', 'rules must be an array');
-      }
-      const hostname = optionalHostname(body);
-      return {
-        action: 'configure_access',
-        rules: parseAccessRules(body.rules),
-        ...(hostname === undefined ? {} : { hostname }),
-      };
-    }
-    case 'set_access_enforce': {
-      if (typeof body.enforceJwt !== 'boolean') {
-        throw new TunnelError('invalid_request', 'enforceJwt must be a boolean');
-      }
-      const acknowledgeExposure = optionalAck(body);
-      return {
-        action: 'set_access_enforce',
-        enforceJwt: body.enforceJwt,
-        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-      };
-    }
+    case 'set_access_credentials':
+      return parseAccessCredentials(body);
+    case 'configure_access':
+      return parseConfigureAccess(body);
+    case 'set_access_enforce':
+      return withAck(
+        {
+          action: 'set_access_enforce',
+          enforceJwt: requiredBool(body, 'enforceJwt', 'enforceJwt must be a boolean'),
+        },
+        body
+      );
+    case 'set_access_mode':
+      return withAck(
+        { action: 'set_access_mode', accessMode: parseAccessMode(body.accessMode) },
+        body
+      );
     default:
       return null;
   }
 }
 
+function parseCreateAction(body: Record<string, unknown>): TunnelActionRequest {
+  const base = withAck({ action: 'create', hostname: requiredHostname(body) }, body);
+  if (typeof body.tunnelName !== 'string' || !body.tunnelName.trim()) return base;
+  const tunnelName = normalizeTunnelName(body.tunnelName);
+  if (!tunnelName) {
+    throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
+  }
+  return { ...base, tunnelName };
+}
+
 function parseAction(body: Record<string, unknown>): TunnelActionRequest {
   const access = parseAccessAction(body);
   if (access) return access;
-  if (body.action === 'set_access_mode') {
-    const accessMode = parseAccessMode(body.accessMode);
-    const acknowledgeExposure = optionalAck(body);
-    return {
-      action: 'set_access_mode',
-      accessMode,
-      ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-    };
-  }
   const action = body.action;
   switch (action) {
     case 'install':
@@ -124,63 +147,25 @@ function parseAction(body: Record<string, unknown>): TunnelActionRequest {
     case 'clear_access_credentials':
       return { action };
     case 'quick_start':
-    case 'start': {
-      const acknowledgeExposure = optionalAck(body);
-      return acknowledgeExposure === undefined ? { action } : { action, acknowledgeExposure };
-    }
-    case 'create': {
-      if (typeof body.hostname !== 'string') {
-        throw new TunnelError('invalid_request', 'hostname is required');
-      }
-      const hostname = normalizeTunnelHostname(body.hostname);
-      if (!hostname) {
-        throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
-      }
-      const acknowledgeExposure = optionalAck(body);
-      if (typeof body.tunnelName === 'string' && body.tunnelName.trim()) {
-        const tunnelName = normalizeTunnelName(body.tunnelName);
-        if (!tunnelName) {
-          throw new TunnelError('invalid_request', 'tunnel name is not a valid identifier');
-        }
-        return {
-          action: 'create',
-          hostname,
-          tunnelName,
-          ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-        };
-      }
-      return {
-        action: 'create',
-        hostname,
-        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-      };
-    }
-    case 'set_auto_start': {
-      if (typeof body.autoStart !== 'boolean') {
-        throw new TunnelError('invalid_request', 'autoStart must be a boolean');
-      }
-      const acknowledgeExposure = optionalAck(body);
-      return {
-        action: 'set_auto_start',
-        autoStart: body.autoStart,
-        ...(acknowledgeExposure === undefined ? {} : { acknowledgeExposure }),
-      };
-    }
+    case 'start':
+      return withAck({ action }, body);
+    case 'create':
+      return parseCreateAction(body);
+    case 'set_auto_start':
+      return withAck(
+        {
+          action: 'set_auto_start',
+          autoStart: requiredBool(body, 'autoStart', 'autoStart must be a boolean'),
+        },
+        body
+      );
     case 'set_trust_proxy':
-      if (typeof body.trustProxy !== 'boolean') {
-        throw new TunnelError('invalid_request', 'trustProxy must be a boolean');
-      }
-      return { action: 'set_trust_proxy', trustProxy: body.trustProxy };
-    case 'adopt_external': {
-      if (typeof body.hostname !== 'string') {
-        throw new TunnelError('invalid_request', 'hostname is required');
-      }
-      const hostname = normalizeTunnelHostname(body.hostname);
-      if (!hostname) {
-        throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
-      }
-      return { action: 'adopt_external', hostname };
-    }
+      return {
+        action: 'set_trust_proxy',
+        trustProxy: requiredBool(body, 'trustProxy', 'trustProxy must be a boolean'),
+      };
+    case 'adopt_external':
+      return { action: 'adopt_external', hostname: requiredHostname(body) };
     default:
       throw new TunnelError('invalid_request', 'unknown action');
   }

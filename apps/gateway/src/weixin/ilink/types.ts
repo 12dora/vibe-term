@@ -10,14 +10,10 @@ export const CLIENT_ID_PREFIX = 'openclaw-weixin-';
 export const MESSAGE_TYPE_BOT = 2;
 
 // message_state
-export const MESSAGE_STATE_GENERATING = 1;
 export const MESSAGE_STATE_FINISH = 2;
 
 // item_list[].type
 export const ITEM_TYPE_TEXT = 1;
-export const ITEM_TYPE_VOICE = 3;
-export const ITEM_TYPE_FILE = 4;
-export const ITEM_TYPE_VIDEO = 5;
 
 // session 过期：ret 或 errcode 为 -14
 export const SESSION_EXPIRED_ERRCODE = -14;

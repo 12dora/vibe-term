@@ -25,6 +25,3 @@ export const meshSecrets = sqliteTable(
     check('mesh_secrets_kind_check', sql`${table.kind} in ('log', 'meta')`),
   ]
 );
-
-export type MeshRelayRow = typeof meshRelays.$inferSelect;
-export type MeshSecretRow = typeof meshSecrets.$inferSelect;

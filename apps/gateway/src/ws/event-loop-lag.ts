@@ -189,10 +189,6 @@ export function stopGatewayEventLoopLag(): void {
   shared = null;
 }
 
-export function demandGatewayEventLoopLagFast(holdMs?: number): void {
-  shared?.demandFast(holdMs);
-}
-
 export function stopGatewayEventLoopLagForTest(): void {
   stopGatewayEventLoopLag();
 }

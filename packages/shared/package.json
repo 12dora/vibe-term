@@ -4,6 +4,7 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
+    "./async": "./src/async/index.ts",
     "./auth": "./src/auth/index.ts",
     "./i18n/resources": "./src/i18n/resources.ts",
     "./i18n/types": "./src/i18n/types.ts",

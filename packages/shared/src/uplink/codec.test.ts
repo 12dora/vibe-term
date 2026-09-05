@@ -71,6 +71,32 @@ describe('mesh vs hub large-page policy', () => {
     expect(decodeHubUplinkCtl(small, { allowKeyLogRes: true }).t).toBe('key.log.res');
   });
 
+  test('两侧解码器都接受大写 node id 并归一化为小写', () => {
+    const lower = 'ab'.repeat(16);
+    const upper = lower.toUpperCase();
+    const cert = randomBytes(16);
+    const certSig = randomBytes(64);
+    const enrollPk = randomBytes(32);
+    const frame = new TextEncoder().encode(
+      JSON.stringify({
+        t: 'enroll.redeemed',
+        certificate: encodeBase64url(cert),
+        cert_sig: encodeBase64url(certSig),
+        enroll_pk: encodeBase64url(enrollPk),
+        node_id: upper,
+      })
+    );
+    expect(decodeMeshUplinkCtl(frame)).toMatchObject({ t: 'enroll.redeemed', nodeId: lower });
+    expect(decodeHubUplinkCtl(frame)).toMatchObject({ t: 'enroll.redeemed', node_id: lower });
+    const authResponse = new TextEncoder().encode(
+      JSON.stringify({ t: 'auth.response', node_id: upper, sig: encodeBase64url(certSig) })
+    );
+    expect(decodeHubUplinkCtl(authResponse)).toMatchObject({
+      t: 'auth.response',
+      node_id: lower,
+    });
+  });
+
   test('ping round-trip 两侧一致', () => {
     expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl({ t: 'ping' }))).toEqual({ t: 'ping' });
     expect(decodeHubUplinkCtl(encodeHubUplinkCtl({ t: 'ping' }))).toEqual({ t: 'ping' });

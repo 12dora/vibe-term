@@ -44,7 +44,3 @@ let treeOverlayBridge: TreeOverlayBridge | null = null;
 export function registerTreeOverlayBridge(bridge: TreeOverlayBridge | null): void {
   treeOverlayBridge = bridge;
 }
-
-export function getTreeOverlayBridge(): TreeOverlayBridge | null {
-  return treeOverlayBridge;
-}

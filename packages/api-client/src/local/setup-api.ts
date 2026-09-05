@@ -4,6 +4,7 @@
 // 因此调用前必须先读一次 `/healthz.startedAt`，用它区分「同一个进程」与「重启后的新进程」。
 
 import { type ApiClient, defaultApiClient } from '../client';
+import { readCodedError } from '../json-mutation';
 import type {
   SetupHubRequest,
   SetupHubResponse,
@@ -28,22 +29,12 @@ export class SetupApiError extends Error {
   }
 }
 
-async function readError(res: Response, fallbackCode: string): Promise<SetupApiError> {
-  try {
-    const body = (await res.json()) as { error?: unknown };
-    if (typeof body.error === 'string') {
-      return new SetupApiError(body.error, body.error, res.status);
-    }
-    if (body.error && typeof body.error === 'object') {
-      const { code, message } = body.error as { code?: unknown; message?: unknown };
-      if (typeof code === 'string') {
-        return new SetupApiError(code, typeof message === 'string' ? message : code, res.status);
-      }
-    }
-  } catch {
-    // 落到 fallback
-  }
-  return new SetupApiError(fallbackCode, fallbackCode, res.status);
+function readError(res: Response, fallbackCode: string): Promise<SetupApiError> {
+  return readCodedError(
+    res,
+    fallbackCode,
+    (code, message, status) => new SetupApiError(code, message, status)
+  );
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;

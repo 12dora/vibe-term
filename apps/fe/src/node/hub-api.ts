@@ -6,6 +6,7 @@
 
 import { type ApiClient, SELF_NODE_ID, defaultApiClient, resolveNodeUrl } from '@tmex/api-client';
 import type { HubEnrollmentStatus } from '@tmex/api-client/auth/index';
+import { readCodedError } from '@tmex/api-client/json-mutation';
 import type { HubRoleRequest, HubRoleTransition } from '@tmex/shared';
 
 /**
@@ -109,15 +110,19 @@ export class HubApiError extends Error {
   }
 }
 
-async function readError(res: Response, fallback: string): Promise<HubApiError> {
-  try {
-    const body = (await res.json()) as { error?: unknown; code?: unknown };
-    if (typeof body.error === 'string') return new HubApiError(body.error, res.status);
-    if (typeof body.code === 'string') return new HubApiError(body.code, res.status);
-  } catch {
-    // 落到 fallback
-  }
-  return new HubApiError(fallback, res.status);
+/** hub 的错误体除了标准契约还可能只带一个顶层 `code`，那一档走 `pick`。 */
+function readError(res: Response, fallback: string): Promise<HubApiError> {
+  return readCodedError(
+    res,
+    fallback,
+    (code, _message, status) => new HubApiError(code, status),
+    (body, status) => {
+      if (!body || typeof body !== 'object') return undefined;
+      const { error, code } = body as { error?: unknown; code?: unknown };
+      if (error !== undefined) return undefined;
+      return typeof code === 'string' ? new HubApiError(code, status) : undefined;
+    }
+  );
 }
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;

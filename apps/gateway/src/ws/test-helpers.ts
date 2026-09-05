@@ -1,5 +1,4 @@
 import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
 import { sessionStateStore } from './borsh/session-state';
 import type { Carrier, CarrierSendResult } from './carrier';
 import { GatewaySession } from './gateway-session';
@@ -139,13 +138,4 @@ export function setupConnectionEntry(
   } satisfies DeviceConnectionEntry;
   server.connections.set(deviceId, entry);
   return entry;
-}
-
-export function envelopeKind(bytes: Uint8Array): number | null {
-  if (!wsBorsh.checkMagic(bytes)) return null;
-  try {
-    return wsBorsh.decodeEnvelope(bytes).kind;
-  } catch {
-    return null;
-  }
 }

@@ -1,6 +1,5 @@
 import type { wsBorsh } from '@tmex/shared';
 
-import { ENVELOPE_BYTES } from './bytes';
 import type { CanonicalEvent, CanonicalPaneTarget } from './types';
 
 type CanonicalGapScope = Extract<CanonicalEvent, { SourceGap: unknown }>['SourceGap']['scope'];
@@ -269,10 +268,4 @@ export function canonicalEventPayloadBytes(event: CanonicalEvent): number | null
   const body = eventBodyBytes(event);
   if (body == null) return null;
   return PROTOCOL_VERSION_BYTES + ENUM_TAG + body;
-}
-
-export function canonicalEventFrameBytes(event: CanonicalEvent): number | null {
-  const payload = canonicalEventPayloadBytes(event);
-  if (payload == null) return null;
-  return payload + ENVELOPE_BYTES;
 }

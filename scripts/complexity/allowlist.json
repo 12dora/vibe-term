@@ -54,8 +54,8 @@
     "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts": {
-    "fileLines": 1283,
-    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
+    "fileLines": 1362,
+    "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）；round28 T4 加入推包进度与预算重算"
   },
   "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts:useNodeUpgrade": {
     "lines": 453,
@@ -277,12 +277,8 @@
     "reason": "远程升级取消状态机（G8 判定）"
   },
   "apps/gateway/src/system/upgrade.ts": {
-    "fileLines": 970,
-    "reason": "升级控制器内聚体，拆分只搬行（G8 判定）"
-  },
-  "apps/gateway/src/system/upgrade.ts:stagePackageLocked": {
-    "cc": 16,
-    "reason": "暂存包写入顺序校验（G8 判定）"
+    "fileLines": 1087,
+    "reason": "升级控制器内聚体，拆分只搬行（G8 判定）；round28 T4 加入暂存包断点续传，落盘细节已抽到 upgrade-staging.ts"
   },
   "apps/gateway/src/tls/tls-config-store.ts:get": {
     "cc": 16,
@@ -493,31 +489,17 @@
     "cc": 20,
     "reason": "队列/背压泵状态机，抽取已试并回退（历轮保留）"
   },
-  "packages/shared/src/uplink/codec.ts": {
-    "fileLines": 1473,
-    "reason": "协议扁平分派/编解码，一分支一帧类型（G8 判定）"
+  "packages/shared/src/uplink/codec-hub.ts:decodeHubInner": {
+    "cc": 42,
+    "reason": "协议扁平分派：hub 线 ctl 穷举 switch，表驱动只会掩盖顺序语义（历轮保留）"
   },
-  "packages/shared/src/uplink/codec.ts:decodeHubInner": {
-    "cc": 76,
-    "lines": 177,
-    "reason": "协议扁平分派/编解码，表驱动只会掩盖顺序语义（历轮保留）"
+  "packages/shared/src/uplink/codec-mesh.ts:decodeMeshUplinkCtl": {
+    "cc": 32,
+    "reason": "协议扁平分派：mesh 线 ctl 穷举 switch，表驱动只会掩盖顺序语义（历轮保留）"
   },
-  "packages/shared/src/uplink/codec.ts:decodeMeshUplinkCtl": {
-    "cc": 67,
-    "lines": 181,
-    "reason": "协议扁平分派/编解码，表驱动只会掩盖顺序语义（历轮保留）"
-  },
-  "packages/shared/src/uplink/codec.ts:encodeHubUplinkCtl": {
-    "cc": 16,
-    "reason": "协议扁平分派/编解码，一分支一帧类型（G8 判定）"
-  },
-  "packages/shared/src/uplink/codec.ts:encodeMeshUplinkCtl": {
+  "packages/shared/src/uplink/codec-mesh.ts:encodeMeshUplinkCtl": {
     "cc": 49,
-    "reason": "协议扁平分派/编解码，表驱动只会掩盖顺序语义（历轮保留）"
-  },
-  "packages/shared/src/uplink/codec.ts:parseHubWriteForwardMessage": {
-    "cc": 24,
-    "reason": "协议扁平分派/编解码，一分支一帧类型（G8 判定）"
+    "reason": "协议扁平分派：mesh 线 ctl 编码穷举 switch，一分支一帧类型（历轮保留）"
   },
   "packages/shared/src/ws-borsh/test-fakes.ts:referenceApply": {
     "cc": 24,
@@ -714,5 +696,9 @@
   "packages/ghostty-terminal/src/test-support/fake-dom.ts": {
     "fileLines": 625,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+  },
+  "apps/gateway/src/system/remote-upgrade-job.ts": {
+    "fileLines": 712,
+    "reason": "round28 T4：推包阶段改为查偏移 + 续传 + 退避重试，与取消状态机共享 Job 内部结构，拆开要把一半私有状态导出"
   }
 }

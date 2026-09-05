@@ -54,7 +54,7 @@ export const SOURCE_GAP_REASON_EPOCH_CHANGED = 3;
 export const SOURCE_GAP_REASON_CACHE_EVICTED = 4;
 export const SOURCE_GAP_REASON_RESOURCE_EXHAUSTED = 5;
 
-export const SourceEntityKeySchema = b.struct({
+const SourceEntityKeySchema = b.struct({
   deviceId: b.string(),
   serverEpoch: b.bytes(16),
   entityKind: b.u8(),
@@ -70,46 +70,46 @@ export const SourceMetadataValueSchema = b.enum({
   Bytes16: b.bytes(16),
 });
 
-export const SourceMetadataFieldSchema = b.struct({
+const SourceMetadataFieldSchema = b.struct({
   field: b.u8(),
   value: SourceMetadataValueSchema,
 });
 
-export const SourceMetadataRecordSchema = b.struct({
+const SourceMetadataRecordSchema = b.struct({
   key: SourceEntityKeySchema,
   parent: b.option(SourceEntityKeySchema),
   fields: b.vec(SourceMetadataFieldSchema),
 });
 
-export const CanonicalPaneTargetSchema = b.struct({
+const CanonicalPaneTargetSchema = b.struct({
   deviceId: b.string(),
   serverEpoch: b.bytes(16),
   paneId: b.string(),
 });
 
-export const CanonicalTerminalCursorSchema = b.struct({
+const CanonicalTerminalCursorSchema = b.struct({
   paneEpoch: b.bytes(16),
   terminalSeq: b.u64(),
 });
 
-export const CanonicalHistoryCursorSchema = b.struct({
+const CanonicalHistoryCursorSchema = b.struct({
   paneEpoch: b.bytes(16),
   historyEpoch: b.bytes(16),
   beforeLine: b.u32(),
 });
 
-export const CanonicalPaneSubscriptionSchema = b.struct({
+const CanonicalPaneSubscriptionSchema = b.struct({
   pane: CanonicalPaneTargetSchema,
   cursor: b.option(CanonicalTerminalCursorSchema),
 });
 
-export const SetPaneSubscriptionsSchema = b.struct({
+const SetPaneSubscriptionsSchema = b.struct({
   generation: b.u64(),
   activePanes: b.vec(CanonicalPaneSubscriptionSchema),
   hotPanes: b.vec(CanonicalPaneSubscriptionSchema),
 });
 
-export const CanonicalTerminalInputSchema = b.struct({
+const CanonicalTerminalInputSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   paneEpoch: b.bytes(16),
@@ -117,7 +117,7 @@ export const CanonicalTerminalInputSchema = b.struct({
   data: b.bytes(),
 });
 
-export const CanonicalResizePaneSchema = b.struct({
+const CanonicalResizePaneSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   rows: b.u16(),
@@ -134,20 +134,20 @@ export const CanonicalResizePaneV11Schema = b.struct({
   sizeEpoch: b.u64(),
 });
 
-export const CanonicalRequestScreenSchema = b.struct({
+const CanonicalRequestScreenSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   byteLimit: b.u32(),
 });
 
-export const CanonicalRequestHistorySchema = b.struct({
+const CanonicalRequestHistorySchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   beforeCursor: b.option(CanonicalHistoryCursorSchema),
   byteLimit: b.u32(),
 });
 
-export const CanonicalCommandSchema = b.enum({
+const CanonicalCommandSchema = b.enum({
   SetPaneSubscriptions: SetPaneSubscriptionsSchema,
   TerminalInput: CanonicalTerminalInputSchema,
   ResizePane: CanonicalResizePaneSchema,
@@ -161,7 +161,7 @@ export const CanonicalCommandEnvelopeSchema = b.struct({
   command: CanonicalCommandSchema,
 });
 
-export const CanonicalFeedReadySchema = b.struct({
+const CanonicalFeedReadySchema = b.struct({
   gatewayEpoch: b.bytes(16),
   maxFrameBytes: b.u32(),
   maxActivePanes: b.u16(),
@@ -170,7 +170,7 @@ export const CanonicalFeedReadySchema = b.struct({
   maxHistoryPageBytes: b.u32(),
 });
 
-export const SourceMetadataSnapshotSchema = b.struct({
+const SourceMetadataSnapshotSchema = b.struct({
   metadataEpoch: b.bytes(16),
   revision: b.u64(),
   snapshotId: b.bytes(16),
@@ -187,7 +187,7 @@ export const SourceMetadataPatchSchema = b.struct({
   removals: b.vec(SourceEntityKeySchema),
 });
 
-export const CanonicalPaneDataSchema = b.struct({
+const CanonicalPaneDataSchema = b.struct({
   pane: CanonicalPaneTargetSchema,
   paneEpoch: b.bytes(16),
   seqStart: b.u64(),
@@ -195,19 +195,19 @@ export const CanonicalPaneDataSchema = b.struct({
   data: b.bytes(),
 });
 
-export const CanonicalSubscriptionRejectionSchema = b.struct({
+const CanonicalSubscriptionRejectionSchema = b.struct({
   pane: CanonicalPaneTargetSchema,
   reason: b.u8(),
 });
 
-export const CanonicalSubscriptionAppliedSchema = b.struct({
+const CanonicalSubscriptionAppliedSchema = b.struct({
   generation: b.u64(),
   activePanes: b.vec(CanonicalPaneTargetSchema),
   hotPanes: b.vec(CanonicalPaneTargetSchema),
   rejected: b.vec(CanonicalSubscriptionRejectionSchema),
 });
 
-export const CanonicalScreenBeginSchema = b.struct({
+const CanonicalScreenBeginSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   paneEpoch: b.bytes(16),
@@ -218,19 +218,19 @@ export const CanonicalScreenBeginSchema = b.struct({
   totalBytes: b.u32(),
 });
 
-export const CanonicalContentChunkSchema = b.struct({
+const CanonicalContentChunkSchema = b.struct({
   requestId: b.bytes(16),
   offset: b.u32(),
   data: b.bytes(),
 });
 
-export const CanonicalScreenCommitSchema = b.struct({
+const CanonicalScreenCommitSchema = b.struct({
   requestId: b.bytes(16),
   totalBytes: b.u32(),
   historyCursor: b.option(CanonicalHistoryCursorSchema),
 });
 
-export const CanonicalHistoryBeginSchema = b.struct({
+const CanonicalHistoryBeginSchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
   paneEpoch: b.bytes(16),
@@ -241,13 +241,13 @@ export const CanonicalHistoryBeginSchema = b.struct({
   totalBytes: b.u32(),
 });
 
-export const CanonicalHistoryCommitSchema = b.struct({
+const CanonicalHistoryCommitSchema = b.struct({
   requestId: b.bytes(16),
   totalBytes: b.u32(),
   nextCursor: b.option(CanonicalHistoryCursorSchema),
 });
 
-export const CanonicalGapScopeSchema = b.enum({
+const CanonicalGapScopeSchema = b.enum({
   Stream: b.unit(),
   Metadata: b.struct({
     expectedEpoch: b.bytes(16),
@@ -264,19 +264,19 @@ export const CanonicalGapScopeSchema = b.enum({
   }),
 });
 
-export const CanonicalSourceGapSchema = b.struct({
+const CanonicalSourceGapSchema = b.struct({
   reason: b.u8(),
   scope: CanonicalGapScopeSchema,
 });
 
-export const CanonicalErrorSchema = b.struct({
+const CanonicalErrorSchema = b.struct({
   requestId: b.option(b.bytes(16)),
   code: b.u16(),
   message: b.string(),
   retryable: b.bool(),
 });
 
-export const CanonicalEventSchema = b.enum({
+const CanonicalEventSchema = b.enum({
   FeedReady: CanonicalFeedReadySchema,
   SourceMetadataSnapshot: SourceMetadataSnapshotSchema,
   SourceMetadataPatch: SourceMetadataPatchSchema,

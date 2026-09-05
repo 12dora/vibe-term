@@ -40,6 +40,8 @@ export { BRAND_LOGO_SRC, PRODUCT_NAME } from './brand';
 
 // ==================== 通用工具 ====================
 
+export { combineAbortSignals } from './async/abort';
+export { withTimeout } from './async/with-timeout';
 export {
   type NormalizePosixPathOptions,
   basename,

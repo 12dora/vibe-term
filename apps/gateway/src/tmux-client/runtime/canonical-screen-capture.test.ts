@@ -6,8 +6,6 @@ import type { PaneIdentity, PaneScreenCheckpoint, PaneTerminalCursor } from '../
 import {
   CanonicalScreenCapture,
   type CanonicalScreenCaptureHost,
-  concatBytes,
-  truncateUtf8Tail,
 } from './canonical-screen-capture';
 
 const EPOCH = new Uint8Array(16).fill(1);
@@ -136,18 +134,5 @@ describe('CanonicalScreenCapture', () => {
     const capture = new CanonicalScreenCapture(host);
     await expect(capture.capture('%1', 1024)).resolves.toBeNull();
     expect(host.stored).toEqual([]);
-  });
-});
-
-describe('utf8 capture helpers', () => {
-  test('truncateUtf8Tail does not split a multi-byte codepoint', () => {
-    const encoded = new TextEncoder().encode('éx');
-    const truncated = truncateUtf8Tail(encoded, 2);
-    expect(new TextDecoder().decode(truncated)).toBe('x');
-  });
-
-  test('concatBytes joins chunks in order', () => {
-    const joined = concatBytes(new Uint8Array([1]), new Uint8Array([2, 3]));
-    expect([...joined]).toEqual([1, 2, 3]);
   });
 });

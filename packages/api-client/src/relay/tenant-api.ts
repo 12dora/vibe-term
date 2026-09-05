@@ -379,26 +379,21 @@ export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJo
  * `/api/mesh/relay/*` 的错误体是 `{ code, ... }`（`session-middleware.ts` 的 `jsonError`），
  * 与运营者侧的 `{ error: { code, message } }` 不同一形，这里两种都认。
  */
-async function readError(res: Response, fallback: string): Promise<RelayApiError> {
-  const clone = res.clone();
-  try {
-    const body = (await clone.json()) as {
-      code?: unknown;
-      reason?: unknown;
-      lastError?: unknown;
-      lastErrorCode?: unknown;
-    };
-    if (typeof body.code === 'string') {
-      const reason = typeof body.reason === 'string' ? `${body.code}: ${body.reason}` : body.code;
-      return new RelayApiError(body.code, reason, res.status, detailsFromBody(body));
-    }
-  } catch {
-    // 落到通用契约
-  }
+function readError(res: Response, fallback: string): Promise<RelayApiError> {
   return readCodedError(
     res,
     fallback,
-    (code, message, status) => new RelayApiError(code, message, status)
+    (code, message, status) => new RelayApiError(code, message, status),
+    (body, status) => {
+      const own = body as
+        | { code?: unknown; reason?: unknown; lastError?: unknown; lastErrorCode?: unknown }
+        | undefined;
+      if (own && typeof own.code === 'string') {
+        const reason = typeof own.reason === 'string' ? `${own.code}: ${own.reason}` : own.code;
+        return new RelayApiError(own.code, reason, status, detailsFromBody(own));
+      }
+      return undefined;
+    }
   );
 }
 

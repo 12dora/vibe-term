@@ -64,15 +64,33 @@ export async function requestJson<TWire, TResult = TWire>(
   return options.pick ? options.pick(wire) : (wire as unknown as TResult);
 }
 
-/** `{ error: { code, message } }` 契约错误体；兼容反代 / 网关层给出的 `{ error: "..." }` 老形态。 */
+/**
+ * `{ error: { code, message } }` 契约错误体；兼容反代 / 网关层给出的 `{ error: "..." }` 老形态。
+ *
+ * `pick` 用于端点自有的错误体形状（如非 `error` 键包信封、需要额外字段拼 message/details）：
+ * 拿到已解析的 JSON body（解析失败时为 `undefined`）与状态码，命中就直接返回完整的 `T`；
+ * 返回 `undefined` 则退回上面的默认契约解析，仍解不出再退到 `make(fallback, fallback, status)`。
+ * 不传 `pick` 时行为与之前完全一致。
+ */
 export async function readCodedError<T>(
   res: Response,
   fallback: string,
-  make: (code: string, message: string, status: number) => T
+  make: (code: string, message: string, status: number) => T,
+  pick?: (body: unknown, status: number) => T | undefined
 ): Promise<T> {
+  let body: unknown;
+  let parsed = true;
   try {
-    const body = (await res.json()) as { error?: unknown };
-    const error = body.error;
+    body = await res.json();
+  } catch {
+    parsed = false;
+  }
+  if (pick) {
+    const picked = pick(parsed ? body : undefined, res.status);
+    if (picked !== undefined) return picked;
+  }
+  if (parsed) {
+    const error = (body as { error?: unknown }).error;
     if (error && typeof error === 'object') {
       const { code, message } = error as { code?: unknown; message?: unknown };
       if (typeof code === 'string') {
@@ -80,8 +98,6 @@ export async function readCodedError<T>(
       }
     }
     if (typeof error === 'string') return make(error, error, res.status);
-  } catch {
-    // 落到 fallback
   }
   return make(fallback, fallback, res.status);
 }

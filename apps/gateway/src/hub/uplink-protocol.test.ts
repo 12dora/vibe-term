@@ -189,14 +189,14 @@ describe('uplink-protocol', () => {
     });
   });
 
-  test('auth.response.node_id must be 32 lowercase hex', () => {
+  test('auth.response.node_id 必须是 32 位 hex，大小写不敏感且归一化为小写', () => {
     const sig = encodeBase64url(randomBytes(64));
     expect(() =>
       decodeUplinkCtl(JSON.stringify({ t: 'auth.response', node_id: 'abc', sig }))
     ).toThrow(UplinkCtlError);
-    expect(() =>
+    expect(
       decodeUplinkCtl(JSON.stringify({ t: 'auth.response', node_id: 'AB'.repeat(16), sig }))
-    ).toThrow(UplinkCtlError);
+    ).toMatchObject({ t: 'auth.response', node_id: 'ab'.repeat(16) });
     expect(() =>
       decodeUplinkCtl(
         JSON.stringify({ t: 'auth.response', node_id: `ab${'0'.repeat(30)}\ninjected`, sig })

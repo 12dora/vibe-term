@@ -30,7 +30,6 @@ import {
   MemoryTunnelAccessStore,
   TunnelAccessStore,
   type TunnelAccessStoreLike,
-  computeAccessEffective,
   emptyAccessStatus,
 } from './access-store';
 import {
@@ -48,6 +47,7 @@ import {
   readLogTail,
 } from './connector-health';
 import { type Downloader, defaultDownloader, installCloudflaredBinary } from './download';
+import { TunnelEdgeRecovery } from './edge-recovery';
 import { resolveEdge } from './edge-resolver';
 import {
   EXPOSURE_ACK_MESSAGE,
@@ -64,7 +64,12 @@ import {
   ExternalTunnelDetector,
   toExternalStatus,
 } from './external-detect';
-import { defaultTunnelName, normalizeTunnelHostname, normalizeTunnelName } from './hostname';
+import {
+  defaultTunnelName,
+  normalizeTunnelHostname,
+  normalizeTunnelName,
+  resolveAccessHostname,
+} from './hostname';
 import { LogRingBuffer } from './log-buffer';
 import { writeNamedConfigYml } from './named-config';
 import {
@@ -83,6 +88,13 @@ import {
 } from './provider';
 import { redactSecrets } from './redact';
 import { type PickPort, type Spawner, bunSpawner, consumeLines, pickFreePort } from './spawn';
+import {
+  buildAccessStatus,
+  buildTunnelStatus,
+  connectorHintText,
+  edgeHintText,
+  tunnelProcessState,
+} from './status-view';
 import { TunnelSupervisor } from './supervisor';
 type PatchHostEnv = (trustProxy: boolean) => Promise<void>;
 type ReadHostEnv = () => Promise<boolean | null>;
@@ -138,7 +150,6 @@ type BinaryCache = {
 const LOGIN_TIMEOUT_MS = 10 * 60 * 1000;
 const LOGIN_POLL_MS = 500;
 const EDGE_RECOVERY_DELAY_MS = 90_000;
-const FAKE_IP_HINT = 'edge DNS resolved to fake-IP 198.18.x (local proxy); static edge override';
 
 export class TunnelManager {
   private readonly tunnelDir: string;
@@ -172,10 +183,7 @@ export class TunnelManager {
   private lastConnector: TunnelConnectorStatus = { ...EMPTY_CONNECTOR };
   private lastEdge: TunnelEdgeResolution | null = null;
   private readonly resolveEdgeFn: () => Promise<TunnelEdgeResolution | null>;
-  private readonly edgeRecoveryDelayMs: number;
-  private degradedSince: number | null = null;
-  private edgeRecoveryDone = false;
-  private edgeRecoveryInFlight = false;
+  private readonly edgeRecovery: TunnelEdgeRecovery;
   private readonly connectorPollMs: number;
   private readonly scanDefaultMetrics: boolean;
   private connectorPollGen = 0;
@@ -255,12 +263,20 @@ export class TunnelManager {
       setAccessGuardSource(() => this.accessGuardState());
       setAccessJwtVerifier(this.jwtVerifier);
     }
-    this.edgeRecoveryDelayMs = opts.edgeRecoveryDelayMs ?? EDGE_RECOVERY_DELAY_MS;
     this.resolveEdgeFn =
       opts.resolveEdge ??
       (config.isTest
         ? async () => null
         : () => resolveEdge({ fetchImpl: this.fetchImpl, now: this.now }));
+    this.edgeRecovery = new TunnelEdgeRecovery({
+      now: () => this.now(),
+      delayMs: opts.edgeRecoveryDelayMs ?? EDGE_RECOVERY_DELAY_MS,
+      resolveEdge: () => this.resolveEdgeFn(),
+      currentEdge: () => this.currentEdge(),
+      canRestart: () => Boolean(this.lastStartOpts) && this.isManagedProcessActive(),
+      restart: (edge) => this.restartWithEdge(edge),
+      warn: (message) => this.warn(message),
+    });
     const spawner: Spawner = opts.spawner ?? bunSpawner;
     this.provider = new CloudflaredProvider(
       spawner,
@@ -327,68 +343,40 @@ export class TunnelManager {
   status(): TunnelStatusResponse {
     this.refreshBinaryPresence();
     const persisted = this.safePersisted();
-    const loggedIn = isOriginCertPresent(this.tunnelDir, this.homeDir);
     const access = this.accessStatus();
-    const external = toExternalStatus(this.lastExternal);
     const loginEnforced = this.loginEnforcedFn();
-    const exposureProtected = this.isExposureProtected(persisted, access, loginEnforced);
-    const processAlive = persisted.externallyManaged
-      ? this.lastExternal.running
-      : processUp(this.supervisor.state);
-    const publicUrl = persisted.externallyManaged
-      ? persisted.hostname
-        ? `https://${persisted.hostname}`
-        : null
-      : persisted.mode === 'named' && processAlive && persisted.hostname
-        ? `https://${persisted.hostname}`
-        : persisted.mode === 'quick' && processAlive
-          ? this.supervisor.publicUrl
-          : null;
-    return {
-      supported: isTunnelPlatformSupported(this.platform, this.arch),
-      platform: tunnelPlatformLabel(this.platform, this.arch),
-      binary: {
-        installed: Boolean(this.binary.path),
-        version: this.binary.version,
-        path: this.binary.path,
-        source: this.binary.source,
+    return buildTunnelStatus({
+      platform: this.platform,
+      arch: this.arch,
+      binary: this.binary,
+      persisted,
+      loggedIn: isOriginCertPresent(this.tunnelDir, this.homeDir),
+      loginUrl: this.job?.kind === 'login' && this.job.state === 'running' ? this.loginUrl : null,
+      originPort: this.originPort,
+      processState: this.processState(persisted),
+      processAlive: persisted.externallyManaged
+        ? this.lastExternal.running
+        : processUp(this.supervisor.state),
+      supervisor: {
+        pid: this.supervisor.pid,
+        startedAt: this.supervisor.startedAt,
+        lastError: this.supervisor.lastError,
+        restarts: this.supervisor.restarts,
+        publicUrl: this.supervisor.publicUrl,
       },
-      auth: {
-        loggedIn,
-        loginUrl: this.job?.kind === 'login' && this.job.state === 'running' ? this.loginUrl : null,
-      },
-      config: {
-        mode: persisted.mode,
-        hostname: persisted.hostname,
-        tunnelName: persisted.tunnelName,
-        tunnelId: persisted.tunnelId,
-        autoStart: persisted.autoStart,
-        externallyManaged: persisted.externallyManaged,
-        originPort: this.originPort,
-        accessMode: persisted.accessMode,
-      },
-      process: {
-        state: this.processState(persisted),
-        pid: persisted.externallyManaged ? null : this.supervisor.pid,
-        startedAt: persisted.externallyManaged ? null : this.supervisor.startedAt,
-        publicUrl,
-        lastError: persisted.externallyManaged
-          ? this.lastConnector.lastError
-          : this.supervisor.lastError,
-        restarts: persisted.externallyManaged ? 0 : this.supervisor.restarts,
-      },
-      connector: { ...this.lastConnector },
+      connector: this.lastConnector,
+      connectorLastError: this.lastConnector.lastError,
       edge: persisted.externallyManaged ? null : this.currentEdge(),
       access,
-      external,
+      external: toExternalStatus(this.lastExternal),
       loginEnforced,
-      exposureProtected,
-      job: this.job ? { ...this.job } : null,
+      exposureProtected: this.isExposureProtected(persisted, access, loginEnforced),
+      job: this.job,
       trustProxy: this.trustProxy,
       configuredTrustProxy: this.configuredTrustProxy,
       restartRequired: this.restartRequired,
       log: this.statusLog(),
-    };
+    });
   }
 
   async ensureFreshConnector(opts?: { maxWaitMs?: number }): Promise<void> {
@@ -626,29 +614,7 @@ export class TunnelManager {
 
   private accessStatus(): TunnelAccessStatus {
     try {
-      const row = this.accessStore.get();
-      const persisted = this.safePersisted();
-      const configured = Boolean(row.appId && row.aud && row.hostname);
-      return {
-        hasCredentials: Boolean(row.apiTokenEnc && row.accountId),
-        accountId: row.accountId,
-        teamDomain: row.teamDomain,
-        configured,
-        appId: row.appId,
-        aud: row.aud,
-        hostname: row.hostname,
-        rules: [...row.rules],
-        enforceJwt: row.enforceJwt,
-        effective: computeAccessEffective({
-          configured,
-          enforceJwt: row.enforceJwt,
-          accessHostname: row.hostname,
-          tunnelMode: persisted.mode,
-          tunnelHostname: persisted.hostname,
-        }),
-        bypassAppId: row.bypassAppIds[0] ?? null,
-        lastError: row.lastError,
-      };
+      return buildAccessStatus(this.accessStore.get(), this.safePersisted());
     } catch {
       return emptyAccessStatus();
     }
@@ -966,7 +932,7 @@ export class TunnelManager {
     if (connector.reachable === true && connector.readyConnections === 0) {
       throw new TunnelError(
         'connector_down',
-        `${connector.lastError ?? 'cloudflared has no edge connections'}${this.edgeHint()}`
+        `${connector.lastError ?? 'cloudflared has no edge connections'}${edgeHintText(this.currentEdge())}`
       );
     }
     const url = `${target.replace(/\/$/, '')}/healthz`;
@@ -1062,26 +1028,14 @@ export class TunnelManager {
   }
 
   private resolveAccessHostname(explicit?: string, forSync = false): string {
-    if (explicit !== undefined) {
-      const hostname = normalizeTunnelHostname(explicit);
-      if (!hostname) {
-        throw new TunnelError('invalid_hostname', 'hostname is not a valid RFC 1123 name');
-      }
-      return hostname;
-    }
     const persisted = this.store.get();
-    if (persisted.hostname) return persisted.hostname;
-    if (forSync) {
-      const fromExternal = this.lastExternal.hostnames[0];
-      if (fromExternal) return fromExternal;
-    }
-    if (persisted.mode === 'off') {
-      throw new TunnelError(
-        'not_configured',
-        'hostname is required when the tunnel is not configured'
-      );
-    }
-    throw new TunnelError('not_configured', 'named tunnel hostname is required');
+    return resolveAccessHostname({
+      explicit,
+      mode: persisted.mode,
+      tunnelHostname: persisted.hostname,
+      externalHostname: this.lastExternal.hostnames[0],
+      forSync,
+    });
   }
 
   private async jobConfigureAccess(
@@ -1254,8 +1208,7 @@ export class TunnelManager {
     };
     this.logs.clear();
     this.supervisor.publicUrl = null;
-    this.degradedSince = null;
-    this.edgeRecoveryDone = false;
+    this.edgeRecovery.reset();
     await this.supervisor.start(this.lastStartOpts);
     this.lastEdge = this.supervisor.edge;
     await this.waitUntilRunning();
@@ -1264,21 +1217,12 @@ export class TunnelManager {
   }
 
   private processState(persisted: TunnelPersisted): TunnelProcessState {
-    if (persisted.externallyManaged) {
-      if (!this.lastExternal.running) return 'stopped';
-      if (this.lastConnector.reachable === true && this.lastConnector.readyConnections === 0) {
-        return 'degraded';
-      }
-      return 'running';
-    }
-    if (
-      this.supervisor.state === 'running' &&
-      this.lastConnector.reachable === true &&
-      this.lastConnector.readyConnections === 0
-    ) {
-      return 'degraded';
-    }
-    return this.supervisor.state;
+    return tunnelProcessState({
+      persisted,
+      externalRunning: this.lastExternal.running,
+      connector: this.lastConnector,
+      supervisorState: this.supervisor.state,
+    });
   }
 
   private statusLog(): string[] {
@@ -1361,12 +1305,7 @@ export class TunnelManager {
   }
 
   private connectorHint(connector: TunnelConnectorStatus = this.lastConnector): string {
-    if (connector.reachable === true && connector.readyConnections != null) {
-      const edgeHint = connector.readyConnections === 0 ? this.edgeHint() : '';
-      return ` (connector: ${connector.readyConnections} edge connections)${edgeHint}`;
-    }
-    if (connector.reachable === false) return ' (connector: metrics unreachable)';
-    return '';
+    return connectorHintText(connector, () => edgeHintText(this.currentEdge()));
   }
 
   private currentEdge(): TunnelEdgeResolution | null {
@@ -1377,55 +1316,20 @@ export class TunnelManager {
 
   private resetEdge(): void {
     this.lastEdge = null;
-    this.degradedSince = null;
-    this.edgeRecoveryDone = false;
+    this.edgeRecovery.reset();
   }
 
-  /** 0 连接且系统解析器返回 fake-IP 时给出可操作提示 */
-  private edgeHint(): string {
-    const edge = this.currentEdge();
-    if (!edge?.fakeIpDetected) return '';
-    const state = edge.mode === 'static' ? 'active' : `failed: ${edge.lastError ?? 'unknown'}`;
-    return ` — ${FAKE_IP_HINT} ${state}`;
+  private async restartWithEdge(edge: TunnelEdgeResolution): Promise<void> {
+    const opts = this.lastStartOpts;
+    if (!opts) return;
+    this.lastEdge = edge;
+    await this.supervisor.stop();
+    await this.supervisor.start(opts);
   }
 
-  /**
-   * 托管进程连续 90s 0 连接且当前用系统解析：重新解析一次，若识别到 fake-IP 且拿到
-   * DoH 地址，就带 --edge 静态列表重启一次；连接恢复前不再重复。
-   */
   private async maybeRecoverEdge(connector: TunnelConnectorStatus): Promise<void> {
     if (this.safePersisted().externallyManaged) return;
-    const degraded = connector.reachable === true && connector.readyConnections === 0;
-    if (!degraded) {
-      this.degradedSince = null;
-      if ((connector.readyConnections ?? 0) > 0) this.edgeRecoveryDone = false;
-      return;
-    }
-    if (this.degradedSince == null) this.degradedSince = this.now();
-    if (this.edgeRecoveryDone || this.edgeRecoveryInFlight) return;
-    if (this.now() - this.degradedSince < this.edgeRecoveryDelayMs) return;
-    if (this.currentEdge()?.mode === 'static') return;
-    if (!this.lastStartOpts || !this.isManagedProcessActive()) return;
-    this.edgeRecoveryInFlight = true;
-    try {
-      const edge = await this.resolveEdgeFn();
-      if (!edge || edge.mode !== 'static' || edge.edgeAddrs.length === 0) return;
-      this.edgeRecoveryDone = true;
-      this.lastEdge = edge;
-      this.warn(
-        `[tunnel] restarting cloudflared with static edge after ${Math.round(
-          (this.now() - (this.degradedSince ?? this.now())) / 1000
-        )}s without edge connections: ${edge.edgeAddrs.join(',')}`
-      );
-      const opts = this.lastStartOpts;
-      await this.supervisor.stop();
-      await this.supervisor.start(opts);
-      this.degradedSince = null;
-    } catch (error) {
-      this.warn(`[tunnel] edge recovery failed: ${String(error)}`);
-    } finally {
-      this.edgeRecoveryInFlight = false;
-    }
+    await this.edgeRecovery.maybeRecover(connector);
   }
 
   private async connectorLogLines(): Promise<string[]> {

@@ -150,7 +150,3 @@ export interface SetupRelayJoinResponse {
   directError: string | null;
   restarting: true;
 }
-
-export interface ApiErrorBody {
-  error: { code: string; message: string };
-}
