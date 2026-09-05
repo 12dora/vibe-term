@@ -920,14 +920,16 @@ describe('推包进度与预算', () => {
     };
   }
 
-  test('推包字节一直在涨：预算跟着重新计时，不会在六分钟处判超时', async () => {
-    // 6 分钟 = 180 轮（2 s 一轮）；这里排 300 轮持续推进，再回到 idle 收尾。
-    const polls: UpgradePollOutcome[] = [];
-    for (let i = 1; i <= 300; i += 1) polls.push(pushing(i * 40_000));
-    polls.push({ kind: 'status', status: status({ state: 'idle' }) });
-    const io = progressIo(polls);
-    const pushes: Array<{ pushedBytes: number; totalBytes: number } | null | undefined> = [];
-    const result = await watchUpgrade({
+  /** 旧入口（不报 progress）的一轮状态：等价于「阶段未知」。 */
+  const legacyPolling: UpgradePollOutcome = {
+    kind: 'status',
+    status: status({ state: 'downloading', targetVersion: '1.2.0' }),
+  };
+
+  type PushProgress = { pushedBytes: number; totalBytes: number } | null | undefined;
+
+  function watch(io: UpgradeIo, progress?: (push: PushProgress) => void) {
+    return watchUpgrade({
       nodeId: 'n1',
       targetVersion: '1.2.0',
       sawActive: true,
@@ -936,8 +938,20 @@ describe('推包进度与预算', () => {
       signal: new AbortController().signal,
       describeError: (code) => code,
       phase: () => undefined,
-      progress: (push) => pushes.push(push),
+      progress,
     });
+  }
+
+  test('推包字节一直在涨：预算跟着重新计时，不会在六分钟处判超时', async () => {
+    // 6 分钟 = 180 轮（2 s 一轮）；这里排 300 轮持续推进，再回到 idle 收尾。
+    const polls: UpgradePollOutcome[] = [];
+    for (let i = 1; i <= 300; i += 1) polls.push(pushing(i * 40_000));
+    polls.push({ kind: 'status', status: status({ state: 'idle' }) });
+    const io = progressIo(polls);
+    const pushes: PushProgress[] = [];
+
+    const result = await watch(io, (push) => pushes.push(push));
+
     expect(result).toEqual({ kind: 'done' });
     expect(io.clock()).toBeGreaterThan(6 * 60_000);
     // 300 轮推包各报一次，最后回到 idle 时再清一次，免得表格上留着过期进度。
@@ -946,18 +960,35 @@ describe('推包进度与预算', () => {
     expect(pushes.at(-1)).toBeNull();
   });
 
-  test('进度停在原地：预算照常到期，报「未确认」而不是无限等', async () => {
+  test('推包阶段字节八分钟纹丝不动：按推包阶段的预算接着等，不在六分钟处判超时', async () => {
+    // 后端在一次 PUT 里可以几分钟不更新 pushedBytes；这段静默不能当成「停摆」。
+    const polls: UpgradePollOutcome[] = [];
+    for (let i = 0; i < 240; i += 1) polls.push(pushing(40_000));
+    polls.push({ kind: 'status', status: status({ state: 'idle' }) });
+    const io = progressIo(polls);
+
+    const result = await watch(io);
+
+    expect(result).toEqual({ kind: 'done' });
+    expect(io.clock()).toBeGreaterThan(8 * 60_000);
+  });
+
+  test('进度一直停着：到推包阶段的预算才判超时，不会无限等', async () => {
     const io = progressIo([pushing(40_000)]);
-    const result = await watchUpgrade({
-      nodeId: 'n1',
-      targetVersion: '1.2.0',
-      sawActive: true,
-      unconfirmedStart: false,
-      io,
-      signal: new AbortController().signal,
-      describeError: (code) => code,
-      phase: () => undefined,
-    });
+
+    const result = await watch(io);
+
+    expect(result).toEqual({ kind: 'timeout' });
+    // 后端推包超时 15 min，前端留一分钟富余让它自己把结论报出来。
+    expect(io.clock()).toBeGreaterThan(15 * 60_000);
+    expect(io.clock()).toBeLessThanOrEqual(16 * 60_000 + 2_000);
+  });
+
+  test('旧入口不报阶段：仍走六分钟基线预算', async () => {
+    const io = progressIo([legacyPolling]);
+
+    const result = await watch(io);
+
     expect(result).toEqual({ kind: 'timeout' });
     expect(io.clock()).toBeLessThanOrEqual(6 * 60_000 + 2_000);
   });

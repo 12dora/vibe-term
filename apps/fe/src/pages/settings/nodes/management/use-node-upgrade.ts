@@ -20,12 +20,7 @@
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
 import { defaultApiClient, formatBytesPair } from '@tmex/api-client';
-import {
-  type RemoteUpgradeProgress,
-  UPGRADE_CANCELLED,
-  type UpgradeStatus,
-  sleepOrAbort,
-} from '@tmex/shared';
+import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@tmex/shared';
 import type {
   NodeUpgradeEntry,
   NodeUpgradeLatest,
@@ -40,6 +35,7 @@ import {
   launchUpgradeBatch,
   reportBatchSummary,
 } from './upgrade-batch';
+import { createProgressTracker, pushProgressOf, upgradeProgressMark } from './upgrade-budget';
 
 export {
   MIN_REMOTE_UPGRADE_VERSION,
@@ -49,15 +45,9 @@ export {
 };
 export type { Translate, UpgradeToasts };
 
+export { pushProgressOf, upgradeProgressMark };
+
 const POLL_MS = 2000;
-/** 没有任何进展时的等待预算：下载 + 解包 + 重启 + 版本回传。 */
-const BUDGET_MS = 6 * 60_000;
-/**
- * 入口每报一次新的推包进度就把预算重新计时——13 MB 的包过中继可能要十几分钟，
- * 按固定 6 分钟砍掉只会把一次正在推进的升级判成「未确认」。这是硬上限，
- * 覆盖后端 10 min 下载 + 15 min 推包 + 1 min 启动。
- */
-const MAX_BUDGET_MS = 30 * 60_000;
 /** POST 之后目标迟迟不进入非 idle：判定没真正开始，不要空等满预算。 */
 const START_GRACE_MS = 30_000;
 /** 刷新后回读各节点升级状态的并发上限。 */
@@ -318,50 +308,13 @@ async function settleIdle(
   return (await versionConfirmed(ctx, false)) ? { kind: 'done' } : null;
 }
 
-/** 只有真的在推包时才给进度：下载阶段总量未知，摆个 0 / 0 只会误导。 */
-export function pushProgressOf(
-  progress: RemoteUpgradeProgress | null
-): { pushedBytes: number; totalBytes: number } | null {
-  if (!progress || progress.phase !== 'push' || progress.totalBytes <= 0) return null;
-  return { pushedBytes: progress.pushedBytes, totalBytes: progress.totalBytes };
-}
-
-/** 进度指纹：入口每换一个阶段、每多推一段字节都会变，据此判断这次升级还在推进。 */
-export function upgradeProgressMark(status: UpgradeStatus): string {
-  const progress = status.progress;
-  if (!progress) return '';
-  return `${progress.phase}:${progress.pushedBytes}:${progress.attempt}`;
-}
-
-/**
- * 进度记账：入口每报一次新的进度就把预算重新计时（封顶 `MAX_BUDGET_MS`），
- * 并在推包字节变化时回调一次，免得每轮都往表格里塞同一份进度。
- */
-function createProgressTracker(ctx: UpgradeWatchContext, startedAt: number) {
-  const hardDeadline = startedAt + MAX_BUDGET_MS;
-  let deadline = startedAt + BUDGET_MS;
-  let progressMark = '';
-  let pushMark = '';
-  return {
-    deadline: () => deadline,
-    observe(status: UpgradeStatus): void {
-      const mark = upgradeProgressMark(status);
-      if (mark && mark !== progressMark) {
-        progressMark = mark;
-        deadline = Math.min(ctx.io.now() + BUDGET_MS, hardDeadline);
-      }
-      const push = pushProgressOf(status.progress ?? null);
-      const nextPushMark = push ? `${push.pushedBytes}/${push.totalBytes}` : '';
-      if (nextPushMark === pushMark) return;
-      pushMark = nextPushMark;
-      ctx.progress?.(push);
-    },
-  };
-}
-
 export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWatchResult> {
   const startedAt = ctx.io.now();
-  const tracker = createProgressTracker(ctx, startedAt);
+  const tracker = createProgressTracker({
+    startedAt,
+    now: () => ctx.io.now(),
+    onPush: ctx.progress,
+  });
   let sawActive = ctx.sawActive;
   while (ctx.io.now() < tracker.deadline()) {
     if (!(await ctx.io.wait(POLL_MS, ctx.signal))) return { kind: 'cancelled' };

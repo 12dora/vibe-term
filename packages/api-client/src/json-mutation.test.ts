@@ -176,6 +176,54 @@ describe('readCodedError', () => {
     expect(err).toEqual({ code: 'boom', message: 'boom' });
   });
 
+  test('响应体是合法 JSON `null` 时退化为 fallback，不抛 TypeError', async () => {
+    const res = jsonResponse(null, 502);
+
+    const err = await readCodedError(res, 'local_status_failed', (code, message, status) => ({
+      code,
+      message,
+      status,
+    }));
+
+    expect(err).toEqual({
+      code: 'local_status_failed',
+      message: 'local_status_failed',
+      status: 502,
+    });
+  });
+
+  test('响应体是裸标量时同样退化为 fallback', async () => {
+    const res = jsonResponse(42, 500);
+
+    const err = await readCodedError(res, 'tls_failed', (code, message, status) => ({
+      code,
+      message,
+      status,
+    }));
+
+    expect(err).toEqual({ code: 'tls_failed', message: 'tls_failed', status: 500 });
+  });
+
+  test('JSON `null` 走端点自有的 pick 时也不炸，pick 未命中仍回 fallback', async () => {
+    const res = jsonResponse(null, 502);
+    const seen: Array<{ body: unknown; status: number }> = [];
+
+    const err = await readCodedError(
+      res,
+      'file_failed',
+      (code, message, status) => new FileApiError(status, message, code as never),
+      (body, status) => {
+        seen.push({ body, status });
+        return undefined;
+      }
+    );
+
+    expect(seen).toEqual([{ body: null, status: 502 }]);
+    expect(err).toBeInstanceOf(FileApiError);
+    expect((err as FileApiError).code).toBe('file_failed' as never);
+    expect((err as FileApiError).status).toBe(502);
+  });
+
   test('响应体不可解析时退化为 fallback', async () => {
     const res = new Response('<html>502</html>', { status: 502 });
 

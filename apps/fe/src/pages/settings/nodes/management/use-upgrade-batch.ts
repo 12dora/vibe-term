@@ -3,6 +3,10 @@
 // 批量计划落在入口节点（本机行）名下，换入口即换计划；同一份计划任一时刻只允许一个标签页推进，
 // 靠 `updatedAt` 心跳与 `ownerTabId` 判定归属。刷新页面后：先回读每行的在途状态（`useUpgradeRestore`），
 // 全部收尾之后才放行批量续跑（`useUpgradeBatchResume`），免得两条路径抢同一台机器。
+//
+// 这个「先后」靠 hook 的调用次序落实：`useUpgradeRestore` 必须排在 `useUpgradeBatch` 之前，
+// 它的 effect 才会先把 `restoreActive` 抬起来。反过来的话，节点列表刚到的那一帧续跑先跑，
+// 此时 `restoreActive` 为 0、`inFlight` 为空，仍在升级的节点会被重发一次 POST。
 
 import type { NodeRow } from '@/node/mesh-nodes';
 import { useCallback, useEffect, useState } from 'react';
@@ -42,18 +46,26 @@ export type ReadPlan = () => UpgradeBatchPlan | null;
 export interface UpgradeBatchControl {
   batch: NodeUpgradeBatchState;
   startAll: (rows: NodeRow[]) => void;
-  readPlan: ReadPlan;
 }
 
-/** 计划的读与写：读只发生一次（结果缓存在 ref 里），写会顶掉上一次留下的计划。 */
-function useUpgradeBatchPlan(
-  refs: UpgradeRefs,
-  entryNodeId: string | null,
-  io: UpgradeIo
-): {
+export interface UpgradeBatchPlanControl {
+  /** 批量计划挂在本机行名下：换入口即换计划。 */
+  entryNodeId: string | null;
   readPlan: ReadPlan;
   openPlan: (order: string[][], targetVersion: string) => BatchPlanSink | null;
-} {
+}
+
+/**
+ * 计划的读与写：读只发生一次（结果缓存在 ref 里），写会顶掉上一次留下的计划。
+ * 单独成段是为了让调用方能把「登记回读」排在「批量续跑」前面——两者都要用 `readPlan`，
+ * 但续跑的 effect 必须后注册。
+ */
+export function useUpgradeBatchPlan(
+  refs: UpgradeRefs,
+  rows: NodeRow[],
+  io: UpgradeIo
+): UpgradeBatchPlanControl {
+  const entryNodeId = rows.find((row) => row.isSelf)?.id ?? null;
   /**
    * 本次挂载待续接的计划；只读一次。被别的标签页占着时按「没有」处理，之后也不再重试——
    * 那一页多半正跑着这批，抢过来只会两页对着同一批机器同时发 POST。
@@ -90,7 +102,7 @@ function useUpgradeBatchPlan(
     [entryNodeId, io, refs]
   );
 
-  return { readPlan, openPlan };
+  return { entryNodeId, readPlan, openPlan };
 }
 
 /**
@@ -177,11 +189,12 @@ export function useUpgradeBatch(p: {
   latest: NodeUpgradeLatest | null;
   alive: () => boolean;
   runOnce: UpgradeRuntime['runOnce'];
+  /** 由调用方先建好并交给 `useUpgradeRestore`，保证回读的 effect 排在续跑之前。 */
+  plan: UpgradeBatchPlanControl;
 }): UpgradeBatchControl {
   const { refs, rows, io, t, latest, alive, runOnce } = p;
   const [batch, setBatch] = useState<NodeUpgradeBatchState>(IDLE_UPGRADE_BATCH);
-  const entryNodeId = rows.find((row) => row.isSelf)?.id ?? null;
-  const { readPlan, openPlan } = useUpgradeBatchPlan(refs, entryNodeId, io);
+  const { entryNodeId, readPlan, openPlan } = p.plan;
 
   /** 一批跑完的收尾记账：running 标记、进度条与心跳用的 sink 一起归位。 */
   const trackBatch = useCallback<TrackBatch>(
@@ -254,7 +267,7 @@ export function useUpgradeBatch(p: {
     return () => clearInterval(timer);
   }, [batch.running, refs]);
 
-  return { batch, startAll, readPlan };
+  return { batch, startAll };
 }
 
 /**

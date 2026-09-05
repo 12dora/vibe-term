@@ -2,9 +2,13 @@
 //
 // 四段各管一摊，`useNodeUpgrade` 只负责按顺序把它们串起来：
 //   useUpgradeRuntime    —— 挂载生命周期、latest 查询、每行状态，以及单行互斥与执行入口
-//   useUpgradeBatch      —— 批量计划的开启 / 续跑 / 心跳与批量进度
+//   useUpgradeBatchPlan  —— 落盘的批量计划的读与写（无 effect）
 //   useUpgradeRestore    —— 刷新页面后的在途升级回读
+//   useUpgradeBatch      —— 批量计划的开启 / 续跑 / 心跳与批量进度
 //   useUpgradeRowActions —— 行内「升级」「停止升级」两个按钮
+//
+// 次序不是随便排的：回读必须比批量续跑先注册 effect，否则节点列表刚到的那一帧续跑会抢在前面，
+// 对仍在升级的节点重发 POST（撞 `UPGRADE_IN_PROGRESS`，还会提前去动下一组 hub）。
 //
 // 跨段共享的可变量集中在 `UpgradeRefs`（见 `upgrade-refs.ts`）。
 
@@ -16,7 +20,7 @@ import type { NodeUpgradeController, NodeUpgradeLatest } from './types';
 import { type Translate, eligibleUpgradeRows } from './upgrade-batch';
 import { type UpgradeRefs, createUpgradeRefs } from './upgrade-refs';
 import { type UpgradeIo, defaultUpgradeIo, launchRowUpgrade } from './use-node-upgrade';
-import { useUpgradeBatch, useUpgradeRestore } from './use-upgrade-batch';
+import { useUpgradeBatch, useUpgradeBatchPlan, useUpgradeRestore } from './use-upgrade-batch';
 import { type UpgradeRuntime, useUpgradeRuntime } from './use-upgrade-runtime';
 
 /** 行内两个按钮：「升级」走确认 + 单行执行，「停止升级」按闸门状态决定现在发还是等 POST 落地补发。 */
@@ -75,7 +79,15 @@ export function useNodeUpgrade(
   const refs = refsRef.current;
 
   const runtime = useUpgradeRuntime(refs, onChanged, io, t);
-  const { batch, startAll, readPlan } = useUpgradeBatch({
+  const plan = useUpgradeBatchPlan(refs, rows, io);
+  const restoringIds = useUpgradeRestore({
+    refs,
+    rows,
+    io,
+    alive: runtime.alive,
+    readPlan: plan.readPlan,
+  });
+  const { batch, startAll } = useUpgradeBatch({
     refs,
     rows,
     io,
@@ -83,8 +95,8 @@ export function useNodeUpgrade(
     latest: runtime.latest,
     alive: runtime.alive,
     runOnce: runtime.runOnce,
+    plan,
   });
-  const restoringIds = useUpgradeRestore({ refs, rows, io, alive: runtime.alive, readPlan });
   const { start, cancel } = useUpgradeRowActions({
     refs,
     t,

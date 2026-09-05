@@ -89,7 +89,8 @@ export async function readCodedError<T>(
     const picked = pick(parsed ? body : undefined, res.status);
     if (picked !== undefined) return picked;
   }
-  if (parsed) {
+  // 合法 JSON 也可能是 `null` 或裸标量：直接读 `.error` 会抛 TypeError，只能走 fallback。
+  if (parsed && typeof body === 'object' && body !== null) {
     const error = (body as { error?: unknown }).error;
     if (error && typeof error === 'object') {
       const { code, message } = error as { code?: unknown; message?: unknown };

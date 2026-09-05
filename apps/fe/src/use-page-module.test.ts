@@ -11,6 +11,7 @@ import {
   initialPageModuleState,
   requestPageModule,
   setPageModulePrerequisite,
+  syncPageModuleState,
   toPageModuleError,
 } from './use-page-module';
 
@@ -151,6 +152,83 @@ describe('已解析模块的缓存', () => {
     for (let i = 0; i < 5; i++) await Promise.resolve();
 
     expect(cachedPageModule(other)).toBeNull();
+  });
+});
+
+describe('syncPageModuleState（usePageModule 的 effect 主体）', () => {
+  afterEach(() => clearPageModuleCache());
+
+  /** 组件状态的最小替身：接住值或更新函数，行为与 React 的 setState 一致。 */
+  function stateBox(initial: PageModuleState) {
+    let state = initial;
+    const renders: PageModuleState[] = [];
+    return {
+      get current() {
+        return state;
+      },
+      renders,
+      apply: (update: PageModuleState | ((prev: PageModuleState) => PageModuleState)) => {
+        const next = typeof update === 'function' ? update(state) : update;
+        if (next === state) return;
+        state = next;
+        renders.push(next);
+      },
+    };
+  }
+
+  test('缓存在 render 与 effect 之间才落地：effect 把状态校准到 ready，不再停在 loading', async () => {
+    const gate = deferred<PageModule>();
+    const loader = () => gate.promise;
+
+    // 第一次进这个页面：模块还没下完就切走，取消掉。
+    const cancel = requestPageModule(loader, () => undefined);
+    cancel();
+
+    // 第二次 render：缓存还是空的，状态从 loading 起步。
+    const box = stateBox(initialPageModuleState(loader));
+    expect(box.current).toEqual(PAGE_MODULE_LOADING);
+
+    // render 之后、effect 之前，第一次那个已取消的请求落地并写进了缓存。
+    gate.resolve(pageModule);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(cachedPageModule(loader)).toBe(pageModule);
+
+    const cleanup = syncPageModuleState(loader, box.apply);
+
+    expect(cleanup).toBeUndefined();
+    expect(box.current).toEqual({ status: 'ready', module: pageModule, error: null });
+  });
+
+  test('状态已经对上同一个模块：不再写一次 state，避免多余的重渲染', async () => {
+    const loader = () => Promise.resolve(pageModule);
+    requestPageModule(loader, () => undefined);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    const box = stateBox(initialPageModuleState(loader));
+    expect(box.current).toEqual({ status: 'ready', module: pageModule, error: null });
+
+    syncPageModuleState(loader, box.apply);
+
+    expect(box.renders).toEqual([]);
+  });
+
+  test('没命中缓存时照常发请求，并把取消函数交回 effect', async () => {
+    const gate = deferred<PageModule>();
+    const loader = () => gate.promise;
+    const box = stateBox({ status: 'error', module: null, error: new Error('boom') });
+
+    const cleanup = syncPageModuleState(loader, box.apply);
+
+    expect(box.current).toEqual(PAGE_MODULE_LOADING);
+    expect(typeof cleanup).toBe('function');
+
+    cleanup?.();
+    gate.resolve(pageModule);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+
+    // 取消之后不再回写状态，但缓存仍然落地——正是上面那条用例要兜的时序。
+    expect(box.current).toEqual(PAGE_MODULE_LOADING);
+    expect(cachedPageModule(loader)).toBe(pageModule);
   });
 });
 

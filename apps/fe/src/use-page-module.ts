@@ -83,6 +83,35 @@ export function requestPageModule(
   };
 }
 
+type ApplyPageModuleState = (
+  update: PageModuleState | ((prev: PageModuleState) => PageModuleState)
+) => void;
+
+/**
+ * 挂载 / 换路由时的同步动作（`usePageModule` 的 effect 主体）：
+ * 命中缓存就把状态校准到 ready，否则发起一次加载并返回取消函数。
+ *
+ * 校准这一步不能省：render 与 effect 之间缓存可能才刚落地——上一次被取消的加载仍会写缓存，
+ * 却不会回写组件状态，此时状态还停在 loading，页面永远没内容。
+ * 已经对上同一个模块时返回原对象，React 直接跳过重渲染。
+ */
+export function syncPageModuleState(
+  loader: PageModuleLoader,
+  apply: ApplyPageModuleState
+): (() => void) | undefined {
+  const cached = cachedPageModule(loader);
+  if (cached) {
+    apply((prev) =>
+      prev.status === 'ready' && prev.module === cached
+        ? prev
+        : { status: 'ready', module: cached, error: null }
+    );
+    return undefined;
+  }
+  apply(PAGE_MODULE_LOADING);
+  return requestPageModule(loader, apply);
+}
+
 export interface PageModuleResult {
   state: PageModuleState;
   retry: () => void;
@@ -101,12 +130,7 @@ export function usePageModule(moduleLoader: PageModuleLoader): PageModuleResult 
   }
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt 是显式重试触发器
-  useEffect(() => {
-    // 命中缓存的那一路已经同步 ready，不再发请求，也就不会有多余的一次 setState。
-    if (cachedPageModule(moduleLoader)) return;
-    setState(PAGE_MODULE_LOADING);
-    return requestPageModule(moduleLoader, setState);
-  }, [moduleLoader, attempt]);
+  useEffect(() => syncPageModuleState(moduleLoader, setState), [moduleLoader, attempt]);
 
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
 
