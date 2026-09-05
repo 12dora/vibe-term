@@ -1,4 +1,5 @@
 import type { ServerSocketAdapter } from '@tmex/shared/link';
+import { SlidingWindowCounter } from '../lib/sliding-window';
 import { defaultScheduler } from './ctl';
 import { wrapBunPeerSocket } from './peer-protocol';
 import { DEFAULT_PEER_BIND_HOSTS, type MeshScheduler, type PeerBindHost } from './types';
@@ -27,7 +28,7 @@ export function isWebSocketUpgradeRequest(req: Request): boolean {
 }
 
 class SlidingWindowLimiter {
-  private readonly hits = new Map<string, number[]>();
+  private readonly hits: SlidingWindowCounter;
   private lastSweep = 0;
 
   constructor(
@@ -35,46 +36,23 @@ class SlidingWindowLimiter {
     private readonly windowMs: number,
     private readonly now: () => number,
     private readonly maxKeys: number
-  ) {}
+  ) {
+    this.hits = new SlidingWindowCounter({ windowMs, now, maxKeys, evict: 'oldest' });
+  }
 
   allow(key: string): boolean {
     const now = this.now();
-    this.sweep(now);
-    const recent = (this.hits.get(key) ?? []).filter((t) => now - t < this.windowMs);
-    if (recent.length >= this.max) {
-      this.hits.set(key, recent);
-      return false;
+    if (now - this.lastSweep >= this.windowMs || this.hits.size > this.maxKeys) {
+      this.lastSweep = now;
+      this.hits.sweep(now);
     }
-    recent.push(now);
-    this.hits.set(key, recent);
+    if (this.hits.count(key, now) >= this.max) return false;
+    this.hits.hit(key, now);
     return true;
   }
 
   get size(): number {
     return this.hits.size;
-  }
-
-  private sweep(now: number): void {
-    if (now - this.lastSweep < this.windowMs && this.hits.size <= this.maxKeys) return;
-    this.lastSweep = now;
-    for (const [key, times] of this.hits) {
-      const recent = times.filter((t) => now - t < this.windowMs);
-      if (recent.length === 0) this.hits.delete(key);
-      else this.hits.set(key, recent);
-    }
-    while (this.hits.size > this.maxKeys) {
-      let oldestKey: string | null = null;
-      let oldest = Number.POSITIVE_INFINITY;
-      for (const [key, times] of this.hits) {
-        const first = times[0] ?? Number.POSITIVE_INFINITY;
-        if (first < oldest) {
-          oldest = first;
-          oldestKey = key;
-        }
-      }
-      if (!oldestKey) break;
-      this.hits.delete(oldestKey);
-    }
   }
 }
 

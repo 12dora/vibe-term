@@ -1,4 +1,9 @@
 import {
+  type KeywordRule,
+  classifyByKeywords,
+  truncateReason,
+} from '../../../../packages/shared/src/net/classify-by-keywords';
+import {
   DIAL_BREAKER_BASE_MS,
   DIAL_BREAKER_FAILS,
   DIAL_BREAKER_HEALTHY_MS,
@@ -26,19 +31,23 @@ export type DirectDialBreakerOptions = {
 
 const SKIP_KINDS = new Set(['signaling-not-ready', 'primary-wait', '']);
 
+const DIRECT_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string | null>> = [
+  [['signaling not ready'], null],
+  [['no_connection', 'multiple_connections'], null],
+  [['authoriz'], 'authorization'],
+  [['fingerprint'], 'fingerprint'],
+  [['timeout', 'timed out'], 'timeout'],
+  [['ice'], 'ice'],
+  [['protocol'], 'protocol'],
+  [['carrier', 'switched back'], 'carrier'],
+  [['channel', 'datachannel'], 'channel'],
+];
+
 export function classifyDirectDialFailure(reason: string | null | undefined): string | null {
   if (!reason) return 'unknown';
-  const r = reason.toLowerCase();
-  if (r.includes('signaling not ready')) return null;
-  if (r.includes('no_connection') || r.includes('multiple_connections')) return null;
-  if (r.includes('authoriz')) return 'authorization';
-  if (r.includes('fingerprint')) return 'fingerprint';
-  if (r.includes('timeout') || r.includes('timed out')) return 'timeout';
-  if (r.includes('ice')) return 'ice';
-  if (r.includes('protocol')) return 'protocol';
-  if (r.includes('carrier') || r.includes('switched back')) return 'carrier';
-  if (r.includes('channel') || r.includes('datachannel')) return 'channel';
-  return reason.length > 64 ? reason.slice(0, 64) : reason;
+  return classifyByKeywords<string | null>(reason, DIRECT_DIAL_FAILURE_RULES, () =>
+    truncateReason(reason)
+  );
 }
 
 export class DirectDialBreaker {

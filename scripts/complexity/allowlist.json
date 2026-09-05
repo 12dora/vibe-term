@@ -212,10 +212,6 @@
     "cc": 23,
     "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
   },
-  "apps/gateway/src/mesh/peer-ws-race.ts:classifyWsDialFailure": {
-    "cc": 35,
-    "reason": "同上：入参是错误对象、读 errno，输出接端点级退避词表（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
-  },
   "apps/gateway/src/mesh/rtc/bulk.ts:pumpDownload": {
     "cc": 17,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
@@ -227,10 +223,6 @@
   "apps/gateway/src/mesh/rtc/dc-handshake.ts:handshakeDataChannel": {
     "lines": 128,
     "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
-  },
-  "apps/gateway/src/mesh/rtc/rtc-dial-breaker.ts:classifyRtcDialFailure": {
-    "cc": 21,
-    "reason": "拨号失败分类扁平分派：分支顺序即优先级；与 ws/direct 两个分类器输入、输出、下游消费方各异，表驱动会掩盖优先级（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/gateway/src/mesh/session-middleware.ts:authenticateRequest": {
     "cc": 17,
@@ -544,10 +536,6 @@
   "packages/ws-client/src/direct/direct-carrier-controller.ts": {
     "fileLines": 1114,
     "reason": "WebRTC 直连生命周期状态机（S2 判定）"
-  },
-  "packages/ws-client/src/direct/direct-dial-breaker.ts:classifyDirectDialFailure": {
-    "cc": 16,
-    "reason": "同上：入参是字符串、可返回 null 表示不计入失败，语义与前两者相反（第二十一轮 EX3 §3.2，prompt-archives/2026090302-round21-perf-idle-smell）"
   },
   "apps/fe/src/auth/session-login.ts": {
     "fileLines": 704,

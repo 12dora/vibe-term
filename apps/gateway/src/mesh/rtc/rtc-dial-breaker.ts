@@ -1,4 +1,9 @@
 import {
+  type KeywordRule,
+  classifyByKeywords,
+  truncateReason,
+} from '../../../../../packages/shared/src/net/classify-by-keywords';
+import {
   DIAL_BREAKER_BASE_MS,
   DIAL_BREAKER_FAILS,
   DIAL_BREAKER_HEALTHY_MS,
@@ -75,19 +80,17 @@ const INTENTIONAL_DC_LOSS = new Set([
   'simultaneous-dial',
 ]);
 
-const RTC_DIAL_FAILURE_RULES: ReadonlyArray<readonly [RegExp, string]> = [
-  [/^(?=[\s\S]*unexpected remote)(?=[\s\S]*signaling state)/, 'signaling-state'],
-  [/signal dropped/, 'signal-dropped'],
-  [/liveness/, 'liveness-timeout'],
-  [/missed-pong|missed pong/, 'missed-pong'],
-  [/timeout|timed out/, 'timeout'],
-  [/ice/, 'ice'],
-  [/abort/, 'abort'],
-  [/fingerprint|protocol|handshake|fragment/, 'protocol'],
-  [/channel-error|datachannel error/, 'channel-error'],
-  [/channel-closed|datachannel closed|channel closed/, 'channel-closed'],
-  [/transport/, 'transport-lost'],
-  [/^closed$/, 'channel-closed'],
+const RTC_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string>> = [
+  [['signal dropped'], 'signal-dropped'],
+  [['liveness'], 'liveness-timeout'],
+  [['missed-pong', 'missed pong'], 'missed-pong'],
+  [['timeout', 'timed out'], 'timeout'],
+  [['ice'], 'ice'],
+  [['abort'], 'abort'],
+  [['fingerprint', 'protocol', 'handshake', 'fragment'], 'protocol'],
+  [['channel-error', 'datachannel error'], 'channel-error'],
+  [['channel-closed', 'datachannel closed', 'channel closed'], 'channel-closed'],
+  [['transport'], 'transport-lost'],
 ];
 
 export function isIntentionalDcLoss(reason: string | null | undefined): boolean {
@@ -97,10 +100,13 @@ export function isIntentionalDcLoss(reason: string | null | undefined): boolean 
 
 export function classifyRtcDialFailure(reason: string | null | undefined): string {
   if (!reason) return 'unknown';
-  const r = reason.toLowerCase();
-  const match = RTC_DIAL_FAILURE_RULES.find(([pattern]) => pattern.test(r));
-  if (match) return match[1];
-  return reason.length > 64 ? reason.slice(0, 64) : reason;
+  const lower = reason.toLowerCase();
+  if (lower.includes('unexpected remote') && lower.includes('signaling state')) {
+    return 'signaling-state';
+  }
+  return classifyByKeywords(lower, RTC_DIAL_FAILURE_RULES, (normalized) =>
+    normalized === 'closed' ? 'channel-closed' : truncateReason(reason)
+  );
 }
 
 export class RtcDialBreaker {

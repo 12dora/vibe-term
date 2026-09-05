@@ -1,5 +1,5 @@
 import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
-import { waitSocketOpen } from '@tmex/shared/net';
+import { type KeywordRule, classifyByKeywords, waitSocketOpen } from '@tmex/shared/net';
 import type { UserStore } from '../auth/user-store';
 import { envInt } from './mesh-log';
 import { type ReachabilityFailureKind, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
@@ -106,63 +106,50 @@ function errorErrno(err: unknown): string {
   return '';
 }
 
-export function classifyWsDialFailure(url: string, err: unknown): WsDialError {
-  if (err instanceof WsDialError) return err;
+const WS_DIAL_ERRNOS = new Set([
+  'ECONNREFUSED',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ECONNRESET',
+  'EPIPE',
+]);
+
+const WS_DIAL_RULES: ReadonlyArray<KeywordRule<WsDialFailureKind>> = [
+  [['econnrefused'], 'refused'],
+  [['ehostunreach', 'enetunreach'], 'unreachable'],
+  [['econnreset', 'reset', 'errno:epipe', 'mark:ws-closed'], 'reset'],
+  [['connect-timeout'], 'open-timeout'],
+  [['refused', 'failed to connect', 'unable to connect', 'connection failed'], 'refused'],
+  [['handshake', 'peer-id', 'transcript', 'not-trusted', 'bad_signature'], 'protocol'],
+  [['timeout', 'dial-timeout'], 'timeout'],
+];
+
+/** 把 errno、`ws-closed` 前缀、握手错误码折进词表输入，保持与关键词同一优先级。 */
+function wsDialHaystack(lower: string, err: unknown): string {
+  const marks: string[] = [];
+  const errno = errorErrno(err);
+  if (WS_DIAL_ERRNOS.has(errno)) marks.push(`errno:${errno.toLowerCase()}`);
+  if (lower.startsWith('ws-closed')) marks.push('mark:ws-closed');
+  if (err instanceof PeerHandshakeError && err.code === 'protocol') marks.push('handshake');
+  return marks.length === 0 ? lower : `${lower}\n${marks.join('\n')}`;
+}
+
+function classifyWsDialKind(err: unknown): WsDialFailureKind {
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLowerCase();
-  const errno = errorErrno(err);
-  if (lower.includes('aborted') || lower === 'stopped' || lower.includes('ws-race-lost')) {
-    return new WsDialError('aborted', url, err);
+  if (lower === 'stopped' || lower.includes('aborted') || lower.includes('ws-race-lost')) {
+    return 'aborted';
   }
   if (err instanceof PeerHandshakeError) {
-    if (err.code === 'timeout') return new WsDialError('timeout', url, err);
-    if (err.code === 'bad_signature' || err.code === 'revoked') {
-      return new WsDialError('protocol', url, err);
-    }
+    if (err.code === 'timeout') return 'timeout';
+    if (err.code === 'bad_signature' || err.code === 'revoked') return 'protocol';
   }
-  if (errno === 'ECONNREFUSED' || lower.includes('econnrefused')) {
-    return new WsDialError('refused', url, err);
-  }
-  if (
-    errno === 'EHOSTUNREACH' ||
-    errno === 'ENETUNREACH' ||
-    lower.includes('ehostunreach') ||
-    lower.includes('enetunreach')
-  ) {
-    return new WsDialError('unreachable', url, err);
-  }
-  if (
-    errno === 'ECONNRESET' ||
-    errno === 'EPIPE' ||
-    lower.includes('econnreset') ||
-    lower.includes('reset') ||
-    lower.startsWith('ws-closed')
-  ) {
-    return new WsDialError('reset', url, err);
-  }
-  if (lower.includes('connect-timeout')) return new WsDialError('open-timeout', url, err);
-  if (
-    lower.includes('refused') ||
-    lower.includes('failed to connect') ||
-    lower.includes('unable to connect') ||
-    lower.includes('connection failed')
-  ) {
-    return new WsDialError('refused', url, err);
-  }
-  if (
-    lower.includes('handshake') ||
-    lower.includes('peer-id') ||
-    lower.includes('transcript') ||
-    lower.includes('not-trusted') ||
-    lower.includes('bad_signature') ||
-    (err instanceof PeerHandshakeError && err.code === 'protocol')
-  ) {
-    return new WsDialError('protocol', url, err);
-  }
-  if (lower.includes('timeout') || lower.includes('dial-timeout')) {
-    return new WsDialError('timeout', url, err);
-  }
-  return new WsDialError('other', url, err);
+  return classifyByKeywords(wsDialHaystack(lower, err), WS_DIAL_RULES, () => 'other');
+}
+
+export function classifyWsDialFailure(url: string, err: unknown): WsDialError {
+  if (err instanceof WsDialError) return err;
+  return new WsDialError(classifyWsDialKind(err), url, err);
 }
 
 function isServerSocketAdapter(value: WebSocketTransportInput): value is ServerSocketAdapter {
