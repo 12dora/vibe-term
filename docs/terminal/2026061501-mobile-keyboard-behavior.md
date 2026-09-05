@@ -94,4 +94,4 @@ offset             = clamp(round(naturalBottom + margin - keyboardTopClientY), 0
 
 - `resize` 主动触发远端 tmux `resize-pane`（vim/htop 重绘）——issue 明确取舍，非默认。
 - `follow` 跨包新增光标 API；RAF 轮询仅在键盘打开期间运行，setState 仅在 offset 变化 ≥1px 时触发。
-- 旧版 iOS（`offsetTop>0`）尺寸/坐标准确性验证手段受限（模拟器历史无法复现键盘 bug）——见 `known-issues`。
+- 旧版 iOS（`offsetTop>0`）尺寸 / 坐标准确性的验证手段受限：模拟器复现不了真机键盘行为，只能靠真机抽查。

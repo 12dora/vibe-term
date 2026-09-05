@@ -60,7 +60,7 @@ journalctl --user -u tmex.service -n 200 --no-pager
 journalctl --user -u tmex.service -f
 ```
 
-unit 使用 `KillMode=process`，stop / restart / crash 只杀 tmex 主进程，不连带 tmux。跨 logout 存活需自行 `loginctl enable-linger <user>`，安装程序不会代开。详见 [进程存活](../service/2026061400-process-survival.md)。
+unit 使用 `KillMode=process`，stop / restart / crash 只杀 tmex 主进程，不连带 tmux。跨 logout 存活需自行 `loginctl enable-linger <user>`，安装程序不会代开。详见 [进程存活](./2026061400-process-survival.md)。
 
 **macOS（launchd）：** plist 含 `AbandonProcessGroup=true`，语义同上。用 `launchctl` 查看对应 job；标准输出进系统日志。
 

@@ -1,6 +1,6 @@
 // 「启用 hub」向导的纯校验与默认值推导。
 //
-// 规则与 `docs/2026082900-hub-ui-tls` 批次 1 契约（POST /api/setup/hub|join）逐条对齐：
+// 规则与 `prompt-archives/2026082900-hub-ui-tls` 批次 1 契约（POST /api/setup/hub|join）逐条对齐：
 // 前端先拦一遍只是为了少一次往返，后端仍是权威。
 
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';

@@ -62,10 +62,10 @@
 | `TMEX_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |
+| `TMEX_RTC_PORT_RANGE` | 未设 | `begin-end`，限制 node 侧 WebRTC 的 UDP 端口范围，便于只放行一段端口。格式非法或越界启动失败 |
 | `TMEX_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条） |
 | `TMEX_RTC_DIAL_BREAKER_MS` | `30000`（30 s） | DataChannel 熔断的**起始**冷却。连续 3 次失败（含拨号失败与通道打开后异常关闭 / liveness timeout / missed pong）后跳过 DC dial，冷却按 30 s → 60 s → 120 s … 指数递增，上限 30 min；`cooldownLevel` 在冷却过期后仍保留。通道保持健康 ≥ 60 s 才复位。本变量覆盖起始冷却，不改失败次数与上限。ws-secure / relay 不受影响 |
 | `TMEX_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限（整数 ≥ 1）。LAN 候选另有 4 s 总预算，失败地址按 1 min → 6 h 退避，见 [直连地址退避](./2026090305-peer-endpoint-backoff.md) |
-| `TMEX_FAILOVER_HISTORY_BYTES_PER_PANE` | `262144`（256 KiB） | legacy failover 每 pane 重拉历史的预算；单次 failover 合计上限 1 MiB，超出只重订订阅 |
 
 相关但非 mesh 专有：`TMEX_MASTER_KEY`（加密落库的节点私钥等，生产必填）、`TMEX_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL`。
 
@@ -348,7 +348,7 @@ tmex hub user reset
 
 - [架构设计 v3.2](./2026082700-hub-node-architecture.md)
 - [多 hub 主/备（第一阶段）](./2026090104-multi-hub-standby.md)
-- [部署指南（安装 / 服务 / SSH 设备）](../2026021000-tmex-bootstrap/deployment.md)
+- [部署指南（安装 / 服务 / SSH 设备）](../deployment/2026021000-production-install.md)
 - [自更新](../update/2026061406-self-update.md)
-- [服务进程与 tmux 存活](../service/2026061400-process-survival.md)
+- [服务进程与 tmux 存活](../deployment/2026061400-process-survival.md)
 - [库与 MASTER_KEY 不匹配](../operations/2026021200-db-key-mismatch-journald.md)

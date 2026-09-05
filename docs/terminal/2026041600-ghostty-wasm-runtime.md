@@ -16,15 +16,16 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 当前关键层次如下：
 
-1. `apps/fe`
-   - 页面层、状态管理、ws-borsh 事件分发。
-   - 通过 `ghostty-terminal` 使用终端控制器。
-2. `packages/ghostty-terminal`
+1. `apps/fe` / `packages/panels`
+   - 页面层与业务面板；不直接接触 wasm。
+2. `packages/terminal-ui`
+   - 终端组件、渲染面（surface）、pane 数据面接线、resize / 触控 / 键盘策略。
+3. `packages/ghostty-terminal`
    - Ghostty wasm 加载器。
    - C API 封装和结构体读写。
-   - 终端控制器、输入事件桥接、HTML 渲染和兼容 buffer。
+   - 终端控制器、输入事件桥接、canvas 渲染与 xterm 兼容 buffer。
    - 包内提交 `ghostty-vt.wasm` 与对应 metadata，由维护脚本手动更新。
-3. `vendor/ghostty`
+4. `vendor/ghostty`
    - Ghostty 官方源码 submodule。
    - 锁定版本由 superproject gitlink 决定，包内 metadata 会镜像当前锁定 commit。
 
@@ -42,7 +43,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 - 解析从后端收到的 VT 字节流。
 - 维护屏幕内容、scrollback、viewport 和终端 mode。
-- 按当前终端状态生成 HTML 和 plain text。
+- 按当前终端状态提供渲染网格（行 / cell / 光标 / 调色板）与纯文本。
 - 把浏览器键盘事件编码成终端输入字节序列。
 - 按终端 mode 对粘贴文本做 bracketed paste 编码。
 
@@ -63,11 +64,12 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 2. 通过 `ghostty_type_json()` 读取 wasm 导出的类型布局信息。
 3. 创建以下核心句柄：
    - `terminalHandle`：终端状态实例。
-   - `keyEncoderHandle`：键盘编码器。
-   - `htmlFormatterHandle`：HTML 格式化器。
-   - `plainFormatterHandle`：纯文本格式化器。
-4. 创建 `.xterm` 风格 DOM、隐藏 `textarea`、渲染容器和兼容 buffer。
-5. 将实例挂到 `window.__tmexE2eXterm`、`window.__tmexE2eTerminal`、`window.__tmexE2eTerminalEngine`，供 E2E 使用。
+   - `keyEncoderHandle` / `mouseEncoderHandle`：键盘与鼠标编码器。
+   - `renderState`：渲染状态资源（`render-state.ts` 的 `createRenderState`），每帧从 wasm 读回网格。
+4. `open(container)` 时创建 `.xterm` 风格 DOM（`terminal-dom.ts`）、隐藏 `textarea`、内容表面，
+   并把 `CanvasRenderer` 挂到渲染协调器（`TerminalRenderCoordinator`）。
+5. 选区文本经全局探针 `__tmexE2eTerminalSelectionText` 暴露给 E2E；其余 E2E 入口由
+   `packages/terminal-ui` 侧的组件提供。
 
 其中，wasm 只会按模块级 Promise 懒加载一次，避免严格模式和多终端实例重复初始化。
 
@@ -90,17 +92,23 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 后端输出进入浏览器后的执行路径如下：
 
-1. ws-borsh 状态机回调 `onApplyHistory`、`onFlushBuffer`、`onOutput` 被触发。
-2. `Terminal.tsx` 对换行做最小归一化，主要是把裸 `\n` 补成 `\r\n`，避免列位置异常。
+1. canonical 状态流经 `PaneSinkRegistry` 分发到该 pane 的 sink
+   （`packages/terminal-ui/src/components/hooks/usePaneSinkRegistration.ts` 的
+   `onOutput` / `onScreenSnapshot` / `onHistoryPage` / `onRebase`）。
+2. 渲染面对换行做最小归一化，主要是把裸 `\n` 补成 `\r\n`，避免列位置异常。
 3. 调用终端实例的 `write(...)`。
 4. `GhosttyTerminalController.write(...)` 内部调用 `ghostty_terminal_vt_write(...)`。
-5. Ghostty 更新内部终端状态后，控制器在下一帧触发 `render()`。
-6. `render()` 同时读取：
-   - HTML formatter 输出，用于更新 `.xterm-screen.innerHTML`；
-   - plain formatter 输出，用于更新兼容 buffer；
-   - scrollbar 数据，用于同步 viewport/baseY/length。
+5. Ghostty 更新内部终端状态后，控制器通知 `TerminalRenderCoordinator`（`terminal-render-coordinator.ts`
+   + `terminal-render-loop.ts`）在下一帧渲染。
+6. 渲染一帧的过程：
+   - `render-state.ts` 从 wasm 读回本帧的行 / cell / 调色板 / 光标，并在读取过程中顺带算出**行级 dirty**
+     （内核本身恒报 `full`，见 [热路径优化](../performance/2026082700-hot-path-optimizations.md) 第 6 节）；
+   - `CanvasRenderer`（`canvas-renderer*.ts`）只重绘变化的行，另有独立的选区层与光标层；
+   - `TerminalBuffer`（`terminal-buffer.ts`）用同一份行文本维护 xterm 兼容视图（`buffer.active`），
+     scrollbar 数据同步 viewport / baseY / length。
 
-因此，当前页面上看到的终端内容，本质上是 Ghostty 维护的终端状态经过 formatter 输出后的结果，而不是前端自己解释 ANSI 序列后逐格绘制。
+因此页面上的终端内容是 Ghostty 维护的终端状态读回后由 canvas 绘制的结果，既不是前端自己解释 ANSI，
+也不再是 formatter 出的 HTML（早期实现是 `.xterm-screen.innerHTML`，已换成 canvas）。
 
 ## 输入链路
 
@@ -147,20 +155,24 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 虽然底层不再使用 xterm，但兼容层仍保留了以下表面形状：
 
-- `.xterm`、`.xterm-screen`、`.xterm-helper-textarea` 等 DOM 类名；
-- `buffer.active.baseY / viewportY / length / getLine()`；
+- `.xterm`、`.xterm-screen`、`.xterm-helper-textarea` 等 DOM 类名（canvas 直接挂在 `.xterm-screen` 上）；
+- `buffer.active.baseY / viewportY / length / getLine()`（`TerminalBuffer` 只保存当前视口文本）；
 - `_core._renderService.dimensions.css.cell`；
-- `FitAddon`；
-- `__tmexE2eXterm` 调试对象。
+- `FitAddon`（`proposeDimensions()` 仍是尺寸测量入口）。
 
 这样做的目的不是继续依赖 xterm，而是降低页面层、移动端交互逻辑和既有 E2E 的迁移成本。
 
 ## 关键文件
 
 - `packages/ghostty-terminal/src/ghostty-wasm.ts`
-  - Ghostty wasm 导出封装、结构体布局读写、formatter/key/paste 调用。
+  - Ghostty wasm 导出封装、结构体布局读写、formatter / key / mouse / paste 调用。
 - `packages/ghostty-terminal/src/terminal.ts`
-  - 终端控制器、DOM 适配、输入事件桥接、渲染和兼容 buffer。
+  - 终端控制器、DOM 适配、输入事件桥接、渲染调度入口。
+- `packages/ghostty-terminal/src/{render-state,canvas-renderer,terminal-render-coordinator}.ts`
+  - 渲染状态读回与行级 dirty 判定、canvas 绘制（含选区层 / 光标层）、帧调度。
+- `packages/ghostty-terminal/src/headless.ts`
+  - 服务端 headless 模拟器（gateway 的 `run_command` / 读屏用，见
+    [run_command 与 headless ghostty](../agent/2026061303-run-command-headless-ghostty.md)）。
 - `packages/terminal-ui/src/components/Terminal.tsx`
   - 与 ws-borsh、主题、输入模式、resize hook 和页面层 contract 的连接点。
 - `packages/terminal-ui/src/components/useTerminalResize.ts`
@@ -169,8 +181,8 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 ## 当前边界
 
 - 当前只覆盖 tmex 真实使用到的能力，不追求完整 xterm API 等价。
-- 渲染使用 Ghostty formatter 输出的 HTML，不是逐 cell canvas 或自绘 renderer。
-- 鼠标协议、复杂选择语义和更多终端 effect 仍可继续扩展，但不在本轮迁移的最小范围内。
+- 渲染是 canvas：按行 dirty 重绘，选区与光标各自成层；不做 DOM 逐 cell。
+- 同一个 wasm 内核还被 gateway 以 headless 形式复用（服务端读屏与 `run_command`）。
 
 ## 结论
 

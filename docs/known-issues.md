@@ -1,10 +1,47 @@
 # 已知问题（Known Issues）
 
-本文件登记尚未解决的已知问题。解决后从本文件移除（并在对应模块文档留存背景）。
+本文件登记**尚未解决**的已知问题。解决后从本文件移除（背景留在对应模块文档里）。
+最近核对：2026-09-05（1.1.32）。
 
-## KI-3：fe e2e 固定失败基线
+## KI-1：e2e / 单测的负载抖动基线
 
-`cd apps/fe && bun run test:e2e` 在 main 上曾稳定失败的用例，截至 2026-09-03（1.1.19）已全部修复并定向复跑通过：`mobile-settings.spec.ts`（webhook 创建与切语言两处竞态）、`mobile-terminal-interactions.spec.ts`（切编辑模式后等快捷键栏唯一化、滚动断言改为真实等待）、`agent-session.spec.ts`（等错误横幅前重新选中 Agent tab）。本清单当前为空；判断分支是否引入回归时以定向复跑为准。
+`cd apps/fe && bun run test:e2e` 标准套件在 1.1.32 上为 108 pass / 3 fail / 1 skip，失败的三条
+（`terminal-mouse-recovery:411`、`terminal-render-regressions:478`、`terminal-selection-canvas:139`）
+在隔离定向复跑中 16/16 通过，属高负载下的渲染时序抖动，不是产品缺陷。mesh 套件 12/12。
 
-- 历史（2026-09-01 round10 / round12、2026-09-03 round19）已修项见各轮档案。
-- **另注**：全量顺序跑（workers=1，约 10 分钟）时 `terminal-render-regressions`、`theme-propagation`、`mobile-mouse-reporting`、`terminal-mouse-drag-recovery`、`ws-borsh-pane-switch`、`ws-borsh-resize:268`、`mobile-keyboard-avoidance:188` 会随机抖动，低负载单跑通过率高；本机全量 e2e 不能作为回归判定的唯一依据。gateway 全量单测在高负载下 `dc-handshake`、`run-command` 的 `--More--` 用例偶发失败，隔离复跑通过。
+判断某个分支是否引入回归时以**定向复跑**为准，不要拿本机全量 e2e 当唯一依据。gateway 全量单测在高负载
+下 `dc-handshake`、`run-command` 的 `--More--` 用例也偶发失败，隔离复跑通过。
+
+## KI-2：升级下载阶段没有持续进度
+
+`downloadVerifiedRelease` 走 inflight 共享，没有回调位，所以「下载安装包」这一段前端只有阶段名、没有
+字节进度；慢网下载超过 10 分钟时前端会先报未确认。推包阶段已有 `pushedBytes` 进度
+（见 [远程升级推包续传](./update/2026090502-resumable-remote-upgrade-push.md)）。
+
+## KI-3：直连 ICE 候选无法按网卡过滤
+
+`node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。
+可用 `TMEX_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
+[直连地址退避](./hub/2026090305-peer-endpoint-backoff.md)。
+
+## KI-4：TURN 仍需手工配置三个环境变量
+
+`TMEX_TURN_URL` / `TMEX_TURN_USERNAME` / `TMEX_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
+libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
+`[mesh][rtc] summary` 的现网数据再定。
+
+## KI-5：中继在途流保护的代价
+
+`MAX_LINK_UNACKED` 提到 65 × 1 MiB，是「不误关满窗口中继流」的直接代价，单条 mux 最坏内存占用随之上升；
+排空等待有 10 分钟硬上限，到期时剩余流仍会被 reset。见
+[直连信令代次与链路活性](./hub/2026090502-rtc-signaling-epoch-link-liveness.md)。
+
+## KI-6：待现网实测的两项
+
+1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
+2. 直连的 ICE-TCP 与 `TMEX_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
+
+## KI-7：两处上帝类待独立立项
+
+`apps/gateway/src/hub/uplink-server.ts` 与 `apps/gateway/src/mesh/peer-manager.ts` 的拆分、以及两个 ctl switch 的合并，
+在第二十八轮被判定为「值得做但不该混在网络修复里」，尚未立项。

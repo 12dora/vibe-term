@@ -17,8 +17,7 @@
 > `STATE_SNAPSHOT(_DIFF)` / `TERM_RESIZE` / `TERM_SYNC_SIZE` / `TMUX_FETCH_PANE_HISTORY` 全部删除，
 > 对应的 `SelectStateMachine`、`pane-history-gate`、`SwitchBarrier` 也一并删除。对端不满足
 > canonical v1.1 门槛（能力 `canonical-state-v1.1` + 版本 ≥ 1.1.23）时**不回退**，直接判定
-> `stateFeedMode = 'unsupported'` 并提示用户升级。切换语义见
-> `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
+> `stateFeedMode = 'unsupported'` 并提示用户升级。屏障与 canonical 的机制对应见文末附录。
 
 ## 设计原则
 
@@ -260,3 +259,50 @@
 - `COLD`：无引用且已逐出热集。只维护元数据；再次激活时通过一次 screen snapshot 恢复。
 
 订阅集按所有 feed 求并集并带引用计数。容量超限时优先拒绝或逐出 hot pane，不能影响 active pane；所有环形缓冲、screen 和历史页都有显式 byte 上限，达到阈值必须丢弃旧数据并用 gap/snapshot 恢复，不能形成无界积压。
+
+---
+
+## 附录：selectToken 屏障（1.1.23 移除）与 canonical 的对应
+
+保留这一节是为了解释「canonical 首屏事务为什么长这样」。屏障机制本身
+（`SWITCH_ACK` → `TERM_HISTORY` → `LIVE_RESUME`，`apps/gateway/src/ws/borsh/switch-barrier.ts`、
+`packages/ws-client/src/state-machine.ts`、`pane-history-gate.ts`）已随 legacy 状态流删除。
+
+### 屏障要解决的问题（仍然成立）
+
+屏障之前，gateway 在 `tmux/select` 后 `capture-pane` 推 history，FE 先写 history 再追加 live buffer，
+没有事务边界，于是：
+
+- live output 可能早于 history 到达并被 history 覆盖，画面乱序；
+- 快速切 pane 时旧 pane 的 history / live 会写进新 pane；
+- 历史订阅与 select 的时机竞态，偶发「无历史 / 白屏」。
+
+### 屏障为什么被替换
+
+- 屏障边界与 `capture-pane` 的一致性只靠时序约定，没有可对账的序号，重叠与缺口都无法证明；
+- history 只有「当前屏」一页，向上滚动要另走 `TMUX_FETCH_PANE_HISTORY`，两条路径各有一套门控；
+- 缓冲期在 gateway 与 FE 各存一份，快切时两侧都要靠 token 对账丢弃，出错就是白屏；
+- 尺寸补发与真实尺寸变化在 wire 上无法区分（`TERM_RESIZE` / `TERM_SYNC_SIZE` 字段完全相同）。
+
+### 机制对应表
+
+| 旧机制 | canonical 替代 |
+| --- | --- |
+| `SWITCH_ACK(token)` | `SubscriptionApplied(generation)`：订阅集合替换的回执，generation 单调递增 |
+| `TERM_HISTORY(token)` | `ScreenBegin/Chunk/Commit`（首屏）+ `HistoryBegin/Chunk/Commit`（游标分页） |
+| `LIVE_RESUME(token)` | `ScreenCommit` 的 `baseSeq`：早于它的 `PaneData` 直接丢弃，无需闸门 |
+| Gateway 屏障期缓冲 | 无。未提交首屏的 pane 直接丢弃流中字节 |
+| token 对账 | `requestId`（首屏 / 历史）与 `generation`（订阅），过期的自然被忽略 |
+| 超时降级重试 | `SourceGap` + 重取整屏；不再有「无进展超时」状态机 |
+| `TERM_RESIZE` / `TERM_SYNC_SIZE` | `ResizePaneV11` 的 `geometryReason`（change / resend）+ `sizeEpoch` |
+
+`TMUX_SELECT` / `TMUX_SELECT_WINDOW` / `TMUX_FOCUS_PANE` 保留：它们是 tmux 控制面（真正切 tmux 的当前
+pane、携带视口尺寸参与几何仲裁），不属于被删除的状态流。`selectToken` 仍随 wire 发（schema 未改），
+但客户端已不再用它对账。
+
+### e2e 覆盖
+
+`apps/fe/tests/ws-borsh-pane-switch.spec.ts`：跨 window 切换后 `TMUX_SELECT` 仍携带本地 cols/rows、
+目标 pane 的首屏事务 Begin/Commit 成对且 requestId 一致；连续两次切换后订阅 generation 单调递增，
+且没有 `PaneData` 落在从未进过订阅集合的 pane 上。首屏内容与 canonical PaneTarget 的 pane 路由分别由
+`ws-borsh-history.spec.ts`、`ws-borsh-pane-route.spec.ts` 覆盖。

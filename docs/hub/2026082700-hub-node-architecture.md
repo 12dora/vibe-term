@@ -372,7 +372,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 - hub 不可达期间若 node 的 IP 变化，缓存地址失效，v1 不做本地发现（签名 UDP 信标留作后续）；peer link 存活期间地址变化会即时互相更新。
 - 载体切回时浏览器→node 方向可能丢失最近输入（与现状 WS 断线一致），UI 提示而不做会话级 ACK。
 - `GatewaySession` / `Carrier` 拆分是最大的一块重构，须先于 link / 直连落地并保持现有测试全绿。
-- 存量文档 `docs/2026021000-tmex-bootstrap/deployment.md` 中 JWT / 登录内容已过时，实现后重写。
+- 存量部署文档中的 JWT / 登录内容已在实现后重写，见 `docs/deployment/2026021000-production-install.md`。
 
 ## §6 任务拆分
 

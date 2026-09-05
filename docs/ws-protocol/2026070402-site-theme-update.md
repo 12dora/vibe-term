@@ -65,11 +65,7 @@ struct SiteThemeUpdateS2C {
 5. `broadcastThemeChange(theme)` 触发 T9 stdin 注入
 6. 广播 S2C 给 `connectedClients`（全局客户端集合，含发送方）
 
-## 验收标准
+## 覆盖
 
-- [x] KIND_SITE_THEME_UPDATE 在 kind.ts / schema.ts / index.ts 定义
-- [x] gateway handler 完整：校验 → 写库 → 内存更新 → 触发 window-style（T8）+ 主题通知注入（T9）→ 广播
-- [x] 前端监听 S2C，经 `setThemeFromS2C` 更新 site store，不回送 C2S
-- [x] 单测：borsh round-trip、广播路由、并发 last-writer-wins
-- [ ] 实证：两浏览器窗口，A 切主题，B <1s 同步
-- [x] 现有 ws-borsh e2e 全过（回归）
+单测覆盖 borsh round-trip、广播路由与并发 last-writer-wins；主题跨端同步另有 e2e
+（`apps/fe/tests/theme-propagation.spec.ts`）。

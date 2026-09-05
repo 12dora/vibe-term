@@ -6,7 +6,7 @@
 >
 > 编解码实现：统一放在 `packages/shared/src/ws-borsh/`（`kind.ts` 定义 kind 常量，`schema.ts` 定义结构，`codec.ts` 收发），两端复用。
 >
-> 状态机与屏障行为见 `docs/ws-protocol/2026021403-ws-state-machines.md` 与 `docs/terminal/2026021404-terminal-switch-barrier-design.md`。
+> 状态机与切换语义见 `docs/ws-protocol/2026021403-ws-state-machines.md`（文末附录记录 1.1.23 移除的 selectToken 屏障与 canonical 的对应）。
 
 ## 背景
 
@@ -16,7 +16,7 @@
 - pane 切换与 history/live 合并缺少事务屏障，容易出现乱序、丢失、重复。
 - resize、bell、事件语义分散，难以系统性测试与回归。
 
-因此定义 `tmex-ws-borsh-v1`：基于 Borsh 的全二进制 WS 协议，配合 `selectToken` 屏障与状态机，提供确定性行为。
+因此定义 `tmex-ws-borsh-v1`：基于 Borsh 的全二进制 WS 协议，配合显式状态机提供确定性行为。（当年的 `selectToken` 屏障已在 1.1.23 由 canonical 首屏事务取代，见下文。）
 
 ## 依赖与约束
 
@@ -41,7 +41,7 @@
 - **Envelope**：每条 WS binary message 的最外层结构。
 - **kind**：消息类型编号（`u16`）。
 - **seq**：发送方单调递增序号（连接内），用于日志与关联错误。
-- **selectToken**：pane 切换事务 token（16 bytes），用于屏障与乱序丢弃。
+- **selectToken**：pane 切换事务 token（16 bytes）。1.1.23 起只作为 `TMUX_SELECT` 的 wire 字段保留，客户端不再用它对账。
 - **CHUNK**：超大 payload 的分片承载消息。
 
 ## 帧大小与分片
@@ -235,10 +235,8 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 
 > 本节描述“字段语义 + wire 类型”。最终 schema 以 shared 代码为准。
 >
-> 上文「1.1.23 移除的 kind（号段作废）」列出的 kind，其小节（`STATE_SNAPSHOT`、`STATE_SNAPSHOT_DIFF`、
-> `TMUX_SUBSCRIBE_PANES`、`TMUX_FETCH_PANE_HISTORY`、`TERM_RESIZE` / `TERM_SYNC_SIZE`、`TERM_OUTPUT`、
-> `TERM_HISTORY`、`SWITCH_ACK`、`LIVE_RESUME`）作为 v1 历史记录保留，**代码里已无对应 schema**，
-> 不要照着实现新代码。
+> 只列**在用**的 kind。上文「1.1.23 移除的 kind（号段作废）」里的那些在 `packages/shared` 中已无
+> schema，也不再在此展开字段。
 
 ### HELLO_C2S（0x0001）
 
@@ -429,58 +427,6 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
   - `paneTitle: option(string)`
   - `paneCurrentCommand: option(string)`
 
-### STATE_SNAPSHOT（0x0208）
-
-字段：
-
-- `deviceId: string`
-- `session: option(SessionWire)`
-
-SessionWire：
-
-- `id: string`
-- `name: string`
-- `windows: vec(WindowWire)`
-
-WindowWire：
-
-- `id: string`
-- `name: string`
-- `customName: option(string)`
-- `index: u16`
-- `active: bool`
-- `layout: option(string)`
-- `panes: vec(PaneWire)`
-
-PaneWire：
-
-- `id: string`
-- `windowId: string`
-- `index: u16`
-- `title: option(string)`
-- `customName: option(string)`
-- `active: bool`
-- `width: u16`
-- `height: u16`
-- `currentPath: option(string)`
-- `currentCommand: option(string)`
-- `left: option(u16)`
-- `top: option(u16)`
-
-### STATE_SNAPSHOT_DIFF（0x0209，v1 保留）
-
-字段：
-
-- `deviceId: string`
-- `baseRevision: u32`
-- `revision: u32`
-- `diffFormat: u8`（保留）
-- `diffBytes: bytes()`
-
-语义：
-
-- v1 默认不启用；客户端在不支持时可以忽略。
-
 ### TMUX_SET_WINDOW_STYLE（0x020A）
 
 字段：
@@ -507,31 +453,6 @@ PaneWire：
 - `deviceId: string`
 - `windowId: string`
 - `paneIds: vec(string)`（该 window 内期望的 pane 顺序，全量）
-
-### TMUX_SUBSCRIBE_PANES（0x020D）
-
-字段：
-
-- `deviceId: string`
-- `paneIds: vec(string)`
-
-语义：
-
-- 幂等全量声明：除焦点 pane 外还要接收输出的 pane 集合，后到的声明整体替换前一次。
-
-### TMUX_FETCH_PANE_HISTORY（0x020E）
-
-字段：
-
-- `deviceId: string`
-- `paneId: string`
-- `requestToken: bytes(16)`
-- `byteLimit: option(u32)`
-
-语义：
-
-- 回包复用 `TERM_HISTORY`，其 `selectToken` 即本请求的 `requestToken`。
-- `byteLimit` 为后加字段；解码按新→旧两代依次尝试（`decodeTmuxFetchPaneHistory`），老客户端的帧补 null。
 
 ### TMUX_RESIZE_PANE（0x020F）
 
@@ -630,17 +551,6 @@ PaneWire：
 
 字段同 TERM_INPUT，但 `isComposing` 固定 false。
 
-### TERM_RESIZE / TERM_SYNC_SIZE（0x0303/0x0304）
-
-字段：
-
-- `deviceId: string`
-- `paneId: string`
-- `cols: u16`
-- `rows: u16`
-
-网关将二者视为该 pane 所在 window 上的 `visible=true` claim（兼容从不发送 `TERM_VIEWPORT` 的客户端）。
-
 ### TERM_VIEWPORT（0x0308）
 
 字段：
@@ -666,32 +576,6 @@ PaneWire：
 
 `owner=true`：本端几何被采用，应继续上报 resize。`owner=false`：跟随权威 `cols×rows`，停止上报容器尺寸。在 winner / 已应用几何变化时发给该 window 上所有 claimant；会话对该 window 的首次 claim 后立即单发一次。
 
-### TERM_OUTPUT（0x0305）
-
-字段：
-
-- `deviceId: string`
-- `paneId: string`
-- `encoding: u8`（1=raw-bytes）
-- `data: bytes()`
-
-约束：
-
-- 服务端必须按“当前客户端订阅的 pane”过滤 output。
-- 在 `LIVE_RESUME(selectToken)` 之前属于屏障期的 output 必须缓冲，不得提前下发。
-
-### TERM_HISTORY（0x0306）
-
-字段：
-
-- `deviceId: string`
-- `paneId: string`
-- `selectToken: bytes(16)`
-- `encoding: u8`（2=utf8-bytes）
-- `alternateScreen: bool`
-- `modes: u8`（pane 终端模式位图，见 `packages/shared/src/ws-borsh/pane-modes.ts`；capture 快照不含 DECSET，鼠标模式随 history 下发）
-- `data: bytes()`
-
 ### CLIPBOARD_WRITE（0x0307）
 
 字段：
@@ -703,23 +587,6 @@ PaneWire：
 语义：
 
 - gateway 从 pane 输出里解析出 OSC52 写剪贴板请求后，单发给订阅该 pane 的客户端。
-
-### SWITCH_ACK（0x0401）
-
-字段：
-
-- `deviceId: string`
-- `windowId: string`
-- `paneId: string`
-- `selectToken: bytes(16)`
-
-### LIVE_RESUME（0x0402）
-
-字段：
-
-- `deviceId: string`
-- `paneId: string`
-- `selectToken: bytes(16)`
 
 ### CHUNK（0x0501）
 
@@ -990,22 +857,17 @@ C2S 不带 clientTimestamp，避免多端时钟漂移导致顺序错乱。细节
 3. Server -> `HELLO_S2C`。
 4. 进入 READY，开始允许业务消息。
 
-### 2) 选择屏障（切 pane，**1.1.23 已移除**）
+### 2) 切 pane（canonical 首屏事务）
 
-以下是 v1 的历史时序，三个 kind 均已删除，仅作记录：
-Client -> `TMUX_SELECT(selectToken, wantHistory, cols/rows)`，Server 按序发
-`SWITCH_ACK(selectToken)` → 可选 `TERM_HISTORY(selectToken)` → `LIVE_RESUME(selectToken)`，
-`LIVE_RESUME` 之前的 output 缓冲、之后先 flush 再实时下发。
-
-现在的等价链路：`SetPaneSubscriptions` → `SubscriptionApplied(generation)` →
-`RequestScreen` → `ScreenBegin/Chunk/Commit`（`baseSeq` 即原 `LIVE_RESUME` 的分界，早于它的
-`PaneData` 直接丢弃）→ 实时 `PaneData`。详见
-[ws 状态机](./2026021403-ws-state-machines.md) 与
-[切换屏障设计（已下线）](../terminal/2026021404-terminal-switch-barrier-design.md)。
+`SetPaneSubscriptions(generation, panes)` → `SubscriptionApplied(generation)` →
+`RequestScreen(requestId, pane)` → `ScreenBegin/Chunk/Commit`（`ScreenCommit.baseSeq` 之前的
+`PaneData` 直接丢弃）→ 实时 `PaneData`。`TMUX_SELECT` 仍会发（切 tmux 当前 pane、携带视口尺寸），
+但不再有屏障帧。1.1.23 前的 `SWITCH_ACK` / `TERM_HISTORY` / `LIVE_RESUME` 三段式时序与它的对应关系见
+[ws 状态机](./2026021403-ws-state-machines.md)（第 3 节与文末附录）。
 
 ## 兼容与迁移
 
-- Gateway 迁移期同时支持：
-  - 新协议：WS binary 且 `magic == TX`。
-  - 旧协议：JSON 文本帧 + 旧 output 二进制帧。
-- FE 提供 feature flag：优先使用 borsh，失败则回退旧协议。
+- 本协议是浏览器 ↔ gateway 的唯一 WS 协议，没有 JSON 回退通道；`magic != TX` 或版本不符即断连。
+- 演进只走两条路：`Envelope.version` 与 `HELLO` 协商的 capabilities。当前门槛是
+  `canonical-state-v1.1` + 对端版本 ≥ 1.1.23，不满足即 fail-closed（见上文「1.1.23 移除的 kind」）。
+- 作废号段永不复用；收到即 `ERROR_UNKNOWN_KIND`。

@@ -39,4 +39,4 @@ system-prompt 增段：agent 先探测环境（POSIX/网络 CLI/TUI），据此�
 
 ## 已知follow-up
 1. **生产打包 wasm（已解决）**：生产 gateway 入口走 `packages/app`（tmex-cli）的 `build:runtime`（`bun build src/runtime/server.ts → dist/runtime/`），非 apps/gateway 自身的 bun build。新增 `packages/app/scripts/copy-runtime-assets.sh` 在 `build:runtime` 后把 `ghostty-vt.wasm` 拷进 `dist/runtime/assets/`，随 `install.ts` 的 `deployRuntimeFiles` 整目录进 `<installDir>/runtime/assets/`，命中 bundled `new URL('./assets/...', import.meta.url)`。dev/test 不变。
-2. **端到端 integration（见 docs/known-issues.md KI-2）**：真 tmux → control 流 → parser → emulator → run_command 的全链路集成测试（长输出不丢/退出码/vim 拒绝）建议补上；当前各层单测已分别覆盖（真 OSC 字节、真 ghostty wasm、run_command 全分支）。
+2. **端到端 integration（未补）**：真 tmux → control 流 → parser → emulator → run_command 的全链路集成测试（长输出不丢/退出码/vim 拒绝）建议补上；当前各层单测已分别覆盖（真 OSC 字节、真 ghostty wasm、run_command 全分支）。
