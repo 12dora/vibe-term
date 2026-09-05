@@ -7,6 +7,7 @@ import type {
 import type {
   PaneIdentity,
   PaneReplayGap,
+  PaneReplayPlan,
   PaneRetentionConsumerLease,
 } from '../../tmux-client/pane-retention';
 import type { SharePaneOracle, ShareScope } from '../share-scope';
@@ -115,4 +116,4 @@ export interface ResolvedTarget {
   target: CanonicalPaneTarget;
 }
 
-export type { DeviceSessionRuntimeListener, PaneIdentity, PaneReplayGap };
+export type { DeviceSessionRuntimeListener, PaneIdentity, PaneReplayGap, PaneReplayPlan };

@@ -1357,6 +1357,7 @@
       "checkGateway": "Please check Gateway status"
     },
     "apiError": {
+      "shareAuthRequired": "Enable login before creating a share.",
       "siteNameRequired": "Site name cannot be empty",
       "siteUrlInvalid": "Site URL must start with http:// or https://",
       "bellThrottleInvalid": "Bell notification throttle seconds must be between 0-300",
@@ -2618,6 +2619,7 @@
           "rtc_unavailable": "WebRTC unavailable on this node",
           "not_direct_capable": "Peer does not support direct links",
           "breaker_cooling": "Paused until {{until}}",
+          "breaker_paused": "Direct link paused",
           "aborted": "Attempt cancelled",
           "other": "Connection failed"
         },
@@ -3266,7 +3268,14 @@
         "nameRequired": "Enter a name.",
         "passwordTooShort": "Password must be at least {{min}} characters.",
         "noOrigin": "Select an address.",
-        "invalidDuration": "Duration must be a whole number of days up to 365."
+        "invalidDuration": "Duration must be a whole number of days up to 365.",
+        "generic": "Something went wrong. Try again.",
+        "SHARE_NOT_FOUND": "Share not found.",
+        "SHARE_WINDOW_NOT_FOUND": "The window is closed and cannot be shared.",
+        "SHARE_PASSWORD_TOO_SHORT": "Password is too short.",
+        "SHARE_ORIGIN_INVALID": "Invalid share address.",
+        "SHARE_ENDED": "Sharing has ended.",
+        "SHARE_AUTH_REQUIRED": "Enable login protection before sharing."
       }
     }
   }

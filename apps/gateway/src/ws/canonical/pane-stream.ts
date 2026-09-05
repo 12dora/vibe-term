@@ -220,6 +220,17 @@ export class CanonicalPaneStream {
     }
   }
 
+  /** 丢弃某个 pane 的待发批次与待发 gap（订阅被撤销时用，不能再把数据发出去）。 */
+  dropPaneDataBatch(key: string): void {
+    const pending = this.paneDataBatches.get(key);
+    if (pending?.timer != null) this.cancelTimer(pending.timer);
+    this.paneDataBatches.delete(key);
+    this.paneDataLastFlushAt.delete(key);
+    this.paneDataHolds.delete(key);
+    this.paneDataHoldOverflows.delete(key);
+    this.paneSendGaps.delete(key);
+  }
+
   discardPaneDataBatches(): void {
     for (const pending of this.paneDataBatches.values()) {
       if (pending.timer != null) this.cancelTimer(pending.timer);

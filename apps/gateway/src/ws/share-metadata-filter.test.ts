@@ -1,8 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@tmex/shared';
 import {
-  filterCanonicalEventForShare,
-  filterMetadataForShare,
+  ShareMetadataView,
   filterMetadataRecordsForShare,
   filterSnapshotForShare,
 } from './share-metadata-filter';
@@ -96,7 +95,13 @@ describe('filterSnapshotForShare', () => {
   });
 });
 
-describe('filterMetadataForShare', () => {
+function exposedView(): ShareMetadataView {
+  const view = new ShareMetadataView(SCOPE);
+  view.snapshot({ metadataEpoch: new Uint8Array(16).fill(9), revision: 1n, records: tree() });
+  return view;
+}
+
+describe('ShareMetadataView.patch', () => {
   test('pane 被移出 window 时转成 removal，其他 window 的 upsert 直接丢弃', () => {
     const patch = {
       metadataEpoch: new Uint8Array(16).fill(9),
@@ -109,11 +114,39 @@ describe('filterMetadataForShare', () => {
       ],
       removals: [],
     };
-    const filtered = filterMetadataForShare(patch, SCOPE);
+    const filtered = exposedView().patch(patch);
     expect(ids(filtered.upserts)).toEqual(['%1']);
     expect(filtered.removals.map((item) => item.nativeId)).toEqual(['%2']);
     expect(filtered.fromRevision).toBe(4n);
     expect(filtered.throughRevision).toBe(5n);
+  });
+
+  test('从未下发过的 pane 移出 window 时不发 removal，patch 仍然保留', () => {
+    const view = exposedView();
+    const patch = {
+      metadataEpoch: new Uint8Array(16).fill(9),
+      fromRevision: 5n,
+      throughRevision: 6n,
+      upserts: [record(wsBorsh.SOURCE_ENTITY_PANE, '%7', otherWindowKey)],
+      removals: [key(wsBorsh.SOURCE_ENTITY_PANE, '%8')],
+    };
+    const filtered = view.patch(patch);
+    expect(filtered.upserts).toEqual([]);
+    expect(filtered.removals).toEqual([]);
+    expect(filtered.throughRevision).toBe(6n);
+  });
+
+  test('同一个 pane 只发一次 removal', () => {
+    const view = exposedView();
+    const patch = (revision: bigint) => ({
+      metadataEpoch: new Uint8Array(16).fill(9),
+      fromRevision: revision,
+      throughRevision: revision + 1n,
+      upserts: [],
+      removals: [key(wsBorsh.SOURCE_ENTITY_PANE, '%1')],
+    });
+    expect(view.patch(patch(5n)).removals.map((item) => item.nativeId)).toEqual(['%1']);
+    expect(view.patch(patch(6n)).removals).toEqual([]);
   });
 
   test('pane 移入 window 时随 upsert 一并下发', () => {
@@ -124,10 +157,10 @@ describe('filterMetadataForShare', () => {
       upserts: [record(wsBorsh.SOURCE_ENTITY_PANE, '%3', windowKey)],
       removals: [],
     };
-    expect(ids(filterMetadataForShare(patch, SCOPE).upserts)).toEqual(['%3']);
+    expect(ids(exposedView().patch(patch).upserts)).toEqual(['%3']);
   });
 
-  test('只放行 scope window 自身的 window removal', () => {
+  test('只放行已下发过的 window removal', () => {
     const patch = {
       metadataEpoch: new Uint8Array(16).fill(9),
       fromRevision: 6n,
@@ -135,12 +168,12 @@ describe('filterMetadataForShare', () => {
       upserts: [],
       removals: [otherWindowKey, windowKey, key(wsBorsh.SOURCE_ENTITY_PANE, '%1')],
     };
-    const filtered = filterMetadataForShare(patch, SCOPE);
+    const filtered = exposedView().patch(patch);
     expect(filtered.removals.map((item) => item.nativeId)).toEqual(['@1', '%1']);
   });
 });
 
-describe('filterCanonicalEventForShare', () => {
+describe('ShareMetadataView.filterEvent', () => {
   const inScope = (_deviceId: string, paneId: string) => paneId === '%1';
 
   test('快照事件保留分片字段', () => {
@@ -154,7 +187,7 @@ describe('filterCanonicalEventForShare', () => {
         records: tree(),
       },
     };
-    const filtered = filterCanonicalEventForShare(event, SCOPE, inScope);
+    const filtered = new ShareMetadataView(SCOPE).filterEvent(event, inScope);
     if (!filtered || !('SourceMetadataSnapshot' in filtered)) throw new Error('expected snapshot');
     expect(filtered.SourceMetadataSnapshot.chunkIndex).toBe(1);
     expect(filtered.SourceMetadataSnapshot.totalChunks).toBe(2);
@@ -169,6 +202,7 @@ describe('filterCanonicalEventForShare', () => {
   });
 
   test('scope 外 pane 的 PaneData 被丢弃', () => {
+    const view = new ShareMetadataView(SCOPE);
     const paneData = (paneId: string): wsBorsh.CanonicalEvent => ({
       PaneData: {
         pane: { deviceId: SCOPE.deviceId, serverEpoch: SERVER_EPOCH, paneId },
@@ -178,14 +212,14 @@ describe('filterCanonicalEventForShare', () => {
         data: new Uint8Array([1]),
       },
     });
-    expect(filterCanonicalEventForShare(paneData('%9'), SCOPE, inScope)).toBeNull();
-    expect(filterCanonicalEventForShare(paneData('%1'), SCOPE, inScope)).not.toBeNull();
+    expect(view.filterEvent(paneData('%9'), inScope)).toBeNull();
+    expect(view.filterEvent(paneData('%1'), inScope)).not.toBeNull();
   });
 
   test('其余事件原样透传', () => {
     const event: wsBorsh.CanonicalEvent = {
       SourceGap: { scope: { Stream: {} }, reason: wsBorsh.SOURCE_GAP_REASON_EPOCH_CHANGED },
     };
-    expect(filterCanonicalEventForShare(event, SCOPE, inScope)).toBe(event);
+    expect(new ShareMetadataView(SCOPE).filterEvent(event, inScope)).toBe(event);
   });
 });

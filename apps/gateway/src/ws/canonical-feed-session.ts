@@ -6,12 +6,7 @@ import {
   PaneHistoryCursorError,
   type PaneHistoryPage,
 } from '../tmux-client/pane-history-reader';
-import {
-  DEFAULT_MAX_ACTIVE_PANES,
-  DEFAULT_MAX_HOT_PANES,
-  type PaneIdentity,
-  type PaneScreenCheckpoint,
-} from '../tmux-client/pane-retention';
+import { DEFAULT_MAX_ACTIVE_PANES, DEFAULT_MAX_HOT_PANES } from '../tmux-client/pane-retention';
 import {
   CANONICAL_PENDING_SWEEP_MS,
   ENVELOPE_BYTES,
@@ -19,11 +14,11 @@ import {
   bytesHex,
   copyBytes,
   defaultCreateEpoch,
-  paneKey,
 } from './canonical/bytes';
 import { CanonicalFrameSizer } from './canonical/frame-sizer';
 import { CanonicalPaneStream } from './canonical/pane-stream';
 import { applyCanonicalResize, normalizeResizeCommand } from './canonical/resize';
+import { CanonicalScreenJobs } from './canonical/screen-jobs';
 import { CanonicalShareGuard } from './canonical/share-guard';
 import { CanonicalSubscriptionCoordinator } from './canonical/subscription-coordinator';
 import { CanonicalTransactionSender } from './canonical/transaction-sender';
@@ -39,8 +34,8 @@ import {
   type CanonicalFeedSessionStats,
   type CanonicalPaneTarget,
   type CanonicalResizeRequest,
+  type PaneReplayPlan,
   type ResolvedTarget,
-  type ScreenJob,
   canonicalSendAccepted,
 } from './canonical/types';
 
@@ -60,7 +55,6 @@ export { CANONICAL_PENDING_SWEEP_MS } from './canonical/bytes';
 export class CanonicalFeedSession {
   private readonly devices = new Map<string, AttachedDevice>();
   private readonly attaching = new Map<string, Promise<boolean>>();
-  private readonly screenJobs = new Map<string, ScreenJob>();
   private readonly historyRequestIds = new Set<string>();
   private readonly inputIds = new Set<string>();
   private readonly inputIdOrder: string[] = [];
@@ -71,13 +65,10 @@ export class CanonicalFeedSession {
   private readonly stream: CanonicalPaneStream;
   private readonly subscriptions = new CanonicalSubscriptionCoordinator();
   private readonly shareGuard: CanonicalShareGuard;
+  private readonly screenJobs: CanonicalScreenJobs;
   private readySent = false;
   private bootstrapped = false;
   private closed = false;
-  private screenTransactionsStarted = 0;
-  private screenTransactionsCompleted = 0;
-  private screenTransactionsFailed = 0;
-  private screenTransactionsCancelled = 0;
   private pendingSweepTimer: ReturnType<typeof setTimeout> | null = null;
   private awaitingSocketDrain = false;
 
@@ -110,13 +101,18 @@ export class CanonicalFeedSession {
       maxPendingPaneGaps,
       onPendingWork: () => this.schedulePendingSweep(),
     });
+    this.screenJobs = new CanonicalScreenJobs({
+      sender: this.sender,
+      stream: this.stream,
+      isClosed: () => this.closed,
+      allowsPane: (deviceId, paneId) => this.shareGuard.allowsPane(deviceId, paneId),
+    });
   }
 
   snapshotStats(): CanonicalFeedSessionStats {
     const stream = this.stream.snapshotStats();
     return {
       attachedRuntimes: this.devices.size,
-      screenJobs: this.screenJobs.size,
       gatedPanes: this.stream.gatedPaneCount(),
       pendingPaneGaps: stream.pendingPaneGaps,
       pendingPaneGapLimit: stream.pendingPaneGapLimit,
@@ -131,10 +127,7 @@ export class CanonicalFeedSession {
       paneGapsSent: stream.paneGapsSent,
       paneGapsByReason: stream.paneGapsByReason,
       streamGapsSent: stream.streamGapsSent,
-      screenTransactionsStarted: this.screenTransactionsStarted,
-      screenTransactionsCompleted: this.screenTransactionsCompleted,
-      screenTransactionsFailed: this.screenTransactionsFailed,
-      screenTransactionsCancelled: this.screenTransactionsCancelled,
+      ...this.screenJobs.stats(),
     };
   }
 
@@ -193,12 +186,7 @@ export class CanonicalFeedSession {
     this.devices.delete(deviceId);
     attached.lease.close();
     attached.detachListener();
-    for (const [key, job] of this.screenJobs) {
-      if (key.startsWith(`${deviceId}\0`)) {
-        this.cancelScreenJob(job);
-        this.screenJobs.delete(key);
-      }
-    }
+    this.screenJobs.cancelDevice(deviceId);
     this.options.onDeviceDetached?.(deviceId, attached.runtime);
   }
 
@@ -229,6 +217,7 @@ export class CanonicalFeedSession {
     const listener: DeviceSessionRuntimeListener = {
       onMetadataPatch: (patch) => {
         if (!attached) return;
+        this.revokeOutOfScopeSubscriptions();
         if (!this.sizer.eventFits({ SourceMetadataPatch: patch })) {
           this.requestMetadataRebase(attached);
           return;
@@ -240,6 +229,7 @@ export class CanonicalFeedSession {
       },
       onMetadataRebaseRequired: () => {
         if (!attached) return;
+        this.revokeOutOfScopeSubscriptions();
         this.requestMetadataRebase(attached);
       },
       onClose: () => {
@@ -335,7 +325,6 @@ export class CanonicalFeedSession {
     if (this.closed) return;
     this.closed = true;
     this.stream.discardPaneDataBatches();
-    for (const job of this.screenJobs.values()) this.cancelScreenJob(job);
     this.screenJobs.clear();
     this.historyRequestIds.clear();
     this.stream.clearPending();
@@ -398,9 +387,7 @@ export class CanonicalFeedSession {
 
     // raw 直通语义：订阅集合变化只取消「不再被订阅」pane 的首屏任务；
     // 仍在集合内的任务不受后续 pane 挂载影响。
-    for (const [key, job] of Array.from(this.screenJobs)) {
-      if (!applied.retainedKeys.has(key)) this.cancelScreenJob(job);
-    }
+    this.screenJobs.cancelUnretained(applied.retainedKeys);
     this.sender.send({
       SubscriptionApplied: {
         generation: applied.generation,
@@ -409,7 +396,27 @@ export class CanonicalFeedSession {
         rejected: applied.rejected,
       },
     });
-    for (const { deviceId, plans } of applied.replay) {
+    this.applyReplay(applied.replay);
+  }
+
+  /**
+   * pane 被移出 scope window 时服务端主动撤销租约订阅：
+   * 只靠出站过滤的话，订阅仍在消耗设备级配额并继续处理输出。
+   */
+  private revokeOutOfScopeSubscriptions(): void {
+    if (!this.options.shareScope || this.closed) return;
+    const revoked = this.subscriptions.revokeOutOfScope(
+      (deviceId, paneId) => this.shareGuard.allowsPane(deviceId, paneId),
+      this.devices.values()
+    );
+    for (const key of revoked) {
+      this.screenJobs.cancelKey(key);
+      this.stream.dropPaneDataBatch(key);
+    }
+  }
+
+  private applyReplay(replay: ReadonlyArray<{ deviceId: string; plans: PaneReplayPlan[] }>): void {
+    for (const { deviceId, plans } of replay) {
       for (const plan of plans) {
         if (plan.gap) this.stream.handlePaneGap(deviceId, plan.gap);
         if (plan.needsScreen) continue;
@@ -475,7 +482,7 @@ export class CanonicalFeedSession {
       );
       return;
     }
-    this.startScreenJob(
+    this.screenJobs.start(
       target.device,
       target.pane,
       command.requestId,
@@ -531,7 +538,7 @@ export class CanonicalFeedSession {
       }
       throw error;
     }
-    if (!page) {
+    if (!page || !this.shareGuard.allowsPane(target.device.deviceId, target.pane.paneId)) {
       this.sender.sendError(
         command.requestId,
         wsBorsh.ERROR_TMUX_TARGET_NOT_FOUND,
@@ -579,102 +586,5 @@ export class CanonicalFeedSession {
       pane,
       target: { deviceId: target.deviceId, serverEpoch, paneId: target.paneId },
     };
-  }
-
-  private startScreenJob(
-    device: AttachedDevice,
-    pane: PaneIdentity,
-    requestId: Uint8Array,
-    byteLimit: number
-  ): void {
-    const key = paneKey(device.deviceId, pane.paneId);
-    const existing = this.screenJobs.get(key);
-    if (existing) this.cancelScreenJob(existing);
-    this.stream.holdPaneDataBatch(key);
-    const job: ScreenJob = {
-      key,
-      requestId: copyBytes(requestId),
-      cancelled: false,
-    };
-    this.screenJobs.set(key, job);
-    this.screenTransactionsStarted += 1;
-    void this.runScreenJob(job, device, pane, byteLimit);
-  }
-
-  // Live data is held across the asynchronous capture and split at its base sequence.
-  private async runScreenJob(
-    job: ScreenJob,
-    device: AttachedDevice,
-    pane: PaneIdentity,
-    byteLimit: number
-  ): Promise<void> {
-    let completed = false;
-    try {
-      const checkpoint = await device.runtime.captureCanonicalScreen(pane.paneId, byteLimit);
-      if (!this.isCurrentScreenJob(job)) return;
-      if (!checkpoint) {
-        this.sender.sendError(
-          job.requestId,
-          wsBorsh.ERROR_TMUX_NOT_READY,
-          'screen unavailable',
-          true
-        );
-        return;
-      }
-      if (this.stream.hasPaneDataHoldOverflow(job.key)) return;
-      if (!this.sendScreenTransaction(device.deviceId, job.requestId, checkpoint)) {
-        this.stream.sendOrQueueStreamGap(wsBorsh.SOURCE_GAP_REASON_CACHE_EVICTED);
-        return;
-      }
-      completed = true;
-    } catch (error) {
-      if (this.isCurrentScreenJob(job)) {
-        this.sender.sendError(
-          job.requestId,
-          wsBorsh.ERROR_INTERNAL_ERROR,
-          error instanceof Error ? error.message : 'screen capture failed',
-          true
-        );
-      }
-    } finally {
-      if (this.screenJobs.get(job.key) === job) {
-        this.screenJobs.delete(job.key);
-        this.stream.releasePaneDataBatch(job.key);
-      }
-      if (completed) this.screenTransactionsCompleted += 1;
-      else if (!job.cancelled) this.screenTransactionsFailed += 1;
-    }
-  }
-
-  private isCurrentScreenJob(job: ScreenJob): boolean {
-    return !this.closed && !job.cancelled && this.screenJobs.get(job.key) === job;
-  }
-
-  private cancelScreenJob(job: ScreenJob): void {
-    if (job.cancelled) return;
-    job.cancelled = true;
-    this.stream.releasePaneDataBatch(job.key);
-    this.screenTransactionsCancelled += 1;
-  }
-
-  private sendScreenTransaction(
-    deviceId: string,
-    requestId: Uint8Array,
-    checkpoint: PaneScreenCheckpoint
-  ): boolean {
-    let heldLivePending = false;
-    const sent = this.sender.sendScreenTransaction(deviceId, requestId, checkpoint, {
-      splitAtBase: (key, paneEpoch, baseSeq) => {
-        const segment = this.stream.splitPaneDataBatchAtBase(key, paneEpoch, baseSeq);
-        heldLivePending = segment !== null;
-        return segment;
-      },
-      sendLive: (targetDeviceId, segment) => {
-        const accepted = this.stream.sendPaneData(targetDeviceId, segment);
-        if (accepted) heldLivePending = false;
-        return accepted;
-      },
-    });
-    return sent && !heldLivePending;
   }
 }

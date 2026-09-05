@@ -50,7 +50,13 @@ export const shareAccessRoutes: ApiRoute[] = [
         authenticated: Boolean(verified),
       };
       if (!verified) return json(base);
-      return json({ ...base, deviceId: share.deviceId, windowId: share.windowId });
+      // 长期分享靠这里滑动续期：只延长服务端 token 的话，浏览器 cookie 仍会在 7 天后消失。
+      const renewal: Record<string, string> = {};
+      if (token && verified.renewed && verified.maxAgeSec) {
+        renewal[X_TMEX_SET_SHARE] = token;
+        renewal[X_TMEX_SET_SHARE_MAX_AGE] = String(verified.maxAgeSec);
+      }
+      return json({ ...base, deviceId: share.deviceId, windowId: share.windowId }, 200, renewal);
     },
   }),
   route({

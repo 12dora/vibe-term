@@ -71,6 +71,7 @@ class ShareServiceImpl implements ShareService {
   private readonly recorders = new Map<string, ShareRecorder>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private viewerCounter: ShareViewerCounter | null = null;
+  private authRequired: () => boolean = () => true;
   private watchTimer: ReturnType<typeof setInterval> | null = null;
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private running = false;
@@ -131,6 +132,7 @@ class ShareServiceImpl implements ShareService {
   }
 
   async create(input: ShareCreateInput): Promise<ShareCreateResult> {
+    if (!this.isAuthRequired()) return { ok: false, code: 'SHARE_AUTH_REQUIRED' };
     const password = input.password ?? '';
     if (password.length < SHARE_PASSWORD_MIN_LENGTH) {
       return { ok: false, code: 'SHARE_PASSWORD_TOO_SHORT' };
@@ -202,6 +204,8 @@ class ShareServiceImpl implements ShareService {
     const existing = this.store.get(id);
     if (!existing) return null;
     if (existing.state === 'ended') return this.toRecord(existing);
+    // 先同步刷出缓冲：改成 ended 之后 appendLog 的 active 检查会丢掉最后一批录屏数据。
+    this.recorders.get(id)?.flush();
     const ended = this.store.end(id, reason, this.now());
     this.clearExpiry(id);
     void this.stopRecorder(id);
@@ -282,6 +286,8 @@ class ShareServiceImpl implements ShareService {
       scope: { shareId: share.id, deviceId: share.deviceId, windowId: share.windowId },
       accessId: access.id,
       expiresAt,
+      renewed: expiresAt !== access.expiresAt,
+      maxAgeSec: Math.max(1, Math.ceil((expiresAt - now) / 1000)),
     };
   }
 
@@ -311,21 +317,24 @@ class ShareServiceImpl implements ShareService {
       this.endShare(shareId, 'expired');
       return { ok: false, code: 'SHARE_ENDED' };
     }
-    const lockedFor = this.limiter.lockedFor(shareId, clientIp);
-    if (lockedFor > 0) {
-      return { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs: lockedFor };
+    const attempt = this.limiter.begin(shareId, clientIp);
+    if (!attempt.ok) {
+      return { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs: attempt.retryAfterMs };
     }
-    const stored = this.store.passwordHash(shareId);
-    const verify = this.deps.verifyPassword ?? verifySharePassword;
-    const valid = stored ? await verify(stored, password ?? '') : false;
+    let valid = false;
+    try {
+      const stored = this.store.passwordHash(shareId);
+      const verify = this.deps.verifyPassword ?? verifySharePassword;
+      valid = stored ? await verify(stored, password ?? '') : false;
+    } finally {
+      this.limiter.settle(shareId, clientIp, valid);
+    }
     if (!valid) {
-      this.limiter.recordFailure(shareId, clientIp);
       const retryAfterMs = this.limiter.lockedFor(shareId, clientIp);
       return retryAfterMs > 0
         ? { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs }
         : { ok: false, code: 'SHARE_PASSWORD_INVALID' };
     }
-    this.limiter.reset(shareId, clientIp);
     const token = generateShareToken(shareId);
     const expiresAt = accessExpiry(share.expiresAt, now);
     this.store.createAccessToken({
@@ -367,6 +376,19 @@ class ShareServiceImpl implements ShareService {
 
   setViewerCounter(fn: ShareViewerCounter | null): void {
     this.viewerCounter = fn;
+  }
+
+  /** 未开启登录的开放部署无法兑现分享隔离，因此禁止创建分享（由装配层注入判定）。 */
+  setAuthRequiredResolver(fn: (() => boolean) | null): void {
+    this.authRequired = fn ?? (() => true);
+  }
+
+  private isAuthRequired(): boolean {
+    try {
+      return this.authRequired();
+    } catch {
+      return true;
+    }
   }
 
   startSweeper(): void {

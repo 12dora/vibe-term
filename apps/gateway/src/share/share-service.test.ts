@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { createMigratedAuthDb } from '../auth/test-db';
+import type { PaneRetentionConsumerCallbacks } from '../tmux-client/pane-retention';
+import { SHARE_LOGIN_MAX_CONCURRENT, SHARE_LOGIN_MAX_FAILURES } from './share-rate-limit';
+import type { ShareRecorderRuntime } from './share-recorder';
 import { type ShareService, type ShareServiceDeps, createShareService } from './share-service';
 import { ShareStore } from './share-store';
 import { SHARE_ACCESS_TTL_MS, parseShareToken } from './share-token';
@@ -277,6 +280,9 @@ describe('凭证登录与校验', () => {
     clock += SHARE_ACCESS_TTL_MS * 0.6;
     const verified = service.verifyAccessToken(login.token);
     expect(verified?.expiresAt).toBe(clock + SHARE_ACCESS_TTL_MS);
+    expect(verified?.renewed).toBe(true);
+    expect(verified?.maxAgeSec).toBe(SHARE_ACCESS_TTL_MS / 1000);
+    expect(service.verifyAccessToken(login.token)?.renewed).toBe(false);
   });
 
   test('口令错误返回 SHARE_PASSWORD_INVALID；10 次后锁定 15 分钟', async () => {
@@ -345,6 +351,117 @@ describe('凭证登录与校验', () => {
       ok: false,
       code: 'SHARE_NOT_FOUND',
     });
+  });
+});
+
+describe('登录限流', () => {
+  test('并发登录不能绕过失败次数限制，验证并发数封顶', async () => {
+    let inflight = 0;
+    let peak = 0;
+    let calls = 0;
+    const service = makeService({
+      verifyPassword: async (stored, password) => {
+        calls += 1;
+        inflight += 1;
+        peak = Math.max(peak, inflight);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        inflight -= 1;
+        return stored === `plain:${password}`;
+      },
+    });
+    const created = await createShare(service, { expiresInMs: null });
+    for (let round = 0; round < 10; round++) {
+      await Promise.all(
+        Array.from({ length: 10 }, () =>
+          service.loginAccess(created.share.id, 'nope', '198.51.100.7')
+        )
+      );
+    }
+    expect(calls).toBeLessThanOrEqual(SHARE_LOGIN_MAX_FAILURES);
+    expect(peak).toBeLessThanOrEqual(SHARE_LOGIN_MAX_CONCURRENT);
+    const locked = await service.loginAccess(created.share.id, 'secret123', '198.51.100.7');
+    expect(locked).toMatchObject({ ok: false, code: 'SHARE_LOGIN_LOCKED' });
+    expect(await service.loginAccess(created.share.id, 'secret123', '198.51.100.8')).toMatchObject({
+      ok: true,
+    });
+  });
+});
+
+describe('创建前置条件', () => {
+  test('节点未开启登录时禁止创建分享', async () => {
+    const service = makeService();
+    service.setAuthRequiredResolver(() => false);
+    await expect(
+      service.create({
+        deviceId: 'dev-1',
+        windowId: '@1',
+        password: 'secret123',
+        expiresInMs: null,
+      })
+    ).resolves.toEqual({ ok: false, code: 'SHARE_AUTH_REQUIRED' });
+    service.setAuthRequiredResolver(null);
+    await expect(createShare(service)).resolves.toMatchObject({ ok: true });
+  });
+});
+
+describe('录屏收尾', () => {
+  class RecorderRuntimeStub implements ShareRecorderRuntime {
+    attached = false;
+
+    getPaneIdentity(paneId: string) {
+      return { paneId, paneEpoch: new Uint8Array(16).fill(3) };
+    }
+
+    attachPaneConsumer(_callbacks: PaneRetentionConsumerCallbacks) {
+      this.attached = true;
+      return {
+        applySubscriptions: () => ({}) as never,
+        close: () => {},
+      } as never;
+    }
+
+    async captureCanonicalScreen(paneId: string) {
+      return {
+        paneId,
+        paneEpoch: new Uint8Array(16).fill(3),
+        baseSeq: 0n,
+        rows: 24,
+        cols: 80,
+        modes: 0,
+        data: new TextEncoder().encode('screen'),
+        historyCursor: null,
+        capturedAt: clock,
+      };
+    }
+
+    getCurrentSnapshot() {
+      return snapshots.get('dev-1') ?? null;
+    }
+  }
+
+  test('终止分享前刷出缓冲，最后一批输入不丢', async () => {
+    const runtime = new RecorderRuntimeStub();
+    const service = makeService({
+      autoStartRecorders: true,
+      recorderFlushIntervalMs: 60_000,
+      recorderPollIntervalMs: 60_000,
+      acquireRuntime: async () => runtime,
+      releaseRuntime: async () => {},
+    });
+    const created = await createShare(service);
+    for (let i = 0; i < 50 && !runtime.attached; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    expect(runtime.attached).toBe(true);
+    service.recordInput(
+      { shareId: created.share.id, deviceId: 'dev-1', windowId: '@1' },
+      '%0',
+      new TextEncoder().encode('ls\r')
+    );
+    service.revoke(created.share.id);
+    const page = service.readLog(created.share.id);
+    expect(page?.entries.some((entry) => entry.kind === 'in')).toBe(true);
+    await service.stop();
   });
 });
 

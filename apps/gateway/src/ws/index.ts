@@ -487,6 +487,7 @@ export class WebSocketServer
   closeAll(): void {
     for (const session of this.canonicalSessions.values()) session.close();
     this.canonicalSessions.clear();
+    this.shareIndex.dispose();
     this.registry.closeAll();
   }
 

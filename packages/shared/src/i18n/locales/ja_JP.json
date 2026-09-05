@@ -1357,6 +1357,7 @@
       "checkGateway": "Gateway 状態を確認してください"
     },
     "apiError": {
+      "shareAuthRequired": "共有を作成する前にログインを有効にしてください。",
       "siteNameRequired": "サイト名は空にできません",
       "siteUrlInvalid": "サイト URL は http:// または https:// で始まる必要があります",
       "bellThrottleInvalid": "ベル通知の制限秒数は 0-300 の間である必要があります",
@@ -2614,6 +2615,7 @@
           "rtc_unavailable": "このマシンで WebRTC 利用不可",
           "not_direct_capable": "対向がダイレクト接続に非対応",
           "breaker_cooling": "{{until}} まで停止中",
+          "breaker_paused": "直接接続は停止中",
           "aborted": "試行を中止",
           "other": "接続失敗"
         },
@@ -3261,7 +3263,14 @@
         "nameRequired": "名前を入力してください。",
         "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
         "noOrigin": "アドレスを選択してください。",
-        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。"
+        "invalidDuration": "有効期限は 365 日以内の整数で入力してください。",
+        "generic": "操作に失敗しました。再試行してください。",
+        "SHARE_NOT_FOUND": "共有が見つかりません。",
+        "SHARE_WINDOW_NOT_FOUND": "ウィンドウが閉じているため共有できません。",
+        "SHARE_PASSWORD_TOO_SHORT": "パスワードが短すぎます。",
+        "SHARE_ORIGIN_INVALID": "共有アドレスが無効です。",
+        "SHARE_ENDED": "共有は終了しました。",
+        "SHARE_AUTH_REQUIRED": "共有する前にログイン保護を有効にしてください。"
       }
     }
   }

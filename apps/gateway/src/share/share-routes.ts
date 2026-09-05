@@ -1,6 +1,7 @@
 import type { ShareSettings } from '@tmex/shared/share';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
+import { t } from '../i18n';
 import { getShareService } from './share-service';
 import type { ShareErrorCode } from './types';
 
@@ -9,19 +10,21 @@ const ERROR_STATUS: Record<ShareErrorCode, number> = {
   SHARE_WINDOW_NOT_FOUND: 404,
   SHARE_PASSWORD_TOO_SHORT: 400,
   SHARE_ORIGIN_INVALID: 400,
+  SHARE_AUTH_REQUIRED: 409,
   SHARE_ENDED: 409,
 };
 
-const ERROR_MESSAGE: Record<ShareErrorCode, string> = {
-  SHARE_NOT_FOUND: 'Share not found.',
-  SHARE_WINDOW_NOT_FOUND: 'Terminal window not found on this device.',
-  SHARE_PASSWORD_TOO_SHORT: 'Share password is too short.',
-  SHARE_ORIGIN_INVALID: 'Share address is not publicly reachable.',
-  SHARE_ENDED: 'Share has already ended.',
+const ERROR_MESSAGE: Record<ShareErrorCode, () => string> = {
+  SHARE_NOT_FOUND: () => 'Share not found.',
+  SHARE_WINDOW_NOT_FOUND: () => 'Terminal window not found on this device.',
+  SHARE_PASSWORD_TOO_SHORT: () => 'Share password is too short.',
+  SHARE_ORIGIN_INVALID: () => 'Share address is not publicly reachable.',
+  SHARE_AUTH_REQUIRED: () => t('apiError.shareAuthRequired'),
+  SHARE_ENDED: () => 'Share has already ended.',
 };
 
 export function shareError(code: ShareErrorCode): Response {
-  return json({ error: ERROR_MESSAGE[code], code }, ERROR_STATUS[code]);
+  return json({ error: ERROR_MESSAGE[code](), code }, ERROR_STATUS[code]);
 }
 
 function optionalString(value: unknown): string | undefined {

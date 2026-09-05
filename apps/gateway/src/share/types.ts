@@ -16,6 +16,7 @@ export type ShareErrorCode =
   | 'SHARE_WINDOW_NOT_FOUND'
   | 'SHARE_PASSWORD_TOO_SHORT'
   | 'SHARE_ORIGIN_INVALID'
+  | 'SHARE_AUTH_REQUIRED'
   | 'SHARE_ENDED';
 
 export type ShareLoginErrorCode =
@@ -45,6 +46,9 @@ export type VerifiedShareAccess = {
   scope: ShareScope;
   accessId: string;
   expiresAt: number;
+  /** 本次验证顺带续期了访问凭证：调用方需要重新下发 cookie。 */
+  renewed?: boolean;
+  maxAgeSec?: number;
 };
 
 export type ShareEndedEvent = { shareId: string; reason: ShareEndReason };
@@ -79,6 +83,8 @@ export interface ShareService {
   recordInput(scope: ShareScope, paneId: string, bytes: Uint8Array): void;
   recordResize(scope: ShareScope, paneId: string, cols: number, rows: number): void;
   setViewerCounter(fn: ShareViewerCounter | null): void;
+  /** 返回 false 表示本节点未开启登录：此时禁止创建分享。 */
+  setAuthRequiredResolver(fn: (() => boolean) | null): void;
   startSweeper(): void;
   /** 巡检一次：到期 / 窗口关闭 / 设备删除；`startSweeper` 按周期调用，测试可直接触发。 */
   watchTick(): void;

@@ -75,41 +75,55 @@ export function filterSnapshotForShare(
   return { ...snapshot, records: filterMetadataRecordsForShare(snapshot.records, scope).records };
 }
 
-function keepRemoval(key: wsBorsh.SourceEntityKey, scope: ShareScope): boolean {
-  if (key.entityKind !== wsBorsh.SOURCE_ENTITY_WINDOW) return true;
-  return key.nativeId === scope.windowId;
+function entityId(key: wsBorsh.SourceEntityKey): string {
+  return `${key.entityKind}\u0000${key.nativeId}`;
 }
 
-/** patch 不能整条丢弃：revision 必须连续，否则客户端会判定 metadata gap 并要求重拍。 */
-export function filterMetadataForShare(
-  patch: ShareFilterablePatch,
-  scope: ShareScope
-): ShareFilterablePatch {
-  const { records, evicted } = filterMetadataRecordsForShare(patch.upserts, scope);
-  return {
-    ...patch,
-    upserts: records,
-    removals: [...patch.removals.filter((key) => keepRemoval(key, scope)), ...evicted],
-  };
-}
+/**
+ * 分享连接的出站元数据视图：记住真正下发过的实体。
+ * 没暴露过的 pane / window 连 removal 都不发（否则 ID 与变更时序仍会泄露给接收者），
+ * patch 本身照发以保持 revision 连续。
+ */
+export class ShareMetadataView {
+  private readonly exposed = new Set<string>();
 
-/** 出站唯一收口：分享连接看到的 canonical 事件都先过这里。 */
-export function filterCanonicalEventForShare(
-  event: wsBorsh.CanonicalEvent,
-  scope: ShareScope,
-  paneInScope: SharePaneOracle
-): wsBorsh.CanonicalEvent | null {
-  if ('SourceMetadataSnapshot' in event) {
-    const snapshot = event.SourceMetadataSnapshot;
-    const { records } = filterMetadataRecordsForShare(snapshot.records, scope);
-    return { SourceMetadataSnapshot: { ...snapshot, records } };
+  constructor(private readonly scope: ShareScope) {}
+
+  snapshot(snapshot: ShareFilterableSnapshot): ShareFilterableSnapshot {
+    const { records } = filterMetadataRecordsForShare(snapshot.records, this.scope);
+    this.exposed.clear();
+    for (const record of records) this.exposed.add(entityId(record.key));
+    return { ...snapshot, records };
   }
-  if ('SourceMetadataPatch' in event) {
-    return { SourceMetadataPatch: filterMetadataForShare(event.SourceMetadataPatch, scope) };
+
+  patch(patch: ShareFilterablePatch): ShareFilterablePatch {
+    const { records, evicted } = filterMetadataRecordsForShare(patch.upserts, this.scope);
+    for (const record of records) this.exposed.add(entityId(record.key));
+    const removals: wsBorsh.SourceEntityKey[] = [];
+    for (const key of [...patch.removals, ...evicted]) {
+      const id = entityId(key);
+      if (!this.exposed.delete(id)) continue;
+      removals.push(key);
+    }
+    return { ...patch, upserts: records, removals };
   }
-  if ('PaneData' in event) {
-    const pane = event.PaneData.pane;
-    return paneInScope(pane.deviceId, pane.paneId) ? event : null;
+
+  /** 出站唯一收口：分享连接看到的 canonical 事件都先过这里。 */
+  filterEvent(
+    event: wsBorsh.CanonicalEvent,
+    paneInScope: SharePaneOracle
+  ): wsBorsh.CanonicalEvent | null {
+    if ('SourceMetadataSnapshot' in event) {
+      const filtered = this.snapshot(event.SourceMetadataSnapshot);
+      return { SourceMetadataSnapshot: { ...event.SourceMetadataSnapshot, ...filtered } };
+    }
+    if ('SourceMetadataPatch' in event) {
+      return { SourceMetadataPatch: this.patch(event.SourceMetadataPatch) };
+    }
+    if ('PaneData' in event) {
+      const pane = event.PaneData.pane;
+      return paneInScope(pane.deviceId, pane.paneId) ? event : null;
+    }
+    return event;
   }
-  return event;
 }

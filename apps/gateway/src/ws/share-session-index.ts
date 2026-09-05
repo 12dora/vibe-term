@@ -2,7 +2,7 @@ import type { StateSnapshotPayload, wsBorsh } from '@tmex/shared';
 import type { GatewaySession } from './gateway-session';
 import { shareVisibleClients } from './share-gate';
 import { getShareWsService } from './share-hooks';
-import { filterCanonicalEventForShare } from './share-metadata-filter';
+import { ShareMetadataView } from './share-metadata-filter';
 import { type SharePaneOracle, type ShareScope, isPaneInShareScope } from './share-scope';
 
 export interface ShareSessionIndexHost {
@@ -19,7 +19,9 @@ export const SHARE_ENDED_CLOSE_REASON = 'SHARE_ENDED';
  */
 export class ShareSessionIndex {
   private readonly sessions = new Map<string, Set<GatewaySession>>();
+  private readonly views = new WeakMap<GatewaySession, ShareMetadataView>();
   private host: ShareSessionIndexHost | null = null;
+  private unwire: (() => void) | null = null;
   private wired = false;
 
   bind(host: ShareSessionIndexHost): void {
@@ -28,6 +30,7 @@ export class ShareSessionIndex {
 
   add(session: GatewaySession, scope: ShareScope): void {
     session.shareScope = scope;
+    this.views.set(session, new ShareMetadataView(scope));
     const existing = this.sessions.get(scope.shareId);
     if (existing) existing.add(session);
     else this.sessions.set(scope.shareId, new Set([session]));
@@ -37,6 +40,7 @@ export class ShareSessionIndex {
   remove(session: GatewaySession): void {
     const scope = session.shareScope;
     if (!scope) return;
+    this.views.delete(session);
     const existing = this.sessions.get(scope.shareId);
     if (!existing) return;
     existing.delete(session);
@@ -95,7 +99,19 @@ export class ShareSessionIndex {
   ): wsBorsh.CanonicalEvent | null {
     const scope = session.shareScope;
     if (!scope) return event;
-    return filterCanonicalEventForShare(event, scope, this.paneOracle(session));
+    let view = this.views.get(session);
+    if (!view) {
+      view = new ShareMetadataView(scope);
+      this.views.set(session, view);
+    }
+    return view.filterEvent(event, this.paneOracle(session));
+  }
+
+  /** 同进程重建分享服务时解除旧实例的监听与计数回调。 */
+  dispose(): void {
+    this.unwire?.();
+    this.unwire = null;
+    this.wired = false;
   }
 
   /** 分享服务的装配晚于 ws 层，因此推迟到第一条分享连接接入时再挂钩（未就绪则下次重试）。 */
@@ -104,9 +120,13 @@ export class ShareSessionIndex {
     const service = getShareWsService();
     if (!service) return;
     this.wired = true;
-    service.onEnded((shareId) => {
+    const off = service.onEnded((shareId) => {
       this.closeAll(shareId);
     });
     service.setViewerCounter((shareId) => this.count(shareId));
+    this.unwire = () => {
+      off();
+      service.setViewerCounter(() => 0);
+    };
   }
 }

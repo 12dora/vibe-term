@@ -6,7 +6,13 @@ import { handleApiRequest } from '../api';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { type ShareService, createShareService, setShareServiceForTests } from './share-service';
 import { ShareStore } from './share-store';
-import { SHARE_COOKIE_PREFIX, X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE } from './share-token';
+import {
+  SHARE_ACCESS_TTL_MS,
+  SHARE_COOKIE_PREFIX,
+  X_TMEX_CLEAR_SHARE,
+  X_TMEX_SET_SHARE,
+  X_TMEX_SET_SHARE_MAX_AGE,
+} from './share-token';
 
 const fakeServer = {} as Server<unknown>;
 let harness: ReturnType<typeof createMigratedAuthDb>;
@@ -111,6 +117,16 @@ describe('分享方 HTTP', () => {
     expect(missing.body.code).toBe('SHARE_WINDOW_NOT_FOUND');
     const bad = await call('POST', '/api/share', { body: { deviceId: 'dev-1' } });
     expect(bad.status).toBe(400);
+  });
+
+  test('节点未开启登录时 POST /api/share 返回 409 SHARE_AUTH_REQUIRED', async () => {
+    service.setAuthRequiredResolver(() => false);
+    const denied = await createShare();
+    expect(denied.status).toBe(409);
+    expect(denied.body.code).toBe('SHARE_AUTH_REQUIRED');
+    expect(typeof denied.body.error).toBe('string');
+    service.setAuthRequiredResolver(null);
+    expect((await createShare()).status).toBe(200);
   });
 
   test('GET /api/share 返回 active / history，可按 deviceId+windowId 过滤', async () => {
@@ -228,6 +244,24 @@ describe('被分享人 HTTP', () => {
       deviceId: 'dev-1',
       windowId: '@1',
     });
+  });
+
+  test('长期分享续期时 GET /api/share-access/:id 重新下发 cookie 头', async () => {
+    const created = await createShare({ expiresInMs: null });
+    const share = created.body.share as ShareRecord;
+    const login = await call('POST', `/api/share-access/${share.id}/login`, {
+      body: { password: 'secret123' },
+    });
+    const token = login.headers.get(X_TMEX_SET_SHARE);
+    const cookie = `${SHARE_COOKIE_PREFIX}self=${token}`;
+
+    const fresh = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
+    expect(fresh.headers.get(X_TMEX_SET_SHARE)).toBeNull();
+
+    clock += SHARE_ACCESS_TTL_MS * 0.6;
+    const renewed = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
+    expect(renewed.headers.get(X_TMEX_SET_SHARE)).toBe(token);
+    expect(Number(renewed.headers.get(X_TMEX_SET_SHARE_MAX_AGE))).toBe(SHARE_ACCESS_TTL_MS / 1000);
   });
 
   test('任意 tmex_sh_* cookie 只要 shareId 匹配即可回退识别', async () => {

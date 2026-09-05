@@ -1357,6 +1357,7 @@
       "checkGateway": "请检查 Gateway 状态"
     },
     "apiError": {
+      "shareAuthRequired": "创建分享前需先开启登录。",
       "siteNameRequired": "站点名称不能为空",
       "siteUrlInvalid": "站点 URL 必须以 http:// 或 https:// 开头",
       "bellThrottleInvalid": "响铃通知频控秒数需在 0-300 之间",
@@ -2614,6 +2615,7 @@
           "rtc_unavailable": "本机不支持 WebRTC",
           "not_direct_capable": "对端不支持直连",
           "breaker_cooling": "暂停至 {{until}}",
+          "breaker_paused": "直连已暂停",
           "aborted": "尝试已取消",
           "other": "连接失败"
         },
@@ -3261,7 +3263,14 @@
         "nameRequired": "请填写名称。",
         "passwordTooShort": "密码至少 {{min}} 位。",
         "noOrigin": "请选择地址。",
-        "invalidDuration": "有效期需为 365 天以内的整数。"
+        "invalidDuration": "有效期需为 365 天以内的整数。",
+        "generic": "操作失败，请重试。",
+        "SHARE_NOT_FOUND": "分享不存在。",
+        "SHARE_WINDOW_NOT_FOUND": "窗口已关闭，无法分享。",
+        "SHARE_PASSWORD_TOO_SHORT": "密码太短。",
+        "SHARE_ORIGIN_INVALID": "分享地址无效。",
+        "SHARE_ENDED": "分享已结束。",
+        "SHARE_AUTH_REQUIRED": "须先启用登录保护才能分享。"
       }
     }
   }

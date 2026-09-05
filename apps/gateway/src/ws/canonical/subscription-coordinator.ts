@@ -24,12 +24,64 @@ export interface CanonicalSubscriptionApplyResult {
 }
 
 export class CanonicalSubscriptionCoordinator {
+  /**
+   * 服务端强制改写订阅（pane 移出分享 scope）时需要一个比客户端 generation 更大的代次，
+   * 否则租约会判定「同代次不同内容」而抛冲突；bias 单调递增，客户端下一次请求仍然更大。
+   */
+  private bias = 0n;
+  private last: {
+    generation: bigint;
+    activePanes: CanonicalPaneSubscription[];
+    hotPanes: CanonicalPaneSubscription[];
+  } | null = null;
+
   apply(
     generation: bigint,
     activePanes: CanonicalPaneSubscription[],
     hotPanes: CanonicalPaneSubscription[],
     devices: Iterable<AttachedDevice>
   ): CanonicalSubscriptionApplyResult {
+    this.last = { generation, activePanes: [...activePanes], hotPanes: [...hotPanes] };
+    return this.commit(generation, activePanes, hotPanes, devices);
+  }
+
+  /**
+   * 按最新 scope 重放订阅集合，返回被撤销的 pane key。
+   * 撤销不回放 replay：保留下来的 pane 游标是旧的，重放会向客户端重复推送已收到的数据。
+   */
+  revokeOutOfScope(
+    allowsPane: (deviceId: string, paneId: string) => boolean,
+    devices: Iterable<AttachedDevice>
+  ): string[] {
+    const last = this.last;
+    if (!last) return [];
+    const revoked: string[] = [];
+    const keep = (list: CanonicalPaneSubscription[]): CanonicalPaneSubscription[] =>
+      list.filter((item) => {
+        if (allowsPane(item.pane.deviceId, item.pane.paneId)) return true;
+        revoked.push(paneKey(item.pane.deviceId, item.pane.paneId));
+        return false;
+      });
+    const activePanes = keep(last.activePanes);
+    const hotPanes = keep(last.hotPanes);
+    if (revoked.length === 0) return [];
+    this.bias += 1n;
+    this.last = { generation: last.generation, activePanes, hotPanes };
+    try {
+      this.commit(last.generation, activePanes, hotPanes, devices);
+    } catch (error) {
+      console.error('[ws] share subscription revoke failed:', error);
+    }
+    return revoked;
+  }
+
+  private commit(
+    clientGeneration: bigint,
+    activePanes: CanonicalPaneSubscription[],
+    hotPanes: CanonicalPaneSubscription[],
+    devices: Iterable<AttachedDevice>
+  ): CanonicalSubscriptionApplyResult {
+    const generation = clientGeneration + this.bias;
     const deviceList = Array.from(devices);
     const deviceMap = new Map(deviceList.map((device) => [device.deviceId, device]));
     const activeByDevice = new Map<string, PaneSubscriptionRequest[]>();
@@ -124,7 +176,7 @@ export class CanonicalSubscriptionCoordinator {
     }
 
     return {
-      generation: appliedGeneration,
+      generation: appliedGeneration - this.bias,
       activePanes: appliedActive,
       hotPanes: appliedHot,
       rejected,
