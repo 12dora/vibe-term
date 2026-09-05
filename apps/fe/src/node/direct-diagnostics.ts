@@ -6,7 +6,11 @@
 // `packages/ws-client/src/direct/types.ts`。
 
 import { SELF_NODE_ID } from '@tmex/api-client';
+import { DIRECT_FAILURE_CODES } from '@tmex/api-client/auth/index';
 import type {
+  DirectFailureCode,
+  DirectFailureDcParams,
+  DirectFailureWsParams,
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
@@ -72,6 +76,30 @@ function normalizeText(value: string | null | undefined): string | null {
   return typeof value === 'string' && value.length > 0 ? value : null;
 }
 
+const KNOWN_FAILURE_CODES = new Set<string>(DIRECT_FAILURE_CODES);
+
+/** 认不出的码（更新的网关新增的）当作没有码，回落原文，不至于把 key 摆到界面上。 */
+function normalizeFailureCode(code: unknown): DirectFailureCode | null {
+  return typeof code === 'string' && KNOWN_FAILURE_CODES.has(code)
+    ? (code as DirectFailureCode)
+    : null;
+}
+
+function normalizeWsParams(params: unknown): DirectFailureWsParams | null {
+  if (!params || typeof params !== 'object') return null;
+  const { url, seconds } = params as DirectFailureWsParams;
+  const out: DirectFailureWsParams = {};
+  if (typeof url === 'string' && url.length > 0) out.url = url;
+  if (typeof seconds === 'number' && Number.isFinite(seconds)) out.seconds = seconds;
+  return out;
+}
+
+function normalizeDcParams(params: unknown): DirectFailureDcParams | null {
+  if (!params || typeof params !== 'object') return null;
+  const { until } = params as DirectFailureDcParams;
+  return typeof until === 'number' && Number.isFinite(until) ? { until } : {};
+}
+
 function normalizeDirectFailure(
   failure: MeshNodeDirectFailure | null | undefined
 ): MeshNodeDirectFailure | null {
@@ -79,7 +107,15 @@ function normalizeDirectFailure(
   const ws = normalizeText(failure.ws);
   const dc = normalizeText(failure.dc);
   if (!ws && !dc) return null;
-  return { at: typeof failure.at === 'number' ? failure.at : 0, ws, dc };
+  return {
+    at: typeof failure.at === 'number' ? failure.at : 0,
+    ws,
+    wsCode: ws ? normalizeFailureCode(failure.wsCode) : null,
+    wsParams: ws ? normalizeWsParams(failure.wsParams) : null,
+    dc,
+    dcCode: dc ? normalizeFailureCode(failure.dcCode) : null,
+    dcParams: dc ? normalizeDcParams(failure.dcParams) : null,
+  };
 }
 
 function normalizeReach(reach: string | null | undefined): MeshNodeReach {

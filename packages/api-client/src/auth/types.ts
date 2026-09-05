@@ -205,14 +205,62 @@ export const NODE_LOGIN_REQUIRED = 'NODE_LOGIN_REQUIRED';
 export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
 export type MeshNodeTransport = 'ws-secure' | 'relay' | 'dc' | null;
 
+/**
+ * 直连失败的稳定分类码。前端按 `nodes.badge.failure.<code>` 翻译；旧网关不下发 code 时
+ * 回落到 `ws` / `dc` 的原文。新增码必须同时补三语文案，否则前端会显示 key。
+ */
+export const DIRECT_FAILURE_CODES = [
+  'timeout',
+  'refused',
+  'unreachable',
+  'reset',
+  'tls',
+  'handshake',
+  'revoked',
+  'untrusted',
+  'backoff',
+  'no_endpoints',
+  'ice_failed',
+  'no_candidates',
+  'dc_open_timeout',
+  'dc_closed',
+  'liveness_timeout',
+  'signal_dropped',
+  'signaling_state',
+  'rtc_unavailable',
+  'not_direct_capable',
+  'breaker_cooling',
+  'aborted',
+  'other',
+] as const;
+
+export type DirectFailureCode = (typeof DIRECT_FAILURE_CODES)[number];
+
+/** `wsCode` 的插值参数：`backoff` 带 `seconds`，其余带发起过的 `url`。 */
+export interface DirectFailureWsParams {
+  url?: string;
+  seconds?: number;
+}
+
+/** `dcCode` 的插值参数：`breaker_cooling` 带熔断解除时刻（epoch 毫秒）。 */
+export interface DirectFailureDcParams {
+  until?: number;
+}
+
 /** 最近一次直连尝试的失败原因（按承载分开记）；从未尝试为 `null`。 */
 export interface MeshNodeDirectFailure {
   /** 记录时刻（epoch 毫秒）。 */
   at: number;
-  /** ws 直连的失败原因，形如 `timeout ws://10.77.88.3:39001/peer`。 */
+  /** ws 直连的失败原因原文，形如 `timeout ws://10.77.88.3:39001/peer`。 */
   ws?: string | null;
-  /** DataChannel 直连的失败原因，形如 `datachannel open timeout`。 */
+  /** ws 失败的分类码；旧网关不下发。 */
+  wsCode?: DirectFailureCode | null;
+  wsParams?: DirectFailureWsParams | null;
+  /** DataChannel 直连的失败原因原文，形如 `datachannel open timeout`。 */
   dc?: string | null;
+  /** DataChannel 失败的分类码；旧网关不下发。 */
+  dcCode?: DirectFailureCode | null;
+  dcParams?: DirectFailureDcParams | null;
 }
 
 /** DataChannel 拨号熔断器快照；未尝试或旧后端不下发。 */

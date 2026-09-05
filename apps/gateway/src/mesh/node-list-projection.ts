@@ -18,11 +18,22 @@ export type MeshNodeDcBreaker = {
   lastFailureKind: string | null;
 };
 
+/** 与 `peer-manager-types.ts` 的 `DirectFailureCode` 同步；此处按下发报文的形状写成字符串。 */
+export type MeshNodeDirectFailure = {
+  at: number;
+  ws?: string | null;
+  wsCode?: string | null;
+  wsParams?: { url?: string; seconds?: number } | null;
+  dc?: string | null;
+  dcCode?: string | null;
+  dcParams?: { until?: number } | null;
+};
+
 export type MeshNodeLinkDetail = {
   peerAddress: string | null;
   linkSinceAt: number | null;
   endpoints: string[];
-  directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+  directFailure: MeshNodeDirectFailure | null;
   dcBreaker?: MeshNodeDcBreaker | null;
 };
 
@@ -44,7 +55,7 @@ export type MeshNodeDto = {
   peerAddress?: string | null;
   linkSinceAt?: number | null;
   endpoints?: string[];
-  directFailure?: { at: number; ws?: string | null; dc?: string | null } | null;
+  directFailure?: MeshNodeDirectFailure | null;
   dcBreaker?: MeshNodeDcBreaker | null;
 };
 

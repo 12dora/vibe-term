@@ -511,18 +511,6 @@ export function parseEndpoints(endpointsJson: string, fallbackPort?: number): st
   return urls;
 }
 
-export function dcFailureReason(
-  _nodeId: string,
-  dcError: unknown,
-  opts: { directCapable: boolean | undefined; rtcAvailable: boolean }
-): string | null {
-  if (opts.directCapable === false) return 'direct_capable=false';
-  if (!opts.rtcAvailable) return 'datachannel unavailable';
-  if (dcError instanceof Error) return dcError.message;
-  if (dcError != null) return String(dcError);
-  return null;
-}
-
 export abstract class PeerCollaboratorHost {
   protected abstract readonly dcUpgrade: DcUpgradeCoordinator;
   protected abstract readonly rtcWake: RtcWakeGate;

@@ -1,4 +1,5 @@
 import { X509Certificate, createHash } from 'node:crypto';
+import { combineAbortSignals } from '@tmex/shared/async';
 import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type {
@@ -721,7 +722,7 @@ export class UplinkPool {
       const delay = backoffDelayMs(this.wrapAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
       this.wrapAttempt += 1;
       this.wrapSleepAbort = new AbortController();
-      const combined = anyAbort(signal, this.wrapSleepAbort.signal);
+      const combined = combineAbortSignals(signal, this.wrapSleepAbort.signal);
       try {
         await this.scheduler.sleep(delay, combined);
       } catch {
@@ -767,7 +768,7 @@ export class UplinkPool {
     total = 1
   ): Promise<boolean> {
     const deadline = new AbortController();
-    const combined = anyAbort(signal, deadline.signal);
+    const combined = combineAbortSignals(signal, deadline.signal) ?? deadline.signal;
     const deadlineStarted = this.scheduler.now();
     const sleeper = this.scheduler.sleep(this.authDeadlineMs, deadline.signal).then(
       () => {
@@ -1289,7 +1290,7 @@ export class UplinkPool {
     this.failbackDebounceAbort = ac;
     this.failbackProbeDeadlineAt = deadline;
     const stop = this.stopAbort?.signal;
-    const combined = stop ? anyAbort(stop, ac.signal) : ac.signal;
+    const combined = combineAbortSignals(stop, ac.signal) ?? ac.signal;
     void this.scheduler.sleep(delay, combined).then(
       () => {
         if (this.failbackDebounceAbort !== ac) return;
@@ -1549,20 +1550,6 @@ function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
     const tls = uplinkWebSocketTls(tlsCa);
     return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
   };
-}
-
-export function anyAbort(a: AbortSignal, b: AbortSignal): AbortSignal {
-  const out = new AbortController();
-  const abort = () => {
-    if (!out.signal.aborted) out.abort();
-  };
-  if (a.aborted || b.aborted) {
-    abort();
-    return out.signal;
-  }
-  a.addEventListener('abort', abort, { once: true });
-  b.addEventListener('abort', abort, { once: true });
-  return out.signal;
 }
 
 export function attachedHubHost(

@@ -1,3 +1,4 @@
+import { combineAbortSignals } from '@tmex/shared/async';
 import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
 import { type KeywordRule, classifyByKeywords, waitSocketOpen } from '@tmex/shared/net';
 import type { UserStore } from '../auth/user-store';
@@ -18,7 +19,14 @@ export type WsSecureCandidate = {
 
 export const PEER_DIRECT_DIAL_CONCURRENCY = 4;
 
-export type WsDialFailureKind = ReachabilityFailureKind | 'protocol' | 'aborted' | 'other';
+export type WsDialFailureKind =
+  | ReachabilityFailureKind
+  | 'protocol'
+  | 'tls'
+  | 'revoked'
+  | 'untrusted'
+  | 'aborted'
+  | 'other';
 
 export class WsDialError extends Error {
   readonly kind: WsDialFailureKind;
@@ -134,6 +142,12 @@ function wsDialHaystack(lower: string, err: unknown): string {
   return marks.length === 0 ? lower : `${lower}\n${marks.join('\n')}`;
 }
 
+/** 证书 / TLS 层拒绝：与握手失败分开，用户能直接对着证书排查。 */
+const TLS_FAILURE_RE =
+  /\btls\b|certificate|cert_|err_cert|self[- ]signed|unable to verify|\bssl\b|hostname mismatch/;
+
+const UNTRUSTED_FAILURE_RE = /not[- ]trusted|untrusted|unknown peer/;
+
 function classifyWsDialKind(err: unknown): WsDialFailureKind {
   const raw = err instanceof Error ? err.message : String(err);
   const lower = raw.toLowerCase();
@@ -142,8 +156,11 @@ function classifyWsDialKind(err: unknown): WsDialFailureKind {
   }
   if (err instanceof PeerHandshakeError) {
     if (err.code === 'timeout') return 'timeout';
-    if (err.code === 'bad_signature' || err.code === 'revoked') return 'protocol';
+    if (err.code === 'revoked') return 'revoked';
+    if (err.code === 'bad_signature') return 'protocol';
   }
+  if (TLS_FAILURE_RE.test(lower)) return 'tls';
+  if (UNTRUSTED_FAILURE_RE.test(lower)) return 'untrusted';
   return classifyByKeywords(wsDialHaystack(lower, err), WS_DIAL_RULES, () => 'other');
 }
 
@@ -196,21 +213,6 @@ export function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<
   });
 }
 
-export function combineAbortSignals(a: AbortSignal, b: AbortSignal): AbortSignal {
-  if (typeof AbortSignal.any === 'function') return AbortSignal.any([a, b]);
-  const ac = new AbortController();
-  const onAbort = () => {
-    if (!ac.signal.aborted) ac.abort();
-  };
-  if (a.aborted || b.aborted) {
-    ac.abort();
-    return ac.signal;
-  }
-  a.addEventListener('abort', onAbort, { once: true });
-  b.addEventListener('abort', onAbort, { once: true });
-  return ac.signal;
-}
-
 export function formatWsDialFailure(url: string, err: unknown): string {
   const classified = classifyWsDialFailure(url, err);
   const msg = classified.message.trim() || 'failed';
@@ -221,6 +223,9 @@ export function formatWsDialFailure(url: string, err: unknown): string {
   if (classified.kind === 'unreachable') return `unreachable ${url}`;
   if (classified.kind === 'reset') return `reset ${url}`;
   if (classified.kind === 'protocol') return `handshake: ${msg}`;
+  if (classified.kind === 'tls') return `tls: ${msg}`;
+  if (classified.kind === 'revoked') return `revoked: ${msg}`;
+  if (classified.kind === 'untrusted') return `untrusted: ${msg}`;
   return `${msg} ${url}`;
 }
 
@@ -303,7 +308,7 @@ function createDialBudget(signal: AbortSignal, totalMs: number | undefined): Dia
     totalAc && totalMs != null
       ? setTimeout(() => totalAc.abort(new Error('dial-timeout')), totalMs)
       : null;
-  const combined = totalAc ? combineAbortSignals(signal, totalAc.signal) : signal;
+  const combined = combineAbortSignals(signal, totalAc?.signal) ?? signal;
   return {
     combined,
     budgetExpired: () => Boolean(totalAc?.signal.aborted && !signal.aborted),
@@ -429,6 +434,8 @@ type RaceState = {
   winner: WsSecureCandidate | null;
   winnerCtl: AbortController | null;
   lastReason: string | null;
+  lastKind: WsDialFailureKind | null;
+  lastUrl: string | null;
 };
 
 function abortOtherControllers(controllers: AbortController[], keep: AbortController | null): void {
@@ -472,8 +479,19 @@ function noteRaceFailure(
   stale: boolean
 ): void {
   if (combined.aborted || stale) return;
+  const classified = classifyWsDialFailure(url, err);
   state.lastReason = formatWsDialFailure(url, err);
+  state.lastKind = classified.kind;
+  state.lastUrl = url;
 }
+
+/** 竞速结果：`lastKind` 是最后一次失败的分类，调用方据此给出稳定的失败码。 */
+export type WsSecureRaceResult = {
+  winner: WsSecureCandidate | null;
+  lastReason: string | null;
+  lastKind: WsDialFailureKind | null;
+  lastUrl: string | null;
+};
 
 export async function raceWsSecureEndpoints(opts: {
   urls: string[];
@@ -483,13 +501,19 @@ export async function raceWsSecureEndpoints(opts: {
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
   staggerMs: number;
   dial: (url: string, signal: AbortSignal) => Promise<WsSecureCandidate | null>;
-}): Promise<{ winner: WsSecureCandidate | null; lastReason: string | null }> {
+}): Promise<WsSecureRaceResult> {
   const urls = dedupeRankedPeerEndpoints(opts.urls);
-  const state: RaceState = { winner: null, winnerCtl: null, lastReason: null };
+  const state: RaceState = {
+    winner: null,
+    winnerCtl: null,
+    lastReason: null,
+    lastKind: null,
+    lastUrl: null,
+  };
   const controllers: AbortController[] = [];
   const abortLosers = () => abortOtherControllers(controllers, state.winnerCtl);
   if (opts.signal.aborted || opts.stale(opts.gen)) {
-    return { winner: null, lastReason: null };
+    return { winner: null, lastReason: null, lastKind: null, lastUrl: null };
   }
   const onParentAbort = () => abortRaceParent(state, controllers);
   opts.signal.addEventListener('abort', onParentAbort, { once: true });
@@ -504,7 +528,7 @@ export async function raceWsSecureEndpoints(opts: {
         const url = urls[i] ?? '';
         const child = new AbortController();
         controllers.push(child);
-        const combined = combineAbortSignals(opts.signal, child.signal);
+        const combined = combineAbortSignals(opts.signal, child.signal) ?? child.signal;
         void (async () => {
           if (i > 0) await opts.sleep(i * opts.staggerMs, combined);
           if (combined.aborted || opts.stale(opts.gen)) return null;
@@ -521,5 +545,10 @@ export async function raceWsSecureEndpoints(opts: {
     opts.signal.removeEventListener('abort', onParentAbort);
     abortLosers();
   }
-  return { winner: state.winner, lastReason: state.lastReason };
+  return {
+    winner: state.winner,
+    lastReason: state.lastReason,
+    lastKind: state.lastKind,
+    lastUrl: state.lastUrl,
+  };
 }

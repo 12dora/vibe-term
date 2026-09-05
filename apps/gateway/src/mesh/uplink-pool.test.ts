@@ -714,6 +714,39 @@ describe('UplinkPool', () => {
     expect(pool.attachedHub()).toBeNull();
   });
 
+  test('反复重连不会在长寿 stop signal 上攒 abort 监听器', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      behavior: {
+        'https://a.example': { failTimes: 999 },
+        'https://b.example': { failTimes: 999 },
+      },
+      scheduler,
+    });
+    pool.start();
+    const stop = pool.stopSignal();
+    if (!stop) throw new Error('stop signal missing');
+    let live = 0;
+    const addOrig = stop.addEventListener.bind(stop);
+    const removeOrig = stop.removeEventListener.bind(stop);
+    stop.addEventListener = ((type: string, ...rest: unknown[]) => {
+      if (type === 'abort') live += 1;
+      return (addOrig as (...args: unknown[]) => void)(type, ...rest);
+    }) as typeof stop.addEventListener;
+    stop.removeEventListener = ((type: string, ...rest: unknown[]) => {
+      if (type === 'abort') live -= 1;
+      return (removeOrig as (...args: unknown[]) => void)(type, ...rest);
+    }) as typeof stop.removeEventListener;
+    for (let i = 0; i < 12; i += 1) {
+      await waitMicro();
+      await scheduler.advance(60_000);
+    }
+    await waitMicro();
+    // 旧的 anyAbort 每拨一次就往 stop signal 上挂一个永不摘除的监听器。
+    expect(live).toBeLessThanOrEqual(2);
+  });
+
   test('make-before-break switchTo authenticates the new link before closing the old one', async () => {
     const { pool, created } = boot({
       urls: ['https://a.example', 'https://b.example'],

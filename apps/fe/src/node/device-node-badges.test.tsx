@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { MeshNode } from '@tmex/api-client/auth/index';
 import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
+import type { DirectDiagnostics, DirectIceDiagnostics } from '@tmex/ws-client/direct/types';
 import type { NodeLink } from './direct-diagnostics';
 
 installWindowStorage();
@@ -14,6 +14,7 @@ const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('.
 const {
   DeviceNodeBadges,
   NodeLinkDiagnostics,
+  directFailureRows,
   formatLinkBadgeLabel,
   formatLinkSince,
   linkDetailKind,
@@ -249,8 +250,9 @@ describe('NodeLinkDiagnostics', () => {
         now={NOW}
       />
     );
-    expect(html).toContain('connected');
-    expect(html).toContain('host → srflx');
+    expect(html).toContain('nodes.badge.ice.connected');
+    expect(html).toContain('nodes.badge.ice.completed');
+    expect(html).toContain('nodes.badge.candidate.host → nodes.badge.candidate.srflx');
     expect(html).toContain('nodes.badge.transportDc');
     expect(html).toContain('9ms');
     expect(html).not.toContain('210ms');
@@ -318,6 +320,119 @@ describe('NodeLinkDiagnostics', () => {
       <NodeLinkDiagnostics diagnostics={diagnostics()} link={link({ transport: null })} now={NOW} />
     );
     expect(html).toContain('nodes.badge.unknown');
+  });
+});
+
+describe('directFailureRows', () => {
+  test('有失败码就按码翻译并带上插值参数', () => {
+    expect(
+      directFailureRows({
+        at: NOW,
+        ws: 'all endpoints backing off (next eligible in 42s)',
+        wsCode: 'backoff',
+        wsParams: { seconds: 42 },
+        dc: 'direct_capable=false',
+        dcCode: 'not_direct_capable',
+        dcParams: null,
+      })
+    ).toEqual([
+      {
+        labelKey: 'nodes.badge.directFailureWs',
+        valueKey: 'nodes.badge.failure.backoff',
+        valueParams: { seconds: 42 },
+        mono: false,
+      },
+      {
+        labelKey: 'nodes.badge.directFailureDc',
+        valueKey: 'nodes.badge.failure.not_direct_capable',
+        valueParams: {},
+        mono: false,
+      },
+    ]);
+  });
+
+  test('熔断冷却的解除时刻按本地时间格式化后再插值', () => {
+    const rows = directFailureRows({
+      at: NOW,
+      dc: 'dial breaker cooling',
+      dcCode: 'breaker_cooling',
+      dcParams: { until: NOW + 60_000 },
+    });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.valueKey).toBe('nodes.badge.failure.breaker_cooling');
+    const until = rows[0]?.valueParams?.until;
+    expect(typeof until).toBe('string');
+    expect(until).toBe(
+      new Date(NOW + 60_000).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })
+    );
+  });
+
+  test('旧网关没有失败码时保留等宽原文', () => {
+    expect(
+      directFailureRows({ at: NOW, ws: 'timeout ws://10.0.0.7:39001/peer', dc: null })
+    ).toEqual([
+      {
+        labelKey: 'nodes.badge.directFailureWs',
+        value: 'timeout ws://10.0.0.7:39001/peer',
+      },
+    ]);
+  });
+
+  test('认不出的码（更新的网关）也回落原文', () => {
+    const rows = directFailureRows({
+      at: NOW,
+      ws: 'brand new failure',
+      wsCode: 'not_a_real_code' as never,
+    });
+    expect(rows[0]?.value).toBe('brand new failure');
+    expect(rows[0]?.valueKey).toBeUndefined();
+  });
+
+  test('没有失败原因就不出行', () => {
+    expect(directFailureRows(null)).toEqual([]);
+  });
+});
+
+describe('ICE 明细的翻译', () => {
+  function iceHtml(ice: Partial<DirectIceDiagnostics>): string {
+    return renderToStaticMarkup(
+      <NodeLinkDiagnostics
+        diagnostics={diagnostics({
+          path: 'direct',
+          rtt: 9,
+          ice: {
+            connectionState: null,
+            iceConnectionState: null,
+            localCandidateType: null,
+            remoteCandidateType: null,
+            selectedPair: null,
+            ...ice,
+          },
+        })}
+        link={link({ reach: 'wan', transport: 'dc' })}
+        now={NOW}
+      />
+    );
+  }
+
+  test('W3C 枚举与候选类型走 key，浏览器方言原样展示', () => {
+    const html = iceHtml({
+      connectionState: 'connecting',
+      iceConnectionState: 'weird-state',
+      localCandidateType: 'relay',
+      remoteCandidateType: 'mystery',
+    });
+    expect(html).toContain('nodes.badge.ice.connecting');
+    expect(html).toContain('weird-state');
+    expect(html).not.toContain('nodes.badge.ice.weird-state');
+    expect(html).toContain('nodes.badge.candidate.relay');
+    expect(html).toContain('mystery');
+    expect(html).not.toContain('nodes.badge.candidate.mystery');
+  });
+
+  test('两端候选都拿不到时退回原来的候选对串', () => {
+    const html = iceHtml({ selectedPair: 'host → srflx' });
+    expect(html).toContain('host → srflx');
   });
 });
 

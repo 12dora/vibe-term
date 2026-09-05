@@ -5,7 +5,9 @@
 // ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
 
 import { SELF_NODE_ID } from '@tmex/api-client';
+import { DIRECT_FAILURE_CODES } from '@tmex/api-client/auth/index';
 import type {
+  DirectFailureCode,
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
@@ -101,7 +103,26 @@ export interface DiagnosticRowSpec {
   /** 需要翻译的值；`value` 缺席时用它。 */
   valueKey?: string;
   valueParams?: Record<string, string | number>;
+  /** 各自翻译后再拼接的值片段（候选对两端）；优先于 `value` / `valueKey`。 */
+  valueParts?: DiagnosticValuePart[];
   mono?: boolean;
+}
+
+/** `key` 存在就翻译，否则原样展示 `text`。 */
+export type DiagnosticValuePart = { key?: string; text?: string };
+
+const PART_SEPARATOR = ' → ';
+
+export function resolveRowValue(
+  row: DiagnosticRowSpec,
+  t: (key: string, params?: Record<string, string | number>) => string
+): string | null {
+  if (row.valueParts) {
+    return row.valueParts
+      .map((part) => (part.key ? t(part.key) : (part.text ?? '?')))
+      .join(PART_SEPARATOR);
+  }
+  return row.value ?? (row.valueKey ? t(row.valueKey, row.valueParams) : null);
 }
 
 /** 已连接时长：秒 → 分 → 时 → 天，只取最大的那一档。 */
@@ -139,13 +160,54 @@ function addressRow(labelKey: string, address: string | null): DiagnosticRowSpec
   return address ? [{ labelKey, value: address }] : [];
 }
 
+/** W3C 的连接 / ICE 状态枚举；不在表内的值（浏览器方言）原样展示。 */
+const ICE_STATES = new Set([
+  'new',
+  'connecting',
+  'connected',
+  'disconnected',
+  'failed',
+  'closed',
+  'checking',
+  'completed',
+]);
+
+const CANDIDATE_TYPES = new Set(['host', 'srflx', 'prflx', 'relay']);
+
+function statePart(state: string | null): DiagnosticValuePart | null {
+  if (!state) return null;
+  return ICE_STATES.has(state) ? { key: `nodes.badge.ice.${state}` } : { text: state };
+}
+
+function candidatePart(type: string | null): DiagnosticValuePart | null {
+  if (!type) return null;
+  return CANDIDATE_TYPES.has(type) ? { key: `nodes.badge.candidate.${type}` } : { text: type };
+}
+
+function partRow(labelKey: string, part: DiagnosticValuePart | null): DiagnosticRowSpec {
+  if (!part) return { labelKey, value: null };
+  return part.key ? { labelKey, valueKey: part.key, mono: false } : { labelKey, value: part.text };
+}
+
+/** 候选对保持 `本端 → 对端` 的形状，两端各自翻译；拿不到两端时退回原串。 */
+function selectedPairRow(ice: DirectIceDiagnostics): DiagnosticRowSpec {
+  const local = candidatePart(ice.localCandidateType);
+  const remote = candidatePart(ice.remoteCandidateType);
+  if (!local && !remote) return { labelKey: 'nodes.badge.selectedPair', value: ice.selectedPair };
+  return {
+    labelKey: 'nodes.badge.selectedPair',
+    valueParts: [local ?? { text: '?' }, remote ?? { text: '?' }],
+    mono: false,
+  };
+}
+
 function iceRows(ice: DirectIceDiagnostics): DiagnosticRowSpec[] {
   return [
-    { labelKey: 'nodes.badge.connectionState', value: ice.connectionState },
-    { labelKey: 'nodes.badge.iceState', value: ice.iceConnectionState },
-    { labelKey: 'nodes.badge.localCandidate', value: ice.localCandidateType },
-    { labelKey: 'nodes.badge.remoteCandidate', value: ice.remoteCandidateType },
-    { labelKey: 'nodes.badge.selectedPair', value: ice.selectedPair },
+    partRow('nodes.badge.connectionState', statePart(ice.connectionState)),
+    partRow('nodes.badge.iceState', statePart(ice.iceConnectionState)),
+    partRow('nodes.badge.localCandidate', candidatePart(ice.localCandidateType)),
+    partRow('nodes.badge.remoteCandidate', candidatePart(ice.remoteCandidateType)),
+    selectedPairRow(ice),
   ];
 }
 
@@ -166,13 +228,52 @@ function detailRows(
   return [];
 }
 
-/** 未直连的原因：ws / DataChannel 各一行，原样展示 node 侧记下的那句话。 */
+/**
+ * 未直连的原因：ws / DataChannel 各一行。网关给了稳定失败码就按码翻译，
+ * 旧网关（只有原文）保留等宽原文——那是给排查用的机器措辞，不该混进译文的字体里。
+ */
 export function directFailureRows(failure: MeshNodeDirectFailure | null): DiagnosticRowSpec[] {
   if (!failure) return [];
-  return [
-    ...(failure.ws ? [{ labelKey: 'nodes.badge.directFailureWs', value: failure.ws }] : []),
-    ...(failure.dc ? [{ labelKey: 'nodes.badge.directFailureDc', value: failure.dc }] : []),
-  ];
+  const rows: DiagnosticRowSpec[] = [];
+  if (failure.ws) {
+    rows.push(
+      failureRow('nodes.badge.directFailureWs', failure.ws, failure.wsCode, {
+        ...(failure.wsParams?.url ? { url: failure.wsParams.url } : {}),
+        ...(failure.wsParams?.seconds != null ? { seconds: failure.wsParams.seconds } : {}),
+      })
+    );
+  }
+  if (failure.dc) {
+    const until = failure.dcParams?.until;
+    rows.push(
+      failureRow(
+        'nodes.badge.directFailureDc',
+        failure.dc,
+        failure.dcCode,
+        until == null ? {} : { until: formatUntil(until) }
+      )
+    );
+  }
+  return rows;
+}
+
+const KNOWN_FAILURE_CODES = new Set<string>(DIRECT_FAILURE_CODES);
+
+function failureRow(
+  labelKey: string,
+  raw: string,
+  code: DirectFailureCode | null | undefined,
+  params: Record<string, string | number>
+): DiagnosticRowSpec {
+  if (!code || !KNOWN_FAILURE_CODES.has(code)) return { labelKey, value: raw };
+  return { labelKey, valueKey: `nodes.badge.failure.${code}`, valueParams: params, mono: false };
+}
+
+/** 熔断解除时刻按本地时区显示时分，跨天的冷却本就不该发生，不必带日期。 */
+function formatUntil(until: number): string {
+  const date = new Date(until);
+  if (Number.isNaN(date.getTime())) return String(until);
+  return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
 export function buildLinkDiagnosticRows(input: {
@@ -328,7 +429,7 @@ export function NodeLinkDiagnostics({
 
 function DiagnosticRow({ row }: { row: DiagnosticRowSpec }) {
   const { t } = useTranslation();
-  const value = row.value ?? (row.valueKey ? t(row.valueKey, row.valueParams) : null);
+  const value = resolveRowValue(row, (key, params) => t(key, params));
   return (
     <div className="flex items-baseline justify-between gap-2">
       <dt className="shrink-0 text-muted-foreground">{t(row.labelKey)}</dt>

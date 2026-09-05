@@ -23,13 +23,13 @@ import {
   rttChangedMaterially,
 } from './address-class';
 import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
+import { type DcFailureDetail, dcFailureReason as describeDcFailure } from './direct-failure-codes';
 import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
 import { stamp } from './mesh-log';
 import {
   DcUpgradeCoordinator,
   PeerCollaboratorHost,
-  dcFailureReason as describeDcFailure,
   parseEndpoints,
   sanitizeEndpoints,
 } from './peer-dc-upgrade';
@@ -40,7 +40,9 @@ import {
   emptyDirectAttempt,
   hasDirectFailure,
   noteDcOutcome,
-  noteWsOutcome,
+  noteNoEndpoints,
+  noteWsBackoff,
+  noteWsRaceFailure,
   winningDialInitiator,
 } from './peer-direct-attempt';
 import {
@@ -115,6 +117,7 @@ export const PEER_RETIRE_MIN_MS = 5_000;
 export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
+
 export {
   PEER_DC_UPGRADE_RETRY_DELAYS_MS,
   PEER_DC_UPGRADE_RETRY_TAIL_MS,
@@ -837,12 +840,14 @@ export class PeerManager extends PeerCollaboratorHost {
     const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
     const skipDcFirst = !existingLive && this.lostDirect.has(nodeId);
     let dcError: unknown = null;
+    let dcCoolingUntil: number | null | undefined;
     const attempt = emptyDirectAttempt(this.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
     const tryDc = async (): Promise<LinkSession | null> => {
       if (!above('dc') || !this.dcCapable(nodeId)) return null;
       const decision = this.dcBreaker.shouldTry(nodeId);
       if (!decision.allow) {
+        dcCoolingUntil = decision.until;
         rtcLog('dial failed', {
           peer: nodeId,
           cause: 'breaker_cooling',
@@ -881,12 +886,12 @@ export class PeerManager extends PeerCollaboratorHost {
     for (const step of attempts) {
       const got = await step.run();
       if (got) {
-        this.finishDirectAttempt(nodeId, attempt, got, dcError);
+        this.finishDirectAttempt(nodeId, attempt, got, dcError, dcCoolingUntil);
         return got;
       }
       if (!step.skipStop) this.throwIfStopped(nodeId, gen);
     }
-    this.finishDirectAttempt(nodeId, attempt, null, dcError);
+    this.finishDirectAttempt(nodeId, attempt, null, dcError, dcCoolingUntil);
     try {
       const stream = await this.uplink.openRelay(nodeId);
       const result = await handshakeRelay({
@@ -938,6 +943,22 @@ export class PeerManager extends PeerCollaboratorHost {
     this.advertisedEndpointSet.set(nodeId, next);
   }
 
+  /** 可拨的地址；全在退避里就把「还要等多久」记进这次尝试，浮层才有话可说。 */
+  private eligibleEndpoints(
+    nodeId: string,
+    endpoints: string[],
+    attempt: DirectAttemptRecord,
+    bypassBackoff: boolean | undefined
+  ): string[] {
+    if (bypassBackoff) return endpoints;
+    const now = this.scheduler.now();
+    const eligible = endpoints.filter((url) => this.endpointBackoff.eligible(nodeId, url, now));
+    if (eligible.length > 0) return eligible;
+    const waitMs = this.endpointBackoff.minWaitMs(nodeId, endpoints, now);
+    noteWsBackoff(attempt, endpoints, Math.max(0, Math.ceil(waitMs / 1000)));
+    return [];
+  }
+
   private async dialWsSecure(
     nodeId: string,
     gen: number,
@@ -972,17 +993,12 @@ export class PeerManager extends PeerCollaboratorHost {
     const parsed =
       opts?.endpoints ?? (cached ? parseEndpoints(cached.endpointsJson, this.server?.port) : []);
     const endpoints = dedupeRankedPeerEndpoints(rankPeerEndpoints(parsed, this.interfacesFn()));
-    if (endpoints.length === 0) return null;
-    const now = this.scheduler.now();
-    const eligible = opts?.bypassBackoff
-      ? endpoints
-      : endpoints.filter((url) => this.endpointBackoff.eligible(nodeId, url, now));
-    if (eligible.length === 0) {
-      const waitMs = this.endpointBackoff.minWaitMs(nodeId, endpoints, now);
-      const secs = Math.max(0, Math.ceil(waitMs / 1000));
-      noteWsOutcome(attempt, `all endpoints backing off (next eligible in ${secs}s)`, endpoints);
+    if (endpoints.length === 0) {
+      noteNoEndpoints(attempt);
       return null;
     }
+    const eligible = this.eligibleEndpoints(nodeId, endpoints, attempt, opts?.bypassBackoff);
+    if (eligible.length === 0) return null;
     const failedAddrs = new Set<string>();
     const raced = await raceWsSecureEndpoints({
       urls: eligible,
@@ -1018,7 +1034,7 @@ export class PeerManager extends PeerCollaboratorHost {
         }
       },
     });
-    if (raced.lastReason) noteWsOutcome(attempt, raced.lastReason, endpoints);
+    noteWsRaceFailure(attempt, raced, endpoints);
     if (this.stale(gen)) {
       quiet(() => raced.winner?.session.close('stopped'));
       this.throwIfStopped(nodeId, gen);
@@ -1884,11 +1900,15 @@ export class PeerManager extends PeerCollaboratorHost {
     nodeId: string,
     attempt: DirectAttemptRecord,
     session: LinkSession | null,
-    dcError: unknown
+    dcError: unknown,
+    dcCoolingUntil?: number | null
   ): void {
     const live = this.live.get(nodeId);
     if (session && live && live.transport !== 'relay') return;
-    if (attempt.dc == null) noteDcOutcome(attempt, this.dcFailureReason(nodeId, dcError));
+    if (attempt.dc == null) {
+      const failure = this.dcFailureReason(nodeId, dcError, dcCoolingUntil);
+      noteDcOutcome(attempt, failure?.text ?? null, failure?.code ?? null, failure?.params ?? null);
+    }
     if (hasDirectFailure(attempt))
       this.lastDirectAttempt.set(nodeId, { ...attempt, at: this.scheduler.now() });
   }
@@ -1898,8 +1918,13 @@ export class PeerManager extends PeerCollaboratorHost {
     if (prev) this.lastDirectAttempt.set(nodeId, clearedDirectAttempt(prev));
   }
 
-  private dcFailureReason(nodeId: string, dcError: unknown): string | null {
+  private dcFailureReason(
+    nodeId: string,
+    dcError: unknown,
+    coolingUntil?: number | null
+  ): DcFailureDetail | null {
     return describeDcFailure(nodeId, dcError, {
+      coolingUntil,
       directCapable: this.userStore.getPeer(nodeId)?.directCapable,
       rtcAvailable: this.rtc?.available === true,
     });

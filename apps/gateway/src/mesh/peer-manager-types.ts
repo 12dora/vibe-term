@@ -76,11 +76,52 @@ export type LiveWaiter = {
   resolve: (session: LinkSession) => void;
 };
 
+/**
+ * 直连失败的稳定分类码，与 `packages/api-client/src/auth/types.ts` 的 `DirectFailureCode`
+ * 一一对应（网关不依赖 api-client，只能镜像）。前端按 `nodes.badge.failure.<code>` 翻译。
+ */
+export type DirectFailureCode =
+  | 'timeout'
+  | 'refused'
+  | 'unreachable'
+  | 'reset'
+  | 'tls'
+  | 'handshake'
+  | 'revoked'
+  | 'untrusted'
+  | 'backoff'
+  | 'no_endpoints'
+  | 'ice_failed'
+  | 'no_candidates'
+  | 'dc_open_timeout'
+  | 'dc_closed'
+  | 'liveness_timeout'
+  | 'signal_dropped'
+  | 'signaling_state'
+  | 'rtc_unavailable'
+  | 'not_direct_capable'
+  | 'breaker_cooling'
+  | 'aborted'
+  | 'other';
+
+export type DirectFailureWsParams = { url?: string; seconds?: number };
+export type DirectFailureDcParams = { until?: number };
+
+export type DirectFailureView = {
+  at: number;
+  ws?: string | null;
+  wsCode?: DirectFailureCode | null;
+  wsParams?: DirectFailureWsParams | null;
+  dc?: string | null;
+  dcCode?: DirectFailureCode | null;
+  dcParams?: DirectFailureDcParams | null;
+};
+
 export type PeerLinkDetail = {
   peerAddress: string | null;
   linkSinceAt: number | null;
   endpoints: string[];
-  directFailure: { at: number; ws?: string | null; dc?: string | null } | null;
+  directFailure: DirectFailureView | null;
   dcBreaker: RtcDialBreakerSnapshot;
 };
 
