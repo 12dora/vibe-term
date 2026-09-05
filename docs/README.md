@@ -49,6 +49,7 @@
 | --- | --- |
 | `terminal/2026041600-ghostty-wasm-runtime.md` | Ghostty wasm 终端底座：分层、初始化、输入 / 输出 / 渲染链路与 xterm 兼容面 |
 | `terminal/2026090101-viewport-policy.md` | 终端视口策略：最小可见客户端拥有 PTY 尺寸 |
+| `terminal/2026090601-pane-oom-policy.md` | tmux 窗口无故消失：tmux 3.6 pane scope 与 systemd `OOMPolicy=stop` 的连坐，取证与处置 |
 | `terminal/2026061501-mobile-keyboard-behavior.md` | 移动端三种键盘避让模式（lift / resize / follow）与光标跟随算法 |
 | `terminal/2026061101-claude-code-osc-notification.md` | Claude Code 各通知渠道的 OSC 序列与 `TERM=xterm-ghostty` 注入 |
 | `terminal/2026070501-tui-theme-notify-2031.md` | 经 DEC mode 2031 向 pane 内 TUI 注入主题变更通知 |
