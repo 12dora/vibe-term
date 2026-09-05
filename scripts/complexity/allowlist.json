@@ -196,13 +196,9 @@
     "reason": "mesh 装配根，第六轮已按职责拆过一次；剩下的是依赖注入清单本身（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）",
     "cc": 16
   },
-  "apps/gateway/src/mesh/peer-manager.ts": {
-    "fileLines": 1939,
-    "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝；round22 加 DC 放弃态三处唤醒接线（+9 行）"
-  },
-  "apps/gateway/src/mesh/peer-manager.ts:applyPeerStatus": {
+  "apps/gateway/src/mesh/peer-status-sync.ts:applyPeerStatus": {
     "cc": 19,
-    "reason": "共享链路生命周期状态机，S1 判定无干净拆分缝"
+    "reason": "对端 node.status 落库的字段合并与 key log 追赶，分支即字段（第二十九轮随 PeerManager 拆分从 peer-manager.ts 迁入）"
   },
   "apps/gateway/src/mesh/peer-manager.ts:handlePeerCtl": {
     "cc": 23,

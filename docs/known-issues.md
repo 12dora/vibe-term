@@ -35,11 +35,6 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
 2. 直连的 ICE-TCP 与 `TMEX_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
 
-## KI-7：`peer-manager.ts` 上帝类待拆
-
-`apps/gateway/src/mesh/peer-manager.ts`（约 1900 行 81 成员）的拆分（`peer-dialer.ts` /
-`peer-live-registry.ts`）尚未立项。同批的 ctl switch 合并与 `uplink-server.ts` 拆分已于第二十九轮完成。
-
 ## KI-8：Hub 转发不把浏览器来源 IP 带给节点
 
 节点侧看到的 clientIp 恒为 `peer:<hubNodeId>`（`dispatchInboundHttp` 写入），`x-forwarded-*` 两端都被剥。
