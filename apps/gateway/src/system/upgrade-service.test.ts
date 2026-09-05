@@ -474,9 +474,21 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       forward,
     });
     expect(status.status).toBe(200);
-    const body = (await status.json()) as { state: string; targetVersion: string; error: null };
+    const body = (await status.json()) as {
+      state: string;
+      targetVersion: string;
+      error: null;
+      progress?: { phase: string; pushedBytes: number; totalBytes: number; attempt: number };
+    };
     expect(body.state).toBe('downloading');
     expect(body.targetVersion).toBe('9.9.9');
+    // 入口代跑的阶段与推包进度随状态一起下发，前端据此刷新预算与进度条。
+    expect(body.progress).toEqual({
+      phase: 'download',
+      pushedBytes: 0,
+      totalBytes: 0,
+      attempt: 0,
+    });
     expect(forwarded.filter((c) => c === 'GET /api/system/upgrade')).toEqual([]);
     releaseDownload();
     await waitForRemoteUpgradeJob(nodeId).catch(() => {});

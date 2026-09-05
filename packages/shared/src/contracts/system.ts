@@ -36,6 +36,8 @@ export interface SystemInfo {
    * 本节点支持的升级能力。旧节点无此字段。
    * `'staged-package'`：接受入口推送的 tarball（`PUT /api/system/upgrade/package`）并从暂存包升级。
    * `'upgrade-cancel'`：支持 `DELETE /api/system/upgrade` 与 `DELETE /api/system/upgrade/package`。
+   * `'staged-package-resume'`：推包可断点续传——`GET /api/system/upgrade/package` 查已收字节数，
+   * `PUT` 带 `offset` 从该处续写，链路中断不再丢掉已收到的部分。
    */
   upgradeCapabilities?: string[];
 }
@@ -57,6 +59,20 @@ export interface UpdateCheckResult {
 /** 用户取消下载阶段的升级；FE 按此精确字符串识别 */
 export const UPGRADE_CANCELLED = 'UPGRADE_CANCELLED';
 
+/**
+ * 入口代跑的远程升级进度（`GET /api/mesh/nodes/:id/upgrade`）。本机升级没有这一段。
+ * `push` 阶段跨链路中断续传，`attempt` 从 1 开始计，重试时递增。
+ */
+export interface RemoteUpgradeProgress {
+  phase: 'download' | 'push' | 'start';
+  /** 已推送到目标的字节数（目标已确认收到的偏移） */
+  pushedBytes: number;
+  /** 升级包总字节数；下载未完成时为 0 */
+  totalBytes: number;
+  /** 当前是第几次推送尝试 */
+  attempt: number;
+}
+
 /** 升级状态（轮询） */
 export interface UpgradeStatus {
   state: UpgradeState;
@@ -66,6 +82,18 @@ export interface UpgradeStatus {
   error: string | null;
   /** 本次升级开始时间 ISO 串 */
   startedAt: string | null;
+  /** 仅远程升级：入口侧的下载 / 推包进度 */
+  progress?: RemoteUpgradeProgress;
+}
+
+/** `GET /api/system/upgrade/package?version=&sha256=`：已收到多少字节，可否直接开始升级 */
+export interface StagedPackageStatus {
+  version: string;
+  sha256: string;
+  /** 已落盘的字节数：续传时作为 `PUT ?offset=` 的取值 */
+  receivedBytes: number;
+  /** 整包已校验通过并暂存完毕 */
+  complete: boolean;
 }
 
 /** 触发升级请求体 */
@@ -97,10 +125,13 @@ export interface StartUninstallRequest {
 /**
  * 入口转发 `503 NODE_UNREACHABLE` 的安全原因。只允许这一组字面量，避免把堆栈、
  * 主机名或令牌带回浏览器。`relay_reset:*` 对应中继 RST 原因（见 relay-stream-router）。
+ * `no_link` 是「压根没有链路」；`link_lost` 是「链路建起来又断了」（中继复位、顶号、
+ * 上行切换）——后者重试通常能成，前者不能。
  */
 export type NodeUnreachableReason =
   | 'not_admitted'
   | 'no_link'
+  | 'link_lost'
   | 'handshake_failed'
   | 'timeout'
   | 'relay_reset:self-target'

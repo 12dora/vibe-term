@@ -1546,6 +1546,51 @@ describe('forwarder', () => {
     }
   });
 
+  test('retry.attempts 让非幂等方法重试；带 rawBody 时一律只推一次', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams, sleep: async () => {} });
+    const cookie = `tmex_s_${OTHER}=remote-sid`;
+    let opens = 0;
+    streams.openHttpStream = async () => {
+      opens += 1;
+      throw new Error('link lost');
+    };
+    const deleteRes = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', { headers: { cookie } }),
+      {
+        nodeId: OTHER,
+        method: 'DELETE',
+        path: '/api/system/upgrade/package',
+        retry: { attempts: 3 },
+      }
+    );
+    expect(deleteRes.status).toBe(503);
+    expect(opens).toBe(3);
+
+    opens = 0;
+    const rawBody = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2, 3]));
+        controller.close();
+      },
+    });
+    const putRes = await forwarder.forwardAuthorizedHttp(
+      new Request('http://localhost/api/mesh/nodes/x/upgrade', { headers: { cookie } }),
+      {
+        nodeId: OTHER,
+        method: 'PUT',
+        path: '/api/system/upgrade/package',
+        rawBody,
+        retry: { attempts: 5 },
+      }
+    );
+    expect(putRes.status).toBe(503);
+    // 流只能读一次：重发必须由调用方按偏移重建，转发层不能自作主张。
+    expect(opens).toBe(1);
+  });
+
   test('abort during openHttpStream is classified as timeout, not lastError', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import type { InstallInfo } from './install-info';
 import { downloadVerifiedRelease, resetReleaseDownloadForTests } from './release-download';
 import {
+  LEGACY_PUSH_MAX_ATTEMPTS,
+  PUSH_MAX_ATTEMPTS,
   cancelRemoteUpgradeJob,
   getRemoteUpgradeJob,
   resetRemoteUpgradeJobsForTests,
@@ -34,6 +36,25 @@ function tempFile(bytes: Uint8Array): string {
   const path = join(dir, 'tmex-cli-9.9.9.tgz');
   writeFileSync(path, bytes);
   return path;
+}
+
+/** 退避不真等：重试用例只关心次数与偏移。 */
+async function noSleep(): Promise<void> {}
+
+const RESUME_CAPS = ['staged-package', 'upgrade-cancel', 'staged-package-resume'];
+
+function offsetResponse(receivedBytes: number, complete = false): Response {
+  return new Response(JSON.stringify({ receivedBytes, complete }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+function unreachable(): Response {
+  return new Response(JSON.stringify({ code: 'NODE_UNREACHABLE', error: 'stream-aborted' }), {
+    status: 503,
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 function authed(nodeId: string): Request {
@@ -206,6 +227,226 @@ describe('RemoteUpgradeJob', () => {
     expect(done.error).toContain('PACKAGE_SHA256_MISMATCH');
   });
 
+  test('推包中途断链：按目标报的偏移续传，只补发剩下的字节', async () => {
+    const nodeId = '33'.repeat(16);
+    const bytes = new Uint8Array(1024).map((_, i) => i % 251);
+    const path = tempFile(bytes);
+    const cut = 400;
+    const puts: Array<{ query: string; sent: number }> = [];
+    let offsetQueries = 0;
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            offsetQueries += 1;
+            return offsetResponse(offsetQueries === 1 ? 0 : cut);
+          }
+          if (input.method === 'PUT') {
+            const raw = input.rawBody
+              ? await new Response(input.rawBody).bytes()
+              : new Uint8Array();
+            puts.push({ query: input.query ?? '', sent: raw.byteLength });
+            if (puts.length === 1) return unreachable();
+            expect(raw).toEqual(bytes.subarray(cut));
+            return new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    expect(started.ok).toBe(true);
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(puts).toHaveLength(2);
+    expect(puts[0]?.query).not.toContain('offset=');
+    expect(puts[0]?.sent).toBe(bytes.byteLength);
+    expect(puts[1]?.query).toContain(`offset=${cut}`);
+    expect(puts[1]?.sent).toBe(bytes.byteLength - cut);
+  });
+
+  test('目标报 complete：不再推一遍，直接进 start', async () => {
+    const nodeId = '44'.repeat(16);
+    const bytes = new Uint8Array(16).fill(1);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          calls.push(`${input.method} ${input.path}`);
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            return offsetResponse(bytes.byteLength, true);
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(calls).toEqual(['GET /api/system/upgrade/package', 'POST /api/system/upgrade']);
+  });
+
+  test('重试次数用尽：按最后一次失败原因收尾，快照带上进度', async () => {
+    const nodeId = '55'.repeat(16);
+    const bytes = new Uint8Array(256).fill(2);
+    const path = tempFile(bytes);
+    let puts = 0;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            return offsetResponse(64);
+          }
+          if (input.method === 'PUT') {
+            puts += 1;
+            await input.rawBody?.cancel().catch(() => {});
+            return unreachable();
+          }
+          throw new Error(`unexpected ${input.method}`);
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toContain('push failed');
+    expect(puts).toBe(PUSH_MAX_ATTEMPTS);
+    expect(done.phase).toBe('push');
+    expect(done.attempt).toBe(PUSH_MAX_ATTEMPTS);
+    expect(done.pushedBytes).toBe(64);
+    expect(done.totalBytes).toBe(bytes.byteLength);
+  });
+
+  test('退避期间按下停止：不再重试，并清掉目标上的半成品', async () => {
+    const nodeId = '66'.repeat(16);
+    const bytes = new Uint8Array(128).fill(3);
+    const path = tempFile(bytes);
+    let puts = 0;
+    let deleted = 0;
+    let sawFirstFailure!: () => void;
+    const firstFailed = new Promise<void>((resolve) => {
+      sawFirstFailure = resolve;
+    });
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+          return offsetResponse(0);
+        }
+        if (input.method === 'PUT') {
+          puts += 1;
+          await input.rawBody?.cancel().catch(() => {});
+          sawFirstFailure();
+          return unreachable();
+        }
+        if (input.method === 'DELETE') {
+          deleted += 1;
+          return new Response('{}', { status: 200 });
+        }
+        throw new Error(`unexpected ${input.method}`);
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: async (_ms, signal) => {
+        await firstFailed;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        if (signal.aborted) throw new Error('aborted');
+      },
+    });
+    await firstFailed;
+    const cancelled = await cancelRemoteUpgradeJob({ nodeId, req: authed(nodeId), forward });
+    expect(cancelled.handled).toBe(true);
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('cancelled');
+    expect(puts).toBeLessThan(PUSH_MAX_ATTEMPTS);
+    expect(deleted).toBeGreaterThan(0);
+  }, 8_000);
+
+  test('不支持续传的目标：从零重传，且不问偏移', async () => {
+    const nodeId = '77'.repeat(16);
+    const bytes = new Uint8Array(96).fill(4);
+    const path = tempFile(bytes);
+    const sent: number[] = [];
+    let offsetQueries = 0;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
+            offsetQueries += 1;
+            return offsetResponse(0);
+          }
+          if (input.method === 'PUT') {
+            const raw = input.rawBody
+              ? await new Response(input.rawBody).bytes()
+              : new Uint8Array();
+            sent.push(raw.byteLength);
+            expect(input.query).not.toContain('offset=');
+            return sent.length < 3 ? unreachable() : new Response('{}', { status: 200 });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(sent).toEqual([96, 96, 96]);
+    expect(offsetQueries).toBe(0);
+  });
+
+  test('4xx 是确定性失败：一次就收尾，不重试', async () => {
+    const nodeId = '88'.repeat(16);
+    const path = tempFile(new Uint8Array([1, 2]));
+    let puts = 0;
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'GET') return offsetResponse(0);
+          puts += 1;
+          return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
+            status: 400,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 2 }),
+      upgradeCapabilities: RESUME_CAPS,
+      sleep: noSleep,
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(puts).toBe(1);
+  });
+
   test('a second start while a job is running is UPGRADE_IN_PROGRESS', async () => {
     const nodeId = 'dd'.repeat(16);
     const path = tempFile(new Uint8Array([1]));
@@ -244,12 +485,14 @@ describe('RemoteUpgradeJob', () => {
   test('push NODE_UNREACHABLE includes the underlying forwarder error', async () => {
     const nodeId = 'dd'.repeat(16);
     const path = tempFile(new Uint8Array([1, 2, 3]));
+    let pushes = 0;
     const started = startRemoteUpgradeJob({
       nodeId,
       version: '9.9.9',
       req: authed(nodeId),
       forward: {
-        async forwardAuthorizedHttp() {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'PUT') pushes += 1;
           return new Response(
             JSON.stringify({
               code: 'NODE_UNREACHABLE',
@@ -261,11 +504,14 @@ describe('RemoteUpgradeJob', () => {
         },
       },
       download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
+      sleep: noSleep,
     });
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('failed');
     expect(done.error).toBe('push failed: HTTP 503 NODE_UNREACHABLE websocket send discarded');
+    // 旧目标不支持续传：链路断了也只从零重传两次，不无限重来。
+    expect(pushes).toBe(LEGACY_PUSH_MAX_ATTEMPTS);
   });
 
   test('a push that never responds fails with push timeout and frees the node', async () => {

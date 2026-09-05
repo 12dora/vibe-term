@@ -65,6 +65,14 @@ type ForwardPump = FailoverPump & {
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 
+/** GET/HEAD 默认可重试；其余方法只有调用方明确要求才重试，且不超过失败切换的上限。 */
+function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): number {
+  const requested = retry?.attempts;
+  if (requested === undefined) return idempotent ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+  if (!Number.isFinite(requested)) return 1;
+  return Math.min(Math.max(Math.trunc(requested), 1), HTTP_FAILOVER_MAX_ATTEMPTS);
+}
+
 export function getSelfRewrite(req: Request): string | null {
   return getMeshRequestContext(req).selfRewrite ?? null;
 }
@@ -233,6 +241,11 @@ export class Forwarder {
       rawBody?: ReadableStream<Uint8Array>;
       headers?: Record<string, string>;
       signal?: AbortSignal;
+      /**
+       * 非幂等方法的显式重试授权：调用方确认这次转发重发一遍是安全的（如删除暂存包）。
+       * 带 rawBody 的请求一律不重试——流只能读一次，重发要由调用方按偏移重建。
+       */
+      retry?: { attempts: number };
     },
     signal?: AbortSignal
   ): Promise<Response> {
@@ -243,18 +256,19 @@ export class Forwarder {
     }
     const abort = input.signal ?? signal ?? req.signal;
     const method = input.method.toUpperCase();
-    const retryable = IDEMPOTENT_HTTP.has(method);
+    const idempotent = IDEMPOTENT_HTTP.has(method);
     const headers: Record<string, string> = { ...(input.headers ?? {}) };
     let uploaded = 0;
-    const rawBody = retryable ? null : (input.rawBody ?? null);
-    const body = retryable
+    const rawBody = idempotent ? null : (input.rawBody ?? null);
+    const body = idempotent
       ? null
       : rawBody
         ? countStreamBytes(rawBody, (n) => {
             uploaded += n;
           })
         : buildJsonStreamBody(input.body, headers);
-    const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    const attempts = rawBody ? 1 : forwardAttempts(idempotent, input.retry);
+    const retryable = attempts > 1;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted) break;

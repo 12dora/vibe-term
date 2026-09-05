@@ -64,6 +64,8 @@ export interface NodeUpgradeEntry {
   targetVersion: string | null;
   /** 已本地化的失败原因；非 `failed` 阶段为 `null`。 */
   error: string | null;
+  /** 入口正在把升级包推给目标时的进度；其余阶段为 `null`。 */
+  push?: { pushedBytes: number; totalBytes: number } | null;
   /**
    * 「停止升级」已发出、结论还没回来（含 POST 在途时排队等补发的那一档）。与阶段无关：
    * 停止按钮据此变灰转圈，双击不会发出第二条 DELETE。
@@ -111,6 +113,7 @@ export const IDLE_UPGRADE_ENTRY: NodeUpgradeEntry = {
   phase: 'idle',
   targetVersion: null,
   error: null,
+  push: null,
   cancelling: false,
 };
 

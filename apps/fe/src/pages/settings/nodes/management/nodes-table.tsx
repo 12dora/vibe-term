@@ -371,7 +371,7 @@ function UpgradeButton({
     ? t('nodes.uninstall.busy')
     : upgradeBlockedHint(row, upgrade.latest?.latestVersion ?? null, t);
   const version = entry.targetVersion ?? upgrade.latest?.latestVersion ?? null;
-  const phaseText = upgradePhaseText(t, entry.phase);
+  const phaseText = upgradePhaseText(t, entry.phase, entry.push);
 
   return (
     <Button

@@ -9,6 +9,8 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -705,7 +707,7 @@ describe('staged package', () => {
     expect(STAGED_PACKAGE_MAX_BYTES).toBe(256 * 1024 * 1024);
   });
 
-  test('PUT writes to a unique .part-<id> temp name', async () => {
+  test('PUT writes to a deterministic .part-<sha 前缀> temp name', async () => {
     const install = makeInstall();
     const controller = new UpgradeController({ getInstallInfo: () => install });
     const bytes = packFakeCliTarball('1.2.3');
@@ -731,7 +733,7 @@ describe('staged package', () => {
       if (partNames.length > 0) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(partNames.length).toBeGreaterThan(0);
+    expect(partNames).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
     release();
     expect((await pending).ok).toBe(true);
   });
@@ -875,7 +877,7 @@ describe('staged package', () => {
     }
   });
 
-  test('aborted PUT body deletes the unique .part and leaves staging/staged empty', async () => {
+  test('aborted PUT body keeps the .part so the next PUT can resume from it', async () => {
     const install = makeInstall();
     const controller = new UpgradeController({ getInstallInfo: () => install });
     const bytes = packFakeCliTarball('1.2.3');
@@ -899,8 +901,170 @@ describe('staged package', () => {
     streamCtl.error(new Error('aborted'));
     const result = await pending;
     expect(result.ok).toBe(false);
+    // 断点续传：中断只关文件，已收到的前缀留在盘上等下一次带 offset 的 PUT 接力。
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
-    expect(leftover).toEqual([]);
+    expect(leftover).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
+    expect(statSync(join(stagedDir, leftover[0] as string)).size).toBe(32);
+  });
+
+  test('断点续传：带 offset 的 PUT 接着写，整包 sha 仍然成立', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const cut = 40;
+    const first = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, cut)), {
+      expectedBytes: bytes.byteLength,
+    });
+    expect(first).toEqual({
+      ok: false,
+      status: 500,
+      code: 'PACKAGE_INCOMPLETE',
+      receivedBytes: cut,
+    });
+    const status = await controller.stagedPackageStatus('1.2.3', hex);
+    expect(status).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: cut,
+      complete: false,
+    });
+    const second = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(cut)), {
+      offset: cut,
+      expectedBytes: bytes.byteLength,
+    });
+    expect(second).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      bytes: bytes.byteLength,
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    expect(readFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+    expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
+      ok: true,
+      version: '1.2.3',
+      sha256: hex,
+      receivedBytes: bytes.byteLength,
+      complete: true,
+    });
+  });
+
+  test('offset 与盘上长度对不上：409 UPGRADE_OFFSET_MISMATCH 并回报真实偏移', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 24)), {
+      expectedBytes: bytes.byteLength,
+    });
+    const mismatched = await controller.stagePackage(
+      '1.2.3',
+      hex,
+      bytesStream(bytes.subarray(99)),
+      {
+        offset: 99,
+        expectedBytes: bytes.byteLength,
+      }
+    );
+    expect(mismatched).toEqual({
+      ok: false,
+      status: 409,
+      code: 'UPGRADE_OFFSET_MISMATCH',
+      receivedBytes: 24,
+    });
+    // 半成品不受牵连：按正确偏移接着传照样能成。
+    const resumed = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(24)), {
+      offset: 24,
+      expectedBytes: bytes.byteLength,
+    });
+    expect(resumed.ok).toBe(true);
+  });
+
+  test('offset=0 覆写旧的半成品，续传后 sha 不符则删掉 .part', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    const partName = `tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`;
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 16)), {
+      expectedBytes: bytes.byteLength,
+    });
+    expect(existsSync(join(stagedDir, partName))).toBe(true);
+    const corrupted = new Uint8Array(bytes.byteLength - 16).fill(0);
+    const result = await controller.stagePackage('1.2.3', hex, bytesStream(corrupted), {
+      offset: 16,
+      expectedBytes: bytes.byteLength,
+    });
+    expect(result).toEqual({ ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' });
+    expect(existsSync(join(stagedDir, partName))).toBe(false);
+  });
+
+  test('同一个包的续传可以顶掉挂死的上一条 PUT，别的版本仍是 409', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    const stalled = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(bytes.subarray(0, 8));
+      },
+    });
+    const first = controller.stagePackage('1.2.3', hex, stalled, {
+      expectedBytes: bytes.byteLength,
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    for (let i = 0; i < 50; i += 1) {
+      if (existsSync(join(stagedDir, `tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`))) break;
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    const other = new Uint8Array([9, 9, 9]);
+    expect(await controller.stagePackage('2.0.0', sha256Hex(other), bytesStream(other))).toEqual({
+      ok: false,
+      status: 409,
+      code: 'UPGRADE_IN_PROGRESS',
+    });
+    const resumed = await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(8)), {
+      offset: 8,
+      expectedBytes: bytes.byteLength,
+    });
+    expect(resumed.ok).toBe(true);
+    expect((await first).ok).toBe(false);
+  });
+
+  test('续传半成品超过 24 h 才被清掉，新鲜的留着', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    mkdirSync(stagedDir, { recursive: true });
+    const fresh = join(stagedDir, `tmex-cli-1.2.3.tgz.part-${'aa'.repeat(8)}`);
+    const stale = join(stagedDir, `tmex-cli-0.9.9.tgz.part-${'bb'.repeat(8)}`);
+    writeFileSync(fresh, 'fresh');
+    writeFileSync(stale, 'stale');
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    utimesSync(stale, old, old);
+    const bytes = packFakeCliTarball('2.0.0');
+    expect((await controller.stagePackage('2.0.0', sha256Hex(bytes), bytesStream(bytes))).ok).toBe(
+      true
+    );
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  test('DELETE package 连同该版本的续传半成品一起清掉', async () => {
+    const install = makeInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const bytes = packFakeCliTarball('1.2.3');
+    const hex = sha256Hex(bytes);
+    await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 12)), {
+      expectedBytes: bytes.byteLength,
+    });
+    const stagedDir = join(install.installDir as string, 'staging', 'staged');
+    expect(readdirSync(stagedDir)).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
+    expect(await controller.removeStagedPackage('1.2.3')).toEqual({ ok: true });
+    expect(readdirSync(stagedDir)).toEqual([]);
   });
 
   test('DELETE package waits for an in-flight PUT of the same version then removes what landed', async () => {
@@ -1167,6 +1331,9 @@ describe('UpgradeController.cancel', () => {
     const stagedDir = join(installDir, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
     writeFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'), 'partial');
+    // 续传半成品只在超过 24 h 保留期后才清，把它的 mtime 拨老两天。
+    const stale = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    utimesSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'), stale, stale);
     const txnDir = join(installDir, 'staging', 'dead-txn');
     mkdirSync(txnDir, { recursive: true });
     writeFileSync(join(txnDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
@@ -1224,7 +1391,7 @@ describe('UpgradeController.cancel', () => {
     await settle();
   });
 
-  test('aborted PUT over an in-memory link leaves staging/staged empty', async () => {
+  test('aborted PUT over an in-memory link keeps the .part when content-length says more is coming', async () => {
     const { createInMemoryLinkPair } = await import('@tmex/shared/link');
     const { acceptHttpStream, openHttpStream } = await import('../mesh/stream-targets');
     const install = makeInstall();
@@ -1240,7 +1407,10 @@ describe('UpgradeController.cancel', () => {
           const url = new URL(req.url);
           const version = url.searchParams.get('version') ?? '';
           const sha256 = url.searchParams.get('sha256') ?? '';
-          const result = await controller.stagePackage(version, sha256, req.body);
+          const declared = Number(req.headers.get('content-length') ?? '');
+          const result = await controller.stagePackage(version, sha256, req.body, {
+            expectedBytes: Number.isFinite(declared) && declared > 0 ? declared : undefined,
+          });
           if (!result.ok) {
             return new Response(JSON.stringify({ code: result.code }), {
               status: result.status,
@@ -1270,7 +1440,10 @@ describe('UpgradeController.cancel', () => {
         method: 'PUT',
         path: '/api/system/upgrade/package',
         query: `?version=1.2.3&sha256=${'ab'.repeat(32)}`,
-        headers: { 'content-type': 'application/octet-stream' },
+        headers: {
+          'content-type': 'application/octet-stream',
+          'content-length': String(64 * 1024 * 1024),
+        },
         origin: 'http://localhost',
         auth: 'remote-sid',
       },
@@ -1282,9 +1455,12 @@ describe('UpgradeController.cancel', () => {
     await rawBody.cancel().catch(() => {});
     await pending.catch(() => {});
     await settle();
+    // 中继 RST 在接收端看起来是「请求体干净地结束」：靠 content-length 才认得出是断了，
+    // 半截包必须留着给下一次续传，而不是当成坏包删掉。
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
-    expect(leftover).toEqual([]);
+    expect(leftover).toEqual([`tmex-cli-1.2.3.tgz.part-${'ab'.repeat(8)}`]);
+    expect(statSync(join(stagedDir, leftover[0] as string)).size).toBeGreaterThan(0);
   }, 8_000);
 });
 

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { SystemInfo } from '@tmex/shared';
@@ -103,14 +103,19 @@ describe('POST /api/system/upgrade version validation', () => {
 });
 
 describe('GET /api/system/info upgradeCapabilities', () => {
-  test('includes staged-package, upgrade-cancel and uninstall', async () => {
+  test('includes staged-package, upgrade-cancel, uninstall and staged-package-resume', async () => {
     const response = await handleSystemApiRequest(
       new Request('http://localhost/api/system/info'),
       '/api/system/info'
     );
     expect(response?.status).toBe(200);
     const body = (await response?.json()) as { upgradeCapabilities?: string[] };
-    expect(body.upgradeCapabilities).toEqual(['staged-package', 'upgrade-cancel', 'uninstall']);
+    expect(body.upgradeCapabilities).toEqual([
+      'staged-package',
+      'upgrade-cancel',
+      'uninstall',
+      'staged-package-resume',
+    ]);
   });
 });
 
@@ -215,6 +220,155 @@ describe('PUT /api/system/upgrade/package', () => {
       expect(response?.status).toBe(413);
       expect(await response?.json()).toEqual({ code: 'PACKAGE_TOO_LARGE' });
       expect(cancelled).toBe(false);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+});
+
+describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
+  const installDirs: string[] = [];
+  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+
+  afterEach(() => {
+    upgradeController.resetForTests();
+    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
+    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function installDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-resume-'));
+    installDirs.push(dir);
+    writeFileSync(join(dir, 'install-meta.json'), '{}');
+    process.env.TMEX_INSTALL_DIR = dir;
+    return dir;
+  }
+
+  /** `declared` 模拟推送端声明的剩余长度：链路半路断掉时它大于实际收到的字节数。 */
+  function put(
+    version: string,
+    sha256: string,
+    body: Uint8Array,
+    opts?: { offset?: number; declared?: number }
+  ): Request {
+    const query = opts?.offset === undefined ? '' : `&offset=${opts.offset}`;
+    return withMeshAuth(
+      new Request(
+        `http://localhost/api/system/upgrade/package?version=${version}&sha256=${sha256}${query}`,
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-length': String(opts?.declared ?? body.byteLength),
+          },
+          body: bytesStream(body),
+        }
+      )
+    );
+  }
+
+  function statusRequest(version: string, sha256: string): Request {
+    return withMeshAuth(
+      new Request(`http://localhost/api/system/upgrade/package?version=${version}&sha256=${sha256}`)
+    );
+  }
+
+  test('GET 报已收字节数，PUT 带 offset 续写后 complete', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const bytes = new Uint8Array(64).fill(3);
+      const hex = sha256Hex(bytes);
+      const empty = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(empty?.status).toBe(200);
+      expect(await empty?.json()).toEqual({
+        version: '1.2.3',
+        sha256: hex,
+        receivedBytes: 0,
+        complete: false,
+      });
+
+      const partial = await handleSystemApiRequest(
+        put('1.2.3', hex, bytes.subarray(0, 20), { declared: 64 }),
+        '/api/system/upgrade/package'
+      );
+      expect(partial?.status).toBe(500);
+      expect(await partial?.json()).toEqual({ code: 'PACKAGE_INCOMPLETE', receivedBytes: 20 });
+
+      const offsetRes = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await offsetRes?.json()).toMatchObject({ receivedBytes: 20, complete: false });
+
+      const rest = await handleSystemApiRequest(
+        put('1.2.3', hex, bytes.subarray(20), { offset: 20 }),
+        '/api/system/upgrade/package'
+      );
+      expect(rest?.status).toBe(200);
+      expect(await rest?.json()).toEqual({ version: '1.2.3', sha256: hex, bytes: 64 });
+
+      const done = await handleSystemApiRequest(
+        statusRequest('1.2.3', hex),
+        '/api/system/upgrade/package'
+      );
+      expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
+      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('offset 对不上是 409 UPGRADE_OFFSET_MISMATCH，回包带真实偏移', async () => {
+    installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const bytes = new Uint8Array(64).fill(5);
+      const hex = sha256Hex(bytes);
+      await handleSystemApiRequest(
+        put('1.2.3', hex, bytes.subarray(0, 10), { declared: 64 }),
+        '/api/system/upgrade/package'
+      );
+      const bad = await handleSystemApiRequest(
+        put('1.2.3', hex, bytes.subarray(50), { offset: 50 }),
+        '/api/system/upgrade/package'
+      );
+      expect(bad?.status).toBe(409);
+      expect(await bad?.json()).toEqual({ code: 'UPGRADE_OFFSET_MISMATCH', receivedBytes: 10 });
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('GET 未登录是 403 staged_requires_auth', async () => {
+    installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await handleSystemApiRequest(
+        new Request(
+          `http://localhost/api/system/upgrade/package?version=1.2.3&sha256=${'ab'.repeat(32)}`
+        ),
+        '/api/system/upgrade/package'
+      );
+      expect(res?.status).toBe(403);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('GET 版本 / sha256 非法是 400', async () => {
+    installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await handleSystemApiRequest(
+        statusRequest('latest', 'ab'.repeat(32)),
+        '/api/system/upgrade/package'
+      );
+      expect(res?.status).toBe(400);
     } finally {
       infoSpy.mockRestore();
     }

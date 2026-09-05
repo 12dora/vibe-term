@@ -36,7 +36,12 @@ export function handleSystemApiRequest(
   if (path === '/api/system/info' && req.method === 'GET') {
     return json({
       ...getSystemInfo(),
-      upgradeCapabilities: ['staged-package', 'upgrade-cancel', 'uninstall'],
+      upgradeCapabilities: [
+        'staged-package',
+        'upgrade-cancel',
+        'uninstall',
+        'staged-package-resume',
+      ],
     });
   }
 
@@ -84,6 +89,10 @@ function dispatchUpgradePackage(req: Request): Response | Promise<Response> | un
   if (req.method === 'PUT') {
     if (isManaged()) return managedExternallyResponse();
     return handleStagePackageOpen(req);
+  }
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    if (isManaged()) return managedExternallyResponse();
+    return handleStagedPackageStatusOpen(req);
   }
   if (req.method === 'DELETE') {
     if (isManaged()) return managedExternallyResponse();
@@ -225,31 +234,72 @@ async function handleDeleteStagedPackageOpen(req: Request): Promise<Response> {
 
 const SHA256_HEX = /^[0-9a-fA-F]{64}$/;
 
-async function handleStagePackageOpen(req: Request): Promise<Response> {
-  if (!requestIsStagedAuthenticated(req)) {
-    return stagedRequiresAuth();
-  }
-  const info = getSystemInfo();
-  if (!info.canSelfUpdate) {
-    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
-  }
+type StagedPackageQuery = { error: Response } | { version: string; sha256: string };
+
+function parseStagedPackageQuery(req: Request): StagedPackageQuery {
   const url = new URL(req.url);
   const version = (url.searchParams.get('version') ?? '').trim();
   const sha256 = (url.searchParams.get('sha256') ?? '').trim();
   if (!version || !isReleaseVersion(version) || !SHA256_HEX.test(sha256)) {
-    return json({ error: t('apiError.upgradeVersionRequired') }, 400);
+    return { error: json({ error: t('apiError.upgradeVersionRequired') }, 400) };
   }
-  const contentLength = req.headers.get('content-length');
-  if (contentLength) {
-    const n = Number(contentLength);
-    if (Number.isFinite(n) && n > STAGED_PACKAGE_MAX_BYTES) {
-      return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
-    }
+  return { version, sha256: sha256.toLowerCase() };
+}
+
+/** `offset` 缺省 / 0 = 从头写；非法值一律按 0 处理，服务端再用 409 纠偏。 */
+function parseStagedPackageOffset(req: Request): number {
+  const raw = new URL(req.url).searchParams.get('offset');
+  if (!raw) return 0;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Math.trunc(n);
+}
+
+function rejectStagedPackageRequest(req: Request): Response | null {
+  if (!requestIsStagedAuthenticated(req)) return stagedRequiresAuth();
+  if (!getSystemInfo().canSelfUpdate) {
+    return json({ error: t('apiError.upgradeNotAllowed') }, 403);
+  }
+  return null;
+}
+
+async function handleStagedPackageStatusOpen(req: Request): Promise<Response> {
+  const blocked = rejectStagedPackageRequest(req);
+  if (blocked) return blocked;
+  const parsed = parseStagedPackageQuery(req);
+  if ('error' in parsed) return parsed.error;
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.stagedPackageStatus(parsed.version, parsed.sha256);
+  if (!result.ok) return json({ code: result.code }, result.status);
+  return json({
+    version: result.version,
+    sha256: result.sha256,
+    receivedBytes: result.receivedBytes,
+    complete: result.complete,
+  });
+}
+
+async function handleStagePackageOpen(req: Request): Promise<Response> {
+  const blocked = rejectStagedPackageRequest(req);
+  if (blocked) return blocked;
+  const parsed = parseStagedPackageQuery(req);
+  if ('error' in parsed) return parsed.error;
+  const offset = parseStagedPackageOffset(req);
+  const declared = Number(req.headers.get('content-length') ?? '');
+  const hasLength = Number.isFinite(declared) && declared > 0;
+  if (hasLength && declared + offset > STAGED_PACKAGE_MAX_BYTES) {
+    return json({ code: 'PACKAGE_TOO_LARGE' }, 413);
   }
   const { upgradeController } = await import('../system/upgrade');
-  const result = await upgradeController.stagePackage(version, sha256, req.body);
-  if (!result.ok && result.code === 'UPGRADE_IN_PROGRESS') {
-    return json({ code: 'UPGRADE_IN_PROGRESS' }, 409);
+  const result = await upgradeController.stagePackage(parsed.version, parsed.sha256, req.body, {
+    offset,
+    expectedBytes: hasLength ? offset + declared : undefined,
+  });
+  if (
+    !result.ok &&
+    (result.code === 'UPGRADE_OFFSET_MISMATCH' || result.code === 'PACKAGE_INCOMPLETE')
+  ) {
+    return json({ code: result.code, receivedBytes: result.receivedBytes }, result.status);
   }
   if (!result.ok) {
     return json({ code: result.code }, result.status);

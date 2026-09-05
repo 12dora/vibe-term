@@ -44,11 +44,15 @@ import {
   createUpgradeCancelGate,
   launchRowUpgrade,
   launchUpgradeBatch,
+  pushProgressOf,
   reportBatchSummary,
   restorableRows,
   restoreUpgradeStates,
   retainKnownIds,
   runNodeUpgrade,
+  upgradeErrorText,
+  upgradePhaseText,
+  watchUpgrade,
 } from './use-node-upgrade';
 
 const t = (key: string, options?: Record<string, unknown>) =>
@@ -834,6 +838,7 @@ describe('POST 在途时按下「停止升级」', () => {
       phase: 'idle',
       targetVersion: null,
       error: null,
+      push: null,
       cancelling: false,
     });
     // 「已开始升级」不再弹：用户按下停止之后再报开始只会添乱
@@ -884,6 +889,116 @@ describe('POST 在途时按下「停止升级」', () => {
       ['error', 'nodes.upgrade.failed:{"error":"nodes.upgrade.nodeGone"}'],
     ]);
     expect(w.entry.cancelling).toBe(false);
+  });
+});
+
+describe('推包进度与预算', () => {
+  /** 假 IO：wait 推进时钟，poll 按脚本逐次给结果（越界用最后一项）。 */
+  function progressIo(polls: UpgradePollOutcome[]): UpgradeIo & { clock: () => number } {
+    let clock = 0;
+    let index = 0;
+    const io = stubIo({
+      poll: async () => polls[Math.min(index++, polls.length - 1)] as UpgradePollOutcome,
+      nodeVersion: async () => '1.2.0',
+      wait: async (ms) => {
+        clock += ms;
+        return true;
+      },
+      now: () => clock,
+    });
+    return { ...io, clock: () => clock };
+  }
+
+  function pushing(pushedBytes: number): UpgradePollOutcome {
+    return {
+      kind: 'status',
+      status: status({
+        state: 'downloading',
+        targetVersion: '1.2.0',
+        progress: { phase: 'push', pushedBytes, totalBytes: 13_500_000, attempt: 1 },
+      }),
+    };
+  }
+
+  test('推包字节一直在涨：预算跟着重新计时，不会在六分钟处判超时', async () => {
+    // 6 分钟 = 180 轮（2 s 一轮）；这里排 300 轮持续推进，再回到 idle 收尾。
+    const polls: UpgradePollOutcome[] = [];
+    for (let i = 1; i <= 300; i += 1) polls.push(pushing(i * 40_000));
+    polls.push({ kind: 'status', status: status({ state: 'idle' }) });
+    const io = progressIo(polls);
+    const pushes: Array<{ pushedBytes: number; totalBytes: number } | null | undefined> = [];
+    const result = await watchUpgrade({
+      nodeId: 'n1',
+      targetVersion: '1.2.0',
+      sawActive: true,
+      unconfirmedStart: false,
+      io,
+      signal: new AbortController().signal,
+      describeError: (code) => code,
+      phase: () => undefined,
+      progress: (push) => pushes.push(push),
+    });
+    expect(result).toEqual({ kind: 'done' });
+    expect(io.clock()).toBeGreaterThan(6 * 60_000);
+    // 300 轮推包各报一次，最后回到 idle 时再清一次，免得表格上留着过期进度。
+    expect(pushes).toHaveLength(301);
+    expect(pushes.at(-2)).toEqual({ pushedBytes: 300 * 40_000, totalBytes: 13_500_000 });
+    expect(pushes.at(-1)).toBeNull();
+  });
+
+  test('进度停在原地：预算照常到期，报「未确认」而不是无限等', async () => {
+    const io = progressIo([pushing(40_000)]);
+    const result = await watchUpgrade({
+      nodeId: 'n1',
+      targetVersion: '1.2.0',
+      sawActive: true,
+      unconfirmedStart: false,
+      io,
+      signal: new AbortController().signal,
+      describeError: (code) => code,
+      phase: () => undefined,
+    });
+    expect(result).toEqual({ kind: 'timeout' });
+    expect(io.clock()).toBeLessThanOrEqual(6 * 60_000 + 2_000);
+  });
+
+  test('下载阶段的进度不当推包展示：总量未知时不摆进度', () => {
+    expect(pushProgressOf(null)).toBeNull();
+    expect(
+      pushProgressOf({ phase: 'download', pushedBytes: 0, totalBytes: 0, attempt: 0 })
+    ).toBeNull();
+    expect(
+      pushProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 0, attempt: 1 })
+    ).toBeNull();
+    expect(pushProgressOf({ phase: 'push', pushedBytes: 10, totalBytes: 20, attempt: 2 })).toEqual({
+      pushedBytes: 10,
+      totalBytes: 20,
+    });
+  });
+
+  test('推包阶段的按钮文案带上「已传 / 总量」', () => {
+    expect(upgradePhaseText(t, 'downloading')).toBe('nodes.upgrade.stateDownloading');
+    expect(upgradePhaseText(t, 'downloading', { pushedBytes: 1024, totalBytes: 2048 })).toBe(
+      'nodes.upgrade.statePushing:{"progress":"1.00 KB / 2.00 KB"}'
+    );
+  });
+
+  test('后端原始失败串翻成人话，认不出的保持原样', () => {
+    expect(upgradeErrorText(t, 'push failed: HTTP 503 NODE_UNREACHABLE link_lost')).toBe(
+      'nodes.upgrade.linkLost'
+    );
+    expect(upgradeErrorText(t, 'push failed: push timeout')).toBe('nodes.upgrade.pushTimeout');
+    expect(upgradeErrorText(t, 'push failed: HTTP 500 PACKAGE_INCOMPLETE')).toBe(
+      'nodes.upgrade.pushFailed'
+    );
+    expect(upgradeErrorText(t, 'UPGRADE_OFFSET_MISMATCH')).toBe('nodes.upgrade.pushFailed');
+    expect(upgradeErrorText(t, 'download failed: GitHub release tarball HTTP 403')).toBe(
+      'nodes.upgrade.downloadFailed'
+    );
+    expect(upgradeErrorText(t, 'start failed: HTTP 409 UPGRADE_IN_PROGRESS')).toBe(
+      'nodes.upgrade.startFailed'
+    );
+    expect(upgradeErrorText(t, 'BOOM')).toBe('BOOM');
   });
 });
 

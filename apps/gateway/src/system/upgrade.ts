@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash } from 'node:crypto';
 import {
   closeSync,
   existsSync,
@@ -17,6 +17,17 @@ import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
+import {
+  type StagePackageOpts,
+  type StagePackageResult,
+  type StagedPackageRecord,
+  type StagedPackageStatusResult,
+  fileSizeOrZero,
+  resumeStagedPart,
+  stagedPartExpired,
+  stagedPartPath,
+  truncatedTransfer,
+} from './upgrade-staging';
 
 export {
   assertReleaseIntegrity,
@@ -26,11 +37,16 @@ export {
   sha256Hex,
 } from './release-download';
 export { processCommandLine, processStartIdentity };
+export type {
+  StagePackageOpts,
+  StagePackageResult,
+  StagedPackageRecord,
+  StagedPackageStatusResult,
+};
 
 export const STAGED_PACKAGE_MAX_BYTES = 256 * 1024 * 1024;
 const STAGED_PACKAGE_TTL_MS = 24 * 60 * 60 * 1000;
 const STAGED_PACKAGE_MAX_COUNT = 2;
-
 function createTxnId(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
@@ -85,21 +101,6 @@ export type UpgradeCancelResult =
       code: 'UPGRADE_NOT_CANCELLABLE' | 'UPGRADE_NOT_RUNNING';
       status: UpgradeStatus;
     };
-
-export type StagedPackageRecord = {
-  version: string;
-  sha256: string;
-  path: string;
-  bytes: number;
-  stagedAt: string;
-};
-
-export type StagePackageResult =
-  | { ok: true; version: string; sha256: string; bytes: number }
-  | { ok: false; status: 400; code: 'PACKAGE_SHA256_MISMATCH' | 'BAD_REQUEST' }
-  | { ok: false; status: 409; code: 'UPGRADE_IN_PROGRESS' }
-  | { ok: false; status: 413; code: 'PACKAGE_TOO_LARGE' }
-  | { ok: false; status: 500; code: 'STAGE_FAILED' };
 
 /**
  * 全局唯一升级状态机：idle / downloading / executing。
@@ -156,6 +157,8 @@ export class UpgradeController {
   private stagedLoaded = false;
   private stagingInFlight = false;
   private stagingVersion: string | null = null;
+  private stagingKey: string | null = null;
+  private stagingPreempt: (() => void) | null = null;
   private stagingDone: Promise<void> = Promise.resolve();
   private abort: AbortController | null = null;
   private cancelRequested = false;
@@ -188,6 +191,8 @@ export class UpgradeController {
     this.stagedLoaded = false;
     this.stagingInFlight = false;
     this.stagingVersion = null;
+    this.stagingKey = null;
+    this.stagingPreempt = null;
     this.stagingDone = Promise.resolve();
     this.abort?.abort();
     this.abort = null;
@@ -258,33 +263,88 @@ export class UpgradeController {
     const stagedDir = join(installDir, 'staging', 'staged');
     const tgz = record?.path ?? join(stagedDir, releaseTarballName(version));
     const sidecar = join(stagedDir, `tmex-cli-${version}.json`);
-    const had = Boolean(record) || existsSync(tgz) || existsSync(sidecar);
+    const parts = this.listStagedParts(stagedDir, version);
+    const had = Boolean(record) || existsSync(tgz) || existsSync(sidecar) || parts.length > 0;
     if (!had) return { ok: false, status: 404 };
     this.staged.delete(version);
     await rm(tgz, { force: true }).catch(() => {});
     await rm(sidecar, { force: true }).catch(() => {});
+    for (const part of parts) await rm(part, { force: true }).catch(() => {});
     return { ok: true };
+  }
+
+  /** 该版本遗留的所有续传半成品：取消 / 删除暂存包时要一并清掉。 */
+  private listStagedParts(stagedDir: string, version: string): string[] {
+    if (!existsSync(stagedDir)) return [];
+    const prefix = `${releaseTarballName(version)}.part`;
+    try {
+      return readdirSync(stagedDir)
+        .filter((name) => name.startsWith(prefix))
+        .map((name) => join(stagedDir, name));
+    } catch {
+      return [];
+    }
+  }
+
+  /** 续传前的偏移查询：已完整暂存返回 `complete`，否则返回 `.part` 的当前长度。 */
+  async stagedPackageStatus(version: string, sha256: string): Promise<StagedPackageStatusResult> {
+    const expected = sha256.trim().toLowerCase();
+    if (!/^[0-9a-f]{64}$/.test(expected)) return { ok: false, status: 400, code: 'BAD_REQUEST' };
+    if (this.stagingVersion === version) await this.stagingDone;
+    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
+    const installDir = resolveUpgradeInstallDir(install);
+    if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    const staged = this.lookupStaged(version, expected);
+    if (staged) {
+      return {
+        ok: true,
+        version,
+        sha256: expected,
+        receivedBytes: staged.bytes,
+        complete: true,
+      };
+    }
+    const stagedDir = join(installDir, 'staging', 'staged');
+    return {
+      ok: true,
+      version,
+      sha256: expected,
+      receivedBytes: fileSizeOrZero(stagedPartPath(stagedDir, version, expected)),
+      complete: false,
+    };
   }
 
   async stagePackage(
     version: string,
     sha256: string,
-    body: ReadableStream<Uint8Array> | null
+    body: ReadableStream<Uint8Array> | null,
+    opts?: StagePackageOpts
   ): Promise<StagePackageResult> {
-    if (this.isBusy() || this.stagingInFlight) {
-      return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+    const key = `${version}:${sha256.trim().toLowerCase()}`;
+    if (this.isBusy()) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+    if (this.stagingInFlight) {
+      // 同一个包的续传：上一条 PUT 多半挂在已经死掉的链路上，先把它顶掉再接手。
+      if (this.stagingKey !== key) return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+      this.stagingPreempt?.();
+      await this.stagingDone;
+      if (this.isBusy() || this.stagingInFlight) {
+        return { ok: false, status: 409, code: 'UPGRADE_IN_PROGRESS' };
+      }
     }
     this.stagingInFlight = true;
     this.stagingVersion = version;
+    this.stagingKey = key;
     let release!: () => void;
     this.stagingDone = new Promise<void>((resolve) => {
       release = resolve;
     });
     try {
-      return await this.stagePackageLocked(version, sha256, body);
+      return await this.stagePackageLocked(version, sha256, body, opts);
     } finally {
       this.stagingInFlight = false;
       this.stagingVersion = null;
+      this.stagingKey = null;
+      this.stagingPreempt = null;
       release();
     }
   }
@@ -292,7 +352,8 @@ export class UpgradeController {
   private async stagePackageLocked(
     version: string,
     sha256: string,
-    body: ReadableStream<Uint8Array> | null
+    body: ReadableStream<Uint8Array> | null,
+    opts?: StagePackageOpts
   ): Promise<StagePackageResult> {
     const expected = sha256.trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) {
@@ -308,16 +369,61 @@ export class UpgradeController {
     await this.repairStagingArtifacts(installDir);
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
-    const finalPath = join(stagedDir, releaseTarballName(version));
-    const partPath = `${finalPath}.part-${randomBytes(8).toString('hex')}`;
-    const sidecarPath = join(stagedDir, `tmex-cli-${version}.json`);
+    const partPath = stagedPartPath(stagedDir, version, expected);
     const maxBytes = this.deps.maxPackageBytes ?? STAGED_PACKAGE_MAX_BYTES;
     const hash = createHash('sha256');
-    let bytes = 0;
+    const resumed = await resumeStagedPart(partPath, opts?.offset ?? 0, maxBytes, hash);
+    if (!resumed.ok) return resumed.result;
+
+    const received = await this.receiveStagedBody({
+      body,
+      partPath,
+      offset: resumed.offset,
+      maxBytes,
+      hash,
+    });
+    if (!received.ok) return received.result;
+    const truncated = truncatedTransfer(received.bytes, opts?.expectedBytes);
+    if (truncated) {
+      // 半截包留在盘上等下一次续传，别把已经收到的十几兆一起扔掉。
+      return { ok: false, status: 500, code: 'PACKAGE_INCOMPLETE', receivedBytes: received.bytes };
+    }
+    if (received.digest !== expected) {
+      await rm(partPath, { force: true }).catch(() => {});
+      return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
+    }
+    return this.commitStagedPackage(installDir, {
+      version,
+      sha256: expected,
+      bytes: received.bytes,
+      partPath,
+    });
+  }
+
+  /**
+   * 收包主循环。链路中断（read 抛错 / 被同包的新 PUT 顶掉）只关文件、**保留 `.part`**，
+   * 下一次 PUT 带 offset 接着写；只有超限这种确定性失败才把半成品删掉。
+   */
+  private async receiveStagedBody(input: {
+    body: ReadableStream<Uint8Array>;
+    partPath: string;
+    offset: number;
+    maxBytes: number;
+    hash: ReturnType<typeof createHash>;
+  }): Promise<
+    { ok: true; bytes: number; digest: string } | { ok: false; result: StagePackageResult }
+  > {
+    const { body, partPath, offset, maxBytes, hash } = input;
+    let bytes = offset;
     const reader = body.getReader();
+    let preempted = false;
+    this.stagingPreempt = () => {
+      preempted = true;
+      void reader.cancel().catch(() => {});
+    };
     let fh: Awaited<ReturnType<typeof open>> | null = null;
     try {
-      fh = await open(partPath, 'w', 0o600);
+      fh = await open(partPath, offset > 0 ? 'a' : 'w', 0o600);
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
@@ -332,7 +438,7 @@ export class UpgradeController {
           } catch {
             // already released
           }
-          return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
+          return { ok: false, result: { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' } };
         }
         hash.update(value);
         await fh.write(value);
@@ -341,17 +447,24 @@ export class UpgradeController {
       fh = null;
     } catch {
       await fh?.close().catch(() => {});
-      fh = null;
-      await rm(partPath, { force: true }).catch(() => {});
-      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+      return { ok: false, result: { ok: false, status: 500, code: 'STAGE_FAILED' } };
+    } finally {
+      this.stagingPreempt = null;
     }
-
-    const digest = hash.digest('hex');
-    if (digest !== expected) {
-      await rm(partPath, { force: true }).catch(() => {});
-      return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
+    if (preempted) {
+      return { ok: false, result: { ok: false, status: 500, code: 'STAGE_FAILED' } };
     }
+    return { ok: true, bytes, digest: hash.digest('hex') };
+  }
 
+  private async commitStagedPackage(
+    installDir: string,
+    input: { version: string; sha256: string; bytes: number; partPath: string }
+  ): Promise<StagePackageResult> {
+    const { version, sha256, bytes, partPath } = input;
+    const stagedDir = join(installDir, 'staging', 'staged');
+    const finalPath = join(stagedDir, releaseTarballName(version));
+    const sidecarPath = join(stagedDir, `tmex-cli-${version}.json`);
     let renamed = false;
     try {
       await rm(finalPath, { force: true }).catch(() => {});
@@ -360,7 +473,7 @@ export class UpgradeController {
       await chmod(finalPath, 0o600).catch(() => {});
       const record: StagedPackageRecord = {
         version,
-        sha256: digest,
+        sha256,
         path: finalPath,
         bytes,
         stagedAt: new Date((this.deps.now ?? Date.now)()).toISOString(),
@@ -369,7 +482,7 @@ export class UpgradeController {
       this.loadStagedFromDisk(installDir);
       this.staged.set(version, record);
       await this.pruneStaged(installDir, version);
-      return { ok: true, version, sha256: digest, bytes };
+      return { ok: true, version, sha256, bytes };
     } catch {
       await rm(partPath, { force: true }).catch(() => {});
       if (renamed) await rm(finalPath, { force: true }).catch(() => {});
@@ -483,10 +596,14 @@ export class UpgradeController {
       return;
     }
     const keptPaths = new Set([...this.staged.values()].map((record) => record.path));
+    const now = (this.deps.now ?? Date.now)();
     for (const name of names) {
       const path = join(stagedDir, name);
       if (name.includes('.part')) {
-        await rm(path, { force: true, recursive: true }).catch(() => {});
+        // 断点续传的半成品要留着给下一次 PUT 接力，只清超过保留期的。
+        if (stagedPartExpired(path, now)) {
+          await rm(path, { force: true, recursive: true }).catch(() => {});
+        }
         continue;
       }
       if (name.endsWith('.json')) {

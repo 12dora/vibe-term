@@ -1,4 +1,5 @@
 import {
+  type RemoteUpgradeProgress,
   UPGRADE_CANCELLED,
   type UpgradeState,
   type UpgradeStatus,
@@ -10,6 +11,7 @@ import { MESH_VIA_SELF } from '../mesh/mesh-deps';
 import { jsonBody, jsonError } from '../mesh/session-middleware';
 import { getSystemInfo } from './info-public';
 import {
+  type RemoteUpgradeJobSnapshot,
   cancelRemoteUpgradeJob,
   consumeHandedOffJob,
   getRemoteUpgradeJob,
@@ -31,6 +33,8 @@ export type AuthorizedUpgradeForwardInput = {
   rawBody?: ReadableStream<Uint8Array>;
   headers?: Record<string, string>;
   signal?: AbortSignal;
+  /** 显式授权重试（非幂等方法默认不重试）；带 rawBody 时无效。 */
+  retry?: { attempts: number };
 };
 
 export type AuthorizedUpgradeForward = {
@@ -139,6 +143,7 @@ export async function handleMeshNodeUpgradeStatus(opts: {
       targetVersion: job.targetVersion,
       error: null,
       startedAt: job.startedAt,
+      progress: remoteUpgradeProgress(job),
     });
   }
   if (job?.state === 'failed') {
@@ -370,6 +375,15 @@ async function startRemoteMeshUpgrade(
     body: { version: latestVersion },
   });
   return mapForwardedUpgradeResponse(nodeId, started);
+}
+
+function remoteUpgradeProgress(job: RemoteUpgradeJobSnapshot): RemoteUpgradeProgress {
+  return {
+    phase: job.phase,
+    pushedBytes: job.pushedBytes,
+    totalBytes: job.totalBytes,
+    attempt: job.attempt,
+  };
 }
 
 function hasStagedPackageCapability(raw: unknown): boolean {

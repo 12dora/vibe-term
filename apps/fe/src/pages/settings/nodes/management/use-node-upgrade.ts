@@ -19,8 +19,8 @@
 // 照样把升级跑起来。因此由 `createUpgradeCancelGate` 记账，等 POST 落地再补发（`UpgradeStartHandoff`）。
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@tmex/api-client';
-import { UPGRADE_CANCELLED, type UpgradeStatus } from '@tmex/shared';
+import { defaultApiClient, formatBytesPair } from '@tmex/api-client';
+import { type RemoteUpgradeProgress, UPGRADE_CANCELLED, type UpgradeStatus } from '@tmex/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
@@ -68,8 +68,14 @@ export {
 export type { Translate, UpgradeToasts };
 
 const POLL_MS = 2000;
-/** 下载 + 解包 + 重启 + 版本回传的总预算。 */
+/** 没有任何进展时的等待预算：下载 + 解包 + 重启 + 版本回传。 */
 const BUDGET_MS = 6 * 60_000;
+/**
+ * 入口每报一次新的推包进度就把预算重新计时——13 MB 的包过中继可能要十几分钟，
+ * 按固定 6 分钟砍掉只会把一次正在推进的升级判成「未确认」。这是硬上限，
+ * 覆盖后端 10 min 下载 + 15 min 推包 + 1 min 启动。
+ */
+const MAX_BUDGET_MS = 30 * 60_000;
 /** POST 之后目标迟迟不进入非 idle：判定没真正开始，不要空等满预算。 */
 const START_GRACE_MS = 30_000;
 /** 刷新后回读各节点升级状态的并发上限。 */
@@ -86,7 +92,20 @@ const ERROR_KEYS: Record<string, string> = {
   UPGRADE_IN_PROGRESS: 'nodes.upgrade.inProgress',
   UPGRADE_UNSUPPORTED: 'nodes.upgrade.unsupported',
   RELEASE_UNAVAILABLE: 'nodes.upgrade.releaseUnavailable',
+  UPGRADE_OFFSET_MISMATCH: 'nodes.upgrade.pushFailed',
 };
+
+/**
+ * 入口报回来的原始失败串（`push failed: …` / `download failed: …`）不适合直接摆给用户：
+ * 按前缀与关键片段翻成一句人话。命中不了的保持原样，宁可露出英文也不谎报原因。
+ */
+const RAW_ERROR_PATTERNS: Array<{ match: RegExp; key: string }> = [
+  { match: /link_lost/i, key: 'nodes.upgrade.linkLost' },
+  { match: /^push failed: .*(push timeout)/i, key: 'nodes.upgrade.pushTimeout' },
+  { match: /^push failed:/i, key: 'nodes.upgrade.pushFailed' },
+  { match: /^download failed:/i, key: 'nodes.upgrade.downloadFailed' },
+  { match: /^start failed:/i, key: 'nodes.upgrade.startFailed' },
+];
 
 /** 轮询期间必须立刻收尾的业务错误：节点被吊销、会话失效、目标压根不支持升级。 */
 const DEFINITIVE_POLL_CODES = new Set([
@@ -291,6 +310,8 @@ export interface UpgradeWatchContext {
   signal: AbortSignal;
   describeError: (code: string) => string;
   phase: (phase: NodeUpgradePhase) => void;
+  /** 入口代跑时的推包进度；本机升级与旧入口没有这一段，只在数值变化时回调。 */
+  progress?: (push: NodeUpgradeEntry['push']) => void;
 }
 
 /** `stopped`：目标已被中断（`error === 'UPGRADE_CANCELLED'`），是良性结论，不能报失败。 */
@@ -321,7 +342,7 @@ async function settleIdle(
 ): Promise<UpgradeWatchResult | null> {
   // 状态不跨进程持久化：重启回来后 error 一定是空的，所以 idle 上还挂着 error 就是下载阶段失败。
   if (status.error === UPGRADE_CANCELLED_ERROR) return { kind: 'stopped' };
-  if (status.error) return { kind: 'failed', error: status.error };
+  if (status.error) return { kind: 'failed', error: ctx.describeError(status.error) };
   if (!sawActive) {
     // POST 结果未知：目标可能已经升完重启回来，版本对上就是成功。
     if (ctx.unconfirmedStart && (await versionConfirmed(ctx, true))) return { kind: 'done' };
@@ -331,11 +352,52 @@ async function settleIdle(
   return (await versionConfirmed(ctx, false)) ? { kind: 'done' } : null;
 }
 
+/** 只有真的在推包时才给进度：下载阶段总量未知，摆个 0 / 0 只会误导。 */
+export function pushProgressOf(
+  progress: RemoteUpgradeProgress | null
+): { pushedBytes: number; totalBytes: number } | null {
+  if (!progress || progress.phase !== 'push' || progress.totalBytes <= 0) return null;
+  return { pushedBytes: progress.pushedBytes, totalBytes: progress.totalBytes };
+}
+
+/** 进度指纹：入口每换一个阶段、每多推一段字节都会变，据此判断这次升级还在推进。 */
+export function upgradeProgressMark(status: UpgradeStatus): string {
+  const progress = status.progress;
+  if (!progress) return '';
+  return `${progress.phase}:${progress.pushedBytes}:${progress.attempt}`;
+}
+
+/**
+ * 进度记账：入口每报一次新的进度就把预算重新计时（封顶 `MAX_BUDGET_MS`），
+ * 并在推包字节变化时回调一次，免得每轮都往表格里塞同一份进度。
+ */
+function createProgressTracker(ctx: UpgradeWatchContext, startedAt: number) {
+  const hardDeadline = startedAt + MAX_BUDGET_MS;
+  let deadline = startedAt + BUDGET_MS;
+  let progressMark = '';
+  let pushMark = '';
+  return {
+    deadline: () => deadline,
+    observe(status: UpgradeStatus): void {
+      const mark = upgradeProgressMark(status);
+      if (mark && mark !== progressMark) {
+        progressMark = mark;
+        deadline = Math.min(ctx.io.now() + BUDGET_MS, hardDeadline);
+      }
+      const push = pushProgressOf(status.progress ?? null);
+      const nextPushMark = push ? `${push.pushedBytes}/${push.totalBytes}` : '';
+      if (nextPushMark === pushMark) return;
+      pushMark = nextPushMark;
+      ctx.progress?.(push);
+    },
+  };
+}
+
 export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWatchResult> {
   const startedAt = ctx.io.now();
-  const deadline = startedAt + BUDGET_MS;
+  const tracker = createProgressTracker(ctx, startedAt);
   let sawActive = ctx.sawActive;
-  while (ctx.io.now() < deadline) {
+  while (ctx.io.now() < tracker.deadline()) {
     if (!(await ctx.io.wait(POLL_MS, ctx.signal))) return { kind: 'cancelled' };
     const poll = await ctx.io.poll(ctx.nodeId, ctx.signal);
     if (poll.kind === 'cancelled') return { kind: 'cancelled' };
@@ -349,6 +411,7 @@ export async function watchUpgrade(ctx: UpgradeWatchContext): Promise<UpgradeWat
       continue;
     }
     const status = poll.status;
+    tracker.observe(status);
     if (status.state !== 'idle') {
       sawActive = true;
       ctx.phase(status.state);
@@ -445,7 +508,7 @@ function outcomeOf(result: UpgradeWatchResult): UpgradeRunOutcome {
 
 /** 一次升级的完整流程：POST → 轮询 → 结论。取消（组件卸载）后一律静默返回。 */
 export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOutcome> {
-  p.patch({ phase: 'pending', targetVersion: p.targetVersion, error: null });
+  p.patch({ phase: 'pending', targetVersion: p.targetVersion, error: null, push: null });
   p.handoff?.begin();
   let started: UpgradeStartOutcome;
   try {
@@ -475,6 +538,7 @@ export async function runNodeUpgrade(p: UpgradeRunParams): Promise<UpgradeRunOut
     signal: p.signal,
     describeError: (code) => upgradeErrorText(p.t, code),
     phase: (phase) => p.patch({ phase }),
+    progress: (push) => p.patch({ push }),
   });
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
@@ -502,6 +566,7 @@ export async function resumeNodeUpgrade(p: UpgradeResumeParams): Promise<Upgrade
     signal: p.signal,
     describeError: (code) => upgradeErrorText(p.t, code),
     phase: (phase) => p.patch({ phase }),
+    progress: (push) => p.patch({ push }),
   });
   if (result.kind === 'cancelled' || p.signal.aborted) return 'cancelled';
   reportResult(p, version, result);
@@ -802,12 +867,26 @@ export function launchRowUpgrade(p: UpgradeRowLaunch): Promise<UpgradeRunOutcome
 
 export function upgradeErrorText(t: Translate, code: string): string {
   const key = ERROR_KEYS[code];
-  return key ? t(key) : code;
+  if (key) return t(key);
+  const pattern = RAW_ERROR_PATTERNS.find((row) => row.match.test(code));
+  return pattern ? t(pattern.key) : code;
 }
 
 /** 阶段 → 按钮上的进度文案；静止阶段没有文案。 */
-export function upgradePhaseText(t: Translate, phase: NodeUpgradePhase): string | null {
-  if (phase === 'downloading') return t('nodes.upgrade.stateDownloading');
+export function upgradePhaseText(
+  t: Translate,
+  phase: NodeUpgradePhase,
+  push?: NodeUpgradeEntry['push']
+): string | null {
+  if (phase === 'downloading') {
+    // 入口正在把包推给目标：摆出「已传 / 总量」，比一个不动的「下载中」有信息量。
+    if (push) {
+      return t('nodes.upgrade.statePushing', {
+        progress: formatBytesPair(push.pushedBytes, push.totalBytes),
+      });
+    }
+    return t('nodes.upgrade.stateDownloading');
+  }
   if (phase === 'executing') return t('nodes.upgrade.stateExecuting');
   if (phase === 'restarting' || phase === 'pending') return t('nodes.upgrade.stateRestarting');
   return null;
