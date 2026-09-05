@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { ensureDir, pathExists, writeText } from './fs-utils';
 import { type ServiceManagerKind, detectServiceManager } from './platform';
 import { runCommand } from './process';
+import { ensureSystemdOomPolicyDropIn, removeSystemdOomPolicyDropIn } from './systemd-oom-policy';
 
 export interface ServiceInstallOptions {
   serviceName: string;
@@ -142,6 +143,7 @@ async function installSystemdService(options: ServiceInstallOptions): Promise<vo
   const unitPath = systemdUnitPath(options.serviceName);
   await ensureDir(join(homedir(), '.config', 'systemd', 'user'));
   await writeText(unitPath, buildSystemdServiceContent(options));
+  await ensureSystemdOomPolicyDropIn().catch(() => 'failed');
 
   const daemonReload = await runCommand('systemctl', ['--user', 'daemon-reload']);
   if (daemonReload.code !== 0) {
@@ -295,6 +297,7 @@ async function uninstallSystemdService(serviceName: string): Promise<void> {
   if (await pathExists(unitPath)) {
     await rm(unitPath, { force: true });
   }
+  await removeSystemdOomPolicyDropIn().catch(() => 'failed');
   await runCommand('systemctl', ['--user', 'daemon-reload']).catch(() => null);
 }
 

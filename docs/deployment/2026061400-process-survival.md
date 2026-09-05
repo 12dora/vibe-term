@@ -25,6 +25,10 @@ loginctl enable-linger <user>
 
 tmex 默认不代为启用 linger，以免擅自改动账户系统状态（linger 会让该用户的 systemd 用户实例常驻、不随登录会话退出而停止，属于账户级配置变更，应由用户知情后自行决定）。
 
+## 相关：pane 级 OOM 策略（Linux，1.1.34 起）
+
+`KillMode=process` 管的是 tmex 自身单元被终止时的波及范围；另有一条独立的杀伤路径来自 tmux ≥ 3.6——它为每个 pane 建一个 systemd 用户 scope，systemd 默认 `DefaultOOMPolicy=stop` 会在内核 OOM 杀掉 scope 内任意进程后停掉整个 scope，pane 的 shell 随之退出、tmux 窗口消失。因此 Linux 上安装/升级托管服务时，tmex 除渲染 unit 外还会写入 `~/.config/systemd/user.conf.d/tmex-oom.conf`（`[Manager] DefaultOOMPolicy=continue`）并 `systemctl --user daemon-reexec`：幂等、用户已显式配置过 `DefaultOOMPolicy=` 时跳过、失败只告警不阻断安装，卸载时只删逐字节相同的那份。机制与取证方法见 `docs/terminal/2026090601-pane-oom-policy.md`。
+
 ## 生效方式
 
 服务定义（systemd unit / launchd plist）只在安装或升级时重新渲染落盘。已运行的实例不会热更新这些文件，因此本修复需要用户执行 `tmex upgrade` 或重装后才落地。

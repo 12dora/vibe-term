@@ -4,7 +4,8 @@ import {
   buildSystemdServiceContent,
   systemdUnitLacksKillModeProcess,
 } from '../lib/service';
-import { warnOnStaleSystemdUnit } from './service-selfcheck';
+import { SYSTEMD_OOM_POLICY_WARNING } from '../lib/systemd-oom-policy';
+import { warnOnStaleSystemdUnit, warnOnSystemdOomPolicy } from './service-selfcheck';
 
 describe('systemdUnitLacksKillModeProcess', () => {
   test('当前模板不告警', () => {
@@ -62,5 +63,57 @@ describe('warnOnStaleSystemdUnit', () => {
     });
     expect(warned).toBe(false);
     expect(lines).toEqual([]);
+  });
+});
+
+describe('warnOnSystemdOomPolicy', () => {
+  test('非 Linux 不 spawn systemctl', async () => {
+    const calls: string[] = [];
+    const warned = await warnOnSystemdOomPolicy({
+      platform: 'darwin',
+      probe: async (command, args) => {
+        calls.push([command, ...args].join(' '));
+        return 'DefaultOOMPolicy=stop';
+      },
+      warn: () => undefined,
+    });
+    expect(warned).toBe(false);
+    expect(calls).toEqual([]);
+  });
+
+  test('Linux + stop + tmux 3.6 打出固定告警', async () => {
+    const warns: string[] = [];
+    const warned = await warnOnSystemdOomPolicy({
+      platform: 'linux',
+      probe: async (command) => (command === 'tmux' ? 'tmux 3.6\n' : 'DefaultOOMPolicy=stop\n'),
+      warn: (line) => warns.push(line),
+    });
+    expect(warned).toBe(true);
+    expect(warns).toEqual([SYSTEMD_OOM_POLICY_WARNING]);
+  });
+
+  test('continue 时安静，且不再探测 tmux', async () => {
+    const calls: string[] = [];
+    const warned = await warnOnSystemdOomPolicy({
+      platform: 'linux',
+      probe: async (command, args) => {
+        calls.push([command, ...args].join(' '));
+        return 'DefaultOOMPolicy=continue\n';
+      },
+      warn: () => undefined,
+    });
+    expect(warned).toBe(false);
+    expect(calls).toEqual(['systemctl --user show -p DefaultOOMPolicy']);
+  });
+
+  test('systemctl 探测失败时静默', async () => {
+    const warns: string[] = [];
+    const warned = await warnOnSystemdOomPolicy({
+      platform: 'linux',
+      probe: async () => null,
+      warn: (line) => warns.push(line),
+    });
+    expect(warned).toBe(false);
+    expect(warns).toEqual([]);
   });
 });

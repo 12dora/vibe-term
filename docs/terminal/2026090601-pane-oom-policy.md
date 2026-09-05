@@ -29,7 +29,30 @@ tmux list-panes -a -F '#{pane_id} #{pane_pid}'; cat /proc/<pane_pid>/cgroup  # �
 
 ## 处置
 
-1. 节点上让 OOM 只杀超限进程、保留 pane（新建的 pane 生效）：
+### tmex 自动处理（1.1.34 起）
+
+Linux 上安装/升级托管服务（渲染 `~/.config/systemd/user/tmex.service` 的那条路径）时，tmex 会一并写入：
+
+```
+~/.config/systemd/user.conf.d/tmex-oom.conf
+[Manager]
+DefaultOOMPolicy=continue
+```
+
+随后执行 `systemctl --user daemon-reexec`（失败退回 `daemon-reload`）。规则：
+
+- **幂等**：内容逐字节相同就跳过，不重写、不重载。
+- **尊重用户配置**：`~/.config/systemd/user.conf` 或 `user.conf.d/` 下任一 drop-in 已显式写过 `DefaultOOMPolicy=`（注释行不算）时完全跳过，只打一行日志。
+- **不阻断安装**：写文件或重载失败一律降级为告警日志，安装/升级照常完成。
+- **卸载**：`tmex uninstall` 只在该文件与 tmex 写出的内容逐字节相同时删除；用户改过就保留。
+
+实现见 `packages/app/src/lib/systemd-oom-policy.ts`，接入点在 `packages/app/src/lib/service.ts` 的 systemd 分支（macOS/launchd 不涉及）。
+
+网关启动时另有只读自检（`packages/app/src/runtime/service-selfcheck.ts`）：Linux 上 `systemctl --user show -p DefaultOOMPolicy` 为 `stop` 且 `tmux -V` ≥ 3.6（解析不出版本时按可能受影响处理）就打一行告警，提示跑 `tmex upgrade`。覆盖未升级或手工部署的机器。
+
+### 需要用户自己做的
+
+1. 升级到 1.1.34 之前的机器手工写一次（新建的 pane 生效，`daemon-reexec` 后现存 scope 也会变为 `continue`）：
 
 ```bash
 mkdir -p ~/.config/systemd/user.conf.d
@@ -38,7 +61,15 @@ systemctl --user daemon-reexec
 ```
 
 2. 限制大内存子进程：`NODE_OPTIONS=--max-old-space-size=4096` 之类，或减少并行任务 / 加内存。
-3. tmex 侧（1.1.34 起）：网关对每次 `%window-close` 与自身发出的 kill-window / kill-pane 打带原因的日志，便于区分「用户关闭」「进程退出」「tmex 操作」。
+
+排查辅助（1.1.34 起）：网关对每次 `%window-close` 与自身发出的 kill-window / kill-pane 打带原因的日志，便于区分「用户关闭」「进程退出」「tmex 操作」。
+
+验证：
+
+```bash
+systemctl --user show -p DefaultOOMPolicy          # DefaultOOMPolicy=continue
+systemctl --user show 'tmux-spawn-*.scope' -p OOMPolicy
+```
 
 ## 可选后续
 
