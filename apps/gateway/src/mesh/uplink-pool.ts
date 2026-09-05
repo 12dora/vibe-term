@@ -1493,6 +1493,12 @@ export class UplinkPool {
     );
   }
 
+  /** 网络指纹变了：候选轮次退避按旧网络算的，重置并叫醒等待中的重连（PeerManager 触发）。 */
+  resetBackoff(): void {
+    this.wrapAttempt = 0;
+    this.wakeWrapSleep();
+  }
+
   private wakeWrapSleep(): void {
     const wake = this.wrapSleepAbort;
     if (!wake || wake.signal.aborted) return;

@@ -33,6 +33,7 @@ import {
   createTtlCache,
   hubRoleAdvertisement,
   isAdvertisablePeerAddress,
+  setHubPresenceStaleMs,
 } from './mesh-runtime';
 import {
   ImmediateScheduler,
@@ -68,6 +69,7 @@ describe('createMeshRuntime', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
 
   afterEach(async () => {
+    setHubPresenceStaleMs(0);
     while (fixtures.length > 0) {
       const item = fixtures.pop();
       await item?.stop?.();
@@ -447,7 +449,8 @@ describe('createMeshRuntime', () => {
     expect(mesh.uplink.state === 'connecting' || mesh.uplink.state === 'online').toBe(true);
   });
 
-  test('hub presence is ignored after uplink disconnects so stale online is not returned', async () => {
+  test('hub presence survives a short uplink drop and decays after the stale window', async () => {
+    setHubPresenceStaleMs(30);
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
     seedUser(userStore);
@@ -523,14 +526,24 @@ describe('createMeshRuntime', () => {
 
     clientWs.close(1000, 'hub-gone');
     await waitUntil(() => mesh.uplink.state !== 'online');
-    const offline = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+    const held = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
       upgrade: () => false,
     });
-    if (!(offline instanceof Response)) throw new Error('expected Response');
-    const offlineBody = (await offline.json()) as {
-      nodes: Array<{ id: string; online: boolean }>;
-    };
-    expect(offlineBody.nodes.find((n) => n.id === peerId)?.online).toBe(false);
+    if (!(held instanceof Response)) throw new Error('expected Response');
+    const heldBody = (await held.json()) as { nodes: Array<{ id: string; online: boolean }> };
+    expect(heldBody.nodes.find((n) => n.id === peerId)?.online).toBe(true);
+
+    let decayed = false;
+    for (let i = 0; i < 40 && !decayed; i += 1) {
+      await Bun.sleep(25);
+      const res = await mesh.handleRequest(new Request('http://localhost/api/auth/nodes'), {
+        upgrade: () => false,
+      });
+      if (!(res instanceof Response)) continue;
+      const body = (await res.json()) as { nodes: Array<{ id: string; online: boolean }> };
+      decayed = body.nodes.find((n) => n.id === peerId)?.online === false;
+    }
+    expect(decayed).toBe(true);
     expect(mesh.lastNodeList?.nodes.find((n) => n.id === peerId)?.online).toBe(true);
   });
 
@@ -594,6 +607,7 @@ describe('createMeshRuntime', () => {
   });
 
   test('hub presence is fresh only after the current generation finishes catch-up and offlines de-dupe', async () => {
+    setHubPresenceStaleMs(30);
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);
     seedUser(userStore);
@@ -678,6 +692,10 @@ describe('createMeshRuntime', () => {
 
     clientWs.close(1000, 'hub-gone');
     await waitUntil(() => mesh.uplink.state !== 'online');
+    await waitUntil(
+      () => events.filter((e) => e.nodeId === peerId && e.status === 'offline').length === 1,
+      2_000
+    );
     const offlineCount = events.filter((e) => e.nodeId === peerId && e.status === 'offline').length;
     expect(offlineCount).toBe(1);
 
@@ -702,6 +720,7 @@ describe('createMeshRuntime', () => {
 
     clientWs2.close(1000, 'hub-gone-again');
     await waitUntil(() => mesh.uplink.state !== 'online');
+    await Bun.sleep(80);
     const offlineAfter = events.filter((e) => e.nodeId === peerId && e.status === 'offline').length;
     expect(offlineAfter).toBe(1);
   });

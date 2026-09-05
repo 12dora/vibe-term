@@ -18,6 +18,7 @@ import {
   expirePendingForwardStream,
   getSelfRewrite,
   pendingForwardStreamCount,
+  setForwardLinkDeadlineMs,
   setPendingForwardStreamTtlMs,
 } from './forwarder';
 import {
@@ -31,9 +32,11 @@ import {
   STREAM_QUEUE_OVERFLOW_REASON,
   X_TMEX_SET_SESSION,
   isMeshRewritten,
+  setMeshRequestContext,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
+import { SHARE_LOGIN_MAX_FAILURES } from './share-login-quota';
 import { waitUntil } from './test-support';
 import { NodeUnreachableError, PeerHandshakeError } from './types';
 
@@ -83,6 +86,89 @@ describe('forwarder', () => {
         nodeId: 'deadbeefdeadbeefdeadbeefdeadbeef',
         reason: 'no_link',
       });
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('取链路超过墙钟上限即 503，不把浏览器耗在重试循环里', async () => {
+    const peers = new FakePeers();
+    peers.getLink = () => new Promise<LinkSession>(() => {});
+    const mesh = await bootMesh({ peers });
+    setForwardLinkDeadlineMs(60);
+    try {
+      const started = Date.now();
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/ping`),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(503);
+      expect((await res.json()).code).toBe('NODE_UNREACHABLE');
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+      mesh.close();
+    }
+  });
+
+  test('websocket 转发同样受墙钟上限约束', async () => {
+    const peers = new FakePeers();
+    peers.getLink = () => new Promise<LinkSession>(() => {});
+    const mesh = await bootMesh({ peers });
+    setForwardLinkDeadlineMs(60);
+    try {
+      const started = Date.now();
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/ws`, {
+            headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          }),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(503);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+      mesh.close();
+    }
+  });
+
+  test('分享登录在 Hub 侧按来源 IP 计配额，超限直接 429 不再转发', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.nextResponseFactory = () =>
+      new Response(JSON.stringify({ code: 'SHARE_PASSWORD_INVALID' }), { status: 401 });
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      const login = (ip: string) =>
+        mesh.runtime.handleRequest(
+          (() => {
+            const req = new Request(`http://localhost/n/${OTHER}/api/share-access/sh1/login`, {
+              method: 'POST',
+              body: JSON.stringify({ password: 'nope' }),
+              headers: { 'content-type': 'application/json' },
+            });
+            setMeshRequestContext(req, { via: 'self', clientIp: ip });
+            return req;
+          })(),
+          dummyServer
+        );
+      for (let i = 0; i < SHARE_LOGIN_MAX_FAILURES; i += 1) {
+        expect(asResponse(await login('9.9.9.9')).status).toBe(401);
+      }
+      const opensAfterFailures = streams.httpOpenCount;
+      const locked = asResponse(await login('9.9.9.9'));
+      expect(locked.status).toBe(429);
+      const body = (await locked.json()) as { code: string; retryAfterMs: number };
+      expect(body.code).toBe('SHARE_LOGIN_LOCKED');
+      expect(body.retryAfterMs).toBeGreaterThan(0);
+      // 锁定后不再打上游，且别的来源 IP 不受牵连。
+      expect(streams.httpOpenCount).toBe(opensAfterFailures);
+      expect(asResponse(await login('8.8.8.8')).status).toBe(401);
     } finally {
       mesh.close();
     }

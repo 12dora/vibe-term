@@ -16,14 +16,13 @@ import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
   classifyPeerReach,
-  classifyRemoteAddress,
   hostFromWsUrl,
   localNetworkFingerprint,
   rankPeerEndpoints,
   rttChangedMaterially,
 } from './address-class';
 import { defaultScheduler, encodeJsonBytes, isRecord, jsonStable, parseSeq } from './ctl';
-import { type DcFailureDetail, dcFailureReason as describeDcFailure } from './direct-failure-codes';
+import { dcFailureReason as describeDcFailure } from './direct-failure-codes';
 import { jsonText } from './json-text';
 import type { RtcSignalMessage } from './mesh-deps';
 import { stamp } from './mesh-log';
@@ -34,14 +33,22 @@ import {
   sanitizeEndpoints,
 } from './peer-dc-upgrade';
 import {
+  type DialRaceLeg,
+  dcDialAborted,
+  raceForegroundDial,
+  raceWsSecureDial,
+  settleAbandonedDcDial,
+} from './peer-dial-race';
+import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
+  dcRecentlyFailed,
   directFailureView,
+  eligiblePeerEndpoints,
   emptyDirectAttempt,
   hasDirectFailure,
   noteDcOutcome,
   noteNoEndpoints,
-  noteWsBackoff,
   noteWsRaceFailure,
   winningDialInitiator,
 } from './peer-direct-attempt';
@@ -74,15 +81,7 @@ import {
   shouldStartRtcAttempt,
 } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
-import {
-  type DirectDialLimiter,
-  abortable,
-  classifyWsDialFailure,
-  dialWsSecureCandidate,
-  quiet,
-  raceWsSecureEndpoints,
-  sharedDirectDialLimiter,
-} from './peer-ws-race';
+import { type DirectDialLimiter, abortable, quiet, sharedDirectDialLimiter } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import { type RtcSignaling, isRtcWakeSdp } from './rtc/ice';
 import {
@@ -527,7 +526,7 @@ export class PeerManager extends PeerCollaboratorHost {
     }
     const inflight = this.pending.get(nodeId);
     if (inflight) return this.awaitEstablishedOrDial(nodeId, inflight);
-    const attempt = this.dial(nodeId);
+    const attempt = this.dial(nodeId, { foreground: true });
     this.pending.set(nodeId, attempt);
     void attempt
       .catch(() => undefined)
@@ -535,7 +534,11 @@ export class PeerManager extends PeerCollaboratorHost {
         if (this.pending.get(nodeId) === attempt) this.pending.delete(nodeId);
       });
     try {
-      return await this.awaitEstablishedOrDial(nodeId, attempt);
+      const session = await this.awaitEstablishedOrDial(nodeId, attempt);
+      // 竞速的败者还在收尾，但链路已经建好：pending 不该再挡住 forceDcProbe / 后台升级。
+      const live = this.live.has(nodeId);
+      if (live && this.pending.get(nodeId) === attempt) this.pending.delete(nodeId);
+      return session;
     } catch (err) {
       const live = this.live.get(nodeId);
       if (live) return live.session;
@@ -780,10 +783,11 @@ export class PeerManager extends PeerCollaboratorHost {
         return unsub;
       },
     };
+    let connectP: Promise<Awaited<ReturnType<RtcPeerManager['connectToPeer']>>> | null = null;
     try {
       await ensureRtcReady(rtc);
       this.throwIfStopped(nodeId, gen);
-      const connectP = rtc.connectToPeer(nodeId, wrapped);
+      connectP = rtc.connectToPeer(nodeId, wrapped);
       this.dispatchRtcWake(nodeId);
       const result = await abortable(connectP, signal);
       if (this.stale(gen)) {
@@ -820,11 +824,12 @@ export class PeerManager extends PeerCollaboratorHost {
       unsub = null;
       return kept;
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      const aborted = (err instanceof Error && err.name === 'AbortError') || /abort/i.test(message);
-      if (!this.stopped && !aborted && !isIntentionalDcLoss(message)) {
-        this.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(message), attemptId);
-      }
+      const noteDcFailure = (reason: string) => {
+        if (this.stopped || isIntentionalDcLoss(reason)) return;
+        this.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(reason), attemptId);
+      };
+      if (dcDialAborted(err)) settleAbandonedDcDial(connectP, noteDcFailure);
+      else noteDcFailure(err instanceof Error ? err.message : String(err));
       this.releaseRtcAttempt(nodeId, unsub);
       throw err;
     } finally {
@@ -832,7 +837,7 @@ export class PeerManager extends PeerCollaboratorHost {
     }
   }
 
-  private async dial(nodeId: string): Promise<LinkSession> {
+  private async dial(nodeId: string, opts?: { foreground?: boolean }): Promise<LinkSession> {
     await Promise.resolve();
     const gen = this.generation;
     const signal = this.stopAbort.signal;
@@ -843,7 +848,7 @@ export class PeerManager extends PeerCollaboratorHost {
     let dcCoolingUntil: number | null | undefined;
     const attempt = emptyDirectAttempt(this.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
-    const tryDc = async (): Promise<LinkSession | null> => {
+    const tryDc = async (dcSignal: AbortSignal): Promise<LinkSession | null> => {
       if (!above('dc') || !this.dcCapable(nodeId)) return null;
       const decision = this.dcBreaker.shouldTry(nodeId);
       if (!decision.allow) {
@@ -856,7 +861,7 @@ export class PeerManager extends PeerCollaboratorHost {
         return null;
       }
       try {
-        return await this.dialDc(nodeId, gen, signal);
+        return await this.dialDc(nodeId, gen, dcSignal);
       } catch (err) {
         dcError = err;
         rtcLog('dial failed', {
@@ -867,31 +872,23 @@ export class PeerManager extends PeerCollaboratorHost {
         return null;
       }
     };
-    const liveOf = async () => this.live.get(nodeId)?.session ?? null;
-    const attempts: Array<{
-      run: () => Promise<LinkSession | null>;
-      skipStop?: boolean;
-    }> = [];
-    if (!skipDcFirst) attempts.push({ run: tryDc });
-    if (above('ws-secure')) {
-      attempts.push({
-        run: () => this.dialWsSecure(nodeId, gen, signal, attempt),
-      });
-    }
-    attempts.push({ run: liveOf });
-    if (skipDcFirst) {
-      attempts.push({ run: tryDc, skipStop: true });
-      attempts.push({ run: liveOf });
-    }
-    for (const step of attempts) {
-      const got = await step.run();
-      if (got) {
-        this.finishDirectAttempt(nodeId, attempt, got, dcError, dcCoolingUntil);
-        return got;
-      }
-      if (!step.skipStop) this.throwIfStopped(nodeId, gen);
-    }
-    this.finishDirectAttempt(nodeId, attempt, null, dcError, dcCoolingUntil);
+    const tryWs = async (wsSignal: AbortSignal) =>
+      above('ws-secure') ? await this.dialWsSecure(nodeId, gen, wsSignal, attempt) : null;
+    const direct = await this.dialDirect(nodeId, gen, signal, {
+      tryDc,
+      tryWs,
+      wsFirst:
+        skipDcFirst ||
+        dcRecentlyFailed(
+          this.lastDirectAttempt.get(nodeId),
+          this.scheduler.now(),
+          this.dcBreaker.snapshot(nodeId).failures
+        ),
+      skipDcFirst,
+      foreground: opts?.foreground === true,
+    });
+    this.finishDirectAttempt(nodeId, attempt, direct.session, dcError, dcCoolingUntil);
+    if (direct.session) return direct.session;
     try {
       const stream = await this.uplink.openRelay(nodeId);
       const result = await handshakeRelay({
@@ -915,9 +912,52 @@ export class PeerManager extends PeerCollaboratorHost {
       if (!kept) throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
       return kept;
     } catch (err) {
+      // 中继也不通：竞速超时后仍在跑的直连腿是最后一根稻草，等它把话说完。
+      const late = direct.pending ? await direct.pending : null;
+      if (late) return late;
       if (err instanceof NodeUnreachableError) throw err;
       throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
     }
+  }
+
+  /** 直连阶段：前台走 DC/ws-secure 竞速，后台升级仍是原来的顺序拨号（DC 拿满 15 s）。 */
+  private async dialDirect(
+    nodeId: string,
+    gen: number,
+    signal: AbortSignal,
+    legs: {
+      tryDc: DialRaceLeg<LinkSession>;
+      tryWs: DialRaceLeg<LinkSession>;
+      wsFirst: boolean;
+      skipDcFirst: boolean;
+      foreground: boolean;
+    }
+  ): Promise<{ session: LinkSession | null; pending: Promise<LinkSession | null> | null }> {
+    const liveOf = async () => this.live.get(nodeId)?.session ?? null;
+    if (legs.foreground) {
+      const raced = await raceForegroundDial<LinkSession>({
+        dc: legs.tryDc,
+        ws: legs.tryWs,
+        wsFirst: legs.wsFirst,
+        signal,
+        scheduler: this.scheduler,
+        live: () => this.live.get(nodeId)?.session ?? null,
+        close: (session, reason) => quiet(() => session.close(reason)),
+        log: (event, fields) => rtcLog(event, { peer: nodeId, ...fields }),
+      });
+      if (raced.session) return { session: raced.session, pending: null };
+      this.throwIfStopped(nodeId, gen);
+      return { session: await liveOf(), pending: raced.pending };
+    }
+    const steps = legs.skipDcFirst
+      ? [legs.tryWs, liveOf, legs.tryDc, liveOf]
+      : [legs.tryDc, legs.tryWs, liveOf];
+    for (const step of steps) {
+      const got = await step(signal);
+      if (got) return { session: got, pending: null };
+      this.throwIfStopped(nodeId, gen);
+    }
+    return { session: null, pending: null };
   }
 
   private syncLocalFingerprint(): void {
@@ -926,6 +966,7 @@ export class PeerManager extends PeerCollaboratorHost {
     );
     if (this.localFingerprint && next !== this.localFingerprint) {
       this.endpointBackoff.resetAll();
+      this.uplink.resetBackoff();
       this.dcUpgrade.onLocalFingerprintChanged();
     }
     this.localFingerprint = next;
@@ -941,22 +982,6 @@ export class PeerManager extends PeerCollaboratorHost {
       this.dcUpgrade.onPeerEndpointChanged(nodeId);
     }
     this.advertisedEndpointSet.set(nodeId, next);
-  }
-
-  /** 可拨的地址；全在退避里就把「还要等多久」记进这次尝试，浮层才有话可说。 */
-  private eligibleEndpoints(
-    nodeId: string,
-    endpoints: string[],
-    attempt: DirectAttemptRecord,
-    bypassBackoff: boolean | undefined
-  ): string[] {
-    if (bypassBackoff) return endpoints;
-    const now = this.scheduler.now();
-    const eligible = endpoints.filter((url) => this.endpointBackoff.eligible(nodeId, url, now));
-    if (eligible.length > 0) return eligible;
-    const waitMs = this.endpointBackoff.minWaitMs(nodeId, endpoints, now);
-    noteWsBackoff(attempt, endpoints, Math.max(0, Math.ceil(waitMs / 1000)));
-    return [];
   }
 
   private async dialWsSecure(
@@ -997,42 +1022,30 @@ export class PeerManager extends PeerCollaboratorHost {
       noteNoEndpoints(attempt);
       return null;
     }
-    const eligible = this.eligibleEndpoints(nodeId, endpoints, attempt, opts?.bypassBackoff);
+    const eligible = eligiblePeerEndpoints(
+      this.endpointBackoff,
+      nodeId,
+      endpoints,
+      attempt,
+      this.scheduler.now(),
+      opts?.bypassBackoff
+    );
     if (eligible.length === 0) return null;
-    const failedAddrs = new Set<string>();
-    const raced = await raceWsSecureEndpoints({
-      urls: eligible,
+    const raced = await raceWsSecureDial({
+      nodeId,
       gen,
+      urls: eligible,
       signal,
+      staggerMs: PEER_WS_DIAL_STAGGER_MS,
+      connectTimeoutMs: this.connectTimeoutMs,
+      lanTimeoutMs: PEER_LAN_DIAL_TIMEOUT_MS,
+      identity: this.identity,
+      userStore: this.userStore,
+      limiter: this.dialLimiter,
+      backoff: this.endpointBackoff,
+      wsFactory: this.wsFactory,
       stale: (g) => this.stale(g),
       sleep: (ms, sig) => this.scheduler.sleep(ms, sig),
-      staggerMs: PEER_WS_DIAL_STAGGER_MS,
-      dial: async (url, combined) => {
-        try {
-          const candidate = await dialWsSecureCandidate({
-            url,
-            expectedId: nodeId,
-            gen,
-            signal: combined,
-            stale: (g) => this.stale(g),
-            connectTimeoutMs: this.connectTimeoutMs,
-            totalTimeoutMs:
-              classifyRemoteAddress(hostFromWsUrl(url)) === 'lan'
-                ? PEER_LAN_DIAL_TIMEOUT_MS
-                : undefined,
-            factory: this.wsFactory,
-            identity: this.identity,
-            userStore: this.userStore,
-            limiter: this.dialLimiter,
-          });
-          if (candidate) this.endpointBackoff.noteSuccess(nodeId, url);
-          return candidate;
-        } catch (err) {
-          const classified = classifyWsDialFailure(url, err);
-          this.endpointBackoff.noteFailureOnce(failedAddrs, nodeId, url, classified.kind);
-          throw classified;
-        }
-      },
     });
     noteWsRaceFailure(attempt, raced, endpoints);
     if (this.stale(gen)) {
@@ -1906,7 +1919,11 @@ export class PeerManager extends PeerCollaboratorHost {
     const live = this.live.get(nodeId);
     if (session && live && live.transport !== 'relay') return;
     if (attempt.dc == null) {
-      const failure = this.dcFailureReason(nodeId, dcError, dcCoolingUntil);
+      const failure = describeDcFailure(nodeId, dcError, {
+        coolingUntil: dcCoolingUntil,
+        directCapable: this.userStore.getPeer(nodeId)?.directCapable,
+        rtcAvailable: this.rtc?.available === true,
+      });
       noteDcOutcome(attempt, failure?.text ?? null, failure?.code ?? null, failure?.params ?? null);
     }
     if (hasDirectFailure(attempt))
@@ -1916,17 +1933,5 @@ export class PeerManager extends PeerCollaboratorHost {
   private clearDirectFailure(nodeId: string): void {
     const prev = this.lastDirectAttempt.get(nodeId);
     if (prev) this.lastDirectAttempt.set(nodeId, clearedDirectAttempt(prev));
-  }
-
-  private dcFailureReason(
-    nodeId: string,
-    dcError: unknown,
-    coolingUntil?: number | null
-  ): DcFailureDetail | null {
-    return describeDcFailure(nodeId, dcError, {
-      coolingUntil,
-      directCapable: this.userStore.getPeer(nodeId)?.directCapable,
-      rtcAvailable: this.rtc?.available === true,
-    });
   }
 }

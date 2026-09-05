@@ -55,6 +55,7 @@ const RTC_DEBUG_EVENTS = new Set<string>([
   'gathering',
   'selected pair',
   'upgrade retry',
+  'dial race won',
 ]);
 
 export function rtcLogLevel(event: string): LogLevel {

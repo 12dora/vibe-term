@@ -1,4 +1,5 @@
 import { wsFailureCode } from './direct-failure-codes';
+import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import type {
   DirectFailureCode,
   DirectFailureDcParams,
@@ -113,4 +114,34 @@ export function directFailureView(
     dcCode: attempt.dcCode,
     dcParams: attempt.dcParams,
   };
+}
+
+export const RECENT_DC_FAILURE_MS = 10 * 60 * 1000;
+
+/** 熔断器已记失败、或近 10 分钟有 DC 失败记录：前台竞速不再给 DC 独占的短预算。 */
+export function dcRecentlyFailed(
+  attempt: DirectAttemptRecord | undefined,
+  now: number,
+  breakerFailures: number
+): boolean {
+  if (breakerFailures > 0) return true;
+  if (!attempt || attempt.dc == null) return false;
+  return now - attempt.at < RECENT_DC_FAILURE_MS;
+}
+
+/** 可拨的地址；全在退避里就把「还要等多久」记进这次尝试，浮层才有话可说。 */
+export function eligiblePeerEndpoints(
+  backoff: PeerEndpointBackoff,
+  nodeId: string,
+  endpoints: string[],
+  attempt: DirectAttemptRecord,
+  now: number,
+  bypassBackoff: boolean | undefined
+): string[] {
+  if (bypassBackoff) return endpoints;
+  const eligible = endpoints.filter((url) => backoff.eligible(nodeId, url, now));
+  if (eligible.length > 0) return eligible;
+  const waitMs = backoff.minWaitMs(nodeId, endpoints, now);
+  noteWsBackoff(attempt, endpoints, Math.max(0, Math.ceil(waitMs / 1000)));
+  return [];
 }

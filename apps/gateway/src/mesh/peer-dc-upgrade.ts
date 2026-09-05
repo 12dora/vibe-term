@@ -221,8 +221,10 @@ export class DcUpgradeCoordinator {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
+    // 有在途拨号就先合并；但必须自己排一次重试，否则合并标记会一直等不到下一个触发点。
     if (this.ports.pending().has(nodeId) || this.ports.upgrading().has(nodeId)) {
       this.ensureGate(nodeId).coalesced = true;
+      this.scheduleCoalescedUpgrade(nodeId);
       return;
     }
     const gate = this.ensureGate(nodeId);

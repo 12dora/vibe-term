@@ -251,6 +251,39 @@ describe('PeerManager endpoint backoff', () => {
     await waitUntil(() => wsCalls === 3, 2_000);
   });
 
+  test('本机网络指纹变化同时重置 uplink 重连退避', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const uplink = dummyUplink(self, store);
+    let resets = 0;
+    uplink.resetBackoff = () => {
+      resets += 1;
+    };
+    const scheduler = new ImmediateScheduler();
+    let ifaces: Record<string, Array<{ address: string; family: string; internal: boolean }>> = {
+      en0: [{ address: '10.0.0.8', family: 'IPv4', internal: false }],
+    };
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      interfacesFn: () => ifaces,
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    await manager.start();
+    scheduler.tickIntervals();
+    expect(resets).toBe(0);
+    ifaces = { en0: [{ address: '10.0.0.99', family: 'IPv4', internal: false }] };
+    scheduler.tickIntervals();
+    expect(resets).toBe(1);
+  });
+
   test('onRevoked clears endpoint backoff so the next getLink dials again', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

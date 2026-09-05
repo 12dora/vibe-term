@@ -14,6 +14,7 @@ import { UserStore } from '../auth/user-store';
 import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
 import type { KeyLogApplier, KeyLogForkEvent, UplinkStatus } from './types';
 import {
+  UPLINK_BACKOFF_MIN_MS,
   UPLINK_CONNECT_LOG_INTERVAL_MS,
   UPLINK_CONNECT_TIMEOUT_MS,
   UplinkClient,
@@ -362,6 +363,36 @@ describe('UplinkClient', () => {
       () => lines.filter((row) => row.includes('[uplink] connect failed')).length >= 2
     );
     expect(lines.filter((row) => row.includes('[uplink] connect failed')).length).toBe(2);
+  });
+
+  test('resetBackoff 把重连退避打回最小值并叫醒等待中的退避', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const userStore = new UserStore(db);
+    seedUser(userStore);
+    const delays: number[] = [];
+    const scheduler = new RecordingScheduler(delays);
+    const client = new UplinkClient({
+      hubUrl: 'https://hub.example.com:8443',
+      identity: { nodeId: 'ab'.repeat(16), edSecretKey: randomBytes(32) },
+      userId: 'user-1',
+      keyLogApplier: dummyApplier(),
+      userStore,
+      statusProvider: () => status(),
+      scheduler,
+      wsFactory: () => {
+        throw Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+      },
+    });
+    fixtures.push({ close, stop: () => client.stop() });
+    client.start();
+    await waitUntil(() => delays.length >= 4);
+    const grown = delays[3] ?? 0;
+    expect(grown).toBeGreaterThan(UPLINK_BACKOFF_MIN_MS);
+    const before = delays.length;
+    client.resetBackoff();
+    await waitUntil(() => delays.length > before);
+    expect(delays[before]).toBeLessThanOrEqual(UPLINK_BACKOFF_MIN_MS);
   });
 
   test('connect failure logs never include tokens or full URLs', async () => {
@@ -2455,6 +2486,30 @@ function captureConsoleWarn(): { lines: string[]; restore: () => void } {
       console.warn = orig;
     },
   };
+}
+
+/** 记录每次退避时长；`sleep` 可被 abort 叫醒（`resetBackoff` 走这条路）。 */
+class RecordingScheduler extends ImmediateScheduler {
+  constructor(private readonly delays: number[]) {
+    super();
+  }
+
+  override sleep(ms: number, signal?: AbortSignal): Promise<void> {
+    this.sleeps += 1;
+    this.delays.push(ms);
+    if (signal?.aborted) return Promise.reject(new Error('aborted'));
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 1);
+      signal?.addEventListener(
+        'abort',
+        () => {
+          clearTimeout(timer);
+          reject(new Error('aborted'));
+        },
+        { once: true }
+      );
+    });
+  }
 }
 
 class YieldingScheduler extends ImmediateScheduler {

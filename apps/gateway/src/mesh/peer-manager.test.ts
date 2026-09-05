@@ -3618,6 +3618,73 @@ describe('PeerManager', () => {
     );
   });
 
+  test('foreground dial gives DC only a short budget before racing ws-secure', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let closedPc = false;
+    const dc: { finish: ((value: unknown) => void) | null } = { finish: null };
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      connectToPeer: () =>
+        new Promise((resolve) => {
+          dc.finish = resolve;
+        }),
+    } as unknown as RtcPeerManager;
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      rtc,
+      wsFactory: () => {
+        const [client, server] = fakeSocketPair();
+        void handshakeWsDirect({
+          socket: server,
+          role: 'acceptor',
+          identity: peer,
+          userStore: store,
+        });
+        return client;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const started = Date.now();
+    const link = await manager.getLink(peer.nodeId);
+    expect(Date.now() - started).toBeLessThan(3_000);
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    expect(link).toBeTruthy();
+    // 输掉竞速的 DC 晚一点才回来：没人认领，必须自己关掉 pc。
+    dc.finish?.({
+      link: {},
+      pc: {
+        close: () => {
+          closedPc = true;
+        },
+      },
+      peerNodeId: peer.nodeId,
+      role: 'initiator',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(closedPc).toBe(true);
+  });
+
   test('ws-secure winner abort closes a losing factory socket that resolves late', async () => {
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });

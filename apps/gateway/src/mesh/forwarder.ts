@@ -38,6 +38,7 @@ import {
 import { stamp } from './mesh-log';
 import { jsonError } from './session-middleware';
 import { readShareCookie, shareAuthValue } from './share-credential';
+import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
 import { isTerminalStreamClose } from './stream-close-code';
 import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
@@ -67,6 +68,22 @@ type ForwardPump = FailoverPump & {
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
+/** 取链路的墙钟上限：拿不到就直接 503，别让浏览器陪着重试循环空转。 */
+export const FORWARD_LINK_DEADLINE_MS = 5_000;
+let forwardLinkDeadlineMs = FORWARD_LINK_DEADLINE_MS;
+
+/** 测试用：缩短取链路的墙钟上限。 */
+export function setForwardLinkDeadlineMs(ms: number): void {
+  forwardLinkDeadlineMs = ms > 0 ? ms : FORWARD_LINK_DEADLINE_MS;
+}
+
+/** 消息用 `timeout`：`classifyUnreachableReason` 据此把 503 的 reason 判成 timeout 而不是 no_link。 */
+class ForwardDeadlineError extends Error {
+  constructor() {
+    super('timeout');
+    this.name = 'ForwardDeadlineError';
+  }
+}
 
 /** GET/HEAD 默认可重试；其余方法只有调用方明确要求才重试，且不超过失败切换的上限。 */
 function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): number {
@@ -125,6 +142,7 @@ function rewriteRequest(req: Request, rewrite: string): Request {
 
 export class Forwarder {
   private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
+  private readonly shareLoginQuota = new ShareLoginQuota();
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly log: (line: string) => void;
   private authRateLimits: AuthRateLimits | null;
@@ -575,6 +593,29 @@ export class Forwarder {
     }
   }
 
+  /** 取链路，最多等到 deadline；超时抛 ForwardDeadlineError，未认领的链路留给下次复用。 */
+  private async linkBefore(nodeId: string, deadlineAt: number) {
+    const remaining = deadlineAt - Date.now();
+    if (remaining <= 0) throw new ForwardDeadlineError();
+    const pending = this.deps.peers.getLink(nodeId);
+    const timeout = new AbortController();
+    const expired = this.sleep(remaining, timeout.signal).then(
+      () => null,
+      () => null
+    );
+    try {
+      const link = await Promise.race([pending, expired]);
+      if (link) return link;
+      // 墙钟没真的走过 deadline（测试注入的零延时 sleep）：不认这次超时。
+      if (Date.now() < deadlineAt) return await pending;
+      void pending.catch(() => undefined);
+      this.log(`[mesh] forward link deadline node=${nodeId} waited_ms=${remaining}`);
+      throw new ForwardDeadlineError();
+    } finally {
+      timeout.abort();
+    }
+  }
+
   private async forwardHttp(
     req: Request,
     nodeId: string,
@@ -590,9 +631,10 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
+    const deadlineAt = Date.now() + forwardLinkDeadlineMs;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (signal.aborted) break;
+      if (signal.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
         try {
           await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, signal);
@@ -601,7 +643,7 @@ export class Forwarder {
         }
       }
       try {
-        const link = await this.deps.peers.getLink(nodeId);
+        const link = await this.linkBefore(nodeId, deadlineAt);
         const upstream = await this.adaptResponse(
           req,
           await this.deps.streams.openHttpStream(
@@ -616,7 +658,7 @@ export class Forwarder {
         return upstream;
       } catch (err) {
         lastError = err;
-        if (!retryable) break;
+        if (!retryable || err instanceof ForwardDeadlineError) break;
       }
     }
     return nodeUnreachableResponse(nodeId, signal.aborted, lastError);
@@ -625,9 +667,11 @@ export class Forwarder {
   private async gateForwardedAuth(
     req: Request,
     rest: string
-  ): Promise<{ response: Response | null; uidHint: string; ip: string }> {
+  ): Promise<{ response: Response | null; uidHint: string; ip: string; shareId?: string }> {
     const ip = clientIpFromRequest(req) ?? 'local';
     const empty = { response: null, uidHint: '', ip };
+    const shareId = shareLoginShareId(req.method, rest);
+    if (shareId) return { ...empty, shareId, response: this.gateShareLogin(shareId, ip) };
     const limits = this.authRateLimits;
     if (!limits) return empty;
     if (AUTH_CHALLENGE_PATHS.has(rest)) {
@@ -650,11 +694,37 @@ export class Forwarder {
     return { response: null, uidHint, ip };
   }
 
+  /** 分享登录：节点侧只看得到 `peer:<hubNodeId>`，配额必须在 Hub 这一侧按真实来源 IP 计。 */
+  private gateShareLogin(shareId: string, ip: string): Response | null {
+    const retryAfterMs = this.shareLoginQuota.lockedFor(shareId, ip);
+    if (retryAfterMs <= 0) return null;
+    this.log(`[mesh] share login locked share=${shareId} retry_after_ms=${retryAfterMs}`);
+    return new Response(
+      JSON.stringify({
+        error: 'Too many failed attempts.',
+        code: 'SHARE_LOGIN_LOCKED',
+        retryAfterMs,
+      }),
+      {
+        status: 429,
+        headers: {
+          'content-type': 'application/json',
+          'retry-after': String(Math.ceil(retryAfterMs / 1000)),
+        },
+      }
+    );
+  }
+
   private async recordForwardedLoginFailure(
-    gated: { uidHint: string; ip: string },
+    gated: { uidHint: string; ip: string; shareId?: string },
     rest: string,
     upstream: Response
   ): Promise<void> {
+    if (gated.shareId) {
+      if (upstream.status === 401) this.shareLoginQuota.recordFailure(gated.shareId, gated.ip);
+      else if (upstream.ok) this.shareLoginQuota.reset(gated.shareId, gated.ip);
+      return;
+    }
     const limits = this.authRateLimits;
     if (!limits || rest !== AUTH_LOGIN_PATH || upstream.status !== 401) return;
     const code = await peekJsonCode(upstream.clone());
@@ -681,7 +751,7 @@ export class Forwarder {
       return nodeUnreachableResponse(nodeId, true);
     }
     let linkError: unknown;
-    const link = await this.deps.peers.getLink(nodeId).catch((err) => {
+    const link = await this.linkBefore(nodeId, Date.now() + forwardLinkDeadlineMs).catch((err) => {
       linkError = err;
       return null;
     });

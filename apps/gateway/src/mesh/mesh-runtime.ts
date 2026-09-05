@@ -62,6 +62,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
+import { stamp } from './mesh-log';
 import {
   type RegisterGatewaySessionInput,
   type RegisterGatewaySessionResult,
@@ -95,7 +96,13 @@ import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import { openHttpStream, openWsStream } from './stream-targets';
-import type { DispatchContext, KeyLogApplier, MeshScheduler, PeerBindHost } from './types';
+import type {
+  DispatchContext,
+  KeyLogApplier,
+  MeshScheduler,
+  PeerBindHost,
+  PeerReach,
+} from './types';
 import { UplinkClient, type UplinkWsFactory } from './uplink-client';
 import {
   type AttachedHub,
@@ -620,6 +627,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
       : null) as CachedRtcConfig | null,
     lastNodeList: null as UplinkNodeList | null,
     hubPresenceLive: false,
+    hubPresenceStaleUntil: 0,
+    hubPresenceDecay: null as { clear: () => void } | null,
     hubGeneration: 0,
     caFingerprint: null as string | null,
   };
@@ -1052,20 +1061,67 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
   });
   d.peerHolder.manager = peerManager;
   uplink.onStateChange((liveState) => {
-    const live = liveState === 'online';
-    if (live) peerManager.onHubSwitched();
-    if (state.hubPresenceLive && !live && state.lastNodeList) {
-      const reach = peerManager.listReach();
-      for (const node of state.lastNodeList.nodes) {
-        if (node.id === identity.nodeIdHex || !node.online) continue;
-        const r = reach.get(node.id);
-        if (isPeerReachable(r)) continue;
-        d.emitSyntheticOffline(node.id);
-      }
+    if (liveState === 'online') {
+      peerManager.onHubSwitched();
+      return;
     }
-    if (!live) state.hubPresenceLive = false;
+    if (!state.hubPresenceLive) return;
+    scheduleHubPresenceDecay(d, state, () => peerManager.listReach());
   });
   return peerManager;
+}
+
+/**
+ * uplink 抖一下不等于对端全下线：掉线后 `HUB_PRESENCE_STALE_MS` 内继续沿用最后一次 hub presence，
+ * 到期还没接回来才退化成「只认 peer 可达性」并补发离线事件。重连后本代 node.list 到达即恢复权威。
+ */
+export const HUB_PRESENCE_STALE_MS = 90_000;
+let hubPresenceStaleMs = HUB_PRESENCE_STALE_MS;
+
+/** 测试用：缩短陈旧窗口，免得等满 90 s。 */
+export function setHubPresenceStaleMs(ms: number): void {
+  hubPresenceStaleMs = ms > 0 ? ms : HUB_PRESENCE_STALE_MS;
+}
+
+type HubPresenceState = MeshDeps['state'];
+
+function hubPresenceUsable(state: HubPresenceState, uplinkOnline: boolean, now: number): boolean {
+  if (!state.lastNodeList) return false;
+  if (state.hubPresenceLive) return true;
+  return !uplinkOnline && now < state.hubPresenceStaleUntil;
+}
+
+function clearHubPresenceDecay(state: HubPresenceState): void {
+  state.hubPresenceDecay?.clear();
+  state.hubPresenceDecay = null;
+  state.hubPresenceStaleUntil = 0;
+}
+
+function scheduleHubPresenceDecay(
+  d: MeshDeps,
+  state: HubPresenceState,
+  reachOf: () => Map<string, PeerReach>
+): void {
+  clearHubPresenceDecay(state);
+  state.hubPresenceLive = false;
+  state.hubPresenceStaleUntil = d.scheduler.now() + hubPresenceStaleMs;
+  console.info(stamp(`[mesh] hub presence stale hold_ms=${hubPresenceStaleMs}`));
+  const handle = d.scheduler.interval(() => {
+    handle.clear();
+    if (state.hubPresenceDecay !== handle) return;
+    state.hubPresenceDecay = null;
+    state.hubPresenceStaleUntil = 0;
+    // 本代 node.list 已经回来了：presence 重新权威，没什么可衰减的。
+    if (state.hubPresenceLive || !state.lastNodeList) return;
+    console.info(stamp('[mesh] hub presence decayed to peer reachability'));
+    const reach = reachOf();
+    for (const node of state.lastNodeList.nodes) {
+      if (node.id === d.identity.nodeIdHex || !node.online) continue;
+      if (isPeerReachable(reach.get(node.id))) continue;
+      d.emitSyntheticOffline(node.id);
+    }
+  }, hubPresenceStaleMs);
+  state.hubPresenceDecay = handle;
 }
 
 function createRtcBrowserWiring(
@@ -1244,7 +1300,8 @@ function wireMeshHttp(
     linkDetailOf: (nodeId: string) => peerManager.linkDetailOf(nodeId),
     listHubOnline: () => {
       const ids = new Set<string>();
-      if (!state.hubPresenceLive || uplink.state !== 'online' || !state.lastNodeList) return ids;
+      if (!hubPresenceUsable(state, uplink.state === 'online', d.scheduler.now())) return ids;
+      if (!state.lastNodeList) return ids;
       for (const node of state.lastNodeList.nodes) {
         if (node.online) ids.add(node.id);
       }
@@ -1438,6 +1495,7 @@ function assembleMeshRuntime(
       stopPromise = (async () => {
         tlsPoll?.clear();
         tlsPoll = null;
+        clearHubPresenceDecay(d.state);
         unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);

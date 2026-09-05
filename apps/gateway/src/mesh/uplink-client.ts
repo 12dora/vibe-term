@@ -1,3 +1,4 @@
+import { combineAbortSignals } from '@tmex/shared/async';
 import {
   decodeBase64url,
   encodeBase64url,
@@ -153,6 +154,8 @@ export class UplinkClient {
   private lastTearDownReason = '';
   private readonly lastDiagAt = new Map<string, number>();
   private customConnect: ((signal: AbortSignal) => Promise<void>) | null = null;
+  private retryAttempt = 0;
+  private retrySleepAbort: AbortController | null = null;
   lastConnectError: { reason: string; at: number } | null = null;
 
   get lastKeyLogHead() {
@@ -216,6 +219,14 @@ export class UplinkClient {
 
   setOnRelayStream(handler: InboundRelayHandler | null): void {
     this.relayHandler = handler;
+  }
+
+  /** 网络指纹变了：上一轮的退避是按旧网络算的，重置并叫醒等待中的重连。 */
+  resetBackoff(): void {
+    this.retryAttempt = 0;
+    const wake = this.retrySleepAbort;
+    this.retrySleepAbort = null;
+    if (wake && !wake.signal.aborted) wake.abort(new Error('backoff-reset'));
   }
 
   start(connectOnce?: (signal: AbortSignal) => Promise<void>): void {
@@ -356,7 +367,7 @@ export class UplinkClient {
   }
 
   private async runLoop(signal: AbortSignal): Promise<void> {
-    let attempt = 0;
+    this.retryAttempt = 0;
     while (!signal.aborted) {
       this.connectingAt = this.scheduler.now();
       this.setState('connecting');
@@ -369,29 +380,38 @@ export class UplinkClient {
         const offlineReason = this.lastTearDownReason || 'disconnected';
         this.tearDownLink(offlineReason);
         this.setState('offline');
-        if (uptime >= UPLINK_STABLE_UPTIME_MS) attempt = 0;
-        const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-        attempt += 1;
-        try {
-          await this.scheduler.sleep(delay, signal);
-        } catch {
-          return;
-        }
+        if (uptime >= UPLINK_STABLE_UPTIME_MS) this.retryAttempt = 0;
+        if (!(await this.backoffSleep(signal))) return;
       } catch (err) {
         this.tearDownLink('connect-failed');
         this.setState('offline');
         if (signal.aborted) return;
         const reason = classifyUplinkConnectError(err);
-        const delay = backoffDelayMs(attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+        const delay = backoffDelayMs(
+          this.retryAttempt,
+          UPLINK_BACKOFF_MIN_MS,
+          UPLINK_BACKOFF_MAX_MS
+        );
         this.lastConnectError = { reason, at: this.scheduler.now() };
-        if (reason !== 'aborted') this.logConnectFailed(attempt + 1, reason, delay);
-        attempt += 1;
-        try {
-          await this.scheduler.sleep(delay, signal);
-        } catch {
-          return;
-        }
+        if (reason !== 'aborted') this.logConnectFailed(this.retryAttempt + 1, reason, delay);
+        if (!(await this.backoffSleep(signal))) return;
       }
+    }
+  }
+
+  /** 退避等待；`resetBackoff()` 可以中途叫醒它。返回 false 表示整个循环该结束了。 */
+  private async backoffSleep(signal: AbortSignal): Promise<boolean> {
+    const delay = backoffDelayMs(this.retryAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+    this.retryAttempt += 1;
+    const wake = new AbortController();
+    this.retrySleepAbort = wake;
+    try {
+      await this.scheduler.sleep(delay, combineAbortSignals(signal, wake.signal));
+      return true;
+    } catch {
+      return !signal.aborted;
+    } finally {
+      if (this.retrySleepAbort === wake) this.retrySleepAbort = null;
     }
   }
 
