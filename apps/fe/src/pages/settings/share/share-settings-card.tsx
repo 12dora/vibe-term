@@ -80,7 +80,7 @@ export function ShareSettingsCard({
           />
         </label>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           <FormField
             id="share-retention-days"
             label={t('settings.share.form.retentionDays')}
@@ -114,15 +114,17 @@ export function ShareSettingsCard({
               data-testid="share-log-max"
             />
           </FormField>
-        </div>
 
-        <OriginField
-          draft={draft}
-          errors={errors}
-          candidates={candidates}
-          disabled={saving}
-          patch={patch}
-        />
+          <div className="sm:col-span-2 lg:col-span-1">
+            <OriginField
+              draft={draft}
+              errors={errors}
+              candidates={candidates}
+              disabled={saving}
+              patch={patch}
+            />
+          </div>
+        </div>
 
         {saveError && (
           <Notice tone="error" testId="share-settings-save-error">
@@ -178,8 +180,7 @@ function OriginField({
           onValueChange={(next) => next && patch({ originChoice: String(next) })}
         >
           <SelectTrigger
-            size="sm"
-            className="w-full sm:w-80"
+            className="w-full sm:w-80 lg:w-full"
             disabled={disabled}
             data-testid="share-default-origin"
           >
@@ -200,7 +201,7 @@ function OriginField({
         {draft.originChoice === SHARE_ORIGIN_CUSTOM && (
           <Input
             id="share-custom-origin"
-            className="w-full sm:w-80"
+            className="w-full sm:w-80 lg:w-full"
             placeholder="https://example.com"
             value={draft.customOrigin}
             disabled={disabled}
