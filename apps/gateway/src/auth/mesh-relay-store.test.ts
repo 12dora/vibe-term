@@ -56,7 +56,13 @@ describe('MeshRelayStore', () => {
         2_000
       );
       expect(f.store.listRelayRows()).toEqual([
-        { url: 'https://a.example', tenantId: 'aa'.repeat(16), priority: 0, kicked: false },
+        {
+          url: 'https://a.example',
+          tenantId: 'aa'.repeat(16),
+          priority: 0,
+          kicked: false,
+          kickedReason: null,
+        },
       ]);
     } finally {
       f.close();

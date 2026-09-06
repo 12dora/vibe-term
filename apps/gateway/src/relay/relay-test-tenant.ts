@@ -97,8 +97,13 @@ export type RelayTenantHandle = {
 export async function enrollRelayRoot(
   harness: RelayHarness,
   root: RootKey,
-  opts?: { password?: string; rootEpoch?: number }
-): Promise<{ tenant_id: string; token: string; password_epoch: number }> {
+  opts?: { password?: string; rootEpoch?: number; knownTokenHash?: string }
+): Promise<{
+  tenant_id: string;
+  token: string | null;
+  token_unchanged?: boolean;
+  password_epoch: number;
+}> {
   const proof = signRelayEnrollProof(root, {
     relayHost: new URL(RELAY_TEST_PUBLIC_URL).host,
     ts: harness.now(),
@@ -108,13 +113,19 @@ export async function enrollRelayRoot(
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       ...(opts?.password === undefined ? {} : { password: opts.password }),
+      ...(opts?.knownTokenHash === undefined ? {} : { known_token_hash: opts.knownTokenHash }),
       root_public_key: encodeBase64url(root.publicKey),
       root_epoch: opts?.rootEpoch ?? 0,
       proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
     }),
   });
   if (!res.ok) throw new Error(`relay enroll failed: ${res.status} ${await res.text()}`);
-  return (await res.json()) as { tenant_id: string; token: string; password_epoch: number };
+  return (await res.json()) as {
+    tenant_id: string;
+    token: string | null;
+    token_unchanged?: boolean;
+    password_epoch: number;
+  };
 }
 
 export async function createTenant(

@@ -401,7 +401,7 @@ describe('RelayUplinkClient', () => {
       statusProvider: status,
       onKicked: (reason) => {
         kicks.push(reason);
-        b.secrets.store.markKicked(b.secrets.relayRows()[0]?.url ?? '', true);
+        b.secrets.store.markKicked(b.secrets.relayRows()[0]?.url ?? '', true, reason);
       },
       wsFactory: () => clientWs,
     });
@@ -415,7 +415,35 @@ describe('RelayUplinkClient', () => {
     await waitUntil(() => kicks.length > 0);
     expect(kicks[0]).toBe('password_rotated');
     expect(b.secrets.relayRows()[0]?.kicked).toBe(true);
+    expect(b.secrets.relayRows()[0]?.kickedReason).toBe('password_rotated');
     expect(client.state).not.toBe('online');
+  });
+
+  test('踢出后再次 auth.ok 清掉踢出标记与原因', async () => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const url = b.secrets.relayRows()[0]?.url ?? '';
+    b.secrets.store.markKicked(url, true, 'password_rotated');
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+
+    expect(b.secrets.relayRows()[0]?.kicked).toBe(false);
+    expect(b.secrets.relayRows()[0]?.kickedReason).toBeNull();
   });
 
   test('远端关闭保留 close reason', async () => {

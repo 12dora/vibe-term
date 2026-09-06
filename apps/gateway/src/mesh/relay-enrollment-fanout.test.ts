@@ -12,7 +12,7 @@ const TENANT_B = 'bb'.repeat(16);
 const DIAL: RelayDialContext = { roles: { relay: false }, relayPublicUrl: null, gatewayPort: 0 };
 
 function row(url: string, tenantId: string): StoredMeshRelayRow {
-  return { url, tenantId, priority: 0, kicked: false };
+  return { url, tenantId, priority: 0, kicked: false, kickedReason: null };
 }
 
 function fakeSecrets(urls: string[]): RelaySecrets {

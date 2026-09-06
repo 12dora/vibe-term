@@ -62,6 +62,13 @@ export async function runRelayPasswordJoin(
         log: (message) => (io.log ?? console.log)(message),
       }
     );
+    // 同一账户的令牌换发：本机角色与上级早就是中继了，不改 env、也不重启
+    if (result.rekeyed) {
+      (io.log ?? console.log)(
+        `refreshed the relay token for ${result.relayUrl} (tenant ${result.tenantId})`
+      );
+      return result;
+    }
     if (ctx.envPath) {
       await writeRelayNodeEnv(ctx.envPath);
     } else {

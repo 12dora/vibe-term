@@ -250,7 +250,13 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       await b.settle();
       expect(b.wiring.secrets.uplinkKind()).toBe('relay');
       expect(b.wiring.secrets.relayRows()).toEqual([
-        { url: canonicalHubUrl(RELAY_URL), tenantId: TENANT_ID, priority: 0, kicked: false },
+        {
+          url: canonicalHubUrl(RELAY_URL),
+          tenantId: TENANT_ID,
+          priority: 0,
+          kicked: false,
+          kickedReason: null,
+        },
       ]);
       const stored = await b.wiring.secrets.store.getRelay(canonicalHubUrl(RELAY_URL));
       expect(stored?.token).toEqual(token);

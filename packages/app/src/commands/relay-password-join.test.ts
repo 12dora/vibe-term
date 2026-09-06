@@ -1,13 +1,14 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
+import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import {
   deriveSeed,
   encodeBase64url,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
-import { kdfParamsToWire, sealRelayPack } from '../../../shared/src/relay';
+import { kdfParamsFromWire, kdfParamsToWire, sealRelayPack } from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
@@ -43,6 +44,50 @@ async function openAuth(username?: string): Promise<LocalAuthContext> {
     });
   }
   return auth;
+}
+
+/** 中继侧的最小假象：健康探针 + `/kdf` + `mode:'join'` 的密封包。 */
+async function packFixture(
+  kdfRaw: { salt: Uint8Array; memory_kib: number; iterations: number; parallelism: number } | null
+): Promise<{ fetcher: FetchLike; token: Uint8Array; logKey: Uint8Array }> {
+  const kdf = kdfRaw ?? {
+    salt: new Uint8Array(16).fill(3),
+    memory_kib: 8,
+    iterations: 1,
+    parallelism: 1,
+  };
+  const root = rootKeyFromSeed(await deriveSeed(PASSWORD, kdf));
+  const logKey = randomBytes(32);
+  const token = randomBytes(32);
+  const sealed = await sealRelayPack({
+    rootSeed: root.seed,
+    tenantId: TENANT_ID,
+    rootPublicKey: root.publicKey,
+    rootEpoch: 0,
+    plaintext: {
+      log_key: new Uint8Array(logKey),
+      token: new Uint8Array(token),
+      head_seq: 1n,
+      head_hash: randomBytes(32),
+      issued_at: 1n,
+    },
+  });
+  const fetcher: FetchLike = async (input) => {
+    const url = String(input);
+    if (url.endsWith('/api/relay/health')) return Response.json({ ok: true });
+    if (url.includes('/kdf')) {
+      return Response.json({ kdf_params: kdfParamsToWire(kdf), root_epoch: 0 });
+    }
+    if (url.includes('/enroll')) {
+      return Response.json({
+        sealed_pack: encodeBase64url(sealed),
+        kdf_params: kdfParamsToWire(kdf),
+        root_epoch: 0,
+      });
+    }
+    return new Response('nope', { status: 404 });
+  };
+  return { fetcher, token, logKey };
 }
 
 describe('performRelayPasswordJoin', () => {
@@ -95,14 +140,53 @@ describe('performRelayPasswordJoin', () => {
     expect(seen.some((item) => item.startsWith('13443/api/relay/tenants/'))).toBe(true);
   });
 
-  test('refuses to overwrite an existing mesh user', async () => {
+  test('本机是别的 mesh 账户时拒绝覆盖', async () => {
     const auth = await openAuth('ivy');
+    const fixture = await packFixture({
+      salt: new Uint8Array(16).fill(9),
+      memory_kib: 8,
+      iterations: 1,
+      parallelism: 1,
+    });
     await expect(
       performRelayPasswordJoin(
         { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
-        { auth }
+        { auth, fetcher: fixture.fetcher }
       )
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'local_user_exists' });
+    const stored = await new MeshRelayStore(auth.db).getRelay(RELAY_URL);
+    expect(stored).toBeNull();
+  });
+
+  test('同一账户：只换发中继令牌，不重建本机用户', async () => {
+    const auth = await openAuth('ivy');
+    const user = auth.userStore.listUsers()[0];
+    if (!user) throw new Error('missing local user');
+    const fixture = await packFixture(kdfParamsFromWire(JSON.parse(user.kdfParamsJson)) ?? null);
+    const relayStore = new MeshRelayStore(auth.db);
+    await relayStore.replaceRelays(
+      [
+        {
+          url: RELAY_URL,
+          tenantId: TENANT_ID,
+          token: new Uint8Array(32).fill(1),
+          priority: 0,
+        },
+      ],
+      1
+    );
+    relayStore.markKicked(RELAY_URL, true, 'password_rotated');
+
+    const result = await performRelayPasswordJoin(
+      { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
+      { auth, fetcher: fixture.fetcher }
+    );
+    expect(result).toMatchObject({ userId: user.id, tenantId: TENANT_ID, rekeyed: true });
+    const stored = await relayStore.getRelay(RELAY_URL);
+    expect(stored?.token).toEqual(fixture.token);
+    expect(stored?.kicked).toBe(false);
+    expect(await relayStore.getSecret('log', 0)).toEqual(fixture.logKey);
+    expect(auth.userStore.listUsers()).toHaveLength(1);
   });
 
   test('maps a missing pack / unknown tenant into relay_tenant_unknown', async () => {

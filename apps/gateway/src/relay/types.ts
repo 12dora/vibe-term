@@ -28,6 +28,12 @@ export const RELAY_METRICS_HISTORY_LIMIT = 60;
 export const RELAY_ENROLL_FAILURE_LIMIT = 5;
 export const RELAY_ENROLL_FAILURE_WINDOW_MS = 15 * 60 * 1000;
 
+/**
+ * 令牌换发后上一代令牌的宽限期：新令牌要经密钥日志（`set-relays`）才到得了成员节点，
+ * 换发的那一刻就作废旧令牌会让成员在拉到新记录之前先被踢下线，从而永远拉不到。
+ */
+export const RELAY_PREV_TOKEN_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
+
 export const RELAY_TENANT_ID_BYTES = 16;
 export const RELAY_TOKEN_BYTES = 32;
 export const RELAY_ADMIN_TOKEN_BYTES = 32;
@@ -55,6 +61,9 @@ export type RelayTenantRecord = {
   rootEpoch: number;
   tokenHash: string;
   tokenEpoch: number;
+  /** 上一代令牌的哈希：非踢出场景换发时保留，宽限期内仍可认证。 */
+  prevTokenHash: string | null;
+  prevTokenIssuedAt: number | null;
   quota: RelayQuota | null;
   label: string | null;
   kicked: boolean;

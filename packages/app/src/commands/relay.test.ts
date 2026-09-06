@@ -23,6 +23,7 @@ import {
   runRelayEnroll,
   runRelayLeave,
   runRelayList,
+  runRelayResendToken,
 } from './relay';
 import type { RelayIo } from './relay-shared';
 
@@ -64,6 +65,7 @@ type FakeOptions = {
   rejectUnauthedStatus?: boolean;
   enroll?: () => Response;
   leave?: Record<string, unknown>;
+  resendToken?: Record<string, unknown>;
   /** 依次作用于每一次 `POST /api/auth/keylog?hub=sync`；用完回落到成功。 */
   appends?: Array<() => Response>;
   /** 依次作用于每一次 `GET /api/auth/keylog/head` 的 rootEpoch。 */
@@ -146,6 +148,10 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         return json(options.readmitPrepare ?? { rootEpoch: user.rootEpoch, entries: [] });
       case '/api/mesh/relay/leave/prepare':
         return json(options.leave ?? { payload: encodeBase64url(SET_RELAYS_PAYLOAD) });
+      case '/api/mesh/relay/resend-token/prepare':
+        return json(
+          options.resendToken ?? { nodes: 3, payload: encodeBase64url(SET_RELAYS_PAYLOAD) }
+        );
       case '/api/auth/keylog/head': {
         const epochs = options.headEpochs;
         const rootEpoch = epochs?.[Math.min(headIndex, epochs.length - 1)] ?? user.rootEpoch;
@@ -592,6 +598,34 @@ describe('relay leave', () => {
     const { fetcher } = fakeGateway(auth, { leave: {} });
     await expect(
       runRelayLeave(parseArgs(['relay', 'leave']), io(auth, fetcher, []))
+    ).rejects.toThrow('no set-relays payload');
+  });
+});
+
+describe('relay resend-token', () => {
+  test('按当前中继表重签一条 set-relays 并报告覆盖的节点数', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { calls, fetcher } = fakeGateway(auth);
+    const result = await runRelayResendToken(
+      parseArgs(['relay', 'resend-token']),
+      io(auth, fetcher, logs)
+    );
+    expect(result.nodes).toBe(3);
+    const paths = calls.map((call) => call.path);
+    expect(paths).toContain('/api/mesh/relay/resend-token/prepare');
+    const append = calls.find((call) => call.path === '/api/auth/keylog?hub=sync');
+    expect(decodeKeyLogRecord(decodeBase64url(String(append?.body?.bytes))).type).toBe(
+      'set-relays'
+    );
+    expect(logs.at(-1)).toContain('3');
+  });
+
+  test('prepare 没给 payload 时报错清楚', async () => {
+    const auth = await openAuth();
+    const { fetcher } = fakeGateway(auth, { resendToken: {} });
+    await expect(
+      runRelayResendToken(parseArgs(['relay', 'resend-token']), io(auth, fetcher, []))
     ).rejects.toThrow('no set-relays payload');
   });
 });

@@ -394,7 +394,7 @@ describe('hub join with an r3 token', () => {
     expect(uplink.kind).toBe('relay');
     expect(uplink.name).toBe('laptop');
     expect(uplink.relays).toEqual([
-      { url: RELAY_A, tenantId: TENANT_A, priority: 0, kicked: false },
+      { url: RELAY_A, tenantId: TENANT_A, priority: 0, kicked: false, kickedReason: null },
     ]);
 
     const store = new MeshRelayStore(joiner.db);

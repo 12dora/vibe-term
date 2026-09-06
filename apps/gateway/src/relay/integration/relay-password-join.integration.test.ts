@@ -12,6 +12,7 @@ import {
   RelayPasswordJoinError,
   performRelayPasswordJoin,
 } from '../../../../../packages/app/src/lib/relay-password-join';
+import { MeshRelayStore } from '../../auth/mesh-relay-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { kdfParamsFromJson } from '../../auth/user-key-service';
 import { UserStore } from '../../auth/user-store';
@@ -123,6 +124,96 @@ describe('relay password join', () => {
     await waitUntil(() => b.userStore.getPeer(tenant.owner.nodeId)?.name === 'alpha-a', 8_000);
     expect(await b.relayStore.getSecret('meta', shared ?? 0)).toBeTruthy();
     expect(await tenant.owner.relayStore.getSecret('meta', shared ?? 0)).toBeTruthy();
+  }, 30_000);
+
+  test('keep 改密后密码加入的节点断线重连仍能认证', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: () => {} });
+    const joined = await performRelayPasswordJoin(
+      {
+        relayUrl: RELAY_TEST_PUBLIC_URL,
+        tenantId: tenant.tenantId(),
+        password: NODE_PASSWORD,
+        name: 'alpha-b',
+      },
+      { auth }
+    );
+    const user = new UserStore(created.db).getById(joined.userId);
+    if (!user) throw new Error('join did not persist a user');
+    const seed = await deriveSeed(NODE_PASSWORD, kdfParamsFromJson(user.kdfParamsJson));
+    const b = await h.bootNode('alpha-b', {
+      userId: joined.userId,
+      rootKey: rootKeyFromSeed(seed),
+      db: created.db,
+      close: created.close,
+    });
+    tenant.nodes.push(b);
+    await waitUntil(() => b.mesh.uplink.state === 'online', 8_000);
+
+    const rotated = await h.relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'second-pass', mode: 'keep' }),
+    });
+    expect(rotated.status).toBe(200);
+
+    const tenantId = tenant.tenantId();
+    h.relay.runtime.registry.get(tenantId, b.nodeId)?.link.close('test-drop');
+    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) == null, 8_000);
+    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) != null, 8_000);
+    expect(b.relayStore.listRelayRows()[0]?.kicked).toBe(false);
+  }, 30_000);
+
+  test('同一账户可用账户密码重新取回中继令牌（rekey）', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      const joined = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+          name: 'alpha-b',
+        },
+        { auth }
+      );
+      const store = new MeshRelayStore(created.db);
+      const good = (await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token;
+      if (!good) throw new Error('join stored no relay token');
+      // 模拟「令牌被换发时本机正好离线」：库里剩一份作废的令牌，还被打了踢出标记
+      await store.setRelayToken({
+        url: RELAY_TEST_PUBLIC_URL,
+        tenantId: tenant.tenantId(),
+        token: new Uint8Array(32).fill(9),
+        now: Date.now(),
+      });
+      store.markKicked(RELAY_TEST_PUBLIC_URL, true, 'password_rotated');
+
+      const rekeyed = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+        },
+        { auth }
+      );
+      expect(rekeyed.rekeyed).toBe(true);
+      expect(rekeyed.userId).toBe(joined.userId);
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(good);
+      expect(store.listRelayRows()[0]?.kicked).toBe(false);
+      expect(new UserStore(created.db).listUsers()).toHaveLength(1);
+    } finally {
+      created.close();
+    }
   }, 30_000);
 
   test('a truncated key log is rejected against the sealed pack head', async () => {

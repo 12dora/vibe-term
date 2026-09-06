@@ -1,4 +1,5 @@
 import type { KeyLogType } from '@vibeterm/shared/auth';
+import type { RelayKickReason } from '@vibeterm/shared/relay';
 import type { HubMode } from '@vibeterm/shared/uplink';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
@@ -156,7 +157,7 @@ export function relayUplinkOverrides(
             tlsCa: o.tlsCa ?? null,
             ...(o.scheduler ? { scheduler: o.scheduler } : {}),
             ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
-            onKicked: () => markRelayKicked(wiring, o.hubUrl),
+            onKicked: (reason) => markRelayKicked(wiring, o.hubUrl, reason),
             dial,
           })
         : new UplinkClient(o),
@@ -167,9 +168,14 @@ export function relayUplinkOverrides(
   };
 }
 
-function markRelayKicked(wiring: RelayWiring, url: string): void {
+/**
+ * 记下踢出原因。`password_rotated` 只表示租户令牌换了代——成员手上没有中继接入口令，
+ * 也签不出 enroll proof，能做的只有等主节点把新令牌经 `set-relays` 发下来；
+ * 池子照旧退避重拨，`auth.ok` 一到 `markUnkicked` 就把标记清掉。
+ */
+function markRelayKicked(wiring: RelayWiring, url: string, reason: RelayKickReason): void {
   try {
-    wiring.secrets.store.markKicked(url, true);
+    wiring.secrets.store.markKicked(url, true, reason);
   } catch {
     // 行可能刚被新的 set-relays 换掉
   }

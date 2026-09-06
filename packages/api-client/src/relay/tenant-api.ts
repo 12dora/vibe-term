@@ -31,6 +31,8 @@ export interface RelayLinkStatus {
   lastErrorAt?: number | null;
   /** 中继侧作废了本租户令牌（改密踢人 / 运营者手动踢）。 */
   kicked?: boolean;
+  /** 踢出原因；`password_rotated` 表示只是令牌换代，等新的 `set-relays` 即可恢复。 */
+  kickedReason?: string | null;
 }
 
 /** 中继链路错误的稳定分类（由网关按原始错误归一化）。 */
@@ -41,6 +43,7 @@ export type RelayLinkErrorCode =
   | 'auth-rejected'
   | 'heartbeat-lost'
   | 'kicked'
+  | 'revoked'
   | 'dns'
   | 'refused'
   | 'tls'
@@ -84,6 +87,11 @@ export interface RelayTenantStatus {
   nodesViaRelay: number;
   /** 令牌已失效，必须重新输入中继口令。 */
   reauthRequired: boolean;
+  /**
+   * 令牌只是换了代：本机没有中继接入口令、也签不出 enroll proof，
+   * 能做的只有等持账户密码的一方把新令牌经 `set-relays` 发下来。旧节点不返回该字段。
+   */
+  awaitingToken?: boolean;
   /** 中继按租户下发的配额。 */
   quota: RelayQuotaView | null;
   /** 密钥日志同步健康度；旧节点不返回该字段。 */
@@ -321,6 +329,7 @@ const EMPTY_STATUS: RelayTenantStatus = {
   metaEpoch: 0,
   nodesViaRelay: 0,
   reauthRequired: false,
+  awaitingToken: false,
   keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
   readmitPending: 0,
 };
@@ -349,10 +358,12 @@ export function normalizeRelayStatus(
       lastErrorCode: row.online === true ? null : (row.lastErrorCode ?? null),
       lastErrorAt: row.online === true ? null : (row.lastErrorAt ?? null),
       kicked: row.kicked === true,
+      kickedReason: row.kicked === true ? (row.kickedReason ?? null) : null,
     })),
     metaEpoch: payload.metaEpoch ?? 0,
     nodesViaRelay: payload.nodesViaRelay ?? 0,
     reauthRequired: payload.reauthRequired === true,
+    awaitingToken: payload.awaitingToken === true,
     keyLog: {
       skipped: payload.keyLog?.skipped ?? 0,
       blockedSeq: payload.keyLog?.blockedSeq ?? null,

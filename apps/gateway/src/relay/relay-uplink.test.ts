@@ -680,6 +680,23 @@ describe('relay kick', () => {
     expect((await again.inbox.takeOf('auth.ok')).t).toBe('auth.ok');
   });
 
+  test('keep mode never sends relay.kicked to a live member', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'new-secret', mode: 'keep' }),
+    });
+    expect(res.status).toBe(200);
+    // 链路还活着：ping 拿得到 pong，而不是 relay.kicked
+    client.send({ t: 'ping' });
+    expect((await client.inbox.takeOf('pong')).t).toBe('pong');
+    expect(relay.runtime.tenants.get(tenant.id)?.kicked).toBe(false);
+  });
+
   test('admin kick marks the tenant and blocks reconnects until re-enroll', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();

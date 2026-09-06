@@ -1,5 +1,6 @@
 import {
   bytesEqual,
+  bytesToHex,
   decodeAuthorization,
   decodeBase64url,
   encodeBase64url,
@@ -18,6 +19,11 @@ import { makeVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserStore } from '../auth/user-store';
 import { isTrustedLocalClient } from './client-source';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
+import {
+  RELAY_ENROLL_FETCH_TIMEOUT_MS,
+  callRelayEnroll,
+  relayTokenHashHex,
+} from './relay-enroll-call';
 import {
   RELAY_ENROLLMENT_FANOUT_TIMEOUT_MS,
   collectJoinMaterialRelays,
@@ -40,7 +46,6 @@ import {
   parseEnrollmentBody,
   parseStoredJson,
   readProof,
-  readRelayErrorCode,
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import { buildRelayStatusRow } from './relay-status-row';
@@ -57,8 +62,8 @@ import {
 export { RELAY_SWITCH_TIMEOUT_MS, type RelayUplinkView } from './relay-switch-route';
 
 export const RELAY_ROUTE_PREFIX = '/api/mesh/relay';
-export const RELAY_ENROLL_FETCH_TIMEOUT_MS = 15_000;
 export const RELAY_ENROLLMENT_ACK_TIMEOUT_MS = 10_000;
+export { RELAY_ENROLL_FETCH_TIMEOUT_MS };
 
 export type RelayRoutesDeps = {
   session: SessionMiddlewareDeps;
@@ -115,6 +120,7 @@ export class RelayRoutes {
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),
+      'POST /resend-token/prepare': (_r, uid) => this.resendTokenPrepare(uid),
       'POST /remove/prepare': (r, uid) => this.removePrepare(r, uid),
       'POST /meta-key/prepare': (r, uid) => this.metaKeyPrepare(r, uid),
       'GET /join-material': (r) => this.joinMaterial(r),
@@ -160,6 +166,8 @@ export class RelayRoutes {
       metaEpoch: this.deps.secrets.currentMetaEpoch(),
       nodesViaRelay: client?.nodesViaRelay ?? 0,
       reauthRequired: rows.some((row) => row.kicked),
+      // 令牌换代：本节点无从自救，只能等持根钥的一方把新令牌经 `set-relays` 发下来
+      awaitingToken: rows.some((row) => row.kicked && row.kickedReason === 'password_rotated'),
       readmitPending,
       quota: client?.quota ?? null,
       // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
@@ -218,77 +226,27 @@ export class RelayRoutes {
     });
     if (!verified.ok) return jsonError('BAD_PROOF', 400, { reason: verified.error });
     const password = typeof body?.password === 'string' ? body.password : undefined;
-    const remote = await this.callRelayEnroll(url, {
+    // 本机已持有的那份令牌：与中继当前令牌一致时中继不再换发，成员节点因此不掉线
+    const stored = await this.deps.secrets.store.getRelay(url).catch(() => null);
+    const remote = await callRelayEnroll(url, {
+      fetchImpl: this.deps.fetchImpl,
+      dial: this.deps.dial,
       password,
       rootPublicKey: user.rootPublicKey,
       rootEpoch: user.rootEpoch,
       proof,
+      ...(stored ? { knownTokenHash: relayTokenHashHex(stored.token) } : {}),
     });
     if (!remote.ok) return jsonError(remote.error, remote.status);
+    const token =
+      remote.token ?? (stored && stored.tenantId === remote.tenantId ? stored.token : null);
+    if (!token) return jsonError('RELAY_BAD_RESPONSE', 502);
     return this.prepareSetRelays(userId, {
       url,
       tenantId: remote.tenantId,
-      token: remote.token,
+      token,
       passwordEpoch: remote.passwordEpoch,
     });
-  }
-
-  private async callRelayEnroll(
-    url: string,
-    input: {
-      password?: string;
-      rootPublicKey: Uint8Array;
-      rootEpoch: number;
-      proof: { bytes: Uint8Array; sig: Uint8Array };
-    }
-  ): Promise<
-    | { ok: true; tenantId: string; token: Uint8Array; passwordEpoch: number }
-    | { ok: false; error: string; status: number }
-  > {
-    const doFetch = this.deps.fetchImpl ?? fetch;
-    const dialUrl = resolveRelayDialUrl(url, this.deps.dial ?? relayDialContextFromEnv());
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), RELAY_ENROLL_FETCH_TIMEOUT_MS);
-    try {
-      const res = await doFetch(`${dialUrl.replace(/\/+$/, '')}/api/relay/enroll`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        signal: ac.signal,
-        body: JSON.stringify({
-          ...(input.password !== undefined ? { password: input.password } : {}),
-          root_public_key: encodeBase64url(input.rootPublicKey),
-          root_epoch: input.rootEpoch,
-          proof: {
-            bytes: encodeBase64url(input.proof.bytes),
-            sig: encodeBase64url(input.proof.sig),
-          },
-        }),
-      });
-      const payload = (await res.json().catch(() => null)) as Record<string, unknown> | null;
-      if (!res.ok) {
-        const code = readRelayErrorCode(payload) ?? 'RELAY_ENROLL_FAILED';
-        return { ok: false, error: code, status: res.status === 401 ? 401 : 502 };
-      }
-      const tenantId = typeof payload?.tenant_id === 'string' ? payload.tenant_id : '';
-      const token = typeof payload?.token === 'string' ? payload.token : '';
-      if (!/^[0-9a-f]{32}$/.test(tenantId) || !token) {
-        return { ok: false, error: 'RELAY_BAD_RESPONSE', status: 502 };
-      }
-      const tokenBytes = decodeBase64url(token);
-      if (tokenBytes.byteLength !== 32) {
-        return { ok: false, error: 'RELAY_BAD_RESPONSE', status: 502 };
-      }
-      return {
-        ok: true,
-        tenantId,
-        token: tokenBytes,
-        passwordEpoch: typeof payload?.password_epoch === 'number' ? payload.password_epoch : 0,
-      };
-    } catch {
-      return { ok: false, error: 'RELAY_UNREACHABLE', status: 502 };
-    } finally {
-      clearTimeout(timer);
-    }
   }
 
   private async prepareSetRelays(
@@ -332,6 +290,33 @@ export class RelayRoutes {
       nodes: listRelayNodeKeys(this.deps.userStore, userId),
     });
     return jsonBody({ metaEpoch: projection.metaKeyEpoch, ...this.stash(payload, null) });
+  }
+
+  /**
+   * 把当前中继表原样再签一遍 `set-relays`：中继地址、租户令牌、世代都不变，
+   * 只是把同一份令牌重新按每个未吊销节点的 X25519 公钥封装并追加到密钥日志。
+   *
+   * 用途是把令牌重新发一遍给那些错过了上一条记录的成员（例如令牌换发时正好离线）。
+   * 记录内容与上一条不同（封装用的临时密钥每次都换），因此不会被当成重复。
+   */
+  private async resendTokenPrepare(userId: string): Promise<Response> {
+    if (this.mode() !== 'relay') return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const relays = mergeRelayTargets(this.deps.secrets.projection().relays, null);
+    if (relays.length === 0) return jsonError('RELAY_NOT_CONFIGURED', 409);
+    const nodes = listRelayNodeKeys(this.deps.userStore, userId);
+    if (nodes.length === 0) return jsonError('NO_ADMITTED_NODES', 409);
+    const logKey = await this.deps.secrets.logKey();
+    const meta = await this.deps.secrets.currentMetaKey();
+    if (!logKey || !meta) return jsonError('RELAY_KEY_MISSING', 409);
+    const payload = await buildSetRelaysPayload({
+      relays,
+      logKey,
+      metaKey: meta.key,
+      metaEpoch: meta.epoch,
+      nodes,
+    });
+    const prepared = this.stash(payload, { logKey, metaKey: meta.key, epoch: meta.epoch });
+    return jsonBody({ metaEpoch: meta.epoch, nodes: nodes.length, ...prepared });
   }
 
   /**

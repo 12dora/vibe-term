@@ -4,6 +4,7 @@ import { toBuffer, toBytes } from '../auth/binary';
 import type { AuthDb } from '../auth/types';
 import { relayEnrollments, relayNodes, relayTenants } from '../db/schema';
 import { parseRelayQuotaJson, serializeRelayQuota } from './relay-quota';
+import { relayTokenHashAccepted } from './relay-token-grace';
 import type {
   RelayEnrollmentRecord,
   RelayNodeRecord,
@@ -22,6 +23,8 @@ function toTenant(row: TenantRow): RelayTenantRecord {
     rootEpoch: row.rootEpoch,
     tokenHash: row.tokenHash,
     tokenEpoch: row.tokenEpoch,
+    prevTokenHash: row.prevTokenHash,
+    prevTokenIssuedAt: row.prevTokenIssuedAt,
     quota: parseRelayQuotaJson(row.quotaJson),
     label: row.label,
     kicked: row.kicked,
@@ -106,6 +109,8 @@ export class RelayTenantStore {
         rootEpoch: input.rootEpoch,
         tokenHash: input.tokenHash,
         tokenEpoch: input.tokenEpoch,
+        prevTokenHash: null,
+        prevTokenIssuedAt: null,
         quotaJson: null,
         label: null,
         kicked: false,
@@ -124,22 +129,39 @@ export class RelayTenantStore {
   /**
    * 重新 enroll：换令牌、清踢出标记，tenant_id 不变。
    * **不动 root_epoch**——它只由 `rotate-root` 侧带记录推进（enroll 里的 epoch 是未鉴权的自称值）。
+   *
+   * `keepPrevious` 时把旧哈希挪到 `prev_token_hash`：成员节点要等新的 `set-relays` 才拿得到新令牌，
+   * 宽限期内旧令牌仍可认证，它们才不会在拿到新记录之前先被踢下线。
+   * 踢出恢复路径（`kicked` / epoch 过旧）传 false：那些链路本来就该断，旧令牌不留后门。
    */
   reissueToken(input: {
     tenantId: string;
     tokenHash: string;
     tokenEpoch: number;
+    keepPrevious: boolean;
     now: number;
   }): void {
+    const current = this.get(input.tenantId);
     this.db
       .update(relayTenants)
       .set({
         tokenHash: input.tokenHash,
         tokenEpoch: input.tokenEpoch,
+        prevTokenHash: input.keepPrevious ? (current?.tokenHash ?? null) : null,
+        prevTokenIssuedAt: input.keepPrevious ? input.now : null,
         kicked: false,
         lastSeenAt: input.now,
       })
       .where(eq(relayTenants.id, input.tenantId))
+      .run();
+  }
+
+  /** 踢租户 / kick 模式改密：上一代令牌立刻失效，不留宽限。 */
+  clearPreviousToken(tenantId: string): void {
+    this.db
+      .update(relayTenants)
+      .set({ prevTokenHash: null, prevTokenIssuedAt: null })
+      .where(eq(relayTenants.id, tenantId))
       .run();
   }
 
@@ -203,7 +225,10 @@ export class RelayTenantStore {
         result = 'kicked';
         return;
       }
-      if (row.tokenHash !== input.tokenHash || row.tokenEpoch < input.minTokenEpoch) {
+      if (
+        !relayTokenHashAccepted(toTenant(row), input.tokenHash, input.now) ||
+        row.tokenEpoch < input.minTokenEpoch
+      ) {
         result = 'unauthorized';
         return;
       }

@@ -24,6 +24,8 @@ export const relayTenants = sqliteTable('relay_tenants', {
   rootEpoch: integer('root_epoch').notNull(),
   tokenHash: text('token_hash').notNull(),
   tokenEpoch: integer('token_epoch').notNull(),
+  prevTokenHash: text('prev_token_hash'),
+  prevTokenIssuedAt: integer('prev_token_issued_at'),
   quotaJson: text('quota_json'),
   label: text('label'),
   kicked: integer('kicked', { mode: 'boolean' }).notNull().default(false),

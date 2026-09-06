@@ -61,6 +61,7 @@ describe('RelayTenantApi 状态', () => {
         lastErrorCode: null,
         lastErrorAt: null,
         kicked: false,
+        kickedReason: null,
       },
     ]);
     expect(status.metaEpoch).toBe(0);
@@ -123,6 +124,7 @@ describe('RelayTenantApi 状态', () => {
       lastErrorCode: null,
       lastErrorAt: 7,
       kicked: false,
+      kickedReason: null,
     });
     expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
     expect(

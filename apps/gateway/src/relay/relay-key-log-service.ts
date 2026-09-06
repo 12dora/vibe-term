@@ -13,6 +13,7 @@ import { trimRelayKeyLogPage } from './relay-key-log-page';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { type RelayMemberResult, verifyRelayMemberProof } from './relay-member';
 import type { RelayTenantStore } from './relay-tenant-store';
+import { relayTokenHashAccepted } from './relay-token-grace';
 import type { RelayTenantRecord } from './types';
 
 export type RelayAppendOutcome =
@@ -138,7 +139,7 @@ export function appendRelayKeyLog(
           throw new Error('relay-keylog-auth');
         }
         if (
-          current.tokenHash !== writeAuth.tokenHash ||
+          !relayTokenHashAccepted(current, writeAuth.tokenHash, now) ||
           current.tokenEpoch < writeAuth.minTokenEpoch
         ) {
           authError = 'UNAUTHORIZED';

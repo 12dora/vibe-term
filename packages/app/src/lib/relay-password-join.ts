@@ -1,3 +1,8 @@
+import {
+  MeshRelayStore,
+  RELAY_LOG_KEY_EPOCH,
+} from '../../../../apps/gateway/src/auth/mesh-relay-store';
+import { bytesEqual } from '../../../shared/src/auth';
 import { RelayPackError, normalizeRelayUrl } from '../../../shared/src/relay';
 import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
@@ -45,7 +50,18 @@ export type RelayPasswordJoinResult = {
   userId: string;
   relayUrl: string;
   tenantId: string;
+  /** 本机已经是该租户的成员，这次只换发了中继令牌（没有重建本机用户，也不用重启）。 */
+  rekeyed?: boolean;
 };
+
+/**
+ * 本机已有 mesh 用户时的处理方式。
+ *
+ * 覆盖别人的账户永远不行；但「同一个账户的成员节点因为令牌被换发而连不上」是真实的恢复场景——
+ * 那台机器手里只剩一份作废的令牌，又因为连不上中继而拉不到带新令牌的 `set-relays`。
+ * 此时用账户密码开密封包、只替换 `mesh_relays` 里的令牌即可，不重建用户、不动证书。
+ */
+type JoinMode = { kind: 'join' } | { kind: 'rekey'; userId: string; rootPublicKey: Uint8Array };
 
 function parseJoinRelayUrl(raw: string): string {
   try {
@@ -130,20 +146,18 @@ function wrapJoinError(error: unknown): RelayPasswordJoinError {
   return wrapRelayPasswordJoinError(error);
 }
 
-async function assertJoinable(ctx: LocalAuthContext): Promise<void> {
-  if (ctx.userStore.listUsers().length > 0) {
+async function resolveJoinMode(ctx: LocalAuthContext): Promise<JoinMode> {
+  const users = ctx.userStore.listUsers();
+  const identity = await ctx.identityStore.load();
+  if (users.length === 0 && !identity?.userId) return { kind: 'join' };
+  const only = users.length === 1 ? users[0] : undefined;
+  if (!only || (identity?.userId && identity.userId !== only.id)) {
     throw new RelayPasswordJoinError(
       'local_user_exists',
       'this machine already has a mesh user; password join refuses to overwrite it'
     );
   }
-  const identity = await ctx.identityStore.load();
-  if (identity?.userId) {
-    throw new RelayPasswordJoinError(
-      'local_user_exists',
-      'this machine already has a node identity bound to a mesh user'
-    );
-  }
+  return { kind: 'rekey', userId: only.id, rootPublicKey: only.rootPublicKey };
 }
 
 async function pinnedFetcher(input: {
@@ -168,11 +182,42 @@ async function pinnedFetcher(input: {
   };
 }
 
+/** 只换令牌：用密封包里的当前令牌覆盖 `mesh_relays` 那一行，并刷新 `K_log`。 */
+async function rekeyRelayToken(
+  mode: Extract<JoinMode, { kind: 'rekey' }>,
+  ctx: LocalAuthContext,
+  transport: { relayUrl: string; tenantId: string },
+  pack: Awaited<ReturnType<typeof joinKdfProofAndPack>>,
+  now: number
+): Promise<RelayPasswordJoinResult> {
+  if (!bytesEqual(pack.rootKey.publicKey, mode.rootPublicKey)) {
+    throw new RelayPasswordJoinError(
+      'local_user_exists',
+      'this machine belongs to a different mesh account; password join refuses to overwrite it'
+    );
+  }
+  const store = new MeshRelayStore(ctx.db);
+  await store.setRelayToken({
+    url: transport.relayUrl,
+    tenantId: transport.tenantId,
+    token: pack.pack.token,
+    now,
+  });
+  await store.putSecret('log', RELAY_LOG_KEY_EPOCH, pack.pack.log_key, now);
+  store.setUplinkKind('relay');
+  return {
+    userId: mode.userId,
+    relayUrl: transport.relayUrl,
+    tenantId: transport.tenantId,
+    rekeyed: true,
+  };
+}
+
 export async function performRelayPasswordJoin(
   input: RelayPasswordJoinInput,
   deps: RelayPasswordJoinDeps
 ): Promise<RelayPasswordJoinResult> {
-  await assertJoinable(deps.auth);
+  const mode = await resolveJoinMode(deps.auth);
   const relayUrl = await resolveJoinRelayPort(input.relayUrl, deps);
   const tenantId = input.tenantId.trim().toLowerCase();
   const { fetcher, pin } = await pinnedFetcher({
@@ -191,6 +236,9 @@ export async function performRelayPasswordJoin(
       now: deps.now?.() ?? Date.now(),
     });
     await deps.afterUnpack?.(pack);
+    if (mode.kind === 'rekey') {
+      return await rekeyRelayToken(mode, deps.auth, transport, pack, deps.now?.() ?? Date.now());
+    }
     const log = await joinDownloadVerifyReplay(transport, pack);
     const admit = await joinSelfAdmitAndPersist({
       auth: deps.auth,

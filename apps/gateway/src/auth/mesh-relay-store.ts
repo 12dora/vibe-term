@@ -21,6 +21,8 @@ export type StoredMeshRelayRow = {
   tenantId: string;
   priority: number;
   kicked: boolean;
+  /** 中继给出的踢出原因；`password_rotated` 表示只是令牌换代，等新的 `set-relays` 即可。 */
+  kickedReason: string | null;
 };
 
 export type StoredMeshRelay = StoredMeshRelayRow & { token: Uint8Array };
@@ -51,6 +53,7 @@ export class MeshRelayStore {
         tenantId: row.tenantId,
         priority: row.priority,
         kicked: row.kicked,
+        kickedReason: row.kickedReason,
       }));
   }
 
@@ -62,6 +65,7 @@ export class MeshRelayStore {
       tenantId: row.tenantId,
       priority: row.priority,
       kicked: row.kicked,
+      kickedReason: row.kickedReason,
       token: await decryptBytes(row.tokenEnc, 'relay_token', row.url),
     };
   }
@@ -74,6 +78,7 @@ export class MeshRelayStore {
         tokenEnc: await encryptBytes(relay.token),
         priority: relay.priority,
         kicked: false,
+        kickedReason: null,
         updatedAt: now,
       }))
     );
@@ -82,8 +87,53 @@ export class MeshRelayStore {
     for (const row of rows) this.db.insert(meshRelays).values(row).run();
   }
 
-  markKicked(url: string, kicked: boolean): void {
-    this.db.update(meshRelays).set({ kicked }).where(eq(meshRelays.url, url)).run();
+  /**
+   * 只换某一条中继的租户令牌，其余行不动（令牌换发后给成员补发的场景）。
+   * 行不存在时补一条排在最后——成员可能因为一直连不上而没收到过任何 `set-relays`。
+   */
+  async setRelayToken(input: {
+    url: string;
+    tenantId: string;
+    token: Uint8Array;
+    now: number;
+  }): Promise<void> {
+    const tokenEnc = await encryptBytes(input.token);
+    const existing = this.db.select().from(meshRelays).where(eq(meshRelays.url, input.url)).get();
+    if (!existing) {
+      const priority = this.listRelayRows().length;
+      this.db
+        .insert(meshRelays)
+        .values({
+          url: input.url,
+          tenantId: input.tenantId,
+          tokenEnc,
+          priority,
+          kicked: false,
+          kickedReason: null,
+          updatedAt: input.now,
+        })
+        .run();
+      return;
+    }
+    this.db
+      .update(meshRelays)
+      .set({
+        tenantId: input.tenantId,
+        tokenEnc,
+        kicked: false,
+        kickedReason: null,
+        updatedAt: input.now,
+      })
+      .where(eq(meshRelays.url, input.url))
+      .run();
+  }
+
+  markKicked(url: string, kicked: boolean, reason?: string | null): void {
+    this.db
+      .update(meshRelays)
+      .set({ kicked, kickedReason: kicked ? (reason ?? null) : null })
+      .where(eq(meshRelays.url, url))
+      .run();
   }
 
   clearRelays(): void {

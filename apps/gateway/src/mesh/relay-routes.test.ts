@@ -158,6 +158,7 @@ describe('RelayRoutes', () => {
         relays: Array<{ url: string; priority: number; kicked: boolean }>;
         reauthRequired: boolean;
         readmitPending: number;
+        awaitingToken: boolean;
       };
       expect(after.mode).toBe('relay');
       expect(after.tenantId).toBe(TENANT_ID);
@@ -173,9 +174,11 @@ describe('RelayRoutes', () => {
           lastErrorCode: null,
           lastErrorAt: null,
           kicked: false,
+          kickedReason: null,
         },
       ] as never);
       expect(after.reauthRequired).toBe(false);
+      expect(after.awaitingToken).toBe(false);
       expect(after.readmitPending).toBe(0);
     } finally {
       b.close();
@@ -478,6 +481,63 @@ describe('RelayRoutes', () => {
       const result = await b.secrets.reconcile();
       expect(result.kind).toBe('relay');
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('已接入时 enroll 带上本机令牌哈希；中继回 token_unchanged 则沿用旧令牌', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
+    const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
+      });
+      return new Response(
+        JSON.stringify({ tenant_id: TENANT_ID, token: null, token_unchanged: true }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      );
+    }) as unknown as typeof fetch;
+    const b = await boot({ fetchImpl });
+    try {
+      await configureRelay(b);
+      const proof = signRelayEnrollProof(b.user.rootKey, {
+        relayHost: hubHostFromUrl(RELAY_URL),
+        ts: Date.now(),
+      });
+      const res = await b.call('/api/mesh/relay/enroll', {
+        method: 'POST',
+        body: JSON.stringify({
+          url: RELAY_URL,
+          proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+        }),
+      });
+      expect(res.status).toBe(200);
+      expect(String(calls[0]?.body.known_token_hash)).toMatch(/^[0-9a-f]{64}$/);
+      const body = (await res.json()) as { token: string; payload: string };
+      // 令牌没换：响应与 set-relays 都用本机已存的那一份
+      expect(decodeBase64url(body.token)).toEqual(new Uint8Array(32).fill(6));
+      const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
+      expect(payload.relays[0]?.token).toEqual(new Uint8Array(32).fill(6));
+    } finally {
+      b.close();
+    }
+  });
+
+  test('resend-token/prepare 按当前中继表重签一条 set-relays', async () => {
+    const b = await boot();
+    try {
+      await configureRelay(b);
+      const res = await b.call('/api/mesh/relay/resend-token/prepare', { method: 'POST' });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { payload: string; metaEpoch: number; nodes: number };
+      expect(body.metaEpoch).toBe(1);
+      expect(body.nodes).toBe(1);
+      const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
+      expect(payload.relays).toHaveLength(1);
+      expect(payload.relays[0]?.url).toBe(canonicalHubUrl(RELAY_URL));
+      expect(payload.relays[0]?.token).toEqual(new Uint8Array(32).fill(6));
+      expect(payload.meta_key.epoch).toBe(1);
     } finally {
       b.close();
     }

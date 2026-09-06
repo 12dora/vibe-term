@@ -25,6 +25,7 @@ const LINK_ERROR_CODES = new Set<string>([
   'auth-rejected',
   'heartbeat-lost',
   'kicked',
+  'revoked',
   'dns',
   'refused',
   'tls',

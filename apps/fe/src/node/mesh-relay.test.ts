@@ -9,6 +9,7 @@ import {
   isRelayMode,
   orderedRelays,
   refreshMeshRelay,
+  relayAwaitingToken,
   relayKicked,
   relayWritable,
   resetMeshRelayStateForTest,
@@ -99,6 +100,19 @@ describe('mesh-relay 纯函数', () => {
       ...status({ relays: [link('https://a.example', { kicked: true })] }),
     };
     expect(relayKicked(kicked)).toBe(true);
+    expect(relayAwaitingToken(kicked)).toBe(false);
+  });
+
+  test('令牌换代按「等待新令牌」判，不当成要重新输入口令', () => {
+    const rotated = {
+      ...getMeshRelayState(),
+      ...status({
+        relays: [link('https://a.example', { kicked: true, kickedReason: 'password_rotated' })],
+      }),
+    };
+    expect(relayAwaitingToken(rotated)).toBe(true);
+    const flagged = { ...getMeshRelayState(), ...status({ awaitingToken: true }) };
+    expect(relayAwaitingToken(flagged)).toBe(true);
   });
 });
 

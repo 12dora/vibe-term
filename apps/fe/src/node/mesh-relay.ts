@@ -47,6 +47,7 @@ const EMPTY_STATE: MeshRelayState = {
   metaEpoch: 0,
   nodesViaRelay: 0,
   reauthRequired: false,
+  awaitingToken: false,
   readmitPending: 0,
   loading: false,
   error: null,
@@ -110,6 +111,17 @@ export function relayWritable(snapshot: MeshRelayState): boolean {
 /** 令牌被作废（改密踢人 / 运营者手动踢）：需要重新输入中继口令。 */
 export function relayKicked(snapshot: MeshRelayState): boolean {
   return snapshot.reauthRequired || snapshot.relays.some((row) => row.kicked === true);
+}
+
+/**
+ * 令牌只是换了代（`password_rotated`）。本机没有中继接入口令、也签不出 enroll proof，
+ * 唯一的出路是等持账户密码的一方把新令牌经 `set-relays` 发下来，所以不提示「重新输入接入密码」。
+ */
+export function relayAwaitingToken(snapshot: MeshRelayState): boolean {
+  if (snapshot.awaitingToken === true) return true;
+  return snapshot.relays.some(
+    (row) => row.kicked === true && row.kickedReason === 'password_rotated'
+  );
 }
 
 /** 按 priority 升序（即 failover 顺序）排一份；同优先级按地址稳定排序。 */
@@ -243,6 +255,8 @@ export interface UseMeshRelayResult extends MeshRelayState {
   /** 管理写入当前可用（非中继模式恒为 true）。 */
   writable: boolean;
   kicked: boolean;
+  /** 令牌换代中：等新令牌下发即可，本机无从自救。旧节点不下发该状态，缺省即 false。 */
+  awaitingToken?: boolean;
   refresh: () => void;
   /** 切到另一条已配置的中继；失败原样抛出。 */
   switchRelay: (url: string) => Promise<void>;
@@ -281,6 +295,7 @@ export function useMeshRelay(options: UseMeshRelayOptions = {}): UseMeshRelayRes
     ordered: orderedRelays(snapshot),
     writable: relayWritable(snapshot),
     kicked: relayKicked(snapshot),
+    awaitingToken: relayAwaitingToken(snapshot),
     refresh,
     switchRelay,
   };

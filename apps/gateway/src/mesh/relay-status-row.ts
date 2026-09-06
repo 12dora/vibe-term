@@ -31,7 +31,7 @@ export function relayLinkError(input: {
 }
 
 export function buildRelayStatusRow(
-  row: { url: string; priority: number; kicked: boolean },
+  row: { url: string; priority: number; kicked: boolean; kickedReason?: string | null },
   attachedUrl: string | null,
   client: Pick<RelayUplinkClient, 'state' | 'rttMs'> | null,
   live: Pick<PooledUplink, 'lastConnectError'> | null,
@@ -60,5 +60,6 @@ export function buildRelayStatusRow(
     lastErrorCode: current ? null : code,
     lastErrorAt: current ? null : err.lastErrorAt,
     kicked: row.kicked,
+    kickedReason: row.kicked ? (row.kickedReason ?? null) : null,
   };
 }

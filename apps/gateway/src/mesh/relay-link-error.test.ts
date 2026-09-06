@@ -29,7 +29,7 @@ const CASES: Array<[string | null | undefined, RelayLinkErrorCode | null]> = [
   ['kicked:password_rotated', 'kicked'],
   ['kicked', 'kicked'],
   ['tenant-kicked', 'kicked'],
-  ['revoked', 'kicked'],
+  ['revoked', 'revoked'],
   ['ECONNREFUSED', 'refused'],
   ['refused', 'refused'],
   ['connection refused', 'refused'],
@@ -55,7 +55,7 @@ const CASES: Array<[string | null | undefined, RelayLinkErrorCode | null]> = [
 /** `relay-uplink-auth.ts` / `relay-uplink-server.ts` 实际 close/reject 的原因，每条都要有明确分类。 */
 const SERVER_REASONS: Array<[string, RelayLinkErrorCode]> = [
   ['auth-timeout', 'auth-timeout'],
-  ['revoked', 'kicked'],
+  ['revoked', 'revoked'],
   ['member-required', 'auth-rejected'],
   ['member-malformed', 'auth-rejected'],
   ['member-type_mismatch', 'auth-rejected'],
@@ -76,7 +76,7 @@ const SERVER_REASONS: Array<[string, RelayLinkErrorCode]> = [
   ['relay-stop', 'protocol'],
   ['relay-kicked', 'kicked'],
   ['relay-password_rotated', 'kicked'],
-  ['relay-revoked', 'kicked'],
+  ['relay-revoked', 'revoked'],
   ['protocol_error', 'protocol'],
   ['unauthenticated', 'auth-rejected'],
   ['relay-tenant-gone', 'kicked'],

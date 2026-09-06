@@ -11,9 +11,10 @@ import { nodeVersionMeets } from '../hub/hub-authorization';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import { verifyRelayMemberProof } from './relay-member';
-import { constantTimeEqual, sha256Hex } from './relay-password';
+import { sha256Hex } from './relay-password';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
+import { relayPrevTokenUsable, relayTokenHashAccepted } from './relay-token-grace';
 import type { RelayTenantRecord } from './types';
 
 export type RelayAuthHost = {
@@ -37,16 +38,28 @@ export type RelayAuthHost = {
 
 type PendingAuth = { nonce: Uint8Array };
 
-/** 链路存续期间复查：令牌哈希、踢出、租户 epoch、全局 min epoch。 */
+/**
+ * 链路存续期间复查：令牌哈希、踢出、租户 epoch、全局 min epoch。
+ * 持上一代令牌的链路在宽限期内照旧有效——新令牌要经密钥日志才到得了它们手上。
+ */
 export function liveAuthStillValid(
   live: RelayLiveNode,
   tenant: RelayTenantRecord,
-  minTokenEpoch: number
+  minTokenEpoch: number,
+  now: number
 ): boolean {
-  if (live.tokenHash !== tenant.tokenHash || tenant.kicked) return false;
+  if (tenant.kicked) return false;
   if (live.tokenEpoch < minTokenEpoch) return false;
-  if (live.tokenEpoch < tenant.tokenEpoch) return false;
-  return true;
+  if (live.tokenHash === tenant.tokenHash) return live.tokenEpoch >= tenant.tokenEpoch;
+  return relayPrevTokenUsable(tenant, now) && live.tokenHash === tenant.prevTokenHash;
+}
+
+/** 令牌被换发（含宽限期到期）报 password_rotated；租户被踢 / 哈希对不上才是 kicked。 */
+export function staleLinkKickReason(
+  live: RelayLiveNode,
+  tenant: RelayTenantRecord
+): 'password_rotated' | 'kicked' {
+  return !tenant.kicked && live.tokenHash === tenant.prevTokenHash ? 'password_rotated' : 'kicked';
 }
 
 export async function handleRelayAuth(
@@ -103,7 +116,7 @@ function checkAuthPreconditions(
     host.reject(link, 'token-epoch');
     return null;
   }
-  if (!constantTimeEqual(sha256Hex(msg.token), tenant.tokenHash)) {
+  if (!relayTokenHashAccepted(tenant, sha256Hex(msg.token), host.now())) {
     host.reject(link, 'bad-token');
     return null;
   }
@@ -155,7 +168,8 @@ function finishAuth(
     host.reject(link, fresh ? 'tenant-kicked' : 'unknown-tenant');
     return;
   }
-  if (!constantTimeEqual(sha256Hex(msg.token), fresh.tokenHash)) {
+  const presentedHash = sha256Hex(msg.token);
+  if (!relayTokenHashAccepted(fresh, presentedHash, host.now())) {
     host.reject(link, 'bad-token');
     return;
   }
@@ -169,7 +183,8 @@ function finishAuth(
     nodeId: msg.node_id,
     link,
     tokenEpoch: fresh.tokenEpoch,
-    tokenHash: fresh.tokenHash,
+    // 记下实际出示的那一代哈希：宽限期内的旧令牌链路不能被后续复查当成「哈希不符」踢掉
+    tokenHash: presentedHash,
     protoVersion: msg.proto,
     clientVersion: msg.client_version,
     connectedAt: now,

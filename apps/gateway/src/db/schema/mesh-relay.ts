@@ -8,6 +8,7 @@ export const meshRelays = sqliteTable('mesh_relays', {
   tokenEnc: text('token_enc').notNull(),
   priority: integer('priority').notNull(),
   kicked: integer('kicked', { mode: 'boolean' }).notNull().default(false),
+  kickedReason: text('kicked_reason'),
   updatedAt: integer('updated_at').notNull(),
 });
 

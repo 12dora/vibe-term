@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
 import type { LinkStream } from '@vibeterm/shared/link';
 import { RELAY_CTL_MAX_NODES } from '@vibeterm/shared/relay';
+import { sha256Hex } from './relay-password';
 import { normalizeRelayQuota } from './relay-quota';
 import {
   type RelayHarness,
@@ -31,7 +32,7 @@ async function admittedPair(
 }
 
 describe('relay token reissue', () => {
-  test('重新 enroll 后旧令牌链路被踢，且旧链路的后续消息不再被处理', async () => {
+  test('拿不出当前令牌重新 enroll：换发但保留上一代，在线成员不掉线', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();
     const node = tenant.addNode();
@@ -41,10 +42,44 @@ describe('relay token reissue', () => {
     const reissued = await enrollRelayRoot(relay, tenant.root);
     expect(reissued.tenant_id).toBe(tenant.id);
     expect(reissued.token).not.toBe(tenant.token);
-    const kicked = await client.inbox.takeOf('relay.kicked');
-    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('kicked');
-    const info = await client.link.closed;
-    expect(info.reason).toBe('relay-kicked');
+    expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBeTruthy();
+
+    // 新令牌还在密钥日志里没送到成员手上，旧链路必须继续活着
+    client.send({ t: 'ping' });
+    expect((await client.inbox.takeOf('pong')).t).toBe('pong');
+  });
+
+  test('出示当前令牌重新 enroll：令牌不换发', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const before = relay.runtime.tenants.get(tenant.id)?.tokenHash;
+    const again = await enrollRelayRoot(relay, tenant.root, {
+      knownTokenHash: sha256Hex(tenant.token),
+    });
+    expect(again.tenant_id).toBe(tenant.id);
+    expect(again.token).toBeNull();
+    expect(again.token_unchanged).toBe(true);
+    expect(relay.runtime.tenants.get(tenant.id)?.tokenHash).toBe(before ?? '');
+    expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBeNull();
+  });
+
+  test('宽限期内上一代令牌仍可认证，kick 模式改密后立刻失效', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const stale = tenant.token;
+    await enrollRelayRoot(relay, tenant.root);
+
+    const first = await tenant.connect(node, { token: stale });
+    expect((await first.inbox.takeOf('auth.ok')).t).toBe('auth.ok');
+    first.link.close('done');
+
+    const rotated = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'kick-pass', mode: 'kick' }),
+    });
+    expect(rotated.status).toBe(200);
+    expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBeNull();
   });
 
   test('认证后的每条消息都复查令牌：库里换了哈希就踢', async () => {
@@ -57,6 +92,7 @@ describe('relay token reissue', () => {
       tenantId: tenant.id,
       tokenHash: 'f'.repeat(64),
       tokenEpoch: 0,
+      keepPrevious: false,
       now: relay.now(),
     });
     client.send({ t: 'ping' });

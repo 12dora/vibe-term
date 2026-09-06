@@ -72,7 +72,13 @@ describe('RelaySecrets', () => {
       expect(result.metaEpoch).toBe(1);
       expect(b.secrets.uplinkKind()).toBe('relay');
       expect(b.secrets.relayRows()).toEqual([
-        { url: canonicalHubUrl(RELAY_URL), tenantId: TENANT_ID, priority: 0, kicked: false },
+        {
+          url: canonicalHubUrl(RELAY_URL),
+          tenantId: TENANT_ID,
+          priority: 0,
+          kicked: false,
+          kickedReason: null,
+        },
       ]);
       expect(await b.secrets.logKey()).toEqual(logKey);
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);

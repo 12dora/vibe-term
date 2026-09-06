@@ -258,6 +258,35 @@ export async function runRelayReauth(
   return await runRelayEnrollInternal(parsed, urlRaw, io, 'reauth');
 }
 
+/**
+ * 把当前中继表原样再签一遍 `set-relays`：地址、令牌、世代都不变，只是重新按每个未吊销节点
+ * 封装一遍并追加到密钥日志。令牌换发时正好离线、因而拿着旧令牌连不上的成员据此拿到当前令牌。
+ */
+export async function runRelayResendToken(
+  parsed: ParsedArgs,
+  io: RelayIo = {}
+): Promise<{ nodes: number }> {
+  return await withAuth(parsed, io, async (ctx) => {
+    const session = await openRelayTenantSession(parsed, ctx, io);
+    const prepare = async (): Promise<Record<string, unknown>> =>
+      await relayGatewayRequest(session, {
+        path: '/api/mesh/relay/resend-token/prepare',
+        method: 'POST',
+        body: {},
+        label: 'relay resend-token',
+      });
+    const prepared = await prepare();
+    await signAndSubmitRelayRecord(session, {
+      type: 'set-relays',
+      payload: setRelaysPayload(prepared),
+      rebuild: async () => setRelaysPayload(await prepare()),
+    });
+    const nodes = asNumber(prepared.nodes);
+    relayLog(io, t('relay.resendToken.done', { count: nodes }));
+    return { nodes };
+  });
+}
+
 export async function runRelayLeave(
   parsed: ParsedArgs,
   io: RelayIo = {}

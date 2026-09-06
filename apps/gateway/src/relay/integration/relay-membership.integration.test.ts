@@ -304,3 +304,81 @@ describe('hub to relay migration', () => {
     expect(h.relay.runtime.registry.get(tenant.tenantId(), tenant.owner.nodeId)).toBeTruthy();
   });
 });
+
+describe('relay password keep 保持成员在线', () => {
+  test('keep 改密后成员节点断线重连仍在线且未被打踢出标记', async () => {
+    const h = await boot({ password: 'first-pass' });
+    const tenant = await h.createTenant('alpha', { password: 'first-pass' });
+    await tenant.enroll();
+    const b = await tenant.joinNode('alpha-b');
+    const tenantId = tenant.tenantId();
+
+    const rotated = await h.relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'second-pass', mode: 'keep' }),
+    });
+    expect(rotated.status).toBe(200);
+
+    // 成员链路断开（模拟网络抖动），池子会自己重拨
+    h.relay.runtime.registry.get(tenantId, b.nodeId)?.link.close('test-drop');
+    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) == null, 8_000);
+    await waitUntil(() => h.relay.runtime.registry.get(tenantId, b.nodeId) != null, 8_000);
+
+    expect(b.relayStore.listRelayRows()[0]?.kicked).toBe(false);
+    const status = await b.json<RelayStatus>('/api/mesh/relay/status');
+    expect(status.reauthRequired).toBe(false);
+    expect(status.relays[0]?.online).toBe(true);
+  });
+
+  test('kick 改密仍作废全部令牌：成员被踢且不再有上一代宽限', async () => {
+    const h = await boot({ password: 'first-pass' });
+    const tenant = await h.createTenant('alpha', { password: 'first-pass' });
+    await tenant.enroll();
+    const b = await tenant.joinNode('alpha-b');
+    const tenantId = tenant.tenantId();
+    const tokenHashBefore = h.relay.runtime.tenants.get(tenantId)?.tokenHash;
+
+    const rotated = await h.relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'second-pass', mode: 'kick' }),
+    });
+    expect(rotated.status).toBe(200);
+    await waitUntil(() => b.relayStore.listRelayRows()[0]?.kicked === true, 20_000);
+    expect(b.relayStore.listRelayRows()[0]?.kickedReason).toBe('password_rotated');
+
+    // 主节点用新口令重新接入：令牌换发，且踢出恢复路径不留上一代
+    await tenant.enroll({ password: 'second-pass' });
+    const after = h.relay.runtime.tenants.get(tenantId);
+    expect(after?.tokenHash).not.toBe(tokenHashBefore ?? '');
+    expect(after?.prevTokenHash).toBeNull();
+    // 成员手上仍是被作废的旧令牌：只能由持账户密码的一方重新取回（`vibeterm relay join --password`）
+    expect(h.relay.runtime.registry.get(tenantId, b.nodeId) ?? null).toBeNull();
+  }, 30_000);
+
+  test('keep 改密后主节点重新 enroll 不换令牌，成员不掉线', async () => {
+    const h = await boot({ password: 'first-pass' });
+    const tenant = await h.createTenant('alpha', { password: 'first-pass' });
+    await tenant.enroll();
+    const b = await tenant.joinNode('alpha-b');
+    const tenantId = tenant.tenantId();
+    const tokenHashBefore = h.relay.runtime.tenants.get(tenantId)?.tokenHash;
+    const memberLink = h.relay.runtime.registry.get(tenantId, b.nodeId);
+
+    const rotated = await h.relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'second-pass', mode: 'keep' }),
+    });
+    expect(rotated.status).toBe(200);
+
+    // 运营者改完密码后主节点再走一次接入（网页「重新输入口令」/ CLI reauth）
+    await tenant.enroll({ password: 'second-pass' });
+
+    // 令牌没换 → 成员链路原样保留，也没有踢出标记
+    expect(h.relay.runtime.tenants.get(tenantId)?.tokenHash).toBe(tokenHashBefore ?? '');
+    expect(h.relay.runtime.registry.get(tenantId, b.nodeId)).toBe(memberLink);
+    expect(b.relayStore.listRelayRows()[0]?.kicked).toBe(false);
+    const status = await b.json<RelayStatus>('/api/mesh/relay/status');
+    expect(status.reauthRequired).toBe(false);
+    expect(status.relays[0]?.online).toBe(true);
+  });
+});

@@ -35,7 +35,7 @@ import {
 } from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { handleRelayAuth, liveAuthStillValid } from './relay-uplink-auth';
+import { handleRelayAuth, liveAuthStillValid, staleLinkKickReason } from './relay-uplink-auth';
 import {
   type RelayUplinkHost,
   handleRelayEnrollCreate,
@@ -270,6 +270,8 @@ export class RelayUplinkServer implements RelayUplinkHost {
 
   /** 踢租户：先发 `relay.kicked`，再断开该租户全部链路。 */
   kickTenant(tenantId: string, reason: RelayKickReason): void {
+    // 踢租户 = 令牌彻底作废，上一代不留宽限
+    this.tenants.clearPreviousToken(tenantId);
     for (const live of this.registry.listTenant(tenantId)) this.kickLink(live, reason);
   }
 
@@ -299,8 +301,9 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.enrollCreates.sweep();
   }
 
-  /** 改密（kick 模式）后调用：令牌 epoch 低于门槛的链路全部断开。 */
+  /** 改密（kick 模式）后调用：作废全部上一代令牌，并断开令牌 epoch 低于门槛的链路。 */
   enforceMinTokenEpoch(minTokenEpoch: number): void {
+    for (const tenant of this.tenants.list()) this.tenants.clearPreviousToken(tenant.id);
     for (const live of this.registry.all()) {
       if (live.tokenEpoch >= minTokenEpoch) continue;
       this.kickLink(live, 'password_rotated');
@@ -422,12 +425,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
       live.link.close('relay-tenant-gone');
       return;
     }
-    const minTokenEpoch = this.configStore.ensure(this.now()).minTokenEpoch;
-    if (!liveAuthStillValid(live, tenant, minTokenEpoch)) {
-      this.kickLink(
-        live,
-        tenant.kicked || live.tokenHash !== tenant.tokenHash ? 'kicked' : 'password_rotated'
-      );
+    const now = this.now();
+    const minTokenEpoch = this.configStore.ensure(now).minTokenEpoch;
+    if (!liveAuthStillValid(live, tenant, minTokenEpoch, now)) {
+      this.kickLink(live, staleLinkKickReason(live, tenant));
       return;
     }
     switch (msg.t) {

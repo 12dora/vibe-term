@@ -39,6 +39,9 @@ export interface DoctorCheck {
 
 export type ServiceMode = 'managed' | 'none';
 
+/** 安装来源（写进 install-meta.json；网关另有 `manual` 表示压根没有 install-meta）。 */
+export type InstallSource = 'install-script' | 'npx' | 'cli';
+
 export interface InstallMeta {
   serviceName: string;
   platform: NodeJS.Platform;
@@ -48,4 +51,6 @@ export interface InstallMeta {
   cliVersion: string;
   bunPath?: string;
   serviceMode?: ServiceMode;
+  /** 安装来源；老安装没有这一项（网关按 CLI 处理）。升级不覆盖已有值。 */
+  installSource?: InstallSource;
 }

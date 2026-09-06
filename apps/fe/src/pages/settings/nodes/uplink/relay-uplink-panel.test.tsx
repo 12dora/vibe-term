@@ -178,6 +178,15 @@ describe('提醒堆', () => {
     expect(html).toContain('relay.tenant.reauth.notice');
   });
 
+  test('令牌换代：出「等待新令牌」而不是「重新输入接入密码」', () => {
+    const html = render({
+      relay: { ...RELAY_MODE, kicked: true, awaitingToken: true },
+    });
+    expect(html).toContain('data-testid="nodes-relay-awaiting-token"');
+    expect(html).toContain('relay.tenant.awaitingToken.notice');
+    expect(html).not.toContain('data-testid="nodes-relay-reauth"');
+  });
+
   test('有旧根签的成员：告警 + 重新确认成员', () => {
     const html = render({ relay: { ...RELAY_MODE, readmitPending: 2 } });
     expect(html).toContain('data-testid="nodes-relay-readmit"');

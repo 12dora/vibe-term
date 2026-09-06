@@ -5,6 +5,7 @@ export const RELAY_LINK_ERROR_CODES = [
   'auth-rejected',
   'heartbeat-lost',
   'kicked',
+  'revoked',
   'dns',
   'refused',
   'tls',
@@ -19,8 +20,10 @@ const NULL_REASONS = /^(stopped|aborted)$/i;
 /** 先匹配更具体的原因，再落到宽泛类（timeout / protocol）。 */
 const RULES: Array<[RegExp, RelayLinkErrorCode]> = [
   [/\bmember-/, 'auth-rejected'],
+  // 吊销是本节点身份的终态（换新 node id 才能再加入），与「令牌被作废」不是一回事
+  [/(?:^|[\s:_-])(?:revoked|relay-revoked)(?:$|[\s:_-])/, 'revoked'],
   [
-    /(?:^|[\s:_-])(?:kicked|tenant-kicked|revoked|password_rotated|relay-kicked|relay-revoked|relay-password_rotated|relay-tenant-gone)(?:$|[\s:_-])/,
+    /(?:^|[\s:_-])(?:kicked|tenant-kicked|password_rotated|relay-kicked|relay-password_rotated|relay-tenant-gone)(?:$|[\s:_-])/,
     'kicked',
   ],
   [/\b(?:missed-pong|ping-failed|heartbeat[-_]timeout|heartbeat[-_]lost)\b/, 'heartbeat-lost'],

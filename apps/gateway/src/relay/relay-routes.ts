@@ -22,13 +22,13 @@ import type { RelayKeyLogStore } from './relay-key-log-store';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
 import { handleRelayJoin } from './relay-pack-http';
 import {
-  constantTimeEqual,
   generateRelayTenantId,
   generateRelayToken,
   sha256Hex,
   verifyRelayPassword,
 } from './relay-password';
 import type { RelayTenantStore } from './relay-tenant-store';
+import { relayTokenHashAccepted } from './relay-token-grace';
 import type { RelayUplinkServer } from './relay-uplink-server';
 import type { RelayEnrollmentRecord, RelayTenantRecord } from './types';
 
@@ -54,28 +54,54 @@ type ParsedEnroll = {
   password: string | null;
   mode: 'enroll' | 'join';
   tenantId: string | null;
+  /** 调用方手上那份令牌的 sha256（十六进制）；与中继当前令牌一致时不再换发。 */
+  knownTokenHash: string | null;
 };
 
-function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
+type EnrollShape = {
+  rootEpoch: number;
+  proofBytes: string;
+  proofSig: string;
+  mode: 'enroll' | 'join';
+  tenantId: string | null;
+  knownTokenHash: string | null;
+};
+
+/** 形状与取值范围检查（不含 b64url 解码）：不合法一律 null，由调用方回 400。 */
+function readEnrollShape(body: Record<string, unknown>): EnrollShape | null {
   const rootEpoch = body.root_epoch;
   if (typeof rootEpoch !== 'number' || !Number.isInteger(rootEpoch) || rootEpoch < 0) return null;
   const proof = body.proof;
   if (!proof || typeof proof !== 'object' || Array.isArray(proof)) return null;
   const rec = proof as Record<string, unknown>;
   if (typeof rec.bytes !== 'string' || typeof rec.sig !== 'string') return null;
-  const modeRaw = body.mode;
-  const mode = modeRaw === 'join' ? 'join' : 'enroll';
+  const mode = body.mode === 'join' ? 'join' : 'enroll';
   const tenantId = typeof body.tenant_id === 'string' ? body.tenant_id : null;
   if (mode === 'join' && !tenantId) return null;
+  const hash = body.known_token_hash;
+  return {
+    rootEpoch,
+    proofBytes: rec.bytes,
+    proofSig: rec.sig,
+    mode,
+    tenantId,
+    knownTokenHash: typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash) ? hash : null,
+  };
+}
+
+function parseEnrollBody(body: Record<string, unknown>): ParsedEnroll | null {
+  const shape = readEnrollShape(body);
+  if (!shape) return null;
   try {
     return {
       rootPublicKey: requireB64url(body, 'root_public_key', 32),
-      rootEpoch,
-      proofBytes: decodeB64url(rec.bytes),
-      proofSig: decodeB64url(rec.sig, 64),
+      rootEpoch: shape.rootEpoch,
+      proofBytes: decodeB64url(shape.proofBytes),
+      proofSig: decodeB64url(shape.proofSig, 64),
       password: typeof body.password === 'string' ? body.password : null,
-      mode,
-      tenantId,
+      mode: shape.mode,
+      tenantId: shape.tenantId,
+      knownTokenHash: shape.knownTokenHash,
     };
   } catch {
     return null;
@@ -95,8 +121,30 @@ async function checkEnrollPassword(
   return relayError(RelayErrorCode.passwordInvalid, 401);
 }
 
+type ReissueDecision = 'reuse' | 'recover' | 'rotate';
+
 /**
- * 同一根公钥重复 enroll = 重新签发令牌（被踢后重输口令的路径），tenant_id 不变。
+ * 同一根公钥重复 enroll 时要不要换令牌。
+ *
+ * - `reuse`：租户健康且调用方出示的哈希就是当前令牌 → 一动不动。改完接入口令再走一次接入
+ *   （网页「重新输入接入密码」/ CLI `relay reauth`）落在这里，成员节点因此不掉线。
+ * - `recover`：被踢或令牌代次低于门槛 → 换发并断掉旧链路（旧令牌本来就该死）。
+ * - `rotate`：租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失）→ 换发，
+ *   但保留上一代供成员在宽限期内继续认证，也不主动断链。
+ */
+function shouldReissueToken(
+  existing: RelayTenantRecord,
+  minTokenEpoch: number,
+  knownTokenHash: string | null,
+  now: number
+): ReissueDecision {
+  if (existing.kicked || existing.tokenEpoch < minTokenEpoch) return 'recover';
+  if (!knownTokenHash) return 'rotate';
+  return relayTokenHashAccepted(existing, knownTokenHash, now) ? 'reuse' : 'rotate';
+}
+
+/**
+ * 同一根公钥重复 enroll：tenant_id 不变，令牌按 `shouldReissueToken` 决定是否换发。
  *
  * 匹配的是**当前**根公钥：根轮换之后旧根持有者的 pk 不再命中任何租户，于是被当成一个新租户
  * （拿不到原租户的注册表与日志）。`root_epoch` 只由 `rotate-root` 侧带记录推进，
@@ -105,28 +153,39 @@ async function checkEnrollPassword(
 function issueTenantToken(
   deps: RelayPublicRoutesDeps,
   parsed: ParsedEnroll,
-  tokenEpoch: number
-): { tenantId: string; token: string } {
-  const token = generateRelayToken();
+  tokenEpoch: number,
+  minTokenEpoch: number
+): { tenantId: string; token: string | null } {
   const now = deps.now();
   const existing = deps.tenants.getByRootPublicKey(parsed.rootPublicKey);
-  const tenantId = existing?.id ?? generateRelayTenantId();
-  const tokenHash = sha256Hex(token);
-  if (existing) {
-    deps.tenants.reissueToken({ tenantId, tokenHash, tokenEpoch, now });
-    // 旧令牌的链路必须立刻断开，否则「重新 enroll」踢不掉任何东西
-    deps.uplink.enforceTokenReissue(tenantId, tokenHash);
-  } else {
+  if (!existing) {
+    const token = generateRelayToken();
+    const tenantId = generateRelayTenantId();
     deps.tenants.create({
       id: tenantId,
       rootPublicKey: parsed.rootPublicKey,
       rootEpoch: parsed.rootEpoch,
-      tokenHash,
+      tokenHash: sha256Hex(token),
       tokenEpoch,
       now,
     });
+    return { tenantId, token };
   }
-  return { tenantId, token };
+  const decision = shouldReissueToken(existing, minTokenEpoch, parsed.knownTokenHash, now);
+  if (decision === 'reuse') return { tenantId: existing.id, token: null };
+  const token = generateRelayToken();
+  const tokenHash = sha256Hex(token);
+  deps.tenants.reissueToken({
+    tenantId: existing.id,
+    tokenHash,
+    tokenEpoch,
+    keepPrevious: decision === 'rotate',
+    now,
+  });
+  // 踢出恢复：旧令牌的链路必须立刻断开，否则被踢的一方只要连着就永远不复查令牌。
+  // `rotate` 不断链——新令牌还在密钥日志里没送到成员手上。
+  if (decision === 'recover') deps.uplink.enforceTokenReissue(existing.id, tokenHash);
+  return { tenantId: existing.id, token };
 }
 
 export async function handleRelayEnroll(
@@ -177,10 +236,12 @@ export async function handleRelayEnroll(
   ) {
     return relayError(RelayErrorCode.quotaTenants, 409);
   }
-  const issued = issueTenantToken(deps, parsed, config.passwordEpoch);
+  const issued = issueTenantToken(deps, parsed, config.passwordEpoch, config.minTokenEpoch);
   return relayJson({
     tenant_id: issued.tenantId,
+    // 令牌未换发时不回令牌原文——中继只存哈希，调用方手上那份仍然有效
     token: issued.token,
+    token_unchanged: issued.token === null,
     password_epoch: config.passwordEpoch,
   });
 }
@@ -194,7 +255,7 @@ export function authenticateRelayTenant(
   if (!presented) return relayError(RelayErrorCode.unauthorized, 401);
   const tenant = deps.tenants.get(tenantId);
   if (!tenant) return relayError(RelayErrorCode.tenantNotFound, 404);
-  if (!constantTimeEqual(sha256Hex(presented), tenant.tokenHash)) {
+  if (!relayTokenHashAccepted(tenant, sha256Hex(presented), deps.now())) {
     return relayError(RelayErrorCode.tokenInvalid, 401);
   }
   if (tenant.kicked) return relayError(RelayErrorCode.tenantKicked, 401);
