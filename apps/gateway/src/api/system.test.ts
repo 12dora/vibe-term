@@ -5,13 +5,14 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SystemInfo } from '@vibeterm/shared';
+import { type SystemInfo, legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import { requestDispatchContext } from '../mesh/types';
 import * as infoPublic from '../system/info-public';
 import { uninstallController } from '../system/uninstall';
 import { STAGED_PACKAGE_MAX_BYTES, upgradeController } from '../system/upgrade';
 import {
   restoreSigningKeys,
+  signSums,
   signedSumsFor,
   sumsTextFor,
   useTestSigningKeys,
@@ -920,6 +921,134 @@ describe('POST /api/system/upgrade 远程降级防护', () => {
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ code: 'UPGRADE_SIGNATURE_REQUIRED' });
       expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+});
+
+describe('POST /api/system/upgrade/package/manifest + PUT 双资产', () => {
+  const version = '1.1.39';
+  const installDirs: string[] = [];
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
+
+  const currentAsset = releaseTarballName(version);
+  const legacyAsset = legacyReleaseTarballName(version);
+  const currentBytes = new Uint8Array([1, 2, 3]);
+  const legacyBytes = new Uint8Array([4, 5, 6, 7]);
+  const currentDigest = sha256Hex(currentBytes);
+  const legacyDigest = sha256Hex(legacyBytes);
+  // 发行同时上传新旧两份资产：内容不同、摘要也不同，推包方挑哪一份必须精确传导到清单摘要上。
+  const sums = `${currentDigest}  ${currentAsset}\n${legacyDigest}  ${legacyAsset}\n`;
+  const sig = signSums(sums);
+
+  beforeAll(() => {
+    useTestSigningKeys();
+  });
+
+  afterAll(() => {
+    restoreSigningKeys();
+  });
+
+  afterEach(() => {
+    upgradeController.resetForTests();
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
+    for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function installDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-dual-asset-'));
+    installDirs.push(dir);
+    writeFileSync(join(dir, 'install-meta.json'), '{}');
+    process.env.VIBETERM_INSTALL_DIR = dir;
+    return dir;
+  }
+
+  async function postManifest(body: unknown): Promise<Response> {
+    const res = await handleSystemApiRequest(
+      withMeshAuth(
+        new Request('http://localhost/api/system/upgrade/package/manifest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ),
+      '/api/system/upgrade/package/manifest'
+    );
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  async function putBytes(sha256: string, bytes: Uint8Array): Promise<Response> {
+    const res = await handleSystemApiRequest(
+      withMeshAuth(
+        new Request(
+          `http://localhost/api/system/upgrade/package?version=${version}&sha256=${sha256}`,
+          {
+            method: 'PUT',
+            headers: {
+              'content-type': 'application/octet-stream',
+              'content-length': String(bytes.byteLength),
+            },
+            body: bytesStream(bytes),
+          }
+        )
+      ),
+      '/api/system/upgrade/package'
+    );
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  test('清单点名新资产：摘要按新资产取，随后推来的新资产字节被收下', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const manifest = await postManifest({ version, sums, sig, asset: currentAsset });
+      expect(manifest.status).toBe(200);
+      expect(await manifest.json()).toEqual({ version, sha256: currentDigest, keyId: 'tk' });
+
+      const staged = await putBytes(currentDigest, currentBytes);
+      expect(staged.status).toBe(200);
+      expect(await staged.json()).toEqual({
+        version,
+        sha256: currentDigest,
+        bytes: currentBytes.byteLength,
+      });
+      expect(existsSync(join(dir, 'staging', 'staged', currentAsset))).toBe(true);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('清单点名新资产却推来旧资产字节：409 UPGRADE_MANIFEST_MISMATCH', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const manifest = await postManifest({ version, sums, sig, asset: currentAsset });
+      expect(manifest.status).toBe(200);
+
+      const staged = await putBytes(legacyDigest, legacyBytes);
+      expect(staged.status).toBe(409);
+      expect(await staged.json()).toEqual({ code: 'UPGRADE_MANIFEST_MISMATCH' });
+      expect(existsSync(join(dir, 'staging', 'staged', currentAsset))).toBe(false);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('清单不带 asset：按旧资产兜底，推来的新资产字节被判为清单不符', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    installDir();
+    try {
+      const manifest = await postManifest({ version, sums, sig });
+      expect(manifest.status).toBe(200);
+      expect(await manifest.json()).toEqual({ version, sha256: legacyDigest, keyId: 'tk' });
+
+      const staged = await putBytes(currentDigest, currentBytes);
+      expect(staged.status).toBe(409);
+      expect(await staged.json()).toEqual({ code: 'UPGRADE_MANIFEST_MISMATCH' });
     } finally {
       infoSpy.mockRestore();
     }
