@@ -5,10 +5,10 @@
 #   bash install.sh [init flags...]
 #   bash install.sh --allow-unverified [init flags...]  # checksum skip, versions < 1.1.4 only
 # Env:
-#   TMEX_VERSION  pin a release (with or without leading v)
+#   VIBETERM_VERSION  pin a release (with or without leading v)
 
-TMEX_RELEASE_REPO='12dora/tmex-enhanced'
-TMEX_MIN_BUN_VERSION='1.3.0'
+VIBETERM_RELEASE_REPO='12dora/tmex-enhanced'
+VIBETERM_MIN_BUN_VERSION='1.3.0'
 
 tmex_parse_tag_name() {
   printf '%s' "$1" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
@@ -136,10 +136,10 @@ tmex_ensure_bun() {
   if command -v bun >/dev/null 2>&1; then
     local ver
     ver="$(bun --version 2>/dev/null || true)"
-    if [ -n "$ver" ] && tmex_version_ge "$ver" "$TMEX_MIN_BUN_VERSION"; then
+    if [ -n "$ver" ] && tmex_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
       return 0
     fi
-    echo "tmex install: Bun ${ver:-unknown} is older than ${TMEX_MIN_BUN_VERSION}; installing a newer Bun"
+    echo "tmex install: Bun ${ver:-unknown} is older than ${VIBETERM_MIN_BUN_VERSION}; installing a newer Bun"
   else
     echo "tmex install: Bun not found; installing via bun.sh"
   fi
@@ -151,8 +151,8 @@ tmex_ensure_bun() {
   fi
   local ver
   ver="$(bun --version 2>/dev/null || true)"
-  if [ -z "$ver" ] || ! tmex_version_ge "$ver" "$TMEX_MIN_BUN_VERSION"; then
-    echo "tmex install: Bun ${ver:-unknown} is still older than ${TMEX_MIN_BUN_VERSION}" >&2
+  if [ -z "$ver" ] || ! tmex_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
+    echo "tmex install: Bun ${ver:-unknown} is still older than ${VIBETERM_MIN_BUN_VERSION}" >&2
     exit 1
   fi
 }
@@ -167,16 +167,16 @@ tmex_github_json() {
 
 tmex_tag_from_latest_redirect() {
   local headers
-  headers="$(curl -sI -H 'User-Agent: tmex-install' "https://github.com/${TMEX_RELEASE_REPO}/releases/latest")" || return 1
+  headers="$(curl -sI -H 'User-Agent: tmex-install' "https://github.com/${VIBETERM_RELEASE_REPO}/releases/latest")" || return 1
   tmex_tag_from_location_headers "$headers"
 }
 
 tmex_resolve_version() {
-  if [ -n "${TMEX_VERSION:-}" ]; then
+  if [ -n "${VIBETERM_VERSION:-}" ]; then
     local pinned
-    pinned="$(tmex_version_from_tag "$TMEX_VERSION")"
+    pinned="$(tmex_version_from_tag "$VIBETERM_VERSION")"
     if ! tmex_is_semver "$pinned"; then
-      echo "tmex install: invalid TMEX_VERSION: ${TMEX_VERSION}" >&2
+      echo "tmex install: invalid VIBETERM_VERSION: ${VIBETERM_VERSION}" >&2
       exit 1
     fi
     printf '%s' "$pinned"
@@ -186,7 +186,7 @@ tmex_resolve_version() {
   tag="$(tmex_tag_from_latest_redirect 2>/dev/null || true)"
   if [ -z "$tag" ]; then
     local json
-    json="$(tmex_github_json "https://api.github.com/repos/${TMEX_RELEASE_REPO}/releases/latest")" || {
+    json="$(tmex_github_json "https://api.github.com/repos/${VIBETERM_RELEASE_REPO}/releases/latest")" || {
       echo "tmex install: failed to query GitHub Releases" >&2
       exit 1
     }
@@ -216,12 +216,12 @@ tmex_run_init() {
   fi
 }
 
-TMEX_INSTALL_TMP=
+VIBETERM_INSTALL_TMP=
 
 tmex_cleanup_tmp() {
-  if [ -n "${TMEX_INSTALL_TMP:-}" ] && [ -d "$TMEX_INSTALL_TMP" ]; then
-    rm -rf "$TMEX_INSTALL_TMP"
-    TMEX_INSTALL_TMP=
+  if [ -n "${VIBETERM_INSTALL_TMP:-}" ] && [ -d "$VIBETERM_INSTALL_TMP" ]; then
+    rm -rf "$VIBETERM_INSTALL_TMP"
+    VIBETERM_INSTALL_TMP=
   fi
 }
 
@@ -259,20 +259,20 @@ tmex_install() {
 
   local version tarball_url tgz
   version="$(tmex_resolve_version)"
-  tarball_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/tmex-cli-${version}.tgz"
+  tarball_url="https://github.com/${VIBETERM_RELEASE_REPO}/releases/download/v${version}/tmex-cli-${version}.tgz"
   echo "tmex install: downloading ${tarball_url}"
 
-  TMEX_INSTALL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/tmex-install.XXXXXX")"
+  VIBETERM_INSTALL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/tmex-install.XXXXXX")"
   trap tmex_cleanup_tmp EXIT
-  tgz="${TMEX_INSTALL_TMP}/tmex-cli-${version}.tgz"
+  tgz="${VIBETERM_INSTALL_TMP}/tmex-cli-${version}.tgz"
 
   if ! curl -fsSL -o "$tgz" -H 'User-Agent: tmex-install' "$tarball_url"; then
     echo "tmex install: failed to download ${tarball_url} (version not found or network error)" >&2
     exit 1
   fi
 
-  local sums_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
-  local sums_file="${TMEX_INSTALL_TMP}/SHA256SUMS"
+  local sums_url="https://github.com/${VIBETERM_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
+  local sums_file="${VIBETERM_INSTALL_TMP}/SHA256SUMS"
   local sums_code
   sums_code="$(curl -sS -L -o "$sums_file" -w '%{http_code}' -H 'User-Agent: tmex-install' "$sums_url")" || {
     echo "tmex install: failed to fetch SHA256SUMS (network error)" >&2
@@ -312,8 +312,8 @@ tmex_install() {
     fi
   fi
 
-  tar -xzf "$tgz" -C "$TMEX_INSTALL_TMP"
-  local pkg_dir="${TMEX_INSTALL_TMP}/package"
+  tar -xzf "$tgz" -C "$VIBETERM_INSTALL_TMP"
+  local pkg_dir="${VIBETERM_INSTALL_TMP}/package"
   if [ ! -f "${pkg_dir}/bin/tmex.js" ]; then
     echo "tmex install: tarball is missing package/bin/tmex.js" >&2
     exit 1

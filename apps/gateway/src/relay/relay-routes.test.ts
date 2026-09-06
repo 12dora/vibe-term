@@ -5,8 +5,8 @@ import {
   encodeBase64url,
   randomBytes,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
-import { sealRelayPack, signRelayEnrollProof } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { sealRelayPack, signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { RELAY_TEST_PUBLIC_URL, type RelayHarness, bootRelayHarness } from './relay-test-harness';
 
 const RELAY_HOST = new URL(RELAY_TEST_PUBLIC_URL).host;

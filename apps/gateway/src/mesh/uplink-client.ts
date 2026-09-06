@@ -1,19 +1,19 @@
-import { combineAbortSignals } from '@tmex/shared/async';
+import { combineAbortSignals } from '@vibeterm/shared/async';
 import {
   decodeBase64url,
   encodeBase64url,
   hubHostFromUrl,
   signEd25519,
   uplinkAuthMessage,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
   WebSocketLink,
   type WebSocketTransportInput,
-} from '@tmex/shared/link';
-import { waitSocketOpen } from '@tmex/shared/net';
-import type { HubAdvertisement, HubWriteForwardMessage } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/link';
+import { waitSocketOpen } from '@vibeterm/shared/net';
+import type { HubAdvertisement, HubWriteForwardMessage } from '@vibeterm/shared/uplink';
 import type { UserStore } from '../auth/user-store';
 import { backoffDelayMs, defaultScheduler, jsonStable } from './ctl';
 import { stamp } from './mesh-log';

@@ -1,4 +1,4 @@
-import type { LinkSession, WebSocketTransportInput } from '@tmex/shared/link';
+import type { LinkSession, WebSocketTransportInput } from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { UserStore } from '../auth/user-store';
 import type { WebSocketServer } from '../ws';

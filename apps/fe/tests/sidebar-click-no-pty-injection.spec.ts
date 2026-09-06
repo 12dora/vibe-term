@@ -17,7 +17,7 @@ function launchVimWithMouse(paneId: string): void {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;

@@ -1,7 +1,7 @@
 // 节点设备列表的离线快照：落盘字段、读取校验、inventory 兜底。
 
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import {
   type DeviceSnapshotStorage,
   MAX_SNAPSHOTS,

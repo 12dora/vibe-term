@@ -1,5 +1,5 @@
-import { SetupApiError } from '@tmex/api-client/local/setup-api';
-import { errorMessage } from '@tmex/shared';
+import { SetupApiError } from '@vibeterm/api-client/local/setup-api';
+import { errorMessage } from '@vibeterm/shared';
 import { setupErrorKey } from './validation';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;

@@ -4,7 +4,7 @@
 
 浏览器侧的文件传输一直是「下载到本地再上传到另一台」：两跳、两份带宽、大文件基本不可用。
 节点间传输让源节点 A 直接把字节推给目标节点 B，链路复用现成的 peer 通道
-（dc / ws-secure / relay 自动选择），断点续传与并行分片复用共享引擎 `@tmex/transfer`。
+（dc / ws-secure / relay 自动选择），断点续传与并行分片复用共享引擎 `@vibeterm/transfer`。
 
 实现分布在 `apps/gateway/src/transfer/`，A 侧与 B 侧是同一份代码的两个角色；A === B 时
 走本机通道，调用的仍是同一个接收服务，两条路径语义一致。
@@ -70,10 +70,10 @@ DELETE /sessions/:sid                       → { ok }                      // �
 
 | 项 | 值 | 位置 |
 |---|---|---|
-| 单文件上限 | `TMEX_TRANSFER_MAX_BYTES`（默认 2 GiB）与中继下发上限取小 | `files/transfer-limit.ts` |
-| 单次 PUT 分片 | 8 MiB（`TMEX_TRANSFER_CHUNK_BYTES` 可覆盖，下限 64 KiB） | `transfer/limits.ts` |
+| 单文件上限 | `VIBETERM_TRANSFER_MAX_BYTES`（默认 2 GiB）与中继下发上限取小 | `files/transfer-limit.ts` |
+| 单次 PUT 分片 | 8 MiB（`VIBETERM_TRANSFER_CHUNK_BYTES` 可覆盖，下限 64 KiB） | `transfer/limits.ts` |
 | 展开文件数 / 访问条目数 / 层级 | 5000 / 20000 / 32 | `transfer/expand.ts` |
-| 单会话文件数 / 累计字节 / 并发写 | 5000 / 64 GiB（`TMEX_TRANSFER_SESSION_MAX_BYTES`）/ 16 | `transfer/limits.ts` |
+| 单会话文件数 / 累计字节 / 并发写 | 5000 / 64 GiB（`VIBETERM_TRANSFER_SESSION_MAX_BYTES`）/ 16 | `transfer/limits.ts` |
 | 会话数（每源节点 / 全节点） | 4 / 32 | 同上 |
 | 任务数（每用户 / 全节点，排队+在跑） | 8 / 32，超出 429 `too_many_jobs` | 同上 |
 | 并行流 | 中继 2、直连 4、A === B 1 | `transfer/bridge.ts` |

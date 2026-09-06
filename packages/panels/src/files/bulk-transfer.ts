@@ -1,7 +1,7 @@
 // 文件传输的路径选择：能直连（bulk DataChannel）就走直连，否则/失败就整次回落 REST。
 //
 // 设计依据 `docs/hub/2026082700-hub-node-architecture.md` §3「bulk 协议」、§4「连接层」。
-// 与纯 REST 路径（`@tmex/api-client` 的 `uploadFileChunked` / `downloadFileWithProgress`）
+// 与纯 REST 路径（`@vibeterm/api-client` 的 `uploadFileChunked` / `downloadFileWithProgress`）
 // 的差别只在「浏览器 ↔ node 的那一段字节」：
 //
 //   上传：REST `init` → bulk 送字节 → REST `commit`（leg2 的 rsync 与 REST 路径完全一致）
@@ -24,19 +24,19 @@ import {
   formatBytesPair,
   formatRate,
   uploadFileChunked,
-} from '@tmex/api-client';
-import { prepareDownload } from '@tmex/api-client/download-transfer';
-import { parseError } from '@tmex/api-client/file-errors';
-import { readNdjsonStream } from '@tmex/api-client/ndjson-stream';
-import type { TransferOpts } from '@tmex/api-client/transfer-types';
-import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@tmex/shared';
-import { ProgressTracker } from '@tmex/transfer';
-import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
+} from '@vibeterm/api-client';
+import { prepareDownload } from '@vibeterm/api-client/download-transfer';
+import { parseError } from '@vibeterm/api-client/file-errors';
+import { readNdjsonStream } from '@vibeterm/api-client/ndjson-stream';
+import type { TransferOpts } from '@vibeterm/api-client/transfer-types';
+import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@vibeterm/shared';
+import { ProgressTracker } from '@vibeterm/transfer';
+import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
 
 /** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经 hub 中转的 REST。 */
 export type TransferPath = 'direct' | 'relay';
 
-/** `@tmex/ws-client` 的 `BulkClient` 结构子集（测试可注入假件）。 */
+/** `@vibeterm/ws-client` 的 `BulkClient` 结构子集（测试可注入假件）。 */
 export interface FileBulkClient {
   isAvailable(): boolean;
   upload(req: {

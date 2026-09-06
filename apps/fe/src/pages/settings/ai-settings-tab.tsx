@@ -1,5 +1,5 @@
-import { LlmProvidersTab } from '@tmex/panels/settings/llm-providers';
-import { SearchTab } from '@tmex/panels/settings/search';
+import { LlmProvidersTab } from '@vibeterm/panels/settings/llm-providers';
+import { SearchTab } from '@vibeterm/panels/settings/search';
 
 export function AISettingsTab() {
   return (

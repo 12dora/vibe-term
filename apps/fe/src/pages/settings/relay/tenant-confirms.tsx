@@ -12,8 +12,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/alert-dialog';
+import { Input } from '@vibeterm/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

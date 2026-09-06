@@ -5,8 +5,8 @@ import {
   randomBytes,
   uplinkAuthMessage,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { decodeB64url } from '../../../../packages/shared/src/auth/b64url';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';

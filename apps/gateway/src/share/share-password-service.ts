@@ -1,4 +1,4 @@
-import { SHARE_PASSWORD_MIN_LENGTH } from '@tmex/shared/share';
+import { SHARE_PASSWORD_MIN_LENGTH } from '@vibeterm/shared/share';
 import { decryptWithContext, encrypt } from '../crypto';
 import { type ShareRow, type ShareStore, hashSharePassword } from './share-store';
 import type { SharePasswordResult, ShareServiceDeps } from './types';

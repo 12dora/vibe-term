@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import type { TmuxSourceMetadataEvent } from '../events';
 import { MetadataEventApplier, formatWindowCloseObserved } from './event-applier';

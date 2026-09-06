@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 
 import {
   type SnapshotMap,

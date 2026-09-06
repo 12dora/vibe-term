@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { PeerManagerState } from './peer-manager-state';
 import type { LiveWaiter, TransportWaiter } from './peer-manager-types';
 import type { PeerTransportKind } from './types';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
 import { paddedCtlJson } from './hub-test-helpers';
 import {
   KEY_LOG_PAGE_MAX_BYTES,

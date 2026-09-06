@@ -1,7 +1,7 @@
 // hub 集合 store：writer 判定、管理写入的阻断条件，以及那条 30 秒兜底轮询回路。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AuthApi, HubEndpointInfo, MeshHubsResponse } from '@tmex/api-client/auth/index';
+import type { AuthApi, HubEndpointInfo, MeshHubsResponse } from '@vibeterm/api-client/auth/index';
 import type { NodeEventPayload } from './mesh-events';
 import {
   MESH_HUBS_POLL_MS,

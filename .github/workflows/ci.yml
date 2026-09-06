@@ -34,9 +34,9 @@ jobs:
       - name: build i18n
         run: bun run build:i18n
       - name: build fe
-        run: bun run --filter @tmex/fe build
+        run: bun run --filter @vibeterm/fe build
       - name: first-screen gzip budget
-        run: bun run --filter @tmex/fe budget
+        run: bun run --filter @vibeterm/fe budget
 
   unit-tests:
     runs-on: ubuntu-latest
@@ -53,4 +53,4 @@ jobs:
       - run: bun run test:unit
         env:
           # GitHub runner 没有可用的 ICE/loopback 候选，真实 node-datachannel 的握手/拨号用例必然失败；本地仍跑。
-          TMEX_SKIP_RTC_TESTS: '1'
+          VIBETERM_SKIP_RTC_TESTS: '1'

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
-import type { LinkSession } from '@tmex/shared/link';
+import { wsBorsh } from '@vibeterm/shared';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   type ForwardPump,
   STREAM_STALE_INPUT_TTL_MS,

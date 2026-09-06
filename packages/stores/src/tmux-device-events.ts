@@ -1,12 +1,12 @@
 // 设备事件与 tmux 事件（bell / notification / pane-active）的状态与副作用处理。
 
-import { claimToastFor, formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
+import { claimToastFor, formatTerminalNotificationToast, useBellStore } from '@vibeterm/notifications';
 import type {
   DeviceEventType,
   EventDevicePayload,
   EventTmuxPayload,
   TmuxEventType,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { toAppPath } from './app-navigation';
 import { type RuntimeCore, hostAppPath } from './runtime';
 import type { SiteStore } from './site';

@@ -1,4 +1,4 @@
-import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
+import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@vibeterm/shared';
 import {
   PUSH_MAX_ATTEMPTS,
   PUSH_RETRY_BACKOFF_MS,
@@ -6,8 +6,8 @@ import {
   type PushPutOptions,
   type PushTransport,
   runPush,
-} from '@tmex/transfer';
-import { openRange } from '@tmex/transfer/node';
+} from '@vibeterm/transfer';
+import { openRange } from '@vibeterm/transfer/node';
 import { getInstallInfo } from './install-info';
 import {
   type DownloadProgressFn,
@@ -35,7 +35,7 @@ export const REMOTE_UPGRADE_TIMEOUTS = {
 };
 
 // 退避梯度与「支持续传时推几次」是引擎的策略，这里只做转出，不再留第二份定义。
-export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@tmex/transfer';
+export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@vibeterm/transfer';
 /** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。升级独有。 */
 export const LEGACY_PUSH_MAX_ATTEMPTS = 3;
 /** 问一次已收偏移的超时；问不到就当 0 从头推，不值得为它挂住整个阶段。 */
@@ -375,7 +375,7 @@ function supportsStagedResume(job: Job): boolean {
 /**
  * 推包阶段。目标支持 `staged-package-resume` 时先问一次已收偏移，只补发缺的那一段；
  * 链路断掉（中继复位 / 顶号 / 上行切换）退避重试，整个阶段共用 `pushMs` 预算。
- * 字节搬运本身由 `@tmex/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
+ * 字节搬运本身由 `@vibeterm/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
  */
 async function runPushPhase(
   job: Job,

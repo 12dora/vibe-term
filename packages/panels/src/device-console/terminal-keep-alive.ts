@@ -15,7 +15,7 @@
 // wire 订阅集合里摘掉（Ghostty 实例与 sink 都还留着，所以 sink 注册表不会开始缓冲），
 // 手机上不再为看不见的 pane 收流、渲染。再次切回时它已不算 warm，走冷 select 重放 history。
 
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 
 const LIVE_PANE_ID_SEPARATOR = '\u0000';
 

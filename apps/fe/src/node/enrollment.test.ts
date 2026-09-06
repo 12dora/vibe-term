@@ -1,5 +1,5 @@
 // enrollment / admit / revoke：pending 落 sessionStorage、证书匹配、admit-node 记录能过
-// `@tmex/shared/auth` 的验签与 reducer、非匹配证书忽略、过期 pending 拒绝、revoke 记录形状。
+// `@vibeterm/shared/auth` 的验签与 reducer、非匹配证书忽略、过期 pending 拒绝、revoke 记录形状。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -9,8 +9,8 @@ import {
   takeRememberedSigner,
 } from '@/auth/credential-prompt';
 import { buildAddPasskeyRecord } from '@/auth/key-log-actions';
-import type { AuthenticationResponseJSON } from '@tmex/api-client/auth/index';
-import type { VerifyPasskeyAssertion } from '@tmex/shared/auth';
+import type { AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index';
+import type { VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
 import {
   applyKeyLogRecord,
   computeRecordHash,
@@ -36,7 +36,7 @@ import {
   signEd25519,
   verifyEd25519,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { PendingStorage } from './enrollment';
 import {
   PENDING_STORAGE_KEY,

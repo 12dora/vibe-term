@@ -25,7 +25,7 @@ import type { LocalAuthContext } from '../lib/local-auth';
 import { RelayCaError, fetchPinnedRelayCa, pinRelayCa, storeRelayCaPin } from '../lib/relay-ca';
 import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
 import { persistRelayUplink } from '../lib/relay-store';
-import { type TmexRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
+import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import { type HubIo, JoinError, maybeRestart } from './hub';
@@ -376,9 +376,9 @@ async function commitRelayJoin(input: {
 
 /** 本机可能同时是中继（`relay,node`）：加入别人的中继不该把自己的 relay 角色关掉。 */
 export function relayJoinRoleName(current: string | undefined): string {
-  let roles: TmexRoles;
+  let roles: VibeTermRoles;
   try {
-    roles = parseTmexRoles(current);
+    roles = parseVibeTermRoles(current);
   } catch {
     roles = { hub: false, node: false, relay: false };
   }
@@ -388,9 +388,9 @@ export function relayJoinRoleName(current: string | undefined): string {
 async function writeRelayNodeEnv(envPath: string): Promise<void> {
   await withEnvLock(async () => {
     const env = await readEnvFile(envPath);
-    env.TMEX_ROLES = relayJoinRoleName(env.TMEX_ROLES);
-    env.TMEX_HUB_URL = '';
-    env.TMEX_HUB_PUBLIC_URL = '';
+    env.VIBETERM_ROLES = relayJoinRoleName(env.VIBETERM_ROLES);
+    env.VIBETERM_HUB_URL = '';
+    env.VIBETERM_HUB_PUBLIC_URL = '';
     await writeEnvFile(envPath, env);
   });
 }
@@ -419,11 +419,11 @@ export async function runRelayJoin(
     if (ctx.envPath) {
       await writeRelayNodeEnv(ctx.envPath);
     } else {
-      process.env.TMEX_ROLES = relayJoinRoleName(
-        ctx.env?.TMEX_ROLES ?? process.env.TMEX_ROLES ?? undefined
+      process.env.VIBETERM_ROLES = relayJoinRoleName(
+        ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
       );
-      process.env.TMEX_HUB_URL = '';
-      process.env.TMEX_HUB_PUBLIC_URL = '';
+      process.env.VIBETERM_HUB_URL = '';
+      process.env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);

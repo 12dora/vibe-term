@@ -1,4 +1,4 @@
-import { type ServerSocketAdapter, WebSocketLink } from '@tmex/shared/link';
+import { type ServerSocketAdapter, WebSocketLink } from '@vibeterm/shared/link';
 import { matchPath } from '../api/route';
 import type { AuthDb } from '../auth/types';
 import {

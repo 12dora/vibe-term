@@ -7,7 +7,7 @@
 // 从该域名进来的（`viaDomain`），点下去就会当场失联。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import { isValidNodeId, nodeAppPath } from '@tmex/api-client';
+import { isValidNodeId, nodeAppPath } from '@vibeterm/api-client';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,8 +17,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button, buttonVariants } from '@tmex/ui/button';
+} from '@vibeterm/ui/alert-dialog';
+import { Button, buttonVariants } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -26,9 +26,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { Bell, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';

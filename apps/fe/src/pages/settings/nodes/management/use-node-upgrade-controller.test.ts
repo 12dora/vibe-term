@@ -11,8 +11,8 @@
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { UpgradeStatus } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { UpgradeStatus } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import * as ReactRuntime from 'react';
 import * as ReactI18nRuntime from 'react-i18next';
 import type { NodeUpgradeController } from './types';

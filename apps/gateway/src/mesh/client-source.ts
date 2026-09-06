@@ -3,7 +3,7 @@ import { resolveClientIp } from './client-ip';
 import { isLocalClientSource } from './domain-access-policy';
 import { MESH_VIA_SELF, getMeshRequestContext } from './mesh-deps';
 
-export const X_TMEX_CLIENT_SOURCE = 'x-tmex-client-source';
+export const X_VIBETERM_CLIENT_SOURCE = 'x-tmex-client-source';
 export const CLIENT_SOURCE_LOCAL = 'local';
 
 function isLocalOrLoopbackIp(ip: string): boolean {
@@ -45,5 +45,5 @@ export function isTrustedLocalClient(req: Request): boolean {
 export function waivesPasskeySecondFactor(req: Request): boolean {
   if (isTrustedLocalClient(req)) return true;
   if (!isPeerRequest(req)) return false;
-  return req.headers.get(X_TMEX_CLIENT_SOURCE) === CLIENT_SOURCE_LOCAL;
+  return req.headers.get(X_VIBETERM_CLIENT_SOURCE) === CLIENT_SOURCE_LOCAL;
 }

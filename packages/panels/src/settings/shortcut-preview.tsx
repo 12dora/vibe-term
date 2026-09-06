@@ -1,5 +1,5 @@
-import type { TerminalShortcutItem } from '@tmex/shared';
-import { Switch } from '@tmex/ui/switch';
+import type { TerminalShortcutItem } from '@vibeterm/shared';
+import { Switch } from '@vibeterm/ui/switch';
 import { useTranslation } from 'react-i18next';
 
 import { ShortcutButtonRow } from './ShortcutButtonRow';

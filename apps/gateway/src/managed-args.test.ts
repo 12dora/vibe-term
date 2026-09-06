@@ -5,14 +5,14 @@ describe('managed Gateway arguments', () => {
   test('defaults to the tmux default server and clears inherited namespace state', () => {
     const parsed = parseManagedGatewayArgs([]);
     const env: Record<string, string | undefined> = {
-      TMEX_TMUX_SOCKET: 'inherited',
+      VIBETERM_TMUX_SOCKET: 'inherited',
     };
 
     applyManagedTmuxNamespace(env, parsed.tmuxNamespace);
 
     expect(parsed).toEqual({ version: false, tmuxNamespace: undefined });
-    expect(env.TMEX_TMUX_SOCKET).toBeUndefined();
-    expect(Object.hasOwn(env, 'TMEX_TMUX_SOCKET')).toBe(false);
+    expect(env.VIBETERM_TMUX_SOCKET).toBeUndefined();
+    expect(Object.hasOwn(env, 'VIBETERM_TMUX_SOCKET')).toBe(false);
   });
 
   test('accepts one explicit safe namespace', () => {
@@ -22,7 +22,7 @@ describe('managed Gateway arguments', () => {
     applyManagedTmuxNamespace(env, parsed.tmuxNamespace);
 
     expect(parsed).toEqual({ version: false, tmuxNamespace: 'vibex-dev' });
-    expect(env.TMEX_TMUX_SOCKET).toBe('vibex-dev');
+    expect(env.VIBETERM_TMUX_SOCKET).toBe('vibex-dev');
   });
 
   test('rejects missing, duplicate, default, unsafe, and unknown values', () => {

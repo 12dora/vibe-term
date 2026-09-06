@@ -1,7 +1,7 @@
 // 任务在源节点 A 上跑：建会话 → 展开 → 逐条推送/建目录 → 收尾。
 // 展开必须在会话建起来之后：grant 没过就开始遍历目录，等于让未授权的调用方白使唤一遍磁盘。
 
-import type { TransferErrorCode, TransferJobItem } from '@tmex/shared';
+import type { TransferErrorCode, TransferJobItem } from '@vibeterm/shared';
 import type { ChannelResult, TransferChannel } from './channel';
 import { errorDetailOf, normalizeTransferError } from './errors';
 import { type ExpandedEntry, expandItems } from './expand';

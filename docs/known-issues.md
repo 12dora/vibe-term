@@ -15,12 +15,12 @@
 ## KI-3：直连 ICE 候选无法按网卡过滤
 
 `node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。
-可用 `TMEX_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
+可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
 [直连地址退避](./hub/2026090305-peer-endpoint-backoff.md)。
 
 ## KI-4：TURN 仍需手工配置三个环境变量
 
-`TMEX_TURN_URL` / `TMEX_TURN_USERNAME` / `TMEX_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
+`VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
 libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
 `[mesh][rtc] summary` 的现网数据再定。
 
@@ -33,7 +33,7 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 ## KI-6：待现网实测的两项
 
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
-2. 直连的 ICE-TCP 与 `TMEX_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
+2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
 
 ## KI-8：Hub 转发不把浏览器来源 IP 带给节点
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkSession, LinkStream, StreamCloseInfo } from '@tmex/shared/link';
+import type { LinkSession, LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';

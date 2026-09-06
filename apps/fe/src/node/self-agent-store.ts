@@ -5,9 +5,9 @@
 // `appNodeRuntimes.get()` 不改引用计数；self 运行时由宿主根（`AppRoot`）长期持有，
 // 这里永远拿得到同一个实例。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { AgentStore } from '@tmex/stores';
-import { setAgentHostStore } from '@tmex/stores';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { AgentStore } from '@vibeterm/stores';
+import { setAgentHostStore } from '@vibeterm/stores';
 import { appNodeRuntimes } from './node-runtimes';
 
 export function selfAgentStore(): AgentStore {

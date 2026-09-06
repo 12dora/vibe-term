@@ -1,4 +1,4 @@
-import { bytesEqual } from '@tmex/shared/auth';
+import { bytesEqual } from '@vibeterm/shared/auth';
 import { backoffDelayMs } from './ctl';
 import type { KeyLogApplier, KeyLogForkEvent, MeshScheduler } from './types';
 import {

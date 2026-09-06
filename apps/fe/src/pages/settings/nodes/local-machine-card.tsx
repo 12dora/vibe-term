@@ -4,16 +4,16 @@
 // `restartRequired: true`——网络那一段必须给出「立即重启」并等服务回来，否则用户会以为
 // 操作没生效。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultLocalApi } from '@tmex/api-client/local/local-api';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultLocalApi } from '@vibeterm/api-client/local/local-api';
 import type {
   LocalDirectStatus,
   LocalRole,
   LocalStatusResponse,
   SetupRelayRole,
-} from '@tmex/api-client/local/types';
-import { Card, CardContent, CardHeader } from '@tmex/ui/card';
+} from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardHeader } from '@vibeterm/ui/card';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';

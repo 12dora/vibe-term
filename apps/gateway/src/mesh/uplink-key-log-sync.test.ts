@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { randomBytes } from '@tmex/shared/auth';
+import { randomBytes } from '@vibeterm/shared/auth';
 import { ImmediateScheduler, waitUntil } from './test-support';
 import type { KeyLogApplier, KeyLogForkEvent } from './types';
 import { UplinkKeyLogSync, type UplinkKeyLogSyncHost } from './uplink-key-log-sync';

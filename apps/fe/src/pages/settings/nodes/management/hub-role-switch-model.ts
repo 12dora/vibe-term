@@ -4,15 +4,15 @@
 import { type HubApi, defaultHubApi } from '@/node/hub-api';
 import { getMeshHubsState, refreshMeshHubs } from '@/node/mesh-hubs';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@tmex/api-client';
-import type { HubAuthorizationKind, MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { errorMessage, sleepOrAbort } from '@tmex/shared';
-import type { HubRoleErrorCode, HubRoleRequest, HubRoleTransitionPhase } from '@tmex/shared';
+import { defaultApiClient } from '@vibeterm/api-client';
+import type { HubAuthorizationKind, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import { errorMessage, sleepOrAbort } from '@vibeterm/shared';
+import type { HubRoleErrorCode, HubRoleRequest, HubRoleTransitionPhase } from '@vibeterm/shared';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
   encodeBase64url,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 

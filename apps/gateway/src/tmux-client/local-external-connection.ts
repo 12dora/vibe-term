@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { type Device, errorMessage } from '@tmex/shared';
+import { type Device, errorMessage } from '@vibeterm/shared';
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { logAt, shouldLog } from '../log/level';

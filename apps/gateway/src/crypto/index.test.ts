@@ -26,7 +26,7 @@ describe('crypto decryptWithContext', () => {
       expect(error.message).toContain('telegram_bot');
       expect(error.message).toContain('bot-1');
       expect(error.message).toContain('token_enc');
-      expect(error.message).toContain('TMEX_MASTER_KEY');
+      expect(error.message).toContain('VIBETERM_MASTER_KEY');
     }
   });
 });

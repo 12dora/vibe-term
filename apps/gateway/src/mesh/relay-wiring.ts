@@ -1,5 +1,5 @@
-import type { KeyLogType } from '@tmex/shared/auth';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { KeyLogType } from '@vibeterm/shared/auth';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { HUB_NOT_WRITER, type HubWriteForwardMessage } from '@tmex/shared/uplink';
+import { HUB_NOT_WRITER, type HubWriteForwardMessage } from '@vibeterm/shared/uplink';
 import {
   WRITER_FORWARD_HEADER,
   WRITER_FORWARD_TIMEOUT_MS,

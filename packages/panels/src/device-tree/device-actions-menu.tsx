@@ -1,10 +1,10 @@
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { EllipsisVertical, type LucideIcon } from 'lucide-react';
 
 export interface DeviceActionItem {

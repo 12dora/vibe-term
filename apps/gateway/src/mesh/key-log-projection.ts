@@ -3,7 +3,7 @@ import {
   decodeRevokeNodePayload,
   nodeIdToHex,
   normalizeNodeName,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { UserKeyService } from '../auth';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';

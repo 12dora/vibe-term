@@ -1,11 +1,11 @@
 // 租户表：一行一租户，编辑 / 踢出 / 删除三个动作。备注可在表里就地改，其余改动进编辑框。
 // 点行即选中，下方的接入节点卡只留该租户的节点；再点一次取消。
 
-import type { RelayQuota, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { RelayQuota, RelayTenantSummary } from '@vibeterm/api-client/relay/admin-api';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Pencil, Trash2, Unplug } from 'lucide-react';
 import { type KeyboardEvent, type MouseEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';

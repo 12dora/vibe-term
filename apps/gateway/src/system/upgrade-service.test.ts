@@ -2,8 +2,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'b
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseTarballName } from '@tmex/shared';
-import type { SystemInfo } from '@tmex/shared';
+import { releaseTarballName } from '@vibeterm/shared';
+import type { SystemInfo } from '@vibeterm/shared';
 import type { UserStore } from '../auth/user-store';
 import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
 import * as infoPublic from './info-public';
@@ -30,13 +30,13 @@ afterAll(() => {
 });
 
 const originalFetch = globalThis.fetch;
-const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const originalReleaseCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
 const tempDirs: string[] = [];
 
 function releaseCacheTempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), 'tmex-svc-cache-'));
   tempDirs.push(dir);
-  process.env.TMEX_RELEASE_CACHE_DIR = dir;
+  process.env.VIBETERM_RELEASE_CACHE_DIR = dir;
   return dir;
 }
 
@@ -46,8 +46,8 @@ afterEach(() => {
   resetReleaseDownloadForTests();
   resetLatestReleaseCache();
   resetReleaseCacheSweepMemoForTests();
-  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
-  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
+  if (originalReleaseCacheDir === undefined) delete process.env.VIBETERM_RELEASE_CACHE_DIR;
+  else process.env.VIBETERM_RELEASE_CACHE_DIR = originalReleaseCacheDir;
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -709,7 +709,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-rel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-rel-cache-'));
     mockGithubLatest('9.9.9');
     const req = authedRequest(nodeId);
     const forward = {
@@ -1016,7 +1016,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-cancel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-cancel-cache-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1090,7 +1090,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-200-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-200-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1185,7 +1185,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-409-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-409-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1280,7 +1280,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-1111-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-1111-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');

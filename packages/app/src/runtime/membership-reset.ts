@@ -1,7 +1,7 @@
 import { MeshMembershipStore } from '../../../../apps/gateway/src/auth/mesh-membership-store';
 import { resolveEnvWriteTarget, stringifyEnv } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import { type TmexRoleName, roleNameFromFlags } from '../lib/roles';
+import { type VibeTermRoleName, roleNameFromFlags } from '../lib/roles';
 import type { SetupServiceDeps } from './setup-service';
 import {
   SetupError,
@@ -18,7 +18,7 @@ import {
  * 能「退出 mesh」的角色：必须带 node 才有成员身份。
  * 纯 `relay` 只是替别的租户转发，本机没有用户/证书/密钥日志，没有可退的成员身份。
  */
-export type MeshRoleName = Exclude<TmexRoleName, 'standalone' | 'relay'>;
+export type MeshRoleName = Exclude<VibeTermRoleName, 'standalone' | 'relay'>;
 export type LeaveTargetRole = 'standalone' | 'relay';
 
 export function isLeavableRoleName(value: unknown): value is MeshRoleName {
@@ -44,11 +44,11 @@ export type LeaveMeshResult = {
 };
 
 const HUB_CLEARED_ENV = {
-  TMEX_HUB_URL: '',
-  TMEX_HUB_PUBLIC_URL: '',
+  VIBETERM_HUB_URL: '',
+  VIBETERM_HUB_PUBLIC_URL: '',
 } as const;
 
-const RELAY_ENV_KEYS = ['TMEX_RELAY_PUBLIC_URL', 'TMEX_RELAY_ADMIN_TOKEN'] as const;
+const RELAY_ENV_KEYS = ['VIBETERM_RELAY_PUBLIC_URL', 'VIBETERM_RELAY_ADMIN_TOKEN'] as const;
 
 type StagedLeave = {
   stagedPath: string | null;
@@ -63,9 +63,9 @@ function omitRelayEnvKeys(env: Record<string, string>): Record<string, string> {
 }
 
 function applyLeaveProcessEnv(targetRole: LeaveTargetRole): void {
-  process.env.TMEX_ROLES = targetRole === 'relay' ? 'relay' : 'standalone';
-  process.env.TMEX_HUB_URL = HUB_CLEARED_ENV.TMEX_HUB_URL;
-  process.env.TMEX_HUB_PUBLIC_URL = HUB_CLEARED_ENV.TMEX_HUB_PUBLIC_URL;
+  process.env.VIBETERM_ROLES = targetRole === 'relay' ? 'relay' : 'standalone';
+  process.env.VIBETERM_HUB_URL = HUB_CLEARED_ENV.VIBETERM_HUB_URL;
+  process.env.VIBETERM_HUB_PUBLIC_URL = HUB_CLEARED_ENV.VIBETERM_HUB_PUBLIC_URL;
   if (targetRole === 'standalone') {
     for (const key of RELAY_ENV_KEYS) delete process.env[key];
   }
@@ -78,7 +78,7 @@ function leaveEnvPatch(
   const next = {
     ...existing,
     ...HUB_CLEARED_ENV,
-    TMEX_ROLES: targetRole === 'relay' ? 'relay' : 'standalone',
+    VIBETERM_ROLES: targetRole === 'relay' ? 'relay' : 'standalone',
   };
   return targetRole === 'standalone' ? omitRelayEnvKeys(next) : next;
 }

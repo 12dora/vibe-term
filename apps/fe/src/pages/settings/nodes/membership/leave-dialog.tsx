@@ -4,7 +4,7 @@
 // 当前会话立刻失效。因此确认文案必须把后果讲全，进度也留在同一个对话框里——退出期间
 // 页面其它部分已经没有意义了。
 
-import type { LocalLeaveTargetRole, LocalRole } from '@tmex/api-client/local/types';
+import type { LocalLeaveTargetRole, LocalRole } from '@vibeterm/api-client/local/types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,7 +14,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+} from '@vibeterm/ui/alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntentRecord } from './intent';

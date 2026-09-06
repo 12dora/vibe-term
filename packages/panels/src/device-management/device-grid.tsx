@@ -16,10 +16,10 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useQuery } from '@tanstack/react-query';
-import { fetchFileRoots } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
+import { fetchFileRoots } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
 import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

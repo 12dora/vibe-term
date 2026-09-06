@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { Carrier } from '../../ws/carrier';
 import type { GatewaySession } from '../../ws/gateway-session';
 

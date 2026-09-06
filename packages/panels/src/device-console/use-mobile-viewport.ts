@@ -1,6 +1,6 @@
 // 移动端判定 + iOS 地址栏收起：两者都只依赖视口，与控制台业务无关。
 
-import { isIOSMobileBrowser } from '@tmex/terminal-ui';
+import { isIOSMobileBrowser } from '@vibeterm/terminal-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 const detectMobile = () => window.innerWidth < 768 || 'ontouchstart' in window;

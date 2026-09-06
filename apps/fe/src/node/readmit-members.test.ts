@@ -2,9 +2,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi, AuthenticationResponseJSON } from '@tmex/api-client/auth/index';
-import { RelayApiError } from '@tmex/api-client/relay/admin-api';
-import type { RelayReadmitEntry, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { AuthApi, AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index';
+import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayReadmitEntry, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   DOMAIN_AUTHORIZATION,
   decodeAdmitNodePayload,
@@ -18,7 +18,7 @@ import {
   rootKeyFromSeed,
   sha256,
   verifyEd25519,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   READMIT_CANCELLED,
   READMIT_MALFORMED,

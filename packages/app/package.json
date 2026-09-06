@@ -1,10 +1,11 @@
 {
-  "name": "tmex-cli",
+  "name": "vibeterm-cli",
   "version": "1.1.40",
   "type": "module",
   "bin": {
+    "vibeterm": "./bin/vibeterm.js",
     "tmex": "./bin/tmex.js",
-    "tmex-cli": "./bin/tmex.js"
+    "vibeterm-cli": "./bin/vibeterm.js"
   },
   "private": true,
   "engines": {

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentMessageDto } from '@tmex/shared';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import {
   type UiThreadBlock,
   type UiToolCall,

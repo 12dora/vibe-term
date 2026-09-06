@@ -20,15 +20,15 @@ const FE_SRC = join(REPO_ROOT, 'apps/fe/src');
 const SHARED_I18N = join(REPO_ROOT, 'packages/shared/src/i18n');
 
 const PKG_DIRS: Record<string, string> = {
-  '@tmex/panels': 'packages/panels',
-  '@tmex/ui': 'packages/ui',
-  '@tmex/stores': 'packages/stores',
-  '@tmex/terminal-ui': 'packages/terminal-ui',
-  '@tmex/api-client': 'packages/api-client',
-  '@tmex/ws-client': 'packages/ws-client',
-  '@tmex/shared': 'packages/shared',
-  '@tmex/theme': 'packages/theme',
-  '@tmex/notifications': 'packages/notifications',
+  '@vibeterm/panels': 'packages/panels',
+  '@vibeterm/ui': 'packages/ui',
+  '@vibeterm/stores': 'packages/stores',
+  '@vibeterm/terminal-ui': 'packages/terminal-ui',
+  '@vibeterm/api-client': 'packages/api-client',
+  '@vibeterm/ws-client': 'packages/ws-client',
+  '@vibeterm/shared': 'packages/shared',
+  '@vibeterm/theme': 'packages/theme',
+  '@vibeterm/notifications': 'packages/notifications',
   'ghostty-terminal': 'packages/ghostty-terminal',
 };
 

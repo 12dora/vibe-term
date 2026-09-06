@@ -47,7 +47,7 @@ import { promptConfirm, promptText } from '../lib/prompt';
 import {
   DEFAULT_PEER_PORT,
   DEFAULT_STUN_SERVERS,
-  parseTmexRoleName,
+  parseVibeTermRoleName,
   rolesFromName,
   validateRoles,
 } from '../lib/roles';
@@ -202,7 +202,7 @@ async function buildUplinkConfig(
   gatewayPort: number
 ): Promise<UplinkConfig> {
   const flags = parsed.flags;
-  const role = parseTmexRoleName(
+  const role = parseVibeTermRoleName(
     (await ask('role', 'Role (standalone|node|hub,node|relay|relay,node)', 'standalone', false)) ||
       'standalone'
   );
@@ -213,9 +213,9 @@ async function buildUplinkConfig(
   const isRelay = role === 'relay' || role === 'relay,node';
   const hubUrl = isRelay
     ? ''
-    : await ask('hub-url', 'Hub URL (TMEX_HUB_URL, empty allowed)', '', false);
+    : await ask('hub-url', 'Hub URL (VIBETERM_HUB_URL, empty allowed)', '', false);
   const peerPort = parsePort(
-    (await ask('peer-port', 'Peer port (TMEX_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
+    (await ask('peer-port', 'Peer port (VIBETERM_PEER_PORT)', String(DEFAULT_PEER_PORT), false)) ||
       String(DEFAULT_PEER_PORT)
   );
   const hubPublicUrlFlag = asString(flags['hub-public-url']) || '';
@@ -289,7 +289,7 @@ async function resolveRelayPublicUrl(
     return normalizeRelayPublicUrl(applyPublicPort(current, publicPort));
   }
   const answer = await promptPublicUrl({
-    label: 'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
+    label: 'Relay public URL (VIBETERM_RELAY_PUBLIC_URL)',
     current,
     publicPort,
     normalize: normalizeRelayPublicUrl,
@@ -359,7 +359,7 @@ async function resolveHubPublicUrl(
     return normalizeHubPublicUrl(applyPublicPort(current, publicPort));
   }
   const answer = await promptPublicUrl({
-    label: 'Hub public URL (TMEX_HUB_PUBLIC_URL)',
+    label: 'Hub public URL (VIBETERM_HUB_PUBLIC_URL)',
     current,
     publicPort,
     normalize: normalizeHubPublicUrl,
@@ -464,7 +464,7 @@ function printInitSummary(
   }
   if (config.role === 'relay' || config.role === 'relay,node') {
     console.log(
-      `- relay admin token: TMEX_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
+      `- relay admin token: VIBETERM_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
     );
     console.log('- run "tmex relay status" on this machine to manage tenants');
   }

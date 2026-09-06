@@ -5,7 +5,7 @@ import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getDisplayVersion } from '../../../../apps/gateway/src/system/version';
 import { t } from '../i18n';
 import {
-  assembleTmex,
+  assembleVibeTerm,
   createProcessShutdown,
   installShutdownHandlers,
   meshShutdownNeeded,
@@ -14,8 +14,8 @@ import { handlePreflightHttp, readRuntimeMode } from './mode';
 import { warnOnStaleSystemdUnit, warnOnSystemdOomPolicy } from './service-selfcheck';
 
 function resolveStaticRoot(): string {
-  if (process.env.TMEX_FE_DIST_DIR) {
-    return resolve(process.env.TMEX_FE_DIST_DIR);
+  if (process.env.VIBETERM_FE_DIST_DIR) {
+    return resolve(process.env.VIBETERM_FE_DIST_DIR);
   }
 
   return resolve(import.meta.dir, '../../resources/fe-dist');
@@ -25,12 +25,12 @@ async function main(): Promise<void> {
   console.log(`[tmex] version ${getDisplayVersion()}`);
   await warnOnStaleSystemdUnit();
   void warnOnSystemdOomPolicy().catch(() => undefined);
-  const host = process.env.TMEX_BIND_HOST || '127.0.0.1';
+  const host = process.env.VIBETERM_BIND_HOST || '127.0.0.1';
   const port = Number(process.env.GATEWAY_PORT || '9883');
   const staticRoot = resolveStaticRoot();
   const runtimeMode = readRuntimeMode();
 
-  const assembled = await assembleTmex({ staticRoot, runtimeMode });
+  const assembled = await assembleVibeTerm({ staticRoot, runtimeMode });
 
   if (runtimeMode === 'preflight') {
     Bun.serve({
@@ -93,7 +93,7 @@ try {
       `[tmex][fatal] 上下文：scope=${error.context.scope} id=${error.context.entityId ?? '-'} field=${error.context.field ?? '-'}`
     );
     console.error(
-      '[tmex][fatal] 请检查 app.env 中 TMEX_MASTER_KEY 是否与当前数据库匹配；如果数据库来自其他环境，请使用原密钥或手动重建相关密文配置。'
+      '[tmex][fatal] 请检查 app.env 中 VIBETERM_MASTER_KEY 是否与当前数据库匹配；如果数据库来自其他环境，请使用原密钥或手动重建相关密文配置。'
     );
     console.error('[tmex][fatal] 详细信息：', error.message);
   } else {

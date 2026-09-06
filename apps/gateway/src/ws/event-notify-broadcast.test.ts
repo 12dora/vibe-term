@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized } from '../db';
 import { runMigrations } from '../db/migrate';
 import { registerEventNotifyBroadcaster } from '../events/broadcaster';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import { buildContext, findPane, resolvePaneContext, resolveWindowTitle } from './bell-context';
 
 function createSnapshot(): StateSnapshotPayload {

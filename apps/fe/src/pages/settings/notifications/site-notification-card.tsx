@@ -1,9 +1,9 @@
 // 站点级通知开关与频控：四个开关 + 四个阈值输入，全部落在站点设置草稿上。
 // 从「通知」标签里拆出来，标签本身只负责编排卡片顺序。
 
-import { Card, CardContent } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import { Card, CardContent } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { SettingsSaveButton } from '../settings-save-button';
 import type { SiteSettingsDraft } from '../site-settings-form';

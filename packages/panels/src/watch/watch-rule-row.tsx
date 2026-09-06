@@ -1,7 +1,7 @@
-import type { WatchRuleDto } from '@tmex/shared';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import type { WatchRuleDto } from '@vibeterm/shared';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 import { Activity, Pencil, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

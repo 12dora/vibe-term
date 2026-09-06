@@ -3,7 +3,7 @@ import type {
   CreatePortMapRequest,
   PortMapExportDto,
   UpdatePortMapRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { requestPeerExportRemoval } from './export-cleanup';

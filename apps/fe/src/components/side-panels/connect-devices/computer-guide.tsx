@@ -2,8 +2,8 @@
 // 默认选中的路径由本机现状推导，用户改过之后就以他的选择为准。
 // 每条路径的步骤自成一套编号：一级选择永远是第 1 步。
 
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
-import { Tabs, TabsContent } from '@tmex/ui/tabs';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
+import { Tabs, TabsContent } from '@vibeterm/ui/tabs';
 import { Info } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -8,7 +8,7 @@ import {
   isDeviceFolderLayoutValid,
   normalizeFolderLayoutOrder,
   reparentOnFolderDelete,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { and, asc, eq, isNull, max } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import { deviceFolderPlacements, deviceFolders } from './schema';

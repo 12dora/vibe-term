@@ -4,10 +4,10 @@ import {
   type DevicesResponse,
   devicesQueryKey,
   fetchDevices,
-} from '@tmex/api-client';
-import type { DeviceConnectionAdapter } from '@tmex/panels';
-import { type AppRuntime, type HostServices, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+} from '@vibeterm/api-client';
+import type { DeviceConnectionAdapter } from '@vibeterm/panels';
+import { type AppRuntime, type HostServices, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import {
   createContext,
   useCallback,

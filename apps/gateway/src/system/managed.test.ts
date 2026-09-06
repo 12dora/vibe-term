@@ -23,8 +23,8 @@ describe('managed runtime lock', () => {
 
   test('lock 后用户 env 不能覆盖', () => {
     lockManagedRuntime({ managementMode: 'companion-cli', updateOwner: 'companion' });
-    process.env.TMEX_MANAGEMENT_MODE = 'none';
-    process.env.TMEX_UPDATE_OWNER = 'self';
+    process.env.VIBETERM_MANAGEMENT_MODE = 'none';
+    process.env.VIBETERM_UPDATE_OWNER = 'self';
     expect(getManagementMode()).toBe('companion-cli');
     expect(getUpdateOwner()).toBe('companion');
     expect(isManagedExternally()).toBe(true);

@@ -2,10 +2,10 @@
 // 保证 select 尺寸计算、请求去重记录与 URL 改写只有一份实现。本 hook 不含 effect，
 // 放在 hook 调用序列的任意位置都不影响副作用执行顺序。
 
-import type { TmuxWindow } from '@tmex/shared';
-import { type HostServices, encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import type { PaneSelection, TerminalRef, TerminalSizeSnapshot } from '@tmex/terminal-ui';
+import type { TmuxWindow } from '@vibeterm/shared';
+import { type HostServices, encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import type { PaneSelection, TerminalRef, TerminalSizeSnapshot } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router';
 import { resolveCloseFallback } from './close-pane-fallback';

@@ -17,8 +17,8 @@ tmex 可经 Cloudflare Tunnel 或直连端口暴露到公网，并启用账号�
 | 级别 | 发现 | 处置 |
 | --- | --- | --- |
 | 高（条件） | 未 bootstrap 的新实例经隧道连 `127.0.0.1` 时，远端请求被当作 loopback，可调用 `/api/auth/local/bootstrap` 创建首个账户 | **已修**：`resolveClientIp` + `requestIsLoopback`（详见 `2026090101-public-login-hardening.md`）；运维上仍应先在本机 bootstrap 再暴露 |
-| 高（条件） | 裸 `@tmex/gateway start` 入口不装会话守卫 | 不改：该入口仅开发用，打包运行时（`packages/app` 装配）才是公网形态；文档注明 |
-| 高 | HTTP 直连暴露时会话可被嗅探；cookie `Secure` 依赖 HTTPS 探测 | 不改代码：公网一律走 Tunnel HTTPS 或自配 TLS，反代后开 `TMEX_TRUST_PROXY` |
+| 高（条件） | 裸 `@vibeterm/gateway start` 入口不装会话守卫 | 不改：该入口仅开发用，打包运行时（`packages/app` 装配）才是公网形态；文档注明 |
+| 高 | HTTP 直连暴露时会话可被嗅探；cookie `Secure` 依赖 HTTPS 探测 | 不改代码：公网一律走 Tunnel HTTPS 或自配 TLS，反代后开 `VIBETERM_TRUST_PROXY` |
 | 中 | 限流 IP 桶在隧道后全员共桶（误伤为主，非绕过） | **已修**：信任代理时按 `CF-Connecting-IP`/`X-Forwarded-For`/`X-Real-IP` 分桶 |
 | 中 | 密码最短 8 位、无复杂度要求；拿到 DB 可离线撞根公钥 | 不改：argon2id 已足够贵；建议用密码管理器生成 16+ 位或改用 passkey。**不加复杂度规则** |
 | 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：tmex 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |

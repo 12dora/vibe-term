@@ -1,4 +1,4 @@
-import type { WebhookEndpoint } from '@tmex/shared';
+import type { WebhookEndpoint } from '@vibeterm/shared';
 import { desc, eq } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import { toWebhookEndpoint } from './mappers';

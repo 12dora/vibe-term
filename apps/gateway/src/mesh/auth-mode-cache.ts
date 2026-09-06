@@ -1,4 +1,4 @@
-import type { LocalAuthStatus } from '@tmex/shared';
+import type { LocalAuthStatus } from '@vibeterm/shared';
 import type { UserRecord, UserStore } from '../auth/user-store';
 import type { HubTlsInfo, HubTlsInfoProvider } from './mesh-deps';
 

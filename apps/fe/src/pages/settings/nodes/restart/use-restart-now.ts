@@ -1,6 +1,6 @@
 // 重启等待的 React 封装。卸载即 abort：只压住 setState 是不够的，在途的 `/healthz` 也必须断掉。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

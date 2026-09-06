@@ -1,7 +1,7 @@
 // 默认配额对话框：未单独设置配额的租户用这组值。入口在租户卡的「更多」里。
 
-import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
+import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -9,7 +9,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

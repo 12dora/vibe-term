@@ -1,8 +1,8 @@
 // 远程升级作业的收发管道：请求脱壳、退避睡眠、上游错误摘要、交签名清单
-//（包体读流已并入 `@tmex/transfer/node`）。都是与作业状态机无关的纯管道，
+//（包体读流已并入 `@vibeterm/transfer/node`）。都是与作业状态机无关的纯管道，
 // 单独放一处让状态机文件只剩流程。
 
-import { errorMessage, withTimeout } from '@tmex/shared';
+import { errorMessage, withTimeout } from '@vibeterm/shared';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 /** 交签名清单的超时：一个几百字节的 POST，慢到这个份上说明链路已经不行了。 */

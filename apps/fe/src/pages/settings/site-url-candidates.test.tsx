@@ -5,7 +5,7 @@
 // 「填入」是回调，直接调用无 hook 的行组件并驱动它的 onClick。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareOriginCandidate } from '@tmex/shared/share';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
 import { Children, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SiteUrlField } from './general-fields';

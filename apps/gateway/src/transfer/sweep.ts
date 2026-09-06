@@ -6,7 +6,7 @@ import { readdirSync, realpathSync, rmSync, statSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { PART_TTL_MS, rangesSidecarPath } from '@tmex/transfer/node';
+import { PART_TTL_MS, rangesSidecarPath } from '@vibeterm/transfer/node';
 import { getDeviceById } from '../db';
 import { getFileRoots } from '../db/file-roots';
 import { activeStagingDirs, isPartClaimed } from './receiver';

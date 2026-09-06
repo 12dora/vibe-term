@@ -3,9 +3,9 @@
 // 安装 / 登录 / 创建都是后台 job：`POST /api/tunnel/actions` 只返回受理时的快照，成败要靠
 // 轮询 `GET /api/tunnel/status` 才看得到，因此 job 在跑或进程正在起来时 2 秒一拉，其余 10 秒。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { TunnelApiError, fetchTunnelStatus } from '@tmex/api-client/local/tunnel-api';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { TunnelApiError, fetchTunnelStatus } from '@vibeterm/api-client/local/tunnel-api';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
 import { TUNNEL_STATUS_QUERY_KEY } from '../status-queries';
 import { useProtectedStatusQuery } from '../use-protected-status-query';
 import { tunnelPollInterval } from './tunnel-model';

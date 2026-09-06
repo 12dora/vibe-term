@@ -2,7 +2,7 @@
 
 生产安装走 GitHub Releases 的 `tmex-cli` 包（launchd / systemd 用户服务 + SQLite），不要再用仓库里的 Docker Compose 或手写 JWT。多机 mesh、登录、passkey / TOTP、直连与排障见 [hub / node 运维指南](../hub/2026082800-hub-node-operations.md)。
 
-历史上本文中的 `JWT_SECRET`、`TMEX_ADMIN_PASSWORD`、OIDC、以及「用 `.env` 密码登录」均已删除：standalone 无应用层登录；加入 hub 后的身份是用户自持根钥，而不是网关签发的 JWT。
+历史上本文中的 `JWT_SECRET`、`VIBETERM_ADMIN_PASSWORD`、OIDC、以及「用 `.env` 密码登录」均已删除：standalone 无应用层登录；加入 hub 后的身份是用户自持根钥，而不是网关签发的 JWT。
 
 ## 环境要求
 
@@ -29,12 +29,12 @@ tmex init --role hub,node
 `init` 会：
 
 - 写入安装目录（macOS `~/Library/Application Support/tmex/`，Linux `~/.local/share/tmex/`）；
-- 生成 `app.env`（含 `TMEX_MASTER_KEY`、`TMEX_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL` 及 mesh 相关键）；
+- 生成 `app.env`（含 `VIBETERM_MASTER_KEY`、`VIBETERM_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL` 及 mesh 相关键）；
 - 部署 `runtime/server.js`、前端静态资源、drizzle 迁移；
-- 写 `run.sh`（导出 `TMEX_FE_DIST_DIR` / `TMEX_MIGRATIONS_DIR` / `TMEX_NATIVE_DIR` 后 exec Bun）；
+- 写 `run.sh`（导出 `VIBETERM_FE_DIST_DIR` / `VIBETERM_MIGRATIONS_DIR` / `VIBETERM_NATIVE_DIR` 后 exec Bun）；
 - 按平台安装 launchd plist 或 systemd 用户单元。
 
-默认 HTTP：`127.0.0.1:9883`。本机浏览器打开该地址即可。需要局域网访问时再把 `app.env` 的 `TMEX_BIND_HOST` 改为 `0.0.0.0` 并重启，同时收紧防火墙。
+默认 HTTP：`127.0.0.1:9883`。本机浏览器打开该地址即可。需要局域网访问时再把 `app.env` 的 `VIBETERM_BIND_HOST` 改为 `0.0.0.0` 并重启，同时收紧防火墙。
 
 非交互示例：
 
@@ -72,7 +72,7 @@ curl -sS http://127.0.0.1:9883/healthz
 
 ## HTTPS 与反向代理
 
-生产建议在前面加 HTTPS（nginx、Caddy、Cloudflare Tunnel 均可）。Tunnel 指到 `127.0.0.1:9883` 时，必须在 `app.env` 设置 `TMEX_TRUST_PROXY=true` 并重启，否则 cookie 的 `Secure` 与 passkey origin 会按本机 HTTP 计算。细节与 WebSocket 反代注意点见运维指南「Cloudflare Tunnel」一节。
+生产建议在前面加 HTTPS（nginx、Caddy、Cloudflare Tunnel 均可）。Tunnel 指到 `127.0.0.1:9883` 时，必须在 `app.env` 设置 `VIBETERM_TRUST_PROXY=true` 并重启，否则 cookie 的 `Secure` 与 passkey origin 会按本机 HTTP 计算。细节与 WebSocket 反代注意点见运维指南「Cloudflare Tunnel」一节。
 
 不要再为「登录」配置 JWT 或 OIDC；应用层会话由各 node 签发的 `node-session` cookie 承担。
 
@@ -84,7 +84,7 @@ curl -sS http://127.0.0.1:9883/healthz
 tmex upgrade
 ```
 
-或指定版本：`tmex upgrade --version 1.1.0`（也可 `TMEX_VERSION=1.1.0` 再跑 `install.sh`）。升级会停服务、部署新 runtime、只向 `app.env` **追加缺失键**、按需重下 native addon，再拉起服务。携带服务定义修复的那一次升级，其自身的 stop 仍按旧 kill 策略执行，可能掉一次 tmux。
+或指定版本：`tmex upgrade --version 1.1.0`（也可 `VIBETERM_VERSION=1.1.0` 再跑 `install.sh`）。升级会停服务、部署新 runtime、只向 `app.env` **追加缺失键**、按需重下 native addon，再拉起服务。携带服务定义修复的那一次升级，其自身的 stop 仍按旧 kill 策略执行，可能掉一次 tmux。
 
 CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序内升级。发版流程见 [CLI 发布](../release/2026041300-cli-release-process.md) 与 [自更新](../update/2026061406-self-update.md)。
 
@@ -98,7 +98,7 @@ CLI 安装且 `canSelfUpdate` 时，设置页「版本与更新」可在程序�
 
 1. 添加设备，类型选 SSH。
 2. 填主机、端口、用户名。
-3. 认证方式选密码并保存。密码由 `TMEX_MASTER_KEY` 加密落库。
+3. 认证方式选密码并保存。密码由 `VIBETERM_MASTER_KEY` 加密落库。
 
 ### 私钥认证
 
@@ -122,7 +122,7 @@ ssh-copy-id -i ~/.ssh/id_ed25519.pub user@remote-host
 安装目录内需要一起备份：
 
 - `data/tmex.db`（WAL 模式下含 `-wal` / `-shm`）
-- `app.env`（尤其 `TMEX_MASTER_KEY`；库与 key 不匹配会启动失败，见 [排障](../operations/2026021200-db-key-mismatch-journald.md)）
+- `app.env`（尤其 `VIBETERM_MASTER_KEY`；库与 key 不匹配会启动失败，见 [排障](../operations/2026021200-db-key-mismatch-journald.md)）
 
 ```bash
 # 示例：Linux 默认路径，先停服务再拷
@@ -132,7 +132,7 @@ cp ~/.local/share/tmex/app.env ./backup/
 systemctl --user start tmex.service
 ```
 
-恢复时必须同时放回对应的 `TMEX_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `hub join`。
+恢复时必须同时放回对应的 `VIBETERM_MASTER_KEY`。不要把测试库拷进生产目录。mesh 节点身份在库内，只恢复单机库不会自动出现在其它入口，需保持各机备份一致或重新 `hub join`。
 
 ## 故障排查
 
@@ -144,11 +144,11 @@ systemctl --user status tmex.service -l --no-pager
 journalctl --user -u tmex.service -n 200 --no-pager
 ```
 
-核对 `app.env` 里生产契约键是否齐全：`TMEX_MASTER_KEY`、`GATEWAY_PORT`、`TMEX_BIND_HOST`、`DATABASE_URL`。`run.sh` 必须能找到 `TMEX_FE_DIST_DIR` 与 `TMEX_MIGRATIONS_DIR`。
+核对 `app.env` 里生产契约键是否齐全：`VIBETERM_MASTER_KEY`、`GATEWAY_PORT`、`VIBETERM_BIND_HOST`、`DATABASE_URL`。`run.sh` 必须能找到 `VIBETERM_FE_DIST_DIR` 与 `VIBETERM_MIGRATIONS_DIR`。
 
 ### 打不开页面
 
-1. 默认只绑 `127.0.0.1`，远程访问需要改 `TMEX_BIND_HOST` 或走 Tunnel。
+1. 默认只绑 `127.0.0.1`，远程访问需要改 `VIBETERM_BIND_HOST` 或走 Tunnel。
 2. 防火墙 / 安全组是否放行你实际暴露的端口（本机 9883 通常不必对公网开放）。
 3. 反代是否升级 WebSocket（`/ws`、`/n/:id/ws`、`/mesh/ws`、`/hub/uplink`）。
 
@@ -168,10 +168,10 @@ mesh 角色下无 cookie 的 `/ws` 会以 **4401** 关闭并跳登录页，这�
 
 ## 安全建议
 
-1. 生产必须设置强随机 `TMEX_MASTER_KEY`，并与数据库一起备份。
+1. 生产必须设置强随机 `VIBETERM_MASTER_KEY`，并与数据库一起备份。
 2. 口令按 argon2id 成本假设可被离线爆破来选；独立第二因素用 passkey。
 3. 对公网只暴露 HTTPS 反代；peer 口仅内网需要。
-4. Cloudflare Tunnel 等场景打开 `TMEX_TRUST_PROXY`，且反代不要把未校验的 `X-Forwarded-*` 传给不可信客户端后再绕过。
+4. Cloudflare Tunnel 等场景打开 `VIBETERM_TRUST_PROXY`，且反代不要把未校验的 `X-Forwarded-*` 传给不可信客户端后再绕过。
 5. 定期 `upgrade`；不要把生产 `app.env` 提交进 git。
 
 ## 参考

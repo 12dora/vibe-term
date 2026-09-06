@@ -2,7 +2,7 @@
 // 注意：local 设备的 gateway 进程即入口主机，可读 os/shell；ssh 设备只知接入参数，
 // 远端真实环境未知（pane 可能进一步 ssh 到别处），由 prompt 引导 agent 自行探测。
 
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { AGENT_ENV_RESOLVERS, type EnvCollectContext } from './environment-fields';
 
 export interface AgentEnvironmentInfo {

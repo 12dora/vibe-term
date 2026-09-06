@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@vibeterm/shared';
 import {
   TEST_SIGNING_KEY,
   restoreSigningKeys,
@@ -50,13 +50,13 @@ function sumsAsset(url: string, version: string, hex: string): Response | null {
 }
 
 const originalFetch = globalThis.fetch;
-const originalBase = process.env.TMEX_RELEASE_BASE_URL;
+const originalBase = process.env.VIBETERM_RELEASE_BASE_URL;
 const tempDirs: string[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalBase === undefined) delete process.env.TMEX_RELEASE_BASE_URL;
-  else process.env.TMEX_RELEASE_BASE_URL = originalBase;
+  if (originalBase === undefined) delete process.env.VIBETERM_RELEASE_BASE_URL;
+  else process.env.VIBETERM_RELEASE_BASE_URL = originalBase;
   resetReleaseDownloadForTests();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -98,15 +98,15 @@ function stubReleaseFetch(
 
 describe('resolveReleaseTarballUrl', () => {
   test('defaults to the GitHub release asset URL', () => {
-    delete process.env.TMEX_RELEASE_BASE_URL;
+    delete process.env.VIBETERM_RELEASE_BASE_URL;
     expect(resolveReleaseTarballUrl('1.2.3')).toBe(releaseTarballUrl('1.2.3'));
     expect(resolveReleaseSha256SumsUrl('1.2.3')).toContain(
       `${RELEASE_REPO_URL}/releases/download/v1.2.3/SHA256SUMS`
     );
   });
 
-  test('TMEX_RELEASE_BASE_URL overrides the GitHub host while keeping the path layout', () => {
-    process.env.TMEX_RELEASE_BASE_URL = 'http://127.0.0.1:19991';
+  test('VIBETERM_RELEASE_BASE_URL overrides the GitHub host while keeping the path layout', () => {
+    process.env.VIBETERM_RELEASE_BASE_URL = 'http://127.0.0.1:19991';
     expect(resolveReleaseTarballUrl('1.2.3')).toBe(
       'http://127.0.0.1:19991/releases/download/v1.2.3/tmex-cli-1.2.3.tgz'
     );

@@ -1,7 +1,7 @@
 // 提交的单飞与令牌：另一侧不能趁在飞时插队，迟到的回调不能写状态。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiError } from '@tmex/api-client';
+import { ApiError } from '@vibeterm/api-client';
 import { createSendRunner } from './send-runner';
 import type { SendSide } from './send-side';
 

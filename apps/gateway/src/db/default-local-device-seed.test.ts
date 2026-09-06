@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import {

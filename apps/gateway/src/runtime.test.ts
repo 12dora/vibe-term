@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { isRelayOnly, parseTmexRoles } from './config';
+import { isRelayOnly, parseVibeTermRoles } from './config';
 import { getMessagingRuntimeHooks, resetMessagingRuntime } from './messaging/context';
 import { setMessagingMeshRuntime } from './messaging/runtime-hooks';
 import { shouldStartMessagingServices, startLiveGatewayServices } from './runtime';
@@ -11,20 +11,20 @@ afterEach(() => {
 
 describe('relay-only messaging gate', () => {
   test('isRelayOnly is true only for pure relay', () => {
-    expect(isRelayOnly(parseTmexRoles('relay'))).toBe(true);
-    expect(isRelayOnly(parseTmexRoles('relay,node'))).toBe(false);
-    expect(isRelayOnly(parseTmexRoles('node'))).toBe(false);
-    expect(isRelayOnly(parseTmexRoles('hub,node'))).toBe(false);
-    expect(isRelayOnly(parseTmexRoles('standalone'))).toBe(false);
-    expect(isRelayOnly(parseTmexRoles(undefined))).toBe(false);
+    expect(isRelayOnly(parseVibeTermRoles('relay'))).toBe(true);
+    expect(isRelayOnly(parseVibeTermRoles('relay,node'))).toBe(false);
+    expect(isRelayOnly(parseVibeTermRoles('node'))).toBe(false);
+    expect(isRelayOnly(parseVibeTermRoles('hub,node'))).toBe(false);
+    expect(isRelayOnly(parseVibeTermRoles('standalone'))).toBe(false);
+    expect(isRelayOnly(parseVibeTermRoles(undefined))).toBe(false);
   });
 
   test('shouldStartMessagingServices skips only relay-only', () => {
-    expect(shouldStartMessagingServices(parseTmexRoles('relay'))).toBe(false);
-    expect(shouldStartMessagingServices(parseTmexRoles('relay,node'))).toBe(true);
-    expect(shouldStartMessagingServices(parseTmexRoles('node'))).toBe(true);
-    expect(shouldStartMessagingServices(parseTmexRoles('hub,node'))).toBe(true);
-    expect(shouldStartMessagingServices(parseTmexRoles(undefined))).toBe(true);
+    expect(shouldStartMessagingServices(parseVibeTermRoles('relay'))).toBe(false);
+    expect(shouldStartMessagingServices(parseVibeTermRoles('relay,node'))).toBe(true);
+    expect(shouldStartMessagingServices(parseVibeTermRoles('node'))).toBe(true);
+    expect(shouldStartMessagingServices(parseVibeTermRoles('hub,node'))).toBe(true);
+    expect(shouldStartMessagingServices(parseVibeTermRoles(undefined))).toBe(true);
   });
 
   test('startLiveGatewayServices skips telegram/weixin/watch/online on relay-only', async () => {
@@ -33,7 +33,7 @@ describe('relay-only messaging gate', () => {
       calls.push(name);
     };
     await startLiveGatewayServices({
-      roles: parseTmexRoles('relay'),
+      roles: parseVibeTermRoles('relay'),
       startLag: () => {
         calls.push('lag');
       },
@@ -54,7 +54,7 @@ describe('relay-only messaging gate', () => {
       calls.push(name);
     };
     await startLiveGatewayServices({
-      roles: parseTmexRoles('hub,node'),
+      roles: parseVibeTermRoles('hub,node'),
       startLag: () => {
         calls.push('lag');
       },
@@ -81,7 +81,7 @@ describe('relay-only messaging gate', () => {
   test('startLiveGatewayServices registers messaging hooks before telegram refresh', async () => {
     const seen: string[] = [];
     await startLiveGatewayServices({
-      roles: parseTmexRoles('node'),
+      roles: parseVibeTermRoles('node'),
       startLag: () => {
         seen.push('lag');
       },
@@ -127,7 +127,7 @@ describe('relay-only messaging gate', () => {
 
   test('relay-only still registers hooks while skipping telegram/weixin', async () => {
     await startLiveGatewayServices({
-      roles: parseTmexRoles('relay'),
+      roles: parseVibeTermRoles('relay'),
       startLag: () => {},
       refreshTelegram: async () => {
         throw new Error('telegram must not start');

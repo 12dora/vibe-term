@@ -30,9 +30,9 @@ export const ACCESS_EXEMPT_PATH_PREFIXES = ['/api/relay/tenants/'] as const;
 /** Cloudflare path app 的 domain 后缀（更具体路径优先） */
 export const ACCESS_BYPASS_PATH_PREFIXES = ['/hub/', '/api/hub/'] as const;
 
-export const TMEX_ALLOW_POLICY_NAME = 'tmex-allow';
-export const TMEX_BYPASS_POLICY_NAME = 'tmex-bypass';
-export const TMEX_APP_NAME = 'tmex';
+export const VIBETERM_ALLOW_POLICY_NAME = 'tmex-allow';
+export const VIBETERM_BYPASS_POLICY_NAME = 'tmex-bypass';
+export const VIBETERM_APP_NAME = 'tmex';
 
 export function bypassAppName(pathPrefix: string): string {
   const slug = pathPrefix.replace(/^\/+|\/+$/g, '').replace(/\//g, '-') || 'hub';

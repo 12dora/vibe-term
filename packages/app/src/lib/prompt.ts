@@ -32,7 +32,7 @@ export async function promptPassword(
   message: string,
   options?: { envKey?: string; confirm?: boolean; confirmMessage?: string }
 ): Promise<string> {
-  const envKey = options?.envKey ?? 'TMEX_PASSWORD';
+  const envKey = options?.envKey ?? 'VIBETERM_PASSWORD';
   if (!isInteractiveStdin()) {
     const fromEnv = process.env[envKey] ?? '';
     if (!fromEnv) {

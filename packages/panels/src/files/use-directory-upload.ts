@@ -1,8 +1,8 @@
 // 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，逐文件分块上传并显示可取消的进度 Toast。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { SELF_NODE_ID, formatBytes, pickUploadStreams } from '@tmex/api-client';
-import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
+import { SELF_NODE_ID, formatBytes, pickUploadStreams } from '@vibeterm/api-client';
+import { useFileTreeStore, useRuntime } from '@vibeterm/stores/react';
 import { type ChangeEvent, type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

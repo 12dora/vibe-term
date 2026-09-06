@@ -10,7 +10,7 @@
 // 每次投递（含每次重试）之前都要重新问一遍「这台还是用户签过的汇聚机吗」：入队时通过不等于
 // 重试时仍然通过——被攻陷的汇聚机可以先让投递失败，等声明被撤销后再收下重试件。
 
-import type { MeshNotificationForwardRequest } from '@tmex/shared';
+import type { MeshNotificationForwardRequest } from '@vibeterm/shared';
 import {
   MESH_FORWARD_DELIVER_TIMEOUT_MS,
   MESH_FORWARD_QUEUE_MAX,

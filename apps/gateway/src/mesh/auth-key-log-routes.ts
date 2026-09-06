@@ -8,8 +8,8 @@ import {
   decodeKeyLogRecord,
   encodeBase64url,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import { pickWriterHub } from '../auth/mesh-hub-store';

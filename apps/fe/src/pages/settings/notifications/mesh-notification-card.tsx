@@ -11,11 +11,11 @@ import type {
   MeshNotificationForwardQueueStats,
   MeshNotificationSink,
   MeshNotificationState,
-} from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Skeleton } from '@tmex/ui/skeleton';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Skeleton } from '@vibeterm/ui/skeleton';
+import { Switch } from '@vibeterm/ui/switch';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';

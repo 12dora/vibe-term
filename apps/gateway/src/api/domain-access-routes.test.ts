@@ -205,7 +205,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     ).toBe(403);
   });
 
-  test('TMEX_TRUST_PROXY=false with spoofed XFF is judged by socket address', () => {
+  test('VIBETERM_TRUST_PROXY=false with spoofed XFF is judged by socket address', () => {
     disable();
     expect(
       guardDomainAccess(
@@ -227,7 +227,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     ).toBe(403);
   });
 
-  test('TMEX_TRUST_PROXY=true uses XFF last segment', () => {
+  test('VIBETERM_TRUST_PROXY=true uses XFF last segment', () => {
     disable();
     expect(
       guardDomainAccess(

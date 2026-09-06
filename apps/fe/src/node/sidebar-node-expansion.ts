@@ -11,7 +11,7 @@
 // 各留各的选择——手机上折叠着省电，桌面上展开过就一直展开，不必每次刷新重点一遍。
 // **只记用户显式点过的那些**；没点过的分节走各栏自己的缺省（终端栏折叠、文件栏展开）。
 
-import { useUIStore } from '@tmex/stores/react';
+import { useUIStore } from '@vibeterm/stores/react';
 import { useCallback } from 'react';
 
 /** 展开态按侧栏分区隔离：同一台 node 在终端栏与文件栏各有各的折叠状态。 */

@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { decodeBase64url } from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { decodeBase64url } from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import {

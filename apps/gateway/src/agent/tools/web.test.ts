@@ -121,12 +121,12 @@ describe('isPrivateHostname / validateFetchUrl（SSRF 拒绝表）', () => {
     expect(validateFetchUrl('http://0x7f.0.0.1/')).toHaveProperty('error');
   });
 
-  test('TMEX_AGENT_ALLOW_PRIVATE_FETCH=1 时放行私有地址', () => {
-    process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH = '1';
+  test('VIBETERM_AGENT_ALLOW_PRIVATE_FETCH=1 时放行私有地址', () => {
+    process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH = '1';
     try {
       expect(validateFetchUrl('http://127.0.0.1/x')).toHaveProperty('url');
     } finally {
-      delete process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH;
+      delete process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH;
     }
   });
 });
@@ -348,7 +348,7 @@ describe('fetch_url', () => {
     });
     servers.push(server);
     // 私网防护会拦 127.0.0.1，测试中放行
-    process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH = '1';
+    process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH = '1';
     try {
       const tool = createFetchUrlTool() as unknown as ExecutableTool;
       const output = (await tool.execute(
@@ -362,7 +362,7 @@ describe('fetch_url', () => {
       expect(output).not.toContain('menu items');
       expect(output).not.toContain('footer text');
     } finally {
-      delete process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH;
+      delete process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH;
     }
   });
 
@@ -373,7 +373,7 @@ describe('fetch_url', () => {
       fetch: () => new Response(big, { headers: { 'Content-Type': 'text/plain' } }),
     });
     servers.push(server);
-    process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH = '1';
+    process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH = '1';
     try {
       const tool = createFetchUrlTool() as unknown as ExecutableTool;
       const output = (await tool.execute(
@@ -386,7 +386,7 @@ describe('fetch_url', () => {
       expect(new TextEncoder().encode(body).length).toBeLessThanOrEqual(16 * 1024 + 32);
       expect(output).toContain('[truncated]');
     } finally {
-      delete process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH;
+      delete process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH;
     }
   });
 
@@ -436,7 +436,7 @@ describe('fetch_url', () => {
       fetch: () => new Response('nope', { status: 503 }),
     });
     servers.push(server);
-    process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH = '1';
+    process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH = '1';
     try {
       const tool = createFetchUrlTool() as unknown as ExecutableTool;
       const output = (await tool.execute(
@@ -445,7 +445,7 @@ describe('fetch_url', () => {
       )) as string;
       expect(output).toContain('HTTP 503');
     } finally {
-      delete process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH;
+      delete process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH;
     }
   });
 });

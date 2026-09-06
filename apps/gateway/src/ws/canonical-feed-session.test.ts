@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
 import type { PaneHistoryCursor, PaneHistoryPage } from '../tmux-client/pane-history-reader';

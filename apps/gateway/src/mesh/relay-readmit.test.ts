@@ -4,7 +4,7 @@ import {
   encodeAdmitNodePayload,
   encodeKeyLogRecord,
   genesisHead,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { NodeCertRecord } from '../auth/user-store';
 import { listReadmitPending } from './relay-readmit';
 

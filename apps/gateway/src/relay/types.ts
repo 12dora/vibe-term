@@ -1,4 +1,4 @@
-import type { RelayQuota, RelayRtcConfig } from '@tmex/shared/relay';
+import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_UPLINK_WS_KIND = 'relay-uplink';
@@ -44,7 +44,7 @@ export type RelayRuntimeConfig = {
   publicUrl: string;
   stun: string[];
   turn?: RelayRtcConfig['turn'];
-  /** `TMEX_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */
+  /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */
   adminToken?: string | null;
   version?: string;
 };

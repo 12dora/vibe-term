@@ -1,7 +1,7 @@
 // 全局默认模型草稿的纯逻辑：换提供商时清理不属于它的模型、选模型时反向同步提供商、保存载荷。
 
 import { describe, expect, test } from 'bun:test';
-import type { LlmProviderDto } from '@tmex/shared';
+import type { LlmProviderDto } from '@vibeterm/shared';
 
 import {
   type LlmDefaultsDraft,

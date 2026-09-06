@@ -21,7 +21,7 @@ import { redactSecrets } from './redact';
 
 describe('normalizeTunnelHostname', () => {
   test('accepts RFC 1123 lowercase names and rejects junk', () => {
-    expect(normalizeTunnelHostname('Tmex.Example.COM')).toBe('tmex.example.com');
+    expect(normalizeTunnelHostname('VibeTerm.Example.COM')).toBe('tmex.example.com');
     expect(normalizeTunnelHostname('localhost')).toBe('localhost');
     expect(normalizeTunnelHostname('')).toBeNull();
     expect(normalizeTunnelHostname('-bad.com')).toBeNull();
@@ -43,7 +43,7 @@ describe('normalizeTunnelHostname', () => {
 describe('normalizeTunnelName', () => {
   test('accepts cloudflared-safe identifiers and rejects traversal', () => {
     expect(normalizeTunnelName('tmex-remote')).toBe('tmex-remote');
-    expect(normalizeTunnelName('Tmex_Remote1')).toBe('tmex_remote1');
+    expect(normalizeTunnelName('VibeTerm_Remote1')).toBe('tmex_remote1');
     expect(normalizeTunnelName('../../x')).toBeNull();
     expect(normalizeTunnelName('/abs')).toBeNull();
     expect(normalizeTunnelName('foo\nbar')).toBeNull();
@@ -181,10 +181,10 @@ describe('cloudflared output parsers', () => {
 });
 
 describe('resolveTunnelDir', () => {
-  test('uses TMEX_TUNNEL_DIR or a tunnel directory next to the sqlite file', () => {
-    expect(resolveTunnelDir({ TMEX_TUNNEL_DIR: '/data/tun' })).toBe('/data/tun');
+  test('uses VIBETERM_TUNNEL_DIR or a tunnel directory next to the sqlite file', () => {
+    expect(resolveTunnelDir({ VIBETERM_TUNNEL_DIR: '/data/tun' })).toBe('/data/tun');
     expect(
-      resolveTunnelDir({ DATABASE_URL: '/var/tmex/tmex.db', TMEX_TUNNEL_DIR: undefined })
+      resolveTunnelDir({ DATABASE_URL: '/var/tmex/tmex.db', VIBETERM_TUNNEL_DIR: undefined })
     ).toBe('/var/tmex/tunnel');
   });
 });

@@ -7,7 +7,7 @@ import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
-import type { TmexRoles } from '../lib/roles';
+import type { VibeTermRoles } from '../lib/roles';
 import type { LocalRouteDeps } from './local-routes';
 import { resolveSetupEnvPath } from './setup-service';
 
@@ -31,17 +31,17 @@ function relayTurnConfig(): { url: string; username: string; credential: string 
   return { url: turnUrl, username: turnUsername, credential: turnCredential };
 }
 
-/** `relay` 角色的运行时；只在 `TMEX_ROLES` 含 relay 时创建，缺 public url 直接报配置错误。 */
+/** `relay` 角色的运行时；只在 `VIBETERM_ROLES` 含 relay 时创建，缺 public url 直接报配置错误。 */
 export function createAssembledRelay(input: {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
   routeDeps: LocalRouteDeps;
 }): Promise<RelayRuntime> | null {
   if (!input.roles.relay) return null;
   // gateway config 是模块加载时的 env 快照；这里按运行时 env 优先，便于同进程内多实例测试
-  const publicUrl = process.env.TMEX_RELAY_PUBLIC_URL?.trim() || gatewayConfig.relayPublicUrl;
+  const publicUrl = process.env.VIBETERM_RELAY_PUBLIC_URL?.trim() || gatewayConfig.relayPublicUrl;
   if (!publicUrl) {
-    throw new Error('TMEX_RELAY_PUBLIC_URL is required when TMEX_ROLES includes relay');
+    throw new Error('VIBETERM_RELAY_PUBLIC_URL is required when VIBETERM_ROLES includes relay');
   }
   return createRelayRuntime({
     db: input.gateway.db,
@@ -49,7 +49,7 @@ export function createAssembledRelay(input: {
       publicUrl,
       stun: gatewayConfig.stunServers,
       turn: relayTurnConfig(),
-      adminToken: process.env.TMEX_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
+      adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
     },
     version: getBaseVersion(),
     startedAt: PROCESS_STARTED_AT,

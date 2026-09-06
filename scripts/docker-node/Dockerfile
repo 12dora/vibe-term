@@ -4,7 +4,7 @@
 FROM ubuntu:24.04
 ARG TARGETARCH
 # 打进镜像的 tmex-cli 包，路径相对构建上下文（scripts/docker-node）。
-ARG TMEX_TARBALL=build/tmex-cli.tgz
+ARG VIBETERM_TARBALL=build/tmex-cli.tgz
 
 ENV DEBIAN_FRONTEND=noninteractive \
     BUN_INSTALL=/usr/local \
@@ -48,7 +48,7 @@ RUN BUN_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo aarch64 || echo x64)" \
     && bun --version
 
 # 安装包只解包到 /opt/tmex-pkg，首启由 entrypoint 调 `tmex init` 铺装到 /opt/tmex（named volume）。
-COPY ${TMEX_TARBALL} /opt/tmex-pkg/tmex-cli.tgz
+COPY ${VIBETERM_TARBALL} /opt/tmex-pkg/tmex-cli.tgz
 RUN tar -xzf /opt/tmex-pkg/tmex-cli.tgz -C /opt/tmex-pkg \
     && test -f /opt/tmex-pkg/package/bin/tmex.js \
     && test -f /opt/tmex-pkg/package/dist/cli-node.js \

@@ -7,15 +7,15 @@
  * Light theme uses seoul256.vim colors
  */
 
-// 主题色单一真源在 @tmex/shared/appearance，前端只做 re-export 保持兼容命名。
+// 主题色单一真源在 @vibeterm/shared/appearance，前端只做 re-export 保持兼容命名。
 export {
   TERMINAL_THEME_DARK as XTERM_THEME_DARK,
   TERMINAL_THEME_LIGHT as XTERM_THEME_LIGHT,
   getTmuxWindowStyle,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 // 别名导出，保持兼容性
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@tmex/shared';
+import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@vibeterm/shared';
 import type { TerminalTheme } from './types';
 export const XTERM_THEME_MIDNIGHT_AMETHYST = TERMINAL_THEME_DARK;
 export const XTERM_THEME_DAWN_AMETHYST = TERMINAL_THEME_LIGHT;
@@ -63,7 +63,7 @@ export function attachTerminalWithLatestTheme<T extends ThemeableTerminal>(
 
 // 内嵌字体逐字形兜底：等宽打底字体在前，符号字体其后，CJK 落到末尾 monospace 走系统。
 // 没有任何单一等宽字体能覆盖全部 TUI 符号，故拆成两层。family 名刻意不带空格，免去加引号。
-export const TERMINAL_EMBEDDED_FONT_FAMILIES = ['GeistMonoTmex', 'NotoSansSymbols2Tmex'];
+export const TERMINAL_EMBEDDED_FONT_FAMILIES = ['GeistMonoVibeTerm', 'NotoSansSymbols2VibeTerm'];
 export const XTERM_FONT_FAMILY = `${TERMINAL_EMBEDDED_FONT_FAMILIES.join(', ')}, monospace`;
 
 // canvas/DOM 测量 cell 尺寸前必须确保内嵌字体已加载：否则首屏按 monospace 回退

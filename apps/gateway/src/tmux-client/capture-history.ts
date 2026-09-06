@@ -4,7 +4,7 @@
 // 普通终端则表现为光标偏移到行尾空白之后。因此 capture 时一并读取光标位置，
 // 把恢复序列拼接到 history 末尾，使回放结束时前端光标与 tmux 一致。
 
-import type { PaneModeFlags } from '@tmex/shared';
+import type { PaneModeFlags } from '@vibeterm/shared';
 import type { PaneHistoryCaptureInfo } from './pane-history-reader';
 
 export interface PaneScreenInfo {

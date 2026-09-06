@@ -33,7 +33,7 @@ describe('buildLaunchdPlist', () => {
 
     expect(content).toContain('<key>KeepAlive</key>');
     expect(content).toContain('<key>AbandonProcessGroup</key>\n  <true/>');
-    expect(content).toContain('<key>TMEX_LOG_FILE</key>');
+    expect(content).toContain('<key>VIBETERM_LOG_FILE</key>');
     expect(content).toContain(
       '<string>/Users/krhougs/Library/Application Support/tmex/tmex.log</string>'
     );

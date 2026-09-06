@@ -10,8 +10,8 @@ import {
   encodeClearTotpPayload,
   encodeRevokeNodePayload,
   hexToBytes,
-} from '@tmex/shared/auth';
-import { HUB_NOT_WRITER, TMEX_FORWARDED_BY_HEADER } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import { HUB_NOT_WRITER, VIBETERM_FORWARDED_BY_HEADER } from '@vibeterm/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
 import { patchNode } from '../../hub/node-persistence';
 import { decodeUplinkCtl } from '../uplink-protocol';
@@ -177,7 +177,7 @@ describe('multi-hub in-process integration', () => {
       }),
     });
     expect(enroll.status).toBe(201);
-    expect(enroll.headers.get(TMEX_FORWARDED_BY_HEADER)).toBe(b.mesh.nodeId);
+    expect(enroll.headers.get(VIBETERM_FORWARDED_BY_HEADER)).toBe(b.mesh.nodeId);
     const created = (await enroll.json()) as { id: string };
     expect(a.userStore.getEnrollmentTokenById(created.id)).not.toBeNull();
 
@@ -402,7 +402,7 @@ describe('multi-hub in-process integration', () => {
           writerEpoch: 2,
         });
       } else {
-        expect(enroll.headers.get(TMEX_FORWARDED_BY_HEADER)).toBe(aBoot.node.mesh.nodeId);
+        expect(enroll.headers.get(VIBETERM_FORWARDED_BY_HEADER)).toBe(aBoot.node.mesh.nodeId);
       }
     } finally {
       errorSpy.mockRestore();
@@ -880,7 +880,7 @@ describe('multi-hub in-process integration', () => {
       phase: 'restarting',
     });
     expect(a.mesh.hub?.mode()).toBe('standby');
-    expect(a.roleEnv?.TMEX_HUB_MODE).toBe('standby');
+    expect(a.roleEnv?.VIBETERM_HUB_MODE).toBe('standby');
     expect(a.roleRestarts?.length).toBe(1);
 
     const bSid = await loginSelf(b.mesh, user);
@@ -899,8 +899,8 @@ describe('multi-hub in-process integration', () => {
     });
     expect(b.mesh.hub?.mode()).toBe('active');
     expect(b.mesh.hub?.writerEpoch()).toBe(2);
-    expect(b.roleEnv?.TMEX_HUB_MODE).toBe('active');
-    expect(b.roleEnv?.TMEX_HUB_WRITER_EPOCH).toBe('2');
+    expect(b.roleEnv?.VIBETERM_HUB_MODE).toBe('active');
+    expect(b.roleEnv?.VIBETERM_HUB_WRITER_EPOCH).toBe('2');
 
     router.takeDown(HUB_A_URL);
     await waitUntil(
@@ -990,7 +990,7 @@ describe('multi-hub in-process integration', () => {
     }
     expect(b.mesh.hub.mode()).toBe('active');
     expect(b.mesh.hub.writerEpoch()).toBeGreaterThan(1);
-    expect(b.roleEnv?.TMEX_HUB_MODE).toBe('active');
+    expect(b.roleEnv?.VIBETERM_HUB_MODE).toBe('active');
     expect(autoLogs.some((line) => line.includes('[hub] auto-promote'))).toBe(true);
 
     await aBoot.node.mesh.hub?.stop();

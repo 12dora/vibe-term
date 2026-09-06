@@ -1,6 +1,6 @@
 // agent store 持久化分片的版本与迁移。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { AgentState } from './agent-state';
 
 /** v1：单值 `activeSessionId` 拆成按 node 分片的 `activeSessionIdByNode`。 */

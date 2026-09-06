@@ -1,5 +1,5 @@
-import type { LinkSession } from '@tmex/shared/link';
-import { type RelayCtlMessage, relaySeqToWire } from '@tmex/shared/relay';
+import type { LinkSession } from '@vibeterm/shared/link';
+import { type RelayCtlMessage, relaySeqToWire } from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
 import type { AuthDb } from '../auth/types';
 import { applyRelayEnrollCreate } from './relay-enroll-create';

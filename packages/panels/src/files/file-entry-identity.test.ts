@@ -2,7 +2,7 @@
 // 只要 entry 引用不变，30 秒一轮的轮询就不会重渲染任何一行）。
 
 import { describe, expect, test } from 'bun:test';
-import type { FileEntryDto } from '@tmex/shared';
+import type { FileEntryDto } from '@vibeterm/shared';
 import { sameFileEntry, stabilizeFileEntries } from './file-entry-identity';
 
 function entry(index: number, over: Partial<FileEntryDto> = {}): FileEntryDto {

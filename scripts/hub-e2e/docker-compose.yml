@@ -59,7 +59,7 @@ services:
     hostname: hub
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
-      TMEX_INSTANCE: hub
+      VIBETERM_INSTANCE: hub
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
       - hub-data:/var/lib/tmex
@@ -73,7 +73,7 @@ services:
     hostname: node-a
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
-      TMEX_INSTANCE: node-a
+      VIBETERM_INSTANCE: node-a
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
       - node-a-data:/var/lib/tmex
@@ -87,7 +87,7 @@ services:
     hostname: node-b
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
-      TMEX_INSTANCE: node-b
+      VIBETERM_INSTANCE: node-b
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
       - node-b-data:/var/lib/tmex
@@ -107,7 +107,7 @@ services:
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
       - ./out:/out
-      - ${TMEX_REPO_ROOT:-../..}:/workspace:ro
+      - ${VIBETERM_REPO_ROOT:-../..}:/workspace:ro
     networks:
       - edge
     depends_on:

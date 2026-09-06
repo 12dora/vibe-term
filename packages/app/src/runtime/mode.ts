@@ -1,6 +1,6 @@
 export type RuntimeMode = 'normal' | 'preflight';
 
-export const RUNTIME_MODE_ENV = 'TMEX_RUNTIME_MODE';
+export const RUNTIME_MODE_ENV = 'VIBETERM_RUNTIME_MODE';
 
 export function readRuntimeMode(env: NodeJS.ProcessEnv = process.env): RuntimeMode {
   return env[RUNTIME_MODE_ENV] === 'preflight' ? 'preflight' : 'normal';

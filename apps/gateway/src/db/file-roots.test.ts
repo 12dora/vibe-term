@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { getSqliteClient } from './client';
 import { createDevice } from './devices';
 import {

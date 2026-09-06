@@ -1,7 +1,7 @@
 // 分享设置表单：服务端值 ↔ 草稿、校验、改动判定。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareSettings } from '@tmex/shared/share';
+import type { ShareSettings } from '@vibeterm/shared/share';
 import {
   SHARE_ORIGIN_AUTO,
   SHARE_ORIGIN_CUSTOM,

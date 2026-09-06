@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
-import { type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@vibeterm/shared/auth';
+import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
@@ -268,7 +268,7 @@ describe('PeerManager', () => {
     });
 
     const [outerA, outerB] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       outerB.onStream(resolve)
     );
     const uplink = dummyUplink(self, store, async () => {
@@ -575,7 +575,7 @@ describe('PeerManager', () => {
       lastSeenAt: Date.now(),
       listVersion: 1,
     });
-    let release: ((ws: import('@tmex/shared/link').WebSocketTransportInput) => void) | undefined;
+    let release: ((ws: import('@vibeterm/shared/link').WebSocketTransportInput) => void) | undefined;
     const manager = new PeerManager({
       identity: self,
       userStore: store,
@@ -745,7 +745,7 @@ describe('PeerManager', () => {
     ]);
     expect(managerA.listReach().get(peer.nodeId)).toBe('lan');
     expect(managerB.listReach().get(self.nodeId)).toBe('lan');
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       linkB.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"ping"}');
@@ -965,7 +965,7 @@ describe('PeerManager', () => {
     const peer = seedNodeIdentity(store, 'user-1');
     const [relayA, relayB] = createInMemoryLinkPair();
     echoQuiesceCaps(relayB);
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       relayB.onStream(resolve)
     );
     const [wsA, wsHold] = createInMemoryLinkPair();
@@ -1894,8 +1894,8 @@ describe('PeerManager', () => {
 
     const lines: string[] = [];
     const orig = console.log;
-    const prevLevel = process.env.TMEX_LOG_LEVEL;
-    process.env.TMEX_LOG_LEVEL = 'debug';
+    const prevLevel = process.env.VIBETERM_LOG_LEVEL;
+    process.env.VIBETERM_LOG_LEVEL = 'debug';
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -1930,8 +1930,8 @@ describe('PeerManager', () => {
       expect(queued.some((row) => row.ms === PEER_DC_UPGRADE_RETRY_DELAYS_MS[1])).toBe(false);
     } finally {
       console.log = orig;
-      if (prevLevel === undefined) delete process.env.TMEX_LOG_LEVEL;
-      else process.env.TMEX_LOG_LEVEL = prevLevel;
+      if (prevLevel === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+      else process.env.VIBETERM_LOG_LEVEL = prevLevel;
     }
   });
 
@@ -2161,8 +2161,8 @@ describe('PeerManager', () => {
   async function adoptQuiesced(
     manager: PeerManager,
     peerNodeId: string,
-    session: import('@tmex/shared/link').LinkSession,
-    remote: import('@tmex/shared/link').LinkSession,
+    session: import('@vibeterm/shared/link').LinkSession,
+    remote: import('@vibeterm/shared/link').LinkSession,
     transport: 'relay' | 'ws-secure' | 'dc',
     initiatedBy: string
   ): Promise<void> {
@@ -2284,7 +2284,7 @@ describe('PeerManager', () => {
     fixtures.push({ close, stop: () => manager.stop() });
     const [relayLocal, relayRemote] = createInMemoryLinkPair();
     await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       relayRemote.onStream(resolve)
     );
     void manager.getLink(peer.nodeId);
@@ -2357,7 +2357,7 @@ describe('PeerManager', () => {
     await waitUntil(() => manager.transportOf(peer.nodeId) === null);
 
     const [relayLocal, relayRemote] = createInMemoryLinkPair();
-    const boundSessions: import('@tmex/shared/link').LinkSession[] = [];
+    const boundSessions: import('@vibeterm/shared/link').LinkSession[] = [];
     const origOpen = relayLocal.openStream.bind(relayLocal);
     relayLocal.openStream = async (payload) => {
       boundSessions.push(relayLocal);
@@ -2365,7 +2365,7 @@ describe('PeerManager', () => {
     };
     await adoptQuiesced(manager, peer.nodeId, relayLocal, relayRemote, 'relay', self.nodeId);
 
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       relayRemote.onStream(resolve)
     );
     const t0 = performance.now();
@@ -3407,7 +3407,7 @@ describe('PeerManager', () => {
       listVersion: 1,
     });
     const [outerA, outerB] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       outerB.onStream(resolve)
     );
     const uplink = dummyUplink(self, store, async () => {
@@ -3462,7 +3462,7 @@ describe('PeerManager', () => {
       listVersion: 1,
     });
     const [outerA, outerB] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       outerB.onStream(resolve)
     );
     const uplink = dummyUplink(self, store, async () => {
@@ -3930,7 +3930,7 @@ describe('PeerManager', () => {
       listVersion: 1,
     });
     const [outerA, outerB] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       outerB.onStream(resolve)
     );
     const uplink = dummyUplink(self, store, async () => {

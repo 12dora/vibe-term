@@ -2,7 +2,7 @@
 // 都要走 `clientFor(row.nodeId)` 取到的客户端，而不是当前路由节点的。
 
 import { describe, expect, test } from 'bun:test';
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 import { createShareRowApi } from './share-actions';
 import type { ShareRow } from './share-rows';
 

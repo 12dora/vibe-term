@@ -4,7 +4,7 @@
 // 为什么不复用 terminal-resize：跟随者（sizingMode='follow'）下 TerminalResizeReporter
 // 根本不测量也不上报，若只靠 resize 声明，跟随者改窗口尺寸后永远抢不回 owner。
 
-import { useRuntime } from '@tmex/stores/react';
+import { useRuntime } from '@vibeterm/stores/react';
 import { type RefObject, useEffect, useRef } from 'react';
 
 /** 容器就绪前的重试节奏：终端实例是异步 boot 的，首帧往往量不到 */

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { MutationObserver, QueryClient } from '@tanstack/react-query';
-import type { FileRootDto } from '@tmex/shared';
+import type { FileRootDto } from '@vibeterm/shared';
 import {
   FILE_ROOTS_QUERY_KEY,
   fileRootOrderToSubmit,

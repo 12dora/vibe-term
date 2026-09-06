@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/ws-client",
+  "name": "@vibeterm/ws-client",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -13,8 +13,8 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@tmex/shared": "workspace:*",
-    "@tmex/transfer": "workspace:*"
+    "@vibeterm/shared": "workspace:*",
+    "@vibeterm/transfer": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^5.7.3"

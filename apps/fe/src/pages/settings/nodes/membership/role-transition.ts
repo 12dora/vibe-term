@@ -8,7 +8,7 @@
 // 只清 mesh 成员身份、保留中继运营状态，不需要接力。
 // 纯 relay 没有网页，网页里不可能从它切出去，落在 `unsupported`。
 
-import type { LocalLeaveTargetRole, LocalRole } from '@tmex/api-client/local/types';
+import type { LocalLeaveTargetRole, LocalRole } from '@vibeterm/api-client/local/types';
 import type { SetupIntent, SetupIntentRecord } from './intent';
 
 // 纯 relay 没有网页与本机用户，不算 mesh 成员；relay,node 的 node 部分与普通 node 同路径。

@@ -5,7 +5,7 @@ import {
   encodeKeyLogRecord,
   genesisHead,
   hexToBytes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { KeyLogStore } from '../auth/key-log-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';

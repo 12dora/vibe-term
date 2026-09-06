@@ -2,7 +2,7 @@
 // 这些依赖（hash-wasm、@noble/curves、WebAuthn 客户端）都只在用户真的登录时才用到，
 // 因此本模块**不进常驻路径**——`session-key-store.ensureNodeLogin()` 与登录页各自按需加载。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type {
   AuthApi,
   AuthenticationResponseJSON,
@@ -10,9 +10,9 @@ import type {
   PasskeySummary,
   PublicKeyCredentialDescriptorJSON,
   PublicKeyCredentialRequestOptionsJSON,
-} from '@tmex/api-client/auth/index';
-import { WebAuthnError, defaultAuthApi, startAuthentication } from '@tmex/api-client/auth/index';
-import type { Login, RootKey } from '@tmex/shared/auth';
+} from '@vibeterm/api-client/auth/index';
+import { WebAuthnError, defaultAuthApi, startAuthentication } from '@vibeterm/api-client/auth/index';
+import type { Login, RootKey } from '@vibeterm/shared/auth';
 import {
   buildLogin,
   buildPasskeyDelegation,
@@ -30,7 +30,7 @@ import {
   rootKeyFromSeed,
   signLogin,
   signWithWebCryptoEd25519,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 
 import { markLoggedIn } from '@/node/mesh-nodes';
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-store';
@@ -45,7 +45,7 @@ import {
 } from './session-key-store';
 
 /**
- * WebAuthn 断言仪式。真实实现来自 `@tmex/api-client`，测试用 `setPasskeyCeremonyForTest()`
+ * WebAuthn 断言仪式。真实实现来自 `@vibeterm/api-client`，测试用 `setPasskeyCeremonyForTest()`
  * 换掉——bun 里没有认证器，没有这个接缝就只能测失败路径。
  */
 let passkeyCeremony: (

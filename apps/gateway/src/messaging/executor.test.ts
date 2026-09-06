@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import type { CommandActor, CommandInvocation } from '@tmex/shared/messaging';
+import type { CommandActor, CommandInvocation } from '@vibeterm/shared/messaging';
 import * as authorize from './authorize';
 import { dispatchCommand, dispatchInboundText } from './executor';
 import { createTestContext } from './test-context';

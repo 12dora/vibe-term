@@ -3,7 +3,7 @@
 // 没有 i18next 实例时 `t` 原样返回 key，因此断言的是 key 与 testId。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ShareRow } from './share-rows';
 
 installWindowStorage();

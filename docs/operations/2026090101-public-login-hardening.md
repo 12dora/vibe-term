@@ -10,7 +10,7 @@
 
 `resolveClientIp({ socketIp, headers, trustProxy })`：
 
-- `TMEX_TRUST_PROXY` 未开启：始终用 socket IP，忽略转发头。
+- `VIBETERM_TRUST_PROXY` 未开启：始终用 socket IP，忽略转发头。
 - 已开启时按序取第一个**合法 IPv4/IPv6 字面量**（trim；非法则跳过）：
   1. `CF-Connecting-IP`
   2. `X-Real-IP`（nginx 的 `$remote_addr`，客户端无法伪造）
@@ -23,7 +23,7 @@
 
 ## 部署
 
-Cloudflare Tunnel / 反代后面**必须**打开 `TMEX_TRUST_PROXY`（隧道管理器也可写入 host env）。未打开时转发头一律不信，限流仍按 socket IP。不要在不可信跳数前开启。
+Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`（隧道管理器也可写入 host env）。未打开时转发头一律不信，限流仍按 socket IP。不要在不可信跳数前开启。
 
 ## Bootstrap loopback
 

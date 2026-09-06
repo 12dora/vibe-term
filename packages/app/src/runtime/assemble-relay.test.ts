@@ -2,25 +2,25 @@ import '../lib/test-master-key';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
-import { assembleTmex, isRelayOnly, meshShutdownNeeded } from './assemble';
+import { assembleVibeTerm, isRelayOnly, meshShutdownNeeded } from './assemble';
 
 const dummyServer = { upgrade: () => false } as unknown as Bun.Server<unknown>;
 
 const RELAY_PUBLIC_URL = 'http://127.0.0.1:19993';
 const RELAY_ADMIN_TOKEN = 'assemble-test-relay-admin-token';
 const savedEnv = {
-  publicUrl: process.env.TMEX_RELAY_PUBLIC_URL,
-  adminToken: process.env.TMEX_RELAY_ADMIN_TOKEN,
+  publicUrl: process.env.VIBETERM_RELAY_PUBLIC_URL,
+  adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN,
 };
 
 beforeAll(() => {
-  process.env.TMEX_RELAY_PUBLIC_URL = RELAY_PUBLIC_URL;
-  process.env.TMEX_RELAY_ADMIN_TOKEN = RELAY_ADMIN_TOKEN;
+  process.env.VIBETERM_RELAY_PUBLIC_URL = RELAY_PUBLIC_URL;
+  process.env.VIBETERM_RELAY_ADMIN_TOKEN = RELAY_ADMIN_TOKEN;
 });
 
 afterAll(() => {
-  process.env.TMEX_RELAY_PUBLIC_URL = savedEnv.publicUrl;
-  process.env.TMEX_RELAY_ADMIN_TOKEN = savedEnv.adminToken;
+  process.env.VIBETERM_RELAY_PUBLIC_URL = savedEnv.publicUrl;
+  process.env.VIBETERM_RELAY_ADMIN_TOKEN = savedEnv.adminToken;
 });
 
 function gatewayWith(db: GatewayRuntime['db']): GatewayRuntime {
@@ -46,7 +46,7 @@ function gatewayWith(db: GatewayRuntime['db']): GatewayRuntime {
 
 async function assembleRelay(roles: { hub: boolean; node: boolean; relay: boolean }) {
   const { db, close } = createMigratedAuthDb();
-  const assembled = await assembleTmex({
+  const assembled = await assembleVibeTerm({
     roles,
     staticRoot: '/tmp/tmex-relay-no-frontend',
     createGatewayRuntime: async () => gatewayWith(db),
@@ -63,7 +63,7 @@ async function assembleRelay(roles: { hub: boolean; node: boolean; relay: boolea
   };
 }
 
-describe('assembleTmex relay role', () => {
+describe('assembleVibeTerm relay role', () => {
   test('relay alone mounts the relay runtime with no mesh and no frontend', async () => {
     const { assembled, close } = await assembleRelay({ hub: false, node: false, relay: true });
     try {
@@ -106,7 +106,7 @@ describe('assembleTmex relay role', () => {
 
   test('standalone assembles without a relay runtime', async () => {
     const { db, close } = createMigratedAuthDb();
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       staticRoot: '/tmp/tmex-relay-no-frontend',
       createGatewayRuntime: async () => gatewayWith(db),

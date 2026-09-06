@@ -1,5 +1,5 @@
 import { type APIRequestContext, type Page, devices, expect, test } from '@playwright/test';
-import type { KeyboardBehaviorMode } from '@tmex/stores';
+import type { KeyboardBehaviorMode } from '@vibeterm/stores';
 import { createSinglePaneSession, ensureCleanSession } from './helpers/tmux';
 import { attachCanonicalCommandCollector } from './helpers/ws-borsh';
 
@@ -24,7 +24,7 @@ const VISUAL_VIEWPORT_MOCK = `
       get scale() { return 1; }
     }
     const mock = new MockVisualViewport();
-    window.__tmexMockKeyboard = (px) => {
+    window.__vibetermMockKeyboard = (px) => {
       mock.keyboardHeight = px;
       mock.dispatchEvent(new Event('resize'));
     };
@@ -107,7 +107,7 @@ async function bootstrap(
 
   const popKeyboard = async (px: number) => {
     await page.evaluate((value) => {
-      (window as unknown as { __tmexMockKeyboard: (px: number) => void }).__tmexMockKeyboard(value);
+      (window as unknown as { __vibetermMockKeyboard: (px: number) => void }).__vibetermMockKeyboard(value);
     }, px);
   };
 

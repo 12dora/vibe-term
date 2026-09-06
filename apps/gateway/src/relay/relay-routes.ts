@@ -5,13 +5,13 @@ import {
   nodeIdToHex,
   verifyEd25519,
   verifyNodeCertificate,
-} from '@tmex/shared/auth';
-import { readJsonObjectBody } from '@tmex/shared/http';
+} from '@vibeterm/shared/auth';
+import { readJsonObjectBody } from '@vibeterm/shared/http';
 import {
   RELAY_ENROLL_PROOF_MAX_SKEW_MS,
   relaySeqToWire,
   verifyRelayEnrollProof,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { decodeB64url, requireB64url } from '../api/route-input';
 import { encodeRedeemPopMessage } from '../hub/redeem-pop';
 import type { RelayConfigStore } from './relay-config-store';

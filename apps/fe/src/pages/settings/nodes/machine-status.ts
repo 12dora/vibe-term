@@ -3,7 +3,7 @@
 // 状态只能有一枚：以前 hub 提示、中继链路条、租户提示各说各的，同一台机器能同时显示
 // 「未连接」和「在线」。这里按上级形态收敛成一档，卡片其余部分不再自己下结论。
 
-import type { LocalRole } from '@tmex/api-client/local/types';
+import type { LocalRole } from '@vibeterm/api-client/local/types';
 
 export type MachineStatusTone = 'ok' | 'warn' | 'muted';
 

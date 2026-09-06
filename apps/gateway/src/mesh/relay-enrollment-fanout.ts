@@ -1,4 +1,4 @@
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { StoredMeshRelayRow } from '../auth/mesh-relay-store';
 import { type RelayDialContext, resolveRelayDialUrl } from './relay-dial';
 import { readRelayErrorCode } from './relay-routes-input';

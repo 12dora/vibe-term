@@ -1,4 +1,4 @@
-import type { KdfParams, KeyLogEffect, KeyLogRecord, UserKeyState } from '@tmex/shared/auth';
+import type { KdfParams, KeyLogEffect, KeyLogRecord, UserKeyState } from '@vibeterm/shared/auth';
 import {
   decodeAddPasskeyPayload,
   decodeAdmitHubPayload,
@@ -13,7 +13,7 @@ import {
   encodeBase64url,
   nodeIdToHex,
   normalizeNodeName,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import { deleteAllPaneGrants, deletePaneGrantsForNode } from '../agent/pane-grant/store';
 import { nodeIdentity } from '../db/schema';

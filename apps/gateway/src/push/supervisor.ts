@@ -4,7 +4,7 @@ import type {
   StateSnapshotPayload,
   TmuxBellEventData,
   TmuxNotificationEventData,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { notifyDeviceClose } from '../agent/device-close-bus';
 import { getAllDevices, getDeviceById, getSiteSettings } from '../db';
 import { eventNotifier } from '../events';

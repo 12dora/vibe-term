@@ -4,7 +4,7 @@
 // 是每个 node 各自的视图状态：路由在 node 之间切换只该换当前视图，不该把别的 node 的选择
 // 或草稿清掉。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { isSessionOnNode, normalizeAgentNodeId } from './agent-session-map';
 import type { AgentStateData, DraftSession } from './agent-state';
 

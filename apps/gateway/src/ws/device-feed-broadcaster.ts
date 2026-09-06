@@ -1,5 +1,5 @@
-import type { EventDevicePayload, StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { EventDevicePayload, StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { TmuxEvent } from '../tmux-client/events';

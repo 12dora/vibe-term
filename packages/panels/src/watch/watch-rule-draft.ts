@@ -1,4 +1,4 @@
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type {
   AssistRegexRequest,
   AssistRegexResponse,
@@ -8,7 +8,7 @@ import type {
   WatchNoMatchBehavior,
   WatchRuleDto,
   WatchTriggerType,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 export const TRIGGER_TYPES: WatchTriggerType[] = ['match', 'unchanged', 'llm'];
 export const FOLLOW_DEFAULT_VALUE = '__default__';

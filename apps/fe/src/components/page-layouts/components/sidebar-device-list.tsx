@@ -2,10 +2,10 @@
 // mesh 下拍平所有 node 的设备（self 在最前），每行带 node 徽标。
 
 import { sortNodes, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import { type SortableRow, SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
-import { useUIStore } from '@tmex/stores/react';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { type SortableRow, SortableVerticalList, useSortableRow } from '@vibeterm/panels/device-tree';
+import { useUIStore } from '@vibeterm/stores/react';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SideBarDeviceListForRuntime } from './sidebar-device-list-runtime';

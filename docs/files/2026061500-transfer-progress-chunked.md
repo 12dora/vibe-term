@@ -8,7 +8,7 @@ Files Tab 的上传/下载入口（右键菜单、长按菜单、拖拽）由更
 
 ## 配置
 
-- `TMEX_TRANSFER_MAX_BYTES`（默认 `2147483648` = 2GB）→ `config.transferMaxBytes`（`apps/gateway/src/config.ts`），上传下载共用。
+- `VIBETERM_TRANSFER_MAX_BYTES`（默认 `2147483648` = 2GB）→ `config.transferMaxBytes`（`apps/gateway/src/config.ts`），上传下载共用。
 - 经 `GET /api/system/info` 的 `SystemInfo.transferMaxBytes` 暴露给前端，上传前预校验文件大小。
 
 ## rsync 进度（跨版本）

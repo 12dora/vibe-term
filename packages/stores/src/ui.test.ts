@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { THEME_PRESETS, type ThemePreset } from '@tmex/theme';
+import { THEME_PRESETS, type ThemePreset } from '@vibeterm/theme';
 import { installWindowStorage } from './test-utils';
 import { createUIStore } from './ui';
 

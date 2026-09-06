@@ -35,9 +35,9 @@ describe('auth command bun spawn', () => {
       join(installDir, 'app.env'),
       stringifyEnv({
         NODE_ENV: 'test',
-        TMEX_MASTER_KEY: MASTER_KEY,
+        VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: join(installDir, 'tmex.db'),
-        TMEX_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'hub,node',
       })
     );
     const fakeBun = join(installDir, 'fake-bun');
@@ -71,7 +71,7 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
     expect(plan.bunBin).toBe(fakeBun);
     expect(plan.cliAuthPath).toBe(cliAuthPath);
     expect(plan.argv).toEqual(argv);
-    expect(plan.env.TMEX_MASTER_KEY).toBe(MASTER_KEY);
+    expect(plan.env.VIBETERM_MASTER_KEY).toBe(MASTER_KEY);
     const result = await spawnAuthCli(plan, { stdio: 'pipe' });
     expect(result.code).toBe(0);
     expect(result.stdout).toContain('hub');
@@ -88,9 +88,9 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
       join(installDir, 'app.env'),
       stringifyEnv({
         NODE_ENV: 'test',
-        TMEX_MASTER_KEY: MASTER_KEY,
+        VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: join(installDir, 'tmex.db'),
-        TMEX_ROLES: 'hub,node',
+        VIBETERM_ROLES: 'hub,node',
       })
     );
     const fakeBun = join(installDir, 'fake-bun');
@@ -168,7 +168,7 @@ main().catch((error) => {
 });
 
 describe('dispatchAuthCli auth env load', () => {
-  test('hub user add loads install env before gateway config captures TMEX_MASTER_KEY', async () => {
+  test('hub user add loads install env before gateway config captures VIBETERM_MASTER_KEY', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'tmex-cli-auth-'));
     tempDirs.push(installDir);
     const databaseUrl = join(installDir, 'tmex.db');
@@ -176,12 +176,12 @@ describe('dispatchAuthCli auth env load', () => {
       join(installDir, 'app.env'),
       stringifyEnv({
         NODE_ENV: 'test',
-        TMEX_MASTER_KEY: MASTER_KEY,
+        VIBETERM_MASTER_KEY: MASTER_KEY,
         DATABASE_URL: databaseUrl,
-        TMEX_MIGRATIONS_DIR: MIGRATIONS,
-        TMEX_ROLES: 'hub,node',
+        VIBETERM_MIGRATIONS_DIR: MIGRATIONS,
+        VIBETERM_ROLES: 'hub,node',
         GATEWAY_PORT: '17991',
-        TMEX_BIND_HOST: '127.0.0.1',
+        VIBETERM_BIND_HOST: '127.0.0.1',
       })
     );
 
@@ -223,12 +223,12 @@ console.log(
     const env = {
       ...Object.fromEntries(
         Object.entries(process.env).filter(
-          ([key]) => key !== 'TMEX_MASTER_KEY' && key !== 'DATABASE_URL'
+          ([key]) => key !== 'VIBETERM_MASTER_KEY' && key !== 'DATABASE_URL'
         )
       ),
       NODE_ENV: 'test',
-      TMEX_PASSWORD: 'tmex-test-pass',
-      TMEX_PASSWORD_CONFIRM: 'tmex-test-pass',
+      VIBETERM_PASSWORD: 'tmex-test-pass',
+      VIBETERM_PASSWORD_CONFIRM: 'tmex-test-pass',
     };
 
     const proc = Bun.spawn([BUN_BIN, scriptPath], {

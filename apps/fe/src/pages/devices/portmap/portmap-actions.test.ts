@@ -1,7 +1,7 @@
 // 建立 / 删除映射的顺序与回滚。`createNodeApiClient` 走 `globalThis.fetch`，这里整体替换掉。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { ApiError } from '@tmex/api-client';
+import { ApiError } from '@vibeterm/api-client';
 import type { PendingExportCleanup } from './pending-cleanup';
 import {
   createPortMapping,

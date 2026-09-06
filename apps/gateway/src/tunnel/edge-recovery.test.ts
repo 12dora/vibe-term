@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TunnelConnectorStatus, TunnelEdgeResolution } from '@tmex/shared';
+import type { TunnelConnectorStatus, TunnelEdgeResolution } from '@vibeterm/shared';
 import { type EdgeRecoveryToken, TunnelEdgeRecovery } from './edge-recovery';
 
 const staticEdge: TunnelEdgeResolution = {

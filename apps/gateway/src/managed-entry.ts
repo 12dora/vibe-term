@@ -12,7 +12,7 @@ import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-ar
 import type { GatewaySession } from './ws/gateway-session';
 import type { GatewaySocketData } from './ws/types';
 
-declare const TMEX_MONOREPO_VERSION: string | undefined;
+declare const VIBETERM_MONOREPO_VERSION: string | undefined;
 
 interface ManagedGatewayRuntime {
   handleRequest: (
@@ -99,8 +99,8 @@ function runtimeUnavailableResponse(): Response {
 }
 
 function embeddedVersion(): string {
-  if (typeof TMEX_MONOREPO_VERSION === 'string' && TMEX_MONOREPO_VERSION) {
-    return TMEX_MONOREPO_VERSION;
+  if (typeof VIBETERM_MONOREPO_VERSION === 'string' && VIBETERM_MONOREPO_VERSION) {
+    return VIBETERM_MONOREPO_VERSION;
   }
   return 'unknown';
 }
@@ -112,7 +112,7 @@ async function runManagedGateway(): Promise<void> {
     updateOwner: 'companion',
   });
 
-  Reflect.deleteProperty(process.env, 'TMEX_FE_DIST_DIR');
+  Reflect.deleteProperty(process.env, 'VIBETERM_FE_DIST_DIR');
 
   const { consumeManagedEndpointPublication, publishManagedEndpoint, resolveManagedEndpointHost } =
     await import('./system/managed-endpoint');

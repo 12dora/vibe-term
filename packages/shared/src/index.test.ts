@@ -1,6 +1,6 @@
-// @tmex/shared 主入口的运行时导出面锁定
+// @vibeterm/shared 主入口的运行时导出面锁定
 //
-// index.ts 是全仓库的公共契约入口，任何包都从 '@tmex/shared' 消费它。
+// index.ts 是全仓库的公共契约入口，任何包都从 '@vibeterm/shared' 消费它。
 // 拆分/重排模块时若漏掉一条 re-export，类型侧未必立刻报错，但运行时值会静默消失。
 // 这里把运行时导出名快照下来，少一个或多一个都要显式改这张表。
 
@@ -76,7 +76,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'isEventType',
   'isFolderListValid',
   'isStandaloneRoles',
-  'isTmexRoleName',
+  'isVibeTermRoleName',
   'layoutLeafPaneId',
   'moveFolderInLayout',
   'moveNodeInLayout',
@@ -111,7 +111,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'wsBorsh',
 ];
 
-describe('@tmex/shared 主入口', () => {
+describe('@vibeterm/shared 主入口', () => {
   it('运行时导出面与快照一致', async () => {
     const mod = await import('./index');
     expect(Object.keys(mod).sort()).toEqual(EXPECTED_RUNTIME_EXPORTS);

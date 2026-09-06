@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { beginAuthTransition, endAuthTransition } from '@/auth/auth-transition';
-import { ApiClient } from '@tmex/api-client/client';
-import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types';
+import { ApiClient } from '@vibeterm/api-client/client';
+import type { RelayMetricsResponse } from '@vibeterm/api-client/relay/metrics-types';
 import { relayMetricsFixture } from './relay-metrics-fixture';
 import {
   type RelayMetricsApi,

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 
 import {
   MetadataProjection,

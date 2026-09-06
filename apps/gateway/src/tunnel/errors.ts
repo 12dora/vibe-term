@@ -1,5 +1,5 @@
-import { errorMessage } from '@tmex/shared';
-import type { TunnelErrorCode } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { TunnelErrorCode } from '@vibeterm/shared';
 
 export const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
 export const EXPOSURE_ACK_MESSAGE =

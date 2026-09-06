@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import type { PaneHistoryPage } from '../../tmux-client/pane-history-reader';
 import type { PaneDataSegment, PaneScreenCheckpoint } from '../../tmux-client/pane-retention';

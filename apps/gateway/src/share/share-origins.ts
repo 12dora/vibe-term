@@ -4,7 +4,7 @@ import {
   nodeSharePrefix,
   normalizeShareOrigin,
   rankShareOrigins,
-} from '@tmex/shared/share';
+} from '@vibeterm/shared/share';
 import { asc, eq } from 'drizzle-orm';
 import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';

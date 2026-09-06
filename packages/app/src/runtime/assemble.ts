@@ -42,7 +42,7 @@ import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { type LocalAuthContext, createAuthContextFromDb } from '../lib/local-auth';
 import { loadNodeDatachannel } from '../lib/native-datachannel';
-import { type TmexRoles, isStandaloneRoles, parseTmexRoles } from '../lib/roles';
+import { type VibeTermRoles, isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { HttpsListener } from '../tls/https-listener';
 import type { TlsService } from '../tls/tls-service';
 import { createAssembledRelay } from './assemble-relay';
@@ -54,19 +54,19 @@ import {
   tryStop,
   wireTlsLifecycle,
 } from './assemble-routes';
-import { createTmexGatewayRuntime } from './gateway';
+import { createVibeTermGatewayRuntime } from './gateway';
 import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
 
 export const SHUTDOWN_TIMEOUT_MS = 20_000;
 
-export function meshShutdownNeeded(roles: TmexRoles): boolean {
+export function meshShutdownNeeded(roles: VibeTermRoles): boolean {
   return roles.hub || roles.node || roles.relay;
 }
 
-type AssembleTmexOptions = {
-  roles?: TmexRoles;
+type AssembleVibeTermOptions = {
+  roles?: VibeTermRoles;
   staticRoot?: string;
   runtimeMode?: RuntimeMode;
   createGatewayRuntime?: () => Promise<GatewayRuntime>;
@@ -78,8 +78,8 @@ type AssembleTmexOptions = {
   localAuthEffective?: () => boolean;
 };
 
-type AssembledTmex = {
-  roles: TmexRoles;
+type AssembledVibeTerm = {
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
   mesh: MeshRuntime | null;
   hub: HubRuntime | null;
@@ -98,8 +98,8 @@ type AssembledTmex = {
 };
 
 function defaultStaticRoot(): string {
-  return process.env.TMEX_FE_DIST_DIR
-    ? resolve(process.env.TMEX_FE_DIST_DIR)
+  return process.env.VIBETERM_FE_DIST_DIR
+    ? resolve(process.env.VIBETERM_FE_DIST_DIR)
     : resolve(import.meta.dir, '../../resources/fe-dist');
 }
 
@@ -112,7 +112,7 @@ async function standaloneNodeKeys(identityStore: LocalAuthContext['identityStore
 }
 
 async function createStandaloneAuthHttp(input: {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
   auth: LocalAuthContext;
   localAuthEffective?: () => boolean;
@@ -158,7 +158,7 @@ function syncLocalSiteNameFromMesh(name: string): void {
 }
 
 async function createNodeMesh(input: {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
   createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
   hub?: HubRuntime;
@@ -168,7 +168,7 @@ async function createNodeMesh(input: {
   meshHubStore?: MeshHubStore;
   onLocalNodeName?: (name: string) => void;
 }): Promise<MeshRuntime> {
-  const nativeDir = input.nativeDir ?? process.env.TMEX_NATIVE_DIR ?? '';
+  const nativeDir = input.nativeDir ?? process.env.VIBETERM_NATIVE_DIR ?? '';
   const identity = await new NodeIdentityStore(input.gateway.db).load();
   const opts: MeshHubAssembleOpts = {
     db: input.gateway.db,
@@ -188,19 +188,19 @@ async function createNodeMesh(input: {
       turnUrl: gatewayConfig.turnUrl,
       turnUsername: gatewayConfig.turnUsername,
       turnCredential: gatewayConfig.turnCredential,
-      bindHost: process.env.TMEX_BIND_HOST || '127.0.0.1',
+      bindHost: process.env.VIBETERM_BIND_HOST || '127.0.0.1',
       peerBindHost: gatewayConfig.peerBindHost,
     },
     hub: input.hub,
     meshHubStore: input.meshHubStore,
     meshHubs: input.meshHubStore,
     canLoadNative: () =>
-      process.env.TMEX_DIRECT_ENABLED !== 'false' &&
+      process.env.VIBETERM_DIRECT_ENABLED !== 'false' &&
       (input.loadNative !== undefined || nativeDir.length > 0),
     loadNative:
       input.loadNative ??
       (async () =>
-        process.env.TMEX_DIRECT_ENABLED === 'false' || !nativeDir
+        process.env.VIBETERM_DIRECT_ENABLED === 'false' || !nativeDir
           ? null
           : loadNodeDatachannel({ nativeDir })),
     userId: identity?.userId ?? undefined,
@@ -265,10 +265,10 @@ function dummyTlsLifecycle(): { tls: TlsService; httpsListener: HttpsListener } 
   };
 }
 
-async function assemblePreflightTmex(opts: AssembleTmexOptions): Promise<AssembledTmex> {
-  const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
+async function assemblePreflightVibeTerm(opts: AssembleVibeTermOptions): Promise<AssembledVibeTerm> {
+  const roles = opts.roles ?? parseVibeTermRoles(process.env.VIBETERM_ROLES);
   const createGateway =
-    opts.createGatewayRuntime ?? (() => createTmexGatewayRuntime(undefined, { mode: 'preflight' }));
+    opts.createGatewayRuntime ?? (() => createVibeTermGatewayRuntime(undefined, { mode: 'preflight' }));
   const gateway = await createGateway();
   const { tls, httpsListener } = dummyTlsLifecycle();
   return {
@@ -293,9 +293,9 @@ async function assemblePreflightTmex(opts: AssembleTmexOptions): Promise<Assembl
 }
 
 async function createAssembleAuthSurface(input: {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   gateway: GatewayRuntime;
-  opts: AssembleTmexOptions;
+  opts: AssembleVibeTermOptions;
   createMesh: (opts: CreateMeshRuntimeOptions) => Promise<MeshRuntime>;
   tlsSlot: { service?: TlsService };
   meshHubStore?: MeshHubStore;
@@ -305,9 +305,9 @@ async function createAssembleAuthSurface(input: {
     installDir: resolveGatewayInstallDir(),
     envPath: resolveSetupEnvPath(),
     env: {
-      TMEX_ROLES: process.env.TMEX_ROLES ?? '',
-      TMEX_HUB_URL: process.env.TMEX_HUB_URL ?? '',
-      TMEX_HUB_PUBLIC_URL: process.env.TMEX_HUB_PUBLIC_URL ?? '',
+      VIBETERM_ROLES: process.env.VIBETERM_ROLES ?? '',
+      VIBETERM_HUB_URL: process.env.VIBETERM_HUB_URL ?? '',
+      VIBETERM_HUB_PUBLIC_URL: process.env.VIBETERM_HUB_PUBLIC_URL ?? '',
     },
   });
   let mesh: MeshRuntime | null = null;
@@ -339,7 +339,7 @@ async function createAssembleAuthSurface(input: {
 }
 
 /** `relay` 单跑（不带 node）：无前端、无用户存储、无 tmux 依赖。 */
-export function isRelayOnly(roles: TmexRoles): boolean {
+export function isRelayOnly(roles: VibeTermRoles): boolean {
   return roles.relay && !roles.node && !roles.hub;
 }
 
@@ -350,12 +350,12 @@ async function relayOnlyFrontend(): Promise<Response> {
   });
 }
 
-function maybeMeshHubStore(roles: TmexRoles, db: GatewayRuntime['db']): MeshHubStore | undefined {
+function maybeMeshHubStore(roles: VibeTermRoles, db: GatewayRuntime['db']): MeshHubStore | undefined {
   return roles.hub || roles.node ? new MeshHubStore(db) : undefined;
 }
 
 function applySiteSettingsLink(
-  roles: TmexRoles,
+  roles: VibeTermRoles,
   mesh: MeshRuntime | null,
   meshHubStore: MeshHubStore | undefined,
   db: GatewayRuntime['db']
@@ -400,13 +400,13 @@ function subscribeReplicatedNodeList(
   }
 }
 
-export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<AssembledTmex> {
+export async function assembleVibeTerm(opts: AssembleVibeTermOptions = {}): Promise<AssembledVibeTerm> {
   const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
-  if (runtimeMode === 'preflight') return assemblePreflightTmex(opts);
-  const roles = opts.roles ?? parseTmexRoles(process.env.TMEX_ROLES);
+  if (runtimeMode === 'preflight') return assemblePreflightVibeTerm(opts);
+  const roles = opts.roles ?? parseVibeTermRoles(process.env.VIBETERM_ROLES);
   const staticRoot = opts.staticRoot ?? defaultStaticRoot();
   const createGateway =
-    opts.createGatewayRuntime ?? (() => createTmexGatewayRuntime(undefined, { mode: runtimeMode }));
+    opts.createGatewayRuntime ?? (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
   const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
   const serveFrontend =
     opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);

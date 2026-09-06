@@ -3,7 +3,7 @@
 // 两页各挂一个 TabsContent：Base UI 默认只挂载当前面板，未选中那页不进 DOM，
 // 同时按钮与面板之间的 tab / tabpanel 关联由 Tabs 根统一分配。
 
-import { Tabs, TabsContent } from '@tmex/ui/tabs';
+import { Tabs, TabsContent } from '@vibeterm/ui/tabs';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ComputerGuide } from './computer-guide';

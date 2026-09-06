@@ -7,8 +7,8 @@ import {
 import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
 import {
   AUTH_401_BODY_LIMIT,
-  X_TMEX_SESSION_RENEWED,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SESSION_RENEWED,
+  X_VIBETERM_SET_SESSION,
   parseSetSessionHeader,
 } from './mesh-deps';
 import { isHttps } from './session-middleware';
@@ -35,16 +35,16 @@ export async function applyAuthPolicy(
   nodeId: string,
   skip401Rewrite = false
 ): Promise<Response | null> {
-  const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
+  const parsed = parseSetSessionHeader(upstream.headers.get(X_VIBETERM_SET_SESSION) ?? '');
   const secure = isHttps(req);
   applyShareCookieHeaders(headers, upstream, nodeId, secure);
   const presented = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
   if (parsed) {
     appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
   }
-  const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
+  const renewed = upstream.headers.get(X_VIBETERM_SESSION_RENEWED);
   if (renewed) {
-    headers.set(X_TMEX_SESSION_RENEWED, renewed);
+    headers.set(X_VIBETERM_SESSION_RENEWED, renewed);
     const expiresAt = Number(renewed);
     if (presented && Number.isFinite(expiresAt)) {
       appendNodeSessionCookie(headers, nodeId, presented, {

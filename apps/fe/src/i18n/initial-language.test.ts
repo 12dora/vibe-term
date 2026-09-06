@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SITE_LANGUAGE_CACHE_KEY } from '@tmex/stores/site-language-cache';
+import { SITE_LANGUAGE_CACHE_KEY } from '@vibeterm/stores/site-language-cache';
 import { browserLanguages, matchBrowserTag, resolveInitialLanguage } from './initial-language';
 
 const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');

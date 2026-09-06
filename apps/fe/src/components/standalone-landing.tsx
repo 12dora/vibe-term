@@ -2,8 +2,8 @@ import { useEffect, useRef } from 'react';
 import { useLocation } from 'react-router';
 
 import { isStandaloneDisplay, shouldOpenSidebarOnLaunch } from '@/lib/standalone';
-import { useUIStore } from '@tmex/stores/react';
-import { useSidebar } from '@tmex/ui/sidebar';
+import { useUIStore } from '@vibeterm/stores/react';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 
 // 以 PWA 启动（iOS 添加到主屏）时首页直接展开侧边栏抽屉，落在「终端」分节，
 // 而不是设备页。判定只看**本次加载落地的路径**：从 `/settings` 冷启动后再导航到 `/`

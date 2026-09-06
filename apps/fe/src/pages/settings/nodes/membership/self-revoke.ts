@@ -10,9 +10,9 @@
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { headFromResponse } from '@/auth/key-log-actions';
 import { buildRevokeNodeRecord } from '@/node/enrollment';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 
 export type SelfRevokeOutcome =
   | { kind: 'revoked' }

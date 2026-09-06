@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiClient, nodeAppPath } from '@tmex/api-client';
+import { ApiClient, nodeAppPath } from '@vibeterm/api-client';
 import { devicesQueryOptions, routeDeviceId } from './global-device-provider';
 
 const selfAppPath = (path: string) => nodeAppPath('self', path);

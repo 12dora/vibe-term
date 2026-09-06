@@ -6,7 +6,7 @@ import type {
   TunnelActionResponse,
   TunnelErrorCode,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from '../client';
 import { readCodedError } from '../json-mutation';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';

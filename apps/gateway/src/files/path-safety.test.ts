@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { checkAndNormalize } from './device-storage';
 
 const LOCAL = { type: 'local' } as Device;

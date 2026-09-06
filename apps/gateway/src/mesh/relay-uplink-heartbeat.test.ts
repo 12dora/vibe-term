@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
 import type { MeshScheduler } from './types';
 

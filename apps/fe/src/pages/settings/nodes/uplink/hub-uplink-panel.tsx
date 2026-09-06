@@ -6,10 +6,10 @@
 import type { HubFailureReason } from '@/node/hub-load-coordinator';
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import { writerHub } from '@/node/mesh-hubs';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import type { LocalRole, LocalStatusResponse } from '@tmex/api-client/local/types';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import type { LocalRole, LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { Repeat, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../card-parts';

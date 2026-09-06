@@ -1,7 +1,7 @@
 // 文件行 → entry 的解析：行在 DOM 上只留自身绝对路径，所属根与所在目录由外层列表容器带；
 // 树根的共享右键菜单据此从目录列表的查询缓存里取回 entry，行本身不再持有回调或菜单。
 
-import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@tmex/shared';
+import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@vibeterm/shared';
 
 export const FILE_LIST_ROOT_ATTR = 'data-file-list-root';
 export const FILE_LIST_DIR_ATTR = 'data-file-list-dir';

@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { collectTmexHeaders, sha256Hex } from './hash.ts';
+import { collectVibeTermHeaders, sha256Hex } from './hash.ts';
 import { apiFetch, joinUrl, loadLoginState, parseArgs, requireArg } from './lib.ts';
 
 const args = parseArgs(process.argv.slice(2));
@@ -87,7 +87,7 @@ if (cmd === 'raw' || cmd === 'sha256') {
     status: res.status,
     bytes: bytes.byteLength,
     sha256,
-    headers: collectTmexHeaders(res.headers),
+    headers: collectVibeTermHeaders(res.headers),
     bulkPath: 'browser-only',
   };
   process.stdout.write(`${JSON.stringify(body)}\n`);

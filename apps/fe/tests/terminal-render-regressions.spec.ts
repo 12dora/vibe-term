@@ -19,7 +19,7 @@ import {
 
 async function readTerminalSize(page: Page): Promise<{ cols: number; rows: number } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return { cols: term.cols, rows: term.rows };
   });
@@ -34,7 +34,7 @@ async function readScreenLines(page: Page): Promise<string[]> {
 // 与 tmux #{cursor_y} 同坐标系）
 async function readCursorRow(page: Page): Promise<number | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.lastCursor?.y ?? null;
   });
 }
@@ -42,7 +42,7 @@ async function readCursorRow(page: Page): Promise<number | null> {
 // 调试用：controller 内部尺寸真相（JS rows vs WASM 渲染态）
 async function readTerminalInternals(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return { missing: true };
     let scrollbar: unknown = null;
     try {

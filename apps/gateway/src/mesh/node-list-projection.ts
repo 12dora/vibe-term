@@ -1,4 +1,4 @@
-import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
+import { decodeCertificate, encodeBase64url } from '@vibeterm/shared/auth';
 import { nodeSessionCookieName } from '../auth/cookies';
 import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';

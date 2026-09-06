@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { CreateDeviceRequest, UpdateDeviceRequest } from '@tmex/shared';
+import type { CreateDeviceRequest, UpdateDeviceRequest } from '@vibeterm/shared';
 import { ApiClient } from './client';
 import {
   createDevice,

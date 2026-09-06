@@ -8,20 +8,20 @@ import {
   sha256,
   verifyEd25519,
   verifyNodeCertificate,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
   type ServerSocketAdapter,
   WebSocketLink,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import type {
   HubAttachmentsMessage,
   HubForwardMessage,
   HubMode,
   HubTokensMessage,
   HubWriteForwardMessage,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import { identicalKeyLog } from '../../../../packages/shared/src/auth/key-log';
 import { json, readJsonObjectBody } from '../api/http';
 import { matchPath } from '../api/route';

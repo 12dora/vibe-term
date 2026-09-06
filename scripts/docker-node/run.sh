@@ -6,18 +6,18 @@
 #   scripts/docker-node/run.sh shell   # 进容器
 #   scripts/docker-node/run.sh status  # 容器 / healthz / install-meta 概况
 #
-# 可覆盖：TMEX_DOCKER_NAME、TMEX_DOCKER_IMAGE、TMEX_DOCKER_TAG、
-#         TMEX_HTTP_PORT（默认 29883）、TMEX_PEER_HOST_PORT（默认 39001）、
-#         TMEX_SITE_NAME、TMEX_BASE_URL。
+# 可覆盖：VIBETERM_DOCKER_NAME、VIBETERM_DOCKER_IMAGE、VIBETERM_DOCKER_TAG、
+#         VIBETERM_HTTP_PORT（默认 29883）、VIBETERM_PEER_HOST_PORT（默认 39001）、
+#         VIBETERM_SITE_NAME、VIBETERM_BASE_URL。
 set -euo pipefail
 
-NAME="${TMEX_DOCKER_NAME:-tmex-node-docker}"
-IMAGE="${TMEX_DOCKER_IMAGE:-tmex-node}"
-TAG="${TMEX_DOCKER_TAG:-latest}"
-HTTP_PORT="${TMEX_HTTP_PORT:-29883}"
-# 网页/setup 接口默认只发布到宿主回环；要远程访问时显式设 TMEX_DOCKER_HTTP_BIND=0.0.0.0。
-HTTP_BIND="${TMEX_DOCKER_HTTP_BIND:-127.0.0.1}"
-PEER_PORT="${TMEX_PEER_HOST_PORT:-39001}"
+NAME="${VIBETERM_DOCKER_NAME:-tmex-node-docker}"
+IMAGE="${VIBETERM_DOCKER_IMAGE:-tmex-node}"
+TAG="${VIBETERM_DOCKER_TAG:-latest}"
+HTTP_PORT="${VIBETERM_HTTP_PORT:-29883}"
+# 网页/setup 接口默认只发布到宿主回环；要远程访问时显式设 VIBETERM_DOCKER_HTTP_BIND=0.0.0.0。
+HTTP_BIND="${VIBETERM_DOCKER_HTTP_BIND:-127.0.0.1}"
+PEER_PORT="${VIBETERM_PEER_HOST_PORT:-39001}"
 VOL_OPT="${NAME}-opt"
 VOL_DATA="${NAME}-data"
 
@@ -34,8 +34,8 @@ cmd_up() {
     return
   fi
   local env_args=()
-  [[ -n "${TMEX_SITE_NAME:-}" ]] && env_args+=(-e "TMEX_SITE_NAME=${TMEX_SITE_NAME}")
-  [[ -n "${TMEX_BASE_URL:-}" ]] && env_args+=(-e "TMEX_BASE_URL=${TMEX_BASE_URL}")
+  [[ -n "${VIBETERM_SITE_NAME:-}" ]] && env_args+=(-e "VIBETERM_SITE_NAME=${VIBETERM_SITE_NAME}")
+  [[ -n "${VIBETERM_BASE_URL:-}" ]] && env_args+=(-e "VIBETERM_BASE_URL=${VIBETERM_BASE_URL}")
   log "creating ${NAME} from ${IMAGE}:${TAG} (http ${HTTP_BIND}:${HTTP_PORT}, peer ${PEER_PORT})"
   docker run -d \
     --name "${NAME}" \

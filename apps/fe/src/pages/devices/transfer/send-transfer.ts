@@ -3,10 +3,10 @@
 // 顺序不能反：grant 绑定了 fromNodeId / destRootId / destPath，源节点拿着它去连目标节点，
 // 目标节点据此确认「这条流确实是浏览器授权过的」。
 
-import { ApiError, createNodeApiClient } from '@tmex/api-client';
-import { createTransferGrant, createTransferJob } from '@tmex/api-client';
-import { subscribeTransferJob, upsertTransferJobSnapshot } from '@tmex/panels/files/transfers';
-import type { TransferErrorCode, TransferJobSnapshot } from '@tmex/shared';
+import { ApiError, createNodeApiClient } from '@vibeterm/api-client';
+import { createTransferGrant, createTransferJob } from '@vibeterm/api-client';
+import { subscribeTransferJob, upsertTransferJobSnapshot } from '@vibeterm/panels/files/transfers';
+import type { TransferErrorCode, TransferJobSnapshot } from '@vibeterm/shared';
 
 export interface TransferEndpointRef {
   /** 运行时 node id（`self` 或 32 位 hex），用来建 ApiClient。 */

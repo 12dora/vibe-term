@@ -2,9 +2,9 @@
 // 数据来自 5 秒一拍的 `relay-metrics-store`，由调用方（中继管理页）持有那条回路：
 // 接入节点卡与本面板读同一份采样，回路只该起一条。
 
-import { Button } from '@tmex/ui/button';
-import { Reveal } from '@tmex/ui/motion';
-import { Skeleton } from '@tmex/ui/skeleton';
+import { Button } from '@vibeterm/ui/button';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { RotateCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatDuration } from './relay-format';

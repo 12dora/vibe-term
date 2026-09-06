@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import {
   failoverCauseOf,

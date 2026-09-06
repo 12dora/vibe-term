@@ -4,7 +4,7 @@
 // 残余风险：远端目录不在本进程控制下，核对与 rsync 之间仍有 TOCTOU 窗口（对端 root 可在两步之间
 // 把目录换成符号链接）。本机目标没有这个窗口（逐段 lstat + realpath 复核）。
 
-import type { FileErrorCode } from '@tmex/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 import { execSshCommand } from '../files/directory-browse';
 import { classifyRsyncFailure, runRsync } from '../files/rsync';
 import { type FileOpResult, fail, ok, withDeviceRsync } from '../files/rsync-operation';

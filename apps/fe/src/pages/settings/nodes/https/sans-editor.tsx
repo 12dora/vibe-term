@@ -1,7 +1,7 @@
 // SAN 列表编辑：证书只对列表里的名字有效，浏览器访问其它名字仍然会报证书错误。
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Plus, X } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';

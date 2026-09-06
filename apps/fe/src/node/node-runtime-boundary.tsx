@@ -13,10 +13,10 @@
 // 门闸同样只挡页面区，侧边栏照常在，用户随时能切去别的 node。
 
 import { QueryClientProvider } from '@tanstack/react-query';
-import { parseNodeIdFromPath } from '@tmex/api-client';
-import { setSiteFallbackReader, useNodeRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { SidebarTrigger } from '@tmex/ui/sidebar';
+import { parseNodeIdFromPath } from '@vibeterm/api-client';
+import { setSiteFallbackReader, useNodeRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { SidebarTrigger } from '@vibeterm/ui/sidebar';
 import { Loader2 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -1,5 +1,5 @@
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import type { NodeRegistry } from './node-registry';
 import { HUB_RTC_TTL_MS } from './types';

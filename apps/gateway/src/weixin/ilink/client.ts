@@ -1,7 +1,7 @@
 // WeixinClient：iLink bot 协议的高层客户端。
 // 负责登录（扫码）、长轮询收消息、context_token 缓存、发送文本。
 
-import { sleepOrAbort } from '@tmex/shared';
+import { sleepOrAbort } from '@vibeterm/shared';
 import { type FetchImpl, getBotQrcode, getQrcodeStatus, sendMessage } from './api';
 import {
   CLIENT_ID_PREFIX,

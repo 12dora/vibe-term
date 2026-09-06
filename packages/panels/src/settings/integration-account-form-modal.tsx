@@ -1,17 +1,17 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 import type { TFunction } from 'i18next';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 
 const FIELD_CLASS = 'min-h-10';
 

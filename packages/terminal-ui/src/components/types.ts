@@ -1,10 +1,10 @@
-import type { TerminalThemeColors } from '@tmex/shared';
+import type { TerminalThemeColors } from '@vibeterm/shared';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import type { ReactNode } from 'react';
 
 /**
  * 终端配色入参：'light' | 'dark' 是历史写法（走 seoul256 双主题），
- * 主题预设生效时宿主直接传解析好的整套色板（@tmex/theme 的 resolveTerminalTheme）。
+ * 主题预设生效时宿主直接传解析好的整套色板（@vibeterm/theme 的 resolveTerminalTheme）。
  */
 export type TerminalTheme = 'light' | 'dark' | TerminalThemeColors;
 

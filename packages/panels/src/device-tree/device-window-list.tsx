@@ -1,5 +1,5 @@
-import type { TmuxWindow } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import type { TmuxWindow } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { Plus } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

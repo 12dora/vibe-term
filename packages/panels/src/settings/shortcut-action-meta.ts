@@ -1,4 +1,4 @@
-import type { TerminalShortcutAction } from '@tmex/shared';
+import type { TerminalShortcutAction } from '@vibeterm/shared';
 import { ArrowDownToLine, ClipboardPaste, Keyboard, type LucideIcon, Radar } from 'lucide-react';
 
 export const ACTION_META: { action: TerminalShortcutAction; icon: LucideIcon }[] = [

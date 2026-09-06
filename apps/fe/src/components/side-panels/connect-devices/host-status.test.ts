@@ -1,8 +1,8 @@
 // 「本机作为中继」三步的现状推导。
 
 import { describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
 import { entryStatus, hubStatus } from './host-status';
 
 const SELF = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';

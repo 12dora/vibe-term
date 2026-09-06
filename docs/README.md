@@ -122,7 +122,7 @@
 | `release/2026083101-github-releases-distribution.md` | 发行源切换到本仓库 GitHub Releases 与 `install.sh` |
 | `release/2026083101-upgrade-crash-safety.md` | 自升级的 BIOS 式事务：落地布局、阶段与崩溃表、回滚与修复 |
 | `update/2026061406-self-update.md` | 程序内自更新状态机、`canSelfUpdate` 判定与版本展示 |
-| `update/2026061502-bun-path-resolution.md` | bun 路径解析：优先级、`TMEX_BUN_PATH`、路径消毒与超时 |
+| `update/2026061502-bun-path-resolution.md` | bun 路径解析：优先级、`VIBETERM_BUN_PATH`、路径消毒与超时 |
 | `update/2026090502-resumable-remote-upgrade-push.md` | 远程升级推包续传：偏移协议、`.part` 生命周期、重试预算与前端进度 |
 
 ## 已知问题

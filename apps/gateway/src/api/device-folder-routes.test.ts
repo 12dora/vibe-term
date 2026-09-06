@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import { DEVICE_FOLDER_NAME_MAX_LENGTH, type DeviceFolderLayout } from '@tmex/shared';
+import { DEVICE_FOLDER_NAME_MAX_LENGTH, type DeviceFolderLayout } from '@vibeterm/shared';
 import type { Server } from 'bun';
 import { ensureSiteSettingsInitialized } from '../db';
 import { runMigrations } from '../db/migrate';

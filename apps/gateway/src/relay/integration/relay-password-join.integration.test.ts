@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { decodeBase64url, deriveSeed, encodeBase64url, rootKeyFromSeed } from '@tmex/shared/auth';
-import { kdfParamsToWire, sealRelayPack } from '@tmex/shared/relay';
+import { decodeBase64url, deriveSeed, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
+import { kdfParamsToWire, sealRelayPack } from '@vibeterm/shared/relay';
 import { and, eq, gt } from 'drizzle-orm';
 import { createAuthContextFromDb } from '../../../../../packages/app/src/lib/local-auth';
 import {

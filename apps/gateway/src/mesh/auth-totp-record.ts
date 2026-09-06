@@ -1,4 +1,4 @@
-import { encodeBase64url, encodeSetTotpPayload } from '@tmex/shared/auth';
+import { encodeBase64url, encodeSetTotpPayload } from '@vibeterm/shared/auth';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import { jsonBody, jsonError } from './session-middleware';

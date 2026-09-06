@@ -1,4 +1,4 @@
-import type { EventType, StateSnapshotPayload, WebhookEvent } from '@tmex/shared';
+import type { EventType, StateSnapshotPayload, WebhookEvent } from '@vibeterm/shared';
 
 import type { TmuxEvent } from './events';
 import type { TmuxSourceMetadataEvent } from './events';

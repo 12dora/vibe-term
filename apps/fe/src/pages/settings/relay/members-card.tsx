@@ -1,11 +1,11 @@
 // 接入节点卡：检索 / 状态过滤 / 列排序都在这里收口，表格本身只摆版式。
 // 选中租户时只留该租户的节点，卡头把范围写明白。
 
-import type { RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
-import type { RelayMetricsMember } from '@tmex/api-client/relay/metrics-types';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+import type { RelayTenantSummary } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { Search, X } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -5,11 +5,11 @@
 // 包内经 decodePaneIdFromUrlParam 归一，宿主不要再 decode）；包内构造的应用内
 // 路径一律经 hostAppPath 映射宿主路由形状。
 
-import { devicesQueryKey as defaultDevicesQueryKey } from '@tmex/api-client';
-import { decodePaneIdFromUrlParam } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
-import { resolveTerminalTheme } from '@tmex/theme';
+import { devicesQueryKey as defaultDevicesQueryKey } from '@vibeterm/api-client';
+import { decodePaneIdFromUrlParam } from '@vibeterm/stores';
+import { useUIStore } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
+import { resolveTerminalTheme } from '@vibeterm/theme';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {

@@ -1,4 +1,4 @@
-import type { TmexRoleName } from './lib/roles';
+import type { VibeTermRoleName } from './lib/roles';
 
 export interface ParsedArgs {
   command: string | null;
@@ -17,7 +17,7 @@ export interface InitConfig {
   nonInteractive: boolean;
   installDeps: boolean;
   skipDepCheck: boolean;
-  role: TmexRoleName;
+  role: VibeTermRoleName;
   hubUrl: string;
   hubPublicUrl: string;
   relayPublicUrl: string;

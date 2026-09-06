@@ -4,10 +4,10 @@
 // 加入码由 hub 侧 `tmex-cli enroll` 或任意已登录入口的节点页签发，默认 10 分钟有效；
 // 密码路径不需要任何人在 Hub 上先操作一次，因此作为默认。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { LocalStatusResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { LocalStatusResponse, SetupJoinResponse } from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type AddressProbeState, precheckProbe, useAddressProbe } from './address-probe';

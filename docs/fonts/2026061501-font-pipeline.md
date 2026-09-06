@@ -31,8 +31,8 @@ bun run build:fonts
 
 ## 运行时接线
 
-- 字体产物归 `@tmex/theme` 所有；开源 FE 经相对 symlink `apps/fe/public/fonts → packages/theme/resources/fonts` 把它们挂到 `/fonts` 下，所以 URL 仍是 `/fonts/generated/<id>/…`。
-- `packages/theme/src/fonts/index.ts`：`resolveFontStack(id)` 由 manifest 派生 `主字体, NotoSansSymbols2Tmex, monospace`；`loadTerminalFonts(id, size)` 为非默认字体运行时注入 `@font-face` 并 `FontFaceSet.load` Regular/Bold（首屏只静态加载默认 Geist，避免一次拉全部）。
+- 字体产物归 `@vibeterm/theme` 所有；开源 FE 经相对 symlink `apps/fe/public/fonts → packages/theme/resources/fonts` 把它们挂到 `/fonts` 下，所以 URL 仍是 `/fonts/generated/<id>/…`。
+- `packages/theme/src/fonts/index.ts`：`resolveFontStack(id)` 由 manifest 派生 `主字体, NotoSansSymbols2VibeTerm, monospace`；`loadTerminalFonts(id, size)` 为非默认字体运行时注入 `@font-face` 并 `FontFaceSet.load` Regular/Bold（首屏只静态加载默认 Geist，避免一次拉全部）。
 - `apps/fe/src/lib/fonts/useAppMonoFont.ts`：挂应用根，把选中字体写到 `:root` 的 `--font-mono`，全应用所有 `font-mono` 文本统一跟随。
 - 字号 / 行高仅作用于终端（`useUIStore.terminalFontSize / terminalLineHeight`，经 `ghostty-terminal` 的 `fontSize` / `lineHeight` init option）。
 

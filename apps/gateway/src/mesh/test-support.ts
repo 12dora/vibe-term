@@ -4,8 +4,8 @@ import {
   generateX25519KeyPair,
   nodeIdToHex,
   randomBytes,
-} from '@tmex/shared/auth';
-import type { ServerSocketAdapter } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import type { ServerSocketAdapter } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import type { MeshIdentity, MeshScheduler } from './types';
 

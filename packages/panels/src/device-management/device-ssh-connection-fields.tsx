@@ -1,6 +1,6 @@
 // SSH 连接字段：主机、端口、用户名。
 
-import { Input } from '@tmex/ui/input';
+import { Input } from '@vibeterm/ui/input';
 import { useTranslation } from 'react-i18next';
 import {
   type DeviceFieldsProps,

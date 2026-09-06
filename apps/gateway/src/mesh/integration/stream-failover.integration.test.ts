@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 import {
   buildLogin,
   createDelegation,
@@ -11,7 +11,7 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   KeyLogStore,
   NodeIdentityStore,

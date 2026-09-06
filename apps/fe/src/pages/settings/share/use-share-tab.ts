@@ -6,9 +6,9 @@
 
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { createNodeApiClient } from '@tmex/api-client';
-import type { ShareSettings } from '@tmex/shared/share';
-import { useRuntime } from '@tmex/stores/react';
+import { createNodeApiClient } from '@vibeterm/api-client';
+import type { ShareSettings } from '@vibeterm/shared/share';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SETTINGS_STALE_MS } from '../data-prefetch';

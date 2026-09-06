@@ -7,9 +7,9 @@ import {
   loginErrorKey,
   loginErrorKeyFromException,
 } from '@/auth/login-errors';
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { WebAuthnError } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { WebAuthnError } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

@@ -2,7 +2,7 @@
 // 边界不是 root 而是 grant 绑定的那个目录——root 内的一条符号链接同样不允许写出去。
 
 import { realpathSync } from 'node:fs';
-import type { Device, FileErrorCode } from '@tmex/shared';
+import type { Device, FileErrorCode } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import type { FileRootRecord } from '../db/file-roots';
 import { checkAndNormalize } from '../files/device-storage';

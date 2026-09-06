@@ -1,7 +1,7 @@
-import { VersionTab } from '@tmex/panels/settings/version';
-import { I18N_MANIFEST, type LocaleCode } from '@tmex/shared';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { VersionTab } from '@vibeterm/panels/settings/version';
+import { I18N_MANIFEST, type LocaleCode } from '@vibeterm/shared';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SiteNameField, SiteUrlField } from './general-fields';

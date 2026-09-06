@@ -9,7 +9,7 @@
 // 「已卸载」与「过期响应」是两回事，分别判定：前者永不写状态（组件没了），
 // 后者只是被更新的一代取代。
 
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import { HubApiError, type HubNodeRow } from './hub-api';
 
 export type HubRequest = () => Promise<HubNodeRow[]>;

@@ -1,17 +1,17 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { EventType, WebhookEndpoint } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
+import { parseApiError } from '@vibeterm/api-client';
+import type { EventType, WebhookEndpoint } from '@vibeterm/shared';
+import { formatDateTime } from '@vibeterm/shared';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { useRuntime, useSiteStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import { useRuntime, useSiteStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 
 import { SETTINGS_STALE_MS } from './settings-query';
 

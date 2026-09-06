@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@vibeterm/shared';
 import { runMigrations } from '../db/migrate';
 import {
   CANONICAL_V11_REQUIRED_PREFIX,

@@ -4,8 +4,8 @@
 // 一台中继兼节点既是运营者也是租户，两者混在一起是原来那张卡最容易误读的地方。
 // 因此「接入本机中继」属于「连接」段（`uplink/uplink-section.tsx` 的 `SelfRelayEntry`），不在这里。
 
-import type { LocalRelayStatus } from '@tmex/api-client/local/types';
-import { Badge } from '@tmex/ui/badge';
+import type { LocalRelayStatus } from '@vibeterm/api-client/local/types';
+import { Badge } from '@vibeterm/ui/badge';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';

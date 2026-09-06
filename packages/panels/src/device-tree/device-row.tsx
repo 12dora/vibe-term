@@ -1,5 +1,5 @@
-import { cn } from '@tmex/ui';
-import { Collapsible, CollapsibleContent } from '@tmex/ui/collapsible';
+import { cn } from '@vibeterm/ui';
+import { Collapsible, CollapsibleContent } from '@vibeterm/ui/collapsible';
 import { memo } from 'react';
 import {
   useDeviceConnectionStatus,

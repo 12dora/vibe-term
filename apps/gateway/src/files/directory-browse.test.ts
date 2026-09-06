@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import type { BrowseDirectoryResponse, Device } from '@tmex/shared';
+import type { BrowseDirectoryResponse, Device } from '@vibeterm/shared';
 import { type DirectoryBrowseDeps, type SshExecResult, browseDirectory } from './directory-browse';
 import type { RsyncDeviceSpec } from './ssh-command';
 

@@ -3,10 +3,10 @@
 
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
-import type { ApiClient } from '@tmex/api-client';
-import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import type { MeshNotificationState } from '@tmex/shared';
+import type { ApiClient } from '@vibeterm/api-client';
+import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import type { MeshNotificationState } from '@vibeterm/shared';
 import { type ReactElement, useCallback, useMemo } from 'react';
 import { PLACEHOLDER_KDF } from '../nodes/management/types';
 import { submitMeshSinkToggle } from './mesh-sink-toggle';

@@ -1,15 +1,15 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { WeixinAccountWithStats } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import type { WeixinAccountWithStats } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { AlertTriangle, Pencil, QrCode, Send, Trash2 } from 'lucide-react';
 import { Suspense, lazy, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 
 import { ChatCommandsBadge } from './chat-commands-badge';
 

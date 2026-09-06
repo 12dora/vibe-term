@@ -1,6 +1,6 @@
 // node 标识（多 node 聚合视图的分节头用）。单 node / standalone 宿主没有分节头，也就不渲染它。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { Server } from 'lucide-react';
 
 export interface NodeBadgeInfo {

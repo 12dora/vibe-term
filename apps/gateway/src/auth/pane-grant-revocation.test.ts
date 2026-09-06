@@ -11,7 +11,7 @@ import {
   encodeRevokeNodePayload,
   type rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { agentPaneGrants } from '../db/schema';
 import { KeyLogStore } from './key-log-store';
 import { ensureNodeIdentity, selfSignedNodeCertificate } from './node-identity-service';

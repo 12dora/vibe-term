@@ -36,9 +36,9 @@ LLM Provider 与 Web 搜索（Tavily / Brave）的单元测试用打桩 upstream
 
 ```bash
 # 先把 test.env 注释里的实测键复制到 test.env.local 填真实值
-bun run --filter @tmex/gateway test:live:llm      # LLM：模型列表 + 真实 chat
-bun run --filter @tmex/gateway test:live:search   # 搜索：Tavily / Brave 任选其一
-bun run --filter @tmex/gateway test:live          # 全部
+bun run --filter @vibeterm/gateway test:live:llm      # LLM：模型列表 + 真实 chat
+bun run --filter @vibeterm/gateway test:live:search   # 搜索：Tavily / Brave 任选其一
+bun run --filter @vibeterm/gateway test:live          # 全部
 ```
 
 未填对应凭证时脚本以退出码 1 报错退出，并打印需要补哪个键。

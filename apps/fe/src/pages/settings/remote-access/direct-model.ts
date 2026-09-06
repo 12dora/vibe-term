@@ -1,7 +1,7 @@
 // 「直接连接」路径的纯推导：访问保护档位、启用本机登录的表单校验与错误码映射。
 // 与 React 无关，便于脱离 DOM 直接测。
 
-import type { LocalAuthStatus } from '@tmex/shared';
+import type { LocalAuthStatus } from '@vibeterm/shared';
 
 /**
  * 直连场景下这台机器的访问保护档位：

@@ -12,9 +12,9 @@ import type {
   MeshAttachedHub,
   MeshHubEndpoint,
   MeshHubsResponse,
-} from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
+} from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingTimingOptions,

@@ -54,22 +54,22 @@ function emitAllLevels(): void {
 }
 
 function withLogLevel<T>(level: string | undefined, fn: () => T): T {
-  const prev = process.env.TMEX_LOG_LEVEL;
+  const prev = process.env.VIBETERM_LOG_LEVEL;
   try {
-    if (level === undefined) delete process.env.TMEX_LOG_LEVEL;
-    else process.env.TMEX_LOG_LEVEL = level;
+    if (level === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+    else process.env.VIBETERM_LOG_LEVEL = level;
     return fn();
   } finally {
-    if (prev === undefined) delete process.env.TMEX_LOG_LEVEL;
-    else process.env.TMEX_LOG_LEVEL = prev;
+    if (prev === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+    else process.env.VIBETERM_LOG_LEVEL = prev;
   }
 }
 
 afterEach(() => {
-  delete process.env.TMEX_LOG_LEVEL;
+  delete process.env.VIBETERM_LOG_LEVEL;
 });
 
-describe('TMEX_LOG_LEVEL', () => {
+describe('VIBETERM_LOG_LEVEL', () => {
   test('parses error|warn|info|debug, defaults to info', () => {
     expect(parseLogLevel(undefined)).toBe(DEFAULT_LOG_LEVEL);
     expect(parseLogLevel('')).toBe('info');
@@ -105,7 +105,7 @@ describe('TMEX_LOG_LEVEL', () => {
     }
   });
 
-  test('unset TMEX_LOG_LEVEL behaves as info', () => {
+  test('unset VIBETERM_LOG_LEVEL behaves as info', () => {
     const captured = withLogLevel(undefined, () => {
       expect(getLogLevel()).toBe('info');
       return captureLogs(emitAllLevels);

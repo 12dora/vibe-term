@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { SiteSettings, WebhookEvent } from '@tmex/shared';
+import type { SiteSettings, WebhookEvent } from '@vibeterm/shared';
 import {
   EVENT_EMOJI,
   buildBellRawView,

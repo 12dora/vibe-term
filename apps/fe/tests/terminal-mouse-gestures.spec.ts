@@ -31,7 +31,7 @@ async function waitFeButtonTracking(page: Page): Promise<void> {
     .poll(
       () =>
         page.evaluate(() => {
-          const t = (window as any).__tmexE2eTerminal;
+          const t = (window as any).__vibetermE2eTerminal;
           return t?.exportModeSnapshot?.()?.mouseButton ?? false;
         }),
       { timeout: 15_000 }
@@ -91,7 +91,7 @@ test('desktop: shift+left drag bypasses reporting into local selection', async (
       .poll(
         () =>
           page.evaluate(() => {
-            const t = (window as any).__tmexE2eTerminal;
+            const t = (window as any).__vibetermE2eTerminal;
             return t?.getSelection?.() ?? '';
           }),
         { timeout: 5_000 }
@@ -131,7 +131,7 @@ test('desktop: bare hover motion reaches TUI under 1003 any-event tracking', asy
       .poll(
         () =>
           page.evaluate(() => {
-            const t = (window as any).__tmexE2eTerminal;
+            const t = (window as any).__vibetermE2eTerminal;
             return t?.exportModeSnapshot?.()?.mouseAny ?? false;
           }),
         { timeout: 15_000 }

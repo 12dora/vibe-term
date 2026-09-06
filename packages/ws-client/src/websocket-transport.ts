@@ -1,6 +1,6 @@
 // 基于 BorshWebSocketClient 的 gateway transport：把连接事件与 S2C 帧翻译成 typed 事件流。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { CanonicalStateClient } from './canonical-state-client';
 import {
   clonePendingCommand,

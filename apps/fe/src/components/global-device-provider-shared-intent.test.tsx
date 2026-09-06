@@ -6,20 +6,20 @@
 // 建模：断言的是 provider 暴露出来的连接意图与调用序列，而不是 React 的调度细节。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type {
   ConnectionState,
   GatewayTransport,
   GatewayTransportCommand,
   GatewayTransportEvent,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 
 installWindowStorage();
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { createAppRuntime } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { createAppRuntime } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { GlobalDeviceProvider, useGlobalDevice } = await import('./global-device-provider');

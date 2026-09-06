@@ -19,9 +19,9 @@ x-tmex-node: &tmex-node
   cap_add:
     - NET_ADMIN
   extra_hosts:
-    - "${TMEX_E2E_HUB_HOST:-ai.example.com}:${TMEX_E2E_HUB_IP:-4.2.2.1}"
+    - "${VIBETERM_E2E_HUB_HOST:-ai.example.com}:${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
   environment:
-    NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+    NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
 
 services:
   node-a:
@@ -29,12 +29,12 @@ services:
     container_name: tmex-split-node-a
     hostname: node-a
     environment:
-      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
-      TMEX_INSTANCE: node-a
-      TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
-      TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
-      TMEX_E2E_TURN_USERNAME: ${TMEX_E2E_TURN_USERNAME:-tmex}
-      TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+      VIBETERM_INSTANCE: node-a
+      VIBETERM_E2E_STUN_SERVERS: ${VIBETERM_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
+      VIBETERM_E2E_TURN_URL: ${VIBETERM_E2E_TURN_URL:-}
+      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-tmex}
+      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
     volumes:
       - node-a-data:/var/lib/tmex
       - ../ca/ca.crt:/ca/ca.crt:ro
@@ -46,12 +46,12 @@ services:
     container_name: tmex-split-node-b
     hostname: node-b
     environment:
-      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
-      TMEX_INSTANCE: node-b
-      TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
-      TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
-      TMEX_E2E_TURN_USERNAME: ${TMEX_E2E_TURN_USERNAME:-tmex}
-      TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+      VIBETERM_INSTANCE: node-b
+      VIBETERM_E2E_STUN_SERVERS: ${VIBETERM_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
+      VIBETERM_E2E_TURN_URL: ${VIBETERM_E2E_TURN_URL:-}
+      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-tmex}
+      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
     volumes:
       - node-b-data:/var/lib/tmex
       - ../ca/ca.crt:/ca/ca.crt:ro
@@ -66,12 +66,12 @@ services:
     working_dir: /workspace
     entrypoint: ["sleep", "infinity"]
     extra_hosts:
-      - "${TMEX_E2E_HUB_HOST:-ai.example.com}:${TMEX_E2E_HUB_IP:-4.2.2.1}"
+      - "${VIBETERM_E2E_HUB_HOST:-ai.example.com}:${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
     environment:
-      NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+      NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
     volumes:
       - ./out:/out
-      - ${TMEX_REPO_ROOT:-../../..}:/workspace:ro
+      - ${VIBETERM_REPO_ROOT:-../../..}:/workspace:ro
       - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-a

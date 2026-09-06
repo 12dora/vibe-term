@@ -19,9 +19,9 @@
     "baseUrl": ".",
     "paths": {
       "@/*": ["src/*"],
-      "@tmex/shared": ["../../packages/shared/src"],
-      "@tmex/ui": ["../../packages/ui/src"],
-      "@tmex/ui/*": ["../../packages/ui/src/components/*"]
+      "@vibeterm/shared": ["../../packages/shared/src"],
+      "@vibeterm/ui": ["../../packages/ui/src"],
+      "@vibeterm/ui/*": ["../../packages/ui/src/components/*"]
     }
   },
   "include": ["src"],

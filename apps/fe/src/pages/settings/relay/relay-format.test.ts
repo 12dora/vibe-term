@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
+import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
 import {
   bandwidthText,
   bytesToKb,

@@ -1,7 +1,7 @@
 // 一次 select-pane 的下发：归一化尺寸后发命令。
 // 从 tmux-selection-actions 的工厂里拆出来，保持那边只做状态面与生命周期编排。
 
-import { generateSelectToken } from '@tmex/ws-client';
+import { generateSelectToken } from '@vibeterm/ws-client';
 import type { RuntimeCore } from './runtime';
 
 export interface SelectPaneRequest {

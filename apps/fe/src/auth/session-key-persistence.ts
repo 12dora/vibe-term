@@ -9,7 +9,7 @@
 //   * `k_totp` 与一次性 TOTP 码**绝不写盘**；delegation 的 18 小时 TTL 就是这份记录的上限。
 //   * 任何一步失败（隐私模式、配额、被其它 tab 阻塞）都退化成纯内存，绝不把异常抛给 UI。
 
-import type { Delegation } from '@tmex/shared/auth';
+import type { Delegation } from '@vibeterm/shared/auth';
 import type { SessionKeyInfo } from './session-key-store';
 
 const DB_NAME = 'tmex-auth';

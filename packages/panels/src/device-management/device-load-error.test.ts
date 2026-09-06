@@ -1,7 +1,7 @@
 // 设备列表加载失败的分类与文案 key。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiError, NODE_UNREACHABLE } from '@tmex/api-client';
+import { ApiError, NODE_UNREACHABLE } from '@vibeterm/api-client';
 import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
 
 const NODE_ID = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';

@@ -4,7 +4,7 @@ import {
   type UpgradeState,
   type UpgradeStatus,
   compareSemver,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';

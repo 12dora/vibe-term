@@ -17,7 +17,7 @@
 // 就地登出会抽掉整棵子树再静默登回来，表现为设备卡片闪断。
 
 import { isCredentialFailure } from '@/auth/login-errors';
-import { SELF_NODE_ID, isNodeLoginRequiredError } from '@tmex/api-client';
+import { SELF_NODE_ID, isNodeLoginRequiredError } from '@vibeterm/api-client';
 import { markLoggedOut } from './mesh-nodes';
 
 export type NodeSessionRecoveryOutcome =

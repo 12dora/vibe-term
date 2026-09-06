@@ -4,8 +4,8 @@
 // get-put-delete，值走真正的 `structuredClone`，所以不可导出 CryptoKey 的往返是真的）。
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import { AuthApi, type MeshNode } from '@tmex/api-client/auth/index';
+import { ApiClient } from '@vibeterm/api-client';
+import { AuthApi, type MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   createDelegation,
   decodeBase64url,
@@ -16,7 +16,7 @@ import {
   generateWebCryptoEd25519KeyPair,
   rootKeyFromSeed,
   verifyLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   PERSISTED_SESSION_VERSION,
   type PersistedSession,

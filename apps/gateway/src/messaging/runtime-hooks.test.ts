@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type StateSnapshotPayload, rolesFromName } from '@tmex/shared';
+import { type StateSnapshotPayload, rolesFromName } from '@vibeterm/shared';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,

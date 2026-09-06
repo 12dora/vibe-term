@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 
-import type { WatchRuleStateDto } from '@tmex/shared';
+import type { WatchRuleStateDto } from '@vibeterm/shared';
 import type { WatchQueryStatus } from './use-watch-rules';
 import {
   WatchRuleStatePanel,

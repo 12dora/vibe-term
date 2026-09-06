@@ -2,9 +2,9 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 NodesPage 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

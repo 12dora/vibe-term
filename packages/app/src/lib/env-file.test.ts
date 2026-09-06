@@ -35,15 +35,15 @@ describe('env-file', () => {
 
   test('mergeMissingKeys only adds absent keys', () => {
     const { next, added } = mergeMissingKeys(
-      { TMEX_ROLES: 'node', GATEWAY_PORT: '9883' },
+      { VIBETERM_ROLES: 'node', GATEWAY_PORT: '9883' },
       hubEnvDefaults()
     );
-    expect(next.TMEX_ROLES).toBe('node');
-    expect(next.TMEX_HUB_URL).toBe('');
-    expect(next.TMEX_PEER_PORT).toBe('39001');
-    expect(next.TMEX_STUN_SERVERS).toContain('stun:stun.l.google.com:19302');
-    expect(added).toContain('TMEX_HUB_URL');
-    expect(added).not.toContain('TMEX_ROLES');
+    expect(next.VIBETERM_ROLES).toBe('node');
+    expect(next.VIBETERM_HUB_URL).toBe('');
+    expect(next.VIBETERM_PEER_PORT).toBe('39001');
+    expect(next.VIBETERM_STUN_SERVERS).toContain('stun:stun.l.google.com:19302');
+    expect(added).toContain('VIBETERM_HUB_URL');
+    expect(added).not.toContain('VIBETERM_ROLES');
   });
 
   test('writeEnvFile replaces via temp file then rename', async () => {
@@ -201,21 +201,21 @@ describe('env-file', () => {
     const dir = await mkdtemp(join(tmpdir(), 'tmex-env-'));
     try {
       const path = join(dir, 'app.env');
-      await writeEnvFile(path, { TMEX_MASTER_KEY: 'k', GATEWAY_PORT: '9883' });
+      await writeEnvFile(path, { VIBETERM_MASTER_KEY: 'k', GATEWAY_PORT: '9883' });
       const added = await mergeMissingEnvFileKeys(path, hubEnvDefaults());
       expect(added.sort()).toEqual(
         [
-          'TMEX_HUB_PUBLIC_URL',
-          'TMEX_HUB_URL',
-          'TMEX_PEER_PORT',
-          'TMEX_ROLES',
-          'TMEX_STUN_SERVERS',
+          'VIBETERM_HUB_PUBLIC_URL',
+          'VIBETERM_HUB_URL',
+          'VIBETERM_PEER_PORT',
+          'VIBETERM_ROLES',
+          'VIBETERM_STUN_SERVERS',
         ].sort()
       );
       const env = await readEnvFile(path);
-      expect(env.TMEX_MASTER_KEY).toBe('k');
+      expect(env.VIBETERM_MASTER_KEY).toBe('k');
       expect(env.GATEWAY_PORT).toBe('9883');
-      expect(env.TMEX_ROLES).toBe('standalone');
+      expect(env.VIBETERM_ROLES).toBe('standalone');
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

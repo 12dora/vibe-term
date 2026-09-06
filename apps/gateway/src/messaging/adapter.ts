@@ -1,4 +1,4 @@
-import { type CommandResult, type MessagingPlatform, chunkText } from '@tmex/shared/messaging';
+import { type CommandResult, type MessagingPlatform, chunkText } from '@vibeterm/shared/messaging';
 
 export interface MessagingAdapter {
   platform: MessagingPlatform;

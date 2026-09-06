@@ -1,6 +1,6 @@
 // 面板可选的根目录，以及发送按钮的文案。两处都是纯函数，无 DOM 单测直接对它断言。
 
-import { type FileRootDto, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { type FileRootDto, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 
 import type { DialogNodeOption } from '../dialog-nodes';
 

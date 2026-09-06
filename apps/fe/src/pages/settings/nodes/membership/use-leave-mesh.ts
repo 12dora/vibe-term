@@ -6,11 +6,11 @@
 
 import { beginAuthTransition, endAuthTransition } from '@/auth/auth-transition';
 import { decodeRootPublicKey, useCredentialPrompt, usePasskeys } from '@/auth/credential-prompt';
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { LocalApiError } from '@tmex/api-client/local/local-api';
-import { errorMessage } from '@tmex/shared';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { LocalApiError } from '@vibeterm/api-client/local/local-api';
+import { errorMessage } from '@vibeterm/shared';
 import type { ReactElement } from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

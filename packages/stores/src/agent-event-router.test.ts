@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { NotificationSink } from '@tmex/notifications';
-import type { AgentSessionDto } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { NotificationSink } from '@vibeterm/notifications';
+import type { AgentSessionDto } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';
 import { type AgentEventContext, dispatchAgentEvent } from './agent-event-router';
 import type { AgentHistorySync } from './agent-history-sync';

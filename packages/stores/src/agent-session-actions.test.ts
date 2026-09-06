@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ApiClient, type FetchLike } from '@tmex/api-client';
-import { noopNotificationSink } from '@tmex/notifications';
-import type { AgentSessionDto } from '@tmex/shared';
+import { ApiClient, type FetchLike } from '@vibeterm/api-client';
+import { noopNotificationSink } from '@vibeterm/notifications';
+import type { AgentSessionDto } from '@vibeterm/shared';
 import type { AgentHistorySync } from './agent-history-sync';
 import { activeSessionIdOnNode, draftOnNode, isDraftMaterializingOnNode } from './agent-node-state';
 import { createAgentSessionActions, sortSessionOrder } from './agent-session-actions';

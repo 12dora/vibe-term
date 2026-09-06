@@ -1,9 +1,9 @@
 import { getMeshRequestContext } from './mesh-deps';
 
-export const X_TMEX_MESH_PEER = 'x-tmex-mesh-peer';
+export const X_VIBETERM_MESH_PEER = 'x-tmex-mesh-peer';
 
 export function readMeshPeerMarker(req: Request): string | null {
-  const raw = req.headers.get(X_TMEX_MESH_PEER)?.trim() ?? '';
+  const raw = req.headers.get(X_VIBETERM_MESH_PEER)?.trim() ?? '';
   return raw || null;
 }
 
@@ -11,7 +11,7 @@ export function attachMeshPeerMarker(
   headers: Record<string, string>,
   fromNodeId: string
 ): Record<string, string> {
-  return { ...headers, [X_TMEX_MESH_PEER]: fromNodeId };
+  return { ...headers, [X_VIBETERM_MESH_PEER]: fromNodeId };
 }
 
 export function isPeerInboundRequest(req: Request): boolean {
@@ -19,12 +19,12 @@ export function isPeerInboundRequest(req: Request): boolean {
 }
 
 export function stripMeshPeerMarkerFromRequest(req: Request): Request {
-  if (!req.headers.has(X_TMEX_MESH_PEER)) {
+  if (!req.headers.has(X_VIBETERM_MESH_PEER)) {
     return req;
   }
   const headers = new Headers();
   req.headers.forEach((value, key) => {
-    if (key.toLowerCase() !== X_TMEX_MESH_PEER) {
+    if (key.toLowerCase() !== X_VIBETERM_MESH_PEER) {
       headers.append(key, value);
     }
   });

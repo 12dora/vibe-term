@@ -15,7 +15,7 @@ import {
   randomBytes,
   sha256,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';

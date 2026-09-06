@@ -26,8 +26,8 @@ async function openAuth(): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: 'standalone',
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: 'standalone',
     },
   });
   authHandles.push(ctx);
@@ -321,9 +321,9 @@ describe('POST /api/setup/join', () => {
       'env_write_failed'
     );
     expect((body as { error: { message: string } }).error.message).toMatch(/joined locally/);
-    expect((body as { error: { message: string } }).error.message).toContain('TMEX_ROLES=node');
+    expect((body as { error: { message: string } }).error.message).toContain('VIBETERM_ROLES=node');
     expect((body as { error: { message: string } }).error.message).toContain(
-      'TMEX_HUB_URL=https://hub.example.com'
+      'VIBETERM_HUB_URL=https://hub.example.com'
     );
     expect(restarts).toEqual([]);
   });

@@ -3,7 +3,7 @@
 // 两个表单只在「校验哪些字段、调哪个 setup 端点、成功文案」上不同，其余顺序完全一致。
 // 顺序本身是契约的一部分（见 submit.ts：先读 startedAt 再调端点），所以整段收在这里。
 
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 import { type FormEvent, useEffect, useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

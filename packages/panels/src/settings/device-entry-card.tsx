@@ -2,8 +2,8 @@ import { Monitor } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 
-import { buttonVariants } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { buttonVariants } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 
 export function DeviceEntryCard() {
   const { t } = useTranslation();

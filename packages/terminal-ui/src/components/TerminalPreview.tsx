@@ -1,6 +1,6 @@
-import { useUIStore } from '@tmex/stores/react';
-import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@tmex/theme';
-import { cn } from '@tmex/ui';
+import { useUIStore } from '@vibeterm/stores/react';
+import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@vibeterm/theme';
+import { cn } from '@vibeterm/ui';
 import { FitAddon, createTerminalController } from 'ghostty-terminal';
 import { useEffect, useMemo, useRef } from 'react';
 import { useLatestRef } from './hooks/useLatestRef';

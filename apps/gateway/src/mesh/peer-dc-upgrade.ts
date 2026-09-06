@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs, isRecord } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';

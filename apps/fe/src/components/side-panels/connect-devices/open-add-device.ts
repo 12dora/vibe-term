@@ -9,7 +9,7 @@ import {
   getAddDeviceTargets,
   subscribeAddDeviceTargets,
 } from '@/pages/devices/add-device-targets';
-import type { AddDevicePreset } from '@tmex/panels/device-management';
+import type { AddDevicePreset } from '@vibeterm/panels/device-management';
 
 export interface AddDeviceTargetSource {
   get: () => readonly AddDeviceTarget[];

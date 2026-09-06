@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import { MESH_NOTIFICATION_ROUTE, type MeshNotificationState } from '@tmex/shared';
+import { MESH_NOTIFICATION_ROUTE, type MeshNotificationState } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { getDb as getOrmDb } from '../db/client';
 import { setMeshNotificationBridge } from '../mesh/notification-mesh-bridge';

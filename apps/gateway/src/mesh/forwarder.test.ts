@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { type NodeUnreachableReason, wsBorsh } from '@tmex/shared';
-import { LinkError, type LinkSession } from '@tmex/shared/link';
+import { type NodeUnreachableReason, wsBorsh } from '@vibeterm/shared';
+import { LinkError, type LinkSession } from '@vibeterm/shared/link';
 import {
   FakePeers,
   FakeStreams,
@@ -30,12 +30,12 @@ import {
   STREAM_QUEUE_MAX_BYTES,
   STREAM_QUEUE_MAX_FRAMES,
   STREAM_QUEUE_OVERFLOW_REASON,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SET_SESSION,
   isMeshRewritten,
   setMeshRequestContext,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
-import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
+import { X_VIBETERM_CLEAR_SHARE, X_VIBETERM_SET_SHARE, X_VIBETERM_SET_SHARE_MAX_AGE } from './share-credential';
 import { SHARE_LOGIN_MAX_FAILURES } from './share-login-quota';
 import { waitUntil } from './test-support';
 import { NodeUnreachableError, PeerHandshakeError } from './types';
@@ -440,7 +440,7 @@ describe('forwarder', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        [X_TMEX_SET_SESSION]: 'sessidvalue;64800',
+        [X_VIBETERM_SET_SESSION]: 'sessidvalue;64800',
       },
     });
     const mesh = await bootMesh({ peers, streams });
@@ -459,7 +459,7 @@ describe('forwarder', () => {
       expect(cookie).toContain(`tmex_s_${OTHER}=sessidvalue`);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('Max-Age=64800');
-      expect(res.headers.get(X_TMEX_SET_SESSION)).toBeNull();
+      expect(res.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
       expect(streams.lastOpen?.auth).toBeNull();
     } finally {
       mesh.close();
@@ -1052,7 +1052,7 @@ describe('forwarder', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        [X_TMEX_SET_SESSION]: ';0',
+        [X_VIBETERM_SET_SESSION]: ';0',
       },
     });
     const mesh = await bootMesh({ peers, streams });
@@ -1066,7 +1066,7 @@ describe('forwarder', () => {
       const cookie = res.headers.get('set-cookie') ?? '';
       expect(cookie).toContain(`tmex_s_${OTHER}=`);
       expect(cookie).toContain('Max-Age=0');
-      expect(res.headers.get(X_TMEX_SET_SESSION)).toBeNull();
+      expect(res.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
     } finally {
       mesh.close();
     }
@@ -2073,7 +2073,7 @@ describe('forwardAuthorizedHttp', () => {
 
 describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
   test('streams a 3 MiB request body through link flow control', async () => {
-    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { createInMemoryLinkPair } = await import('@vibeterm/shared/link');
     const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
     const [local, remote] = createInMemoryLinkPair();
     let received = 0;
@@ -2150,7 +2150,7 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
     const { mkdtempSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { createInMemoryLinkPair } = await import('@vibeterm/shared/link');
     const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
     const { UpgradeController } = await import('../system/upgrade');
     const installDir = mkdtempSync(join(tmpdir(), 'tmex-fwd-413-'));
@@ -2551,8 +2551,8 @@ describe('forwarder 分享凭证', () => {
       streams.nextResponse = new Response(JSON.stringify({ ok: true }), {
         headers: {
           'content-type': 'application/json',
-          [X_TMEX_SET_SHARE]: SHARE_TOKEN,
-          [X_TMEX_SET_SHARE_MAX_AGE]: '86400',
+          [X_VIBETERM_SET_SHARE]: SHARE_TOKEN,
+          [X_VIBETERM_SET_SHARE_MAX_AGE]: '86400',
         },
       });
       const res = asResponse(
@@ -2568,11 +2568,11 @@ describe('forwarder 分享凭证', () => {
       const cookie = res.headers.get('set-cookie') ?? '';
       expect(cookie).toContain(`tmex_sh_${OTHER}=${SHARE_TOKEN}`);
       expect(cookie).toContain('Max-Age=86400');
-      expect(res.headers.get(X_TMEX_SET_SHARE)).toBeNull();
-      expect(res.headers.get(X_TMEX_SET_SHARE_MAX_AGE)).toBeNull();
+      expect(res.headers.get(X_VIBETERM_SET_SHARE)).toBeNull();
+      expect(res.headers.get(X_VIBETERM_SET_SHARE_MAX_AGE)).toBeNull();
 
       streams.nextResponse = new Response('{}', {
-        headers: { 'content-type': 'application/json', [X_TMEX_CLEAR_SHARE]: '1' },
+        headers: { 'content-type': 'application/json', [X_VIBETERM_CLEAR_SHARE]: '1' },
       });
       const out = asResponse(
         await mesh.runtime.handleRequest(
@@ -2585,7 +2585,7 @@ describe('forwarder 分享凭证', () => {
         )
       );
       expect(out.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
-      expect(out.headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
+      expect(out.headers.get(X_VIBETERM_CLEAR_SHARE)).toBeNull();
     } finally {
       mesh.close();
     }

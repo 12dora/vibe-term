@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { NodeUnreachableReason } from '@tmex/shared';
-import { LinkError } from '@tmex/shared/link';
+import type { NodeUnreachableReason } from '@vibeterm/shared';
+import { LinkError } from '@vibeterm/shared/link';
 import {
   classifyUnreachableReason,
   nodeUnreachableResponse,

@@ -154,7 +154,7 @@ tmex_install "$@"
       ...process.env,
       PATH: `${bin}:${process.env.PATH ?? ''}`,
       TMPDIR: root,
-      TMEX_VERSION: opts.version,
+      VIBETERM_VERSION: opts.version,
       FAKE_CURL_TGZ: tgzSrc,
       FAKE_CURL_SUMS_CODE: opts.sumsCode,
       FAKE_CURL_SUMS_BODY_FILE: sumsFile,
@@ -239,14 +239,14 @@ HDR
     expect(result.stdout.trim()).toBe('ok');
   });
 
-  test('tmex_resolve_version validates TMEX_VERSION', () => {
-    const ok = sourceEval('tmex_resolve_version', 'TMEX_VERSION=v1.2.3');
+  test('tmex_resolve_version validates VIBETERM_VERSION', () => {
+    const ok = sourceEval('tmex_resolve_version', 'VIBETERM_VERSION=v1.2.3');
     expect(ok.status).toBe(0);
     expect(ok.stdout.trim()).toBe('1.2.3');
 
-    const bad = sourceEval('tmex_resolve_version', 'TMEX_VERSION=../etc/passwd');
+    const bad = sourceEval('tmex_resolve_version', 'VIBETERM_VERSION=../etc/passwd');
     expect(bad.status).not.toBe(0);
-    expect(bad.stderr).toMatch(/invalid TMEX_VERSION/i);
+    expect(bad.stderr).toMatch(/invalid VIBETERM_VERSION/i);
   });
 
   test('tmex_node_version_ok requires major >= 20', () => {

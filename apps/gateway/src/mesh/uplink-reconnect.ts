@@ -1,4 +1,4 @@
-import type { ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
+import type { ServerSocketAdapter, WebSocketTransportInput } from '@vibeterm/shared/link';
 import { UPLINK_CTL_TYPES } from './uplink-protocol';
 
 function stripCtlControlChars(text: string): string {

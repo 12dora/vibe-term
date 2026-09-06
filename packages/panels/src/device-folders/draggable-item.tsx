@@ -7,7 +7,7 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { GripVertical } from 'lucide-react';
 import { type ReactNode, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

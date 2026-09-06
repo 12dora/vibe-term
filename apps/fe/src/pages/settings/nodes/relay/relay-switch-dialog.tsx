@@ -1,7 +1,7 @@
 // 切换中继的确认框。切换本身无损（make-before-break），但它改的是本机全部会话的走向，
 // 所以仍要一次确认，并说清「只影响本机」。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { relayLabel } from './relay-rows';

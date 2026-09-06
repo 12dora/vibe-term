@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import { diffSnapshotClosures } from './snapshot-diff';
 
 function makePane(id: string, windowId: string, index = 0, title = `title-${id}`): TmuxPane {

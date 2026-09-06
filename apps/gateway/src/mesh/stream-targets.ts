@@ -1,11 +1,11 @@
-import { wsBorsh } from '@tmex/shared';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import { wsBorsh } from '@vibeterm/shared';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { parseOpenPayload } from './peer-protocol';
-import { X_TMEX_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
+import { X_VIBETERM_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
   authResponseHeaders,
@@ -29,7 +29,7 @@ const BLOCKED_REQUEST_HEADERS = new Set([
   'connection',
   'upgrade',
   'x-tmex-via',
-  X_TMEX_MESH_PEER,
+  X_VIBETERM_MESH_PEER,
 ]);
 
 function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {

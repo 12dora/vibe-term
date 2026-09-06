@@ -1,8 +1,8 @@
 // `/mesh/ws` 帧解码与重连退避。
 
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { wsBorsh } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import {
   type EnrollRedeemedPayload,
   KIND_ENROLL_REDEEMED,

@@ -2,8 +2,8 @@
 // 所以只能靠「上次成功取到的站点语言缓存」+ 浏览器语言列表来定。
 // 二者都拿不到才回落 manifest 默认语言。Web 与 PWA 走同一条路径，不看 display-mode。
 
-import { DEFAULT_LOCALE, type LocaleCode } from '@tmex/shared';
-import { readCachedSiteLanguage } from '@tmex/stores/site-language-cache';
+import { DEFAULT_LOCALE, type LocaleCode } from '@vibeterm/shared';
+import { readCachedSiteLanguage } from '@vibeterm/stores/site-language-cache';
 
 const LANGUAGE_PREFIXES: ReadonlyArray<readonly [string, LocaleCode]> = [
   ['zh', 'zh_CN'],

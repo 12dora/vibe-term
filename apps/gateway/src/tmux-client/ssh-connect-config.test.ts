@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { AgentAuthMethod, PublicKeyAuthMethod } from 'ssh2';
 
 import { resolveSshConnectConfig } from './ssh-connect-config';

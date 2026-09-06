@@ -49,8 +49,8 @@ export {
 } from './carrier-switch';
 
 // 直连（WebRTC）栈**不**从这里导出：整棵 RTC 栈约 19 KB gz，一旦进主 barrel 就钉死在
-// 首屏入口 chunk。宿主按需 `import('@tmex/ws-client/direct')`，轻量诊断契约走
-// `@tmex/ws-client/direct/types`。
+// 首屏入口 chunk。宿主按需 `import('@vibeterm/ws-client/direct')`，轻量诊断契约走
+// `@vibeterm/ws-client/direct/types`。
 
 export {
   WebSocketGatewayTransport,

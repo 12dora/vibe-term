@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 /** 未就绪待发队列的缺省字节预算：足够一次大粘贴，仍有上限。 */
 export const DEFAULT_MAX_PENDING_BYTES = 2 * 1024 * 1024;

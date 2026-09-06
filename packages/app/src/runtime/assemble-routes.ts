@@ -36,7 +36,7 @@ import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import type { TmexRoles } from '../lib/roles';
+import type { VibeTermRoles } from '../lib/roles';
 import { AcmeHttp01Challenge } from '../tls/acme-challenge';
 import { HttpsListener } from '../tls/https-listener';
 import { TlsService } from '../tls/tls-service';
@@ -86,7 +86,7 @@ export type HttpAndWs = {
 };
 
 function createRouteAuthenticate(
-  roles: TmexRoles,
+  roles: VibeTermRoles,
   nodeSessionStore: NodeSessionStore,
   localAuthEffective: () => boolean
 ): LocalRouteDeps['authenticate'] {
@@ -246,7 +246,7 @@ function buildTlsLifecycle(
       }
       await writeEnvFile(envPath, {
         ...existing,
-        TMEX_TRUST_PROXY: trustProxy ? 'true' : 'false',
+        VIBETERM_TRUST_PROXY: trustProxy ? 'true' : 'false',
       });
     });
   });
@@ -254,7 +254,7 @@ function buildTlsLifecycle(
     const envPath = resolveSetupEnvPath();
     try {
       const existing = await readEnvFile(envPath);
-      const raw = existing.TMEX_TRUST_PROXY;
+      const raw = existing.VIBETERM_TRUST_PROXY;
       if (raw === undefined) return null;
       const value = raw.trim().toLowerCase();
       return value === '1' || value === 'true' || value === 'yes';
@@ -292,7 +292,7 @@ function wsAuthFrom(http: MeshHttpRuntime | null): GatewayWsAuth | null {
 }
 
 export function buildLocalRouteDeps(input: {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   auth: LocalAuthContext;
   mesh: MeshRuntime | null;
   hub: HubRuntime | null;

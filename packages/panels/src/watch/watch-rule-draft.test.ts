@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { CreateWatchRuleRequest, WatchRuleDto } from '@tmex/shared';
+import type { CreateWatchRuleRequest, WatchRuleDto } from '@vibeterm/shared';
 import {
   TRIGGER_TYPES,
   type WatchRuleDraft,

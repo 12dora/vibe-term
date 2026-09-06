@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { type InboundReplayNote, StreamReplayState } from './stream-replay-state';
 
 function encodeDeviceConnect(deviceId: string): Uint8Array {

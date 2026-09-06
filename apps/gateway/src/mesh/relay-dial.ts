@@ -1,5 +1,5 @@
-import { hubHostFromUrl } from '@tmex/shared/auth';
-import { parseTmexRoles, resolveGatewayPort } from '../config';
+import { hubHostFromUrl } from '@vibeterm/shared/auth';
+import { parseVibeTermRoles, resolveGatewayPort } from '../config';
 
 export type RelayDialContext = {
   roles: { relay: boolean };
@@ -25,9 +25,9 @@ export function relayDialContextFromRuntime(input: {
 export function relayDialContextFromEnv(env: NodeJS.ProcessEnv = process.env): RelayDialContext {
   let roles = { relay: false };
   try {
-    roles = parseTmexRoles(env.TMEX_ROLES);
+    roles = parseVibeTermRoles(env.VIBETERM_ROLES);
   } catch {
-    /* 非法 TMEX_ROLES：不当成本机中继，不改写拨号 */
+    /* 非法 VIBETERM_ROLES：不当成本机中继，不改写拨号 */
   }
   let gatewayPort = 0;
   try {
@@ -37,7 +37,7 @@ export function relayDialContextFromEnv(env: NodeJS.ProcessEnv = process.env): R
   }
   return relayDialContextFromRuntime({
     roles,
-    relayPublicUrl: env.TMEX_RELAY_PUBLIC_URL,
+    relayPublicUrl: env.VIBETERM_RELAY_PUBLIC_URL,
     gatewayPort,
   });
 }
@@ -60,7 +60,7 @@ export function relayTlsCaForDial(
 
 /**
  * `relay,node` 本机接入自己的中继时，把公网 URL 改写成回环，避开 hairpin NAT。
- * 认证签名仍绑定 `TMEX_RELAY_PUBLIC_URL` 的 host，这里只改拨号地址。
+ * 认证签名仍绑定 `VIBETERM_RELAY_PUBLIC_URL` 的 host，这里只改拨号地址。
  */
 export function resolveRelayDialUrl(url: string, ctx: RelayDialContext): string {
   if (!ctx.roles.relay) return url;

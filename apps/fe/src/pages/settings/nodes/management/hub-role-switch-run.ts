@@ -1,6 +1,6 @@
 // Hub 主备切换的状态机与断点续跑：只依赖 `HubRoleIo` 这一层接缝，不碰 React 与网络实现。
 
-import type { HubRoleRequest } from '@tmex/shared';
+import type { HubRoleRequest } from '@vibeterm/shared';
 import {
   type AdmitHubOutcome,
   HUB_ROLE_AUTH_TIMEOUT_MS,

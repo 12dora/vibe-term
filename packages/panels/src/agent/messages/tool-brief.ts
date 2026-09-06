@@ -1,6 +1,6 @@
 // 工具调用的纯文本摘要：按 toolName 查表，未知工具回退到 input 序列化。
 
-import type { UiToolCall } from '@tmex/stores';
+import type { UiToolCall } from '@vibeterm/stores';
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);

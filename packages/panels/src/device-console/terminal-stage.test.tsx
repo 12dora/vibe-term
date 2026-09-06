@@ -4,11 +4,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { I18N_RESOURCES, type TmuxPane, type TmuxWindow } from '@tmex/shared';
-import { createAppRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
-import { resolveTerminalTheme } from '@tmex/theme';
+import { I18N_RESOURCES, type TmuxPane, type TmuxWindow } from '@vibeterm/shared';
+import { createAppRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import { resolveTerminalTheme } from '@vibeterm/theme';
 import i18next from 'i18next';
 import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

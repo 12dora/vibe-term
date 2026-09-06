@@ -1,11 +1,11 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   type RelayCtlMessage,
   type RelayKickReason,
   type RelayQuota,
   type RelayRtcConfig,
   relaySeqFromWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { stamp } from './mesh-log';
 import type { RelayKeyLogSync } from './relay-key-log-sync';

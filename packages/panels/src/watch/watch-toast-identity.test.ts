@@ -2,8 +2,8 @@
 // 否则同一次触发会弹两条 toast。这里把两边的字段来源摆在一起对齐。
 
 import { describe, expect, test } from 'bun:test';
-import { toastDedupeKey } from '@tmex/notifications';
-import { wsBorsh } from '@tmex/shared';
+import { toastDedupeKey } from '@vibeterm/notifications';
+import { wsBorsh } from '@vibeterm/shared';
 import { watchToastIdentity } from './watch-events-init';
 
 const NODE_B = 'bb'.repeat(16);

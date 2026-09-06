@@ -1,4 +1,4 @@
-import type { wsBorsh } from '@tmex/shared';
+import type { wsBorsh } from '@vibeterm/shared';
 
 import type {
   DeviceSessionRuntime,

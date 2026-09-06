@@ -2,9 +2,9 @@
 // 回灌 effect（useRemotePaneSize）必须排在 select 派发与 active 跟随之后：它可能触发
 // fetchPaneHistory，提前会让 history 请求越过同一次提交里的 TMUX_SELECT。
 
-import type { TmuxPane } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import type { TmuxPane } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback, useEffect, useState } from 'react';
 import type { PaneSelectionRefs } from './use-pane-selection-state';
 import { useRemotePaneSize } from './use-remote-pane-size';

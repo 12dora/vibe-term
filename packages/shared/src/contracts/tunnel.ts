@@ -235,7 +235,7 @@ export interface TunnelStatusResponse {
   exposureProtected: boolean;
   /** 进行中或最近一次结束的 job */
   job: TunnelJobStatus | null;
-  /** 当前进程是否已按 TMEX_TRUST_PROXY=true 运行（生效值） */
+  /** 当前进程是否已按 VIBETERM_TRUST_PROXY=true 运行（生效值） */
   trustProxy: boolean;
   /** app.env 里已保存的值（期望值）；与 trustProxy 不一致即需重启 */
   configuredTrustProxy: boolean;

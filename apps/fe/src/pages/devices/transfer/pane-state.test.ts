@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { FileEntryDto } from '@tmex/shared';
+import type { FileEntryDto } from '@vibeterm/shared';
 import {
   createTransferPaneState,
   moveHighlight,

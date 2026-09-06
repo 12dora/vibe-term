@@ -14,9 +14,9 @@ import {
 import { type HubApi, defaultRelayEnrollmentApi } from '@/node/hub-api';
 import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
 import { createEnrollmentOnRelay } from '@/node/relay-join';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { actionErrorText } from './errors';

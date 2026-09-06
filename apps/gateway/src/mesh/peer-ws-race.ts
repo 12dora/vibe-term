@@ -1,6 +1,6 @@
-import { combineAbortSignals } from '@tmex/shared/async';
-import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@tmex/shared/link';
-import { type KeywordRule, classifyByKeywords, waitSocketOpen } from '@tmex/shared/net';
+import { combineAbortSignals } from '@vibeterm/shared/async';
+import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@vibeterm/shared/link';
+import { type KeywordRule, classifyByKeywords, waitSocketOpen } from '@vibeterm/shared/net';
 import type { UserStore } from '../auth/user-store';
 import { envInt } from './mesh-log';
 import { type ReachabilityFailureKind, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
@@ -93,7 +93,7 @@ let sharedLimiter: DirectDialLimiter | null = null;
 
 export function sharedDirectDialLimiter(): DirectDialLimiter {
   sharedLimiter ??= new DirectDialLimiter(
-    envInt('TMEX_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
+    envInt('VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
   );
   return sharedLimiter;
 }
@@ -102,7 +102,7 @@ export function resetSharedDirectDialLimiter(limiter?: DirectDialLimiter): void 
   sharedLimiter =
     limiter ??
     new DirectDialLimiter(
-      envInt('TMEX_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
+      envInt('VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY', PEER_DIRECT_DIAL_CONCURRENCY, 1)
     );
 }
 

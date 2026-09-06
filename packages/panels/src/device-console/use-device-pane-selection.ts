@@ -6,8 +6,8 @@
 //   4. usePaneSizeSync  本地 resize 下发 + 远端尺寸回灌（回灌会拉 history，必须最后）
 // 纯决策逻辑见 ./pane-selection-rules 与 ./selection-recovery。
 
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import type { RefObject } from 'react';
 import { usePaneActiveFollow } from './use-pane-active-follow';
 import { usePaneRouteReconciliation } from './use-pane-route-reconciliation';

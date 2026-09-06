@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { collectTmexHeaders, sha256Hex } from './hash.ts';
+import { collectVibeTermHeaders, sha256Hex } from './hash.ts';
 
 describe('sha256Hex', () => {
   test('hashes empty and known vectors', async () => {
@@ -12,7 +12,7 @@ describe('sha256Hex', () => {
   });
 });
 
-describe('collectTmexHeaders', () => {
+describe('collectVibeTermHeaders', () => {
   test('keeps x-tmex-* plus length/type', () => {
     const headers = new Headers({
       'Content-Type': 'application/octet-stream',
@@ -20,7 +20,7 @@ describe('collectTmexHeaders', () => {
       'X-Tmex-Via': 'relay',
       Date: 'Wed, 01 Jan 2020 00:00:00 GMT',
     });
-    expect(collectTmexHeaders(headers)).toEqual({
+    expect(collectVibeTermHeaders(headers)).toEqual({
       'content-type': 'application/octet-stream',
       'content-length': '8',
       'x-tmex-via': 'relay',

@@ -68,7 +68,7 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
    - `renderState`：渲染状态资源（`render-state.ts` 的 `createRenderState`），每帧从 wasm 读回网格。
 4. `open(container)` 时创建 `.xterm` 风格 DOM（`terminal-dom.ts`）、隐藏 `textarea`、内容表面，
    并把 `CanvasRenderer` 挂到渲染协调器（`TerminalRenderCoordinator`）。
-5. 选区文本经全局探针 `__tmexE2eTerminalSelectionText` 暴露给 E2E；其余 E2E 入口由
+5. 选区文本经全局探针 `__vibetermE2eTerminalSelectionText` 暴露给 E2E；其余 E2E 入口由
    `packages/terminal-ui` 侧的组件提供。
 
 其中，wasm 只会按模块级 Promise 懒加载一次，避免严格模式和多终端实例重复初始化。

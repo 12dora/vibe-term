@@ -2,8 +2,8 @@
 // `/api/mesh/nodes` 的有界重试、恢复信号（可见 / online）触发的立即重来。
 
 import { describe, expect, test } from 'bun:test';
-import type { AuthApi, AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthApi, AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

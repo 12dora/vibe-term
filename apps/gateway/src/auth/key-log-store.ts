@@ -1,4 +1,4 @@
-import type { KeyLogHead, KeyLogType } from '@tmex/shared/auth';
+import type { KeyLogHead, KeyLogType } from '@vibeterm/shared/auth';
 import {
   decodeAddPasskeyPayload,
   decodeAdmitHubPayload,
@@ -14,7 +14,7 @@ import {
   decodeRotateRootPayload,
   decodeSetTotpPayload,
   encodeBase64url,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { and, asc, eq, gte } from 'drizzle-orm';
 import { userKeyLog, users } from '../db/schema';
 import { toBuffer, toBytes } from './binary';

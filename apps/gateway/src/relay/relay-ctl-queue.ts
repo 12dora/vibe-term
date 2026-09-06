@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   RELAY_CTL_QUEUE_MAX,
   RELAY_CTL_QUEUE_MAX_BYTES,

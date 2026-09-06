@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchAgentLlmSettings, parseApiError } from '@tmex/api-client';
-import type { LlmProviderDto, UpdateAgentLlmSettingsRequest } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { fetchAgentLlmSettings, parseApiError } from '@vibeterm/api-client';
+import type { LlmProviderDto, UpdateAgentLlmSettingsRequest } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

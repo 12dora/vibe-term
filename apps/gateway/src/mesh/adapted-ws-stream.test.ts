@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StreamCloseInfo } from '@tmex/shared/link';
+import type { StreamCloseInfo } from '@vibeterm/shared/link';
 import { adaptWsStream } from './adapted-ws-stream';
 import { encodeTerminalStreamClose } from './stream-close-code';
 

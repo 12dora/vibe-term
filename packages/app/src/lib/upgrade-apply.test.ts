@@ -72,11 +72,11 @@ async function seedInstall(installDir: string, version: string): Promise<void> {
     join(installDir, 'app.env'),
     [
       'NODE_ENV=production',
-      'TMEX_BIND_HOST=127.0.0.1',
+      'VIBETERM_BIND_HOST=127.0.0.1',
       'GATEWAY_PORT=19883',
       `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
-      'TMEX_MASTER_KEY=test',
-      'TMEX_ROLES=standalone',
+      'VIBETERM_MASTER_KEY=test',
+      'VIBETERM_ROLES=standalone',
       '',
     ].join('\n')
   );
@@ -622,11 +622,11 @@ describe('repairUpgrade active txn and legacy dirs', () => {
       join(installDir, 'app.env'),
       [
         'NODE_ENV=production',
-        'TMEX_BIND_HOST=127.0.0.1',
+        'VIBETERM_BIND_HOST=127.0.0.1',
         'GATEWAY_PORT=19883',
         `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
-        'TMEX_MASTER_KEY=test',
-        'TMEX_ROLES=standalone',
+        'VIBETERM_MASTER_KEY=test',
+        'VIBETERM_ROLES=standalone',
         '',
       ].join('\n')
     );

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@tmex/shared';
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@vibeterm/shared';
 
 import {
   type ToolbarButton,

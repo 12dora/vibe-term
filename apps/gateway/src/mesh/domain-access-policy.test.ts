@@ -300,7 +300,7 @@ describe('decideDomainAccess', () => {
     );
   });
 
-  test('TMEX_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
+  test('VIBETERM_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
     const spoofed = new Headers({ 'x-forwarded-for': '203.0.113.9' });
     expect(
       decideDomainAccess({
@@ -324,7 +324,7 @@ describe('decideDomainAccess', () => {
     ).toBe('deny-text');
   });
 
-  test('TMEX_TRUST_PROXY=true judges XFF last segment', () => {
+  test('VIBETERM_TRUST_PROXY=true judges XFF last segment', () => {
     expect(
       decideDomainAccess({
         ...base,

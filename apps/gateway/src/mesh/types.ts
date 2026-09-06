@@ -1,5 +1,5 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
-import type { MeshUplinkCtlMessage } from '@tmex/shared/uplink';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
+import type { MeshUplinkCtlMessage } from '@vibeterm/shared/uplink';
 
 export type MeshNodeId = string;
 

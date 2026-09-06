@@ -1,6 +1,6 @@
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
-import { type RelayCtlMessage, type RelayEnvelope, decodeRelayCtl } from '@tmex/shared/relay';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
+import { type RelayCtlMessage, type RelayEnvelope, decodeRelayCtl } from '@vibeterm/shared/relay';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import { RELAY_TOKEN_HEADER } from './relay-routes';

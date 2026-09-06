@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/gateway",
+  "name": "@vibeterm/gateway",
   "version": "0.1.0",
   "type": "module",
   "scripts": {
@@ -26,8 +26,8 @@
     "@ai-sdk/openai": "^3.0.71",
     "@ai-sdk/openai-compatible": "^2.0.50",
     "@simplewebauthn/server": "13.3.3",
-    "@tmex/shared": "workspace:*",
-    "@tmex/transfer": "workspace:*",
+    "@vibeterm/shared": "workspace:*",
+    "@vibeterm/transfer": "workspace:*",
     "ai": "^6.0.203",
     "drizzle-orm": "^0.45.1",
     "ghostty-terminal": "workspace:*",

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import type { ShareRecord, ShareSettings } from '@tmex/shared/share';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { ShareRecord, ShareSettings } from '@vibeterm/shared/share';
 import type { Server } from 'bun';
 import { handleApiRequest } from '../api';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -10,9 +10,9 @@ import { ShareStore } from './share-store';
 import {
   SHARE_ACCESS_TTL_MS,
   SHARE_COOKIE_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  X_VIBETERM_CLEAR_SHARE,
+  X_VIBETERM_SET_SHARE,
+  X_VIBETERM_SET_SHARE_MAX_AGE,
 } from './share-token';
 
 const fakeServer = {} as Server<unknown>;
@@ -242,7 +242,7 @@ describe('被分享人 HTTP', () => {
     expect(login.status).toBe(200);
     expect(login.body.ok).toBe(true);
     expect(login.headers.get('set-cookie')).toBeNull();
-    const token = login.headers.get(X_TMEX_SET_SHARE);
+    const token = login.headers.get(X_VIBETERM_SET_SHARE);
     expect(token).toBeTruthy();
     expect(Number(login.headers.get('x-tmex-set-share-max-age'))).toBe(3_600);
 
@@ -262,16 +262,16 @@ describe('被分享人 HTTP', () => {
     const login = await call('POST', `/api/share-access/${share.id}/login`, {
       body: { password: 'secret123' },
     });
-    const token = login.headers.get(X_TMEX_SET_SHARE);
+    const token = login.headers.get(X_VIBETERM_SET_SHARE);
     const cookie = `${SHARE_COOKIE_PREFIX}self=${token}`;
 
     const fresh = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
-    expect(fresh.headers.get(X_TMEX_SET_SHARE)).toBeNull();
+    expect(fresh.headers.get(X_VIBETERM_SET_SHARE)).toBeNull();
 
     clock += SHARE_ACCESS_TTL_MS * 0.6;
     const renewed = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
-    expect(renewed.headers.get(X_TMEX_SET_SHARE)).toBe(token);
-    expect(Number(renewed.headers.get(X_TMEX_SET_SHARE_MAX_AGE))).toBe(SHARE_ACCESS_TTL_MS / 1000);
+    expect(renewed.headers.get(X_VIBETERM_SET_SHARE)).toBe(token);
+    expect(Number(renewed.headers.get(X_VIBETERM_SET_SHARE_MAX_AGE))).toBe(SHARE_ACCESS_TTL_MS / 1000);
   });
 
   test('任意 tmex_sh_* cookie 只要 shareId 匹配即可回退识别', async () => {
@@ -280,7 +280,7 @@ describe('被分享人 HTTP', () => {
     const login = await call('POST', `/api/share-access/${share.id}/login`, {
       body: { password: 'secret123' },
     });
-    const token = login.headers.get(X_TMEX_SET_SHARE);
+    const token = login.headers.get(X_VIBETERM_SET_SHARE);
     const authed = await call('GET', `/api/share-access/${share.id}`, {
       headers: { cookie: `${SHARE_COOKIE_PREFIX}abcdef=${token}` },
     });
@@ -327,13 +327,13 @@ describe('被分享人 HTTP', () => {
     const login = await call('POST', `/api/share-access/${share.id}/login`, {
       body: { password: 'secret123' },
     });
-    const token = login.headers.get(X_TMEX_SET_SHARE);
+    const token = login.headers.get(X_VIBETERM_SET_SHARE);
     const cookie = `${SHARE_COOKIE_PREFIX}self=${token}`;
     const out = await call('POST', `/api/share-access/${share.id}/logout`, {
       headers: { cookie },
     });
     expect(out.status).toBe(200);
-    expect(out.headers.get(X_TMEX_CLEAR_SHARE)).toBe('1');
+    expect(out.headers.get(X_VIBETERM_CLEAR_SHARE)).toBe('1');
     const view = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
     expect(view.body.authenticated).toBe(false);
   });
@@ -370,7 +370,7 @@ describe('口令查看 / 修改端点', () => {
     const view = await call('GET', `/api/share/${share.id}/password`);
     expect(view.status).toBe(500);
     expect(view.body.code).toBe('SHARE_PASSWORD_DECRYPT_FAILED');
-    expect(view.body.error as string).toContain('TMEX_MASTER_KEY');
+    expect(view.body.error as string).toContain('VIBETERM_MASTER_KEY');
   });
 
   test('POST /api/share/:id/password 改口令，endSessions 决定是否踢人', async () => {
@@ -379,7 +379,7 @@ describe('口令查看 / 修改端点', () => {
     const login = await call('POST', `/api/share-access/${share.id}/login`, {
       body: { password: 'secret123' },
     });
-    const cookie = `${SHARE_COOKIE_PREFIX}self=${login.headers.get(X_TMEX_SET_SHARE)}`;
+    const cookie = `${SHARE_COOKIE_PREFIX}self=${login.headers.get(X_VIBETERM_SET_SHARE)}`;
 
     const kept = await call('POST', `/api/share/${share.id}/password`, {
       body: { password: 'next-pass-1', endSessions: false },

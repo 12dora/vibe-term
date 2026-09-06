@@ -1,9 +1,9 @@
 // 远程访问状态卡：状态与 Access 徽标、公网地址、启停 / 移除 / 连通性检查，以及可折叠的 cloudflared 日志。
 
-import type { TunnelStatusResponse } from '@tmex/shared';
-import { Badge } from '@tmex/ui/badge';
-import { Button, buttonVariants } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button, buttonVariants } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { ExternalLink, Loader2, Play, Radar, Square, Trash2, Unplug } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

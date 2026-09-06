@@ -3,7 +3,7 @@ import type {
   GatewayHistoryCursor,
   GatewayPaneHistoryPage,
   GatewayPaneScreenSnapshot,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import {
   type HistoryPageValidationContext,
   bytesEqual,

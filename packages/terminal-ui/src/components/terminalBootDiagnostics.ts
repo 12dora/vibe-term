@@ -1,4 +1,4 @@
-import type { GatewayTransportSourceRoute } from '@tmex/ws-client';
+import type { GatewayTransportSourceRoute } from '@vibeterm/ws-client';
 import type { TerminalSurfaceDiagnosticState } from './TerminalSurface';
 import type { TerminalStreamDiagnosticInput } from './terminal-diagnostics';
 

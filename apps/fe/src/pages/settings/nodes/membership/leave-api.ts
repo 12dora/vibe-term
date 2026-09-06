@@ -4,8 +4,8 @@
 // `prompt-archives/2026082901-nodes-settings-devices-polish/sub/api-contract.md`）；
 // 这里只留一个窄接口，让 hook 的依赖可注入、可替换，同时把角色收敛到 `MeshRole`。
 
-import { defaultLocalApi } from '@tmex/api-client/local/local-api';
-import type { LocalLeaveResponse, LocalLeaveTargetRole } from '@tmex/api-client/local/types';
+import { defaultLocalApi } from '@vibeterm/api-client/local/local-api';
+import type { LocalLeaveResponse, LocalLeaveTargetRole } from '@vibeterm/api-client/local/types';
 import type { MeshRole } from './role-transition';
 
 export interface LocalLeaveRequest {

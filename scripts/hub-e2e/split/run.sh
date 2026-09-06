@@ -7,20 +7,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 HUB_E2E="$(cd "${ROOT}/.." && pwd)"
 REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
-export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
+export VIBETERM_REPO_ROOT="${VIBETERM_REPO_ROOT:-${REPO_ROOT}}"
 LOCAL_COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
 # RSSH：一个可执行文件，把参数当远端命令执行（例如封装 sshpass/ssh 的脚本）；凭据不入库。
 # RSYNC_SSH：rsync -e 使用的 ssh 命令（同样由调用方提供，可含 sshpass 包装），例如 RSYNC_SSH=/path/to/ssh-wrap。
 RSYNC_SSH="${RSYNC_SSH:?set RSYNC_SSH to an ssh command for rsync -e (e.g. a wrapper script that adds -p/-o/sshpass)}"
 RSSH="${RSSH:?set RSSH to an ssh wrapper script, e.g. RSSH=/path/to/rssh (runs: rssh '<remote command>')}"
-HUB_HOST="${TMEX_E2E_HUB_HOST:-ai.example.com}"
-HUB_IP="${TMEX_E2E_HUB_IP:-4.2.2.1}"
-HUB_PORT="${TMEX_E2E_HUB_PORT:-18443}"
-HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://${HUB_HOST}:${HUB_PORT}}"
-REMOTE_USER="${TMEX_E2E_REMOTE_USER:-root}"
-REMOTE_DIR="${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}"
-if [[ -n "${TMEX_E2E_REMOTE_SUDO+x}" ]]; then
-  REMOTE_SUDO="${TMEX_E2E_REMOTE_SUDO}"
+HUB_HOST="${VIBETERM_E2E_HUB_HOST:-ai.example.com}"
+HUB_IP="${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
+HUB_PORT="${VIBETERM_E2E_HUB_PORT:-18443}"
+HUB_PUBLIC_URL="${VIBETERM_HUB_PUBLIC_URL:-https://${HUB_HOST}:${HUB_PORT}}"
+REMOTE_USER="${VIBETERM_E2E_REMOTE_USER:-root}"
+REMOTE_DIR="${VIBETERM_E2E_REMOTE_DIR:-/root/tmex-e2e}"
+if [[ -n "${VIBETERM_E2E_REMOTE_SUDO+x}" ]]; then
+  REMOTE_SUDO="${VIBETERM_E2E_REMOTE_SUDO}"
 elif [[ "${REMOTE_USER}" != "root" ]]; then
   REMOTE_SUDO="sudo"
 else
@@ -31,35 +31,35 @@ if [[ -n "${REMOTE_SUDO}" ]]; then
 else
   REMOTE_DOCKER="docker"
 fi
-TLS_MODE="${TMEX_E2E_TLS_MODE:-letsencrypt}"
+TLS_MODE="${VIBETERM_E2E_TLS_MODE:-letsencrypt}"
 if [[ "${TLS_MODE}" != "letsencrypt" && "${TLS_MODE}" != "private-ca" ]]; then
-  echo "TMEX_E2E_TLS_MODE must be letsencrypt or private-ca (got ${TLS_MODE})" >&2
+  echo "VIBETERM_E2E_TLS_MODE must be letsencrypt or private-ca (got ${TLS_MODE})" >&2
   exit 2
 fi
-REMOTE_TARBALL="${TMEX_E2E_REMOTE_TARBALL:-${REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
-export TMEX_E2E_HUB_HOST="${HUB_HOST}"
-export TMEX_E2E_HUB_IP="${HUB_IP}"
-export TMEX_E2E_HUB_PORT="${HUB_PORT}"
-export TMEX_E2E_REMOTE_DIR="${REMOTE_DIR}"
-export TMEX_E2E_TLS_MODE="${TLS_MODE}"
-export TMEX_E2E_TURN_EXTERNAL_IP="${TMEX_E2E_TURN_EXTERNAL_IP:-${HUB_IP}}"
+REMOTE_TARBALL="${VIBETERM_E2E_REMOTE_TARBALL:-${REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
+export VIBETERM_E2E_HUB_HOST="${HUB_HOST}"
+export VIBETERM_E2E_HUB_IP="${HUB_IP}"
+export VIBETERM_E2E_HUB_PORT="${HUB_PORT}"
+export VIBETERM_E2E_REMOTE_DIR="${REMOTE_DIR}"
+export VIBETERM_E2E_TLS_MODE="${TLS_MODE}"
+export VIBETERM_E2E_TURN_EXTERNAL_IP="${VIBETERM_E2E_TURN_EXTERNAL_IP:-${HUB_IP}}"
 if [[ "${TLS_MODE}" == "private-ca" ]]; then
-  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
+  NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
 else
-  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/certs/fullchain.pem}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/certs/privkey.pem}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
+  NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${REMOTE_DIR}/certs/fullchain.pem}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${REMOTE_DIR}/certs/privkey.pem}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
 fi
-export TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}"
-USER_NAME="${TMEX_E2E_USER:-alice}"
-PASSWORD="${TMEX_E2E_PASSWORD:-TmexE2e!alice-2026}"
+export VIBETERM_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}"
+USER_NAME="${VIBETERM_E2E_USER:-alice}"
+PASSWORD="${VIBETERM_E2E_PASSWORD:-VibeTermE2e!alice-2026}"
 OUT="${ROOT}/out"
 IMAGE_NAME="tmex-e2e:split"
-TARBALL="${TMEX_TARBALL:?set TMEX_TARBALL to the tmex-cli tarball used to build the local image}"
+TARBALL="${VIBETERM_TARBALL:?set VIBETERM_TARBALL to the tmex-cli tarball used to build the local image}"
 FAILS=0
 declare -a REPORT_ROWS=()
 
@@ -130,7 +130,7 @@ wait_local_healthy() {
 
 wait_remote_hub() {
   local n=0
-  local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
+  local max=$(( ${VIBETERM_E2E_HEALTH_TIMEOUT:-600} / 2 ))
   while (( n < max )); do
     if rssh_docker "exec tmex-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
       return 0
@@ -328,9 +328,9 @@ apply_lan_netem_on() {
   local container="$1"
   local resolved="" iface="" ip=""
   local -a args
-  read -r -a args <<< "${TMEX_E2E_LAN_NETEM:-}"
+  read -r -a args <<< "${VIBETERM_E2E_LAN_NETEM:-}"
   if ((${#args[@]} == 0)); then
-    log "lan netem: empty TMEX_E2E_LAN_NETEM"
+    log "lan netem: empty VIBETERM_E2E_LAN_NETEM"
     return 1
   fi
   if ! docker exec "${container}" bash -lc 'command -v tc >/dev/null && command -v ip >/dev/null'; then
@@ -353,12 +353,12 @@ apply_lan_netem_on() {
     tmex-split-node-a) LAN_NETEM_IFACE_A="${iface}" ;;
     tmex-split-node-b) LAN_NETEM_IFACE_B="${iface}" ;;
   esac
-  log "lan netem: ${container} dev=${iface} ip=${ip} netem ${TMEX_E2E_LAN_NETEM:-}"
+  log "lan netem: ${container} dev=${iface} ip=${ip} netem ${VIBETERM_E2E_LAN_NETEM:-}"
   log "lan netem qdisc ${container}: $(docker exec "${container}" tc qdisc show dev "${iface}" 2>/dev/null | tr '\n' ' ' | tr '|' '/' || true)"
 }
 
 apply_lan_netem() {
-  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ -z "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     return 0
   fi
   local rc=0
@@ -384,7 +384,7 @@ clear_lan_netem_on() {
 }
 
 clear_lan_netem() {
-  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ -z "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     return 0
   fi
   clear_lan_netem_on tmex-split-node-a "${LAN_NETEM_IFACE_A:-}"
@@ -430,7 +430,7 @@ write_report() {
 - hub host/ip: ${HUB_HOST} / ${HUB_IP}
 - tls: ${TLS_MODE}
 - remote: ${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}
-- lan netem: ${TMEX_E2E_LAN_NETEM:-off}
+- lan netem: ${VIBETERM_E2E_LAN_NETEM:-off}
 
 | scenario | result | evidence |
 |---|---|---|
@@ -471,7 +471,7 @@ enroll_and_join() {
   : > "${log_file}"
   kill_enroll
   rssh_docker "exec tmex-split-hub bash -lc 'rm -f /tmp/enroll.log'"
-  rssh_docker "exec -d -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bash -lc 'nohup stdbuf -oL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex >/tmp/enroll.log 2>&1'"
+  rssh_docker "exec -d -e VIBETERM_PASSWORD='${PASSWORD}' tmex-split-hub bash -lc 'nohup stdbuf -oL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex >/tmp/enroll.log 2>&1'"
   local n=0
   while (( n < 45 )); do
     rssh_docker "exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
@@ -508,17 +508,17 @@ enroll_and_join() {
     join_code=\$?
     echo JOIN_EXIT=\$join_code
     cp /opt/tmex/app.env /var/lib/tmex/app.env
-    grep -E '^TMEX_HUB_URL=' /var/lib/tmex/app.env || true
-    grep -E '^TMEX_ROLES=' /var/lib/tmex/app.env || true
-    grep -q 'TMEX_HUB_URL=${HUB_PUBLIC_URL}' /var/lib/tmex/app.env || exit 20
-    grep -q 'TMEX_ROLES=node' /var/lib/tmex/app.env || exit 21
+    grep -E '^VIBETERM_HUB_URL=' /var/lib/tmex/app.env || true
+    grep -E '^VIBETERM_ROLES=' /var/lib/tmex/app.env || true
+    grep -q 'VIBETERM_HUB_URL=${HUB_PUBLIC_URL}' /var/lib/tmex/app.env || exit 20
+    grep -q 'VIBETERM_ROLES=node' /var/lib/tmex/app.env || exit 21
     exit 0
   " | tee "${OUT}/join-${node_name}.log"
   local join_ok=${PIPESTATUS[0]}
   set -e
   if [[ "${join_ok}" -ne 0 ]]; then
     kill_enroll
-    echo "hub join did not persist TMEX_HUB_URL/TMEX_ROLES for ${node_name}" >&2
+    echo "hub join did not persist VIBETERM_HUB_URL/VIBETERM_ROLES for ${node_name}" >&2
     return 1
   fi
 
@@ -628,16 +628,16 @@ rsync -az -e "${RSYNC_SSH}" "${RSYNC_EXCLUDES[@]}" \
   "${HUB_E2E}/" "${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}/repo/scripts/hub-e2e/"
 
 log "setup remote hub"
-rssh "TMEX_E2E_TURN_URL='${TMEX_E2E_TURN_URL:-}' TMEX_E2E_TURN_USERNAME='${TMEX_E2E_TURN_USERNAME:-tmex}' TMEX_E2E_TURN_CREDENTIAL='${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}' TMEX_E2E_TURN_EXTERNAL_IP='${TMEX_E2E_TURN_EXTERNAL_IP}' TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL='${REMOTE_TARBALL}' TMEX_E2E_HUB_HOST='${HUB_HOST}' TMEX_E2E_HUB_IP='${HUB_IP}' TMEX_E2E_HUB_PORT='${HUB_PORT}' TMEX_HUB_PUBLIC_URL='${HUB_PUBLIC_URL}' TMEX_E2E_REMOTE_DIR='${REMOTE_DIR}' TMEX_E2E_REMOTE_SUDO='${REMOTE_SUDO}' TMEX_E2E_TLS_MODE='${TLS_MODE}' TMEX_E2E_TLS_CERT='${TMEX_E2E_TLS_CERT}' TMEX_E2E_TLS_KEY='${TMEX_E2E_TLS_KEY}' TMEX_E2E_CA_CRT='${TMEX_E2E_CA_CRT}' TMEX_E2E_NODE_CA_CERTS='${NODE_CA_CERTS}' bash ${REMOTE_DIR}/repo/scripts/hub-e2e/split/setup-remote.sh"
+rssh "VIBETERM_E2E_TURN_URL='${VIBETERM_E2E_TURN_URL:-}' VIBETERM_E2E_TURN_USERNAME='${VIBETERM_E2E_TURN_USERNAME:-tmex}' VIBETERM_E2E_TURN_CREDENTIAL='${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}' VIBETERM_E2E_TURN_EXTERNAL_IP='${VIBETERM_E2E_TURN_EXTERNAL_IP}' VIBETERM_E2E_SKIP_BUILD=${VIBETERM_E2E_SKIP_BUILD:-1} VIBETERM_TARBALL='${REMOTE_TARBALL}' VIBETERM_E2E_HUB_HOST='${HUB_HOST}' VIBETERM_E2E_HUB_IP='${HUB_IP}' VIBETERM_E2E_HUB_PORT='${HUB_PORT}' VIBETERM_HUB_PUBLIC_URL='${HUB_PUBLIC_URL}' VIBETERM_E2E_REMOTE_DIR='${REMOTE_DIR}' VIBETERM_E2E_REMOTE_SUDO='${REMOTE_SUDO}' VIBETERM_E2E_TLS_MODE='${TLS_MODE}' VIBETERM_E2E_TLS_CERT='${VIBETERM_E2E_TLS_CERT}' VIBETERM_E2E_TLS_KEY='${VIBETERM_E2E_TLS_KEY}' VIBETERM_E2E_CA_CRT='${VIBETERM_E2E_CA_CRT}' VIBETERM_E2E_NODE_CA_CERTS='${NODE_CA_CERTS}' bash ${REMOTE_DIR}/repo/scripts/hub-e2e/split/setup-remote.sh"
 
 log "setup local nodes"
-TMEX_TARBALL="${TARBALL}" TMEX_E2E_SKIP_BUILD="${TMEX_E2E_SKIP_BUILD:-1}" \
-  TMEX_E2E_HUB_HOST="${HUB_HOST}" TMEX_E2E_HUB_IP="${HUB_IP}" \
-  TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}" \
+VIBETERM_TARBALL="${TARBALL}" VIBETERM_E2E_SKIP_BUILD="${VIBETERM_E2E_SKIP_BUILD:-1}" \
+  VIBETERM_E2E_HUB_HOST="${HUB_HOST}" VIBETERM_E2E_HUB_IP="${HUB_IP}" \
+  VIBETERM_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}" \
   bash "${ROOT}/setup-local.sh"
 
 sync_clocks || log "clock sync imperfect, login may hit DELEGATION_ISSUED_IN_FUTURE"
-preflight_udp "${TMEX_E2E_UDP_PROBE_PORT:-3478}" || true
+preflight_udp "${VIBETERM_E2E_UDP_PROBE_PORT:-3478}" || true
 
 # ---------- A ----------
 set +e
@@ -651,7 +651,7 @@ else
 fi
 
 set +e
-add_out="$(rssh_docker "exec -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bun /opt/tmex/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/tmex" 2>&1)"
+add_out="$(rssh_docker "exec -e VIBETERM_PASSWORD='${PASSWORD}' tmex-split-hub bun /opt/tmex/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/tmex" 2>&1)"
 add_rc=$?
 set -e
 printf '%s\n' "${add_out}" | tee "${OUT}/hub-user-add.log"
@@ -813,7 +813,7 @@ else
   fail "A6 create local device on node-a (${dev_a_json})"
 fi
 
-MARKER_A="TMEX_SPLIT_A_MARKER"
+MARKER_A="VIBETERM_SPLIT_A_MARKER"
 term_a_rc=1
 if [[ -n "${DEVICE_A_ID}" ]]; then
   set +e
@@ -933,7 +933,7 @@ REACH_B="$(docker exec tmex-split-driver bun -e '
 log "observed hub reach from node-a: ${REACH_B}"
 printf '%s\n' "${REACH_B}" > "${OUT}/reach-hub-from-a.txt"
 
-MARKER_B="TMEX_SPLIT_B_MARKER"
+MARKER_B="VIBETERM_SPLIT_B_MARKER"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker "${MARKER_B}" --timeout 25000
@@ -974,7 +974,7 @@ else
   fail "C1 node-a sees node-b reach=lan within 90s"
 fi
 
-MARKER_C="TMEX_SPLIT_C_LAN"
+MARKER_C="VIBETERM_SPLIT_C_LAN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_C}" --timeout 25000
@@ -990,7 +990,7 @@ log "stopping remote hub"
 rssh_docker "stop tmex-split-hub"
 sleep 2
 
-MARKER_CD="TMEX_SPLIT_C_HUBDOWN"
+MARKER_CD="VIBETERM_SPLIT_C_HUBDOWN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_CD}" --timeout 25000
@@ -1058,9 +1058,9 @@ re_login_rc=$?
 driver nodes.ts wait-hub-online --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
   --names node-a --timeout 90000
 re_up_rc=$?
-env_a="$(docker exec tmex-split-node-a bash -lc 'grep -E "TMEX_HUB_URL|TMEX_ROLES" /var/lib/tmex/app.env')"
+env_a="$(docker exec tmex-split-node-a bash -lc 'grep -E "VIBETERM_HUB_URL|VIBETERM_ROLES" /var/lib/tmex/app.env')"
 term_e_json="$(driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker TMEX_SPLIT_E_A --timeout 25000)"
+  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker VIBETERM_SPLIT_E_A --timeout 25000)"
 term_e_rc=$?
 set -e
 printf '%s\n' "${env_a}" | tee "${OUT}/node-a-env-after-restart.txt"
@@ -1204,7 +1204,7 @@ run_direct_scenarios() {
       bulk_relay_json=/out/files-bulk-relay.json
       root_json_file=/out/file-root-hub.json
       enable_log="${OUT}/direct-enable-hub.log"
-      marker=TMEX_SPLIT_D
+      marker=VIBETERM_SPLIT_D
       ;;
     lan)
       d1="L1 both rows direct_capable=true"
@@ -1230,7 +1230,7 @@ run_direct_scenarios() {
       bulk_relay_json=/out/files-bulk-relay-lan.json
       root_json_file=/out/file-root-lan.json
       enable_log="${OUT}/direct-enable-node-b.log"
-      marker=TMEX_SPLIT_D_LAN
+      marker=VIBETERM_SPLIT_D_LAN
       ;;
     *)
       echo "run_direct_scenarios: unknown kind ${kind}" >&2
@@ -1288,7 +1288,7 @@ run_direct_scenarios() {
   target_ensure_tmux "${target}"
   sleep 3
   # docker restart drops tc qdisc; re-apply so L2–L8 actually see netem
-  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ "${kind}" == "lan" && -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     apply_lan_netem || log "WARNING: lan netem re-apply after restart failed"
   fi
 
@@ -1331,7 +1331,7 @@ run_direct_scenarios() {
   set -e
   dump_rtc_logs "${target}"
   local netem_ev=""
-  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ "${kind}" == "lan" && -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     netem_ev="; $(lan_netem_qdisc_evidence || true)"
   fi
   if [[ "${transport_dc_rc}" -eq 0 ]]; then
@@ -1508,8 +1508,8 @@ run_direct_scenarios() {
 # These L1–L8 rows are REQUIRED (count toward FAILS). Hub D/H/I stay after, and still FAIL
 # with evidence when the WAN path cannot establish (VPS UDP filter / symmetric NAT / no TURN-TCP).
 log "LAN DataChannel scenarios (node-a ↔ node-b)"
-if [[ -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
-  log "lan netem requested: ${TMEX_E2E_LAN_NETEM}"
+if [[ -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
+  log "lan netem requested: ${VIBETERM_E2E_LAN_NETEM}"
   apply_lan_netem || log "WARNING: lan netem apply failed before L scenarios"
 fi
 run_direct_scenarios lan
@@ -1534,7 +1534,7 @@ BROWSER_ARGS=(
   --node-b-name node-b
   --node-a-id "${NODE_A_ID}"
   --device-a-id "${DEVICE_A_ID}"
-  --marker TMEX_SPLIT_PW_MARKER
+  --marker VIBETERM_SPLIT_PW_MARKER
   --map-host "${HUB_HOST}"
   --map-ip "${HUB_IP}"
 )

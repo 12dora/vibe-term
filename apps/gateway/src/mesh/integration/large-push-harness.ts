@@ -2,7 +2,7 @@ import {
   SERVER_WS_BACKPRESSURE_LIMIT,
   type ServerSocketAdapter,
   WebSocketLink,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import { Forwarder } from '../forwarder';
 import type { MeshRuntime } from '../mesh-runtime';
 import { openHttpStream } from '../stream-targets';

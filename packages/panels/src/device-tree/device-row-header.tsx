@@ -1,4 +1,4 @@
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { ChevronRight, Globe, GripVertical, Monitor } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionStatus } from '../device-connection';

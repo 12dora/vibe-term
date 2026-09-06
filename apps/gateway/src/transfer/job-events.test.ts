@@ -1,7 +1,7 @@
 // 事件订阅的有界缓冲与错误码归一化。
 
 import { describe, expect, test } from 'bun:test';
-import type { TransferJobEvent } from '@tmex/shared';
+import type { TransferJobEvent } from '@vibeterm/shared';
 import { normalizeTransferError } from './errors';
 import { jobEventsResponse } from './job-events';
 import {

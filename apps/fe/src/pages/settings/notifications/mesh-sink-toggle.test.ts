@@ -2,10 +2,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { ApiClient } from '@tmex/api-client';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { MESH_NOTIFICATION_ROUTE } from '@tmex/shared';
-import { deriveSeed, encodeBase64url, rootKeyFromSeed } from '@tmex/shared/auth';
+import type { ApiClient } from '@vibeterm/api-client';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { MESH_NOTIFICATION_ROUTE } from '@vibeterm/shared';
+import { deriveSeed, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
 import {
   MESH_SINK_NO_MODE,
   MESH_SINK_NO_NODE_ID,

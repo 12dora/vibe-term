@@ -14,10 +14,10 @@ import type {
   AuthKdfParamsJson,
   KeyLogAppendResult,
   PasskeySummary,
-} from '@tmex/api-client/auth/index';
-import { defaultAuthApi, startRegistration } from '@tmex/api-client/auth/index';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+} from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi, startRegistration } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   type AddPasskeyPayload,
   type KdfParams,
@@ -36,7 +36,7 @@ import {
   rewrapTotpSecret as rewrapTotpCiphertext,
   rootKeyFromSeed,
   verifyTotpCode,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { RecordSigner } from './key-log-actions';
 import {
   buildAddPasskeyRecord,

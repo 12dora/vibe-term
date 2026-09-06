@@ -5,7 +5,7 @@ import type {
   Device,
   TestConnectionResult,
   UpdateDeviceRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient, toApiError } from './client';
 import { requestJson, requestOk } from './json-mutation';
 

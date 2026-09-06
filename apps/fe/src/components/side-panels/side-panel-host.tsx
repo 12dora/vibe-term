@@ -16,8 +16,8 @@
 import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { withI18nRest } from '@/i18n/rest-prerequisite';
 import { lazyChunk } from '@/lazy-chunk';
-import { Button } from '@tmex/ui/button';
-import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
+import { Button } from '@vibeterm/ui/button';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@vibeterm/ui/sheet';
 import { Loader2, X } from 'lucide-react';
 import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -1,13 +1,13 @@
-import { CLIENT_SOURCE_LOCAL, X_TMEX_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
-import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, X_TMEX_SET_SESSION } from './mesh-deps';
-import { X_TMEX_CLEAR_SHARE, X_TMEX_SET_SHARE, X_TMEX_SET_SHARE_MAX_AGE } from './share-credential';
+import { CLIENT_SOURCE_LOCAL, X_VIBETERM_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
+import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, X_VIBETERM_SET_SESSION } from './mesh-deps';
+import { X_VIBETERM_CLEAR_SHARE, X_VIBETERM_SET_SHARE, X_VIBETERM_SET_SHARE_MAX_AGE } from './share-credential';
 
 /** 内部凭证头：Hub 翻成 Set-Cookie 后不得再回给浏览器。 */
 const INTERNAL_CREDENTIAL_HEADERS = new Set<string>([
-  X_TMEX_SET_SESSION,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
-  X_TMEX_CLEAR_SHARE,
+  X_VIBETERM_SET_SESSION,
+  X_VIBETERM_SET_SHARE,
+  X_VIBETERM_SET_SHARE_MAX_AGE,
+  X_VIBETERM_CLEAR_SHARE,
 ]);
 
 const RESPONSE_ALLOW = new Set([
@@ -28,7 +28,7 @@ const DROP_REQUEST_HEADERS = new Set([
   'cf-access-jwt-assertion',
   'cf-access-authenticated-user-email',
   'cf-ray',
-  X_TMEX_CLIENT_SOURCE,
+  X_VIBETERM_CLIENT_SOURCE,
 ]);
 
 export function copyUpstreamHeaders(upstream: Response): Headers {
@@ -75,7 +75,7 @@ export function filterRequestHeaders(req: Request): Record<string, string> {
     out[key] = value;
   });
   if (isTrustedLocalClient(req)) {
-    out[X_TMEX_CLIENT_SOURCE] = CLIENT_SOURCE_LOCAL;
+    out[X_VIBETERM_CLIENT_SOURCE] = CLIENT_SOURCE_LOCAL;
   }
   return out;
 }

@@ -5,10 +5,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { ApiClient } from '@tmex/api-client/client';
-import type { RelayStatusResponse, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
-import { RelayAdminApi } from '@tmex/api-client/relay/admin-api';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { ApiClient } from '@vibeterm/api-client/client';
+import type { RelayStatusResponse, RelayTenantSummary } from '@vibeterm/api-client/relay/admin-api';
+import { RelayAdminApi } from '@vibeterm/api-client/relay/admin-api';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

@@ -3,7 +3,7 @@ import {
   type TmuxVersion,
   compareTmuxVersion,
   parseTmuxVersion,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 export { parseTmuxVersion, type TmuxVersion };
 

@@ -1,7 +1,7 @@
 // 跨节点汇总的摊平：行要带上自己的节点，单台节点拉挂了其余节点照常出。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareRecord } from '@tmex/shared/share';
+import type { ShareRecord } from '@vibeterm/shared/share';
 import {
   type ShareListResult,
   failedShareNodeNames,

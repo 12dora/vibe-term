@@ -88,8 +88,8 @@ function randomSecret(prefix: string): string {
 }
 
 function testMasterKey(): string {
-  const key = parseEnvFile(readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')).TMEX_MASTER_KEY;
-  if (!key) throw new Error('TMEX_MASTER_KEY missing from test.env');
+  const key = parseEnvFile(readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')).VIBETERM_MASTER_KEY;
+  if (!key) throw new Error('VIBETERM_MASTER_KEY missing from test.env');
   return key;
 }
 
@@ -106,24 +106,24 @@ interface InstanceSpec {
 function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
   const lines = [
     'NODE_ENV=test',
-    `TMEX_ROLES=${spec.roles}`,
-    `TMEX_MASTER_KEY=${masterKey}`,
+    `VIBETERM_ROLES=${spec.roles}`,
+    `VIBETERM_MASTER_KEY=${masterKey}`,
     `GATEWAY_PORT=${spec.port}`,
-    'TMEX_BIND_HOST=127.0.0.1',
+    'VIBETERM_BIND_HOST=127.0.0.1',
     `DATABASE_URL=${spec.dir}/tmex.db`,
-    `TMEX_BASE_URL=http://127.0.0.1:${spec.port}`,
+    `VIBETERM_BASE_URL=http://127.0.0.1:${spec.port}`,
     // 中继模式下上级不再是 hub：两个键都必须为空，否则 uplink 会去拨不存在的 hub。
-    'TMEX_HUB_URL=',
-    'TMEX_HUB_PUBLIC_URL=',
-    `TMEX_PEER_PORT=${spec.peerPort}`,
-    'TMEX_PEER_BIND_HOST=127.0.0.1',
-    'TMEX_STUN_SERVERS=',
-    'TMEX_TRUST_PROXY=true',
-    `TMEX_TMUX_SOCKET=${spec.tmuxSocket}`,
-    'TMEX_SITE_NAME=tmex',
+    'VIBETERM_HUB_URL=',
+    'VIBETERM_HUB_PUBLIC_URL=',
+    `VIBETERM_PEER_PORT=${spec.peerPort}`,
+    'VIBETERM_PEER_BIND_HOST=127.0.0.1',
+    'VIBETERM_STUN_SERVERS=',
+    'VIBETERM_TRUST_PROXY=true',
+    `VIBETERM_TMUX_SOCKET=${spec.tmuxSocket}`,
+    'VIBETERM_SITE_NAME=tmex',
   ];
-  if (spec.relayPublicUrl) lines.push(`TMEX_RELAY_PUBLIC_URL=${spec.relayPublicUrl}`);
-  if (spec.relayAdminToken) lines.push(`TMEX_RELAY_ADMIN_TOKEN=${spec.relayAdminToken}`);
+  if (spec.relayPublicUrl) lines.push(`VIBETERM_RELAY_PUBLIC_URL=${spec.relayPublicUrl}`);
+  if (spec.relayAdminToken) lines.push(`VIBETERM_RELAY_ADMIN_TOKEN=${spec.relayAdminToken}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -133,7 +133,7 @@ function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
   return {
     ...(process.env as Record<string, string>),
     NODE_ENV: 'test',
-    TMEX_MIGRATIONS_DIR: MIGRATIONS_DIR,
+    VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
     ...extra,
   };
 }
@@ -166,8 +166,8 @@ async function startInstance(dir: string): Promise<Bun.Subprocess> {
       ...(process.env as Record<string, string>),
       ...env,
       NODE_ENV: 'test',
-      TMEX_MIGRATIONS_DIR: MIGRATIONS_DIR,
-      TMEX_FE_DIST_DIR: FE_DIST_DIR,
+      VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
+      VIBETERM_FE_DIST_DIR: FE_DIST_DIR,
     },
     stdout: 'inherit',
     stderr: 'inherit',
@@ -219,11 +219,11 @@ interface MeshNodeRow {
 }
 
 function ensureFeDist(): void {
-  if (existsSync(`${FE_DIST_DIR}/index.html`) && process.env.TMEX_RELAY_E2E_BUILD_FE !== '1') {
+  if (existsSync(`${FE_DIST_DIR}/index.html`) && process.env.VIBETERM_RELAY_E2E_BUILD_FE !== '1') {
     return;
   }
-  log('building apps/fe (dist missing or TMEX_RELAY_E2E_BUILD_FE=1)');
-  const result = spawnSync('bun', ['run', '--filter', '@tmex/fe', 'build'], {
+  log('building apps/fe (dist missing or VIBETERM_RELAY_E2E_BUILD_FE=1)');
+  const result = spawnSync('bun', ['run', '--filter', '@vibeterm/fe', 'build'], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
   });
@@ -352,7 +352,7 @@ async function enrollTenant(input: {
       '--install-dir',
       input.aDir,
     ],
-    { TMEX_PASSWORD: input.meshPassword }
+    { VIBETERM_PASSWORD: input.meshPassword }
   );
 }
 
@@ -389,7 +389,7 @@ async function joinNodeB(input: {
       '--install-dir',
       input.bDir,
     ],
-    { TMEX_PASSWORD: input.meshPassword }
+    { VIBETERM_PASSWORD: input.meshPassword }
   );
   log('node B redeemed the join token');
   const nodeId = await admitRelayNode(input.session, pending);
@@ -476,18 +476,18 @@ async function main(): Promise<void> {
   const ports = await allocatePorts();
   const publicUrl = `http://127.0.0.1:${ports.relay}`;
   const adminToken = encodeBase64url(crypto.getRandomValues(new Uint8Array(32)));
-  const meshPassword = randomSecret('TmexRelayE2e!');
-  const relayNodePassword = randomSecret('TmexRelayOps!');
-  const relayPassword = randomSecret('TmexRelayPw!');
+  const meshPassword = randomSecret('VibeTermRelayE2e!');
+  const relayNodePassword = randomSecret('VibeTermRelayOps!');
+  const relayPassword = randomSecret('VibeTermRelayPw!');
   await writeEnvFiles(dirs, ports, { publicUrl, adminToken });
   for (const socket of Object.values(TMUX_SOCKETS)) killTmuxSocket(socket);
   log(`relay=${ports.relay} a=${ports.a} b=${ports.b} tmp=${tmpDir}`);
 
   await runCli(['hub', 'user', 'add', RELAY_USERNAME, '--install-dir', dirs.relay], {
-    TMEX_PASSWORD: relayNodePassword,
+    VIBETERM_PASSWORD: relayNodePassword,
   });
   await runCli(['hub', 'user', 'add', USERNAME, '--install-dir', dirs.a], {
-    TMEX_PASSWORD: meshPassword,
+    VIBETERM_PASSWORD: meshPassword,
   });
 
   await startInstance(dirs.relay);

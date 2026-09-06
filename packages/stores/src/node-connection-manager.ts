@@ -16,23 +16,23 @@ import {
   nodeAppPath,
   nodeWsUrl,
   normalizeNodeId,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import {
   handleGlobalUnauthorized,
   handleNodeLoginRequired,
-} from '@tmex/api-client/auth/session-interceptor';
-import type { NotificationSink } from '@tmex/notifications';
+} from '@vibeterm/api-client/auth/session-interceptor';
+import type { NotificationSink } from '@vibeterm/notifications';
 import {
   type GatewayConnection,
   type SocketFactory,
   createGatewayConnection,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
 import { type AppRuntimeOptions, createBrowserHostServices } from './runtime';
 import { type UIStore, createUIStore } from './ui';
 
-export { SELF_NODE_ID, normalizeNodeId } from '@tmex/api-client';
+export { SELF_NODE_ID, normalizeNodeId } from '@vibeterm/api-client';
 
 /** 引用计数归零后的默认释放宽限期 */
 export const DEFAULT_RELEASE_GRACE_MS = 30_000;

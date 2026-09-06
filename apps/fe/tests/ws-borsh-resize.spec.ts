@@ -16,7 +16,7 @@ async function readTerminalSize(page: Page): Promise<{
   rows: number;
 } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return {
       cols: term.cols,
@@ -299,7 +299,7 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
 
     // 只把本地模拟器改小（不动容器）：制造一个「尺寸没变但画面已陈旧」的跟随者
     await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) {
         throw new Error('missing e2e terminal');
       }

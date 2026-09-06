@@ -4,8 +4,8 @@ import {
   generateEd25519KeyPair,
   generateX25519KeyPair,
   nodeIdToHex,
-} from '@tmex/shared/auth';
-import type { HubEndpointInfo, MeshUplinkNodeList } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { HubEndpointInfo, MeshUplinkNodeList } from '@vibeterm/shared/uplink';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { HubRuntime } from './hub-runtime';

@@ -1,5 +1,5 @@
-import { buildWindowTitleParts } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { buildWindowTitleParts } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { useCallback, useState } from 'react';
 
 export type RenameCandidate =

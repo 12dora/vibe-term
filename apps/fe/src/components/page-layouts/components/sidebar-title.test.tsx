@@ -2,8 +2,8 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 sidebar-device-list 测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -17,8 +17,8 @@ let desktopViewport = true;
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { appNodeRuntimes } = await import('../../../node/node-runtimes');
 const { BRAND_LOGO_SRC, PRODUCT_NAME } = await import('../../brand');

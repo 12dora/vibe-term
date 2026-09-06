@@ -26,11 +26,11 @@ import {
 } from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi, isWebAuthnAvailable, requireRootEpoch } from '@tmex/api-client/auth/index';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { OtpInput } from '@tmex/ui/otp-input';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi, isWebAuthnAvailable, requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { OtpInput } from '@vibeterm/ui/otp-input';
 import { AlertTriangle, Fingerprint, Loader2 } from 'lucide-react';
 import { type FormEvent, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

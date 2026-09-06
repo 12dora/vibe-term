@@ -5,7 +5,7 @@
 // tool-approval-response，因此同一回合的多个确认必须等全部决定后合并为一条 tool 消息落库，
 // 才能发起续跑（见 appendApprovalResponsesIfReady）。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import {
   type AgentConfirmationRecord,

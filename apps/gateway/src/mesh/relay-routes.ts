@@ -6,12 +6,12 @@ import {
   hubHostFromUrl,
   sha256,
   verifyEd25519,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   RELAY_ENROLL_PROOF_MAX_SKEW_MS,
   generateTenantKey,
   verifyRelayEnrollProof,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth';
 import { makeVerifyPasskeyAssertion } from '../auth/passkey';

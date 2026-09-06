@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import { type MetadataValue, type PaneFieldHints, stringValue, u16Value, u32Value } from './types';
 

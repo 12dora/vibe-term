@@ -60,7 +60,7 @@ async function openAuth(roles: string): Promise<LocalAuthContext> {
   const ctx = await openLocalAuth({
     memory: true,
     migrationsFolder: MIGRATIONS,
-    env: { TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '', TMEX_ROLES: roles },
+    env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: roles },
   });
   handles.push(ctx);
   return ctx;
@@ -193,7 +193,7 @@ describe('hub join against fake hub', () => {
       }
     );
     expect(joined.userId).toBe(user.id);
-    expect(logs.some((line) => /TMEX_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(true);
+    expect(logs.some((line) => /VIBETERM_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(true);
     const nodeUser = node.userStore.getById(user.id);
     expect(nodeUser).toBeTruthy();
     expect(node.keyLogStore.list(user.id).length).toBe(records.length);
@@ -652,19 +652,19 @@ describe('hub join/leave service restart', () => {
     expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
   });
 
-  test('hub join writes TMEX_ROLES/TMEX_HUB_URL and calls restart', async () => {
+  test('hub join writes VIBETERM_ROLES/VIBETERM_HUB_URL and calls restart', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'tmex-join-env-'));
     try {
       const envPath = join(dir, 'app.env');
       await writeFile(
         envPath,
-        'TMEX_ROLES=standalone\nOTHER=keep\nTMEX_HUB_PUBLIC_URL=https://stale.example\n',
+        'VIBETERM_ROLES=standalone\nOTHER=keep\nVIBETERM_HUB_PUBLIC_URL=https://stale.example\n',
         'utf8'
       );
       const hub = await startJoinableHub('alice', 'hub-pass-word');
       const node = await openAuth('standalone');
       node.envPath = envPath;
-      node.env = { TMEX_ROLES: 'standalone', OTHER: 'keep' };
+      node.env = { VIBETERM_ROLES: 'standalone', OTHER: 'keep' };
       node.installDir = dir;
       let restarted = 0;
       const joined = await runHubJoin(
@@ -682,9 +682,9 @@ describe('hub join/leave service restart', () => {
       expect(joined.hubUrl).toBe(hub.url);
       expect(restarted).toBe(1);
       const env = await readEnvFile(envPath);
-      expect(env.TMEX_ROLES).toBe('node');
-      expect(env.TMEX_HUB_URL).toBe(hub.url);
-      expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+      expect(env.VIBETERM_ROLES).toBe('node');
+      expect(env.VIBETERM_HUB_URL).toBe(hub.url);
+      expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
       expect(env.OTHER).toBe('keep');
     } finally {
       await rm(dir, { recursive: true, force: true });

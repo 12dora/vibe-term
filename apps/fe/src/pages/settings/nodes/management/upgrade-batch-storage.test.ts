@@ -1,7 +1,7 @@
 // 批量升级计划的落盘：读写、TTL、脏数据、存储抛异常时的降级，以及标签页归属。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { createMemoryStorage } from '@tmex/stores/test-utils';
+import { createMemoryStorage } from '@vibeterm/stores/test-utils';
 import {
   UPGRADE_BATCH_OWNER_STALE_MS,
   UPGRADE_BATCH_TTL_MS,

@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { readJsonObjectBody } from '../api/http';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import { isShareAccessPath } from './auth-public-paths';

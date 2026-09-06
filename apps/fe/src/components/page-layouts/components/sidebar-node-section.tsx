@@ -21,17 +21,17 @@ import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
 import { offlineDevices, writeDeviceSnapshot } from '@/pages/devices/device-snapshot-store';
-import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
+import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@vibeterm/api-client';
 import {
   NodeBadge,
   type NodeBadgeInfo,
   type SortableRow,
   shouldHideSidebarNodeSection,
-} from '@tmex/panels/device-tree';
-import type { Device } from '@tmex/shared';
-import { isSidebarDeviceVisible } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
+} from '@vibeterm/panels/device-tree';
+import type { Device } from '@vibeterm/shared';
+import { isSidebarDeviceVisible } from '@vibeterm/stores';
+import { useUIStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
 import { ChevronRight, Loader2, Monitor } from 'lucide-react';
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';

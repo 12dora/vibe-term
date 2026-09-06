@@ -3,10 +3,10 @@
 // 三个动作都由树根**一处**持有（`FileLeafContextMenu` 事件委托），entry 由调用方在触发时传入：
 // 每行各调一次 `useFileNodeActions` 会重复建 500 份闭包与 500 次 `useTranslation`。
 
-import { fileDownloadUrl } from '@tmex/api-client';
-import type { FileEntryDto, FileRootDto } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@tmex/ui/context-menu';
+import { fileDownloadUrl } from '@vibeterm/api-client';
+import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@vibeterm/ui/context-menu';
 import { Download, FolderOpen } from 'lucide-react';
 import type { DragEvent } from 'react';
 import { useCallback, useMemo } from 'react';

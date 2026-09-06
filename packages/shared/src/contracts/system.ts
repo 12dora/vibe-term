@@ -195,7 +195,7 @@ export interface MeshNodeOperation {
 
 /** 本机可被其他设备访问的地址线索（`GET /api/system/addresses`），供「接入更多设备」面板拼地址 */
 export interface AccessAddressesResponse {
-  /** 网关监听地址（app.env `TMEX_BIND_HOST`） */
+  /** 网关监听地址（app.env `VIBETERM_BIND_HOST`） */
   bindHost: string;
   /** 网关监听端口 */
   port: number;

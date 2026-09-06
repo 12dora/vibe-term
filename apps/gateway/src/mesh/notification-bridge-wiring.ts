@@ -1,7 +1,7 @@
 // 把 mesh 装配根里的零件组装成 `MeshNotificationBridge`，避免 mesh-runtime 继续膨胀。
 
-import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@tmex/shared';
-import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@tmex/shared';
+import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@vibeterm/shared';
+import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@vibeterm/shared';
 import type { UserStore } from '../auth/user-store';
 import type { MeshNotificationBridge } from './notification-mesh-bridge';
 import { collectMeshNotificationSinks } from './notification-sink-set';

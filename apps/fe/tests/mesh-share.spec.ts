@@ -44,7 +44,7 @@ test('mesh: a shared window is reachable through the hub with only that window v
   browser,
 }) => {
   const sessionName = `tmex-mesh-share-${Date.now()}`;
-  const marker = `TMEX_SHARE_MARKER_${Date.now()}`;
+  const marker = `VIBETERM_SHARE_MARKER_${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   let deviceId: string | undefined;
   let recipient: Page | undefined;
@@ -164,7 +164,7 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
   browser,
 }) => {
   const sessionName = `tmex-self-share-${Date.now()}`;
-  const marker = `TMEX_SELF_SHARE_${Date.now()}`;
+  const marker = `VIBETERM_SELF_SHARE_${Date.now()}`;
   spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });

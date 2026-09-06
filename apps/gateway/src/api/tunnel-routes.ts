@@ -1,4 +1,4 @@
-import type { TunnelAccessMode, TunnelActionRequest } from '@tmex/shared';
+import type { TunnelAccessMode, TunnelActionRequest } from '@vibeterm/shared';
 import { MESH_VIA_SELF, getMeshRequestContext, requestDispatchContext } from '../mesh/mesh-deps';
 import { isPeerInboundRequest } from '../mesh/peer-request-marker';
 import { parseAccessRules } from '../tunnel/access-rules';

@@ -2,7 +2,7 @@
 // 凭证来自 test.env.local：TEST_LLM_BASE_URL / TEST_LLM_API_KEY / TEST_LLM_MODEL
 // （可选 TEST_LLM_PROTOCOL，默认 openai-chat）。缺失则报错退出（见 requireLiveEnv）。
 //
-// 运行：bun run --filter @tmex/gateway test:live:llm
+// 运行：bun run --filter @vibeterm/gateway test:live:llm
 
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';

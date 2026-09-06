@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { GatewayTransportCommand } from '@tmex/ws-client';
+import type { GatewayTransportCommand } from '@vibeterm/ws-client';
 import type { RuntimeCore } from './runtime';
 import type { TmuxState } from './tmux-state';
 import { createTmuxWindowActions } from './tmux-window-actions';

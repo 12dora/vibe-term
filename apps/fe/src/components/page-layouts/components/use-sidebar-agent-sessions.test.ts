@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { AgentSessionDto, StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { isSessionOnNode } from '@tmex/stores';
+import type { AgentSessionDto, StateSnapshotPayload, TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import { isSessionOnNode } from '@vibeterm/stores';
 import { shallow } from 'zustand/vanilla/shallow';
 import { OrphanSessionRow, PaneSessionRow } from './agent-session-row';
 import {

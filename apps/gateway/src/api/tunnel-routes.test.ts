@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
 import { MESH_VIA_SELF, requestDispatchContext, setMeshRequestContext } from '../mesh/mesh-deps';
 import { MemoryTunnelConfigStore } from '../tunnel/config-store';
 import { FakeSpawner, argsInclude } from '../tunnel/fake-spawn';

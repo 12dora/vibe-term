@@ -1,7 +1,7 @@
 // rsync 缺失：弹出带「自动安装」按钮的 toast（仅当配置过 LLM），一次/恢复后重置。
 
-import type { FileErrorCode, FileRootDto } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import type { FileErrorCode, FileRootDto } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

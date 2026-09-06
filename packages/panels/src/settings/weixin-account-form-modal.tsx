@@ -1,4 +1,4 @@
-import type { WeixinAccountWithStats } from '@tmex/shared';
+import type { WeixinAccountWithStats } from '@vibeterm/shared';
 import { useState } from 'react';
 
 import {

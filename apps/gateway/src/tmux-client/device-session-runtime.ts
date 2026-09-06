@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';

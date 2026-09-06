@@ -1,7 +1,7 @@
 // 站点设置的取数策略，从 site store 里拆出来：请求代次（旧响应不得覆盖新数据）
 // 与在途请求共享（并发调用只出一次 GET）都只在这里成立，store 只管提交结果。
 
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 
 export interface SiteSettingsLoaderOptions {
   /** 发一次真实请求（store 注入，避免这里再依赖 api-client） */

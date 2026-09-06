@@ -1,4 +1,4 @@
-import { canonicalHubUrl } from '@tmex/shared/auth';
+import { canonicalHubUrl } from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { gatewayKv } from '../db/schema';

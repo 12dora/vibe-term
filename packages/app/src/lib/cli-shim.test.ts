@@ -5,11 +5,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setLang, t } from '../i18n';
 import {
-  TMEX_SHIM_MARKER,
+  VIBETERM_SHIM_MARKER,
   deployCliPackage,
-  installTmexShim,
+  installVibeTermShim,
   isDirOnPath,
-  removeTmexShims,
+  removeVibeTermShims,
 } from './cli-shim';
 import { pathExists } from './fs-utils';
 import { createInstallLayout } from './install-layout';
@@ -74,7 +74,7 @@ describe('deployCliPackage', () => {
   });
 });
 
-describe('installTmexShim', () => {
+describe('installVibeTermShim', () => {
   test('writes an executable shim that prefers node then baked-in bun path', async () => {
     const packageLayout = await makePackageRoot();
     const root = await mkdtemp(join(tmpdir(), 'tmex-shim-'));
@@ -87,7 +87,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(installDir);
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath,
       localBinDir,
@@ -101,7 +101,7 @@ describe('installTmexShim', () => {
 
     const shim = await readFile(result.shimPath, 'utf8');
     expect(shim.startsWith('#!/usr/bin/env bash')).toBe(true);
-    expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(VIBETERM_SHIM_MARKER);
     expect(shim).toContain(`# tmex-install-dir: ${installDir}`);
     expect(shim).toContain('command -v node');
     expect(shim).toMatch(/-ge 20/);
@@ -127,7 +127,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(installDir);
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -150,7 +150,7 @@ describe('installTmexShim', () => {
     await deployCliPackage(packageLayout, installLayout);
     const localBinDir = join(root, 'local-bin');
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -173,7 +173,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -196,7 +196,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -221,7 +221,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -244,14 +244,14 @@ describe('installTmexShim', () => {
     await deployCliPackage(packageLayout, firstLayout);
     await deployCliPackage(packageLayout, secondLayout);
 
-    await installTmexShim({
+    await installVibeTermShim({
       installLayout: firstLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
       bunBinDir: join(root, 'missing-bun-bin'),
       pathEnv: localBinDir,
     });
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout: secondLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -260,7 +260,7 @@ describe('installTmexShim', () => {
     });
 
     const shim = await readFile(result.shimPath, 'utf8');
-    expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(VIBETERM_SHIM_MARKER);
     expect(shim).toContain(`# tmex-install-dir: ${secondLayout.installDir}`);
     expect(shim).not.toContain(`# tmex-install-dir: ${firstLayout.installDir}`);
     expect(result.skipWarning).toBeNull();
@@ -279,7 +279,7 @@ describe('installTmexShim', () => {
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
 
-    const result = await installTmexShim({
+    const result = await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -301,7 +301,7 @@ describe('installTmexShim', () => {
     await mkdir(bunBinDir, { recursive: true });
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
-    await installTmexShim({
+    await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -326,7 +326,7 @@ describe('installTmexShim', () => {
   });
 });
 
-describe('removeTmexShims', () => {
+describe('removeVibeTermShims', () => {
   test('removes managed shim and bun symlink, leaves foreign binaries', async () => {
     const packageLayout = await makePackageRoot();
     const root = await mkdtemp(join(tmpdir(), 'tmex-shim-rm-'));
@@ -336,7 +336,7 @@ describe('removeTmexShims', () => {
     await mkdir(bunBinDir, { recursive: true });
     const installLayout = createInstallLayout(join(root, 'install'));
     await deployCliPackage(packageLayout, installLayout);
-    await installTmexShim({
+    await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -346,7 +346,7 @@ describe('removeTmexShims', () => {
     const foreign = join(localBinDir, 'other');
     await writeFile(foreign, '#!/bin/sh\necho hi\n', { mode: 0o755 });
 
-    await removeTmexShims({ localBinDir, bunBinDir });
+    await removeVibeTermShims({ localBinDir, bunBinDir });
 
     await expect(stat(join(localBinDir, 'tmex'))).rejects.toThrow();
     await expect(stat(join(bunBinDir, 'tmex'))).rejects.toThrow();
@@ -362,7 +362,7 @@ describe('removeTmexShims', () => {
     await mkdir(bunBinDir, { recursive: true });
     const installLayout = createInstallLayout(join(root, 'install-keep'));
     await deployCliPackage(packageLayout, installLayout);
-    await installTmexShim({
+    await installVibeTermShim({
       installLayout,
       bunPath: '/usr/bin/bun',
       localBinDir,
@@ -370,18 +370,18 @@ describe('removeTmexShims', () => {
       pathEnv: localBinDir,
     });
 
-    await removeTmexShims({
+    await removeVibeTermShims({
       localBinDir,
       bunBinDir,
       installDir: join(root, 'install-other'),
     });
 
     const shim = await readFile(join(localBinDir, 'tmex'), 'utf8');
-    expect(shim).toContain(TMEX_SHIM_MARKER);
+    expect(shim).toContain(VIBETERM_SHIM_MARKER);
     expect(shim).toContain(`# tmex-install-dir: ${installLayout.installDir}`);
     expect(await readlink(join(bunBinDir, 'tmex'))).toBe(join(localBinDir, 'tmex'));
 
-    await removeTmexShims({
+    await removeVibeTermShims({
       localBinDir,
       bunBinDir,
       installDir: installLayout.installDir,

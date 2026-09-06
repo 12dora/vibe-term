@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@tmex/shared/link';
+import { FrameOp, LinkMux, encodeFrame, encodeWindowPayload } from '@vibeterm/shared/link';
 import { FANOUT_MAX_PENDING_BYTES, fanoutDataChannel } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES } from './data-channel-carrier';
 import { DC_FLUSH_RETRY_MS, DataChannelLink } from './data-channel-link';
@@ -43,7 +43,7 @@ describe('DataChannelLink', () => {
     const [a, b] = pairDataChannels('peer');
     const left = new LinkMux(new DataChannelLink(a), { role: 'initiator' });
     const right = new LinkMux(new DataChannelLink(b), { role: 'acceptor' });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       right.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"http"}');
@@ -253,7 +253,7 @@ describe('DataChannelLink', () => {
     const right = new DataChannelLink(b, { liveness: false });
     const muxLeft = new LinkMux(left, { role: 'initiator' });
     const muxRight = new LinkMux(right, { role: 'acceptor' });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxRight.onStream(resolve)
     );
     const out = await muxLeft.openStream(new Uint8Array([1]));
@@ -425,7 +425,7 @@ describe('DataChannelLink', () => {
     const right = new DataChannelLink(b, { liveness: false });
     const muxA = new LinkMux(left, { role: 'initiator', streamWindow: 1024 });
     const muxB = new LinkMux(right, { role: 'acceptor', streamWindow: 1024 });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new Uint8Array([1]));
@@ -472,7 +472,7 @@ describe('DataChannelLink', () => {
     const right = new DataChannelLink(b, { liveness: false });
     const muxA = new LinkMux(left, { role: 'initiator', streamWindow: 1024 });
     const muxB = new LinkMux(right, { role: 'acceptor', streamWindow: 1024 });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new Uint8Array([1]));

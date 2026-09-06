@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxSession } from '@tmex/shared';
+import type { TmuxSession } from '@vibeterm/shared';
 import { findPaneCurrentPath, resolveFileLinkRoot } from './terminalFileLinks';
 
 const roots = [

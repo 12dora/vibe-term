@@ -1,5 +1,5 @@
-import type { TmuxSession } from '@tmex/shared';
-import type { TerminalFileLinkRoot } from '@tmex/stores';
+import type { TmuxSession } from '@vibeterm/shared';
+import type { TerminalFileLinkRoot } from '@vibeterm/stores';
 
 /**
  * 终端里点开的绝对路径归属哪个授权根：命中前缀的根里取最长的一个。

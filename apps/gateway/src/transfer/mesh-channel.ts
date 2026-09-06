@@ -2,8 +2,8 @@
 // 所有调用都走 `/api/mesh-internal/transfer/*`：peer 标记保证对端身份，
 // grant 保证「这台节点确实被授权往这个目录写」。
 
-import type { TransferErrorCode } from '@tmex/shared';
-import type { PushOutcome } from '@tmex/transfer';
+import type { TransferErrorCode } from '@vibeterm/shared';
+import type { PushOutcome } from '@vibeterm/transfer';
 import { type TransferMeshBridge, getTransferMeshBridge } from './bridge';
 import {
   type ChannelResult,

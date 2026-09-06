@@ -1,4 +1,4 @@
-import type { EventType, WebhookEndpoint, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEndpoint, WebhookEvent } from '@vibeterm/shared';
 import { getAllWebhookEndpoints, getSiteSettings } from '../../db';
 import { logAt } from '../../log/level';
 import type { NotificationChannel } from './types';

@@ -5,8 +5,8 @@ import {
   enqueueAgentMessage,
   sendAgentMessage,
   withdrawQueuedAgentMessage,
-} from '@tmex/api-client';
-import type { AgentMessageDto } from '@tmex/shared';
+} from '@vibeterm/api-client';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import { mergeMessages } from './agent-history-sync';
 import { type AgentSessionActionsDeps, reportActionError } from './agent-session-deps';
 import { withSessionOrder } from './agent-session-map';

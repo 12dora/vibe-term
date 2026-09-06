@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 
 import { runMigrations } from '../db/migrate';
 import type { TmuxConnectionOptions } from './connection-types';

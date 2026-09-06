@@ -1,7 +1,7 @@
 // 中继运营面的展示格式化：全是纯函数，文案一律经 `t` 出。
 
-import { formatBytes } from '@tmex/api-client/format';
-import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
+import { formatBytes } from '@vibeterm/api-client/format';
+import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { type WebSocketTransportInput, createInMemoryLinkPair } from '@tmex/shared/link';
+import { type WebSocketTransportInput, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   DirectDialLimiter,
   type WsSecureCandidate,

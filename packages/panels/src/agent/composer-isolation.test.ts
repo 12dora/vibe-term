@@ -4,8 +4,8 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentSessionDto } from '@tmex/shared';
-import type { SessionInProgress } from '@tmex/stores';
+import type { AgentSessionDto } from '@vibeterm/shared';
+import type { SessionInProgress } from '@vibeterm/stores';
 
 import { AgentComposer } from './agent-composer';
 import { deriveAgentTabView } from './agent-tab-view';

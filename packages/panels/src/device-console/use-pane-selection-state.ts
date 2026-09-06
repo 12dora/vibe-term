@@ -2,8 +2,8 @@
 // 这里的 effect 必须排在其他 pane 选择 hook 之前：isSplitViewRef / hasWindowSnapshotRef
 // 会被同一次提交里后续 effect（select 派发、跟随、尺寸回灌）读取。
 
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
-import type { PaneSelection, TimedPaneSelection } from '@tmex/terminal-ui';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import type { PaneSelection, TimedPaneSelection } from '@vibeterm/terminal-ui';
 import { type RefObject, useEffect, useMemo, useRef, useState } from 'react';
 import {
   paneRouteKey,

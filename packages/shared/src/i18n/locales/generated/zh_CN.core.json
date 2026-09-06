@@ -605,10 +605,10 @@
         "fail": "上传 {{name}} 失败"
       },
       "transfer": {
-        "legUserToTmex": "用户 → tmex",
-        "legTmexToServer": "tmex → 服务器",
-        "legServerToTmex": "服务器 → tmex",
-        "legTmexToUser": "tmex → 用户",
+        "legUserToVibeTerm": "用户 → tmex",
+        "legVibeTermToServer": "tmex → 服务器",
+        "legServerToVibeTerm": "服务器 → tmex",
+        "legVibeTermToUser": "tmex → 用户",
         "cancel": "取消",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",

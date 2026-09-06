@@ -190,24 +190,24 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.standby.notJoined': 'this node is not joined (no node_identity); run tmex hub join first',
     'hub.standby.alreadyActive': 'this install is already an active hub; run tmex hub demote first',
     'hub.standby.missingHubUrl':
-      'TMEX_HUB_URL is empty; a standby hub still uplinks to the current primary',
+      'VIBETERM_HUB_URL is empty; a standby hub still uplinks to the current primary',
     'hub.standby.invalidPriority': 'invalid --priority: must be a non-negative integer',
     'hub.standby.done': 'standby hub enabled (priority={{priority}}, publicUrl={{url}})',
     'hub.standby.nodeId': 'this node id: {{nodeId}}',
     'hub.standby.allowHint':
       'the active hub ignores this standby until it runs: tmex hub allow {{nodeId}}',
     'hub.standby.authorizedPrimary':
-      'authorized current primary hub {{nodeId}}; TMEX_HUB_PEERS={{peers}}',
+      'authorized current primary hub {{nodeId}}; VIBETERM_HUB_PEERS={{peers}}',
     'hub.standby.noPrimary':
-      'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set TMEX_HUB_PEERS manually with tmex hub allow',
-    'hub.peers.current': 'current TMEX_HUB_PEERS={{peers}}',
+      'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set VIBETERM_HUB_PEERS manually with tmex hub allow',
+    'hub.peers.current': 'current VIBETERM_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote requires a hub,node install',
     'hub.promote.needConfirm':
       'promoting the writer risks split-brain; pass --yes or confirm interactively',
     'hub.promote.warning':
       'WARNING: demote or stop the previous writer before this node starts, or the mesh will split-brain.',
     'hub.promote.emptyPeers':
-      'WARNING: TMEX_HUB_PEERS is empty; this hub authorizes no peers (the old writer cannot fence it). The previous writer must still run: tmex hub allow {{nodeId}}',
+      'WARNING: VIBETERM_HUB_PEERS is empty; this hub authorizes no peers (the old writer cannot fence it). The previous writer must still run: tmex hub allow {{nodeId}}',
     'hub.promote.allowReminder':
       'the previous writer must authorize this hub with: tmex hub allow {{nodeId}}',
     'hub.promote.done': 'promoted to active hub (writerEpoch={{epoch}})',
@@ -445,22 +445,22 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 tmex hub join。',
     'hub.standby.alreadyActive': '本机已是 active hub。请先执行 tmex hub demote，再设为 standby。',
     'hub.standby.missingHubUrl':
-      '缺少 TMEX_HUB_URL（当前主 hub 地址）。standby 仍需以 node 身份连上主 hub。',
+      '缺少 VIBETERM_HUB_URL（当前主 hub 地址）。standby 仍需以 node 身份连上主 hub。',
     'hub.standby.invalidPriority': '--priority 必须是 ≥ 0 的整数',
     'hub.standby.done': '已将本机设为 standby hub（priority={{priority}}，publicUrl={{url}}）',
     'hub.standby.nodeId': '本机 node id：{{nodeId}}',
     'hub.standby.allowHint':
       '当前 active hub 会忽略本机 standby，直到执行：tmex hub allow {{nodeId}}',
-    'hub.standby.authorizedPrimary': '已授权当前主 hub {{nodeId}}；TMEX_HUB_PEERS={{peers}}',
+    'hub.standby.authorizedPrimary': '已授权当前主 hub {{nodeId}}；VIBETERM_HUB_PEERS={{peers}}',
     'hub.standby.noPrimary':
-      '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 tmex hub allow 手动写入 TMEX_HUB_PEERS',
-    'hub.peers.current': '当前 TMEX_HUB_PEERS={{peers}}',
+      '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 tmex hub allow 手动写入 VIBETERM_HUB_PEERS',
+    'hub.peers.current': '当前 VIBETERM_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote 仅适用于 hub,node 安装',
     'hub.promote.needConfirm': '提升写者有脑裂风险。请加 --yes 确认，或在交互终端确认。',
     'hub.promote.warning':
       '警告：提升写者前必须先将原主 hub demote 或停机，否则会出现脑裂（split-brain）。',
     'hub.promote.emptyPeers':
-      '警告：TMEX_HUB_PEERS 为空；本机未授权任何对端 hub（旧写者无法 fencing 本机）。请在原写者上执行：tmex hub allow {{nodeId}}',
+      '警告：VIBETERM_HUB_PEERS 为空；本机未授权任何对端 hub（旧写者无法 fencing 本机）。请在原写者上执行：tmex hub allow {{nodeId}}',
     'hub.promote.allowReminder': '请在原写者上授权本机：tmex hub allow {{nodeId}}',
     'hub.promote.done': '已提升为 active hub（writerEpoch={{epoch}}）',
     'hub.demote.notHub': 'hub demote 仅适用于 hub,node 安装',

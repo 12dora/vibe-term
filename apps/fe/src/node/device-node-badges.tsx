@@ -4,20 +4,20 @@
 // 点击展开诊断浮层：明细按链路种类给，走中转就说清中转地址与未直连的原因，
 // ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import { DIRECT_FAILURE_CODES } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { DIRECT_FAILURE_CODES } from '@vibeterm/api-client/auth/index';
 import type {
   DirectFailureCode,
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
-} from '@tmex/api-client/auth/index';
-import { cn } from '@tmex/ui';
+} from '@vibeterm/api-client/auth/index';
+import { cn } from '@vibeterm/ui';
 import type {
   DirectCarrierPath,
   DirectDiagnostics,
   DirectIceDiagnostics,
-} from '@tmex/ws-client/direct/types';
+} from '@vibeterm/ws-client/direct/types';
 import { Activity } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

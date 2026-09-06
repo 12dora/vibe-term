@@ -4,8 +4,8 @@ import {
   decodeKeyLogRecord,
   encodeBase64url,
   nodeIdToHex,
-} from '@tmex/shared/auth';
-import type { RelayMemberProof } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import type { RelayMemberProof } from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import type { KeyLogApplier, MeshIdentity } from './types';
 

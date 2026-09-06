@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { PaneRetentionConsumerCallbacks } from '../tmux-client/pane-retention';
 import type { ShareOriginSources } from './share-origins';

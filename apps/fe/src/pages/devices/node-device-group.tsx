@@ -19,16 +19,16 @@ import { type LoginFailureCode, getSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useGlobalDevice } from '@/components/global-device-provider';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   type AddDevicePreset,
   DeviceManagementPanel,
   type DeviceManagementPanelHandle,
   type DeviceNodeContext,
-} from '@tmex/panels/device-management';
-import { NodeBadge } from '@tmex/panels/device-tree';
-import type { Device } from '@tmex/shared';
+} from '@vibeterm/panels/device-management';
+import { NodeBadge } from '@vibeterm/panels/device-tree';
+import type { Device } from '@vibeterm/shared';
 import { Loader2 } from 'lucide-react';
 import { type ReactNode, type Ref, useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';

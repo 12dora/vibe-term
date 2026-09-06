@@ -1,4 +1,4 @@
-import type { Device, EventType, SiteSettings, TmuxWindow, WebhookEvent } from '@tmex/shared';
+import type { Device, EventType, SiteSettings, TmuxWindow, WebhookEvent } from '@vibeterm/shared';
 import { getSiteSettings } from '../db';
 import type { LifecycleEventEmitter } from './connection-types';
 import { diffSnapshotClosures } from './snapshot-diff';

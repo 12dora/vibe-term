@@ -2,10 +2,10 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 node-runtime-boundary 用例同一套做法）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import enUS from '@tmex/shared/i18n/locales/en_US.json';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import enUS from '@vibeterm/shared/i18n/locales/en_US.json';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

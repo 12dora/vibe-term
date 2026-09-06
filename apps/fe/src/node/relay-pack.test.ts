@@ -2,10 +2,10 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayPackUpload, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { decodeBase64url, encodeBase64url, rootKeyFromSeed } from '@tmex/shared/auth';
-import { openRelayPack } from '@tmex/shared/relay';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayPackUpload, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { decodeBase64url, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
+import { openRelayPack } from '@vibeterm/shared/relay';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from './mesh-relay';
 import {
   clearRelayPackDebtForTest,

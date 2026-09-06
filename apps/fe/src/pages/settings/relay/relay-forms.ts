@@ -9,8 +9,8 @@ import type {
   RelayPasswordRequest,
   RelayQuota,
   RelayTenantPatch,
-} from '@tmex/api-client/relay/admin-api';
-import { RELAY_LIMITS_BOUNDS, RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
+} from '@vibeterm/api-client/relay/admin-api';
+import { RELAY_LIMITS_BOUNDS, RELAY_QUOTA_LIMITS } from '@vibeterm/api-client/relay/admin-api';
 import { bytesToKb, bytesToMb, kbToBytes, mbToBytes } from './relay-format';
 
 /** 带宽字段用 KB/s 收，上限按服务端的字节上限折算。 */

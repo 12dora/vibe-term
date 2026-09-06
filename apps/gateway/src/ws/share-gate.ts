@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { GatewaySession } from './gateway-session';
 import { getShareWsService } from './share-hooks';
 import type { SharePaneOracle, ShareScope } from './share-scope';

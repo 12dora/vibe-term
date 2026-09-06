@@ -42,8 +42,8 @@ async function openAuth(): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: 'node',
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: 'node',
       GATEWAY_PORT: '19993',
     },
   });

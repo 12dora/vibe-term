@@ -4,7 +4,7 @@ import {
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
 } from '@/node/mesh-nodes';
-import { ApiClient, SELF_NODE_ID, clearResponseHooks } from '@tmex/api-client';
+import { ApiClient, SELF_NODE_ID, clearResponseHooks } from '@vibeterm/api-client';
 import {
   AuthApi,
   type AuthenticationResponseJSON,
@@ -14,7 +14,7 @@ import {
   installSessionInterceptor,
   onAuthRequired,
   uninstallSessionInterceptor,
-} from '@tmex/api-client/auth/index';
+} from '@vibeterm/api-client/auth/index';
 import {
   decodeBase64url,
   decodeDelegation,
@@ -24,7 +24,7 @@ import {
   rootKeyFromSeed,
   verifyDelegation,
   verifyLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   clearSessionKey,
   ensureNodeLogin,
@@ -805,13 +805,13 @@ describe('常驻模块的静态依赖', () => {
       );
     const store = await scan('session-key-store.ts');
     expect(store.find((entry) => entry.path === './session-login')?.kind).toBe('dynamic-import');
-    expect(store.map((entry) => entry.path)).not.toContain('@tmex/shared/auth');
+    expect(store.map((entry) => entry.path)).not.toContain('@vibeterm/shared/auth');
 
     // 侧边栏 / 路由边界这两条常驻入口也只能碰 store，不能直接引实现。
     for (const file of ['NodeLoginButton.tsx', 'use-node-login.ts']) {
       const paths = (await scan(file)).map((entry) => entry.path);
       expect(paths).not.toContain('./session-login');
-      expect(paths).not.toContain('@tmex/shared/auth');
+      expect(paths).not.toContain('@vibeterm/shared/auth');
     }
   });
 });

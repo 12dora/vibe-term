@@ -10,7 +10,7 @@ test('ws-borsh: canonical screen feed applies pane ready marker on initial load'
   request,
 }) => {
   await page.addInitScript(() => {
-    (window as any).__TMEX_E2E_DEBUG = true;
+    (window as any).__VIBETERM_E2E_DEBUG = true;
   });
 
   const received = attachPaneFeedCollector(page);
@@ -34,7 +34,7 @@ test('ws-borsh: canonical screen feed applies pane ready marker on initial load'
 
     await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 20_000 });
     await expect
-      .poll(() => page.evaluate(() => Boolean((window as any).__tmexE2eXterm)), {
+      .poll(() => page.evaluate(() => Boolean((window as any).__vibetermE2eXterm)), {
         timeout: 20_000,
       })
       .toBeTruthy();

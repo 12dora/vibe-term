@@ -9,7 +9,7 @@ import type {
   DeviceType,
   FileRootDto,
   UpdateFileRootRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
@@ -20,8 +20,8 @@ import {
   deleteFileRoot,
   fetchFileRoots,
   updateFileRoot,
-} from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+} from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 import { SETTINGS_STALE_MS } from './settings-query';
 
 export const SETTINGS_FILE_ROOTS_QUERY_KEY = ['files', 'settings', 'roots'] as const;

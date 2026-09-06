@@ -1,4 +1,4 @@
-import type { Device, TmuxSession, TmuxWindow } from '@tmex/shared';
+import type { Device, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 
 import { config } from '../config';
 import { updateDeviceRuntimeStatus } from '../db';

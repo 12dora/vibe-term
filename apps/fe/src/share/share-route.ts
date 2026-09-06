@@ -3,7 +3,7 @@
 // （`?w=<windowId>&p=<paneId>`）——控制台仍照常经 HostServices.appPath 改写地址，
 // 只是被映射回同一个分享页，不会把访客带去 /devices/…。
 
-import { NODE_ID_PATTERN, nodePathPrefix } from '@tmex/api-client';
+import { NODE_ID_PATTERN, nodePathPrefix } from '@vibeterm/api-client';
 
 export const SHARE_ROUTE_PATH = '/s/:shareId';
 export const NODE_SHARE_ROUTE_PATH = '/n/:nodeId/s/:shareId';

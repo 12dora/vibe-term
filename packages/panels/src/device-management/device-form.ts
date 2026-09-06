@@ -6,7 +6,7 @@ import type {
   Device,
   DeviceType,
   UpdateDeviceRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 export type DeviceFormValues = {
   name: string;

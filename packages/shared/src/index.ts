@@ -167,10 +167,10 @@ export * from './tmux-version';
 // ==================== 角色模型 ====================
 
 export {
-  type TmexRoleName,
-  type TmexRoles,
+  type VibeTermRoleName,
+  type VibeTermRoles,
   isStandaloneRoles,
-  isTmexRoleName,
+  isVibeTermRoleName,
   roleNameFromFlags,
   rolesFromName,
   validateRoles,

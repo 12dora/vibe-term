@@ -74,25 +74,25 @@ describe('managed endpoint protocol', () => {
 
 describe('managed endpoint publication', () => {
   test('requires an absolute path and a non-empty nonce', () => {
-    expect(() => resolveManagedEndpointPublication({})).toThrow('TMEX_MANAGED_ENDPOINT_PATH');
+    expect(() => resolveManagedEndpointPublication({})).toThrow('VIBETERM_MANAGED_ENDPOINT_PATH');
     expect(() =>
       resolveManagedEndpointPublication({
-        TMEX_MANAGED_ENDPOINT_PATH: 'relative/ready.json',
-        TMEX_MANAGED_ENDPOINT_NONCE: 'nonce',
+        VIBETERM_MANAGED_ENDPOINT_PATH: 'relative/ready.json',
+        VIBETERM_MANAGED_ENDPOINT_NONCE: 'nonce',
       })
     ).toThrow('absolute');
     expect(() =>
       resolveManagedEndpointPublication({
-        TMEX_MANAGED_ENDPOINT_PATH: join(tmpdir(), 'ready.json'),
-        TMEX_MANAGED_ENDPOINT_NONCE: '',
+        VIBETERM_MANAGED_ENDPOINT_PATH: join(tmpdir(), 'ready.json'),
+        VIBETERM_MANAGED_ENDPOINT_NONCE: '',
       })
-    ).toThrow('TMEX_MANAGED_ENDPOINT_NONCE');
+    ).toThrow('VIBETERM_MANAGED_ENDPOINT_NONCE');
   });
 
   test('consumes one-time endpoint environment before the runtime starts', () => {
     const env: NodeJS.ProcessEnv = {
-      TMEX_MANAGED_ENDPOINT_PATH: join(tmpdir(), 'ready.json'),
-      TMEX_MANAGED_ENDPOINT_NONCE: 'launch-nonce',
+      VIBETERM_MANAGED_ENDPOINT_PATH: join(tmpdir(), 'ready.json'),
+      VIBETERM_MANAGED_ENDPOINT_NONCE: 'launch-nonce',
       UNRELATED: 'preserved',
     };
 

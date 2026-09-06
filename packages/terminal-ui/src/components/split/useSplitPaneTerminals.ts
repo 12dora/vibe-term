@@ -1,6 +1,6 @@
 // 分屏内各 Terminal 实例的登记与联动：尺寸跟随 layout、焦点转发、非焦点 pane 首屏 history。
 
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { refocusTerminalInput } from '../../utils/terminal-input-focus';
 import type { SplitLayoutGeometry } from '../splitLayoutGeometry';

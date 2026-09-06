@@ -3,7 +3,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 HttpsSection / SettingsPage 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type {
   LocalAuthStatus,
   TunnelAccessMode,
@@ -11,8 +11,8 @@ import type {
   TunnelMode,
   TunnelProcessState,
   TunnelStatusResponse,
-} from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+} from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import { EXPOSURE_ACK, type ExposureState } from './exposure';
 import type { NamedDraft } from './named-step';
 import type { TunnelActions } from './tunnel-actions';

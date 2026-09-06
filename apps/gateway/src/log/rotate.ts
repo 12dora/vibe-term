@@ -137,29 +137,29 @@ export function shouldInstallProcessLogRotation(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  if (env.TMEX_LOG_DISABLE === '1') return false;
-  if (env.NODE_ENV === 'test' && env.TMEX_LOG_ROTATE !== '1') return false;
-  if (env.TMEX_LOG_FILE?.trim()) return true;
+  if (env.VIBETERM_LOG_DISABLE === '1') return false;
+  if (env.NODE_ENV === 'test' && env.VIBETERM_LOG_ROTATE !== '1') return false;
+  if (env.VIBETERM_LOG_FILE?.trim()) return true;
   return (
-    platform === 'darwin' && env.NODE_ENV === 'production' && Boolean(env.TMEX_INSTALL_DIR?.trim())
+    platform === 'darwin' && env.NODE_ENV === 'production' && Boolean(env.VIBETERM_INSTALL_DIR?.trim())
   );
 }
 
 export function resolveProcessLogRotationConfig(
   env: NodeJS.ProcessEnv = process.env
 ): ProcessLogRotationConfig | null {
-  const explicit = env.TMEX_LOG_FILE?.trim();
-  const installDir = env.TMEX_INSTALL_DIR?.trim();
+  const explicit = env.VIBETERM_LOG_FILE?.trim();
+  const installDir = env.VIBETERM_INSTALL_DIR?.trim();
   const stdoutPath = explicit || (installDir ? join(installDir, 'tmex.log') : '');
   if (!stdoutPath) return null;
-  const errExplicit = env.TMEX_LOG_ERR_FILE?.trim();
+  const errExplicit = env.VIBETERM_LOG_ERR_FILE?.trim();
   const stderrPath =
     errExplicit || (installDir ? join(installDir, 'tmex.err.log') : `${stdoutPath}.err`);
   return {
     stdoutPath,
     stderrPath,
-    maxBytes: envInt(env, 'TMEX_LOG_MAX_BYTES', DEFAULT_LOG_MAX_BYTES, MIN_LOG_MAX_BYTES),
-    generations: envInt(env, 'TMEX_LOG_GENERATIONS', DEFAULT_LOG_GENERATIONS, MIN_LOG_GENERATIONS),
+    maxBytes: envInt(env, 'VIBETERM_LOG_MAX_BYTES', DEFAULT_LOG_MAX_BYTES, MIN_LOG_MAX_BYTES),
+    generations: envInt(env, 'VIBETERM_LOG_GENERATIONS', DEFAULT_LOG_GENERATIONS, MIN_LOG_GENERATIONS),
   };
 }
 

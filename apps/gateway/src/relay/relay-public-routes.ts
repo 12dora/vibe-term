@@ -1,4 +1,4 @@
-import { readJsonObjectBody } from '@tmex/shared/http';
+import { readJsonObjectBody } from '@vibeterm/shared/http';
 import { type HttpMethod, matchPath, methodMatches } from '../api/route';
 import { respondRelayEnrollmentCreate } from './relay-enroll-create';
 import { RelayErrorCode, relayError } from './relay-http';

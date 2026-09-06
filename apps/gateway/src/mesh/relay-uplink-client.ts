@@ -1,11 +1,11 @@
-import { hubHostFromUrl } from '@tmex/shared/auth';
+import { hubHostFromUrl } from '@vibeterm/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
   WebSocketLink,
   type WebSocketTransportInput,
-} from '@tmex/shared/link';
-import { waitSocketOpen } from '@tmex/shared/net';
+} from '@vibeterm/shared/link';
+import { waitSocketOpen } from '@vibeterm/shared/net';
 import {
   type RelayCtlMessage,
   type RelayKickReason,
@@ -14,7 +14,7 @@ import {
   decodeRelayCtl,
   encodeRelayCtl,
   encodeRelayOpenStream,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { getDisplayVersion } from '../system/version';
 import { defaultScheduler, jsonStable } from './ctl';

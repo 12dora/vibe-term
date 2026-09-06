@@ -16,7 +16,7 @@ import {
   hexToBytes,
   nodeIdToHex,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { eq } from 'drizzle-orm';
 import { nodeIdentity } from '../db/schema';
 import { KeyLogStore } from './key-log-store';

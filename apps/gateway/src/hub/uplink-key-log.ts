@@ -3,9 +3,9 @@ import {
   computeRecordHash,
   decodeKeyLogRecord,
   nodeIdToHex,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
-import { HUB_NOT_WRITER, type HubNotWriterError } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
+import { HUB_NOT_WRITER, type HubNotWriterError } from '@vibeterm/shared/uplink';
 import { decodeB64url } from '../../../../packages/shared/src/auth/b64url';
 import { identicalKeyLog } from '../../../../packages/shared/src/auth/key-log';
 import type { UserStore } from '../auth/user-store';

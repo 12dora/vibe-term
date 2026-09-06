@@ -2,7 +2,7 @@
 // 与 SettingsPage.test.tsx 同一套静态渲染做法；这里只关心多出来的那一个标签。
 
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

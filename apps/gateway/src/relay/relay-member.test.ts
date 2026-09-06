@@ -11,7 +11,7 @@ import {
   genesisHead,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { verifyRelayMemberProof } from './relay-member';
 
 const UID = 'user-1';

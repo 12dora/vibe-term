@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings } from '@tmex/shared';
+import type { Device, SiteSettings } from '@vibeterm/shared';
 import { dispatchTmuxPushEvent, parseTmuxNotificationPayload } from './tmux-push-events';
 
 function makeDevice(): Device {

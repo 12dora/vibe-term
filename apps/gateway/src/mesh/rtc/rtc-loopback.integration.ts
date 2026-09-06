@@ -2,8 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
-import { encodeBase64url, normalizeFingerprint, parseSdpFingerprint } from '@tmex/shared/auth';
-import { LinkMux } from '@tmex/shared/link';
+import { encodeBase64url, normalizeFingerprint, parseSdpFingerprint } from '@vibeterm/shared/auth';
+import { LinkMux } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { createGatewaySession } from '../../ws/test-helpers';
@@ -16,19 +16,19 @@ import { RtcPeerManager, type RtcPeerManagerOptions, SESS_CHANNEL_LABEL } from '
 import { loopbackSignaling } from './rtc-test-fixtures';
 import { pairDataChannels } from './test-fakes';
 
-const nativeDir = process.env.TMEX_NATIVE_DIR;
+const nativeDir = process.env.VIBETERM_NATIVE_DIR;
 const addonPath = nativeDir ? join(nativeDir, 'node_datachannel.node') : null;
 
 async function loadNativeFromEnv(): Promise<NodeDatachannelModule | null> {
   if (!nativeDir || !addonPath) {
-    console.warn('skipping rtc-loopback.integration.ts: TMEX_NATIVE_DIR is unset');
+    console.warn('skipping rtc-loopback.integration.ts: VIBETERM_NATIVE_DIR is unset');
     return null;
   }
   if (!existsSync(addonPath)) {
     console.warn(`skipping rtc-loopback.integration.ts: addon missing at ${addonPath}`);
     return null;
   }
-  process.env.TMEX_NATIVE_DIR = nativeDir;
+  process.env.VIBETERM_NATIVE_DIR = nativeDir;
   const require = createRequire(import.meta.url);
   try {
     const binding = require(addonPath) as NodeDatachannelModule;
@@ -139,7 +139,7 @@ describe.skipIf(!nativeMod)('rtc loopback (node-datachannel)', () => {
     ]);
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"loop"}');

@@ -13,8 +13,8 @@ import {
   signEd25519,
   signKeyLogRecordWithRoot,
   uplinkAuthMessage,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { KeyLogStore } from '../auth/key-log-store';
 import { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';

@@ -1,4 +1,4 @@
-import { combineAbortSignals, sleepOrAbort } from '@tmex/shared';
+import { combineAbortSignals, sleepOrAbort } from '@vibeterm/shared';
 import { type FetchImpl, getUpdates } from './api';
 import {
   type GetUpdatesResp,

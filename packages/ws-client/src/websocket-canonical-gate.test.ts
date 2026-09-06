@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@vibeterm/shared';
 import { BorshWebSocketClient } from './client';
 import { type BinaryFakeSocket, createFakeSocket, helloFrame } from './test-fakes';
 import { WebSocketGatewayTransport } from './websocket-transport';

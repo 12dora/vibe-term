@@ -7,8 +7,8 @@ import {
   randomBytes,
   uplinkAuthMessage,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import { WebSocketLink } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { WebSocketLink } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';

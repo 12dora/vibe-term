@@ -21,11 +21,11 @@
 // 目录行仍保留各自的 ContextMenu（数量与展开的目录数同阶，不是热点）。
 
 import { useQueryClient } from '@tanstack/react-query';
-import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@tmex/shared';
-import { fileRoute, hostAppPath } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import { ContextMenu, ContextMenuTrigger } from '@tmex/ui/context-menu';
-import { useSidebar } from '@tmex/ui/sidebar';
+import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@vibeterm/shared';
+import { fileRoute, hostAppPath } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import { ContextMenu, ContextMenuTrigger } from '@vibeterm/ui/context-menu';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import {
   type CSSProperties,
   type DragEvent,

@@ -8,7 +8,7 @@ import type {
   WatchFireMode,
   WatchNoMatchBehavior,
   WatchTriggerType,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { sql } from 'drizzle-orm';
 import { check, index, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 import { devices } from './devices';
@@ -23,7 +23,7 @@ export type {
   WatchFireMode,
   WatchNoMatchBehavior,
   WatchTriggerType,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 export const llmProviders = sqliteTable(
   'llm_providers',

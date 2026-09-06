@@ -21,8 +21,8 @@ import {
   retryPendingMetaKeys,
   subscribePendingMetaKeys,
 } from '@/node/relay-meta-key-pending';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 
 /** 一批欠账的退避梯度：走完仍未落账就停手，等下一次挂上中继或欠账变化再来一轮。 */
 export const RELAY_META_KEY_RETRY_BACKOFF_MS: readonly number[] = [1_000, 5_000, 20_000, 60_000];

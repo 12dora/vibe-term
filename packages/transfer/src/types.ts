@@ -1,4 +1,4 @@
-// 传输引擎的通用类型。线上契约（任务快照 / NDJSON 事件）在 `@tmex/shared` 的
+// 传输引擎的通用类型。线上契约（任务快照 / NDJSON 事件）在 `@vibeterm/shared` 的
 // `contracts/transfer.ts`，这里只放引擎内部三个消费者（浏览器上传下载、升级推包、
 // 节点间传输）共用的字节层结构。
 

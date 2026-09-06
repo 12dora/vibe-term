@@ -2,14 +2,14 @@
 
 import { useNodeOffline } from '@/node/node-offline';
 import { selfAgentStore } from '@/node/self-agent-store';
-import type { AgentSessionDto, StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
+import type { AgentSessionDto, StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 import {
   activeSessionIdOnNode,
   isNodePaused,
   isSessionOnNode,
   normalizeAgentNodeId,
-} from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+} from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import {
   type Context,
   createContext,

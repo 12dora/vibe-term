@@ -3,14 +3,14 @@
 // 顺序不能反——响应回来时网关可能已经在 300ms 后退出，那时再读 `/healthz` 拿到的
 // 就是新进程的 startedAt，重启判定会永远等不到「变化」。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { SetupApi, readHealthStartedAt } from '@tmex/api-client/local/setup-api';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { SetupApi, readHealthStartedAt } from '@vibeterm/api-client/local/setup-api';
 import type {
   SetupHubResponse,
   SetupJoinResponse,
   SetupRelayJoinResponse,
   SetupRelayResponse,
-} from '@tmex/api-client/local/types';
+} from '@vibeterm/api-client/local/types';
 import {
   type BecomeHubValues,
   type BecomeRelayValues,

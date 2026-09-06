@@ -12,8 +12,8 @@ export const EXAMPLE_HUB_URL = 'https://tmex.example.com';
 export const EXAMPLE_RELAY_URL = 'https://relay.example.com';
 
 /** 哨兵只含 `[A-Za-z0-9._-]`，`joinCommand()` 的引用规则不会碰它们。 */
-const TOKEN_SENTINEL = '__TMEX_JOIN_TOKEN__';
-const NAME_SENTINEL = '__TMEX_NODE_NAME__';
+const TOKEN_SENTINEL = '__VIBETERM_JOIN_TOKEN__';
+const NAME_SENTINEL = '__VIBETERM_NODE_NAME__';
 
 export interface JoinCommandPreviewInput {
   /** `/api/auth/mode` 或 enrollment 响应给出的 hub 对外地址；不可信时退回示例地址。 */

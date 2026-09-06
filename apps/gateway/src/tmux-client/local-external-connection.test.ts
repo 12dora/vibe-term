@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 
 import { createDevice as createDeviceRow, getDeviceById, getDeviceRuntimeStatus } from '../db';
 import { runMigrations } from '../db/migrate';

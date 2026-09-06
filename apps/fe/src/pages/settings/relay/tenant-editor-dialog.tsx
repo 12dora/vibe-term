@@ -4,8 +4,8 @@ import type {
   RelayQuota,
   RelayTenantPatch,
   RelayTenantSummary,
-} from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
+} from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -13,9 +13,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

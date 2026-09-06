@@ -1,14 +1,14 @@
 // 侧边栏设备树的 agent 会话装饰：会话分支/孤立会话区/对话框与「新建会话」动作，
-// 经 SidebarAgentAdapter 注入 @tmex/panels/device-tree（包内零 agent 依赖）。
+// 经 SidebarAgentAdapter 注入 @vibeterm/panels/device-tree（包内零 agent 依赖）。
 
 import { selfAgentStore } from '@/node/self-agent-store';
-import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@tmex/panels/device-tree';
-import type { AgentSessionDto, TmuxPane } from '@tmex/shared';
-import type { AppRuntime } from '@tmex/stores';
-import { normalizeAgentNodeId } from '@tmex/stores';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
+import type { DeviceTreeNavigation, SidebarAgentAdapter } from '@vibeterm/panels/device-tree';
+import type { AgentSessionDto, TmuxPane } from '@vibeterm/shared';
+import type { AppRuntime } from '@vibeterm/stores';
+import { normalizeAgentNodeId } from '@vibeterm/stores';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import { ChevronRight, History } from 'lucide-react';
 import { type ReactNode, useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';

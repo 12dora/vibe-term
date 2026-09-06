@@ -1,4 +1,4 @@
-import type { TelegramBotChat, TelegramBotWithStats, TelegramChatType } from '@tmex/shared';
+import type { TelegramBotChat, TelegramBotWithStats, TelegramChatType } from '@vibeterm/shared';
 import { and, count, desc, eq } from 'drizzle-orm';
 import { i18next } from '../i18n';
 import { getDb as getOrmDb } from './client';

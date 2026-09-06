@@ -1,7 +1,7 @@
 // S2C 帧解码：按 wire kind 查表解码并投递 transport 事件。
 // 未登记的 kind 一律忽略（与旧 switch 的 default 行为一致）；解码异常向上抛，由订阅侧统一记录。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type {
   GatewayNodeEvent,
   GatewayRebaseReason,

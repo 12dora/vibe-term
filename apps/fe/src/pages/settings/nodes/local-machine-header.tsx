@@ -4,10 +4,10 @@
 // 在卡头再摆一份角色选择只会和向导抢同一件事。
 
 import { SIDE_PANEL_LINK_STATE, useSidePanel } from '@/components/side-panels/use-side-panel';
-import type { LocalRole } from '@tmex/api-client/local/types';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { CardTitle } from '@tmex/ui/card';
+import type { LocalRole } from '@vibeterm/api-client/local/types';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { CardTitle } from '@vibeterm/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +16,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';

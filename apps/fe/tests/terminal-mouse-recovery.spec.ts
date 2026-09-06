@@ -8,7 +8,7 @@ import {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -24,21 +24,21 @@ async function readVisibleTerminalText(page: Page): Promise<string> {
 
 async function readViewportY(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.buffer?.active?.viewportY ?? 0;
   });
 }
 
 async function readBaseY(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.buffer?.active?.baseY ?? 0;
   });
 }
 
 async function scrollViewportToTop(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     term?.scrollToTop?.();
   });
 }
@@ -122,7 +122,7 @@ function exitVim(paneId: string): void {
 
 function emitScrollback(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-c`);
-  tmux(`send-keys -t ${paneId} -l 'for i in $(seq 1 120); do echo TMEX_SCROLL_$i; done'`);
+  tmux(`send-keys -t ${paneId} -l 'for i in $(seq 1 120); do echo VIBETERM_SCROLL_$i; done'`);
   tmux(`send-keys -t ${paneId} C-m`);
 }
 

@@ -2,8 +2,8 @@
 // 一遍，而不是信任入队那一刻的判断——被攻陷的汇聚机可以先让投递失败，等声明撤销后再收重试件。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNotificationForwardRequest } from '@tmex/shared';
-import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@tmex/shared';
+import type { MeshNotificationForwardRequest } from '@vibeterm/shared';
+import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@vibeterm/shared';
 import type { UserStore } from '../auth/user-store';
 import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 

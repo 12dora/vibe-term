@@ -12,9 +12,9 @@ import {
   verifyDelegationTimes,
   verifyLogin,
   verifyTotpCode,
-} from '@tmex/shared/auth';
-import type { KeyLogEffect, VerifyDelegationPasskey } from '@tmex/shared/auth';
-import type { HubMode } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { KeyLogEffect, VerifyDelegationPasskey } from '@vibeterm/shared/auth';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import type { ChallengeStore } from '../auth/challenge-store';
@@ -70,7 +70,7 @@ import {
   MESH_VIA_SELF,
   type MeshRoles,
   PASSKEY_REGISTER_TTL_MS,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SET_SESSION,
   getMeshRequestContext,
   isStandaloneRoles,
 } from './mesh-deps';
@@ -400,7 +400,7 @@ export class AuthRoutes {
     }
     const headers = new Headers({
       'content-type': 'application/json',
-      [X_TMEX_SET_SESSION]: ';0',
+      [X_VIBETERM_SET_SESSION]: ';0',
     });
     return jsonBody({ ok: true }, 200, headers);
   }
@@ -644,7 +644,7 @@ export class AuthRoutes {
     const maxAgeSec = Math.max(0, Math.floor((issued.expiresAt - now) / 1000));
     const headers = new Headers({
       'content-type': 'application/json',
-      [X_TMEX_SET_SESSION]: `${issued.sid};${maxAgeSec || Math.floor(NODE_SESSION_TTL_MS / 1000)}`,
+      [X_VIBETERM_SET_SESSION]: `${issued.sid};${maxAgeSec || Math.floor(NODE_SESSION_TTL_MS / 1000)}`,
     });
     return jsonBody({ expires_at: issued.expiresAt }, 200, headers);
   }

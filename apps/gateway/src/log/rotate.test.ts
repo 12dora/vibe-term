@@ -25,13 +25,13 @@ async function tempDir(): Promise<string> {
 
 afterEach(async () => {
   restoreProcessLogRotationForTest();
-  delete process.env.TMEX_LOG_FILE;
-  delete process.env.TMEX_LOG_ERR_FILE;
-  delete process.env.TMEX_LOG_ROTATE;
-  delete process.env.TMEX_LOG_DISABLE;
-  delete process.env.TMEX_LOG_MAX_BYTES;
-  delete process.env.TMEX_LOG_GENERATIONS;
-  delete process.env.TMEX_INSTALL_DIR;
+  delete process.env.VIBETERM_LOG_FILE;
+  delete process.env.VIBETERM_LOG_ERR_FILE;
+  delete process.env.VIBETERM_LOG_ROTATE;
+  delete process.env.VIBETERM_LOG_DISABLE;
+  delete process.env.VIBETERM_LOG_MAX_BYTES;
+  delete process.env.VIBETERM_LOG_GENERATIONS;
+  delete process.env.VIBETERM_INSTALL_DIR;
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
 
@@ -145,10 +145,10 @@ describe('process log rotation config', () => {
   test('honours env overrides and defaults', () => {
     expect(DEFAULT_LOG_MAX_BYTES).toBe(16 * 1024 * 1024);
     expect(DEFAULT_LOG_GENERATIONS).toBe(3);
-    process.env.TMEX_LOG_FILE = '/tmp/custom.log';
-    process.env.TMEX_LOG_ERR_FILE = '/tmp/custom.err';
-    process.env.TMEX_LOG_MAX_BYTES = '8192';
-    process.env.TMEX_LOG_GENERATIONS = '2';
+    process.env.VIBETERM_LOG_FILE = '/tmp/custom.log';
+    process.env.VIBETERM_LOG_ERR_FILE = '/tmp/custom.err';
+    process.env.VIBETERM_LOG_MAX_BYTES = '8192';
+    process.env.VIBETERM_LOG_GENERATIONS = '2';
     expect(resolveProcessLogRotationConfig()).toEqual({
       stdoutPath: '/tmp/custom.log',
       stderrPath: '/tmp/custom.err',
@@ -157,40 +157,40 @@ describe('process log rotation config', () => {
     });
   });
 
-  test('installs on darwin production via TMEX_INSTALL_DIR, skips Linux and tests', () => {
+  test('installs on darwin production via VIBETERM_INSTALL_DIR, skips Linux and tests', () => {
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', TMEX_INSTALL_DIR: '/tmp/tmex' },
+        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex' },
         'darwin'
       )
     ).toBe(true);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', TMEX_INSTALL_DIR: '/tmp/tmex' },
+        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex' },
         'linux'
       )
     ).toBe(false);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'test', TMEX_LOG_FILE: '/tmp/tmex.log' },
+        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/tmex.log' },
         'darwin'
       )
     ).toBe(false);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'test', TMEX_LOG_FILE: '/tmp/tmex.log', TMEX_LOG_ROTATE: '1' },
+        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/tmex.log', VIBETERM_LOG_ROTATE: '1' },
         'darwin'
       )
     ).toBe(true);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', TMEX_INSTALL_DIR: '/tmp/tmex', TMEX_LOG_DISABLE: '1' },
+        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex', VIBETERM_LOG_DISABLE: '1' },
         'darwin'
       )
     ).toBe(false);
   });
 
-  test('maybeInstall is a no-op during bun test unless TMEX_LOG_ROTATE=1', () => {
+  test('maybeInstall is a no-op during bun test unless VIBETERM_LOG_ROTATE=1', () => {
     expect(maybeInstallProcessLogRotation()).toBe(false);
     expect(processLogRotationInstalledForTest()).toBe(false);
   });

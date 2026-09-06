@@ -1,4 +1,4 @@
-import type { TmuxEventType } from '@tmex/shared';
+import type { TmuxEventType } from '@vibeterm/shared';
 
 export interface TmuxEvent {
   type: TmuxEventType;

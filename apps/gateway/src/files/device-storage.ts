@@ -8,7 +8,7 @@ import type {
   FileErrorCode,
   FileStatResponse,
   ListFilesResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { config } from '../config';
 import { getDeviceById } from '../db';
 import type { FileRootRecord } from '../db/file-roots';

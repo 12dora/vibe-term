@@ -1,5 +1,5 @@
-import { DeviceEntryCard } from '@tmex/panels/settings/device-entry-card';
-import { FilesSettingsTab } from '@tmex/panels/settings/files';
+import { DeviceEntryCard } from '@vibeterm/panels/settings/device-entry-card';
+import { FilesSettingsTab } from '@vibeterm/panels/settings/files';
 
 export function DevicesAndFilesTab() {
   return (

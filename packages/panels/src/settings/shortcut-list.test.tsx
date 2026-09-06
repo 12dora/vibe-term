@@ -1,9 +1,9 @@
 // label 输入框对齐 payload 的写法：本地草稿 + 失焦提交。
-// bun test 无 DOM：mock 包住 @tmex/ui/input（转发真实实现）拿到输入框 props，直接调它的回调。
+// bun test 无 DOM：mock 包住 @vibeterm/ui/input（转发真实实现）拿到输入框 props，直接调它的回调。
 
 import { describe, expect, mock, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
-import type { TerminalShortcutItem } from '@tmex/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import type { TerminalShortcutItem } from '@vibeterm/shared';
 import i18next from 'i18next';
 import type { ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,11 +16,11 @@ type CapturedInput = {
   onBlur?: () => void;
 };
 
-const realInput = (await import('@tmex/ui/input')) as unknown as Record<string, unknown>;
+const realInput = (await import('@vibeterm/ui/input')) as unknown as Record<string, unknown>;
 const RealInput = realInput.Input as ComponentType<CapturedInput>;
 const captured: CapturedInput[] = [];
 
-mock.module('@tmex/ui/input', () => ({
+mock.module('@vibeterm/ui/input', () => ({
   ...realInput,
   Input: (props: CapturedInput) => {
     captured.push(props);

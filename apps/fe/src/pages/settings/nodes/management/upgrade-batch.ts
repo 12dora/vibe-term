@@ -8,7 +8,7 @@
 // 计划（`upgrade-batch-storage`），刷新后按同一份 `order` 接着跑，最后仍然只弹一条汇总。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import { compareSemver } from '@tmex/shared';
+import { compareSemver } from '@vibeterm/shared';
 import type { UpgradeRunOutcome } from './types';
 import { type BatchPlanSink, type UpgradeBatchPlan, planRemaining } from './upgrade-batch-storage';
 

@@ -1,9 +1,9 @@
-import type { UiToolCall } from '@tmex/stores';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
+import type { UiToolCall } from '@vibeterm/stores';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@vibeterm/ui/dialog';
 import {
   CheckIcon,
   ChevronRightIcon,

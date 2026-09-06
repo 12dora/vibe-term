@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
-import { removeTmexShims } from '../lib/cli-shim';
+import { removeVibeTermShims } from '../lib/cli-shim';
 import { readEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
 import { pathExists, resolvePath } from '../lib/fs-utils';
@@ -174,7 +174,7 @@ async function removeProgramStep(plan: UninstallPlan): Promise<void> {
   const removeShims =
     plan.deps.removeShims ??
     ((opts: { installDir: string }) =>
-      removeTmexShims({
+      removeVibeTermShims({
         installDir: opts.installDir,
         localBinDir: plan.deps.shimDirs?.localBinDir,
         bunBinDir: plan.deps.shimDirs?.bunBinDir,

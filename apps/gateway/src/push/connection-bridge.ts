@@ -1,4 +1,4 @@
-import type { Device, EventType, SiteSettings, WebhookEvent } from '@tmex/shared';
+import type { Device, EventType, SiteSettings, WebhookEvent } from '@vibeterm/shared';
 import type { ConnectionAlertSource } from './connection-alerts';
 
 export const BRIDGE_EVENT_SOURCES = new Set<ConnectionAlertSource>(['close', 'connect', 'probe']);

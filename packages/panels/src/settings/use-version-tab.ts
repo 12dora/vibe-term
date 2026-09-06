@@ -2,9 +2,9 @@
 // 升级会重启服务，因此完成检测靠「见过非 idle 后又回到 idle」而非单次响应。
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { SystemInfo, UpdateCheckResult, UpgradeStatus } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import type { SystemInfo, UpdateCheckResult, UpgradeStatus } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

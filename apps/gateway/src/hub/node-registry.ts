@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 
 export type NodeRegistryMeta = {
   name: string;

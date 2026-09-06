@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { CLIENT_SOURCE_LOCAL, X_TMEX_CLIENT_SOURCE } from './client-source';
+import { CLIENT_SOURCE_LOCAL, X_VIBETERM_CLIENT_SOURCE } from './client-source';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import {
   MESH_FORWARD_CSP,
   MESH_VIA_SELF,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SET_SESSION,
   setMeshRequestContext,
 } from './mesh-deps';
 
@@ -23,7 +23,7 @@ describe('copyUpstreamHeaders', () => {
           'x-evil': '1',
           'cache-control': 'no-store',
           'set-cookie': 'stolen=1',
-          [X_TMEX_SET_SESSION]: 'sid;60',
+          [X_VIBETERM_SET_SESSION]: 'sid;60',
         },
       })
     );
@@ -31,7 +31,7 @@ describe('copyUpstreamHeaders', () => {
     expect(svg.get('content-disposition')).toBe('attachment');
     expect(svg.get('x-evil')).toBeNull();
     expect(svg.get('set-cookie')).toBeNull();
-    expect(svg.get(X_TMEX_SET_SESSION)).toBeNull();
+    expect(svg.get(X_VIBETERM_SET_SESSION)).toBeNull();
     expect(svg.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
     expect(svg.get('x-content-type-options')).toBe('nosniff');
     expect(svg.get('cache-control')).toBe('no-store');
@@ -100,9 +100,9 @@ describe('filterRequestHeaders', () => {
 
   test('受信本机入口盖上 x-tmex-client-source: local，浏览器伪造会被丢掉再盖回', () => {
     const out = filterRequestHeaders(
-      reqWith({ accept: '*/*', [X_TMEX_CLIENT_SOURCE]: 'forged' }, '127.0.0.1')
+      reqWith({ accept: '*/*', [X_VIBETERM_CLIENT_SOURCE]: 'forged' }, '127.0.0.1')
     );
-    expect(out[X_TMEX_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
     expect(out.accept).toBe('*/*');
   });
 });

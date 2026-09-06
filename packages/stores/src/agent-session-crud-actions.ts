@@ -8,8 +8,8 @@ import {
   fetchAgentSessions,
   stopAgentSession,
   updateAgentSession,
-} from '@tmex/api-client';
-import type { AgentSessionDto } from '@tmex/shared';
+} from '@vibeterm/api-client';
+import type { AgentSessionDto } from '@vibeterm/shared';
 import { selectEvictableHistories } from './agent-history-budget';
 import { agentNodeKey } from './agent-node-state';
 import { type AgentSessionActionsDeps, reportActionError } from './agent-session-deps';

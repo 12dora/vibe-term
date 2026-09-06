@@ -6,7 +6,7 @@ import type {
   AuthKdfParamsJson,
   AuthModeResponse,
   HubEndpointInfo,
-} from '@tmex/api-client/auth/index';
+} from '@vibeterm/api-client/auth/index';
 
 /** 已确认带 uid / kdf 参数的 mesh 模式：管理动作都要签名，缺一不可。 */
 export type ResolvedMode = AuthModeResponse & { uid: string; kdfParams: AuthKdfParamsJson };

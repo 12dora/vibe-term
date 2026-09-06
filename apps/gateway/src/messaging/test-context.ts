@@ -1,4 +1,4 @@
-import { rolesFromName } from '@tmex/shared';
+import { rolesFromName } from '@vibeterm/shared';
 import type { CommandContext, DeviceView, MeshNodeView, TmuxWindowView } from './context';
 import { registerBuiltinCommands } from './handlers';
 import { createCommandRegistry } from './registry';

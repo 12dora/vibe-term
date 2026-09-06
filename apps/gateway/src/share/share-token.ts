@@ -1,11 +1,11 @@
-import { encodeBase64url, randomBytes, sha256 } from '@tmex/shared/auth';
+import { encodeBase64url, randomBytes, sha256 } from '@vibeterm/shared/auth';
 
 export const SHARE_COOKIE_PREFIX = 'tmex_sh_';
 export const SHARE_AUTH_PREFIX = 'share:';
 
-export const X_TMEX_SET_SHARE = 'x-tmex-set-share';
-export const X_TMEX_SET_SHARE_MAX_AGE = 'x-tmex-set-share-max-age';
-export const X_TMEX_CLEAR_SHARE = 'x-tmex-clear-share';
+export const X_VIBETERM_SET_SHARE = 'x-tmex-set-share';
+export const X_VIBETERM_SET_SHARE_MAX_AGE = 'x-tmex-set-share-max-age';
+export const X_VIBETERM_CLEAR_SHARE = 'x-tmex-clear-share';
 
 export const SHARE_ID_BYTES = 16;
 export const SHARE_SECRET_BYTES = 32;

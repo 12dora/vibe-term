@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { LINK_STREAM_BACKPRESSURE_BYTES, LinkStreamCarrier } from './link-stream-carrier';
 import {
   decodeTerminalStreamClose,
@@ -11,7 +11,7 @@ import {
 describe('LinkStreamCarrier', () => {
   test('maps send queue above 1 MiB to backpressure and fires onDrain', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -40,7 +40,7 @@ describe('LinkStreamCarrier', () => {
 
   test('close ends the stream and terminate RSTs', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -52,7 +52,7 @@ describe('LinkStreamCarrier', () => {
     incoming.end();
     expect((await out.closed).reason).toBe('end');
 
-    const incoming2P = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming2P = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out2 = await a.openStream(new Uint8Array([2]));
@@ -65,7 +65,7 @@ describe('LinkStreamCarrier', () => {
 
   test('close drains already-accepted frames before END', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -86,7 +86,7 @@ describe('LinkStreamCarrier', () => {
 
   test('link abort fires onClose even with a queued send', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -103,7 +103,7 @@ describe('LinkStreamCarrier', () => {
 describe('LinkStreamCarrier 终止性关闭码', () => {
   test('4410 以 RST 携带 code:reason，对端可解码', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -125,7 +125,7 @@ describe('LinkStreamCarrier 终止性关闭码', () => {
 
   test('普通关闭码仍是干净半关闭，不带终止标记', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));

@@ -17,7 +17,7 @@ type VisibleTextRange = {
 
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange | null> {
   return page.evaluate((target) => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) {
       return null;
     }
@@ -54,7 +54,7 @@ async function waitForVisibleText(page: Page, needle: string): Promise<VisibleTe
 // 数 link 下划线层上该文本区间行带内的非透明像素（下划线用 stroke 画，alpha > 0 即有墨迹）。
 async function countUnderlinePixels(page: Page, range: VisibleTextRange): Promise<number> {
   return page.evaluate((target) => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas[data-layer="link"]');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return -1;
@@ -85,7 +85,7 @@ async function countUnderlinePixels(page: Page, range: VisibleTextRange): Promis
 
 async function cellCenter(page: Page, row: number, col: number): Promise<{ x: number; y: number }> {
   const metrics = await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return null;

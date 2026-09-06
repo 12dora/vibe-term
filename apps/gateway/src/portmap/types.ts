@@ -1,5 +1,5 @@
-import type { PortMapErrorCode } from '@tmex/shared';
-import type { LinkSession } from '@tmex/shared/link';
+import type { PortMapErrorCode } from '@vibeterm/shared';
+import type { LinkSession } from '@vibeterm/shared/link';
 
 /** A 侧持久化的映射行。 */
 export type PortMapRow = {

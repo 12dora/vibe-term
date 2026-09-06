@@ -1,7 +1,7 @@
 // mesh 成员列表的首帧兜底缓存：落盘字段裁剪、读取校验、过期与条数上限。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   MESH_NODES_CACHE_MAX_AGE_MS,
   MESH_NODES_CACHE_MAX_ROWS,

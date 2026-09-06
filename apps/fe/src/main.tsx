@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { PRODUCT_NAME, formatDisplayVersion } from '@tmex/shared';
+import { PRODUCT_NAME, formatDisplayVersion } from '@vibeterm/shared';
 import { type CSSProperties, type ComponentType, StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Navigate, Outlet, RouterProvider, createBrowserRouter } from 'react-router';
@@ -37,17 +37,17 @@ import {
 import { PageWrapper } from '@/page-wrapper';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
-import { installSessionInterceptor } from '@tmex/api-client/auth/index';
-import { ConnectionIndicator } from '@tmex/panels';
-import { SettingsEventsInit } from '@tmex/panels/settings/events';
-import { WatchEventsInit } from '@tmex/panels/watch';
-import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
-import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
-import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
-import { applyThemePreset, isThemePreset } from '@tmex/theme';
-import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
-import { markToasterReady } from '@tmex/ui/toast';
-import { setDefaultClientVersion } from '@tmex/ws-client';
+import { installSessionInterceptor } from '@vibeterm/api-client/auth/index';
+import { ConnectionIndicator } from '@vibeterm/panels';
+import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
+import { WatchEventsInit } from '@vibeterm/panels/watch';
+import { SELF_NODE_ID, useNodeRuntime } from '@vibeterm/stores';
+import { RuntimeProvider, useUIStore } from '@vibeterm/stores/react';
+import { useKeyboardAvoidance } from '@vibeterm/terminal-ui/hooks/use-keyboard-avoidance';
+import { applyThemePreset, isThemePreset } from '@vibeterm/theme';
+import { SidebarInset, SidebarProvider, useSidebar } from '@vibeterm/ui/sidebar';
+import { markToasterReady } from '@vibeterm/ui/toast';
+import { setDefaultClientVersion } from '@vibeterm/ws-client';
 
 function applyInitialTheme(): void {
   try {

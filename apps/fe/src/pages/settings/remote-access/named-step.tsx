@@ -6,9 +6,9 @@
 // 主机名没有单独的保存动作（契约里只有 `create` 带 hostname），所以「确认」只是向导内部的
 // 一步：确认之后才展开创建，Access 那一步也才有可展示的目标主机名。
 
-import type { TunnelStatusResponse } from '@tmex/shared';
-import { Button, buttonVariants } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
+import { Button, buttonVariants } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { ArrowRight, ExternalLink, Loader2, LogIn, Pencil, Rocket } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';

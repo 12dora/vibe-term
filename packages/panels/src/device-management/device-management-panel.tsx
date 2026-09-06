@@ -6,12 +6,12 @@
 // 退回宿主给的 `fallbackDevices`（本地快照 / 节点 inventory）；卡片带 offline 标记、排序禁用。
 // 宽度与内边距由页面级容器统一负责，本面板只是 `w-full`。
 
-import { devicesQueryKey as defaultDevicesQueryKey } from '@tmex/api-client';
-import type { Device, DeviceType } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent } from '@tmex/ui/card';
+import { devicesQueryKey as defaultDevicesQueryKey } from '@vibeterm/api-client';
+import type { Device, DeviceType } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent } from '@vibeterm/ui/card';
 import { Monitor, Plus } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';

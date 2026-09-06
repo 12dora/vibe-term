@@ -4,13 +4,13 @@
 //
 // 列表跨节点汇总，行里带着自己的节点：多节点时多一列点名是哪台，单机时这一列没有信息量，不出。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Copy, Ellipsis, Square } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../components/wide-table';

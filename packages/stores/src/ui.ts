@@ -1,4 +1,4 @@
-import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@tmex/theme';
+import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@vibeterm/theme';
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';

@@ -1,13 +1,13 @@
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
-import type { HostServices } from '@tmex/stores';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import type { HostServices } from '@vibeterm/stores';
 import {
   decodePaneIdFromUrlParam,
   dispatchUserInitiatedSelection,
   encodePaneIdForUrl,
   hostAppPath,
-} from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import { useSidebar } from '@tmex/ui/sidebar';
+} from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { matchPath, useLocation, useNavigate } from 'react-router';
 import type { DeviceTreeNavigation } from './agent-adapter';

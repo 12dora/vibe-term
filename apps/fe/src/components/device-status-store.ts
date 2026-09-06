@@ -4,7 +4,7 @@
 // 快照只在提交后由 `publish` 写入（provider 的 useLayoutEffect）：渲染期写外部 store 会让
 // 被放弃的并发渲染也把值漏出去，而写入与通知合成一步则保证读到的永远是已提交的那一帧。
 
-import type { DeviceConnectionStatus } from '@tmex/panels';
+import type { DeviceConnectionStatus } from '@vibeterm/panels';
 import {
   type DeviceConnectionSnapshot,
   deriveDeviceConnectionStatus,

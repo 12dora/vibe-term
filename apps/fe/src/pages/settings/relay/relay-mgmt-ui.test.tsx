@@ -5,8 +5,8 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { RelayQuota, RelayTenantSummary } from '@tmex/api-client/relay/admin-api';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { RelayQuota, RelayTenantSummary } from '@vibeterm/api-client/relay/admin-api';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ReactElement } from 'react';
 
 installWindowStorage();

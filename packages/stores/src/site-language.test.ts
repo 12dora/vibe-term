@@ -3,7 +3,7 @@
 // `/n/<id>/...` 子树时被掀翻（见 f4 任务 B）。
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();

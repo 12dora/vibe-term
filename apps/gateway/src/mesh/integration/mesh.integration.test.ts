@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   DELEGATION_TTL_MS,
   DOMAIN_DELEGATION,
@@ -18,15 +18,15 @@ import {
   rootKeyFromSeed,
   signEd25519,
   signLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   FrameDecoder,
   GCM_TAG_LENGTH,
   SC_DIRECTION_INITIATOR,
   buildAesGcmNonce,
   encodeFrameHeader,
-} from '@tmex/shared/link';
-import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
+import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -47,7 +47,7 @@ import { WebSocketServer } from '../../ws';
 import {
   MESH_FORWARD_WS_KIND,
   MESH_VIA_SELF,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SET_SESSION,
   setMeshRequestContext,
 } from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
@@ -951,7 +951,7 @@ describe('mesh phase-2 integration', () => {
     expect(names).toContain(nodeSessionCookieName(b.mesh.nodeId));
     expect(names).not.toContain(nodeSessionCookieName(MESH_VIA_SELF));
     expect(names).not.toContain(nodeSessionCookieName(a.mesh.nodeId));
-    expect(toB.headers.get(X_TMEX_SET_SESSION)).toBeNull();
+    expect(toB.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
     expect(sidFromResponse(toB, b.mesh.nodeId).length).toBeGreaterThan(8);
   });
 

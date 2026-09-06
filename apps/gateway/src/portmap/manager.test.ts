@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { resetPeerStreamSlots } from './budget';
 import { PortMapManager } from './manager';
 import { isPortFree } from './port-probe';

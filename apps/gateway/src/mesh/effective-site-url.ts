@@ -1,4 +1,4 @@
-import { isPublicShareOrigin, normalizeShareOrigin } from '@tmex/shared/share';
+import { isPublicShareOrigin, normalizeShareOrigin } from '@vibeterm/shared/share';
 import type { SiteSettingsLinkProvider } from '../api/site-settings-link';
 import { type MeshHubRecord, pickWriterHub } from '../auth/mesh-hub-store';
 

@@ -15,18 +15,18 @@ import { fileURLToPath } from 'node:url';
 const INSTALL_MARKER = 'Application Support/tmex';
 
 /** 指向安装目录、dev/test 下需要净化的路径键 */
-const PATH_KEYS = ['TMEX_MIGRATIONS_DIR', 'TMEX_FE_DIST_DIR'] as const;
+const PATH_KEYS = ['VIBETERM_MIGRATIONS_DIR', 'VIBETERM_FE_DIST_DIR'] as const;
 
 /** 生产必需且非空的键 */
 const PRODUCTION_REQUIRED = [
-  'TMEX_MASTER_KEY',
+  'VIBETERM_MASTER_KEY',
   'GATEWAY_PORT',
-  'TMEX_BIND_HOST',
+  'VIBETERM_BIND_HOST',
   'DATABASE_URL',
 ] as const;
 
 /** 生产必需且必须指向真实存在目录的键（由 run.sh export） */
-const PRODUCTION_REQUIRED_DIRS = ['TMEX_FE_DIST_DIR', 'TMEX_MIGRATIONS_DIR'] as const;
+const PRODUCTION_REQUIRED_DIRS = ['VIBETERM_FE_DIST_DIR', 'VIBETERM_MIGRATIONS_DIR'] as const;
 
 export type EnvName = 'development' | 'test' | 'production';
 
@@ -148,13 +148,13 @@ function applyProductionEnv(
 
   if (missing.length > 0) {
     throw new Error(
-      `[env] 生产环境启动校验失败，缺少/无效的必需变量：${missing.join('、')}。生产变量应由安装版 run.sh 经 app.env 注入；请检查 app.env 是否完整、TMEX_FE_DIST_DIR/TMEX_MIGRATIONS_DIR 是否指向已部署的 resources 目录，或重新执行 \`tmex upgrade\` 重建 run.sh。`
+      `[env] 生产环境启动校验失败，缺少/无效的必需变量：${missing.join('、')}。生产变量应由安装版 run.sh 经 app.env 注入；请检查 app.env 是否完整、VIBETERM_FE_DIST_DIR/VIBETERM_MIGRATIONS_DIR 是否指向已部署的 resources 目录，或重新执行 \`tmex upgrade\` 重建 run.sh。`
     );
   }
 
   // 生产不读取任何仓库文件、不修改注入值，仅打印可观测摘要。
   log(
-    `production: 使用 app.env 注入变量（不读仓库 env 文件） port=${env.GATEWAY_PORT} host=${env.TMEX_BIND_HOST} db=${env.DATABASE_URL}`
+    `production: 使用 app.env 注入变量（不读仓库 env 文件） port=${env.GATEWAY_PORT} host=${env.VIBETERM_BIND_HOST} db=${env.DATABASE_URL}`
   );
 }
 

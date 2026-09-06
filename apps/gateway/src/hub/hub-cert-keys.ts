@@ -1,4 +1,4 @@
-import { decodeCertificate } from '@tmex/shared/auth';
+import { decodeCertificate } from '@vibeterm/shared/auth';
 
 export function decodeCertificateIdentityKeys(
   bytes: Uint8Array

@@ -1,4 +1,4 @@
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 
 const TERMINAL_RESET_PREFIX = 'tmex-close:';

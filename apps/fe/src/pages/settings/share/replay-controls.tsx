@@ -1,8 +1,8 @@
 // 回放控制条：播放 / 暂停、倍速、进度条、时间，以及多 pane 时的 pane 选择。
 // 下方是输入标记条——被分享人敲的键只在这里显示，不写进终端。
 
-import { Button } from '@tmex/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Button } from '@vibeterm/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { Pause, Play } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { formatReplayClock } from './replay-timeline';

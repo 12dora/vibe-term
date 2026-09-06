@@ -1,13 +1,13 @@
 // 动作串行化：一把锁挡住并发、job 在跑时只放行 cancel_login、check 结果与失败后的重拉。
 
 import { describe, expect, test } from 'bun:test';
-import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
+import { TunnelApiError } from '@vibeterm/api-client/local/tunnel-api';
 import type {
   TunnelActionRequest,
   TunnelActionResponse,
   TunnelJobStatus,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import {
   TunnelActionController,
   checkResultOf,

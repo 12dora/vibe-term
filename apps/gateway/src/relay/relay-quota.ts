@@ -1,4 +1,4 @@
-import { RELAY_CTL_MAX_NODES, type RelayQuota } from '@tmex/shared/relay';
+import { RELAY_CTL_MAX_NODES, type RelayQuota } from '@vibeterm/shared/relay';
 import { RELAY_DEFAULT_QUOTA } from './types';
 
 /**

@@ -3,7 +3,7 @@
 //  2. 同一个 node 并存多份 provider（路由层 + 侧栏聚合视图）——意图必须是同一份。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { DeviceIntentSnapshot } from './device-intent-store';
 
 installWindowStorage();

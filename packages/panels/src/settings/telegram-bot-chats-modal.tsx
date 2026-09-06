@@ -1,21 +1,21 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { ListTelegramBotChatsResponse, TelegramBotChat } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
+import { parseApiError } from '@vibeterm/api-client';
+import type { ListTelegramBotChatsResponse, TelegramBotChat } from '@vibeterm/shared';
+import { formatDateTime } from '@vibeterm/shared';
 import { Send, Shield } from 'lucide-react';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { useRuntime, useSiteStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
+import { useRuntime, useSiteStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 
 interface TelegramBotChatsModalProps {
   open: boolean;

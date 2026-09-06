@@ -2,7 +2,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态标记断言结构与 testId（与 RelayTab 测试同一套做法）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

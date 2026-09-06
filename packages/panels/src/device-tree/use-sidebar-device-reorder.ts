@@ -3,10 +3,10 @@
 // 必须把结果合并回完整顺序再提交，否则隐藏设备的旧 sortOrder 会与新序号撞车。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { reorderDevices } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { toast } from '@tmex/ui/toast';
+import { reorderDevices } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { toast } from '@vibeterm/ui/toast';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { reorderDevicesOptimistically } from './device-reorder';

@@ -3,7 +3,7 @@ import {
   type UpdateCheckResult,
   compareSemver,
   releaseTarballName,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { getBaseVersion } from './version';
 
 const FETCH_TIMEOUT_MS = 10_000;

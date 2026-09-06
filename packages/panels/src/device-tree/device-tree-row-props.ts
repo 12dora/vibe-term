@@ -1,6 +1,6 @@
 // 窗口行 / pane 行与其各分段共用的 props 面；集中在这里避免分段文件反向 import 行组件。
 
-import type { Device, TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { Device, TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import type { DeviceTreeNavigation, SidebarAgentAdapter } from './agent-adapter';
 

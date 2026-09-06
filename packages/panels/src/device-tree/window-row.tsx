@@ -1,4 +1,4 @@
-import { useSidebar } from '@tmex/ui/sidebar';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { memo, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSortableRow } from './device-tree-dnd';

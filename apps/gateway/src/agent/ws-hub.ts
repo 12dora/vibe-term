@@ -2,12 +2,12 @@
 // 维护 sessionId -> 订阅客户端 集合，负责 AGENT_EVENT/WATCH_EVENT 的 borsh 编码与广播。
 // 事件来源：agent runtime（Task 5）与 watch service（Task 6）。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type {
   AgentEventPayloadMap,
   AgentSyncEventPayload,
   WatchEventPayloadMap,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import {
   getAgentSessionById,
   getMaxAgentMessageSeq,

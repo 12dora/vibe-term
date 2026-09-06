@@ -1,5 +1,5 @@
-import { DEFAULT_TERMINAL_SHORTCUTS } from '@tmex/shared';
-import type { TerminalShortcutItem, TunnelAccessMode } from '@tmex/shared';
+import { DEFAULT_TERMINAL_SHORTCUTS } from '@vibeterm/shared';
+import type { TerminalShortcutItem, TunnelAccessMode } from '@vibeterm/shared';
 import { sql } from 'drizzle-orm';
 import { check, integer, sqliteTable, text } from 'drizzle-orm/sqlite-core';
 

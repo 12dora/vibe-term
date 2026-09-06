@@ -68,7 +68,7 @@ describe('resolveTotpCode', () => {
     ).toBe('111111');
   });
 
-  test('TMEX_TOTP wins over --totp-secret', () => {
+  test('VIBETERM_TOTP wins over --totp-secret', () => {
     expect(
       resolveTotpCode({
         totpSecret: RFC6238_BASE32,

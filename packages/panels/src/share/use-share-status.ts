@@ -2,9 +2,9 @@
 // 有分享在跑时按 10 s 盯在线人数，没有时退到 60 s（切回页面还会各自触发一次）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { type ShareListResponse, listShares, shareQueryKey } from '@tmex/api-client';
-import type { ShareRecord } from '@tmex/shared/share';
-import { useRuntime } from '@tmex/stores/react';
+import { type ShareListResponse, listShares, shareQueryKey } from '@vibeterm/api-client';
+import type { ShareRecord } from '@vibeterm/shared/share';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback } from 'react';
 import { pickActiveShare, shareRefetchIntervalMs } from './share-dialog-model';
 

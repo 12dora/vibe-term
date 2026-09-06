@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/theme",
+  "name": "@vibeterm/theme",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -23,6 +23,6 @@
     "typescript": "^5.7.3"
   },
   "dependencies": {
-    "@tmex/shared": "workspace:*"
+    "@vibeterm/shared": "workspace:*"
   }
 }

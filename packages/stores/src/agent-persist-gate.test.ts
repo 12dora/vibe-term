@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { noopNotificationSink } from '@tmex/notifications';
+import { noopNotificationSink } from '@vibeterm/notifications';
 
 import { createAgentStore } from './agent';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';

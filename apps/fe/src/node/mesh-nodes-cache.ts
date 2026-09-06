@@ -8,7 +8,7 @@
 // 直连失败）一律清空——它们描述的是上一次会话里那条链路，冷启动后必然过期，显示出来只会
 // 是错的。鉴权相关的 `/api/auth/mode` 主体也不落盘，只留一个「上次是不是 mesh」的布尔值。
 
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 
 const CACHE_KEY = 'tmex:mesh-nodes';
 const CACHE_VERSION = 1;

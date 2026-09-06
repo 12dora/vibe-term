@@ -7,7 +7,7 @@ import type {
   CreateTransferJobRequest,
   TransferGrantResponse,
   TransferSourceItem,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { requestDispatchContext } from '../mesh/types';

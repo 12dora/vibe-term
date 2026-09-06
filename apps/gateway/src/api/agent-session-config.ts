@@ -1,4 +1,4 @@
-import type { AgentWriteMode } from '@tmex/shared';
+import type { AgentWriteMode } from '@vibeterm/shared';
 import { HOSTED_TOOL_KEYS } from '../agent/tools/hosted';
 import { type AgentSessionRecord, getAgentSettings } from '../db/agent';
 import { getLlmProviderById } from '../db/llm';

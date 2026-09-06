@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { PaneHistoryCursor } from '../../../apps/gateway/src/tmux-client/pane-history-reader';
 import { PaneRetention } from '../../../apps/gateway/src/tmux-client/pane-retention';
 import {

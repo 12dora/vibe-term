@@ -90,7 +90,7 @@ tmex 内置完整的登录保护，但 standalone 安装默认**不启用**：�
 
 **多节点互联**：节点成员资格由根钥签发的 Ed25519 证书证明，Hub 不签发任何凭证。节点之间的链路双向认证，并以 AES-256-GCM 端到端加密，做中转的 Hub 只搬密文。
 
-**传输**：内置 TLS 监听器可提供自签 CA 证书，或经 ACME（`http-01`，或通过 Cloudflare / DNSPod 的 `dns-01`）签发的 Let's Encrypt 证书；也可以在自己的反向代理上终止 TLS，并设 `TMEX_TRUST_PROXY=true`，让 tmex 读到真实的客户端地址与协议。没有公网 IP 时，tmex 自行下载并托管 `cloudflared`，用自有域名或临时隧道对外，并可在其前面强制校验 [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) 的 JWT。
+**传输**：内置 TLS 监听器可提供自签 CA 证书，或经 ACME（`http-01`，或通过 Cloudflare / DNSPod 的 `dns-01`）签发的 Let's Encrypt 证书；也可以在自己的反向代理上终止 TLS，并设 `VIBETERM_TRUST_PROXY=true`，让 tmex 读到真实的客户端地址与协议。没有公网 IP 时，tmex 自行下载并托管 `cloudflared`，用自有域名或临时隧道对外，并可在其前面强制校验 [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) 的 JWT。
 
 - 密码与私钥均使用 AES-256-GCM 加密存储。
 - Webhook 通知使用 HMAC-SHA256 签名验证。
@@ -116,7 +116,7 @@ tmex 同时监听 BEL（`\a`）和常见的 OSC 通知序列（OSC 9、OSC 99、
 
 **Q：为什么 tmex 默认不开启 OSC passthrough？**
 
-默认关闭 passthrough 可避免 pane 内程序将私有终端控制序列直接透传到宿主终端，从而缩小终端逃逸攻击面。如果你明确需要 iTerm2 等宿主终端接收 OSC 序列，可设置环境变量 `TMEX_TMUX_ALLOW_PASSTHROUGH=true`。
+默认关闭 passthrough 可避免 pane 内程序将私有终端控制序列直接透传到宿主终端，从而缩小终端逃逸攻击面。如果你明确需要 iTerm2 等宿主终端接收 OSC 序列，可设置环境变量 `VIBETERM_TMUX_ALLOW_PASSTHROUGH=true`。
 
 ## License
 

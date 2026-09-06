@@ -1,9 +1,9 @@
 // 暂存升级包的落盘细节。字节层（`.part` 命名、偏移校验、前缀重算、截断判定、落位）
-// 已经统一到 `@tmex/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
+// 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { releaseTarballName } from '@tmex/shared';
+import { releaseTarballName } from '@vibeterm/shared';
 import {
   PART_TTL_MS,
   type SinkDescriptor,
@@ -11,7 +11,7 @@ import {
   deterministicPartPath,
   fileExpired,
   fileSizeOrZero,
-} from '@tmex/transfer/node';
+} from '@vibeterm/transfer/node';
 import { stagedManifestVersion } from './upgrade-manifest';
 
 export { fileSizeOrZero };

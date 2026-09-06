@@ -5,7 +5,7 @@
 // Cloudflare Access 分支：凭证 → 允许访问的用户 → 应用状态；
 // API token 与 account id 只往服务端送一次，状态里永远只回「是否已保存」。
 
-import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,9 +15,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import {
   KeyRound,
   Loader2,

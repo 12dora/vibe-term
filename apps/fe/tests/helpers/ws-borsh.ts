@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 // gateway 的 WS 端点。URL 带 per-socket 的 `?cid=` nonce（多 node 下服务端靠它认连接），
 // 因此不能用 endsWith('/ws') 判断。
@@ -438,7 +438,7 @@ export async function readVisibleTerminalText(
   page: import('@playwright/test').Page
 ): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;

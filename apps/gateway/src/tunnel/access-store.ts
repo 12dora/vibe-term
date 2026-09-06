@@ -1,4 +1,4 @@
-import type { TunnelAccessPolicyRule, TunnelAccessStatus, TunnelMode } from '@tmex/shared';
+import type { TunnelAccessPolicyRule, TunnelAccessStatus, TunnelMode } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { decryptWithContext, encrypt } from '../crypto';

@@ -1,13 +1,13 @@
 // 分享弹窗：没有进行中的分享就是创建表单，有则展示链接与终止入口。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

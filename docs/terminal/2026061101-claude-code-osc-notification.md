@@ -41,7 +41,7 @@ if (process.env.TERM_PROGRAM) return process.env.TERM_PROGRAM; // tmux 3.2+ 强�
 if (process.env.TMUX) return "tmux";
 ```
 
-tmux 3.2+ 在派生 pane 进程时**强制覆盖** `TERM_PROGRAM=tmux`（会话环境变量无法覆盖），因此唯一可注入的钩子是 `TERM=xterm-ghostty`。tmex 现在默认（`TMEX_TMUX_TERM_PROGRAM=ghostty`）在接管会话时：
+tmux 3.2+ 在派生 pane 进程时**强制覆盖** `TERM_PROGRAM=tmux`（会话环境变量无法覆盖），因此唯一可注入的钩子是 `TERM=xterm-ghostty`。tmex 现在默认（`VIBETERM_TMUX_TERM_PROGRAM=ghostty`）在接管会话时：
 
 1. 检测宿主（本地或 SSH 远端）是否有 `xterm-ghostty` terminfo，缺失则用内置源（`apps/gateway/src/tmux-client/ghostty-terminfo.ts`，自 Ghostty 官方导出）通过 `tic -x` 安装到 `~/.terminfo`；
 2. 成功后把 tmux `default-terminal` 设为 `xterm-ghostty`（注意：这是 **tmux server 级选项**，影响该 server 上所有会话的新 pane）；
@@ -50,7 +50,7 @@ tmux 3.2+ 在派生 pane 进程时**强制覆盖** `TERM_PROGRAM=tmux`（会话�
 之后新开的 pane / window 中 `TERM=xterm-ghostty`，Claude Code auto 渠道即识别为 ghostty 并通过 OSC 777 发送通知。**已存在的 shell 进程不受影响**，需要新开 pane 或重启 shell。
 
 - tmex 终端引擎本身就是 ghostty-vt（WASM），terminfo 声明的能力与前端真实能力一致。
-- 设 `TMEX_TMUX_TERM_PROGRAM=off` 可完全关闭该行为。
+- 设 `VIBETERM_TMUX_TERM_PROGRAM=off` 可完全关闭该行为。
 - `tic` / `infocmp` 不可用（无 ncurses 工具）或安装失败时自动跳过 `default-terminal` 设置，保持 tmux 默认 TERM，不会破坏现有程序。
 - 不想依赖该机制时，仍可在 Claude Code 设置中显式指定：`{ "preferredNotifChannel": "iterm2" }`（iterm2 / ghostty / kitty 均受 tmex 支持）。
 

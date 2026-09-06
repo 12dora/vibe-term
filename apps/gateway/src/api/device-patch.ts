@@ -1,4 +1,4 @@
-import type { AuthMode, Device } from '@tmex/shared';
+import type { AuthMode, Device } from '@vibeterm/shared';
 import { t } from '../i18n';
 import {
   type ConfigFieldSpec,

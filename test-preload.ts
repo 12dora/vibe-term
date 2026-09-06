@@ -1,6 +1,6 @@
 // 仓库根测试 preload（根 bunfig.toml 引用）。
 // 覆盖「从根目录直接 bun test <path>」——这种调用不走某个 workspace 的 bunfig。
-// 用相对路径导入：根 node_modules 无 @tmex/shared 的 workspace symlink。
+// 用相对路径导入：根 node_modules 无 @vibeterm/shared 的 workspace symlink。
 import { loadEnv } from './packages/shared/src/env/load-env';
 
 const PROD_MARKER = 'Application Support/tmex';

@@ -9,9 +9,9 @@ export const SESSION_IDLE_MS = 10 * 60_000;
 export const TRANSFER_CHUNK_BYTES = 8 * 1024 * 1024;
 const MIN_CHUNK_BYTES = 64 * 1024;
 
-/** 会话下发给源侧的分片大小；`TMEX_TRANSFER_CHUNK_BYTES` 可覆盖（下限 64 KiB）。 */
+/** 会话下发给源侧的分片大小；`VIBETERM_TRANSFER_CHUNK_BYTES` 可覆盖（下限 64 KiB）。 */
 export function transferChunkBytes(): number {
-  const configured = envNumber('TMEX_TRANSFER_CHUNK_BYTES');
+  const configured = envNumber('VIBETERM_TRANSFER_CHUNK_BYTES');
   if (configured === null) return TRANSFER_CHUNK_BYTES;
   return Math.max(MIN_CHUNK_BYTES, configured);
 }
@@ -42,10 +42,10 @@ function envNumber(key: string): number | null {
 }
 
 /**
- * 单会话累计可写字节。默认 64 GiB，`TMEX_TRANSFER_SESSION_MAX_BYTES` 可覆盖；
+ * 单会话累计可写字节。默认 64 GiB，`VIBETERM_TRANSFER_SESSION_MAX_BYTES` 可覆盖；
  * 与单文件上限取大，保证一个合法的大文件永远塞得进一个会话。
  */
 export function sessionMaxBytes(perFileLimit: number): number {
-  const configured = envNumber('TMEX_TRANSFER_SESSION_MAX_BYTES') ?? DEFAULT_SESSION_MAX_BYTES;
+  const configured = envNumber('VIBETERM_TRANSFER_SESSION_MAX_BYTES') ?? DEFAULT_SESSION_MAX_BYTES;
   return Math.max(configured, perFileLimit);
 }

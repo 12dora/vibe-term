@@ -6,9 +6,9 @@
 //   page  —— 挂在根路由的 errorElement 上，整页替换；
 //   panel —— 侧滑面板内部，出错只毁这块内容，页面其他部分照常可用。
 
-import { formatDisplayVersion, writeTextToClipboard } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { formatDisplayVersion, writeTextToClipboard } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { AlertTriangle, Check, ChevronRight, Copy, Home, RotateCw } from 'lucide-react';
 import {
   Component,

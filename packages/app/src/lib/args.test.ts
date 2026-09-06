@@ -265,7 +265,7 @@ describe('cli help', () => {
     expect(help).toContain('tmex hub join');
     expect(help).toContain('--password');
     expect(help).toContain('--totp');
-    expect(help).toContain('TMEX_TOTP');
+    expect(help).toContain('VIBETERM_TOTP');
     expect(help).toContain('tmex relay join');
     expect(help).toContain('tmex hub standby --public-url');
     expect(help).toContain('tmex hub promote');
@@ -276,7 +276,7 @@ describe('cli help', () => {
     expect(help).toContain('--no-restart');
     expect(help).toContain('tmex mesh reset-root');
     expect(help).toContain('tmex enroll');
-    expect(help).toContain('TMEX_PASSWORD');
+    expect(help).toContain('VIBETERM_PASSWORD');
   });
 });
 

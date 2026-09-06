@@ -1,4 +1,4 @@
-import { useRuntime } from '@tmex/stores/react';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback } from 'react';
 import { SortableVerticalList } from './device-tree-dnd';
 import type { WindowRowProps } from './device-tree-row-props';

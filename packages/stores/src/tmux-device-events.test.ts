@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import type { NotificationOptions } from '@tmex/notifications';
-import type { EventDevicePayload, EventTmuxPayload, SiteSettings } from '@tmex/shared';
-import { createGatewayConnection } from '@tmex/ws-client';
+import type { NotificationOptions } from '@vibeterm/notifications';
+import type { EventDevicePayload, EventTmuxPayload, SiteSettings } from '@vibeterm/shared';
+import { createGatewayConnection } from '@vibeterm/ws-client';
 import type { HostServices } from './runtime';
 import { installWindowStorage } from './test-utils';
 import type { TmuxDomainEventContext } from './tmux-device-events';
@@ -9,8 +9,8 @@ import type { TmuxState } from './tmux-state';
 
 installWindowStorage();
 
-const notificationsActual = await import('@tmex/notifications');
-mock.module('@tmex/notifications', () => ({
+const notificationsActual = await import('@vibeterm/notifications');
+mock.module('@vibeterm/notifications', () => ({
   ...notificationsActual,
   playBellSound: mock(() => {}),
 }));
@@ -130,7 +130,7 @@ function deviceEvent(payload: Partial<EventDevicePayload> & Pick<EventDevicePayl
 
 afterEach(async () => {
   for (const dispose of disposers.splice(0)) dispose();
-  const { resetToastDedupeForTest, useBellStore } = await import('@tmex/notifications');
+  const { resetToastDedupeForTest, useBellStore } = await import('@vibeterm/notifications');
   resetToastDedupeForTest();
   for (const paneId of Object.keys(useBellStore.getState().ringingPanes)) {
     useBellStore.getState().clearBell(paneId);
@@ -141,7 +141,7 @@ describe('handleTmuxEvent bell', () => {
   test('高亮 paneId 并播放提示音', async () => {
     const h = makeHarness();
     handleTmuxEvent(h.ctx, tmuxEvent('bell', { paneId: '%bell-1' }));
-    const { useBellStore } = await import('@tmex/notifications');
+    const { useBellStore } = await import('@vibeterm/notifications');
     expect(useBellStore.getState().ringingPanes['%bell-1']).toBe(true);
     expect(h.bellPlays).toHaveLength(1);
   });
@@ -149,7 +149,7 @@ describe('handleTmuxEvent bell', () => {
   test('缺少 paneId 时回落到 windowId', async () => {
     const h = makeHarness();
     handleTmuxEvent(h.ctx, tmuxEvent('bell', { windowId: '@bell-2' }));
-    const { useBellStore } = await import('@tmex/notifications');
+    const { useBellStore } = await import('@vibeterm/notifications');
     expect(useBellStore.getState().ringingPanes['@bell-2']).toBe(true);
   });
 
@@ -157,7 +157,7 @@ describe('handleTmuxEvent bell', () => {
     const h = makeHarness();
     handleTmuxEvent(h.ctx, tmuxEvent('bell', undefined));
     handleTmuxEvent(h.ctx, tmuxEvent('bell', { paneId: 42 }));
-    const { useBellStore } = await import('@tmex/notifications');
+    const { useBellStore } = await import('@vibeterm/notifications');
     expect(Object.keys(useBellStore.getState().ringingPanes)).toHaveLength(0);
     expect(h.bellPlays).toHaveLength(2);
   });
@@ -166,7 +166,7 @@ describe('handleTmuxEvent bell', () => {
     const h = makeHarness();
     h.setSettings({ enableBellSound: false });
     handleTmuxEvent(h.ctx, tmuxEvent('bell', { paneId: '%bell-3' }));
-    const { useBellStore } = await import('@tmex/notifications');
+    const { useBellStore } = await import('@vibeterm/notifications');
     expect(useBellStore.getState().ringingPanes['%bell-3']).toBe(true);
     expect(h.bellPlays).toHaveLength(0);
   });
@@ -174,7 +174,7 @@ describe('handleTmuxEvent bell', () => {
   test('宿主接管通知不影响 bell', async () => {
     const h = makeHarness(true);
     handleTmuxEvent(h.ctx, tmuxEvent('bell', { paneId: '%bell-4' }));
-    const { useBellStore } = await import('@tmex/notifications');
+    const { useBellStore } = await import('@vibeterm/notifications');
     expect(useBellStore.getState().ringingPanes['%bell-4']).toBe(true);
     expect(h.bellPlays).toHaveLength(1);
   });
@@ -235,7 +235,7 @@ describe('handleTmuxEvent notification', () => {
   });
 
   test('同一条通知已被别的通道认领（转发件先到）时不再弹', async () => {
-    const { claimToastFor } = await import('@tmex/notifications');
+    const { claimToastFor } = await import('@vibeterm/notifications');
     const h = makeHarness();
     // 汇聚节点转发回来的那一路先弹了：身份相同，直投这一路让位。
     expect(

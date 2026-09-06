@@ -3,12 +3,12 @@
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiClient } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { I18N_RESOURCES } from '@tmex/shared';
-import { createAppRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { ApiClient } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import { createAppRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import i18next from 'i18next';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

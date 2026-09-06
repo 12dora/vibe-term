@@ -1,11 +1,11 @@
-import { uplinkAuthMessage, verifyEd25519 } from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
+import { uplinkAuthMessage, verifyEd25519 } from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   RELAY_PROTO_VERSION,
   type RelayCtlMessage,
   type RelayRtcConfig,
   relaySeqToWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
 import { nodeVersionMeets } from '../hub/hub-authorization';
 import type { RelayConfigStore } from './relay-config-store';

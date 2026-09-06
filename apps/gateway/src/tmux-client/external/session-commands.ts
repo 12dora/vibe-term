@@ -1,5 +1,5 @@
-import { encodePaneModes } from '@tmex/shared';
-import type { TmuxWindow } from '@tmex/shared';
+import { encodePaneModes } from '@vibeterm/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 
 import { config } from '../../config';
 import {

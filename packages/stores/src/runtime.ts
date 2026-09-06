@@ -1,15 +1,15 @@
 // 应用运行时：把连接、REST 客户端、通知出口、宿主服务与各 store 按实例组装。
 // 单实例宿主使用默认 runtime（index.ts 原名导出）；多实例宿主每个 gateway 建一份。
 
-import { type ApiClient, SELF_NODE_ID, defaultApiClient } from '@tmex/api-client';
+import { type ApiClient, SELF_NODE_ID, defaultApiClient } from '@vibeterm/api-client';
 import {
   type BellPlayer,
   type NotificationSink,
   noopNotificationSink,
   playBellSound,
-} from '@tmex/notifications';
-import type { TranslateFn } from '@tmex/notifications';
-import { writeTextToClipboard } from '@tmex/shared';
+} from '@vibeterm/notifications';
+import type { TranslateFn } from '@vibeterm/notifications';
+import { writeTextToClipboard } from '@vibeterm/shared';
 import {
   type BorshWebSocketClient,
   type GatewayConnection,
@@ -20,7 +20,7 @@ import {
   type GatewayTransport,
   LazyWebSocketGatewayTransport,
   getBorshClient,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import {
   type PaneSink,
   cleanupDevicePaneState,
@@ -29,7 +29,7 @@ import {
   dispatchPaneScreenSnapshot,
   dispatchPaneTerminalData,
   registerPaneSink,
-} from '@tmex/ws-client/pane-sink-registry';
+} from '@vibeterm/ws-client/pane-sink-registry';
 import i18next from 'i18next';
 import { bridgeCloseMobileSidebar, bridgeIsMobile, bridgeOpenMobileSidebar } from './flow-bridges';
 import type { UIStore } from './ui';

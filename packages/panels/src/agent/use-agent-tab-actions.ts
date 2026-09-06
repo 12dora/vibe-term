@@ -6,10 +6,10 @@ import { useEffect, useLayoutEffect, useRef } from 'react';
 import type { NavigateFunction } from 'react-router';
 import { useNavigate } from 'react-router';
 
-import type { AgentSessionDto, AgentWriteMode } from '@tmex/shared';
-import type { HostServices, SidebarTab } from '@tmex/stores';
-import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
+import type { AgentSessionDto, AgentWriteMode } from '@vibeterm/shared';
+import type { HostServices, SidebarTab } from '@vibeterm/stores';
+import { encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
 
 import type { BindingInfo } from './agent-binding';
 import { canRebindToRoute } from './agent-route-sync';

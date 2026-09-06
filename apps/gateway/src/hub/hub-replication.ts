@@ -1,4 +1,4 @@
-import type { MeshUplinkNodeList as UplinkNodeList } from '@tmex/shared/uplink';
+import type { MeshUplinkNodeList as UplinkNodeList } from '@vibeterm/shared/uplink';
 import { type MeshHubRecord, type MeshHubStore, hubListToRecords } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';

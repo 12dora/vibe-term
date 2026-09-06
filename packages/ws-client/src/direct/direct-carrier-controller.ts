@@ -88,7 +88,7 @@ export const SESS_CHANNEL_LABEL = 'sess';
 export const RTC_CONFIG_PATH = '/api/mesh/rtc-config';
 export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
 export const MESH_CONNECTION_PATH = '/api/mesh/connection';
-export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';
+export const X_VIBETERM_CONNECTION_HEADER = 'x-tmex-connection';
 
 /** `GET /api/mesh/connection`：带上本条 WS 的 client nonce，node 据此答出**服务端** id。 */
 export function meshConnectionPath(cid?: string | null): string {
@@ -618,7 +618,7 @@ export class DirectCarrierController {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(connectionId ? { [X_TMEX_CONNECTION_HEADER]: connectionId } : {}),
+        ...(connectionId ? { [X_VIBETERM_CONNECTION_HEADER]: connectionId } : {}),
       },
       body: JSON.stringify({
         rtcSession: attempt.rtcSession,

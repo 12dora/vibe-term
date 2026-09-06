@@ -2,9 +2,9 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染，点不了标签；换页后的内容直接渲染对应子组件。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { INSTALL_COMMAND } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { INSTALL_COMMAND } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { AccessAddress } from './access-addresses';
 
 installWindowStorage();
@@ -18,9 +18,9 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;

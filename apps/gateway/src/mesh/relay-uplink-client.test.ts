@@ -10,8 +10,8 @@ import {
   randomBytes,
   uplinkAuthMessage,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import { type LinkStream, WebSocketLink } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { type LinkStream, WebSocketLink } from '@vibeterm/shared/link';
 import {
   type RelayCtlMessage,
   decodeRelayCtl,
@@ -23,7 +23,7 @@ import {
   generateTenantKey,
   openEnvelope,
   sealEnvelope,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { KeyLogStore } from '../auth/key-log-store';
 import { type NodeIdentityKeys, ensureNodeIdentity } from '../auth/node-identity-service';
 import { selfSignedNodeCertificate } from '../auth/node-identity-service';
@@ -487,8 +487,8 @@ describe('RelayUplinkClient', () => {
     const b = await bootRelayNode();
     fixtures.push({ close: b.close });
     const [clientWs] = fakeSocketPair();
-    const prevRoles = process.env.TMEX_ROLES;
-    const prevUrl = process.env.TMEX_RELAY_PUBLIC_URL;
+    const prevRoles = process.env.VIBETERM_ROLES;
+    const prevUrl = process.env.VIBETERM_RELAY_PUBLIC_URL;
     const prevPort = process.env.GATEWAY_PORT;
     const dialed: string[] = [];
     const client = new RelayUplinkClient({
@@ -507,8 +507,8 @@ describe('RelayUplinkClient', () => {
       },
     });
     fixtures.push({ close: () => {}, stop: () => client.stop() });
-    process.env.TMEX_ROLES = 'node';
-    process.env.TMEX_RELAY_PUBLIC_URL = 'https://other.example';
+    process.env.VIBETERM_ROLES = 'node';
+    process.env.VIBETERM_RELAY_PUBLIC_URL = 'https://other.example';
     process.env.GATEWAY_PORT = '1';
     try {
       const connecting = client.attemptConnect();
@@ -517,10 +517,10 @@ describe('RelayUplinkClient', () => {
       await connecting.catch(() => undefined);
       expect(dialed).toEqual(['ws://127.0.0.1:19993/relay/uplink']);
     } finally {
-      if (prevRoles === undefined) delete process.env.TMEX_ROLES;
-      else process.env.TMEX_ROLES = prevRoles;
-      if (prevUrl === undefined) delete process.env.TMEX_RELAY_PUBLIC_URL;
-      else process.env.TMEX_RELAY_PUBLIC_URL = prevUrl;
+      if (prevRoles === undefined) delete process.env.VIBETERM_ROLES;
+      else process.env.VIBETERM_ROLES = prevRoles;
+      if (prevUrl === undefined) delete process.env.VIBETERM_RELAY_PUBLIC_URL;
+      else process.env.VIBETERM_RELAY_PUBLIC_URL = prevUrl;
       if (prevPort === undefined) delete process.env.GATEWAY_PORT;
       else process.env.GATEWAY_PORT = prevPort;
     }

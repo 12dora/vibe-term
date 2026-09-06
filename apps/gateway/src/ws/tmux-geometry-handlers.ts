@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
 import { parseWindowLayoutSize } from './frame-utils';
 import type { GatewaySession } from './gateway-session';

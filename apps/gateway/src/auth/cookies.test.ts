@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { LinkError } from '@tmex/shared/link';
+import { LinkError } from '@vibeterm/shared/link';
 import { PeerHandshakeError } from '../mesh/types';
 import {
   appendNodeSessionCookie,

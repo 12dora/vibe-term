@@ -11,8 +11,8 @@ TARGET_FE_DIR="${APP_DIR}/resources/fe-dist"
 TARGET_DRIZZLE_DIR="${APP_DIR}/resources/gateway-drizzle"
 
 if [[ ! -f "${FE_DIST_DIR}/index.html" ]]; then
-  echo "[tmex build] frontend dist not found, building @tmex/fe ..."
-  (cd "${ROOT_DIR}" && bun run --filter @tmex/fe build)
+  echo "[tmex build] frontend dist not found, building @vibeterm/fe ..."
+  (cd "${ROOT_DIR}" && bun run --filter @vibeterm/fe build)
 fi
 
 rm -rf "${TARGET_FE_DIR}" "${TARGET_DRIZZLE_DIR}"

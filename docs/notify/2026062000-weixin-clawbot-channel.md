@@ -93,7 +93,7 @@ channels = [WebhookChannel, TelegramChannel, WeixinChannel]
 - **context_token TTL 实测**（头号风险，需人工）：
   1. 设置页扫码登录 bot，给它发一条消息激活；
   2. 从 gateway 日志或 `weixin_account_users.last_context_token` 取 token，连同 `bot_token` / `base_url` / `user_id` 填入 `test.env.local`（`TEST_WEIXIN_*`）；
-  3. `bun run --filter @tmex/gateway test:live:weixin`（立即发送应成功）；
+  3. `bun run --filter @vibeterm/gateway test:live:weixin`（立即发送应成功）；
   4. 设 `TEST_WEIXIN_TTL_DELAY_MS` 跨多次运行二分失效时长，结论看日志 `expired=…`。
 - 端到端：设置页加账号 → 扫码 → 激活 → 触发终端响铃 → 确认微信收到 → 闲置观察过期 + UI 重激活提示。
 

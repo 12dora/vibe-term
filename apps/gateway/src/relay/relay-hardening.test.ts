@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import type { LinkStream } from '@tmex/shared/link';
-import { RELAY_CTL_MAX_NODES } from '@tmex/shared/relay';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
+import type { LinkStream } from '@vibeterm/shared/link';
+import { RELAY_CTL_MAX_NODES } from '@vibeterm/shared/relay';
 import { normalizeRelayQuota } from './relay-quota';
 import {
   type RelayHarness,

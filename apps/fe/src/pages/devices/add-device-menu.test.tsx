@@ -7,7 +7,7 @@ import {
   DropdownMenuGroup,
   DropdownMenuLabel,
   DropdownMenuSeparator,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Children, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { Link } from 'react-router';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url } from '@tmex/shared/auth';
-import { MIN_HUB_TOKENS_VERSION } from '@tmex/shared/uplink';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { MIN_HUB_TOKENS_VERSION } from '@vibeterm/shared/uplink';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { stripEnrollmentReplicationSecrets } from '../auth/user-store';

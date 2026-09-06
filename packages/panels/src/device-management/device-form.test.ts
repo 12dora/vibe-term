@@ -1,7 +1,7 @@
 // 设备表单纯逻辑：默认值归一（authMode auto → agent）、create/update payload 的字段裁剪与校验。
 
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import {
   type DeviceFormValues,
   buildCreatePayload,

@@ -4,7 +4,7 @@ import {
   type LinkStream,
   type ServerSocketAdapter,
   type WebSocketTransportInput,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import { formatSafeErrorLog } from '../auth/cookies';
 import {
   type RankableIfaceAddr,

@@ -6,13 +6,13 @@
 // 多条中继时切换不在菜单里：链路行本身就是选择器，点哪条就切到哪条。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Ellipsis } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice, NoticeAction } from '../card-parts';

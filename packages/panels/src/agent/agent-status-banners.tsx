@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { CircleAlertIcon } from 'lucide-react';
 
 /** 节点离线 / 孤立会话 / pane 绑定不一致 / 运行错误四条状态横幅 */

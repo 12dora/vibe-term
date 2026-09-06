@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeRenameNodePayload, hexToBytes } from '@tmex/shared/auth';
+import { encodeRenameNodePayload, hexToBytes } from '@vibeterm/shared/auth';
 import { UserStore } from '../auth';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';

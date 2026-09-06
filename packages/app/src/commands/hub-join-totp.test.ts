@@ -19,29 +19,29 @@ describe('joinErrorHttpStatus', () => {
 });
 
 describe('resolveJoinTotpCode', () => {
-  const prev = process.env.TMEX_TOTP;
+  const prev = process.env.VIBETERM_TOTP;
 
   afterEach(() => {
-    if (prev === undefined) delete process.env.TMEX_TOTP;
-    else process.env.TMEX_TOTP = prev;
+    if (prev === undefined) delete process.env.VIBETERM_TOTP;
+    else process.env.VIBETERM_TOTP = prev;
   });
 
   test('prefers --totp over io and env', () => {
-    process.env.TMEX_TOTP = '111111';
+    process.env.VIBETERM_TOTP = '111111';
     const parsed = parseArgs(['hub', 'join', 'https://hub.example', '--totp', '222222']);
     expect(resolveJoinTotpCode(parsed, { totpCode: '333333' })).toBe('222222');
   });
 
-  test('uses HubIo.totpCode then TMEX_TOTP', () => {
-    delete process.env.TMEX_TOTP;
+  test('uses HubIo.totpCode then VIBETERM_TOTP', () => {
+    delete process.env.VIBETERM_TOTP;
     const parsed = parseArgs(['hub', 'join', 'https://hub.example']);
     expect(resolveJoinTotpCode(parsed, { totpCode: '444444' })).toBe('444444');
-    process.env.TMEX_TOTP = '555555';
+    process.env.VIBETERM_TOTP = '555555';
     expect(resolveJoinTotpCode(parsed, {})).toBe('555555');
   });
 
   test('returns undefined when nothing is provided', () => {
-    delete process.env.TMEX_TOTP;
+    delete process.env.VIBETERM_TOTP;
     const parsed = parseArgs(['hub', 'join', 'https://hub.example']);
     expect(resolveJoinTotpCode(parsed, {})).toBeUndefined();
   });

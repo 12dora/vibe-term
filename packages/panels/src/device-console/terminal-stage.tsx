@@ -5,14 +5,14 @@
 // 最近看过的 N 个 pane 同时挂载在同一个盒子里，只有路由点名的那个可见，
 // 其余 visibility:hidden 继续吃 live 输出，切回时即时呈现。
 
-import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { selectPaneViewportOwner } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import { selectPaneViewportOwner } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import {
   SplitTerminalArea,
   Terminal as TerminalComponent,
   type TerminalRef,
-} from '@tmex/terminal-ui';
+} from '@vibeterm/terminal-ui';
 import { Loader2, SearchX } from 'lucide-react';
 import {
   type ReactNode,

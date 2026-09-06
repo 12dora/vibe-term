@@ -13,7 +13,7 @@ import {
   type WebhookEndpoint,
   type WeixinAccountUser,
   type WeixinUserStatus,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import type {
   devices,
   siteSettings,

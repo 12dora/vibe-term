@@ -1,9 +1,9 @@
 // 操作区按钮的表驱动渲染：按钮模型由纯函数构建，组件只负责映射成 <Button>。
 
-import { PaneSwitcherMenu } from '@tmex/terminal-ui';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
+import { PaneSwitcherMenu } from '@vibeterm/terminal-ui';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import {
   Keyboard,
   type LucideIcon,

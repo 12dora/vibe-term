@@ -4,10 +4,10 @@
 import { describe, expect, test } from 'bun:test';
 
 describe('main.tsx 的静态依赖', () => {
-  test('键盘避让只从窄子路径引，不碰 @tmex/terminal-ui 包根', async () => {
+  test('键盘避让只从窄子路径引，不碰 @vibeterm/terminal-ui 包根', async () => {
     const source = await Bun.file(`${import.meta.dir}/main.tsx`).text();
     const paths = new Bun.Transpiler({ loader: 'tsx' }).scanImports(source).map((e) => e.path);
-    expect(paths).toContain('@tmex/terminal-ui/hooks/use-keyboard-avoidance');
-    expect(paths).not.toContain('@tmex/terminal-ui');
+    expect(paths).toContain('@vibeterm/terminal-ui/hooks/use-keyboard-avoidance');
+    expect(paths).not.toContain('@vibeterm/terminal-ui');
   });
 });

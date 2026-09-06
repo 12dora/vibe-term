@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 /** 单条转发流最多记住多少条几何帧：pane 反复增删时不让这张表无界增长。 */
 const MAX_VIEWPORT_REPLAY_FRAMES = 64;

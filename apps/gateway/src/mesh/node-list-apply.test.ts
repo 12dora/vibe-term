@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { HubEndpointInfo } from '@tmex/shared/uplink';
+import type { HubEndpointInfo } from '@vibeterm/shared/uplink';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';

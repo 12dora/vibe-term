@@ -4,7 +4,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectionDetailsContent } from './connection-details';
 

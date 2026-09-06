@@ -1,7 +1,7 @@
 // mergeNodes：mesh 成员集 + hub 心跳，外加 hub 独有的「待批准」行。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import type { HubNodeRow } from './hub-api';
 import { mergeNodes } from './merge-nodes';
 

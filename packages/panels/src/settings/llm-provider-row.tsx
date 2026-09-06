@@ -1,5 +1,5 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { LlmProviderDto } from '@tmex/shared';
+import type { LlmProviderDto } from '@vibeterm/shared';
 import { Boxes, Loader2, Pencil, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,13 +14,13 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/alert-dialog';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 
-import { parseApiError } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 import { LlmProviderModelsModal } from './llm-provider-models-modal';
 
 function maskBaseUrl(baseUrl: string): string {

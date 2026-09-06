@@ -2,8 +2,8 @@
 // 公网 IP），与分享地址同源同序。展示的是 `accessUrl`——含 `/n/<nodeId>` 转发前缀的完整地址，
 // 直接填进设置或复制给别人都能用；只读（由 Hub 托管）时不给「填入」，仅供复制。
 
-import type { ShareOriginCandidate } from '@tmex/shared/share';
-import { Button } from '@tmex/ui/button';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
+import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { CopyButton } from './nodes/copy-feedback';
 import { originKindLabel } from './origin-kind-label';

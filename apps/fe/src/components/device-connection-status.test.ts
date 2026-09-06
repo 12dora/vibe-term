@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { DeviceConnectionStatus } from '@tmex/panels';
+import type { DeviceConnectionStatus } from '@vibeterm/panels';
 import {
   type DeviceConnectionSnapshot,
   MAX_PENDING_STATUS_MS,

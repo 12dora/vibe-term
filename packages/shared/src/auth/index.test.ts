@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import * as auth from './index';
 
-describe('@tmex/shared/auth barrel', () => {
+describe('@vibeterm/shared/auth barrel', () => {
   it('exports the identity primitives', () => {
     expect(typeof auth.deriveSeed).toBe('function');
     expect(typeof auth.createDelegation).toBe('function');

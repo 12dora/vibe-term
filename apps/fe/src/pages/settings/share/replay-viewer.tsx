@@ -1,13 +1,13 @@
 // 日志回放窗：只读终端 + 时间轴。日志分页拉齐，边拉边能看；输入只在下方的标记条里出现。
 
-import type { ShareRecord } from '@tmex/shared/share';
+import type { ShareRecord } from '@vibeterm/shared/share';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { Loader2 } from 'lucide-react';
 import { useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';

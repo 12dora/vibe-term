@@ -3,8 +3,8 @@
 // Y 只认「带得出授权」的调用，授权则由浏览器用自己的 Y 会话在建会话时换取。
 
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { ensureSessionGrant, resetPaneGrantClientForTests } from '../../agent/pane-grant/client';
 import { createPaneGrantRoutes } from '../../agent/pane-grant/routes';
 import { defaultPaneGrantVerifier } from '../../agent/pane-grant/rpc-guard';

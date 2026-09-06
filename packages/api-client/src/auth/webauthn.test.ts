@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { AuthenticationResponseJSON } from './types';
 import {
   isWebAuthnAvailable,

@@ -4,7 +4,7 @@
 // 时 i18next 会回落成 key 本身，因此断言按 data-testid 而非文案。
 
 import { describe, expect, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

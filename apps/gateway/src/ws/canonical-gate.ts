@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 /**
  * canonical v1.1 版本门槛（fail-closed）：低于 CANONICAL_V11_MIN_PEER_VERSION 的对端无法正确消费

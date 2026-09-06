@@ -1,5 +1,5 @@
 import { expect, test } from '@playwright/test';
-import { decodePaneIdFromUrlParam } from '@tmex/stores';
+import { decodePaneIdFromUrlParam } from '@vibeterm/stores';
 import { matchPath } from 'react-router';
 import { createLocalDevice } from './helpers/device';
 import { createSinglePaneSession, createTwoPaneSession, ensureCleanSession } from './helpers/tmux';

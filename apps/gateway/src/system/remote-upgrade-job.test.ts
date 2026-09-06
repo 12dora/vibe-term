@@ -30,7 +30,7 @@ import { UpgradeController } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 const tempDirs: string[] = [];
-const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const originalReleaseCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
 
 beforeAll(() => {
   useTestSigningKeys();
@@ -48,8 +48,8 @@ function signed<T extends { sha256: string }>(release: T): T & { sums: string; s
 afterEach(() => {
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
-  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
-  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
+  if (originalReleaseCacheDir === undefined) delete process.env.VIBETERM_RELEASE_CACHE_DIR;
+  else process.env.VIBETERM_RELEASE_CACHE_DIR = originalReleaseCacheDir;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -171,7 +171,7 @@ describe('RemoteUpgradeJob', () => {
     const b = '22'.repeat(16);
     const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-share-'));
     tempDirs.push(cacheDir);
-    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const tarball = new Uint8Array([9, 8, 7]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     let tarballHits = 0;
@@ -891,7 +891,7 @@ describe('RemoteUpgradeJob', () => {
     const nodeId = 'de'.repeat(16);
     const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-'));
     tempDirs.push(cacheDir);
-    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const bytes = new Uint8Array(64).fill(3);
     const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
     writeFileSync(path, bytes);
@@ -934,7 +934,7 @@ describe('RemoteUpgradeJob', () => {
     const nodeId = 'df'.repeat(16);
     const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-cancel-'));
     tempDirs.push(cacheDir);
-    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const bytes = new Uint8Array(64).fill(4);
     const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
     writeFileSync(path, bytes);
@@ -986,7 +986,7 @@ describe('RemoteUpgradeJob', () => {
     const nodeId = 'bb'.repeat(16);
     const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-cancel-dl-'));
     tempDirs.push(cacheDir);
-    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -1330,7 +1330,7 @@ describe('RemoteUpgradeJob', () => {
     const version = '3.3.3';
     const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-share-dl-'));
     tempDirs.push(cacheDir);
-    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const tarball = new Uint8Array([4, 5, 6, 7, 8]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     const originalFetch = globalThis.fetch;

@@ -2,8 +2,8 @@
 // 加入码只在本机签得出来的时候才出现。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ConnectMachine } from './use-connect-machine';
 
 installWindowStorage();
@@ -17,9 +17,9 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { resetMeshRelayStateForTest, setMeshRelayStateForTest } = await import('@/node/mesh-relay');

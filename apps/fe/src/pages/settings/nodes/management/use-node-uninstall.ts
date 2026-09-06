@@ -11,10 +11,10 @@
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@tmex/api-client';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { MeshUninstallErrorCode } from '@tmex/shared';
-import { compareSemver } from '@tmex/shared';
+import { defaultApiClient } from '@vibeterm/api-client';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { MeshUninstallErrorCode } from '@vibeterm/shared';
+import { compareSemver } from '@vibeterm/shared';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

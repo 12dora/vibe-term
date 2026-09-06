@@ -3,8 +3,8 @@
 // ACME 签发是后台任务：`PUT /api/tls` 立刻返回 `acme.status === 'pending'`，真正的成败要靠
 // 轮询 `GET /api/tls` 才能看到，所以 pending 期间自动每 3 秒拉一次，其余时间不轮询。
 
-import { type TlsApi, TlsApiError, defaultTlsApi } from '@tmex/api-client/local/tls-api';
-import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
+import { type TlsApi, TlsApiError, defaultTlsApi } from '@vibeterm/api-client/local/tls-api';
+import type { TlsStatusResponse } from '@vibeterm/api-client/local/tls-types';
 import { TLS_STATUS_QUERY_KEY } from '../../status-queries';
 import { useProtectedStatusQuery } from '../../use-protected-status-query';
 import { acmePollInterval } from './tls-form';

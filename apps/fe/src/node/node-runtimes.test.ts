@@ -2,13 +2,13 @@
 // 切回 primary 时补齐已订阅 pane，dispose 时一并停掉。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import type { AppRuntime, AppRuntimeOptions } from '@tmex/stores';
-import type { GatewayConnection, WebSocketLike } from '@tmex/ws-client';
-import type { DirectCarrierController } from '@tmex/ws-client/direct';
-import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
-import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
-import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import type { AppRuntime, AppRuntimeOptions } from '@vibeterm/stores';
+import type { GatewayConnection, WebSocketLike } from '@vibeterm/ws-client';
+import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
+import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
+import type { DirectDiagnostics } from '@vibeterm/ws-client/direct/types';
+import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   type DirectLinkModule,

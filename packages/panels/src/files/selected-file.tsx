@@ -9,8 +9,8 @@
 // 才会重渲染。provider 的 context value 是 store 本身（恒等），不会因为选中态变化而让
 // 所有消费者跟着重渲染。
 
-import { decodeFileRef, hostAppPath } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
+import { decodeFileRef, hostAppPath } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
 import {
   type ReactNode,
   createContext,

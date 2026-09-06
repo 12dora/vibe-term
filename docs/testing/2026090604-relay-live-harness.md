@@ -9,14 +9,14 @@ state 组装）是中继拓扑的进程主管，与 hub 拓扑的 `mesh-boot.ts`
 
 | 实例 | 角色 | 说明 |
 |---|---|---|
-| R | `relay,node` | 公共中继 + 本机 node。`TMEX_RELAY_PUBLIC_URL=http://127.0.0.1:<portR>`，管理令牌由 `TMEX_RELAY_ADMIN_TOKEN` 写死在 `app.env` 里 |
-| A | `node`（`TMEX_HUB_URL` 为空） | 用 `tmex relay enroll` 在 R 上开租户，成为该租户的主节点 |
+| R | `relay,node` | 公共中继 + 本机 node。`VIBETERM_RELAY_PUBLIC_URL=http://127.0.0.1:<portR>`，管理令牌由 `VIBETERM_RELAY_ADMIN_TOKEN` 写死在 `app.env` 里 |
+| A | `node`（`VIBETERM_HUB_URL` 为空） | 用 `tmex relay enroll` 在 R 上开租户，成为该租户的主节点 |
 | B | `standalone` → `node` | 用 A 生成的 `r3.` 加入码经 `tmex hub join --token` 并入同一租户 |
 
 三台都绑 `127.0.0.1`，端口从 19851（gateway）与 39851（peer）起顺次探空，
 tmux socket 固定为 `tmex-relay-e2e-r` / `-a` / `-b`，`NODE_ENV=test`，
-`TMEX_MASTER_KEY` 取自仓库根 `test.env`，`TMEX_MIGRATIONS_DIR` 指向 `apps/gateway/drizzle`，
-`TMEX_FE_DIST_DIR` 指向 `apps/fe/dist`（缺 `index.html` 时按 mesh-boot 的做法先构建）。
+`VIBETERM_MASTER_KEY` 取自仓库根 `test.env`，`VIBETERM_MIGRATIONS_DIR` 指向 `apps/gateway/drizzle`，
+`VIBETERM_FE_DIST_DIR` 指向 `apps/fe/dist`（缺 `index.html` 时按 mesh-boot 的做法先构建）。
 
 ## 用法
 
@@ -31,18 +31,18 @@ bun apps/fe/tests/helpers/relay-boot.ts --mode hub
 `--mode hub` 只是把 `mesh-boot.ts` 的用法打出来：hub 拓扑（`hub,node` + `node`）仍然用
 `bun apps/fe/tests/helpers/mesh-boot.ts --state <path>`，relay-boot 不复制那套流程。
 
-环境变量 `TMEX_RELAY_E2E_BUILD_FE=1` 可强制重建 `apps/fe/dist`。
+环境变量 `VIBETERM_RELAY_E2E_BUILD_FE=1` 可强制重建 `apps/fe/dist`。
 
 ## 启动序列
 
 1. `tmex hub user add relayop --install-dir <R>` / `tmex hub user add alice --install-dir <A>`
-   （`TMEX_PASSWORD` 走环境变量，非 TTY 时 CLI 只认它）。
+   （`VIBETERM_PASSWORD` 走环境变量，非 TTY 时 CLI 只认它）。
 2. 起 R → 等 `/healthz` 与 `GET /api/relay/health`。
 3. `POST /api/relay/password`（`Authorization: Bearer <adminToken>`，body `{password, mode:'keep'}`）
    给中继设接入口令。CLI 的 `tmex relay passwd` 要隐藏输入两遍，非交互场景直接打管理接口更省事。
 4. 起 A → 等 `/healthz`。
 5. `tmex relay enroll http://127.0.0.1:<portR> --password <中继口令> --install-dir <A>`，
-   `TMEX_PASSWORD` 给本机 mesh 密码。命令内部完成 proof → `POST /api/mesh/relay/enroll` →
+   `VIBETERM_PASSWORD` 给本机 mesh 密码。命令内部完成 proof → `POST /api/mesh/relay/enroll` →
    签 `set-relays` → 轮询直到 `mode==='relay'` 且在线。
 6. 主管以密码登录 A（Argon2 seed → Ed25519 root → delegation → challenge/login），
    轮询 `GET /api/mesh/relay/status` 直到 `mode==='relay'` 且该中继 `online && attached`。
@@ -64,7 +64,7 @@ bun apps/fe/tests/helpers/relay-boot.ts --mode hub
   改动这几个接口时记得同步这个文件。
 - **A 不能是 `standalone`**：standalone 只挂 `authSurfaceOnly` 的鉴权面
   （`packages/app/src/runtime/assemble.ts`），没有 `/api/mesh/relay/*`，`relay enroll` 会 404。
-  租户主节点必须是 `node`（`TMEX_HUB_URL` / `TMEX_HUB_PUBLIC_URL` 留空，正是 `relay join` 之后的状态）。
+  租户主节点必须是 `node`（`VIBETERM_HUB_URL` / `VIBETERM_HUB_PUBLIC_URL` 留空，正是 `relay join` 之后的状态）。
 - **`transport` 不打流就是 `null`**：`/api/mesh/nodes` 的 `transport` 取自 peer manager 当前链路，
   刚上线时还没建流。主管先打一次 `/n/<B>` 代理逼出链路再读，实测稳定拿到 `relay`
   （回环环境下 WebRTC 直连拨不通：`endpoint backoff … 192.168.31.36 / 198.18.0.1`，不会升级成 `dc`）。

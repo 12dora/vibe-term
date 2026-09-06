@@ -1,6 +1,6 @@
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import { motionDurations, useReducedMotion } from '@tmex/ui/motion';
-import type { ConnectionState } from '@tmex/ws-client';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import { motionDurations, useReducedMotion } from '@vibeterm/ui/motion';
+import type { ConnectionState } from '@vibeterm/ws-client';
 import { Loader2, RefreshCcw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -3,7 +3,7 @@
 // 保证关闭时能等到它们收尾再清理。
 
 import { rm } from 'node:fs/promises';
-import { type SinkDescriptor, partPathOf } from '@tmex/transfer/node';
+import { type SinkDescriptor, partPathOf } from '@vibeterm/transfer/node';
 import { normalizeRelPath } from './dest';
 import { resolveAuthorizedDir, resolveAuthorizedFile } from './dest-local';
 import { ensureRemoteDir, placeFileOnRemote, probeRemoteTarget } from './dest-remote';

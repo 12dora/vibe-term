@@ -1,4 +1,4 @@
-import type { WatchRuleSampleDto } from '@tmex/shared';
+import type { WatchRuleSampleDto } from '@vibeterm/shared';
 
 export const SAMPLE_RING_LIMIT = 120;
 

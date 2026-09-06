@@ -1,8 +1,8 @@
 // 设备增改对话框：按设备种类（local / ssh / 远端节点上的 local / ssh）组合区块，
 // 成功后按注入的 queryKey 失效缓存。类型创建后不可改（编辑态下拉禁用，update payload 也不含 type）。
 
-import type { Device, DeviceType } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
+import type { Device, DeviceType } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -10,7 +10,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceAuthFields } from './device-auth-fields';

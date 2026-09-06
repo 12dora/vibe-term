@@ -2,7 +2,7 @@
 
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
-import { NoPasskeyForOriginError, X_TMEX_CONNECTION_HEADER } from './types';
+import { NoPasskeyForOriginError, X_VIBETERM_CONNECTION_HEADER } from './types';
 import type {
   AuthChallengeResponse,
   AuthLoginErrorCode,
@@ -164,7 +164,7 @@ export class AuthApi {
     const { connectionId, cid } = options;
     const query = cid ? `?cid=${encodeURIComponent(cid)}` : '';
     const res = await this.client.fetch(nodeAuthPath(nodeId, `/api/mesh/connection${query}`), {
-      ...(connectionId ? { headers: { [X_TMEX_CONNECTION_HEADER]: connectionId } } : {}),
+      ...(connectionId ? { headers: { [X_VIBETERM_CONNECTION_HEADER]: connectionId } } : {}),
     });
     if (!res.ok) {
       return {

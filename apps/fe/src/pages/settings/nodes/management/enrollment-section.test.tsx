@@ -3,7 +3,7 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { PendingEnrollment } from '@/node/enrollment';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

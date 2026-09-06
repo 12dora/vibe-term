@@ -1,5 +1,5 @@
-import { wsBorsh } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { wsBorsh } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies } from '../auth/cookies';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
@@ -31,7 +31,7 @@ import {
   type RtcSignalMessage,
   type RtcSignalRouter,
   WS_CLOSE_LOGIN_REQUIRED,
-  X_TMEX_CONNECTION,
+  X_VIBETERM_CONNECTION,
   getMeshRequestContext,
 } from './mesh-deps';
 import {
@@ -474,7 +474,7 @@ export class MeshRoutes {
       sid: auth.sid,
       via,
       cid,
-      connectionId: cid ? null : req.headers.get(X_TMEX_CONNECTION)?.trim() || null,
+      connectionId: cid ? null : req.headers.get(X_VIBETERM_CONNECTION)?.trim() || null,
     });
     if (!resolved) return jsonError('NO_CONNECTION', 404);
     if (!resolved.ok) {
@@ -623,7 +623,7 @@ function rtcAuthFields(body: Record<string, unknown> | null, req: Request) {
     fp: { algorithm: fp.algorithm, value: fp.value },
     connectionId:
       (typeof body?.connectionId === 'string' ? body.connectionId.trim() : '') ||
-      req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+      req.headers.get(X_VIBETERM_CONNECTION)?.trim() ||
       null,
   };
 }

@@ -1,4 +1,4 @@
-import type { wsBorsh } from '@tmex/shared';
+import type { wsBorsh } from '@vibeterm/shared';
 import { isTmuxPaneId, isTmuxWindowId } from '../tmux-client/snapshot-format';
 import type { GatewaySession } from './gateway-session';
 import type { TmuxCommandHost } from './tmux-command-handlers';

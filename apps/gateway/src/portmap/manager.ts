@@ -4,8 +4,8 @@ import type {
   PortMapState,
   PortProbeResponse,
   UpdatePortMapRequest,
-} from '@tmex/shared';
-import type { PortMapErrorCode } from '@tmex/shared';
+} from '@vibeterm/shared';
+import type { PortMapErrorCode } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { config } from '../config';
 import { getDb } from '../db/client';

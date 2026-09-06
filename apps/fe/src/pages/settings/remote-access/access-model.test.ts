@@ -1,7 +1,7 @@
 // Access 规则草稿的校验与归一、可应用性判断与步骤标签。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   type AccessRuleDraft,
   accessConfigureHostname,

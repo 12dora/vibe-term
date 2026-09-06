@@ -1,10 +1,10 @@
 // 统一凭据对话框：可用 passkey 的判定、由用户选择造签名者、根钥 seed 的清零时机。
 
 import { describe, expect, test } from 'bun:test';
-import { WebAuthnError } from '@tmex/api-client/auth/index';
-import type { PasskeySummary } from '@tmex/api-client/auth/index';
-import { decodeBase64url, deriveSeed, encodeBase64url, rootKeyFromSeed } from '@tmex/shared/auth';
-import type { RootKey } from '@tmex/shared/auth';
+import { WebAuthnError } from '@vibeterm/api-client/auth/index';
+import type { PasskeySummary } from '@vibeterm/api-client/auth/index';
+import { decodeBase64url, deriveSeed, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
+import type { RootKey } from '@vibeterm/shared/auth';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   CredentialPromptDialog,

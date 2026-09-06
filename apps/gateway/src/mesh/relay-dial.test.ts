@@ -62,8 +62,8 @@ describe('isLoopbackRelayDial / CA pin', () => {
 describe('relayDialContextFromEnv', () => {
   test('从环境读取角色与端口', () => {
     const ctx = relayDialContextFromEnv({
-      TMEX_ROLES: 'relay,node',
-      TMEX_RELAY_PUBLIC_URL: 'https://relay.example',
+      VIBETERM_ROLES: 'relay,node',
+      VIBETERM_RELAY_PUBLIC_URL: 'https://relay.example',
       GATEWAY_PORT: '18883',
     });
     expect(ctx.roles.relay).toBe(true);
@@ -72,13 +72,13 @@ describe('relayDialContextFromEnv', () => {
   });
 
   test('非法角色不当成中继', () => {
-    expect(relayDialContextFromEnv({ TMEX_ROLES: 'nope' }).roles.relay).toBe(false);
+    expect(relayDialContextFromEnv({ VIBETERM_ROLES: 'nope' }).roles.relay).toBe(false);
   });
 
   test('runtime 快照与 env 同源时形状一致', () => {
     const fromEnv = relayDialContextFromEnv({
-      TMEX_ROLES: 'relay,node',
-      TMEX_RELAY_PUBLIC_URL: ' https://relay.example ',
+      VIBETERM_ROLES: 'relay,node',
+      VIBETERM_RELAY_PUBLIC_URL: ' https://relay.example ',
       GATEWAY_PORT: '19993',
     });
     expect(

@@ -1,4 +1,4 @@
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { config } from '../config';
 import { getSiteSettings } from '../db';
 import { meshForwardChannel } from './channels/mesh-forward';

@@ -1,10 +1,10 @@
 // 控制台标题：当前 window/pane 的终端标签（带响铃指示）。
 // 路由参数由宿主显式传入；paneId 为路由段原值（React Router 已 decode 一次），包内做归一。
 
-import { useBellStore } from '@tmex/notifications';
-import { PRODUCT_NAME } from '@tmex/shared';
-import { buildTerminalLabel, decodePaneIdFromUrlParam } from '@tmex/stores';
-import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
+import { useBellStore } from '@vibeterm/notifications';
+import { PRODUCT_NAME } from '@vibeterm/shared';
+import { buildTerminalLabel, decodePaneIdFromUrlParam } from '@vibeterm/stores';
+import { useSiteStore, useTmuxStore } from '@vibeterm/stores/react';
 import { useMemo } from 'react';
 
 export interface DeviceConsolePageTitleProps {

@@ -7,7 +7,7 @@
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { resolveMeshNodeName } from '@/node/node-names';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
-import { isSelfNode } from '@tmex/api-client';
+import { isSelfNode } from '@vibeterm/api-client';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 

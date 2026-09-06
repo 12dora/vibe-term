@@ -1,10 +1,10 @@
-import type { Device, DeviceType, FileRootDto } from '@tmex/shared';
+import type { Device, DeviceType, FileRootDto } from '@vibeterm/shared';
 import { FolderOpen } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import {
   Select,
   SelectContent,
@@ -13,7 +13,7 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
-} from '@tmex/ui/select';
+} from '@vibeterm/ui/select';
 
 import { DirectoryPickerModal } from './directory-picker-modal';
 import { FileRootDeviceIcon } from './file-root-device-icon';

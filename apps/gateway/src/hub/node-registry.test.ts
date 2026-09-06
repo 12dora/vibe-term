@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { NodeRegistry } from './node-registry';
 
 describe('NodeRegistry', () => {

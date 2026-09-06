@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
@@ -12,8 +12,8 @@ const sendMock = mock((kind: number, payload: Uint8Array) => {
 const isReadyMock = mock(() => true);
 
 // 只替换建连入口：命令编码走 ws-client 真实实现（Borsh），断言直接读 payload 里的字段。
-const wsActual = await import('@tmex/ws-client');
-mock.module('@tmex/ws-client', () => ({
+const wsActual = await import('@vibeterm/ws-client');
+mock.module('@vibeterm/ws-client', () => ({
   ...wsActual,
   getBorshClient: () => ({
     send: sendMock,

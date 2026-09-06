@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 import type { Client, ClientChannel, ConnectConfig } from 'ssh2';
 
 import { createDevice as createDeviceRow, getDeviceRuntimeStatus } from '../db';
@@ -29,7 +29,7 @@ function createDevice(session = 'tmex-ssh-test'): Device {
 }
 
 function extractCommandId(command: string): string {
-  const match = command.match(/printf '\\036TMEX_END %s %d\\036\\n' '([^']+)' \$\?/);
+  const match = command.match(/printf '\\036VIBETERM_END %s %d\\036\\n' '([^']+)' \$\?/);
   if (!match) {
     throw new Error(`missing command id in payload: ${command}`);
   }
@@ -58,7 +58,7 @@ function respondToPayload(
   tmuxVersion = 'tmux 3.4'
 ): { stdout: string; exitCode: number } | null {
   if (payload.includes('command -v tmux')) {
-    return { stdout: `TMEX_BOOT_OK\t/usr/bin/tmux\t${tmuxVersion}\t/home/alice\n`, exitCode: 0 };
+    return { stdout: `VIBETERM_BOOT_OK\t/usr/bin/tmux\t${tmuxVersion}\t/home/alice\n`, exitCode: 0 };
   }
   if (payload.includes(`'has-session' '-t' '${session}'`)) {
     return { stdout: '', exitCode: 0 };
@@ -234,7 +234,7 @@ function setupCommandChannel(
     }
     fakeClient.commandChannel.emit(
       'data',
-      Buffer.from(`${response.stdout}\x1eTMEX_END ${commandId} ${response.exitCode}\x1e\n`)
+      Buffer.from(`${response.stdout}\x1eVIBETERM_END ${commandId} ${response.exitCode}\x1e\n`)
     );
   };
 }
@@ -1221,7 +1221,7 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
         }
         fakeClient.commandChannel.emit(
           'data',
-          Buffer.from(`${response.stdout}\x1eTMEX_END ${commandId} ${response.exitCode}\x1e\n`)
+          Buffer.from(`${response.stdout}\x1eVIBETERM_END ${commandId} ${response.exitCode}\x1e\n`)
         );
       };
       if (payload.includes("'show-options' '-gqv' '@tmex-server-epoch'")) {

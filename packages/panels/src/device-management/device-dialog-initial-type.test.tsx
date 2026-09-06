@@ -4,11 +4,11 @@
 
 import { describe, expect, mock, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { devicesQueryKey } from '@tmex/api-client';
-import { I18N_RESOURCES } from '@tmex/shared';
-import { createAppRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { devicesQueryKey } from '@vibeterm/api-client';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import { createAppRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import i18next from 'i18next';
 import type { ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -25,7 +25,7 @@ const shell =
     return <Tag {...rest}>{children}</Tag>;
   };
 
-mock.module('@tmex/ui/dialog', () => ({
+mock.module('@vibeterm/ui/dialog', () => ({
   Dialog: shell('div'),
   DialogContent: shell('div'),
   DialogHeader: shell('div'),

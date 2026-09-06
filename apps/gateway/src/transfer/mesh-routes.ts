@@ -1,7 +1,7 @@
 // 目标节点 B 的 peer-only 接口。`/api/mesh-internal/*` 的 peer 标记只证明「对端是本用户的
 // 某台受信任节点」，真正的授权来自 grant（浏览器用自己的 B 会话签发、绑死源节点与目标目录）。
 
-import type { TransferErrorCode } from '@tmex/shared';
+import type { TransferErrorCode } from '@vibeterm/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { readMeshPeerMarker } from '../mesh/peer-request-marker';

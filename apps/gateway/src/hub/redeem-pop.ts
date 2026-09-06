@@ -1,4 +1,4 @@
-import { concatBytes, sha256 } from '@tmex/shared/auth';
+import { concatBytes, sha256 } from '@vibeterm/shared/auth';
 
 export const REDEEM_POP_DOMAIN = 'tmex/redeem-pop/v1';
 

@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized, updateSiteSettings } from '../../db';
 import { runMigrations } from '../../db/migrate';
 import { weixinService } from '../../weixin/service';

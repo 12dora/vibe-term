@@ -1,5 +1,5 @@
-import { buildWindowDisplayName } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { buildWindowDisplayName } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { useCallback, useState } from 'react';
 
 export type CloseCandidate =

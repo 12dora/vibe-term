@@ -133,7 +133,7 @@ export async function checkEnvironment(input: {
     });
 
     const env = await readEnvFile(input.envPath);
-    const required = ['TMEX_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'TMEX_BIND_HOST'];
+    const required = ['VIBETERM_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'VIBETERM_BIND_HOST'];
     for (const key of required) {
       if (!env[key]) {
         installChecks.push({
@@ -177,8 +177,8 @@ export async function checkEnvironment(input: {
         });
       }
     }
-    if (env.TMEX_BIND_HOST) {
-      healthHost = env.TMEX_BIND_HOST;
+    if (env.VIBETERM_BIND_HOST) {
+      healthHost = env.VIBETERM_BIND_HOST;
     }
   } else {
     installChecks.push({

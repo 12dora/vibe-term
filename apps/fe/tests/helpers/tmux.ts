@@ -3,7 +3,7 @@ import { fileURLToPath } from 'node:url';
 
 // e2e 专用 tmux socket，与生产/开发默认 socket（/private/tmp/tmux-501/default）隔离，
 // 避免 e2e 的会话 create/destroy 影响本机常驻 tmex。必须与 playwright.config.ts 注入给
-// 被测 gateway 的 TMEX_TMUX_SOCKET 保持一致，否则 gateway 在默认 socket 上找不到会话。
+// 被测 gateway 的 VIBETERM_TMUX_SOCKET 保持一致，否则 gateway 在默认 socket 上找不到会话。
 export const E2E_TMUX_SOCKET = 'tmex-e2e';
 
 // pane 的工作目录显式指定为 apps/fe：不传 -c 时 tmux 取客户端 cwd，跨 worktree / 跨次运行

@@ -5,7 +5,7 @@
 // 只用 transition 不用 tmex-fade：动画的 fill-mode 是 both，播完会把 opacity 永久钉在 1，
 // 分节根上拖拽用的 opacity-60 就再也压不住了；纯 class 才能让 tailwind-merge 正常收敛。
 
-import { motionDurations, useReducedMotion } from '@tmex/ui/motion';
+import { motionDurations, useReducedMotion } from '@vibeterm/ui/motion';
 import { useEffect, useRef, useState } from 'react';
 
 type Phase = 'hidden' | 'entering' | 'visible' | 'exiting';

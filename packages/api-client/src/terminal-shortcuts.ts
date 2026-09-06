@@ -1,4 +1,4 @@
-import type { TerminalShortcutSettings, UpdateTerminalShortcutSettingsRequest } from '@tmex/shared';
+import type { TerminalShortcutSettings, UpdateTerminalShortcutSettingsRequest } from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { requestJson } from './json-mutation';
 

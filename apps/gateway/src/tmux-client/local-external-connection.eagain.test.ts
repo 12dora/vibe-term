@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 
 import { config } from '../config';
 import { runMigrations } from '../db/migrate';

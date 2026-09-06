@@ -1,4 +1,4 @@
-import type { ServerSocketAdapter } from '@tmex/shared/link';
+import type { ServerSocketAdapter } from '@vibeterm/shared/link';
 import { SlidingWindowCounter } from '../lib/sliding-window';
 import { defaultScheduler } from './ctl';
 import { wrapBunPeerSocket } from './peer-protocol';

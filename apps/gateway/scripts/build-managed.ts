@@ -134,7 +134,7 @@ function compileOne(target: ManagedTarget, outDir: string, version: string): Tar
   const outfile = join(outDir, outfileName(target));
 
   // 非当前宿主：默认只记 matrix，不假装 cross-compile PASS（Bun 可跨编译但本 Spike 要求诚实）。
-  if (!hostMatch && !process.env.TMEX_MANAGED_FORCE_CROSS) {
+  if (!hostMatch && !process.env.VIBETERM_MANAGED_FORCE_CROSS) {
     return {
       target,
       status: 'defined_not_executed',
@@ -150,9 +150,9 @@ function compileOne(target: ManagedTarget, outDir: string, version: string): Tar
     `--outfile=${outfile}`,
     `--target=${target}`,
     '--define',
-    `TMEX_MONOREPO_VERSION="${version}"`,
+    `VIBETERM_MONOREPO_VERSION="${version}"`,
     '--define',
-    'TMEX_MANAGED_BUILD=true',
+    'VIBETERM_MANAGED_BUILD=true',
     '--define',
     MANAGED_NODE_ENV_DEFINE,
     // ssh2 的 optional native dep cpu-features 在多数宿主未安装源码；

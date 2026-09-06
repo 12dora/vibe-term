@@ -2,7 +2,7 @@
 // 否则顺序被 Unset 后退不回 tmux index 顺序（老的自定义顺序会粘住）。
 
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   type MetadataLiveCaches,
   ingestMetadataPatch,

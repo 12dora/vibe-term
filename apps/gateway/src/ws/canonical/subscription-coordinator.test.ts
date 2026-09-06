@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import { PaneRetention } from '../../tmux-client/pane-retention';
 import { CanonicalSubscriptionCoordinator } from './subscription-coordinator';

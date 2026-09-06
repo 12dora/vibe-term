@@ -1,7 +1,7 @@
 // 退出对话框的文案路由：标题与后果按「从哪个角色退、退到哪」分档，不能混着讲。
 
 import { describe, expect, test } from 'bun:test';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import {
   type LeaveDialogRequest,
   isLeaveToPureRelay,

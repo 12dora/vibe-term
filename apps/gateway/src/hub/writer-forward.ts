@@ -1,18 +1,18 @@
-import { bytesToHex, sha256 } from '@tmex/shared/auth';
+import { bytesToHex, sha256 } from '@vibeterm/shared/auth';
 import {
   HUB_NOT_WRITER,
   HUB_WRITE_FORWARD_FRAME_MAX_BYTES,
   type HubNotWriterError,
   type HubWriteForwardHeaders,
   type HubWriteForwardMessage,
-  TMEX_FORWARDED_BY_HEADER,
+  VIBETERM_FORWARDED_BY_HEADER,
   UPLINK_CTL_MAX_BYTES,
   encodeHubUplinkCtl,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import { json } from '../api/http';
 
 export const WRITER_FORWARD_TIMEOUT_MS = 10_000;
-export const WRITER_FORWARD_HEADER = TMEX_FORWARDED_BY_HEADER;
+export const WRITER_FORWARD_HEADER = VIBETERM_FORWARDED_BY_HEADER;
 export const WRITE_FORWARD_FRAME_MAX_BYTES = HUB_WRITE_FORWARD_FRAME_MAX_BYTES;
 export const WRITE_FORWARD_IDEMPOTENCY_MAX = 256;
 export const WRITE_FORWARD_OVERSIZED_ERROR = 'payload_too_large';

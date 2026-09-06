@@ -3,8 +3,8 @@
 // 浏览器默认不认这个 CA，因此保存成功后必须把「下载 CA + 各端安装」摆在显眼位置，
 // 否则用户只会看到一个证书错误页。
 
-import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
-import { Button } from '@tmex/ui/button';
+import type { TlsStatusResponse } from '@vibeterm/api-client/local/tls-types';
+import { Button } from '@vibeterm/ui/button';
 import { Download, Loader2, RefreshCw, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

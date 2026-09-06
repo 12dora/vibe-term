@@ -18,9 +18,9 @@ import {
   randomBytes,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
-import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { eq } from 'drizzle-orm';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';

@@ -5,8 +5,8 @@
 // 一律按「已断开」展示，让用户能点「连接」发起一次手动尝试；只有掉线之后用户自己点出来的
 // 尝试才照常展示 connecting / error / reconnecting（节点恢复在线时复位）。
 
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

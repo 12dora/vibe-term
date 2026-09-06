@@ -5,7 +5,7 @@
 // 让传输弹窗至少能浏览起来；只要存在任意一条启用的根，白名单模型立即恢复独占，
 // `fs-root` 与任何不存在的 id 一样返回 `root_not_found`。
 
-import { type FileErrorCode, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { type FileErrorCode, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import { getAllDevices } from '../db';
 import { type FileRootRecord, getFileRootById, getFileRoots } from '../db/file-roots';
 

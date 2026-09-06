@@ -35,7 +35,7 @@ async function waitFeButtonTracking(page: Page): Promise<void> {
     .poll(
       () =>
         page.evaluate(() => {
-          const t = (window as any).__tmexE2eTerminal;
+          const t = (window as any).__vibetermE2eTerminal;
           return t?.exportModeSnapshot?.()?.mouseButton ?? false;
         }),
       { timeout: 15_000 }

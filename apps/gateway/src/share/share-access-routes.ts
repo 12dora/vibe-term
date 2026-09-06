@@ -6,9 +6,9 @@ import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { getShareService } from './share-service';
 import {
   SHARE_COOKIE_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  X_VIBETERM_CLEAR_SHARE,
+  X_VIBETERM_SET_SHARE,
+  X_VIBETERM_SET_SHARE_MAX_AGE,
   parseShareToken,
   shareCookieName,
 } from './share-token';
@@ -53,8 +53,8 @@ export const shareAccessRoutes: ApiRoute[] = [
       // 长期分享靠这里滑动续期：只延长服务端 token 的话，浏览器 cookie 仍会在 7 天后消失。
       const renewal: Record<string, string> = {};
       if (token && verified.renewed && verified.maxAgeSec) {
-        renewal[X_TMEX_SET_SHARE] = token;
-        renewal[X_TMEX_SET_SHARE_MAX_AGE] = String(verified.maxAgeSec);
+        renewal[X_VIBETERM_SET_SHARE] = token;
+        renewal[X_VIBETERM_SET_SHARE_MAX_AGE] = String(verified.maxAgeSec);
       }
       return json({ ...base, deviceId: share.deviceId, windowId: share.windowId }, 200, renewal);
     },
@@ -69,8 +69,8 @@ export const shareAccessRoutes: ApiRoute[] = [
       const result = await getShareService().loginAccess(params.id, password, clientIp);
       if (result.ok) {
         return json({ ok: true, expiresAt: result.expiresAt }, 200, {
-          [X_TMEX_SET_SHARE]: result.token,
-          [X_TMEX_SET_SHARE_MAX_AGE]: String(result.maxAgeSec),
+          [X_VIBETERM_SET_SHARE]: result.token,
+          [X_VIBETERM_SET_SHARE_MAX_AGE]: String(result.maxAgeSec),
         });
       }
       if (result.code === 'SHARE_NOT_FOUND') return notFound();
@@ -97,7 +97,7 @@ export const shareAccessRoutes: ApiRoute[] = [
     handler: (req, params) => {
       const token = readShareCookieToken(req, params.id);
       if (token) getShareService().logoutAccess(token);
-      return json({ ok: true }, 200, { [X_TMEX_CLEAR_SHARE]: '1' });
+      return json({ ok: true }, 200, { [X_VIBETERM_CLEAR_SHARE]: '1' });
     },
   }),
 ];

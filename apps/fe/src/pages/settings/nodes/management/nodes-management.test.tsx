@@ -8,10 +8,10 @@ import type {
   HubEndpointInfo,
   MeshHubEndpoint,
   MeshNode,
-} from '@tmex/api-client/auth/index';
-import type { UpgradeStatus } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+} from '@vibeterm/api-client/auth/index';
+import type { UpgradeStatus } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import { Children, type ReactElement, type ReactNode } from 'react';
 import type {
   NodeActionDeps,
@@ -75,7 +75,7 @@ const {
   upgradeErrorText,
   upgradePhaseText,
 } = await import('./use-node-upgrade');
-const { rootKeyFromSeed } = await import('@tmex/shared/auth');
+const { rootKeyFromSeed } = await import('@vibeterm/shared/auth');
 
 const MODE: AuthModeResponse = {
   mode: 'mesh',

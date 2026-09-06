@@ -1,5 +1,5 @@
 import { describe, expect, spyOn, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { WebSocketServer } from './index';
 import { createBorshTestWs, createFakeCarrier } from './test-helpers';
 

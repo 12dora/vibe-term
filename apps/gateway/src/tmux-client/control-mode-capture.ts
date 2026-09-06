@@ -1,4 +1,4 @@
-import type { PaneModeFlags } from '@tmex/shared';
+import type { PaneModeFlags } from '@vibeterm/shared';
 import type { ControlModeBlock } from './control-mode-parser';
 import { isTmuxPaneId } from './snapshot-format';
 

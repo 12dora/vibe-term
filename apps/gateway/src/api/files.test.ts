@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { BrowseDirectoryResponse, Device } from '@tmex/shared';
+import type { BrowseDirectoryResponse, Device } from '@vibeterm/shared';
 import * as devicesDb from '../db';
 import * as deviceStorage from '../files/device-storage';
 import { directoryBrowseIo } from '../files/directory-browse';

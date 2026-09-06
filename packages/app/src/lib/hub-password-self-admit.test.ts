@@ -350,7 +350,7 @@ async function openAuth(roles: string): Promise<LocalAuthContext> {
   const ctx = await openLocalAuth({
     memory: true,
     migrationsFolder: MIGRATIONS,
-    env: { TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '', TMEX_ROLES: roles },
+    env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: roles },
   });
   handles.push(ctx);
   return ctx;

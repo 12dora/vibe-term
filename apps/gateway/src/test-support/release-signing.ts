@@ -1,8 +1,8 @@
 // 单测用的发布签名夹具：一把固定的测试钥 + 现造 SHA256SUMS / 签名行。
 // 真正的发布私钥只存在于 CI secret 里，测试一律走注入的钥表。
 
-import { type ReleaseSigningKey, releaseTarballName, signReleaseSums } from '@tmex/shared';
-import { rootKeyFromSeed } from '@tmex/shared/auth';
+import { type ReleaseSigningKey, releaseTarballName, signReleaseSums } from '@vibeterm/shared';
+import { rootKeyFromSeed } from '@vibeterm/shared/auth';
 import { setReleaseSigningKeysForTests } from '../system/release-signature';
 
 export const TEST_SIGNING_SEED = new Uint8Array(32).fill(42);

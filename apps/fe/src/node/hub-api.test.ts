@@ -1,7 +1,7 @@
 // hub 管理 API 客户端：路径拼装（角色接口打的是**参数给的**那台 hub）与错误码映射。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import { HubApi, HubApiError, hubAdmissionStatus } from './hub-api';
 
 const HUB = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';

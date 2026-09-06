@@ -25,7 +25,7 @@
   ];
   ```
 
-- 私钥（raw 32 字节种子的标准 base64）只存在两处：GitHub Actions secret `TMEX_RELEASE_SIGNING_KEY`，
+- 私钥（raw 32 字节种子的标准 base64）只存在两处：GitHub Actions secret `VIBETERM_RELEASE_SIGNING_KEY`，
   以及维护者自己保管的离线备份 `~/code/key/tmex-release-signing-ed25519-r1.json`（`{"seedB64":"<base64>","pubB64":"<base64>"}`，
   权限 0600）。除此之外任何地方都不该出现，包括日志、CI 输出、仓库。
 
@@ -34,7 +34,7 @@
 1. 生成新种子与公钥，把 `{ id: 'r2', publicKey: '<新公钥 base64>' }` **追加**到 `RELEASE_SIGNING_KEYS` 末尾，
    旧条目原样保留；
 2. 合并并发一个版本，让带新公钥的客户端先铺开；
-3. 把 secret `TMEX_RELEASE_SIGNING_KEY` 换成新种子，之后的发版就由 `r2` 签；
+3. 把 secret `VIBETERM_RELEASE_SIGNING_KEY` 换成新种子，之后的发版就由 `r2` 签；
 4. 只有当确认「不再需要验证 `r1` 签过的任何版本」时，才从数组里删掉 `r1`。
 
 签名脚本会用种子推出公钥，在 `RELEASE_SIGNING_KEYS` 里找不到就直接失败——防止签出一把谁也验不了的钥。
@@ -46,7 +46,7 @@
 ```yaml
 - name: Sign SHA256SUMS
   env:
-    TMEX_RELEASE_SIGNING_KEY: ${{ secrets.TMEX_RELEASE_SIGNING_KEY }}
+    VIBETERM_RELEASE_SIGNING_KEY: ${{ secrets.VIBETERM_RELEASE_SIGNING_KEY }}
   run: |
     bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
     cat packages/app/SHA256SUMS.sig

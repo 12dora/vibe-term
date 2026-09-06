@@ -13,9 +13,9 @@
 
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { enrollmentSignerFrom } from '@/auth/key-log-actions';
-import type { RelayJoinMaterial, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { createEnrollment, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
-import { encodeRelayJoinToken } from '@tmex/shared/relay';
+import type { RelayJoinMaterial, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { createEnrollment, decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
+import { encodeRelayJoinToken } from '@vibeterm/shared/relay';
 import type { CreatedEnrollment, PendingEnrollment } from './enrollment';
 import { addPendingEnrollment } from './enrollment';
 import type { EnrollmentRelayResult, HubApi } from './hub-api';

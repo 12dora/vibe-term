@@ -1,7 +1,7 @@
 // 路由与快照的对账：URL 点名的 window/pane 失效时回落，以及首次进设备的自动选中。
 // 与 select 派发拆开——这两件事只改路由，不下发任何 tmux 命令。
 
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 import { useEffect } from 'react';
 import { resolveDeviceDefaultSelection, resolveRouteTarget } from './selection-recovery';
 import type { PaneSelectionDispatch } from './use-pane-selection-dispatch';

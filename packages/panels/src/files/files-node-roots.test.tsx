@@ -2,8 +2,8 @@
 // bun test 无 DOM，用 react-dom/server 静态渲染断言 HTML（与 files-tab.test.tsx 同法）。
 
 import { describe, expect, test } from 'bun:test';
-import type { FileEntryDto, FileRootDto } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -14,14 +14,14 @@ installWindowStorage();
 });
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { I18N_RESOURCES } = await import('@tmex/shared');
-const { createAppRuntime } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { I18N_RESOURCES } = await import('@vibeterm/shared');
+const { createAppRuntime } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const i18next = (await import('i18next')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { I18nextProvider } = await import('react-i18next');
 const { MemoryRouter } = await import('react-router');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { FilesTab } = await import('./files-tab');
 const { FILE_LEAF_PATH_ATTR, FILE_LIST_DIR_ATTR, FILE_LIST_ROOT_ATTR } = await import(
   './file-leaf-target'

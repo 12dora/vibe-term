@@ -6,7 +6,7 @@ import type {
   TunnelAccessPolicyRule,
   TunnelActionRequest,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { directProtected } from './direct-model';
 import type { StepState } from './tunnel-model';
 

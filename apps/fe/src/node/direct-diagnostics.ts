@@ -5,8 +5,8 @@
 // 不可用）时 `resolveDirectDiagnostics()` 回落到恒为 `primary` 的桩，契约与桩都在
 // `packages/ws-client/src/direct/types.ts`。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import { DIRECT_FAILURE_CODES } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { DIRECT_FAILURE_CODES } from '@vibeterm/api-client/auth/index';
 import type {
   DirectFailureCode,
   DirectFailureDcParams,
@@ -14,9 +14,9 @@ import type {
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
-} from '@tmex/api-client/auth/index';
-import type { DirectDiagnostics } from '@tmex/ws-client/direct/types';
-import { resolveDirectDiagnostics } from '@tmex/ws-client/direct/types';
+} from '@vibeterm/api-client/auth/index';
+import type { DirectDiagnostics } from '@vibeterm/ws-client/direct/types';
+import { resolveDirectDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { useMemo, useSyncExternalStore } from 'react';
 import { getMeshNodesState, subscribeMeshNodes } from './mesh-nodes';
 import { appNodeRuntimes } from './node-runtimes';

@@ -1,6 +1,6 @@
 // 四个写操作（创建 / 暂停继续 / 删除 / 重试清理放行）的状态机：谁在飞、错在哪，以及成功后刷新列表。
 
-import { createNodeApiClient, updatePortMap } from '@tmex/api-client';
+import { createNodeApiClient, updatePortMap } from '@vibeterm/api-client';
 import { useState } from 'react';
 
 import { type DialogNodeOption, findDialogNode } from '../dialog-nodes';

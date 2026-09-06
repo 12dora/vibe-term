@@ -1,4 +1,4 @@
-import { useRuntime } from '@tmex/stores/react';
+import { useRuntime } from '@vibeterm/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

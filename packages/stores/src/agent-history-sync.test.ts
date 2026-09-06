@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
-import { ApiClient, type FetchLike } from '@tmex/api-client';
-import type { AgentMessageDto } from '@tmex/shared';
+import { ApiClient, type FetchLike } from '@vibeterm/api-client';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import { createAgentHistorySync } from './agent-history-sync';
 import { type AgentStateData, createInitialAgentStateData } from './agent-state';
 

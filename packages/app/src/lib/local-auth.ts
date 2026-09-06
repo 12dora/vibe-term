@@ -47,7 +47,7 @@ function applyCliEnv(env: LocalAuthEnv): void {
 }
 
 export function resolveCliMigrationsFolder(installDir?: string): string {
-  const fromEnv = process.env.TMEX_MIGRATIONS_DIR;
+  const fromEnv = process.env.VIBETERM_MIGRATIONS_DIR;
   if (fromEnv) return fromEnv;
   if (installDir) {
     return createInstallLayout(installDir).drizzleDir;
@@ -146,7 +146,7 @@ export async function openLocalAuth(options: OpenLocalAuthOptions = {}): Promise
   }
   process.env.DATABASE_URL = databaseUrl;
   if (options.migrationsFolder) {
-    process.env.TMEX_MIGRATIONS_DIR = options.migrationsFolder;
+    process.env.VIBETERM_MIGRATIONS_DIR = options.migrationsFolder;
   }
 
   const { runMigrations } = await import('../../../../apps/gateway/src/db/migrate');

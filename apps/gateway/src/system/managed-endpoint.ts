@@ -113,23 +113,23 @@ export function parseManagedEndpointPayload(payload: string): ManagedEndpointRea
 export function resolveManagedEndpointPublication(
   env: NodeJS.ProcessEnv = process.env
 ): ManagedEndpointPublication {
-  const path = env.TMEX_MANAGED_ENDPOINT_PATH;
+  const path = env.VIBETERM_MANAGED_ENDPOINT_PATH;
   if (!path || !path.trim()) {
-    throw new Error('TMEX_MANAGED_ENDPOINT_PATH is required for the managed Gateway');
+    throw new Error('VIBETERM_MANAGED_ENDPOINT_PATH is required for the managed Gateway');
   }
   if (!isAbsolute(path) || !basename(path) || dirname(path) === path) {
-    throw new Error('TMEX_MANAGED_ENDPOINT_PATH must be an absolute file path');
+    throw new Error('VIBETERM_MANAGED_ENDPOINT_PATH must be an absolute file path');
   }
 
-  const nonce = env.TMEX_MANAGED_ENDPOINT_NONCE;
+  const nonce = env.VIBETERM_MANAGED_ENDPOINT_NONCE;
   if (nonce === undefined || nonce.length === 0) {
-    throw new Error('TMEX_MANAGED_ENDPOINT_NONCE is required for the managed Gateway');
+    throw new Error('VIBETERM_MANAGED_ENDPOINT_NONCE is required for the managed Gateway');
   }
   try {
     validateNonce(nonce);
   } catch {
     throw new Error(
-      `TMEX_MANAGED_ENDPOINT_NONCE must contain 1..${MANAGED_ENDPOINT_MAX_NONCE_BYTES} UTF-8 bytes`
+      `VIBETERM_MANAGED_ENDPOINT_NONCE must contain 1..${MANAGED_ENDPOINT_MAX_NONCE_BYTES} UTF-8 bytes`
     );
   }
   return { path, nonce };
@@ -139,8 +139,8 @@ export function consumeManagedEndpointPublication(
   env: NodeJS.ProcessEnv = process.env
 ): ManagedEndpointPublication {
   const publication = resolveManagedEndpointPublication(env);
-  Reflect.deleteProperty(env, 'TMEX_MANAGED_ENDPOINT_PATH');
-  Reflect.deleteProperty(env, 'TMEX_MANAGED_ENDPOINT_NONCE');
+  Reflect.deleteProperty(env, 'VIBETERM_MANAGED_ENDPOINT_PATH');
+  Reflect.deleteProperty(env, 'VIBETERM_MANAGED_ENDPOINT_NONCE');
   return publication;
 }
 

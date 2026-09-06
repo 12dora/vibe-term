@@ -8,28 +8,28 @@
 // 要打远端 API 的动作禁用；连接开关仍可点（手动发起一次连接尝试）。
 
 import { useMutation } from '@tanstack/react-query';
-import { testDeviceConnection } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
+import { testDeviceConnection } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
 import {
   hostAppPath,
   isSidebarDeviceVisible,
   isSidebarFilesVisible,
   sidebarDeviceVisibilityKey,
-} from '@tmex/stores';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
-import { Button, buttonVariants } from '@tmex/ui/button';
-import { Card, CardContent } from '@tmex/ui/card';
+} from '@vibeterm/stores';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button, buttonVariants } from '@vibeterm/ui/button';
+import { Card, CardContent } from '@vibeterm/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { Switch } from '@tmex/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
+} from '@vibeterm/ui/dropdown-menu';
+import { Switch } from '@vibeterm/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import {
   ArrowUpRight,
   FolderCog,

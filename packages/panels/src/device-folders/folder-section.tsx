@@ -5,15 +5,15 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { DeviceFolder } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import type { DeviceFolder } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import {
   ChevronRight,
   Folder,

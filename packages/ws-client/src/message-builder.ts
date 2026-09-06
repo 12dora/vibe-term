@@ -1,7 +1,7 @@
 // FE Borsh 消息构建器
 // 提供便捷的 API 构建各种消息
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 // ========== 生成 selectToken ==========
 

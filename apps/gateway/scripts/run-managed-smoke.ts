@@ -113,16 +113,16 @@ async function main(): Promise<void> {
     TMPDIR: join(work, 'tmp'),
     NODE_ENV: 'production',
     GATEWAY_PORT: '0',
-    TMEX_BIND_HOST: '127.0.0.1',
-    TMEX_MANAGED_ENDPOINT_PATH: endpointPath,
-    TMEX_MANAGED_ENDPOINT_NONCE: endpointNonce,
-    TMEX_TMUX_SOCKET: `tmex-managed-inherited-${process.pid}`,
+    VIBETERM_BIND_HOST: '127.0.0.1',
+    VIBETERM_MANAGED_ENDPOINT_PATH: endpointPath,
+    VIBETERM_MANAGED_ENDPOINT_NONCE: endpointNonce,
+    VIBETERM_TMUX_SOCKET: `tmex-managed-inherited-${process.pid}`,
     DATABASE_URL: dbPath,
-    TMEX_MASTER_KEY: masterKey,
+    VIBETERM_MASTER_KEY: masterKey,
     // 故意注入自管理值，证明 managed entry 在业务模块加载前将其覆盖。
-    TMEX_MANAGEMENT_MODE: 'none',
-    TMEX_UPDATE_OWNER: 'self',
-    // 显式不设 TMEX_FE_DIST_DIR / 生产安装路径
+    VIBETERM_MANAGEMENT_MODE: 'none',
+    VIBETERM_UPDATE_OWNER: 'self',
+    // 显式不设 VIBETERM_FE_DIST_DIR / 生产安装路径
   };
   mkdirSync(env.TMPDIR, { recursive: true });
 
@@ -278,7 +278,7 @@ async function main(): Promise<void> {
       /* ignore */
     }
     // 保留 work 目录证据时由调用方复制；默认不删以便排障，设置 CLEAN=1 才删
-    if (process.env.TMEX_MANAGED_SMOKE_CLEAN === '1') {
+    if (process.env.VIBETERM_MANAGED_SMOKE_CLEAN === '1') {
       rmSync(work, { recursive: true, force: true });
     }
   }

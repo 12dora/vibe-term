@@ -5,12 +5,12 @@ import type { GhosttyCellDimensions, GhosttyTheme } from './types';
 const ghosttyWasmUrl = new URL('./assets/ghostty-vt.wasm', import.meta.url).href;
 
 // `bun build --compile` 产物内，跨包引用的资产可能不进入嵌入表（实测 ENOENT）——
-// 按 plan「无法可靠嵌入时的签名相邻资源」策略回退：`TMEX_GHOSTTY_WASM_PATH` 显式覆盖，
+// 按 plan「无法可靠嵌入时的签名相邻资源」策略回退：`VIBETERM_GHOSTTY_WASM_PATH` 显式覆盖，
 // 否则取可执行同目录的 `ghostty-vt.wasm`（managed 构建保证其随产物分发）。
 function ghosttyWasmCandidates(): string[] {
   const candidates = [ghosttyWasmUrl];
   if (typeof Bun !== 'undefined' && typeof process !== 'undefined' && process.execPath) {
-    const envPath = process.env.TMEX_GHOSTTY_WASM_PATH;
+    const envPath = process.env.VIBETERM_GHOSTTY_WASM_PATH;
     if (envPath) {
       candidates.push(envPath);
     }

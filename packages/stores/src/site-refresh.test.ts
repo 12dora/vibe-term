@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();

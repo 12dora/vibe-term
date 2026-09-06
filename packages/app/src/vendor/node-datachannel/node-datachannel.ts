@@ -96,9 +96,9 @@ export function loadBinding(): NativeBinding {
   if (binding) {
     return binding;
   }
-  const nativeDir = process.env.TMEX_NATIVE_DIR;
+  const nativeDir = process.env.VIBETERM_NATIVE_DIR;
   if (!nativeDir) {
-    throw new Error('TMEX_NATIVE_DIR is not set');
+    throw new Error('VIBETERM_NATIVE_DIR is not set');
   }
   return loadBindingFromPath(join(nativeDir, 'node_datachannel.node'));
 }

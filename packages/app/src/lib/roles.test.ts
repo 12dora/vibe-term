@@ -1,62 +1,62 @@
 import { describe, expect, test } from 'bun:test';
-import { parseTmexRoles as parseGatewayTmexRoles } from '../../../../apps/gateway/src/config';
-import { parseTmexRoleName, parseTmexRoles } from './roles';
+import { parseVibeTermRoles as parseGatewayVibeTermRoles } from '../../../../apps/gateway/src/config';
+import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
 
 const STANDALONE = { hub: false, node: false, relay: false };
 const NODE = { hub: false, node: true, relay: false };
 const HUB_NODE = { hub: true, node: true, relay: false };
 
-describe('app parseTmexRoles wrapper', () => {
+describe('app parseVibeTermRoles wrapper', () => {
   test('undefined / empty / whitespace normalize to standalone', () => {
-    expect(parseTmexRoles(undefined)).toEqual(STANDALONE);
-    expect(parseTmexRoles('')).toEqual(STANDALONE);
-    expect(parseTmexRoles('   ')).toEqual(STANDALONE);
+    expect(parseVibeTermRoles(undefined)).toEqual(STANDALONE);
+    expect(parseVibeTermRoles('')).toEqual(STANDALONE);
+    expect(parseVibeTermRoles('   ')).toEqual(STANDALONE);
   });
 
   test('accepts the three legal values', () => {
-    expect(parseTmexRoles('standalone')).toEqual(STANDALONE);
-    expect(parseTmexRoles('node')).toEqual(NODE);
-    expect(parseTmexRoles('hub,node')).toEqual(HUB_NODE);
-    expect(parseTmexRoles('  node  ')).toEqual(NODE);
+    expect(parseVibeTermRoles('standalone')).toEqual(STANDALONE);
+    expect(parseVibeTermRoles('node')).toEqual(NODE);
+    expect(parseVibeTermRoles('hub,node')).toEqual(HUB_NODE);
+    expect(parseVibeTermRoles('  node  ')).toEqual(NODE);
   });
 
   test('rejects invalid role names', () => {
-    expect(() => parseTmexRoles('hub')).toThrow('role must be one of standalone | node | hub,node');
-    expect(() => parseTmexRoles('node,hub')).toThrow('role must be one of');
+    expect(() => parseVibeTermRoles('hub')).toThrow('role must be one of standalone | node | hub,node');
+    expect(() => parseVibeTermRoles('node,hub')).toThrow('role must be one of');
   });
 });
 
-describe('app parseTmexRoleName wrapper', () => {
+describe('app parseVibeTermRoleName wrapper', () => {
   test('undefined defaults to standalone; empty/whitespace still fail', () => {
-    expect(parseTmexRoleName(undefined)).toBe('standalone');
-    expect(() => parseTmexRoleName('')).toThrow('role must be one of');
-    expect(() => parseTmexRoleName('   ')).toThrow('role must be one of');
+    expect(parseVibeTermRoleName(undefined)).toBe('standalone');
+    expect(() => parseVibeTermRoleName('')).toThrow('role must be one of');
+    expect(() => parseVibeTermRoleName('   ')).toThrow('role must be one of');
   });
 });
 
-describe('gateway vs app TMEX_ROLES wrappers', () => {
+describe('gateway vs app VIBETERM_ROLES wrappers', () => {
   test('undefined is standalone in both', () => {
-    expect(parseGatewayTmexRoles(undefined)).toEqual(STANDALONE);
-    expect(parseTmexRoles(undefined)).toEqual(STANDALONE);
+    expect(parseGatewayVibeTermRoles(undefined)).toEqual(STANDALONE);
+    expect(parseVibeTermRoles(undefined)).toEqual(STANDALONE);
   });
 
   test('empty and whitespace: gateway rejects, app normalizes', () => {
-    expect(() => parseGatewayTmexRoles('')).toThrow('TMEX_ROLES');
-    expect(() => parseGatewayTmexRoles('   ')).toThrow('TMEX_ROLES');
-    expect(parseTmexRoles('')).toEqual(STANDALONE);
-    expect(parseTmexRoles('   ')).toEqual(STANDALONE);
+    expect(() => parseGatewayVibeTermRoles('')).toThrow('VIBETERM_ROLES');
+    expect(() => parseGatewayVibeTermRoles('   ')).toThrow('VIBETERM_ROLES');
+    expect(parseVibeTermRoles('')).toEqual(STANDALONE);
+    expect(parseVibeTermRoles('   ')).toEqual(STANDALONE);
   });
 
   test('legal values agree', () => {
     for (const raw of ['standalone', 'node', 'hub,node', '  hub,node  '] as const) {
-      expect(parseGatewayTmexRoles(raw)).toEqual(parseTmexRoles(raw));
+      expect(parseGatewayVibeTermRoles(raw)).toEqual(parseVibeTermRoles(raw));
     }
   });
 
   test('invalid values throw in both (distinct messages)', () => {
     for (const raw of ['hub', 'node,hub', 'HUB,NODE', 'standalone,node']) {
-      expect(() => parseGatewayTmexRoles(raw)).toThrow('TMEX_ROLES must be one of');
-      expect(() => parseTmexRoles(raw)).toThrow('role must be one of');
+      expect(() => parseGatewayVibeTermRoles(raw)).toThrow('VIBETERM_ROLES must be one of');
+      expect(() => parseVibeTermRoles(raw)).toThrow('role must be one of');
     }
   });
 });

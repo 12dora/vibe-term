@@ -6,16 +6,16 @@ import {
   fetchTerminalShortcuts,
   terminalShortcutsQueryKey,
   updateTerminalShortcuts,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type TerminalShortcutAction,
   type TerminalShortcutItem,
   type TerminalShortcutSettings,
   type UpdateTerminalShortcutSettingsRequest,
-} from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { keyEventToTerminalSequence, parseEscapeSequence } from '@tmex/terminal-ui';
+} from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { keyEventToTerminalSequence, parseEscapeSequence } from '@vibeterm/terminal-ui';
 import {
   type KeyboardEvent as ReactKeyboardEvent,
   useCallback,

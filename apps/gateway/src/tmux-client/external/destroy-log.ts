@@ -1,4 +1,4 @@
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 
 export type TmuxDestroyReason = 'user' | 'parking';
 

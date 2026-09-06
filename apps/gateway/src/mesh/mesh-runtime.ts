@@ -1,7 +1,7 @@
 import os from 'node:os';
-import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
-import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
+import { canonicalHubUrl, encodeBase64url } from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import type { HubAdvertisement, HubMode } from '@vibeterm/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { dropPaneGrantsOfNode } from '../agent/pane-grant/revoke';
 import { filesBulkHooks } from '../api/files';
@@ -19,7 +19,7 @@ import {
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
-import { type TmexRoles, config as gatewayConfig } from '../config';
+import { type VibeTermRoles, config as gatewayConfig } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { HubRuntime, type HubTurnConfig } from '../hub';
 import {
@@ -124,7 +124,7 @@ import { bindHubUplinkHooks, kickHubPeerDiscovery } from './uplink-pool-hooks';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
 
 export type MeshRuntimeConfig = {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   hubUrl: string | null;
   hubPublicUrl?: string | null;
   hubUrls?: string[];
@@ -166,7 +166,7 @@ export type CreateMeshRuntimeOptions = {
   meshHubStore?: MeshHubStore;
   /** TLS 指纹轮询间隔；默认 10 分钟。TLS 服务无变更回调时用轮询刷新 node.status.hub.caFingerprint。 */
   tlsPollIntervalMs?: number;
-  /** 由 packages/app assemble 注入：把 TMEX_HUB_MODE / TMEX_HUB_WRITER_EPOCH 写进 app.env。 */
+  /** 由 packages/app assemble 注入：把 VIBETERM_HUB_MODE / VIBETERM_HUB_WRITER_EPOCH 写进 app.env。 */
   patchHubRoleEnv?: (patch: Record<string, string>) => Promise<void>;
   /** 由 packages/app assemble 注入：延迟调用 RuntimeController.requestRestart。 */
   scheduleHubRoleRestart?: (delayMs: number) => void;

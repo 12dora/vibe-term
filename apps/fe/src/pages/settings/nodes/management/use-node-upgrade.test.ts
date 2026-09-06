@@ -4,8 +4,8 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { UpgradeStatus } from '@tmex/shared';
-import { createMemoryStorage } from '@tmex/stores/test-utils';
+import type { UpgradeStatus } from '@vibeterm/shared';
+import { createMemoryStorage } from '@vibeterm/stores/test-utils';
 import type { NodeUpgradeEntry, NodeUpgradeTransfer, UpgradeRunOutcome } from './types';
 import {
   BATCH_CONCURRENCY,

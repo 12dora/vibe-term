@@ -24,8 +24,8 @@ fi
 cd "$PROJECT_DIR"
 
 # 加载 development.env（+ 可选 .local 覆盖），让 supervisor 自身拿到 GATEWAY_PORT/
-# FE_PORT 做健康检查与日志。继承的安装版毒变量（TMEX_MIGRATIONS_DIR 等）与相对
-# DATABASE_URL 的解析，统一交给应用启动时的 @tmex/shared loadEnv() 处理，这里不再重复。
+# FE_PORT 做健康检查与日志。继承的安装版毒变量（VIBETERM_MIGRATIONS_DIR 等）与相对
+# DATABASE_URL 的解析，统一交给应用启动时的 @vibeterm/shared loadEnv() 处理，这里不再重复。
 export NODE_ENV=development
 
 load_env_file() {

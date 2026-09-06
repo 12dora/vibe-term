@@ -1,7 +1,7 @@
 // 接入中继前的端口探测：显式端口不动，探到端口就用探到的，探不动就沿用用户输入。
 
 import { describe, expect, test } from 'bun:test';
-import type { RelayResolveResult, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { RelayResolveResult, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { resolveEnrollUrl } from './use-relay-actions';
 
 function api(impl: (url: string) => Promise<RelayResolveResult>, calls: string[] = []) {

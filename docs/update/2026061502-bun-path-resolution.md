@@ -14,7 +14,7 @@ issue 建议的修复（在 `locateBunFromShell()` 之后加 homebrew 路径检�
 
 `checkBunVersion(minVersion?, { explicitPath?, metaBunPath? })` 按以下优先级解析，每个候选都过 `validateBunAt`（执行 `--version` + 版本比对）：
 
-1. **显式** `--bun-path` flag / `TMEX_BUN_PATH` env —— 必须是「存在的绝对路径」，否则直接报 `explicitInvalid`，**不静默回退**。
+1. **显式** `--bun-path` flag / `VIBETERM_BUN_PATH` env —— 必须是「存在的绝对路径」，否则直接报 `explicitInvalid`，**不静默回退**。
 2. **`process.execPath`**（仅当 `process.versions.bun` 存在，即 cli 被 bun 拉起，如自更新链路）—— 最权威。
 3. **`meta.bunPath`**（init 持久化到 `install-meta.json`）。
 4. **动态探测**：登录 shell 解析（`$SHELL` / zsh / bash 的 `-lic 'command -v bun'`，经净化 + 存在性校验）→ 当前进程 PATH 的裸 `bun`。

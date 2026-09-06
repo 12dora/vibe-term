@@ -1,14 +1,14 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { TelegramBotWithStats } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import type { TelegramBotWithStats } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { Pencil, Trash2, Users } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 
 import { ChatCommandsBadge } from './chat-commands-badge';
 import { TelegramBotChatsModal } from './telegram-bot-chats-modal';

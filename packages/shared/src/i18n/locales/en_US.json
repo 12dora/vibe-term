@@ -1866,10 +1866,10 @@
         "fail": "Failed to upload {{name}}"
       },
       "transfer": {
-        "legUserToTmex": "Browser → tmex",
-        "legTmexToServer": "tmex → Server",
-        "legServerToTmex": "Server → tmex",
-        "legTmexToUser": "tmex → Browser",
+        "legUserToVibeTerm": "Browser → tmex",
+        "legVibeTermToServer": "tmex → Server",
+        "legServerToVibeTerm": "Server → tmex",
+        "legVibeTermToUser": "tmex → Browser",
         "cancel": "Cancel",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",

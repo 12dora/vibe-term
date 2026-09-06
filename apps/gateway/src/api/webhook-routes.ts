@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { EventType, WebhookEndpoint } from '@tmex/shared';
+import type { EventType, WebhookEndpoint } from '@vibeterm/shared';
 import { createWebhookEndpoint, deleteWebhookEndpoint, getAllWebhookEndpoints } from '../db';
 import { t } from '../i18n';
 import { broadcastSettingsUpdate } from '../settings/broadcaster';

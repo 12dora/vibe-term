@@ -1,4 +1,4 @@
-import type { ShareScope } from '@tmex/shared/share';
+import type { ShareScope } from '@vibeterm/shared/share';
 import { agentSupervisor } from './agent/supervisor';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
@@ -183,7 +183,7 @@ export async function createGatewayRuntime(
     systemApiHandler,
   } = options;
   const mode =
-    options.mode ?? (process.env.TMEX_RUNTIME_MODE === 'preflight' ? 'preflight' : 'normal');
+    options.mode ?? (process.env.VIBETERM_RUNTIME_MODE === 'preflight' ? 'preflight' : 'normal');
   const applyMigrations = options.runMigrationsFn ?? runMigrations;
   const liveStart = options.liveStart ?? startLiveGatewayServices;
 

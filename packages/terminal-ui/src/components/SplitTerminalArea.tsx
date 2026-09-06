@@ -12,7 +12,7 @@
 //
 // 本文件是组合根：几何、尺寸上报、拖拽交互、单 pane 渲染分别在 ./split/ 下。
 
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SplitPaneView } from './split/SplitPaneView';

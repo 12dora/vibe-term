@@ -3,17 +3,17 @@
 // 所有角色都要看到它——standalone 想变 hub 就得先有 https 的公开地址，node 也可能被别人访问。
 // 区块只负责编排：状态查询、模式选择、保存 / 续签的挂起态与错误提示，具体表单在各 panel 里。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { type TlsApi, defaultTlsApi } from '@tmex/api-client/local/tls-api';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { type TlsApi, defaultTlsApi } from '@vibeterm/api-client/local/tls-api';
 import type {
   TlsEffectiveHttps,
   TlsMode,
   TlsStatusResponse,
   TlsUpdateRequest,
-} from '@tmex/api-client/local/tls-types';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+} from '@vibeterm/api-client/local/tls-types';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Loader2, RotateCcw, Save } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -1,5 +1,5 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { ClientSendResult } from './client';
 import type {
   GatewayRebaseReason,

@@ -1,13 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { releaseTarballName, wsBorsh } from '@tmex/shared';
+import { releaseTarballName, wsBorsh } from '@vibeterm/shared';
 import {
   DOMAIN_CERTIFICATE,
   encodeBase64url,
   encodeCertificate,
   hexToBytes,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { runMigrations } from '../db/migrate';
 import { resetReleaseDownloadForTests } from '../system/release-download';
 import {
@@ -1204,7 +1204,7 @@ describe('mesh-routes', () => {
 });
 
 const originalFetch = globalThis.fetch;
-const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const originalReleaseCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
 const UPGRADE_PEER = 'ee'.repeat(16);
 const dummyLink = {} as LinkSession;
 
@@ -1214,8 +1214,8 @@ afterEach(() => {
   resetReleaseDownloadForTests();
   resetLatestReleaseCache();
   resetNodeOperationsForTests();
-  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
-  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
+  if (originalReleaseCacheDir === undefined) delete process.env.VIBETERM_RELEASE_CACHE_DIR;
+  else process.env.VIBETERM_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
 
 class RecordingStreams extends FakeStreams {
@@ -1801,7 +1801,7 @@ describe('mesh upgrade routes', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-rel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-rel-cache-'));
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     mockGithubLatest('9.9.9');
@@ -2021,7 +2021,7 @@ describe('mesh upgrade routes', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-cancel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-cancel-cache-'));
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     mockGithubLatest('9.9.9');

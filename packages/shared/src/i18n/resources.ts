@@ -1872,10 +1872,10 @@ export const I18N_RESOURCES = {
         "fail": "Failed to upload {{name}}"
       },
       "transfer": {
-        "legUserToTmex": "Browser → tmex",
-        "legTmexToServer": "tmex → Server",
-        "legServerToTmex": "Server → tmex",
-        "legTmexToUser": "tmex → Browser",
+        "legUserToVibeTerm": "Browser → tmex",
+        "legVibeTermToServer": "tmex → Server",
+        "legServerToVibeTerm": "Server → tmex",
+        "legVibeTermToUser": "tmex → Browser",
         "cancel": "Cancel",
         "downloaded": "Downloaded {{name}}",
         "downloadFailed": "Failed to download {{name}}",
@@ -5391,10 +5391,10 @@ export const I18N_RESOURCES = {
         "fail": "上传 {{name}} 失败"
       },
       "transfer": {
-        "legUserToTmex": "用户 → tmex",
-        "legTmexToServer": "tmex → 服务器",
-        "legServerToTmex": "服务器 → tmex",
-        "legTmexToUser": "tmex → 用户",
+        "legUserToVibeTerm": "用户 → tmex",
+        "legVibeTermToServer": "tmex → 服务器",
+        "legServerToVibeTerm": "服务器 → tmex",
+        "legVibeTermToUser": "tmex → 用户",
         "cancel": "取消",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
@@ -8904,10 +8904,10 @@ export const I18N_RESOURCES = {
         "fail": "{{name}} のアップロードに失敗しました"
       },
       "transfer": {
-        "legUserToTmex": "ブラウザ → tmex",
-        "legTmexToServer": "tmex → サーバー",
-        "legServerToTmex": "サーバー → tmex",
-        "legTmexToUser": "tmex → ブラウザ",
+        "legUserToVibeTerm": "ブラウザ → tmex",
+        "legVibeTermToServer": "tmex → サーバー",
+        "legServerToVibeTerm": "サーバー → tmex",
+        "legVibeTermToUser": "tmex → ブラウザ",
         "cancel": "キャンセル",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",

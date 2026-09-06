@@ -1,4 +1,4 @@
-import { type DtlsFingerprint, encodeBase64url, normalizeFingerprint } from '@tmex/shared/auth';
+import { type DtlsFingerprint, encodeBase64url, normalizeFingerprint } from '@vibeterm/shared/auth';
 import type { UserStore } from '../../auth/user-store';
 import type { Carrier } from '../../ws/carrier';
 import type { GatewaySession } from '../../ws/gateway-session';

@@ -4,7 +4,7 @@
 // 的每一个 entry 都会拿到新对象，哪怕内容一字未改——500 行的目录于是整片打穿行级 memo。
 // 这里按路径复用上一份里内容相同的 entry；整份逐位不变时连数组引用一起沿用。
 
-import type { FileEntryDto } from '@tmex/shared';
+import type { FileEntryDto } from '@vibeterm/shared';
 
 /** 行渲染与右键菜单实际读到的字段全等即视为同一份 */
 export function sameFileEntry(a: FileEntryDto, b: FileEntryDto): boolean {

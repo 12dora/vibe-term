@@ -5,8 +5,8 @@
 // 交叠就是同一个 head 上的两个 seq，hub 只收得下一条，另一条永久 `seq_gap`。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -18,7 +18,7 @@ const {
   encodeBase64url,
   generateEd25519KeyPair,
   rootKeyFromSeed,
-} = await import('@tmex/shared/auth');
+} = await import('@vibeterm/shared/auth');
 const { forgetSigner, rememberSigner } = await import('@/auth/credential-prompt');
 const { headFromResponse } = await import('@/auth/key-log-actions');
 const {

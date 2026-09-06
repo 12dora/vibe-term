@@ -5,11 +5,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import type { Device, FileRootDto } from '@tmex/shared';
-import { I18N_RESOURCES } from '@tmex/shared';
-import { createAppRuntime, sidebarDeviceVisibilityKey } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { Device, FileRootDto } from '@vibeterm/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import { createAppRuntime, sidebarDeviceVisibilityKey } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

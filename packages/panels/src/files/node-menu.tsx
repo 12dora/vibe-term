@@ -1,10 +1,10 @@
 // 文件树节点的共用菜单片段与状态行。
 
-import { formatBytes } from '@tmex/api-client';
-import type { FileErrorCode, FileRootDto } from '@tmex/shared';
-import type { HostServices } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import { ContextMenuItem } from '@tmex/ui/context-menu';
+import { formatBytes } from '@vibeterm/api-client';
+import type { FileErrorCode, FileRootDto } from '@vibeterm/shared';
+import type { HostServices } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import { ContextMenuItem } from '@vibeterm/ui/context-menu';
 import { Bot, Copy, Globe, Link, Monitor, RotateCw, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

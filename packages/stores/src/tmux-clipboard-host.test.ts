@@ -1,11 +1,11 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
 
-const notificationsActual = await import('@tmex/notifications');
-mock.module('@tmex/notifications', () => ({
+const notificationsActual = await import('@vibeterm/notifications');
+mock.module('@vibeterm/notifications', () => ({
   ...notificationsActual,
   playBellSound: mock(() => {}),
 }));
@@ -13,8 +13,8 @@ mock.module('@tmex/notifications', () => ({
 type MessageHandler = (msg: { kind: number; payload: Uint8Array }) => void;
 const messageHandlers = new Set<MessageHandler>();
 
-const wsActual = await import('@tmex/ws-client');
-mock.module('@tmex/ws-client', () => ({
+const wsActual = await import('@vibeterm/ws-client');
+mock.module('@vibeterm/ws-client', () => ({
   ...wsActual,
   getBorshClient: () => ({
     send: () => {},

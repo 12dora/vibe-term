@@ -3,10 +3,10 @@
 // 不预取：多数人只是想复制一条裸链接，为此把每条分享的明文密码提前拉到前端不划算。
 // 关窗、换分享一律作废（含在途请求），状态机见 share-link-password-state.ts。
 
-import { getSharePassword } from '@tmex/api-client';
-import { shareErrorKey } from '@tmex/api-client/share-errors';
-import type { ShareRecord } from '@tmex/shared/share';
-import { useRuntime } from '@tmex/stores/react';
+import { getSharePassword } from '@vibeterm/api-client';
+import { shareErrorKey } from '@vibeterm/api-client/share-errors';
+import type { ShareRecord } from '@vibeterm/shared/share';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback, useState } from 'react';
 import type { ShareLinkPassword } from './share-dialog-model';
 import {

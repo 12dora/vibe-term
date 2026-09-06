@@ -12,7 +12,7 @@
 
 因此，发布前不能只关注 `packages/app` 本身，必须确保根工作区内依赖发布包的产物全部重新生成。
 
-> 版本号是构建期注入的：`bun run build` 期间 `packages/app` 的 `build:runtime` 会读 `packages/app/package.json` 的 `version`，经 `bun build --define TMEX_MONOREPO_VERSION="x.y.z"` 烧进 `dist/runtime/server.js`。所以**必须先 bump 版本号再 build**，否则 bundle 里烧进的是旧版本。详见 [版本注入与自更新](#版本注入与自更新)。
+> 版本号是构建期注入的：`bun run build` 期间 `packages/app` 的 `build:runtime` 会读 `packages/app/package.json` 的 `version`，经 `bun build --define VIBETERM_MONOREPO_VERSION="x.y.z"` 烧进 `dist/runtime/server.js`。所以**必须先 bump 版本号再 build**，否则 bundle 里烧进的是旧版本。详见 [版本注入与自更新](#版本注入与自更新)。
 
 ## 结论
 
@@ -112,7 +112,7 @@ curl -fsSIL "https://github.com/12dora/tmex-enhanced/releases/download/v<version
 安装验证：
 
 ```bash
-TMEX_VERSION=<version> curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
+VIBETERM_VERSION=<version> curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
 tmex doctor --lang en
 ```
 
@@ -120,7 +120,7 @@ tmex doctor --lang en
 
 「monorepo 版本」= 发布的 `tmex-cli` 版本（`packages/app/package.json.version`），是前后端唯一真相源。
 
-- **构建期注入**：`build:runtime`（`packages/app/scripts/build-runtime.ts`）读该版本，经 `bun build --define TMEX_MONOREPO_VERSION="x.y.z"` 烧进 bundle；前端 `vite.config.ts` 同样 `define __MONOREPO_VERSION__`。运行时 `apps/gateway/src/system/version.ts` 用 `typeof` 守卫读取，dev 回退读仓库 `package.json`。**所以发版顺序必须是「先 `release:tmex` bump，再 `build`」**。
+- **构建期注入**：`build:runtime`（`packages/app/scripts/build-runtime.ts`）读该版本，经 `bun build --define VIBETERM_MONOREPO_VERSION="x.y.z"` 烧进 bundle；前端 `vite.config.ts` 同样 `define __MONOREPO_VERSION__`。运行时 `apps/gateway/src/system/version.ts` 用 `typeof` 守卫读取，dev 回退读仓库 `package.json`。**所以发版顺序必须是「先 `release:tmex` bump，再 `build`」**。
 - **CHANGELOG 随 Release 发布**：`packages/app/CHANGELOG.md` 已在 `files` 中，每个发布版只含该版本日志，并由 workflow 写入 GitHub Release notes。
 - **程序内自更新**：设置页「版本与更新」触发后，gateway 从 GitHub Releases 下载目标版本 tarball，再 detached 执行 `tmex upgrade --apply-current-package` 完成停服务 → 部署 → 重启。仅 `production` + CLI 安装可用。详见 [自更新与版本展示](../update/2026061406-self-update.md) 与 [发版与 changelog 流程](2026061406-release-changelog-flow.md)。
 

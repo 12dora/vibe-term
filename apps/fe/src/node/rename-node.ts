@@ -5,10 +5,10 @@
 // 取 head → 签名 → append，整段进 key log 写锁（head 是全局的，并行会造出两条同 seq 的记录）。
 
 import { type RecordSigner, buildSignedRecord, headFromResponse } from '@/auth/key-log-actions';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { buildRenameNodePayload, encodeBase64url, hexToBytes } from '@tmex/shared/auth';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { buildRenameNodePayload, encodeBase64url, hexToBytes } from '@vibeterm/shared/auth';
 import { classifyKeyLogFailure } from './enrollment';
 import { withKeyLogLock } from './enrollment-engine';
 

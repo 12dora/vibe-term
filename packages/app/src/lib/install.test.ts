@@ -17,15 +17,15 @@ afterEach(async () => {
 });
 
 describe('buildAppEnvValues', () => {
-  test('brackets IPv6 hosts in TMEX_BASE_URL', () => {
+  test('brackets IPv6 hosts in VIBETERM_BASE_URL', () => {
     const values = buildAppEnvValues({
       host: '2001:db8::1',
       port: 9883,
       databasePath: '/tmp/tmex.db',
       masterKey: 'key',
     });
-    expect(values.TMEX_BASE_URL).toBe('http://[2001:db8::1]:9883');
-    expect(values.TMEX_BIND_HOST).toBe('2001:db8::1');
+    expect(values.VIBETERM_BASE_URL).toBe('http://[2001:db8::1]:9883');
+    expect(values.VIBETERM_BIND_HOST).toBe('2001:db8::1');
   });
 
   test('writes hub env keys with defaults', () => {
@@ -37,12 +37,12 @@ describe('buildAppEnvValues', () => {
       role: 'hub,node',
       hubPublicUrl: 'https://hub.example',
     });
-    expect(values.TMEX_ROLES).toBe('hub,node');
-    expect(values.TMEX_HUB_URL).toBe('');
-    expect(values.TMEX_PEER_PORT).toBe('39001');
-    expect(values.TMEX_HUB_PUBLIC_URL).toBe('https://hub.example');
-    expect(values.TMEX_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
-    expect(values.TMEX_DIRECT_ENABLED).toBe('true');
+    expect(values.VIBETERM_ROLES).toBe('hub,node');
+    expect(values.VIBETERM_HUB_URL).toBe('');
+    expect(values.VIBETERM_PEER_PORT).toBe('39001');
+    expect(values.VIBETERM_HUB_PUBLIC_URL).toBe('https://hub.example');
+    expect(values.VIBETERM_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
+    expect(values.VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 });
 
@@ -70,12 +70,12 @@ describe('writeRunScript', () => {
     expect(script).toContain(`done < ${posixQuote(installLayout.envPath)}`);
     expect(script).not.toContain('source ');
     expect(script).toContain('export PATH="${HOME}/.bun/bin:${PATH:-}"');
-    expect(script).toContain('export TMEX_FE_DIST_DIR=');
-    expect(script).toContain('export TMEX_MIGRATIONS_DIR=');
-    expect(script).toContain('export TMEX_INSTALL_DIR=');
+    expect(script).toContain('export VIBETERM_FE_DIST_DIR=');
+    expect(script).toContain('export VIBETERM_MIGRATIONS_DIR=');
+    expect(script).toContain('export VIBETERM_INSTALL_DIR=');
     expect(script).toContain('printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"');
     expect(script).toContain(
-      `export TMEX_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
+      `export VIBETERM_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
     );
     expect(script).toContain(
       `exec ${posixQuote('/usr/bin/bun')} ${posixQuote(join(installDir, 'current', 'runtime', 'server.js'))}`
@@ -100,13 +100,13 @@ describe('writeRunScript', () => {
 
     expect(script).toContain(`done < ${posixQuote(installLayout.envPath)}`);
     expect(script).toContain(
-      `export TMEX_FE_DIST_DIR=${posixQuote(join(installDir, 'current', 'resources', 'fe-dist'))}`
+      `export VIBETERM_FE_DIST_DIR=${posixQuote(join(installDir, 'current', 'resources', 'fe-dist'))}`
     );
     expect(script).toContain(
-      `export TMEX_MIGRATIONS_DIR=${posixQuote(join(installDir, 'current', 'resources', 'gateway-drizzle'))}`
+      `export VIBETERM_MIGRATIONS_DIR=${posixQuote(join(installDir, 'current', 'resources', 'gateway-drizzle'))}`
     );
     expect(script).toContain(
-      `export TMEX_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
+      `export VIBETERM_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
     );
     expect(script).toContain(
       `exec ${posixQuote(bunPath)} ${posixQuote(join(installDir, 'current', 'runtime', 'server.js'))}`

@@ -1,4 +1,4 @@
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { getSiteSettings } from '../../db';
 import { weixinService } from '../../weixin/service';
 import {

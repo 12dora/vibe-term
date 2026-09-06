@@ -1,8 +1,8 @@
 import { refreshMeshNodes } from '@/node/mesh-nodes';
 import { useMutation } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import { type SiteSettings, sleep } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import { type SiteSettings, sleep } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

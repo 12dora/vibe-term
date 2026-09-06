@@ -1,6 +1,6 @@
-import { useTmuxStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
+import { useTmuxStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
 import { AlertCircle, RefreshCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

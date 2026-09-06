@@ -19,7 +19,7 @@ import {
   genesisHead,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { KeyLogStore } from './key-log-store';
 import { ensureNodeIdentity, selfSignedNodeCertificate } from './node-identity-service';
 import { NodeIdentityStore } from './node-identity-store';

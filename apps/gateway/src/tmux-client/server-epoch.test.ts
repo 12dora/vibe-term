@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  TMEX_SERVER_EPOCH_OPTION,
+  VIBETERM_SERVER_EPOCH_OPTION,
   type TmuxCommandResult,
   decodeServerEpoch,
   ensureStableServerEpoch,
@@ -38,9 +38,9 @@ describe('stable tmux server epoch', () => {
       Array.from(decodeServerEpoch(SECOND))
     );
     expect(commands).toEqual([
-      ['show-options', '-gqv', TMEX_SERVER_EPOCH_OPTION],
-      ['set-option', '-gq', '-o', TMEX_SERVER_EPOCH_OPTION, FIRST],
-      ['show-options', '-gqv', TMEX_SERVER_EPOCH_OPTION],
+      ['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION],
+      ['set-option', '-gq', '-o', VIBETERM_SERVER_EPOCH_OPTION, FIRST],
+      ['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION],
     ]);
   });
 
@@ -54,7 +54,7 @@ describe('stable tmux server epoch', () => {
     expect(writes).toBe(0);
 
     await expect(ensureStableServerEpoch(async () => ok('not-an-epoch'), SECOND)).rejects.toThrow(
-      `invalid ${TMEX_SERVER_EPOCH_OPTION} value`
+      `invalid ${VIBETERM_SERVER_EPOCH_OPTION} value`
     );
   });
 });

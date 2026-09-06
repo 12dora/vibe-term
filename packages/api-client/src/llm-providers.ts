@@ -7,7 +7,7 @@ import type {
   ListLlmProvidersResponse,
   UpdateLlmProviderRequest,
   UpdateLlmProviderResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { requestJson } from './json-mutation';
 

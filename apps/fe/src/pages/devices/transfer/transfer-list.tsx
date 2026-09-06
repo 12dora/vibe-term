@@ -1,6 +1,6 @@
 // 弹窗下方的传输列表：节点间任务与浏览器上传 / 下载共用同一份 store，因此一起列。
 
-import { formatBytes, formatEta, formatRate } from '@tmex/api-client';
+import { formatBytes, formatEta, formatRate } from '@vibeterm/api-client';
 import {
   BROWSER_ENDPOINT_ID,
   type TransferJobView,
@@ -8,11 +8,11 @@ import {
   clearFinishedTransferJobs,
   isTerminalTransferState,
   useTransferJobs,
-} from '@tmex/panels/files/transfers';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Progress } from '@tmex/ui/progress';
-import { ScrollArea } from '@tmex/ui/scroll-area';
+} from '@vibeterm/panels/files/transfers';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Progress } from '@vibeterm/ui/progress';
+import { ScrollArea } from '@vibeterm/ui/scroll-area';
 import { ArrowRight, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

@@ -1,10 +1,10 @@
 // 上传/下载会话状态：分块传输期间在内存维护 session + 本机临时文件。
-// 字节落盘交给 `@tmex/transfer/node` 的 `ResumableSink`（乱序区间 + 位图 + rename 落位），
+// 字节落盘交给 `@vibeterm/transfer/node` 的 `ResumableSink`（乱序区间 + 位图 + rename 落位），
 // 这里只管会话生命周期。清理三重保障：显式清理 + 周期 GC + 启动孤儿扫描。
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ResumableSink, type SinkDescriptor } from '@tmex/transfer/node';
+import { ResumableSink, type SinkDescriptor } from '@vibeterm/transfer/node';
 
 const sink = new ResumableSink();
 

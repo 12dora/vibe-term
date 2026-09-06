@@ -17,7 +17,7 @@ import {
 } from './relay-admin';
 import { type RelayIo, relayErrorCode } from './relay-shared';
 
-const ENV = { GATEWAY_PORT: '19993', TMEX_RELAY_ADMIN_TOKEN: 'admin-token' };
+const ENV = { GATEWAY_PORT: '19993', VIBETERM_RELAY_ADMIN_TOKEN: 'admin-token' };
 
 const STATUS = {
   config: {
@@ -127,7 +127,7 @@ describe('relay status / tenants', () => {
     const { io } = recorder(STATUS_RESPONSES);
     await expect(
       runRelayStatus(parseArgs(['relay', 'status']), { ...io, env: { GATEWAY_PORT: '19993' } })
-    ).rejects.toThrow('TMEX_RELAY_ADMIN_TOKEN missing');
+    ).rejects.toThrow('VIBETERM_RELAY_ADMIN_TOKEN missing');
   });
 });
 

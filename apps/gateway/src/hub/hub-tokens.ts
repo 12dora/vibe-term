@@ -1,12 +1,12 @@
-import { encodeBase64url } from '@tmex/shared/auth';
-import { decodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { decodeBase64url } from '@vibeterm/shared/auth';
 import {
   type HubTokenRow,
   type HubTokensMessage,
   type HubTokensRevision,
   UPLINK_CTL_MAX_BYTES,
   encodeHubUplinkCtl,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import type { EnrollmentTokenRecord, EnrollmentTokenRevision, UserStore } from '../auth/user-store';
 import { stripEnrollmentReplicationSecrets } from '../auth/user-store';
 import { nodeVersionSupportsHubAuthRecords } from './hub-authorization';

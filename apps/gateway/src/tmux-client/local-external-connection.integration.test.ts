@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 
 import { runMigrations } from '../db/migrate';
 import type { TmuxEvent } from './events';

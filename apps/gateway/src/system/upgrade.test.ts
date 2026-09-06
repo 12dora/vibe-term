@@ -15,7 +15,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { UPGRADE_CANCELLED, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { UPGRADE_CANCELLED, releaseTarballName, releaseTarballUrl } from '@vibeterm/shared';
 import {
   restoreSigningKeys,
   signSums,
@@ -56,18 +56,18 @@ async function putTestManifest(
 }
 
 const originalFetch = globalThis.fetch;
-const originalCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
-const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+const originalCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
+const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
 const tempDirs: string[] = [];
 const liveChildren: ChildProcess[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   resetReleaseDownloadForTests();
-  if (originalCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
-  else process.env.TMEX_RELEASE_CACHE_DIR = originalCacheDir;
-  if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
-  else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+  if (originalCacheDir === undefined) delete process.env.VIBETERM_RELEASE_CACHE_DIR;
+  else process.env.VIBETERM_RELEASE_CACHE_DIR = originalCacheDir;
+  if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+  else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
   rmSync(join(tmpdir(), 'tmex-release-cache'), { recursive: true, force: true });
   for (const child of liveChildren.splice(0)) {
     try {
@@ -170,7 +170,7 @@ describe('resolveUpgradeInstallDir', () => {
 
 describe('stageGithubRelease', () => {
   beforeEach(() => {
-    process.env.TMEX_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
   });
 
   test('downloads GitHub tarball, extracts npm-pack layout, returns package/bin/tmex.js', async () => {
@@ -509,7 +509,7 @@ describe('UpgradeController detached spawn', () => {
 
 describe('stageGithubRelease checksums', () => {
   beforeEach(() => {
-    process.env.TMEX_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
   });
 
   test('aborts when SHA256SUMS returns a non-404 HTTP error before extract', async () => {
@@ -895,8 +895,8 @@ describe('staged package', () => {
     stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, version) });
     const stageDir = join(install.installDir as string, 'staging', 'txn-local');
     mkdirSync(stageDir, { recursive: true });
-    const previous = process.env.TMEX_INSTALL_DIR;
-    process.env.TMEX_INSTALL_DIR = install.installDir as string;
+    const previous = process.env.VIBETERM_INSTALL_DIR;
+    process.env.VIBETERM_INSTALL_DIR = install.installDir as string;
     try {
       await stageGithubRelease(stageDir, version);
       expect(
@@ -906,8 +906,8 @@ describe('staged package', () => {
       ).toBe(true);
       expect(existsSync(join(stageDir, '.release-cache'))).toBe(false);
     } finally {
-      if (previous === undefined) delete process.env.TMEX_INSTALL_DIR;
-      else process.env.TMEX_INSTALL_DIR = previous;
+      if (previous === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+      else process.env.VIBETERM_INSTALL_DIR = previous;
     }
   });
 
@@ -1539,7 +1539,7 @@ describe('UpgradeController.cancel', () => {
   });
 
   test('aborted PUT over an in-memory link keeps the .part when content-length says more is coming', async () => {
-    const { createInMemoryLinkPair } = await import('@tmex/shared/link');
+    const { createInMemoryLinkPair } = await import('@vibeterm/shared/link');
     const { acceptHttpStream, openHttpStream } = await import('../mesh/stream-targets');
     const install = makeInstall();
     const controller = new UpgradeController({ getInstallInfo: () => install });

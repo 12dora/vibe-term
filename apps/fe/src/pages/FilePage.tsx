@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { FileCategory, FileStatResponse } from '@tmex/shared';
-import { basename, dirname } from '@tmex/shared';
+import type { FileCategory, FileStatResponse } from '@vibeterm/shared';
+import { basename, dirname } from '@vibeterm/shared';
 import { Download, ExternalLink, FileWarning, Loader2, RotateCw } from 'lucide-react';
 import { type ReactNode, Suspense, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -14,20 +14,20 @@ import {
   downloadFileWithProgress,
   fetchFileContent,
   fetchFileStat,
-} from '@tmex/api-client';
-import { formatBytes } from '@tmex/api-client';
-import { fileRawUrl } from '@tmex/api-client';
-import { CodeViewer } from '@tmex/panels/code-viewer';
-import { startTransferToast } from '@tmex/panels/files';
-import { type AppRuntime, type FileRef, decodeFileRef } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
+} from '@vibeterm/api-client';
+import { formatBytes } from '@vibeterm/api-client';
+import { fileRawUrl } from '@vibeterm/api-client';
+import { CodeViewer } from '@vibeterm/panels/code-viewer';
+import { startTransferToast } from '@vibeterm/panels/files';
+import { type AppRuntime, type FileRef, decodeFileRef } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 
 // Markdown 渲染链（react-markdown + katex + mermaid 等）约 137 KiB gzip，只有 markdown 文件用得到，
 // 代码 / 纯文本预览不该为它买单。
 const MarkdownPreview = lazyChunk(() =>
-  import('@tmex/panels/markdown').then((m) => m.MarkdownPreview)
+  import('@vibeterm/panels/markdown').then((m) => m.MarkdownPreview)
 );
 
 function useFileRef(ref?: string): FileRef | null {

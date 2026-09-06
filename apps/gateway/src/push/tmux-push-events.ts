@@ -1,4 +1,4 @@
-import type { Device, SiteSettings, TmuxNotificationEventData } from '@tmex/shared';
+import type { Device, SiteSettings, TmuxNotificationEventData } from '@vibeterm/shared';
 import type { TmuxEvent } from '../tmux-client/events';
 import type { PaneLocationContext } from '../tmux/bell-context';
 

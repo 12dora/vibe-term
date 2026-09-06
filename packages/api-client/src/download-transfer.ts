@@ -2,8 +2,8 @@
 // → content（leg2 tmex→客户端，读流计速）→ 返回 {name, blob}。自身不访问 URL/document/下载锚点。
 // 支持 AbortSignal 取消；只要远端已产出 downloadId，任何阶段失败都 best-effort 清理远端临时会话。
 
-import type { FileErrorCode } from '@tmex/shared';
-import { ProgressTracker } from '@tmex/transfer';
+import type { FileErrorCode } from '@vibeterm/shared';
+import { ProgressTracker } from '@vibeterm/transfer';
 import { type ApiClient, defaultApiClient } from './client';
 import { FileApiError, parseError } from './file-errors';
 import { formatBytes, formatBytesPair, formatRate } from './format';
@@ -186,7 +186,7 @@ async function drainContent(
 
 // leg1：服务器 → tmex（rsync）。downloadId 一拿到就通过 onDownloadId 上报，
 // 保证解析中途抛错时调用方仍能回收远端会话。
-// bulk 直连路径（`@tmex/panels` 的 downloadFileWithTransport）复用同一份 leg1。
+// bulk 直连路径（`@vibeterm/panels` 的 downloadFileWithTransport）复用同一份 leg1。
 export async function prepareDownload(
   rootId: string,
   path: string,

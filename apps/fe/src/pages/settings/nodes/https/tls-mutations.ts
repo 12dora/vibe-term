@@ -5,8 +5,8 @@
 //
 // 状态放在一个可订阅的控制器里而不是组件 state：这样锁的行为可以脱离 DOM 直接测。
 
-import type { TlsApi } from '@tmex/api-client/local/tls-api';
-import type { TlsStatusResponse, TlsUpdateRequest } from '@tmex/api-client/local/tls-types';
+import type { TlsApi } from '@vibeterm/api-client/local/tls-api';
+import type { TlsStatusResponse, TlsUpdateRequest } from '@vibeterm/api-client/local/tls-types';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 
 export type TlsMutationKind = 'save' | 'renew';

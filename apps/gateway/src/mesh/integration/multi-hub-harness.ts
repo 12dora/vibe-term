@@ -9,8 +9,8 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
-import { WebSocketLink } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { WebSocketLink } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   MeshHubStore,
@@ -185,8 +185,8 @@ export function memoryHubRoleHooks(initial?: Record<string, string>): {
   scheduleHubRoleRestart: (delayMs: number) => void;
 } {
   const env = {
-    TMEX_HUB_MODE: 'active',
-    TMEX_HUB_WRITER_EPOCH: '1',
+    VIBETERM_HUB_MODE: 'active',
+    VIBETERM_HUB_WRITER_EPOCH: '1',
     ...initial,
   };
   const restarts: number[] = [];
@@ -492,8 +492,8 @@ export async function bootHubA(
     identity,
   });
   const role = memoryHubRoleHooks({
-    TMEX_HUB_MODE: 'active',
-    TMEX_HUB_WRITER_EPOCH: '1',
+    VIBETERM_HUB_MODE: 'active',
+    VIBETERM_HUB_WRITER_EPOCH: '1',
     ...extra?.roleEnv,
   });
   const mesh = await createMeshRuntime({
@@ -654,8 +654,8 @@ export async function enrollAndStart(
 
   const role = opts.roles.hub
     ? memoryHubRoleHooks({
-        TMEX_HUB_MODE: opts.hubMode ?? 'standby',
-        TMEX_HUB_WRITER_EPOCH: String(opts.hubWriterEpoch ?? 1),
+        VIBETERM_HUB_MODE: opts.hubMode ?? 'standby',
+        VIBETERM_HUB_WRITER_EPOCH: String(opts.hubWriterEpoch ?? 1),
         ...opts.roleEnv,
       })
     : null;

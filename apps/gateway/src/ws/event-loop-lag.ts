@@ -62,10 +62,10 @@ export class EventLoopLagSampler {
     this.idleTickMs = opts.idleTickMs ?? (opts.tickMs ? opts.tickMs : EVENT_LOOP_LAG_IDLE_TICK_MS);
     this.windowMs = opts.windowMs ?? EVENT_LOOP_LAG_WINDOW_MS;
     this.warnMs =
-      opts.warnMs ?? envInt('TMEX_EVENT_LOOP_LAG_WARN_MS', EVENT_LOOP_LAG_WARN_MS_DEFAULT);
+      opts.warnMs ?? envInt('VIBETERM_EVENT_LOOP_LAG_WARN_MS', EVENT_LOOP_LAG_WARN_MS_DEFAULT);
     this.warnIntervalMs = opts.warnIntervalMs ?? EVENT_LOOP_LAG_WARN_INTERVAL_MS;
     this.suspendDriftMs = opts.suspendDriftMs ?? EVENT_LOOP_LAG_SUSPEND_DRIFT_MS;
-    this.diagnostics = opts.diagnostics ?? envInt('TMEX_EVENT_LOOP_LAG_DIAG', 0) > 0;
+    this.diagnostics = opts.diagnostics ?? envInt('VIBETERM_EVENT_LOOP_LAG_DIAG', 0) > 0;
     this.warn =
       opts.warn ??
       ((line) => {

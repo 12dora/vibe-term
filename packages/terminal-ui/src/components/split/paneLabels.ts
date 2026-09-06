@@ -1,4 +1,4 @@
-import type { TmuxPane } from '@tmex/shared';
+import type { TmuxPane } from '@vibeterm/shared';
 
 export function paneDisplayName(pane: TmuxPane | undefined): string {
   return pane?.customName?.trim() || pane?.title?.trim() || 'Pane';

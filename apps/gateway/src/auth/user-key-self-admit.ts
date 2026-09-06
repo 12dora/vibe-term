@@ -1,4 +1,4 @@
-import type { RootKey, UserKeyState } from '@tmex/shared/auth';
+import type { RootKey, UserKeyState } from '@vibeterm/shared/auth';
 import {
   buildKeyLogRecord,
   computeRecordHash,
@@ -9,8 +9,8 @@ import {
   encodeMetaKeyPayload,
   signKeyLogRecordWithRoot,
   wrapEntryToBytes,
-} from '@tmex/shared/auth';
-import { generateTenantKey, wrapKeyForNodes } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { generateTenantKey, wrapKeyForNodes } from '@vibeterm/shared/relay';
 import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
 import type { ApplyKeyLogInput, UserKeyService } from './user-key-service';
 

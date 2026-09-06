@@ -1,8 +1,8 @@
 // `/api/mesh/relay/*` 的入参解析与上游错误码提取：纯函数，与路由类分开放，
 // 免得 `relay-routes.ts` 继续朝 600 行门禁上顶。
 
-import { decodeAuthorization, decodeBase64url } from '@tmex/shared/auth';
-import { normalizeRelayUrl } from '@tmex/shared/relay';
+import { decodeAuthorization, decodeBase64url } from '@vibeterm/shared/auth';
+import { normalizeRelayUrl } from '@vibeterm/shared/relay';
 
 export type ParsedEnrollment = {
   enrollPk: Uint8Array;

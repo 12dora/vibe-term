@@ -4,8 +4,8 @@
 // 也没有可吊销的证书：整行除「批准加入」外一律禁用。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import { Check, Ellipsis, Loader2, ShieldAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { stickyActionColumn } from '../../components/wide-table';

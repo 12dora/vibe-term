@@ -1,7 +1,7 @@
 // Borsh 帧分发：magic 校验、envelope 解码、分片重组与 HELLO/PONG 分流。
 // 只负责协议语义，不持有连接状态；连接生命周期由 BorshWebSocketClient 管理。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 export interface BorshMessage {
   kind: number;

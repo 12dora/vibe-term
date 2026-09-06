@@ -3,7 +3,7 @@ import type {
   AccessAddressesResponse,
   TunnelProcessState,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { buildAccessAddresses, isLoopbackOrigin, showLoopbackHint } from './access-addresses';
 
 /**

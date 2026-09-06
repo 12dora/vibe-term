@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { WatchRuleSampleDto } from '@tmex/shared';
+import type { WatchRuleSampleDto } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { encrypt } from '../crypto';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';

@@ -8,7 +8,7 @@
 // 崩掉／代理超时），这时记号既不能立刻清掉（重启真的发生了就该接力），也不能永远留着
 // ——否则几天后一次无关的「退出 mesh」会把这条陈旧记号消费掉，莫名其妙地打开旧向导。
 
-import type { SetupRelayRole } from '@tmex/api-client/local/types';
+import type { SetupRelayRole } from '@vibeterm/api-client/local/types';
 
 export const SETUP_INTENT_KEY = 'tmex.setup.intent';
 

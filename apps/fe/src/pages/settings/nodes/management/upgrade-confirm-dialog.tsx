@@ -2,7 +2,7 @@
 //
 // 行内一台与批量一组共用这一个框：正文沿用原先弹 `confirm` 时的那三句，批量再把目标名字列出来。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 import type { NodeUpgradeController, NodeUpgradePending } from './types';
 

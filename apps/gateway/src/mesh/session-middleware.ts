@@ -8,8 +8,8 @@ import type { NodeSessionRecord, NodeSessionStore } from '../auth/node-session-s
 import {
   MESH_VIA_SELF,
   type MeshRoles,
-  X_TMEX_SESSION_RENEWED,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SESSION_RENEWED,
+  X_VIBETERM_SET_SESSION,
   getMeshRequestContext,
   isStandaloneRoles,
   parseSetSessionHeader,
@@ -125,7 +125,7 @@ export function applySessionHeaders(
     return response;
   }
   const headers = new Headers(response.headers);
-  headers.set(X_TMEX_SESSION_RENEWED, String(auth.renewedExpiresAt));
+  headers.set(X_VIBETERM_SESSION_RENEWED, String(auth.renewedExpiresAt));
   const via = getMeshRequestContext(req).via ?? MESH_VIA_SELF;
   if (via === MESH_VIA_SELF) {
     const maxAgeSec = Math.max(0, Math.floor((auth.renewedExpiresAt - Date.now()) / 1000));
@@ -172,7 +172,7 @@ export function consumeSetSessionForBrowser(req: Request, response: Response): R
   if (via !== MESH_VIA_SELF) {
     return response;
   }
-  const rawSession = response.headers.get(X_TMEX_SET_SESSION);
+  const rawSession = response.headers.get(X_VIBETERM_SET_SESSION);
   const share = hasShareCookieHeaders(response);
   const stale = share ? null : staleShareCookieName(req, MESH_VIA_SELF);
   if (!rawSession && !share && !stale) {
@@ -184,7 +184,7 @@ export function consumeSetSessionForBrowser(req: Request, response: Response): R
     headers.append('set-cookie', buildClearCookie(stale, { secure }));
   }
   if (rawSession) {
-    headers.delete(X_TMEX_SET_SESSION);
+    headers.delete(X_VIBETERM_SET_SESSION);
     const parsed = parseSetSessionHeader(rawSession);
     if (parsed) {
       headers.append(

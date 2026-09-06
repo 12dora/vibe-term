@@ -1,6 +1,6 @@
-import type { TerminalThemeColors } from '@tmex/shared';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
-import { resolveFontStack } from '@tmex/theme';
+import type { TerminalThemeColors } from '@vibeterm/shared';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
+import { resolveFontStack } from '@vibeterm/theme';
 import {
   type CompatibleTerminalLike,
   TERMINAL_ENGINE,
@@ -64,11 +64,11 @@ export interface TerminalBootSurface {
 }
 
 interface TerminalE2eGlobals {
-  __tmexE2eXterm: CompatibleTerminalLike | null;
-  __tmexE2eTerminal: CompatibleTerminalLike | null;
-  __tmexE2eTerminalEngine: typeof TERMINAL_ENGINE | null;
-  __tmexE2eTerminalRenderer: string | null;
-  __tmexE2eTerminalSelectionText: string | null;
+  __vibetermE2eXterm: CompatibleTerminalLike | null;
+  __vibetermE2eTerminal: CompatibleTerminalLike | null;
+  __vibetermE2eTerminalEngine: typeof TERMINAL_ENGINE | null;
+  __vibetermE2eTerminalRenderer: string | null;
+  __vibetermE2eTerminalSelectionText: string | null;
 }
 
 function terminalE2eGlobals(): TerminalE2eGlobals {
@@ -79,11 +79,11 @@ function terminalE2eGlobals(): TerminalE2eGlobals {
 // 整页唯一的全局，只更新终端指针而不同步选区，切换后读到的会是上一个 pane 的旧选区。
 function setE2eTerminalProbe(terminal: CompatibleTerminalLike): void {
   const g = terminalE2eGlobals();
-  g.__tmexE2eXterm = terminal;
-  g.__tmexE2eTerminal = terminal;
-  g.__tmexE2eTerminalEngine = TERMINAL_ENGINE;
-  g.__tmexE2eTerminalRenderer = terminal.getRendererKind?.() ?? null;
-  g.__tmexE2eTerminalSelectionText = terminal.hasSelection?.()
+  g.__vibetermE2eXterm = terminal;
+  g.__vibetermE2eTerminal = terminal;
+  g.__vibetermE2eTerminalEngine = TERMINAL_ENGINE;
+  g.__vibetermE2eTerminalRenderer = terminal.getRendererKind?.() ?? null;
+  g.__vibetermE2eTerminalSelectionText = terminal.hasSelection?.()
     ? (terminal.getSelection?.() ?? null)
     : null;
 }
@@ -91,11 +91,11 @@ function setE2eTerminalProbe(terminal: CompatibleTerminalLike): void {
 /** 可见实例尚未就绪（启动中 / 启动失败）：不能让探针停在别的 pane 上 */
 function clearE2eTerminalProbes(): void {
   const g = terminalE2eGlobals();
-  g.__tmexE2eXterm = null;
-  g.__tmexE2eTerminal = null;
-  g.__tmexE2eTerminalEngine = null;
-  g.__tmexE2eTerminalRenderer = null;
-  g.__tmexE2eTerminalSelectionText = null;
+  g.__vibetermE2eXterm = null;
+  g.__vibetermE2eTerminal = null;
+  g.__vibetermE2eTerminalEngine = null;
+  g.__vibetermE2eTerminalRenderer = null;
+  g.__vibetermE2eTerminalSelectionText = null;
 }
 
 function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
@@ -104,15 +104,15 @@ function clearE2eTerminalProbe(terminal: CompatibleTerminalLike | null): void {
   }
 
   const g = terminalE2eGlobals();
-  if (g.__tmexE2eTerminal !== terminal && g.__tmexE2eXterm !== terminal) {
+  if (g.__vibetermE2eTerminal !== terminal && g.__vibetermE2eXterm !== terminal) {
     return;
   }
 
-  g.__tmexE2eXterm = null;
-  g.__tmexE2eTerminal = null;
-  g.__tmexE2eTerminalEngine = null;
-  g.__tmexE2eTerminalRenderer = null;
-  g.__tmexE2eTerminalSelectionText = null;
+  g.__vibetermE2eXterm = null;
+  g.__vibetermE2eTerminal = null;
+  g.__vibetermE2eTerminalEngine = null;
+  g.__vibetermE2eTerminalRenderer = null;
+  g.__vibetermE2eTerminalSelectionText = null;
 }
 
 export function applyTerminalRenderSuspension(

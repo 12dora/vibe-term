@@ -12,7 +12,7 @@
     "outDir": "./dist",
     "baseUrl": ".",
     "paths": {
-      "@tmex/shared": ["../../packages/shared/src"]
+      "@vibeterm/shared": ["../../packages/shared/src"]
     }
   },
   "include": ["src/**/*"]

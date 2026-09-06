@@ -68,7 +68,7 @@ jobs:
 
       - name: Sign SHA256SUMS
         env:
-          TMEX_RELEASE_SIGNING_KEY: ${{ secrets.TMEX_RELEASE_SIGNING_KEY }}
+          VIBETERM_RELEASE_SIGNING_KEY: ${{ secrets.VIBETERM_RELEASE_SIGNING_KEY }}
         run: |
           bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
           cat packages/app/SHA256SUMS.sig

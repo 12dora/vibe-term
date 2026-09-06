@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import type { LinkStream } from '@tmex/shared/link';
-import { type RelayEnvelope, relaySeqToWire } from '@tmex/shared/relay';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
+import type { LinkStream } from '@vibeterm/shared/link';
+import { type RelayEnvelope, relaySeqToWire } from '@vibeterm/shared/relay';
 import type { RelayLiveNode } from './relay-registry';
 import {
   type RelayHarness,

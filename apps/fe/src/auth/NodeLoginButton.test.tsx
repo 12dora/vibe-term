@@ -2,13 +2,13 @@
 // 否则从旧会话恢复出来、盘上没有断言的用户会陷在「点一次发一个同样的请求」的死循环里。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import {
   AuthApi,
   type AuthenticationResponseJSON,
   type MeshNode,
-} from '@tmex/api-client/auth/index';
-import { encodeBase64url } from '@tmex/shared/auth';
+} from '@vibeterm/api-client/auth/index';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { loginFromNodeButton, needsLoginPage } from './NodeLoginButton';
 import {
   clearSessionKey,

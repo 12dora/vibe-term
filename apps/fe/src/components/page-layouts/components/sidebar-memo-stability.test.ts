@@ -8,8 +8,8 @@
 // 只要它们在「数据没变、对象换了」时返回 true，React 就不会重渲染子树。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

@@ -20,9 +20,9 @@ import {
   sha256,
   signLogin,
   totpCode,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
-import type { HubMode } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -41,7 +41,7 @@ import {
   type OpenedWsStream,
   type PeerLinkProvider,
   type StreamOpener,
-  X_TMEX_SET_SESSION,
+  X_VIBETERM_SET_SESSION,
   isMeshRewritten,
   setMeshRequestContext,
 } from './mesh-deps';
@@ -328,7 +328,7 @@ export function asResponse(res: unknown): Response {
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export function sidFromLogin(res: Response): string {
-  const internal = res.headers.get(X_TMEX_SET_SESSION);
+  const internal = res.headers.get(X_VIBETERM_SET_SESSION);
   if (internal) {
     const sid = internal.split(';')[0]?.trim();
     if (sid) return sid;
@@ -1183,7 +1183,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1241,7 +1241,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1278,7 +1278,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1314,7 +1314,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh();
     try {
       const { buildKeyLogRecord, computeRecordHash, encodeKeyLogRecord, signKeyLogRecordWithRoot } =
-        await import('@tmex/shared/auth');
+        await import('@vibeterm/shared/auth');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
         uid: mesh.boot.userId,
@@ -1397,7 +1397,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1556,7 +1556,7 @@ describe('auth-routes', () => {
   test('wrong TOTP rejected; missing TOTP required when enabled', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -1621,7 +1621,7 @@ describe('auth-routes', () => {
         buildKeyLogRecord,
         encodeKeyLogRecord,
         signKeyLogRecordWithRoot,
-      } = await import('@tmex/shared/auth');
+      } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const user = mesh.userStore.getById(mesh.boot.userId);
       if (!user) throw new Error('missing user');
@@ -1747,7 +1747,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1827,7 +1827,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1872,7 +1872,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       mesh.userStore.createNode({
         id: 'bb'.repeat(16),
@@ -1951,7 +1951,7 @@ describe('auth-routes', () => {
   test('TOTP_REQUIRED and PASSKEY_REQUIRED are not counted as login failures', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -2371,7 +2371,7 @@ describe('auth-routes', () => {
       expect(body.rp.id).toBe('localhost');
       expect(body.challenge_id).toBeTruthy();
 
-      const { encodeDelegation } = await import('@tmex/shared/auth');
+      const { encodeDelegation } = await import('@vibeterm/shared/auth');
       const sess = generateEd25519KeyPair();
       const del = createDelegation(mesh.boot.rootKey, {
         uid: mesh.boot.userId,
@@ -2436,7 +2436,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const recA = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2544,7 +2544,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2589,7 +2589,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2652,7 +2652,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2698,7 +2698,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2737,7 +2737,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2777,7 +2777,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -3101,7 +3101,7 @@ describe('auth-routes', () => {
   test('TOTP then passkey: both enrolled means both required', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -3288,7 +3288,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('passkey login/options trusted origin follows TMEX_TRUST_PROXY rules', async () => {
+  test('passkey login/options trusted origin follows VIBETERM_TRUST_PROXY rules', async () => {
     const mesh = await bootMesh();
     try {
       const forwardedOrigin = 'https://app.example.com';

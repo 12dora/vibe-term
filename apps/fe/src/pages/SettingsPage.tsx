@@ -21,9 +21,9 @@ import { lazyChunk } from '@/lazy-chunk';
 import { type ChunkPreloadTarget, preloadChunk, startIdleChunkPreload } from '@/lib/chunk-preload';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { nodeQueryClient } from '@/node/node-runtimes';
-import { parseApiError } from '@tmex/api-client';
-import { useOptionalRuntime, useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
+import { parseApiError } from '@vibeterm/api-client';
+import { useOptionalRuntime, useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -33,10 +33,10 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Reveal } from '@tmex/ui/motion';
-import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@vibeterm/ui/tabs';
 import { prefetchTabData } from './settings/data-prefetch';
 import { useRelayAvailability } from './settings/relay/relay-status-store';
 import { useSiteSettingsForm } from './settings/use-site-settings-form';
@@ -53,7 +53,7 @@ const loadNotificationSettingsTab = () =>
   import('./settings/notification-settings-tab').then((m) => m.NotificationSettingsTab);
 const loadAISettingsTab = () => import('./settings/ai-settings-tab').then((m) => m.AISettingsTab);
 const loadTerminalSettingsTab = () =>
-  import('@tmex/panels/settings/terminal').then((m) => m.TerminalSettingsTab);
+  import('@vibeterm/panels/settings/terminal').then((m) => m.TerminalSettingsTab);
 const loadRemoteAccessTab = () =>
   import('./settings/remote-access/remote-access-tab').then((m) => m.RemoteAccessTab);
 const loadRelayTab = () => import('./settings/relay/relay-tab').then((m) => m.RelayTab);

@@ -9,12 +9,12 @@
 // 拿别的 origin 的凭证发起仪式必然 `NotAllowedError`，给用户一个注定失败的按钮比不给更糟。
 
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
-import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@tmex/api-client/auth/index';
-import { WebAuthnError, defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { bytesEqual, decodeBase64url } from '@tmex/shared/auth';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@vibeterm/api-client/auth/index';
+import { WebAuthnError, defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Fingerprint, KeyRound, Loader2 } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

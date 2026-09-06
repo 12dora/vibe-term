@@ -1,6 +1,6 @@
 // HTTPS 区块内部共用的展示件：通用原语取自 settings/components，这里只留本区块特有的排版差异。
 
-import { Input } from '@tmex/ui/input';
+import { Input } from '@vibeterm/ui/input';
 import { useTranslation } from 'react-i18next';
 import {
   FormField,

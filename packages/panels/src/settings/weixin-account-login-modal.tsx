@@ -1,17 +1,17 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
+import { parseApiError } from '@vibeterm/api-client';
 import type {
   ListWeixinAccountUsersResponse,
   StartWeixinLoginResponse,
   WeixinLoginStatusResponse,
-} from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+} from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { Loader2, QrCode, RefreshCw } from 'lucide-react';
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -19,7 +19,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 
 // qrcode.react 只在真正出二维码那一刻才用得上，却占了通知设置整块 chunk 的一大截：
 // 切成独立 chunk，等登录起来拿到二维码地址再下载。

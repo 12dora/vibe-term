@@ -38,7 +38,7 @@ Usage:
 
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
   TTY: hidden input with confirmation where required; empty rejected.
-  Non-TTY: TMEX_PASSWORD (TMEX_PASSWORD_OLD for passwd; TMEX_TOTP for hub join TOTP). NFKC is applied by deriveSeed.
+  Non-TTY: VIBETERM_PASSWORD (VIBETERM_PASSWORD_OLD for passwd; VIBETERM_TOTP for hub join TOTP). NFKC is applied by deriveSeed.
   --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
 
 Global flags:
@@ -83,7 +83,7 @@ const HELP_ZH = `tmex CLI
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。
-  非 TTY：TMEX_PASSWORD（passwd 的旧密码用 TMEX_PASSWORD_OLD；hub join 的 TOTP 用 TMEX_TOTP）。NFKC 由 deriveSeed 处理。
+  非 TTY：VIBETERM_PASSWORD（passwd 的旧密码用 VIBETERM_PASSWORD_OLD；hub join 的 TOTP 用 VIBETERM_TOTP）。NFKC 由 deriveSeed 处理。
   --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
 
 全局参数：

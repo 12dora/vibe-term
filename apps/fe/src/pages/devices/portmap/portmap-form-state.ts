@@ -1,6 +1,6 @@
 // 新建映射表单的纯逻辑：端口解析、字段校验、探测结果如何影响提交。
 
-import type { PortProbeResponse, TargetPortProbeResponse } from '@tmex/shared';
+import type { PortProbeResponse, TargetPortProbeResponse } from '@vibeterm/shared';
 
 export const LISTEN_HOST_LOCAL = '127.0.0.1';
 export const LISTEN_HOST_ANY = '0.0.0.0';

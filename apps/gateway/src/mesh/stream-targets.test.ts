@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { wsBorsh } from '@vibeterm/shared';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { handleApiRequest } from '../api';
 import { dispatchRoutes } from '../api/route';
 import { NODE_SESSION_TTL_MS, NodeSessionStore } from '../auth/node-session-store';
@@ -11,7 +11,7 @@ import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
 import {
   CLIENT_SOURCE_LOCAL,
-  X_TMEX_CLIENT_SOURCE,
+  X_VIBETERM_CLIENT_SOURCE,
   waivesPasskeySecondFactor,
 } from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
@@ -99,7 +99,7 @@ describe('http/ws stream targets', () => {
     expect(await res.text()).toBe('ok-body');
     expect(seenBody).toBe('payload-bytes');
 
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const ac = new AbortController();
@@ -328,7 +328,7 @@ describe('http/ws stream targets', () => {
 
   test('openHttpStream errors the response body when the stream RSTs after the head', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const peerReady = Promise.withResolvers<import('@tmex/shared/link').LinkStream>();
+    const peerReady = Promise.withResolvers<import('@vibeterm/shared/link').LinkStream>();
     b.onStream(async (stream) => {
       await stream.write(
         new TextEncoder().encode(
@@ -434,7 +434,7 @@ describe('http/ws stream targets', () => {
         'x-tmex-via': 'forged',
         'content-type': 'application/json',
         'x-custom': 'keep',
-        [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
+        [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
       },
     });
     expect(res.status).toBe(200);
@@ -448,18 +448,18 @@ describe('http/ws stream targets', () => {
     expect(openHeaders['x-tmex-via']).toBeUndefined();
     expect(openHeaders['content-type']).toBe('application/json');
     expect(openHeaders['x-custom']).toBe('keep');
-    expect(openHeaders[X_TMEX_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(openHeaders[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
   });
 
   test('stripForwardedRequestHeaders 保留 x-tmex-client-source', () => {
     const out = stripForwardedRequestHeaders({
       cookie: 'secret=1',
       authorization: 'Bearer x',
-      [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
+      [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
       'x-forwarded-for': '1.2.3.4',
       'x-custom': 'keep',
     });
-    expect(out[X_TMEX_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
     expect(out['x-custom']).toBe('keep');
     expect(out.cookie).toBeUndefined();
     expect(out.authorization).toBeUndefined();
@@ -480,7 +480,7 @@ describe('http/ws stream targets', () => {
           } as unknown as NodeSessionStore,
           async dispatchHttp(req) {
             dispatched.path = new URL(req.url).pathname;
-            dispatched.source = req.headers.get(X_TMEX_CLIENT_SOURCE);
+            dispatched.source = req.headers.get(X_VIBETERM_CLIENT_SOURCE);
             return new Response('ok');
           },
         });
@@ -490,7 +490,7 @@ describe('http/ws stream targets', () => {
         path,
         origin: 'http://localhost',
         auth: null,
-        headers: { [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+        headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
       });
       expect(res.status).toBe(200);
       expect(dispatched).toEqual({ path, source: CLIENT_SOURCE_LOCAL });
@@ -578,7 +578,7 @@ describe('http/ws stream targets', () => {
             via: ctx.viaNodeId,
             clientIp: `peer:${ctx.viaNodeId}`,
           });
-          seen.header = req.headers.get(X_TMEX_CLIENT_SOURCE);
+          seen.header = req.headers.get(X_VIBETERM_CLIENT_SOURCE);
           seen.via = ctx.viaNodeId;
           seen.waived = waivesPasskeySecondFactor(req);
           return new Response('ok');
@@ -590,7 +590,7 @@ describe('http/ws stream targets', () => {
       path: '/api/auth/mode',
       origin: 'http://localhost',
       auth: 'sid',
-      headers: { [X_TMEX_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+      headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
     });
     expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
     expect(seen.via).toBe('entry-1');
@@ -796,7 +796,7 @@ describe('http/ws stream targets', () => {
       now: Date.now(),
     });
     const [a, b] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) => {
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) => {
       b.onStream((stream) => {
         resolve(stream);
         void acceptWsStream(stream, {
@@ -841,7 +841,7 @@ describe('http/ws stream targets', () => {
       now: Date.now(),
     });
     const [a, b] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     b.onStream((stream) => {
@@ -1120,7 +1120,7 @@ describe('LinkStreamCarrier with attachStreamSession', () => {
   test('attachStreamSession routes HELLO without a Bun socket', async () => {
     const server = new WebSocketServer();
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array(0));
@@ -1192,7 +1192,7 @@ describe('分享凭证的 mesh 流', () => {
   });
 
   const acceptShareWs =
-    (server: WebSocketServer) => (stream: import('@tmex/shared/link').LinkStream) => {
+    (server: WebSocketServer) => (stream: import('@vibeterm/shared/link').LinkStream) => {
       void acceptWsStream(stream, {
         peerNodeId: 'entry-1',
         sessionStore: denyAll,

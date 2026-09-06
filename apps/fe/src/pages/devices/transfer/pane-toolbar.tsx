@@ -1,10 +1,10 @@
 // 面板工具条：面包屑、上一级、可编辑路径、根目录下拉、隐藏文件开关。
 
-import type { FileRootDto } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Switch } from '@tmex/ui/switch';
+import type { FileRootDto } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
+import { Switch } from '@vibeterm/ui/switch';
 import { ArrowUp, ChevronRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { transferBreadcrumbs } from './pane-state';

@@ -1,4 +1,4 @@
-// 设备终端页薄壳：解析路由参数后渲染 @tmex/panels/device-console 的控制台组件。
+// 设备终端页薄壳：解析路由参数后渲染 @vibeterm/panels/device-console 的控制台组件。
 // paneId 传路由段原值（React Router 已 decode 一次），decode 归一在包内做，此处不再 decode。
 
 import { useGlobalDevice } from '@/components/global-device-provider';
@@ -8,7 +8,7 @@ import {
   DeviceConsole,
   DeviceConsoleActions,
   DeviceConsolePageTitle,
-} from '@tmex/panels/device-console';
+} from '@vibeterm/panels/device-console';
 import { useParams } from 'react-router';
 
 interface DeviceRouteParams {

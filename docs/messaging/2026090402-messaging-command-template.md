@@ -10,7 +10,7 @@ Telegram Bot 原先只识别精确字符串 `/start` 做绑定；微信 iLink �
 
 ```
 入站文本
-  → parseCommand（@tmex/shared/messaging，纯函数）
+  → parseCommand（@vibeterm/shared/messaging，纯函数）
   → authorizeMessagingActor（已授权 + allowCommands；群聊还要 from.id = 绑定 user_id）
   → resolveNodeTarget
   → 仅本机执行 handler
@@ -18,7 +18,7 @@ Telegram Bot 原先只识别精确字符串 `/start` 做绑定；微信 iLink �
   → MessagingAdapter.render → 分片后回复
 ```
 
-- 共享包：`packages/shared/src/messaging/`，经 `@tmex/shared/messaging` 导出，**不**进入浏览器主入口。
+- 共享包：`packages/shared/src/messaging/`，经 `@vibeterm/shared/messaging` 导出，**不**进入浏览器主入口。
 - 网关：`apps/gateway/src/messaging/`（registry / executor / adapter / handlers / inbound）。
 - Telegram：`TelegramService.handleIncomingText`；精确 `/start` 仍走绑定，其余进命令层。
 - 微信：`WeixinService.handleInbound` 在既有 upsert 之后，已授权且文本非空才 dispatch。

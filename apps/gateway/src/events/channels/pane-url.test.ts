@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
 import { buildPaneUrl, eventNodeId, normalizeHttpUrl } from './pane-url';
 
 function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {

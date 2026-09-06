@@ -1,7 +1,7 @@
 // 分屏几何：tmux layout 字符串 → 渲染几何（比例 cells）、pane 元信息索引、标题栏堆叠深度。
 
-import type { TmuxLayoutNode, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { parseWindowLayout } from '@tmex/shared';
+import type { TmuxLayoutNode, TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import { parseWindowLayout } from '@vibeterm/shared';
 import { type RefObject, useMemo, useRef } from 'react';
 import {
   type SplitLayoutGeometry,

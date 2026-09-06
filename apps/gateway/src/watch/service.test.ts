@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { EventType, WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';
 import { getDb as getOrmDb } from '../db/client';

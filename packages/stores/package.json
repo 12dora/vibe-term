@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/stores",
+  "name": "@vibeterm/stores",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -13,11 +13,11 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@tmex/api-client": "workspace:*",
-    "@tmex/notifications": "workspace:*",
-    "@tmex/shared": "workspace:*",
-    "@tmex/theme": "workspace:*",
-    "@tmex/ws-client": "workspace:*"
+    "@vibeterm/api-client": "workspace:*",
+    "@vibeterm/notifications": "workspace:*",
+    "@vibeterm/shared": "workspace:*",
+    "@vibeterm/theme": "workspace:*",
+    "@vibeterm/ws-client": "workspace:*"
   },
   "peerDependencies": {
     "i18next": "^24.0.0 || ^25.0.0",

@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
-import { combineAbortSignals, releaseTarballName } from '@tmex/shared';
+import { combineAbortSignals, releaseTarballName } from '@vibeterm/shared';
 import { parseSha256Sums, sha256Hex } from '../../../../packages/shared/src/release/verify';
 import {
   assertReleaseSha256,
@@ -236,7 +236,7 @@ export async function sha256File(path: string): Promise<{ sha256: string; bytes:
 }
 
 export function resolveReleaseCacheDir(installDir?: string | null): string {
-  const override = process.env.TMEX_RELEASE_CACHE_DIR?.trim();
+  const override = process.env.VIBETERM_RELEASE_CACHE_DIR?.trim();
   if (override) return override;
   if (installDir) return join(installDir, 'staging', 'release-cache');
   return join(tmpdir(), 'tmex-release-cache');

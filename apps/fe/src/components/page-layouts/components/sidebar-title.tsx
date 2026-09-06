@@ -1,9 +1,9 @@
 import { Brand } from '@/components/brand';
 import { settingsPageModule } from '@/page-modules';
-import { useSiteStore, useTmuxStore } from '@tmex/stores/react';
-import { ICON_TOOLTIP_DELAY_MS, IconTooltip } from '@tmex/ui/icon-tooltip';
-import { useSidebar } from '@tmex/ui/sidebar';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
+import { useSiteStore, useTmuxStore } from '@vibeterm/stores/react';
+import { ICON_TOOLTIP_DELAY_MS, IconTooltip } from '@vibeterm/ui/icon-tooltip';
+import { useSidebar } from '@vibeterm/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import { Settings, X } from 'lucide-react';
 import { useEffect } from 'react';
 import { useTranslation } from 'react-i18next';

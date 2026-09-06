@@ -10,10 +10,10 @@
 import { leaseSigner } from '@/auth/credential-prompt';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { type RecordSigner, headFromResponse } from '@/auth/key-log-actions';
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
 import {
   type AdmitDisposition,
   buildAdmitNodeRecord,

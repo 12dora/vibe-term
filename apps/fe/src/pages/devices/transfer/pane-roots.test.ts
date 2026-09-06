@@ -1,7 +1,7 @@
 // 面板根目录合成与发送按钮文案的纯逻辑。
 
 import { describe, expect, test } from 'bun:test';
-import { type FileRootDto, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { type FileRootDto, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import type { DialogNodeOption } from '../dialog-nodes';
 import { VIRTUAL_FS_ROOT, paneRoots, sendLabel } from './pane-roots';
 

@@ -1,11 +1,11 @@
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { isAuthLoginPublicPath, isShareAccessPath } from './auth-public-paths';
-import { SHARE_WS_VERIFY_MS, X_TMEX_SESSION_RENEWED } from './mesh-deps';
+import { SHARE_WS_VERIFY_MS, X_VIBETERM_SESSION_RENEWED } from './mesh-deps';
 import {
   type ShareAccessVerification,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
+  X_VIBETERM_CLEAR_SHARE,
+  X_VIBETERM_SET_SHARE,
   parseShareAuth,
   shareCookieName,
   shareIdOfToken,
@@ -146,10 +146,10 @@ export function authResponseHeaders(
   verified: StreamAuthOk
 ): Record<string, string> {
   if (verified.renewedExpiresAt !== undefined) {
-    headers[X_TMEX_SESSION_RENEWED] = String(verified.renewedExpiresAt);
+    headers[X_VIBETERM_SESSION_RENEWED] = String(verified.renewedExpiresAt);
   }
-  if (verified.clearShare && !headers[X_TMEX_SET_SHARE]) {
-    headers[X_TMEX_CLEAR_SHARE] = '1';
+  if (verified.clearShare && !headers[X_VIBETERM_SET_SHARE]) {
+    headers[X_VIBETERM_CLEAR_SHARE] = '1';
   }
   return headers;
 }

@@ -2,15 +2,15 @@
 // （与 DevicesPage.test.tsx、侧边栏聚合视图的测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { DeviceFolderLayout } from '@tmex/shared';
-import type { AppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { DeviceFolderLayout } from '@vibeterm/shared';
+import type { AppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
 // 面板换成探针：本文件测的是映射（谁进了哪个分组、把手落在哪里），
 // 面板 / 卡片自身由 packages/panels 覆盖。
-mock.module('@tmex/panels/device-management', () => ({
+mock.module('@vibeterm/panels/device-management', () => ({
   DeviceManagementPanel: ({
     listenOpenAddDeviceEvent,
     offline,
@@ -54,7 +54,7 @@ mock.module('./use-device-folders', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { DeviceFoldersView, nodeCandidates } = await import('./device-folders-view');
 
 const REMOTE_ID = '0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f';

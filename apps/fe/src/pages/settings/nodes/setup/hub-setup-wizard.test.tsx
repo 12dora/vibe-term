@@ -1,8 +1,8 @@
 // 向导的静态渲染：路径选择、按 nodeEnv 显隐 insecureLocal、预填规则、校验文案的呈现。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

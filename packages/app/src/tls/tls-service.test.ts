@@ -174,7 +174,7 @@ describe('TlsService', () => {
     expect(status.listener.error).toBe('Failed to bind');
   });
 
-  test('external writes TMEX_TRUST_PROXY and marks restart required', async () => {
+  test('external writes VIBETERM_TRUST_PROXY and marks restart required', async () => {
     const ctx = await setup();
     cleanups.push(ctx.close);
     const status = await ctx.service.applyMode({ mode: 'external', trustProxy: true });
@@ -182,7 +182,7 @@ describe('TlsService', () => {
     expect(status.trustProxy).toBe(true);
     expect(status.restartRequired).toBe(true);
     const env = await readFile(ctx.envPath, 'utf8');
-    expect(env).toContain('TMEX_TRUST_PROXY=true');
+    expect(env).toContain('VIBETERM_TRUST_PROXY=true');
   });
 
   test('external env failure rolls back: mode and listener stay unchanged', async () => {

@@ -1,8 +1,8 @@
 // AgentTab 的派生态：由 AgentTabState 纯函数推导，无副作用。
 
-import type { AgentQueuedMessageDto, AgentSessionDto, AgentWriteMode } from '@tmex/shared';
-import type { DraftSession } from '@tmex/stores';
-import { NODE_OFFLINE_ERROR, isNodePaused, lastUserMessageText } from '@tmex/stores';
+import type { AgentQueuedMessageDto, AgentSessionDto, AgentWriteMode } from '@vibeterm/shared';
+import type { DraftSession } from '@vibeterm/stores';
+import { NODE_OFFLINE_ERROR, isNodePaused, lastUserMessageText } from '@vibeterm/stores';
 
 import { type BindingInfo, bindingSource, resolveBinding } from './agent-binding';
 import { canRebindToRoute } from './agent-route-sync';

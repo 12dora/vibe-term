@@ -1,8 +1,8 @@
 // 分享日志的分页加载：一页页往后取，取到 `nextAfter === null` 为止。
 // 边取边交给上层，长录像也能先看到开头，不必等整份下完。
 
-import type { ShareLogEntry } from '@tmex/shared/share';
-import { useRuntime } from '@tmex/stores/react';
+import type { ShareLogEntry } from '@vibeterm/shared/share';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useEffect, useState } from 'react';
 import { fetchShareLogPage, shareErrorKey } from './share-api';
 

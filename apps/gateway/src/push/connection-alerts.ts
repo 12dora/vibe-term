@@ -4,7 +4,7 @@ import type {
   EventType,
   SiteSettings,
   WebhookEvent,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { DEVICE_CONNECTION_ERROR_EVENT } from '../events/channels/types';
 import { t } from '../i18n';

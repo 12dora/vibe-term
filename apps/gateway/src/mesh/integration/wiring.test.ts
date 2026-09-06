@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { encodeBase64url, generateEd25519KeyPair, randomBytes } from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { enumeratePeerEndpoints } from '../mesh-runtime';

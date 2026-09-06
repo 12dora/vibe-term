@@ -1,17 +1,17 @@
 // 侧边栏 agent 会话行：pane 分支下的紧凑行、孤立会话区的带元信息行，及共用的操作菜单。
 
-import type { AgentSessionDto } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
-import { useSiteStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import type { AgentSessionDto } from '@vibeterm/shared';
+import { formatDateTime } from '@vibeterm/shared';
+import { useSiteStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { useSidebar } from '@tmex/ui/sidebar';
+} from '@vibeterm/ui/dropdown-menu';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { Bot, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';

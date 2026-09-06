@@ -1,7 +1,7 @@
 // 被分享页的密码表单：标题即分享名称，一行错误，限速时按秒倒数并禁用提交。
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { AlertTriangle, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';

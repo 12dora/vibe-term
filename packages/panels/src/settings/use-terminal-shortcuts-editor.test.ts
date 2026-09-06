@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { TerminalShortcutItem } from '@tmex/shared';
+import type { TerminalShortcutItem } from '@vibeterm/shared';
 
 import {
   appendActionShortcut,

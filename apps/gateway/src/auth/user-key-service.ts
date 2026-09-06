@@ -10,7 +10,7 @@ import type {
   UserKeyState,
   VerifyKeyLogError,
   VerifyPasskeyAssertion,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
@@ -32,7 +32,7 @@ import {
   signKeyLogRecordWithRoot,
   totpPayloadFromKeyLogRecord,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { encrypt } from '../crypto';
 import { toBuffer } from './binary';
 import type { KeyLogStore } from './key-log-store';

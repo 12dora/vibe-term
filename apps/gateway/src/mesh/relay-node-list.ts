@@ -1,4 +1,4 @@
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
 import {
   type RelayCtlMessage,
   type RelayListNode,
@@ -10,7 +10,7 @@ import {
   openEnvelope,
   relaySeqFromWire,
   sealEnvelope,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { jsonText } from './json-text';

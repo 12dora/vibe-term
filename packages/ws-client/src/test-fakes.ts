@@ -1,7 +1,7 @@
 // 各测试套共用的 WS 假件：手工驱动的 transport 与 HELLO_S2C 帧构造器。
 // 仅供 *.test.ts 使用，不从包入口导出。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { WebSocketLike } from './client';
 
 export interface FakeSocketOptions {

@@ -1,4 +1,4 @@
-import type { ThemeMode } from '@tmex/shared';
+import type { ThemeMode } from '@vibeterm/shared';
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';

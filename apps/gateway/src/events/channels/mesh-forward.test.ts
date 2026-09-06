@@ -4,7 +4,7 @@ import type {
   MeshNotificationForwardRequest,
   MeshNotificationSink,
   WebhookEvent,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { setMeshNotificationBridge } from '../../mesh/notification-mesh-bridge';
 import { MeshForwardChannel, buildForwardRequest, isLocallyOriginatedEvent } from './mesh-forward';
 

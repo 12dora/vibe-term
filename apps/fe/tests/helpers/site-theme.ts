@@ -1,12 +1,12 @@
 import type { APIRequestContext } from '@playwright/test';
-import { type ThemeMode, wsBorsh } from '@tmex/shared';
+import { type ThemeMode, wsBorsh } from '@vibeterm/shared';
 
 // 与 playwright.config.ts / global-setup.ts 的 DEFAULT_GATEWAY_PORT 同步；
-// 实际运行由 scripts/run-e2e.ts 注入 TMEX_E2E_GATEWAY_PORT。
+// 实际运行由 scripts/run-e2e.ts 注入 VIBETERM_E2E_GATEWAY_PORT。
 const DEFAULT_GATEWAY_PORT = 9665;
 
 function gatewayWsUrl(): string {
-  const port = Number(process.env.TMEX_E2E_GATEWAY_PORT) || DEFAULT_GATEWAY_PORT;
+  const port = Number(process.env.VIBETERM_E2E_GATEWAY_PORT) || DEFAULT_GATEWAY_PORT;
   return `ws://127.0.0.1:${port}/ws`;
 }
 

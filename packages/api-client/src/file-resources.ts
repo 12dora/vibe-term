@@ -9,7 +9,7 @@ import type {
   ListFileRootsResponse,
   ListFilesResponse,
   UpdateFileRootRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { parseError } from './file-errors';
 import { filesApiUrl } from './file-urls';

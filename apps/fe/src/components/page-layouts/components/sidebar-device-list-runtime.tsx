@@ -7,11 +7,11 @@ import {
   type SidebarDeviceStatsResult,
   shouldHideSidebarNodeSection,
   useSidebarDeviceStats,
-} from '@tmex/panels/device-tree';
-import type { Device } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Skeleton } from '@tmex/ui/skeleton';
+} from '@vibeterm/panels/device-tree';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { Monitor } from 'lucide-react';
 import { type CSSProperties, type ReactNode, useEffect } from 'react';
 import { SidebarAgentSessionsProvider, useSidebarAgentAdapter } from './sidebar-agent-sessions';

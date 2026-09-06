@@ -1,4 +1,4 @@
-import type { AssistRegexResponse, WatchRuleDto, WatchTriggerType } from '@tmex/shared';
+import type { AssistRegexResponse, WatchRuleDto, WatchTriggerType } from '@vibeterm/shared';
 import { useCallback, useMemo, useState } from 'react';
 import {
   type WatchRuleDraft,

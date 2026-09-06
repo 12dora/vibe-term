@@ -125,7 +125,7 @@ test('mesh: the remote node signs in silently, and survives a full page reload',
 
 test('mesh: terminal on the joined node echoes through the entry', async ({ page }) => {
   const sessionName = `tmex-mesh-e2e-${Date.now()}`;
-  const marker = `TMEX_MESH_MARKER_${Date.now()}`;
+  const marker = `VIBETERM_MESH_MARKER_${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   let deviceId: string | undefined;
 

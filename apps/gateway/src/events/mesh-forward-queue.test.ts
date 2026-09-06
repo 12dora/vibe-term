@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { MeshNotificationForwardRequest } from '@tmex/shared';
+import type { MeshNotificationForwardRequest } from '@vibeterm/shared';
 import {
   MESH_FORWARD_BACKOFF_MS,
   MeshForwardQueue,

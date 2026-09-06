@@ -1,4 +1,4 @@
-import { type StateSnapshotPayload, type TmexRoles, isStandaloneRoles } from '@tmex/shared';
+import { type StateSnapshotPayload, type VibeTermRoles, isStandaloneRoles } from '@vibeterm/shared';
 import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
@@ -56,7 +56,7 @@ export type MessagingRuntimeHookDeps = {
   releaseRuntime?: (deviceId: string, runtime: MessagingDeviceRuntime) => Promise<void>;
   resolveConfirmation?: (confirmationId: string, approved: boolean, reason?: string) => void;
   isStandalone?: () => boolean;
-  roles?: () => TmexRoles;
+  roles?: () => VibeTermRoles;
   loadIdentity?: () => {
     nodeId: string | null;
     name: string | null;
@@ -118,7 +118,7 @@ function defaultLocalName(): string {
 function resolveUplinkKind(
   standalone: boolean,
   uplinkKind: 'hub' | 'relay' | null,
-  roles: TmexRoles
+  roles: VibeTermRoles
 ): UplinkKind {
   if (standalone) return 'none';
   if (uplinkKind === 'hub' || uplinkKind === 'relay') return uplinkKind;
@@ -228,7 +228,7 @@ function mapConfirmationError(error: unknown): DecideConfirmationResult {
 
 function buildGetUplinkStatus(deps: {
   isStandalone: () => boolean;
-  roles: () => TmexRoles;
+  roles: () => VibeTermRoles;
   loadIdentity: () => LocalIdentity;
   getMesh: () => MeshPresenceSource | null;
 }): () => UplinkStatus {

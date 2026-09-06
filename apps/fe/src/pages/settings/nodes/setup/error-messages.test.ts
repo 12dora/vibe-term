@@ -2,7 +2,7 @@
 // 这类唯一有用的诊断信息会被本地化文案吞掉。
 
 import { describe, expect, test } from 'bun:test';
-import { SetupApiError } from '@tmex/api-client/local/setup-api';
+import { SetupApiError } from '@vibeterm/api-client/local/setup-api';
 import { describeSetupError } from './error-messages';
 
 const t = (key: string, options?: Record<string, unknown>): string =>

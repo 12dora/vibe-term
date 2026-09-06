@@ -4,7 +4,7 @@
 // 「复制」变成一条新内容再播一次，读屏用户听到的是一句莫名其妙的第二次提示。
 // 可见标签因此留在 live region 外面。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Check, Copy } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

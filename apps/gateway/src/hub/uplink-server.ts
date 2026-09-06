@@ -1,4 +1,4 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import {
   HUB_NOT_WRITER,
   type HubAdvertisement,
@@ -7,7 +7,7 @@ import {
   type HubMode,
   type HubNotWriterError,
   type HubWriteForwardMessage,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import { MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';

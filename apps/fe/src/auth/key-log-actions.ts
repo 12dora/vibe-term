@@ -3,8 +3,8 @@
 // sk_sess 不能签任何持久记录：每个动作都要么现场用密码重派生根钥，
 // 要么让另一把 passkey 对该条记录做一次专用 assertion（challenge = sha256(recordBytes)）。
 
-import type { AuthenticationResponseJSON, KeyLogHeadResponse } from '@tmex/api-client/auth/index';
-import { assertForChallenge } from '@tmex/api-client/auth/index';
+import type { AuthenticationResponseJSON, KeyLogHeadResponse } from '@vibeterm/api-client/auth/index';
+import { assertForChallenge } from '@vibeterm/api-client/auth/index';
 import type {
   AddPasskeyPayload,
   EnrollmentSigner,
@@ -15,7 +15,7 @@ import type {
   RootKey,
   RotateRootKeepTotp,
   SetTotpPayload,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   buildKeyLogRecord,
   decodeBase64url,
@@ -32,7 +32,7 @@ import {
   rootKeyFromSeed,
   sha256,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 
 export type AssertFn = (
   challenge: Uint8Array,
@@ -75,7 +75,7 @@ export async function signWithPasskey(
 }
 
 /**
- * `RecordSigner` → `@tmex/shared/auth` 的 `EnrollmentSigner`。
+ * `RecordSigner` → `@vibeterm/shared/auth` 的 `EnrollmentSigner`。
  * 根钥直接就是 `EnrollmentSigner`（有 `sign`）；passkey 侧包一层断言。
  */
 export function enrollmentSignerFrom(signer: RecordSigner): EnrollmentSigner {

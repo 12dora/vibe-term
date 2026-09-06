@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { agentWsHub } from '../agent/ws-hub';
 import { runMigrations } from '../db/migrate';
 import { WebSocketServer } from './index';

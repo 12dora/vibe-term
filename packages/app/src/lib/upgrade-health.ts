@@ -107,7 +107,7 @@ export async function liveHealthUrl(installDir: string): Promise<string | null> 
   const env = await readEnvFile(envPath).catch(() => null);
   if (!env) return null;
   const port = String(env.GATEWAY_PORT || '9883');
-  const host = String(env.TMEX_BIND_HOST || '127.0.0.1');
+  const host = String(env.VIBETERM_BIND_HOST || '127.0.0.1');
   const bind = host === '0.0.0.0' || host === '::' ? '127.0.0.1' : host;
   return formatHttpEndpoint(bind, port, '/healthz');
 }

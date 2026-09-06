@@ -7,9 +7,9 @@ import {
   type MeshNodeReach,
   type MeshNodeTransport,
   handleGlobalUnauthorized,
-} from '@tmex/api-client/auth/index';
-import { wsBorsh } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
+} from '@vibeterm/api-client/auth/index';
+import { wsBorsh } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { type RecoverySubscribe, isPageVisible, onPageRecovery } from './mesh-recovery';
 
 /** 会话在连接期间失效时服务端的关闭码（B2-2b 契约）。 */

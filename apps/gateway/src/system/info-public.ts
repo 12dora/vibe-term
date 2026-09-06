@@ -1,7 +1,7 @@
 /**
  * 系统信息公共面：不依赖 update-check / upgrade 模块，可供 managed 与开源路径共用。
  */
-import type { SystemInfo, TransferCapability } from '@tmex/shared';
+import type { SystemInfo, TransferCapability } from '@vibeterm/shared';
 import { config } from '../config';
 import { getInstallInfo } from './install-info';
 import {

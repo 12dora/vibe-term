@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { AgentAuthMethod, ConnectConfig, PublicKeyAuthMethod } from 'ssh2';
 
 import type { decryptWithContext } from '../crypto';

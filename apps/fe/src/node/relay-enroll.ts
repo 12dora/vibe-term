@@ -18,14 +18,14 @@ import {
   headFromResponse,
   kdfParamsFromJson,
 } from '@/auth/key-log-actions';
-import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
-import { errorMessage } from '@tmex/shared';
-import type { RootKey } from '@tmex/shared/auth';
-import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
-import { signRelayEnrollProof } from '@tmex/shared/relay';
+import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import type { RelayMetaKeyOp, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
+import { errorMessage } from '@vibeterm/shared';
+import type { RootKey } from '@vibeterm/shared/auth';
+import { bytesEqual, decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
+import { signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
 import type { ReadmitResult } from './readmit-members';
 import { READMIT_PENDING, readmitStaleMembers } from './readmit-members';

@@ -127,7 +127,7 @@ export function decideDomainAccess(input: {
 }): DomainAccessDecision {
   if (!input.viaSelf || input.allowed) return 'allow';
   if (isServicePath(input.method, input.pathname)) return 'allow';
-  // Reverse-proxy deployments must enable TMEX_TRUST_PROXY, otherwise the proxy's
+  // Reverse-proxy deployments must enable VIBETERM_TRUST_PROXY, otherwise the proxy's
   // own socket IP is judged (typically private → allowed).
   const ip = resolveClientIp({
     socketIp: input.clientIp,

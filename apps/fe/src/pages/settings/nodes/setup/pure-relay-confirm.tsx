@@ -1,6 +1,6 @@
 // 选「纯中继」前的确认：这一档重启后网页整个消失，只剩 CLI，选错了没法在网页里改回来。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 
 export function PureRelayConfirm({

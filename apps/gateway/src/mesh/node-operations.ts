@@ -1,4 +1,4 @@
-import type { MeshNodeOperation, MeshNodeOperationKind } from '@tmex/shared';
+import type { MeshNodeOperation, MeshNodeOperationKind } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';

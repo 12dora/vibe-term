@@ -7,7 +7,7 @@ import {
   FragmentAssembler,
   type FragmentFail,
   fragmentBytes,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 
 export const MAX_DC_MESSAGE_BYTES = DC_MAX_MESSAGE_BYTES;
 export {

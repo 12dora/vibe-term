@@ -715,7 +715,7 @@ describe('GhosttyTerminalController canvas baseline', () => {
     );
 
     expect(received.some((item) => item.startsWith('mouse:'))).toBeTrue();
-    expect((globalThis as any).__tmexE2eTerminalSelectionText ?? null).toBeNull();
+    expect((globalThis as any).__vibetermE2eTerminalSelectionText ?? null).toBeNull();
     disposable.dispose();
   });
 
@@ -2298,7 +2298,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
 
     await dom.flushAnimationFrames();
     expect(fullRenders).toBe(afterBegin);
-    expect((globalThis as any).__tmexE2eTerminalSelectionText ?? null).not.toBeNull();
+    expect((globalThis as any).__vibetermE2eTerminalSelectionText ?? null).not.toBeNull();
 
     // 拖拽期间到达的输出必须照常全渲染。
     terminal.write('output during drag');
@@ -2308,7 +2308,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     terminal.endTouchSelection();
   });
 
-  // 分屏回归：同一页挂多个控制器时，__tmexE2eTerminalSelectionText 是唯一的全局探针，
+  // 分屏回归：同一页挂多个控制器时，__vibetermE2eTerminalSelectionText 是唯一的全局探针，
   // 每个控制器每帧都会写它。空闲 pane 的任意一帧曾把有选区 pane 的探针抹成 null，而渲染
   // 循环按需调度、本 pane 空闲后不会再写回来，探针就永久停在 null
   //（e2e terminal-selection-canvas「双击选词」在满负载全量运行下随机读到 null）。
@@ -2335,7 +2335,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
 
     const paneA = await openPane();
     const paneB = await openPane();
-    const probe = () => (globalThis as any).__tmexE2eTerminalSelectionText ?? null;
+    const probe = () => (globalThis as any).__vibetermE2eTerminalSelectionText ?? null;
 
     expect(paneA.startTouchSelection(4, 4, 'word')).toBeTrue();
     paneA.endTouchSelection();
@@ -2376,7 +2376,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     expect(terminal.hasSelection()).toBeTrue();
   });
 
-  // e2e（apps/fe/tests）把 controller 当作 window.__tmexE2eXterm 直接读这些入口做
+  // e2e（apps/fe/tests）把 controller 当作 window.__vibetermE2eXterm 直接读这些入口做
   // 光标/行列对齐校验。它们必须是公开只读接口，不能退化成内部字段。
   test('cellDimensions should expose the live cell object shared with _core', async () => {
     dom = installCanvasDom();
@@ -2418,7 +2418,7 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     expect(terminal.terminalHandle).toBe(1);
   });
 
-  // 守卫：apps/fe/tests 通过 window.__tmexE2eXterm 直接读下列成员做对齐校验与失败诊断。
+  // 守卫：apps/fe/tests 通过 window.__vibetermE2eXterm 直接读下列成员做对齐校验与失败诊断。
   // 它们不在 CompatibleTerminalLike 的必选部分，重构时最容易被无声删掉（曾因此挂掉
   // terminal-render-regressions / terminal-mouse-row-alignment 两个 e2e）。
   test('controller should keep every member the e2e probes read', async () => {

@@ -2,7 +2,7 @@
 // 弹窗外壳走 portal，静态渲染取不到，因此渲染断言直接打在 IntegrationFormFields 上。
 
 import { describe, expect, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

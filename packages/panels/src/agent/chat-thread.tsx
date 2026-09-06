@@ -1,6 +1,6 @@
-import type { UiThreadBlock } from '@tmex/stores';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import type { UiThreadBlock } from '@vibeterm/stores';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { ArrowDownIcon } from 'lucide-react';
 import { useCallback, useRef } from 'react';
 import { useTranslation } from 'react-i18next';

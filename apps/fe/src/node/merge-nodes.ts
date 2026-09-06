@@ -3,15 +3,15 @@
 // 从 `mesh-nodes.ts` 拆出来的纯函数段（store 与轮询留在原文件）：这里只有输入输出确定的映射，
 // 没有任何请求与订阅，测试可以直接喂两个数组。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type {
   HubMode,
   MeshNode,
   MeshNodeReach,
   MeshNodeTransport,
-} from '@tmex/api-client/auth/index';
-import type { MeshNodeOperation } from '@tmex/shared';
-import { bytesToHex, decodeBase64url, sha256 } from '@tmex/shared/auth';
+} from '@vibeterm/api-client/auth/index';
+import type { MeshNodeOperation } from '@vibeterm/shared';
+import { bytesToHex, decodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { type HubAdmissionStatus, type HubNodeRow, hubAdmissionStatus } from './hub-api';
 
 /** 公钥指纹：sha256(pk) 的前 16 个十六进制字符（8 字节）。畸形 base64url 返回空串。 */

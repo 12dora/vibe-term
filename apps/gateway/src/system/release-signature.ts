@@ -11,7 +11,7 @@ import {
   expectedTarballHash,
   releaseSignatureRequired,
   verifyReleaseSums,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 
 export type ReleaseSignatureCode =

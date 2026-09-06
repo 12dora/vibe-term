@@ -5,16 +5,16 @@
 // 列表渲染拆成纯展示组件 `DirectoryEntryList`，两者都在 directory-picker-modal.test.tsx 里覆盖。
 
 import { useQuery } from '@tanstack/react-query';
-import type { BrowseDirectoryEntryDto } from '@tmex/shared';
+import type { BrowseDirectoryEntryDto } from '@vibeterm/shared';
 import { ArrowUp, ChevronRight, Folder, Link2, TriangleAlert } from 'lucide-react';
 import { type KeyboardEvent, useEffect, useReducer, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ApiClient } from '@tmex/api-client';
-import { browseDirectory } from '@tmex/api-client/file-resources';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import type { ApiClient } from '@vibeterm/api-client';
+import { browseDirectory } from '@vibeterm/api-client/file-resources';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -22,11 +22,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { ScrollArea } from '@tmex/ui/scroll-area';
-import { Skeleton } from '@tmex/ui/skeleton';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { ScrollArea } from '@vibeterm/ui/scroll-area';
+import { Skeleton } from '@vibeterm/ui/skeleton';
+import { Switch } from '@vibeterm/ui/switch';
 
 export const DIRECTORY_BROWSE_QUERY_KEY = 'directory-browse';
 

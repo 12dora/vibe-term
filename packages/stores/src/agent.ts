@@ -1,8 +1,8 @@
 // Agent 会话 store 组合根：装配订阅、事件路由、历史同步、REST 动作，产出 zustand store。
 // 模式仿 tmux.ts：模块级 initialized 防重入、client.onMessage 独立 handler、READY 重连补发订阅。
 
-import type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';
-import { buildAgentSubscribe, buildAgentUnsubscribe } from '@tmex/ws-client';
+import type { AgentSessionDto, AgentSessionStatus } from '@vibeterm/shared';
+import { buildAgentSubscribe, buildAgentUnsubscribe } from '@vibeterm/ws-client';
 import { create } from 'zustand';
 import { type PersistStorage, createJSONStorage, persist } from 'zustand/middleware';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';

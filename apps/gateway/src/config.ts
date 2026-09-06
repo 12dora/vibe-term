@@ -1,11 +1,11 @@
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
-import { type TmexRoles, isTmexRoleName, rolesFromName, validateRoles } from '@tmex/shared';
-import type { HubMode } from '@tmex/shared/uplink';
+import { type VibeTermRoles, isVibeTermRoleName, rolesFromName, validateRoles } from '@vibeterm/shared';
+import type { HubMode } from '@vibeterm/shared/uplink';
 
-export type { TmexRoles };
+export type { VibeTermRoles };
 
-declare const TMEX_MANAGED_BUILD: boolean | undefined;
+declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
 
 function getEnv(key: string, defaultValue: string): string {
   return process.env[key] ?? defaultValue;
@@ -20,13 +20,13 @@ function getBooleanEnv(key: string, defaultValue: boolean): boolean {
 }
 
 function isManagedBuild(): boolean {
-  return typeof TMEX_MANAGED_BUILD === 'boolean' && TMEX_MANAGED_BUILD;
+  return typeof VIBETERM_MANAGED_BUILD === 'boolean' && VIBETERM_MANAGED_BUILD;
 }
 
 function isCompanionManagedRuntime(env: NodeJS.ProcessEnv): boolean {
   return (
     isManagedBuild() ||
-    (env.TMEX_MANAGEMENT_MODE === 'companion-cli' && env.TMEX_UPDATE_OWNER === 'companion')
+    (env.VIBETERM_MANAGEMENT_MODE === 'companion-cli' && env.VIBETERM_UPDATE_OWNER === 'companion')
   );
 }
 
@@ -51,64 +51,64 @@ export function resolveTmuxBin(
   platform: NodeJS.Platform = process.platform,
   managedBuild = isManagedBuild()
 ): string {
-  const value = env.TMEX_TMUX_BIN?.trim();
+  const value = env.VIBETERM_TMUX_BIN?.trim();
   if (!value) {
     if (managedBuild && platform === 'win32') {
-      throw new Error('TMEX_TMUX_BIN must be set to an absolute path on managed Windows');
+      throw new Error('VIBETERM_TMUX_BIN must be set to an absolute path on managed Windows');
     }
     return 'tmux';
   }
   const isAbsolute = platform === 'win32' ? win32.isAbsolute(value) : posix.isAbsolute(value);
   if (!isAbsolute) {
-    throw new Error('TMEX_TMUX_BIN must be an absolute path');
+    throw new Error('VIBETERM_TMUX_BIN must be an absolute path');
   }
   return value;
 }
 
 function getGatewayOwnerToken(): string | null {
-  const value = process.env.TMEX_GATEWAY_OWNER_TOKEN?.trim();
+  const value = process.env.VIBETERM_GATEWAY_OWNER_TOKEN?.trim();
   if (!value) {
     return null;
   }
   if (!/^[0-9a-f]{64}$/i.test(value)) {
-    throw new Error('TMEX_GATEWAY_OWNER_TOKEN must be exactly 32 bytes encoded as hex');
+    throw new Error('VIBETERM_GATEWAY_OWNER_TOKEN must be exactly 32 bytes encoded as hex');
   }
   return value.toLowerCase();
 }
 
-export function parseTmexRoles(raw: string | undefined): TmexRoles {
+export function parseVibeTermRoles(raw: string | undefined): VibeTermRoles {
   if (raw === undefined) {
     return rolesFromName('standalone');
   }
   const value = raw.trim();
-  if (!isTmexRoleName(value)) {
-    throw new Error('TMEX_ROLES must be one of standalone | node | hub,node | relay | relay,node');
+  if (!isVibeTermRoleName(value)) {
+    throw new Error('VIBETERM_ROLES must be one of standalone | node | hub,node | relay | relay,node');
   }
   const roles = rolesFromName(value);
   const invalid = validateRoles(roles);
   if (invalid) {
-    throw new Error(`TMEX_ROLES is invalid: ${invalid}`);
+    throw new Error(`VIBETERM_ROLES is invalid: ${invalid}`);
   }
   return roles;
 }
 
 /** `relay` 单跑（不带 node）：无用户、无设备、不应拉起即时通讯轮询。 */
-export function isRelayOnly(roles: TmexRoles): boolean {
+export function isRelayOnly(roles: VibeTermRoles): boolean {
   return roles.relay && !roles.node && !roles.hub;
 }
 
-export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): TmexRoles {
-  return parseTmexRoles(env.TMEX_ROLES);
+export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): VibeTermRoles {
+  return parseVibeTermRoles(env.VIBETERM_ROLES);
 }
 
 export function parsePeerPort(raw: string | undefined): number {
   const value = (raw ?? '39001').trim() || '39001';
   if (!/^\d+$/.test(value)) {
-    throw new Error('TMEX_PEER_PORT must be a decimal integer');
+    throw new Error('VIBETERM_PEER_PORT must be a decimal integer');
   }
   const port = Number(value);
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
-    throw new Error('TMEX_PEER_PORT must be an integer in 1..65535');
+    throw new Error('VIBETERM_PEER_PORT must be an integer in 1..65535');
   }
   return port;
 }
@@ -145,7 +145,7 @@ export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null 
   if (raw === undefined || raw.trim() === '') return null;
   const match = /^(\d+)\s*-\s*(\d+)$/.exec(raw.trim());
   if (!match?.[1] || !match[2]) {
-    throw new Error('TMEX_RTC_PORT_RANGE must use begin-end format');
+    throw new Error('VIBETERM_RTC_PORT_RANGE must use begin-end format');
   }
   const begin = Number(match[1]);
   const end = Number(match[2]);
@@ -156,7 +156,7 @@ export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null 
     end > 65535 ||
     begin > end
   ) {
-    throw new Error('TMEX_RTC_PORT_RANGE must be an ordered range within 1..65535');
+    throw new Error('VIBETERM_RTC_PORT_RANGE must be an ordered range within 1..65535');
   }
   return { begin, end };
 }
@@ -180,18 +180,18 @@ export function parseHubMode(raw: string | undefined): HubMode {
   if (raw === undefined || raw.trim() === '') return 'active';
   const value = raw.trim();
   if (value === 'active' || value === 'standby') return value;
-  throw new Error('TMEX_HUB_MODE must be active | standby');
+  throw new Error('VIBETERM_HUB_MODE must be active | standby');
 }
 
 export function parseHubPriority(raw: string | undefined, mode: HubMode): number {
   if (raw === undefined || raw.trim() === '') return mode === 'standby' ? 200 : 100;
   const value = raw.trim();
   if (!/^\d+$/.test(value)) {
-    throw new Error('TMEX_HUB_PRIORITY must be a non-negative integer');
+    throw new Error('VIBETERM_HUB_PRIORITY must be a non-negative integer');
   }
   const n = Number(value);
   if (!Number.isInteger(n) || n < 0) {
-    throw new Error('TMEX_HUB_PRIORITY must be a non-negative integer');
+    throw new Error('VIBETERM_HUB_PRIORITY must be a non-negative integer');
   }
   return n;
 }
@@ -200,11 +200,11 @@ export function parseHubWriterEpoch(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return 1;
   const value = raw.trim();
   if (!/^\d+$/.test(value)) {
-    throw new Error('TMEX_HUB_WRITER_EPOCH must be an integer >= 1');
+    throw new Error('VIBETERM_HUB_WRITER_EPOCH must be an integer >= 1');
   }
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) {
-    throw new Error('TMEX_HUB_WRITER_EPOCH must be an integer >= 1');
+    throw new Error('VIBETERM_HUB_WRITER_EPOCH must be an integer >= 1');
   }
   return n;
 }
@@ -235,7 +235,7 @@ export function parseHubPeers(raw: string | undefined): string[] {
     const value = part.trim().toLowerCase();
     if (!value) continue;
     if (!HUB_PEER_ID.test(value)) {
-      throw new Error('TMEX_HUB_PEERS must be comma-separated 32-hex node ids');
+      throw new Error('VIBETERM_HUB_PEERS must be comma-separated 32-hex node ids');
     }
     if (seen.has(value)) continue;
     seen.add(value);
@@ -256,11 +256,11 @@ export function parseHubAutoPromoteTimeoutMs(raw: string | undefined): number {
   if (raw === undefined || raw.trim() === '') return HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS;
   const value = raw.trim();
   if (!/^\d+$/.test(value)) {
-    throw new Error('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
+    throw new Error('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
   }
   const n = Number(value);
   if (!Number.isInteger(n) || n < 1) {
-    throw new Error('TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
+    throw new Error('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS must be an integer >= 1');
   }
   return n;
 }
@@ -271,12 +271,12 @@ export function parseUplinkPreferNearest(raw: string | undefined): boolean | nul
   const value = raw.trim().toLowerCase();
   if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
   if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
-  throw new Error('TMEX_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off');
+  throw new Error('VIBETERM_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off');
 }
 
-/** cloudflared 数据目录：显式 `TMEX_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
+/** cloudflared 数据目录：显式 `VIBETERM_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
-  const explicit = env.TMEX_TUNNEL_DIR?.trim();
+  const explicit = env.VIBETERM_TUNNEL_DIR?.trim();
   if (explicit) return explicit;
   const dbUrl = (env.DATABASE_URL ?? './tmex.db').trim();
   if (dbUrl === ':memory:' || dbUrl.startsWith('file::memory:')) {
@@ -286,83 +286,83 @@ export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   return join(dirname(dbPath), 'tunnel');
 }
 
-const hubMode = parseHubMode(process.env.TMEX_HUB_MODE);
-const hubUrl = getOptionalEnv('TMEX_HUB_URL');
+const hubMode = parseHubMode(process.env.VIBETERM_HUB_MODE);
+const hubUrl = getOptionalEnv('VIBETERM_HUB_URL');
 
 export const config = {
   // 核心安全配置（生产环境建议配置，用于加密敏感字段）
-  masterKey: process.env.TMEX_MASTER_KEY,
+  masterKey: process.env.VIBETERM_MASTER_KEY,
 
   // 服务配置
   port: resolveGatewayPort(),
-  bindHost: getEnv('TMEX_BIND_HOST', '0.0.0.0'),
-  originUrl: originUrlFromBindHost(getEnv('TMEX_BIND_HOST', '0.0.0.0'), resolveGatewayPort()),
-  baseUrl: getEnv('TMEX_BASE_URL', 'http://127.0.0.1:8085'),
-  siteNameDefault: getEnv('TMEX_SITE_NAME', 'tmex'),
+  bindHost: getEnv('VIBETERM_BIND_HOST', '0.0.0.0'),
+  originUrl: originUrlFromBindHost(getEnv('VIBETERM_BIND_HOST', '0.0.0.0'), resolveGatewayPort()),
+  baseUrl: getEnv('VIBETERM_BASE_URL', 'http://127.0.0.1:8085'),
+  siteNameDefault: getEnv('VIBETERM_SITE_NAME', 'tmex'),
 
   // 数据库
   databaseUrl: getEnv('DATABASE_URL', './tmex.db'),
   tunnelDir: resolveTunnelDir(),
 
   // 文件传输（上传/下载）单文件字节上限，默认 2GB；后端校验 + 前端上传前预校验共用
-  transferMaxBytes: Number.parseInt(getEnv('TMEX_TRANSFER_MAX_BYTES', '2147483648'), 10),
+  transferMaxBytes: Number.parseInt(getEnv('VIBETERM_TRANSFER_MAX_BYTES', '2147483648'), 10),
 
   // 设置默认值（可被数据库中的实际设置覆盖）
-  bellThrottleSecondsDefault: Number.parseInt(getEnv('TMEX_BELL_THROTTLE_SECONDS', '6'), 10),
+  bellThrottleSecondsDefault: Number.parseInt(getEnv('VIBETERM_BELL_THROTTLE_SECONDS', '6'), 10),
   notificationThrottleSecondsDefault: Number.parseInt(
-    getEnv('TMEX_NOTIFICATION_THROTTLE_SECONDS', '3'),
+    getEnv('VIBETERM_NOTIFICATION_THROTTLE_SECONDS', '3'),
     10
   ),
-  tmuxAllowPassthrough: getBooleanEnv('TMEX_TMUX_ALLOW_PASSTHROUGH', false),
+  tmuxAllowPassthrough: getBooleanEnv('VIBETERM_TMUX_ALLOW_PASSTHROUGH', false),
   // 逗号分隔的通知渠道禁用清单（如 "webhook,telegram"），命中的内建 channel
   // 在 EventNotifier 构造时直接跳过注册。getter 保证每次构造读取当前环境值。
   get disabledNotificationChannelsEnv(): string {
-    return getEnv('TMEX_DISABLED_NOTIFICATION_CHANNELS', '');
+    return getEnv('VIBETERM_DISABLED_NOTIFICATION_CHANNELS', '');
   },
   // 主题切换时向订阅了 mode 2031 的 pane 注入 CSI ?997;{1|2}n 通知（kill switch）
-  themeNotify2031Enabled: getBooleanEnv('TMEX_THEME_NOTIFY_2031', true),
-  tmuxTermProgram: getEnv('TMEX_TMUX_TERM_PROGRAM', 'ghostty'),
+  themeNotify2031Enabled: getBooleanEnv('VIBETERM_THEME_NOTIFY_2031', true),
+  tmuxTermProgram: getEnv('VIBETERM_TMUX_TERM_PROGRAM', 'ghostty'),
   // 受管 session 的 window-style，用于 tmux 代答 pane 内 OSC 10/11 颜色查询；
   // 默认与前端 seoul256 dark 主题一致，设为 off 关闭
-  tmuxWindowStyle: getEnv('TMEX_TMUX_WINDOW_STYLE', 'fg=#d0d0d0,bg=#262626'),
-  // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 TMEX_TMUX_SOCKET=tmex-e2e
+  tmuxWindowStyle: getEnv('VIBETERM_TMUX_WINDOW_STYLE', 'fg=#d0d0d0,bg=#262626'),
+  // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 VIBETERM_TMUX_SOCKET=tmex-e2e
   // 以与生产默认 socket 隔离；生产/普通运行不设 → 空串 → 不加 -L → 用默认 socket。
-  tmuxSocket: getEnv('TMEX_TMUX_SOCKET', ''),
+  tmuxSocket: getEnv('VIBETERM_TMUX_SOCKET', ''),
   tmuxBin: resolveTmuxBin(),
   gatewayOwnerToken: getGatewayOwnerToken(),
-  sshReconnectMaxRetriesDefault: Number.parseInt(getEnv('TMEX_SSH_RECONNECT_MAX_RETRIES', '2'), 10),
+  sshReconnectMaxRetriesDefault: Number.parseInt(getEnv('VIBETERM_SSH_RECONNECT_MAX_RETRIES', '2'), 10),
   sshReconnectDelaySecondsDefault: Number.parseInt(
-    getEnv('TMEX_SSH_RECONNECT_DELAY_SECONDS', '10'),
+    getEnv('VIBETERM_SSH_RECONNECT_DELAY_SECONDS', '10'),
     10
   ),
-  languageDefault: getEnv('TMEX_DEFAULT_LANGUAGE', 'en_US'),
+  languageDefault: getEnv('VIBETERM_DEFAULT_LANGUAGE', 'en_US'),
 
-  roles: parseTmexRoles(process.env.TMEX_ROLES),
+  roles: parseVibeTermRoles(process.env.VIBETERM_ROLES),
   hubUrl,
-  hubPublicUrl: getOptionalEnv('TMEX_HUB_PUBLIC_URL'),
-  relayPublicUrl: getOptionalEnv('TMEX_RELAY_PUBLIC_URL'),
-  relayAdminToken: getOptionalEnv('TMEX_RELAY_ADMIN_TOKEN'),
+  hubPublicUrl: getOptionalEnv('VIBETERM_HUB_PUBLIC_URL'),
+  relayPublicUrl: getOptionalEnv('VIBETERM_RELAY_PUBLIC_URL'),
+  relayAdminToken: getOptionalEnv('VIBETERM_RELAY_ADMIN_TOKEN'),
   hubMode,
-  hubPriority: parseHubPriority(process.env.TMEX_HUB_PRIORITY, hubMode),
-  hubWriterEpoch: parseHubWriterEpoch(process.env.TMEX_HUB_WRITER_EPOCH),
-  hubUrls: parseHubUrls(hubUrl, process.env.TMEX_HUB_URLS),
-  hubPeers: parseHubPeers(process.env.TMEX_HUB_PEERS),
-  hubAutoPromote: parseHubAutoPromote(process.env.TMEX_HUB_AUTO_PROMOTE),
+  hubPriority: parseHubPriority(process.env.VIBETERM_HUB_PRIORITY, hubMode),
+  hubWriterEpoch: parseHubWriterEpoch(process.env.VIBETERM_HUB_WRITER_EPOCH),
+  hubUrls: parseHubUrls(hubUrl, process.env.VIBETERM_HUB_URLS),
+  hubPeers: parseHubPeers(process.env.VIBETERM_HUB_PEERS),
+  hubAutoPromote: parseHubAutoPromote(process.env.VIBETERM_HUB_AUTO_PROMOTE),
   hubAutoPromoteTimeoutMs: parseHubAutoPromoteTimeoutMs(
-    process.env.TMEX_HUB_AUTO_PROMOTE_TIMEOUT_MS
+    process.env.VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS
   ),
-  uplinkPreferNearest: parseUplinkPreferNearest(process.env.TMEX_UPLINK_PREFER_NEAREST),
-  peerPort: parsePeerPort(process.env.TMEX_PEER_PORT),
-  stunServers: parseStunServers(process.env.TMEX_STUN_SERVERS),
-  peerBindHost: parsePeerBindHost(process.env.TMEX_PEER_BIND_HOST),
-  rtcPortRange: parseRtcPortRange(process.env.TMEX_RTC_PORT_RANGE),
-  turnUrl: getOptionalEnv('TMEX_TURN_URL'),
-  turnUsername: getOptionalEnv('TMEX_TURN_USERNAME'),
-  turnCredential: getOptionalEnv('TMEX_TURN_CREDENTIAL'),
+  uplinkPreferNearest: parseUplinkPreferNearest(process.env.VIBETERM_UPLINK_PREFER_NEAREST),
+  peerPort: parsePeerPort(process.env.VIBETERM_PEER_PORT),
+  stunServers: parseStunServers(process.env.VIBETERM_STUN_SERVERS),
+  peerBindHost: parsePeerBindHost(process.env.VIBETERM_PEER_BIND_HOST),
+  rtcPortRange: parseRtcPortRange(process.env.VIBETERM_RTC_PORT_RANGE),
+  turnUrl: getOptionalEnv('VIBETERM_TURN_URL'),
+  turnUsername: getOptionalEnv('VIBETERM_TURN_USERNAME'),
+  turnCredential: getOptionalEnv('VIBETERM_TURN_CREDENTIAL'),
   // When true, local Bun-socket requests (via=self) honour x-forwarded-proto /
   // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
   // Never applied to forwarded (via ≠ self) requests. Default false.
-  trustProxy: getBooleanEnv('TMEX_TRUST_PROXY', false),
+  trustProxy: getBooleanEnv('VIBETERM_TRUST_PROXY', false),
 
   // 环境
   isDev: getEnv('NODE_ENV', 'development') === 'development',
@@ -372,5 +372,5 @@ export const config = {
 
 // 生产环境检查
 if (config.isProd && !config.masterKey) {
-  throw new Error('TMEX_MASTER_KEY is required in production mode');
+  throw new Error('VIBETERM_MASTER_KEY is required in production mode');
 }

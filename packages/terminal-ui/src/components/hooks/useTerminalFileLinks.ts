@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchFileRoots, fetchFileStat } from '@tmex/api-client';
-import { type TerminalFileLinksProvider, fileRoute, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { fetchFileRoots, fetchFileStat } from '@vibeterm/api-client';
+import { type TerminalFileLinksProvider, fileRoute, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

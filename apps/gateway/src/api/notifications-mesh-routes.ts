@@ -5,7 +5,7 @@ import {
   MESH_NOTIFICATION_ROUTE,
   MESH_NOTIFICATION_SETTINGS_NAMESPACE,
   type MeshNotificationState,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { meshForwardChannel } from '../events/channels/mesh-forward';
 import { getMeshNotificationBridge } from '../mesh/notification-mesh-bridge';
 import {

@@ -3,9 +3,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { MeshHubsState } from '@/node/mesh-hubs';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import type { LocalRole, LocalStatusResponse } from '@tmex/api-client/local/types';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import type { LocalRole, LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   HubUplinkNotices,

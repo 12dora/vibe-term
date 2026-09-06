@@ -1,7 +1,7 @@
 // 表格展示的格式化：相对时间、剩余期限、结束原因、时长、日志大小、地址主机名。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareRecord } from '@tmex/shared/share';
+import type { ShareRecord } from '@vibeterm/shared/share';
 import {
   absoluteTimeText,
   durationText,

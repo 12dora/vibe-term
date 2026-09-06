@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,

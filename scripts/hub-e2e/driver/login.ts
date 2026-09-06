@@ -201,7 +201,7 @@ const outPath = typeof args.out === 'string' ? args.out : '';
 const totpCodeValue = resolveTotpCode({
   totp: args.totp,
   totpSecret: args['totp-secret'],
-  envTotp: process.env.TMEX_TOTP,
+  envTotp: process.env.VIBETERM_TOTP,
 });
 
 const { state, mode } = await loginSelf(baseUrl, password, totpCodeValue);

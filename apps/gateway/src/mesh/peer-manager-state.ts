@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import type { DirectAttemptRecord } from './peer-direct-attempt';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';

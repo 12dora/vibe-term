@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
 import { createFileRoot } from '../db/file-roots';

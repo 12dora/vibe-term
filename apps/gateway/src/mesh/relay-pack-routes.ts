@@ -1,10 +1,10 @@
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import {
   RELAY_PACK_MAX_BYTES,
   kdfParamsFromWire,
   kdfParamsToWire,
   relaySeqFromWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import { decodeB64url } from '../api/route-input';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';

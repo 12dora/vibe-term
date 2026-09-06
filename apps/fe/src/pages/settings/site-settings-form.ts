@@ -4,8 +4,8 @@ import {
   type SiteSettings,
   type SiteSettingsLinkFields,
   type UpdateSiteSettingsRequest,
-} from '@tmex/shared';
-import type { ShareOriginCandidate } from '@tmex/shared/share';
+} from '@vibeterm/shared';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
 
 export interface SiteSettingsDraft {
   siteName: string;

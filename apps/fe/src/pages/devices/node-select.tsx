@@ -3,7 +3,7 @@
 
 import { useTranslation } from 'react-i18next';
 
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { type DialogNodeOption, findDialogNode, nodeUnavailableReason } from './dialog-nodes';
 
 function ReasonTag({ option }: { option: DialogNodeOption }) {

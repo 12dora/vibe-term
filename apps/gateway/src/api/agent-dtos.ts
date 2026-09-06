@@ -3,7 +3,7 @@ import type {
   AgentMessageDto,
   AgentQueuedMessageDto,
   AgentSessionDto,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import {
   AgentAwaitingConfirmationError,
   AgentConfirmationAlreadyDecidedError,

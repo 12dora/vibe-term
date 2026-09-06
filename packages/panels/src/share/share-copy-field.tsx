@@ -1,10 +1,10 @@
 // 只读文本 + 复制按钮：链接与密码共用。复制走 `writeTextToClipboard`（Clipboard API 失败
 // 时回退 execCommand），成败都给 toast，不静默。
 
-import { writeTextToClipboard } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { toast } from '@tmex/ui/toast';
+import { writeTextToClipboard } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { toast } from '@vibeterm/ui/toast';
 import { Copy } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

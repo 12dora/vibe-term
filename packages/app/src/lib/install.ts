@@ -7,7 +7,7 @@ import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
 import { type InstallLayout, type PackageLayout, currentRuntimePaths } from './install-layout';
 import { writeJsonFile } from './json-file';
-import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, type TmexRoleName } from './roles';
+import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, type VibeTermRoleName } from './roles';
 
 export function generateMasterKey(): string {
   return randomBytes(32).toString('base64');
@@ -18,7 +18,7 @@ export interface AppEnvInput {
   port: number;
   databasePath: string;
   masterKey: string;
-  role?: TmexRoleName;
+  role?: VibeTermRoleName;
   hubUrl?: string;
   peerPort?: number;
   hubPublicUrl?: string;
@@ -54,20 +54,20 @@ export function applyHubModeEnvKeys(
   }
 ): Record<string, string> {
   const next = { ...env };
-  if (patch.roles !== undefined) next.TMEX_ROLES = patch.roles;
-  if (patch.mode !== undefined) next.TMEX_HUB_MODE = patch.mode;
-  if (patch.publicUrl !== undefined) next.TMEX_HUB_PUBLIC_URL = patch.publicUrl;
-  if (patch.priority !== undefined) next.TMEX_HUB_PRIORITY = String(patch.priority);
-  if (patch.writerEpoch !== undefined) next.TMEX_HUB_WRITER_EPOCH = String(patch.writerEpoch);
+  if (patch.roles !== undefined) next.VIBETERM_ROLES = patch.roles;
+  if (patch.mode !== undefined) next.VIBETERM_HUB_MODE = patch.mode;
+  if (patch.publicUrl !== undefined) next.VIBETERM_HUB_PUBLIC_URL = patch.publicUrl;
+  if (patch.priority !== undefined) next.VIBETERM_HUB_PRIORITY = String(patch.priority);
+  if (patch.writerEpoch !== undefined) next.VIBETERM_HUB_WRITER_EPOCH = String(patch.writerEpoch);
   if (patch.hubPeers !== undefined) {
-    next.TMEX_HUB_PEERS =
+    next.VIBETERM_HUB_PEERS =
       typeof patch.hubPeers === 'string' ? patch.hubPeers : patch.hubPeers.join(',');
   }
   return next;
 }
 
 export function hubEnvDefaults(input?: {
-  role?: TmexRoleName;
+  role?: VibeTermRoleName;
   hubUrl?: string;
   peerPort?: number;
   hubPublicUrl?: string;
@@ -75,11 +75,11 @@ export function hubEnvDefaults(input?: {
 }): Record<string, string> {
   const role = input?.role ?? 'standalone';
   return {
-    TMEX_ROLES: role,
-    TMEX_HUB_URL: input?.hubUrl ?? '',
-    TMEX_PEER_PORT: String(input?.peerPort ?? DEFAULT_PEER_PORT),
-    TMEX_HUB_PUBLIC_URL: input?.hubPublicUrl ?? '',
-    TMEX_STUN_SERVERS: input?.stunServers ?? DEFAULT_STUN_SERVERS,
+    VIBETERM_ROLES: role,
+    VIBETERM_HUB_URL: input?.hubUrl ?? '',
+    VIBETERM_PEER_PORT: String(input?.peerPort ?? DEFAULT_PEER_PORT),
+    VIBETERM_HUB_PUBLIC_URL: input?.hubPublicUrl ?? '',
+    VIBETERM_STUN_SERVERS: input?.stunServers ?? DEFAULT_STUN_SERVERS,
   };
 }
 
@@ -89,27 +89,27 @@ export function generateRelayAdminToken(): string {
 
 /** 只有 relay / relay,node 才写中继键，避免给其它角色的 app.env 塞无用项。 */
 export function relayEnvDefaults(input?: {
-  role?: TmexRoleName;
+  role?: VibeTermRoleName;
   relayPublicUrl?: string;
   relayAdminToken?: string;
 }): Record<string, string> {
   if (input?.role !== 'relay' && input?.role !== 'relay,node') return {};
   return {
-    TMEX_RELAY_PUBLIC_URL: input.relayPublicUrl ?? '',
-    TMEX_RELAY_ADMIN_TOKEN: input.relayAdminToken || generateRelayAdminToken(),
+    VIBETERM_RELAY_PUBLIC_URL: input.relayPublicUrl ?? '',
+    VIBETERM_RELAY_ADMIN_TOKEN: input.relayAdminToken || generateRelayAdminToken(),
   };
 }
 
 export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
   return {
     NODE_ENV: 'production',
-    TMEX_BIND_HOST: input.host,
+    VIBETERM_BIND_HOST: input.host,
     GATEWAY_PORT: String(input.port),
     DATABASE_URL: input.databasePath,
-    TMEX_MASTER_KEY: input.masterKey,
-    TMEX_BASE_URL: formatHttpEndpoint(input.host, input.port),
-    TMEX_SITE_NAME: 'tmex',
-    TMEX_DIRECT_ENABLED: 'true',
+    VIBETERM_MASTER_KEY: input.masterKey,
+    VIBETERM_BASE_URL: formatHttpEndpoint(input.host, input.port),
+    VIBETERM_SITE_NAME: 'tmex',
+    VIBETERM_DIRECT_ENABLED: 'true',
     ...hubEnvDefaults(input),
     ...relayEnvDefaults(input),
   };
@@ -182,10 +182,10 @@ export function buildRunScriptContent(installDir: string, bunPath: string): stri
     'fi',
     pathExport,
     '',
-    `export TMEX_INSTALL_DIR=${quotePosixShellArg(installDir)}`,
-    `export TMEX_FE_DIST_DIR=${quotePosixShellArg(current.feDir)}`,
-    `export TMEX_MIGRATIONS_DIR=${quotePosixShellArg(current.drizzleDir)}`,
-    `export TMEX_NATIVE_DIR=${quotePosixShellArg(current.nativeDir)}`,
+    `export VIBETERM_INSTALL_DIR=${quotePosixShellArg(installDir)}`,
+    `export VIBETERM_FE_DIST_DIR=${quotePosixShellArg(current.feDir)}`,
+    `export VIBETERM_MIGRATIONS_DIR=${quotePosixShellArg(current.drizzleDir)}`,
+    `export VIBETERM_NATIVE_DIR=${quotePosixShellArg(current.nativeDir)}`,
     '',
     'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"',
     `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(current.runtimeServerPath)}`,

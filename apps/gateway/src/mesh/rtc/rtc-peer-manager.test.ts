@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 // 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
-const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
-import { wsBorsh } from '@tmex/shared';
-import { encodeBase64url, normalizeFingerprint } from '@tmex/shared/auth';
-import { LinkMux } from '@tmex/shared/link';
+const describeRtc = process.env.VIBETERM_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
+import { wsBorsh } from '@vibeterm/shared';
+import { encodeBase64url, normalizeFingerprint } from '@vibeterm/shared/auth';
+import { LinkMux } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { createGatewaySession } from '../../ws/test-helpers';
@@ -281,7 +281,7 @@ describeRtc('RtcPeerManager', () => {
 
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"ping"}');
@@ -321,7 +321,7 @@ describeRtc('RtcPeerManager', () => {
     });
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new Uint8Array([1]));
@@ -746,8 +746,8 @@ describeRtc('RtcPeerManager', () => {
     const { left, right, a, b } = setup();
     const lines: string[] = [];
     const orig = console.log;
-    const prevLevel = process.env.TMEX_LOG_LEVEL;
-    process.env.TMEX_LOG_LEVEL = 'debug';
+    const prevLevel = process.env.VIBETERM_LOG_LEVEL;
+    process.env.VIBETERM_LOG_LEVEL = 'debug';
     console.log = (...args: unknown[]) => {
       lines.push(args.map(String).join(' '));
     };
@@ -756,8 +756,8 @@ describeRtc('RtcPeerManager', () => {
       await Promise.all([left.connectToPeer(b.nodeId, sigA), right.connectToPeer(a.nodeId, sigB)]);
     } finally {
       console.log = orig;
-      if (prevLevel === undefined) delete process.env.TMEX_LOG_LEVEL;
-      else process.env.TMEX_LOG_LEVEL = prevLevel;
+      if (prevLevel === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+      else process.env.VIBETERM_LOG_LEVEL = prevLevel;
     }
     const rtc = lines.filter((line) => line.includes('[mesh][rtc]'));
     expect(rtc.some((line) => line.includes('dial start'))).toBe(true);

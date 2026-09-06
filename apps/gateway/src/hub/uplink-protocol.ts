@@ -38,4 +38,4 @@ export {
   type RtcSignalFrom,
   type RtcSignalMessage,
   type UplinkCtlType,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';

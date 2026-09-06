@@ -4,7 +4,7 @@ import type {
   TmuxNotificationEventData,
   TmuxPane,
   TmuxWindow,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 interface ResolvePaneContextOptions {
   deviceId: string;

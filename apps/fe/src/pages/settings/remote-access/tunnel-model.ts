@@ -1,8 +1,8 @@
 // 远程访问（Cloudflare Tunnel）的纯推导：状态徽标、向导步进、主机名校验、错误与进度文案键。
 // 全部与 React 无关，便于脱离 DOM 直接测。
 
-import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import { errorMessage } from '@tmex/shared';
+import { TunnelApiError } from '@vibeterm/api-client/local/tunnel-api';
+import { errorMessage } from '@vibeterm/shared';
 import type {
   LocalAuthStatus,
   TunnelActionRequest,
@@ -10,7 +10,7 @@ import type {
   TunnelErrorCode,
   TunnelMode,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import {
   accessEffective,
   accessStepState,

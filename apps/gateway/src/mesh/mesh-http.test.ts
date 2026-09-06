@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-routes.test';
 import {
@@ -15,7 +15,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
-import { X_TMEX_MESH_PEER } from './peer-request-marker';
+import { X_VIBETERM_MESH_PEER } from './peer-request-marker';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 
 const LOGIN_PUBLIC = [
@@ -580,7 +580,7 @@ describe('mesh-http', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [X_TMEX_MESH_PEER]: 'entry-peer',
+          [X_VIBETERM_MESH_PEER]: 'entry-peer',
         },
         body: JSON.stringify({ deviceId: 'missing', paneId: '%1' }),
       });

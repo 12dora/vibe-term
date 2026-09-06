@@ -437,7 +437,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 语义：
 
 - 客户端在主题切换、设备连接/重连后发送，gateway 据此更新会话所有 window 的 `window-style` 及 `after-new-window` hook。
-- gateway 按 `TMEX_TMUX_WINDOW_STYLE` 的白名单规则校验 style，非法值忽略；该配置为 `off` 时忽略本消息。
+- gateway 按 `VIBETERM_TMUX_WINDOW_STYLE` 的白名单规则校验 style，非法值忽略；该配置为 `off` 时忽略本消息。
 
 ### TMUX_REORDER_WINDOWS（0x020B）
 

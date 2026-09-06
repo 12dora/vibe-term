@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { sessionStateStore } from './borsh/session-state';
 import type { Carrier, CarrierSendResult } from './carrier';
 import { GatewaySession } from './gateway-session';

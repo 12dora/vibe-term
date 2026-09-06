@@ -1,4 +1,4 @@
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 
 /** 通知渠道抽象：EventNotifier 节流后遍历分发给所有已注册渠道，各渠道自行决定是否发送。 */
 export interface NotificationChannel {

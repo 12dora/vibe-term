@@ -9,7 +9,7 @@ import type {
   HubEndpointInfo,
   HubMode,
   MeshHubEndpoint,
-} from '@tmex/api-client/auth/index';
+} from '@vibeterm/api-client/auth/index';
 import { useTranslation } from 'react-i18next';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;

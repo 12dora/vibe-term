@@ -1,9 +1,9 @@
 // AGENT_EVENT 分发：按 eventType 查表调用处理函数，每个处理函数只做一件事的状态迁移。
 
-import type { NotificationSink, TranslateFn } from '@tmex/notifications';
-import type { AgentEventPayloadMap, AgentEventType } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import type { BorshMessage } from '@tmex/ws-client';
+import type { NotificationSink, TranslateFn } from '@vibeterm/notifications';
+import type { AgentEventPayloadMap, AgentEventType } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import type { BorshMessage } from '@vibeterm/ws-client';
 import type { AgentDeltaBuffer } from './agent-delta-buffer';
 import type { AgentHistorySync } from './agent-history-sync';
 import type { AgentDataGetState, AgentDataSetState } from './agent-state';

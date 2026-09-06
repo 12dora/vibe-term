@@ -6,15 +6,15 @@
 //
 // 状态放在可订阅的控制器里而不是组件 state：锁与错误处理可以脱离 DOM 直接测。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { runTunnelAction } from '@tmex/api-client/local/tunnel-api';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { runTunnelAction } from '@vibeterm/api-client/local/tunnel-api';
 import type {
   TunnelActionRequest,
   TunnelActionResponse,
   TunnelErrorCode,
   TunnelJobStatus,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { type TunnelError, toTunnelError } from './tunnel-model';
 

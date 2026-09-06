@@ -1,8 +1,8 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { AgentEventPayloadMap } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { AgentEventPayloadMap } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { ModelMessage } from 'ai';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';

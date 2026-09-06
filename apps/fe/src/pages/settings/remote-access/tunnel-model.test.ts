@@ -1,8 +1,8 @@
 // 远程访问的纯推导：状态徽标、向导步进、主机名校验、轮询节奏与错误 / 进度文案键。
 
 import { describe, expect, test } from 'bun:test';
-import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
+import { TunnelApiError } from '@vibeterm/api-client/local/tunnel-api';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
@@ -1026,7 +1026,7 @@ describe('isValidTunnelName', () => {
     expect(isValidTunnelName('a/b')).toBe(false);
     expect(isValidTunnelName('a\\b')).toBe(false);
     expect(isValidTunnelName('a.b')).toBe(false);
-    expect(isValidTunnelName('Tmex')).toBe(false);
+    expect(isValidTunnelName('VibeTerm')).toBe(false);
     expect(isValidTunnelName('')).toBe(false);
     expect(isValidTunnelName('-tmex')).toBe(false);
     expect(isValidTunnelName('_tmex')).toBe(false);

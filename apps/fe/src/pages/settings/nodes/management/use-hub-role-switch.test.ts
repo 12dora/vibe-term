@@ -3,10 +3,10 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import type { HubRoleRequest } from '@tmex/shared';
-import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
-import { createMemoryStorage } from '@tmex/stores/test-utils';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import type { HubRoleRequest } from '@vibeterm/shared';
+import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
+import { createMemoryStorage } from '@vibeterm/stores/test-utils';
 import {
   type AdmitHubOutcome,
   HUB_ROLE_HUBS_TIMEOUT_MS,

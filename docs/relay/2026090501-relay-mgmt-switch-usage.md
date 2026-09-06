@@ -55,5 +55,5 @@
 
 ## 注意事项
 
-- 临时实例的 `test.env.local` 由 setup 写入且会覆盖 shell 环境变量（`loadEnv` override=true）；多实例并行时要从文件里删掉 `TMEX_ROLES` / `TMEX_RELAY_PUBLIC_URL`，否则第二个实例的 `relayHost` 绑错导致 `RELAY_BAD_PROOF`。测完必须删除该文件。
+- 临时实例的 `test.env.local` 由 setup 写入且会覆盖 shell 环境变量（`loadEnv` override=true）；多实例并行时要从文件里删掉 `VIBETERM_ROLES` / `VIBETERM_RELAY_PUBLIC_URL`，否则第二个实例的 `relayHost` 绑错导致 `RELAY_BAD_PROOF`。测完必须删除该文件。
 - 追加中继时中继返回的 `RELAY_*` 401 由 `session-interceptor` 豁免，不再当作本机会话失效。

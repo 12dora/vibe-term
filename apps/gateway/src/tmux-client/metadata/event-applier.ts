@@ -1,4 +1,4 @@
-import { collectLayoutLeaves, layoutLeafPaneId, parseWindowLayout, wsBorsh } from '@tmex/shared';
+import { collectLayoutLeaves, layoutLeafPaneId, parseWindowLayout, wsBorsh } from '@vibeterm/shared';
 
 import type { TmuxSourceMetadataEvent } from '../events';
 import { PARKING_WINDOW_NAME } from '../external/constants';

@@ -1,7 +1,7 @@
 // 用法: bun apps/gateway/bench/envelope-view.bench.ts
 // 对比 mesh 中继热路径上 decodeEnvelope（逐字节 copy）vs decodeEnvelopeView（常数时间 header）。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 const PAYLOAD = 32 * 1024;
 const ITERATIONS = 2_000;

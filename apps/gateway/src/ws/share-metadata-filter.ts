@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { SharePaneOracle, ShareScope } from './share-scope';
 
 export interface ShareFilterableSnapshot {

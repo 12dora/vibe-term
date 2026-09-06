@@ -1,4 +1,4 @@
-import { decodeCertificate } from '@tmex/shared/auth';
+import { decodeCertificate } from '@vibeterm/shared/auth';
 import type { UserStore } from '../auth/user-store';
 import type { RtcSignalMessage } from './mesh-deps';
 import {

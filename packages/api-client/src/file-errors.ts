@@ -1,6 +1,6 @@
 // 文件 API 的错误类型与响应解析，供 REST 端点与两段式传输共用。
 
-import type { FileErrorCode } from '@tmex/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 
 export class FileApiError extends Error {
   status: number;

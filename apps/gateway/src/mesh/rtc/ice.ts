@@ -5,7 +5,7 @@ import {
   randomBytes,
   signEd25519,
   verifyEd25519,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { type RtcPortRange, config } from '../../config';
 import type { RtcSignalMessage } from '../mesh-deps';
 import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';

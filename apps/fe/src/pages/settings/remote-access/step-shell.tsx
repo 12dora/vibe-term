@@ -1,6 +1,6 @@
 // 远程访问向导的步骤外壳与几个小展示件。
 
-import { Badge } from '@tmex/ui/badge';
+import { Badge } from '@vibeterm/ui/badge';
 import { Check, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';

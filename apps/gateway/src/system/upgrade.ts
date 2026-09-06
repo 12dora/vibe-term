@@ -11,10 +11,10 @@ import {
 } from 'node:fs';
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
-import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
-import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@tmex/shared';
-import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
-import { partPathOf, resumableSink } from '@tmex/transfer/node';
+import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@vibeterm/shared';
+import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@vibeterm/shared';
+import { processCommandLine, processStartIdentity } from '@vibeterm/shared/process';
+import { partPathOf, resumableSink } from '@vibeterm/transfer/node';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import {
@@ -64,9 +64,9 @@ function createTxnId(): string {
   return `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 10)}`;
 }
 
-/** Prefer TMEX_INSTALL_DIR (run.sh) so a current/resources/fe-dist layout still resolves. */
+/** Prefer VIBETERM_INSTALL_DIR (run.sh) so a current/resources/fe-dist layout still resolves. */
 export function resolveUpgradeInstallDir(install: InstallInfo): string | null {
-  const fromEnv = process.env.TMEX_INSTALL_DIR;
+  const fromEnv = process.env.VIBETERM_INSTALL_DIR;
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   const dir = install.installDir;
   if (!dir) return null;

@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
 # tmex hub/node Docker e2e 驱动。用法：
-#   TMEX_TARBALL=/path/to/tmex-cli-1.0.2.tgz scripts/hub-e2e/run.sh
+#   VIBETERM_TARBALL=/path/to/tmex-cli-1.0.2.tgz scripts/hub-e2e/run.sh
 #   scripts/hub-e2e/run.sh --image-tar tmex-e2e.tar
 #   scripts/hub-e2e/run.sh down
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
-export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
+export VIBETERM_REPO_ROOT="${VIBETERM_REPO_ROOT:-${REPO_ROOT}}"
 COMPOSE=(docker compose -p tmex-e2e -f "${ROOT}/docker-compose.yml")
 IMAGE_NAME="tmex-e2e:latest"
 PLATFORM="linux/amd64"
-USER_NAME="${TMEX_E2E_USER:-alice}"
-PASSWORD="${TMEX_E2E_PASSWORD:-TmexE2e!alice-2026}"
+USER_NAME="${VIBETERM_E2E_USER:-alice}"
+PASSWORD="${VIBETERM_E2E_PASSWORD:-VibeTermE2e!alice-2026}"
 OUT="${ROOT}/out"
 FAILS=0
 declare -a REPORT_ROWS=()
@@ -35,7 +35,7 @@ skip() {
 usage() {
   cat <<'EOF'
 Usage:
-  TMEX_TARBALL=<tmex-cli.tgz> scripts/hub-e2e/run.sh
+  VIBETERM_TARBALL=<tmex-cli.tgz> scripts/hub-e2e/run.sh
   scripts/hub-e2e/run.sh --image-tar <tmex-e2e.tar>
   scripts/hub-e2e/run.sh down
 EOF
@@ -103,9 +103,9 @@ cli() {
   # 认证命令必须直接跑 Bun runtime/cli-auth.js。
   # node dist/cli-node.js 会再 spawn bun，但在本容器里子进程 stdout 被吞掉，
   # enroll 的 join token 因此写不进日志。
-  local -a env_flags=(-e "TMEX_PASSWORD=${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt)
-  if [[ -n "${TMEX_PASSWORD_OLD:-}" ]]; then
-    env_flags+=(-e "TMEX_PASSWORD_OLD=${TMEX_PASSWORD_OLD}")
+  local -a env_flags=(-e "VIBETERM_PASSWORD=${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt)
+  if [[ -n "${VIBETERM_PASSWORD_OLD:-}" ]]; then
+    env_flags+=(-e "VIBETERM_PASSWORD_OLD=${VIBETERM_PASSWORD_OLD}")
   fi
   docker exec "${env_flags[@]}" \
     "tmex-e2e-${svc}" \
@@ -117,8 +117,8 @@ driver() {
   local name="$1"
   local bundled="${ROOT}/driver-dist/${name%.ts}.js"
   local -a env_flags=(-e NODE_EXTRA_CA_CERTS=/ca/ca.crt)
-  if [[ -n "${TMEX_TOTP:-}" ]]; then
-    env_flags+=(-e "TMEX_TOTP=${TMEX_TOTP}")
+  if [[ -n "${VIBETERM_TOTP:-}" ]]; then
+    env_flags+=(-e "VIBETERM_TOTP=${VIBETERM_TOTP}")
   fi
   if [[ -f "${bundled}" ]]; then
     docker exec -w /workspace "${env_flags[@]}" \
@@ -158,7 +158,7 @@ enroll_and_join() {
   local log_file="${OUT}/enroll-${node_name}.log"
   : > "${log_file}"
   kill_enroll
-  docker exec -e TMEX_PASSWORD="${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt tmex-e2e-hub \
+  docker exec -e VIBETERM_PASSWORD="${PASSWORD}" -e NODE_EXTRA_CA_CERTS=/ca/ca.crt tmex-e2e-hub \
     stdbuf -oL -eL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex \
     > "${log_file}" 2>&1 &
   local enroll_pid=$!
@@ -193,10 +193,10 @@ enroll_and_join() {
     join_code=\$?
     echo JOIN_EXIT=\$join_code
     cp /opt/tmex/app.env /var/lib/tmex/app.env
-    grep -E '^TMEX_HUB_URL=' /var/lib/tmex/app.env || true
-    grep -E '^TMEX_ROLES=' /var/lib/tmex/app.env || true
-    grep -q 'TMEX_HUB_URL=https://hub.tmex.test' /var/lib/tmex/app.env || exit 20
-    grep -q 'TMEX_ROLES=node' /var/lib/tmex/app.env || exit 21
+    grep -E '^VIBETERM_HUB_URL=' /var/lib/tmex/app.env || true
+    grep -E '^VIBETERM_ROLES=' /var/lib/tmex/app.env || true
+    grep -q 'VIBETERM_HUB_URL=https://hub.tmex.test' /var/lib/tmex/app.env || exit 20
+    grep -q 'VIBETERM_ROLES=node' /var/lib/tmex/app.env || exit 21
     exit 0
   " | tee "${OUT}/join-${node_name}.log"
   local join_ok=${PIPESTATUS[0]}
@@ -204,7 +204,7 @@ enroll_and_join() {
   if [[ "${join_ok}" -ne 0 ]]; then
     kill "${enroll_pid}" 2>/dev/null || true
     kill_enroll
-    echo "hub join did not persist TMEX_HUB_URL/TMEX_ROLES for ${node_name}" >&2
+    echo "hub join did not persist VIBETERM_HUB_URL/VIBETERM_ROLES for ${node_name}" >&2
     return 1
   fi
 
@@ -227,7 +227,7 @@ write_report() {
 
 - date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 - image: ${IMAGE_NAME}
-- tarball: ${TMEX_TARBALL:-n/a}
+- tarball: ${VIBETERM_TARBALL:-n/a}
 
 | scenario | result | evidence |
 |---|---|---|
@@ -245,18 +245,18 @@ trap cleanup_on_exit EXIT
 if [[ -n "${IMAGE_TAR}" ]]; then
   log "loading image tar ${IMAGE_TAR}"
   docker load -i "${IMAGE_TAR}"
-elif [[ "${TMEX_E2E_SKIP_BUILD:-}" == "1" ]] && docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-  log "skipping build (TMEX_E2E_SKIP_BUILD=1, ${IMAGE_NAME} exists)"
+elif [[ "${VIBETERM_E2E_SKIP_BUILD:-}" == "1" ]] && docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  log "skipping build (VIBETERM_E2E_SKIP_BUILD=1, ${IMAGE_NAME} exists)"
 else
-  if [[ -z "${TMEX_TARBALL:-}" ]]; then
-    echo "TMEX_TARBALL is required unless --image-tar is given" >&2
+  if [[ -z "${VIBETERM_TARBALL:-}" ]]; then
+    echo "VIBETERM_TARBALL is required unless --image-tar is given" >&2
     exit 2
   fi
-  if [[ ! -f "${TMEX_TARBALL}" ]]; then
-    echo "tarball not found: ${TMEX_TARBALL}" >&2
+  if [[ ! -f "${VIBETERM_TARBALL}" ]]; then
+    echo "tarball not found: ${VIBETERM_TARBALL}" >&2
     exit 2
   fi
-  cp "${TMEX_TARBALL}" "${ROOT}/build/tmex-cli.tgz"
+  cp "${VIBETERM_TARBALL}" "${ROOT}/build/tmex-cli.tgz"
   log "building ${IMAGE_NAME} (--platform ${PLATFORM})"
   docker build --platform "${PLATFORM}" -t "${IMAGE_NAME}" -f "${ROOT}/Dockerfile" "${ROOT}"
 fi
@@ -415,7 +415,7 @@ else
     > "${OUT}/mesh-nodes-hub-reach.json" || true
 fi
 
-MARKER1="TMEX_E2E_MARKER_001"
+MARKER1="VIBETERM_E2E_MARKER_001"
 set +e
 driver terminal.ts --base-url https://hub.tmex.test --cookie-file /out/cookies-hub.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --pane-id "${PANE_B}" --marker "${MARKER1}" --timeout 25000
@@ -483,7 +483,7 @@ else
     > "${OUT}/mesh-nodes-entry-lan.json" || true
 fi
 
-MARKER2="TMEX_E2E_MARKER_002"
+MARKER2="VIBETERM_E2E_MARKER_002"
 set +e
 driver terminal.ts --base-url https://entry.tmex.test --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --pane-id "${PANE_B}" --marker "${MARKER2}"
@@ -525,7 +525,7 @@ fi
 log "stopping hub"
 docker stop tmex-e2e-hub
 
-MARKER3="TMEX_E2E_MARKER_003"
+MARKER3="VIBETERM_E2E_MARKER_003"
 set +e
 driver terminal.ts --base-url https://entry.tmex.test --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --pane-id "${PANE_B}" --marker "${MARKER3}"
@@ -665,7 +665,7 @@ fi
 NEW_PASSWORD="${PASSWORD}-rot"
 set +e
 passwd_out="$(
-  TMEX_PASSWORD_OLD="${PASSWORD}" PASSWORD="${NEW_PASSWORD}" \
+  VIBETERM_PASSWORD_OLD="${PASSWORD}" PASSWORD="${NEW_PASSWORD}" \
     cli hub hub user passwd "${USER_NAME}" 2>&1
 )"
 passwd_rc=$?

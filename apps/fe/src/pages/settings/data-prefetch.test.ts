@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { QueryClient } from '@tanstack/react-query';
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 import {
   PREFETCHABLE_TABS,
   SETTINGS_STALE_MS,

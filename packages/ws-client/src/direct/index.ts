@@ -1,8 +1,8 @@
 // 直连（WebRTC DataChannel）栈的出口。
 //
-// 刻意**不**从 `@tmex/ws-client` 的主 barrel 再导出：直连只在浏览器为「远端 node」建连时
+// 刻意**不**从 `@vibeterm/ws-client` 的主 barrel 再导出：直连只在浏览器为「远端 node」建连时
 // 才用得上，主 barrel 一旦 re-export 就把整棵 RTC 栈钉死在首屏入口 chunk 里。宿主按需
-// `await import('@tmex/ws-client/direct')`，诊断/类型这类轻量契约仍走 `./direct/types`。
+// `await import('@vibeterm/ws-client/direct')`，诊断/类型这类轻量契约仍走 `./direct/types`。
 
 export {
   DirectCarrierController,

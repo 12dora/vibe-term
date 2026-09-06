@@ -1,4 +1,4 @@
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from '../connection-types';
 import type { DeviceSessionRuntimeListener } from '../device-session-runtime';

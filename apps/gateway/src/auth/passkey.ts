@@ -11,15 +11,15 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import type { AddPasskeyPayload, Delegation, VerifyPasskeyAssertion } from '@tmex/shared/auth';
-import type { VerifyDelegationPasskey } from '@tmex/shared/auth';
+import type { AddPasskeyPayload, Delegation, VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
+import type { VerifyDelegationPasskey } from '@vibeterm/shared/auth';
 import {
   decodeBase64url,
   decodePasskeyAssertion,
   encodeBase64url,
   encodePasskeyAssertion,
   verifyDelegationTimes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { UserStore } from './user-store';
 
 export type CreateRegistrationOptionsInput = {

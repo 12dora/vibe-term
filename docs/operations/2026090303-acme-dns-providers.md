@@ -79,7 +79,7 @@ cloudflareToken?: string   // 旧字段，等价于 dnsProvider='cloudflare' + {
 
 1. 设置 → 节点 → HTTPS 设置：模式 **Let's Encrypt**，域名填 hub 的公开域名，验证方式 **DNS-01**，提供商 **DNSPod**，填 ID + Token；内置监听 `0.0.0.0`，端口 `9443`（`tls_config.tls_port` 默认值）。dns-01 完全不碰 80，不需要 nginx 配合。
 2. 签发成功后 `https://<域名>:9443` 即为内置监听器直出的 HTTPS 入口。
-3. 把 hub 公开地址（`TMEX_HUB_PUBLIC_URL`）改成这个带端口的地址并重启；各节点通过 hub 列表刷新到新地址。此时流量不再经反代，`TMEX_TRUST_PROXY` 应关掉。
+3. 把 hub 公开地址（`VIBETERM_HUB_PUBLIC_URL`）改成这个带端口的地址并重启；各节点通过 hub 列表刷新到新地址。此时流量不再经反代，`VIBETERM_TRUST_PROXY` 应关掉。
 4. 面板侧只拆该域名的 vhost / 证书目录，全局续期 cron 不动。
 
 **通行密钥按 origin 注册**：端口变了就是新 origin。旧地址上注册过的 passkey 在新地址不可用，需要先从局域网 / localhost 登录后在新地址补注册。

@@ -3,7 +3,7 @@
 // 这条路径不建任何隧道、不改隧道配置——用户自己用固定 IP / 端口映射 / 反向代理把 tmex 暴露出去，
 // tmex 能做的只有两件事：说清当前有没有登录门，以及在没有时把门装上。
 
-import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { SetupNotice } from '../nodes/setup/form-parts';

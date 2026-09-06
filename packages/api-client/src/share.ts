@@ -2,7 +2,7 @@
 //
 // 设置 / 日志 / 删除历史三族端点由设置页自带客户端消费，不在此文件。
 
-import type { ShareOriginCandidate, ShareRecord } from '@tmex/shared/share';
+import type { ShareOriginCandidate, ShareRecord } from '@vibeterm/shared/share';
 import { type ApiClient, toApiError } from './client';
 import { requestJson } from './json-mutation';
 

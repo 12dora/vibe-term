@@ -23,9 +23,9 @@ describe('local shell PATH cache', () => {
           exitCode: 0,
           stdout: [
             'some noisy shell output',
-            '__TMEX_SHELL_ENV_BEGIN__',
+            '__VIBETERM_SHELL_ENV_BEGIN__',
             'PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin',
-            '__TMEX_SHELL_ENV_END__',
+            '__VIBETERM_SHELL_ENV_END__',
           ].join('\n'),
           stderr: '',
         };
@@ -56,9 +56,9 @@ describe('local shell PATH cache', () => {
           return {
             exitCode: 0,
             stdout: [
-              '__TMEX_SHELL_ENV_BEGIN__',
+              '__VIBETERM_SHELL_ENV_BEGIN__',
               'PATH=/usr/bin:/bin',
-              '__TMEX_SHELL_ENV_END__',
+              '__VIBETERM_SHELL_ENV_END__',
             ].join('\n'),
             stderr: '',
           };
@@ -67,9 +67,9 @@ describe('local shell PATH cache', () => {
         return {
           exitCode: 0,
           stdout: [
-            '__TMEX_SHELL_ENV_BEGIN__',
+            '__VIBETERM_SHELL_ENV_BEGIN__',
             'PATH=/opt/homebrew/bin:/usr/bin:/bin',
-            '__TMEX_SHELL_ENV_END__',
+            '__VIBETERM_SHELL_ENV_END__',
           ].join('\n'),
           stderr: '',
         };
@@ -82,14 +82,14 @@ describe('local shell PATH cache', () => {
         '/bin/zsh',
         '-l',
         '-c',
-        "printf '__TMEX_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__TMEX_SHELL_ENV_END__\\n'",
+        "printf '__VIBETERM_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__VIBETERM_SHELL_ENV_END__\\n'",
       ],
       [
         '/bin/zsh',
         '-l',
         '-i',
         '-c',
-        "printf '__TMEX_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__TMEX_SHELL_ENV_END__\\n'",
+        "printf '__VIBETERM_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__VIBETERM_SHELL_ENV_END__\\n'",
       ],
     ]);
   });
@@ -116,9 +116,9 @@ describe('local shell PATH cache', () => {
         return {
           exitCode: 0,
           stdout: [
-            '__TMEX_SHELL_ENV_BEGIN__',
+            '__VIBETERM_SHELL_ENV_BEGIN__',
             'PATH=/opt/homebrew/bin:/usr/bin:/bin',
-            '__TMEX_SHELL_ENV_END__',
+            '__VIBETERM_SHELL_ENV_END__',
           ].join('\n'),
           stderr: '',
         };
@@ -131,7 +131,7 @@ describe('local shell PATH cache', () => {
       '/bin/zsh',
       '-l',
       '-c',
-      "printf '__TMEX_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__TMEX_SHELL_ENV_END__\\n'",
+      "printf '__VIBETERM_SHELL_ENV_BEGIN__\\n'; /usr/bin/env; printf '__VIBETERM_SHELL_ENV_END__\\n'",
     ]);
   });
 
@@ -248,22 +248,22 @@ describe('buildLocalTmuxEnv', () => {
       DATABASE_URL: '/Library/Application Support/tmex/data/tmex.db',
       GATEWAY_PORT: '9883',
       FE_PORT: '8085',
-      TMEX_MASTER_KEY: 'super-secret-key',
-      TMEX_FE_DIST_DIR: '/Library/Application Support/tmex/resources/fe-dist',
-      TMEX_MIGRATIONS_DIR: '/Library/Application Support/tmex/resources/drizzle',
-      TMEX_BIND_HOST: '0.0.0.0',
-      TMEX_TMUX_TERM_PROGRAM: 'ghostty',
+      VIBETERM_MASTER_KEY: 'super-secret-key',
+      VIBETERM_FE_DIST_DIR: '/Library/Application Support/tmex/resources/fe-dist',
+      VIBETERM_MIGRATIONS_DIR: '/Library/Application Support/tmex/resources/drizzle',
+      VIBETERM_BIND_HOST: '0.0.0.0',
+      VIBETERM_TMUX_TERM_PROGRAM: 'ghostty',
     });
 
     // tmex 注入键一个都不剩
     for (const key of Object.keys(result)) {
-      expect(key.startsWith('TMEX_')).toBe(false);
+      expect(key.startsWith('VIBETERM_')).toBe(false);
     }
     expect(result.NODE_ENV).toBeUndefined();
     expect(result.DATABASE_URL).toBeUndefined();
     expect(result.GATEWAY_PORT).toBeUndefined();
     expect(result.FE_PORT).toBeUndefined();
-    expect(result.TMEX_MASTER_KEY).toBeUndefined();
+    expect(result.VIBETERM_MASTER_KEY).toBeUndefined();
 
     // 用户终端需要的键完整保留
     expect(result).toEqual({
@@ -284,7 +284,7 @@ describe('buildLocalTmuxEnv', () => {
           Path: 'C:\\Windows\\System32',
           SystemRoot: 'C:\\Windows',
           ComSpec: 'C:\\Windows\\System32\\cmd.exe',
-          Tmex_Master_Key: 'must-not-leak',
+          VibeTerm_Master_Key: 'must-not-leak',
           node_env: 'production',
         },
         'win32'

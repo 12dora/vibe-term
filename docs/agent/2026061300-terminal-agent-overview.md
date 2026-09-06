@@ -78,7 +78,7 @@ tmex 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gate
 ## 安全与隐私
 
 - **写终端确认**：`send_input` 的 `needsApproval` 按 session writeMode 判定，默认 confirm；pane 绑定在 session 上而非工具参数，模型无法越界写其它 pane。
-- **SSRF 防护**：`fetch_url` 默认拒绝回环/链路本地/私有网段地址，重定向逐跳重新校验（最多 3 跳）；env `TMEX_AGENT_ALLOW_PRIVATE_FETCH=1` 放行。本项目内网部署无鉴权，此防护是防 agent 被诱导打内网的关键。
+- **SSRF 防护**：`fetch_url` 默认拒绝回环/链路本地/私有网段地址，重定向逐跳重新校验（最多 3 跳）；env `VIBETERM_AGENT_ALLOW_PRIVATE_FETCH=1` 放行。本项目内网部署无鉴权，此防护是防 agent 被诱导打内网的关键。
 - **隐私提示**：`read_screen` 会把终端可见内容（可能含密钥回显）发给第三方 LLM，session 切换菜单底部常驻提示文案。
 - **auto 模式中断重放风险**：进程死在"终端已写入但 step 未落库"窗口时，重启恢复会重写一遍输入。confirm 模式有确认兜底；auto 模式接受此风险（可选优化：send_input 前写 journal，未实现）。
 - **API key**：providers / 搜索 key 均加密落库，REST 只写不回显（掩码展示）。

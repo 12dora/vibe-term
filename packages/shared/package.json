@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/shared",
+  "name": "@vibeterm/shared",
   "version": "0.1.0",
   "type": "module",
   "exports": {

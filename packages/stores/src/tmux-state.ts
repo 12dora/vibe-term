@@ -1,5 +1,5 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
-import type { ConnectionState, GatewayHistoryCursor, StateFeedMode } from '@tmex/ws-client';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { ConnectionState, GatewayHistoryCursor, StateFeedMode } from '@vibeterm/ws-client';
 import type { ViewportPolicyMap } from './viewport-policy';
 
 export type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;

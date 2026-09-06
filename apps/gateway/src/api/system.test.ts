@@ -5,7 +5,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SystemInfo } from '@tmex/shared';
+import type { SystemInfo } from '@vibeterm/shared';
 import { requestDispatchContext } from '../mesh/types';
 import * as infoPublic from '../system/info-public';
 import { uninstallController } from '../system/uninstall';
@@ -235,12 +235,12 @@ describe('PUT /api/system/upgrade/package', () => {
 
 describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
   const installDirs: string[] = [];
-  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
 
   afterEach(() => {
     upgradeController.resetForTests();
-    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
-    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
     for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
@@ -248,7 +248,7 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmex-api-resume-'));
     installDirs.push(dir);
     writeFileSync(join(dir, 'install-meta.json'), '{}');
-    process.env.TMEX_INSTALL_DIR = dir;
+    process.env.VIBETERM_INSTALL_DIR = dir;
     return dir;
   }
 
@@ -624,8 +624,8 @@ describe('DELETE /api/system/upgrade/package', () => {
     const { join } = await import('node:path');
     const installDir = mkdtempSync(join(tmpdir(), 'tmex-del-pkg-'));
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
-    const prevInstall = process.env.TMEX_INSTALL_DIR;
-    process.env.TMEX_INSTALL_DIR = installDir;
+    const prevInstall = process.env.VIBETERM_INSTALL_DIR;
+    process.env.VIBETERM_INSTALL_DIR = installDir;
     try {
       const bytes = new Uint8Array([1, 2, 3, 4]);
       const hex = sha256Hex(bytes);
@@ -647,8 +647,8 @@ describe('DELETE /api/system/upgrade/package', () => {
       expect(existsSync(sidecar)).toBe(false);
     } finally {
       infoSpy.mockRestore();
-      if (prevInstall === undefined) delete process.env.TMEX_INSTALL_DIR;
-      else process.env.TMEX_INSTALL_DIR = prevInstall;
+      if (prevInstall === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+      else process.env.VIBETERM_INSTALL_DIR = prevInstall;
       rmSync(installDir, { recursive: true, force: true });
     }
   });
@@ -778,7 +778,7 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   const version = '1.1.39';
   const hex = 'ab'.repeat(32);
   const tempDirs: string[] = [];
-  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
 
   beforeAll(() => {
     useTestSigningKeys();
@@ -789,8 +789,8 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   });
 
   afterEach(() => {
-    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
-    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
     for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     upgradeController.resetForTests();
   });
@@ -817,7 +817,7 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   test('a signed manifest is accepted and reports the authoritative digest', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'tmex-api-manifest-'));
     tempDirs.push(dir);
-    process.env.TMEX_INSTALL_DIR = dir;
+    process.env.VIBETERM_INSTALL_DIR = dir;
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
     try {
       const res = await post({ version, ...signedSumsFor(version, hex) });

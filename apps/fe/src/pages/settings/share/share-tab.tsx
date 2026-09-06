@@ -2,9 +2,9 @@
 // 数据与写操作在 use-share-tab.ts；回放窗按需加载（终端渲染器不该跟着这个标签一起下载）。
 
 import { lazyChunk } from '@/lazy-chunk';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Reveal } from '@tmex/ui/motion';
-import { Skeleton } from '@tmex/ui/skeleton';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';

@@ -1,9 +1,9 @@
 // 元数据密钥换代的欠账：记账 / 覆盖 / 重发 / 重签。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { encodeBase64url } from '@tmex/shared/auth';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { RelayFlowDeps } from './relay-enroll';
 import {
   clearPendingMetaKeysForTest,

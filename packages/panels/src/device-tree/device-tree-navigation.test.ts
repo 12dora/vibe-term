@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxWindow } from '@tmex/shared';
-import type { HostServices } from '@tmex/stores';
+import type { TmuxWindow } from '@vibeterm/shared';
+import type { HostServices } from '@vibeterm/stores';
 import {
   DEVICE_ROUTE_PATH,
   PANE_ROUTE_PATH,

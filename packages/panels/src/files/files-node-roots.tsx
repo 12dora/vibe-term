@@ -9,11 +9,11 @@ import {
   fetchFileRoots,
   fetchLlmProviders,
   reorderFileRoots,
-} from '@tmex/api-client';
-import type { FileEntryDto, FileRootDto, SystemInfo } from '@tmex/shared';
-import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+} from '@vibeterm/api-client';
+import type { FileEntryDto, FileRootDto, SystemInfo } from '@vibeterm/shared';
+import { useFileTreeStore, useRuntime, useTmuxStore, useUIStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { Loader2, TriangleAlert } from 'lucide-react';
 import { type CSSProperties, memo, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -5,10 +5,10 @@ import {
   listPendingMetaKeys,
   relayPackDebt,
 } from '@/node/relay-meta-key-pending';
-import { ApiClient } from '@tmex/api-client';
-import { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayPackUpload } from '@tmex/api-client/relay/tenant-api';
-import { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import { ApiClient } from '@vibeterm/api-client';
+import { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayPackUpload } from '@vibeterm/api-client/relay/tenant-api';
+import { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   bytesEqual,
   computeRecordHash,
@@ -25,9 +25,9 @@ import {
   encryptTotpSecret,
   rootKeyFromSeed,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
-import { totpCode } from '@tmex/shared/auth';
-import { openRelayPack } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { totpCode } from '@vibeterm/shared/auth';
+import { openRelayPack } from '@vibeterm/shared/relay';
 import {
   beginTotpSetup,
   changePassword,

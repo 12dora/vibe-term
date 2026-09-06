@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 
 import { PANE_SCREEN_INFO_FORMAT } from '../capture-history';
 import type { TmuxConnectionOptions } from '../connection-types';

@@ -4,10 +4,10 @@
 // 其余（池演进、冷却计时）都用生产代码本体。
 
 import { afterEach, describe, expect, jest, test } from 'bun:test';
-import { createAppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
-import { type GatewayTransportCommand, createSharedGatewayTransport } from '@tmex/ws-client';
-import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
+import { createAppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import { type GatewayTransportCommand, createSharedGatewayTransport } from '@vibeterm/ws-client';
+import type { PaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import {
   type KeepAlivePool,
   createKeepAliveColdScheduler,

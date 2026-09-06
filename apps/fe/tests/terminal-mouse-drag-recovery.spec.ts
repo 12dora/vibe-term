@@ -51,7 +51,7 @@ function pressEventCount(logPath: string): number {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -72,7 +72,7 @@ async function waitFeButtonTracking(page: Page): Promise<void> {
     .poll(
       () =>
         page.evaluate(() => {
-          const t = (window as any).__tmexE2eTerminal;
+          const t = (window as any).__vibetermE2eTerminal;
           return t?.exportModeSnapshot?.()?.mouseButton ?? false;
         }),
       { timeout: 15_000 }

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import type { AgentSyncEventPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { AgentSyncEventPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { appendAgentMessage, createAgentConfirmation, createAgentSession } from '../db/agent';
 import { getDb as getOrmDb } from '../db/client';

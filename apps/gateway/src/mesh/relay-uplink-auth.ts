@@ -3,12 +3,12 @@ import {
   encodeBase64url,
   signEd25519,
   uplinkAuthMessage,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   RELAY_PROTO_VERSION,
   type RelayCtlMessage,
   type RelayMemberProof,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { selfAdmitMemberProof } from './relay-member';
 import type { RelaySecrets } from './relay-secrets';

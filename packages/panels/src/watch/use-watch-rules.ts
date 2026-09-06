@@ -6,11 +6,11 @@ import {
   updateWatchRule,
   watchRuleStateQueryKey,
   watchRulesQueryKey,
-} from '@tmex/api-client';
-import { errorMessage } from '@tmex/shared';
-import type { WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { toast } from '@tmex/ui/toast';
+} from '@vibeterm/api-client';
+import { errorMessage } from '@vibeterm/shared';
+import type { WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { toast } from '@vibeterm/ui/toast';
 import { useTranslation } from 'react-i18next';
 
 export type WatchQueryStatus = 'loading' | 'error' | 'ready';

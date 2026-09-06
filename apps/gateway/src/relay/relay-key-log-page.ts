@@ -2,7 +2,7 @@ import {
   RELAY_CTL_MAX_BYTES,
   type RelayKeyLogRecordWire,
   relaySeqToWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
 import type { RelayKeyLogRow } from './types';
 

@@ -18,7 +18,7 @@ ICE 状态、候选类型、候选对。中文界面上一半是中文一半是 
 前端按码翻 `nodes.badge.failure.<code>`，码缺失或不认识就显示原文。
 
 码表是对外契约：`packages/api-client/src/auth/types.ts` 的 `DIRECT_FAILURE_CODES`（运行时常量数组，
-`DirectFailureCode` 由它推出）。网关不依赖 `@tmex/api-client`，在
+`DirectFailureCode` 由它推出）。网关不依赖 `@vibeterm/api-client`，在
 `apps/gateway/src/mesh/peer-manager-types.ts` 镜像一份——**改码表要两边一起改，并同步三语文案**。
 
 23 个码：`timeout`、`refused`、`unreachable`、`reset`、`tls`、`handshake`、`revoked`、`untrusted`、

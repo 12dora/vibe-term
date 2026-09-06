@@ -1,8 +1,8 @@
 // 新建映射表单的字段与提示行。表单本体只留下探测、提交条件与布局。
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 

@@ -12,8 +12,8 @@ import {
   hubHostFromUrl,
   rootKeyFromSeed,
   wrapEntryFromBytes,
-} from '@tmex/shared/auth';
-import { generateTenantKey, signRelayEnrollProof, unwrapKeyForNode } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { generateTenantKey, signRelayEnrollProof, unwrapKeyForNode } from '@vibeterm/shared/relay';
 import { nodeSessionCookieName } from '../auth/cookies';
 import { KeyLogStore } from '../auth/key-log-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';

@@ -38,7 +38,7 @@ test('issue45 ime fast input: composition events deliver 你好世界！ without
     // 字符序列「你好世界！」分 5 次 composition 周期连续触发，覆盖 bug 4-C 的 rAF 漏画场景。
     await page.evaluate(() => {
       const g = globalThis as any;
-      const term = g.__tmexE2eXterm;
+      const term = g.__vibetermE2eXterm;
       const textarea = term?.textarea as HTMLTextAreaElement | undefined;
       if (!term || !textarea) {
         throw new Error('terminal textarea not ready');

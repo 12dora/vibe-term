@@ -92,7 +92,7 @@ export async function main(): Promise<void> {
   const parsed = parseArgs(argv);
   const requestedLang =
     (typeof parsed.flags.lang === 'string' ? parsed.flags.lang : undefined) ||
-    process.env.TMEX_CLI_LANG;
+    process.env.VIBETERM_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
   if (parsed.flags.help === true) {

@@ -1,4 +1,4 @@
-import type { TunnelConnectorStatus, TunnelEdgeResolution } from '@tmex/shared';
+import type { TunnelConnectorStatus, TunnelEdgeResolution } from '@vibeterm/shared';
 
 /** 本次自愈是否仍然有效：手动停止 / 重启会作废在途的恢复。 */
 export type EdgeRecoveryToken = { readonly cancelled: boolean };

@@ -4,8 +4,8 @@
 // 反代或本机 HTTPS 监听也得跟着改——提示行说的就是这件事。
 // 建议端口每次挂载抽一个，之后保持不变：抽来抽去会让用户以为端口是随机生成的。
 
-import { pickSuggestedPort } from '@tmex/shared/net';
-import { Input } from '@tmex/ui/input';
+import { pickSuggestedPort } from '@vibeterm/shared/net';
+import { Input } from '@vibeterm/ui/input';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { readAddressPort, replaceAddressPort, splitAddress } from './address-probe';

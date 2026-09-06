@@ -4,7 +4,7 @@
 // 本机多一道判据：记录说它是汇聚机，本机开关（`gateway_kv`）也得开着——记录管「别人往这里发」，
 // 开关管「这台机器现在收不收」。两者有一个不成立就不算汇聚机，与入站路由的判据一致。
 
-import type { MeshNotificationSink } from '@tmex/shared';
+import type { MeshNotificationSink } from '@vibeterm/shared';
 import { isPeerReachable } from './address-class';
 import { pickMeshNodeName } from './node-list-projection';
 import type { PeerReach } from './types';

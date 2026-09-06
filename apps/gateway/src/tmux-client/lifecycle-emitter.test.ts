@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings, TmuxWindow } from '@tmex/shared';
+import type { Device, SiteSettings, TmuxWindow } from '@vibeterm/shared';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 
 function makeDevice(): Device {

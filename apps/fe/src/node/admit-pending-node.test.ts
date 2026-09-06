@@ -2,13 +2,13 @@
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import type { AuthApi } from '@tmex/api-client/auth/index';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import {
   decodeAdmitNodePayload,
   decodeKeyLogRecord,
   encodeBase64url,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { admitPendingNode } from './admit-pending-node';
 import { clearUnconfirmedRecords, listUnconfirmedRecordIds } from './enrollment';
 import type { PendingAdmitMaterial } from './merge-nodes';

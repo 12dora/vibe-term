@@ -11,7 +11,7 @@ import {
   nodeIdToHex,
   signTranscript,
   verifyTranscript,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   type ByteTransport,
   LinkMux,
@@ -24,7 +24,7 @@ import {
   secureChannelDirections,
   websocketTransport,
   x25519SharedSecret,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { decodeJsonBytes, encodeCtlMessage, isRecord, requireString } from './ctl';
 import { withPeerHandshakeTimeout } from './peer-handshake-timeout';

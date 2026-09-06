@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { UpdateSiteSettingsRequest } from '@tmex/shared';
+import type { UpdateSiteSettingsRequest } from '@vibeterm/shared';
 import {
   type SiteSettingsUpdates,
   normalizeDisabledNotificationChannels,

@@ -17,11 +17,11 @@ describe('managed gateway --version', () => {
     temporaryDirectories.push(work);
     const databasePath = join(work, 'must-not-exist.db');
     const env = { ...process.env };
-    Reflect.deleteProperty(env, 'TMEX_MASTER_KEY');
+    Reflect.deleteProperty(env, 'VIBETERM_MASTER_KEY');
     env.NODE_ENV = 'production';
     env.DATABASE_URL = databasePath;
     env.GATEWAY_PORT = 'not-a-port';
-    env.TMEX_BIND_HOST = '127.0.0.1';
+    env.VIBETERM_BIND_HOST = '127.0.0.1';
 
     const startedAt = performance.now();
     const child = Bun.spawn(

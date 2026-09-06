@@ -10,7 +10,7 @@ import {
   shouldApplyRemotePaneSize,
   shouldIgnoreActivePaneEvent,
   shouldSkipSnapshotFollow,
-} from '@tmex/terminal-ui';
+} from '@vibeterm/terminal-ui';
 
 export interface RuleWindowLike {
   id: string;

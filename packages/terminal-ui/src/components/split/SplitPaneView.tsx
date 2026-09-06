@@ -1,8 +1,8 @@
 // 单个 pane 的渲染单元：浮起式标题栏（名称 + 进程@路径 + 关闭）+ 终端实例 + 落点预览。
 
-import { useBellStore } from '@tmex/notifications';
-import type { TmuxPane } from '@tmex/shared';
-import { usePaneAgentState } from '@tmex/stores/react';
+import { useBellStore } from '@vibeterm/notifications';
+import type { TmuxPane } from '@vibeterm/shared';
+import { usePaneAgentState } from '@vibeterm/stores/react';
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal } from '../Terminal';

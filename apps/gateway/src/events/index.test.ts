@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import type { Server } from 'bun';
 import { handleApiRequest } from '../api/index';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
@@ -142,8 +142,8 @@ describe('EventNotifier channel registry', () => {
   });
 });
 
-describe('TMEX_DISABLED_NOTIFICATION_CHANNELS env disable', () => {
-  const ENV_KEY = 'TMEX_DISABLED_NOTIFICATION_CHANNELS';
+describe('VIBETERM_DISABLED_NOTIFICATION_CHANNELS env disable', () => {
+  const ENV_KEY = 'VIBETERM_DISABLED_NOTIFICATION_CHANNELS';
   const BUILTIN_IDS = ['webhook', 'telegram', 'weixin', 'ws-broadcast'];
 
   test('未设 env 时注册全部内建 channel', () => {

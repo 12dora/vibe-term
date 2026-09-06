@@ -4,7 +4,7 @@
 //  - `node`：跑在源节点上的节点间传输任务，由 `GET /api/transfer/jobs/:id/events`（NDJSON）驱动；
 //  - `upload` / `download`：浏览器自己发起的两段式传输，由调用方按回调推进度。
 //
-// 不用 zustand：`@tmex/panels` 没有这个依赖（只有 `@tmex/stores` 有），而这里要的只是
+// 不用 zustand：`@vibeterm/panels` 没有这个依赖（只有 `@vibeterm/stores` 有），而这里要的只是
 // 「一份 Map + 订阅」，用 `useSyncExternalStore` 直接写反而少一层。
 
 import type {
@@ -14,7 +14,7 @@ import type {
   TransferJobState,
   TransferPath,
   TransferProgress,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { useCallback, useSyncExternalStore } from 'react';
 
 /** 浏览器一侧在方向标里的占位 id（不是任何真实节点）。 */

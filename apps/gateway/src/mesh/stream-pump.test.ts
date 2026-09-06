@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 import { pumpLink, pumpToLink } from './stream-pump';
 
 describe('pumpToLink', () => {

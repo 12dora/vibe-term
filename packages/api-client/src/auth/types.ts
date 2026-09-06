@@ -1,8 +1,8 @@
 // mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
-// 所有二进制字段一律 base64url（无 padding）字符串，与 `@tmex/shared/auth` 的 encodeBase64url 对齐。
+// 所有二进制字段一律 base64url（无 padding）字符串，与 `@vibeterm/shared/auth` 的 encodeBase64url 对齐。
 
-import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@tmex/shared';
-import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
+import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@vibeterm/shared';
+import type { HubEndpointInfo, HubMode } from '@vibeterm/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
 // 这里只做 type-only 转出：浏览器侧不会因此把 codec 打进 bundle。
@@ -364,7 +364,7 @@ export interface MeshHubsResponse {
 export const HUB_NOT_WRITER = 'HUB_NOT_WRITER';
 
 /** `x-tmex-connection`：把请求绑到本标签页的那条 Gateway WS。 */
-export const X_TMEX_CONNECTION_HEADER = 'x-tmex-connection';
+export const X_VIBETERM_CONNECTION_HEADER = 'x-tmex-connection';
 
 /** `GET /api/mesh/connection` 的 200 响应。 */
 export interface MeshConnectionResponse {

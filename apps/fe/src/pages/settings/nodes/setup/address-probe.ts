@@ -5,9 +5,9 @@
 // 显式端口永远不动——用户写了什么就用什么。
 
 import { createStateStore } from '@/node/create-polling-store';
-import type { ApiClient } from '@tmex/api-client';
-import { SetupApi } from '@tmex/api-client/local/setup-api';
-import type { SetupPrecheckKind } from '@tmex/api-client/local/types';
+import type { ApiClient } from '@vibeterm/api-client';
+import { SetupApi } from '@vibeterm/api-client/local/setup-api';
+import type { SetupPrecheckKind } from '@vibeterm/api-client/local/types';
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { isLocalHostname } from './validation';
 

@@ -1,6 +1,6 @@
 // 设备行的连接状态指示：只有一个状态圆点，连接/断开由展开态与宿主自行驱动。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionStatus } from '../device-connection';
 

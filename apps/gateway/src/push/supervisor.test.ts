@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, SiteSettings, StateSnapshotPayload } from '@vibeterm/shared';
 import type {
   DeviceSessionRuntime,
   DeviceSessionRuntimeListener,

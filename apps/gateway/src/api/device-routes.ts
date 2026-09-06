@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { CreateDeviceRequest, Device } from '@tmex/shared';
+import type { CreateDeviceRequest, Device } from '@vibeterm/shared';
 import { encrypt } from '../crypto';
 import {
   createDevice,

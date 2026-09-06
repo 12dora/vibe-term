@@ -4,8 +4,8 @@ import {
   encodeBase64url,
   hubHostFromUrl,
   verifyHubEnrollProof,
-} from '@tmex/shared/auth';
-import type { HubNotWriterError } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { HubNotWriterError } from '@vibeterm/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import { requireB64url, validationError } from '../api/route-input';
 import type { UserRecord, UserStore } from '../auth/user-store';

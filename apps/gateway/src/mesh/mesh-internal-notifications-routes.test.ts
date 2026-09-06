@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@tmex/shared';
-import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@tmex/shared';
+import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@vibeterm/shared';
+import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@vibeterm/shared';
 import { dispatchRoutes } from '../api/route';
 import {
   type MeshInternalNotificationDeps,
@@ -8,7 +8,7 @@ import {
   resetMeshNotificationRateLimit,
 } from './mesh-internal-notifications-routes';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
-import { X_TMEX_MESH_PEER } from './peer-request-marker';
+import { X_VIBETERM_MESH_PEER } from './peer-request-marker';
 
 type Received = { eventType: EventType; event: Omit<WebhookEvent, 'eventType' | 'timestamp'> };
 
@@ -47,7 +47,7 @@ function request(body: unknown, marker: string | null = 'node-b'): Request {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(marker ? { [X_TMEX_MESH_PEER]: marker } : {}),
+      ...(marker ? { [X_VIBETERM_MESH_PEER]: marker } : {}),
     },
     body: JSON.stringify(body),
   });

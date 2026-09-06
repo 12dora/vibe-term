@@ -1,11 +1,11 @@
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { LlmProviderDto, UpdateLlmProviderRequest } from '@tmex/shared';
+import type { LlmProviderDto, UpdateLlmProviderRequest } from '@vibeterm/shared';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -13,10 +13,10 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 
-import { updateLlmProvider } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { updateLlmProvider } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 import { LlmProviderModels, type ModelDraft } from './llm-provider-models';
 
 interface LlmProviderModelsModalProps {

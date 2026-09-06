@@ -1,6 +1,6 @@
-import { errorMessage } from '@tmex/shared';
-import type { EventDevicePayload, ThemeMode } from '@tmex/shared';
-import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { EventDevicePayload, ThemeMode } from '@vibeterm/shared';
+import { getTmuxWindowStyle, wsBorsh } from '@vibeterm/shared';
 import { getSiteSettings } from '../db';
 import { t } from '../i18n';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';

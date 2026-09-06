@@ -3,7 +3,7 @@
 // 用 grid-template-rows 0fr↔1fr 做高度过渡（内容高度不用写死），
 // 叠一点透明度与位移；收起先播完动画再卸载，故本组件自己管挂载。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { type ReactNode, useEffect, useState } from 'react';
 
 /** 与 --tmex-motion-layout 对齐：动画跑完才卸载面板 */

@@ -1,7 +1,7 @@
 // 被分享页的会话编排：取分享信息 → 输密码 → 建专用运行时 → 断开 / 结束时收摊。
 
-import { nodePathPrefix } from '@tmex/api-client';
-import { useOptionalRuntime } from '@tmex/stores/react';
+import { nodePathPrefix } from '@vibeterm/api-client';
+import { useOptionalRuntime } from '@vibeterm/stores/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   ShareAccessError,

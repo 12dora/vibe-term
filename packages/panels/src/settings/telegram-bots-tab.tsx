@@ -1,13 +1,13 @@
 import { useQuery } from '@tanstack/react-query';
-import { parseApiError } from '@tmex/api-client';
-import type { ListTelegramBotsResponse, TelegramBotWithStats } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { parseApiError } from '@vibeterm/api-client';
+import type { ListTelegramBotsResponse, TelegramBotWithStats } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { Plus } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 
 import { SETTINGS_STALE_MS } from './settings-query';
 import { TelegramBotFormModal } from './telegram-bot-form-modal';

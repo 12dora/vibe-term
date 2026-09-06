@@ -4,10 +4,10 @@
 // `data-picker-index`（键盘处理靠它定位），名字部分才是按钮。超过阈值的长列表给行加
 // content-visibility，避免一次铺开上千个节点。
 
-import { formatBytes } from '@tmex/api-client';
-import type { FileEntryDto } from '@tmex/shared';
-import { cn } from '@tmex/ui';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { formatBytes } from '@vibeterm/api-client';
+import type { FileEntryDto } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import { File as FileIcon, Folder, Link2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { isDirectoryEntry } from './pane-state';

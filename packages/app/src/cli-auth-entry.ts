@@ -65,11 +65,11 @@ export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promis
 }
 
 export async function main(): Promise<void> {
-  process.env.TMEX_CLI_AUTH_RUNTIME = '1';
+  process.env.VIBETERM_CLI_AUTH_RUNTIME = '1';
   const parsed = parseArgs(process.argv.slice(2));
   const requestedLang =
     (typeof parsed.flags.lang === 'string' ? parsed.flags.lang : undefined) ||
-    process.env.TMEX_CLI_LANG;
+    process.env.VIBETERM_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
   if (parsed.flags.help === true) {

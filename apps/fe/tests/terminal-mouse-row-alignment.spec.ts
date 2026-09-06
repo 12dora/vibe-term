@@ -43,7 +43,7 @@ function lastPress(logPath: string): SgrPress | null {
 
 async function readCellDimensions(page: Page): Promise<{ width: number; height: number }> {
   const cell = await page.evaluate(() => {
-    const term = (window as any).__tmexE2eTerminal ?? (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eTerminal ?? (window as any).__vibetermE2eXterm;
     return term?.cellDimensions?.() ?? null;
   });
   expect(cell).toBeTruthy();
@@ -52,7 +52,7 @@ async function readCellDimensions(page: Page): Promise<{ width: number; height: 
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -110,7 +110,7 @@ test('desktop dpr=2: mouse press row matches the rendered grid row on the lower 
       .poll(
         () =>
           page.evaluate(() => {
-            const t = (window as any).__tmexE2eTerminal;
+            const t = (window as any).__vibetermE2eTerminal;
             return t?.exportModeSnapshot?.()?.mouseButton ?? false;
           }),
         { timeout: 15_000 }

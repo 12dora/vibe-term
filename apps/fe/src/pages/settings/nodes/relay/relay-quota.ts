@@ -4,8 +4,8 @@
 // 带宽可以无上限、`currentNodes` 与 `usage.currentNodes` 两处都可能给、带宽用量的字段名
 // 还在演进。摊在 JSX 里必然写成一串三元。
 
-import { formatBytes, formatRate } from '@tmex/api-client/format';
-import type { RelayQuotaView } from '@tmex/api-client/relay/tenant-api';
+import { formatBytes, formatRate } from '@vibeterm/api-client/format';
+import type { RelayQuotaView } from '@vibeterm/api-client/relay/tenant-api';
 
 export type RelayQuotaKind = 'nodes' | 'streams' | 'bandwidth' | 'maxFile';
 

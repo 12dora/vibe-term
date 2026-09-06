@@ -1,6 +1,6 @@
 // HTTPS 模式四选一。选中只切换下方表单，真正落库要按各表单里的保存。
 
-import type { TlsMode } from '@tmex/api-client/local/tls-types';
+import type { TlsMode } from '@vibeterm/api-client/local/tls-types';
 import { Cloud, Globe, ShieldCheck, ShieldOff } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';

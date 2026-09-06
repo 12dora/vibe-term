@@ -1,6 +1,6 @@
 // 非活跃会话历史的保留预算：只留最近激活的若干份，超预算的历史清空，重新打开时全量重拉。
 
-import type { AgentMessageDto } from '@tmex/shared';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import type { AgentStateData } from './agent-state';
 
 /** 保留的非活跃历史份数上限 */

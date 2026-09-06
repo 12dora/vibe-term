@@ -4,13 +4,13 @@ import type {
   LlmProviderDto,
   LlmProviderProtocol,
   UpdateLlmProviderRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { Loader2, Save } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -18,12 +18,12 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 
-import { createLlmProvider, updateLlmProvider } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { createLlmProvider, updateLlmProvider } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 
 const PROTOCOL_OPTIONS: LlmProviderProtocol[] = ['openai-chat', 'openai-responses'];
 

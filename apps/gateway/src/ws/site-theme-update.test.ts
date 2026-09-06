@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized, getSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { WebSocketServer } from './index';

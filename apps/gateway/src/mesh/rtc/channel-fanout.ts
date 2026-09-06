@@ -1,4 +1,4 @@
-import { MAX_LINK_UNACKED } from '@tmex/shared/link';
+import { MAX_LINK_UNACKED } from '@vibeterm/shared/link';
 import type { DataChannelLike } from './native';
 import { rtcLog } from './rtc-log';
 

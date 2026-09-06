@@ -1,7 +1,7 @@
 // 已结束的分享：回放日志与删除记录。删除会连日志一起删，走二次确认。
 // 历史是节点本地的记录，这张表只出当前节点的（多节点时表上方另有一行说明）。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Play, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../components/wide-table';

@@ -1,7 +1,7 @@
 // 设备的「所属节点」渲染上下文。`Device.type` 只有 local | ssh，「是否属于远端 mesh 节点」
 // 是宿主按运行时注入的展示信息，不落在数据里。节点名已经在分组头上，种类文案不再重复它。
 
-import type { DeviceType } from '@tmex/shared';
+import type { DeviceType } from '@vibeterm/shared';
 import type { TFunction } from 'i18next';
 
 export interface DeviceNodeContext {

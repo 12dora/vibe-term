@@ -2,7 +2,7 @@
 // 文件层用 `FileErrorCode`，契约要的是 `TransferErrorCode`——三者只在这里换算，
 // 通道与任务运行器都调这一份，避免各自维护一张白名单后互相打架。
 
-import type { TransferErrorCode } from '@tmex/shared';
+import type { TransferErrorCode } from '@vibeterm/shared';
 
 const TRANSFER_ERROR_CODES: ReadonlySet<string> = new Set<TransferErrorCode>([
   'invalid',

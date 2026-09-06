@@ -2,7 +2,7 @@ import { type APIRequestContext, type Page, expect, test } from '@playwright/tes
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -48,12 +48,12 @@ test('ssh device: probe and runtime connect are parameterized by target name', a
   page,
   request,
 }) => {
-  const targetName = process.env.TMEX_E2E_SSH_DEVICE_NAME?.trim();
-  test.skip(!targetName, 'requires TMEX_E2E_SSH_DEVICE_NAME');
+  const targetName = process.env.VIBETERM_E2E_SSH_DEVICE_NAME?.trim();
+  test.skip(!targetName, 'requires VIBETERM_E2E_SSH_DEVICE_NAME');
   if (!targetName) {
     return;
   }
-  const gatewayPort = process.env.TMEX_E2E_GATEWAY_PORT?.trim() || '9663';
+  const gatewayPort = process.env.VIBETERM_E2E_GATEWAY_PORT?.trim() || '9663';
   const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
 
   const target = await resolveTargetDevice(request, gatewayUrl, targetName);
@@ -71,12 +71,12 @@ test('ssh device: probe and runtime connect are parameterized by target name', a
   expect(probePayload.tmuxAvailable).toBe(true);
   expect(probePayload.phase).toBe('ready');
 
-  const marker = `__TMEX_SSH_SMOKE_${Date.now()}__`;
+  const marker = `__VIBETERM_SSH_SMOKE_${Date.now()}__`;
   await page.goto(`/devices/${target.id}`);
   await expect(page.getByTestId('device-page')).toBeVisible();
   await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
   await expect
-    .poll(() => page.evaluate(() => Boolean((window as any).__tmexE2eXterm)), { timeout: 30_000 })
+    .poll(() => page.evaluate(() => Boolean((window as any).__vibetermE2eXterm)), { timeout: 30_000 })
     .toBeTruthy();
 
   await page.locator('.xterm').first().click();

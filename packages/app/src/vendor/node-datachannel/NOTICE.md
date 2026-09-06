@@ -7,7 +7,7 @@ Upstream: https://github.com/murat-dogan/node-datachannel
 Modifications by tmex:
 
 - Replaced optionalDependency / local-build loader with an absolute-path
-  `require` of `<TMEX_NATIVE_DIR>/node_datachannel.node` (or
+  `require` of `<VIBETERM_NATIVE_DIR>/node_datachannel.node` (or
   `loadBindingFromPath`), typed through `NativeBinding`.
 - Annotated the implicit `any` in `datachannel-stream.ts` /
   `websocket-server.ts` so the vendored copy passes `tsc --strict`.

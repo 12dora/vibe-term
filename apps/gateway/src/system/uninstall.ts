@@ -3,8 +3,8 @@ import { randomBytes } from 'node:crypto';
 import { cpSync, existsSync, realpathSync } from 'node:fs';
 import { tmpdir as osTmpdir } from 'node:os';
 import { join } from 'node:path';
-import { errorMessage } from '@tmex/shared';
-import type { StartUninstallRequest, UninstallStatus, UpgradeState } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { StartUninstallRequest, UninstallStatus, UpgradeState } from '@vibeterm/shared';
 import { json } from '../api/http';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
@@ -31,10 +31,10 @@ export type UninstallControllerDeps = {
   now?: () => number;
 };
 
-declare const TMEX_MANAGED_BUILD: boolean | undefined;
+declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
 
 function isManagedBuild(): boolean {
-  return typeof TMEX_MANAGED_BUILD !== 'undefined' && TMEX_MANAGED_BUILD === true;
+  return typeof VIBETERM_MANAGED_BUILD !== 'undefined' && VIBETERM_MANAGED_BUILD === true;
 }
 
 function waitForSpawn(child: ChildProcess): Promise<void> {

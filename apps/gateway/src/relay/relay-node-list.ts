@@ -6,7 +6,7 @@ import {
   type RelayRtcConfig,
   encodeRelayCtl,
   relaySeqToWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 

@@ -1,12 +1,12 @@
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { buildClearCookie, buildSetCookie, parseCookies } from '../auth/cookies';
 import { getShareService } from '../share';
 import {
   SHARE_AUTH_PREFIX,
   SHARE_COOKIE_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  X_VIBETERM_CLEAR_SHARE,
+  X_VIBETERM_SET_SHARE,
+  X_VIBETERM_SET_SHARE_MAX_AGE,
   isValidShareCookieVia,
   parseShareToken,
   shareCookieName,
@@ -17,9 +17,9 @@ import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 
 export {
   SHARE_AUTH_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  X_VIBETERM_CLEAR_SHARE,
+  X_VIBETERM_SET_SHARE,
+  X_VIBETERM_SET_SHARE_MAX_AGE,
   shareCookieName,
 };
 
@@ -87,7 +87,7 @@ export function parseShareAuth(auth: string | null | undefined): string | null {
 }
 
 export function hasShareCookieHeaders(response: Response): boolean {
-  return response.headers.has(X_TMEX_SET_SHARE) || response.headers.has(X_TMEX_CLEAR_SHARE);
+  return response.headers.has(X_VIBETERM_SET_SHARE) || response.headers.has(X_VIBETERM_CLEAR_SHARE);
 }
 
 /**
@@ -100,20 +100,20 @@ export function applyShareCookieHeaders(
   via: string,
   secure: boolean
 ): void {
-  headers.delete(X_TMEX_SET_SHARE);
-  headers.delete(X_TMEX_SET_SHARE_MAX_AGE);
-  headers.delete(X_TMEX_CLEAR_SHARE);
+  headers.delete(X_VIBETERM_SET_SHARE);
+  headers.delete(X_VIBETERM_SET_SHARE_MAX_AGE);
+  headers.delete(X_VIBETERM_CLEAR_SHARE);
   if (!isValidShareCookieVia(via)) return;
   const name = shareCookieName(via);
-  const token = upstream.headers.get(X_TMEX_SET_SHARE)?.trim();
-  const maxAgeRaw = Number(upstream.headers.get(X_TMEX_SET_SHARE_MAX_AGE) ?? '');
+  const token = upstream.headers.get(X_VIBETERM_SET_SHARE)?.trim();
+  const maxAgeRaw = Number(upstream.headers.get(X_VIBETERM_SET_SHARE_MAX_AGE) ?? '');
   if (token && Number.isFinite(maxAgeRaw)) {
     headers.append(
       'set-cookie',
       buildSetCookie(name, token, { maxAgeSec: Math.max(0, Math.floor(maxAgeRaw)), secure })
     );
   }
-  if (upstream.headers.get(X_TMEX_CLEAR_SHARE)) {
+  if (upstream.headers.get(X_VIBETERM_CLEAR_SHARE)) {
     headers.append('set-cookie', buildClearCookie(name, { secure }));
   }
 }

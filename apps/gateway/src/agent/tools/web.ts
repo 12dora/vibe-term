@@ -1,6 +1,6 @@
 // Web 工具：web_search（tavily/brave 分发）与 fetch_url（含 SSRF 防护）
 
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import { type Tool, tool } from 'ai';
 import { z } from 'zod';
 import { decrypt } from '../../crypto';
@@ -91,7 +91,7 @@ export function isPrivateHostname(hostname: string): boolean {
 }
 
 function allowPrivateFetch(): boolean {
-  return process.env.TMEX_AGENT_ALLOW_PRIVATE_FETCH === '1';
+  return process.env.VIBETERM_AGENT_ALLOW_PRIVATE_FETCH === '1';
 }
 
 export function validateFetchUrl(rawUrl: string): { url: URL } | { error: string } {

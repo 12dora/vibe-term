@@ -21,15 +21,15 @@ import {
 describe('gateway loopback host', () => {
   test('falls back to IPv4 loopback', () => {
     expect(loopbackHost({})).toBe('127.0.0.1');
-    expect(loopbackHost({ TMEX_BIND_HOST: '0.0.0.0' })).toBe('127.0.0.1');
-    expect(loopbackHost({ TMEX_BIND_HOST: 'localhost' })).toBe('127.0.0.1');
+    expect(loopbackHost({ VIBETERM_BIND_HOST: '0.0.0.0' })).toBe('127.0.0.1');
+    expect(loopbackHost({ VIBETERM_BIND_HOST: 'localhost' })).toBe('127.0.0.1');
   });
 
   test('uses the IPv6 loopback when the instance binds an IPv6 literal', () => {
-    expect(loopbackHost({ TMEX_BIND_HOST: '::' })).toBe('[::1]');
-    expect(loopbackHost({ TMEX_BIND_HOST: '[::]' })).toBe('[::1]');
-    expect(loopbackHost({ TMEX_BIND_HOST: '::1' })).toBe('[::1]');
-    expect(gatewayBaseUrl({ GATEWAY_PORT: '9883', TMEX_BIND_HOST: '::' })).toBe(
+    expect(loopbackHost({ VIBETERM_BIND_HOST: '::' })).toBe('[::1]');
+    expect(loopbackHost({ VIBETERM_BIND_HOST: '[::]' })).toBe('[::1]');
+    expect(loopbackHost({ VIBETERM_BIND_HOST: '::1' })).toBe('[::1]');
+    expect(gatewayBaseUrl({ GATEWAY_PORT: '9883', VIBETERM_BIND_HOST: '::' })).toBe(
       'http://[::1]:9883'
     );
   });

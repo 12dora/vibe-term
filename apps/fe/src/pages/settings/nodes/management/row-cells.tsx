@@ -1,6 +1,6 @@
 // 节点表的通用单元格与「不可写」提示：正常行与待批准行共用，放这里避免两个行组件互相 import。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import type { NodeActionDeps } from './types';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import { SetupApiError } from '@tmex/api-client/local/setup-api';
+import { ApiClient } from '@vibeterm/api-client';
+import { SetupApiError } from '@vibeterm/api-client/local/setup-api';
 import { createAddressProbeCore, precheckProbe } from './address-probe';
 import {
   submitBecomeHub,

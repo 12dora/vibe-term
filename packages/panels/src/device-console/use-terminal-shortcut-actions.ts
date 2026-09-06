@@ -1,15 +1,15 @@
 // 快捷键栏动作分发：纯 UI 动作（切键盘 / 回到底部）不依赖连接，
 // send 与 paste / newAgentSession 才需要有效设备与 pane。
 
-import type { TerminalShortcutAction, TerminalShortcutItem } from '@tmex/shared';
+import type { TerminalShortcutAction, TerminalShortcutItem } from '@vibeterm/shared';
 import {
   type AppRuntime,
   bridgeOpenMobileSidebar,
   normalizeAgentNodeId,
   resolveAgentStore,
-} from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
+} from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

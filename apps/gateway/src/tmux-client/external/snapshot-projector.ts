@@ -1,4 +1,4 @@
-import type { TmuxPane, TmuxSession, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 
 import type { TmuxConnectionOptions } from '../connection-types';
 import type { ControlModeSubscription } from '../control-mode-subscription';

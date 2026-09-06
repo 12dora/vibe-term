@@ -16,7 +16,7 @@ export interface BunCheckResult {
 }
 
 export interface ResolveBunOptions {
-  /** 显式指定的 bun 路径（--bun-path / TMEX_BUN_PATH）。提供时尊重用户输入，无效直接报错，不静默回退。 */
+  /** 显式指定的 bun 路径（--bun-path / VIBETERM_BUN_PATH）。提供时尊重用户输入，无效直接报错，不静默回退。 */
   explicitPath?: string;
   /** install-meta.json 中持久化的 bun 路径。 */
   metaBunPath?: string;
@@ -135,9 +135,9 @@ export function sanitizeBunPath(raw: string): string {
   return selectPreferredBunPath(extractSanitizedLines(stripAnsiEscapes(raw)));
 }
 
-/** 从命令行 flags / 环境变量读取用户显式指定的 bun 路径（--bun-path / TMEX_BUN_PATH）。 */
+/** 从命令行 flags / 环境变量读取用户显式指定的 bun 路径（--bun-path / VIBETERM_BUN_PATH）。 */
 export function readExplicitBunPath(flags: ParsedArgs['flags']): string | undefined {
-  return asString(flags['bun-path']) || process.env.TMEX_BUN_PATH;
+  return asString(flags['bun-path']) || process.env.VIBETERM_BUN_PATH;
 }
 
 function isBunRuntime(): boolean {

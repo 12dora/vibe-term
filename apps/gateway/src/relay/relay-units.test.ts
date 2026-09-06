@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { MIN_RELAY_CLIENT_VERSION, RELAY_KEYLOG_SEQ_MISMATCH } from '@tmex/shared/relay';
+import { MIN_RELAY_CLIENT_VERSION, RELAY_KEYLOG_SEQ_MISMATCH } from '@vibeterm/shared/relay';
 import { nodeVersionMeets } from '../hub/hub-authorization';
 import { RelayBandwidthLimiter } from './relay-bandwidth';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';

@@ -12,7 +12,7 @@ import {
   encodeRotateRootKeepPayload,
   generateKdfParams,
   genesisHead,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import {

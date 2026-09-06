@@ -12,7 +12,7 @@
 import { NodeBadge, type NodeBadgeInfo } from '../device-tree/node-badge';
 
 import { useIsFetching } from '@tanstack/react-query';
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { ChevronRight, GripVertical, Loader2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';

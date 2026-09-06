@@ -2,7 +2,7 @@ import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 /**
  * Regenerate packages/app/src/vendor/node-datachannel from the pinned
  * node-datachannel version (devDependency). The native loader is rewritten so
- * Bun can inline the JS layer and require `<TMEX_NATIVE_DIR>/node_datachannel.node`,
+ * Bun can inline the JS layer and require `<VIBETERM_NATIVE_DIR>/node_datachannel.node`,
  * and the copied upstream files are patched so they type-check under `strict`.
  *
  *   bun packages/app/scripts/vendor-node-datachannel.ts
@@ -121,9 +121,9 @@ export function loadBinding(): NativeBinding {
   if (binding) {
     return binding;
   }
-  const nativeDir = process.env.TMEX_NATIVE_DIR;
+  const nativeDir = process.env.VIBETERM_NATIVE_DIR;
   if (!nativeDir) {
-    throw new Error('TMEX_NATIVE_DIR is not set');
+    throw new Error('VIBETERM_NATIVE_DIR is not set');
   }
   return loadBindingFromPath(join(nativeDir, 'node_datachannel.node'));
 }
@@ -223,7 +223,7 @@ Upstream: https://github.com/murat-dogan/node-datachannel
 Modifications by tmex:
 
 - Replaced optionalDependency / local-build loader with an absolute-path
-  \`require\` of \`<TMEX_NATIVE_DIR>/node_datachannel.node\` (or
+  \`require\` of \`<VIBETERM_NATIVE_DIR>/node_datachannel.node\` (or
   \`loadBindingFromPath\`), typed through \`NativeBinding\`.
 - Annotated the implicit \`any\` in \`datachannel-stream.ts\` /
   \`websocket-server.ts\` so the vendored copy passes \`tsc --strict\`.

@@ -8,10 +8,10 @@ import {
   type DomainAccessPolicy,
   defaultApiClient,
   updateDomainAccess,
-} from '@tmex/api-client';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { errorMessage } from '@tmex/shared';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/api-client';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { errorMessage } from '@vibeterm/shared';
+import { Switch } from '@vibeterm/ui/switch';
 import { useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DangerConfirmDialog } from '../components/danger-confirm-dialog';

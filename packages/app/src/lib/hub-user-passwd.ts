@@ -93,7 +93,7 @@ export async function applyHubUserPasswd(
   }
   const oldPassword = await resolvePassword({
     password: io.oldPassword,
-    envKey: 'TMEX_PASSWORD_OLD',
+    envKey: 'VIBETERM_PASSWORD_OLD',
     confirm: false,
     prompt: 'Current password',
   });
@@ -102,7 +102,7 @@ export async function applyHubUserPasswd(
 
   const newPassword = await resolvePassword({
     password: io.newPassword ?? io.password,
-    envKey: 'TMEX_PASSWORD',
+    envKey: 'VIBETERM_PASSWORD',
     confirm: io.newPassword === undefined && io.password === undefined,
     prompt: 'New password',
     confirmPrompt: 'Confirm new password',

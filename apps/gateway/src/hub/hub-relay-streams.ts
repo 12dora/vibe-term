@@ -1,4 +1,4 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { pumpHubRelay } from '../relay/hub-relay-pump';
 import {

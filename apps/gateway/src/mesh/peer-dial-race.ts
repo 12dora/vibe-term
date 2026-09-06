@@ -1,4 +1,4 @@
-import type { WebSocketTransportInput } from '@tmex/shared/link';
+import type { WebSocketTransportInput } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { classifyRemoteAddress, hostFromWsUrl } from './address-class';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';

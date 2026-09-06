@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from '../lib/args';
 import { assertKnownFlags } from '../lib/args';
-import { TMEX_SHIM_MARKER } from '../lib/cli-shim';
+import { VIBETERM_SHIM_MARKER } from '../lib/cli-shim';
 import { pathExists } from '../lib/fs-utils';
 import { runUninstall } from './uninstall';
 
@@ -144,11 +144,11 @@ describe('runUninstall --yes --purge', () => {
     const foreign = join(localBinDir, 'other');
     await writeFile(
       marked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
     );
     await writeFile(
       bunMarked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
     );
     await writeFile(foreign, '#!/bin/sh\necho hi\n');
     await runUninstall(parseArgs(['uninstall', '--yes', '--purge', '--install-dir', installDir]), {
@@ -166,7 +166,7 @@ describe('runUninstall --yes --purge', () => {
     const marked = join(localBinDir, 'tmex');
     await writeFile(
       marked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: /other/install\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: /other/install\n`
     );
     await runUninstall(parseArgs(['uninstall', '--yes', '--purge', '--install-dir', installDir]), {
       uninstallService: async () => undefined,

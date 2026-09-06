@@ -3,7 +3,7 @@
 // 客户端工厂单独传进来，既让 `useShareTab` 只管状态，也让「远端那一行是不是发给了远端」
 // 能被单测直接钉住。
 
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 import { deleteShare, getSharePassword, revokeShare, updateSharePassword } from './share-api';
 import type { ShareRow } from './share-rows';
 

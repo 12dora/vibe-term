@@ -1,6 +1,6 @@
 // Agent 装饰面：设备树本体不感知 agent 领域类型，宿主经该适配器注入会话装饰。
 
-import type { TmuxPane } from '@tmex/shared';
+import type { TmuxPane } from '@vibeterm/shared';
 import type { ComponentType } from 'react';
 
 /** 设备树内部导航面：与点击 pane 完全同款（清 pending 导航、派发选择事件、SPA 跳转） */

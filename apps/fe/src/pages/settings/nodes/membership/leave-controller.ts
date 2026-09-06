@@ -11,7 +11,7 @@
 //      401，全局拦截器的 `/login` 跳转会把还在等重启的这段编排一起卸掉。这个标记一直保持到
 //      整页硬跳转（换掉整个 JS 环境），只有退出被明确拒绝时才撤销。
 
-import type { LocalLeaveTargetRole } from '@tmex/api-client/local/types';
+import type { LocalLeaveTargetRole } from '@vibeterm/api-client/local/types';
 import type { SetupIntentRecord } from './intent';
 import type { MeshRole } from './role-transition';
 import type { SelfRevokeOutcome } from './self-revoke';

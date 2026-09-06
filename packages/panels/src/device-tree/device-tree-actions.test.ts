@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import { buildPaneActions, buildWindowActions } from './device-tree-actions';
 
 const t = (key: string) => key;

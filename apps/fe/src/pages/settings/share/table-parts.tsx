@@ -1,6 +1,6 @@
 // 分享两张表共用的单元格与空状态。列宽与滚动壳见 `../components/wide-table`。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import type { ReactNode } from 'react';
 
 export function Th({ children, className }: { children: ReactNode; className?: string }) {

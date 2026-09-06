@@ -5,17 +5,17 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
-import { ApiClient, type DomainAccessPolicy } from '@tmex/api-client';
-import type { AuthModeResponse, MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { LocalApiError } from '@tmex/api-client/local/local-api';
+import { ApiClient, type DomainAccessPolicy } from '@vibeterm/api-client';
+import type { AuthModeResponse, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import type {
   LocalDirectAction,
   LocalDirectResponse,
   LocalDirectStatus,
   LocalRole,
   LocalStatusResponse,
-} from '@tmex/api-client/local/types';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
+} from '@vibeterm/api-client/local/types';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MemoryRouter } from 'react-router';
 import {

@@ -1,7 +1,7 @@
 // tmux store 组装根：状态字段 + 命令下发，事件路由/pane 订阅/选择面拆到同目录模块。
 
-import { getTmuxWindowStyle } from '@tmex/shared';
-import type { ConnectionState } from '@tmex/ws-client';
+import { getTmuxWindowStyle } from '@vibeterm/shared';
+import type { ConnectionState } from '@vibeterm/ws-client';
 import { create } from 'zustand';
 import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
@@ -41,7 +41,7 @@ export function createTmuxStore(
     return false;
   }
 
-  // gateway 连接设备时按 TMEX_TMUX_WINDOW_STYLE 注入默认（暗色）window-style，
+  // gateway 连接设备时按 VIBETERM_TMUX_WINDOW_STYLE 注入默认（暗色）window-style，
   // 这里在设备连上/重连/主题切换时按前端当前主题覆盖，保持 tmux 代答的 OSC 10/11 颜色一致。
   function sendWindowStyleForCurrentTheme(deviceId: string): void {
     const style = getTmuxWindowStyle(deps.getUI().getState().theme);

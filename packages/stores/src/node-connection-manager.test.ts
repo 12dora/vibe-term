@@ -1,10 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
-import { nodeWsUrl } from '@tmex/api-client';
+import { nodeWsUrl } from '@vibeterm/api-client';
 import {
   type GatewayConnection,
   type WebSocketLike,
   createGatewayConnection,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import {
   NodeConnectionManager,
   WS_UNAUTHORIZED_CLOSE_CODE,

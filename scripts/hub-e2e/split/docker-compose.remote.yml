@@ -13,12 +13,12 @@ x-tmex-hub: &tmex-hub
   init: true
   stop_grace_period: 25s
   environment:
-    TMEX_INSTANCE: hub
-    TMEX_E2E_STUN_SERVERS: ${TMEX_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
-    TMEX_E2E_TURN_URL: ${TMEX_E2E_TURN_URL:-}
-    TMEX_E2E_TURN_USERNAME: ${TMEX_E2E_TURN_USERNAME:-tmex}
-    TMEX_E2E_TURN_CREDENTIAL: ${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
-    NODE_EXTRA_CA_CERTS: ${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
+    VIBETERM_INSTANCE: hub
+    VIBETERM_E2E_STUN_SERVERS: ${VIBETERM_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
+    VIBETERM_E2E_TURN_URL: ${VIBETERM_E2E_TURN_URL:-}
+    VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-tmex}
+    VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
+    NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
 
 services:
   caddy:
@@ -26,15 +26,15 @@ services:
     platform: linux/amd64
     container_name: tmex-split-caddy
     ports:
-      - "0.0.0.0:${TMEX_E2E_HUB_PORT:-18443}:443"
+      - "0.0.0.0:${VIBETERM_E2E_HUB_PORT:-18443}:443"
     volumes:
-      - ${TMEX_E2E_CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
-      - ${TMEX_E2E_TLS_CERT:-${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}/certs/fullchain.pem}:/certs/fullchain.pem:ro
-      - ${TMEX_E2E_TLS_KEY:-${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}/certs/privkey.pem}:/certs/privkey.pem:ro
+      - ${VIBETERM_E2E_CADDYFILE:-./Caddyfile}:/etc/caddy/Caddyfile:ro
+      - ${VIBETERM_E2E_TLS_CERT:-${VIBETERM_E2E_REMOTE_DIR:-/root/tmex-e2e}/certs/fullchain.pem}:/certs/fullchain.pem:ro
+      - ${VIBETERM_E2E_TLS_KEY:-${VIBETERM_E2E_REMOTE_DIR:-/root/tmex-e2e}/certs/privkey.pem}:/certs/privkey.pem:ro
     networks:
       edge:
         aliases:
-          - ${TMEX_E2E_HUB_HOST:-ai.example.com}
+          - ${VIBETERM_E2E_HUB_HOST:-ai.example.com}
     depends_on:
       hub:
         condition: service_healthy
@@ -48,7 +48,7 @@ services:
       - "39001:39001"
     volumes:
       - hub-data:/var/lib/tmex
-      - ${TMEX_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}:/ca/ca.crt:ro
+      - ${VIBETERM_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}:/ca/ca.crt:ro
     networks:
       - edge
 
@@ -59,6 +59,6 @@ services:
     restart: unless-stopped
     command: >
       --listening-port=3478 --min-port=49160 --max-port=49200
-      --external-ip=${TMEX_E2E_TURN_EXTERNAL_IP:-${TMEX_E2E_HUB_IP:-4.2.2.1}}
-      --realm=tmex --user=${TMEX_E2E_TURN_USERNAME:-tmex}:${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      --external-ip=${VIBETERM_E2E_TURN_EXTERNAL_IP:-${VIBETERM_E2E_HUB_IP:-4.2.2.1}}
+      --realm=tmex --user=${VIBETERM_E2E_TURN_USERNAME:-tmex}:${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
       --lt-cred-mech --fingerprint --no-tls --no-dtls --no-cli --log-file=stdout

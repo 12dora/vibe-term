@@ -11,8 +11,8 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
-import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,

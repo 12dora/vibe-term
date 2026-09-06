@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { LinkStream, StreamCloseInfo } from '@tmex/shared/link';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
@@ -463,7 +463,7 @@ describe('mergeUplinkCandidates', () => {
     expect(sameHubUrl('HTTPS://Active.Example:443/', 'https://active.example')).toBe(true);
   });
 
-  test('fresh standby own row plus TMEX_HUB_URL seed ranks the seed active above own standby', () => {
+  test('fresh standby own row plus VIBETERM_HUB_URL seed ranks the seed active above own standby', () => {
     const own = {
       hubNodeId: ID.a,
       publicUrl: 'https://self.example',
@@ -583,7 +583,7 @@ describe('UplinkPool', () => {
     relayDrainRecheckMs?: number;
     relayDrainTimeoutMs?: number;
     versions?: Record<string, string>;
-    onHubTokens?: (msg: import('@tmex/shared/uplink').HubTokensMessage) => void;
+    onHubTokens?: (msg: import('@vibeterm/shared/uplink').HubTokensMessage) => void;
   }) {
     const { db, close } = createMigratedAuthDb();
     const userStore = new UserStore(db);

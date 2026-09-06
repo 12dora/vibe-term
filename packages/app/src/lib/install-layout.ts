@@ -117,10 +117,10 @@ async function locatePackageRoot(startDir: string): Promise<string> {
           typeof parsed.bin === 'object' && parsed.bin !== null
             ? (parsed.bin as Record<string, unknown>)
             : null;
-        const hasTmexBin = bin !== null && typeof bin.tmex === 'string';
-        const hasTmexCliBin = bin !== null && typeof bin['tmex-cli'] === 'string';
+        const hasVibeTermBin = bin !== null && typeof bin.tmex === 'string';
+        const hasVibeTermCliBin = bin !== null && typeof bin['tmex-cli'] === 'string';
 
-        if ((name === 'tmex-cli' || name === 'tmex') && (hasTmexBin || hasTmexCliBin)) {
+        if ((name === 'tmex-cli' || name === 'tmex') && (hasVibeTermBin || hasVibeTermCliBin)) {
           return current;
         }
       }

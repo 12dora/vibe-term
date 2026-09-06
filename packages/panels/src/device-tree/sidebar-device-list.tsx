@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
-import { devicesQueryKey as defaultDevicesQueryKey, fetchDevices } from '@tmex/api-client';
-import { hostAppPath } from '@tmex/stores';
-import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { ScrollArea } from '@tmex/ui/scroll-area';
-import { SidebarGroup } from '@tmex/ui/sidebar';
+import { devicesQueryKey as defaultDevicesQueryKey, fetchDevices } from '@vibeterm/api-client';
+import { hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { ScrollArea } from '@vibeterm/ui/scroll-area';
+import { SidebarGroup } from '@vibeterm/ui/sidebar';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';

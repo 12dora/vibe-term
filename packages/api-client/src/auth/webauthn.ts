@@ -2,7 +2,7 @@
 // ArrayBuffer 形态，再把凭证转回 *ResponseJSON。等价于 @simplewebauthn/browser 的
 // startRegistration / startAuthentication，但不引入依赖（仓库尚未安装该包）。
 
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
 import type {
   AuthenticationResponseJSON,
   PublicKeyCredentialCreationOptionsJSON,

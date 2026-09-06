@@ -8,7 +8,7 @@ export { DEFAULT_FONT_ID, FONT_MANIFEST };
 export type { FontManifestEntry };
 
 // 符号兜底字体（媒体控制/Braille/勾选等），恒定挂在主字体之后，CJK 落系统 monospace。
-const SYMBOL_FALLBACK = 'NotoSansSymbols2Tmex';
+const SYMBOL_FALLBACK = 'NotoSansSymbols2VibeTerm';
 
 export function getFontEntry(fontId: string): FontManifestEntry {
   return (

@@ -13,8 +13,8 @@ import {
 } from '@/share/share-link-password';
 import { SharePasswordForm } from '@/share/share-password-form';
 import { useShareSession } from '@/share/use-share-session';
-import { parseNodeIdFromPath } from '@tmex/api-client';
-import { SidebarInset } from '@tmex/ui/sidebar';
+import { parseNodeIdFromPath } from '@vibeterm/api-client';
+import { SidebarInset } from '@vibeterm/ui/sidebar';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

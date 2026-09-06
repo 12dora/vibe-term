@@ -1,4 +1,4 @@
-import type { TunnelMode } from '@tmex/shared';
+import type { TunnelMode } from '@vibeterm/shared';
 import { TunnelError } from './errors';
 
 const HOSTNAME_RE = /^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/;

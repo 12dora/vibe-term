@@ -3,8 +3,8 @@ import { describe, expect, mock, test } from 'bun:test';
 // resolveRuntimeCore 只做选项归一，不碰 WS / localStorage / window，本文件无需相应垫片。
 // 唯一保留的前奏：runtime.ts 在模块求值时把 playBellSound 固化进 defaultBell，
 // 必须先于 ./runtime 首次求值替换掉，否则后续文件的 bell 用例会真的去建 AudioContext。
-const notificationsActual = await import('@tmex/notifications');
-mock.module('@tmex/notifications', () => ({
+const notificationsActual = await import('@vibeterm/notifications');
+mock.module('@vibeterm/notifications', () => ({
   ...notificationsActual,
   playBellSound: mock(() => {}),
 }));

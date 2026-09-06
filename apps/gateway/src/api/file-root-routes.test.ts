@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { Device, FileRootDto } from '@tmex/shared';
+import type { Device, FileRootDto } from '@vibeterm/shared';
 import { createDevice } from '../db/devices';
 import { createFileRoot, deleteFileRoot } from '../db/file-roots';
 import { runMigrations } from '../db/migrate';

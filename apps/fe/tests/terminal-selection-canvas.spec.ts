@@ -30,7 +30,7 @@ type VisibleTextRange = {
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange> {
   const handle = await page.waitForFunction(
     (target) => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) {
         return null;
       }
@@ -71,7 +71,7 @@ async function getCanvasMetrics(page: Page): Promise<{
   cellHeight: number;
 }> {
   const metrics = await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return null;
@@ -128,7 +128,7 @@ async function clickVisibleText(page: Page, needle: string, clickCount: number):
 
 async function readSelectionText(page: Page): Promise<string | null> {
   return page.evaluate(() => {
-    return (window as any).__tmexE2eTerminalSelectionText ?? null;
+    return (window as any).__vibetermE2eTerminalSelectionText ?? null;
   });
 }
 
@@ -252,7 +252,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .poll(
         () =>
           page.evaluate(() => {
-            const term = (window as any).__tmexE2eXterm;
+            const term = (window as any).__vibetermE2eXterm;
             return term?.buffer?.active?.baseY ?? 0;
           }),
         { timeout: 20_000 }
@@ -260,7 +260,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .toBeGreaterThan(80);
 
     await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       term?.scrollToBottom();
     });
 
@@ -284,7 +284,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .poll(
         () =>
           page.evaluate(() => {
-            const term = (window as any).__tmexE2eXterm;
+            const term = (window as any).__vibetermE2eXterm;
             return term?.buffer?.active?.viewportY ?? 0;
           }),
         { timeout: 10_000 }

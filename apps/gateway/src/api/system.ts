@@ -1,4 +1,4 @@
-import type { StartUpgradeRequest } from '@tmex/shared';
+import type { StartUpgradeRequest } from '@vibeterm/shared';
 import { t } from '../i18n';
 import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
@@ -9,10 +9,10 @@ import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
-declare const TMEX_MANAGED_BUILD: boolean | undefined;
+declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
 
 function isManagedBuild(): boolean {
-  return typeof TMEX_MANAGED_BUILD !== 'undefined' && TMEX_MANAGED_BUILD === true;
+  return typeof VIBETERM_MANAGED_BUILD !== 'undefined' && VIBETERM_MANAGED_BUILD === true;
 }
 
 function managedExternallyResponse(status = 403): Response {

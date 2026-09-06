@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 HUB_E2E="$(cd "${ROOT}/.." && pwd)"
-REMOTE_SUDO="${TMEX_E2E_REMOTE_SUDO:-}"
+REMOTE_SUDO="${VIBETERM_E2E_REMOTE_SUDO:-}"
 if [[ -n "${REMOTE_SUDO}" ]]; then
   DOCKER=("${REMOTE_SUDO}" --preserve-env docker)
 else
@@ -14,38 +14,38 @@ fi
 COMPOSE=("${DOCKER[@]}" compose -p tmex-split -f "${ROOT}/docker-compose.remote.yml")
 IMAGE_NAME="tmex-e2e:split"
 PLATFORM="linux/amd64"
-export TMEX_E2E_HUB_HOST="${TMEX_E2E_HUB_HOST:-ai.example.com}"
-export TMEX_E2E_HUB_IP="${TMEX_E2E_HUB_IP:-4.2.2.1}"
-export TMEX_E2E_HUB_PORT="${TMEX_E2E_HUB_PORT:-18443}"
-export TMEX_E2E_REMOTE_DIR="${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}"
-export TMEX_E2E_TLS_MODE="${TMEX_E2E_TLS_MODE:-letsencrypt}"
-export TMEX_E2E_TURN_EXTERNAL_IP="${TMEX_E2E_TURN_EXTERNAL_IP:-${TMEX_E2E_HUB_IP}}"
-TARBALL="${TMEX_TARBALL:-${TMEX_E2E_REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
-HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://${TMEX_E2E_HUB_HOST}:${TMEX_E2E_HUB_PORT}}"
-if [[ "${TMEX_E2E_TLS_MODE}" == "private-ca" ]]; then
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${TMEX_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${TMEX_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-${TMEX_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
-  export TMEX_E2E_NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
+export VIBETERM_E2E_HUB_HOST="${VIBETERM_E2E_HUB_HOST:-ai.example.com}"
+export VIBETERM_E2E_HUB_IP="${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
+export VIBETERM_E2E_HUB_PORT="${VIBETERM_E2E_HUB_PORT:-18443}"
+export VIBETERM_E2E_REMOTE_DIR="${VIBETERM_E2E_REMOTE_DIR:-/root/tmex-e2e}"
+export VIBETERM_E2E_TLS_MODE="${VIBETERM_E2E_TLS_MODE:-letsencrypt}"
+export VIBETERM_E2E_TURN_EXTERNAL_IP="${VIBETERM_E2E_TURN_EXTERNAL_IP:-${VIBETERM_E2E_HUB_IP}}"
+TARBALL="${VIBETERM_TARBALL:-${VIBETERM_E2E_REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
+HUB_PUBLIC_URL="${VIBETERM_HUB_PUBLIC_URL:-https://${VIBETERM_E2E_HUB_HOST}:${VIBETERM_E2E_HUB_PORT}}"
+if [[ "${VIBETERM_E2E_TLS_MODE}" == "private-ca" ]]; then
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${VIBETERM_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${VIBETERM_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-${VIBETERM_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
+  export VIBETERM_E2E_NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
 else
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${TMEX_E2E_REMOTE_DIR}/certs/fullchain.pem}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${TMEX_E2E_REMOTE_DIR}/certs/privkey.pem}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
-  export TMEX_E2E_NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${VIBETERM_E2E_REMOTE_DIR}/certs/fullchain.pem}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${VIBETERM_E2E_REMOTE_DIR}/certs/privkey.pem}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
+  export VIBETERM_E2E_NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
 fi
 
 log() { printf '[split-remote] %s\n' "$*"; }
 
 render_caddyfile() {
-  sed -e "s/__HUB_HOST__/${TMEX_E2E_HUB_HOST}/g" -e "s/__HUB_IP__/${TMEX_E2E_HUB_IP}/g" -e "s/__HUB_PORT__/${TMEX_E2E_HUB_PORT}/g" \
+  sed -e "s/__HUB_HOST__/${VIBETERM_E2E_HUB_HOST}/g" -e "s/__HUB_IP__/${VIBETERM_E2E_HUB_IP}/g" -e "s/__HUB_PORT__/${VIBETERM_E2E_HUB_PORT}/g" \
     "${ROOT}/Caddyfile" > "${ROOT}/Caddyfile.runtime"
-  export TMEX_E2E_CADDYFILE="${ROOT}/Caddyfile.runtime"
+  export VIBETERM_E2E_CADDYFILE="${ROOT}/Caddyfile.runtime"
 }
 
 wait_healthy() {
   local svc="$1"
   local n=0
-  local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
+  local max=$(( ${VIBETERM_E2E_HEALTH_TIMEOUT:-600} / 2 ))
   while (( n < max )); do
     local cid
     cid="$("${COMPOSE[@]}" ps -q "${svc}" 2>/dev/null || true)"
@@ -65,8 +65,8 @@ if [[ "${1:-}" == "down" ]]; then
   exit 0
 fi
 
-if [[ "${TMEX_E2E_SKIP_BUILD:-}" == "1" ]] && "${DOCKER[@]}" image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
-  log "skipping build (TMEX_E2E_SKIP_BUILD=1, ${IMAGE_NAME} exists)"
+if [[ "${VIBETERM_E2E_SKIP_BUILD:-}" == "1" ]] && "${DOCKER[@]}" image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  log "skipping build (VIBETERM_E2E_SKIP_BUILD=1, ${IMAGE_NAME} exists)"
 else
   if [[ ! -f "${TARBALL}" ]]; then
     echo "tarball not found: ${TARBALL}" >&2
@@ -85,7 +85,7 @@ log "compose down (tmex-split only)"
 
 log "compose up hub"
 "${COMPOSE[@]}" up -d hub
-if [[ -n "${TMEX_E2E_TURN_URL:-}" ]]; then
+if [[ -n "${VIBETERM_E2E_TURN_URL:-}" ]]; then
   log "compose up turn (coturn, host network :3478 + 49160-49200/udp)"
   "${COMPOSE[@]}" up -d turn || log "turn failed to start (image coturn/coturn:latest missing?) — continuing without TURN"
 fi
@@ -96,30 +96,30 @@ log "patch hub app.env public URL → ${HUB_PUBLIC_URL}"
   set -euo pipefail
   f=/var/lib/tmex/app.env
   test -f \"\$f\"
-  sed -i 's|^TMEX_BASE_URL=.*|TMEX_BASE_URL=${HUB_PUBLIC_URL}|' \"\$f\"
-  sed -i 's|^TMEX_HUB_PUBLIC_URL=.*|TMEX_HUB_PUBLIC_URL=${HUB_PUBLIC_URL}|' \"\$f\"
-  grep -q '^TMEX_TRUST_PROXY=' \"\$f\" && sed -i 's|^TMEX_TRUST_PROXY=.*|TMEX_TRUST_PROXY=true|' \"\$f\" || echo 'TMEX_TRUST_PROXY=true' >> \"\$f\"
-  grep -q '^TMEX_PEER_BIND_HOST=' \"\$f\" && sed -i 's|^TMEX_PEER_BIND_HOST=.*|TMEX_PEER_BIND_HOST=0.0.0.0|' \"\$f\" || echo 'TMEX_PEER_BIND_HOST=0.0.0.0' >> \"\$f\"
-  grep -E 'TMEX_BASE_URL|TMEX_HUB_PUBLIC_URL|TMEX_TRUST_PROXY|TMEX_PEER_BIND_HOST|TMEX_ROLES' \"\$f\"
+  sed -i 's|^VIBETERM_BASE_URL=.*|VIBETERM_BASE_URL=${HUB_PUBLIC_URL}|' \"\$f\"
+  sed -i 's|^VIBETERM_HUB_PUBLIC_URL=.*|VIBETERM_HUB_PUBLIC_URL=${HUB_PUBLIC_URL}|' \"\$f\"
+  grep -q '^VIBETERM_TRUST_PROXY=' \"\$f\" && sed -i 's|^VIBETERM_TRUST_PROXY=.*|VIBETERM_TRUST_PROXY=true|' \"\$f\" || echo 'VIBETERM_TRUST_PROXY=true' >> \"\$f\"
+  grep -q '^VIBETERM_PEER_BIND_HOST=' \"\$f\" && sed -i 's|^VIBETERM_PEER_BIND_HOST=.*|VIBETERM_PEER_BIND_HOST=0.0.0.0|' \"\$f\" || echo 'VIBETERM_PEER_BIND_HOST=0.0.0.0' >> \"\$f\"
+  grep -E 'VIBETERM_BASE_URL|VIBETERM_HUB_PUBLIC_URL|VIBETERM_TRUST_PROXY|VIBETERM_PEER_BIND_HOST|VIBETERM_ROLES' \"\$f\"
 "
 "${DOCKER[@]}" restart tmex-split-hub
 wait_healthy hub
 
-log "compose up caddy (prefer 0.0.0.0:${TMEX_E2E_HUB_PORT})"
+log "compose up caddy (prefer 0.0.0.0:${VIBETERM_E2E_HUB_PORT})"
 caddy_ok=0
 if "${COMPOSE[@]}" up -d caddy; then
   caddy_ok=1
 else
-  log "0.0.0.0:${TMEX_E2E_HUB_PORT} 被占用（不动 tmex-e2e）；改绑公网 IP ${TMEX_E2E_HUB_IP}:${TMEX_E2E_HUB_PORT}"
+  log "0.0.0.0:${VIBETERM_E2E_HUB_PORT} 被占用（不动 tmex-e2e）；改绑公网 IP ${VIBETERM_E2E_HUB_IP}:${VIBETERM_E2E_HUB_PORT}"
   bind_file="${ROOT}/.compose-bind.yml"
-  sed "s/0.0.0.0:/${TMEX_E2E_HUB_IP}:/" "${ROOT}/docker-compose.remote.yml" > "${bind_file}"
+  sed "s/0.0.0.0:/${VIBETERM_E2E_HUB_IP}:/" "${ROOT}/docker-compose.remote.yml" > "${bind_file}"
   if "${DOCKER[@]}" compose -p tmex-split -f "${bind_file}" up -d caddy; then
     caddy_ok=1
   fi
 fi
 if [[ "${caddy_ok}" -ne 1 ]]; then
-  echo "failed to bind ${TMEX_E2E_HUB_PORT} (0.0.0.0 and ${TMEX_E2E_HUB_IP})" >&2
-  ss -lntp | grep "${TMEX_E2E_HUB_PORT}" || true
+  echo "failed to bind ${VIBETERM_E2E_HUB_PORT} (0.0.0.0 and ${VIBETERM_E2E_HUB_IP})" >&2
+  ss -lntp | grep "${VIBETERM_E2E_HUB_PORT}" || true
   "${DOCKER[@]}" ps --format '{{.Names}} {{.Ports}}' || true
   exit 1
 fi

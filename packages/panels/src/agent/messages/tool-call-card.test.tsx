@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
-import type { UiToolCall } from '@tmex/stores';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import type { UiToolCall } from '@vibeterm/stores';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

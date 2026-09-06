@@ -191,7 +191,7 @@ async function resolveNewRelayPassword(parsed: ParsedArgs, io: RelayIo): Promise
     return io.newRelayPassword;
   }
   return await promptPassword('New relay password', {
-    envKey: 'TMEX_RELAY_PASSWORD',
+    envKey: 'VIBETERM_RELAY_PASSWORD',
     confirm: true,
     confirmMessage: 'Confirm new relay password',
   });

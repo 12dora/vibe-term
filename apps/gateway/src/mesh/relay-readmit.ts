@@ -1,4 +1,4 @@
-import { decodeKeyLogRecord, encodeBase64url } from '@tmex/shared/auth';
+import { decodeKeyLogRecord, encodeBase64url } from '@vibeterm/shared/auth';
 import type { NodeCertRecord, UserStore } from '../auth/user-store';
 
 export type ReadmitPrepareEntry = {

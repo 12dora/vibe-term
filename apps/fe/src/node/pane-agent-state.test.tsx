@@ -3,10 +3,10 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AgentSessionDto } from '@tmex/shared';
-import type { AgentState, AgentStore, AppRuntime } from '@tmex/stores';
-import { setAgentHostStore } from '@tmex/stores';
-import { RuntimeProvider, usePaneAgentState } from '@tmex/stores/react';
+import type { AgentSessionDto } from '@vibeterm/shared';
+import type { AgentState, AgentStore, AppRuntime } from '@vibeterm/stores';
+import { setAgentHostStore } from '@vibeterm/stores';
+import { RuntimeProvider, usePaneAgentState } from '@vibeterm/stores/react';
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 

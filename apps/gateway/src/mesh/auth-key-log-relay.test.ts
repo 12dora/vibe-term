@@ -20,8 +20,8 @@ import {
   generateKdfParams,
   hexToBytes,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
-import { generateTenantKey } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { generateTenantKey } from '@vibeterm/shared/relay';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';

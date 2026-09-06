@@ -5,8 +5,8 @@
 // 挂 Hub 和中继，摆两个 tab 只会让另一边永远是一句「先离开中继」。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { LocalStatusResponse, SetupRelayRole } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
+import type { LocalStatusResponse, SetupRelayRole } from '@vibeterm/api-client/local/types';
+import { Button } from '@vibeterm/ui/button';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ConnectionDetails } from '../connection-details';

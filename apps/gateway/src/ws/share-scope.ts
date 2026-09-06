@@ -1,5 +1,5 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
-import type { ShareScope } from '@tmex/shared/share';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { ShareScope } from '@vibeterm/shared/share';
 
 /** 分享连接的可见范围：一个 tmux window（tab）及其 pane。 */
 export type { ShareScope };

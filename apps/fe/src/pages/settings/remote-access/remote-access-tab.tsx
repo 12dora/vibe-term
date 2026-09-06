@@ -5,10 +5,10 @@
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
-import { isSelfNode } from '@tmex/api-client';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { isSelfNode } from '@vibeterm/api-client';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -177,7 +177,7 @@ function printUpgradeDone(
   targetVersion: string,
   env: Record<string, string>
 ): void {
-  const host = rewriteWildcardBindHost(String(env.TMEX_BIND_HOST || '127.0.0.1'));
+  const host = rewriteWildcardBindHost(String(env.VIBETERM_BIND_HOST || '127.0.0.1'));
   const port = String(env.GATEWAY_PORT || '9883');
   console.log(`[tmex] ${t('upgrade.done')}`);
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);

@@ -5,7 +5,7 @@
 // 一个小索引键记录每个节点快照的 updatedAt：条目上限 MAX_SNAPSHOTS（LRU 淘汰最旧的），
 // 写入撞上配额时先淘汰最旧的再重试一次；节点从 mesh 列表消失后由页面调用 prune 清掉。
 
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 
 const KEY_PREFIX = 'tmex:device-snapshot:';
 const INDEX_KEY = 'tmex:device-snapshot-index';

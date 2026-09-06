@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   buildLogin,
   createDelegation,
@@ -12,8 +12,8 @@ import {
   generateEd25519KeyPair,
   normalizeFingerprint,
   signLogin,
-} from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { eq } from 'drizzle-orm';
 import { filesBulkHooks } from '../../api/files';
 import {
@@ -230,7 +230,7 @@ describe('direct path integration', () => {
     const [linkA, linkB] = createInMemoryLinkPair();
     const [linkA2, linkB2] = createInMemoryLinkPair();
     const openedSessions: GatewaySession[] = [];
-    const accept = (stream: import('@tmex/shared/link').LinkStream) => {
+    const accept = (stream: import('@vibeterm/shared/link').LinkStream) => {
       void acceptWsStream(stream, {
         peerNodeId: MESH_VIA_SELF,
         sessionStore,
@@ -517,7 +517,7 @@ describe('direct path integration', () => {
     const [linkA, linkB] = createInMemoryLinkPair();
     const [linkA2, linkB2] = createInMemoryLinkPair();
     const openedSessions: GatewaySession[] = [];
-    const accept = (stream: import('@tmex/shared/link').LinkStream) => {
+    const accept = (stream: import('@vibeterm/shared/link').LinkStream) => {
       void acceptWsStream(stream, {
         peerNodeId: MESH_VIA_SELF,
         sessionStore,
@@ -889,7 +889,7 @@ describe('direct path integration', () => {
     ]);
     expect(meshA.peers.transportOf(meshB.nodeId)).toBe('dc');
     expect(meshB.peers.transportOf(meshA.nodeId)).toBe('dc');
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       linkB.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"ping"}');

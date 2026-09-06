@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   findDialogNode,
   firstUsableNode,

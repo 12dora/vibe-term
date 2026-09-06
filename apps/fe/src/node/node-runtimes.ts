@@ -9,7 +9,7 @@
 //   并把 `BulkClient`（F3-2 的文件直传）按 nodeId 登记给文件面板。控制器拿本连接当前 socket
 //   的 client nonce（WS URL 上的 `?cid=`）去换服务端 `connectionId`（F3-5）。
 //   `self` 是浏览器直接连的 entry，没有第二跳，永远不建直连。
-// - 直连栈（`@tmex/ws-client/direct`，约 19 KB gz）**按需加载**：只有真的要给远端 node
+// - 直连栈（`@vibeterm/ws-client/direct`，约 19 KB gz）**按需加载**：只有真的要给远端 node
 //   升级链路时才 `import()`。加载失败不影响 WS（只记一条日志），下一次建连再试；加载
 //   期间连接被 dispose 就直接放弃，不留悬挂的控制器。诊断源在建连的同一帧同步挂上一个
 //   占位实现（`createDeferredDiagnosticsSource`），控制器就位后转发，UI 不会错过订阅。
@@ -23,25 +23,25 @@ import {
   createNodeWsUrlSource,
   isSelfNode,
   nodeWsUrl,
-} from '@tmex/api-client';
-import type { NotificationSink } from '@tmex/notifications';
+} from '@vibeterm/api-client';
+import type { NotificationSink } from '@vibeterm/notifications';
 import {
   type AppRuntime,
   NodeConnectionManager,
   type NodeConnectionManagerOptions,
   normalizeNodeId,
-} from '@tmex/stores';
+} from '@vibeterm/stores';
 import {
   type GatewayConnection,
   type SocketFactory,
   createGatewayConnection,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import type {
   DirectCarrierController,
   DirectSignalMessage,
   DirectSignalingTransport,
-} from '@tmex/ws-client/direct';
-import { createDeferredDiagnosticsSource } from '@tmex/ws-client/direct/types';
+} from '@vibeterm/ws-client/direct';
+import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/types';
 import i18n from 'i18next';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 import { resolveMeshNodeName } from './node-names';
@@ -98,7 +98,7 @@ const meshRtcSignals = new MeshRtcSignalHub(() => sharedMeshEvents());
 
 /** 懒加载的直连栈里，宿主真正要用到的三个符号。 */
 export type DirectLinkModule = Pick<
-  typeof import('@tmex/ws-client/direct'),
+  typeof import('@vibeterm/ws-client/direct'),
   'BulkClient' | 'DirectCarrierController' | 'registerBulkClient'
 >;
 
@@ -111,7 +111,7 @@ let directLoadLogged = false;
  */
 function loadDirectModule(): Promise<DirectLinkModule | null> {
   if (directModule) return directModule;
-  const pending: Promise<DirectLinkModule | null> = import('@tmex/ws-client/direct').catch(
+  const pending: Promise<DirectLinkModule | null> = import('@vibeterm/ws-client/direct').catch(
     (error: unknown) => {
       if (directModule === pending) directModule = null;
       if (!directLoadLogged) {
@@ -128,7 +128,7 @@ function loadDirectModule(): Promise<DirectLinkModule | null> {
 export interface NodeDirectWiring {
   /** 自建连接（测试注入）。**必须**把第二个参数接到真 socket 的 `onclose` 上。 */
   createConnection?: (nodeId: string, onClose: (code: number) => void) => GatewayConnection;
-  /** 直连栈加载器（测试注入）；缺省按需 `import('@tmex/ws-client/direct')`。 */
+  /** 直连栈加载器（测试注入）；缺省按需 `import('@vibeterm/ws-client/direct')`。 */
   loadDirect?: () => Promise<DirectLinkModule | null>;
   createController?: (
     nodeId: string,
@@ -202,7 +202,7 @@ function directFallbackText(runtime: AppRuntime | null): string {
  * 切回 primary（含直连异常关闭）后的补齐：
  * 1. 重发该 device 的整份 pane 订阅——`mountPane()` 拿到的释放函数**立刻调用**，
  *    引用计数一加一减回到原值，但两次都会以新 generation 重下发当前订阅集合；
- *    订阅面在 `@tmex/stores`，没有对外暴露「只重发一次」的入口（见 result 备注）。
+ *    订阅面在 `@vibeterm/stores`，没有对外暴露「只重发一次」的入口（见 result 备注）。
  * 2. 提示用户：浏览器→node 方向的最近输入可能没送到（这一方向没有补齐机制）。
  *
  * canonical feed 由带 cursor 的重订阅精确补流，只有服务端明确返回 gap 时才重取整屏，

@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import type { DeviceTreeOrderRecord } from '../db';
 import { getDeviceTreeOrder, setPaneOrder, setWindowOrder } from '../db';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';

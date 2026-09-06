@@ -14,16 +14,16 @@ import {
   devicesQueryKey,
   nodeWsUrl,
   terminalShortcutsQueryKey,
-} from '@tmex/api-client';
-import { DEFAULT_TERMINAL_SHORTCUTS, type TerminalShortcutSettings } from '@tmex/shared';
+} from '@vibeterm/api-client';
+import { DEFAULT_TERMINAL_SHORTCUTS, type TerminalShortcutSettings } from '@vibeterm/shared';
 import {
   type AppRuntime,
   type TerminalFileLinksProvider,
   type UIStore,
   createAppRuntime,
   createBrowserHostServices,
-} from '@tmex/stores';
-import { type GatewayConnection, createGatewayConnection } from '@tmex/ws-client';
+} from '@vibeterm/stores';
+import { type GatewayConnection, createGatewayConnection } from '@vibeterm/ws-client';
 import { createShareAppPath, sharePagePath } from './share-route';
 
 /** 会话失效 / 分享结束的 WS 关闭码（契约见 plan §2.4）。 */

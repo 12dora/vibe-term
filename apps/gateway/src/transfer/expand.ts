@@ -3,7 +3,7 @@
 // 每文件独立的偏移/校验模型正是断点续传能成立的前提。
 // 空目录也要显式登记，否则「传了整棵树」的结果会缺掉没有文件的那些层。
 
-import type { TransferErrorCode, TransferSourceItem } from '@tmex/shared';
+import type { TransferErrorCode, TransferSourceItem } from '@vibeterm/shared';
 import { statFile } from '../files/device-storage';
 import { normalizeRelPath } from './dest';
 import { enumerateTree } from './enumerate';

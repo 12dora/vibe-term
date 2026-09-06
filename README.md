@@ -89,7 +89,7 @@ tmex ships a full authentication stack, but on a standalone install it is **off 
 
 **Mesh.** Membership is proved by Ed25519 node certificates issued by your root key — the hub issues no credentials of its own. Node-to-node links are mutually authenticated and encrypted end to end with AES-256-GCM, so a relaying hub only ever moves ciphertext.
 
-**Transport.** The built-in TLS listener serves a self-signed CA or a Let's Encrypt certificate obtained over ACME (`http-01`, or `dns-01` via Cloudflare or DNSPod). You can also terminate TLS at your own reverse proxy and set `TMEX_TRUST_PROXY=true` so tmex reads the real client address and scheme. Without a public IP, tmex downloads and supervises `cloudflared` itself — on your own hostname or as a quick tunnel — and can enforce [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) JWTs in front of it.
+**Transport.** The built-in TLS listener serves a self-signed CA or a Let's Encrypt certificate obtained over ACME (`http-01`, or `dns-01` via Cloudflare or DNSPod). You can also terminate TLS at your own reverse proxy and set `VIBETERM_TRUST_PROXY=true` so tmex reads the real client address and scheme. Without a public IP, tmex downloads and supervises `cloudflared` itself — on your own hostname or as a quick tunnel — and can enforce [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) JWTs in front of it.
 
 - Passwords and private keys are encrypted at rest with AES-256-GCM.
 - Webhook notifications are signed with HMAC-SHA256.
@@ -115,7 +115,7 @@ No. tmex used to open one remote reader channel per pane; it now multiplexes eve
 
 **Q: Why is OSC passthrough disabled by default?**
 
-Disabled passthrough prevents pane processes from forwarding private terminal control sequences to the host terminal, reducing the terminal-escape attack surface. If you need host terminals such as iTerm2 to receive OSC sequences, set `TMEX_TMUX_ALLOW_PASSTHROUGH=true`.
+Disabled passthrough prevents pane processes from forwarding private terminal control sequences to the host terminal, reducing the terminal-escape attack surface. If you need host terminals such as iTerm2 to receive OSC sequences, set `VIBETERM_TMUX_ALLOW_PASSTHROUGH=true`.
 
 ## License
 

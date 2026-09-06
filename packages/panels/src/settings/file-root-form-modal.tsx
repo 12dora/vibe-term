@@ -1,9 +1,9 @@
-import type { Device, FileRootDto } from '@tmex/shared';
+import type { Device, FileRootDto } from '@vibeterm/shared';
 import { Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import type { ApiClient } from '@tmex/api-client';
-import { Button } from '@tmex/ui/button';
+import type { ApiClient } from '@vibeterm/api-client';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -11,7 +11,7 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 
 import { FileRootDeviceField, FileRootPathField } from './file-root-form-sections';
 import type { FileRootDeviceGroup } from './file-root-query';

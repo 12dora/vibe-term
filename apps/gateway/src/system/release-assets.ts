@@ -1,15 +1,15 @@
 // 发行资产的地址与取用：URL 拼装、SHA256SUMS / SHA256SUMS.sig 的拉取与验签。
 // 与「整包下载 / 缓存」分开，让 release-download 只剩字节搬运与缓存生命周期。
 
-import { RELEASE_REPO_URL, combineAbortSignals, errorMessage } from '@tmex/shared';
-import { releaseTag, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { RELEASE_REPO_URL, combineAbortSignals, errorMessage } from '@vibeterm/shared';
+import { releaseTag, releaseTarballName, releaseTarballUrl } from '@vibeterm/shared';
 import { assertReleaseChecksum } from '../../../../packages/shared/src/release/verify';
 import { type VerifiedReleaseSums, verifyReleaseSumsBundle } from './release-signature';
 
 const SHA256SUMS_FETCH_TIMEOUT_MS = 30_000;
 
 /** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
-export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
+export const RELEASE_BASE_URL_ENV = 'VIBETERM_RELEASE_BASE_URL';
 
 export function resolveReleaseBaseUrl(): string {
   const override = process.env[RELEASE_BASE_URL_ENV]?.trim().replace(/\/+$/, '');

@@ -1,7 +1,7 @@
 // 本机卡片上的紧凑指标区：四种收尾（骨架 / 首拉失败 / 正常 / 过期）与控制台链接。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

@@ -1,6 +1,6 @@
 // 打包 runtime（内联 gateway），并在构建期注入 monorepo 版本号。
 //
-// 注入 TMEX_MONOREPO_VERSION 后，运行时 apps/gateway/src/system/version.ts 的
+// 注入 VIBETERM_MONOREPO_VERSION 后，运行时 apps/gateway/src/system/version.ts 的
 // typeof 守卫被短路，安装版/容器版无需再依赖 install-meta 或仓库 package.json 即可拿到版本。
 
 import { spawnSync } from 'node:child_process';
@@ -73,7 +73,7 @@ export async function buildRuntimeEntry(options: {
     format: 'esm',
     plugins: [cpuFeaturesStubPlugin],
     define: {
-      TMEX_MONOREPO_VERSION: JSON.stringify(options.version),
+      VIBETERM_MONOREPO_VERSION: JSON.stringify(options.version),
     },
     throw: false,
   });
@@ -122,7 +122,7 @@ function verifyVendoredNativeBundle(): void {
       );
       process.exit(1);
     }
-    if (!text.includes('TMEX_NATIVE_DIR') || !text.includes('node_datachannel.node')) {
+    if (!text.includes('VIBETERM_NATIVE_DIR') || !text.includes('node_datachannel.node')) {
       console.error('[build:runtime] vendored native JS is missing absolute-path loader');
       process.exit(1);
     }
@@ -196,7 +196,7 @@ function assertNoUnresolvedPackageRequires(filePath: string): void {
 }
 
 async function main(): Promise<void> {
-  console.log(`[build:runtime] injecting TMEX_MONOREPO_VERSION="${version}"`);
+  console.log(`[build:runtime] injecting VIBETERM_MONOREPO_VERSION="${version}"`);
 
   mkdirSync(join(pkgRoot, 'dist/runtime'), { recursive: true });
 

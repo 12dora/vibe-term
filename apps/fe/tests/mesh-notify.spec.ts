@@ -39,7 +39,7 @@ async function meshNotifyState(page: Page, nodeId: string | null): Promise<MeshN
 
 test('mesh: the sink toasts events forwarded from another node', async ({ page, context }) => {
   const sessionName = `tmex-mesh-notify-${Date.now()}`;
-  const token = `TMEX_MESH_NOTIFY_${Date.now()}`;
+  const token = `VIBETERM_MESH_NOTIFY_${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   const paneId = meshTmux(state.nodeTmuxSocket, `list-panes -t ${sessionName}:0 -F '#{pane_id}'`);
   const windowId = meshTmux(

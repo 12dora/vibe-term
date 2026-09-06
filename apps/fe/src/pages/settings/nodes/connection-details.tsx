@@ -9,9 +9,9 @@
 
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
-import { Progress } from '@tmex/ui/progress';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
+import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';

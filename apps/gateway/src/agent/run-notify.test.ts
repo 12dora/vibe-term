@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';
 import { createAgentSession, ensureAgentSettingsInitialized } from '../db/agent';

@@ -8,7 +8,7 @@ import {
   encodeBase64url,
   generateEd25519KeyPair,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { PendingEnrollment } from './enrollment';
 import {
   collectRedeemedCertificates,

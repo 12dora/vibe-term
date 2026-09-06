@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { Server } from 'bun';
 import { createDevice, updateDeviceRuntimeStatus } from '../db';
 import { getSqliteClient } from '../db/client';

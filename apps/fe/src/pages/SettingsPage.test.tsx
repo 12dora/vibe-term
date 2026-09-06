@@ -4,7 +4,7 @@
 // 断言标签项齐全、只有对应标签的面板被挂载；NodesTab 自身的分派在 settings/nodes/nodes-tab.test.tsx 里覆盖。
 
 import { describe, expect, mock, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import type { GatewayTransportEvent } from '@tmex/ws-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import type { GatewayTransportEvent } from '@vibeterm/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';

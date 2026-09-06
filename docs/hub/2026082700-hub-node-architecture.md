@@ -77,7 +77,7 @@
 
 peer link 传输选择（自动，按序）：
 
-1. **内网 / v6 / 公网直达**：目标 node 的 **peer 监听端口**（`TMEX_PEER_PORT`，默认 39001，绑定 `0.0.0.0` / `::`）只承载 **签名信令**（明文 WS）；数据面走 node↔node WebRTC DataChannel（DTLS 加密、ICE host 候选零跳）。hub 不可达时这是唯一路径，地址来自 `peer_cache`。
+1. **内网 / v6 / 公网直达**：目标 node 的 **peer 监听端口**（`VIBETERM_PEER_PORT`，默认 39001，绑定 `0.0.0.0` / `::`）只承载 **签名信令**（明文 WS）；数据面走 node↔node WebRTC DataChannel（DTLS 加密、ICE host 候选零跳）。hub 不可达时这是唯一路径，地址来自 `peer_cache`。
 2. **hub 信令 + ICE**：peer 端口不可达时，信令经 hub `ctl` 流转发，ICE 走 STUN / v6 / TURN。
 3. **hub relay**：ICE 失败或任一端 `direct_capable=false`，经 hub `relay` 流中转（`SecureChannel` 加密）。
 
@@ -195,7 +195,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 4. 响应带回 enrollment id、Hub URL、CA 指纹与 `key_log_head_hash`；客户端据此编码普通 join 串，后续 `performHubJoin()` / redeem 不变。
 5. 限流：`apps/gateway/src/hub/hub-enroll-limiter.ts`，滑动窗口，键为 `ip + uid`；累计 proof 失败，并限制每 uid 每小时成功创建次数。不记录 proof / 密码材料。
 
-CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无值时隐藏输入；尊重 `TMEX_PASSWORD`）。本机 setup：`POST /api/setup/join` 的 `method: 'password'`。
+CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无值时隐藏输入；尊重 `VIBETERM_PASSWORD`）。本机 setup：`POST /api/setup/join` 的 `method: 'password'`。
 
 ### 链路身份与握手
 
@@ -264,7 +264,7 @@ CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无�
 - `UplinkClient`：指数退避 1 s → 60 s 带抖动；连接后先 `auth.*`，再上报 `node.status`；收到 `node.list` 落 `peer_cache`（仅元数据）、`key_log_head` 落后时拉 `key.log` 逐条验签应用（含 `admit-node` → `node_certs`）。
 - `PeerManager`：维护到每个 peer 的 `LinkSession`（懒建、空闲 5 分钟关闭）；peer 监听端口只接受签名信令与 `ctl`，证书不在 `node_certs` 或验签失败即关，按源 ip 限速；数据面 `DataChannelLink`（握手绑定 DTLS 指纹）；建不起来时经 hub `relay` 起 `SecureChannelLink`。hub 不可达时依次尝试 `peer_cache.endpoints_json` 中的全部缓存地址。
 - `RtcPeerManager`：浏览器↔node 与 node↔node 共用 `node-datachannel` 装载与 ICE 配置（来自 `node.list`，开启 IPv6）；浏览器为 offerer；node↔node 由 nodeId 字典序小者 offer。Bun 侧适配器使用 `bufferedAmount() / setBufferedAmountLowThreshold() / onBufferedAmountLow() / maxMessageSize() / remoteFingerprint()`，浏览器侧用对应属性与事件，两套实现同一 `Carrier` 语义。装载方式：`build-runtime` 内联 node-datachannel 的 JS 层（含 `detect-libc` 逻辑）并把原生绑定改为按绝对路径 `require('<installDir>/native/node_datachannel.node')`，manifest 记录 tarball 内 addon 路径与 N-API 版本，启动时探测失败即 `direct_capable=false`。
-- 默认 `TMEX_BIND_HOST=127.0.0.1`（本地 UI），peer 端口独立绑定。
+- 默认 `VIBETERM_BIND_HOST=127.0.0.1`（本地 UI），peer 端口独立绑定。
 - 双角色：`InMemoryLink` 实现 `LinkSession`，hub 侧无差别对待。
 
 ### DataChannel 消息尺寸与背压 / bulk 协议
@@ -301,7 +301,7 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 
 ### 角色与启动矩阵
 
-`TMEX_ROLES`：`standalone`（默认）| `node` | `hub,node` | `relay` | `relay,node`。`hub` 与 `relay` 不能同机。
+`VIBETERM_ROLES`：`standalone`（默认）| `node` | `hub,node` | `relay` | `relay,node`。`hub` 与 `relay` 不能同机。
 
 | 角色 | 构造 | 前端 | 迁移 | tmux 检查 | supervisors |
 |---|---|---|---|---|---|
@@ -317,8 +317,8 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 
 ### 配置
 
-- hub：`TMEX_HUB_PUBLIC_URL`、`TMEX_STUN_SERVERS`（逗号分隔）、`TMEX_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `TMEX_MASTER_KEY` 加密落库。
-- node：`TMEX_HUB_URL`、`TMEX_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
+- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
+- node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
 - STUN/TURN：hub 配置 → `node.list` 下发 → 浏览器 `GET /api/mesh/rtc-config`。
 
 ### CLI 新命令（`packages/app/src/commands/`）
@@ -329,7 +329,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 - `hub join <https-url> --token <join 串> [--name <n>]`（仅接受系统信任链验证的 HTTPS）/ `hub leave`
 - `direct enable|disable`：按 `platform / arch / libc` 查 pinned manifest（`packages/app/src/lib/native-manifest.ts`：包名、addon 文件名、`integrity`、N-API 版本），从 npm registry 下载单平台 tarball，校验后解出 `.node` 到 `<installDir>/native/`（`install-layout` 新增 `nativeDir`）。缺失则 `direct_capable=false`。`init --role node|hub,node` 默认执行，失败不阻断。
 - `init --role <roles>`；`upgrade` manifest 变化时重下。
-- `hub join` 提示放行 `TMEX_PEER_PORT`（仅内网直连需要）。
+- `hub join` 提示放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。
 
 ### 兼容与迁移
 

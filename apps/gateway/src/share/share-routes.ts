@@ -1,4 +1,4 @@
-import type { ShareSettings } from '@tmex/shared/share';
+import type { ShareSettings } from '@vibeterm/shared/share';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { CryptoDecryptError } from '../crypto/errors';

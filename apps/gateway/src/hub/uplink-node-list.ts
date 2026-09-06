@@ -1,11 +1,11 @@
 import os from 'node:os';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   type HubAdvertisement,
   type HubEndpointInfo,
   type HubMode,
   UPLINK_CTL_MAX_HUBS,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';

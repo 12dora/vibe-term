@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { type BorshDispatchHost, type BorshKindHandler, decoderHandler } from './borsh-kind-types';
 import { decodeCanonicalCommand } from './borsh/codec-borsh';
 

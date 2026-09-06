@@ -1,5 +1,5 @@
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import type { TunnelEdgeResolution } from '@tmex/shared';
+import type { TunnelEdgeResolution } from '@vibeterm/shared';
 import { describeEdge } from './edge-resolver';
 import { TunnelError } from './errors';
 import {

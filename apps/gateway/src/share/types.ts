@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import type {
   ShareEndReason,
   ShareLogPage,
@@ -6,7 +6,7 @@ import type {
   ShareRecord,
   ShareScope,
   ShareSettings,
-} from '@tmex/shared/share';
+} from '@vibeterm/shared/share';
 import type { ShareOriginSources } from './share-origins';
 import type { ShareRecorderRuntime } from './share-recorder';
 import type { ShareStore } from './share-store';

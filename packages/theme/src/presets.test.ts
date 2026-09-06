@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import fs from 'node:fs';
 import path from 'node:path';
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT } from '@tmex/shared';
+import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT } from '@vibeterm/shared';
 import { contrastRatio } from './color-utils';
 import { extractPresetSection, renderPresetCssSections } from './preset-css';
 import { THEME_PRESET_META, resolveTerminalTheme } from './preset-meta';

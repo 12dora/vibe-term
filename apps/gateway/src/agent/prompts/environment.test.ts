@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import os from 'node:os';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { collectAgentEnvironment } from './environment';
 
 const now = '2026-06-13T08:00:00.000Z';

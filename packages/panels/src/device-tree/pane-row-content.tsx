@@ -1,6 +1,6 @@
-import { useBellStore } from '@tmex/notifications';
-import type { TmuxPane } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import { useBellStore } from '@vibeterm/notifications';
+import type { TmuxPane } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceActionsMenu } from './device-actions-menu';

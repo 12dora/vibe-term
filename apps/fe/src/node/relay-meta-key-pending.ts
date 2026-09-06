@@ -8,7 +8,7 @@
 // 租户密钥早已按各节点的 X25519 公钥封装过）。根钥 seed、口令一概不进这里。
 
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { RelayMetaKeyOp } from '@tmex/api-client/relay/tenant-api';
+import type { RelayMetaKeyOp } from '@vibeterm/api-client/relay/tenant-api';
 import {
   type RelayFlowDeps,
   type RelayFlowResult,

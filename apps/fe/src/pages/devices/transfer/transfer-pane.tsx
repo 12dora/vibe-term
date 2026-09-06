@@ -1,8 +1,8 @@
 // 传输弹窗的单侧面板：节点 → 根目录 → 目录浏览 + 多选，底部一个发送按钮。
 
-import { Button } from '@tmex/ui/button';
-import { ScrollArea } from '@tmex/ui/scroll-area';
-import { Skeleton } from '@tmex/ui/skeleton';
+import { Button } from '@vibeterm/ui/button';
+import { ScrollArea } from '@vibeterm/ui/scroll-area';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import type { Dispatch } from 'react';
 import { useTranslation } from 'react-i18next';
 

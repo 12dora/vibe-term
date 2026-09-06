@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi } from '@tmex/api-client/auth/index';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import {
   decodeBase64url,
   decodeKeyLogRecord,
@@ -11,7 +11,7 @@ import {
   encodeBase64url,
   nodeIdToHex,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { RENAME_UNCONFIRMED, renameNodeViaKeyLog, renameRetryable } from './rename-node';
 
 const KDF = {

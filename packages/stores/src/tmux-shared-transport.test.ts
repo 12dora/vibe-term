@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import { type GatewayTransportCommand, createSharedGatewayTransport } from '@tmex/ws-client';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import { type GatewayTransportCommand, createSharedGatewayTransport } from '@vibeterm/ws-client';
 import { createAppRuntime } from './app-runtime';
 import { installWindowStorage } from './test-utils';
 import { selectPaneViewportOwner } from './viewport-policy';

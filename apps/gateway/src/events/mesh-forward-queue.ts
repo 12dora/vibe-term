@@ -4,7 +4,7 @@
 // `nodeId:deviceId:paneId:eventType` 合并只留最新一条，超限丢最旧，
 // 出队时丢过期。丢弃一律回调给调用方打日志。
 
-import type { MeshNotificationForwardRequest } from '@tmex/shared';
+import type { MeshNotificationForwardRequest } from '@vibeterm/shared';
 
 export const MESH_FORWARD_QUEUE_MAX = 20;
 export const MESH_FORWARD_QUEUE_TTL_MS = 3 * 60 * 1000;

@@ -13,8 +13,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -22,8 +22,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

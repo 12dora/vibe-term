@@ -21,7 +21,7 @@ export async function resolvePassword(options: {
     return options.password;
   }
   return await promptPassword(options.prompt ?? 'Password', {
-    envKey: options.envKey ?? 'TMEX_PASSWORD',
+    envKey: options.envKey ?? 'VIBETERM_PASSWORD',
     confirm: options.confirm,
     confirmMessage: options.confirmPrompt,
   });

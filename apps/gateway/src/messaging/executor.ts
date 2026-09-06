@@ -3,7 +3,7 @@ import {
   type CommandResult,
   parseCommand,
   resolveNodeTarget,
-} from '@tmex/shared/messaging';
+} from '@vibeterm/shared/messaging';
 import { authorizeMessagingActor } from './authorize';
 import { type CommandContext, errorResult } from './context';
 import type { CommandHandler } from './handlers/types';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
+import type { StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 
 import {
   PANE_SNAPSHOT_FORMAT,

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 
 import { runMigrations } from '../../db/migrate';
 import { createDeviceSessionRuntime } from '../../tmux-client/device-session-runtime';

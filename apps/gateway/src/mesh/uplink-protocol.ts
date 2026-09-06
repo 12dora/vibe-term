@@ -16,7 +16,7 @@ export {
   type MeshUplinkKeyLogRecord as UplinkKeyLogRecord,
   type MeshUplinkNodeList as UplinkNodeList,
   type MeshUplinkRtcSignal as UplinkRtcSignal,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 
 export function uplinkWsUrl(hubUrl: string): string {
   const url = new URL(hubUrl);

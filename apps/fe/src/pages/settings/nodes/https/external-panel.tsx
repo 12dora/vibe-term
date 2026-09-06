@@ -2,9 +2,9 @@
 //
 // 唯一的开关是 `trustProxy`——它写进 env 文件，只有换进程才生效，因此保存后会出现重启提示。
 
-import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import type { TlsStatusResponse } from '@vibeterm/api-client/local/tls-types';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

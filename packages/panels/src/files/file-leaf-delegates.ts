@@ -1,7 +1,7 @@
 // 树根共享右键菜单的事件委托逻辑：从事件目标找回是哪一行、以及该不该把手势交回 base-ui。
 // 全部只依赖 `AttrElement`（`closest` + `getAttribute`），无 DOM 环境下可用替身单测。
 
-import type { FileRootDto, ListFilesResponse } from '@tmex/shared';
+import type { FileRootDto, ListFilesResponse } from '@vibeterm/shared';
 import {
   type AttrElement,
   type FileLeafTarget,

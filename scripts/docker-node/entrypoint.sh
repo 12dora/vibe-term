@@ -14,13 +14,13 @@ PID_FILE="${INSTALL_DIR}/tmex.pid"
 LOCK_FILE="${INSTALL_DIR}/upgrade.lock"
 JOURNAL_FILE="${INSTALL_DIR}/upgrade-state.json"
 
-GATEWAY_PORT_IN="${TMEX_GATEWAY_PORT:-9883}"
-PEER_PORT_IN="${TMEX_PEER_PORT:-39001}"
-SITE_NAME_IN="${TMEX_SITE_NAME:-docker-node}"
-RESTART_DELAY_S="${TMEX_SUPERVISOR_DELAY:-20}"
-TICK_S="${TMEX_SUPERVISOR_TICK:-2}"
-JOURNAL_STALE_S="${TMEX_SUPERVISOR_JOURNAL_STALE:-900}"
-DEMO_SESSION="${TMEX_DEMO_SESSION:-demo}"
+GATEWAY_PORT_IN="${VIBETERM_GATEWAY_PORT:-9883}"
+PEER_PORT_IN="${VIBETERM_PEER_PORT:-39001}"
+SITE_NAME_IN="${VIBETERM_SITE_NAME:-docker-node}"
+RESTART_DELAY_S="${VIBETERM_SUPERVISOR_DELAY:-20}"
+TICK_S="${VIBETERM_SUPERVISOR_TICK:-2}"
+JOURNAL_STALE_S="${VIBETERM_SUPERVISOR_JOURNAL_STALE:-900}"
+DEMO_SESSION="${VIBETERM_DEMO_SESSION:-demo}"
 
 log() { printf '[docker-node] %s\n' "$*"; }
 
@@ -88,7 +88,7 @@ require_clean_install_dir() {
   leftovers="$(ls -A "${INSTALL_DIR}" 2>/dev/null)"
   [[ -z "${leftovers}" ]] && return 0
   log "FATAL: ${INSTALL_DIR} 非空但缺少 install-meta.json（上次 init 未完成）。"
-  log "app.env 里的 TMEX_MASTER_KEY 与 ${DATA_DIR} 的库一一对应，这里不会自动重装。"
+  log "app.env 里的 VIBETERM_MASTER_KEY 与 ${DATA_DIR} 的库一一对应，这里不会自动重装。"
   log "请清空两个卷后重来：scripts/docker-node/run.sh down -v"
   exit 1
 }
@@ -110,7 +110,7 @@ run_init() {
     --bun-path="${BUN_PATH}"
 }
 
-# init 写的 app.env 缺 TMEX_PEER_BIND_HOST，TMEX_SITE_NAME 固定为 tmex；
+# init 写的 app.env 缺 VIBETERM_PEER_BIND_HOST，VIBETERM_SITE_NAME 固定为 tmex；
 # 只在首启覆盖，之后 join / 用户手改的值一律保留。
 set_env_key() {
   local key="$1" value="$2" file="${INSTALL_DIR}/app.env"
@@ -122,10 +122,10 @@ set_env_key() {
 }
 
 patch_first_boot_env() {
-  set_env_key TMEX_SITE_NAME "${SITE_NAME_IN}"
-  set_env_key TMEX_PEER_BIND_HOST 0.0.0.0
-  if [[ -n "${TMEX_BASE_URL:-}" ]]; then
-    set_env_key TMEX_BASE_URL "${TMEX_BASE_URL}"
+  set_env_key VIBETERM_SITE_NAME "${SITE_NAME_IN}"
+  set_env_key VIBETERM_PEER_BIND_HOST 0.0.0.0
+  if [[ -n "${VIBETERM_BASE_URL:-}" ]]; then
+    set_env_key VIBETERM_BASE_URL "${VIBETERM_BASE_URL}"
   fi
   chmod 600 "${INSTALL_DIR}/app.env" 2>/dev/null || true
 }

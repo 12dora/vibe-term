@@ -1,7 +1,7 @@
 // 「直接连接」路径的纯推导：保护档位、启用阶段、首位用户表单校验、错误码映射。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalAuthStatus } from '@tmex/shared';
+import type { LocalAuthStatus } from '@vibeterm/shared';
 import {
   type BootstrapDraft,
   bootstrapDraftError,

@@ -1,4 +1,4 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { OpenedWsStream } from './mesh-deps';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import { openWsStream } from './stream-targets';

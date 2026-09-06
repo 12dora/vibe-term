@@ -1,4 +1,4 @@
-import { type ByteTransport, CTL_STREAM_ID, FrameOp } from '@tmex/shared/link';
+import { type ByteTransport, CTL_STREAM_ID, FrameOp } from '@vibeterm/shared/link';
 import { FANOUT_MAX_PENDING_BYTES } from './channel-fanout';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import { isDcHandshakeWire } from './dc-handshake';

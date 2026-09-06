@@ -21,7 +21,7 @@
 
 ### ICE / 拨号
 
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`TMEX_RTC_PORT_RANGE=begin-end` 映射端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤）。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤）。
 - `connectToPeer` 四阶段共用一个 15 s deadline；`waitLocalFingerprint` 改回调扇出。
 - 熔断器 `skipKinds` 排除本地信令状态错误；到达永久禁用阈值后每 10 min 允许一次 `forceProbe`。
 - 按 peer 聚合候选对类型的成功/失败与拨号耗时，`[mesh][rtc] summary` 每 peer 最多 60 s 一条。

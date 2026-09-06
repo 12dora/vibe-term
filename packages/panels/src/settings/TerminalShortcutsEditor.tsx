@@ -1,4 +1,4 @@
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

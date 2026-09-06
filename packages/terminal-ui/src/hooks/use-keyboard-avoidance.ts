@@ -1,4 +1,4 @@
-import type { KeyboardBehaviorMode } from '@tmex/stores';
+import type { KeyboardBehaviorMode } from '@vibeterm/stores';
 import { useEffect, useState } from 'react';
 import { FollowLoopScheduler } from '../utils/follow-loop';
 import { AppliedTransformReader, ShortcutStripTracker } from '../utils/keyboard-avoidance-dom';

@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { Carrier, CarrierSendResult } from './carrier';
 import { carrierKindOf, logGuardEvent } from './ws-backpressure-log';
 

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
-import { THEME_PRESETS, THEME_PRESET_META, type ThemePreset } from '@tmex/theme';
+import type { SiteSettings } from '@vibeterm/shared';
+import { THEME_PRESETS, THEME_PRESET_META, type ThemePreset } from '@vibeterm/theme';
 import { installWindowStorage } from './test-utils';
 
 // 预设名单会随版本增删；按 appearance 现取，避免写死 id
@@ -24,8 +24,8 @@ mock.module('i18next', () => {
 
 const sendMock = mock(() => true);
 const isReadyMock = mock(() => true);
-const wsActual = await import('@tmex/ws-client');
-mock.module('@tmex/ws-client', () => {
+const wsActual = await import('@vibeterm/ws-client');
+mock.module('@vibeterm/ws-client', () => {
   return {
     ...wsActual,
     getBorshClient: () => ({ send: sendMock, isReady: isReadyMock }),
@@ -39,7 +39,7 @@ mock.module('@tmex/ws-client', () => {
 const { useSiteStore, useUIStore } = await import('./default-runtime');
 const { createAppRuntime } = await import('./app-runtime');
 
-const TMEX_UI_KEY = 'tmex-ui';
+const VIBETERM_UI_KEY = 'tmex-ui';
 
 function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
@@ -79,7 +79,7 @@ function flushAsync(): Promise<void> {
 }
 
 function readLocalStorageTheme(): 'dark' | 'light' | undefined {
-  const raw = localStorage.getItem(TMEX_UI_KEY);
+  const raw = localStorage.getItem(VIBETERM_UI_KEY);
   if (!raw) return undefined;
   try {
     const parsed = JSON.parse(raw) as { state?: { theme?: unknown } };
@@ -307,7 +307,7 @@ describe('useSiteStore theme preset', () => {
     // 若按内存值判定，随后到达的 light S2C 会把对方刚选的预设清成 null 并回写。
     useUIStore.setState({ theme: 'dark', themePreset: DARK_PRESET });
     localStorage.setItem(
-      TMEX_UI_KEY,
+      VIBETERM_UI_KEY,
       JSON.stringify({ state: { theme: 'light', themePreset: LIGHT_PRESET }, version: 0 })
     );
 
@@ -424,13 +424,13 @@ describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
   test('selectThemePreset 只落本 store 的 settings 并上行，不碰共享 UI store 与 localStorage', () => {
     const runtime = makeRemoteRuntime();
     runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
-    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+    const uiBefore = localStorage.getItem(VIBETERM_UI_KEY);
 
     runtime.stores.site.getState().selectThemePreset(LIGHT_PRESET);
 
     expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
     expect(useUIStore.getState().theme).toBe('dark');
-    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(localStorage.getItem(VIBETERM_UI_KEY)).toBe(uiBefore);
     expect(remoteStorageKeys()).toEqual([]);
     // 那台 node 自己的站点外观照常更新并上行
     expect(runtime.stores.site.getState().settings?.theme).toBe('light');
@@ -440,13 +440,13 @@ describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
   test('updateTheme 同样不改共享 UI store 与 localStorage', () => {
     const runtime = makeRemoteRuntime();
     runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
-    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+    const uiBefore = localStorage.getItem(VIBETERM_UI_KEY);
 
     runtime.stores.site.getState().updateTheme('light');
 
     expect(useUIStore.getState().theme).toBe('dark');
     expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
-    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(localStorage.getItem(VIBETERM_UI_KEY)).toBe(uiBefore);
     expect(remoteStorageKeys()).toEqual([]);
     expect(runtime.stores.site.getState().settings?.theme).toBe('light');
     expect(sendMock).toHaveBeenCalledTimes(1);
@@ -455,13 +455,13 @@ describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
   test('setThemeFromS2C 只更新自己的 settings，不回送也不碰浏览器级状态', () => {
     const runtime = makeRemoteRuntime();
     runtime.stores.site.setState({ settings: makeSiteSettings({ theme: 'dark' }) });
-    const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+    const uiBefore = localStorage.getItem(VIBETERM_UI_KEY);
 
     runtime.stores.site.getState().setThemeFromS2C('light');
 
     expect(useUIStore.getState().theme).toBe('dark');
     expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
-    expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+    expect(localStorage.getItem(VIBETERM_UI_KEY)).toBe(uiBefore);
     expect(remoteStorageKeys()).toEqual([]);
     expect(runtime.stores.site.getState().settings?.theme).toBe('light');
     expect(sendMock).not.toHaveBeenCalled();
@@ -472,7 +472,7 @@ describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
     globalThis.fetch = siteSettingsResponse({ theme: 'light' });
     try {
       const runtime = makeRemoteRuntime();
-      const uiBefore = localStorage.getItem(TMEX_UI_KEY);
+      const uiBefore = localStorage.getItem(VIBETERM_UI_KEY);
 
       const settings = await runtime.stores.site.getState().fetchSettings();
 
@@ -480,7 +480,7 @@ describe('createSiteStore controlsBrowserPrefs=false 的主题写入', () => {
       expect(runtime.stores.site.getState().settings?.theme).toBe('light');
       expect(useUIStore.getState().theme).toBe('dark');
       expect(useUIStore.getState().themePreset).toBe(DARK_PRESET);
-      expect(localStorage.getItem(TMEX_UI_KEY)).toBe(uiBefore);
+      expect(localStorage.getItem(VIBETERM_UI_KEY)).toBe(uiBefore);
     } finally {
       globalThis.fetch = originalFetch;
     }

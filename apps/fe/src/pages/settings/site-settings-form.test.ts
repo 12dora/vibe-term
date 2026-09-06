@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
-import type { LocaleCode } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
+import type { LocaleCode } from '@vibeterm/shared';
 import {
   type SiteSettingsLinkage,
   type SiteSettingsWithLinkage,

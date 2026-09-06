@@ -1,10 +1,10 @@
-import { errorMessage } from '@tmex/shared';
-import type { TunnelAccessPolicyRule } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { TunnelAccessPolicyRule } from '@vibeterm/shared';
 import {
   ACCESS_BYPASS_PATH_PREFIXES,
-  TMEX_ALLOW_POLICY_NAME,
-  TMEX_APP_NAME,
-  TMEX_BYPASS_POLICY_NAME,
+  VIBETERM_ALLOW_POLICY_NAME,
+  VIBETERM_APP_NAME,
+  VIBETERM_BYPASS_POLICY_NAME,
   bypassAppDomain,
   bypassAppName,
 } from './access-paths';
@@ -122,7 +122,7 @@ export class CloudflareAccessClient {
       apiToken,
       {
         type: 'self_hosted',
-        name: opts?.name ?? TMEX_APP_NAME,
+        name: opts?.name ?? VIBETERM_APP_NAME,
         domain: opts?.domain ?? hostname,
         session_duration: SESSION_DURATION,
       }
@@ -143,7 +143,7 @@ export class CloudflareAccessClient {
       apiToken,
       {
         type: 'self_hosted',
-        name: opts?.name ?? TMEX_APP_NAME,
+        name: opts?.name ?? VIBETERM_APP_NAME,
         domain: opts?.domain ?? hostname,
         session_duration: SESSION_DURATION,
       }
@@ -239,17 +239,17 @@ export class CloudflareAccessClient {
   ): Promise<void> {
     const include = toCloudflareInclude(rules);
     const body = {
-      name: TMEX_ALLOW_POLICY_NAME,
+      name: VIBETERM_ALLOW_POLICY_NAME,
       decision: 'allow',
       include,
     };
     const existing = await this.listPolicies(accountId, apiToken, appId);
-    this.assertNoForeignAuthorizingPolicies(existing, TMEX_ALLOW_POLICY_NAME);
-    const ours = existing.filter((p) => p.name === TMEX_ALLOW_POLICY_NAME);
+    this.assertNoForeignAuthorizingPolicies(existing, VIBETERM_ALLOW_POLICY_NAME);
+    const ours = existing.filter((p) => p.name === VIBETERM_ALLOW_POLICY_NAME);
     if (ours.length > 1) {
       throw new TunnelError(
         'access_api_failed',
-        `Multiple ${TMEX_ALLOW_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
+        `Multiple ${VIBETERM_ALLOW_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
       );
     }
     const keep = ours[0];
@@ -269,12 +269,12 @@ export class CloudflareAccessClient {
       );
     }
     const verified = await this.listPolicies(accountId, apiToken, appId);
-    this.assertNoForeignAuthorizingPolicies(verified, TMEX_ALLOW_POLICY_NAME);
-    const allow = verified.find((p) => p.name === TMEX_ALLOW_POLICY_NAME && p.decision === 'allow');
+    this.assertNoForeignAuthorizingPolicies(verified, VIBETERM_ALLOW_POLICY_NAME);
+    const allow = verified.find((p) => p.name === VIBETERM_ALLOW_POLICY_NAME && p.decision === 'allow');
     if (!allow) {
       throw new TunnelError(
         'access_api_failed',
-        `Cloudflare Access did not persist the ${TMEX_ALLOW_POLICY_NAME} allow policy`
+        `Cloudflare Access did not persist the ${VIBETERM_ALLOW_POLICY_NAME} allow policy`
       );
     }
     const got = fromCloudflareInclude(allow.include);
@@ -288,17 +288,17 @@ export class CloudflareAccessClient {
 
   async ensureBypassPolicy(accountId: string, apiToken: string, appId: string): Promise<void> {
     const body = {
-      name: TMEX_BYPASS_POLICY_NAME,
+      name: VIBETERM_BYPASS_POLICY_NAME,
       decision: 'bypass',
       include: [{ everyone: {} }],
     };
     const existing = await this.listPolicies(accountId, apiToken, appId);
-    this.assertNoForeignAuthorizingPolicies(existing, TMEX_BYPASS_POLICY_NAME);
-    const ours = existing.filter((p) => p.name === TMEX_BYPASS_POLICY_NAME);
+    this.assertNoForeignAuthorizingPolicies(existing, VIBETERM_BYPASS_POLICY_NAME);
+    const ours = existing.filter((p) => p.name === VIBETERM_BYPASS_POLICY_NAME);
     if (ours.length > 1) {
       throw new TunnelError(
         'access_api_failed',
-        `Multiple ${TMEX_BYPASS_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
+        `Multiple ${VIBETERM_BYPASS_POLICY_NAME} policies exist (${ours.map(policyLabel).join(', ')}). Remove extras in the Cloudflare dashboard, then retry.`
       );
     }
     const keep = ours[0];
@@ -356,7 +356,7 @@ export class CloudflareAccessClient {
   ): Promise<TunnelAccessPolicyRule[]> {
     const policies = await this.listPolicies(accountId, apiToken, appId);
     const allow =
-      policies.find((p) => p.name === TMEX_ALLOW_POLICY_NAME && p.decision === 'allow') ??
+      policies.find((p) => p.name === VIBETERM_ALLOW_POLICY_NAME && p.decision === 'allow') ??
       policies.find((p) => p.decision === 'allow');
     return fromCloudflareInclude(allow?.include);
   }
@@ -366,7 +366,7 @@ export class CloudflareAccessClient {
     const exact = apps.find((app) => app.domain.toLowerCase() === host);
     if (exact) return exact;
     return (
-      apps.find((app) => app.name === TMEX_APP_NAME && app.domain.toLowerCase() === host) ?? null
+      apps.find((app) => app.name === VIBETERM_APP_NAME && app.domain.toLowerCase() === host) ?? null
     );
   }
 
@@ -448,7 +448,7 @@ export class CloudflareAccessClient {
     return {
       id,
       aud,
-      name: readString(result, 'name') ?? TMEX_APP_NAME,
+      name: readString(result, 'name') ?? VIBETERM_APP_NAME,
       domain: readString(result, 'domain') ?? '',
     };
   }

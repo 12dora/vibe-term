@@ -3,20 +3,20 @@
 
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
-import { fetchWatchRule } from '@tmex/api-client';
-import type { ToastIdentity } from '@tmex/notifications';
-import { claimToastFor, formatWatchTriggeredNotification } from '@tmex/notifications';
+import { fetchWatchRule } from '@vibeterm/api-client';
+import type { ToastIdentity } from '@vibeterm/notifications';
+import { claimToastFor, formatWatchTriggeredNotification } from '@vibeterm/notifications';
 import type {
   WatchModelUnavailablePayload,
   WatchRuleDto,
   WatchRuleErrorPayload,
   WatchTriggeredPayload,
-} from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import type { AppRuntime } from '@tmex/stores';
-import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import type { BorshWebSocketClient } from '@tmex/ws-client';
+} from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import type { AppRuntime } from '@vibeterm/stores';
+import { encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import type { BorshWebSocketClient } from '@vibeterm/ws-client';
 import i18next from 'i18next';
 import { useEffect } from 'react';
 
@@ -140,7 +140,7 @@ export function watchToastIdentity(
 
 /**
  * 本条事件的 toast 归本页面这条通道弹吗？同一事件也可能经汇聚节点转发回来（见
- * `@tmex/notifications/toast-dedupe`），先到的那条认领成功，另一条静默丢弃。
+ * `@vibeterm/notifications/toast-dedupe`），先到的那条认领成功，另一条静默丢弃。
  * 查询失效不受影响——那是另一件事，两条路都该做。
  */
 function claimWatchToast(runtime: AppRuntime, decoded: DecodedWatchEvent): boolean {

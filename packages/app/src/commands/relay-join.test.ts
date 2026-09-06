@@ -66,7 +66,7 @@ async function openAuth(username?: string, roles = 'node'): Promise<LocalAuthCon
   const auth = await openLocalAuth({
     memory: true,
     migrationsFolder: MIGRATIONS,
-    env: { TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '', TMEX_ROLES: roles },
+    env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: roles },
   });
   handles.push(auth);
   if (username) {
@@ -656,7 +656,7 @@ describe('r3 join with a pinned CA', () => {
 
 describe('r3 join and the local roles', () => {
   test('a relay,node host keeps its relay role', async () => {
-    const previous = process.env.TMEX_ROLES;
+    const previous = process.env.VIBETERM_ROLES;
     const tenant = await makeTenant([ENTRY_A]);
     const joiner = await openAuth(undefined, 'relay,node');
     const { fetcher } = fakeRelay(tenant);
@@ -667,16 +667,16 @@ describe('r3 join and the local roles', () => {
         skipRestart: true,
         log: () => undefined,
       });
-      expect(process.env.TMEX_ROLES).toBe('relay,node');
+      expect(process.env.VIBETERM_ROLES).toBe('relay,node');
     } finally {
-      if (previous === undefined) process.env.TMEX_ROLES = undefined;
-      else process.env.TMEX_ROLES = previous;
+      if (previous === undefined) process.env.VIBETERM_ROLES = undefined;
+      else process.env.VIBETERM_ROLES = previous;
     }
   });
 });
 
 describe('hub join dispatch', () => {
-  test('an r3 token reaches the relay path without needing a url or TMEX_HUB_URL', async () => {
+  test('an r3 token reaches the relay path without needing a url or VIBETERM_HUB_URL', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const joiner = await openAuth();
     const { calls, fetcher } = fakeRelay(tenant);

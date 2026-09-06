@@ -3,13 +3,13 @@
 // 下拉内容单独导出且不自带 hook：Base UI 的菜单走 portal，静态渲染什么都不输出，
 // 单测只能直接对元素树断言（与 `BulkActionsMenuList` 同一套做法）。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Ellipsis, Gauge, KeyRound, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

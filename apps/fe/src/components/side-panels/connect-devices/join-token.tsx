@@ -31,10 +31,10 @@ import {
   useCreateEnrollment,
 } from '@/pages/settings/nodes/management/use-create-enrollment';
 import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
-import type { AuthKdfParamsJson, MeshNode } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { AuthKdfParamsJson, MeshNode } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Check, Loader2, ShieldCheck } from 'lucide-react';
 import {
   type ReactElement,

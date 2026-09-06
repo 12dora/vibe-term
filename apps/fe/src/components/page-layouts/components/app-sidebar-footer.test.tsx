@@ -2,7 +2,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 sidebar-title 测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -15,8 +15,8 @@ installWindowStorage();
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { GlobalDeviceProvider } = await import('@/components/global-device-provider');
 const { AppSidebar } = await import('./app-sidebar');

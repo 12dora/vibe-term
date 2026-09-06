@@ -3,7 +3,7 @@ import {
   encodeBase64url,
   normalizeFingerprint,
   parseSdpFingerprint,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { RtcSignalMessage } from '../mesh-deps';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import { PeerHandshakeError } from '../types';

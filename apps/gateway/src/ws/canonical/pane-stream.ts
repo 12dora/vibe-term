@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import {
   DEFAULT_MAX_REPLAY_BYTES_PER_PANE,

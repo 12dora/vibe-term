@@ -1,4 +1,4 @@
-import { decodeKeyLogRecord } from '@tmex/shared/auth';
+import { decodeKeyLogRecord } from '@vibeterm/shared/auth';
 import type { KeyLogStore } from '../auth/key-log-store';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { HubKeyLogAppendResult, HubKeyLogSource } from './types';

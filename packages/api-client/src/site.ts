@@ -4,7 +4,7 @@ import type {
   GetSiteSettingsResponse,
   SiteSettingsLinkFields,
   SiteSettingsView,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 
 function mergeSiteSettingsView(payload: GetSiteSettingsResponse): SiteSettingsView {

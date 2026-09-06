@@ -6,8 +6,8 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
   ArrowLeftRight,
   Download,

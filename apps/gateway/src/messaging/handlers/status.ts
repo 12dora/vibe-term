@@ -1,5 +1,5 @@
-import { roleNameFromFlags } from '@tmex/shared';
-import type { CommandSpec } from '@tmex/shared/messaging';
+import { roleNameFromFlags } from '@vibeterm/shared';
+import type { CommandSpec } from '@vibeterm/shared/messaging';
 import type { UplinkStatus } from '../context';
 import type { CommandHandler } from './types';
 

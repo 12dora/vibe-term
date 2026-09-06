@@ -325,17 +325,17 @@ async function runPreflight(
   const candidateEnv: NodeJS.ProcessEnv = {
     ...process.env,
     ...env,
-    TMEX_BIND_HOST: '127.0.0.1',
+    VIBETERM_BIND_HOST: '127.0.0.1',
     GATEWAY_PORT: String(port),
-    TMEX_BASE_URL: formatHttpEndpoint('127.0.0.1', port),
+    VIBETERM_BASE_URL: formatHttpEndpoint('127.0.0.1', port),
     DATABASE_URL: preflightDb,
-    TMEX_ROLES: 'standalone',
+    VIBETERM_ROLES: 'standalone',
     [RUNTIME_MODE_ENV]: 'preflight',
-    TMEX_HUB_URL: '',
-    TMEX_PEER_PORT: String(await allocateEphemeralPort()),
-    TMEX_FE_DIST_DIR: join(versionDir, 'resources', 'fe-dist'),
-    TMEX_MIGRATIONS_DIR: join(versionDir, 'resources', 'gateway-drizzle'),
-    TMEX_NATIVE_DIR: join(versionDir, 'native'),
+    VIBETERM_HUB_URL: '',
+    VIBETERM_PEER_PORT: String(await allocateEphemeralPort()),
+    VIBETERM_FE_DIST_DIR: join(versionDir, 'resources', 'fe-dist'),
+    VIBETERM_MIGRATIONS_DIR: join(versionDir, 'resources', 'gateway-drizzle'),
+    VIBETERM_NATIVE_DIR: join(versionDir, 'native'),
     NODE_ENV: 'production',
   };
 
@@ -407,8 +407,8 @@ async function backupAndSwitch(
   await switchCurrent(installDir, toVersion);
   await writeRunScript(createInstallLayout(installDir), bunPath);
   if (!skipShims) {
-    const { installTmexShim } = await import('./cli-shim');
-    await installTmexShim({
+    const { installVibeTermShim } = await import('./cli-shim');
+    await installVibeTermShim({
       installLayout: createInstallLayout(installDir),
       bunPath,
     });

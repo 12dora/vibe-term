@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device, FileErrorCode } from '@tmex/shared';
+import type { Device, FileErrorCode } from '@vibeterm/shared';
 import { decryptWithContext } from '../crypto';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import { resolveSshConnectConfig } from '../tmux-client/ssh-connect-config';
@@ -33,13 +33,13 @@ const SSH_BASE_OPTS = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectT
 function setupAskpass(secret: string): { env: Record<string, string>; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), 'tmex-rsync-ap-'));
   const scriptPath = join(dir, 'askpass.sh');
-  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$TMEX_RSYNC_SECRET"\n', { mode: 0o700 });
+  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$VIBETERM_RSYNC_SECRET"\n', { mode: 0o700 });
   chmodSync(scriptPath, 0o700);
   return {
     env: {
       SSH_ASKPASS: scriptPath,
       SSH_ASKPASS_REQUIRE: 'force',
-      TMEX_RSYNC_SECRET: secret,
+      VIBETERM_RSYNC_SECRET: secret,
       // 老版 ssh 在无 tty 时需要 DISPLAY 才会调用 askpass；新版靠 REQUIRE=force 即可
       DISPLAY: process.env.DISPLAY || ':0',
     },

@@ -20,8 +20,8 @@ import {
   defaultRelayAdminApi,
   isRelayNotEnabled,
   isRelayUnauthorized,
-} from '@tmex/api-client/relay/admin-api';
-import { errorMessage } from '@tmex/shared';
+} from '@vibeterm/api-client/relay/admin-api';
+import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 
 /** 中继状态与 hub 管理面同一档：30 秒一拍。 */

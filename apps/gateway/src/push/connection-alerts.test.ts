@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings } from '@tmex/shared';
+import type { Device, SiteSettings } from '@vibeterm/shared';
 import { ConnectionAlertNotifier } from './connection-alerts';
 
 function makeDevice(id: string): Device {

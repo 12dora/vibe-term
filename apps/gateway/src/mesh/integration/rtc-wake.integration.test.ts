@@ -10,7 +10,7 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   KeyLogStore,
   NodeIdentityStore,

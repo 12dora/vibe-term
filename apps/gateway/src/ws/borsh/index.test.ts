@@ -1,7 +1,7 @@
 // Gateway Borsh 集成测试
 
 import { describe, expect, it } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { createGatewaySession } from '../test-helpers';
 import { createBorshSessionState, encodePayloadFrames } from './codec-borsh';
 import { sessionStateStore } from './session-state';

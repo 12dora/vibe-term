@@ -73,12 +73,12 @@ async function findFreePort(start: number): Promise<number> {
 }
 
 function generatePassword(): string {
-  return `TmexE2e!${encodeBase64url(crypto.getRandomValues(new Uint8Array(12)))}`;
+  return `VibeTermE2e!${encodeBase64url(crypto.getRandomValues(new Uint8Array(12)))}`;
 }
 
 function testMasterKey(): string {
-  const key = parseEnvFile(readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')).TMEX_MASTER_KEY;
-  if (!key) throw new Error('TMEX_MASTER_KEY missing from test.env');
+  const key = parseEnvFile(readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')).VIBETERM_MASTER_KEY;
+  if (!key) throw new Error('VIBETERM_MASTER_KEY missing from test.env');
   return key;
 }
 
@@ -95,25 +95,25 @@ interface InstanceSpec {
 function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
   return `${[
     'NODE_ENV=test',
-    `TMEX_ROLES=${spec.roles}`,
-    `TMEX_MASTER_KEY=${masterKey}`,
+    `VIBETERM_ROLES=${spec.roles}`,
+    `VIBETERM_MASTER_KEY=${masterKey}`,
     `GATEWAY_PORT=${spec.port}`,
-    'TMEX_BIND_HOST=127.0.0.1',
+    'VIBETERM_BIND_HOST=127.0.0.1',
     `DATABASE_URL=${spec.dir}/tmex.db`,
-    `TMEX_BASE_URL=http://localhost:${spec.port}`,
-    `TMEX_HUB_URL=${spec.hubUrl}`,
-    `TMEX_HUB_PUBLIC_URL=${spec.hubPublicUrl}`,
-    `TMEX_PEER_PORT=${spec.peerPort}`,
-    'TMEX_PEER_BIND_HOST=127.0.0.1',
-    'TMEX_STUN_SERVERS=',
+    `VIBETERM_BASE_URL=http://localhost:${spec.port}`,
+    `VIBETERM_HUB_URL=${spec.hubUrl}`,
+    `VIBETERM_HUB_PUBLIC_URL=${spec.hubPublicUrl}`,
+    `VIBETERM_PEER_PORT=${spec.peerPort}`,
+    'VIBETERM_PEER_BIND_HOST=127.0.0.1',
+    'VIBETERM_STUN_SERVERS=',
     // Playwright 的浏览器从 loopback 连过来，客户端来源会被判成 trusted-local，
     // 通行密钥二次验证等按来源收紧的策略会被整体豁免。打开信任代理之后用例可以用
     // `x-forwarded-for` 显式声明来源是公网，强路径与豁免路径都能在同一套实例上验。
     // 只影响 x-forwarded-* / x-real-ip / cf-connecting-ip 的解读，不带这些头的请求
     // 仍然按 socket IP 判定（见 apps/gateway/src/mesh/client-ip.ts）。
-    'TMEX_TRUST_PROXY=true',
-    `TMEX_TMUX_SOCKET=${spec.tmuxSocket}`,
-    'TMEX_SITE_NAME=tmex',
+    'VIBETERM_TRUST_PROXY=true',
+    `VIBETERM_TMUX_SOCKET=${spec.tmuxSocket}`,
+    'VIBETERM_SITE_NAME=tmex',
   ].join('\n')}\n`;
 }
 
@@ -123,7 +123,7 @@ function cliEnv(extra: Record<string, string> = {}): Record<string, string> {
   return {
     ...(process.env as Record<string, string>),
     NODE_ENV: 'test',
-    TMEX_MIGRATIONS_DIR: MIGRATIONS_DIR,
+    VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
     ...extra,
   };
 }
@@ -160,7 +160,7 @@ async function startInstance(
     env: {
       ...(process.env as Record<string, string>),
       ...env,
-      TMEX_MIGRATIONS_DIR: MIGRATIONS_DIR,
+      VIBETERM_MIGRATIONS_DIR: MIGRATIONS_DIR,
       ...extraEnv,
     },
     stdout: 'inherit',
@@ -292,11 +292,11 @@ async function waitRemoteNodeOnline(
 }
 
 function ensureFeDist(): void {
-  if (existsSync(`${FE_DIST_DIR}/index.html`) && process.env.TMEX_MESH_E2E_BUILD_FE !== '1') {
+  if (existsSync(`${FE_DIST_DIR}/index.html`) && process.env.VIBETERM_MESH_E2E_BUILD_FE !== '1') {
     return;
   }
-  log('building apps/fe (dist missing or TMEX_MESH_E2E_BUILD_FE=1)');
-  const result = spawnSync('bun', ['run', '--filter', '@tmex/fe', 'build'], {
+  log('building apps/fe (dist missing or VIBETERM_MESH_E2E_BUILD_FE=1)');
+  const result = spawnSync('bun', ['run', '--filter', '@vibeterm/fe', 'build'], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
   });
@@ -393,10 +393,10 @@ async function main(): Promise<void> {
 
   log(`hub=${hubPort} node=${nodePort} tmp=${tmpDir}`);
   await runCli(['hub', 'user', 'add', USERNAME, '--install-dir', hubDir], {
-    TMEX_PASSWORD: password,
+    VIBETERM_PASSWORD: password,
   });
 
-  await startInstance(hubDir, { TMEX_FE_DIST_DIR: FE_DIST_DIR });
+  await startInstance(hubDir, { VIBETERM_FE_DIST_DIR: FE_DIST_DIR });
   await waitHealthy(hubPort);
   log('hub healthy');
 
@@ -405,7 +405,7 @@ async function main(): Promise<void> {
     [process.execPath, CLI_AUTH, 'enroll', '--ttl', '10m', '--install-dir', hubDir],
     {
       cwd: REPO_ROOT,
-      env: cliEnv({ TMEX_PASSWORD: password }),
+      env: cliEnv({ VIBETERM_PASSWORD: password }),
       stdout: 'pipe',
       stderr: 'pipe',
     }
@@ -444,9 +444,9 @@ async function main(): Promise<void> {
   ]);
 
   const nodeEnv = await readAppEnv(nodeDir);
-  if (nodeEnv.TMEX_ROLES !== 'node' || nodeEnv.TMEX_HUB_URL !== baseUrl) {
+  if (nodeEnv.VIBETERM_ROLES !== 'node' || nodeEnv.VIBETERM_HUB_URL !== baseUrl) {
     throw new Error(
-      `hub join did not persist roles/hub url: roles=${nodeEnv.TMEX_ROLES} hub=${nodeEnv.TMEX_HUB_URL}`
+      `hub join did not persist roles/hub url: roles=${nodeEnv.VIBETERM_ROLES} hub=${nodeEnv.VIBETERM_HUB_URL}`
     );
   }
 

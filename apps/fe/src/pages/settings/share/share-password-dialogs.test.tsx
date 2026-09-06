@@ -4,9 +4,9 @@
 // `t` 的产出因此单跑与合跑并不一致，断言 key 会在合跑时崩（与 site-url-candidates.test.tsx 同因）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import { ApiError } from '@tmex/api-client';
-import { SHARE_PASSWORD_MIN_LENGTH } from '@tmex/shared/share';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { ApiError } from '@vibeterm/api-client';
+import { SHARE_PASSWORD_MIN_LENGTH } from '@vibeterm/shared/share';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ShareRow } from './share-rows';
 
 installWindowStorage();

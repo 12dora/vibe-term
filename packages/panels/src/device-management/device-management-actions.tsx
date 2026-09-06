@@ -1,6 +1,6 @@
 // 「添加设备」动作按钮（宿主外壳右上 +）：缺省派发全局事件，宿主可注入显式回调。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { type AddDevicePreset, OPEN_ADD_DEVICE_EVENT } from './events';

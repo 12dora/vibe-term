@@ -6,8 +6,8 @@ import { ensureDir, pathExists, readText, writeText } from './fs-utils';
 import { quotePosixShellArg } from './install';
 import type { InstallLayout, PackageLayout } from './install-layout';
 
-export const TMEX_SHIM_MARKER = '# tmex-cli shim; managed by tmex init/upgrade';
-export const TMEX_INSTALL_DIR_PREFIX = '# tmex-install-dir:';
+export const VIBETERM_SHIM_MARKER = '# tmex-cli shim; managed by tmex init/upgrade';
+export const VIBETERM_INSTALL_DIR_PREFIX = '# tmex-install-dir:';
 
 export function defaultLocalBinDir(): string {
   return join(homedir(), '.local', 'bin');
@@ -40,7 +40,7 @@ export async function deployCliPackage(
   await copyFile(packageLayout.cliDistPath, join(installLayout.cliDir, 'dist', 'cli-node.js'));
 }
 
-export interface InstallTmexShimOptions {
+export interface InstallVibeTermShimOptions {
   installLayout: InstallLayout;
   bunPath: string;
   localBinDir?: string;
@@ -48,7 +48,7 @@ export interface InstallTmexShimOptions {
   pathEnv?: string;
 }
 
-export interface InstallTmexShimResult {
+export interface InstallVibeTermShimResult {
   shimPath: string;
   bunLinkPath: string | null;
   pathHint: string | null;
@@ -60,8 +60,8 @@ function buildShimScript(cliJsPath: string, bunPath: string, installDir: string)
   const quotedBun = quotePosixShellArg(bunPath);
   return [
     '#!/usr/bin/env bash',
-    TMEX_SHIM_MARKER,
-    `${TMEX_INSTALL_DIR_PREFIX} ${installDir}`,
+    VIBETERM_SHIM_MARKER,
+    `${VIBETERM_INSTALL_DIR_PREFIX} ${installDir}`,
     'set -euo pipefail',
     `CLI_JS=${quotedCli}`,
     'if command -v node >/dev/null 2>&1; then',
@@ -91,9 +91,9 @@ function buildShimScript(cliJsPath: string, bunPath: string, installDir: string)
 }
 
 function parseRecordedInstallDir(text: string): string | null {
-  const line = text.split('\n').find((entry) => entry.startsWith(TMEX_INSTALL_DIR_PREFIX));
+  const line = text.split('\n').find((entry) => entry.startsWith(VIBETERM_INSTALL_DIR_PREFIX));
   if (!line) return null;
-  const recorded = line.slice(TMEX_INSTALL_DIR_PREFIX.length).trim();
+  const recorded = line.slice(VIBETERM_INSTALL_DIR_PREFIX.length).trim();
   return recorded || null;
 }
 
@@ -108,7 +108,7 @@ async function isManagedShim(path: string): Promise<boolean> {
       return false;
     }
     const text = await readShimText(path);
-    return text.includes(TMEX_SHIM_MARKER);
+    return text.includes(VIBETERM_SHIM_MARKER);
   } catch {
     return false;
   }
@@ -180,9 +180,9 @@ async function installBunLink(
   return { path: linkPath, skipped: null };
 }
 
-export async function installTmexShim(
-  options: InstallTmexShimOptions
-): Promise<InstallTmexShimResult> {
+export async function installVibeTermShim(
+  options: InstallVibeTermShimOptions
+): Promise<InstallVibeTermShimResult> {
   const localBinDir = options.localBinDir ?? defaultLocalBinDir();
   const bunBinDir = options.bunBinDir ?? defaultBunBinDir();
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
@@ -222,17 +222,17 @@ export async function deployCliAndShim(
   packageLayout: PackageLayout,
   installLayout: InstallLayout,
   bunPath: string,
-  options?: Omit<InstallTmexShimOptions, 'installLayout' | 'bunPath'>
-): Promise<InstallTmexShimResult> {
+  options?: Omit<InstallVibeTermShimOptions, 'installLayout' | 'bunPath'>
+): Promise<InstallVibeTermShimResult> {
   await deployCliPackage(packageLayout, installLayout);
-  return await installTmexShim({
+  return await installVibeTermShim({
     installLayout,
     bunPath,
     ...options,
   });
 }
 
-export async function removeTmexShims(options?: {
+export async function removeVibeTermShims(options?: {
   localBinDir?: string;
   bunBinDir?: string;
   installDir?: string;

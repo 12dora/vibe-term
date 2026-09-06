@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import * as devicesDb from '../db';
 import * as fileRootsDb from '../db/file-roots';
 import { pullFileFromDevice } from './device-storage';

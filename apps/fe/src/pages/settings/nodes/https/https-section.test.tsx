@@ -2,7 +2,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 NodesPage / NodesTab 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { TlsStatusResponse, TlsUpdateRequest } from '@tmex/api-client/local/tls-types';
+import type { TlsStatusResponse, TlsUpdateRequest } from '@vibeterm/api-client/local/tls-types';
 import type { TlsMutationKind } from './tls-mutations';
 
 let status: TlsStatusResponse | null = null;
@@ -43,8 +43,8 @@ mock.module('./tls-mutations', () => ({
 }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { ApiClient } = await import('@tmex/api-client');
-const { TlsApi } = await import('@tmex/api-client/local/tls-api');
+const { ApiClient } = await import('@vibeterm/api-client');
+const { TlsApi } = await import('@vibeterm/api-client/local/tls-api');
 const { HttpsSection } = await import('./https-section');
 
 const api = new TlsApi(new ApiClient('', () => Promise.resolve(new Response('{}'))));

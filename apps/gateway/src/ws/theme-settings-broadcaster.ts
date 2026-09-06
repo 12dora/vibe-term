@@ -1,5 +1,5 @@
-import type { EventType, ThemeMode, WebhookEvent } from '@tmex/shared';
-import { getTmuxWindowStyle, wsBorsh } from '@tmex/shared';
+import type { EventType, ThemeMode, WebhookEvent } from '@vibeterm/shared';
+import { getTmuxWindowStyle, wsBorsh } from '@vibeterm/shared';
 import { updateSiteSettings } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
 import type { GatewaySession } from './gateway-session';

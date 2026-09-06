@@ -3,8 +3,8 @@
 
 import { toast } from 'sonner';
 
-import type { LegProgress } from '@tmex/api-client';
-import { Progress } from '@tmex/ui/progress';
+import type { LegProgress } from '@vibeterm/api-client';
+import { Progress } from '@vibeterm/ui/progress';
 import i18next from 'i18next';
 import { type LocalTransferHandle, combineLegPct, startLocalTransfer } from './transfer-jobs-store';
 
@@ -36,12 +36,12 @@ function PathBadge({ path }: { path: TransferToastPath }) {
 function legLabel(direction: TransferDirection, leg: 1 | 2): string {
   if (direction === 'upload') {
     return leg === 1
-      ? i18next.t('files.transfer.legUserToTmex')
-      : i18next.t('files.transfer.legTmexToServer');
+      ? i18next.t('files.transfer.legUserToVibeTerm')
+      : i18next.t('files.transfer.legVibeTermToServer');
   }
   return leg === 1
-    ? i18next.t('files.transfer.legServerToTmex')
-    : i18next.t('files.transfer.legTmexToUser');
+    ? i18next.t('files.transfer.legServerToVibeTerm')
+    : i18next.t('files.transfer.legVibeTermToUser');
 }
 
 function LegRow({ label, leg }: { label: string; leg: LegProgress }) {

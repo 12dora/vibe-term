@@ -1,13 +1,13 @@
 // 节点间文件传输的端到端：真实 LinkMux（含信用窗口/背压）+ 真实 mesh-internal 路由 +
 // 真实可续传 sink。A 与 B 在同一进程内，但字节确实经过一条完整的 mux 流。
-// 分片大小压到 256 KiB（`TMEX_TRANSFER_CHUNK_BYTES`），这样几百 KiB 的样本就能跑出多分片并行。
+// 分片大小压到 256 KiB（`VIBETERM_TRANSFER_CHUNK_BYTES`），这样几百 KiB 的样本就能跑出多分片并行。
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { LinkSession } from '@tmex/shared/link';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { NodeSessionStore } from '../../auth';
 import { getDb } from '../../db/client';
 import { createDevice } from '../../db/devices';
@@ -260,15 +260,15 @@ async function runJob(input: {
 
 describe('node-to-node transfer over a real peer link', () => {
   beforeAll(() => {
-    previousChunkEnv = process.env.TMEX_TRANSFER_CHUNK_BYTES;
-    process.env.TMEX_TRANSFER_CHUNK_BYTES = String(CHUNK_BYTES);
+    previousChunkEnv = process.env.VIBETERM_TRANSFER_CHUNK_BYTES;
+    process.env.VIBETERM_TRANSFER_CHUNK_BYTES = String(CHUNK_BYTES);
     runMigrations();
     sessionStore = new NodeSessionStore(getDb());
   });
 
   afterAll(() => {
-    if (previousChunkEnv === undefined) delete process.env.TMEX_TRANSFER_CHUNK_BYTES;
-    else process.env.TMEX_TRANSFER_CHUNK_BYTES = previousChunkEnv;
+    if (previousChunkEnv === undefined) delete process.env.VIBETERM_TRANSFER_CHUNK_BYTES;
+    else process.env.VIBETERM_TRANSFER_CHUNK_BYTES = previousChunkEnv;
   });
 
   beforeEach(async () => {

@@ -1,4 +1,4 @@
-import type { DeviceType } from '@tmex/shared';
+import type { DeviceType } from '@vibeterm/shared';
 import { Globe, Monitor } from 'lucide-react';
 
 export function FileRootDeviceIcon({

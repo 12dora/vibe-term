@@ -3,9 +3,9 @@
 // 这些 effect 共享 userInitiatedSelectionRef / recentSelectRequestsRef，执行顺序即
 // 「记账 → 事件跟随 → 快照跟随 → 建窗跟随」，调换会改变跟随目标与 select 变体。
 
-import type { TmuxWindow } from '@tmex/shared';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import { type PaneSelection, shouldTrackPendingRouteSelection } from '@tmex/terminal-ui';
+import type { TmuxWindow } from '@vibeterm/shared';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import { type PaneSelection, shouldTrackPendingRouteSelection } from '@vibeterm/terminal-ui';
 import { useEffect } from 'react';
 import { resolveActivePaneEventFollow, resolveSnapshotActiveFollow } from './pane-selection-rules';
 import {

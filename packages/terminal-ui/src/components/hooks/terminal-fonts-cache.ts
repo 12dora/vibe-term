@@ -3,7 +3,7 @@
 // 切 pane 重建终端时这段 await 把控制器创建推到下一个宏任务；命中缓存时返回 undefined，
 // 调用方据此同步跳过 await。
 
-import { loadTerminalFonts } from '@tmex/theme';
+import { loadTerminalFonts } from '@vibeterm/theme';
 
 const loadedFontSets = new Set<string>();
 const pendingFontSets = new Map<string, Promise<void>>();
