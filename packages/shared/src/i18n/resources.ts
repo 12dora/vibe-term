@@ -423,6 +423,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "Enable Notification Push",
       "enableBellPush": "Push Terminal Bell Events",
       "enableBellSound": "Play Sound On Terminal Bell",
+      "notifications": {
+        "mesh": {
+          "title": "Mesh Notifications",
+          "switchLabel": "Receive Notifications from Other Nodes",
+          "switchHint": "Events from other nodes are sent through this machine's channels.",
+          "sinks": "Sink nodes: {{names}}",
+          "empty": "No sink enabled. Each node only reports its own events.",
+          "offlineName": "{{name}} (offline)",
+          "separator": ", ",
+          "queue": "{{pending}} pending, {{dropped}} dropped",
+          "loadFailed": "Failed to load mesh notification state: {{message}}",
+          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+        },
+        "scope": {
+          "remote": "Editing notification channels of \"{{name}}\".",
+          "self": "These channels belong to this machine only. Delivery of other nodes' events is controlled by \"Mesh Notifications\"."
+        }
+      },
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
       "theme": "Theme",
@@ -1453,6 +1471,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "Invalid group layout"
     },
     "notification": {
+      "mesh": {
+        "origin": "Node {{node}} | Device {{device}}"
+      },
       "eventType": {
         "terminal_bell": "Terminal Bell",
         "terminal_notification": "Terminal Notification",
@@ -2437,6 +2458,7 @@ export const I18N_RESOURCES = {
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
+        "notifySettings": "Notification Settings",
         "description": "Node details; rename it or change its domain access policy.",
         "nodeId": "Node ID",
         "name": "Name",
@@ -3726,6 +3748,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "开启通知推送",
       "enableBellPush": "推送终端响铃",
       "enableBellSound": "终端响铃时播放提示音",
+      "notifications": {
+        "mesh": {
+          "title": "多节点通知",
+          "switchLabel": "接收其它节点的通知",
+          "switchHint": "其它节点的事件将通过本机的通道发送。",
+          "sinks": "汇聚节点：{{names}}",
+          "empty": "未启用汇聚，各节点仅通知自身事件。",
+          "offlineName": "{{name}}（离线）",
+          "separator": "、",
+          "queue": "待补发 {{pending}} 条，已丢弃 {{dropped}} 条",
+          "loadFailed": "多节点通知状态读取失败：{{message}}",
+          "saveFailed": "多节点通知设置保存失败：{{message}}"
+        },
+        "scope": {
+          "remote": "当前编辑的是「{{name}}」的通知通道。",
+          "self": "这些通道只属于本机。其它节点的事件是否送达，由「多节点通知」决定。"
+        }
+      },
       "sshReconnectDelay": "SSH 重连等待（秒）",
       "language": "语言",
       "theme": "主题",
@@ -4756,6 +4796,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "分组布局无效"
     },
     "notification": {
+      "mesh": {
+        "origin": "节点 {{node}}｜设备 {{device}}"
+      },
       "eventType": {
         "terminal_bell": "终端响铃",
         "terminal_notification": "终端通知",
@@ -5740,6 +5783,7 @@ export const I18N_RESOURCES = {
         "failed": "批准失败：{{error}}"
       },
       "detail": {
+        "notifySettings": "通知设置",
         "description": "查看节点信息，修改名称与域名访问策略。",
         "nodeId": "节点 ID",
         "name": "名称",
@@ -7023,6 +7067,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "通知プッシュを有効にする",
       "enableBellPush": "ターミナルベルをプッシュ通知",
       "enableBellSound": "ターミナルベル時に通知音を再生",
+      "notifications": {
+        "mesh": {
+          "title": "マルチノード通知",
+          "switchLabel": "他のノードの通知を受信",
+          "switchHint": "他のノードのイベントは本機のチャンネルから送信されます。",
+          "sinks": "集約ノード：{{names}}",
+          "empty": "集約は未設定です。各ノードは自身のイベントのみ通知します。",
+          "offlineName": "{{name}}（オフライン）",
+          "separator": "、",
+          "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
+          "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+        },
+        "scope": {
+          "remote": "「{{name}}」の通知チャンネルを編集しています。",
+          "self": "これらのチャンネルは本機のみに属します。他のノードのイベントの配信は「マルチノード通知」で決まります。"
+        }
+      },
       "sshReconnectDelay": "SSH 再接続待機（秒）",
       "language": "言語",
       "theme": "テーマ",
@@ -8053,6 +8115,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
+      "mesh": {
+        "origin": "ノード {{node}}｜デバイス {{device}}"
+      },
       "eventType": {
         "terminal_bell": "ターミナルベル",
         "terminal_notification": "ターミナル通知",
@@ -9037,6 +9102,7 @@ export const I18N_RESOURCES = {
         "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
+        "notifySettings": "通知設定",
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
         "nodeId": "ノード ID",
         "name": "名前",

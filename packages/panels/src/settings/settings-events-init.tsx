@@ -33,6 +33,7 @@ export const SETTINGS_NAMESPACE_QUERY_KEYS: ReadonlyMap<string, readonly Setting
     ['weixin', [['weixin-accounts']]],
     ['devices', [devicesQueryKey]],
     ['device-folders', [deviceFoldersQueryKey]],
+    ['notifications-mesh', [['notifications-mesh']]],
     ['tree-order', NO_KEYS],
   ]);
 

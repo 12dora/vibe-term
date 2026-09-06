@@ -25,6 +25,7 @@ import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { appNodeRuntimes, nodeQueryClient } from '@/node/node-runtimes';
 import { RelayMetaKeyResident } from '@/node/relay-meta-key-resident';
+import { EntryNotifyToastsInit } from '@/notifications/entry-notify-toasts';
 import {
   IDLE_PRELOAD_PAGE_MODULES,
   devicePageModule,
@@ -205,7 +206,8 @@ function RootLayout() {
         <RelayMetaKeyResident />
         <NodeRuntimeScope nodeId={SELF_NODE_ID}>
           <AppSidebar />
-          <SelfSettingsEventsInit />
+          <EntryNotifyToastsInit />
+          <SelfNodeEventsInit />
         </NodeRuntimeScope>
         <MainInset />
         <SidePanelHost />
@@ -227,12 +229,20 @@ function RouteConnectionIndicator() {
   );
 }
 
-// 浏览远端 node 时，页面区的设置事件订阅跟着路由 node 走，但设备分组布局等 self 数据
-// （固定打 self 的 QueryClient）仍要吃到本机网关的失效事件，否则会拿陈旧布局覆盖新布局。
+// 浏览远端 node 时，页面区的事件订阅跟着路由 node 走，但入口自身的两条订阅仍要在场：
+// 设置失效（设备分组布局等 self 数据固定打 self 的 QueryClient，否则会拿陈旧布局覆盖新布局），
+// 以及 WATCH_EVENT（入口机上的监控触发不该因为正在看别的 node 就不弹）。
+// 后者顺带保证入口的 WS 常连——其它节点转发来的通知正是经这条连接广播回浏览器的。
 // 路由就是 self 时页面区已经订阅了，这里不再重复。
-function SelfSettingsEventsInit() {
+function SelfNodeEventsInit() {
   const routeNodeId = useRouteNodeId();
-  return routeNodeId === SELF_NODE_ID ? null : <SettingsEventsInit />;
+  if (routeNodeId === SELF_NODE_ID) return null;
+  return (
+    <>
+      <WatchEventsInit />
+      <SettingsEventsInit />
+    </>
+  );
 }
 
 // 路由 node 就绪后才做的接线：事件订阅会开该 node 的 WS，

@@ -228,6 +228,9 @@
       "reconnect": "重新连接"
     },
     "notification": {
+      "mesh": {
+        "origin": "节点 {{node}}｜设备 {{device}}"
+      },
       "eventType": {
         "terminal_bell": "终端响铃",
         "terminal_notification": "终端通知",

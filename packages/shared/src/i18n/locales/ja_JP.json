@@ -417,6 +417,24 @@
       "enableNotificationPush": "通知プッシュを有効にする",
       "enableBellPush": "ターミナルベルをプッシュ通知",
       "enableBellSound": "ターミナルベル時に通知音を再生",
+      "notifications": {
+        "mesh": {
+          "title": "マルチノード通知",
+          "switchLabel": "他のノードの通知を受信",
+          "switchHint": "他のノードのイベントは本機のチャンネルから送信されます。",
+          "sinks": "集約ノード：{{names}}",
+          "empty": "集約は未設定です。各ノードは自身のイベントのみ通知します。",
+          "offlineName": "{{name}}（オフライン）",
+          "separator": "、",
+          "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
+          "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+        },
+        "scope": {
+          "remote": "「{{name}}」の通知チャンネルを編集しています。",
+          "self": "これらのチャンネルは本機のみに属します。他のノードのイベントの配信は「マルチノード通知」で決まります。"
+        }
+      },
       "sshReconnectDelay": "SSH 再接続待機（秒）",
       "language": "言語",
       "theme": "テーマ",
@@ -1447,6 +1465,9 @@
       "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
+      "mesh": {
+        "origin": "ノード {{node}}｜デバイス {{device}}"
+      },
       "eventType": {
         "terminal_bell": "ターミナルベル",
         "terminal_notification": "ターミナル通知",
@@ -2431,6 +2452,7 @@
         "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
+        "notifySettings": "通知設定",
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
         "nodeId": "ノード ID",
         "name": "名前",

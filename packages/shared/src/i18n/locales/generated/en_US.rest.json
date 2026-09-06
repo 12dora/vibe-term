@@ -227,6 +227,24 @@
       "enableNotificationPush": "Enable Notification Push",
       "enableBellPush": "Push Terminal Bell Events",
       "enableBellSound": "Play Sound On Terminal Bell",
+      "notifications": {
+        "mesh": {
+          "title": "Mesh Notifications",
+          "switchLabel": "Receive Notifications from Other Nodes",
+          "switchHint": "Events from other nodes are sent through this machine's channels.",
+          "sinks": "Sink nodes: {{names}}",
+          "empty": "No sink enabled. Each node only reports its own events.",
+          "offlineName": "{{name}} (offline)",
+          "separator": ", ",
+          "queue": "{{pending}} pending, {{dropped}} dropped",
+          "loadFailed": "Failed to load mesh notification state: {{message}}",
+          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+        },
+        "scope": {
+          "remote": "Editing notification channels of \"{{name}}\".",
+          "self": "These channels belong to this machine only. Delivery of other nodes' events is controlled by \"Mesh Notifications\"."
+        }
+      },
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
       "tabGroup": {
@@ -1688,6 +1706,7 @@
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
+        "notifySettings": "Notification Settings",
         "description": "Node details; rename it or change its domain access policy.",
         "nodeId": "Node ID",
         "name": "Name",

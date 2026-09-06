@@ -228,6 +228,9 @@
       "reconnect": "Reconnect"
     },
     "notification": {
+      "mesh": {
+        "origin": "Node {{node}} | Device {{device}}"
+      },
       "eventType": {
         "terminal_bell": "Terminal Bell",
         "terminal_notification": "Terminal Notification",
