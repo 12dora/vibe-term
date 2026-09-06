@@ -89,7 +89,7 @@ function randomSecret(prefix: string): string {
 
 function testMasterKey(): string {
   const key = parseEnvFile(
-    readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')
+    readFileSync(resolve(REPO_ROOT, 'env', 'test.env'), 'utf8')
   ).VIBETERM_MASTER_KEY;
   if (!key) throw new Error('VIBETERM_MASTER_KEY missing from test.env');
   return key;
