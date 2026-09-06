@@ -1,13 +1,7 @@
 import type { Socket } from 'node:net';
 import { halfCloseSupported, shutdownWriteHalf } from './half-close';
 import { type PumpSocket, type PumpSocketData, disposePumpSocketData, onSocketData } from './pump';
-
-/** Bun 的 node:net socket 底下挂着原生句柄，FFI 的 shutdown 要作用在它上面。 */
-type SocketHandle = { readyState: number; fd: number };
-
-function socketHandle(socket: Socket): SocketHandle | null {
-  return (socket as Socket & { _handle?: SocketHandle | null })._handle ?? null;
-}
+import { socketHandle, watchSocketLiveness } from './socket-liveness';
 
 function quietly(fn: () => void): void {
   try {
@@ -36,6 +30,7 @@ export function prepareSocket(socket: Socket): void {
  * 立刻被发现。
  */
 export function attachPumpSocketHandlers(socket: Socket, data: PumpSocketData): void {
+  const unwatch = watchSocketLiveness(socket, () => losePeer(socket, data));
   socket.on('data', (chunk: Buffer) => {
     if (!data.pump) socket.pause();
     if (!onSocketData(data, chunk)) destroySocket(socket);
@@ -44,19 +39,32 @@ export function attachPumpSocketHandlers(socket: Socket, data: PumpSocketData): 
   socket.on('end', () => {
     // 对端 RST 时 Bun 的 net 壳同样只报 end，但底层句柄已经没了；照半关闭处理会把名额挂死
     if (!socketHandle(socket)) {
-      destroySocket(socket);
+      unwatch();
+      losePeer(socket, data);
       return;
     }
     data.fin = true;
     data.pump?.onEnd();
   });
   socket.on('close', () => {
+    unwatch();
     data.closed = true;
     data.pump?.onClose();
     disposePumpSocketData(data);
   });
   // node 在 error 之后一定会再发 close，这里只是防止未处理的 error 事件抛出去
   socket.on('error', () => {});
+}
+
+/**
+ * 对端已经不在了。只调 `onClose()` 不够：它的 `localFin` / `streamEnded` 判断会把 RST 吞掉，
+ * 于是半关闭过的流会永远挂在那儿。必须直接 destroy 泵（RST 掉流）再拆 socket、归还名额。
+ */
+function losePeer(socket: Socket, data: PumpSocketData): void {
+  data.closed = true;
+  data.pump?.destroy('portmap-peer-gone');
+  destroySocket(socket);
+  disposePumpSocketData(data);
 }
 
 /**

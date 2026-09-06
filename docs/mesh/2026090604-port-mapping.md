@@ -74,9 +74,32 @@ TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
 - `socket.end()` 仍然是两半一起关，所以写半边关闭继续走 `bun:ffi` 的 POSIX
   `shutdown(fd, SHUT_WR)`，只是作用对象换成 `socket._handle`（node:net socket 底下的原生句柄，
   带 `fd` 与 `readyState`，服务端 accept 的 socket 与 `net.connect` 连上后的 socket 都有）。
-- 对端被 RST 掉时 Bun 的 net 壳同样只报 `end`，不报 `error`/`close`；区别在于此时 `socket._handle`
-  已经没了（正常 FIN 时它还在且 `readyState === 1`）。`attachPumpSocketHandlers` 用这一点把「对端
-  消失」与「对端半关闭」分开：句柄没了就当连接消失，销毁 socket 让 `close` 事件把并发名额还回来。
+- 对端被 RST 掉时 Bun 的 net 壳只报 `end`，不报 `error`/`close`；`attachPumpSocketHandlers` 用
+  `socket._handle` 是否还在把「对端消失」与「对端半关闭」分开（正常 FIN 之后句柄还在且
+  `readyState === 1`）。但读半边的 `end` 本身也不可靠，见下面的连接监活。
+
+### 连接监活（`socket-liveness.ts`）
+
+读半边的 EOF 只有在 socket 处于流动状态时才冒得出来，于是有两条路径完全没有任何事件：
+
+- **被暂停的 socket 对端 RST**：泵到了高水位就停读，Bun 不再碰这个 fd；只要 mux 消费方一直卡着，
+  `end`/`close` 永远不来。实测（`Bun.Socket.terminate()` 或 python `SO_LINGER{1,0}` 打过来）
+  确认：0 个事件。
+- **对端先 FIN 再 RST**：`end` 已经为 FIN 发过一次，Bun 不会再给第二次。
+
+两种情况下 socket、并发名额与 mux 流都会永久挂着，攒够 48 条就把这条 peer 链路的端口映射堵死。
+所以加了一个所有适配器共享的 1 s 巡检（`watchSocketLiveness`，`close` 时注销）：
+
+| 信号 | 覆盖的情况 |
+| --- | --- |
+| `_handle` 消失 | Bun 自己拆掉了原生 socket（`Bun.Socket.terminate()` 打过来实测就是这样） |
+| `_handle.readyState !== 1` | 句柄还在但已不是 Established |
+| 内核 `SO_ERROR != 0`（FFI `getsockopt`） | 真实 RST——实测此时句柄和 `readyState` 都还正常，只有内核知道 |
+
+`SO_ERROR` 读一次即被清空，所以只在巡检里读，读到非 0 立刻判死。确认失联走 `pump.destroy()` +
+`socket.destroy()`：只调 `onClose()` 不够，它的 `localFin` / `streamEnded` 判断会把 RST 吞掉。
+FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接（含被我方 FFI 关掉写半边的半关闭连接，
+实测 `readyState` 仍为 1、`SO_ERROR` 仍为 0）不会被误判。
 
 ### 背压
 

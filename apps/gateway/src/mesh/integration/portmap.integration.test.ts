@@ -294,12 +294,30 @@ async function enrollB(a: Awaited<ReturnType<typeof bootA>>) {
 type TcpClient = {
   socket: Socket;
   send: (payload: Uint8Array) => Promise<void>;
+  received: () => number;
   waitFor: (total: number) => Promise<Uint8Array>;
   waitHash: (total: number) => Promise<number>;
   waitClosed: () => Promise<void>;
   halfClose: () => void;
   close: () => void;
 };
+
+/**
+ * xorshift32 伪随机流：每条连接一个种子、一个长度。定长斜坡（每 256 字节重复）无法暴露
+ * 「整块被同长度的另一块替换」或「两条连接的响应互换」，伪随机 + 各不相同的长度才能。
+ */
+function pseudoRandom(size: number, seed: number): Uint8Array {
+  const out = new Uint8Array(size + 4);
+  const words = new Uint32Array(out.buffer, 0, (size + 3) >> 2);
+  let state = seed >>> 0 || 0x9e37_79b9;
+  for (let i = 0; i < words.length; i += 1) {
+    state = (state ^ (state << 13)) >>> 0;
+    state = state ^ (state >>> 17);
+    state = (state ^ (state << 5)) >>> 0;
+    words[i] = state;
+  }
+  return out.subarray(0, size);
+}
 
 const KEEP_CHUNKS_LIMIT = 8 * 1024 * 1024;
 
@@ -349,6 +367,7 @@ async function tcpClient(port: number): Promise<TcpClient> {
   };
   return {
     socket,
+    received: () => state.received,
     send: (payload) =>
       new Promise<void>((resolve, reject) => {
         socket.write(payload, (err) => (err ? reject(err) : resolve()));
@@ -441,12 +460,6 @@ describe('portmap mesh integration', () => {
     return { a, b, echo, manager, map };
   }
 
-  function ramp(size: number): Uint8Array {
-    const payload = new Uint8Array(size);
-    for (let i = 0; i < size; i += 1) payload[i] = (i * 31) & 0xff;
-    return payload;
-  }
-
   test('round-trips bytes from A to an echo server on B', async () => {
     const { manager, map, echo } = await setup();
     const client = await tcpClient(map.listenPort);
@@ -467,12 +480,13 @@ describe('portmap mesh integration', () => {
     const { manager, map } = await setup();
     const client = await tcpClient(map.listenPort);
     const size = 1024 * 1024 + 8192;
-    const payload = ramp(size);
+    const payload = pseudoRandom(size, 0x1234_5678);
     await client.send(payload);
     const back = await client.waitFor(size);
     expect(back.byteLength).toBe(size);
-    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
+    expect(fnv1a(back)).toBe(fnv1a(payload));
     await Bun.sleep(50);
+    expect(client.received()).toBe(size);
     expect(manager.get(map.id).bytesOut).toBe(size);
     client.close();
   });
@@ -480,13 +494,14 @@ describe('portmap mesh integration', () => {
   test('carries a payload far larger than the mux window', async () => {
     const { manager, map } = await setup();
     const client = await tcpClient(map.listenPort);
-    const size = 56 * 1024 * 1024;
-    const payload = ramp(size);
+    const size = 56 * 1024 * 1024 + 7_777;
+    const payload = pseudoRandom(size, 0x00c0_ffee);
     const sent = client.send(payload);
     const hash = await client.waitHash(size);
     await sent;
     expect(hash).toBe(fnv1a(payload));
     await Bun.sleep(50);
+    expect(client.received()).toBe(size);
     expect(manager.get(map.id).bytesOut).toBe(size);
     expect(manager.get(map.id).bytesIn).toBe(size);
     client.close();
@@ -494,21 +509,28 @@ describe('portmap mesh integration', () => {
 
   test('runs eight concurrent connections over one peer link', async () => {
     const { manager, map } = await setup();
-    const size = 6 * 1024 * 1024;
-    const payload = ramp(size);
-    const expected = fnv1a(payload);
-    const clients = await Promise.all(Array.from({ length: 8 }, () => tcpClient(map.listenPort)));
-    const runs = clients.map(async (client) => {
-      const sent = client.send(payload);
-      const hash = await client.waitHash(size);
+    // 每条连接一份不同种子、不同长度的伪随机流：整块替换或连接间串流都会被自己的哈希抓住
+    const jobs = Array.from({ length: 8 }, (_unused, i) => {
+      const size = 5 * 1024 * 1024 + i * 512 * 1024 + i * 37;
+      return { size, payload: pseudoRandom(size, 0x51ed_0000 + i) };
+    });
+    const clients = await Promise.all(jobs.map(() => tcpClient(map.listenPort)));
+    const runs = clients.map(async (client, i) => {
+      const job = jobs[i] as { size: number; payload: Uint8Array };
+      const sent = client.send(job.payload);
+      const hash = await client.waitHash(job.size);
       await sent;
       return hash;
     });
-    for (const hash of await Promise.all(runs)) expect(hash).toBe(expected);
+    const hashes = await Promise.all(runs);
+    for (const [i, job] of jobs.entries()) {
+      expect(hashes[i]).toBe(fnv1a(job.payload));
+      expect(clients[i]?.received()).toBe(job.size);
+    }
     await Bun.sleep(50);
     const dto = manager.get(map.id);
     expect(dto.totalConnections).toBe(8);
-    expect(dto.bytesOut).toBe(8 * size);
+    expect(dto.bytesOut).toBe(jobs.reduce((sum, job) => sum + job.size, 0));
     for (const client of clients) client.close();
   }, 180_000);
 
@@ -571,8 +593,8 @@ describe('portmap mesh integration', () => {
     const slow = startSlowEchoServer();
     const { manager, map } = await setup({ target: slow });
     const client = await tcpClient(map.listenPort);
-    const size = 32 * 1024 * 1024;
-    const payload = ramp(size);
+    const size = 32 * 1024 * 1024 + 999;
+    const payload = pseudoRandom(size, 0x5107_0001);
     const pushed = client.send(payload).catch(() => {});
     await Bun.sleep(600);
     const stalled = manager.get(map.id).bytesOut;
@@ -595,13 +617,13 @@ describe('portmap mesh integration', () => {
     const { map } = await setup();
     const before = linkDial.count;
     const client = await tcpClient(map.listenPort);
-    const size = 2 * 1024 * 1024;
-    const payload = ramp(size);
+    const size = 2 * 1024 * 1024 + 321;
+    const payload = pseudoRandom(size, 0xc01d_d1a1);
     await client.send(payload);
     const back = await client.waitFor(size);
     expect(back.byteLength).toBe(size);
-    expect(back[0]).toBe(0);
-    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
+    expect(fnv1a(back)).toBe(fnv1a(payload));
+    expect(client.received()).toBe(size);
     expect(linkDial.count).toBeGreaterThan(before);
     client.close();
   });
