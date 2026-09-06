@@ -3,6 +3,7 @@ import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
+import { probeAddressForCli, probeNotFoundMessage } from './probe-address';
 import { RelayCaError, fetchPinnedRelayCa, pinRelayCa } from './relay-ca';
 import {
   RelayPasswordJoinError,
@@ -36,6 +37,7 @@ export type RelayPasswordJoinDeps = {
   now?: () => number;
   fetcher?: FetchLike;
   timeoutMs?: number;
+  log?: (message: string) => void;
   afterUnpack?: (pack: Awaited<ReturnType<typeof joinKdfProofAndPack>>) => void | Promise<void>;
 };
 
@@ -54,6 +56,23 @@ function parseJoinRelayUrl(raw: string): string {
       error instanceof Error ? error.message : 'invalid relay url'
     );
   }
+}
+
+/** 地址没写端口时探候选端口；探不到按「中继不可达」报，与其它传输失败同一个错误码。 */
+async function resolveJoinRelayPort(
+  relayUrl: string,
+  deps: RelayPasswordJoinDeps
+): Promise<string> {
+  const probed = await probeAddressForCli(relayUrl, {
+    kind: 'relay',
+    fetcher: deps.fetcher,
+    log: deps.log,
+    ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+  });
+  if (probed.probed && !probed.found) {
+    throw new RelayPasswordJoinError('relay_unreachable', probeNotFoundMessage(probed.triedPorts));
+  }
+  return probed.url;
 }
 
 function isRelayUnreachableCause(error: unknown): boolean {
@@ -152,7 +171,7 @@ export async function performRelayPasswordJoin(
   deps: RelayPasswordJoinDeps
 ): Promise<RelayPasswordJoinResult> {
   await assertJoinable(deps.auth);
-  const relayUrl = parseJoinRelayUrl(input.relayUrl);
+  const relayUrl = await resolveJoinRelayPort(parseJoinRelayUrl(input.relayUrl), deps);
   const tenantId = input.tenantId.trim().toLowerCase();
   const { fetcher, pin } = await pinnedFetcher({
     relayUrl,

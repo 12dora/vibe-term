@@ -361,6 +361,40 @@ describe('RelayRoutes', () => {
     }
   });
 
+  test('POST /resolve 需要 node-session，登录后按候选端口探测', async () => {
+    const b = await boot({
+      fetchImpl: (async (input: unknown) => {
+        const url = new URL(String(input));
+        if (url.port === '13443' && url.pathname === '/api/relay/health') {
+          return Response.json({ ok: true });
+        }
+        throw new Error('connection refused');
+      }) as typeof fetch,
+    });
+    try {
+      const anonymous = await b.routes.handle(
+        new Request('http://localhost/api/mesh/relay/resolve', {
+          method: 'POST',
+          body: JSON.stringify({ url: RELAY_URL }),
+        }),
+        '/api/mesh/relay/resolve'
+      );
+      expect((await anonymous!).status).toBe(401);
+
+      const res = await b.call('/api/mesh/relay/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ url: RELAY_URL }),
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { url: string; port: number; explicit: boolean };
+      expect(body.url).toBe(`${RELAY_URL}:13443`);
+      expect(body.port).toBe(13443);
+      expect(body.explicit).toBe(false);
+    } finally {
+      b.close();
+    }
+  });
+
   test('proof-material + enroll 产出可解码的 set-relays payload', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {

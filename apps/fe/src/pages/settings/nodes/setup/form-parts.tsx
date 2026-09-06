@@ -6,6 +6,7 @@ import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../../components/form-primitives';
+import type { AddressProbeState } from './address-probe';
 import type { RestartWaiter } from './use-restart-waiter';
 
 export { FormField, type NoticeTone } from '../../components/form-primitives';
@@ -74,6 +75,41 @@ export function SetupSubmitRow({
         {submitting ? t('nodes.setup.submit.pending') : label}
       </Button>
     </>
+  );
+}
+
+/** 端口探测的三态：在途 / 探到非默认端口并已改写地址 / 全军覆没。 */
+export function AddressProbeNotice({
+  state,
+  kind,
+  testId,
+}: {
+  state: AddressProbeState;
+  kind: 'hub' | 'relay';
+  testId: string;
+}) {
+  const { t } = useTranslation();
+  if (state.phase === 'idle') return null;
+  if (state.phase === 'probing') {
+    return (
+      <Notice tone="info" testId={`${testId}-probing`}>
+        {t('nodes.setup.probe.probing')}
+      </Notice>
+    );
+  }
+  if (state.phase === 'failed') {
+    return (
+      <Notice tone="warning" testId={`${testId}-failed`}>
+        {t('nodes.setup.probe.failed')}
+      </Notice>
+    );
+  }
+  return (
+    <Notice tone="success" testId={`${testId}-resolved`}>
+      {t(kind === 'hub' ? 'nodes.setup.probe.resolvedHub' : 'nodes.setup.probe.resolvedRelay', {
+        port: state.port,
+      })}
+    </Notice>
   );
 }
 

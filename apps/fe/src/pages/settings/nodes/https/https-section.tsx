@@ -23,7 +23,7 @@ import { useRestartGateway } from '../restart/use-restart-now';
 import { AcmePanel } from './acme-panel';
 import { ExternalPanel } from './external-panel';
 import { ModeChooser } from './mode-chooser';
-import { InfoRow, Notice } from './parts';
+import { CopyableCode, InfoRow, Notice } from './parts';
 import { SelfSignedPanel } from './selfsigned-panel';
 import { describeTlsError } from './tls-errors';
 import { daysUntil, defaultSans, formatTimestamp } from './tls-form';
@@ -321,6 +321,18 @@ function accessText(t: Translate, status: TlsStatusResponse, https: TlsEffective
     : t('nodes.https.status.accessProxy');
 }
 
+/** 对外地址只在没被「对外访问」那行说过一遍时单独列出（反代未确认那档已经把地址写进文案里）。 */
+function PublicUrlLine({ https }: { https: TlsEffectiveHttps }) {
+  const { t } = useTranslation();
+  const url = https.publicUrl;
+  if (!url || (https.source === 'reverse-proxy' && !https.verified)) return null;
+  return (
+    <StatusLine label={t('nodes.https.status.publicUrl')}>
+      <CopyableCode value={url} testId="https-public-url" />
+    </StatusLine>
+  );
+}
+
 /** 内置监听器一行：只有自签 / ACME 会起监听，关闭与外部反代下这行只会让人误以为出了问题。 */
 function listenerText(t: Translate, status: TlsStatusResponse): string {
   const { running, port, error } = status.listener;
@@ -356,6 +368,7 @@ function StatusHeader({ status }: { status: TlsStatusResponse }) {
           <StatusLine label={t('nodes.https.status.access')}>
             <span data-testid="https-effective">{accessText(t, status, https)}</span>
           </StatusLine>
+          <PublicUrlLine https={https} />
           {status.mode === 'none' && https.source === 'reverse-proxy' && (
             <p className="text-xs text-muted-foreground" data-testid="https-proxy-hint">
               {t('nodes.https.status.proxyHint')}

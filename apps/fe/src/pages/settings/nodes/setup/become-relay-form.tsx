@@ -28,6 +28,7 @@ import {
   SetupSubmitRow,
   SwitchRow,
 } from './form-parts';
+import { PortPicker } from './port-picker';
 import { PureRelayConfirm } from './pure-relay-confirm';
 import { writeSelfRelayFollowUp } from './self-relay-followup';
 import { submitBecomeRelay } from './submit';
@@ -49,6 +50,8 @@ export interface BecomeRelayFormProps {
   initialRole?: SetupRelayRole;
   /** 重启完成后的动作，默认整页跳登录页。 */
   onRestarted?: () => void;
+  /** 测试注入固定的建议端口。 */
+  suggestedPort?: number;
 }
 
 function initialValues(input: {
@@ -75,6 +78,7 @@ export function BecomeRelayForm({
   origin,
   initialRole = 'relay,node',
   onRestarted = navigateToLogin,
+  suggestedPort,
 }: BecomeRelayFormProps) {
   const { t } = useTranslation();
   const nodeEnv = localStatus.nodeEnv;
@@ -143,7 +147,12 @@ export function BecomeRelayForm({
             step({ kind: 'submit', plan: pureRelaySubmitPlan(values, nodeEnv) }, event);
           }}
         >
-          <RelayServiceFields values={values} shown={shown} onChange={update} />
+          <RelayServiceFields
+            values={values}
+            shown={shown}
+            onChange={update}
+            {...(suggestedPort === undefined ? {} : { suggestedPort })}
+          />
 
           {values.alsoNode ? (
             <RelayAccountFields
@@ -188,10 +197,12 @@ function RelayServiceFields({
   values,
   shown,
   onChange,
+  suggestedPort,
 }: {
   values: BecomeRelayValues;
   shown: Partial<Record<string, string>>;
   onChange: (patch: Partial<BecomeRelayValues>) => void;
+  suggestedPort?: number;
 }) {
   const { t } = useTranslation();
   return (
@@ -211,6 +222,13 @@ function RelayServiceFields({
           className="min-h-10"
         />
       </FormField>
+
+      <PortPicker
+        idPrefix="setup-relay"
+        url={values.relayPublicUrl}
+        onChange={(next) => onChange({ relayPublicUrl: next })}
+        {...(suggestedPort === undefined ? {} : { suggestedPort })}
+      />
 
       <FormField
         id="setup-relay-password"

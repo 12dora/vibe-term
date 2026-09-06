@@ -25,8 +25,6 @@ async function writeRelayNodeEnv(envPath: string): Promise<void> {
 }
 
 function joinUrlFromParsed(parsed: ParsedArgs): string {
-  const flagged = asString(parsed.flags.url);
-  if (flagged) return flagged;
   const rest = parsed.positionals.filter((item) => item !== 'relay' && item !== 'join');
   return rest[0] ?? '';
 }
@@ -61,6 +59,7 @@ export async function runRelayPasswordJoin(
         now: io.now,
         fetcher: io.fetcher,
         timeoutMs: io.relayTimeoutMs,
+        log: (message) => (io.log ?? console.log)(message),
       }
     );
     if (ctx.envPath) {

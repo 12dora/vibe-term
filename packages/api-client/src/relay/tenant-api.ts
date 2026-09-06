@@ -102,6 +102,21 @@ export interface RelayKeyLogHealth {
   caughtUp: boolean;
 }
 
+/**
+ * `POST /api/mesh/relay/resolve`：地址没写端口时，由本机 gateway 代探候选端口。
+ *
+ * 必须在 `proofMaterial()` 之前调用——enroll proof 签的是含端口的 host，端口定晚了签名就作废。
+ */
+export interface RelayResolveResult {
+  /** 探通的中继地址（含端口）；一个端口都没答话为 `null`。 */
+  url: string | null;
+  port: number | null;
+  /** 用户显式写了端口：只确认了一次，没有遍历候选。 */
+  explicit: boolean;
+  /** 实际发起过探测的端口。 */
+  triedPorts: number[];
+}
+
 /** `POST /api/mesh/relay/enroll/proof-material`：签 enroll proof 所需的材料。 */
 export interface RelayProofMaterial {
   /** 归一化后的中继地址。 */
@@ -450,6 +465,17 @@ export class RelayTenantApi {
    */
   readmitPrepare(): Promise<RelayReadmitPrepare> {
     return this.json<RelayReadmitPrepare>(`${BASE}/readmit/prepare`, 'relay_readmit_failed');
+  }
+
+  /**
+   * `POST /api/mesh/relay/resolve`：探中继地址的端口。地址没写端口时先调它，
+   * 拿到的 `url` 再去 `proofMaterial()`。
+   */
+  resolveRelayAddress(url: string): Promise<RelayResolveResult> {
+    return this.json<RelayResolveResult>(`${BASE}/resolve`, 'relay_resolve_failed', {
+      method: 'POST',
+      body: { url },
+    });
   }
 
   /** `POST /api/mesh/relay/enroll/proof-material`：拿 `relayHost` 与 `ts` 去签 proof。 */

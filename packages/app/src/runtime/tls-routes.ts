@@ -17,13 +17,52 @@ export type TlsEffectiveHttps = {
   publicUrl: string | null;
 };
 
+/** 内置监听器实际服务的域名：证书说了算，其次才是配置的公网地址。 */
+function builtinHost(
+  status: Pick<TlsStatus, 'mode' | 'sans' | 'acme'>,
+  configuredPublicUrl: string | null | undefined
+): string | null {
+  if (status.mode === 'acme' && status.acme?.domain) return status.acme.domain.toLowerCase();
+  const san = status.sans?.find((entry) => isPublicDnsName(entry));
+  if (san) return san.toLowerCase();
+  const configured = httpsConfiguredUrl(configuredPublicUrl);
+  if (!configured) return null;
+  try {
+    return new URL(configured).hostname;
+  } catch {
+    return null;
+  }
+}
+
+/** 只认能对外解析的域名：IP 字面量、通配符与回环名都不该出现在对外地址里。 */
+function isPublicDnsName(entry: string): boolean {
+  const name = entry.trim().toLowerCase();
+  if (!name.includes('.') || name.startsWith('*') || name.endsWith('.localhost')) return false;
+  return !/^[0-9.]+$/.test(name) && !name.includes(':');
+}
+
+/** 内置 HTTPS 监听器的对外地址；非 443 一律显式带端口。 */
+function builtinPublicUrl(
+  status: Pick<TlsStatus, 'mode' | 'sans' | 'acme' | 'tlsPort' | 'listener'>,
+  configuredPublicUrl: string | null | undefined
+): string | null {
+  const host = builtinHost(status, configuredPublicUrl);
+  if (!host) return null;
+  const port = status.listener.port ?? status.tlsPort;
+  return port === 443 ? `https://${host}` : `https://${host}:${port}`;
+}
+
 export function resolveEffectiveHttps(
-  status: Pick<TlsStatus, 'listener'>,
+  status: Pick<TlsStatus, 'listener' | 'mode' | 'sans' | 'acme' | 'tlsPort'>,
   req: Request,
   configuredPublicUrl?: string | null
 ): TlsEffectiveHttps {
   if (status.listener.running) {
-    return { source: 'builtin', verified: true, publicUrl: null };
+    return {
+      source: 'builtin',
+      verified: true,
+      publicUrl: builtinPublicUrl(status, configuredPublicUrl),
+    };
   }
   const requestUrl = publicRequestUrl(req);
   if (requestUrl.protocol === 'https:') {

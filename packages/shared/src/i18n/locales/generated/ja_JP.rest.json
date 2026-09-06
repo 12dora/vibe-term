@@ -1519,6 +1519,7 @@
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "status": {
           "access": "外部アクセス",
+          "publicUrl": "公開アドレス",
           "accessBuiltin": "HTTPS（内蔵リスナーが提供、ポート {{port}}）",
           "accessProxyVerified": "HTTPS（前段のリバースプロキシが提供、今回のリクエストで確認済み）",
           "accessProxyInferred": "HTTPS（公開アドレス {{url}} からの推定、リクエストでは未確認）",
@@ -2016,7 +2017,19 @@
           "caFingerprint": "CA フィンガープリント",
           "caFingerprintHint": "自己署名証明書の中継のみ必要です。空欄ならシステムが信頼する証明書を使います。",
           "directEnableRelayHint": "中継を経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
-          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。"
+          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。",
+          "publicPort": "公開ポート",
+          "publicPortStandard": "標準 443",
+          "publicPortSuggested": "推奨 {{port}}",
+          "publicPortCustom": "カスタム",
+          "publicPortValue": "ポート番号",
+          "publicPortHint": "80/443 が塞がれている場合は高位ポートを使用します。リバースプロキシまたは内蔵 HTTPS リスナーも同じポートで待ち受ける必要があります。"
+        },
+        "probe": {
+          "probing": "一般的なポートを探索中…",
+          "resolvedHub": "ポート {{port}} で Hub を検出し、アドレスを更新しました。",
+          "resolvedRelay": "ポート {{port}} で中継を検出し、アドレスを更新しました。",
+          "failed": "443 および内蔵候補ポートのいずれも応答しません。ポートの開放を確認するか、ポート付きのアドレスを直接入力してください。"
         },
         "precheck": {
           "button": "アドレスを確認",

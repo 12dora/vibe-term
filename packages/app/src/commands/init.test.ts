@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { DirectEnableResult } from './direct';
-import { enableDirectAfterInit, normalizeRelayPublicUrl } from './init';
+import {
+  applyPublicPort,
+  enableDirectAfterInit,
+  normalizeHubPublicUrl,
+  normalizeRelayPublicUrl,
+} from './init';
 
 describe('normalizeRelayPublicUrl', () => {
   test('归一化 https 地址', () => {
@@ -17,6 +22,41 @@ describe('normalizeRelayPublicUrl', () => {
       'invalid relay public URL'
     );
     expect(() => normalizeRelayPublicUrl('relay.example.com')).toThrow('invalid relay public URL');
+  });
+});
+
+describe('normalizeHubPublicUrl', () => {
+  test('归一化 https 地址并保留非标端口', () => {
+    expect(normalizeHubPublicUrl(' https://Hub.Example.com:443/ ')).toBe('https://hub.example.com');
+    expect(normalizeHubPublicUrl('https://hub.example.com:13443')).toBe(
+      'https://hub.example.com:13443'
+    );
+    expect(normalizeHubPublicUrl('http://127.0.0.1:19883')).toBe('http://127.0.0.1:19883');
+  });
+
+  test('拒绝空值与非 https 的公网地址', () => {
+    expect(() => normalizeHubPublicUrl('   ')).toThrow('cannot be empty');
+    expect(() => normalizeHubPublicUrl('http://hub.example.com')).toThrow('invalid hub public URL');
+    expect(() => normalizeHubPublicUrl('hub.example.com')).toThrow('invalid hub public URL');
+  });
+});
+
+describe('applyPublicPort', () => {
+  test('地址没写端口时补上选定的公网端口', () => {
+    expect(applyPublicPort('https://hub.example.com', 13443)).toBe('https://hub.example.com:13443');
+    expect(applyPublicPort(' hub.example.com ', 13443)).toBe('https://hub.example.com:13443');
+  });
+
+  test('显式端口与 443 都原样返回', () => {
+    expect(applyPublicPort('https://hub.example.com:8443', 13443)).toBe(
+      'https://hub.example.com:8443'
+    );
+    expect(applyPublicPort('https://hub.example.com', 443)).toBe('https://hub.example.com');
+    expect(applyPublicPort('', 13443)).toBe('');
+  });
+
+  test('无法解析的地址原样交给后面的校验', () => {
+    expect(applyPublicPort('ftp://hub.example.com', 13443)).toBe('ftp://hub.example.com');
   });
 });
 

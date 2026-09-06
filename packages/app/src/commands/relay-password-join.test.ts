@@ -46,6 +46,37 @@ async function openAuth(username?: string): Promise<LocalAuthContext> {
 }
 
 describe('performRelayPasswordJoin', () => {
+  test('地址没写端口时探候选端口，探不到按 relay_unreachable 报', async () => {
+    const auth = await openAuth();
+    const fetcher: FetchLike = async () => new Response('nope', { status: 404 });
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher, timeoutMs: 100 }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_unreachable' });
+  });
+
+  test('探到候选端口后按带端口的地址继续接入', async () => {
+    const auth = await openAuth();
+    const seen: string[] = [];
+    const fetcher: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      seen.push(`${url.port}${url.pathname}`);
+      if (url.port === '13443' && url.pathname === '/api/relay/health') {
+        return Response.json({ ok: true });
+      }
+      return new Response('nope', { status: 404 });
+    };
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher, timeoutMs: 100 }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError' });
+    expect(seen.some((item) => item.startsWith('13443/api/relay/tenants/'))).toBe(true);
+  });
+
   test('refuses to overwrite an existing mesh user', async () => {
     const auth = await openAuth('ivy');
     await expect(
@@ -58,14 +89,16 @@ describe('performRelayPasswordJoin', () => {
 
   test('maps a missing pack / unknown tenant into relay_tenant_unknown', async () => {
     const auth = await openAuth();
-    const fetcher: FetchLike = async () =>
-      new Response(
+    const fetcher: FetchLike = async (input) => {
+      if (String(input).endsWith('/api/relay/health')) return Response.json({ ok: true });
+      return new Response(
         JSON.stringify({ error: { code: 'RELAY_TENANT_NOT_FOUND', message: 'missing' } }),
         {
           status: 404,
           headers: { 'content-type': 'application/json' },
         }
       );
+    };
     await expect(
       performRelayPasswordJoin(
         { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
@@ -111,6 +144,9 @@ describe('performRelayPasswordJoin', () => {
     });
     const fetcher: FetchLike = async (input) => {
       const url = String(input);
+      if (url.endsWith('/api/relay/health')) {
+        return Response.json({ ok: true });
+      }
       if (url.includes('/kdf')) {
         return Response.json({ kdf_params: kdfParamsToWire(kdf), root_epoch: 0 });
       }

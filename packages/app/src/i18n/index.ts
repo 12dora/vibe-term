@@ -232,6 +232,14 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.user.passwd.doneFullReset':
       'password updated for {{username}} (full-reset): passkeys, two-step verification, and sessions were removed',
 
+    'port.probe.searching': 'no port given; probing 443 and the built-in candidate ports…',
+    'port.probe.foundRelay': 'relay found on port {{port}}; using {{url}}',
+    'port.probe.foundHub': 'hub found on port {{port}}; using {{url}}',
+    'port.probe.notFound':
+      'no response on 443 or the built-in candidate ports ({{ports}}); open the port or give an address with an explicit port',
+    'init.prompt.publicPort':
+      'Public HTTPS port (443 = standard, {{suggested}} = suggested when the ISP blocks 443)',
+
     'relay.passwd.modeKick':
       'kick mode: every tenant using the old relay password is disconnected and must re-run tmex relay reauth',
     'relay.passwd.modeKeep':
@@ -468,6 +476,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.user.passwd.doneKeep': '已更新 {{username}} 的密码（保留）：现有登录方式保持不变。',
     'hub.user.passwd.doneFullReset':
       '已更新 {{username}} 的密码（全量重置）：已移除通行密钥、两步验证并注销全部会话。',
+
+    'port.probe.searching': '地址未写端口，正在探测 443 及内置候选端口……',
+    'port.probe.foundRelay': '已在 {{port}} 端口探测到中继，使用 {{url}}',
+    'port.probe.foundHub': '已在 {{port}} 端口探测到 Hub，使用 {{url}}',
+    'port.probe.notFound':
+      '443 及内置候选端口（{{ports}}）均无响应，请放行端口或直接填写带端口的地址',
+    'init.prompt.publicPort': '公网 HTTPS 端口（443 为标准端口，{{suggested}} 为建议的高位端口）',
 
     'relay.passwd.modeKick':
       '踢出模式：所有还在用旧口令的租户会被断开，需要重新执行 tmex relay reauth',

@@ -23,10 +23,26 @@ function errorBody(code: string, message: string, status: number): Response {
 describe('SetupApi.precheck', () => {
   test('POST /api/setup/precheck 带 url，返回可达性', async () => {
     const { client, calls } = recorder([
-      Response.json({ reachable: true, isSelf: false, status: 200, error: null }),
+      Response.json({
+        reachable: true,
+        isSelf: false,
+        status: 200,
+        error: null,
+        resolvedUrl: 'https://hub.example.com:13443',
+        triedPorts: [443, 2053, 13443],
+        probed: true,
+      }),
     ]);
     const out = await new SetupApi(client).precheck('https://hub.example.com');
-    expect(out).toEqual({ reachable: true, isSelf: false, status: 200, error: null });
+    expect(out).toEqual({
+      reachable: true,
+      isSelf: false,
+      status: 200,
+      error: null,
+      resolvedUrl: 'https://hub.example.com:13443',
+      triedPorts: [443, 2053, 13443],
+      probed: true,
+    });
     expect(calls[0].url).toBe('/api/setup/precheck');
     expect(calls[0].init?.method).toBe('POST');
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ url: 'https://hub.example.com' });

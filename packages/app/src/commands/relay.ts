@@ -1,6 +1,7 @@
 import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
 import { normalizeRelayUrl, signRelayEnrollProof } from '../../../shared/src/relay';
 import { t } from '../i18n';
+import { requireProbedAddress } from '../lib/probe-address';
 import { promptPassword } from '../lib/prompt';
 import { uploadRelayPackFromLocal } from '../lib/relay-pack-upload';
 import {
@@ -176,7 +177,12 @@ async function runRelayEnrollInternal(
   io: RelayIo,
   command: 'enroll' | 'reauth'
 ): Promise<{ tenantId: string; relayUrl: string; online: boolean }> {
-  const relayUrl = requireRelayUrl(urlRaw, command);
+  // 地址没写端口时探候选端口；探不到直接报错，别让后面的健康检查给出一句更含糊的话。
+  const relayUrl = await requireProbedAddress(requireRelayUrl(urlRaw, command), {
+    kind: 'relay',
+    fetcher: io.fetcher,
+    log: (message) => relayLog(io, message),
+  });
   const health = await fetchRelayHealth(relayUrl, io);
   if (!health.ok) {
     throw new Error(`relay is not healthy: ${relayUrl}`);

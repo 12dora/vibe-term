@@ -2265,6 +2265,7 @@
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "status": {
           "access": "对外访问",
+          "publicUrl": "对外地址",
           "accessBuiltin": "HTTPS，由本机内置监听器提供（端口 {{port}}）",
           "accessProxyVerified": "HTTPS，由前置反向代理提供（本次请求已确认）",
           "accessProxyInferred": "HTTPS，按公开地址 {{url}} 推断（未经请求确认）",
@@ -2762,7 +2763,19 @@
           "caFingerprint": "CA 指纹",
           "caFingerprintHint": "仅自签证书的中继需要；留空表示使用系统信任的证书。",
           "directEnableRelayHint": "让节点之间直接通信，而不经中继转发。即使失败也不影响本次设置。",
-          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。"
+          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。",
+          "publicPort": "公网端口",
+          "publicPortStandard": "标准 443",
+          "publicPortSuggested": "建议 {{port}}",
+          "publicPortCustom": "自定义",
+          "publicPortValue": "端口号",
+          "publicPortHint": "80/443 被封锁时可改用高位端口；反代或本机 HTTPS 监听须监听同一端口。"
+        },
+        "probe": {
+          "probing": "正在探测常用端口…",
+          "resolvedHub": "已在 {{port}} 端口探测到 Hub，地址已更新。",
+          "resolvedRelay": "已在 {{port}} 端口探测到中继，地址已更新。",
+          "failed": "443 及内置候选端口均无响应。请确认端口已放行，或直接填写带端口的地址。"
         },
         "precheck": {
           "button": "测试地址",

@@ -1519,6 +1519,7 @@
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "status": {
           "access": "Access",
+          "publicUrl": "Public Address",
           "accessBuiltin": "HTTPS, served by the built-in listener (port {{port}})",
           "accessProxyVerified": "HTTPS, served by a reverse proxy (confirmed by this request)",
           "accessProxyInferred": "HTTPS, inferred from the public address {{url}} (not confirmed by this request)",
@@ -2021,7 +2022,19 @@
           "caFingerprint": "CA fingerprint",
           "caFingerprintHint": "Only needed for relays with a self-signed certificate; leave empty to use system-trusted certificates.",
           "directEnableRelayHint": "Let nodes talk directly instead of going through the relay. Setup continues even if it fails.",
-          "directUnsupportedRelayHint": "{{platform}} does not support direct connections; traffic goes through the relay."
+          "directUnsupportedRelayHint": "{{platform}} does not support direct connections; traffic goes through the relay.",
+          "publicPort": "Public Port",
+          "publicPortStandard": "Standard 443",
+          "publicPortSuggested": "Suggested {{port}}",
+          "publicPortCustom": "Custom",
+          "publicPortValue": "Port number",
+          "publicPortHint": "Use a high port when 80/443 are blocked; the reverse proxy or built-in HTTPS listener must listen on the same port."
+        },
+        "probe": {
+          "probing": "Probing common ports…",
+          "resolvedHub": "Hub found on port {{port}}; the address has been updated.",
+          "resolvedRelay": "Relay found on port {{port}}; the address has been updated.",
+          "failed": "No response on 443 or any built-in candidate port. Confirm the port is open, or enter an address that includes the port."
         },
         "precheck": {
           "button": "Test address",

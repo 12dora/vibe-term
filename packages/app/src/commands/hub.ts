@@ -59,6 +59,7 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import { HUB_CA_FETCH_TIMEOUT_MS, probeHubJoinUrl } from './hub-join-probe';
 import { publishHubJoinAdmitForCli, resolveJoinTotpCode } from './hub-join-totp';
 import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
 import { withAuth } from './with-auth';
@@ -233,6 +234,7 @@ async function fetchPinnedHubCa(
   try {
     response = await fetcher(`${hubUrl}/api/tls/ca.crt`, {
       redirect: 'error',
+      signal: AbortSignal.timeout(HUB_CA_FETCH_TIMEOUT_MS),
       tls: { rejectUnauthorized: false },
     } as RequestInit);
   } catch (error) {
@@ -597,12 +599,13 @@ export async function runHubJoin(
     throw new Error('hub join requires <https-url>');
   }
   const insecureLocal = parsed.flags['insecure-local'] === true || io.insecureLocal === true;
+  const hubUrlRaw = await probeHubJoinUrl(urlRaw, io, insecureLocal);
   const name = asString(parsed.flags.name) || 'node';
   let token = tokenFlag;
   let passwordRootKey: RootKey | undefined;
   if (!token) {
     const material = await requestEnrollmentByPassword({
-      hubUrl: urlRaw,
+      hubUrl: hubUrlRaw,
       password: await resolvePassword({
         password: asString(parsed.flags.password),
       }),
@@ -622,7 +625,7 @@ export async function runHubJoin(
     try {
       const joined = await performHubJoin(
         {
-          hubUrl: urlRaw,
+          hubUrl: hubUrlRaw,
           token,
           name,
           insecureLocal,

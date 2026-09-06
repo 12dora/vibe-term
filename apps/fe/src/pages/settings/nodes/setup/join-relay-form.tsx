@@ -9,8 +9,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex
 import { Input } from '@tmex/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { type AddressProbeState, precheckProbe, useAddressProbe } from './address-probe';
 import { currentHostname, navigateToLogin } from './browser-location';
 import {
+  AddressProbeNotice,
   FormField,
   RestartPanel,
   ResultRow,
@@ -56,6 +58,7 @@ export function JoinRelayForm({
     caFingerprint: '',
     directEnable: directSupported,
   }));
+  const probe = useAddressProbe();
   const errors = validateJoinRelay(values, nodeEnv);
   const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupRelayJoinResponse>({
@@ -70,6 +73,15 @@ export function JoinRelayForm({
 
   function update(patch: Partial<JoinRelayValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
+    // 地址一改，上一次探测的结论就作废，在途的那次也一并丢掉。
+    if (patch.relayUrl !== undefined) probe.reset();
+  }
+
+  /** 地址没写端口时探一遍 443 与内置候选端口；探到别的端口就把地址改写成带端口的。 */
+  async function probeRelayUrl(): Promise<void> {
+    if (errors.relayUrl) return;
+    const resolved = await probe.run(values.relayUrl, precheckProbe(client));
+    if (resolved) setValues((previous) => ({ ...previous, relayUrl: resolved }));
   }
 
   if (result) return <JoinRelayResult result={result} waiter={waiter} />;
@@ -82,7 +94,13 @@ export function JoinRelayForm({
       </CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
-          <JoinRelayFields values={values} shown={shown} onChange={update} />
+          <JoinRelayFields
+            values={values}
+            shown={shown}
+            onChange={update}
+            probe={probe}
+            onProbe={() => void probeRelayUrl()}
+          />
 
           <SwitchRow
             id="setup-relay-join-direct-enable"
@@ -150,10 +168,14 @@ function JoinRelayFields({
   values,
   shown,
   onChange,
+  probe,
+  onProbe,
 }: {
   values: JoinRelayValues;
   shown: JoinRelayErrors;
   onChange: (patch: Partial<JoinRelayValues>) => void;
+  probe: AddressProbeState;
+  onProbe: () => void;
 }) {
   const { t } = useTranslation();
   const [advanced, setAdvanced] = useState(false);
@@ -169,11 +191,14 @@ function JoinRelayFields({
           id="setup-relay-url"
           value={values.relayUrl}
           onChange={(event) => onChange({ relayUrl: event.target.value })}
+          onBlur={onProbe}
           placeholder={t('nodes.setup.fields.relayUrlPlaceholder')}
           autoComplete="url"
           className="min-h-10"
         />
       </FormField>
+
+      <AddressProbeNotice state={probe} kind="relay" testId="setup-join-relay-probe" />
 
       <FormField
         id="setup-relay-tenant-id"

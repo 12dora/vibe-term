@@ -114,7 +114,15 @@ describe('POST /api/setup/precheck', () => {
       )
     );
     expect(status).toBe(200);
-    expect(body).toEqual({ reachable: true, isSelf: true, status: 200, error: null });
+    expect(body).toEqual({
+      reachable: true,
+      isSelf: true,
+      status: 200,
+      error: null,
+      resolvedUrl: 'https://hub.example.com',
+      triedPorts: [443],
+      probed: true,
+    });
   });
 
   test('invalid_url is 400', async () => {

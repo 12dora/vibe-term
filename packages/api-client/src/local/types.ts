@@ -74,6 +74,12 @@ export interface SetupPrecheckResponse {
   isSelf: boolean;
   status: number | null;
   error: string | null;
+  /** 端口探测确定的地址（含端口）；未探测或一个端口都没答话为 `null`。 */
+  resolvedUrl: string | null;
+  /** 实际发起过探测的端口；未探测为空。 */
+  triedPorts: number[];
+  /** 地址没写端口时才探测候选端口。 */
+  probed: boolean;
 }
 
 export type SetupDirectOutcome = 'enabled' | 'failed' | 'skipped';

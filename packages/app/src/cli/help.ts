@@ -3,7 +3,7 @@ import type { CliLang } from '../i18n';
 const HELP_EN = `tmex CLI
 
 Usage:
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
+  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -48,7 +48,7 @@ Global flags:
 const HELP_ZH = `tmex CLI
 
 用法：
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
+  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]

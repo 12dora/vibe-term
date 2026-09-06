@@ -13,6 +13,7 @@ import { enrollRelay, leaveRelay, removeRelay } from '@/node/relay-enroll';
 import { forgetRelayPackDebt, rememberRelayPackDebt } from '@/node/relay-meta-key-pending';
 import type { RelayPackRefreshResult } from '@/node/relay-pack';
 import { refreshRelayPack } from '@/node/relay-pack';
+import { shouldProbeAddress } from '@/pages/settings/nodes/setup/address-probe';
 import type { AuthApi } from '@tmex/api-client/auth/index';
 import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
 import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
@@ -97,6 +98,21 @@ function report(t: Translate, result: RelayFlowResult, doneKey: string): boolean
  * 接入后重封的结论落成欠账：逐台回执里失败的那几台精确留账，请求整个没打通时哪几台不明，
  * 整份留账。返回是否全部封上（否则调用方挂一条非阻断告警）。
  */
+/**
+ * 地址没写端口时先探一遍端口再接入：enroll proof 签的是 `hubHostFromUrl(url)`（含端口），
+ * 探测必须发生在 `proof-material` 之前，否则签出来的 proof 绑在错的 host 上。
+ * 探不到 / 旧节点没有这条路由，一律沿用用户输入的地址，由后续步骤给出真正的失败原因。
+ */
+export async function resolveEnrollUrl(relayApi: RelayTenantApi, url: string): Promise<string> {
+  if (!shouldProbeAddress(url)) return url;
+  try {
+    const resolved = await relayApi.resolveRelayAddress(url);
+    return resolved.url ?? url;
+  } catch {
+    return url;
+  }
+}
+
 function settlePackDebt(pack: RelayPackRefreshResult | null): boolean {
   if (pack?.ok) {
     forgetRelayPackDebt();
@@ -150,8 +166,9 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
         // 别的机器无法用「租户编号 + 密码」加入。失败不回滚接入，只记欠账并提示。
         // 用容器存：闭包里的赋值 TS 看不见，直接用 let 会被窄化成 null。
         const packRef: { result: RelayPackRefreshResult | null } = { result: null };
+        const url = await resolveEnrollUrl(relayApi, form.url.trim());
         const result = await enrollRelay(flowDeps, {
-          url: form.url.trim(),
+          url,
           password: form.password ? form.password : null,
           rootPassword: form.rootPassword,
           afterEnroll: async (rootKey) => {

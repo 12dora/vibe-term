@@ -53,15 +53,26 @@ export {
 } from './relay-tenant-ops';
 export { waitUntil };
 
-const RELAY_HOST = new URL(RELAY_TEST_PUBLIC_URL).host;
+const RELAY_HOSTNAME = new URL(RELAY_TEST_PUBLIC_URL).hostname;
+
+/** 按 hostname 比对：端口探测会试候选端口，按 host 比对会把它们漏给真实网络。 */
+function isRelayTarget(url: string): boolean {
+  try {
+    return new URL(url).hostname === RELAY_HOSTNAME;
+  } catch {
+    return false;
+  }
+}
 
 /** 把发往中继公开地址的请求接进进程内 RelayRuntime，其余交还原生 fetch。 */
 function installRelayFetch(relay: RelayHarness): () => void {
   const original = globalThis.fetch;
   const patched = ((input: RequestInfo | URL, init?: RequestInit) => {
     const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    const url = new URL(href);
-    if (url.host === RELAY_HOST) return relay.fetch(`${url.pathname}${url.search}`, init);
+    if (isRelayTarget(href)) {
+      const url = new URL(href);
+      return relay.fetch(`${url.pathname}${url.search}`, init);
+    }
     return original(input as RequestInfo, init);
   }) as typeof fetch;
   patched.preconnect = original.preconnect?.bind(original) ?? (() => {});
@@ -78,7 +89,7 @@ export async function bootRelayMeshHarness(
   const restoreFetch = installRelayFetch(relay);
   const nodes: RelayMeshNode[] = [];
   const wsFactory: UplinkWsFactory = async (url) => {
-    if (new URL(url).host !== RELAY_HOST) throw new Error(`no-relay:${url}`);
+    if (!isRelayTarget(url)) throw new Error(`no-relay:${url}`);
     const [nodeSock, relaySock] = fakeSocketPair();
     relay.runtime.uplink.accept(new WebSocketLink(relaySock, { role: 'acceptor' }));
     return nodeSock;

@@ -214,6 +214,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'hub-url',
     'hub-public-url',
     'relay-public-url',
+    'public-port',
     'peer-port',
     'stun-servers',
     'no-service',

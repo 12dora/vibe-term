@@ -2271,6 +2271,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
         "status": {
           "access": "Access",
+          "publicUrl": "Public Address",
           "accessBuiltin": "HTTPS, served by the built-in listener (port {{port}})",
           "accessProxyVerified": "HTTPS, served by a reverse proxy (confirmed by this request)",
           "accessProxyInferred": "HTTPS, inferred from the public address {{url}} (not confirmed by this request)",
@@ -2773,7 +2774,19 @@ export const I18N_RESOURCES = {
           "caFingerprint": "CA fingerprint",
           "caFingerprintHint": "Only needed for relays with a self-signed certificate; leave empty to use system-trusted certificates.",
           "directEnableRelayHint": "Let nodes talk directly instead of going through the relay. Setup continues even if it fails.",
-          "directUnsupportedRelayHint": "{{platform}} does not support direct connections; traffic goes through the relay."
+          "directUnsupportedRelayHint": "{{platform}} does not support direct connections; traffic goes through the relay.",
+          "publicPort": "Public Port",
+          "publicPortStandard": "Standard 443",
+          "publicPortSuggested": "Suggested {{port}}",
+          "publicPortCustom": "Custom",
+          "publicPortValue": "Port number",
+          "publicPortHint": "Use a high port when 80/443 are blocked; the reverse proxy or built-in HTTPS listener must listen on the same port."
+        },
+        "probe": {
+          "probing": "Probing common ports…",
+          "resolvedHub": "Hub found on port {{port}}; the address has been updated.",
+          "resolvedRelay": "Relay found on port {{port}}; the address has been updated.",
+          "failed": "No response on 443 or any built-in candidate port. Confirm the port is open, or enter an address that includes the port."
         },
         "precheck": {
           "button": "Test address",
@@ -5767,6 +5780,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "status": {
           "access": "对外访问",
+          "publicUrl": "对外地址",
           "accessBuiltin": "HTTPS，由本机内置监听器提供（端口 {{port}}）",
           "accessProxyVerified": "HTTPS，由前置反向代理提供（本次请求已确认）",
           "accessProxyInferred": "HTTPS，按公开地址 {{url}} 推断（未经请求确认）",
@@ -6264,7 +6278,19 @@ export const I18N_RESOURCES = {
           "caFingerprint": "CA 指纹",
           "caFingerprintHint": "仅自签证书的中继需要；留空表示使用系统信任的证书。",
           "directEnableRelayHint": "让节点之间直接通信，而不经中继转发。即使失败也不影响本次设置。",
-          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。"
+          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。",
+          "publicPort": "公网端口",
+          "publicPortStandard": "标准 443",
+          "publicPortSuggested": "建议 {{port}}",
+          "publicPortCustom": "自定义",
+          "publicPortValue": "端口号",
+          "publicPortHint": "80/443 被封锁时可改用高位端口；反代或本机 HTTPS 监听须监听同一端口。"
+        },
+        "probe": {
+          "probing": "正在探测常用端口…",
+          "resolvedHub": "已在 {{port}} 端口探测到 Hub，地址已更新。",
+          "resolvedRelay": "已在 {{port}} 端口探测到中继，地址已更新。",
+          "failed": "443 及内置候选端口均无响应。请确认端口已放行，或直接填写带端口的地址。"
         },
         "precheck": {
           "button": "测试地址",
@@ -9257,6 +9283,7 @@ export const I18N_RESOURCES = {
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "status": {
           "access": "外部アクセス",
+          "publicUrl": "公開アドレス",
           "accessBuiltin": "HTTPS（内蔵リスナーが提供、ポート {{port}}）",
           "accessProxyVerified": "HTTPS（前段のリバースプロキシが提供、今回のリクエストで確認済み）",
           "accessProxyInferred": "HTTPS（公開アドレス {{url}} からの推定、リクエストでは未確認）",
@@ -9754,7 +9781,19 @@ export const I18N_RESOURCES = {
           "caFingerprint": "CA フィンガープリント",
           "caFingerprintHint": "自己署名証明書の中継のみ必要です。空欄ならシステムが信頼する証明書を使います。",
           "directEnableRelayHint": "中継を経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
-          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。"
+          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。",
+          "publicPort": "公開ポート",
+          "publicPortStandard": "標準 443",
+          "publicPortSuggested": "推奨 {{port}}",
+          "publicPortCustom": "カスタム",
+          "publicPortValue": "ポート番号",
+          "publicPortHint": "80/443 が塞がれている場合は高位ポートを使用します。リバースプロキシまたは内蔵 HTTPS リスナーも同じポートで待ち受ける必要があります。"
+        },
+        "probe": {
+          "probing": "一般的なポートを探索中…",
+          "resolvedHub": "ポート {{port}} で Hub を検出し、アドレスを更新しました。",
+          "resolvedRelay": "ポート {{port}} で中継を検出し、アドレスを更新しました。",
+          "failed": "443 および内蔵候補ポートのいずれも応答しません。ポートの開放を確認するか、ポート付きのアドレスを直接入力してください。"
         },
         "precheck": {
           "button": "アドレスを確認",

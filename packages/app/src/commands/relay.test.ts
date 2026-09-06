@@ -97,7 +97,7 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         ? (JSON.parse(init.body) as Record<string, unknown>)
         : undefined;
     calls.push({ path, method: init?.method ?? 'GET', body });
-    if (url.origin === RELAY_URL) {
+    if (url.origin === RELAY_URL || url.origin.startsWith(`${RELAY_URL}:`)) {
       return json(options.health ?? { ok: true, version: '1.1.23', hasPassword: true });
     }
     switch (path) {
@@ -455,11 +455,20 @@ describe('relay enroll', () => {
 
   test('a relay that is not healthy stops before touching the local gateway', async () => {
     const auth = await openAuth();
+    const url = `${RELAY_URL}:8443`;
     const { calls, fetcher } = fakeGateway(auth, { health: { ok: false } });
     await expect(
-      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+      runRelayEnroll(parseArgs(['relay', 'enroll', url]), url, io(auth, fetcher, []))
     ).rejects.toThrow('relay is not healthy');
     expect(calls).toHaveLength(1);
+  });
+
+  test('a portless url with no reachable candidate port names the ports tried', async () => {
+    const auth = await openAuth();
+    const { fetcher } = fakeGateway(auth, { health: { ok: false } });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(/443/);
   });
 
   test('a missing url is refused', async () => {

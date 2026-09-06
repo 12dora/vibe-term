@@ -370,6 +370,8 @@ function passwordJoinFetcher(
   return async (input, init) => {
     const url = String(input);
     const method = (init?.method ?? 'GET').toUpperCase();
+    // 地址没写端口时 runHubJoin 会先探 /healthz 选端口
+    if (url.endsWith('/healthz')) return Response.json({ status: 'ok', startedAt: 1 });
     const live = hub.userStore.getById(user.id) ?? user;
     const records = hub.keyLogStore.list(user.id);
     const head = hub.keyLogStore.head(user.id);
