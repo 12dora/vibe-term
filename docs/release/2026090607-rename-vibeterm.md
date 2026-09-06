@@ -44,7 +44,7 @@
 
 ### 2. 环境变量别名
 
-`packages/shared/src/env/load-env.ts` 的 `applyLegacyEnvAliases()` 在启动时把残留的 `TMEX_X` 复制到未设置的 `VIBETERM_X`；`mergeMissingEnvFileKeys` 把 `TMEX_X` 视为 `VIBETERM_X` 已存在，不会重复追加。迁移后的 `app.env` 已经是 `VIBETERM_*`，这条别名只覆盖「未迁移」与「回滚到旧 env」两种场景。新 `run.sh` 同时导出 `VIBETERM_*` 与 `TMEX_*` 四个路径变量，保证事务内回滚拉起旧 runtime 时仍能读到。
+`packages/shared/src/env/load-env.ts` 的 `applyLegacyEnvAliases()` 在启动时把残留的 `TMEX_X` 复制到未设置的 `VIBETERM_X`；`mergeMissingEnvFileKeys` 把 `TMEX_X` 视为 `VIBETERM_X` 已存在，不会重复追加。迁移后的 `app.env` 已经是 `VIBETERM_*`，这条别名只覆盖「未迁移」与「回滚到旧 env」两种场景。新 `run.sh` 只导出 `VIBETERM_*`；事务在停服前把旧 `run.sh` 备份到 `backups/<txn>/run.sh`，回滚 / repair 时原样还原，旧 runtime 因此仍能读到 `TMEX_*` 路径变量。自定义 `--install-dir` 的安装不搬目录，但同样在事务内把 `app.env` 的 `TMEX_*` 键改写为 `VIBETERM_*`（有备份、可回退）；`readEnvFile` 读取时也做同样别名，CLI 各命令在迁移前就能读到新键。
 
 ### 3. 安装识别与双 shim
 
@@ -84,7 +84,7 @@ localStorage / sessionStorage 一次性 `getItem(old) → setItem(new) → remov
 4. 服务：服务名若为旧默认 `tmex` 则改为 `vibeterm`（label `com.vibeterm.vibeterm`、单元 `vibeterm.service`）；自定义服务名保留，只换 label 前缀。装新服务之前显式 bootout 旧 label 并删除 `com.tmex.<服务名>.plist` / `tmex.service`（存在才做），避免两个实例抢 9883。
 5. `run.sh`、shim、plist / unit、`install-meta.json` 一律按新路径与新服务名重写。
 
-**journal 与回滚**：升级日志新增 `migrate-install-dir` 阶段，记录新旧路径、env 备份路径与旧 label。健康检查失败时反向执行：目录搬回旧路径、按备份还原 `app.env`、DB 文件名改回、旧 label 重新装上。`upgrade --repair` 能续做（rename 与 env 改写之间崩溃可直接重跑，收尾步骤幂等）或回退。
+**journal 与回滚**：升级日志新增 `migrate-install-dir` 阶段。迁移记录（新旧路径、新旧服务名、env 备份路径、DB 是否已改名）在目录 rename **之前**先写入 journal，之后每一步完成再更新，所以任意时刻崩溃都能由 `upgrade --repair` 按记录续做或回退。健康检查失败时先确认新服务的进程已退出（launchd job 卸载 + pid 消失为硬条件，端口释放只等待 5 秒后告警继续），再写入 `reverting` 阶段并反向执行：目录搬回旧路径、按备份还原 `app.env`、DB 文件名改回、旧 `run.sh` 原样还原、旧 label 重新装上；记录标记为 `undone`，直到旧版本切回并通过健康检查才清除。恢复的目标版本低于 2.0 时一律使用旧 label 与旧日志文件名（无论是否发生过迁移），2.x 之间的失败回滚保持新 label。停止新服务失败时不动目录与 DB，保留 journal 交给 `--repair`。
 
 ## 运维手册：升级一片 1.1.40 的节点
 
@@ -101,7 +101,7 @@ localStorage / sessionStorage 一次性 `getItem(old) → setItem(new) → remov
 
 ## 已知限制
 
-- **迁移后不支持降回 1.x**：旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键，手工降级会得到一个找不到自己数据的实例。需要回退时只能走升级事务自身的 rollback / `--repair`（那条路径仍然安全，因为本版 `run.sh` 把 `VIBETERM_*` 镜像回 `TMEX_*`）。
+- **迁移后不支持降回 1.x**：旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键，手工降级会得到一个找不到自己数据的实例。需要回退时只能走升级事务自身的 rollback / `--repair`（那条路径仍然安全：旧 `run.sh` 有事务备份并原样还原）。
 - **自定义安装目录不迁移**。目录名保持原样，只改服务 label 与 `app.env` 键。想改目录名只能停服务后手工搬并同步改 `install-meta.json`、`run.sh`、plist / unit，不推荐。
 - **混合版本期的功能降级**：未升级的节点收不到 `tmex-close:` 的精确关闭原因，也不会被 `tmex-rtc-wake` 唤起直连，表现为关闭提示变笼统、直连建立更慢。全网升级后自愈。
 - **tmux 选项迁移只在 attach 时发生**。升级后从未被访问过的 pane 保留旧选项，直到下一次 attach。
