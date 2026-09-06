@@ -4,6 +4,7 @@
 // 微信 / 浏览器通道发出。声明本身在 mesh 内广播，所以状态行列的是**全网**的汇聚节点，
 // 不只是本机。网关不支持该端点（老节点）或本机未联网互联时整块不渲染。
 
+import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
   MeshNotificationForwardQueueStats,
@@ -14,9 +15,9 @@ import { useRuntime } from '@tmex/stores/react';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Skeleton } from '@tmex/ui/skeleton';
 import { Switch } from '@tmex/ui/switch';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
-import { SETTINGS_STALE_MS } from '../data-prefetch';
 import {
   fetchMeshNotificationState,
   meshNotificationQueryKey,
@@ -24,6 +25,44 @@ import {
 } from './mesh-api';
 
 type Translate = (key: string, params?: Record<string, unknown>) => string;
+
+/**
+ * 汇聚声明在 mesh 里广播，队列计数则一直在动——两者都不经设置广播（`SETTINGS_EVENT`）通知
+ * 浏览器，光靠设置页那份 `staleTime`（30 s）这张卡会一直停在打开那一刻的快照上。
+ * 挂着就轮询；`staleTime` 跟着降到同一个值，否则窗口失焦期间轮询暂停、回来时数据仍被判「新鲜」，
+ * 焦点重取形同虚设。
+ */
+export const MESH_NOTIFICATION_REFETCH_MS = 10_000;
+
+export const meshNotificationRefreshOptions = {
+  staleTime: MESH_NOTIFICATION_REFETCH_MS,
+  refetchInterval: MESH_NOTIFICATION_REFETCH_MS,
+  refetchOnWindowFocus: true,
+} as const;
+
+/** 节点表里会影响这张卡的部分：汇聚节点名与在线态都从这里来。 */
+export function meshNodesSignature(
+  nodes: readonly { id: string; name: string; online?: boolean }[]
+): string {
+  return nodes.map((node) => `${node.id}:${node.name}:${node.online === true ? 1 : 0}`).join('|');
+}
+
+/** 节点表一变（改名 / 上下线 / 增删）就把汇聚状态重取一次。 */
+function useInvalidateOnMeshNodesChange(invalidate: () => void): void {
+  const signature = useRef(meshNodesSignature(getMeshNodesState().nodes));
+  const latest = useRef(invalidate);
+  latest.current = invalidate;
+  useEffect(
+    () =>
+      subscribeMeshNodes(() => {
+        const next = meshNodesSignature(getMeshNodesState().nodes);
+        if (next === signature.current) return;
+        signature.current = next;
+        latest.current();
+      }),
+    []
+  );
+}
 
 /** 汇聚节点名；离线的加尾注。 */
 export function meshSinkLabel(sink: MeshNotificationSink, t: Translate): string {
@@ -130,7 +169,11 @@ export function MeshNotificationCard() {
   const query = useQuery({
     queryKey: meshNotificationQueryKey,
     queryFn: ({ signal }) => fetchMeshNotificationState(apiClient, signal),
-    staleTime: SETTINGS_STALE_MS,
+    ...meshNotificationRefreshOptions,
+  });
+
+  useInvalidateOnMeshNodesChange(() => {
+    void queryClient.invalidateQueries({ queryKey: meshNotificationQueryKey });
   });
 
   const mutation = useMutation({

@@ -10,9 +10,15 @@ import { installWindowStorage } from '@tmex/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { MeshNotificationCardBody, meshQueueNote, meshSinkLabel, meshSinkSummary } = await import(
-  './mesh-notification-card'
-);
+const {
+  MESH_NOTIFICATION_REFETCH_MS,
+  MeshNotificationCardBody,
+  meshNodesSignature,
+  meshNotificationRefreshOptions,
+  meshQueueNote,
+  meshSinkLabel,
+  meshSinkSummary,
+} = await import('./mesh-notification-card');
 
 /** i18next 未初始化时 `useTranslation()` 的 t 就是回 key，这里保持同一约定。 */
 const t = (key: string, params?: Record<string, unknown>) =>
@@ -63,6 +69,31 @@ describe('汇聚节点状态行', () => {
       'settings.notifications.mesh.offlineName:{"name":"laptop"}'
     );
     expect(meshSinkLabel(sink({ name: 'laptop' }), t)).toBe('laptop');
+  });
+});
+
+describe('新鲜度', () => {
+  test('挂着就轮询，回到窗口也重取——汇聚声明与队列计数都不走设置广播', () => {
+    expect(meshNotificationRefreshOptions.refetchInterval).toBe(MESH_NOTIFICATION_REFETCH_MS);
+    expect(MESH_NOTIFICATION_REFETCH_MS).toBe(10_000);
+    expect(meshNotificationRefreshOptions.refetchOnWindowFocus).toBe(true);
+    // staleTime 若还是设置页那份 30 s，失焦回来时数据仍被判「新鲜」，焦点重取不会发生。
+    expect(meshNotificationRefreshOptions.staleTime).toBe(MESH_NOTIFICATION_REFETCH_MS);
+  });
+
+  test('节点表签名只认影响本卡的字段：改名 / 上下线 / 增删才算变', () => {
+    const base = [
+      { id: 'a', name: 'hub', online: true },
+      { id: 'b', name: 'laptop', online: false },
+    ];
+    expect(meshNodesSignature(base)).toBe(meshNodesSignature([...base]));
+    expect(meshNodesSignature(base)).not.toBe(
+      meshNodesSignature([{ id: 'a', name: 'hub2', online: true }, base[1]!])
+    );
+    expect(meshNodesSignature(base)).not.toBe(
+      meshNodesSignature([base[0]!, { id: 'b', name: 'laptop', online: true }])
+    );
+    expect(meshNodesSignature(base)).not.toBe(meshNodesSignature([base[0]!]));
   });
 });
 

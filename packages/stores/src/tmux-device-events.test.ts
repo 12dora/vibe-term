@@ -130,7 +130,8 @@ function deviceEvent(payload: Partial<EventDevicePayload> & Pick<EventDevicePayl
 
 afterEach(async () => {
   for (const dispose of disposers.splice(0)) dispose();
-  const { useBellStore } = await import('@tmex/notifications');
+  const { resetToastDedupeForTest, useBellStore } = await import('@tmex/notifications');
+  resetToastDedupeForTest();
   for (const paneId of Object.keys(useBellStore.getState().ringingPanes)) {
     useBellStore.getState().clearBell(paneId);
   }
@@ -231,6 +232,29 @@ describe('handleTmuxEvent notification', () => {
     const h = makeHarness();
     handleTmuxEvent(h.ctx, tmuxEvent('notification', { source: 'osc9' }));
     expect(h.infos[0]?.title).toBe('terminal.notificationFallbackTitle');
+  });
+
+  test('同一条通知已被别的通道认领（转发件先到）时不再弹', async () => {
+    const { claimToastFor } = await import('@tmex/notifications');
+    const h = makeHarness();
+    // 汇聚节点转发回来的那一路先弹了：身份相同，直投这一路让位。
+    expect(
+      claimToastFor({
+        eventType: 'terminal_notification',
+        nodeId: 'self',
+        deviceId: 'device-1',
+        paneId: '%1',
+      })
+    ).toBe(true);
+    handleTmuxEvent(h.ctx, tmuxEvent('notification', { title: 'x', paneId: '%1' }));
+    expect(h.infos).toHaveLength(0);
+  });
+
+  test('不同 pane 的通知各弹各的', () => {
+    const h = makeHarness();
+    handleTmuxEvent(h.ctx, tmuxEvent('notification', { title: 'a', paneId: '%1' }));
+    handleTmuxEvent(h.ctx, tmuxEvent('notification', { title: 'b', paneId: '%2' }));
+    expect(h.infos).toHaveLength(2);
   });
 });
 

@@ -233,7 +233,8 @@ function RouteConnectionIndicator() {
 // 设置失效（设备分组布局等 self 数据固定打 self 的 QueryClient，否则会拿陈旧布局覆盖新布局），
 // 以及 WATCH_EVENT（入口机上的监控触发不该因为正在看别的 node 就不弹）。
 // 后者顺带保证入口的 WS 常连——其它节点转发来的通知正是经这条连接广播回浏览器的。
-// 路由就是 self 时页面区已经订阅了，这里不再重复。
+// 路由就是 self 时页面区已经订阅了，这里不再重复；`/n/<entry 自身 id>/...` 是 self 的别名，
+// `useRouteNodeId()` 已经把它折回 `self`，两处不会各订阅一遍。
 function SelfNodeEventsInit() {
   const routeNodeId = useRouteNodeId();
   if (routeNodeId === SELF_NODE_ID) return null;

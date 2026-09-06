@@ -1,6 +1,6 @@
 // 设备事件与 tmux 事件（bell / notification / pane-active）的状态与副作用处理。
 
-import { formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
+import { claimToastFor, formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
 import type {
   DeviceEventType,
   EventDevicePayload,
@@ -134,6 +134,18 @@ const handleNotification: TmuxEventHandler = (ctx, payload) => {
   }
 
   const data = eventData(payload);
+  // 同一条通知也可能经汇聚节点转发回入口那条连接（`terminal_notification`），
+  // 先到的一条认领 toast，另一条静默丢弃。
+  if (
+    !claimToastFor({
+      eventType: 'terminal_notification',
+      nodeId: ctx.core.nodeId,
+      deviceId: payload.deviceId,
+      paneId: stringField(data, 'paneId'),
+    })
+  ) {
+    return;
+  }
   const { title, description } = formatTerminalNotificationToast(data, ctx.core.t);
   const paneUrl = stringField(data, 'paneUrl');
   ctx.core.notifications.info(title, {

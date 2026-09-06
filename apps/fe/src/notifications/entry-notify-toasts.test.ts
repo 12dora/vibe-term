@@ -1,6 +1,7 @@
 // 入口机上「其它节点事件」的 toast 判据与订阅接线。
 
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { claimToastFor, resetToastDedupeForTest } from '@tmex/notifications';
 import type { WebhookEvent } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { installWindowStorage } from '@tmex/stores/test-utils';
@@ -10,10 +11,15 @@ installWindowStorage();
 const {
   forwardedEventPath,
   forwardedOrigin,
+  forwardedToastIdentity,
   formatForwardedEventToast,
   shouldToastForwardedEvent,
   subscribeEntryNotifyToasts,
 } = await import('./entry-notify-toasts');
+
+beforeEach(() => {
+  resetToastDedupeForTest();
+});
 
 const ENTRY = 'aa'.repeat(16);
 const NODE_B = 'bb'.repeat(16);
@@ -38,7 +44,6 @@ function ctx(overrides: Record<string, unknown> = {}) {
   return {
     eventType: 'terminal_bell',
     event: event(),
-    routeNodeId: ENTRY,
     entryNodeId: ENTRY,
     hostManagedNotifications: false,
     toastEnabled: true,
@@ -76,9 +81,15 @@ describe('是否该弹', () => {
     );
   });
 
-  test('来源正是当前路由 node：那台机器的运行时已经弹过，不弹两遍', () => {
-    expect(shouldToastForwardedEvent(ctx({ routeNodeId: NODE_B }))).toBe(false);
-    expect(shouldToastForwardedEvent(ctx({ routeNodeId: NODE_C }))).toBe(true);
+  test('来源是不是当前路由 node 都照弹：重复交给身份去重，不靠路由猜', () => {
+    // 浏览器可能压根没订阅那台机器（别的浏览器持着订阅、懒登录门闸没放行），
+    // 也可能刚离开那条路由但运行时还在宽限期——两种都不能靠路由排除。
+    expect(shouldToastForwardedEvent(ctx({ event: event({ payload: { nodeId: NODE_B } }) }))).toBe(
+      true
+    );
+    expect(shouldToastForwardedEvent(ctx({ event: event({ payload: { nodeId: NODE_C } }) }))).toBe(
+      true
+    );
   });
 
   test('agent_* 由发起机上报，不属于转发：不弹', () => {
@@ -162,12 +173,38 @@ function notifyFrame(eventType: string, payload: WebhookEvent) {
   };
 }
 
+describe('事件身份', () => {
+  test('与来源机直投那一路对齐：node / device / pane / rule 四段', () => {
+    expect(
+      forwardedToastIdentity(
+        'watch_triggered',
+        event({
+          eventType: 'watch_triggered',
+          payload: { nodeId: NODE_B, ruleId: 'r1' },
+        }),
+        { nodeId: NODE_B, nodeName: null }
+      )
+    ).toEqual({
+      eventType: 'watch_triggered',
+      nodeId: NODE_B,
+      deviceId: 'd1',
+      paneId: '%2',
+      ruleId: 'r1',
+    });
+  });
+
+  test('没有 ruleId 的事件那一段为空', () => {
+    expect(
+      forwardedToastIdentity('terminal_bell', event(), { nodeId: NODE_B, nodeName: null })
+    ).toMatchObject({ ruleId: null });
+  });
+});
+
 describe('订阅接线', () => {
   test('NOTIFY_EVENT 里的远端事件弹一条；本机自产的不弹', () => {
     const toasts: Toast[] = [];
     const { runtime, emit } = fakeRuntime(toasts);
     const stop = subscribeEntryNotifyToasts(runtime as never, {
-      routeNodeId: () => ENTRY,
       entryNodeId: () => ENTRY,
       t,
     });
@@ -185,11 +222,77 @@ describe('订阅接线', () => {
     const toasts: Toast[] = [];
     const { runtime, emit } = fakeRuntime(toasts);
     subscribeEntryNotifyToasts(runtime as never, {
-      routeNodeId: () => ENTRY,
       entryNodeId: () => ENTRY,
       t,
     });
     emit({ kind: wsBorsh.KIND_WATCH_EVENT, payload: new Uint8Array(4) });
     expect(toasts).toHaveLength(0);
+  });
+});
+
+describe('身份去重', () => {
+  function subscribe(toasts: Toast[]) {
+    const { runtime, emit } = fakeRuntime(toasts);
+    subscribeEntryNotifyToasts(runtime as never, { entryNodeId: () => ENTRY, t });
+    return emit;
+  }
+
+  const watchEvent = (overrides: Partial<WebhookEvent> = {}) =>
+    event({
+      eventType: 'watch_triggered',
+      payload: { nodeId: NODE_B, nodeName: 'laptop', ruleId: 'r1', message: 'matched' },
+      ...overrides,
+    });
+
+  test('来源机直投先弹过：转发件同身份，不弹第二条', () => {
+    const toasts: Toast[] = [];
+    const emit = subscribe(toasts);
+    // 直投那一路（`WatchEventsInit`）先认领，键由同一组 id 拼出。
+    expect(
+      claimToastFor({
+        eventType: 'watch_triggered',
+        nodeId: NODE_B,
+        deviceId: 'd1',
+        paneId: '%2',
+        ruleId: 'r1',
+      })
+    ).toBe(true);
+
+    emit(notifyFrame('watch_triggered', watchEvent()));
+    expect(toasts).toHaveLength(0);
+  });
+
+  test('浏览器没订阅那台设备（直投这一路根本不来）：转发件照弹', () => {
+    const toasts: Toast[] = [];
+    const emit = subscribe(toasts);
+    emit(notifyFrame('watch_triggered', watchEvent()));
+    expect(toasts).toHaveLength(1);
+  });
+
+  test('转发件重复投递（多条通道）只弹一条', () => {
+    const toasts: Toast[] = [];
+    const emit = subscribe(toasts);
+    emit(notifyFrame('watch_triggered', watchEvent()));
+    emit(notifyFrame('watch_triggered', watchEvent()));
+    expect(toasts).toHaveLength(1);
+  });
+
+  test('不同规则 / 不同来源节点是不同事件，各弹各的', () => {
+    const toasts: Toast[] = [];
+    const emit = subscribe(toasts);
+    emit(notifyFrame('watch_triggered', watchEvent()));
+    emit(
+      notifyFrame(
+        'watch_triggered',
+        watchEvent({ payload: { nodeId: NODE_B, ruleId: 'r2', message: 'matched' } })
+      )
+    );
+    emit(
+      notifyFrame(
+        'watch_triggered',
+        watchEvent({ payload: { nodeId: NODE_C, ruleId: 'r1', message: 'matched' } })
+      )
+    );
+    expect(toasts).toHaveLength(3);
   });
 });

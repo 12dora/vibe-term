@@ -51,6 +51,7 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
   let ruleId: string | undefined;
   let nodePage: Page | undefined;
   const nodeId = state.remoteNodeId;
+  const ruleName = `mesh-notify-${Date.now()}`;
 
   try {
     await loginWithPassword(page, state);
@@ -92,7 +93,7 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
     // 远端 node 上建一条 match 规则。
     const ruleRes = await page.request.post(meshUrl(state, `/n/${nodeId}/api/watch/rules`), {
       data: {
-        name: `mesh-notify-${Date.now()}`,
+        name: ruleName,
         deviceId,
         paneId,
         triggerType: 'match',
@@ -125,8 +126,27 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
 
     meshTmux(state.nodeTmuxSocket, `send-keys -t ${paneId} "echo ${token}" Enter`);
 
-    const toast = page.locator('[data-sonner-toast]').filter({ hasText: state.remoteNodeName });
+    // 断言必须落到「这一条规则触发了」上：只匹配节点名的话，同一条规则的
+    // `watch_rule_error`（文案里也带节点名与规则名）照样能让用例通过。
+    // 触发文案是 `notification.watch.matchTriggered`（规则名 + 命中文本），命中文本里带 token；
+    // 转发件的正文首行还会点名来源节点。三者同时出现才是那一条。
+    const toast = page
+      .locator('[data-sonner-toast]')
+      .filter({ hasText: ruleName })
+      .filter({ hasText: token })
+      .filter({ hasText: state.remoteNodeName });
     await expect(toast).toBeVisible({ timeout: 60_000 });
+    await expect(toast).toHaveCount(1);
+
+    // 规则确实进了触发态（而不是只在浏览器里看见一条 toast）。
+    const ruleState = await page.request.get(
+      meshUrl(state, `/n/${nodeId}/api/watch/rules/${ruleId}/state`)
+    );
+    expect(ruleState.ok(), `watch rule state: ${ruleState.status()}`).toBeTruthy();
+    const stateBody = (await ruleState.json()) as {
+      state: { lastTriggeredAt: string | null } | null;
+    };
+    expect(stateBody.state?.lastTriggeredAt ?? null).not.toBe(null);
   } finally {
     await nodePage?.close();
     if (ruleId) {

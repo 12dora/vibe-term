@@ -9,12 +9,17 @@
 // 只弹「别人家」的事件：
 //   - payload 里没有 nodeId 的是本机自己的事件，既有通道已经弹过；
 //   - 来源就是入口自身的同理；
-//   - 来源正是当前路由 node 时，那台机器的运行时已经弹过，避免弹两遍；
 //   - `agent_*` 由发起机上报（远端 agent 会话的事件天然带 nodeId），不属于转发，排除。
+//
+// 与「来源节点自己的运行时」之间**不按路由排除**：浏览器是不是订阅着那台机器无从假设
+//（另一个浏览器持着订阅、懒登录门闸还没放行、刚离开那条路由但运行时还在宽限期都可能），
+// 排除掉就会漏弹或弹两遍。改成按事件身份认领（`@tmex/notifications` 的 toast-dedupe）：
+// 直投与转发谁先到谁弹，另一条丢掉。
 
 import { getMeshNodesState } from '@/node/mesh-nodes';
-import { isValidNodeId, nodeAppPath, parseNodeIdFromPath } from '@tmex/api-client';
-import { buildPaneLocationLabel } from '@tmex/notifications';
+import { isValidNodeId, nodeAppPath } from '@tmex/api-client';
+import { buildPaneLocationLabel, claimToastFor } from '@tmex/notifications';
+import type { ToastIdentity } from '@tmex/notifications';
 import type { WebhookEvent } from '@tmex/shared';
 import { wsBorsh } from '@tmex/shared';
 import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
@@ -42,8 +47,6 @@ export function forwardedOrigin(event: WebhookEvent): ForwardedOrigin | null {
 export interface ForwardedToastContext {
   eventType: string;
   event: WebhookEvent;
-  /** 当前路由 node（已解析为具体 node id；入口自身为 entryNodeId）。 */
-  routeNodeId: string | null;
   entryNodeId: string | null;
   hostManagedNotifications: boolean;
   toastEnabled: boolean;
@@ -55,8 +58,23 @@ export function shouldToastForwardedEvent(ctx: ForwardedToastContext): boolean {
   const origin = forwardedOrigin(ctx.event);
   if (!origin) return false;
   if (ctx.entryNodeId && origin.nodeId === ctx.entryNodeId) return false;
-  if (ctx.routeNodeId && origin.nodeId === ctx.routeNodeId) return false;
   return true;
+}
+
+/** 转发件的事件身份：与来源机直投那一路（`WATCH_EVENT` / tmux `notification`）同一组 id。 */
+export function forwardedToastIdentity(
+  eventType: string,
+  event: WebhookEvent,
+  origin: ForwardedOrigin
+): ToastIdentity {
+  const ruleId = event.payload?.ruleId;
+  return {
+    eventType,
+    nodeId: origin.nodeId,
+    deviceId: event.device?.id ?? null,
+    paneId: event.tmux?.paneId ?? null,
+    ruleId: typeof ruleId === 'string' ? ruleId : null,
+  };
 }
 
 /** 事件在来源节点上的应用内路径；拼不出（无设备）时返回 null。 */
@@ -119,8 +137,6 @@ function decodeNotifyEvent(payload: Uint8Array): { eventType: string; event: Web
 }
 
 export interface EntryNotifyDeps {
-  /** 当前路由 node（`self` 已解析成 entry 自身的 node id）。 */
-  routeNodeId: () => string | null;
   entryNodeId: () => string | null;
   t: Translate;
 }
@@ -137,7 +153,6 @@ export function subscribeEntryNotifyToasts(runtime: AppRuntime, deps: EntryNotif
       !shouldToastForwardedEvent({
         eventType: decoded.eventType,
         event: decoded.event,
-        routeNodeId: deps.routeNodeId(),
         entryNodeId: deps.entryNodeId(),
         hostManagedNotifications: runtime.features.hostManagedNotifications,
         toastEnabled,
@@ -147,6 +162,8 @@ export function subscribeEntryNotifyToasts(runtime: AppRuntime, deps: EntryNotif
     }
 
     const origin = forwardedOrigin(decoded.event) as ForwardedOrigin;
+    if (!claimToastFor(forwardedToastIdentity(decoded.eventType, decoded.event, origin))) return;
+
     const { title, description } = formatForwardedEventToast(
       decoded.eventType,
       decoded.event,
@@ -171,13 +188,6 @@ export function subscribeEntryNotifyToasts(runtime: AppRuntime, deps: EntryNotif
   });
 }
 
-/** 把当前 URL 的路由 node 解析成具体 node id（入口自身回 entryNodeId）。 */
-function currentRouteNodeId(entryNodeId: string | null): string | null {
-  if (typeof window === 'undefined') return entryNodeId;
-  const routeNodeId = parseNodeIdFromPath(window.location.pathname);
-  return isValidNodeId(routeNodeId) && routeNodeId !== 'self' ? routeNodeId : entryNodeId;
-}
-
 /**
  * 挂在入口（self）运行时下，**不随路由 node 切换**：其它节点的事件永远由入口的连接送达。
  */
@@ -187,7 +197,6 @@ export function EntryNotifyToastsInit() {
     () =>
       subscribeEntryNotifyToasts(runtime, {
         entryNodeId: () => getMeshNodesState().entryNodeId,
-        routeNodeId: () => currentRouteNodeId(getMeshNodesState().entryNodeId),
         t: (key, params) => i18next.t(key, params ?? {}) as string,
       }),
     [runtime]

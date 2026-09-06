@@ -65,6 +65,13 @@ describe('范围提示', () => {
     expect(html).toContain('settings.notifications.scope.self');
   });
 
+  test('`/n/<entry 自身 id>` 是本机的别名：按本机提示，不当远端', () => {
+    setMesh(true);
+    const html = render(`/n/${ENTRY}/settings`);
+    expect(html).toContain('settings.notifications.scope.self');
+    expect(html).not.toContain('settings.notifications.scope.remote');
+  });
+
   test('远端节点：提示正在编辑的是哪一台', () => {
     setMesh(true);
     const html = render(`/n/${NODE_B}/settings`);

@@ -18,3 +18,13 @@ export {
   type NotificationSink,
 } from './sinks';
 export { formatWatchTriggeredNotification } from './watch-format';
+export {
+  TOAST_DEDUPE_COALESCE_MS,
+  TOAST_DEDUPE_TTL_MS,
+  claimToast,
+  claimToastFor,
+  resetToastDedupeForTest,
+  toastDedupeKey,
+  type ClaimToastOptions,
+  type ToastIdentity,
+} from './toast-dedupe';
