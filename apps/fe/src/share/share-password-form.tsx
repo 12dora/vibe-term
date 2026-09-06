@@ -22,6 +22,8 @@ export interface SharePasswordFormProps {
   error: ShareAccessErrorCode | null;
   lockedUntil: number | null;
   submitting: boolean;
+  /** 链接里带来的密码：只预填，仍要被分享人自己点「继续」。 */
+  initialPassword?: string;
   onSubmit: (password: string) => void;
 }
 
@@ -30,10 +32,11 @@ export function SharePasswordForm({
   error,
   lockedUntil,
   submitting,
+  initialPassword,
   onSubmit,
 }: SharePasswordFormProps) {
   const { t } = useTranslation();
-  const [password, setPassword] = useState('');
+  const [password, setPassword] = useState(initialPassword ?? '');
   const [revealed, setRevealed] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
   const now = useShareNow(lockedUntil !== null, 1000);

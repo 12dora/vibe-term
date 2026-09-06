@@ -28,6 +28,9 @@ export type {
   ShareLoginErrorCode,
   ShareLoginResult,
   ShareOriginsView,
+  SharePasswordResult,
+  ShareSessionsRevokedEvent,
+  ShareSetPasswordResult,
   ShareViewerCounter,
   VerifiedShareAccess,
 } from './types';

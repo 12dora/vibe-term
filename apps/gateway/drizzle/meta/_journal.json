@@ -337,6 +337,13 @@
       "when": 1789557600000,
       "tag": "0047_share",
       "breakpoints": true
+    },
+    {
+      "idx": 48,
+      "version": "6",
+      "when": 1789644000000,
+      "tag": "0048_share_password_enc",
+      "breakpoints": true
     }
   ]
 }

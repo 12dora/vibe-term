@@ -5,7 +5,7 @@ import type { ShareOriginCandidate, ShareRecord } from '@tmex/shared/share';
 import { renderWatch as renderPanel, setupWatchTestEnv } from '../watch/watch-test-harness';
 import { ShareActiveView } from './share-active-view';
 import { ShareCreateForm } from './share-create-form';
-import { type ShareDraft, createShareDraft } from './share-dialog-model';
+import { type ShareDraft, type ShareLinkPassword, createShareDraft } from './share-dialog-model';
 import { shareOriginLabel } from './share-origin-label';
 
 beforeAll(setupWatchTestEnv);
@@ -114,16 +114,33 @@ describe('shareOriginLabel', () => {
   });
 });
 
+function linkPassword(overrides: Partial<ShareLinkPassword> = {}): ShareLinkPassword {
+  return {
+    include: false,
+    password: null,
+    loading: false,
+    error: null,
+    setInclude: () => undefined,
+    ...overrides,
+  };
+}
+
+function activeView(props: Partial<Parameters<typeof ShareActiveView>[0]> = {}) {
+  return renderPanel(
+    <ShareActiveView
+      share={record()}
+      password={null}
+      linkPassword={linkPassword()}
+      stopping={false}
+      onStop={() => undefined}
+      {...props}
+    />
+  ).html;
+}
+
 describe('ShareActiveView', () => {
   test('展示链接与在线人数，刚创建时给出明文密码', () => {
-    const html = renderPanel(
-      <ShareActiveView
-        share={record()}
-        password="Ab3dEf7h"
-        stopping={false}
-        onStop={() => undefined}
-      />
-    ).html;
+    const html = activeView({ password: 'Ab3dEf7h' });
     expect(html).toContain('value="https://a.example/s/s1"');
     expect(html).toContain('value="Ab3dEf7h"');
     expect(html).toContain('2 online');
@@ -132,9 +149,7 @@ describe('ShareActiveView', () => {
   });
 
   test('已有分享只给遮罩与一次性提示，复制按钮禁用', () => {
-    const html = renderPanel(
-      <ShareActiveView share={record()} password={null} stopping={false} onStop={() => undefined} />
-    ).html;
+    const html = activeView();
     expect(html).toContain('••••••••');
     expect(html).toContain('The password is shown only at creation.');
     expect(html).toMatch(/data-testid="share-active-password-copy"[^>]*disabled/);
@@ -142,16 +157,41 @@ describe('ShareActiveView', () => {
 
   test('限期分享展示剩余期限', () => {
     const now = 1_700_000_000_000;
-    const html = renderPanel(
-      <ShareActiveView
-        share={record({ expiresAt: now + 3 * 86_400_000 })}
-        password={null}
-        stopping={false}
-        onStop={() => undefined}
-        now={now}
-      />
-    ).html;
+    const html = activeView({ share: record({ expiresAt: now + 3 * 86_400_000 }), now });
     expect(html).toContain('3 d left');
     expect(html).not.toContain('Never expires');
+  });
+
+  test('缺省不勾「链接中包含密码」，链接是裸的', () => {
+    const html = activeView({ password: 'Ab3dEf7h' });
+    expect(html).toContain('data-testid="share-include-password"');
+    expect(html).toContain('Include the password in the link');
+    expect(html).toContain('value="https://a.example/s/s1"');
+    expect(html).not.toContain('#p=');
+  });
+
+  test('勾上后链接带密码 fragment', () => {
+    const html = activeView({
+      password: 'Ab3dEf7h',
+      linkPassword: linkPassword({ include: true, password: 'Ab3dEf7h' }),
+    });
+    expect(html).toContain('value="https://a.example/s/s1#p=Ab3dEf7h"');
+  });
+
+  test('已有分享取回密码后，密码栏不再遮罩——链接里已经明文可见', () => {
+    const html = activeView({
+      linkPassword: linkPassword({ include: true, password: 'Ab3dEf7h' }),
+    });
+    expect(html).toContain('value="Ab3dEf7h"');
+    expect(html).not.toContain('••••••••');
+    expect(html).not.toContain('The password is shown only at creation.');
+  });
+
+  test('取密码失败就地摆出原因（旧分享看不到密码）', () => {
+    const html = activeView({
+      linkPassword: linkPassword({ error: 'share.error.passwordUnavailable' }),
+    });
+    expect(html).toContain('data-testid="share-include-password-error"');
+    expect(html).toContain('The password of this share cannot be viewed.');
   });
 });

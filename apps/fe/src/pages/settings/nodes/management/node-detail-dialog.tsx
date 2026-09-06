@@ -7,6 +7,7 @@
 // 从该域名进来的（`viaDomain`），点下去就会当场失联。
 
 import type { NodeRow } from '@/node/mesh-nodes';
+import { isValidNodeId, nodeAppPath } from '@tmex/api-client';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,7 +18,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
+import { Button, buttonVariants } from '@tmex/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -28,8 +29,9 @@ import {
 } from '@tmex/ui/dialog';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
-import { Loader2, Save } from 'lucide-react';
+import { Bell, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router';
 import { CopyButton } from '../copy-feedback';
 import { hubModeLabel } from '../uplink/hub-strip';
 import {
@@ -206,6 +208,33 @@ export function NodeDetailBody({
   );
 }
 
+/**
+ * 「通知设置」入口：通知通道属于被编辑的那台机器，本机的设置改不到远端节点。
+ * 只对远端节点出现——本机就在当前这一页。
+ */
+export function nodeNotifySettingsPath(row: NodeRow): string | null {
+  if (row.isSelf || !isValidNodeId(row.runtimeNodeId)) return null;
+  return `${nodeAppPath(row.runtimeNodeId, '/settings')}?tab=notifications`;
+}
+
+export function NodeNotifySettingsLink({ row }: { row: NodeRow }) {
+  const { t } = useTranslation();
+  const to = nodeNotifySettingsPath(row);
+  if (!to) return null;
+  return (
+    <div className="flex">
+      <Link
+        to={to}
+        className={buttonVariants({ size: 'sm', variant: 'outline' })}
+        data-testid="node-detail-notify-settings"
+      >
+        <Bell />
+        {t('nodes.detail.notifySettings')}
+      </Link>
+    </div>
+  );
+}
+
 export interface NodeDetailDialogProps {
   row: NodeRow;
   open: boolean;
@@ -256,6 +285,8 @@ export function NodeDetailDialog({
           onAllowedChange={onAllowedChange}
           errors={state.errors}
         />
+
+        <NodeNotifySettingsLink row={row} />
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={state.saving}>

@@ -224,3 +224,44 @@ describe('分享口令哈希', () => {
     expect(await verifySharePassword('not-json', 'correct-horse')).toBe(false);
   }, 20_000);
 });
+
+describe('ShareStore 口令密文与批量踢人', () => {
+  test('insert 落密文，缺省为 null（老分享升级后的形状）', () => {
+    store.insert({ ...row({ id: 'enc' }), passwordHash: 'h', passwordEnc: 'cipher' });
+    store.insert({ ...row({ id: 'legacy' }), passwordHash: 'h' });
+    expect(store.passwordEnc('enc')).toBe('cipher');
+    expect(store.passwordEnc('legacy')).toBeNull();
+    expect(store.passwordEnc('missing')).toBeNull();
+  });
+
+  test('updatePassword 同时改哈希与密文，不存在的分享返回 false', () => {
+    store.insert({ ...row(), passwordHash: 'h1', passwordEnc: 'c1' });
+    expect(store.updatePassword('share-1', 'h2', 'c2')).toBe(true);
+    expect(store.passwordHash('share-1')).toBe('h2');
+    expect(store.passwordEnc('share-1')).toBe('c2');
+    expect(store.updatePassword('missing', 'h', 'c')).toBe(false);
+  });
+
+  test('deleteAccessTokensByShare 只清本分享的凭证并返回条数', () => {
+    store.insert({ ...row({ id: 'a' }), passwordHash: 'h' });
+    store.insert({ ...row({ id: 'b' }), passwordHash: 'h' });
+    for (const [id, shareId, hash] of [
+      ['t1', 'a', 'hash1'],
+      ['t2', 'a', 'hash2'],
+      ['t3', 'b', 'hash3'],
+    ] as const) {
+      store.createAccessToken({
+        id,
+        shareId,
+        tokenHash: hash,
+        clientIp: null,
+        createdAt: 1,
+        expiresAt: 1_000,
+      });
+    }
+    expect(store.deleteAccessTokensByShare('a')).toBe(2);
+    expect(store.findAccessToken('hash1')).toBeNull();
+    expect(store.findAccessToken('hash3')?.shareId).toBe('b');
+    expect(store.deleteAccessTokensByShare('a')).toBe(0);
+  });
+});

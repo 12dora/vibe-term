@@ -10,10 +10,16 @@ export const SHARE_ERROR_CODES = [
   'SHARE_NOT_FOUND',
   'SHARE_WINDOW_NOT_FOUND',
   'SHARE_PASSWORD_TOO_SHORT',
+  'SHARE_PASSWORD_UNAVAILABLE',
   'SHARE_ORIGIN_INVALID',
   'SHARE_ENDED',
   'SHARE_AUTH_REQUIRED',
 ] as const;
+
+/** 少数错误码的文案不按 `share.error.<code>` 命名，这里点名覆盖。 */
+const SHARE_ERROR_KEY_OVERRIDES: Readonly<Record<string, string>> = {
+  SHARE_PASSWORD_UNAVAILABLE: 'share.error.passwordUnavailable',
+};
 
 export type ShareErrorCode = (typeof SHARE_ERROR_CODES)[number];
 
@@ -27,7 +33,6 @@ export const SHARE_GENERIC_ERROR_KEY = 'share.error.generic';
  */
 export function shareErrorKey(error: unknown): string {
   const code = error instanceof ApiError ? error.code : null;
-  return code && KNOWN_SHARE_ERROR_CODES.has(code)
-    ? `share.error.${code}`
-    : SHARE_GENERIC_ERROR_KEY;
+  if (!code || !KNOWN_SHARE_ERROR_CODES.has(code)) return SHARE_GENERIC_ERROR_KEY;
+  return SHARE_ERROR_KEY_OVERRIDES[code] ?? `share.error.${code}`;
 }

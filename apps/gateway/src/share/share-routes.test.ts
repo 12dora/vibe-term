@@ -4,6 +4,7 @@ import type { ShareRecord, ShareSettings } from '@tmex/shared/share';
 import type { Server } from 'bun';
 import { handleApiRequest } from '../api';
 import { createMigratedAuthDb } from '../auth/test-db';
+import { isAuthLoginPublicPath } from '../mesh/auth-public-paths';
 import { type ShareService, createShareService, setShareServiceForTests } from './share-service';
 import { ShareStore } from './share-store';
 import {
@@ -335,5 +336,105 @@ describe('被分享人 HTTP', () => {
     expect(out.headers.get(X_TMEX_CLEAR_SHARE)).toBe('1');
     const view = await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } });
     expect(view.body.authenticated).toBe(false);
+  });
+});
+
+describe('口令查看 / 修改端点', () => {
+  test('GET /api/share/:id/password 回显明文，未知分享 404', async () => {
+    const created = await createShare();
+    const share = created.body.share as ShareRecord;
+    const view = await call('GET', `/api/share/${share.id}/password`);
+    expect(view.status).toBe(200);
+    expect(view.body.password).toBe('secret123');
+    // 明文口令不许被浏览器/反代缓存下来。
+    expect(view.headers.get('Cache-Control')).toBe('private, no-store');
+
+    const missing = await call('GET', '/api/share/nope/password');
+    expect(missing.status).toBe(404);
+    expect(missing.body.code).toBe('SHARE_NOT_FOUND');
+  });
+
+  test('老分享无密文时 GET 返回 409 SHARE_PASSWORD_UNAVAILABLE', async () => {
+    const created = await createShare();
+    const share = created.body.share as ShareRecord;
+    new ShareStore(harness.db).updatePassword(share.id, 'plain:secret123', null);
+    const view = await call('GET', `/api/share/${share.id}/password`);
+    expect(view.status).toBe(409);
+    expect(view.body.code).toBe('SHARE_PASSWORD_UNAVAILABLE');
+  });
+
+  test('主密钥对不上时 GET 返回 500 SHARE_PASSWORD_DECRYPT_FAILED', async () => {
+    const created = await createShare();
+    const share = created.body.share as ShareRecord;
+    new ShareStore(harness.db).updatePassword(share.id, 'plain:secret123', 'not-a-ciphertext');
+    const view = await call('GET', `/api/share/${share.id}/password`);
+    expect(view.status).toBe(500);
+    expect(view.body.code).toBe('SHARE_PASSWORD_DECRYPT_FAILED');
+    expect(view.body.error as string).toContain('TMEX_MASTER_KEY');
+  });
+
+  test('POST /api/share/:id/password 改口令，endSessions 决定是否踢人', async () => {
+    const created = await createShare();
+    const share = created.body.share as ShareRecord;
+    const login = await call('POST', `/api/share-access/${share.id}/login`, {
+      body: { password: 'secret123' },
+    });
+    const cookie = `${SHARE_COOKIE_PREFIX}self=${login.headers.get(X_TMEX_SET_SHARE)}`;
+
+    const kept = await call('POST', `/api/share/${share.id}/password`, {
+      body: { password: 'next-pass-1', endSessions: false },
+    });
+    expect(kept.status).toBe(200);
+    expect(kept.body.endedSessions).toBe(0);
+    expect((kept.body.share as ShareRecord).id).toBe(share.id);
+    expect(
+      (await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } })).body
+        .authenticated
+    ).toBe(true);
+    expect((await call('GET', `/api/share/${share.id}/password`)).body.password).toBe(
+      'next-pass-1'
+    );
+
+    const ended = await call('POST', `/api/share/${share.id}/password`, {
+      body: { password: 'next-pass-2', endSessions: true },
+    });
+    expect(ended.status).toBe(200);
+    expect(ended.body.endedSessions).toBe(1);
+    expect(
+      (await call('GET', `/api/share-access/${share.id}`, { headers: { cookie } })).body
+        .authenticated
+    ).toBe(false);
+    const relogin = await call('POST', `/api/share-access/${share.id}/login`, {
+      body: { password: 'next-pass-2' },
+    });
+    expect(relogin.status).toBe(200);
+  });
+
+  test('POST 校验：body 非法 400、口令过短 400、未知 404、已结束 409', async () => {
+    const created = await createShare();
+    const share = created.body.share as ShareRecord;
+    expect((await call('POST', `/api/share/${share.id}/password`, { body: {} })).status).toBe(400);
+    const short = await call('POST', `/api/share/${share.id}/password`, {
+      body: { password: 'abc', endSessions: false },
+    });
+    expect(short.status).toBe(400);
+    expect(short.body.code).toBe('SHARE_PASSWORD_TOO_SHORT');
+    const missing = await call('POST', '/api/share/nope/password', {
+      body: { password: 'long-enough', endSessions: false },
+    });
+    expect(missing.status).toBe(404);
+
+    await call('POST', `/api/share/${share.id}/revoke`);
+    const ended = await call('POST', `/api/share/${share.id}/password`, {
+      body: { password: 'long-enough', endSessions: false },
+    });
+    expect(ended.status).toBe(409);
+    expect(ended.body.code).toBe('SHARE_ENDED');
+  });
+
+  test('两条端点都不在匿名公开面上（须带常规会话）', () => {
+    expect(isAuthLoginPublicPath('/api/share/abc/password', 'GET')).toBe(false);
+    expect(isAuthLoginPublicPath('/api/share/abc/password', 'POST')).toBe(false);
+    expect(isAuthLoginPublicPath('/api/share-access/abc/password', 'GET')).toBe(false);
   });
 });

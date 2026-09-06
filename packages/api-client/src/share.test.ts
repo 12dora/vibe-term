@@ -3,10 +3,13 @@ import { ApiClient, ApiError } from './client';
 import {
   createShare,
   getShareOrigins,
+  getSharePassword,
   listShares,
   revokeShare,
   shareListPath,
+  sharePasswordPath,
   shareQueryKey,
+  updateSharePassword,
 } from './share';
 import { shareErrorKey } from './share-errors';
 
@@ -185,5 +188,63 @@ describe('getShareOrigins', () => {
     expect(client.calls[0].path).toBe('/api/share/origins');
     expect(result.recommended).toBe('https://a.example');
     expect(result.candidates[0].kind).toBe('site');
+  });
+});
+
+describe('分享口令端点', () => {
+  test('sharePasswordPath 转义 id', () => {
+    expect(sharePasswordPath('a/b')).toBe('/api/share/a%2Fb/password');
+  });
+
+  test('getSharePassword GET 明文口令', async () => {
+    const client = new StubApiClient([jsonResponse({ password: 'hunter2000' })]);
+
+    const result = await getSharePassword(client, 's1');
+
+    expect(client.calls[0].path).toBe('/api/share/s1/password');
+    expect(client.calls[0].init).toBeUndefined();
+    expect(result.password).toBe('hunter2000');
+  });
+
+  test('getSharePassword 把 409 转成带码的 ApiError', async () => {
+    const client = new StubApiClient([
+      jsonResponse({ error: 'nope', code: 'SHARE_PASSWORD_UNAVAILABLE' }, 409),
+    ]);
+
+    const error = await getSharePassword(client, 's1').catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe('SHARE_PASSWORD_UNAVAILABLE');
+    expect(shareErrorKey(error)).toBe('share.error.passwordUnavailable');
+  });
+
+  test('updateSharePassword POST 新口令与踢人开关，回传 endedSessions', async () => {
+    const client = new StubApiClient([jsonResponse({ share: { id: 's1' }, endedSessions: 2 })]);
+
+    const result = await updateSharePassword(client, 's1', {
+      password: 'next-pass',
+      endSessions: true,
+    });
+
+    expect(client.calls[0].path).toBe('/api/share/s1/password');
+    expect(client.calls[0].init?.method).toBe('POST');
+    expect(JSON.parse(client.calls[0].init?.body as string)).toEqual({
+      password: 'next-pass',
+      endSessions: true,
+    });
+    expect(result.endedSessions).toBe(2);
+    expect(result.share.id).toBe('s1');
+  });
+
+  test('updateSharePassword 把 409 SHARE_ENDED 转成 ApiError', async () => {
+    const client = new StubApiClient([jsonResponse({ error: 'ended', code: 'SHARE_ENDED' }, 409)]);
+
+    const error = await updateSharePassword(client, 's1', {
+      password: 'next-pass',
+      endSessions: false,
+    }).catch((err: unknown) => err);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).code).toBe('SHARE_ENDED');
   });
 });

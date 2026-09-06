@@ -13,6 +13,10 @@ export interface ShareSessionIndexHost {
 export const SHARE_ENDED_CLOSE_CODE = 4410;
 export const SHARE_ENDED_CLOSE_REASON = 'SHARE_ENDED';
 
+/** 分享仍在，但访问凭证被作废（改了口令并选择踢人）：前端据此退回密码表单。 */
+export const SHARE_LOGIN_REQUIRED_CLOSE_CODE = 4401;
+export const SHARE_LOGIN_REQUIRED_CLOSE_REASON = 'SHARE_LOGIN_REQUIRED';
+
 /**
  * 分享连接不进常规 SessionRegistry：按 shareId 单独索引，承担「终止/到期即断开」、
  * 在线人数、以及 scope 判定（pane 归属、出站事件过滤）。
@@ -123,9 +127,13 @@ export class ShareSessionIndex {
     const off = service.onEnded((shareId) => {
       this.closeAll(shareId);
     });
+    const offRevoked = service.onSessionsRevoked((shareId) => {
+      this.closeAll(shareId, SHARE_LOGIN_REQUIRED_CLOSE_CODE, SHARE_LOGIN_REQUIRED_CLOSE_REASON);
+    });
     service.setViewerCounter((shareId) => this.count(shareId));
     this.unwire = () => {
       off();
+      offRevoked();
       service.setViewerCounter(() => 0);
     };
   }

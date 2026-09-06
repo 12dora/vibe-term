@@ -13,6 +13,7 @@ import {
 import { getDeviceById } from '../db';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';
+import { ShareAccessManager } from './share-access-tokens';
 import {
   type ShareOriginContext,
   type ShareOriginSources,
@@ -20,29 +21,16 @@ import {
   defaultShareOriginSources,
   resolveSharePrefix,
 } from './share-origins';
-import { ShareLoginLimiter } from './share-rate-limit';
+import { SharePasswordManager } from './share-password-service';
 import { ShareRecorder, type ShareRecorderRuntime, hasWindow } from './share-recorder';
 import {
-  accessExpiry,
   clampInt,
   defaultAcquireRuntime,
   defaultReleaseRuntime,
   normalizeDefaultOrigin,
 } from './share-service-support';
-import {
-  type ShareLogAppend,
-  type ShareRow,
-  ShareStore,
-  hashSharePassword,
-  verifySharePassword,
-} from './share-store';
-import {
-  SHARE_ACCESS_TTL_MS,
-  generateShareId,
-  generateShareToken,
-  hashShareToken,
-  parseShareToken,
-} from './share-token';
+import { type ShareLogAppend, type ShareRow, ShareStore } from './share-store';
+import { generateShareId } from './share-token';
 import type {
   ShareCreateInput,
   ShareCreateResult,
@@ -51,8 +39,11 @@ import type {
   ShareListResult,
   ShareLoginResult,
   ShareOriginsView,
+  SharePasswordResult,
   ShareService,
   ShareServiceDeps,
+  ShareSessionsRevokedEvent,
+  ShareSetPasswordResult,
   ShareViewerCounter,
   VerifiedShareAccess,
 } from './types';
@@ -66,8 +57,10 @@ const MAX_TIMEOUT_MS = 2_147_483_000;
 class ShareServiceImpl implements ShareService {
   private readonly store: ShareStore;
   private readonly now: () => number;
-  private readonly limiter: ShareLoginLimiter;
+  private readonly access: ShareAccessManager;
+  private readonly passwords: SharePasswordManager;
   private readonly listeners = new Set<(event: ShareEndedEvent) => void>();
+  private readonly revokeListeners = new Set<(event: ShareSessionsRevokedEvent) => void>();
   private readonly recorders = new Map<string, ShareRecorder>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private viewerCounter: ShareViewerCounter | null = null;
@@ -79,7 +72,10 @@ class ShareServiceImpl implements ShareService {
   constructor(private readonly deps: ShareServiceDeps = {}) {
     this.store = deps.store ?? new ShareStore();
     this.now = deps.now ?? Date.now;
-    this.limiter = new ShareLoginLimiter(this.now);
+    this.access = new ShareAccessManager(this.store, deps, this.now, (shareId) =>
+      this.endShare(shareId, 'expired')
+    );
+    this.passwords = new SharePasswordManager(this.store, deps);
   }
 
   private snapshotOf(deviceId: string): StateSnapshotPayload | null {
@@ -170,8 +166,11 @@ class ShareServiceImpl implements ShareService {
       expiresAt: input.expiresInMs === null ? null : now + Math.max(0, input.expiresInMs),
       endedAt: null,
     };
-    const hash = await (this.deps.hashPassword ?? hashSharePassword)(password);
-    this.store.insert({ ...row, passwordHash: hash });
+    const [hash, enc] = await Promise.all([
+      this.passwords.hash(password),
+      this.passwords.encrypt(password),
+    ]);
+    this.store.insert({ ...row, passwordHash: hash, passwordEnc: enc });
     this.scheduleExpiry(row);
     void this.startRecorder(row);
     return { ok: true, share: this.toRecord(row), password };
@@ -190,6 +189,34 @@ class ShareServiceImpl implements ShareService {
   get(id: string): ShareRecord | null {
     const row = this.store.get(id);
     return row ? this.toRecord(row) : null;
+  }
+
+  getPassword(id: string): Promise<SharePasswordResult> {
+    return this.passwords.read(id);
+  }
+
+  async setPassword(
+    id: string,
+    password: string,
+    options: { endSessions?: boolean } = {}
+  ): Promise<ShareSetPasswordResult> {
+    const result = await this.passwords.write(id, password, {
+      endSessions: options.endSessions === true,
+      onRevoked: (shareId) => this.emitSessionsRevoked(shareId),
+    });
+    if (!result.ok) return result;
+    return { ok: true, share: this.toRecord(result.row), endedSessions: result.endedSessions };
+  }
+
+  private emitSessionsRevoked(shareId: string): void {
+    const event: ShareSessionsRevokedEvent = { shareId };
+    for (const listener of this.revokeListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error('[share] onSessionsRevoked listener failed:', error);
+      }
+    }
   }
 
   revoke(id: string): ShareRecord | null {
@@ -266,103 +293,28 @@ class ShareServiceImpl implements ShareService {
   }
 
   verifyAccessToken(token: string, now = this.now()): VerifiedShareAccess | null {
-    const parsed = parseShareToken(token);
-    if (!parsed) return null;
-    const raw = `${parsed.shareId}.${parsed.secret}`;
-    const access = this.store.findAccessToken(hashShareToken(raw));
-    if (!access || access.shareId !== parsed.shareId) return null;
-    const share = this.store.get(access.shareId);
-    if (!share || share.state !== 'active') return null;
-    if (share.expiresAt !== null && share.expiresAt <= now) {
-      this.endShare(share.id, 'expired');
-      return null;
-    }
-    if (access.expiresAt <= now) {
-      this.store.deleteAccessToken(hashShareToken(raw));
-      return null;
-    }
-    const expiresAt = this.renewAccess(access.id, access.expiresAt, share.expiresAt, now);
-    return {
-      scope: { shareId: share.id, deviceId: share.deviceId, windowId: share.windowId },
-      accessId: access.id,
-      expiresAt,
-      renewed: expiresAt !== access.expiresAt,
-      maxAgeSec: Math.max(1, Math.ceil((expiresAt - now) / 1000)),
-    };
+    return this.access.verify(token, now);
   }
 
-  private renewAccess(
-    accessId: string,
-    current: number,
-    shareExpiresAt: number | null,
-    now: number
-  ): number {
-    if (current - now > SHARE_ACCESS_TTL_MS / 2) return current;
-    const target = accessExpiry(shareExpiresAt, now);
-    if (target <= current) return current;
-    this.store.renewAccessToken(accessId, target, now);
-    return target;
-  }
-
-  async loginAccess(
-    shareId: string,
-    password: string,
-    clientIp: string
-  ): Promise<ShareLoginResult> {
-    const share = this.store.get(shareId);
-    if (!share) return { ok: false, code: 'SHARE_NOT_FOUND' };
-    const now = this.now();
-    if (share.state !== 'active') return { ok: false, code: 'SHARE_ENDED' };
-    if (share.expiresAt !== null && share.expiresAt <= now) {
-      this.endShare(shareId, 'expired');
-      return { ok: false, code: 'SHARE_ENDED' };
-    }
-    const attempt = this.limiter.begin(shareId, clientIp);
-    if (!attempt.ok) {
-      return { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs: attempt.retryAfterMs };
-    }
-    let valid = false;
-    try {
-      const stored = this.store.passwordHash(shareId);
-      const verify = this.deps.verifyPassword ?? verifySharePassword;
-      valid = stored ? await verify(stored, password ?? '') : false;
-    } finally {
-      this.limiter.settle(shareId, clientIp, valid);
-    }
-    if (!valid) {
-      const retryAfterMs = this.limiter.lockedFor(shareId, clientIp);
-      return retryAfterMs > 0
-        ? { ok: false, code: 'SHARE_LOGIN_LOCKED', retryAfterMs }
-        : { ok: false, code: 'SHARE_PASSWORD_INVALID' };
-    }
-    const token = generateShareToken(shareId);
-    const expiresAt = accessExpiry(share.expiresAt, now);
-    this.store.createAccessToken({
-      id: hashShareToken(token).slice(0, 32),
-      shareId,
-      tokenHash: hashShareToken(token),
-      clientIp: clientIp || null,
-      createdAt: now,
-      expiresAt,
-    });
-    return {
-      ok: true,
-      token,
-      expiresAt,
-      maxAgeSec: Math.max(1, Math.ceil((expiresAt - now) / 1000)),
-    };
+  loginAccess(shareId: string, password: string, clientIp: string): Promise<ShareLoginResult> {
+    return this.access.login(shareId, password, clientIp);
   }
 
   logoutAccess(token: string): void {
-    const parsed = parseShareToken(token);
-    if (!parsed) return;
-    this.store.deleteAccessToken(hashShareToken(`${parsed.shareId}.${parsed.secret}`));
+    this.access.logout(token);
   }
 
   onEnded(listener: (event: ShareEndedEvent) => void): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  onSessionsRevoked(listener: (event: ShareSessionsRevokedEvent) => void): () => void {
+    this.revokeListeners.add(listener);
+    return () => {
+      this.revokeListeners.delete(listener);
     };
   }
 

@@ -227,6 +227,24 @@
       "enableNotificationPush": "Enable Notification Push",
       "enableBellPush": "Push Terminal Bell Events",
       "enableBellSound": "Play Sound On Terminal Bell",
+      "notifications": {
+        "mesh": {
+          "title": "Mesh Notifications",
+          "switchLabel": "Receive Notifications from Other Nodes",
+          "switchHint": "Events from other nodes are sent through this machine's channels.",
+          "sinks": "Sink nodes: {{names}}",
+          "empty": "No sink enabled. Each node only reports its own events.",
+          "offlineName": "{{name}} (offline)",
+          "separator": ", ",
+          "queue": "{{pending}} pending, {{dropped}} dropped",
+          "loadFailed": "Failed to load mesh notification state: {{message}}",
+          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+        },
+        "scope": {
+          "remote": "Editing notification channels of \"{{name}}\".",
+          "self": "These channels belong to this machine only. Delivery of other nodes' events is controlled by \"Mesh Notifications\"."
+        }
+      },
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
       "tabGroup": {
@@ -727,7 +745,19 @@
           "linkCopied": "Copied",
           "stop": "Stop",
           "stopTitle": "Stop Share",
-          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it."
+          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it.",
+          "viewPassword": "View Password",
+          "password": "Password",
+          "passwordHidden": "This share was created by an older version, so its password cannot be shown and can only be changed.",
+          "changePassword": "Change Password",
+          "changePasswordTitle": "Change Share Password",
+          "newPassword": "New Password",
+          "generate": "Generate",
+          "endSessions": "Disconnect all current viewers",
+          "endSessionsHint": "Left unchecked, connected viewers keep watching and only new visitors need the new password.",
+          "passwordChanged": "Password updated",
+          "passwordChangedAndEnded": "Password updated, {{count}} viewers disconnected",
+          "copyLinkWithPassword": "Copy Link with Password"
         },
         "history": {
           "title": "History",
@@ -1688,6 +1718,7 @@
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
+        "notifySettings": "Notification Settings",
         "description": "Node details; rename it or change its domain access policy.",
         "nodeId": "Node ID",
         "name": "Name",
@@ -2525,6 +2556,8 @@
         "copy": "Copy",
         "copied": "Copied",
         "copyFailed": "Copy failed",
+        "includePassword": "Include the password in the link",
+        "includePasswordHint": "Opening the link fills in the password; the visitor still clicks Continue. The link equals the password, so send it only to the intended person.",
         "passwordOnce": "The password is shown only at creation.",
         "viewers": "{{count}} online",
         "expires": "Expires at",
@@ -2545,6 +2578,7 @@
       "error": {
         "nameRequired": "Enter a name.",
         "passwordTooShort": "Password must be at least {{min}} characters.",
+        "passwordUnavailable": "The password of this share cannot be viewed. Set a new one instead.",
         "noOrigin": "Select an address.",
         "invalidDuration": "Duration must be a whole number of days up to 365.",
         "generic": "Something went wrong. Try again.",

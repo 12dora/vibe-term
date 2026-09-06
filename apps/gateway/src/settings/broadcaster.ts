@@ -12,7 +12,8 @@ export type SettingsNamespace =
   | 'weixin'
   | 'devices'
   | 'tree-order'
-  | 'device-folders';
+  | 'device-folders'
+  | 'notifications-mesh';
 
 type SettingsBroadcaster = (namespace: SettingsNamespace) => void;
 

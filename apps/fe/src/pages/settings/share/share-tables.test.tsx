@@ -8,7 +8,9 @@ import { installWindowStorage } from '@tmex/stores/test-utils';
 
 installWindowStorage();
 
+const { Children } = await import('react');
 const { renderToStaticMarkup } = await import('react-dom/server');
+const { ActiveShareMenuList, SHARE_PASSWORD_ACTIONS } = await import('./active-shares-table');
 const { ActiveSharesTable } = await import('./active-shares-table');
 const { ShareHistoryTable } = await import('./history-table');
 
@@ -47,6 +49,7 @@ describe('ActiveSharesTable', () => {
         busyShareId={null}
         deviceName={deviceName}
         onStop={() => undefined}
+        onPasswordAction={() => undefined}
       />
     );
     expect(html).toContain('data-testid="share-active-row-sh1"');
@@ -55,6 +58,7 @@ describe('ActiveSharesTable', () => {
     expect(html).toContain('data-testid="share-viewers-sh1"');
     expect(html).toContain('data-testid="share-copy-sh1"');
     expect(html).toContain('data-testid="share-stop-sh1"');
+    expect(html).toContain('data-testid="share-menu-sh1"');
   });
 
   test('正在写入的那一行禁用终止', () => {
@@ -65,6 +69,7 @@ describe('ActiveSharesTable', () => {
         busyShareId="sh1"
         deviceName={deviceName}
         onStop={() => undefined}
+        onPasswordAction={() => undefined}
       />
     );
     // 服务端渲染下禁用态就是 `disabled=""`；这一行只有终止一个按钮会被禁用。
@@ -79,6 +84,7 @@ describe('ActiveSharesTable', () => {
         busyShareId={null}
         deviceName={deviceName}
         onStop={() => undefined}
+        onPasswordAction={() => undefined}
       />
     );
     expect(html).toContain('data-testid="share-active-empty"');
@@ -154,5 +160,44 @@ describe('ShareHistoryTable', () => {
       />
     );
     expect(html).toContain('data-testid="share-history-empty"');
+  });
+});
+
+// 菜单内容走 portal，SSR 什么都不输出：当普通函数调用再对元素树断言
+// （同 `LocalMachineMenuList`）。
+describe('ActiveShareMenuList', () => {
+  type ItemProps = { 'data-testid'?: string; disabled?: boolean; onClick?: () => void };
+
+  function renderList(busy = false) {
+    const picked: string[] = [];
+    const list = ActiveShareMenuList({
+      busy,
+      label: (action) => `label:${action}`,
+      onSelect: (action) => {
+        picked.push(action);
+      },
+    }) as React.ReactElement<{ children?: React.ReactNode }>;
+    const items = Children.toArray(list.props.children) as React.ReactElement<ItemProps>[];
+    return { items, picked };
+  }
+
+  test('密码三件事各一项，testId 与顺序固定', () => {
+    const { items } = renderList();
+    expect(items.map((item) => item.props['data-testid'])).toEqual([
+      'share-row-view-password',
+      'share-row-change-password',
+      'share-row-copy-link-password',
+    ]);
+    expect(SHARE_PASSWORD_ACTIONS).toEqual(['view', 'change', 'copy-link']);
+  });
+
+  test('点哪一项就抛哪一个动作', () => {
+    const { items, picked } = renderList();
+    for (const item of items) item.props.onClick?.();
+    expect(picked).toEqual(['view', 'change', 'copy-link']);
+  });
+
+  test('该行有写操作在途时整组禁用', () => {
+    expect(renderList(true).items.every((item) => item.props.disabled)).toBe(true);
   });
 });

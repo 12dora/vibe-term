@@ -80,6 +80,45 @@ export function createShare(
   });
 }
 
+/** 口令明文，改口令入口回显用；服务端只在存有密文时给。 */
+export interface SharePasswordResponse {
+  password: string;
+}
+
+export interface UpdateSharePasswordInput {
+  password: string;
+  /** true = 顺手作废该分享的全部访问凭证，已登录的人被断开、退回密码表单。 */
+  endSessions: boolean;
+}
+
+export interface UpdateSharePasswordResponse {
+  share: ShareRecord;
+  /** 被作废的访问凭证数；`endSessions` 为 false 时恒为 0。 */
+  endedSessions: number;
+}
+
+export function sharePasswordPath(id: string): string {
+  return `/api/share/${encodeURIComponent(id)}/password`;
+}
+
+export function getSharePassword(client: ApiClient, id: string): Promise<SharePasswordResponse> {
+  return requestJson<SharePasswordResponse>(client, sharePasswordPath(id), {
+    toError: shareError('Failed to load share password'),
+  });
+}
+
+export function updateSharePassword(
+  client: ApiClient,
+  id: string,
+  input: UpdateSharePasswordInput
+): Promise<UpdateSharePasswordResponse> {
+  return requestJson<UpdateSharePasswordResponse>(client, sharePasswordPath(id), {
+    method: 'POST',
+    body: input,
+    toError: shareError('Failed to update share password'),
+  });
+}
+
 export function revokeShare(client: ApiClient, id: string): Promise<ShareRecord> {
   return requestJson<{ share: ShareRecord }, ShareRecord>(
     client,

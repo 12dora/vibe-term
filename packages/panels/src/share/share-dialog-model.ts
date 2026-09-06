@@ -189,3 +189,28 @@ export const SHARE_IDLE_POLL_MS = 60_000;
 export function shareRefetchIntervalMs(hasActiveShare: boolean): number {
   return hasActiveShare ? SHARE_ACTIVE_POLL_MS : SHARE_IDLE_POLL_MS;
 }
+
+/**
+ * 「链接中包含密码」拼出来的链接：密码放 fragment，不随请求发出，也不进 Referer。
+ * 被分享页开局读一次即抹掉（见 `apps/fe/src/share/share-link-password.ts`，那边另有一份
+ * 同形状的实现——两个包互不依赖，四行字符串拼接各带一份用例，比开一条跨包出口划算）。
+ */
+export function buildShareLinkWithPassword(url: string, password: string): string {
+  if (!password) return url;
+  return `${url.split('#')[0]}#p=${encodeURIComponent(password)}`;
+}
+
+export interface ShareLinkPassword {
+  include: boolean;
+  /** 已知的明文密码：刚创建拿得到，已有分享要按需取回；取不到为 `null`。 */
+  password: string | null;
+  loading: boolean;
+  /** 取密码失败的 i18n key。 */
+  error: string | null;
+  setInclude: (next: boolean) => void;
+}
+
+/** 勾了且密码已到手才带密码，否则给裸链接——半截链接比不带密码更糟。 */
+export function shareLinkValue(url: string, link: ShareLinkPassword): string {
+  return link.include && link.password ? buildShareLinkWithPassword(url, link.password) : url;
+}

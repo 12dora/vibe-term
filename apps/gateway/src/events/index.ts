@@ -1,6 +1,7 @@
 import type { EventType, WebhookEvent } from '@tmex/shared';
 import { config } from '../config';
 import { getSiteSettings } from '../db';
+import { meshForwardChannel } from './channels/mesh-forward';
 import { telegramChannel } from './channels/telegram';
 import type { NotificationChannel } from './channels/types';
 import { webhookChannel } from './channels/webhook';
@@ -16,6 +17,17 @@ function parseDisabledChannelIds(csv: string): Set<string> {
   );
 }
 
+/**
+ * 节流键的作用域：同一 pane 在不同节点上是两回事，汇聚机收下多台节点的事件后
+ * 必须按 `nodeId:deviceId:paneId` 分桶，否则 B 的响铃会把 C 的压掉。
+ * 本机事件没有 `payload.nodeId`，统一记为 `local`。
+ */
+export function eventThrottleScope(event: WebhookEvent): string {
+  const raw = event.payload?.nodeId;
+  const nodeId = typeof raw === 'string' && raw.trim() ? raw.trim() : 'local';
+  return `${nodeId}:${event.device.id}:${event.tmux?.paneId ?? '-'}`;
+}
+
 export class EventNotifier {
   private bellThrottleMap = new Map<string, number>();
   private notificationThrottleMap = new Map<string, number>();
@@ -23,7 +35,13 @@ export class EventNotifier {
 
   constructor() {
     const envDisabled = parseDisabledChannelIds(config.disabledNotificationChannelsEnv);
-    const builtinChannels = [webhookChannel, telegramChannel, weixinChannel, wsBroadcastChannel];
+    const builtinChannels = [
+      webhookChannel,
+      telegramChannel,
+      weixinChannel,
+      wsBroadcastChannel,
+      meshForwardChannel,
+    ];
     for (const channel of builtinChannels) {
       if (envDisabled.has(channel.id)) {
         continue;
@@ -76,7 +94,7 @@ export class EventNotifier {
       return true;
     }
 
-    const key = `${event.device.id}:${event.tmux?.paneId ?? '-'}:${event.eventType}`;
+    const key = `${eventThrottleScope(event)}:${event.eventType}`;
     const now = Date.now();
     const previous = this.bellThrottleMap.get(key) ?? 0;
 
@@ -96,7 +114,7 @@ export class EventNotifier {
     }
 
     const source = typeof event.payload?.source === 'string' ? event.payload.source : 'unknown';
-    const key = `${event.device.id}:${event.tmux?.paneId ?? '-'}:notification:${source}`;
+    const key = `${eventThrottleScope(event)}:notification:${source}`;
     const now = Date.now();
     const previous = this.notificationThrottleMap.get(key) ?? 0;
 

@@ -9,6 +9,7 @@ export * from './files';
 export * from './format';
 export * from './llm-providers';
 export * from './node-url';
+export * from './notifications-mesh';
 export * from './relay/admin-api';
 export * from './relay/tenant-api';
 export * from './share';

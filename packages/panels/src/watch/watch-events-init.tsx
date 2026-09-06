@@ -4,7 +4,8 @@
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
 import { fetchWatchRule } from '@tmex/api-client';
-import { formatWatchTriggeredNotification } from '@tmex/notifications';
+import type { ToastIdentity } from '@tmex/notifications';
+import { claimToastFor, formatWatchTriggeredNotification } from '@tmex/notifications';
 import type {
   WatchModelUnavailablePayload,
   WatchRuleDto,
@@ -106,6 +107,47 @@ function invalidateWatchQueries(queryClient: QueryClient, ruleId: string): void 
   void queryClient.invalidateQueries({ queryKey: ['watch-rule-state', ruleId] });
 }
 
+// `WATCH_EVENT`（直投）与转发来的 `NOTIFY_EVENT` 讲的是同一件事，去重键必须用同一套命名：
+// 这里把 WS 的数字事件类型折回 `WebhookEvent` 的 `eventType` 字符串。
+const WATCH_TOAST_EVENT_TYPES: Record<number, string> = {
+  [wsBorsh.WATCH_EVENT_TRIGGERED]: 'watch_triggered',
+  [wsBorsh.WATCH_EVENT_MODEL_UNAVAILABLE]: 'watch_model_unavailable',
+  [wsBorsh.WATCH_EVENT_RULE_ERROR]: 'watch_rule_error',
+};
+
+export interface DecodedWatchEvent {
+  ruleId: string;
+  deviceId: string;
+  paneId: string;
+  eventType: number;
+}
+
+/** 直投这一路的事件身份；不认识的事件类型（本页面不弹 toast）返回 null。 */
+export function watchToastIdentity(
+  nodeId: string,
+  decoded: DecodedWatchEvent
+): ToastIdentity | null {
+  const eventType = WATCH_TOAST_EVENT_TYPES[decoded.eventType];
+  if (!eventType) return null;
+  return {
+    eventType,
+    nodeId,
+    deviceId: decoded.deviceId,
+    paneId: decoded.paneId,
+    ruleId: decoded.ruleId,
+  };
+}
+
+/**
+ * 本条事件的 toast 归本页面这条通道弹吗？同一事件也可能经汇聚节点转发回来（见
+ * `@tmex/notifications/toast-dedupe`），先到的那条认领成功，另一条静默丢弃。
+ * 查询失效不受影响——那是另一件事，两条路都该做。
+ */
+function claimWatchToast(runtime: AppRuntime, decoded: DecodedWatchEvent): boolean {
+  const identity = watchToastIdentity(runtime.nodeId, decoded);
+  return identity !== null && claimToastFor(identity);
+}
+
 async function handleTriggered(
   runtime: AppRuntime,
   queryClient: QueryClient,
@@ -165,6 +207,10 @@ function setupWatchEventHandlers(runtime: AppRuntime, queryClient: QueryClient):
     }
 
     invalidateWatchQueries(queryClient, decoded.ruleId);
+
+    if (!claimWatchToast(runtime, decoded)) {
+      return;
+    }
 
     switch (decoded.eventType) {
       case wsBorsh.WATCH_EVENT_TRIGGERED:

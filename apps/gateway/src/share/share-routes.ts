@@ -1,6 +1,7 @@
 import type { ShareSettings } from '@tmex/shared/share';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
+import { CryptoDecryptError } from '../crypto/errors';
 import { t } from '../i18n';
 import { getShareService } from './share-service';
 import type { ShareErrorCode } from './types';
@@ -9,6 +10,7 @@ const ERROR_STATUS: Record<ShareErrorCode, number> = {
   SHARE_NOT_FOUND: 404,
   SHARE_WINDOW_NOT_FOUND: 404,
   SHARE_PASSWORD_TOO_SHORT: 400,
+  SHARE_PASSWORD_UNAVAILABLE: 409,
   SHARE_ORIGIN_INVALID: 400,
   SHARE_AUTH_REQUIRED: 409,
   SHARE_ENDED: 409,
@@ -18,13 +20,24 @@ const ERROR_MESSAGE: Record<ShareErrorCode, () => string> = {
   SHARE_NOT_FOUND: () => 'Share not found.',
   SHARE_WINDOW_NOT_FOUND: () => 'Terminal window not found on this device.',
   SHARE_PASSWORD_TOO_SHORT: () => 'Share password is too short.',
+  SHARE_PASSWORD_UNAVAILABLE: () =>
+    'Share password cannot be shown; it predates encrypted storage. Set a new one instead.',
   SHARE_ORIGIN_INVALID: () => 'Share address is not publicly reachable.',
   SHARE_AUTH_REQUIRED: () => t('apiError.shareAuthRequired'),
   SHARE_ENDED: () => 'Share has already ended.',
 };
 
+/** 口令明文只发给这一次请求：别让浏览器/反代把它留在任何缓存里。 */
+const PASSWORD_CACHE_CONTROL = 'private, no-store';
+
 export function shareError(code: ShareErrorCode): Response {
   return json({ error: ERROR_MESSAGE[code](), code }, ERROR_STATUS[code]);
+}
+
+/** 主密钥与库里的密文对不上是部署故障：报 500 并带原文，别伪装成「不可回显」。 */
+function cryptoFailure(error: CryptoDecryptError): Response {
+  console.error('[share] password decrypt failed:', error);
+  return json({ error: error.message, code: 'SHARE_PASSWORD_DECRYPT_FAILED' }, 500);
 }
 
 function optionalString(value: unknown): string | undefined {
@@ -119,6 +132,36 @@ export const shareRoutes: ApiRoute[] = [
         ...(limitRaw && Number.isFinite(Number(limitRaw)) ? { limit: Number(limitRaw) } : {}),
       });
       return page ? json(page) : shareError('SHARE_NOT_FOUND');
+    },
+  }),
+  route({
+    method: 'GET',
+    path: '/api/share/:id/password',
+    handler: async (_req, params) => {
+      try {
+        const result = await getShareService().getPassword(params.id);
+        return result.ok
+          ? json({ password: result.password }, 200, { 'Cache-Control': PASSWORD_CACHE_CONTROL })
+          : shareError(result.code);
+      } catch (error) {
+        if (error instanceof CryptoDecryptError) return cryptoFailure(error);
+        throw error;
+      }
+    },
+  }),
+  route({
+    method: 'POST',
+    path: '/api/share/:id/password',
+    handler: async (req, params) => {
+      const body = await readJsonObjectBody(req);
+      if (!body || typeof body.password !== 'string') {
+        return json({ error: 'Invalid request body.', code: 'INVALID_BODY' }, 400);
+      }
+      const result = await getShareService().setPassword(params.id, body.password, {
+        endSessions: body.endSessions === true,
+      });
+      if (!result.ok) return shareError(result.code);
+      return json({ share: result.share, endedSessions: result.endedSessions });
     },
   }),
   route({

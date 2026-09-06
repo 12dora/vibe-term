@@ -14,6 +14,7 @@ import {
   deleteShare,
   fetchShareSettings,
   getShareOrigins,
+  getSharePassword,
   listShares,
   revokeShare,
   saveShareSettings,
@@ -21,6 +22,7 @@ import {
   shareOriginsQueryKey,
   shareQueryKey,
   shareSettingsQueryKey,
+  updateSharePassword,
 } from './share-api';
 
 /** 进行中的分享要看在线人数与剩余期限，一拍 10 秒；标签不在前台时 react-query 自动停。 */
@@ -52,6 +54,10 @@ export interface ShareTabModel {
   savingSettings: boolean;
   saveError: string | null;
   refresh: () => void;
+  /** 取回明文密码；失败原样抛出，由对话框就地翻译（旧分享的 409 要单独说明）。 */
+  fetchPassword: (shareId: string) => Promise<string>;
+  /** 改密码；返回被断开的观看者数量。 */
+  changePassword: (shareId: string, password: string, endSessions: boolean) => Promise<number>;
   revoke: (record: ShareRecord) => void;
   remove: (record: ShareRecord) => void;
   saveSettings: (next: ShareSettings) => void;
@@ -108,6 +114,36 @@ export function useShareTab(): ShareTabModel {
     [queryClient]
   );
 
+  // 密码两族动作的失败要就地摆在对话框里（旧分享不可查看、密码太短），
+  // 不能像 revoke/remove 那样吞进页头的 actionError，所以只借这里的「行内忙」标记。
+  const runPasswordAction = useCallback(
+    async <T>(shareId: string, action: () => Promise<T>): Promise<T> => {
+      setBusyShareId(shareId);
+      try {
+        return await action();
+      } finally {
+        setBusyShareId(null);
+      }
+    },
+    []
+  );
+
+  const fetchPassword = useCallback(
+    (shareId: string) =>
+      runPasswordAction(shareId, async () => (await getSharePassword(apiClient, shareId)).password),
+    [apiClient, runPasswordAction]
+  );
+
+  const changePassword = useCallback(
+    (shareId: string, password: string, endSessions: boolean) =>
+      runPasswordAction(shareId, async () => {
+        const result = await updateSharePassword(apiClient, shareId, { password, endSessions });
+        await queryClient.invalidateQueries({ queryKey: shareQueryKey() });
+        return result.endedSessions;
+      }),
+    [apiClient, queryClient, runPasswordAction]
+  );
+
   const settingsMutation = useMutation({
     mutationFn: (next: ShareSettings) => saveShareSettings(apiClient, next),
     onSuccess: (saved) => {
@@ -137,6 +173,8 @@ export function useShareTab(): ShareTabModel {
     savingSettings: settingsMutation.isPending,
     saveError: errorText(t, settingsMutation.error),
     refresh,
+    fetchPassword,
+    changePassword,
     revoke: (record) => void runAction(record, () => revokeShare(apiClient, record.id)),
     remove: (record) => void runAction(record, () => deleteShare(apiClient, record.id)),
     saveSettings: (next) => settingsMutation.mutate(next),

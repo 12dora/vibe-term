@@ -16,9 +16,12 @@ const {
   DomainAccessConfirm,
   DomainAccessConfirmBody,
   NodeDetailBody,
+  NodeNotifySettingsLink,
   domainAccessNote,
   domainAccessSwitchDisabled,
+  nodeNotifySettingsPath,
 } = await import('./node-detail-dialog');
+const { MemoryRouter } = await import('react-router');
 const {
   createNodeDetailIo,
   hasNodeDetailChanges,
@@ -494,5 +497,26 @@ describe('详情正文', () => {
     const html = body({ errors: ['nodes.detail.renameFailed'] });
     expect(html).toContain(`data-testid="nodes-detail-errors-${REMOTE.id}"`);
     expect(html).toContain('nodes.detail.renameFailed');
+  });
+});
+
+describe('通知设置入口', () => {
+  test('远端节点：链到该 node 的通知标签', () => {
+    expect(nodeNotifySettingsPath(REMOTE)).toBe(`/n/${REMOTE.id}/settings?tab=notifications`);
+  });
+
+  test('本机：本来就在这一页，不摆入口', () => {
+    expect(nodeNotifySettingsPath(SELF)).toBeNull();
+    expect(renderToStaticMarkup(<NodeNotifySettingsLink row={SELF} />)).toBe('');
+  });
+
+  test('渲染出带 testid 的链接', () => {
+    const html = renderToStaticMarkup(
+      <MemoryRouter>
+        <NodeNotifySettingsLink row={REMOTE} />
+      </MemoryRouter>
+    );
+    expect(html).toContain('data-testid="node-detail-notify-settings"');
+    expect(html).toContain(`/n/${REMOTE.id}/settings?tab=notifications`);
   });
 });

@@ -1,14 +1,21 @@
 // 进行中的分享：链接 / 密码 / 在线人数 / 有效期 + 终止。
-// 密码只有刚创建那一次拿得到明文（接口只返回一次），已有分享一律遮罩。
+// 密码只有刚创建那一次自动拿得到；已有分享遮罩显示，勾「链接中包含密码」时才按需取回。
 
 import { formatDateTime } from '@tmex/shared';
 import type { ShareRecord } from '@tmex/shared/share';
 import { useSiteStore } from '@tmex/stores/react';
 import { Button } from '@tmex/ui/button';
+import { Checkbox } from '@tmex/ui/checkbox';
 import { Loader2 } from 'lucide-react';
+import { useId } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ShareCopyField } from './share-copy-field';
-import { shareRemaining, shareRemainingKey } from './share-dialog-model';
+import {
+  type ShareLinkPassword,
+  shareLinkValue,
+  shareRemaining,
+  shareRemainingKey,
+} from './share-dialog-model';
 
 const MASKED_PASSWORD = '••••••••';
 
@@ -16,6 +23,7 @@ export interface ShareActiveViewProps {
   share: ShareRecord;
   /** 刚创建时的明文密码；已有分享为 null。 */
   password: string | null;
+  linkPassword: ShareLinkPassword;
   stopping: boolean;
   onStop: () => void;
   now?: number;
@@ -40,34 +48,68 @@ function ShareExpiryLine({ share, now }: { share: ShareRecord; now: number }) {
   );
 }
 
+/** 勾上即把密码拼进链接的 fragment：省掉被分享人手工粘贴，代价是链接本身等同密码。 */
+function IncludePasswordField({ link }: { link: ShareLinkPassword }) {
+  const { t } = useTranslation();
+  const id = useId();
+  return (
+    <div className="space-y-1">
+      <label className="flex items-center gap-2 text-sm" htmlFor={id}>
+        <Checkbox
+          id={id}
+          checked={link.include}
+          disabled={link.loading}
+          onCheckedChange={(next) => link.setInclude(next === true)}
+          data-testid="share-include-password"
+        />
+        {t('share.dialog.includePassword')}
+        {link.loading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+      </label>
+      <p className="text-xs text-muted-foreground">{t('share.dialog.includePasswordHint')}</p>
+      {link.error && (
+        <p className="text-xs text-destructive" data-testid="share-include-password-error">
+          {t(link.error)}
+        </p>
+      )}
+    </div>
+  );
+}
+
 export function ShareActiveView({
   share,
   password,
+  linkPassword,
   stopping,
   onStop,
   now = Date.now(),
 }: ShareActiveViewProps) {
   const { t } = useTranslation();
+  // 勾选后取回的明文同样摆进密码栏：链接里已经明文可见，再遮罩只会自相矛盾。
+  const plain = password ?? linkPassword.password;
+  const link = shareLinkValue(share.url, linkPassword);
 
   return (
     <div className="space-y-4" data-testid="share-active-view">
-      <ShareCopyField
-        label={t('share.dialog.link')}
-        value={share.url}
-        copyLabel={t('share.dialog.copy')}
-        testId="share-link"
-      />
+      <div className="space-y-2">
+        <ShareCopyField
+          label={t('share.dialog.link')}
+          value={link}
+          copyLabel={t('share.dialog.copy')}
+          testId="share-link"
+        />
+        <IncludePasswordField link={linkPassword} />
+      </div>
 
       <div className="space-y-2">
         <ShareCopyField
           label={t('share.dialog.password')}
-          value={password ?? ''}
-          display={password ?? MASKED_PASSWORD}
+          value={plain ?? ''}
+          display={plain ?? MASKED_PASSWORD}
           copyLabel={t('share.dialog.copy')}
           testId="share-active-password"
-          disabled={password === null}
+          disabled={plain === null}
         />
-        {password === null && (
+        {plain === null && (
           <p className="text-xs text-muted-foreground">{t('share.dialog.passwordOnce')}</p>
         )}
       </div>

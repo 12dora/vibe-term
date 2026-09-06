@@ -423,6 +423,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "Enable Notification Push",
       "enableBellPush": "Push Terminal Bell Events",
       "enableBellSound": "Play Sound On Terminal Bell",
+      "notifications": {
+        "mesh": {
+          "title": "Mesh Notifications",
+          "switchLabel": "Receive Notifications from Other Nodes",
+          "switchHint": "Events from other nodes are sent through this machine's channels.",
+          "sinks": "Sink nodes: {{names}}",
+          "empty": "No sink enabled. Each node only reports its own events.",
+          "offlineName": "{{name}} (offline)",
+          "separator": ", ",
+          "queue": "{{pending}} pending, {{dropped}} dropped",
+          "loadFailed": "Failed to load mesh notification state: {{message}}",
+          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+        },
+        "scope": {
+          "remote": "Editing notification channels of \"{{name}}\".",
+          "self": "These channels belong to this machine only. Delivery of other nodes' events is controlled by \"Mesh Notifications\"."
+        }
+      },
       "sshReconnectDelay": "SSH Reconnect Delay (seconds)",
       "language": "Language",
       "theme": "Theme",
@@ -930,7 +948,19 @@ export const I18N_RESOURCES = {
           "linkCopied": "Copied",
           "stop": "Stop",
           "stopTitle": "Stop Share",
-          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it."
+          "stopConfirm": "Stopping \"{{name}}\" invalidates the link and disconnects everyone on it.",
+          "viewPassword": "View Password",
+          "password": "Password",
+          "passwordHidden": "This share was created by an older version, so its password cannot be shown and can only be changed.",
+          "changePassword": "Change Password",
+          "changePasswordTitle": "Change Share Password",
+          "newPassword": "New Password",
+          "generate": "Generate",
+          "endSessions": "Disconnect all current viewers",
+          "endSessionsHint": "Left unchecked, connected viewers keep watching and only new visitors need the new password.",
+          "passwordChanged": "Password updated",
+          "passwordChangedAndEnded": "Password updated, {{count}} viewers disconnected",
+          "copyLinkWithPassword": "Copy Link with Password"
         },
         "history": {
           "title": "History",
@@ -1453,6 +1483,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "Invalid group layout"
     },
     "notification": {
+      "mesh": {
+        "origin": "Node {{node}} | Device {{device}}"
+      },
       "eventType": {
         "terminal_bell": "Terminal Bell",
         "terminal_notification": "Terminal Notification",
@@ -2437,6 +2470,7 @@ export const I18N_RESOURCES = {
         "failed": "Admit failed: {{error}}"
       },
       "detail": {
+        "notifySettings": "Notification Settings",
         "description": "Node details; rename it or change its domain access policy.",
         "nodeId": "Node ID",
         "name": "Name",
@@ -3274,6 +3308,8 @@ export const I18N_RESOURCES = {
         "copy": "Copy",
         "copied": "Copied",
         "copyFailed": "Copy failed",
+        "includePassword": "Include the password in the link",
+        "includePasswordHint": "Opening the link fills in the password; the visitor still clicks Continue. The link equals the password, so send it only to the intended person.",
         "passwordOnce": "The password is shown only at creation.",
         "viewers": "{{count}} online",
         "expires": "Expires at",
@@ -3294,6 +3330,7 @@ export const I18N_RESOURCES = {
       "error": {
         "nameRequired": "Enter a name.",
         "passwordTooShort": "Password must be at least {{min}} characters.",
+        "passwordUnavailable": "The password of this share cannot be viewed. Set a new one instead.",
         "noOrigin": "Select an address.",
         "invalidDuration": "Duration must be a whole number of days up to 365.",
         "generic": "Something went wrong. Try again.",
@@ -3726,6 +3763,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "开启通知推送",
       "enableBellPush": "推送终端响铃",
       "enableBellSound": "终端响铃时播放提示音",
+      "notifications": {
+        "mesh": {
+          "title": "多节点通知",
+          "switchLabel": "接收其它节点的通知",
+          "switchHint": "其它节点的事件将通过本机的通道发送。",
+          "sinks": "汇聚节点：{{names}}",
+          "empty": "未启用汇聚，各节点仅通知自身事件。",
+          "offlineName": "{{name}}（离线）",
+          "separator": "、",
+          "queue": "待补发 {{pending}} 条，已丢弃 {{dropped}} 条",
+          "loadFailed": "多节点通知状态读取失败：{{message}}",
+          "saveFailed": "多节点通知设置保存失败：{{message}}"
+        },
+        "scope": {
+          "remote": "当前编辑的是「{{name}}」的通知通道。",
+          "self": "这些通道只属于本机。其它节点的事件是否送达，由「多节点通知」决定。"
+        }
+      },
       "sshReconnectDelay": "SSH 重连等待（秒）",
       "language": "语言",
       "theme": "主题",
@@ -4233,7 +4288,19 @@ export const I18N_RESOURCES = {
           "linkCopied": "已复制",
           "stop": "终止",
           "stopTitle": "终止分享",
-          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。"
+          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。",
+          "viewPassword": "查看密码",
+          "password": "密码",
+          "passwordHidden": "该分享创建于旧版本，密码不可查看，可直接修改。",
+          "changePassword": "修改密码",
+          "changePasswordTitle": "修改分享密码",
+          "newPassword": "新密码",
+          "generate": "生成",
+          "endSessions": "同时断开当前所有观看者",
+          "endSessionsHint": "不勾选时，已连接的人可继续观看，只有新访客需要用新密码。",
+          "passwordChanged": "密码已更新",
+          "passwordChangedAndEnded": "密码已更新，已断开 {{count}} 人",
+          "copyLinkWithPassword": "复制带密码的链接"
         },
         "history": {
           "title": "历史",
@@ -4756,6 +4823,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "分组布局无效"
     },
     "notification": {
+      "mesh": {
+        "origin": "节点 {{node}}｜设备 {{device}}"
+      },
       "eventType": {
         "terminal_bell": "终端响铃",
         "terminal_notification": "终端通知",
@@ -5740,6 +5810,7 @@ export const I18N_RESOURCES = {
         "failed": "批准失败：{{error}}"
       },
       "detail": {
+        "notifySettings": "通知设置",
         "description": "查看节点信息，修改名称与域名访问策略。",
         "nodeId": "节点 ID",
         "name": "名称",
@@ -6571,6 +6642,8 @@ export const I18N_RESOURCES = {
         "copy": "复制",
         "copied": "已复制",
         "copyFailed": "复制失败",
+        "includePassword": "链接中包含密码",
+        "includePasswordHint": "打开链接即自动填好密码，仍需点击继续。链接等同密码，请只发给本人。",
         "passwordOnce": "密码仅在创建时显示一次。",
         "viewers": "在线 {{count}} 人",
         "expires": "到期时间",
@@ -6591,6 +6664,7 @@ export const I18N_RESOURCES = {
       "error": {
         "nameRequired": "请填写名称。",
         "passwordTooShort": "密码至少 {{min}} 位。",
+        "passwordUnavailable": "该分享的密码无法查看，请直接修改。",
         "noOrigin": "请选择地址。",
         "invalidDuration": "有效期需为 365 天以内的整数。",
         "generic": "操作失败，请重试。",
@@ -7023,6 +7097,24 @@ export const I18N_RESOURCES = {
       "enableNotificationPush": "通知プッシュを有効にする",
       "enableBellPush": "ターミナルベルをプッシュ通知",
       "enableBellSound": "ターミナルベル時に通知音を再生",
+      "notifications": {
+        "mesh": {
+          "title": "マルチノード通知",
+          "switchLabel": "他のノードの通知を受信",
+          "switchHint": "他のノードのイベントは本機のチャンネルから送信されます。",
+          "sinks": "集約ノード：{{names}}",
+          "empty": "集約は未設定です。各ノードは自身のイベントのみ通知します。",
+          "offlineName": "{{name}}（オフライン）",
+          "separator": "、",
+          "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
+          "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+        },
+        "scope": {
+          "remote": "「{{name}}」の通知チャンネルを編集しています。",
+          "self": "これらのチャンネルは本機のみに属します。他のノードのイベントの配信は「マルチノード通知」で決まります。"
+        }
+      },
       "sshReconnectDelay": "SSH 再接続待機（秒）",
       "language": "言語",
       "theme": "テーマ",
@@ -7530,7 +7622,19 @@ export const I18N_RESOURCES = {
           "linkCopied": "コピーしました",
           "stop": "停止",
           "stopTitle": "共有を停止",
-          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。"
+          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。",
+          "viewPassword": "パスワードを表示",
+          "password": "パスワード",
+          "passwordHidden": "この共有は旧バージョンで作成されたため、パスワードは表示できません。変更のみ可能です。",
+          "changePassword": "パスワードを変更",
+          "changePasswordTitle": "共有パスワードの変更",
+          "newPassword": "新しいパスワード",
+          "generate": "生成",
+          "endSessions": "現在の閲覧者をすべて切断する",
+          "endSessionsHint": "チェックしない場合、接続中の相手はそのまま閲覧でき、新しい訪問者のみ新しいパスワードが必要です。",
+          "passwordChanged": "パスワードを更新しました",
+          "passwordChangedAndEnded": "パスワードを更新し、{{count}} 人を切断しました",
+          "copyLinkWithPassword": "パスワード付きリンクをコピー"
         },
         "history": {
           "title": "履歴",
@@ -8053,6 +8157,9 @@ export const I18N_RESOURCES = {
       "folderLayoutInvalid": "グループ配置が無効です"
     },
     "notification": {
+      "mesh": {
+        "origin": "ノード {{node}}｜デバイス {{device}}"
+      },
       "eventType": {
         "terminal_bell": "ターミナルベル",
         "terminal_notification": "ターミナル通知",
@@ -9037,6 +9144,7 @@ export const I18N_RESOURCES = {
         "failed": "承認に失敗しました：{{error}}"
       },
       "detail": {
+        "notifySettings": "通知設定",
         "description": "ノードの情報を確認し、名前とドメインアクセスの設定を変更します。",
         "nodeId": "ノード ID",
         "name": "名前",
@@ -9868,6 +9976,8 @@ export const I18N_RESOURCES = {
         "copy": "コピー",
         "copied": "コピーしました",
         "copyFailed": "コピーに失敗しました",
+        "includePassword": "リンクにパスワードを含める",
+        "includePasswordHint": "リンクを開くとパスワードが自動入力されますが、「続行」は相手が押します。リンクはパスワードと同等のため、本人にのみ送ってください。",
         "passwordOnce": "パスワードは作成時のみ表示されます。",
         "viewers": "{{count}} 人接続中",
         "expires": "有効期限",
@@ -9888,6 +9998,7 @@ export const I18N_RESOURCES = {
       "error": {
         "nameRequired": "名前を入力してください。",
         "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
+        "passwordUnavailable": "この共有のパスワードは表示できません。新しく設定してください。",
         "noOrigin": "アドレスを選択してください。",
         "invalidDuration": "有効期限は 365 日以内の整数で入力してください。",
         "generic": "操作に失敗しました。再試行してください。",

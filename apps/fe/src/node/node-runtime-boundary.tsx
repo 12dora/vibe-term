@@ -18,7 +18,7 @@ import { setSiteFallbackReader, useNodeRuntime } from '@tmex/stores';
 import { RuntimeProvider } from '@tmex/stores/react';
 import { SidebarTrigger } from '@tmex/ui/sidebar';
 import { Loader2 } from 'lucide-react';
-import { type ReactNode, useEffect } from 'react';
+import { type ReactNode, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Link, useLocation } from 'react-router';
 
@@ -26,6 +26,8 @@ import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import { loginErrorKey } from '@/auth/login-errors';
 import { type NodeLoginGate, useNodeLoginGate } from '@/auth/use-node-login';
 import { GlobalDeviceProvider } from '@/components/global-device-provider';
+import { toRuntimeNodeId } from './merge-nodes';
+import { getMeshNodesState, subscribeMeshNodes } from './mesh-nodes-store';
 import { appNodeRuntimes, nodeQueryClient } from './node-runtimes';
 
 /**
@@ -33,9 +35,15 @@ import { appNodeRuntimes, nodeQueryClient } from './node-runtimes';
  *
  * 从 pathname 解析而不是 `useParams()`：页面路由挂在 `/n/:nodeId` 的**子级**，而
  * `useParams()` 只给到当前 match 为止累积的参数，外壳所在的父级路由读不到 `:nodeId`。
+ *
+ * `/n/<entry 自身的 nodeId>/...` 是旧路由的**别名**（网关的 `rewriteSelf()` 认这一条），
+ * 这里统一折回 `self`：否则同一台机器会开出两套运行时/两条 WS，事件订阅（WATCH_EVENT、
+ * 设置失效）各注册一遍，通知直接弹两条。entry id 还没拉到时按原样返回，拉到后再折。
  */
 export function useRouteNodeId(): string {
-  return parseNodeIdFromPath(useLocation().pathname);
+  const raw = parseNodeIdFromPath(useLocation().pathname);
+  const snapshot = useCallback(() => toRuntimeNodeId(raw, getMeshNodesState().entryNodeId), [raw]);
+  return useSyncExternalStore(subscribeMeshNodes, snapshot, snapshot);
 }
 
 /** 页面区的 node 运行时。外壳（侧边栏）必须留在它外面，否则切 node 会整条重挂。 */

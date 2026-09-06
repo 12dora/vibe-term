@@ -106,9 +106,12 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
 | GET | `/api/share/:id/log` | `?after=<seq>&limit=`，默认 2000 条 / 2 MiB 一页 |
 | GET/PUT | `/api/share/settings` | `ShareSettings` |
 | GET | `/api/share/origins` | `{ candidates, recommended, nodePrefix }` |
+| GET | `/api/share/:id/password` | 回显口令明文 → `{ password }`（见下「口令查看与修改」） |
+| POST | `/api/share/:id/password` | `{ password, endSessions }` → `{ share, endedSessions }` |
 
 错误码：`SHARE_NOT_FOUND` 404、`SHARE_WINDOW_NOT_FOUND` 404、`SHARE_PASSWORD_TOO_SHORT` 400、
 `SHARE_ORIGIN_INVALID` 400、`SHARE_ENDED` 409、`SHARE_ACTIVE` 409（删进行中的分享）、
+`SHARE_PASSWORD_UNAVAILABLE` 409（口令无密文，只能改不能看）、
 `SHARE_AUTH_REQUIRED` 409（见下「开放模式」）。
 
 ### 被分享人（公开路径，无常规会话）
@@ -121,6 +124,54 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
 
 `/api/share-access/*` 整个前缀进 `auth-public-paths`，`localUiGuard` 与节点侧流入口同时放行；
 分享 cookie **只**能打这三条路径，其余 `/api/*` 在流入口直接 401。
+
+## 口令查看与修改（1.1.35）
+
+分享创建后口令只在响应里返回一次，站长事后想再看到它、或临时换一个，此前只能终止重开。本轮补上
+「查看 / 修改口令」，并允许把口令直接塞进链接。
+
+### 密文存储
+
+`shares` 新增可空列 `password_enc`（迁移 `0048_share_password_enc.sql`）：口令同时落两份——
+`password_hash` 是 argon2id，**登录校验只认它**；`password_enc` 是 `apps/gateway/src/crypto` 的
+AES-256-GCM 密文（主密钥 `TMEX_MASTER_KEY`，与 Telegram token、LLM key 同一套），只服务于回显。
+两份都在 `apps/gateway/src/share/share-password-service.ts` 的 `SharePasswordManager` 里成对写入。
+
+- **0048 之前创建的分享** `password_enc` 为 null：`GET /api/share/:id/password` 回 409
+  `SHARE_PASSWORD_UNAVAILABLE`（前端文案 `share.error.passwordUnavailable`：「该分享的口令无法查看，
+  请直接修改。」），改一次口令即补上密文。
+- **主密钥与密文对不上**（换了 `TMEX_MASTER_KEY`、密文损坏）是部署故障，不是「不可回显」：
+  `decryptWithContext` 抛的 `CryptoDecryptError` 冒到路由层，回 500 `SHARE_PASSWORD_DECRYPT_FAILED`
+  并带上原始诊断（含「TMEX_MASTER_KEY 与数据库中的加密数据不匹配」）。绝不降级成 409，否则会把
+  运维故障伪装成正常业务态。
+
+### 修改与踢人语义
+
+`POST /api/share/:id/password` `{ password, endSessions }`：
+
+| 情况 | 结果 |
+|---|---|
+| 分享不存在 | 404 `SHARE_NOT_FOUND` |
+| 分享已结束 | 409 `SHARE_ENDED`（结束的分享不再改口令） |
+| 口令短于 `SHARE_PASSWORD_MIN_LENGTH`(6) | 400 `SHARE_PASSWORD_TOO_SHORT` |
+| `endSessions: false` | 只换哈希 + 密文；**已登录的观众不受影响**（访问凭证独立于口令），新访客用新口令登录 |
+| `endSessions: true` | 额外 `deleteAccessTokensByShare(id)` 删光该分享的全部访问凭证，并广播 `onSessionsRevoked` |
+
+`endedSessions` 返回的是**被作废的访问凭证条数**（≈ 处于登录态的浏览器数），不是当前 ws 连接数——
+凭证在库里，数得起；ws 连接数由 `ShareSessionIndex` 单独维护，且离线用户也该算进「被踢」。
+
+踢人的断线路径：`ShareService.onSessionsRevoked` → `ws/share-hooks.ts` 的 `ShareWsService` 门面 →
+`ShareSessionIndex.closeAll(shareId, 4401, 'SHARE_LOGIN_REQUIRED')`。用 4401 而不是终止用的 4410：
+前端把 4401 当「要重新登录」退回密码表单，4410 才是「分享已结束」。分享记录本身仍是 `active`。
+
+### 带口令的链接
+
+`<share.url>#p=<encodeURIComponent(password)>`，**纯前端拼接**，服务端不参与、也不记录。接收页从
+`location.hash` 读出预填密码表单（只填不提交，仍需人点一次登录），随即 `history.replaceState` 抹掉
+hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进反代与网关的访问日志。
+
+安全提示：这等于把口令和地址合成一条「谁拿到谁能进」的链接，口令的二次门槛就没了——只适合发给
+本来就该看到这个终端的人。链接一旦外泄，唯一的补救是改口令并勾「同时断开当前所有观看者」。
 
 ## 凭证流
 
@@ -252,7 +303,11 @@ e2e 环境里 hub 只有 localhost 地址、自动候选为空，用例先 `PUT 
 5. **撤销依赖设备快照的更新时序**：最坏结果是少撤销一拍（下一次 patch 补上），判定本身 fail-closed。
 6. **创建分享依赖设备当前快照里能找到该 window**；设备完全没有客户端连接时会回 `SHARE_WINDOW_NOT_FOUND`
    （分享入口在终端页，实际不会命中）。
-7. **中继入口探测是缓存式的**：中继主机刚掉 `node` 角色时，最长 10 min 内仍可能把它当作候选推荐；
+7. **口令密文与主密钥同生死**：轮换 `TMEX_MASTER_KEY` 后，历史分享的 `password_enc` 一律解不开，
+   查看口令会报 500；登录不受影响（走哈希），改一次口令即用新主密钥重新落密文。
+8. **带口令的链接不可撤回**：`#p=` 只是前端拼接，服务端既不知道谁发过、也没法作废单条链接；
+   泄漏后只能改口令 + 踢人。
+9. **中继入口探测是缓存式的**：中继主机刚掉 `node` 角色时，最长 10 min 内仍可能把它当作候选推荐；
    反过来刚可用的中继最长 2 min 后才会出现。要立刻纠正只能重启网关（启动时会重新预热）。
    探测走本机出网直连中继域名，被出网策略挡住时中继候选会静默消失（判定 fail-closed）。
 

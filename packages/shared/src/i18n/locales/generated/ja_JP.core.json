@@ -228,6 +228,9 @@
       "reconnect": "再接続"
     },
     "notification": {
+      "mesh": {
+        "origin": "ノード {{node}}｜デバイス {{device}}"
+      },
       "eventType": {
         "terminal_bell": "ターミナルベル",
         "terminal_notification": "ターミナル通知",

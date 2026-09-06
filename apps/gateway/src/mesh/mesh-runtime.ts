@@ -78,6 +78,9 @@ import {
   meshHubNotRetired,
 } from './node-list-apply';
 import { pickSelfDisplayName } from './node-list-projection';
+import { buildMeshNotificationBridge } from './notification-bridge-wiring';
+import { setMeshNotificationBridge } from './notification-mesh-bridge';
+import { isMeshNotificationSinkEnabled } from './notification-sink-state';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   bindRelayReconcile,
@@ -763,7 +766,10 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       version,
       tmux: true,
       direct_capable: bindings.rtc.available,
-      inventory: { version },
+      inventory: {
+        version,
+        ...(isMeshNotificationSinkEnabled() ? { notifySink: true } : {}),
+      },
       endpoints: enumeratePeerEndpoints(
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
         ifaceCache.get()
@@ -1317,6 +1323,22 @@ function wireMeshHttp(
     forwardInternalHttp: (nodeId, path, body, signal) =>
       http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
   });
+  setMeshNotificationBridge(
+    buildMeshNotificationBridge({
+      selfNodeId: identity.nodeIdHex,
+      selfName: () => selfDisplayNameOf(d),
+      userStore,
+      listReach: () => peers.listReach(),
+      listHubOnline: () => peers.listHubOnline(),
+      listedNodes: () => state.lastNodeList?.nodes ?? [],
+      forwardInternalHttp: (nodeId, path, body, signal) =>
+        http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
+      advertise: () => {
+        uplink.sendStatusIfChanged();
+        peerManager.refreshAdvertisedStatus();
+      },
+    })
+  );
   return http;
 }
 function createTlsRefresher(d: MeshDeps, uplink: UplinkPool): () => Promise<void> {
@@ -1433,6 +1455,7 @@ function assembleMeshRuntime(
         unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);
+        setMeshNotificationBridge(null);
         setMessagingMeshRuntime(null);
         await stopQuietly([
           ['peer', () => peerManager.stop()],
