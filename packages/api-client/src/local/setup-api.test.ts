@@ -168,14 +168,14 @@ describe('SetupApi.joinHub', () => {
     await new SetupApi(client).joinHub({
       hubUrl: 'https://hub.example.com',
       method: 'password',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
       directEnable: false,
     });
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       hubUrl: 'https://hub.example.com',
       method: 'password',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
       directEnable: false,
     });
@@ -230,7 +230,7 @@ describe('SetupApi.setupRelay', () => {
       relayPublicUrl: 'https://relay.example',
       relayPassword: 'tenant-pass',
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       directEnable: false,
     });
     expect(out.role).toBe('relay,node');
@@ -241,7 +241,7 @@ describe('SetupApi.setupRelay', () => {
       relayPublicUrl: 'https://relay.example',
       relayPassword: 'tenant-pass',
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       directEnable: false,
     });
   });
@@ -272,7 +272,7 @@ describe('SetupApi.relayJoin', () => {
     const out = await new SetupApi(client).relayJoin({
       relayUrl: 'https://relay.example',
       tenantId: 'tenant-1',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
     });
     expect(out.tenantId).toBe('tenant-1');
@@ -280,7 +280,7 @@ describe('SetupApi.relayJoin', () => {
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
       relayUrl: 'https://relay.example',
       tenantId: 'tenant-1',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
     });
   });

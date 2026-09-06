@@ -426,6 +426,7 @@ export type ConfirmTotpSetupResult =
  * 两段式 TOTP 的第二段：**先本地校验用户输入的验证码**，通过后才追加 `set-totp`。
  *
  * `k_totp = HKDF(seed, "tmex-totp"‖root_epoch, uid)`，密钥以 AES-256-GCM 加密后写进 payload，
+ * HKDF info 是协议常量，沿用 tmex 时期的值以保持跨版本兼容。
  * AAD = borsh({uid, root_epoch, seq})。
  */
 export async function confirmTotpSetup(

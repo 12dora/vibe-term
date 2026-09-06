@@ -8,7 +8,10 @@ import type { GatewayConnection, WebSocketLike } from '@vibeterm/ws-client';
 import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
 import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
 import type { DirectDiagnostics } from '@vibeterm/ws-client/direct/types';
-import { PRIMARY_ONLY_DIAGNOSTICS, resolveDirectDiagnostics } from '@vibeterm/ws-client/direct/types';
+import {
+  PRIMARY_ONLY_DIAGNOSTICS,
+  resolveDirectDiagnostics,
+} from '@vibeterm/ws-client/direct/types';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   type DirectLinkModule,

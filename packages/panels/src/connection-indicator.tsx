@@ -59,7 +59,7 @@ export function ConnectionIndicator() {
   const isClosed = connectionState === 'CLOSED';
   const isFirstConnect = !hasConnectedOnce && !isClosed;
 
-  const easing = phase === 'exiting' ? 'var(--tmex-ease-in)' : 'var(--tmex-ease-out)';
+  const easing = phase === 'exiting' ? 'var(--vibeterm-ease-in)' : 'var(--vibeterm-ease-out)';
   const duration = `${motionDurations.layout}ms`;
   const transitionStyle: React.CSSProperties = {
     bottom: 'calc(1rem + env(safe-area-inset-bottom, 0px))',

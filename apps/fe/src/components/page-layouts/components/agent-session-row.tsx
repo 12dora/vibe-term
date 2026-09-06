@@ -56,7 +56,7 @@ function SessionActionsMenu({
             aria-label={t('agent.session.menu')}
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              'size-5 shrink-0 text-muted-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100',
+              'size-5 shrink-0 text-muted-foreground transition-opacity duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100',
               isMobile
                 ? 'opacity-100'
                 : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100',
@@ -122,7 +122,7 @@ export const PaneSessionRow = memo(function PaneSessionRow({
         data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
+          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
           isMobile && 'min-h-11 py-2 pr-12',
           paused
             ? 'text-muted-foreground/60'
@@ -170,7 +170,7 @@ export const OrphanSessionRow = memo(function OrphanSessionRow({
         data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
           paused
             ? 'text-muted-foreground/60'
             : isActive

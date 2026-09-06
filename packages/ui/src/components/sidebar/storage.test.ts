@@ -1,5 +1,10 @@
 import { afterEach, describe, expect, it } from 'bun:test';
-import { readSidebarStorage, removeSidebarStorage, writeSidebarStorage } from './storage';
+import {
+  migrateSidebarStorage,
+  readSidebarStorage,
+  removeSidebarStorage,
+  writeSidebarStorage,
+} from './storage';
 
 const globals = globalThis as { window?: unknown };
 const originalWindow = globals.window;
@@ -50,5 +55,45 @@ describe('sidebar storage helpers', () => {
     expect(readSidebarStorage('a')).toBeNull();
     expect(() => writeSidebarStorage('a', '1')).not.toThrow();
     expect(() => removeSidebarStorage('a')).not.toThrow();
+  });
+});
+
+describe('migrateSidebarStorage', () => {
+  function installMap(entries: [string, string][]): Map<string, string> {
+    const values = new Map(entries);
+    installStorage({
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => values.set(key, value),
+      removeItem: (key: string) => values.delete(key),
+    });
+    return values;
+  }
+
+  it('新 key 缺失时搬运旧值并删除旧 key', () => {
+    const values = installMap([['old', '400']]);
+    migrateSidebarStorage('old', 'new');
+    expect(values.get('new')).toBe('400');
+    expect(values.has('old')).toBeFalse();
+  });
+
+  it('新 key 已存在时保留新值，仅清理旧 key', () => {
+    const values = installMap([
+      ['old', '400'],
+      ['new', '520'],
+    ]);
+    migrateSidebarStorage('old', 'new');
+    expect(values.get('new')).toBe('520');
+    expect(values.has('old')).toBeFalse();
+  });
+
+  it('无旧值时不写入新 key', () => {
+    const values = installMap([]);
+    migrateSidebarStorage('old', 'new');
+    expect(values.has('new')).toBeFalse();
+  });
+
+  it('storage 抛错时降级而不抛出', () => {
+    installStorage(throwingStorage());
+    expect(() => migrateSidebarStorage('old', 'new')).not.toThrow();
   });
 });

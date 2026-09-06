@@ -76,7 +76,7 @@ export function EditorInputPanel({
       <textarea
         ref={editorTextareaRef}
         data-testid="editor-input"
-        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors duration-(--tmex-motion-fast) ease-out focus:border-ring motion-reduce:transition-none"
+        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors duration-(--vibeterm-motion-fast) ease-out focus:border-ring motion-reduce:transition-none"
         value={editorText}
         onChange={(e) => editor.handleEditorChange(e.target.value)}
         placeholder={t('terminal.inputPlaceholder')}

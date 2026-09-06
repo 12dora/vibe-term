@@ -32,7 +32,7 @@ function injectFontFace(entry: FontManifestEntry): void {
     return;
   }
   const style = doc.createElement('style');
-  style.dataset.tmexFont = entry.id;
+  style.dataset.vibetermFont = entry.id;
   style.textContent =
     `@font-face{font-family:${entry.cssFamily};` +
     `src:url("${entry.files.regular}") format("woff2");font-weight:400;font-style:normal;font-display:swap}` +

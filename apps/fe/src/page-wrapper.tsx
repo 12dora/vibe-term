@@ -78,7 +78,7 @@ export function PageWrapper({
           key={animateContent ? state.status : undefined}
           className={cn(
             'bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]',
-            animateContent && 'tmex-reveal'
+            animateContent && 'vibeterm-reveal'
           )}
         >
           {state.status === 'error' ? <PageLoadFallback onRetry={retry} /> : Page ? <Page /> : null}

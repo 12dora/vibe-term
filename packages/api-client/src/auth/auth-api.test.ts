@@ -275,7 +275,7 @@ describe('AuthApi.getConnection（F3-4）', () => {
     expect(calls[0].init?.headers).toBeUndefined();
   });
 
-  test('传 connectionId 时带 x-tmex-connection 头（多标签定位）', async () => {
+  test('传 connectionId 时带新旧两个 connection 头（多标签定位）', async () => {
     const { api, calls } = recorder([
       new Response(JSON.stringify({ connectionId: 'conn-2' }), { status: 200 }),
     ]);
@@ -284,7 +284,10 @@ describe('AuthApi.getConnection（F3-4）', () => {
       connectionId: 'conn-2',
     });
     expect(calls[0].url).toBe('/api/mesh/connection');
-    expect(calls[0].init?.headers).toEqual({ 'x-tmex-connection': 'conn-2' });
+    expect(calls[0].init?.headers).toEqual({
+      'x-vibeterm-connection': 'conn-2',
+      'x-tmex-connection': 'conn-2',
+    });
   });
 
   test('传 cid 时拼进 query（浏览器唯一能带上握手的定位信息）', async () => {

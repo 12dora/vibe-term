@@ -3,6 +3,7 @@ import * as React from 'react';
 import { useIsMobile } from '../../hooks/use-mobile';
 import { cn } from '../../utils';
 import {
+  LEGACY_SIDEBAR_WIDTH_STORAGE_KEY,
   SIDEBAR_KEYBOARD_SHORTCUT,
   SIDEBAR_WIDTH_DEFAULT_PX,
   SIDEBAR_WIDTH_ICON,
@@ -21,7 +22,12 @@ import {
   mobileSheetInitialFocus,
   setMobileSidebarOpen,
 } from './mobile-open';
-import { readSidebarStorage, removeSidebarStorage, writeSidebarStorage } from './storage';
+import {
+  migrateSidebarStorage,
+  readSidebarStorage,
+  removeSidebarStorage,
+  writeSidebarStorage,
+} from './storage';
 import {
   clampSidebarWidth,
   parseStoredSidebarWidth,
@@ -42,6 +48,7 @@ function useSidebarWidthState(): SidebarWidthContextProps {
   const viewportWidthRef = React.useRef<number>(Number.POSITIVE_INFINITY);
   const [width, setWidthState] = React.useState<number>(() => {
     if (typeof window === 'undefined') return SIDEBAR_WIDTH_DEFAULT_PX;
+    migrateSidebarStorage(LEGACY_SIDEBAR_WIDTH_STORAGE_KEY, SIDEBAR_WIDTH_STORAGE_KEY);
     const preferred = parseStoredSidebarWidth(readSidebarStorage(SIDEBAR_WIDTH_STORAGE_KEY));
     preferredWidthRef.current = preferred;
     viewportWidthRef.current = viewportWidth();

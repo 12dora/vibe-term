@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
-// relay e2e 的进程主管：从源码拉起三个 tmex runtime——
+// relay e2e 的进程主管：从源码拉起三个 VibeTerm runtime——
 //   R = `relay,node`（公共中继 + 本机 node）
-//   A = `node`（无 hub），用 `tmex relay enroll` 在 R 上开租户，成为该租户的主节点
-//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `tmex hub join --token` 并入同一租户
+//   A = `node`（无 hub），用 `vibeterm relay enroll` 在 R 上开租户，成为该租户的主节点
+//   B = `standalone`，用 A 生成的 `r3.` 加入码经 `vibeterm hub join --token` 并入同一租户
 // 然后把连接信息（端口、节点编号、租户编号、管理令牌、可直接给 curl 用的 Cookie 头）
 // 写进 state JSON。收到 SIGTERM/SIGINT 时回收全部子进程、tmux socket 与临时目录。
 //
 // 用法：
-//   bun apps/fe/tests/helpers/relay-boot.ts --state /tmp/tmex-relay-e2e-<pid>.json
+//   bun apps/fe/tests/helpers/relay-boot.ts --state /tmp/vibeterm-relay-e2e-<pid>.json
 //   bun apps/fe/tests/helpers/relay-boot.ts --mode hub          # 只打印 hub 拓扑怎么起
 //
 // hub 拓扑（hub,node + node）不在本文件范围内，用既有的 mesh-boot.ts，别在这里复制一份。
@@ -37,9 +37,9 @@ const MIGRATIONS_DIR = resolve(REPO_ROOT, 'apps/gateway/drizzle');
 const FE_DIST_DIR = resolve(REPO_ROOT, 'apps/fe/dist');
 
 const TMUX_SOCKETS = {
-  relay: 'tmex-relay-e2e-r',
-  a: 'tmex-relay-e2e-a',
-  b: 'tmex-relay-e2e-b',
+  relay: 'vibeterm-relay-e2e-r',
+  a: 'vibeterm-relay-e2e-a',
+  b: 'vibeterm-relay-e2e-b',
 } as const;
 const USERNAME = 'alice';
 const RELAY_USERNAME = 'relayop';
@@ -88,7 +88,9 @@ function randomSecret(prefix: string): string {
 }
 
 function testMasterKey(): string {
-  const key = parseEnvFile(readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')).VIBETERM_MASTER_KEY;
+  const key = parseEnvFile(
+    readFileSync(resolve(REPO_ROOT, 'test.env'), 'utf8')
+  ).VIBETERM_MASTER_KEY;
   if (!key) throw new Error('VIBETERM_MASTER_KEY missing from test.env');
   return key;
 }
@@ -110,7 +112,7 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     `VIBETERM_MASTER_KEY=${masterKey}`,
     `GATEWAY_PORT=${spec.port}`,
     'VIBETERM_BIND_HOST=127.0.0.1',
-    `DATABASE_URL=${spec.dir}/tmex.db`,
+    `DATABASE_URL=${spec.dir}/vibeterm.db`,
     `VIBETERM_BASE_URL=http://127.0.0.1:${spec.port}`,
     // 中继模式下上级不再是 hub：两个键都必须为空，否则 uplink 会去拨不存在的 hub。
     'VIBETERM_HUB_URL=',
@@ -120,7 +122,7 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     'VIBETERM_STUN_SERVERS=',
     'VIBETERM_TRUST_PROXY=true',
     `VIBETERM_TMUX_SOCKET=${spec.tmuxSocket}`,
-    'VIBETERM_SITE_NAME=tmex',
+    'VIBETERM_SITE_NAME=VibeTerm',
   ];
   if (spec.relayPublicUrl) lines.push(`VIBETERM_RELAY_PUBLIC_URL=${spec.relayPublicUrl}`);
   if (spec.relayAdminToken) lines.push(`VIBETERM_RELAY_ADMIN_TOKEN=${spec.relayAdminToken}`);
@@ -231,7 +233,7 @@ function ensureFeDist(): void {
 }
 
 function killTmuxSocket(socket: string): void {
-  // socket 名固定为 relay e2e 专用，绝不会命中默认 socket / 生产 tmex session。
+  // socket 名固定为 relay e2e 专用，绝不会命中默认 socket / 生产 VibeTerm session。
   spawnSync('tmux', ['-L', socket, 'kill-server'], { stdio: 'ignore' });
 }
 
@@ -459,7 +461,7 @@ async function main(): Promise<void> {
 
   ensureFeDist();
 
-  const tmpDir = `/tmp/tmex-relay-e2e-${process.pid}-${Date.now()}`;
+  const tmpDir = `/tmp/vibeterm-relay-e2e-${process.pid}-${Date.now()}`;
   tmpDirRef = tmpDir;
   process.on('SIGTERM', () => {
     cleanup();

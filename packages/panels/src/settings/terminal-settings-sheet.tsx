@@ -17,7 +17,7 @@ export function TerminalSettingsSheet({ open, onOpenChange }: TerminalSettingsSh
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="max-h-[88dvh] overflow-y-auto pb-[var(--tmex-safe-area-bottom)] sm:mx-auto sm:max-w-md sm:rounded-t-2xl sm:border sm:border-b-0"
+        className="max-h-[88dvh] overflow-y-auto pb-[var(--vibeterm-safe-area-bottom)] sm:mx-auto sm:max-w-md sm:rounded-t-2xl sm:border sm:border-b-0"
         data-testid="keyboard-behavior-sheet"
       >
         <SheetHeader>

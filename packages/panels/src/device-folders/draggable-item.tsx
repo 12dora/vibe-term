@@ -15,7 +15,7 @@ import type { SortableItemData } from './collision';
 import { nodeElementId } from './folder-tree-model';
 
 const CONTROL_CLASS =
-  'inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground shadow-sm transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-foreground motion-reduce:transition-none';
+  'inline-flex size-6 shrink-0 items-center justify-center rounded-md border border-border/60 bg-background/90 text-muted-foreground shadow-sm transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-accent hover:text-foreground motion-reduce:transition-none';
 
 export interface DeviceFolderNodeShellProps {
   nodeId: string;

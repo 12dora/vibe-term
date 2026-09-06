@@ -78,7 +78,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
 function named(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResponse {
   const base = status();
   return status({
-    config: { ...base.config, mode: 'named', hostname: 'tmex.example.com' },
+    config: { ...base.config, mode: 'named', hostname: 'vibeterm.example.com' },
     process: { ...base.process, state: 'running' },
     ...overrides,
   });
@@ -94,7 +94,7 @@ function mode(overrides: Partial<AuthModeResponse> = {}): AuthModeResponse {
     passkeyAvailable: false,
     passkeysForThisOrigin: false,
     hubNodeId: SELF,
-    hubPublicUrl: 'https://tmex.example.com',
+    hubPublicUrl: 'https://vibeterm.example.com',
     ...overrides,
   };
 }
@@ -103,10 +103,10 @@ describe('entryStatus', () => {
   test('命名隧道运行中：地址由主机名拼出，running 为真', () => {
     expect(entryStatus(named(), null)).toEqual({
       kind: 'named',
-      url: 'https://tmex.example.com',
+      url: 'https://vibeterm.example.com',
       running: true,
       degraded: false,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
     });
   });
 
@@ -127,10 +127,10 @@ describe('entryStatus', () => {
     });
     expect(entryStatus(adopted, null)).toEqual({
       kind: 'named',
-      url: 'https://tmex.example.com',
+      url: 'https://vibeterm.example.com',
       running: true,
       degraded: false,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
     });
     const adoptedDown = status({
       config: { ...named().config, externallyManaged: true },
@@ -267,7 +267,7 @@ describe('hubStatus', () => {
   test('本机就是 Hub：地址与隧道主机名一致时不报不一致', () => {
     expect(hubStatus(mode(), entry)).toEqual({
       role: 'self',
-      url: 'https://tmex.example.com',
+      url: 'https://vibeterm.example.com',
       mismatch: false,
     });
   });

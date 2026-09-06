@@ -19,7 +19,7 @@ const { createAppRuntime } = await import('./app-runtime');
 const { handleDeviceEvent, handleTmuxEvent } = await import('./tmux-device-events');
 
 const BASE_SETTINGS: SiteSettings = {
-  siteName: 'tmex',
+  siteName: 'VibeTerm',
   siteUrl: 'http://localhost:9663',
   bellThrottleSeconds: 0,
   notificationThrottleSeconds: 0,

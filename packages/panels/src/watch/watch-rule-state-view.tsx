@@ -1,4 +1,9 @@
-import type { LocaleCode, WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@vibeterm/shared';
+import type {
+  LocaleCode,
+  WatchRuleDto,
+  WatchRuleSampleDto,
+  WatchRuleStateDto,
+} from '@vibeterm/shared';
 import { formatDateTime } from '@vibeterm/shared';
 import { useSiteStore } from '@vibeterm/stores/react';
 import { Badge } from '@vibeterm/ui/badge';

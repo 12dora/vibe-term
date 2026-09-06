@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
 import { ApiClient, defaultApiClient } from '@vibeterm/api-client';
-import { type BellPlayer, type NotificationSink, noopNotificationSink } from '@vibeterm/notifications';
+import {
+  type BellPlayer,
+  type NotificationSink,
+  noopNotificationSink,
+} from '@vibeterm/notifications';
 import {
   type GatewayConnection,
   LazyWebSocketGatewayTransport,

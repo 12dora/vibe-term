@@ -18,7 +18,7 @@ function resolveBunExecutable(): string {
   return 'bun';
 }
 
-// 默认端口刻意避开生产常驻 tmex 的 9883，降低 e2e 误打生产实例的风险；
+// 默认端口刻意避开生产常驻 VibeTerm 的 9883，降低 e2e 误打生产实例的风险；
 // 实际运行由 bun run test:e2e（scripts/run-e2e.ts）自动选空闲端口并注入 VIBETERM_E2E_*_PORT。
 const DEFAULT_GATEWAY_PORT = 9665;
 const DEFAULT_FE_PORT = 9885;
@@ -40,7 +40,7 @@ const forceFreshServers = Boolean(
 );
 const reuseExistingServer = !process.env.CI && !forceFreshServers;
 
-// 用 connect 探测而非 listen：listen 不带 host 绑 ::，对监听 IPv4 的进程（如生产 tmex）会误判空闲
+// 用 connect 探测而非 listen：listen 不带 host 绑 ::，对监听 IPv4 的进程（如生产 VibeTerm）会误判空闲
 function isPortListening(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const socket = net.connect({ port, host: '127.0.0.1' });
@@ -55,7 +55,7 @@ function isPortListening(port: number): Promise<boolean> {
 }
 
 // 防护：无论 reuse 还是 fresh，只要端口未显式指定却已被占用，都拒绝运行——
-// reuse 会命中未知实例（本机 9883 常驻生产 tmex）、fresh 也会与之冲突。要求显式指定
+// reuse 会命中未知实例（本机 9883 常驻生产 VibeTerm）、fresh 也会与之冲突。要求显式指定
 // env 或走 bun run test:e2e。globalSetup 另有一道 healthz=env:test 断言兜底。
 if (!meshOnly) {
   const conflicts: string[] = [];
@@ -69,7 +69,7 @@ if (!meshOnly) {
     throw new Error(
       `[e2e] Refusing to use port(s) already occupied by unknown server(s): ${conflicts.join(
         ', '
-      )}. This may be a production tmex instance. Set VIBETERM_E2E_FE_PORT / VIBETERM_E2E_GATEWAY_PORT explicitly (e.g. VIBETERM_E2E_FE_PORT=9885 VIBETERM_E2E_GATEWAY_PORT=9665), or run via \`bun run test:e2e\` which picks free ports automatically.`
+      )}. This may be a production VibeTerm instance. Set VIBETERM_E2E_FE_PORT / VIBETERM_E2E_GATEWAY_PORT explicitly (e.g. VIBETERM_E2E_FE_PORT=9885 VIBETERM_E2E_GATEWAY_PORT=9665), or run via \`bun run test:e2e\` which picks free ports automatically.`
     );
   }
 }
@@ -131,11 +131,12 @@ export default defineConfig({
           env: {
             NODE_ENV: 'test',
             GATEWAY_PORT: String(gatewayPort),
-            DATABASE_URL: process.env.VIBETERM_E2E_DATABASE_URL ?? `/tmp/tmex-e2e-${Date.now()}.db`,
+            DATABASE_URL:
+              process.env.VIBETERM_E2E_DATABASE_URL ?? `/tmp/vibeterm-e2e-${Date.now()}.db`,
             VIBETERM_BASE_URL: `http://localhost:${gatewayPort}`,
             // local 设备的 tmux 会话全部落到 e2e 专用 socket，与生产默认 socket 隔离；
             // 必须与 tests/helpers/tmux.ts 的 E2E_TMUX_SOCKET 一致。
-            VIBETERM_TMUX_SOCKET: 'tmex-e2e',
+            VIBETERM_TMUX_SOCKET: 'vibeterm-e2e',
           },
           url: `http://localhost:${gatewayPort}/healthz`,
           timeout: 60_000,

@@ -19,8 +19,8 @@ import {
   saveBatchPlan,
 } from './upgrade-batch-storage';
 
-const KEY = 'tmex.nodes.upgrade-batch.entry';
-const TAB_KEY = 'tmex.nodes.upgrade-batch.tab';
+const KEY = 'vibeterm.nodes.upgrade-batch.entry';
+const TAB_KEY = 'vibeterm.nodes.upgrade-batch.tab';
 
 const saved = new Map<string, PropertyDescriptor | undefined>();
 
@@ -93,7 +93,7 @@ describe('计划的读写', () => {
 
   test('入口节点对不上：不认，并把这条清掉', () => {
     saveBatchPlan(plan({ entryNodeId: 'other' }));
-    store.setItem(KEY, store.getItem('tmex.nodes.upgrade-batch.other') ?? '');
+    store.setItem(KEY, store.getItem('vibeterm.nodes.upgrade-batch.other') ?? '');
     expect(loadBatchPlan('entry', 1000)).toBeNull();
     expect(store.getItem(KEY)).toBeNull();
   });
@@ -134,7 +134,7 @@ describe('计划的读写', () => {
     saveBatchPlan(plan({ entryNodeId: 'other' }));
     clearBatchPlan('entry');
     expect(store.getItem(KEY)).toBeNull();
-    expect(store.getItem('tmex.nodes.upgrade-batch.other')).not.toBeNull();
+    expect(store.getItem('vibeterm.nodes.upgrade-batch.other')).not.toBeNull();
   });
 });
 
@@ -213,7 +213,7 @@ describe('标签页归属', () => {
     expect(isBatchPlanStorageEvent('entry', KEY)).toBe(true);
     expect(isBatchPlanStorageEvent('entry', null)).toBe(true);
     expect(isBatchPlanStorageEvent('entry', batchPlanKey('other'))).toBe(false);
-    expect(isBatchPlanStorageEvent('entry', 'tmex.something.else')).toBe(false);
+    expect(isBatchPlanStorageEvent('entry', 'vibeterm.something.else')).toBe(false);
   });
 });
 

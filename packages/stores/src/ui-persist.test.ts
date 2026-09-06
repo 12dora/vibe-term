@@ -205,7 +205,7 @@ describe('UI store 草稿持久化', () => {
   }
 
   function persistedDrafts(): Record<string, string> {
-    const raw = counting.storage.getItem(`${prefix}tmex-ui`);
+    const raw = counting.storage.getItem(`${prefix}vibeterm-ui`);
     if (!raw) return {};
     return (
       (JSON.parse(raw) as { state?: { editorDrafts?: Record<string, string> } }).state
@@ -246,7 +246,7 @@ describe('UI store 草稿持久化', () => {
     store.getState().setSidebarCollapsed(true);
     expect(counting.writes()).toBe(before + 1);
 
-    const raw = JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const raw = JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state: { sidebarCollapsed: boolean; editorDrafts: Record<string, string> };
     };
     expect(raw.state.sidebarCollapsed).toBe(true);
@@ -414,13 +414,13 @@ describe('页面离场时 flush 草稿', () => {
     (globalThis.document as unknown as { visibilityState: string }).visibilityState = 'visible';
     fire('visibilitychange');
     expect(
-      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+      JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'first' });
 
     (globalThis.document as unknown as { visibilityState: string }).visibilityState = 'hidden';
     fire('visibilitychange');
     expect(
-      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+      JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'second' });
   });
 
@@ -438,7 +438,7 @@ describe('页面离场时 flush 草稿', () => {
 
     fire('pagehide');
     expect(
-      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+      JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'unsaved' });
   });
 
@@ -466,7 +466,7 @@ describe('页面离场时 flush 草稿', () => {
     fire('pagehide');
     clock.run();
     expect(
-      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+      JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'first' });
 
     const nextDisposers: Array<() => void> = [];
@@ -480,7 +480,7 @@ describe('页面离场时 flush 草稿', () => {
     next.getState().setEditorDraft('dev:%1', 'fresh');
     clock.run();
     expect(
-      JSON.parse(counting.storage.getItem(`${prefix}tmex-ui`) ?? '{}').state.editorDrafts
+      JSON.parse(counting.storage.getItem(`${prefix}vibeterm-ui`) ?? '{}').state.editorDrafts
     ).toEqual({ 'dev:%1': 'fresh' });
     for (const dispose of nextDisposers.splice(0)) dispose();
   });

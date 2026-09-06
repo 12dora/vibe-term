@@ -1,7 +1,7 @@
 // 「直接连接」路径的唯一一步：访问保护。
 //
-// 这条路径不建任何隧道、不改隧道配置——用户自己用固定 IP / 端口映射 / 反向代理把 tmex 暴露出去，
-// tmex 能做的只有两件事：说清当前有没有登录门，以及在没有时把门装上。
+// 这条路径不建任何隧道、不改隧道配置——用户自己用固定 IP / 端口映射 / 反向代理把 VibeTerm 暴露出去，
+// VibeTerm 能做的只有两件事：说清当前有没有登录门，以及在没有时把门装上。
 
 import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';
@@ -48,7 +48,7 @@ export function DirectStep({
   );
 }
 
-/** 入口地址只能给参考值：真正的对外地址由用户自己的映射 / 反向代理决定，tmex 看不到。 */
+/** 入口地址只能给参考值：真正的对外地址由用户自己的映射 / 反向代理决定，VibeTerm 看不到。 */
 function EntryHint({ status }: { status: TunnelStatusResponse }) {
   const { t } = useTranslation();
   const origin = typeof window === 'undefined' ? null : window.location.origin;

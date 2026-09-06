@@ -1,6 +1,7 @@
 // Hub 主备切换的状态机与断点续跑：只依赖 `HubRoleIo` 这一层接缝，不碰 React 与网络实现。
 
 import type { HubRoleRequest } from '@vibeterm/shared';
+import { migrateStorageKey } from '@vibeterm/stores';
 import {
   type AdmitHubOutcome,
   HUB_ROLE_AUTH_TIMEOUT_MS,
@@ -15,6 +16,7 @@ import {
   type HubRoleOutcome,
   type HubRoleSwitchPlan,
   type HubsSnapshot,
+  LEGACY_HUB_ROLE_SWITCH_KEY,
   type Translate,
   type UnsupportedKeyLogNode,
   hubRoleErrorText,
@@ -394,6 +396,7 @@ export function hubRoleSwitchPersist(base: Omit<HubRoleSwitchRecord, 'phase'>): 
 
 /** 存储里的东西一律当成不可信输入：字段缺一不可，过期的一律丢掉。 */
 export function loadHubRoleSwitch(now: number): HubRoleSwitchRecord | null {
+  migrateStorageKey(sessionStore(), LEGACY_HUB_ROLE_SWITCH_KEY, HUB_ROLE_SWITCH_KEY);
   let raw: string | null = null;
   try {
     raw = sessionStore()?.getItem(HUB_ROLE_SWITCH_KEY) ?? null;

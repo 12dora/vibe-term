@@ -50,7 +50,7 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
                     draft.language}
                 </SelectValue>
               </SelectTrigger>
-              <SelectContent className="max-h-[var(--tmex-viewport-height)]">
+              <SelectContent className="max-h-[var(--vibeterm-viewport-height)]">
                 {I18N_MANIFEST.locales.map((locale) => (
                   <SelectItem key={locale.code} value={locale.code}>
                     {locale.nativeName}

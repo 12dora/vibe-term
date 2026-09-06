@@ -84,7 +84,7 @@ export function toNodeDeviceGroups(
 }
 
 const CHIP_CLASS =
-  'rounded border border-border/60 px-1.5 py-px text-[10px] leading-none transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none';
+  'rounded border border-border/60 px-1.5 py-px text-[10px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none';
 
 function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();

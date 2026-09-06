@@ -69,7 +69,7 @@ export function CopyButton({
   const { copied, copy } = useCopyToClipboard(value);
   return (
     <Button type="button" size="xs" variant={variant} onClick={copy} data-testid={`${testId}-copy`}>
-      {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+      {copied ? <Check className="vibeterm-scale-in" /> : <Copy className="vibeterm-scale-in" />}
       <CopyLabel copied={copied} />
     </Button>
   );

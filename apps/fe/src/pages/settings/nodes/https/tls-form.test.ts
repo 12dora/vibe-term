@@ -21,7 +21,7 @@ import {
 describe('isValidSan', () => {
   test('接受主机名与 IP', () => {
     expect(isValidSan('hub.lan')).toBe(true);
-    expect(isValidSan('tmex')).toBe(true);
+    expect(isValidSan('vibeterm')).toBe(true);
     expect(isValidSan('192.168.1.10')).toBe(true);
     expect(isValidSan('fd00::1')).toBe(true);
     expect(isValidSan('[fd00::1]')).toBe(true);

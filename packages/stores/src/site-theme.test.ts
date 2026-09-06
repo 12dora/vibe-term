@@ -39,11 +39,11 @@ mock.module('@vibeterm/ws-client', () => {
 const { useSiteStore, useUIStore } = await import('./default-runtime');
 const { createAppRuntime } = await import('./app-runtime');
 
-const VIBETERM_UI_KEY = 'tmex-ui';
+const VIBETERM_UI_KEY = 'vibeterm-ui';
 
 function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
-    siteName: 'tmex',
+    siteName: 'VibeTerm',
     siteUrl: 'http://localhost',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,

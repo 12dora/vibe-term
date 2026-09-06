@@ -99,7 +99,7 @@ export interface HelloFrameOptions {
 /** 构造一帧 HELLO_S2C；缺省值对应「不支持任何能力的老网关」。 */
 export function helloFrame(options: HelloFrameOptions = {}): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-    serverImpl: 'tmex-gateway',
+    serverImpl: 'vibeterm-gateway',
     serverVersion: options.serverVersion ?? '0.1.0',
     selectedVersion: 1,
     maxFrameBytes: options.maxFrameBytes ?? 1048576,

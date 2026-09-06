@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import * as net from 'node:net';
 
-// listen 不带 host 默认绑 ::，对只监听 IPv4 的进程（如生产 tmex 的 9883）会误判可用，
+// listen 不带 host 默认绑 ::，对只监听 IPv4 的进程（如生产 VibeTerm 的 9883）会误判可用，
 // 必须先用 connect 探测
 function isPortListening(port: number): Promise<boolean> {
   return new Promise((resolve) => {
@@ -85,10 +85,10 @@ function applyMeshFlags(args: string[]): void {
   if (projects.length === 0 || projects.every((name) => name.startsWith('mesh'))) {
     process.env.VIBETERM_E2E_MESH_ONLY = '1';
   }
-  process.env.VIBETERM_MESH_E2E_STATE ??= `/tmp/tmex-mesh-e2e-${process.pid}.json`;
+  process.env.VIBETERM_MESH_E2E_STATE ??= `/tmp/vibeterm-mesh-e2e-${process.pid}.json`;
 }
 
-// 默认端口避开生产常驻 tmex 的 9883/9663（见 playwright.config.ts 同步常量）。
+// 默认端口避开生产常驻 VibeTerm 的 9883/9663（见 playwright.config.ts 同步常量）。
 const defaultGatewayPort = 9665;
 const defaultFePort = 9885;
 

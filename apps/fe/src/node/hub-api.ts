@@ -4,7 +4,12 @@
 // node-session。因此这里一律走 entry 的 ApiClient（baseUrl 为空），由 entry 的 `/n/:id`
 // 转发器代到 hub 机；**不能**用当前路由 node 的 ApiClient，否则会变成 `/n/a/n/hub/...`。
 
-import { type ApiClient, SELF_NODE_ID, defaultApiClient, resolveNodeUrl } from '@vibeterm/api-client';
+import {
+  type ApiClient,
+  SELF_NODE_ID,
+  defaultApiClient,
+  resolveNodeUrl,
+} from '@vibeterm/api-client';
 import type { HubEnrollmentStatus } from '@vibeterm/api-client/auth/index';
 import { readCodedError } from '@vibeterm/api-client/json-mutation';
 import type { HubRoleRequest, HubRoleTransition } from '@vibeterm/shared';

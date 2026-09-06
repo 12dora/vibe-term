@@ -1,5 +1,5 @@
 // 传输有两段（leg）；toast 同时显示两条进度。
-// 上传：leg1 浏览器→tmex，leg2 tmex→服务器；下载：leg1 服务器→tmex，leg2 tmex→浏览器。
+// 上传：leg1 浏览器→VibeTerm，leg2 VibeTerm→服务器；下载：leg1 服务器→VibeTerm，leg2 VibeTerm→浏览器。
 
 export interface LegProgress {
   /** 0-100 */

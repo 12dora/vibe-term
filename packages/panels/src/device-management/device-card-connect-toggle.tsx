@@ -106,7 +106,7 @@ export function DeviceCardConnectToggle({
         <span
           aria-hidden="true"
           className={cn(
-            'h-2 w-2 shrink-0 rounded-full transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+            'h-2 w-2 shrink-0 rounded-full transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
             deviceStatusDotClass(status)
           )}
         />

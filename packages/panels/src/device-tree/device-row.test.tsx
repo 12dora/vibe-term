@@ -120,8 +120,8 @@ describe('DeviceRow 子树的展开态', () => {
     expect(html).not.toContain('data-slot="collapsible-content"');
   });
 
-  test('子树不再叠一层入场动画：tmex-reveal 由 collapsible 的高度过渡取代', () => {
-    expect(renderRow({ isExpanded: true })).not.toContain('tmex-reveal');
+  test('子树不再叠一层入场动画：vibeterm-reveal 由 collapsible 的高度过渡取代', () => {
+    expect(renderRow({ isExpanded: true })).not.toContain('vibeterm-reveal');
   });
 
   test('连接态按设备从适配器读取，不看别台设备', () => {

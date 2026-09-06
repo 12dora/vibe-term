@@ -139,7 +139,7 @@ function CopyValueButton({ value, testId }: { value: string; testId: string }) {
 
   return (
     <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={testId}>
-      {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+      {copied ? <Check className="vibeterm-scale-in" /> : <Copy className="vibeterm-scale-in" />}
       <span>{t(copied ? 'nodes.actions.copied' : 'nodes.actions.copy')}</span>
       <output className="sr-only" aria-live="polite">
         {copied ? t('nodes.actions.copied') : ''}

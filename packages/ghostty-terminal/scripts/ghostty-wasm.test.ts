@@ -11,7 +11,7 @@ import {
 const tempDirs: string[] = [];
 
 function makeTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-ghostty-wasm-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-ghostty-wasm-'));
   tempDirs.push(dir);
   return dir;
 }

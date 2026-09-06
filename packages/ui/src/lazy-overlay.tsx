@@ -30,7 +30,7 @@ import { Button } from './components/button';
 /** 就地重试上限，超过后（且用户确实在等这个弹层）才走整页刷新 */
 export const MAX_OVERLAY_LOAD_RETRIES = 2;
 
-const RELOAD_GUARD_KEY = 'tmex.overlay-chunk-reloaded';
+const RELOAD_GUARD_KEY = 'vibeterm.overlay-chunk-reloaded';
 
 export interface OverlayLoader<M> {
   /** 已加载则同步返回，否则 null */

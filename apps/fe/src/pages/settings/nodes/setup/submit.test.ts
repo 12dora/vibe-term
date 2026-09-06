@@ -68,7 +68,7 @@ describe('submitBecomeHub', () => {
 
     const outcome = await submitBecomeHub(
       {
-        hubPublicUrl: '  https://tmex.example.com  ',
+        hubPublicUrl: '  https://vibeterm.example.com  ',
         username: ' alice ',
         password: 'hunter2hunter2',
         confirmPassword: 'hunter2hunter2',
@@ -81,7 +81,7 @@ describe('submitBecomeHub', () => {
     expect(outcome.result.fingerprint).toBe('fp');
     expect(calls.map((c) => c.url)).toEqual(['/healthz', '/api/setup/hub']);
     expect(calls[1].body).toEqual({
-      hubPublicUrl: 'https://tmex.example.com',
+      hubPublicUrl: 'https://vibeterm.example.com',
       username: 'alice',
       password: 'hunter2hunter2',
       directEnable: true,
@@ -101,7 +101,7 @@ describe('submitBecomeHub', () => {
     });
     const outcome = await submitBecomeHub(
       {
-        hubPublicUrl: 'https://tmex.example.com',
+        hubPublicUrl: 'https://vibeterm.example.com',
         username: 'alice',
         password: 'hunter2hunter2',
         confirmPassword: 'hunter2hunter2',
@@ -122,7 +122,7 @@ describe('submitBecomeHub', () => {
     });
     const error = await submitBecomeHub(
       {
-        hubPublicUrl: 'https://tmex.example.com',
+        hubPublicUrl: 'https://vibeterm.example.com',
         username: 'alice',
         password: 'hunter2hunter2',
         confirmPassword: 'hunter2hunter2',
@@ -138,7 +138,7 @@ describe('submitBecomeHub', () => {
 describe('submitJoinHub', () => {
   const values: JoinHubValues = {
     method: 'token',
-    hubUrl: ' https://tmex.example.com ',
+    hubUrl: ' https://vibeterm.example.com ',
     token: 'abc\ndef',
     password: '',
     name: ' 书房 ',
@@ -151,7 +151,7 @@ describe('submitJoinHub', () => {
       '/healthz': Response.json({ startedAt: 7 }),
       '/api/setup/join': Response.json({
         ok: true,
-        hubUrl: 'https://tmex.example.com',
+        hubUrl: 'https://vibeterm.example.com',
         username: 'alice',
         direct: 'enabled',
         directError: null,
@@ -162,7 +162,7 @@ describe('submitJoinHub', () => {
     expect(outcome.previousStartedAt).toBe(7);
     expect(calls.map((c) => c.url)).toEqual(['/healthz', '/api/setup/join']);
     expect(calls[1].body).toEqual({
-      hubUrl: 'https://tmex.example.com',
+      hubUrl: 'https://vibeterm.example.com',
       method: 'token',
       token: 'abcdef',
       name: '书房',
@@ -176,7 +176,7 @@ describe('submitJoinHub', () => {
       '/healthz': Response.json({ startedAt: 7 }),
       '/api/setup/join': Response.json({
         ok: true,
-        hubUrl: 'https://tmex.example.com',
+        hubUrl: 'https://vibeterm.example.com',
         username: 'alice',
         direct: 'skipped',
         directError: null,
@@ -189,7 +189,7 @@ describe('submitJoinHub', () => {
       client
     );
     expect(calls[1].body).toEqual({
-      hubUrl: 'https://tmex.example.com',
+      hubUrl: 'https://vibeterm.example.com',
       method: 'password',
       password: 'hunter2hunter2',
       name: '书房',
@@ -202,7 +202,7 @@ describe('submitJoinHub', () => {
       '/healthz': Response.json({ startedAt: 7 }),
       '/api/setup/join': Response.json({
         ok: true,
-        hubUrl: 'https://tmex.example.com',
+        hubUrl: 'https://vibeterm.example.com',
         username: 'alice',
         direct: 'skipped',
         directError: null,

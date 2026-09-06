@@ -97,7 +97,7 @@ function RelayRow({
       {selectable && !relay.attached ? (
         <button
           type="button"
-          className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--tmex-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
+          className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--vibeterm-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
           onClick={() => onSelect?.(relay)}
           data-testid={`nodes-relay-switch-${host}`}
         >

@@ -61,7 +61,10 @@ export function TenantTable(props: TenantTableProps) {
           ))}
           {tenants.length === 0 && (
             <tr>
-              <td colSpan={10} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
+              <td
+                colSpan={10}
+                className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
+              >
                 {t('relay.admin.tenants.empty')}
               </td>
             </tr>

@@ -75,7 +75,7 @@ export function RelayMembersTable({
             <tr>
               <td
                 colSpan={COLUMNS.length}
-                className="tmex-fade px-3 py-6 text-center text-muted-foreground"
+                className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
                 data-testid={filtered ? 'relay-members-no-match' : 'relay-members-empty'}
               >
                 {t(filtered ? 'relay.metrics.members.noMatch' : 'relay.metrics.members.empty')}

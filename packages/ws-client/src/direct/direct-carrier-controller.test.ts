@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  CONNECTION_HEADER,
   DirectCarrierController,
   type DirectCarrierControllerOptions,
   MESH_CONNECTION_PATH,
   RTC_AUTHORIZE_PATH,
   RTC_CONFIG_PATH,
-  X_VIBETERM_CONNECTION_HEADER,
   buildIceServers,
   meshConnectionPath,
 } from './direct-carrier-controller';
@@ -243,14 +243,14 @@ describe('DirectCarrierController happy path', () => {
 });
 
 describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
-  test('authorize 同时用 body 与 x-tmex-connection 头带上 connectionId', async () => {
+  test('authorize 同时用 body 与 connection 头带上 connectionId', async () => {
     const s = setup();
     s.controller.start();
     await flush();
 
     const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
     expect((authorize?.body as { connectionId?: string }).connectionId).toBe(CONNECTION_ID);
-    expect(authorize?.headers[X_VIBETERM_CONNECTION_HEADER]).toBe(CONNECTION_ID);
+    expect(authorize?.headers[CONNECTION_HEADER.name]).toBe(CONNECTION_ID);
   });
 
   test('每次尝试都重取 connectionId：primary 重连后换成新值', async () => {
@@ -282,7 +282,7 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
     const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
     // nonce 只是找回身份的索引，绝不能当成 connectionId 用
     expect((authorize?.body as { connectionId?: string }).connectionId).toBe(CONNECTION_ID);
-    expect(authorize?.headers[X_VIBETERM_CONNECTION_HEADER]).toBe(CONNECTION_ID);
+    expect(authorize?.headers[CONNECTION_HEADER.name]).toBe(CONNECTION_ID);
     expect(JSON.stringify(authorize?.body)).not.toContain('cid-tab-1');
   });
 
@@ -313,7 +313,7 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
     const s = setup();
     s.api.routes.set(MESH_CONNECTION_PATH, {
       status: 409,
-      body: { code: 'MULTIPLE_CONNECTIONS', hint: 'send x-tmex-connection' },
+      body: { code: 'MULTIPLE_CONNECTIONS', hint: 'send x-vibeterm-connection' },
     });
     s.controller.start();
     await flush();
@@ -392,7 +392,7 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
       rtcSession: s.session(),
       fp_browser: { algorithm: 'sha-256', value: normalized(FP_BROWSER_VALUE) },
     });
-    expect(authorize?.headers[X_VIBETERM_CONNECTION_HEADER]).toBeUndefined();
+    expect(authorize?.headers[CONNECTION_HEADER.name]).toBeUndefined();
     expect(s.controller.getState()).toBe('connecting');
   });
 

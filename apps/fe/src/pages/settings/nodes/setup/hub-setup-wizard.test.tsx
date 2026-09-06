@@ -118,9 +118,9 @@ describe('HubSetupWizard', () => {
 describe('BecomeHubForm', () => {
   test('https origin 预填到公开地址；production 下 http origin 不预填', () => {
     const https = renderToStaticMarkup(
-      <BecomeHubForm localStatus={status()} origin="https://tmex.example.com" />
+      <BecomeHubForm localStatus={status()} origin="https://vibeterm.example.com" />
     );
-    expect(https).toContain('value="https://tmex.example.com"');
+    expect(https).toContain('value="https://vibeterm.example.com"');
 
     const http = renderToStaticMarkup(
       <BecomeHubForm localStatus={status()} origin="http://localhost:19663" />

@@ -74,7 +74,7 @@ export interface DeviceCardProps {
   hasRoots?: boolean;
   /** 节点内排序的把手（宿主注入），渲染在第一行最左 */
   dragHandle?: ReactNode;
-  /** 卡片根节点内联样式；列表用它挂 `--tmex-stagger-index` 做逐项入场 */
+  /** 卡片根节点内联样式；列表用它挂 `--vibeterm-stagger-index` 做逐项入场 */
   style?: CSSProperties;
   className?: string;
 }
@@ -301,7 +301,7 @@ export const DeviceCard = memo(function DeviceCard({
         data-offline={offline ? 'true' : undefined}
         style={style}
         className={cn(
-          'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color,opacity] duration-(--tmex-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
+          'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color,opacity] duration-(--vibeterm-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
           offline && 'border-dashed bg-muted/20 opacity-75 hover:shadow-none',
           className
         )}

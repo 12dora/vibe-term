@@ -63,7 +63,7 @@ describe('createDevice', () => {
     host: 'vm.example',
     port: 2222,
     username: 'root',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     password: 's3cret',
   };

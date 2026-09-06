@@ -25,7 +25,7 @@ function jsonResponse(data: unknown, status = 200): Response {
 }
 
 const stored = {
-  siteName: 'tmex',
+  siteName: 'VibeTerm',
   siteUrl: 'https://hub.example',
   bellThrottleSeconds: 6,
   notificationThrottleSeconds: 3,

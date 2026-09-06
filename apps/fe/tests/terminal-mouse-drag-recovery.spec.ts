@@ -126,8 +126,8 @@ test('desktop: 1002 drag tracking survives page refresh (authoritative mode rest
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-drag-refresh-${Date.now()}`;
-  const logPath = `/tmp/tmex-e2e-drag-refresh-${Date.now()}.log`;
+  const sessionName = `vibeterm-e2e-drag-refresh-${Date.now()}`;
+  const logPath = `/tmp/vibeterm-e2e-drag-refresh-${Date.now()}.log`;
   const { paneId, windowId } = createTuiSession(sessionName, logPath);
   await waitButtonTracking(paneId);
 
@@ -171,8 +171,8 @@ test('desktop: 1002 drag tracking survives page refresh (authoritative mode rest
 });
 
 test('desktop: 1002 drag tracking survives window round-trip', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-drag-window-${Date.now()}`;
-  const logPath = `/tmp/tmex-e2e-drag-window-${Date.now()}.log`;
+  const sessionName = `vibeterm-e2e-drag-window-${Date.now()}`;
+  const logPath = `/tmp/vibeterm-e2e-drag-window-${Date.now()}.log`;
   const { paneId: tuiPaneId, windowId: tuiWindowId } = createTuiSession(sessionName, logPath);
   tmux(`new-window -t ${sessionName} "sh -lc 'echo PANE1_READY; exec sh'"`);
   const otherWindowId = tmux(`display-message -p -t ${sessionName}:1 '#{window_id}'`);

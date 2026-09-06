@@ -1006,7 +1006,7 @@ describe('「更多」菜单的可点性', () => {
   test('三个菜单项：升级带选中数量，禁用原因进 title', () => {
     const list = BulkActionsMenuList({
       states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
-      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 tmex' },
+      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 VibeTerm' },
       onUpgrade: () => undefined,
       onRevoke: () => undefined,
       onUninstall: () => undefined,

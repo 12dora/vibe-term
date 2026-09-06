@@ -38,8 +38,8 @@ export function useBrandName(): string {
  * standalone 下这里拿不到 mesh 名字，退回站点名。
  *
  * standalone 没有 node 概念，`/api/auth/mode` 只返回 `{mode:'none'}`，本机压根没有对外
- * 暴露的 node 名——退回站点名（默认也叫 `tmex`）。与产品名相同时返回 `null`，避免
- * 品牌块出现「tmex / tmex」两行重复。
+ * 暴露的 node 名——退回站点名（默认也叫 `VibeTerm`）。与产品名相同时返回 `null`，避免
+ * 品牌块出现「VibeTerm / VibeTerm」两行重复。
  */
 export function useLocalNodeName(): string | null {
   const mesh = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);

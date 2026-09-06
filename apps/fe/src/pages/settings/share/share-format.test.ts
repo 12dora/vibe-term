@@ -34,8 +34,8 @@ function record(partial: Partial<ShareRecord> = {}): ShareRecord {
     createdAt: NOW - HOUR,
     expiresAt: null,
     endedAt: NOW,
-    origin: 'https://tmex.example.com',
-    url: 'https://tmex.example.com/s/abc',
+    origin: 'https://vibeterm.example.com',
+    url: 'https://vibeterm.example.com/s/abc',
     viewers: 0,
     logBytes: 0,
     logTruncated: false,
@@ -130,8 +130,8 @@ describe('logSizeText', () => {
 
 describe('originHostText', () => {
   test('只出主机名', () => {
-    expect(originHostText('https://tmex.example.com')).toBe('tmex.example.com');
-    expect(originHostText('https://tmex.example.com:8443')).toBe('tmex.example.com:8443');
+    expect(originHostText('https://vibeterm.example.com')).toBe('vibeterm.example.com');
+    expect(originHostText('https://vibeterm.example.com:8443')).toBe('vibeterm.example.com:8443');
   });
 
   test('拿不到合法 URL 时原样展示', () => {

@@ -70,8 +70,8 @@ test('desktop dpr=2: mouse press row matches the rendered grid row on the lower 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mouse-row-${Date.now()}`;
-  const logPath = `/tmp/tmex-e2e-mouse-row-${Date.now()}.log`;
+  const sessionName = `vibeterm-e2e-mouse-row-${Date.now()}`;
+  const logPath = `/tmp/vibeterm-e2e-mouse-row-${Date.now()}.log`;
   // 直接以 TUI 为 session 初始命令并给足行数：python TUI 不响应 WINCH 重绘，
   // 默认 80x24 会话只剩尾部 24 行可见（'row 10' 等不到）
   ensureCleanSession(sessionName);

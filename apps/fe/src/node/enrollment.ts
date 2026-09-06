@@ -24,9 +24,12 @@ import {
   hexToBytes,
   verifyNodeCertificate,
 } from '@vibeterm/shared/auth';
+import { migrateStorageKey } from '@vibeterm/stores';
 import type { HubApi } from './hub-api';
 
-export const PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
+export const PENDING_STORAGE_KEY = 'vibeterm.enrollment.pending';
+/** 改名前的键，首次读取时搬运 */
+const LEGACY_PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
 
 /**
  * sessionStorage 里的一条待确认 enrollment。二进制字段一律 base64url。
@@ -179,6 +182,7 @@ export function listPendingEnrollments(): PendingEnrollment[] {
     cache = [];
     return cache;
   }
+  migrateStorageKey(store, LEGACY_PENDING_STORAGE_KEY, PENDING_STORAGE_KEY);
   let raw: string | null = null;
   let rows: PendingEnrollment[] = [];
   try {
@@ -767,7 +771,7 @@ export function joinCommand(hubPublicUrl: string, token: string, name?: string |
     throw new Error('hub public url must be an https url');
   }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `tmex hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
+  return `vibeterm hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
 }
 
 function shellQuote(value: string): string {

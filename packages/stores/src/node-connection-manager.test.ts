@@ -123,7 +123,7 @@ describe('NodeConnectionManager.get', () => {
     expect(b.runtime.storagePrefix).toBe(`n:${NODE_B}:`);
     expect(a.runtime.stores.tmux).not.toBe(b.runtime.stores.tmux);
     expect(a.runtime.stores.agent).not.toBe(b.runtime.stores.agent);
-    // UI 偏好是宿主级的，所有 node 共用一份（key 仍为 tmex-ui）
+    // UI 偏好是宿主级的，所有 node 共用一份（key 仍为 vibeterm-ui）
     expect(a.runtime.stores.ui).toBe(b.runtime.stores.ui);
     manager.disposeAll();
   });

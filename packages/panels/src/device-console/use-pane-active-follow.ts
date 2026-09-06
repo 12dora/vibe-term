@@ -4,6 +4,7 @@
 // 「记账 → 事件跟随 → 快照跟随 → 建窗跟随」，调换会改变跟随目标与 select 变体。
 
 import type { TmuxWindow } from '@vibeterm/shared';
+import { USER_INITIATED_SELECTION_EVENT } from '@vibeterm/stores';
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { type PaneSelection, shouldTrackPendingRouteSelection } from '@vibeterm/terminal-ui';
 import { useEffect } from 'react';
@@ -217,9 +218,9 @@ export function usePaneActiveFollow({
       }
     };
 
-    window.addEventListener('tmex:user-initiated-selection', handler as EventListener);
+    window.addEventListener(USER_INITIATED_SELECTION_EVENT, handler as EventListener);
     return () => {
-      window.removeEventListener('tmex:user-initiated-selection', handler as EventListener);
+      window.removeEventListener(USER_INITIATED_SELECTION_EVENT, handler as EventListener);
     };
   }, [deviceId, userInitiatedSelectionRef]);
 }

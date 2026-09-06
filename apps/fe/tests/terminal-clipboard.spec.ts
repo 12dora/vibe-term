@@ -16,7 +16,7 @@ test('desktop: paste shortcut should deliver clipboard text to the terminal', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-clipboard-paste-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-clipboard-paste-${Date.now()}`;
   createTwoPaneSession(sessionName);
   const deviceId = await createLocalDevice(
     request,
@@ -46,7 +46,7 @@ test('desktop: paste shortcut should deliver clipboard text to the terminal', as
 });
 
 test('desktop: Ctrl+C should interrupt the foreground process', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-clipboard-sigint-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-clipboard-sigint-${Date.now()}`;
   createTwoPaneSession(sessionName);
   const deviceId = await createLocalDevice(
     request,
@@ -78,7 +78,7 @@ test('desktop: Ctrl+C should interrupt the foreground process', async ({ page, r
 });
 
 test('desktop: Ctrl+B inside terminal should not toggle the sidebar', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-clipboard-prefix-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-clipboard-prefix-${Date.now()}`;
   createTwoPaneSession(sessionName);
   const deviceId = await createLocalDevice(
     request,

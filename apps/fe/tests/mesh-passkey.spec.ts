@@ -384,7 +384,8 @@ async function meshNodesStatus(target: Page): Promise<number> {
 /** 本 document 至今起过几次 WebAuthn 断言仪式（由 context 的 init script 计数）。 */
 async function passkeyGetCalls(target: Page): Promise<number> {
   return target.evaluate(
-    () => (window as unknown as { __vibetermPasskeyGetCalls?: number }).__vibetermPasskeyGetCalls ?? 0
+    () =>
+      (window as unknown as { __vibetermPasskeyGetCalls?: number }).__vibetermPasskeyGetCalls ?? 0
   );
 }
 

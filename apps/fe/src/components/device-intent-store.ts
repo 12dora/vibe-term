@@ -14,6 +14,7 @@ import {
   type DeviceIdStorage,
   connectedDevicesKey,
   disconnectedDevicesKey,
+  migrateDeviceIntentKeys,
   pruneUnknownDeviceIds,
   readPersistedIds,
   withDeviceId,
@@ -46,6 +47,7 @@ export class DeviceIntentStore {
   private snapshot: DeviceIntentSnapshot;
 
   constructor(storagePrefix: string, storage?: DeviceIdStorage | null) {
+    migrateDeviceIntentKeys(storagePrefix, storage);
     this.connectedKey = connectedDevicesKey(storagePrefix);
     this.disconnectedKey = disconnectedDevicesKey(storagePrefix);
     this.storage = storage;

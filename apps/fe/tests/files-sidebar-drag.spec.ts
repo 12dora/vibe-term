@@ -17,8 +17,8 @@ test.afterAll(() => {
 });
 
 test('files: 拖动根目录不会把侧栏横向滚动，且纵向重排生效', async ({ page }) => {
-  sandboxA = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-drag-a-')));
-  sandboxB = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-drag-b-')));
+  sandboxA = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-drag-a-')));
+  sandboxB = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-drag-b-')));
   writeFileSync(join(sandboxA, 'a.txt'), 'a');
   writeFileSync(join(sandboxB, 'b.txt'), 'b');
 

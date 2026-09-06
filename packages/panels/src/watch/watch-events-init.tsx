@@ -14,7 +14,7 @@ import type {
 } from '@vibeterm/shared';
 import { wsBorsh } from '@vibeterm/shared';
 import type { AppRuntime } from '@vibeterm/stores';
-import { encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { USER_INITIATED_SELECTION_EVENT, encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import type { BorshWebSocketClient } from '@vibeterm/ws-client';
 import i18next from 'i18next';
@@ -26,14 +26,14 @@ const initializedClients = new WeakSet<BorshWebSocketClient>();
 const PANE_URL_RE = /\/devices\/([^/]+)\/windows\/([^/]+)\/panes\/([^/]+)$/;
 
 // 「sidebar device list 点击同款」跳转语义（与 stores/app-navigation.ts 保持一致）：
-// pane 路由先 dispatch tmex:user-initiated-selection（2s 内防自动跟踪覆盖该选择）再导航（replace）。
+// pane 路由先 dispatch USER_INITIATED_SELECTION_EVENT（2s 内防自动跟踪覆盖该选择）再导航（replace）。
 // detail 里的 paneId 与 sidebar navigateToPane 保持一致：原始未编码值。
 function navigateToWatchUrl(runtime: AppRuntime, url: string): void {
   const match = PANE_URL_RE.exec(url);
   if (match) {
     const [, deviceId, windowId, encodedPaneId] = match;
     window.dispatchEvent(
-      new CustomEvent('tmex:user-initiated-selection', {
+      new CustomEvent(USER_INITIATED_SELECTION_EVENT, {
         detail: { deviceId, windowId, paneId: decodeURIComponent(encodedPaneId) },
       })
     );

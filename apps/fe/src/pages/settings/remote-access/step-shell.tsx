@@ -30,7 +30,7 @@ export function WizardStepCard({
     <section
       data-testid={testId}
       data-step-state={state}
-      className={`rounded-xl p-3 ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+      className={`rounded-xl p-3 ring-1 transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
         state === 'current' ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10'
       }`}
     >

@@ -100,6 +100,6 @@ describe('agent persist 写盘门控', () => {
     store.getState().setDefaultWriteMode('auto');
     expect(writes).toBe(before + 1);
 
-    expect(localStorage.getItem('persist-gate-test-tmex-agent')).toContain('"auto"');
+    expect(localStorage.getItem('persist-gate-test-vibeterm-agent')).toContain('"auto"');
   });
 });

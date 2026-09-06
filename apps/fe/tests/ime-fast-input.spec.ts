@@ -20,7 +20,7 @@ test('issue45 ime fast input: composition events deliver 你好世界！ without
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-ime-fast-input-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-ime-fast-input-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(

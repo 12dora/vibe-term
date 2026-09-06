@@ -87,7 +87,7 @@ export interface JoinSession {
 /** 「已加入」标记的最长寿命：过了就当作过期信息丢掉，别永远赖在步骤 6 上。 */
 export const ADMITTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
-const SESSION_STORAGE_KEY = 'tmex.connectDevices.joinSession';
+const SESSION_STORAGE_KEY = 'vibeterm.connectDevices.joinSession';
 
 function sessionStore(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
   return (globalThis as { sessionStorage?: Storage }).sessionStorage ?? null;

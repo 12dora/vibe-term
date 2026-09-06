@@ -317,7 +317,7 @@ function Badge({
   testId: string;
 }) {
   const className = cn(
-    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
     tone === 'ok'
       ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
       : 'border-border text-muted-foreground'
@@ -402,7 +402,7 @@ export function NodeLinkDiagnostics({
   const failures = kind === 'relay' ? directFailureRows(link.directFailure) : [];
   return (
     <div
-      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--tmex-motion-fast) ease-out motion-reduce:animate-none"
+      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--vibeterm-motion-fast) ease-out motion-reduce:animate-none"
       data-testid="ice-diagnostics"
     >
       <div className="mb-1 font-semibold">{t('nodes.badge.iceTitle')}</div>

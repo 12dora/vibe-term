@@ -27,7 +27,7 @@ export function PureRelayConfirm({
       confirmTestId="setup-pure-relay-confirm-ok"
     >
       <span className="block">{t('nodes.setup.pureRelayConfirm.description')}</span>
-      <span className="mt-2 block font-mono">tmex relay status</span>
+      <span className="mt-2 block font-mono">vibeterm relay status</span>
     </ConfirmDialog>
   );
 }

@@ -4,7 +4,11 @@
 import { sortNodes, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
-import { type SortableRow, SortableVerticalList, useSortableRow } from '@vibeterm/panels/device-tree';
+import {
+  type SortableRow,
+  SortableVerticalList,
+  useSortableRow,
+} from '@vibeterm/panels/device-tree';
 import { useUIStore } from '@vibeterm/stores/react';
 import { useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';

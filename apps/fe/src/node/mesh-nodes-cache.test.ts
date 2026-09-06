@@ -11,7 +11,7 @@ import {
   writeMeshNodesCache,
 } from './mesh-nodes-cache';
 
-const KEY = 'tmex:mesh-nodes';
+const KEY = 'vibeterm:mesh-nodes';
 const NOW = 1_700_000_000_000;
 
 function memoryStorage(initial: Record<string, string> = {}): MeshNodesCacheStorage & {

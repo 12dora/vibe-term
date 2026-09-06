@@ -33,7 +33,7 @@ export const DeviceRow = memo(function DeviceRow(props: DeviceRowProps) {
       style={sortable.style}
       data-testid={`device-item-${deviceId}`}
       className={cn(
-        'group/device rounded-xl border border-border/60 overflow-hidden transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        'group/device rounded-xl border border-border/60 overflow-hidden transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         isSelected ? 'bg-chat-surface' : 'bg-muted/20',
         sortable.isDragging && 'opacity-60 shadow-lg'
       )}

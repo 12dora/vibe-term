@@ -144,7 +144,7 @@ describe('HttpsSection selfsigned', () => {
         sans: ['hub.lan', '192.168.1.10'],
         notBefore: Date.now() - 1000,
         notAfter: Date.now() + 86_400_000 * 100,
-        issuer: 'CN=tmex local CA',
+        issuer: 'CN=VibeTerm local CA',
       },
       listener: { running: true, port: 9443, error: null },
     });
@@ -156,7 +156,7 @@ describe('HttpsSection selfsigned', () => {
     expect(html).toContain('data-testid="https-ca-fingerprint"');
     expect(html).toContain('data-testid="https-ca-download"');
     expect(html).toContain('href="/api/tls/ca.crt"');
-    expect(html).toContain('download="tmex-ca.crt"');
+    expect(html).toContain('download="vibeterm-ca.crt"');
     for (const platform of ['macos', 'ios', 'windows', 'android', 'linux']) {
       expect(html).toContain(`data-testid="https-ca-guide-${platform}"`);
     }
@@ -168,7 +168,7 @@ describe('HttpsSection selfsigned', () => {
     const html = render();
     expect(html).toContain('hub.lan');
     expect(html).toContain('192.168.1.10');
-    expect(html).toContain('CN=tmex local CA');
+    expect(html).toContain('CN=VibeTerm local CA');
     expect(html).toContain('data-testid="https-listener-state"');
     expect(html).toContain('data-testid="https-cert-valid-until"');
   });

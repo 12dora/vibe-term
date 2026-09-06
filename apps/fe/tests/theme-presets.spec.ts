@@ -44,7 +44,7 @@ async function readBodyBackground(page: Page): Promise<string> {
 }
 
 test('theme-presets: Dracula 同时换 UI token 与终端配色，刷新后保持', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-theme-preset-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-preset-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-preset-${Date.now()}`);

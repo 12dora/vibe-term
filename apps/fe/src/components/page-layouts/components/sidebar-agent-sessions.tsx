@@ -152,7 +152,7 @@ function AgentOrphanSessions({
         </span>
         <ChevronRight
           className={cn(
-            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
+            'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none',
             open && 'rotate-90'
           )}
         />

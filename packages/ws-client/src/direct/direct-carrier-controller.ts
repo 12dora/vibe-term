@@ -8,7 +8,7 @@
 //   2. 建 `RTCPeerConnection`，开 `sess` 通道（ordered + reliable）
 //   3. `createOffer()` + `setLocalDescription()`，从 `localDescription.sdp` 解出 `fp_browser`
 //   4. `POST /api/rtc/authorize {rtcSession, fp_browser, connectionId}`（同时带
-//      `x-tmex-connection` 头）→ `{nonce, fp_node}`；node 据 connectionId 把直连挂到
+//      connection 头）→ `{nonce, fp_node}`；node 据 connectionId 把直连挂到
 //      本标签页那条 Gateway WS 上（同 sid 多标签时不带它会 409）
 //   5. 经注入的信令通道发 offer，随后才放本地 ICE 候选出去（entry 要先见到本 rtcSession
 //      的 offer 才认候选）；收到 answer 后**核对远端 SDP 指纹 == fp_node**，
@@ -33,6 +33,7 @@
 // 失败但不自动重试。`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 与「signaling not ready」
 // 不计入失败。`maxAttempts`（默认 5）只限制同一不健康周期内的自动重试次数。
 
+import { CONNECTION_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
 import {
@@ -88,7 +89,7 @@ export const SESS_CHANNEL_LABEL = 'sess';
 export const RTC_CONFIG_PATH = '/api/mesh/rtc-config';
 export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
 export const MESH_CONNECTION_PATH = '/api/mesh/connection';
-export const X_VIBETERM_CONNECTION_HEADER = 'x-tmex-connection';
+export { CONNECTION_HEADER };
 
 /** `GET /api/mesh/connection`：带上本条 WS 的 client nonce，node 据此答出**服务端** id。 */
 export function meshConnectionPath(cid?: string | null): string {
@@ -618,7 +619,7 @@ export class DirectCarrierController {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(connectionId ? { [X_VIBETERM_CONNECTION_HEADER]: connectionId } : {}),
+        ...(connectionId ? assignHeaderPair({}, CONNECTION_HEADER, connectionId) : {}),
       },
       body: JSON.stringify({
         rtcSession: attempt.rtcSession,

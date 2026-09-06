@@ -188,7 +188,7 @@ const CASES: [input: string, expected: string][] = [
   ['scale-[1.03] scale-100', 'scale-100'],
   ['transition-all transition-colors', 'transition-colors'],
   ['transition transition-none', 'transition-none'],
-  ['duration-150 duration-(--tmex-motion-fast)', 'duration-(--tmex-motion-fast)'],
+  ['duration-150 duration-(--vibeterm-motion-fast)', 'duration-(--vibeterm-motion-fast)'],
   ['ease-in ease-out', 'ease-out'],
   ['animate-spin animate-none', 'animate-none'],
   ['opacity-0 opacity-100', 'opacity-100'],

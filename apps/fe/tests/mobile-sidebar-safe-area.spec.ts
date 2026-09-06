@@ -11,7 +11,7 @@ test('mobile: sidebar hides scrollbar and covers safe area', async ({ page, requ
       data: {
         name: `${batchKey}-${String(i).padStart(2, '0')}`,
         type: 'local',
-        session: 'tmex',
+        session: 'vibeterm',
         authMode: 'auto',
       },
     });
@@ -35,7 +35,7 @@ test('mobile: sidebar hides scrollbar and covers safe area', async ({ page, requ
   await expect(sidebar.getByTestId(`device-item-${deviceIds[0]}`)).toBeVisible();
 
   await page.evaluate(() => {
-    document.documentElement.style.setProperty('--tmex-safe-area-bottom', '24px');
+    document.documentElement.style.setProperty('--vibeterm-safe-area-bottom', '24px');
   });
   const paddingBottom = await sidebar.evaluate((el) => getComputedStyle(el).paddingBottom);
   expect(paddingBottom).toBe('24px');

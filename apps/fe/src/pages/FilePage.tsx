@@ -69,7 +69,7 @@ const TEXT_CATEGORIES: ReadonlySet<FileCategory> = new Set<FileCategory>([
 
 function CenteredMessage({ icon, text }: { icon?: ReactNode; text: string }) {
   return (
-    <div className="tmex-fade flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
+    <div className="vibeterm-fade flex h-full flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground">
       {icon}
       <span className="text-sm">{text}</span>
     </div>

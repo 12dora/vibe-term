@@ -76,11 +76,11 @@ const PREFIX_A = 'n:0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a:';
 const PREFIX_B = 'n:0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b:';
 
 function connectedKey(prefix: string): string {
-  return `${prefix}tmex:connectedDevices`;
+  return `${prefix}vibeterm:connectedDevices`;
 }
 
 function disconnectedKey(prefix: string): string {
-  return `${prefix}tmex:disconnectedDevices`;
+  return `${prefix}vibeterm:disconnectedDevices`;
 }
 
 function createRuntime(storagePrefix: string): { runtime: AppRuntime; transport: FakeTransport } {
@@ -221,7 +221,10 @@ describe('缺陷 1：不同 node 的 provider 各用自己的意图与存储键'
     const writes: string[] = [];
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (key: string, value: string) => {
-      if (key.endsWith('tmex:connectedDevices') || key.endsWith('tmex:disconnectedDevices')) {
+      if (
+        key.endsWith('vibeterm:connectedDevices') ||
+        key.endsWith('vibeterm:disconnectedDevices')
+      ) {
         writes.push(key);
       }
       setItem(key, value);

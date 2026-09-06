@@ -29,7 +29,7 @@ export function DeviceRowHeader({
     <div className="relative px-3 py-1.5">
       <span
         className={cn(
-          'absolute left-0 top-0 bottom-0 w-0.5 bg-muted-foreground/70 transition-opacity duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+          'absolute left-0 top-0 bottom-0 w-0.5 bg-muted-foreground/70 transition-opacity duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
           isSelected ? 'opacity-100' : 'opacity-0'
         )}
       />
@@ -60,7 +60,7 @@ export function DeviceRowHeader({
         >
           <ChevronRight
             className={cn(
-              'h-3.5 w-3.5 transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+              'h-3.5 w-3.5 transition-transform duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
               isExpanded && 'rotate-90'
             )}
           />

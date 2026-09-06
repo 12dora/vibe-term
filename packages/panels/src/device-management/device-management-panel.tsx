@@ -64,7 +64,7 @@ export interface DeviceManagementPanelProps {
 
 function NoticeCard({ text }: { text: string }) {
   return (
-    <Card size="sm" className="tmex-reveal">
+    <Card size="sm" className="vibeterm-reveal">
       <CardContent className="py-10 text-center text-sm text-muted-foreground">{text}</CardContent>
     </Card>
   );
@@ -78,7 +78,7 @@ function LoadErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void
     ? t('device.loadFailedUnreachableReason', { reason: info.reason })
     : t(deviceLoadErrorMessageKey(info.kind));
   return (
-    <Card size="sm" className="tmex-reveal">
+    <Card size="sm" className="vibeterm-reveal">
       <CardContent className="space-y-3 py-10 text-center" data-testid="devices-load-error">
         <p className="text-sm text-destructive" data-error-kind={info.kind}>
           {text}
@@ -94,7 +94,7 @@ function LoadErrorCard({ error, onRetry }: { error: unknown; onRetry: () => void
 function EmptyState({ onAdd }: { onAdd: () => void }) {
   const { t } = useTranslation();
   return (
-    <Card size="sm" className="tmex-reveal">
+    <Card size="sm" className="vibeterm-reveal">
       <CardContent className="space-y-3 py-8 text-center">
         <div className="mx-auto flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-muted">
           <Monitor className="h-5 w-5 text-muted-foreground" />

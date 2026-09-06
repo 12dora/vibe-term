@@ -10,7 +10,11 @@ import { useMeshRelay } from '@/node/mesh-relay';
 import { LOCAL_STATUS_QUERY_KEY } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
 import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
-import { type LocalApi, LocalApiError, defaultLocalApi } from '@vibeterm/api-client/local/local-api';
+import {
+  type LocalApi,
+  LocalApiError,
+  defaultLocalApi,
+} from '@vibeterm/api-client/local/local-api';
 import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import type { ConnectStatus } from './connect-path';
 

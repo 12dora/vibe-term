@@ -4,10 +4,13 @@
 // 接一次自己的中继，这条记号就是用来在重启后把那个入口顶到眼前的。与 setup 记号一样：
 // 只放路径名、有保质期、读一次即清。
 
+import { migrateStorageKey } from '@vibeterm/stores';
 import type { IntentStorage } from '../membership/intent';
 import { browserIntentStorage } from '../membership/intent';
 
-export const SELF_RELAY_FOLLOW_UP_KEY = 'tmex.setup.followUp';
+export const SELF_RELAY_FOLLOW_UP_KEY = 'vibeterm.setup.followUp';
+/** 改名前的键，读取前搬运 */
+const LEGACY_SELF_RELAY_FOLLOW_UP_KEY = 'tmex.setup.followUp';
 
 /** 记号里唯一认识的路径名；换了别的值一律当没有。 */
 export const SELF_RELAY_FOLLOW_UP_PATH = 'enroll-self-relay';
@@ -34,6 +37,7 @@ export function takeSelfRelayFollowUp(
   storage: IntentStorage | null = browserIntentStorage(),
   now: number = Date.now()
 ): boolean {
+  migrateStorageKey(storage, LEGACY_SELF_RELAY_FOLLOW_UP_KEY, SELF_RELAY_FOLLOW_UP_KEY);
   let raw: string | null = null;
   try {
     raw = storage?.getItem(SELF_RELAY_FOLLOW_UP_KEY) ?? null;

@@ -80,7 +80,7 @@ async function swipe(
 }
 
 test('mobile: editor interactions keep focus and send ws messages', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-mobile-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-term-${Date.now()}`;
@@ -148,7 +148,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-ime-symbol-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-ime-symbol-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-ime-symbol-${Date.now()}`;
@@ -217,7 +217,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-ime-cancel-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-ime-cancel-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-ime-cancel-${Date.now()}`;
@@ -292,7 +292,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
 });
 
 test('mobile: terminal can scroll with touch gesture', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-mobile-scroll-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-scroll-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-scroll-${Date.now()}`;
@@ -395,7 +395,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-longpress-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-longpress-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {
@@ -548,7 +548,7 @@ test('mobile: only the cursor row wakes the keyboard, the hide button dismisses 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-kbd-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-kbd-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {

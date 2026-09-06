@@ -49,7 +49,7 @@ export function createDefaultFormValues(
       // host 不预填（需用户填真实地址）；sshConfigRef 仅 configRef 模式用，默认留空。
       username: 'root',
       sshConfigRef: '',
-      session: 'tmex',
+      session: 'vibeterm',
       defaultWorkingDir: '',
       authMode: 'auto',
       password: '',
@@ -58,6 +58,8 @@ export function createDefaultFormValues(
     };
   }
 
+  // 服务端 devices.session 列默认仍是 'tmex'（跨版本兼容，不改），已有设备一律带显式值，
+  // 这里的兜底只在字段缺失时生效。
   return {
     name: device.name,
     type: device.type,
@@ -65,7 +67,7 @@ export function createDefaultFormValues(
     port: device.port ?? 22,
     username: device.username ?? '',
     sshConfigRef: device.sshConfigRef ?? '',
-    session: device.session ?? 'tmex',
+    session: device.session ?? 'vibeterm',
     defaultWorkingDir: device.defaultWorkingDir ?? '',
     authMode: device.type === 'local' ? 'auto' : normalizeSshAuthMode(device.authMode),
     password: '',
@@ -79,7 +81,7 @@ export function buildCreatePayload(values: DeviceFormValues): CreateDeviceReques
     return {
       name: values.name.trim(),
       type: 'local',
-      session: normalizeText(values.session) ?? 'tmex',
+      session: normalizeText(values.session) ?? 'vibeterm',
       defaultWorkingDir: normalizeText(values.defaultWorkingDir),
       authMode: 'auto',
     };
@@ -93,7 +95,7 @@ export function buildCreatePayload(values: DeviceFormValues): CreateDeviceReques
     host: values.host.trim(),
     port: values.port,
     username: values.username.trim(),
-    session: normalizeText(values.session) ?? 'tmex',
+    session: normalizeText(values.session) ?? 'vibeterm',
     defaultWorkingDir: normalizeText(values.defaultWorkingDir),
     authMode: values.authMode,
   };
@@ -118,7 +120,7 @@ export function buildUpdatePayload(values: DeviceFormValues): UpdateDeviceReques
   if (values.type === 'local') {
     return {
       name: values.name.trim(),
-      session: normalizeText(values.session) ?? 'tmex',
+      session: normalizeText(values.session) ?? 'vibeterm',
       defaultWorkingDir: normalizeText(values.defaultWorkingDir) ?? '',
       authMode: 'auto',
     };
@@ -132,7 +134,7 @@ export function buildUpdatePayload(values: DeviceFormValues): UpdateDeviceReques
     port: values.port,
     username: values.username.trim(),
     sshConfigRef: values.authMode === 'configRef' ? values.sshConfigRef.trim() : '',
-    session: normalizeText(values.session) ?? 'tmex',
+    session: normalizeText(values.session) ?? 'vibeterm',
     defaultWorkingDir: normalizeText(values.defaultWorkingDir) ?? '',
     authMode: values.authMode,
   };

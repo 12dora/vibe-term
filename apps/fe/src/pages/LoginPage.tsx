@@ -27,7 +27,11 @@ import {
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
-import { defaultAuthApi, isWebAuthnAvailable, requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import {
+  defaultAuthApi,
+  isWebAuthnAvailable,
+  requireRootEpoch,
+} from '@vibeterm/api-client/auth/index';
 import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
 import { OtpInput } from '@vibeterm/ui/otp-input';
@@ -184,7 +188,7 @@ function PasskeyRow({
 }
 
 // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，输入框里的是用户名。
-// 用户名框没有默认值（`tmex relay join` 建出来的账号，用户名就是那串 uid，填进去只会吓人），
+// 用户名框没有默认值（`vibeterm relay join` 建出来的账号，用户名就是那串 uid，填进去只会吓人），
 // 所以留空是常态：此时按 mode 给的 uid 走。只有确实输了一个**别的**名字才按名字走。
 export function resolveLoginUid(
   mode: Pick<AuthModeResponse, 'uid' | 'username'>,
@@ -349,7 +353,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="login-page">
       <form
-        className="tmex-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
+        className="vibeterm-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={(event) => void onSubmit(event)}
       >
         <Brand className="justify-center" />
@@ -408,7 +412,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
         </output>
         {error ? (
           <p
-            className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
+            className="vibeterm-fade flex items-start gap-1.5 text-sm text-destructive"
             data-testid="login-error"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />

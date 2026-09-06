@@ -11,7 +11,11 @@ import type {
   PublicKeyCredentialDescriptorJSON,
   PublicKeyCredentialRequestOptionsJSON,
 } from '@vibeterm/api-client/auth/index';
-import { WebAuthnError, defaultAuthApi, startAuthentication } from '@vibeterm/api-client/auth/index';
+import {
+  WebAuthnError,
+  defaultAuthApi,
+  startAuthentication,
+} from '@vibeterm/api-client/auth/index';
 import type { Login, RootKey } from '@vibeterm/shared/auth';
 import {
   buildLogin,

@@ -174,7 +174,7 @@ function PathCard({
     <label
       data-testid={testId}
       data-selected={selected ? 'true' : 'false'}
-      className={`flex flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+      className={`flex flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
         disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
       } ${selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'}`}
     >

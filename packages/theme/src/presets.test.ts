@@ -24,7 +24,8 @@ function semanticTokensFromRoot(): string[] {
   return [...root[1].matchAll(/^\s*(--[a-z0-9-]+):/gm)]
     .map((m) => m[1])
     .filter(
-      (name) => !name.startsWith('--base-') && !name.startsWith('--tmex-') && name !== '--radius'
+      (name) =>
+        !name.startsWith('--base-') && !name.startsWith('--vibeterm-') && name !== '--radius'
     );
 }
 

@@ -63,7 +63,7 @@ export function SharePasswordForm({
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="share-password">
       <form
-        className="tmex-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
+        className="vibeterm-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={submit}
       >
         <h1 className="truncate text-base font-semibold" data-testid="share-name">
@@ -104,7 +104,7 @@ export function SharePasswordForm({
         </output>
         {message ? (
           <p
-            className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
+            className="vibeterm-fade flex items-start gap-1.5 text-sm text-destructive"
             data-testid="share-password-error"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />

@@ -91,7 +91,7 @@ export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined
 }
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
-  clientImpl: 'tmex-fe',
+  clientImpl: 'vibeterm-fe',
   clientVersion: getDefaultClientVersion(),
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,

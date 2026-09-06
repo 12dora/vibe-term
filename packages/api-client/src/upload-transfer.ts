@@ -1,4 +1,4 @@
-// 分块上传：init → 并行区间 PUT（leg1 浏览器→tmex）→ commit 流式 NDJSON（leg2 tmex→服务器 rsync）。
+// 分块上传：init → 并行区间 PUT（leg1 浏览器→VibeTerm）→ commit 流式 NDJSON（leg2 VibeTerm→服务器 rsync）。
 // leg1 交给 `@vibeterm/transfer` 的推送驱动：失败按已收区间续传，不再整包重来。
 
 import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@vibeterm/shared';

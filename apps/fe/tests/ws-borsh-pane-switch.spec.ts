@@ -15,7 +15,7 @@ test('ws-borsh: TMUX_SELECT carries cols/rows and the canonical screen transacti
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-barrier-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-barrier-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 
@@ -92,7 +92,7 @@ test('ws-borsh: rapid window switches keep subscription generations monotonic an
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-rapid-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-rapid-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 

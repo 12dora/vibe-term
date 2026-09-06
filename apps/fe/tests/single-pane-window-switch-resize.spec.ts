@@ -17,7 +17,7 @@ test('single-pane window switch resizes target window to webapp viewport', async
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-switch-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-switch-resize-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 

@@ -9,8 +9,11 @@
 // 是错的。鉴权相关的 `/api/auth/mode` 主体也不落盘，只留一个「上次是不是 mesh」的布尔值。
 
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { migrateStorageKey } from '@vibeterm/stores';
 
-const CACHE_KEY = 'tmex:mesh-nodes';
+const CACHE_KEY = 'vibeterm:mesh-nodes';
+/** 改名前的键，读缓存时顺手搬一次 */
+const LEGACY_CACHE_KEY = 'tmex:mesh-nodes';
 const CACHE_VERSION = 1;
 
 /** 超过这个年龄的缓存直接丢弃：成员集早就变了，拿它当第一帧只会显示一堆不存在的节点。 */
@@ -75,6 +78,7 @@ export function readMeshNodesCache(
   now = Date.now()
 ): MeshNodesCache | null {
   if (!storage) return null;
+  migrateStorageKey(storage, LEGACY_CACHE_KEY, CACHE_KEY);
   try {
     const raw = storage.getItem(CACHE_KEY);
     if (!raw) return null;

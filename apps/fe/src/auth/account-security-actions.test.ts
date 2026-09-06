@@ -580,8 +580,8 @@ describe('TOTP 两段式设置', () => {
   test('第一段只生成密钥与 URI，不写任何 key-log 记录', () => {
     const { api, posted } = mockApi();
     void api;
-    const draft = beginTotpSetup({ uid: UID, issuer: 'tmex', secret });
-    expect(draft.otpauthUri.startsWith('otpauth://totp/tmex:alice?')).toBe(true);
+    const draft = beginTotpSetup({ uid: UID, issuer: 'VibeTerm', secret });
+    expect(draft.otpauthUri.startsWith('otpauth://totp/VibeTerm:alice?')).toBe(true);
     expect(posted).toHaveLength(0);
   });
 

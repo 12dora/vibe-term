@@ -5,7 +5,7 @@
 //   每条 socket 另带一个 client nonce `?cid=`（见 `createDefaultNodeConnection`）。
 // - REST：`new ApiClient(nodePathPrefix(id))`，端点函数照旧传 `/api/...`。
 // - storage：agent / file-tree 等 key 带 node 前缀；UI 偏好（主题、侧栏、终端字号）是
-//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `tmex-ui`）。
+//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `vibeterm-ui`）。
 // - 路由：host.appPath 注入 `/n/<id>` 前缀，包内构造的应用内路径与 matchPath pattern 一并生效。
 
 import {
@@ -125,7 +125,7 @@ export class NodeConnectionManager {
     );
   }
 
-  /** 所有 node 共用的 UI 偏好 store（key 恒为 `tmex-ui`，与单 node 时一致）。 */
+  /** 所有 node 共用的 UI 偏好 store（key 恒为 `vibeterm-ui`，与单 node 时一致）。 */
   private uiStore(): UIStore {
     if (!this.sharedUiStore) this.sharedUiStore = createUIStore({ storagePrefix: '' });
     return this.sharedUiStore;

@@ -40,7 +40,7 @@ export function ConnectionDetails({ relay, hubs, selfNodeId }: ConnectionDetails
         className="group/details flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         data-testid="local-machine-details-toggle"
       >
-        <ChevronRight className="size-3.5 transition-transform duration-(--tmex-motion-fast) group-data-panel-open/details:rotate-90 motion-reduce:transition-none" />
+        <ChevronRight className="size-3.5 transition-transform duration-(--vibeterm-motion-fast) group-data-panel-open/details:rotate-90 motion-reduce:transition-none" />
         {t('nodes.machine.details.title')}
       </CollapsibleTrigger>
       <CollapsibleContent>

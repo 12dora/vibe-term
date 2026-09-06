@@ -6,7 +6,11 @@
 import { fileDownloadUrl } from '@vibeterm/api-client';
 import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
-import { ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@vibeterm/ui/context-menu';
+import {
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '@vibeterm/ui/context-menu';
 import { Download, FolderOpen } from 'lucide-react';
 import type { DragEvent } from 'react';
 import { useCallback, useMemo } from 'react';

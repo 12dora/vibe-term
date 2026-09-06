@@ -3,7 +3,10 @@
 // sk_sess 不能签任何持久记录：每个动作都要么现场用密码重派生根钥，
 // 要么让另一把 passkey 对该条记录做一次专用 assertion（challenge = sha256(recordBytes)）。
 
-import type { AuthenticationResponseJSON, KeyLogHeadResponse } from '@vibeterm/api-client/auth/index';
+import type {
+  AuthenticationResponseJSON,
+  KeyLogHeadResponse,
+} from '@vibeterm/api-client/auth/index';
 import { assertForChallenge } from '@vibeterm/api-client/auth/index';
 import type {
   AddPasskeyPayload,

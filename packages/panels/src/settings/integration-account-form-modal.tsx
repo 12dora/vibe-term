@@ -9,7 +9,13 @@ import { toast } from 'sonner';
 
 import { cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@vibeterm/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@vibeterm/ui/dialog';
 import { Input } from '@vibeterm/ui/input';
 import { Switch } from '@vibeterm/ui/switch';
 

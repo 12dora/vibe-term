@@ -7,7 +7,7 @@ test('mobile: single pane view with pane switcher and stacked layout', async ({
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-split-mobile-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-split-mobile-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {

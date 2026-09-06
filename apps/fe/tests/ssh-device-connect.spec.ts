@@ -76,7 +76,9 @@ test('ssh device: probe and runtime connect are parameterized by target name', a
   await expect(page.getByTestId('device-page')).toBeVisible();
   await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
   await expect
-    .poll(() => page.evaluate(() => Boolean((window as any).__vibetermE2eXterm)), { timeout: 30_000 })
+    .poll(() => page.evaluate(() => Boolean((window as any).__vibetermE2eXterm)), {
+      timeout: 30_000,
+    })
     .toBeTruthy();
 
   await page.locator('.xterm').first().click();

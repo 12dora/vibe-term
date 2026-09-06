@@ -7,7 +7,7 @@ test('device: terminal ui renders and editor input toggles', async ({ page, requ
     data: {
       name,
       type: 'local',
-      session: 'tmex',
+      session: 'vibeterm',
       authMode: 'auto',
     },
   });

@@ -156,7 +156,7 @@ test('bug1: split-pane B selection persists while A continuously outputs (5s / 1
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-bug1-persist-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-persist-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const paneA = paneIds[0]!;
   const paneB = paneIds[1]!;
@@ -202,7 +202,7 @@ test('bug1: 2x2 split — any pane output does not affect other panes selection'
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-bug1-2x2-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-2x2-${Date.now()}`;
   const { paneIds } = createFourPaneSession(sessionName);
   expect(paneIds.length).toBe(4);
 
@@ -253,7 +253,7 @@ test('bug1: split-pane focus switch (same window) does not clear selection', asy
 }) => {
   // 分屏同窗切 pane 走轻量 FOCUS_PANE（不重建终端），selection 应保留。
   // 跨 window 切换清 selection 的语义由 terminal-selection-canvas.spec.ts 覆盖。
-  const sessionName = `tmex-e2e-bug1-focus-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-focus-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const paneA = paneIds[0]!;
   const paneB = paneIds[1]!;
@@ -318,7 +318,7 @@ test('bug1: cross-window switch still clears selection (existing expected semant
 }) => {
   // 跨 window 切换重建终端，selection 被清——这是现有 expected 语义，不应被 bug1 修复破坏。
   // 单 pane 视图（非分屏），用全局 __vibetermE2eXterm 读 selection。
-  const sessionName = `tmex-e2e-bug1-xwindow-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-xwindow-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   const pane0 = paneIds[0]!;
   const pane1 = paneIds[1]!;

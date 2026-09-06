@@ -122,7 +122,7 @@ export function SelfSignedPanel({
           <div className="flex flex-wrap items-center gap-2">
             <a
               href={caUrl}
-              download="tmex-ca.crt"
+              download="vibeterm-ca.crt"
               className="inline-flex h-7 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-[0.8rem] font-medium hover:bg-muted"
               data-testid="https-ca-download"
             >

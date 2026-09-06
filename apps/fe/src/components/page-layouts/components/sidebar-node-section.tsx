@@ -199,7 +199,7 @@ function SectionHeader({
         >
           <ChevronRight
             className={cn(
-              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
               disclosure.expanded && 'rotate-90'
             )}
           />
@@ -288,7 +288,7 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
       <div className="px-1 pb-0.5">
         {busy ? (
           <div
-            className="tmex-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
+            className="vibeterm-fade flex items-center gap-2 px-2 py-1 text-xs text-muted-foreground"
             data-testid={`sidebar-node-pending-${node.runtimeNodeId}`}
           >
             <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin motion-reduce:animate-none" />
@@ -297,7 +297,7 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
         ) : !expanded && gate.code === null ? (
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none"
+            className="flex w-full items-center gap-2 rounded-md px-2 py-1 text-xs text-muted-foreground transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-sidebar-accent hover:text-foreground motion-reduce:transition-none"
             data-testid={`sidebar-node-expand-${node.runtimeNodeId}`}
             onClick={() => setExpanded(true)}
           >
@@ -305,7 +305,7 @@ function SidebarNodeSignIn({ node, drag }: { node: SidebarNodeEntry; drag?: Side
             <span className="truncate">{t('auth.node.loginToThisNode')}</span>
           </button>
         ) : (
-          <div className="tmex-fade flex flex-col gap-1">
+          <div className="vibeterm-fade flex flex-col gap-1">
             {gate.code ? (
               <span
                 className="px-1 text-[10px] text-destructive"

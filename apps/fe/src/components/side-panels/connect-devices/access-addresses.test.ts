@@ -43,12 +43,12 @@ describe('buildAccessAddresses', () => {
   test('隧道 → Hub → 局域网 → 当前地址，去重去尾斜杠（隧道与 Hub 同址时留隧道）', () => {
     const list = buildAccessAddresses({
       origin: 'http://192.168.1.20:9883',
-      tunnel: tunnel({ mode: 'named', hostname: 'tmex.example.com' }),
-      hubPublicUrl: 'https://tmex.example.com/',
+      tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }),
+      hubPublicUrl: 'https://vibeterm.example.com/',
       addresses: lan,
     });
     expect(list).toEqual([
-      { kind: 'tunnel', url: 'https://tmex.example.com' },
+      { kind: 'tunnel', url: 'https://vibeterm.example.com' },
       { kind: 'lan', url: 'http://192.168.1.20:9883' },
       { kind: 'lan', url: 'http://10.0.0.5:9883' },
     ]);
@@ -81,7 +81,7 @@ describe('buildAccessAddresses', () => {
   test('隧道进程已停：地址不摆出来，默认落到局域网', () => {
     const list = buildAccessAddresses({
       origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({ mode: 'named', hostname: 'tmex.example.com' }, { state: 'stopped' }),
+      tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { state: 'stopped' }),
       hubPublicUrl: null,
       addresses: lan,
     });
@@ -94,7 +94,7 @@ describe('buildAccessAddresses', () => {
   test('连接器没有边缘连接：隧道降到 Hub / 局域网之后，不当默认', () => {
     const list = buildAccessAddresses({
       origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({ mode: 'named', hostname: 'tmex.example.com' }, { readyConnections: 0 }),
+      tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { readyConnections: 0 }),
       hubPublicUrl: 'https://hub.example',
       addresses: lan,
     });
@@ -102,14 +102,14 @@ describe('buildAccessAddresses', () => {
       { kind: 'hub', url: 'https://hub.example' },
       { kind: 'lan', url: 'http://192.168.1.20:9883' },
       { kind: 'lan', url: 'http://10.0.0.5:9883' },
-      { kind: 'tunnel', url: 'https://tmex.example.com' },
+      { kind: 'tunnel', url: 'https://vibeterm.example.com' },
     ]);
   });
 
   test('进程自报 degraded 同样降级', () => {
     const list = buildAccessAddresses({
       origin: 'http://127.0.0.1:9883',
-      tunnel: tunnel({ mode: 'named', hostname: 'tmex.example.com' }, { state: 'degraded' }),
+      tunnel: tunnel({ mode: 'named', hostname: 'vibeterm.example.com' }, { state: 'degraded' }),
       hubPublicUrl: null,
       addresses: lan,
     });
@@ -120,13 +120,13 @@ describe('buildAccessAddresses', () => {
     const list = buildAccessAddresses({
       origin: 'http://127.0.0.1:9883',
       tunnel: tunnel(
-        { mode: 'named', hostname: 'tmex.example.com' },
+        { mode: 'named', hostname: 'vibeterm.example.com' },
         { readyConnections: null, reachable: null }
       ),
       hubPublicUrl: null,
       addresses: lan,
     });
-    expect(list[0]).toEqual({ kind: 'tunnel', url: 'https://tmex.example.com' });
+    expect(list[0]).toEqual({ kind: 'tunnel', url: 'https://vibeterm.example.com' });
   });
 
   test('什么都没有时退回当前 origin 并给回环提示', () => {
@@ -143,13 +143,13 @@ describe('buildAccessAddresses', () => {
 
   test('数据未到时按 origin 兜底；非回环 origin 不提示', () => {
     const input = {
-      origin: 'https://tmex.lan:9883',
+      origin: 'https://vibeterm.lan:9883',
       tunnel: null,
       hubPublicUrl: null,
       addresses: null,
     };
     const list = buildAccessAddresses(input);
-    expect(list).toEqual([{ kind: 'current', url: 'https://tmex.lan:9883' }]);
+    expect(list).toEqual([{ kind: 'current', url: 'https://vibeterm.lan:9883' }]);
     expect(showLoopbackHint(list, input)).toBe(false);
   });
 

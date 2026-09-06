@@ -31,7 +31,11 @@ export function CommandBlock({
           onClick={copy}
           data-testid={`command-block-${testId}-copy`}
         >
-          {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+          {copied ? (
+            <Check className="vibeterm-scale-in" />
+          ) : (
+            <Copy className="vibeterm-scale-in" />
+          )}
           <CopyLabel copied={copied} />
         </Button>
       </div>

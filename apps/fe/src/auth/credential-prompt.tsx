@@ -299,10 +299,10 @@ export function CredentialPromptDialog({
 
   return (
     <div
-      className="tmex-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="vibeterm-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       data-testid="credential-prompt"
     >
-      <div className="tmex-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
+      <div className="vibeterm-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
         <div className="flex flex-col gap-0.5">
           <h2 className="text-sm font-semibold">{t('auth.credential.title')}</h2>
           <p className="text-xs text-muted-foreground" data-testid="credential-prompt-purpose">
@@ -326,7 +326,10 @@ export function CredentialPromptDialog({
           {error ? t(error, { defaultValue: error }) : ''}
         </output>
         {error ? (
-          <p className="tmex-fade text-xs text-destructive" data-testid="credential-prompt-error">
+          <p
+            className="vibeterm-fade text-xs text-destructive"
+            data-testid="credential-prompt-error"
+          >
             {t(error, { defaultValue: error })}
           </p>
         ) : null}

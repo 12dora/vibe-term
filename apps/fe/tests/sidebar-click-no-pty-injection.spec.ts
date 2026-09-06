@@ -35,7 +35,7 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-sidebar-no-inject-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-sidebar-no-inject-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const vimPaneId = paneIds[1] ?? paneIds[0];
   expect(vimPaneId).toBeTruthy();

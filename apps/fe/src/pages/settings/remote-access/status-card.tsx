@@ -105,7 +105,7 @@ export function TunnelStatusCard({
           </SetupNotice>
         )}
 
-        {/* 接管来的隧道由系统服务拉起，tmex 这边的启停 / 移除会被后端 409 挡回来。 */}
+        {/* 接管来的隧道由系统服务拉起，VibeTerm 这边的启停 / 移除会被后端 409 挡回来。 */}
         {startAck.shown && (
           <ExposureWarning
             exposure={exposure}
@@ -153,7 +153,7 @@ export function TunnelStatusCard({
 
 /**
  * 动作按钮行。「移除」在命名隧道下先弹二次确认（会连 Cloudflare 上的隧道一起删），
- * 接管来的隧道只能「释放」——启停由系统服务管，tmex 这边发过去会被后端 409 挡回来。
+ * 接管来的隧道只能「释放」——启停由系统服务管，VibeTerm 这边发过去会被后端 409 挡回来。
  */
 function TunnelStatusActions({
   status,

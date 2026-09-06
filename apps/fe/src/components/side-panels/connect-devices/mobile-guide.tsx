@@ -87,7 +87,7 @@ export function AddressChoiceList({
             key={item.url}
             data-testid={`connect-address-${index}`}
             data-kind={item.kind}
-            className={`flex w-full cursor-pointer items-start gap-2 rounded-lg border p-2 transition-colors duration-(--tmex-motion-fast) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none ${
+            className={`flex w-full cursor-pointer items-start gap-2 rounded-lg border p-2 transition-colors duration-(--vibeterm-motion-fast) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none ${
               checked ? 'border-primary/50 bg-primary/5' : 'border-border/60 hover:bg-muted/50'
             }`}
           >

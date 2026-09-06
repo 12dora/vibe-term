@@ -17,7 +17,7 @@ function row(patch: Partial<ShareRow> = {}): ShareRow {
     id: 'sh1',
     nodeId: 'self',
     nodeName: '本机',
-    url: 'https://tmex.example.com/s/sh1',
+    url: 'https://vibeterm.example.com/s/sh1',
     ...patch,
   } as ShareRow;
 }
@@ -175,13 +175,13 @@ describe('copyShareLinkWithPassword', () => {
     expect(state.written).toEqual([]);
     release('pw-sh1');
     await done;
-    expect(state.written).toEqual(['https://tmex.example.com/s/sh1#p=pw-sh1']);
+    expect(state.written).toEqual(['https://vibeterm.example.com/s/sh1#p=pw-sh1']);
   });
 
   test('没有 ClipboardItem 时退回「取完再写」', async () => {
     const written = stubTextClipboard();
     await copyShareLinkWithPassword(share, (target) => Promise.resolve(`pw-${target.id}`), t);
-    expect(written).toEqual(['https://tmex.example.com/s/sh1#p=pw-sh1']);
+    expect(written).toEqual(['https://vibeterm.example.com/s/sh1#p=pw-sh1']);
   });
 
   test('旧分享取不到密码时什么都不复制，也不去开「查看密码」（那儿同样看不到）', async () => {

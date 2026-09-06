@@ -39,7 +39,7 @@ test('desktop: visible terminal should follow the latest viewport contents', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-viewport-render-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-viewport-render-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-viewport-render-${Date.now()}`;
@@ -92,7 +92,7 @@ test('desktop: direct input should become visible in the current viewport', asyn
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-desktop-input-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-desktop-input-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-desktop-input-${Date.now()}`;

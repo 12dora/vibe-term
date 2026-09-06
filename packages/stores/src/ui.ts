@@ -2,7 +2,12 @@ import { DEFAULT_FONT_ID, type ThemePreset, isThemePreset } from '@vibeterm/them
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
-import { type DeferredPersistOptions, createDeferredPersistStorage } from './ui-persist';
+import { migrateStorageKey } from './storage-migration';
+import {
+  type DeferredPersistOptions,
+  browserStorage,
+  createDeferredPersistStorage,
+} from './ui-persist';
 
 export type SidebarTab = 'panes' | 'agent' | 'files';
 
@@ -241,11 +246,17 @@ function createUIPersistStorage(options: CreateUIStoreOptions) {
   });
 }
 
+function uiStorageKeyFor(prefix: string, options: CreateUIStoreOptions): string {
+  const key = `${prefix}vibeterm-ui`;
+  migrateStorageKey(options.persistStorage?.storage ?? browserStorage(), `${prefix}tmex-ui`, key);
+  return key;
+}
+
 export function createUIStore(
   core: Pick<RuntimeCore, 'storagePrefix'>,
   options: CreateUIStoreOptions = {}
 ) {
-  const storageKey = `${core.storagePrefix}tmex-ui`;
+  const storageKey = uiStorageKeyFor(core.storagePrefix, options);
   const persisted = createUIPersistStorage(options);
 
   const store = create<UIState>()(

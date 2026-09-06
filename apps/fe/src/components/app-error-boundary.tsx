@@ -157,7 +157,7 @@ export function AppErrorFallback({
               data-testid="app-error-details-toggle"
             >
               <ChevronRight
-                className={`transition-transform duration-(--tmex-motion-fast) motion-reduce:transition-none ${detailsOpen ? 'rotate-90' : ''}`}
+                className={`transition-transform duration-(--vibeterm-motion-fast) motion-reduce:transition-none ${detailsOpen ? 'rotate-90' : ''}`}
               />
               {t('appError.details')}
             </Button>
@@ -168,9 +168,9 @@ export function AppErrorFallback({
                 </pre>
                 <Button variant="outline" size="xs" onClick={copy} data-testid="app-error-copy">
                   {copied ? (
-                    <Check className="tmex-scale-in" />
+                    <Check className="vibeterm-scale-in" />
                   ) : (
-                    <Copy className="tmex-scale-in" />
+                    <Copy className="vibeterm-scale-in" />
                   )}
                   {copied ? t('appError.copied') : t('appError.copyDetails')}
                 </Button>

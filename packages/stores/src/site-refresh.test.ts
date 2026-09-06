@@ -13,7 +13,7 @@ const { useSiteStore, useUIStore } = await import('./default-runtime');
 
 function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
-    siteName: 'tmex',
+    siteName: 'VibeTerm',
     siteUrl: 'http://localhost',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,

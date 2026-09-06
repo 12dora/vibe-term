@@ -8,7 +8,7 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-sidebar-disclosure-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-sidebar-disclosure-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const selectedPaneId = paneIds[0] as string;
   let deviceId: string | undefined;
@@ -32,10 +32,10 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive', asy
         type: 'ssh',
         host: '127.0.0.1',
         port: 1,
-        username: 'tmex-e2e',
+        username: 'vibeterm-e2e',
         session: `${sessionName}-missing`,
         authMode: 'password',
-        password: 'tmex-e2e-unreachable',
+        password: 'vibeterm-e2e-unreachable',
       },
     });
     expect(offlineCreateRes.ok()).toBeTruthy();

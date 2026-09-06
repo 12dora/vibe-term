@@ -12,7 +12,13 @@ import {
   AlertDialogTitle,
 } from '@vibeterm/ui/alert-dialog';
 import { Button } from '@vibeterm/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@vibeterm/ui/dialog';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@vibeterm/ui/dialog';
 import { Input } from '@vibeterm/ui/input';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';

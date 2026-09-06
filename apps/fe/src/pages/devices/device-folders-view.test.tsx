@@ -186,7 +186,7 @@ describe('DeviceFoldersView', () => {
 
   test('离线节点优先用本地快照', () => {
     localStorage.setItem(
-      `tmex:device-snapshot:${OFFLINE_ID}`,
+      `vibeterm:device-snapshot:${OFFLINE_ID}`,
       JSON.stringify([{ id: 'snap', name: '快照', type: 'local', sortOrder: 0 }])
     );
     layout = { folders: [], placements: [] };

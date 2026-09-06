@@ -1,6 +1,6 @@
-// 系统里已有的 cloudflared：探测到就先问用户是接管它，还是让 tmex 另建一条。
+// 系统里已有的 cloudflared：探测到就先问用户是接管它，还是让 VibeTerm 另建一条。
 //
-// 接管（`adopt_external`）只把 mode / hostname 记进 tmex，不去碰那个由 launchd/systemd
+// 接管（`adopt_external`）只把 mode / hostname 记进 VibeTerm，不去碰那个由 launchd/systemd
 // 管着的进程——两边同时拉起同一条隧道只会互相顶掉。
 
 import type { TunnelStatusResponse } from '@vibeterm/shared';

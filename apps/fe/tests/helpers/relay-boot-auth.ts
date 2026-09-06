@@ -1,6 +1,6 @@
 // relay-boot 的鉴权 / 密钥日志助手：与浏览器同一条密码登录链路（Argon2 seed → Ed25519 root →
 // delegation → challenge/login），外加中继模式下「加节点向导」的两步——生成 r3 加入码、
-// 兑换之后补签 admit-node 与 meta-key。CLI 没有这两条命令（`tmex enroll` 只走 hub 路径），
+// 兑换之后补签 admit-node 与 meta-key。CLI 没有这两条命令（`vibeterm enroll` 只走 hub 路径），
 // 所以这里按 apps/fe/src/node/relay-join.ts 与 apps/gateway/src/relay/integration/relay-tenant-ops.ts
 // 复刻同一套 shared 助手调用，全部走真实 HTTP 接口。
 //

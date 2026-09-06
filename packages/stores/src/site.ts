@@ -151,7 +151,7 @@ export function createSiteStore(
       return;
     }
     try {
-      const key = `${core.storagePrefix}tmex-ui`;
+      const key = `${core.storagePrefix}vibeterm-ui`;
       const raw = localStorage.getItem(key);
       const parsed = raw ? (JSON.parse(raw) as { state?: { theme?: unknown } }) : { state: {} };
       parsed.state = { ...(parsed.state ?? {}), theme };

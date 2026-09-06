@@ -15,7 +15,7 @@ test('ws-borsh: canonical screen feed applies pane ready marker on initial load'
 
   const received = attachPaneFeedCollector(page);
 
-  const sessionName = `tmex-e2e-history-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-history-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   expect(paneIds.length >= 1).toBeTruthy();
 

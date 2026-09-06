@@ -39,7 +39,7 @@ export function DeviceConnectionControl({ deviceId, status }: DeviceConnectionCo
       aria-label={statusLabel}
       title={statusLabel}
       className={cn(
-        'h-2 w-2 shrink-0 rounded-full transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
+        'h-2 w-2 shrink-0 rounded-full transition-colors duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none',
         deviceStatusDotClass(status)
       )}
     />

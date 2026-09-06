@@ -9,6 +9,7 @@ import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
 import { createMemoryStorage } from '@vibeterm/stores/test-utils';
 import {
   type AdmitHubOutcome,
+  FORCE_KEYLOG_HEADER,
   HUB_ROLE_HUBS_TIMEOUT_MS,
   HUB_ROLE_RESTART_BUDGET_MS,
   HUB_ROLE_SWITCH_KEY,
@@ -21,6 +22,7 @@ import {
   type HubRoleRunOutcome,
   type HubRoleSwitchPlan,
   type HubRoleSwitchRecord,
+  LEGACY_FORCE_KEYLOG_HEADER,
   admitHubWithForce,
   awaitHubRoleSwitch,
   clearHubRoleSwitch,
@@ -241,7 +243,9 @@ describe('submitAdmitHubRecord', () => {
       return jsonResponse(200, { ok: true, hubAck: true });
     });
     expect(outcome).toEqual({ kind: 'ok' });
-    expect((calls[0]?.headers as Record<string, string>)['X-Tmex-Force-Keylog']).toBeUndefined();
+    const sent = calls[0]?.headers as Record<string, string>;
+    expect(sent[FORCE_KEYLOG_HEADER]).toBeUndefined();
+    expect(sent[LEGACY_FORCE_KEYLOG_HEADER]).toBeUndefined();
   });
 
   test('hub 没确认时不算成功：一条都没落库，绝不能接着升主', async () => {
@@ -268,13 +272,14 @@ describe('submitAdmitHubRecord', () => {
     ]);
   });
 
-  test('force 时补上强制头', async () => {
+  test('force 时补上强制头（新旧两个名字都发）', async () => {
     const headers: Array<Record<string, string>> = [];
     await submitAdmitHubRecord(RECORD, true, async (_path, init) => {
       headers.push(init?.headers as Record<string, string>);
       return jsonResponse(200, { ok: true, hubAck: true });
     });
-    expect(headers[0]?.['X-Tmex-Force-Keylog']).toBe('1');
+    expect(headers[0]?.[FORCE_KEYLOG_HEADER]).toBe('1');
+    expect(headers[0]?.[LEGACY_FORCE_KEYLOG_HEADER]).toBe('1');
   });
 
   test('网络异常与其它错误码原样带出', async () => {

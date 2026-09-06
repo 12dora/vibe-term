@@ -76,7 +76,7 @@ describe('ProtocolDispatcher', () => {
     expect(rec.pongPayloads[0]).toEqual(pongPayload);
 
     const hello = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion: '0.1.0',
       selectedVersion: 1,
       maxFrameBytes: 1024,

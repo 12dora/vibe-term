@@ -30,8 +30,8 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
     auth: { loggedIn: true, loginUrl: null },
     config: {
       mode: 'named',
-      hostname: 'tmex.example.com',
-      tunnelName: 'tmex',
+      hostname: 'vibeterm.example.com',
+      tunnelName: 'vibeterm',
       tunnelId: 'd8e1f0aa',
       autoStart: false,
       externallyManaged: false,
@@ -42,7 +42,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       state: 'running',
       pid: 42,
       startedAt: '2026-08-30T00:00:00.000Z',
-      publicUrl: 'https://tmex.example.com',
+      publicUrl: 'https://vibeterm.example.com',
       lastError: null,
       restarts: 0,
     },
@@ -151,21 +151,21 @@ describe('toAccessRules / ruleDraftsFrom', () => {
 
 describe('目标主机名与可应用性', () => {
   test('配置目标：已建隧道用 config.hostname，没建时用向导确认的草稿', () => {
-    expect(accessConfigureHostname(status(), '')).toBe('tmex.example.com');
+    expect(accessConfigureHostname(status(), '')).toBe('vibeterm.example.com');
     // 已有应用覆盖的主机名不参与推导：后端配置动作不认它。
     expect(
       accessConfigureHostname(
         status({ access: { ...status().access, hostname: 'old.example.com' } }),
         ''
       )
-    ).toBe('tmex.example.com');
+    ).toBe('vibeterm.example.com');
     const noTunnel = status({ config: { ...status().config, mode: 'off', hostname: null } });
     expect(accessConfigureHostname(noTunnel, '  draft.example.com  ')).toBe('draft.example.com');
     expect(accessConfigureHostname(noTunnel, '   ')).toBeNull();
   });
 
   test('同步目标：config.hostname，其次探测到的系统隧道主机名', () => {
-    expect(accessSyncHostname(status())).toBe('tmex.example.com');
+    expect(accessSyncHostname(status())).toBe('vibeterm.example.com');
     const noTunnel = status({ config: { ...status().config, mode: 'off', hostname: null } });
     expect(accessSyncHostname(noTunnel)).toBeNull();
     expect(
@@ -202,7 +202,7 @@ describe('目标主机名与可应用性', () => {
     expect(
       canSyncAccess({
         ...noHostname,
-        external: { ...noHostname.external, detected: true, hostnames: ['tmex.example.com'] },
+        external: { ...noHostname.external, detected: true, hostnames: ['vibeterm.example.com'] },
       })
     ).toBe(true);
     // 没保存凭证时依然不能同步。
@@ -281,7 +281,7 @@ describe('accessStepTag', () => {
     expect(
       accessStepTag({
         ...ineffective,
-        access: { ...ineffective.access, hostname: 'tmex.example.com', effective: true },
+        access: { ...ineffective.access, hostname: 'vibeterm.example.com', effective: true },
       })
     ).toBe('optional');
   });
@@ -315,7 +315,7 @@ describe('effectiveAccessMode', () => {
         ...status().access,
         configured: true,
         enforceJwt: true,
-        hostname: 'tmex.example.com',
+        hostname: 'vibeterm.example.com',
         effective: true,
       },
     });
@@ -374,7 +374,7 @@ describe('accessStepState', () => {
           ...status().access,
           configured: true,
           enforceJwt: true,
-          hostname: 'tmex.example.com',
+          hostname: 'vibeterm.example.com',
           effective: true,
         },
       }),
@@ -391,7 +391,7 @@ describe('accessEffective', () => {
         ...status().access,
         configured: true,
         enforceJwt: true,
-        hostname: 'tmex.example.com',
+        hostname: 'vibeterm.example.com',
         effective: true,
       },
     });

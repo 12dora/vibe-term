@@ -15,7 +15,11 @@ export {
 } from '@vibeterm/shared';
 
 // 别名导出，保持兼容性
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@vibeterm/shared';
+import {
+  TERMINAL_THEME_DARK,
+  TERMINAL_THEME_LIGHT,
+  type TerminalThemeColors,
+} from '@vibeterm/shared';
 import type { TerminalTheme } from './types';
 export const XTERM_THEME_MIDNIGHT_AMETHYST = TERMINAL_THEME_DARK;
 export const XTERM_THEME_DAWN_AMETHYST = TERMINAL_THEME_LIGHT;

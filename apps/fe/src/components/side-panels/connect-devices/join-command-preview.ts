@@ -6,7 +6,7 @@
 import { isTrustedHubUrl, joinCommand } from '@/node/enrollment';
 
 /** hub 对外地址未知时的示例地址。 */
-export const EXAMPLE_HUB_URL = 'https://tmex.example.com';
+export const EXAMPLE_HUB_URL = 'https://vibeterm.example.com';
 
 /** 中继地址未知时的示例地址。 */
 export const EXAMPLE_RELAY_URL = 'https://relay.example.com';
@@ -44,7 +44,7 @@ function shellQuote(value: string): string {
 /** 用账号密码加入 Hub 的命令；口令不进命令行，由 CLI 隐藏输入。 */
 export function passwordJoinCommand(hubPublicUrl: string | null): string {
   const url = isTrustedHubUrl(hubPublicUrl) ? (hubPublicUrl as string) : EXAMPLE_HUB_URL;
-  return `tmex hub join ${shellQuote(url)} --password`;
+  return `vibeterm hub join ${shellQuote(url)} --password`;
 }
 
 /** 用账号密码加入中继租户的命令。租户编号未知时填占位符，形状仍然正确。 */
@@ -55,11 +55,11 @@ export function relayJoinCommand(input: {
 }): string {
   const url = isTrustedHubUrl(input.relayUrl) ? (input.relayUrl as string) : EXAMPLE_RELAY_URL;
   const tenant = input.tenantId ?? input.tenantPlaceholder;
-  return `tmex relay join ${shellQuote(url)} --tenant ${shellQuote(tenant)}`;
+  return `vibeterm relay join ${shellQuote(url)} --tenant ${shellQuote(tenant)}`;
 }
 
 /** 本机以租户身份接进一条中继的命令；地址未知时填示例地址，形状仍然正确。 */
 export function relayEnrollCommand(relayUrl: string | null): string {
   const url = isTrustedHubUrl(relayUrl) ? (relayUrl as string) : EXAMPLE_RELAY_URL;
-  return `tmex relay enroll ${shellQuote(url)}`;
+  return `vibeterm relay enroll ${shellQuote(url)}`;
 }

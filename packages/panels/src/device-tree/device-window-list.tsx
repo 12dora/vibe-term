@@ -42,7 +42,7 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
         onPointerDown={stopPropagation}
         onMouseDown={stopPropagation}
         onClick={handleCreateWindow}
-        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-dashed border-border/50 hover:border-border"
+        className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none text-muted-foreground hover:text-foreground hover:bg-accent/30 border border-dashed border-border/50 hover:border-border"
       >
         <Plus className="h-3.5 w-3.5 shrink-0" />
         <span className="text-xs">{t('window.new')}</span>

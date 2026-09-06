@@ -23,7 +23,7 @@ test('sidebar: window tab follows terminal title and supports rename via menu', 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-rename-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-rename-${Date.now()}`;
   const { paneId, windowId, backgroundWindowId } = createTwoWindowSession(sessionName);
 
   const createRes = await request.post('/api/devices', {

@@ -30,7 +30,7 @@ describe('CommandInputCollapse', () => {
     expect(html).toContain('data-[state=closed]:grid-rows-[0fr]');
     expect(html).toContain('data-[state=closed]:opacity-0');
     expect(html).toContain('data-[state=closed]:translate-y-1');
-    expect(html).toContain('duration-(--tmex-motion-layout)');
+    expect(html).toContain('duration-(--vibeterm-motion-layout)');
     expect(html).toContain('motion-reduce:transition-none');
   });
 

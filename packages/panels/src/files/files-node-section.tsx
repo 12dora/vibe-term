@@ -97,7 +97,7 @@ function FilesNodeSectionShell({
         >
           <ChevronRight
             className={cn(
-              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+              'h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
               expanded && 'rotate-90'
             )}
           />

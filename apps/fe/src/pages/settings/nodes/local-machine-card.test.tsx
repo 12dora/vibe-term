@@ -759,7 +759,7 @@ describe('LocalMachineCard 的允许域名访问', () => {
 
   test('有公开域名：开关与标签同一行，说明另起一行，不再单起「通用设置」标题', () => {
     const html = render(
-      withDomainAccess({ allowed: true, viaDomain: false, hosts: ['tmex.example.com'] }),
+      withDomainAccess({ allowed: true, viaDomain: false, hosts: ['vibeterm.example.com'] }),
       MESH_MODE
     );
     expect(html).toContain('nodes.machine.domainAccess.label');
@@ -797,7 +797,7 @@ describe('LocalMachineCard 的允许域名访问', () => {
 
   test('已关闭时开关处于关闭态', () => {
     const html = render(
-      withDomainAccess({ allowed: false, viaDomain: false, hosts: ['tmex.example.com'] }),
+      withDomainAccess({ allowed: false, viaDomain: false, hosts: ['vibeterm.example.com'] }),
       MESH_MODE
     );
     expect(switchState(html, 'local-machine-domain-access-switch').checked).toBe(false);
@@ -840,7 +840,7 @@ describe('DomainAccessController', () => {
   const policy = (allowed: boolean): DomainAccessPolicy => ({
     allowed,
     viaDomain: false,
-    hosts: ['tmex.example.com'],
+    hosts: ['vibeterm.example.com'],
   });
 
   test('开启不需要确认，直接写', async () => {

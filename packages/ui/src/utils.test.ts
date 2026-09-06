@@ -26,7 +26,7 @@ describe('cn', () => {
   });
 
   it('未识别的类名原样保留', () => {
-    expect(cn('tmex-custom', 'p-2', 'p-4')).toBe('tmex-custom p-4');
+    expect(cn('vibeterm-custom', 'p-2', 'p-4')).toBe('vibeterm-custom p-4');
   });
 
   it('空输入返回空串', () => {

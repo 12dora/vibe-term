@@ -27,7 +27,7 @@ function ScrollArea({ className, children, axis = 'both', ...props }: ScrollArea
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
         style={axis === 'vertical' ? VERTICAL_ONLY_VIEWPORT_STYLE : undefined}
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none outline-none focus-visible:ring-[3px] focus-visible:outline-1"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
@@ -49,7 +49,7 @@ function ScrollBar({
       data-orientation={orientation}
       orientation={orientation}
       className={cn(
-        'data-horizontal:h-2.5 data-horizontal:flex-col data-horizontal:border-t data-horizontal:border-t-transparent data-vertical:h-full data-vertical:w-2.5 data-vertical:border-l data-vertical:border-l-transparent flex touch-none p-px transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none select-none',
+        'data-horizontal:h-2.5 data-horizontal:flex-col data-horizontal:border-t data-horizontal:border-t-transparent data-vertical:h-full data-vertical:w-2.5 data-vertical:border-l data-vertical:border-l-transparent flex touch-none p-px transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none select-none',
         '[@media(any-pointer:coarse)]:hidden',
         className
       )}

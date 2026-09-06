@@ -24,7 +24,7 @@ import { type ConnectMachine, useConnectMachine } from './use-connect-machine';
 
 const PREFIX = 'connectDevices.computer';
 const PATHS: ConnectPath[] = ['relay', 'hub', 'ssh'];
-/** 选择接入方式固定占第 1 步，需要装 tmex 的路径把安装排在第 2 步。 */
+/** 选择接入方式固定占第 1 步，需要装 VibeTerm 的路径把安装排在第 2 步。 */
 const INSTALL_STEP_INDEX = 2;
 
 function PathHints() {

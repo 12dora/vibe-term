@@ -12,7 +12,7 @@ test.describe
     let deviceId: string;
     let windowId: string;
     let paneId: string;
-    const sessionName = `tmex-e2e-mobile-aw-${Date.now()}`;
+    const sessionName = `vibeterm-e2e-mobile-aw-${Date.now()}`;
 
     test.beforeAll(async ({ request }) => {
       ensureCleanSession(sessionName);

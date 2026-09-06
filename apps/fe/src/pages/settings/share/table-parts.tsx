@@ -37,7 +37,7 @@ export function EmptyRow({
     <tr>
       <td
         colSpan={colSpan}
-        className="tmex-fade px-3 py-6 text-center text-muted-foreground"
+        className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
         data-testid={testId}
       >
         {children}

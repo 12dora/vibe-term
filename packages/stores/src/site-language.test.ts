@@ -22,7 +22,7 @@ const { createAppRuntime } = await import('./app-runtime');
 const { SITE_LANGUAGE_CACHE_KEY } = await import('./site-language-cache');
 
 const SETTINGS: SiteSettings = {
-  siteName: 'tmex',
+  siteName: 'VibeTerm',
   siteUrl: 'http://localhost',
   bellThrottleSeconds: 6,
   notificationThrottleSeconds: 3,

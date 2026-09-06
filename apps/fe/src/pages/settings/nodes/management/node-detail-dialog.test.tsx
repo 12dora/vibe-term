@@ -68,7 +68,7 @@ const SELF = nodeRow({
 });
 
 function policy(overrides: Partial<DomainAccessPolicy> = {}): DomainAccessPolicy {
-  return { allowed: true, viaDomain: false, hosts: ['tmex.example.com'], ...overrides };
+  return { allowed: true, viaDomain: false, hosts: ['vibeterm.example.com'], ...overrides };
 }
 
 const realFetch = globalThis.fetch;
@@ -112,7 +112,7 @@ describe('域名访问的请求通道', () => {
       kind: 'ready',
       allowed: true,
       viaDomain: false,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
   });
 

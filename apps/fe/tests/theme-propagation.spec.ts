@@ -64,7 +64,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-single-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-single-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-single-${Date.now()}`);
@@ -100,7 +100,7 @@ test('theme: single page — toggle dark/light flips xterm background color', as
 });
 
 test('theme: gateway updates tmux window-style to match site theme', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-theme-wstyle-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-wstyle-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-wstyle-${Date.now()}`);
@@ -153,7 +153,7 @@ test('theme: cross-page — A toggles theme, B syncs within 1s via WS broadcast'
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-cross-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-cross-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-cross-${Date.now()}`);
@@ -210,7 +210,7 @@ test('theme: rapid theme toggle × browser resize keeps pane cols/rows stable', 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-resize-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-resize-${Date.now()}`);

@@ -47,7 +47,7 @@ function NoDeviceNotice() {
   const { t } = useTranslation();
   return (
     <div className="flex h-full items-center justify-center p-4">
-      <div className="tmex-fade rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
+      <div className="vibeterm-fade rounded-lg border border-dashed border-border px-4 py-3 text-sm text-muted-foreground">
         {t('device.noDevices')}
       </div>
     </div>

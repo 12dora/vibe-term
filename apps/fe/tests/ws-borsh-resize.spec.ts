@@ -62,7 +62,7 @@ test('ws-borsh: resize does not spam canonical geometry-change commands', async 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-${Date.now()}`;
@@ -105,7 +105,7 @@ test('ws-borsh: initial load and browser resize converge to tmux pane size', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-sync-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-sync-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 
@@ -142,7 +142,7 @@ test('ws-borsh: growing viewport converges to latest tmux pane size instead of s
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-grow-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-grow-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 
@@ -179,7 +179,7 @@ test('ws-borsh: remote tmux resize does not trigger resize echo from another bro
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-multi-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-multi-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-multi-${Date.now()}`;
@@ -226,7 +226,7 @@ test('ws-borsh: focus restore emits no geometry command when terminal size is al
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-focus-stable-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-focus-stable-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-focus-stable-${Date.now()}`;
@@ -264,7 +264,7 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-focus-stale-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-focus-stale-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const name = `e2e-borsh-resize-focus-stale-${Date.now()}`;

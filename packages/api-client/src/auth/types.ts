@@ -2,6 +2,7 @@
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@vibeterm/shared/auth` 的 encodeBase64url 对齐。
 
 import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@vibeterm/shared';
+import { CONNECTION_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { HubEndpointInfo, HubMode } from '@vibeterm/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
@@ -172,7 +173,7 @@ export interface AuthLoginRequest {
 }
 
 /**
- * 登录成功体**只有** `expires_at`（B2-2b-fix 契约）：sid 走内部头 `x-tmex-set-session`，
+ * 登录成功体**只有** `expires_at`（B2-2b-fix 契约）：sid 走内部 set-session 头，
  * 由 entry 转成 `Set-Cookie` 后删除，浏览器永远拿不到。
  */
 export interface AuthLoginResponse {
@@ -363,8 +364,8 @@ export interface MeshHubsResponse {
 /** standby hub 拒绝管理写入的 409：`code` 之外还带 writer 的地址，UI 据此指路。 */
 export const HUB_NOT_WRITER = 'HUB_NOT_WRITER';
 
-/** `x-tmex-connection`：把请求绑到本标签页的那条 Gateway WS。 */
-export const X_VIBETERM_CONNECTION_HEADER = 'x-tmex-connection';
+/** 把请求绑到本标签页的那条 Gateway WS；新旧两个头名同时发送（混合版本桥）。 */
+export { CONNECTION_HEADER };
 
 /** `GET /api/mesh/connection` 的 200 响应。 */
 export interface MeshConnectionResponse {
@@ -373,7 +374,7 @@ export interface MeshConnectionResponse {
 
 /**
  * `NO_CONNECTION`：该 sid 在目标 node 上没有 live 的 Gateway WS（primary 还没连上 / 刚断）。
- * `MULTIPLE_CONNECTIONS`：同 sid 有多条（多标签），必须带 `x-tmex-connection` 才能定位。
+ * `MULTIPLE_CONNECTIONS`：同 sid 有多条（多标签），必须带 connection 头才能定位。
  */
 export type MeshConnectionErrorCode = 'NO_CONNECTION' | 'MULTIPLE_CONNECTIONS';
 

@@ -41,7 +41,7 @@ describe('buildDevicePayload 创建模式', () => {
       formValues({ type: 'local', session: '   ', defaultWorkingDir: '  ' }),
       'create'
     );
-    expect(result.payload).toMatchObject({ session: 'tmex' });
+    expect(result.payload).toMatchObject({ session: 'vibeterm' });
     expect(result.payload.defaultWorkingDir).toBeUndefined();
   });
 

@@ -57,7 +57,7 @@ test('desktop: shift+left drag bypasses reporting into local selection', async (
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-shift-select-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-shift-select-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { paneId, windowId } = createTuiSession(sessionName, logPath);
   await expect
@@ -114,7 +114,7 @@ test('desktop: bare hover motion reaches TUI under 1003 any-event tracking', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-hover-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-hover-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { paneId, windowId } = createTuiSession(sessionName, logPath, ' --all');
   await expect

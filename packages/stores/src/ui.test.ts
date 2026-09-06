@@ -44,7 +44,7 @@ describe('sidebar tab state', () => {
     const store = createUIStore({ storagePrefix: prefix });
     store.getState().setSidebarTab('files');
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: Record<string, unknown>;
     };
     expect(persisted.state && 'sidebarTab' in persisted.state).toBe(false);
@@ -55,7 +55,7 @@ describe('sidebar tab state', () => {
   test('ignores legacy persisted sidebarTab and sidebarSections', () => {
     const prefix = `ui-sidebar-legacy-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: {
           sidebarTab: 'files',
@@ -81,7 +81,7 @@ describe('sidebar tab state', () => {
     store.getState().setSidebarDeviceExpanded('device-a', true);
     expect(store.getState().sidebarDeviceExpanded).toEqual({ 'device-a': true });
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarDeviceExpanded?: Record<string, boolean> };
     };
     expect(persisted.state?.sidebarDeviceExpanded).toEqual({ 'device-a': true });
@@ -103,7 +103,7 @@ describe('sidebar tab state', () => {
       'self:device-2': false,
     });
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarDeviceVisibility?: Record<string, boolean> };
     };
     expect(persisted.state?.sidebarDeviceVisibility).toEqual({
@@ -129,7 +129,7 @@ describe('sidebar tab state', () => {
     expect(store.getState().sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
     expect(store.getState().sidebarDeviceVisibility).toEqual({ 'node-a:device-1': true });
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarFilesVisibility?: Record<string, boolean> };
     };
     expect(persisted.state?.sidebarFilesVisibility).toEqual({ 'node-a:device-1': false });
@@ -141,7 +141,7 @@ describe('sidebar tab state', () => {
   test('normalizes invalid persisted files visibility', () => {
     const prefix = `ui-sidebar-invalid-files-visibility-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { sidebarFilesVisibility: { 'node-a:device-1': 1, 'node-a:device-2': false } },
         version: 0,
@@ -156,7 +156,7 @@ describe('sidebar tab state', () => {
   test('normalizes invalid persisted device visibility', () => {
     const prefix = `ui-sidebar-invalid-visibility-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { sidebarDeviceVisibility: { 'node-a:device-1': 'yes', 'node-a:device-2': true } },
         version: 0,
@@ -182,7 +182,7 @@ describe('sidebar tab state', () => {
       'folder-b': true,
     });
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { deviceFolderExpanded?: Record<string, boolean> };
     };
     expect(persisted.state?.deviceFolderExpanded).toEqual({
@@ -200,7 +200,7 @@ describe('sidebar tab state', () => {
   test('normalizes invalid persisted device folder disclosure', () => {
     const prefix = `ui-device-folder-invalid-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { deviceFolderExpanded: { 'folder-a': 'nope', 'folder-b': false } },
         version: 0,
@@ -215,7 +215,7 @@ describe('sidebar tab state', () => {
   test('normalizes invalid persisted device disclosure', () => {
     const prefix = `ui-sidebar-invalid-device-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { sidebarDeviceExpanded: null },
         version: 0,
@@ -243,7 +243,7 @@ describe('sidebar node order', () => {
     store.getState().setSidebarNodeOrder(['node-b', 'node-a']);
     expect(store.getState().sidebarNodeOrder).toEqual(['node-b', 'node-a']);
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarNodeOrder?: string[] };
     };
     expect(persisted.state?.sidebarNodeOrder).toEqual(['node-b', 'node-a']);
@@ -265,7 +265,7 @@ describe('sidebar node order', () => {
   test('normalizes invalid persisted node order', () => {
     const prefix = `ui-sidebar-node-order-invalid-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { sidebarNodeOrder: ['node-a', 7, null, 'node-a', 'node-b'] },
         version: 0,
@@ -281,7 +281,7 @@ describe('sidebar node order', () => {
   test('falls back to an empty order when the persisted value is not an array', () => {
     const prefix = `ui-sidebar-node-order-shape-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({ state: { sidebarNodeOrder: { 0: 'node-a' } }, version: 0 })
     );
 
@@ -310,7 +310,7 @@ describe('sidebar node expansion', () => {
       'files:node-a': false,
     });
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarNodeExpansion?: Record<string, boolean> };
     };
     expect(persisted.state?.sidebarNodeExpansion).toEqual({
@@ -327,7 +327,7 @@ describe('sidebar node expansion', () => {
   test('normalizes invalid persisted expansion entries', () => {
     const prefix = `ui-sidebar-node-expansion-invalid-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: { sidebarNodeExpansion: { 'panes:node-a': 'nope', 'panes:node-b': true } },
         version: 0,
@@ -355,7 +355,7 @@ describe('sidebar collapse state', () => {
 
     store.getState().setSidebarCollapsed(true);
 
-    const persisted = JSON.parse(storage.getItem(`${prefix}tmex-ui`) ?? '{}') as {
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: { sidebarCollapsed?: boolean };
     };
     expect(persisted.state?.sidebarCollapsed).toBe(true);
@@ -386,7 +386,7 @@ describe('theme preset persistence', () => {
   test('drops a persisted preset id that is no longer registered', () => {
     const prefix = `ui-theme-preset-stale-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({ state: { themePreset: 'underground' }, version: 0 })
     );
 
@@ -396,7 +396,7 @@ describe('theme preset persistence', () => {
   test('drops a non-string persisted preset', () => {
     const prefix = `ui-theme-preset-garbage-${Date.now()}-`;
     storage.setItem(
-      `${prefix}tmex-ui`,
+      `${prefix}vibeterm-ui`,
       JSON.stringify({ state: { themePreset: { id: 'nope' } }, version: 0 })
     );
 
@@ -450,7 +450,7 @@ describe('cross-tab theme sync', () => {
 
   test('另一标签页改的外观与预设会同步进本页 store', () => {
     const prefix = `ui-theme-cross-tab-${Date.now()}-`;
-    const key = `${prefix}tmex-ui`;
+    const key = `${prefix}vibeterm-ui`;
     storage.setItem(
       key,
       JSON.stringify({ state: { theme: 'dark', themePreset: null }, version: 0 })
@@ -471,7 +471,7 @@ describe('cross-tab theme sync', () => {
 
   test('其它 key 的 storage 事件不影响本页', () => {
     const prefix = `ui-theme-other-key-${Date.now()}-`;
-    const key = `${prefix}tmex-ui`;
+    const key = `${prefix}vibeterm-ui`;
     const tab = openTab(prefix);
     tab.store.getState().setThemePreset(VALID_PRESET);
 
@@ -483,7 +483,7 @@ describe('cross-tab theme sync', () => {
 
   test('另一标签页写入的非法预设按无预设处理', () => {
     const prefix = `ui-theme-cross-tab-invalid-${Date.now()}-`;
-    const key = `${prefix}tmex-ui`;
+    const key = `${prefix}vibeterm-ui`;
     const tab = openTab(prefix);
     tab.store.getState().setThemePreset(VALID_PRESET);
 
@@ -498,7 +498,7 @@ describe('cross-tab theme sync', () => {
 
   test('syncThemeFromStorage 忽略持久化里缺失的字段', () => {
     const prefix = `ui-theme-partial-${Date.now()}-`;
-    const key = `${prefix}tmex-ui`;
+    const key = `${prefix}vibeterm-ui`;
     const store = createUIStore({ storagePrefix: prefix });
     store.getState().setThemePreset(VALID_PRESET);
 

@@ -1,7 +1,10 @@
 // 设备对话框提交逻辑：payload 构造（纯函数）、create/update mutation 选择与错误提示。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { createDevice as createDeviceApi, updateDevice as updateDeviceApi } from '@vibeterm/api-client';
+import {
+  createDevice as createDeviceApi,
+  updateDevice as updateDeviceApi,
+} from '@vibeterm/api-client';
 import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
 import { type FormEvent, useState } from 'react';

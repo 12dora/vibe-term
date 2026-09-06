@@ -123,7 +123,7 @@ export function hubModeHelp(): string {
   return [
     'hub 拓扑（hub,node + node）用既有的 mesh-boot.ts，本文件不复制它：',
     '',
-    '  bun apps/fe/tests/helpers/mesh-boot.ts --state /tmp/tmex-mesh-e2e.json',
+    '  bun apps/fe/tests/helpers/mesh-boot.ts --state /tmp/vibeterm-mesh-e2e.json',
     '',
     'mesh-boot 会拉起 hub(19771+) + node，enroll/hub join 并入 mesh，把 baseUrl / hubNodeId /',
     'remoteNodeId / username / password 写进 state JSON，SIGTERM 回收全部进程与 tmux socket。',

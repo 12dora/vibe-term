@@ -48,7 +48,7 @@ async function bootstrap(
   request: APIRequestContext,
   mode: KeyboardBehaviorMode
 ): Promise<KeyboardTestContext> {
-  const sessionName = `tmex-e2e-kb-${mode}-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-kb-${mode}-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const name = `e2e-kb-${mode}-${Date.now()}`;
@@ -66,10 +66,10 @@ async function bootstrap(
   await page.addInitScript(VISUAL_VIEWPORT_MOCK);
   await page.addInitScript((behaviorMode) => {
     try {
-      const raw = localStorage.getItem('tmex-ui');
+      const raw = localStorage.getItem('vibeterm-ui');
       const parsed = raw ? JSON.parse(raw) : { state: {}, version: 0 };
       parsed.state = { ...(parsed.state ?? {}), keyboardBehaviorMode: behaviorMode };
-      localStorage.setItem('tmex-ui', JSON.stringify(parsed));
+      localStorage.setItem('vibeterm-ui', JSON.stringify(parsed));
     } catch {
       /* ignore */
     }
@@ -107,7 +107,9 @@ async function bootstrap(
 
   const popKeyboard = async (px: number) => {
     await page.evaluate((value) => {
-      (window as unknown as { __vibetermMockKeyboard: (px: number) => void }).__vibetermMockKeyboard(value);
+      (
+        window as unknown as { __vibetermMockKeyboard: (px: number) => void }
+      ).__vibetermMockKeyboard(value);
     }, px);
   };
 
@@ -223,7 +225,7 @@ test('mobile keyboard mode "follow": empty shell keeps cursor visible without fu
       .poll(async () =>
         page.evaluate(() =>
           getComputedStyle(document.documentElement)
-            .getPropertyValue('--tmex-kb-shortcut-lift')
+            .getPropertyValue('--vibeterm-kb-shortcut-lift')
             .trim()
         )
       )

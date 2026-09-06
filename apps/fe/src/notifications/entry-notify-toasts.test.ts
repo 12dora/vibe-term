@@ -32,7 +32,7 @@ function event(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: new Date(0).toISOString(),
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'd1', name: 'laptop', type: 'local' },
     tmux: { windowId: '@1', paneId: '%2', windowIndex: 0 },
     payload: { nodeId: NODE_B, nodeName: 'laptop' },

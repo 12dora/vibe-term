@@ -17,7 +17,7 @@ function recorder(responses: Response[]): { client: ApiClient; calls: Call[] } {
 const POLICY = {
   allowed: true,
   viaDomain: false,
-  hosts: ['tmex.example.com'],
+  hosts: ['vibeterm.example.com'],
 };
 
 describe('fetchDomainAccess / updateDomainAccess', () => {

@@ -90,7 +90,7 @@ test('ws-borsh: rapid theme toggle × browser resize converges back to window si
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-resize-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 

@@ -1,5 +1,10 @@
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { assistRegex, createWatchRule, fetchLlmProviders, updateWatchRule } from '@vibeterm/api-client';
+import {
+  assistRegex,
+  createWatchRule,
+  fetchLlmProviders,
+  updateWatchRule,
+} from '@vibeterm/api-client';
 import { errorMessage } from '@vibeterm/shared';
 import type { AssistRegexResponse, WatchRuleDto } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';

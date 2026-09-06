@@ -28,7 +28,7 @@ const STATUS: TlsStatusResponse = {
     sans: ['hub.lan', '192.168.1.10'],
     notBefore: 1_700_000_000_000,
     notAfter: 1_734_000_000_000,
-    issuer: 'CN=tmex local CA',
+    issuer: 'CN=VibeTerm local CA',
   },
   listener: { running: true, port: 9443, error: null },
   acme: null,

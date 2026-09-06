@@ -21,7 +21,7 @@ export function buildOtpauthUri(input: {
   digits?: number;
   period?: number;
 }): string {
-  const issuer = input.issuer ?? 'tmex';
+  const issuer = input.issuer ?? 'VibeTerm';
   const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(input.account)}`;
   const params = new URLSearchParams({
     secret: encodeBase32(input.secret),

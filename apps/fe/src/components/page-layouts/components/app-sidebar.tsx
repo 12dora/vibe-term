@@ -32,8 +32,12 @@ import { SidebarTitle } from './sidebar-title';
 
 // AgentTab / FilesTab 仅在选中对应 tab 时才渲染，改 React.lazy 懒加载，
 // 把 agent / files 两个子系统（含各自 store + 重组件链）移出首屏 entry chunk。
-const AgentTab = lazy(() => import('@vibeterm/panels/agent').then((m) => ({ default: m.AgentTab })));
-const FilesTab = lazy(() => import('@vibeterm/panels/files').then((m) => ({ default: m.FilesTab })));
+const AgentTab = lazy(() =>
+  import('@vibeterm/panels/agent').then((m) => ({ default: m.AgentTab }))
+);
+const FilesTab = lazy(() =>
+  import('@vibeterm/panels/files').then((m) => ({ default: m.FilesTab }))
+);
 const FilesNodeSection = lazy(() =>
   import('@vibeterm/panels/files').then((m) => ({ default: m.FilesNodeSection }))
 );
@@ -204,7 +208,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar variant="inset" {...props}>
-      <div className="h-[var(--tmex-safe-area-top)]" />
+      <div className="h-[var(--vibeterm-safe-area-top)]" />
       <SidebarHeader className="gap-4 pt-3 pb-0">
         <SidebarTitle />
         {/* 上移 5px（gap 20→16 再 -1px）：让 TabsList 里可见的 active 药丸上沿与右侧
@@ -276,7 +280,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
           下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。 */}
       <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
         <NavMain items={footerItems} />
-        <div className="h-[var(--tmex-safe-area-bottom)]" />
+        <div className="h-[var(--vibeterm-safe-area-bottom)]" />
       </SidebarFooter>
     </Sidebar>
   );

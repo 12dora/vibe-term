@@ -1,4 +1,4 @@
-// 「安装 tmex」：两条「让新机器加入」的路径共用，SSH 直连不需要它。
+// 「安装 VibeTerm」：两条「让新机器加入」的路径共用，SSH 直连不需要它。
 
 import { INSTALL_COMMAND } from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';

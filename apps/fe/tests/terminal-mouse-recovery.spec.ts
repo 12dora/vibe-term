@@ -130,7 +130,7 @@ test('desktop: vim alternate screen survives page refresh with content and mouse
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-refresh-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-refresh-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const vimPaneId = paneIds[1] ?? paneIds[0];
   expect(vimPaneId).toBeTruthy();
@@ -165,7 +165,7 @@ test('desktop: vim alternate screen survives page refresh with content and mouse
 });
 
 test('desktop: vim mouse modes survive pane round-trip navigation', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-vim-pane-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-pane-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const shellPaneId = paneIds[0];
   const vimPaneId = paneIds[1] ?? paneIds[0];
@@ -211,7 +211,7 @@ test('desktop: vim exit releases mouse wheel back to viewport scrolling after re
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-exit-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-exit-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const vimPaneId = paneId;
   expect(vimPaneId).toBeTruthy();
@@ -266,7 +266,7 @@ test('desktop: vim exit releases mouse wheel back to viewport scrolling without 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-exit-direct-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-exit-direct-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const vimPaneId = paneId;
   expect(vimPaneId).toBeTruthy();
@@ -316,7 +316,7 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-refresh-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-refresh-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[1] ?? paneIds[0];
   expect(targetPaneId).toBeTruthy();
@@ -360,7 +360,7 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-pane-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-pane-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const shellPaneId = paneIds[0];
   const targetPaneId = paneIds[1] ?? paneIds[0];
@@ -412,7 +412,7 @@ test('desktop: focus restore repaints a cleared terminal canvas even when termin
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-focus-repaint-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-focus-repaint-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const targetPaneId = paneId;
   expect(targetPaneId).toBeTruthy();

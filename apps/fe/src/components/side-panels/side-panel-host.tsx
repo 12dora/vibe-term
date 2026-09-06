@@ -82,7 +82,7 @@ export function SidePanelHost() {
               不会像原来那页那样被撑出可视区又滚不动。
               bg-muted/50 与页面内容区一致，卡片（bg-background）才有对比。 */}
           <div
-            className="bg-muted/50 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--tmex-safe-area-bottom))] [-webkit-overflow-scrolling:touch]"
+            className="bg-muted/50 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--vibeterm-safe-area-bottom))] [-webkit-overflow-scrolling:touch]"
             data-testid="side-panel-body"
           >
             <SidePanelBody panel={rendered} onClose={close} />

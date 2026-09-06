@@ -8,7 +8,7 @@ test('terminal custom shortcuts: preview, icon toggle, add action, save persists
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-sc-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-sc-${Date.now()}`;
   createTwoPaneSession(sessionName);
   const name = `e2e-sc-${Date.now()}`;
   const createRes = await request.post('/api/devices', {

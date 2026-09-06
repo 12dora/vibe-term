@@ -9,6 +9,7 @@
 
 import type { RecordSigner } from '@/auth/key-log-actions';
 import type { RelayMetaKeyOp } from '@vibeterm/api-client/relay/tenant-api';
+import { migrateStorageKey } from '@vibeterm/stores';
 import {
   type RelayFlowDeps,
   type RelayFlowResult,
@@ -17,7 +18,9 @@ import {
   resendRelayRecord,
 } from './relay-enroll';
 
-export const RELAY_META_KEY_STORAGE_KEY = 'tmex.relay.metaKeyPending';
+export const RELAY_META_KEY_STORAGE_KEY = 'vibeterm.relay.metaKeyPending';
+/** 改名前的键，首次读取时搬运 */
+const LEGACY_RELAY_META_KEY_STORAGE_KEY = 'tmex.relay.metaKeyPending';
 
 /** 欠着的那一条换代。`record` 为 `null` 表示当时连签都没签成，重试要重新要凭据。 */
 export interface PendingMetaKey {
@@ -63,6 +66,7 @@ function reasonOf(value: unknown): PendingMetaKey['reason'] {
 function load(): void {
   if (loaded) return;
   loaded = true;
+  migrateStorageKey(storage(), LEGACY_RELAY_META_KEY_STORAGE_KEY, RELAY_META_KEY_STORAGE_KEY);
   try {
     const raw = storage()?.getItem(RELAY_META_KEY_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
@@ -168,7 +172,9 @@ export async function retryPendingMetaKey(
 // 密封包欠账
 // ---------------------------------------------------------------------------
 
-export const RELAY_PACK_DEBT_STORAGE_KEY = 'tmex.relay.packDebt';
+export const RELAY_PACK_DEBT_STORAGE_KEY = 'vibeterm.relay.packDebt';
+/** 改名前的键，读取前搬运 */
+const LEGACY_RELAY_PACK_DEBT_STORAGE_KEY = 'tmex.relay.packDebt';
 
 /**
  * 密封包没能重封（根轮换之后最典型：`rotate-root` 一落账全部会话即失效，这台浏览器连
@@ -214,6 +220,7 @@ function parsePackDebt(raw: string | null): RelayPackDebt {
 function loadPackDebt(): void {
   if (packDebtLoaded) return;
   packDebtLoaded = true;
+  migrateStorageKey(storage(), LEGACY_RELAY_PACK_DEBT_STORAGE_KEY, RELAY_PACK_DEBT_STORAGE_KEY);
   try {
     packDebt = parsePackDebt(storage()?.getItem(RELAY_PACK_DEBT_STORAGE_KEY) ?? null);
   } catch {

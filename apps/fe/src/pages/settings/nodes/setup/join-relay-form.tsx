@@ -1,4 +1,4 @@
-// 「加入已有中继」表单：等价于 CLI `tmex relay join <relayUrl> --tenant <id>`。
+// 「加入已有中继」表单：等价于 CLI `vibeterm relay join <relayUrl> --tenant <id>`。
 //
 // 加入所需的三样东西全部来自中继那侧已经接进去的机器：中继地址、租户编号、mesh 账户密码。
 // 中继不认识加入码，也不签发加入码——这条路径没有「先在别处生成一次」的步骤。
@@ -151,7 +151,7 @@ function JoinRelayResult({
 }) {
   const { t } = useTranslation();
   return (
-    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-join-relay-result">
+    <Card className="border-0 ring-0 vibeterm-reveal" data-testid="setup-join-relay-result">
       <CardHeader>
         <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
         <CardDescription>{t('nodes.setup.result.relayJoinDescription')}</CardDescription>

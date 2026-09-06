@@ -58,7 +58,7 @@ export function TotpSection({
     setError(null);
     publishFeedback(null);
     setCode('');
-    setDraft(beginTotpSetup({ uid, issuer: 'tmex' }));
+    setDraft(beginTotpSetup({ uid, issuer: 'VibeTerm' }));
   }, [publishFeedback, uid]);
 
   const confirm = useCallback(async () => {

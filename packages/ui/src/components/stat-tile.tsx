@@ -56,7 +56,7 @@ export function StatTile({
       data-stale={stale ? '' : undefined}
       title={hint}
       className={cn(
-        'gap-0 transition-opacity duration-(--tmex-motion-fast) motion-reduce:transition-none',
+        'gap-0 transition-opacity duration-(--vibeterm-motion-fast) motion-reduce:transition-none',
         stale && 'opacity-60',
         className
       )}

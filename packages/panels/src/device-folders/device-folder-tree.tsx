@@ -316,7 +316,7 @@ function TreeRoot({
       data-testid="device-folder-tree"
       data-drop-target={active ? 'true' : undefined}
       className={cn(
-        'flex min-w-0 flex-col gap-3 rounded-xl transition-[box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        'flex min-w-0 flex-col gap-3 rounded-xl transition-[box-shadow] duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         active && 'ring-2 ring-ring/25',
         className
       )}

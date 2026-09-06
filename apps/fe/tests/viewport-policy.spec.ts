@@ -78,7 +78,7 @@ test('viewport-policy: the smallest visible client owns the window; the larger c
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-viewport-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-viewport-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
   const deviceId = await createDevice(request, sessionName);
   let clients: Awaited<ReturnType<typeof openTwoClients>> | null = null;
@@ -128,7 +128,7 @@ test('viewport-policy: closing the owner hands the window size to the remaining 
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-viewport-close-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-viewport-close-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
   const deviceId = await createDevice(request, sessionName);
   let clients: Awaited<ReturnType<typeof openTwoClients>> | null = null;

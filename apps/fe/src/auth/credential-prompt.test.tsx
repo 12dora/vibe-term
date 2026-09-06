@@ -3,7 +3,12 @@
 import { describe, expect, test } from 'bun:test';
 import { WebAuthnError } from '@vibeterm/api-client/auth/index';
 import type { PasskeySummary } from '@vibeterm/api-client/auth/index';
-import { decodeBase64url, deriveSeed, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
+import {
+  decodeBase64url,
+  deriveSeed,
+  encodeBase64url,
+  rootKeyFromSeed,
+} from '@vibeterm/shared/auth';
 import type { RootKey } from '@vibeterm/shared/auth';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {

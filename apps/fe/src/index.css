@@ -151,20 +151,20 @@
 }
 
 /* follow 键盘模式：direct 快捷键栏浮到键盘正上方（issue #27）。
-   --tmex-kb-shortcut-lift 由 use-keyboard-avoidance 写（= inset - offset），叠加 <main>
+   --vibeterm-kb-shortcut-lift 由 use-keyboard-avoidance 写（= inset - offset），叠加 <main>
    的 -offset 后总位移恰为 -inset，贴键盘顶。transform 不脱离文档流，终端 canvas 高度
    不变、不触发 resize。变量未设时默认 0，快捷键栏正常拼在终端下方。 */
 .kb-floating-shortcuts {
   position: relative;
   z-index: 20;
-  transform: translateY(calc(-1 * var(--tmex-kb-shortcut-lift, 0px)));
+  transform: translateY(calc(-1 * var(--vibeterm-kb-shortcut-lift, 0px)));
 }
 
 /* 只在快捷键栏真的抬起来的那段时间预留合成层：常驻 will-change 会让这个元素一直占一层，
    而键盘绝大多数时候是收着的。`use-keyboard-avoidance` 把位移量写成行内自定义属性，键盘
    落下时写回 0px，据此判定当前是否在浮动。选择器认不出行内写法时退化回常驻，不会漏层。 */
-.kb-floating-shortcuts[style*="--tmex-kb-shortcut-lift"]:not(
-    [style*="--tmex-kb-shortcut-lift: 0px"]
+.kb-floating-shortcuts[style*="--vibeterm-kb-shortcut-lift"]:not(
+    [style*="--vibeterm-kb-shortcut-lift: 0px"]
   ) {
   will-change: transform;
 }

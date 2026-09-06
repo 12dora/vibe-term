@@ -1,5 +1,5 @@
-// 两步下载：prepare（leg1 服务器→tmex rsync，流式 NDJSON 进度，期间持续有数据避免空闲超时）
-// → content（leg2 tmex→客户端，读流计速）→ 返回 {name, blob}。自身不访问 URL/document/下载锚点。
+// 两步下载：prepare（leg1 服务器→VibeTerm rsync，流式 NDJSON 进度，期间持续有数据避免空闲超时）
+// → content（leg2 VibeTerm→客户端，读流计速）→ 返回 {name, blob}。自身不访问 URL/document/下载锚点。
 // 支持 AbortSignal 取消；只要远端已产出 downloadId，任何阶段失败都 best-effort 清理远端临时会话。
 
 import type { FileErrorCode } from '@vibeterm/shared';
@@ -147,7 +147,7 @@ async function fetchContentOnce(input: {
   return { ok: true };
 }
 
-// leg2：tmex → 客户端。链路中断按已收字节数续传（服务端支持 `Range`）。
+// leg2：VibeTerm → 客户端。链路中断按已收字节数续传（服务端支持 `Range`）。
 async function drainContent(
   client: ApiClient,
   downloadId: string,
@@ -184,7 +184,7 @@ async function drainContent(
     : new FileApiError(500, 'download failed', 'unknown');
 }
 
-// leg1：服务器 → tmex（rsync）。downloadId 一拿到就通过 onDownloadId 上报，
+// leg1：服务器 → VibeTerm（rsync）。downloadId 一拿到就通过 onDownloadId 上报，
 // 保证解析中途抛错时调用方仍能回收远端会话。
 // bulk 直连路径（`@vibeterm/panels` 的 downloadFileWithTransport）复用同一份 leg1。
 export async function prepareDownload(

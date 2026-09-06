@@ -97,16 +97,16 @@ export function tunnelPill(status: TunnelStatusResponse): TunnelPill {
   if (status.process.state === 'error') return 'error';
   if (status.config.mode === 'off') return 'notConfigured';
   if (tunnelAlive(status)) return tunnelDegraded(status) ? 'degraded' : 'running';
-  // 接管来的隧道由系统服务跑，tmex 侧没有进程，运行态以探测结果为准。
+  // 接管来的隧道由系统服务跑，VibeTerm 侧没有进程，运行态以探测结果为准。
   if (status.config.externallyManaged) return 'stopped';
   if (status.process.state === 'starting') return 'starting';
   return 'stopped';
 }
 
 /**
- * Access 徽标。前三档是 tmex 托管的应用（`access.configured`）：不校验令牌 / 绑了别的主机名 / 校验已生效。
- * 后两档来自只读探测，只在 tmex 没有托管应用时出现：
- * `dashboardCovered` = Cloudflare 控制台上已有应用覆盖这个主机名（tmex 不校验令牌）；
+ * Access 徽标。前三档是 VibeTerm 托管的应用（`access.configured`）：不校验令牌 / 绑了别的主机名 / 校验已生效。
+ * 后两档来自只读探测，只在 VibeTerm 没有托管应用时出现：
+ * `dashboardCovered` = Cloudflare 控制台上已有应用覆盖这个主机名（VibeTerm 不校验令牌）；
  * `unknown` = 有主机名但查不了（没有可用凭证或 API 失败），与「查过了，确实没有」必须区分。
  */
 export type AccessPill =
@@ -500,7 +500,7 @@ export function isAuthRequiredError(
 type ExposingAction = Extract<TunnelActionRequest, { acknowledgeExposure?: boolean }>;
 
 /**
- * 会把 tmex 开放到公网的动作：未受保护时必须带上用户的显式确认。
+ * 会把 VibeTerm 开放到公网的动作：未受保护时必须带上用户的显式确认。
  * 开隧道是一类；拿掉最后一道保护（关掉令牌校验、删掉 Access 应用）是同一件事的另一半。
  */
 export function isExposingAction(req: TunnelActionRequest): req is ExposingAction {

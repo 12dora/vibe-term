@@ -40,7 +40,7 @@ export const PaneRowContent = memo(function PaneRowContent({
       data-testid={`pane-item-${pane.id}`}
       data-active={isActive ? 'true' : undefined}
       className={cn(
-        'flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none pr-13 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-21',
+        'flex-1 min-w-0 flex items-center gap-2 px-2 py-1 rounded-lg text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none pr-13 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-21',
         isMobile && 'py-2.5 pr-24',
         isActive ? 'bg-primary/10 text-primary' : 'hover:bg-accent/30 text-muted-foreground'
       )}
@@ -100,7 +100,7 @@ function PaneCloseButton({
       }}
       data-testid={`pane-close-${pane.id}`}
       className={cn(
-        'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none',
+        'absolute top-1/2 -translate-y-1/2 flex items-center justify-center rounded text-muted-foreground hover:bg-background hover:text-foreground transition-opacity duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none',
         isMobile
           ? 'h-11 w-11 right-0 rounded-lg bg-background/40 opacity-100'
           : 'h-5 w-5 right-1.5 [@media(any-pointer:coarse)]:h-10 [@media(any-pointer:coarse)]:w-10 [@media(any-pointer:coarse)]:right-0.5 [@media(any-pointer:coarse)]:rounded-lg',

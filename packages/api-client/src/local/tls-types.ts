@@ -48,7 +48,7 @@ export interface TlsAcmeStatus {
 
 /**
  * 对外「有效 HTTPS」判定，与内置监听器状态分开：
- * - builtin：tmex 内置 HTTPS 监听器在运行；
+ * - builtin：VibeTerm 内置 HTTPS 监听器在运行；
  * - reverse-proxy：TLS 由反向代理终止。`verified=true` 表示本次请求经受信任的代理头
  *   （trustProxy）确认为 https；`verified=false` 表示仅由配置的公开地址（hub 公开地址 / VIBETERM_BASE_URL）
  *   的 scheme 推断；

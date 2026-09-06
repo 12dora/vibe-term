@@ -25,7 +25,7 @@ beforeEach(() => {
       dispatched.push(e as CustomEvent);
       return true;
     },
-    location: { origin: 'https://tmex.test' },
+    location: { origin: 'https://vibeterm.test' },
   };
   setNavigateBridge((to, opts) => {
     navCalls.push({ to, opts });
@@ -52,7 +52,7 @@ describe('navigateToAppUrl', () => {
     navigateToAppUrl('/devices/dev1/windows/win2/panes/%251');
 
     expect(dispatched).toHaveLength(1);
-    expect(dispatched[0].type).toBe('tmex:user-initiated-selection');
+    expect(dispatched[0].type).toBe('vibeterm:user-initiated-selection');
     expect(dispatched[0].detail).toEqual({
       nodeId: 'self',
       deviceId: 'dev1',

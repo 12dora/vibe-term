@@ -2,7 +2,7 @@
 
 import type { DeviceType } from '@vibeterm/shared';
 
-export const OPEN_ADD_DEVICE_EVENT = 'tmex:open-add-device';
+export const OPEN_ADD_DEVICE_EVENT = 'vibeterm:open-add-device';
 
 /** 打开新建对话框时预选的设备类型；不给就用对话框自己的默认值。 */
 export interface AddDevicePreset {

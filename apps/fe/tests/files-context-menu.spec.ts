@@ -19,7 +19,7 @@ test('files: 文件/文件夹右键菜单、复制路径、上传', async ({ pag
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
   // 1. 本机文件树：临时目录 + 一个文件 + 一个子目录
-  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-files-')));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-files-')));
   rootPath = sandbox;
   writeFileSync(join(rootPath, 'hello.txt'), 'hi');
   writeFileSync(join(rootPath, 'sub-marker'), 'x'); // 占位，保证目录非空
@@ -110,7 +110,7 @@ test('files: 文件/文件夹右键菜单、复制路径、上传', async ({ pag
 test('files: 应用内流式下载（菜单）保存文件', async ({ page, context }) => {
   await context.grantPermissions(['clipboard-read', 'clipboard-write']);
 
-  const dlSandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-dl-')));
+  const dlSandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-dl-')));
   const content = 'download-stream-content-12345';
   writeFileSync(join(dlSandbox, 'doc.txt'), content);
 
@@ -150,7 +150,7 @@ test('files: 应用内流式下载（菜单）保存文件', async ({ page, cont
 });
 
 test('files: 上传进行中的 toast 不自动消失、不可手动关闭、可取消', async ({ page }) => {
-  const upSandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-up-')));
+  const upSandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-up-')));
 
   const devRes = await page.request.post('/api/devices', {
     data: { name: `e2e-up-${Date.now()}`, type: 'local', authMode: 'auto' },

@@ -4,7 +4,7 @@ import { type SiteSettingsLoader, createSiteSettingsLoader } from './site-settin
 
 function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
-    siteName: 'tmex',
+    siteName: 'VibeTerm',
     siteUrl: 'http://localhost',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,

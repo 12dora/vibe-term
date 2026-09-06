@@ -82,6 +82,11 @@ export {
   setNavigateBridge,
   setSidebarBridge,
 } from './flow-bridges';
+export {
+  migrateLocalStorageKey,
+  migrateStorageKey,
+  type SyncKeyValueStorage,
+} from './storage-migration';
 export { selectPaneAgentState, type PaneAgentState } from './use-pane-agent-state';
 export {
   applyViewportPolicy,
