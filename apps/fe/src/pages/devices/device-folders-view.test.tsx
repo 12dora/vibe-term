@@ -30,6 +30,9 @@ mock.module('@vibeterm/panels/device-management', () => ({
   DeviceManagementActions: ({ onAddDevice }: { onAddDevice?: () => void }) => (
     <span data-testid="device-actions" data-callback={String(Boolean(onAddDevice))} />
   ),
+  // 分组与待同步占位都从这个模块拿骨架卡；mock 少了它，单独跑本文件会在导入期报缺导出
+  // （合跑时被 DevicesPage.test 先注册的 mock 掩盖）。
+  DeviceCardSkeleton: () => <span data-testid="devices-loading" />,
 }));
 
 let layout: DeviceFolderLayout = { folders: [], placements: [] };
