@@ -1,16 +1,16 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { LlmProviderDto, UpdateAgentLlmSettingsRequest } from '@tmex/shared';
+import { useQuery } from '@tanstack/react-query';
+import type { LlmProviderDto } from '@tmex/shared';
 import { Loader2, Plus, Save } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { toast } from 'sonner';
 
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
-import { fetchAgentLlmSettings, fetchLlmProviders, parseApiError } from '@tmex/api-client';
+import { fetchLlmProviders } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
+import { useLlmDefaultsState } from './llm-defaults-state';
 import { LlmModelSelect } from './llm-model-select';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
@@ -87,62 +87,11 @@ const NONE_PROVIDER_VALUE = '__none__';
 
 function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
   const { t } = useTranslation();
-  const queryClient = useQueryClient();
-  const { apiClient } = useRuntime();
-
-  const [defaultProviderId, setDefaultProviderId] = useState<string | null>(null);
-  const [defaultModelId, setDefaultModelId] = useState('');
-
-  const settingsQuery = useQuery({
-    queryKey: ['llm-settings'],
-    queryFn: () => fetchAgentLlmSettings(t('settings.llm.settingsLoadFailed'), apiClient),
-    staleTime: SETTINGS_STALE_MS,
-  });
-
-  const serverDefaultProviderId = settingsQuery.data?.settings.defaultProviderId ?? null;
-  const serverDefaultModelId = settingsQuery.data?.settings.defaultModelId ?? '';
-  const settingsLoaded = Boolean(settingsQuery.data);
-
-  useEffect(() => {
-    if (!settingsLoaded) {
-      return;
-    }
-    setDefaultProviderId(serverDefaultProviderId);
-    setDefaultModelId(serverDefaultModelId);
-  }, [settingsLoaded, serverDefaultProviderId, serverDefaultModelId]);
-
-  const saveDefaultsMutation = useMutation({
-    mutationFn: async () => {
-      const payload: UpdateAgentLlmSettingsRequest = {
-        defaultProviderId,
-        defaultModelId: defaultModelId.trim() || null,
-      };
-      const res = await apiClient.fetch('/api/llm/settings', {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error(await parseApiError(res, t('settings.llm.settingsSaveFailed')));
-    },
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['llm-settings'] });
-      toast.success(t('common.success'));
-    },
-    onError: (err) => {
-      toast.error(err instanceof Error ? err.message : t('common.error'));
-    },
-  });
+  const { draft, selectProvider, selectModel, save, isLoading, isSaving } =
+    useLlmDefaultsState(providers);
 
   const enabledProviders = providers.filter((provider) => provider.enabled);
-  const selectedProvider = providers.find((provider) => provider.id === defaultProviderId);
-
-  const selectProvider = (nextProviderId: string | null) => {
-    setDefaultProviderId(nextProviderId);
-    const nextProvider = providers.find((provider) => provider.id === nextProviderId);
-    if (!nextProvider?.models.includes(defaultModelId)) {
-      setDefaultModelId('');
-    }
-  };
+  const selectedProvider = providers.find((provider) => provider.id === draft.providerId);
 
   return (
     <Card className="border-0 ring-0" data-testid="llm-defaults-section">
@@ -156,7 +105,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
               {t('settings.llm.defaultProvider')}
             </label>
             <Select
-              value={defaultProviderId ?? NONE_PROVIDER_VALUE}
+              value={draft.providerId ?? NONE_PROVIDER_VALUE}
               onValueChange={(value) => {
                 if (!value) return;
                 selectProvider(value === NONE_PROVIDER_VALUE ? null : value);
@@ -192,13 +141,10 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
               id="llm-default-model-select"
               testId="llm-default-model-select"
               providers={providers}
-              providerId={defaultProviderId}
-              modelId={defaultModelId || null}
+              providerId={draft.providerId}
+              modelId={draft.modelId || null}
               allowNone
-              onChange={(next) => {
-                setDefaultProviderId(next.providerId);
-                setDefaultModelId(next.modelId ?? '');
-              }}
+              onChange={selectModel}
             />
           </div>
         </div>
@@ -207,15 +153,11 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
           <Button
             variant="secondary"
             data-testid="llm-defaults-save"
-            onClick={() => saveDefaultsMutation.mutate()}
-            disabled={saveDefaultsMutation.isPending || settingsQuery.isLoading}
+            onClick={save}
+            disabled={isSaving || isLoading}
             className="w-full sm:w-auto"
           >
-            {saveDefaultsMutation.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Save className="h-4 w-4" />
-            )}
+            {isSaving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
             {t('settings.llm.saveDefaults')}
           </Button>
         </div>

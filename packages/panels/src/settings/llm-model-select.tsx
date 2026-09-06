@@ -82,15 +82,13 @@ export function LlmModelSelect({
   const selectable = isModelSelectable(groups, providerId, modelId);
   const currentValue = modelId ? encodeModelValue(providerId, modelId) : NONE_MODEL_VALUE;
 
-  const noneText = noneLabel ?? t('settings.llm.defaultProviderNone');
-  const placeholder = isEmpty
-    ? t('settings.llm.defaultModelEmpty')
-    : t('settings.llm.defaultModelPlaceholder');
+  const noneText = noneLabel ?? t('common.llmModel.none');
+  const placeholder = isEmpty ? t('common.llmModel.empty') : t('common.llmModel.placeholder');
 
   const triggerLabel = modelId
     ? selectable
       ? modelId
-      : t('settings.llm.defaultModelUnavailable', { model: modelId })
+      : t('common.llmModel.unavailable', { model: modelId })
     : allowNone
       ? noneText
       : placeholder;
@@ -113,7 +111,7 @@ export function LlmModelSelect({
         {allowNone && <SelectItem value={NONE_MODEL_VALUE}>{noneText}</SelectItem>}
         {modelId && !selectable && (
           <SelectItem value={currentValue} className="text-muted-foreground">
-            {t('settings.llm.defaultModelUnavailable', { model: modelId })}
+            {t('common.llmModel.unavailable', { model: modelId })}
           </SelectItem>
         )}
         {groups.map((group) => (
