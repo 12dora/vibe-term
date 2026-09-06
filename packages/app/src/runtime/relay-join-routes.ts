@@ -24,6 +24,8 @@ export const RELAY_JOIN_ERROR_STATUS: Record<string, number> = {
   relay_unreachable: 502,
   local_user_exists: 409,
   relay_not_authorized: 403,
+  // 只换令牌时本节点不在当前 K_meta 世代里：签不出 set-relays，得由在线节点重发
+  relay_key_missing: 409,
 };
 
 const RELAY_JOIN_ERROR_CODES = new Set(Object.keys(RELAY_JOIN_ERROR_STATUS));

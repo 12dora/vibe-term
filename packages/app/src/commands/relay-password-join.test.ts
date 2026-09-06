@@ -201,7 +201,7 @@ describe('performRelayPasswordJoin', () => {
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'local_user_exists' });
   });
 
-  test('同一账户：只换发中继令牌，不重建本机用户', async () => {
+  test('本节点不在当前 K_meta 世代里：显式报错，不留半成功状态', async () => {
     const auth = await openAuth('ivy');
     const user = auth.userStore.listUsers()[0];
     if (!user) throw new Error('missing local user');
@@ -220,15 +220,18 @@ describe('performRelayPasswordJoin', () => {
     );
     relayStore.markKicked(RELAY_URL, true, 'password_rotated');
 
-    const result = await performRelayPasswordJoin(
-      { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
-      { auth, fetcher: fixture.fetcher }
-    );
-    expect(result).toMatchObject({ userId: user.id, tenantId: TENANT_ID, rekeyed: true });
+    const headBefore = auth.userStore.getById(user.id)?.keyLogHeadSeq;
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher: fixture.fetcher }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_key_missing' });
+    // 半成功会在下一次 reconcile 时静默退回旧令牌，所以什么都不许改
     const stored = await relayStore.getRelay(RELAY_URL);
-    expect(stored?.token).toEqual(fixture.token);
-    expect(stored?.kicked).toBe(false);
-    expect(await relayStore.getSecret('log', 0)).toEqual(fixture.logKey);
+    expect(stored?.token).toEqual(new Uint8Array(32).fill(1));
+    expect(stored?.kicked).toBe(true);
+    expect(auth.userStore.getById(user.id)?.keyLogHeadSeq).toBe(headBefore ?? 0);
     expect(auth.userStore.listUsers()).toHaveLength(1);
   });
 

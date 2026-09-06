@@ -8,7 +8,7 @@ import {
   randomBytes,
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
-import { kdfParamsToWire, sealRelayPack } from '@vibeterm/shared/relay';
+import { kdfParamsToWire, sealRelayPack, signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { and, eq, gt } from 'drizzle-orm';
 import { createAuthContextFromDb } from '../../../../../packages/app/src/lib/local-auth';
 import {
@@ -45,7 +45,11 @@ async function boot() {
   return harness;
 }
 
-async function uploadPack(h: RelayMeshHarness, tenant: RelayTenant): Promise<void> {
+async function uploadPack(
+  h: RelayMeshHarness,
+  tenant: RelayTenant,
+  tokenOverride?: string
+): Promise<void> {
   const material = await tenant.owner.json<{
     logKey: string;
     relays: Array<{ url: string; tenantId: string; token: string }>;
@@ -61,7 +65,7 @@ async function uploadPack(h: RelayMeshHarness, tenant: RelayTenant): Promise<voi
     rootEpoch: user.rootEpoch,
     plaintext: {
       log_key: decodeBase64url(material.logKey),
-      token: decodeBase64url(primary.token),
+      token: decodeBase64url(tokenOverride ?? primary.token),
       head_seq: head.seq,
       head_hash: head.hash,
       issued_at: BigInt(Date.now()),
@@ -69,7 +73,7 @@ async function uploadPack(h: RelayMeshHarness, tenant: RelayTenant): Promise<voi
   });
   const res = await h.relay.tenantFetch(
     `/api/relay/tenants/${primary.tenantId}/pack`,
-    primary.token,
+    tokenOverride ?? primary.token,
     {
       method: 'POST',
       body: JSON.stringify({
@@ -153,6 +157,60 @@ async function rotateTenantRootByPassword(
     8_000
   );
   return next;
+}
+
+/**
+ * 直接打中继 `enroll` 换一份新令牌，但**不**发布任何 `set-relays`，密封包按新令牌重封。
+ * 复刻「连着换发了两次、最新那条记录从未上链」这一形态。
+ */
+async function reissueTokenWithoutPublishing(
+  h: RelayMeshHarness,
+  tenant: RelayTenant
+): Promise<Uint8Array> {
+  const user = tenant.owner.userStore.getById(tenant.userId);
+  if (!user) throw new Error('missing tenant user');
+  const proof = signRelayEnrollProof(tenant.rootKey, {
+    relayHost: new URL(RELAY_TEST_PUBLIC_URL).host,
+    ts: Date.now(),
+  });
+  const res = await h.relay.fetch('/api/relay/enroll', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      password: 'relay-pass',
+      root_public_key: encodeBase64url(user.rootPublicKey),
+      root_epoch: user.rootEpoch,
+      proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
+    }),
+  });
+  if (res.status !== 200) throw new Error(`relay enroll ${res.status}: ${await res.text()}`);
+  const body = (await res.json()) as { token: string | null };
+  if (!body.token) throw new Error('relay did not reissue a token');
+  await uploadPack(h, tenant, body.token);
+  return decodeBase64url(body.token);
+}
+
+/** 把发往中继密钥日志的 append 前 `times` 次改成 `SEQ_MISMATCH`，其余原样透传。 */
+function seqMismatchFetcher(times: number): { fetcher: typeof fetch; appends: () => number } {
+  const real = globalThis.fetch;
+  let seen = 0;
+  const fetcher = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const href = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    const method = init?.method ?? (init?.body ? 'POST' : 'GET');
+    if (href.includes('/keylog') && method === 'POST') {
+      seen += 1;
+      if (seen <= times) {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: { code: 'SEQ_MISMATCH', message: 'busy' } }), {
+            status: 409,
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      }
+    }
+    return real(input as RequestInfo, init);
+  }) as typeof fetch;
+  return { fetcher, appends: () => seen };
 }
 
 describe('relay password join', () => {
@@ -283,6 +341,118 @@ describe('relay password join', () => {
       // 「下一次网关启动」：reconcile 按投影整表重写，不能再把令牌盖回旧的那份
       await (await localRelaySecrets(created.db, joined.userId)).reconcile();
       expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
+    } finally {
+      created.close();
+    }
+  }, 30_000);
+
+  test('连着换发两次、最新那条从未上链：以密封包里的令牌为准并补签', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      const joined = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+          name: 'alpha-b',
+        },
+        { auth }
+      );
+      const store = new MeshRelayStore(created.db);
+
+      // 第一次换发写下了 set-relays（本机离线错过），第二次只换令牌、没上链
+      await rotateTenantRelayToken(tenant);
+      const published = (await tenant.owner.relayStore.getRelay(RELAY_TEST_PUBLIC_URL))?.token;
+      const current = await reissueTokenWithoutPublishing(h, tenant);
+      expect(current).not.toEqual(published ?? new Uint8Array());
+
+      const rekeyed = await performRelayPasswordJoin(
+        { relayUrl: RELAY_TEST_PUBLIC_URL, tenantId: tenant.tenantId(), password: NODE_PASSWORD },
+        { auth }
+      );
+      // 「令牌和之前不一样」不等于「是当前那份」：必须落到密封包里的 current 上
+      expect(rekeyed.rekeyed).toBe(true);
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
+      await (await localRelaySecrets(created.db, joined.userId)).reconcile();
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
+    } finally {
+      created.close();
+    }
+  }, 30_000);
+
+  test('补签遇到并发冲突：重下重签一次后成功，本机与中继不分叉', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      const joined = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+          name: 'alpha-b',
+        },
+        { auth }
+      );
+      const current = await reissueTokenWithoutPublishing(h, tenant);
+      const gate = seqMismatchFetcher(1);
+
+      const rekeyed = await performRelayPasswordJoin(
+        { relayUrl: RELAY_TEST_PUBLIC_URL, tenantId: tenant.tenantId(), password: NODE_PASSWORD },
+        { auth, fetcher: gate.fetcher }
+      );
+      expect(rekeyed.rekeyed).toBe(true);
+      expect(gate.appends()).toBe(2);
+      const store = new MeshRelayStore(created.db);
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
+      // 中继先落账、本机后落账：两侧的 head 必须一致，否则往后每次 rekey 都会被前缀校验拒掉
+      const local = await auth.userKeys.head(joined.userId);
+      expect(h.relay.runtime.tenants.get(tenant.tenantId())?.keyLogHeadSeq).toBe(local.seq);
+    } finally {
+      created.close();
+    }
+  }, 30_000);
+
+  test('补签一直冲突：显式报错且本机 head 不动（不留分叉）', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      const joined = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+          name: 'alpha-b',
+        },
+        { auth }
+      );
+      await reissueTokenWithoutPublishing(h, tenant);
+      const headBefore = await auth.userKeys.head(joined.userId);
+
+      await expect(
+        performRelayPasswordJoin(
+          { relayUrl: RELAY_TEST_PUBLIC_URL, tenantId: tenant.tenantId(), password: NODE_PASSWORD },
+          { auth, fetcher: seqMismatchFetcher(99).fetcher }
+        )
+      ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'join_failed' });
+      const headAfter = await auth.userKeys.head(joined.userId);
+      expect(headAfter.seq).toBe(headBefore.seq);
+      expect(headAfter.hash).toEqual(headBefore.hash);
     } finally {
       created.close();
     }
