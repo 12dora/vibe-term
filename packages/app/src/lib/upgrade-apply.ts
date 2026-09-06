@@ -55,7 +55,12 @@ import {
   removeCandidateVersion,
   rollbackToOld,
 } from './upgrade-txn';
-import { revertMigrationAfterFailure, stopBeforeMigrationUndo } from './upgrade-txn-migrate';
+import {
+  finishMigrationUndo,
+  restoreDbAfterInterruptedRevert,
+  revertMigrationAfterFailure,
+  stopBeforeMigrationUndo,
+} from './upgrade-txn-migrate';
 
 export { createManagedServiceControl, createServiceControl, resolveServiceMode };
 export type { UpgradeServiceControl };
@@ -336,6 +341,15 @@ async function prepareRepair(input: {
     if (input.action !== 'restart_old') return rt;
     // 迁移已经撤销（回滚中途断电）或本来就没有迁移：都按「恢复旧版本」的身份收尾。
     const undone = undoneMigration(input.installDir, input.journal);
+    // `undone` 是先落盘的：紧接着的 meta / run.sh / shim 恢复可能一步都没做，这里幂等补做。
+    if (undone && input.journal) {
+      await finishMigrationUndo({
+        record: undone,
+        txnId: input.journal.txnId,
+        bunPath: input.bunPath,
+        shimDirs: repairShimDirs(input.deps),
+      });
+    }
     const meta2 = undone ? await readInstallMeta(undone.fromDir) : meta;
     const target = repairServiceIdentity(input.installDir, input.journal, 'restore');
     return {
@@ -361,15 +375,6 @@ async function prepareRepair(input: {
   return { ...rt, journal, migration: journal.dirMigration ?? record };
 }
 
-async function repairMissingJournal(
-  installDir: string,
-  bunPath: string,
-  deps: UpgradeApplyDeps
-): Promise<void> {
-  await convertLegacyLayout(installDir, { bunPath }).catch(() => false);
-  await sweepRepairGarbage(installDir, deps);
-}
-
 async function repairAbortCandidate(rt: RepairRuntime, journal: UpgradeJournal): Promise<void> {
   await killRecordedCandidate(rt.installDir, journal);
   await removeCandidateVersion(rt.installDir, journal.toVersion);
@@ -383,6 +388,10 @@ async function repairRestartOld(
   journal: UpgradeJournal,
   healthCheck: HealthCheckFn
 ): Promise<void> {
+  // 回退中断：新版本可能已经写过库，必须在拉起旧版本、清理事务之前把备份还回去。
+  if (journal.phase === 'reverting') {
+    await restoreDbAfterInterruptedRevert(rt.installDir, journal, rt.service);
+  }
   const current = await readCurrentVersion(rt.installDir);
   if (current && current !== journal.fromVersion && journal.fromVersion) {
     await switchCurrent(rt.installDir, journal.fromVersion);
@@ -478,7 +487,9 @@ export async function repairUpgrade(
   const journal = rt.journal;
 
   if (!journal) {
-    await repairMissingJournal(rt.installDir, bunPath, deps);
+    // 旧布局（没有 current）的转换一律留给 applyUpgrade：它会先把旧 run.sh 备份进事务再重写。
+    // 在这里提前转换，事务备份拿到的就是新模板，回滚时旧 runtime 缺 TMEX_* 路径变量起不来。
+    await sweepRepairGarbage(rt.installDir, deps);
     return { action, installDir: rt.installDir };
   }
   if (action === 'abort_candidate') {

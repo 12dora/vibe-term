@@ -312,6 +312,92 @@ describe('migrateInstallDir', () => {
     expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toBe(before);
   });
 
+  test('a blocked move back keeps a retryable record in the directory the install is still in', async () => {
+    const root = await scratch();
+    const fromDir = join(root, 'tmex');
+    const toDir = join(root, 'vibeterm');
+    await seedLegacyInstall(fromDir);
+    const before = await readFile(join(fromDir, 'app.env'), 'utf8');
+
+    const persisted: Array<{ record: DirMigrationRecord; dir: string }> = [];
+    let injected = false;
+    await expect(
+      migrateInstallDir(movePlan(fromDir, toDir), {
+        txnId: 'txn-blocked',
+        persist: async (record, dir) => {
+          persisted.push({ record, dir });
+          if (injected || !record.envRewritten) return;
+          injected = true;
+          // 迁移做完最后一步时失败，且旧路径此刻被占住：目录搬不回去
+          await mkdir(fromDir, { recursive: true });
+          throw new Error('persist-boom');
+        },
+      })
+    ).rejects.toThrow('persist-boom');
+
+    const last = persisted.at(-1);
+    // 撤销没做完就宣称 undone，repair 会跳过剩下的还原；记录还必须留在安装真正所在的目录
+    expect(last?.record.undone).toBe(false);
+    expect(last?.dir).toBe(toDir);
+    expect(last?.record.moveDir).toBe(true);
+    expect(await readdir(fromDir)).toEqual([]);
+    expect(await readFile(join(toDir, 'app.env'), 'utf8')).toBe(before);
+    expect(await pathExists(join(toDir, 'data', 'tmex.db'))).toBe(true);
+    expect(await pathExists(join(toDir, 'data', 'vibeterm.db'))).toBe(false);
+
+    // 挪开占位目录之后再 repair 一次：同一条记录能把撤销做完
+    await rm(fromDir, { recursive: true, force: true });
+    await revertInstallDirMigration(last?.record as DirMigrationRecord, { txnId: 'txn-blocked' });
+    expect(await pathExists(toDir)).toBe(false);
+    expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toBe(before);
+    expect(await pathExists(join(fromDir, 'data', 'tmex.db'))).toBe(true);
+  });
+
+  test('an env restore failure keeps a retryable record realigned to the old directory', async () => {
+    const root = await scratch();
+    const fromDir = join(root, 'tmex');
+    const toDir = join(root, 'vibeterm');
+    await seedLegacyInstall(fromDir);
+    const before = await readFile(join(fromDir, 'app.env'), 'utf8');
+
+    const persisted: Array<{ record: DirMigrationRecord; dir: string }> = [];
+    let injected = false;
+    await expect(
+      migrateInstallDir(movePlan(fromDir, toDir), {
+        txnId: 'txn-env-restore-fail',
+        persist: async (record, dir) => {
+          persisted.push({ record, dir });
+          if (injected || !record.envRewritten || !record.envBackup) return;
+          injected = true;
+          // 备份读不出来：目录搬得回去，app.env 却还停在迁移后的样子
+          await rm(record.envBackup, { force: true });
+          await mkdir(record.envBackup, { recursive: true });
+          throw new Error('persist-boom');
+        },
+      })
+    ).rejects.toThrow('persist-boom');
+
+    const last = persisted.at(-1);
+    expect(last?.record.undone).toBe(false);
+    // 目录已经搬回旧路径：记录里的路径（含 env 备份）必须跟着回来，否则 repair 找不到它们
+    expect(last?.dir).toBe(fromDir);
+    expect(last?.record.toDir).toBe(fromDir);
+    expect(last?.record.moveDir).toBe(false);
+    expect(last?.record.envBackup).toBe(join(fromDir, 'backups', 'app.env.txn-env-restore-fail'));
+    expect(await pathExists(toDir)).toBe(false);
+    expect(await pathExists(join(fromDir, 'data', 'tmex.db'))).toBe(true);
+    expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toContain('VIBETERM_MASTER_KEY');
+
+    // 备份重新可读之后再 repair 一次：realign 过的记录仍然指得对
+    const backup = last?.record.envBackup as string;
+    await rm(backup, { recursive: true, force: true });
+    await writeFile(backup, before);
+    await revertInstallDirMigration(last?.record as DirMigrationRecord, {
+      txnId: 'txn-env-restore-fail',
+    });
+    expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toBe(before);
+  });
+
   test('returns null when the destination cannot be created', async () => {
     const root = await scratch();
     const fromDir = join(root, 'tmex');

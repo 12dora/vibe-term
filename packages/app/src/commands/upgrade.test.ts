@@ -14,6 +14,7 @@ import {
   signSums,
   useTestSigningKeys,
 } from '../lib/test-support/release-signing';
+import { applyUpgrade, repairUpgrade } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
 import { readCurrentVersion } from '../lib/upgrade-switch';
 import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
@@ -35,6 +36,79 @@ afterEach(async () => {
 /** 直接读 `process.exitCode` 会被上面赋的 undefined 收窄掉，包一层拿回声明类型。 */
 function currentExitCode(): number | string | undefined {
   return process.exitCode;
+}
+
+async function writeInstallMetaFixture(
+  installDir: string,
+  meta: {
+    serviceName: string;
+    cliVersion: string;
+    serviceMode: 'none' | 'managed';
+    autostart?: boolean;
+  }
+): Promise<void> {
+  await writeFile(
+    join(installDir, 'install-meta.json'),
+    `${JSON.stringify({
+      serviceName: meta.serviceName,
+      platform: process.platform,
+      autostart: meta.autostart ?? false,
+      installDir,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cliVersion: meta.cliVersion,
+      bunPath: process.execPath,
+      serviceMode: meta.serviceMode,
+    })}\n`
+  );
+}
+
+/** 造一份下载解压之后的候选包，让 `--txn` 走 staging 里的布局而不是仓库自身。 */
+async function stagePackage(installDir: string, txnId: string, version: string): Promise<void> {
+  const extract = join(installDir, 'staging', txnId, 'extract', 'package');
+  await mkdir(join(extract, 'bin'), { recursive: true });
+  await mkdir(join(extract, 'dist', 'runtime'), { recursive: true });
+  await mkdir(join(extract, 'resources', 'fe-dist'), { recursive: true });
+  await mkdir(join(extract, 'resources', 'gateway-drizzle'), { recursive: true });
+  await writeFile(
+    join(extract, 'package.json'),
+    `{"name":"vibeterm-cli","version":"${version}"}\n`
+  );
+  await writeFile(join(extract, 'bin', 'vibeterm.js'), 'export {}\n');
+  await writeFile(join(extract, 'dist', 'cli-node.js'), 'export {}\n');
+  await writeFile(join(extract, 'dist', 'runtime', 'server.js'), 'export {}\n');
+  await writeFile(join(extract, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+  await writeFile(join(extract, 'resources', 'gateway-drizzle', '0000.sql'), '--\n');
+}
+
+function upgradeArgs(installDir: string, extra: string[]) {
+  return parseArgs([
+    'upgrade',
+    '--apply-current-package',
+    '--install-dir',
+    installDir,
+    '--txn',
+    'live-txn',
+    '--version',
+    '2.0.0',
+    '--bun-path',
+    process.execPath,
+    ...extra,
+  ]);
+}
+
+function fakeService() {
+  return {
+    running: true,
+    async stop(): Promise<void> {
+      this.running = false;
+    },
+    async start(): Promise<void> {
+      this.running = true;
+    },
+    async isRunning(): Promise<boolean> {
+      return this.running;
+    },
+  };
 }
 
 function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response> {
@@ -369,6 +443,101 @@ describe('upgrade flag unification', () => {
     });
     expect(repairTxn).toBe('live-txn');
     expect(applyTxn).toBe('live-txn');
+  });
+
+  test('the full repair+apply entry backs up the pre-conversion run.sh before converting', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-legacy-layout-'));
+    tempDirs.push(installDir);
+    // 没有 current 的 1.x 布局：run.sh 是那一版真正写出来的脚本（只导出 TMEX_* 路径变量）
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(installDir, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    const legacyRunScript = [
+      '#!/usr/bin/env bash',
+      `export TMEX_INSTALL_DIR='${installDir}'`,
+      `export TMEX_FE_DIST_DIR='${join(installDir, 'current', 'resources', 'fe-dist')}'`,
+      '',
+    ].join('\n');
+    await writeFile(join(installDir, 'run.sh'), legacyRunScript);
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.1.40',
+      serviceMode: 'none',
+    });
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'GATEWAY_PORT=19883',
+        'VIBETERM_BIND_HOST=127.0.0.1',
+        'VIBETERM_MASTER_KEY=test',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        '',
+      ].join('\n')
+    );
+    await stagePackage(installDir, 'live-txn', '2.0.0');
+    const shimDirs = [join(installDir, '_shims'), join(installDir, '_bun-bin')];
+
+    await expect(
+      runUpgrade(upgradeArgs(installDir, ['--no-service']), {
+        repair: (dir, bunPath, opts) => repairUpgrade(dir, bunPath, { ...opts, shimDirs }),
+        apply: (options) =>
+          applyUpgrade(
+            { ...options, skipShims: true },
+            {
+              service: fakeService(),
+              runCandidate: async () => ({ stop: async () => undefined }),
+              healthCheck: async () => {
+                throw new Error('preflight-boom');
+              },
+              shimDirs,
+            }
+          ),
+      })
+    ).rejects.toThrow(/preflight-boom|Preflight/i);
+
+    // repair 抢在事务备份之前转换布局，备份到的就是新模板，旧 runtime 再也起不来
+    expect(await readFile(join(installDir, 'run.sh'), 'utf8')).toBe(legacyRunScript);
+  }, 20_000);
+
+  test('the service identity after a repair comes from the repaired meta, not the stale one', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-repaired-meta-'));
+    tempDirs.push(installDir);
+    // 上一次 1.1.40 -> 2.0.0 停在 started：磁盘上的 meta 此刻还是 serviceName=tmex
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.1.40',
+      serviceMode: 'managed',
+    });
+    await stagePackage(installDir, 'live-txn', '2.0.0');
+
+    let applyOptions: Parameters<typeof applyUpgrade>[0] | undefined;
+    await runUpgrade(upgradeArgs(installDir, []), {
+      repair: async (dir) => {
+        // repair 验证通过后把迁移后的服务身份提交到磁盘（commitSuccess 就是这么写的）
+        await writeInstallMetaFixture(dir, {
+          serviceName: 'vibeterm',
+          cliVersion: '2.0.0',
+          serviceMode: 'none',
+          autostart: true,
+        });
+        return { action: 'verify_or_rollback' as const, installDir: dir };
+      },
+      apply: async (options) => {
+        applyOptions = options;
+      },
+    });
+
+    // 沿用闭包里的旧 meta 会去建 tmex 的控制器，它停不掉正在跑的 com.vibeterm.vibeterm
+    expect(applyOptions).toBeDefined();
+    expect(applyOptions?.serviceName).toBe('vibeterm');
+    expect(applyOptions?.noService).toBe(true);
+    expect(applyOptions?.autostart).toBe(true);
   });
 
   test('download extract then extracted CLI repair+apply commits and later cleans staging', async () => {

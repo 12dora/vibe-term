@@ -127,6 +127,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.serviceStillRunning': 'the service is still running',
     'upgrade.migrationStopFailed':
       'Refusing to undo the install migration: the service in {{dir}} did not stop ({{error}}). Stop it, then run `vibeterm upgrade --repair`.',
+    'upgrade.migrationRevertBlocked':
+      'Cannot move the install back to {{dir}}: the path already exists. Remove or rename it, then run `vibeterm upgrade --repair`.',
     'upgrade.healthStaleStartedAt':
       'Health check startedAt {{actual}} is not newer than restart at {{expected}}.',
     'upgrade.nativeRequired':
@@ -394,6 +396,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.serviceStillRunning': '服务仍在运行',
     'upgrade.migrationStopFailed':
       '拒绝回退安装迁移：{{dir}} 的服务未停止（{{error}}）。请先停掉它，再执行 `vibeterm upgrade --repair`。',
+    'upgrade.migrationRevertBlocked':
+      '无法把安装搬回 {{dir}}：该路径已存在。请先移走或改名，再执行 `vibeterm upgrade --repair`。',
     'upgrade.healthStaleStartedAt':
       '健康检查 startedAt {{actual}} 不晚于本次重启时间 {{expected}}。',
     'upgrade.nativeRequired':
