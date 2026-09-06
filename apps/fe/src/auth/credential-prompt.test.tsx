@@ -15,6 +15,7 @@ import {
   CredentialPromptDialog,
   WrongPasswordError,
   credentialErrorText,
+  credentialPromptCloseRequest,
   credentialPromptContainer,
   decodeRootPublicKey,
   forgetSigner,
@@ -127,9 +128,9 @@ describe('对话框', () => {
     expect(many).toContain('data-testid="credential-prompt-passkey-select"');
   });
 
-  // 凭据框必须盖在其余对话框之上（确认框走 portal 且 isolate z-50），所以浏览器里挂 body；
-  // 静态渲染没有 document，退回内联渲染，本文件的断言才成立。
-  test('浏览器里挂到 document.body，没有 document 时内联渲染', () => {
+  // 浏览器里走 base-ui 的嵌套对话框（焦点环、Escape、关闭后焦点归位都归它管）；
+  // 静态渲染没有 DOM，base-ui 什么都不输出，只能退回内联遮罩——本文件的断言正是靠它。
+  test('有 DOM 才走 base-ui 对话框，没有 document 时内联渲染', () => {
     expect(credentialPromptContainer()).toBeNull();
     const body = {} as HTMLElement;
     (globalThis as { document?: unknown }).document = { body };
@@ -140,8 +141,11 @@ describe('对话框', () => {
     }
   });
 
-  test('遮罩层级高于其余对话框（z-60），否则密码框被确认框盖住', () => {
-    expect(render([])).toContain('z-[60]');
+  test('内联兜底仍盖在其余遮罩之上（z-60），并保留各 testid', () => {
+    const html = render([]);
+    expect(html).toContain('z-[60]');
+    expect(html).toContain('data-testid="credential-prompt"');
+    expect(html).toContain('data-testid="credential-prompt-cancel"');
   });
 
   test('错误文案渲染在框里，用户可以直接改密码重试', () => {
@@ -156,6 +160,21 @@ describe('对话框', () => {
       />
     );
     expect(html).toContain('data-testid="credential-prompt-error"');
+  });
+});
+
+// Escape / 点遮罩都由 base-ui 转成一次关闭请求，这里只定这条请求算不算「取消」。
+describe('credentialPromptCloseRequest', () => {
+  test('Escape 请求关闭即取消', () => {
+    expect(credentialPromptCloseRequest(false, false)).toBe(true);
+  });
+
+  test('忙碌中不接受关闭：与「取消」按钮的禁用态一致', () => {
+    expect(credentialPromptCloseRequest(false, true)).toBe(false);
+  });
+
+  test('开着的状态不会被当成取消', () => {
+    expect(credentialPromptCloseRequest(true, false)).toBe(false);
   });
 });
 

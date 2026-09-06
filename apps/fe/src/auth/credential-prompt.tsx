@@ -13,17 +13,13 @@ import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@vibeterm/api-c
 import { WebAuthnError, defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
-import { Button } from '@vibeterm/ui/button';
-import { Input } from '@vibeterm/ui/input';
-import { Fingerprint, KeyRound, Loader2 } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { useTranslation } from 'react-i18next';
 import {
   passkeysForOrigin,
   rootSignerFromPassword,
   withRootSigner,
 } from './account-security-actions';
+import { CredentialPromptDialog } from './credential-prompt-dialog';
 import type { RecordSigner } from './key-log-actions';
 
 /** 刚做完密码 / passkey 交互后的免二次输入窗口（设计 §2 步骤 3）。 */
@@ -267,145 +263,13 @@ export function usePasskeys(
 // 对话框
 // ---------------------------------------------------------------------------
 
-export interface CredentialPromptDialogProps {
-  purpose: CredentialPurpose;
-  /** 已按 origin 过滤过的可用凭证；为空则只渲染密码路径。 */
-  passkeys: PasskeySummary[];
-  busy: boolean;
-  error: string | null;
-  onSubmit: (choice: CredentialChoice) => void;
-  onCancel: () => void;
-}
-
-/**
- * 凭据框挂到哪里：浏览器里挂 `document.body`，静态渲染（无 `document`）时内联渲染。
- *
- * 内联渲染会被压在别的对话框下面——其余遮罩（AlertDialog / Sheet）都 portal 到 body 且
- * 自带 `isolate z-50`，同为 z-50 的内联遮罩排在文档流里注定在下方，用户只看到一个「卡住」的
- * 确认框。挂到 body 并用 z-60 才能盖住它们。
- */
-export function credentialPromptContainer(): HTMLElement | null {
-  return typeof document === 'undefined' ? null : document.body;
-}
-
-/**
- * 轻量遮罩：不用 Radix/base-ui 的 Dialog，那套在服务端静态渲染里什么都不输出，
- * 而本页的用例正是靠静态渲染断言「passkey 选项只在允许时出现」。
- */
-export function CredentialPromptDialog({
-  purpose,
-  passkeys,
-  busy,
-  error,
-  onSubmit,
-  onCancel,
-}: CredentialPromptDialogProps) {
-  const { t } = useTranslation();
-  const [password, setPassword] = useState('');
-  const [credentialId, setCredentialId] = useState(passkeys[0]?.credential_id ?? '');
-
-  const canUsePasskey = passkeys.length > 0;
-  const selected = canUsePasskey
-    ? (passkeys.find((row) => row.credential_id === credentialId) ?? passkeys[0])
-    : null;
-
-  const overlay = (
-    <div
-      className="vibeterm-fade fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
-      data-testid="credential-prompt"
-    >
-      <div className="vibeterm-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
-        <div className="flex flex-col gap-0.5">
-          <h2 className="text-sm font-semibold">{t('auth.credential.title')}</h2>
-          <p className="text-xs text-muted-foreground" data-testid="credential-prompt-purpose">
-            {t(`auth.credential.purpose.${purpose}`)}
-          </p>
-        </div>
-        <p className="text-xs text-muted-foreground">{t('auth.credential.hint')}</p>
-
-        <Input
-          type="password"
-          autoComplete="current-password"
-          placeholder={t('auth.security.currentPassword')}
-          value={password}
-          data-testid="credential-prompt-password"
-          onChange={(event) => setPassword(event.target.value)}
-        />
-
-        {/* 播报节点常驻：`empty:hidden` 会把它从可访问性树里摘掉，播报会时灵时不灵。
-            sr-only 是 absolute 定位，空着也不占 flex gap；可见的报错块另外条件渲染。 */}
-        <output className="sr-only" aria-live="polite">
-          {error ? t(error, { defaultValue: error }) : ''}
-        </output>
-        {error ? (
-          <p
-            className="vibeterm-fade text-xs text-destructive"
-            data-testid="credential-prompt-error"
-          >
-            {t(error, { defaultValue: error })}
-          </p>
-        ) : null}
-
-        <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            size="sm"
-            disabled={busy || !password}
-            onClick={() => onSubmit({ kind: 'password', password })}
-            data-testid="credential-prompt-submit"
-          >
-            {busy ? <Loader2 className="animate-spin motion-reduce:animate-none" /> : <KeyRound />}
-            {t('auth.credential.usePassword')}
-          </Button>
-          {canUsePasskey && selected ? (
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={busy}
-              onClick={() => onSubmit({ kind: 'passkey', credentialId: selected.credential_id })}
-              data-testid="credential-prompt-passkey"
-            >
-              <Fingerprint />
-              {t('auth.credential.usePasskey')}
-            </Button>
-          ) : null}
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={onCancel}
-            data-testid="credential-prompt-cancel"
-          >
-            {t('common.cancel')}
-          </Button>
-        </div>
-
-        {canUsePasskey && passkeys.length > 1 ? (
-          <label className="flex flex-col gap-1 text-[11px] text-muted-foreground">
-            {t('auth.credential.passkeySelect')}
-            <select
-              className="rounded-md border border-border bg-background p-1 text-xs"
-              value={selected?.credential_id ?? ''}
-              data-testid="credential-prompt-passkey-select"
-              onChange={(event) => setCredentialId(event.target.value)}
-            >
-              {passkeys.map((row) => (
-                <option key={row.credential_id} value={row.credential_id}>
-                  {row.name || row.credential_id}
-                </option>
-              ))}
-            </select>
-          </label>
-        ) : null}
-      </div>
-    </div>
-  );
-
-  const container = credentialPromptContainer();
-  return container ? createPortal(overlay, container) : overlay;
-}
+// 对话框本体在 ./credential-prompt-dialog：那边只管渲染，本文件只管取签名者。
+export {
+  credentialPromptCloseRequest,
+  credentialPromptContainer,
+  type CredentialPromptDialogProps,
+} from './credential-prompt-dialog';
+export { CredentialPromptDialog };
 
 // ---------------------------------------------------------------------------
 // hook
