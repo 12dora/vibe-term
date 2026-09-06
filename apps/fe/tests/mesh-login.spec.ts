@@ -108,7 +108,9 @@ test('mesh: the remote node signs in silently, and survives a full page reload',
 
   // 撤掉远端 node 的会话 cookie 再整页刷新：新 document 的内存是空的，只能靠 IndexedDB 里
   // 那把不可导出的 sk_sess 恢复出会话钥再登一次——iOS PWA 每次冷启动就是这个场景。
-  // cookie 名是协议常量，沿用 tmex 时期的值以保持跨版本兼容
+  // 2.0 起 cookie 名是 `vibeterm_s_<nodeId>`，`tmex_s_` 只作旧名兼容读取：两个都清才算撤掉会话
+  // （见 apps/gateway/src/auth/cookies.ts 的 NODE_SESSION_COOKIE_PREFIX / LEGACY_…）。
+  await page.context().clearCookies({ name: `vibeterm_s_${state.remoteNodeId}` });
   await page.context().clearCookies({ name: `tmex_s_${state.remoteNodeId}` });
   expect(await nodeLoggedIn(page, state.remoteNodeId)).toBe(false);
 
