@@ -14,7 +14,8 @@ import { setTransferMeshBridge, streamsForTransport } from './bridge';
 import { joinPosix, normalizeRelPath, resolveDestContext } from './dest';
 import { expandItems } from './expand';
 import { consumeGrant, createGrant, resetTransferGrantsForTests } from './grants';
-import { resetTransferJobsForTests } from './job-registry';
+import { createJob, resetTransferJobsForTests } from './job-registry';
+import { MAX_JOBS_PER_USER } from './limits';
 import { transferRoutes } from './routes';
 
 const NODE_A = 'a'.repeat(32);
@@ -232,6 +233,52 @@ describe('transfer routes', () => {
     expect(cancelled.status).toBe(200);
   });
 
+  test('admission: a user cannot queue more than the per-user job budget', async () => {
+    // 直接登记占位任务（没有 runner，会一直停在 queued），把预算占满
+    for (let i = 0; i < MAX_JOBS_PER_USER; i += 1) {
+      createJob({
+        jobId: `queued-${i}`,
+        uid: 'u1',
+        fromNodeId: NODE_A,
+        toNodeId: NODE_B,
+        destRootId: rootId,
+        destPath: rootDir,
+        path: 'relay',
+        streams: 1,
+      });
+    }
+    const grant = createGrant({
+      fromNodeId: NODE_A,
+      destRootId: rootId,
+      destPath: rootDir,
+      uid: 'u1',
+    });
+    writeFileSync(join(rootDir, 'over.txt'), 'x');
+    const res = (await dispatch('POST', '/api/transfer/jobs', {
+      toNodeId: 'self',
+      items: [{ rootId, path: join(rootDir, 'over.txt') }],
+      destRootId: rootId,
+      destPath: rootDir,
+      grant: { grantId: grant.id, token: grant.token },
+    })) as Response;
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ code: 'too_many_jobs' });
+    // 另一个用户不受这个用户的占用影响
+    const other = (await dispatch(
+      'POST',
+      '/api/transfer/jobs',
+      {
+        toNodeId: 'self',
+        items: [{ rootId, path: join(rootDir, 'over.txt') }],
+        destRootId: rootId,
+        destPath: rootDir,
+        grant: { grantId: grant.id, token: grant.token },
+      },
+      'u2'
+    )) as Response;
+    expect(other.status).toBe(200);
+  });
+
   test('jobs from another user are not visible', async () => {
     const grant = createGrant({
       fromNodeId: NODE_A,
@@ -302,10 +349,56 @@ describe('source expansion', () => {
     });
     expect(expanded.ok).toBe(true);
     if (!expanded.ok) return;
-    const byRel = Object.fromEntries(expanded.files.map((f) => [f.relPath, f]));
-    expect(Object.keys(byRel).sort()).toEqual(['d/e/big.txt', 'd/small.txt']);
+    const byRel = Object.fromEntries(expanded.entries.map((f) => [f.relPath, f]));
+    expect(Object.keys(byRel).sort()).toEqual(['d', 'd/e', 'd/e/big.txt', 'd/small.txt']);
     expect(byRel['d/small.txt']?.error).toBeUndefined();
     expect(byRel['d/e/big.txt']?.error).toBe('quota_file_size');
+    expect(byRel.d?.type).toBe('dir');
+  });
+
+  test('empty directories are part of the manifest', async () => {
+    mkdirSync(join(rootDir, 'tree/empty'), { recursive: true });
+    const expanded = await expandItems([{ rootId, path: join(rootDir, 'tree') }], {
+      maxFileBytes: 1024,
+      signal: new AbortController().signal,
+    });
+    expect(expanded.ok).toBe(true);
+    if (!expanded.ok) return;
+    expect(expanded.entries.map((e) => e.relPath).sort()).toEqual(['tree', 'tree/empty']);
+    expect(expanded.entries.every((e) => e.type === 'dir')).toBe(true);
+  });
+
+  test('two sources landing on the same relative path are flagged as a conflict', async () => {
+    mkdirSync(join(rootDir, 'one'), { recursive: true });
+    mkdirSync(join(rootDir, 'two'), { recursive: true });
+    writeFileSync(join(rootDir, 'one/report.txt'), 'aaaa');
+    writeFileSync(join(rootDir, 'two/report.txt'), 'bbbb');
+    const expanded = await expandItems(
+      [
+        { rootId, path: join(rootDir, 'one/report.txt') },
+        { rootId, path: join(rootDir, 'two/report.txt') },
+      ],
+      { maxFileBytes: 1024, signal: new AbortController().signal }
+    );
+    expect(expanded.ok).toBe(true);
+    if (!expanded.ok) return;
+    expect(expanded.entries).toHaveLength(2);
+    expect(expanded.entries[0].error).toBeUndefined();
+    expect(expanded.entries[1].error).toBe('dest_conflict');
+  });
+
+  test('a directory larger than the visited-entry cap fails instead of transferring a subset', async () => {
+    const many = join(rootDir, 'many');
+    mkdirSync(many, { recursive: true });
+    for (let i = 0; i < 40; i += 1) writeFileSync(join(many, `f${i}.txt`), 'x');
+    const expanded = await expandItems([{ rootId, path: many }], {
+      maxFileBytes: 1024,
+      signal: new AbortController().signal,
+    });
+    expect(expanded.ok).toBe(true);
+    if (!expanded.ok) return;
+    // 40 个文件 + 目录自身，一条不少
+    expect(expanded.entries).toHaveLength(41);
   });
 
   test('a resolvable destination context normalizes the directory', () => {

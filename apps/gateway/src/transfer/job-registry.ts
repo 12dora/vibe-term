@@ -1,5 +1,7 @@
-// 源节点 A 上的任务登记表。与远程升级作业一样只放内存：真正的断点续传状态在目标节点的
-// `.part` 上，进程重启后重新发起同一次传输会自动接着传。完成的任务留 30 分钟供前端回看。
+// 源节点 A 上的任务登记表。只放内存：真正的断点续传状态在目标节点的 `.part` 上，
+// 且半成品身份按「授权作用域 + relPath + 大小」确定，进程重启后重新发起同一次传输
+// （哪怕换一张 grant）都能接着上次的偏移传。完成的任务留 30 分钟供前端回看，
+// 到点由独立的定时器淘汰，另设条数上限，别让没人来查的快照一直堆在进程里。
 
 import type {
   TransferErrorCode,
@@ -11,9 +13,11 @@ import type {
   TransferPath,
 } from '@tmex/shared';
 import { ProgressTracker, throttleProgress } from '@tmex/transfer';
+import { MAX_FINISHED_JOBS } from './limits';
 
 const FINISHED_TTL_MS = 30 * 60_000;
 const PROGRESS_INTERVAL_MS = 200;
+const EVICT_INTERVAL_MS = 60_000;
 
 type Listener = (event: TransferJobEvent) => void;
 
@@ -29,10 +33,35 @@ export interface TransferJobRecord {
 const jobs = new Map<string, TransferJobRecord>();
 
 function sweep(now: number): void {
+  const finished: Array<[string, number]> = [];
   for (const [id, job] of jobs) {
     const finishedAt = job.snapshot.finishedAt;
-    if (finishedAt !== null && now - finishedAt > FINISHED_TTL_MS) jobs.delete(id);
+    if (finishedAt === null) continue;
+    if (now - finishedAt > FINISHED_TTL_MS) {
+      jobs.delete(id);
+      continue;
+    }
+    finished.push([id, finishedAt]);
   }
+  if (finished.length <= MAX_FINISHED_JOBS) return;
+  finished.sort((a, b) => a[1] - b[1]);
+  for (const [id] of finished.slice(0, finished.length - MAX_FINISHED_JOBS)) jobs.delete(id);
+}
+
+// 前端断开之后没有任何请求会再碰这张表，淘汰必须自己有心跳，不能只挂在 API 调用上。
+const evictTimer = setInterval(() => sweep(Date.now()), EVICT_INTERVAL_MS);
+evictTimer.unref?.();
+
+/** 排队 + 在跑的任务数（准入判定用）。 */
+export function activeJobCounts(uid: string): { user: number; total: number } {
+  let user = 0;
+  let total = 0;
+  for (const job of jobs.values()) {
+    if (job.snapshot.finishedAt !== null) continue;
+    total += 1;
+    if (job.uid === uid) user += 1;
+  }
+  return { user, total };
 }
 
 function emit(job: TransferJobRecord, event: TransferJobEvent): void {
@@ -96,6 +125,15 @@ export function createJob(input: {
         progress: snapshot.progress,
         updatedAt: Date.now(),
       });
+      const item = snapshot.items[snapshot.currentIndex];
+      if (item) {
+        emit(job, {
+          type: 'item',
+          jobId: snapshot.jobId,
+          index: snapshot.currentIndex,
+          item,
+        });
+      }
     },
     { intervalMs: PROGRESS_INTERVAL_MS }
   );
@@ -168,8 +206,19 @@ export function setCurrentIndex(job: TransferJobRecord, index: number): void {
   job.snapshot.currentIndex = index;
 }
 
-/** 累计已传字节（含之前条目）。节流后才发事件，避免大文件把 NDJSON 刷爆。 */
-export function reportProgress(job: TransferJobRecord, transferredBytes: number): void {
+/**
+ * 累计已传字节（含之前条目）。节流后才发事件，避免大文件把 NDJSON 刷爆；
+ * 当前条目的字节数就地更新，跟着同一次节流一起发出去。
+ */
+export function reportProgress(
+  job: TransferJobRecord,
+  transferredBytes: number,
+  item?: { index: number; transferredBytes: number }
+): void {
+  if (item) {
+    const target = job.snapshot.items[item.index];
+    if (target) target.transferredBytes = item.transferredBytes;
+  }
   job.emitProgress(transferredBytes);
 }
 

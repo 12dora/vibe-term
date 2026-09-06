@@ -11,6 +11,7 @@ import {
   applyAuthPolicy,
   peekJsonCode,
 } from './forwarder-auth-policy';
+import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import { parseNodePrefix } from './forwarder-path';
@@ -288,6 +289,8 @@ export class Forwarder {
         abort
       );
     } catch (err) {
+      // 传输层还没接手这个 body：不主动掐掉的话，源端的读取管道与文件句柄就没人再关了
+      await cancelForwardBody(streamBody);
       return nodeUnreachableResponse(nodeId, abort.aborted, err);
     }
   }
@@ -367,6 +370,8 @@ export class Forwarder {
         if (!retryable) break;
       }
     }
+    // 一次也没有被传输层接手：同上，包出来的计数流必须自己收掉
+    await cancelForwardBody(countedRaw);
     return nodeUnreachableResponse(
       input.nodeId,
       abort.aborted,
@@ -921,36 +926,6 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-/** 上行进度节流：至少 1 s 或 256 KiB 才回调一次，别把小块 IO 变成刷屏。 */
-const PROGRESS_MIN_INTERVAL_MS = 1_000;
-const PROGRESS_MIN_BYTES = 256 * 1024;
-
-function throttledProgress(onProgress: (bytes: number) => void): (bytes: number) => void {
-  let lastAt = 0;
-  let lastBytes = 0;
-  return (bytes) => {
-    const at = Date.now();
-    if (at - lastAt < PROGRESS_MIN_INTERVAL_MS && bytes - lastBytes < PROGRESS_MIN_BYTES) return;
-    lastAt = at;
-    lastBytes = bytes;
-    onProgress(bytes);
-  };
-}
-
-function countStreamBytes(
-  body: ReadableStream<Uint8Array>,
-  onBytes: (n: number) => void
-): ReadableStream<Uint8Array> {
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        onBytes(chunk.byteLength);
-        controller.enqueue(chunk);
-      },
-    })
-  );
 }
 
 function toBytes(message: unknown): Uint8Array | null {

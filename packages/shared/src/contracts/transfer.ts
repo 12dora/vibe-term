@@ -21,6 +21,10 @@ export type TransferErrorCode =
   | 'incomplete'
   | 'checksum_mismatch'
   | 'dest_exists'
+  /** 同一次任务里两个源文件落到同一个目标相对路径 */
+  | 'dest_conflict'
+  /** 触到接收侧的会话预算（文件数 / 总字节 / 并发写 / 会话数） */
+  | 'limit_exceeded'
   | 'quota_file_size'
   | 'cancelled';
 
@@ -72,6 +76,8 @@ export interface CreateTransferJobRequest {
 export interface TransferJobItem {
   /** 相对源目录的展示路径（目录展开后为 `dir/sub/file`） */
   relPath: string;
+  /** 条目类型，缺省按 `file` 处理；`dir` 只在目标侧建目录，不传字节 */
+  type?: 'file' | 'dir';
   size: number;
   state: TransferItemState;
   transferredBytes: number;

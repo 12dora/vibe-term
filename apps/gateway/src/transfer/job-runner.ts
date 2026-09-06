@@ -1,29 +1,21 @@
-// 任务在源节点 A 上跑：展开 → 建会话 → 逐个文件 runPush → commit。
-// 字节从本机盘直接读（`openRange`），ssh 源先 rsync 拉到本机暂存再读。
+// 任务在源节点 A 上跑：建会话 → 展开 → 逐条推送/建目录 → 收尾。
+// 展开必须在会话建起来之后：grant 没过就开始遍历目录，等于让未授权的调用方白使唤一遍磁盘。
 
 import type { TransferErrorCode, TransferJobItem } from '@tmex/shared';
-import { type ByteRange, runPush } from '@tmex/transfer';
-import { openRange } from '@tmex/transfer/node';
-import { config } from '../config';
-import { pullFileFromDevice } from '../files/device-storage';
-import { transferMaxBytesNow } from '../files/transfer-limit';
-import { abortableSleep } from '../system/remote-upgrade-io';
-import type { ChannelVoid, TransferChannel } from './channel';
-import { type ExpandedFile, expandItems } from './expand';
+import type { ChannelResult, TransferChannel } from './channel';
+import { errorDetailOf, normalizeTransferError } from './errors';
+import { type ExpandedEntry, expandItems } from './expand';
 import {
   type TransferJobRecord,
   flushProgress,
-  reportProgress,
   setCurrentIndex,
   setItemState,
   setJobExpanding,
   setJobItems,
   setJobState,
 } from './job-registry';
+import { type PushOneResult, pushFile } from './push-file';
 import type { OpenSessionResult } from './receiver';
-
-const PUSH_MAX_ATTEMPTS = 5;
-const FILE_DEADLINE_MS = 6 * 60 * 60 * 1000;
 
 export interface RunJobInput {
   job: TransferJobRecord;
@@ -34,181 +26,153 @@ export interface RunJobInput {
   streams: number;
 }
 
-function toItem(file: ExpandedFile): TransferJobItem {
+function toItem(entry: ExpandedEntry): TransferJobItem {
   return {
-    relPath: file.relPath,
-    size: file.size,
-    state: file.error ? 'failed' : 'pending',
+    relPath: entry.relPath,
+    type: entry.type,
+    size: entry.size,
+    state: entry.error ? 'failed' : 'pending',
     transferredBytes: 0,
-    ...(file.error ? { error: file.error } : {}),
+    ...(entry.error ? { error: entry.error } : {}),
   };
 }
 
+/**
+ * 外层护栏：任何未预期的异常都要收成终态，否则任务永远停在 running，
+ * 订阅者等不到 `end`，完成态 GC 也永远碰不到它。
+ */
 export async function runTransferJob(input: RunJobInput): Promise<void> {
-  const { job, channel } = input;
-  const signal = job.abort.signal;
-  const maxFileBytes = transferMaxBytesNow(config.transferMaxBytes);
-  setJobState(job, 'running');
-
-  const expanded = await expandItems(input.items, { maxFileBytes, signal });
-  if (!expanded.ok) {
-    setJobState(
-      job,
-      expanded.code === 'cancelled' ? 'cancelled' : 'failed',
-      expanded.code,
-      expanded.detail
-    );
+  const { job } = input;
+  try {
+    await runJob(input);
+  } catch (err) {
+    finalize(job, errorDetailOf(err));
     return;
   }
-  setJobItems(job, expanded.files.map(toItem));
-  setJobExpanding(job, false);
-  if (signal.aborted) {
+  finalize(job);
+}
+
+function finalize(job: TransferJobRecord, detail?: string): void {
+  if (job.snapshot.finishedAt !== null) return;
+  if (job.abort.signal.aborted) {
     setJobState(job, 'cancelled', 'cancelled');
     return;
   }
+  setJobState(job, 'failed', normalizeTransferError(detail), detail);
+}
+
+async function runJob(input: RunJobInput): Promise<void> {
+  const { job, channel } = input;
+  const signal = job.abort.signal;
+  setJobState(job, 'running');
+  if (signal.aborted) return setJobState(job, 'cancelled', 'cancelled');
 
   const opened = await channel.open(input.grant, input.onConflict, signal);
   if (!opened.ok) {
-    setJobState(job, 'failed', opened.code, opened.detail);
-    return;
+    if (signal.aborted) return setJobState(job, 'cancelled', 'cancelled');
+    return setJobState(job, 'failed', opened.code, opened.detail);
   }
   try {
-    await pushAll(input, expanded.files, opened);
+    const expanded = await expandItems(input.items, {
+      maxFileBytes: opened.maxFileBytes,
+      signal,
+    });
+    if (!expanded.ok) {
+      const cancelled = signal.aborted || expanded.code === 'cancelled';
+      return setJobState(
+        job,
+        cancelled ? 'cancelled' : 'failed',
+        cancelled ? 'cancelled' : expanded.code,
+        expanded.detail
+      );
+    }
+    setJobItems(job, expanded.entries.map(toItem));
+    setJobExpanding(job, false);
+    await pushAll(input, expanded.entries, opened);
   } finally {
     await channel.close(opened.sessionId).catch(() => undefined);
   }
 }
 
+interface Progress {
+  done: number;
+  failure: { code: TransferErrorCode; detail?: string } | null;
+}
+
 async function pushAll(
   input: RunJobInput,
-  files: readonly ExpandedFile[],
+  entries: readonly ExpandedEntry[],
   session: OpenSessionResult
 ): Promise<void> {
-  const { job, channel } = input;
+  const { job } = input;
   const signal = job.abort.signal;
-  let done = 0;
-  let failure: { code: TransferErrorCode; detail?: string } | null = null;
+  const progress: Progress = { done: 0, failure: null };
 
-  for (const [index, file] of files.entries()) {
-    if (signal.aborted) {
-      setJobState(job, 'cancelled', 'cancelled');
-      return;
-    }
-    if (file.error) {
-      // 展开阶段就判死的条目（超单文件上限）：不去碰链路，但整个任务算失败
-      failure ??= { code: file.error };
+  for (const [index, entry] of entries.entries()) {
+    if (signal.aborted) return setJobState(job, 'cancelled', 'cancelled');
+    if (entry.error) {
+      // 展开阶段就判死的条目（超单文件上限、目标路径撞车）：不去碰链路，但整个任务算失败
+      progress.failure ??= { code: entry.error };
       continue;
     }
     setCurrentIndex(job, index);
     setItemState(job, index, { state: 'running' });
-    const result = await pushOne({ input, session, file, index, baseBytes: done });
-    if (result.kind === 'cancelled') {
-      setJobState(job, 'cancelled', 'cancelled');
-      return;
-    }
-    if (result.kind === 'skipped') {
-      setItemState(job, index, { state: 'skipped' });
-      done += file.size;
-      continue;
-    }
-    if (result.kind === 'failed') {
-      setItemState(job, index, { state: 'failed', error: result.code });
-      failure = { code: result.code, detail: result.detail };
-      continue;
-    }
-    setItemState(job, index, { state: 'done', transferredBytes: file.size });
-    done += file.size;
-    flushProgress(job, done);
+    const result =
+      entry.type === 'dir'
+        ? await makeDir(input, session, entry, signal)
+        : await pushFile({
+            job,
+            channel: input.channel,
+            session,
+            streams: input.streams,
+            entry,
+            index,
+            baseBytes: progress.done,
+          });
+    if (result.kind === 'cancelled') return setJobState(job, 'cancelled', 'cancelled');
+    applyResult(job, index, entry, result, progress);
   }
-  flushProgress(job, done);
-  if (failure) setJobState(job, 'failed', failure.code, failure.detail);
-  else setJobState(job, 'done');
-}
-
-type PushOneResult =
-  | { kind: 'done' }
-  | { kind: 'skipped' }
-  | { kind: 'cancelled' }
-  | { kind: 'failed'; code: TransferErrorCode; detail?: string };
-
-async function pushOne(ctx: {
-  input: RunJobInput;
-  session: OpenSessionResult;
-  file: ExpandedFile;
-  index: number;
-  baseBytes: number;
-}): Promise<PushOneResult> {
-  const { input, session, file, index, baseBytes } = ctx;
-  const { job, channel } = input;
-  const signal = job.abort.signal;
-  const source = await pullFileFromDevice(file.rootId, file.absPath, { signal });
-  if (!source.ok) return { kind: 'failed', code: source.code as TransferErrorCode };
-  const size = source.data.size;
-  const target = { relPath: file.relPath, size };
-
-  try {
-    const result = await runPush(
-      {
-        status: (s) => channel.status(session.sessionId, target, s),
-        put: (range, opts) =>
-          channel.put(
-            session.sessionId,
-            target,
-            range,
-            openRangeFor(source.data.tmpPath, range),
-            opts
-          ),
-      },
-      {
-        totalBytes: size,
-        streams: input.streams,
-        maxRangeBytes: session.chunkSize,
-        maxAttempts: PUSH_MAX_ATTEMPTS,
-        deadlineMs: Date.now() + FILE_DEADLINE_MS,
-        signal,
-        sleep: abortableSleep,
-        onProgress: (bytes) => {
-          setItemState(job, index, { transferredBytes: bytes });
-          reportProgress(job, baseBytes + bytes);
-        },
-      }
-    );
-    if (result.kind === 'cancelled') return { kind: 'cancelled' };
-    if (result.kind === 'failed') return classifyPushFailure(result.error);
-    const committed = await channel.commit(session.sessionId, target, signal);
-    return commitOutcome(committed);
-  } finally {
-    source.data.cleanup();
+  flushProgress(job, progress.done);
+  if (signal.aborted) return setJobState(job, 'cancelled', 'cancelled');
+  if (progress.failure) {
+    setJobState(job, 'failed', progress.failure.code, progress.failure.detail);
+    return;
   }
+  setJobState(job, 'done');
 }
 
-function openRangeFor(path: string, range: ByteRange): ReadableStream<Uint8Array> {
-  return openRange(path, range.offset, range.offset + range.length);
+function applyResult(
+  job: TransferJobRecord,
+  index: number,
+  entry: ExpandedEntry,
+  result: PushOneResult,
+  progress: Progress
+): void {
+  if (result.kind === 'skipped') {
+    setItemState(job, index, { state: 'skipped' });
+    progress.done += entry.size;
+    return;
+  }
+  if (result.kind === 'failed') {
+    setItemState(job, index, { state: 'failed', error: result.code });
+    progress.failure = { code: result.code, detail: result.detail };
+    return;
+  }
+  setItemState(job, index, { state: 'done', transferredBytes: entry.size });
+  progress.done += entry.size;
+  flushProgress(job, progress.done);
 }
 
-const FAILURE_CODES = new Set<TransferErrorCode>([
-  'quota_file_size',
-  'dest_exists',
-  'grant_invalid',
-  'grant_expired',
-  'peer_mismatch',
-  'checksum_mismatch',
-  'too_large',
-  'permission_denied',
-  'outside_roots',
-  'not_found',
-  'invalid',
-]);
-
-function classifyPushFailure(error: string): PushOneResult {
-  const code = error as TransferErrorCode;
-  if (code === 'dest_exists') return { kind: 'skipped' };
-  if (FAILURE_CODES.has(code)) return { kind: 'failed', code };
-  return { kind: 'failed', code: 'unknown', detail: error };
+async function makeDir(
+  input: RunJobInput,
+  session: OpenSessionResult,
+  entry: ExpandedEntry,
+  signal: AbortSignal
+): Promise<PushOneResult> {
+  const made = await input.channel.mkdir(session.sessionId, entry.relPath, signal);
+  if (signal.aborted) return { kind: 'cancelled' };
+  if (made.ok) return { kind: 'done' };
+  return { kind: 'failed', code: made.code, detail: made.detail };
 }
 
-function commitOutcome(committed: ChannelVoid): PushOneResult {
-  if (committed.ok) return { kind: 'done' };
-  if (committed.code === 'dest_exists') return { kind: 'skipped' };
-  return { kind: 'failed', code: committed.code, detail: committed.detail };
-}
+export type { ChannelResult };

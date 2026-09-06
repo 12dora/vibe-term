@@ -1,46 +1,48 @@
-// 目标节点 B 上的接收服务：会话 + 区间落盘 + 落位。
+// 目标节点 B 上的接收服务：会话生命周期 + 预算。区间落盘与落位在 `receiver-files.ts`。
 // mesh-internal 路由与「A 就是 B」的本机复制都走这一份，保证两条路径的语义完全一致。
 
-import { randomBytes } from 'node:crypto';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { createHash, randomBytes } from 'node:crypto';
+import { mkdirSync, rmdirSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { TransferCapability, TransferErrorCode } from '@tmex/shared';
-import { ResumableSink, type SinkDescriptor } from '@tmex/transfer/node';
+import type { SinkDescriptor } from '@tmex/transfer/node';
 import { config } from '../config';
-import { pushFileToDevice, statFile } from '../files/device-storage';
-import { execSshCommand } from '../files/directory-browse';
-import { withDeviceRsync } from '../files/rsync-operation';
 import { transferMaxBytesNow } from '../files/transfer-limit';
-import { quoteShellArg } from '../tmux-client/command-builder';
-import {
-  type DestContext,
-  baseNameOf,
-  ensureLocalParent,
-  joinPosix,
-  normalizeRelPath,
-  parentOf,
-  resolveDestContext,
-} from './dest';
+import type { DestContext } from './dest';
+import { resolveDestContext } from './dest';
 import { type TransferGrant, consumeGrant } from './grants';
+import {
+  MAX_SESSIONS_PER_PEER,
+  MAX_SESSIONS_TOTAL,
+  SESSION_IDLE_MS,
+  sessionMaxBytes,
+  transferChunkBytes,
+} from './limits';
+import { receiverSink } from './receiver-sink';
 
-export const SESSION_IDLE_MS = 10 * 60_000;
-/** 单次 PUT 的体积上限，同时也是进度粒度。 */
-export const TRANSFER_CHUNK_BYTES = 8 * 1024 * 1024;
+export { SESSION_IDLE_MS, TRANSFER_CHUNK_BYTES } from './limits';
+
 export const RECEIVER_CAPABILITIES: TransferCapability[] = [
   'transfer-v2',
   'transfer-ranged-parallel',
 ];
 
-const sink = new ResumableSink();
-
-interface ReceivingFile {
+export interface ReceivingFile {
   relPath: string;
   size: number;
   descriptor: SinkDescriptor;
-  /** ssh 目标：先落到本机暂存，commit 时再 rsync 推过去 */
+  /** ssh 目标：先落到本机暂存，落位时再 rsync 推过去 */
   staged: boolean;
+  /** 本机 rename 已完成（ssh 目标此时字节在暂存目录里） */
+  stagedDone: boolean;
+  /** 最终落位完成：本机目标 = rename 成功，ssh 目标 = rsync 成功 */
   committed: boolean;
+  /** 目标已存在且策略为 skip */
+  skipped: boolean;
+  /** 本进程内对该半成品的独占声明（partPath） */
+  partClaim: string | null;
 }
 
 export interface TransferSession {
@@ -49,13 +51,27 @@ export interface TransferSession {
   uid: string;
   dest: DestContext;
   onConflict: 'skip' | 'overwrite';
-  tmpDir: string | null;
+  /** grant 作用域：同一 root + 同一授权目录，跨会话可续传同一个半成品 */
+  scopeKey: string;
+  /** ssh 目标的本机暂存目录（按作用域确定，重启后仍能接上） */
+  stagingDir: string | null;
   files: Map<string, ReceivingFile>;
   createdAt: number;
   lastUsedAt: number;
+  maxFileBytes: number;
+  maxBytes: number;
+  bytesRegistered: number;
+  activeOps: number;
+  activeWrites: number;
+  closing: boolean;
+  closed: Promise<void> | null;
+  abort: AbortController;
+  idleWaiters: Array<() => void>;
 }
 
 const sessions = new Map<string, TransferSession>();
+/** partPath → sessionId：同一半成品同一时刻只允许一个会话在写。 */
+const partOwners = new Map<string, string>();
 
 export interface OpenSessionResult {
   sessionId: string;
@@ -69,13 +85,32 @@ export type ReceiverFailure = { ok: false; code: TransferErrorCode; detail?: str
 export type ReceiverResult<T> = ({ ok: true } & T) | ReceiverFailure;
 export type ReceiverVoid = { ok: true } | ReceiverFailure;
 
-function fail(code: TransferErrorCode, detail?: string): ReceiverFailure {
+export function receiverFail(code: TransferErrorCode, detail?: string): ReceiverFailure {
   return { ok: false, code, detail };
+}
+
+function scopeKeyOf(grant: TransferGrant, dest: DestContext): string {
+  return `${grant.destRootId}\0${dest.realDestDir}`;
+}
+
+function stagingDirFor(scopeKey: string): string {
+  const digest = createHash('sha256').update(scopeKey).digest('hex').slice(0, 16);
+  return join(tmpdir(), `tmex-rx-${digest}`);
+}
+
+function countSessionsFor(peerNodeId: string): number {
+  let count = 0;
+  for (const session of sessions.values()) {
+    if (!session.closing && session.fromNodeId === peerNodeId) count += 1;
+  }
+  return count;
 }
 
 function sweep(now: number): void {
   for (const [id, session] of sessions) {
-    if (now - session.lastUsedAt > SESSION_IDLE_MS) closeSession(id);
+    if (session.closing) continue;
+    if (session.activeOps > 0) continue;
+    if (now - session.lastUsedAt > SESSION_IDLE_MS) void closeSession(id);
   }
 }
 
@@ -88,13 +123,17 @@ export function openSession(input: {
 }): ReceiverResult<OpenSessionResult> {
   const now = input.now ?? Date.now();
   sweep(now);
+  if (sessions.size >= MAX_SESSIONS_TOTAL) return receiverFail('limit_exceeded');
+  if (countSessionsFor(input.peerNodeId) >= MAX_SESSIONS_PER_PEER) {
+    return receiverFail('limit_exceeded');
+  }
   const consumed = consumeGrant({
     grantId: input.grantId,
     token: input.token,
     peerNodeId: input.peerNodeId,
     now,
   });
-  if (!consumed.ok) return fail(consumed.code);
+  if (!consumed.ok) return receiverFail(consumed.code);
   return startSession(consumed.grant, input.onConflict ?? 'skip', now);
 }
 
@@ -104,206 +143,168 @@ function startSession(
   now: number
 ): ReceiverResult<OpenSessionResult> {
   const dest = resolveDestContext(grant.destRootId, grant.destPath);
-  if (!dest.ok) return fail(dest.code);
+  if (!dest.ok) return receiverFail(dest.code);
+  const maxFileBytes = transferMaxBytesNow(config.transferMaxBytes);
+  const scopeKey = scopeKeyOf(grant, dest.data);
   const session: TransferSession = {
     id: randomBytes(16).toString('hex'),
     fromNodeId: grant.fromNodeId,
     uid: grant.uid,
     dest: dest.data,
     onConflict,
-    tmpDir: null,
+    scopeKey,
+    stagingDir: dest.data.device.type === 'local' ? null : stagingDirFor(scopeKey),
     files: new Map(),
     createdAt: now,
     lastUsedAt: now,
+    maxFileBytes,
+    maxBytes: sessionMaxBytes(maxFileBytes),
+    bytesRegistered: 0,
+    activeOps: 0,
+    activeWrites: 0,
+    closing: false,
+    closed: null,
+    abort: new AbortController(),
+    idleWaiters: [],
   };
+  if (session.stagingDir) {
+    try {
+      mkdirSync(session.stagingDir, { recursive: true, mode: 0o700 });
+    } catch {
+      return receiverFail('permission_denied');
+    }
+  }
   sessions.set(session.id, session);
   return {
     ok: true,
     sessionId: session.id,
     capabilities: RECEIVER_CAPABILITIES,
-    maxFileBytes: transferMaxBytesNow(config.transferMaxBytes),
-    chunkSize: TRANSFER_CHUNK_BYTES,
+    maxFileBytes,
+    chunkSize: transferChunkBytes(),
     expiresAt: now + SESSION_IDLE_MS,
   };
 }
 
+/** 先判过期再续期：晚到的请求不能把已经该回收的会话救活。 */
 export function getSession(sessionId: string, peerNodeId: string): TransferSession | null {
   const session = sessions.get(sessionId);
   if (!session) return null;
   if (session.fromNodeId !== peerNodeId) return null;
-  session.lastUsedAt = Date.now();
+  if (session.closing) return null;
+  const now = Date.now();
+  if (session.activeOps === 0 && now - session.lastUsedAt > SESSION_IDLE_MS) {
+    void closeSession(sessionId);
+    return null;
+  }
+  session.lastUsedAt = now;
   return session;
 }
 
-export function closeSession(sessionId: string): void {
-  const session = sessions.get(sessionId);
-  if (!session) return;
-  sessions.delete(sessionId);
-  for (const file of session.files.values()) {
-    if (!file.committed) void sink.discard(file.descriptor).catch(() => {});
-  }
-  if (session.tmpDir) {
-    try {
-      rmSync(session.tmpDir, { recursive: true, force: true });
-    } catch {
-      // best-effort
-    }
-  }
-}
-
-/** 冲突检测：本机直接看 inode，ssh 设备只能问一次远端。 */
-async function destExists(session: TransferSession, absPath: string): Promise<boolean> {
-  if (session.dest.device.type === 'local') return existsSync(absPath);
-  const stat = await statFile(session.dest.root.id, absPath);
-  return stat.ok;
-}
-
-function sessionTmpDir(session: TransferSession): string {
-  if (!session.tmpDir) session.tmpDir = mkdtempSync(join(tmpdir(), 'tmex-rx-'));
-  return session.tmpDir;
-}
-
-async function prepareFile(
-  session: TransferSession,
-  relPath: string,
-  size: number
-): Promise<ReceiverResult<{ file: ReceivingFile }>> {
-  const existing = session.files.get(relPath);
-  if (existing) return { ok: true, file: existing };
-  const rel = normalizeRelPath(relPath);
-  if (!rel) return fail('invalid');
-  const limit = transferMaxBytesNow(config.transferMaxBytes);
-  if (size > limit) return fail('quota_file_size');
-
-  const staged = session.dest.device.type !== 'local';
-  const abs = joinPosix(session.dest.destDir, rel);
-  if (session.onConflict === 'skip' && (await destExists(session, abs))) {
-    return fail('dest_exists');
-  }
-  let destPath: string;
-  if (staged) {
-    destPath = join(sessionTmpDir(session), rel);
-  } else {
-    const parent = await ensureLocalParent(session.dest, abs);
-    if (!parent.ok) return fail(parent.code);
-    destPath = abs;
-  }
-  const file: ReceivingFile = {
-    relPath: rel,
-    size,
-    staged,
-    committed: false,
-    descriptor: {
-      destPath,
-      key: `${session.id}:${rel}`,
-      mode: 'ranged',
-      totalBytes: size,
-      maxBytes: size,
-      fileMode: 0o644,
-    },
-  };
-  session.files.set(relPath, file);
-  return { ok: true, file };
-}
-
-export async function fileStatus(
-  session: TransferSession,
-  relPath: string,
-  size: number
-): Promise<ReceiverResult<{ receivedBytes: number; ranges: Array<[number, number]> }>> {
-  const prepared = await prepareFile(session, relPath, size);
-  if (!prepared.ok) return prepared;
-  if (prepared.file.committed) {
-    return { ok: true, receivedBytes: size, ranges: size > 0 ? [[0, size]] : [] };
-  }
-  const state = await sink.status(prepared.file.descriptor);
-  return {
-    ok: true,
-    receivedBytes: state.receivedBytes,
-    ranges: state.ranges.map((r) => [r.offset, r.length] as [number, number]),
-  };
-}
-
-const WRITE_FAILURES: Record<string, TransferErrorCode> = {
-  offset_mismatch: 'offset_mismatch',
-  too_large: 'too_large',
-  incomplete: 'incomplete',
-  checksum_mismatch: 'checksum_mismatch',
-  aborted: 'cancelled',
-  invalid: 'invalid',
-  io_error: 'unknown',
-};
-
-export async function writeFileRange(
-  session: TransferSession,
-  input: { relPath: string; size: number; offset: number; length?: number },
-  body: ReadableStream<Uint8Array>
-): Promise<ReceiverResult<{ received: number; complete: boolean }>> {
-  const prepared = await prepareFile(session, input.relPath, input.size);
-  if (!prepared.ok) return prepared;
-  const file = prepared.file;
-  if (file.committed) return { ok: true, received: file.size, complete: true };
-  const written = await sink.write(file.descriptor, body, {
-    offset: input.offset,
-    contentLength: input.length,
-  });
+/** 字节在动就算活着：一个 8 MiB 分片传十分钟也不该被空闲回收掉。 */
+export function touchSession(session: TransferSession): void {
   session.lastUsedAt = Date.now();
-  if (!written.ok) return fail(WRITE_FAILURES[written.code] ?? 'unknown');
-  return { ok: true, received: written.receivedBytes, complete: written.complete };
 }
 
-/** 落位：本机设备直接 rename 到目标；ssh 设备先建远端目录再 rsync 推过去。 */
-export async function commitFile(
-  session: TransferSession,
-  relPath: string,
-  size: number
-): Promise<ReceiverResult<{ skipped: boolean }>> {
-  const file = session.files.get(relPath);
-  if (!file) return fail('not_found');
-  // 建会话时登记的大小与提交时声明的对不上：说明两端对同一个 relPath 的认知已经分叉
-  if (file.size !== size) return fail('invalid');
-  if (file.committed) return { ok: true, skipped: false };
-  const state = await sink.status(file.descriptor);
-  if (!state.complete) return fail('incomplete');
-  const committed = await sink.commit(file.descriptor);
-  if (!committed.ok) return fail('unknown');
-  file.committed = true;
-  if (!file.staged) return { ok: true, skipped: false };
-  return pushStagedFile(session, file);
+export function beginOp(session: TransferSession): ReceiverVoid {
+  if (session.closing) return receiverFail('cancelled');
+  session.activeOps += 1;
+  session.lastUsedAt = Date.now();
+  return { ok: true };
 }
 
-async function pushStagedFile(
-  session: TransferSession,
-  file: ReceivingFile
-): Promise<ReceiverResult<{ skipped: boolean }>> {
-  const remoteDir = parentOf(joinPosix(session.dest.destDir, file.relPath));
-  const made = await ensureRemoteDir(session, remoteDir);
-  if (!made.ok) return made;
-  const pushed = await pushFileToDevice(
-    session.dest.root.id,
-    remoteDir,
-    file.descriptor.destPath,
-    baseNameOf(file.relPath)
-  );
-  if (!pushed.ok) return fail(pushed.code, pushed.detail);
-  return { ok: true, skipped: false };
+export function endOp(session: TransferSession): void {
+  session.activeOps = Math.max(0, session.activeOps - 1);
+  session.lastUsedAt = Date.now();
+  if (session.activeOps === 0) {
+    const waiters = session.idleWaiters.splice(0);
+    for (const waiter of waiters) waiter();
+  }
 }
 
-async function ensureRemoteDir(session: TransferSession, remoteDir: string): Promise<ReceiverVoid> {
-  if (remoteDir === session.dest.destDir) return { ok: true };
-  const result = await withDeviceRsync(session.dest.device, async (spec) => {
-    const res = await execSshCommand(spec, `mkdir -p ${quoteShellArg(remoteDir)}`);
-    return res.exitCode === 0
-      ? ({ ok: true, data: undefined } as const)
-      : ({ ok: false, code: 'permission_denied' as const, detail: res.stderr } as const);
-  });
-  return result.ok ? { ok: true } : fail(result.code, result.detail);
+function whenIdle(session: TransferSession): Promise<void> {
+  if (session.activeOps === 0) return Promise.resolve();
+  return new Promise<void>((resolve) => session.idleWaiters.push(resolve));
+}
+
+/** 半成品的进程内独占：两个会话同时写同一个 `.part` 会互相踩，第二个直接判冲突。 */
+export function claimPart(session: TransferSession, partPath: string): boolean {
+  const owner = partOwners.get(partPath);
+  if (owner && owner !== session.id) return false;
+  partOwners.set(partPath, session.id);
+  return true;
+}
+
+export function releasePart(session: TransferSession, partPath: string): void {
+  if (partOwners.get(partPath) === session.id) partOwners.delete(partPath);
+}
+
+/**
+ * 关闭：先置 closing 拦住新操作，再等在跑的操作收尾，最后才丢弃半成品并摘掉会话。
+ * 顺序反了会出现「清理跑完之后又冒出一个 `.rx` 旁挂文件」这种没人再管得到的残留。
+ */
+export function closeSession(sessionId: string): Promise<void> {
+  const session = sessions.get(sessionId);
+  if (!session) return Promise.resolve();
+  if (session.closed) return session.closed;
+  session.closing = true;
+  session.abort.abort();
+  session.closed = (async () => {
+    await whenIdle(session);
+    for (const file of session.files.values()) {
+      if (!file.committed) await receiverSink.discard(file.descriptor).catch(() => {});
+      if (file.staged && file.stagedDone) {
+        await rm(file.descriptor.destPath, { force: true }).catch(() => {});
+      }
+      if (file.partClaim) releasePart(session, file.partClaim);
+    }
+    if (session.stagingDir && !hasLiveStagingPeer(session)) {
+      try {
+        rmdirSync(session.stagingDir);
+      } catch {
+        // 目录里还有别的会话的暂存文件：留着，交给孤儿清扫按 TTL 处理
+      }
+    }
+    sessions.delete(sessionId);
+  })();
+  return session.closed;
+}
+
+function hasLiveStagingPeer(session: TransferSession): boolean {
+  for (const other of sessions.values()) {
+    if (other.id !== session.id && other.stagingDir === session.stagingDir) return true;
+  }
+  return false;
+}
+
+export function activeSessionCount(): number {
+  return sessions.size;
+}
+
+/** 测试用：模拟进程崩溃——只丢掉内存里的会话表，盘上的半成品原样留着。 */
+export function forgetTransferSessionsForTests(): void {
+  sessions.clear();
+  partOwners.clear();
+}
+
+export function isPartClaimed(partPath: string): boolean {
+  return partOwners.has(partPath);
+}
+
+/** 正在被会话使用的暂存目录：孤儿清扫要绕开它们。 */
+export function activeStagingDirs(): Set<string> {
+  const dirs = new Set<string>();
+  for (const session of sessions.values()) {
+    if (session.stagingDir) dirs.add(session.stagingDir);
+  }
+  return dirs;
 }
 
 // 空闲会话的兜底 GC：没有新会话进来时也要把半成品清掉，别把 `.part` 留在用户目录里。
 const sessionGcTimer = setInterval(() => sweep(Date.now()), 60_000);
 sessionGcTimer.unref?.();
 
-export function resetTransferSessionsForTests(): void {
-  for (const id of [...sessions.keys()]) closeSession(id);
+export async function resetTransferSessionsForTests(): Promise<void> {
+  await Promise.all([...sessions.keys()].map((id) => closeSession(id)));
+  sessions.clear();
+  partOwners.clear();
 }

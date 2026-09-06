@@ -11,8 +11,10 @@ import {
   MESH_TRANSFER_PREFIX,
   type OpenSessionResult,
   type TransferChannel,
+  type TransferFileRef,
   toReceivedState,
 } from './channel';
+import { errorDetailOf, normalizeTransferError } from './errors';
 
 type JsonBody = Record<string, unknown>;
 
@@ -24,9 +26,13 @@ async function readJson(res: Response): Promise<JsonBody> {
   }
 }
 
-function errorCodeOf(body: JsonBody, fallback: TransferErrorCode): TransferErrorCode {
-  const code = body.code;
-  return typeof code === 'string' ? (code as TransferErrorCode) : fallback;
+/**
+ * 响应体里的 `code` 一律过归一化：链路层返回的是 `NODE_UNREACHABLE` 这种大写常量，
+ * 直接当契约码用会漏出 `TransferErrorCode` 之外的值。
+ */
+function errorCodeOf(body: JsonBody, res: Response): TransferErrorCode {
+  const fallback: TransferErrorCode = res.status === 503 ? 'node_unreachable' : 'unknown';
+  return normalizeTransferError(body.code ?? body.error, fallback);
 }
 
 function bridgeOrThrow(): TransferMeshBridge {
@@ -35,35 +41,29 @@ function bridgeOrThrow(): TransferMeshBridge {
   return bridge;
 }
 
-function fileQuery(file: { relPath: string; size: number }, extra: string): string {
+function fileQuery(file: TransferFileRef, extra: string): string {
   return `?rel=${encodeURIComponent(file.relPath)}&size=${file.size}${extra}`;
 }
 
 export function createMeshChannel(nodeId: string): TransferChannel {
+  const post = async (path: string, body: unknown, signal?: AbortSignal): Promise<Response> =>
+    bridgeOrThrow().forwardInternalHttp(nodeId, `${MESH_TRANSFER_PREFIX}${path}`, body, signal);
+
   return {
     async open(grant, onConflict, signal) {
-      const bridge = bridgeOrThrow();
-      const res = await bridge.forwardInternalHttp(
-        nodeId,
-        `${MESH_TRANSFER_PREFIX}/sessions`,
+      const res = await post(
+        '/sessions',
         { grantId: grant.grantId, token: grant.token, onConflict },
         signal
       );
       const body = await readJson(res);
-      if (!res.ok) {
-        return {
-          ok: false,
-          code: errorCodeOf(body, res.status === 503 ? 'node_unreachable' : 'unknown'),
-        };
-      }
+      if (!res.ok) return { ok: false, code: errorCodeOf(body, res) };
       return { ok: true, ...(body as unknown as OpenSessionResult) };
     },
 
     async status(sessionId, file, signal) {
-      const bridge = bridgeOrThrow();
-      const res = await bridge.forwardInternalHttp(
-        nodeId,
-        `${MESH_TRANSFER_PREFIX}/sessions/${sessionId}/status`,
+      const res = await post(
+        `/sessions/${sessionId}/status`,
         { relPath: file.relPath, size: file.size },
         signal
       );
@@ -75,10 +75,9 @@ export function createMeshChannel(nodeId: string): TransferChannel {
     },
 
     async put(sessionId, file, range, body, opts) {
-      const bridge = bridgeOrThrow();
       let res: Response;
       try {
-        res = await bridge.forwardInternalHttp(
+        res = await bridgeOrThrow().forwardInternalHttp(
           nodeId,
           `${MESH_TRANSFER_PREFIX}/sessions/${sessionId}/files`,
           null,
@@ -95,22 +94,33 @@ export function createMeshChannel(nodeId: string): TransferChannel {
           }
         );
       } catch (err) {
-        return { kind: 'retry', error: err instanceof Error ? err.message : String(err) };
+        if (opts.signal.aborted) return { kind: 'cancelled' };
+        return { kind: 'retry', error: errorDetailOf(err) ?? 'push failed' };
       }
+      if (opts.signal.aborted) return { kind: 'cancelled' };
       return classifyPut(res, range.length, opts.onProgress);
     },
 
     async commit(sessionId, file, signal) {
-      const bridge = bridgeOrThrow();
-      const res = await bridge.forwardInternalHttp(
-        nodeId,
-        `${MESH_TRANSFER_PREFIX}/sessions/${sessionId}/commit`,
+      const res = await post(
+        `/sessions/${sessionId}/commit`,
         { relPath: file.relPath, size: file.size },
         signal
       );
       const body = await readJson(res);
+      if (res.ok) return { ok: true, skipped: body.skipped === true };
+      return { ok: false, code: errorCodeOf(body, res), detail: errorDetailOf(body.detail) };
+    },
+
+    async mkdir(sessionId, relPath, signal): Promise<ChannelVoid> {
+      const res = await post(`/sessions/${sessionId}/dirs`, { relPath }, signal);
       if (res.ok) return { ok: true };
-      return { ok: false, code: errorCodeOf(body, 'unknown'), detail: String(body.detail ?? '') };
+      const body = await readJson(res);
+      return { ok: false, code: errorCodeOf(body, res), detail: errorDetailOf(body.detail) };
+    },
+
+    async keepAlive(sessionId, signal) {
+      await post(`/sessions/${sessionId}/keepalive`, {}, signal).catch(() => undefined);
     },
 
     async close(sessionId) {
@@ -132,7 +142,9 @@ export function createMeshChannel(nodeId: string): TransferChannel {
 /** 目标侧的确定性拒绝：重试多少次结论都一样，不值得占着退避阶梯。 */
 const TERMINAL_CODES = new Set<TransferErrorCode>([
   'dest_exists',
+  'dest_conflict',
   'quota_file_size',
+  'limit_exceeded',
   'too_large',
   'invalid',
   'outside_roots',
@@ -140,6 +152,7 @@ const TERMINAL_CODES = new Set<TransferErrorCode>([
   'root_not_found',
   'root_disabled',
   'device_not_found',
+  'not_a_directory',
   'grant_invalid',
   'grant_expired',
   'peer_mismatch',
@@ -157,7 +170,8 @@ async function classifyPut(
     onProgress(length);
     return { kind: 'landed' };
   }
-  const code = errorCodeOf(body, 'unknown');
+  const code = errorCodeOf(body, res);
+  if (code === 'cancelled') return { kind: 'cancelled' };
   if (TERMINAL_CODES.has(code)) return { kind: 'fail', error: code };
   if (res.status >= 500 || res.status === 409) return { kind: 'retry', error: code };
   return { kind: 'fail', error: code };

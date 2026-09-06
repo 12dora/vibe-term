@@ -6,10 +6,8 @@ import { randomBytes } from 'node:crypto';
 import type {
   CreateTransferJobRequest,
   TransferGrantResponse,
-  TransferJobEvent,
   TransferSourceItem,
 } from '@tmex/shared';
-import { ndjsonResponse } from '../api/file-http';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { requestDispatchContext } from '../mesh/types';
@@ -17,16 +15,20 @@ import { getTransferMeshBridge, streamsForTransport } from './bridge';
 import { type TransferChannel, createLocalChannel } from './channel';
 import { resolveDestContext } from './dest';
 import { createGrant } from './grants';
+import { jobEventsResponse } from './job-events';
 import {
   type TransferJobRecord,
+  activeJobCounts,
   cancelJob,
   createJob,
   getJob,
   listJobs,
-  subscribeJob,
 } from './job-registry';
 import { runTransferJob } from './job-runner';
+import { MAX_JOBS_PER_USER, MAX_JOBS_TOTAL } from './limits';
 import { createMeshChannel } from './mesh-channel';
+// 副作用导入：孤儿清扫的开机 + 周期任务
+import './sweep';
 
 const SELF_NODE_ID = 'self';
 
@@ -115,10 +117,16 @@ async function handleCreateJob(req: Request): Promise<Response> {
     return badRequest('grant_invalid');
   }
 
+  const uid = uidOf(req);
+  const counts = activeJobCounts(uid);
+  if (counts.user >= MAX_JOBS_PER_USER || counts.total >= MAX_JOBS_TOTAL) {
+    return json({ error: 'too_many_jobs', code: 'too_many_jobs' }, 429);
+  }
+
   const picked = pickChannel(toNodeId, selfNodeId);
   const job = createJob({
     jobId: randomBytes(12).toString('hex'),
-    uid: uidOf(req),
+    uid,
     fromNodeId: selfNodeId,
     toNodeId,
     destRootId,
@@ -147,30 +155,7 @@ function requireJob(req: Request, jobId: string): TransferJobRecord | Response {
 function handleJobEvents(req: Request, jobId: string): Response {
   const job = requireJob(req, jobId);
   if (job instanceof Response) return job;
-  let unsubscribe: (() => void) | null = null;
-  return ndjsonResponse({
-    start(emit, close) {
-      emit({ type: 'snapshot', job: job.snapshot } satisfies TransferJobEvent);
-      if (job.snapshot.finishedAt !== null) {
-        emit({ type: 'end' } satisfies TransferJobEvent);
-        close();
-        return;
-      }
-      unsubscribe = subscribeJob(job, (event) => {
-        emit(event);
-        if (event.type === 'state' && job.snapshot.finishedAt !== null) {
-          emit({ type: 'end' } satisfies TransferJobEvent);
-          unsubscribe?.();
-          unsubscribe = null;
-          close();
-        }
-      });
-    },
-    cancel() {
-      unsubscribe?.();
-      unsubscribe = null;
-    },
-  });
+  return jobEventsResponse(job);
 }
 
 export const transferRoutes: ApiRoute[] = [

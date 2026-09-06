@@ -6,16 +6,15 @@ import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { readMeshPeerMarker } from '../mesh/peer-request-marker';
 import { MESH_TRANSFER_PREFIX } from './channel';
+import { SESSION_IDLE_MS } from './limits';
 import {
   type ReceiverFailure,
   type TransferSession,
   closeSession,
-  commitFile,
-  fileStatus,
   getSession,
   openSession,
-  writeFileRange,
 } from './receiver';
+import { commitFile, fileStatus, makeDirectory, writeFileRange } from './receiver-files';
 
 const STATUS_BY_CODE: Partial<Record<TransferErrorCode, number>> = {
   grant_invalid: 403,
@@ -24,6 +23,8 @@ const STATUS_BY_CODE: Partial<Record<TransferErrorCode, number>> = {
   quota_file_size: 413,
   too_large: 413,
   dest_exists: 409,
+  dest_conflict: 409,
+  limit_exceeded: 429,
   offset_mismatch: 409,
   incomplete: 409,
   not_found: 404,
@@ -131,11 +132,30 @@ async function handleCommit(req: Request, sessionId: string): Promise<Response> 
   return json({ ok: true, skipped: done.skipped });
 }
 
-function handleClose(req: Request, sessionId: string): Response {
+async function handleClose(req: Request, sessionId: string): Promise<Response> {
   const session = requireSession(req, sessionId);
   if (session instanceof Response) return session;
-  closeSession(session.id);
+  // 等在跑的操作收尾再回：DELETE 返回时目标侧确实已经清干净了
+  await closeSession(session.id);
   return json({ ok: true });
+}
+
+async function handleMkdir(req: Request, sessionId: string): Promise<Response> {
+  const session = requireSession(req, sessionId);
+  if (session instanceof Response) return session;
+  const body = await readJsonObjectBody(req);
+  const relPath = typeof body?.relPath === 'string' ? body.relPath : '';
+  if (!relPath) return json({ error: 'invalid', code: 'invalid' }, 400);
+  const made = await makeDirectory(session, relPath);
+  if (!made.ok) return errorResponse(made);
+  return json({ ok: true });
+}
+
+/** 续期：源侧在暂存大文件时用它把目标会话按住，别让空闲 GC 收掉。 */
+function handleKeepAlive(req: Request, sessionId: string): Response {
+  const session = requireSession(req, sessionId);
+  if (session instanceof Response) return session;
+  return json({ ok: true, expiresAt: session.lastUsedAt + SESSION_IDLE_MS });
 }
 
 export function createMeshInternalTransferRoutes(): ApiRoute[] {
@@ -159,6 +179,16 @@ export function createMeshInternalTransferRoutes(): ApiRoute[] {
       method: 'POST',
       path: `${MESH_TRANSFER_PREFIX}/sessions/:sid/commit`,
       handler: (req, params) => handleCommit(req, params.sid),
+    }),
+    route({
+      method: 'POST',
+      path: `${MESH_TRANSFER_PREFIX}/sessions/:sid/dirs`,
+      handler: (req, params) => handleMkdir(req, params.sid),
+    }),
+    route({
+      method: 'POST',
+      path: `${MESH_TRANSFER_PREFIX}/sessions/:sid/keepalive`,
+      handler: (req, params) => handleKeepAlive(req, params.sid),
     }),
     route({
       method: 'DELETE',
