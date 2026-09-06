@@ -393,8 +393,7 @@
       "copyPending": "画面をタップしてコピーを完了してください",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
-      "showKeyboard": "キーボードを表示",
-      "hideKeyboard": "キーボードを非表示",
+      "hideKeyboard": "キーボードを隠す",
       "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
       "linkOpenFailed": "リンクを開けませんでした"
     },
@@ -1438,6 +1437,7 @@
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
       "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionChanged": "エージェントセッションが変更されました。再試行してください",
       "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
       "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",

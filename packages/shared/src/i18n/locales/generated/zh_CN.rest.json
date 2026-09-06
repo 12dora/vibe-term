@@ -1213,6 +1213,7 @@
       "llmSearchProviderInvalid": "搜索服务必须是 none、tavily 或 brave",
       "llmFetchModelsFailed": "拉取模型列表失败：{{detail}}",
       "agentSessionNotFound": "智能体会话不存在",
+      "agentSessionChanged": "智能体会话已被改动，请重试",
       "agentSessionBusy": "智能体会话正在运行中，请先停止或等待完成",
       "agentSessionAwaitingConfirmation": "智能体会话有待处理的确认请求，请先处理",
       "agentDeviceRequired": "必须指定设备",

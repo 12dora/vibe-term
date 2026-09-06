@@ -187,7 +187,6 @@
       "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
-      "showKeyboard": "Show Keyboard",
       "hideKeyboard": "Hide Keyboard",
       "fileLinkNotFound": "File does not exist or is not accessible",
       "linkOpenFailed": "Could not open link"

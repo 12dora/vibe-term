@@ -542,9 +542,9 @@ test('mobile: long press should select word and selection toolbar copies it', as
   }
 });
 
-// 触屏上软键盘只由快捷键栏的「显示键盘」开合：点终端画布不弹键盘（也不收），
-// 保证滚动 / 长按选择这些「看」的手势不会被键盘顶掉半屏。
-test('mobile: tapping the canvas never toggles the keyboard, the toggle button does', async ({
+// 触屏上软键盘只由「输入行」（光标所在行，含上下一行容差）唤起：点画布其他位置不弹也不收，
+// 保证滚动 / 长按选择这些「看」的手势不会被键盘顶掉半屏；收起走快捷键栏的「隐藏键盘」。
+test('mobile: only the cursor row wakes the keyboard, the hide button dismisses it', async ({
   page,
   request,
 }) => {
@@ -568,42 +568,62 @@ test('mobile: tapping the canvas never toggles the keyboard, the toggle button d
       Boolean((document.activeElement as HTMLElement | null)?.closest('.xterm-helper-textarea'))
     );
 
+  // 光标行 / 远离光标的行的 client 坐标：与渲染同源（最近一帧光标 + .xterm-screen 基准）
+  const rowPoints = () =>
+    page.evaluate(() => {
+      const term = (globalThis as any).__tmexE2eXterm;
+      const screen = document.querySelector('.xterm-screen');
+      if (!term || !(screen instanceof HTMLElement)) return null;
+      const rect = screen.getBoundingClientRect();
+      const cell = term.cellDimensions();
+      const cursorRow = term.lastCursor?.y ?? null;
+      if (cursorRow === null || cell.height <= 0) return null;
+      const rowCenterY = (row: number) => rect.top + (row + 0.5) * cell.height;
+      const farRow = Math.min(cursorRow + 8, Math.floor(rect.height / cell.height) - 2);
+      return {
+        x: rect.left + rect.width / 2,
+        cursorY: rowCenterY(cursorRow),
+        farY: rowCenterY(farRow),
+        cursorRow,
+        farRow,
+      };
+    });
+
   try {
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('device-page')).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
-    const toggle = page.getByTestId('terminal-keyboard-toggle');
-    await expect(toggle).toBeVisible();
-
-    const terminal = page.locator('.xterm').first();
-    const box = await terminal.boundingBox();
-    expect(box).not.toBeNull();
-    if (!box) return;
-    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-
-    // 移动端挂载不自动聚焦
+    const hideButton = page.getByTestId('terminal-keyboard-hide');
+    // 移动端挂载不自动聚焦，因此「隐藏键盘」按钮此刻不存在
     expect(await inputFocused()).toBe(false);
+    await expect(hideButton).toHaveCount(0);
 
-    // 画布轻点：不聚焦、不弹键盘
-    await page.touchscreen.tap(center.x, center.y);
+    const points = await rowPoints();
+    expect(points).not.toBeNull();
+    if (!points) return;
+    expect(points.farRow).toBeGreaterThan(points.cursorRow + 1);
+
+    // 远离光标的行：不聚焦、不弹键盘
+    await page.touchscreen.tap(points.x, points.farY);
     await page.waitForTimeout(300);
     expect(await inputFocused()).toBe(false);
+    await expect(hideButton).toHaveCount(0);
 
-    // 输入入口：聚焦终端输入元素（= 弹出软键盘）
-    await toggle.tap();
+    // 光标所在的输入行：聚焦（= 弹出软键盘），「隐藏键盘」按钮随之出现
+    await page.touchscreen.tap(points.x, points.cursorY);
     await expect.poll(inputFocused, { timeout: 5_000 }).toBe(true);
-    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+    await expect(hideButton).toBeVisible();
 
-    // 键盘弹着时再点画布：焦点保持，不闪收
-    await page.touchscreen.tap(center.x, center.y);
+    // 键盘弹着时点别的行：焦点保持，不闪收
+    await page.touchscreen.tap(points.x, points.farY);
     await page.waitForTimeout(300);
     expect(await inputFocused()).toBe(true);
 
-    // 再点一次入口：收起
-    await toggle.tap();
+    // 「隐藏键盘」收起，按钮随焦点一起消失
+    await hideButton.tap();
     await expect.poll(inputFocused, { timeout: 5_000 }).toBe(false);
-    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+    await expect(hideButton).toHaveCount(0);
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);

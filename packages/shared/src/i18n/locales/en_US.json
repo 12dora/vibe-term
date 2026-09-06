@@ -393,7 +393,6 @@
       "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
-      "showKeyboard": "Show Keyboard",
       "hideKeyboard": "Hide Keyboard",
       "fileLinkNotFound": "File does not exist or is not accessible",
       "linkOpenFailed": "Could not open link"
@@ -1438,6 +1437,7 @@
       "llmSearchProviderInvalid": "Search provider must be none, tavily or brave",
       "llmFetchModelsFailed": "Failed to fetch model list: {{detail}}",
       "agentSessionNotFound": "Agent session not found",
+      "agentSessionChanged": "Agent session changed elsewhere, retry",
       "agentSessionBusy": "Agent session is currently running, stop it or wait for completion",
       "agentSessionAwaitingConfirmation": "Agent session has pending confirmations, resolve them first",
       "agentDeviceRequired": "Device is required",

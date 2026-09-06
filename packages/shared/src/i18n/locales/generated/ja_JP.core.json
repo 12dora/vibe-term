@@ -187,8 +187,7 @@
       "copyPending": "画面をタップしてコピーを完了してください",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
-      "showKeyboard": "キーボードを表示",
-      "hideKeyboard": "キーボードを非表示",
+      "hideKeyboard": "キーボードを隠す",
       "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
       "linkOpenFailed": "リンクを開けませんでした"
     },

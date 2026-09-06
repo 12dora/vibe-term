@@ -20,7 +20,7 @@ function focusIfEnabled(context: PointerEventContext): void {
 
 // 触摸手势消费过的那次点按，浏览器随后仍会合成一整套鼠标事件。它们必须整体作废：
 // 合成 click 会聚焦 helper textarea（触屏上等于弹软键盘），合成 mousedown 的默认动作
-// 又会把焦点从 textarea 上夺走（键盘闪收）。软键盘只由「显示键盘」按钮唤起。
+// 又会把焦点从 textarea 上夺走（键盘闪收）。触屏的焦点由手势机显式决定。
 function isSyntheticAfterTouch(context: PointerEventContext): boolean {
   return Date.now() < context.mouse.suppressSyntheticUntil;
 }

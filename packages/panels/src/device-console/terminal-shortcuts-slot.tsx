@@ -8,7 +8,7 @@ import { useRuntime } from '@tmex/stores/react';
 import type { TerminalRef } from '@tmex/terminal-ui';
 import { type RefObject, memo, useMemo } from 'react';
 import { ShortcutButtonRow } from '../settings/ShortcutButtonRow';
-import { TerminalKeyboardButton } from './terminal-keyboard-button';
+import { TerminalHideKeyboardButton } from './terminal-keyboard-button';
 
 export const ShortcutsBar = memo(function ShortcutsBar({
   onActivate,
@@ -17,7 +17,7 @@ export const ShortcutsBar = memo(function ShortcutsBar({
 }: {
   onActivate: (item: TerminalShortcutItem) => void;
   disabled: boolean;
-  /** 触屏软键盘开关要用的终端 ref；不传即不渲染该按钮（桌面点终端就能输入） */
+  /** 触屏「隐藏键盘」按钮要用的终端 ref；不传即不渲染（桌面无软键盘） */
   keyboardToggle?: RefObject<TerminalRef | null>;
 }) {
   const runtime = useRuntime();
@@ -44,9 +44,7 @@ export const ShortcutsBar = memo(function ShortcutsBar({
       className="terminal-shortcuts-strip flex items-center gap-1.5"
       data-testid="terminal-shortcuts-strip"
     >
-      {keyboardToggle && (
-        <TerminalKeyboardButton terminalRef={keyboardToggle} disabled={disabled} />
-      )}
+      {keyboardToggle && <TerminalHideKeyboardButton terminalRef={keyboardToggle} />}
       {items.length > 0 && (
         <ShortcutButtonRow
           items={items}
@@ -69,7 +67,7 @@ export interface TerminalShortcutsSlotProps {
   background: string;
   onActivate: (item: TerminalShortcutItem) => void;
   disabled: boolean;
-  /** 触屏才传：软键盘开关按钮作用的终端 ref */
+  /** 触屏才传：「隐藏键盘」按钮作用的终端 ref */
   keyboardToggle?: RefObject<TerminalRef | null>;
 }
 

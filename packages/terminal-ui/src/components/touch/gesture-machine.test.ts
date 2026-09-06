@@ -106,6 +106,8 @@ interface Harness {
   machine: MobileTouchGestureMachine;
   calls: string[];
   setReporting: (reporting: boolean) => void;
+  /** 把终端置为「已滚回历史」（viewportY 落后 baseY） */
+  setScrolledBack: () => void;
   pan: PanState | null;
 }
 
@@ -115,6 +117,8 @@ function createHarness(options: {
   /** 省略 = 未开启平移视口（Terminal 的 viewportPan 为 false），终端不暴露 panMetrics/panBy */
   pan?: Partial<PanState>;
   container?: FakeElement;
+  /** 最近一帧的光标视口行号；省略 = 读不到光标（轻点永远不聚焦） */
+  cursorRow?: number;
 }): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
@@ -148,7 +152,12 @@ function createHarness(options: {
       calls.push(`updateSelection(${clientX},${clientY})`),
     endTouchSelection: () => calls.push('endSelection'),
     noteTouchHandled: () => calls.push('noteTouchHandled'),
+    focus: () => calls.push('focus'),
   };
+  if (options.cursorRow !== undefined) {
+    terminal.lastCursor = { visible: true, y: options.cursorRow };
+    terminal.buffer = { active: { viewportY: 10, baseY: 10 } };
+  }
   terminal._core = {
     _renderService: { dimensions: { css: { cell: { height: CELL_HEIGHT } } } },
   };
@@ -179,6 +188,9 @@ function createHarness(options: {
     setReporting: (next) => {
       reporting = next;
     },
+    setScrolledBack: () => {
+      terminal.buffer = { active: { viewportY: 2, baseY: 10 } };
+    },
   };
 }
 
@@ -189,7 +201,7 @@ describe('mouse reporting gestures', () => {
     const end = touchEvent([], [touch(1, 103, 101)]);
     machine.handleTouchEnd(asTouchEvent(end));
 
-    // 轻点不碰焦点：软键盘只由快捷键栏的「显示键盘」唤起
+    // 光标行读不到时轻点不碰焦点（这里的桩终端没有 lastCursor）
     expect(calls).toEqual(['press(100,100)', 'release(100,100)', 'noteTouchHandled']);
     expect(end.defaultPrevented).toBe(true);
     expect(machine.currentState()).toBe('idle');
@@ -315,10 +327,15 @@ describe('non-reporting scroll', () => {
   });
 });
 
-// 触屏轻点画布只是"看一眼"：合成鼠标序列会聚焦 helper textarea（弹软键盘）或反过来夺走
-// 它的焦点（收键盘），因此整套序列作废；软键盘只由快捷键栏的「显示键盘」开合。
-describe('tap on the canvas never touches the keyboard', () => {
+// 触屏轻点画布：合成鼠标序列一律作废（它会隐式聚焦 helper textarea 弹键盘、或反过来
+// 夺走焦点收键盘）；只有点在光标所在行才显式聚焦唤起软键盘。
+describe('tap on the canvas only wakes the keyboard on the cursor row', () => {
   const surface = () => new FakeElement(['.xterm']);
+  // .xterm-screen 顶在 y=0，CELL_HEIGHT=20 → 光标行 5 覆盖 client y ∈ [100, 120)
+  const screenContainer = () =>
+    new FakeElement([], {
+      '.xterm-screen': new FakeElement([], {}, { left: 0, right: 200, top: 0, bottom: 400 }),
+    });
 
   test('轻点画布：压掉合成鼠标序列，且不聚焦', () => {
     const { machine, calls } = createHarness({ reporting: false });
@@ -341,6 +358,81 @@ describe('tap on the canvas never touches the keyboard', () => {
 
     expect(calls).toEqual([]);
     expect(end.defaultPrevented).toBe(false);
+  });
+
+  test('点在光标行上：聚焦（唤起软键盘）', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['noteTouchHandled', 'focus']);
+  });
+
+  test('点在光标行上下一行内：同样聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 85)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 85)], surface())));
+
+    expect(calls).toEqual(['noteTouchHandled', 'focus']);
+  });
+
+  test('点在离光标很远的行：不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 300)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 300)], surface())));
+
+    expect(calls).toEqual(['noteTouchHandled']);
+  });
+
+  test('已滚回历史：光标行不在屏上，点哪都不聚焦', () => {
+    const { machine, calls } = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    calls.length = 0;
+    // 手势进行中滚回历史：viewportY 落后于 baseY
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+    expect(calls).toEqual(['noteTouchHandled', 'focus']);
+
+    const scrolledBack = createHarness({
+      reporting: false,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    scrolledBack.setScrolledBack();
+    scrolledBack.machine.handleTouchStart(
+      asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface()))
+    );
+    scrolledBack.machine.handleTouchEnd(
+      asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface()))
+    );
+    expect(scrolledBack.calls).toEqual(['noteTouchHandled']);
+  });
+
+  test('上报模式点光标行同样唤起键盘，且照常发鼠标字节', () => {
+    const { machine, calls } = createHarness({
+      reporting: true,
+      cursorRow: 5,
+      container: screenContainer(),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 110)], undefined, surface())));
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 110)], surface())));
+
+    expect(calls).toEqual(['press(100,110)', 'release(100,110)', 'noteTouchHandled', 'focus']);
   });
 
   test('覆盖层（选区工具条）上的轻点放行，按钮仍可点', () => {

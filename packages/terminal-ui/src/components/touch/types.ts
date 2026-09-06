@@ -34,9 +34,13 @@ export interface TerminalScroller {
     clientY: number;
   }) => boolean;
   noteTouchHandled?: () => void;
+  focus?: () => void;
+  /** 最近一帧的光标；y 是视口内行号，null/不可见表示读不到 */
+  lastCursor?: { visible: boolean; y: number | null } | null;
   buffer?: {
     active?: {
       viewportY?: number;
+      baseY?: number;
     };
   };
   _core?: {

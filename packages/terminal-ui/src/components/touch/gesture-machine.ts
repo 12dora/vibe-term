@@ -8,8 +8,18 @@ import {
 } from './scroll-bypass';
 import { TouchScrollGesture } from './scroll-gesture';
 import { LongPressSelectionGesture } from './selection-gesture';
-import { shouldSuppressTapSyntheticMouse } from './tap-focus';
-import { type TouchPoint, exceedsMoveTolerance, findTouchById } from './touch-geometry';
+import {
+  TERMINAL_SCREEN_SELECTOR,
+  cursorRowFromTerminal,
+  shouldSuppressTapSyntheticMouse,
+  tapHitsCursorRow,
+} from './tap-focus';
+import {
+  type TouchPoint,
+  exceedsMoveTolerance,
+  findTouchById,
+  terminalLineHeight,
+} from './touch-geometry';
 import type { ResolveTerminal, TouchGestureState } from './types';
 
 interface PanOutcome {
@@ -260,12 +270,13 @@ export class MobileTouchGestureMachine {
     }
 
     if (this.state === 'pending') {
-      // preventDefault 抑制 compat mouse 序列（规范保证）：上报模式的轻点只发鼠标字节，
-      // 不碰焦点——软键盘由快捷键栏的「显示键盘」唤起
+      // preventDefault 抑制 compat mouse 序列（规范保证）：上报模式的轻点发鼠标字节，
+      // 焦点只在点中输入行时才显式给出
       const terminal = this.resolveTerminal();
       this.mouseReport.tap(terminal, this.touchStartX, this.touchStartY);
       terminal?.noteTouchHandled?.();
       preventIfCancelable(event);
+      this.focusIfTapHitsInputRow(terminal);
       this.resetGesture();
       return;
     }
@@ -292,7 +303,7 @@ export class MobileTouchGestureMachine {
         if (this.state === 'scroll' || this.state === 'pan') {
           this.scroll.endGesture();
         }
-        this.suppressTapSyntheticMouse(event);
+        this.handleCanvasTap(event);
         this.resetGesture();
       }
       return;
@@ -301,13 +312,37 @@ export class MobileTouchGestureMachine {
     this.resetGesture();
   };
 
-  // 画布上没滚动起来的那次抬指 = 轻点：作废合成鼠标序列，焦点（软键盘）保持原样。
-  private suppressTapSyntheticMouse(event: TouchEvent): void {
+  // 画布上没滚动起来的那次抬指 = 轻点：合成鼠标序列一律作废（焦点不被隐式改动），
+  // 只有点在光标所在行时才显式聚焦、唤起软键盘。
+  private handleCanvasTap(event: TouchEvent): void {
     if (!shouldSuppressTapSyntheticMouse({ moved: this.moved, target: event.target })) {
       return;
     }
-    this.resolveTerminal()?.noteTouchHandled?.();
+    const terminal = this.resolveTerminal();
+    terminal?.noteTouchHandled?.();
     preventIfCancelable(event);
+    this.focusIfTapHitsInputRow(terminal);
+  }
+
+  // 输入行 = 光标所在行（上下各一行容差）。行号与画布渲染同源（最近一帧的光标快照 +
+  // .xterm-screen 的 client 基准），滚回历史时读不到行号，轻点自然不聚焦。
+  private focusIfTapHitsInputRow(terminal: ReturnType<ResolveTerminal>): void {
+    if (!terminal) {
+      return;
+    }
+    const screen = this.container.querySelector(TERMINAL_SCREEN_SELECTOR);
+    if (!(screen instanceof HTMLElement)) {
+      return;
+    }
+    const hit = tapHitsCursorRow({
+      clientY: this.touchStartY,
+      screenTop: screen.getBoundingClientRect().top,
+      cellHeight: terminalLineHeight(terminal),
+      cursorRow: cursorRowFromTerminal(terminal),
+    });
+    if (hit) {
+      terminal.focus?.();
+    }
   }
 
   readonly handleTouchCancel = (event: TouchEvent): void => {

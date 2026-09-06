@@ -1213,6 +1213,7 @@
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
       "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionChanged": "エージェントセッションが変更されました。再試行してください",
       "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
       "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",
