@@ -7,7 +7,6 @@ import {
   Network,
   RadioTower,
   RotateCcw,
-  Server,
   Settings as SettingsIcon,
   Share2,
   Sparkles,
@@ -46,8 +45,6 @@ import { useSiteSettingsForm } from './settings/use-site-settings-form';
 // 那样七个标签的代码会全部回到入口 chunk 里。
 const loadGeneralSettingsTab = () =>
   import('./settings/general-settings-tab').then((m) => m.GeneralSettingsTab);
-const loadDevicesAndFilesTab = () =>
-  import('./settings/devices-and-files-tab').then((m) => m.DevicesAndFilesTab);
 const loadNodesTab = () => import('./settings/nodes/nodes-tab').then((m) => m.NodesTab);
 const loadNotificationSettingsTab = () =>
   import('./settings/notification-settings-tab').then((m) => m.NotificationSettingsTab);
@@ -60,7 +57,6 @@ const loadRelayTab = () => import('./settings/relay/relay-tab').then((m) => m.Re
 const loadShareTab = () => import('./settings/share/share-tab').then((m) => m.ShareTab);
 
 const GeneralSettingsTab = lazyChunk(loadGeneralSettingsTab);
-const DevicesAndFilesTab = lazyChunk(loadDevicesAndFilesTab);
 const NodesTab = lazyChunk(loadNodesTab);
 const NotificationSettingsTab = lazyChunk(loadNotificationSettingsTab);
 const AISettingsTab = lazyChunk(loadAISettingsTab);
@@ -71,7 +67,6 @@ const ShareTab = lazyChunk(loadShareTab);
 
 export type SettingsTab =
   | 'general'
-  | 'devicesAndFiles'
   | 'nodes'
   | 'notifications'
   | 'ai'
@@ -83,7 +78,6 @@ export type SettingsTab =
 /** 每台机器都有的标签：空闲预热与 `chunkPreloadOrder` 只认这一组。 */
 const SETTINGS_TABS: SettingsTab[] = [
   'general',
-  'devicesAndFiles',
   'nodes',
   'share',
   'notifications',
@@ -100,7 +94,6 @@ const OPTIONAL_SETTINGS_TABS: SettingsTab[] = ['relay'];
 
 const TAB_CHUNK_LOADERS: Record<SettingsTab, ChunkPreloadTarget> = {
   general: loadGeneralSettingsTab,
-  devicesAndFiles: loadDevicesAndFilesTab,
   nodes: loadNodesTab,
   notifications: loadNotificationSettingsTab,
   ai: loadAISettingsTab,
@@ -125,7 +118,6 @@ const TABS_USING_SITE_SETTINGS: ReadonlySet<SettingsTab> = new Set<SettingsTab>(
 const SETTINGS_TAB_BAR = [
   { value: 'general', labelKey: 'settings.tabGroup.general', icon: SettingsIcon },
   { value: 'terminal', labelKey: 'settings.tabGroup.terminal', icon: Monitor },
-  { value: 'devicesAndFiles', labelKey: 'settings.tabGroup.devicesAndFiles', icon: Server },
   { value: 'remoteAccess', labelKey: 'settings.tabGroup.remoteAccess', icon: Globe },
   { value: 'nodes', labelKey: 'settings.tabGroup.nodes', icon: Network },
   { value: 'share', labelKey: 'settings.tabGroup.share', icon: Share2 },
@@ -246,8 +238,6 @@ function SettingsTabPanels({ activeTab }: { activeTab: SettingsTab }) {
         }
       >
         {activeTab === 'general' && <GeneralSettingsTab form={form} />}
-
-        {activeTab === 'devicesAndFiles' && <DevicesAndFilesTab />}
 
         {activeTab === 'nodes' && <NodesTab />}
 

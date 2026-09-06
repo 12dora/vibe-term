@@ -15,6 +15,7 @@ import {
   CredentialPromptDialog,
   WrongPasswordError,
   credentialErrorText,
+  credentialPromptContainer,
   decodeRootPublicKey,
   forgetSigner,
   isRetryableCredentialError,
@@ -124,6 +125,23 @@ describe('对话框', () => {
 
     const many = render([HUB_PASSKEY, passkey({ credential_id: 'c' })]);
     expect(many).toContain('data-testid="credential-prompt-passkey-select"');
+  });
+
+  // 凭据框必须盖在其余对话框之上（确认框走 portal 且 isolate z-50），所以浏览器里挂 body；
+  // 静态渲染没有 document，退回内联渲染，本文件的断言才成立。
+  test('浏览器里挂到 document.body，没有 document 时内联渲染', () => {
+    expect(credentialPromptContainer()).toBeNull();
+    const body = {} as HTMLElement;
+    (globalThis as { document?: unknown }).document = { body };
+    try {
+      expect(credentialPromptContainer()).toBe(body);
+    } finally {
+      Reflect.deleteProperty(globalThis, 'document');
+    }
+  });
+
+  test('遮罩层级高于其余对话框（z-60），否则密码框被确认框盖住', () => {
+    expect(render([])).toContain('z-[60]');
   });
 
   test('错误文案渲染在框里，用户可以直接改密码重试', () => {

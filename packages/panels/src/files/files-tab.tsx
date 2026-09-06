@@ -13,6 +13,12 @@ import { RotateCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import {
+  FilesNoRootsHint,
+  FilesSectionStateProvider,
+  shouldShowNoRootsHint,
+  useFilesSectionStates,
+} from './files-empty-hint';
 import { FilesNodeRoots } from './files-node-roots';
 import { hasExternalFiles } from './use-directory-upload';
 
@@ -52,6 +58,9 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const isFetching = useIsFetching({ queryKey: ['files'] });
+  // 多 node 聚合时各分节在空时整节不渲染，提示由外壳出一条（单 node 由文件树自己出）。
+  const sectionStates = useFilesSectionStates();
+  const showHint = sections !== undefined && shouldShowNoRootsHint(sectionStates.states);
 
   const refresh = () => {
     if (onRefresh) {
@@ -91,7 +100,10 @@ function FilesTabInner({ hideHeader, sections, onRefresh }: FilesTabProps) {
           }}
           className="min-w-0 space-y-0.5 pr-1 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]"
         >
-          {sections ?? <FilesNodeRoots />}
+          <FilesSectionStateProvider report={sectionStates.report}>
+            {sections ?? <FilesNodeRoots />}
+          </FilesSectionStateProvider>
+          {showHint && <FilesNoRootsHint />}
         </div>
       </ScrollArea>
     </SidebarGroup>

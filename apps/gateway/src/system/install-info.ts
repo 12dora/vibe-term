@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import type { GatewayDeployment } from '@vibeterm/shared';
+import type { GatewayDeployment, InstallSource } from '@vibeterm/shared';
 import { config } from '../config';
 
 /** install-meta.json 形状（由 vibeterm-cli init/upgrade 写入） */
@@ -12,10 +12,13 @@ export interface InstallMetaShape {
   updatedAt?: string;
   cliVersion?: string;
   bunPath?: string;
+  installSource?: string;
 }
 
 export interface InstallInfo {
   installedViaCli: boolean;
+  /** 安装来源；`getInstallInfo` 恒会给出，测试替身可省。 */
+  installSource?: InstallSource;
   deployment: GatewayDeployment;
   installDir: string | null;
   serviceName: string | null;
@@ -52,6 +55,15 @@ export function readInstallMeta(): InstallMetaShape | null {
   }
 }
 
+const INSTALL_SOURCES: readonly InstallSource[] = ['install-script', 'npx', 'cli', 'manual'];
+
+/** install-meta 里没记来源的老安装一律按 `cli`：有 meta 就说明是 CLI 落的盘。 */
+export function installSourceFromMeta(meta: InstallMetaShape | null): InstallSource {
+  if (!meta) return 'manual';
+  const recorded = meta.installSource;
+  return INSTALL_SOURCES.find((source) => source === recorded) ?? 'cli';
+}
+
 function deploymentFromPlatform(platform: string | undefined): GatewayDeployment {
   if (platform === 'darwin') return 'launchd';
   if (platform === 'linux') return 'systemd';
@@ -67,6 +79,7 @@ export function getInstallInfo(): InstallInfo {
   if (!config.isProd) {
     return {
       installedViaCli: false,
+      installSource: 'manual',
       deployment: 'none',
       installDir: null,
       serviceName: null,
@@ -79,6 +92,7 @@ export function getInstallInfo(): InstallInfo {
   if (!meta) {
     return {
       installedViaCli: false,
+      installSource: 'manual',
       deployment: 'none',
       installDir: resolveInstallDir(),
       serviceName: null,
@@ -89,6 +103,7 @@ export function getInstallInfo(): InstallInfo {
 
   return {
     installedViaCli: true,
+    installSource: installSourceFromMeta(meta),
     deployment: deploymentFromPlatform(meta.platform ?? process.platform),
     installDir: meta.installDir ?? resolveInstallDir(),
     serviceName: meta.serviceName ?? null,

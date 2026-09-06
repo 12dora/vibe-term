@@ -42,6 +42,7 @@ import {
   resolveInstallDir,
   resolvePackageLayout,
 } from '../lib/install-layout';
+import { detectInstallSource } from '../lib/install-source';
 import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
 import {
@@ -541,6 +542,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
     cliVersion,
     bunPath: bun.path,
     serviceMode: config.noService ? 'none' : 'managed',
+    installSource: detectInstallSource(),
   };
   await writeInstallMeta(installLayout, meta);
 

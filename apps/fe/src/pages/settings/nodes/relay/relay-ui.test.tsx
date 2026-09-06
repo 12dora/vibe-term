@@ -1,7 +1,8 @@
 // 中继 UI 的纯逻辑与链路行：行内文案、错误码查表、配额分档、提醒次序、次级菜单条目、
-// 提交前校验、切换对话框的文案路由。
+// 提交前校验、切换对话框的文案路由、确认框与凭据框的先后。
 
 import { describe, expect, test } from 'bun:test';
+import type { RelayFlowDeps } from '@/node/relay-enroll';
 import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
 import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -16,7 +17,7 @@ import { relayNotices } from './relay-notices';
 import { relayQuotaRows } from './relay-quota';
 import { RelayRows, relayFailing, relayLabel, relayLinkErrorKey } from './relay-rows';
 import { relaySwitchDialogCopy } from './relay-switch-dialog';
-import { relayErrorText } from './use-relay-actions';
+import { type RelayConfirmRequest, relayErrorText, runRelayConfirm } from './use-relay-actions';
 import { readmitErrorText } from './use-relay-readmit';
 import { relaySwitchErrorText } from './use-relay-switch';
 
@@ -434,5 +435,61 @@ describe('次级菜单的条目', () => {
       'nodes-relay-remove-b.example',
     ]);
     expect(items[0]?.params).toEqual({ host: 'a.example' });
+  });
+});
+
+// 「离开中继」曾表现为点了确认就卡住：确认框还开着，密码框被它盖在下面。
+describe('runRelayConfirm 的确认框时序', () => {
+  const flowDeps = {} as RelayFlowDeps;
+
+  function harness(withSigner: () => Promise<unknown>) {
+    const calls: string[] = [];
+    const deps = {
+      request: { intent: 'leave' } as RelayConfirmRequest,
+      flowDeps,
+      prompt: {
+        withSigner: async () => {
+          calls.push('withSigner');
+          return (await withSigner()) as never;
+        },
+      },
+      t,
+      onChanged: () => calls.push('changed'),
+      setConfirm: (request: RelayConfirmRequest | null) =>
+        calls.push(request === null ? 'closeConfirm' : 'openConfirm'),
+      setBusy: (busy: boolean) => calls.push(busy ? 'busy' : 'idle'),
+    };
+    return { calls, deps };
+  }
+
+  test('取凭据之前先收起确认框', async () => {
+    const { calls, deps } = harness(async () => null);
+    await runRelayConfirm(deps);
+    expect(calls.indexOf('closeConfirm')).toBeLessThan(calls.indexOf('withSigner'));
+  });
+
+  test('用户取消凭据：不算改动，忙碌态照样落回', async () => {
+    const { calls, deps } = harness(async () => null);
+    await runRelayConfirm(deps);
+    expect(calls).toEqual(['busy', 'closeConfirm', 'withSigner', 'idle']);
+  });
+
+  test('成功后通知宿主刷新', async () => {
+    const { calls, deps } = harness(async () => ({ ok: true }));
+    await runRelayConfirm(deps);
+    expect(calls).toEqual(['busy', 'closeConfirm', 'withSigner', 'changed', 'idle']);
+  });
+
+  test('失败不刷新，也不把确认框再摆回来', async () => {
+    const { calls, deps } = harness(async () => ({ ok: false, code: 'RELAY_OFFLINE' }));
+    await runRelayConfirm(deps);
+    expect(calls).toEqual(['busy', 'closeConfirm', 'withSigner', 'idle']);
+    expect(calls).not.toContain('openConfirm');
+  });
+
+  test('没有待确认的请求时什么都不做', async () => {
+    const { calls, deps } = harness(async () => null);
+    await runRelayConfirm({ ...deps, request: null });
+    expect(calls).toEqual([]);
   });
 });

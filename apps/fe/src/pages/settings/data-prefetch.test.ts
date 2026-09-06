@@ -24,16 +24,7 @@ function fakeQueryClient() {
   return { client, calls };
 }
 
-const ALL_TABS = [
-  'general',
-  'devicesAndFiles',
-  'nodes',
-  'share',
-  'notifications',
-  'ai',
-  'terminal',
-  'remoteAccess',
-];
+const ALL_TABS = ['general', 'nodes', 'share', 'notifications', 'ai', 'terminal', 'remoteAccess'];
 
 describe('tabPrefetchSpecs', () => {
   test('AI 标签预取 providers 与 settings 两条', () => {

@@ -17,6 +17,7 @@ import { ChevronRight, GripVertical, Loader2 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SortableRow } from '../device-tree/device-tree-dnd';
+import { filesSectionState, useReportFilesSection } from './files-empty-hint';
 import { FilesNodeRoots, useVisibleFileRoots } from './files-node-roots';
 
 export interface FilesNodeInfo {
@@ -142,9 +143,12 @@ function FilesNodeRootsSection({
   onExpandedChange?: (expanded: boolean) => void;
 }) {
   const fetching = useIsFetching({ queryKey: ['files'] });
-  const { rootsQuery, roots } = useVisibleFileRoots();
+  const { rootsQuery, allRoots, roots } = useVisibleFileRoots();
+  const state = filesSectionState(rootsQuery, allRoots.length, roots.length);
+  // 整节不渲染时侧栏可能一片空白，外壳据各分节的成色补一条「未配置目录」。
+  useReportFilesSection(node.runtimeNodeId, state);
 
-  if (!rootsQuery.isError && (!rootsQuery.isSuccess || roots.length === 0)) return null;
+  if (state !== 'content') return null;
 
   return (
     <FilesNodeSectionShell
@@ -155,6 +159,33 @@ function FilesNodeRootsSection({
       onExpandedChange={onExpandedChange}
     >
       <FilesNodeRoots />
+    </FilesNodeSectionShell>
+  );
+}
+
+/** 离线 / 未登录 / 已折叠的分节：本身就有内容（提示或登录入口），一律按 `content` 上报。 */
+function FilesNodeStaticSection({
+  node,
+  drag,
+  expanded,
+  onExpandedChange,
+  children,
+}: {
+  node: FilesNodeInfo;
+  drag?: FilesNodeSortable;
+  expanded?: boolean;
+  onExpandedChange?: (expanded: boolean) => void;
+  children: ReactNode;
+}) {
+  useReportFilesSection(node.runtimeNodeId, 'content');
+  return (
+    <FilesNodeSectionShell
+      node={node}
+      drag={drag}
+      controlledExpanded={expanded}
+      onExpandedChange={onExpandedChange}
+    >
+      {children}
     </FilesNodeSectionShell>
   );
 }
@@ -170,10 +201,10 @@ export function FilesNodeSection({
 
   if (!node.online) {
     return (
-      <FilesNodeSectionShell
+      <FilesNodeStaticSection
         node={node}
         drag={drag}
-        controlledExpanded={expanded}
+        expanded={expanded}
         onExpandedChange={onExpandedChange}
       >
         <div
@@ -182,16 +213,16 @@ export function FilesNodeSection({
         >
           {t('files.nodeOffline')}
         </div>
-      </FilesNodeSectionShell>
+      </FilesNodeStaticSection>
     );
   }
 
   if (!node.loggedIn) {
     return (
-      <FilesNodeSectionShell
+      <FilesNodeStaticSection
         node={node}
         drag={drag}
-        controlledExpanded={expanded}
+        expanded={expanded}
         onExpandedChange={onExpandedChange}
       >
         <div
@@ -201,7 +232,7 @@ export function FilesNodeSection({
           <span className="text-[11px] text-muted-foreground/70">{t('files.nodeSignInHint')}</span>
           {renderLogin?.(node)}
         </div>
-      </FilesNodeSectionShell>
+      </FilesNodeStaticSection>
     );
   }
 
@@ -209,14 +240,14 @@ export function FilesNodeSection({
   // ——上下文里只有 entry 的 QueryClient，跑起来读到的会是别人的目录。
   if (expanded === false) {
     return (
-      <FilesNodeSectionShell
+      <FilesNodeStaticSection
         node={node}
         drag={drag}
-        controlledExpanded={false}
+        expanded={false}
         onExpandedChange={onExpandedChange}
       >
         {null}
-      </FilesNodeSectionShell>
+      </FilesNodeStaticSection>
     );
   }
 

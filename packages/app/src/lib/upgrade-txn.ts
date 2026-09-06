@@ -12,6 +12,7 @@ import { readEnvFile } from './env-file';
 import { errorMessage } from './error-message';
 import { ensureDir, pathExists } from './fs-utils';
 import { deployRuntimeFiles, writeInstallMeta, writeRunScript } from './install';
+import { detectInstallSource } from './install-source';
 import {
   type CandidateHandle,
   type CandidateRunner,
@@ -167,6 +168,8 @@ async function persistUpgradeMeta(
   const meta = await readJsonFile<InstallMeta>(layout.metaPath);
   meta.updatedAt = new Date().toISOString();
   meta.cliVersion = toVersion;
+  // 老安装的 meta 里没有安装来源，借这次升级补上；已记过的一律保留（升级方式不代表安装方式）。
+  if (!meta.installSource) meta.installSource = detectInstallSource();
   meta.bunPath = bunPath;
   // 迁移把目录搬走后，meta 必须指向自己所在的目录：网页卸载 / 外部工具都按它找安装。
   meta.installDir = installDir;

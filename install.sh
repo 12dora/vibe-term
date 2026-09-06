@@ -216,6 +216,8 @@ vibeterm_run_init() {
   shift
   local cli_js="${pkg_dir}/bin/vibeterm.js"
   [ -f "$cli_js" ] || cli_js="${pkg_dir}/bin/tmex.js"
+  # 安装来源记进 install-meta.json，网页「关于」页据此显示安装方式
+  export VIBETERM_INSTALL_SOURCE=install.sh
   if command -v node >/dev/null 2>&1 && vibeterm_node_version_ok "$(node --version 2>/dev/null || true)"; then
     node "$cli_js" init "$@"
   else

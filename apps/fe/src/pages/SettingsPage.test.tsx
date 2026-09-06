@@ -34,16 +34,7 @@ const {
   settingsTabBarItems,
 } = await import('./SettingsPage');
 
-const TAB_IDS = [
-  'general',
-  'terminal',
-  'devicesAndFiles',
-  'remoteAccess',
-  'nodes',
-  'share',
-  'notifications',
-  'ai',
-];
+const TAB_IDS = ['general', 'terminal', 'remoteAccess', 'nodes', 'share', 'notifications', 'ai'];
 
 function render(entry = '/settings'): string {
   return renderToStaticMarkup(
@@ -61,7 +52,7 @@ async function renderResolved(entry = '/settings'): Promise<string> {
 }
 
 describe('SettingsPage 标签栏', () => {
-  test('八个标签都在，「节点」排在远程访问与「分享」之间', () => {
+  test('七个标签都在，「节点」排在远程访问与「分享」之间', () => {
     const html = render();
     for (const tab of TAB_IDS) {
       expect(html).toContain(`data-testid="settings-tab-${tab}"`);
@@ -77,15 +68,19 @@ describe('SettingsPage 标签栏', () => {
     expect(html).toContain('settings.tabGroup.share');
   });
 
-  test('「设备与文件」紧挨在「终端」右侧，「远程访问」在其后', () => {
+  test('「远程访问」紧挨在「终端」右侧；「设备与文件」标签已删除', () => {
     const html = render();
-    expect(html.indexOf('settings-tab-devicesAndFiles')).toBeGreaterThan(
+    expect(html.indexOf('settings-tab-remoteAccess')).toBeGreaterThan(
       html.indexOf('settings-tab-terminal')
     );
-    expect(html.indexOf('settings-tab-remoteAccess')).toBeGreaterThan(
-      html.indexOf('settings-tab-devicesAndFiles')
-    );
     expect(html).toContain('settings.tabGroup.remoteAccess');
+    expect(html).not.toContain('settings-tab-devicesAndFiles');
+  });
+
+  test('`?tab=devicesAndFiles` 老书签回「通用」', async () => {
+    expect(settingsTabFromParam('devicesAndFiles')).toBe('general');
+    const html = await renderResolved('/settings?tab=devicesAndFiles');
+    expect(html).toContain('data-testid="general-settings-tab"');
   });
 
   test('面板互斥：默认标签下只挂通用面板，NodesTab / 远程访问都不渲染', async () => {
@@ -113,7 +108,7 @@ describe('SettingsPage 标签栏', () => {
 
 // 中继标签只在本机带中继角色时挂上，门禁本身在 settings/relay/settings-tab-gating.test.tsx 里覆盖。
 describe('settingsTabBarItems', () => {
-  test('没有中继角色时就是八个常规标签', () => {
+  test('没有中继角色时就是七个常规标签', () => {
     expect(settingsTabBarItems(false).map((item) => String(item.value))).toEqual(TAB_IDS);
   });
 

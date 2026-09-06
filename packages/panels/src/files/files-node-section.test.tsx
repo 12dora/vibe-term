@@ -129,6 +129,12 @@ describe('FilesNodeSection 的分节头', () => {
     expect(html).not.toContain('demo-app');
   });
 
+  test('一个目录都没配过时整节仍不渲染：提示由外壳统一出一条', () => {
+    const html = renderSection(REMOTE_NODE, []);
+    expect(html).not.toContain('data-testid="files-node-section-node-app"');
+    expect(html).not.toContain('data-testid="files-no-roots-hint"');
+  });
+
   test('目录列表还没回来时不渲染分节头，避免头闪一下又消失', () => {
     const html = renderSection(REMOTE_NODE, [REMOTE_ROOT], { rootsLoaded: false });
     expect(html).not.toContain('data-testid="files-node-section-node-app"');

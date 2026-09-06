@@ -2,6 +2,7 @@
   "name": "vibeterm-cli",
   "version": "2.0.0",
   "type": "module",
+  "license": "MIT",
   "bin": {
     "vibeterm": "./bin/vibeterm.js",
     "tmex": "./bin/tmex.js",

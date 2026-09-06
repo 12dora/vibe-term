@@ -41,6 +41,7 @@ export function getSystemInfo(): SystemInfo {
     baseVersion: getBaseVersion(),
     isProd: config.isProd,
     installedViaCli: install.installedViaCli,
+    installSource: install.installSource,
     deployment: install.deployment,
     canSelfUpdate,
     serviceName: install.serviceName,

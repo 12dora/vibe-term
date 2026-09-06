@@ -117,7 +117,7 @@ export async function runLeaveWorkflow(
   request: LeaveRequest
 ): Promise<LeaveOutcome> {
   if (deps.revoke) {
-    // 凭据弹层与确认对话框同为 z-50 且前者不走 portal，会被对话框盖住：确认身份期间先把对话框收起
+    // 确认身份期间先把对话框收起：让一个已不能操作的确认框压在凭据框旁边只会让人以为卡住了
     deps.setPhase('confirming');
     const outcome = await deps.revoke();
     if (outcome.kind !== 'revoked') deps.onRevokeOutcome(outcome);

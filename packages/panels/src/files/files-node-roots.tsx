@@ -22,6 +22,7 @@ import { SortableVerticalList, useSortableRow } from '../device-tree/device-tree
 import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-view';
 import { fileIconColor, fileIconFor } from './file-icon';
 import { FileLeafContextMenu } from './file-leaf-menu';
+import { FilesNoRootsHint } from './files-empty-hint';
 import { NodeError } from './node-menu';
 import {
   FILE_ROOTS_QUERY_KEY,
@@ -198,11 +199,17 @@ export function FilesNodeRoots() {
           </Button>
         </div>
       )}
-      {!rootsQuery.isLoading && !rootsQuery.isError && roots.length === 0 && (
-        <div className="px-3 py-6 text-center text-xs text-muted-foreground">
-          {t('files.noRoots')}
-        </div>
-      )}
+      {/* 「一个目录都没配过」才劝去配置；配过但被侧栏开关隐藏 / 设备没连上只说没得显示 */}
+      {!rootsQuery.isLoading &&
+        !rootsQuery.isError &&
+        roots.length === 0 &&
+        (allRoots.length === 0 ? (
+          <FilesNoRootsHint />
+        ) : (
+          <div className="px-3 py-6 text-center text-xs text-muted-foreground">
+            {t('files.noVisibleRoots')}
+          </div>
+        ))}
     </SelectedFileProvider>
   );
 }

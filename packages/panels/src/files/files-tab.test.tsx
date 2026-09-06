@@ -89,7 +89,7 @@ describe('FilesTab 的根目录过滤', () => {
   test('本机设备的启用目录默认显示', () => {
     const html = renderFilesTab({ roots: [LOCAL_ROOT] });
     expect(html).toContain('/srv/local');
-    expect(html).not.toContain('没有可访问的目录');
+    expect(html).not.toContain('data-testid="files-no-roots-hint"');
   });
 
   test('未连接的 SSH 设备的目录不显示', () => {
@@ -98,10 +98,25 @@ describe('FilesTab 的根目录过滤', () => {
     expect(html).not.toContain('/srv/ssh');
   });
 
-  test('禁用的目录不显示', () => {
+  test('禁用的目录不显示；配过目录只说没得显示，不劝去配置', () => {
     const html = renderFilesTab({ roots: [{ ...LOCAL_ROOT, enabled: false }] });
     expect(html).not.toContain('/srv/local');
-    expect(html).toContain('没有可访问的目录');
+    expect(html).toContain('没有可显示的目录');
+    expect(html).not.toContain('data-testid="files-no-roots-hint"');
+  });
+
+  test('一个目录都没配过：出一条带「管理设备」链接的提示', () => {
+    const html = renderFilesTab({ roots: [] });
+    expect(html).toContain('data-testid="files-no-roots-hint"');
+    expect(html).toContain('未配置目录。');
+    expect(html).toContain('href="/devices"');
+    expect(html).toContain('管理设备');
+  });
+
+  test('目录列表还没回来时不出空态提示', () => {
+    const html = renderFilesTab();
+    expect(html).not.toContain('data-testid="files-no-roots-hint"');
+    expect(html).not.toContain('没有可显示的目录');
   });
 });
 

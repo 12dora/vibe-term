@@ -17,6 +17,7 @@ import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
 import { Fingerprint, KeyRound, Loader2 } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import {
   passkeysForOrigin,
@@ -277,7 +278,18 @@ export interface CredentialPromptDialogProps {
 }
 
 /**
- * 无 portal 的轻量遮罩：Radix/base-ui 的 Dialog 走 portal，在服务端静态渲染里什么都不输出，
+ * 凭据框挂到哪里：浏览器里挂 `document.body`，静态渲染（无 `document`）时内联渲染。
+ *
+ * 内联渲染会被压在别的对话框下面——其余遮罩（AlertDialog / Sheet）都 portal 到 body 且
+ * 自带 `isolate z-50`，同为 z-50 的内联遮罩排在文档流里注定在下方，用户只看到一个「卡住」的
+ * 确认框。挂到 body 并用 z-60 才能盖住它们。
+ */
+export function credentialPromptContainer(): HTMLElement | null {
+  return typeof document === 'undefined' ? null : document.body;
+}
+
+/**
+ * 轻量遮罩：不用 Radix/base-ui 的 Dialog，那套在服务端静态渲染里什么都不输出，
  * 而本页的用例正是靠静态渲染断言「passkey 选项只在允许时出现」。
  */
 export function CredentialPromptDialog({
@@ -297,9 +309,9 @@ export function CredentialPromptDialog({
     ? (passkeys.find((row) => row.credential_id === credentialId) ?? passkeys[0])
     : null;
 
-  return (
+  const overlay = (
     <div
-      className="vibeterm-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="vibeterm-fade fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4"
       data-testid="credential-prompt"
     >
       <div className="vibeterm-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
@@ -390,6 +402,9 @@ export function CredentialPromptDialog({
       </div>
     </div>
   );
+
+  const container = credentialPromptContainer();
+  return container ? createPortal(overlay, container) : overlay;
 }
 
 // ---------------------------------------------------------------------------

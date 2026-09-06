@@ -1,7 +1,7 @@
-// 版本设置页的展示块：信息行、更新检查行、变更日志、升级进度、升级确认弹窗。
+// 「关于」卡的展示块：信息行、更新检查、变更日志、升级进度、升级确认弹窗。
 // 数据与动作由 ./use-version-tab 提供，这里只负责渲染。
 
-import type { SystemInfo, UpdateCheckResult } from '@vibeterm/shared';
+import type { InstallSource, SystemInfo, UpdateCheckResult } from '@vibeterm/shared';
 import { formatDate } from '@vibeterm/shared';
 import { useSiteStore } from '@vibeterm/stores/react';
 import {
@@ -16,15 +16,31 @@ import {
 } from '@vibeterm/ui/alert-dialog';
 import { Button } from '@vibeterm/ui/button';
 import { AlertTriangle, Download, Loader2, RefreshCw } from 'lucide-react';
-import { Suspense, lazy } from 'react';
-import { useTranslation } from 'react-i18next';
+import { type ReactNode, Suspense, lazy } from 'react';
+import { Trans, useTranslation } from 'react-i18next';
 
 // 变更日志才用得到 Markdown 渲染链（约 137 KiB gzip），设置页其余部分不该为它买单。
 const MarkdownPreview = lazy(() =>
   import('../markdown/markdown-preview').then((m) => ({ default: m.MarkdownPreview }))
 );
 
-function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+/** 本项目与上游的仓库地址：跟着卡片走，不进 i18n（三语都是同一个 URL）。 */
+const PROJECT_URL = 'https://github.com/12dora/vibe-term';
+const UPSTREAM_URL = 'https://github.com/krhougs/tmex';
+
+const INSTALL_SOURCE_KEY: Record<InstallSource, string> = {
+  'install-script': 'settings.version.installSourceScript',
+  npx: 'settings.version.installSourceNpx',
+  cli: 'settings.version.installSourceCli',
+  manual: 'settings.version.installSourceManual',
+};
+
+/** 老网关不下发 `installSource`：有 CLI 安装产物就按 CLI，否则按手动或容器。 */
+function installSourceOf(info: SystemInfo): InstallSource {
+  return info.installSource ?? (info.installedViaCli ? 'cli' : 'manual');
+}
+
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
     <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
       <div className="min-w-0 pr-2 text-sm font-medium">{label}</div>
@@ -33,17 +49,100 @@ function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
   );
 }
 
-export function VersionInfoRows({
+function ExternalLink({
+  href,
+  testId,
+  children,
+}: { href: string; testId: string; children?: ReactNode }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noreferrer"
+      data-testid={testId}
+      className="text-primary underline underline-offset-2"
+    >
+      {children}
+    </a>
+  );
+}
+
+/** 运行状态三行：安装方式、服务管理器、mesh 运行模式（后者由宿主传入）。 */
+function RuntimeInfoRows({
   info,
   deploymentLabel,
+  runMode,
 }: {
   info?: SystemInfo;
   deploymentLabel: (deployment: SystemInfo['deployment']) => string;
+  runMode?: string;
 }) {
   const { t } = useTranslation();
-  const installMethod = info?.installedViaCli
-    ? t('settings.version.installMethodCli')
-    : t('settings.version.installMethodNonCli');
+  return (
+    <>
+      <InfoRow
+        label={t('settings.version.installMethod')}
+        value={
+          <span data-testid="settings-version-install-source">
+            {info ? t(INSTALL_SOURCE_KEY[installSourceOf(info)]) : '-'}
+          </span>
+        }
+      />
+      <InfoRow
+        label={t('settings.version.deployment')}
+        value={info ? deploymentLabel(info.deployment) : '-'}
+      />
+      <InfoRow
+        label={t('settings.version.role')}
+        value={<span data-testid="settings-version-role">{runMode ?? t('common.loading')}</span>}
+      />
+    </>
+  );
+}
+
+/** 出处三行：版权与致谢、许可证、项目地址。 */
+function ProjectInfoRows() {
+  const { t } = useTranslation();
+  return (
+    <>
+      <InfoRow
+        label={t('settings.version.copyright')}
+        value={
+          <span data-testid="settings-version-copyright">
+            {t('settings.version.copyrightOwner')} ·{' '}
+            <Trans
+              i18nKey="settings.version.basedOn"
+              components={{
+                upstream: <ExternalLink href={UPSTREAM_URL} testId="settings-version-upstream" />,
+              }}
+            />
+          </span>
+        }
+      />
+      <InfoRow label={t('settings.version.license')} value="MIT" />
+      <InfoRow
+        label={t('settings.version.projectUrl')}
+        value={
+          <ExternalLink href={PROJECT_URL} testId="settings-version-project">
+            github.com/12dora/vibe-term
+          </ExternalLink>
+        }
+      />
+    </>
+  );
+}
+
+export function VersionInfoRows({
+  info,
+  deploymentLabel,
+  runMode,
+}: {
+  info?: SystemInfo;
+  deploymentLabel: (deployment: SystemInfo['deployment']) => string;
+  /** mesh 运行模式的展示文案；宿主还没拿到时不传，这里显示「加载中...」。 */
+  runMode?: string;
+}) {
+  const { t } = useTranslation();
   return (
     <div className="space-y-3">
       <InfoRow
@@ -54,11 +153,8 @@ export function VersionInfoRows({
           </span>
         }
       />
-      <InfoRow label={t('settings.version.installMethod')} value={info ? installMethod : '-'} />
-      <InfoRow
-        label={t('settings.version.deployment')}
-        value={info ? deploymentLabel(info.deployment) : '-'}
-      />
+      <RuntimeInfoRows info={info} deploymentLabel={deploymentLabel} runMode={runMode} />
+      <ProjectInfoRows />
     </div>
   );
 }
@@ -81,35 +177,39 @@ function LatestVersionText({ update }: { update: UpdateCheckResult }) {
   );
 }
 
-export function UpdateCheckRow({
-  update,
+/** 检查更新的按钮：卡头右侧与标题同一行；检查结论留在内容区。 */
+export function UpdateCheckButton({
   isChecking,
   disabled,
   onCheck,
 }: {
-  update?: UpdateCheckResult;
   isChecking: boolean;
   disabled: boolean;
   onCheck: () => void;
 }) {
   const { t } = useTranslation();
   return (
-    <div className="flex flex-wrap items-center gap-3">
-      <Button
-        variant="outline"
-        data-testid="settings-version-check"
-        onClick={onCheck}
-        disabled={disabled}
-      >
-        {isChecking ? (
-          <Loader2 className="h-4 w-4 animate-spin" />
-        ) : (
-          <RefreshCw className="h-4 w-4" />
-        )}
-        {isChecking ? t('settings.version.checking') : t('settings.version.checkUpdate')}
-      </Button>
+    <Button
+      variant="outline"
+      size="sm"
+      data-testid="settings-version-check"
+      onClick={onCheck}
+      disabled={disabled}
+    >
+      {isChecking ? (
+        <Loader2 className="h-4 w-4 animate-spin" />
+      ) : (
+        <RefreshCw className="h-4 w-4" />
+      )}
+      {isChecking ? t('settings.version.checking') : t('settings.version.checkUpdate')}
+    </Button>
+  );
+}
 
-      {update && <LatestVersionText update={update} />}
+export function UpdateCheckResultRow({ update }: { update: UpdateCheckResult }) {
+  return (
+    <div className="flex flex-wrap items-center gap-3">
+      <LatestVersionText update={update} />
     </div>
   );
 }

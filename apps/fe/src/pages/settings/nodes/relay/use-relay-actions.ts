@@ -196,23 +196,19 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
 
   const { prompt } = deps;
 
-  const runConfirm = useCallback(async () => {
-    const request = confirm;
-    if (!request || !flowDeps) return;
-    setBusy(true);
-    try {
-      // 两个动作都会改变成员的解密能力，凭据走 `withSigner`（不进复用窗口），每次当场确认。
-      const result = await prompt.withSigner(
-        (signer) => runConfirmAction(flowDeps, request, signer),
-        { purpose: 'revoke' }
-      );
-      if (!result) return;
-      if (report(t, result, doneKeyOf(request.intent))) onChanged();
-      setConfirm(null);
-    } finally {
-      setBusy(false);
-    }
-  }, [confirm, flowDeps, onChanged, prompt, t]);
+  const runConfirm = useCallback(
+    () =>
+      runRelayConfirm({
+        request: confirm,
+        flowDeps,
+        prompt,
+        t,
+        onChanged,
+        setConfirm,
+        setBusy,
+      }),
+    [confirm, flowDeps, onChanged, prompt, t]
+  );
 
   const pending = useRelayPending({
     api: deps.api,
@@ -236,6 +232,42 @@ export function useRelayActions(deps: RelayActionsDeps): RelayActionsController 
     runConfirm,
     ...pending,
   };
+}
+
+export interface RunRelayConfirmDeps {
+  request: RelayConfirmRequest | null;
+  flowDeps: RelayFlowDeps | null;
+  prompt: Pick<CredentialPromptHandle, 'withSigner'>;
+  t: Translate;
+  onChanged: () => void;
+  setConfirm: (request: RelayConfirmRequest | null) => void;
+  setBusy: (busy: boolean) => void;
+}
+
+/**
+ * 确认框点「确定」之后的那一段。
+ *
+ * 凭据框与确认框同为浮层，取签名者之前必须先把确认框收起：即便凭据框已 portal 到 body，
+ * 让一个不能再操作的确认框压在密码框边上也只会让人以为卡住了（离开与移除同此）。
+ */
+export async function runRelayConfirm(deps: RunRelayConfirmDeps): Promise<void> {
+  const { request, flowDeps, prompt, t, onChanged, setConfirm, setBusy } = deps;
+  if (!request || !flowDeps) return;
+  setBusy(true);
+  setConfirm(null);
+  try {
+    // 两个动作都会改变成员的解密能力，凭据走 `withSigner`（不进复用窗口），每次当场确认。
+    const result = await prompt.withSigner(
+      (signer) => runConfirmAction(flowDeps, request, signer),
+      {
+        purpose: 'revoke',
+      }
+    );
+    if (!result) return;
+    if (report(t, result, doneKeyOf(request.intent))) onChanged();
+  } finally {
+    setBusy(false);
+  }
 }
 
 function runConfirmAction(

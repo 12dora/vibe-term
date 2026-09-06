@@ -1,6 +1,7 @@
 {
   "name": "vibeterm",
   "private": true,
+  "license": "MIT",
   "workspaces": ["apps/*", "packages/*"],
   "scripts": {
     "dev": "bash ./scripts/dev-supervisor.sh",

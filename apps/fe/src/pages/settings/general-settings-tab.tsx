@@ -1,3 +1,4 @@
+import { useQuery } from '@tanstack/react-query';
 import { VersionTab } from '@vibeterm/panels/settings/version';
 import { I18N_MANIFEST, type LocaleCode } from '@vibeterm/shared';
 import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
@@ -5,11 +6,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SiteNameField, SiteUrlField } from './general-fields';
+import { ROLE_LABEL_KEY } from './nodes/membership/role-transition';
 import { SettingsSaveButton } from './settings-save-button';
+import { LOCAL_STATUS_QUERY_KEY, fetchSelfLocalStatus } from './status-queries';
 import type { SiteSettingsForm } from './use-site-settings-form';
 
-// 版本卡与站点设置草稿无关：草稿每敲一键都会重渲染本标签，memo 把它挡在外面。
-const Version = memo(VersionTab);
+/**
+ * 「关于」卡与站点设置草稿无关：草稿每敲一键都会重渲染本标签，memo 把它挡在外面。
+ * 运行模式来自 `/api/local/status`（与「多节点互联」标签同一份缓存），面板包里查不到，
+ * 所以在宿主这边查好文案再传进去。
+ */
+const About = memo(function About() {
+  const { t } = useTranslation();
+  const status = useQuery({
+    queryKey: LOCAL_STATUS_QUERY_KEY,
+    queryFn: fetchSelfLocalStatus,
+    throwOnError: false,
+  });
+  const role = status.data?.role;
+  // 查不到本机运行态时给一杠，不能一直挂在「加载中...」上。
+  const fallback = status.isError ? '-' : undefined;
+  return <VersionTab runMode={role ? t(ROLE_LABEL_KEY[role]) : fallback} />;
+});
 
 interface GeneralSettingsTabProps {
   form: SiteSettingsForm;
@@ -68,7 +86,7 @@ export function GeneralSettingsTab({ form }: GeneralSettingsTabProps) {
         </CardContent>
       </Card>
 
-      <Version />
+      <About />
       {/* 中继模式下改名要签一条密钥日志记录，凭据对话框挂在这里。 */}
       {form.renameDialog}
     </>
