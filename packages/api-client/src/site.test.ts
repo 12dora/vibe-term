@@ -59,6 +59,30 @@ describe('fetchSiteSettings', () => {
     expect(settings.siteUrlEditable).toBe(false);
     expect(settings.siteNameLinkedToNode).toBe(true);
     expect(settings.nodeId).toBe('aa'.repeat(16));
+    expect(settings.siteAccessOrigins).toEqual([]);
+  });
+
+  test('carries the public access candidates through', async () => {
+    const siteAccessOrigins = [
+      {
+        url: 'https://relay.example',
+        kind: 'relay' as const,
+        label: 'relay.example',
+        accessUrl: 'https://relay.example/n/aabb',
+      },
+    ];
+    const client = new StubApiClient([
+      jsonResponse({
+        settings: stored,
+        effectiveSiteUrl: stored.siteUrl,
+        siteUrlEditable: true,
+        siteNameLinkedToNode: false,
+        nodeId: null,
+        siteAccessOrigins,
+      }),
+    ]);
+    const settings = await fetchSiteSettings(client);
+    expect(settings.siteAccessOrigins).toEqual(siteAccessOrigins);
   });
 
   test('standalone payload defaults link flags from siblings', async () => {
@@ -76,6 +100,7 @@ describe('fetchSiteSettings', () => {
     expect(settings.siteNameLinkedToNode).toBe(false);
     expect(settings.nodeId).toBeNull();
     expect(settings.effectiveSiteUrl).toBe(stored.siteUrl);
+    expect(settings.siteAccessOrigins).toEqual([]);
   });
 
   test('non-OK response throws', async () => {

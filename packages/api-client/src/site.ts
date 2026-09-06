@@ -15,6 +15,7 @@ function mergeSiteSettingsView(payload: GetSiteSettingsResponse): SiteSettingsVi
     siteNameLinkedToNode:
       payload.siteNameLinkedToNode ?? payload.settings.siteNameLinkedToNode ?? false,
     nodeId: payload.nodeId ?? payload.settings.nodeId ?? null,
+    siteAccessOrigins: payload.siteAccessOrigins ?? payload.settings.siteAccessOrigins ?? [],
   };
 }
 

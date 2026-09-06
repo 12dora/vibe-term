@@ -25,7 +25,7 @@ function draft(overrides: Partial<ShareDraft> = {}): ShareDraft {
 }
 
 function candidate(url: string, kind: ShareOriginCandidate['kind'] = 'site'): ShareOriginCandidate {
-  return { url, kind, label: url };
+  return { url, kind, label: url, accessUrl: url };
 }
 
 function record(overrides: Partial<ShareRecord> = {}): ShareRecord {

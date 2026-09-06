@@ -6,6 +6,7 @@ import { renderWatch as renderPanel, setupWatchTestEnv } from '../watch/watch-te
 import { ShareActiveView } from './share-active-view';
 import { ShareCreateForm } from './share-create-form';
 import { type ShareDraft, createShareDraft } from './share-dialog-model';
+import { shareOriginLabel } from './share-origin-label';
 
 beforeAll(setupWatchTestEnv);
 
@@ -17,7 +18,12 @@ function draft(overrides: Partial<ShareDraft> = {}): ShareDraft {
 }
 
 const candidates: ShareOriginCandidate[] = [
-  { url: 'https://a.example', kind: 'site', label: 'a.example' },
+  {
+    url: 'https://a.example',
+    kind: 'site',
+    label: 'a.example',
+    accessUrl: 'https://a.example',
+  },
 ];
 
 function createForm(props: Partial<Parameters<typeof ShareCreateForm>[0]> = {}) {
@@ -73,6 +79,20 @@ describe('ShareCreateForm', () => {
     expect(html).toContain('data-testid="share-duration-unit"');
   });
 
+  test('地址下拉展示「种类 · host」，多条候选才分得清来路', () => {
+    const relay: ShareOriginCandidate = {
+      url: 'https://relay.example',
+      kind: 'relay',
+      label: 'relay.example',
+      accessUrl: 'https://relay.example/n/abc',
+    };
+    const html = createForm({
+      draft: draft({ origin: relay.url }),
+      candidates: [relay, ...candidates],
+    });
+    expect(html).toContain('Relay · relay.example');
+  });
+
   test('没有候选地址时给出提示并禁用创建', () => {
     const html = createForm({ candidates: [] });
     expect(html).toContain('data-testid="share-no-address"');
@@ -80,6 +100,17 @@ describe('ShareCreateForm', () => {
     expect(html).not.toContain('data-testid="share-origin"');
     expect(html).toContain('data-testid="share-create-submit"');
     expect(html).toMatch(/data-testid="share-create-submit"[^>]*disabled/);
+  });
+});
+
+describe('shareOriginLabel', () => {
+  const t = (key: string) => key;
+
+  test('每种来路各有前缀，自定义地址同样带前缀（避免与「自定义…」选项混淆）', () => {
+    const kinds = ['custom', 'site', 'hub', 'relay', 'tunnel', 'ip'] as const;
+    expect(
+      kinds.map((kind) => shareOriginLabel(t, { ...candidates[0], kind, label: 'h.example' }))
+    ).toEqual(kinds.map((kind) => `common.originKind.${kind} · h.example`));
   });
 });
 

@@ -119,7 +119,7 @@ describe('buildSiteSettingsPatch', () => {
 });
 
 describe('siteSettingsLinkage', () => {
-  test('mesh 下的四个字段原样读出', () => {
+  test('mesh 下的联动字段原样读出', () => {
     const settings: SiteSettingsWithLinkage = {
       ...makeSettings(),
       effectiveSiteUrl: 'https://hub.example',
@@ -133,11 +133,28 @@ describe('siteSettingsLinkage', () => {
       siteUrlEditable: false,
       effectiveSiteUrl: 'https://hub.example',
       nodeId: 'abc',
+      siteAccessOrigins: [],
     });
+  });
+
+  test('可用地址候选原样带出', () => {
+    const origins = [
+      {
+        url: 'https://relay.example',
+        kind: 'relay' as const,
+        label: 'relay.example',
+        accessUrl: 'https://relay.example/n/abc',
+      },
+    ];
+
+    expect(
+      siteSettingsLinkage({ ...makeSettings(), siteAccessOrigins: origins }).siteAccessOrigins
+    ).toEqual(origins);
   });
 
   test('老服务端不下发这些字段：退回可自由编辑、不联动', () => {
     expect(siteSettingsLinkage(makeSettings())).toEqual(UNLINKED_SITE_SETTINGS);
+    expect(UNLINKED_SITE_SETTINGS.siteAccessOrigins).toEqual([]);
   });
 });
 
@@ -148,6 +165,7 @@ describe('planSiteSettingsSave', () => {
     siteUrlEditable: false,
     effectiveSiteUrl: 'https://hub.example',
     nodeId: 'node-1',
+    siteAccessOrigins: [],
   };
 
   test('未联动：改名走 PATCH，没有 rename', () => {
@@ -377,6 +395,7 @@ describe('pinSiteName', () => {
       siteUrlEditable: false,
       effectiveSiteUrl: 'https://hub.example',
       nodeId: 'n1',
+      siteAccessOrigins: [],
     };
     const draft = { ...baseline, siteName: 'studio', bellThrottleSeconds: 20 };
     expect(planSiteSettingsSave(pinned, draft, linkage)).toEqual({

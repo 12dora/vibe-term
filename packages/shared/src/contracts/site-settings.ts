@@ -1,6 +1,7 @@
 // 站点设置契约
 
 import type { LocaleCode } from '../i18n/resources';
+import type { ShareOriginCandidate } from '../share/types';
 
 export type ThemeMode = 'dark' | 'light';
 
@@ -32,6 +33,8 @@ export interface SiteSettingsLinkFields {
   siteNameLinkedToNode: boolean;
   /** mesh 下为本机 node id，standalone 为 null。 */
   nodeId: string | null;
+  /** 本机当前可被访问的公网地址候选（与分享地址候选同源、同序）。 */
+  siteAccessOrigins: ShareOriginCandidate[];
 }
 
 export type SiteSettingsView = SiteSettings & SiteSettingsLinkFields;

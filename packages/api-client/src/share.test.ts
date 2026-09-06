@@ -167,7 +167,14 @@ describe('revokeShare', () => {
 describe('getShareOrigins', () => {
   test('GET /api/share/origins', async () => {
     const payload = {
-      candidates: [{ url: 'https://a.example', kind: 'site', label: 'a.example' }],
+      candidates: [
+        {
+          url: 'https://a.example',
+          kind: 'site',
+          label: 'a.example',
+          accessUrl: 'https://a.example',
+        },
+      ],
       recommended: 'https://a.example',
       nodePrefix: null,
     };

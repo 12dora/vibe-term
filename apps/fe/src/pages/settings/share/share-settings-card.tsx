@@ -9,6 +9,7 @@ import { Switch } from '@tmex/ui/switch';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormField, Notice } from '../components/form-primitives';
+import { originKindLabel } from '../origin-kind-label';
 import { SettingsSaveButton } from '../settings-save-button';
 import {
   SHARE_ORIGIN_AUTO,
@@ -149,7 +150,8 @@ function originLabel(
 ): string {
   if (choice === SHARE_ORIGIN_AUTO) return t('settings.share.form.originAuto');
   if (choice === SHARE_ORIGIN_CUSTOM) return t('settings.share.form.originCustom');
-  return candidates.find((candidate) => candidate.url === choice)?.label ?? choice;
+  const candidate = candidates.find((item) => item.url === choice);
+  return candidate ? originKindLabel(t, candidate) : choice;
 }
 
 function OriginField({
@@ -190,7 +192,7 @@ function OriginField({
             <SelectItem value={SHARE_ORIGIN_AUTO}>{t('settings.share.form.originAuto')}</SelectItem>
             {candidates.map((candidate) => (
               <SelectItem key={candidate.url} value={candidate.url}>
-                {candidate.label}
+                {originKindLabel(t, candidate)}
               </SelectItem>
             ))}
             <SelectItem value={SHARE_ORIGIN_CUSTOM}>

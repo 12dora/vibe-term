@@ -5,6 +5,7 @@ import {
   type SiteSettingsLinkFields,
   type UpdateSiteSettingsRequest,
 } from '@tmex/shared';
+import type { ShareOriginCandidate } from '@tmex/shared/share';
 
 export interface SiteSettingsDraft {
   siteName: string;
@@ -77,6 +78,8 @@ export interface SiteSettingsLinkage {
   effectiveSiteUrl: string | null;
   /** 联动的节点 id，即 rename 的目标；未知为 `null`。 */
   nodeId: string | null;
+  /** 本机当前可被访问的公网地址候选（与分享地址候选同源、同序）；老服务端不下发时为空。 */
+  siteAccessOrigins: readonly ShareOriginCandidate[];
 }
 
 export const UNLINKED_SITE_SETTINGS: SiteSettingsLinkage = {
@@ -84,6 +87,7 @@ export const UNLINKED_SITE_SETTINGS: SiteSettingsLinkage = {
   siteUrlEditable: true,
   effectiveSiteUrl: null,
   nodeId: null,
+  siteAccessOrigins: [],
 };
 
 export function siteSettingsLinkage(settings: SiteSettingsWithLinkage): SiteSettingsLinkage {
@@ -92,6 +96,7 @@ export function siteSettingsLinkage(settings: SiteSettingsWithLinkage): SiteSett
     siteUrlEditable: settings.siteUrlEditable !== false,
     effectiveSiteUrl: settings.effectiveSiteUrl ?? null,
     nodeId: settings.nodeId ?? null,
+    siteAccessOrigins: settings.siteAccessOrigins ?? [],
   };
 }
 

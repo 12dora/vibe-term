@@ -40,6 +40,8 @@ export interface ShareOriginCandidate {
   url: string;
   kind: ShareOriginKind;
   label: string;
+  /** 浏览器实际访问本机所用的完整地址：origin + 转发前缀（如 /n/<nodeId>），无尾斜杠。 */
+  accessUrl: string;
 }
 
 export type ShareLogKind = 'out' | 'in' | 'resize' | 'checkpoint';

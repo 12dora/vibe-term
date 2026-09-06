@@ -13,6 +13,7 @@ import {
   type ShareDurationChoice,
   type ShareDurationUnit,
 } from './share-dialog-model';
+import { shareOriginLabel } from './share-origin-label';
 
 export type SetShareDraftField = <K extends keyof ShareDraft>(key: K, value: ShareDraft[K]) => void;
 
@@ -158,12 +159,12 @@ function AddressField({
           }}
         >
           <SelectTrigger className="w-full" data-testid="share-origin">
-            <SelectValue>{selected?.label ?? draft.origin}</SelectValue>
+            <SelectValue>{selected ? shareOriginLabel(t, selected) : draft.origin}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {candidates.map((candidate) => (
               <SelectItem key={candidate.url} value={candidate.url}>
-                {candidate.label}
+                {shareOriginLabel(t, candidate)}
               </SelectItem>
             ))}
           </SelectContent>
