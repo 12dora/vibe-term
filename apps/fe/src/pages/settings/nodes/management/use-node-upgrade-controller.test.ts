@@ -134,6 +134,7 @@ const { createBatchPlan, currentTabId, saveBatchPlan } = await import('./upgrade
 const LATEST = '1.2.0';
 const SELF_ID = 'self-node';
 const NODE_ID = 'n1-node';
+const LEAF_ID = 'n2-node';
 
 function row(overrides: Partial<NodeRow> & { id: string }): NodeRow {
   return {
@@ -382,7 +383,7 @@ describe('行内升级的确认框', () => {
   });
 
   /** 起一个只有 latest 的实例，节点列表一次到位，回读收尾后交出控制器。 */
-  function mountIdle(starts: string[]) {
+  function mountIdle(starts: string[], poll?: UpgradeIo['poll']) {
     globalThis.fetch = ((input: string) =>
       Promise.resolve(
         String(input).includes('/api/mesh/upgrade/latest')
@@ -395,7 +396,7 @@ describe('行内升级的确认框', () => {
         starts.push(nodeId);
         return { kind: 'started', status: status({ state: 'downloading', targetVersion: LATEST }) };
       },
-      poll: async () => ({ kind: 'status', status: status() }),
+      poll: poll ?? (async () => ({ kind: 'status', status: status() })),
       cancel: async () => ({ kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 }),
       nodeVersion: async () => LATEST,
       wait: async () => {
@@ -409,12 +410,16 @@ describe('行内升级的确认框', () => {
       row({ id: SELF_ID, isSelf: true, version: LATEST }),
       row({ id: NODE_ID, version: '1.1.30' }),
     ];
+    let live: NodeRow[] = rows;
     const harness = mountController(
-      () => rows,
+      () => live,
       io,
       () => undefined
     );
-    return { harness, rows };
+    const setRows = (next: NodeRow[]) => {
+      live = next;
+    };
+    return { harness, rows, setRows };
   }
 
   test('点「升级」先开确认框：确认之后才发 POST', async () => {
@@ -463,6 +468,43 @@ describe('行内升级的确认框', () => {
     await settle();
 
     expect(starts).toEqual([NODE_ID]);
+
+    harness.unmount();
+  });
+
+  test('确认框开着时回读接管了另一台机器：拍板后这一批不起跑', async () => {
+    const starts: string[] = [];
+    // 新来的那台一直报「下载中」：回读把它接管成在途升级，行内锁从此一直占着。
+    let leafPolls = 0;
+    const { harness, rows, setRows } = mountIdle(starts, async (nodeId) => {
+      if (nodeId !== LEAF_ID) return { kind: 'status', status: status() };
+      leafPolls += 1;
+      if (leafPolls > 1) return new Promise(() => undefined);
+      return { kind: 'status', status: status({ state: 'downloading', targetVersion: LATEST }) };
+    });
+    await settle();
+    harness.act();
+    await settle();
+
+    let controller = harness.act();
+    controller.startAll(rows);
+    controller = harness.act();
+    expect(controller.pending).toEqual({ kind: 'batch', targets: [rows[1]], version: LATEST });
+
+    // 框还开着，节点列表这时才带来一台仍在升级的机器。
+    setRows([...rows, row({ id: LEAF_ID, version: '1.1.30' })]);
+    harness.act();
+    await settle(50);
+    controller = harness.act();
+    expect(controller.anyRunning).toBe(true);
+
+    controller.confirmPending();
+    await settle();
+    controller = harness.act();
+    await settle();
+
+    expect(controller.pending).toBeNull();
+    expect(starts).toEqual([]);
 
     harness.unmount();
   });

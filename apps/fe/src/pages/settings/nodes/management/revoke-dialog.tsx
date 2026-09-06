@@ -25,6 +25,8 @@ type Translate = (key: string, options?: Record<string, unknown>) => string;
 export interface RevokeDialogCopy {
   title: string;
   body: string;
+  /** 批量时逐条列出的目标；单台为空。名字不进正文：几十台时那一句会把对话框撑出视口。 */
+  targets: Array<{ id: string; name: string }>;
 }
 
 /**
@@ -35,10 +37,17 @@ export function revokeDialogCopy(plan: RevokePlan, t: Translate): RevokeDialogCo
   const count = plan.targets.length;
   const title = t('nodes.revoke.confirmTitle', { count });
   if (plan.kind === 'bulk') {
-    const names = plan.targets.map((row) => row.name).join('、');
-    return { title, body: t('nodes.revoke.bulkConfirm', { count, names }) };
+    return {
+      title,
+      body: t('nodes.revoke.bulkConfirm', { count }),
+      targets: plan.targets.map((row) => ({ id: row.id, name: row.name })),
+    };
   }
-  return { title, body: t('nodes.revoke.confirmText', { name: plan.targets[0]?.name ?? '' }) };
+  return {
+    title,
+    body: t('nodes.revoke.confirmText', { name: plan.targets[0]?.name ?? '' }),
+    targets: [],
+  };
 }
 
 /** 内层单独一段：每次开框都重新挂载，原因输入框不会带着上一次的残留。 */
@@ -58,10 +67,28 @@ function RevokeDialogBody({
         if (!next) controller.dismiss();
       }}
     >
-      <AlertDialogContent data-testid="nodes-revoke-dialog">
+      <AlertDialogContent
+        data-testid="nodes-revoke-dialog"
+        className="max-h-[85vh] overflow-y-auto"
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{copy.title}</AlertDialogTitle>
-          <AlertDialogDescription>{copy.body}</AlertDialogDescription>
+          <AlertDialogDescription>
+            {copy.body}
+            {copy.targets.length > 0 && (
+              // 描述区是 <p>，名字只能用行内元素铺开；台数多时这一块自己滚，不撑高对话框。
+              <span
+                className="mt-2 block max-h-32 overflow-y-auto"
+                data-testid="nodes-revoke-targets"
+              >
+                {copy.targets.map((target) => (
+                  <span key={target.id} className="block truncate font-medium text-foreground">
+                    {target.name}
+                  </span>
+                ))}
+              </span>
+            )}
+          </AlertDialogDescription>
         </AlertDialogHeader>
 
         <div className="space-y-1.5">

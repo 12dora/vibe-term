@@ -4,6 +4,7 @@ import {
   type WatchRuleDraft,
   type WatchRuleValidationError,
   applyAssistResult,
+  applyModelSelection,
   applyProviderId,
   applyTriggerType,
   createWatchRuleDraft,
@@ -21,6 +22,7 @@ export interface WatchRuleDraftController {
   setField: SetWatchRuleField;
   selectTriggerType: (next: WatchTriggerType) => void;
   selectProvider: (next: string | null) => void;
+  selectModel: (next: { providerId: string | null; modelId: string | null }) => void;
   acceptAssistResult: (result: AssistRegexResponse) => void;
   minInterval: number;
   validate: () => WatchRuleValidationError | null;
@@ -41,6 +43,10 @@ export function useWatchRuleDraft(rule: WatchRuleDto | null): WatchRuleDraftCont
     setDraft((current) => applyProviderId(current, next));
   }, []);
 
+  const selectModel = useCallback((next: { providerId: string | null; modelId: string | null }) => {
+    setDraft((current) => applyModelSelection(current, next));
+  }, []);
+
   const acceptAssistResult = useCallback((result: AssistRegexResponse) => {
     setDraft((current) => applyAssistResult(current, result));
   }, []);
@@ -53,10 +59,11 @@ export function useWatchRuleDraft(rule: WatchRuleDto | null): WatchRuleDraftCont
       setField,
       selectTriggerType,
       selectProvider,
+      selectModel,
       acceptAssistResult,
       minInterval: minIntervalFor(draft.triggerType),
       validate,
     }),
-    [draft, setField, selectTriggerType, selectProvider, acceptAssistResult, validate]
+    [draft, setField, selectTriggerType, selectProvider, selectModel, acceptAssistResult, validate]
   );
 }

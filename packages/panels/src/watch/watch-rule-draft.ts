@@ -139,6 +139,19 @@ export function applyProviderId(draft: WatchRuleDraft, next: string | null): Wat
   return { ...draft, providerId: next, modelId: next === null ? '' : draft.modelId };
 }
 
+/**
+ * 模型选择器的回填。清空模型（选「跟随全局默认」）只清模型：`{providerId: A, modelId: ''}`
+ * 是合法状态，意思是「用提供商 A 的全局默认模型」，不该顺手把已选的提供商也抹掉。
+ * 只有选中了具体模型时才把提供商同步成它所属的那一个。
+ */
+export function applyModelSelection(
+  draft: WatchRuleDraft,
+  next: { providerId: string | null; modelId: string | null }
+): WatchRuleDraft {
+  if (next.modelId === null) return { ...draft, modelId: '' };
+  return { ...draft, providerId: next.providerId, modelId: next.modelId };
+}
+
 export function applyAssistResult(
   draft: WatchRuleDraft,
   result: AssistRegexResponse

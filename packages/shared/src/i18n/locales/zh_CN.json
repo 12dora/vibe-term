@@ -2531,7 +2531,7 @@
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
-        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
         "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },

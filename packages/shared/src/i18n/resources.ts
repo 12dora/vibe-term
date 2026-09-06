@@ -2539,8 +2539,8 @@ export const I18N_RESOURCES = {
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
-        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
-        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
         "bulkDone_one": "{{count}} node removed",
         "bulkDone_other": "{{count}} nodes removed",
         "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"
@@ -5840,7 +5840,7 @@ export const I18N_RESOURCES = {
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
-        "bulkConfirm": "移除 {{count}} 个节点（{{names}}）？它们将立即失去访问权限，须重新添加。",
+        "bulkConfirm": "移除以下 {{count}} 个节点？它们将立即失去访问权限，须重新添加。",
         "bulkDone": "已移除 {{count}} 个节点",
         "bulkFailed": "已移除 {{count}} 个，{{failed}} 个失败（{{names}}）"
       },
@@ -9137,7 +9137,7 @@ export const I18N_RESOURCES = {
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
-        "bulkConfirm": "{{count}} 個のノード（{{names}}）を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
+        "bulkConfirm": "次の {{count}} 個のノードを削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
         "bulkDone": "{{count}} 個のノードを削除しました",
         "bulkFailed": "{{count}} 個を削除、{{failed}} 個が失敗しました（{{names}}）"
       },

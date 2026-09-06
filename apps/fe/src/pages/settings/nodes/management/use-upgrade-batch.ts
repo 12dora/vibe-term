@@ -51,6 +51,14 @@ export interface UpgradeBatchControl {
   startAll: (rows: NodeRow[]) => void;
 }
 
+/**
+ * 批量起跑的即时闸门：已有批量在跑、有行内升级占着某台机器、或回读还没收尾，任一成立都不许起跑。
+ * 确认框开着的这段时间里三者都可能翻转（续跑接管、回读读到在途升级），因此拍板之后还要再核一遍。
+ */
+function batchBlocked(refs: UpgradeRefs): boolean {
+  return refs.batchRunning.current || refs.running.size > 0 || refs.restoring.current.size > 0;
+}
+
 export interface UpgradeBatchPlanControl {
   /** 批量计划挂在本机行名下：换入口即换计划。 */
   entryNodeId: string | null;
@@ -243,12 +251,12 @@ export function useUpgradeBatch(p: {
         signal,
         t,
         toasts: toast,
-        // 确认框开着的这段时间里，续跑可能已经把一批接管过去：拍板后再核一遍。
+        // 确认框开着的这段时间里，续跑或回读可能已经接管了机器：拍板后把闸门再核一遍。
         confirm: async () =>
           version !== null &&
           (await gate.ask({ kind: 'batch', targets, version })) &&
           !signal.aborted &&
-          !refs.batchRunning.current,
+          !batchBlocked(refs),
         runOne: (row, targetVersion, toasts) => runOnce(row, targetVersion, toasts),
         openPlan,
         onStart: (total, completed) => {

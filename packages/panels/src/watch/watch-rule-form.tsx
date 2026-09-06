@@ -39,6 +39,7 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
     setField,
     selectTriggerType,
     selectProvider,
+    selectModel,
     acceptAssistResult,
     minInterval,
     validate,
@@ -52,8 +53,6 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
     queryFn: () => fetchLlmProviders(undefined, apiClient),
     throwOnError: false,
   });
-
-  const providers = providersQuery.data?.providers ?? [];
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -158,9 +157,9 @@ export function WatchRuleForm({ deviceId, paneId, rule, onSaved, onCancel }: Wat
       <ModelFields
         formId={formId}
         draft={draft}
-        setField={setField}
         onSelectProvider={selectProvider}
-        providers={providers}
+        onSelectModel={selectModel}
+        providers={providersQuery.data?.providers ?? []}
       />
 
       <LlmAugmentFields draft={draft} setField={setField} />

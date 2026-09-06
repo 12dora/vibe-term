@@ -5,6 +5,7 @@ import {
   type WatchRuleDraft,
   type WatchRuleValidationError,
   applyAssistResult,
+  applyModelSelection,
   applyProviderId,
   applyTriggerType,
   buildAssistRegexRequest,
@@ -226,6 +227,24 @@ describe('applyTriggerType', () => {
       confirmWithLlm: true,
       extractGroup: 1,
       unchangedMinutes: 7,
+    });
+  });
+});
+
+describe('applyModelSelection', () => {
+  test('只清模型时保留已选提供商：那是「用该提供商的全局默认模型」', () => {
+    const draft = draftWith({ providerId: 'p1', modelId: 'gpt-4o' });
+    expect(applyModelSelection(draft, { providerId: null, modelId: null })).toMatchObject({
+      providerId: 'p1',
+      modelId: '',
+    });
+  });
+
+  test('选中具体模型时提供商跟着换成它所属的那一个', () => {
+    const draft = draftWith({ providerId: 'p1', modelId: 'gpt-4o' });
+    expect(applyModelSelection(draft, { providerId: 'p2', modelId: 'claude' })).toMatchObject({
+      providerId: 'p2',
+      modelId: 'claude',
     });
   });
 });

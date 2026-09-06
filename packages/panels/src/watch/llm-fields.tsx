@@ -45,16 +45,17 @@ export function LlmFields({ formId, draft, setField }: LlmFieldsProps) {
 interface ModelFieldsProps {
   formId: string;
   draft: WatchRuleDraft;
-  setField: SetWatchRuleField;
   onSelectProvider: (providerId: string | null) => void;
+  /** 模型选择器的回填；清空模型时保留已选提供商，见 `applyModelSelection`。 */
+  onSelectModel: (next: { providerId: string | null; modelId: string | null }) => void;
   providers: LlmProviderDto[];
 }
 
 export function ModelFields({
   formId,
   draft,
-  setField,
   onSelectProvider,
+  onSelectModel,
   providers,
 }: ModelFieldsProps) {
   const { t } = useTranslation();
@@ -107,10 +108,7 @@ export function ModelFields({
           modelId={draft.modelId || null}
           allowNone
           noneLabel={t('watch.form.followGlobalDefault')}
-          onChange={(next) => {
-            onSelectProvider(next.providerId);
-            setField('modelId', next.modelId ?? '');
-          }}
+          onChange={onSelectModel}
         />
       </div>
       {needsModelFor(draft) && (

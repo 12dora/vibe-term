@@ -1790,8 +1790,8 @@
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
-        "bulkConfirm_one": "Remove {{count}} node ({{names}})? It loses access immediately and has to be added again from scratch.",
-        "bulkConfirm_other": "Remove {{count}} nodes ({{names}})? They lose access immediately and have to be added again from scratch.",
+        "bulkConfirm_one": "Remove the following node? It loses access immediately and has to be added again from scratch.",
+        "bulkConfirm_other": "Remove the following {{count}} nodes? They lose access immediately and have to be added again from scratch.",
         "bulkDone_one": "{{count}} node removed",
         "bulkDone_other": "{{count}} nodes removed",
         "bulkFailed": "{{count}} removed, {{failed}} failed ({{names}})"

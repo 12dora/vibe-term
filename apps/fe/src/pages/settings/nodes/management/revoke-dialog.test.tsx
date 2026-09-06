@@ -19,12 +19,17 @@ describe('revokeDialogCopy', () => {
     const copy = revokeDialogCopy(plan, t);
     expect(copy.title).toBe('nodes.revoke.confirmTitle:{"count":1}');
     expect(copy.body).toBe('nodes.revoke.confirmText:{"name":"studio"}');
+    expect(copy.targets).toEqual([]);
   });
 
-  test('批量：标题按台数算，正文列出全部名字', () => {
+  test('批量：正文只报台数，名字另列一份（几十台时不撑爆对话框）', () => {
     const plan: RevokePlan = { kind: 'bulk', targets: [row('a'), row('b')] };
     const copy = revokeDialogCopy(plan, t);
     expect(copy.title).toBe('nodes.revoke.confirmTitle:{"count":2}');
-    expect(copy.body).toBe('nodes.revoke.bulkConfirm:{"count":2,"names":"a、b"}');
+    expect(copy.body).toBe('nodes.revoke.bulkConfirm:{"count":2}');
+    expect(copy.targets).toEqual([
+      { id: 'a', name: 'a' },
+      { id: 'b', name: 'b' },
+    ]);
   });
 });

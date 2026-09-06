@@ -1,6 +1,8 @@
 // 站点访问 URL 的候选地址列表：可编辑（可「填入」）、由 Hub 托管（只读，只能复制）、无候选三种形态。
-// 无 DOM 测试环境：版式用 react-dom/server 静态渲染断言（没有 i18next 实例时 `t` 原样返回 key，
-// 因此断言的是 key 与 testId）；「填入」是回调，直接调用无 hook 的行组件并驱动它的 onClick。
+// 无 DOM 测试环境：版式用 react-dom/server 静态渲染断言。`t` 的产出在这里一概不断言——同进程里
+// 别的测试文件（如 `FilePage.test.tsx`）会用 `mock.module` 把 `useTranslation` 换成原样返回 key
+// 的桩，单跑与合跑的文案因此并不一致；能稳的只有结构：testId、`data-kind` 与候选的 accessUrl。
+// 「填入」是回调，直接调用无 hook 的行组件并驱动它的 onClick。
 
 import { describe, expect, test } from 'bun:test';
 import type { ShareOriginCandidate } from '@tmex/shared/share';
@@ -97,14 +99,15 @@ describe('SiteUrlField', () => {
     );
 
     expect(html).not.toContain('data-testid="settings-site-url-readonly"');
-    expect(html).toContain('settings.general.urlHint');
+    expect(html).toContain('data-testid="settings-site-url-hint"');
     expect(html).toContain('data-testid="settings-site-url-candidates"');
-    expect(html).toContain('settings.general.urlCandidates');
-    expect(html).not.toContain('settings.general.urlOtherCandidates');
     expect(html).toContain('data-kind="relay"');
     expect(html).toContain('data-kind="tunnel"');
-    expect(html).toContain('common.originKind.relay · relay.example');
+    // 种类前缀由 `originKindLabel` 拼，前半截是 key 还是中文取决于同进程里谁先跑；host 一定在。
+    expect(html).toContain('· relay.example');
     expect(html).toContain('https://relay.example/n/abc');
+    expect(html).toContain('https://tmex.example');
+    // 「填入」在场即说明这一列走的是可编辑那一支（标题随之是「可用地址」）。
     expect(html).toContain('data-testid="settings-site-url-candidate-use"');
   });
 
@@ -120,9 +123,11 @@ describe('SiteUrlField', () => {
     );
 
     expect(html).toContain('data-testid="settings-site-url-readonly"');
-    expect(html).toContain('settings.general.urlManagedHint');
-    expect(html).toContain('settings.general.urlOtherCandidates');
+    expect(html).toContain('data-testid="settings-site-url-hint"');
+    expect(html).toContain('data-testid="settings-site-url-candidates"');
+    // 只读那一支不给「填入」（标题随之是「其它可用地址」），只留复制。
     expect(html).not.toContain('data-testid="settings-site-url-candidate-use"');
+    expect(html).toContain('data-testid="settings-site-url-candidate-0-copy"');
     expect(html).toContain('data-kind="relay"');
     expect(html).not.toContain('data-kind="tunnel"');
   });
@@ -130,7 +135,7 @@ describe('SiteUrlField', () => {
   test('没有候选：不出列表', () => {
     const html = renderToStaticMarkup(<SiteUrlField form={form({})} />);
 
-    expect(html).toContain('settings.general.urlHint');
+    expect(html).toContain('data-testid="settings-site-url-hint"');
     expect(html).not.toContain('data-testid="settings-site-url-candidates"');
   });
 });
