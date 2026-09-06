@@ -28,7 +28,11 @@ const PHYSICAL_IFACE_PREFIXES = [
 /** 隧道网卡：上面的私网地址仍可能有人扫得到（同一 VPN / Tailscale），保留但降权 */
 const TUNNEL_IFACE_PREFIXES = ['utun', 'tun', 'tap', 'wg', 'ipsec', 'ppp', 'tailscale'] as const;
 
-/** 容器 / 虚拟机 / 系统内部网卡：手机永远连不上，直接丢 */
+/**
+ * 容器 / 虚拟机 / 系统内部网卡：手机永远连不上，直接丢。
+ * 注意不含裸 `br*` / `bridge*`——把物理网卡并进网桥（Proxmox、Linux 服务器、macOS 网络共享）
+ * 时局域网地址就挂在网桥上，见 `isBridgeIface`；docker 自建网络是带连字符的 `br-<hex>`。
+ */
 const DISCARD_IFACE_PREFIXES = [
   'lo',
   'awdl',
@@ -40,7 +44,6 @@ const DISCARD_IFACE_PREFIXES = [
   'anpi',
   'docker',
   'veth',
-  'bridge',
   'virbr',
   'lxdbr',
   'lxcbr',
@@ -78,8 +81,14 @@ export function isTunnelIface(name: string): boolean {
   return startsWithAny(name.toLowerCase(), TUNNEL_IFACE_PREFIXES);
 }
 
+/** 裸网桥 `br0` / `bridge100`：可能承载物理网卡的局域网地址。`br-<hex>` 是 docker 自建网络，不算。 */
+export function isBridgeIface(name: string): boolean {
+  return /^(?:br|bridge)\d*$/.test(name.toLowerCase());
+}
+
 export function isVirtualIface(name: string): boolean {
   const n = name.toLowerCase();
+  if (isBridgeIface(n)) return false;
   if (n.startsWith('br-')) return true;
   return startsWithAny(n, DISCARD_IFACE_PREFIXES) || isTunnelIface(n);
 }
@@ -116,27 +125,35 @@ export function classifyLanCandidate(input: {
   if (isCgnatIpv4(address)) return 'tailscale';
   const name = input.iface.toLowerCase();
   const physical = isPhysicalIface(name);
-  if (!physical && hasVirtualMac(input.mac)) return null;
+  // 网桥可能并着虚拟机宿主的网卡，MAC 落在虚拟化 OUI 上是正常的，不作为丢弃信号
+  if (!physical && !isBridgeIface(name) && hasVirtualMac(input.mac)) return null;
   if (isTunnelIface(name)) return isPrivateIpv4(address) ? 'vpn' : null;
+  // 网桥只认私网地址：公网地址挂在网桥上多半是虚拟机 NAT 出口，不是手机能走的路
+  if (isBridgeIface(name)) return isPrivateIpv4(address) ? 'lan' : null;
   if (isVirtualIface(name)) return null;
   if (physical) return 'lan';
   // 名字既不像物理网卡也不在已知虚拟前缀里（USB 网卡、雷雳网桥等）：只放行私网地址
   return isPrivateIpv4(address) ? 'lan' : null;
 }
 
-const KIND_TIER: Record<LanAddressKind, number> = { lan: 1, tailscale: 2, vpn: 3 };
 const TIER_DEFAULT_ROUTE = 0;
-const TIER_PUBLIC = 4;
+const TIER_PHYSICAL = 1;
+const TIER_BRIDGE = 2;
+const TIER_TAILSCALE = 3;
+const TIER_VPN = 4;
+const TIER_PUBLIC = 5;
 
 function tierOf(candidate: LanAddressCandidate, defaultIface: string | null): number {
-  if (candidate.kind !== 'lan') return KIND_TIER[candidate.kind];
+  if (candidate.kind === 'tailscale') return TIER_TAILSCALE;
+  if (candidate.kind === 'vpn') return TIER_VPN;
   if (!isPrivateIpv4(candidate.ip)) return TIER_PUBLIC;
   const iface = candidate.iface.toLowerCase();
+  const bridge = isBridgeIface(iface);
   // 默认路由走 utun 时（Surge 等代理接管默认网关）不给加权，否则 VPN 地址会抢到二维码第一条
-  if (defaultIface && iface === defaultIface.toLowerCase() && isPhysicalIface(iface)) {
+  if (defaultIface && iface === defaultIface.toLowerCase() && (isPhysicalIface(iface) || bridge)) {
     return TIER_DEFAULT_ROUTE;
   }
-  return KIND_TIER.lan;
+  return bridge ? TIER_BRIDGE : TIER_PHYSICAL;
 }
 
 function nameBonus(candidate: LanAddressCandidate): number {

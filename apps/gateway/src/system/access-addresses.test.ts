@@ -1,6 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import type { NetworkInterfaceInfo } from 'node:os';
-import { collectLanAddresses, getAccessAddresses, isLoopbackBindHost } from './access-addresses';
+import {
+  collectLanAddresses,
+  getAccessAddresses,
+  getAccessAddressesAsync,
+  isLoopbackBindHost,
+} from './access-addresses';
 import { collectLanCandidates } from './lan-interfaces';
 
 const iface = (
@@ -31,16 +36,37 @@ describe('access-addresses', () => {
     expect(list).toEqual(['192.168.1.20', '10.0.0.5']);
   });
 
-  test('容器 / 虚拟机 / 桥接网卡上的私网地址不进候选', () => {
+  test('容器 / 虚拟机网卡上的私网地址不进候选', () => {
     const list = collectLanCandidates({
       docker0: [iface('172.17.0.1')],
-      'br-abcdef': [iface('172.18.0.1')],
+      'br-abc123': [iface('172.18.0.1')],
       veth1234: [iface('10.1.1.1')],
       vmnet8: [iface('192.168.55.1')],
-      bridge100: [iface('192.168.64.1')],
+      virbr0: [iface('192.168.122.1')],
+      lxdbr0: [iface('10.55.0.1')],
+      vboxnet0: [iface('192.168.56.1')],
       en0: [iface('192.168.1.20')],
     });
     expect(list).toEqual([{ ip: '192.168.1.20', kind: 'lan', iface: 'en0' }]);
+  });
+
+  test('物理网卡并进网桥时局域网地址挂在网桥上，仍要列出来', () => {
+    const list = collectLanCandidates({
+      br0: [iface('192.168.1.30')],
+      'br-abc123': [iface('172.18.0.1')],
+    });
+    expect(list).toEqual([{ ip: '192.168.1.30', kind: 'lan', iface: 'br0' }]);
+  });
+
+  test('网桥排在物理网卡之后，除非它就是默认路由', () => {
+    const interfaces = {
+      bridge0: [iface('192.168.9.9')],
+      en0: [iface('192.168.1.20')],
+    };
+    expect(collectLanCandidates(interfaces).map((item) => item.iface)).toEqual(['en0', 'bridge0']);
+    expect(
+      collectLanCandidates(interfaces, { defaultIface: 'bridge0' }).map((item) => item.iface)
+    ).toEqual(['bridge0', 'en0']);
   });
 
   test('Tailscale 的 CGNAT 地址保留但另标一类，排在物理局域网之后', () => {
@@ -131,6 +157,49 @@ describe('access-addresses', () => {
     expect(res.loopbackOnly).toBe(false);
     expect(res.lanAddresses).toEqual(['192.168.1.20', '100.64.1.2']);
     expect(res.lanCandidates.map((item) => item.kind)).toEqual(['lan', 'tailscale']);
+  });
+
+  test('中继入口在等待上限内探通就随响应下发，超时则仍为 null', async () => {
+    const base = {
+      bindHost: '0.0.0.0',
+      port: 9883,
+      interfaces: () => ({}),
+      defaultIface: () => null,
+    };
+    let entry: string | null = null;
+    const fast = await getAccessAddressesAsync({
+      ...base,
+      relayAccessUrl: () => entry,
+      awaitRelayProbe: async () => {
+        entry = 'https://relay.example/n/abc';
+      },
+      relayProbeWaitMs: 50,
+    });
+    expect(fast.relayAccessUrl).toBe('https://relay.example/n/abc');
+
+    const slow = await getAccessAddressesAsync({
+      ...base,
+      relayAccessUrl: () => null,
+      awaitRelayProbe: () => new Promise<void>((resolve) => setTimeout(resolve, 200).unref?.()),
+      relayProbeWaitMs: 20,
+    });
+    expect(slow.relayAccessUrl).toBeNull();
+  });
+
+  test('中继入口已探通时不等探测', async () => {
+    let waited = false;
+    const res = await getAccessAddressesAsync({
+      bindHost: '0.0.0.0',
+      port: 9883,
+      interfaces: () => ({}),
+      defaultIface: () => null,
+      relayAccessUrl: () => 'https://relay.example/n/abc',
+      awaitRelayProbe: async () => {
+        waited = true;
+      },
+    });
+    expect(res.relayAccessUrl).toBe('https://relay.example/n/abc');
+    expect(waited).toBe(false);
   });
 
   test('中继入口探通时随响应下发，探测抛错按不可用处理', () => {

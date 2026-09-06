@@ -4,7 +4,13 @@ import type {
   TunnelProcessState,
   TunnelStatusResponse,
 } from '@vibeterm/shared';
-import { buildAccessAddresses, isLoopbackOrigin, showLoopbackHint } from './access-addresses';
+import {
+  ADDRESSES_RELAY_POLL_MAX,
+  buildAccessAddresses,
+  isLoopbackOrigin,
+  shouldRefetchAddresses,
+  showLoopbackHint,
+} from './access-addresses';
 
 /**
  * 隧道状态夹具：进程状态与连接器健康都按真实契约给，排序要认它们。
@@ -250,6 +256,36 @@ describe('buildAccessAddresses', () => {
       { kind: 'lan', url: 'http://192.168.1.20:9883' },
       { kind: 'lan', url: 'http://10.0.0.5:9883' },
     ]);
+  });
+
+  test('中继上联但还没探到入口时补刷，探到 / 非中继 / 次数用尽即停', () => {
+    const pending = { ...lan, relayAccessUrl: null };
+    expect(shouldRefetchAddresses({ relayMode: true, addresses: pending, attempts: 0 })).toBe(true);
+    expect(
+      shouldRefetchAddresses({
+        relayMode: true,
+        addresses: pending,
+        attempts: ADDRESSES_RELAY_POLL_MAX - 1,
+      })
+    ).toBe(true);
+    expect(
+      shouldRefetchAddresses({
+        relayMode: true,
+        addresses: pending,
+        attempts: ADDRESSES_RELAY_POLL_MAX,
+      })
+    ).toBe(false);
+    expect(
+      shouldRefetchAddresses({
+        relayMode: true,
+        addresses: { ...lan, relayAccessUrl: 'https://relay.example/n/abc' },
+        attempts: 0,
+      })
+    ).toBe(false);
+    expect(shouldRefetchAddresses({ relayMode: false, addresses: pending, attempts: 0 })).toBe(
+      false
+    );
+    expect(shouldRefetchAddresses({ relayMode: true, addresses: null, attempts: 0 })).toBe(false);
   });
 
   test('isLoopbackOrigin', () => {

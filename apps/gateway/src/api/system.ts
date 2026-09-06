@@ -3,9 +3,9 @@ import { t } from '../i18n';
 import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
-import { relayShareAccessUrl } from '../share/share-origins';
-import { getAccessAddresses } from '../system/access-addresses';
+import { getAccessAddressesAsync } from '../system/access-addresses';
 import { MANAGED_EXTERNALLY, getSystemInfo, isManagedExternally } from '../system/info-public';
+import { awaitRelayEntryProbe, relayEntryAccessUrl } from '../system/relay-entry';
 import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
 
@@ -49,13 +49,22 @@ export function handleSystemApiRequest(
   }
 
   if (path === '/api/system/addresses' && req.method === 'GET') {
-    return json(getAccessAddresses({ relayAccessUrl: () => relayShareAccessUrl() }));
+    return handleAccessAddresses();
   }
 
   const upgrade = handleUpgradeApiRequest(req, path);
   if (upgrade !== undefined) return upgrade;
 
   return handleUninstallApiRequest(req, path);
+}
+
+async function handleAccessAddresses(): Promise<Response> {
+  return json(
+    await getAccessAddressesAsync({
+      relayAccessUrl: relayEntryAccessUrl,
+      awaitRelayProbe: awaitRelayEntryProbe,
+    })
+  );
 }
 
 function handleUpgradeApiRequest(

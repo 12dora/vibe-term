@@ -3,6 +3,7 @@ import type { NetworkInterfaceInfo } from 'node:os';
 import {
   classifyLanCandidate,
   collectLanCandidates,
+  isBridgeIface,
   isPhysicalIface,
   isVirtualIface,
   parseDarwinDefaultIface,
@@ -28,6 +29,15 @@ describe('lan-interfaces 网卡分类', () => {
     for (const name of ['utun4', 'tun0', 'tap0', 'wg0', 'docker0', 'br-abc', 'veth9', 'awdl0']) {
       expect(isVirtualIface(name)).toBe(true);
     }
+    // 裸网桥不是虚拟网卡：物理网卡并进 br0 / bridge0 后局域网地址就挂在这里
+    for (const name of ['br0', 'br1', 'bridge0', 'bridge100']) {
+      expect(isBridgeIface(name)).toBe(true);
+      expect(isVirtualIface(name)).toBe(false);
+    }
+    for (const name of ['br-abc123', 'virbr0', 'lxdbr0', 'lxcbr0']) {
+      expect(isBridgeIface(name)).toBe(false);
+      expect(isVirtualIface(name)).toBe(true);
+    }
   });
 
   test('分类矩阵', () => {
@@ -45,6 +55,10 @@ describe('lan-interfaces 网卡分类', () => {
       ['ppp0', '192.168.30.2', 'vpn'],
       ['utun0', '203.0.113.7', null],
       ['docker0', '172.17.0.1', null],
+      ['br0', '192.168.1.30', 'lan'],
+      ['bridge100', '192.168.64.1', 'lan'],
+      ['br0', '203.0.113.9', null],
+      ['br-abc123', '172.18.0.1', null],
       ['vboxnet0', '192.168.56.1', null],
       ['anpi0', '10.1.2.3', null],
       ['thunderbolt0', '192.168.9.9', 'lan'],

@@ -42,6 +42,41 @@ function readRelayAccessUrl(deps: AccessAddressesDeps): string | null {
   }
 }
 
+/** 中继入口探测的等待上限：首次打开面板时探测刚发出，多等一小会儿好过让公网槽空着。 */
+export const RELAY_ENTRY_WAIT_MS = 300;
+
+export interface AsyncAccessAddressesDeps extends AccessAddressesDeps {
+  /** 等在途的中继入口探测落地（不自带超时，上限由本模块把） */
+  awaitRelayProbe?: () => Promise<void>;
+  relayProbeWaitMs?: number;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref?.();
+  });
+}
+
+/**
+ * 与 `getAccessAddresses` 相同，但中继入口未探通时会等在途探测一小会儿。
+ * 首次打开面板时探测才刚发出，同步读一定是 null；前端查询 60 s 不刷新，等不到就永远看不到中继入口。
+ */
+export async function getAccessAddressesAsync(
+  deps: AsyncAccessAddressesDeps = {}
+): Promise<AccessAddressesResponse> {
+  const res = getAccessAddresses(deps);
+  if (res.relayAccessUrl || !deps.awaitRelayProbe) return res;
+  try {
+    await Promise.race([
+      deps.awaitRelayProbe(),
+      sleep(deps.relayProbeWaitMs ?? RELAY_ENTRY_WAIT_MS),
+    ]);
+  } catch {
+    return res;
+  }
+  return { ...res, relayAccessUrl: readRelayAccessUrl(deps) };
+}
+
 export function getAccessAddresses(deps: AccessAddressesDeps = {}): AccessAddressesResponse {
   const bindHost = deps.bindHost ?? config.bindHost;
   const port = deps.port ?? config.port;

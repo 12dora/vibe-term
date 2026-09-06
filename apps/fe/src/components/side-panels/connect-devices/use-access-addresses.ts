@@ -8,7 +8,13 @@ import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings
 import { useQuery } from '@tanstack/react-query';
 import type { AccessAddressesResponse } from '@vibeterm/shared';
 import { useRuntime } from '@vibeterm/stores/react';
-import { type AccessAddress, buildAccessAddresses, showLoopbackHint } from './access-addresses';
+import {
+  ADDRESSES_RELAY_POLL_MS,
+  type AccessAddress,
+  buildAccessAddresses,
+  shouldRefetchAddresses,
+  showLoopbackHint,
+} from './access-addresses';
 
 export const ACCESS_ADDRESSES_QUERY_KEY = ['system-access-addresses'] as const;
 
@@ -26,6 +32,7 @@ export function useAccessAddresses(): { list: AccessAddress[]; loopbackHint: boo
     staleTime: 10_000,
     retry: false,
   });
+  const relayMode = relay.relayMode;
   const addresses = useQuery({
     queryKey: ACCESS_ADDRESSES_QUERY_KEY,
     queryFn: async (): Promise<AccessAddressesResponse> => {
@@ -35,6 +42,15 @@ export function useAccessAddresses(): { list: AccessAddress[]; loopbackHint: boo
     },
     staleTime: 60_000,
     retry: false,
+    // `dataUpdateCount` 首次成功后为 1，减一即已补刷次数。
+    refetchInterval: (query) =>
+      shouldRefetchAddresses({
+        relayMode,
+        addresses: query.state.data ?? null,
+        attempts: Math.max(0, query.state.dataUpdateCount - 1),
+      })
+        ? ADDRESSES_RELAY_POLL_MS
+        : false,
   });
   // `hubPublicUrl` 只有本机就是 Hub 时才是本机入口；成员节点上那是上级地址，
   // 手机扫出来打开的是上级的界面。中继上联时同样不展示（与「本机设为 Hub」同一把尺子）。
@@ -45,7 +61,7 @@ export function useAccessAddresses(): { list: AccessAddress[]; loopbackHint: boo
     tunnel: tunnel.data ?? null,
     hubPublicUrl: mode?.hubPublicUrl ?? null,
     selfIsHub,
-    relayMode: relay.relayMode,
+    relayMode,
     addresses: addresses.data ?? null,
   };
   const list = buildAccessAddresses(input);

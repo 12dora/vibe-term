@@ -128,6 +128,25 @@ export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[]
   return out;
 }
 
+/** 中继入口探测未回来时的补刷间隔与次数上限。 */
+export const ADDRESSES_RELAY_POLL_MS = 3_000;
+export const ADDRESSES_RELAY_POLL_MAX = 5;
+
+/**
+ * 中继上联但还没探到入口时要不要补刷 `/api/system/addresses`。
+ * 探测是网关侧异步发起的，首份响应大概率还没有 `relayAccessUrl`；查询本身 60 s 不刷新，
+ * 不补刷就永远看不到中继入口。探到、不是中继、或补刷够了就停。
+ */
+export function shouldRefetchAddresses(state: {
+  relayMode: boolean;
+  addresses: AccessAddressesResponse | null;
+  attempts: number;
+}): boolean {
+  if (!state.relayMode || !state.addresses) return false;
+  if (state.addresses.relayAccessUrl) return false;
+  return state.attempts < ADDRESSES_RELAY_POLL_MAX;
+}
+
 /** 只剩回环地址可展示时提醒：本机只监听 127.0.0.1，其他设备连不上。 */
 export function showLoopbackHint(list: AccessAddress[], input: AccessAddressInput): boolean {
   const onlyLoopback = list.every((item) => item.kind === 'current' && isLoopbackOrigin(item.url));
