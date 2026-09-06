@@ -2245,6 +2245,9 @@
           "too_large": "ファイルが大きすぎます",
           "connection_failed": "接続に失敗しました",
           "timeout": "タイムアウトしました",
+          "dest_conflict": "保存先が他の項目と重複しています",
+          "limit_exceeded": "転送上限を超えました",
+          "too_many_jobs": "進行中の転送が多すぎます",
           "job_gone": "タスクは存在しません",
           "unknown": "転送に失敗しました"
         }

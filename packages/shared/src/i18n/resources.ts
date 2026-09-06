@@ -3003,6 +3003,9 @@ export const I18N_RESOURCES = {
           "too_large": "File too large",
           "connection_failed": "Connection failed",
           "timeout": "Timed out",
+          "dest_conflict": "Destination path conflicts with another item",
+          "limit_exceeded": "Transfer limit exceeded",
+          "too_many_jobs": "Too many transfers in progress",
           "job_gone": "Job no longer exists",
           "unknown": "Transfer failed"
         }
@@ -6489,6 +6492,9 @@ export const I18N_RESOURCES = {
           "too_large": "文件过大",
           "connection_failed": "连接失败",
           "timeout": "超时",
+          "dest_conflict": "与其它待传文件目标路径重复",
+          "limit_exceeded": "超出传输上限",
+          "too_many_jobs": "同时进行的传输过多",
           "job_gone": "任务已不存在",
           "unknown": "传输失败"
         }
@@ -9975,6 +9981,9 @@ export const I18N_RESOURCES = {
           "too_large": "ファイルが大きすぎます",
           "connection_failed": "接続に失敗しました",
           "timeout": "タイムアウトしました",
+          "dest_conflict": "保存先が他の項目と重複しています",
+          "limit_exceeded": "転送上限を超えました",
+          "too_many_jobs": "進行中の転送が多すぎます",
           "job_gone": "タスクは存在しません",
           "unknown": "転送に失敗しました"
         }

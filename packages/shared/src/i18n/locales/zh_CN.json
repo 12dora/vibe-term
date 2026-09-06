@@ -2991,6 +2991,9 @@
           "too_large": "文件过大",
           "connection_failed": "连接失败",
           "timeout": "超时",
+          "dest_conflict": "与其它待传文件目标路径重复",
+          "limit_exceeded": "超出传输上限",
+          "too_many_jobs": "同时进行的传输过多",
           "job_gone": "任务已不存在",
           "unknown": "传输失败"
         }

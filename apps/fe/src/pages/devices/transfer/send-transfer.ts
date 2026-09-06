@@ -56,7 +56,7 @@ export async function sendTransfer(params: SendTransferParams): Promise<Transfer
   return job;
 }
 
-const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransferErrorCode>([
+const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransferErrorCode | 'too_many_jobs'>([
   'node_unreachable',
   'grant_invalid',
   'grant_expired',
@@ -65,6 +65,9 @@ const KNOWN_ERROR_CODES: ReadonlySet<string> = new Set<TransferErrorCode>([
   'incomplete',
   'checksum_mismatch',
   'dest_exists',
+  'dest_conflict',
+  'limit_exceeded',
+  'too_many_jobs',
   'quota_file_size',
   'cancelled',
   'not_found',

@@ -2251,6 +2251,9 @@
           "too_large": "File too large",
           "connection_failed": "Connection failed",
           "timeout": "Timed out",
+          "dest_conflict": "Destination path conflicts with another item",
+          "limit_exceeded": "Transfer limit exceeded",
+          "too_many_jobs": "Too many transfers in progress",
           "job_gone": "Job no longer exists",
           "unknown": "Transfer failed"
         }
