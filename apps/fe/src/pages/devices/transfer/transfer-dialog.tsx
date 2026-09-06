@@ -2,6 +2,7 @@
 //
 // 两侧各建自己的 `createNodeApiClient(nodeId)`，不需要 NodeRuntimeScope——列目录只用 REST。
 
+import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import {
   Dialog,
@@ -43,9 +44,11 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
   const { nodes } = useMeshNodes({ enabled: meshEnabled });
   const selfName = t('device.addTo.self');
 
+  // 成员列表还在同步时不给任何选项：下拉显示「加载中」，而不是把本机列成唯一节点。
+  const { loading: nodesLoading } = useInventoryReadiness();
   const options = useMemo(
-    () => toDialogNodeOptions(nodes, entryNodeId, selfName),
-    [nodes, entryNodeId, selfName]
+    () => toDialogNodeOptions(nodes, entryNodeId, selfName, { loading: nodesLoading }),
+    [nodes, entryNodeId, selfName, nodesLoading]
   );
 
   const [left, dispatchLeft] = useReducer(transferPaneReducer, null, () =>

@@ -1,5 +1,6 @@
 // 端口映射弹窗：上方新建表单，下方是所有在线已登录节点上的映射汇总（打开期间 2 秒轮询）。
 
+import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import {
@@ -37,9 +38,11 @@ export default function PortMapDialog({ open, onOpenChange }: PortMapDialogProps
   const { nodes } = useMeshNodes({ enabled: meshEnabled });
   const selfName = t('device.addTo.self');
 
+  // 成员列表还在同步时不给任何选项：下拉显示「加载中」，而不是把本机列成唯一节点。
+  const { loading: nodesLoading } = useInventoryReadiness();
   const options = useMemo(
-    () => toDialogNodeOptions(nodes, entryNodeId, selfName),
-    [nodes, entryNodeId, selfName]
+    () => toDialogNodeOptions(nodes, entryNodeId, selfName, { loading: nodesLoading }),
+    [nodes, entryNodeId, selfName, nodesLoading]
   );
 
   const [form, setForm] = useState<PortMapFormState>(() => createPortMapFormState(null));

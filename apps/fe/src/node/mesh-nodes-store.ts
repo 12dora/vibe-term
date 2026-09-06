@@ -7,7 +7,12 @@
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
-import type { AuthApi, AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import type {
+  AuthApi,
+  AuthModeResponse,
+  MeshNode,
+  MeshNodesResponse,
+} from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { createStateStore } from './create-polling-store';
@@ -80,6 +85,13 @@ export interface MeshNodesState {
   /** 当前 `nodes` 来自 localStorage 兜底缓存，还没被任何一次 REST 换过。 */
   stale: boolean;
   /**
+   * 已 admit、但上级还没把状态块解开的成员数（名字仍是 raw id、inventory 为空）。
+   * 旧网关不下发这一段，此时为 `null`＝不知道，判就绪要退回中继侧的成员数交叉验证。
+   */
+  pendingMembers: number | null;
+  /** 本机见过的最高成员列表版本；旧网关不下发为 `null`。 */
+  listVersion: number | null;
+  /**
    * 上一次成功的 `/api/auth/mode` 是不是 mesh（来自缓存）。只用来在 `modeLoaded` 之前
    * 决定要不要渲染聚合视图 / 起 `/api/mesh/nodes`，**不**替代 `mode` 本身——鉴权相关的
    * 字段（通行密钥二次验证、本机登录状态）绝不能从盘上恢复。
@@ -96,6 +108,8 @@ const EMPTY_STATE: MeshNodesState = {
   error: null,
   loadedAt: null,
   stale: false,
+  pendingMembers: null,
+  listVersion: null,
   cachedMesh: false,
 };
 
@@ -236,14 +250,38 @@ export function meshEnabledOf(state: MeshNodesState): boolean {
   return !state.modeLoaded && state.cachedMesh;
 }
 
+/**
+ * 事件把某个「还在同步中」的成员的库存补上了。
+ *
+ * `pendingMembers` 只有 REST 算得出来，而列表应用后网关只推 NODE_EVENT：不补拉一次，
+ * 界面会一直停在加载态直到五分钟后的兜底轮询。事件不带库存（解不开状态块）或该行本来
+ * 就有库存时都不触发，持续的上下线事件不会变成新的定时器。
+ */
+export function fillsPendingMember(
+  state: Pick<MeshNodesState, 'nodes' | 'pendingMembers'>,
+  event: NodeEventPayload
+): boolean {
+  if (state.pendingMembers === null || state.pendingMembers <= 0) return false;
+  if (event.inventory == null) return false;
+  const row = state.nodes.find((node) => node.id === event.nodeId);
+  return row !== undefined && row.inventory == null;
+}
+
 export function applyMeshNodeEvent(event: NodeEventPayload): void {
-  const { nodes } = store.get();
-  const next = patchNodesWithEvent(nodes, event);
-  if (next !== nodes) setState({ nodes: next });
+  const snapshot = store.get();
+  const next = patchNodesWithEvent(snapshot.nodes, event);
+  if (next !== snapshot.nodes) setState({ nodes: next });
+  if (fillsPendingMember(snapshot, event)) ensureFreshMeshNodes();
 }
 
 let inFlight: Promise<void> | null = null;
 let trailingRequested = false;
+
+/** 只实现了 `listNodes` 的接线（旧调用方、单测的假 api）拿不到同步进度，按「不知道」处理。 */
+async function listNodesDetailed(api: AuthApi): Promise<MeshNodesResponse> {
+  if (typeof api.listNodesDetailed !== 'function') return { nodes: await api.listNodes() };
+  return api.listNodesDetailed();
+}
 
 export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<void> {
   // 退出 mesh 期间本机会话已被清空，再拉 `/api/mesh/nodes` 只会稳定拿 401：
@@ -253,9 +291,17 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
   setState({ loading: true });
   inFlight = (async () => {
     try {
-      const nodes = await api.listNodes();
+      const list = await listNodesDetailed(api);
       nodesRetry.reset();
-      setState({ nodes, loading: false, error: null, loadedAt: Date.now(), stale: false });
+      setState({
+        nodes: list.nodes,
+        pendingMembers: list.pendingMembers ?? null,
+        listVersion: list.listVersion ?? null,
+        loading: false,
+        error: null,
+        loadedAt: Date.now(),
+        stale: false,
+      });
       persistMeshNodes();
     } catch (err) {
       setState({ loading: false, error: errorMessage(err) });

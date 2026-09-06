@@ -76,11 +76,19 @@ function renderPanel(
 }
 
 describe('DeviceManagementPanel 的渲染分支', () => {
-  test('缓存里还没有列表时是加载态，不渲染网格', () => {
+  test('缓存里还没有列表时是设备卡片形状的占位，不渲染网格', () => {
     const html = renderPanel();
+    expect(html).toContain('data-testid="devices-loading"');
     expect(html).toContain('加载中');
+    expect(html).toContain('border-dashed');
     expect(html).not.toContain('data-testid="devices-grid"');
     expect(html).not.toContain('data-testid="devices-add-empty"');
+  });
+
+  test('占位与网格互斥：列表到了就没有占位', () => {
+    const html = renderPanel({ devices: [DEVICE] });
+    expect(html).toContain('data-testid="devices-grid"');
+    expect(html).not.toContain('data-testid="devices-loading"');
   });
 
   test('空列表给出「添加设备」空态', () => {

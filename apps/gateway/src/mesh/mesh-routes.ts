@@ -37,6 +37,7 @@ import {
 import {
   type MeshNodeDto,
   type MeshNodeLinkDetail,
+  meshListReadiness,
   projectMeshListNode,
 } from './node-list-projection';
 import {
@@ -226,10 +227,8 @@ export class MeshRoutes {
     const listed = new Set(nodes.map((n) => n.id));
     sweepStaleNodeOperations(listed);
     return jsonBody({
-      nodes: nodes.map((n) => ({
-        ...n,
-        operation: readNodeOperation(n.id),
-      })),
+      ...meshListReadiness(this.deps.userStore, this.deps.nodeId),
+      nodes: nodes.map((n) => ({ ...n, operation: readNodeOperation(n.id) })),
     });
   }
 

@@ -142,6 +142,52 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes reports listVersion and pendingMembers', async () => {
+    const mesh = await bootMesh({ peers: new FakePeers() });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const read = async () => {
+        const res = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+          headers: { cookie: `vibeterm_s_self=${sid}` },
+        });
+        return (await res.json()) as { listVersion: number; pendingMembers: number };
+      };
+
+      // 证书已在、状态块还没解开：该成员算「还在同步」
+      expect(await read()).toMatchObject({ listVersion: 0, pendingMembers: 1 });
+
+      mesh.userStore.upsertPeer({
+        nodeId: PEER_ID,
+        name: 'studio',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 5,
+      });
+      expect(await read()).toMatchObject({ listVersion: 5, pendingMembers: 0 });
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes reports wan reach, transport and rttMs', async () => {
     const peers = new FakePeers();
     peers.reach.set(PEER_ID, 'wan');

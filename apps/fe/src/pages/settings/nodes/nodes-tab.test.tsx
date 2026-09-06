@@ -89,9 +89,19 @@ function status(overrides: Partial<LocalStatusResponse> = {}): LocalStatusRespon
   };
 }
 
-function render(mode: AuthModeResponse): string {
+type MeshStateOverrides = Parameters<typeof setMeshNodesStateForTest>[0];
+
+/** 缺省是「成员列表已到齐」；同步中的分支用 overrides 显式表达。 */
+function render(mode: AuthModeResponse, overrides: MeshStateOverrides = {}): string {
   resetMeshNodesStateForTest();
-  setMeshNodesStateForTest({ mode, modeLoaded: true, entryNodeId: mode.nodeId });
+  setMeshNodesStateForTest({
+    mode,
+    modeLoaded: true,
+    entryNodeId: mode.nodeId,
+    loadedAt: 1,
+    pendingMembers: 0,
+    ...overrides,
+  });
   return renderToStaticMarkup(
     <MemoryRouter>
       <NodesTab />
@@ -159,6 +169,13 @@ describe('NodesTab mesh', () => {
     expect(html).not.toContain('href="/nodes"');
     // compact：页级标题与管理主体自带的账号安全入口都不出现
     expect(html).not.toContain('data-testid="nodes-account-security"');
+  });
+
+  test('成员列表还在同步时用骨架顶着，不画一张只有本机的空表', () => {
+    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    const html = render(MESH_MODE, { loadedAt: null, pendingMembers: null });
+    expect(html).toContain('data-testid="nodes-syncing"');
+    expect(html).not.toContain('data-testid="nodes-table"');
   });
 
   test('未登录时本机区块给登录提示而不是崩掉', () => {

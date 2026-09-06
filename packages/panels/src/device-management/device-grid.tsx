@@ -24,6 +24,7 @@ import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
+import { DEVICE_GRID_CLASS } from './device-card-skeleton';
 import { deviceGridCollisionDetection } from './device-grid-collision';
 import type { useDeviceManagementState } from './use-device-management-state';
 
@@ -126,10 +127,7 @@ export function DeviceGrid({
         <div
           data-testid="devices-grid"
           // 自适应列数：每列至少 24rem，设备名与 SSH 目标才有地方放（窄屏退回单列）
-          className={cn(
-            'grid grid-cols-[repeat(auto-fill,minmax(min(24rem,100%),1fr))] gap-3',
-            state.staggering && 'vibeterm-stagger'
-          )}
+          className={cn(DEVICE_GRID_CLASS, state.staggering && 'vibeterm-stagger')}
           onAnimationEnd={state.onAnimationEnd}
         >
           {devices.map((device, index) => (

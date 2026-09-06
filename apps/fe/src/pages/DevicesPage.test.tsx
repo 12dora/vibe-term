@@ -31,6 +31,7 @@ mock.module('@vibeterm/panels/device-management', () => ({
   DeviceManagementActions: ({ onAddDevice }: { onAddDevice?: () => void }) => (
     <span data-testid="device-actions" data-callback={String(Boolean(onAddDevice))} />
   ),
+  DeviceCardSkeleton: () => <span data-testid="devices-loading" />,
 }));
 
 // 文件夹布局的数据层要 self runtime + QueryClient；本文件只关心「树把条目映射成什么」，
@@ -124,8 +125,19 @@ function render(): string {
   );
 }
 
-function renderMeshWith(nodes: MeshNode[]): string {
-  setMeshNodesStateForTest({ mode: MODE, modeLoaded: true, entryNodeId: ENTRY_ID, nodes });
+type MeshStateOverrides = Parameters<typeof setMeshNodesStateForTest>[0];
+
+/** 缺省是「列表已到齐」；成员还在同步的分支各自用 overrides 显式表达。 */
+function renderMeshWith(nodes: MeshNode[], overrides: MeshStateOverrides = {}): string {
+  setMeshNodesStateForTest({
+    mode: MODE,
+    modeLoaded: true,
+    entryNodeId: ENTRY_ID,
+    nodes,
+    loadedAt: 1,
+    pendingMembers: 0,
+    ...overrides,
+  });
   return render();
 }
 
@@ -226,10 +238,24 @@ describe('DevicesPage', () => {
     expect(html).not.toContain('devices.folders.dragHandle');
   });
 
-  test('mesh 但节点列表还没回来时退回本机卡片网格，避免首屏闪空', () => {
-    const html = renderMeshWith([]);
+  test('mesh 但节点列表还没回来：本机网格照常渲染，缺的节点摆骨架而不是当成不存在', () => {
+    const html = renderMeshWith([], { loadedAt: null, pendingMembers: null });
     expect(html).toContain('data-testid="device-panel"');
-    expect(html).not.toContain('data-testid="devices-node-header-self"');
+    expect(html).toContain('data-testid="devices-pending-nodes"');
+    // 本机是「成员之一」而不是「唯一成员」：分组头要挂出来
+    expect(html).toContain('data-testid="devices-node-header-self"');
+  });
+
+  test('列表已到但还有成员在同步：按待同步数摆骨架分组', () => {
+    const html = renderMeshWith([meshNode({ id: ENTRY_ID, name: 'entry' })], {
+      pendingMembers: 2,
+    });
+    expect(html).toContain('data-testid="devices-pending-nodes"');
+  });
+
+  test('列表到齐且真的只有本机：不摆骨架，空态是合法结论', () => {
+    const html = renderMeshWith([meshNode({ id: ENTRY_ID, name: 'entry' })]);
+    expect(html).not.toContain('data-testid="devices-pending-nodes"');
   });
 
   test('mesh：self 在前，三种节点形态各自渲染', () => {

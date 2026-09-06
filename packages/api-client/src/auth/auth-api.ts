@@ -100,12 +100,26 @@ export class AuthApi {
 
   /** `GET /api/mesh/nodes`（**需会话**）：含公钥 / inventory / loggedIn / isHub。 */
   async listNodes(): Promise<MeshNode[]> {
+    return (await this.listNodesDetailed()).nodes;
+  }
+
+  /**
+   * 同一条路由，但连列表同步进度（`listVersion` / `pendingMembers`）一起拿。
+   * 旧网关不下发这两段，缺失即为「不知道」，调用方不要当成 0。
+   */
+  async listNodesDetailed(): Promise<MeshNodesResponse> {
     const res = await this.client.fetch('/api/mesh/nodes');
     if (!res.ok) {
       throw new Error(await parseApiError(res, 'Failed to load mesh nodes'));
     }
-    const payload = (await res.json()) as MeshNodesResponse;
-    return payload.nodes ?? [];
+    const payload = (await res.json()) as Partial<MeshNodesResponse>;
+    return {
+      nodes: payload.nodes ?? [],
+      ...(typeof payload.listVersion === 'number' ? { listVersion: payload.listVersion } : {}),
+      ...(typeof payload.pendingMembers === 'number'
+        ? { pendingMembers: payload.pendingMembers }
+        : {}),
+    };
   }
 
   /**

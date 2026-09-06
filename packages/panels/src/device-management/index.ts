@@ -8,6 +8,11 @@ export {
   type DeviceManagementPanelProps,
 } from './device-management-panel';
 export { DeviceCard, type DeviceCardProps } from './device-card';
+export {
+  DEVICE_GRID_CLASS,
+  DeviceCardSkeleton,
+  type DeviceCardSkeletonProps,
+} from './device-card-skeleton';
 export { DeviceCardHost, type DeviceCardHostProps } from './device-card-host';
 export { DeviceDeleteDialog, type DeviceDeleteDialogProps } from './device-delete-dialog';
 export { DeviceDialog, type DeviceDialogProps } from './device-dialog';

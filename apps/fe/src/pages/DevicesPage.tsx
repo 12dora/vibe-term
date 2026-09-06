@@ -8,6 +8,7 @@
 // 宽度 / 内边距只由 `DevicesPageContainer` 一处负责：loading、空态、错误态、就绪态共用，
 // 内层面板一律 `w-full`，不再各自套 max-width / padding。
 
+import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { DeviceManagementActions } from '@vibeterm/panels/device-management';
@@ -23,6 +24,7 @@ import { pruneDeviceSnapshots } from './devices/device-snapshot-store';
 import { DevicesActionsMenu } from './devices/devices-actions-menu';
 import { type NodeDeviceGroupEntry, toNodeDeviceGroups } from './devices/node-device-group';
 import { useDevicesPageCommands } from './devices/page-commands';
+import { PendingNodeGroups } from './devices/pending-node-groups';
 
 /** standalone（以及 mesh 列表还没回来时）唯一的那个分组：本机自己。 */
 function selfGroup(name: string): NodeDeviceGroupEntry {
@@ -59,7 +61,8 @@ function DevicesBody({
 }) {
   const { t } = useTranslation();
   // standalone 下一个 `/api/mesh/*` 请求都不发
-  const { nodes, loadedAt } = useMeshNodes({ enabled: meshEnabled });
+  const { nodes, pendingMembers } = useMeshNodes({ enabled: meshEnabled });
+  const readiness = useInventoryReadiness();
   const meshGroups = useMemo(
     () => (meshEnabled ? toNodeDeviceGroups(nodes, entryNodeId) : []),
     [meshEnabled, nodes, entryNodeId]
@@ -70,13 +73,25 @@ function DevicesBody({
     [meshGroups, selfName]
   );
 
-  // 节点列表落定后清掉已不在 mesh 里的节点的离线快照（standalone 只留 self）
+  // 节点列表**到齐**后才清掉已不在 mesh 里的节点的离线快照（standalone 只留 self）：
+  // 一份还在同步中的列表里缺的正是那些节点，照着它清会把它们的快照一并抹掉。
+  const { ready } = readiness;
   useEffect(() => {
-    if (meshEnabled && loadedAt === null) return;
+    if (meshEnabled && !ready) return;
     pruneDeviceSnapshots(groups.map((group) => group.runtimeNodeId));
-  }, [meshEnabled, loadedAt, groups]);
+  }, [meshEnabled, ready, groups]);
 
-  return <DeviceFoldersView groups={groups} showNodeHeaders={meshGroups.length > 0} />;
+  // 成员还没到齐时本机那一组照常渲染（它的设备是真实的），但要挂上分组头并把缺的节点
+  // 摆成骨架：否则一份「成功但不完整」的列表会被画成「本机是唯一成员」。
+  return (
+    <>
+      <DeviceFoldersView
+        groups={groups}
+        showNodeHeaders={meshGroups.length > 0 || readiness.loading}
+      />
+      {readiness.loading && <PendingNodeGroups pendingMembers={pendingMembers} />}
+    </>
+  );
 }
 
 export default function DevicesPage() {

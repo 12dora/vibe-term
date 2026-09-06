@@ -16,6 +16,7 @@ import { Monitor, Plus } from 'lucide-react';
 import { type Ref, useCallback, useEffect, useImperativeHandle, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { DeviceConnectionAdapter } from '../device-connection';
+import { DeviceCardSkeleton } from './device-card-skeleton';
 import { DeviceDialog } from './device-dialog';
 import { DeviceGrid } from './device-grid';
 import { describeDeviceLoadError, deviceLoadErrorMessageKey } from './device-load-error';
@@ -60,14 +61,6 @@ export interface DeviceManagementPanelProps {
   onDevicesLoaded?: (devices: Device[]) => void;
   className?: string;
   ref?: Ref<DeviceManagementPanelHandle>;
-}
-
-function NoticeCard({ text }: { text: string }) {
-  return (
-    <Card size="sm" className="vibeterm-reveal">
-      <CardContent className="py-10 text-center text-sm text-muted-foreground">{text}</CardContent>
-    </Card>
-  );
 }
 
 /** 加载失败的一张卡：文案按失败性质分档，节点打不通时优先用后端给的原因串。 */
@@ -165,7 +158,7 @@ export function DeviceManagementPanel({
       {state.status === 'error' ? (
         <LoadErrorCard error={state.error} onRetry={state.retry} />
       ) : state.status !== 'ready' ? (
-        <NoticeCard text={t('common.loading')} />
+        <DeviceCardSkeleton />
       ) : !empty ? (
         <DeviceGrid
           state={state}

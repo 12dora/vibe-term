@@ -33,6 +33,7 @@ import {
 } from './bulk-actions-menu';
 import { EnrollmentSection } from './enrollment-section';
 import { HubRoleDialog } from './hub-role-dialog';
+import { NodesSyncGate } from './nodes-sync-gate';
 import { NodesTable } from './nodes-table';
 import { RevokeDialog } from './revoke-dialog';
 import type { NodeSelection, ResolvedMode } from './types';
@@ -252,23 +253,25 @@ export function NodesManagement({
           clearedIds={engine.clearedIds}
         />
 
-        <NodesTable
-          rows={rows}
-          hubApi={hub.hubApi}
-          hubOnline={writable}
-          hubWritable={relay.relayMode || !hubs.writesBlocked}
-          blockedHint={blockedHint}
-          writerPublicUrl={hubs.writerPublicUrl}
-          hubDetails={hubDetails}
-          mode={mode}
-          api={api}
-          prompt={prompt}
-          onChanged={refreshAll}
-          upgrade={upgrade}
-          selection={selection}
-          uninstall={uninstall}
-          roleSwitch={roleSwitch}
-        />
+        <NodesSyncGate>
+          <NodesTable
+            rows={rows}
+            hubApi={hub.hubApi}
+            hubOnline={writable}
+            hubWritable={relay.relayMode || !hubs.writesBlocked}
+            blockedHint={blockedHint}
+            writerPublicUrl={hubs.writerPublicUrl}
+            hubDetails={hubDetails}
+            mode={mode}
+            api={api}
+            prompt={prompt}
+            onChanged={refreshAll}
+            upgrade={upgrade}
+            selection={selection}
+            uninstall={uninstall}
+            roleSwitch={roleSwitch}
+          />
+        </NodesSyncGate>
 
         <UninstallDialog uninstall={uninstall} />
         <HubRoleDialog roleSwitch={roleSwitch} />

@@ -34,11 +34,21 @@ function selfOnly(selfName: string, entryNodeId: string | null): DialogNodeOptio
   };
 }
 
+export interface DialogNodeOptionsOptions {
+  /**
+   * 成员列表还在同步：返回空选项，让下拉显示「加载中」而不是把本机画成唯一成员
+   * （加入中继后重启的那几秒，列表是「成功但不完整」的）。
+   */
+  loading?: boolean;
+}
+
 export function toDialogNodeOptions(
   nodes: MeshNode[],
   entryNodeId: string | null,
-  selfName: string
+  selfName: string,
+  options: DialogNodeOptionsOptions = {}
 ): DialogNodeOption[] {
+  if (options.loading) return [];
   if (nodes.length === 0) return [selfOnly(selfName, entryNodeId)];
   return sortNodes(nodes, entryNodeId).map((node) => {
     const runtimeNodeId = toRuntimeNodeId(node.id, entryNodeId);

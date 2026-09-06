@@ -270,3 +270,37 @@ function endpointsFromJson(raw: string | null | undefined): string[] {
   if (!Array.isArray(parsed)) return [];
   return parsed.filter((item): item is string => typeof item === 'string');
 }
+
+/** `GET /api/mesh/nodes` 的列表同步进度。 */
+export type MeshListReadiness = {
+  /** 本地 `peer_cache` 见过的最高 `node.list` / `relay.list` 版本；一次都没应用过为 0。 */
+  listVersion: number;
+  /** 已 admit 但状态块还没解开（`peer_cache` 里没有这一行）的成员数。 */
+  pendingMembers: number;
+};
+
+type ReadinessStore = {
+  listPeers(): ReadonlyArray<{ nodeId: string; listVersion: number }>;
+  listCerts(): ReadonlyArray<{ nodeId: string; revokedLogSeq: number | null }>;
+};
+
+/**
+ * 证书立刻就在，成员的名字 / inventory 却要等上级把状态块解开写进 `peer_cache`
+ * （见 `relay-node-list.ts` 的 `entryFromCache` 兜底）。两者的差额就是「还在同步中的成员」，
+ * 浏览器据此把「列表还没到齐」与「本来就只有一台」区分开。
+ */
+export function meshListReadiness(store: ReadinessStore, selfNodeId: string): MeshListReadiness {
+  const cached = new Set<string>();
+  let listVersion = 0;
+  for (const peer of store.listPeers()) {
+    cached.add(peer.nodeId);
+    if (peer.listVersion > listVersion) listVersion = peer.listVersion;
+  }
+  let pendingMembers = 0;
+  for (const cert of store.listCerts()) {
+    if (cert.revokedLogSeq != null) continue;
+    if (cert.nodeId === selfNodeId) continue;
+    if (!cached.has(cert.nodeId)) pendingMembers += 1;
+  }
+  return { listVersion, pendingMembers };
+}

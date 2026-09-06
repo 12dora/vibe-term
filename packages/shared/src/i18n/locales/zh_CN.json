@@ -3210,7 +3210,8 @@
           "refused": "连接被拒绝",
           "tls": "TLS 握手失败",
           "protocol": "协议不兼容，请升级中继或本机",
-          "unknown": "连接失败"
+          "unknown": "连接失败",
+          "revoked": "本节点已被吊销，需以新的节点身份重新加入"
         },
         "switch": {
           "title": "切换到 {{host}}？",
@@ -3313,6 +3314,9 @@
           "description": "本机不再连接 {{url}}，其余中继继续可用。",
           "confirm": "移除",
           "done": "已移除该中继。"
+        },
+        "awaitingToken": {
+          "notice": "中继令牌已换代，等待持账户密码的一方下发新令牌。"
         }
       },
       "admin": {
@@ -3360,7 +3364,7 @@
           "clearHint": "清除后任何人都能接入本中继。",
           "modeLabel": "现有租户",
           "modeKeep": "保留现有租户",
-          "modeKeepHint": "新密码只对新接入生效。",
+          "modeKeepHint": "已接入租户及其节点不受影响，仅新接入需使用新密码。",
           "modeKick": "作废旧令牌",
           "modeKickHint": "所有租户须重新输入密码。",
           "tooShort": "密码至少 8 个字符。",

@@ -2466,7 +2466,8 @@
           "refused": "Connection refused",
           "tls": "TLS handshake failed",
           "protocol": "Incompatible protocol, upgrade the relay or this machine",
-          "unknown": "Connection failed"
+          "unknown": "Connection failed",
+          "revoked": "This node was revoked; rejoin with a new node identity"
         },
         "switch": {
           "title": "Switch to {{host}}?",
@@ -2569,6 +2570,9 @@
           "description": "This machine stops connecting to {{url}}. The other relays keep working.",
           "confirm": "Remove",
           "done": "Relay removed."
+        },
+        "awaitingToken": {
+          "notice": "The relay token was rotated. Waiting for the new token to be distributed."
         }
       },
       "admin": {
@@ -2616,7 +2620,7 @@
           "clearHint": "Once cleared, anyone can join this relay.",
           "modeLabel": "Existing tenants",
           "modeKeep": "Keep existing tenants",
-          "modeKeepHint": "The new password applies to new joins only.",
+          "modeKeepHint": "Existing tenants and their nodes are unaffected; only new enrollments need the new password.",
           "modeKick": "Revoke old tokens",
           "modeKickHint": "Every tenant has to enter the password again.",
           "tooShort": "The password needs at least 8 characters.",

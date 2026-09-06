@@ -91,3 +91,19 @@ describe('findDialogNode / firstUsableNode', () => {
     expect(firstUsableNode([])).toBeNull();
   });
 });
+
+describe('成员列表还在同步时的选项', () => {
+  test('loading：一个选项都不给（下拉据此显示「加载中」）', () => {
+    expect(toDialogNodeOptions([], ENTRY, '本机', { loading: true })).toEqual([]);
+    expect(
+      toDialogNodeOptions([node({ id: REMOTE, name: 'studio' })], ENTRY, '本机', { loading: true })
+    ).toEqual([]);
+  });
+
+  test('列表空但已就绪：退回「只有本机」，这是合法的空态', () => {
+    const options = toDialogNodeOptions([], ENTRY, '本机', { loading: false });
+    expect(options).toHaveLength(1);
+    expect(options[0]?.id).toBe('self');
+    expect(options[0]?.usable).toBe(true);
+  });
+});

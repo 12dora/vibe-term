@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
 import {
+  meshListReadiness,
   parseJson,
   pickMeshNodeName,
   pickSelfDisplayName,
@@ -293,5 +294,61 @@ describe('node-list-projection', () => {
     );
     expect(dto?.isHub).toBe(true);
     expect(dto?.hubMode).toBe('standby');
+  });
+});
+
+describe('meshListReadiness', () => {
+  const store = (
+    peers: { nodeId: string; listVersion: number }[],
+    certs: { nodeId: string; revokedLogSeq: number | null }[]
+  ) => ({ listPeers: () => peers, listCerts: () => certs });
+
+  test('证书有、peer_cache 没有的成员算作还在同步', () => {
+    expect(
+      meshListReadiness(
+        store(
+          [{ nodeId: 'b', listVersion: 7 }],
+          [
+            { nodeId: 'self', revokedLogSeq: null },
+            { nodeId: 'b', revokedLogSeq: null },
+            { nodeId: 'c', revokedLogSeq: null },
+          ]
+        ),
+        'self'
+      )
+    ).toEqual({ listVersion: 7, pendingMembers: 1 });
+  });
+
+  test('本机与已吊销的证书不计入待同步', () => {
+    expect(
+      meshListReadiness(
+        store(
+          [],
+          [
+            { nodeId: 'self', revokedLogSeq: null },
+            { nodeId: 'gone', revokedLogSeq: 12 },
+          ]
+        ),
+        'self'
+      )
+    ).toEqual({ listVersion: 0, pendingMembers: 0 });
+  });
+
+  test('listVersion 取 peer_cache 里的最高版本', () => {
+    expect(
+      meshListReadiness(
+        store(
+          [
+            { nodeId: 'b', listVersion: 3 },
+            { nodeId: 'c', listVersion: 9 },
+          ],
+          [
+            { nodeId: 'b', revokedLogSeq: null },
+            { nodeId: 'c', revokedLogSeq: null },
+          ]
+        ),
+        'self'
+      )
+    ).toEqual({ listVersion: 9, pendingMembers: 0 });
   });
 });

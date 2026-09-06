@@ -1,5 +1,8 @@
 // 文件传输 / 端口映射弹窗里的节点下拉。离线或未登录的节点仍然列出但禁用，并在行尾标出原因，
 // 免得「节点不见了」看起来像列表没加载完。
+//
+// 成员列表还在同步时选项为空（`toDialogNodeOptions` 的 loading 分支）：下拉禁用并显示
+// 「加载中」，不能把本机画成唯一成员。
 
 import { useTranslation } from 'react-i18next';
 
@@ -36,6 +39,8 @@ export function NodeSelect({
 }: NodeSelectProps) {
   const { t } = useTranslation();
   const selected = findDialogNode(options, value);
+  // 空选项只有一种来源：成员列表还在同步（否则至少有本机自己，见 `toDialogNodeOptions`）。
+  const loading = options.length === 0;
 
   return (
     <Select
@@ -48,13 +53,15 @@ export function NodeSelect({
         data-testid={testId}
         aria-label={ariaLabel}
         className="h-9 w-full"
-        disabled={disabled || options.length === 0}
+        disabled={disabled || loading}
       >
         <SelectValue>
           {selected ? (
             <span className="truncate">{selected.name}</span>
           ) : (
-            <span className="text-muted-foreground">{t('devices.transfer.nodePlaceholder')}</span>
+            <span className="text-muted-foreground">
+              {t(loading ? 'common.loading' : 'devices.transfer.nodePlaceholder')}
+            </span>
           )}
         </SelectValue>
       </SelectTrigger>

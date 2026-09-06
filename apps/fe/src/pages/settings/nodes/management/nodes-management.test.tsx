@@ -149,6 +149,19 @@ beforeEach(() => {
 });
 
 describe('NodesManagement', () => {
+  test('成员列表还在同步时用骨架顶掉节点表（加入中继后重启的那几秒）', () => {
+    setMeshNodesStateForTest({
+      mode: MODE,
+      modeLoaded: true,
+      entryNodeId: MODE.nodeId,
+      nodes: [meshNode({ id: MODE.nodeId as string, name: 'entry', loggedIn: true })],
+      loadedAt: null,
+    });
+    const html = render(MODE);
+    expect(html).toContain('data-testid="nodes-syncing"');
+    expect(html).not.toContain('data-testid="nodes-table"');
+  });
+
   test('mesh 模式渲染节点表：self 在前、指纹 16 位、到达路径与登录按钮', () => {
     setMeshNodesStateForTest({
       entryNodeId: '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e',

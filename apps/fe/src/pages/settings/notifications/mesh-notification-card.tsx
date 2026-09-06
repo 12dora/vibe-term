@@ -5,6 +5,7 @@
 // 所以状态行列的是**全网**的汇聚节点，不只是本机；翻转开关要当场确认一次密码或通行密钥。
 // 网关不支持该端点（老节点）或本机未联网互联时整块不渲染。
 
+import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type {
@@ -164,6 +165,7 @@ export function MeshNotificationCard() {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
   const queryClient = useQueryClient();
+  const { loading: nodesLoading } = useInventoryReadiness();
 
   const query = useQuery({
     queryKey: meshNotificationQueryKey,
@@ -186,7 +188,9 @@ export function MeshNotificationCard() {
     },
   });
 
-  if (query.isPending) {
+  // 成员列表还没到齐时汇聚点名字未知，`sinks` 为空会被写成「各节点只通知自身」——
+  // 那是一句会误导人的结论，同步完成前继续用骨架顶着。
+  if (query.isPending || nodesLoading) {
     return (
       <MeshNotificationCardShell>
         <Skeleton className="h-10 w-full" />

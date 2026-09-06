@@ -37,10 +37,18 @@ export interface AuthModeResponse {
   passkeysForThisOrigin: boolean;
   passkeyAvailable: boolean;
   /**
-   * 用户名下**任意 origin** 已注册 ≥1 把通行密钥：密码登录必须附带通行密钥二次验证
+   * **当前 origin** 已注册 ≥1 把通行密钥：密码登录必须附带通行密钥二次验证
    * （`AuthLoginRequest.passkey`），否则服务端回 `PASSKEY_REQUIRED`。旧版本节点不返回该字段。
+   *
+   * 断言只能在注册它的 origin 上完成，所以这里按 origin 判定：别处注册的钥匙不会让
+   * 这个地址要求一个永远做不完的仪式（见 `passkeysRegisteredElsewhere`）。
    */
   passkeySecondFactor?: boolean;
+  /**
+   * 名下有通行密钥，但没有一把注册在当前 origin：登录页据此提示「登录后为此地址添加」。
+   * 旧版本节点不返回该字段。
+   */
+  passkeysRegisteredElsewhere?: boolean;
   /**
    * 入口判定浏览器来自受信本机来源时，即使账号已注册通行密钥也不要求二次验证。
    * 此时 `passkeySecondFactor` 为 false。旧版本节点不返回该字段。
@@ -317,6 +325,16 @@ export interface MeshNode {
 
 export interface MeshNodesResponse {
   nodes: MeshNode[];
+  /**
+   * 本机见过的最高成员列表版本（`node.list` / `relay.list`）；一次都没应用过为 0。
+   * 旧网关不下发。
+   */
+  listVersion?: number;
+  /**
+   * 已 admit、但状态块还没解开因而名字 / inventory 仍为空的成员数。大于 0 表示成员列表
+   * 还在同步中，界面应显示加载态而不是「只有本机」。旧网关不下发。
+   */
+  pendingMembers?: number;
 }
 
 /** `GET /api/mesh/hubs` 里本机 uplink 当前挂载的那台 hub；未连上时为 `null`。 */

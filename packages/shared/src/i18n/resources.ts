@@ -3222,7 +3222,8 @@ export const I18N_RESOURCES = {
           "refused": "Connection refused",
           "tls": "TLS handshake failed",
           "protocol": "Incompatible protocol, upgrade the relay or this machine",
-          "unknown": "Connection failed"
+          "unknown": "Connection failed",
+          "revoked": "This node was revoked; rejoin with a new node identity"
         },
         "switch": {
           "title": "Switch to {{host}}?",
@@ -3325,6 +3326,9 @@ export const I18N_RESOURCES = {
           "description": "This machine stops connecting to {{url}}. The other relays keep working.",
           "confirm": "Remove",
           "done": "Relay removed."
+        },
+        "awaitingToken": {
+          "notice": "The relay token was rotated. Waiting for the new token to be distributed."
         }
       },
       "admin": {
@@ -3372,7 +3376,7 @@ export const I18N_RESOURCES = {
           "clearHint": "Once cleared, anyone can join this relay.",
           "modeLabel": "Existing tenants",
           "modeKeep": "Keep existing tenants",
-          "modeKeepHint": "The new password applies to new joins only.",
+          "modeKeepHint": "Existing tenants and their nodes are unaffected; only new enrollments need the new password.",
           "modeKick": "Revoke old tokens",
           "modeKickHint": "Every tenant has to enter the password again.",
           "tooShort": "The password needs at least 8 characters.",
@@ -6745,7 +6749,8 @@ export const I18N_RESOURCES = {
           "refused": "连接被拒绝",
           "tls": "TLS 握手失败",
           "protocol": "协议不兼容，请升级中继或本机",
-          "unknown": "连接失败"
+          "unknown": "连接失败",
+          "revoked": "本节点已被吊销，需以新的节点身份重新加入"
         },
         "switch": {
           "title": "切换到 {{host}}？",
@@ -6848,6 +6853,9 @@ export const I18N_RESOURCES = {
           "description": "本机不再连接 {{url}}，其余中继继续可用。",
           "confirm": "移除",
           "done": "已移除该中继。"
+        },
+        "awaitingToken": {
+          "notice": "中继令牌已换代，等待持账户密码的一方下发新令牌。"
         }
       },
       "admin": {
@@ -6895,7 +6903,7 @@ export const I18N_RESOURCES = {
           "clearHint": "清除后任何人都能接入本中继。",
           "modeLabel": "现有租户",
           "modeKeep": "保留现有租户",
-          "modeKeepHint": "新密码只对新接入生效。",
+          "modeKeepHint": "已接入租户及其节点不受影响，仅新接入需使用新密码。",
           "modeKick": "作废旧令牌",
           "modeKickHint": "所有租户须重新输入密码。",
           "tooShort": "密码至少 8 个字符。",
@@ -10268,7 +10276,8 @@ export const I18N_RESOURCES = {
           "refused": "接続拒否",
           "tls": "TLS ハンドシェイクに失敗しました",
           "protocol": "プロトコルが非互換です。中継か本機を更新してください",
-          "unknown": "接続に失敗しました"
+          "unknown": "接続に失敗しました",
+          "revoked": "本ノードは失効しました。新しいノード ID で再参加してください"
         },
         "switch": {
           "title": "{{host}} に切り替えますか？",
@@ -10371,6 +10380,9 @@ export const I18N_RESOURCES = {
           "description": "本機は {{url}} に接続しなくなります。ほかの中継はそのまま使えます。",
           "confirm": "削除",
           "done": "中継を削除しました。"
+        },
+        "awaitingToken": {
+          "notice": "中継トークンが更新されました。新しいトークンの配布を待っています。"
         }
       },
       "admin": {
@@ -10418,7 +10430,7 @@ export const I18N_RESOURCES = {
           "clearHint": "削除すると誰でも本リレーに参加できます。",
           "modeLabel": "既存テナント",
           "modeKeep": "既存テナントを維持",
-          "modeKeepHint": "新しいパスワードは新規参加にのみ適用されます。",
+          "modeKeepHint": "既存テナントとそのノードは影響を受けません。新規接続のみ新しいパスワードが必要です。",
           "modeKick": "既存トークンを失効",
           "modeKickHint": "全テナントがパスワードを再入力する必要があります。",
           "tooShort": "パスワードは 8 文字以上で入力してください。",
