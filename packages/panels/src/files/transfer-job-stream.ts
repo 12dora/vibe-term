@@ -3,6 +3,7 @@
 
 import {
   type ApiClient,
+  ApiError,
   cancelTransferJob,
   getTransferJob as fetchTransferJob,
   streamTransferJobEvents,
@@ -13,6 +14,7 @@ import {
   isTerminalTransferState,
   registerTransferCancel,
   removeTransferJob,
+  settleMissingTransferJob,
   transferJobKey,
   upsertTransferJobSnapshot,
 } from './transfer-jobs-store';
@@ -40,6 +42,11 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
+/** 源节点上已经没有这个任务（重启后内存注册表清空）：两个端点都会 404。 */
+function isJobGone(error: unknown): boolean {
+  return error instanceof ApiError && error.status === 404;
+}
+
 /** 拉一次快照收敛状态；任务已终态或已不存在返回 true（订阅可以收工）。 */
 async function refreshSnapshot(
   options: TransferSubscribeOptions,
@@ -49,8 +56,12 @@ async function refreshSnapshot(
     const job = await fetchTransferJob(options.client, options.jobId, signal);
     upsertTransferJobSnapshot(options.nodeId, job);
     return isTerminalTransferState(job.state);
-  } catch {
+  } catch (error) {
     if (signal.aborted) return true;
+    if (isJobGone(error)) {
+      settleMissingTransferJob(options.nodeId, options.jobId);
+      return true;
+    }
     // 任务已被源节点回收：本地行也没有再刷新的意义
     const view = getTransferJobView(transferJobKey(options.nodeId, options.jobId));
     return view === undefined || isTerminalTransferState(view.state);
@@ -74,8 +85,12 @@ async function runSubscription(
         signal
       );
       attempt = 0;
-    } catch {
-      // 断流按重连处理，状态由下面的快照定夺
+    } catch (error) {
+      // 404 是「任务不存在」，重连没有意义：直接把行落到终态收工；其余断流交给下面的快照定夺
+      if (!signal.aborted && isJobGone(error)) {
+        settleMissingTransferJob(options.nodeId, options.jobId);
+        return;
+      }
     }
     if (signal.aborted) return;
     if (await refreshSnapshot(options, signal)) return;

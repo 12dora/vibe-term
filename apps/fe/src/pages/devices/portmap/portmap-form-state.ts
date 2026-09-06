@@ -27,6 +27,17 @@ export function createPortMapFormState(listenNodeId: string | null): PortMapForm
   };
 }
 
+/**
+ * 迟到的创建响应不该覆盖用户新改的表单：只有表单还是提交那一刻的那一份才重置。
+ * 每次编辑都会生成新的 state 对象，引用相等即「没动过」。
+ */
+export function resetFormIfUnchanged(
+  submitted: PortMapFormState,
+  listenNodeId: string | null
+): (current: PortMapFormState) => PortMapFormState {
+  return (current) => (current === submitted ? createPortMapFormState(listenNodeId) : current);
+}
+
 /** 1–65535 的整数；其余（含空串、小数、越界）为 null。 */
 export function parsePort(value: string): number | null {
   const trimmed = value.trim();

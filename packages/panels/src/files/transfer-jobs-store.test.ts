@@ -1,16 +1,19 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
 import type { TransferJobSnapshot } from '@tmex/shared';
 import {
+  TRANSFER_JOB_GONE,
   applyTransferJobEvent,
   cancelTransferJobEntry,
   clearFinishedTransferJobs,
   combineLegPct,
+  countFinishedItems,
   createRateEstimator,
   getTransferJobView,
   getTransferJobsSnapshot,
   isTerminalTransferState,
   reduceTransferEvent,
   resetTransferJobsForTest,
+  settleMissingTransferJob,
   startLocalTransfer,
   subscribeTransferJobsStore,
   transferJobKey,
@@ -151,6 +154,78 @@ describe('reduceTransferEvent', () => {
     expect(next.itemsDone).toBe(1);
   });
 
+  test('item 事件按下标计数：失败的条目不算完成', () => {
+    const job = viewFromSnapshot(
+      NODE_A,
+      snapshot({
+        items: [
+          { relPath: 'a.bin', size: 1, state: 'running', transferredBytes: 0 },
+          { relPath: 'b.bin', size: 1, state: 'pending', transferredBytes: 0 },
+          { relPath: 'c.bin', size: 1, state: 'pending', transferredBytes: 0 },
+        ],
+        currentIndex: 0,
+      })
+    );
+    expect(job.itemsDone).toBe(0);
+
+    const failed = reduceTransferEvent(job, NODE_A, {
+      type: 'item',
+      jobId: 'j1',
+      index: 0,
+      item: { relPath: 'a.bin', size: 1, state: 'failed', transferredBytes: 0 },
+    });
+    expect(failed.itemsDone).toBe(0);
+
+    const done = reduceTransferEvent(failed, NODE_A, {
+      type: 'item',
+      jobId: 'j1',
+      index: 1,
+      item: { relPath: 'b.bin', size: 1, state: 'done', transferredBytes: 1 },
+    });
+    expect(done.itemsDone).toBe(1);
+
+    const running = reduceTransferEvent(done, NODE_A, {
+      type: 'item',
+      jobId: 'j1',
+      index: 2,
+      item: { relPath: 'c.bin', size: 1, state: 'running', transferredBytes: 0 },
+    });
+    expect(running.itemsDone).toBe(1);
+    expect(running.itemsTotal).toBe(3);
+  });
+
+  test('同一条目重复上报不重复计数，与快照口径一致', () => {
+    const job = viewFromSnapshot(NODE_A, snapshot());
+    const once = reduceTransferEvent(job, NODE_A, {
+      type: 'item',
+      jobId: 'j1',
+      index: 1,
+      item: { relPath: 'b.bin', size: 100, state: 'done', transferredBytes: 100 },
+    });
+    const twice = reduceTransferEvent(once, NODE_A, {
+      type: 'item',
+      jobId: 'j1',
+      index: 1,
+      item: { relPath: 'b.bin', size: 100, state: 'done', transferredBytes: 100 },
+    });
+    expect(twice.itemsDone).toBe(2);
+    expect(twice.itemsDone).toBe(
+      viewFromSnapshot(
+        NODE_A,
+        snapshot({
+          items: [
+            { relPath: 'a.bin', size: 100, state: 'done', transferredBytes: 100 },
+            { relPath: 'b.bin', size: 100, state: 'done', transferredBytes: 100 },
+          ],
+        })
+      ).itemsDone
+    );
+  });
+
+  test('countFinishedItems 只数 done 与 skipped', () => {
+    expect(countFinishedItems(['done', 'failed', 'skipped', undefined, 'running'])).toBe(2);
+  });
+
   test('state 事件带错误码并关掉取消按钮', () => {
     const next = reduceTransferEvent(base, NODE_A, {
       type: 'state',
@@ -201,6 +276,27 @@ describe('store', () => {
     upsertTransferJobSnapshot(NODE_A, snapshot({ jobId: 'j2', state: 'running' }));
     clearFinishedTransferJobs();
     expect(getTransferJobsSnapshot().map((view) => view.jobId)).toEqual(['j2']);
+  });
+});
+
+describe('settleMissingTransferJob', () => {
+  test('任务已不存在时把行落到失败终态，可被清除已结束收走', () => {
+    upsertTransferJobSnapshot(NODE_A, snapshot({ jobId: 'j1' }));
+    settleMissingTransferJob(NODE_A, 'j1');
+    const view = getTransferJobView(transferJobKey(NODE_A, 'j1'));
+    expect(view?.state).toBe('failed');
+    expect(view?.error).toBe(TRANSFER_JOB_GONE);
+    expect(view?.cancellable).toBe(false);
+    clearFinishedTransferJobs();
+    expect(getTransferJobsSnapshot()).toHaveLength(0);
+  });
+
+  test('已终态或不存在的行不被改写', () => {
+    upsertTransferJobSnapshot(NODE_A, snapshot({ jobId: 'j2', state: 'done' }));
+    settleMissingTransferJob(NODE_A, 'j2');
+    expect(getTransferJobView(transferJobKey(NODE_A, 'j2'))?.state).toBe('done');
+    settleMissingTransferJob(NODE_A, 'nope');
+    expect(getTransferJobView(transferJobKey(NODE_A, 'nope'))).toBeUndefined();
   });
 });
 

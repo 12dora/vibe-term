@@ -13,11 +13,15 @@ export interface TransferPaneState {
   path: string;
   draft: string;
   highlight: number;
+  /** 高亮条目的路径；列表变动后据此把下标重新对上。 */
+  highlightPath: string | null;
   hidden: boolean;
   /** 已勾选条目的绝对路径。 */
   selection: ReadonlySet<string>;
-  /** shift 区间选择的锚点下标。 */
-  anchor: number | null;
+  /** shift 区间选择的锚点路径；下标会随过滤/刷新变化，只有路径是稳的。 */
+  anchorPath: string | null;
+  /** 节点 / 目录 / 选择每变一次就加一；迟到的提交回调据此判断状态是否还是自己那一份。 */
+  revision: number;
 }
 
 export type TransferPaneAction =
@@ -27,13 +31,13 @@ export type TransferPaneAction =
   | { type: 'draft'; value: string }
   | { type: 'submitDraft' }
   | { type: 'sync'; path: string }
-  | { type: 'highlight'; index: number }
-  | { type: 'move'; delta: number; count: number }
+  | { type: 'highlight'; index: number; paths: readonly string[] }
+  | { type: 'move'; delta: number; paths: readonly string[] }
   | { type: 'toggleHidden'; hidden: boolean }
   | { type: 'toggle'; index: number; path: string }
   | { type: 'range'; index: number; paths: readonly string[] }
   | { type: 'prune'; paths: readonly string[] }
-  | { type: 'clearSelection' };
+  | { type: 'clearSelection'; revision?: number };
 
 const EMPTY_SELECTION: ReadonlySet<string> = new Set<string>();
 
@@ -44,9 +48,11 @@ export function createTransferPaneState(nodeId: string | null = null): TransferP
     path: '',
     draft: '',
     highlight: -1,
+    highlightPath: null,
     hidden: false,
     selection: EMPTY_SELECTION,
-    anchor: null,
+    anchorPath: null,
+    revision: 0,
   };
 }
 
@@ -95,9 +101,43 @@ function navigated(state: TransferPaneState, path: string): TransferPaneState {
     path,
     draft: path,
     highlight: -1,
+    highlightPath: null,
     selection: EMPTY_SELECTION,
-    anchor: null,
+    anchorPath: null,
   };
+}
+
+/** 换节点 / 换根目录都是整块重置，只有 revision 必须单调递增（迟到回调靠它判断新旧）。 */
+function resetPane(state: TransferPaneState, nodeId: string | null): TransferPaneState {
+  return { ...createTransferPaneState(nodeId), revision: state.revision };
+}
+
+function highlighted(
+  state: TransferPaneState,
+  index: number,
+  paths: readonly string[]
+): TransferPaneState {
+  const path = index >= 0 ? (paths[index] ?? null) : null;
+  if (state.highlight === index && state.highlightPath === path) return state;
+  return { ...state, highlight: index, highlightPath: path };
+}
+
+/** 列表刷新后按路径把高亮与锚点重新对上；对不上的直接清掉。 */
+function reconcile(state: TransferPaneState, paths: readonly string[]): TransferPaneState {
+  const selection = pruneSelection(state.selection, paths);
+  const anchorPath =
+    state.anchorPath !== null && paths.includes(state.anchorPath) ? state.anchorPath : null;
+  const highlight = state.highlightPath === null ? -1 : paths.indexOf(state.highlightPath);
+  const highlightPath = highlight < 0 ? null : state.highlightPath;
+  if (
+    selection === state.selection &&
+    anchorPath === state.anchorPath &&
+    highlight === state.highlight &&
+    highlightPath === state.highlightPath
+  ) {
+    return state;
+  }
+  return { ...state, selection, anchorPath, highlight, highlightPath };
 }
 
 function selectionAction(
@@ -109,39 +149,51 @@ function selectionAction(
       return {
         ...state,
         selection: toggleSelection(state.selection, action.path),
-        anchor: action.index,
+        anchorPath: action.path,
         highlight: action.index,
+        highlightPath: action.path,
       };
     case 'range': {
-      const anchor = state.anchor ?? action.index;
+      const anchorIndex = state.anchorPath === null ? -1 : action.paths.indexOf(state.anchorPath);
+      const anchor = anchorIndex < 0 ? action.index : anchorIndex;
       return {
-        ...state,
+        ...highlighted(state, action.index, action.paths),
         selection: rangeSelection(state.selection, action.paths, anchor, action.index),
-        highlight: action.index,
       };
     }
-    case 'prune': {
-      const selection = pruneSelection(state.selection, action.paths);
-      return selection === state.selection ? state : { ...state, selection };
-    }
-    case 'clearSelection':
+    case 'prune':
+      return reconcile(state, action.paths);
+    case 'clearSelection': {
+      // 迟到的提交回调：面板已经换了节点 / 目录 / 勾选，这次成功不该再动当前状态
+      if (action.revision !== undefined && action.revision !== state.revision) return state;
       return state.selection.size === 0
         ? state
-        : { ...state, selection: EMPTY_SELECTION, anchor: null };
+        : { ...state, selection: EMPTY_SELECTION, anchorPath: null };
+    }
   }
 }
 
-export function transferPaneReducer(
-  state: TransferPaneState,
-  action: TransferPaneAction
-): TransferPaneState {
+/** 会让「已提交的那一份」失效的动作；draft / highlight / move 只是光标位置，不算。 */
+const REVISION_ACTIONS: ReadonlySet<TransferPaneAction['type']> = new Set([
+  'selectNode',
+  'selectRoot',
+  'navigate',
+  'submitDraft',
+  'toggleHidden',
+  'toggle',
+  'range',
+  'prune',
+  'clearSelection',
+]);
+
+function applyPaneAction(state: TransferPaneState, action: TransferPaneAction): TransferPaneState {
   switch (action.type) {
     case 'selectNode':
-      return state.nodeId === action.nodeId ? state : createTransferPaneState(action.nodeId);
+      return state.nodeId === action.nodeId ? state : resetPane(state, action.nodeId);
     case 'selectRoot':
       return state.rootId === action.rootId
         ? state
-        : { ...createTransferPaneState(state.nodeId), rootId: action.rootId, hidden: state.hidden };
+        : { ...resetPane(state, state.nodeId), rootId: action.rootId, hidden: state.hidden };
     case 'navigate':
       return navigated(state, action.path);
     case 'draft':
@@ -155,14 +207,34 @@ export function transferPaneReducer(
         ? state
         : { ...state, path: action.path, draft: action.path };
     case 'highlight':
-      return { ...state, highlight: action.index };
+      return highlighted(state, action.index, action.paths);
     case 'move':
-      return { ...state, highlight: moveHighlight(action.count, state.highlight, action.delta) };
+      return highlighted(
+        state,
+        moveHighlight(action.paths.length, state.highlight, action.delta),
+        action.paths
+      );
     case 'toggleHidden':
-      return { ...state, hidden: action.hidden, highlight: -1 };
+      return { ...state, hidden: action.hidden, highlight: -1, highlightPath: null };
     default:
       return selectionAction(state, action);
   }
+}
+
+export function transferPaneReducer(
+  state: TransferPaneState,
+  action: TransferPaneAction
+): TransferPaneState {
+  const next = applyPaneAction(state, action);
+  if (next === state || !REVISION_ACTIONS.has(action.type)) return next;
+  return { ...next, revision: state.revision + 1 };
+}
+
+/** 从 `data-picker-index` 上解析行下标；解析不出返回 null。 */
+export function pickerIndex(value: string | null | undefined): number | null {
+  if (!value) return null;
+  const index = Number.parseInt(value, 10);
+  return Number.isInteger(index) && index >= 0 ? index : null;
 }
 
 // ---------------------------------------------------------------------------

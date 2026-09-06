@@ -97,6 +97,38 @@ describe('sendTransfer', () => {
     expect(rows[0].kind).toBe('node');
   });
 
+  test('弹窗已关闭（signal 已 abort）时只落行，不再起进度流', async () => {
+    replies = [json({ grantId: 'g1', token: 'tok', expiresAt: 9 }), json({ job: JOB })];
+    const controller = new AbortController();
+    controller.abort();
+
+    await sendTransfer({
+      source: { nodeId: 'self', meshId: ENTRY, rootId: 'r1', path: '/src', paths: ['/src/a.bin'] },
+      dest: { nodeId: REMOTE, meshId: REMOTE, rootId: 'r2', path: '/data' },
+      signal: controller.signal,
+    });
+
+    // 建单的两次请求仍然发出（关弹窗不取消已提交的任务），但没有第三次事件流请求
+    expect(calls.map((call) => call.url)).toEqual([
+      `/n/${REMOTE}/api/transfer/grants`,
+      '/api/transfer/jobs',
+    ]);
+    expect(getTransferJobsSnapshot()).toHaveLength(1);
+  });
+
+  test('signal 未 abort 时照常订阅进度', async () => {
+    replies = [json({ grantId: 'g1', token: 'tok', expiresAt: 9 }), json({ job: JOB })];
+    const controller = new AbortController();
+
+    await sendTransfer({
+      source: { nodeId: 'self', meshId: ENTRY, rootId: 'r1', path: '/src', paths: ['/src/a.bin'] },
+      dest: { nodeId: REMOTE, meshId: REMOTE, rootId: 'r2', path: '/data' },
+      signal: controller.signal,
+    });
+
+    expect(calls.some((call) => call.url.endsWith('/api/transfer/jobs/j1/events'))).toBe(true);
+  });
+
   test('覆盖策略透传', async () => {
     replies = [json({ grantId: 'g1', token: 'tok', expiresAt: 9 }), json({ job: JOB })];
     await sendTransfer({

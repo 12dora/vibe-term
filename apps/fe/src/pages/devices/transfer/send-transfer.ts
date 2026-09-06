@@ -21,6 +21,12 @@ export interface SendTransferParams {
   source: TransferEndpointRef & { paths: string[] };
   dest: TransferEndpointRef;
   onConflict?: 'skip' | 'overwrite';
+  /**
+   * 发起方（弹窗）的生命周期信号。**不传给请求本身**——关掉弹窗不该取消已经发出的建单，
+   * 只用来决定「这次建成的任务还要不要由我来起进度流」：弹窗已经没了就只落行，
+   * 下次打开由 `useTransferJobsSync` 统一续订。
+   */
+  signal?: AbortSignal;
 }
 
 export async function sendTransfer(params: SendTransferParams): Promise<TransferJobSnapshot> {
@@ -44,7 +50,9 @@ export async function sendTransfer(params: SendTransferParams): Promise<Transfer
   });
 
   upsertTransferJobSnapshot(source.nodeId, job);
-  subscribeTransferJob({ nodeId: source.nodeId, jobId: job.jobId, client: sourceClient });
+  if (!params.signal?.aborted) {
+    subscribeTransferJob({ nodeId: source.nodeId, jobId: job.jobId, client: sourceClient });
+  }
   return job;
 }
 

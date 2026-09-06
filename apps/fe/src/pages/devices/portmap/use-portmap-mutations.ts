@@ -1,10 +1,16 @@
-// 三个写操作（创建 / 暂停继续 / 删除）的状态机：谁在飞、错在哪，以及成功后刷新列表。
+// 四个写操作（创建 / 暂停继续 / 删除 / 重试清理放行）的状态机：谁在飞、错在哪，以及成功后刷新列表。
 
 import { createNodeApiClient, updatePortMap } from '@tmex/api-client';
 import { useState } from 'react';
 
 import { type DialogNodeOption, findDialogNode } from '../dialog-nodes';
-import { createPortMapping, deletePortMapping, portMapErrorKey } from './portmap-actions';
+import type { PendingExportCleanup } from './pending-cleanup';
+import {
+  createPortMapping,
+  deletePortMapping,
+  portMapErrorKey,
+  retryExportCleanup,
+} from './portmap-actions';
 import { type PortMapFormState, parsePort } from './portmap-form-state';
 import type { PortMapRow } from './use-portmap-list';
 
@@ -15,6 +21,11 @@ export interface PortMapMutations {
   create: (form: PortMapFormState, onCreated: (listenNodeId: string) => void) => void;
   toggle: (row: PortMapRow) => void;
   remove: (row: PortMapRow) => void;
+  retryCleanup: (record: PendingExportCleanup) => void;
+}
+
+function runtimeIdOf(options: DialogNodeOption[], meshId: string): string | null {
+  return options.find((option) => option.meshId === meshId)?.id ?? null;
 }
 
 export function usePortMapMutations(
@@ -67,14 +78,41 @@ export function usePortMapMutations(
     setBusyId(row.id);
     setErrorKey(null);
     void deletePortMapping({
-      listenNodeId: row.nodeId,
-      targetNodeId: options.find((option) => option.meshId === row.targetNodeId)?.id ?? null,
+      listen: {
+        nodeId: row.nodeId,
+        meshId: options.find((option) => option.id === row.nodeId)?.meshId ?? row.nodeId,
+        host: row.listenHost,
+        port: row.listenPort,
+      },
+      target: {
+        nodeId: runtimeIdOf(options, row.targetNodeId),
+        meshId: row.targetNodeId,
+        host: row.targetHost,
+        port: row.targetPort,
+      },
       mapId: row.id,
+      name: row.name,
     })
       .then(onChanged)
       .catch(fail)
       .finally(() => setBusyId(null));
   };
 
-  return { submitting, busyId, errorKey, create, toggle, remove };
+  const retryCleanup: PortMapMutations['retryCleanup'] = (record) => {
+    setBusyId(record.mapId);
+    setErrorKey(null);
+    void retryExportCleanup({
+      record,
+      listenNodeId: runtimeIdOf(options, record.listenMeshId),
+      targetNodeId: runtimeIdOf(options, record.targetMeshId),
+    })
+      .then((outcome) => {
+        if (outcome === 'pending') setErrorKey('devices.portmap.cleanup.failed');
+        else onChanged();
+      })
+      .catch(fail)
+      .finally(() => setBusyId(null));
+  };
+
+  return { submitting, busyId, errorKey, create, toggle, remove, retryCleanup };
 }

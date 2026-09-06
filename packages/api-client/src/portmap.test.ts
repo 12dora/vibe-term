@@ -113,11 +113,22 @@ describe('updatePortMap / deletePortMap', () => {
     expect(map.paused).toBe(true);
   });
 
-  test('DELETE 映射', async () => {
+  test('DELETE 映射；空响应体按「未清理放行记录」处理', async () => {
     const client = new StubApiClient([new Response(null, { status: 204 })]);
-    await deletePortMap(client, 'm1');
+    const result = await deletePortMap(client, 'm1');
     expect(client.calls[0].path).toBe('/api/portmap/m1');
     expect(client.calls[0].init?.method).toBe('DELETE');
+    expect(result.exportRemoved).toBe(false);
+  });
+
+  test('DELETE 映射：响应带 exportRemoved 时透传', async () => {
+    const client = new StubApiClient([jsonResponse({ ok: true, exportRemoved: true })]);
+    expect(await deletePortMap(client, 'm1')).toEqual({ exportRemoved: true });
+  });
+
+  test('DELETE 映射：响应只有 ok 时仍按未清理处理', async () => {
+    const client = new StubApiClient([jsonResponse({ ok: true })]);
+    expect(await deletePortMap(client, 'm1')).toEqual({ exportRemoved: false });
   });
 });
 

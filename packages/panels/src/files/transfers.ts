@@ -5,6 +5,7 @@
 
 export {
   BROWSER_ENDPOINT_ID,
+  TRANSFER_JOB_GONE,
   applyTransferJobEvent,
   cancelTransferJobEntry,
   clearFinishedTransferJobs,
@@ -18,6 +19,7 @@ export {
   registerTransferCancel,
   removeTransferJob,
   resetTransferJobsForTest,
+  settleMissingTransferJob,
   startLocalTransfer,
   subscribeTransferJobsStore,
   transferJobKey,

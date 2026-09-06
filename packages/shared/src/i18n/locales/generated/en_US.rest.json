@@ -2251,6 +2251,7 @@
           "too_large": "File too large",
           "connection_failed": "Connection failed",
           "timeout": "Timed out",
+          "job_gone": "Job no longer exists",
           "unknown": "Transfer failed"
         }
       },
@@ -2264,6 +2265,14 @@
         "delete": "Delete",
         "deleteConfirmTitle": "Delete this port map?",
         "deleteConfirmDescription": "\"{{name}}\" will be deleted and established connections will drop.",
+        "cleanup": {
+          "title": "Pending Authorization Cleanup",
+          "description": "The port map is deleted, but the authorization on the target node stays active until it is removed.",
+          "retry": "Clean Up",
+          "retrying": "Cleaning up...",
+          "unavailable": "Target node unavailable",
+          "failed": "Cleanup failed: the target node is unreachable."
+        },
         "columns": {
           "name": "Name",
           "listen": "This Machine",

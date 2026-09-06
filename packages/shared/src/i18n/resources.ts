@@ -3003,6 +3003,7 @@ export const I18N_RESOURCES = {
           "too_large": "File too large",
           "connection_failed": "Connection failed",
           "timeout": "Timed out",
+          "job_gone": "Job no longer exists",
           "unknown": "Transfer failed"
         }
       },
@@ -3016,6 +3017,14 @@ export const I18N_RESOURCES = {
         "delete": "Delete",
         "deleteConfirmTitle": "Delete this port map?",
         "deleteConfirmDescription": "\"{{name}}\" will be deleted and established connections will drop.",
+        "cleanup": {
+          "title": "Pending Authorization Cleanup",
+          "description": "The port map is deleted, but the authorization on the target node stays active until it is removed.",
+          "retry": "Clean Up",
+          "retrying": "Cleaning up...",
+          "unavailable": "Target node unavailable",
+          "failed": "Cleanup failed: the target node is unreachable."
+        },
         "columns": {
           "name": "Name",
           "listen": "This Machine",
@@ -6480,6 +6489,7 @@ export const I18N_RESOURCES = {
           "too_large": "文件过大",
           "connection_failed": "连接失败",
           "timeout": "超时",
+          "job_gone": "任务已不存在",
           "unknown": "传输失败"
         }
       },
@@ -6493,6 +6503,14 @@ export const I18N_RESOURCES = {
         "delete": "删除",
         "deleteConfirmTitle": "删除映射？",
         "deleteConfirmDescription": "「{{name}}」将被删除，已建立的连接会断开。",
+        "cleanup": {
+          "title": "待清理放行",
+          "description": "映射已删除，目标节点上的放行记录仍有效，清理后才会失效。",
+          "retry": "清理",
+          "retrying": "清理中...",
+          "unavailable": "目标节点不可用",
+          "failed": "清理失败：目标节点暂不可达。"
+        },
         "columns": {
           "name": "名称",
           "listen": "本机",
@@ -9957,6 +9975,7 @@ export const I18N_RESOURCES = {
           "too_large": "ファイルが大きすぎます",
           "connection_failed": "接続に失敗しました",
           "timeout": "タイムアウトしました",
+          "job_gone": "タスクは存在しません",
           "unknown": "転送に失敗しました"
         }
       },
@@ -9970,6 +9989,14 @@ export const I18N_RESOURCES = {
         "delete": "削除",
         "deleteConfirmTitle": "マッピングを削除しますか？",
         "deleteConfirmDescription": "「{{name}}」を削除します。確立済みの接続は切断されます。",
+        "cleanup": {
+          "title": "未削除の許可レコード",
+          "description": "マッピングは削除済みですが、転送先ノードの許可レコードは削除するまで有効です。",
+          "retry": "削除",
+          "retrying": "削除中...",
+          "unavailable": "転送先ノードを利用できません",
+          "failed": "削除に失敗しました：転送先ノードに到達できません。"
+        },
         "columns": {
           "name": "名称",
           "listen": "本機",

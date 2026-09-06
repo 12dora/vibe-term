@@ -27,6 +27,8 @@ export interface TransferEntryListProps {
   onToggle: (index: number, path: string) => void;
   onRange: (index: number) => void;
   onEnter: (path: string) => void;
+  /** 行获得焦点时把高亮同步过去，Tab 走位与方向键走位保持同一份状态。 */
+  onFocusRow?: (index: number) => void;
   rowRefs?: { current: Array<HTMLButtonElement | null> };
 }
 
@@ -37,6 +39,7 @@ export function TransferEntryList({
   onToggle,
   onRange,
   onEnter,
+  onFocusRow,
   rowRefs,
 }: TransferEntryListProps) {
   const { t } = useTranslation();
@@ -77,11 +80,13 @@ export function TransferEntryList({
             />
             <button
               type="button"
+              data-picker-name=""
               ref={(node) => {
                 if (rowRefs) rowRefs.current[index] = node;
               }}
               aria-current={index === highlight ? 'true' : undefined}
               className="flex min-w-0 flex-1 items-center gap-2 text-left text-sm outline-none"
+              onFocus={() => onFocusRow?.(index)}
               onClick={(event) => {
                 if (event.shiftKey) onRange(index);
                 else onToggle(index, entry.path);

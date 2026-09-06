@@ -3,9 +3,11 @@ import { ApiClient } from '@tmex/api-client';
 import type { TransferJobSnapshot } from '@tmex/shared';
 import { subscribeTransferJob } from './transfer-job-stream';
 import {
+  TRANSFER_JOB_GONE,
   getTransferJobView,
   resetTransferJobsForTest,
   transferJobKey,
+  upsertTransferJobSnapshot,
 } from './transfer-jobs-store';
 
 const NODE_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
@@ -50,6 +52,13 @@ class StubApiClient extends ApiClient {
 
 function ndjson(events: unknown[]): Response {
   return new Response(events.map((e) => `${JSON.stringify(e)}\n`).join(''), { status: 200 });
+}
+
+function notFound(): Response {
+  return new Response(JSON.stringify({ code: 'not_found' }), {
+    status: 404,
+    headers: { 'Content-Type': 'application/json' },
+  });
 }
 
 function json(data: unknown): Response {
@@ -129,6 +138,32 @@ describe('subscribeTransferJob', () => {
     await flush(20);
     expect(getTransferJobView(transferJobKey(NODE_A, 'j404'))).toBeUndefined();
     expect(client.paths).toEqual(['/api/transfer/jobs/j404/events', '/api/transfer/jobs/j404']);
+  });
+
+  test('事件流 404 时立刻收工，不再拉快照也不重连', async () => {
+    upsertTransferJobSnapshot(NODE_A, snapshot());
+    const client = new StubApiClient([notFound()]);
+
+    subscribeTransferJob({ nodeId: NODE_A, jobId: 'j1', client, sleep: noSleep });
+    await flush(20);
+
+    const view = getTransferJobView(transferJobKey(NODE_A, 'j1'));
+    expect(view?.state).toBe('failed');
+    expect(view?.error).toBe(TRANSFER_JOB_GONE);
+    expect(client.paths).toEqual(['/api/transfer/jobs/j1/events']);
+  });
+
+  test('快照 404 时把行落到终态并停止订阅', async () => {
+    upsertTransferJobSnapshot(NODE_A, snapshot());
+    const client = new StubApiClient([new Response('', { status: 200 }), notFound(), ndjson([])]);
+
+    subscribeTransferJob({ nodeId: NODE_A, jobId: 'j1', client, sleep: noSleep });
+    await flush(20);
+
+    const view = getTransferJobView(transferJobKey(NODE_A, 'j1'));
+    expect(view?.state).toBe('failed');
+    expect(view?.error).toBe(TRANSFER_JOB_GONE);
+    expect(client.paths).toEqual(['/api/transfer/jobs/j1/events', '/api/transfer/jobs/j1']);
   });
 
   test('同一任务重复订阅只开一条流', async () => {

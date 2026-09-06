@@ -14,8 +14,14 @@ import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { firstUsableNode, toDialogNodeOptions } from '../dialog-nodes';
+import { usePendingExportCleanups } from './pending-cleanup';
+import { PendingCleanupList } from './pending-cleanup-list';
 import { PortMapCreateForm } from './portmap-create-form';
-import { type PortMapFormState, createPortMapFormState } from './portmap-form-state';
+import {
+  type PortMapFormState,
+  createPortMapFormState,
+  resetFormIfUnchanged,
+} from './portmap-form-state';
 import { PortMapTable } from './portmap-table';
 import { type PortMapRow, usePortMapList } from './use-portmap-list';
 import { usePortMapMutations } from './use-portmap-mutations';
@@ -41,6 +47,7 @@ export default function PortMapDialog({ open, onOpenChange }: PortMapDialogProps
 
   const list = usePortMapList(open, options);
   const mutations = usePortMapMutations(options, list.refetch);
+  const cleanups = usePendingExportCleanups();
 
   // 监听节点缺省落到第一个可用节点；目标节点让用户自己选（多数场景是「本机 → 某台远端」）。
   const formState =
@@ -64,11 +71,19 @@ export default function PortMapDialog({ open, onOpenChange }: PortMapDialogProps
             options={options}
             submitting={mutations.submitting}
             errorKey={mutations.errorKey}
-            onSubmit={() =>
+            onSubmit={() => {
+              const submitted = form;
               mutations.create(formState, (listenNodeId) =>
-                setForm(createPortMapFormState(listenNodeId))
-              )
-            }
+                setForm(resetFormIfUnchanged(submitted, listenNodeId))
+              );
+            }}
+          />
+
+          <PendingCleanupList
+            records={cleanups}
+            options={options}
+            busyId={mutations.busyId}
+            onRetry={mutations.retryCleanup}
           />
 
           {list.rows.length === 0 ? (

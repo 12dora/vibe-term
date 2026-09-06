@@ -50,6 +50,7 @@ function PaneList({
       onToggle={(index, path) => dispatch({ type: 'toggle', index, path })}
       onRange={(index) => dispatch({ type: 'range', index, paths: model.paths })}
       onEnter={(path) => dispatch({ type: 'navigate', path })}
+      onFocusRow={(index) => dispatch({ type: 'highlight', index, paths: model.paths })}
     />
   );
 }
@@ -62,7 +63,10 @@ export interface TransferPaneProps {
   sendLabel: string;
   /** 不为 null 时按钮禁用，值即提示文案。 */
   sendBlockedReason: string | null;
+  /** 这一侧正在提交（按钮显示提交中）。 */
   sending: boolean;
+  /** 任意一侧正在提交：两侧按钮都禁用，避免重复提交。 */
+  busy: boolean;
   onSend: () => void;
 }
 
@@ -133,7 +137,7 @@ export function TransferPane(props: TransferPaneProps) {
         className="w-full"
         data-testid={`${testId}-send`}
         title={props.sendBlockedReason ?? undefined}
-        disabled={props.sendBlockedReason !== null || props.sending}
+        disabled={props.sendBlockedReason !== null || props.busy}
         onClick={props.onSend}
       >
         {props.sending ? t('devices.transfer.sending') : props.sendLabel}

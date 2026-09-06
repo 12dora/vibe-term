@@ -1,7 +1,7 @@
 // 目录节点的上传入口：外部文件拖入 + 右键菜单选择文件，逐文件分块上传并显示可取消的进度 Toast。
 
 import { useQueryClient } from '@tanstack/react-query';
-import { formatBytes } from '@tmex/api-client';
+import { SELF_NODE_ID, formatBytes, pickUploadStreams } from '@tmex/api-client';
 import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
 import { type ChangeEvent, type DragEvent, useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -58,6 +58,8 @@ export function useDirectoryUpload(
           t('files.transfer.tooLarge', { name: file.name, max: formatBytes(transferMaxBytes) })
         );
       }
+      // 回落到 REST 的那一段：本机是同机直传，远端节点要经 hub / 中继，按中继配额压流数
+      const streams = pickUploadStreams(runtime.nodeId !== SELF_NODE_ID);
       for (const file of accepted) {
         const controller = new AbortController();
         const tt = startTransferToast(file.name, 'upload', () => controller.abort(), {
@@ -70,7 +72,7 @@ export function useDirectoryUpload(
             rootId,
             path,
             file,
-            { onLeg: tt.leg, signal: controller.signal, onPath: (p) => tt.setPath?.(p) },
+            { onLeg: tt.leg, signal: controller.signal, streams, onPath: (p) => tt.setPath?.(p) },
             runtime.apiClient
           );
           tt.success(t('files.upload.success', { name: file.name }));

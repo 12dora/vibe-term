@@ -2245,6 +2245,7 @@
           "too_large": "文件过大",
           "connection_failed": "连接失败",
           "timeout": "超时",
+          "job_gone": "任务已不存在",
           "unknown": "传输失败"
         }
       },
@@ -2258,6 +2259,14 @@
         "delete": "删除",
         "deleteConfirmTitle": "删除映射？",
         "deleteConfirmDescription": "「{{name}}」将被删除，已建立的连接会断开。",
+        "cleanup": {
+          "title": "待清理放行",
+          "description": "映射已删除，目标节点上的放行记录仍有效，清理后才会失效。",
+          "retry": "清理",
+          "retrying": "清理中...",
+          "unavailable": "目标节点不可用",
+          "failed": "清理失败：目标节点暂不可达。"
+        },
         "columns": {
           "name": "名称",
           "listen": "本机",

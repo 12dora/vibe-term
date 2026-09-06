@@ -8,6 +8,7 @@
 // 「一份 Map + 订阅」，用 `useSyncExternalStore` 直接写反而少一层。
 
 import type {
+  TransferItemState,
   TransferJobEvent,
   TransferJobSnapshot,
   TransferJobState,
@@ -37,6 +38,8 @@ export interface TransferJobView {
   /** 0–100。节点任务由字节算出，浏览器任务由两段进度合成。 */
   pct: number;
   path: TransferPath | null;
+  /** 按下标记住每个条目的状态；done / skipped 的个数即 `itemsDone`（失败的条目不算完成）。 */
+  itemStates: readonly (TransferItemState | undefined)[];
   itemsDone: number;
   itemsTotal: number;
   error?: string;
@@ -80,11 +83,26 @@ function currentTitle(job: TransferJobSnapshot): string {
   return item?.relPath ?? job.items[0]?.relPath ?? '';
 }
 
-function doneCount(job: TransferJobSnapshot): number {
-  return job.items.filter((item) => item.state === 'done' || item.state === 'skipped').length;
+/** 只有 done / skipped 算完成：runner 遇到单个条目失败会继续往下传，失败项不能计入。 */
+export function countFinishedItems(states: readonly (TransferItemState | undefined)[]): number {
+  return states.filter((state) => state === 'done' || state === 'skipped').length;
+}
+
+/** 把某个下标的条目状态记下来；中间空出来的位置留 undefined（还没见过的条目）。 */
+export function withItemState(
+  states: readonly (TransferItemState | undefined)[],
+  index: number,
+  state: TransferItemState
+): readonly (TransferItemState | undefined)[] {
+  if (index < 0) return states;
+  const next = [...states];
+  while (next.length <= index) next.push(undefined);
+  next[index] = state;
+  return next;
 }
 
 export function viewFromSnapshot(nodeId: string, job: TransferJobSnapshot): TransferJobView {
+  const itemStates = job.items.map((item) => item.state);
   return {
     key: transferJobKey(nodeId, job.jobId),
     kind: 'node',
@@ -97,7 +115,8 @@ export function viewFromSnapshot(nodeId: string, job: TransferJobSnapshot): Tran
     progress: job.progress,
     pct: transferPct(job.progress),
     path: job.path,
-    itemsDone: doneCount(job),
+    itemStates,
+    itemsDone: countFinishedItems(itemStates),
     itemsTotal: job.items.length,
     error: job.error,
     errorDetail: job.errorDetail,
@@ -127,11 +146,13 @@ export function reduceTransferEvent(
     case 'item': {
       const wasDone = view.title === event.item.relPath;
       const finished = event.item.state === 'done' || event.item.state === 'skipped';
+      const itemStates = withItemState(view.itemStates, event.index, event.item.state);
       return {
         ...view,
         title: finished && wasDone ? view.title : event.item.relPath,
-        itemsDone: finished ? Math.max(view.itemsDone, event.index + 1) : view.itemsDone,
-        itemsTotal: Math.max(view.itemsTotal, event.index + 1),
+        itemStates,
+        itemsDone: countFinishedItems(itemStates),
+        itemsTotal: Math.max(view.itemsTotal, itemStates.length),
       };
     }
     case 'state': {
@@ -213,6 +234,24 @@ export function applyTransferJobEvent(
   const next = reduceTransferEvent(view, nodeId, event);
   if (next === view) return;
   entries.set(key, next);
+  publish();
+}
+
+/** 源节点上已经没有这个任务了（重启或已回收）：把行落到失败终态，交给「清除已结束」收走。 */
+export const TRANSFER_JOB_GONE = 'job_gone';
+
+export function settleMissingTransferJob(nodeId: string, jobId: string): void {
+  const key = transferJobKey(nodeId, jobId);
+  const view = entries.get(key);
+  if (!view || isTerminalTransferState(view.state)) return;
+  cancels.delete(key);
+  entries.set(key, {
+    ...view,
+    state: 'failed',
+    error: TRANSFER_JOB_GONE,
+    cancellable: false,
+    finishedAt: view.finishedAt ?? Date.now(),
+  });
   publish();
 }
 
@@ -316,6 +355,7 @@ export function startLocalTransfer(options: LocalTransferOptions): LocalTransfer
     progress: { ...EMPTY_PROGRESS, totalBytes: total },
     pct: 0,
     path: null,
+    itemStates: [],
     itemsDone: 0,
     itemsTotal: 1,
     createdAt: now,

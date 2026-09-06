@@ -7,6 +7,7 @@ import {
   parsePort,
   portMapSubmitBlock,
   probeTarget,
+  resetFormIfUnchanged,
   targetProbeHint,
   validatePortMapForm,
 } from './portmap-form-state';
@@ -119,5 +120,19 @@ describe('portMapSubmitBlock', () => {
 
   test('监听所有地址不影响提交条件', () => {
     expect(portMapSubmitBlock(form({ listenHost: LISTEN_HOST_ANY }), null)).toBeNull();
+  });
+});
+
+describe('resetFormIfUnchanged', () => {
+  test('表单没动过时按新的监听节点重置', () => {
+    const submitted = form();
+    const next = resetFormIfUnchanged(submitted, 'self')(submitted);
+    expect(next).toEqual(createPortMapFormState('self'));
+  });
+
+  test('提交后又改过的表单不被迟到的响应覆盖', () => {
+    const submitted = form();
+    const edited = { ...submitted, targetPort: '6379' };
+    expect(resetFormIfUnchanged(submitted, 'self')(edited)).toBe(edited);
   });
 });

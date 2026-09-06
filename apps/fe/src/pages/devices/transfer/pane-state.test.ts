@@ -4,6 +4,7 @@ import {
   createTransferPaneState,
   moveHighlight,
   parentPath,
+  pickerIndex,
   pruneSelection,
   rangeSelection,
   sendBlock,
@@ -106,6 +107,95 @@ describe('transferPaneReducer', () => {
     let state = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/a' });
     state = transferPaneReducer(state, { type: 'range', index: 2, paths });
     expect([...state.selection].sort()).toEqual(['/a', '/b', '/c']);
+  });
+
+  test('锚点按路径记，列表过滤后仍指向同一个条目', () => {
+    // 显示隐藏文件时列表是 ['/.a', '/b', '/c', '/d']，隐藏后只剩下面三条
+    const visible = ['/b', '/c', '/d'];
+    // 显示隐藏文件时勾上 /c（下标 2）
+    let state = transferPaneReducer(base, { type: 'toggle', index: 2, path: '/c' });
+    expect(state.anchorPath).toBe('/c');
+    // 隐藏 .a 之后 /c 变成下标 1；对下标 0 的 /b 做 shift 点选只应覆盖 /b–/c
+    state = transferPaneReducer(state, { type: 'prune', paths: visible });
+    state = transferPaneReducer(state, { type: 'range', index: 0, paths: visible });
+    expect([...state.selection].sort()).toEqual(['/b', '/c']);
+  });
+
+  test('锚点条目消失后 shift 点选退回单选', () => {
+    let state = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/gone' });
+    state = transferPaneReducer(state, { type: 'prune', paths: ['/a', '/b'] });
+    expect(state.anchorPath).toBeNull();
+    state = transferPaneReducer(state, { type: 'range', index: 1, paths: ['/a', '/b'] });
+    expect([...state.selection]).toEqual(['/b']);
+  });
+
+  test('列表变动后高亮按路径重新对上，条目没了就取消高亮', () => {
+    let state = transferPaneReducer(base, { type: 'move', delta: 1, paths: ['/a', '/b', '/c'] });
+    state = transferPaneReducer(state, { type: 'move', delta: 1, paths: ['/a', '/b', '/c'] });
+    expect(state.highlight).toBe(1);
+    expect(state.highlightPath).toBe('/b');
+
+    const shifted = transferPaneReducer(state, { type: 'prune', paths: ['/b', '/c'] });
+    expect(shifted.highlight).toBe(0);
+
+    const dropped = transferPaneReducer(state, { type: 'prune', paths: ['/a', '/c'] });
+    expect(dropped.highlight).toBe(-1);
+    expect(dropped.highlightPath).toBeNull();
+  });
+
+  test('内容没变化的 prune 返回原引用', () => {
+    const state = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/a' });
+    expect(transferPaneReducer(state, { type: 'prune', paths: ['/a', '/b'] })).toBe(state);
+  });
+
+  test('revision 随节点 / 目录 / 选择变化递增，光标移动不算', () => {
+    const picked = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/a' });
+    expect(picked.revision).toBe(base.revision + 1);
+    const moved = transferPaneReducer(picked, { type: 'move', delta: 1, paths: ['/a', '/b'] });
+    expect(moved.revision).toBe(picked.revision);
+    const switched = transferPaneReducer(moved, { type: 'selectNode', nodeId: 'n2' });
+    expect(switched.revision).toBe(picked.revision + 1);
+  });
+
+  test('迟到的清空只在 revision 未变时生效', () => {
+    const submitted = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/a' });
+    // 提交后用户又勾了一个
+    const changed = transferPaneReducer(submitted, { type: 'toggle', index: 1, path: '/b' });
+    const stale = transferPaneReducer(changed, {
+      type: 'clearSelection',
+      revision: submitted.revision,
+    });
+    expect(stale).toBe(changed);
+    expect(stale.selection.size).toBe(2);
+
+    const fresh = transferPaneReducer(changed, {
+      type: 'clearSelection',
+      revision: changed.revision,
+    });
+    expect(fresh.selection.size).toBe(0);
+  });
+
+  test('不带 revision 的清空一律生效', () => {
+    const state = transferPaneReducer(base, { type: 'toggle', index: 0, path: '/a' });
+    expect(transferPaneReducer(state, { type: 'clearSelection' }).selection.size).toBe(0);
+  });
+
+  test('highlight 动作同步记下路径，重复设置返回原引用', () => {
+    const paths = ['/a', '/b'];
+    const state = transferPaneReducer(base, { type: 'highlight', index: 1, paths });
+    expect(state.highlightPath).toBe('/b');
+    expect(transferPaneReducer(state, { type: 'highlight', index: 1, paths })).toBe(state);
+  });
+});
+
+describe('pickerIndex', () => {
+  test('解析行下标；非法值为 null', () => {
+    expect(pickerIndex('3')).toBe(3);
+    expect(pickerIndex('0')).toBe(0);
+    expect(pickerIndex('-1')).toBeNull();
+    expect(pickerIndex('x')).toBeNull();
+    expect(pickerIndex(null)).toBeNull();
+    expect(pickerIndex(undefined)).toBeNull();
   });
 });
 

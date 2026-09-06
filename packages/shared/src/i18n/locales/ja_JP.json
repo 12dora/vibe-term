@@ -2991,6 +2991,7 @@
           "too_large": "ファイルが大きすぎます",
           "connection_failed": "接続に失敗しました",
           "timeout": "タイムアウトしました",
+          "job_gone": "タスクは存在しません",
           "unknown": "転送に失敗しました"
         }
       },
@@ -3004,6 +3005,14 @@
         "delete": "削除",
         "deleteConfirmTitle": "マッピングを削除しますか？",
         "deleteConfirmDescription": "「{{name}}」を削除します。確立済みの接続は切断されます。",
+        "cleanup": {
+          "title": "未削除の許可レコード",
+          "description": "マッピングは削除済みですが、転送先ノードの許可レコードは削除するまで有効です。",
+          "retry": "削除",
+          "retrying": "削除中...",
+          "unavailable": "転送先ノードを利用できません",
+          "failed": "削除に失敗しました：転送先ノードに到達できません。"
+        },
         "columns": {
           "name": "名称",
           "listen": "本機",

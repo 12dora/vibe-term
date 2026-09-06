@@ -10,6 +10,7 @@ import {
   type TransferPaneState,
   isDirectoryEntry,
   parentPath,
+  pickerIndex,
   visibleEntries,
 } from './pane-state';
 import { fileListQueryOptions, fileRootsQueryOptions } from './transfer-queries';
@@ -86,20 +87,28 @@ export function useTransferPane(
     if (state.highlight >= 0) rowRefs.current[state.highlight]?.focus();
   }, [state.highlight]);
 
+  // Enter 作用在「当前获得焦点的那一行」上：Tab 换行并不会改高亮，只能从 DOM 上取下标。
+  const focusedEntry = (target: HTMLElement) => {
+    if (!target.closest('[data-picker-name]')) return undefined;
+    const row = target.closest('[data-picker-index]');
+    const index = pickerIndex(row?.getAttribute('data-picker-index'));
+    return index === null ? undefined : entries[index];
+  };
+
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       // 路径输入框里的上下键留给光标
       if (target.tagName === 'INPUT') return;
       event.preventDefault();
-      dispatch({ type: 'move', delta: event.key === 'ArrowDown' ? 1 : -1, count: entries.length });
+      dispatch({ type: 'move', delta: event.key === 'ArrowDown' ? 1 : -1, paths });
       return;
     }
-    const highlighted = state.highlight >= 0 ? entries[state.highlight] : undefined;
-    if (event.key === 'Enter' && highlighted && target.closest('[data-picker-index]')) {
-      event.preventDefault();
-      if (isDirectoryEntry(highlighted)) dispatch({ type: 'navigate', path: highlighted.path });
-    }
+    if (event.key !== 'Enter') return;
+    const entry = focusedEntry(target);
+    if (!entry || !isDirectoryEntry(entry)) return;
+    event.preventDefault();
+    dispatch({ type: 'navigate', path: entry.path });
   };
 
   const currentPath = resolvedPath ?? state.path;

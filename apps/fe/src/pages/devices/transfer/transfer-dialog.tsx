@@ -90,8 +90,12 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
               sendLabel={t('devices.transfer.sendToRight')}
               sendBlockedReason={leftBlock ? t(BLOCK_KEYS[leftBlock]) : null}
               sending={sender.sending === 'left'}
+              busy={sender.busy}
               onSend={() =>
-                sender.send('left', left, right, () => dispatchLeft({ type: 'clearSelection' }))
+                sender.send('left', left, right, () =>
+                  // 迟到的成功回调不能清掉「提交之后才勾上的」新选择
+                  dispatchLeft({ type: 'clearSelection', revision: left.revision })
+                )
               }
             />
             <TransferPane
@@ -102,8 +106,11 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
               sendLabel={t('devices.transfer.sendToLeft')}
               sendBlockedReason={rightBlock ? t(BLOCK_KEYS[rightBlock]) : null}
               sending={sender.sending === 'right'}
+              busy={sender.busy}
               onSend={() =>
-                sender.send('right', right, left, () => dispatchRight({ type: 'clearSelection' }))
+                sender.send('right', right, left, () =>
+                  dispatchRight({ type: 'clearSelection', revision: right.revision })
+                )
               }
             />
           </div>

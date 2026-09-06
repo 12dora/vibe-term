@@ -82,11 +82,22 @@ export function updatePortMap(
   });
 }
 
-export async function deletePortMap(client: ApiClient, id: string): Promise<void> {
-  await requestOk(client, portMapPath(id), {
+export interface DeletePortMapResult {
+  /** A 侧是否已顺带删掉 B 上的放行记录；响应里没有该字段（老节点 / 空响应体）按 false 处理。 */
+  exportRemoved: boolean;
+}
+
+export async function deletePortMap(client: ApiClient, id: string): Promise<DeletePortMapResult> {
+  const res = await requestOk(client, portMapPath(id), {
     method: 'DELETE',
     toError: portmapError('Failed to delete port map'),
   });
+  const body = await res.json().catch(() => null);
+  const removed =
+    typeof body === 'object' && body !== null
+      ? (body as { exportRemoved?: unknown }).exportRemoved === true
+      : false;
+  return { exportRemoved: removed };
 }
 
 /** A 侧：监听端口是否可绑定。 */
