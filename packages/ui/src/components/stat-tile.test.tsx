@@ -40,7 +40,7 @@ describe('<StatTile />', () => {
     );
     expect(slotClass(html, 'stat-tile-value')).toContain('shrink-0');
     expect(html).toContain('data-slot="byte-rate"');
-    expect(html).toContain('min-w-[7.5ch]');
+    expect(html).toContain('min-w-[11ch]');
   });
 
   test('没有数值时出破折号而不是空白', () => {

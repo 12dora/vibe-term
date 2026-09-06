@@ -14,20 +14,21 @@ describe('<ByteRate />', () => {
     expect(html).toContain('text-right');
     expect(html).toContain('whitespace-nowrap');
     expect(html).toContain('tabular-nums');
-    expect(html).toContain('min-w-[7.5ch]');
+    // 11ch = 最长合法读数 `1023.9 MB/s` 的宽度
+    expect(html).toContain('min-w-[11ch]');
     expect(html).toContain('>12.3 MB/s<');
   });
 
   test('最小宽度可覆盖，默认值不会一起留下', () => {
     const html = renderToStaticMarkup(<ByteRate minWidthClass="min-w-[18ch]">0.0 KB/s</ByteRate>);
     expect(html).toContain('min-w-[18ch]');
-    expect(html).not.toContain('min-w-[7.5ch]');
+    expect(html).not.toContain('min-w-[11ch]');
   });
 
   test('className 里的最小宽度覆盖默认值（cn 合并同组类）', () => {
-    const html = renderToStaticMarkup(<ByteRate className="min-w-[11ch]">0.0 KB/s</ByteRate>);
-    expect(html).toContain('min-w-[11ch]');
-    expect(html).not.toContain('min-w-[7.5ch]');
+    const html = renderToStaticMarkup(<ByteRate className="min-w-[13ch]">0.0 KB/s</ByteRate>);
+    expect(html).toContain('min-w-[13ch]');
+    expect(html).not.toContain('min-w-[11ch]');
   });
 
   test('透传原生属性', () => {

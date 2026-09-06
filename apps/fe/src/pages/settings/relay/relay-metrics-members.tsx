@@ -23,8 +23,11 @@ const RTT_TONE_CLASS = {
   destructive: 'text-destructive',
 } as const;
 
-/** 速率列固定宽度：两个读数各自等宽还不够，列本身也要定死，否则整表随刷新重排。 */
-const RATE_COLUMN_CLASS = 'w-[11rem] min-w-[11rem]';
+/**
+ * 速率列固定宽度：两个读数各自等宽还不够，列本身也要定死，否则整表随刷新重排。
+ * 15rem 按最坏情形取：两个 11ch 读数（`1023.9 MB/s`）+ 三个方向符号 + 间距 + 左右 px-3。
+ */
+const RATE_COLUMN_CLASS = 'w-[15rem] min-w-[15rem]';
 
 const COLUMNS: { key: MemberSortKey; align: 'left' | 'right'; className?: string }[] = [
   { key: 'node', align: 'left' },
@@ -57,7 +60,7 @@ export function RelayMembersTable({
   const { t } = useTranslation();
   return (
     <WideTableScroll>
-      <table className="w-full min-w-[46rem] text-xs" data-testid="relay-members-table">
+      <table className="w-full min-w-[50rem] text-xs" data-testid="relay-members-table">
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
             {COLUMNS.map((column) => (
@@ -118,12 +121,15 @@ function MemberRow({ member, now }: { member: RelayMetricsMember; now: number })
       <Td align="right">{member.activeStreams}</Td>
       <Td align="right" className={RATE_COLUMN_CLASS}>
         {/* 出 / 入两个读数各自包一层：整句插值成一个字符串就没法让两半分别定宽。
-            ↑ ↓ · 三个符号与语言无关，沿用 relay.metrics.tiles.throughputSub 的排法。 */}
+            ↑ ↓ · 三个符号与语言无关，沿用 relay.metrics.tiles.throughputSub 的排法；
+            符号本身对读屏无意义，方向靠同位置的 sr-only 文案交代。 */}
         <span className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
           <span aria-hidden>↑</span>
+          <span className="sr-only">{t('common.direction.out')}</span>
           <ByteRate>{formatRate(member.bytesOutPerSec)}</ByteRate>
           <span aria-hidden>·</span>
           <span aria-hidden>↓</span>
+          <span className="sr-only">{t('common.direction.in')}</span>
           <ByteRate>{formatRate(member.bytesInPerSec)}</ByteRate>
         </span>
       </Td>

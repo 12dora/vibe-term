@@ -94,9 +94,10 @@ describe('传输进度行的宽度', () => {
   test('已传 / 总量与速率 / 剩余时间各自定宽，位数变化不挤动端点名', () => {
     const html = renderToStaticMarkup(<TransferRow view={jobView()} options={OPTIONS} />);
     expect(html).toContain('data-slot="byte-rate"');
-    expect(html).toContain('min-w-[15ch]');
-    expect(html).toContain('min-w-[7.5ch]');
-    expect(html).toContain('min-w-[5ch]');
+    // 21ch = `1023.9 MB / 1023.9 MB`；11ch = `1023.9 MB/s`；8ch = 封顶的 `99:59:59`
+    expect(html).toContain('min-w-[21ch]');
+    expect(html).toContain('min-w-[11ch]');
+    expect(html).toContain('min-w-[8ch]');
     // 固定一位小数、单位从 KB 起
     expect(html).toContain('1.0 KB / 2.0 KB');
     expect(html).toContain('4.0 KB/s');

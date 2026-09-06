@@ -94,14 +94,15 @@ export function TransferRow({
             {t('devices.transfer.items', { done: view.itemsDone, total: view.itemsTotal })}
           </span>
         )}
-        <ByteRate className="ml-auto shrink-0" minWidthClass="min-w-[15ch]">
+        {/* 21ch = `1023.9 MB / 1023.9 MB`；ETA 8ch = 封顶的 `99:59:59`。 */}
+        <ByteRate className="ml-auto shrink-0" minWidthClass="min-w-[21ch]">
           {total > 0 ? formatBytesPair(view.progress.transferredBytes, total) : `${view.pct}%`}
         </ByteRate>
         {!isTerminalTransferState(view.state) && (
           <span className="flex shrink-0 items-center gap-1">
             <ByteRate>{formatRate(view.progress.ratePerSec)}</ByteRate>
             <span aria-hidden>·</span>
-            <ByteRate minWidthClass="min-w-[5ch]">{formatEta(view.progress.etaSec)}</ByteRate>
+            <ByteRate minWidthClass="min-w-[8ch]">{formatEta(view.progress.etaSec)}</ByteRate>
           </span>
         )}
       </div>

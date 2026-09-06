@@ -370,14 +370,18 @@ describe('磁贴排', () => {
   test('速率 / 字节量的数值格进 ByteRate，刷新时磁贴宽度不变', () => {
     const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
     expect(html).toContain('data-slot="byte-rate"');
-    expect(html).toContain('min-w-[7.5ch]');
+    // 11ch = 最长合法读数 `1023.9 MB/s`
+    expect(html).toContain('min-w-[11ch]');
   });
 
-  test('带宽格摆「已用 / 上限」两个读数时留更宽的位置', () => {
+  test('带宽格只给会变的「已用」定宽，上限是常量跟在后面', () => {
     const capped = relayMetricsFixture();
+    capped.totals.bandwidthBytesPerSec = 4096;
     capped.totals.bandwidthLimitBytesPerSec = 1024 * 1024;
     const html = renderToStaticMarkup(<RelayFullTiles data={capped} trends={trends} />);
-    expect(html).toContain('min-w-[16ch]');
+    // 定宽只包住「已用」这半；上限仍走 usedOfLimit 模板（未初始化 i18n 时只回键名）
+    expect(html).toContain('tabular-nums min-w-[11ch]">4.0 KB/s</span>');
+    expect(html).toContain('relay.metrics.tiles.usedOfLimit');
   });
 
   test('事件循环延迟过高时磁贴转告警色', () => {
@@ -404,6 +408,9 @@ describe('趋势卡', () => {
     expect(html).toContain('data-testid="relay-trend-event-loop"');
     expect(html).toContain('relay.metrics.trends.range');
     expect(html).toContain('relay.metrics.trends.window');
+    // 只有吞吐图的标注是字节读数，按「峰值 1023.9 MB/s · 谷值 1023.9 MB/s」留位
+    expect(html).toContain('min-w-[30ch]');
+    expect(html).toContain('min-w-0');
   });
 
   test('没有样本时不出峰谷，改说空态', () => {
@@ -450,9 +457,25 @@ describe('接入节点表', () => {
     expect(html).toContain('8.0 KB/s');
     expect(html).toContain('4.0 KB/s');
     expect(html).toContain('data-slot="byte-rate"');
-    expect(html).toContain('min-w-[7.5ch]');
+    expect(html).toContain('min-w-[11ch]');
     // 表头与单元格用同一个列宽，排序切换也不重排
-    expect(html.match(/w-\[11rem\] min-w-\[11rem\]/g)?.length).toBeGreaterThan(1);
+    expect(html.match(/w-\[15rem\] min-w-\[15rem\]/g)?.length).toBeGreaterThan(1);
+  });
+
+  test('方向符号对读屏无意义，出 / 入各配一条 sr-only 文案', () => {
+    const data = relayMetricsFixture();
+    const html = renderToStaticMarkup(
+      <RelayMembersTable
+        members={data.members}
+        now={data.sampledAt}
+        sort={DEFAULT_MEMBER_SORT}
+        onSort={() => undefined}
+      />
+    );
+    expect(html).toContain('<span class="sr-only">common.direction.out</span>');
+    expect(html).toContain('<span class="sr-only">common.direction.in</span>');
+    expect(html).toContain('aria-hidden="true">↑</span>');
+    expect(html).toContain('aria-hidden="true">↓</span>');
   });
 
   test('一个成员都没有时出空态', () => {

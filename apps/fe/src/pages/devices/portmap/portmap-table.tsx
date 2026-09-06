@@ -54,7 +54,7 @@ export function PortMapTable({ rows, options, busyId, onToggle, onDelete }: Port
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.target')}</th>
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.state')}</th>
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.connections')}</th>
-            <th className="w-[11rem] min-w-[11rem] px-2 py-1.5 font-medium">
+            <th className="w-[15rem] min-w-[15rem] px-2 py-1.5 font-medium">
               {t('devices.portmap.columns.traffic')}
             </th>
             <th className="px-2 py-1.5 font-medium text-right">
@@ -81,15 +81,19 @@ export function PortMapTable({ rows, options, busyId, onToggle, onDelete }: Port
               <td className="px-2 py-1.5 tabular-nums">
                 {row.activeConnections} / {row.totalConnections}
               </td>
-              {/* 流量随连接持续增长：两个读数各自定宽，整列才不会随刷新重排。 */}
-              <td className="w-[11rem] min-w-[11rem] px-2 py-1.5 tabular-nums">
+              {/* 流量随连接持续增长：两个读数各自定宽，整列才不会随刷新重排。
+                  列宽 15rem 按最坏情形取（两个 11ch 读数 + 方向符号 + 间距 + 左右 px-2）；
+                  ↓ ↑ 对读屏无意义，方向靠同位置的 sr-only 文案交代。 */}
+              <td className="w-[15rem] min-w-[15rem] px-2 py-1.5 tabular-nums">
                 <span className="inline-flex items-center gap-1 whitespace-nowrap">
                   <span aria-hidden>↓</span>
+                  <span className="sr-only">{t('common.direction.in')}</span>
                   <ByteRate data-testid={`portmap-bytes-in-${row.id}`}>
                     {formatBytesFixed(row.bytesIn)}
                   </ByteRate>
                   <span aria-hidden>·</span>
                   <span aria-hidden>↑</span>
+                  <span className="sr-only">{t('common.direction.out')}</span>
                   <ByteRate data-testid={`portmap-bytes-out-${row.id}`}>
                     {formatBytesFixed(row.bytesOut)}
                   </ByteRate>

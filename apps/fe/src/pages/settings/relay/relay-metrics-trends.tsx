@@ -18,6 +18,8 @@ interface TrendChartProps {
   series: MetricSeries[];
   tones: SparklineTone[];
   format: (value: number) => string;
+  /** 峰谷标注的最小宽度：按该图读数的最长合法内容取。 */
+  rangeWidthClass?: string;
   legend?: { label: string; tone: SparklineTone }[];
 }
 
@@ -38,7 +40,15 @@ function toneDot(tone: SparklineTone): string {
   }
 }
 
-function TrendChart({ title, testId, series, tones, format, legend }: TrendChartProps) {
+function TrendChart({
+  title,
+  testId,
+  series,
+  tones,
+  format,
+  rangeWidthClass = 'min-w-0',
+  legend,
+}: TrendChartProps) {
   const { t } = useTranslation();
   const max = Math.max(...series.map((one) => one.max), 0);
   const min = Math.min(...series.map((one) => one.min));
@@ -59,8 +69,9 @@ function TrendChart({ title, testId, series, tones, format, legend }: TrendChart
             </span>
           ))}
         </div>
-        {/* 峰谷标注每 5 秒重算一次，宽度定死才不会把图例往左推。 */}
-        <ByteRate className="text-[11px] text-muted-foreground" minWidthClass="min-w-[14ch]">
+        {/* 峰谷标注每 5 秒重算一次；速率图按「峰值 1023.9 MB/s · 谷值 1023.9 MB/s」留 30ch，
+            另两张图的读数不是字节量，标注又是 justify-between 的右端、右边界本就钉死，不必占位。 */}
+        <ByteRate className="text-[11px] text-muted-foreground" minWidthClass={rangeWidthClass}>
           {empty
             ? t('relay.metrics.empty')
             : t('relay.metrics.trends.range', {
@@ -101,6 +112,7 @@ export function RelayTrendsCard({ trends }: { trends: RelayTrendSeries }) {
           series={[trends.bytesOut, trends.bytesIn]}
           tones={['accent', 'success']}
           format={formatRate}
+          rangeWidthClass="min-w-[30ch]"
           legend={[
             { label: t('relay.metrics.trends.legendOut'), tone: 'accent' },
             { label: t('relay.metrics.trends.legendIn'), tone: 'success' },

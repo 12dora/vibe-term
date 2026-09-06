@@ -298,14 +298,16 @@ function BandwidthTile({ data, stale }: MetricsTileProps) {
     <StatTile
       label={t('relay.metrics.tiles.bandwidth')}
       value={
-        <ByteRate minWidthClass={limit === null ? 'min-w-[7.5ch]' : 'min-w-[16ch]'}>
-          {limit === null
-            ? used
-            : t('relay.metrics.tiles.usedOfLimit', {
-                used,
-                limit: formatRate(limit),
-              })}
-        </ByteRate>
+        limit === null ? (
+          <ByteRate>{used}</ByteRate>
+        ) : (
+          // 「已用 / 上限」两段拼成一个字符串就没法分别定宽，而整串最长要 25ch、磁贴放不下。
+          // 上限是配置常量、刷新时不变，只给会变的「已用」留位置：`used` 为空即取模板的分隔部分。
+          <span className="whitespace-nowrap">
+            <ByteRate>{used}</ByteRate>
+            {t('relay.metrics.tiles.usedOfLimit', { used: '', limit: formatRate(limit) })}
+          </span>
+        )
       }
       sub={
         limit === null

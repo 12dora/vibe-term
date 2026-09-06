@@ -64,11 +64,27 @@ describe('流量列的宽度', () => {
     );
     expect(html).toContain('data-testid="portmap-bytes-in-m1"');
     expect(html).toContain('data-testid="portmap-bytes-out-m1"');
-    expect(html).toContain('w-[11rem] min-w-[11rem]');
-    expect(html).toContain('min-w-[7.5ch]');
+    expect(html).toContain('w-[15rem] min-w-[15rem]');
+    expect(html).toContain('min-w-[11ch]');
     // 固定一位小数、单位从 KB 起：0 字节也不塌成 `0 B`
     expect(html).toContain('1.0 KB');
     expect(html).toContain('20.0 MB');
+  });
+
+  test('方向符号对读屏无意义，收 / 发各配一条 sr-only 文案', () => {
+    const html = renderToStaticMarkup(
+      <PortMapTable
+        rows={[row(REMOTE)]}
+        options={OPTIONS}
+        busyId={null}
+        onToggle={() => undefined}
+        onDelete={() => undefined}
+      />
+    );
+    expect(html).toContain('<span class="sr-only">common.direction.in</span>');
+    expect(html).toContain('<span class="sr-only">common.direction.out</span>');
+    expect(html).toContain('aria-hidden="true">↓</span>');
+    expect(html).toContain('aria-hidden="true">↑</span>');
   });
 
   test('零流量摆 0.0 KB，位数与有流量时一致', () => {

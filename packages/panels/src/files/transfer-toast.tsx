@@ -54,7 +54,8 @@ function LegRow({ label, leg }: { label: string; leg: LegProgress }) {
         <span className="flex shrink-0 items-center gap-1">
           {leg.rate && <ByteRate>{leg.rate}</ByteRate>}
           {leg.rate && leg.detail && <span aria-hidden>·</span>}
-          {leg.detail && <ByteRate minWidthClass="min-w-[15ch]">{leg.detail}</ByteRate>}
+          {/* 21ch = `1023.9 MB / 1023.9 MB`，`formatBytesPair` 的最长合法内容。 */}
+          {leg.detail && <ByteRate minWidthClass="min-w-[21ch]">{leg.detail}</ByteRate>}
         </span>
       </div>
       <Progress value={leg.pct} />
