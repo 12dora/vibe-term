@@ -1,6 +1,6 @@
 {
   "name": "vibeterm-cli",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "type": "module",
   "license": "MIT",
   "bin": {
@@ -16,7 +16,13 @@
     "type": "git",
     "url": "https://github.com/12dora/vibe-term.git"
   },
-  "files": ["bin", "dist", "resources", "README.md", "CHANGELOG.md"],
+  "files": [
+    "bin",
+    "dist",
+    "resources",
+    "README.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "clean": "rm -rf dist resources/fe-dist resources/gateway-drizzle",
     "bundle:resources": "bash ./scripts/bundle-resources.sh",
