@@ -259,7 +259,11 @@ export async function startLocalUpgradeAttempt(
   | { ok: true; status: UpgradeStatus }
   | {
       ok: false;
-      code: 'UPGRADE_NOT_ALLOWED' | 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED';
+      code:
+        | 'UPGRADE_NOT_ALLOWED'
+        | 'UPGRADE_IN_PROGRESS'
+        | 'PACKAGE_NOT_STAGED'
+        | 'UPGRADE_SIGNATURE_REQUIRED';
       status: UpgradeStatus;
     }
 > {

@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { releaseTarballName } from '@tmex/shared';
 import type { SystemInfo } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
+import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
 import * as infoPublic from './info-public';
 import { resetReleaseDownloadForTests, retainReleaseVersion } from './release-download';
 import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
@@ -19,6 +20,14 @@ import {
   mapForwardedUpgradeResponse,
   resetReleaseCacheSweepMemoForTests,
 } from './upgrade-service';
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
 
 const originalFetch = globalThis.fetch;
 const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
@@ -751,7 +760,8 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       if (url.includes('tmex-cli-')) {
         return new Response(payload, { status: 200 });
@@ -1015,7 +1025,8 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       if (url.includes('tmex-cli-')) {
         return new Response(payload, { status: 200 });
@@ -1088,7 +1099,8 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       if (url.includes('tmex-cli-')) {
         return new Response(payload, { status: 200 });
@@ -1182,7 +1194,8 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       if (url.includes('tmex-cli-')) {
         return new Response(payload, { status: 200 });
@@ -1276,7 +1289,8 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       if (url.includes('tmex-cli-')) {
         return new Response(payload, { status: 200 });

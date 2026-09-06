@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import {
   chmodSync,
@@ -15,6 +15,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import {
+  TEST_SIGNING_KEY,
+  restoreSigningKeys,
+  signSums,
+  signedSumsFor,
+  sumsTextFor,
+  useTestSigningKeys,
+} from '../test-support/release-signing';
+import {
   downloadVerifiedRelease,
   isReleaseDownloadInFlight,
   isReleaseVersionRetained,
@@ -25,6 +33,21 @@ import {
   retainReleaseVersion,
   sweepReleaseCache,
 } from './release-download';
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
+
+/** SHA256SUMS 与其签名一起造：`.sig` 必须先判，否则会把 sums 当签名返回。 */
+function sumsAsset(url: string, version: string, hex: string): Response | null {
+  if (!url.includes('SHA256SUMS')) return null;
+  const sums = sumsTextFor(version, hex);
+  return new Response(url.endsWith('.sig') ? `${signSums(sums)}\n` : sums, { status: 200 });
+}
 
 const originalFetch = globalThis.fetch;
 const originalBase = process.env.TMEX_RELEASE_BASE_URL;
@@ -60,9 +83,8 @@ function stubReleaseFetch(
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     urls.push(url);
-    if (url.includes('SHA256SUMS')) {
-      return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
-    }
+    const sums = sumsAsset(url, version, hex);
+    if (sums) return sums;
     tarballHits += 1;
     return new Response(Buffer.from(tarball), { status: 200 });
   }) as typeof fetch;
@@ -137,9 +159,8 @@ describe('downloadVerifiedRelease', () => {
     const tarball = new Uint8Array([1, 2, 3]);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        return new Response(`${'0'.repeat(64)}  ${releaseTarballName(version)}\n`, { status: 200 });
-      }
+      const sums = sumsAsset(url, version, '0'.repeat(64));
+      if (sums) return sums;
       return new Response(Buffer.from(tarball), { status: 200 });
     }) as typeof fetch;
     const cacheDir = tempDir('tmex-rel-cache-');
@@ -193,11 +214,8 @@ describe('downloadVerifiedRelease', () => {
     const ac = new AbortController();
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        return new Response(`${'ab'.repeat(32)}  ${releaseTarballName(version)}\n`, {
-          status: 200,
-        });
-      }
+      const sums = sumsAsset(url, version, 'ab'.repeat(32));
+      if (sums) return sums;
       const signal = init?.signal;
       const body = new ReadableStream<Uint8Array>({
         async pull(controller) {
@@ -244,9 +262,8 @@ describe('downloadVerifiedRelease', () => {
     const hex = sha256Hex(tarball);
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
-      }
+      const sums = sumsAsset(url, version, hex);
+      if (sums) return sums;
       const signal = init?.signal;
       let offset = 0;
       const body = new ReadableStream<Uint8Array>({
@@ -303,11 +320,8 @@ describe('downloadVerifiedRelease', () => {
     const version = '4.4.5';
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        return new Response(`${'ab'.repeat(32)}  ${releaseTarballName(version)}\n`, {
-          status: 200,
-        });
-      }
+      const sums = sumsAsset(url, version, 'ab'.repeat(32));
+      if (sums) return sums;
       const signal = init?.signal;
       const body = new ReadableStream<Uint8Array>({
         async pull(controller) {
@@ -389,9 +403,8 @@ function stubStreamedRelease(
   });
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes('SHA256SUMS')) {
-      return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
-    }
+    const sums = sumsAsset(url, version, hex);
+    if (sums) return sums;
     let sent = 0;
     const body = new ReadableStream<Uint8Array>({
       async start(controller) {
@@ -693,6 +706,11 @@ describe('已校验缓存的复用', () => {
     const dest = join(cacheDir, releaseTarballName(version));
     writeFileSync(dest, Buffer.from(tarball));
     writeFileSync(`${dest}.sha256`, `${hex}\n`);
+    const signed = signedSumsFor(version, hex);
+    writeFileSync(
+      `${dest}.sig.json`,
+      `${JSON.stringify({ version, sha256: hex, keyId: TEST_SIGNING_KEY.id, ...signed })}\n`
+    );
     utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
     globalThis.fetch = (async (_input: RequestInfo | URL): Promise<Response> => {
       throw new Error('should not download');

@@ -23,6 +23,7 @@ import {
   type ReleaseFetch,
   downloadReleaseTarball,
   fetchReleaseSha256Sums,
+  fetchReleaseSumsSignature,
   resolveReleaseVersion,
 } from '../lib/release-fetch';
 import {
@@ -34,7 +35,7 @@ import {
   withUpgradeLock,
 } from '../lib/upgrade-apply';
 import { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from '../lib/upgrade-flags';
-import { assertReleaseIntegrity } from '../lib/upgrade-verify';
+import { assertReleaseIntegrity, assertReleaseSignature } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InstallMeta, ParsedArgs } from '../types';
@@ -122,6 +123,10 @@ export async function delegateUpgrade(
       allowUnverified,
       fileName: releaseTarballName(version),
     });
+    // 摘要对上了只说明字节没被中途改；签名才回答「这份 SHA256SUMS 是不是发布方给的」。
+    if (!sums.unpublished) {
+      assertReleaseSignature(version, sums.text, await fetchReleaseSumsSignature(version, fetchFn));
+    }
     if (sums.unpublished === true) {
       log(t('upgrade.integrityUnverified'));
     }

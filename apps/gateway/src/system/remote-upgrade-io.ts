@@ -1,5 +1,12 @@
-// 远程升级作业的收发管道：请求脱壳、退避睡眠、上游错误摘要（包体读流已并入 `@tmex/transfer/node`）。
-// 都是与作业状态机无关的纯管道，单独放一处让状态机文件只剩流程。
+// 远程升级作业的收发管道：请求脱壳、退避睡眠、上游错误摘要、交签名清单
+//（包体读流已并入 `@tmex/transfer/node`）。都是与作业状态机无关的纯管道，
+// 单独放一处让状态机文件只剩流程。
+
+import { errorMessage, withTimeout } from '@tmex/shared';
+import type { AuthorizedUpgradeForward } from './upgrade-service';
+
+/** 交签名清单的超时：一个几百字节的 POST，慢到这个份上说明链路已经不行了。 */
+const MANIFEST_TIMEOUT_MS = 60 * 1000;
 
 /** 作业跑在原请求之外，只带鉴权必需的头，避免把已关闭请求的 body / signal 拖进来。 */
 export function detachRequest(req: Request): Request {
@@ -46,4 +53,40 @@ export async function describeUpstream(res: Response): Promise<string> {
     // keep raw text
   }
   return `HTTP ${res.status}${extra ? ` ${extra}` : ''}`.trim();
+}
+
+/**
+ * 推字节之前先把「SHA256SUMS + 签名」交给目标，让它自己验一遍并记下权威摘要。
+ * 目标 404 表示是没有这个接口的老节点，按老流程继续（老节点本来也只认自报 sha256）。
+ */
+export async function pushPackageManifest(input: {
+  forward: AuthorizedUpgradeForward;
+  req: Request;
+  nodeId: string;
+  version: string;
+  sums: string;
+  sig: string;
+  signal: AbortSignal;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const res = await withTimeout(
+      input.forward.forwardAuthorizedHttp(input.req, {
+        nodeId: input.nodeId,
+        method: 'POST',
+        path: '/api/system/upgrade/package/manifest',
+        body: { version: input.version, sums: input.sums, sig: input.sig },
+        signal: input.signal,
+        retry: { attempts: 2 },
+      }),
+      MANIFEST_TIMEOUT_MS,
+      'manifest timeout'
+    );
+    if (res.status === 404 || (res.status >= 200 && res.status < 300)) {
+      await res.text().catch(() => '');
+      return { ok: true };
+    }
+    return { ok: false, error: `manifest failed: ${await describeUpstream(res)}` };
+  } catch (err) {
+    return { ok: false, error: `manifest failed: ${errorMessage(err)}` };
+  }
 }

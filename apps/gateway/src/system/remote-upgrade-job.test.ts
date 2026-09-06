@@ -1,8 +1,15 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  restoreSigningKeys,
+  signSums,
+  signedSumsFor,
+  sumsTextFor,
+  useTestSigningKeys,
+} from '../test-support/release-signing';
 import type { InstallInfo } from './install-info';
 import {
   downloadVerifiedRelease,
@@ -24,6 +31,19 @@ import type { AuthorizedUpgradeForward } from './upgrade-service';
 
 const tempDirs: string[] = [];
 const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
+
+/** 下载结果里的已验签 SHA256SUMS：推包前要把它交给目标，缺了整个作业都不该往下走。 */
+function signed<T extends { sha256: string }>(release: T): T & { sums: string; sig: string } {
+  return { ...release, ...signedSumsFor('9.9.9', release.sha256) };
+}
 
 afterEach(() => {
   resetRemoteUpgradeJobsForTests();
@@ -50,6 +70,14 @@ const RESUME_CAPS = ['staged-package', 'upgrade-cancel', 'staged-package-resume'
 
 function offsetResponse(receivedBytes: number, complete = false): Response {
   return new Response(JSON.stringify({ receivedBytes, complete }), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+/** 目标接受签名清单：推字节之前会先来这一发，用例只关心之后的推包流程。 */
+function manifestAccepted(): Response {
+  return new Response(JSON.stringify({ version: '9.9.9', sha256: 'ab'.repeat(32), keyId: 'tk' }), {
     status: 200,
     headers: { 'content-type': 'application/json' },
   });
@@ -83,6 +111,7 @@ describe('RemoteUpgradeJob', () => {
     }> = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         const raw = input.rawBody ? await new Response(input.rawBody).bytes() : null;
         calls.push({
           method: input.method,
@@ -121,7 +150,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256, bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
     });
     expect(started.ok).toBe(true);
     if (!started.ok) throw new Error('expected start');
@@ -150,7 +179,8 @@ describe('RemoteUpgradeJob', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-1.0.0.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-1.0.0.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       tarballHits += 1;
       return new Response(tarball, { status: 200 });
@@ -198,6 +228,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.rawBody) await new Response(input.rawBody).bytes();
           return new Response('{}', {
             status: 200,
@@ -218,7 +249,7 @@ describe('RemoteUpgradeJob', () => {
           downloadTotalBytes: getRemoteUpgradeJob(nodeId)?.downloadTotalBytes ?? -1,
         });
         await gate;
-        return { path, sha256, bytes: bytes.byteLength };
+        return signed({ path, sha256, bytes: bytes.byteLength });
       },
     });
     expect(started.ok).toBe(true);
@@ -272,6 +303,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') {
             return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
               status: 400,
@@ -281,7 +313,7 @@ describe('RemoteUpgradeJob', () => {
           throw new Error(`unexpected ${input.method}`);
         },
       },
-      download: async () => ({ path, sha256: 'ee'.repeat(32), bytes: 1 }),
+      download: async () => signed({ path, sha256: 'ee'.repeat(32), bytes: 1 }),
     });
     expect(started.ok).toBe(true);
     const done = await waitForRemoteUpgradeJob(nodeId);
@@ -304,6 +336,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             offsetQueries += 1;
             return offsetResponse(offsetQueries === 1 ? 0 : cut);
@@ -320,7 +353,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -345,6 +378,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           calls.push(`${input.method} ${input.path}`);
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             return offsetResponse(bytes.byteLength, true);
@@ -352,7 +386,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -373,6 +407,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           calls.push(`${input.method} ${input.path}`);
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             return offsetResponse(bytes.byteLength, false);
@@ -391,7 +426,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -420,6 +455,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             offsetQueries += 1;
             return offsetResponse(bytes.byteLength, false);
@@ -440,7 +476,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -465,6 +501,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method !== 'PUT' || !input.rawBody) return new Response('{}', { status: 200 });
           sawCallback = typeof input.onProgress === 'function';
           const reader = input.rawBody.getReader();
@@ -480,7 +517,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       sleep: noSleep,
     });
     const done = await waitForRemoteUpgradeJob(nodeId);
@@ -506,6 +543,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             return offsetResponse(64);
           }
@@ -517,7 +555,7 @@ describe('RemoteUpgradeJob', () => {
           throw new Error(`unexpected ${input.method}`);
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -543,6 +581,7 @@ describe('RemoteUpgradeJob', () => {
     });
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
           return offsetResponse(0);
         }
@@ -564,7 +603,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: async (_ms, signal) => {
         await firstFailed;
@@ -593,6 +632,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET' && input.path === '/api/system/upgrade/package') {
             offsetQueries += 1;
             return offsetResponse(0);
@@ -608,7 +648,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
       sleep: noSleep,
     });
@@ -628,6 +668,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'GET') return offsetResponse(0);
           puts += 1;
           return new Response(JSON.stringify({ code: 'PACKAGE_SHA256_MISMATCH' }), {
@@ -636,7 +677,7 @@ describe('RemoteUpgradeJob', () => {
           });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 2 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 2 }),
       upgradeCapabilities: RESUME_CAPS,
       sleep: noSleep,
     });
@@ -664,7 +705,7 @@ describe('RemoteUpgradeJob', () => {
       forward,
       download: async () => {
         await gate;
-        return { path, sha256: 'ff'.repeat(32), bytes: 1 };
+        return signed({ path, sha256: 'ff'.repeat(32), bytes: 1 });
       },
     });
     expect(first.ok).toBe(true);
@@ -673,7 +714,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'ff'.repeat(32), bytes: 1 }),
+      download: async () => signed({ path, sha256: 'ff'.repeat(32), bytes: 1 }),
     });
     expect(second).toEqual({ ok: false, code: 'UPGRADE_IN_PROGRESS' });
     releaseDownload();
@@ -690,6 +731,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') pushes += 1;
           return new Response(
             JSON.stringify({
@@ -701,7 +743,7 @@ describe('RemoteUpgradeJob', () => {
           );
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
       sleep: noSleep,
     });
     expect(started.ok).toBe(true);
@@ -722,6 +764,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.rawBody) {
             input.rawBody.cancel = (async () => {
               cancelled = true;
@@ -731,7 +774,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('never');
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
       timeouts: { pushMs: 50 },
     });
     expect(started.ok).toBe(true);
@@ -747,7 +790,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 1 }),
     });
     expect(again.ok).toBe(true);
     await waitForRemoteUpgradeJob(nodeId);
@@ -791,6 +834,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') {
             pushSignal = input.signal;
             if (input.rawBody) {
@@ -816,7 +860,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 4 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 4 }),
     });
     expect(started.ok).toBe(true);
     for (let i = 0; i < 50 && !pushSignal; i += 1) {
@@ -860,6 +904,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') {
             // 60 s 版本缓存过期后来了新版本，另一个节点开始升级并按新版本清扫
             const { removed } = await sweepReleaseCache(cacheDir, { keepVersions: ['9.9.10'] });
@@ -871,7 +916,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       sleep: noSleep,
     });
     expect(started.ok).toBe(true);
@@ -904,6 +949,7 @@ describe('RemoteUpgradeJob', () => {
       req: authed(nodeId),
       forward: {
         async forwardAuthorizedHttp(_req, input) {
+          if (input.path.endsWith('/package/manifest')) return manifestAccepted();
           if (input.method === 'PUT') {
             expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(true);
             releasePush();
@@ -917,7 +963,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
       sleep: noSleep,
     });
     await gate;
@@ -1019,6 +1065,7 @@ describe('RemoteUpgradeJob', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         calls.push(`${input.method} ${input.path}`);
         if (input.method === 'PUT') {
           return new Response('{}', { status: 200 });
@@ -1040,7 +1087,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
+      download: async () => signed({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
     });
     for (let i = 0; i < 50 && !calls.includes('POST /api/system/upgrade'); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1071,7 +1118,7 @@ describe('RemoteUpgradeJob', () => {
           return new Response('{}', { status: 200 });
         },
       },
-      download: async () => ({ path, sha256: 'ff'.repeat(32), bytes: 1 }),
+      download: async () => signed({ path, sha256: 'ff'.repeat(32), bytes: 1 }),
     });
     await waitForRemoteUpgradeJob(nodeId);
     const cancelled = await cancelRemoteUpgradeJob({
@@ -1105,6 +1152,7 @@ describe('RemoteUpgradeJob', () => {
     let putLanded = false;
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         if (input.method === 'PUT' && input.path === '/api/system/upgrade/package') {
           const version = new URLSearchParams((input.query ?? '').replace(/^\?/, '')).get(
             'version'
@@ -1147,7 +1195,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256, bytes: bytes.byteLength }),
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
       upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
     });
     for (let i = 0; i < 50 && !putLanded; i += 1) {
@@ -1177,6 +1225,7 @@ describe('RemoteUpgradeJob', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         calls.push(`${input.method} ${input.path}`);
         if (input.method === 'PUT') {
           return new Response('{}', { status: 200 });
@@ -1202,7 +1251,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
+      download: async () => signed({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
       upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
     });
     for (let i = 0; i < 50 && !calls.includes('POST /api/system/upgrade'); i += 1) {
@@ -1234,6 +1283,7 @@ describe('RemoteUpgradeJob', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         calls.push(`${input.method} ${input.path}`);
         if (input.method === 'PUT') {
           return new Response('{}', { status: 200 });
@@ -1253,7 +1303,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
+      download: async () => signed({ path, sha256: 'ee'.repeat(32), bytes: 3 }),
       upgradeCapabilities: ['staged-package', 'upgrade-cancel'],
     });
     for (let i = 0; i < 50 && !calls.includes('POST /api/system/upgrade'); i += 1) {
@@ -1287,7 +1337,8 @@ describe('RemoteUpgradeJob', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  tmex-cli-${version}.tgz\n`, { status: 200 });
+        const body = `${hex}  tmex-cli-${version}.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       const signal = init?.signal;
       let offset = 0;
@@ -1363,6 +1414,7 @@ describe('RemoteUpgradeJob', () => {
     const calls: string[] = [];
     const forward: AuthorizedUpgradeForward = {
       async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
         calls.push(`${input.method} ${input.path}`);
         if (input.method === 'PUT') {
           return new Response('{}', { status: 200 });
@@ -1379,7 +1431,7 @@ describe('RemoteUpgradeJob', () => {
       version: '9.9.9',
       req: authed(nodeId),
       forward,
-      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
+      download: async () => signed({ path, sha256: 'aa'.repeat(32), bytes: 3 }),
       upgradeCapabilities: ['staged-package'],
     });
     for (let i = 0; i < 50 && !calls.includes('POST /api/system/upgrade'); i += 1) {
@@ -1397,4 +1449,125 @@ describe('RemoteUpgradeJob', () => {
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('handed-off');
   }, 8_000);
+});
+
+describe('RemoteUpgradeJob 签名清单', () => {
+  test('推字节之前先 POST 清单，带的是入口验过签的 SHA256SUMS', async () => {
+    const nodeId = 'c1'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const calls: Array<{ method: string; path: string; body?: unknown }> = [];
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.rawBody) await new Response(input.rawBody).bytes();
+        calls.push({ method: input.method, path: input.path, body: input.body });
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => signed({ path, sha256, bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(calls.map((c) => `${c.method} ${c.path}`)).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'PUT /api/system/upgrade/package',
+      'POST /api/system/upgrade',
+    ]);
+    const manifest = calls[0]?.body as { version: string; sums: string; sig: string };
+    expect(manifest.version).toBe('9.9.9');
+    expect(manifest.sums).toBe(signedSumsFor('9.9.9', sha256).sums);
+    expect(manifest.sig.startsWith('tmex-release-sig v1 ')).toBe(true);
+  });
+
+  test('老节点没有清单接口（404）：照旧推包，不中断', async () => {
+    const nodeId = 'c2'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.rawBody) await new Response(input.rawBody).bytes();
+        calls.push(`${input.method} ${input.path}`);
+        if (input.path.endsWith('/package/manifest')) {
+          return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
+        }
+        return new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } });
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(calls).toEqual([
+      'POST /api/system/upgrade/package/manifest',
+      'PUT /api/system/upgrade/package',
+      'POST /api/system/upgrade',
+    ]);
+  });
+
+  test('目标拒绝清单：作业失败，一个字节都不推', async () => {
+    const nodeId = 'c3'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        calls.push(`${input.method} ${input.path}`);
+        return new Response(JSON.stringify({ code: 'RELEASE_SIGNATURE_INVALID' }), { status: 400 });
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => signed({ path, sha256: 'ab'.repeat(32), bytes: bytes.byteLength }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toContain('manifest failed');
+    expect(done.error).toContain('RELEASE_SIGNATURE_INVALID');
+    expect(calls).toEqual(['POST /api/system/upgrade/package/manifest']);
+  });
+
+  test('没有签名的发行包一律不推给节点', async () => {
+    const nodeId = 'c4'.repeat(16);
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const calls: string[] = [];
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        calls.push(`${input.method} ${input.path}`);
+        return new Response('{}', { status: 200 });
+      },
+    };
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward,
+      download: async () => ({
+        path,
+        sha256: 'ab'.repeat(32),
+        bytes: bytes.byteLength,
+        sums: sumsTextFor('9.9.9', 'ab'.repeat(32)),
+        sig: null,
+      }),
+    });
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('failed');
+    expect(done.error).toContain('RELEASE_UNSIGNED');
+    expect(calls).toEqual([]);
+  });
 });

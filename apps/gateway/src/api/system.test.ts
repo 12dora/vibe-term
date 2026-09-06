@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -10,6 +10,12 @@ import { requestDispatchContext } from '../mesh/types';
 import * as infoPublic from '../system/info-public';
 import { uninstallController } from '../system/uninstall';
 import { STAGED_PACKAGE_MAX_BYTES, upgradeController } from '../system/upgrade';
+import {
+  restoreSigningKeys,
+  signedSumsFor,
+  sumsTextFor,
+  useTestSigningKeys,
+} from '../test-support/release-signing';
 import { handleSystemApiRequest, isReleaseVersion } from './system';
 
 function sha256Hex(bytes: Uint8Array): string {
@@ -103,7 +109,7 @@ describe('POST /api/system/upgrade version validation', () => {
 });
 
 describe('GET /api/system/info upgradeCapabilities', () => {
-  test('includes staged-package, upgrade-cancel, uninstall and staged-package-resume', async () => {
+  test('includes staged-package, upgrade-cancel, uninstall, resume and signed-package', async () => {
     const response = await handleSystemApiRequest(
       new Request('http://localhost/api/system/info'),
       '/api/system/info'
@@ -115,6 +121,7 @@ describe('GET /api/system/info upgradeCapabilities', () => {
       'upgrade-cancel',
       'uninstall',
       'staged-package-resume',
+      'signed-package',
     ]);
   });
 });
@@ -764,5 +771,109 @@ describe('POST/GET /api/system/uninstall', () => {
       rmSync(installDir, { recursive: true, force: true });
       rmSync(copyRoot, { recursive: true, force: true });
     }
+  });
+});
+
+describe('POST /api/system/upgrade/package/manifest', () => {
+  const version = '1.1.39';
+  const hex = 'ab'.repeat(32);
+  const tempDirs: string[] = [];
+  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+
+  beforeAll(() => {
+    useTestSigningKeys();
+  });
+
+  afterAll(() => {
+    restoreSigningKeys();
+  });
+
+  afterEach(() => {
+    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
+    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+    upgradeController.resetForTests();
+  });
+
+  function manifestRequest(body: unknown): Request {
+    return withMeshAuth(
+      new Request('http://localhost/api/system/upgrade/package/manifest', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+    );
+  }
+
+  async function post(body: unknown): Promise<Response> {
+    const res = await handleSystemApiRequest(
+      manifestRequest(body),
+      '/api/system/upgrade/package/manifest'
+    );
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  test('a signed manifest is accepted and reports the authoritative digest', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-manifest-'));
+    tempDirs.push(dir);
+    process.env.TMEX_INSTALL_DIR = dir;
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await post({ version, ...signedSumsFor(version, hex) });
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ version, sha256: hex, keyId: 'tk' });
+      expect(existsSync(join(dir, 'staging', 'staged', `tmex-cli-${version}.manifest.json`))).toBe(
+        true
+      );
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('an unsigned manifest is 400 RELEASE_UNSIGNED', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await post({ version, sums: sumsTextFor(version, hex), sig: '' });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ code: 'RELEASE_UNSIGNED' });
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('a bad version or malformed body is 400 BAD_REQUEST', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      for (const body of [{ version: 'latest', sums: 'x', sig: 'y' }, { sums: 'x' }, 'not-json']) {
+        const res = await post(body);
+        expect(res.status).toBe(400);
+        expect(await res.json()).toEqual({ code: 'BAD_REQUEST' });
+      }
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('open-mode standalone POST is 403 staged_requires_auth', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await handleSystemApiRequest(
+        new Request('http://localhost/api/system/upgrade/package/manifest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ version, ...signedSumsFor(version, hex) }),
+        }),
+        '/api/system/upgrade/package/manifest'
+      );
+      expect(res?.status).toBe(403);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('refuses when canSelfUpdate is false', async () => {
+    const res = await post({ version, ...signedSumsFor(version, hex) });
+    expect(res.status).toBe(403);
   });
 });

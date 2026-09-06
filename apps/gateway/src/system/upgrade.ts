@@ -26,10 +26,19 @@ import {
   sweepReleaseCache,
 } from './release-download';
 import {
+  type PackageManifestResult,
+  persistStagedManifest,
+  removeStagedManifest,
+  stagedManifestMatches,
+  stagedManifestSha256,
+  verifyPackageManifest,
+} from './upgrade-manifest';
+import {
   type StagePackageOpts,
   type StagePackageResult,
   type StagedPackageRecord,
   type StagedPackageStatusResult,
+  classifyStagedEntry,
   fileSizeOrZero,
   stageFailureToResult,
   stagedPartExpired,
@@ -37,13 +46,7 @@ import {
   stagedSinkDescriptor,
 } from './upgrade-staging';
 
-export {
-  assertReleaseIntegrity,
-  fetchReleaseSha256Sums,
-  parseSha256Sums,
-  releaseSha256SumsUrl,
-  sha256Hex,
-} from './release-download';
+export { parseSha256Sums, releaseSha256SumsUrl, sha256Hex } from './release-download';
 export { processCommandLine, processStartIdentity };
 export type {
   StagePackageOpts,
@@ -100,7 +103,10 @@ export type UpgradeStartOpts = {
 
 export type UpgradeStartResult =
   | { ok: true }
-  | { ok: false; code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' };
+  | {
+      ok: false;
+      code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' | 'UPGRADE_SIGNATURE_REQUIRED';
+    };
 
 export type UpgradeCancelResult =
   | { ok: true; status: UpgradeStatus }
@@ -222,6 +228,11 @@ export class UpgradeController {
     if (source === 'staged') {
       staged = this.lookupStaged(version, opts?.sha256);
       if (!staged) return { ok: false, code: 'PACKAGE_NOT_STAGED' };
+      // 推来的包一律要有可验签的清单，且清单摘要就是盘上这个包；没有开关能绕过。
+      const installDir = this.installDir();
+      if (!installDir || !stagedManifestMatches(installDir, version, staged.sha256)) {
+        return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
+      }
     }
     this.state = 'downloading';
     this.targetVersion = version;
@@ -259,6 +270,32 @@ export class UpgradeController {
     });
   }
 
+  private installDir(): string | null {
+    return resolveUpgradeInstallDir((this.deps.getInstallInfo ?? getInstallInfo)());
+  }
+
+  /** `POST /api/system/upgrade/package/manifest`：验签后把清单落成 sidecar，之后收字节以它为准。 */
+  async putPackageManifest(
+    version: string,
+    input: { sums: unknown; sig: unknown }
+  ): Promise<PackageManifestResult> {
+    const verified = verifyPackageManifest({ version, sums: input.sums, sig: input.sig });
+    if (!verified.ok) return verified;
+    const installDir = this.installDir();
+    if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    try {
+      await persistStagedManifest(installDir, verified.manifest);
+    } catch {
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
+    return {
+      ok: true,
+      version,
+      sha256: verified.manifest.sha256,
+      keyId: verified.manifest.keyId,
+    };
+  }
+
   async removeStagedPackage(version: string): Promise<{ ok: true } | { ok: false; status: 404 }> {
     if (this.stagingVersion === version) {
       await this.stagingDone;
@@ -277,6 +314,7 @@ export class UpgradeController {
     this.staged.delete(version);
     await rm(tgz, { force: true }).catch(() => {});
     await rm(sidecar, { force: true }).catch(() => {});
+    await removeStagedManifest(stagedDir, version);
     for (const part of parts) await rm(part, { force: true }).catch(() => {});
     return { ok: true };
   }
@@ -367,12 +405,16 @@ export class UpgradeController {
     if (!/^[0-9a-f]{64}$/.test(expected)) {
       return { ok: false, status: 400, code: 'BAD_REQUEST' };
     }
-    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
-    const installDir = resolveUpgradeInstallDir(install);
+    const installDir = this.installDir();
     if (!installDir) {
       return { ok: false, status: 500, code: 'STAGE_FAILED' };
     }
     if (!body) return { ok: false, status: 400, code: 'BAD_REQUEST' };
+    // 已有清单就以清单摘要为准：推包方自报的 sha256 对不上，收字节这一步就断掉。
+    const manifestSha256 = stagedManifestSha256(installDir, version);
+    if (manifestSha256 !== null && manifestSha256 !== expected) {
+      return { ok: false, status: 409, code: 'UPGRADE_MANIFEST_MISMATCH' };
+    }
 
     await this.repairStagingArtifacts(installDir, version);
     const stagedDir = join(installDir, 'staging', 'staged');
@@ -505,6 +547,7 @@ export class UpgradeController {
         void rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
           force: true,
         }).catch(() => {});
+        void removeStagedManifest(join(installDir, 'staging', 'staged'), version);
       }
     }
   }
@@ -526,6 +569,7 @@ export class UpgradeController {
       await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
         force: true,
       }).catch(() => {});
+      await removeStagedManifest(join(installDir, 'staging', 'staged'), version);
     }
     await this.pruneOrphanStagedFiles(installDir);
   }
@@ -543,24 +587,21 @@ export class UpgradeController {
     const now = (this.deps.now ?? Date.now)();
     for (const name of names) {
       const path = join(stagedDir, name);
-      if (name.includes('.part')) {
-        // 断点续传的半成品要留着给下一次 PUT 接力，只清超过保留期的。
+      const entry = classifyStagedEntry(name);
+      if (entry.kind === 'part' || entry.kind === 'manifest') {
+        // 续传半成品与签名清单都可能先于正式包到达，只清过了保留期的。
         if (stagedPartExpired(path, now)) {
           await rm(path, { force: true, recursive: true }).catch(() => {});
         }
         continue;
       }
-      if (name.endsWith('.json')) {
-        const version = name.startsWith('tmex-cli-')
-          ? name.slice('tmex-cli-'.length, -'.json'.length)
-          : '';
-        const tgz = version ? join(stagedDir, releaseTarballName(version)) : '';
-        if (!version || !existsSync(tgz) || !this.staged.has(version)) {
-          await rm(path, { force: true }).catch(() => {});
-        }
+      if (entry.kind === 'sidecar') {
+        const tgz = entry.version ? join(stagedDir, releaseTarballName(entry.version)) : '';
+        const live = Boolean(tgz) && existsSync(tgz) && this.staged.has(entry.version);
+        if (!live) await rm(path, { force: true }).catch(() => {});
         continue;
       }
-      if (name.endsWith('.tgz') && !keptPaths.has(path)) {
+      if (entry.kind === 'tarball' && !keptPaths.has(path)) {
         await rm(path, { force: true }).catch(() => {});
       }
     }
@@ -671,6 +712,7 @@ export class UpgradeController {
           force: true,
         });
         await rename(record.path, consumedPath);
+        await removeStagedManifest(join(installDir, 'staging', 'staged'), version);
         this.throwIfCancelled();
         const hashed = await sha256File(consumedPath);
         if (hashed.sha256 !== record.sha256) {

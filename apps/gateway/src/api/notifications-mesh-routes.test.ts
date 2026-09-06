@@ -43,22 +43,20 @@ describe('/api/notifications/mesh', () => {
     expect(state.selfEnabled).toBe(false);
   });
 
-  test('PUT 落库并回读、通知 mesh 重播状态', async () => {
-    let advertised = 0;
+  test('PUT 落库并回读，状态带本机节点编号', async () => {
     setMeshNotificationBridge({
       selfNodeId: () => 'node-a',
       selfName: () => 'A',
+      selfSinkEnabled: () => true,
       listSinks: () => [{ nodeId: 'node-a', name: 'A', self: true, online: true }],
       deliver: async () => new Response('{}'),
-      advertise: () => {
-        advertised += 1;
-      },
     });
     const put = (await (await call('PUT', { enabled: true })).json()) as MeshNotificationState;
     expect(put.supported).toBe(true);
     expect(put.selfEnabled).toBe(true);
     expect(put.sinks).toEqual([{ nodeId: 'node-a', name: 'A', self: true, online: true }]);
-    expect(advertised).toBe(1);
+    // 前端签 `notification-sink` 记录时要按这个编号写 payload。
+    expect(put.selfNodeId).toBe('node-a');
 
     resetMeshNotificationSinkCache();
     const get = (await (await call('GET')).json()) as MeshNotificationState;

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,11 +9,24 @@ import { pathExists } from '../lib/fs-utils';
 import { packNpmTarball } from '../lib/native-tarball';
 import { runCommand } from '../lib/process';
 import { releaseSha256SumsUrl } from '../lib/release-fetch';
+import {
+  restoreSigningKeys,
+  signSums,
+  useTestSigningKeys,
+} from '../lib/test-support/release-signing';
 import { readJournal } from '../lib/upgrade-state';
 import { readCurrentVersion } from '../lib/upgrade-switch';
 import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
 
 const tempDirs: string[] = [];
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
@@ -415,7 +428,10 @@ await applyUpgrade(
             return new Response(new Uint8Array(tarball), { status: 200 });
           }
           if (href.includes('SHA256SUMS')) {
-            return new Response(`${hex}  ${releaseTarballName('2.0.0')}\n`, { status: 200 });
+            const body = `${hex}  ${releaseTarballName('2.0.0')}\n`;
+            return new Response(href.endsWith('.sig') ? `${signSums(body)}\n` : body, {
+              status: 200,
+            });
           }
           return new Response('nope', { status: 404 });
         },
