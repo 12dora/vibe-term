@@ -29,7 +29,21 @@ export const I18N_RESOURCES = {
       "error": "Error",
       "yes": "Yes",
       "no": "No",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "llmModel": {
+        "placeholder": "Select a model",
+        "empty": "No models available. Enable a model under a provider first.",
+        "unavailable": "{{model}} (unavailable)",
+        "none": "Not set"
+      },
+      "originKind": {
+        "site": "Custom Domain",
+        "hub": "Hub",
+        "relay": "Relay",
+        "tunnel": "Tunnel",
+        "ip": "Public IP",
+        "custom": "Custom"
+      }
     },
     "nav": {
       "manageDevices": "Manage Devices",
@@ -397,7 +411,11 @@ export const I18N_RESOURCES = {
       "general": {
         "nameLinkedHint": "Also renames this node in Mesh.",
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
-        "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
+        "urlHint": "Used in notification links and share addresses.",
+        "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
+        "urlCandidates": "Available Addresses",
+        "urlOtherCandidates": "Other Addresses",
+        "urlUseCandidate": "Use"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
@@ -1014,9 +1032,6 @@ export const I18N_RESOURCES = {
         "defaultProvider": "Default Provider",
         "defaultProviderNone": "Not set",
         "defaultModel": "Default Model",
-        "defaultModelPlaceholder": "Select a model",
-        "defaultModelUnavailable": "{{model}} (unavailable)",
-        "defaultModelEmpty": "No models available. Enable a model under a provider first.",
         "saveDefaults": "Save Defaults",
         "loadFailed": "Failed to load LLM providers",
         "createFailed": "Failed to create provider",
@@ -1697,7 +1712,6 @@ export const I18N_RESOURCES = {
         "conditionPromptPlaceholder": "e.g. The build has failed with a compile error",
         "model": "Model",
         "followGlobalDefault": "Follow global default",
-        "modelPlaceholder": "Model ID",
         "modelRequiredHint": "This rule calls an LLM. Make sure the selected (or global default) model is available.",
         "confirmWithLlm": "LLM double-check before notifying",
         "confirmWithLlmDesc": "Reduce false positives; fails open if the model is unavailable",
@@ -2518,8 +2532,10 @@ export const I18N_RESOURCES = {
         "cancelled": "Cancelled."
       },
       "revoke": {
+        "confirmTitle_one": "Remove Node",
+        "confirmTitle_other": "Remove Nodes",
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
-        "reasonPrompt": "Reason (optional)",
+        "reasonLabel": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
@@ -2533,6 +2549,8 @@ export const I18N_RESOURCES = {
         "action": "Upgrade",
         "hint": "Upgrade to {{version}}",
         "latestPending": "the latest version",
+        "confirmTitle": "Upgrade Nodes",
+        "confirmTitleOne": "Upgrade {{name}}",
         "confirmSelf": "Upgrade this machine to {{version}}? The service restarts and access drops briefly.",
         "confirmRemote": "Upgrade node “{{name}}” to {{version}}? The node restarts and its sessions drop.",
         "started": "Upgrade to {{version}} started",
@@ -3314,7 +3332,21 @@ export const I18N_RESOURCES = {
       "error": "错误",
       "yes": "是",
       "no": "否",
-      "unknown": "未知"
+      "unknown": "未知",
+      "llmModel": {
+        "placeholder": "选择模型",
+        "empty": "无可用模型，请先在提供商中启用模型",
+        "unavailable": "{{model}}（已停用）",
+        "none": "未设置"
+      },
+      "originKind": {
+        "site": "自建域名",
+        "hub": "Hub",
+        "relay": "中继",
+        "tunnel": "隧道",
+        "ip": "公网 IP",
+        "custom": "自定义"
+      }
     },
     "nav": {
       "manageDevices": "管理设备",
@@ -3682,7 +3714,11 @@ export const I18N_RESOURCES = {
       "general": {
         "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
-        "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
+        "urlHint": "用于通知链接与分享地址。",
+        "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
+        "urlCandidates": "可用地址",
+        "urlOtherCandidates": "其它可用地址",
+        "urlUseCandidate": "填入"
       },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
@@ -4299,9 +4335,6 @@ export const I18N_RESOURCES = {
         "defaultProvider": "默认提供商",
         "defaultProviderNone": "未设置",
         "defaultModel": "默认模型",
-        "defaultModelPlaceholder": "选择模型",
-        "defaultModelUnavailable": "{{model}}（已停用）",
-        "defaultModelEmpty": "无可用模型，请先在提供商中启用模型",
         "saveDefaults": "保存默认设置",
         "loadFailed": "加载 LLM 提供商失败",
         "createFailed": "创建提供商失败",
@@ -4982,7 +5015,6 @@ export const I18N_RESOURCES = {
         "conditionPromptPlaceholder": "如：构建因编译错误而失败",
         "model": "模型",
         "followGlobalDefault": "跟随全局默认",
-        "modelPlaceholder": "模型 ID",
         "modelRequiredHint": "该规则会调用 LLM，请确保所选（或全局默认）模型可用。",
         "confirmWithLlm": "通知前 LLM 二次确认",
         "confirmWithLlmDesc": "减少误报；模型不可用时直接通知",
@@ -5802,8 +5834,9 @@ export const I18N_RESOURCES = {
         "cancelled": "已取消。"
       },
       "revoke": {
+        "confirmTitle": "移除节点",
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
-        "reasonPrompt": "移除原因（可选）",
+        "reasonLabel": "原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
@@ -5815,6 +5848,8 @@ export const I18N_RESOURCES = {
         "action": "升级",
         "hint": "升级到 {{version}}",
         "latestPending": "最新版本",
+        "confirmTitle": "升级节点",
+        "confirmTitleOne": "升级 {{name}}",
         "confirmSelf": "升级本机到 {{version}}？服务会重启，当前访问随之中断，稍候即可恢复。",
         "confirmRemote": "升级节点「{{name}}」到 {{version}}？该节点会重启，其上的会话随之中断。",
         "started": "已开始升级到 {{version}}",
@@ -6594,7 +6629,21 @@ export const I18N_RESOURCES = {
       "error": "エラー",
       "yes": "はい",
       "no": "いいえ",
-      "unknown": "不明"
+      "unknown": "不明",
+      "llmModel": {
+        "placeholder": "モデルを選択",
+        "empty": "利用可能なモデルがありません。プロバイダーでモデルを有効にしてください。",
+        "unavailable": "{{model}}（無効）",
+        "none": "未設定"
+      },
+      "originKind": {
+        "site": "独自ドメイン",
+        "hub": "Hub",
+        "relay": "中継",
+        "tunnel": "トンネル",
+        "ip": "パブリック IP",
+        "custom": "カスタム"
+      }
     },
     "nav": {
       "manageDevices": "デバイス管理",
@@ -6962,7 +7011,11 @@ export const I18N_RESOURCES = {
       "general": {
         "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
-        "urlManagedHint": "ハブの公開アドレスによって決まります。「マルチノード連携」で変更してください。"
+        "urlHint": "通知リンクと共有アドレスに使用します。",
+        "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
+        "urlCandidates": "利用可能なアドレス",
+        "urlOtherCandidates": "その他のアドレス",
+        "urlUseCandidate": "入力"
       },
       "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
@@ -7579,9 +7632,6 @@ export const I18N_RESOURCES = {
         "defaultProvider": "既定プロバイダー",
         "defaultProviderNone": "未設定",
         "defaultModel": "既定モデル",
-        "defaultModelPlaceholder": "モデルを選択",
-        "defaultModelUnavailable": "{{model}}（無効）",
-        "defaultModelEmpty": "利用可能なモデルがありません。プロバイダーでモデルを有効にしてください。",
         "saveDefaults": "既定を保存",
         "loadFailed": "LLM プロバイダーの読み込みに失敗しました",
         "createFailed": "プロバイダーの作成に失敗しました",
@@ -8262,7 +8312,6 @@ export const I18N_RESOURCES = {
         "conditionPromptPlaceholder": "例：コンパイルエラーでビルドが失敗した",
         "model": "モデル",
         "followGlobalDefault": "グローバル既定に従う",
-        "modelPlaceholder": "モデル ID",
         "modelRequiredHint": "このルールは LLM を呼び出します。選択した（またはグローバル既定の）モデルが利用可能か確認してください。",
         "confirmWithLlm": "通知前に LLM で再確認",
         "confirmWithLlmDesc": "誤検知を低減。モデル利用不可時はそのまま通知",
@@ -9082,8 +9131,9 @@ export const I18N_RESOURCES = {
         "cancelled": "キャンセルしました。"
       },
       "revoke": {
+        "confirmTitle": "ノードを削除",
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
-        "reasonPrompt": "理由（任意）",
+        "reasonLabel": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
@@ -9095,6 +9145,8 @@ export const I18N_RESOURCES = {
         "action": "アップグレード",
         "hint": "{{version}} にアップグレード",
         "latestPending": "最新バージョン",
+        "confirmTitle": "ノードをアップグレード",
+        "confirmTitleOne": "{{name}} をアップグレード",
         "confirmSelf": "このマシンを {{version}} にアップグレードしますか？サービスが再起動し、接続が一時的に切れます。",
         "confirmRemote": "ノード「{{name}}」を {{version}} にアップグレードしますか？ノードが再起動し、セッションは切断されます。",
         "started": "{{version}} へのアップグレードを開始しました",

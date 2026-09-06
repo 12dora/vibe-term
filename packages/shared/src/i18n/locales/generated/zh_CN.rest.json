@@ -215,7 +215,11 @@
       "general": {
         "nameLinkedHint": "将同步修改「多节点互联」里的节点名称。",
         "nameLinkedLocked": "当前 Hub 不可写入，暂时无法改名。",
-        "urlManagedHint": "由 Hub 公开地址决定，请在「多节点互联」中修改。"
+        "urlHint": "用于通知链接与分享地址。",
+        "urlManagedHint": "由 Hub 公开地址决定，在「多节点互联」中修改。",
+        "urlCandidates": "可用地址",
+        "urlOtherCandidates": "其它可用地址",
+        "urlUseCandidate": "填入"
       },
       "bellThrottle": "响铃通知频控（秒）",
       "notificationThrottle": "通知频控（秒）",
@@ -825,9 +829,6 @@
         "defaultProvider": "默认提供商",
         "defaultProviderNone": "未设置",
         "defaultModel": "默认模型",
-        "defaultModelPlaceholder": "选择模型",
-        "defaultModelUnavailable": "{{model}}（已停用）",
-        "defaultModelEmpty": "无可用模型，请先在提供商中启用模型",
         "saveDefaults": "保存默认设置",
         "loadFailed": "加载 LLM 提供商失败",
         "createFailed": "创建提供商失败",
@@ -1781,8 +1782,9 @@
         "cancelled": "已取消。"
       },
       "revoke": {
+        "confirmTitle": "移除节点",
         "confirmText": "移除节点「{{name}}」？该节点会立即失去访问权限，需要重新添加。",
-        "reasonPrompt": "移除原因（可选）",
+        "reasonLabel": "原因（可选）",
         "done": "已移除",
         "hubFailed": "Hub 未确认，移除没有生效，请重试。（{{error}}）",
         "selfBlocked": "不能移除当前正在使用的节点。",
@@ -1794,6 +1796,8 @@
         "action": "升级",
         "hint": "升级到 {{version}}",
         "latestPending": "最新版本",
+        "confirmTitle": "升级节点",
+        "confirmTitleOne": "升级 {{name}}",
         "confirmSelf": "升级本机到 {{version}}？服务会重启，当前访问随之中断，稍候即可恢复。",
         "confirmRemote": "升级节点「{{name}}」到 {{version}}？该节点会重启，其上的会话随之中断。",
         "started": "已开始升级到 {{version}}",

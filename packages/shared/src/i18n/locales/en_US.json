@@ -23,7 +23,21 @@
       "error": "Error",
       "yes": "Yes",
       "no": "No",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "llmModel": {
+        "placeholder": "Select a model",
+        "empty": "No models available. Enable a model under a provider first.",
+        "unavailable": "{{model}} (unavailable)",
+        "none": "Not set"
+      },
+      "originKind": {
+        "site": "Custom Domain",
+        "hub": "Hub",
+        "relay": "Relay",
+        "tunnel": "Tunnel",
+        "ip": "Public IP",
+        "custom": "Custom"
+      }
     },
     "nav": {
       "manageDevices": "Manage Devices",
@@ -391,7 +405,11 @@
       "general": {
         "nameLinkedHint": "Also renames this node in Mesh.",
         "nameLinkedLocked": "The current Hub is not accepting writes; renaming is unavailable.",
-        "urlManagedHint": "Determined by the hub's public address; change it under Mesh settings."
+        "urlHint": "Used in notification links and share addresses.",
+        "urlManagedHint": "Set by the Hub public address. Change it under Mesh.",
+        "urlCandidates": "Available Addresses",
+        "urlOtherCandidates": "Other Addresses",
+        "urlUseCandidate": "Use"
       },
       "bellThrottle": "Bell Notification Throttle (seconds)",
       "notificationThrottle": "Notification Throttle (seconds)",
@@ -1008,9 +1026,6 @@
         "defaultProvider": "Default Provider",
         "defaultProviderNone": "Not set",
         "defaultModel": "Default Model",
-        "defaultModelPlaceholder": "Select a model",
-        "defaultModelUnavailable": "{{model}} (unavailable)",
-        "defaultModelEmpty": "No models available. Enable a model under a provider first.",
         "saveDefaults": "Save Defaults",
         "loadFailed": "Failed to load LLM providers",
         "createFailed": "Failed to create provider",
@@ -1691,7 +1706,6 @@
         "conditionPromptPlaceholder": "e.g. The build has failed with a compile error",
         "model": "Model",
         "followGlobalDefault": "Follow global default",
-        "modelPlaceholder": "Model ID",
         "modelRequiredHint": "This rule calls an LLM. Make sure the selected (or global default) model is available.",
         "confirmWithLlm": "LLM double-check before notifying",
         "confirmWithLlmDesc": "Reduce false positives; fails open if the model is unavailable",
@@ -2512,8 +2526,10 @@
         "cancelled": "Cancelled."
       },
       "revoke": {
+        "confirmTitle_one": "Remove Node",
+        "confirmTitle_other": "Remove Nodes",
         "confirmText": "Remove node “{{name}}”? It loses access immediately and has to be added again from scratch.",
-        "reasonPrompt": "Reason (optional)",
+        "reasonLabel": "Reason (optional)",
         "done": "Node removed",
         "hubFailed": "The hub did not confirm, so nothing was removed. Try again. ({{error}})",
         "selfBlocked": "You cannot remove the node you are signed in to.",
@@ -2527,6 +2543,8 @@
         "action": "Upgrade",
         "hint": "Upgrade to {{version}}",
         "latestPending": "the latest version",
+        "confirmTitle": "Upgrade Nodes",
+        "confirmTitleOne": "Upgrade {{name}}",
         "confirmSelf": "Upgrade this machine to {{version}}? The service restarts and access drops briefly.",
         "confirmRemote": "Upgrade node “{{name}}” to {{version}}? The node restarts and its sessions drop.",
         "started": "Upgrade to {{version}} started",

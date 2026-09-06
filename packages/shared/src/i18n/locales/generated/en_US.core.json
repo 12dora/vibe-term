@@ -23,7 +23,21 @@
       "error": "Error",
       "yes": "Yes",
       "no": "No",
-      "unknown": "Unknown"
+      "unknown": "Unknown",
+      "llmModel": {
+        "placeholder": "Select a model",
+        "empty": "No models available. Enable a model under a provider first.",
+        "unavailable": "{{model}} (unavailable)",
+        "none": "Not set"
+      },
+      "originKind": {
+        "site": "Custom Domain",
+        "hub": "Hub",
+        "relay": "Relay",
+        "tunnel": "Tunnel",
+        "ip": "Public IP",
+        "custom": "Custom"
+      }
     },
     "nav": {
       "manageDevices": "Manage Devices",
@@ -473,7 +487,6 @@
         "conditionPromptPlaceholder": "e.g. The build has failed with a compile error",
         "model": "Model",
         "followGlobalDefault": "Follow global default",
-        "modelPlaceholder": "Model ID",
         "modelRequiredHint": "This rule calls an LLM. Make sure the selected (or global default) model is available.",
         "confirmWithLlm": "LLM double-check before notifying",
         "confirmWithLlmDesc": "Reduce false positives; fails open if the model is unavailable",

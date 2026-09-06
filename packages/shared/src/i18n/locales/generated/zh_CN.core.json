@@ -23,7 +23,21 @@
       "error": "错误",
       "yes": "是",
       "no": "否",
-      "unknown": "未知"
+      "unknown": "未知",
+      "llmModel": {
+        "placeholder": "选择模型",
+        "empty": "无可用模型，请先在提供商中启用模型",
+        "unavailable": "{{model}}（已停用）",
+        "none": "未设置"
+      },
+      "originKind": {
+        "site": "自建域名",
+        "hub": "Hub",
+        "relay": "中继",
+        "tunnel": "隧道",
+        "ip": "公网 IP",
+        "custom": "自定义"
+      }
     },
     "nav": {
       "manageDevices": "管理设备",
@@ -473,7 +487,6 @@
         "conditionPromptPlaceholder": "如：构建因编译错误而失败",
         "model": "模型",
         "followGlobalDefault": "跟随全局默认",
-        "modelPlaceholder": "模型 ID",
         "modelRequiredHint": "该规则会调用 LLM，请确保所选（或全局默认）模型可用。",
         "confirmWithLlm": "通知前 LLM 二次确认",
         "confirmWithLlmDesc": "减少误报；模型不可用时直接通知",

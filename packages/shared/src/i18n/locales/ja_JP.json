@@ -23,7 +23,21 @@
       "error": "エラー",
       "yes": "はい",
       "no": "いいえ",
-      "unknown": "不明"
+      "unknown": "不明",
+      "llmModel": {
+        "placeholder": "モデルを選択",
+        "empty": "利用可能なモデルがありません。プロバイダーでモデルを有効にしてください。",
+        "unavailable": "{{model}}（無効）",
+        "none": "未設定"
+      },
+      "originKind": {
+        "site": "独自ドメイン",
+        "hub": "Hub",
+        "relay": "中継",
+        "tunnel": "トンネル",
+        "ip": "パブリック IP",
+        "custom": "カスタム"
+      }
     },
     "nav": {
       "manageDevices": "デバイス管理",
@@ -391,7 +405,11 @@
       "general": {
         "nameLinkedHint": "「マルチノード連携」のノード名も同時に変わります。",
         "nameLinkedLocked": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
-        "urlManagedHint": "ハブの公開アドレスによって決まります。「マルチノード連携」で変更してください。"
+        "urlHint": "通知リンクと共有アドレスに使用します。",
+        "urlManagedHint": "Hub の公開アドレスによって決まります。「マルチノード連携」で変更してください。",
+        "urlCandidates": "利用可能なアドレス",
+        "urlOtherCandidates": "その他のアドレス",
+        "urlUseCandidate": "入力"
       },
       "bellThrottle": "ベル通知の制限（秒）",
       "notificationThrottle": "通知制限（秒）",
@@ -1008,9 +1026,6 @@
         "defaultProvider": "既定プロバイダー",
         "defaultProviderNone": "未設定",
         "defaultModel": "既定モデル",
-        "defaultModelPlaceholder": "モデルを選択",
-        "defaultModelUnavailable": "{{model}}（無効）",
-        "defaultModelEmpty": "利用可能なモデルがありません。プロバイダーでモデルを有効にしてください。",
         "saveDefaults": "既定を保存",
         "loadFailed": "LLM プロバイダーの読み込みに失敗しました",
         "createFailed": "プロバイダーの作成に失敗しました",
@@ -1691,7 +1706,6 @@
         "conditionPromptPlaceholder": "例：コンパイルエラーでビルドが失敗した",
         "model": "モデル",
         "followGlobalDefault": "グローバル既定に従う",
-        "modelPlaceholder": "モデル ID",
         "modelRequiredHint": "このルールは LLM を呼び出します。選択した（またはグローバル既定の）モデルが利用可能か確認してください。",
         "confirmWithLlm": "通知前に LLM で再確認",
         "confirmWithLlmDesc": "誤検知を低減。モデル利用不可時はそのまま通知",
@@ -2511,8 +2525,9 @@
         "cancelled": "キャンセルしました。"
       },
       "revoke": {
+        "confirmTitle": "ノードを削除",
         "confirmText": "ノード「{{name}}」を削除しますか？直ちにアクセスできなくなり、追加し直す必要があります。",
-        "reasonPrompt": "理由（任意）",
+        "reasonLabel": "理由（任意）",
         "done": "削除しました",
         "hubFailed": "ハブが確認しなかったため削除されていません。もう一度お試しください。（{{error}}）",
         "selfBlocked": "現在使用中のノードは削除できません。",
@@ -2524,6 +2539,8 @@
         "action": "アップグレード",
         "hint": "{{version}} にアップグレード",
         "latestPending": "最新バージョン",
+        "confirmTitle": "ノードをアップグレード",
+        "confirmTitleOne": "{{name}} をアップグレード",
         "confirmSelf": "このマシンを {{version}} にアップグレードしますか？サービスが再起動し、接続が一時的に切れます。",
         "confirmRemote": "ノード「{{name}}」を {{version}} にアップグレードしますか？ノードが再起動し、セッションは切断されます。",
         "started": "{{version}} へのアップグレードを開始しました",
