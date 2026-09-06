@@ -119,6 +119,9 @@ export class AuthApi {
       ...(typeof payload.pendingMembers === 'number'
         ? { pendingMembers: payload.pendingMembers }
         : {}),
+      ...(Array.isArray(payload.pendingMemberIds)
+        ? { pendingMemberIds: payload.pendingMemberIds }
+        : {}),
     };
   }
 

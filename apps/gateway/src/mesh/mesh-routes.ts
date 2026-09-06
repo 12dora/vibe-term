@@ -224,10 +224,10 @@ export class MeshRoutes {
 
   private handleNodes(req: Request): Response {
     const nodes = this.collectNodes(req);
-    const listed = new Set(nodes.map((n) => n.id));
-    sweepStaleNodeOperations(listed);
+    sweepStaleNodeOperations(new Set(nodes.map((n) => n.id)));
+    const listedRows = this.deps.roles.hub ? nodes : (this.deps.listedNames?.() ?? []);
     return jsonBody({
-      ...meshListReadiness(this.deps.userStore, this.deps.nodeId),
+      ...meshListReadiness(this.deps.userStore, this.deps.nodeId, nodes, listedRows),
       nodes: nodes.map((n) => ({ ...n, operation: readNodeOperation(n.id) })),
     });
   }

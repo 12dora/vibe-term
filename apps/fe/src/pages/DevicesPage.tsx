@@ -24,7 +24,7 @@ import { pruneDeviceSnapshots } from './devices/device-snapshot-store';
 import { DevicesActionsMenu } from './devices/devices-actions-menu';
 import { type NodeDeviceGroupEntry, toNodeDeviceGroups } from './devices/node-device-group';
 import { useDevicesPageCommands } from './devices/page-commands';
-import { PendingNodeGroups } from './devices/pending-node-groups';
+import { PendingNodeGroups, missingPendingCount } from './devices/pending-node-groups';
 
 /** standalone（以及 mesh 列表还没回来时）唯一的那个分组：本机自己。 */
 function selfGroup(name: string): NodeDeviceGroupEntry {
@@ -61,11 +61,24 @@ function DevicesBody({
 }) {
   const { t } = useTranslation();
   // standalone 下一个 `/api/mesh/*` 请求都不发
-  const { nodes, pendingMembers } = useMeshNodes({ enabled: meshEnabled });
+  const { nodes, pendingMemberIds } = useMeshNodes({ enabled: meshEnabled });
   const readiness = useInventoryReadiness();
+  // 待同步成员多半已经在成员集里（成员集由证书驱动）：这些行就地画占位，不再另补匿名分组。
+  const pendingIds = useMemo(
+    () => (pendingMemberIds === null ? undefined : new Set(pendingMemberIds)),
+    [pendingMemberIds]
+  );
   const meshGroups = useMemo(
-    () => (meshEnabled ? toNodeDeviceGroups(nodes, entryNodeId) : []),
-    [meshEnabled, nodes, entryNodeId]
+    () => (meshEnabled ? toNodeDeviceGroups(nodes, entryNodeId, pendingIds) : []),
+    [meshEnabled, nodes, entryNodeId, pendingIds]
+  );
+  const missingPending = useMemo(
+    () =>
+      missingPendingCount({
+        pendingMemberIds,
+        listedIds: new Set(nodes.map((node) => node.id)),
+      }),
+    [pendingMemberIds, nodes]
   );
   const selfName = t('device.addTo.self');
   const groups = useMemo(
@@ -89,7 +102,7 @@ function DevicesBody({
         groups={groups}
         showNodeHeaders={meshGroups.length > 0 || readiness.loading}
       />
-      {readiness.loading && <PendingNodeGroups pendingMembers={pendingMembers} />}
+      {readiness.loading && <PendingNodeGroups count={missingPending} />}
     </>
   );
 }

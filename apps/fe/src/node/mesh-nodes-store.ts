@@ -89,6 +89,8 @@ export interface MeshNodesState {
    * 旧网关不下发这一段，此时为 `null`＝不知道，判就绪要退回中继侧的成员数交叉验证。
    */
   pendingMembers: number | null;
+  /** 待同步成员的 id：已经在 `nodes` 里的那几行就地画占位，其余才另补占位分组。 */
+  pendingMemberIds: string[] | null;
   /** 本机见过的最高成员列表版本；旧网关不下发为 `null`。 */
   listVersion: number | null;
   /**
@@ -109,6 +111,7 @@ const EMPTY_STATE: MeshNodesState = {
   loadedAt: null,
   stale: false,
   pendingMembers: null,
+  pendingMemberIds: null,
   listVersion: null,
   cachedMesh: false,
 };
@@ -251,27 +254,37 @@ export function meshEnabledOf(state: MeshNodesState): boolean {
 }
 
 /**
- * 事件把某个「还在同步中」的成员的库存补上了。
+ * 这条 NODE_EVENT 是否让同步进度失效，需要补一次 REST。
  *
- * `pendingMembers` 只有 REST 算得出来，而列表应用后网关只推 NODE_EVENT：不补拉一次，
- * 界面会一直停在加载态直到五分钟后的兜底轮询。事件不带库存（解不开状态块）或该行本来
- * 就有库存时都不触发，持续的上下线事件不会变成新的定时器。
+ * `pendingMembers` 只有 REST 算得出来，而列表应用后网关只推 NODE_EVENT，兜底轮询要五分钟：
+ * 不补拉的话界面会一直停在加载态。三种情形都必须补：
+ *  - 待同步成员的库存被补上（状态块解开了）；
+ *  - 待同步成员被别处吊销（revoke 事件不带库存，计数只会一直挂着）；
+ *  - **首拉还在飞**：此刻 `pendingMembers` 还是「不知道」，事件会被丢掉，而在飞的那次响应
+ *    可能早于事件发出、带着过期的计数落地。排一次尾随请求即可（`ensureFreshMeshNodes` 合并）。
+ *
+ * 其余情况一律不触发：解不开状态块的成员每次上下线都补拉会变成新的定时器。
  */
-export function fillsPendingMember(
-  state: Pick<MeshNodesState, 'nodes' | 'pendingMembers'>,
-  event: NodeEventPayload
+export function shouldRefreshPendingMembers(
+  state: Pick<MeshNodesState, 'nodes' | 'pendingMembers' | 'loadedAt'>,
+  event: NodeEventPayload,
+  firstFetchInFlight: boolean
 ): boolean {
-  if (state.pendingMembers === null || state.pendingMembers <= 0) return false;
+  const known = state.nodes.some((node) => node.id === event.nodeId);
+  const pending = state.pendingMembers !== null && state.pendingMembers > 0;
+  if (event.status === 'revoked') return pending && known;
   if (event.inventory == null) return false;
+  if (state.loadedAt === null) return firstFetchInFlight;
+  if (!pending) return false;
   const row = state.nodes.find((node) => node.id === event.nodeId);
   return row !== undefined && row.inventory == null;
 }
 
-export function applyMeshNodeEvent(event: NodeEventPayload): void {
+export function applyMeshNodeEvent(event: NodeEventPayload, api: AuthApi = defaultAuthApi): void {
   const snapshot = store.get();
   const next = patchNodesWithEvent(snapshot.nodes, event);
   if (next !== snapshot.nodes) setState({ nodes: next });
-  if (fillsPendingMember(snapshot, event)) ensureFreshMeshNodes();
+  if (shouldRefreshPendingMembers(snapshot, event, inFlight !== null)) ensureFreshMeshNodes(api);
 }
 
 let inFlight: Promise<void> | null = null;
@@ -296,6 +309,7 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
       setState({
         nodes: list.nodes,
         pendingMembers: list.pendingMembers ?? null,
+        pendingMemberIds: list.pendingMemberIds ?? null,
         listVersion: list.listVersion ?? null,
         loading: false,
         error: null,

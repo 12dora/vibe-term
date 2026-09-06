@@ -302,8 +302,10 @@ describe('meshListReadiness', () => {
     peers: { nodeId: string; listVersion: number }[],
     certs: { nodeId: string; revokedLogSeq: number | null }[]
   ) => ({ listPeers: () => peers, listCerts: () => certs });
+  const online = (...ids: string[]) => ids.map((id) => ({ id, online: true }));
+  const offline = (...ids: string[]) => ids.map((id) => ({ id, online: false }));
 
-  test('证书有、peer_cache 没有的成员算作还在同步', () => {
+  test('本进程还没应用过成员列表：证书有、peer_cache 没有的成员都算同步中', () => {
     expect(
       meshListReadiness(
         store(
@@ -314,9 +316,38 @@ describe('meshListReadiness', () => {
             { nodeId: 'c', revokedLogSeq: null },
           ]
         ),
-        'self'
+        'self',
+        offline('self', 'b', 'c'),
+        []
       )
-    ).toEqual({ listVersion: 7, pendingMembers: 1 });
+    ).toEqual({ listVersion: 7, pendingMembers: 1, pendingMemberIds: ['c'] });
+  });
+
+  test('列表已应用且成员离线：状态块永远不会来，按离线渲染而不是一直同步中', () => {
+    expect(
+      meshListReadiness(
+        store([], [{ nodeId: 'c', revokedLogSeq: null }]),
+        'self',
+        [...offline('c'), ...online('self')],
+        [{ id: 'c' }]
+      )
+    ).toEqual({ listVersion: 0, pendingMembers: 0, pendingMemberIds: [] });
+  });
+
+  test('列表已应用但成员不在列表里（已离开中继）：同样不算同步中', () => {
+    expect(
+      meshListReadiness(store([], [{ nodeId: 'c', revokedLogSeq: null }]), 'self', online('c'), [
+        { id: 'other' },
+      ]).pendingMembers
+    ).toBe(0);
+  });
+
+  test('列表已应用、成员在线但状态块还没解开：仍算同步中', () => {
+    expect(
+      meshListReadiness(store([], [{ nodeId: 'c', revokedLogSeq: null }]), 'self', online('c'), [
+        { id: 'c' },
+      ])
+    ).toEqual({ listVersion: 0, pendingMembers: 1, pendingMemberIds: ['c'] });
   });
 
   test('本机与已吊销的证书不计入待同步', () => {
@@ -329,9 +360,11 @@ describe('meshListReadiness', () => {
             { nodeId: 'gone', revokedLogSeq: 12 },
           ]
         ),
-        'self'
+        'self',
+        online('self', 'gone'),
+        []
       )
-    ).toEqual({ listVersion: 0, pendingMembers: 0 });
+    ).toEqual({ listVersion: 0, pendingMembers: 0, pendingMemberIds: [] });
   });
 
   test('listVersion 取 peer_cache 里的最高版本', () => {
@@ -347,8 +380,10 @@ describe('meshListReadiness', () => {
             { nodeId: 'c', revokedLogSeq: null },
           ]
         ),
-        'self'
+        'self',
+        online('b', 'c'),
+        []
       )
-    ).toEqual({ listVersion: 9, pendingMembers: 0 });
+    ).toEqual({ listVersion: 9, pendingMembers: 0, pendingMemberIds: [] });
   });
 });

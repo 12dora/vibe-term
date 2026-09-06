@@ -61,6 +61,7 @@ const DevicesPageModule = await import('./DevicesPage');
 const DevicesPage = DevicesPageModule.default;
 const { PageActions } = DevicesPageModule;
 const { nodeDeviceGroupState, toNodeDeviceGroups } = await import('./devices/node-device-group');
+const { missingPendingCount } = await import('./devices/pending-node-groups');
 const { registerDevicesPageCommands, resetDevicesPageCommandsForTest } = await import(
   './devices/page-commands'
 );
@@ -136,6 +137,7 @@ function renderMeshWith(nodes: MeshNode[], overrides: MeshStateOverrides = {}): 
     nodes,
     loadedAt: 1,
     pendingMembers: 0,
+    pendingMemberIds: [],
     ...overrides,
   });
   return render();
@@ -177,6 +179,16 @@ describe('toNodeDeviceGroups', () => {
     expect(groups[0].runtimeNodeId).toBe(REMOTE_ID);
   });
 
+  test('网关点名的待同步成员打上 pending，本机永远不打', () => {
+    const groups = toNodeDeviceGroups(
+      [meshNode({ id: REMOTE_ID }), meshNode({ id: ENTRY_ID })],
+      ENTRY_ID,
+      new Set([REMOTE_ID, ENTRY_ID])
+    );
+    expect(groups.find((group) => group.isSelf)?.pending).toBe(false);
+    expect(groups.find((group) => group.id === REMOTE_ID)?.pending).toBe(true);
+  });
+
   test('带出 isHub 与 version 供分组头展示', () => {
     const groups = toNodeDeviceGroups(
       [meshNode({ id: REMOTE_ID, isHub: true, version: '1.2.3' })],
@@ -204,6 +216,39 @@ describe('nodeDeviceGroupState', () => {
   test('在线未登录 / 在线已登录', () => {
     expect(nodeDeviceGroupState({ ...base, online: true, loggedIn: false })).toBe('signedOut');
     expect(nodeDeviceGroupState({ ...base, online: true, loggedIn: true })).toBe('ready');
+  });
+
+  test('待同步且打不通才是 pending；链路已通时读到的是真实设备，不能被占位盖掉', () => {
+    expect(nodeDeviceGroupState({ ...base, online: false, loggedIn: false, pending: true })).toBe(
+      'pending'
+    );
+    expect(nodeDeviceGroupState({ ...base, online: true, loggedIn: true, pending: true })).toBe(
+      'ready'
+    );
+  });
+});
+
+describe('missingPendingCount', () => {
+  test('待同步成员已经在列表里：不另补占位', () => {
+    expect(
+      missingPendingCount({
+        pendingMemberIds: [REMOTE_ID],
+        listedIds: new Set([ENTRY_ID, REMOTE_ID]),
+      })
+    ).toBe(0);
+  });
+
+  test('待同步成员还不在列表里：按差集补', () => {
+    expect(
+      missingPendingCount({
+        pendingMemberIds: [REMOTE_ID, OFFLINE_ID],
+        listedIds: new Set([ENTRY_ID, REMOTE_ID]),
+      })
+    ).toBe(1);
+  });
+
+  test('旧网关不下发 id：按一组算', () => {
+    expect(missingPendingCount({ pendingMemberIds: null, listedIds: new Set() })).toBe(1);
   });
 });
 
@@ -239,16 +284,40 @@ describe('DevicesPage', () => {
   });
 
   test('mesh 但节点列表还没回来：本机网格照常渲染，缺的节点摆骨架而不是当成不存在', () => {
-    const html = renderMeshWith([], { loadedAt: null, pendingMembers: null });
+    const html = renderMeshWith([], {
+      loadedAt: null,
+      pendingMembers: null,
+      pendingMemberIds: null,
+    });
     expect(html).toContain('data-testid="device-panel"');
     expect(html).toContain('data-testid="devices-pending-nodes"');
     // 本机是「成员之一」而不是「唯一成员」：分组头要挂出来
     expect(html).toContain('data-testid="devices-node-header-self"');
   });
 
-  test('列表已到但还有成员在同步：按待同步数摆骨架分组', () => {
+  test('待同步成员已经在列表里：那一行就地画占位，不再另补匿名分组（否则是重影）', () => {
+    const html = renderMeshWith(
+      [
+        meshNode({ id: ENTRY_ID, name: 'entry' }),
+        // cert-only 成员：名字还是 raw id、没有库存、也还打不通
+        meshNode({ id: REMOTE_ID, name: REMOTE_ID, online: false, loggedIn: false }),
+      ],
+      { pendingMembers: 1, pendingMemberIds: [REMOTE_ID] }
+    );
+    expect(html).toContain(`data-testid="devices-node-group-${REMOTE_ID}"`);
+    expect(html).toMatch(
+      new RegExp(`data-testid="devices-node-group-${REMOTE_ID}"[^>]*data-state="pending"`)
+    );
+    // 就地占位（探针里的 DeviceCardSkeleton），且不建运行时
+    expect(html).toContain('data-testid="devices-loading"');
+    expect(html).not.toContain(`data-testid="devices-node-panel-${REMOTE_ID}"`);
+    expect(html).not.toContain('data-testid="devices-pending-nodes"');
+  });
+
+  test('旧网关不下发待同步 id：仍补一组匿名占位', () => {
     const html = renderMeshWith([meshNode({ id: ENTRY_ID, name: 'entry' })], {
       pendingMembers: 2,
+      pendingMemberIds: null,
     });
     expect(html).toContain('data-testid="devices-pending-nodes"');
   });
@@ -256,6 +325,7 @@ describe('DevicesPage', () => {
   test('列表到齐且真的只有本机：不摆骨架，空态是合法结论', () => {
     const html = renderMeshWith([meshNode({ id: ENTRY_ID, name: 'entry' })]);
     expect(html).not.toContain('data-testid="devices-pending-nodes"');
+    expect(html).not.toContain('data-state="pending"');
   });
 
   test('mesh：self 在前，三种节点形态各自渲染', () => {

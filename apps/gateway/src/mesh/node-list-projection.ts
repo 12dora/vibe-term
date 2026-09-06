@@ -275,8 +275,10 @@ function endpointsFromJson(raw: string | null | undefined): string[] {
 export type MeshListReadiness = {
   /** 本地 `peer_cache` 见过的最高 `node.list` / `relay.list` 版本；一次都没应用过为 0。 */
   listVersion: number;
-  /** 已 admit 但状态块还没解开（`peer_cache` 里没有这一行）的成员数。 */
+  /** 已 admit 但状态块还没解开的成员数（等于 `pendingMemberIds.length`）。 */
   pendingMembers: number;
+  /** 上一条的成员 id：浏览器据此把已经在列表里的那几行就地画成占位。 */
+  pendingMemberIds: string[];
 };
 
 type ReadinessStore = {
@@ -288,19 +290,35 @@ type ReadinessStore = {
  * 证书立刻就在，成员的名字 / inventory 却要等上级把状态块解开写进 `peer_cache`
  * （见 `relay-node-list.ts` 的 `entryFromCache` 兜底）。两者的差额就是「还在同步中的成员」，
  * 浏览器据此把「列表还没到齐」与「本来就只有一台」区分开。
+ *
+ * 判据必须收敛：状态块只随**活着的链路**广播，所以本进程已经应用过成员列表之后，列表里
+ * 没有（已不在中继）或列表说它离线的成员就再也等不到状态块了——那几行按离线渲染，不再算
+ * 同步中，否则节点表会永远停在骨架上。`listed` 为空即「本进程还没应用过任何列表」
+ * （刚重启的那几秒），此时一律算同步中；hub 自己就是成员集的权威，调用方直接把整份投影
+ * 当成 `listed` 传进来。
  */
-export function meshListReadiness(store: ReadinessStore, selfNodeId: string): MeshListReadiness {
+export function meshListReadiness(
+  store: ReadinessStore,
+  selfNodeId: string,
+  nodes: ReadonlyArray<{ id: string; online: boolean }>,
+  listed: ReadonlyArray<{ id: string }>
+): MeshListReadiness {
   const cached = new Set<string>();
   let listVersion = 0;
   for (const peer of store.listPeers()) {
     cached.add(peer.nodeId);
     if (peer.listVersion > listVersion) listVersion = peer.listVersion;
   }
-  let pendingMembers = 0;
+  const listedIds = new Set(listed.map((row) => row.id));
+  const onlineIds = new Set(nodes.filter((node) => node.online).map((node) => node.id));
+  const pendingMemberIds: string[] = [];
   for (const cert of store.listCerts()) {
     if (cert.revokedLogSeq != null) continue;
     if (cert.nodeId === selfNodeId) continue;
-    if (!cached.has(cert.nodeId)) pendingMembers += 1;
+    if (cached.has(cert.nodeId)) continue;
+    const absent = !listedIds.has(cert.nodeId) || !onlineIds.has(cert.nodeId);
+    if (listedIds.size > 0 && absent) continue;
+    pendingMemberIds.push(cert.nodeId);
   }
-  return { listVersion, pendingMembers };
+  return { listVersion, pendingMembers: pendingMemberIds.length, pendingMemberIds };
 }

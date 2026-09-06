@@ -335,6 +335,11 @@ export interface MeshNodesResponse {
    * 还在同步中，界面应显示加载态而不是「只有本机」。旧网关不下发。
    */
   pendingMembers?: number;
+  /**
+   * 上一条的成员 id（`pendingMembers === pendingMemberIds.length`）。已经出现在 `nodes`
+   * 里的那几行要就地画成占位，只有不在列表里的才另补占位分组。旧网关不下发。
+   */
+  pendingMemberIds?: string[];
 }
 
 /** `GET /api/mesh/hubs` 里本机 uplink 当前挂载的那台 hub；未连上时为 `null`。 */

@@ -23,6 +23,7 @@ import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   type AddDevicePreset,
+  DeviceCardSkeleton,
   DeviceManagementPanel,
   type DeviceManagementPanelHandle,
   type DeviceNodeContext,
@@ -47,11 +48,18 @@ export interface NodeDeviceGroupEntry {
   isHub: boolean;
   version: string | null;
   inventory: unknown;
+  /** 网关说这台的状态块还没解开：名字与设备都还不作数，先画占位。 */
+  pending?: boolean;
 }
 
-export type NodeDeviceGroupState = 'offline' | 'signedOut' | 'ready';
+export type NodeDeviceGroupState = 'pending' | 'offline' | 'signedOut' | 'ready';
 
+/**
+ * 待同步且还打不通时才算 `pending`：链路已经通的那台读到的是真实设备，
+ * 不能拿占位把它盖掉。
+ */
 export function nodeDeviceGroupState(node: NodeDeviceGroupEntry): NodeDeviceGroupState {
+  if (node.pending && !node.online) return 'pending';
   if (!node.online) return 'offline';
   if (!node.loggedIn) return 'signedOut';
   return 'ready';
@@ -60,7 +68,8 @@ export function nodeDeviceGroupState(node: NodeDeviceGroupEntry): NodeDeviceGrou
 /** mesh 节点列表 → 设备页分组：entry 自身排最前，其余按名称排序。 */
 export function toNodeDeviceGroups(
   nodes: MeshNode[],
-  entryNodeId: string | null
+  entryNodeId: string | null,
+  pendingIds?: ReadonlySet<string>
 ): NodeDeviceGroupEntry[] {
   const entries = nodes.map((node) => {
     const isSelf = entryNodeId != null && node.id === entryNodeId;
@@ -75,6 +84,7 @@ export function toNodeDeviceGroups(
       isHub: node.isHub === true,
       version: node.version ?? null,
       inventory: node.inventory ?? null,
+      pending: !isSelf && pendingIds?.has(node.id) === true,
     } satisfies NodeDeviceGroupEntry;
   });
   return entries.sort((a, b) => {
@@ -90,11 +100,13 @@ function StatusChip({ node }: { node: NodeDeviceGroupEntry }) {
   const { t } = useTranslation();
   const state = nodeDeviceGroupState(node);
   const label =
-    state === 'offline'
-      ? t('devices.nodes.status.offline')
-      : state === 'signedOut'
-        ? t('devices.nodes.status.signedOut')
-        : t('devices.nodes.status.online');
+    state === 'pending'
+      ? t('common.loading')
+      : state === 'offline'
+        ? t('devices.nodes.status.offline')
+        : state === 'signedOut'
+          ? t('devices.nodes.status.signedOut')
+          : t('devices.nodes.status.online');
   return (
     <span
       data-testid={`devices-node-status-${node.runtimeNodeId}`}
@@ -297,7 +309,10 @@ export function NodeDeviceGroup({ node, showHeader = true, dragControls }: NodeD
       {(showHeader || dragControls != null) && (
         <GroupHeader node={node} dragControls={dragControls ?? null} />
       )}
-      {state === 'signedOut' ? (
+      {state === 'pending' ? (
+        // 状态块还没解开：这台的设备一个都不作数（快照可能是上一代的），先摆卡片占位
+        <DeviceCardSkeleton />
+      ) : state === 'signedOut' ? (
         <SignedOutBody node={node} />
       ) : (
         // ready 与 offline 共用同一棵运行时子树：节点掉线只是把面板切到离线模式，不重挂
