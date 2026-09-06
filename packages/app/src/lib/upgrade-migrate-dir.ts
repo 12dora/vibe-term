@@ -49,6 +49,8 @@ export interface DirMigrationRecord extends DirMigrationPlan {
   envRewritten: boolean;
   dbRenamed: boolean;
   oldLabel: string;
+  /** 迁移已经撤销（目录 / env / DB 都回到旧位置），但回滚流程尚未收尾 */
+  undone: boolean;
 }
 
 /** 每完成一步就落盘；currentDir 是记录当前所在的安装目录（rename 之后 journal 随目录走）。 */
@@ -59,6 +61,25 @@ export interface MigrationOptions {
   persist?: MigrationPersist;
 }
 
+/**
+ * 要恢复的版本是不是改名之前的。< 2.0.0 的 runtime 只认 `com.tmex.<服务名>` / `tmex.log`：
+ * 用新 label 把它拉起来，旧 CLI 就管不了自己的 job，下一次 `tmex upgrade` 会因端口占用失败。
+ */
+export function isLegacyLabelVersion(version: string | undefined): boolean {
+  const major = Number.parseInt((version ?? '').split('.')[0] ?? '', 10);
+  return Number.isFinite(major) && major < 2;
+}
+
+/**
+ * 恢复旧版本之前清掉新命名的运行时残留：新 run.sh 写的 `vibeterm.pid` 会让 pid 探测认错实例，
+ * `vibeterm.log*` 也不该留在一个跑着旧版本的安装里（`.legacy` 存档不动）。
+ */
+export async function cleanNewRuntimeFiles(installDir: string): Promise<void> {
+  for (const name of ['vibeterm.pid', 'vibeterm.log', 'vibeterm.err.log']) {
+    await rm(join(installDir, name), { force: true }).catch(() => null);
+  }
+}
+
 export function legacyLaunchdLabelFor(serviceName: string): string {
   return `com.tmex.${serviceName}`;
 }
@@ -66,11 +87,18 @@ export function legacyLaunchdLabelFor(serviceName: string): string {
 /**
  * 目录只有「旧默认目录 + 新默认目录不存在」才搬；其余情况退化为原地的 env 键迁移。
  */
+async function hasLegacyEnvKeys(installDir: string): Promise<boolean> {
+  const envPath = join(installDir, 'app.env');
+  if (!(await pathExists(envPath))) return false;
+  const raw = await readFile(envPath, 'utf8').catch(() => '');
+  return raw.split(/\r?\n/).some((line) => line.trimStart().startsWith(LEGACY_ENV_PREFIX));
+}
+
 export async function planInstallMigration(input: {
   installDir: string;
   platform: NodeJS.Platform;
   serviceName: string;
-}): Promise<DirMigrationPlan> {
+}): Promise<DirMigrationPlan | null> {
   const fromDir = resolve(input.installDir);
   const toDir = resolve(newInstallDir(input.platform));
   const movable =
@@ -78,6 +106,9 @@ export async function planInstallMigration(input: {
     fromDir !== toDir &&
     !(await pathExists(toDir));
   if (!movable) {
+    // 目录不搬家、app.env 里也没有旧前缀的键：无事可做，别留下迁移记录
+    // （留着会让失败回滚误以为要退回改名前的服务身份）。
+    if (!(await hasLegacyEnvKeys(fromDir))) return null;
     return {
       fromDir,
       toDir: fromDir,
@@ -103,6 +134,7 @@ export function createMigrationRecord(plan: DirMigrationPlan): DirMigrationRecor
     envRewritten: false,
     dbRenamed: false,
     oldLabel: legacyLaunchdLabelFor(plan.oldServiceName),
+    undone: false,
   };
 }
 
@@ -257,10 +289,18 @@ export async function migrateInstallDir(
     }
   }
 
+  // 回退必须用**最新**的一步状态：DB 已改名而 env 写失败时，拿初始记录回退会把目录搬回去
+  // 却留下 vibeterm.db，配置指向不存在的 tmex.db。
+  let latest = record;
+  const track: MigrationPersist = async (next, dir) => {
+    latest = next;
+    await opts.persist?.(next, dir);
+  };
   try {
-    return await finishInstallDirMigration(record, opts);
+    return await finishInstallDirMigration(record, { ...opts, persist: track });
   } catch (error) {
-    await revertInstallDirMigration(record).catch(() => null);
+    await revertInstallDirMigration(latest, { txnId: opts.txnId }).catch(() => null);
+    await opts.persist?.({ ...latest, undone: true }, plan.fromDir).catch(() => null);
     throw error;
   }
 }
@@ -284,12 +324,23 @@ export async function revertInstallDirMigration(
       await renameDbTrioBack(join(record.toDir, 'backups', opts.txnId)).catch(() => null);
     }
   }
+  // app.env 还原失败（磁盘满 / 权限）也必须继续把 DB 名和目录搬回去，最后再把错误抛出来。
+  let failure: unknown = null;
   if (record.envBackup && (await pathExists(record.envBackup))) {
-    await writeText(join(record.toDir, 'app.env'), await readFile(record.envBackup, 'utf8'), 0o600);
-    await rm(record.envBackup, { force: true }).catch(() => null);
+    try {
+      await writeText(
+        join(record.toDir, 'app.env'),
+        await readFile(record.envBackup, 'utf8'),
+        0o600
+      );
+      await rm(record.envBackup, { force: true }).catch(() => null);
+    } catch (error) {
+      failure = error;
+    }
   }
   await restoreLegacyRuntimeFiles(record.toDir);
-  if (!record.moveDir) return;
-  if (await pathExists(record.fromDir)) return;
-  await rename(record.toDir, record.fromDir);
+  if (record.moveDir && !(await pathExists(record.fromDir))) {
+    await rename(record.toDir, record.fromDir);
+  }
+  if (failure) throw failure;
 }

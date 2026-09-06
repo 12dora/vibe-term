@@ -39,15 +39,18 @@ describe('waitForServiceRelease', () => {
     expect(busy).toBe(0);
   });
 
-  test('fails when the port stays busy', async () => {
+  test('warns and continues when a foreign process keeps the port', async () => {
     const installDir = await installDirWithPort(19999);
-    await expect(
-      waitForServiceRelease({
-        installDir,
-        timeoutMs: 300,
-        probes: { ownedAlive: () => false, portBusy: async () => true },
-      })
-    ).rejects.toThrow(/did not stop|未在/);
+    const warnings: string[] = [];
+    // 端口被别人占着不该让停服流程失败：自己的进程已经退出，后面的健康检查自会暴露问题
+    await waitForServiceRelease({
+      installDir,
+      timeoutMs: 5_000,
+      portGraceMs: 200,
+      log: (message) => warnings.push(message),
+      probes: { ownedAlive: () => false, portBusy: async () => true },
+    });
+    expect(warnings.join('\n')).toContain('still in use');
   });
 
   test('fails while the install still owns a live pid', async () => {

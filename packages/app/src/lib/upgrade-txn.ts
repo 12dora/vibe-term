@@ -29,7 +29,12 @@ import { finishCommittedCleanup, removeTxnDirs, safeRemoveDir } from './upgrade-
 import type { HealthCheckFn } from './upgrade-health';
 import { liveHealthUrl, pollHealthz, verifyOldHealthz } from './upgrade-health';
 import { isPidAlive } from './upgrade-lock';
-import type { DirMigrationPlan, DirMigrationRecord } from './upgrade-migrate-dir';
+import {
+  type DirMigrationPlan,
+  type DirMigrationRecord,
+  cleanNewRuntimeFiles,
+  isLegacyLabelVersion,
+} from './upgrade-migrate-dir';
 import { ensureCandidateNativeAddon } from './upgrade-native';
 import {
   type UpgradeServiceControl,
@@ -37,7 +42,7 @@ import {
   killPidAndWait,
   waitForPidExit,
 } from './upgrade-process';
-import { backupRunScript, restoreRunScript } from './upgrade-run-script';
+import { backupRunScript, restoreRunScript, runScriptBackupPath } from './upgrade-run-script';
 import {
   type UpgradeJournal,
   advanceJournal,
@@ -236,6 +241,7 @@ export async function rollbackToOld(
     );
   }
   await restoreRunScript(installDir, journal.txnId, bunPath);
+  if (isLegacyLabelVersion(journal.fromVersion)) await cleanNewRuntimeFiles(installDir);
   const restartAt = new Date().toISOString();
   await service.start();
   const url = await liveHealthUrl(installDir);
@@ -249,6 +255,8 @@ export async function rollbackToOld(
   await writeJournal(installDir, {
     ...journal,
     phase: 'rolled_back',
+    // 旧版本已经切回并验证通过，迁移撤销到此收尾。
+    dirMigration: undefined,
     updatedAt: new Date().toISOString(),
     error,
   });
@@ -371,6 +379,11 @@ async function stageAndPreflight(
     const message = errorMessage(error);
     await killRecordedCandidate(installDir, next);
     await removeCandidateVersion(installDir, ctx.toVersion);
+    // 旧布局转换已经用新模板重写过 run.sh：中止前把事务备份还回去，
+    // 否则一次失败的升级会把还在跑 1.x 的安装留在起不来的状态。
+    if (await pathExists(runScriptBackupPath(installDir, ctx.txnId))) {
+      await restoreRunScript(installDir, ctx.txnId, ctx.bunPath).catch(() => null);
+    }
     await removeTxnDirs(installDir, ctx.txnId);
     await writeJournal(installDir, {
       ...next,
@@ -395,6 +408,29 @@ export interface TxnContext {
   log: (message: string) => void;
   serviceMode: ServiceMode;
   migrationPlan?: DirMigrationPlan | null;
+  /** 当前注册用的服务名；回滚到 < 2.0.0 时要用它重建成旧 label 的控制器 */
+  serviceName?: string;
+}
+
+/**
+ * 恢复 < 2.0.0 时一律换成旧 label 的控制器：旧 runtime 只认 `com.tmex.<服务名>`，
+ * 用新 label 注册它，1.1.x 的 CLI 就找不到自己的 job，下一次升级会因端口占用失败。
+ * 迁移分支已经重建过控制器，这里只处理「没发生迁移」的情况。
+ */
+function restoreServiceControl(
+  state: { installDir: string; service: UpgradeServiceControl },
+  journal: UpgradeJournal,
+  deps: UpgradeApplyDeps,
+  ctx: TxnContext
+): UpgradeServiceControl {
+  if (!isLegacyLabelVersion(journal.fromVersion)) return state.service;
+  if (!ctx.serviceName || !deps.rebuildService) return state.service;
+  return deps.rebuildService({
+    installDir: state.installDir,
+    serviceName: ctx.serviceName,
+    legacyServiceName: ctx.serviceName,
+    legacyLabel: true,
+  });
 }
 
 /** 失败收尾：先把可能已经搬走的安装目录还原，再决定要不要回滚版本。 */
@@ -411,6 +447,8 @@ async function handleTxnFailure(
   ctx: TxnContext
 ): Promise<void> {
   let latest = (await readJournal(state.installDir)) ?? journal;
+  // 迁移撤销会把 phase 改成 reverting，先按撤销前的阶段决定要不要回滚版本。
+  const needsRollback = latest.phase === 'started' || latest.phase === 'switching';
   const { migration } = state;
   if (migration) {
     try {
@@ -434,16 +472,18 @@ async function handleTxnFailure(
         installDir: migration.fromDir,
         serviceName: migration.oldServiceName,
         legacyServiceName: migration.newServiceName,
-        legacyLabel: true,
+        legacyLabel: isLegacyLabelVersion(latest.fromVersion),
       }) ?? state.service;
     state.migration = null;
   }
-  if (latest.phase !== 'started' && latest.phase !== 'switching') return;
+  if (!needsRollback) return;
+  // 迁移分支已经重建成旧 label 的控制器（还带着要拆掉的新服务名），别再覆盖它。
+  const service = migration ? state.service : restoreServiceControl(state, latest, deps, ctx);
   await rollbackToOld(
     state.installDir,
     latest,
     ctx.bunPath,
-    state.service,
+    service,
     ctx.healthCheck,
     errorMessage(error),
     ctx.log,

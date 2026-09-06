@@ -289,40 +289,59 @@ async function runLockedUpgrade(opts: {
   repair?: typeof repairUpgrade;
   apply?: typeof applyUpgrade;
 }): Promise<void> {
-  const service = createServiceControl({
-    installDir: opts.installDir,
-    meta: opts.meta,
-    noServiceFlag: asBoolean(opts.parsed.flags['no-service']) ?? false,
-  });
+  const noServiceFlag = asBoolean(opts.parsed.flags['no-service']) ?? false;
+  // repair 必须能按 journal 推导出的目录 / 服务身份重建控制器：在读 journal 之前建好的那一个
+  // 用的是旧身份，迁移中断后会漏停 com.vibeterm.*，撤销迁移后又会去启动已经搬走的 run.sh。
+  const buildService = (o: {
+    installDir: string;
+    serviceName?: string;
+    legacyServiceName?: string;
+    legacyLabel?: boolean;
+  }) =>
+    createServiceControl({
+      installDir: o.installDir,
+      meta: opts.meta,
+      noServiceFlag,
+      serviceName: o.serviceName,
+      legacyServiceName: o.legacyServiceName,
+      legacyLabel: o.legacyLabel,
+    });
   const repair = opts.repair ?? repairUpgrade;
   const apply = opts.apply ?? applyUpgrade;
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
-  const action = await repair(opts.installDir, opts.bunPath, { service, activeTxnId });
+  const repaired = await repair(opts.installDir, opts.bunPath, {
+    rebuildService: buildService,
+    activeTxnId,
+  });
   if (opts.repairOnly) {
-    console.log(`[vibeterm] ${t('upgrade.repairDone', { action })}`);
+    console.log(`[vibeterm] ${t('upgrade.repairDone', { action: repaired.action })}`);
     return;
   }
 
+  // 撤销迁移会把安装搬回旧目录，后面的一切都要按恢复之后的路径来。
+  const installDir = repaired.installDir;
+  const installLayout =
+    installDir === opts.installDir ? opts.installLayout : createInstallLayout(installDir);
+  const service = buildService({ installDir });
+
   const packageLayout = asString(opts.parsed.flags.txn)
-    ? await packageLayoutFromStaged(opts.installDir, asString(opts.parsed.flags.txn) as string)
+    ? await packageLayoutFromStaged(installDir, asString(opts.parsed.flags.txn) as string)
     : await resolvePackageLayout(import.meta.url);
   const cliVersion = await readPackageVersion(packageLayout.packageRoot);
   const toVersion = asString(opts.parsed.flags.version) || cliVersion;
 
-  if (await pathExists(opts.installLayout.envPath)) {
-    await mergeMissingEnvFileKeys(opts.installLayout.envPath, hubEnvDefaults());
+  if (await pathExists(installLayout.envPath)) {
+    await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
   }
 
   await apply(
     {
-      installDir: opts.installDir,
+      installDir,
       toVersion,
       packageLayout,
       bunPath: opts.bunPath,
       keepBackup: opts.keepBackup,
-      noService:
-        resolveServiceMode(opts.meta, asBoolean(opts.parsed.flags['no-service']) ?? false) ===
-        'none',
+      noService: resolveServiceMode(opts.meta, noServiceFlag) === 'none',
       allowMissingNative: opts.allowMissingNative,
       txnId: asString(opts.parsed.flags.txn),
       serviceName: opts.meta.serviceName,

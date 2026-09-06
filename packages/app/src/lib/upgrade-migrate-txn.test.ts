@@ -10,6 +10,7 @@ import {
   type DirMigrationPlan,
   type DirMigrationRecord,
   createMigrationRecord,
+  planInstallMigration,
 } from './upgrade-migrate-dir';
 import { type UpgradeJournal, readJournal, writeJournal } from './upgrade-state';
 import { readCurrentVersion, switchCurrent } from './upgrade-switch';
@@ -89,11 +90,18 @@ async function seedLegacyInstall(installDir: string, version: string): Promise<v
   await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
 }
 
-function fakeService(): UpgradeServiceControl & { running: boolean; starts: number } {
+function fakeService(failStopAt?: number): UpgradeServiceControl & {
+  running: boolean;
+  starts: number;
+  stops: number;
+} {
   return {
     running: true,
     starts: 0,
+    stops: 0,
     async stop() {
+      this.stops += 1;
+      if (failStopAt !== undefined && this.stops === failStopAt) throw new Error('stop-boom');
       this.running = false;
     },
     async start() {
@@ -135,6 +143,39 @@ type TxnRun = {
   noService: true;
   skipShims: true;
 };
+
+/** 造一份「已经改完名」的安装：VIBETERM_* 键、data/vibeterm.db、serviceName=vibeterm。 */
+async function seedModernInstall(installDir: string, version: string): Promise<void> {
+  const pkg = await writePackage(join(installDir, '_seed-pkg'), version);
+  await mkdir(join(installDir, 'data'), { recursive: true });
+  const { deployPackageToVersionDir } = await import('./upgrade-apply');
+  await deployPackageToVersionDir(pkg, installDir, version);
+  await switchCurrent(installDir, version);
+  await writeFile(
+    join(installDir, 'install-meta.json'),
+    `${JSON.stringify({
+      serviceName: 'vibeterm',
+      platform: process.platform,
+      autostart: false,
+      installDir,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cliVersion: version,
+      bunPath: '/usr/bin/bun',
+    })}\n`
+  );
+  await writeFile(
+    join(installDir, 'app.env'),
+    [
+      'NODE_ENV=production',
+      'GATEWAY_PORT=19883',
+      'VIBETERM_BIND_HOST=127.0.0.1',
+      'VIBETERM_MASTER_KEY=secret',
+      `DATABASE_URL=${join(installDir, 'data', 'vibeterm.db')}`,
+      '',
+    ].join('\n')
+  );
+  await writeFile(join(installDir, 'data', 'vibeterm.db'), 'db-bytes');
+}
 
 function txnOptions(fromDir: string, pkg: PackageLayout): TxnRun {
   return {
@@ -387,6 +428,242 @@ describe('executeUpgradeTxn install dir migration', () => {
   });
 });
 
+describe('restoring a pre-2.0 version', () => {
+  test('the txn rollback re-registers under the legacy label and drops the new runtime files', async () => {
+    const { fromDir, pkg } = await setup();
+    const service = fakeService();
+    const rebuilt: Array<{
+      installDir: string;
+      serviceName: string;
+      legacyServiceName?: string;
+      legacyLabel?: boolean;
+    }> = [];
+    // 2.0.0 起过一次留下的新命名残留
+    await writeFile(join(fromDir, 'vibeterm.pid'), '{"pid":1}');
+    await writeFile(join(fromDir, 'vibeterm.log'), 'new');
+    await writeFile(join(fromDir, 'vibeterm.err.log'), 'new');
+
+    await expect(
+      executeUpgradeTxn(
+        txnOptions(fromDir, pkg),
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+          rebuildService: (opts) => {
+            rebuilt.push(opts);
+            return service;
+          },
+        },
+        {
+          installDir: fromDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          txnId: 'txn-legacy-label',
+          keepBackup: false,
+          resolvedFrom: '1.1.40',
+          service,
+          healthCheck: async ({ expectedVersion }) => {
+            if (expectedVersion === '2.0.0') throw new Error('unhealthy');
+          },
+          log: () => undefined,
+          serviceMode: 'none',
+          serviceName: 'tmex',
+          migrationPlan: null,
+        }
+      )
+    ).rejects.toThrow();
+
+    // 1.1.40 的 runtime 只认 com.tmex.tmex / tmex.log
+    expect(rebuilt).toEqual([
+      {
+        installDir: fromDir,
+        serviceName: 'tmex',
+        legacyServiceName: 'tmex',
+        legacyLabel: true,
+      },
+    ]);
+    expect(await pathExists(join(fromDir, 'vibeterm.pid'))).toBe(false);
+    expect(await pathExists(join(fromDir, 'vibeterm.log'))).toBe(false);
+    expect(await pathExists(join(fromDir, 'vibeterm.err.log'))).toBe(false);
+  });
+
+  test('repair restart_old without a migration uses the legacy label too', async () => {
+    const { fromDir } = await setup();
+    await writeJournal(fromDir, {
+      txnId: 'txn-stopping',
+      phase: 'stopping',
+      fromVersion: '1.1.40',
+      toVersion: '2.0.0',
+      startedAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:01.000Z',
+    });
+    await writeFile(join(fromDir, 'vibeterm.pid'), '{"pid":1}');
+    await writeFile(join(fromDir, 'vibeterm.log'), 'new');
+
+    const service = fakeService();
+    service.running = false;
+    const rebuilt: Array<{
+      installDir: string;
+      serviceName: string;
+      legacyServiceName?: string;
+      legacyLabel?: boolean;
+    }> = [];
+    const { action } = await repairUpgrade(fromDir, '/usr/bin/bun', {
+      healthCheck: async () => undefined,
+      shimDirs: [join(fromDir, '_shims'), join(fromDir, '_bun-bin')],
+      rebuildService: (opts) => {
+        rebuilt.push(opts);
+        return service;
+      },
+    });
+
+    expect(action).toBe('restart_old');
+    expect(service.starts).toBe(1);
+    expect(rebuilt.at(-1)).toEqual({
+      installDir: fromDir,
+      serviceName: 'tmex',
+      legacyServiceName: 'tmex',
+      legacyLabel: true,
+    });
+    expect(await pathExists(join(fromDir, 'vibeterm.pid'))).toBe(false);
+    expect(await pathExists(join(fromDir, 'vibeterm.log'))).toBe(false);
+  });
+});
+
+describe('a 2.x upgrade that fails must keep the new service identity', () => {
+  test('no migration plan, no relabel to com.tmex.*', async () => {
+    const root = await scratch();
+    const installDir = join(root, 'vibeterm');
+    await seedModernInstall(installDir, '2.0.0');
+    const pkg = await writePackage(join(root, '_pkg201'), '2.0.1');
+    const service = fakeService();
+    const rebuilt: unknown[] = [];
+
+    // 已经是新目录 / 新 env：根本不该产生迁移计划
+    expect(
+      await planInstallMigration({ installDir, platform: 'linux', serviceName: 'vibeterm' })
+    ).toBeNull();
+
+    await expect(
+      executeUpgradeTxn(
+        { ...txnOptions(installDir, pkg), toVersion: '2.0.1' },
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+          rebuildService: (opts) => {
+            rebuilt.push(opts);
+            return service;
+          },
+        },
+        {
+          installDir,
+          toVersion: '2.0.1',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          txnId: 'txn-2x',
+          keepBackup: false,
+          resolvedFrom: '2.0.0',
+          service,
+          healthCheck: async ({ expectedVersion }) => {
+            if (expectedVersion === '2.0.1') throw new Error('unhealthy');
+          },
+          log: () => undefined,
+          serviceMode: 'none',
+          serviceName: 'vibeterm',
+          migrationPlan: null,
+        }
+      )
+    ).rejects.toThrow();
+
+    // 回滚到 2.0.0 不能把服务改回 com.tmex.*
+    expect(rebuilt).toEqual([]);
+    expect(await readCurrentVersion(installDir)).toBe('2.0.0');
+    const env = await readEnvFile(join(installDir, 'app.env'));
+    expect(env.DATABASE_URL).toBe(join(installDir, 'data', 'vibeterm.db'));
+  });
+});
+
+describe('an interrupted migration undo', () => {
+  test('repair keeps going towards the old version instead of the candidate', async () => {
+    const { root, fromDir, toDir, plan, pkg } = await setup();
+    // 第三次 stop（rollbackToOld 里那次）失败 = 撤销完目录、还没切回 current 就断电
+    const service = fakeService(3);
+    await expect(
+      executeUpgradeTxn(
+        txnOptions(fromDir, pkg),
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+          rebuildService: () => service,
+        },
+        {
+          installDir: fromDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          txnId: 'txn-undo-crash',
+          keepBackup: true,
+          resolvedFrom: '1.1.40',
+          service,
+          healthCheck: async ({ expectedVersion }) => {
+            if (expectedVersion === '2.0.0') throw new Error('unhealthy');
+          },
+          log: () => undefined,
+          serviceMode: 'none',
+          serviceName: 'tmex',
+          migrationPlan: plan,
+        }
+      )
+    ).rejects.toThrow();
+
+    // 目录已经搬回来了，但回滚还没收尾：记录必须留着，方向必须已经定死
+    expect(await pathExists(toDir)).toBe(false);
+    const crashed = await readJournal(fromDir);
+    expect(crashed?.phase).toBe('reverting');
+    expect(crashed?.dirMigration?.undone).toBe(true);
+    expect(await readCurrentVersion(fromDir)).toBe('2.0.0');
+
+    // 调用方在读 journal 之前建好的控制器不能被沿用（目录 / 身份都已经变了）
+    const stale = fakeService();
+    const restored = fakeService();
+    restored.running = false;
+    const rebuilt: Array<{
+      installDir: string;
+      serviceName: string;
+      legacyServiceName?: string;
+      legacyLabel?: boolean;
+    }> = [];
+    const { action, installDir } = await repairUpgrade(fromDir, '/usr/bin/bun', {
+      service: stale,
+      rebuildService: (opts) => {
+        rebuilt.push(opts);
+        return restored;
+      },
+      healthCheck: async () => undefined,
+      shimDirs: [join(root, '_shims'), join(root, '_bun-bin')],
+    });
+
+    expect(action).toBe('restart_old');
+    expect(installDir).toBe(fromDir);
+    expect(stale.starts).toBe(0);
+    expect(restored.starts).toBe(1);
+    expect(rebuilt.at(-1)).toEqual({
+      installDir: fromDir,
+      serviceName: 'tmex',
+      legacyServiceName: 'vibeterm',
+      legacyLabel: true,
+    });
+    expect(await readCurrentVersion(fromDir)).toBe('1.1.40');
+    const journal = await readJournal(fromDir);
+    expect(journal?.phase).toBe('aborted');
+    expect(journal?.dirMigration).toBeUndefined();
+  });
+});
+
 describe('repairServiceIdentity', () => {
   test('uses the new identity while the migration stands and the old one when undoing it', () => {
     const record = createMigrationRecord({
@@ -415,11 +692,15 @@ describe('repairServiceIdentity', () => {
       installDir: '/old',
       identity: { serviceName: 'tmex', legacyServiceName: 'vibeterm', legacyLabel: true },
     });
-    // rename 没成功时记录作废
+    // rename 没成功（或本来就没有迁移）：仍然按「恢复 1.x」用旧 label 注册
     expect(repairServiceIdentity('/old', journal, 'restart_old')).toEqual({
       installDir: '/old',
-      identity: {},
+      identity: { legacyLabel: true },
     });
+    // 恢复的是 2.x 就不该再用旧 label
+    expect(
+      repairServiceIdentity('/old', { ...journal, fromVersion: '2.0.0' }, 'restart_old')
+    ).toEqual({ installDir: '/old', identity: {} });
   });
 });
 
@@ -449,7 +730,7 @@ describe('repairUpgrade after a crash inside the migration', () => {
 
     const service = fakeService();
     const localBinDir = join(root, '_shims');
-    const action = await repairUpgrade(toDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(toDir, '/usr/bin/bun', {
       service,
       healthCheck: async () => undefined,
       shimDirs: [localBinDir, join(root, '_bun-bin')],
@@ -500,7 +781,7 @@ describe('repairUpgrade after a crash inside the migration', () => {
     await writeJournal(toDir, { ...(committed as UpgradeJournal), phase: 'started' });
 
     const localBinDir = join(root, '_shims');
-    const action = await repairUpgrade(toDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(toDir, '/usr/bin/bun', {
       service,
       healthCheck: async ({ expectedVersion }) => {
         if (expectedVersion === '2.0.0') throw new Error('unhealthy');

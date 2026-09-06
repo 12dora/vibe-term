@@ -95,10 +95,19 @@ export async function revertMigrationAfterFailure(opts: {
   log: (message: string) => void;
 }): Promise<UpgradeJournal> {
   const { record, journal, bunPath, log } = opts;
+  // 先把「正在回退」写下来：撤销目录之后、旧版本收尾之前再断电，repair 必须仍然朝旧版本走，
+  // 而不是看到 started 就去启动候选版本（那份布局已经不存在了）。
+  const reverting: UpgradeJournal = {
+    ...journal,
+    phase: 'reverting',
+    updatedAt: new Date().toISOString(),
+  };
+  await writeJournal(record.toDir, reverting).catch(() => null);
   await revertInstallDirMigration(record, { txnId: journal.txnId });
   const reverted: UpgradeJournal = {
-    ...journal,
-    dirMigration: undefined,
+    ...reverting,
+    // 记录保留到回滚收尾为止，只标记「已撤销」：中途再断电才知道不必重复撤销。
+    dirMigration: { ...record, undone: true },
     updatedAt: new Date().toISOString(),
   };
   await writeJournal(record.fromDir, reverted);

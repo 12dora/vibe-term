@@ -123,7 +123,7 @@ describe('repairUpgrade journal recovery', () => {
       updatedAt: '2026-08-31T00:00:01.000Z',
     });
 
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', { service: fakeService() });
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', { service: fakeService() });
     expect(action).toBe('abort_candidate');
     expect(await pathExists(join(installDir, 'versions', '2.0.0'))).toBe(false);
     expect(await pathExists(join(installDir, 'staging', 'txn-1'))).toBe(false);
@@ -145,7 +145,7 @@ describe('repairUpgrade journal recovery', () => {
     });
     const service = fakeService();
     service.running = false;
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
       service,
       healthCheck: async () => undefined,
     });
@@ -170,7 +170,7 @@ describe('repairUpgrade journal recovery', () => {
       startedAt: '2026-08-31T00:00:00.000Z',
       updatedAt: '2026-08-31T00:00:01.000Z',
     });
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
       service: fakeService(),
       healthCheck: async ({ expectedVersion }) => {
         expect(expectedVersion).toBe('2.0.0');
@@ -230,7 +230,7 @@ describe('repairUpgrade journal recovery', () => {
           if (expectedVersion === '2.0.0') throw new Error('new-unhealthy');
         },
       })
-    ).resolves.toBe('verify_or_rollback');
+    ).resolves.toMatchObject({ action: 'verify_or_rollback' });
     expect(await readCurrentVersion(installDir)).toBe('1.0.0');
     expect((await readJournal(installDir))?.phase).toBe('rolled_back');
     expect(await pathExists(join(installDir, 'versions', '2.0.0'))).toBe(false);
@@ -537,7 +537,7 @@ describe('repairUpgrade release gates', () => {
         candidatePid: child.pid,
         candidateStartedAt: new Date().toISOString(),
       });
-      const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+      const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
         service: fakeService(),
         healthCheck: async () => undefined,
       });
@@ -562,7 +562,7 @@ describe('repairUpgrade active txn and legacy dirs', () => {
     await writeFile(join(installDir, 'staging', 'active-txn', 'keep'), 'payload');
     await mkdir(join(installDir, 'staging', 'orphan'), { recursive: true });
     await writeFile(join(installDir, 'staging', 'orphan', 'x'), 'x');
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
       service: fakeService(),
       activeTxnId: 'active-txn',
     });
@@ -675,7 +675,7 @@ describe('repairUpgrade stopping and old health', () => {
     });
     const service = fakeService();
     service.running = true;
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
       service,
       healthCheck: async () => undefined,
     });
@@ -696,7 +696,7 @@ describe('repairUpgrade stopping and old health', () => {
     });
     const service = fakeService();
     service.running = false;
-    const action = await repairUpgrade(installDir, '/usr/bin/bun', {
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
       service,
       healthCheck: async () => undefined,
     });
@@ -722,7 +722,7 @@ describe('repairUpgrade stopping and old health', () => {
         service,
         healthCheck: async () => undefined,
       })
-    ).toBe('restart_old');
+    ).toMatchObject({ action: 'restart_old' });
   });
 
   test('stop failure does not copy the database', async () => {
@@ -796,5 +796,141 @@ describe('repairUpgrade stopping and old health', () => {
     expect(seen[1]?.minStartedAt).toBeUndefined();
     expect(await readCurrentVersion(installDir)).toBe('1.0.2');
     expect((await readJournal(installDir))?.phase).toBe('rolled_back');
+  });
+});
+
+describe('legacy layout run.sh backup', () => {
+  test('restores the pre-conversion run.sh byte for byte when the upgrade fails', async () => {
+    const installDir = await scratch();
+    // 没有 current 的 1.x 布局，run.sh 是那一版真正写出来的脚本（只导出 TMEX_* 路径变量）
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(installDir, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    const legacyRunScript = [
+      '#!/usr/bin/env bash',
+      'set -euo pipefail',
+      `export TMEX_INSTALL_DIR='${installDir}'`,
+      `export TMEX_FE_DIST_DIR='${join(installDir, 'current', 'resources', 'fe-dist')}'`,
+      `export TMEX_MIGRATIONS_DIR='${join(installDir, 'current', 'resources', 'gateway-drizzle')}'`,
+      `exec /usr/bin/bun '${join(installDir, 'current', 'runtime', 'server.js')}'`,
+      '',
+    ].join('\n');
+    await writeFile(join(installDir, 'run.sh'), legacyRunScript);
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify({
+        serviceName: 'tmex',
+        platform: process.platform,
+        autostart: false,
+        installDir,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        cliVersion: '1.1.40',
+        bunPath: '/usr/bin/bun',
+      })}\n`
+    );
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'GATEWAY_PORT=19883',
+        'VIBETERM_BIND_HOST=127.0.0.1',
+        'VIBETERM_MASTER_KEY=test',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        '',
+      ].join('\n')
+    );
+
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    const service = fakeService();
+    await expect(
+      applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+          skipShims: true,
+          keepBackup: true,
+        },
+        {
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          // requireTlsListener 只有真正启动之后的健康检查才会带，preflight 不带
+          healthCheck: async ({ expectedVersion, requireTlsListener }) => {
+            if (requireTlsListener && expectedVersion === '2.0.0') throw new Error('unhealthy');
+          },
+        }
+      )
+    ).rejects.toThrow();
+
+    // 布局转换会先用新模板重写 run.sh，备份必须赶在那之前取，否则旧 runtime 起不来
+    expect(await readFile(join(installDir, 'run.sh'), 'utf8')).toBe(legacyRunScript);
+    expect(await readCurrentVersion(installDir)).toBe('1.1.40');
+  });
+
+  test('a preflight abort also puts the pre-conversion run.sh back', async () => {
+    const installDir = await scratch();
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(installDir, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    const legacyRunScript = `#!/usr/bin/env bash\nexport TMEX_INSTALL_DIR='${installDir}'\n`;
+    await writeFile(join(installDir, 'run.sh'), legacyRunScript);
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      `${JSON.stringify({
+        serviceName: 'tmex',
+        platform: process.platform,
+        autostart: false,
+        installDir,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        cliVersion: '1.1.40',
+        bunPath: '/usr/bin/bun',
+      })}\n`
+    );
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'GATEWAY_PORT=19883',
+        'VIBETERM_BIND_HOST=127.0.0.1',
+        'VIBETERM_MASTER_KEY=test',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        '',
+      ].join('\n')
+    );
+
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    await expect(
+      applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+          skipShims: true,
+        },
+        {
+          service: fakeService(),
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => {
+            throw new Error('preflight-boom');
+          },
+        }
+      )
+    ).rejects.toThrow(/preflight-boom|Preflight/i);
+
+    expect(await readFile(join(installDir, 'run.sh'), 'utf8')).toBe(legacyRunScript);
   });
 });

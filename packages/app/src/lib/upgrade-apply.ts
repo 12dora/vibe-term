@@ -7,7 +7,7 @@ import { defaultBunBinDir, defaultLocalBinDir } from './cli-shim';
 import { errorMessage } from './error-message';
 import { pathExists } from './fs-utils';
 import { writeRunScript } from './install';
-import { createInstallLayout, packageLayoutFromRoot } from './install-layout';
+import { createInstallLayout, hasCurrentLayout, packageLayoutFromRoot } from './install-layout';
 import { readJsonFile } from './json-file';
 import { restoreDbTrio } from './upgrade-db';
 import { finishCommittedCleanup, sweepUpgradeGarbage } from './upgrade-gc';
@@ -18,7 +18,9 @@ import { acquireUpgradeLock, releaseUpgradeLock } from './upgrade-lock';
 import {
   type DirMigrationRecord,
   type MigrationPersist,
+  cleanNewRuntimeFiles,
   finishInstallDirMigration,
+  isLegacyLabelVersion,
   planInstallMigration,
 } from './upgrade-migrate-dir';
 import {
@@ -28,6 +30,7 @@ import {
   hasOwnedLivePidFile,
   pidFilePath,
 } from './upgrade-process';
+import { backupRunScript } from './upgrade-run-script';
 import {
   createManagedServiceControl,
   createServiceControl,
@@ -111,11 +114,31 @@ function resolveRepairService(
   meta: InstallMeta | null,
   identity: ServiceIdentity
 ): UpgradeServiceControl {
+  // 工厂优先：CLI 在知道 journal 之前就建好的 deps.service 用的是旧身份 / 旧目录，
+  // 迁移中断后拿它去停服务会漏掉 com.vibeterm.*，搬回目录后又会去启动已经不存在的 run.sh。
+  const serviceName = identity.serviceName ?? meta?.serviceName ?? DEFAULT_SERVICE_NAME;
+  // 没发生迁移时新旧服务名相同：装旧 label 那份时照样要拆掉同名的新 label 注册。
+  const legacyServiceName = identity.legacyServiceName ?? serviceName;
+  const rebuilt = deps.rebuildService?.({
+    installDir,
+    serviceName,
+    legacyServiceName,
+    legacyLabel: identity.legacyLabel,
+  });
+  if (rebuilt) return rebuilt;
   if (deps.service) return deps.service;
-  if (meta) return createServiceControl({ installDir, meta, ...identity });
+  if (meta) {
+    return createServiceControl({
+      installDir,
+      meta,
+      serviceName,
+      legacyServiceName,
+      legacyLabel: identity.legacyLabel,
+    });
+  }
   return createManagedServiceControl({
-    serviceName: identity.serviceName ?? DEFAULT_SERVICE_NAME,
-    legacyServiceName: identity.legacyServiceName,
+    serviceName,
+    legacyServiceName,
     installDir,
     autostart: true,
     runScriptPath: createInstallLayout(installDir).runScriptPath,
@@ -123,14 +146,24 @@ function resolveRepairService(
   });
 }
 
-/** 迁移记录只有当前确实站在它的目标目录上才算数：rename 没成功时记录作废。 */
+/** 迁移记录只有当前确实站在它的目标目录上、且尚未撤销才算「还在生效」。 */
 function activeMigration(
   installDir: string,
   journal: UpgradeJournal | null
 ): DirMigrationRecord | null {
   const record = journal?.dirMigration;
-  if (!record) return null;
+  if (!record || record.undone) return null;
   return resolve(installDir) === resolve(record.toDir) ? record : null;
+}
+
+/** 已经撤销、目录也搬回旧位置的记录：还要按旧身份把回滚收尾。 */
+function undoneMigration(
+  installDir: string,
+  journal: UpgradeJournal | null
+): DirMigrationRecord | null {
+  const record = journal?.dirMigration;
+  if (!record?.undone) return null;
+  return resolve(installDir) === resolve(record.fromDir) ? record : null;
 }
 
 async function verifyOldServiceRunning(
@@ -140,10 +173,13 @@ async function verifyOldServiceRunning(
   healthCheck: HealthCheckFn,
   serviceMode?: ServiceMode
 ): Promise<void> {
+  // 服务还在跑就绝不再 start()：第二个 run.sh 会覆盖 pid 文件后因端口占用退出。
   const alreadyRunning = await service.isRunning();
   let restarted = false;
   let restartAt: string | undefined;
   if (!alreadyRunning) {
+    // 拉起 < 2.0.0 之前清掉新命名的 pid / 日志，并用旧 label 的控制器注册（见 restoreService）。
+    if (isLegacyLabelVersion(journal.fromVersion)) await cleanNewRuntimeFiles(installDir);
     restartAt = new Date().toISOString();
     await service.start();
     restarted = true;
@@ -169,6 +205,8 @@ async function markAborted(installDir: string, journal: UpgradeJournal): Promise
   await writeJournal(installDir, {
     ...journal,
     phase: 'aborted',
+    // 旧版本已经恢复并验证通过，迁移撤销到此收尾。
+    dirMigration: undefined,
     updatedAt: new Date().toISOString(),
   });
 }
@@ -208,6 +246,13 @@ async function completeInterruptedMigration(
   return current;
 }
 
+/** 恢复旧版本时该用的控制器：< 2.0.0 一律换成旧 label / 旧日志名那一份。 */
+function restoreService(rt: RepairRuntime, journal: UpgradeJournal | null): UpgradeServiceControl {
+  const target = repairServiceIdentity(rt.installDir, journal, 'restore');
+  if (!target.identity.legacyLabel && !target.identity.serviceName) return rt.service;
+  return resolveRepairService(target.installDir, rt.deps, rt.meta, target.identity);
+}
+
 /** 撤销迁移并把上下文切回旧目录 / 旧服务身份；新服务停不下来就直接抛。 */
 async function undoMigrationInRepair(
   rt: RepairRuntime,
@@ -241,20 +286,23 @@ async function undoMigrationInRepair(
 export function repairServiceIdentity(
   installDir: string,
   journal: UpgradeJournal | null,
-  action: RecoveryKind
+  action: RecoveryKind | 'restore'
 ): { installDir: string; identity: ServiceIdentity } {
-  const record = activeMigration(installDir, journal);
-  if (!record) return { installDir, identity: {} };
-  if (action === 'restart_old') {
+  const record = activeMigration(installDir, journal) ?? undoneMigration(installDir, journal);
+  if (action === 'restart_old' || action === 'restore') {
+    // 恢复 < 2.0.0 就必须注册回旧 label / 旧日志名，否则旧 CLI 管不了自己的 job。
+    const legacyLabel = isLegacyLabelVersion(journal?.fromVersion);
+    if (!record) return { installDir, identity: legacyLabel ? { legacyLabel } : {} };
     return {
       installDir: record.fromDir,
       identity: {
         serviceName: record.oldServiceName,
         legacyServiceName: record.newServiceName,
-        legacyLabel: true,
+        legacyLabel,
       },
     };
   }
+  if (!record) return { installDir, identity: {} };
   return {
     installDir,
     identity: { serviceName: record.newServiceName, legacyServiceName: record.oldServiceName },
@@ -284,7 +332,20 @@ async function prepareRepair(input: {
     migration: record,
     service: resolveRepairService(input.installDir, input.deps, meta, identity),
   };
-  if (!record || !input.journal) return rt;
+  if (!record) {
+    if (input.action !== 'restart_old') return rt;
+    // 迁移已经撤销（回滚中途断电）或本来就没有迁移：都按「恢复旧版本」的身份收尾。
+    const undone = undoneMigration(input.installDir, input.journal);
+    const meta2 = undone ? await readInstallMeta(undone.fromDir) : meta;
+    const target = repairServiceIdentity(input.installDir, input.journal, 'restore');
+    return {
+      ...rt,
+      installDir: target.installDir,
+      meta: meta2,
+      service: resolveRepairService(target.installDir, input.deps, meta2, target.identity),
+    };
+  }
+  if (!input.journal) return rt;
 
   // 新版本还没起来过（stopping / migrate / backup / switching 中断）：整体撤回迁移，
   // 回到旧目录与旧 label 上恢复旧版本，绝不拿旧服务名去启动新前缀的 label。
@@ -343,7 +404,7 @@ async function repairVerifyOrRollback(
   rt: RepairRuntime,
   journal: UpgradeJournal,
   healthCheck: HealthCheckFn
-): Promise<void> {
+): Promise<string> {
   const url = await liveHealthUrl(rt.installDir);
   try {
     if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
@@ -367,11 +428,12 @@ async function repairVerifyOrRollback(
       rt.meta?.serviceMode,
       rt.migration?.newServiceName
     );
+    return rt.installDir;
   } catch (error) {
     const message = errorMessage(error);
     const back = rt.migration
       ? await undoMigrationInRepair(rt, journal, rt.migration)
-      : { ...rt, journal };
+      : { ...rt, journal, service: restoreService(rt, journal) };
     await rollbackToOld(
       back.installDir,
       back.journal ?? journal,
@@ -382,6 +444,7 @@ async function repairVerifyOrRollback(
       rt.log,
       back.meta?.serviceMode
     );
+    return back.installDir;
   }
 }
 
@@ -396,11 +459,17 @@ async function repairTerminalCleanup(rt: RepairRuntime, journal: UpgradeJournal)
   await sweepRepairGarbage(rt.installDir, rt.deps);
 }
 
+export interface RepairOutcome {
+  action: RecoveryKind;
+  /** 恢复之后真正生效的安装目录：撤销迁移会把它搬回旧路径，调用方不能再用原来的路径。 */
+  installDir: string;
+}
+
 export async function repairUpgrade(
   installDir: string,
   bunPath: string,
   deps: UpgradeApplyDeps = {}
-): Promise<string> {
+): Promise<RepairOutcome> {
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
   const initial = await readJournal(installDir);
@@ -410,22 +479,22 @@ export async function repairUpgrade(
 
   if (!journal) {
     await repairMissingJournal(rt.installDir, bunPath, deps);
-    return action;
+    return { action, installDir: rt.installDir };
   }
   if (action === 'abort_candidate') {
     await repairAbortCandidate(rt, journal);
-    return action;
+    return { action, installDir: rt.installDir };
   }
   if (action === 'restart_old') {
     await repairRestartOld(rt, journal, healthCheck);
-    return action;
+    return { action, installDir: rt.installDir };
   }
   if (action === 'verify_or_rollback') {
-    await repairVerifyOrRollback(rt, journal, healthCheck);
-    return action;
+    const finalDir = await repairVerifyOrRollback(rt, journal, healthCheck);
+    return { action, installDir: finalDir };
   }
   await repairTerminalCleanup(rt, journal);
-  return action;
+  return { action, installDir: rt.installDir };
 }
 
 export async function applyUpgrade(
@@ -448,6 +517,9 @@ export async function applyUpgrade(
       noServiceFlag: options.noService,
     });
 
+  // 旧布局（没有 current）转换时会先用新模板重写 run.sh：事务备份必须赶在那之前取，
+  // 否则回滚时「逐字节还原」拿到的是新模板，旧 runtime 需要的 TMEX_* 路径变量一个都没有。
+  if (!hasCurrentLayout(installDir)) await backupRunScript(installDir, txnId);
   await convertLegacyLayout(installDir, { bunPath, skipShims: options.skipShims });
   const resolvedFrom = (await readCurrentVersion(installDir)) || fromVersion;
   if (resolvedFrom === toVersion) {
@@ -487,6 +559,7 @@ export async function applyUpgrade(
       healthCheck,
       log,
       serviceMode: resolveServiceMode(meta, options.noService),
+      serviceName: meta.serviceName,
       migrationPlan,
     }
   );

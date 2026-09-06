@@ -12,6 +12,7 @@ export type UpgradePhase =
   | 'backup'
   | 'switching'
   | 'started'
+  | 'reverting'
   | 'committed'
   | 'aborted'
   | 'rolled_back';
@@ -49,6 +50,8 @@ export function recoveryAction(journal: UpgradeJournal | null): RecoveryKind {
     case 'migrate-install-dir':
     case 'backup':
     case 'switching':
+    // 迁移已经撤销、旧版本还没收尾：方向已经定死，只能继续恢复旧版本。
+    case 'reverting':
       return 'restart_old';
     case 'started':
       return 'verify_or_rollback';

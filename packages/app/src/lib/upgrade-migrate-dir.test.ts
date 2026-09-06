@@ -1,5 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { legacyInstallDir, newInstallDir } from '../constants';
@@ -66,16 +76,26 @@ function movePlan(fromDir: string, toDir: string): DirMigrationPlan {
 describe('planInstallMigration', () => {
   test('a custom install dir stays put but still gets the env key migration', async () => {
     const custom = await scratch();
+    await seedLegacyInstall(custom);
     const plan = await planInstallMigration({
       installDir: custom,
       platform: 'linux',
       serviceName: 'tmex',
     });
-    expect(plan.moveDir).toBe(false);
-    expect(plan.fromDir).toBe(custom);
-    expect(plan.toDir).toBe(custom);
+    expect(plan?.moveDir).toBe(false);
+    expect(plan?.fromDir).toBe(custom);
+    expect(plan?.toDir).toBe(custom);
     // 目录不搬家时服务名保持原样，只换 label 前缀
-    expect(plan.newServiceName).toBe('tmex');
+    expect(plan?.newServiceName).toBe('tmex');
+  });
+
+  test('an already-migrated install gets no plan at all', async () => {
+    const custom = await scratch();
+    await writeFile(join(custom, 'app.env'), 'GATEWAY_PORT=9883\nVIBETERM_MASTER_KEY=k\n');
+    // 留下迁移记录会让 2.x → 2.x 的失败回滚误以为要退回改名前的服务身份
+    expect(
+      await planInstallMigration({ installDir: custom, platform: 'linux', serviceName: 'vibeterm' })
+    ).toBeNull();
   });
 
   test('does not move when the new default directory already exists', async () => {
@@ -87,12 +107,12 @@ describe('planInstallMigration', () => {
     });
     // 本机可能真的存在新目录；两种结果都要说得通。
     if (await pathExists(newInstallDir(platform))) {
-      expect(plan.moveDir).toBe(false);
+      expect(plan?.moveDir ?? false).toBe(false);
     } else {
-      expect(plan.moveDir).toBe(true);
-      expect(plan.fromDir).toBe(legacyInstallDir(platform));
-      expect(plan.toDir).toBe(newInstallDir(platform));
-      expect(plan.newServiceName).toBe('vibeterm');
+      expect(plan?.moveDir).toBe(true);
+      expect(plan?.fromDir).toBe(legacyInstallDir(platform));
+      expect(plan?.toDir).toBe(newInstallDir(platform));
+      expect(plan?.newServiceName).toBe('vibeterm');
     }
   });
 
@@ -260,6 +280,36 @@ describe('migrateInstallDir', () => {
     expect(await pathExists(join(toDir, 'tmex.log'))).toBe(false);
     expect(await readFile(join(toDir, 'vibeterm.log.legacy'), 'utf8')).toBe('log');
     expect(await readFile(join(toDir, 'vibeterm.err.log.legacy'), 'utf8')).toBe('err');
+  });
+
+  test('reverts with the latest step state when the env write fails after the db rename', async () => {
+    const root = await scratch();
+    const fromDir = join(root, 'tmex');
+    const toDir = join(root, 'vibeterm');
+    await seedLegacyInstall(fromDir);
+    const before = await readFile(join(fromDir, 'app.env'), 'utf8');
+    // app.env 指到一个只读目录：读得到、写不了 —— 失败点正好落在 DB 改完名之后
+    const readOnly = join(root, 'ro');
+    await mkdir(readOnly, { recursive: true });
+    await rename(join(fromDir, 'app.env'), join(readOnly, 'app.env'));
+    await symlink(join(readOnly, 'app.env'), join(fromDir, 'app.env'));
+    await chmod(readOnly, 0o500);
+
+    try {
+      await expect(
+        migrateInstallDir(movePlan(fromDir, toDir), { txnId: 'txn-env-write-fail' })
+      ).rejects.toThrow();
+    } finally {
+      await chmod(readOnly, 0o700);
+    }
+
+    // 拿初始记录回退会留下 vibeterm.db，配置却指着不存在的 tmex.db
+    expect(await pathExists(toDir)).toBe(false);
+    for (const suffix of ['', '-wal', '-shm']) {
+      expect(await pathExists(join(fromDir, 'data', `tmex.db${suffix}`))).toBe(true);
+      expect(await pathExists(join(fromDir, 'data', `vibeterm.db${suffix}`))).toBe(false);
+    }
+    expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toBe(before);
   });
 
   test('returns null when the destination cannot be created', async () => {

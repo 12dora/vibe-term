@@ -359,9 +359,9 @@ describe('upgrade flag unification', () => {
     let repairTxn: string | null | undefined;
     let applyTxn: string | undefined;
     await runUpgrade(parsed, {
-      repair: async (_installDir, _bunPath, opts) => {
+      repair: async (installDir, _bunPath, opts) => {
         repairTxn = opts?.activeTxnId ?? null;
-        return 'none';
+        return { action: 'cleanup' as const, installDir };
       },
       apply: async (opts) => {
         applyTxn = opts.txnId;

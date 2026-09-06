@@ -39,6 +39,9 @@ export function createManagedServiceControl(opts: {
   probes?: ServiceReleaseProbes;
   /** 测试注入：服务管理器与 launchctl / systemctl 执行器 */
   deps?: ServiceDeps;
+  /** 端口释放的宽限时间，只在测试里调小 */
+  portGraceMs?: number;
+  log?: (message: string) => void;
 }): UpgradeServiceControl {
   const identity = { legacyServiceName: opts.legacyServiceName, deps: opts.deps };
   const isRunning = async (): Promise<boolean> =>
@@ -58,6 +61,8 @@ export function createManagedServiceControl(opts: {
         installDir: opts.installDir,
         timeoutMs: Math.max(1_000, deadline - Date.now()),
         probes: opts.probes,
+        portGraceMs: opts.portGraceMs,
+        log: opts.log,
       });
     },
     async start() {

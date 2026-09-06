@@ -243,30 +243,41 @@ export type ServiceReleaseProbes = {
   ownedAlive?: (installDir: string) => boolean;
 };
 
+/** 端口迟迟不放开时最多再等这么久，然后只警告不失败 */
+export const PORT_RELEASE_GRACE_MS = 5_000;
+
 /**
- * `launchctl bootout` / `systemctl stop` 可能先于进程真正退出返回：现网见过服务已「停止」、
- * 端口仍被占着的机器，随后的 bootstrap 必然失败。等到自己的 pid 死透、且 app.env 里的端口
- * 没人在听为止。
+ * `launchctl bootout` / `systemctl stop` 可能先于进程真正退出返回。**硬条件**是自己的 pid 必须
+ * 死透（服务是否还挂在管理器里由调用方先行确认）；端口释放只是尽力而为——端口可能被别的进程占着，
+ * 那不该让停服流程失败，更不该因此拒绝回退迁移，只记一条警告，后面的健康检查自会暴露问题。
  */
 export async function waitForServiceRelease(opts: {
   installDir: string;
   timeoutMs: number;
   probes?: ServiceReleaseProbes;
+  log?: (message: string) => void;
+  portGraceMs?: number;
 }): Promise<void> {
-  const env = await readEnvFile(join(opts.installDir, 'app.env')).catch(() => null);
-  const port = Number.parseInt(env?.GATEWAY_PORT ?? '', 10);
-  const host = env?.VIBETERM_BIND_HOST || env?.TMEX_BIND_HOST || '127.0.0.1';
-  const portBusy = opts.probes?.portBusy ?? isPortBusy;
   const ownedAlive = opts.probes?.ownedAlive ?? hasOwnedLivePidFile;
   await waitUntil(
-    async () => {
-      if (ownedAlive(opts.installDir)) return false;
-      if (!Number.isFinite(port) || port <= 0) return true;
-      return !(await portBusy(port, host));
-    },
+    () => !ownedAlive(opts.installDir),
     opts.timeoutMs,
     t('upgrade.serviceDidNotStop', { timeout: opts.timeoutMs })
   );
+
+  const env = await readEnvFile(join(opts.installDir, 'app.env')).catch(() => null);
+  const port = Number.parseInt(env?.GATEWAY_PORT ?? '', 10);
+  if (!Number.isFinite(port) || port <= 0) return;
+  const host = env?.VIBETERM_BIND_HOST || '127.0.0.1';
+  const portBusy = opts.probes?.portBusy ?? isPortBusy;
+  const grace = Math.max(0, Math.min(opts.portGraceMs ?? PORT_RELEASE_GRACE_MS, opts.timeoutMs));
+  try {
+    await waitUntil(async () => !(await portBusy(port, host)), grace);
+  } catch {
+    (opts.log ?? console.warn)(
+      `[vibeterm] port ${port} is still in use after the service stopped; continuing`
+    );
+  }
 }
 
 const STOP_TIMEOUT_MS = 20_000;
