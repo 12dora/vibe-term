@@ -1,4 +1,4 @@
-// mesh 身份鉴权相关的 REST 报文类型（设计见 docs/hub/2026082700-hub-node-architecture.md §2 / §4）。
+// mesh 身份鉴权相关的 REST 报文类型（设计见 docs/architecture/mesh-architecture.md §2 / §4）。
 // 所有二进制字段一律 base64url（无 padding）字符串，与 `@vibeterm/shared/auth` 的 encodeBase64url 对齐。
 
 import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@vibeterm/shared';

@@ -1,6 +1,6 @@
 // 「把这台机器变成 hub」表单：创建首个用户 + 写 `VIBETERM_ROLES=hub,node` + 重启。
 //
-// 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/hub/2026082800-hub-node-operations.md
+// 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/operations/mesh-operations.md
 // 「首次搭 hub」）。HTTPS 由反代 / Cloudflare Tunnel 提供，本批次不内建。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';

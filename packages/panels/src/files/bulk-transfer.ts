@@ -1,6 +1,6 @@
 // 文件传输的路径选择：能直连（bulk DataChannel）就走直连，否则/失败就整次回落 REST。
 //
-// 设计依据 `docs/hub/2026082700-hub-node-architecture.md` §3「bulk 协议」、§4「连接层」。
+// 设计依据 `docs/architecture/mesh-architecture.md` §3「bulk 协议」、§4「连接层」。
 // 与纯 REST 路径（`@vibeterm/api-client` 的 `uploadFileChunked` / `downloadFileWithProgress`）
 // 的差别只在「浏览器 ↔ node 的那一段字节」：
 //

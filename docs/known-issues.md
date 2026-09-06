@@ -1,7 +1,6 @@
 # 已知问题（Known Issues）
 
-本文件登记**尚未解决**的已知问题。解决后从本文件移除（背景留在对应模块文档里）。
-最近核对：2026-09-05（1.1.34）。
+本文件登记**尚未解决**的已知问题，面向开发者与运维。解决后从本文件移除（背景留在对应模块文档里）。
 
 ## KI-1：e2e / 单测的负载抖动基线
 
@@ -16,7 +15,7 @@
 
 `node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。
 可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
-[直连地址退避](./hub/2026090305-peer-endpoint-backoff.md)。
+[节点直连](./architecture/peer-direct-connect.md)。
 
 ## KI-4：TURN 仍需手工配置三个环境变量
 
@@ -28,7 +27,7 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 
 `MAX_LINK_UNACKED` 提到 65 × 1 MiB，是「不误关满窗口中继流」的直接代价，单条 mux 最坏内存占用随之上升；
 排空等待有 10 分钟硬上限，到期时剩余流仍会被 reset。见
-[直连信令代次与链路活性](./hub/2026090502-rtc-signaling-epoch-link-liveness.md)。
+[节点直连](./architecture/peer-direct-connect.md)。
 
 ## KI-6：待现网实测的两项
 
@@ -41,7 +40,7 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 因此节点自己的分享登录限速在 Hub 路径上会把所有访客算成同一个来源。当前由 Hub 侧按（真实来源 IP, shareId）
 的配额兜住（`apps/gateway/src/mesh/share-login-quota.ts`），实际不会误锁别人；但节点端限速在这条路径上
 仍是空转。彻底解法是给 peer 上下文加一条 Hub 可信填写、浏览器不可覆盖的来源 IP 元数据。
-见[终端分享](./share/2026090503-terminal-share.md)。
+见[终端分享](./architecture/terminal-share.md)。
 
 ## KI-9：本机自升级没有下载字节进度
 
@@ -51,14 +50,14 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 
 ## KI-10：旧版本入口节点操作新版本节点上的远程窗格会被拒
 
-`/api/mesh-internal/tmux/*` 自本轮起要求窗格授权（见
-[远程 agent 窗格授权](./agent/2026090606-remote-pane-grant.md)）。目标节点已升级、发起节点仍是旧版本时，
+`/api/mesh-internal/tmux/*` 要求窗格授权（见
+[远程 agent 窗格授权](./architecture/agent-remote-pane-grant.md)）。目标节点已升级、发起节点仍是旧版本时，
 旧发起方不会带授权，远端窗格的 agent 会话会一直收到 403 `PANE_GRANT_REQUIRED`。发起节点升级后，
 下一次发消息 / 改绑窗格就会自动补签，无需人工干预；升级前该会话不可用。
 
 ## KI-11：旧版本入口推包给新版本节点会卡在装包这一步
 
-发行包签名自 1.1.39 起生效（见[发行包签名](./release/2026090606-release-signing.md)）。新节点只装
+发行包签名自 1.1.39 起生效（见[发行包签名](./operations/release-signing.md)）。新节点只装
 「带可验签清单」的暂存包，而旧版本入口不会发 `POST /api/system/upgrade/package/manifest`：字节能推上去，
 装包一步返回 `UPGRADE_SIGNATURE_REQUIRED`，节点停在原版本（不会装上任何东西，安全侧是对的）。
 处置：先把入口升到 1.1.39+，再对节点发起升级；或者在节点本机跑一次 `vibeterm upgrade`。
@@ -67,4 +66,4 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 首次安装本来也要信任下载源。
 
 另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
-≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `vibeterm upgrade --version <ver>`；且**升到 2.0.0 完成安装目录迁移之后不支持降回 1.x**（旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键），见 [改名迁移](./release/2026090607-rename-vibeterm.md)。
+≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `vibeterm upgrade --version <ver>`；且**升到 2.0.0 完成安装目录迁移之后不支持降回 1.x**（旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键），见 [改名迁移](./operations/rename-migration.md)。

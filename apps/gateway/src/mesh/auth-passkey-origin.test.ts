@@ -1,4 +1,4 @@
-// 通行密钥二次验证按 origin 生效的 HTTP 契约（背景见 docs/auth/2026090701-passkey-per-origin.md）。
+// 通行密钥二次验证按 origin 生效的 HTTP 契约（背景见 docs/security/login-security.md）。
 // 断言只能在注册它的 origin 完成，所以「另一个入口域名」必须能只凭密码（+ TOTP）登录，
 // 而注册过通行密钥的那个 origin 一如既往要过断言。
 

@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议 Kind 常量定义
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 //
 // 1.1.23 删除 legacy 终端状态流后，以下 kind 号永久作废、不得复用：
 // 0x0208 STATE_SNAPSHOT、0x0209 STATE_SNAPSHOT_DIFF、0x020d TMUX_SUBSCRIBE_PANES、

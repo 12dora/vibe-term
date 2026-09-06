@@ -1,0 +1,851 @@
+# 公共中继（relay）角色
+
+本文是 relay 角色的实现参考，覆盖隐私边界、租户密钥、密钥日志记录、加入串、存储、HTTP 与 uplink 协议、节点侧行为、CLI / 网页、配额与运维；面向中继运营者与改动 `apps/gateway/src/relay/`、`apps/gateway/src/mesh/relay-*.ts` 的开发者。首发版本 **1.1.23**。
+读之前建议先看 [多节点架构](./mesh-architecture.md) 的鉴权与密钥日志部分——
+中继复用同一套用户自持根钥与 `user_key_log`，只是把「上级」从 hub 换成了一台什么都看不懂的转发器。
+
+## 背景与目标
+
+hub 是信任面很宽的上级：它明文读取并持久化 `node.status` 里的清单、endpoints 与版本，明文生成 `node.list`，
+解码并应用整条密钥日志，还能读到 `rtc.signal` 的 SDP。「密文中转」只覆盖 `SecureChannelLink` 建立之后的数据面。
+这对「自己家里那台入口机」够用，但一台想给别人用的公共入口不该看到这些。
+
+relay 的目标是把上级降级成**盲中继**：
+
+- 只按节点编号转发密文，既看不到终端内容，也看不到设备清单、endpoints、SDP 与密钥日志内容；
+- 多租户：一台中继同时服务多个互不可见的 VibeTerm 用户（租户），运营者能计量与限额；
+- 成员判定仍在租户自己的节点上完成，中继的注册表只是链路准入缓存，丢了能重建。
+
+代价是中继不能替租户仲裁：它看不懂日志，也验不了 passkey 签名。相关取舍集中在 [§13 已知边界](#13-已知边界)。
+
+## 1. 角色与运行方式
+
+`VIBETERM_ROLES` 在原有三值上新增两个：
+
+| 取值 | 说明 |
+|---|---|
+| `relay` | 纯中继。不建 mesh、不建 standalone 登录面、没有前端（`/` 与所有非 `/api/relay/*` 请求回 404 `RELAY_NO_FRONTEND`），只处理 `/api/relay/*` 与 `/relay/uplink` |
+| `relay,node` | 中继 + 本机 node。有完整前端与本机用户，运营者界面就在设置页 |
+
+`hub` 与 `relay` **不能同机**：`parseVibeTermRoles()` 调 `validateRoles()`，命中即启动失败
+（`VIBETERM_ROLES is invalid: relay cannot be combined with hub`）。非法角色名的错误文案是
+`VIBETERM_ROLES must be one of standalone | node | hub,node | relay | relay,node`。
+
+挂载顺序（`packages/app/src/runtime/assemble-routes.ts`）：TLS/local → setup → **relay** → hub → mesh → gateway → 静态。
+WS 升级也先判 `relay.isUplinkSocket`，停机时先 `relay.stop()`。
+
+### 环境变量
+
+| 变量 | 必填 | 说明 |
+|---|---|---|
+| `VIBETERM_RELAY_PUBLIC_URL` | 是（relay 角色） | 中继对外地址。uplink 认证签名绑定它的 host（`hubHostFromUrl`），redeem 返回的 `relays` 也用它。缺失时 assemble 直接抛 `VIBETERM_RELAY_PUBLIC_URL is required when VIBETERM_ROLES includes relay` |
+| `VIBETERM_RELAY_ADMIN_TOKEN` | 否 | 管理令牌。缺失时首启生成一枚 32 字节 b64url；**production 写回 `app.env`**，dev/test 只打印一次。库里只存 sha256 |
+
+`VIBETERM_RELAY_PUBLIC_URL` 允许带非默认端口（`https://relay.example.com:13443`）：归一化、签名与 `r3.` 串全程保留它。
+运营商封 80/443 时把中继架在高位端口，见 [非标端口部署](../operations/nonstandard-ports.md)——
+那里也说明了内置候选端口表与「地址没写端口时自动探测」的行为（`vibeterm relay enroll` / `relay join` 与网页接入表单共用一套）。
+
+两个键只有 `relay` / `relay,node` 角色才会被 `init` 写进 `app.env`（`relayEnvDefaults()`）；其它角色的 `app.env` 不含它们。
+STUN/TURN 复用既有 `VIBETERM_STUN_SERVERS` / `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL`，
+随 `auth.ok` 与 `relay.list` 下发给租户节点。
+
+中继自己**不需要**链路身份密钥、不写 `users` / `node_certs` / `nodes` / `peer_cache` 任何 hub 表。
+
+## 2. 隐私边界
+
+| 中继看得到 | 中继看不到（都在密文里） |
+|---|---|
+| 租户编号、根公钥、根 epoch | 节点名、设备清单、endpoints、tmux 状态 |
+| 节点编号 → 链路公钥（Ed25519）、X25519 公钥、`pending`/`admitted`/`revoked` | 节点能否直连（`direct_capable`，在 K_meta 封里） |
+| 在线状态、流量字节、并发流数、协议版本、客户端版本号（版本门用） | 密钥日志 payload（passkey、TOTP、中继列表、租户密钥） |
+| `admit-node` / `revoke-node` / 根轮换三类记录的明文 sidecar（用于建注册表、跟上根公钥） | SDP / ICE candidate（`relay.rtc` 的 `enc` 字段） |
+| | relay 流的内层（`SecureChannelLink`，与 hub 现状一致） |
+
+`direct_capable` 不是 `relay.status` / `relay.list` 上的明文字段，而在 K_meta 封里的状态块（`RelayStatusBlob`）中。
+
+## 3. 租户密钥
+
+两把 32 字节对称密钥，都只在节点之间流转，中继永远拿不到。
+
+| 密钥 | 轮换 | 用途 |
+|---|---|---|
+| `K_log` | 不轮换 | 加密存放在中继的密钥日志记录 |
+| `K_meta`（带 `epoch: u32`） | 吊销 / 根轮换即换代 | 加密 `relay.status` 状态块、`relay.rtc` 信令、`relay.list` 里对端的状态块 |
+
+分发都靠密钥日志记录：`K_log` 随 join 串与 `set-relays` 下发，`K_meta` 走 `meta-key` / `set-relays.meta_key`，
+按每个节点的 X25519 公钥（节点证书里的 `x25519_pk`）逐个封装。
+
+**按节点封装**（`packages/shared/src/relay/tenant-cipher.ts`）：
+
+```
+eph      = x25519.keygen()
+ss       = X25519(eph_sk, node_x25519_pk)
+wrapKey  = HKDF-SHA256(ss, salt = utf8("tmex-relay-wrap/v1"), info = node_id(16B), 32)
+ct       = AES-256-GCM(wrapKey, nonce 12B 随机, K)        // 无 AAD，node_id 已进 info；恒 48 B
+```
+
+wire 形态 `WrapEntry = { node_id: 32hex, eph_pk: b64url, nonce: b64url, ct: b64url }`。
+
+**信封**（承载状态块 / RTC 块 / 日志记录）：
+
+```
+Envelope = { v: 1, epoch?: u32, n: b64url(nonce 12B), ct: b64url(AES-256-GCM 密文+tag) }
+AAD      = utf8("tmex-relay/<kind>/v1")            // kind ∈ keylog | status | rtc
+```
+
+`kind` 受 `^[a-z][a-z0-9-]{0,31}$` 约束；密钥或 AAD 不对一律抛 `RelayCipherError`。
+实现只用 WebCrypto AES-GCM + `@noble/curves` x25519 + `@noble/hashes` hkdf，浏览器与 Bun 共用。
+
+**密钥日志块的明文帧**（`packages/shared/src/relay/keylog-frame.ts`，节点侧与 CLI 共用同一份）：
+
+```
+plaintext = utf8(JSON.stringify({ bytes: b64url(recordBytes), sig: b64url(sig) }))
+blob      = sealEnvelope(K_log, 'keylog', plaintext)     // 不带 epoch
+```
+
+明文帧不用 `recordBytes ‖ sig` 直接拼接：passkey 签名是**变长** Borsh 断言，拼完切不开，所以用与 hub `key.log.res` 同形的 `{bytes, sig}` JSON。
+
+节点侧把解出来的密钥落 `mesh_secrets {kind, epoch, key_enc}`（`key_enc` 用 `VIBETERM_MASTER_KEY` 加密）；
+`K_log` 固定占 `epoch = 0` 那一行。旧世代的 `K_meta` 行保留，用来解旧块。
+
+## 4. 密钥日志新记录
+
+两条新记录类型加进 `user_key_log`（迁移 0040 放开了 `type` 的 CHECK 约束，否则写库直接失败）。
+
+| 记录 | 签名者 | 版本门 | 载荷（Borsh 字段顺序即编码顺序） |
+|---|---|---|---|
+| `set-relays` | `root` / `passkey` | `minVersion 1.1.23`，`allowForce: false` | `mode(u8 enum，0=ordered) ‖ relays(vec<RelayTarget>) ‖ log_key(vec<WrapEntry>) ‖ meta_key(MetaKeyPayload)` |
+| `meta-key` | `root` / `passkey` | 同上 | `epoch(u32) ‖ entries(vec<WrapEntry>)` |
+| `rename-node` | `root` / `passkey` | `minVersion 1.1.24`，`allowForce: false` | `node_id(16) ‖ name(string)` |
+| `readmit-node` | `root` / `passkey` | `minVersion 1.1.26`，`allowForce: false` | 与 `admit-node` 相同：`authorization_bytes ‖ authorization_sig ‖ certificate_bytes ‖ cert_sig` |
+
+```
+RelayWrapEntry : node_id(16) ‖ eph_pk(32) ‖ nonce(12) ‖ ct(48)
+RelayTarget    : url(string) ‖ tenant_id(16) ‖ token(32) ‖ priority(u8)
+MetaKeyPayload : epoch(u32) ‖ entries(vec<RelayWrapEntry>)
+```
+
+上限：`relays ≤ 16`、`url ≤ 512` 字节、wrap 条目 ≤ 1024。`rename-node.name` 须 UTF-8、trim 后非空且 ≤ 64 字符（与加入向导节点名上限一致）。
+
+应用规则（`packages/shared/src/auth/relay-records.ts`）：
+
+- `set-relays`：`relays` 为空 = **离开中继**（投影里 `relays` 置 null，回到 env 里的 hub 配置或无上级）。
+  `meta_key.epoch` 允许等于当前世代（同世代补发）或更大，更小则整条记录判为无效并返回 `relay_epoch_regression`。
+  url 走 `canonicalHubUrl` 归一化，这里**不强制 https**（方便 docker / 内网实测；只有 join 串强制）。
+- `meta-key`：`epoch` 必须**严格大于**已应用的世代，否则 `relay_epoch_regression`。
+  找不到自己那条 `WrapEntry` = 被排除，节点保留旧世代只读（打 warn，不报错）。
+- `rename-node`：`name` trim 后非空且 ≤ 64 字符；`node_id` 必须已在 `state.nodeCerts` 中，否则 `unknown_node`；投影写入 `state.nodeNames`。
+- `readmit-node`：验签规则与 `admit-node` 相同（授权签名对**当前** `state.rootPublicKey` 或 passkey 断言、证书签名、enroll_pk / uid），但要求 `state.nodeCerts` 里已有该节点**未吊销**且 `certificateBytes` 完全相同的证书，然后只替换 `authorizationBytes` / `authorizationSig`。否则 `unknown_node` / `node_revoked` / `certificate_mismatch`。
+
+### readmit-node
+
+根轮换（`rotate-root-keep`）不会重签历史 `admit-node`。中继租户是按**当前**根公钥与 `root_epoch` 创建的，`relay.auth` 要求成员证明记录的 `root_epoch` 等于租户当前 epoch，且必须由当前根签过。迁到中继之前（以及此后每次根轮换之后），必须对每个未吊销节点补一条 `readmit-node`：解码原 `Authorization`，按相同 `uid` / `enroll_pk` / `exp` 等绑定重编码为 `signer: 'root'`、`credential_id: null`、当前 `root_epoch` 的授权并由当前根签名；证书字节不变。原先由 passkey 承认的成员因此也能用当前根重新确认。`node_certs.admit_record_seq` 指向这条新记录，节点再向中继出示时才能过 `member-epoch_mismatch`。
+
+`GET /api/mesh/relay/readmit/prepare` 列出 `admit_record_seq` 对应记录的 `root_epoch` 小于当前 epoch 的未吊销证书（含本机）。`GET /api/mesh/relay/status` 的 `readmitPending` 与 `POST /api/mesh/relay/enroll` 的 `readmitRequired` 是同一计数。CLI `vibeterm relay enroll` / `reauth` 与网页接入的顺序是 **readmit → enroll → set-relays**：先走本机 `GET /api/mesh/relay/readmit/prepare` 补签全部成员，再取 proof 并调用远端 enroll（令牌换发不可逆），最后才提交 `set-relays`。远端 enroll 响应里的 `readmitRequired` 只作事后校验：若仍大于 0，中止 `set-relays`。
+
+`UserKeyState` 因此多了四个字段：`relays`（投影）、`metaKeyEpoch`、`metaKeyEntries`、`nodeNames`（`rename-node` 投影，nodeId hex → 已 trim 的显示名）。
+
+### admit / revoke / 根轮换之后的 meta-key 跟进
+
+既有的 `admit-node` / `revoke-node` / `rotate-root*` 格式一字未改，由**发起方**在其后补一条 `meta-key`：
+
+| 触发 | 记录 | 世代 | 封装范围 |
+|---|---|---|---|
+| 承认新节点 | `POST /api/mesh/relay/meta-key/prepare {op:'admit', node_id}` | 当前 +1，**复用**当前 `K_meta` | 全部未吊销节点 |
+| 吊销节点 | `{op:'rotate', exclude:[nodeId]}` | 当前 +1，**换新** `K_meta` | 未吊销节点减 `exclude` |
+| 改密 / 根轮换 | 前端 `account-security-actions.ts` 在 rotate 之后自动签一条 `{op:'rotate'}` | 当前 +1，换新 | 全部未吊销节点 |
+
+admit 不能「用当前 epoch 只封装给新节点」：`meta-key` 要求 epoch 严格递增，且只封装给一个节点会让其余节点停在旧世代只读。所以 admit 也换世代（但复用同一把密钥，旧块照样解得开），并且两种操作都覆盖全部节点。
+
+`rotate-root`（全量重置）在服务端应用记录的那一刻就 `revokeAllSessions`，而 `POST /api/auth/keylog` 要 node-session，
+所以紧随其后的 `meta-key` **必然 401**。前端把已签好的记录存进 `sessionStorage`（`vibeterm.relay.metaKeyPending`），
+用户用新密码重新登录、打开节点页后自动重发（本地 head 没动，字节仍然接得上）。
+`rotate-root-keep`（常规改密，默认路径）会话保留，当场就落账。
+
+## 5. join 串 r3
+
+```
+"r3." + base64url(
+    enroll_sk   32
+  ‖ root_pk     32
+  ‖ head_hash   32
+  ‖ K_log       32
+  ‖ n           u8              (1..16)
+  ‖ [ len       u16 LE          (1..512)
+      ‖ url     utf8[len]       (https；仅回环允许 http)
+      ‖ tenant_id 16
+      ‖ token     32 ] × n
+) [ "." <64 位小写 hex CA 指纹> ]
+```
+
+定长头 128 字节，每条地址后面跟 48 字节自己的凭据。**每台中继各自签发租户编号与令牌，不能跨中继复用**，
+所以有序 failover 的每一跳都必须带自己的那一份。解码侧拒绝：`n=0`、`n>16`、url 长度越界、非 https（非回环）、
+表截断、尾部多余字节；编码缓冲（含 `enroll_sk`、`K_log`、令牌）返回前清零。
+
+CA 指纹只有一个，语义是「表里每台都必须出示指纹相符的 CA」。
+
+旧的 96 字节 join 串继续表示 hub 模式（`decodeJoinToken`）；`isRelayJoinToken()` 只判 `r3.` 前缀。
+
+`GET /api/mesh/relay/join-material` 默认只返回当前 attach 的那一台；密封包要按中继分别封装时用 `?scope=all` 拿全表（每台自己的 `url` / `tenantId` / `token`）。
+`POST /api/mesh/relay/enrollments` 会把同一条 enrollment 并发写到 `mesh_relays` 里的每一台（HTTP `POST /api/relay/tenants/:id/enrollments`，每台 5 s 超时，`Promise.allSettled`；attached 那台 HTTP 够不着时才退回 uplink `relay.enroll.create`）。
+201 响应的 `relays` 是对象数组：接受的带 `token`，拒绝的带 `error`、不回令牌——浏览器用接受方拼 r3 串，不必再打一次 join-material。至少一台接受才保留本地 enrollment；全部失败则作废并 502 `RELAY_ENROLL_FANOUT_FAILED`。加入方遇到某台 404 `RELAY_ENROLLMENT_UNKNOWN` / `RELAY_NOT_FOUND` 时换下一台，CA 指纹不符仍直接失败。
+
+## 5b. 密码加入（密封包）
+
+第二台机器可以用 **中继地址 + 租户编号 + mesh 账户密码** 加入已有租户，不必持有 `r3.` 加入码。
+中继只存公开的 KDF 参数与一块自己解不开的 `sealed_pack`；真正的 `K_log`、租户令牌与日志头钉在密封包里。
+
+### 密封包格式
+
+```
+KEK = HKDF-SHA256(root_seed, salt = utf8("tmex-relay-pack/v1"), info = tenant_id(16B), 32)
+AAD = utf8("tmex-relay-pack/v1") ‖ tenant_id(16) ‖ root_public_key(32) ‖ root_epoch(u32 LE)
+plaintext (Borsh) = { v:u8=1, log_key(32), token(32), head_seq(u64), head_hash(32), issued_at(u64) }
+sealed_pack 线格式 = nonce(12) ‖ AES-256-GCM(ct‖tag)     // 上限 4096 B
+```
+
+`root_seed = deriveSeed(password, kdf_params)`（与 mesh 根钥同一套 Argon2id）。实现见 `packages/shared/src/relay/relay-pack.ts`：WebCrypto AES-GCM + `@noble/hashes` hkdf，浏览器与 Bun 共用；KEK / 明文缓冲用完清零。
+
+### 中继侧存储与路由
+
+迁移 `0043_relay_pack.sql` 给 `relay_tenants` 增加可空列 `kdf_params_json`、`sealed_pack`。这两列**不得**出现在 `/api/relay/status` 或其它管理响应里。根轮换（`rotate-root*` sidecar）会把两列清空，未刷新密封包之前密码加入会 404。
+
+| 方法 路由 | 鉴权 | 说明 |
+|---|---|---|
+| `GET /api/relay/tenants/:id/kdf` | 无 | → `{ kdf_params, root_epoch }`；未知租户或尚未上传密封包 → 404 `RELAY_TENANT_NOT_FOUND`。按源 IP **与**租户编号限流（与 enroll 失败同一套 `RelayEnrollLimiter`） |
+| `POST /api/relay/enroll` `mode:'join'` | 无（根钥 proof） | body 在现有 enroll 字段上加 `mode:'join'`、`tenant_id`。验 `tmex/relay-enroll/v1` proof，根公钥必须等于**该租户当前**根公钥，且 `root_epoch` 一致。成功 → `{ tenant_id, kdf_params, sealed_pack, root_epoch, key_log_head_seq }`。**不**签发令牌、不跑站点口令、不 `enforceTokenReissue`。缺 `mode` 或 `mode:'enroll'` 行为与今日完全相同 |
+| `POST /api/relay/tenants/:id/pack` | 租户令牌 | body `{ sealed_pack, kdf_params, root_epoch, head_seq }`。`root_epoch` 必须等于租户当前值；`head_seq` 不得大于中继 `key_log_head_seq`（密封包不能声称中继尚未持有的日志头）；超 4096 B → `RELAY_PACK_TOO_LARGE`。事务写入 |
+| `GET /api/relay/tenants/:id/keylog` | 租户令牌 | 分页密文日志，供加入方下载。查询 `from_seq`、`limit` |
+| `POST /api/relay/tenants/:id/keylog` | 租户令牌 | 追加一条加密记录，可带 `member` sidecar（与 `relay.keylog.append` 同形） |
+
+join 失败（错根、错 epoch、被踢）记入限流；成功则 `reset` 该 IP 与租户桶。被踢租户 → 401 `RELAY_TENANT_KICKED`，令牌不动。
+
+### 加入流程（节点）
+
+1. 本机已有 mesh 用户或已绑定节点身份 → 失败 `local_user_exists`（standalone 本机登录账户不在此列，与 `joinHub` 一致）。
+2. `GET …/kdf` → 校验 KDF 预算（`memory_kib ≤ 262144`、`iterations ≤ 10`、`parallelism ≤ 4`、salt 16 B）→ `deriveSeed` → 签 enroll proof → `POST /api/relay/enroll` `mode:'join'`。
+3. 开密封包；用包内令牌分页下载密钥日志并解密；`verifyKeyLogChain`；**`head_seq` 处记录的 hash 必须等于包内 `head_hash`**，日志更短也拒绝。
+4. 回放（passkey 走链内 replay verifier）。用户键入的规范化 `(url, tenantId)` **必须**出现在根签名的 `set-relays` 投影里，否则 `join_failed` / `该中继不在根签名的中继列表里`（拒绝把 pack/log 拷到未授权中继上加入）。
+5. **先**向中继追加 `admit-node`（带 `admit` sidecar）再追加换代 `meta-key`，每条都走中继 CAS（`seq = head+1`）。`SEQ_MISMATCH` 时重新下载日志、按新 head 重建两条记录再试（最多 4 次，与 CLI hub join 相同）。`member_ignored: true` 视为硬失败，中止且**不**写本机状态。两条都成功后才 `commitJoin` / 落证书 / `mesh_relays`（只替换命中行的 token，从不 `unshift` 未列出的 URL）/ `mesh_secrets`。
+6. 按新 head 重封并 `POST …/pack` → 写 env（`VIBETERM_ROLES=node` 或本机已跑 relay 时 `relay,node`，`VIBETERM_HUB_URL=''`、`VIBETERM_HUB_PUBLIC_URL=''`，走 staged-env/promote）→ 重启。
+
+第二条追加失败时同样不写本机状态。此时中继上可能留下一条已承认、尚无本机 `K_meta` 的 **orphan pending node**（`node_id` 会出现在错误信息里）；运营者可在中继成员表里撤销该 pending 节点后让加入方重试。
+
+CLI：`vibeterm relay join <url> --tenant <id> [--password] [--name] [--ca-fingerprint] [--no-restart]`，实现 `performRelayPasswordJoin` / `runRelayPasswordJoin`。`--ca-fingerprint` 复用 `relay-ca.ts` 钉 CA；未给则走系统信任库，**绝不静默降级 TLS**。
+
+### 首次 enroll / 改密时上传密封包
+
+每台中继有自己的 tenant id 与 token，密封包必须 **按中继分别密封**（KEK `info` = 该中继 tenant id，明文 token = 该中继 token）。CLI 持有根种子时直接对每台中继 `POST /pack`；网页经本机 `POST /api/mesh/relay/pack` 转发。
+
+请求体（网页 enroll 对话框、reauth、根轮换、根签追加之后刷新密封包时用同一形状）：
+
+```jsonc
+{
+  "kdf_params": { "salt": "<b64url 16B>", "memory_kib": 65536, "iterations": 3, "parallelism": 1 },
+  "root_epoch": 0,
+  "head_seq": 4,
+  "packs": [
+    { "url": "https://relay-a.example", "sealed_pack": "<b64url nonce‖ct>" },
+    { "url": "https://relay-b.example", "sealed_pack": "<b64url nonce‖ct>" }
+  ]
+}
+```
+
+节点按 `url` 对照 `mesh_relays` 把各包转到对应中继。一轮内仍接受旧的单包体 `{ sealed_pack, kdf_params, root_epoch, head_seq, urls? }`，视为本机已接入中继的那一包（`urls` 省略则同一包转发给全部已配置中继）。
+
+密封材料来自 `GET /api/mesh/relay/join-material`（`logKey` + **各**中继的 `url` / `tenantId` / `token`）加上 `GET /api/auth/keylog/head`。节点**不持有**根种子，所以密封发生在浏览器或 CLI。`vibeterm relay enroll` / `reauth` 与 CLI 改密在持有根种子时直接打各中继 `/pack`。
+
+### 残余风险
+
+密封包钉住的 `head_hash` 只保证「至少与**上一次刷新密封包**时一样新」。这与 r3 加入码钉 head 的保证级别相同：码签发之后链上可以继续追加，加入方必须收下更新的后缀；若运营者很久没刷新密封包，加入方钉到的是旧头，仍能通过验证并追上后续记录。根轮换若未立刻重封，密码加入会 404，直到持有新根种子的节点上传新包。
+
+admit-node 已上中继、meta-key 尚未成功时，中继成员表会看到该 `node_id` 处于 pending/admitted 而加入方本机无用户；撤销该节点后可重新加入。
+
+## 6. 存储
+
+### 中继侧（迁移 `0039_relay.sql`）
+
+```
+relay_config      id(=1) PK CHECK(id=1), password_hash TEXT NULL, password_epoch INT=0,
+                  min_token_epoch INT=0, admin_token_hash TEXT NULL, default_quota_json TEXT,
+                  max_tenants INT NULL, total_bandwidth_bytes_per_sec INT NULL, fair_share INT=1 NOT NULL,
+                  updated_at INT   ← 后三列由 `0049_relay_limits.sql` 追加
+relay_tenants     id TEXT PK(32hex), root_public_key BLOB UNIQUE, root_epoch INT,
+                  token_hash TEXT, token_epoch INT, quota_json TEXT NULL, label TEXT NULL,
+                  kicked INT=0, created_at INT, last_seen_at INT NULL,
+                  bytes_in INT=0, bytes_out INT=0, key_log_head_seq INT=0
+relay_nodes       PK(tenant_id, node_id), ed_pk BLOB, x25519_pk BLOB,
+                  status CHECK in ('pending','admitted','revoked'), admit_seq INT NULL,
+                  last_seen_at INT NULL, proto_version INT NULL, client_version TEXT NULL, created_at INT
+relay_enrollments id TEXT PK, tenant_id FK, enroll_pk BLOB UNIQUE, authorization_bytes BLOB,
+                  authorization_sig BLOB, expires_at INT, used_at INT NULL, node_id TEXT NULL, created_at INT
+relay_key_log     PK(tenant_id, seq), blob TEXT（Envelope 的 JSON 原样，中继从不解开）, created_at INT
+```
+
+- `password_hash` 存 argon2id 的 JSON（与根密钥同参数：`memoryKib 65536 / iterations 3 / parallelism 1`）。
+- `admin_token_hash` 是 sha256 hex，令牌原文不落库。
+- `relay_tenants.id` 是中继随机生成的 16 字节，与租户 uid 无关。
+- 三张子表都 `ON DELETE CASCADE`，删租户即清空。
+- 中继级限额（`max_tenants` / `total_bandwidth_bytes_per_sec` / `fair_share`）单独列，不并进
+  `default_quota_json`：默认配额是**按租户**语义且会原样推给租户，中继级限额绝不能进 `relay.quota` 帧。
+
+### 节点侧（迁移 `0040_mesh_relay.sql`）
+
+```
+mesh_relays   url TEXT PK, tenant_id TEXT, token_enc TEXT, priority INT, kicked INT=0, updated_at INT
+mesh_secrets  PK(kind, epoch), kind CHECK in ('log','meta'), key_enc TEXT, created_at INT
+node_identity + uplink_kind TEXT DEFAULT 'hub' NOT NULL, + name TEXT
+user_key_log  type CHECK 追加 'set-relays'、'meta-key'、`rename-node`、`readmit-node`（重建表）
+```
+
+`token_enc` / `key_enc` 都是 `VIBETERM_MASTER_KEY` 加密后的 base64。
+退出 mesh（`POST /api/local/leave`）时 `MeshMembershipStore.clearAll()` 会一并删掉 `mesh_relays` 与 `mesh_secrets`。
+
+## 7. HTTP 接口
+
+### 7.1 中继侧 `/api/relay/*`
+
+错误体一律 `{ error: { code, message } }`；写接口成功返回 `{ ok: true }`。
+未知路径 404 `RELAY_NOT_FOUND`，方法不符 405 `RELAY_METHOD_NOT_ALLOWED`。
+**relay 角色缺席时整族路由不存在**，由 gateway 兜底 404——设置页的标签门禁就靠这一点（见 §10）。
+
+#### 无鉴权
+
+| 方法 路由 | 请求 / 响应 |
+|---|---|
+| `GET /api/relay/health` | → `{ ok, version, tenants, nodesOnline, uptimeMs }` |
+| `POST /api/relay/enroll` | body `{ password?, root_public_key: b64url32, root_epoch: int, proof: { bytes, sig } }` → `{ tenant_id, token, password_epoch }` |
+
+`proof` 是 `tmex/relay-enroll/v1` 的 Borsh 签名：
+`domain(string) ‖ relay_host(string) ‖ root_public_key(32) ‖ ts(u64)`，用根钥 Ed25519 签，时间窗 ±5 分钟。
+它防的是「拿别人的根公钥占坑」。
+
+错误码：`RELAY_INVALID_BODY` 400 / `RELAY_BAD_PROOF` 401（域、host、pk、时间窗、签名任一不符）/
+`RELAY_PASSWORD_REQUIRED` 401 / `RELAY_PASSWORD_INVALID` 401 /
+`RELAY_RATE_LIMITED` 429（同一源 IP 15 分钟内 5 次口令失败后，**任何** enroll 都拒）/
+`RELAY_QUOTA_TENANTS` 409（已达 `maxTenants`；判定在口令校验**之后**，免得满员中继变成口令探测器。
+同一根公钥的重发令牌不受影响）。
+
+同一根公钥重复 enroll = 重新签发令牌（被踢后重输口令的路径）：`tenant_id` 不变、`token_epoch` 置为当前
+`password_epoch`、清 `kicked`，并**立刻踢掉持旧令牌的 uplink**。匹配用的是租户**当前**根公钥，
+`root_epoch` 只由根轮换 sidecar 推进，enroll body 里的自称值只在建新租户时当初值。
+
+#### 租户令牌（header `x-vibeterm-relay-token: <token 原文 b64url>`）
+
+| 方法 路由 | 请求 / 响应 |
+|---|---|
+| `POST /api/relay/tenants/:tenantId/enrollments` | body `{ id, enroll_pk, authorization, authorization_sig, exp }` → `201 { ok: true }`。与 uplink `relay.enroll.create` 共用创建逻辑：验当前根公钥、`exp` 上限、每租户未使用上限 32（`ENROLLMENT_QUOTA`）、16 条 / 60 s（`ENROLLMENT_RATE_LIMITED`）。同 `id` 同 payload 幂等；同 `id` 不同 payload → 409 `RELAY_ENROLLMENT_CONFLICT` |
+| `POST /api/relay/tenants/:tenantId/enrollments/redeem` | body `{ certificate, cert_sig, pop }`（都 b64url；**不上传 name**）→ `{ tenant_id, relays: [publicUrl], rtc, key_log: [{seq, blob}] }` |
+| `GET /api/relay/tenants/:tenantId/enrollments/:enrollPkB64url` | → `{ authorization, authorization_sig, exp, used_at }` |
+
+lookup 这条路由是必需的：`applyAdmitNode` 硬性要求 `certificate.uid === authorization.uid`，
+而 r3 串里没有 uid，redeem 又是一次性的，加入方必须在造证书之前先读出租户 uid。
+
+redeem 校验顺序：令牌 → enrollment 存在且属本租户 → `enroll_pk` 一致 → 未用过 → 未过期 → `cert_sig` →
+PoP（`encodeRedeemPopMessage`，用证书里的 `ed_pk` 验，必填）→ 节点已 revoked 则拒 → 新节点查 `maxNodes` 配额 →
+消费 enrollment → `relay_nodes` upsert 成 `pending` → 向该租户全部在线节点广播 `enroll.redeemed`。
+
+错误码：`RELAY_UNAUTHORIZED` 401 / `RELAY_TOKEN_INVALID` 401（令牌不符或 epoch 过旧）/
+`RELAY_TENANT_KICKED` 401 / `RELAY_TENANT_NOT_FOUND` 404 / `RELAY_INVALID_BODY` 400 /
+`RELAY_BAD_CERTIFICATE` 400 / `RELAY_ENROLLMENT_UNKNOWN` 400（含跨租户，不区分以免泄露）/
+`RELAY_ENROLLMENT_USED` 400 / `RELAY_ENROLLMENT_EXPIRED` 400 / `RELAY_BAD_CERT_SIG` 400 /
+`RELAY_BAD_POP` 400 / `RELAY_NODE_REVOKED` 409 / `RELAY_QUOTA_NODES` 409 /
+`RELAY_ENROLLMENT_CONFLICT` 409 / `ENROLLMENT_QUOTA` 409 / `ENROLLMENT_RATE_LIMITED` 429。
+lookup 找不到（含 b64url 非法、跨租户）一律 404 `RELAY_NOT_FOUND`。
+
+#### 管理（bearer 管理令牌 **或** 本机 node-session）
+
+鉴权：`Authorization: Bearer <token>` 或 `x-vibeterm-relay-admin-token`，比的是 sha256 的常数时间比较；
+`relay,node` 时 assemble 额外注入 `isLocalUserAuthenticated`，本机已登录会话直接可用。失败一律 401 `RELAY_UNAUTHORIZED`。
+
+| 方法 路由 | 说明 |
+|---|---|
+| `GET /api/relay/status` | `{ config: { hasPassword, passwordEpoch, minTokenEpoch, defaultQuota, limits }, tenants: [...], totals: { tenants, nodes, nodesOnline, streams, bytesIn, bytesOut } }`；`bytesIn/Out` = 落库值 + 未刷新的内存增量；`totals.nodes` 是全部租户 pending+admitted 之和（与配额占用同口径）；`limits` 见 §11.2 |
+| `POST /api/relay/password` | `{ password: string \| null, mode: 'kick' \| 'keep' }` → `password_epoch += 1`；`kick` 时 `min_token_epoch = password_epoch` 并立刻断开 `token_epoch` 过旧的链路 |
+| `PATCH /api/relay/config` | `{ defaultQuota? , limits? }`，二者至少给一个（都不给 400 `RELAY_INVALID_BODY`）。`defaultQuota` 落库并把新配额推给所有「跟随默认」的在线租户（非法 400 `RELAY_BAD_QUOTA`）；`limits` 落库并热更新中继级带宽闸（非法 400 `RELAY_BAD_LIMITS`） |
+| `PATCH /api/relay/tenants/:id` | `{ quota?: RelayQuota \| null, label?: string \| null }`；`quota: null` 回到默认，`label` 空串或 null 清空（≤128 字符） |
+| `POST /api/relay/tenants/:id/kick` | 置 `kicked` + 断开；该租户须重新 enroll 才能再连 |
+| `DELETE /api/relay/tenants/:id` | 断开 + 删注册表、enrollment、密钥日志、计量 |
+
+租户表每行：`{ id, label, createdAt, lastSeenAt, nodes, nodesOnline, streams, bytesIn, bytesOut, quota, tokenEpoch, kicked }`。
+配额越界（如 `maxNodes > 256`）回 400 `RELAY_BAD_QUOTA`。
+
+### 7.2 节点侧 `/api/mesh/relay/*`
+
+全部要求本机 node-session；无会话 401 `{"code":"UNAUTHORIZED"}`，路径不匹配 405 `{"code":"method_not_allowed"}`，
+其余错误体是 `{ code, reason? }`（**与中继侧的 `{error:{code,message}}` 不同形**）。
+standalone 机器也能用（本机登录门生效时），这是「一台机器从零变成中继租户」的起点。
+例外：`GET /api/mesh/relay/status` 对可信本机客户端（`isTrustedLocalClient`：入口直达且套接字对端为回环/内网）免密；
+浏览器自报的 `x-vibeterm-client-source` 与 peer 转发请求一律不放行。`vibeterm relay list` 打本机回环时先走这条路径，401 再退回 node-session。
+
+| 方法 路由 | 说明 |
+|---|---|
+| `GET /api/mesh/relay/status` | 任何模式都回答，见下 |
+| `POST /enroll/proof-material` | body `{url}` → `{ url, relayHost, ts, maxSkewMs, rootPublicKey, rootEpoch }`；调用方据此本地签 proof。错误 `400 INVALID_URL`、`404 UNKNOWN_USER` |
+| `POST /enroll` | body `{ url, password?, proof: {bytes, sig} }` → `{ tenantId, token, passwordEpoch, metaEpoch, payload, payloadHash }`。**hub 模式也允许**（迁移入口）。错误 `400 INVALID_URL\|MALFORMED\|BAD_PROOF`、`401 <中继返回的 code>`、`409 NO_ADMITTED_NODES`、`502 RELAY_UNREACHABLE\|RELAY_BAD_RESPONSE\|RELAY_ENROLL_FAILED` |
+| `POST /leave/prepare` | 仅 relay 模式 → `{ metaEpoch, payload, payloadHash }`（空 `relays` 的 `set-relays`） |
+| `POST /remove/prepare` | body `{url}`，摘掉多中继里的某一条，**世代不变**、密钥重新封装给全部未吊销节点。错误 `400 INVALID_URL`、`404 RELAY_NOT_FOUND`、`409 RELAY_LAST\|RELAY_NOT_CONFIGURED\|NO_ADMITTED_NODES\|RELAY_KEY_MISSING` |
+| `POST /meta-key/prepare` | body `{op:'admit', node_id}` 或 `{op:'rotate', exclude?:[]}` → `{ epoch, payload, payloadHash }`。错误 `409 RELAY_NOT_CONFIGURED\|NO_ADMITTED_NODES`、`404 UNKNOWN_NODE`、`400 MALFORMED` |
+| `GET /join-material` | 仅 relay 模式 → `{ logKey, relays: [{url, tenantId, token}] }`；`?scope=all` 返回全表 |
+| `POST /enrollments` | body 同 hub：`{enroll_pk, authorization, authorization_sig, exp?}` → `201 { ok, id, expiresAt, relays: [{url, tenantId, token, accepted:true} \| {url, tenantId, accepted:false, error}] }`，并发扇出到全部已配置中继。错误 `409 DUPLICATE_ENROLL_PK\|RELAY_NOT_CONFIGURED`、`502 RELAY_ENROLL_FANOUT_FAILED` 等 |
+| `GET /enrollments/:id` | → `{ status: 'pending'\|'redeemed', enroll_pk, alreadyAdmitted, nodeId?, certificate?, cert_sig? }`，`404 NOT_FOUND` |
+
+`GET /api/mesh/relay/status` 的响应：
+
+```jsonc
+{
+  "mode": "relay" | "hub" | "none",
+  "tenantId": "<32hex>" | null,
+  "relays": [{ "url": "...", "priority": 0, "online": false, "attached": false,
+               "rttMs": null, "lastError": null, "kicked": false }],
+  "metaEpoch": 1,
+  "nodesViaRelay": 0,
+  "reauthRequired": false,
+  "quota": { "maxNodes": 16, "maxStreams": 64, "bandwidthBytesPerSec": null, "currentNodes": 3 } | null,
+  "keyLog": { "skipped": 0, "blockedSeq": null, "caughtUp": true }
+}
+```
+
+`keyLog.blockedSeq` 是字符串化的 u64 或 null（见 [§13](#13-已知边界) 的投毒边界）。`rttMs` 是 attached 那条 uplink 最近一次 ping→pong 的时延（毫秒；重连清零；尚未测到为 null）。`quota.currentNodes` 是中继在 `relay.quota` 里下发的当前占用（pending+admitted）。
+
+所有待签 payload 都由调用方（浏览器或 CLI）自己 `buildKeyLogRecord` + 签名 + `POST /api/auth/keylog?hub=sync` 提交；
+节点在记录**被应用**时才真正切换上级。
+
+### 7.3 `/api/auth/keylog?hub=sync` 在中继模式下的行为
+
+`planKeyLogAppend()`（`apps/gateway/src/mesh/auth-key-log-routes.ts`）按两个维度决策：
+
+| 情形 | 行为 |
+|---|---|
+| `set-relays` / `meta-key`（**任何模式**） | 跳过 attached-writer 判定；不等上级 ACK；本地验签 + 链校验后落账；**不推给旧上级**（hub → 中继迁移时不能把旧 hub 也拖进中继模式），由记录应用触发的重连后 catch-up 补推 |
+| 中继模式的其它记录 | 跳过 attached-writer 判定；不等中继 ACK；本地落账后尽力 `publish()`；中继离线时由重连后的 catch-up 补推 |
+| hub 模式的其它记录 | **完全不变**：attached-writer 判定 → 版本门 → 等 hub ACK / 重试 / 504 `HUB_TIMEOUT` |
+
+「中继模式」的判定来源是已应用的密钥日志本身（`currentState(uid).relays` 非空），
+比 `node_identity.uplink_kind` 早一步生效。
+
+本地优先落账时响应体是 `{ ok, seq, hash, hubAck: true, localApply: true }`。
+`hubAck: true` 是**故意**的——中继模式下本地日志就是权威，「已确认」= 已落账，前端三处判定因此照旧成立。
+`localApply` 只是排查用的附加字段。中继回的 `SEQ_MISMATCH` 之类 ack 错误**刻意不转成 HTTP 错误**：
+它同样可能只是「中继落后于本地」，转成 409 会把节点永久卡死。
+
+版本门 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES` 按模式选版本来源：hub 模式读 `nodes.version`，
+中继模式读 `peer_cache.version`（只检查未吊销证书对应的对端）。对端已在 peer cache 里但
+version 缺失或无法解析时 fail-closed。空 peer cache 只豁免节点侧三类记录
+（`set-relays` / `meta-key` / `rename-node`），方便首台节点 bootstrap；`admit-hub` /
+`retire-hub` / `rotate-root-keep` 仍然 fail-closed。中继模式不再绕过 `rotate-root-keep`：
+全体未吊销对端须 ≥ `MIN_ROTATE_ROOT_KEEP_RECORD_VERSION`（1.1.16）才放行。
+
+## 8. uplink 协议 `relay/v1`
+
+`WS /relay/uplink`，沿用 `packages/shared/src/link` 的帧与多路复用，ctl 帧 ≤64 KiB（`RELAY_CTL_MAX_BYTES`）。
+ctl 是 JSON `{t, ...}`，编解码在 `packages/shared/src/relay/codec.ts`。
+`seq` 在 wire 上是 `number | string`（u64 超 2^53 时走字符串），用 `relaySeqToWire` / `relaySeqFromWire` 转换。
+
+| `t` | 方向 | 载荷 | 中继行为 |
+|---|---|---|---|
+| `auth.challenge` | R→N | `{nonce: b64url32}` | 连上即发，`RELAY_AUTH_TIMEOUT_MS` 10 s 内不认证就断 |
+| `relay.auth` | N→R | `{tenant_id, token, node_id, sig, proto, client_version, member?}` | 见下 |
+| `auth.ok` | R→N | `{tenant_id, key_log_head_seq, rtc}` | |
+| `ping` / `pong` | 双向 | | 心跳 15 s，连丢 3 次断 |
+| `relay.status` | N→R | `{blob: Envelope(K_meta), epoch}` | 只存内存最新一块 + 触发广播；节点断开即消失 |
+| `relay.list` | R→N | `{version, nodes: [{id, online, status, epoch?, blob?}], rtc, key_log_head_seq}` | 全量；先滤掉 `revoked` 再截断到 256 条；整帧超 64 KiB 时退化成不带 `blob` 的清单；100 ms 防抖 |
+| `relay.keylog.append` | N→R | `{id, seq, blob, member?: {op, bytes, sig}}` | `seq` 必须 = head+1；日志行与 head 同事务提交（CAS） |
+| `relay.keylog.ack` | R→N | `{id, ok, seq?, error?, head?, member_ignored?, member_error?}` | 冲突回 `error: 'SEQ_MISMATCH'` 带最新 `head` |
+| `relay.keylog.req` | N→R | `{from_seq, limit?}` | limit 1..64，默认 32 |
+| `relay.keylog.res` / `relay.keylog.push` | R→N | `{records: [{seq, blob}], has_more?}` | append 成功后向**同租户其他**在线节点推 push |
+| `relay.rtc` | 双向 | `{rtcSession, from:'browser'\|'node', to, enc: Envelope(K_meta)}` | 校验 `to` 同租户、admitted、在线后转发 |
+| `relay.enroll.create` | N→R | `{id, enroll_pk, authorization, authorization_sig, exp}` | 用当前根公钥验 authorization → 落 `relay_enrollments` |
+| `relay.enroll.ack` | R→N | `{id, ok, error?}` | |
+| `enroll.redeemed` | R→N | `{certificate, cert_sig, enroll_pk, node_id}` | 广播给该租户**全部**在线节点（中继不知道 entry node，**没有 `entry_sid`**） |
+| `relay.quota` | R→N | `{maxNodes, maxStreams, bandwidthBytesPerSec, maxFileBytes?, currentNodes?, usage?}` | 认证后与配额变更、节点状态变化时；`maxFileBytes` / `currentNodes` / `usage` 可选（旧中继不下发，缺失即不限） |
+| `relay.kicked` | R→N | `{reason: 'password_rotated'\|'kicked'\|'revoked'}` | 随后关闭 |
+
+### `relay.auth` 的准入判定
+
+顺序：`proto === 1` → `client_version ≥ 1.1.23`（`MIN_RELAY_CLIENT_VERSION`，`_dev` 后缀会被剥掉）→
+租户存在且未 kicked → `token_epoch ≥ min_token_epoch` → 令牌哈希常数时间比较 → 成员判定 → 验 `sig`。
+`sig` = Ed25519(`nonce ‖ relay_host`)，`relay_host` 来自 `VIBETERM_RELAY_PUBLIC_URL`。
+
+节点未知或 `pending` 时必须带 `member`（明文 `admit-node` 记录的 `bytes` + `sig`）：
+根签名直接验；passkey 签名中继验不了，只在该租户**已有** admitted 节点时容忍（首个节点必须根签名）。
+`revoked` 是终态，任何 admit 都抬不回来。
+
+断连原因字符串（`link.close(reason)`）：`unknown-tenant` / `tenant-kicked` / `token-epoch` / `bad-token` /
+`proto-unsupported` / `client-too-old` / `member-required` /
+`member-<malformed|type_mismatch|bad_signature|node_mismatch|epoch_mismatch|seq_mismatch|passkey_unverifiable>` /
+`revoked` / `bad-sig` / `unauthorized` / `auth-timeout` / `heartbeat-timeout` /
+`relay-password_rotated` / `relay-kicked` / `relay-revoked` / `relay-replaced` / `relay-tenant-gone` / `relay-stop`。
+
+认证之后**每条消息**都复查令牌哈希与 `kicked`，防止「库改了但链路还没断」的窗口。
+
+### `member` sidecar 的绑定规则
+
+`member.op` 三取值，中继据此重建注册表 / 跟上根公钥：
+
+| `op` | 对应记录 | 中继采信的签名者 | 效果 |
+|---|---|---|---|
+| `admit` | `admit-node` | `root`（`passkey` 在有 admitted 节点时容忍） | upsert 成 `admitted` |
+| `revoke` | `revoke-node` | 仅 `root` | 置 `revoked`（终态）并踢掉该链路 |
+| `rotate-root` | `rotate-root` / `rotate-root-keep` / `reset-root` | 仅 `root`（**旧根**签名） | CAS 换 `root_public_key`，`root_epoch += 1` |
+
+三条硬规则（缺一条就能重放旧记录把已吊销节点抬回 admitted）：
+
+1. `record.root_epoch` 必须等于租户**当前**根 epoch（`epoch_mismatch`）；
+2. 随 append 上来的记录必须就是该 `seq` 的那一条（`seq_mismatch`）；
+3. root 签名必须恰好 64 字节（`bad_signature`）；passkey 签名是变长 Borsh 断言，
+   codec 允许 ≤4096 字节（`RELAY_CTL_MAX_SIG_BYTES`），但 `revoke` / `rotate-root` 一律 `passkey_unverifiable`。
+
+校验不过时 ack 仍是 `{ok: true, member_ignored: true, member_error: '<原因>'}`——**日志行照旧落库**，
+成员判定本来就在节点侧。
+
+### relay 流
+
+OPEN 首帧与 hub 一致：中继侧只接受 `{"to":"<32hex nodeId>"}`，转发出去的首帧带上 `{"to":...,"from":...}`。
+中继校验 source / target 同租户且均 admitted，否则 `RST unknown-target`。
+并发流按**租户**计数（`reserveStream` 先占位再 await，避免并发穿透），超额 `RST quota-streams`。
+带宽是每租户令牌桶，只延迟 pump 不丢帧。
+
+## 9. 节点侧行为
+
+### uplink 池
+
+`UplinkPool` 在 `node_identity.uplink_kind = 'relay'` 时把候选来源换成 `mesh_relays`（按 `priority` 升序，
+`hubNodeId: null`、`mode:'active'`、`writerEpoch:0`），`createClient` 造 `RelayUplinkClient`，
+`probeHealthz` 打 `GET <relay>/api/relay/health`，`isLocalCandidate` 恒 false。
+failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNodeId` 为 null 自动失效）。
+切到中继时顺手 `mesh_hubs.replaceAll([])`，所以 `/api/mesh/hubs` 自然返回 `hubs: []`。
+
+`RelayUplinkClient` 把 hub 的 ctl 翻译成 `relay/v1`：`rtc.signal` → `relay.rtc`（K_meta 封装 `{sdp, candidate}`）、
+`key.log.append` → `relay.keylog.append`、`ping/pong` 直通，其余 `hub.*` 抛错。
+因此 `createKeyLogPublisher` 与 `MeshRtcSignalRouter` 一行未改就能在中继模式工作。
+心跳 ping→pong 记下最新 RTT，经 `/api/mesh/relay/status` 的 attached 行 `rttMs` 暴露；重连清零。
+
+**当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。`apps/gateway/src/mesh/relay-link-error.ts` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
+
+**手动切换中继**：`POST /api/mesh/relay/switch { url }`（node-session 鉴权，`apps/gateway/src/mesh/relay-switch-route.ts`）：规范化 URL → 未配置 404 `RELAY_UNKNOWN` / 被踢 409 `RELAY_KICKED` / 已挂载 409 `RELAY_ALREADY_ATTACHED` → `UplinkPool.switchTo(url, signal)` make-before-break，10 s 超时即取消该次切换并回 502 `RELAY_SWITCH_FAILED`（body 带 `lastError` / `lastErrorCode`）；被并发切换取代的调用返回结构化失败。成功后把 URL 写入本机 `gateway_kv` 键 `relay.preferredUrl`，`relay-wiring` 启动时把首选排在候选首位；不改签名的 `set-relays` 记录。前端 `apps/fe/src/node/mesh-relay.ts` 的状态 store 带代数：切换成功后 +1，旧代的轮询结果与在途去重一律丢弃。
+
+**实时用量**：`relay.quota` 帧可带 `usage`，节点侧只对当前 attached 的中继有值，见 [限额与指标](./relay-limits-and-metrics.md)。
+
+本机同时跑 `relay,node` 时，`resolveRelayDialUrl` 若发现目标 host 等于本机 `VIBETERM_RELAY_PUBLIC_URL` 的 host，
+把 HTTP/WS 拨号改成 `http://127.0.0.1:<GATEWAY_PORT>`（避开 hairpin NAT）。认证签名仍绑公网 host；回环拨号跳过 CA pin。
+
+### 记录应用与重连
+
+`set-relays` / `meta-key` 应用后触发 `RelaySecrets.reconcile()`：重放密钥日志 → 解出自己的 `K_log` / `K_meta`
+入 `mesh_secrets` → 整表写 `mesh_relays` → 设 `uplink_kind`。目标有变则 `uplink.stop()` + `start()`；
+只是世代变了就立刻 `sendStatus()` 重发状态块（否则对端要等下一个心跳才看得见本节点）。
+
+### 密钥日志双向同步
+
+本地 head > 中继 head → 分页上传缺失记录（每页 64 条）；反之下载、解密、逐条验签应用。
+**解不开或接不上链的记录会被跳过并计数**，游标推过那一页继续，不会永远卡在同一页；
+`skipped` / `blockedSeq` / `caughtUp` 经 `keyLogHealth()` 暴露在 `GET /api/mesh/relay/status` 的 `keyLog` 字段里。
+单次追平最多 4096 页（防伪造的天文 seq 空转）。
+
+### 对端清单
+
+`relay.list` → 与 hub `node.list` 同形，解开对端状态块后写 `peer_cache`（含 `direct_capable`）；
+解不开（旧世代 / 被排除）时回落到本地 `peer_cache.directCapable`。
+清单处理串行化并按 `version` 丢弃过期帧，避免大清单晚于小清单完成导致回退。
+
+### 被踢与重认证
+
+收到 `relay.kicked` → `mesh_relays.kicked = true`，`status.reauthRequired` 翻真。
+重新 enroll（同一根公钥）会拿到新令牌、`replaceRelays` 把 `kicked` 清零；`RelayUplinkClient` 认证成功也会清。
+
+### 加节点
+
+中继的 `enroll.redeemed` 没有 `entry_sid`，所以浏览器不能靠 `/mesh/ws` 实时推送，只能轮询
+`GET /api/mesh/relay/enrollments/:id`。节点侧收到广播后会把证书并进本地 `enrollment_tokens`
+（`acceptRelayEnrollRedeemed`），轮询才拿得到 `status: 'redeemed'`。
+
+### 节点名
+
+中继模式下节点名由节点自持（`node_identity.name`，`hub join --name` 写入），随状态块下发；
+取不到时回落 `site_settings.siteName`。改任意节点的名字走密钥日志记录 `rename-node`
+（`root` / `passkey` 签名，`minVersion 1.1.24`）：前端本地 `buildKeyLogRecord` 后
+`POST /api/auth/keylog?hub=sync` 提交已签名记录（与 `set-relays` 同一条路径，见 `AuthApi.appendKeyLog(..., { hubSync: true })`）。
+每台节点应用时更新 `peer_cache.name`；若 `node_id` 是本机则同步 `node_identity.name` 与站点名。
+Hub 模式收到该记录时同样写 `nodes.name` 并广播 `node.list`，所以 Hub 网格也可以走这条路径
+（Hub 专属的 `POST /api/hub/nodes/:id/rename` 仍可用，由前端决定走哪条）。
+
+## 10. CLI 与网页
+
+### 运营者命令（中继机本地）
+
+读安装版 `app.env` 的 `GATEWAY_PORT` 与 `VIBETERM_RELAY_ADMIN_TOKEN`，一律打 `http://127.0.0.1:<port>`，
+带 `Authorization: Bearer`。缺令牌时报
+`VIBETERM_RELAY_ADMIN_TOKEN missing from app.env; this machine is not running the relay role`。
+
+| 命令 | HTTP |
+|---|---|
+| `vibeterm relay status [--json]` | `GET /api/relay/status` |
+| `vibeterm relay tenants [--json]` | 同上，打印租户表 |
+| `vibeterm relay passwd [--clear] [--kick\|--keep]` | `POST /api/relay/password`；默认 `keep`，先打印后果说明再隐藏输入两遍 |
+| `vibeterm relay kick <tenantId>` | `POST /api/relay/tenants/:id/kick` |
+| `vibeterm relay remove <tenantId> [--yes]` | `DELETE /api/relay/tenants/:id`；非 TTY 且无 `--yes` 直接报错 |
+| `vibeterm relay quota <tenantId\|default> [--max-nodes N] [--max-streams N] [--bandwidth <KBps>\|unlimited] [--max-file-mb <MB>\|none] [--inherit]` | `PATCH /api/relay/config` 或 `PATCH /api/relay/tenants/:id`；`--inherit` 发 `{quota: null}` |
+| `vibeterm relay limits [--max-tenants N\|none] [--total-bandwidth-kb <KBps>\|none] [--fair-share on\|off]` | `PATCH /api/relay/config` 的 `{limits}`；不带参数只读并打印当前限额 |
+| `vibeterm relay label <tenantId> <text...>` | `PATCH /api/relay/tenants/:id` |
+
+```bash
+vibeterm relay status --json
+vibeterm relay passwd --kick                     # 隐藏输入两遍，旧令牌全部作废
+vibeterm relay quota default --max-nodes 16 --bandwidth 512
+vibeterm relay quota abcd…ef --inherit
+vibeterm relay label abcd…ef 上海 A 机
+vibeterm relay remove abcd…ef --yes
+```
+
+### 租户命令（任意节点本地）
+
+都需要本机用户密码（`VIBETERM_PASSWORD` 或隐藏输入）来派生根钥并登录本机 gateway 拿 node-session。
+`relay leave` 仍要密码（它签 `set-relays`）；`relay list` 打本机回环时先免密读 `GET /api/mesh/relay/status`，401 再退回登录。
+
+| 命令 | 流程 |
+|---|---|
+| `vibeterm relay enroll <url> [--password <p>] [--username <n>]` | 探 `GET <url>/api/relay/health` → 无本地用户则先建 → `GET /api/auth/mode` + 登录 → `proof-material` → 本地签 proof → `POST /api/mesh/relay/enroll` → 签 `set-relays` 提交 `?hub=sync` → 轮询 `status` 直到 `mode==='relay'` 且在线（≤30 s） |
+| `vibeterm relay reauth <url> [--password <p>]` | 与 enroll 同一条链路（按 url 去重，租户不变、令牌换新），只是提示语不同 |
+| `vibeterm relay leave` | `leave/prepare` → 签 `set-relays`（空列表）→ 提交 → 轮询直到 `mode !== 'relay'` |
+| `vibeterm relay list [--json]` | `GET /api/mesh/relay/status`，打印 mode / tenant / meta 世代 / peers + 中继表 |
+
+```bash
+vibeterm relay enroll https://relay.example --password '<中继口令>'
+vibeterm relay list --json
+vibeterm hub join --token r3.<...>                          # 无需 url、无需 VIBETERM_HUB_URL
+vibeterm hub join https://relay-b.example --token r3.<...>  # url 只用于把该中继提到 failover 队首
+```
+
+`hub join` 的 r3 分支会写 `VIBETERM_HUB_URL=''`、`VIBETERM_HUB_PUBLIC_URL=''`，
+角色经 `relayJoinRoleName()` 归一（`relay,node` 保持 `relay,node`，其余落 `node`）。
+签名提交带有界乐观重试（4 次）：并发冲突时重读 head、**重新取一份 payload**、重签重发；
+中途根 epoch 变了立即中止并抛 `RELAY_ROOT_ROTATED`。
+CA 指纹后缀存在时，先无令牌拉 `GET <relay>/api/tls/ca.crt` 对指纹、pin 住再发任何带令牌的请求；
+指纹不符**不 failover**，直接中止（这是安全信号）。
+
+### 初始化
+
+```bash
+vibeterm init --role relay --relay-public-url https://relay.example --no-interactive
+vibeterm init --role relay,node --relay-public-url https://relay.example
+```
+
+`relay` 单跑跳过 tmux 依赖检查与 hub 地址追问；`--relay-public-url` 在落任何配置之前就按
+`normalizeRelayUrl` 校验（非 https 且非回环直接拒），交互模式最多重问 3 次。
+`init` 结束时打印管理令牌所在的 `app.env` 路径。
+
+### 网页
+
+网页初始化（仅 standalone）：`POST /api/setup/relay`，body `{ role: 'relay' | 'relay,node', relayPublicUrl, relayPassword?, username?, password?, directEnable? }`。
+写入 `VIBETERM_ROLES` / `VIBETERM_RELAY_PUBLIC_URL`、清空 Hub 键、保留或生成 `VIBETERM_RELAY_ADMIN_TOKEN`（响应里不回令牌）；`relayPassword` 只 hash 进 `relay_config`，不写 `app.env`。`relay,node` 还会像 becomeHub 一样建本机用户。随后 `withSetupTransition` 重启。
+
+`POST /api/local/leave` 增加可选 `targetRole: 'standalone' | 'relay'`（默认 standalone）。`relay,node → relay` 清 mesh 成员，并删掉 `root_public_key` 等于本机用户根公钥的那条 `relay_tenants`（级联清该租户的 nodes / enrollments / key_log），其它租户与中继 env 键保留；leave 随后立刻重启，本机幽灵租户上的在线 uplink 随进程断开。去 standalone 则两边都清，并删掉 `VIBETERM_RELAY_*`。`node` / `hub,node` 不能直接 `targetRole: relay`（400 `invalid_target`）。`GET /api/local/status` 在本机含 relay 角色时多一块 `relay: { publicUrl, hasPassword, tenantCount, nodesOnline, currentNodes }`，不含令牌或口令哈希。
+
+**租户侧（设置 → 节点）**：原 `HubStrip` 泛化成上级链路区块，中继模式下显示每条中继的
+url / 在线 / attached / 优先级 / 最近错误 / 被踢标记，外加「元数据密钥第 N 代」「经中继可见 N 个节点」「配额」。
+菜单项：接入中继、hub → 中继迁移、追加中继、移除某条中继（多于一条时逐条列出）、重新输入口令、轮换元数据密钥、离开中继。
+hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下不渲染。
+加节点向导生成 `r3.` join 串，admit 成功后自动补签 `meta-key {op:'admit'}`，吊销成功后自动补签 `{op:'rotate'}`；
+补签失败会留一条持久化的「欠账」并在挂上中继时自动重试一次，告警条上也有手动重试按钮。
+
+**运营者侧（设置 → 中继管理，`relay.admin.tabLabel`，在 `SETTINGS_TAB_BAR` 中紧随 `nodes`，属 `OPTIONAL_SETTINGS_TABS`）**：仅在探针成功时出现。页头三点菜单：修改接入密码、中继限额；未设密码时页头下一条警告。租户卡三点菜单：默认配额。租户行可选（`aria-selected`），选中后接入节点卡只显示该租户成员；接入节点卡带检索（名称 / nodeId / tenantId）、七列排序（`aria-sort` 只落在当前列）与状态筛选，纯函数在 `relay-metrics-model.ts`；中继是盲中继，成员 `name` 恒为 `null`，排序键实际是 `name ?? nodeId`。改口令对话框（清除开关 + 踢/留单选，默认「保留」），踢出与删除确认框（删除需逐字敲出租户编号）。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)。
+
+**接入向导**（`apps/fe/src/components/side-panels/connect-devices/`）覆盖「经中继 / 经 Hub / SSH 直连」三条路径，见 [接入设备面板](../development/connect-devices-panel.md)。追加中继时中继返回的 `RELAY_*` 401 由 `session-interceptor` 豁免，不当作本机会话失效。
+
+**门禁探针**：前端拿不到角色信息，所以进设置页时打一次 `GET /api/relay/status`——
+200 → 标签出现；**404 → 本机没有 relay 角色**，标签不出现且本次会话不再探；401 → 不出现但下次挂载重探。
+`?tab=relay` 深链在标签隐藏时仍能进，页面自己渲染「未启用」说明。
+
+## 11. 配额与计量
+
+### 11.1 按租户配额（`RelayQuota`，随 `relay.quota` 下发）
+
+| 项 | 默认 | 上限 | 生效点 |
+|---|---|---|---|
+| `maxNodes` | 16 | **256**（= `RELAY_CTL_MAX_NODES`，`relay.list` 一帧的容量） | redeem 时按 pending + admitted 计，revoked 不占位 |
+| `maxStreams` | 64 | 65536 | OPEN 时按租户全部在线节点的并发流总数计，超额 `RST quota-streams` |
+| `bandwidthBytesPerSec` | `null`（不限速） | 10 GiB/s | 每租户令牌桶，只延迟不丢帧 |
+| `maxFileBytes` | `null`（不限） | 1 TiB | **中继发布、租户节点执行**：节点侧 `effectiveTransferMaxBytes()` 取它与本机 `transferMaxBytes` 的小值，在上传 init 与下载 prepare 处回 `too_large`（413） |
+
+每租户覆盖为 `null` 表示跟随默认。配额变更立刻推 `relay.quota`。
+
+### 11.2 中继级限额（`RelayLimits`，只在中继本地）
+
+| 项 | 默认 | 上限 | 生效点 |
+|---|---|---|---|
+| `maxTenants` | `null`（不限） | 65536 | `POST /api/relay/enroll` 建新租户前，409 `RELAY_QUOTA_TENANTS` |
+| `totalBandwidthBytesPerSec` | `null`（不限） | 10 GiB/s | `pumpMetered` 里租户桶之后的第二道令牌桶，只延迟不丢帧 |
+| `fairShare` | 开 | — | 开：每租户在中继桶里占一个逻辑流，全部字节（含小帧）按轮转分配；关：所有租户共用一条 FCFS 流，先到先得 |
+
+读写口：`GET /api/relay/status` 的 `config.limits`、`PATCH /api/relay/config` 的 `{ limits }`
+（非法值 400 `RELAY_BAD_LIMITS`）。`GET /api/relay/health` 无鉴权，**不暴露限额**。
+`PATCH` 落库后立刻热更新令牌桶速率与公平分配开关，无需重启。
+
+`maxFileBytes` 是策略而非强制：中继看不到流里传什么（§2、§13），改过软件的租户可以无视它；
+真正保护运营者的是 `totalBandwidthBytesPerSec` 这道硬闸。端口映射没有可声明的大小，
+`maxFileBytes` 对它不生效，只有带宽闸管得住。
+另有两条 enrollment 闸：每租户「未过期未使用」上限 32（`ENROLLMENT_QUOTA`）、
+创建频率 16 条 / 60 s（`ENROLLMENT_RATE_LIMITED`）；过期行与用过超过 24 h 的行随 30 s 计量刷盘一起清扫。
+
+计量口径：中继从节点读到的每一帧**同时**计入该租户的 `bytesIn` 与 `bytesOut`（转发前记账），
+即一次中转的同一份字节两边各记一次。内存累计、30 s 落库，`stop()` 强制刷。
+
+## 12. 运维
+
+- **改口令**：`vibeterm relay passwd`。`--keep`（默认）只推进 `password_epoch`，已接入的租户不受影响；
+  `--kick` 同时把 `min_token_epoch` 抬到 `password_epoch`，所有旧令牌立刻失效并断链，
+  租户需用新口令 `vibeterm relay reauth <url>`（或网页上「重新输入口令」）恢复，`tenant_id` 不变。
+- **踢租户 / 删租户**：`kick` 只作废令牌与断链，数据留着；`remove` 连注册表、enrollment、密钥日志一起删。
+  注意被吊销节点如果在吊销当时中继正好离线，中继侧会留一条陈旧的 `admitted` 行，需要运营者手动 `kick`。
+- **健康探针**：`GET /api/relay/health` 无鉴权，反代健康检查与节点拨号前探测都用它。
+- **反代 / Access 豁免**：`/relay/uplink`、`/api/relay/health`、`/api/relay/enroll` 在
+  `ACCESS_EXEMPT_EXACT_PATHS` 里；`/api/relay/tenants/` 前缀只做 origin 守卫豁免，**不建 Cloudflare bypass 应用**。
+  管理面 `/api/relay/status|password|config|tenants/:id` **不豁免**——它们本就该走浏览器会话或管理令牌。
+  同一组路径也进了 `domain-access-policy` 的 `isServicePath()`。
+- **限速**：enroll 的按 IP 闸用 `clientIpFromRequest()`（trusted-proxy 感知），反代后面不会让所有人共用一个桶。
+- **升级**：中继与租户节点必须同版本升级到 ≥ 1.1.23——`relay.auth` 上有硬版本门，
+  且 `relay.status` / `relay.list` 不带明文 `direct_capable`，与 1.1.23 之前的实现不兼容。
+- **迁到中继前若已轮换过根**：须先签 `readmit-node`，再 enroll，最后提交 `set-relays`。CLI 与网页接入会自动按该顺序执行。中继只认识当前根，历史 `admit-node` 无法作为成员证明。远端 enroll 会立刻换发并作废旧令牌，因此 readmit 必须发生在 enroll 之前。
+
+## 13. 已知边界
+
+- **中继无法验 passkey 签名**（验签需要 `clientDataJSON`，含 origin）。因此中继层的 `admit` 可由持令牌节点提交，
+  `revoke` 与根轮换只认根签名。中继的注册表只是链路准入缓存，真正的成员判定与 `K_meta` 轮换在节点侧完成；
+  被 passkey 吊销的节点仍能连中继，但解不出新元数据、与任何节点握手都被拒。运营者可手动踢。
+- **中继上的密钥日志是同租户成员共同写入的，中继无法审阅内容**。任何一个已承认且持有效令牌的节点，
+  都可以往本租户日志里塞入其它成员解不开、或验签/接链不过的记录，把该租户在中继上的日志「投毒」，
+  直到它被吊销为止。其它节点不会因此卡死：解不开的记录会被跳过并计数
+  （`GET /api/mesh/relay/status` 的 `keyLog.skipped` / `keyLog.blockedSeq`），
+  但**本地日志无法越过被投毒的那一条继续追平**（链是连续的），表现为该节点此后拿不到更新的成员/密钥记录。
+  恢复手段：吊销该节点后由健康节点重建日志，或运营者踢掉整个租户令牌。
+  这是「中继不看内容」这条隐私边界的直接代价。
+- **中继的成员表里 `revoked` 是终态**：被吊销的 node id 永远不会因为任何（哪怕根签名完好的）`admit-node`
+  记录复活；一台机器要重新加入必须换新的节点身份（新 node id）。
+- **根轮换必须由租户主动告知中继**：`rotate-root` / `rotate-root-keep` / `reset-root` 记录上传时附带明文 sidecar，
+  中继用旧根验签后换公钥并把 `root_epoch` +1。若该记录没能上传（例如中继长期离线），中继会继续用旧公钥验成员记录，
+  新的 admit 全被拒；此时用**新根**重新 enroll 会得到一个**新租户**（tenant_id、注册表、日志全新），需要重新加入各节点。
+- **根轮换后再迁中继必须 readmit**：中继 enroll 时记下的是当前根公钥与 epoch；旧世代 `admit-node` 一律 `member-epoch_mismatch`。不补 `readmit-node` 则全网无法接入中继。
+- **中继一次只看得见 256 个节点**：`relay.list` 一帧最多 `RELAY_CTL_MAX_NODES` 个条目，
+  因此每租户 `maxNodes` 配额同样封顶 256；吊销的节点不占清单也不占配额。
+- **单文件上限只能由租户节点执行**：中继流里是整段 peer 会话的 AES-GCM 密文，中继看不到文件大小、
+  也分不清一条内层流是文件还是终端。因此 `maxFileBytes` 只是中继发布的策略，由租户节点在传输入口拦；
+  运营者的硬保护是中继级带宽闸。
+- **中继看得到租户根公钥、节点数、在线时段与流量模式**，以及完整的 `certificate` / `authorization` 明文字段
+  （admit sidecar 与 `relay.enroll.create` 都要它来建注册表）。
+- **多中继为有序 failover**：同一时刻只连一台。不同节点落在不同中继时互不可见（无跨中继转发），
+  `relay.list` 只含同一台中继上的同租户节点。enrollment 会扇出到全部已配置中继（见 §5），r3 串只编码接受了创建的那些；
+  加入方某台 404 时换下一台，活路上行仍只挂一台。
+- **中继不再仲裁 `seq`**：hub 模式靠 `publishAndAck` 挡住并发同 seq 的写，中继模式不挡——
+  两台节点同时写会各自落本地、其中一台在中继上被 `SEQ_MISMATCH` 拒，之后 catch-up 里报 fork 并打 warn。
+  这是「本地成员表权威、中继注册表可重建」的直接后果。实际风险低（前端所有写都在 `withKeyLogLock` 里）。
+- **中继模式下对端版本已写入 `peer_cache.version`**：`relay.list` 解开状态块后落库，解不开时回落缓存。
+  `inspectHubAuthRecordCompat` 在中继模式读这列（hub 模式仍读 `nodes.version`）。对端在 cache 里但
+  version 缺失/无法解析时 fail-closed；空 cache 只豁免 `set-relays` / `meta-key` / `rename-node`（首台 bootstrap）。`readmit-node` 要求已有证书，不走空 cache 豁免；中继模式下也不跳过未进入 `peer_cache` 的未吊销证书（未知版本一律阻塞）。
+  `rotate-root-keep` 不再因中继模式而绕过门禁，须全体未吊销对端 ≥ 1.1.16。
+
+## 14. 测试与实测
+
+### 进程内集成测试
+
+`apps/gateway/src/relay/integration/`：`relay.integration.test.ts`（5 例）与
+`relay-membership.integration.test.ts`（6 例），harness 在 `relay-mesh-harness.ts` / `relay-mesh-types.ts` /
+`relay-tenant-ops.ts`。节点栈是真的（`createMigratedAuthDb` + `ensureNodeIdentity` + `createMeshRuntime`，
+真实 `UplinkPool` / `RelayUplinkClient` / `RelayKeyLogSync` / `RelaySecrets` / `/api/mesh/relay/*`），
+链路走内存 socket 接进 `RelayRuntime.uplink.accept()`，`globalThis.fetch` 被临时改写把
+`https://relay.example` 的请求接进进程内 `RelayRuntime.handleRequest`。签记录一律走真实 HTTP
+（`GET /api/auth/keylog/head` → 根钥签 → `POST /api/auth/keylog?hub=sync`）。
+
+覆盖场景：接入与扇出、enroll proof 端到端、两租户互不可见、密钥日志双向同步与积压下载、
+CLI 用的两条中继路由、改密 kick / keep、吊销 + `meta-key` 轮换、节点数与并发流配额、hub → 中继迁移、根轮换。
+
+单元测试在 `apps/gateway/src/relay/relay-{units,routes,uplink,admin,hardening}.test.ts`
+与 `apps/gateway/src/mesh/relay-*.test.ts`。
+
+### 临时实例
+
+从源码起一台纯中继（test 模式不写 env 文件，管理令牌只在启动日志里打印一次 `[relay] generated admin token (not persisted, ...)`）：
+
+```bash
+VIBETERM_ROLES=relay \
+VIBETERM_RELAY_PUBLIC_URL=http://127.0.0.1:19993 \
+GATEWAY_PORT=19993 VIBETERM_BIND_HOST=127.0.0.1 \
+VIBETERM_TMUX_SOCKET=vibeterm-relay-dev \
+NODE_ENV=test DATABASE_URL=<scratch>/relay.db VIBETERM_DIRECT_ENABLED=false \
+bun packages/app/src/runtime/server.ts
+```
+
+验证要点：`GET /api/relay/health` 200；`GET /api/relay/status` 无鉴权 401、带 bearer 200；`GET /` 404（单跑无前端）；`ws://127.0.0.1:19993/relay/uplink` 首帧是 ctl 上的 `auth.challenge`。tmux 一律用独立 socket，收尾只 `tmux -L vibeterm-relay-dev kill-server`。三进程（中继 + 两台租户节点）的自动化主管见 [中继实测主管](../development/relay-live-harness.md)。
+
+## 15. 令牌换发与宽限（1.1.41 起）
+
+租户令牌只能经密钥日志（`set-relays`）分发给成员节点，而成员必须先通过 `relay.auth` 才拉得到日志。
+1.1.40 之前「同一根公钥再 enroll 一律换发令牌并立刻踢掉持旧令牌的链路」，于是
+**改完接入口令后（哪怕选了「保留现有租户」）主节点再走一次接入，全体成员节点就会被踢下线且再也拉不到新令牌**——
+它们手里只有作废的旧令牌，而新令牌在它们进不去的日志里。这就是「改密后很多节点连不上」的真因。
+
+### 换发判定
+
+`POST /api/relay/enroll` 新增可选字段 `known_token_hash`（调用方手上那份令牌的 sha256 十六进制）。
+节点侧 `POST /api/mesh/relay/enroll` 会自动带上 `mesh_relays` 里已存的那一份。中继按 `shouldReissueToken()` 三选一：
+
+| 判定 | 触发条件 | 行为 |
+|---|---|---|
+| `reuse` | 租户未被踢、`token_epoch ≥ min_token_epoch`，且 `known_token_hash` **等于当前令牌**（常数时间比较，上一代不算） | **不换发**。响应 `token: null`、`token_unchanged: true`，节点沿用本机已存的令牌 |
+| `recover` | `kicked` 或 `token_epoch < min_token_epoch` | 换发，清空 `prev_token_hash`，并 `enforceTokenReissue` 断掉持旧令牌的链路 |
+| `rotate` | 租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失） | 换发，旧哈希挪进 `prev_token_hash`，**不断链** |
+
+### 上一代令牌的宽限
+
+迁移 `0054_relay_prev_token.sql` 给 `relay_tenants` 加了 `prev_token_hash` / `prev_token_issued_at`。
+`rotate` 换发时旧哈希在 `RELAY_PREV_TOKEN_GRACE_MS`（30 天）内仍可认证——`relay.auth`、租户令牌 REST 鉴权、
+`putPack`、`relay.keylog.append` 的写鉴权都走 `relayTokenHashAccepted()`。链路存续期的复查
+（`liveAuthStillValid`）记的是**实际出示的那一代哈希**，因此宽限期内的老链路不会被当成「哈希不符」踢掉。
+
+复查点有三个（`revalidateRelayLive`）：每条 ctl、**心跳那一拍**、每次开流。只跑数据流的链路不产生 ctl，
+心跳是它唯一的复查点——少了这一拍，持上一代令牌的链路能活过整个宽限期。
+
+手持**上一代**令牌来 enroll 一律走 `rotate` 拿一份新令牌，绝不回 `token_unchanged`：
+否则调用方会把那份即将过期的旧令牌再写进 `set-relays` / 密封包，等宽限期一到全网又一起断。
+
+清空 `prev_token_hash` 的两条路：`POST /api/relay/tenants/:id/kick`（踢租户）与
+`POST /api/relay/password` `mode: 'kick'`（`enforceMinTokenEpoch`）。也就是说 **kick 语义一字未变**：
+运营者要作废旧令牌时，宽限不给任何后门。
+
+### 成员侧
+
+`mesh_relays` 加了 `kicked_reason`。`relay.kicked` 的 `password_rotated` 只表示令牌换代——成员既没有中继接入口令、
+也签不出 enroll proof，唯一出路是等持账户密码的一方把新令牌发下来，所以
+`GET /api/mesh/relay/status` 多了 `awaitingToken`，界面据此改出「等待新令牌」而不是「重新输入接入密码」。
+链路错误分类里 `revoked` 也从 `kicked` 桶拆了出来：被吊销是本节点身份的终态，换新 node id 才能再加入。
+
+### 恢复手段
+
+| 场景 | 做法 |
+|---|---|
+| 令牌换发时成员正好离线，错过了那条 `set-relays` | 主节点执行 `vibeterm relay resend-token`（或 `POST /api/mesh/relay/resend-token/prepare` + 签名提交）：按**当前**中继表与令牌重签一条 `set-relays`，任何还能读到密钥日志的成员都会拿到 |
+| 成员完全够不着密钥日志（令牌已作废，kick 之后尤其如此） | 在该机器上用**账户密码**跑 `vibeterm relay join <url> --tenant <id> --password`，见下 |
+
+#### rekey（只换令牌）分支
+
+本机已经是同一账户的成员时，`performRelayPasswordJoin` 不重建用户、不改 env、不重启，只做这几件事：
+
+1. **同账户判定走密钥日志**，不比根公钥：链的 genesis uid 必须等于本机用户 id，且本地 head 必须是这条链的前缀。
+   漏掉一次 `rotate-root-keep` 的成员本地根公钥会与密封包对不上，但它仍是同一个账户，照样能自救；
+   genesis uid 不同或链对不上仍报 `local_user_exists`。
+2. **追平并应用缺的记录**（含那条 `rotate-root-keep` 与带新令牌的 `set-relays`）。只改 `mesh_relays`
+   是不够的：网关下次启动会按**投影**整表重写这张表，把刚装上的令牌又盖回去。
+3. **投影是否够新，按密封包钉住的日志头判**，不看「令牌变没变」：只有 seq **严格大于**
+   `pack.head_seq` 的 `set-relays` 才算比密封包新。否则会踩进「本机 T0、日志里只有更早那次换发的
+   T1、密封包里是从未上链的 T2」——令牌确实变了，采用的却仍是过期的 T1。
+4. 投影不够新时用密封包里的令牌补签一条 `set-relays`：**先追加到中继，成功了才本机落账**。
+   反过来的话中继一 `SEQ_MISMATCH` 本地就永久分叉（本地 head 领先中继，此后每次 rekey 都过不了
+   前缀校验）。冲突时重新下载、校验、重新派生并重签，最多 3 轮，仍不成显式报错。
+5. 补签的前置条件（当前 `K_meta`、可封装的节点）**只读检查**，不成立就在动任何库之前报错
+   （`relay_key_missing`，HTTP 409）：半成功会在下一次 reconcile 时静默退回旧令牌。
+   这台机器要恢复，得由一台在线节点跑 `vibeterm relay resend-token`。
+
+UI 上「令牌已换代」不再顶掉「重新输入接入密码」那条提醒：被踢的租户（尤其是单节点租户）只能靠重新接入恢复，
+动作必须一直摆在那里；换代提醒作为补充说明另一条出路。
+
+kick 模式改密之后主节点必须先用**新接入口令**重新接入（令牌换发，不留宽限），各成员再按上表第二行自救。

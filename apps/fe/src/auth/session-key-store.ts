@@ -1,6 +1,6 @@
 // 浏览器临时钥（sk_sess）与 delegation 的持有者。
 //
-// 设计约束（docs/hub/2026082700-hub-node-architecture.md §2）：
+// 设计约束（docs/architecture/mesh-architecture.md §2）：
 //   * sk_sess 的**私钥字节**永远不出 WebCrypto：能生成不可导出 CryptoKey 时会话钥可以跨文档
 //     持久化（见 `./session-key-persistence`），否则退回 `@noble` 原始私钥并**只留内存**。
 //   * k_totp 与一次性 TOTP 码在任何形态下都只在内存，绝不写盘、不写 localStorage / cookie。

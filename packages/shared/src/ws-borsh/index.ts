@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议模块
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 // 重新导出 zorsh b 命名空间供类型使用
 export { b } from '@zorsh/zorsh';

@@ -1,142 +1,100 @@
-# 文档索引
+# VibeTerm 文档
 
-本文件是 `docs/` 的稳定入口。文件名带日期编号只是归档约定，**不要靠日期找文档**——从这里的表格进。
+本目录是 VibeTerm 的技术文档，面向开发者与运维。产品介绍与安装入门看仓库根 [README.md](../README.md)（中文版 [README.zh-CN.md](./README.zh-CN.md)），仓库工作约定看根 [AGENTS.md](../AGENTS.md)。
 
-新增文档按模块放进对应目录（没有就新建），文件名 `<日期><编号>-<英文短语>.md`，并回来补一行。
-规范见仓库根 `AGENTS.md`。产品层面的介绍看仓库根 `README.md`，不在 `docs/` 里重复。
+每篇文档开头一句话说明内容与读者；描述的都是**当前已落地的行为**，过程性记录不进这里。改代码影响到文档时同步改文档；新文档按主题放进下面四个目录之一，文件名用描述性 kebab-case 英文，并在该目录的 `README.md` 与本页补一行。
 
-目录顺序：**上手与部署 → 架构（mesh / 协议 / 终端 / agent）→ 功能模块 → 运维与工程（运维 / 性能 /
-测试 / 发版 / 更新 / 环境）→ 已知问题**。
-
-## 上手与部署
-
-| 路径 | 用途 |
+| 目录 | 放什么 |
 | --- | --- |
-| `deployment/2026021000-production-install.md` | 生产部署：一键安装、launchd / systemd 用户服务、env 与数据目录、HTTPS 反代、备份、升级与排障 |
-| `deployment/2026061400-process-survival.md` | VibeTerm 崩溃 / 重启时 tmux 进程的存活边界（`KillMode=process`、`AbandonProcessGroup`、linger） |
-| `deployment/2026090605-nonstandard-ports.md` | 80/443 不可用时的非标端口部署：端口透明性、候选端口表与自动探测 |
-| `env/2026061301-three-tier-env.md` | development / test / production 三套环境的加载规则与变量清单 |
-| `onboarding/2026083101-connect-devices-panel.md` | 「接入更多设备」面板（移动端选地址→扫码、服务器接入）与远程访问入口 |
+| [`architecture/`](./architecture/README.md) | 系统如何工作：多节点互联（mesh / hub / 中继 / 直连 / 端口映射）、WebSocket 协议与状态机、终端底座与视口、文件传输、分享、Agent、Watch、通知与消息指令 |
+| [`operations/`](./operations/README.md) | 部署与运维手册：安装、mesh 与多 hub 运维、容器节点、HTTPS / 端口 / 隧道、进程存活、发版 / 签名 / 升级 / 改名迁移 |
+| [`security/`](./security/README.md) | 登录面安全模型与访问策略（mesh 的威胁模型在 `architecture/mesh-architecture.md`） |
+| [`development/`](./development/README.md) | 开发与测试：环境变量、前端包结构与外壳行为、性能基准、字体流水线、实测 harness |
+| `images/` | 根 README 引用的截图 |
+| [`known-issues.md`](./known-issues.md) | 尚未解决的已知问题登记簿；解决后从中移除 |
 
-## 架构：多节点 mesh
+## 快速定位
 
-| 路径 | 用途 |
+- 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md) → 需要第二台入口时 [多 hub 主/备](./operations/multi-hub-standby.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
+- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)。
+- 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
+- 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
+- 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
+- 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)。
+
+## 全部文档
+
+### architecture/
+
+| 文档 | 内容 |
 | --- | --- |
-| `hub/2026082700-hub-node-architecture.md` | hub / node mesh 架构设计：身份与 key-log、链路多路复用、直连与中继、失陷边界 |
-| `hub/2026082800-hub-node-operations.md` | hub / node 运维：角色装配、加入与吊销、登录与 passkey、环境变量、直连排障 |
-| `hub/2026090104-multi-hub-standby.md` | 多 hub 主 / 备：writer 选举、fencing、写入转发、跨 hub relay、切换手册 |
-| `hub/2026090301-site-settings-node-linkage.md` | 站点名 / 访问地址与 mesh 节点身份联动：有效地址、写保护、双向同步 |
-| `hub/2026090305-peer-endpoint-backoff.md` | 直连地址负向缓存与退避、LAN 预算、拨号并发、广播端网卡过滤 |
-| `hub/2026090306-rtc-dial-breaker.md` | WebRTC DataChannel 熔断：阈值、冷却阶梯、强制探测、`dcBreaker` 字段 |
-| `hub/2026090502-rtc-signaling-epoch-link-liveness.md` | 直连信令代次、ICE 配置、链路活性与在途流保护（1.1.31） |
-| `hub/2026090505-direct-failure-codes.md` | 直连失败码（ws / DataChannel）、链路信息窗按码 i18n 与原文兜底 |
-| `hub/2026082801-hub-docker-e2e.md` | Docker 多容器 hub/node 实测 harness（单机 compose 与远端分体拓扑） |
-| `hub/2026090402-docker-node.md` | 可升级的 VibeTerm 节点容器：容器内自装、事务式升级、看护循环 |
-| `mesh/2026090604-port-mapping.md` | 端口映射：node A 的 TCP 监听器经 peer 流复用器隧道到 node B 的拨号器 |
-| `relay/2026090304-relay-role.md` | 公共中继（relay）角色实现参考：盲中继协议、租户密钥、接口、CLI 与运维 |
-| `relay/2026090403-relay-metrics.md` | `GET /api/relay/metrics`：采样口径、字段来源与设置页可视化 |
-| `relay/2026090501-relay-mgmt-switch-usage.md` | 中继管理页、手动切换中继、三档配额实时用量与当前错误语义 |
-| `relay/2026090604-relay-limits.md` | 中继运营限额：租户数上限、全局带宽闸门与单文件大小约束 |
+| [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、直连授权、角色装配、失陷边界 |
+| [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、WebRTC 熔断、信令代次与活性、失败码与链路信息窗 |
+| [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
+| [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
+| [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |
+| [site-settings-node-linkage.md](./architecture/site-settings-node-linkage.md) | 站点名 / 访问地址与 mesh 节点身份联动 |
+| [ws-borsh-v1-spec.md](./architecture/ws-borsh-v1-spec.md) | `vibeterm-ws-borsh-v1` wire 格式的唯一真源：kind 编号、payload schema、作废号段、能力协商 |
+| [ws-state-machines.md](./architecture/ws-state-machines.md) | 两端状态机：连接、设备、canonical 首屏 / 订阅 / resize / bell / feed，附屏障历史对应 |
+| [site-theme-broadcast.md](./architecture/site-theme-broadcast.md) | `KIND_SITE_THEME_UPDATE` 站点主题跨端广播 |
+| [ghostty-terminal.md](./architecture/ghostty-terminal.md) | Ghostty wasm 终端底座：分层、初始化、输入 / 输出 / 渲染链路、xterm 兼容面 |
+| [terminal-viewport-policy.md](./architecture/terminal-viewport-policy.md) | 终端视口策略：最小可见客户端拥有 PTY 尺寸 |
+| [terminal-osc-notifications.md](./architecture/terminal-osc-notifications.md) | 终端 OSC 通知序列与 Claude Code 渠道、`TERM=xterm-ghostty` 注入 |
+| [tui-theme-notify.md](./architecture/tui-theme-notify.md) | 经 DEC mode 2031 向 pane 内 TUI 注入主题变更通知 |
+| [ws-latency-badge.md](./architecture/ws-latency-badge.md) | 延迟徽标的测量口径与毛刺排查 |
+| [mobile-keyboard.md](./architecture/mobile-keyboard.md) | 移动端软键盘：避让三模式与唤起入口 |
+| [device-tree-reorder.md](./architecture/device-tree-reorder.md) | 设备 / 窗口 / pane 拖拽排序与顺序持久化 |
+| [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、路径安全 |
+| [node-to-node-transfer.md](./architecture/node-to-node-transfer.md) | 节点间文件传输：一次性授权、协议、限制与清理 |
+| [terminal-share.md](./architecture/terminal-share.md) | 终端分享：数据模型、接口、凭证与 ws 隔离、录制回放、安全边界 |
+| [terminal-agent.md](./architecture/terminal-agent.md) | 终端 AI Agent：数据模型、接口、生命周期、系统提示词、终端工具与 `run_command`、凭证处理 |
+| [agent-remote-pane-grant.md](./architecture/agent-remote-pane-grant.md) | 远程窗格授权：`/api/mesh-internal/tmux/*` 的按窗格授权 |
+| [watch-monitor.md](./architecture/watch-monitor.md) | Watch 规则模型、三种触发、LLM 介入点、调度 |
+| [notifications-weixin-channel.md](./architecture/notifications-weixin-channel.md) | 微信（iLink）通知渠道 |
+| [mesh-notification-sink.md](./architecture/mesh-notification-sink.md) | 多节点通知汇聚 |
+| [messaging-commands.md](./architecture/messaging-commands.md) | 平台无关的消息指令层（Telegram / 微信） |
 
-## 架构：WebSocket 协议
+### operations/
 
-| 路径 | 用途 |
+| 文档 | 内容 |
 | --- | --- |
-| `ws-protocol/2026021402-ws-borsh-v1-spec.md` | `vibeterm-ws-borsh-v1` wire 格式唯一真源：kind 编号、payload schema、作废号段、能力协商 |
-| `ws-protocol/2026021403-ws-state-machines.md` | 两端状态机规范：连接、设备、canonical 首屏 / 订阅 / resize / bell / feed，附 selectToken 屏障的历史对应 |
-| `ws-protocol/2026070402-site-theme-update.md` | `KIND_SITE_THEME_UPDATE` 站点主题跨端广播与 last-writer-wins |
+| [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
+| [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
+| [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |
+| [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
+| [nonstandard-ports.md](./operations/nonstandard-ports.md) | 80/443 不可用时的非标端口部署与端口探测 |
+| [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
+| [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘 fake-IP 绕行与排查 |
+| [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy |
+| [troubleshooting-db-master-key.md](./operations/troubleshooting-db-master-key.md) | 数据库与 `VIBETERM_MASTER_KEY` 不匹配的启动失败 |
+| [release-process.md](./operations/release-process.md) | 发版手册：发行源、版本注入、changelog 改写规范、构建、校验、打 tag |
+| [release-signing.md](./operations/release-signing.md) | 发行包 Ed25519 签名：密钥轮换、校验点、兼容矩阵 |
+| [upgrade-transaction.md](./operations/upgrade-transaction.md) | 崩溃安全的升级事务：布局、阶段与崩溃表、修复 |
+| [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
+| [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：推包续传协议与进度 |
+| [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
+| [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
-## 架构：终端
+### security/
 
-| 路径 | 用途 |
+| 文档 | 内容 |
 | --- | --- |
-| `terminal/2026041600-ghostty-wasm-runtime.md` | Ghostty wasm 终端底座：分层、初始化、输入 / 输出 / 渲染链路与 xterm 兼容面 |
-| `terminal/2026090101-viewport-policy.md` | 终端视口策略：最小可见客户端拥有 PTY 尺寸 |
-| `terminal/2026090601-pane-oom-policy.md` | tmux 窗口无故消失：tmux 3.6 pane scope 与 systemd `OOMPolicy=stop` 的连坐，取证与处置 |
-| `terminal/2026061501-mobile-keyboard-behavior.md` | 移动端三种键盘避让模式（lift / resize / follow）与光标跟随算法 |
-| `terminal/2026061101-claude-code-osc-notification.md` | Claude Code 各通知渠道的 OSC 序列与 `TERM=xterm-ghostty` 注入 |
-| `terminal/2026070501-tui-theme-notify-2031.md` | 经 DEC mode 2031 向 pane 内 TUI 注入主题变更通知 |
-| `terminal/2026090304-ws-latency-measurement.md` | 延迟徽标的测量口径：心跳 nonce / 中位数、网关 PONG 优先通道与 `[ws-metrics] ping` |
+| [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP 与 bootstrap、通行密钥二次验证（按 origin + 本地豁免）、公网安全评估 |
+| [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
 
-## 架构：终端 AI Agent
+### development/
 
-| 路径 | 用途 |
+| 文档 | 内容 |
 | --- | --- |
-| `agent/2026061300-terminal-agent-overview.md` | Agent 总览：数据模型、REST/WS 接口分工、消息队列、事件流、生命周期与已知限制 |
-| `agent/2026061302-system-prompt-and-credential-handling.md` | 类 JSX system prompt 模板、环境注入、注入防护与出站 LLM 凭证消毒 |
-| `agent/2026061303-run-command-headless-ghostty.md` | `run_command` 工具与服务端 headless ghostty per-pane 模拟器 |
-| `agent/2026090606-remote-pane-grant.md` | 远程窗格授权：`/api/mesh-internal/tmux/*` 的按窗格授权与失陷边界 |
-
-## 功能模块
-
-| 路径 | 用途 |
-| --- | --- |
-| `device-tree/2026061400-reorder.md` | 设备 / 窗口 / pane 的拖拽排序与服务端顺序持久化（经 canonical metadata 下发） |
-| `files/2026061500-transfer-progress-chunked.md` | 分块上传、两阶段进度与速度、取消、2GB 上限、上传路径安全与临时文件清理 |
-| `files/2026090101-files-sidebar-visibility-default.md` | 文件侧栏的可见性缺省与竖向拖拽 |
-| `files/2026090604-node-to-node-transfer.md` | 节点间文件传输：源节点直推目标节点、`@vibeterm/transfer` 引擎与断点续传 |
-| `watch/2026061300-watch-monitor-overview.md` | Watch 规则模型、调度、三种触发（正则 / 不变 / LLM）与 API |
-| `notify/2026062000-weixin-clawbot-channel.md` | 微信（iLink / ClawBot）渠道：扫码登录、用户授权、半主动推送语义与 API |
-| `notify/2026090603-mesh-notification-sink.md` | 多节点通知汇聚：开关式 sink、配置复制、合并队列与 toast 去重 |
-| `messaging/2026090402-messaging-command-template.md` | 平台无关的消息命令层（Telegram / 微信）：解析、授权、命令表与新平台适配 |
-| `frontend/2026070800-workspace-packages.md` | workspace 包清单与出口、依赖方向、Connection / Runtime 两层工厂与嵌入用法 |
-| `frontend/2026090307-app-error-boundary.md` | 路由 `errorElement` / 面板级错误边界 / 懒加载 chunk 重试 |
-| `frontend/2026090504-sidebar-node-first-paint.md` | 侧栏节点首屏：设备列表 pending 占位、mesh 节点缓存与有界重试、前台拨号竞速与 hub presence 陈旧窗口 |
-| `frontend/2026090606-mobile-keyboard-trigger.md` | 触屏软键盘唤起入口收敛到输入行，终端画布轻点不再弹键盘 |
-| `fonts/2026061501-font-pipeline.md` | Nerd Fonts 精选清单、woff2 构建工具链、动态 manifest 与运行时懒加载 |
-
-## 功能模块：终端分享
-
-| 路径 | 用途 |
-| --- | --- |
-| `share/2026090503-terminal-share.md` | 终端分享：数据模型、owner / share-access 接口、分享凭证与 ws 作用域隔离、录屏日志与回放、安全边界 |
-
-## 运维排障
-
-| 路径 | 用途 |
-| --- | --- |
-| `operations/2026021200-db-key-mismatch-journald.md` | 数据库复制后 master key 不匹配的启动失败排障与 journald 日志配置 |
-| `operations/2026090101-public-login-hardening.md` | 公网登录面：客户端 IP 判定、首次 bootstrap 本机限制与未登录面的资源上限 |
-| `operations/2026090101-public-login-security-review.md` | 公网启用账号密码登录的安全评估：现有机制、处置清单与「明确不做的事」 |
-| `operations/2026090201-passkey-second-factor-opaque-login.md` | 登录失败模糊化与通行密钥二次验证 |
-| `operations/2026090304-passkey-trusted-local-source-waiver.md` | 本机 / 内网 / CGNAT 源地址免通行密钥二次验证：判定、入口打标、安全边界 |
-| `operations/2026090302-domain-access-policy.md` | 按节点的「允许域名访问」开关：拦截规则、服务白名单、锁死自救 |
-| `operations/2026090201-effective-https-status.md` | HTTPS 设置区「对外有效 HTTPS」的判定与展示 |
-| `operations/2026090303-acme-dns-providers.md` | ACME dns-01 提供商抽象（Cloudflare / DNSPod）与非标端口 HTTPS 配置 |
-| `operations/2026090502-tunnel-fake-ip-edge-bypass.md` | 隧道边缘 fake-IP 绕行：DoH 解析真实边缘、`--edge` 静态模式与排查法 |
-
-## 性能
-
-| 路径 | 用途 |
-| --- | --- |
-| `performance/2026082700-hot-path-optimizations.md` | 热路径优化实测：解析器零拷贝、retention 增量记账、帧精确尺寸、渲染桥行级 dirty、history 分页、DB 索引，及 Rust/WASM 移植评估 |
-| `performance/2026090502-fe-smoothness-ws-reconnect.md` | 前端流畅度（页面模块缓存、chunk 预热、`content-visibility`、vendor 分包）与浏览器 WS 重连韧性 |
-| `performance/2026083101-settings-tabs-latency.md` | 设置页各 tab 加载慢的根因与处置 |
-| `performance/2026090101-static-cache-policy.md` | 打包前端静态资源的缓存策略 |
-
-## 测试
-
-| 路径 | 用途 |
-| --- | --- |
-| `testing/2026061302-live-integration-tests.md` | 打真实 endpoint 的 live integration 测试约定与凭证守卫 |
-| `testing/2026090604-relay-live-harness.md` | 中继三进程实测主管 `relay-boot`：拓扑、鉴权助手与 state JSON |
-
-## 发版与更新
-
-| 路径 | 用途 |
-| --- | --- |
-| `release/2026041300-cli-release-process.md` | `vibeterm-cli` 发布流程：版本注入、全量构建、校验、打 tag 触发 Actions |
-| `release/2026061406-release-changelog-flow.md` | `scripts/release.ts` 的双语 changelog 生成与 agent 改写规范 |
-| `release/2026083101-github-releases-distribution.md` | 发行源切换到本仓库 GitHub Releases 与 `install.sh` |
-| `release/2026083101-upgrade-crash-safety.md` | 自升级的 BIOS 式事务：落地布局、阶段与崩溃表、回滚与修复 |
-| `release/2026090606-release-signing.md` | 发行包 Ed25519 签名：密钥与轮换、`SHA256SUMS.sig`、各校验点与兼容矩阵 |
-| `release/2026090607-rename-vibeterm.md` | tmex → VibeTerm 改名（2.0.0）：命名表、冻结值、安装迁移与兼容桥、升级手册 |
-| `update/2026061406-self-update.md` | 程序内自更新状态机、`canSelfUpdate` 判定与版本展示 |
-| `update/2026061502-bun-path-resolution.md` | bun 路径解析：优先级、`VIBETERM_BUN_PATH`、路径消毒与超时 |
-| `update/2026090502-resumable-remote-upgrade-push.md` | 远程升级推包续传：偏移协议、`.part` 生命周期、重试预算与前端进度 |
-
-## 已知问题
-
-| 路径 | 用途 |
-| --- | --- |
-| `known-issues.md` | 尚未解决的已知问题登记簿（含 e2e 抖动基线）。解决后从中移除 |
+| [environments.md](./development/environments.md) | development / test / production 三套环境与 `loadEnv()` |
+| [workspace-packages.md](./development/workspace-packages.md) | 前端 workspace 包结构、两层工厂与嵌入用法 |
+| [app-error-boundary.md](./development/app-error-boundary.md) | 路由 / 面板级错误边界与 chunk 重试 |
+| [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存、重试、前台拨号竞速 |
+| [files-sidebar-visibility.md](./development/files-sidebar-visibility.md) | 文件侧栏可见性缺省与纵向拖拽 |
+| [connect-devices-panel.md](./development/connect-devices-panel.md) | 「接入更多设备」面板与远程访问向导 |
+| [font-pipeline.md](./development/font-pipeline.md) | 终端字体打包流水线 |
+| [performance-hot-paths.md](./development/performance-hot-paths.md) | 热路径优化、基准脚本与 Rust / WASM 评估 |
+| [performance-frontend.md](./development/performance-frontend.md) | 前端流畅度、WS 重连、设置页加载、静态资源缓存 |
+| [live-integration-tests.md](./development/live-integration-tests.md) | 打真实 endpoint 的实测约定 |
+| [relay-live-harness.md](./development/relay-live-harness.md) | 中继三进程实测主管 |
+| [hub-docker-e2e.md](./development/hub-docker-e2e.md) | Docker 多容器 hub/node 实测 harness |

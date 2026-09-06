@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议 wire <-> domain 转换层
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 import type { b } from '@zorsh/zorsh';
 import type {

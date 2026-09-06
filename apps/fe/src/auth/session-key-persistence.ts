@@ -3,7 +3,7 @@
 // 为什么需要：iOS 的 PWA 每次冷启动都是一个新 document，纯内存的会话钥必然丢失——entry 的
 // HttpOnly cookie 还在，但每台远端 node 都会退回「登录该节点」并再要一次密码。
 //
-// 安全前提（docs/hub/2026082700-hub-node-architecture.md §2「会话钥的跨文档持久化」）：
+// 安全前提（docs/architecture/mesh-architecture.md §2「会话钥的跨文档持久化」）：
 //   * 只在 WebCrypto 能生成**不可导出** Ed25519 私钥时才启用。存进去的是 `CryptoKey` 本身，
 //     structured clone 保留 non-extractable，JS（含 XSS）永远读不到私钥字节。
 //   * `k_totp` 与一次性 TOTP 码**绝不写盘**；delegation 的 18 小时 TTL 就是这份记录的上限。

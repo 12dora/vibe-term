@@ -1,4 +1,4 @@
-// 中继密封包（sealed pack）的浏览器侧刷新（docs/relay/2026090304-relay-role.md §5b）。
+// 中继密封包（sealed pack）的浏览器侧刷新（docs/architecture/relay.md §5b）。
 //
 // 密封包是「中继地址 + 租户编号 + 账户密码」加入的唯一凭据：它把 `K_log`、租户令牌与当时的
 // 密钥日志头钉在一块只有根种子能解开的密文里（`KEK = HKDF(root_seed, tenant_id)`）。

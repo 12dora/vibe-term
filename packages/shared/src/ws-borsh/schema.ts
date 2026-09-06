@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议 Schema 定义
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 import { b } from '@zorsh/zorsh';
 

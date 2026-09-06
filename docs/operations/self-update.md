@@ -1,0 +1,157 @@
+# 程序内自更新与版本展示
+
+本文描述版本号的真相源与注入、安装方式检测与 `canSelfUpdate` 判定、更新检查、本机升级状态机、发行包缓存 / 租约 / 清扫与 API；面向改动 `apps/gateway/src/system/` 升级代码的开发者与需要理解升级行为的运维。
+
+## 背景
+
+VibeTerm 以 `vibeterm-cli` 包（`packages/app`）发布。除终端 `vibeterm upgrade` 外，设置页提供版本展示、安装方式检测与程序内自更新（带状态机）；发版时自动生成 changelog。
+
+## 版本真相源与注入
+
+「monorepo 版本」= 发布的 `vibeterm-cli` 版本（`packages/app/package.json.version`），唯一真相源。
+
+纯函数 `formatDisplayVersion(base, isProd)`（`@vibeterm/shared`，浏览器安全）统一展示规则：`isProd ? base : base + '_dev'`。
+
+- **前端**：`vite.config.ts` 读 `packages/app/package.json`，`define` 注入 `__MONOREPO_VERSION__` 与 `__IS_PROD__`（`mode === 'production'`）。`main.tsx` 启动 `console.info('vibeterm <display>')`。
+- **gateway**：`apps/gateway/src/system/version.ts` 的 `getBaseVersion()` 分层取值：
+  1. 构建期注入的 `VIBETERM_MONOREPO_VERSION`（`typeof` 守卫；`packages/app` `build:runtime` 与 `apps/gateway` `build` 均注入）——主生产/容器路径。
+  2. production 兜底：`install-meta.json.cliVersion`。
+  3. dev/test：仓库 `packages/app/package.json`。
+  4. 兜底 `unknown`。
+  - 后端在 `apps/gateway/src/index.ts`（dev）与 `packages/app/src/runtime/server.ts`（prod bundle）启动时输出版本。
+
+构建期注入用 `bun build --define`：`packages/app/scripts/build-runtime.ts` 读版本并传 `--define VIBETERM_MONOREPO_VERSION="x.y.z"`。
+
+## 安装方式检测
+
+`apps/gateway/src/system/install-info.ts`：
+
+- 反推 installDir：优先 `VIBETERM_FE_DIST_DIR`（= `installDir/resources/fe-dist`）上溯两级，回退 `cwd`（服务 `WorkingDirectory=installDir`）。
+- 读 `installDir/install-meta.json`：存在 → `installedViaCli=true`，`deployment` 由 `platform` 映射（darwin→launchd / linux→systemd / 其余→none）。
+- 仅 production 才判 CLI 安装；dev/test 与 production-无-meta（手动部署）→ 非 CLI。
+
+`canSelfUpdate = isProd && installedViaCli && deployment !== 'none' && !isManagedExternally() && getManagementMode() === 'none'`（`apps/gateway/src/system/{managed,info-public}.ts`）：非 production 禁用、非 CLI 安装禁用，**且被外部宿主托管（managed 模式，或 update owner 不是 self）时一律禁用**——那种部署下升级由宿主负责，gateway 自升级会与宿主的版本管理打架。
+
+## 检查更新与 changelog
+
+`apps/gateway/src/system/update-check.ts`（发行源是本仓库 GitHub Releases，见 [发布流程](./release-process.md)）：
+
+- `fetchLatestGithubRelease()` 读 `RELEASE_API_LATEST_URL`（`releases/latest`，`no-store`、10 s 超时），
+  `tag_name` 去掉前缀 `v` 即 latest 版本；changelog 直接取 release body（markdown），空则 `null`。
+- 资产里没有 `vibeterm-cli-<version>.tgz` 时仍回报 `latestVersion`，但 `hasUpdate=false`——避免前端提供一个
+  下载不到包的升级按钮。403 / 404 / 429 直接抛错，不回退 npm。
+- **成功结果在进程内缓存 60 s，并发调用合并成一次请求**（`resetLatestReleaseCache()` 供测试复位）。
+  未认证的 GitHub API 只有 60 次/小时，而「全部升级」会为每个节点各发一次 start；没有这层缓存时
+  N 个节点就是 N 次查询，一次批量升级即可能把配额打光。失败不缓存，下一次照常重试。
+
+## 升级状态机与执行
+
+`apps/gateway/src/system/upgrade.ts`，全局唯一 `UpgradeController`，状态 `idle / downloading / executing`：
+
+1. `downloading`：从 GitHub Releases 下载 `vibeterm-cli-<version>.tgz`（fetch 跟随资产 302）到临时目录，
+   校验 SHA256 后 `tar -xzf` 解出 npm pack 布局（`package/`）。CLI 是 bun bundle，无需 `npm install`。
+   此阶段 gateway 仍存活，失败回 `idle` 并经 `status()` 上报 error。
+2. `executing`：`detached` 拉起解压包的 `package/bin/vibeterm.js upgrade --apply-current-package
+   --install-dir <dir> --version <v>`（输出落 `installDir/upgrade.log`）。子进程停服务（杀掉本 gateway）
+   → 部署 → 重启；服务重启后新 gateway 启动即 `idle`。事务、预启动验证与回滚见
+   [升级事务](./upgrade-transaction.md)。
+
+依赖服务 unit 的 `KillMode=process`（systemd）/ `AbandonProcessGroup=true`（launchd），使 detached 子进程
+在服务进程被停时存活，完成自升级。
+
+远程节点的升级（入口把包推给节点、断流续传）见
+[远程升级](./remote-upgrade.md)。
+
+## 发行包缓存与清扫
+
+入口节点为远程升级下载的 tarball 落在 `<installDir>/staging/release-cache/`（`resolveReleaseCacheDir()`；
+未安装场景回落 `<os tmpdir>/vibeterm-release-cache`，`VIBETERM_RELEASE_CACHE_DIR` 可覆盖）。目录里只有三种文件：
+
+- `vibeterm-cli-<version>.tgz`——校验通过的整包。资产与平台无关，所以缓存键只有版本号。
+- `vibeterm-cli-<version>.tgz.sha256`——sidecar，写在整包 rename 之后；**没有 sidecar 的整包一律当崩溃残留**。
+- `vibeterm-cli-<version>.tgz.part`——下载中的半成品。
+
+同一版本的并发下载由 `downloadVerifiedRelease` 的单飞表合并成一次（`isReleaseDownloadInFlight()` 对外
+暴露「该版本正在下载」）。已校验的整包在进程内按**文件身份** `size:mtimeMs:ino:ctimeMs` 记忆，同一批
+N 个节点复用同一个包时只算一次 sha256；四项里任何一项对不上就整包重算，进程重启后从头校验。
+身份里必须带 `ino` 与 `ctimeMs`：只比 `size + mtime` 的话，把等长内容原地覆盖进去再用 `utimes` 把 mtime
+改回原值，就能让一个被换过内容的包冒充「已校验」；`ctime` 无法用户态回写，`ino` 换文件必变。
+
+### 版本租约
+
+`retainReleaseVersion(cacheDir, version)` 返回一个释放函数，持有期间该版本的缓存文件对**任何**清扫免疫
+（引用计数，可重入；释放函数幂等）。`isReleaseVersionRetained()` 只读查询。
+
+需要它的原因：远程升级任务下完包后还要往目标推几分钟（重试 + 退避最长 15 min）。这期间
+`update-check` 的 60 s latest 缓存会过期，发行源上出了新版本 B，另一个节点开始升级时按
+`keepVersions: [B]` 清扫，就会把还在推的 A 整包删掉；下一次推包尝试重新打开该路径直接 ENOENT，
+之后的重试全部白跑。租约把「谁还要用这个包」表达出来，清扫据此避让。
+
+持有租约的位置：
+
+- `remote-upgrade-job.ts` 的 `runJob()`——进任务即持有，`finally` 里释放，覆盖下载 / 推包 / 启动
+  三个阶段以及失败、取消、超时的所有出口。
+- `upgrade.ts` 的 `stageGithubRelease()`——覆盖本机自升级的「下载 + `tar` 解压」窗口。
+
+### 清扫
+
+`sweepReleaseCache(cacheDir, { keepVersions, now?, partTtlMs? })` 是唯一的清理入口，全程 best-effort
+（目录不存在即 no-op，单个删除失败不影响其余）：
+
+| 文件 | 处置 |
+| --- | --- |
+| 任何 `vibeterm-cli-<v>.*`，`v` 持有租约 | 一律保留，不看 `keepVersions` |
+| `vibeterm-cli-<v>.tgz` | `v` 不在 `keepVersions` → 删；在但缺 sidecar 且该版本不在下载中 → 删 |
+| `vibeterm-cli-<v>.tgz.sha256` | `v` 不在 `keepVersions`，或对应 `.tgz` 已不在 → 删 |
+| `vibeterm-cli-<v>.tgz.part` | 该版本正在下载 → 保留；否则 mtime 超过 `partTtlMs`（缺省 24 h）→ 删 |
+| 其他任何文件/目录 | 删 |
+
+「对应文件在不在」不能只信 `readdir` 的那一次快照：枚举与真正删除之间，下载可能刚把 `.part`
+rename 成 `.tgz` 并写完 sidecar、退出在途表。所以判定「缺 sidecar 的整包」和「孤儿 sidecar」时，
+删之前会再 stat 一次对侧文件，盘上已经有了就跳过——否则会把一个刚下载完的合法包删掉。
+
+调用点：
+
+- **网关启动**（`runtime.ts` 的 `sweepReleaseCacheOnStartup()`，紧挨 `sweepOrphanTransferTemps()`）：
+  `keepVersions: []` + `partTtlMs: 0`，整目录清空——此刻不可能有下载在途。
+  `createGatewayRuntime()` **await** 它（清理很快），免得它和启动后第一个被接受的升级请求重叠；
+  失败只吞掉，不挡启动。
+- **每次升级开始前**（`upgrade-service.ts` 的 `handleMeshNodeUpgradeStart`，拿到 `latestVersion` 之后、
+  开始下载之前）：`keepVersions: [latestVersion]`。一次「全部升级」会连发 N 个 start，所以按
+  `cacheDir + 目标版本` 做 30 s 的进程内记忆，实际只扫一次。
+- **本机自升级的 `repairStagingArtifacts()`**（`run()` 开头与收包 PUT）：`keepVersions: [本次目标版本]`。
+
+三条硬性约束：
+
+1. **不在批量结束时清扫**——重试与断点续传都靠缓存里的包。
+2. **不删在途的 `.part`**——本机升级取消（`cleanupCancelledUpgrade`）只有在
+   `isReleaseDownloadInFlight()` 为 false 时才删 `.part`，否则会掐掉同进程里远程升级任务正在共享的下载；
+   反向（远程任务取消掐掉本机下载）早已由单飞表的 waiter 计数挡住。
+3. **不删持有租约的版本**——`keepVersions` 表达的是「本次升级要什么」，租约表达的是「别人还在用什么」，
+   两者是或的关系。
+
+## API
+
+`apps/gateway/src/api/system.ts`（挂在 `/api/system/`）：
+
+- `GET /api/system/info` → `SystemInfo`
+- `GET /api/system/update-check` → `UpdateCheckResult`
+- `GET /api/system/upgrade` → `UpgradeStatus`（轮询）
+- `POST /api/system/upgrade` `{version}` → 启动；非 `canSelfUpdate` 403、忙 409、缺版本 400
+
+## 前端
+
+设置页新增「版本与更新」Tab（`packages/panels/src/settings/version-tab.tsx`）：展示版本/安装方式/部署方式；「检查更新」拉取 latest + changelog（markdown 渲染）；`canSelfUpdate` 时「立即升级」弹窗警告（中断访问、可能影响 tmux 进程存活）→ `POST` 后轮询状态，跨服务重启检测完成并刷新版本；否则禁用并给出原因 + 终端升级提示。
+
+## 预期行为
+
+- dev：前端 console 与后端启动日志均为 `0.10.0_dev`；版本 Tab 升级禁用（原因：非 production）。
+- production + CLI 安装（install-meta）：`/api/system/info` → `installedViaCli=true`、正确 deployment、`canSelfUpdate=true`。
+- production 无 meta（手动部署）：`canSelfUpdate=false`。
+- `update-check` 能查到 GitHub Releases 的 latest；状态机 `downloading→executing`，非法触发 403/409。
+
+## 注意事项
+
+- 升级会中断当前访问并重启服务，可能影响该服务托管的 tmux 进程存活——前端确认弹窗已明确告知。
+- changelog 来自 GitHub Release body（由发版 workflow 从 `packages/app/CHANGELOG.md` 写入，仅含当前版本）；
+  body 为空时前端回退展示「版本 + 发布时间」。

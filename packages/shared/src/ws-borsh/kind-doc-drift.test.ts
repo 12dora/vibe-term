@@ -10,8 +10,8 @@ const SPEC_PATH = join(
   '..',
   '..',
   'docs',
-  'ws-protocol',
-  '2026021402-ws-borsh-v1-spec.md'
+  'architecture',
+  'ws-borsh-v1-spec.md'
 );
 
 const KIND_TABLE_HEADING = '## kind 编号表（完整）';

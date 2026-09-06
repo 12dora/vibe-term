@@ -1,0 +1,78 @@
+# Device Tree 拖拽排序
+
+本文描述设备 / window / pane 三层拖拽排序的持久化路径（REST 与 WS）、顺序如何经 canonical metadata 下发，以及 @dnd-kit 的传感器约定；面向改动侧栏设备树的开发者。
+
+## 背景
+
+device tree 侧栏（`packages/panels/src/device-tree/sidebar-device-list.tsx`）支持两层手动排序，并把顺序持久化在服务端：
+
+1. 拖动 device 标题行调整设备顺序；
+2. 拖动 window / pane 调整顺序（pane/window 下的 agent session 暂不排序）。
+
+device 是数据库实体；window / pane 来自 tmux 实时快照（不入库），原先分别按名称、tmux `index` 排序。
+
+## 设计
+
+两条独立持久化路径，均以 DB 为单一真源；前端用 `@dnd-kit` 实现三层独立拖拽（不跨容器移动）。
+
+### Device 顺序
+
+- `devices` 表新增 `sort_order` 列（迁移 `0006`，按 `created_at` 回填）。
+- 共享 `Device` 接口新增 `sortOrder: number`；`getAllDevices` 改为 `orderBy(asc(sort_order), desc(created_at))`，所有消费 `/api/devices` 的视图自动一致。
+- 重排走 REST：`PUT /api/devices/order`，body `{ deviceIds: string[] }`（全量有序），`reorderDevices` 单事务按下标写 `sort_order`。
+- 前端用 React Query 乐观更新（`onMutate` 写缓存 + 存 previous，`onError` 回滚，`onSettled` 才 `invalidateQueries`），避免 in-flight 重取覆盖。
+
+### Window / Pane 顺序（显示层，不碰 tmux 布局）
+
+- 不触碰 tmux 真实布局。表 `device_tree_order(device_id PK, windows JSON, panes JSON, updated_at)`
+  （`apps/gateway/src/db/schema/devices.ts`）按 device 存有序 id（`windows: string[]`、
+  `panes: Record<windowId, string[]>`），读写在 `db/devices.ts`（`getDeviceTreeOrder(s)` / 保存函数）。
+- 重排走 WS：`reorderWindows` / `reorderPanes`（`apps/gateway/src/ws/tmux-command-handlers.ts`）写库、
+  更新进程内缓存，并广播一次 `SETTINGS_UPDATE('tree-order')`；不触发 `requestSnapshot`（reorder 不碰 tmux）。
+- 顺序随 **canonical metadata** 下发：`apps/gateway/src/tmux-client/metadata-projection.ts` 把保存的顺序
+  索引成序号，`metadata/hierarchy-builder.ts` 写进每条 window / pane 记录的 `SOURCE_FIELD_TREE_ORDER`(15)
+  字段，patch 与全量 snapshot 走同一条通路。客户端
+  （`packages/ws-client/src/canonical-metadata-identity.ts`）用 `sortSnapshotByCanonicalTreeOrder`
+  把 `baseSnapshot` 排成展示视图，保存顺序里仍存在的 live id 保序在前，未在保存中的按 tmux `index`
+  追加在后，已不存在的 stale id 自动失效。
+- 1.1.23 前这条链路是 gateway 侧的 `applyDeviceTreeOverlay` + `encodeSnapshotWithOverlays` 在
+  `STATE_SNAPSHOT` 下发前重排；该 kind 与 `ws/overlay-utils.ts` 已随 legacy 状态流删除。
+
+### WS 协议
+
+新增两个 kind（`packages/shared/src/ws-borsh/kind.ts`，已登记 `VALID_KINDS` / `kindToString`）：
+
+| kind | 值 | payload schema |
+| --- | --- | --- |
+| `KIND_TMUX_REORDER_WINDOWS` | `0x020b` | `{ deviceId, windowIds: vec<string> }` |
+| `KIND_TMUX_REORDER_PANES` | `0x020c` | `{ deviceId, windowId, paneIds: vec<string> }` |
+
+前端构造 `buildTmuxReorderWindows` / `buildTmuxReorderPanes`（`packages/ws-client/src/message-builder.ts`），store action `reorderWindows` / `reorderPanes`（`packages/stores/src/tmux.ts`）发送，并对本地快照做乐观重排（服务端重广播再校正）。
+
+### 拖拽交互（@dnd-kit）
+
+- 三层嵌套 `DndContext` + `SortableContext`（device 在最外、window 在 device 内、pane 在 window 内），互不跨容器。
+- 每层用**独立 `GripVertical` 手柄**（`useSortable` 的 `setActivatorNodeRef` + `attributes`/`listeners`），手柄 `onClick` `stopPropagation`，整行/整卡仍保留原有点击导航与连接逻辑。
+- sensors 抽成共享 hook `useDeviceTreeSensors()`，三层统一：**鼠标 `MouseSensor{distance:8}`**（按下移动 8px 即激活、无 delay，PC「按下即拖」）+ **触摸 `TouchSensor{delay:250,tolerance:5}`**（长按激活、滑动 >5px 让位原生滚动）+ **`KeyboardSensor`**（`sortableKeyboardCoordinates`，可访问性）。轻点走导航、长按/拖动手柄才拖拽；手柄触摸热区按 `[@media(any-pointer:coarse)]` 放大、移动端常显。
+  - ⚠️ **不要用单个 `PointerSensor{delay,tolerance}`**：旧版 `@dnd-kit/core` 无法按 `pointerType` 给鼠标/触摸分别配约束，`delay` 模式下 tolerance 是「计时期间位移超过即取消」的取消阈值——鼠标按下即移动必然 >8px 被取消，导致 PC 完全拖不动（手机长按手指相对静止才能熬过 delay）。必须拆 Mouse + Touch。
+- `DndContext` 置于 `ScrollArea` 外，内置 autoscroll 可探测 Viewport 祖先；拖动元素的 transform 用 **`CSS.Translate.toString(transform)`**（只取平移）而非 `CSS.Transform.toString`——后者会附带 `scaleX/scaleY` 缩放分量，列表项高度不一时会把被拖元素**拉伸变形**。
+
+## 关键文件
+
+- 共享：`packages/shared/src/index.ts`（`Device.sortOrder`）、`ws-borsh/{kind,schema,canonical-tree-order}.ts`
+- gateway：`db/schema/devices.ts`、`db/devices.ts`、`drizzle/0006_*.sql`、`ws/tmux-command-handlers.ts`、
+  `tmux-client/metadata-projection.ts`、`tmux-client/metadata/hierarchy-builder.ts`、`api/index.ts`
+- 前端：`packages/ws-client/src/{message-builder,canonical-metadata-identity}.ts`、
+  `packages/stores/src/tmux.ts`、`packages/panels/src/device-tree/{sidebar-device-list,device-tree-dnd}.tsx`
+
+## 测试
+
+- `packages/shared/src/ws-borsh/index.test.ts`：reorder kind 校验 + payload round-trip（含数组 / 空数组）。
+- `apps/gateway/src/db/device-order.test.ts`：`reorderDevices` 相对顺序、`device_tree_order` 读写合并。
+- `apps/gateway/src/tmux-client/metadata-projection.test.ts`：tree-order 字段的投影与增量。
+
+## 注意
+
+- window / pane id 跨 tmux 重启不稳定；overlay 以其为 key，靠降级规则容错，tmux 重启后部分顺序会丢失（可接受）。
+- `index` 徽标仍显示 tmux 原生索引，overlay 重排后可能与显示顺序不连续（预期）。
+- i18n 文案改 `packages/shared/src/i18n/locales/*.json`（三语同步）后 `bun run build:i18n`，勿手改 / lint 生成的 `resources.ts`、`types.ts`。

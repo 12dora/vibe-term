@@ -1,5 +1,5 @@
 // Gateway 会话/设备/选择 状态机存储
-// 参考: docs/ws-protocol/2026021403-ws-state-machines.md
+// 参考: docs/architecture/ws-state-machines.md
 
 import type { ServerWebSocket } from 'bun';
 import type { GatewaySession } from '../gateway-session';
