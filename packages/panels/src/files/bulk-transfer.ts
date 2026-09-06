@@ -257,6 +257,7 @@ export async function downloadFileWithTransport(
       });
       opts.onLeg?.(1, { pct: 100, detail: formatBytes(prepared.size) });
       const blob = await drainBulkDownload(bulk, downloadId, prepared.size, opts);
+      await deleteQuietly(client, `/api/files/download/${downloadId}`);
       return { name: prepared.name, blob, transferPath: 'direct' };
     } catch (err) {
       if (downloadId) await deleteQuietly(client, `/api/files/download/${downloadId}`);

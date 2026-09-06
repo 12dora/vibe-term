@@ -323,7 +323,7 @@ function downloadGateway(size: number): Recorded {
 }
 
 describe('downloadFileWithTransport', () => {
-  test('直连可用时走 bulk：prepare 后直接收流，不打 /content', async () => {
+  test('直连可用时走 bulk：prepare 后直接收流，不打 /content，成功后删会话', async () => {
     const gw = downloadGateway(8);
     const bulk = fakeBulk({
       download: (req) => {
@@ -345,7 +345,7 @@ describe('downloadFileWithTransport', () => {
     expect(file.transferPath).toBe('direct');
     expect(file.name).toBe('a.bin');
     expect(await blobBytes(file.blob)).toEqual(new Uint8Array([1, 1, 1, 1, 2, 2, 2, 2]));
-    expect(gw.calls).toEqual(['POST /api/files/download/prepare']);
+    expect(gw.calls).toEqual(['POST /api/files/download/prepare', 'DELETE /api/files/download/d1']);
   });
 
   test('bulk 收流失败时回收会话并整次改走 REST', async () => {
