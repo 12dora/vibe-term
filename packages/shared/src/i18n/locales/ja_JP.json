@@ -83,6 +83,9 @@
           "tunnel": "トンネル",
           "hub": "ハブ",
           "lan": "LAN アドレス",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "中継",
           "current": "現在のアドレス",
           "loopbackHint": "このマシンは 127.0.0.1 でのみ待ち受けているため、他のデバイスから直接アクセスできません。リモートアクセスを設定するか、--host 0.0.0.0 でインストールしてください。"
         },
@@ -445,7 +448,6 @@
       "themeDark": "ダーク",
       "tabGroup": {
         "general": "一般",
-        "devicesAndFiles": "デバイスとファイル",
         "nodes": "マルチノード連携",
         "share": "共有",
         "notifications": "通知",
@@ -1019,11 +1021,6 @@
           "inputEmpty": "なし"
         }
       },
-      "deviceManagement": {
-        "title": "デバイス管理",
-        "description": "ローカルおよび SSH デバイスの追加・編集・接続を行います。",
-        "openButton": "デバイス管理を開く"
-      },
       "settingsSaved": "設定を保存しました",
       "saveFailed": "設定の保存に失敗しました",
       "loadFailed": "設定の読み込みに失敗しました",
@@ -1122,12 +1119,20 @@
         "deleteDesc": "「{{path}}」をホワイトリストから削除しますか？配下のファイルにアクセスできなくなります。"
       },
       "version": {
-        "title": "バージョンと更新",
+        "title": "概要",
         "currentVersion": "現在のバージョン",
         "installMethod": "インストール方法",
-        "installMethodCli": "CLI でインストール",
-        "installMethodNonCli": "CLI 以外でインストール",
-        "deployment": "デプロイ方式",
+        "installSourceScript": "インストールスクリプト",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "手動またはコンテナ",
+        "role": "動作モード",
+        "copyright": "著作権",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "<upstream>tmex</upstream> をベースに開発",
+        "license": "ライセンス",
+        "projectUrl": "プロジェクト",
+        "deployment": "サービス",
         "deploymentLaunchd": "launchd（macOS）",
         "deploymentSystemd": "systemd（Linux）",
         "deploymentNone": "なし",
@@ -1817,7 +1822,8 @@
     "files": {
       "title": "ファイル",
       "refresh": "ファイル一覧を更新",
-      "noRoots": "アクセス可能なディレクトリがありません。「設定 → ファイル」で追加してください。",
+      "noRoots": "ディレクトリが未設定です。<manage>「デバイス管理」</manage>→ デバイスカード → 右上のメニューで設定します。",
+      "noVisibleRoots": "表示できるディレクトリがありません。",
       "nodeOffline": "ノードはオフラインです",
       "nodeSignInHint": "ログインするとファイルを表示します",
       "reorderFailed": "フォルダーの並び順を保存できませんでした",
@@ -1915,7 +1921,8 @@
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
-        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。"
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。",
+        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -2022,6 +2029,9 @@
       }
     },
     "nodes": {
+      "loading": {
+        "members": "ノード一覧を同期中"
+      },
       "management": {
         "title": "ノード管理"
       },

@@ -14,7 +14,10 @@
   - 命令块 `command-block.tsx` 复用 `copy-feedback.tsx` 的复制反馈。
 - 「加入已有中继」第 4 步就地生成加入码（`use-create-enrollment.ts` 与节点管理页共用），第 5 步命令与加入码/节点名称联动，第 6 步就地确认加入：证书监听 + admit 签名收敛为 `apps/fe/src/node/enrollment-engine.ts` 单例（一条轮询、全局 key-log 写互斥、签前重校验、已签记录先入未确认存储、签名者租约、面板会话 id 持久化）。
 - 「本机作为中继」第 3–5 步由 `host-status.ts` 按隧道状态与 auth mode 推导（命名/接管/临时隧道、Hub 公开地址；本机 self/node/standalone）。
-- 移动设备第 1 步的候选地址由 `access-addresses.ts` 按公网 → 局域网（`GET /api/system/addresses`）→ 非回环当前地址排序。
+- 移动设备第 1 步的候选地址由 `access-addresses.ts` 排序：健康隧道 → 本机 Hub → 中继入口 → 局域网 → Tailscale → VPN → 掉线隧道 → 非回环当前地址。
+  - 「Hub」只在本机自己就是 Hub（`mode.hubNodeId === mode.nodeId`）且非中继上联时出现；成员节点上 `hubPublicUrl` 是上级地址，扫出来打开的是上级界面。回环地址一律丢弃。后端 `resolveHub()` 在中继上联时直接返回空，也不再用 `http://127.0.0.1` 兜底。
+  - 「中继」是 `GET /api/system/addresses` 下发的 `relayAccessUrl`（`<中继>/n/<本机 nodeId>`），复用分享侧的入口探测，探不通则不列。
+  - 局域网候选由 `apps/gateway/src/system/lan-interfaces.ts` 枚举并分类：丢掉链路本地、代理 fake-IP（`198.18.0.0/15`）与容器 / 虚拟机 / 桥接网卡；CGNAT（`100.64.0.0/10`）标为「Tailscale」，其它隧道网卡上的私网地址标为「VPN」并排在物理局域网之后；默认路由所在物理网卡的地址排第一（默认路由被代理接管到 `utun` 时不加权）。绑定到具体 IPv4 时只列该地址。
 - 文案在 `connectDevices.*` 三语；风格：短句、「本机」、不用「你」。
 - 远程访问向导：新增顶层「连接方式」步（`ConnectionPath = 'tunnel' | 'direct'`，与 `WizardMode` 分离）。隧道分支：安装 → 隧道类型（临时/命名）→ …；直连分支只剩访问保护。已配置隧道时锁定为隧道；隧道移除后向导本地状态归零；未选/直连时不显示隧道状态卡。
 

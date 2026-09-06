@@ -21,6 +21,8 @@ import {
   filterNotRetiredHubRecords,
   inspectHubAuthRecordCompat,
 } from '../hub/hub-authorization';
+import { isLoopbackHostLiteral } from './address-class';
+import { findPrimaryUser } from './auth-mode-cache';
 import type { AuthRoutesDeps } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest } from './client-source';
@@ -34,6 +36,21 @@ export type LoginFailureSink = {
   precheck: (body: Record<string, unknown> | null) => Response | null;
   rejectUid: () => Response | null;
 };
+
+/**
+ * 装配期的 `hubPublicUrl` 在没有任何 Hub 配置时会兜底成 `http://127.0.0.1`：那只服务上联拨号，
+ * 摆进 `/api/auth/mode` 会被界面当成可访问的 Hub 入口。回环一律视为「没有」。
+ */
+function usableHubUrl(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const host = new URL(url).hostname.replace(/^\[|\]$/g, '');
+    if (host === 'localhost' || isLoopbackHostLiteral(host)) return null;
+  } catch {
+    return null;
+  }
+  return url;
+}
 
 export function loginRequestContext(req: Request): { peer: boolean; ip: string } {
   const peer = isPeerRequest(req);
@@ -253,27 +270,41 @@ export class AuthKeyLogRoutes {
     return done(applied.seq, applied.hash);
   }
 
+  /**
+   * `/api/auth/mode` 的 Hub 投影。中继上联时一律为空：切到中继不会清 `userStore` 的 hub meta，
+   * 也不会清 `VIBETERM_HUB_URL`，照旧上报会让前端把上级地址当成本机入口。
+   * 非 Hub 且既无 writer 又无 meta 时同样为空——`hubPublicUrl` 的 `http://127.0.0.1` 兜底
+   * 只服务上联拨号，摆到界面上是个谁也打不开的地址。
+   */
   resolveHub(): { nodeId: string | null; publicUrl: string | null } {
+    if (this.relayUplink()) return { nodeId: null, publicUrl: null };
     const rows = this.authorizedHubRows();
     const writerId = pickWriterHub(rows);
     if (writerId) {
       const writer = this.deps.hubStore?.get(writerId);
       return {
         nodeId: writerId,
-        publicUrl: writer?.publicUrl ?? this.deps.hubPublicUrl ?? null,
+        publicUrl: writer?.publicUrl ?? usableHubUrl(this.deps.hubPublicUrl),
       };
     }
     const meta = this.deps.userStore.getHubMeta();
     if (this.deps.roles.hub) {
       return {
         nodeId: this.deps.nodeId,
-        publicUrl: this.deps.hubPublicUrl ?? meta?.publicUrl ?? null,
+        publicUrl: usableHubUrl(this.deps.hubPublicUrl) ?? meta?.publicUrl ?? null,
       };
     }
+    if (!meta) return { nodeId: null, publicUrl: usableHubUrl(this.deps.hubPublicUrl) };
     return {
-      nodeId: meta?.nodeId ?? null,
-      publicUrl: meta?.publicUrl ?? this.deps.hubPublicUrl ?? null,
+      nodeId: meta.nodeId ?? null,
+      publicUrl: meta.publicUrl ?? usableHubUrl(this.deps.hubPublicUrl),
     };
+  }
+
+  /** 主账号的上联是不是中继。 */
+  private relayUplink(): boolean {
+    const user = findPrimaryUser(this.deps.userStore, this.deps.primaryUserId);
+    return user ? this.inRelayMode(user.id) : false;
   }
 
   /** 上级是中继：已应用的密钥日志里有非空中继列表就算数（比 node_identity 早一步生效）。 */

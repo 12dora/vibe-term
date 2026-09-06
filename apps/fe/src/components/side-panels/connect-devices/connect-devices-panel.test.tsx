@@ -201,6 +201,24 @@ describe('移动设备页的地址选择与二维码', () => {
     );
   });
 
+  test('新链路类型带各自的标签与 data-kind', () => {
+    const html = render(
+      <AddressChoiceList
+        {...choice([
+          { kind: 'relay', url: 'https://relay.example/n/abc' },
+          { kind: 'tailscale', url: 'http://100.64.1.2:9883' },
+          { kind: 'vpn', url: 'http://10.8.0.2:9883' },
+        ])}
+      />
+    );
+    expect(html).toContain('data-kind="relay"');
+    expect(html).toContain('data-kind="tailscale"');
+    expect(html).toContain('data-kind="vpn"');
+    expect(html).toContain('connectDevices.mobile.address.tailscale');
+    expect(html).toContain('connectDevices.mobile.address.vpn');
+    expect(html).toContain('connectDevices.mobile.address.relay');
+  });
+
   test('换一条地址：选中态跟着走', () => {
     const html = render(<AddressChoiceList {...choice(ADDRESSES, 1)} />);
     expect(html.split('checked=""').length - 1).toBe(1);

@@ -1,11 +1,19 @@
 // 手机要访问的地址：不是浏览器当前的 origin（本机打开时是 127.0.0.1，别的设备根本连不上），
-// 而是按可达性排出来的候选——公网入口（隧道 / Hub 公开地址）、局域网 IP、以及非回环的当前地址。
+// 而是按可达性排出来的候选——公网入口（隧道 / 本机 Hub / 中继）、局域网 IP、以及非回环的当前地址。
 
 import type { AccessAddressesResponse, TunnelStatusResponse } from '@vibeterm/shared';
 import { entryStatus } from './host-status';
 
-// 种类只用来给候选打标签（界面上要区分「隧道 / Hub / 局域网 / 当前地址」），排序仍按可达性。
-export type AccessAddressKind = 'tunnel' | 'hub' | 'lan' | 'current';
+// 种类只用来给候选打标签（界面上要区分「隧道 / Hub / 中继 / 局域网 / Tailscale / VPN / 当前地址」），
+// 排序仍按可达性。
+export type AccessAddressKind =
+  | 'tunnel'
+  | 'hub'
+  | 'relay'
+  | 'lan'
+  | 'tailscale'
+  | 'vpn'
+  | 'current';
 
 export interface AccessAddress {
   kind: AccessAddressKind;
@@ -16,6 +24,10 @@ export interface AccessAddressInput {
   origin: string;
   tunnel: TunnelStatusResponse | null;
   hubPublicUrl: string | null;
+  /** 本机自己就是 Hub；成员节点上 `hubPublicUrl` 是上级地址，扫出来打开的是上级的界面 */
+  selfIsHub: boolean;
+  /** 上联是中继：此时没有 Hub 入口，公网槽由中继候选填 */
+  relayMode: boolean;
   addresses: AccessAddressesResponse | null;
 }
 
@@ -57,9 +69,33 @@ function tunnelCandidate(tunnel: TunnelStatusResponse | null): TunnelCandidate {
   return { url, healthy: true };
 }
 
+/** 本机 Hub 的公网入口。成员节点与中继上联都没有；回环地址手机扫不到，一律丢掉。 */
+function selfHubUrl(input: AccessAddressInput): string | null {
+  if (!input.selfIsHub || input.relayMode) return null;
+  const url = input.hubPublicUrl;
+  if (!url || isLoopbackOrigin(url)) return null;
+  return url;
+}
+
+type LanEntry = { kind: 'lan' | 'tailscale' | 'vpn'; ip: string };
+
+const LAN_ORDER = ['lan', 'tailscale', 'vpn'] as const;
+
+/** 旧网关只给 `lanAddresses: string[]`，此时全部按局域网处理。 */
+function lanEntries(addresses: AccessAddressesResponse | null): LanEntry[] {
+  if (!addresses || addresses.loopbackOnly) return [];
+  const candidates = addresses.lanCandidates;
+  if (Array.isArray(candidates))
+    return candidates.map((item) => ({ kind: item.kind, ip: item.ip }));
+  if (Array.isArray(addresses.lanAddresses)) {
+    return addresses.lanAddresses.map((ip) => ({ kind: 'lan' as const, ip }));
+  }
+  return [];
+}
+
 /**
- * 候选列表：可用的隧道 → Hub → 局域网 → 掉线的隧道 → 当前地址；
- * 全部为空时退回当前 origin（哪怕是回环，界面另给提示）。
+ * 候选列表：可用的隧道 → 本机 Hub → 中继入口 → 局域网 → Tailscale → VPN →
+ * 掉线的隧道 → 当前地址；全部为空时退回当前 origin（哪怕是回环，界面另给提示）。
  *
  * 第一条就是二维码的缺省地址，所以隧道只有**当前真的可达**才排第一：光看「配了主机名」
  * 会把停掉的隧道推成默认，用户扫出来是一个打不开的地址。
@@ -67,7 +103,7 @@ function tunnelCandidate(tunnel: TunnelStatusResponse | null): TunnelCandidate {
 export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[] {
   const out: AccessAddress[] = [];
   const seen = new Set<string>();
-  const push = (kind: AccessAddressKind, url: string | null) => {
+  const push = (kind: AccessAddressKind, url: string | null | undefined) => {
     if (!url) return;
     const normalized = url.replace(/\/+$/, '');
     if (seen.has(normalized)) return;
@@ -77,10 +113,14 @@ export function buildAccessAddresses(input: AccessAddressInput): AccessAddress[]
 
   const tunnel = tunnelCandidate(input.tunnel);
   if (tunnel.healthy) push('tunnel', tunnel.url);
-  push('hub', input.hubPublicUrl);
-  const addresses = input.addresses;
-  if (addresses && !addresses.loopbackOnly && Array.isArray(addresses.lanAddresses)) {
-    for (const ip of addresses.lanAddresses) push('lan', `http://${ip}:${addresses.port}`);
+  push('hub', selfHubUrl(input));
+  push('relay', input.addresses?.relayAccessUrl ?? null);
+  const port = input.addresses?.port;
+  const lan = lanEntries(input.addresses);
+  for (const kind of LAN_ORDER) {
+    for (const entry of lan) {
+      if (entry.kind === kind) push(kind, `http://${entry.ip}:${port}`);
+    }
   }
   if (!tunnel.healthy) push('tunnel', tunnel.url);
   if (input.origin && !isLoopbackOrigin(input.origin)) push('current', input.origin);

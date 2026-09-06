@@ -556,7 +556,8 @@
     "files": {
       "title": "文件",
       "refresh": "刷新文件列表",
-      "noRoots": "没有可访问的目录。请在「设置 → 文件」中添加。",
+      "noRoots": "未配置目录。打开<manage>「管理设备」</manage>→ 设备卡片 → 右上角菜单配置。",
+      "noVisibleRoots": "没有可显示的目录。",
       "nodeOffline": "节点离线",
       "nodeSignInHint": "登录后显示文件",
       "reorderFailed": "目录排序保存失败",
@@ -646,7 +647,8 @@
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。"
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。",
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
       },
       "node": {
         "loginToThisNode": "登录该节点",

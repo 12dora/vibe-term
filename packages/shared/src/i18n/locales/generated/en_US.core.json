@@ -556,7 +556,8 @@
     "files": {
       "title": "Files",
       "refresh": "Refresh file list",
-      "noRoots": "No accessible directories. Add one in Settings → Files.",
+      "noRoots": "No directories configured. Open <manage>Manage Devices</manage> → device card → top-right menu to set up.",
+      "noVisibleRoots": "No directories to show.",
       "nodeOffline": "Node offline",
       "nodeSignInHint": "Sign in to show files",
       "reorderFailed": "Failed to save folder order",
@@ -646,7 +647,8 @@
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address."
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address.",
+        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
       },
       "node": {
         "loginToThisNode": "Sign in",

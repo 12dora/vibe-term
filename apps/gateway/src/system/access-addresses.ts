@@ -1,9 +1,10 @@
-// 「接入更多设备」面板要展示的本机地址线索：监听地址 + 局域网 IPv4。
-// 公网地址（隧道 / Hub 公开地址）由前端从 tunnel status 与 auth mode 取，这里只管本机能看到的。
+// 「接入更多设备」面板要展示的本机地址线索：监听地址 + 局域网 IPv4 候选。
+// 隧道地址由前端从 tunnel status 取；中继入口在这里给——它要探测结论，前端拿不到。
 
 import { networkInterfaces } from 'node:os';
-import type { AccessAddressesResponse } from '@vibeterm/shared';
+import type { AccessAddressesResponse, LanAddressCandidate } from '@vibeterm/shared';
 import { config } from '../config';
+import { collectLanCandidates, readDefaultIface } from './lan-interfaces';
 
 type InterfaceMap = ReturnType<typeof networkInterfaces>;
 
@@ -14,39 +15,49 @@ export function isLoopbackBindHost(bindHost: string): boolean {
   return LOOPBACK_HOSTS.has(host) || host.startsWith('127.');
 }
 
-function isPrivateIpv4(address: string): boolean {
-  if (address.startsWith('10.') || address.startsWith('192.168.')) return true;
-  const match = /^172\.(\d+)\./.exec(address);
-  return match !== null && Number(match[1]) >= 16 && Number(match[1]) <= 31;
+export interface AccessAddressesDeps {
+  bindHost?: string;
+  port?: number;
+  interfaces?: () => InterfaceMap;
+  /** 默认路由网卡；不传时现读（自带 1 min 缓存） */
+  defaultIface?: () => string | null;
+  /** 中继入口 `<relay>/n/<self>`；探不通或不是中继上联时为 null */
+  relayAccessUrl?: () => string | null;
 }
 
-/** 非回环、非链路本地的 IPv4；私网段排前面，其余按字典序。 */
-export function collectLanAddresses(interfaces: InterfaceMap): string[] {
-  const seen = new Set<string>();
-  for (const entries of Object.values(interfaces)) {
-    for (const entry of entries ?? []) {
-      if (entry.family !== 'IPv4' || entry.internal) continue;
-      if (entry.address.startsWith('169.254.')) continue;
-      seen.add(entry.address);
-    }
+/** 候选 IP 列表，等价于 `collectLanCandidates(...).map((c) => c.ip)`。 */
+export function collectLanAddresses(
+  interfaces: InterfaceMap,
+  options: { defaultIface?: string | null; bindHost?: string | null } = {}
+): string[] {
+  return collectLanCandidates(interfaces, options).map((candidate) => candidate.ip);
+}
+
+function readRelayAccessUrl(deps: AccessAddressesDeps): string | null {
+  if (!deps.relayAccessUrl) return null;
+  try {
+    return deps.relayAccessUrl();
+  } catch {
+    return null;
   }
-  return [...seen].sort((a, b) => {
-    const pa = isPrivateIpv4(a) ? 0 : 1;
-    const pb = isPrivateIpv4(b) ? 0 : 1;
-    return pa - pb || a.localeCompare(b);
-  });
 }
 
-export function getAccessAddresses(
-  deps: { bindHost?: string; port?: number; interfaces?: () => InterfaceMap } = {}
-): AccessAddressesResponse {
+export function getAccessAddresses(deps: AccessAddressesDeps = {}): AccessAddressesResponse {
   const bindHost = deps.bindHost ?? config.bindHost;
   const port = deps.port ?? config.port;
   const loopbackOnly = isLoopbackBindHost(bindHost);
+  const lanCandidates: LanAddressCandidate[] = loopbackOnly
+    ? []
+    : collectLanCandidates((deps.interfaces ?? networkInterfaces)(), {
+        defaultIface: (deps.defaultIface ?? readDefaultIface)(),
+        bindHost,
+      });
   return {
     bindHost,
     port,
     loopbackOnly,
-    lanAddresses: loopbackOnly ? [] : collectLanAddresses((deps.interfaces ?? networkInterfaces)()),
+    lanAddresses: lanCandidates.map((candidate) => candidate.ip),
+    lanCandidates,
+    relayAccessUrl: readRelayAccessUrl(deps),
   };
 }

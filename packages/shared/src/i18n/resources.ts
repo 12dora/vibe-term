@@ -89,6 +89,9 @@ export const I18N_RESOURCES = {
           "tunnel": "Tunnel",
           "hub": "Hub",
           "lan": "LAN",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "Relay",
           "current": "Current address",
           "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
         },
@@ -451,7 +454,6 @@ export const I18N_RESOURCES = {
       "themeDark": "Dark",
       "tabGroup": {
         "general": "General",
-        "devicesAndFiles": "Devices & Files",
         "nodes": "Multi-node Mesh",
         "share": "Sharing",
         "notifications": "Notifications",
@@ -1025,11 +1027,6 @@ export const I18N_RESOURCES = {
           "inputEmpty": "None"
         }
       },
-      "deviceManagement": {
-        "title": "Device Management",
-        "description": "Add, edit, and connect to local and SSH devices.",
-        "openButton": "Open Device Management"
-      },
       "settingsSaved": "Settings saved",
       "saveFailed": "Failed to save settings",
       "loadFailed": "Failed to load settings",
@@ -1128,12 +1125,20 @@ export const I18N_RESOURCES = {
         "deleteDesc": "Remove \"{{path}}\" from the whitelist? Files under it will no longer be accessible."
       },
       "version": {
-        "title": "Version & Updates",
+        "title": "About",
         "currentVersion": "Current version",
         "installMethod": "Install method",
-        "installMethodCli": "Installed via CLI",
-        "installMethodNonCli": "Not installed via CLI",
-        "deployment": "Deployment",
+        "installSourceScript": "Install script",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "Manual or container",
+        "role": "Run mode",
+        "copyright": "Copyright",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "Built on <upstream>tmex</upstream>",
+        "license": "License",
+        "projectUrl": "Project",
+        "deployment": "Service",
         "deploymentLaunchd": "launchd (macOS)",
         "deploymentSystemd": "systemd (Linux)",
         "deploymentNone": "None",
@@ -1823,7 +1828,8 @@ export const I18N_RESOURCES = {
     "files": {
       "title": "Files",
       "refresh": "Refresh file list",
-      "noRoots": "No accessible directories. Add one in Settings → Files.",
+      "noRoots": "No directories configured. Open <manage>Manage Devices</manage> → device card → top-right menu to set up.",
+      "noVisibleRoots": "No directories to show.",
       "nodeOffline": "Node offline",
       "nodeSignInHint": "Sign in to show files",
       "reorderFailed": "Failed to save folder order",
@@ -1921,7 +1927,8 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address."
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address.",
+        "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
       },
       "node": {
         "loginToThisNode": "Sign in",
@@ -2028,6 +2035,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
+      "loading": {
+        "members": "Syncing node list"
+      },
       "management": {
         "title": "Node management"
       },
@@ -3608,6 +3618,9 @@ export const I18N_RESOURCES = {
           "tunnel": "隧道",
           "hub": "Hub",
           "lan": "局域网",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "中继",
           "current": "当前地址",
           "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
         },
@@ -3970,7 +3983,6 @@ export const I18N_RESOURCES = {
       "themeDark": "深色",
       "tabGroup": {
         "general": "通用",
-        "devicesAndFiles": "设备与文件",
         "nodes": "多节点互联",
         "share": "分享",
         "notifications": "通知",
@@ -4544,11 +4556,6 @@ export const I18N_RESOURCES = {
           "inputEmpty": "无"
         }
       },
-      "deviceManagement": {
-        "title": "设备管理",
-        "description": "添加、编辑并连接本地与 SSH 设备。",
-        "openButton": "打开设备管理"
-      },
       "settingsSaved": "站点设置已保存",
       "saveFailed": "保存设置失败",
       "loadFailed": "加载设置失败",
@@ -4647,12 +4654,20 @@ export const I18N_RESOURCES = {
         "deleteDesc": "将「{{path}}」移出白名单？该目录下的文件将不再可访问。"
       },
       "version": {
-        "title": "版本与更新",
+        "title": "关于",
         "currentVersion": "当前版本",
         "installMethod": "安装方式",
-        "installMethodCli": "通过 CLI 安装",
-        "installMethodNonCli": "非 CLI 安装",
-        "deployment": "部署方式",
+        "installSourceScript": "安装脚本",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "手动或容器",
+        "role": "运行模式",
+        "copyright": "版权",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "基于 <upstream>tmex</upstream> 开发",
+        "license": "许可证",
+        "projectUrl": "项目地址",
+        "deployment": "服务",
         "deploymentLaunchd": "launchd（macOS）",
         "deploymentSystemd": "systemd（Linux）",
         "deploymentNone": "无",
@@ -5342,7 +5357,8 @@ export const I18N_RESOURCES = {
     "files": {
       "title": "文件",
       "refresh": "刷新文件列表",
-      "noRoots": "没有可访问的目录。请在「设置 → 文件」中添加。",
+      "noRoots": "未配置目录。打开<manage>「管理设备」</manage>→ 设备卡片 → 右上角菜单配置。",
+      "noVisibleRoots": "没有可显示的目录。",
       "nodeOffline": "节点离线",
       "nodeSignInHint": "登录后显示文件",
       "reorderFailed": "目录排序保存失败",
@@ -5440,7 +5456,8 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。"
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。",
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -5547,6 +5564,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
+      "loading": {
+        "members": "正在同步节点列表"
+      },
       "management": {
         "title": "节点管理"
       },
@@ -7121,6 +7141,9 @@ export const I18N_RESOURCES = {
           "tunnel": "トンネル",
           "hub": "ハブ",
           "lan": "LAN アドレス",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "中継",
           "current": "現在のアドレス",
           "loopbackHint": "このマシンは 127.0.0.1 でのみ待ち受けているため、他のデバイスから直接アクセスできません。リモートアクセスを設定するか、--host 0.0.0.0 でインストールしてください。"
         },
@@ -7483,7 +7506,6 @@ export const I18N_RESOURCES = {
       "themeDark": "ダーク",
       "tabGroup": {
         "general": "一般",
-        "devicesAndFiles": "デバイスとファイル",
         "nodes": "マルチノード連携",
         "share": "共有",
         "notifications": "通知",
@@ -8057,11 +8079,6 @@ export const I18N_RESOURCES = {
           "inputEmpty": "なし"
         }
       },
-      "deviceManagement": {
-        "title": "デバイス管理",
-        "description": "ローカルおよび SSH デバイスの追加・編集・接続を行います。",
-        "openButton": "デバイス管理を開く"
-      },
       "settingsSaved": "設定を保存しました",
       "saveFailed": "設定の保存に失敗しました",
       "loadFailed": "設定の読み込みに失敗しました",
@@ -8160,12 +8177,20 @@ export const I18N_RESOURCES = {
         "deleteDesc": "「{{path}}」をホワイトリストから削除しますか？配下のファイルにアクセスできなくなります。"
       },
       "version": {
-        "title": "バージョンと更新",
+        "title": "概要",
         "currentVersion": "現在のバージョン",
         "installMethod": "インストール方法",
-        "installMethodCli": "CLI でインストール",
-        "installMethodNonCli": "CLI 以外でインストール",
-        "deployment": "デプロイ方式",
+        "installSourceScript": "インストールスクリプト",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "手動またはコンテナ",
+        "role": "動作モード",
+        "copyright": "著作権",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "<upstream>tmex</upstream> をベースに開発",
+        "license": "ライセンス",
+        "projectUrl": "プロジェクト",
+        "deployment": "サービス",
         "deploymentLaunchd": "launchd（macOS）",
         "deploymentSystemd": "systemd（Linux）",
         "deploymentNone": "なし",
@@ -8855,7 +8880,8 @@ export const I18N_RESOURCES = {
     "files": {
       "title": "ファイル",
       "refresh": "ファイル一覧を更新",
-      "noRoots": "アクセス可能なディレクトリがありません。「設定 → ファイル」で追加してください。",
+      "noRoots": "ディレクトリが未設定です。<manage>「デバイス管理」</manage>→ デバイスカード → 右上のメニューで設定します。",
+      "noVisibleRoots": "表示できるディレクトリがありません。",
       "nodeOffline": "ノードはオフラインです",
       "nodeSignInHint": "ログインするとファイルを表示します",
       "reorderFailed": "フォルダーの並び順を保存できませんでした",
@@ -8953,7 +8979,8 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
-        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。"
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。",
+        "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
       },
       "node": {
         "loginToThisNode": "このノードにサインイン",
@@ -9060,6 +9087,9 @@ export const I18N_RESOURCES = {
       }
     },
     "nodes": {
+      "loading": {
+        "members": "ノード一覧を同期中"
+      },
       "management": {
         "title": "ノード管理"
       },

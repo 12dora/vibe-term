@@ -103,6 +103,13 @@ export function isCgnatIpv4(host: string): boolean {
   return a === 100 && b >= 64 && b <= 127;
 }
 
+/** 198.18.0.0/15：RFC 2544 基准测试段，本机代理（Surge / Clash 等）常用作 fake-IP。 */
+export function isFakeIpv4(host: string): boolean {
+  const o = parseIpv4(host.trim());
+  if (!o) return false;
+  return o[0] === 198 && (o[1] === 18 || o[1] === 19);
+}
+
 /** IPv6 unique local `fc00::/7`. */
 export function isIpv6Ula(host: string): boolean {
   const w = parseIpv6Words(host);

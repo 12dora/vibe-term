@@ -15,6 +15,9 @@
           "tunnel": "Tunnel",
           "hub": "Hub",
           "lan": "LAN",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "Relay",
           "current": "Current address",
           "loopbackHint": "This machine only listens on 127.0.0.1, so other devices cannot reach it directly. Set up remote access, or install with --host 0.0.0.0 to listen on all addresses."
         },
@@ -251,7 +254,6 @@
       "language": "Language",
       "tabGroup": {
         "general": "General",
-        "devicesAndFiles": "Devices & Files",
         "nodes": "Multi-node Mesh",
         "share": "Sharing",
         "notifications": "Notifications",
@@ -821,11 +823,6 @@
           "inputEmpty": "None"
         }
       },
-      "deviceManagement": {
-        "title": "Device Management",
-        "description": "Add, edit, and connect to local and SSH devices.",
-        "openButton": "Open Device Management"
-      },
       "settingsSaved": "Settings saved",
       "saveFailed": "Failed to save settings",
       "loadFailed": "Failed to load settings",
@@ -924,12 +921,20 @@
         "deleteDesc": "Remove \"{{path}}\" from the whitelist? Files under it will no longer be accessible."
       },
       "version": {
-        "title": "Version & Updates",
+        "title": "About",
         "currentVersion": "Current version",
         "installMethod": "Install method",
-        "installMethodCli": "Installed via CLI",
-        "installMethodNonCli": "Not installed via CLI",
-        "deployment": "Deployment",
+        "installSourceScript": "Install script",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "Manual or container",
+        "role": "Run mode",
+        "copyright": "Copyright",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "Built on <upstream>tmex</upstream>",
+        "license": "License",
+        "projectUrl": "Project",
+        "deployment": "Service",
         "deploymentLaunchd": "launchd (macOS)",
         "deploymentSystemd": "systemd (Linux)",
         "deploymentNone": "None",
@@ -1274,6 +1279,9 @@
       "openRaw": "Open raw"
     },
     "nodes": {
+      "loading": {
+        "members": "Syncing node list"
+      },
       "management": {
         "title": "Node management"
       },

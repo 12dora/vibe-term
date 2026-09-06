@@ -83,6 +83,9 @@
           "tunnel": "隧道",
           "hub": "Hub",
           "lan": "局域网",
+          "tailscale": "Tailscale",
+          "vpn": "VPN",
+          "relay": "中继",
           "current": "当前地址",
           "loopbackHint": "本机只监听 127.0.0.1，其他设备无法直接访问。请配置远程访问，或安装时用 --host 0.0.0.0 监听所有地址。"
         },
@@ -445,7 +448,6 @@
       "themeDark": "深色",
       "tabGroup": {
         "general": "通用",
-        "devicesAndFiles": "设备与文件",
         "nodes": "多节点互联",
         "share": "分享",
         "notifications": "通知",
@@ -1019,11 +1021,6 @@
           "inputEmpty": "无"
         }
       },
-      "deviceManagement": {
-        "title": "设备管理",
-        "description": "添加、编辑并连接本地与 SSH 设备。",
-        "openButton": "打开设备管理"
-      },
       "settingsSaved": "站点设置已保存",
       "saveFailed": "保存设置失败",
       "loadFailed": "加载设置失败",
@@ -1122,12 +1119,20 @@
         "deleteDesc": "将「{{path}}」移出白名单？该目录下的文件将不再可访问。"
       },
       "version": {
-        "title": "版本与更新",
+        "title": "关于",
         "currentVersion": "当前版本",
         "installMethod": "安装方式",
-        "installMethodCli": "通过 CLI 安装",
-        "installMethodNonCli": "非 CLI 安装",
-        "deployment": "部署方式",
+        "installSourceScript": "安装脚本",
+        "installSourceNpx": "npx",
+        "installSourceCli": "CLI",
+        "installSourceManual": "手动或容器",
+        "role": "运行模式",
+        "copyright": "版权",
+        "copyrightOwner": "© 2026 12dora",
+        "basedOn": "基于 <upstream>tmex</upstream> 开发",
+        "license": "许可证",
+        "projectUrl": "项目地址",
+        "deployment": "服务",
         "deploymentLaunchd": "launchd（macOS）",
         "deploymentSystemd": "systemd（Linux）",
         "deploymentNone": "无",
@@ -1817,7 +1822,8 @@
     "files": {
       "title": "文件",
       "refresh": "刷新文件列表",
-      "noRoots": "没有可访问的目录。请在「设置 → 文件」中添加。",
+      "noRoots": "未配置目录。打开<manage>「管理设备」</manage>→ 设备卡片 → 右上角菜单配置。",
+      "noVisibleRoots": "没有可显示的目录。",
       "nodeOffline": "节点离线",
       "nodeSignInHint": "登录后显示文件",
       "reorderFailed": "目录排序保存失败",
@@ -1915,7 +1921,8 @@
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。"
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。",
+        "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
       },
       "node": {
         "loginToThisNode": "登录该节点",
@@ -2022,6 +2029,9 @@
       }
     },
     "nodes": {
+      "loading": {
+        "members": "正在同步节点列表"
+      },
       "management": {
         "title": "节点管理"
       },

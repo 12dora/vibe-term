@@ -1,7 +1,9 @@
-// 聚合三路本机信息拼出手机可用的地址：隧道状态（公网入口）、auth mode（Hub 公开地址）、
-// `/api/system/addresses`（监听地址 + 局域网 IP）。三路都问浏览器直连的这台机器。
+// 聚合本机信息拼出手机可用的地址：隧道状态（公网入口）、auth mode（Hub 公开地址）、
+// 中继链路，以及 `/api/system/addresses`（监听地址 + 局域网候选 + 中继入口）。
+// 全部问浏览器直连的这台机器。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
+import { useMeshRelay } from '@/node/mesh-relay';
 import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
 import type { AccessAddressesResponse } from '@vibeterm/shared';
@@ -16,7 +18,8 @@ function currentOrigin(): string {
 
 export function useAccessAddresses(): { list: AccessAddress[]; loopbackHint: boolean } {
   const { apiClient } = useRuntime();
-  const { mode } = useSharedAuthMode();
+  const { mode, meshEnabled } = useSharedAuthMode();
+  const relay = useMeshRelay({ enabled: meshEnabled });
   const tunnel = useQuery({
     queryKey: TUNNEL_STATUS_QUERY_KEY,
     queryFn: fetchSelfTunnelStatus,
@@ -33,10 +36,16 @@ export function useAccessAddresses(): { list: AccessAddress[]; loopbackHint: boo
     staleTime: 60_000,
     retry: false,
   });
+  // `hubPublicUrl` 只有本机就是 Hub 时才是本机入口；成员节点上那是上级地址，
+  // 手机扫出来打开的是上级的界面。中继上联时同样不展示（与「本机设为 Hub」同一把尺子）。
+  const selfIsHub =
+    mode?.mode === 'mesh' && Boolean(mode.hubNodeId) && mode.hubNodeId === mode.nodeId;
   const input = {
     origin: currentOrigin(),
     tunnel: tunnel.data ?? null,
     hubPublicUrl: mode?.hubPublicUrl ?? null,
+    selfIsHub,
+    relayMode: relay.relayMode,
     addresses: addresses.data ?? null,
   };
   const list = buildAccessAddresses(input);

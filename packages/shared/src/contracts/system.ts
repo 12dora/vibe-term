@@ -8,6 +8,9 @@ export type GatewayDeployment = 'launchd' | 'systemd' | 'none';
 /** 升级状态机：仅这三态 */
 export type UpgradeState = 'idle' | 'downloading' | 'executing';
 
+/** 装这套东西的方式：安装脚本 / npx / 直接跑 CLI / 手动或容器。 */
+export type InstallSource = 'install-script' | 'npx' | 'cli' | 'manual';
+
 /** 系统信息（gateway 权威），用于设置页版本 section */
 export interface SystemInfo {
   /** 展示版本（非 production 带 _dev 后缀） */
@@ -18,6 +21,11 @@ export interface SystemInfo {
   isProd: boolean;
   /** 是否通过 CLI（vibeterm init）安装 */
   installedViaCli: boolean;
+  /**
+   * 安装来源（「关于」页展示）。老安装的 install-meta 里没有这一项，按 `cli` 处理；
+   * 完全没有 install-meta（手动部署 / 容器）为 `manual`。
+   */
+  installSource?: InstallSource;
   /** 部署方式 */
   deployment: GatewayDeployment;
   /** 是否允许程序内自更新：isProd && installedViaCli && deployment!=='none' */
@@ -193,6 +201,19 @@ export interface MeshNodeOperation {
   error: string | null;
 }
 
+/**
+ * 局域网候选的链路类型：`lan` 物理网卡上的同网段地址；`tailscale` CGNAT 段（RFC 6598）；
+ * `vpn` 其它隧道网卡上的私网地址（对端不在同一 VPN 时打不开）。
+ */
+export type LanAddressKind = 'lan' | 'vpn' | 'tailscale';
+
+export interface LanAddressCandidate {
+  ip: string;
+  kind: LanAddressKind;
+  /** 来源网卡名，便于排障 */
+  iface: string;
+}
+
 /** 本机可被其他设备访问的地址线索（`GET /api/system/addresses`），供「接入更多设备」面板拼地址 */
 export interface AccessAddressesResponse {
   /** 网关监听地址（app.env `VIBETERM_BIND_HOST`） */
@@ -201,6 +222,10 @@ export interface AccessAddressesResponse {
   port: number;
   /** 只监听回环：局域网设备无法直接访问 */
   loopbackOnly: boolean;
-  /** 本机非回环 IPv4（私网段优先），只在 `loopbackOnly=false` 时有意义 */
+  /** @deprecated 等于 `lanCandidates.map((c) => c.ip)`，保留给旧前端 */
   lanAddresses: string[];
+  /** 已按可达性排序的局域网候选，只在 `loopbackOnly=false` 时有意义 */
+  lanCandidates: LanAddressCandidate[];
+  /** 中继上联且入口探通时的 `<relay>/n/<self>`，否则为 null */
+  relayAccessUrl?: string | null;
 }

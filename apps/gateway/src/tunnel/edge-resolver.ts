@@ -1,6 +1,7 @@
 import { promises as dnsPromises } from 'node:dns';
 import { errorMessage } from '@vibeterm/shared';
 import type { TunnelEdgeResolution } from '@vibeterm/shared';
+import { isFakeIpv4 } from '../mesh/address-class';
 
 export const EDGE_SRV_NAME = '_v2-origintunneld._tcp.argotunnel.com';
 export const WELL_KNOWN_EDGE_HOSTS = [
@@ -68,11 +69,7 @@ function ipv4Octets(ip: string): number[] | null {
 }
 
 /** 198.18.0.0/15：RFC 2544 基准测试段，本机代理（Surge 等）常用作 fake-IP */
-export function isFakeIp(ip: string): boolean {
-  const octets = ipv4Octets(ip);
-  if (!octets) return false;
-  return octets[0] === 198 && (octets[1] === 18 || octets[1] === 19);
-}
+export { isFakeIpv4 as isFakeIp };
 
 /** [首字节, 次字节下界, 次字节上界]：本地/私有/保留段，不能当 edge 地址用 */
 const UNUSABLE_V4_BLOCKS: ReadonlyArray<readonly [number, number, number]> = [
@@ -88,7 +85,7 @@ const UNUSABLE_V4_BLOCKS: ReadonlyArray<readonly [number, number, number]> = [
 export function isUnusableEdgeIp(ip: string): boolean {
   const octets = ipv4Octets(ip);
   if (!octets) return true;
-  if (isFakeIp(ip)) return true;
+  if (isFakeIpv4(ip)) return true;
   const [a, b] = octets as [number, number, number, number];
   if (a >= 224) return true;
   return UNUSABLE_V4_BLOCKS.some(([first, min, max]) => a === first && b >= min && b <= max);
@@ -439,7 +436,7 @@ async function systemLookup(lookup: EdgeLookup): Promise<SystemLookupResult> {
   );
   const errors = results.map((result) => result.error).filter((e): e is string => Boolean(e));
   return {
-    fakeIpDetected: results.some((result) => result.addrs.some((ip) => isFakeIp(ip))),
+    fakeIpDetected: results.some((result) => result.addrs.some((ip) => isFakeIpv4(ip))),
     lookupError:
       errors.length === results.length && errors.length > 0
         ? `system DNS lookup failed: ${errors[0]}`

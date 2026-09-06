@@ -46,6 +46,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
+import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { NodeUnreachableError } from './types';
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
@@ -852,6 +853,68 @@ describe('auth-routes', () => {
     }
   });
 
+  test('中继上联时 mode 不上报 Hub：残留的 hub meta 与 env 都不算', async () => {
+    const mesh = await bootMesh();
+    try {
+      mesh.userStore.upsertHubMeta({
+        nodeId: 'bb'.repeat(16),
+        publicUrl: 'https://hub.example',
+        now: Date.now(),
+      });
+      const applied = await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
+        type: 'set-relays',
+        payload: await buildSetRelaysPayload({
+          relays: [
+            {
+              url: 'https://relay.example',
+              tenantId: 'ef'.repeat(16),
+              token: new Uint8Array(32).fill(6),
+              priority: 0,
+            },
+          ],
+          logKey: new Uint8Array(32).fill(1),
+          metaKey: new Uint8Array(32).fill(2),
+          metaEpoch: 1,
+          nodes: listRelayNodeKeys(mesh.userStore, mesh.boot.userId),
+        }),
+      });
+      expect(applied.ok).toBe(true);
+      const res = await call(mesh.runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { hubNodeId: string | null; hubPublicUrl: string | null };
+      expect(body.hubNodeId).toBeNull();
+      expect(body.hubPublicUrl).toBeNull();
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('非 Hub 且无 hub meta 时不把 http://127.0.0.1 兜底当成 Hub 地址', async () => {
+    const mesh = await bootMesh();
+    try {
+      const runtime = new MeshHttpRuntime({
+        roles: { hub: false, node: true, relay: false },
+        nodeId: NODE_ID,
+        nodePk: NODE_PK,
+        userStore: mesh.userStore,
+        keyLogService: mesh.keyLogService,
+        challengeStore: mesh.challengeStore,
+        nodeSessionStore: mesh.nodeSessionStore,
+        peers: mesh.peers,
+        streams: mesh.streams,
+        publisher: { publish() {} },
+        primaryUserId: mesh.boot.userId,
+        hubPublicUrl: 'http://127.0.0.1',
+      });
+      const res = await call(runtime, 'http://localhost/api/auth/mode');
+      const body = (await res.json()) as { hubNodeId: string | null; hubPublicUrl: string | null };
+      expect(body.hubNodeId).toBeNull();
+      expect(body.hubPublicUrl).toBeNull();
+      runtime.stop();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/auth/mode exposes caFingerprint from tlsInfo', async () => {
     const mesh = await bootMesh();
     try {
@@ -1003,7 +1066,7 @@ describe('auth-routes', () => {
       expect(localBody.passkeySecondFactor).toBe(true);
       expect(remoteBody.passkeysForThisOrigin).toBe(false);
       expect(remoteBody.passkeyAvailable).toBe(false);
-      expect(remoteBody.passkeySecondFactor).toBe(true);
+      expect(remoteBody.passkeySecondFactor).toBe(false);
       expect(tlsCalls).toBe(1);
     } finally {
       mesh.close();
@@ -1994,6 +2057,7 @@ describe('auth-routes', () => {
         const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
           clientIp: '203.0.113.22',
           totp: { code, k_totp: encodeBase64url(kTotp) },
+          headers: { origin: 'http://localhost:19663' },
         });
         expect(res.status).toBe(401);
         expect((await res.json()).code).toBe('PASSKEY_REQUIRED');
@@ -3015,15 +3079,16 @@ describe('auth-routes', () => {
     }
   });
 
-  test('password login requires passkey second factor when any origin has a key', async () => {
+  test('password login requires passkey second factor when this origin has a key', async () => {
     const mesh = await bootMesh();
     try {
       const enrolled = await enrollSyntheticPasskey(mesh.userStore, mesh.boot.userId);
-      const missing = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const missing = await challengeAndLogin(mesh.runtime, mesh.boot, { headers: { origin: 'http://localhost:19663' } });
       expect(missing.res.status).toBe(401);
       expect((await missing.res.json()).code).toBe('PASSKEY_REQUIRED');
 
       const ok = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        headers: { origin: 'http://localhost:19663' },
         passkey: async (del) => {
           const assertion = await enrolled.authenticator.assert({
             challenge: sha256(del.bytes),
@@ -3048,6 +3113,7 @@ describe('auth-routes', () => {
       expect(stored?.counter).toBeGreaterThan(0);
 
       const mismatch = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        headers: { origin: 'http://localhost:19663' },
         passkey: async () => {
           const other = createDelegation(mesh.boot.rootKey, {
             uid: mesh.boot.userId,
@@ -3080,6 +3146,7 @@ describe('auth-routes', () => {
       const bob = await mesh.keyLogService.bootstrapUser({ username: 'bob', password: PASSWORD });
       const bobKey = await enrollSyntheticPasskey(mesh.userStore, bob.userId);
       const res = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        headers: { origin: 'http://localhost:19663' },
         passkey: async (del) => {
           const assertion = await bobKey.authenticator.assert({
             challenge: sha256(del.bytes),
@@ -3134,11 +3201,15 @@ describe('auth-routes', () => {
       const missingTotp = await challengeAndLogin(mesh.runtime, mesh.boot);
       expect((await missingTotp.res.json()).code).toBe('TOTP_REQUIRED');
 
-      const missingPasskey = await challengeAndLogin(mesh.runtime, mesh.boot, { totp });
+      const missingPasskey = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        totp,
+        headers: { origin: 'http://localhost:19663' },
+      });
       expect((await missingPasskey.res.json()).code).toBe('PASSKEY_REQUIRED');
 
       const both = await challengeAndLogin(mesh.runtime, mesh.boot, {
         totp,
+        headers: { origin: 'http://localhost:19663' },
         passkey: async (del) => {
           const assertion = await enrolled.authenticator.assert({
             challenge: sha256(del.bytes),
@@ -3185,6 +3256,7 @@ describe('auth-routes', () => {
 
       const loopbackLogin = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '127.0.0.1',
+        headers: { origin: 'http://localhost:19663' },
       });
       expect(loopbackLogin.res.status).toBe(200);
 
@@ -3201,6 +3273,7 @@ describe('auth-routes', () => {
 
       const publicLogin = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
+        headers: { origin: 'http://localhost:19663' },
       });
       expect(publicLogin.res.status).toBe(401);
       expect((await publicLogin.res.json()).code).toBe('PASSKEY_REQUIRED');
@@ -3221,20 +3294,21 @@ describe('auth-routes', () => {
       const waived = await challengeAndLogin(mesh.runtime, mesh.boot, {
         via: entry,
         clientIp: `peer:${entry}`,
-        headers: { 'x-tmex-client-source': 'local' },
+        headers: { 'x-tmex-client-source': 'local', origin: 'http://localhost:19663' },
       });
       expect(waived.res.status).toBe(200);
 
       const peerNoHeader = await challengeAndLogin(mesh.runtime, mesh.boot, {
         via: entry,
         clientIp: `peer:${entry}`,
+        headers: { origin: 'http://localhost:19663' },
       });
       expect(peerNoHeader.res.status).toBe(401);
       expect((await peerNoHeader.res.json()).code).toBe('PASSKEY_REQUIRED');
 
       const forgedDirect = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
-        headers: { 'x-tmex-client-source': 'local' },
+        headers: { 'x-tmex-client-source': 'local', origin: 'http://localhost:19663' },
       });
       expect(forgedDirect.res.status).toBe(401);
       expect((await forgedDirect.res.json()).code).toBe('PASSKEY_REQUIRED');
