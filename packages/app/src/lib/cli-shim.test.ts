@@ -1,13 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setLang, t } from '../i18n';
 import {
   LEGACY_INSTALL_DIR_PREFIX,
   LEGACY_SHIM_MARKER,
   VIBETERM_SHIM_MARKER,
+  defaultShimDirs,
   deployCliPackage,
   findLegacyMarkedShims,
   installVibeTermShim,
@@ -89,6 +90,16 @@ describe('deployCliPackage', () => {
     expect(await readFile(join(installLayout.cliDir, 'dist', 'cli-node.js'), 'utf8')).toContain(
       'export async function main'
     );
+  });
+});
+
+describe('defaultShimDirs', () => {
+  test('points at the home dir and is sandboxed under bun test', () => {
+    const [localBinDir, bunBinDir] = defaultShimDirs();
+    expect(localBinDir).toBe(join(homedir(), '.local', 'bin'));
+    expect(bunBinDir).toBe(join(homedir(), '.bun', 'bin'));
+    // 测试预载把 HOME 钉在临时目录：任何默认落点都碰不到真实主目录。
+    expect(homedir().startsWith(tmpdir())).toBe(true);
   });
 });
 
@@ -276,12 +287,82 @@ describe('installVibeTermShim', () => {
       localBinDir,
       bunBinDir: join(root, 'missing-bun-bin'),
       pathEnv: localBinDir,
+      force: true,
     });
 
     const shim = await readFile(result.shimPath, 'utf8');
     expect(shim).toContain(VIBETERM_SHIM_MARKER);
     expect(shim).toContain(`# vibeterm-install-dir: ${secondLayout.installDir}`);
     expect(shim).not.toContain(`# vibeterm-install-dir: ${firstLayout.installDir}`);
+    expect(result.skipWarning).toBeNull();
+  });
+
+  test('refuses to take over a shim owned by another install that still exists', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-shim-owned-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const bunBinDir = join(root, 'bun-bin');
+    await mkdir(bunBinDir, { recursive: true });
+    const firstLayout = createInstallLayout(join(root, 'install-a'));
+    const secondLayout = createInstallLayout(join(root, 'install-b'));
+    await deployCliPackage(packageLayout, firstLayout);
+    await deployCliPackage(packageLayout, secondLayout);
+
+    await installVibeTermShim({
+      installLayout: firstLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: localBinDir,
+    });
+    const result = await installVibeTermShim({
+      installLayout: secondLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir,
+      pathEnv: localBinDir,
+    });
+
+    expect(await readFile(join(localBinDir, 'vibeterm'), 'utf8')).toContain(
+      `# vibeterm-install-dir: ${firstLayout.installDir}`
+    );
+    expect(await readFile(join(localBinDir, 'tmex'), 'utf8')).toContain(
+      `# vibeterm-install-dir: ${firstLayout.installDir}`
+    );
+    expect(result.bunLinkPath).toBeNull();
+    expect(result.skipWarning).toContain(join(localBinDir, 'vibeterm'));
+  });
+
+  test('takes over a shim whose recorded install dir is gone', async () => {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-shim-orphan-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    const firstLayout = createInstallLayout(join(root, 'install-a'));
+    const secondLayout = createInstallLayout(join(root, 'install-b'));
+    await deployCliPackage(packageLayout, firstLayout);
+    await deployCliPackage(packageLayout, secondLayout);
+
+    await installVibeTermShim({
+      installLayout: firstLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+    await rm(firstLayout.installDir, { recursive: true, force: true });
+    const result = await installVibeTermShim({
+      installLayout: secondLayout,
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+
+    expect(await readFile(result.shimPath, 'utf8')).toContain(
+      `# vibeterm-install-dir: ${secondLayout.installDir}`
+    );
     expect(result.skipWarning).toBeNull();
   });
 

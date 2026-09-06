@@ -1,0 +1,5 @@
+# bun 只读工作目录下的 bunfig.toml，不会向上找仓库根的那一份：
+# `bun test`（含 `bun run test:app` 与 scripts/ci/unit-tests.ts）都以本包为 cwd，
+# 因此测试主目录沙箱必须挂在这里。
+[test]
+preload = ["./scripts/test/home-sandbox.ts"]

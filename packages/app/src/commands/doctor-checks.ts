@@ -3,7 +3,7 @@ import { resolve } from 'node:path';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { t } from '../i18n';
 import { checkBunVersion } from '../lib/bun';
-import { findLegacyMarkedShims } from '../lib/cli-shim';
+import { defaultShimDirs, findLegacyMarkedShims } from '../lib/cli-shim';
 import { getInstallHintAsync } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
@@ -353,7 +353,10 @@ export async function checkLegacyLeftovers(input: {
       [...new Set([input.serviceName, LEGACY_SERVICE_NAME])],
       input.installDir
     )),
-    ...(await findLegacyMarkedShims()),
+    ...(await findLegacyMarkedShims({
+      localBinDir: defaultShimDirs()[0],
+      bunBinDir: defaultShimDirs()[1],
+    })),
   ];
   if (leftovers.length === 0) return [];
   return [

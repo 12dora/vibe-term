@@ -20,3 +20,11 @@ if (!db || PROD_MARKERS.some((marker) => db.includes(marker))) {
 
 // bun test 已将 NODE_ENV 设为 test：loadEnv 命中 test.env，并净化继承的安装版路径键。
 loadEnv();
+
+// bun 只读工作目录下的 bunfig.toml：从仓库根直接跑 `bun test packages/app/...` 时
+// packages/app/bunfig.toml 不生效，主目录沙箱要在这里补上。只在目标全部属于该包时挂载，
+// 其余包的测试仍用真实主目录（gateway 的文件浏览 / 隧道用例依赖它）。
+const testTargets = Bun.argv.slice(1).filter((arg) => !arg.startsWith('-'));
+if (testTargets.length > 0 && testTargets.every((target) => target.includes('/packages/app'))) {
+  await import('../../packages/app/scripts/test/home-sandbox');
+}

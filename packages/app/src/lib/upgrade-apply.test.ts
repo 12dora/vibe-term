@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { spawn } from 'node:child_process';
-import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from 'node:fs/promises';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathExists } from './fs-utils';
 import type { PackageLayout } from './install-layout';
@@ -20,6 +20,11 @@ async function scratch(): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), 'vibeterm-apply-'));
   tempDirs.push(dir);
   return dir;
+}
+
+/** shim 落点：一律指向本用例的临时目录，任何写穿真实 ~/.local/bin 的回归都会立刻炸。 */
+function shimDirs(root: string): [string, string] {
+  return [join(root, '_shims'), join(root, '_bun-bin')];
 }
 
 async function writePackage(root: string, version: string): Promise<PackageLayout> {
@@ -123,7 +128,10 @@ describe('repairUpgrade journal recovery', () => {
       updatedAt: '2026-08-31T00:00:01.000Z',
     });
 
-    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', { service: fakeService() });
+    const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
+      service: fakeService(),
+    });
     expect(action).toBe('abort_candidate');
     expect(await pathExists(join(installDir, 'versions', '2.0.0'))).toBe(false);
     expect(await pathExists(join(installDir, 'staging', 'txn-1'))).toBe(false);
@@ -146,6 +154,7 @@ describe('repairUpgrade journal recovery', () => {
     const service = fakeService();
     service.running = false;
     const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service,
       healthCheck: async () => undefined,
     });
@@ -171,6 +180,7 @@ describe('repairUpgrade journal recovery', () => {
       updatedAt: '2026-08-31T00:00:01.000Z',
     });
     const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       healthCheck: async ({ expectedVersion }) => {
         expect(expectedVersion).toBe('2.0.0');
@@ -198,6 +208,7 @@ describe('repairUpgrade journal recovery', () => {
     });
     const service = fakeService();
     await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service,
       healthCheck: async () => undefined,
     });
@@ -225,6 +236,7 @@ describe('repairUpgrade journal recovery', () => {
     });
     await expect(
       repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
         service: fakeService(),
         healthCheck: async ({ expectedVersion }) => {
           if (expectedVersion === '2.0.0') throw new Error('new-unhealthy');
@@ -271,6 +283,7 @@ Bun.serve({
         skipShims: true,
       },
       {
+        shimDirs: shimDirs(installDir),
         service,
         healthCheck: async (opts) => {
           if (opts.url.includes(':19883/')) return;
@@ -285,6 +298,43 @@ Bun.serve({
 });
 
 describe('applyUpgrade', () => {
+  test('installs shims only into the injected dirs and leaves the home dir untouched', async () => {
+    // 2026-09-07 事故回归：shim 目录未注入时会写穿真实的 ~/.local/bin 与 ~/.bun/bin。
+    expect(homedir().startsWith(tmpdir())).toBe(true);
+    expect(homedir()).toContain('vibeterm-test-home-');
+
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    const [localBinDir, bunBinDir] = shimDirs(installDir);
+    await mkdir(bunBinDir, { recursive: true });
+    const homeBefore = (await readdir(homedir())).sort();
+
+    await applyUpgrade(
+      {
+        installDir,
+        toVersion: '2.0.0',
+        packageLayout: pkg,
+        bunPath: '/usr/bin/bun',
+        noService: true,
+      },
+      {
+        shimDirs: [localBinDir, bunBinDir],
+        service: fakeService(),
+        runCandidate: async () => ({ stop: async () => undefined }),
+        healthCheck: async () => undefined,
+      }
+    );
+
+    expect(await readFile(join(localBinDir, 'vibeterm'), 'utf8')).toContain(
+      `# vibeterm-install-dir: ${installDir}`
+    );
+    expect(await pathExists(join(bunBinDir, 'vibeterm'))).toBe(true);
+    expect(await pathExists(join(homedir(), '.local', 'bin'))).toBe(false);
+    expect(await pathExists(join(homedir(), '.bun', 'bin'))).toBe(false);
+    expect((await readdir(homedir())).sort()).toEqual(homeBefore);
+  }, 30_000);
+
   test('switches current after a successful preflight and prunes older versions', async () => {
     const installDir = await scratch();
     await seedInstall(installDir, '1.0.0');
@@ -302,6 +352,7 @@ describe('applyUpgrade', () => {
         skipShims: true,
       },
       {
+        shimDirs: shimDirs(installDir),
         service,
         runCandidate: async () => ({ stop: async () => undefined }),
         healthCheck: async ({ expectedVersion }) => {
@@ -349,6 +400,7 @@ describe('applyUpgrade', () => {
           skipShims: true,
         },
         {
+          shimDirs: shimDirs(installDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => {
@@ -378,6 +430,7 @@ describe('applyUpgrade', () => {
         skipShims: true,
       },
       {
+        shimDirs: shimDirs(installDir),
         service: fakeService(),
         log: (message) => logs.push(message),
       }
@@ -403,6 +456,7 @@ describe('applyUpgrade', () => {
         keepBackup: true,
       },
       {
+        shimDirs: shimDirs(installDir),
         service: fakeService(),
         runCandidate: async () => ({ stop: async () => undefined }),
         healthCheck: async () => undefined,
@@ -413,6 +467,7 @@ describe('applyUpgrade', () => {
     expect(journal?.keepBackup).toBe(true);
     expect(await pathExists(join(installDir, 'backups', journal?.txnId ?? ''))).toBe(true);
     await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       healthCheck: async () => undefined,
     });
@@ -441,6 +496,7 @@ describe('repairUpgrade release gates', () => {
     });
     const seen: Array<string | undefined> = [];
     await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       healthCheck: async ({ expectedVersion }) => {
         seen.push(expectedVersion);
@@ -475,6 +531,7 @@ describe('repairUpgrade release gates', () => {
     };
     await expect(
       repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
         service,
         healthCheck: async () => {
           throw new Error('new-unhealthy');
@@ -507,7 +564,11 @@ describe('repairUpgrade release gates', () => {
       throw new Error('bootstrap-failed');
     };
     await expect(
-      repairUpgrade(installDir, '/usr/bin/bun', { service, healthCheck: async () => undefined })
+      repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
+        service,
+        healthCheck: async () => undefined,
+      })
     ).rejects.toThrow(/bootstrap-failed/);
     expect((await readJournal(installDir))?.phase).toBe('switching');
     expect(await pathExists(join(installDir, 'backups', 'txn-start', 'tmex.db'))).toBe(true);
@@ -538,6 +599,7 @@ describe('repairUpgrade release gates', () => {
         candidateStartedAt: new Date().toISOString(),
       });
       const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
         service: fakeService(),
         healthCheck: async () => undefined,
       });
@@ -563,6 +625,7 @@ describe('repairUpgrade active txn and legacy dirs', () => {
     await mkdir(join(installDir, 'staging', 'orphan'), { recursive: true });
     await writeFile(join(installDir, 'staging', 'orphan', 'x'), 'x');
     const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       activeTxnId: 'active-txn',
     });
@@ -585,6 +648,7 @@ describe('repairUpgrade active txn and legacy dirs', () => {
       updatedAt: '2026-08-31T00:00:01.000Z',
     });
     await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       activeTxnId: 'live-txn',
     });
@@ -644,6 +708,7 @@ describe('repairUpgrade active txn and legacy dirs', () => {
           skipShims: true,
         },
         {
+          shimDirs: shimDirs(installDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => {
@@ -676,6 +741,7 @@ describe('repairUpgrade stopping and old health', () => {
     const service = fakeService();
     service.running = true;
     const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service,
       healthCheck: async () => undefined,
     });
@@ -697,6 +763,7 @@ describe('repairUpgrade stopping and old health', () => {
     const service = fakeService();
     service.running = false;
     const { action } = await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service,
       healthCheck: async () => undefined,
     });
@@ -719,6 +786,7 @@ describe('repairUpgrade stopping and old health', () => {
     service.running = false;
     expect(
       await repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
         service,
         healthCheck: async () => undefined,
       })
@@ -744,6 +812,7 @@ describe('repairUpgrade stopping and old health', () => {
           skipShims: true,
         },
         {
+          shimDirs: shimDirs(installDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -781,6 +850,7 @@ describe('repairUpgrade stopping and old health', () => {
     const seen: Array<{ expectedVersion?: string; statusOnly?: boolean; minStartedAt?: string }> =
       [];
     await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
       service: fakeService(),
       healthCheck: async (opts) => {
         seen.push({
@@ -859,6 +929,7 @@ describe('legacy layout run.sh backup', () => {
           keepBackup: true,
         },
         {
+          shimDirs: shimDirs(installDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           // requireTlsListener 只有真正启动之后的健康检查才会带，preflight 不带
@@ -922,6 +993,7 @@ describe('legacy layout run.sh backup', () => {
           skipShims: true,
         },
         {
+          shimDirs: shimDirs(installDir),
           service: fakeService(),
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => {

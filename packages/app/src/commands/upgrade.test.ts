@@ -410,6 +410,8 @@ describe('upgrade flag unification', () => {
     );
     await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
 
+    const fakeHome = join(installDir, '_home');
+    await mkdir(fakeHome, { recursive: true });
     const appRoot = join(import.meta.dir, '../..');
     const wrapper = `#!/usr/bin/env bun
 import { parseArgs } from ${JSON.stringify(`${appRoot}/src/lib/args.ts`)};
@@ -430,11 +432,12 @@ const service = {
   async start() { this.running = true; },
   async isRunning() { return this.running; },
 };
-await repairUpgrade(installDir, process.execPath, { service, activeTxnId: txn, healthCheck: async () => undefined });
+const shimDirs = [installDir + '/_shims', installDir + '/_bun-bin'];
+await repairUpgrade(installDir, process.execPath, { service, activeTxnId: txn, shimDirs, healthCheck: async () => undefined });
 const layout = await packageLayoutFromRoot(import.meta.dir + '/..');
 await applyUpgrade(
   { installDir, toVersion, packageLayout: layout, bunPath: process.execPath, noService: true, skipShims: true, txnId: txn },
-  { service, runCandidate: async () => ({ stop: async () => undefined }), healthCheck: async () => undefined }
+  { service, shimDirs, runCandidate: async () => ({ stop: async () => undefined }), healthCheck: async () => undefined }
 );
 `;
     const tarball = packNpmTarball({
@@ -469,8 +472,11 @@ await applyUpgrade(
           return new Response('nope', { status: 404 });
         },
         runCommand: async (command, args, options) => {
-          if (command === 'tar') return runCommand(command, args, options);
-          return runCommand(process.execPath, args, options);
+          // 子进程必须拿到沙箱 HOME：解包出来的 CLI 会跑真正的 repair / apply，
+          // 一旦回落到真实主目录就会覆盖用户的 ~/.local/bin/vibeterm。
+          const env = { ...process.env, HOME: fakeHome, USERPROFILE: fakeHome };
+          if (command === 'tar') return runCommand(command, args, { ...options, env });
+          return runCommand(process.execPath, args, { ...options, env });
         },
         execPath: process.execPath,
         log: () => undefined,

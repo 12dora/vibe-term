@@ -32,6 +32,7 @@ describe('convertLegacyLayout', () => {
     await convertLegacyLayout(installDir, {
       bunPath: '/usr/bin/bun',
       skipShims: true,
+      shimDirs: [join(installDir, '_shims'), join(installDir, '_bun-bin')],
     });
 
     expect(await readlink(join(installDir, 'current'))).toBe(join('versions', '1.0.0'));
@@ -55,7 +56,11 @@ describe('convertLegacyLayout', () => {
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     const { switchCurrent } = await import('./upgrade-switch');
     await switchCurrent(installDir, '1.0.0');
-    await convertLegacyLayout(installDir, { bunPath: '/usr/bin/bun', skipShims: true });
+    await convertLegacyLayout(installDir, {
+      bunPath: '/usr/bin/bun',
+      skipShims: true,
+      shimDirs: [join(installDir, '_shims'), join(installDir, '_bun-bin')],
+    });
     expect(await readlink(join(installDir, 'current'))).toBe(join('versions', '1.0.0'));
   });
 
@@ -68,7 +73,11 @@ describe('convertLegacyLayout', () => {
       `${JSON.stringify({ serviceName: 'vibeterm' })}\n`
     );
     await expect(
-      convertLegacyLayout(installDir, { bunPath: '/usr/bin/bun', skipShims: true })
+      convertLegacyLayout(installDir, {
+        bunPath: '/usr/bin/bun',
+        skipShims: true,
+        shimDirs: [join(installDir, '_shims'), join(installDir, '_bun-bin')],
+      })
     ).rejects.toThrow(/cliVersion|install-meta/i);
   });
 
@@ -86,8 +95,7 @@ describe('convertLegacyLayout', () => {
     );
     await convertLegacyLayout(installDir, {
       bunPath: '/usr/bin/bun',
-      localBinDir,
-      bunBinDir: join(installDir, 'missing-bun'),
+      shimDirs: [localBinDir, join(installDir, 'missing-bun')],
     });
     expect(await readFile(join(localBinDir, 'vibeterm'), 'utf8')).toBe('keep-me-shim\n');
     expect(await pathExists(join(installDir, 'current', 'cli', 'bin', 'vibeterm.js'))).toBe(false);
@@ -107,8 +115,7 @@ describe('convertLegacyLayout', () => {
     );
     await convertLegacyLayout(installDir, {
       bunPath: '/usr/bin/bun',
-      localBinDir,
-      bunBinDir: join(installDir, 'missing-bun'),
+      shimDirs: [localBinDir, join(installDir, 'missing-bun')],
     });
     const shim = await readFile(join(localBinDir, 'vibeterm'), 'utf8');
     expect(shim).toContain('current/cli/bin/vibeterm.js');

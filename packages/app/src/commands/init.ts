@@ -17,7 +17,7 @@ import {
 } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
-import { deployCliAndShim } from '../lib/cli-shim';
+import { defaultShimDirs, deployCliAndShim } from '../lib/cli-shim';
 import {
   type DepInstallPlan,
   executeDependencyInstall,
@@ -483,7 +483,9 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   if (!config.force) {
     const journal = await readJournal(config.installDir);
     if (journal) {
-      await withUpgradeLock(config.installDir, () => repairUpgrade(config.installDir, bun.path));
+      await withUpgradeLock(config.installDir, () =>
+        repairUpgrade(config.installDir, bun.path, { shimDirs: defaultShimDirs() })
+      );
     }
   }
 
@@ -513,7 +515,12 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   await deployRuntimeFiles(packageLayout, versionLayout);
   await switchCurrent(config.installDir, cliVersion);
   const installLayout = createInstallLayout(config.installDir);
-  const shim = await deployCliAndShim(packageLayout, installLayout, bun.path);
+  const [localBinDir, bunBinDir] = defaultShimDirs();
+  const shim = await deployCliAndShim(packageLayout, installLayout, bun.path, {
+    localBinDir,
+    bunBinDir,
+    force: true,
+  });
   await enableDirectAfterInit(config);
 
   const masterKey = generateMasterKey();

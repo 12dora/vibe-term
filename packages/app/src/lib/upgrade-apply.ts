@@ -3,7 +3,6 @@ import { resolve } from 'node:path';
 import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import type { InstallMeta, ServiceMode } from '../types';
-import { defaultBunBinDir, defaultLocalBinDir } from './cli-shim';
 import { errorMessage } from './error-message';
 import { pathExists } from './fs-utils';
 import { writeRunScript } from './install';
@@ -72,14 +71,10 @@ export function createTxnId(): string {
   return `${Date.now().toString(16)}-${randomBytes(4).toString('hex')}`;
 }
 
-function repairShimDirs(deps: UpgradeApplyDeps): string[] {
-  return deps.shimDirs ?? [defaultLocalBinDir(), defaultBunBinDir()];
-}
-
 async function sweepRepairGarbage(installDir: string, deps: UpgradeApplyDeps): Promise<void> {
   await sweepUpgradeGarbage(installDir, {
     keepTxnId: deps.activeTxnId,
-    shimDirs: repairShimDirs(deps),
+    shimDirs: deps.shimDirs,
   });
 }
 
@@ -234,7 +229,7 @@ async function completeInterruptedMigration(
   }
   // run.sh 里是旧目录的绝对路径，不重写服务起不来。
   await writeRunScript(createInstallLayout(installDir), bunPath).catch(() => null);
-  const [localBinDir, bunBinDir] = repairShimDirs(deps);
+  const [localBinDir, bunBinDir] = deps.shimDirs;
   const { installVibeTermShim } = await import('./cli-shim');
   await installVibeTermShim({
     installLayout: createInstallLayout(installDir),
@@ -264,7 +259,7 @@ async function undoMigrationInRepair(
     record,
     journal,
     bunPath: rt.bunPath,
-    shimDirs: repairShimDirs(rt.deps),
+    shimDirs: rt.deps.shimDirs,
     log: rt.log,
   });
   const meta = await readInstallMeta(record.fromDir);
@@ -366,7 +361,7 @@ async function repairMissingJournal(
   bunPath: string,
   deps: UpgradeApplyDeps
 ): Promise<void> {
-  await convertLegacyLayout(installDir, { bunPath }).catch(() => false);
+  await convertLegacyLayout(installDir, { bunPath, shimDirs: deps.shimDirs }).catch(() => false);
   await sweepRepairGarbage(installDir, deps);
 }
 
@@ -468,7 +463,7 @@ export interface RepairOutcome {
 export async function repairUpgrade(
   installDir: string,
   bunPath: string,
-  deps: UpgradeApplyDeps = {}
+  deps: UpgradeApplyDeps
 ): Promise<RepairOutcome> {
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
@@ -499,7 +494,7 @@ export async function repairUpgrade(
 
 export async function applyUpgrade(
   options: ApplyUpgradeOptions,
-  deps: UpgradeApplyDeps = {}
+  deps: UpgradeApplyDeps
 ): Promise<void> {
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
@@ -520,7 +515,11 @@ export async function applyUpgrade(
   // 旧布局（没有 current）转换时会先用新模板重写 run.sh：事务备份必须赶在那之前取，
   // 否则回滚时「逐字节还原」拿到的是新模板，旧 runtime 需要的 TMEX_* 路径变量一个都没有。
   if (!hasCurrentLayout(installDir)) await backupRunScript(installDir, txnId);
-  await convertLegacyLayout(installDir, { bunPath, skipShims: options.skipShims });
+  await convertLegacyLayout(installDir, {
+    bunPath,
+    skipShims: options.skipShims,
+    shimDirs: deps.shimDirs,
+  });
   const resolvedFrom = (await readCurrentVersion(installDir)) || fromVersion;
   if (resolvedFrom === toVersion) {
     log(t('upgrade.alreadyCurrent', { version: toVersion }));

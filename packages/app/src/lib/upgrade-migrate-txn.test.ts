@@ -28,6 +28,11 @@ async function scratch(): Promise<string> {
   return dir;
 }
 
+/** shim 落点：一律指向用例临时目录的同级兄弟目录，杜绝写穿真实 ~/.local/bin。 */
+function shimDirs(installDir: string): [string, string] {
+  return [`${installDir}-shims`, `${installDir}-bun-bin`];
+}
+
 async function writePackage(root: string, version: string): Promise<PackageLayout> {
   await mkdir(join(root, 'bin'), { recursive: true });
   await mkdir(join(root, 'dist', 'runtime'), { recursive: true });
@@ -210,6 +215,7 @@ describe('executeUpgradeTxn install dir migration', () => {
     const finalDir = await executeUpgradeTxn(
       txnOptions(fromDir, pkg),
       {
+        shimDirs: shimDirs(fromDir),
         service,
         runCandidate: async () => ({ stop: async () => undefined }),
         healthCheck: async () => undefined,
@@ -273,6 +279,7 @@ describe('executeUpgradeTxn install dir migration', () => {
       executeUpgradeTxn(
         txnOptions(fromDir, pkg),
         {
+          shimDirs: shimDirs(fromDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -336,6 +343,7 @@ describe('executeUpgradeTxn install dir migration', () => {
     const finalDir = await executeUpgradeTxn(
       txnOptions(fromDir, pkg),
       {
+        shimDirs: shimDirs(fromDir),
         service,
         runCandidate: async () => ({ stop: async () => undefined }),
         healthCheck: async () => undefined,
@@ -395,6 +403,7 @@ describe('executeUpgradeTxn install dir migration', () => {
       executeUpgradeTxn(
         txnOptions(fromDir, pkg),
         {
+          shimDirs: shimDirs(fromDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -447,6 +456,7 @@ describe('restoring a pre-2.0 version', () => {
       executeUpgradeTxn(
         txnOptions(fromDir, pkg),
         {
+          shimDirs: shimDirs(fromDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -550,6 +560,7 @@ describe('a 2.x upgrade that fails must keep the new service identity', () => {
       executeUpgradeTxn(
         { ...txnOptions(installDir, pkg), toVersion: '2.0.1' },
         {
+          shimDirs: shimDirs(installDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -595,6 +606,7 @@ describe('an interrupted migration undo', () => {
       executeUpgradeTxn(
         txnOptions(fromDir, pkg),
         {
+          shimDirs: shimDirs(fromDir),
           service,
           runCandidate: async () => ({ stop: async () => undefined }),
           healthCheck: async () => undefined,
@@ -756,6 +768,7 @@ describe('repairUpgrade after a crash inside the migration', () => {
     await executeUpgradeTxn(
       { ...txnOptions(fromDir, pkg), keepBackup: true },
       {
+        shimDirs: shimDirs(fromDir),
         service,
         runCandidate: async () => ({ stop: async () => undefined }),
         healthCheck: async () => undefined,

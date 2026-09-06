@@ -18,12 +18,15 @@ const SHIM_NAMES = ['vibeterm', 'tmex'] as const;
 
 const CLI_BIN_FILES = ['vibeterm.js', 'tmex.js'] as const;
 
-export function defaultLocalBinDir(): string {
-  return join(homedir(), '.local', 'bin');
-}
+/** `[localBinDir, bunBinDir]`：shim 与 bun 软链的落点，永远显式传递。 */
+export type ShimDirs = [localBinDir: string, bunBinDir: string];
 
-export function defaultBunBinDir(): string {
-  return join(homedir(), '.bun', 'bin');
+/**
+ * 真实用户主目录下的 shim 目录。只允许在用户主动触发的入口（init / upgrade / uninstall /
+ * doctor）里调用：库内部一律接收调用方注入的目录，避免测试写穿真实 `~/.local/bin`。
+ */
+export function defaultShimDirs(): ShimDirs {
+  return [join(homedir(), '.local', 'bin'), join(homedir(), '.bun', 'bin')];
 }
 
 export function isDirOnPath(dir: string, pathEnv: string = process.env.PATH ?? ''): boolean {
@@ -71,9 +74,14 @@ export async function deployCliPackage(
 export interface InstallVibeTermShimOptions {
   installLayout: InstallLayout;
   bunPath: string;
-  localBinDir?: string;
-  bunBinDir?: string;
+  localBinDir: string;
+  bunBinDir: string;
   pathEnv?: string;
+  /**
+   * 允许覆盖记录着「另一个仍然存在的安装目录」的 shim。只有用户亲自跑 init / upgrade
+   * 才置位；事务内部为同一安装目录重写 shim 不需要它。
+   */
+  force?: boolean;
 }
 
 export interface InstallVibeTermShimResult {
@@ -174,13 +182,25 @@ async function shimMatchesInstall(path: string, installDir?: string): Promise<bo
   return recorded === installDir;
 }
 
-async function canReplaceManagedPath(path: string): Promise<boolean> {
+/**
+ * 只有「不存在」「本安装自己的 shim」「原主人安装目录已消失」三种情况才允许覆盖。
+ * 否则一次针对临时目录的安装就会顶掉指向真实安装的 `~/.local/bin/vibeterm`。
+ */
+async function canReplaceManagedPath(
+  path: string,
+  installDir: string,
+  force?: boolean
+): Promise<boolean> {
   try {
     await lstat(path);
   } catch {
     return true;
   }
-  return await isManagedShim(path);
+  if (!(await isManagedShim(path))) return false;
+  if (force) return true;
+  const recorded = parseRecordedInstallDir(await readShimText(path));
+  if (!recorded || recorded === installDir) return true;
+  return !(await pathExists(recorded));
 }
 
 async function writeShimAtomic(shimPath: string, content: string): Promise<void> {
@@ -214,13 +234,14 @@ function pathHintFor(
 async function installBunLink(
   shimPath: string,
   bunBinDir: string,
-  linkName: string
+  linkName: string,
+  guard: { installDir: string; force?: boolean }
 ): Promise<{ path: string | null; skipped: string | null }> {
   if (!(await pathExists(bunBinDir))) {
     return { path: null, skipped: null };
   }
   const linkPath = join(bunBinDir, linkName);
-  if (!(await canReplaceManagedPath(linkPath))) {
+  if (!(await canReplaceManagedPath(linkPath, guard.installDir, guard.force))) {
     return { path: null, skipped: t('cli.shim.skipForeign', { path: linkPath }) };
   }
   const tmp = `${linkPath}.${process.pid}.${Date.now()}.tmp`;
@@ -237,8 +258,7 @@ async function installBunLink(
 export async function installVibeTermShim(
   options: InstallVibeTermShimOptions
 ): Promise<InstallVibeTermShimResult> {
-  const localBinDir = options.localBinDir ?? defaultLocalBinDir();
-  const bunBinDir = options.bunBinDir ?? defaultBunBinDir();
+  const { localBinDir, bunBinDir } = options;
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
   const cliBinDir = join(options.installLayout.installDir, 'current', 'cli', 'bin');
   const installDir = options.installLayout.installDir;
@@ -255,7 +275,7 @@ export async function installVibeTermShim(
   const warnings: Array<string | null> = [];
   for (const name of SHIM_NAMES) {
     const path = join(localBinDir, name);
-    if (await canReplaceManagedPath(path)) {
+    if (await canReplaceManagedPath(path, installDir, options.force)) {
       await writeShimAtomic(path, content);
       await chmod(path, 0o755);
       written.push({ name, path });
@@ -273,7 +293,10 @@ export async function installVibeTermShim(
       bunLinks.set(entry.name, null);
       continue;
     }
-    const link = await installBunLink(entry.path, bunBinDir, entry.name);
+    const link = await installBunLink(entry.path, bunBinDir, entry.name, {
+      installDir,
+      force: options.force,
+    });
     bunLinks.set(entry.name, link.path);
     if (link.skipped) {
       warnings.push(link.skipped);
@@ -298,7 +321,7 @@ export async function deployCliAndShim(
   packageLayout: PackageLayout,
   installLayout: InstallLayout,
   bunPath: string,
-  options?: Omit<InstallVibeTermShimOptions, 'installLayout' | 'bunPath'>
+  options: Omit<InstallVibeTermShimOptions, 'installLayout' | 'bunPath'>
 ): Promise<InstallVibeTermShimResult> {
   await deployCliPackage(packageLayout, installLayout);
   return await installVibeTermShim({
@@ -333,27 +356,23 @@ async function removeOneShim(
   }
 }
 
-export async function removeVibeTermShims(options?: {
-  localBinDir?: string;
-  bunBinDir?: string;
+export async function removeVibeTermShims(options: {
+  localBinDir: string;
+  bunBinDir: string;
   installDir?: string;
 }): Promise<void> {
-  const localBinDir = options?.localBinDir ?? defaultLocalBinDir();
-  const bunBinDir = options?.bunBinDir ?? defaultBunBinDir();
+  const { localBinDir, bunBinDir } = options;
   for (const name of SHIM_NAMES) {
-    await removeOneShim(join(localBinDir, name), join(bunBinDir, name), options?.installDir);
+    await removeOneShim(join(localBinDir, name), join(bunBinDir, name), options.installDir);
   }
 }
 
 /** doctor 用：找出仍带改名前标记的 shim（升级后正常应全部被重写）。 */
-export async function findLegacyMarkedShims(options?: {
-  localBinDir?: string;
-  bunBinDir?: string;
+export async function findLegacyMarkedShims(options: {
+  localBinDir: string;
+  bunBinDir: string;
 }): Promise<string[]> {
-  const dirs = [
-    options?.localBinDir ?? defaultLocalBinDir(),
-    options?.bunBinDir ?? defaultBunBinDir(),
-  ];
+  const dirs = [options.localBinDir, options.bunBinDir];
   const found: string[] = [];
   for (const dir of dirs) {
     for (const name of SHIM_NAMES) {

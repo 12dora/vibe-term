@@ -7,7 +7,7 @@ import type { DirectEnableResult, EnableDirectOptions } from '../commands/direct
 import { t } from '../i18n';
 import { RUNTIME_MODE_ENV } from '../runtime/mode';
 import type { InstallMeta, ServiceMode } from '../types';
-import { deployCliPackage } from './cli-shim';
+import { type ShimDirs, deployCliPackage } from './cli-shim';
 import { readEnvFile } from './env-file';
 import { errorMessage } from './error-message';
 import { ensureDir, pathExists } from './fs-utils';
@@ -70,7 +70,8 @@ export type UpgradeApplyDeps = {
   enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
   now?: () => Date;
   activeTxnId?: string | null;
-  shimDirs?: string[];
+  /** shim 落点，必填：不给就会写到真实主目录，测试与临时实例必须注入自己的临时目录。 */
+  shimDirs: ShimDirs;
   /** 安装迁移后按新路径 / 新服务名重建服务控制器；不给则迁移后沿用原控制器。 */
   rebuildService?: (opts: {
     installDir: string;
@@ -309,6 +310,7 @@ async function backupAndSwitch(
   journal: UpgradeJournal,
   toVersion: string,
   bunPath: string,
+  shimDirs: ShimDirs,
   skipShims?: boolean
 ): Promise<UpgradeJournal> {
   const layout = createInstallLayout(installDir);
@@ -323,10 +325,13 @@ async function backupAndSwitch(
   await switchCurrent(installDir, toVersion);
   await writeRunScript(createInstallLayout(installDir), bunPath);
   if (!skipShims) {
+    const [localBinDir, bunBinDir] = shimDirs;
     const { installVibeTermShim } = await import('./cli-shim');
     await installVibeTermShim({
       installLayout: createInstallLayout(installDir),
       bunPath,
+      localBinDir,
+      bunBinDir,
     });
   }
   return next;
@@ -555,6 +560,7 @@ export async function executeUpgradeTxn(
       journal,
       ctx.toVersion,
       ctx.bunPath,
+      deps.shimDirs,
       options.skipShims
     );
     await startNewAndCommit(

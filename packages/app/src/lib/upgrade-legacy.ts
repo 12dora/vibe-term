@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { t } from '../i18n';
 import type { InstallMeta } from '../types';
+import type { ShimDirs } from './cli-shim';
 import { copyDirectory, pathExists } from './fs-utils';
 import { writeRunScript } from './install';
 import { createLegacyLayout, createVersionLayout, hasCurrentLayout } from './install-layout';
@@ -11,7 +12,7 @@ const LEGACY_DIRS = ['cli', 'runtime', 'resources', 'native'] as const;
 
 export async function convertLegacyLayout(
   installDir: string,
-  options: { bunPath: string; skipShims?: boolean; localBinDir?: string; bunBinDir?: string }
+  options: { bunPath: string; skipShims?: boolean; shimDirs: ShimDirs }
 ): Promise<boolean> {
   if (hasCurrentLayout(installDir)) return false;
 
@@ -41,11 +42,12 @@ export async function convertLegacyLayout(
   const cliJs = join(installDir, 'current', 'cli', 'bin', 'vibeterm.js');
   if (!options.skipShims && (await pathExists(cliJs))) {
     const { installVibeTermShim } = await import('./cli-shim');
+    const [localBinDir, bunBinDir] = options.shimDirs;
     await installVibeTermShim({
       installLayout: dest,
       bunPath: options.bunPath,
-      localBinDir: options.localBinDir,
-      bunBinDir: options.bunBinDir,
+      localBinDir,
+      bunBinDir,
     });
   }
 

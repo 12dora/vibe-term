@@ -5,6 +5,7 @@ import { releaseTarballName } from '../../../shared/src/release/source';
 import { defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { checkBunVersion, readExplicitBunPath } from '../lib/bun';
+import { defaultShimDirs } from '../lib/cli-shim';
 import { getInstallHint } from '../lib/dep-install';
 import { mergeMissingEnvFileKeys, readEnvFile } from '../lib/env-file';
 import { errorMessage } from '../lib/error-message';
@@ -309,9 +310,11 @@ async function runLockedUpgrade(opts: {
   const repair = opts.repair ?? repairUpgrade;
   const apply = opts.apply ?? applyUpgrade;
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
+  const shimDirs = defaultShimDirs();
   const repaired = await repair(opts.installDir, opts.bunPath, {
     rebuildService: buildService,
     activeTxnId,
+    shimDirs,
   });
   if (opts.repairOnly) {
     console.log(`[vibeterm] ${t('upgrade.repairDone', { action: repaired.action })}`);
@@ -347,7 +350,7 @@ async function runLockedUpgrade(opts: {
       serviceName: opts.meta.serviceName,
       autostart: opts.meta.autostart,
     },
-    { service }
+    { service, shimDirs }
   );
 }
 

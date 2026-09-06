@@ -3,6 +3,7 @@
 
 import { t } from '../i18n';
 import type { InstallMeta } from '../types';
+import type { ShimDirs } from './cli-shim';
 import { errorMessage } from './error-message';
 import { pathExists } from './fs-utils';
 import { writeInstallMeta } from './install';
@@ -90,8 +91,8 @@ export async function revertMigrationAfterFailure(opts: {
   journal: UpgradeJournal;
   bunPath: string;
   skipShims?: boolean;
-  /** [localBinDir, bunBinDir]；测试必须给，否则会写到真实的 ~/.local/bin */
-  shimDirs?: string[];
+  /** [localBinDir, bunBinDir]；必填，避免写到真实的 ~/.local/bin */
+  shimDirs: ShimDirs;
   log: (message: string) => void;
 }): Promise<UpgradeJournal> {
   const { record, journal, bunPath, log } = opts;
@@ -114,7 +115,7 @@ export async function revertMigrationAfterFailure(opts: {
   await restoreInstallMeta(record).catch(() => null);
   await restoreRunScript(record.fromDir, journal.txnId, bunPath).catch(() => null);
   if (!opts.skipShims) {
-    const [localBinDir, bunBinDir] = opts.shimDirs ?? [];
+    const [localBinDir, bunBinDir] = opts.shimDirs;
     const { installVibeTermShim } = await import('./cli-shim');
     await installVibeTermShim({
       installLayout: createInstallLayout(record.fromDir),
