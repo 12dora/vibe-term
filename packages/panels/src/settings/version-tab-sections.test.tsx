@@ -1,4 +1,4 @@
-// 「关于」卡：卡头的检查更新按钮、信息行的取值与加载态、出处三行（版权 / 许可证 / 项目地址）。
+// 「关于」卡：卡头的检查更新按钮、抬头（logo / 产品名 / 版本）、运行状态一句话的拼法与省略、出处两行。
 // bun test 无 DOM，用 react-dom/server 静态渲染断言 HTML；系统信息直接种进 QueryClient。
 
 import { describe, expect, test } from 'bun:test';
@@ -57,7 +57,7 @@ function render(options: { info?: SystemInfo; runMode?: string } = {}): string {
 }
 
 describe('「关于」卡的卡头', () => {
-  test('标题是「关于」，检查更新与标题同一行（排在信息行之前）', () => {
+  test('标题是「关于」，检查更新与标题同一行（排在抬头之前）', () => {
     const html = render({ info: INFO });
     expect(html).toContain('关于');
     expect(html).not.toContain('版本与更新');
@@ -69,54 +69,72 @@ describe('「关于」卡的卡头', () => {
   });
 });
 
-describe('「关于」卡的信息行', () => {
-  test('安装方式按来源逐档展示', () => {
-    expect(render({ info: INFO })).toContain('安装脚本');
-    expect(render({ info: { ...INFO, installSource: 'npx' } })).toContain('npx');
-    expect(render({ info: { ...INFO, installSource: 'manual' } })).toContain('手动或容器');
+describe('「关于」卡的抬头', () => {
+  test('logo、产品名、一句定位、版本行；不再是一行一格的信息行', () => {
+    const html = render({ info: INFO });
+    expect(html).toContain('src="/logo.png"');
+    expect(html).toContain('VibeTerm');
+    expect(html).toContain('为 AI Agent 时代重造的 tmux 终端工作区。');
+    expect(html).toContain('版本 2.0.0');
+    expect(html).not.toContain('当前版本');
+    expect(html).not.toContain('安装方式');
+    expect(html).not.toContain('许可证</div>');
+  });
+
+  test('系统信息未到：版本行加载中，运行状态那句话不渲染', () => {
+    const html = render();
+    expect(html).toContain('加载中...');
+    expect(html).not.toContain('settings-version-runtime');
+  });
+});
+
+describe('「关于」卡的运行状态一句话', () => {
+  const runtime = (html: string) =>
+    html.match(/data-testid="settings-version-runtime"[^>]*>([^<]*)</)?.[1];
+
+  test('安装方式、服务、运行模式拼成一句，英文两侧留空格', () => {
+    expect(runtime(render({ info: INFO, runMode: 'Hub 兼节点' }))).toBe(
+      '通过安装脚本安装，由 launchd（macOS）托管，当前为 Hub 兼节点。'
+    );
+  });
+
+  test('安装来源逐档换子句', () => {
+    expect(runtime(render({ info: { ...INFO, installSource: 'npx' } }))).toContain('通过 npx 安装');
+    expect(runtime(render({ info: { ...INFO, installSource: 'manual' } }))).toContain(
+      '手动或容器安装'
+    );
   });
 
   test('老网关不下发安装来源：有 CLI 安装产物按 CLI，没有按手动或容器', () => {
     const legacy = { ...INFO, installSource: undefined };
-    const html = render({ info: legacy });
-    expect(html).toContain('>CLI<');
-    expect(render({ info: { ...legacy, installedViaCli: false } })).toContain('手动或容器');
+    expect(runtime(render({ info: legacy }))).toContain('通过 CLI 安装');
+    expect(runtime(render({ info: { ...legacy, installedViaCli: false } }))).toContain(
+      '手动或容器安装'
+    );
   });
 
-  test('服务一行是 launchd / systemd，与运行模式分开两行', () => {
-    const html = render({ info: INFO, runMode: 'Hub 兼节点' });
-    expect(html).toContain('服务');
-    expect(html).toContain('launchd（macOS）');
-    expect(html).toContain('运行模式');
-    expect(html).toContain('Hub 兼节点');
-  });
-
-  test('运行模式还没查到时显示加载中', () => {
-    const html = render({ info: INFO });
-    expect(html).toContain('data-testid="settings-version-role"');
-    expect(html).toContain('加载中...');
-  });
-
-  test('系统信息未到：版本格加载中，其余给一杠', () => {
-    const html = render();
-    expect(html).toContain('加载中...');
-    expect(html).toContain('>-<');
+  test('没注册系统服务写「未注册为系统服务」，运行模式没查到就省掉这一子句', () => {
+    expect(runtime(render({ info: { ...INFO, deployment: 'none' } }))).toBe(
+      '通过安装脚本安装，未注册为系统服务。'
+    );
+    expect(render({ info: INFO })).not.toContain('当前为');
   });
 });
 
 describe('「关于」卡的出处', () => {
-  test('版权与致谢一行，tmex 链到上游仓库', () => {
+  test('版权、致谢与许可证是一句话，tmex 链到上游仓库、MIT 链到 LICENSE', () => {
     const html = render({ info: INFO });
-    expect(html).toContain('© 2026 12dora');
+    expect(html).toContain('© 2026 12dora。基于 ');
     expect(html).toContain('href="https://github.com/krhougs/tmex"');
+    expect(html).toContain('href="https://github.com/12dora/vibe-term/blob/main/LICENSE"');
+    expect(html).toContain('MIT 许可证</a>发布。');
     expect(html).toContain('rel="noreferrer"');
-    expect(html).toContain('tmex');
   });
 
-  test('许可证 MIT，项目地址链到本仓库', () => {
+  test('项目地址一行链到本仓库', () => {
     const html = render({ info: INFO });
-    expect(html).toContain('许可证');
-    expect(html).toContain('MIT');
+    expect(html).toContain('项目地址：');
     expect(html).toContain('href="https://github.com/12dora/vibe-term"');
+    expect(html).toContain('github.com/12dora/vibe-term</a>');
   });
 });

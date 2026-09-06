@@ -6,16 +6,16 @@ import { useTranslation } from 'react-i18next';
 
 import { useVersionTab } from './use-version-tab';
 import {
+  AboutText,
   ChangelogSection,
   UpdateCheckButton,
   UpdateCheckResultRow,
   UpgradeConfirmDialog,
   UpgradeProgress,
-  VersionInfoRows,
 } from './version-tab-sections';
 
 export interface VersionTabProps {
-  /** mesh 运行模式的展示文案（独立运行 / 节点 / Hub 兼节点…）；没传即显示「加载中...」。 */
+  /** mesh 运行模式的展示文案（独立运行 / 节点 / Hub 兼节点…）；没传就不写这一子句。 */
   runMode?: string;
 }
 
@@ -37,7 +37,7 @@ export function VersionTab({ runMode }: VersionTabProps = {}) {
         </CardAction>
       </CardHeader>
       <CardContent className="space-y-6">
-        <VersionInfoRows info={info} deploymentLabel={model.deploymentLabel} runMode={runMode} />
+        <AboutText info={info} deploymentLabel={model.deploymentLabel} runMode={runMode} />
 
         {update && <UpdateCheckResultRow update={update} />}
 

@@ -23,7 +23,8 @@ export interface VersionTabModel {
   upgradeStateText: string | null;
   /** 不能自更新时的原因文案；可自更新或原因不明为 null */
   disabledReason: string | null;
-  deploymentLabel: (deployment: SystemInfo['deployment']) => string;
+  /** 服务管理器名称；没注册系统服务时为 null，由展示层换成「未注册为系统服务」。 */
+  deploymentLabel: (deployment: SystemInfo['deployment']) => string | null;
   showConfirm: boolean;
   setShowConfirm: (open: boolean) => void;
   confirmUpgrade: () => void;
@@ -121,10 +122,10 @@ export function useVersionTab(): VersionTabModel {
   const info = infoQuery.data;
   const update = updateQuery.data;
 
-  const deploymentLabel = (deployment: SystemInfo['deployment']): string => {
+  const deploymentLabel = (deployment: SystemInfo['deployment']): string | null => {
     if (deployment === 'launchd') return t('settings.version.deploymentLaunchd');
     if (deployment === 'systemd') return t('settings.version.deploymentSystemd');
-    return t('settings.version.deploymentNone');
+    return null;
   };
 
   const upgradeStateText =

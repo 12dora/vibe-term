@@ -1,8 +1,9 @@
-// 「关于」卡的展示块：信息行、更新检查、变更日志、升级进度、升级确认弹窗。
+// 「关于」卡的展示块：抬头与说明文字、更新检查、变更日志、升级进度、升级确认弹窗。
+// 信息用段落文字表达（像常见软件的「关于」），不用一行一格的列表。
 // 数据与动作由 ./use-version-tab 提供，这里只负责渲染。
 
 import type { InstallSource, SystemInfo, UpdateCheckResult } from '@vibeterm/shared';
-import { formatDate } from '@vibeterm/shared';
+import { BRAND_LOGO_SRC, PRODUCT_NAME, formatDate } from '@vibeterm/shared';
 import { useSiteStore } from '@vibeterm/stores/react';
 import {
   AlertDialog,
@@ -26,8 +27,11 @@ const MarkdownPreview = lazy(() =>
 
 /** 本项目与上游的仓库地址：跟着卡片走，不进 i18n（三语都是同一个 URL）。 */
 const PROJECT_URL = 'https://github.com/12dora/vibe-term';
+const PROJECT_HOST = 'github.com/12dora/vibe-term';
 const UPSTREAM_URL = 'https://github.com/krhougs/tmex';
+const LICENSE_URL = 'https://github.com/12dora/vibe-term/blob/main/LICENSE';
 
+/** 安装来源对应的整句子句（「通过安装脚本安装」），拼进运行状态那句话里。 */
 const INSTALL_SOURCE_KEY: Record<InstallSource, string> = {
   'install-script': 'settings.version.installSourceScript',
   npx: 'settings.version.installSourceNpx',
@@ -40,13 +44,14 @@ function installSourceOf(info: SystemInfo): InstallSource {
   return info.installSource ?? (info.installedViaCli ? 'cli' : 'manual');
 }
 
-function InfoRow({ label, value }: { label: string; value: ReactNode }) {
-  return (
-    <div className="flex min-h-10 items-center justify-between gap-4 rounded-lg border border-border bg-card px-4 py-2.5">
-      <div className="min-w-0 pr-2 text-sm font-medium">{label}</div>
-      <div className="min-w-0 truncate text-right text-sm text-muted-foreground">{value}</div>
-    </div>
-  );
+/**
+ * 中文/日文子句里插值的英文词（Hub、npx）两侧要留半角空格，但插值前不知道相邻是不是汉字，
+ * 所以拼好整句后统一补：汉字与拉丁字母/数字相邻处加一个空格。英文句子没有汉字，原样返回。
+ */
+function spaceCjkLatin(text: string): string {
+  return text
+    .replace(/([\u3040-\u30ff\u4e00-\u9fff])([A-Za-z0-9])/g, '$1 $2')
+    .replace(/([A-Za-z0-9])([\u3040-\u30ff\u4e00-\u9fff])/g, '$1 $2');
 }
 
 function ExternalLink({
@@ -67,94 +72,105 @@ function ExternalLink({
   );
 }
 
-/** 运行状态三行：安装方式、服务管理器、mesh 运行模式（后者由宿主传入）。 */
-function RuntimeInfoRows({
+/** 抬头：logo、产品名、一句定位、版本号——常见「关于」面板的样子。 */
+function AboutHeadline({ info }: { info?: SystemInfo }) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex items-start gap-4">
+      <span className="block h-14 w-14 shrink-0 overflow-hidden rounded-xl border-2 border-black">
+        <img src={BRAND_LOGO_SRC} alt="" className="h-full w-full object-cover" />
+      </span>
+      <div className="min-w-0 space-y-1">
+        <div className="text-lg font-semibold leading-tight tracking-tight">{PRODUCT_NAME}</div>
+        <div className="text-sm text-muted-foreground">{t('settings.version.tagline')}</div>
+        <div className="text-sm text-muted-foreground" data-testid="settings-version-current">
+          {info
+            ? t('settings.version.versionLine', { version: info.version })
+            : t('common.loading')}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 运行状态一句话：安装方式、服务管理器、mesh 运行模式（后者由宿主传入）。
+ * 拿不到的子句直接省略，不在句子里塞「加载中」或一杠。
+ */
+function RuntimeSentence({
   info,
   deploymentLabel,
   runMode,
 }: {
   info?: SystemInfo;
-  deploymentLabel: (deployment: SystemInfo['deployment']) => string;
+  deploymentLabel: (deployment: SystemInfo['deployment']) => string | null;
   runMode?: string;
 }) {
   const { t } = useTranslation();
+  if (!info) return null;
+  const service = deploymentLabel(info.deployment);
+  const clauses = [
+    t(INSTALL_SOURCE_KEY[installSourceOf(info)]),
+    service
+      ? t('settings.version.runtimeService', { service })
+      : t('settings.version.runtimeServiceNone'),
+    runMode ? t('settings.version.runtimeRole', { role: runMode }) : null,
+  ].filter((clause): clause is string => Boolean(clause));
+  const sentence =
+    clauses.join(t('settings.version.runtimeSeparator')) + t('settings.version.runtimeEnd');
   return (
-    <>
-      <InfoRow
-        label={t('settings.version.installMethod')}
-        value={
-          <span data-testid="settings-version-install-source">
-            {info ? t(INSTALL_SOURCE_KEY[installSourceOf(info)]) : '-'}
-          </span>
-        }
-      />
-      <InfoRow
-        label={t('settings.version.deployment')}
-        value={info ? deploymentLabel(info.deployment) : '-'}
-      />
-      <InfoRow
-        label={t('settings.version.role')}
-        value={<span data-testid="settings-version-role">{runMode ?? t('common.loading')}</span>}
-      />
-    </>
+    <p
+      className="text-sm text-muted-foreground"
+      data-testid="settings-version-runtime"
+      data-install-source={installSourceOf(info)}
+      data-run-mode={runMode ?? ''}
+    >
+      {spaceCjkLatin(sentence)}
+    </p>
   );
 }
 
-/** 出处三行：版权与致谢、许可证、项目地址。 */
-function ProjectInfoRows() {
-  const { t } = useTranslation();
+/** 出处两行：版权、致谢与许可证一句；项目地址一行。 */
+function ProjectNotes() {
   return (
-    <>
-      <InfoRow
-        label={t('settings.version.copyright')}
-        value={
-          <span data-testid="settings-version-copyright">
-            {t('settings.version.copyrightOwner')} ·{' '}
-            <Trans
-              i18nKey="settings.version.basedOn"
-              components={{
-                upstream: <ExternalLink href={UPSTREAM_URL} testId="settings-version-upstream" />,
-              }}
-            />
-          </span>
-        }
-      />
-      <InfoRow label={t('settings.version.license')} value="MIT" />
-      <InfoRow
-        label={t('settings.version.projectUrl')}
-        value={
-          <ExternalLink href={PROJECT_URL} testId="settings-version-project">
-            github.com/12dora/vibe-term
-          </ExternalLink>
-        }
-      />
-    </>
+    <div className="space-y-1 text-sm text-muted-foreground">
+      <p data-testid="settings-version-copyright">
+        <Trans
+          i18nKey="settings.version.copyrightLine"
+          components={{
+            upstream: <ExternalLink href={UPSTREAM_URL} testId="settings-version-upstream" />,
+            license: <ExternalLink href={LICENSE_URL} testId="settings-version-license" />,
+          }}
+        />
+      </p>
+      <p>
+        <Trans
+          i18nKey="settings.version.projectLine"
+          values={{ host: PROJECT_HOST }}
+          components={{
+            project: <ExternalLink href={PROJECT_URL} testId="settings-version-project" />,
+          }}
+        />
+      </p>
+    </div>
   );
 }
 
-export function VersionInfoRows({
+export function AboutText({
   info,
   deploymentLabel,
   runMode,
 }: {
   info?: SystemInfo;
-  deploymentLabel: (deployment: SystemInfo['deployment']) => string;
-  /** mesh 运行模式的展示文案；宿主还没拿到时不传，这里显示「加载中...」。 */
+  deploymentLabel: (deployment: SystemInfo['deployment']) => string | null;
+  /** mesh 运行模式的展示文案；宿主还没拿到（或查不到）时不传，句子里省掉这一子句。 */
   runMode?: string;
 }) {
-  const { t } = useTranslation();
   return (
-    <div className="space-y-3">
-      <InfoRow
-        label={t('settings.version.currentVersion')}
-        value={
-          <span data-testid="settings-version-current" className="font-mono">
-            {info ? info.version : t('common.loading')}
-          </span>
-        }
-      />
-      <RuntimeInfoRows info={info} deploymentLabel={deploymentLabel} runMode={runMode} />
-      <ProjectInfoRows />
+    <div className="space-y-4">
+      <AboutHeadline info={info} />
+      <RuntimeSentence info={info} deploymentLabel={deploymentLabel} runMode={runMode} />
+      <ProjectNotes />
     </div>
   );
 }

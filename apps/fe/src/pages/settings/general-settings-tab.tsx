@@ -24,9 +24,8 @@ const About = memo(function About() {
     throwOnError: false,
   });
   const role = status.data?.role;
-  // 查不到本机运行态时给一杠，不能一直挂在「加载中...」上。
-  const fallback = status.isError ? '-' : undefined;
-  return <VersionTab runMode={role ? t(ROLE_LABEL_KEY[role]) : fallback} />;
+  // 查不到本机运行态就不传，关于卡的那句话会省掉运行模式子句。
+  return <VersionTab runMode={role ? t(ROLE_LABEL_KEY[role]) : undefined} />;
 });
 
 interface GeneralSettingsTabProps {
