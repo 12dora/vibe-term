@@ -618,7 +618,7 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "packages/shared/src/auth/key-log.ts": {
-    "fileLines": 717,
+    "fileLines": 701,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "packages/shared/src/ws-borsh/schema.ts": {

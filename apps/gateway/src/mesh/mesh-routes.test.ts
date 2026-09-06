@@ -1,4 +1,4 @@
-import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { releaseTarballName, wsBorsh } from '@tmex/shared';
 import {
@@ -15,6 +15,7 @@ import {
   waitForRemoteUpgradeJob,
 } from '../system/remote-upgrade-job';
 import { resetLatestReleaseCache } from '../system/update-check';
+import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
 import {
   FakePeers,
   FakeStreams,
@@ -34,6 +35,14 @@ import {
   WS_CLOSE_LOGIN_REQUIRED,
 } from './mesh-deps';
 import { resetNodeOperationsForTests } from './node-operations';
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
 
 const PEER_ID = 'cc'.repeat(16);
 const REVOKED_ID = 'dd'.repeat(16);
@@ -1801,7 +1810,8 @@ describe('mesh upgrade routes', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('api.github.com')) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  ${releaseTarballName('9.9.9')}\n`, { status: 200 });
+        const body = `${hex}  ${releaseTarballName('9.9.9')}\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(Buffer.from(tarball), { status: 200 });
     }) as typeof fetch;
@@ -1844,12 +1854,22 @@ describe('mesh upgrade routes', () => {
       await waitForRemoteUpgradeJob(UPGRADE_PEER);
       expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual([
         'GET /api/system/info',
+        'POST /api/system/upgrade/package/manifest',
         'PUT /api/system/upgrade/package',
         'POST /api/system/upgrade',
       ]);
-      expect(streams.opens[1]?.query).toContain('version=9.9.9');
-      expect(streams.opens[1]?.query).toContain(`sha256=${hex}`);
-      expect(streams.opens[2]?.body).toBe(
+      // 清单必须先于字节到达，且带的就是入口验过签的那份 SHA256SUMS。
+      const manifest = JSON.parse(streams.opens[1]?.body ?? '{}') as {
+        version: string;
+        sums: string;
+        sig: string;
+      };
+      expect(manifest.version).toBe('9.9.9');
+      expect(manifest.sums).toContain(hex);
+      expect(manifest.sig.startsWith('tmex-release-sig v1 ')).toBe(true);
+      expect(streams.opens[2]?.query).toContain('version=9.9.9');
+      expect(streams.opens[2]?.query).toContain(`sha256=${hex}`);
+      expect(streams.opens[3]?.body).toBe(
         JSON.stringify({ version: '9.9.9', source: 'staged', sha256: hex })
       );
     } finally {
@@ -2010,7 +2030,8 @@ describe('mesh upgrade routes', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('api.github.com')) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  ${releaseTarballName('9.9.9')}\n`, { status: 200 });
+        const body = `${hex}  ${releaseTarballName('9.9.9')}\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(Buffer.from(tarball), { status: 200 });
     }) as typeof fetch;
@@ -2023,6 +2044,7 @@ describe('mesh upgrade routes', () => {
         canSelfUpdate: true,
         upgradeCapabilities: ['staged-package'],
       }),
+      jsonResponse({ version: '9.9.9', sha256: hex, keyId: 'tk' }),
       jsonResponse({ version: '9.9.9', sha256: hex, bytes: tarball.byteLength }),
       jsonResponse({
         state: 'downloading',
@@ -2065,6 +2087,7 @@ describe('mesh upgrade routes', () => {
       });
       expect(streams.opens.map((o) => `${o.method} ${o.path}`)).toEqual([
         'GET /api/system/info',
+        'POST /api/system/upgrade/package/manifest',
         'PUT /api/system/upgrade/package',
         'POST /api/system/upgrade',
         'DELETE /api/system/upgrade',

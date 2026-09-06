@@ -25,9 +25,10 @@ import {
   sha256,
 } from './encoding';
 import { applyAdmitHub, applyRetireHub, retireHubIfAdmitted } from './key-log-hub';
+import { applyNotificationSink } from './notification-sink-record';
 import { applyReadmitNode } from './readmit-node-record';
 import type { StoredRelayList } from './relay-records';
-import { MIN_RELAY_RECORD_VERSION, applyRelayKeyLogRecord, cloneRelayList } from './relay-records';
+import { applyRelayKeyLogRecord, cloneRelayList } from './relay-records';
 import { applyRenameNode } from './rename-node-record';
 import type { RootKey } from './root-key';
 import { verifyEd25519 } from './root-key';
@@ -70,39 +71,27 @@ export type UserKeyState = {
   metaKeyEntries: WrapEntry[];
   /** 最新 `rename-node` 投影：nodeId hex → 已 trim 的显示名。未回放密钥日志的快照可缺省。 */
   nodeNames?: Map<string, string>;
+  /** 最新 `notification-sink` 投影：nodeId hex → 是否为汇聚机。未回放密钥日志的快照可缺省。 */
+  notificationSinks?: Map<string, boolean>;
   head: KeyLogHead;
 };
 
-/** 写入 `admit-hub` / `retire-hub` 前，所有未吊销节点须达到该版本，否则旧节点无法解码新记录。 */
-export const MIN_HUB_AUTH_RECORD_VERSION = '1.1.13';
-/** 写入 `rotate-root-keep` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
-export const MIN_ROTATE_ROOT_KEEP_RECORD_VERSION = '1.1.16';
-/** 写入 `rename-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
-export const MIN_RENAME_NODE_RECORD_VERSION = '1.1.24';
-/** 写入 `readmit-node` 前，所有未吊销节点须达到该版本；不允许 force 绕过。 */
-export const MIN_READMIT_NODE_RECORD_VERSION = '1.1.26';
-export const KEYLOG_TYPE_UNSUPPORTED_BY_NODES = 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES';
-export const HUB_AUTH_RECORD_TYPES = ['admit-hub', 'retire-hub'] as const;
-export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
-
-export type KeyLogRecordCompatSpec = {
-  minVersion: string;
-  allowForce: boolean;
-};
-
-export const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
-export const RENAME_NODE_RECORD_TYPES = ['rename-node'] as const;
-export const READMIT_NODE_RECORD_TYPES = ['readmit-node'] as const;
-
-export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
-  'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
-  'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
-  'rename-node': { minVersion: MIN_RENAME_NODE_RECORD_VERSION, allowForce: false },
-  'readmit-node': { minVersion: MIN_READMIT_NODE_RECORD_VERSION, allowForce: false },
-  'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
-  'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
-  'rotate-root-keep': { minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION, allowForce: false },
-};
+export {
+  HUB_AUTH_RECORD_TYPES,
+  KEYLOG_RECORD_COMPAT,
+  KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
+  MIN_HUB_AUTH_RECORD_VERSION,
+  MIN_NOTIFICATION_SINK_RECORD_VERSION,
+  MIN_READMIT_NODE_RECORD_VERSION,
+  MIN_RENAME_NODE_RECORD_VERSION,
+  MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
+  NOTIFICATION_SINK_RECORD_TYPES,
+  READMIT_NODE_RECORD_TYPES,
+  RELAY_RECORD_TYPES,
+  RENAME_NODE_RECORD_TYPES,
+  ROTATE_ROOT_KEEP_RECORD_TYPES,
+} from './key-log-compat';
+export type { KeyLogRecordCompatSpec } from './key-log-compat';
 
 export type KeyLogEffect =
   | { type: 'revokeAllSessions' }
@@ -126,6 +115,7 @@ export const KEY_LOG_SIGNER_MATRIX: Record<KeyLogType, readonly KeyLogSigner[]> 
   'meta-key': ['root', 'passkey'],
   'rename-node': ['root', 'passkey'],
   'readmit-node': ['root', 'passkey'],
+  'notification-sink': ['root', 'passkey'],
 };
 
 export type KeyLogSignedRecord = {
@@ -219,6 +209,7 @@ export function emptyUserKeyState(
     metaKeyEpoch: 0,
     metaKeyEntries: [],
     nodeNames: new Map(),
+    notificationSinks: new Map(),
     head: genesisHead(),
   };
 }
@@ -392,6 +383,7 @@ function cloneState(state: UserKeyState): UserKeyState {
     metaKeyEpoch: state.metaKeyEpoch,
     metaKeyEntries: state.metaKeyEntries.map((entry) => ({ ...entry })),
     nodeNames: new Map(state.nodeNames),
+    notificationSinks: new Map(state.notificationSinks),
     head: { seq: state.head.seq, hash: new Uint8Array(state.head.hash) },
   };
 }
@@ -436,6 +428,7 @@ function applyRootChange(
     state.nodeCerts = new Map();
     state.hubAuthorizations = new Map();
     state.nodeNames = new Map();
+    state.notificationSinks = new Map();
     effects.push({ type: 'clearPeerCache' });
   }
   return { ok: true, state, effects };
@@ -598,6 +591,7 @@ const KEY_LOG_APPLIERS: Record<KeyLogType, KeyLogApplier> = {
   'meta-key': applyRelayKeyLogRecord,
   'rename-node': applyRenameNode,
   'readmit-node': applyReadmitNode,
+  'notification-sink': applyNotificationSink,
 };
 
 export async function applyKeyLogRecord(

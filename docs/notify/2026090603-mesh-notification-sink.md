@@ -23,46 +23,39 @@ hub 只复制节点表、证书和密钥日志，通知配置不在其中。结�
 
 ## 设计
 
-### 汇聚声明的广播
+### 汇聚声明（用户签名记录）
 
-汇聚开关是**节点自述的元数据**，搭 `node.status` 的 `inventory` 便车广播：
+汇聚声明是一条**用户签名的密钥日志记录**，不是节点自述的元数据（round 32 改动，见下）：
 
 ```
-inventory = { version: "1.1.36", notifySink: true }   // 关闭时不带该键
+type = notification-sink
+payload = { node_id: 16 B, enabled: bool, at: u64 }   // packages/shared/src/auth/notification-sink-record.ts
+signer = root | passkey                                // KEY_LOG_SIGNER_MATRIX
 ```
 
-链路与落地（三条都已存在，本轮没有新增协议帧）：
+密钥日志本来就全网复制（hub 下发 / 中继同步 / join 回放同一条链），因此每台节点都能独立
+回放出同一份汇聚集合：`mesh/notification-sink-records.ts` 按 `type='notification-sink'`
+过滤、按 `seq` 递增回放，**同一节点后写的赢**（`enabled: false` 即撤销）。
+**不需要新表**，只加了一条迁移 `0052_notification_sink_keylog.sql` 放宽 `user_key_log`
+的类型 CHECK 约束。
 
-| 拓扑 | 上行 | 落到对端哪里 |
+浏览器侧翻转开关的动作（`pages/settings/notifications/mesh-sink-toggle.ts`）：
+
+1. `useCredentialPrompt` 当场取一次密码 / 通行密钥（与 `rename-node` 同一套仪式）；
+2. 取 head → 签 `notification-sink` → `POST /api/auth/keylog?hub=sync`；
+3. 记录落地后才 `PUT /api/notifications/mesh` 翻本机开关。用户取消凭据交互时三步都不发生。
+
+本机开关仍存 `gateway_kv`（键 `mesh.notification.sink.enabled`，见
+`mesh/notification-sink-state.ts`），语义收窄为「这台机器现在收不收转发件」：
+
+| 判据 | 谁说了算 | 作用 |
 | --- | --- | --- |
-| hub 模式 | `node.status` → hub | hub `user_nodes.inventory_json`；hub 再经 `node.list` 广播给全部节点，节点写 `peer_cache.inventory_json` |
-| 中继模式 | `relay.status`（K_meta 封装的状态块） | 对端解封后写 `peer_cache.inventory_json` |
-| 直连对端 | `peer.status` | `peer_cache.inventory_json`（`peer-status-sync.ts`） |
+| 用户签名声明 | 密钥日志（全网复制） | 别的节点要不要往这里转发 |
+| 本机开关 | 本机 `gateway_kv` | 本机收到转发件后收不收（入站路由的 404 判据之一） |
 
-因此**不需要新表、不需要迁移**：汇聚集合本来就随节点列表持久化在 `peer_cache` /
-`user_nodes` 里，重启后立刻可用。本机开关自己存 `gateway_kv`（键
-`mesh.notification.sink.enabled`，见 `mesh/notification-sink-state.ts`），进程内缓存一份，
-`statusProvider()` 每次心跳读它做 `jsonStable` 比对。
-
-开关翻转后立即 `uplink.sendStatusIfChanged()` + `peerManager.refreshAdvertisedStatus()`，
-不等心跳。
-
-`mesh/notification-sink-set.ts` 把三处来源归并成 `MeshNotificationSink[]`，判据是
-**取最新的一次权威观测**，不是「任一为真」：
-
-1. `peer_cache` 有行就以它为准——它由上行 `node.list`、中继状态块与直连 `peer.status`
-   共同刷新，是最全的一路；
-2. `peer_cache` 与 hub 侧 `user_nodes` 行同时存在时，比两者的 `last_seen_at`，取新的那一路；
-3. `peer_cache` 没有该节点才退回 `node.list` 广播，再没有才退回 `user_nodes` 行。
-
-取「或」会漏掉「关」：节点在上行中断期间通过直连撤销声明后，陈旧的那一路仍为真，
-事件会继续往一台已经不再接收的机器上发（round31 审查项 F2）。
-
-> **未采用密钥日志记录**：`rename-node` 那类记录的签名者只能是 root 或 passkey
-> （`KEY_LOG_SIGNER_MATRIX`），节点自身没有签名能力，一个设置开关每次都要用户输密码
-> 或过 passkey 不可接受，`PUT /api/notifications/mesh` 也无从签起。改名在 hub 模式下同样
-> 不走密钥日志（走 hub 控制面），`rename-node` 只是中继模式没有控制面时的补位。
-> 代价见「安全边界」。
+`mesh/notification-sink-set.ts` 据此产出 `MeshNotificationSink[]`：远端节点只看声明，
+本机要求「声明 + 开关」同时成立；`peer_cache` / `user_nodes` / `node.list` 三处只用来取显示名
+与在线态，**inventory 里的 `notifySink` 已经删除，新版本一概不读**。
 
 ### 节点侧转发
 
@@ -114,7 +107,8 @@ POST /api/mesh-internal/notifications
 `mesh/mesh-internal-notifications-routes.ts`，挂在 mesh-internal 总入口（`handleMeshInternalTmuxRequest`）下，
 共用它的 `requirePeerMarker` 把关，逐条校验：
 
-1. 本机开关没打开 → **404**（对端据此丢弃，不再重试）；
+1. 用户没签过本机的 `notification-sink` 声明、或本机开关没打开 → **404**
+   （对端据此丢弃，不再重试）；判据即 `MeshNotificationBridge.selfSinkEnabled()`；
 2. 没有对端标记，或来源不是本机认识的 mesh 节点（`getMeshAgentBridge().lookupNode()`）→ **403**；
 3. 每来源节点每分钟 60 条（`TokenBucket`），超出 → **429**；桶表用 `IdleLruMap`
    （容量 1024、空闲 60 s 回收）管理：新来源只回收空闲桶或淘汰最久未用的一个，
@@ -146,8 +140,9 @@ POST /api/mesh-internal/notifications
 
 | 端点 | 说明 |
 | --- | --- |
-| `GET /api/notifications/mesh` | 返回 `MeshNotificationState`：`supported`（无 mesh 时 false）、`selfEnabled`、`sinks[]`、`forwardQueue` |
-| `PUT /api/notifications/mesh` | body `{ enabled: boolean }`，落库 + 立刻重播状态 + 广播设置变更，返回最新 `MeshNotificationState` |
+| `GET /api/notifications/mesh` | 返回 `MeshNotificationState`：`supported`（无 mesh 时 false）、`selfNodeId`（前端签记录用）、`selfEnabled`、`sinks[]`、`forwardQueue` |
+| `PUT /api/notifications/mesh` | body `{ enabled: boolean }`，只落本机开关 + 广播设置变更，返回最新 `MeshNotificationState`；汇聚声明由浏览器另签一条 `notification-sink` 记录 |
+| `POST /api/auth/keylog?hub=sync` | 浏览器提交签好的 `notification-sink` 记录（与 `rename-node` 同一条路） |
 | `POST /api/mesh-internal/notifications` | 节点→汇聚机内部投递，对端标记保护，浏览器不可达；成功回 202（已收下，扇出异步） |
 
 设置变更广播命名空间：`notifications-mesh`（前端据此失效缓存）。
@@ -158,14 +153,24 @@ POST /api/mesh-internal/notifications
 
 - 投递只走对端链路，标记由 `acceptHttpStream` 按**已认证的对端身份**写入，浏览器侧的
   `x-tmex-mesh-peer` 头在入口就被 `stripMeshPeerMarkerFromRequest` 剥掉，伪造不进来。
-- 汇聚机独立判据：即便来源节点声称对方是汇聚机，只要本机开关没打开就回 404。
+- 汇聚机独立判据：即便来源节点声称对方是汇聚机，只要本机没签过声明或开关没打开就回 404。
 - 通知文案里的节点名由汇聚机按对端标记自己查，`origin.nodeName` 不采信：发送方伪造不了
   别人的名字，也塞不进任意文本。
-- **已知取舍**：汇聚声明搭的是 `node.status`/`node.list` 便车，中继模式下状态块用 K_meta 封装，
-  中继伪造不了；**hub 模式下一个被攻陷的 hub 可以给某个节点伪造 `notifySink: true`**，
-  从而让其它节点把事件转发给它选定的**某台已入网节点**。影响面限于用户自己的机器之间
-  （攻陷的 hub 本就能转发浏览器流量），且目标只能是已签发证书的节点，不能外流。
-  如果后续要堵死，正解是把声明升级成节点自签的记录，而不是回到密钥日志。
+- 汇聚集合只认用户签名的 `notification-sink` 记录：被攻陷的节点既不能自称汇聚机（自述的
+  inventory 不再被读），也不能替别人撤销声明；被攻陷的 hub / 中继同样伪造不出记录——
+  链是 prev_hash 串起来的，签名者只能是 root 或 passkey，改一条就整链验不过。
+- 转发件的来源同样不可伪造：`origin.nodeId` 必须与已认证的对端标记一致，否则 400。
+
+## 兼容性
+
+- `notification-sink` 是新记录类型，旧版本节点解不开（`KeyLogType` 是 Borsh 枚举，
+  `user_key_log` 还有类型 CHECK 约束），收到会卡住整条密钥日志。因此写入前走既有的版本门
+  `KEYLOG_RECORD_COMPAT`：全网未吊销节点都 ≥ **1.1.39** 才允许写，否则
+  `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`，卡片上提示「有节点版本低于 1.1.39，须先升级全部节点」。
+  不允许 force 绕过。
+- 1.1.38 及更早的节点仍在 inventory 里发 `notifySink`，新版本一概忽略：混合版本的网络里，
+  旧节点声明的汇聚身份对新节点无效（新节点不会往它转发），升级后由用户在设置里重新打开一次
+  开关（签一条记录）即可恢复。旧节点自己仍按老逻辑读 inventory，看不到新记录，也不会因此出错。
 
 ## 限制
 
@@ -175,10 +180,13 @@ POST /api/mesh-internal/notifications
   （事件本身幂等性由渠道侧节流兜底）。
 - 202 只表示「汇聚机收下」，不表示 webhook / bot 已经发出去；扇出失败只在汇聚机侧留日志。
 - 转发的是事件本身，不是渠道配置：汇聚机得自己配好 bot / webhook。
+- 签名声明与本机开关理论上可能不一致（记录写成了、随后那次 `PUT` 没成）：此时别的节点照发，
+  本机回 404 丢弃，其它节点的卡片仍把它列成汇聚机。再点一次开关即可对齐（记录是幂等的）。
 - 消息指令（round25）仍然只在本机执行，本轮不涉及。
 
 ## 验收
 
+- 打开开关要过一次密码 / 通行密钥；取消则开关不动、记录不写；
 - 节点 B 的响铃 / watch 命中出现在汇聚机 A 的 webhook 与浏览器 toast 里，文案带「节点：B」，
   深链为 `<A 的站点>/n/<B>/devices/...`；
 - A 离线 2 分钟内恢复，能收到合并后的补发；离线超过 3 分钟的丢弃并留日志；

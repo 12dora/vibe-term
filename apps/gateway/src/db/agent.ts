@@ -104,6 +104,7 @@ export interface CreateAgentSessionInput {
   allowControlChars?: boolean;
   originPaneTitle?: string | null;
   originProcessName?: string | null;
+  remoteGrant?: string | null;
   maxStepsPerTurn?: number;
 }
 
@@ -125,6 +126,7 @@ export function createAgentSession(input: CreateAgentSessionInput): AgentSession
     allowControlChars: input.allowControlChars ?? false,
     originPaneTitle: input.originPaneTitle ?? null,
     originProcessName: input.originProcessName ?? null,
+    remoteGrant: input.remoteGrant ?? null,
     status: 'idle',
     lastError: null,
     maxStepsPerTurn: input.maxStepsPerTurn ?? 25,
@@ -191,6 +193,7 @@ export function updateAgentSession(
     'useProviderWebSearch',
     'providerHostedTools',
     'allowControlChars',
+    'remoteGrant',
     'status',
     'lastError',
     'maxStepsPerTurn',

@@ -24,12 +24,12 @@ function installBridge(sinks: MeshNotificationSink[]) {
   setMeshNotificationBridge({
     selfNodeId: () => 'node-a',
     selfName: () => 'A 机',
+    selfSinkEnabled: () => false,
     listSinks: () => sinks,
     deliver: async (sink, body) => {
       delivered.push({ sink, body });
       return new Response('{}', { status: 200 });
     },
-    advertise: () => {},
   });
   return delivered;
 }
@@ -107,9 +107,9 @@ describe('MeshForwardChannel', () => {
     setMeshNotificationBridge({
       selfNodeId: () => 'node-a',
       selfName: () => 'A 机',
+      selfSinkEnabled: () => false,
       listSinks: () => [sink('node-b')],
       deliver: async () => new Response('{}', { status: 502 }),
-      advertise: () => {},
     });
     const channel = new MeshForwardChannel();
     await channel.notify('terminal_bell', event());

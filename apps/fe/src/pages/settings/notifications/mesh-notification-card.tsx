@@ -1,8 +1,9 @@
 // 设置页「通知」标签的「多节点通知」卡片。
 //
 // 开关声明本机为汇聚点：打开后其它节点的事件会转发过来，经本机的 webhook / Telegram /
-// 微信 / 浏览器通道发出。声明本身在 mesh 内广播，所以状态行列的是**全网**的汇聚节点，
-// 不只是本机。网关不支持该端点（老节点）或本机未联网互联时整块不渲染。
+// 微信 / 浏览器通道发出。声明是一条用户签名的 `notification-sink` 密钥日志记录（全网复制），
+// 所以状态行列的是**全网**的汇聚节点，不只是本机；翻转开关要当场确认一次密码或通行密钥。
+// 网关不支持该端点（老节点）或本机未联网互联时整块不渲染。
 
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -18,11 +19,9 @@ import { Switch } from '@tmex/ui/switch';
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
-import {
-  fetchMeshNotificationState,
-  meshNotificationQueryKey,
-  updateMeshNotificationState,
-} from './mesh-api';
+import { fetchMeshNotificationState, meshNotificationQueryKey } from './mesh-api';
+import { MeshSinkError, meshSinkErrorText } from './mesh-sink-toggle';
+import { useMeshSinkToggle } from './use-mesh-sink-toggle';
 
 type Translate = (key: string, params?: Record<string, unknown>) => string;
 
@@ -176,10 +175,13 @@ export function MeshNotificationCard() {
     void queryClient.invalidateQueries({ queryKey: meshNotificationQueryKey });
   });
 
+  const toggle = useMeshSinkToggle({ apiClient, selfNodeId: query.data?.selfNodeId });
+
   const mutation = useMutation({
-    mutationFn: (enabled: boolean) => updateMeshNotificationState(apiClient, enabled),
+    mutationFn: (enabled: boolean) => toggle.submit(enabled),
     onSuccess: (next) => {
-      queryClient.setQueryData(meshNotificationQueryKey, next);
+      // 用户取消凭据交互：什么都没改，重取一次让开关回到服务端状态。
+      if (next) queryClient.setQueryData(meshNotificationQueryKey, next);
       void queryClient.invalidateQueries({ queryKey: meshNotificationQueryKey });
     },
   });
@@ -219,10 +221,12 @@ export function MeshNotificationCard() {
         }
         onEnabledChange={(enabled) => mutation.mutate(enabled)}
       />
+      {toggle.dialog}
     </MeshNotificationCardShell>
   );
 }
 
 function errorMessage(error: unknown, t: Translate): string {
+  if (error instanceof MeshSinkError) return meshSinkErrorText(t, error.code);
   return error instanceof Error && error.message ? error.message : t('common.error');
 }

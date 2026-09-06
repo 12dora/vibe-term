@@ -4,6 +4,7 @@ import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@tmex
 import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
 import type { MeshNotificationBridge } from './notification-mesh-bridge';
+import { listNotificationSinkNodeIds } from './notification-sink-records';
 import { collectMeshNotificationSinks } from './notification-sink-set';
 import { isMeshNotificationSinkEnabled } from './notification-sink-state';
 import type { PeerReach } from './types';
@@ -14,27 +15,34 @@ export type MeshNotificationBridgeInput = {
   userStore: UserStore;
   listReach: () => ReadonlyMap<string, PeerReach>;
   listHubOnline: () => ReadonlySet<string>;
-  listedNodes: () => ReadonlyArray<{ id: string; name: string; inventory?: unknown }>;
+  listedNodes: () => ReadonlyArray<{ id: string; name: string }>;
+  /** 当前用户编号；汇聚声明从这名用户的密钥日志里回放。 */
+  userIdOf: () => string;
   forwardInternalHttp: (
     nodeId: string,
     path: string,
     body: unknown,
     signal?: AbortSignal
   ) => Promise<Response>;
-  advertise: () => void;
 };
 
 export function buildMeshNotificationBridge(
   input: MeshNotificationBridgeInput
 ): MeshNotificationBridge {
+  const declared = () => listNotificationSinkNodeIds(input.userIdOf());
   return {
     selfNodeId: () => input.selfNodeId,
     selfName: () => input.selfName(),
+    /** 本机收不收转发件：用户签过的声明 + 本机开关，缺一不可。 */
+    selfSinkEnabled(): boolean {
+      return isMeshNotificationSinkEnabled() && declared().has(input.selfNodeId);
+    },
     listSinks(): MeshNotificationSink[] {
       return collectMeshNotificationSinks({
         selfNodeId: input.selfNodeId,
         selfName: input.selfName(),
         selfEnabled: isMeshNotificationSinkEnabled(),
+        declared: declared(),
         listed: input.listedNodes(),
         certs: input.userStore.listCerts(),
         peers: input.userStore.listPeers(),
@@ -50,6 +58,5 @@ export function buildMeshNotificationBridge(
     ): Promise<Response> {
       return input.forwardInternalHttp(sinkNodeId, MESH_INTERNAL_NOTIFICATION_ROUTE, body, signal);
     },
-    advertise: () => input.advertise(),
   };
 }

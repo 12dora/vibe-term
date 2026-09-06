@@ -2,7 +2,8 @@
 //
 // 安全约束：只走对端链路（`requirePeerMarker` 由 mesh-internal 总入口统一把关），
 // body 里的 `origin.nodeId` 必须与对端标记一致且是本机认识的 mesh 节点；
-// 本机开关没打开时一律 404（对方据此丢弃，不再重试）。
+// 用户没签过本机的 `notification-sink` 声明、或本机开关没打开，一律 404
+// （对方据此丢弃，不再重试）。
 
 import type { DeviceType, EventType, WebhookEvent } from '@tmex/shared';
 import { MESH_INTERNAL_NOTIFICATION_ROUTE, isEventType } from '@tmex/shared';
@@ -12,8 +13,8 @@ import { getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
 import { IdleLruMap, TokenBucket } from '../hub/uplink-rate-limit';
 import { getMeshAgentBridge } from './mesh-agent-bridge';
+import { getMeshNotificationBridge } from './notification-mesh-bridge';
 import { resolveMeshNodeDisplayName } from './notification-origin-name';
-import { isMeshNotificationSinkEnabled } from './notification-sink-state';
 import { readMeshPeerMarker } from './peer-request-marker';
 
 export { MESH_INTERNAL_NOTIFICATION_ROUTE };
@@ -38,7 +39,8 @@ export type MeshInternalNotificationDeps = {
 };
 
 const defaultDeps: MeshInternalNotificationDeps = {
-  sinkEnabled: () => isMeshNotificationSinkEnabled(),
+  // 签名声明 + 本机开关：任一不成立都不收（桥不在 = 没有 mesh，同样不收）。
+  sinkEnabled: () => getMeshNotificationBridge()?.selfSinkEnabled() === true,
   knownNode: (nodeId) => getMeshAgentBridge()?.lookupNode(nodeId) !== 'unknown',
   nodeName: (nodeId) => resolveMeshNodeDisplayName(nodeId),
   notify: (eventType, event) => eventNotifier.notify(eventType, event),

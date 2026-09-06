@@ -1,5 +1,8 @@
 // 本机「接收其它节点的通知」开关：落 gateway_kv，进程内缓存一份。
-// statusProvider 每次心跳都要读它做 jsonStable 比对，不能每次都打库。
+//
+// 它只管「本机收到转发件后收不收」；别的节点要不要往这里转发，由用户签名的
+// `notification-sink` 密钥日志记录决定（见 notification-sink-records.ts）。
+// 每条入站转发件都要读一次，缓存一份免得次次打库。
 
 import { getGatewayKv, setGatewayKv } from '../db/kv';
 
