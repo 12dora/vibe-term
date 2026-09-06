@@ -1,6 +1,7 @@
 import {
   DEFAULT_LOCALE,
   DEFAULT_TERMINAL_SHORTCUTS,
+  I18N_MANIFEST,
   type Device,
   type EventType,
   type LocaleCode,
@@ -30,8 +31,11 @@ export function optional<T>(value: T | null | undefined): T | undefined {
   return value ?? undefined;
 }
 
+/** 清单里有的语言原样保留，其余（含空值、老库里的非法值）落回默认语言。 */
+const LOCALE_CODES = new Set<string>(I18N_MANIFEST.locales.map((locale) => locale.code));
+
 export function normalizeLocale(value: string | null | undefined): LocaleCode {
-  return value === 'zh_CN' ? 'zh_CN' : DEFAULT_LOCALE;
+  return value && LOCALE_CODES.has(value) ? (value as LocaleCode) : DEFAULT_LOCALE;
 }
 
 export function toDevice(row: typeof devices.$inferSelect): Device {
