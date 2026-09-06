@@ -40,22 +40,22 @@ describe('CloudflareAccessClient', () => {
       expect(init?.method).toBe('POST');
       return jsonRes({
         success: true,
-        result: { id: 'app-1', aud: 'aud-1', name: 'tmex', domain: 'tmex.example.com' },
+        result: { id: 'app-1', aud: 'aud-1', name: 'VibeTerm', domain: 'vibeterm.example.com' },
       });
     });
-    const app = await client.createApp('acc1', 'tok', 'tmex.example.com');
+    const app = await client.createApp('acc1', 'tok', 'vibeterm.example.com');
     expect(app).toMatchObject({ id: 'app-1', aud: 'aud-1' });
     expect(body).toMatchObject({
       type: 'self_hosted',
-      domain: 'tmex.example.com',
+      domain: 'vibeterm.example.com',
       session_duration: '24h',
     });
   });
 
-  test('replaces only the tmex-allow policy and refuses extra authorizing policies', async () => {
+  test('replaces only the vibeterm-allow policy and refuses extra authorizing policies', async () => {
     const calls: Array<{ method?: string; url: string; body?: unknown }> = [];
     let policies = [
-      { id: 'pol-1', name: 'tmex-allow', decision: 'allow', include: [] as unknown[] },
+      { id: 'pol-1', name: 'vibeterm-allow', decision: 'allow', include: [] as unknown[] },
     ];
     const client = new CloudflareAccessClient(async (input, init) => {
       const url = String(input);
@@ -69,7 +69,7 @@ describe('CloudflareAccessClient', () => {
         policies = [
           {
             id: 'pol-1',
-            name: 'tmex-allow',
+            name: 'vibeterm-allow',
             decision: 'allow',
             include: body?.include ?? [],
           },
@@ -84,20 +84,88 @@ describe('CloudflareAccessClient', () => {
     expect(calls.some((c) => c.method === 'DELETE')).toBe(false);
     const put = calls.find((c) => c.method === 'PUT');
     expect(put?.body).toMatchObject({
-      name: 'tmex-allow',
+      name: 'vibeterm-allow',
       decision: 'allow',
       include: [{ email: { email: 'a@example.com' } }],
     });
   });
 
-  test('fails replaceAllowPolicy when a non-tmex allow policy exists', async () => {
+  test('改名前建的 tmex-allow 策略被认成我们管理的，就地改写而非报错', async () => {
+    const calls: Array<{ method?: string; url: string; body?: unknown }> = [];
+    const client = new CloudflareAccessClient(async (input, init) => {
+      const url = String(input);
+      const method = init?.method;
+      const body = init?.body ? JSON.parse(String(init.body)) : undefined;
+      calls.push({ method, url, body });
+      if (url.endsWith('/policies') && method === 'GET') {
+        const renamed = calls.some((c) => c.method === 'PUT');
+        return jsonRes({
+          success: true,
+          result: [
+            {
+              id: 'pol-1',
+              name: renamed ? 'vibeterm-allow' : 'tmex-allow',
+              decision: 'allow',
+              include: renamed ? [{ email: { email: 'a@example.com' } }] : [],
+            },
+          ],
+        });
+      }
+      if (url.endsWith('/policies/pol-1') && method === 'PUT') {
+        return jsonRes({ success: true, result: { id: 'pol-1', name: body?.name } });
+      }
+      return jsonRes({ success: false, errors: [{ message: `unexpected ${method} ${url}` }] }, 400);
+    });
+    await client.replaceAllowPolicy('acc1', 'tok', 'app-1', [
+      { kind: 'email', value: 'a@example.com' },
+    ]);
+    const put = calls.find((c) => c.method === 'PUT');
+    expect(put?.url.endsWith('/policies/pol-1')).toBe(true);
+    expect(put?.body).toMatchObject({ name: 'vibeterm-allow' });
+    expect(calls.some((c) => c.method === 'POST')).toBe(false);
+  });
+
+  test('改名前建的 tmex-bypass 应用与策略同样被复用', async () => {
+    const client = new CloudflareAccessClient(async (input, init) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url.includes('/access/apps') && method === 'GET' && !url.includes('/policies')) {
+        return jsonRes({
+          success: true,
+          result: [
+            {
+              id: 'app-legacy',
+              aud: 'aud-legacy',
+              domain: 'legacy.example.com',
+              name: 'tmex',
+            },
+            {
+              id: 'bypass-legacy',
+              aud: 'aud-bl',
+              domain: 'other.example.com/hub/',
+              name: 'tmex-bypass-hub',
+            },
+          ],
+          result_info: { page: 1, per_page: 100, total_count: 2, total_pages: 1 },
+        });
+      }
+      return jsonRes({ success: false, errors: [{ message: url }] }, 400);
+    });
+    const apps = await client.listApps('acc1', 'tok');
+    expect(client.findAppForHostname(apps, 'legacy.example.com')?.id).toBe('app-legacy');
+    expect(client.findBypassApps(apps, 'other.example.com').map((a) => a.id)).toEqual([
+      'bypass-legacy',
+    ]);
+  });
+
+  test('fails replaceAllowPolicy when a foreign allow policy exists', async () => {
     const client = new CloudflareAccessClient(async (input, init) => {
       const url = String(input);
       if (url.endsWith('/policies') && (init?.method ?? 'GET') === 'GET') {
         return jsonRes({
           success: true,
           result: [
-            { id: 'pol-1', name: 'tmex-allow', decision: 'allow', include: [] },
+            { id: 'pol-1', name: 'vibeterm-allow', decision: 'allow', include: [] },
             { id: 'pol-2', name: 'contractors', decision: 'allow', include: [] },
           ],
         });
@@ -159,22 +227,22 @@ describe('CloudflareAccessClient', () => {
       }
       return jsonRes({ success: false, errors: [{ message: `${method} ${url}` }] }, 400);
     });
-    const ids = await client.upsertBypassApps('acc1', 'tok', 'tmex.example.com', []);
+    const ids = await client.upsertBypassApps('acc1', 'tok', 'vibeterm.example.com', []);
     expect(ids).toEqual(['bypass-hub', 'bypass-api']);
     expect(created).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
           type: 'self_hosted',
-          domain: 'tmex.example.com/hub/',
-          name: 'tmex-bypass-hub',
+          domain: 'vibeterm.example.com/hub/',
+          name: 'vibeterm-bypass-hub',
         }),
         expect.objectContaining({
           type: 'self_hosted',
-          domain: 'tmex.example.com/api/hub/',
-          name: 'tmex-bypass-api-hub',
+          domain: 'vibeterm.example.com/api/hub/',
+          name: 'vibeterm-bypass-api-hub',
         }),
         expect.objectContaining({
-          name: 'tmex-bypass',
+          name: 'vibeterm-bypass',
           decision: 'bypass',
           include: [{ everyone: {} }],
         }),
@@ -214,7 +282,7 @@ describe('CloudflareAccessClient', () => {
       if (/[?&]page=2(?:&|$)/.test(url)) {
         return jsonRes({
           success: true,
-          result: [{ id: 'app-b', aud: 'aud-b', domain: 'tmex.example.com', name: 'tmex' }],
+          result: [{ id: 'app-b', aud: 'aud-b', domain: 'vibeterm.example.com', name: 'VibeTerm' }],
           result_info: { page: 2, per_page: 100, total_count: 2, total_pages: 2 },
         });
       }
@@ -223,7 +291,7 @@ describe('CloudflareAccessClient', () => {
     const apps = await client.listApps('acc1', 'tok');
     expect(apps.map((a) => a.id)).toEqual(['app-a', 'app-b']);
     expect(apps.truncated).toBe(false);
-    expect(client.findAppForHostname(apps, 'tmex.example.com')?.id).toBe('app-b');
+    expect(client.findAppForHostname(apps, 'vibeterm.example.com')?.id).toBe('app-b');
     expect(pages.some((u) => u.includes('page=2'))).toBe(true);
   });
 
@@ -236,7 +304,7 @@ describe('CloudflareAccessClient', () => {
           result: {
             config: {
               ingress: [
-                { hostname: 'tmex.example.com', service: 'http://127.0.0.1:19883' },
+                { hostname: 'vibeterm.example.com', service: 'http://127.0.0.1:19883' },
                 { service: 'http_status:404' },
               ],
             },
@@ -244,18 +312,18 @@ describe('CloudflareAccessClient', () => {
         });
       }
       if (url.endsWith('/cfd_tunnel/tid')) {
-        return jsonRes({ success: true, result: { id: 'tid', name: 'tmex-ext' } });
+        return jsonRes({ success: true, result: { id: 'tid', name: 'vibeterm-ext' } });
       }
       return jsonRes({ success: false, errors: [{ message: url }] }, 400);
     });
     const ingress = await client.getTunnelIngress('acc1', 'tok', 'tid');
     expect(ingress).toEqual([
-      { hostname: 'tmex.example.com', service: 'http://127.0.0.1:19883' },
+      { hostname: 'vibeterm.example.com', service: 'http://127.0.0.1:19883' },
       { hostname: null, service: 'http_status:404' },
     ]);
     expect(await client.getTunnel('acc1', 'tok', 'tid')).toEqual({
       id: 'tid',
-      name: 'tmex-ext',
+      name: 'vibeterm-ext',
     });
   });
 
@@ -362,7 +430,7 @@ describe('CloudflareAccessClient', () => {
       { requestTimeoutMs: 5_000, listAppsDeadlineMs: 15 }
     );
     try {
-      await client.upsertBypassApps('acc1', 'tok', 'tmex.example.com', []);
+      await client.upsertBypassApps('acc1', 'tok', 'vibeterm.example.com', []);
       throw new Error('expected failure');
     } catch (error) {
       expect((error as { code?: string }).code).toBe('access_api_failed');
@@ -387,7 +455,7 @@ describe('CloudflareAccessClient', () => {
     }
     const writeStarted = Date.now();
     try {
-      await client.createApp('acc1', 'tok', 'tmex.example.com');
+      await client.createApp('acc1', 'tok', 'vibeterm.example.com');
       throw new Error('expected failure');
     } catch {
       expect(Date.now() - writeStarted).toBeGreaterThan(50);

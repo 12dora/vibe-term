@@ -66,7 +66,7 @@ export interface PortProbeResponse {
   port: number;
   /** 本机能否绑定该端口（true = 空闲） */
   free: boolean;
-  /** 是否为 tmex 自身或系统保留端口 */
+  /** 是否为 VibeTerm 自身或系统保留端口 */
   reserved: boolean;
   /** 已被本机某条映射占用时给出其 id */
   usedByMapId: string | null;

@@ -265,7 +265,7 @@ describe('分块 PUT 的硬上限与下载会话保留', () => {
   });
 
   test('下载内容读完不回收会话：可以再用 Range 续传，DELETE 才清理', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     dirs.push(dir);
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('hello'));
@@ -302,7 +302,7 @@ describe('分块 PUT 的硬上限与下载会话保留', () => {
   });
 
   test('源文件在续传途中被改写：干净失败并回收会话', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     dirs.push(dir);
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('hello'));

@@ -14,7 +14,7 @@ import { hasEnabledFileRoots, resolveFileRoot } from './file-root';
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-root-unit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-root-unit-'));
   dirs.push(dir);
   return dir;
 }

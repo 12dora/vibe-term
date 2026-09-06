@@ -63,7 +63,7 @@ function expectOk(result: Awaited<ReturnType<typeof browseDirectory>>): BrowseDi
 let sandbox: string | null = null;
 
 function makeSandbox(): string {
-  sandbox = mkdtempSync(path.join(tmpdir(), 'tmex-browse-'));
+  sandbox = mkdtempSync(path.join(tmpdir(), 'vibeterm-browse-'));
   return sandbox;
 }
 
@@ -368,7 +368,7 @@ describe('browseDirectory — SSH', () => {
     await expectCode(
       async () => ({
         stdout: new Uint8Array(),
-        stderr: '[tmex] ssh timed out',
+        stderr: '[vibeterm] ssh timed out',
         exitCode: 124,
       }),
       'timeout'

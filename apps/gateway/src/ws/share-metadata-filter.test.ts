@@ -38,7 +38,7 @@ function tree(): wsBorsh.SourceMetadataRecord[] {
     ]),
     record(wsBorsh.SOURCE_ENTITY_SERVER, '$server', deviceKey),
     record(wsBorsh.SOURCE_ENTITY_SESSION, '$0', serverKey, [
-      { field: wsBorsh.SOURCE_FIELD_NAME, value: { String: 'tmex' } },
+      { field: wsBorsh.SOURCE_FIELD_NAME, value: { String: 'vibeterm' } },
     ]),
     record(wsBorsh.SOURCE_ENTITY_WINDOW, '@1', sessionKey, [
       { field: wsBorsh.SOURCE_FIELD_NAME, value: { String: 'build' } },

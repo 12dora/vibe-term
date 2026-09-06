@@ -1,4 +1,5 @@
 import { readJsonObjectBody } from '@vibeterm/shared/http';
+import { readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { type HttpMethod, matchPath, methodMatches } from '../api/route';
 import { respondRelayEnrollmentCreate } from './relay-enroll-create';
 import { RelayErrorCode, relayError } from './relay-http';
@@ -46,7 +47,7 @@ async function handlePack(
   req: Request,
   params: Record<string, string>
 ): Promise<Response> {
-  const presented = req.headers.get(RELAY_TOKEN_HEADER)?.trim() ?? null;
+  const presented = readHeaderPair(req.headers, RELAY_TOKEN_HEADER)?.trim() ?? null;
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
   return applyRelayPackUpload(ctx.deps, tenantParam(params), presented, body);
@@ -83,7 +84,7 @@ async function handleKeyLog(
     return handleRelayKeyLogPage(ctx.deps, tenant, req);
   }
   if (req.method !== 'POST') return relayError(RelayErrorCode.methodNotAllowed, 405);
-  const presented = req.headers.get(RELAY_TOKEN_HEADER)?.trim() ?? null;
+  const presented = readHeaderPair(req.headers, RELAY_TOKEN_HEADER)?.trim() ?? null;
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
   return applyRelayKeyLogAppend(ctx.deps, tenantId, presented, body);

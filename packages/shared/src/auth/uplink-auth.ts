@@ -1,5 +1,6 @@
 import { b } from '@zorsh/zorsh';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const DOMAIN_UPLINK_AUTH = 'tmex/uplink-auth/v1';
 
 export const UplinkAuthSchema = b.struct({

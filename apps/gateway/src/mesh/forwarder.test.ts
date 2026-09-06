@@ -27,15 +27,15 @@ import {
   MESH_FORWARD_WS_KIND,
   MESH_REJECT_4401_KIND,
   type MeshServerWebSocket,
+  SET_SESSION_HEADER,
   STREAM_QUEUE_MAX_BYTES,
   STREAM_QUEUE_MAX_FRAMES,
   STREAM_QUEUE_OVERFLOW_REASON,
-  X_VIBETERM_SET_SESSION,
   isMeshRewritten,
   setMeshRequestContext,
 } from './mesh-deps';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
-import { X_VIBETERM_CLEAR_SHARE, X_VIBETERM_SET_SHARE, X_VIBETERM_SET_SHARE_MAX_AGE } from './share-credential';
+import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 import { SHARE_LOGIN_MAX_FAILURES } from './share-login-quota';
 import { waitUntil } from './test-support';
 import { NodeUnreachableError, PeerHandshakeError } from './types';
@@ -123,7 +123,7 @@ describe('forwarder', () => {
       const res = asResponse(
         await mesh.runtime.handleRequest(
           new Request(`http://localhost/n/${OTHER}/ws`, {
-            headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+            headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
           }),
           dummyServer
         )
@@ -234,7 +234,7 @@ describe('forwarder', () => {
         await mesh.runtime.handleRequest(
           new Request(`http://localhost/n/${OTHER}/api/file`, {
             headers: {
-              cookie: 'tmex_s_self=abc',
+              cookie: 'vibeterm_s_self=abc',
               authorization: 'Bearer x',
               host: 'evil.example',
               connection: 'keep-alive',
@@ -378,7 +378,7 @@ describe('forwarder', () => {
       const res = asResponse(
         await mesh.runtime.handleRequest(
           new Request(`http://localhost/n/${OTHER}/api/devices`, {
-            headers: { cookie: `tmex_s_${OTHER}=stale` },
+            headers: { cookie: `vibeterm_s_${OTHER}=stale` },
           }),
           dummyServer
         )
@@ -390,7 +390,7 @@ describe('forwarder', () => {
         nodeId: OTHER,
       });
       const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_s_${OTHER}=`);
+      expect(cookie).toContain(`vibeterm_s_${OTHER}=`);
       expect(cookie).toContain('Path=/');
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('SameSite=Lax');
@@ -414,7 +414,7 @@ describe('forwarder', () => {
       const res = asResponse(
         await mesh.runtime.handleRequest(
           new Request(`https://entry.example/n/${OTHER}/api/devices`, {
-            headers: { cookie: `tmex_s_${OTHER}=stale-sid` },
+            headers: { cookie: `vibeterm_s_${OTHER}=stale-sid` },
           }),
           dummyServer
         )
@@ -425,14 +425,16 @@ describe('forwarder', () => {
         code: 'NODE_LOGIN_REQUIRED',
         nodeId: OTHER,
       });
-      const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toBe(`tmex_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`);
+      expect(res.headers.getSetCookie()).toEqual([
+        `vibeterm_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+        `tmex_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+      ]);
     } finally {
       mesh.close();
     }
   });
 
-  test('x-tmex-set-session becomes Set-Cookie tmex_s_<id> on entry', async () => {
+  test('x-tmex-set-session becomes Set-Cookie vibeterm_s_<id> on entry', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
@@ -440,7 +442,7 @@ describe('forwarder', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        [X_VIBETERM_SET_SESSION]: 'sessidvalue;64800',
+        [SET_SESSION_HEADER.name]: 'sessidvalue;64800',
       },
     });
     const mesh = await bootMesh({ peers, streams });
@@ -456,10 +458,10 @@ describe('forwarder', () => {
         )
       );
       const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_s_${OTHER}=sessidvalue`);
+      expect(cookie).toContain(`vibeterm_s_${OTHER}=sessidvalue`);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('Max-Age=64800');
-      expect(res.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
+      expect(res.headers.get(SET_SESSION_HEADER.name)).toBeNull();
       expect(streams.lastOpen?.auth).toBeNull();
     } finally {
       mesh.close();
@@ -528,7 +530,7 @@ describe('forwarder', () => {
       };
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -572,7 +574,7 @@ describe('forwarder', () => {
       };
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -628,7 +630,7 @@ describe('forwarder', () => {
       };
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws?cid=tab-nonce`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -657,7 +659,7 @@ describe('forwarder', () => {
       const prior = pendingForwardStreamCount();
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -696,7 +698,7 @@ describe('forwarder', () => {
       const prior = pendingForwardStreamCount();
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -733,7 +735,7 @@ describe('forwarder', () => {
       const prior = pendingForwardStreamCount();
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -962,7 +964,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('/n/:id/ws 4401 HTTP fallback (upgrade refused) never touches tmex_s_<target>', async () => {
+  test('/n/:id/ws 4401 HTTP fallback (upgrade refused) never touches vibeterm_s_<target>', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const mesh = await bootMesh({ peers });
@@ -989,7 +991,7 @@ describe('forwarder', () => {
     try {
       const cases = [
         'http://localhost/n/self%3D/ws',
-        'http://localhost/n/aa%3Btmex_s_self/ws',
+        'http://localhost/n/aa%3Bvibeterm_s_self/ws',
         'http://localhost/n/aa%00bb/ws',
         'http://localhost/n/aa%1bbb/ws',
         `http://localhost/n/${OTHER.toUpperCase()}/ws`,
@@ -1052,7 +1054,7 @@ describe('forwarder', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        [X_VIBETERM_SET_SESSION]: ';0',
+        [SET_SESSION_HEADER.name]: ';0',
       },
     });
     const mesh = await bootMesh({ peers, streams });
@@ -1064,9 +1066,9 @@ describe('forwarder', () => {
         )
       );
       const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_s_${OTHER}=`);
+      expect(cookie).toContain(`vibeterm_s_${OTHER}=`);
       expect(cookie).toContain('Max-Age=0');
-      expect(res.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
+      expect(res.headers.get(SET_SESSION_HEADER.name)).toBeNull();
     } finally {
       mesh.close();
     }
@@ -1096,7 +1098,7 @@ describe('forwarder', () => {
       };
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws?cid=tab-a`, {
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         server
       );
@@ -1638,7 +1640,7 @@ describe('forwarder', () => {
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
     const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams, sleep: async () => {} });
-    const cookie = `tmex_s_${OTHER}=remote-sid`;
+    const cookie = `vibeterm_s_${OTHER}=remote-sid`;
     let opens = 0;
     streams.openHttpStream = async () => {
       opens += 1;
@@ -1701,7 +1703,7 @@ describe('forwarder', () => {
     };
     const res = await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
       }),
       {
         nodeId: OTHER,
@@ -1736,7 +1738,7 @@ describe('forwarder', () => {
     const res = await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
         method: 'PUT',
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
       }),
       {
         nodeId: OTHER,
@@ -1821,7 +1823,7 @@ describe('forwardAuthorizedHttp', () => {
       streams,
       sleep: async () => {},
     });
-    const cookie = `tmex_s_${OTHER}=remote-sid`;
+    const cookie = `vibeterm_s_${OTHER}=remote-sid`;
     const getRes = await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', { headers: { cookie } }),
       { nodeId: OTHER, method: 'GET', path: '/api/system/upgrade' }
@@ -1877,7 +1879,7 @@ describe('forwardAuthorizedHttp', () => {
     const pending = forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
         method: 'POST',
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         signal: ac.signal,
       }),
       { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
@@ -1904,7 +1906,7 @@ describe('forwardAuthorizedHttp', () => {
     const forwarder = new Forwarder({ nodeId: NODE_ID, peers, streams });
     await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
-        headers: { cookie: `tmex_s_${OTHER}=sess-from-cookie` },
+        headers: { cookie: `vibeterm_s_${OTHER}=sess-from-cookie` },
       }),
       { nodeId: OTHER, method: 'GET', path: '/api/system/upgrade' }
     );
@@ -1957,7 +1959,7 @@ describe('forwardAuthorizedHttp', () => {
     const res = await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
         method: 'PUT',
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
       }),
       {
         nodeId: OTHER,
@@ -2006,7 +2008,7 @@ describe('forwardAuthorizedHttp', () => {
     await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
         method: 'POST',
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
       }),
       { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
     );
@@ -2037,7 +2039,7 @@ describe('forwardAuthorizedHttp', () => {
       const res = await forwarder.forwardAuthorizedHttp(
         new Request('http://localhost/api/mesh/nodes/x/upgrade', {
           method: 'PUT',
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
         }),
         {
           nodeId: OTHER,
@@ -2127,7 +2129,7 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
     const res = await forwarder.forwardAuthorizedHttp(
       new Request('http://localhost/api/mesh/nodes/x/upgrade', {
         method: 'PUT',
-        headers: { cookie: `tmex_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
+        headers: { cookie: `vibeterm_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
       }),
       {
         nodeId: OTHER,
@@ -2153,13 +2155,13 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
     const { createInMemoryLinkPair } = await import('@vibeterm/shared/link');
     const { acceptHttpStream, openHttpStream } = await import('./stream-targets');
     const { UpgradeController } = await import('../system/upgrade');
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-fwd-413-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-fwd-413-'));
     const controller = new UpgradeController({
       getInstallInfo: () => ({
         installedViaCli: true,
         deployment: 'launchd',
         installDir,
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.0.0',
         bunPath: '/usr/bin/bun',
       }),
@@ -2220,7 +2222,7 @@ describe('forwardAuthorizedHttp multi-MiB raw body over in-memory link', () => {
       const res = await forwarder.forwardAuthorizedHttp(
         new Request('http://localhost/api/mesh/nodes/x/upgrade', {
           method: 'PUT',
-          headers: { cookie: `tmex_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid`, origin: 'http://localhost' },
         }),
         {
           nodeId: OTHER,
@@ -2252,7 +2254,7 @@ function encodeHelloFrame(): Uint8Array {
 
 function encodeHelloS2CFrame(serverVersion = '1.1.23'): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-    serverImpl: 'tmex-gateway',
+    serverImpl: 'vibeterm-gateway',
     serverVersion,
     selectedVersion: wsBorsh.CURRENT_VERSION,
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
@@ -2469,7 +2471,7 @@ async function openForwardWs(
   };
   await runtime.handleRequest(
     new Request(`http://localhost/n/${nodeId}/ws`, {
-      headers: { cookie: `tmex_s_${nodeId}=remote-sid` },
+      headers: { cookie: `vibeterm_s_${nodeId}=remote-sid` },
     }),
     server
   );
@@ -2490,7 +2492,7 @@ async function openForwardWs(
 describe('forwarder 分享凭证', () => {
   const SHARE_TOKEN = 'sh-1.secret';
 
-  test('/n/:id/api/share-access/* 用 tmex_sh_<node> 换 share: 凭证', async () => {
+  test('/n/:id/api/share-access/* 用 vibeterm_sh_<node> 换 share: 凭证', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
@@ -2501,7 +2503,7 @@ describe('forwarder 分享凭证', () => {
       });
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1`, {
-          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_${OTHER}=${SHARE_TOKEN}` },
         }),
         dummyServer
       );
@@ -2523,7 +2525,7 @@ describe('forwarder 分享凭证', () => {
       });
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/api/devices`, {
-          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_${OTHER}=${SHARE_TOKEN}` },
         }),
         dummyServer
       );
@@ -2551,8 +2553,8 @@ describe('forwarder 分享凭证', () => {
       streams.nextResponse = new Response(JSON.stringify({ ok: true }), {
         headers: {
           'content-type': 'application/json',
-          [X_VIBETERM_SET_SHARE]: SHARE_TOKEN,
-          [X_VIBETERM_SET_SHARE_MAX_AGE]: '86400',
+          [SET_SHARE_HEADER.name]: SHARE_TOKEN,
+          [SET_SHARE_MAX_AGE_HEADER.name]: '86400',
         },
       });
       const res = asResponse(
@@ -2566,13 +2568,13 @@ describe('forwarder 分享凭证', () => {
         )
       );
       const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_sh_${OTHER}=${SHARE_TOKEN}`);
+      expect(cookie).toContain(`vibeterm_sh_${OTHER}=${SHARE_TOKEN}`);
       expect(cookie).toContain('Max-Age=86400');
-      expect(res.headers.get(X_VIBETERM_SET_SHARE)).toBeNull();
-      expect(res.headers.get(X_VIBETERM_SET_SHARE_MAX_AGE)).toBeNull();
+      expect(res.headers.get(SET_SHARE_HEADER.name)).toBeNull();
+      expect(res.headers.get(SET_SHARE_MAX_AGE_HEADER.name)).toBeNull();
 
       streams.nextResponse = new Response('{}', {
-        headers: { 'content-type': 'application/json', [X_VIBETERM_CLEAR_SHARE]: '1' },
+        headers: { 'content-type': 'application/json', [CLEAR_SHARE_HEADER.name]: '1' },
       });
       const out = asResponse(
         await mesh.runtime.handleRequest(
@@ -2585,7 +2587,7 @@ describe('forwarder 分享凭证', () => {
         )
       );
       expect(out.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
-      expect(out.headers.get(X_VIBETERM_CLEAR_SHARE)).toBeNull();
+      expect(out.headers.get(CLEAR_SHARE_HEADER.name)).toBeNull();
     } finally {
       mesh.close();
     }
@@ -2608,7 +2610,7 @@ describe('forwarder 分享凭证', () => {
             body: '{}',
             headers: {
               'content-type': 'application/json',
-              cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}`,
+              cookie: `vibeterm_sh_${OTHER}=${SHARE_TOKEN}`,
             },
           }),
           dummyServer
@@ -2657,7 +2659,7 @@ describe('forwarder 分享凭证', () => {
       };
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_${OTHER}=${SHARE_TOKEN}` },
         }),
         server
       );
@@ -2677,7 +2679,7 @@ describe('forwarder 分享凭证', () => {
     try {
       const upgrade = await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws?share=sh-1`, {
-          headers: { cookie: `tmex_s_${OTHER}=stale-sid; tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_s_${OTHER}=stale-sid; vibeterm_sh_${OTHER}=${SHARE_TOKEN}` },
         }),
         dummyServer
       );
@@ -2704,7 +2706,7 @@ describe('forwarder 分享凭证', () => {
       };
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws?share=sh-1`, {
-          headers: { cookie: `tmex_s_${OTHER}=stale-sid` },
+          headers: { cookie: `vibeterm_s_${OTHER}=stale-sid` },
         }),
         server
       );
@@ -2731,7 +2733,7 @@ describe('forwarder 分享凭证', () => {
       };
       await mesh.runtime.handleRequest(
         new Request(`http://localhost/n/${OTHER}/ws`, {
-          headers: { cookie: `tmex_sh_${OTHER}=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_${OTHER}=${SHARE_TOKEN}` },
         }),
         server
       );

@@ -2,7 +2,7 @@
 // （工具结果）做消毒。覆盖 run 内 tool-result 回喂与跨轮历史回放两条出站路径。
 // 关键边界：只消毒 role==='tool' 与 assistant 内嵌的 tool-result 输出；
 // 绝不动 user / system 消息（用户输入按产品决策不改写，仅另行告警）。
-// tmex.db 落库的是真实内容（工具返回真实），消毒只发生在出站这一层。
+// 数据库落库的是真实内容（工具返回真实），消毒只发生在出站这一层。
 
 import type { LanguageModelMiddleware } from 'ai';
 import { redactSecrets } from './secret-scan';

@@ -43,7 +43,7 @@ import { acceptWsStream, openHttpStream, openWsStream } from '../stream-targets'
 import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 const origGetTransferOwner = filesBulkHooks.status;

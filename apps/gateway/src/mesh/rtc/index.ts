@@ -52,6 +52,7 @@ export {
   type RtcSignaling,
   type RtcWakeFields,
   type SdpSignal,
+  LEGACY_RTC_WAKE_DOMAIN,
   RTC_WAKE_DOMAIN,
   RTC_WAKE_MAX_SKEW_MS,
   RTC_WAKE_NONCE_BYTES,

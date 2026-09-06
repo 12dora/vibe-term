@@ -277,8 +277,8 @@ describe('node-to-node transfer over a real peer link', () => {
     resetTransferGrantsForTests();
     await resetTransferSessionsForTests();
     resetTransferJobsForTests();
-    srcDir = tempDir('tmex-tx-src-');
-    dstDir = tempDir('tmex-tx-dst-');
+    srcDir = tempDir('vibeterm-tx-src-');
+    dstDir = tempDir('vibeterm-tx-dst-');
     const now = new Date().toISOString();
     const deviceId = `dev-${Math.random().toString(16).slice(2)}`;
     createDevice({

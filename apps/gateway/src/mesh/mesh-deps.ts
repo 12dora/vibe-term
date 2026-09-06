@@ -8,9 +8,11 @@ export type { DispatchContext };
 
 export const MESH_VIA_SELF = 'self';
 
-export const X_VIBETERM_SET_SESSION = 'x-tmex-set-session';
-export const X_VIBETERM_SESSION_RENEWED = 'x-tmex-session-renewed';
-export const X_VIBETERM_CONNECTION = 'x-tmex-connection';
+export {
+  CONNECTION_HEADER,
+  SESSION_RENEWED_HEADER,
+  SET_SESSION_HEADER,
+} from '@vibeterm/shared/http/mesh-headers';
 
 export const LOGIN_RATE_LIMIT = 10;
 export const LOGIN_RATE_WINDOW_MS = 60_000;

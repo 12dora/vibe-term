@@ -19,7 +19,7 @@ beforeAll(() => {
       id,
       name: `r3-${i}`,
       type: 'local',
-      session: 'tmex',
+      session: 'vibeterm',
       authMode: 'auto',
       sortOrder: i,
       createdAt: now,

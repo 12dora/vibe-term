@@ -7,7 +7,7 @@ export const AUTH_LOGIN_PUBLIC_PATHS = new Set([
   '/api/auth/passkey/login/options',
 ]);
 
-/** 被分享人的公开面：无常规会话，只认 `tmex_sh_<via>` cookie。 */
+/** 被分享人的公开面：无常规会话，只认 `vibeterm_sh_<via>` cookie。 */
 export const SHARE_ACCESS_PATH_PREFIX = '/api/share-access/';
 
 /** 契约 §2.3 的三个端点，逐条列出：同前缀新增管理路由不会被顺带匿名开放。 */

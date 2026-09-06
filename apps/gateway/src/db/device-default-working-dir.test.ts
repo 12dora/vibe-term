@@ -15,7 +15,7 @@ function makeDevice(id: string, name: string, defaultWorkingDir?: string): Devic
     id,
     name,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     defaultWorkingDir,
     sortOrder: 0,

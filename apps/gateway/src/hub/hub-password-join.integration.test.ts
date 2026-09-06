@@ -23,7 +23,7 @@ import { waitUntil } from '../mesh/test-support';
 import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const HUB_URL = 'https://hub.example';
 const dummyServer = { upgrade: () => false };
 

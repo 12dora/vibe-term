@@ -45,7 +45,7 @@ import { createFakeNativeModule } from '../rtc/test-fakes';
 import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 
 function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
   const server = wsServer ?? new WebSocketServer();
@@ -196,7 +196,7 @@ function paneSnapshot(deviceId: string): StateSnapshotPayload {
     deviceId,
     session: {
       id: '$1',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',

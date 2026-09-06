@@ -53,7 +53,7 @@ function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: strin
   }
   lines.push(
     `if [ -e ${quoteShellArg(name)} ] || [ -L ${quoteShellArg(name)} ]; then e=1; else e=0; fi`,
-    'printf \'TMEXDIR %s\\nTMEXEXISTS %s\\n\' "$d" "$e"'
+    'printf \'VTDIR %s\\nVTEXISTS %s\\n\' "$d" "$e"'
   );
   return lines.join('\n');
 }
@@ -63,8 +63,8 @@ function parseWalkOutput(stdout: Uint8Array): { dir: string; exists: boolean } |
   let dir: string | null = null;
   let exists: boolean | null = null;
   for (const line of text.split('\n')) {
-    if (line.startsWith('TMEXDIR ')) dir = line.slice(8).replace(/\r$/, '');
-    else if (line.startsWith('TMEXEXISTS ')) exists = line.slice(11).trim() === '1';
+    if (line.startsWith('VTDIR ')) dir = line.slice(8).replace(/\r$/, '');
+    else if (line.startsWith('VTEXISTS ')) exists = line.slice(11).trim() === '1';
   }
   return dir && exists !== null ? { dir, exists } : null;
 }

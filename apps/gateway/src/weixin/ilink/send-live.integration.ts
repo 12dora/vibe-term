@@ -34,7 +34,7 @@ async function probeSend(label: string) {
     toUserId: env.TEST_WEIXIN_USER_ID,
     contextToken: env.TEST_WEIXIN_CONTEXT_TOKEN,
     clientId: makeClientId(),
-    items: [{ text: `tmex live probe (${label}) ${new Date().toISOString()}` }],
+    items: [{ text: `vibeterm live probe (${label}) ${new Date().toISOString()}` }],
   });
   const expired = resp.ret === SESSION_EXPIRED_ERRCODE || resp.errcode === SESSION_EXPIRED_ERRCODE;
   console.log(

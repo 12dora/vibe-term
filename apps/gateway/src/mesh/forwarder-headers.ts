@@ -1,14 +1,20 @@
-import { CLIENT_SOURCE_LOCAL, X_VIBETERM_CLIENT_SOURCE, isTrustedLocalClient } from './client-source';
-import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, X_VIBETERM_SET_SESSION } from './mesh-deps';
-import { X_VIBETERM_CLEAR_SHARE, X_VIBETERM_SET_SHARE, X_VIBETERM_SET_SHARE_MAX_AGE } from './share-credential';
+import {
+  addHeaderNames,
+  assignHeaderPair,
+  isVibeTermHeaderName,
+} from '@vibeterm/shared/http/mesh-headers';
+import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL, isTrustedLocalClient } from './client-source';
+import { MESH_ALLOWED_MIME, MESH_FORWARD_CSP, SET_SESSION_HEADER } from './mesh-deps';
+import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 
 /** 内部凭证头：Hub 翻成 Set-Cookie 后不得再回给浏览器。 */
-const INTERNAL_CREDENTIAL_HEADERS = new Set<string>([
-  X_VIBETERM_SET_SESSION,
-  X_VIBETERM_SET_SHARE,
-  X_VIBETERM_SET_SHARE_MAX_AGE,
-  X_VIBETERM_CLEAR_SHARE,
-]);
+const INTERNAL_CREDENTIAL_HEADERS = addHeaderNames(
+  new Set<string>(),
+  SET_SESSION_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
+  CLEAR_SHARE_HEADER
+);
 
 const RESPONSE_ALLOW = new Set([
   'content-length',
@@ -18,18 +24,20 @@ const RESPONSE_ALLOW = new Set([
   'etag',
   'last-modified',
 ]);
-const DROP_REQUEST_HEADERS = new Set([
-  'cookie',
-  'authorization',
-  'host',
-  'connection',
-  'upgrade',
-  'cf-connecting-ip',
-  'cf-access-jwt-assertion',
-  'cf-access-authenticated-user-email',
-  'cf-ray',
-  X_VIBETERM_CLIENT_SOURCE,
-]);
+const DROP_REQUEST_HEADERS = addHeaderNames(
+  new Set([
+    'cookie',
+    'authorization',
+    'host',
+    'connection',
+    'upgrade',
+    'cf-connecting-ip',
+    'cf-access-jwt-assertion',
+    'cf-access-authenticated-user-email',
+    'cf-ray',
+  ]),
+  CLIENT_SOURCE_HEADER
+);
 
 export function copyUpstreamHeaders(upstream: Response): Headers {
   const headers = new Headers();
@@ -46,7 +54,7 @@ export function copyUpstreamHeaders(upstream: Response): Headers {
       contentDisposition = value;
       return;
     }
-    if (RESPONSE_ALLOW.has(lower) || lower.startsWith('x-tmex-')) headers.set(key, value);
+    if (RESPONSE_ALLOW.has(lower) || isVibeTermHeaderName(lower)) headers.set(key, value);
   });
   const mime = baseMime(contentType);
   if (mime && MESH_ALLOWED_MIME.has(mime)) {
@@ -75,7 +83,7 @@ export function filterRequestHeaders(req: Request): Record<string, string> {
     out[key] = value;
   });
   if (isTrustedLocalClient(req)) {
-    out[X_VIBETERM_CLIENT_SOURCE] = CLIENT_SOURCE_LOCAL;
+    assignHeaderPair(out, CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL);
   }
   return out;
 }

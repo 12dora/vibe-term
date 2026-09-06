@@ -44,7 +44,7 @@ function selfUpdateInfo(): SystemInfo {
     installedViaCli: true,
     deployment: 'launchd',
     canSelfUpdate: true,
-    serviceName: 'tmex',
+    serviceName: 'vibeterm',
     transferMaxBytes: 1,
   };
 }
@@ -245,7 +245,7 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
   });
 
   function installDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-resume-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-resume-'));
     installDirs.push(dir);
     writeFileSync(join(dir, 'install-meta.json'), '{}');
     process.env.VIBETERM_INSTALL_DIR = dir;
@@ -324,7 +324,7 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
         '/api/system/upgrade/package'
       );
       expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }
@@ -371,8 +371,8 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
         '/api/system/upgrade/package'
       );
       expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.json'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.json'))).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }
@@ -622,7 +622,7 @@ describe('DELETE /api/system/upgrade/package', () => {
     const { mkdtempSync, existsSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-del-pkg-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-del-pkg-'));
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
     const prevInstall = process.env.VIBETERM_INSTALL_DIR;
     process.env.VIBETERM_INSTALL_DIR = installDir;
@@ -631,8 +631,8 @@ describe('DELETE /api/system/upgrade/package', () => {
       const hex = sha256Hex(bytes);
       const staged = await upgradeController.stagePackage('1.2.3', hex, bytesStream(bytes));
       expect(staged.ok).toBe(true);
-      const tgz = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz');
-      const sidecar = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.json');
+      const tgz = join(installDir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz');
+      const sidecar = join(installDir, 'staging', 'staged', 'vibeterm-cli-1.2.3.json');
       expect(existsSync(tgz)).toBe(true);
       const response = await handleSystemApiRequest(
         withMeshAuth(
@@ -706,12 +706,12 @@ describe('POST/GET /api/system/uninstall', () => {
   });
 
   test('POST schedules uninstall through the injected spawner', async () => {
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-'));
-    const copyRoot = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-tmp-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-sys-uninst-'));
+    const copyRoot = mkdtempSync(join(tmpdir(), 'vibeterm-sys-uninst-tmp-'));
     try {
       const versionDir = join(installDir, 'versions', '1.2.3');
       mkdirSync(join(versionDir, 'cli', 'bin'), { recursive: true });
-      writeFileSync(join(versionDir, 'cli', 'bin', 'tmex.js'), '#!/usr/bin/env node\n');
+      writeFileSync(join(versionDir, 'cli', 'bin', 'vibeterm.js'), '#!/usr/bin/env node\n');
       symlinkSync(versionDir, join(installDir, 'current'));
       const spawned: string[][] = [];
       uninstallController.setDepsForTests({
@@ -719,7 +719,7 @@ describe('POST/GET /api/system/uninstall', () => {
           installedViaCli: true,
           deployment: 'launchd',
           installDir,
-          serviceName: 'tmex',
+          serviceName: 'vibeterm',
           cliVersion: '1.2.3',
           bunPath: process.execPath,
         }),
@@ -815,7 +815,7 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   }
 
   test('a signed manifest is accepted and reports the authoritative digest', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-manifest-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-manifest-'));
     tempDirs.push(dir);
     process.env.VIBETERM_INSTALL_DIR = dir;
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
@@ -823,9 +823,9 @@ describe('POST /api/system/upgrade/package/manifest', () => {
       const res = await post({ version, ...signedSumsFor(version, hex) });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ version, sha256: hex, keyId: 'tk' });
-      expect(existsSync(join(dir, 'staging', 'staged', `tmex-cli-${version}.manifest.json`))).toBe(
-        true
-      );
+      expect(
+        existsSync(join(dir, 'staging', 'staged', `vibeterm-cli-${version}.manifest.json`))
+      ).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }

@@ -16,14 +16,19 @@ export function resolveReleaseBaseUrl(): string {
   return override && override.length > 0 ? override : RELEASE_REPO_URL;
 }
 
-export function resolveReleaseTarballUrl(version: string): string {
+export function resolveReleaseTarballUrl(
+  version: string,
+  assetName: string = releaseTarballName(version)
+): string {
   const base = resolveReleaseBaseUrl();
-  if (base === RELEASE_REPO_URL) return releaseTarballUrl(version);
-  return `${base}/releases/download/${releaseTag(version)}/${releaseTarballName(version)}`;
+  if (base === RELEASE_REPO_URL && assetName === releaseTarballName(version)) {
+    return releaseTarballUrl(version);
+  }
+  return `${base}/releases/download/${releaseTag(version)}/${assetName}`;
 }
 
 export function resolveReleaseSha256SumsUrl(version: string): string {
-  return resolveReleaseTarballUrl(version).replace(releaseTarballName(version), 'SHA256SUMS');
+  return `${resolveReleaseBaseUrl()}/releases/download/${releaseTag(version)}/SHA256SUMS`;
 }
 
 export function releaseSha256SumsUrl(version: string): string {
@@ -37,9 +42,10 @@ export function resolveReleaseSha256SumsSigUrl(version: string): string {
 export function assertReleaseSha256(
   version: string,
   sha256: string,
-  sums: { hex: string | null; missing: boolean }
+  sums: { hex: string | null; missing: boolean },
+  assetName: string = releaseTarballName(version)
 ): void {
-  assertReleaseChecksum(sha256, sums, releaseTarballName(version));
+  assertReleaseChecksum(sha256, sums, assetName);
 }
 
 /** 拉一个纯文本资产；404 返回 null，其余非 2xx 抛错。 */
@@ -74,7 +80,9 @@ async function fetchReleaseText(
 export async function fetchVerifiedReleaseSums(
   version: string,
   fetchFn: typeof fetch = fetch,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  /** 要取摘要的资产名；向 <2.0.0 的节点推包时传旧名。 */
+  assetName?: string
 ): Promise<VerifiedReleaseSums> {
   const [sums, sig] = await Promise.all([
     fetchReleaseText(resolveReleaseSha256SumsUrl(version), 'SHA256SUMS', fetchFn, signal),
@@ -85,5 +93,5 @@ export async function fetchVerifiedReleaseSums(
       'Release SHA256SUMS is missing; tarball integrity is unverified. Refusing to continue.'
     );
   }
-  return verifyReleaseSumsBundle(version, { sums, sig });
+  return verifyReleaseSumsBundle(version, { sums, sig }, assetName);
 }

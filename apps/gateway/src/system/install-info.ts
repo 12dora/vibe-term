@@ -3,7 +3,7 @@ import { basename, resolve } from 'node:path';
 import type { GatewayDeployment } from '@vibeterm/shared';
 import { config } from '../config';
 
-/** install-meta.json 形状（由 tmex-cli init/upgrade 写入） */
+/** install-meta.json 形状（由 vibeterm-cli init/upgrade 写入） */
 export interface InstallMetaShape {
   serviceName?: string;
   platform?: string;

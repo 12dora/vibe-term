@@ -575,7 +575,9 @@ describe('PeerManager', () => {
       lastSeenAt: Date.now(),
       listVersion: 1,
     });
-    let release: ((ws: import('@vibeterm/shared/link').WebSocketTransportInput) => void) | undefined;
+    let release:
+      | ((ws: import('@vibeterm/shared/link').WebSocketTransportInput) => void)
+      | undefined;
     const manager = new PeerManager({
       identity: self,
       userStore: store,

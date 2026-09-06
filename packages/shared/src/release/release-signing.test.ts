@@ -24,7 +24,7 @@ function testKey(id: string, seedByte: number): { seed: Uint8Array; key: Release
 }
 
 const SUMS = [
-  `${'a'.repeat(64)}  tmex-cli-1.1.39.tgz`,
+  `${'a'.repeat(64)}  vibeterm-cli-1.1.39.tgz`,
   `${'b'.repeat(64)} *dist/other.tgz`,
   '',
 ].join('\n');
@@ -118,23 +118,23 @@ describe('signReleaseSums / verifyReleaseSums', () => {
 describe('parseSha256Sums / expectedTarballHash', () => {
   test('maps file names to lowercase digests, ignoring directories', () => {
     const map = parseSha256Sums(SUMS);
-    expect(map.get('tmex-cli-1.1.39.tgz')).toBe('a'.repeat(64));
+    expect(map.get('vibeterm-cli-1.1.39.tgz')).toBe('a'.repeat(64));
     expect(map.get('other.tgz')).toBe('b'.repeat(64));
     expect(map.size).toBe(2);
   });
 
   test('uppercase digests are normalized and malformed lines skipped', () => {
-    const text = ['nonsense', 'short  x.tgz', `${'A'.repeat(64)}  tmex-cli-1.2.3.tgz`, ''].join(
+    const text = ['nonsense', 'short  x.tgz', `${'A'.repeat(64)}  vibeterm-cli-1.2.3.tgz`, ''].join(
       '\r\n'
     );
-    expect(parseSha256Sums(text).get('tmex-cli-1.2.3.tgz')).toBe('a'.repeat(64));
+    expect(parseSha256Sums(text).get('vibeterm-cli-1.2.3.tgz')).toBe('a'.repeat(64));
   });
 
   test('trailing separators and directory prefixes resolve to the same file name', () => {
-    const text = `${'a'.repeat(64)}  dist/pkg/tmex-cli-1.2.3.tgz\n`;
-    expect(parseSha256Sums(text).get('tmex-cli-1.2.3.tgz')).toBe('a'.repeat(64));
+    const text = `${'a'.repeat(64)}  dist/pkg/vibeterm-cli-1.2.3.tgz\n`;
+    expect(parseSha256Sums(text).get('vibeterm-cli-1.2.3.tgz')).toBe('a'.repeat(64));
     expect(releaseSumsFileName('dist/pkg/')).toBe('pkg');
-    expect(releaseSumsFileName('tmex-cli-1.2.3.tgz')).toBe('tmex-cli-1.2.3.tgz');
+    expect(releaseSumsFileName('vibeterm-cli-1.2.3.tgz')).toBe('vibeterm-cli-1.2.3.tgz');
   });
 
   test('duplicate file names keep the first entry', () => {
@@ -143,8 +143,21 @@ describe('parseSha256Sums / expectedTarballHash', () => {
   });
 
   test('expectedTarballHash resolves by version', () => {
+    // SUMS 只列了改名前的资产名，走旧名回退
     expect(expectedTarballHash(SUMS, '1.1.39')).toBe('a'.repeat(64));
     expect(expectedTarballHash(SUMS, '9.9.9')).toBeNull();
+  });
+
+  test('expectedTarballHash 优先取新资产名，缺失才回退旧名', () => {
+    const both = [
+      `${'c'.repeat(64)}  vibeterm-cli-2.0.0.tgz`,
+      `${'d'.repeat(64)}  tmex-cli-2.0.0.tgz`,
+      '',
+    ].join('\n');
+    expect(expectedTarballHash(both, '2.0.0')).toBe('c'.repeat(64));
+    expect(expectedTarballHash(`${'d'.repeat(64)}  tmex-cli-2.0.0.tgz\n`, '2.0.0')).toBe(
+      'd'.repeat(64)
+    );
   });
 });
 

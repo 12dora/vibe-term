@@ -10,8 +10,8 @@ import { runMigrations } from '../db/migrate';
 import { createGatewayRuntime } from '../runtime';
 import { WebSocketServer } from '../ws';
 import {
+  CLIENT_SOURCE_HEADER,
   CLIENT_SOURCE_LOCAL,
-  X_VIBETERM_CLIENT_SOURCE,
   waivesPasskeySecondFactor,
 } from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
@@ -434,7 +434,7 @@ describe('http/ws stream targets', () => {
         'x-tmex-via': 'forged',
         'content-type': 'application/json',
         'x-custom': 'keep',
-        [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
+        [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL,
       },
     });
     expect(res.status).toBe(200);
@@ -448,18 +448,18 @@ describe('http/ws stream targets', () => {
     expect(openHeaders['x-tmex-via']).toBeUndefined();
     expect(openHeaders['content-type']).toBe('application/json');
     expect(openHeaders['x-custom']).toBe('keep');
-    expect(openHeaders[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(openHeaders[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
   });
 
   test('stripForwardedRequestHeaders 保留 x-tmex-client-source', () => {
     const out = stripForwardedRequestHeaders({
       cookie: 'secret=1',
       authorization: 'Bearer x',
-      [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL,
+      [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL,
       'x-forwarded-for': '1.2.3.4',
       'x-custom': 'keep',
     });
-    expect(out[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
     expect(out['x-custom']).toBe('keep');
     expect(out.cookie).toBeUndefined();
     expect(out.authorization).toBeUndefined();
@@ -480,7 +480,7 @@ describe('http/ws stream targets', () => {
           } as unknown as NodeSessionStore,
           async dispatchHttp(req) {
             dispatched.path = new URL(req.url).pathname;
-            dispatched.source = req.headers.get(X_VIBETERM_CLIENT_SOURCE);
+            dispatched.source = req.headers.get(CLIENT_SOURCE_HEADER.name);
             return new Response('ok');
           },
         });
@@ -490,7 +490,7 @@ describe('http/ws stream targets', () => {
         path,
         origin: 'http://localhost',
         auth: null,
-        headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+        headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
       });
       expect(res.status).toBe(200);
       expect(dispatched).toEqual({ path, source: CLIENT_SOURCE_LOCAL });
@@ -578,7 +578,7 @@ describe('http/ws stream targets', () => {
             via: ctx.viaNodeId,
             clientIp: `peer:${ctx.viaNodeId}`,
           });
-          seen.header = req.headers.get(X_VIBETERM_CLIENT_SOURCE);
+          seen.header = req.headers.get(CLIENT_SOURCE_HEADER.name);
           seen.via = ctx.viaNodeId;
           seen.waived = waivesPasskeySecondFactor(req);
           return new Response('ok');
@@ -590,7 +590,7 @@ describe('http/ws stream targets', () => {
       path: '/api/auth/mode',
       origin: 'http://localhost',
       auth: 'sid',
-      headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
     });
     expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
     expect(seen.via).toBe('entry-1');
@@ -1349,7 +1349,9 @@ describe('分享凭证的 mesh 流', () => {
     });
     expect(ok.status).toBe(200);
     expect(seen[0]?.uid).toBeNull();
-    expect(seen[0]?.cookie).toBe(`tmex_sh_entry-1=${SHARE_TOKEN}`);
+    expect(seen[0]?.cookie).toBe(
+      `vibeterm_sh_entry-1=${SHARE_TOKEN}; tmex_sh_entry-1=${SHARE_TOKEN}`
+    );
 
     const denied = await openHttpStream(a, {
       method: 'GET',

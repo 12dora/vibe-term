@@ -1,5 +1,9 @@
 import { combineAbortSignals } from '@vibeterm/shared/async';
-import type { LinkSession, ServerSocketAdapter, WebSocketTransportInput } from '@vibeterm/shared/link';
+import type {
+  LinkSession,
+  ServerSocketAdapter,
+  WebSocketTransportInput,
+} from '@vibeterm/shared/link';
 import { type KeywordRule, classifyByKeywords, waitSocketOpen } from '@vibeterm/shared/net';
 import type { UserStore } from '../auth/user-store';
 import { envInt } from './mesh-log';

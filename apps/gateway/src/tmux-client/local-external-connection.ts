@@ -295,7 +295,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
         throw new Error(`LocalExternalTmuxConnection only supports local device: ${this.deviceId}`);
       }
 
-      this.sessionName = this.device.session?.trim() || 'tmex';
+      this.sessionName = this.device.session?.trim() || 'vibeterm';
 
       await this.awaitConnectStep(generation, () => this.assertTmuxCompatibility());
       const { created } = await this.awaitConnectStep(generation, () => this.ensureSession());
@@ -491,7 +491,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     const version = parseTmuxVersion(result.stdout.trim());
     if (this.deps.enableSubscription && !isControlModeSupported(version)) {
       throw new Error(
-        `tmux ${version?.major}.${version?.minor} is too old for tmex (control mode requires tmux >= 3.0)`
+        `tmux ${version?.major}.${version?.minor} is too old for VibeTerm (control mode requires tmux >= 3.0)`
       );
     }
     if (config.tmuxBin !== 'tmux') {

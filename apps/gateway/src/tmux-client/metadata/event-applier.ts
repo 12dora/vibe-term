@@ -1,7 +1,12 @@
-import { collectLayoutLeaves, layoutLeafPaneId, parseWindowLayout, wsBorsh } from '@vibeterm/shared';
+import {
+  collectLayoutLeaves,
+  layoutLeafPaneId,
+  parseWindowLayout,
+  wsBorsh,
+} from '@vibeterm/shared';
 
 import type { TmuxSourceMetadataEvent } from '../events';
-import { PARKING_WINDOW_NAME } from '../external/constants';
+import { isParkingWindowName } from '../external/constants';
 import {
   type MetadataValue,
   type PaneFieldHints,
@@ -67,7 +72,7 @@ function windowPaneCommand(records: Map<string, ProjectedRecord>, windowId: stri
 /**
  * tmux 自己销毁窗口时没有任何调用方可查，只能把观察到的关闭连同最后已知信息记下来。
  * `exitStatus` 恒为 null：`#{pane_dead_status}` 只在 `remain-on-exit on` 时才有值，
- * 而 tmex 从不设它——窗口在 `%window-close` 到达时已经不存在，无处可查。
+ * 而 VibeTerm 从不设它——窗口在 `%window-close` 到达时已经不存在，无处可查。
  * 保留形参是为了将来真开了 remain-on-exit 时能把退出码填进同一行。
  */
 export function formatWindowCloseObserved(
@@ -128,7 +133,7 @@ const EVENT_HANDLERS: EventHandlerMap = {
   },
   'window-renamed'(event, ctx) {
     // 真实窗口不会被改成聚焦护盾的名字：出现即说明护盾窗口漏进来了，不投影它
-    if (event.name === PARKING_WINDOW_NAME) return;
+    if (isParkingWindowName(event.name)) return;
     ctx.setField(
       wsBorsh.SOURCE_ENTITY_WINDOW,
       event.windowId,

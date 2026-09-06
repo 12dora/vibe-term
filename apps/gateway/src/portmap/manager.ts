@@ -278,7 +278,7 @@ export class PortMapManager {
 
   private checkPortAvailable(host: string, port: number, exceptId: string | null): void {
     if (this.reservedPorts().includes(port)) {
-      throw new PortMapError('port_reserved', `port ${port} is used by tmex itself`);
+      throw new PortMapError('port_reserved', `port ${port} is used by VibeTerm itself`);
     }
     const usedBy = this.findByPort(host, port, exceptId);
     if (usedBy) {

@@ -16,7 +16,7 @@ describe('external tmux core helpers', () => {
   });
 
   test('isTmuxServerGoneMessage classifies tmux disappearance strings', () => {
-    expect(isTmuxServerGoneMessage("can't find session: tmex")).toBe(true);
+    expect(isTmuxServerGoneMessage("can't find session: vibeterm")).toBe(true);
     expect(isTmuxServerGoneMessage('no server running on /tmp/tmux-1000/default')).toBe(true);
     expect(isTmuxServerGoneMessage('lost server')).toBe(true);
     expect(isTmuxServerGoneMessage('session not found')).toBe(true);

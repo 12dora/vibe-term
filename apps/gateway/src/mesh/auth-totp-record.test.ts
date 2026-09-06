@@ -22,7 +22,10 @@ describe('handleTotpRecord cache control', () => {
       expect(denied.status).toBe(401);
       expect(denied.headers.get('Cache-Control')).toBe('private, no-store');
 
-      const boot = await keyLogService.bootstrapUser({ username: 'alice', password: 'tmex-test' });
+      const boot = await keyLogService.bootstrapUser({
+        username: 'alice',
+        password: 'vibeterm-test',
+      });
       const missing = handleTotpRecord({ userStore, keyLogService }, boot.userId);
       expect(missing.status).toBe(404);
       expect(missing.headers.get('Cache-Control')).toBe('private, no-store');

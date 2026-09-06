@@ -21,7 +21,7 @@ function snapshotWith(deviceId: string, windowIds: string[]): StateSnapshotPaylo
     deviceId,
     session: {
       id: '$0',
-      name: 'tmex-test',
+      name: 'vibeterm-test',
       windows: windowIds.map((id, index) => ({
         id,
         name: `win-${index}`,

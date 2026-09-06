@@ -1,5 +1,6 @@
 import { wsBorsh } from '@vibeterm/shared';
 import { encodeBase64url } from '@vibeterm/shared/auth';
+import { CONNECTION_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies } from '../auth/cookies';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
@@ -31,7 +32,6 @@ import {
   type RtcSignalMessage,
   type RtcSignalRouter,
   WS_CLOSE_LOGIN_REQUIRED,
-  X_VIBETERM_CONNECTION,
   getMeshRequestContext,
 } from './mesh-deps';
 import {
@@ -474,7 +474,7 @@ export class MeshRoutes {
       sid: auth.sid,
       via,
       cid,
-      connectionId: cid ? null : req.headers.get(X_VIBETERM_CONNECTION)?.trim() || null,
+      connectionId: cid ? null : readHeaderPair(req.headers, CONNECTION_HEADER)?.trim() || null,
     });
     if (!resolved) return jsonError('NO_CONNECTION', 404);
     if (!resolved.ok) {
@@ -499,7 +499,7 @@ export class MeshRoutes {
     });
     const fail = lookupFail(
       resolved,
-      'send connectionId from GET /api/mesh/connection or x-tmex-connection'
+      `send connectionId from GET /api/mesh/connection or ${CONNECTION_HEADER.name}`
     );
     if (fail) return fail;
     const granted = await this.deps.rtcFingerprint.authorizeBrowser({
@@ -623,7 +623,7 @@ function rtcAuthFields(body: Record<string, unknown> | null, req: Request) {
     fp: { algorithm: fp.algorithm, value: fp.value },
     connectionId:
       (typeof body?.connectionId === 'string' ? body.connectionId.trim() : '') ||
-      req.headers.get(X_VIBETERM_CONNECTION)?.trim() ||
+      readHeaderPair(req.headers, CONNECTION_HEADER)?.trim() ||
       null,
   };
 }

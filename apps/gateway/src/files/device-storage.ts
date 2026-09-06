@@ -240,7 +240,7 @@ async function copyToTempFile(
   spec: RsyncDeviceSpec,
   normPath: string
 ): Promise<FileOpResult<{ tmpPath: string; size: number; cleanup: () => void }>> {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rfile-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rfile-'));
   const dest = join(dir, 'f');
   const cleanup = () => {
     try {
@@ -432,7 +432,7 @@ export async function pullFileFromDevice(
       return fail('too_large', String(maxBytes));
     }
 
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const dest = join(dir, 'f');
     const cleanup = () => {
       try {

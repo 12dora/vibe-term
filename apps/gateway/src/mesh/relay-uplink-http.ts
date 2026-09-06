@@ -1,4 +1,8 @@
-import { type LinkSession, WebSocketLink, type WebSocketTransportInput } from '@vibeterm/shared/link';
+import {
+  type LinkSession,
+  WebSocketLink,
+  type WebSocketTransportInput,
+} from '@vibeterm/shared/link';
 import { waitSocketOpen } from '@vibeterm/shared/net';
 import {
   type RelayDialContext,

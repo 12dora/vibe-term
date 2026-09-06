@@ -288,7 +288,7 @@ export function logGatewayActivityMetricsIfDue(host: GatewayMetricsHost): void {
     Object.entries(metrics.canonical.evictionsByReason)
       .map(([reason, count]) => `${reason}:${count}`)
       .join(',') || 'none';
-  let tmexFeClients = 0;
+  let vibetermFeClients = 0;
   let companionClients = 0;
   let otherClients = 0;
   let unnegotiatedClients = 0;
@@ -296,8 +296,9 @@ export function logGatewayActivityMetricsIfDue(host: GatewayMetricsHost): void {
     const clientImpl = client.borshState.clientImpl;
     if (clientImpl === null) {
       unnegotiatedClients += 1;
-    } else if (clientImpl === 'tmex-fe') {
-      tmexFeClients += 1;
+    } else if (clientImpl === 'vibeterm-fe' || clientImpl === 'tmex-fe') {
+      // 缓存里的旧前端 bundle 仍自称 tmex-fe，归到同一个桶
+      vibetermFeClients += 1;
     } else if (clientImpl === 'vibex-companion') {
       companionClients += 1;
     } else {
@@ -352,7 +353,7 @@ export function logGatewayActivityMetricsIfDue(host: GatewayMetricsHost): void {
         `canonical_screen_transactions_completed_total=${metrics.canonical.screenTransactionsCompletedTotal} ` +
         `canonical_screen_transactions_failed_total=${metrics.canonical.screenTransactionsFailedTotal} ` +
         `canonical_screen_transactions_cancelled_total=${metrics.canonical.screenTransactionsCancelledTotal} ` +
-        `client_impls=tmex-fe:${tmexFeClients},vibex-companion:${companionClients},` +
+        `client_impls=vibeterm-fe:${vibetermFeClients},vibex-companion:${companionClients},` +
         `other:${otherClients},unnegotiated:${unnegotiatedClients} ` +
         `event_loop_lag_ms=${lag.lagMs} max_lag_ms=${lag.maxLagMs}`
     )

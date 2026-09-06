@@ -235,7 +235,7 @@ describe('buildLocalTmuxEnv', () => {
     });
   });
 
-  test('strips tmex-injected env (app.env) so user shells never inherit them', () => {
+  test('strips vibeterm-injected env (app.env) so user shells never inherit them', () => {
     const result = buildLocalTmuxEnv('/opt/homebrew/bin:/usr/bin:/bin', {
       HOME: '/Users/alice',
       USER: 'alice',
@@ -243,27 +243,32 @@ describe('buildLocalTmuxEnv', () => {
       PATH: '/usr/bin:/bin',
       LANG: 'zh_CN.UTF-8',
       SSH_AUTH_SOCK: '/tmp/agent.sock',
-      // 以下均为 tmex 注入，必须被剔除
+      // 以下均为 vibeterm 注入，必须被剔除
       NODE_ENV: 'production',
-      DATABASE_URL: '/Library/Application Support/tmex/data/tmex.db',
+      DATABASE_URL: '/Library/Application Support/vibeterm/data/vibeterm.db',
       GATEWAY_PORT: '9883',
       FE_PORT: '8085',
       VIBETERM_MASTER_KEY: 'super-secret-key',
-      VIBETERM_FE_DIST_DIR: '/Library/Application Support/tmex/resources/fe-dist',
-      VIBETERM_MIGRATIONS_DIR: '/Library/Application Support/tmex/resources/drizzle',
+      VIBETERM_FE_DIST_DIR: '/Library/Application Support/vibeterm/resources/fe-dist',
+      VIBETERM_MIGRATIONS_DIR: '/Library/Application Support/vibeterm/resources/drizzle',
       VIBETERM_BIND_HOST: '0.0.0.0',
       VIBETERM_TMUX_TERM_PROGRAM: 'ghostty',
+      // 原地升级的旧 app.env 仍是 TMEX_ 前缀，同样必须被剔除
+      TMEX_MASTER_KEY: 'legacy-secret-key',
+      TMEX_BIND_HOST: '0.0.0.0',
     });
 
-    // tmex 注入键一个都不剩
+    // 注入键一个都不剩（新旧两种前缀）
     for (const key of Object.keys(result)) {
       expect(key.startsWith('VIBETERM_')).toBe(false);
+      expect(key.startsWith('TMEX_')).toBe(false);
     }
     expect(result.NODE_ENV).toBeUndefined();
     expect(result.DATABASE_URL).toBeUndefined();
     expect(result.GATEWAY_PORT).toBeUndefined();
     expect(result.FE_PORT).toBeUndefined();
     expect(result.VIBETERM_MASTER_KEY).toBeUndefined();
+    expect(result.TMEX_MASTER_KEY).toBeUndefined();
 
     // 用户终端需要的键完整保留
     expect(result).toEqual({
@@ -303,7 +308,7 @@ describe('buildLocalTmuxEnv', () => {
         '/usr/bin:/bin',
         {
           Path: '/user-owned/path',
-          tmex_user_owned: 'preserved',
+          vibeterm_user_owned: 'preserved',
           node_env: 'development',
         },
         'linux'
@@ -311,7 +316,7 @@ describe('buildLocalTmuxEnv', () => {
     ).toEqual({
       Path: '/user-owned/path',
       PATH: '/usr/bin:/bin',
-      tmex_user_owned: 'preserved',
+      vibeterm_user_owned: 'preserved',
       node_env: 'development',
       LC_ALL: 'C.UTF-8',
     });

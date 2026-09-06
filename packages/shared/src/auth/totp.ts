@@ -5,6 +5,7 @@ import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 import { concatBytes, u32ToLe } from './encoding';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const TOTP_SALT_PREFIX = 'tmex-totp';
 export const TOTP_DEFAULT_STEP = 30;
 export const TOTP_DEFAULT_DIGITS = 6;

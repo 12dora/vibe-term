@@ -132,16 +132,19 @@ export class UninstallController {
 
   private async spawnUninstall(installDir: string, serviceName: string | null): Promise<void> {
     const cliDir = resolveInstalledCliDir(installDir);
-    const cliEntry = join(cliDir, 'bin', 'tmex.js');
-    if (!existsSync(cliEntry)) {
-      throw new Error(`installed CLI not found at ${cliEntry}`);
+    // 改名前装的 CLI 只有 bin/tmex.js。
+    const binName = ['vibeterm.js', 'tmex.js'].find((name) =>
+      existsSync(join(cliDir, 'bin', name))
+    );
+    if (!binName) {
+      throw new Error(`installed CLI not found at ${join(cliDir, 'bin')}`);
     }
     const id = this.deps.randomId?.() ?? randomBytes(8).toString('hex');
-    const dest = join(this.deps.tmpdir?.() ?? osTmpdir(), `tmex-uninstall-${id}`);
+    const dest = join(this.deps.tmpdir?.() ?? osTmpdir(), `vibeterm-uninstall-${id}`);
     const copyDir =
       this.deps.copyDir ?? ((src, target) => cpSync(src, target, { recursive: true }));
     copyDir(cliDir, dest);
-    const binPath = join(dest, 'bin', 'tmex.js');
+    const binPath = join(dest, 'bin', binName);
     const args = [binPath, 'uninstall', '--yes', '--purge', '--install-dir', installDir];
     if (serviceName) {
       args.push('--service-name', serviceName);

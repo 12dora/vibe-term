@@ -29,8 +29,8 @@ async function waitState(manager: TunnelManager, state: string, timeoutMs = 2_00
 }
 
 async function setup(overrides: ConstructorParameters<typeof TunnelManager>[0] = {}) {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-'));
-  const homeDir = await mkdtemp(join(tmpdir(), 'tmex-tun-home-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-home-'));
   const spawner = new FakeSpawner();
   spawner.on((s) => argsInclude(s, '--version'), {
     stdout: 'cloudflared version 2025.8.1 (built 2025-08-01T00:00:00Z)\n',
@@ -136,7 +136,7 @@ describe('TunnelManager', () => {
     await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
     ctx.spawner.once((s) => argsInclude(s, 'create'), {
       stdout:
-        'Tunnel credentials written to /tmp/x.json\nCreated tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+        'Tunnel credentials written to /tmp/x.json\nCreated tunnel vibeterm-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
     });
     ctx.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
     ctx.spawner.on((s) => argsInclude(s, 'run'), {
@@ -148,7 +148,7 @@ describe('TunnelManager', () => {
     expect(job?.state).toBe('done');
     expect(ctx.manager.status().config.mode).toBe('named');
     expect(ctx.manager.status().config.hostname).toBe('remote.example.com');
-    expect(ctx.manager.status().config.tunnelName).toBe('tmex-remote');
+    expect(ctx.manager.status().config.tunnelName).toBe('vibeterm-remote');
     expect(ctx.manager.status().config.tunnelId).toBe('550e8400-e29b-41d4-a716-446655440000');
     await waitState(ctx.manager, 'running');
 
@@ -160,7 +160,9 @@ describe('TunnelManager', () => {
       exitCode: 1,
     });
     ctx2.spawner.on((s) => argsInclude(s, 'list'), {
-      stdout: JSON.stringify([{ id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'tmex-remote' }]),
+      stdout: JSON.stringify([
+        { id: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee', name: 'vibeterm-remote' },
+      ]),
     });
     ctx2.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
     ctx2.spawner.on((s) => argsInclude(s, 'run'), {
@@ -176,7 +178,7 @@ describe('TunnelManager', () => {
     dirs.push(ctx3.dir);
     await writeFile(join(ctx3.dir, 'cert.pem'), 'CERT', 'utf8');
     ctx3.spawner.once((s) => argsInclude(s, 'create'), {
-      stdout: 'Created tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+      stdout: 'Created tunnel vibeterm-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
     });
     ctx3.spawner.on((s) => argsInclude(s, 'dns'), {
       stderr: 'An A, AAAA, or CNAME record with that host already exists.\n',
@@ -432,7 +434,7 @@ describe('TunnelManager', () => {
     dirs.push(ctx.dir);
     await writeFile(join(ctx.dir, 'cert.pem'), 'CERT', 'utf8');
     ctx.spawner.once((s) => argsInclude(s, 'create'), {
-      stdout: 'Created tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+      stdout: 'Created tunnel vibeterm-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
     });
     ctx.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
     ctx.spawner.on((s) => argsInclude(s, 'run'), {
@@ -561,7 +563,7 @@ describe('TunnelManager', () => {
         if (url.endsWith('/access/apps') && method === 'POST') {
           return Response.json({
             success: true,
-            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'tmex' },
+            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'vibeterm' },
           });
         }
         if (url.includes('/access/apps/app-1/policies') && method === 'GET') {
@@ -571,7 +573,7 @@ describe('TunnelManager', () => {
           const body = JSON.parse(String(init?.body));
           allowPolicy = {
             id: 'pol-1',
-            name: 'tmex-allow',
+            name: 'vibeterm-allow',
             decision: 'allow',
             include: body.include,
           };
@@ -580,7 +582,7 @@ describe('TunnelManager', () => {
         if (url.endsWith('/access/apps/app-1') && method === 'GET') {
           return Response.json({
             success: true,
-            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'tmex' },
+            result: { id: 'app-1', aud: 'aud-1', domain: 'remote.example.com', name: 'vibeterm' },
           });
         }
         return Response.json(
@@ -740,7 +742,7 @@ describe('TunnelManager', () => {
         if (url.includes('/access/apps?')) {
           return Response.json({
             success: true,
-            result: [{ id: 'app-9', aud: 'aud-9', domain: 'remote.example.com', name: 'tmex' }],
+            result: [{ id: 'app-9', aud: 'aud-9', domain: 'remote.example.com', name: 'vibeterm' }],
             result_info: { page: 1, per_page: 100, total_count: 1, total_pages: 1 },
           });
         }
@@ -833,7 +835,12 @@ describe('TunnelManager', () => {
         if (url.endsWith('/access/apps/app-1') && method === 'GET') {
           return Response.json({
             success: true,
-            result: { id: 'app-1', aud: 'aud-app-1', domain: 'remote.example.com', name: 'tmex' },
+            result: {
+              id: 'app-1',
+              aud: 'aud-app-1',
+              domain: 'remote.example.com',
+              name: 'vibeterm',
+            },
           });
         }
         return Response.json(
@@ -883,7 +890,7 @@ describe('TunnelManager', () => {
           captured.domain = typeof body.domain === 'string' ? body.domain : null;
           return Response.json({
             success: true,
-            result: { id: 'app-h', aud: 'aud-h', domain: body.domain, name: 'tmex' },
+            result: { id: 'app-h', aud: 'aud-h', domain: body.domain, name: 'vibeterm' },
           });
         }
         if (url.includes('/policies') && method === 'GET') {
@@ -892,7 +899,7 @@ describe('TunnelManager', () => {
         if (url.includes('/policies') && method === 'POST') {
           allowPolicy = {
             id: 'pol-h',
-            name: 'tmex-allow',
+            name: 'vibeterm-allow',
             decision: 'allow',
             include: body.include,
           };
@@ -901,7 +908,7 @@ describe('TunnelManager', () => {
         if (url.endsWith('/access/apps/app-h') && method === 'GET') {
           return Response.json({
             success: true,
-            result: { id: 'app-h', aud: 'aud-h', domain: captured.domain, name: 'tmex' },
+            result: { id: 'app-h', aud: 'aud-h', domain: captured.domain, name: 'vibeterm' },
           });
         }
         return Response.json(
@@ -1529,7 +1536,7 @@ describe('TunnelManager', () => {
     expect(existsSync(join(ctx.dir, 'cert.pem'))).toBe(false);
     expect(ctx.manager.status().auth.loggedIn).toBe(true);
     ctx.spawner.once((s) => argsInclude(s, 'create'), {
-      stdout: 'Created tunnel tmex-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
+      stdout: 'Created tunnel vibeterm-remote with id 550e8400-e29b-41d4-a716-446655440000\n',
     });
     ctx.spawner.on((s) => argsInclude(s, 'dns'), { stdout: 'ok\n' });
     ctx.spawner.on((s) => argsInclude(s, 'run'), {
@@ -1622,7 +1629,7 @@ describe('TunnelManager', () => {
   test('adopt_external accepts a token-mode tunnel discovered via escaped log + sibling hostname', async () => {
     const inner = JSON.stringify({
       ingress: [
-        { hostname: 'tmex.example.org', originRequest: {}, service: 'http://127.0.0.1:19883' },
+        { hostname: 'vibeterm.example.org', originRequest: {}, service: 'http://127.0.0.1:19883' },
         { service: 'http_status:404' },
       ],
       'warp-routing': { enabled: false },
@@ -1638,13 +1645,13 @@ describe('TunnelManager', () => {
       loginEnforced: () => false,
       externalDetectDeps: {
         listProcesses: async () =>
-          '1 cloudflared tunnel --logfile /tmp/cf.log --token-file /tmp/tmex-cf/token run\n',
+          '1 cloudflared tunnel --logfile /tmp/cf.log --token-file /tmp/vibeterm-cf/token run\n',
         readFile: async (path) => {
-          if (path === '/tmp/tmex-cf/token') {
+          if (path === '/tmp/vibeterm-cf/token') {
             return Buffer.from(JSON.stringify({ a: 'a', t: 'tid', s: 's' })).toString('base64');
           }
-          if (path === '/tmp/tmex-cf/hostname') return 'tmex.example.org\n';
-          if (path === '/tmp/tmex-cf/tunnel-id') return 'tid\n';
+          if (path === '/tmp/vibeterm-cf/hostname') return 'vibeterm.example.org\n';
+          if (path === '/tmp/vibeterm-cf/tunnel-id') return 'tid\n';
           if (path === '/tmp/cf.log') return `${escapedLog}\n`;
           return null;
         },
@@ -1656,13 +1663,13 @@ describe('TunnelManager', () => {
     dirs.push(ctx.dir);
     const adopt = await ctx.manager.handleAction({
       action: 'adopt_external',
-      hostname: 'tmex.example.org',
+      hostname: 'vibeterm.example.org',
     });
     expect(adopt.httpStatus).toBe(200);
     const status = ctx.manager.status();
     expect(status.config.externallyManaged).toBe(true);
-    expect(status.config.hostname).toBe('tmex.example.org');
-    expect(status.external.hostnames).toEqual(['tmex.example.org']);
+    expect(status.config.hostname).toBe('vibeterm.example.org');
+    expect(status.external.hostnames).toEqual(['vibeterm.example.org']);
   });
 
   test('start warms external detection without throwing on unsupported platform', async () => {

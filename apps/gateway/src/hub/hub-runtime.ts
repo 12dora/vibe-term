@@ -10,6 +10,12 @@ import {
   verifyNodeCertificate,
 } from '@vibeterm/shared/auth';
 import {
+  FORCE_KEYLOG_HEADER,
+  readHeaderPair,
+  readHeaderPairFromRecord,
+  setHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
+import {
   type LinkSession,
   type LinkStream,
   type ServerSocketAdapter,
@@ -595,9 +601,8 @@ export class HubRuntime {
     const url = `http://hub${msg.path ?? '/'}`;
     const headers = new Headers();
     if (msg.headers?.['content-type']) headers.set('content-type', msg.headers['content-type']);
-    if (msg.headers?.['x-tmex-force-keylog']) {
-      headers.set('x-tmex-force-keylog', msg.headers['x-tmex-force-keylog']);
-    }
+    const forceKeylog = readHeaderPairFromRecord(msg.headers, FORCE_KEYLOG_HEADER);
+    if (forceKeylog) setHeaderPair(headers, FORCE_KEYLOG_HEADER, forceKeylog);
     const req = new Request(url, {
       method: msg.method ?? 'POST',
       headers,
@@ -652,7 +657,7 @@ export class HubRuntime {
       inspectHubAuthRecordCompat(this.userStore, bytes, userId, {
         localNodeId: this.config.nodeId ?? this.config.hubNodeId,
       }),
-      req.headers.get('x-tmex-force-keylog') === '1'
+      readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1'
     );
     if (!compat.ok) {
       return json({ code: compat.code, minVersion: compat.minVersion, nodes: compat.nodes }, 409);

@@ -31,9 +31,11 @@ const SSH_BASE_OPTS = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectT
 // 用 SSH_ASKPASS 非交互地回答密码/passphrase 提示（OpenSSH 8.4+ 的 SSH_ASKPASS_REQUIRE=force）。
 // 临时 askpass 脚本本身不含密钥，密钥经环境变量传入；脚本 0700，用后清理。
 function setupAskpass(secret: string): { env: Record<string, string>; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rsync-ap-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rsync-ap-'));
   const scriptPath = join(dir, 'askpass.sh');
-  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$VIBETERM_RSYNC_SECRET"\n', { mode: 0o700 });
+  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$VIBETERM_RSYNC_SECRET"\n', {
+    mode: 0o700,
+  });
   chmodSync(scriptPath, 0o700);
   return {
     env: {
@@ -54,7 +56,7 @@ function setupAskpass(secret: string): { env: Record<string, string>; cleanup: (
 }
 
 function writeTempKey(privateKey: string): { keyPath: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rsync-key-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rsync-key-'));
   const keyPath = join(dir, 'id');
   writeFileSync(keyPath, privateKey, { mode: 0o600 });
   chmodSync(keyPath, 0o600);

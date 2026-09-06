@@ -17,8 +17,8 @@ describe('parseNodePrefix', () => {
 
   test('对 nodeId 做 decodeURIComponent，非 /n/ 前缀返回 null', () => {
     expect(parseNodePrefix('/n/self%3D/ws')).toEqual({ nodeId: 'self=', rest: '/ws' });
-    expect(parseNodePrefix('/n/aa%3Btmex_s_self/api')).toEqual({
-      nodeId: 'aa;tmex_s_self',
+    expect(parseNodePrefix('/n/aa%3Bvibeterm_s_self/api')).toEqual({
+      nodeId: 'aa;vibeterm_s_self',
       rest: '/api',
     });
     expect(parseNodePrefix('/api/devices')).toBeNull();

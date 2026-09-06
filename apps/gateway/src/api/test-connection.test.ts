@@ -28,7 +28,7 @@ function createLocalDevice(): Device {
     name: 'local-device',
     type: 'local',
     authMode: 'auto',
-    session: 'tmex',
+    session: 'vibeterm',
     sortOrder: 0,
     createdAt: now,
     updatedAt: now,

@@ -5,7 +5,7 @@
 
 export type PromptNode = string | number | boolean | null | undefined | PromptNode[];
 
-export const Fragment = Symbol.for('tmex.prompt.jsx.Fragment');
+export const Fragment = Symbol.for('vibeterm.prompt.jsx.Fragment');
 
 function collect(node: PromptNode, out: string[]): void {
   if (node === null || node === undefined || node === false || node === true) {

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  CLIENT_SOURCE_HEADER,
   CLIENT_SOURCE_LOCAL,
-  X_VIBETERM_CLIENT_SOURCE,
   isPeerRequest,
   isTrustedLocalClient,
   waivesPasskeySecondFactor,
@@ -189,7 +189,7 @@ describe('waivesPasskeySecondFactor', () => {
     const req = makeReq({
       via: ENTRY,
       ip: `peer:${ENTRY}`,
-      headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
     });
     expect(isPeerRequest(req)).toBe(true);
     expect(isTrustedLocalClient(req)).toBe(false);
@@ -204,7 +204,7 @@ describe('waivesPasskeySecondFactor', () => {
   test('direct request with header and public ip is not waived', () => {
     const req = makeReq({
       ip: '203.0.113.10',
-      headers: { [X_VIBETERM_CLIENT_SOURCE]: CLIENT_SOURCE_LOCAL },
+      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
     });
     expect(isPeerRequest(req)).toBe(false);
     expect(waivesPasskeySecondFactor(req)).toBe(false);

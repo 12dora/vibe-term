@@ -18,6 +18,7 @@
     "./uplink": "./src/uplink/codec.ts",
     "./messaging": "./src/messaging/index.ts",
     "./http": "./src/http/read-body.ts",
+    "./http/mesh-headers": "./src/http/mesh-headers.ts",
     "./net": "./src/net/index.ts",
     "./process": "./src/process/process-identity.ts"
   },

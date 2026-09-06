@@ -86,7 +86,7 @@ async function handleCreateDevice(req: Request): Promise<Response> {
     port: body.port ?? 22,
     username: body.username,
     sshConfigRef: body.sshConfigRef,
-    session: body.session ?? 'tmex',
+    session: body.session ?? 'vibeterm',
     defaultWorkingDir: body.defaultWorkingDir?.trim() || undefined,
     authMode: body.authMode,
     passwordEnc: body.password ? await encrypt(body.password) : undefined,

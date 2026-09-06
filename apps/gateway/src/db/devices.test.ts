@@ -25,7 +25,7 @@ function makeDevice(id: string, name: string): Device {
     id,
     name,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,

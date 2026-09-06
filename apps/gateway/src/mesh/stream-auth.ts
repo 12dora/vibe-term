@@ -1,11 +1,17 @@
+import {
+  CLEAR_SHARE_HEADER,
+  SESSION_RENEWED_HEADER,
+  SET_SHARE_HEADER,
+  assignHeaderPair,
+  readHeaderPairFromRecord,
+} from '@vibeterm/shared/http/mesh-headers';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { isAuthLoginPublicPath, isShareAccessPath } from './auth-public-paths';
-import { SHARE_WS_VERIFY_MS, X_VIBETERM_SESSION_RENEWED } from './mesh-deps';
+import { SHARE_WS_VERIFY_MS } from './mesh-deps';
 import {
   type ShareAccessVerification,
-  X_VIBETERM_CLEAR_SHARE,
-  X_VIBETERM_SET_SHARE,
+  legacyShareCookieName,
   parseShareAuth,
   shareCookieName,
   shareIdOfToken,
@@ -89,7 +95,7 @@ export function verifyStreamAuth(
 
 /**
  * HTTP 流的鉴权：常规会话照旧；分享凭证只放行契约里的三个 `/api/share-access/*` 端点，
- * 并把 token 以 `tmex_sh_<peerNodeId>` cookie 合成回请求头，供分享路由读取。
+ * 并把 token 以 `vibeterm_sh_<peerNodeId>` / `tmex_sh_<peerNodeId>` cookie 合成回请求头，供分享路由读取。
  * 失效的分享凭证落在这三个端点上时降级为匿名——否则残留 cookie 会把查询、
  * 重新登录和退出一起锁死，页面再也自愈不了。
  */
@@ -108,7 +114,7 @@ export function authorizeHttpStream(
   }
   if (!verified.share) return verified;
   if (!publicShare) return { ok: false, reason: 'share_forbidden' };
-  headers.cookie = `${shareCookieName(ctx.peerNodeId)}=${verified.share.token}`;
+  headers.cookie = `${shareCookieName(ctx.peerNodeId)}=${verified.share.token}; ${legacyShareCookieName(ctx.peerNodeId)}=${verified.share.token}`;
   return verified;
 }
 
@@ -146,10 +152,10 @@ export function authResponseHeaders(
   verified: StreamAuthOk
 ): Record<string, string> {
   if (verified.renewedExpiresAt !== undefined) {
-    headers[X_VIBETERM_SESSION_RENEWED] = String(verified.renewedExpiresAt);
+    assignHeaderPair(headers, SESSION_RENEWED_HEADER, String(verified.renewedExpiresAt));
   }
-  if (verified.clearShare && !headers[X_VIBETERM_SET_SHARE]) {
-    headers[X_VIBETERM_CLEAR_SHARE] = '1';
+  if (verified.clearShare && !readHeaderPairFromRecord(headers, SET_SHARE_HEADER)) {
+    assignHeaderPair(headers, CLEAR_SHARE_HEADER, '1');
   }
   return headers;
 }

@@ -1,5 +1,9 @@
 import { describe, expect, test } from 'bun:test';
-import { GATEWAY_CAPABILITIES, GATEWAY_CAPABILITY_CANONICAL_STATE_V1, wsBorsh } from '@vibeterm/shared';
+import {
+  GATEWAY_CAPABILITIES,
+  GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
+  wsBorsh,
+} from '@vibeterm/shared';
 import { decodeCanonicalCommand, encodeCanonicalEvent } from './codec-borsh';
 
 const ZERO_16 = new Uint8Array(16);

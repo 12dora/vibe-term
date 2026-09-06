@@ -9,8 +9,8 @@ import {
   parsePeerPort,
   parseRtcPortRange,
   parseStunServers,
-  parseVibeTermRoles,
   parseUplinkPreferNearest,
+  parseVibeTermRoles,
   resolveTmuxBin,
 } from './config';
 
@@ -167,11 +167,11 @@ describe('config.tmuxBin', () => {
 
   test('Windows 使用 Windows 路径语义接受盘符与 UNC 绝对路径', () => {
     expect(
-      resolveTmuxBin({ VIBETERM_TMUX_BIN: 'C:\\Program Files\\tmex\\psmux.exe' }, 'win32', true)
-    ).toBe('C:\\Program Files\\tmex\\psmux.exe');
-    expect(resolveTmuxBin({ VIBETERM_TMUX_BIN: '\\\\server\\share\\psmux.exe' }, 'win32', true)).toBe(
-      '\\\\server\\share\\psmux.exe'
-    );
+      resolveTmuxBin({ VIBETERM_TMUX_BIN: 'C:\\Program Files\\vibeterm\\psmux.exe' }, 'win32', true)
+    ).toBe('C:\\Program Files\\vibeterm\\psmux.exe');
+    expect(
+      resolveTmuxBin({ VIBETERM_TMUX_BIN: '\\\\server\\share\\psmux.exe' }, 'win32', true)
+    ).toBe('\\\\server\\share\\psmux.exe');
   });
 
   test('managed Windows 必须由调用方提供绝对 multiplexer 路径', () => {
@@ -373,9 +373,15 @@ describe('config hub/node env', () => {
   });
 
   test('拒绝非法 VIBETERM_HUB_MODE / PRIORITY / WRITER_EPOCH', async () => {
-    await expect(loadConfigWith({ VIBETERM_HUB_MODE: 'primary' })).rejects.toThrow('VIBETERM_HUB_MODE');
-    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '-1' })).rejects.toThrow('VIBETERM_HUB_PRIORITY');
-    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '1.5' })).rejects.toThrow('VIBETERM_HUB_PRIORITY');
+    await expect(loadConfigWith({ VIBETERM_HUB_MODE: 'primary' })).rejects.toThrow(
+      'VIBETERM_HUB_MODE'
+    );
+    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '-1' })).rejects.toThrow(
+      'VIBETERM_HUB_PRIORITY'
+    );
+    await expect(loadConfigWith({ VIBETERM_HUB_PRIORITY: '1.5' })).rejects.toThrow(
+      'VIBETERM_HUB_PRIORITY'
+    );
     await expect(loadConfigWith({ VIBETERM_HUB_WRITER_EPOCH: '0' })).rejects.toThrow(
       'VIBETERM_HUB_WRITER_EPOCH'
     );
@@ -425,7 +431,9 @@ describe('config hub/node env', () => {
   });
 
   test('拒绝非法 VIBETERM_HUB_PEERS', async () => {
-    await expect(loadConfigWith({ VIBETERM_HUB_PEERS: 'not-hex' })).rejects.toThrow('VIBETERM_HUB_PEERS');
+    await expect(loadConfigWith({ VIBETERM_HUB_PEERS: 'not-hex' })).rejects.toThrow(
+      'VIBETERM_HUB_PEERS'
+    );
     await expect(loadConfigWith({ VIBETERM_HUB_PEERS: 'aa'.repeat(15) })).rejects.toThrow(
       'VIBETERM_HUB_PEERS'
     );
@@ -476,8 +484,12 @@ describe('hub auto-promote and nearest-uplink env', () => {
     expect(parseHubAutoPromoteTimeoutMs('')).toBe(600_000);
     expect(parseHubAutoPromoteTimeoutMs('1000')).toBe(1_000);
     expect(() => parseHubAutoPromoteTimeoutMs('0')).toThrow('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS');
-    expect(() => parseHubAutoPromoteTimeoutMs('-1')).toThrow('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS');
-    expect(() => parseHubAutoPromoteTimeoutMs('1.5')).toThrow('VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS');
+    expect(() => parseHubAutoPromoteTimeoutMs('-1')).toThrow(
+      'VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS'
+    );
+    expect(() => parseHubAutoPromoteTimeoutMs('1.5')).toThrow(
+      'VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS'
+    );
   });
 
   test('prefer-nearest is auto when unset and can be forced off or on', () => {

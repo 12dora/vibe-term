@@ -86,7 +86,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
         throw new Error(`SshExternalTmuxConnection only supports ssh device: ${this.deviceId}`);
       }
 
-      this.sessionName = this.device.session?.trim() || 'tmex';
+      this.sessionName = this.device.session?.trim() || 'vibeterm';
 
       await this.awaitConnectStep(generation, () => this.connectSshClient());
       await this.awaitConnectStep(generation, () => this.openCommandChannel());
@@ -368,7 +368,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
     const version = parseTmuxVersion(parsed.tmuxVersion);
     if (!isControlModeSupported(version)) {
-      const message = `remote tmux too old for tmex (control mode requires tmux >= 3.0, found ${parsed.tmuxVersion || 'unknown'})`;
+      const message = `remote tmux too old for VibeTerm (control mode requires tmux >= 3.0, found ${parsed.tmuxVersion || 'unknown'})`;
       updateDeviceRuntimeStatus(this.deviceId, {
         lastSeenAt: new Date().toISOString(),
         tmuxAvailable: false,

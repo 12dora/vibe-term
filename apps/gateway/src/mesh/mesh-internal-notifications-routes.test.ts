@@ -8,7 +8,7 @@ import {
   resetMeshNotificationRateLimit,
 } from './mesh-internal-notifications-routes';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
-import { X_VIBETERM_MESH_PEER } from './peer-request-marker';
+import { MESH_PEER_HEADER } from './peer-request-marker';
 
 type Received = { eventType: EventType; event: Omit<WebhookEvent, 'eventType' | 'timestamp'> };
 
@@ -47,7 +47,7 @@ function request(body: unknown, marker: string | null = 'node-b'): Request {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      ...(marker ? { [X_VIBETERM_MESH_PEER]: marker } : {}),
+      ...(marker ? { [MESH_PEER_HEADER.name]: marker } : {}),
     },
     body: JSON.stringify(body),
   });

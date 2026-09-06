@@ -18,7 +18,7 @@ import {
 const tempDirs: string[] = [];
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-log-rotate-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-log-rotate-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -46,7 +46,7 @@ async function readGenerations(filePath: string, generations: number): Promise<s
 describe('RotatingFileWriter', () => {
   test('writes past the cap roll over, keeps generations, and does not lose or split lines', async () => {
     const dir = await tempDir();
-    const filePath = join(dir, 'tmex.log');
+    const filePath = join(dir, 'vibeterm.log');
     const maxBytes = 4096;
     const generations = 3;
     const writer = new RotatingFileWriter({ filePath, maxBytes, generations });
@@ -157,34 +157,68 @@ describe('process log rotation config', () => {
     });
   });
 
+  test('安装目录缺省用新日志名', () => {
+    expect(
+      resolveProcessLogRotationConfig({ VIBETERM_INSTALL_DIR: '/opt/vibeterm' }, () => false)
+    ).toMatchObject({
+      stdoutPath: '/opt/vibeterm/vibeterm.log',
+      stderrPath: '/opt/vibeterm/vibeterm.err.log',
+    });
+  });
+
+  test('改名前的安装仍轮转已存在的 tmex.log / tmex.err.log', () => {
+    const legacy = new Set(['/opt/vibeterm/tmex.log', '/opt/vibeterm/tmex.err.log']);
+    expect(
+      resolveProcessLogRotationConfig({ VIBETERM_INSTALL_DIR: '/opt/vibeterm' }, (p) =>
+        legacy.has(p)
+      )
+    ).toMatchObject({
+      stdoutPath: '/opt/vibeterm/tmex.log',
+      stderrPath: '/opt/vibeterm/tmex.err.log',
+    });
+  });
+
+  test('新旧日志同时存在时用新名', () => {
+    expect(
+      resolveProcessLogRotationConfig({ VIBETERM_INSTALL_DIR: '/opt/vibeterm' }, () => true)
+    ).toMatchObject({
+      stdoutPath: '/opt/vibeterm/vibeterm.log',
+      stderrPath: '/opt/vibeterm/vibeterm.err.log',
+    });
+  });
+
   test('installs on darwin production via VIBETERM_INSTALL_DIR, skips Linux and tests', () => {
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex' },
+        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/vibeterm' },
         'darwin'
       )
     ).toBe(true);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex' },
+        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/vibeterm' },
         'linux'
       )
     ).toBe(false);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/tmex.log' },
+        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/vibeterm.log' },
         'darwin'
       )
     ).toBe(false);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/tmex.log', VIBETERM_LOG_ROTATE: '1' },
+        { NODE_ENV: 'test', VIBETERM_LOG_FILE: '/tmp/vibeterm.log', VIBETERM_LOG_ROTATE: '1' },
         'darwin'
       )
     ).toBe(true);
     expect(
       shouldInstallProcessLogRotation(
-        { NODE_ENV: 'production', VIBETERM_INSTALL_DIR: '/tmp/tmex', VIBETERM_LOG_DISABLE: '1' },
+        {
+          NODE_ENV: 'production',
+          VIBETERM_INSTALL_DIR: '/tmp/vibeterm',
+          VIBETERM_LOG_DISABLE: '1',
+        },
         'darwin'
       )
     ).toBe(false);

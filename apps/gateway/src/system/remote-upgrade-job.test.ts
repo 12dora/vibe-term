@@ -56,9 +56,9 @@ afterEach(() => {
 });
 
 function tempFile(bytes: Uint8Array): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-job-pkg-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-job-pkg-'));
   tempDirs.push(dir);
-  const path = join(dir, 'tmex-cli-9.9.9.tgz');
+  const path = join(dir, 'vibeterm-cli-9.9.9.tgz');
   writeFileSync(path, bytes);
   return path;
 }
@@ -93,7 +93,7 @@ function unreachable(): Response {
 function authed(nodeId: string): Request {
   return new Request('http://localhost/api/mesh/nodes/x/upgrade', {
     method: 'POST',
-    headers: { cookie: `tmex_s_${nodeId}=remote-sid` },
+    headers: { cookie: `vibeterm_s_${nodeId}=remote-sid` },
   });
 }
 
@@ -166,10 +166,60 @@ describe('RemoteUpgradeJob', () => {
     expect(calls[1]?.body).toEqual({ version: '9.9.9', source: 'staged', sha256 });
   });
 
+  test('按目标节点版本挑资产名：<2.0.0 用改名前的旧资产，其余用新资产', async () => {
+    const bytes = new Uint8Array([1, 2, 3, 4]);
+    const path = tempFile(bytes);
+    const sha256 = 'ab'.repeat(32);
+    const forward: AuthorizedUpgradeForward = {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.path.endsWith('/package/manifest')) return manifestAccepted();
+        if (input.rawBody) await new Response(input.rawBody).bytes();
+        if (input.method === 'PUT') {
+          return new Response(
+            JSON.stringify({ version: '9.9.9', sha256, bytes: bytes.byteLength }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response(
+          JSON.stringify({
+            state: 'downloading',
+            targetVersion: '9.9.9',
+            error: null,
+            startedAt: '2026-09-01T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      },
+    };
+
+    async function assetFor(targetCurrentVersion: string | null): Promise<string | undefined> {
+      const nodeId = targetCurrentVersion === null ? '77'.repeat(16) : '88'.repeat(16);
+      let requested: string | undefined;
+      const started = startRemoteUpgradeJob({
+        nodeId,
+        version: '9.9.9',
+        req: authed(nodeId),
+        forward,
+        targetCurrentVersion,
+        download: async (_version, _signal, _onProgress, assetName) => {
+          requested = assetName;
+          return signed({ path, sha256, bytes: bytes.byteLength });
+        },
+      });
+      expect(started.ok).toBe(true);
+      await waitForRemoteUpgradeJob(nodeId);
+      return requested;
+    }
+
+    expect(await assetFor('1.1.40')).toBe('tmex-cli-9.9.9.tgz');
+    expect(await assetFor(null)).toBe('tmex-cli-9.9.9.tgz');
+    expect(await assetFor('2.0.0')).toBe('vibeterm-cli-9.9.9.tgz');
+  });
+
   test('two nodes share one download', async () => {
     const a = '11'.repeat(16);
     const b = '22'.repeat(16);
-    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-share-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-share-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const tarball = new Uint8Array([9, 8, 7]);
@@ -179,7 +229,7 @@ describe('RemoteUpgradeJob', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-1.0.0.tgz\n`;
+        const body = `${hex}  vibeterm-cli-1.0.0.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       tarballHits += 1;
@@ -889,11 +939,11 @@ describe('RemoteUpgradeJob', () => {
 
   test('推包期间别的节点清扫缓存：租约钉住本任务的整包，不会被删成 ENOENT', async () => {
     const nodeId = 'de'.repeat(16);
-    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-lease-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const bytes = new Uint8Array(64).fill(3);
-    const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
+    const path = join(cacheDir, 'vibeterm-cli-9.9.9.tgz');
     writeFileSync(path, bytes);
     writeFileSync(`${path}.sha256`, `${'aa'.repeat(32)}\n`);
     const swept: string[][] = [];
@@ -927,16 +977,19 @@ describe('RemoteUpgradeJob', () => {
     // 任务收尾后租约释放，同样的清扫就能把旧包收走
     expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(false);
     const after = await sweepReleaseCache(cacheDir, { keepVersions: ['9.9.10'] });
-    expect(after.removed.sort()).toEqual(['tmex-cli-9.9.9.tgz', 'tmex-cli-9.9.9.tgz.sha256']);
+    expect(after.removed.sort()).toEqual([
+      'vibeterm-cli-9.9.9.tgz',
+      'vibeterm-cli-9.9.9.tgz.sha256',
+    ]);
   });
 
   test('任务被取消后租约同样释放', async () => {
     const nodeId = 'df'.repeat(16);
-    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-cancel-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-lease-cancel-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const bytes = new Uint8Array(64).fill(4);
-    const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
+    const path = join(cacheDir, 'vibeterm-cli-9.9.9.tgz');
     writeFileSync(path, bytes);
     let releasePush!: () => void;
     const gate = new Promise<void>((resolve) => {
@@ -984,14 +1037,14 @@ describe('RemoteUpgradeJob', () => {
 
   test('cancel during download removes the cache .part and never leaves a tarball without sidecar', async () => {
     const nodeId = 'bb'.repeat(16);
-    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-cancel-dl-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-cancel-dl-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${'ab'.repeat(32)}  tmex-cli-9.9.9.tgz\n`, { status: 200 });
+        return new Response(`${'ab'.repeat(32)}  vibeterm-cli-9.9.9.tgz\n`, { status: 200 });
       }
       const signal = init?.signal;
       const body = new ReadableStream<Uint8Array>({
@@ -1032,7 +1085,7 @@ describe('RemoteUpgradeJob', () => {
         },
       });
       expect(started.ok).toBe(true);
-      const part = join(cacheDir, 'tmex-cli-9.9.9.tgz.part');
+      const part = join(cacheDir, 'vibeterm-cli-9.9.9.tgz.part');
       for (let i = 0; i < 50 && !existsSync(part); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -1048,8 +1101,8 @@ describe('RemoteUpgradeJob', () => {
       expect(cancelled.handled).toBe(true);
       await waitForRemoteUpgradeJob(nodeId);
       expect(existsSync(part)).toBe(false);
-      expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
-      expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
+      expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'))).toBe(false);
+      expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }
@@ -1135,13 +1188,13 @@ describe('RemoteUpgradeJob', () => {
 
   test('cancel after PUT landed but before ACK DELETEs the staged package', async () => {
     const nodeId = 'ee'.repeat(16);
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-job-ack-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-ack-'));
     tempDirs.push(installDir);
     const install: InstallInfo = {
       installedViaCli: true,
       deployment: 'launchd',
       installDir,
-      serviceName: 'tmex',
+      serviceName: 'vibeterm',
       cliVersion: '1.1.0',
       bunPath: '/usr/bin/bun',
     };
@@ -1328,7 +1381,7 @@ describe('RemoteUpgradeJob', () => {
   test('cancelling a remote job does not abort a shared local download', async () => {
     const nodeId = 'b1'.repeat(16);
     const version = '3.3.3';
-    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-share-dl-'));
+    const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-share-dl-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const tarball = new Uint8Array([4, 5, 6, 7, 8]);
@@ -1337,7 +1390,7 @@ describe('RemoteUpgradeJob', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-${version}.tgz\n`;
+        const body = `${hex}  vibeterm-cli-${version}.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       const signal = init?.signal;
@@ -1371,7 +1424,7 @@ describe('RemoteUpgradeJob', () => {
     }) as typeof fetch;
     try {
       const local = downloadVerifiedRelease(version, { cacheDir });
-      const part = join(cacheDir, `tmex-cli-${version}.tgz.part`);
+      const part = join(cacheDir, `vibeterm-cli-${version}.tgz.part`);
       for (let i = 0; i < 50 && !existsSync(part); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
@@ -1398,7 +1451,7 @@ describe('RemoteUpgradeJob', () => {
       expect(cancelled.handled).toBe(true);
       const result = await local;
       expect(result.sha256).toBe(hex);
-      expect(existsSync(join(cacheDir, `tmex-cli-${version}.tgz`))).toBe(true);
+      expect(existsSync(join(cacheDir, `vibeterm-cli-${version}.tgz`))).toBe(true);
     } finally {
       globalThis.fetch = originalFetch;
     }

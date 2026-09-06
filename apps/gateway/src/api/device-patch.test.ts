@@ -16,7 +16,7 @@ function sampleDevice(overrides: Partial<Device> = {}): Device {
     port: 22,
     username: 'root',
     sshConfigRef: 'work',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     passwordEnc: 'pw-enc',
     privateKeyEnc: 'key-enc',

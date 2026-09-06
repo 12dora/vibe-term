@@ -30,7 +30,7 @@ const LONG_OUTPUT_COMMAND =
   `echo ${FIRST_MARKER}; i=1; while [ "$i" -le ${LONG_LINE_COUNT} ]; ` +
   `do echo "$i"; i=$((i+1)); done; echo ${LAST_MARKER}`;
 
-// 独立临时 socket（-L），不触碰默认 socket / 名为 tmex 的会话。
+// 独立临时 socket（-L），不触碰默认 socket / 名为 vibeterm 的会话。
 function socketArgs(socketName: string, argv: string[]): string[] {
   return argv[0] === 'tmux' ? ['tmux', '-L', socketName, ...argv.slice(1)] : argv;
 }
@@ -166,10 +166,10 @@ describe('run_command real tmux integration', () => {
   test(
     'control-mode → parser → PaneEmulator → run_command (long output, exit codes, TUI)',
     async () => {
-      const socketName = `tmex-test-runcmd-${process.pid}-${Date.now()}`;
+      const socketName = `vibeterm-test-runcmd-${process.pid}-${Date.now()}`;
       const sessionName = `runcmd-e2e-${process.pid}`;
       leftoverSocket = socketName;
-      expect(sessionName).not.toBe('tmex');
+      expect(sessionName).not.toBe('vibeterm');
 
       tmuxOn(
         socketName,
@@ -273,7 +273,7 @@ describe('run_command real tmux integration', () => {
         );
         expect(dMarkers.some((item) => item.marker.exitCode === 0)).toBe(true);
         expect(
-          dMarkers.some((item) => item.marker.params.some((param) => param.startsWith('tmex=')))
+          dMarkers.some((item) => item.marker.params.some((param) => param.startsWith('vibeterm=')))
         ).toBe(true);
 
         const falseResult = await invokeRunCommand(tools, 'false');

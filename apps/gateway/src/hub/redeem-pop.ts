@@ -1,5 +1,6 @@
 import { concatBytes, sha256 } from '@vibeterm/shared/auth';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const REDEEM_POP_DOMAIN = 'tmex/redeem-pop/v1';
 
 export function encodeRedeemPopMessage(input: {

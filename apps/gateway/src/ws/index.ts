@@ -582,7 +582,7 @@ export class WebSocketServer
     if (!ws.shareScope) agentWsHub.registerClient(ws);
 
     const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion: getDisplayVersion(),
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes: serverMaxFrameBytes,

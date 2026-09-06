@@ -151,7 +151,7 @@ function connect(dispatch: (req: Request) => Promise<Response>): Forwarder {
 function browserRequest(withSession = true): Request {
   return new Request('http://localhost/api/agent/sessions', {
     method: 'POST',
-    headers: withSession ? { cookie: `tmex_s_${NODE_Y}=${sid}` } : {},
+    headers: withSession ? { cookie: `vibeterm_s_${NODE_Y}=${sid}` } : {},
   });
 }
 
@@ -207,7 +207,7 @@ describe('远程窗格授权（真实 peer 链路）', () => {
       id: DEVICE_Y,
       name: 'remote-device',
       type: 'local',
-      session: 'tmex-test',
+      session: 'vibeterm-test',
       authMode: 'agent',
       port: 22,
       sortOrder: 0,

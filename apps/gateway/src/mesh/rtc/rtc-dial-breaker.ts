@@ -124,14 +124,16 @@ export class RtcDialBreaker {
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
     this.disableAfter =
-      opts.disableAfter ?? envInt('VIBETERM_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
+      opts.disableAfter ??
+      envInt('VIBETERM_RTC_DIAL_DISABLE_AFTER', RTC_DIAL_DISABLE_AFTER_DEFAULT, 1);
     this.forceProbeMs = opts.forceProbeMs ?? RTC_DIAL_FORCE_PROBE_MS;
     this.onDisable = opts.onDisable;
     this.onRearm = opts.onRearm;
     this.inner = new DialBreaker({
       now: this.now,
       breakerMs:
-        opts.breakerMs ?? envInt('VIBETERM_RTC_DIAL_BREAKER_MS', RTC_DIAL_BREAKER_BASE_MS_DEFAULT, 1),
+        opts.breakerMs ??
+        envInt('VIBETERM_RTC_DIAL_BREAKER_MS', RTC_DIAL_BREAKER_BASE_MS_DEFAULT, 1),
       failLimit: opts.failLimit ?? RTC_DIAL_BREAKER_FAILS,
       healthyMs: opts.healthyMs ?? RTC_DIAL_BREAKER_HEALTHY_MS,
       maxMs: opts.maxMs ?? RTC_DIAL_BREAKER_MAX_MS,

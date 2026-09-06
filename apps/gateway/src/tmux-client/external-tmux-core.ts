@@ -108,7 +108,7 @@ export abstract class ExternalTmuxConnectionCore {
   );
 
   protected device: Device | null = null;
-  protected sessionName = 'tmex';
+  protected sessionName = 'vibeterm';
   protected connected = false;
   protected manualDisconnect = false;
   protected closeNotified = false;
@@ -368,6 +368,9 @@ export abstract class ExternalTmuxConnectionCore {
     created: boolean,
     startControl: boolean
   ): Promise<void> {
+    await this.awaitConnectStep(generation, () =>
+      this.sessionCommands.renameLegacyParkingWindows()
+    );
     const serverEpoch = await this.awaitConnectStep(generation, () =>
       ensureStableServerEpoch((argv) => this.runTmuxAllowFailure(argv))
     );

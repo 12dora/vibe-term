@@ -33,7 +33,7 @@ function createDevice(id: string): Device {
     id,
     name: id,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,
@@ -43,8 +43,8 @@ function createDevice(id: string): Device {
 
 function createSettings(): SiteSettings {
   return {
-    siteName: 'tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'VibeTerm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,
     enableBrowserNotificationToast: true,
@@ -151,7 +151,7 @@ describe('PushSupervisor', () => {
       deviceId: device.id,
       session: {
         id: '$1',
-        name: 'tmex',
+        name: 'VibeTerm',
         windows: [
           {
             id: '@1',
@@ -180,7 +180,7 @@ describe('PushSupervisor', () => {
       {
         paneId: '%1',
         windowId: '@1',
-        paneUrl: 'https://tmex.example.com/devices/d1/windows/%401/panes/%251',
+        paneUrl: 'https://vibeterm.example.com/devices/d1/windows/%401/panes/%251',
       },
     ]);
 
@@ -233,7 +233,7 @@ describe('PushSupervisor', () => {
       deviceId: device.id,
       session: {
         id: '$1',
-        name: 'tmex',
+        name: 'VibeTerm',
         windows: [
           {
             id: '@1',
@@ -270,7 +270,7 @@ describe('PushSupervisor', () => {
       {
         paneId: '%1',
         windowId: '@1',
-        paneUrl: 'https://tmex.example.com/devices/d2/windows/%401/panes/%251',
+        paneUrl: 'https://vibeterm.example.com/devices/d2/windows/%401/panes/%251',
         source: 'osc777',
         title: 'Build finished',
         body: 'All 42 tests passed',

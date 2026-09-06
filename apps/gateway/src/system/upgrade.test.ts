@@ -68,7 +68,7 @@ afterEach(() => {
   else process.env.VIBETERM_RELEASE_CACHE_DIR = originalCacheDir;
   if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
   else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
-  rmSync(join(tmpdir(), 'tmex-release-cache'), { recursive: true, force: true });
+  rmSync(join(tmpdir(), 'vibeterm-release-cache'), { recursive: true, force: true });
   for (const child of liveChildren.splice(0)) {
     try {
       child.kill('SIGKILL');
@@ -98,9 +98,9 @@ function writeCompletePackage(pkg: string): void {
   mkdirSync(join(pkg, 'resources', 'gateway-drizzle'), { recursive: true });
   writeFileSync(
     join(pkg, 'package.json'),
-    `${JSON.stringify({ name: 'tmex-cli', bin: { tmex: './bin/tmex.js' } })}\n`
+    `${JSON.stringify({ name: 'vibeterm-cli', bin: { vibeterm: './bin/vibeterm.js' } })}\n`
   );
-  writeFileSync(join(pkg, 'bin', 'tmex.js'), '#!/usr/bin/env node\nconsole.log("ok");\n');
+  writeFileSync(join(pkg, 'bin', 'vibeterm.js'), '#!/usr/bin/env node\nconsole.log("ok");\n');
   writeFileSync(join(pkg, 'dist', 'cli-node.js'), 'export {}\n');
   writeFileSync(join(pkg, 'dist', 'runtime', 'server.js'), 'export {}\n');
   writeFileSync(join(pkg, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
@@ -108,7 +108,7 @@ function writeCompletePackage(pkg: string): void {
 }
 
 function packFakeCliTarball(version: string): Buffer {
-  const dir = tempDir('tmex-pack-src-');
+  const dir = tempDir('vibeterm-pack-src-');
   writeCompletePackage(join(dir, 'package'));
   const tgz = join(dir, releaseTarballName(version));
   const packed = spawnSync('tar', ['-czf', tgz, '-C', dir, 'package'], { encoding: 'utf8' });
@@ -152,7 +152,7 @@ function spawnSleepChild(): ChildProcess {
 
 describe('resolveUpgradeInstallDir', () => {
   test('walks up from current/ when install-meta sits at the parent', () => {
-    const dir = tempDir('tmex-upg-current-');
+    const dir = tempDir('vibeterm-upg-current-');
     mkdirSync(join(dir, 'current'), { recursive: true });
     writeFileSync(join(dir, 'install-meta.json'), '{"cliVersion":"1.0.0"}\n');
     expect(
@@ -160,7 +160,7 @@ describe('resolveUpgradeInstallDir', () => {
         installedViaCli: true,
         deployment: 'launchd',
         installDir: join(dir, 'current'),
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.0.0',
         bunPath: '/usr/bin/bun',
       })
@@ -170,10 +170,10 @@ describe('resolveUpgradeInstallDir', () => {
 
 describe('stageGithubRelease', () => {
   beforeEach(() => {
-    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('vibeterm-rel-cache-');
   });
 
-  test('downloads GitHub tarball, extracts npm-pack layout, returns package/bin/tmex.js', async () => {
+  test('downloads GitHub tarball, extracts npm-pack layout, returns package/bin/vibeterm.js', async () => {
     const version = '9.9.9';
     const bytes = packFakeCliTarball(version);
     const requested = stubGithubFetch(bytes, {
@@ -181,12 +181,12 @@ describe('stageGithubRelease', () => {
       body: matchingSumsBody(bytes, version),
     });
 
-    const stageDir = tempDir('tmex-upg-stage-');
+    const stageDir = tempDir('vibeterm-upg-stage-');
     const binPath = await stageGithubRelease(stageDir, version);
 
     expect(requested).toContain(releaseTarballUrl(version));
     expect(requested).toContain(releaseSha256SumsUrl(version));
-    expect(binPath).toBe(join(stageDir, 'package', 'bin', 'tmex.js'));
+    expect(binPath).toBe(join(stageDir, 'package', 'bin', 'vibeterm.js'));
     expect(existsSync(binPath)).toBe(true);
     expect(readFileSync(binPath, 'utf8')).toContain('console.log("ok")');
   });
@@ -199,15 +199,15 @@ describe('stageGithubRelease', () => {
       return new Response('nope', { status: 403 });
     }) as typeof fetch;
 
-    await expect(stageGithubRelease(tempDir('tmex-upg-stage-'), '9.9.9')).rejects.toThrow(
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-stage-'), '9.9.9')).rejects.toThrow(
       /GitHub release tarball HTTP 403/i
     );
     expect(requested).toEqual([releaseTarballUrl('9.9.9')]);
     expect(requested.every((url) => !url.includes('registry.npmjs.org'))).toBe(true);
   });
 
-  test('extract without package/bin/tmex.js throws', async () => {
-    const dir = tempDir('tmex-pack-empty-');
+  test('extract without package/bin/vibeterm.js throws', async () => {
+    const dir = tempDir('vibeterm-pack-empty-');
     writeFileSync(join(dir, 'readme.txt'), 'no cli\n');
     const tgz = join(dir, 'empty.tgz');
     const packed = spawnSync('tar', ['-czf', tgz, '-C', dir, 'readme.txt'], { encoding: 'utf8' });
@@ -218,20 +218,20 @@ describe('stageGithubRelease', () => {
 
     stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, '1.2.3') });
 
-    await expect(stageGithubRelease(tempDir('tmex-upg-stage-'), '1.2.3')).rejects.toThrow(
-      /downloaded tmex-cli binary not found/
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-stage-'), '1.2.3')).rejects.toThrow(
+      /downloaded CLI binary not found/
     );
   });
 
   test('extract missing package layout files throws and stays idle-capable', async () => {
-    const dir = tempDir('tmex-pack-partial-');
+    const dir = tempDir('vibeterm-pack-partial-');
     const pkg = join(dir, 'package');
     mkdirSync(join(pkg, 'bin'), { recursive: true });
     writeFileSync(
       join(pkg, 'package.json'),
-      `${JSON.stringify({ name: 'tmex-cli', bin: { tmex: './bin/tmex.js' } })}\n`
+      `${JSON.stringify({ name: 'vibeterm-cli', bin: { vibeterm: './bin/vibeterm.js' } })}\n`
     );
-    writeFileSync(join(pkg, 'bin', 'tmex.js'), '#!/usr/bin/env node\n');
+    writeFileSync(join(pkg, 'bin', 'vibeterm.js'), '#!/usr/bin/env node\n');
     const tgz = join(dir, releaseTarballName('1.2.3'));
     const packed = spawnSync('tar', ['-czf', tgz, '-C', dir, 'package'], { encoding: 'utf8' });
     if (packed.status !== 0) {
@@ -240,29 +240,36 @@ describe('stageGithubRelease', () => {
     const bytes = readFileSync(tgz);
     stubGithubFetch(bytes, { status: 200, body: matchingSumsBody(bytes, '1.2.3') });
 
-    await expect(stageGithubRelease(tempDir('tmex-upg-stage-'), '1.2.3')).rejects.toThrow(
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-stage-'), '1.2.3')).rejects.toThrow(
       /extracted package is missing/
     );
   });
 });
 
 describe('assertExtractedCliPackage', () => {
-  test('accepts a complete tmex-cli package', () => {
-    const root = tempDir('tmex-layout-ok-');
+  test('accepts a complete vibeterm-cli package', () => {
+    const root = tempDir('vibeterm-layout-ok-');
     writeCompletePackage(root);
     expect(() => assertExtractedCliPackage(root)).not.toThrow();
   });
 
   test('rejects wrong package name or missing bin', () => {
-    const root = tempDir('tmex-layout-name-');
+    const root = tempDir('vibeterm-layout-name-');
     writeCompletePackage(root);
     writeFileSync(
       join(root, 'package.json'),
-      `${JSON.stringify({ name: 'other', bin: { tmex: './bin/tmex.js' } })}\n`
+      `${JSON.stringify({ name: 'other', bin: { vibeterm: './bin/vibeterm.js' } })}\n`
     );
-    expect(() => assertExtractedCliPackage(root)).toThrow(/expected tmex-cli/);
+    expect(() => assertExtractedCliPackage(root)).toThrow(/expected vibeterm-cli or tmex-cli/);
 
-    writeFileSync(join(root, 'package.json'), `${JSON.stringify({ name: 'tmex-cli' })}\n`);
+    // 改名前的包名仍然接受
+    writeFileSync(
+      join(root, 'package.json'),
+      `${JSON.stringify({ name: 'tmex-cli', bin: { tmex: './bin/tmex.js' } })}\n`
+    );
+    expect(() => assertExtractedCliPackage(root)).not.toThrow();
+
+    writeFileSync(join(root, 'package.json'), `${JSON.stringify({ name: 'vibeterm-cli' })}\n`);
     expect(() => assertExtractedCliPackage(root)).toThrow(/bin entry/);
   });
 });
@@ -291,12 +298,12 @@ describe('waitForSpawnAndDetach', () => {
 
 describe('UpgradeController detached spawn', () => {
   function makeInstall(): InstallInfo {
-    const dir = tempDir('tmex-upg-install-');
+    const dir = tempDir('vibeterm-upg-install-');
     return {
       installedViaCli: true,
       deployment: 'launchd',
       installDir: dir,
-      serviceName: 'tmex',
+      serviceName: 'vibeterm',
       cliVersion: '1.1.0',
       bunPath: '/usr/bin/bun',
     };
@@ -312,7 +319,7 @@ describe('UpgradeController detached spawn', () => {
     let spawned = false;
     const controller = new UpgradeController({
       getInstallInfo: () => makeInstall(),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => {
         spawned = true;
         return child as unknown as ChildProcess;
@@ -334,7 +341,7 @@ describe('UpgradeController detached spawn', () => {
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => makeInstall(),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
 
@@ -352,7 +359,7 @@ describe('UpgradeController detached spawn', () => {
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => makeInstall(),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
     expect(controller.start('1.2.3')).toBe(true);
@@ -367,7 +374,7 @@ describe('UpgradeController detached spawn', () => {
   });
 
   test('refuses web upgrade when serviceMode is none without a live pid', async () => {
-    const dir = tempDir('tmex-upg-none-');
+    const dir = tempDir('vibeterm-upg-none-');
     writeFileSync(
       join(dir, 'install-meta.json'),
       `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
@@ -380,11 +387,11 @@ describe('UpgradeController detached spawn', () => {
         installedViaCli: true,
         deployment: 'none',
         installDir: dir,
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.1.3',
         bunPath: '/usr/bin/bun',
       }),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: (_cmd, args) => {
         spawned.push([...args]);
         return child as unknown as ChildProcess;
@@ -399,13 +406,13 @@ describe('UpgradeController detached spawn', () => {
   });
 
   test('refuses web upgrade when none-mode pid is live but foreign', async () => {
-    const dir = tempDir('tmex-upg-none-foreign-');
+    const dir = tempDir('vibeterm-upg-none-foreign-');
     writeFileSync(
       join(dir, 'install-meta.json'),
       `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
     );
     const sleeper = spawnSleepChild();
-    writeFileSync(join(dir, 'tmex.pid'), `${sleeper.pid}\n`);
+    writeFileSync(join(dir, 'vibeterm.pid'), `${sleeper.pid}\n`);
     const spawned: string[][] = [];
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => undefined;
@@ -414,11 +421,11 @@ describe('UpgradeController detached spawn', () => {
         installedViaCli: true,
         deployment: 'none',
         installDir: dir,
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.1.3',
         bunPath: '/usr/bin/bun',
       }),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: (_cmd, args) => {
         spawned.push([...args]);
         return child as unknown as ChildProcess;
@@ -427,14 +434,16 @@ describe('UpgradeController detached spawn', () => {
     expect(controller.start('1.2.3')).toBe(true);
     await settle();
     expect(controller.status().state).toBe('idle');
-    expect(controller.status().error).toMatch(/not the tmex runtime|does not belong|ownership/i);
+    expect(controller.status().error).toMatch(
+      /not the VibeTerm runtime|does not belong|ownership/i
+    );
     expect(spawned).toEqual([]);
     expect(existsSync(join(dir, 'upgrade.log'))).toBe(false);
     expect(() => process.kill(sleeper.pid as number, 0)).not.toThrow();
   });
 
   test('refuses none-mode pid whose cmdline is vim with this install server.js', async () => {
-    const dir = tempDir('tmex-upg-none-vim-');
+    const dir = tempDir('vibeterm-upg-none-vim-');
     mkdirSync(join(dir, 'current', 'runtime'), { recursive: true });
     writeFileSync(join(dir, 'current', 'runtime', 'server.js'), 'export {}\n');
     writeFileSync(
@@ -442,7 +451,7 @@ describe('UpgradeController detached spawn', () => {
       `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
     );
     const sleeper = spawnSleepChild();
-    writeFileSync(join(dir, 'tmex.pid'), `${sleeper.pid}\n`);
+    writeFileSync(join(dir, 'vibeterm.pid'), `${sleeper.pid}\n`);
     const vimCmd = `vim ${join(dir, 'current', 'runtime', 'server.js')}`;
     const spawned: string[][] = [];
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
@@ -452,11 +461,11 @@ describe('UpgradeController detached spawn', () => {
         installedViaCli: true,
         deployment: 'none',
         installDir: dir,
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.1.3',
         bunPath: '/usr/bin/bun',
       }),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       processCommandLine: () => vimCmd,
       spawn: (_cmd, args) => {
         spawned.push([...args]);
@@ -466,18 +475,20 @@ describe('UpgradeController detached spawn', () => {
     expect(controller.start('1.2.3')).toBe(true);
     await settle();
     expect(controller.status().state).toBe('idle');
-    expect(controller.status().error).toMatch(/not the tmex runtime|does not belong|ownership/i);
+    expect(controller.status().error).toMatch(
+      /not the VibeTerm runtime|does not belong|ownership/i
+    );
     expect(spawned).toEqual([]);
     expect(() => process.kill(sleeper.pid as number, 0)).not.toThrow();
   });
 
   test('passes --no-service when persisted mode is none and pid cmdline matches this install', async () => {
-    const dir = tempDir('tmex-upg-none-pid-');
+    const dir = tempDir('vibeterm-upg-none-pid-');
     writeFileSync(
       join(dir, 'install-meta.json'),
       `${JSON.stringify({ cliVersion: '1.1.3', serviceMode: 'none' })}\n`
     );
-    writeFileSync(join(dir, 'tmex.pid'), `${process.pid}\n`);
+    writeFileSync(join(dir, 'vibeterm.pid'), `${process.pid}\n`);
     const ownedCmd = `bun ${join(dir, 'current', 'runtime', 'server.js')}`;
     const spawned: string[][] = [];
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
@@ -487,11 +498,11 @@ describe('UpgradeController detached spawn', () => {
         installedViaCli: true,
         deployment: 'none',
         installDir: dir,
-        serviceName: 'tmex',
+        serviceName: 'vibeterm',
         cliVersion: '1.1.3',
         bunPath: '/usr/bin/bun',
       }),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       processCommandLine: () => ownedCmd,
       spawn: (_cmd, args) => {
         spawned.push([...args]);
@@ -509,7 +520,7 @@ describe('UpgradeController detached spawn', () => {
 
 describe('stageGithubRelease checksums', () => {
   beforeEach(() => {
-    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('tmex-rel-cache-');
+    process.env.VIBETERM_RELEASE_CACHE_DIR = tempDir('vibeterm-rel-cache-');
   });
 
   test('aborts when SHA256SUMS returns a non-404 HTTP error before extract', async () => {
@@ -521,7 +532,7 @@ describe('stageGithubRelease checksums', () => {
       if (url.includes('SHA256SUMS')) return new Response('nope', { status: 500 });
       return new Response(toResponseBody(bytes), { status: 200 });
     }) as typeof fetch;
-    await expect(stageGithubRelease(tempDir('tmex-upg-sums-500-'), version)).rejects.toThrow(
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-sums-500-'), version)).rejects.toThrow(
       /SHA256SUMS HTTP 500/
     );
   });
@@ -538,7 +549,7 @@ describe('stageGithubRelease checksums', () => {
       }
       return new Response(toResponseBody(bytes), { status: 200 });
     }) as typeof fetch;
-    const binPath = await stageGithubRelease(tempDir('tmex-upg-sums-ok-'), version);
+    const binPath = await stageGithubRelease(tempDir('vibeterm-upg-sums-ok-'), version);
     expect(existsSync(binPath)).toBe(true);
   });
 
@@ -549,7 +560,7 @@ describe('stageGithubRelease checksums', () => {
       status: 200,
       body: `${'0'.repeat(64)}  ${releaseTarballName(version)}\n`,
     });
-    await expect(stageGithubRelease(tempDir('tmex-upg-sums-bad-'), version)).rejects.toThrow(
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-sums-bad-'), version)).rejects.toThrow(
       /sha256 mismatch/i
     );
   });
@@ -558,7 +569,7 @@ describe('stageGithubRelease checksums', () => {
     const version = '1.1.4';
     const bytes = packFakeCliTarball(version);
     stubGithubFetch(bytes, { status: 404, body: 'not published' });
-    await expect(stageGithubRelease(tempDir('tmex-upg-sums-404-'), version)).rejects.toThrow(
+    await expect(stageGithubRelease(tempDir('vibeterm-upg-sums-404-'), version)).rejects.toThrow(
       /requires SHA256SUMS|Refusing to continue/i
     );
   });
@@ -567,9 +578,9 @@ describe('stageGithubRelease checksums', () => {
     const version = '1.1.0';
     const bytes = packFakeCliTarball(version);
     stubGithubFetch(bytes, { status: 404, body: 'not published' });
-    await expect(stageGithubRelease(tempDir('tmex-upg-sums-404-old-'), version)).rejects.toThrow(
-      /SHA256SUMS is missing|integrity is unverified|SHA256SUMS is required/i
-    );
+    await expect(
+      stageGithubRelease(tempDir('vibeterm-upg-sums-404-old-'), version)
+    ).rejects.toThrow(/SHA256SUMS is missing|integrity is unverified|SHA256SUMS is required/i);
   });
 
   test('aborts when SHA256SUMS has no exact tarball entry', async () => {
@@ -579,20 +590,20 @@ describe('stageGithubRelease checksums', () => {
       status: 200,
       body: `${sha256Hex(bytes)}  other-file.tgz\n`,
     });
-    await expect(stageGithubRelease(tempDir('tmex-upg-sums-noentry-'), version)).rejects.toThrow(
-      /does not list|missing an entry/
-    );
+    await expect(
+      stageGithubRelease(tempDir('vibeterm-upg-sums-noentry-'), version)
+    ).rejects.toThrow(/does not list|missing an entry/);
   });
 });
 
 describe('staged package', () => {
   function makeInstall(): InstallInfo {
-    const dir = tempDir('tmex-upg-staged-');
+    const dir = tempDir('vibeterm-upg-staged-');
     return {
       installedViaCli: true,
       deployment: 'launchd',
       installDir: dir,
-      serviceName: 'tmex',
+      serviceName: 'vibeterm',
       cliVersion: '1.1.0',
       bunPath: '/usr/bin/bun',
     };
@@ -627,13 +638,13 @@ describe('staged package', () => {
       install.installDir as string,
       'staging',
       'staged',
-      'tmex-cli-1.2.3.tgz'
+      'vibeterm-cli-1.2.3.tgz'
     );
     expect(existsSync(stagedPath)).toBe(true);
     expect(readFileSync(stagedPath)).toEqual(Buffer.from(bytes));
     const sidecar = JSON.parse(
       readFileSync(
-        join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.json'),
+        join(install.installDir as string, 'staging', 'staged', 'vibeterm-cli-1.2.3.json'),
         'utf8'
       )
     ) as { version: string; sha256: string; bytes: number };
@@ -649,8 +660,8 @@ describe('staged package', () => {
     const result = await controller.stagePackage('1.2.3', '0'.repeat(64), bytesStream(bytes));
     expect(result).toEqual({ ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz.part'))).toBe(false);
   });
 
   test('PUT over the size cap returns 413 and does not keep the part', async () => {
@@ -663,10 +674,12 @@ describe('staged package', () => {
     const result = await controller.stagePackage('1.2.3', sha256Hex(bytes), bytesStream(bytes));
     expect(result).toEqual({ ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' });
     expect(
-      existsSync(join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))
+      existsSync(join(install.installDir as string, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))
     ).toBe(false);
     expect(
-      existsSync(join(install.installDir as string, 'staging', 'staged', 'tmex-cli-1.2.3.tgz.part'))
+      existsSync(
+        join(install.installDir as string, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz.part')
+      )
     ).toBe(false);
   });
 
@@ -676,7 +689,7 @@ describe('staged package', () => {
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => install,
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
     expect(controller.start('9.9.9')).toBe(true);
@@ -766,7 +779,7 @@ describe('staged package', () => {
       if (partNames.length > 0) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
-    expect(partNames).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
+    expect(partNames).toEqual([`vibeterm-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
     release();
     expect((await pending).ok).toBe(true);
   });
@@ -816,7 +829,7 @@ describe('staged package', () => {
       install.installDir as string,
       'staging',
       'staged',
-      'tmex-cli-1.2.3.tgz'
+      'vibeterm-cli-1.2.3.tgz'
     );
     expect(existsSync(stagedPath)).toBe(true);
     await putTestManifest(controller, '1.2.3', hex);
@@ -830,7 +843,7 @@ describe('staged package', () => {
       (name) => name !== 'staged' && name !== 'release-cache'
     );
     expect(txnDirs.length).toBeGreaterThan(0);
-    const moved = join(stagingRoot, txnDirs[0] as string, 'tmex-cli-1.2.3.tgz');
+    const moved = join(stagingRoot, txnDirs[0] as string, 'vibeterm-cli-1.2.3.tgz');
     expect(existsSync(moved)).toBe(true);
     child.emit('spawn');
     await settle();
@@ -862,7 +875,7 @@ describe('staged package', () => {
     const controller = new UpgradeController({ getInstallInfo: () => install });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
-    mkdirSync(join(stagedDir, 'tmex-cli-1.2.3.json'));
+    mkdirSync(join(stagedDir, 'vibeterm-cli-1.2.3.json'));
     const bytes = packFakeCliTarball('1.2.3');
     const hex = sha256Hex(bytes);
     const result = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
@@ -881,11 +894,11 @@ describe('staged package', () => {
     });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
-    writeFileSync(join(stagedDir, 'tmex-cli-0.0.1.tgz'), 'orphan');
+    writeFileSync(join(stagedDir, 'vibeterm-cli-0.0.1.tgz'), 'orphan');
     const bytes = packFakeCliTarball('1.2.3');
     const hex = sha256Hex(bytes);
     expect((await controller.stagePackage('1.2.3', hex, bytesStream(bytes))).ok).toBe(true);
-    expect(existsSync(join(stagedDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-0.0.1.tgz'))).toBe(false);
   });
 
   test('local stageGithubRelease uses the shared staging/release-cache', async () => {
@@ -901,7 +914,12 @@ describe('staged package', () => {
       await stageGithubRelease(stageDir, version);
       expect(
         existsSync(
-          join(install.installDir as string, 'staging', 'release-cache', `tmex-cli-${version}.tgz`)
+          join(
+            install.installDir as string,
+            'staging',
+            'release-cache',
+            `vibeterm-cli-${version}.tgz`
+          )
         )
       ).toBe(true);
       expect(existsSync(join(stageDir, '.release-cache'))).toBe(false);
@@ -937,7 +955,7 @@ describe('staged package', () => {
     expect(result.ok).toBe(false);
     // 断点续传：中断只关文件，已收到的前缀留在盘上等下一次带 offset 的 PUT 接力。
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
-    expect(leftover).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
+    expect(leftover).toEqual([`vibeterm-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
     expect(statSync(join(stagedDir, leftover[0] as string)).size).toBe(32);
   });
 
@@ -975,7 +993,7 @@ describe('staged package', () => {
       bytes: bytes.byteLength,
     });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
-    expect(readFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+    expect(readFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
     expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
       ok: true,
       version: '1.2.3',
@@ -1018,8 +1036,8 @@ describe('staged package', () => {
       bytes: bytes.byteLength,
     });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
-    expect(readFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.json'))).toBe(true);
+    expect(readFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toEqual(Buffer.from(bytes));
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.json'))).toBe(true);
     expect(await controller.stagedPackageStatus('1.2.3', hex)).toEqual({
       ok: true,
       version: '1.2.3',
@@ -1066,7 +1084,7 @@ describe('staged package', () => {
     const bytes = packFakeCliTarball('1.2.3');
     const hex = sha256Hex(bytes);
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
-    const partName = `tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`;
+    const partName = `vibeterm-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`;
     await controller.stagePackage('1.2.3', hex, bytesStream(bytes.subarray(0, 16)), {
       expectedBytes: bytes.byteLength,
     });
@@ -1095,7 +1113,7 @@ describe('staged package', () => {
     });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     for (let i = 0; i < 50; i += 1) {
-      if (existsSync(join(stagedDir, `tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`))) break;
+      if (existsSync(join(stagedDir, `vibeterm-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`))) break;
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     const other = new Uint8Array([9, 9, 9]);
@@ -1117,8 +1135,8 @@ describe('staged package', () => {
     const controller = new UpgradeController({ getInstallInfo: () => install });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
-    const fresh = join(stagedDir, `tmex-cli-1.2.3.tgz.part-${'aa'.repeat(8)}`);
-    const stale = join(stagedDir, `tmex-cli-0.9.9.tgz.part-${'bb'.repeat(8)}`);
+    const fresh = join(stagedDir, `vibeterm-cli-1.2.3.tgz.part-${'aa'.repeat(8)}`);
+    const stale = join(stagedDir, `vibeterm-cli-0.9.9.tgz.part-${'bb'.repeat(8)}`);
     writeFileSync(fresh, 'fresh');
     writeFileSync(stale, 'stale');
     const old = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -1140,7 +1158,7 @@ describe('staged package', () => {
       expectedBytes: bytes.byteLength,
     });
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
-    expect(readdirSync(stagedDir)).toEqual([`tmex-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
+    expect(readdirSync(stagedDir)).toEqual([`vibeterm-cli-1.2.3.tgz.part-${hex.slice(0, 16)}`]);
     expect(await controller.removeStagedPackage('1.2.3')).toEqual({ ok: true });
     expect(readdirSync(stagedDir)).toEqual([]);
   });
@@ -1187,12 +1205,12 @@ describe('staged package', () => {
 
 describe('UpgradeController.cancel', () => {
   function makeInstall(): InstallInfo {
-    const dir = tempDir('tmex-upg-cancel-');
+    const dir = tempDir('vibeterm-upg-cancel-');
     return {
       installedViaCli: true,
       deployment: 'launchd',
       installDir: dir,
-      serviceName: 'tmex',
+      serviceName: 'vibeterm',
       cliVersion: '1.1.0',
       bunPath: '/usr/bin/bun',
     };
@@ -1237,7 +1255,7 @@ describe('UpgradeController.cancel', () => {
     child.killed = false;
     const controller = new UpgradeController({
       getInstallInfo: () => makeInstall(),
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
     expect(controller.start('1.2.3')).toBe(true);
@@ -1259,16 +1277,16 @@ describe('UpgradeController.cancel', () => {
     const installDir = install.installDir as string;
     const cacheDir = join(installDir, 'staging', 'release-cache');
     mkdirSync(cacheDir, { recursive: true });
-    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'), 'partial');
-    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz'), 'unverified');
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'keep');
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz.part'), 'partial');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz'), 'unverified');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'), 'keep');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'), `${'ab'.repeat(32)}\n`);
     let seenSignal: AbortSignal | undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => install,
       stageRelease: async (stageDir, _version, signal): Promise<string> => {
         seenSignal = signal;
-        writeFileSync(join(stageDir, 'tmex-cli-1.2.3.tgz.part'), 'partial-txn');
+        writeFileSync(join(stageDir, 'vibeterm-cli-1.2.3.tgz.part'), 'partial-txn');
         mkdirSync(join(stageDir, 'package'), { recursive: true });
         await new Promise<never>((_resolve, reject) => {
           signal?.addEventListener('abort', () => {
@@ -1292,11 +1310,11 @@ describe('UpgradeController.cancel', () => {
     expect(result.status.error).toBe('UPGRADE_CANCELLED');
     expect(seenSignal?.aborted).toBe(true);
     expect(stagingEntries(installDir)).toEqual([]);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz.part'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz'))).toBe(false);
     // 缓存只留本次目标版本：9.9.9 连同 sidecar 在 run() 开头被清扫掉。
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'))).toBe(false);
     expect(controller.status().error).toBe(UPGRADE_CANCELLED);
   }, 5_000);
 
@@ -1405,7 +1423,7 @@ describe('UpgradeController.cancel', () => {
       install.installDir as string,
       'staging',
       'staged',
-      'tmex-cli-1.2.3.tgz'
+      'vibeterm-cli-1.2.3.tgz'
     );
     expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
     for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
@@ -1436,7 +1454,7 @@ describe('UpgradeController.cancel', () => {
       stageRelease: async (stageDir) => {
         writeFileSync(join(stageDir, 'partial.tgz'), 'x');
         await gate;
-        return '/tmp/pkg/bin/tmex.js';
+        return '/tmp/pkg/bin/vibeterm.js';
       },
       spawn: () => {
         queueMicrotask(() => child.emit('spawn'));
@@ -1469,40 +1487,40 @@ describe('UpgradeController.cancel', () => {
     const installDir = install.installDir as string;
     const stagedDir = join(installDir, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
-    writeFileSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'), 'partial');
+    writeFileSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz.part-deadbeef'), 'partial');
     // 续传半成品只在超过 24 h 保留期后才清，把它的 mtime 拨老两天。
     const stale = new Date(Date.now() - 48 * 60 * 60 * 1000);
-    utimesSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'), stale, stale);
+    utimesSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz.part-deadbeef'), stale, stale);
     const txnDir = join(installDir, 'staging', 'dead-txn');
     mkdirSync(txnDir, { recursive: true });
-    writeFileSync(join(txnDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
+    writeFileSync(join(txnDir, 'vibeterm-cli-1.2.3.tgz.part'), 'x');
     const cacheDir = join(installDir, 'staging', 'release-cache');
     mkdirSync(cacheDir, { recursive: true });
     // 新鲜的 .part 可能是同进程另一个远程任务在共享下载，保留期内不碰。
-    writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
-    const stalePart = join(cacheDir, 'tmex-cli-0.0.2.tgz.part');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz.part'), 'x');
+    const stalePart = join(cacheDir, 'vibeterm-cli-0.0.2.tgz.part');
     writeFileSync(stalePart, 'x');
     utimesSync(stalePart, stale, stale);
-    writeFileSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'), 'orphan-final');
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'keep');
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'vibeterm-cli-0.0.1.tgz'), 'orphan-final');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'), 'keep');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
     writeFileSync(join(cacheDir, 'junk.txt'), 'not ours');
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => install,
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
     expect(controller.start('8.8.8')).toBe(true);
     await settle();
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz.part-deadbeef'))).toBe(false);
     expect(existsSync(txnDir)).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.2.3.tgz.part'))).toBe(true);
     expect(existsSync(stalePart)).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-0.0.1.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'))).toBe(false);
     expect(existsSync(join(cacheDir, 'junk.txt'))).toBe(false);
     child.emit('spawn');
     await settle();
@@ -1514,11 +1532,11 @@ describe('UpgradeController.cancel', () => {
     const stagedDir = join(installDir, 'staging', 'staged');
     mkdirSync(stagedDir, { recursive: true });
     writeFileSync(
-      join(stagedDir, 'tmex-cli-1.2.3.json'),
+      join(stagedDir, 'vibeterm-cli-1.2.3.json'),
       `${JSON.stringify({
         version: '1.2.3',
         sha256: 'ab'.repeat(32),
-        path: join(stagedDir, 'tmex-cli-1.2.3.tgz'),
+        path: join(stagedDir, 'vibeterm-cli-1.2.3.tgz'),
         bytes: 12,
         stagedAt: '2026-09-01T00:00:00.000Z',
       })}\n`
@@ -1527,13 +1545,13 @@ describe('UpgradeController.cancel', () => {
     child.unref = () => undefined;
     const controller = new UpgradeController({
       getInstallInfo: () => install,
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
     expect(controller.start('8.8.8')).toBe(true);
     await settle();
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.json'))).toBe(false);
-    expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.json'))).toBe(false);
+    expect(existsSync(join(stagedDir, 'vibeterm-cli-1.2.3.tgz'))).toBe(false);
     child.emit('spawn');
     await settle();
   });
@@ -1606,14 +1624,14 @@ describe('UpgradeController.cancel', () => {
     // 半截包必须留着给下一次续传，而不是当成坏包删掉。
     const stagedDir = join(install.installDir as string, 'staging', 'staged');
     const leftover = existsSync(stagedDir) ? readdirSync(stagedDir) : [];
-    expect(leftover).toEqual([`tmex-cli-1.2.3.tgz.part-${'ab'.repeat(8)}`]);
+    expect(leftover).toEqual([`vibeterm-cli-1.2.3.tgz.part-${'ab'.repeat(8)}`]);
     expect(statSync(join(stagedDir, leftover[0] as string)).size).toBeGreaterThan(0);
   }, 8_000);
 });
 
 describe('cmdlineOwnsInstallRuntime', () => {
   test('requires bun/node and an argv token equal to the runtime path', () => {
-    const dir = '/tmp/tmex-install-own';
+    const dir = '/tmp/vibeterm-install-own';
     const serverJs = join(dir, 'current', 'runtime', 'server.js');
     expect(cmdlineOwnsInstallRuntime(`bun ${serverJs}`, dir)).toBe(true);
     expect(cmdlineOwnsInstallRuntime(`/opt/homebrew/bin/node ${serverJs}`, dir)).toBe(true);

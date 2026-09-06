@@ -6,7 +6,7 @@
         "computer": "Server or computer"
       },
       "mobile": {
-        "intro": "A phone or tablet acts as a controller: it operates connected machines through the browser and does not run a terminal itself. Add tmex to the home screen for a full-screen, app-like experience.",
+        "intro": "A phone or tablet acts as a controller: it operates connected machines through the browser and does not run a terminal itself. Add VibeTerm to the home screen for a full-screen, app-like experience.",
         "platform": {
           "ios": "iOS",
           "android": "Android"
@@ -39,7 +39,7 @@
           },
           "launch": {
             "title": "Launch from the home screen",
-            "description": "Tap the tmex icon on the home screen. If sign-in is enabled, you will sign in once on first launch."
+            "description": "Tap the VibeTerm icon on the home screen. If sign-in is enabled, you will sign in once on first launch."
           }
         },
         "android": {
@@ -52,7 +52,7 @@
           },
           "launch": {
             "title": "Launch from the home screen",
-            "description": "Open tmex from the home screen or app drawer. If sign-in is enabled, you will sign in once on first launch."
+            "description": "Open VibeTerm from the home screen or app drawer. If sign-in is enabled, you will sign in once on first launch."
           }
         },
         "remoteHint": "If this address is only reachable on the local network, the phone must be on the same network. For access from anywhere, set up remote access first.",
@@ -68,12 +68,12 @@
           "hint": {
             "relay": "Relay: nodes sit behind NAT and only need a public meeting point.",
             "hub": "Hub: accounts and nodes are managed centrally.",
-            "ssh": "Direct SSH: this machine reaches the new machine over SSH; tmex is not installed."
+            "ssh": "Direct SSH: this machine reaches the new machine over SSH; VibeTerm is not installed."
           },
           "tip": {
             "relay": "A relay only forwards encrypted traffic and holds no accounts or keys. It suits machines behind NAT or a firewall.",
             "hub": "The Hub is the trust center for accounts and node membership, and needs a fixed public HTTPS address.",
-            "ssh": "The new machine does not run tmex. This machine connects over SSH and it appears in the device list."
+            "ssh": "The new machine does not run VibeTerm. This machine connects over SSH and it appears in the device list."
           }
         },
         "side": {
@@ -87,10 +87,10 @@
           }
         },
         "install": {
-          "title": "Install tmex",
+          "title": "Install VibeTerm",
           "description": "Run the install script on the new machine. Linux needs tmux 3.0 or later.",
           "command": "Install command",
-          "pathHint": "If the tmex command is not found, reopen the terminal or run:"
+          "pathHint": "If the vibeterm command is not found, reopen the terminal or run:"
         },
         "join": {
           "uplink": {
@@ -162,7 +162,7 @@
           },
           "invite": {
             "title": "Connect the new machine",
-            "description": "Install tmex on the new machine, then follow the \"Join an existing relay\" steps.",
+            "description": "Install VibeTerm on the new machine, then follow the \"Join an existing relay\" steps.",
             "blocked": "The tenant ID is available once the previous step is done.",
             "gotoJoin": "See the join steps"
           }
@@ -192,13 +192,13 @@
           },
           "invite": {
             "title": "Connect the new machine",
-            "description": "Install tmex on the new machine, then follow the \"Join an existing Hub\" steps.",
+            "description": "Install VibeTerm on the new machine, then follow the \"Join an existing Hub\" steps.",
             "ready": "This machine is the Hub. Switch to \"Join an existing Hub\" to continue.",
             "gotoJoin": "See the join steps"
           }
         },
         "ssh": {
-          "description": "This machine connects to the new machine over SSH; tmex is not installed there.",
+          "description": "This machine connects to the new machine over SSH; VibeTerm is not installed there.",
           "title": "Add an SSH device",
           "stepDescription": "In the device dialog set the type to SSH, then enter the host address and sign-in method.",
           "button": "Add device",
@@ -209,7 +209,7 @@
     "settings": {
       "siteSettings": "Site Settings",
       "siteName": "Site Name",
-      "siteNamePlaceholder": "tmex",
+      "siteNamePlaceholder": "VibeTerm",
       "siteUrl": "Site URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
@@ -300,10 +300,10 @@
       "remoteAccess": {
         "title": "Remote access",
         "wizardTitle": "Setup",
-        "description": "Reach this machine's tmex remotely over Cloudflare Tunnel or a direct connection.",
+        "description": "Reach this machine's VibeTerm remotely over Cloudflare Tunnel or a direct connection.",
         "remoteNodeNotice": "Remote access can only be configured on the node your browser connects to directly. Switch to that node first.",
         "loginRequired": "Sign in before configuring remote access.",
-        "loadFailed": "Couldn't load the remote access status. Make sure the tmex gateway is still running and reload the page.",
+        "loadFailed": "Couldn't load the remote access status. Make sure the VibeTerm gateway is still running and reload the page.",
         "unsupported": "No cloudflared build is available for this platform ({{platform}}), so Cloudflare Tunnel can't be used here.",
         "modeLabel": "Mode",
         "publicUrl": "Public URL",
@@ -347,7 +347,7 @@
         "path": {
           "tunnel": {
             "title": "Cloudflare Tunnel",
-            "description": "No public IP or port forwarding needed; tmex manages cloudflared."
+            "description": "No public IP or port forwarding needed; VibeTerm manages cloudflared."
           },
           "direct": {
             "title": "Direct connection",
@@ -366,15 +366,15 @@
             },
             "unprotected": {
               "title": "No access protection configured",
-              "description": "Anyone with the address can use the tmex on this machine. With sign-in protection on, access requires signing in."
+              "description": "Anyone with the address can use the VibeTerm on this machine. With sign-in protection on, access requires signing in."
             },
             "unknown": {
               "title": "Can't confirm the protection state",
-              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade tmex and try again."
+              "description": "This gateway did not report its local sign-in state, usually because it is out of date. Upgrade VibeTerm and try again."
             }
           },
           "entryLabel": "Current entry",
-          "entryHint": "The address tmex is reached at. When exposing it, point the public entry at port {{port}} on this machine, or at a reverse proxy.",
+          "entryHint": "The address VibeTerm is reached at. When exposing it, point the public entry at port {{port}} on this machine, or at a reverse proxy.",
           "tls": {
             "hint": "Enable HTTPS: plain HTTP puts passwords and session credentials on the wire.",
             "link": "Set up HTTPS in node settings"
@@ -392,7 +392,7 @@
               "password": "The password needs at least 8 characters.",
               "confirm": "The two passwords don't match."
             },
-            "warning": "Once on, reaching tmex requires signing in, and every open session has to sign in again.",
+            "warning": "Once on, reaching VibeTerm requires signing in, and every open session has to sign in again.",
             "acknowledge": "I understand every open session will have to sign in again",
             "action": "Turn on local sign-in"
           },
@@ -407,7 +407,7 @@
             "malformed": "The request was malformed. Reload the page and try again.",
             "unknown": "That didn't work. Try again in a moment."
           },
-          "caveat": "Note: access protection only makes reaching tmex require a sign-in. Keep your other defenses in place."
+          "caveat": "Note: access protection only makes reaching VibeTerm require a sign-in. Keep your other defenses in place."
         },
         "actions": {
           "start": "Start",
@@ -438,16 +438,16 @@
         "steps": {
           "path": {
             "title": "Connection method",
-            "description": "Choose how to reach this machine's tmex remotely."
+            "description": "Choose how to reach this machine's VibeTerm remotely."
           },
           "install": {
             "title": "Install cloudflared",
-            "description": "Downloads cloudflared into the tmex data directory, leaving any existing install alone.",
+            "description": "Downloads cloudflared into the VibeTerm data directory, leaving any existing install alone.",
             "version": "Version",
             "path": "Path",
             "source": "Source",
             "sourceValue": {
-              "managed": "Managed by tmex",
+              "managed": "Managed by VibeTerm",
               "system": "Found on PATH"
             },
             "skipped": "cloudflared comes from the system service; no second install needed."
@@ -470,17 +470,17 @@
             "title": "Named tunnel",
             "description": "Uses a domain you already host on Cloudflare, so the public URL never changes.",
             "login": {
-              "description": "Pick the domain to authorize on the Cloudflare page that opens, then come back here — tmex continues on its own.",
+              "description": "Pick the domain to authorize on the Cloudflare page that opens, then come back here — VibeTerm continues on its own.",
               "waiting": "Waiting for you to finish authorizing on Cloudflare",
               "done": "Cloudflare authorization complete."
             },
             "hostname": "Hostname",
-            "hostnamePlaceholder": "tmex.example.com",
+            "hostnamePlaceholder": "vibeterm.example.com",
             "hostnameHint": "A subdomain hosted on Cloudflare.",
-            "hostnameInvalid": "Enter a lowercase hostname such as tmex.example.com.",
+            "hostnameInvalid": "Enter a lowercase hostname such as vibeterm.example.com.",
             "tunnelName": "Tunnel name",
-            "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "Optional (tmex generates one). Lowercase letters, digits, hyphens and underscores only.",
+            "tunnelNamePlaceholder": "vibeterm",
+            "tunnelNameHint": "Optional (VibeTerm generates one). Lowercase letters, digits, hyphens and underscores only.",
             "hubHint": "This machine is a Hub: set the Hub's public URL to this hostname so other nodes can connect through the tunnel.",
             "hubHintLink": "Open multi-node settings",
             "tunnelId": "Tunnel ID",
@@ -490,16 +490,16 @@
           },
           "proxy": {
             "title": "Reverse proxy trust",
-            "description": "The tunnel rewrites the client address and protocol on every request, so tmex needs matching trust settings.",
+            "description": "The tunnel rewrites the client address and protocol on every request, so VibeTerm needs matching trust settings.",
             "trustProxy": "Trust reverse proxy headers",
-            "trustProxyHint": "Turn this on only if the tunnel is the only way to reach tmex.",
-            "autoStart": "Start with tmex",
+            "trustProxyHint": "Turn this on only if the tunnel is the only way to reach VibeTerm.",
+            "autoStart": "Start with VibeTerm",
             "autoStartHint": "Bring the tunnel up whenever the gateway starts.",
-            "restartRequired": "Saved. Restart tmex to apply.",
+            "restartRequired": "Saved. Restart VibeTerm to apply.",
             "restartNow": "Restart now",
-            "restarting": "Restarting tmex",
-            "restartTimeout": "Timed out waiting for the restart. Restart tmex manually, then reload this page.",
-            "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Requests that bypass the tunnel could forge these headers, so block external access to that port.",
+            "restarting": "Restarting VibeTerm",
+            "restartTimeout": "Timed out waiting for the restart. Restart VibeTerm manually, then reload this page.",
+            "trustProxyDetail": "When on, VibeTerm trusts X-Forwarded-Proto and X-Forwarded-For. Requests that bypass the tunnel could forge these headers, so block external access to that port.",
             "trustProxyEffective": "In effect now",
             "trustProxyState": {
               "on": "Trusted",
@@ -508,8 +508,8 @@
           },
           "login": {
             "title": "Sign in to Cloudflare",
-            "description": "Authorize tmex to create tunnels and DNS records. The credentials stay on this machine.",
-            "skipped": "The tunnel is run by a system service, so there's nothing to sign in to from tmex."
+            "description": "Authorize VibeTerm to create tunnels and DNS records. The credentials stay on this machine.",
+            "skipped": "The tunnel is run by a system service, so there's nothing to sign in to from VibeTerm."
           },
           "hostname": {
             "title": "Hostname",
@@ -557,7 +557,7 @@
           "download_failed": "Downloading cloudflared failed. Check that this machine can reach github.com, then try again.",
           "not_logged_in": "Cloudflare authorization isn't complete. Go back to \"Sign in to Cloudflare\" and finish it.",
           "login_timeout": "The Cloudflare authorization timed out. Start the sign-in again and pick a domain on the page that opens.",
-          "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as tmex.example.com.",
+          "invalid_hostname": "That hostname isn't valid. Use a lowercase name such as vibeterm.example.com.",
           "tunnel_exists": "A tunnel with this name already exists in Cloudflare. Pick another name, or delete the existing one.",
           "dns_route_failed": "Adding the DNS record failed. Confirm the domain is hosted in the same Cloudflare account and no conflicting record exists.",
           "process_failed": "cloudflared didn't start. Expand the cloudflared log to see why.",
@@ -566,12 +566,12 @@
           "not_configured": "Remote access isn't configured yet. Pick a method in the setup below.",
           "invalid_request": "The request was rejected as invalid; this page may be out of date. Reload and try again.",
           "unknown": "Operation failed: {{message}}",
-          "auth_required": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into tmex.",
+          "auth_required": "Sign-in isn't enabled on this machine. Enable it before going public, or anyone could walk straight into VibeTerm.",
           "access_api_failed": "The Cloudflare API call failed: {{message}}. Check the API token's permissions and the account ID, then try again.",
-          "exposure_ack_required": "This exposes tmex to the public internet. Confirm the risk first."
+          "exposure_ack_required": "This exposes VibeTerm to the public internet. Confirm the risk first."
         },
         "authRequired": {
-          "notice": "Warning: sign-in is not enabled. Enable it before going public, or anyone can access tmex.",
+          "notice": "Warning: sign-in is not enabled. Enable it before going public, or anyone can access VibeTerm.",
           "link": "Open multi-node settings"
         },
         "confirmRemove": {
@@ -596,8 +596,8 @@
           "hint": "Choose how access is protected.",
           "none": {
             "title": "None",
-            "description": "No access protection: anyone with the address can use the tmex on this machine.",
-            "warning": "No access protection: anyone with the address can use the tmex on this machine.",
+            "description": "No access protection: anyone with the address can use the VibeTerm on this machine.",
+            "warning": "No access protection: anyone with the address can use the VibeTerm on this machine.",
             "appRemains": "The Access app has not been removed. You can remove it here."
           },
           "login": {
@@ -610,14 +610,14 @@
           }
         },
         "externallyManaged": "Run by a system service",
-        "externallyManagedNotice": "A system service runs this tunnel. tmex only shows its state and can't start or stop it. Release it first to hand the tunnel back to tmex.",
+        "externallyManagedNotice": "A system service runs this tunnel. VibeTerm only shows its state and can't start or stop it. Release it first to hand the tunnel back to VibeTerm.",
         "exposure": {
-          "warning": "No access protection is configured: anyone with the tunnel URL can use tmex. Enable sign-in (multi-node), or configure Access and turn on token verification.",
-          "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use tmex.",
-          "acknowledge": "I understand the risk and want to expose tmex publicly",
-          "ackRequired": "This exposes tmex to the public internet. Tick the confirmation to continue.",
+          "warning": "No access protection is configured: anyone with the tunnel URL can use VibeTerm. Enable sign-in (multi-node), or configure Access and turn on token verification.",
+          "warningShort": "Nothing is protecting this machine right now: anyone with the tunnel URL can use VibeTerm.",
+          "acknowledge": "I understand the risk and want to expose VibeTerm publicly",
+          "ackRequired": "This exposes VibeTerm to the public internet. Tick the confirmation to continue.",
           "enableLogin": "Enable sign-in (multi-node)",
-          "dropWarning": "Warning: the tunnel keeps running — once this is removed, anyone can use tmex."
+          "dropWarning": "Warning: the tunnel keeps running — once this is removed, anyone can use VibeTerm."
         },
         "access": {
           "tag": {
@@ -658,17 +658,17 @@
           },
           "sync": {
             "action": "Sync from Cloudflare",
-            "hint": "Credentials are saved, but tmex has no Access application on record. If you already created one for {{hostname}} in the Cloudflare dashboard, sync it in first to avoid a duplicate."
+            "hint": "Credentials are saved, but VibeTerm has no Access application on record. If one already exists for {{hostname}} in the Cloudflare dashboard, sync it in first to avoid a duplicate."
           },
           "probe": {
-            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and tmex will check again.",
-            "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. tmex doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under tmex.",
+            "unknown": "Can't check Cloudflare Access for {{hostname}}: no usable credentials, or the lookup failed. This does not mean Access is unconfigured. Save an API token and account ID below and VibeTerm will check again.",
+            "covered": "Read-only check: an Access application in the Cloudflare dashboard already covers {{hostname}}. VibeTerm doesn't manage it and the gateway won't verify the tokens it issues — use \"Sync from Cloudflare\" to bring it under VibeTerm.",
             "absent": "Read-only check: no Access application in Cloudflare covers {{hostname}}. Add the allowed users below and apply to create one.",
             "teamDomain": "Team domain: {{teamDomain}}",
-            "needCredentials": "To manage it from tmex and verify tokens at the gateway, save a Cloudflare API token and account ID below first."
+            "needCredentials": "To manage it from VibeTerm and verify tokens at the gateway, save a Cloudflare API token and account ID below first."
           },
           "app": {
-            "title": "Access application (managed by tmex)",
+            "title": "Access application (managed by VibeTerm)",
             "appId": "Application ID",
             "aud": "AUD",
             "hostname": "Covered hostname",
@@ -689,7 +689,7 @@
         },
         "external": {
           "title": "Existing Cloudflare Tunnel detected",
-          "description": "This machine already runs a tunnel outside tmex's management. Let tmex adopt it, or ignore it and create a new one.",
+          "description": "This machine already runs a tunnel outside VibeTerm's management. Let VibeTerm adopt it, or ignore it and create a new one.",
           "source": "Detected from",
           "sourceValue": {
             "launchd": "launchd service",
@@ -709,7 +709,7 @@
             "absent": "No Access application covers this hostname",
             "unknown": "Can't check — no usable credentials"
           },
-          "noHostname": "Its configuration has no hostname pointing at this tmex (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let tmex create its own tunnel.",
+          "noHostname": "Its configuration has no hostname pointing at this VibeTerm (127.0.0.1:{{port}}), so it can't be adopted. Check its ingress rules, or let VibeTerm create its own tunnel.",
           "chooseHostname": "Choose the hostname to adopt",
           "adopt": "Adopt the existing tunnel",
           "adoptHint": "Adopting sets this hostname as the public address and shows the tunnel's state and access control here.",
@@ -950,7 +950,7 @@
         "stateExecuting": "Applying the upgrade, the service is restarting…",
         "interruptNotice": "The connection will drop while the service restarts; it will recover shortly.",
         "checkFailed": "Failed to check for updates",
-        "terminalHint": "Or upgrade from a terminal: tmex upgrade"
+        "terminalHint": "Or upgrade from a terminal: vibeterm upgrade"
       }
     },
     "messaging": {
@@ -1094,15 +1094,15 @@
       "deviceConnectionError": "🔴 {{siteName}}: Connection error on device \"{{deviceName}}\" ({{host}}) [{{category}}]\n{{error}}",
       "agentCredentialWarning": "⚠️ {{siteName}}: A message in agent session \"{{sessionTitle}}\" appears to contain credentials ({{types}}). It will be sent to the LLM and stored — risk of leakage.",
       "authSuccess": "✅ Authorized. You will now receive notifications.",
-      "authPending": "⏳ Authorization request received. Please approve in tmex settings.",
+      "authPending": "⏳ Authorization request received. Please approve in VibeTerm settings.",
       "authFailed": "❌ Authorization request failed. Please contact administrator.",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
-      "approveMessageTemplate": "✅ Authorized via tmex.\nBot: {{botName}}\nTime: {{time}}",
+      "approveMessageTemplate": "✅ Authorized via VibeTerm.\nBot: {{botName}}\nTime: {{time}}",
       "botNotRunning": "Bot is not running or unavailable"
     },
     "weixin": {
       "title": "WeChat (ClawBot) Management",
-      "subtitle": "Push tmex alerts to your personal WeChat via the iLink bot protocol.",
+      "subtitle": "Push VibeTerm alerts to a personal WeChat via the iLink bot protocol.",
       "replyOnlyNotice": "iLink can only reply inside an active conversation window — message the bot first to activate; alerts then reuse that session. If it goes quiet too long the session expires; message the bot again to re-activate.",
       "accountName": "Account Name",
       "accountNamePlaceholder": "e.g., my-wechat",
@@ -1142,15 +1142,15 @@
       "accountNotRunning": "Account is not logged in or not running",
       "userNotFound": "User not found",
       "testMessageTemplate": "🧪 Test Message\nSite: {{siteName}}\nTime: {{time}}",
-      "approveMessageTemplate": "✅ Authorized via tmex.\nAccount: {{accountName}}\nTime: {{time}}",
-      "keepalivePrompt": "【tmex】To keep notifications flowing, just reply with anything to keep the session alive 🙏",
+      "approveMessageTemplate": "✅ Authorized via VibeTerm.\nAccount: {{accountName}}\nTime: {{time}}",
+      "keepalivePrompt": "【VibeTerm】Reply with anything to keep the notification connection alive 🙏",
       "scanConfirmedSendHint": "Scan confirmed! Now send any message to this bot in WeChat to finish binding.",
       "bindingInProgress": "Message received, finishing binding…",
       "bindSuccess": "WeChat bound. You will now receive notifications.",
       "bound": "Bound",
       "unbound": "Not bound",
       "bindAction": "Bind (scan)",
-      "gatewayOnline": "🟢 tmex online @ {{siteName}}"
+      "gatewayOnline": "🟢 VibeTerm online @ {{siteName}}"
     },
     "webhook": {
       "title": "Webhooks",
@@ -1432,7 +1432,7 @@
           "descriptionRelay": "Sessions keep working through the relay. It can be installed again at any time."
         },
         "directNeedsInstall": "Install the add-on first.",
-        "directRestartRequired": "Restart tmex to apply this change.",
+        "directRestartRequired": "Restart VibeTerm to apply this change.",
         "directFailed": "Could not update the direct connection add-on.",
         "directErrorUnsupported": "This platform has no direct connection add-on.",
         "directErrorDownloadFailed": "Could not download the add-on.",
@@ -1440,7 +1440,7 @@
         "directErrorDetail": "{{base}} ({{detail}})",
         "restartNow": "Restart now",
         "restarting": "Restarting…",
-        "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "domainAccess": {
           "label": "Allow Domain Access",
           "description": "When off, web and API access from the public internet is refused; LAN, local and node-mesh traffic is unaffected. Public domains: {{hosts}}",
@@ -1449,8 +1449,8 @@
           "failed": "Could not save the domain access setting ({{detail}}).",
           "confirm": {
             "title": "Turn off domain access?",
-            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening tmex over a LAN IP or localhost.",
-            "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure tmex opens over a LAN IP or localhost first.",
+            "description": "The web UI and API on {{hosts}} stop responding right away; only hub and node traffic keeps working. Turning it back on requires opening VibeTerm over a LAN IP or localhost.",
+            "viaDomain": "This page is served over that domain and will disconnect immediately. Make sure VibeTerm opens over a LAN IP or localhost first.",
             "confirm": "Turn Off",
             "cancel": "Cancel"
           }
@@ -1467,8 +1467,8 @@
         "changeHub": "Change hub",
         "confirm": "Leave and restart",
         "cancel": "Cancel",
-        "consequencesNode": "After leaving, all mesh state on this machine is removed, tmex restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
-        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, tmex restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
+        "consequencesNode": "After leaving, all mesh state on this machine is removed, VibeTerm restarts and the current session ends. This machine is revoked on the hub automatically before leaving.",
+        "consequencesHub": "This machine is the hub. Leaving removes all of its mesh state, VibeTerm restarts and the current session ends. Every node loses its hub and has to join another hub to come back.",
         "leaveConfirm": {
           "title": "Leave the hub?",
           "description": "This machine goes back to running standalone."
@@ -1485,7 +1485,7 @@
         "leaving": "Leaving…",
         "restarting": "Restarting… ({{seconds}}s)",
         "restarted": "Restarted. Returning to settings…",
-        "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "reload": "Reload page",
         "checkAgain": "Check again",
         "revokeFailed": "Could not revoke this machine on the old hub ({{error}}). Leaving anyway — revoke it from the old hub's node list later.",
@@ -1505,8 +1505,8 @@
           "webGone": "After the restart this machine serves no web UI; the relay is managed from the command line.",
           "restore": "To get the web UI back, run this on the machine to set it up as relay and node again."
         },
-        "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, tmex restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
-        "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, tmex restarts and the current session ends."
+        "consequencesRelayKeepService": "This machine's node identity and mesh state are deleted, VibeTerm restarts and the current session ends. The relay service, its tenants and the operator log are kept.",
+        "consequencesRelayReset": "The relay service, its tenants and the operator log are erased and cannot be recovered. This machine's node identity and mesh state are deleted as well, VibeTerm restarts and the current session ends."
       },
       "https": {
         "title": "HTTPS settings",
@@ -1519,10 +1519,10 @@
         "renewStarted": "Renewal started",
         "loginRequired": "Sign in to view the HTTPS settings.",
         "loadFailed": "Could not load the HTTPS settings.",
-        "restartRequired": "Restart tmex to apply this change.",
+        "restartRequired": "Restart VibeTerm to apply this change.",
         "restartNow": "Restart now",
         "restarting": "Restarting…",
-        "restartTimeout": "tmex did not come back. Start it manually, then reload this page.",
+        "restartTimeout": "VibeTerm did not come back. Start it manually, then reload this page.",
         "status": {
           "access": "Access",
           "publicUrl": "Public Address",
@@ -1579,10 +1579,10 @@
           "none": "No certificate yet."
         },
         "external": {
-          "intro": "tmex keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
+          "intro": "VibeTerm keeps serving plain HTTP and the proxy in front handles TLS. Point the proxy at the plain port and let it forward the original host, protocol and client address.",
           "trustProxy": "Trust proxy headers",
-          "trustProxyHint": "Turn this on only if tmex can be reached through the proxy alone.",
-          "trustProxyDetail": "When on, tmex trusts X-Forwarded-Proto and X-Forwarded-For. Direct connections could forge these headers, so block external access to that port."
+          "trustProxyHint": "Turn this on only if VibeTerm can be reached through the proxy alone.",
+          "trustProxyDetail": "When on, VibeTerm trusts X-Forwarded-Proto and X-Forwarded-For. Direct connections could forge these headers, so block external access to that port."
         },
         "selfsigned": {
           "intro": "For a LAN or tunnel with no public domain. The private certificate authority (CA) is kept on this machine, and certificates are valid for 398 days.",
@@ -1598,10 +1598,10 @@
           "renew": "Reissue certificate",
           "guide": {
             "title": "Install the CA on your devices",
-            "intro": "Download tmex-ca.crt, then follow the steps for your platform. Check the fingerprint above after installing.",
+            "intro": "Download vibeterm-ca.crt, then follow the steps for your platform. Check the fingerprint above after installing.",
             "macos": {
               "title": "macOS",
-              "steps": "Double-click tmex-ca.crt to open Keychain Access, put it in the System keychain, then open the entry and set \"When using this certificate\" to \"Always Trust\"."
+              "steps": "Double-click vibeterm-ca.crt to open Keychain Access, put it in the System keychain, then open the entry and set \"When using this certificate\" to \"Always Trust\"."
             },
             "ios": {
               "title": "iOS / iPadOS",
@@ -1609,7 +1609,7 @@
             },
             "windows": {
               "title": "Windows",
-              "steps": "Run certmgr.msc, go to Trusted Root Certification Authorities → Certificates → All Tasks → Import and pick tmex-ca.crt. Firefox keeps its own store, so import it there as well."
+              "steps": "Run certmgr.msc, go to Trusted Root Certification Authorities → Certificates → All Tasks → Import and pick vibeterm-ca.crt. Firefox keeps its own store, so import it there as well."
             },
             "android": {
               "title": "Android",
@@ -1617,7 +1617,7 @@
             },
             "linux": {
               "title": "Linux",
-              "steps": "Copy the file to /usr/local/share/ca-certificates/tmex-ca.crt and run sudo update-ca-certificates (Debian/Ubuntu), or to /etc/pki/ca-trust/source/anchors/ and run sudo update-ca-trust (Fedora/RHEL)."
+              "steps": "Copy the file to /usr/local/share/ca-certificates/vibeterm-ca.crt and run sudo update-ca-certificates (Debian/Ubuntu), or to /etc/pki/ca-trust/source/anchors/ and run sudo update-ca-trust (Fedora/RHEL)."
             }
           }
         },
@@ -1740,7 +1740,7 @@
         "domainAccessHosts": "Public domains: {{hosts}}",
         "disableTitle": "Turn off domain access?",
         "disableText": "The configured public domain will stop serving the web UI and API, keeping only Hub and mesh traffic.",
-        "disableSelfWarning": "tmex is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
+        "disableSelfWarning": "VibeTerm is currently being accessed through this domain; this page will disconnect immediately. Make sure a LAN IP or localhost still works.",
         "disableConfirm": "Turn Off",
         "renameUnavailable": "The current Hub is not accepting writes; renaming is unavailable.",
         "renameFailed": "Rename failed: {{error}}",
@@ -1758,11 +1758,11 @@
         "upgradeWithSelf": "Upgrade ({{count}}, incl. this machine)",
         "upgradeSelfNotice": "This machine is upgraded last; the service restarts and this page drops briefly.",
         "revoke": "Remove Nodes",
-        "uninstall": "Uninstall tmex"
+        "uninstall": "Uninstall VibeTerm"
       },
       "uninstall": {
-        "confirmTitle": "Uninstall tmex",
-        "confirmText": "The tmex service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
+        "confirmTitle": "Uninstall VibeTerm",
+        "confirmText": "The VibeTerm service, program and data on the node are deleted, then the node is removed from the mesh. This cannot be undone.",
         "targets": "Will be uninstalled ({{count}})",
         "skipped": "Skipped ({{count}})",
         "noTargets": "None of the selected nodes can be uninstalled remotely.",
@@ -1789,7 +1789,7 @@
         "errors": {
           "loginRequired": "Sign in to that node first.",
           "unreachable": "That node cannot be reached.",
-          "notAllowed": "That node was not deployed by the tmex installer and cannot be uninstalled remotely.",
+          "notAllowed": "That node was not deployed by the VibeTerm installer and cannot be uninstalled remotely.",
           "unsupported": "That node runs a version without remote uninstall.",
           "selfBlocked": "This machine cannot be uninstalled.",
           "upgradeInProgress": "That node is upgrading. Try again later.",
@@ -1860,7 +1860,7 @@
         "nodeGone": "The node has been removed from the network.",
         "inProgress": "An upgrade is already running on this node.",
         "notAllowed": "This node's install cannot update itself (no service manager, or it runs in a container). Upgrade it manually.",
-        "unsupported": "This node is too old for remote upgrades. Run npx tmex-cli upgrade on that machine.",
+        "unsupported": "This node is too old for remote upgrades. Run vibeterm upgrade on that machine.",
         "releaseUnavailable": "The latest version could not be resolved.",
         "linkLost": "The link to this node dropped and retries did not finish. Try again later.",
         "pushFailed": "Failed to push the upgrade package. Try again later.",
@@ -1869,7 +1869,7 @@
         "startFailed": "The node did not start the install. Try again later.",
         "timeout": "The result is unconfirmed. Refresh the node list and check the version.",
         "atLatest": "Already on the latest version.",
-        "tooOld": "This node ({{version}}) is too old for remote upgrades. Run npx tmex-cli upgrade on that machine.",
+        "tooOld": "This node ({{version}}) is too old for remote upgrades. Run vibeterm upgrade on that machine.",
         "allNone": "No node needs an upgrade.",
         "allBusy": "An upgrade is already running. Wait for it to finish before upgrading all.",
         "confirmAll_one": "Upgrade {{count}} node to {{version}}? The node restarts and its sessions drop.",
@@ -1961,7 +1961,7 @@
       "setup": {
         "title": "Set up this machine",
         "intro": "This machine is not connected to any other yet. Choose how to set it up.",
-        "introDetail": "Whichever you pick, the configuration is saved and tmex restarts once.",
+        "introDetail": "Whichever you pick, the configuration is saved and VibeTerm restarts once.",
         "path": {
           "becomeHub": {
             "title": "Make this the hub",
@@ -1982,26 +1982,26 @@
         },
         "becomeHub": {
           "title": "Make this the hub",
-          "description": "Creates the first account here, then restarts tmex as the hub."
+          "description": "Creates the first account here, then restarts VibeTerm as the hub."
         },
         "joinHub": {
           "title": "Join an existing hub",
-          "description": "Registers this machine with the hub, then restarts tmex as a node.",
-          "passwordDescription": "Register this machine with the Hub using its address and the account password, then restart tmex as a node.",
+          "description": "Registers this machine with the hub, then restarts VibeTerm as a node.",
+          "passwordDescription": "Register this machine with the Hub using its address and the account password, then restart VibeTerm as a node.",
           "useToken": "Use a join token instead",
           "usePassword": "Use a password instead"
         },
         "fields": {
           "hubPublicUrl": "Public hub address",
-          "hubPublicUrlHint": "An externally reachable https address, for example https://tmex.example.com. Every node that joins must be able to reach it.",
+          "hubPublicUrlHint": "An externally reachable https address, for example https://vibeterm.example.com. Every node that joins must be able to reach it.",
           "username": "Username",
           "usernameHint": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "password": "Password",
           "passwordHint": "At least 8 characters. It cannot be reset from the server, so store it safely.",
           "confirmPassword": "Confirm password",
           "hubUrl": "Hub address",
-          "hubUrlHint": "The hub's https address, for example https://tmex.example.com.",
-          "urlPlaceholder": "https://tmex.example.com",
+          "hubUrlHint": "The hub's https address, for example https://vibeterm.example.com.",
+          "urlPlaceholder": "https://vibeterm.example.com",
           "token": "Join code",
           "tokenHint": "Create it on the hub, on its Nodes page. It is valid for 10 minutes — paste the whole code.",
           "tokenPlaceholder": "Paste the join code from the hub",
@@ -2045,7 +2045,7 @@
         "precheck": {
           "button": "Test address",
           "reachableSelf": "Reachable, and it is this machine. The address is ready to use.",
-          "reachableOther": "Reachable (HTTP {{status}}), but a different tmex answered. Check the address.",
+          "reachableOther": "Reachable (HTTP {{status}}), but a different VibeTerm answered. Check the address.",
           "unreachable": "Not reachable: {{error}}",
           "httpsHint": "Set up HTTPS on the Nodes tab, or put a reverse proxy or Cloudflare Tunnel in front of this machine."
         },
@@ -2058,8 +2058,8 @@
         },
         "result": {
           "title": "Setup complete",
-          "becomeHubDescription": "The account is created and tmex is restarting as the hub.",
-          "joinDescription": "This machine joined the hub and tmex is restarting.",
+          "becomeHubDescription": "The account is created and VibeTerm is restarting as the hub.",
+          "joinDescription": "This machine joined the hub and VibeTerm is restarting.",
           "fingerprint": "Account fingerprint",
           "hubPublicUrl": "Public hub address",
           "hubUrl": "Hub address",
@@ -2070,25 +2070,25 @@
             "skipped": "skipped",
             "failed": "failed ({{error}}) — traffic goes through the hub; you can retry later"
           },
-          "relayDescription": "The relay is configured and tmex is restarting. The web UI is gone after the restart.",
-          "relayNodeDescription": "The relay is configured and tmex is restarting as relay and node.",
+          "relayDescription": "The relay is configured and VibeTerm is restarting. The web UI is gone after the restart.",
+          "relayNodeDescription": "The relay is configured and VibeTerm is restarting as relay and node.",
           "relayPublicUrl": "Relay Public Address",
           "relayPassword": "Relay Password",
           "relayWebGone": "The web UI is about to become unavailable. Manage the relay from a terminal on this machine:",
-          "relayJoinDescription": "This machine joined the relay; tmex is restarting.",
+          "relayJoinDescription": "This machine joined the relay; VibeTerm is restarting.",
           "relayUrl": "Relay address",
           "tenantId": "Tenant ID"
         },
         "restart": {
-          "waiting": "Waiting for tmex to come back… {{seconds}}s",
-          "restarted": "tmex is back. Taking you to the sign-in page.",
-          "timeout": "tmex did not come back within 60 seconds. Start it manually, then reload this page:"
+          "waiting": "Waiting for VibeTerm to come back… {{seconds}}s",
+          "restarted": "VibeTerm is back. Taking you to the sign-in page.",
+          "timeout": "VibeTerm did not come back within 60 seconds. Start it manually, then reload this page:"
         },
         "toast": {
-          "hubCreated": "Hub created — tmex is restarting",
-          "joined": "Joined the hub — tmex is restarting",
-          "relayCreated": "Relay configured, tmex is restarting",
-          "relayJoined": "Joined the relay; tmex is restarting"
+          "hubCreated": "Hub created — VibeTerm is restarting",
+          "joined": "Joined the hub — VibeTerm is restarting",
+          "relayCreated": "Relay configured, VibeTerm is restarting",
+          "relayJoined": "Joined the relay; VibeTerm is restarting"
         },
         "errors": {
           "not_standalone": "This machine is already set up.",
@@ -2133,7 +2133,7 @@
         },
         "becomeRelay": {
           "title": "Use This Machine as the Relay",
-          "description": "Set the relay public address and password, then restart tmex as a relay.",
+          "description": "Set the relay public address and password, then restart VibeTerm as a relay.",
           "pureNotice": "A relay-only machine serves no web UI after the restart and is managed from the command line."
         },
         "password": {
@@ -2148,7 +2148,7 @@
         },
         "joinRelay": {
           "title": "Join an existing relay",
-          "description": "Join an existing tenant with the relay address, tenant ID and account password, then restart tmex as a node.",
+          "description": "Join an existing tenant with the relay address, tenant ID and account password, then restart VibeTerm as a node.",
           "advanced": "Advanced options",
           "hideAdvanced": "Hide advanced options"
         },

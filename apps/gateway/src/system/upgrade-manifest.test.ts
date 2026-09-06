@@ -32,13 +32,13 @@ afterEach(() => {
 });
 
 function tempInstall(): InstallInfo {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-manifest-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-manifest-'));
   tempDirs.push(dir);
   return {
     installedViaCli: true,
     deployment: 'launchd',
     installDir: dir,
-    serviceName: 'tmex',
+    serviceName: 'vibeterm',
     cliVersion: '1.1.0',
     bunPath: '/usr/bin/bun',
   };
@@ -162,7 +162,7 @@ describe('stagePackage against a manifest', () => {
     await controller.putPackageManifest('1.1.39', signedSumsFor('1.1.39', 'ab'.repeat(32)));
     const result = await controller.stagePackage('1.1.39', sha256Hex(bytes), bytesStream(bytes));
     expect(result).toEqual({ ok: false, status: 409, code: 'UPGRADE_MANIFEST_MISMATCH' });
-    expect(existsSync(join(stagedDirOf(install), 'tmex-cli-1.1.39.tgz'))).toBe(false);
+    expect(existsSync(join(stagedDirOf(install), 'vibeterm-cli-1.1.39.tgz'))).toBe(false);
   });
 
   test('bytes matching the manifest stage normally', async () => {
@@ -252,7 +252,7 @@ describe('远程发起的升级要过签名下限', () => {
     child.unref = () => undefined;
     return new UpgradeController({
       getInstallInfo: () => install,
-      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      stageRelease: async () => '/tmp/pkg/bin/vibeterm.js',
       spawn: () => child as unknown as ChildProcess,
     });
   }
@@ -295,7 +295,7 @@ describe('暂存包过期后重试', () => {
       ...(stub
         ? {
             spawn: () => child as unknown as ChildProcess,
-            extractPackage: async () => '/tmp/pkg/bin/tmex.js',
+            extractPackage: async () => '/tmp/pkg/bin/vibeterm.js',
           }
         : {}),
     });

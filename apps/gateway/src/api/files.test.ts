@@ -225,7 +225,7 @@ describe('files bulk hooks', () => {
   });
 
   test('openDownload streams the prepared temp file and cleans up on end', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('hello'));
     const session = createDownloadSession({
@@ -312,7 +312,7 @@ describe('HTTP transfer uid binding', () => {
       spyOn(deviceStorage, 'pullFileFromDevice').mockResolvedValue({
         ok: true,
         data: {
-          tmpPath: '/tmp/tmex-dl-fake',
+          tmpPath: '/tmp/vibeterm-dl-fake',
           size: 4,
           name: 'a.bin',
           mime: 'application/octet-stream',
@@ -395,7 +395,7 @@ describe('transfer uid cleanup', () => {
   }
 
   async function prepareOwnedDownload(uid: string, payload: string): Promise<string> {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from(payload));
     spies.push(
@@ -434,7 +434,7 @@ describe('transfer uid cleanup', () => {
   }
 
   function expectReusedDownloadHasNoUid(transferId: string) {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('x'));
     const naked = createDownloadSession({
@@ -589,7 +589,7 @@ describe('GET /api/files/browse', () => {
   });
 
   test('lists local subdirectories of a temp dir', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'tmex-browse-http-'));
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-browse-http-'));
     sandboxDirs.push(root);
     mkdirSync(join(root, 'sub'));
     writeFileSync(join(root, 'file.txt'), 'x');

@@ -1,3 +1,4 @@
+import { RELAY_ADMIN_TOKEN_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import type { RelayConfigStore } from './relay-config-store';
 import { constantTimeEqual, generateRelayAdminToken, sha256Hex } from './relay-password';
 
@@ -25,7 +26,7 @@ function bearerToken(req: Request): string | null {
     const match = /^Bearer\s+(.+)$/i.exec(header.trim());
     if (match?.[1]) return match[1].trim();
   }
-  const direct = req.headers.get('x-tmex-relay-admin-token');
+  const direct = readHeaderPair(req.headers, RELAY_ADMIN_TOKEN_HEADER);
   return direct?.trim() || null;
 }
 

@@ -5,6 +5,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import {
   type ReleaseSignatureCode,
   ReleaseSignatureError,
@@ -34,14 +35,29 @@ const MANIFEST_SUFFIX = '.manifest.json';
 /** SHA256SUMS 原文 + 签名行的上限：正常只有几百字节，超出必是塞垃圾。 */
 export const MANIFEST_MAX_BYTES = 64 * 1024;
 
-export function stagedManifestPath(stagedDir: string, version: string): string {
-  return join(stagedDir, `tmex-cli-${version}${MANIFEST_SUFFIX}`);
+/** 清单名由整包名派生（去掉 `.tgz`），不再各自硬编码前缀。 */
+function manifestName(tarballName: string): string {
+  return `${tarballName.replace(/\.tgz$/, '')}${MANIFEST_SUFFIX}`;
 }
 
-/** `tmex-cli-<ver>.manifest.json` → 版本号；其它文件名返回 null。 */
+export function stagedManifestPath(stagedDir: string, version: string): string {
+  return join(stagedDir, manifestName(releaseTarballName(version)));
+}
+
+/** 改名前留在暂存目录里的清单路径。 */
+export function legacyStagedManifestPath(stagedDir: string, version: string): string {
+  return join(stagedDir, manifestName(legacyReleaseTarballName(version)));
+}
+
+/** 清单名的前缀：改名前暂存的清单也要认出来，否则孤儿清理会当成陌生文件留着。 */
+const MANIFEST_PREFIXES = ['vibeterm-cli-', 'tmex-cli-'];
+
+/** `<pkg>-cli-<ver>.manifest.json` → 版本号；其它文件名返回 null。 */
 export function stagedManifestVersion(name: string): string | null {
-  if (!name.startsWith('tmex-cli-') || !name.endsWith(MANIFEST_SUFFIX)) return null;
-  const version = name.slice('tmex-cli-'.length, -MANIFEST_SUFFIX.length);
+  if (!name.endsWith(MANIFEST_SUFFIX)) return null;
+  const prefix = MANIFEST_PREFIXES.find((p) => name.startsWith(p));
+  if (!prefix) return null;
+  const version = name.slice(prefix.length, -MANIFEST_SUFFIX.length);
   return version.length > 0 ? version : null;
 }
 
@@ -124,7 +140,12 @@ export function stagedManifestExpired(
 }
 
 export async function removeStagedManifest(stagedDir: string, version: string): Promise<void> {
-  await rm(stagedManifestPath(stagedDir, version), { force: true }).catch(() => {});
+  for (const path of [
+    stagedManifestPath(stagedDir, version),
+    legacyStagedManifestPath(stagedDir, version),
+  ]) {
+    await rm(path, { force: true }).catch(() => {});
+  }
 }
 
 /**

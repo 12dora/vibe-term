@@ -40,7 +40,7 @@ describe('WebSocketServer client diagnostics', () => {
         return frame.length;
       },
     });
-    const clientImpl = `tmex-fe-${'x'.repeat(100)}`;
+    const clientImpl = `vibeterm-fe-${'x'.repeat(100)}`;
     const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
       clientImpl,
       clientVersion: '1.1.23',
@@ -357,7 +357,7 @@ describe('WebSocketServer tmux select guards', () => {
       deviceId: 'device-a',
       session: {
         id: '$1',
-        name: 'tmex',
+        name: 'VibeTerm',
         windows: [
           {
             id: '@1',
@@ -572,7 +572,7 @@ describe('WebSocketServer bell extension', () => {
         deviceId: 'device-a',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: [
             {
               id: '@1',
@@ -649,7 +649,7 @@ describe('WebSocketServer bell extension', () => {
         deviceId: 'device-a',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: [
             {
               id: '@1',
@@ -756,7 +756,7 @@ describe('WebSocketServer 自定义名与设备树顺序（canonical metadata）
       deviceId: 'device-a',
       session: {
         id: '$1',
-        name: 'tmex',
+        name: 'VibeTerm',
         windows: windowIds.map((id, index) => ({
           id,
           name: `win-${index}`,
@@ -1099,7 +1099,7 @@ describe('WebSocketServer site theme propagation', () => {
         deviceId: 'device-a',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: [
             {
               id: '@1',
@@ -1162,7 +1162,7 @@ describe('WebSocketServer site theme propagation', () => {
         deviceId: 'device-a',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: [
             {
               id: '@1',
@@ -1206,7 +1206,7 @@ describe('WebSocketServer site theme propagation', () => {
         deviceId: 'device-a',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: [
             {
               id: '@1',
@@ -1286,7 +1286,7 @@ describe('WebSocketServer resize × theme dedup', () => {
         deviceId,
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'VibeTerm',
           windows: windows ?? [
             {
               id: '@1',

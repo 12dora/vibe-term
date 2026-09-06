@@ -13,7 +13,8 @@ import { activeStagingDirs, isPartClaimed } from './receiver';
 
 /** 只认本模块自己造的名字：`<目标名>.part-<16 位十六进制>`。 */
 const PART_NAME = /\.part-[0-9a-f]{16}$/;
-const STAGING_NAME = /^tmex-rx-[0-9A-Za-z]{6,32}$/;
+// 新旧两种前缀都要认，否则升级后旧的暂存目录永远不会被清
+const STAGING_NAME = /^(?:vibeterm|tmex)-rx-[0-9A-Za-z]{6,32}$/;
 
 const MAX_SWEEP_DIRS = 2000;
 const MAX_SWEEP_DEPTH = 6;

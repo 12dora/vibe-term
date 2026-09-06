@@ -47,8 +47,8 @@ describe('tunnel_config migration', () => {
       expect(store.get().accessMode).toBeNull();
       const saved = store.save({
         mode: 'named',
-        hostname: 'tmex.example.com',
-        tunnelName: 'tmex-tmex',
+        hostname: 'vibeterm.example.com',
+        tunnelName: 'vibeterm-remote',
         tunnelId: '550e8400-e29b-41d4-a716-446655440000',
         autoStart: true,
         externallyManaged: true,
@@ -59,8 +59,8 @@ describe('tunnel_config migration', () => {
       expect(saved.accessMode).toBe('login');
       expect(store.get()).toMatchObject({
         mode: 'named',
-        hostname: 'tmex.example.com',
-        tunnelName: 'tmex-tmex',
+        hostname: 'vibeterm.example.com',
+        tunnelName: 'vibeterm-remote',
         autoStart: true,
         externallyManaged: true,
         exposureAcknowledgedAt: '2026-08-30T00:00:00.000Z',
@@ -100,7 +100,7 @@ describe('tunnel_config migration', () => {
     for (const name of names) applyMigration(sqlite, name);
     sqlite.run(
       `INSERT INTO tunnel_config (id, mode, hostname, tunnel_name, tunnel_id, auto_start, externally_managed, exposure_acknowledged_at, updated_at)
-       VALUES ('default', 'named', 'tmex.example.com', 'tmex', 'tid', 0, 0, null, '2026-09-01T00:00:00.000Z')`
+       VALUES ('default', 'named', 'vibeterm.example.com', 'vibeterm-remote', 'tid', 0, 0, null, '2026-09-01T00:00:00.000Z')`
     );
     applyMigration(sqlite, ACCESS_MODE_MIGRATION);
     const cols = sqlite.query('PRAGMA table_info(tunnel_config)').all() as Array<{

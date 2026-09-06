@@ -11,7 +11,7 @@ export const devices = sqliteTable(
     port: integer('port').default(22),
     username: text('username'),
     sshConfigRef: text('ssh_config_ref'),
-    session: text('session').default('tmex'),
+    session: text('session').default('vibeterm'),
     authMode: text('auth_mode').notNull(),
     passwordEnc: text('password_enc'),
     privateKeyEnc: text('private_key_enc'),

@@ -9,7 +9,9 @@ import {
   RELEASE_SIGNING_KEYS,
   type ReleaseSigningKey,
   expectedTarballHash,
+  parseSha256Sums,
   releaseSignatureRequired,
+  releaseTarballName,
   verifyReleaseSums,
 } from '@vibeterm/shared';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
@@ -59,7 +61,9 @@ export type VerifiedReleaseSums = {
  */
 export function verifyReleaseSumsBundle(
   version: string,
-  bundle: { sums: string; sig: string | null }
+  bundle: { sums: string; sig: string | null },
+  /** 要取摘要的资产名；缺省按「新名优先、回退旧名」查。向 <2.0.0 的节点推包时显式传旧名。 */
+  assetName?: string
 ): VerifiedReleaseSums {
   const sig = bundle.sig?.trim() ? bundle.sig : null;
   let keyId: string | null = null;
@@ -78,11 +82,13 @@ export function verifyReleaseSumsBundle(
       `release ${version} has no SHA256SUMS.sig; refusing to continue`
     );
   }
-  const sha256 = expectedTarballHash(bundle.sums, version);
+  const sha256 = assetName
+    ? (parseSha256Sums(bundle.sums).get(assetName) ?? null)
+    : expectedTarballHash(bundle.sums, version);
   if (!sha256) {
     throw new ReleaseSignatureError(
       'RELEASE_SUMS_INVALID',
-      `SHA256SUMS does not list tmex-cli-${version}.tgz`
+      `SHA256SUMS does not list ${assetName ?? releaseTarballName(version)}`
     );
   }
   return { sums: bundle.sums, sig, keyId, sha256 };
@@ -97,7 +103,7 @@ export function assertPushableRelease(version: string, release: { sig: string | 
   );
 }
 
-/** 缓存目录里与整包同名的签名 sidecar：`tmex-cli-<ver>.tgz.sig.json`。 */
+/** 缓存目录里与整包同名的签名 sidecar：`<tarball>.sig.json`。 */
 export function releaseSigSidecarPath(tarballPath: string): string {
   return `${tarballPath}.sig.json`;
 }
@@ -131,7 +137,8 @@ export async function removeReleaseSigSidecar(tarballPath: string): Promise<void
 export function readReleaseSigSidecar(
   tarballPath: string,
   version: string,
-  sha256: string
+  sha256: string,
+  assetName?: string
 ): VerifiedReleaseSums | null {
   const path = releaseSigSidecarPath(tarballPath);
   if (!existsSync(path)) return null;
@@ -144,7 +151,7 @@ export function readReleaseSigSidecar(
   if (parsed.version !== version || typeof parsed.sums !== 'string') return null;
   const sig = typeof parsed.sig === 'string' ? parsed.sig : null;
   try {
-    const verified = verifyReleaseSumsBundle(version, { sums: parsed.sums, sig });
+    const verified = verifyReleaseSumsBundle(version, { sums: parsed.sums, sig }, assetName);
     return verified.sha256 === sha256 ? verified : null;
   } catch {
     return null;

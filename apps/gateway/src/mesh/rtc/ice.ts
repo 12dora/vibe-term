@@ -246,13 +246,21 @@ export function isEmptyCandidate(candidate: string): boolean {
 }
 
 export const RTC_WAKE_TYPE = 'rtc.wake';
-export const RTC_WAKE_DOMAIN = 'tmex-rtc-wake';
+export const RTC_WAKE_DOMAIN = 'vibeterm-rtc-wake';
+/** tmex 时期的唤醒域：混合版本期仍接受对端发来的旧值，全网 ≥2.0 后可删。 */
+export const LEGACY_RTC_WAKE_DOMAIN = 'tmex-rtc-wake';
+
+export type RtcWakeDomain = typeof RTC_WAKE_DOMAIN | typeof LEGACY_RTC_WAKE_DOMAIN;
+
+export function isRtcWakeDomain(value: unknown): value is RtcWakeDomain {
+  return value === RTC_WAKE_DOMAIN || value === LEGACY_RTC_WAKE_DOMAIN;
+}
 export const RTC_WAKE_MAX_SKEW_MS = 60_000;
 export const RTC_WAKE_NONCE_BYTES = 16;
 
 export type RtcWakeFields = {
   type: typeof RTC_WAKE_TYPE;
-  domain: typeof RTC_WAKE_DOMAIN;
+  domain: RtcWakeDomain;
   from: string;
   to: string;
   rtcSession: string;
@@ -269,10 +277,13 @@ export type RtcWakeSignInput = {
   issued_at: number;
 };
 
-export function rtcWakeCanonicalBytes(fields: RtcWakeSignInput): Uint8Array {
+export function rtcWakeCanonicalBytes(
+  fields: RtcWakeSignInput,
+  domain: RtcWakeDomain = RTC_WAKE_DOMAIN
+): Uint8Array {
   return new TextEncoder().encode(
     JSON.stringify({
-      domain: RTC_WAKE_DOMAIN,
+      domain,
       from: fields.from,
       to: fields.to,
       rtcSession: fields.rtcSession,
@@ -328,7 +339,7 @@ export function parseRtcWakeSdp(sdp: string | null | undefined): RtcWakeFields |
   try {
     const parsed = JSON.parse(sdp) as Record<string, unknown>;
     if (parsed.type !== RTC_WAKE_TYPE || parsed.sdp !== undefined) return null;
-    if (parsed.domain !== RTC_WAKE_DOMAIN) return null;
+    if (!isRtcWakeDomain(parsed.domain)) return null;
     if (typeof parsed.from !== 'string' || typeof parsed.to !== 'string') return null;
     if (typeof parsed.rtcSession !== 'string' || typeof parsed.nonce !== 'string') return null;
     if (!isCanonicalRtcWakeNonce(parsed.nonce)) return null;
@@ -336,7 +347,7 @@ export function parseRtcWakeSdp(sdp: string | null | undefined): RtcWakeFields |
     if (typeof parsed.sig !== 'string') return null;
     return {
       type: RTC_WAKE_TYPE,
-      domain: RTC_WAKE_DOMAIN,
+      domain: parsed.domain,
       from: parsed.from,
       to: parsed.to,
       rtcSession: parsed.rtcSession,
@@ -365,13 +376,16 @@ export function verifyRtcWakeSignature(wake: RtcWakeFields, edPk: Uint8Array): b
     if (sig.byteLength !== 64) return false;
     return verifyEd25519(
       sig,
-      rtcWakeCanonicalBytes({
-        from: wake.from,
-        to: wake.to,
-        rtcSession: wake.rtcSession,
-        nonce: wake.nonce,
-        issued_at: wake.issued_at,
-      }),
+      rtcWakeCanonicalBytes(
+        {
+          from: wake.from,
+          to: wake.to,
+          rtcSession: wake.rtcSession,
+          nonce: wake.nonce,
+          issued_at: wake.issued_at,
+        },
+        wake.domain
+      ),
       edPk
     );
   } catch {

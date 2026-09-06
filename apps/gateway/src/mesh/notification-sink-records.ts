@@ -4,7 +4,11 @@
 // 集合，不需要新表也不需要迁移。判据只有用户签过的记录：节点自述的 inventory 一律不采信，
 // 被攻陷的节点无法把自己塞进汇聚集合，也无法替别人撤销。
 
-import { decodeKeyLogRecord, decodeNotificationSinkPayload, nodeIdToHex } from '@vibeterm/shared/auth';
+import {
+  decodeKeyLogRecord,
+  decodeNotificationSinkPayload,
+  nodeIdToHex,
+} from '@vibeterm/shared/auth';
 import { and, asc, eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { getDb } from '../db/client';

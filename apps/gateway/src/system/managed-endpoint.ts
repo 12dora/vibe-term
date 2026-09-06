@@ -161,7 +161,7 @@ export async function publishManagedEndpoint(
 
   const temporaryPath = join(
     dirname(publication.path),
-    `.tmex-managed-endpoint-${process.pid}-${randomUUID()}.tmp`
+    `.vibeterm-managed-endpoint-${process.pid}-${randomUUID()}.tmp`
   );
   try {
     await writeFile(temporaryPath, payload, {

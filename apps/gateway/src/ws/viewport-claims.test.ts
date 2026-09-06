@@ -116,7 +116,7 @@ function snapshot(
 ): StateSnapshotPayload {
   return {
     deviceId: 'device-a',
-    session: { id: '$1', name: 'tmex', windows },
+    session: { id: '$1', name: 'VibeTerm', windows },
   };
 }
 

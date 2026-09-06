@@ -10,7 +10,7 @@ export type InternalHttpForwarder = (
   signal?: AbortSignal
 ) => Promise<Response>;
 
-/** 带浏览器会话（`tmex_s_<nodeId>` cookie）转发到目标节点，用于代用户换取窗格授权。 */
+/** 带浏览器会话（`vibeterm_s_<nodeId>` cookie）转发到目标节点，用于代用户换取窗格授权。 */
 export type AuthorizedHttpForwarder = (
   req: Request,
   input: { nodeId: string; method: string; path: string; body?: unknown }

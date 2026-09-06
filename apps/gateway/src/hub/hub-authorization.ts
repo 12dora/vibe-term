@@ -272,7 +272,7 @@ export function inspectHubAuthRecordCompat(
   };
 }
 
-/** `x-tmex-force-keylog` 仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
+/** force-keylog 内部头仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
 export function applyForcedKeyLogCompat(
   compat: HubAuthRecordCompatResult,
   forced: boolean

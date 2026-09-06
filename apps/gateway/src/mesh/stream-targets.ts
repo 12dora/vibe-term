@@ -1,11 +1,12 @@
 import { wsBorsh } from '@vibeterm/shared';
+import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes, isRecord } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { parseOpenPayload } from './peer-protocol';
-import { X_VIBETERM_MESH_PEER, attachMeshPeerMarker } from './peer-request-marker';
+import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
   authResponseHeaders,
@@ -22,15 +23,11 @@ export { isAuthSkippedPath } from './stream-auth';
 const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
 let lastHttpForwardAbortLogAt = 0;
 
-const BLOCKED_REQUEST_HEADERS = new Set([
-  'cookie',
-  'authorization',
-  'host',
-  'connection',
-  'upgrade',
-  'x-tmex-via',
-  X_VIBETERM_MESH_PEER,
-]);
+const BLOCKED_REQUEST_HEADERS = addHeaderNames(
+  new Set(['cookie', 'authorization', 'host', 'connection', 'upgrade']),
+  VIA_HEADER,
+  MESH_PEER_HEADER
+);
 
 function resolveInboundHttpUrl(path: string, query: string, origin: string): URL {
   return new URL(path + query, origin.endsWith('/') ? origin : `${origin}/`);

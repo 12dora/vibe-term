@@ -16,7 +16,7 @@ beforeAll(() => {
     id: 'run-notify-local-device',
     name: 'local-box',
     type: 'local',
-    session: 'tmex-test',
+    session: 'vibeterm-test',
     authMode: 'agent',
     port: 22,
     sortOrder: 0,

@@ -1,6 +1,6 @@
 import { wsBorsh } from '@vibeterm/shared';
 import { readJsonObjectBody } from '../api/http';
-import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { isShareAccessPath } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
@@ -97,7 +97,7 @@ function forwardAttempts(idempotent: boolean, retry?: { attempts: number }): num
 }
 
 /**
- * 转发到目标节点的凭证：分享公开面用 `share:<token>`（`tmex_sh_<nodeId>` cookie），
+ * 转发到目标节点的凭证：分享公开面用 `share:<token>`（`vibeterm_sh_<nodeId>` cookie），
  * 登录前公开面不带凭证，其余用节点会话 cookie。
  */
 function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | null {
@@ -106,7 +106,7 @@ function forwardedAuthFor(req: Request, nodeId: string, rest: string): string | 
     return token ? shareAuthValue(token) : null;
   }
   if (AUTH_SKIP.has(rest)) return null;
-  return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
+  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
 }
 
 export function getSelfRewrite(req: Request): string | null {
@@ -316,8 +316,7 @@ export class Forwarder {
     },
     signal?: AbortSignal
   ): Promise<Response> {
-    const auth =
-      parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(input.nodeId)) ?? null;
+    const auth = readNodeSessionCookie(parseCookies(req.headers.get('cookie')), input.nodeId);
     if (!auth) {
       return jsonError('NODE_LOGIN_REQUIRED', 401, { nodeId: input.nodeId });
     }

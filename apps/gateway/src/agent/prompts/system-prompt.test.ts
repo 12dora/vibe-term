@@ -8,7 +8,7 @@ const baseEnv: AgentEnvironmentInfo = {
   host: '10.0.0.1',
   username: 'admin',
   port: 22,
-  tmuxSession: 'tmex',
+  tmuxSession: 'vibeterm',
   timezone: 'Asia/Shanghai',
   nowIso: '2026-06-13T08:00:00.000Z',
   gatewayOs: null,

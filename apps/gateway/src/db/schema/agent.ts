@@ -127,7 +127,7 @@ export const agentPaneGrants = sqliteTable(
     fromNodeId: text('from_node_id').notNull(),
     deviceId: text('device_id').notNull(),
     paneId: text('pane_id').notNull(),
-    /** 目标 tmux server 的世代（`@tmex-server-epoch`）：tmux 重启后窗格号会重号，必须一起绑 */
+    /** 目标 tmux server 的世代（`@tmex-server-epoch`，协议常量，沿用 tmex 时期的值）：tmux 重启后窗格号会重号，必须一起绑 */
     serverEpoch: text('server_epoch'),
     createdAt: integer('created_at').notNull(),
     lastUsedAt: integer('last_used_at').notNull(),

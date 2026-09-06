@@ -9,6 +9,7 @@ import {
   encodeBase64url,
   verifyKeyLogRecord,
 } from '@vibeterm/shared/auth';
+import { FORCE_KEYLOG_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
@@ -157,7 +158,7 @@ async function readKeyLogAppend(
     return {
       bytes: decodeBase64url(fields.bytes),
       sig: decodeBase64url(fields.sig),
-      force: req.headers.get('x-tmex-force-keylog') === '1',
+      force: readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1',
     };
   } catch {
     return null;
@@ -472,7 +473,7 @@ export class AuthKeyLogRoutes {
         relayMode: this.inRelayMode(userId),
         localNodeId: this.deps.nodeId,
       }),
-      req.headers.get('x-tmex-force-keylog') === '1'
+      readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1'
     );
     if (compat.ok) return null;
     return jsonError(compat.code, 409, {

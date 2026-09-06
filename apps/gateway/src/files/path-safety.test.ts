@@ -13,7 +13,7 @@ let root: string;
 let outside: string;
 
 beforeAll(() => {
-  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-pathsafe-')));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-pathsafe-')));
   root = join(sandbox, 'root');
   outside = join(sandbox, 'outside');
   mkdirSync(root);

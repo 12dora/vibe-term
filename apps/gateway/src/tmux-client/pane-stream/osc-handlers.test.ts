@@ -112,8 +112,8 @@ describe('emitOsc', () => {
 
   test('OSC 133 prompt markers', () => {
     expect(emit('133', 'C').prompts).toEqual([{ kind: 'C', exitCode: null, params: [] }]);
-    expect(emit('133', 'D;137;tmex=abc').prompts).toEqual([
-      { kind: 'D', exitCode: 137, params: ['137', 'tmex=abc'] },
+    expect(emit('133', 'D;137;vibeterm=abc').prompts).toEqual([
+      { kind: 'D', exitCode: 137, params: ['137', 'vibeterm=abc'] },
     ]);
     expect(emit('133', 'Z').prompts).toEqual([]);
   });

@@ -1,6 +1,6 @@
 // 发起节点 X 这一侧：向目标节点 Y 换取窗格授权、随会话持久化、给 RPC 取用。
 //
-// 换取走 `forwardAuthorizedHttp`：带的是浏览器自己的 `tmex_s_<Y>` 会话——能看到 Y 的窗格
+// 换取走 `forwardAuthorizedHttp`：带的是浏览器自己的 `vibeterm_s_<Y>` 会话——能看到 Y 的窗格
 // 就已经登录过 Y，因此不引入新的信任关系。授权以主密钥加密后存进 `agent_sessions.remote_grant`。
 
 import { decrypt, encrypt } from '../../crypto';

@@ -80,8 +80,8 @@ async function main(): Promise<void> {
     gatewayRoot,
     'dist-managed',
     process.platform === 'darwin' && process.arch === 'arm64'
-      ? 'tmex-gateway-managed-darwin-arm64'
-      : `tmex-gateway-managed-${process.platform}-${process.arch}`
+      ? 'vibeterm-gateway-managed-darwin-arm64'
+      : `vibeterm-gateway-managed-${process.platform}-${process.arch}`
   );
   const artifact = resolve(artifactArg || defaultArtifact);
 
@@ -96,12 +96,12 @@ async function main(): Promise<void> {
     process.exit(1);
   }
 
-  const work = mkdtempSync(join(tmpdir(), 'tmex-managed-smoke-'));
-  const dbPath = join(work, 'tmex-managed.db');
+  const work = mkdtempSync(join(tmpdir(), 'vibeterm-managed-smoke-'));
+  const dbPath = join(work, 'vibeterm-managed.db');
   const endpointPath = join(work, 'gateway-ready.json');
   const endpointNonce = randomUUID();
   const masterKey = '0'.repeat(64);
-  const tmuxNamespace = `tmex-managed-smoke-${process.pid}-${randomUUID()}`;
+  const tmuxNamespace = `vibeterm-managed-smoke-${process.pid}-${randomUUID()}`;
 
   // 构造无 bun/node 的 PATH
   const barePath = [join(work, 'bin'), '/usr/bin', '/bin'].join(':');
@@ -116,7 +116,7 @@ async function main(): Promise<void> {
     VIBETERM_BIND_HOST: '127.0.0.1',
     VIBETERM_MANAGED_ENDPOINT_PATH: endpointPath,
     VIBETERM_MANAGED_ENDPOINT_NONCE: endpointNonce,
-    VIBETERM_TMUX_SOCKET: `tmex-managed-inherited-${process.pid}`,
+    VIBETERM_TMUX_SOCKET: `vibeterm-managed-inherited-${process.pid}`,
     DATABASE_URL: dbPath,
     VIBETERM_MASTER_KEY: masterKey,
     // 故意注入自管理值，证明 managed entry 在业务模块加载前将其覆盖。

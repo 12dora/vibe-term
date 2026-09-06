@@ -107,7 +107,7 @@
           },
           "launch": {
             "title": "从主屏幕打开",
-            "description": "点按主屏幕上的 tmex 图标启动。若已启用登录，首次打开需登录一次。"
+            "description": "点按主屏幕上的 VibeTerm 图标启动。若已启用登录，首次打开需登录一次。"
           }
         },
         "android": {
@@ -120,7 +120,7 @@
           },
           "launch": {
             "title": "从主屏幕打开",
-            "description": "在主屏幕或应用列表中打开 tmex。若已启用登录，首次打开需登录一次。"
+            "description": "在主屏幕或应用列表中打开 VibeTerm。若已启用登录，首次打开需登录一次。"
           }
         },
         "remoteHint": "当前地址若仅限局域网访问，手机需连接同一网络。需要随时随地访问，请先配置远程访问。",
@@ -136,12 +136,12 @@
           "hint": {
             "relay": "中继：节点在 NAT 后，只需一个公网汇合点。",
             "hub": "Hub：需要集中管理账号与节点。",
-            "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 tmex。"
+            "ssh": "SSH 直连：本机可通过 SSH 访问新机器，无需安装 VibeTerm。"
           },
           "tip": {
             "relay": "中继只转发加密流量，不保存账号与密钥。适合都在 NAT 或防火墙后的机器。",
             "hub": "Hub 是信任中心，保存账号与节点成员，需要固定的公网 HTTPS 地址。",
-            "ssh": "新机器不运行 tmex，由本机经 SSH 连接，作为设备出现在设备列表。"
+            "ssh": "新机器不运行 VibeTerm，由本机经 SSH 连接，作为设备出现在设备列表。"
           }
         },
         "side": {
@@ -155,10 +155,10 @@
           }
         },
         "install": {
-          "title": "安装 tmex",
+          "title": "安装 VibeTerm",
           "description": "在新机器上执行安装脚本。Linux 需 tmux 3.0 或更高版本。",
           "command": "安装命令",
-          "pathHint": "提示找不到 tmex 命令时，重开终端或执行："
+          "pathHint": "提示找不到 vibeterm 命令时，重开终端或执行："
         },
         "join": {
           "uplink": {
@@ -230,7 +230,7 @@
           },
           "invite": {
             "title": "让新机器加入",
-            "description": "在新机器上安装 tmex，按「加入已有中继」的步骤接入。",
+            "description": "在新机器上安装 VibeTerm，按「加入已有中继」的步骤接入。",
             "blocked": "完成上一步后，本机才能给出租户编号。",
             "gotoJoin": "查看加入步骤"
           }
@@ -260,13 +260,13 @@
           },
           "invite": {
             "title": "让新机器加入",
-            "description": "在新机器上安装 tmex，按「加入已有 Hub」的步骤接入。",
+            "description": "在新机器上安装 VibeTerm，按「加入已有 Hub」的步骤接入。",
             "ready": "本机已是 Hub，切到「加入已有 Hub」继续。",
             "gotoJoin": "查看加入步骤"
           }
         },
         "ssh": {
-          "description": "本机经 SSH 连接新机器，新机器无需安装 tmex。",
+          "description": "本机经 SSH 连接新机器，新机器无需安装 VibeTerm。",
           "title": "添加 SSH 设备",
           "stepDescription": "在设备对话框中把类型选为 SSH，填写主机地址与登录方式。",
           "button": "添加设备",
@@ -294,7 +294,7 @@
       "username": "用户名",
       "usernamePlaceholder": "root",
       "session": "Tmux 会话名称",
-      "sessionPlaceholder": "tmex",
+      "sessionPlaceholder": "vibeterm",
       "defaultWorkingDir": "默认工作目录",
       "defaultWorkingDirPlaceholder": "留空使用用户 home 目录",
       "authMode": "认证方式",
@@ -400,7 +400,7 @@
     "settings": {
       "siteSettings": "站点设置",
       "siteName": "站点名称",
-      "siteNamePlaceholder": "tmex",
+      "siteNamePlaceholder": "VibeTerm",
       "siteUrl": "站点访问 URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
@@ -498,10 +498,10 @@
       "remoteAccess": {
         "title": "远程访问",
         "wizardTitle": "配置向导",
-        "description": "通过 Cloudflare Tunnel 或直接连接远程访问本机 tmex。",
+        "description": "通过 Cloudflare Tunnel 或直接连接远程访问本机 VibeTerm。",
         "remoteNodeNotice": "远程访问只能在浏览器直连的节点配置。请先切换到该节点。",
         "loginRequired": "请先登录，再配置远程访问。",
-        "loadFailed": "读取远程访问状态失败。请确认 tmex 网关仍在运行，并刷新页面重试。",
+        "loadFailed": "读取远程访问状态失败。请确认 VibeTerm 网关仍在运行，并刷新页面重试。",
         "unsupported": "当前系统（{{platform}}）没有可用的 cloudflared 构建，无法使用 Cloudflare Tunnel。",
         "modeLabel": "方式",
         "publicUrl": "公网地址",
@@ -545,7 +545,7 @@
         "path": {
           "tunnel": {
             "title": "Cloudflare Tunnel",
-            "description": "无需公网 IP 或端口映射，cloudflared 由 tmex 管理。"
+            "description": "无需公网 IP 或端口映射，cloudflared 由 VibeTerm 管理。"
           },
           "direct": {
             "title": "直接连接",
@@ -564,15 +564,15 @@
             },
             "unprotected": {
               "title": "访问保护未配置",
-              "description": "任何人拿到地址就能使用本机 tmex。启用登录保护后，访问需要登录。"
+              "description": "任何人拿到地址就能使用本机 VibeTerm。启用登录保护后，访问需要登录。"
             },
             "unknown": {
               "title": "无法确认访问保护状态",
-              "description": "当前网关未下发本机登录状态，通常是版本过旧。升级 tmex 后再试。"
+              "description": "当前网关未下发本机登录状态，通常是版本过旧。升级 VibeTerm 后再试。"
             }
           },
           "entryLabel": "当前入口",
-          "entryHint": "tmex 的访问地址。对外暴露时，需指向本机的 {{port}} 端口，或指向反向代理。",
+          "entryHint": "VibeTerm 的访问地址。对外暴露时，需指向本机的 {{port}} 端口，或指向反向代理。",
           "tls": {
             "hint": "请启用 HTTPS：明文 HTTP 会把登录口令与会话凭证暴露在链路上。",
             "link": "前往节点设置配置 HTTPS"
@@ -590,7 +590,7 @@
               "password": "口令至少需要 8 个字符。",
               "confirm": "两次输入的口令不一致。"
             },
-            "warning": "启用后访问 tmex 需要登录，所有已打开的会话都需要重新登录。",
+            "warning": "启用后访问 VibeTerm 需要登录，所有已打开的会话都需要重新登录。",
             "acknowledge": "我知道所有已打开的会话都需要重新登录",
             "action": "启用本机登录"
           },
@@ -605,7 +605,7 @@
             "malformed": "请求格式不正确，请刷新页面后重试。",
             "unknown": "操作失败，请稍后重试。"
           },
-          "caveat": "说明：访问保护仅保证「访问 tmex 需要登录」，建议配合其他安全措施使用。"
+          "caveat": "说明：访问保护仅保证「访问 VibeTerm 需要登录」，建议配合其他安全措施使用。"
         },
         "actions": {
           "start": "启动",
@@ -636,16 +636,16 @@
         "steps": {
           "path": {
             "title": "连接方式",
-            "description": "选择远程访问本机 tmex 的方式。"
+            "description": "选择远程访问本机 VibeTerm 的方式。"
           },
           "install": {
             "title": "安装 cloudflared",
-            "description": "将 cloudflared 下载到 tmex 数据目录，不改动已有安装。",
+            "description": "将 cloudflared 下载到 VibeTerm 数据目录，不改动已有安装。",
             "version": "版本",
             "path": "路径",
             "source": "来源",
             "sourceValue": {
-              "managed": "由 tmex 管理",
+              "managed": "由 VibeTerm 管理",
               "system": "系统已安装（PATH）"
             },
             "skipped": "cloudflared 由系统服务提供，无需再次安装。"
@@ -668,17 +668,17 @@
             "title": "命名隧道",
             "description": "使用已托管在 Cloudflare 的域名，公网地址固定不变。",
             "login": {
-              "description": "在弹出的 Cloudflare 页面里选择要授权的域名，完成后回到本页，tmex 会自动继续。",
+              "description": "在弹出的 Cloudflare 页面里选择要授权的域名，完成后回到本页，VibeTerm 会自动继续。",
               "waiting": "正在等待 Cloudflare 授权完成",
               "done": "已完成 Cloudflare 授权。"
             },
             "hostname": "主机名",
-            "hostnamePlaceholder": "tmex.example.com",
+            "hostnamePlaceholder": "vibeterm.example.com",
             "hostnameHint": "填写一个已托管在 Cloudflare 的子域名。",
-            "hostnameInvalid": "主机名格式不正确，请填写如 tmex.example.com 的小写域名。",
+            "hostnameInvalid": "主机名格式不正确，请填写如 vibeterm.example.com 的小写域名。",
             "tunnelName": "隧道名称",
-            "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "可留空(由 tmex 生成)。只能使用小写字母、数字、连字符与下划线。",
+            "tunnelNamePlaceholder": "vibeterm",
+            "tunnelNameHint": "可留空（由 VibeTerm 生成）。只能使用小写字母、数字、连字符与下划线。",
             "hubHint": "本机为 Hub：把 Hub 的公开地址设为该主机名，其他节点才能经隧道接入。",
             "hubHintLink": "前往多节点互联设置",
             "tunnelId": "隧道 ID",
@@ -688,16 +688,16 @@
           },
           "proxy": {
             "title": "反向代理信任",
-            "description": "隧道会替换请求里的客户端地址与协议，tmex 需要相应调整信任设置。",
+            "description": "隧道会替换请求里的客户端地址与协议，VibeTerm 需要相应调整信任设置。",
             "trustProxy": "信任反向代理头",
-            "trustProxyHint": "仅当 tmex 只能经由该隧道访问时才开启。",
-            "autoStart": "随 tmex 启动",
+            "trustProxyHint": "仅当 VibeTerm 只能经由该隧道访问时才开启。",
+            "autoStart": "随 VibeTerm 启动",
             "autoStartHint": "网关启动时自动拉起隧道。",
-            "restartRequired": "设置已保存，重启 tmex 后生效。",
+            "restartRequired": "设置已保存，重启 VibeTerm 后生效。",
             "restartNow": "立即重启",
-            "restarting": "正在重启 tmex",
-            "restartTimeout": "等待重启超时。请手动重启 tmex 后刷新页面。",
-            "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在绕过隧道伪造请求头风险，建议禁止该端口的外网访问。",
+            "restarting": "正在重启 VibeTerm",
+            "restartTimeout": "等待重启超时。请手动重启 VibeTerm 后刷新页面。",
+            "trustProxyDetail": "开启后 VibeTerm 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在绕过隧道伪造请求头风险，建议禁止该端口的外网访问。",
             "trustProxyEffective": "当前生效",
             "trustProxyState": {
               "on": "已信任",
@@ -706,8 +706,8 @@
           },
           "login": {
             "title": "登录 Cloudflare",
-            "description": "授权 tmex 创建隧道与 DNS 记录。授权凭证仅保存在本机。",
-            "skipped": "隧道由系统服务托管，无需在 tmex 内登录 Cloudflare。"
+            "description": "授权 VibeTerm 创建隧道与 DNS 记录。授权凭证仅保存在本机。",
+            "skipped": "隧道由系统服务托管，无需在 VibeTerm 内登录 Cloudflare。"
           },
           "hostname": {
             "title": "主机名",
@@ -755,7 +755,7 @@
           "download_failed": "下载 cloudflared 失败。请检查本机网络是否能访问 github.com，然后重试。",
           "not_logged_in": "尚未完成 Cloudflare 授权。请回到「登录 Cloudflare」完成授权。",
           "login_timeout": "Cloudflare 授权超时。请重新发起登录，并在打开的页面里选择域名完成授权。",
-          "invalid_hostname": "主机名格式不正确，请填写形如 tmex.example.com 的小写域名。",
+          "invalid_hostname": "主机名格式不正确，请填写形如 vibeterm.example.com 的小写域名。",
           "tunnel_exists": "Cloudflare 上已有同名隧道。请换一个名称，或先删除已有隧道。",
           "dns_route_failed": "添加 DNS 记录失败。请确认该域名托管在同一个 Cloudflare 账号下，且没有同名记录冲突。",
           "process_failed": "cloudflared 未能正常启动。请展开 cloudflared 日志查看具体原因。",
@@ -764,12 +764,12 @@
           "not_configured": "还未配置远程访问，请先在下方向导里选择一种方式。",
           "invalid_request": "请求无效，页面数据可能已过期。请刷新页面后重试。",
           "unknown": "操作失败：{{message}}",
-          "auth_required": "本机还未启用登录。开放公网访问前请先启用登录，否则任何人都能直接进入 tmex。",
+          "auth_required": "本机未启用登录。开放公网访问前请先启用，否则任何人都能直接进入 VibeTerm。",
           "access_api_failed": "调用 Cloudflare API 失败：{{message}}。请确认 API 令牌的权限与账户 ID 无误后重试。",
-          "exposure_ack_required": "该操作会把 tmex 开放到公网，请先勾选风险确认。"
+          "exposure_ack_required": "该操作会把 VibeTerm 开放到公网，请先勾选风险确认。"
         },
         "authRequired": {
-          "notice": "警告: 登录未启用。开放公网访问前请先启用，否则任何人都能访问 tmex。",
+          "notice": "警告：登录未启用。开放公网访问前请先启用，否则任何人都能访问 VibeTerm。",
           "link": "前往多节点互联设置"
         },
         "confirmRemove": {
@@ -794,8 +794,8 @@
           "hint": "选择一种访问保护方式。",
           "none": {
             "title": "无",
-            "description": "不设访问保护，任何人拿到地址即可使用本机 tmex。",
-            "warning": "访问保护未启用：任何人拿到地址即可使用本机 tmex。",
+            "description": "不设访问保护，任何人拿到地址即可使用本机 VibeTerm。",
+            "warning": "访问保护未启用：任何人拿到地址即可使用本机 VibeTerm。",
             "appRemains": "Access 应用未移除，可在此移除。"
           },
           "login": {
@@ -808,14 +808,14 @@
           }
         },
         "externallyManaged": "由系统服务托管",
-        "externallyManagedNotice": "隧道由系统服务运行，tmex 仅显示状态，无法启动或停止。要交回 tmex 管理，请先取消接管。",
+        "externallyManagedNotice": "隧道由系统服务运行，VibeTerm 仅显示状态，无法启动或停止。要交回 VibeTerm 管理，请先取消接管。",
         "exposure": {
-          "warning": "当前未配置访问保护：任何人拿到隧道地址, 都能直接使用 tmex。请启用登录（多节点互联），或配置 Access 并开启令牌校验。",
-          "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 tmex。",
+          "warning": "当前未配置访问保护：任何人拿到隧道地址都能直接使用 VibeTerm。请启用登录（多节点互联），或配置 Access 并开启令牌校验。",
+          "warningShort": "当前没有任何访问保护：拿到隧道地址的人都能直接使用 VibeTerm。",
           "acknowledge": "我已了解风险，仍要开放公网访问",
-          "ackRequired": "该操作会把 tmex 开放到公网，请先勾选风险确认。",
+          "ackRequired": "该操作会把 VibeTerm 开放到公网，请先勾选风险确认。",
           "enableLogin": "启用登录（多节点互联）",
-          "dropWarning": "警告：隧道仍在运行，移除后任何人都能直接使用 tmex。"
+          "dropWarning": "警告：隧道仍在运行，移除后任何人都能直接使用 VibeTerm。"
         },
         "access": {
           "tag": {
@@ -856,17 +856,17 @@
           },
           "sync": {
             "action": "从 Cloudflare 同步",
-            "hint": "凭证已保存，但 tmex 无 Access 应用记录。如果你已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步把它接入 tmex，避免重复创建。"
+            "hint": "凭证已保存，但 VibeTerm 无 Access 应用记录。若已在 Cloudflare 控制台为 {{hostname}} 建过应用，请先同步接入 VibeTerm，避免重复创建。"
           },
           "probe": {
             "unknown": "无法检测 {{hostname}} 的 Cloudflare Access 状态：当前没有可用的凭证，或查询 API 失败。这不代表未配置。保存下方的 API 令牌与账户 ID 后会自动重新检测。",
-            "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 tmex 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 tmex。",
+            "covered": "只读检测：Cloudflare 控制台上已有一个 Access 应用覆盖 {{hostname}}。该应用不由 VibeTerm 管理，网关也不会校验它签发的令牌；点「从 Cloudflare 同步」可以把它接入 VibeTerm。",
             "absent": "只读检测：Cloudflare 上没有覆盖 {{hostname}} 的 Access 应用。在下方填写允许访问的用户并应用，即可创建一个。",
             "teamDomain": "团队域：{{teamDomain}}",
-            "needCredentials": "要交给 tmex 托管并在网关校验令牌，请先在下方保存 Cloudflare API 令牌与账户 ID。"
+            "needCredentials": "要交给 VibeTerm 托管并在网关校验令牌，请先在下方保存 Cloudflare API 令牌与账户 ID。"
           },
           "app": {
-            "title": "Access 应用（由 tmex 托管）",
+            "title": "Access 应用（由 VibeTerm 托管）",
             "appId": "应用 ID",
             "aud": "AUD",
             "hostname": "覆盖主机名",
@@ -887,7 +887,7 @@
         },
         "external": {
           "title": "检测到系统里已有的 Cloudflare Tunnel",
-          "description": "本机上已经有未纳入 tmex 管理的隧道。可以由 tmex 接管，或忽略并新建隧道。",
+          "description": "本机上已经有未纳入 VibeTerm 管理的隧道。可以由 VibeTerm 接管，或忽略并新建隧道。",
           "source": "检测来源",
           "sourceValue": {
             "launchd": "launchd 服务",
@@ -907,7 +907,7 @@
             "absent": "未检测到覆盖该主机名的 Access 应用",
             "unknown": "无法检测（缺少可用凭证）"
           },
-          "noHostname": "这条隧道的配置里没有指向本机 tmex（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 tmex 另建一条隧道。",
+          "noHostname": "这条隧道的配置里没有指向本机 VibeTerm（127.0.0.1:{{port}}）的主机名，因此无法接管。请检查它的 ingress 配置，或让 VibeTerm 另建一条隧道。",
           "chooseHostname": "选择要接管的主机名",
           "adopt": "接管已有隧道",
           "adoptHint": "接管后，自动将该主机名设为公网地址，并显示隧道状态与访问控制。",
@@ -1148,7 +1148,7 @@
         "stateExecuting": "正在执行升级，服务即将重启…",
         "interruptNotice": "服务重启期间连接会断开，稍候即可恢复。",
         "checkFailed": "检查更新失败",
-        "terminalHint": "或通过终端升级：tmex upgrade"
+        "terminalHint": "或通过终端升级：vibeterm upgrade"
       }
     },
     "messaging": {
@@ -1292,15 +1292,15 @@
       "deviceConnectionError": "🔴 {{siteName}}：设备「{{deviceName}}」({{host}}) 连接异常 [{{category}}]\n{{error}}",
       "agentCredentialWarning": "⚠️ {{siteName}}：智能体会话「{{sessionTitle}}」的一条消息疑似包含凭证（{{types}}）。该内容将发送至 LLM 并存储，存在泄露风险。",
       "authSuccess": "✅ 已授权，可接收通知。",
-      "authPending": "⏳ 已收到授权申请，请在 tmex 设置页审批。",
+      "authPending": "⏳ 已收到授权申请，请在 VibeTerm 设置页审批。",
       "authFailed": "❌ 授权申请失败，请联系管理员。",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
-      "approveMessageTemplate": "✅ 已通过 tmex 授权。\nBot：{{botName}}\n时间：{{time}}",
+      "approveMessageTemplate": "✅ 已通过 VibeTerm 授权。\nBot：{{botName}}\n时间：{{time}}",
       "botNotRunning": "Bot 未启动或不可用"
     },
     "weixin": {
       "title": "微信 (ClawBot) 管理",
-      "subtitle": "通过 iLink bot 协议把 tmex 告警推送到你的个人微信。",
+      "subtitle": "通过 iLink bot 协议把 VibeTerm 告警推送到个人微信。",
       "replyOnlyNotice": "iLink 只能在会话激活窗口内回复——先给 bot 发条消息激活，告警随后复用该会话；闲置过久会话会过期，需再给 bot 发条消息重新激活。",
       "accountName": "账号名称",
       "accountNamePlaceholder": "如：我的微信",
@@ -1340,15 +1340,15 @@
       "accountNotRunning": "账号未登录或未运行",
       "userNotFound": "用户不存在",
       "testMessageTemplate": "🧪 测试消息\n站点：{{siteName}}\n时间：{{time}}",
-      "approveMessageTemplate": "✅ 已通过 tmex 授权。\n账号：{{accountName}}\n时间：{{time}}",
-      "keepalivePrompt": "【tmex】为确保你能正常收到通知，请回复任意内容即可保持连接 🙏",
+      "approveMessageTemplate": "✅ 已通过 VibeTerm 授权。\n账号：{{accountName}}\n时间：{{time}}",
+      "keepalivePrompt": "【VibeTerm】为保持通知连接，请回复任意内容 🙏",
       "scanConfirmedSendHint": "扫码成功！请在微信里给该 bot 发送任意一条消息以完成绑定。",
       "bindingInProgress": "已收到消息，正在完成绑定…",
       "bindSuccess": "微信已绑定，开始接收通知。",
       "bound": "已绑定",
       "unbound": "未绑定",
       "bindAction": "扫码绑定",
-      "gatewayOnline": "🟢 tmex 已上线 @ {{siteName}}"
+      "gatewayOnline": "🟢 VibeTerm 已上线 @ {{siteName}}"
     },
     "webhook": {
       "title": "Webhooks",
@@ -1400,8 +1400,8 @@
     "websocket": {
       "inputDropped": "连接中断，刚才的输入未能发送。连接恢复后请重新输入或粘贴。",
       "gatewayTooOld": "终端连接失败：Gateway 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
-      "nodeTooOld": "终端连接失败：节点 {{name}} 的 tmex 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
-      "nodeTooOldUnnamed": "终端连接失败：节点的 tmex 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
+      "nodeTooOld": "终端连接失败：节点 {{name}} 的 VibeTerm 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
+      "nodeTooOldUnnamed": "终端连接失败：节点的 VibeTerm 版本 {{version}} 过低，请升级到 {{minVersion}} 或更新版本。",
       "clientTooOld": "终端连接失败：网页版本过低，请刷新页面。",
       "unknownVersion": "未知",
       "reconnecting": "重连中",
@@ -1866,10 +1866,10 @@
         "fail": "上传 {{name}} 失败"
       },
       "transfer": {
-        "legUserToVibeTerm": "用户 → tmex",
-        "legVibeTermToServer": "tmex → 服务器",
-        "legServerToVibeTerm": "服务器 → tmex",
-        "legVibeTermToUser": "tmex → 用户",
+        "legUserToVibeTerm": "用户 → VibeTerm",
+        "legVibeTermToServer": "VibeTerm → 服务器",
+        "legServerToVibeTerm": "服务器 → VibeTerm",
+        "legVibeTermToUser": "VibeTerm → 用户",
         "cancel": "取消",
         "downloaded": "已下载 {{name}}",
         "downloadFailed": "下载 {{name}} 失败",
@@ -2180,7 +2180,7 @@
           "descriptionRelay": "会话会继续经中继转发，可随时重新安装。"
         },
         "directNeedsInstall": "须先安装插件。",
-        "directRestartRequired": "重启 tmex 后生效。",
+        "directRestartRequired": "重启 VibeTerm 后生效。",
         "directFailed": "直连插件操作失败。",
         "directErrorUnsupported": "本平台没有可用的直连插件。",
         "directErrorDownloadFailed": "插件下载失败。",
@@ -2188,7 +2188,7 @@
         "directErrorDetail": "{{base}}（{{detail}}）",
         "restartNow": "立即重启",
         "restarting": "正在重启……",
-        "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "domainAccess": {
           "label": "允许域名访问",
           "description": "关闭后拒绝来自公网的网页与 API 访问，局域网、本机与节点互联不受影响。公开域名：{{hosts}}",
@@ -2198,7 +2198,7 @@
           "confirm": {
             "title": "关闭域名访问？",
             "description": "{{hosts}} 上的网页与 API 会立即停止服务，只保留 Hub / 节点互联。恢复须通过内网 IP 或 localhost 打开本页重新开启。",
-            "viaDomain": "本页正经该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 tmex。",
+            "viaDomain": "本页正通过该域名访问，关闭后会立即断开。请先确认能通过内网 IP 或 localhost 打开 VibeTerm。",
             "confirm": "关闭",
             "cancel": "取消"
           }
@@ -2215,8 +2215,8 @@
         "changeHub": "更换 Hub",
         "confirm": "退出并重启",
         "cancel": "取消",
-        "consequencesNode": "退出后, 本机的多节点互联状态将全部删除, tmex 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
-        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，tmex 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
+        "consequencesNode": "退出后，本机的多节点互联状态将全部删除，VibeTerm 将重启，当前会话随之失效。退出前将自动在 Hub 上吊销本机。",
+        "consequencesHub": "本机为 Hub。退出后本机的多节点互联状态将全部删除，VibeTerm 会重启，当前会话随之失效。所有下级节点都会失去 Hub，必须重新加入其它 Hub 才能恢复。",
         "leaveConfirm": {
           "title": "退出 Hub？",
           "description": "本机将变回独立运行。"
@@ -2233,7 +2233,7 @@
         "leaving": "正在退出……",
         "restarting": "正在重启……（{{seconds}} 秒）",
         "restarted": "已重启，正在返回设置页……",
-        "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "reload": "刷新页面",
         "checkAgain": "再查一次",
         "revokeFailed": "未能在旧 Hub 上吊销本机（{{error}}），退出继续。请稍后在旧 Hub 的节点列表里手动吊销。",
@@ -2253,8 +2253,8 @@
           "webGone": "重启后本机不再提供网页，中继改用命令行管理。",
           "restore": "要恢复网页，在本机执行下面的命令重新设置为中继兼节点。"
         },
-        "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，tmex 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
-        "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，tmex 会重启，当前会话随之失效。"
+        "consequencesRelayKeepService": "本机的节点身份与多节点互联状态全部删除，VibeTerm 会重启，当前会话随之失效。中继服务、已接入租户与运营日志保留。",
+        "consequencesRelayReset": "中继服务、已接入租户与运营日志全部清除，不可恢复。本机的节点身份与多节点互联状态一并删除，VibeTerm 会重启，当前会话随之失效。"
       },
       "https": {
         "title": "HTTPS 设置",
@@ -2267,10 +2267,10 @@
         "renewStarted": "已开始续期",
         "loginRequired": "登录后查看 HTTPS 设置。",
         "loadFailed": "无法加载 HTTPS 设置。",
-        "restartRequired": "重启 tmex 后生效。",
+        "restartRequired": "重启 VibeTerm 后生效。",
         "restartNow": "立即重启",
         "restarting": "正在重启……",
-        "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
+        "restartTimeout": "VibeTerm 未能恢复。请手动启动后刷新本页。",
         "status": {
           "access": "对外访问",
           "publicUrl": "对外地址",
@@ -2327,10 +2327,10 @@
           "none": "尚未签发证书。"
         },
         "external": {
-          "intro": "tmex 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
+          "intro": "VibeTerm 继续提供明文 HTTP，由前置代理处理 TLS。请把代理指向明文端口，并转发原始 host、协议与客户端地址。",
           "trustProxy": "信任代理请求头",
-          "trustProxyHint": "仅当 tmex 只能经由代理访问时才开启。",
-          "trustProxyDetail": "开启后 tmex 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在直连伪造请求头风险，建议禁止该端口的外网访问。"
+          "trustProxyHint": "仅当 VibeTerm 只能经由代理访问时才开启。",
+          "trustProxyDetail": "开启后 VibeTerm 会信任 X-Forwarded-Proto 与 X-Forwarded-For。存在直连伪造请求头风险，建议禁止该端口的外网访问。"
         },
         "selfsigned": {
           "intro": "适用于没有公网域名的局域网或隧道。私有证书颁发机构（CA）保存在本机，证书有效期 398 天。",
@@ -2346,10 +2346,10 @@
           "renew": "重新签发证书",
           "guide": {
             "title": "在设备上安装 CA",
-            "intro": "先下载 tmex-ca.crt，再按对应平台的步骤操作。安装后请核对上面的指纹。",
+            "intro": "先下载 vibeterm-ca.crt，再按对应平台的步骤操作。安装后请核对上面的指纹。",
             "macos": {
               "title": "macOS",
-              "steps": "双击 tmex-ca.crt 打开「钥匙串访问」，放进「系统」钥匙串，再打开该条目把「使用此证书时」改成「始终信任」。"
+              "steps": "双击 vibeterm-ca.crt 打开「钥匙串访问」，放进「系统」钥匙串，再打开该条目把「使用此证书时」改成「始终信任」。"
             },
             "ios": {
               "title": "iOS / iPadOS",
@@ -2357,7 +2357,7 @@
             },
             "windows": {
               "title": "Windows",
-              "steps": "运行 certmgr.msc，进入「受信任的根证书颁发机构 → 证书 → 所有任务 → 导入」，选择 tmex-ca.crt。Firefox 有自己的证书库，需要另外导入一次。"
+              "steps": "运行 certmgr.msc，进入「受信任的根证书颁发机构 → 证书 → 所有任务 → 导入」，选择 vibeterm-ca.crt。Firefox 有自己的证书库，需要另外导入一次。"
             },
             "android": {
               "title": "Android",
@@ -2365,7 +2365,7 @@
             },
             "linux": {
               "title": "Linux",
-              "steps": "把文件复制到 /usr/local/share/ca-certificates/tmex-ca.crt 后执行 sudo update-ca-certificates（Debian/Ubuntu），或复制到 /etc/pki/ca-trust/source/anchors/ 后执行 sudo update-ca-trust（Fedora/RHEL）。"
+              "steps": "把文件复制到 /usr/local/share/ca-certificates/vibeterm-ca.crt 后执行 sudo update-ca-certificates（Debian/Ubuntu），或复制到 /etc/pki/ca-trust/source/anchors/ 后执行 sudo update-ca-trust（Fedora/RHEL）。"
             }
           }
         },
@@ -2488,7 +2488,7 @@
         "domainAccessHosts": "公开域名：{{hosts}}",
         "disableTitle": "关闭域名访问？",
         "disableText": "关闭后，经配置的公开域名将不再提供网页与 API，只保留 Hub / 节点互联服务。",
-        "disableSelfWarning": "当前正通过该域名访问 tmex，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
+        "disableSelfWarning": "当前正通过该域名访问 VibeTerm，关闭后本页会立即失联；请确认还能通过内网 IP 或 localhost 访问。",
         "disableConfirm": "关闭",
         "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
         "renameFailed": "重命名失败：{{error}}",
@@ -2506,11 +2506,11 @@
         "upgradeWithSelf": "升级（{{count}}，含本机）",
         "upgradeSelfNotice": "本机排在最后升级，届时服务重启、当前页面短暂断开。",
         "revoke": "移除节点",
-        "uninstall": "卸载 tmex"
+        "uninstall": "卸载 VibeTerm"
       },
       "uninstall": {
-        "confirmTitle": "卸载 tmex",
-        "confirmText": "将删除节点上的 tmex 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
+        "confirmTitle": "卸载 VibeTerm",
+        "confirmText": "将删除节点上的 VibeTerm 服务、程序与数据，随后把它从多节点互联中移除。此操作不可撤销。",
         "targets": "将卸载（{{count}}）",
         "skipped": "跳过（{{count}}）",
         "noTargets": "所选节点都无法远程卸载。",
@@ -2536,7 +2536,7 @@
         "errors": {
           "loginRequired": "须先登录该节点。",
           "unreachable": "连不上该节点。",
-          "notAllowed": "该节点不是由 tmex 安装器部署的，无法远程卸载。",
+          "notAllowed": "该节点不是由 VibeTerm 安装器部署的，无法远程卸载。",
           "unsupported": "该节点版本过旧，不支持远程卸载。",
           "selfBlocked": "不能卸载本机。",
           "upgradeInProgress": "该节点正在升级，请稍后再试。",
@@ -2604,7 +2604,7 @@
         "nodeGone": "该节点已从网络中移除。",
         "inProgress": "该节点正在升级。",
         "notAllowed": "该节点的安装方式无法自更新（无服务管理器或运行在容器中），须手动升级。",
-        "unsupported": "该节点版本过旧，不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
+        "unsupported": "该节点版本过旧，不支持远程升级，请在该机器上执行 vibeterm upgrade。",
         "releaseUnavailable": "无法获取最新版本。",
         "linkLost": "与该节点的连接中断，已重试仍未完成，请稍后重试。",
         "pushFailed": "升级包推送失败，请稍后重试。",
@@ -2613,7 +2613,7 @@
         "startFailed": "目标节点未能开始安装，请稍后重试。",
         "timeout": "升级结果未确认，请刷新节点列表核对版本。",
         "atLatest": "已是最新版本。",
-        "tooOld": "该节点版本过旧（{{version}}），不支持远程升级，请在该机器上执行 npx tmex-cli upgrade。",
+        "tooOld": "该节点版本过旧（{{version}}），不支持远程升级，请在该机器上执行 vibeterm upgrade。",
         "allNone": "没有可升级的节点。",
         "allBusy": "已有节点在升级，须等它完成后再全部升级。",
         "confirmAll": "升级 {{count}} 个节点到 {{version}}？节点会依次重启，其上的会话随之中断。",
@@ -2704,7 +2704,7 @@
       "setup": {
         "title": "设置本机",
         "intro": "本机尚未与其他机器互联，请选择设置方式。",
-        "introDetail": "任选一种，保存配置后 tmex 会重启一次。",
+        "introDetail": "任选一种，保存配置后 VibeTerm 会重启一次。",
         "path": {
           "becomeHub": {
             "title": "把本机设为 Hub",
@@ -2725,26 +2725,26 @@
         },
         "becomeHub": {
           "title": "把本机设为 Hub",
-          "description": "在本机创建第一个账号，然后以 Hub 身份重启 tmex。"
+          "description": "在本机创建第一个账号，然后以 Hub 身份重启 VibeTerm。"
         },
         "joinHub": {
           "title": "加入已有 Hub",
-          "description": "把本机注册到 Hub，然后以节点身份重启 tmex。",
-          "passwordDescription": "用 Hub 地址与账号密码把本机注册到 Hub，然后以节点身份重启 tmex。",
+          "description": "把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
+          "passwordDescription": "用 Hub 地址与账号密码把本机注册到 Hub，然后以节点身份重启 VibeTerm。",
           "useToken": "改用加入码",
           "usePassword": "改用密码"
         },
         "fields": {
           "hubPublicUrl": "Hub 公开地址",
-          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://tmex.example.com。所有拟加入的节点均须可正常访问。",
+          "hubPublicUrlHint": "外部可访问的 https 地址，例如 https://vibeterm.example.com。所有拟加入的节点均须可正常访问。",
           "username": "用户名",
           "usernameHint": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "password": "密码",
           "passwordHint": "至少 8 位。服务端无法重置，请妥善保管。",
           "confirmPassword": "确认密码",
           "hubUrl": "Hub 地址",
-          "hubUrlHint": "Hub 的 https 地址，例如 https://tmex.example.com。",
-          "urlPlaceholder": "https://tmex.example.com",
+          "hubUrlHint": "Hub 的 https 地址，例如 https://vibeterm.example.com。",
+          "urlPlaceholder": "https://vibeterm.example.com",
           "token": "加入码",
           "tokenHint": "在 Hub 的「节点」页生成，10 分钟内有效。请完整粘贴。",
           "tokenPlaceholder": "粘贴 Hub 生成的加入码",
@@ -2788,7 +2788,7 @@
         "precheck": {
           "button": "测试地址",
           "reachableSelf": "可以访问，且响应的就是本机。该地址可以直接使用。",
-          "reachableOther": "可以访问（HTTP {{status}}），但响应的是另一个 tmex 实例，请核对地址。",
+          "reachableOther": "可以访问（HTTP {{status}}），但响应的是另一个 VibeTerm 实例，请核对地址。",
           "unreachable": "无法访问：{{error}}",
           "httpsHint": "可以在「节点」标签页配置 HTTPS，也可以在本机前面加反向代理或 Cloudflare Tunnel。"
         },
@@ -2801,8 +2801,8 @@
         },
         "result": {
           "title": "设置完成",
-          "becomeHubDescription": "账号已创建，tmex 正在以 Hub 身份重启。",
-          "joinDescription": "本机已加入 Hub，tmex 正在重启。",
+          "becomeHubDescription": "账号已创建，VibeTerm 正在以 Hub 身份重启。",
+          "joinDescription": "本机已加入 Hub，VibeTerm 正在重启。",
           "fingerprint": "账号指纹",
           "hubPublicUrl": "Hub 公开地址",
           "hubUrl": "Hub 地址",
@@ -2813,25 +2813,25 @@
             "skipped": "已跳过",
             "failed": "失败（{{error}}）——流量将经 Hub 中转，可稍后重试"
           },
-          "relayDescription": "中继已设置，tmex 正在重启。重启后本机不再提供网页。",
-          "relayNodeDescription": "中继已设置，tmex 正在以中继兼节点身份重启。",
+          "relayDescription": "中继已设置，VibeTerm 正在重启。重启后本机不再提供网页。",
+          "relayNodeDescription": "中继已设置，VibeTerm 正在以中继兼节点身份重启。",
           "relayPublicUrl": "中继公网地址",
           "relayPassword": "接入口令",
           "relayWebGone": "网页即将不可用。后续管理请在本机终端执行：",
-          "relayJoinDescription": "本机已加入中继，tmex 正在重启。",
+          "relayJoinDescription": "本机已加入中继，VibeTerm 正在重启。",
           "relayUrl": "中继地址",
           "tenantId": "租户编号"
         },
         "restart": {
-          "waiting": "等待 tmex 恢复…… {{seconds}} 秒",
-          "restarted": "tmex 已恢复，正在跳转到登录页。",
-          "timeout": "60 秒内 tmex 未恢复。请手动启动后刷新本页："
+          "waiting": "等待 VibeTerm 恢复…… {{seconds}} 秒",
+          "restarted": "VibeTerm 已恢复，正在跳转到登录页。",
+          "timeout": "60 秒内 VibeTerm 未恢复。请手动启动后刷新本页："
         },
         "toast": {
-          "hubCreated": "Hub 已创建，tmex 正在重启",
-          "joined": "已加入 Hub，tmex 正在重启",
-          "relayCreated": "中继已设置，tmex 正在重启",
-          "relayJoined": "已加入中继，tmex 正在重启"
+          "hubCreated": "Hub 已创建，VibeTerm 正在重启",
+          "joined": "已加入 Hub，VibeTerm 正在重启",
+          "relayCreated": "中继已设置，VibeTerm 正在重启",
+          "relayJoined": "已加入中继，VibeTerm 正在重启"
         },
         "errors": {
           "not_standalone": "本机已完成设置。",
@@ -2876,7 +2876,7 @@
         },
         "becomeRelay": {
           "title": "本机作为中继",
-          "description": "设置中继公网地址与接入口令，然后以中继身份重启 tmex。",
+          "description": "设置中继公网地址与接入口令，然后以中继身份重启 VibeTerm。",
           "pureNotice": "纯中继重启后不再提供网页，只能用命令行管理。"
         },
         "password": {
@@ -2891,7 +2891,7 @@
         },
         "joinRelay": {
           "title": "加入已有中继",
-          "description": "用中继地址、租户编号与账号密码接入已有租户，然后以节点身份重启 tmex。",
+          "description": "用中继地址、租户编号与账号密码接入已有租户，然后以节点身份重启 VibeTerm。",
           "advanced": "高级选项",
           "hideAdvanced": "收起高级选项"
         },

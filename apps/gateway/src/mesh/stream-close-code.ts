@@ -1,7 +1,9 @@
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 
-const TERMINAL_RESET_PREFIX = 'tmex-close:';
+const TERMINAL_RESET_PREFIX = 'vibeterm-close:';
+/** tmex 时期的前缀：混合版本期继续解析对端发来的旧值，全网 ≥2.0 后可删。 */
+const LEGACY_TERMINAL_RESET_PREFIX = 'tmex-close:';
 
 /**
  * 终止性关闭码：节点端主动关闭该连接且重连也不会成功，Hub 收到后直接断浏览器，
@@ -24,8 +26,14 @@ export function encodeTerminalStreamClose(code: number, reason: string): string 
 export function decodeTerminalStreamClose(
   message: string | null | undefined
 ): { code: number; reason: string } | null {
-  if (!message || !message.startsWith(TERMINAL_RESET_PREFIX)) return null;
-  const rest = message.slice(TERMINAL_RESET_PREFIX.length);
+  if (!message) return null;
+  const prefix = message.startsWith(TERMINAL_RESET_PREFIX)
+    ? TERMINAL_RESET_PREFIX
+    : message.startsWith(LEGACY_TERMINAL_RESET_PREFIX)
+      ? LEGACY_TERMINAL_RESET_PREFIX
+      : null;
+  if (!prefix) return null;
+  const rest = message.slice(prefix.length);
   const split = rest.indexOf(':');
   if (split <= 0) return null;
   const code = Number(rest.slice(0, split));

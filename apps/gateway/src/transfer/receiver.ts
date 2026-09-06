@@ -95,7 +95,7 @@ function scopeKeyOf(grant: TransferGrant, dest: DestContext): string {
 
 function stagingDirFor(scopeKey: string): string {
   const digest = createHash('sha256').update(scopeKey).digest('hex').slice(0, 16);
-  return join(tmpdir(), `tmex-rx-${digest}`);
+  return join(tmpdir(), `vibeterm-rx-${digest}`);
 }
 
 function countSessionsFor(peerNodeId: string): number {

@@ -14,7 +14,7 @@ function event(payload?: Record<string, unknown>): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: '2026-09-06T00:00:00.000Z',
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'dev-1', name: 'dev', type: 'local' },
     tmux: { paneId: '%1' },
     ...(payload ? { payload } : {}),

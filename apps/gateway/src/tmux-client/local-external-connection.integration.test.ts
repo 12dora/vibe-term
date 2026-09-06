@@ -75,8 +75,8 @@ beforeAll(() => {
 
 describe('LocalExternalTmuxConnection integration', () => {
   test('connects to tmux session, captures history, streams live output and bell', async () => {
-    const socketName = `tmex-test-local-basic-${Date.now()}`;
-    const sessionName = 'tmex-local-basic';
+    const socketName = `vibeterm-test-local-basic-${Date.now()}`;
+    const sessionName = 'vibeterm-local-basic';
     tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
@@ -145,8 +145,8 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 20_000);
 
   test('OSC notifications (raw and tmux-passthrough-wrapped) flow through control mode', async () => {
-    const socketName = `tmex-test-local-notify-${Date.now()}`;
-    const sessionName = 'tmex-local-notify';
+    const socketName = `vibeterm-test-local-notify-${Date.now()}`;
+    const sessionName = 'vibeterm-local-notify';
     tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
@@ -212,8 +212,8 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 20_000);
 
   test('two gateway connections subscribe to the same session without preempting each other', async () => {
-    const socketName = `tmex-test-local-dual-${Date.now()}`;
-    const sessionName = 'tmex-local-dual';
+    const socketName = `vibeterm-test-local-dual-${Date.now()}`;
+    const sessionName = 'vibeterm-local-dual';
     tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     function createConn(outputs: string[], snapshots: StateSnapshotPayload[]) {
@@ -280,8 +280,8 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 30_000);
 
   test('control client never delivers focus events to ?1004h panes (Claude Code 60s fallback guard)', async () => {
-    const socketName = `tmex-test-local-focus-${Date.now()}`;
-    const sessionName = 'tmex-local-focus';
+    const socketName = `vibeterm-test-local-focus-${Date.now()}`;
+    const sessionName = 'vibeterm-local-focus';
     const focusLog = `/tmp/${socketName}.focuslog`;
     // pane 进入 raw 模式、开启 focus reporting，并把 stdin 原样落盘；
     // 若 control attach / select-pane 触发焦点事件，日志中会出现 ESC[I / ESC[O。
@@ -344,8 +344,8 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 20_000);
 
   test('re-selecting the same pane concurrently does not reopen fifo twice', async () => {
-    const socketName = `tmex-test-local-reselect-${Date.now()}`;
-    const sessionName = 'tmex-local-reselect';
+    const socketName = `vibeterm-test-local-reselect-${Date.now()}`;
+    const sessionName = 'vibeterm-local-reselect';
     tmuxOn(socketName, `new-session -d -s ${sessionName} "sh -lc 'echo READY_MARKER; exec sh'"`);
 
     const snapshots: StateSnapshotPayload[] = [];
@@ -405,8 +405,8 @@ describe('LocalExternalTmuxConnection integration', () => {
 
   // capturePaneText 走独立临时 socket（-L），不触碰默认 socket 上的任何会话。
   test('capturePaneText reads plain pane text on demand with optional history', async () => {
-    const socketName = `tmex-test-capture-${Date.now()}`;
-    const sessionName = 'tmex-capture-text';
+    const socketName = `vibeterm-test-capture-${Date.now()}`;
+    const sessionName = 'vibeterm-capture-text';
 
     execSync(
       `tmux -L ${socketName} new-session -d -x 80 -y 10 -s ${sessionName} "sh -lc 'exec sh'"`,
@@ -499,8 +499,8 @@ describe('LocalExternalTmuxConnection integration', () => {
 
   // getPaneInfo 同样走独立临时 socket，校验实时尺寸/前台命令。
   test('getPaneInfo reports live cols/rows and foreground command', async () => {
-    const socketName = `tmex-test-paneinfo-${Date.now()}`;
-    const sessionName = 'tmex-pane-info';
+    const socketName = `vibeterm-test-paneinfo-${Date.now()}`;
+    const sessionName = 'vibeterm-pane-info';
 
     execSync(
       `tmux -L ${socketName} new-session -d -x 100 -y 30 -s ${sessionName} "sh -lc 'exec sh'"`,
@@ -572,8 +572,8 @@ describe('LocalExternalTmuxConnection integration', () => {
   }, 20_000);
 
   test('splitPane / resizePaneById / selectLayout / focusPane drive real tmux layout', async () => {
-    const socketName = `tmex-test-split-${Date.now()}`;
-    const sessionName = 'tmex-split';
+    const socketName = `vibeterm-test-split-${Date.now()}`;
+    const sessionName = 'vibeterm-split';
 
     execSync(
       `tmux -L ${socketName} new-session -d -x 200 -y 50 -s ${sessionName} "sh -lc 'exec sh'"`,
@@ -744,8 +744,8 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
   }
 
   test('订阅 pane 收到 997 注入，未订阅 pane 不受影响，prompt marker 清位', async () => {
-    const socketName = `tmex-test-local-2031-${Date.now()}`;
-    const sessionName = 'tmex-local-2031';
+    const socketName = `vibeterm-test-local-2031-${Date.now()}`;
+    const sessionName = 'vibeterm-local-2031';
     const recvFile = `/tmp/${socketName}-recv`;
     tmuxOn(socketName, `new-session -d -x 80 -y 24 -s ${sessionName}`);
     tmuxOn(socketName, `split-window -t ${sessionName}`);
@@ -808,12 +808,12 @@ describe('LocalExternalTmuxConnection mode 2031 theme notify integration', () =>
     }
   }, 30_000);
 
-  test('gateway 重启后经 @tmex_2031 pane 选项恢复订阅', async () => {
-    const socketName = `tmex-test-local-2031-restore-${Date.now()}`;
-    const sessionName = 'tmex-local-2031-restore';
+  test('gateway 重启后经 @vibeterm_2031 pane 选项恢复订阅', async () => {
+    const socketName = `vibeterm-test-local-2031-restore-${Date.now()}`;
+    const sessionName = 'vibeterm-local-2031-restore';
     tmuxOn(socketName, `new-session -d -x 80 -y 24 -s ${sessionName}`);
     const paneId = tmuxOn(socketName, `display-message -p -t ${sessionName} '#{pane_id}'`);
-    tmuxOn(socketName, `set-option -p -t ${paneId} @tmex_2031 on`);
+    tmuxOn(socketName, `set-option -p -t ${paneId} @vibeterm_2031 on`);
 
     const sink = { outputs: [] as string[], snapshots: [] as StateSnapshotPayload[] };
     const connection = createConnection(socketName, sessionName, sink);

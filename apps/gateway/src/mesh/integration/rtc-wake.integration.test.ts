@@ -32,7 +32,7 @@ import type { LoadNative } from '../rtc/native';
 import { createFakeNativeModule } from '../rtc/test-fakes';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 type HubBoot = {

@@ -527,7 +527,7 @@ async function stopQuietly(parts: Array<[string, () => void | Promise<void>]>): 
     try {
       await fn();
     } catch (err) {
-      console.error(`[tmex] ${label} stop failed`, err);
+      console.error(`[vibeterm] ${label} stop failed`, err);
     }
   }
 }

@@ -31,10 +31,10 @@ describe('managed gateway target contract', () => {
 
   test('derives the executable suffix from the target rather than the build host', () => {
     expect(outfileName('bun-windows-x64-baseline')).toBe(
-      'tmex-gateway-managed-windows-x64-baseline.exe'
+      'vibeterm-gateway-managed-windows-x64-baseline.exe'
     );
-    expect(outfileName('bun-windows-arm64')).toBe('tmex-gateway-managed-windows-arm64.exe');
-    expect(outfileName('bun-darwin-arm64')).toBe('tmex-gateway-managed-darwin-arm64');
-    expect(outfileName('bun-linux-x64')).toBe('tmex-gateway-managed-linux-x64');
+    expect(outfileName('bun-windows-arm64')).toBe('vibeterm-gateway-managed-windows-arm64.exe');
+    expect(outfileName('bun-darwin-arm64')).toBe('vibeterm-gateway-managed-darwin-arm64');
+    expect(outfileName('bun-linux-x64')).toBe('vibeterm-gateway-managed-linux-x64');
   });
 });

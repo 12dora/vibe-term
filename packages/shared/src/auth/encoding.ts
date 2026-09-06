@@ -7,6 +7,7 @@ import {
 } from '@noble/hashes/utils.js';
 import { b } from '@zorsh/zorsh';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const DOMAIN_DELEGATION = 'tmex/delegation/v1';
 export const DOMAIN_LOGIN = 'tmex/login/v1';
 export const DOMAIN_AUTHORIZATION = 'tmex/enroll/v1';

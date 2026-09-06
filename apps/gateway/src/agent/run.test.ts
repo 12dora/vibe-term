@@ -166,7 +166,7 @@ beforeAll(() => {
     id: TEST_DEVICE_ID,
     name: 'run-test-device',
     type: 'local',
-    session: 'tmex-test',
+    session: 'vibeterm-test',
     authMode: 'agent',
     port: 22,
     sortOrder: 0,

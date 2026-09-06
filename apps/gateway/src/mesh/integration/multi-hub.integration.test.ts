@@ -11,7 +11,8 @@ import {
   encodeRevokeNodePayload,
   hexToBytes,
 } from '@vibeterm/shared/auth';
-import { HUB_NOT_WRITER, VIBETERM_FORWARDED_BY_HEADER } from '@vibeterm/shared/uplink';
+import { FORWARDED_BY_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
+import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { signUserRecord } from '../../hub/hub-test-helpers';
 import { patchNode } from '../../hub/node-persistence';
 import { decodeUplinkCtl } from '../uplink-protocol';
@@ -177,7 +178,7 @@ describe('multi-hub in-process integration', () => {
       }),
     });
     expect(enroll.status).toBe(201);
-    expect(enroll.headers.get(VIBETERM_FORWARDED_BY_HEADER)).toBe(b.mesh.nodeId);
+    expect(readHeaderPair(enroll.headers, FORWARDED_BY_HEADER)).toBe(b.mesh.nodeId);
     const created = (await enroll.json()) as { id: string };
     expect(a.userStore.getEnrollmentTokenById(created.id)).not.toBeNull();
 
@@ -402,7 +403,7 @@ describe('multi-hub in-process integration', () => {
           writerEpoch: 2,
         });
       } else {
-        expect(enroll.headers.get(VIBETERM_FORWARDED_BY_HEADER)).toBe(aBoot.node.mesh.nodeId);
+        expect(readHeaderPair(enroll.headers, FORWARDED_BY_HEADER)).toBe(aBoot.node.mesh.nodeId);
       }
     } finally {
       errorSpy.mockRestore();

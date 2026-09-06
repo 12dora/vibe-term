@@ -1,6 +1,11 @@
 import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, posix, resolve, win32 } from 'node:path';
-import { type VibeTermRoles, isVibeTermRoleName, rolesFromName, validateRoles } from '@vibeterm/shared';
+import {
+  type VibeTermRoles,
+  isVibeTermRoleName,
+  rolesFromName,
+  validateRoles,
+} from '@vibeterm/shared';
 import type { HubMode } from '@vibeterm/shared/uplink';
 
 export type { VibeTermRoles };
@@ -82,7 +87,9 @@ export function parseVibeTermRoles(raw: string | undefined): VibeTermRoles {
   }
   const value = raw.trim();
   if (!isVibeTermRoleName(value)) {
-    throw new Error('VIBETERM_ROLES must be one of standalone | node | hub,node | relay | relay,node');
+    throw new Error(
+      'VIBETERM_ROLES must be one of standalone | node | hub,node | relay | relay,node'
+    );
   }
   const roles = rolesFromName(value);
   const invalid = validateRoles(roles);
@@ -271,16 +278,18 @@ export function parseUplinkPreferNearest(raw: string | undefined): boolean | nul
   const value = raw.trim().toLowerCase();
   if (value === '0' || value === 'false' || value === 'no' || value === 'off') return false;
   if (value === '1' || value === 'true' || value === 'yes' || value === 'on') return true;
-  throw new Error('VIBETERM_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off');
+  throw new Error(
+    'VIBETERM_UPLINK_PREFER_NEAREST must be 0 | 1 | true | false | yes | no | on | off'
+  );
 }
 
 /** cloudflared 数据目录：显式 `VIBETERM_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.VIBETERM_TUNNEL_DIR?.trim();
   if (explicit) return explicit;
-  const dbUrl = (env.DATABASE_URL ?? './tmex.db').trim();
+  const dbUrl = (env.DATABASE_URL ?? './vibeterm.db').trim();
   if (dbUrl === ':memory:' || dbUrl.startsWith('file::memory:')) {
-    return join(tmpdir(), 'tmex-tunnel');
+    return join(tmpdir(), 'vibeterm-tunnel');
   }
   const dbPath = isAbsolute(dbUrl) ? dbUrl : resolve(dbUrl);
   return join(dirname(dbPath), 'tunnel');
@@ -298,10 +307,11 @@ export const config = {
   bindHost: getEnv('VIBETERM_BIND_HOST', '0.0.0.0'),
   originUrl: originUrlFromBindHost(getEnv('VIBETERM_BIND_HOST', '0.0.0.0'), resolveGatewayPort()),
   baseUrl: getEnv('VIBETERM_BASE_URL', 'http://127.0.0.1:8085'),
-  siteNameDefault: getEnv('VIBETERM_SITE_NAME', 'tmex'),
+  siteNameDefault: getEnv('VIBETERM_SITE_NAME', 'VibeTerm'),
 
-  // 数据库
-  databaseUrl: getEnv('DATABASE_URL', './tmex.db'),
+  // 数据库。默认值只用于 dev/test；生产的 DATABASE_URL 由安装版 app.env 注入，
+  // 已有安装仍指向安装目录里的 tmex.db。
+  databaseUrl: getEnv('DATABASE_URL', './vibeterm.db'),
   tunnelDir: resolveTunnelDir(),
 
   // 文件传输（上传/下载）单文件字节上限，默认 2GB；后端校验 + 前端上传前预校验共用
@@ -325,12 +335,15 @@ export const config = {
   // 受管 session 的 window-style，用于 tmux 代答 pane 内 OSC 10/11 颜色查询；
   // 默认与前端 seoul256 dark 主题一致，设为 off 关闭
   tmuxWindowStyle: getEnv('VIBETERM_TMUX_WINDOW_STYLE', 'fg=#d0d0d0,bg=#262626'),
-  // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 VIBETERM_TMUX_SOCKET=tmex-e2e
+  // local 设备的 tmux socket（tmux -L <name>）。仅 e2e 注入 VIBETERM_TMUX_SOCKET=vibeterm-e2e
   // 以与生产默认 socket 隔离；生产/普通运行不设 → 空串 → 不加 -L → 用默认 socket。
   tmuxSocket: getEnv('VIBETERM_TMUX_SOCKET', ''),
   tmuxBin: resolveTmuxBin(),
   gatewayOwnerToken: getGatewayOwnerToken(),
-  sshReconnectMaxRetriesDefault: Number.parseInt(getEnv('VIBETERM_SSH_RECONNECT_MAX_RETRIES', '2'), 10),
+  sshReconnectMaxRetriesDefault: Number.parseInt(
+    getEnv('VIBETERM_SSH_RECONNECT_MAX_RETRIES', '2'),
+    10
+  ),
   sshReconnectDelaySecondsDefault: Number.parseInt(
     getEnv('VIBETERM_SSH_RECONNECT_DELAY_SECONDS', '10'),
     10

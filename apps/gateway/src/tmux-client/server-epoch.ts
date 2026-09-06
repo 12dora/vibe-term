@@ -1,4 +1,6 @@
-export const VIBETERM_SERVER_EPOCH_OPTION = '@tmex-server-epoch';
+export const VIBETERM_SERVER_EPOCH_OPTION = '@vibeterm-server-epoch';
+/** tmex 时期的选项名：升级时 tmux 服务端还活着，attach 时把旧值搬到新名再删旧值。 */
+export const LEGACY_SERVER_EPOCH_OPTION = '@tmex-server-epoch';
 
 export interface TmuxCommandResult {
   exitCode: number;
@@ -32,6 +34,15 @@ export async function ensureStableServerEpoch(
   const existing = await runTmux(['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION]);
   if (existing.exitCode === 0 && existing.stdout.trim()) {
     return decodeServerEpoch(existing.stdout);
+  }
+
+  // 从 1.x 原地升级：服务端仍带旧选项，搬到新名后删旧值，epoch 不变（否则会话被判为换了服务端）。
+  const legacy = await runTmux(['show-options', '-gqv', LEGACY_SERVER_EPOCH_OPTION]);
+  const legacyValue = legacy.exitCode === 0 ? legacy.stdout.trim() : '';
+  if (legacyValue && /^[0-9a-f]{32}$/.test(legacyValue)) {
+    await runTmux(['set-option', '-gq', '-o', VIBETERM_SERVER_EPOCH_OPTION, legacyValue]);
+    await runTmux(['set-option', '-gqu', LEGACY_SERVER_EPOCH_OPTION]);
+    return decodeServerEpoch(legacyValue);
   }
 
   await runTmux(['set-option', '-gq', '-o', VIBETERM_SERVER_EPOCH_OPTION, candidate]);

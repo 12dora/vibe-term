@@ -14,7 +14,7 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: new Date().toISOString(),
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'dev-1', name: 'mac', type: 'local' },
     tmux: { windowId: '@1', paneId: '%1', windowIndex: 7, paneIndex: 3 },
     ...overrides,
@@ -49,11 +49,11 @@ describe('WeixinChannel gating & formatting', () => {
       await weixinChannel.notify('terminal_bell', makeEvent({ eventType: 'terminal_bell' }));
       expect(calls).toHaveLength(1);
       const text = calls[0]?.text ?? '';
-      expect(text).toContain('tmex');
+      expect(text).toContain('vibeterm');
       expect(text).toContain('mac');
       // 纯文本：不含 HTML 锚标签
       expect(text).not.toContain('<a href');
-      expect(text).toContain('https://tmex.example.com/devices/dev-1/windows/%401/panes/%251');
+      expect(text).toContain('https://vibeterm.example.com/devices/dev-1/windows/%401/panes/%251');
       updateSiteSettings({ enableBellPush: false });
     });
   });

@@ -1,4 +1,10 @@
-import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@vibeterm/shared';
+import {
+  UPGRADE_CANCELLED,
+  combineAbortSignals,
+  errorMessage,
+  selectReleaseAssetForTarget,
+  withTimeout,
+} from '@vibeterm/shared';
 import {
   PUSH_MAX_ATTEMPTS,
   PUSH_RETRY_BACKOFF_MS,
@@ -80,7 +86,8 @@ type DownloadedRelease = {
 type DownloadFn = (
   version: string,
   signal?: AbortSignal,
-  onProgress?: DownloadProgressFn
+  onProgress?: DownloadProgressFn,
+  assetName?: string
 ) => Promise<DownloadedRelease>;
 
 type Job = {
@@ -103,6 +110,8 @@ type Job = {
   pushPromise: Promise<Response> | null;
   startPromise: Promise<Response> | null;
   upgradeCapabilities: string[];
+  /** 推给目标节点的发行资产名：<2.0.0 的节点只认改名前的那份。 */
+  assetName: string;
 };
 
 type RemoteUpgradeTimeouts = {
@@ -164,6 +173,8 @@ export function startRemoteUpgradeJob(opts: {
   now?: () => number;
   timeouts?: Partial<RemoteUpgradeTimeouts>;
   upgradeCapabilities?: readonly string[];
+  /** 目标节点当前版本；决定推新资产还是改名前的旧资产。未知时按旧资产处理。 */
+  targetCurrentVersion?: string | null;
   /** 单测注入：跳过退避真实等待。 */
   sleep?: SleepFn;
 }): RemoteUpgradeStartResult {
@@ -197,6 +208,7 @@ export function startRemoteUpgradeJob(opts: {
     pushPromise: null,
     startPromise: null,
     upgradeCapabilities: [...(opts.upgradeCapabilities ?? ['staged-package', 'upgrade-cancel'])],
+    assetName: selectReleaseAssetForTarget(opts.targetCurrentVersion, opts.version),
   };
   jobs.set(opts.nodeId, job);
 
@@ -337,10 +349,15 @@ async function runDownloadPhase(
   job.phase = 'download';
   try {
     const downloaded = await withTimeout(
-      deps.download(job.version, job.abort.signal, (downloadedBytes, totalBytes) => {
-        job.downloadedBytes = downloadedBytes;
-        job.downloadTotalBytes = totalBytes;
-      }),
+      deps.download(
+        job.version,
+        job.abort.signal,
+        (downloadedBytes, totalBytes) => {
+          job.downloadedBytes = downloadedBytes;
+          job.downloadTotalBytes = totalBytes;
+        },
+        job.assetName
+      ),
       deps.timeouts.downloadMs,
       'download timeout'
     );
@@ -699,7 +716,13 @@ function releaseCacheDir(): string {
 async function defaultDownload(
   version: string,
   signal?: AbortSignal,
-  onProgress?: DownloadProgressFn
+  onProgress?: DownloadProgressFn,
+  assetName?: string
 ): Promise<DownloadedRelease> {
-  return downloadVerifiedRelease(version, { cacheDir: releaseCacheDir(), signal, onProgress });
+  return downloadVerifiedRelease(version, {
+    cacheDir: releaseCacheDir(),
+    signal,
+    onProgress,
+    assetName,
+  });
 }

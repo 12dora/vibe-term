@@ -144,10 +144,10 @@ describe('pane stream parser golden traces', () => {
 
   test('OSC 9 notification ignores progress payload', () => {
     expectGolden(
-      bytes('A', 0x1b, 0x5d, '9;hello from tmex', 0x07, 'B', 0x1b, 0x5d, '9;4;1;42', 0x07, 'C'),
+      bytes('A', 0x1b, 0x5d, '9;hello from VibeTerm', 0x07, 'B', 0x1b, 0x5d, '9;4;1;42', 0x07, 'C'),
       {
         events: [
-          { type: 'notification', notification: { source: 'osc9', body: 'hello from tmex' } },
+          { type: 'notification', notification: { source: 'osc9', body: 'hello from VibeTerm' } },
         ],
         output: Array.from(bytes('ABC')),
       }
@@ -406,13 +406,19 @@ describe('pane stream parser golden traces', () => {
   });
 
   test('OSC 133 C/D markers including nonce', () => {
-    expectGolden(bytes('X', 0x1b, ']', '133;C', ST, 'Y', 0x1b, ']', '133;D;137;tmex=abc123', ST), {
-      events: [
-        { type: 'prompt', marker: { kind: 'C', exitCode: null, params: [] } },
-        { type: 'prompt', marker: { kind: 'D', exitCode: 137, params: ['137', 'tmex=abc123'] } },
-      ],
-      output: [0x58, 0x59],
-    });
+    expectGolden(
+      bytes('X', 0x1b, ']', '133;C', ST, 'Y', 0x1b, ']', '133;D;137;vibeterm=abc123', ST),
+      {
+        events: [
+          { type: 'prompt', marker: { kind: 'C', exitCode: null, params: [] } },
+          {
+            type: 'prompt',
+            marker: { kind: 'D', exitCode: 137, params: ['137', 'vibeterm=abc123'] },
+          },
+        ],
+        output: [0x58, 0x59],
+      }
+    );
   });
 
   test('OSC 133 unknown subcommand is ignored', () => {

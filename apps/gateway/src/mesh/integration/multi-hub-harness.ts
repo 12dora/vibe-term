@@ -35,7 +35,7 @@ import type { UplinkWsFactory } from '../uplink-client';
 import { sameHubUrl } from '../uplink-pool';
 import { type UplinkNodeList, decodeUplinkCtl, encodeUplinkCtl } from '../uplink-protocol';
 
-export const PASSWORD = 'tmex-test';
+export const PASSWORD = 'vibeterm-test';
 export const HUB_A_URL = 'http://hub-a.test';
 export const HUB_B_URL = 'http://hub-b.test';
 export const HUB_E_URL = 'http://hub-e.test';

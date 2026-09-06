@@ -161,7 +161,7 @@ async function postPasskeyRecord(
   });
   const req = new Request('http://localhost/api/auth/keylog?hub=sync', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie: `tmex_s_self=${b.sid}` },
+    headers: { 'content-type': 'application/json', cookie: `vibeterm_s_self=${b.sid}` },
     body: JSON.stringify({
       bytes: encodeBase64url(bytes),
       sig: encodeBase64url(encodePasskeyAssertionSig(assertion)),

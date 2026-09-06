@@ -104,7 +104,7 @@ describe('managed endpoint publication', () => {
   });
 
   test('atomically publishes one complete final file', async () => {
-    const directory = mkdtempSync(join(tmpdir(), 'tmex-managed-endpoint-'));
+    const directory = mkdtempSync(join(tmpdir(), 'vibeterm-managed-endpoint-'));
     temporaryDirectories.push(directory);
     const path = join(directory, 'ready.json');
     const publication = { path, nonce: 'launch-nonce' };

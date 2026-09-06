@@ -13,7 +13,7 @@ afterEach(() => {
 });
 
 function fixture(name: string, content = ''): string {
-  const root = join(tmpdir(), `tmex-managed-scan-${crypto.randomUUID()}`);
+  const root = join(tmpdir(), `vibeterm-managed-scan-${crypto.randomUUID()}`);
   mkdirSync(root, { recursive: true });
   roots.push(root);
   const artifact = join(root, name);
@@ -23,7 +23,7 @@ function fixture(name: string, content = ''): string {
 
 describe('managed artifact fail-closed scanner', () => {
   test('拒绝真实自更新实现特征', () => {
-    const artifact = fixture('gateway', 'registry.npmjs.org/tmex-cli');
+    const artifact = fixture('gateway', 'registry.npmjs.org/vibeterm-cli');
     const result = scanManagedArtifact(artifact);
     expect(result.ok).toBe(false);
     expect(result.findings).toContain('content:npm-registry');
@@ -43,7 +43,7 @@ describe('managed artifact fail-closed scanner', () => {
   });
 
   test('manifest 目录下缺 ghostty wasm 或 sha 不符均拒绝', () => {
-    const artifact = fixture('tmex-gateway-managed-darwin-arm64');
+    const artifact = fixture('vibeterm-gateway-managed-darwin-arm64');
     const dir = join(artifact, '..');
     writeFileSync(
       join(dir, 'target-matrix.json'),

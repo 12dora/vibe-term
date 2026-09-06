@@ -7,7 +7,7 @@ function createSnapshot(): StateSnapshotPayload {
     deviceId: 'device-1',
     session: {
       id: '$1',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',
@@ -63,7 +63,7 @@ describe('resolvePaneContext', () => {
   test('resolves by paneId first and builds pane url', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com/',
+      siteUrl: 'https://vibeterm.example.com/',
       snapshot: createSnapshot(),
       rawData: {
         paneId: '%12',
@@ -75,7 +75,7 @@ describe('resolvePaneContext', () => {
       paneId: '%12',
       windowIndex: 0,
       paneIndex: 1,
-      paneUrl: 'https://tmex.example.com/devices/device-1/windows/%401/panes/%2512',
+      paneUrl: 'https://vibeterm.example.com/devices/device-1/windows/%401/panes/%2512',
       paneTitle: 'second',
       paneCurrentCommand: 'vim',
     });
@@ -84,7 +84,7 @@ describe('resolvePaneContext', () => {
   test('falls back to active window/pane when raw data is empty', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot: createSnapshot(),
       rawData: {},
     });
@@ -94,7 +94,7 @@ describe('resolvePaneContext', () => {
       paneId: '%21',
       windowIndex: 1,
       paneIndex: 0,
-      paneUrl: 'https://tmex.example.com/devices/device-1/windows/%402/panes/%2521',
+      paneUrl: 'https://vibeterm.example.com/devices/device-1/windows/%402/panes/%2521',
       paneTitle: 'ops-1',
       paneCurrentCommand: 'htop',
     });
@@ -103,7 +103,7 @@ describe('resolvePaneContext', () => {
   test('returns raw ids when snapshot is unavailable', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot: null,
       rawData: {
         windowId: '@1',
@@ -120,7 +120,7 @@ describe('resolvePaneContext', () => {
   test('falls back to windowId when paneId is missing from the snapshot', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot: createSnapshot(),
       rawData: {
         windowId: '@1',
@@ -146,7 +146,7 @@ describe('resolvePaneContext', () => {
 
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot,
       rawData: {},
     });
@@ -167,7 +167,7 @@ describe('resolvePaneContext', () => {
 
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot,
       rawData: { windowId: '@1' },
     });
@@ -180,8 +180,8 @@ describe('resolvePaneContext', () => {
   test('keeps raw ids when the session has no windows', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
-      snapshot: { deviceId: 'device-1', session: { id: '$1', name: 'tmex', windows: [] } },
+      siteUrl: 'https://vibeterm.example.com',
+      snapshot: { deviceId: 'device-1', session: { id: '$1', name: 'VibeTerm', windows: [] } },
       rawData: { windowId: '@9', paneId: '%9' },
     });
 
@@ -199,7 +199,7 @@ describe('resolvePaneContext', () => {
   test('treats empty and non-string raw ids as missing', () => {
     const bell = resolvePaneContext({
       deviceId: 'device-1',
-      siteUrl: 'https://tmex.example.com',
+      siteUrl: 'https://vibeterm.example.com',
       snapshot: createSnapshot(),
       rawData: { windowId: '', paneId: 12 },
     });
@@ -267,7 +267,7 @@ describe('buildContext', () => {
     expect(
       buildContext({
         deviceId: 'device-1',
-        siteUrl: 'https://tmex.example.com/',
+        siteUrl: 'https://vibeterm.example.com/',
         window,
         pane,
       })
@@ -276,7 +276,7 @@ describe('buildContext', () => {
       paneId: '%12',
       windowIndex: 3,
       paneIndex: 7,
-      paneUrl: 'https://tmex.example.com/devices/device-1/windows/%401/panes/%2512',
+      paneUrl: 'https://vibeterm.example.com/devices/device-1/windows/%401/panes/%2512',
       paneTitle: 'nvim',
       paneCurrentCommand: 'nvim',
     });
@@ -286,7 +286,7 @@ describe('buildContext', () => {
     expect(
       buildContext({
         deviceId: 'device-1',
-        siteUrl: 'https://tmex.example.com',
+        siteUrl: 'https://vibeterm.example.com',
         fallbackWindowId: '@raw',
         fallbackPaneId: '%raw',
       })

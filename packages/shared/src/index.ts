@@ -1,4 +1,4 @@
-// tmex 前后端共享类型定义（barrel）
+// VibeTerm 前后端共享类型定义（barrel）
 //
 // 本文件只做再导出：跨域契约按领域拆分在 ./contracts/* 下，
 // 运行时模块（i18n / ws-borsh / appearance / tmux-layout / capabilities）在各自目录。

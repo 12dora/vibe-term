@@ -10,14 +10,14 @@ import {
   type MeshInternalTmuxRuntime,
   handleMeshInternalTmuxRequest,
 } from './mesh-internal-tmux-routes';
-import { X_VIBETERM_MESH_PEER } from './peer-request-marker';
+import { MESH_PEER_HEADER } from './peer-request-marker';
 
 function peerRequest(path: string, body: unknown, peer = 'peer-1'): Request {
   return new Request(`http://localhost${path}`, {
     method: 'POST',
     headers: {
       'content-type': 'application/json',
-      [X_VIBETERM_MESH_PEER]: peer,
+      [MESH_PEER_HEADER.name]: peer,
     },
     body: JSON.stringify(body),
   });

@@ -47,7 +47,7 @@ import { WebSocketServer } from '../../ws';
 import {
   MESH_FORWARD_WS_KIND,
   MESH_VIA_SELF,
-  X_VIBETERM_SET_SESSION,
+  SET_SESSION_HEADER,
   setMeshRequestContext,
 } from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
@@ -57,7 +57,7 @@ import { setShareAccessVerifier } from '../share-credential';
 import { openHttpStream, openWsStream } from '../stream-targets';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 function fakeRuntime(): DeviceSessionRuntime {
@@ -934,7 +934,7 @@ describe('mesh phase-2 integration', () => {
     expect([401, 503]).toContain(again.status);
   });
 
-  test('SSO: same delegation+sess key logs into B with only tmex_s_<B>', async () => {
+  test('SSO: same delegation+sess key logs into B with only vibeterm_s_<B>', async () => {
     const a = await bootHubA();
     const b = await enrollNodeB(a);
     const sess = generateEd25519KeyPair();
@@ -951,7 +951,7 @@ describe('mesh phase-2 integration', () => {
     expect(names).toContain(nodeSessionCookieName(b.mesh.nodeId));
     expect(names).not.toContain(nodeSessionCookieName(MESH_VIA_SELF));
     expect(names).not.toContain(nodeSessionCookieName(a.mesh.nodeId));
-    expect(toB.headers.get(X_VIBETERM_SET_SESSION)).toBeNull();
+    expect(toB.headers.get(SET_SESSION_HEADER.name)).toBeNull();
     expect(sidFromResponse(toB, b.mesh.nodeId).length).toBeGreaterThan(8);
   });
 
@@ -1336,7 +1336,7 @@ describe('mesh phase-2 integration', () => {
       };
       const req = new Request(`http://entry/n/${b.mesh.nodeId}/ws`, {
         headers: {
-          cookie: `tmex_sh_${b.mesh.nodeId}=sh-1.secret`,
+          cookie: `vibeterm_sh_${b.mesh.nodeId}=sh-1.secret`,
           upgrade: 'websocket',
           connection: 'Upgrade',
         },
@@ -1399,7 +1399,7 @@ describe('mesh phase-2 integration', () => {
       };
       const req = new Request(`http://entry/n/${b.mesh.nodeId}/ws?share=sh-2`, {
         headers: {
-          cookie: `tmex_sh_${b.mesh.nodeId}=sh-1.secret`,
+          cookie: `vibeterm_sh_${b.mesh.nodeId}=sh-1.secret`,
           upgrade: 'websocket',
           connection: 'Upgrade',
         },

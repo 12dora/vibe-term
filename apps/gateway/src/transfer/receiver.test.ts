@@ -35,7 +35,7 @@ const NODE_A = 'a'.repeat(32);
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rx-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rx-test-'));
   dirs.push(dir);
   return dir;
 }

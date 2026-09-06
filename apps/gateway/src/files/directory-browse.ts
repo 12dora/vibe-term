@@ -223,7 +223,7 @@ export async function execSshCommand(
     if (timedOut) {
       return {
         stdout: new Uint8Array(stdoutBuf),
-        stderr: `${stderr}\n[tmex] ssh timed out`,
+        stderr: `${stderr}\n[vibeterm] ssh timed out`,
         exitCode: 124,
       };
     }

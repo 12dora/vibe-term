@@ -1,3 +1,4 @@
+import { GATEWAY_CHALLENGE_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
 import { config } from '../config';
 import { runtimeController } from '../control/runtime';
@@ -35,13 +36,13 @@ async function handleGetManifest(method: 'GET' | 'HEAD'): Promise<Response> {
     theme_color: '#0b1020',
     icons: [
       {
-        src: '/tmex.png',
+        src: '/vibeterm.png',
         sizes: '1024x1024',
         type: 'image/png',
         purpose: 'any',
       },
       {
-        src: '/tmex-maskable.png',
+        src: '/vibeterm-maskable.png',
         sizes: '1024x1024',
         type: 'image/png',
         purpose: 'maskable',
@@ -88,7 +89,7 @@ export const healthRoutes: ApiRoute[] = [
           tls,
           owner: createGatewayOwnerProof(
             config.gatewayOwnerToken,
-            req.headers.get('x-tmex-gateway-challenge'),
+            readHeaderPair(req.headers, GATEWAY_CHALLENGE_HEADER),
             process.pid,
             tmux.healthy
           ),

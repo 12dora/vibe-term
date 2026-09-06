@@ -33,12 +33,12 @@ export function buildRunCommandPayload(input: {
     return `${input.command}\r`;
   }
   const expr = posixExitCodeExpr(input.shell) ?? '$?';
-  const marker = `printf '\\033]133;D;%s;tmex=${input.nonce}\\033\\\\' "${expr}"`;
+  const marker = `printf '\\033]133;D;%s;vibeterm=${input.nonce}\\033\\\\' "${expr}"`;
   return `${input.command}; ${marker}\r`;
 }
 
 export function isMatchingExitMarker(marker: PromptMarker, nonce: string): boolean {
-  return marker.kind === 'D' && (!nonce || marker.params.includes(`tmex=${nonce}`));
+  return marker.kind === 'D' && (!nonce || marker.params.includes(`vibeterm=${nonce}`));
 }
 
 export function attachRunCommandTap(

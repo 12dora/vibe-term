@@ -17,7 +17,7 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'watch_triggered',
     timestamp: '2026-01-02T03:04:05.000Z',
-    site: { name: 'tmex & co', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm & co', url: 'https://vibeterm.example.com' },
     device: { id: 'dev-1', name: 'mac', type: 'local' },
     tmux: {
       windowId: '@1',
@@ -52,14 +52,14 @@ describe('notification-format raw views', () => {
     expect(buildPaneMetaLines(event)).toEqual(['Title：vim <main>', 'Process：bash & nvim']);
 
     const bell = buildBellRawView(event);
-    expect(bell.title).toContain('tmex & co');
+    expect(bell.title).toContain('VibeTerm & co');
     expect(bell.paneMetaLines.some((line) => line.includes('vim <main>'))).toBe(true);
-    expect(bell.paneUrl).toContain('https://tmex.example.com/');
+    expect(bell.paneUrl).toContain('https://vibeterm.example.com/');
 
     const notification = buildNotificationRawView(event);
     expect(notification.title).toBe('Build <ok>');
     expect(notification.body).toBe('done & dusted');
-    expect(notification.footer).toContain('tmex & co');
+    expect(notification.footer).toContain('VibeTerm & co');
 
     const generic = buildGenericRawView(event, SETTINGS);
     expect(generic.lines.some((line) => line.includes('vim <main>'))).toBe(true);
@@ -99,7 +99,7 @@ describe('notification-format raw views', () => {
       buildNotificationRawView(event).paneMetaLines.some((line) => line.includes('studio'))
     ).toBe(true);
     const generic = buildGenericRawView(event, SETTINGS).lines;
-    const siteIndex = generic.findIndex((line) => line.includes('tmex & co'));
+    const siteIndex = generic.findIndex((line) => line.includes('VibeTerm & co'));
     const nodeIndex = generic.findIndex((line) => line.includes('studio'));
     expect(nodeIndex).toBeGreaterThan(siteIndex);
   });

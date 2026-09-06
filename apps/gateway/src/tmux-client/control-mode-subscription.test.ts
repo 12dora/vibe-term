@@ -241,8 +241,8 @@ describe('control mode subscription', () => {
     const { subscription, collected } = createCollector();
     subscription.push(
       lines(
-        '%subscription-changed tmex-cwd \u00241 @1 0 %7 : /work/tree with spaces',
-        '%subscription-changed tmex-command \u00241 @1 0 %7 : cargo test'
+        '%subscription-changed vibeterm-cwd \u00241 @1 0 %7 : /work/tree with spaces',
+        '%subscription-changed vibeterm-command \u00241 @1 0 %7 : cargo test'
       )
     );
     expect(collected.metadata).toEqual([

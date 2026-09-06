@@ -7,6 +7,7 @@
  * 构建：`bun scripts/build-managed.ts`（`bun build --compile`）。
  */
 
+import { applyLegacyEnvAliases } from '../../../packages/shared/src/env/load-env';
 import { formatHttpEndpoint } from '../../../packages/shared/src/network';
 import { applyManagedTmuxNamespace, parseManagedGatewayArgs } from './managed-args';
 import type { GatewaySession } from './ws/gateway-session';
@@ -106,6 +107,10 @@ function embeddedVersion(): string {
 }
 
 async function runManagedGateway(): Promise<void> {
+  // managed 入口不读仓库 env 文件（变量由 companion CLI 注入），但仍要把旧前缀镜像过来：
+  // 改名前安装的实例注入的是 TMEX_*。
+  applyLegacyEnvAliases();
+
   const { lockManagedRuntime } = await import('./system/managed');
   lockManagedRuntime({
     managementMode: 'companion-cli',
@@ -113,6 +118,7 @@ async function runManagedGateway(): Promise<void> {
   });
 
   Reflect.deleteProperty(process.env, 'VIBETERM_FE_DIST_DIR');
+  Reflect.deleteProperty(process.env, 'TMEX_FE_DIST_DIR');
 
   const { consumeManagedEndpointPublication, publishManagedEndpoint, resolveManagedEndpointHost } =
     await import('./system/managed-endpoint');
@@ -140,7 +146,7 @@ async function runManagedGateway(): Promise<void> {
   }
 
   console.log(
-    `[gateway] tmex ${getDisplayVersion()} managed=${getManagementMode()} owner=${getUpdateOwner()}`
+    `[gateway] VibeTerm ${getDisplayVersion()} managed=${getManagementMode()} owner=${getUpdateOwner()}`
   );
 
   const createRuntime = async (): Promise<ManagedGatewayRuntime> => {
@@ -264,7 +270,7 @@ if (import.meta.main) {
   const managedArgs = parseManagedGatewayArgs(process.argv.slice(2));
 
   if (managedArgs.version) {
-    console.log(`tmex-gateway ${embeddedVersion()}`);
+    console.log(`vibeterm-gateway ${embeddedVersion()}`);
   } else {
     applyManagedTmuxNamespace(process.env, managedArgs.tmuxNamespace);
     await runManagedGateway();

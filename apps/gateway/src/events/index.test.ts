@@ -32,7 +32,7 @@ function recordingChannel(id: string): {
 }
 
 const baseEvent = {
-  site: { name: 'tmex', url: 'https://tmex.example.com' },
+  site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
   device: { id: 'device-reg', name: 'dev-reg', type: 'local' as const },
   tmux: { windowId: '@1', paneId: '%1', windowIndex: 1, paneIndex: 1 },
 };
@@ -419,8 +419,8 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
 
       await eventNotifier.notify('terminal_bell', {
         site: {
-          name: 'tmex',
-          url: 'https://tmex.example.com',
+          name: 'VibeTerm',
+          url: 'https://vibeterm.example.com',
         },
         device: {
           id: 'device-disabled',
@@ -459,8 +459,8 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
 
       await eventNotifier.notify('terminal_bell', {
         site: {
-          name: 'tmex<prod>&',
-          url: 'https://tmex.example.com',
+          name: 'VibeTerm<prod>&',
+          url: 'https://vibeterm.example.com',
         },
         device: {
           id: 'device-html',
@@ -478,10 +478,10 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
       expect(calls).toHaveLength(1);
       expect(calls[0]?.parseMode).toBe('HTML');
       expect(calls[0]?.text).toContain(
-        '🔔 Terminal Bell from tmex&lt;prod&gt;&amp;: Window 7 · Terminal 3 @ dev&lt;1&gt;&amp;'
+        '🔔 Terminal Bell from VibeTerm&lt;prod&gt;&amp;: Window 7 · Terminal 3 @ dev&lt;1&gt;&amp;'
       );
       expect(calls[0]?.text).toContain(
-        '<a href="https://tmex.example.com/devices/device-html/windows/%401/panes/%251">Click to view</a>'
+        '<a href="https://vibeterm.example.com/devices/device-html/windows/%401/panes/%251">Click to view</a>'
       );
     } finally {
       telegramService.sendToAuthorizedChats = originalSend;
@@ -504,7 +504,7 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
       await eventNotifier.notify('watch_rule_error', {
         site: {
           name: 'shanghai-macmini',
-          url: 'https://tmex.example.com',
+          url: 'https://vibeterm.example.com',
         },
         device: {
           id: 'device-other',
@@ -561,8 +561,8 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
 
       await eventNotifier.notify('terminal_notification', {
         site: {
-          name: 'tmex',
-          url: 'https://tmex.example.com',
+          name: 'VibeTerm',
+          url: 'https://vibeterm.example.com',
         },
         device: {
           id: 'device-notification-disabled',
@@ -606,8 +606,8 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
 
       const payload = {
         site: {
-          name: 'tmex',
-          url: 'https://tmex.example.com',
+          name: 'VibeTerm',
+          url: 'https://vibeterm.example.com',
         },
         device: {
           id: 'device-notification-html',
@@ -634,9 +634,9 @@ describe('EventNotifier telegram bell settings & html formatting', () => {
       expect(calls[0]?.parseMode).toBe('HTML');
       expect(calls[0]?.text).toContain('Build &lt;finished&gt;');
       expect(calls[0]?.text).toContain('All 42 tests &amp; checks passed');
-      expect(calls[0]?.text).toContain('from tmex: Window 7 · Terminal 3 @ dev&lt;4&gt;&amp;');
+      expect(calls[0]?.text).toContain('from VibeTerm: Window 7 · Terminal 3 @ dev&lt;4&gt;&amp;');
       expect(calls[0]?.text).toContain(
-        '<a href="https://tmex.example.com/devices/device-notification-html/windows/%401/panes/%251">'
+        '<a href="https://vibeterm.example.com/devices/device-notification-html/windows/%401/panes/%251">'
       );
     } finally {
       telegramService.sendToAuthorizedChats = originalSend;

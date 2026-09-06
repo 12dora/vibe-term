@@ -58,7 +58,7 @@ describe('LLM provider live integration', () => {
   });
 
   // Responses 协议（reasoning 模型）多轮工具调用：上一轮的 reasoning / tool-call item
-  // 带 id，默认会被发成 item_reference 依赖服务端存储；tmex 无状态回放需 store=false
+  // 带 id，默认会被发成 item_reference 依赖服务端存储；VibeTerm 无状态回放需 store=false
   // 改为内联发送，否则报 "Item with id '...' not found / store=false"（见 agent/run.ts）。
   test.if(protocol === 'openai-responses')(
     'Responses 多轮工具调用在 store:false 下成功（回放带 id 的 item）',

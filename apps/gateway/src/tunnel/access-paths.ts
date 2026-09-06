@@ -4,7 +4,7 @@
  * Hub HTTP（`hub-runtime.handleRequest`）：
  * - `/hub/uplink` — 节点常驻 WS（无浏览器 Access cookie）
  * - `/api/hub/enrollments/redeem` — CLI redeem（无用户 session）
- * - `/api/hub/enrollments` POST / GET `:id`、`/api/hub/nodes` 及 rename/revoke — 带 tmex 用户鉴权；
+ * - `/api/hub/enrollments` POST / GET `:id`、`/api/hub/nodes` 及 rename/revoke — 带 VibeTerm 用户鉴权；
  *   与 redeem 同属 `/api/hub/`，bypass 应用按此前缀覆盖，避免 CLI 被边缘拦截
  *
  * Relay HTTP（`relay-runtime.handleRequest`），与 hub 同理的机器路径：
@@ -30,13 +30,44 @@ export const ACCESS_EXEMPT_PATH_PREFIXES = ['/api/relay/tenants/'] as const;
 /** Cloudflare path app 的 domain 后缀（更具体路径优先） */
 export const ACCESS_BYPASS_PATH_PREFIXES = ['/hub/', '/api/hub/'] as const;
 
-export const VIBETERM_ALLOW_POLICY_NAME = 'tmex-allow';
-export const VIBETERM_BYPASS_POLICY_NAME = 'tmex-bypass';
-export const VIBETERM_APP_NAME = 'tmex';
+// 新建 Cloudflare Access 资源用的名字。改名前建的资源仍叫 tmex*，读侧一律双接受：
+// 认成「我们管理的」才能就地改写，否则会被当成用户手工加的策略而拒绝同步。
+export const VIBETERM_ALLOW_POLICY_NAME = 'vibeterm-allow';
+export const VIBETERM_BYPASS_POLICY_NAME = 'vibeterm-bypass';
+export const VIBETERM_APP_NAME = 'VibeTerm';
+const VIBETERM_BYPASS_APP_PREFIX = 'vibeterm-bypass';
+
+const LEGACY_ALLOW_POLICY_NAME = 'tmex-allow';
+const LEGACY_BYPASS_POLICY_NAME = 'tmex-bypass';
+const LEGACY_APP_NAME = 'tmex';
+const LEGACY_BYPASS_APP_PREFIX = 'tmex-bypass';
 
 export function bypassAppName(pathPrefix: string): string {
   const slug = pathPrefix.replace(/^\/+|\/+$/g, '').replace(/\//g, '-') || 'hub';
-  return `tmex-bypass-${slug}`;
+  return `${VIBETERM_BYPASS_APP_PREFIX}-${slug}`;
+}
+
+/** 是我们管理的 allow 策略名（含改名前的旧名） */
+export function isManagedAllowPolicyName(name: string): boolean {
+  return name === VIBETERM_ALLOW_POLICY_NAME || name === LEGACY_ALLOW_POLICY_NAME;
+}
+
+/** 是我们管理的 bypass 策略名（含改名前的旧名） */
+export function isManagedBypassPolicyName(name: string): boolean {
+  return name === VIBETERM_BYPASS_POLICY_NAME || name === LEGACY_BYPASS_POLICY_NAME;
+}
+
+/** 是我们管理的 Access 应用名（含改名前的旧名） */
+export function isManagedAppName(name: string): boolean {
+  return name === VIBETERM_APP_NAME || name === LEGACY_APP_NAME;
+}
+
+/** 是我们管理的 bypass 应用名（按前缀，含改名前的旧前缀） */
+export function isManagedBypassAppName(name: string): boolean {
+  return (
+    name.startsWith(`${VIBETERM_BYPASS_APP_PREFIX}-`) ||
+    name.startsWith(`${LEGACY_BYPASS_APP_PREFIX}-`)
+  );
 }
 
 export function bypassAppDomain(hostname: string, pathPrefix: string): string {

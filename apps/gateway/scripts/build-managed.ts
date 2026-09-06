@@ -114,8 +114,8 @@ function readVersion(): string {
 export function outfileName(target: ManagedTarget): string {
   const suffix = target.replace(/^bun-/, '');
   return target.startsWith('bun-windows-')
-    ? `tmex-gateway-managed-${suffix}.exe`
-    : `tmex-gateway-managed-${suffix}`;
+    ? `vibeterm-gateway-managed-${suffix}.exe`
+    : `vibeterm-gateway-managed-${suffix}`;
 }
 
 export interface TargetResult {

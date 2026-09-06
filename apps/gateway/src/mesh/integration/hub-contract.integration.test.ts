@@ -38,7 +38,7 @@ import {
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 function fakeGateway(db: AuthDb): GatewayRuntime {

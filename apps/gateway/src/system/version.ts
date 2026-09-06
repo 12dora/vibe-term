@@ -28,7 +28,7 @@ function readRepoPackageVersion(): string | null {
   }
 }
 
-/** monorepo 原始版本号（= 发布的 tmex-cli 版本，唯一真相源） */
+/** monorepo 原始版本号（= 发布的 vibeterm-cli 版本，唯一真相源） */
 export function getBaseVersion(): string {
   if (cachedBase !== undefined) return cachedBase;
 

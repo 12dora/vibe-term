@@ -9,7 +9,9 @@ export const RELAY_ENVELOPE_NONCE_LENGTH = 12;
 export const RELAY_WRAP_NONCE_LENGTH = 12;
 /** AES-256-GCM(32 字节租户密钥) = 32 密文 + 16 tag。 */
 export const RELAY_WRAP_CIPHERTEXT_LENGTH = 48;
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const RELAY_WRAP_HKDF_SALT = 'tmex-relay-wrap/v1';
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const RELAY_ENVELOPE_AAD_PREFIX = 'tmex-relay/';
 export const RELAY_ENVELOPE_AAD_SUFFIX = '/v1';
 

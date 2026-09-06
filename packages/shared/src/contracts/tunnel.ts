@@ -55,7 +55,7 @@ export interface TunnelBinaryStatus {
   installed: boolean;
   version: string | null;
   path: string | null;
-  /** managed = tmex 自己下载到数据目录；system = PATH 里已有 */
+  /** managed = VibeTerm 自己下载到数据目录；system = PATH 里已有 */
   source: 'managed' | 'system' | null;
 }
 
@@ -68,13 +68,13 @@ export interface TunnelAuthStatus {
 
 export interface TunnelConfigStatus {
   mode: TunnelMode;
-  /** named 模式的公网主机名（如 tmex.example.com） */
+  /** named 模式的公网主机名（如 vibeterm.example.com） */
   hostname: string | null;
   tunnelName: string | null;
   tunnelId: string | null;
   /** 随 gateway 启动自动拉起 */
   autoStart: boolean;
-  /** 隧道进程由系统服务托管（adopt_external），tmex 不拉起/停止它 */
+  /** 隧道进程由系统服务托管（adopt_external），VibeTerm 不拉起/停止它 */
   externallyManaged: boolean;
   /** 本机监听端口（cloudflared ingress 的 origin） */
   originPort: number;
@@ -116,7 +116,7 @@ export interface TunnelAccessStatus {
 }
 
 /**
- * 系统里已存在、不由 tmex 托管的 cloudflared（brew/launchd/systemd 服务或手工进程）。
+ * 系统里已存在、不由 VibeTerm 托管的 cloudflared（brew/launchd/systemd 服务或手工进程）。
  * 探测来源：进程列表、launchd/systemd 单元、~/.cloudflared/config.yml 与 cert.pem。
  */
 export interface TunnelExternalStatus {
@@ -277,7 +277,7 @@ export type TunnelActionRequest =
   | { action: 'sync_access'; hostname?: string }
   /**
    * 接管系统里已存在的隧道：mode=named、hostname 取 external.hostnames[index]，
-   * 不由 tmex 拉起进程（external 已在跑），只做状态展示与连通性检查
+   * 不由 VibeTerm 拉起进程（external 已在跑），只做状态展示与连通性检查
    */
   | { action: 'adopt_external'; hostname: string }
   /** 关闭强制校验且这是最后一道保护时同样需要 acknowledgeExposure=true */

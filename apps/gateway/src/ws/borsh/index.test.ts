@@ -22,7 +22,7 @@ describe('borsh codec', () => {
     const seq = state.seqGen();
 
     const helloS2C = {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion: '0.1.0',
       selectedVersion: 1,
       maxFrameBytes: 65536,

@@ -1,7 +1,7 @@
 import { errorMessage } from '@vibeterm/shared';
 import type { TunnelErrorCode } from '@vibeterm/shared';
 
-export const HOST_ENV_MESSAGE = 'Host environment is not managed by tmex-cli';
+export const HOST_ENV_MESSAGE = 'Host environment is not managed by vibeterm-cli';
 export const EXPOSURE_ACK_MESSAGE =
   'This instance has no sign-in and no Cloudflare Access protection; confirm public exposure explicitly';
 export const EXTERNAL_MANAGED_MESSAGE = 'managed by the system service';

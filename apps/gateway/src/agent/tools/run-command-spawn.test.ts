@@ -23,7 +23,7 @@ describe('buildRunCommandPayload', () => {
     });
     expect(payload.startsWith('ls -la; ')).toBe(true);
     expect(payload).toContain('133;D');
-    expect(payload).toContain('tmex=abc');
+    expect(payload).toContain('vibeterm=abc');
     expect(payload).toContain('$?');
     expect(payload.endsWith('\r')).toBe(true);
   });
@@ -40,7 +40,9 @@ describe('buildRunCommandPayload', () => {
 
 describe('isMatchingExitMarker', () => {
   test('只接受 kind=D', () => {
-    expect(isMatchingExitMarker({ kind: 'A', exitCode: 0, params: ['tmex=n'] }, 'n')).toBe(false);
+    expect(isMatchingExitMarker({ kind: 'A', exitCode: 0, params: ['vibeterm=n'] }, 'n')).toBe(
+      false
+    );
   });
 
   test('nonce 为空时任意 D 都匹配', () => {
@@ -48,11 +50,11 @@ describe('isMatchingExitMarker', () => {
   });
 
   test('nonce 必须出现在 params 里', () => {
-    expect(isMatchingExitMarker({ kind: 'D', exitCode: 0, params: ['0', 'tmex=abc'] }, 'abc')).toBe(
-      true
-    );
     expect(
-      isMatchingExitMarker({ kind: 'D', exitCode: 99, params: ['99', 'tmex=OTHER'] }, 'abc')
+      isMatchingExitMarker({ kind: 'D', exitCode: 0, params: ['0', 'vibeterm=abc'] }, 'abc')
+    ).toBe(true);
+    expect(
+      isMatchingExitMarker({ kind: 'D', exitCode: 99, params: ['99', 'vibeterm=OTHER'] }, 'abc')
     ).toBe(false);
   });
 });
@@ -83,10 +85,10 @@ describe('attachRunCommandTap', () => {
     );
 
     onBytes?.(new TextEncoder().encode('hi'));
-    onMarker?.({ kind: 'D', exitCode: 1, params: ['tmex=old'] });
+    onMarker?.({ kind: 'D', exitCode: 1, params: ['vibeterm=old'] });
     expect(tap.getReceivedMarker()).toBeNull();
     nonce = 'n1';
-    onMarker?.({ kind: 'D', exitCode: 0, params: ['tmex=n1'] });
+    onMarker?.({ kind: 'D', exitCode: 0, params: ['vibeterm=n1'] });
     expect(tap.getReceivedMarker()?.exitCode).toBe(0);
     expect(buffer.decode()).toBe('hi');
     tap.untap();

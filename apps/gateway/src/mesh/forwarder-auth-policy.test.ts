@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { AUTH_LOGIN_PATH, AUTH_SKIP, applyAuthPolicy, peekJsonCode } from './forwarder-auth-policy';
-import { AUTH_401_BODY_LIMIT, X_VIBETERM_SESSION_RENEWED, X_VIBETERM_SET_SESSION } from './mesh-deps';
-import { X_VIBETERM_CLEAR_SHARE, X_VIBETERM_SET_SHARE, X_VIBETERM_SET_SHARE_MAX_AGE } from './share-credential';
+import { AUTH_401_BODY_LIMIT, SESSION_RENEWED_HEADER, SET_SESSION_HEADER } from './mesh-deps';
+import { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER } from './share-credential';
 
 const OTHER = 'bb'.repeat(16);
 
@@ -23,7 +23,7 @@ describe('applyAuthPolicy', () => {
     });
     const res = await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/devices`, {
-        headers: { cookie: `tmex_s_${OTHER}=stale` },
+        headers: { cookie: `vibeterm_s_${OTHER}=stale` },
       }),
       headersFrom(upstream),
       upstream,
@@ -37,7 +37,7 @@ describe('applyAuthPolicy', () => {
       nodeId: OTHER,
     });
     const cookie = res?.headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_s_${OTHER}=`);
+    expect(cookie).toContain(`vibeterm_s_${OTHER}=`);
     expect(cookie).toContain('Max-Age=0');
     expect(cookie.includes('Secure')).toBe(false);
   });
@@ -65,7 +65,7 @@ describe('applyAuthPolicy', () => {
     });
     const res = await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/mesh/connection`, {
-        headers: { cookie: `tmex_s_${OTHER}=fresh` },
+        headers: { cookie: `vibeterm_s_${OTHER}=fresh` },
       }),
       headersFrom(upstream),
       upstream,
@@ -83,7 +83,7 @@ describe('applyAuthPolicy', () => {
       });
       const res = await applyAuthPolicy(
         new Request(`http://localhost/n/${OTHER}/api/devices`, {
-          headers: { cookie: `tmex_s_${OTHER}=stale` },
+          headers: { cookie: `vibeterm_s_${OTHER}=stale` },
         }),
         headersFrom(upstream),
         upstream,
@@ -100,7 +100,7 @@ describe('applyAuthPolicy', () => {
     });
     const res = await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/devices`, {
-        headers: { cookie: `tmex_s_${OTHER}=fresh` },
+        headers: { cookie: `vibeterm_s_${OTHER}=fresh` },
       }),
       headersFrom(upstream),
       upstream,
@@ -129,7 +129,7 @@ describe('applyAuthPolicy', () => {
     const upstream = new Response(JSON.stringify({ error: 'via_mismatch' }), { status: 401 });
     const res = await applyAuthPolicy(
       new Request(`https://entry.example/n/${OTHER}/api/devices`, {
-        headers: { cookie: `tmex_s_${OTHER}=stale-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=stale-sid` },
       }),
       headersFrom(upstream),
       upstream,
@@ -140,9 +140,10 @@ describe('applyAuthPolicy', () => {
       code: 'NODE_LOGIN_REQUIRED',
       nodeId: OTHER,
     });
-    expect(res?.headers.get('set-cookie')).toBe(
-      `tmex_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`
-    );
+    expect(res?.headers.getSetCookie()).toEqual([
+      `vibeterm_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+      `tmex_s_${OTHER}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure`,
+    ]);
   });
 
   test('x-tmex-set-session 变成 Set-Cookie，且 200 返回 null', async () => {
@@ -150,7 +151,7 @@ describe('applyAuthPolicy', () => {
       status: 200,
       headers: {
         'content-type': 'application/json',
-        [X_VIBETERM_SET_SESSION]: 'sessidvalue;64800',
+        [SET_SESSION_HEADER.name]: 'sessidvalue;64800',
       },
     });
     const headers = new Headers({ 'content-type': 'application/json' });
@@ -163,7 +164,7 @@ describe('applyAuthPolicy', () => {
     );
     expect(res).toBeNull();
     const cookie = headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_s_${OTHER}=sessidvalue`);
+    expect(cookie).toContain(`vibeterm_s_${OTHER}=sessidvalue`);
     expect(cookie).toContain('Max-Age=64800');
   });
 
@@ -171,21 +172,21 @@ describe('applyAuthPolicy', () => {
     const expiresAt = Date.now() + 30_000;
     const upstream = new Response('{}', {
       status: 200,
-      headers: { [X_VIBETERM_SESSION_RENEWED]: String(expiresAt) },
+      headers: { [SESSION_RENEWED_HEADER.name]: String(expiresAt) },
     });
     const headers = new Headers();
     const res = await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/devices`, {
-        headers: { cookie: `tmex_s_${OTHER}=live-sid` },
+        headers: { cookie: `vibeterm_s_${OTHER}=live-sid` },
       }),
       headers,
       upstream,
       OTHER
     );
     expect(res).toBeNull();
-    expect(headers.get(X_VIBETERM_SESSION_RENEWED)).toBe(String(expiresAt));
+    expect(headers.get(SESSION_RENEWED_HEADER.name)).toBe(String(expiresAt));
     const cookie = headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_s_${OTHER}=live-sid`);
+    expect(cookie).toContain(`vibeterm_s_${OTHER}=live-sid`);
     expect(cookie).toContain('Max-Age=');
   });
 
@@ -246,17 +247,17 @@ describe('peekJsonCode', () => {
 });
 
 describe('applyAuthPolicy 分享凭证', () => {
-  test('x-tmex-set-share 翻成 tmex_sh_<node> cookie 并抹掉内部头', async () => {
+  test('x-tmex-set-share 翻成 vibeterm_sh_<node> cookie 并抹掉内部头', async () => {
     const upstream = new Response(JSON.stringify({ ok: true }), {
       headers: {
         'content-type': 'application/json',
-        [X_VIBETERM_SET_SHARE]: 'sh-1.secret',
-        [X_VIBETERM_SET_SHARE_MAX_AGE]: '86400',
+        [SET_SHARE_HEADER.name]: 'sh-1.secret',
+        [SET_SHARE_MAX_AGE_HEADER.name]: '86400',
       },
     });
     const headers = headersFrom(upstream);
-    headers.set(X_VIBETERM_SET_SHARE, 'sh-1.secret');
-    headers.set(X_VIBETERM_SET_SHARE_MAX_AGE, '86400');
+    headers.set(SET_SHARE_HEADER.name, 'sh-1.secret');
+    headers.set(SET_SHARE_MAX_AGE_HEADER.name, '86400');
     const res = await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/login`, { method: 'POST' }),
       headers,
@@ -266,19 +267,19 @@ describe('applyAuthPolicy 分享凭证', () => {
     );
     expect(res).toBeNull();
     const cookie = headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_sh_${OTHER}=sh-1.secret`);
+    expect(cookie).toContain(`vibeterm_sh_${OTHER}=sh-1.secret`);
     expect(cookie).toContain('Max-Age=86400');
     expect(cookie).toContain('HttpOnly');
-    expect(headers.get(X_VIBETERM_SET_SHARE)).toBeNull();
-    expect(headers.get(X_VIBETERM_SET_SHARE_MAX_AGE)).toBeNull();
+    expect(headers.get(SET_SHARE_HEADER.name)).toBeNull();
+    expect(headers.get(SET_SHARE_MAX_AGE_HEADER.name)).toBeNull();
   });
 
   test('x-tmex-clear-share 写过期 cookie', async () => {
     const upstream = new Response('{}', {
-      headers: { 'content-type': 'application/json', [X_VIBETERM_CLEAR_SHARE]: '1' },
+      headers: { 'content-type': 'application/json', [CLEAR_SHARE_HEADER.name]: '1' },
     });
     const headers = headersFrom(upstream);
-    headers.set(X_VIBETERM_CLEAR_SHARE, '1');
+    headers.set(CLEAR_SHARE_HEADER.name, '1');
     await applyAuthPolicy(
       new Request(`http://localhost/n/${OTHER}/api/share-access/sh-1/logout`, { method: 'POST' }),
       headers,
@@ -287,8 +288,8 @@ describe('applyAuthPolicy 分享凭证', () => {
       true
     );
     const cookie = headers.get('set-cookie') ?? '';
-    expect(cookie).toContain(`tmex_sh_${OTHER}=;`);
+    expect(cookie).toContain(`vibeterm_sh_${OTHER}=;`);
     expect(cookie).toContain('Max-Age=0');
-    expect(headers.get(X_VIBETERM_CLEAR_SHARE)).toBeNull();
+    expect(headers.get(CLEAR_SHARE_HEADER.name)).toBeNull();
   });
 });

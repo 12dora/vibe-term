@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
-import { combineAbortSignals, releaseTarballName } from '@vibeterm/shared';
+import {
+  combineAbortSignals,
+  legacyReleaseTarballName,
+  releaseTarballName,
+} from '@vibeterm/shared';
 import { parseSha256Sums, sha256Hex } from '../../../../packages/shared/src/release/verify';
 import {
   assertReleaseSha256,
@@ -74,18 +78,29 @@ let rehashCount = 0;
 /** 版本级租约：持有期间该版本的缓存文件对任何清扫都免疫（远程推包可能要用它几分钟）。 */
 const retained = new Map<string, number>();
 
-/** 缓存目录里唯一合法的文件名形态：`tmex-cli-<semver>.tgz[.sha256|.part]`。 */
+/**
+ * 缓存目录里唯一合法的文件名形态：`(vibeterm|tmex)-cli-<semver>.tgz[.sha256|.sig.json|.part]`。
+ * 旧名同样合法：向 <2.0.0 的节点推包时下载的正是改名前的那份资产。
+ */
 const RELEASE_CACHE_NAME =
-  /^tmex-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.sig\.json|\.part)?$/;
+  /^(?:vibeterm|tmex)-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.sig\.json|\.part)?$/;
 const RELEASE_PART_TTL_MS = 24 * 60 * 60 * 1000;
 
-function inflightKey(cacheDir: string, version: string): string {
+/** 同一版本可能有新旧两份资产在下，在途表按资产名分桶。 */
+function inflightKey(cacheDir: string, assetName: string): string {
+  return `${cacheDir}::${assetName}`;
+}
+
+function versionKey(cacheDir: string, version: string): string {
   return `${cacheDir}::${version}`;
 }
 
-/** 该版本是否正在下载：清理方（本机取消 / 缓存清扫）据此避开共享中的 `.part`。 */
+/** 该版本是否有任一资产正在下载：清理方（本机取消 / 缓存清扫）据此避开共享中的 `.part`。 */
 export function isReleaseDownloadInFlight(cacheDir: string, version: string): boolean {
-  return inflight.has(inflightKey(cacheDir, version));
+  return (
+    inflight.has(inflightKey(cacheDir, releaseTarballName(version))) ||
+    inflight.has(inflightKey(cacheDir, legacyReleaseTarballName(version)))
+  );
 }
 
 /**
@@ -93,7 +108,7 @@ export function isReleaseDownloadInFlight(cacheDir: string, version: string): bo
  * 推几分钟，期间别的节点开始升级会带着新版本来清扫，没有租约就会把在推的整包删掉，重试直接 ENOENT。
  */
 export function retainReleaseVersion(cacheDir: string, version: string): () => void {
-  const key = inflightKey(cacheDir, version);
+  const key = versionKey(cacheDir, version);
   retained.set(key, (retained.get(key) ?? 0) + 1);
   let released = false;
   return () => {
@@ -106,7 +121,7 @@ export function retainReleaseVersion(cacheDir: string, version: string): () => v
 }
 
 export function isReleaseVersionRetained(cacheDir: string, version: string): boolean {
-  return retained.has(inflightKey(cacheDir, version));
+  return retained.has(versionKey(cacheDir, version));
 }
 
 export type SweepReleaseCacheOpts = {
@@ -239,6 +254,11 @@ export function resolveReleaseCacheDir(installDir?: string | null): string {
   const override = process.env.VIBETERM_RELEASE_CACHE_DIR?.trim();
   if (override) return override;
   if (installDir) return join(installDir, 'staging', 'release-cache');
+  return join(tmpdir(), 'vibeterm-release-cache');
+}
+
+/** 改名前用的临时缓存目录；启动清扫时顺手删掉，免得旧包永远堆在 /tmp。 */
+export function legacyTmpReleaseCacheDir(): string {
   return join(tmpdir(), 'tmex-release-cache');
 }
 
@@ -260,16 +280,19 @@ export async function downloadVerifiedRelease(
     fetchFn?: typeof fetch;
     signal?: AbortSignal;
     onProgress?: DownloadProgressFn;
+    /** 要下载的资产名；缺省为新资产名，向 <2.0.0 的节点推包时传旧名。 */
+    assetName?: string;
   }
 ): Promise<DownloadedRelease> {
   throwIfAborted(opts.signal);
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
-  const dest = join(opts.cacheDir, releaseTarballName(version));
+  const assetName = opts.assetName ?? releaseTarballName(version);
+  const dest = join(opts.cacheDir, assetName);
   const sidecar = `${dest}.sha256`;
-  const cached = await readVerifiedCache(dest, sidecar, version);
+  const cached = await readVerifiedCache(dest, sidecar, version, assetName);
   if (cached) return cached;
 
-  const key = `${opts.cacheDir}::${version}`;
+  const key = inflightKey(opts.cacheDir, assetName);
   const partPath = `${dest}.part`;
   return new Promise<DownloadedRelease>((resolve, reject) => {
     const waiter: InflightWaiter = {
@@ -394,13 +417,14 @@ async function downloadVerifiedReleaseUncached(
     fetchFn?: typeof fetch;
     signal?: AbortSignal;
     onProgress?: DownloadProgressFn;
+    assetName?: string;
   }
 ): Promise<DownloadedRelease> {
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
-  const fileName = releaseTarballName(version);
+  const fileName = opts.assetName ?? releaseTarballName(version);
   const dest = join(opts.cacheDir, fileName);
   const sidecar = `${dest}.sha256`;
-  const cached = await readVerifiedCache(dest, sidecar, version);
+  const cached = await readVerifiedCache(dest, sidecar, version, fileName);
   if (cached) return cached;
 
   const fetchFn = opts.fetchFn ?? fetch;
@@ -411,15 +435,20 @@ async function downloadVerifiedReleaseUncached(
   try {
     throwIfAborted(opts.signal);
     downloaded = await downloadTarballToFile(
-      resolveReleaseTarballUrl(version),
+      resolveReleaseTarballUrl(version, fileName),
       part,
       fetchFn,
       opts.signal,
       opts.onProgress
     );
     throwIfAborted(opts.signal);
-    verified = await fetchVerifiedReleaseSums(version, fetchFn, opts.signal);
-    assertReleaseSha256(version, downloaded.sha256, { hex: verified.sha256, missing: false });
+    verified = await fetchVerifiedReleaseSums(version, fetchFn, opts.signal, fileName);
+    assertReleaseSha256(
+      version,
+      downloaded.sha256,
+      { hex: verified.sha256, missing: false },
+      fileName
+    );
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
     throw err;
@@ -459,14 +488,15 @@ async function downloadVerifiedReleaseUncached(
 async function readVerifiedCache(
   dest: string,
   sidecar: string,
-  version: string
+  version: string,
+  assetName?: string
 ): Promise<DownloadedRelease | null> {
   if (!existsSync(dest) || !existsSync(sidecar)) return null;
   try {
     const expected = readFileSync(sidecar, 'utf8').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return null;
     // 缓存包也得过签名这一关：sidecar 缺失 / 被改过就当没缓存，重下一次比放行一个不可信的包便宜。
-    const signed = readReleaseSigSidecar(dest, version, expected);
+    const signed = readReleaseSigSidecar(dest, version, expected, assetName);
     if (!signed) return null;
     const info = statSync(dest);
     const identity = fileIdentity(info);

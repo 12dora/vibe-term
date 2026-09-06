@@ -585,7 +585,11 @@ describe('hub.attachments / hub.forward / attachedHubId codec', () => {
         id: 'fwd-1',
         method: 'POST',
         path: '/api/hub/nodes/n1/rename',
-        headers: { 'content-type': 'application/json', 'x-tmex-force-keylog': '1' },
+        headers: {
+          'content-type': 'application/json',
+          'x-vibeterm-force-keylog': '1',
+          'x-tmex-force-keylog': '1',
+        },
         body: JSON.stringify({ name: 'x' }),
         uid: 'user-1',
       };
@@ -612,7 +616,7 @@ describe('hub.attachments / hub.forward / attachedHubId codec', () => {
             path: '/api/hub/enrollments',
             headers: {
               'content-type': 'application/json',
-              cookie: 'tmex_s_self=secret',
+              cookie: 'vibeterm_s_self=secret',
               authorization: 'Bearer x',
               'x-tmex-force-keylog': '1',
             },
@@ -625,7 +629,12 @@ describe('hub.attachments / hub.forward / attachedHubId codec', () => {
         id: 'fwd-2',
         method: 'POST',
         path: '/api/hub/enrollments',
-        headers: { 'content-type': 'application/json', 'x-tmex-force-keylog': '1' },
+        // 只带旧名进来的帧也补齐新名，两侧对端都能读到
+        headers: {
+          'content-type': 'application/json',
+          'x-vibeterm-force-keylog': '1',
+          'x-tmex-force-keylog': '1',
+        },
         body: '{}',
       });
     });

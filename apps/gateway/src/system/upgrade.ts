@@ -45,6 +45,7 @@ import {
   stageFailureToResult,
   stagedPartExpired,
   stagedPartPath,
+  stagedRecordPath,
   stagedSinkDescriptor,
 } from './upgrade-staging';
 
@@ -127,11 +128,11 @@ export type UpgradeCancelResult =
  * 全局唯一升级状态机：idle / downloading / executing。
  *
  * 触发流程（仅 canSelfUpdate 由 API 层校验）：
- *  1. downloading：从本仓库 GitHub Releases 下载 `tmex-cli-<version>.tgz`
+ *  1. downloading：从本仓库 GitHub Releases 下载 `vibeterm-cli-<version>.tgz`
  *     到临时目录（fetch 跟随 GitHub 资产 302），再 `tar -xzf` 解出 npm pack
  *     布局（`package/`）。CLI 为 bun bundle，无需 npm install。此阶段失败时
  *     gateway 仍存活，可经 status() 上报 error 并回到 idle。
- *  2. executing：detached 拉起解压包的 `package/bin/tmex.js upgrade --apply-current-package`，
+ *  2. executing：detached 拉起解压包的 `package/bin/vibeterm.js upgrade --apply-current-package`，
  *     子进程停服务（杀掉本 gateway）→ 部署 → 重启。服务重启后新 gateway 启动即 idle。
  *
  * 依赖服务 unit 的 KillMode=process / AbandonProcessGroup=true，使 detached 子进程
@@ -139,11 +140,15 @@ export type UpgradeCancelResult =
  */
 
 function readNoneModePidRecord(installDir: string): PidFileRecord | null {
-  try {
-    return parsePidFileRecord(readFileSync(join(installDir, 'tmex.pid'), 'utf8'));
-  } catch {
-    return null;
+  // 改名前安装的实例写的是 tmex.pid；服务重新注册前 run.sh 仍在写旧名。
+  for (const name of ['vibeterm.pid', 'tmex.pid']) {
+    try {
+      return parsePidFileRecord(readFileSync(join(installDir, name), 'utf8'));
+    } catch {
+      // 换下一个名字
+    }
   }
+  return null;
 }
 
 function pidIsAlive(pid: number): boolean {
@@ -321,7 +326,7 @@ export class UpgradeController {
     const record = this.staged.get(version);
     const stagedDir = join(installDir, 'staging', 'staged');
     const tgz = record?.path ?? join(stagedDir, releaseTarballName(version));
-    const sidecar = join(stagedDir, `tmex-cli-${version}.json`);
+    const sidecar = stagedRecordPath(stagedDir, version);
     const parts = this.listStagedParts(stagedDir, version);
     const had = Boolean(record) || existsSync(tgz) || existsSync(sidecar) || parts.length > 0;
     if (!had) return { ok: false, status: 404 };
@@ -464,7 +469,7 @@ export class UpgradeController {
     const { version, sha256, bytes, partPath } = input;
     const stagedDir = join(installDir, 'staging', 'staged');
     const finalPath = join(stagedDir, releaseTarballName(version));
-    const sidecarPath = join(stagedDir, `tmex-cli-${version}.json`);
+    const sidecarPath = stagedRecordPath(stagedDir, version);
     let renamed = false;
     try {
       await rm(finalPath, { force: true }).catch(() => {});
@@ -577,7 +582,7 @@ export class UpgradeController {
       if (keep.has(version)) continue;
       this.staged.delete(version);
       await rm(record.path, { force: true }).catch(() => {});
-      await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
+      await rm(stagedRecordPath(join(installDir, 'staging', 'staged'), version), {
         force: true,
       }).catch(() => {});
       await removeStagedManifest(join(installDir, 'staging', 'staged'), version);
@@ -732,7 +737,7 @@ export class UpgradeController {
         if (!record) throw new Error('PACKAGE_NOT_STAGED');
         const consumedPath = join(stageDir, releaseTarballName(version));
         this.staged.delete(version);
-        await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
+        await rm(stagedRecordPath(join(installDir, 'staging', 'staged'), version), {
           force: true,
         });
         await rename(record.path, consumedPath);
@@ -828,7 +833,7 @@ export class UpgradeController {
       );
       if (owned === true) return;
       if (owned === false) {
-        throw new Error(`PID ${pid} is not the tmex runtime for this install (${installDir}).`);
+        throw new Error(`PID ${pid} is not the VibeTerm runtime for this install (${installDir}).`);
       }
     }
     const readCmd = this.deps.processCommandLine ?? processCommandLine;
@@ -839,7 +844,7 @@ export class UpgradeController {
       cmdline = null;
     }
     if (!cmdline || !cmdlineOwnsInstallRuntime(cmdline, installDir)) {
-      throw new Error(`PID ${pid} is not the tmex runtime for this install (${installDir}).`);
+      throw new Error(`PID ${pid} is not the VibeTerm runtime for this install (${installDir}).`);
     }
   }
 
@@ -941,8 +946,11 @@ export function assertExtractedCliPackage(packageRoot: string): void {
   } catch {
     throw new Error(`extracted package.json is invalid at ${pkgPath}`);
   }
-  if (parsed.name !== 'tmex-cli') {
-    throw new Error(`extracted package name is ${String(parsed.name)}, expected tmex-cli`);
+  // 改名前的资产包名仍是 tmex-cli：向 <2.0.0 的节点推的正是那份，本机也可能解到它。
+  if (parsed.name !== 'vibeterm-cli' && parsed.name !== 'tmex-cli') {
+    throw new Error(
+      `extracted package name is ${String(parsed.name)}, expected vibeterm-cli or tmex-cli`
+    );
   }
   if (!hasBinEntry(parsed.bin)) {
     throw new Error('extracted package.json is missing a bin entry');
@@ -1007,7 +1015,7 @@ export function parsePidFileRecord(raw: string): PidFileRecord | null {
 
 /**
  * 下载 GitHub Release tarball 并解压到 stageDir（npm pack 布局：package/）。
- * 返回 CLI 入口路径 `<stageDir>/package/bin/tmex.js`。
+ * 返回 CLI 入口路径 `<stageDir>/package/bin/vibeterm.js`（旧包回退到 `bin/tmex.js`）。
  */
 export async function stageGithubRelease(
   stageDir: string,
@@ -1037,9 +1045,12 @@ export async function extractCliTarball(
 ): Promise<string> {
   await extractTarball(tarballPath, stageDir, signal);
   const packageRoot = join(stageDir, 'package');
-  const binPath = join(packageRoot, 'bin', 'tmex.js');
-  if (!existsSync(binPath)) {
-    throw new Error(`downloaded tmex-cli binary not found at ${binPath}`);
+  // 改名前的资产只有 bin/tmex.js。
+  const binPath = ['vibeterm.js', 'tmex.js']
+    .map((name) => join(packageRoot, 'bin', name))
+    .find((path) => existsSync(path));
+  if (!binPath) {
+    throw new Error(`downloaded CLI binary not found in ${join(packageRoot, 'bin')}`);
   }
   assertExtractedCliPackage(packageRoot);
   return binPath;

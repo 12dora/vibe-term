@@ -1,5 +1,9 @@
 import type { UserKeyState } from '@vibeterm/shared/auth';
-import { applyRelayKeyLogRecord, decodeKeyLogRecord, emptyUserKeyState } from '@vibeterm/shared/auth';
+import {
+  applyRelayKeyLogRecord,
+  decodeKeyLogRecord,
+  emptyUserKeyState,
+} from '@vibeterm/shared/auth';
 import { and, asc, eq, inArray } from 'drizzle-orm';
 import { decryptWithContext, encrypt } from '../crypto';
 import { meshRelays, meshSecrets, nodeIdentity, userKeyLog } from '../db/schema';

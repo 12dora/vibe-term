@@ -224,7 +224,7 @@ describe('extractLastError', () => {
 
 describe('readLogTail', () => {
   test('reads the last bytes, drops a partial first line, and redacts', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-logtail-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-logtail-'));
     try {
       const path = join(dir, 'cloudflared.log');
       const secret = 'b'.repeat(32);
@@ -251,7 +251,7 @@ describe('readLogTail', () => {
   });
 
   test('keeps the first line when the file is fully read and returns [] on missing files', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-logtail-full-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-logtail-full-'));
     try {
       const path = join(dir, 'cloudflared.log');
       await writeFile(path, 'alpha\nbeta\n', 'utf8');

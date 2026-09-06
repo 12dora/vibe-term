@@ -13,11 +13,11 @@ export function normalizeTunnelHostname(raw: string): string | null {
 
 export function firstHostnameLabel(hostname: string): string {
   const label = hostname.split('.')[0]?.trim() ?? '';
-  return label || 'tmex';
+  return label || 'vibeterm';
 }
 
 export function defaultTunnelName(hostname: string): string {
-  return `tmex-${firstHostnameLabel(hostname)}`.slice(0, TUNNEL_NAME_MAX);
+  return `vibeterm-${firstHostnameLabel(hostname)}`.slice(0, TUNNEL_NAME_MAX);
 }
 
 export function normalizeTunnelName(raw: string): string | null {

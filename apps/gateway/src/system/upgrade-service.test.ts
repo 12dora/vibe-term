@@ -34,7 +34,7 @@ const originalReleaseCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
 const tempDirs: string[] = [];
 
 function releaseCacheTempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-svc-cache-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-svc-cache-'));
   tempDirs.push(dir);
   process.env.VIBETERM_RELEASE_CACHE_DIR = dir;
   return dir;
@@ -474,10 +474,10 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
   test('start 先清掉缓存里的旧版本，再开始下载', async () => {
     const nodeId = 'ab'.repeat(16);
     const cacheDir = releaseCacheTempDir();
-    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'), 'old');
-    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'target');
-    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz'), 'old');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'), 'target');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
     mockGithubLatest('9.9.9');
 
     const res = await handleMeshNodeUpgradeStart({
@@ -489,16 +489,16 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
     });
 
     expect(res.status).toBe(200);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'))).toBe(true);
     await waitForRemoteUpgradeJob(nodeId).catch(() => {});
   }, 8_000);
 
   test('别的节点还在推的版本被租约钉住：start 的清扫不动它，租约释放后才清', async () => {
     const cacheDir = releaseCacheTempDir();
-    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'), 'in-flight push');
-    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz'), 'in-flight push');
+    writeFileSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
     const lease = retainReleaseVersion(cacheDir, '1.1.30');
     mockGithubLatest('9.9.9');
 
@@ -514,8 +514,8 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
         })
       ).status
     ).toBe(200);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(true);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz.sha256'))).toBe(true);
 
     lease();
     resetReleaseCacheSweepMemoForTests();
@@ -531,8 +531,8 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
         })
       ).status
     ).toBe(200);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'vibeterm-cli-1.1.30.tgz.sha256'))).toBe(false);
     await Promise.all([first, second].map((id) => waitForRemoteUpgradeJob(id).catch(() => {})));
   }, 8_000);
 
@@ -709,7 +709,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-rel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-rel-cache-'));
     mockGithubLatest('9.9.9');
     const req = authedRequest(nodeId);
     const forward = {
@@ -760,10 +760,11 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
+        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      if (url.includes('tmex-cli-')) {
+      if (url.includes('-cli-')) {
         return new Response(payload, { status: 200 });
       }
       return latestFetch(input);
@@ -1016,7 +1017,9 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-cancel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(
+      join(tmpdir(), 'vibeterm-svc-cancel-cache-')
+    );
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1025,10 +1028,11 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
+        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      if (url.includes('tmex-cli-')) {
+      if (url.includes('-cli-')) {
         return new Response(payload, { status: 200 });
       }
       return latestFetch(input);
@@ -1090,7 +1094,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-200-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-post-200-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1099,10 +1103,11 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
+        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      if (url.includes('tmex-cli-')) {
+      if (url.includes('-cli-')) {
         return new Response(payload, { status: 200 });
       }
       return latestFetch(input);
@@ -1185,7 +1190,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-post-409-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-post-409-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1194,10 +1199,11 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
+        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      if (url.includes('tmex-cli-')) {
+      if (url.includes('-cli-')) {
         return new Response(payload, { status: 200 });
       }
       return latestFetch(input);
@@ -1280,7 +1286,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-svc-1111-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-1111-'));
     mockGithubLatest('9.9.9');
     const payload = new Uint8Array([1, 2, 3]);
     const { createHash } = await import('node:crypto');
@@ -1289,10 +1295,11 @@ describe('handleMeshNodeUpgradeCancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  tmex-cli-9.9.9.tgz\n`;
+        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
+        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
-      if (url.includes('tmex-cli-')) {
+      if (url.includes('-cli-')) {
         return new Response(payload, { status: 200 });
       }
       return latestFetch(input);
@@ -1420,7 +1427,7 @@ function neverForward(): {
 function authedRequest(nodeId: string): Request {
   return new Request('http://localhost/upgrade', {
     method: 'POST',
-    headers: { cookie: `tmex_s_${nodeId}=remote-sid` },
+    headers: { cookie: `vibeterm_s_${nodeId}=remote-sid` },
   });
 }
 
@@ -1432,7 +1439,7 @@ function selfUpdateInfo(overrides: Partial<SystemInfo>): SystemInfo {
     installedViaCli: true,
     deployment: 'launchd',
     canSelfUpdate: true,
-    serviceName: 'tmex',
+    serviceName: 'vibeterm',
     transferMaxBytes: 1,
     ...overrides,
   };

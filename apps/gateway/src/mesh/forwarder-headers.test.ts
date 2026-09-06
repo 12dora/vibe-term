@@ -1,10 +1,10 @@
 import { describe, expect, test } from 'bun:test';
-import { CLIENT_SOURCE_LOCAL, X_VIBETERM_CLIENT_SOURCE } from './client-source';
+import { CLIENT_SOURCE_HEADER, CLIENT_SOURCE_LOCAL } from './client-source';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import {
   MESH_FORWARD_CSP,
   MESH_VIA_SELF,
-  X_VIBETERM_SET_SESSION,
+  SET_SESSION_HEADER,
   setMeshRequestContext,
 } from './mesh-deps';
 
@@ -23,7 +23,7 @@ describe('copyUpstreamHeaders', () => {
           'x-evil': '1',
           'cache-control': 'no-store',
           'set-cookie': 'stolen=1',
-          [X_VIBETERM_SET_SESSION]: 'sid;60',
+          [SET_SESSION_HEADER.name]: 'sid;60',
         },
       })
     );
@@ -31,7 +31,7 @@ describe('copyUpstreamHeaders', () => {
     expect(svg.get('content-disposition')).toBe('attachment');
     expect(svg.get('x-evil')).toBeNull();
     expect(svg.get('set-cookie')).toBeNull();
-    expect(svg.get(X_VIBETERM_SET_SESSION)).toBeNull();
+    expect(svg.get(SET_SESSION_HEADER.name)).toBeNull();
     expect(svg.get('content-security-policy')).toBe(MESH_FORWARD_CSP);
     expect(svg.get('x-content-type-options')).toBe('nosniff');
     expect(svg.get('cache-control')).toBe('no-store');
@@ -51,10 +51,13 @@ describe('copyUpstreamHeaders', () => {
     expect(png.get('content-disposition')).toBe('inline');
   });
 
-  test('允许 x-tmex-* 透传，空 content-type 当 octet-stream', () => {
+  test('允许 x-vibeterm-* / x-tmex-* 透传，空 content-type 当 octet-stream', () => {
     const headers = copyUpstreamHeaders(
-      new Response('x', { headers: { 'x-tmex-foo': 'bar', etag: '"a"' } })
+      new Response('x', {
+        headers: { 'x-vibeterm-foo': 'baz', 'x-tmex-foo': 'bar', etag: '"a"' },
+      })
     );
+    expect(headers.get('x-vibeterm-foo')).toBe('baz');
     expect(headers.get('x-tmex-foo')).toBe('bar');
     expect(headers.get('etag')).toBe('"a"');
     expect(headers.get('content-type')).toBe('application/octet-stream');
@@ -67,7 +70,7 @@ describe('filterRequestHeaders', () => {
     const out = filterRequestHeaders(
       reqWith(
         {
-          cookie: 'tmex_s_self=abc',
+          cookie: 'vibeterm_s_self=abc',
           authorization: 'Bearer x',
           host: 'evil.example',
           connection: 'keep-alive',
@@ -100,9 +103,9 @@ describe('filterRequestHeaders', () => {
 
   test('受信本机入口盖上 x-tmex-client-source: local，浏览器伪造会被丢掉再盖回', () => {
     const out = filterRequestHeaders(
-      reqWith({ accept: '*/*', [X_VIBETERM_CLIENT_SOURCE]: 'forged' }, '127.0.0.1')
+      reqWith({ accept: '*/*', [CLIENT_SOURCE_HEADER.name]: 'forged' }, '127.0.0.1')
     );
-    expect(out[X_VIBETERM_CLIENT_SOURCE]).toBe(CLIENT_SOURCE_LOCAL);
+    expect(out[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
     expect(out.accept).toBe('*/*');
   });
 });

@@ -8,7 +8,7 @@ export function resolveTmuxWindowStyle(value: string): string | null {
     return null;
   }
   if (!WINDOW_STYLE_PATTERN.test(style)) {
-    console.warn(`[tmex] ignoring invalid tmux window-style: ${style}`);
+    console.warn(`[vibeterm] ignoring invalid tmux window-style: ${style}`);
     return null;
   }
   return style;

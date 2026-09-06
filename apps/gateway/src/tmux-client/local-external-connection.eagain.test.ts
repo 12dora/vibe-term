@@ -17,7 +17,7 @@ function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '' };
 }
 
-function createDevice(session = 'tmex-test'): Device {
+function createDevice(session = 'vibeterm-test'): Device {
   return {
     id: 'device-local',
     name: 'local',
@@ -64,10 +64,10 @@ function createRunStub(
     if (command === `has-session -t ${session}`) {
       return ok();
     }
-    if (command === 'show-options -gqv @tmex-server-epoch') {
+    if (command === 'show-options -gqv @vibeterm-server-epoch') {
       return ok('00112233445566778899aabbccddeeff\n');
     }
-    if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
+    if (command === `new-window -t ${session} -n vibeterm-park -P -F #{window_id} sleep 30`) {
       return ok('@99\n');
     }
     if (command === `last-window -t ${session}` || command === 'kill-window -t @99') {
@@ -154,8 +154,8 @@ describe('LocalExternalTmuxConnection socket injection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-version-conflict'),
-        run: createRunStub('tmex-version-conflict', {
+        getDevice: () => createDevice('vibeterm-version-conflict'),
+        run: createRunStub('vibeterm-version-conflict', {
           record: calls,
           overrides: (command) => {
             if (command === '-V') return ok('tmux 3.5a\n');
@@ -189,8 +189,8 @@ describe('LocalExternalTmuxConnection socket injection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-version-conflict'),
-        run: createRunStub('tmex-version-conflict', {
+        getDevice: () => createDevice('vibeterm-version-conflict'),
+        run: createRunStub('vibeterm-version-conflict', {
           record: calls,
           overrides: (command) => {
             if (command === '-V') return ok('tmux 3.5a\n');
@@ -221,7 +221,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-missing-client'),
+        getDevice: () => createDevice('vibeterm-missing-client'),
         run: async (argv) => {
           calls.push(argv);
           return { exitCode: 127, stdout: '', stderr: 'No such file or directory' };
@@ -237,8 +237,8 @@ describe('LocalExternalTmuxConnection socket injection', () => {
 
   test('uses configured absolute tmux binary for version probe, commands, and control client', async () => {
     setTmuxBin('/opt/vibex/bin/tmux');
-    setTmuxSocket('tmex-e2e');
-    const session = 'tmex-absolute-bin';
+    setTmuxSocket('vibeterm-e2e');
+    const session = 'vibeterm-absolute-bin';
     const calls: string[][] = [];
     let controlArgv: string[] | null = null;
 
@@ -268,12 +268,12 @@ describe('LocalExternalTmuxConnection socket injection', () => {
     expect(calls.length).toBeGreaterThan(1);
     expect(calls.some((argv) => argv.slice(3).join(' ') === '-V')).toBe(true);
     for (const argv of calls) {
-      expect(argv.slice(0, 3)).toEqual(['/opt/vibex/bin/tmux', '-L', 'tmex-e2e']);
+      expect(argv.slice(0, 3)).toEqual(['/opt/vibex/bin/tmux', '-L', 'vibeterm-e2e']);
     }
     expect(controlArgv as string[] | null).toEqual([
       '/opt/vibex/bin/tmux',
       '-L',
-      'tmex-e2e',
+      'vibeterm-e2e',
       '-C',
       'attach-session',
       '-t',
@@ -282,9 +282,9 @@ describe('LocalExternalTmuxConnection socket injection', () => {
   });
 
   test('uses the Windows psmux contract without POSIX shell, terminfo, or global teardown', async () => {
-    const psmuxBin = 'C:\\Program Files\\tmex\\resources\\psmux.exe';
-    const namespace = 'tmex-stable';
-    const session = 'tmex-windows-contract';
+    const psmuxBin = 'C:\\Program Files\\vibeterm\\resources\\psmux.exe';
+    const namespace = 'vibeterm-stable';
+    const session = 'vibeterm-windows-contract';
     setTmuxBin(psmuxBin);
     setTmuxSocket(namespace);
     const calls: string[][] = [];
@@ -313,7 +313,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
             if (command === 'display-message -p #{version}') return ok('3.3.7\r\n');
             if (
               command ===
-              `new-window -t ${session} -n tmex-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
+              `new-window -t ${session} -n vibeterm-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
             ) {
               return ok('@99\r\n');
             }
@@ -335,7 +335,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
       expect(argv[0]).not.toBe('/bin/sh');
     }
     expect(calls.map(subcommandOf)).toContain(
-      `new-window -t ${session} -n tmex-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
+      `new-window -t ${session} -n vibeterm-park -P -F #{window_id} ping.exe -n 31 127.0.0.1`
     );
     expect(calls.map(subcommandOf).some((command) => command.includes('default-terminal'))).toBe(
       false
@@ -352,8 +352,8 @@ describe('LocalExternalTmuxConnection socket injection', () => {
   });
 
   test('injects -L <socket> into run argv and control-client argv when tmuxSocket is set', async () => {
-    setTmuxSocket('tmex-e2e');
-    const session = 'tmex-socket-on';
+    setTmuxSocket('vibeterm-e2e');
+    const session = 'vibeterm-socket-on';
     const calls: string[][] = [];
     let controlArgv: string[] | null = null;
 
@@ -385,7 +385,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
 
     expect(calls.length).toBeGreaterThan(0);
     for (const argv of calls) {
-      expect(argv.slice(0, 3)).toEqual(['tmux', '-L', 'tmex-e2e']);
+      expect(argv.slice(0, 3)).toEqual(['tmux', '-L', 'vibeterm-e2e']);
     }
     expect(controlArgv).toBeNull();
 
@@ -398,12 +398,12 @@ describe('LocalExternalTmuxConnection socket injection', () => {
       '-t',
       session,
     ];
-    expect(built.slice(0, 3)).toEqual(['tmux', '-L', 'tmex-e2e']);
+    expect(built.slice(0, 3)).toEqual(['tmux', '-L', 'vibeterm-e2e']);
   });
 
   test('control-client argv contains -L <socket> when subscription enabled', async () => {
-    setTmuxSocket('tmex-e2e');
-    const session = 'tmex-socket-ctl';
+    setTmuxSocket('vibeterm-e2e');
+    const session = 'vibeterm-socket-ctl';
     const captured: { argv: string[] | null } = { argv: null };
 
     const connection = new LocalExternalTmuxConnection(
@@ -433,7 +433,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
     expect(captured.argv).toEqual([
       'tmux',
       '-L',
-      'tmex-e2e',
+      'vibeterm-e2e',
       '-C',
       'attach-session',
       '-t',
@@ -443,7 +443,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
 
   test('omits -L from run argv when tmuxSocket is empty', async () => {
     setTmuxSocket('');
-    const session = 'tmex-socket-off';
+    const session = 'vibeterm-socket-off';
     const calls: string[][] = [];
 
     const connection = new LocalExternalTmuxConnection(
@@ -477,7 +477,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
 
   test('omits -L from control-client argv when tmuxSocket is empty', async () => {
     setTmuxSocket('');
-    const session = 'tmex-socket-off-ctl';
+    const session = 'vibeterm-socket-off-ctl';
     const captured: { argv: string[] | null } = { argv: null };
 
     const connection = new LocalExternalTmuxConnection(
@@ -510,7 +510,7 @@ describe('LocalExternalTmuxConnection socket injection', () => {
 describe('LocalExternalTmuxConnection EAGAIN handling', () => {
   test('transient spawn EAGAIN does not escape, shutdown, or error out', async () => {
     setTmuxSocket('');
-    const session = 'tmex-eagain';
+    const session = 'vibeterm-eagain';
     let eagainPhase = false;
     let closeCalls = 0;
     const errors: unknown[] = [];
@@ -579,7 +579,7 @@ describe('LocalExternalTmuxConnection EAGAIN handling', () => {
 
   test('recovers after a transient EAGAIN: subsequent snapshot emits normally', async () => {
     setTmuxSocket('');
-    const session = 'tmex-eagain-recover';
+    const session = 'vibeterm-eagain-recover';
     let eagainPhase = false;
     let closeCalls = 0;
     const snapshots: unknown[] = [];

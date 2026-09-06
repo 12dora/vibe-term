@@ -149,9 +149,9 @@ describe('PaneEmulator + registry', () => {
       onMarker: (m) => markers.push(m),
     });
     fake.pushBytes('%1', 'out');
-    fake.pushMarker('%1', { kind: 'D', exitCode: 0, params: ['0', 'tmex=n1'] });
+    fake.pushMarker('%1', { kind: 'D', exitCode: 0, params: ['0', 'vibeterm=n1'] });
     expect(bytes).toEqual(['out']);
-    expect(markers).toEqual([{ kind: 'D', exitCode: 0, params: ['0', 'tmex=n1'] }]);
+    expect(markers).toEqual([{ kind: 'D', exitCode: 0, params: ['0', 'vibeterm=n1'] }]);
     untap();
     fake.pushBytes('%1', 'after-untap');
     expect(bytes).toEqual(['out']); // 退订后不再收

@@ -445,7 +445,7 @@ describe('provider --edge args', () => {
   });
 
   test('named and quick spawns append --edge in static mode only', async () => {
-    const dir = await tempDir('tmex-tun-edge-');
+    const dir = await tempDir('vibeterm-tun-edge-');
     const staticSpawner = new FakeSpawner();
     const staticProvider = new CloudflaredProvider(staticSpawner.spawn, dir, async () => 4242, {
       resolveEdge: async () => ({
@@ -488,7 +488,7 @@ describe('provider --edge args', () => {
   });
 
   test('a throwing resolver does not block the spawn', async () => {
-    const dir = await tempDir('tmex-tun-edge-fail-');
+    const dir = await tempDir('vibeterm-tun-edge-fail-');
     const spawner = new FakeSpawner();
     const provider = new CloudflaredProvider(spawner.spawn, dir, async () => 4242, {
       resolveEdge: async () => {

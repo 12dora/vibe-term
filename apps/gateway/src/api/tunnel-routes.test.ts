@@ -11,8 +11,8 @@ import { dispatchRoutes } from './route';
 import { createTunnelRoutes } from './tunnel-routes';
 
 async function setup() {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-'));
-  const homeDir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-home-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-rt-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-rt-home-'));
   const spawner = new FakeSpawner();
   spawner.on((s) => argsInclude(s, '--version'), {
     stdout: 'cloudflared version 2025.8.1\n',

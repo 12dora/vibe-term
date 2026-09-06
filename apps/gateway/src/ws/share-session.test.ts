@@ -16,7 +16,7 @@ function snapshot(): StateSnapshotPayload {
     deviceId: SCOPE.deviceId,
     session: {
       id: '$0',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',
@@ -39,7 +39,7 @@ function snapshot(): StateSnapshotPayload {
 
 function helloPayload(): Uint8Array {
   return wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
-    clientImpl: 'tmex-fe',
+    clientImpl: 'vibeterm-fe',
     clientVersion: '1.1.33',
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     supportsCompression: false,

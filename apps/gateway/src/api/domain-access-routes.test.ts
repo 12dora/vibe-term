@@ -34,23 +34,23 @@ function openIsolatedStore(): DomainAccessStore {
 describe('GET/PATCH /api/system/domain-access', () => {
   test('GET returns default allowed policy', async () => {
     openIsolatedStore();
-    setDomainAccessGuardForTests({ hosts: ['tmex.example.com'] });
+    setDomainAccessGuardForTests({ hosts: ['vibeterm.example.com'] });
     const res = await handleApiRequest(
-      new Request('https://tmex.example.com/api/system/domain-access')
+      new Request('https://vibeterm.example.com/api/system/domain-access')
     );
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       allowed: true,
       viaDomain: true,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
   });
 
   test('PATCH updates allowed and returns the new view', async () => {
     const store = openIsolatedStore();
-    setDomainAccessGuardForTests({ hosts: ['tmex.example.com'] });
+    setDomainAccessGuardForTests({ hosts: ['vibeterm.example.com'] });
     const res = await handleApiRequest(
-      new Request('https://tmex.example.com/api/system/domain-access', {
+      new Request('https://vibeterm.example.com/api/system/domain-access', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ allowed: false }),
@@ -60,7 +60,7 @@ describe('GET/PATCH /api/system/domain-access', () => {
     expect(await res.json()).toEqual({
       allowed: false,
       viaDomain: true,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
     expect(store.get().allowDomainAccess).toBe(false);
   });
@@ -81,7 +81,7 @@ describe('GET/PATCH /api/system/domain-access', () => {
 
   test('dispatchHttp with via=<nodeId> (peer-inbound) can GET and PATCH', async () => {
     const store = openIsolatedStore();
-    setDomainAccessGuardForTests({ hosts: ['tmex.example.com'] });
+    setDomainAccessGuardForTests({ hosts: ['vibeterm.example.com'] });
     const viaNodeId = 'ab'.repeat(16);
     async function dispatchHttp(
       request: Request,
@@ -91,17 +91,17 @@ describe('GET/PATCH /api/system/domain-access', () => {
       return handleApiRequest(request);
     }
     const getRes = await dispatchHttp(
-      new Request('https://tmex.example.com/api/system/domain-access'),
+      new Request('https://vibeterm.example.com/api/system/domain-access'),
       { uid: 'user-1', viaNodeId }
     );
     expect(getRes.status).toBe(200);
     expect(await getRes.json()).toEqual({
       allowed: true,
       viaDomain: false,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
     const patchRes = await dispatchHttp(
-      new Request('https://tmex.example.com/api/system/domain-access', {
+      new Request('https://vibeterm.example.com/api/system/domain-access', {
         method: 'PATCH',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ allowed: false }),
@@ -112,15 +112,15 @@ describe('GET/PATCH /api/system/domain-access', () => {
     expect(await patchRes.json()).toEqual({
       allowed: false,
       viaDomain: false,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
     expect(store.get().allowDomainAccess).toBe(false);
   });
 
   test('viaDomain is true for via=self on a configured domain', async () => {
     openIsolatedStore();
-    setDomainAccessGuardForTests({ hosts: ['tmex.example.com'] });
-    const req = new Request('https://tmex.example.com/api/system/domain-access');
+    setDomainAccessGuardForTests({ hosts: ['vibeterm.example.com'] });
+    const req = new Request('https://vibeterm.example.com/api/system/domain-access');
     setMeshRequestContext(req, { via: MESH_VIA_SELF });
     const res = await handleApiRequest(req);
     expect(res.status).toBe(200);
@@ -133,9 +133,9 @@ describe('GET/PATCH /api/system/domain-access', () => {
 describe('guardDomainAccess is not applied on the API route itself', () => {
   test('GET remains reachable so the hub UI can re-enable the policy', async () => {
     openIsolatedStore();
-    setDomainAccessGuardForTests({ allowed: false, hosts: ['tmex.example.com'] });
+    setDomainAccessGuardForTests({ allowed: false, hosts: ['vibeterm.example.com'] });
     const res = await handleApiRequest(
-      new Request('https://tmex.example.com/api/system/domain-access')
+      new Request('https://vibeterm.example.com/api/system/domain-access')
     );
     expect(res.status).toBe(200);
     const body = (await res.json()) as { allowed: boolean };
@@ -164,7 +164,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
   });
 
   function disable(): void {
-    setDomainAccessGuardForTests({ allowed: false, hosts: ['tmex.example.com'] });
+    setDomainAccessGuardForTests({ allowed: false, hosts: ['vibeterm.example.com'] });
   }
 
   test('public client + Host localhost or IP literal is 403', () => {
@@ -180,28 +180,30 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
   test('LAN client via the domain name and loopback are allowed', () => {
     disable();
     expect(
-      guardDomainAccess(req('https://tmex.example.com/', { clientIp: '192.168.1.5' }))
+      guardDomainAccess(req('https://vibeterm.example.com/', { clientIp: '192.168.1.5' }))
     ).toBeNull();
     expect(
-      guardDomainAccess(req('https://tmex.example.com/', { clientIp: '127.0.0.1' }))
+      guardDomainAccess(req('https://vibeterm.example.com/', { clientIp: '127.0.0.1' }))
     ).toBeNull();
     expect(
-      guardDomainAccess(req('https://tmex.example.com/', { clientIp: '100.64.1.2' }))
+      guardDomainAccess(req('https://vibeterm.example.com/', { clientIp: '100.64.1.2' }))
     ).toBeNull();
   });
 
   test('unknown source is 403; service paths still pass from public', () => {
     disable();
-    expect(guardDomainAccess(req('https://tmex.example.com/', {}))?.status).toBe(403);
+    expect(guardDomainAccess(req('https://vibeterm.example.com/', {}))?.status).toBe(403);
     expect(
-      guardDomainAccess(req('https://tmex.example.com/healthz', { clientIp: '203.0.113.10' }))
+      guardDomainAccess(req('https://vibeterm.example.com/healthz', { clientIp: '203.0.113.10' }))
     ).toBeNull();
     expect(
-      guardDomainAccess(req('https://tmex.example.com/n/abc/api/x', { clientIp: '203.0.113.10' }))
-        ?.status
+      guardDomainAccess(
+        req('https://vibeterm.example.com/n/abc/api/x', { clientIp: '203.0.113.10' })
+      )?.status
     ).toBe(403);
     expect(
-      guardDomainAccess(req('https://tmex.example.com/ws', { clientIp: '203.0.113.10' }))?.status
+      guardDomainAccess(req('https://vibeterm.example.com/ws', { clientIp: '203.0.113.10' }))
+        ?.status
     ).toBe(403);
   });
 
@@ -210,7 +212,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     expect(
       guardDomainAccess(
         req(
-          'https://tmex.example.com/',
+          'https://vibeterm.example.com/',
           { clientIp: '10.0.0.8', trustProxy: false },
           { 'x-forwarded-for': '203.0.113.9' }
         )
@@ -219,7 +221,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     expect(
       guardDomainAccess(
         req(
-          'https://tmex.example.com/',
+          'https://vibeterm.example.com/',
           { clientIp: '203.0.113.9', trustProxy: false },
           { 'x-forwarded-for': '10.0.0.8' }
         )
@@ -232,7 +234,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     expect(
       guardDomainAccess(
         req(
-          'https://tmex.example.com/',
+          'https://vibeterm.example.com/',
           { clientIp: '10.0.0.8', trustProxy: true },
           { 'x-forwarded-for': '1.2.3.4, 203.0.113.9' }
         )
@@ -241,7 +243,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     expect(
       guardDomainAccess(
         req(
-          'https://tmex.example.com/',
+          'https://vibeterm.example.com/',
           { clientIp: '203.0.113.9', trustProxy: true },
           { 'x-forwarded-for': '1.2.3.4, 10.0.0.8' }
         )
@@ -253,7 +255,7 @@ describe('guardDomainAccess enforces by client source, not Host', () => {
     disable();
     expect(
       guardDomainAccess(
-        req('https://tmex.example.com/api/x', {
+        req('https://vibeterm.example.com/api/x', {
           via: 'ab'.repeat(16),
           clientIp: '203.0.113.10',
         })

@@ -21,7 +21,7 @@ const snapshot: StateSnapshotPayload = {
   deviceId: 'dev-1',
   session: {
     id: '$1',
-    name: 'tmex',
+    name: 'VibeTerm',
     windows: [
       {
         id: '@1',

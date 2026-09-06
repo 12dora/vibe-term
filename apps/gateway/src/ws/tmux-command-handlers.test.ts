@@ -12,7 +12,7 @@ function makeSnapshot(): StateSnapshotPayload {
     deviceId: 'device-a',
     session: {
       id: '$1',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',

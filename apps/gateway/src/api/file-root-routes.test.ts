@@ -26,7 +26,7 @@ function makeDevice(id: string): Device {
     id,
     name: `dev-${id}`,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,

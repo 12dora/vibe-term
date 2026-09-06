@@ -28,7 +28,7 @@ function ok(stdout = ''): CommandResult {
   return { exitCode: 0, stdout, stderr: '' };
 }
 
-function createDevice(session = 'tmex-test'): Device {
+function createDevice(session = 'vibeterm-test'): Device {
   return {
     id: 'device-local',
     name: 'local',
@@ -77,10 +77,10 @@ function createRunStub(
     if (command === `has-session -t ${session}`) {
       return ok();
     }
-    if (command === 'show-options -gqv @tmex-server-epoch') {
+    if (command === 'show-options -gqv @vibeterm-server-epoch') {
       return ok('00112233445566778899aabbccddeeff\n');
     }
-    if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
+    if (command === `new-window -t ${session} -n vibeterm-park -P -F #{window_id} sleep 30`) {
       return ok('@99\n');
     }
     if (
@@ -343,8 +343,8 @@ describe('LocalExternalTmuxConnection', () => {
   test('connect runs exact command sequence with control-mode session options', async () => {
     const calls: string[][] = [];
     const snapshots: StateSnapshotPayload[] = [];
-    const device = createDevice('tmex-snapshot');
-    device.defaultWorkingDir = '/tmp/tmex-test-cwd';
+    const device = createDevice('vibeterm-snapshot');
+    device.defaultWorkingDir = '/tmp/vibeterm-test-cwd';
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
@@ -361,13 +361,13 @@ describe('LocalExternalTmuxConnection', () => {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
         getDevice: () => device,
-        run: createRunStub('tmex-snapshot', {
+        run: createRunStub('vibeterm-snapshot', {
           record: calls,
           overrides: (command) => {
-            if (command === 'has-session -t tmex-snapshot') {
-              return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-snapshot" };
+            if (command === 'has-session -t vibeterm-snapshot') {
+              return { exitCode: 1, stdout: '', stderr: "can't find session: vibeterm-snapshot" };
             }
-            if (command === 'new-session -d -c /tmp/tmex-test-cwd -s tmex-snapshot') {
+            if (command === 'new-session -d -c /tmp/vibeterm-test-cwd -s vibeterm-snapshot') {
               return ok();
             }
             return null;
@@ -380,31 +380,32 @@ describe('LocalExternalTmuxConnection', () => {
 
     expect(calls.map((argv) => argv.join(' '))).toEqual([
       'tmux -V',
-      'tmux has-session -t tmex-snapshot',
-      'tmux new-session -d -c /tmp/tmex-test-cwd -s tmex-snapshot',
-      'tmux show-options -gqv @tmex-server-epoch',
-      'tmux set-option -t tmex-snapshot -s allow-passthrough off',
-      'tmux set-option -t tmex-snapshot -g extended-keys on',
-      'tmux set-option -t tmex-snapshot -s extended-keys-format csi-u',
-      'tmux set-option -t tmex-snapshot -g focus-events off',
-      'tmux set-option -t tmex-snapshot destroy-unattached off',
-      'tmux set-environment -t tmex-snapshot TERM_PROGRAM ghostty',
-      'tmux set-environment -t tmex-snapshot COLORTERM truecolor',
-      'tmux set-option -t tmex-snapshot default-path /tmp/tmex-test-cwd',
-      "tmux set-hook -t tmex-snapshot after-new-window set-option -w window-style 'fg=#d0d0d0,bg=#262626'",
-      'tmux list-windows -t tmex-snapshot -F #{window_id}',
+      'tmux has-session -t vibeterm-snapshot',
+      'tmux new-session -d -c /tmp/vibeterm-test-cwd -s vibeterm-snapshot',
+      'tmux list-windows -t vibeterm-snapshot -F #{window_id}|#{window_name}',
+      'tmux show-options -gqv @vibeterm-server-epoch',
+      'tmux set-option -t vibeterm-snapshot -s allow-passthrough off',
+      'tmux set-option -t vibeterm-snapshot -g extended-keys on',
+      'tmux set-option -t vibeterm-snapshot -s extended-keys-format csi-u',
+      'tmux set-option -t vibeterm-snapshot -g focus-events off',
+      'tmux set-option -t vibeterm-snapshot destroy-unattached off',
+      'tmux set-environment -t vibeterm-snapshot TERM_PROGRAM ghostty',
+      'tmux set-environment -t vibeterm-snapshot COLORTERM truecolor',
+      'tmux set-option -t vibeterm-snapshot default-path /tmp/vibeterm-test-cwd',
+      "tmux set-hook -t vibeterm-snapshot after-new-window set-option -w window-style 'fg=#d0d0d0,bg=#262626'",
+      'tmux list-windows -t vibeterm-snapshot -F #{window_id}',
       'tmux set-option -w -t @1 window-style fg=#d0d0d0,bg=#262626',
-      'tmux display-message -p -t tmex-snapshot #{session_id}|#{session_name}',
-      'tmux list-windows -t tmex-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}',
-      'tmux list-panes -s -t tmex-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
-      'tmux list-panes -a -F #{pane_id}|#{@tmex_2031}',
+      'tmux display-message -p -t vibeterm-snapshot #{session_id}|#{session_name}',
+      'tmux list-windows -t vibeterm-snapshot -F #{window_id}|#{window_index}|#{window_active}|#{window_layout}|#{window_name}',
+      'tmux list-panes -s -t vibeterm-snapshot -F #{pane_id}|#{window_id}|#{pane_index}|#{pane_active}|#{pane_width}|#{pane_height}|#{pane_left}|#{pane_top}|#{window_active}|#{pane_title}|#{pane_current_command}|#{pane_current_path}',
+      'tmux list-panes -a -F #{pane_id}|#{@vibeterm_2031}|#{@tmex_2031}',
     ]);
     expect(snapshots).toEqual([
       {
         deviceId: 'device-local',
         session: {
           id: '$1',
-          name: 'tmex-snapshot',
+          name: 'vibeterm-snapshot',
           windows: [
             {
               id: '@1',
@@ -448,8 +449,8 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-version'),
-        run: createRunStub('tmex-version', {
+        getDevice: () => createDevice('vibeterm-version'),
+        run: createRunStub('vibeterm-version', {
           overrides: (command) => (command === '-V' ? ok('tmux 2.9a\n') : null),
         }),
         spawnControlClient: () => {
@@ -488,11 +489,11 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-stream'),
-        run: createRunStub('tmex-stream'),
+        getDevice: () => createDevice('vibeterm-stream'),
+        run: createRunStub('vibeterm-stream'),
         spawnControlClient: (argv) => {
-          expect(argv).toEqual(['tmux', '-C', 'attach-session', '-t', 'tmex-stream']);
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-stream\n');
+          expect(argv).toEqual(['tmux', '-C', 'attach-session', '-t', 'vibeterm-stream']);
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-stream\n');
           return fake.proc;
         },
       }
@@ -548,10 +549,10 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-title'),
-        run: createRunStub('tmex-title', { record: commands }),
+        getDevice: () => createDevice('vibeterm-title'),
+        run: createRunStub('vibeterm-title', { record: commands }),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-title\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-title\n');
           return fake.proc;
         },
       }
@@ -571,9 +572,9 @@ describe('LocalExternalTmuxConnection', () => {
       commands.filter((argv) => {
         const command = argv.slice(1).join(' ');
         return (
-          command.startsWith('display-message -p -t tmex-title') ||
-          command.startsWith('list-windows -t tmex-title') ||
-          command.startsWith('list-panes -s -t tmex-title')
+          command.startsWith('display-message -p -t vibeterm-title') ||
+          command.startsWith('list-windows -t vibeterm-title') ||
+          command.startsWith('list-panes -s -t vibeterm-title')
         );
       })
     ).toEqual([]);
@@ -606,10 +607,12 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-canonical-capture'),
-        run: createRunStub('tmex-canonical-capture'),
+        getDevice: () => createDevice('vibeterm-canonical-capture'),
+        run: createRunStub('vibeterm-canonical-capture'),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-canonical-capture\n');
+          fake.pushStdout(
+            '%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-canonical-capture\n'
+          );
           return fake.proc;
         },
       }
@@ -642,7 +645,7 @@ describe('LocalExternalTmuxConnection', () => {
 
   test('an unknown pane title is forwarded for projection-owned reconciliation', async () => {
     const fake = createFakeControlProcess();
-    const session = 'tmex-pending-title';
+    const session = 'vibeterm-pending-title';
     const commands: string[][] = [];
     const snapshots: StateSnapshotPayload[] = [];
     const titles: Array<{ paneId: string; title: string }> = [];
@@ -725,11 +728,11 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-restart'),
-        run: createRunStub('tmex-restart'),
+        getDevice: () => createDevice('vibeterm-restart'),
+        run: createRunStub('vibeterm-restart'),
         spawnControlClient: () => {
           const fake = createFakeControlProcess();
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-restart\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-restart\n');
           fakes.push(fake);
           return fake.proc;
         },
@@ -768,27 +771,27 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-gone'),
-        run: createRunStub('tmex-gone', {
+        getDevice: () => createDevice('vibeterm-gone'),
+        run: createRunStub('vibeterm-gone', {
           overrides: (command) => {
-            if (sessionGone && command === 'has-session -t tmex-gone') {
-              return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-gone" };
+            if (sessionGone && command === 'has-session -t vibeterm-gone') {
+              return { exitCode: 1, stdout: '', stderr: "can't find session: vibeterm-gone" };
             }
-            if (sessionGone && command.startsWith('display-message -p -t tmex-gone')) {
-              return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-gone" };
+            if (sessionGone && command.startsWith('display-message -p -t vibeterm-gone')) {
+              return { exitCode: 1, stdout: '', stderr: "can't find session: vibeterm-gone" };
             }
-            if (sessionGone && command.startsWith('list-windows -t tmex-gone')) {
-              return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-gone" };
+            if (sessionGone && command.startsWith('list-windows -t vibeterm-gone')) {
+              return { exitCode: 1, stdout: '', stderr: "can't find session: vibeterm-gone" };
             }
-            if (sessionGone && command.startsWith('list-panes -s -t tmex-gone')) {
-              return { exitCode: 1, stdout: '', stderr: "can't find session: tmex-gone" };
+            if (sessionGone && command.startsWith('list-panes -s -t vibeterm-gone')) {
+              return { exitCode: 1, stdout: '', stderr: "can't find session: vibeterm-gone" };
             }
             return null;
           },
         }),
         spawnControlClient: () => {
           const fake = createFakeControlProcess();
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-gone\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-gone\n');
           fakes.push(fake);
           return fake.proc;
         },
@@ -820,8 +823,8 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-input'),
-        run: createRunStub('tmex-input', {
+        getDevice: () => createDevice('vibeterm-input'),
+        run: createRunStub('vibeterm-input', {
           record: commands,
           overrides: (command) => (command.startsWith('send-keys -H -t %1') ? ok() : null),
         }),
@@ -864,7 +867,7 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-input-serial'),
+        getDevice: () => createDevice('vibeterm-input-serial'),
         run: async (argv) => {
           commands.push(argv);
           const command = argv.slice(1).join(' ');
@@ -874,7 +877,7 @@ describe('LocalExternalTmuxConnection', () => {
             });
             return ok();
           }
-          return createRunStub('tmex-input-serial')(argv);
+          return createRunStub('vibeterm-input-serial')(argv);
         },
       }
     );
@@ -895,7 +898,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('logs tmux command context when a non-target-missing command fails', async () => {
-    const session = 'tmex-command-context';
+    const session = 'vibeterm-command-context';
     const errors: Error[] = [];
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const connection = new LocalExternalTmuxConnection(
@@ -963,8 +966,8 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-stacked-layout'),
-        run: createRunStub('tmex-stacked-layout', {
+        getDevice: () => createDevice('vibeterm-stacked-layout'),
+        run: createRunStub('vibeterm-stacked-layout', {
           record: commands,
           overrides: (command) => {
             if (command === 'resize-window -t @1 -x 85 -y 24') return ok();
@@ -1013,7 +1016,7 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-alt-fallback'),
+        getDevice: () => createDevice('vibeterm-alt-fallback'),
         run: async (argv) => {
           const command = argv.slice(1).join(' ');
           if (
@@ -1069,7 +1072,7 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-alt-visible'),
+        getDevice: () => createDevice('vibeterm-alt-visible'),
         run: async (argv) => {
           const command = argv.slice(1).join(' ');
           if (
@@ -1125,7 +1128,7 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: false,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-normal-cursor'),
+        getDevice: () => createDevice('vibeterm-normal-cursor'),
         run: async (argv) => {
           const command = argv.slice(1).join(' ');
           if (
@@ -1159,7 +1162,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('setWindowStyle re-applies client style to hook and existing windows', async () => {
-    const session = 'tmex-style';
+    const session = 'vibeterm-style';
     const lightStyle = 'fg=#616161,bg=#e1e1e1';
     const calls: string[][] = [];
     const connection = new LocalExternalTmuxConnection(
@@ -1208,7 +1211,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('setWindowStyle ignores style with unsafe characters', async () => {
-    const session = 'tmex-style-bad';
+    const session = 'vibeterm-style-bad';
     const calls: string[][] = [];
     const connection = new LocalExternalTmuxConnection(
       {
@@ -1241,7 +1244,7 @@ describe('LocalExternalTmuxConnection', () => {
 
   test('capturePaneText pane missing throws TmuxTargetMissingError without polluting device status', async () => {
     const deviceId = 'device-local-capture-missing';
-    const session = 'tmex-capture-missing';
+    const session = 'vibeterm-capture-missing';
     const device = { ...createDevice(session), id: deviceId };
     createDeviceRow(device);
 
@@ -1295,7 +1298,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('createWindow uses homedir when defaultWorkingDir is empty', async () => {
-    const session = 'tmex-cwd-empty';
+    const session = 'vibeterm-cwd-empty';
     const calls: string[][] = [];
     const connection = new LocalExternalTmuxConnection(
       {
@@ -1331,7 +1334,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('createWindow uses custom dir when defaultWorkingDir is set', async () => {
-    const session = 'tmex-cwd-custom';
+    const session = 'vibeterm-cwd-custom';
     const calls: string[][] = [];
     const device = createDevice(session);
     device.defaultWorkingDir = '/custom/path';
@@ -1385,10 +1388,10 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-heartbeat'),
-        run: createRunStub('tmex-heartbeat'),
+        getDevice: () => createDevice('vibeterm-heartbeat'),
+        run: createRunStub('vibeterm-heartbeat'),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-heartbeat\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-heartbeat\n');
           return fake.proc;
         },
       }
@@ -1398,7 +1401,7 @@ describe('LocalExternalTmuxConnection', () => {
 
     (connection as any).sendHeartbeat();
 
-    expect(fake.writtenData).toContain('display-message -p "tmex-hb"\n');
+    expect(fake.writtenData).toContain('display-message -p "vibeterm-hb"\n');
 
     connection.disconnect();
   });
@@ -1418,10 +1421,10 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-hb-response'),
-        run: createRunStub('tmex-hb-response'),
+        getDevice: () => createDevice('vibeterm-hb-response'),
+        run: createRunStub('vibeterm-hb-response'),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-hb-response\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-hb-response\n');
           return fake.proc;
         },
       }
@@ -1432,7 +1435,7 @@ describe('LocalExternalTmuxConnection', () => {
     (connection as any).sendHeartbeat();
     expect((connection as any).heartbeatPending).toBe(true);
 
-    fake.pushStdout('%begin 2 2 0\ntmex-hb\n%end 2 2 0\n');
+    fake.pushStdout('%begin 2 2 0\nvibeterm-hb\n%end 2 2 0\n');
 
     await waitFor(() => (!(connection as any).heartbeatPending ? true : null));
 
@@ -1458,11 +1461,11 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-hb-timeout'),
-        run: createRunStub('tmex-hb-timeout'),
+        getDevice: () => createDevice('vibeterm-hb-timeout'),
+        run: createRunStub('vibeterm-hb-timeout'),
         spawnControlClient: () => {
           const f = createFakeControlProcess();
-          f.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-hb-timeout\n');
+          f.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-hb-timeout\n');
           fakes.push(f);
           return f.proc;
         },
@@ -1474,7 +1477,7 @@ describe('LocalExternalTmuxConnection', () => {
     if (!target) throw new Error('control process was not created');
 
     (connection as any).sendHeartbeat();
-    expect(target.writtenData).toContain('display-message -p "tmex-hb"\n');
+    expect(target.writtenData).toContain('display-message -p "vibeterm-hb"\n');
 
     // Replace the 10s timeout with a short one to avoid slow test.
     // The replacement replicates the same guard logic from sendHeartbeat.
@@ -1508,10 +1511,10 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-pause'),
-        run: createRunStub('tmex-pause'),
+        getDevice: () => createDevice('vibeterm-pause'),
+        run: createRunStub('vibeterm-pause'),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-pause\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-pause\n');
           return fake.proc;
         },
       }
@@ -1543,11 +1546,11 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-stdout-end'),
-        run: createRunStub('tmex-stdout-end'),
+        getDevice: () => createDevice('vibeterm-stdout-end'),
+        run: createRunStub('vibeterm-stdout-end'),
         spawnControlClient: () => {
           const f = createFakeControlProcess();
-          f.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-stdout-end\n');
+          f.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-stdout-end\n');
           fakes.push(f);
           return f.proc;
         },
@@ -1581,10 +1584,10 @@ describe('LocalExternalTmuxConnection', () => {
       {
         enableSubscription: true,
         ensureGhosttyTerminfo: async () => false,
-        getDevice: () => createDevice('tmex-hb-cleanup'),
-        run: createRunStub('tmex-hb-cleanup'),
+        getDevice: () => createDevice('vibeterm-hb-cleanup'),
+        run: createRunStub('vibeterm-hb-cleanup'),
         spawnControlClient: () => {
-          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 tmex-hb-cleanup\n');
+          fake.pushStdout('%begin 1 1 0\n%end 1 1 0\n%session-changed $1 vibeterm-hb-cleanup\n');
           return fake.proc;
         },
       }
@@ -1605,7 +1608,7 @@ describe('LocalExternalTmuxConnection', () => {
   });
 
   test('requestSnapshot reports a non-transient list-windows error via onError without unhandled rejection', async () => {
-    const session = 'tmex-snapshot-throw';
+    const session = 'vibeterm-snapshot-throw';
     let failListWindows = false;
     const errors: Error[] = [];
     const unhandled: unknown[] = [];
@@ -1698,9 +1701,9 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
   test('emits session_created only when the session is actually created', async () => {
     let created = false;
     const { connection, events } = makeLifecycleConnection({
-      session: 'tmex-lc-created',
+      session: 'vibeterm-lc-created',
       overrides: (command) => {
-        if (command === 'has-session -t tmex-lc-created' && !created) {
+        if (command === 'has-session -t vibeterm-lc-created' && !created) {
           created = true;
           return { exitCode: 1, stdout: '', stderr: "can't find session" };
         }
@@ -1713,13 +1716,13 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
     await connection.connect();
     expect(events.map((e) => e.eventType)).toEqual(['session_created']);
-    expect(events[0].event.tmux.sessionName).toBe('tmex-lc-created');
+    expect(events[0].event.tmux.sessionName).toBe('vibeterm-lc-created');
     expect(events[0].event.device.id).toBe('device-local');
     connection.disconnect();
   });
 
   test('does not emit session_created when the session already exists (and first snapshot emits no closures)', async () => {
-    const { connection, events } = makeLifecycleConnection({ session: 'tmex-lc-existing' });
+    const { connection, events } = makeLifecycleConnection({ session: 'vibeterm-lc-existing' });
     await connection.connect();
     expect(events).toHaveLength(0);
     connection.disconnect();
@@ -1727,7 +1730,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('emits tmux_pane_close when a pane disappears from the snapshot', async () => {
     let panesGone = false;
-    const session = 'tmex-lc-pane';
+    const session = 'vibeterm-lc-pane';
     const { connection, events } = makeLifecycleConnection({
       session,
       overrides: (command) => {
@@ -1760,7 +1763,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('emits tmux_window_close without per-pane events when a window disappears', async () => {
     let windowGone = false;
-    const session = 'tmex-lc-window';
+    const session = 'vibeterm-lc-window';
     const { connection, events } = makeLifecycleConnection({
       session,
       overrides: (command) => {
@@ -1799,7 +1802,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('does not emit closures when the snapshot turns invalid', async () => {
     let invalid = false;
-    const session = 'tmex-lc-invalid';
+    const session = 'vibeterm-lc-invalid';
     const { connection, events } = makeLifecycleConnection({
       session,
       overrides: (command) => {
@@ -1821,7 +1824,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('emits session_closed exactly once when the tmux server goes away during snapshot', async () => {
     let serverGone = false;
-    const session = 'tmex-lc-gone';
+    const session = 'vibeterm-lc-gone';
     const { connection, events } = makeLifecycleConnection({
       session,
       overrides: (command) => {
@@ -1854,7 +1857,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
 
   test('runTmux server-gone marks tmux unavailable before emitting session_closed', async () => {
     let serverGone = false;
-    const session = 'tmex-lc-cmd-gone';
+    const session = 'vibeterm-lc-cmd-gone';
     const { connection, events } = makeLifecycleConnection({
       session,
       overrides: (command) => {
@@ -1887,7 +1890,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
   });
 
   test('concurrent snapshot demands run one batch plus one trailing refresh without overlap', async () => {
-    const session = 'tmex-lc-race';
+    const session = 'vibeterm-lc-race';
     const fresh = '%2|@1|1|1|80|24|0|0|1|bash|node|/home/user\n';
     const stale =
       '%1|@1|0|1|80|24|0|0|1|first pane|vim|/home/user\n%2|@1|1|0|80|24|0|0|1|bash|node|/home/user\n';
@@ -1956,7 +1959,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
   });
 
   test('disconnect during blocked connect does not resurrect after the block resolves', async () => {
-    const session = 'tmex-cancel-connect';
+    const session = 'vibeterm-cancel-connect';
     const snapshots: StateSnapshotPayload[] = [];
     const sourceReady: Uint8Array[] = [];
     let spawnCount = 0;
@@ -1987,7 +1990,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
         getDevice: () => createDevice(session),
         run: async (argv) => {
           const command = argv.slice(1).join(' ');
-          if (command === 'show-options -gqv @tmex-server-epoch') {
+          if (command === 'show-options -gqv @vibeterm-server-epoch') {
             epochStarted = true;
             await epochGate;
           }
@@ -2015,7 +2018,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
   });
 
   test('disconnect during control attach does not publish connected state or snapshot', async () => {
-    const session = 'tmex-cancel-attach';
+    const session = 'vibeterm-cancel-attach';
     const snapshots: StateSnapshotPayload[] = [];
     const sourceReady: Uint8Array[] = [];
     let parkStarted = false;
@@ -2046,7 +2049,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
         getDevice: () => createDevice(session),
         run: async (argv) => {
           const command = argv.slice(1).join(' ');
-          if (command === `new-window -t ${session} -n tmex-park -P -F #{window_id} sleep 30`) {
+          if (command === `new-window -t ${session} -n vibeterm-park -P -F #{window_id} sleep 30`) {
             parkStarted = true;
             await parkGate;
           }
@@ -2074,7 +2077,7 @@ describe('LocalExternalTmuxConnection lifecycle events', () => {
   });
 
   test('disconnect during blocked snapshot commands does not publish snapshot', async () => {
-    const session = 'tmex-cancel-snapshot';
+    const session = 'vibeterm-cancel-snapshot';
     const snapshots: StateSnapshotPayload[] = [];
     let snapshotStarted = false;
     let releaseSnapshot: (() => void) | undefined;
@@ -2173,7 +2176,7 @@ describe('控制模式下的输入流水线', () => {
   }
 
   test('32 KiB 粘贴一次写完全部 send-keys，只等一次回执', async () => {
-    const harness = await connectControlMode('tmex-paste');
+    const harness = await connectControlMode('vibeterm-paste');
     const before = harness.sendKeys().length;
 
     const paste = harness.connection.sendInput('%1', 'x'.repeat(32 * 1024));
@@ -2193,7 +2196,7 @@ describe('控制模式下的输入流水线', () => {
   });
 
   test('粘贴与按键交错时保持写入顺序', async () => {
-    const harness = await connectControlMode('tmex-paste-order');
+    const harness = await connectControlMode('vibeterm-paste-order');
     const before = harness.sendKeys().length;
     const hexOf = () => harness.sendKeys().map((line) => line.trim().split(' ').slice(4).join(''));
 
@@ -2222,7 +2225,7 @@ describe('控制模式下的输入流水线', () => {
   });
 
   test('中间一块失败时整段粘贴报错', async () => {
-    const harness = await connectControlMode('tmex-paste-fail');
+    const harness = await connectControlMode('vibeterm-paste-fail');
     const before = harness.sendKeys().length;
 
     const paste = harness.connection.sendInput('%1', 'y'.repeat(768));

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { setMeshRequestContext } from './mesh-deps';
 import {
-  X_VIBETERM_MESH_PEER,
+  MESH_PEER_HEADER,
   attachMeshPeerMarker,
   isPeerInboundRequest,
   readMeshPeerMarker,
@@ -11,7 +11,7 @@ import {
 describe('peer-request-marker', () => {
   test('strip 去掉外部请求上的伪造标记', () => {
     const req = new Request('http://localhost/api/mesh-internal/tmux/pane-info', {
-      headers: { [X_VIBETERM_MESH_PEER]: 'forged' },
+      headers: { [MESH_PEER_HEADER.name]: 'forged' },
     });
     expect(readMeshPeerMarker(req)).toBe('forged');
     const stripped = stripMeshPeerMarkerFromRequest(req);
@@ -20,7 +20,7 @@ describe('peer-request-marker', () => {
 
   test('attach 写入 fromNodeId', () => {
     const headers = attachMeshPeerMarker({ accept: '*/*' }, 'peer-a');
-    expect(headers[X_VIBETERM_MESH_PEER]).toBe('peer-a');
+    expect(headers[MESH_PEER_HEADER.name]).toBe('peer-a');
   });
 
   test('clientIp peer: 前缀视为 inbound', () => {

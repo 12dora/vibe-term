@@ -1,18 +1,25 @@
 import { bytesToHex, sha256 } from '@vibeterm/shared/auth';
 import {
+  FORCE_KEYLOG_HEADER,
+  FORWARDED_BY_HEADER,
+  assignHeaderPair,
+  readHeaderPair,
+  readHeaderPairFromRecord,
+  setHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
+import {
   HUB_NOT_WRITER,
   HUB_WRITE_FORWARD_FRAME_MAX_BYTES,
   type HubNotWriterError,
   type HubWriteForwardHeaders,
   type HubWriteForwardMessage,
-  VIBETERM_FORWARDED_BY_HEADER,
   UPLINK_CTL_MAX_BYTES,
   encodeHubUplinkCtl,
 } from '@vibeterm/shared/uplink';
 import { json } from '../api/http';
 
 export const WRITER_FORWARD_TIMEOUT_MS = 10_000;
-export const WRITER_FORWARD_HEADER = VIBETERM_FORWARDED_BY_HEADER;
+export const WRITER_FORWARD_HEADER = FORWARDED_BY_HEADER;
 export const WRITE_FORWARD_FRAME_MAX_BYTES = HUB_WRITE_FORWARD_FRAME_MAX_BYTES;
 export const WRITE_FORWARD_IDEMPOTENCY_MAX = 256;
 export const WRITE_FORWARD_OVERSIZED_ERROR = 'payload_too_large';
@@ -52,7 +59,7 @@ export function oversizedWriteForwardResponse(): Response {
 }
 
 export function requestAlreadyForwarded(req: Request): boolean {
-  const value = req.headers.get(WRITER_FORWARD_HEADER);
+  const value = readHeaderPair(req.headers, WRITER_FORWARD_HEADER);
   return Boolean(value && value.trim().length > 0);
 }
 
@@ -60,8 +67,8 @@ export function collectWriteForwardHeaders(req: Request): HubWriteForwardHeaders
   const headers: HubWriteForwardHeaders = {};
   const contentType = req.headers.get('content-type');
   if (contentType) headers['content-type'] = contentType;
-  const force = req.headers.get('x-tmex-force-keylog');
-  if (force) headers['x-tmex-force-keylog'] = force;
+  const force = readHeaderPair(req.headers, FORCE_KEYLOG_HEADER);
+  if (force) assignHeaderPair(headers as Record<string, string>, FORCE_KEYLOG_HEADER, force);
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
@@ -69,7 +76,7 @@ export function ackToHttpResponse(msg: HubWriteForwardMessage, forwardedBy: stri
   const headers = new Headers();
   const contentType = msg.headers?.['content-type'];
   if (contentType) headers.set('content-type', contentType);
-  headers.set(WRITER_FORWARD_HEADER, forwardedBy);
+  setHeaderPair(headers, WRITER_FORWARD_HEADER, forwardedBy);
   return new Response(msg.body ?? null, { status: msg.status ?? 500, headers });
 }
 

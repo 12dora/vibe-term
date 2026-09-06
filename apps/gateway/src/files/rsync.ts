@@ -193,7 +193,7 @@ export async function runRsync(
       proc.exited,
     ]);
     if (timedOut) {
-      return { stdout, stderr: `${stderr}\n[tmex] rsync timed out`, exitCode: 124 };
+      return { stdout, stderr: `${stderr}\n[vibeterm] rsync timed out`, exitCode: 124 };
     }
     return { stdout, stderr, exitCode };
   } finally {

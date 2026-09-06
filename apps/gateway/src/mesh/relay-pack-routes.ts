@@ -1,4 +1,5 @@
 import { encodeBase64url } from '@vibeterm/shared/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import {
   RELAY_PACK_MAX_BYTES,
   kdfParamsFromWire,
@@ -66,7 +67,7 @@ async function forwardPackToRelay(input: {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-tmex-relay-token': encodeBase64url(input.token),
+          ...assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(input.token)),
         },
         body: input.payload,
         signal: ac.signal,

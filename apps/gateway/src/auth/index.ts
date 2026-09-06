@@ -5,7 +5,15 @@ export {
   type ChallengeEntry,
   type ChallengeKind,
 } from './challenge-store';
-export { buildClearCookie, buildSetCookie, nodeSessionCookieName, parseCookies } from './cookies';
+export {
+  buildClearCookie,
+  buildSetCookie,
+  hasNodeSessionCookie,
+  legacyNodeSessionCookieName,
+  nodeSessionCookieName,
+  parseCookies,
+  readNodeSessionCookie,
+} from './cookies';
 export {
   KeyLogStore,
   projectPayloadJson,

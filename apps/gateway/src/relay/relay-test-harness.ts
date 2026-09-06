@@ -154,7 +154,7 @@ export async function bootRelayHarness(opts: RelayHarnessOptions = {}): Promise<
     },
     tenantFetch(path, token, init) {
       const headers = new Headers(init?.headers);
-      headers.set(RELAY_TOKEN_HEADER, token);
+      headers.set(RELAY_TOKEN_HEADER.name, token);
       if (init?.body && !headers.has('content-type')) {
         headers.set('content-type', 'application/json');
       }

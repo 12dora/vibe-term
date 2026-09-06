@@ -95,7 +95,8 @@ export async function createRegistrationOptions(
   input: CreateRegistrationOptionsInput
 ): Promise<PublicKeyCredentialCreationOptionsJSON> {
   return generateRegistrationOptions({
-    rpName: 'tmex',
+    // 仅用于认证器 UI 的展示名；rpID 由 origin 推导，不随品牌改名变化（改动会作废已注册的通行密钥）
+    rpName: 'VibeTerm',
     rpID: input.rpId,
     userName: input.uid,
     userID: Uint8Array.from(new TextEncoder().encode(input.userId)),

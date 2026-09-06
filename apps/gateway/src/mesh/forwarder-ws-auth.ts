@@ -1,4 +1,4 @@
-import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { MESH_REJECT_4401_KIND, type MeshUpgradeServer } from './mesh-deps';
 import { jsonError } from './session-middleware';
 import { readShareCookie, shareAuthValue } from './share-credential';
@@ -14,7 +14,7 @@ export function remoteWsAuthFor(
 ): string | null {
   const token = readShareCookie(req, nodeId);
   if (boundShareId) return token ? shareAuthValue(token) : null;
-  const session = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
+  const session = readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
   if (session) return session;
   return token ? shareAuthValue(token) : null;
 }

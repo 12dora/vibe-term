@@ -16,6 +16,7 @@ import {
 } from '../auth/root-key';
 
 export const RELAY_PACK_VERSION = 1;
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const RELAY_PACK_HKDF_SALT = 'tmex-relay-pack/v1';
 export const RELAY_PACK_NONCE_LENGTH = 12;
 export const RELAY_PACK_KEK_LENGTH = 32;

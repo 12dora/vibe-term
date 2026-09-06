@@ -23,7 +23,7 @@ const NODE_B = 'b'.repeat(32);
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-tx-unit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-tx-unit-'));
   dirs.push(dir);
   return dir;
 }

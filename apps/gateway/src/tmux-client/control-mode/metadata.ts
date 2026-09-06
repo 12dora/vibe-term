@@ -1,5 +1,5 @@
 import type { TmuxSourceMetadataEvent } from '../events';
-import { PARKING_WINDOW_NAME } from '../external/constants';
+import { isParkingWindowName } from '../external/constants';
 import type { ControlModeNotification } from './types';
 
 /** 同时活着的护盾窗口只会有一个；留几个槽位兜住清理失败的历史 id，同时避免无界增长。 */
@@ -17,7 +17,7 @@ export class ControlModeMetadataBridge {
   private readonly parkingWindowIds = new Set<string>();
 
   /**
-   * 记下本次 attach 建的 `tmex-park` 窗口：它只活几秒，它的激活 / 改名 / 关闭事件
+   * 记下本次 attach 建的 `vibeterm-park` 窗口：它只活几秒，它的激活 / 改名 / 关闭事件
    * 一旦外泄，前端「跟随活动窗口」就会被拉进去，再随它被杀而看起来像 tab 自己消失。
    */
   noteParkingWindow(windowId: string | null): void {
@@ -49,7 +49,7 @@ export class ControlModeMetadataBridge {
   }
 
   private parseWindowRenamed(windowId: string, name: string): TmuxSourceMetadataEvent | null {
-    if (name === PARKING_WINDOW_NAME) {
+    if (isParkingWindowName(name)) {
       this.noteParkingWindow(windowId);
       return null;
     }
@@ -115,10 +115,10 @@ export class ControlModeMetadataBridge {
         if (!paneId) {
           return null;
         }
-        if (name === 'tmex-cwd') {
+        if (name === 'vibeterm-cwd') {
           return { type: 'pane-current-path', paneId, currentPath: value };
         }
-        if (name === 'tmex-command') {
+        if (name === 'vibeterm-command') {
           return { type: 'pane-current-command', paneId, currentCommand: value };
         }
         return null;

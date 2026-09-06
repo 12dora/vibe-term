@@ -26,11 +26,11 @@ function tempDir(prefix: string): string {
 function writeCliInstall(installDir: string): void {
   const versionDir = join(installDir, 'versions', '1.2.3');
   mkdirSync(join(versionDir, 'cli', 'bin'), { recursive: true });
-  writeFileSync(join(versionDir, 'cli', 'bin', 'tmex.js'), '#!/usr/bin/env node\n');
+  writeFileSync(join(versionDir, 'cli', 'bin', 'vibeterm.js'), '#!/usr/bin/env node\n');
   symlinkSync(versionDir, join(installDir, 'current'));
   writeFileSync(
     join(installDir, 'install-meta.json'),
-    `${JSON.stringify({ serviceName: 'tmex', installDir, platform: 'darwin' })}\n`
+    `${JSON.stringify({ serviceName: 'vibeterm', installDir, platform: 'darwin' })}\n`
   );
 }
 
@@ -39,7 +39,7 @@ function cliInstallInfo(installDir: string, extra?: Partial<InstallInfo>): Insta
     installedViaCli: true,
     deployment: 'launchd',
     installDir,
-    serviceName: 'tmex',
+    serviceName: 'vibeterm',
     cliVersion: '1.2.3',
     bunPath: process.execPath,
     ...extra,
@@ -68,7 +68,7 @@ describe('UninstallController', () => {
   });
 
   test('rejects when deployment is none', async () => {
-    const dir = tempDir('tmex-uninst-none-');
+    const dir = tempDir('vibeterm-uninst-none-');
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(dir, { deployment: 'none' }),
     });
@@ -81,7 +81,7 @@ describe('UninstallController', () => {
   });
 
   test('rejects when managed externally', async () => {
-    const dir = tempDir('tmex-uninst-mng-');
+    const dir = tempDir('vibeterm-uninst-mng-');
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(dir),
       isManaged: () => true,
@@ -95,7 +95,7 @@ describe('UninstallController', () => {
   });
 
   test('rejects when an upgrade is in progress', async () => {
-    const dir = tempDir('tmex-uninst-upg-');
+    const dir = tempDir('vibeterm-uninst-upg-');
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(dir),
       getUpgradeState: () => 'executing',
@@ -106,9 +106,9 @@ describe('UninstallController', () => {
   });
 
   test('copies CLI to a temp dir and spawns detached uninstall --yes --purge --delay-ms 1500', async () => {
-    const installDir = tempDir('tmex-uninst-ok-');
+    const installDir = tempDir('vibeterm-uninst-ok-');
     writeCliInstall(installDir);
-    const copyRoot = tempDir('tmex-uninst-copies-');
+    const copyRoot = tempDir('vibeterm-uninst-copies-');
     const spawned: Array<{ cmd: string; args: string[]; opts: Record<string, unknown> }> = [];
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(installDir),
@@ -135,7 +135,7 @@ describe('UninstallController', () => {
     expect(typeof body.startedAt).toBe('string');
     expect(spawned).toHaveLength(1);
     expect(spawned[0]?.cmd).toBe(process.execPath);
-    const tmpBin = join(copyRoot, 'tmex-uninstall-deadbeef', 'bin', 'tmex.js');
+    const tmpBin = join(copyRoot, 'vibeterm-uninstall-deadbeef', 'bin', 'vibeterm.js');
     expect(spawned[0]?.args).toEqual([
       tmpBin,
       'uninstall',
@@ -144,7 +144,7 @@ describe('UninstallController', () => {
       '--install-dir',
       installDir,
       '--service-name',
-      'tmex',
+      'vibeterm',
       '--delay-ms',
       '1500',
     ]);
@@ -154,9 +154,9 @@ describe('UninstallController', () => {
   });
 
   test('second POST while scheduled is idempotent and does not spawn again', async () => {
-    const installDir = tempDir('tmex-uninst-idemp-');
+    const installDir = tempDir('vibeterm-uninst-idemp-');
     writeCliInstall(installDir);
-    const copyRoot = tempDir('tmex-uninst-idemp-tmp-');
+    const copyRoot = tempDir('vibeterm-uninst-idemp-tmp-');
     let spawns = 0;
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(installDir),
@@ -188,9 +188,9 @@ describe('UninstallController', () => {
   });
 
   test('startLocalUninstall logs via and user then schedules when authenticated', async () => {
-    const installDir = tempDir('tmex-uninst-auth-');
+    const installDir = tempDir('vibeterm-uninst-auth-');
     writeCliInstall(installDir);
-    const copyRoot = tempDir('tmex-uninst-auth-tmp-');
+    const copyRoot = tempDir('vibeterm-uninst-auth-tmp-');
     uninstallController.setDepsForTests({
       getInstallInfo: () => cliInstallInfo(installDir),
       tmpdir: () => copyRoot,

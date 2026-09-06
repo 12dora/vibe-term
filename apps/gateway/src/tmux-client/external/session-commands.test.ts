@@ -6,7 +6,7 @@ import type { TmuxConnectionOptions } from '../connection-types';
 import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SNAPSHOT_FIELD_SEPARATOR } from '../snapshot-format';
 import { TmuxTargetMissingError } from '../target-missing';
-import { PARKING_WINDOW_NAME } from './constants';
+import { LEGACY_PARKING_WINDOW_NAME, PARKING_WINDOW_NAME } from './constants';
 import { formatTmuxDestroyLog } from './destroy-log';
 import {
   type SessionCommandHost,
@@ -41,17 +41,17 @@ function createCallbacks(): TmuxConnectionOptions {
 
 describe('session command builders', () => {
   test('create-window argv includes cwd and optional name', () => {
-    expect(buildCreateWindowArgv('tmex', '/tmp/work')).toEqual([
+    expect(buildCreateWindowArgv('vibeterm', '/tmp/work')).toEqual([
       'new-window',
       '-t',
-      'tmex',
+      'vibeterm',
       '-c',
       '/tmp/work',
     ]);
-    expect(buildCreateWindowArgv('tmex', '/tmp/work', 'docs')).toEqual([
+    expect(buildCreateWindowArgv('vibeterm', '/tmp/work', 'docs')).toEqual([
       'new-window',
       '-t',
-      'tmex',
+      'vibeterm',
       '-c',
       '/tmp/work',
       '-n',
@@ -119,12 +119,12 @@ describe('session command builders', () => {
       '-F',
       `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
     ]);
-    expect(buildBreakPaneArgv('%3', 'tmex')).toEqual([
+    expect(buildBreakPaneArgv('%3', 'vibeterm')).toEqual([
       'break-pane',
       '-s',
       '%3',
       '-t',
-      'tmex:',
+      'vibeterm:',
       '-P',
       '-F',
       `#{window_id}${SNAPSHOT_FIELD_SEPARATOR}#{pane_id}`,
@@ -157,7 +157,7 @@ describe('SessionCommands', () => {
     const responses = new Map<string, CommandResult>();
     const host: SessionCommandHost = {
       deviceId: 'dev-1',
-      sessionName: 'tmex',
+      sessionName: 'vibeterm',
       connected: true,
       manualDisconnect: false,
       logPrefix: '[test]',
@@ -211,37 +211,50 @@ describe('SessionCommands', () => {
     const { host, allowCalls } = createHost();
     await new SessionCommands(host).configureSessionOptions();
     expect(allowCalls.map((argv) => argv.join(' '))).toEqual([
-      'set-option -t tmex -s allow-passthrough off',
-      'set-option -t tmex -g extended-keys on',
-      'set-option -t tmex -s extended-keys-format csi-u',
-      'set-option -t tmex -g focus-events off',
-      'set-option -t tmex destroy-unattached off',
-      'set-environment -t tmex TERM_PROGRAM ghostty',
-      'set-environment -t tmex COLORTERM truecolor',
-      'set-option -t tmex default-path /tmp/work',
+      'set-option -t vibeterm -s allow-passthrough off',
+      'set-option -t vibeterm -g extended-keys on',
+      'set-option -t vibeterm -s extended-keys-format csi-u',
+      'set-option -t vibeterm -g focus-events off',
+      'set-option -t vibeterm destroy-unattached off',
+      'set-environment -t vibeterm TERM_PROGRAM ghostty',
+      'set-environment -t vibeterm COLORTERM truecolor',
+      'set-option -t vibeterm default-path /tmp/work',
       '__configureWindowStyle__',
     ]);
   });
 
   test('ensureSession creates a detached session only when has-session fails', async () => {
     const createdHost = createHost();
-    createdHost.responses.set('has-session -t tmex', fail("can't find session: tmex"));
-    createdHost.responses.set('new-session -d -c /tmp/work -s tmex', ok());
+    createdHost.responses.set('has-session -t vibeterm', fail("can't find session: vibeterm"));
+    createdHost.responses.set('new-session -d -c /tmp/work -s vibeterm', ok());
     expect(await new SessionCommands(createdHost.host).ensureSession()).toEqual({ created: true });
     expect(createdHost.allowCalls.map((argv) => argv.join(' '))).toEqual([
-      'has-session -t tmex',
-      'new-session -d -c /tmp/work -s tmex',
+      'has-session -t vibeterm',
+      'new-session -d -c /tmp/work -s vibeterm',
     ]);
 
     const existing = createHost();
     expect(await new SessionCommands(existing.host).ensureSession()).toEqual({ created: false });
-    expect(existing.allowCalls.map((argv) => argv.join(' '))).toEqual(['has-session -t tmex']);
+    expect(existing.allowCalls.map((argv) => argv.join(' '))).toEqual(['has-session -t vibeterm']);
+  });
+
+  test('renameLegacyParkingWindows 把 1.x 残留的 tmex-park 改成新名', async () => {
+    const { host, allowCalls, responses } = createHost();
+    responses.set(
+      'list-windows -t vibeterm -F #{window_id}|#{window_name}',
+      ok(`@1|zsh\n@2|${LEGACY_PARKING_WINDOW_NAME}\n@3|${PARKING_WINDOW_NAME}\n`)
+    );
+    await new SessionCommands(host).renameLegacyParkingWindows();
+    expect(allowCalls.map((argv) => argv.join(' '))).toEqual([
+      'list-windows -t vibeterm -F #{window_id}|#{window_name}',
+      `rename-window -t @2 ${PARKING_WINDOW_NAME}`,
+    ]);
   });
 
   test('createParkingWindow uses the parking name and command, and warns on failure', async () => {
     const failing = createHost();
     failing.responses.set(
-      `new-window -t tmex -n ${PARKING_WINDOW_NAME} -P -F #{window_id} sleep 30`,
+      `new-window -t vibeterm -n ${PARKING_WINDOW_NAME} -P -F #{window_id} sleep 30`,
       fail('nope')
     );
     const warns: string[] = [];
@@ -260,7 +273,7 @@ describe('SessionCommands', () => {
 
     const okHost = createHost();
     okHost.responses.set(
-      `new-window -t tmex -n ${PARKING_WINDOW_NAME} -P -F #{window_id} sleep 30`,
+      `new-window -t vibeterm -n ${PARKING_WINDOW_NAME} -P -F #{window_id} sleep 30`,
       ok(' @99 \n')
     );
     expect(await new SessionCommands(okHost.host).createParkingWindow()).toBe('@99');
@@ -268,13 +281,13 @@ describe('SessionCommands', () => {
 
   test('closeWindowInternal inserts a replacement window before killing the last one', async () => {
     const { host, allowCalls, snapshots, responses } = createHost();
-    responses.set('display-message -p -t tmex #{session_windows}', ok('1\n'));
-    responses.set('new-window -d -t tmex -c /tmp/work', ok());
+    responses.set('display-message -p -t vibeterm #{session_windows}', ok('1\n'));
+    responses.set('new-window -d -t vibeterm -c /tmp/work', ok());
     responses.set('kill-window -t @1', ok());
     await new SessionCommands(host).closeWindowInternal('@1');
     expect(allowCalls.map((argv) => argv.join(' '))).toEqual([
-      'display-message -p -t tmex #{session_windows}',
-      'new-window -d -t tmex -c /tmp/work',
+      'display-message -p -t vibeterm #{session_windows}',
+      'new-window -d -t vibeterm -c /tmp/work',
       'kill-window -t @1',
     ]);
     expect(snapshots).toEqual([1]);
@@ -568,9 +581,9 @@ describe('formatTmuxDestroyLog', () => {
         id: '@3',
         name: 'claude',
         reason: 'user',
-        session: 'tmex',
+        session: 'vibeterm',
       })
-    ).toBe('[tmux] kill-window id=@3 name=claude reason=user session=tmex');
+    ).toBe('[tmux] kill-window id=@3 name=claude reason=user session=vibeterm');
   });
 
   test('renders the pane destruction line and falls back to unknown', () => {
@@ -580,8 +593,8 @@ describe('formatTmuxDestroyLog', () => {
         id: '%7',
         name: '',
         reason: 'parking',
-        session: 'tmex',
+        session: 'vibeterm',
       })
-    ).toBe('[tmux] kill-pane id=%7 name=unknown reason=parking session=tmex');
+    ).toBe('[tmux] kill-pane id=%7 name=unknown reason=parking session=vibeterm');
   });
 });

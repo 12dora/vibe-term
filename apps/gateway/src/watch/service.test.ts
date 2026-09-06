@@ -219,7 +219,7 @@ beforeAll(() => {
     id: TEST_DEVICE_ID,
     name: 'watch-test-device',
     type: 'local',
-    session: 'tmex-test',
+    session: 'vibeterm-test',
     authMode: 'auto',
     port: 22,
     sortOrder: 0,

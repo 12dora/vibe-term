@@ -44,7 +44,7 @@ function encodeHelloS2C(maxFrameBytes: number, serverVersion = '1.1.23'): Uint8A
   return wsBorsh.encodeEnvelope(
     wsBorsh.KIND_HELLO_S2C,
     wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion,
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes,
