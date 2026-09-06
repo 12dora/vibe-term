@@ -54,6 +54,7 @@ const MIGRATIONS = [
   '0046_relay_pack_updated_at.sql',
   '0047_share.sql',
   '0048_share_password_enc.sql',
+  '0049_relay_limits.sql',
   '0050_port_maps.sql',
 ] as const;
 
