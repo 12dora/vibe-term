@@ -10,7 +10,7 @@ import {
 
 describe('cert-authority', () => {
   test('issues an EC P-256 CA and leaf that node:crypto can verify', async () => {
-    const ca = await createCa({ name: 'tmex test CA' });
+    const ca = await createCa({ name: 'VibeTerm test CA' });
     const leaf = await issueLeaf({
       ca,
       sans: ['localhost', '127.0.0.1', '::1'],
@@ -23,7 +23,7 @@ describe('cert-authority', () => {
     expect(leafCert.checkHost('localhost')).toBe('localhost');
 
     const parsedCa = parseCertificate(ca.certPem);
-    expect(parsedCa.subject.toLowerCase()).toContain('tmex test ca');
+    expect(parsedCa.subject.toLowerCase()).toContain('vibeterm test ca');
     expect(parsedCa.issuer).toBe(parsedCa.subject);
     const tenYearsMs = 10 * 365 * 24 * 60 * 60 * 1000;
     expect(parsedCa.notAfter - parsedCa.notBefore).toBeGreaterThan(
@@ -32,7 +32,7 @@ describe('cert-authority', () => {
 
     const parsedLeaf = parseCertificate(leaf.certPem);
     expect(parsedLeaf.sans).toEqual(expect.arrayContaining(['localhost', '127.0.0.1', '::1']));
-    expect(parsedLeaf.issuer.toLowerCase()).toContain('tmex test ca');
+    expect(parsedLeaf.issuer.toLowerCase()).toContain('vibeterm test ca');
     const daysMs = 398 * 24 * 60 * 60 * 1000;
     expect(parsedLeaf.notAfter - parsedLeaf.notBefore).toBeGreaterThan(
       daysMs - 24 * 60 * 60 * 1000

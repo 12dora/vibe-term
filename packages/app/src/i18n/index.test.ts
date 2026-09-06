@@ -28,13 +28,13 @@ describe('i18n', () => {
   test('cli.help is sourced from cliHelpText', () => {
     setLang('en');
     expect(t('cli.help')).toBe(cliHelpText('en'));
-    expect(t('cli.help')).toContain('tmex hub user add <username>');
-    expect(t('cli.help')).toContain('tmex hub user passwd <username> [--full-reset]');
-    expect(t('cli.help')).toContain('tmex direct enable|disable');
+    expect(t('cli.help')).toContain('vibeterm hub user add <username>');
+    expect(t('cli.help')).toContain('vibeterm hub user passwd <username> [--full-reset]');
+    expect(t('cli.help')).toContain('vibeterm direct enable|disable');
     setLang('zh-CN');
     expect(t('cli.help')).toBe(cliHelpText('zh-CN'));
-    expect(t('cli.help')).toContain('tmex hub join');
-    expect(t('cli.help')).toContain('tmex relay join');
+    expect(t('cli.help')).toContain('vibeterm hub join');
+    expect(t('cli.help')).toContain('vibeterm relay join');
     expect(t('cli.help')).toContain('--no-restart');
     expect(t('cli.help')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
   });
@@ -89,10 +89,10 @@ describe('i18n', () => {
 
   test('skipForeign exists in both languages and zh-CN avoids 你', () => {
     setLang('en');
-    expect(t('cli.shim.skipForeign', { path: '/tmp/tmex' })).toContain('/tmp/tmex');
+    expect(t('cli.shim.skipForeign', { path: '/tmp/vibeterm' })).toContain('/tmp/vibeterm');
     setLang('zh-CN');
-    const zh = t('cli.shim.skipForeign', { path: '/tmp/tmex' });
-    expect(zh).toContain('/tmp/tmex');
+    const zh = t('cli.shim.skipForeign', { path: '/tmp/vibeterm' });
+    expect(zh).toContain('/tmp/vibeterm');
     expect(zh).not.toContain('你');
   });
 });

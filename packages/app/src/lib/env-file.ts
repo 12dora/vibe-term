@@ -96,6 +96,19 @@ export async function writeEnvFile(
   await rename(tempPath, targetPath);
 }
 
+const ENV_PREFIX = 'VIBETERM_';
+const LEGACY_ENV_PREFIX = 'TMEX_';
+
+/**
+ * 已有安装的 app.env 里是改名前的 `TMEX_*`，本版**不改写**（回滚到 1.1.x 仍要能读）。
+ * 补默认值时把 `TMEX_X` 视为 `VIBETERM_X` 已存在，避免同一项在文件里出现两份。
+ */
+function hasKeyOrLegacyAlias(values: Record<string, string>, key: string): boolean {
+  if (key in values) return true;
+  if (!key.startsWith(ENV_PREFIX)) return false;
+  return `${LEGACY_ENV_PREFIX}${key.slice(ENV_PREFIX.length)}` in values;
+}
+
 export function mergeMissingKeys(
   existing: Record<string, string>,
   defaults: Record<string, string>
@@ -103,7 +116,7 @@ export function mergeMissingKeys(
   const next = { ...existing };
   const added: string[] = [];
   for (const [key, value] of Object.entries(defaults)) {
-    if (!(key in next)) {
+    if (!hasKeyOrLegacyAlias(next, key)) {
       next[key] = value;
       added.push(key);
     }

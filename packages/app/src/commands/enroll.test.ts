@@ -83,9 +83,9 @@ describe('enroll', () => {
       },
     });
     expect(result.token).toHaveLength(JOIN_TOKEN_CHARS);
-    expect(result.joinCommand).toContain('tmex hub join');
+    expect(result.joinCommand).toContain('vibeterm hub join');
     expect(result.joinCommand).toContain(
-      `tmex hub join https://hub.example --token ${result.token}`
+      `vibeterm hub join https://hub.example --token ${result.token}`
     );
     expect(result.admitted).toBe(true);
     const user = auth.userStore.getByUsername('frank');
@@ -117,7 +117,7 @@ describe('enroll', () => {
     });
     expect(result.joinCommand).toContain("'https://hub.example/join?x=1&y=2'");
     expect(result.joinCommand).toContain('--token');
-    expect(result.joinCommand.startsWith('tmex hub join ')).toBe(true);
+    expect(result.joinCommand.startsWith('vibeterm hub join ')).toBe(true);
   });
 
   test('hub enroll with selfsigned TLS appends CA fingerprint to the join token', async () => {
@@ -136,7 +136,7 @@ describe('enroll', () => {
       password: 'enroll-pass-word',
       log: () => undefined,
     });
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     await new TlsConfigStore(auth.db).upsert({
       mode: 'selfsigned',

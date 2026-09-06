@@ -29,14 +29,14 @@ describe('cli-node entry', () => {
 
 describe('auth command bun spawn', () => {
   test('Node dispatch forwards hub user add argv to the bun auth entry', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-cli-spawn-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-spawn-'));
     tempDirs.push(installDir);
     await writeFile(
       join(installDir, 'app.env'),
       stringifyEnv({
         NODE_ENV: 'test',
         VIBETERM_MASTER_KEY: MASTER_KEY,
-        DATABASE_URL: join(installDir, 'tmex.db'),
+        DATABASE_URL: join(installDir, 'vibeterm.db'),
         VIBETERM_ROLES: 'hub,node',
       })
     );
@@ -82,14 +82,14 @@ echo "FAKE_BUN_ARGV=$(printf '%q ' "$@")"
   });
 
   test('node-built cli-node forwards auth argv to fake bun', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-cli-node-spawn-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-node-spawn-'));
     tempDirs.push(installDir);
     await writeFile(
       join(installDir, 'app.env'),
       stringifyEnv({
         NODE_ENV: 'test',
         VIBETERM_MASTER_KEY: MASTER_KEY,
-        DATABASE_URL: join(installDir, 'tmex.db'),
+        DATABASE_URL: join(installDir, 'vibeterm.db'),
         VIBETERM_ROLES: 'hub,node',
       })
     );
@@ -110,7 +110,7 @@ echo "NODE_SPAWN $(printf '%q ' "$@")"
     await writeFile(join(installDir, 'runtime', 'cli-auth.js'), 'export {}\n');
 
     const outfile = join(installDir, 'cli-node.js');
-    const wrapper = join(installDir, 'tmex.js');
+    const wrapper = join(installDir, 'vibeterm.js');
     const build = Bun.spawnSync(
       [
         BUN_BIN,
@@ -169,9 +169,9 @@ main().catch((error) => {
 
 describe('dispatchAuthCli auth env load', () => {
   test('hub user add loads install env before gateway config captures VIBETERM_MASTER_KEY', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-cli-auth-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-auth-'));
     tempDirs.push(installDir);
-    const databaseUrl = join(installDir, 'tmex.db');
+    const databaseUrl = join(installDir, 'vibeterm.db');
     await writeFile(
       join(installDir, 'app.env'),
       stringifyEnv({
@@ -227,8 +227,8 @@ console.log(
         )
       ),
       NODE_ENV: 'test',
-      VIBETERM_PASSWORD: 'tmex-test-pass',
-      VIBETERM_PASSWORD_CONFIRM: 'tmex-test-pass',
+      VIBETERM_PASSWORD: 'vibeterm-test-pass',
+      VIBETERM_PASSWORD_CONFIRM: 'vibeterm-test-pass',
     };
 
     const proc = Bun.spawn([BUN_BIN, scriptPath], {
@@ -264,9 +264,9 @@ console.log(
   }, 30_000);
 
   test('dispatchCli accepts parsed hub user add argv', () => {
-    const parsed = parseArgs(['hub', 'user', 'add', 'alice', '--install-dir', '/tmp/tmex-x']);
+    const parsed = parseArgs(['hub', 'user', 'add', 'alice', '--install-dir', '/tmp/vibeterm-x']);
     expect(parsed.command).toBe('hub');
     expect(parsed.positionals).toEqual(['user', 'add', 'alice']);
-    expect(parsed.flags['install-dir']).toBe('/tmp/tmex-x');
+    expect(parsed.flags['install-dir']).toBe('/tmp/vibeterm-x');
   });
 });

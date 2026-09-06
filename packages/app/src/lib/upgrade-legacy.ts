@@ -38,7 +38,7 @@ export async function convertLegacyLayout(
   await switchCurrent(installDir, fromVersion);
   await writeRunScript(dest, options.bunPath);
 
-  const cliJs = join(installDir, 'current', 'cli', 'bin', 'tmex.js');
+  const cliJs = join(installDir, 'current', 'cli', 'bin', 'vibeterm.js');
   if (!options.skipShims && (await pathExists(cliJs))) {
     const { installVibeTermShim } = await import('./cli-shim');
     await installVibeTermShim({

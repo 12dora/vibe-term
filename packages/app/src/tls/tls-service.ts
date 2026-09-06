@@ -641,7 +641,7 @@ export class TlsService {
         'tls CA remaining validity below 30 days, rotating CA; joined nodes must re-join'
       );
     }
-    const ca = await createCa({ name: 'tmex local CA', now: this.now() });
+    const ca = await createCa({ name: 'VibeTerm local CA', now: this.now() });
     await this.upsert({ caCertPem: ca.certPem, caKeyPem: ca.keyPem });
     return ca;
   }

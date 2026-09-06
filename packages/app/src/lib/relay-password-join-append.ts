@@ -1,5 +1,6 @@
 import { relayMemberFromRecord } from '../../../../apps/gateway/src/mesh/relay-key-log-sync';
 import { decodeKeyLogRecord, encodeBase64url } from '../../../shared/src/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import { RELAY_KEYLOG_SEQ_MISMATCH, sealRelayKeyLogRecord } from '../../../shared/src/relay';
 import { RelayApiError, joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
 import type { FetchLike } from './fetch-like';
@@ -16,7 +17,7 @@ export type AppendPairResult =
   | { ok: false; kind: 'meta_failed'; error: unknown };
 
 function tenantHeaders(token: Uint8Array): Record<string, string> {
-  return { 'x-tmex-relay-token': encodeBase64url(token) };
+  return assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(token));
 }
 
 export function isRelaySeqMismatch(error: unknown): boolean {

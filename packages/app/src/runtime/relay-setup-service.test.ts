@@ -42,7 +42,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-setup-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-setup-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -123,7 +123,7 @@ describe('becomeRelay', () => {
         role: 'relay,node',
         relayPublicUrl: 'https://relay.example',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
       },
       deps
     );
@@ -225,7 +225,7 @@ describe('becomeRelay', () => {
         role: 'relay,node',
         relayPublicUrl: 'https://relay.example',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
       },
       deps
     );
@@ -242,7 +242,7 @@ describe('becomeRelay', () => {
           role: 'relay,node',
           relayPublicUrl: 'https://relay.example',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
         },
         again
       )

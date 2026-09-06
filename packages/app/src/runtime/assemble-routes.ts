@@ -134,7 +134,7 @@ export async function tryStop(run: () => unknown, label?: string): Promise<void>
   try {
     await run();
   } catch (err) {
-    if (label) console.error(`[tmex] ${label} stop failed`, err);
+    if (label) console.error(`[vibeterm] ${label} stop failed`, err);
   }
 }
 
@@ -224,7 +224,7 @@ function buildTlsLifecycle(
   const httpsListener = new HttpsListener({
     fetch,
     websocket,
-    log: (message) => console.log(`[tmex] ${message}`),
+    log: (message) => console.log(`[vibeterm] ${message}`),
   });
   const tls = new TlsService({
     store: new TlsConfigStore(db),

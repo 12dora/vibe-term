@@ -1,40 +1,40 @@
 import type { CliLang } from '../i18n';
 
-const HELP_EN = `tmex CLI
+const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
-  tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
-  tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
-  tmex hub user add <username>
-  tmex hub user passwd <username> [--full-reset]
-  tmex hub user totp <username>
-  tmex hub user reset
-  tmex hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
-  tmex hub leave [--no-restart]
-  tmex hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
-  tmex hub promote [--yes] [--no-restart]
-  tmex hub demote [--no-restart]
-  tmex hub list
-  tmex hub allow <nodeId> [<nodeId>...] [--no-restart]
-  tmex hub disallow <nodeId> [--no-restart]
-  tmex mesh reset-root
-  tmex enroll [--ttl 10m]
-  tmex direct enable|disable
-  tmex relay enroll <url> [--password <p>] [--username <name>]
-  tmex relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
-  tmex relay reauth <url> [--password <p>]
-  tmex relay leave
-  tmex relay list [--json]
-  tmex relay status [--json]
-  tmex relay tenants [--json]
-  tmex relay passwd [--clear] [--kick|--keep]
-  tmex relay kick <tenantId>
-  tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
-  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
-  tmex relay label <tenantId> <text>
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
+  vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
+  vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
+  vibeterm hub user add <username>
+  vibeterm hub user passwd <username> [--full-reset]
+  vibeterm hub user totp <username>
+  vibeterm hub user reset
+  vibeterm hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
+  vibeterm hub leave [--no-restart]
+  vibeterm hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
+  vibeterm hub promote [--yes] [--no-restart]
+  vibeterm hub demote [--no-restart]
+  vibeterm hub list
+  vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
+  vibeterm hub disallow <nodeId> [--no-restart]
+  vibeterm mesh reset-root
+  vibeterm enroll [--ttl 10m]
+  vibeterm direct enable|disable
+  vibeterm relay enroll <url> [--password <p>] [--username <name>]
+  vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
+  vibeterm relay reauth <url> [--password <p>]
+  vibeterm relay leave
+  vibeterm relay list [--json]
+  vibeterm relay status [--json]
+  vibeterm relay tenants [--json]
+  vibeterm relay passwd [--clear] [--kick|--keep]
+  vibeterm relay kick <tenantId>
+  vibeterm relay remove <tenantId> [--yes]
+  vibeterm relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  vibeterm relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
+  vibeterm relay label <tenantId> <text>
 
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
   TTY: hidden input with confirmation where required; empty rejected.
@@ -45,41 +45,41 @@ Global flags:
   --lang <en|zh-CN>
   --help`;
 
-const HELP_ZH = `tmex CLI
+const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
-  tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
-  tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
-  tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
-  tmex hub user add <username>
-  tmex hub user passwd <username> [--full-reset]
-  tmex hub user totp <username>
-  tmex hub user reset
-  tmex hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
-  tmex hub leave [--no-restart]
-  tmex hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
-  tmex hub promote [--yes] [--no-restart]
-  tmex hub demote [--no-restart]
-  tmex hub list
-  tmex hub allow <nodeId> [<nodeId>...] [--no-restart]
-  tmex hub disallow <nodeId> [--no-restart]
-  tmex mesh reset-root
-  tmex enroll [--ttl 10m]
-  tmex direct enable|disable
-  tmex relay enroll <url> [--password <p>] [--username <name>]
-  tmex relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
-  tmex relay reauth <url> [--password <p>]
-  tmex relay leave
-  tmex relay list [--json]
-  tmex relay status [--json]
-  tmex relay tenants [--json]
-  tmex relay passwd [--clear] [--kick|--keep]
-  tmex relay kick <tenantId>
-  tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
-  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
-  tmex relay label <tenantId> <text>
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
+  vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
+  vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
+  vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
+  vibeterm hub user add <username>
+  vibeterm hub user passwd <username> [--full-reset]
+  vibeterm hub user totp <username>
+  vibeterm hub user reset
+  vibeterm hub join <https-url> --token <t> | --password [<p>] [--totp <code>] [--name <n>] [--insecure-local] [--no-restart]
+  vibeterm hub leave [--no-restart]
+  vibeterm hub standby --public-url <https-url> [--priority <n>] [--insecure-local] [--no-restart]
+  vibeterm hub promote [--yes] [--no-restart]
+  vibeterm hub demote [--no-restart]
+  vibeterm hub list
+  vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
+  vibeterm hub disallow <nodeId> [--no-restart]
+  vibeterm mesh reset-root
+  vibeterm enroll [--ttl 10m]
+  vibeterm direct enable|disable
+  vibeterm relay enroll <url> [--password <p>] [--username <name>]
+  vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
+  vibeterm relay reauth <url> [--password <p>]
+  vibeterm relay leave
+  vibeterm relay list [--json]
+  vibeterm relay status [--json]
+  vibeterm relay tenants [--json]
+  vibeterm relay passwd [--clear] [--kick|--keep]
+  vibeterm relay kick <tenantId>
+  vibeterm relay remove <tenantId> [--yes]
+  vibeterm relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  vibeterm relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
+  vibeterm relay label <tenantId> <text>
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。

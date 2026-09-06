@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 async function scratch(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-apply-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-apply-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -29,7 +29,7 @@ async function writePackage(root: string, version: string): Promise<PackageLayou
   await mkdir(join(root, 'resources', 'gateway-drizzle'), { recursive: true });
   await writeFile(
     join(root, 'package.json'),
-    `${JSON.stringify({ name: 'tmex-cli', version, bin: { tmex: './bin/tmex.js' } }, null, 2)}\n`
+    `${JSON.stringify({ name: 'vibeterm-cli', version, bin: { tmex: './bin/tmex.js' } }, null, 2)}\n`
   );
   await writeFile(join(root, 'bin', 'tmex.js'), 'export {}\n');
   await writeFile(join(root, 'dist', 'cli-node.js'), 'export {}\n');
@@ -45,6 +45,7 @@ async function writePackage(root: string, version: string): Promise<PackageLayou
   };
 }
 
+/** 种子安装刻意用改名前的形态（serviceName=tmex、data/tmex.db），覆盖既有安装升级路径。 */
 async function seedInstall(installDir: string, version: string): Promise<void> {
   const pkg = await writePackage(join(installDir, '_seed-pkg'), version);
   await mkdir(join(installDir, 'versions', version, 'runtime'), { recursive: true });

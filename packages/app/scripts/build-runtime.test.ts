@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-cpu-features-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cpu-features-'));
   tempDirs.push(dir);
   return dir;
 }

@@ -14,11 +14,11 @@ WASM_SRC="${ROOT_DIR}/packages/ghostty-terminal/src/assets/ghostty-vt.wasm"
 RUNTIME_ASSETS_DIR="${APP_DIR}/dist/runtime/assets"
 
 if [[ ! -f "${WASM_SRC}" ]]; then
-  echo "[tmex build] ghostty-vt.wasm not found at ${WASM_SRC}" >&2
+  echo "[vibeterm build] ghostty-vt.wasm not found at ${WASM_SRC}" >&2
   exit 1
 fi
 
 mkdir -p "${RUNTIME_ASSETS_DIR}"
 cp "${WASM_SRC}" "${RUNTIME_ASSETS_DIR}/ghostty-vt.wasm"
 
-echo "[tmex build] runtime ghostty-vt.wasm copied"
+echo "[vibeterm build] runtime ghostty-vt.wasm copied"

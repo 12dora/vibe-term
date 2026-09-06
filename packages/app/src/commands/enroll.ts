@@ -499,7 +499,7 @@ export async function runEnroll(
       user.keyLogHeadHash,
       caFingerprint
     );
-    const joinCommand = `tmex hub join ${quoteJoinArg(hubJoinUrl(ctx, io))} --token ${quoteJoinArg(token)}`;
+    const joinCommand = `vibeterm hub join ${quoteJoinArg(hubJoinUrl(ctx, io))} --token ${quoteJoinArg(token)}`;
     log(io, `join token: ${token}`);
     log(io, joinCommand);
     if (io.wait === false) {

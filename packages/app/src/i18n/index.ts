@@ -21,7 +21,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'errors.version.invalid': 'Invalid version: {{input}}',
 
     'errors.layout.packageRootNotFound':
-      'Unable to locate tmex package root. Please ensure dist artifacts are complete.',
+      'Unable to locate VibeTerm package root. Please ensure dist artifacts are complete.',
     'errors.layout.runtimeMissing': 'Runtime artifact not found: {{path}}',
     'errors.layout.feMissing': 'Frontend static assets not found: {{path}}',
     'errors.layout.drizzleMissing': 'Gateway migration assets not found: {{path}}',
@@ -42,7 +42,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'service.status.none': 'Service manager is not integrated for platform: {{platform}}',
     'service.status.plistMissing': 'launchd plist not found',
     'service.hint.systemd': 'systemctl --user status {{serviceName}}',
-    'service.hint.launchd': 'launchctl print gui/$(id -u)/com.tmex.{{serviceName}}',
+    'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
     'service.hint.none': 'No service manager command on this platform.',
 
     'init.prompt.installDir': 'Install directory (install-dir)',
@@ -56,7 +56,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'init.error.installDirNotEmpty':
       'Install directory is not empty: {{installDir}}. Use --force to overwrite.',
     'init.error.noServiceManager':
-      'No supported service manager found (platform: {{platform}}). tmex requires systemd (Linux) or launchd (macOS).',
+      'No supported service manager found (platform: {{platform}}). VibeTerm requires systemd (Linux) or launchd (macOS).',
     'init.warning.noServiceManager':
       'Service manager is not supported on platform {{platform}}. Files are deployed but autostart is not configured.',
     'init.done': 'Initialization completed.',
@@ -74,11 +74,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.bun.ok': 'Bun installed: {{version}}',
     'doctor.bun.fail': 'Bun check failed: {{reason}}',
     'doctor.tmux.ok': 'tmux installed: {{version}}',
-    'doctor.tmux.fail': 'tmux not found (tmex requires tmux >= 3.0).',
+    'doctor.tmux.fail': 'tmux not found (VibeTerm requires tmux >= 3.0).',
     'doctor.tmux.versionLow': 'tmux version too low: {{version}} (requires >= 3.0)',
+    'doctor.legacyLayout.leftovers':
+      'Leftover files from the pre-rename layout found. Remove them so an older CLI cannot start a second instance.',
     'doctor.fix.header': 'Attempting to fix issues...',
     'doctor.fix.skip': 'Skipping unfixable item: {{id}}',
-    'doctor.fix.hint': 'Run "tmex doctor --fix" to attempt automatic installation.',
+    'doctor.fix.hint': 'Run "vibeterm doctor --fix" to attempt automatic installation.',
     'doctor.ssh.ok': 'ssh installed',
     'doctor.ssh.missing': 'ssh not found; SSH devices will not work.',
     'doctor.installDir.exists': 'Install directory exists: {{installDir}}',
@@ -107,7 +109,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.networkFailed': 'Failed to reach GitHub Releases: {{detail}}',
     'upgrade.latestLookupFailed': 'GitHub latest-release response is missing tag_name.',
     'upgrade.assetMissing':
-      'Extracted release is missing package/bin/tmex.js for version {{version}}.',
+      'Extracted release is missing package/bin/vibeterm.js for version {{version}}.',
     'upgrade.extractFailed': 'Failed to extract the release tarball (exit {{code}}).',
     'upgrade.lockHeld':
       'Another upgrade is already running (pid {{pid}}). If that process is dead, retry; lock: {{path}}.',
@@ -141,14 +143,15 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.signatureInvalid':
       'Release {{version}} SHA256SUMS signature is not valid ({{reason}}). Refusing to continue.',
     'upgrade.signatureHttpFailed': 'Failed to fetch SHA256SUMS.sig: {{detail}}',
-    'upgrade.pidNotOwned': 'PID {{pid}} is not the tmex runtime for this install ({{installDir}}).',
+    'upgrade.pidNotOwned':
+      'PID {{pid}} is not the VibeTerm runtime for this install ({{installDir}}).',
     'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
 
     'cli.shim.pathHint':
-      '{{binDir}} is not on PATH. Add it so the tmex command is available: export PATH="{{binDir}}:$PATH"',
-    'cli.shim.ready': 'CLI command: tmex ({{shimPath}})',
+      '{{binDir}} is not on PATH. Add it so the vibeterm command is available: export PATH="{{binDir}}:$PATH"',
+    'cli.shim.ready': 'CLI command: vibeterm ({{shimPath}})',
     'cli.shim.skipForeign':
-      'Skipped replacing {{path}} (existing file is not a tmex-managed shim).',
+      'Skipped replacing {{path}} (existing file is not a vibeterm-managed shim).',
 
     'uninstall.prompt.removeService': 'Uninstall system service',
     'uninstall.prompt.removeProgram': 'Remove program files (runtime/resources/cli/run.sh/meta)',
@@ -158,7 +161,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'uninstall.summary.installDir': 'Install dir',
     'uninstall.summary.serviceName': 'Service name',
 
-    'tmux.notFound': 'tmux not found. tmex requires tmux >= 3.0 to operate.',
+    'tmux.notFound': 'tmux not found. VibeTerm requires tmux >= 3.0 to operate.',
     'tmux.versionTooLow': 'tmux version too low: current {{version}}, required >= 3.0',
 
     'deps.install.confirm': 'Install {{dep}} now?',
@@ -187,19 +190,21 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.join.admitPending': 'Joined; waiting for approval from a signed-in browser',
 
     'hub.standby.missingPublicUrl': 'hub standby requires --public-url',
-    'hub.standby.notJoined': 'this node is not joined (no node_identity); run tmex hub join first',
-    'hub.standby.alreadyActive': 'this install is already an active hub; run tmex hub demote first',
+    'hub.standby.notJoined':
+      'this node is not joined (no node_identity); run vibeterm hub join first',
+    'hub.standby.alreadyActive':
+      'this install is already an active hub; run vibeterm hub demote first',
     'hub.standby.missingHubUrl':
       'VIBETERM_HUB_URL is empty; a standby hub still uplinks to the current primary',
     'hub.standby.invalidPriority': 'invalid --priority: must be a non-negative integer',
     'hub.standby.done': 'standby hub enabled (priority={{priority}}, publicUrl={{url}})',
     'hub.standby.nodeId': 'this node id: {{nodeId}}',
     'hub.standby.allowHint':
-      'the active hub ignores this standby until it runs: tmex hub allow {{nodeId}}',
+      'the active hub ignores this standby until it runs: vibeterm hub allow {{nodeId}}',
     'hub.standby.authorizedPrimary':
       'authorized current primary hub {{nodeId}}; VIBETERM_HUB_PEERS={{peers}}',
     'hub.standby.noPrimary':
-      'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set VIBETERM_HUB_PEERS manually with tmex hub allow',
+      'WARNING: could not find the current primary hub to authorize (no active mesh_hubs row and no peer_cache hub sentinel); set VIBETERM_HUB_PEERS manually with vibeterm hub allow',
     'hub.peers.current': 'current VIBETERM_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote requires a hub,node install',
     'hub.promote.needConfirm':
@@ -207,9 +212,9 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.promote.warning':
       'WARNING: demote or stop the previous writer before this node starts, or the mesh will split-brain.',
     'hub.promote.emptyPeers':
-      'WARNING: VIBETERM_HUB_PEERS is empty; this hub authorizes no peers (the old writer cannot fence it). The previous writer must still run: tmex hub allow {{nodeId}}',
+      'WARNING: VIBETERM_HUB_PEERS is empty; this hub authorizes no peers (the old writer cannot fence it). The previous writer must still run: vibeterm hub allow {{nodeId}}',
     'hub.promote.allowReminder':
-      'the previous writer must authorize this hub with: tmex hub allow {{nodeId}}',
+      'the previous writer must authorize this hub with: vibeterm hub allow {{nodeId}}',
     'hub.promote.done': 'promoted to active hub (writerEpoch={{epoch}})',
     'hub.demote.notHub': 'hub demote requires a hub,node install',
     'hub.demote.done': 'demoted to standby hub',
@@ -246,7 +251,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
       'Public HTTPS port (443 = standard, {{suggested}} = suggested when the ISP blocks 443)',
 
     'relay.passwd.modeKick':
-      'kick mode: every tenant using the old relay password is disconnected and must re-run tmex relay reauth',
+      'kick mode: every tenant using the old relay password is disconnected and must re-run vibeterm relay reauth',
     'relay.passwd.modeKeep':
       'keep mode: tenants already enrolled stay connected; the new password only applies to new enrollments',
     'relay.passwd.updated': 'relay password updated (password epoch {{epoch}})',
@@ -286,7 +291,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
 
     'errors.version.invalid': '非法版本号：{{input}}',
 
-    'errors.layout.packageRootNotFound': '无法定位 tmex 包根目录，请确认 dist 产物完整。',
+    'errors.layout.packageRootNotFound': '无法定位 VibeTerm 包根目录，请确认 dist 产物完整。',
     'errors.layout.runtimeMissing': '未找到 runtime 产物：{{path}}',
     'errors.layout.feMissing': '未找到前端静态资源：{{path}}',
     'errors.layout.drizzleMissing': '未找到网关迁移资源：{{path}}',
@@ -306,7 +311,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'service.status.none': '当前平台未集成服务管理：{{platform}}',
     'service.status.plistMissing': 'plist 不存在',
     'service.hint.systemd': 'systemctl --user status {{serviceName}}',
-    'service.hint.launchd': 'launchctl print gui/$(id -u)/com.tmex.{{serviceName}}',
+    'service.hint.launchd': 'launchctl print gui/$(id -u)/com.vibeterm.{{serviceName}}',
     'service.hint.none': '当前平台无服务管理命令',
 
     'init.prompt.installDir': '安装目录（install-dir）',
@@ -319,7 +324,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
       '目录 {{installDir}} 已存在，是否继续（不会删除现有配置与数据库）？',
     'init.error.installDirNotEmpty': '安装目录已存在且非空：{{installDir}}。如需覆盖请加 --force',
     'init.error.noServiceManager':
-      '未检测到可用的服务管理器（平台：{{platform}}）。tmex 需要 systemd（Linux）或 launchd（macOS）。',
+      '未检测到可用的服务管理器（平台：{{platform}}）。VibeTerm 需要 systemd（Linux）或 launchd（macOS）。',
     'init.warning.noServiceManager': '当前平台 {{platform}} 未实现自动服务安装，已完成文件部署。',
     'init.done': '初始化完成。',
     'init.summary.installDir': '安装目录',
@@ -336,11 +341,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.bun.ok': 'Bun 已安装：{{version}}',
     'doctor.bun.fail': 'Bun 检查失败：{{reason}}',
     'doctor.tmux.ok': 'tmux 已安装：{{version}}',
-    'doctor.tmux.fail': '未检测到 tmux（tmex 需要 tmux >= 3.0 才能工作）。',
+    'doctor.tmux.fail': '未检测到 tmux（VibeTerm 需要 tmux >= 3.0 才能工作）。',
     'doctor.tmux.versionLow': 'tmux 版本过低：{{version}}（要求 >= 3.0）',
+    'doctor.legacyLayout.leftovers':
+      '发现改名前布局的残留文件，建议删除，避免旧版 CLI 拉起第二个实例。',
     'doctor.fix.header': '正在尝试修复问题...',
     'doctor.fix.skip': '跳过无法自动修复的项目：{{id}}',
-    'doctor.fix.hint': '运行 "tmex doctor --fix" 尝试自动安装缺失的依赖。',
+    'doctor.fix.hint': '运行 "vibeterm doctor --fix" 尝试自动安装缺失的依赖。',
     'doctor.ssh.ok': 'ssh 已安装',
     'doctor.ssh.missing': '未检测到 ssh，远程设备将不可用。',
     'doctor.installDir.exists': '安装目录存在：{{installDir}}',
@@ -368,7 +375,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.versionNotFound': '未找到版本 {{version}}（HTTP 404）。',
     'upgrade.networkFailed': '无法访问 GitHub Releases：{{detail}}',
     'upgrade.latestLookupFailed': 'GitHub latest-release 响应缺少 tag_name。',
-    'upgrade.assetMissing': '版本 {{version}} 的解压结果缺少 package/bin/tmex.js。',
+    'upgrade.assetMissing': '版本 {{version}} 的解压结果缺少 package/bin/vibeterm.js。',
     'upgrade.extractFailed': '解压发行包失败（退出码 {{code}}）。',
     'upgrade.lockHeld':
       '另有升级正在进行（pid {{pid}}）。若该进程已退出，请重试；锁文件：{{path}}。',
@@ -399,13 +406,13 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
       '版本 {{version}} 缺少 SHA256SUMS.sig。{{since}} 起的发行包必须带签名，拒绝继续。',
     'upgrade.signatureInvalid': '版本 {{version}} 的 SHA256SUMS 签名无效（{{reason}}），拒绝继续。',
     'upgrade.signatureHttpFailed': '获取 SHA256SUMS.sig 失败：{{detail}}',
-    'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 tmex 运行时（{{installDir}}）。',
+    'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 VibeTerm 运行时（{{installDir}}）。',
     'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
 
     'cli.shim.pathHint':
-      '{{binDir}} 不在 PATH 中。加入后即可使用 tmex 命令：export PATH="{{binDir}}:$PATH"',
-    'cli.shim.ready': 'CLI 命令：tmex（{{shimPath}}）',
-    'cli.shim.skipForeign': '已跳过替换 {{path}}（现有文件不是 tmex 托管的 shim）。',
+      '{{binDir}} 不在 PATH 中。加入后即可使用 vibeterm 命令：export PATH="{{binDir}}:$PATH"',
+    'cli.shim.ready': 'CLI 命令：vibeterm（{{shimPath}}）',
+    'cli.shim.skipForeign': '已跳过替换 {{path}}（现有文件不是 vibeterm 托管的 shim）。',
 
     'uninstall.prompt.removeService': '是否卸载系统服务',
     'uninstall.prompt.removeProgram': '是否删除程序文件（runtime/resources/cli/run.sh/meta）',
@@ -415,7 +422,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'uninstall.summary.installDir': '安装目录',
     'uninstall.summary.serviceName': '服务名称',
 
-    'tmux.notFound': '未检测到 tmux。tmex 需要 tmux >= 3.0 才能工作。',
+    'tmux.notFound': '未检测到 tmux。VibeTerm 需要 tmux >= 3.0 才能工作。',
     'tmux.versionTooLow': 'tmux 版本过低：当前 {{version}}，要求 >= 3.0',
 
     'deps.install.confirm': '是否现在安装 {{dep}}？',
@@ -442,26 +449,28 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'hub.join.admitPending': '已加入，等待已登录的浏览器批准',
 
     'hub.standby.missingPublicUrl': 'hub standby 需要 --public-url',
-    'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 tmex hub join。',
-    'hub.standby.alreadyActive': '本机已是 active hub。请先执行 tmex hub demote，再设为 standby。',
+    'hub.standby.notJoined':
+      '本机尚未加入 mesh（缺少 node_identity）。请先执行 vibeterm hub join。',
+    'hub.standby.alreadyActive':
+      '本机已是 active hub。请先执行 vibeterm hub demote，再设为 standby。',
     'hub.standby.missingHubUrl':
       '缺少 VIBETERM_HUB_URL（当前主 hub 地址）。standby 仍需以 node 身份连上主 hub。',
     'hub.standby.invalidPriority': '--priority 必须是 ≥ 0 的整数',
     'hub.standby.done': '已将本机设为 standby hub（priority={{priority}}，publicUrl={{url}}）',
     'hub.standby.nodeId': '本机 node id：{{nodeId}}',
     'hub.standby.allowHint':
-      '当前 active hub 会忽略本机 standby，直到执行：tmex hub allow {{nodeId}}',
+      '当前 active hub 会忽略本机 standby，直到执行：vibeterm hub allow {{nodeId}}',
     'hub.standby.authorizedPrimary': '已授权当前主 hub {{nodeId}}；VIBETERM_HUB_PEERS={{peers}}',
     'hub.standby.noPrimary':
-      '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 tmex hub allow 手动写入 VIBETERM_HUB_PEERS',
+      '警告：找不到当前主 hub 可授权（mesh_hubs 无 active 行，peer_cache 也无 hub 哨兵）。请用 vibeterm hub allow 手动写入 VIBETERM_HUB_PEERS',
     'hub.peers.current': '当前 VIBETERM_HUB_PEERS={{peers}}',
     'hub.promote.notHub': 'hub promote 仅适用于 hub,node 安装',
     'hub.promote.needConfirm': '提升写者有脑裂风险。请加 --yes 确认，或在交互终端确认。',
     'hub.promote.warning':
       '警告：提升写者前必须先将原主 hub demote 或停机，否则会出现脑裂（split-brain）。',
     'hub.promote.emptyPeers':
-      '警告：VIBETERM_HUB_PEERS 为空；本机未授权任何对端 hub（旧写者无法 fencing 本机）。请在原写者上执行：tmex hub allow {{nodeId}}',
-    'hub.promote.allowReminder': '请在原写者上授权本机：tmex hub allow {{nodeId}}',
+      '警告：VIBETERM_HUB_PEERS 为空；本机未授权任何对端 hub（旧写者无法 fencing 本机）。请在原写者上执行：vibeterm hub allow {{nodeId}}',
+    'hub.promote.allowReminder': '请在原写者上授权本机：vibeterm hub allow {{nodeId}}',
     'hub.promote.done': '已提升为 active hub（writerEpoch={{epoch}}）',
     'hub.demote.notHub': 'hub demote 仅适用于 hub,node 安装',
     'hub.demote.done': '已降为 standby hub',
@@ -494,7 +503,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'init.prompt.publicPort': '公网 HTTPS 端口（443 为标准端口，{{suggested}} 为建议的高位端口）',
 
     'relay.passwd.modeKick':
-      '踢出模式：所有还在用旧口令的租户会被断开，需要重新执行 tmex relay reauth',
+      '踢出模式：所有还在用旧口令的租户会被断开，需要重新执行 vibeterm relay reauth',
     'relay.passwd.modeKeep': '保留模式：已接入的租户继续在线，新口令只对新的接入生效',
     'relay.passwd.updated': '中继口令已更新（口令世代 {{epoch}}）',
     'relay.passwd.cleared': '已清除中继口令，接入不再需要口令（世代 {{epoch}}）',

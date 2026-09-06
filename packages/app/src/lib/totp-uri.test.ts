@@ -18,7 +18,7 @@ describe('totpOtpauthUri', () => {
   test('builds Key Uri Format with SHA1 / 6 digits / 30s', () => {
     const uri = totpOtpauthUri('alice', new TextEncoder().encode('foobar'));
     expect(uri).toBe(
-      'otpauth://totp/tmex%3Aalice?secret=MZXW6YTBOI&issuer=tmex&algorithm=SHA1&digits=6&period=30'
+      'otpauth://totp/VibeTerm%3Aalice?secret=MZXW6YTBOI&issuer=VibeTerm&algorithm=SHA1&digits=6&period=30'
     );
   });
 

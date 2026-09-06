@@ -108,7 +108,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     DATABASE_URL: input.databasePath,
     VIBETERM_MASTER_KEY: input.masterKey,
     VIBETERM_BASE_URL: formatHttpEndpoint(input.host, input.port),
-    VIBETERM_SITE_NAME: 'tmex',
+    VIBETERM_SITE_NAME: 'VibeTerm',
     VIBETERM_DIRECT_ENABLED: 'true',
     ...hubEnvDefaults(input),
     ...relayEnvDefaults(input),
@@ -187,7 +187,7 @@ export function buildRunScriptContent(installDir: string, bunPath: string): stri
     `export VIBETERM_MIGRATIONS_DIR=${quotePosixShellArg(current.drizzleDir)}`,
     `export VIBETERM_NATIVE_DIR=${quotePosixShellArg(current.nativeDir)}`,
     '',
-    'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"',
+    'printf \'%s\\n\' "$$" > "$SCRIPT_DIR/vibeterm.pid"',
     `exec ${quotePosixShellArg(bunPath)} ${quotePosixShellArg(current.runtimeServerPath)}`,
     '',
   ];

@@ -114,7 +114,7 @@ export function createTlsRoutes(deps: {
         status: 200,
         headers: {
           'content-type': 'application/x-x509-ca-cert',
-          'content-disposition': 'attachment; filename="tmex-ca.crt"',
+          'content-disposition': 'attachment; filename="vibeterm-ca.crt"',
         },
       });
     }

@@ -22,7 +22,7 @@ function resolveStaticRoot(): string {
 }
 
 async function main(): Promise<void> {
-  console.log(`[tmex] version ${getDisplayVersion()}`);
+  console.log(`[vibeterm] version ${getDisplayVersion()}`);
   await warnOnStaleSystemdUnit();
   void warnOnSystemdOomPolicy().catch(() => undefined);
   const host = process.env.VIBETERM_BIND_HOST || '127.0.0.1';
@@ -38,7 +38,7 @@ async function main(): Promise<void> {
       port,
       fetch: (req) => handlePreflightHttp(req, getDisplayVersion(), PROCESS_STARTED_AT),
     });
-    console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
+    console.log(`[vibeterm] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
     return;
   }
 
@@ -69,35 +69,35 @@ async function main(): Promise<void> {
   assembled.setProcessShutdown(runShutdown);
 
   assembled.gateway.onRestartRequested(async () => {
-    console.log(`[tmex] ${t('runtime.restartRequested')}`);
+    console.log(`[vibeterm] ${t('runtime.restartRequested')}`);
     await runShutdown();
   });
 
-  console.log(`[tmex] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
+  console.log(`[vibeterm] ${t('runtime.started', { url: `http://${host}:${port}` })}`);
 }
 
 process.on('unhandledRejection', (reason) => {
-  console.error('[tmex][unhandledRejection]', reason);
+  console.error('[vibeterm][unhandledRejection]', reason);
 });
 
 process.on('uncaughtException', (error) => {
-  console.error('[tmex][uncaughtException]', error);
+  console.error('[vibeterm][uncaughtException]', error);
 });
 
 try {
   await main();
 } catch (error) {
   if (error instanceof CryptoDecryptError) {
-    console.error('[tmex][fatal] 启动失败：检测到无法解密的敏感数据。');
+    console.error('[vibeterm][fatal] 启动失败：检测到无法解密的敏感数据。');
     console.error(
-      `[tmex][fatal] 上下文：scope=${error.context.scope} id=${error.context.entityId ?? '-'} field=${error.context.field ?? '-'}`
+      `[vibeterm][fatal] 上下文：scope=${error.context.scope} id=${error.context.entityId ?? '-'} field=${error.context.field ?? '-'}`
     );
     console.error(
-      '[tmex][fatal] 请检查 app.env 中 VIBETERM_MASTER_KEY 是否与当前数据库匹配；如果数据库来自其他环境，请使用原密钥或手动重建相关密文配置。'
+      '[vibeterm][fatal] 请检查 app.env 中 VIBETERM_MASTER_KEY 是否与当前数据库匹配；如果数据库来自其他环境，请使用原密钥或手动重建相关密文配置。'
     );
-    console.error('[tmex][fatal] 详细信息：', error.message);
+    console.error('[vibeterm][fatal] 详细信息：', error.message);
   } else {
-    console.error('[tmex][fatal] 启动失败：', error);
+    console.error('[vibeterm][fatal] 启动失败：', error);
   }
   throw error;
 }

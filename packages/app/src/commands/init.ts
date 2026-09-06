@@ -81,7 +81,7 @@ export async function enableDirectAfterInit(
     return;
   }
   const enable = deps.enableDirect ?? enableDirect;
-  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
   try {
     const result = await enable({ installDir: config.installDir });
     if (result.ok) {
@@ -450,7 +450,7 @@ function printInitSummary(
   serviceHintText: string,
   shim: { shimPath: string; pathHint: string | null }
 ): void {
-  console.log(`[tmex] ${t('init.done')}`);
+  console.log(`[vibeterm] ${t('init.done')}`);
   console.log(`- ${t('init.summary.installDir')}: ${config.installDir}`);
   console.log(`- ${t('init.summary.serviceName')}: ${config.serviceName}`);
   console.log(`- ${t('init.summary.bun')}: ${bun.version} (${bun.path})`);
@@ -466,7 +466,7 @@ function printInitSummary(
     console.log(
       `- relay admin token: VIBETERM_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
     );
-    console.log('- run "tmex relay status" on this machine to manage tenants');
+    console.log('- run "vibeterm relay status" on this machine to manage tenants');
   }
 }
 

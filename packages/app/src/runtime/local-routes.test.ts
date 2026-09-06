@@ -125,7 +125,7 @@ describe('GET /api/local/status', () => {
           domainAccess: () => ({
             allowed: false,
             viaDomain: true,
-            hosts: ['tmex.example.com'],
+            hosts: ['vibeterm.example.com'],
           }),
         })
       )
@@ -134,7 +134,7 @@ describe('GET /api/local/status', () => {
     expect((body as { domainAccess: unknown }).domainAccess).toEqual({
       allowed: false,
       viaDomain: true,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
   });
 
@@ -542,7 +542,7 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
     const identity = await ensureNodeIdentity(ctx.identityStore);
     await ctx.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: Date.now(),
     });
@@ -665,7 +665,7 @@ describe('POST /api/local/leave', () => {
     const identity = await ensureNodeIdentity(ctx.identityStore);
     await ctx.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: Date.now(),
     });

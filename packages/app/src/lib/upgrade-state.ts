@@ -1,12 +1,14 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathExists, writeTextAtomic } from './fs-utils';
+import type { DirMigrationRecord } from './upgrade-migrate-dir';
 
 export type UpgradePhase =
   | 'lock'
   | 'staging'
   | 'preflight'
   | 'stopping'
+  | 'migrate-install-dir'
   | 'backup'
   | 'switching'
   | 'started'
@@ -25,6 +27,8 @@ export interface UpgradeJournal {
   keepBackup?: boolean;
   candidatePid?: number;
   candidateStartedAt?: string;
+  /** 安装目录迁移的新旧路径与已完成的步骤，供 repair / 回滚续做 */
+  dirMigration?: DirMigrationRecord;
   error?: string;
 }
 
@@ -42,6 +46,7 @@ export function recoveryAction(journal: UpgradeJournal | null): RecoveryKind {
     case 'preflight':
       return 'abort_candidate';
     case 'stopping':
+    case 'migrate-install-dir':
     case 'backup':
     case 'switching':
       return 'restart_old';
@@ -84,7 +89,7 @@ export async function advanceJournal(
   extra?: Partial<
     Pick<
       UpgradeJournal,
-      'dbBackup' | 'error' | 'keepBackup' | 'candidatePid' | 'candidateStartedAt'
+      'dbBackup' | 'error' | 'keepBackup' | 'candidatePid' | 'candidateStartedAt' | 'dirMigration'
     >
   >
 ): Promise<UpgradeJournal> {

@@ -12,7 +12,7 @@ afterEach(async () => {
 
 describe('switchCurrent', () => {
   test('creates current via temp symlink then rename', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-switch-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-switch-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     await writeFile(join(installDir, 'versions', '1.0.0', 'marker'), 'one');
@@ -24,7 +24,7 @@ describe('switchCurrent', () => {
   });
 
   test('atomically replaces current to a new version', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-switch-rep-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-switch-rep-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     await mkdir(join(installDir, 'versions', '2.0.0'), { recursive: true });

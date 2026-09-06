@@ -11,7 +11,7 @@ TARGET_FE_DIR="${APP_DIR}/resources/fe-dist"
 TARGET_DRIZZLE_DIR="${APP_DIR}/resources/gateway-drizzle"
 
 if [[ ! -f "${FE_DIST_DIR}/index.html" ]]; then
-  echo "[tmex build] frontend dist not found, building @vibeterm/fe ..."
+  echo "[vibeterm build] frontend dist not found, building @vibeterm/fe ..."
   (cd "${ROOT_DIR}" && bun run --filter @vibeterm/fe build)
 fi
 
@@ -27,4 +27,4 @@ cp -R "${GATEWAY_DRIZZLE_DIR}/." "${TARGET_DRIZZLE_DIR}/"
 find "${TARGET_FE_DIR}" -name '*.map' -delete
 find "${TARGET_DRIZZLE_DIR}/meta" -name '*_snapshot.json' -delete
 
-echo "[tmex build] resources bundled"
+echo "[vibeterm build] resources bundled"

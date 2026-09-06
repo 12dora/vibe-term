@@ -21,7 +21,9 @@ describe('app parseVibeTermRoles wrapper', () => {
   });
 
   test('rejects invalid role names', () => {
-    expect(() => parseVibeTermRoles('hub')).toThrow('role must be one of standalone | node | hub,node');
+    expect(() => parseVibeTermRoles('hub')).toThrow(
+      'role must be one of standalone | node | hub,node'
+    );
     expect(() => parseVibeTermRoles('node,hub')).toThrow('role must be one of');
   });
 });

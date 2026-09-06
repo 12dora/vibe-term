@@ -1,3 +1,4 @@
+import { applyLegacyEnvAliases } from '../../shared/src/env/load-env';
 import { runDoctor } from './commands/doctor';
 import { runInit } from './commands/init';
 import { runUninstall } from './commands/uninstall';
@@ -88,6 +89,8 @@ function reconstructArgv(parsed: ParsedArgs): string[] {
 }
 
 export async function main(): Promise<void> {
+  // 已有安装的 app.env / 用户脚本里仍是 TMEX_*，读任何配置前先镜像成 VIBETERM_*。
+  applyLegacyEnvAliases();
   const argv = process.argv.slice(2);
   const parsed = parseArgs(argv);
   const requestedLang =

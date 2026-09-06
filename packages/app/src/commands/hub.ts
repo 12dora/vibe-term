@@ -30,6 +30,7 @@ import {
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
 import { isRelayJoinToken } from '../../../shared/src/relay';
+import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
@@ -53,7 +54,12 @@ import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/pas
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { isInteractiveStdin, promptConfirm } from '../lib/prompt';
-import { DEFAULT_PEER_PORT, type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
+import {
+  DEFAULT_PEER_PORT,
+  type VibeTermRoles,
+  parseVibeTermRoles,
+  roleNameFromFlags,
+} from '../lib/roles';
 import { restartService, startService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
@@ -103,7 +109,7 @@ export const HUB_SIGNED_AUTH_PRECEDENCE_NOTE =
   'signed admit-hub/retire-hub takes precedence over VIBETERM_HUB_PEERS; manage signed authorization from the UI';
 
 export const HUB_MANUAL_RESTART_HINT =
-  'skipped service restart; restart tmex manually to apply the change';
+  'skipped service restart; restart VibeTerm manually to apply the change';
 
 export const NODE_REVOKED_REJOIN_ERROR =
   'this node identity was revoked; use a fresh identity (mesh reset / re-init)';
@@ -289,7 +295,7 @@ async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: strin
 }
 
 async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
-  let serviceName = asString(parsed.flags['service-name']) || 'tmex';
+  let serviceName = asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME;
   if (!installDir) return serviceName;
   const layout = createInstallLayout(installDir);
   if (await pathExists(layout.metaPath)) {
@@ -668,7 +674,10 @@ export async function runHubJoin(
       log(io, `joined hub ${joined.hubUrl}`);
       const peerPort =
         ctx.env.VIBETERM_PEER_PORT || process.env.VIBETERM_PEER_PORT || String(DEFAULT_PEER_PORT);
-      log(io, `allow inbound VIBETERM_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
+      log(
+        io,
+        `allow inbound VIBETERM_PEER_PORT (${peerPort}) on the LAN firewall for direct links`
+      );
       return {
         userId: joined.userId,
         hubUrl: joined.hubUrl,

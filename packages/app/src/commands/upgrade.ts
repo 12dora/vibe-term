@@ -55,7 +55,7 @@ export async function reenableDirectAfterUpgrade(
   deps: ReenableDirectAfterUpgradeDeps = {}
 ): Promise<void> {
   const reenable = deps.reenableDirectIfNeeded ?? reenableDirectIfNeeded;
-  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
   try {
     const result = await reenable({ installDir });
     if (!result.ok) {
@@ -96,6 +96,13 @@ export function passthroughUpgradeFlags(
   return args;
 }
 
+async function firstExistingPath(candidates: string[]): Promise<string | null> {
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export async function delegateUpgrade(
   parsed: ParsedArgs,
   targetVersion: string,
@@ -104,7 +111,7 @@ export async function delegateUpgrade(
   const fetchFn = deps.fetch ?? fetch;
   const run = deps.runCommand ?? runCommand;
   const execPath = deps.execPath ?? process.execPath;
-  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
   const version = await resolveReleaseVersion(targetVersion, fetchFn);
   const installDir = resolveInstallDir(
     asString(parsed.flags['install-dir']) || defaultInstallDir(process.platform)
@@ -115,13 +122,13 @@ export async function delegateUpgrade(
 
   try {
     const tarballPath = join(stagingDir, releaseTarballName(version));
-    await downloadReleaseTarball(version, tarballPath, fetchFn);
+    const assetName = await downloadReleaseTarball(version, tarballPath, fetchFn);
     const bytes = await readFile(tarballPath);
-    const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version), fetchFn);
+    const sums = await fetchReleaseSha256Sums(version, assetName, fetchFn);
     const allowUnverified = asBoolean(parsed.flags['allow-unverified']) === true;
     assertReleaseIntegrity(version, bytes, sums, {
       allowUnverified,
-      fileName: releaseTarballName(version),
+      fileName: assetName,
     });
     // 摘要对上了只说明字节没被中途改；签名才回答「这份 SHA256SUMS 是不是发布方给的」。
     if (!sums.unpublished) {
@@ -139,8 +146,12 @@ export async function delegateUpgrade(
     }
 
     const packageRoot = join(extractDir, 'package');
-    const cliJs = join(packageRoot, 'bin', 'tmex.js');
-    if (!(await pathExists(cliJs))) {
+    // 桥接期的旧名资产里两个 bin 都在；再老的包只有 `bin/tmex.js`。
+    const cliJs = await firstExistingPath([
+      join(packageRoot, 'bin', 'vibeterm.js'),
+      join(packageRoot, 'bin', 'tmex.js'),
+    ]);
+    if (cliJs === null) {
       throw new Error(t('upgrade.assetMissing', { version }));
     }
 
@@ -179,7 +190,7 @@ function printUpgradeDone(
 ): void {
   const host = rewriteWildcardBindHost(String(env.VIBETERM_BIND_HOST || '127.0.0.1'));
   const port = String(env.GATEWAY_PORT || '9883');
-  console.log(`[tmex] ${t('upgrade.done')}`);
+  console.log(`[vibeterm] ${t('upgrade.done')}`);
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
   console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
@@ -240,10 +251,19 @@ export async function runUpgrade(parsed: ParsedArgs, deps: RunUpgradeDeps = {}):
 
   if (flags.repairOnly) return;
 
-  const env = (await pathExists(installLayout.envPath))
-    ? await readEnvFile(installLayout.envPath).catch(() => ({}) as Record<string, string>)
+  const finalDir = await resolvePostUpgradeInstallDir(installDir);
+  const finalEnvPath = createInstallLayout(finalDir).envPath;
+  const env = (await pathExists(finalEnvPath))
+    ? await readEnvFile(finalEnvPath).catch(() => ({}) as Record<string, string>)
     : {};
-  printUpgradeDone(installDir, flags.targetVersion, env);
+  printUpgradeDone(finalDir, flags.targetVersion, env);
+}
+
+/** 升级可能把安装目录搬到新默认路径，摘要要按搬完之后的位置打印。 */
+async function resolvePostUpgradeInstallDir(installDir: string): Promise<string> {
+  if (await pathExists(join(installDir, 'install-meta.json'))) return installDir;
+  const migrated = defaultInstallDir(process.platform);
+  return (await pathExists(join(migrated, 'install-meta.json'))) ? migrated : installDir;
 }
 
 async function requireUpgradeBun(parsed: ParsedArgs, meta: InstallMeta): Promise<string> {
@@ -279,7 +299,7 @@ async function runLockedUpgrade(opts: {
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
   const action = await repair(opts.installDir, opts.bunPath, { service, activeTxnId });
   if (opts.repairOnly) {
-    console.log(`[tmex] ${t('upgrade.repairDone', { action })}`);
+    console.log(`[vibeterm] ${t('upgrade.repairDone', { action })}`);
     return;
   }
 

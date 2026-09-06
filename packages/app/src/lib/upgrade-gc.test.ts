@@ -14,7 +14,7 @@ afterEach(async () => {
 
 describe('pruneVersions', () => {
   test('keeps current and one previous last-known-good', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-'));
     tempDirs.push(installDir);
     for (const version of ['1.0.0', '1.1.0', '2.0.0']) {
       await mkdir(join(installDir, 'versions', version), { recursive: true });
@@ -29,7 +29,7 @@ describe('pruneVersions', () => {
   });
 
   test('refuses to delete the directory current points at', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-protect-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-protect-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     await switchCurrent(installDir, '1.0.0');
@@ -40,7 +40,7 @@ describe('pruneVersions', () => {
 
 describe('removeTxnDirs', () => {
   test('deletes staging and backups for the txn', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-txn-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-txn-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'staging', 'txn-1'), { recursive: true });
     await mkdir(join(installDir, 'backups', 'txn-1'), { recursive: true });
@@ -53,7 +53,7 @@ describe('removeTxnDirs', () => {
 
 describe('removeLegacyTopLevelDirs', () => {
   test('removes top-level cli/runtime/resources once current exists', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-legacy-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-legacy-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'cli'), { recursive: true });
     await mkdir(join(installDir, 'runtime'), { recursive: true });
@@ -72,7 +72,7 @@ describe('removeLegacyTopLevelDirs', () => {
 
 describe('sweepUpgradeGarbage', () => {
   test('removes orphan staging and tmp leftovers without touching current or data', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-sweep-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-sweep-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     await mkdir(join(installDir, 'staging', 'orphan'), { recursive: true });
@@ -96,7 +96,7 @@ describe('sweepUpgradeGarbage', () => {
   });
 
   test('keeps reserved staged and release-cache directories', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-reserved-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-reserved-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0'), { recursive: true });
     await mkdir(join(installDir, 'staging', 'staged'), { recursive: true });
@@ -121,7 +121,7 @@ describe('sweepUpgradeGarbage', () => {
   });
 
   test('cleans shim tmex.*.tmp without touching foreign shims', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-gc-shim-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-gc-shim-'));
     tempDirs.push(installDir);
     const shimDir = join(installDir, 'local-bin');
     await mkdir(shimDir, { recursive: true });

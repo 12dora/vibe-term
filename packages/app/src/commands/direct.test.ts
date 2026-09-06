@@ -34,7 +34,7 @@ afterEach(async () => {
 });
 
 async function makeInstallDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-direct-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-'));
   tempDirs.push(dir);
   return dir;
 }

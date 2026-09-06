@@ -183,7 +183,8 @@ describe('relay env keys', () => {
 
   test('an explicit admin token is kept', () => {
     expect(
-      relayEnvDefaults({ role: 'relay,node', relayAdminToken: 'keep-me' }).VIBETERM_RELAY_ADMIN_TOKEN
+      relayEnvDefaults({ role: 'relay,node', relayAdminToken: 'keep-me' })
+        .VIBETERM_RELAY_ADMIN_TOKEN
     ).toBe('keep-me');
   });
 

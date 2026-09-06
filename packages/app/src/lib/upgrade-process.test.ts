@@ -11,6 +11,7 @@ import {
   formatPidRecord,
   killPidAndWait,
   parsePidRecord,
+  pidFilePath,
   processCommandLine,
 } from './upgrade-process';
 
@@ -47,13 +48,13 @@ describe('killPidAndWait', () => {
       killPidAndWait(4242, 1_000, {
         isAlive: () => true,
         assertOwned: () => {
-          throw new Error('not the tmex runtime');
+          throw new Error('not the VibeTerm runtime');
         },
         kill: (_pid, sig) => {
           signals.push(String(sig));
         },
       })
-    ).rejects.toThrow(/not the tmex runtime/);
+    ).rejects.toThrow(/not the VibeTerm runtime/);
     expect(signals).toEqual([]);
   });
 
@@ -64,7 +65,7 @@ describe('killPidAndWait', () => {
       killPidAndWait(4242, 1_000, {
         isAlive: () => true,
         assertOwned: () => {
-          if (!owned) throw new Error('not the tmex runtime');
+          if (!owned) throw new Error('not the VibeTerm runtime');
         },
         kill: (_pid, sig) => {
           signals.push(String(sig));
@@ -74,7 +75,7 @@ describe('killPidAndWait', () => {
           throw new Error('still alive');
         },
       })
-    ).rejects.toThrow(/not the tmex runtime/);
+    ).rejects.toThrow(/not the VibeTerm runtime/);
     expect(signals).toEqual(['SIGTERM']);
   });
 
@@ -112,9 +113,9 @@ describe('parsePidRecord', () => {
 
 describe('createDirectProcessControl', () => {
   test('foreign live PID throws on stop, does not signal, and keeps the pid file', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-direct-foreign-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-foreign-'));
     tempDirs.push(dir);
-    const pidPath = join(dir, 'tmex.pid');
+    const pidPath = join(dir, 'vibeterm.pid');
     const child = spawn('bash', ['-c', 'sleep 30'], {
       stdio: 'ignore',
       detached: true,
@@ -128,14 +129,14 @@ describe('createDirectProcessControl', () => {
       pidPath,
       installDir: dir,
     });
-    await expect(control.stop()).rejects.toThrow(/not the tmex runtime|不属于/);
+    await expect(control.stop()).rejects.toThrow(/not the VibeTerm runtime|不属于/);
     expect(isPidAlive(child.pid)).toBe(true);
     expect(await Bun.file(pidPath).text()).toBe(`${child.pid}\n`);
-    await expect(control.isRunning()).rejects.toThrow(/not the tmex runtime|不属于/);
+    await expect(control.isRunning()).rejects.toThrow(/not the VibeTerm runtime|不属于/);
   });
 
   test('owned current/runtime/server.js process can be stopped', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-direct-owned-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-owned-'));
     tempDirs.push(dir);
     const serverJs = join(dir, 'current', 'runtime', 'server.js');
     await mkdir(join(dir, 'current', 'runtime'), { recursive: true });
@@ -147,7 +148,7 @@ describe('createDirectProcessControl', () => {
     if (!child.pid) throw new Error('spawn failed');
     child.unref();
     livePids.push(child.pid);
-    const pidPath = join(dir, 'tmex.pid');
+    const pidPath = join(dir, 'vibeterm.pid');
     await writeFile(pidPath, `${child.pid}\n`);
     // Linux 上 /proc/<pid>/cmdline 在 exec 完成前是空的，先等子进程真正带着 server.js 跑起来。
     for (let i = 0; i < 100 && !(processCommandLine(child.pid) ?? '').includes(serverJs); i += 1) {
@@ -165,7 +166,7 @@ describe('createDirectProcessControl', () => {
   });
 
   test('legacy pid with vim argv containing server.js is not owned', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-direct-vim-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-vim-'));
     tempDirs.push(dir);
     const serverJs = join(dir, 'current', 'runtime', 'server.js');
     await mkdir(join(dir, 'current', 'runtime'), { recursive: true });
@@ -184,11 +185,11 @@ describe('createDirectProcessControl', () => {
         installDir: dir,
         commandLine: `vim ${serverJs}`,
       })
-    ).toThrow(/not the tmex runtime|不属于/);
+    ).toThrow(/not the VibeTerm runtime|不属于/);
   });
 
   test('legacy pid identity-primary still accepts a matching start identity', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-direct-ident-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-direct-ident-'));
     tempDirs.push(dir);
     await mkdir(join(dir, 'current', 'runtime'), { recursive: true });
     await writeFile(join(dir, 'current', 'runtime', 'server.js'), 'export {}\n');
@@ -212,12 +213,30 @@ describe('createDirectProcessControl', () => {
 
 describe('cmdlineOwnsRuntime', () => {
   test('requires bun/node executable and an argv token equal to the runtime path', () => {
-    const runtime = '/tmp/tmex-install/current/runtime/server.js';
+    const runtime = '/tmp/vibeterm-install/current/runtime/server.js';
     expect(cmdlineOwnsRuntime(`bun ${runtime}`, [runtime])).toBe(true);
     expect(cmdlineOwnsRuntime(`/usr/local/bin/node ${runtime}`, [runtime])).toBe(true);
     expect(cmdlineOwnsRuntime(`vim ${runtime}`, [runtime])).toBe(false);
     expect(cmdlineOwnsRuntime(`tail -f ${runtime}`, [runtime])).toBe(false);
     expect(cmdlineOwnsRuntime(`bun ${runtime}.bak`, [runtime])).toBe(false);
     expect(cmdlineOwnsRuntime(`bun /tmp/other/server.js ${runtime}x`, [runtime])).toBe(false);
+  });
+});
+
+describe('pidFilePath', () => {
+  test('prefers vibeterm.pid but falls back to the pre-rename tmex.pid', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-pid-'));
+    tempDirs.push(dir);
+
+    // 两个都没有：仍然返回新名，新 run.sh 会把它写出来
+    expect(pidFilePath(dir)).toBe(join(dir, 'vibeterm.pid'));
+
+    // 只有旧名：升级期间跑的还是改名前的 run.sh
+    await writeFile(join(dir, 'tmex.pid'), '1\n');
+    expect(pidFilePath(dir)).toBe(join(dir, 'tmex.pid'));
+
+    // 新名出现后一律用新名
+    await writeFile(join(dir, 'vibeterm.pid'), '2\n');
+    expect(pidFilePath(dir)).toBe(join(dir, 'vibeterm.pid'));
   });
 });

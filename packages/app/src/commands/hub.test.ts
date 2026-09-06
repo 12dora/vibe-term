@@ -105,7 +105,7 @@ describe('hub user commands', () => {
     authHandles.push(auth);
     const result = await runHubUserAdd(parsed, 'alice', {
       auth,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       log: () => undefined,
     });
     expect(result.userId).toBeTruthy();
@@ -314,7 +314,7 @@ describe('hub user commands', () => {
     authHandles.push(auth);
     await runHubUserAdd(parsed, 'alice', {
       auth,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       log: () => undefined,
     });
     await expect(
@@ -390,7 +390,7 @@ async function openEnvAuth(
   roles: string,
   extraEnv: Record<string, string> = {}
 ): Promise<{ auth: LocalAuthContext; envPath: string; dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-hub-cli-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-hub-cli-'));
   tempDirs.push(dir);
   const envPath = join(dir, 'app.env');
   const env = {
@@ -670,7 +670,7 @@ describe('hub standby/promote/demote/list', () => {
     expect(result.nodeId).toBe(identity.nodeId);
     const text = logs.join('\n');
     expect(text).toContain(identity.nodeId);
-    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+    expect(text).toContain(`vibeterm hub allow ${identity.nodeId}`);
     expect(text).toMatch(/ignore|忽略/i);
   });
 
@@ -768,7 +768,7 @@ describe('hub standby/promote/demote/list', () => {
     const text = logs.join('\n');
     expect(text).toMatch(/VIBETERM_HUB_PEERS/);
     expect(text).toMatch(/empty|空/i);
-    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+    expect(text).toContain(`vibeterm hub allow ${identity.nodeId}`);
   });
 
   test('list marks authorized for self and VIBETERM_HUB_PEERS, not others', async () => {

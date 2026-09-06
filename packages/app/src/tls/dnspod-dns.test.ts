@@ -60,7 +60,7 @@ describe('DnspodDnsClient', () => {
 
     expect(calls[0]?.url).toBe('https://dnsapi.cn/Domain.Info');
     expect(calls.every((call) => call.method === 'POST')).toBe(true);
-    expect(calls.every((call) => call.ua === 'tmex/9.9.9 (ops@example.com)')).toBe(true);
+    expect(calls.every((call) => call.ua === 'vibeterm/9.9.9 (ops@example.com)')).toBe(true);
     expect(calls.every((call) => call.body.includes('login_token=100%2Ctok'))).toBe(true);
     expect(calls.every((call) => call.body.includes('format=json'))).toBe(true);
   });

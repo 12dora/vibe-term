@@ -1,4 +1,4 @@
-import { defaultInstallDir } from '../constants';
+import { DEFAULT_SERVICE_NAME, defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { readExplicitBunPath } from '../lib/bun';
 import {
@@ -18,6 +18,7 @@ import {
   checkDependencies,
   checkEnvironment,
   checkHealth,
+  checkLegacyLeftovers,
   checkService,
   renderDoctorResult,
 } from './doctor-checks';
@@ -105,7 +106,21 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
     id: 'service',
     collect: async (ctx) =>
       checkService({
-        serviceName: ctx.meta?.serviceName || asString(ctx.parsed.flags['service-name']) || 'tmex',
+        serviceName:
+          ctx.meta?.serviceName ||
+          asString(ctx.parsed.flags['service-name']) ||
+          DEFAULT_SERVICE_NAME,
+        installDir: ctx.installDir,
+      }),
+  },
+  {
+    id: 'legacy-layout',
+    collect: async (ctx) =>
+      checkLegacyLeftovers({
+        serviceName:
+          ctx.meta?.serviceName ||
+          asString(ctx.parsed.flags['service-name']) ||
+          DEFAULT_SERVICE_NAME,
         installDir: ctx.installDir,
       }),
   },
@@ -192,7 +207,7 @@ export function reportDoctorRun(
   reporter.render(checks, options.json);
   const decision = doctorRunDecision(checks, options);
   if (decision.action === 'hint') {
-    reporter.log(`\n[tmex] ${t('doctor.fix.hint')}`);
+    reporter.log(`\n[vibeterm] ${t('doctor.fix.hint')}`);
   }
   if (decision.exitCode !== undefined) {
     reporter.setExitCode(decision.exitCode);
@@ -215,7 +230,7 @@ async function loadDoctorContext(parsed: ParsedArgs): Promise<DoctorRunContext> 
 async function applyOneDoctorFix(check: DoctorCheck, parsed: ParsedArgs): Promise<void> {
   const planned = await planDoctorFix(check);
   if (planned.kind === 'skip') {
-    console.log(`[tmex] ${t('doctor.fix.skip', { id: planned.id })}`);
+    console.log(`[vibeterm] ${t('doctor.fix.skip', { id: planned.id })}`);
     return;
   }
   const nonInteractive = asBoolean(parsed.flags['no-interactive']) ?? false;
@@ -226,7 +241,7 @@ async function applyOneDoctorFix(check: DoctorCheck, parsed: ParsedArgs): Promis
 }
 
 async function applyDoctorFixes(checks: DoctorCheck[], parsed: ParsedArgs): Promise<void> {
-  console.log(`\n[tmex] ${t('doctor.fix.header')}`);
+  console.log(`\n[vibeterm] ${t('doctor.fix.header')}`);
   for (const check of filterFixableFailures(checks)) {
     await applyOneDoctorFix(check, parsed);
   }

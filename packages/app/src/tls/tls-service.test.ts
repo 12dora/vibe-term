@@ -74,7 +74,7 @@ async function setup(overrides?: {
   onStatusChange?: () => void;
 }) {
   const { db, close } = createMigratedAuthDb();
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-'));
   const envPath = overrides?.envPath ?? join(dir, 'app.env');
   const jobs: Array<Promise<void>> = [];
   const listener = new FakeListener();

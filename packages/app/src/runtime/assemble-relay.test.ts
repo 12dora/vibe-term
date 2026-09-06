@@ -48,7 +48,7 @@ async function assembleRelay(roles: { hub: boolean; node: boolean; relay: boolea
   const { db, close } = createMigratedAuthDb();
   const assembled = await assembleVibeTerm({
     roles,
-    staticRoot: '/tmp/tmex-relay-no-frontend',
+    staticRoot: '/tmp/vibeterm-relay-no-frontend',
     createGatewayRuntime: async () => gatewayWith(db),
     createMeshRuntime: async () => {
       throw new Error('mesh runtime must not be created for relay-only');
@@ -108,7 +108,7 @@ describe('assembleVibeTerm relay role', () => {
     const { db, close } = createMigratedAuthDb();
     const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
-      staticRoot: '/tmp/tmex-relay-no-frontend',
+      staticRoot: '/tmp/vibeterm-relay-no-frontend',
       createGatewayRuntime: async () => gatewayWith(db),
     });
     try {

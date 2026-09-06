@@ -4,8 +4,8 @@ set -u -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_FILE="${PROJECT_DIR}/development.env"
-ENV_LOCAL_FILE="${PROJECT_DIR}/development.env.local"
+ENV_FILE="${PROJECT_DIR}/env/development.env"
+ENV_LOCAL_FILE="${PROJECT_DIR}/env/development.env.local"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/dev-supervisor-pids.sh"
 

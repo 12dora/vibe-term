@@ -1,4 +1,8 @@
 import {
+  LEGACY_NODE_SESSION_COOKIE_PREFIX,
+  NODE_SESSION_COOKIE_PREFIX,
+} from '../../../../apps/gateway/src/auth/cookies';
+import {
   type RootKey,
   buildLogin,
   canonicalHubUrl,
@@ -10,6 +14,7 @@ import {
   generateEd25519KeyPair,
   signLogin,
 } from '../../../shared/src/auth';
+import { SET_SESSION_HEADER, readHeaderPair } from '../../../shared/src/http/mesh-headers';
 import type { FetchLike } from './fetch-like';
 
 export type HubAuthMode = {
@@ -264,29 +269,37 @@ function authLoginError(status: number, body: Record<string, unknown>): Error {
   return new Error(`auth login failed: HTTP ${status} ${code}`);
 }
 
-const SESSION_COOKIE_PREFIX = 'tmex_s_';
+/** 会话 cookie 前缀：新名在前，旧名供混合版本期的老 hub 使用。 */
+const SESSION_COOKIE_PREFIXES = [
+  NODE_SESSION_COOKIE_PREFIX,
+  LEGACY_NODE_SESSION_COOKIE_PREFIX,
+] as const;
 
+/** 请求侧两个前缀都带：对端是 ≥2.0 还是 1.1.x 都能认出会话。 */
 export function cookieHeaderForSession(sid: string, nodeId: string): string {
-  const selfCookie = `${SESSION_COOKIE_PREFIX}self=${sid}`;
-  if (!nodeId || nodeId === 'self') {
-    return selfCookie;
-  }
-  return `${selfCookie}; ${SESSION_COOKIE_PREFIX}${nodeId}=${sid}`;
+  const names = SESSION_COOKIE_PREFIXES.flatMap((prefix) =>
+    !nodeId || nodeId === 'self' ? [`${prefix}self`] : [`${prefix}self`, `${prefix}${nodeId}`]
+  );
+  return names.map((name) => `${name}=${sid}`).join('; ');
 }
 
 export function sessionIdFromLoginResponse(response: Response, nodeId: string): string {
-  const fromHeader = sessionIdFromSetSessionHeader(response.headers.get('x-tmex-set-session'));
+  const fromHeader = sessionIdFromSetSessionHeader(
+    readHeaderPair(response.headers, SET_SESSION_HEADER)
+  );
   if (fromHeader) return fromHeader;
 
   const cookies = collectSetCookies(response);
-  const selfCookie = cookies.get(`${SESSION_COOKIE_PREFIX}self`);
-  if (selfCookie) return selfCookie;
-  if (nodeId) {
-    const named = cookies.get(`${SESSION_COOKIE_PREFIX}${nodeId}`);
-    if (named) return named;
+  for (const prefix of SESSION_COOKIE_PREFIXES) {
+    const selfCookie = cookies.get(`${prefix}self`);
+    if (selfCookie) return selfCookie;
+    if (nodeId) {
+      const named = cookies.get(`${prefix}${nodeId}`);
+      if (named) return named;
+    }
   }
   for (const [name, value] of cookies) {
-    if (name.startsWith(SESSION_COOKIE_PREFIX) && value) return value;
+    if (SESSION_COOKIE_PREFIXES.some((prefix) => name.startsWith(prefix)) && value) return value;
   }
   return '';
 }

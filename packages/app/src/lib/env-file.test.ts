@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import {
   lstat,
   mkdir,
@@ -21,6 +21,12 @@ import {
   writeEnvFile,
 } from './env-file';
 import { hubEnvDefaults } from './install';
+
+const tempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
 
 describe('env-file', () => {
   test('parses env content', () => {
@@ -47,7 +53,7 @@ describe('env-file', () => {
   });
 
   test('writeEnvFile replaces via temp file then rename', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-atomic-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-atomic-'));
     try {
       const path = join(dir, 'app.env');
       await writeEnvFile(path, { A: '1' });
@@ -60,7 +66,7 @@ describe('env-file', () => {
   });
 
   test('writeEnvFile updates a symlinked env file without replacing the symlink', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-symlink-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-symlink-'));
     try {
       const volumeDir = join(dir, 'volume');
       const overlayDir = join(dir, 'overlay');
@@ -84,7 +90,7 @@ describe('env-file', () => {
   });
 
   test('writeEnvFile creates the target of an absolute dangling symlink', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-abs-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-dangle-abs-'));
     try {
       const volumeDir = join(dir, 'volume');
       const overlayDir = join(dir, 'overlay');
@@ -106,7 +112,7 @@ describe('env-file', () => {
   });
 
   test('writeEnvFile creates the target of a relative dangling symlink', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-rel-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-dangle-rel-'));
     try {
       const volumeDir = join(dir, 'volume');
       const overlayDir = join(dir, 'overlay');
@@ -129,7 +135,7 @@ describe('env-file', () => {
   });
 
   test('resolveEnvWriteTarget follows existing absolute and relative symlinks', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-target-'));
     try {
       const volumeDir = join(dir, 'volume');
       const overlayDir = join(dir, 'overlay');
@@ -150,7 +156,7 @@ describe('env-file', () => {
   });
 
   test('resolveEnvWriteTarget falls back to the missing target of a dangling symlink', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-dangle-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-target-dangle-'));
     try {
       const volumeDir = join(dir, 'volume');
       const overlayDir = join(dir, 'overlay');
@@ -170,7 +176,7 @@ describe('env-file', () => {
   });
 
   test('resolveEnvWriteTarget returns the original path when the file is missing', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-target-missing-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-target-missing-'));
     try {
       const path = join(dir, 'app.env');
       expect(await resolveEnvWriteTarget(path)).toBe(path);
@@ -180,7 +186,7 @@ describe('env-file', () => {
   });
 
   test('writeEnvFile throws when a symlink chain cannot be resolved', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-dangle-cycle-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-dangle-cycle-'));
     try {
       const leftPath = join(dir, 'left.env');
       const rightPath = join(dir, 'right.env');
@@ -198,7 +204,7 @@ describe('env-file', () => {
   });
 
   test('upgrade merge writes only missing app.env keys', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-env-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-'));
     try {
       const path = join(dir, 'app.env');
       await writeEnvFile(path, { VIBETERM_MASTER_KEY: 'k', GATEWAY_PORT: '9883' });
@@ -219,5 +225,43 @@ describe('env-file', () => {
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('mergeMissingKeys legacy prefix equivalence', () => {
+  test('an existing TMEX_X satisfies the VIBETERM_X default', () => {
+    const { next, added } = mergeMissingKeys(
+      { TMEX_MASTER_KEY: 'k', TMEX_ROLES: 'node' },
+      { VIBETERM_MASTER_KEY: 'generated', VIBETERM_ROLES: 'standalone', VIBETERM_PEER_PORT: '9884' }
+    );
+    expect(added).toEqual(['VIBETERM_PEER_PORT']);
+    expect(next.TMEX_MASTER_KEY).toBe('k');
+    expect(next.VIBETERM_MASTER_KEY).toBeUndefined();
+    expect(next.VIBETERM_PEER_PORT).toBe('9884');
+  });
+
+  test('non-prefixed keys are still filled in', () => {
+    const { next, added } = mergeMissingKeys({ TMEX_ROLES: 'node' }, { GATEWAY_PORT: '9883' });
+    expect(added).toEqual(['GATEWAY_PORT']);
+    expect(next.GATEWAY_PORT).toBe('9883');
+  });
+
+  test('mergeMissingEnvFileKeys does not duplicate a legacy key on disk', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-legacy-'));
+    tempDirs.push(dir);
+    const file = join(dir, 'app.env');
+    await writeFile(file, 'TMEX_ROLES=node\nTMEX_HUB_URL=https://hub.example\n');
+
+    const added = await mergeMissingEnvFileKeys(file, {
+      VIBETERM_ROLES: 'standalone',
+      VIBETERM_HUB_URL: '',
+      VIBETERM_PEER_PORT: '9884',
+    });
+
+    expect(added).toEqual(['VIBETERM_PEER_PORT']);
+    const text = await readFile(file, 'utf8');
+    expect(text).toContain('TMEX_ROLES=node');
+    expect(text).not.toContain('VIBETERM_ROLES=');
+    expect(text).toContain('VIBETERM_PEER_PORT=9884');
   });
 });

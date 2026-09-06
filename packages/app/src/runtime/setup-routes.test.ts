@@ -190,7 +190,7 @@ describe('POST /api/setup/hub', () => {
         post('/api/setup/hub', {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         }),
         deps({
@@ -227,7 +227,7 @@ describe('POST /api/setup/hub', () => {
       post('/api/setup/hub', {
         hubPublicUrl: 'https://hub.example.com',
         username,
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       });
     const first = handleSetupRequest(bodyOf('alice'), shared);
@@ -249,7 +249,7 @@ describe('POST /api/setup/hub', () => {
         post('/api/setup/hub', {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         }),
         shared
@@ -261,7 +261,7 @@ describe('POST /api/setup/hub', () => {
         post('/api/setup/hub', {
           hubPublicUrl: 'https://hub.example.com',
           username: 'bob',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         }),
         shared
@@ -358,7 +358,7 @@ describe('POST /api/setup/join', () => {
         post('/api/setup/join', {
           hubUrl: 'https://hub.example.com',
           method: 'password',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           directEnable: false,
         }),
@@ -391,7 +391,7 @@ describe('POST /api/setup/join', () => {
         post('/api/setup/join', {
           hubUrl: 'https://hub.example.com',
           method: 'password',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           totpCode: '123456',
           directEnable: false,
@@ -421,7 +421,7 @@ describe('POST /api/setup/join', () => {
         post('/api/setup/join', {
           hubUrl: 'https://hub.example.com',
           method: 'password',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           directEnable: false,
         }),
@@ -447,7 +447,7 @@ describe('POST /api/setup/join', () => {
           post('/api/setup/join', {
             hubUrl: 'https://hub.example.com',
             method: 'password',
-            password: 'tmex-test-pass',
+            password: 'vibeterm-test-pass',
             name: 'studio',
             totpCode,
             directEnable: false,
@@ -536,7 +536,7 @@ describe('POST /api/setup/relay-join', () => {
         post('/api/setup/relay-join', {
           relayUrl: 'https://relay.example',
           tenantId: 'tenant-1',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           directEnable: false,
         }),

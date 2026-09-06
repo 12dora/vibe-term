@@ -1,18 +1,27 @@
 import { randomBytes } from 'node:crypto';
+import { resolve } from 'node:path';
+import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import type { InstallMeta, ServiceMode } from '../types';
 import { defaultBunBinDir, defaultLocalBinDir } from './cli-shim';
 import { errorMessage } from './error-message';
 import { pathExists } from './fs-utils';
+import { writeRunScript } from './install';
 import { createInstallLayout, packageLayoutFromRoot } from './install-layout';
 import { readJsonFile } from './json-file';
-import { getServiceStatus, installService, stopService } from './service';
+import {
+  getServiceStatus,
+  installLegacyLabelledService,
+  installService,
+  stopService,
+} from './service';
 import { restoreDbTrio } from './upgrade-db';
 import { finishCommittedCleanup, sweepUpgradeGarbage } from './upgrade-gc';
 import type { HealthCheckFn } from './upgrade-health';
 import { liveHealthUrl, pollHealthz, verifyOldHealthz } from './upgrade-health';
 import { convertLegacyLayout } from './upgrade-legacy';
 import { acquireUpgradeLock, releaseUpgradeLock } from './upgrade-lock';
+import { finishInstallDirMigration, planInstallDirMigration } from './upgrade-migrate-dir';
 import {
   type UpgradeServiceControl,
   createDirectProcessControl,
@@ -60,6 +69,8 @@ export function createManagedServiceControl(opts: {
   installDir: string;
   autostart: boolean;
   runScriptPath: string;
+  /** 回滚安装目录迁移时用改名前的 launchd label 重新注册 */
+  legacyLabel?: boolean;
 }): UpgradeServiceControl {
   return {
     async stop() {
@@ -74,7 +85,8 @@ export function createManagedServiceControl(opts: {
       );
     },
     async start() {
-      await installService({
+      const install = opts.legacyLabel ? installLegacyLabelledService : installService;
+      await install({
         serviceName: opts.serviceName,
         runScriptPath: opts.runScriptPath,
         installDir: opts.installDir,
@@ -91,6 +103,8 @@ export function createServiceControl(opts: {
   installDir: string;
   meta: InstallMeta;
   noServiceFlag?: boolean;
+  serviceName?: string;
+  legacyLabel?: boolean;
 }): UpgradeServiceControl {
   const layout = createInstallLayout(opts.installDir);
   const mode = resolveServiceMode(opts.meta, opts.noServiceFlag);
@@ -102,10 +116,11 @@ export function createServiceControl(opts: {
     });
   }
   return createManagedServiceControl({
-    serviceName: opts.meta.serviceName,
+    serviceName: opts.serviceName ?? opts.meta.serviceName,
     installDir: opts.installDir,
     autostart: opts.meta.autostart,
     runScriptPath: layout.runScriptPath,
+    legacyLabel: opts.legacyLabel,
   });
 }
 
@@ -160,6 +175,42 @@ async function markAborted(installDir: string, journal: UpgradeJournal): Promise
   });
 }
 
+/**
+ * `--repair`：目录已搬到新路径但 app.env / DB / run.sh 还没改完（rename 与改写之间崩溃）时补完。
+ * 幂等；目录没搬成或已搬回时什么也不做。
+ */
+async function completeInterruptedMigration(
+  installDir: string,
+  journal: UpgradeJournal,
+  bunPath: string,
+  deps: UpgradeApplyDeps
+): Promise<UpgradeJournal> {
+  const record = journal.dirMigration;
+  if (!record || resolve(installDir) !== resolve(record.toDir)) return journal;
+
+  const finished = record.envRewritten
+    ? record
+    : await finishInstallDirMigration(record, { txnId: journal.txnId });
+  // run.sh 里是旧目录的绝对路径，不重写服务起不来。
+  await writeRunScript(createInstallLayout(installDir), bunPath).catch(() => null);
+  const [localBinDir, bunBinDir] = repairShimDirs(deps);
+  const { installVibeTermShim } = await import('./cli-shim');
+  await installVibeTermShim({
+    installLayout: createInstallLayout(installDir),
+    bunPath,
+    localBinDir,
+    bunBinDir,
+  }).catch(() => null);
+
+  const next: UpgradeJournal = {
+    ...journal,
+    dirMigration: finished,
+    updatedAt: new Date().toISOString(),
+  };
+  await writeJournal(installDir, next);
+  return next;
+}
+
 async function repairMissingJournal(
   installDir: string,
   bunPath: string,
@@ -212,7 +263,7 @@ async function repairVerifyOrRollback(
   const url = await liveHealthUrl(installDir);
   try {
     if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
-    // 服务仍在运行时绝不能再 start()：第二个 run.sh 会覆盖 tmex.pid 后因端口占用退出，
+    // 服务仍在运行时绝不能再 start()：第二个 run.sh 会覆盖 pid 文件后因端口占用退出，
     // 留下指向死 pid 的记录，使后续 stop/repair 误判「未运行」而在活进程持库时动 DB。
     if (!(await service.isRunning())) {
       await service.start().catch(() => null);
@@ -270,7 +321,7 @@ function resolveRepairService(
   if (deps.service) return deps.service;
   if (meta) return createServiceControl({ installDir, meta });
   return createManagedServiceControl({
-    serviceName: 'tmex',
+    serviceName: DEFAULT_SERVICE_NAME,
     installDir,
     autostart: true,
     runScriptPath: layout.runScriptPath,
@@ -282,9 +333,12 @@ export async function repairUpgrade(
   bunPath: string,
   deps: UpgradeApplyDeps = {}
 ): Promise<string> {
-  const log = deps.log ?? ((message) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
-  const journal = await readJournal(installDir);
+  const readJournalResult = await readJournal(installDir);
+  const journal = readJournalResult?.dirMigration
+    ? await completeInterruptedMigration(installDir, readJournalResult, bunPath, deps)
+    : readJournalResult;
   const action = recoveryAction(journal);
   const layout = createInstallLayout(installDir);
   const meta = (await pathExists(layout.metaPath))
@@ -324,7 +378,7 @@ export async function applyUpgrade(
   options: ApplyUpgradeOptions,
   deps: UpgradeApplyDeps = {}
 ): Promise<void> {
-  const log = deps.log ?? ((message) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
   const { installDir, toVersion, packageLayout, bunPath } = options;
   const layout = createInstallLayout(installDir);
@@ -347,19 +401,40 @@ export async function applyUpgrade(
     return;
   }
 
-  await executeUpgradeTxn(options, deps, {
+  const migrationPlan = await planInstallDirMigration({
     installDir,
-    toVersion,
-    packageLayout,
-    bunPath,
-    txnId,
-    keepBackup,
-    resolvedFrom,
-    service,
-    healthCheck,
-    log,
-    serviceMode: resolveServiceMode(meta, options.noService),
+    platform: process.platform,
+    serviceName: meta.serviceName,
   });
+  const rebuildService: NonNullable<UpgradeApplyDeps['rebuildService']> =
+    deps.rebuildService ??
+    ((opts) =>
+      createServiceControl({
+        installDir: opts.installDir,
+        meta,
+        noServiceFlag: options.noService,
+        serviceName: opts.serviceName,
+        legacyLabel: opts.legacyLabel,
+      }));
+
+  await executeUpgradeTxn(
+    options,
+    { ...deps, rebuildService },
+    {
+      installDir,
+      toVersion,
+      packageLayout,
+      bunPath,
+      txnId,
+      keepBackup,
+      resolvedFrom,
+      service,
+      healthCheck,
+      log,
+      serviceMode: resolveServiceMode(meta, options.noService),
+      migrationPlan,
+    }
+  );
 }
 
 export async function withUpgradeLock<T>(installDir: string, fn: () => Promise<T>): Promise<T> {

@@ -67,7 +67,7 @@ export async function loadInstallEnv(parsed?: ParsedArgs): Promise<{
   );
   const layout = createInstallLayout(installDir);
   if (!(await pathExists(layout.envPath))) {
-    throw new Error(`config file not found: ${layout.envPath}. run tmex init first`);
+    throw new Error(`config file not found: ${layout.envPath}. run vibeterm init first`);
   }
   const env = await readEnvFile(layout.envPath);
   applyCliEnv(env);

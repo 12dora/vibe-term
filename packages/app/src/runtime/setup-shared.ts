@@ -11,7 +11,12 @@ import {
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
-import { type VibeTermRoles, isStandaloneRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
+import {
+  type VibeTermRoles,
+  isStandaloneRoles,
+  parseVibeTermRoles,
+  roleNameFromFlags,
+} from '../lib/roles';
 
 export const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 

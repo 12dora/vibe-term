@@ -90,7 +90,7 @@ export function loopbackHost(env: Record<string, string | undefined>): string {
 export function gatewayBaseUrl(env: Record<string, string | undefined>): string {
   const port = (env.GATEWAY_PORT ?? '').trim();
   if (!port || !/^\d+$/.test(port)) {
-    throw new Error('GATEWAY_PORT missing from app.env; run tmex init first');
+    throw new Error('GATEWAY_PORT missing from app.env; run vibeterm init first');
   }
   return `http://${loopbackHost(env)}:${port}`;
 }

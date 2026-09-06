@@ -64,7 +64,7 @@ async function openAuth(roles = 'node'): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-leave-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-leave-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -73,7 +73,7 @@ async function seedMembership(auth: LocalAuthContext): Promise<void> {
   const identity = await ensureNodeIdentity(auth.identityStore);
   await auth.userKeys.bootstrapUserWithSelfAdmit({
     username: 'alice',
-    password: 'tmex-test-pass',
+    password: 'vibeterm-test-pass',
     identity,
     now: 1_700_000_000_000,
   });

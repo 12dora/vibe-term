@@ -138,7 +138,7 @@ export default nodeDataChannel;
 `;
 
 /**
- * 上游这两个文件在 tmex 的 `strict` 配置下有隐式 any，逐段替换而不是整体重写，
+ * 上游这两个文件在本项目的 `strict` 配置下有隐式 any，逐段替换而不是整体重写，
  * 这样升级 node-datachannel 时上游其余改动仍会被带进来；模式对不上就直接报错。
  */
 const strictPatches: Record<string, Array<[from: string, to: string]>> = {
@@ -220,7 +220,7 @@ License: Mozilla Public License 2.0 (see LICENSE).
 
 Upstream: https://github.com/murat-dogan/node-datachannel
 
-Modifications by tmex:
+Modifications by VibeTerm:
 
 - Replaced optionalDependency / local-build loader with an absolute-path
   \`require\` of \`<VIBETERM_NATIVE_DIR>/node_datachannel.node\` (or
@@ -228,7 +228,7 @@ Modifications by tmex:
 - Annotated the implicit \`any\` in \`datachannel-stream.ts\` /
   \`websocket-server.ts\` so the vendored copy passes \`tsc --strict\`.
 - Dropped \`detect-libc\` from this JS layer; libc detection lives in
-  \`packages/app/src/lib/native-manifest.ts\` and is used by \`tmex direct enable\`.
+  \`packages/app/src/lib/native-manifest.ts\` and is used by \`vibeterm direct enable\`.
 `
 );
 
@@ -243,7 +243,7 @@ writeFileSync(
 
 Apache License 2.0. Upstream: https://github.com/lovell/detect-libc
 
-tmex vendors the family-detection logic (glibc vs musl) in
+VibeTerm vendors the family-detection logic (glibc vs musl) in
 \`packages/app/src/lib/native-manifest.ts\`. musl is unsupported in v1.
 `
 );

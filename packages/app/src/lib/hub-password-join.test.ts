@@ -11,7 +11,7 @@ import { deriveRootKey } from './password';
 
 const HEAD = new Uint8Array(32).fill(3);
 const UID = 'user-1';
-const PASSWORD = 'tmex-test-pass';
+const PASSWORD = 'vibeterm-test-pass';
 
 function kdfJson(params: ReturnType<typeof generateKdfParams>) {
   return {

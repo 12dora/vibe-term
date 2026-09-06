@@ -18,6 +18,8 @@ import {
 } from '../../packages/shared/src/release/release-signing';
 
 const SECRET_ENV = 'VIBETERM_RELEASE_SIGNING_KEY';
+/** 改名前的变量名；CI secret 仍叫这个，本地手动签名时两者皆可 */
+const LEGACY_SECRET_ENV = 'TMEX_RELEASE_SIGNING_KEY';
 
 function die(message: string): never {
   console.error(`[sign-sums] ${message}`);
@@ -25,7 +27,7 @@ function die(message: string): never {
 }
 
 const sumsPath = resolve(process.argv[2] ?? 'packages/app/SHA256SUMS');
-const seed = (process.env[SECRET_ENV] ?? '').trim();
+const seed = (process.env[SECRET_ENV] ?? process.env[LEGACY_SECRET_ENV] ?? '').trim();
 if (!seed) {
   die(`${SECRET_ENV} is not set; refusing to publish an unsigned release.`);
 }

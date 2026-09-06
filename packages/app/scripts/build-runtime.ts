@@ -23,9 +23,9 @@ export const cpuFeaturesStubPlugin: BunPlugin = {
   setup(build) {
     build.onResolve({ filter: /^cpu-features$/ }, () => ({
       path: 'cpu-features',
-      namespace: 'tmex-optional-stub',
+      namespace: 'vibeterm-optional-stub',
     }));
-    build.onLoad({ filter: /.*/, namespace: 'tmex-optional-stub' }, () => ({
+    build.onLoad({ filter: /.*/, namespace: 'vibeterm-optional-stub' }, () => ({
       contents: "throw new Error('cpu-features unavailable');\n",
       loader: 'js',
     }));
@@ -96,7 +96,7 @@ function runBunBuild(args: string[]): void {
 }
 
 function verifyVendoredNativeBundle(): void {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-native-bundle-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-native-bundle-'));
   try {
     const outfile = join(workDir, 'native-datachannel.js');
     runBunBuild([
@@ -136,7 +136,7 @@ function verifyVendoredNativeBundle(): void {
 }
 
 function verifyCryptoBundles(): void {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-crypto-bundle-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-crypto-bundle-'));
   const entry = join(pkgRoot, 'scripts', '.crypto-smoke.ts');
   try {
     writeFileSync(

@@ -63,7 +63,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-setup-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-setup-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -115,7 +115,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -149,7 +149,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: true,
       },
       deps
@@ -168,7 +168,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: true,
       },
       deps
@@ -186,7 +186,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'http://example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -197,7 +197,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'bad name',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -223,7 +223,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'http://127.0.0.1:9443',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -246,7 +246,7 @@ describe('becomeHub', () => {
     const identity = await ensureNodeIdentity(deps.auth.identityStore);
     await deps.auth.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: 1,
     });
@@ -255,7 +255,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -286,7 +286,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -316,7 +316,7 @@ describe('becomeHub', () => {
     const input = (username: string) => ({
       hubPublicUrl: 'https://hub.example.com',
       username,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       directEnable: false,
     });
     const first = becomeHub(input('alice'), deps);
@@ -348,7 +348,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -359,7 +359,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'carol',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -393,7 +393,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -694,7 +694,7 @@ describe('joinHub', () => {
         {
           hubUrl: 'https://hub.example.com',
           method: 'password',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           directEnable: false,
         },
@@ -727,7 +727,7 @@ describe('joinHub', () => {
       {
         hubUrl: 'https://hub.example.com',
         method: 'password',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
         directEnable: false,
         totpCode: '999000',

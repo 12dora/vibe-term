@@ -3,7 +3,7 @@ import { runCommand } from '../lib/process';
 import {
   SYSTEMD_KILL_MODE_WARNING,
   systemdUnitLacksKillModeProcess,
-  tmexSystemdUnitPath,
+  vibeTermSystemdUnitPath,
 } from '../lib/service';
 import {
   SYSTEMD_OOM_POLICY_WARNING,
@@ -30,7 +30,7 @@ export async function warnOnStaleSystemdUnit(
 ): Promise<boolean> {
   const platform = deps.platform ?? process.platform;
   if (platform !== 'linux') return false;
-  const content = await (deps.readUnit ?? readUnit)(deps.unitPath ?? tmexSystemdUnitPath());
+  const content = await (deps.readUnit ?? readUnit)(deps.unitPath ?? vibeTermSystemdUnitPath());
   if (!systemdUnitLacksKillModeProcess(content)) return false;
   (deps.warn ?? console.warn)(SYSTEMD_KILL_MODE_WARNING);
   return true;

@@ -18,7 +18,7 @@ afterEach(async () => {
 });
 
 async function deps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupServiceDeps> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-join-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-join-'));
   tempDirs.push(dir);
   const envPath = join(dir, 'app.env');
   await writeFile(
@@ -46,7 +46,7 @@ describe('handleRelayJoinRequest', () => {
       {
         relayUrl: 'https://relay.example',
         tenantId: 'abc',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
         caFingerprint: 'ab'.repeat(32),
         directEnable: false,
@@ -63,7 +63,7 @@ describe('handleRelayJoinRequest', () => {
     expect(seen).toMatchObject({
       relayUrl: 'https://relay.example',
       tenantId: 'abc',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
       caFingerprint: 'ab'.repeat(32),
     });
@@ -75,7 +75,7 @@ describe('handleRelayJoinRequest', () => {
   });
 
   test('keeps the relay role when the machine already runs relay', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-join-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-join-'));
     tempDirs.push(dir);
     const envPath = join(dir, 'app.env');
     await writeFile(envPath, 'VIBETERM_ROLES=relay\n', 'utf8');
@@ -83,7 +83,7 @@ describe('handleRelayJoinRequest', () => {
       {
         relayUrl: 'https://relay.example',
         tenantId: 'abc',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
       },
       {
@@ -105,7 +105,7 @@ describe('handleRelayJoinRequest', () => {
 const JOIN_BODY = {
   relayUrl: 'https://relay.example',
   tenantId: 'abc',
-  password: 'tmex-test-pass',
+  password: 'vibeterm-test-pass',
   name: 'studio',
 };
 

@@ -95,6 +95,10 @@ export function createInstallLayout(installDir: string): InstallLayout {
   return createLegacyLayout(installDir);
 }
 
+/** 改名后 CLI 包名 / bin 名都变了；旧名必须继续认，否则从旧 tarball 驱动的 apply 找不到包根。 */
+const PACKAGE_NAMES = ['vibeterm-cli', 'vibeterm', 'tmex-cli', 'tmex'];
+const PACKAGE_BIN_NAMES = ['vibeterm', 'vibeterm-cli', 'tmex', 'tmex-cli'];
+
 async function locatePackageRoot(startDir: string): Promise<string> {
   let current = startDir;
 
@@ -117,10 +121,10 @@ async function locatePackageRoot(startDir: string): Promise<string> {
           typeof parsed.bin === 'object' && parsed.bin !== null
             ? (parsed.bin as Record<string, unknown>)
             : null;
-        const hasVibeTermBin = bin !== null && typeof bin.tmex === 'string';
-        const hasVibeTermCliBin = bin !== null && typeof bin['tmex-cli'] === 'string';
+        const hasCliBin =
+          bin !== null && PACKAGE_BIN_NAMES.some((key) => typeof bin[key] === 'string');
 
-        if ((name === 'tmex-cli' || name === 'tmex') && (hasVibeTermBin || hasVibeTermCliBin)) {
+        if (PACKAGE_NAMES.includes(name) && hasCliBin) {
           return current;
         }
       }

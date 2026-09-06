@@ -51,7 +51,7 @@ async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () 
 
 describe('ensureCandidateNativeAddon', () => {
   test('installs the pinned addon into the candidate dir with the real enableDirect path', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-up-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-up-'));
     tempDirs.push(installDir);
     const fromLayout = createVersionLayout(installDir, '1.1.3');
     await mkdir(fromLayout.nativeDir, { recursive: true });
@@ -93,7 +93,7 @@ describe('ensureCandidateNativeAddon', () => {
   });
 
   test('aborts when native install fails unless allow-missing-native', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-fail-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-fail-'));
     tempDirs.push(installDir);
     const fromLayout = createVersionLayout(installDir, '1.0.0');
     await mkdir(fromLayout.nativeDir, { recursive: true });
@@ -125,7 +125,7 @@ describe('ensureCandidateNativeAddon', () => {
   });
 
   test('reuses a matching local addon without calling enableDirect', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-reuse-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-reuse-'));
     tempDirs.push(installDir);
     const fromLayout = createVersionLayout(installDir, '1.1.3');
     const addon = Buffer.from('matching-native-addon');
@@ -164,7 +164,7 @@ describe('ensureCandidateNativeAddon', () => {
   });
 
   test('reinstalls when hash, platform, version or NAPI mismatch', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-mismatch-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-mismatch-'));
     tempDirs.push(installDir);
     const fromLayout = createVersionLayout(installDir, '1.1.3');
     await mkdir(fromLayout.nativeDir, { recursive: true });
@@ -195,7 +195,7 @@ describe('ensureCandidateNativeAddon', () => {
   });
 
   test('is a no-op when the current version has no native manifest', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-native-skip-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-skip-'));
     tempDirs.push(installDir);
     let called = false;
     await ensureCandidateNativeAddon({

@@ -30,4 +30,4 @@ export const UPGRADE_PASSTHROUGH_FLAGS = [
 ] as const;
 
 export const UPGRADE_USAGE =
-  'Usage: tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]';
+  'Usage: vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--yes] [--lang <code>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]';

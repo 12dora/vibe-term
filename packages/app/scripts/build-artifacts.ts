@@ -93,7 +93,7 @@ function randomSmokePort(): number {
 }
 
 async function smokeTest(outdir: string): Promise<void> {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-artifacts-smoke-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-artifacts-smoke-'));
 
   try {
     for (let attempt = 1; attempt <= SMOKE_PORT_ATTEMPTS; attempt++) {

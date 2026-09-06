@@ -1,6 +1,8 @@
 import {
   RELEASE_API_LATEST_URL,
   RELEASE_REPO_URL,
+  legacyReleaseTarballName,
+  legacyReleaseTarballUrl,
   releaseTag,
   releaseTarballName,
   releaseTarballUrl,
@@ -12,7 +14,7 @@ import { writeBytesAtomic } from './fs-utils';
 
 const GITHUB_HEADERS = {
   Accept: 'application/vnd.github+json',
-  'User-Agent': 'tmex-cli',
+  'User-Agent': 'vibeterm-cli',
 };
 
 export type ReleaseFetch = (url: string | URL, init?: RequestInit) => Promise<Response>;
@@ -51,11 +53,8 @@ function networkError(detail: string): Error {
   return new Error(t('upgrade.networkFailed', { detail }));
 }
 
-async function githubFetch(
-  url: string,
-  fetchFn: ReleaseFetch,
-  versionLabel: string
-): Promise<Response> {
+/** 404 返回 null（调用方据此决定是否回退到旧资产名），其余失败一律抛错。 */
+async function githubFetchOrNull(url: string, fetchFn: ReleaseFetch): Promise<Response | null> {
   let response: Response;
   try {
     response = await fetchFn(url, { headers: GITHUB_HEADERS, redirect: 'follow' });
@@ -63,11 +62,21 @@ async function githubFetch(
     const detail = errorMessage(error);
     throw networkError(detail);
   }
-  if (response.status === 404) {
-    throw new Error(t('upgrade.versionNotFound', { version: versionLabel }));
-  }
+  if (response.status === 404) return null;
   if (!response.ok) {
     throw networkError(`HTTP ${response.status}`);
+  }
+  return response;
+}
+
+async function githubFetch(
+  url: string,
+  fetchFn: ReleaseFetch,
+  versionLabel: string
+): Promise<Response> {
+  const response = await githubFetchOrNull(url, fetchFn);
+  if (response === null) {
+    throw new Error(t('upgrade.versionNotFound', { version: versionLabel }));
   }
   return response;
 }
@@ -85,14 +94,23 @@ export async function resolveReleaseVersion(
   return parseLatestReleaseVersion(body);
 }
 
+/**
+ * 下载发行 tarball，返回实际命中的资产名。新名 404 时回退到改名前的资产名——
+ * 桥接期间可能存在只发了旧名资产的 release，摘要查表要按命中的名字来。
+ */
 export async function downloadReleaseTarball(
   version: string,
   destFile: string,
   fetchFn: ReleaseFetch = fetch
-): Promise<void> {
-  const response = await githubFetch(releaseTarballUrl(version), fetchFn, version);
-  const buf = Buffer.from(await response.arrayBuffer());
-  await writeBytesAtomic(destFile, buf);
+): Promise<string> {
+  const primary = await githubFetchOrNull(releaseTarballUrl(version), fetchFn);
+  if (primary !== null) {
+    await writeBytesAtomic(destFile, Buffer.from(await primary.arrayBuffer()));
+    return releaseTarballName(version);
+  }
+  const legacy = await githubFetch(legacyReleaseTarballUrl(version), fetchFn, version);
+  await writeBytesAtomic(destFile, Buffer.from(await legacy.arrayBuffer()));
+  return legacyReleaseTarballName(version);
 }
 
 export function releaseSha256SumsUrl(version: string): string {
@@ -144,6 +162,12 @@ export async function fetchReleaseSha256Sums(
     throw new Error(t('upgrade.checksumHttpFailed', { detail: `HTTP ${response.status}` }));
   }
   const text = await response.text();
-  const hex = parseSha256Sums(text, fileName || releaseTarballName(version));
+  const wanted = fileName || releaseTarballName(version);
+  // 只列了旧名资产的 SHA256SUMS（桥接期）仍要能查到摘要。
+  const hex =
+    parseSha256Sums(text, wanted) ??
+    (wanted === releaseTarballName(version)
+      ? parseSha256Sums(text, legacyReleaseTarballName(version))
+      : null);
   return { hex, missing: hex === null, unpublished: false, text };
 }

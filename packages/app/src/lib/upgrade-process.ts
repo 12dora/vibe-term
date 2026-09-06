@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { basename, join } from 'node:path';
 import { parsePidFileRecord } from '../../../shared/src/process/pid-file';
@@ -169,8 +169,15 @@ export function readPidRecord(pidPath: string): PidRecord | null {
   }
 }
 
+/**
+ * 新 run.sh 写 `vibeterm.pid`；升级过程中服务可能还是改名前的 run.sh（写 `tmex.pid`），
+ * 新文件不存在时回退到旧名，否则会认不出正在运行的实例。
+ */
 export function pidFilePath(installDir: string): string {
-  return join(installDir, 'tmex.pid');
+  const current = join(installDir, 'vibeterm.pid');
+  if (existsSync(current)) return current;
+  const legacy = join(installDir, 'tmex.pid');
+  return existsSync(legacy) ? legacy : current;
 }
 
 export function assertOwnedInstallProcess(opts: {

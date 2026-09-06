@@ -1,3 +1,4 @@
+import { RELAY_TOKEN_HEADER, readHeaderPair } from '../../../shared/src/http/mesh-headers';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
@@ -153,8 +154,8 @@ async function appendRootMetaKey(tenant: Tenant, epoch: number): Promise<void> {
 
 /** 先 `add-passkey`（根签名），再用这把 passkey 签一条 `meta-key`。 */
 async function appendPasskeySignedMetaKey(tenant: Tenant): Promise<void> {
-  const origin = 'https://tmex.example';
-  const rpId = 'tmex.example';
+  const origin = 'https://vibeterm.example';
+  const rpId = 'vibeterm.example';
   const authenticator = await createEs256Authenticator();
   const registration = await authenticator.register({
     challenge: new Uint8Array(32).fill(3),
@@ -236,7 +237,7 @@ function fakeRelay(tenant: Tenant, options: RelayOptions = {}) {
       origin: url.origin,
       path: url.pathname,
       method: init?.method ?? 'GET',
-      token: headers.get('x-tmex-relay-token'),
+      token: readHeaderPair(headers, RELAY_TOKEN_HEADER),
       tls: (init as { tls?: unknown } | undefined)?.tls,
     });
     if (options.hangOrigins?.includes(url.origin)) {
@@ -256,7 +257,11 @@ function fakeRelay(tenant: Tenant, options: RelayOptions = {}) {
     }
     // 每台中继只认自己签发的租户令牌。
     const entry = tenant.entries.find((item) => item.url === url.origin);
-    if (!entry || headers.get('x-tmex-relay-token') !== encodeBase64url(entry.token)) {
+    // 两个名字都必须发出来：老中继只认旧名，新中继优先读新名
+    if (headers.get(RELAY_TOKEN_HEADER.name) !== headers.get(RELAY_TOKEN_HEADER.legacy)) {
+      return Response.json({ error: 'RELAY_TOKEN_HEADER_MISMATCH' }, { status: 401 });
+    }
+    if (!entry || readHeaderPair(headers, RELAY_TOKEN_HEADER) !== encodeBase64url(entry.token)) {
       return new Response(JSON.stringify({ error: { code: 'RELAY_TOKEN_INVALID' } }), {
         status: 401,
         headers: { 'content-type': 'application/json' },

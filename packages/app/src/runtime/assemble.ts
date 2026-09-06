@@ -265,10 +265,13 @@ function dummyTlsLifecycle(): { tls: TlsService; httpsListener: HttpsListener } 
   };
 }
 
-async function assemblePreflightVibeTerm(opts: AssembleVibeTermOptions): Promise<AssembledVibeTerm> {
+async function assemblePreflightVibeTerm(
+  opts: AssembleVibeTermOptions
+): Promise<AssembledVibeTerm> {
   const roles = opts.roles ?? parseVibeTermRoles(process.env.VIBETERM_ROLES);
   const createGateway =
-    opts.createGatewayRuntime ?? (() => createVibeTermGatewayRuntime(undefined, { mode: 'preflight' }));
+    opts.createGatewayRuntime ??
+    (() => createVibeTermGatewayRuntime(undefined, { mode: 'preflight' }));
   const gateway = await createGateway();
   const { tls, httpsListener } = dummyTlsLifecycle();
   return {
@@ -350,7 +353,10 @@ async function relayOnlyFrontend(): Promise<Response> {
   });
 }
 
-function maybeMeshHubStore(roles: VibeTermRoles, db: GatewayRuntime['db']): MeshHubStore | undefined {
+function maybeMeshHubStore(
+  roles: VibeTermRoles,
+  db: GatewayRuntime['db']
+): MeshHubStore | undefined {
   return roles.hub || roles.node ? new MeshHubStore(db) : undefined;
 }
 
@@ -400,13 +406,16 @@ function subscribeReplicatedNodeList(
   }
 }
 
-export async function assembleVibeTerm(opts: AssembleVibeTermOptions = {}): Promise<AssembledVibeTerm> {
+export async function assembleVibeTerm(
+  opts: AssembleVibeTermOptions = {}
+): Promise<AssembledVibeTerm> {
   const runtimeMode = opts.runtimeMode ?? readRuntimeMode();
   if (runtimeMode === 'preflight') return assemblePreflightVibeTerm(opts);
   const roles = opts.roles ?? parseVibeTermRoles(process.env.VIBETERM_ROLES);
   const staticRoot = opts.staticRoot ?? defaultStaticRoot();
   const createGateway =
-    opts.createGatewayRuntime ?? (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
+    opts.createGatewayRuntime ??
+    (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
   const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
   const serveFrontend =
     opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);

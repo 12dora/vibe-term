@@ -21,7 +21,7 @@ describe('buildAppEnvValues', () => {
     const values = buildAppEnvValues({
       host: '2001:db8::1',
       port: 9883,
-      databasePath: '/tmp/tmex.db',
+      databasePath: '/tmp/vibeterm.db',
       masterKey: 'key',
     });
     expect(values.VIBETERM_BASE_URL).toBe('http://[2001:db8::1]:9883');
@@ -32,7 +32,7 @@ describe('buildAppEnvValues', () => {
     const values = buildAppEnvValues({
       host: '127.0.0.1',
       port: 9883,
-      databasePath: '/tmp/tmex.db',
+      databasePath: '/tmp/vibeterm.db',
       masterKey: 'key',
       role: 'hub,node',
       hubPublicUrl: 'https://hub.example',
@@ -56,7 +56,7 @@ describe('quotePosixShellArg', () => {
 
 describe('writeRunScript', () => {
   test('writes executable script with safe shell variables', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-install-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-install-'));
     tempDirs.push(installDir);
 
     const installLayout = createInstallLayout(installDir);
@@ -73,7 +73,10 @@ describe('writeRunScript', () => {
     expect(script).toContain('export VIBETERM_FE_DIST_DIR=');
     expect(script).toContain('export VIBETERM_MIGRATIONS_DIR=');
     expect(script).toContain('export VIBETERM_INSTALL_DIR=');
-    expect(script).toContain('printf \'%s\\n\' "$$" > "$SCRIPT_DIR/tmex.pid"');
+    expect(script).toContain('printf \'%s\\n\' "$$" > "$SCRIPT_DIR/vibeterm.pid"');
+    // run.sh 只导出 VIBETERM_*：迁移后不支持降级到 2.0 以下，事务回滚会还原旧 run.sh。
+    expect(script).not.toContain('TMEX_');
+    expect(spawnSync('bash', ['-n', '-c', script], { encoding: 'utf8' }).status).toBe(0);
     expect(script).toContain(
       `export VIBETERM_NATIVE_DIR=${posixQuote(join(installDir, 'current', 'native'))}`
     );
@@ -84,7 +87,7 @@ describe('writeRunScript', () => {
   });
 
   test('POSIX-quotes interpolated paths that contain quotes, $(...), spaces, and apostrophes', async () => {
-    const parent = await mkdtemp(join(tmpdir(), 'tmex-install-'));
+    const parent = await mkdtemp(join(tmpdir(), 'vibeterm-install-'));
     tempDirs.push(parent);
 
     const installDir = join(parent, `weird "quotes" and $(echo pwned) and 'sq' dir`);

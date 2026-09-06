@@ -4,13 +4,26 @@ import { join } from 'node:path';
 import { ensureDir, pathExists, writeText } from './fs-utils';
 import { type RunCommandResult, runCommand } from './process';
 
-export const OOM_DROP_IN_FILENAME = 'tmex-oom.conf';
+export const OOM_DROP_IN_FILENAME = 'vibeterm-oom.conf';
+
+/** 改名前写出的 drop-in；已有机器上还留着，识别出来一并清理，避免两份同义配置并存。 */
+export const LEGACY_OOM_DROP_IN_FILENAME = 'tmex-oom.conf';
 
 /**
  * tmux ≥ 3.6 把每个 pane 放进独立的 systemd 用户 scope；systemd 默认 `DefaultOOMPolicy=stop`
  * 会在内核 OOM 杀掉 scope 内任意进程后停掉整个 scope（连 shell 一起），窗口随之消失。
  */
-export const OOM_DROP_IN_CONTENT = `# Written by tmex — do not edit (remove tmex to drop this file).
+export const OOM_DROP_IN_CONTENT = `# Written by VibeTerm — do not edit (uninstall VibeTerm to drop this file).
+# tmux >= 3.6 runs every pane in its own systemd user scope. With systemd's default
+# DefaultOOMPolicy=stop, a kernel OOM kill of any process inside a pane stops the whole
+# scope: the shell dies and the tmux window disappears. "continue" keeps the pane alive
+# and lets the kernel kill only the offending process.
+[Manager]
+DefaultOOMPolicy=continue
+`;
+
+/** 改名前写出的 drop-in 内容，逐字节比对用于确认那份文件确实是我们写的。 */
+export const LEGACY_OOM_DROP_IN_CONTENT = `# Written by tmex — do not edit (remove tmex to drop this file).
 # tmux >= 3.6 runs every pane in its own systemd user scope. With systemd's default
 # DefaultOOMPolicy=stop, a kernel OOM kill of any process inside a pane stops the whole
 # scope: the shell dies and the tmux window disappears. "continue" keeps the pane alive
@@ -25,6 +38,7 @@ export interface SystemdOomPolicyPaths {
   userConf: string;
   dropInDir: string;
   dropIn: string;
+  legacyDropIn: string;
 }
 
 export function systemdOomPolicyPaths(configDir?: string): SystemdOomPolicyPaths {
@@ -34,6 +48,7 @@ export function systemdOomPolicyPaths(configDir?: string): SystemdOomPolicyPaths
     userConf: join(base, 'user.conf'),
     dropInDir,
     dropIn: join(dropInDir, OOM_DROP_IN_FILENAME),
+    legacyDropIn: join(dropInDir, LEGACY_OOM_DROP_IN_FILENAME),
   };
 }
 
@@ -59,14 +74,28 @@ async function listDropIns(dir: string): Promise<string[]> {
   }
 }
 
-/** 用户已显式配置过 DefaultOOMPolicy 时返回该文件路径，tmex 不覆盖用户意图。 */
+/** 用户已显式配置过 DefaultOOMPolicy 时返回该文件路径，VibeTerm 不覆盖用户意图。 */
 export async function findExplicitOomPolicy(paths: SystemdOomPolicyPaths): Promise<string | null> {
   if (declaresDefaultOomPolicy(await readTextOrNull(paths.userConf))) return paths.userConf;
   for (const name of await listDropIns(paths.dropInDir)) {
     const path = join(paths.dropInDir, name);
-    if (declaresDefaultOomPolicy(await readTextOrNull(path))) return path;
+    const content = await readTextOrNull(path);
+    // 改名前我们自己写的那份不算「用户意图」，否则升级后永远跳过写新文件。
+    if (name === LEGACY_OOM_DROP_IN_FILENAME && content === LEGACY_OOM_DROP_IN_CONTENT) continue;
+    if (declaresDefaultOomPolicy(content)) return path;
   }
   return null;
+}
+
+/** 只删逐字节等于我们写过的那份旧 drop-in；用户改过的一律保留。 */
+async function removeLegacyDropIn(paths: SystemdOomPolicyPaths): Promise<boolean> {
+  if ((await readTextOrNull(paths.legacyDropIn)) !== LEGACY_OOM_DROP_IN_CONTENT) return false;
+  try {
+    await rm(paths.legacyDropIn, { force: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export type OomDropInOutcome = 'written' | 'unchanged' | 'skipped-explicit' | 'failed';
@@ -106,7 +135,7 @@ async function reloadManagerConfig(deps: SystemdOomPolicyDeps): Promise<void> {
 }
 
 /**
- * 托管安装/升级时写入 `~/.config/systemd/user.conf.d/tmex-oom.conf`，幂等；
+ * 托管安装/升级时写入 `~/.config/systemd/user.conf.d/vibeterm-oom.conf`，幂等；
  * 用户已显式配置 DefaultOOMPolicy 时跳过。任何失败只告警，绝不让安装失败。
  */
 export async function ensureSystemdOomPolicyDropIn(
@@ -125,10 +154,14 @@ export async function ensureSystemdOomPolicyDropIn(
       return 'skipped-explicit';
     }
 
-    if ((await readTextOrNull(paths.dropIn)) === OOM_DROP_IN_CONTENT) return 'unchanged';
+    if ((await readTextOrNull(paths.dropIn)) === OOM_DROP_IN_CONTENT) {
+      await removeLegacyDropIn(paths);
+      return 'unchanged';
+    }
 
     await ensureDir(paths.dropInDir);
     await writeText(paths.dropIn, OOM_DROP_IN_CONTENT);
+    await removeLegacyDropIn(paths);
     log(`[service] wrote ${paths.dropIn} (DefaultOOMPolicy=continue)`);
   } catch (error) {
     warn(
@@ -149,10 +182,12 @@ export async function removeSystemdOomPolicyDropIn(
   const log = deps.log ?? console.log;
   const warn = deps.warn ?? console.warn;
 
-  if (!(await pathExists(paths.dropIn))) return 'absent';
+  const removedLegacy = await removeLegacyDropIn(paths);
+
+  if (!(await pathExists(paths.dropIn))) return removedLegacy ? 'removed' : 'absent';
   const current = await readTextOrNull(paths.dropIn);
   if (current !== OOM_DROP_IN_CONTENT) {
-    log(`[service] kept ${paths.dropIn} (modified since tmex wrote it)`);
+    log(`[service] kept ${paths.dropIn} (modified since VibeTerm wrote it)`);
     return 'kept-modified';
   }
 
@@ -167,7 +202,7 @@ export async function removeSystemdOomPolicyDropIn(
 }
 
 export const SYSTEMD_OOM_POLICY_WARNING =
-  '[service] systemd DefaultOOMPolicy=stop: a kernel OOM kill inside a tmux pane will close the whole window — run `tmex upgrade` (or write ~/.config/systemd/user.conf.d/tmex-oom.conf with DefaultOOMPolicy=continue)';
+  '[service] systemd DefaultOOMPolicy=stop: a kernel OOM kill inside a tmux pane will close the whole window — run `vibeterm upgrade` (or write ~/.config/systemd/user.conf.d/vibeterm-oom.conf with DefaultOOMPolicy=continue)';
 
 /** `systemctl --user show -p DefaultOOMPolicy` 既可能输出 `DefaultOOMPolicy=stop` 也可能只有值。 */
 export function parseDefaultOomPolicy(output: string | null): string | null {

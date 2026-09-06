@@ -73,7 +73,7 @@ export async function resolveAuthSpawnPlan(
   const installDir = asString(parsed.flags['install-dir']) || defaultInstallDir(process.platform);
   const layout = createInstallLayout(installDir);
   if (!(await pathExists(layout.envPath))) {
-    throw new Error(`config file not found: ${layout.envPath}. run tmex init first`);
+    throw new Error(`config file not found: ${layout.envPath}. run vibeterm init first`);
   }
   const appEnv = await readEnvFile(layout.envPath);
 

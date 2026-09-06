@@ -1,6 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { ensureDir, pathExists, writeText } from './fs-utils';
 import { type ServiceManagerKind, detectServiceManager } from './platform';
@@ -12,6 +13,8 @@ export interface ServiceInstallOptions {
   runScriptPath: string;
   installDir: string;
   autostart: boolean;
+  /** 曾用的服务名；与 serviceName 不同时，安装前拆掉它留下的 systemd unit。 */
+  legacyServiceName?: string;
 }
 
 export interface ServiceUninstallOptions {
@@ -31,7 +34,7 @@ function systemdUnitPath(serviceName: string): string {
   return join(homedir(), '.config', 'systemd', 'user', `${serviceName}.service`);
 }
 
-export function tmexSystemdUnitPath(serviceName = 'tmex'): string {
+export function vibeTermSystemdUnitPath(serviceName = DEFAULT_SERVICE_NAME): string {
   return systemdUnitPath(serviceName);
 }
 
@@ -45,9 +48,14 @@ export function systemdUnitLacksKillModeProcess(unitContent: string | null): boo
 }
 
 export const SYSTEMD_KILL_MODE_WARNING =
-  '[service] tmex.service lacks KillMode=process; tmux may be killed on restart — run tmex upgrade / re-install to refresh the unit';
+  '[service] the systemd unit lacks KillMode=process; tmux may be killed on restart — run vibeterm upgrade / re-install to refresh the unit';
 
 function launchdLabel(serviceName: string): string {
+  return `com.vibeterm.${serviceName}`;
+}
+
+/** 改名前的 launchd label；升级时必须先卸载它，否则 KeepAlive 会拉起第二个实例抢端口。 */
+function legacyLaunchdLabel(serviceName: string): string {
   return `com.tmex.${serviceName}`;
 }
 
@@ -59,6 +67,58 @@ function launchdLocalPlistPath(serviceName: string, installDir: string): string 
   return join(installDir, `${launchdLabel(serviceName)}.plist`);
 }
 
+function legacyLaunchAgentsPlistPath(serviceName: string): string {
+  return join(homedir(), 'Library', 'LaunchAgents', `${legacyLaunchdLabel(serviceName)}.plist`);
+}
+
+function legacyLocalPlistPath(serviceName: string, installDir: string): string {
+  return join(installDir, `${legacyLaunchdLabel(serviceName)}.plist`);
+}
+
+export function legacyLaunchdPlistPaths(serviceName: string, installDir?: string): string[] {
+  return legacyPlistPaths(serviceName, installDir);
+}
+
+function legacyPlistPaths(serviceName: string, installDir?: string): string[] {
+  const paths = [legacyLaunchAgentsPlistPath(serviceName)];
+  if (installDir) paths.push(legacyLocalPlistPath(serviceName, installDir));
+  return paths;
+}
+
+async function bootoutLegacyLaunchd(serviceName: string, installDir?: string): Promise<void> {
+  const uid = String(process.getuid?.() ?? 0);
+  for (const path of legacyPlistPaths(serviceName, installDir)) {
+    await runCommand('launchctl', ['bootout', `gui/${uid}`, path]).catch(() => null);
+  }
+}
+
+/** bootout 旧 label 并删除旧 plist；只在旧文件真的存在时动手。返回被拆掉的 plist 路径。 */
+export async function removeLegacyLaunchdJob(
+  serviceName: string,
+  installDir?: string,
+  deps?: { run?: typeof runCommand }
+): Promise<string[]> {
+  const run = deps?.run ?? runCommand;
+  const uid = String(process.getuid?.() ?? 0);
+  const removed: string[] = [];
+  for (const path of legacyPlistPaths(serviceName, installDir)) {
+    if (!(await pathExists(path))) continue;
+    await run('launchctl', ['bootout', `gui/${uid}`, path]).catch(() => null);
+    await rm(path, { force: true }).catch(() => null);
+    removed.push(path);
+  }
+  return removed;
+}
+
+/** 只有 serviceName 真的换了名字才需要拆旧 unit；同名时新内容直接原地覆盖。 */
+async function removeLegacySystemdUnit(serviceName: string, legacyName?: string): Promise<void> {
+  if (!legacyName || legacyName === serviceName) return;
+  const unitPath = systemdUnitPath(legacyName);
+  if (!(await pathExists(unitPath))) return;
+  await runCommand('systemctl', ['--user', 'disable', '--now', legacyName]).catch(() => null);
+  await rm(unitPath, { force: true }).catch(() => null);
+}
+
 export function buildSystemdServiceContent({
   serviceName,
   runScriptPath,
@@ -68,14 +128,14 @@ export function buildSystemdServiceContent({
   const escapedRunScriptPath = runScriptPath.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 
   return `[Unit]
-Description=tmex (${serviceName})
+Description=VibeTerm (${serviceName})
 After=network.target
 
 [Service]
 Type=simple
 KillMode=process
 WorkingDirectory=${escapedInstallDir}
-SyslogIdentifier=tmex
+SyslogIdentifier=vibeterm
 StandardOutput=journal
 StandardError=journal
 ExecStart=/usr/bin/env bash "${escapedRunScriptPath}"
@@ -97,13 +157,12 @@ function escapeXml(value: string): string {
     .replaceAll("'", '&apos;');
 }
 
-export function buildLaunchdPlist({
-  serviceName,
-  runScriptPath,
-  installDir,
-}: ServiceInstallOptions): string {
-  const label = launchdLabel(serviceName);
-
+function buildLaunchdPlistFor(
+  label: string,
+  logBaseName: string,
+  logEnvPrefix: string,
+  { runScriptPath, installDir }: ServiceInstallOptions
+): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -125,21 +184,31 @@ export function buildLaunchdPlist({
   <true/>
   <key>EnvironmentVariables</key>
   <dict>
-    <key>VIBETERM_LOG_FILE</key>
-    <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
-    <key>VIBETERM_LOG_ERR_FILE</key>
-    <string>${escapeXml(join(installDir, 'tmex.err.log'))}</string>
+    <key>${logEnvPrefix}_LOG_FILE</key>
+    <string>${escapeXml(join(installDir, `${logBaseName}.log`))}</string>
+    <key>${logEnvPrefix}_LOG_ERR_FILE</key>
+    <string>${escapeXml(join(installDir, `${logBaseName}.err.log`))}</string>
   </dict>
   <key>StandardOutPath</key>
-  <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
+  <string>${escapeXml(join(installDir, `${logBaseName}.log`))}</string>
   <key>StandardErrorPath</key>
-  <string>${escapeXml(join(installDir, 'tmex.err.log'))}</string>
+  <string>${escapeXml(join(installDir, `${logBaseName}.err.log`))}</string>
 </dict>
 </plist>
 `;
 }
 
+export function buildLaunchdPlist(options: ServiceInstallOptions): string {
+  return buildLaunchdPlistFor(launchdLabel(options.serviceName), 'vibeterm', 'VIBETERM', options);
+}
+
+/** 迁移回滚专用：写回改名前那份 plist（旧 label / 旧日志名 / 旧环境变量名）。 */
+export function buildLegacyLaunchdPlist(options: ServiceInstallOptions): string {
+  return buildLaunchdPlistFor(legacyLaunchdLabel(options.serviceName), 'tmex', 'TMEX', options);
+}
+
 async function installSystemdService(options: ServiceInstallOptions): Promise<void> {
+  await removeLegacySystemdUnit(options.serviceName, options.legacyServiceName);
   const unitPath = systemdUnitPath(options.serviceName);
   await ensureDir(join(homedir(), '.config', 'systemd', 'user'));
   await writeText(unitPath, buildSystemdServiceContent(options));
@@ -175,12 +244,6 @@ async function installSystemdService(options: ServiceInstallOptions): Promise<vo
   }
 }
 
-async function bootoutLaunchd(serviceName: string): Promise<void> {
-  const uid = String(process.getuid?.() ?? 0);
-  const plistPath = launchdLaunchAgentsPlistPath(serviceName);
-  await runCommand('launchctl', ['bootout', `gui/${uid}`, plistPath]).catch(() => null);
-}
-
 async function installLaunchdService(options: ServiceInstallOptions): Promise<void> {
   const launchAgentsPath = launchdLaunchAgentsPlistPath(options.serviceName);
   const localPath = launchdLocalPlistPath(options.serviceName, options.installDir);
@@ -189,6 +252,9 @@ async function installLaunchdService(options: ServiceInstallOptions): Promise<vo
   if (options.autostart) {
     await ensureDir(join(homedir(), 'Library', 'LaunchAgents'));
   }
+
+  // 换 label 前先把旧 job 拆干净：留着它 KeepAlive 会复活旧 run.sh，两个实例抢同一个端口。
+  await removeLegacyLaunchdJob(options.serviceName, options.installDir);
 
   await writeText(targetPath, buildLaunchdPlist(options));
 
@@ -203,6 +269,43 @@ async function installLaunchdService(options: ServiceInstallOptions): Promise<vo
   );
 
   const uid = String(process.getuid?.() ?? 0);
+  const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
+  if (bootstrap.code !== 0) {
+    throw new Error(
+      t('service.launchd.bootstrapFailed', {
+        detail: bootstrap.stderr || bootstrap.stdout,
+      })
+    );
+  }
+}
+
+/**
+ * 回滚安装目录迁移时把 launchd job 还原成旧 label：留着新 label 会让 1.1.x 的 CLI
+ * 找不到自己的 job，之后再升级会同时跑起两个实例抢端口。systemd 侧 unit 名不变，无需处理。
+ */
+export async function installLegacyLabelledService(options: ServiceInstallOptions): Promise<void> {
+  const manager = await detectServiceManager();
+  if (manager !== 'launchd') {
+    await installService(options);
+    return;
+  }
+
+  const uid = String(process.getuid?.() ?? 0);
+  const newAgents = launchdLaunchAgentsPlistPath(options.serviceName);
+  const newLocal = launchdLocalPlistPath(options.serviceName, options.installDir);
+  for (const path of [newAgents, newLocal]) {
+    await runCommand('launchctl', ['bootout', `gui/${uid}`, path]).catch(() => null);
+    await rm(path, { force: true }).catch(() => null);
+  }
+
+  const targetPath = options.autostart
+    ? legacyLaunchAgentsPlistPath(options.serviceName)
+    : legacyLocalPlistPath(options.serviceName, options.installDir);
+  if (options.autostart) {
+    await ensureDir(join(homedir(), 'Library', 'LaunchAgents'));
+  }
+  await writeText(targetPath, buildLegacyLaunchdPlist(options));
+  await runCommand('launchctl', ['bootout', `gui/${uid}`, targetPath]).catch(() => null);
   const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
   if (bootstrap.code !== 0) {
     throw new Error(
@@ -248,6 +351,8 @@ export async function stopService(serviceName: string, installDir?: string): Pro
       const localPath = launchdLocalPlistPath(serviceName, installDir);
       await runCommand('launchctl', ['bootout', `gui/${uid}`, localPath]).catch(() => null);
     }
+    // 升级时正在跑的可能仍是旧 label 的 job，不停掉它端口不会释放。
+    await bootoutLegacyLaunchd(serviceName, installDir);
   }
 }
 
@@ -320,6 +425,7 @@ export async function uninstallService(options: ServiceUninstallOptions): Promis
       await runCommand('launchctl', ['bootout', `gui/${uid}`, localPath]).catch(() => null);
       await rm(localPath, { force: true }).catch(() => null);
     }
+    await removeLegacyLaunchdJob(options.serviceName, options.installDir);
     return;
   }
 }
@@ -450,4 +556,19 @@ export async function restartService(serviceName: string, installDir?: string): 
   }
 
   throw new Error(t('service.install.unsupportedPlatform', { platform: process.platform }));
+}
+
+/** 迁移后残留的旧 label plist 路径（doctor 用），没有返回空数组。 */
+export async function findLegacyLaunchdPlists(
+  serviceNames: readonly string[],
+  installDir?: string
+): Promise<string[]> {
+  if (process.platform !== 'darwin') return [];
+  const found: string[] = [];
+  for (const name of serviceNames) {
+    for (const path of legacyPlistPaths(name, installDir)) {
+      if (await pathExists(path)) found.push(path);
+    }
+  }
+  return found;
 }

@@ -40,7 +40,7 @@ function currentExitCode(): number | string | undefined {
 function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response> {
   return async (url) => {
     const href = String(url);
-    if (href === releaseTarballUrl('1.1.0') || href.includes('tmex-cli-')) {
+    if (href === releaseTarballUrl('1.1.0') || href.includes('vibeterm-cli-')) {
       return new Response(new Uint8Array(tarball), { status: 200 });
     }
     if (href.includes('SHA256SUMS')) {
@@ -53,7 +53,7 @@ function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response
 describe('reenableDirectAfterUpgrade', () => {
   test('calls reenableDirectIfNeeded with installDir', async () => {
     let calledWith: string | undefined;
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade', {
       reenableDirectIfNeeded: async ({ installDir }) => {
         calledWith = installDir;
         return {
@@ -65,12 +65,12 @@ describe('reenableDirectAfterUpgrade', () => {
         };
       },
     });
-    expect(calledWith).toBe('/tmp/tmex-upgrade');
+    expect(calledWith).toBe('/tmp/vibeterm-upgrade');
   });
 
   test('does not throw when reenable reports failure', async () => {
     const logs: string[] = [];
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade-fail', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade-fail', {
       reenableDirectIfNeeded: async () => ({ ok: false, reason: 'integrity mismatch' }),
       log: (message) => logs.push(message),
     });
@@ -78,7 +78,7 @@ describe('reenableDirectAfterUpgrade', () => {
   });
 
   test('swallows thrown errors from reenableDirectIfNeeded', async () => {
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade-throw', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade-throw', {
       reenableDirectIfNeeded: async () => {
         throw new Error('no network');
       },
@@ -89,11 +89,12 @@ describe('reenableDirectAfterUpgrade', () => {
 
 describe('delegateUpgrade', () => {
   test('downloads the GitHub release tarball and re-execs upgrade --apply-current-package', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-dl-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-dl-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
-      'package/package.json': '{"name":"tmex-cli","version":"1.1.0"}\n',
-      'package/bin/tmex.js': 'export {}\n',
+      'package/package.json': '{"name":"vibeterm-cli","version":"1.1.0"}\n',
+      'package/bin/vibeterm.js': 'export {}\n',
+      'package/bin/tmex.js': "import './vibeterm.js';\n",
     });
     const spawned: Array<{ command: string; args: string[] }> = [];
     const logs: string[] = [];
@@ -131,7 +132,7 @@ describe('delegateUpgrade', () => {
 
     const apply = spawned.find((call) => call.command === '/usr/local/bin/node');
     expect(apply).toBeDefined();
-    expect(apply?.args[0]).toMatch(/package\/bin\/tmex\.js$/);
+    expect(apply?.args[0]).toMatch(/package\/bin\/vibeterm\.js$/);
     expect(apply?.args.slice(1, 3)).toEqual(['upgrade', '--apply-current-package']);
     expect(apply?.args).toContain('--lang');
     expect(apply?.args).toContain('en');
@@ -145,8 +146,40 @@ describe('delegateUpgrade', () => {
     expect(releaseSha256SumsUrl('1.1.0')).toContain('SHA256SUMS');
   });
 
+  test('execs bin/tmex.js when the tarball only ships the pre-rename entry', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-legacy-bin-'));
+    tempDirs.push(installDir);
+    const tarball = packNpmTarball({
+      'package/package.json': '{"name":"tmex-cli","version":"1.1.0"}\n',
+      'package/bin/tmex.js': 'export {}\n',
+    });
+    const spawned: Array<{ command: string; args: string[] }> = [];
+
+    await delegateUpgrade(
+      {
+        command: 'upgrade',
+        positionals: [],
+        flags: { 'install-dir': installDir, 'allow-unverified': true },
+      },
+      '1.1.0',
+      {
+        fetch: fakeFetch(tarball),
+        runCommand: async (command, args, options) => {
+          spawned.push({ command, args });
+          if (command === 'tar') return runCommand(command, args, options);
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        execPath: '/usr/bin/node',
+        log: () => undefined,
+      }
+    );
+
+    const apply = spawned.find((call) => call.command === '/usr/bin/node');
+    expect(apply?.args[0]).toMatch(/package\/bin\/tmex\.js$/);
+  });
+
   test('propagates the extracted CLI exit code', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-exit-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-exit-'));
     tempDirs.push(installDir);
     const previous = process.exitCode;
     process.exitCode = undefined;
@@ -180,7 +213,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('does not spawn npx on 404', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-404-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-404-'));
     tempDirs.push(installDir);
     const spawned: string[] = [];
     await expect(
@@ -200,7 +233,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('1.1.0 without --allow-unverified fails on SHA256SUMS 404', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-noflag-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-noflag-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
       'package/bin/tmex.js': 'export {}\n',
@@ -223,7 +256,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('1.1.4 SHA256SUMS 404 fails even with --allow-unverified', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-114-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-114-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
       'package/bin/tmex.js': 'export {}\n',
@@ -240,7 +273,7 @@ describe('delegateUpgrade', () => {
           fetch: async (url) => {
             const href = String(url);
             if (href.includes('SHA256SUMS')) return new Response('missing', { status: 404 });
-            if (href.includes('tmex-cli-'))
+            if (href.includes('vibeterm-cli-'))
               return new Response(new Uint8Array(tarball), { status: 200 });
             return new Response('nope', { status: 404 });
           },
@@ -264,7 +297,7 @@ describe('upgrade flag unification', () => {
       '--version',
       '1.1.4',
       '--install-dir',
-      '/tmp/tmex',
+      '/tmp/vibeterm',
       '--allow-missing-native',
       '--keep-backup',
     ]);
@@ -280,7 +313,7 @@ describe('upgrade flag unification', () => {
   });
 
   test('runUpgrade apply-current-package threads parsed --txn into repairUpgrade', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-run-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-run-'));
     tempDirs.push(installDir);
     await writeFile(
       join(installDir, 'install-meta.json'),
@@ -339,7 +372,7 @@ describe('upgrade flag unification', () => {
   });
 
   test('download extract then extracted CLI repair+apply commits and later cleans staging', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-e2e-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-e2e-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0', 'runtime'), { recursive: true });
     await mkdir(join(installDir, 'data'), { recursive: true });

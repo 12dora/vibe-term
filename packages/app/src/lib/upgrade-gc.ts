@@ -65,6 +65,8 @@ function isInstallTmpLeftover(name: string): boolean {
     name.startsWith('upgrade-state.json.') ||
     name.startsWith('current.') ||
     name.startsWith('run.sh.') ||
+    name.startsWith('vibeterm.') ||
+    // 改名前 pid 文件叫 tmex.pid，旧版本留下的临时文件仍要清掉
     name.startsWith('tmex.')
   );
 }

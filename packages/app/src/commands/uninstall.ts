@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, dirname, isAbsolute, resolve, sep } from 'node:path';
-import { defaultInstallDir } from '../constants';
+import { DEFAULT_SERVICE_NAME, defaultInstallDir } from '../constants';
 import { t } from '../i18n';
 import { removeVibeTermShims } from '../lib/cli-shim';
 import { readEnvFile } from '../lib/env-file';
@@ -45,7 +45,7 @@ function isInsideDir(target: string, root: string): boolean {
 
 function tempUninstallCopyRoot(argv1: string, tmp: string): string | null {
   const copyRoot = dirname(dirname(resolve(argv1)));
-  if (!basename(copyRoot).startsWith('tmex-uninstall-')) return null;
+  if (!basename(copyRoot).startsWith('vibeterm-uninstall-')) return null;
   if (!isInsideDir(copyRoot, tmp)) return null;
   return copyRoot;
 }
@@ -75,12 +75,12 @@ export async function runUninstall(
   const yes = asBoolean(parsed.flags.yes) ?? false;
   const purge = asBoolean(parsed.flags.purge) ?? false;
   const delayMs = parseDelayMs(parsed.flags['delay-ms']);
-  const log = deps.log ?? ((message: string) => console.error(`[tmex] uninstall: ${message}`));
+  const log = deps.log ?? ((message: string) => console.error(`[vibeterm] uninstall: ${message}`));
   const sleep =
     deps.sleep ??
     ((ms: number) => new Promise<void>((resolveSleep) => setTimeout(resolveSleep, ms)));
 
-  let serviceName = asString(parsed.flags['service-name']) || 'tmex';
+  let serviceName = asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME;
   if (await pathExists(installLayout.metaPath)) {
     const meta = await readJsonFile<InstallMeta>(installLayout.metaPath);
     serviceName = meta.serviceName;
@@ -128,7 +128,7 @@ export async function runUninstall(
     await removeTempUninstallCopy(argv1, deps.tmpdir?.() ?? tmpdir(), log);
   }
 
-  console.log(`[tmex] ${t('uninstall.done')}`);
+  console.log(`[vibeterm] ${t('uninstall.done')}`);
   console.log(`- ${t('uninstall.summary.installDir')}: ${installLayout.installDir}`);
   console.log(`- ${t('uninstall.summary.serviceName')}: ${serviceName}`);
 }

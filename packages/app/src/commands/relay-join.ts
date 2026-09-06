@@ -10,6 +10,7 @@ import {
   signEd25519,
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import {
   type RelayJoinToken,
   type RelayJoinTokenEntry,
@@ -95,7 +96,7 @@ function shouldTryNextRelay(error: unknown): boolean {
 
 /** 每台中继的租户令牌都是它自己签发的，跨中继复用只会被拒。 */
 function relayHeaders(entry: RelayJoinTokenEntry): Record<string, string> {
-  return { 'x-tmex-relay-token': encodeBase64url(entry.token) };
+  return assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(entry.token));
 }
 
 /**

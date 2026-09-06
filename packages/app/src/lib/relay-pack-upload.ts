@@ -9,6 +9,7 @@ import {
   decodeBase64url,
   encodeBase64url,
 } from '../../../shared/src/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import { kdfParamsToWire, sealRelayPack } from '../../../shared/src/relay';
 import { joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
 import type { FetchLike } from './fetch-like';
@@ -120,7 +121,7 @@ async function postPacksToRelays(input: {
         fetcher: input.fetcher,
         url: joinRelayUrl(pack.url, `/api/relay/tenants/${pack.tenantId}/pack`),
         method: 'POST',
-        headers: { 'x-tmex-relay-token': encodeBase64url(pack.token) },
+        headers: assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(pack.token)),
         body: {
           sealed_pack: encodeBase64url(pack.sealed),
           kdf_params: kdfParamsToWire(input.kdfParams),

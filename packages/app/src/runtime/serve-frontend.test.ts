@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function makeStaticRoot(): Promise<string> {
-  const root = await mkdtemp(join(tmpdir(), 'tmex-fe-'));
+  const root = await mkdtemp(join(tmpdir(), 'vibeterm-fe-'));
   tempDirs.push(root);
   await writeFile(join(root, 'index.html'), '<html>ok</html>');
   await mkdir(join(root, 'assets'), { recursive: true });

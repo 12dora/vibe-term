@@ -161,7 +161,7 @@ describe('assembleVibeTerm role matrix', () => {
       let canLoadNative: (() => boolean) | undefined;
       await assembleVibeTerm({
         roles: { hub: false, node: true, relay: false },
-        nativeDir: '/tmp/tmex-native-should-not-load',
+        nativeDir: '/tmp/vibeterm-native-should-not-load',
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async (opts) => {
           loadNative = opts.loadNative;
@@ -739,8 +739,8 @@ describe('assembleVibeTerm role matrix', () => {
     expect(seen).toEqual(['ws:/ws']);
   });
 
-  test('local gateway responses get x-tmex-session-renewed from attached auth', async () => {
-    const { setMeshRequestContext, X_VIBETERM_SESSION_RENEWED } = await import(
+  test('local gateway responses get the session-renewed header from attached auth', async () => {
+    const { setMeshRequestContext, SESSION_RENEWED_HEADER } = await import(
       '../../../../apps/gateway/src/mesh/mesh-deps'
     );
     const mesh = fakeMesh({
@@ -767,7 +767,8 @@ describe('assembleVibeTerm role matrix', () => {
       createMeshRuntime: async () => mesh,
     });
     const res = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
-    expect(res?.headers.get(X_VIBETERM_SESSION_RENEWED)).toBeTruthy();
+    expect(res?.headers.get(SESSION_RENEWED_HEADER.name)).toBeTruthy();
+    expect(res?.headers.get(SESSION_RENEWED_HEADER.legacy)).toBeTruthy();
   });
 
   test('passes persisted identity userId to createMeshRuntime', async () => {
@@ -1000,7 +1001,7 @@ describe('assembleVibeTerm role matrix', () => {
   test('startup with stored selfsigned config starts https listener; shutdown stops it', async () => {
     const { db, close } = createMigratedAuthDb();
     const port = 20000 + Math.floor(Math.random() * 10000);
-    const ca = await createCa({ name: 'tmex assemble CA' });
+    const ca = await createCa({ name: 'VibeTerm assemble CA' });
     const leaf = await issueLeaf({
       ca,
       sans: ['localhost', '127.0.0.1'],
@@ -1087,7 +1088,7 @@ describe('assembleVibeTerm role matrix', () => {
         body: JSON.stringify({
           hubPublicUrl: 'https://hub.example',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         }),
       }),
@@ -1278,7 +1279,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
         new Request('http://127.0.0.1/api/auth/local/bootstrap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+          body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
         })
       );
       expect(boot.res.status).toBe(200);
@@ -1313,7 +1314,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
         iterations: number;
         parallelism: number;
       };
-      const sid = await loginWithPassword(assembled, uid, 'tmex-test-pass', kdf, nodeId);
+      const sid = await loginWithPassword(assembled, uid, 'vibeterm-test-pass', kdf, nodeId);
       const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
 
       const authedDevices = await assembled.fetch(
@@ -1354,7 +1355,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
         new Request('http://127.0.0.1/api/auth/local/bootstrap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+          body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
         })
       );
       await json(
@@ -1553,7 +1554,7 @@ describe('assembleVibeTerm domain access guard', () => {
     resetDomainAccessForTests();
   });
 
-  const HOSTS = ['tmex.example.com'];
+  const HOSTS = ['vibeterm.example.com'];
 
   async function assembleDisabled(overrides?: {
     hub?: HubRuntime;
@@ -1593,19 +1594,22 @@ describe('assembleVibeTerm domain access guard', () => {
       serveFrontend: async () => new Response('spa'),
       createGatewayRuntime: async () => fakeGateway(),
     });
-    const res = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    const res = await assembled.fetch(new Request('https://vibeterm.example.com/'), dummyServer);
     expect(res?.status).toBe(200);
     expect(await res?.text()).toBe('spa');
   });
 
   test('disabled domain: / is 403 text, /api and /ws are 403 JSON', async () => {
     const assembled = await assembleDisabled();
-    const page = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    const page = await assembled.fetch(new Request('https://vibeterm.example.com/'), dummyServer);
     expect(page?.status).toBe(403);
     expect(page?.headers.get('content-type')).toContain('text/plain');
     expect(await page?.text()).toBe('Domain access is disabled for this host.');
 
-    const api = await assembled.fetch(new Request('https://tmex.example.com/api/x'), dummyServer);
+    const api = await assembled.fetch(
+      new Request('https://vibeterm.example.com/api/x'),
+      dummyServer
+    );
     expect(api?.status).toBe(403);
     expect(await api?.json()).toEqual({
       error: {
@@ -1614,7 +1618,7 @@ describe('assembleVibeTerm domain access guard', () => {
       },
     });
 
-    const ws = await assembled.fetch(new Request('https://tmex.example.com/ws'), dummyServer);
+    const ws = await assembled.fetch(new Request('https://vibeterm.example.com/ws'), dummyServer);
     expect(ws?.status).toBe(403);
     expect(await ws?.json()).toEqual({
       error: {
@@ -1638,7 +1642,7 @@ describe('assembleVibeTerm domain access guard', () => {
       }),
     });
     const nodeApi = await assembled.fetch(
-      new Request('https://tmex.example.com/n/abc/api/x'),
+      new Request('https://vibeterm.example.com/n/abc/api/x'),
       dummyServer
     );
     expect(nodeApi?.status).toBe(403);
@@ -1647,13 +1651,13 @@ describe('assembleVibeTerm domain access guard', () => {
     });
 
     const health = await assembled.fetch(
-      new Request('https://tmex.example.com/healthz'),
+      new Request('https://vibeterm.example.com/healthz'),
       dummyServer
     );
     expect(health?.status).toBe(200);
 
     const uplink = await assembled.fetch(
-      new Request('https://tmex.example.com/hub/uplink'),
+      new Request('https://vibeterm.example.com/hub/uplink'),
       dummyServer
     );
     expect(uplink?.status).toBe(200);
@@ -1661,32 +1665,32 @@ describe('assembleVibeTerm domain access guard', () => {
     expect(hubHits).toBe(1);
 
     const acme = await assembled.fetch(
-      new Request('https://tmex.example.com/.well-known/acme-challenge/tok'),
+      new Request('https://vibeterm.example.com/.well-known/acme-challenge/tok'),
       dummyServer
     );
     expect(acme?.status).not.toBe(403);
 
     const redeem = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
+      new Request('https://vibeterm.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
       dummyServer
     );
     expect(redeem?.status).toBe(200);
     expect(await redeem?.text()).toBe('api-ok');
 
     const hubStatus = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/status'),
+      new Request('https://vibeterm.example.com/api/hub/status'),
       dummyServer
     );
     expect(hubStatus?.status).toBe(200);
 
     const enroll = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/enrollments/tok-1'),
+      new Request('https://vibeterm.example.com/api/hub/enrollments/tok-1'),
       dummyServer
     );
     expect(enroll?.status).toBe(200);
 
     const lan = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('192.168.1.5')
     );
     expect(lan?.status).toBe(200);
@@ -1695,7 +1699,7 @@ describe('assembleVibeTerm domain access guard', () => {
 
   test('peer-inbound via=<nodeId> is not blocked by the public dispatcher guard', async () => {
     const assembled = await assembleDisabled();
-    const req = new Request('https://tmex.example.com/api/x');
+    const req = new Request('https://vibeterm.example.com/api/x');
     setMeshRequestContext(req, { via: 'ab'.repeat(16) });
     const res = await assembled.fetch(req, dummyServer);
     expect(res?.status).toBe(200);
@@ -1714,17 +1718,17 @@ describe('assembleVibeTerm domain access guard', () => {
   test('loopback and CGNAT clients are allowed; unknown source is 403', async () => {
     const assembled = await assembleDisabled();
     const loopback = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('127.0.0.1')
     );
     expect(loopback?.status).toBe(200);
     const cgnat = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('100.64.1.2')
     );
     expect(cgnat?.status).toBe(200);
     const unknown = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp(null)
     );
     expect(unknown?.status).toBe(403);
@@ -1733,14 +1737,14 @@ describe('assembleVibeTerm domain access guard', () => {
   test('untrusted spoofed XFF is judged by the socket address', async () => {
     const assembled = await assembleDisabled();
     const lanSocket = await assembled.fetch(
-      new Request('https://tmex.example.com/', {
+      new Request('https://vibeterm.example.com/', {
         headers: { 'x-forwarded-for': '203.0.113.9' },
       }),
       serverWithClientIp('10.0.0.8')
     );
     expect(lanSocket?.status).toBe(200);
     const publicSocket = await assembled.fetch(
-      new Request('https://tmex.example.com/', {
+      new Request('https://vibeterm.example.com/', {
         headers: { 'x-forwarded-for': '10.0.0.8' },
       }),
       serverWithClientIp('203.0.113.9')

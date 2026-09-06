@@ -69,7 +69,7 @@ export function nativeManifestPath(nativeDir: string): string {
 }
 
 function defaultLog(message: string): void {
-  console.warn(`[tmex][native-datachannel] ${message}`);
+  console.warn(`[vibeterm][native-datachannel] ${message}`);
 }
 
 export async function readInstalledNativeManifest(

@@ -150,7 +150,7 @@ export class DnspodDnsClient implements DnsProvider {
       method: 'POST',
       headers: {
         'content-type': 'application/x-www-form-urlencoded',
-        'user-agent': `tmex/${this.version} (${this.email})`,
+        'user-agent': `vibeterm/${this.version} (${this.email})`,
       },
       body,
     });

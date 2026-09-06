@@ -12,7 +12,7 @@ afterEach(async () => {
 });
 
 async function makeNativeDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-native-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-native-'));
   tempDirs.push(dir);
   await mkdir(dir, { recursive: true });
   return dir;

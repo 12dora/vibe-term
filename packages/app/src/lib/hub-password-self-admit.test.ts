@@ -18,7 +18,7 @@ import { HUB_JOIN_ADMIT_ATTEMPTS, publishHubJoinSelfAdmit } from './hub-password
 import { type LocalAuthContext, createAuthContextFromDb, openLocalAuth } from './local-auth';
 
 const HUB = 'https://hub.example';
-const PASSWORD = 'tmex-test-pass';
+const PASSWORD = 'vibeterm-test-pass';
 
 function b64(bytes: Uint8Array): string {
   return encodeBase64url(bytes);
