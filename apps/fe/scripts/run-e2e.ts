@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import * as net from 'node:net';
 
 // listen 不带 host 默认绑 ::，对只监听 IPv4 的进程（如生产 VibeTerm 的 9883）会误判可用，
@@ -118,6 +118,15 @@ if (process.env.VIBETERM_E2E_MESH_ONLY !== '1') {
 
   process.env.VIBETERM_E2E_GATEWAY_PORT = String(gatewayPort);
   process.env.VIBETERM_E2E_FE_PORT = String(fePort);
+}
+
+// e2e 专用 tmux 服务器（socket 与 playwright.config.ts / tests/helpers/tmux.ts 一致）会跨次运行
+// 残留：它的 cwd 若是已删除的 worktree，之后新建 pane 时 `-c` 指定的起始目录会被忽略，
+// pane 落在被删目录里，opencode 等程序直接报「当前目录已删除」退出。每轮开跑前先杀掉它——
+// 该 socket 只给 e2e 用，不会碰生产 / 开发的默认 socket。
+const killed = spawnSync('tmux', ['-L', 'vibeterm-e2e', 'kill-server'], { stdio: 'ignore' });
+if (killed.status === 0) {
+  console.log('[e2e] killed stale tmux server on socket vibeterm-e2e');
 }
 
 const cli = resolvePlaywrightCli();
