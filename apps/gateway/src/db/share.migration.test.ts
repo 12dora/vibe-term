@@ -1,10 +1,39 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
+import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 
 const migrationsFolder = resolve(import.meta.dir, '../../drizzle');
+const PASSWORD_ENC_MIGRATION = '0048_share_password_enc.sql';
+
+/** 按文件名顺序手工回放迁移，`until` 之后的不执行：用来造「升级前」的老库。 */
+function migratedUpTo(until: string): Database {
+  const sqlite = new Database(':memory:');
+  sqlite.run('PRAGMA foreign_keys = ON');
+  for (const name of readdirSync(migrationsFolder)
+    .filter((f) => f.endsWith('.sql'))
+    .sort()) {
+    if (name === until) break;
+    for (const statement of readFileSync(resolve(migrationsFolder, name), 'utf8')
+      .split('--> statement-breakpoint')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)) {
+      sqlite.run(statement);
+    }
+  }
+  return sqlite;
+}
+
+function applyMigration(sqlite: Database, name: string): void {
+  for (const statement of readFileSync(resolve(migrationsFolder, name), 'utf8')
+    .split('--> statement-breakpoint')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)) {
+    sqlite.run(statement);
+  }
+}
 
 function migrated(): Database {
   const sqlite = new Database(':memory:');
@@ -24,6 +53,49 @@ function insertShare(sqlite: Database, id: string): void {
     )
     .run(id);
 }
+
+describe('0048 shares.password_enc', () => {
+  test('老库升级后新增可空 password_enc，既有分享保留 password_hash 仍可登录', () => {
+    const sqlite = migratedUpTo(PASSWORD_ENC_MIGRATION);
+    try {
+      const before = (
+        sqlite.query('PRAGMA table_info(shares)').all() as Array<{ name: string }>
+      ).map((row) => row.name);
+      expect(before).not.toContain('password_enc');
+      insertShare(sqlite, 'legacy');
+
+      applyMigration(sqlite, PASSWORD_ENC_MIGRATION);
+
+      const column = (
+        sqlite.query('PRAGMA table_info(shares)').all() as Array<{
+          name: string;
+          notnull: number;
+          dflt_value: string | null;
+        }>
+      ).find((row) => row.name === 'password_enc');
+      expect(column).toBeTruthy();
+      expect(column?.notnull).toBe(0);
+      expect(column?.dflt_value).toBeNull();
+
+      const legacy = sqlite.query('SELECT * FROM shares WHERE id = ?').get('legacy') as {
+        password_hash: string;
+        password_enc: string | null;
+      };
+      expect(legacy.password_hash).toBe('h');
+      expect(legacy.password_enc).toBeNull();
+
+      sqlite.query('UPDATE shares SET password_enc = ? WHERE id = ?').run('cipher', 'legacy');
+      const updated = sqlite
+        .query('SELECT password_enc FROM shares WHERE id = ?')
+        .get('legacy') as {
+        password_enc: string | null;
+      };
+      expect(updated.password_enc).toBe('cipher');
+    } finally {
+      sqlite.close();
+    }
+  });
+});
 
 describe('0047 share tables', () => {
   test('shares 表字段与默认值', () => {
@@ -54,6 +126,7 @@ describe('0047 share tables', () => {
         'created_at',
         'expires_at',
         'ended_at',
+        'password_enc',
       ]);
       insertShare(sqlite, 's1');
       const row = sqlite.query('SELECT * FROM shares WHERE id = ?').get('s1') as {

@@ -53,6 +53,7 @@ const MIGRATIONS = [
   '0045_readmit_node_keylog.sql',
   '0046_relay_pack_updated_at.sql',
   '0047_share.sql',
+  '0048_share_password_enc.sql',
 ] as const;
 
 export interface MaterializedMigrations {

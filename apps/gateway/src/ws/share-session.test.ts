@@ -111,6 +111,7 @@ describe('share session index', () => {
         ended = listener;
         return () => {};
       },
+      onSessionsRevoked: () => () => {},
       setViewerCounter: (fn) => {
         counter = fn;
       },
@@ -125,6 +126,36 @@ describe('share session index', () => {
     ended(SCOPE.shareId);
     expect(session.closed).toBe(true);
     expect(counter(SCOPE.shareId)).toBe(0);
+  });
+
+  test('改口令踢人：onSessionsRevoked 用 4401 SHARE_LOGIN_REQUIRED 断开，分享本身不算结束', () => {
+    let revoked!: (shareId: string) => void;
+    const service: ShareWsService = {
+      recordInput: () => {},
+      recordResize: () => {},
+      onEnded: () => () => {},
+      onSessionsRevoked: (listener) => {
+        revoked = listener;
+        return () => {};
+      },
+      setViewerCounter: () => {},
+    };
+    setShareWsServiceResolver(() => service);
+
+    const server = new WebSocketServer();
+    const session = createBorshTestWs();
+    server.handleOpen(session, { shareScope: SCOPE });
+
+    revoked('other-share');
+    expect(session.closed).toBe(false);
+
+    revoked(SCOPE.shareId);
+    expect(session.closed).toBe(true);
+    expect(server.countShareSessions(SCOPE.shareId)).toBe(0);
+    const carrier = session.data.carrier as unknown as {
+      closeCalls: Array<{ code: number; reason: string }>;
+    };
+    expect(carrier.closeCalls).toEqual([{ code: 4401, reason: 'SHARE_LOGIN_REQUIRED' }]);
   });
 });
 

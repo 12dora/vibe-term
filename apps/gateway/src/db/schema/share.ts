@@ -21,6 +21,8 @@ export const shares = sqliteTable(
     state: text('state').notNull().default('active'),
     endReason: text('end_reason'),
     passwordHash: text('password_hash').notNull(),
+    /** 口令密文（AES-256-GCM，主密钥加密）；0048 之前创建的分享为 null，只能改不能看。 */
+    passwordEnc: text('password_enc'),
     origin: text('origin').notNull(),
     url: text('url').notNull(),
     recordLog: integer('record_log', { mode: 'boolean' }).notNull().default(true),

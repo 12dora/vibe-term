@@ -37,7 +37,7 @@ export type ShareRow = {
   endedAt: number | null;
 };
 
-export type ShareInsert = ShareRow & { passwordHash: string };
+export type ShareInsert = ShareRow & { passwordHash: string; passwordEnc?: string | null };
 
 export type ShareLogAppend = {
   at: number;
@@ -100,6 +100,7 @@ export class ShareStore {
       .values({
         ...record,
         endReason: record.endReason,
+        passwordEnc: record.passwordEnc ?? null,
         expiresAt: record.expiresAt,
         endedAt: record.endedAt,
         logPurgedAt: record.logPurgedAt,
@@ -119,6 +120,23 @@ export class ShareStore {
       .where(eq(shares.id, id))
       .get();
     return row?.passwordHash ?? null;
+  }
+
+  /** 口令密文；0048 迁移之前创建的分享为 null（只存了哈希，无法回显）。 */
+  passwordEnc(id: string): string | null {
+    const row = this.db
+      .select({ passwordEnc: shares.passwordEnc })
+      .from(shares)
+      .where(eq(shares.id, id))
+      .get();
+    return row?.passwordEnc ?? null;
+  }
+
+  updatePassword(id: string, passwordHash: string, passwordEnc: string | null): boolean {
+    const before = this.db.select({ id: shares.id }).from(shares).where(eq(shares.id, id)).get();
+    if (!before) return false;
+    this.db.update(shares).set({ passwordHash, passwordEnc }).where(eq(shares.id, id)).run();
+    return true;
   }
 
   list(filter?: { deviceId?: string; windowId?: string }): ShareRow[] {
@@ -305,6 +323,18 @@ export class ShareStore {
 
   deleteAccessToken(tokenHash: string): void {
     this.db.delete(shareAccessTokens).where(eq(shareAccessTokens.tokenHash, tokenHash)).run();
+  }
+
+  /** 作废某分享的全部访问凭证，返回删除条数（改口令踢人用）。 */
+  deleteAccessTokensByShare(shareId: string): number {
+    const rows = this.db
+      .select({ id: shareAccessTokens.id })
+      .from(shareAccessTokens)
+      .where(eq(shareAccessTokens.shareId, shareId))
+      .all();
+    if (rows.length === 0) return 0;
+    this.db.delete(shareAccessTokens).where(eq(shareAccessTokens.shareId, shareId)).run();
+    return rows.length;
   }
 
   sweepAccessTokens(now: number): void {

@@ -360,6 +360,7 @@ describe('share input recording', () => {
       },
       recordResize: (_scope, paneId, cols, rows) => resizes.push([paneId, cols, rows]),
       onEnded: () => () => {},
+      onSessionsRevoked: () => () => {},
       setViewerCounter: () => {},
     };
     setShareWsServiceResolver(() => service);

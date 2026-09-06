@@ -564,3 +564,125 @@ describe('日志读取', () => {
     expect(service.readLog('missing')).toBeNull();
   });
 });
+
+describe('口令查看与修改', () => {
+  test('create 落密文，getPassword 用真实主密钥往返回明文', async () => {
+    const service = makeService();
+    const created = await createShare(service, { password: 'hunter2000' });
+    const enc = store.passwordEnc(created.share.id);
+    expect(enc).toBeTruthy();
+    expect(enc).not.toBe('hunter2000');
+    await expect(service.getPassword(created.share.id)).resolves.toEqual({
+      ok: true,
+      password: 'hunter2000',
+    });
+  });
+
+  test('老分享（password_enc 为 null）报 SHARE_PASSWORD_UNAVAILABLE；未知分享报 SHARE_NOT_FOUND', async () => {
+    const service = makeService();
+    const created = await createShare(service);
+    store.updatePassword(created.share.id, 'plain:secret123', null);
+    await expect(service.getPassword(created.share.id)).resolves.toEqual({
+      ok: false,
+      code: 'SHARE_PASSWORD_UNAVAILABLE',
+    });
+    await expect(service.getPassword('missing')).resolves.toEqual({
+      ok: false,
+      code: 'SHARE_NOT_FOUND',
+    });
+  });
+
+  test('主密钥不匹配时解密错误上抛，不伪装成不可回显', async () => {
+    const failure = new Error('master key mismatch');
+    const service = makeService({
+      encryptPassword: async (password) => `enc:${password}`,
+      decryptPassword: async () => {
+        throw failure;
+      },
+    });
+    const created = await createShare(service);
+    expect(store.passwordEnc(created.share.id)).toBe('enc:secret123');
+    await expect(service.getPassword(created.share.id)).rejects.toBe(failure);
+  });
+
+  test('setPassword 换掉哈希与密文，旧口令失效、新口令可登录', async () => {
+    const service = makeService();
+    const created = await createShare(service);
+    const result = await service.setPassword(created.share.id, 'brand-new-pass');
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('unreachable');
+    expect(result.endedSessions).toBe(0);
+    expect(result.share.id).toBe(created.share.id);
+    expect(store.passwordHash(created.share.id)).toBe('plain:brand-new-pass');
+    await expect(service.getPassword(created.share.id)).resolves.toEqual({
+      ok: true,
+      password: 'brand-new-pass',
+    });
+
+    const stale = await service.loginAccess(created.share.id, 'secret123', '203.0.113.7');
+    expect(stale.ok).toBe(false);
+    const fresh = await service.loginAccess(created.share.id, 'brand-new-pass', '203.0.113.8');
+    expect(fresh.ok).toBe(true);
+  });
+
+  test('endSessions=false 保留在线凭证；=true 作废全部凭证并通知 ws 层', async () => {
+    const service = makeService();
+    const created = await createShare(service);
+    const revoked: string[] = [];
+    service.onSessionsRevoked((event) => revoked.push(event.shareId));
+
+    const first = await service.loginAccess(created.share.id, 'secret123', '203.0.113.1');
+    if (!first.ok) throw new Error('login failed');
+    const kept = await service.setPassword(created.share.id, 'next-pass-1', {
+      endSessions: false,
+    });
+    expect(kept.ok && kept.endedSessions).toBe(0);
+    expect(revoked).toEqual([]);
+    expect(service.verifyAccessToken(first.token)).not.toBeNull();
+
+    const second = await service.loginAccess(created.share.id, 'next-pass-1', '203.0.113.2');
+    if (!second.ok) throw new Error('login failed');
+    const ended = await service.setPassword(created.share.id, 'next-pass-2', {
+      endSessions: true,
+    });
+    expect(ended.ok && ended.endedSessions).toBe(2);
+    expect(revoked).toEqual([created.share.id]);
+    expect(service.verifyAccessToken(first.token)).toBeNull();
+    expect(service.verifyAccessToken(second.token)).toBeNull();
+  });
+
+  test('onSessionsRevoked 退订后不再收到事件，监听器抛错不影响返回值', async () => {
+    const service = makeService();
+    const created = await createShare(service);
+    const seen: string[] = [];
+    const off = service.onSessionsRevoked(() => {
+      throw new Error('listener boom');
+    });
+    service.onSessionsRevoked((event) => seen.push(event.shareId));
+    const first = await service.setPassword(created.share.id, 'aaa-bbb-1', { endSessions: true });
+    expect(first.ok).toBe(true);
+    expect(seen).toEqual([created.share.id]);
+
+    off();
+    await service.setPassword(created.share.id, 'aaa-bbb-2', { endSessions: true });
+    expect(seen).toEqual([created.share.id, created.share.id]);
+  });
+
+  test('太短的口令、已结束与不存在的分享按码拒绝', async () => {
+    const service = makeService();
+    const created = await createShare(service);
+    await expect(service.setPassword(created.share.id, 'abc')).resolves.toEqual({
+      ok: false,
+      code: 'SHARE_PASSWORD_TOO_SHORT',
+    });
+    await expect(service.setPassword('missing', 'long-enough')).resolves.toEqual({
+      ok: false,
+      code: 'SHARE_NOT_FOUND',
+    });
+    service.revoke(created.share.id);
+    await expect(service.setPassword(created.share.id, 'long-enough')).resolves.toEqual({
+      ok: false,
+      code: 'SHARE_ENDED',
+    });
+  });
+});

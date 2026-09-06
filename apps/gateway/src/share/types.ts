@@ -15,6 +15,7 @@ export type ShareErrorCode =
   | 'SHARE_NOT_FOUND'
   | 'SHARE_WINDOW_NOT_FOUND'
   | 'SHARE_PASSWORD_TOO_SHORT'
+  | 'SHARE_PASSWORD_UNAVAILABLE'
   | 'SHARE_ORIGIN_INVALID'
   | 'SHARE_AUTH_REQUIRED'
   | 'SHARE_ENDED';
@@ -53,6 +54,17 @@ export type VerifiedShareAccess = {
 
 export type ShareEndedEvent = { shareId: string; reason: ShareEndReason };
 
+/** 改口令时选择「踢掉已登录的人」：访问凭证已作废，ws 层需据此断开该分享的全部连接。 */
+export type ShareSessionsRevokedEvent = { shareId: string };
+
+export type SharePasswordResult =
+  | { ok: true; password: string }
+  | { ok: false; code: 'SHARE_NOT_FOUND' | 'SHARE_PASSWORD_UNAVAILABLE' };
+
+export type ShareSetPasswordResult =
+  | { ok: true; share: ShareRecord; endedSessions: number }
+  | { ok: false; code: 'SHARE_NOT_FOUND' | 'SHARE_ENDED' | 'SHARE_PASSWORD_TOO_SHORT' };
+
 export type ShareListFilter = { deviceId?: string; windowId?: string };
 
 export type ShareListResult = { active: ShareRecord[]; history: ShareRecord[] };
@@ -69,6 +81,14 @@ export interface ShareService {
   create(input: ShareCreateInput): Promise<ShareCreateResult>;
   list(filter?: ShareListFilter): ShareListResult;
   get(id: string): ShareRecord | null;
+  /** 回显口令明文；密文缺失（0048 之前创建）返回 SHARE_PASSWORD_UNAVAILABLE，主密钥不匹配则抛 CryptoDecryptError。 */
+  getPassword(id: string): Promise<SharePasswordResult>;
+  /** 改口令；`endSessions` 为真时同时作废该分享的全部访问凭证并断开在线连接。 */
+  setPassword(
+    id: string,
+    password: string,
+    options?: { endSessions?: boolean }
+  ): Promise<ShareSetPasswordResult>;
   revoke(id: string): ShareRecord | null;
   remove(id: string): boolean;
   endShare(id: string, reason: ShareEndReason): ShareRecord | null;
@@ -80,6 +100,7 @@ export interface ShareService {
   loginAccess(shareId: string, password: string, clientIp: string): Promise<ShareLoginResult>;
   logoutAccess(token: string): void;
   onEnded(listener: (event: ShareEndedEvent) => void): () => void;
+  onSessionsRevoked(listener: (event: ShareSessionsRevokedEvent) => void): () => void;
   recordInput(scope: ShareScope, paneId: string, bytes: Uint8Array): void;
   recordResize(scope: ShareScope, paneId: string, cols: number, rows: number): void;
   setViewerCounter(fn: ShareViewerCounter | null): void;
@@ -102,6 +123,8 @@ export type ShareServiceDeps = {
   releaseRuntime?: (deviceId: string, runtime: ShareRecorderRuntime) => Promise<void>;
   hashPassword?: (password: string) => Promise<string>;
   verifyPassword?: (stored: string, password: string) => Promise<boolean>;
+  encryptPassword?: (password: string) => Promise<string>;
+  decryptPassword?: (ciphertext: string, shareId: string) => Promise<string>;
   recorderFlushIntervalMs?: number;
   recorderPollIntervalMs?: number;
   watchIntervalMs?: number;

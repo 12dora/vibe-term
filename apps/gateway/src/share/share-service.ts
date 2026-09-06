@@ -20,6 +20,7 @@ import {
   defaultShareOriginSources,
   resolveSharePrefix,
 } from './share-origins';
+import { SharePasswordManager } from './share-password-service';
 import { ShareLoginLimiter } from './share-rate-limit';
 import { ShareRecorder, type ShareRecorderRuntime, hasWindow } from './share-recorder';
 import {
@@ -29,13 +30,7 @@ import {
   defaultReleaseRuntime,
   normalizeDefaultOrigin,
 } from './share-service-support';
-import {
-  type ShareLogAppend,
-  type ShareRow,
-  ShareStore,
-  hashSharePassword,
-  verifySharePassword,
-} from './share-store';
+import { type ShareLogAppend, type ShareRow, ShareStore, verifySharePassword } from './share-store';
 import {
   SHARE_ACCESS_TTL_MS,
   generateShareId,
@@ -51,8 +46,11 @@ import type {
   ShareListResult,
   ShareLoginResult,
   ShareOriginsView,
+  SharePasswordResult,
   ShareService,
   ShareServiceDeps,
+  ShareSessionsRevokedEvent,
+  ShareSetPasswordResult,
   ShareViewerCounter,
   VerifiedShareAccess,
 } from './types';
@@ -67,7 +65,9 @@ class ShareServiceImpl implements ShareService {
   private readonly store: ShareStore;
   private readonly now: () => number;
   private readonly limiter: ShareLoginLimiter;
+  private readonly passwords: SharePasswordManager;
   private readonly listeners = new Set<(event: ShareEndedEvent) => void>();
+  private readonly revokeListeners = new Set<(event: ShareSessionsRevokedEvent) => void>();
   private readonly recorders = new Map<string, ShareRecorder>();
   private readonly expiryTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private viewerCounter: ShareViewerCounter | null = null;
@@ -80,6 +80,7 @@ class ShareServiceImpl implements ShareService {
     this.store = deps.store ?? new ShareStore();
     this.now = deps.now ?? Date.now;
     this.limiter = new ShareLoginLimiter(this.now);
+    this.passwords = new SharePasswordManager(this.store, deps);
   }
 
   private snapshotOf(deviceId: string): StateSnapshotPayload | null {
@@ -170,8 +171,11 @@ class ShareServiceImpl implements ShareService {
       expiresAt: input.expiresInMs === null ? null : now + Math.max(0, input.expiresInMs),
       endedAt: null,
     };
-    const hash = await (this.deps.hashPassword ?? hashSharePassword)(password);
-    this.store.insert({ ...row, passwordHash: hash });
+    const [hash, enc] = await Promise.all([
+      this.passwords.hash(password),
+      this.passwords.encrypt(password),
+    ]);
+    this.store.insert({ ...row, passwordHash: hash, passwordEnc: enc });
     this.scheduleExpiry(row);
     void this.startRecorder(row);
     return { ok: true, share: this.toRecord(row), password };
@@ -190,6 +194,34 @@ class ShareServiceImpl implements ShareService {
   get(id: string): ShareRecord | null {
     const row = this.store.get(id);
     return row ? this.toRecord(row) : null;
+  }
+
+  getPassword(id: string): Promise<SharePasswordResult> {
+    return this.passwords.read(id);
+  }
+
+  async setPassword(
+    id: string,
+    password: string,
+    options: { endSessions?: boolean } = {}
+  ): Promise<ShareSetPasswordResult> {
+    const result = await this.passwords.write(id, password, {
+      endSessions: options.endSessions === true,
+      onRevoked: (shareId) => this.emitSessionsRevoked(shareId),
+    });
+    if (!result.ok) return result;
+    return { ok: true, share: this.toRecord(result.row), endedSessions: result.endedSessions };
+  }
+
+  private emitSessionsRevoked(shareId: string): void {
+    const event: ShareSessionsRevokedEvent = { shareId };
+    for (const listener of this.revokeListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error('[share] onSessionsRevoked listener failed:', error);
+      }
+    }
   }
 
   revoke(id: string): ShareRecord | null {
@@ -363,6 +395,13 @@ class ShareServiceImpl implements ShareService {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
+    };
+  }
+
+  onSessionsRevoked(listener: (event: ShareSessionsRevokedEvent) => void): () => void {
+    this.revokeListeners.add(listener);
+    return () => {
+      this.revokeListeners.delete(listener);
     };
   }
 
