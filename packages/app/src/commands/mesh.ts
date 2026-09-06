@@ -56,7 +56,7 @@ export async function runMeshResetRoot(
 /**
  * 删掉账户名下**全部**通行密钥，保留 TOTP 与已有会话。
  *
- * 逃生舱：二次验证按 origin 生效（见 docs/auth/2026090701-passkey-per-origin.md），认证器丢了
+ * 逃生舱：二次验证按 origin 生效（见 docs/security/login-security.md），认证器丢了
  * 之后，注册过通行密钥的那个地址就再也登不进去。这条命令只签 `remove-passkey`，不动根钥，
  * 不比 `hub user passwd --full-reset` 多撤销任何东西。
  */

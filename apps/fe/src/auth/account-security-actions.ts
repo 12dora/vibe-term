@@ -235,7 +235,7 @@ const META_KEY_AFTER_ROTATE_ID = 'rotate-root';
 const ROTATE_OP = { op: 'rotate' } as const;
 
 /**
- * 改密之后重封中继密封包（docs/relay §5b）。
+ * 改密之后重封中继密封包（docs/architecture/relay.md §5b）。
  *
  * root_epoch 一变，旧密封包的 AAD 就对不上（`rotate-root` 还会被中继侧的根轮换 sidecar 直接
  * 清空），不重封则别的机器再也无法用「租户编号 + 密码」加入。

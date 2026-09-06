@@ -1,5 +1,5 @@
 // relay-boot 写给调用方的 state JSON：schema 与 `--mode hub` 的说明都收在这里，
-// 让 relay-boot.ts 只留编排逻辑。字段含义见 docs/testing/2026090604-relay-live-harness.md。
+// 让 relay-boot.ts 只留编排逻辑。字段含义见 docs/development/relay-live-harness.md。
 
 import { type Session, cookieHeader } from './relay-boot-auth.ts';
 

@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议错误码定义
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 export const ERROR_UNSUPPORTED_PROTOCOL = 1001;
 export const ERROR_INVALID_FRAME = 1002;

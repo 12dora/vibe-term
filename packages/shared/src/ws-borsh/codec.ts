@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议编解码器
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 import type { Schema } from '@zorsh/zorsh';
 import type { b } from '@zorsh/zorsh';

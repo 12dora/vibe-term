@@ -5,7 +5,7 @@
 //   绝不读取仓库 env 文件、绝不净化路径键（生产里这些键正是安装目录路径）。
 // - development / test：净化继承的安装版毒变量 → 读 env/<env>.env / env/<env>.env.local
 //   → override=true 应用，使仓库文件成为该环境的唯一真相。
-// 详见 docs 与 prompt-archives/2026061301-env-three-tier/plan-00.md。
+// 详见 docs/development/environments.md。
 
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';

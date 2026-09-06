@@ -1,5 +1,5 @@
 // WebSocket Borsh 协议分片重组
-// 参考: docs/ws-protocol/2026021402-ws-borsh-v1-spec.md
+// 参考: docs/architecture/ws-borsh-v1-spec.md
 
 import { ERROR_FRAME_TOO_LARGE, ERROR_INVALID_FRAME, WsBorshError } from './errors';
 
