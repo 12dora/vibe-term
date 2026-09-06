@@ -1,8 +1,8 @@
 import { t } from '../i18n';
+import { requireFlagValue } from '../lib/args';
 import type { FetchLike } from '../lib/fetch-like';
 import { loadInstallEnv } from '../lib/local-auth';
 import { promptPassword } from '../lib/prompt';
-import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import {
   type RelayIo,
@@ -300,14 +300,14 @@ type QuotaPatch = {
 
 export function readQuotaFlags(parsed: ParsedArgs): QuotaPatch {
   const patch: QuotaPatch = {};
-  const maxNodes = asString(parsed.flags['max-nodes']);
-  if (maxNodes) patch.maxNodes = parseCountFlag(maxNodes, 'max-nodes');
-  const maxStreams = asString(parsed.flags['max-streams']);
-  if (maxStreams) patch.maxStreams = parseCountFlag(maxStreams, 'max-streams');
-  const bandwidth = asString(parsed.flags.bandwidth);
-  if (bandwidth) patch.bandwidthBytesPerSec = parseBandwidthFlag(bandwidth);
-  const maxFile = asString(parsed.flags['max-file-mb']);
-  if (maxFile) patch.maxFileBytes = parseMaxFileFlag(maxFile);
+  const maxNodes = requireFlagValue(parsed.flags, 'max-nodes');
+  if (maxNodes !== undefined) patch.maxNodes = parseCountFlag(maxNodes, 'max-nodes');
+  const maxStreams = requireFlagValue(parsed.flags, 'max-streams');
+  if (maxStreams !== undefined) patch.maxStreams = parseCountFlag(maxStreams, 'max-streams');
+  const bandwidth = requireFlagValue(parsed.flags, 'bandwidth');
+  if (bandwidth !== undefined) patch.bandwidthBytesPerSec = parseBandwidthFlag(bandwidth);
+  const maxFile = requireFlagValue(parsed.flags, 'max-file-mb');
+  if (maxFile !== undefined) patch.maxFileBytes = parseMaxFileFlag(maxFile);
   return patch;
 }
 
@@ -340,12 +340,12 @@ type LimitsPatch = {
 
 export function readLimitsFlags(parsed: ParsedArgs): LimitsPatch {
   const patch: LimitsPatch = {};
-  const maxTenants = asString(parsed.flags['max-tenants']);
-  if (maxTenants) patch.maxTenants = parseMaxTenantsFlag(maxTenants);
-  const bandwidth = asString(parsed.flags['total-bandwidth-kb']);
-  if (bandwidth) patch.totalBandwidthBytesPerSec = parseTotalBandwidthFlag(bandwidth);
-  const fairShare = asString(parsed.flags['fair-share']);
-  if (fairShare) patch.fairShare = parseFairShareFlag(fairShare);
+  const maxTenants = requireFlagValue(parsed.flags, 'max-tenants');
+  if (maxTenants !== undefined) patch.maxTenants = parseMaxTenantsFlag(maxTenants);
+  const bandwidth = requireFlagValue(parsed.flags, 'total-bandwidth-kb');
+  if (bandwidth !== undefined) patch.totalBandwidthBytesPerSec = parseTotalBandwidthFlag(bandwidth);
+  const fairShare = requireFlagValue(parsed.flags, 'fair-share');
+  if (fairShare !== undefined) patch.fairShare = parseFairShareFlag(fairShare);
   return patch;
 }
 

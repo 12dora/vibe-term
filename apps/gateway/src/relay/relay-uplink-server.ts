@@ -365,6 +365,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.closeTimers.clear();
     for (const link of [...this.accepted]) link.close('relay-stop');
     this.accepted.clear();
+    for (const bucket of this.buckets.values()) bucket.cancelAll();
     this.buckets.clear();
     this.bandwidth.clear();
     this.lastUsagePush.clear();

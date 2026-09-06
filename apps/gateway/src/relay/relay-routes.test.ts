@@ -122,6 +122,35 @@ describe('relay enroll', () => {
     expect(((await reissued.json()) as { tenant_id: string }).tenant_id).toBe(first.id);
   });
 
+  test('a tenant cap lowered during the password check is honoured', async () => {
+    const relay = await boot();
+    await relay.createTenant();
+    const store = relay.runtime.configStore;
+    const real = store.ensure.bind(store);
+    const seen: Array<number | null> = [];
+    const spy = spyOn(store, 'ensure').mockImplementation((now: number) => {
+      const record = real(now);
+      seen.push(record.limits.maxTenants);
+      // 第一次读之后立刻改上限：等价于运营者趁 checkEnrollPassword 那一段 await 调小了上限。
+      if (seen.length === 1) {
+        store.setLimits({ maxTenants: 1, totalBandwidthBytesPerSec: null, fairShare: true }, now);
+      }
+      return record;
+    });
+    const newcomer = rootKeyFromSeed(randomBytes(32));
+    const res = await relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enrollBody(relay, newcomer),
+    });
+    spy.mockRestore();
+    // 口令校验之前读到的还是「不限」：409 只能来自校验之后的重读。
+    expect(seen[0]).toBeNull();
+    expect(seen.length).toBeGreaterThan(1);
+    expect(res.status).toBe(409);
+    expect(relay.runtime.tenants.count()).toBe(1);
+  });
+
   test('rejects a proof signed for another relay host', async () => {
     const relay = await boot();
     const root = rootKeyFromSeed(randomBytes(32));

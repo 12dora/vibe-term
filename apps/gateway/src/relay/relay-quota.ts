@@ -77,23 +77,41 @@ export type RelaySleep = (ms: number) => Promise<void>;
 
 export const RELAY_TOKEN_BUCKET_BYPASS_BYTES = 4 * 1024;
 
+/** 每笔待发放请求的取消身份：一条流可以派生多个把手，各自独立取消。 */
+type TakeOwner = { closed: boolean };
+
 type PendingTake = {
   state: TokenStreamState;
+  owner: TakeOwner;
   remaining: number;
   resolve: () => void;
   reject: (reason?: unknown) => void;
 };
 
-type TokenStreamState = {
+type TokenStreamState = TakeOwner & {
   pending: PendingTake[];
   queued: boolean;
-  closed: boolean;
 };
 
-export type RelayTokenStream = {
+/** 轮转里下一笔该发放的请求，以及它走的是旁路道还是流队列。 */
+type NextTake = { take: PendingTake; fromBypass: boolean };
+
+export type RelayTokenHandle = {
   take(bytes: number): Promise<void>;
   close(): void;
 };
+
+export type RelayTokenStream = RelayTokenHandle & {
+  /** 派生一个可单独关闭的把手：关掉它只撤自己排队的请求，同流其他把手不受影响。 */
+  createHandle(): RelayTokenHandle;
+};
+
+export type RelayTokenBucketOptions = {
+  /** 关掉后 ≤4 KiB 的帧也进轮转队列——中继级总闸要按租户分账，小帧不能从旁路溜过去。 */
+  bypassSmallFrames?: boolean;
+};
+
+const CLOSED_MESSAGE = 'relay token stream closed';
 
 const defaultSleep: RelaySleep = (ms) =>
   new Promise((resolve) => {
@@ -102,25 +120,29 @@ const defaultSleep: RelaySleep = (ms) =>
 
 /**
  * 每租户带宽令牌桶：只延迟不丢帧。容量 = 1 秒的额度，突发不超过 1 秒速率。
- * 大帧按逻辑流轮转分配令牌；不超过 4 KiB 的帧走优先通道，避免被 bulk 流阻塞。
+ * 大帧按逻辑流轮转分配令牌；不超过 4 KiB 的帧默认走优先通道，避免被 bulk 流阻塞。
  * `rate = null` 时不限速。
  */
 export class RelayTokenBucket {
   private tokens: number;
   private lastRefillAt: number;
+  private readonly states = new Set<TokenStreamState>();
   private readonly defaultStream = this.createState();
   private readonly bypass: PendingTake[] = [];
   private readonly ready: TokenStreamState[] = [];
+  private readonly bypassSmallFrames: boolean;
   private draining = false;
   private lastGrantWasBypass = false;
 
   constructor(
     private rate: number | null,
     private readonly now: () => number = Date.now,
-    private readonly sleep: RelaySleep = defaultSleep
+    private readonly sleep: RelaySleep = defaultSleep,
+    options: RelayTokenBucketOptions = {}
   ) {
     this.tokens = rate ?? 0;
     this.lastRefillAt = now();
+    this.bypassSmallFrames = options.bypassSmallFrames !== false;
   }
 
   setRate(rate: number | null): void {
@@ -141,31 +163,54 @@ export class RelayTokenBucket {
     return this.rate;
   }
 
+  /** 还没发放完的请求笔数；泄漏回归测试靠它断言「关掉的把手不留队列」。 */
+  get pendingCount(): number {
+    let total = this.bypass.length;
+    for (const state of this.states) total += state.pending.length;
+    return total;
+  }
+
   createStream(): RelayTokenStream {
     const state = this.createState();
     return {
-      take: (bytes) => this.takeFor(state, bytes),
+      take: (bytes) => this.takeFor(state, state, bytes),
       close: () => this.closeStream(state),
+      createHandle: () => this.createHandleFor(state),
     };
   }
 
   take(bytes: number): Promise<void> {
-    return this.takeFor(this.defaultStream, bytes);
+    return this.takeFor(this.defaultStream, this.defaultStream, bytes);
   }
 
-  private takeFor(state: TokenStreamState, bytes: number): Promise<void> {
-    if (state.closed) return Promise.reject(new Error('relay token stream closed'));
+  /** 停机：撤掉全部排队请求，含桶自带的默认流。 */
+  cancelAll(reason: unknown = new Error('relay token bucket closed')): void {
+    this.rejectAll(reason);
+  }
+
+  private createHandleFor(state: TokenStreamState): RelayTokenHandle {
+    const owner: TakeOwner = { closed: false };
+    return {
+      take: (bytes) => this.takeFor(state, owner, bytes),
+      close: () => this.closeOwner(state, owner),
+    };
+  }
+
+  private takeFor(state: TokenStreamState, owner: TakeOwner, bytes: number): Promise<void> {
+    if (state.closed || owner.closed) return Promise.reject(new Error(CLOSED_MESSAGE));
     if (this.rate === null || bytes <= 0) return Promise.resolve();
-    if (bytes <= RELAY_TOKEN_BUCKET_BYPASS_BYTES) return this.takeBypass(state, bytes);
+    if (this.bypassSmallFrames && bytes <= RELAY_TOKEN_BUCKET_BYPASS_BYTES) {
+      return this.takeBypass(state, owner, bytes);
+    }
     const pending = new Promise<void>((resolve, reject) => {
-      state.pending.push({ state, remaining: bytes, resolve, reject });
+      state.pending.push({ state, owner, remaining: bytes, resolve, reject });
     });
     this.schedule(state);
     this.ensureDrain();
     return pending;
   }
 
-  private takeBypass(state: TokenStreamState, bytes: number): Promise<void> {
+  private takeBypass(state: TokenStreamState, owner: TakeOwner, bytes: number): Promise<void> {
     const rate = this.rate;
     if (rate === null) return Promise.resolve();
     this.refill(rate);
@@ -174,14 +219,16 @@ export class RelayTokenBucket {
       return Promise.resolve();
     }
     const pending = new Promise<void>((resolve, reject) => {
-      this.bypass.push({ state, remaining: bytes, resolve, reject });
+      this.bypass.push({ state, owner, remaining: bytes, resolve, reject });
     });
     this.ensureDrain();
     return pending;
   }
 
   private createState(): TokenStreamState {
-    return { pending: [], queued: false, closed: false };
+    const state: TokenStreamState = { pending: [], queued: false, closed: false };
+    this.states.add(state);
+    return state;
   }
 
   private schedule(state: TokenStreamState): void {
@@ -201,6 +248,11 @@ export class RelayTokenBucket {
       });
   }
 
+  /**
+   * 一轮只发放整块（`chunk`），攒不够就先睡。
+   * 发放零头会毁掉轮转：谁分到零头谁就要等下一次补给才凑得齐一块，
+   * 而下一次补给又整块给了对手——帧长正好等于轮转粒度时会锁成一边倒。
+   */
   private async drain(): Promise<void> {
     while (this.hasPending()) {
       const rate = this.rate;
@@ -209,49 +261,52 @@ export class RelayTokenBucket {
         return;
       }
       this.refill(rate);
-      if (this.tokens <= 0) {
-        const next = this.nextTake();
-        if (!next) {
-          const stale = this.ready.shift();
-          if (stale) stale.queued = false;
-          continue;
-        }
-        const demand = Math.min(rate, next.remaining, RELAY_TOKEN_BUCKET_BYPASS_BYTES);
-        await this.sleep(Math.max(1, Math.ceil(((demand - this.tokens) * 1000) / rate)));
+      const next = this.nextTake();
+      if (!next) {
+        this.dropStale();
         continue;
       }
-      const bypass = this.shouldServeBypass() ? this.bypass[0] : undefined;
-      if (bypass) {
-        const spend = Math.min(this.tokens, bypass.remaining);
-        this.tokens -= spend;
-        bypass.remaining -= spend;
-        if (bypass.remaining <= 0) {
-          this.bypass.shift();
-          bypass.resolve();
-        }
-        this.lastGrantWasBypass = true;
+      const chunk = Math.min(rate, next.take.remaining, RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+      if (this.tokens < chunk) {
+        await this.sleep(Math.max(1, Math.ceil(((chunk - this.tokens) * 1000) / rate)));
         continue;
       }
-      const state = this.ready.shift();
-      if (!state) continue;
-      state.queued = false;
-      const take = state.pending[0];
-      if (!take) continue;
-      const spend = Math.min(this.tokens, take.remaining, RELAY_TOKEN_BUCKET_BYPASS_BYTES);
-      this.tokens -= spend;
-      take.remaining -= spend;
+      this.grant(next, chunk);
+    }
+  }
+
+  /** 队头的流已经没有待发放请求了（把手被关掉），把它从轮转里摘掉。 */
+  private dropStale(): void {
+    const stale = this.ready.shift();
+    if (stale) stale.queued = false;
+  }
+
+  private grant(next: NextTake, chunk: number): void {
+    const take = next.take;
+    this.tokens -= chunk;
+    take.remaining -= chunk;
+    if (next.fromBypass) {
       if (take.remaining <= 0) {
-        state.pending.shift();
+        this.bypass.shift();
         take.resolve();
       }
-      this.lastGrantWasBypass = false;
-      this.schedule(state);
+      this.lastGrantWasBypass = true;
+      return;
     }
+    const state = this.ready.shift();
+    if (state) state.queued = false;
+    if (take.remaining <= 0) {
+      take.state.pending.shift();
+      take.resolve();
+    }
+    this.lastGrantWasBypass = false;
+    if (state) this.schedule(state);
   }
 
   private resolveAll(): void {
     for (const take of this.bypass.splice(0)) take.resolve();
-    for (const state of this.ready.splice(0)) {
+    this.ready.length = 0;
+    for (const state of this.states) {
       state.queued = false;
       for (const take of state.pending.splice(0)) take.resolve();
     }
@@ -259,7 +314,8 @@ export class RelayTokenBucket {
 
   private rejectAll(reason: unknown): void {
     for (const take of this.bypass.splice(0)) take.reject(reason);
-    for (const state of this.ready.splice(0)) {
+    this.ready.length = 0;
+    for (const state of this.states) {
       state.queued = false;
       for (const take of state.pending.splice(0)) take.reject(reason);
     }
@@ -269,8 +325,13 @@ export class RelayTokenBucket {
     return this.bypass.length > 0 || this.ready.length > 0;
   }
 
-  private nextTake(): PendingTake | undefined {
-    return this.shouldServeBypass() ? this.bypass[0] : this.ready[0]?.pending[0];
+  private nextTake(): NextTake | undefined {
+    if (this.shouldServeBypass()) {
+      const take = this.bypass[0];
+      return take ? { take, fromBypass: true } : undefined;
+    }
+    const take = this.ready[0]?.pending[0];
+    return take ? { take, fromBypass: false } : undefined;
   }
 
   private shouldServeBypass(): boolean {
@@ -280,18 +341,36 @@ export class RelayTokenBucket {
   private closeStream(state: TokenStreamState): void {
     if (state.closed) return;
     state.closed = true;
-    if (state.queued) {
+    this.states.delete(state);
+    this.dropTakes(state, null);
+  }
+
+  private closeOwner(state: TokenStreamState, owner: TakeOwner): void {
+    if (owner.closed) return;
+    owner.closed = true;
+    this.dropTakes(state, owner);
+  }
+
+  /** `owner` 为 null 时撤掉整条流的请求，否则只撤该把手自己那几笔。 */
+  private dropTakes(state: TokenStreamState, owner: TakeOwner | null): void {
+    const reason = new Error(CLOSED_MESSAGE);
+    const owned = (take: PendingTake): boolean => owner === null || take.owner === owner;
+    for (let i = state.pending.length - 1; i >= 0; i--) {
+      const take = state.pending[i];
+      if (!take || !owned(take)) continue;
+      state.pending.splice(i, 1);
+      take.reject(reason);
+    }
+    for (let i = this.bypass.length - 1; i >= 0; i--) {
+      const take = this.bypass[i];
+      if (!take || take.state !== state || !owned(take)) continue;
+      this.bypass.splice(i, 1);
+      take.reject(reason);
+    }
+    if (state.queued && state.pending.length === 0) {
       const index = this.ready.indexOf(state);
       if (index >= 0) this.ready.splice(index, 1);
       state.queued = false;
-    }
-    const reason = new Error('relay token stream closed');
-    for (const take of state.pending.splice(0)) take.reject(reason);
-    for (let i = this.bypass.length - 1; i >= 0; i--) {
-      const take = this.bypass[i];
-      if (take?.state !== state) continue;
-      this.bypass.splice(i, 1);
-      take.reject(reason);
     }
   }
 

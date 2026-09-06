@@ -225,6 +225,51 @@ describe('relay quota', () => {
     await Promise.resolve();
   });
 
+  test('closing a derived handle cancels only its own takes', async () => {
+    let clock = 0;
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      async (ms) => {
+        clock += ms;
+      },
+      { bypassSmallFrames: false }
+    );
+    const stream = bucket.createStream();
+    const first = stream.createHandle();
+    const second = stream.createHandle();
+    const doomed = first.take(8_192);
+    const kept = second.take(8_192);
+    first.close();
+    expect(bucket.pendingCount).toBe(1);
+    await expect(doomed).rejects.toThrow('relay token stream closed');
+    await expect(first.take(1)).rejects.toThrow('relay token stream closed');
+    await kept;
+    expect(bucket.pendingCount).toBe(0);
+  });
+
+  test('bypassSmallFrames off sends small frames through the rotation', async () => {
+    let clock = 0;
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      async (ms) => {
+        clock += ms;
+      },
+      { bypassSmallFrames: false }
+    );
+    const large = bucket.createStream();
+    const small = bucket.createStream();
+    const order: string[] = [];
+    await large.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    await Promise.all([
+      large.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES * 3).then(() => order.push('large')),
+      small.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).then(() => order.push('small')),
+    ]);
+    // 小帧没有旁路可走，只能按轮转排队：它比大帧短，所以先完成。
+    expect(order).toEqual(['small', 'large']);
+  });
+
   test('unlimited rate never sleeps', async () => {
     let slept = 0;
     const bucket = new RelayTokenBucket(
@@ -361,6 +406,89 @@ describe('relay bandwidth limiter', () => {
     expect(limiter.fairShare).toBe(false);
     handle.close();
     limiter.clear();
+  });
+
+  test('100 open/send/abort cycles leave nothing queued in either mode', async () => {
+    for (const fairShare of [true, false]) {
+      let clock = 0;
+      const sleepers: Array<() => void> = [];
+      const limiter = new RelayBandwidthLimiter(
+        { maxTenants: null, totalBandwidthBytesPerSec: 4 * 1024, fairShare },
+        () => clock,
+        () =>
+          new Promise<void>((resolve) => {
+            sleepers.push(resolve);
+          })
+      );
+      const rejected: string[] = [];
+      for (let i = 0; i < 100; i++) {
+        const handle = limiter.acquire(`tenant-${i % 3}`);
+        handle.take(1024 * 1024).catch((err: Error) => rejected.push(err.message));
+        handle.close();
+        await expect(handle.take(1)).rejects.toThrow('closed');
+      }
+      expect(rejected).toHaveLength(100);
+      expect(limiter.pendingCount).toBe(0);
+      expect(limiter.tenantCount).toBe(0);
+      limiter.clear();
+      expect(limiter.pendingCount).toBe(0);
+      clock += 10_000;
+      for (const wake of sleepers.splice(0)) wake();
+      await Promise.resolve();
+    }
+  });
+
+  test('a cancelled tenant stops taking tokens ahead of live traffic', async () => {
+    const { limiter, clock } = bandwidthHarness({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 8 * 1024,
+      fairShare: true,
+    });
+    const ghosts = ['ghost-a', 'ghost-b', 'ghost-c'].map((id) => limiter.acquire(id));
+    for (const ghost of ghosts) {
+      ghost.take(1024 * 1024).catch(() => {});
+    }
+    for (const ghost of ghosts) ghost.close();
+    expect(limiter.pendingCount).toBe(0);
+    const start = clock();
+    const live = limiter.acquire('live');
+    let bytes = 0;
+    while (clock() - start < 5_000) {
+      await live.take(4 * 1024);
+      bytes += 4 * 1024;
+    }
+    live.close();
+    // 幽灵租户若还留在轮转里，live 只能分到四分之一。
+    expect(bytes).toBeGreaterThanOrEqual(4 * 8 * 1024);
+  });
+
+  test('fair share counts small frames per tenant, not per stream', async () => {
+    const { limiter, clock } = bandwidthHarness({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 64 * 1024,
+      fairShare: true,
+    });
+    const admitted = new Map<string, number>([
+      ['tenant-a', 0],
+      ['tenant-b', 0],
+    ]);
+    const drive = async (tenantId: string): Promise<void> => {
+      const handle = limiter.acquire(tenantId);
+      while (clock() < 20_000) {
+        await handle.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+        admitted.set(tenantId, (admitted.get(tenantId) ?? 0) + RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+      }
+      handle.close();
+    };
+    const running: Array<Promise<void>> = [];
+    for (let i = 0; i < 8; i++) running.push(drive('tenant-a'));
+    running.push(drive('tenant-b'));
+    await Promise.all(running);
+    const a = admitted.get('tenant-a') ?? 0;
+    const b = admitted.get('tenant-b') ?? 0;
+    expect(b).toBeGreaterThan(0);
+    // 修复前 8 条小帧流能把比例拉到 8:1。
+    expect(Math.min(a, b) / Math.max(a, b)).toBeGreaterThan(0.85);
   });
 });
 

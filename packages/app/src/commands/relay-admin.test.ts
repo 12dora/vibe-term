@@ -325,6 +325,30 @@ describe('relay quota', () => {
     ).toThrow('invalid --max-file-mb');
   });
 
+  test('缺值的配额旗标先报用法错，不发任何请求', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--max-file-mb']), tenantId, io)
+    ).rejects.toThrow('--max-file-mb');
+    await expect(
+      runRelayQuota(
+        parseArgs(['relay', 'quota', tenantId, '--max-file-mb', '--max-nodes', '2']),
+        tenantId,
+        io
+      )
+    ).rejects.toThrow('--max-file-mb');
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--bandwidth=']), tenantId, io)
+    ).rejects.toThrow('--bandwidth');
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--max-streams=  ']), tenantId, io)
+    ).rejects.toThrow('--max-streams');
+    expect(calls).toHaveLength(0);
+    expect(() => readQuotaFlags(parseArgs(['relay', 'quota', 'x', '--max-nodes']))).toThrow(
+      '--max-nodes'
+    );
+  });
+
   test('mergeQuota falls back to the built-in defaults when nothing is known', () => {
     expect(mergeQuota(null, { maxStreams: 4 })).toEqual({
       maxNodes: 8,
@@ -379,6 +403,27 @@ describe('relay limits', () => {
     expect(readLimitsFlags(parseArgs(['relay', 'limits', '--total-bandwidth-kb', 'none']))).toEqual(
       { totalBandwidthBytesPerSec: null }
     );
+  });
+
+  test('缺值的限额旗标先报用法错，不发任何请求', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants']), io)
+    ).rejects.toThrow('--max-tenants');
+    // 与另一个有效旗标同时给：不能只应用有效的那个还报成功。
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants', '--fair-share', 'off']), io)
+    ).rejects.toThrow('--max-tenants');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants=']), io)
+    ).rejects.toThrow('--max-tenants');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--total-bandwidth-kb=  ']), io)
+    ).rejects.toThrow('--total-bandwidth-kb');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--fair-share']), io)
+    ).rejects.toThrow('--fair-share');
+    expect(calls).toHaveLength(0);
   });
 
   test('mergeLimits only overwrites the fields that were given', () => {

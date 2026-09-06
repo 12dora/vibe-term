@@ -310,6 +310,22 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
 };
 
+/**
+ * 取一个必须带值的旗标。光秃秃的 `--flag`（被解析成 true）和空串都算「给了但没给值」，
+ * 直接报用法错误——否则会被当成压根没给这个旗标，用户要求的改动被静默丢掉。
+ */
+export function requireFlagValue(
+  flags: Readonly<Record<string, string | boolean>>,
+  key: string
+): string | undefined {
+  if (!Object.hasOwn(flags, key)) return undefined;
+  const value = flags[key];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(t('errors.validate.emptyField', { field: `--${key}` }));
+  }
+  return value;
+}
+
 export function assertKnownFlags(parsed: ParsedArgs): void {
   const nested = resolveNestedCommand(parsed);
   const allowed = COMMAND_FLAGS[nested.name] ?? GLOBAL_FLAGS;

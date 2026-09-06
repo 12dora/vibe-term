@@ -42,11 +42,29 @@
 - 公平分配开时，每个租户在这只桶里占**一个逻辑流**（`RelayTokenStream`，引用计数，租户没有活跃中继流时释放）。
   桶的 `drain()` 本来就在就绪的逻辑流之间轮转、每轮最多发 4 KiB，于是「一个租户一个流」直接得到租户间轮转公平，
   不需要第二套调度器。空闲租户的逻辑流没有待处理请求，不进就绪队列，不占轮转位。
-- 公平分配关时，所有租户共用桶的默认流：同一条 FIFO，先到先得。
+- 公平分配关时，所有租户共用一条 FCFS 流：同一条 FIFO，先到先得。
+- 中继级这只桶**关掉 ≤4 KiB 的旁路道**（`RelayTokenBucketOptions.bypassSmallFrames: false`）。
+  旁路是桶级 FIFO、不进轮转，租户只要把流量切成小帧、多开几条流就能绕开租户轮转多吃带宽
+  （实测 8 条小帧流对 1 条能拉到 8:1）。交互优先只保留在**租户自己**那只桶里
+  （`relay-uplink-server.ts` 的 `bucketFor`）：那里的旁路只在租户自己的额度内排序，抢不到别人的份额。
+- 每条中继流从租户逻辑流上派生一个**独立可关闭的把手**（`RelayTokenStream.createHandle()`）。
+  中止一条流只撤这条流自己排队的请求，同租户其他流不受影响；`RelayBandwidthLimiter.clear()`
+  （`stop()` 调用）撤掉所有队列，包括 FCFS 流与桶自带的默认流。已关闭的把手上再 `take()` 直接 reject。
+  没有这层身份，反复「开流—发帧—中止」会把待发放请求和 payload 一直留在桶里，中止的流量还会排在活流量前面。
+- `drain()` 一轮只发放**整块**（`min(rate, 剩余, 4 KiB)`），攒不够就先睡。发放零头会毁掉轮转：
+  分到零头的一方要等下一次补给才凑得齐一块，而下一次补给又整块给了对手——帧长正好等于轮转粒度（4 KiB）时
+  会锁成一边倒（实测 67:1）。
 
 `pumpMetered` 里的顺序是「先租户闸、后中继闸、再记 admitted」：超了自家配额的租户不该在全局轮转里占位。
 两道闸都只延迟不丢帧，mux 的 WINDOW 信用会把背压自然传回发送端。`PATCH /api/relay/config` 落库后
 立刻调 `applyLimits()` 热更新速率与开关，不必重启。
+
+### 最大租户数的读取时机
+
+`handleRelayEnroll` 里 `checkEnrollPassword()` 是异步的（argon2）。租户上限在这段 `await` **之后**重新读一次配置，
+紧挨着后面同步的「计数—判断—建租户」三步，中间不再有 `await`；否则运营者在校验期间调小上限，
+在途的 enroll 仍按旧上限放行，中继会超员。口令哈希与 `passwordEpoch` 仍用校验前那次读到的值——
+它们必须与实际校验过的口令对应。
 
 ### 单文件上限：中继发布、节点执行
 
@@ -99,7 +117,10 @@ tmex relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] [--f
 
 - `cd apps/gateway && bun test src/relay src/db src/files`：
   迁移列断言、`normalizeRelayLimits` 边界、令牌桶两租户约 50/50、空闲中继不限速、关掉公平分配退回 FCFS、
-  满员 409 且重发令牌放行、limits PATCH 与 metrics 投影、`effectiveTransferMaxBytes`。
+  满员 409 且重发令牌放行、上限在口令校验期间被调小仍然生效、limits PATCH 与 metrics 投影、
+  `effectiveTransferMaxBytes`。
+  另有三条回归：100 次「开流—发帧—中止」后两种模式下队列都清零、被取消的租户不再吃令牌、
+  8 条小帧流的租户 A 对 1 条流的租户 B 放行字节接近 1:1。
 - `packages/shared`：`relay.quota` 带 `maxFileBytes` 的编解码与向下兼容（`null` 与缺失都当不限）。
 - `packages/api-client` / `apps/fe` / `packages/app`：契约、表单往返、CLI 旗标与 help。
 - 现网口径：设最大租户数 N 后第 N+1 个 enroll 回 409；两租户同时灌流量时 admitted 速率各占总上限约一半。
@@ -114,3 +135,8 @@ tmex relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] [--f
   在未配总带宽时完全一致（`rate === null` 时令牌桶是 no-op）。
 - 关掉公平分配后所有租户共用一条 FIFO：一个租户排队的大帧会挡住其他租户，这正是 FCFS 的定义。
   除非运营者明确要「先到先得」，否则保持默认开启。
+- 网页表单里带宽按 KB/s、单文件按 MB 取整显示。草稿会记下打开表单时的**原始字节值**（`QuotaOrigin` /
+  `LimitsOrigin`）：某个字段的文本没被改过就原样回传原值，只有真被改过才做单位换算。
+  否则 512 B/s 会在改别的字段时被改写成 1024 B/s，1024 字节的单文件上限被改写成 1 MiB。
+- CLI 里需要带值的旗标走 `requireFlagValue()`：光秃秃的 `--max-tenants` 与 `--max-tenants=` 都会在
+  发出任何请求之前报用法错，不会被当成「没给这个旗标」而静默丢掉。
