@@ -16,6 +16,7 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'kick', 'abc']).name).toBe('relay.kick');
     expect(nested(['relay', 'remove', 'abc']).name).toBe('relay.remove');
     expect(nested(['relay', 'quota', 'default']).name).toBe('relay.quota');
+    expect(nested(['relay', 'limits']).name).toBe('relay.limits');
     expect(nested(['relay', 'label', 'abc', 'text']).name).toBe('relay.label');
     expect(nested(['relay', 'enroll', 'https://r.example']).name).toBe('relay.enroll');
     expect(nested(['relay', 'join', 'https://r.example']).name).toBe('relay.join');
@@ -67,6 +68,23 @@ describe('relay flag allowlists', () => {
       )
     ).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'quota', 'abc', '--inherit']))).not.toThrow();
+    expect(() =>
+      assertKnownFlags(parseArgs(['relay', 'quota', 'abc', '--max-file-mb', '100']))
+    ).not.toThrow();
+    expect(() =>
+      assertKnownFlags(
+        parseArgs([
+          'relay',
+          'limits',
+          '--max-tenants',
+          '4',
+          '--total-bandwidth-kb',
+          'none',
+          '--fair-share',
+          'off',
+        ])
+      )
+    ).not.toThrow();
   });
 
   test('tenant flags are accepted', () => {
@@ -90,6 +108,12 @@ describe('relay flag allowlists', () => {
     );
     expect(() => assertKnownFlags(parseArgs(['relay', 'leave', '--json']))).toThrow(
       'Unknown flag: --json'
+    );
+    expect(() =>
+      assertKnownFlags(parseArgs(['relay', 'quota', 'abc', '--max-tenants', '2']))
+    ).toThrow('Unknown flag: --max-tenants');
+    expect(() => assertKnownFlags(parseArgs(['relay', 'limits', '--max-nodes', '2']))).toThrow(
+      'Unknown flag: --max-nodes'
     );
     expect(() =>
       assertKnownFlags(parseArgs(['relay', 'enroll', 'https://r.example', '--inherit']))

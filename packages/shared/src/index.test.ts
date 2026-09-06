@@ -60,6 +60,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'formatDate',
   'formatDateTime',
   'formatDisplayVersion',
+  'formatEta',
   'formatHttpEndpoint',
   'formatRate',
   'getOsc11ResponseColor',

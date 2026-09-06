@@ -6,17 +6,24 @@ import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import {
   type RelayIo,
+  type RelayLimits,
   type RelayQuota,
   asNumber,
   asText,
   confirmRelayAction,
   formatBytes,
+  formatLimits,
   formatQuota,
   formatTable,
   gatewayBaseUrl,
   joinRelayUrl,
+  limitsFromJson,
   parseBandwidthFlag,
   parseCountFlag,
+  parseFairShareFlag,
+  parseMaxFileFlag,
+  parseMaxTenantsFlag,
+  parseTotalBandwidthFlag,
   printJson,
   quotaFromJson,
   relayAdminToken,
@@ -48,6 +55,7 @@ export type RelayAdminStatus = {
     passwordEpoch: number;
     minTokenEpoch: number;
     defaultQuota: RelayQuota | null;
+    limits: RelayLimits;
   };
   tenants: RelayAdminTenant[];
   totals: Record<string, unknown>;
@@ -103,6 +111,7 @@ export async function fetchRelayAdminStatus(call: AdminCall): Promise<RelayAdmin
       passwordEpoch: asNumber(config.passwordEpoch),
       minTokenEpoch: asNumber(config.minTokenEpoch),
       defaultQuota: quotaFromJson(config.defaultQuota),
+      limits: limitsFromJson(config.limits),
     },
     tenants,
     totals: (body.totals ?? {}) as Record<string, unknown>,
@@ -286,6 +295,7 @@ type QuotaPatch = {
   maxNodes?: number;
   maxStreams?: number;
   bandwidthBytesPerSec?: number | null;
+  maxFileBytes?: number | null;
 };
 
 export function readQuotaFlags(parsed: ParsedArgs): QuotaPatch {
@@ -296,10 +306,17 @@ export function readQuotaFlags(parsed: ParsedArgs): QuotaPatch {
   if (maxStreams) patch.maxStreams = parseCountFlag(maxStreams, 'max-streams');
   const bandwidth = asString(parsed.flags.bandwidth);
   if (bandwidth) patch.bandwidthBytesPerSec = parseBandwidthFlag(bandwidth);
+  const maxFile = asString(parsed.flags['max-file-mb']);
+  if (maxFile) patch.maxFileBytes = parseMaxFileFlag(maxFile);
   return patch;
 }
 
-const FALLBACK_QUOTA: RelayQuota = { maxNodes: 8, maxStreams: 32, bandwidthBytesPerSec: null };
+const FALLBACK_QUOTA: RelayQuota = {
+  maxNodes: 8,
+  maxStreams: 32,
+  bandwidthBytesPerSec: null,
+  maxFileBytes: null,
+};
 
 export function mergeQuota(base: RelayQuota | null, patch: QuotaPatch): RelayQuota {
   const start = base ?? FALLBACK_QUOTA;
@@ -310,7 +327,59 @@ export function mergeQuota(base: RelayQuota | null, patch: QuotaPatch): RelayQuo
       patch.bandwidthBytesPerSec === undefined
         ? start.bandwidthBytesPerSec
         : patch.bandwidthBytesPerSec,
+    maxFileBytes:
+      patch.maxFileBytes === undefined ? (start.maxFileBytes ?? null) : patch.maxFileBytes,
   };
+}
+
+type LimitsPatch = {
+  maxTenants?: number | null;
+  totalBandwidthBytesPerSec?: number | null;
+  fairShare?: boolean;
+};
+
+export function readLimitsFlags(parsed: ParsedArgs): LimitsPatch {
+  const patch: LimitsPatch = {};
+  const maxTenants = asString(parsed.flags['max-tenants']);
+  if (maxTenants) patch.maxTenants = parseMaxTenantsFlag(maxTenants);
+  const bandwidth = asString(parsed.flags['total-bandwidth-kb']);
+  if (bandwidth) patch.totalBandwidthBytesPerSec = parseTotalBandwidthFlag(bandwidth);
+  const fairShare = asString(parsed.flags['fair-share']);
+  if (fairShare) patch.fairShare = parseFairShareFlag(fairShare);
+  return patch;
+}
+
+export function mergeLimits(base: RelayLimits, patch: LimitsPatch): RelayLimits {
+  return {
+    maxTenants: patch.maxTenants === undefined ? base.maxTenants : patch.maxTenants,
+    totalBandwidthBytesPerSec:
+      patch.totalBandwidthBytesPerSec === undefined
+        ? base.totalBandwidthBytesPerSec
+        : patch.totalBandwidthBytesPerSec,
+    fairShare: patch.fairShare ?? base.fairShare,
+  };
+}
+
+/** `tmex relay limits`：中继级限额（租户数 / 总带宽 / 公平分配）。 */
+export async function runRelayLimits(parsed: ParsedArgs, io: RelayIo = {}): Promise<RelayLimits> {
+  const patch = readLimitsFlags(parsed);
+  const call = await adminCall(parsed, io);
+  const status = await fetchRelayAdminStatus(call);
+  if (Object.keys(patch).length === 0) {
+    relayLog(io, t('relay.limits.current', { limits: formatLimits(status.config.limits) }));
+    return status.config.limits;
+  }
+  const next = mergeLimits(status.config.limits, patch);
+  await requestRelayJson({
+    fetcher: call.fetcher,
+    url: joinRelayUrl(call.baseUrl, '/api/relay/config'),
+    method: 'PATCH',
+    headers: call.headers,
+    body: { limits: next },
+    label: 'relay limits',
+  });
+  relayLog(io, t('relay.limits.updated', { limits: formatLimits(next) }));
+  return next;
 }
 
 async function applyDefaultQuota(
@@ -372,7 +441,9 @@ export async function runRelayQuota(
     throw new Error('--inherit applies to a tenant, not the relay default quota');
   }
   if (!inherit && Object.keys(patch).length === 0) {
-    throw new Error('relay quota requires --max-nodes / --max-streams / --bandwidth or --inherit');
+    throw new Error(
+      'relay quota requires --max-nodes / --max-streams / --bandwidth / --max-file-mb or --inherit'
+    );
   }
   const call = await adminCall(parsed, io);
   const status = await fetchRelayAdminStatus(call);

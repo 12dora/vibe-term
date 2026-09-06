@@ -29,6 +29,7 @@ export type NestedCommandName =
   | 'relay.kick'
   | 'relay.remove'
   | 'relay.quota'
+  | 'relay.limits'
   | 'relay.label'
   | 'relay.enroll'
   | 'relay.reauth'
@@ -133,6 +134,7 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   kick: 'relay.kick',
   remove: 'relay.remove',
   quota: 'relay.quota',
+  limits: 'relay.limits',
   label: 'relay.label',
   enroll: 'relay.enroll',
   join: 'relay.join',
@@ -282,7 +284,14 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'max-nodes',
     'max-streams',
     'bandwidth',
+    'max-file-mb',
     'inherit',
+  ]),
+  'relay.limits': new Set([
+    ...RELAY_ADMIN_FLAGS,
+    'max-tenants',
+    'total-bandwidth-kb',
+    'fair-share',
   ]),
   'relay.label': RELAY_ADMIN_FLAGS,
   'relay.enroll': RELAY_TENANT_FLAGS,

@@ -165,6 +165,15 @@ export async function handleRelayEnroll(
   const rejected = await checkEnrollPassword(deps, parsed, config.passwordHash, ip);
   if (rejected) return rejected;
   deps.limiter.reset(ip);
+  // 满员判定放在口令校验之后：否则一个满员的中继会变成「口令对不对」的探测器。
+  const maxTenants = config.limits.maxTenants;
+  if (
+    maxTenants !== null &&
+    !deps.tenants.getByRootPublicKey(parsed.rootPublicKey) &&
+    deps.tenants.count() >= maxTenants
+  ) {
+    return relayError(RelayErrorCode.quotaTenants, 409);
+  }
   const issued = issueTenantToken(deps, parsed, config.passwordEpoch);
   return relayJson({
     tenant_id: issued.tenantId,

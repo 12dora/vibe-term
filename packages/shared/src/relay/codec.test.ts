@@ -125,6 +125,41 @@ describe('relay ctl 编解码', () => {
     });
   });
 
+  it('relay.quota.maxFileBytes 可选：null 与缺失都当作不限', () => {
+    const withLimit: RelayCtlMessage = {
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      maxFileBytes: 1024,
+    };
+    expect(decodeRelayCtl(encodeRelayCtl(withLimit))).toEqual(withLimit);
+    const explicitNull = JSON.stringify({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      maxFileBytes: null,
+    });
+    expect(decodeRelayCtl(explicitNull)).toEqual({
+      t: 'relay.quota',
+      maxNodes: 8,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+    });
+    expect(() =>
+      decodeRelayCtl(
+        JSON.stringify({
+          t: 'relay.quota',
+          maxNodes: 8,
+          maxStreams: 32,
+          bandwidthBytesPerSec: null,
+          maxFileBytes: -1,
+        })
+      )
+    ).toThrow(RelayCtlError);
+  });
+
   it('relay.quota.usage 可选且向下兼容', () => {
     const withUsage: RelayCtlMessage = {
       t: 'relay.quota',

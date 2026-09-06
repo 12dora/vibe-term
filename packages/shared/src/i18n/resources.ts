@@ -2159,7 +2159,8 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This machine's ID",
-          "hubs": "Hub details"
+          "hubs": "Hub details",
+          "quotaMaxFile": "Max file size"
         },
         "direct": "Direct connection add-on",
         "directUnsupported": "Not supported on this platform",
@@ -2944,6 +2945,122 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
         "resetFailed": "Failed to reset layout",
         "resetDone": "Layout reset"
+      },
+      "menu": {
+        "more": "More",
+        "fileTransfer": "File Transfer",
+        "portMap": "Port Mapping"
+      },
+      "transfer": {
+        "title": "File Transfer",
+        "description": "Transfer files directly between two nodes.",
+        "node": "Node",
+        "nodePlaceholder": "Select a node",
+        "root": "Directory",
+        "rootPlaceholder": "Select a directory",
+        "rootEmpty": "No file directory configured",
+        "up": "Up",
+        "pathLabel": "Path",
+        "showHidden": "Show hidden files",
+        "empty": "Directory is empty",
+        "loadFailed": "Failed to load directory",
+        "selected": "{{count}} selected",
+        "sendToRight": "Send to Right",
+        "sendToLeft": "Send to Left",
+        "sending": "Submitting...",
+        "sendFailed": "Failed to create transfer job",
+        "pickNodes": "Select a node and directory on both sides first",
+        "pickSource": "Select the items to transfer first",
+        "sameTarget": "Source and target are the same directory",
+        "list": "Transfers",
+        "listEmpty": "No transfers",
+        "clearFinished": "Clear Finished",
+        "cancel": "Cancel",
+        "browser": "Browser",
+        "items": "{{done}}/{{total}} items",
+        "pathLocal": "local",
+        "state": {
+          "queued": "Queued",
+          "running": "Transferring",
+          "done": "Completed",
+          "failed": "Failed",
+          "cancelled": "Cancelled"
+        },
+        "errors": {
+          "node_unreachable": "Node unreachable",
+          "grant_invalid": "Invalid grant",
+          "grant_expired": "Grant expired",
+          "peer_mismatch": "Source node mismatch",
+          "offset_mismatch": "Resume offset mismatch",
+          "incomplete": "Transfer interrupted",
+          "checksum_mismatch": "Checksum mismatch",
+          "dest_exists": "File already exists at target",
+          "quota_file_size": "Exceeds per-file limit",
+          "cancelled": "Cancelled",
+          "not_found": "File not found",
+          "outside_roots": "Path outside the directory",
+          "permission_denied": "Permission denied",
+          "too_large": "File too large",
+          "connection_failed": "Connection failed",
+          "timeout": "Timed out",
+          "unknown": "Transfer failed"
+        }
+      },
+      "portmap": {
+        "title": "Port Mapping",
+        "description": "Forward a local port on one node to a service on another node.",
+        "empty": "No port maps",
+        "loadFailed": "Failed to load port maps",
+        "pause": "Pause",
+        "resume": "Resume",
+        "delete": "Delete",
+        "deleteConfirmTitle": "Delete this port map?",
+        "deleteConfirmDescription": "\"{{name}}\" will be deleted and established connections will drop.",
+        "columns": {
+          "name": "Name",
+          "listen": "This Machine",
+          "target": "Target",
+          "state": "State",
+          "connections": "Connections",
+          "traffic": "Traffic",
+          "actions": "Actions"
+        },
+        "state": {
+          "listening": "Listening",
+          "paused": "Paused",
+          "error": "Error"
+        },
+        "form": {
+          "listenNode": "Listening Node",
+          "listenHost": "Listen Address",
+          "listenHostLocal": "This machine only",
+          "listenHostAny": "All addresses",
+          "listenHostAnyWarning": "With 0.0.0.0, anyone on the LAN can reach this port.",
+          "listenPort": "Listen Port",
+          "targetNode": "Target Node",
+          "targetHost": "Target Address",
+          "targetPort": "Target Port",
+          "nameOptional": "Name (optional)",
+          "submit": "Create",
+          "submitting": "Creating...",
+          "incomplete": "Fill in both nodes and ports first",
+          "portRange": "Port must be between 1 and 65535",
+          "portInUse": "Port already in use",
+          "portReserved": "Reserved port",
+          "targetIdle": "No service on the target port",
+          "sameNode": "Listening and target nodes must differ"
+        },
+        "errors": {
+          "invalid_request": "Invalid request",
+          "port_in_use": "Port already in use",
+          "port_reserved": "Reserved port",
+          "bind_failed": "Failed to listen",
+          "not_found": "Port map not found",
+          "target_unreachable": "Target unreachable",
+          "export_missing": "Target node has no matching allow record",
+          "limit_reached": "Connection limit reached",
+          "unknown": "Operation failed"
+        }
       }
     },
     "relay": {
@@ -2991,7 +3108,14 @@ export const I18N_RESOURCES = {
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
-          "tenants": "Tenants"
+          "tenants": "Tenants",
+          "bandwidth": "Admitted rate",
+          "bandwidthHint": "Forwarding rate actually admitted by the token bucket.",
+          "bandwidthUnlimited": "No total bandwidth limit",
+          "bandwidthFair": "Fair-shared between tenants",
+          "bandwidthFcfs": "First come, first served",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "No tenant limit"
         },
         "groups": {
           "traffic": "Traffic",
@@ -3146,7 +3270,9 @@ export const I18N_RESOURCES = {
           "RELAY_UNKNOWN": "That relay is not in this machine’s relay list.",
           "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
-          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later."
+          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
+          "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
+          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -3219,13 +3345,17 @@ export const I18N_RESOURCES = {
           "unlimitedValue": "Unlimited",
           "inherit": "Follow default",
           "inheritBadge": "Default",
-          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
+          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}} · file {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "Max nodes must be an integer between 1 and {{max}}.",
           "invalidStreams": "Max streams must be an integer between 1 and {{max}}.",
           "invalidBandwidth": "Max bandwidth must be an integer between 1 and {{max}} KB/s.",
           "saved": "Default quota updated.",
-          "failed": "Could not update the quota: {{message}}"
+          "failed": "Could not update the quota: {{message}}",
+          "maxFile": "Max file size (MB)",
+          "maxFileHint": "Leave empty for no limit. Published by the relay, enforced by tenant nodes.",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "Max file size must be an integer between 1 and {{max}} MB, or empty for no limit."
         },
         "tenants": {
           "title": "Tenants",
@@ -3274,6 +3404,19 @@ export const I18N_RESOURCES = {
           "minutes": "{{n}} min ago",
           "hours": "{{n}} h ago",
           "days": "{{n}} d ago"
+        },
+        "limits": {
+          "title": "Relay Limits",
+          "menuItem": "Relay Limits…",
+          "description": "Applies to this relay as a whole and is never pushed to tenants.",
+          "maxTenants": "Max tenants",
+          "totalBandwidth": "Total bandwidth (KB/s)",
+          "fairShare": "Fair-share bandwidth",
+          "fairShareHint": "On: tenants split the total bandwidth round-robin. Off: first come, first served.",
+          "invalidMaxTenants": "Max tenants must be an integer between 1 and {{max}}, or empty for no limit.",
+          "invalidBandwidth": "Total bandwidth must be an integer between 1 and {{max}} KB/s, or empty for no limit.",
+          "saved": "Relay limits updated.",
+          "failed": "Could not update limits: {{message}}"
         }
       }
     },
@@ -5499,7 +5642,8 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "不限",
           "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
-          "hubs": "Hub 明细"
+          "hubs": "Hub 明细",
+          "quotaMaxFile": "单文件上限"
         },
         "direct": "直连插件",
         "directUnsupported": "本平台不支持",
@@ -6278,6 +6422,122 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "所有分组将被删除，全部节点回到最外层并按默认顺序排列。",
         "resetFailed": "恢复默认布局失败",
         "resetDone": "已恢复默认布局"
+      },
+      "menu": {
+        "more": "更多",
+        "fileTransfer": "文件传输",
+        "portMap": "端口映射"
+      },
+      "transfer": {
+        "title": "文件传输",
+        "description": "在两个节点之间直接传输文件。",
+        "node": "节点",
+        "nodePlaceholder": "选择节点",
+        "root": "目录",
+        "rootPlaceholder": "选择目录",
+        "rootEmpty": "未配置文件目录",
+        "up": "上一级",
+        "pathLabel": "路径",
+        "showHidden": "显示隐藏文件",
+        "empty": "目录为空",
+        "loadFailed": "目录加载失败",
+        "selected": "已选 {{count}} 项",
+        "sendToRight": "发送到右侧",
+        "sendToLeft": "发送到左侧",
+        "sending": "提交中...",
+        "sendFailed": "创建传输任务失败",
+        "pickNodes": "须先选定两侧的节点与目录",
+        "pickSource": "须先勾选要传输的条目",
+        "sameTarget": "源与目标是同一目录",
+        "list": "传输列表",
+        "listEmpty": "暂无传输",
+        "clearFinished": "清除已结束",
+        "cancel": "取消",
+        "browser": "浏览器",
+        "items": "{{done}}/{{total}} 项",
+        "pathLocal": "本地",
+        "state": {
+          "queued": "等待中",
+          "running": "传输中",
+          "done": "已完成",
+          "failed": "失败",
+          "cancelled": "已取消"
+        },
+        "errors": {
+          "node_unreachable": "节点不可达",
+          "grant_invalid": "授权无效",
+          "grant_expired": "授权已过期",
+          "peer_mismatch": "来源节点不匹配",
+          "offset_mismatch": "断点不一致",
+          "incomplete": "传输中断",
+          "checksum_mismatch": "校验不一致",
+          "dest_exists": "目标已存在同名文件",
+          "quota_file_size": "超出单文件上限",
+          "cancelled": "已取消",
+          "not_found": "文件不存在",
+          "outside_roots": "路径超出目录范围",
+          "permission_denied": "无权访问",
+          "too_large": "文件过大",
+          "connection_failed": "连接失败",
+          "timeout": "超时",
+          "unknown": "传输失败"
+        }
+      },
+      "portmap": {
+        "title": "端口映射",
+        "description": "把一个节点的本地端口转发到另一个节点上的服务。",
+        "empty": "暂无映射",
+        "loadFailed": "映射加载失败",
+        "pause": "暂停",
+        "resume": "继续",
+        "delete": "删除",
+        "deleteConfirmTitle": "删除映射？",
+        "deleteConfirmDescription": "「{{name}}」将被删除，已建立的连接会断开。",
+        "columns": {
+          "name": "名称",
+          "listen": "本机",
+          "target": "目标",
+          "state": "状态",
+          "connections": "连接数",
+          "traffic": "流量",
+          "actions": "操作"
+        },
+        "state": {
+          "listening": "监听中",
+          "paused": "已暂停",
+          "error": "异常"
+        },
+        "form": {
+          "listenNode": "监听节点",
+          "listenHost": "监听地址",
+          "listenHostLocal": "仅本机",
+          "listenHostAny": "所有地址",
+          "listenHostAnyWarning": "监听 0.0.0.0 后，局域网内任何人都能访问该端口。",
+          "listenPort": "监听端口",
+          "targetNode": "目标节点",
+          "targetHost": "目标地址",
+          "targetPort": "目标端口",
+          "nameOptional": "名称（可选）",
+          "submit": "创建",
+          "submitting": "创建中...",
+          "incomplete": "须先填全节点与端口",
+          "portRange": "端口须在 1–65535 之间",
+          "portInUse": "端口已被占用",
+          "portReserved": "保留端口",
+          "targetIdle": "目标端口暂无服务",
+          "sameNode": "监听节点与目标节点不能相同"
+        },
+        "errors": {
+          "invalid_request": "参数不合法",
+          "port_in_use": "端口已被占用",
+          "port_reserved": "保留端口",
+          "bind_failed": "监听失败",
+          "not_found": "映射不存在",
+          "target_unreachable": "目标不可达",
+          "export_missing": "目标节点未放行",
+          "limit_reached": "已达连接数上限",
+          "unknown": "操作失败"
+        }
       }
     },
     "relay": {
@@ -6325,7 +6585,14 @@ export const I18N_RESOURCES = {
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
-          "tenants": "租户"
+          "tenants": "租户",
+          "bandwidth": "放行带宽",
+          "bandwidthHint": "令牌桶实际放行的转发速率。",
+          "bandwidthUnlimited": "未设总带宽上限",
+          "bandwidthFair": "租户间公平分配",
+          "bandwidthFcfs": "先到先得",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "未设租户数上限"
         },
         "groups": {
           "traffic": "流量",
@@ -6480,7 +6747,9 @@ export const I18N_RESOURCES = {
           "RELAY_UNKNOWN": "这条中继不在本机的中继列表里。",
           "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
-          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。"
+          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
+          "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
+          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -6553,13 +6822,17 @@ export const I18N_RESOURCES = {
           "unlimitedValue": "不限",
           "inherit": "跟随默认",
           "inheritBadge": "默认",
-          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}}",
+          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}} · 单文件 {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "节点数上限须为 1–{{max}} 的整数。",
           "invalidStreams": "并发流上限须为 1–{{max}} 的整数。",
           "invalidBandwidth": "带宽上限须为 1–{{max}} 的整数（KB/s）。",
           "saved": "默认配额已更新。",
-          "failed": "配额更新失败：{{message}}"
+          "failed": "配额更新失败：{{message}}",
+          "maxFile": "单文件上限（MB）",
+          "maxFileHint": "留空即不限。该上限由中继发布、租户节点执行。",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "单文件上限须为 1–{{max}} 的整数（MB），留空即不限。"
         },
         "tenants": {
           "title": "租户",
@@ -6608,6 +6881,19 @@ export const I18N_RESOURCES = {
           "minutes": "{{n}} 分钟前",
           "hours": "{{n}} 小时前",
           "days": "{{n}} 天前"
+        },
+        "limits": {
+          "title": "中继限额",
+          "menuItem": "中继限额…",
+          "description": "作用于本中继整体，不随配额下发给租户。",
+          "maxTenants": "最大租户数",
+          "totalBandwidth": "总带宽上限（KB/s）",
+          "fairShare": "租户带宽公平分配",
+          "fairShareHint": "开启后各租户按轮转均分总带宽；关闭即先到先得。",
+          "invalidMaxTenants": "最大租户数须为 1–{{max}} 的整数，留空即不限。",
+          "invalidBandwidth": "总带宽上限须为 1–{{max}} 的整数（KB/s），留空即不限。",
+          "saved": "中继限额已更新。",
+          "failed": "限额更新失败：{{message}}"
         }
       }
     },
@@ -8833,7 +9119,8 @@ export const I18N_RESOURCES = {
           "quotaUnlimited": "無制限",
           "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
-          "hubs": "Hub の詳細"
+          "hubs": "Hub の詳細",
+          "quotaMaxFile": "1 ファイルの上限"
         },
         "direct": "ダイレクト接続アドオン",
         "directUnsupported": "このプラットフォームでは非対応",
@@ -9612,6 +9899,122 @@ export const I18N_RESOURCES = {
         "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
         "resetFailed": "レイアウトのリセットに失敗しました",
         "resetDone": "レイアウトを既定に戻しました"
+      },
+      "menu": {
+        "more": "その他",
+        "fileTransfer": "ファイル転送",
+        "portMap": "ポートマッピング"
+      },
+      "transfer": {
+        "title": "ファイル転送",
+        "description": "2 つのノード間で直接ファイルを転送します。",
+        "node": "ノード",
+        "nodePlaceholder": "ノードを選択",
+        "root": "ディレクトリ",
+        "rootPlaceholder": "ディレクトリを選択",
+        "rootEmpty": "ファイルディレクトリが未設定です",
+        "up": "上へ",
+        "pathLabel": "パス",
+        "showHidden": "隠しファイルを表示",
+        "empty": "ディレクトリは空です",
+        "loadFailed": "ディレクトリの読み込みに失敗しました",
+        "selected": "{{count}} 件選択中",
+        "sendToRight": "右へ送る",
+        "sendToLeft": "左へ送る",
+        "sending": "送信中...",
+        "sendFailed": "転送タスクの作成に失敗しました",
+        "pickNodes": "先に両側のノードとディレクトリを選択してください",
+        "pickSource": "先に転送する項目を選択してください",
+        "sameTarget": "転送元と転送先が同じディレクトリです",
+        "list": "転送一覧",
+        "listEmpty": "転送はありません",
+        "clearFinished": "完了分を消去",
+        "cancel": "キャンセル",
+        "browser": "ブラウザ",
+        "items": "{{done}}/{{total}} 件",
+        "pathLocal": "ローカル",
+        "state": {
+          "queued": "待機中",
+          "running": "転送中",
+          "done": "完了",
+          "failed": "失敗",
+          "cancelled": "キャンセル済み"
+        },
+        "errors": {
+          "node_unreachable": "ノードに到達できません",
+          "grant_invalid": "認可が無効です",
+          "grant_expired": "認可の有効期限が切れています",
+          "peer_mismatch": "転送元ノードが一致しません",
+          "offset_mismatch": "再開位置が一致しません",
+          "incomplete": "転送が中断されました",
+          "checksum_mismatch": "チェックサムが一致しません",
+          "dest_exists": "転送先に同名ファイルがあります",
+          "quota_file_size": "1 ファイルの上限を超えています",
+          "cancelled": "キャンセル済み",
+          "not_found": "ファイルが見つかりません",
+          "outside_roots": "パスがディレクトリの範囲外です",
+          "permission_denied": "アクセス権がありません",
+          "too_large": "ファイルが大きすぎます",
+          "connection_failed": "接続に失敗しました",
+          "timeout": "タイムアウトしました",
+          "unknown": "転送に失敗しました"
+        }
+      },
+      "portmap": {
+        "title": "ポートマッピング",
+        "description": "あるノードのローカルポートを別ノードのサービスへ転送します。",
+        "empty": "マッピングはありません",
+        "loadFailed": "マッピングの読み込みに失敗しました",
+        "pause": "一時停止",
+        "resume": "再開",
+        "delete": "削除",
+        "deleteConfirmTitle": "マッピングを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。確立済みの接続は切断されます。",
+        "columns": {
+          "name": "名称",
+          "listen": "本機",
+          "target": "転送先",
+          "state": "状態",
+          "connections": "接続数",
+          "traffic": "通信量",
+          "actions": "操作"
+        },
+        "state": {
+          "listening": "待ち受け中",
+          "paused": "一時停止中",
+          "error": "異常"
+        },
+        "form": {
+          "listenNode": "待ち受けノード",
+          "listenHost": "待ち受けアドレス",
+          "listenHostLocal": "本機のみ",
+          "listenHostAny": "すべてのアドレス",
+          "listenHostAnyWarning": "0.0.0.0 で待ち受けると、LAN 内の誰でもこのポートに接続できます。",
+          "listenPort": "待ち受けポート",
+          "targetNode": "転送先ノード",
+          "targetHost": "転送先アドレス",
+          "targetPort": "転送先ポート",
+          "nameOptional": "名称（任意）",
+          "submit": "作成",
+          "submitting": "作成中...",
+          "incomplete": "先にノードとポートを入力してください",
+          "portRange": "ポートは 1〜65535 の範囲です",
+          "portInUse": "ポートは使用中です",
+          "portReserved": "予約済みポートです",
+          "targetIdle": "転送先ポートにサービスがありません",
+          "sameNode": "待ち受けノードと転送先ノードは同一にできません"
+        },
+        "errors": {
+          "invalid_request": "パラメータが不正です",
+          "port_in_use": "ポートは使用中です",
+          "port_reserved": "予約済みポートです",
+          "bind_failed": "待ち受けに失敗しました",
+          "not_found": "マッピングが見つかりません",
+          "target_unreachable": "転送先に到達できません",
+          "export_missing": "転送先ノードに許可レコードがありません",
+          "limit_reached": "接続数の上限に達しました",
+          "unknown": "操作に失敗しました"
+        }
       }
     },
     "relay": {
@@ -9659,7 +10062,14 @@ export const I18N_RESOURCES = {
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
-          "tenants": "テナント"
+          "tenants": "テナント",
+          "bandwidth": "通過帯域",
+          "bandwidthHint": "トークンバケットが実際に通した転送レートです。",
+          "bandwidthUnlimited": "合計帯域の上限なし",
+          "bandwidthFair": "テナント間で公平配分",
+          "bandwidthFcfs": "先着順",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "テナント数の上限なし"
         },
         "groups": {
           "traffic": "トラフィック",
@@ -9814,7 +10224,9 @@ export const I18N_RESOURCES = {
           "RELAY_UNKNOWN": "その中継は本機の中継一覧にありません。",
           "RELAY_KICKED": "その中継はこのテナントのトークンを失効させました。先に接続パスワードを入力し直してください。",
           "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
-          "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。"
+          "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。",
+          "RELAY_QUOTA_TENANTS": "中継のテナント数が上限に達しています。",
+          "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。"
         },
         "remove": {
           "title": "この中継を削除しますか？",
@@ -9887,13 +10299,17 @@ export const I18N_RESOURCES = {
           "unlimitedValue": "無制限",
           "inherit": "既定に従う",
           "inheritBadge": "既定",
-          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
+          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}} · ファイル {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "ノード数の上限は 1〜{{max}} の整数で入力してください。",
           "invalidStreams": "同時ストリームの上限は 1〜{{max}} の整数で入力してください。",
           "invalidBandwidth": "帯域の上限は 1〜{{max}} KB/s の整数で入力してください。",
           "saved": "既定クォータを更新しました。",
-          "failed": "クォータを更新できませんでした：{{message}}"
+          "failed": "クォータを更新できませんでした：{{message}}",
+          "maxFile": "1 ファイルの上限（MB）",
+          "maxFileHint": "空欄で無制限です。中継が公開し、テナントのノードが適用します。",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "1 ファイルの上限は 1〜{{max}} の整数（MB）です。空欄で無制限になります。"
         },
         "tenants": {
           "title": "テナント",
@@ -9942,6 +10358,19 @@ export const I18N_RESOURCES = {
           "minutes": "{{n}} 分前",
           "hours": "{{n}} 時間前",
           "days": "{{n}} 日前"
+        },
+        "limits": {
+          "title": "中継の上限",
+          "menuItem": "中継の上限…",
+          "description": "中継全体に適用され、テナントには配信されません。",
+          "maxTenants": "最大テナント数",
+          "totalBandwidth": "合計帯域の上限（KB/s）",
+          "fairShare": "テナント間の帯域を公平配分",
+          "fairShareHint": "有効にすると各テナントがラウンドロビンで合計帯域を分け合います。無効なら先着順です。",
+          "invalidMaxTenants": "最大テナント数は 1〜{{max}} の整数です。空欄で無制限になります。",
+          "invalidBandwidth": "合計帯域の上限は 1〜{{max}} の整数（KB/s）です。空欄で無制限になります。",
+          "saved": "中継の上限を更新しました。",
+          "failed": "上限の更新に失敗しました：{{message}}"
         }
       }
     },

@@ -1,5 +1,10 @@
 import {
+  RELAY_LIMITS_MAX_BANDWIDTH,
+  RELAY_LIMITS_MAX_TENANTS,
+} from '../../../../apps/gateway/src/relay/relay-limits';
+import {
   RELAY_QUOTA_MAX_BANDWIDTH,
+  RELAY_QUOTA_MAX_FILE_BYTES,
   RELAY_QUOTA_MAX_NODES_LIMIT,
   RELAY_QUOTA_MAX_STREAMS_LIMIT,
 } from '../../../../apps/gateway/src/relay/relay-quota';
@@ -38,6 +43,13 @@ export type RelayQuota = {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  maxFileBytes?: number | null;
+};
+
+export type RelayLimits = {
+  maxTenants: number | null;
+  totalBandwidthBytesPerSec: number | null;
+  fairShare: boolean;
 };
 
 /** 传输层失败的一种：`isRelayTransportError` 认它，可以换下一台中继重试。 */
@@ -211,17 +223,43 @@ export function formatQuota(quota: RelayQuota | null): string {
     quota.bandwidthBytesPerSec == null
       ? 'unlimited'
       : `${Math.round(quota.bandwidthBytesPerSec / 1024)} KB/s`;
-  return `nodes=${quota.maxNodes} streams=${quota.maxStreams} bw=${bandwidth}`;
+  const maxFile =
+    quota.maxFileBytes == null
+      ? 'unlimited'
+      : `${Math.round(quota.maxFileBytes / (1024 * 1024))} MB`;
+  return `nodes=${quota.maxNodes} streams=${quota.maxStreams} bw=${bandwidth} file=${maxFile}`;
+}
+
+export function formatLimits(limits: RelayLimits): string {
+  const tenants = limits.maxTenants == null ? 'unlimited' : String(limits.maxTenants);
+  const bandwidth =
+    limits.totalBandwidthBytesPerSec == null
+      ? 'unlimited'
+      : `${Math.round(limits.totalBandwidthBytesPerSec / 1024)} KB/s`;
+  return `tenants=${tenants} bw=${bandwidth} fair-share=${limits.fairShare ? 'on' : 'off'}`;
 }
 
 export function quotaFromJson(value: unknown): RelayQuota | null {
   if (!value || typeof value !== 'object') return null;
   const raw = value as Record<string, unknown>;
   const bandwidth = raw.bandwidthBytesPerSec;
+  const maxFile = raw.maxFileBytes;
   return {
     maxNodes: asNumber(raw.maxNodes),
     maxStreams: asNumber(raw.maxStreams),
     bandwidthBytesPerSec: typeof bandwidth === 'number' ? bandwidth : null,
+    maxFileBytes: typeof maxFile === 'number' ? maxFile : null,
+  };
+}
+
+export function limitsFromJson(value: unknown): RelayLimits {
+  const raw = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const maxTenants = raw.maxTenants;
+  const bandwidth = raw.totalBandwidthBytesPerSec;
+  return {
+    maxTenants: typeof maxTenants === 'number' ? maxTenants : null,
+    totalBandwidthBytesPerSec: typeof bandwidth === 'number' ? bandwidth : null,
+    fairShare: raw.fairShare !== false,
   };
 }
 
@@ -241,6 +279,60 @@ export function parseBandwidthFlag(raw: string): number | null {
     );
   }
   return bytes;
+}
+
+/** `--max-file-mb <MB>|none` → bytes；`none`/`unlimited`/`0` 表示不限。 */
+export function parseMaxFileFlag(raw: string): number | null {
+  const value = raw.trim().toLowerCase();
+  if (value === 'none' || value === 'unlimited' || value === '0') return null;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`invalid --max-file-mb: ${raw} (use a MB number or "none")`);
+  }
+  const bytes = Number(value) * 1024 * 1024;
+  if (!Number.isSafeInteger(bytes) || bytes < 1 || bytes > RELAY_QUOTA_MAX_FILE_BYTES) {
+    throw new Error(
+      `invalid --max-file-mb: ${raw} (1..${RELAY_QUOTA_MAX_FILE_BYTES / (1024 * 1024)} MB or "none")`
+    );
+  }
+  return bytes;
+}
+
+/** `--max-tenants <n>|none` → 数量；`none`/`unlimited`/`0` 表示不限。 */
+export function parseMaxTenantsFlag(raw: string): number | null {
+  const value = raw.trim().toLowerCase();
+  if (value === 'none' || value === 'unlimited' || value === '0') return null;
+  if (!/^\d+$/.test(value)) {
+    throw new Error(`invalid --max-tenants: ${raw} (expected a positive integer or "none")`);
+  }
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > RELAY_LIMITS_MAX_TENANTS) {
+    throw new Error(`invalid --max-tenants: ${raw} (expected 1..${RELAY_LIMITS_MAX_TENANTS})`);
+  }
+  return parsed;
+}
+
+/** `--total-bandwidth-kb <KBps>|none` → bytes/s；`none`/`unlimited`/`0` 表示不限。 */
+export function parseTotalBandwidthFlag(raw: string): number | null {
+  const value = raw.trim().toLowerCase();
+  if (value === 'none' || value === 'unlimited' || value === '0') return null;
+  if (!/^\d+(\.\d+)?$/.test(value)) {
+    throw new Error(`invalid --total-bandwidth-kb: ${raw} (use a KB/s number or "none")`);
+  }
+  const bytes = Math.round(Number(value) * 1024);
+  if (!Number.isInteger(bytes) || bytes < 1 || bytes > RELAY_LIMITS_MAX_BANDWIDTH) {
+    throw new Error(
+      `invalid --total-bandwidth-kb: ${raw} (1..${RELAY_LIMITS_MAX_BANDWIDTH / 1024} KB/s or "none")`
+    );
+  }
+  return bytes;
+}
+
+/** `--fair-share on|off`。 */
+export function parseFairShareFlag(raw: string): boolean {
+  const value = raw.trim().toLowerCase();
+  if (value === 'on' || value === 'true' || value === 'yes') return true;
+  if (value === 'off' || value === 'false' || value === 'no') return false;
+  throw new Error(`invalid --fair-share: ${raw} (expected "on" or "off")`);
 }
 
 export function parseCountFlag(raw: string, flag: string): number {

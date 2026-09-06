@@ -4,10 +4,17 @@ import {
   RELAY_RESPONSE_MAX_BYTES,
   RelayApiError,
   RelayTimeoutError,
+  formatLimits,
+  formatQuota,
   gatewayBaseUrl,
+  limitsFromJson,
   loopbackHost,
   parseBandwidthFlag,
   parseCountFlag,
+  parseFairShareFlag,
+  parseMaxFileFlag,
+  parseMaxTenantsFlag,
+  parseTotalBandwidthFlag,
   requestRelayJson,
 } from './relay-shared';
 
@@ -45,6 +52,61 @@ describe('relay quota flags', () => {
     // 1e400 → Infinity → JSON 里变 null（= 不限速），必须在客户端就拦下。
     expect(() => parseBandwidthFlag('999999999999999999999999')).toThrow('invalid --bandwidth');
     expect(() => parseBandwidthFlag('10485761')).toThrow('invalid --bandwidth');
+  });
+
+  test('--max-file-mb：none/0 表示不限，其余按 MB 折算并卡上限', () => {
+    expect(parseMaxFileFlag('none')).toBeNull();
+    expect(parseMaxFileFlag('unlimited')).toBeNull();
+    expect(parseMaxFileFlag('0')).toBeNull();
+    expect(parseMaxFileFlag('100')).toBe(100 * 1024 * 1024);
+    expect(() => parseMaxFileFlag('1.5')).toThrow('invalid --max-file-mb');
+    expect(() => parseMaxFileFlag('1048577')).toThrow('invalid --max-file-mb');
+  });
+
+  test('配额摘要带单文件上限', () => {
+    expect(
+      formatQuota({ maxNodes: 4, maxStreams: 8, bandwidthBytesPerSec: null, maxFileBytes: null })
+    ).toBe('nodes=4 streams=8 bw=unlimited file=unlimited');
+    expect(
+      formatQuota({
+        maxNodes: 4,
+        maxStreams: 8,
+        bandwidthBytesPerSec: 524_288,
+        maxFileBytes: 100 * 1024 * 1024,
+      })
+    ).toBe('nodes=4 streams=8 bw=512 KB/s file=100 MB');
+  });
+});
+
+describe('relay limits flags', () => {
+  test('none/0 表示不限，其余卡在服务端区间内', () => {
+    expect(parseMaxTenantsFlag('none')).toBeNull();
+    expect(parseMaxTenantsFlag('0')).toBeNull();
+    expect(parseMaxTenantsFlag('4')).toBe(4);
+    expect(() => parseMaxTenantsFlag('65537')).toThrow('invalid --max-tenants');
+    expect(() => parseMaxTenantsFlag('many')).toThrow('invalid --max-tenants');
+
+    expect(parseTotalBandwidthFlag('none')).toBeNull();
+    expect(parseTotalBandwidthFlag('512')).toBe(512 * 1024);
+    expect(() => parseTotalBandwidthFlag('10485761')).toThrow('invalid --total-bandwidth-kb');
+
+    expect(parseFairShareFlag('on')).toBe(true);
+    expect(parseFairShareFlag('OFF')).toBe(false);
+    expect(() => parseFairShareFlag('maybe')).toThrow('invalid --fair-share');
+  });
+
+  test('limitsFromJson 缺字段按「不限 + 公平分配开」兜底', () => {
+    expect(limitsFromJson(undefined)).toEqual({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: null,
+      fairShare: true,
+    });
+    expect(
+      limitsFromJson({ maxTenants: 2, totalBandwidthBytesPerSec: 1024, fairShare: false })
+    ).toEqual({ maxTenants: 2, totalBandwidthBytesPerSec: 1024, fairShare: false });
+    expect(
+      formatLimits({ maxTenants: null, totalBandwidthBytesPerSec: null, fairShare: true })
+    ).toBe('tenants=unlimited bw=unlimited fair-share=on');
   });
 });
 

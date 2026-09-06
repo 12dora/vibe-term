@@ -8,6 +8,8 @@ import type {
   WriteOptions,
 } from '@tmex/shared/link';
 import { encodeRelayOpenStream } from '@tmex/shared/relay';
+import { RelayBandwidthLimiter } from './relay-bandwidth';
+import { defaultRelayLimits } from './relay-limits';
 import { RelayMetering } from './relay-metering';
 import { RelayTokenBucket } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
@@ -123,12 +125,14 @@ async function runFailure(
   const incoming = new TestStream(encodeRelayOpenStream({ to: TARGET_ID }), source, 'src', events);
   const metering = new RelayMetering({} as RelayTenantStore, () => 100, 0);
   const bucket = new RelayTokenBucket(null);
+  const bandwidth = new RelayBandwidthLimiter(defaultRelayLimits(), () => 100);
   const context: RelayStreamContext = {
     registry,
     tenants: { getNode: () => ({ status: 'admitted' }) } as unknown as RelayTenantStore,
     metering,
     quotaFor: () => ({ maxNodes: 2, maxStreams: 2, bandwidthBytesPerSec: null }),
     bucketFor: () => bucket,
+    bandwidthFor: (tenantId) => bandwidth.acquire(tenantId),
     now: () => 100,
     isStopped: () => false,
   };

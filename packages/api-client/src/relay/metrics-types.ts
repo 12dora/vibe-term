@@ -30,6 +30,12 @@ export type RelayMetricsTotals = {
   framesOutPerSec: number;
   /** 令牌桶放行的字节速率；旧中继不下发。 */
   bandwidthBytesPerSec?: number;
+  /** 中继级总带宽上限；`null` 不限，旧中继不下发。 */
+  bandwidthLimitBytesPerSec?: number | null;
+  /** 租户数上限；`null` 不限，旧中继不下发。 */
+  maxTenants?: number | null;
+  /** 租户间是否按轮转公平分配总带宽；旧中继不下发。 */
+  fairShare?: boolean;
 };
 
 export type RelayMetricsTenant = {
@@ -51,6 +57,7 @@ export type RelayMetricsTenant = {
     maxNodes: number;
     maxStreams: number;
     bandwidthBytesPerSec: number | null;
+    maxFileBytes?: number | null;
   } | null;
   usage?: {
     currentNodes: number;

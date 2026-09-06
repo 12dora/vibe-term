@@ -64,6 +64,8 @@ export interface RelayQuotaView {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 单文件传输上限（字节）；`null` 或缺失表示不限。 */
+  maxFileBytes?: number | null;
   /** 当前占用（pending + admitted）；旧中继不下发。 */
   currentNodes?: number;
   /** 实时用量；旧中继不下发时为 `null`。 */

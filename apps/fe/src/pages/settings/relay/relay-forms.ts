@@ -4,16 +4,23 @@
 // 错误字段存的是 i18n key，不是文案。
 
 import type {
+  RelayLimits,
   RelayPasswordMode,
   RelayPasswordRequest,
   RelayQuota,
   RelayTenantPatch,
 } from '@tmex/api-client/relay/admin-api';
-import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
-import { bytesToKb, kbToBytes } from './relay-format';
+import { RELAY_LIMITS_BOUNDS, RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
+import { bytesToKb, bytesToMb, kbToBytes, mbToBytes } from './relay-format';
 
 /** 带宽字段用 KB/s 收，上限按服务端的字节上限折算。 */
 export const BANDWIDTH_KB_LIMIT = Math.floor(RELAY_QUOTA_LIMITS.bandwidthBytesPerSec / 1024);
+/** 单文件上限字段用 MB 收。 */
+export const MAX_FILE_MB_LIMIT = Math.floor(RELAY_QUOTA_LIMITS.maxFileBytes / (1024 * 1024));
+export const TOTAL_BANDWIDTH_KB_LIMIT = Math.floor(
+  RELAY_LIMITS_BOUNDS.totalBandwidthBytesPerSec / 1024
+);
+export const MAX_TENANTS_LIMIT = RELAY_LIMITS_BOUNDS.maxTenants;
 
 export interface QuotaDraft {
   maxNodes: string;
@@ -21,12 +28,15 @@ export interface QuotaDraft {
   bandwidthKb: string;
   /** 勾上即不限速，`bandwidthKb` 保留原值备切回。 */
   unlimited: boolean;
+  /** 单文件上限（MB）；留空即不限。 */
+  maxFileMb: string;
 }
 
 export interface QuotaErrors {
   maxNodes?: string;
   maxStreams?: string;
   bandwidthKb?: string;
+  maxFileMb?: string;
 }
 
 export type QuotaParseResult =
@@ -42,6 +52,7 @@ export function quotaToDraft(quota: RelayQuota): QuotaDraft {
     bandwidthKb:
       quota.bandwidthBytesPerSec === null ? '' : String(bytesToKb(quota.bandwidthBytesPerSec)),
     unlimited: quota.bandwidthBytesPerSec === null,
+    maxFileMb: quota.maxFileBytes == null ? '' : String(bytesToMb(quota.maxFileBytes)),
   };
 }
 
@@ -71,18 +82,80 @@ export function parseQuotaDraft(draft: QuotaDraft): QuotaParseResult {
     else bandwidthBytesPerSec = kbToBytes(kb);
   }
 
+  // 留空 = 不限；填了就必须是合法整数。
+  let maxFileBytes: number | null = null;
+  if (draft.maxFileMb.trim() !== '') {
+    const mb = boundedInteger(draft.maxFileMb, MAX_FILE_MB_LIMIT);
+    if (mb === null) errors.maxFileMb = 'relay.admin.quota.invalidMaxFile';
+    else maxFileBytes = mbToBytes(mb);
+  }
+
   if (Object.keys(errors).length > 0 || maxNodes === null || maxStreams === null) {
     return { quota: null, errors };
   }
-  return { quota: { maxNodes, maxStreams, bandwidthBytesPerSec }, errors: null };
+  return { quota: { maxNodes, maxStreams, bandwidthBytesPerSec, maxFileBytes }, errors: null };
 }
 
 export function quotaEquals(a: RelayQuota, b: RelayQuota): boolean {
   return (
     a.maxNodes === b.maxNodes &&
     a.maxStreams === b.maxStreams &&
-    a.bandwidthBytesPerSec === b.bandwidthBytesPerSec
+    a.bandwidthBytesPerSec === b.bandwidthBytesPerSec &&
+    (a.maxFileBytes ?? null) === (b.maxFileBytes ?? null)
   );
+}
+
+// ---------------------------------------------------------------------------
+// 中继限额
+// ---------------------------------------------------------------------------
+
+export interface LimitsDraft {
+  /** 留空即不限。 */
+  maxTenants: string;
+  /** 总带宽上限（KB/s）；留空即不限。 */
+  totalBandwidthKb: string;
+  fairShare: boolean;
+}
+
+export interface LimitsErrors {
+  maxTenants?: string;
+  totalBandwidthKb?: string;
+}
+
+export type LimitsParseResult =
+  | { limits: RelayLimits; errors: null }
+  | { limits: null; errors: LimitsErrors };
+
+export function limitsToDraft(limits: RelayLimits | undefined): LimitsDraft {
+  return {
+    maxTenants: limits?.maxTenants == null ? '' : String(limits.maxTenants),
+    totalBandwidthKb:
+      limits?.totalBandwidthBytesPerSec == null
+        ? ''
+        : String(bytesToKb(limits.totalBandwidthBytesPerSec)),
+    fairShare: limits?.fairShare !== false,
+  };
+}
+
+export function parseLimitsDraft(draft: LimitsDraft): LimitsParseResult {
+  const errors: LimitsErrors = {};
+  let maxTenants: number | null = null;
+  if (draft.maxTenants.trim() !== '') {
+    const parsed = boundedInteger(draft.maxTenants, MAX_TENANTS_LIMIT);
+    if (parsed === null) errors.maxTenants = 'relay.admin.limits.invalidMaxTenants';
+    else maxTenants = parsed;
+  }
+  let totalBandwidthBytesPerSec: number | null = null;
+  if (draft.totalBandwidthKb.trim() !== '') {
+    const kb = boundedInteger(draft.totalBandwidthKb, TOTAL_BANDWIDTH_KB_LIMIT);
+    if (kb === null) errors.totalBandwidthKb = 'relay.admin.limits.invalidBandwidth';
+    else totalBandwidthBytesPerSec = kbToBytes(kb);
+  }
+  if (Object.keys(errors).length > 0) return { limits: null, errors };
+  return {
+    limits: { maxTenants, totalBandwidthBytesPerSec, fairShare: draft.fairShare },
+    errors: null,
+  };
 }
 
 // ---------------------------------------------------------------------------

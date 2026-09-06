@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import { MIN_RELAY_CLIENT_VERSION, RELAY_KEYLOG_SEQ_MISMATCH } from '@tmex/shared/relay';
 import { nodeVersionMeets } from '../hub/hub-authorization';
+import { RelayBandwidthLimiter } from './relay-bandwidth';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { trimRelayKeyLogPage } from './relay-key-log-page';
+import { type RelayLimits, defaultRelayLimits, normalizeRelayLimits } from './relay-limits';
 import {
   constantTimeEqual,
   generateRelayTenantId,
@@ -13,6 +15,7 @@ import {
   verifyRelayPassword,
 } from './relay-password';
 import {
+  RELAY_QUOTA_MAX_FILE_BYTES,
   RELAY_TOKEN_BUCKET_BYPASS_BYTES,
   RelayTokenBucket,
   defaultRelayQuota,
@@ -59,12 +62,14 @@ describe('relay quota', () => {
         maxNodes: 2,
         maxStreams: 4,
         bandwidthBytesPerSec: null,
+        maxFileBytes: null,
       }
     );
     expect(normalizeRelayQuota({ maxNodes: 2, maxStreams: 4 })).toEqual({
       maxNodes: 2,
       maxStreams: 4,
       bandwidthBytesPerSec: null,
+      maxFileBytes: null,
     });
     expect(normalizeRelayQuota({ maxNodes: 0, maxStreams: 4 })).toBeNull();
     expect(
@@ -73,8 +78,31 @@ describe('relay quota', () => {
     expect(normalizeRelayQuota(null)).toBeNull();
   });
 
+  test('normalizes maxFileBytes and rejects out-of-range values', () => {
+    expect(
+      normalizeRelayQuota({ maxNodes: 2, maxStreams: 4, maxFileBytes: 1024 })?.maxFileBytes
+    ).toBe(1024);
+    expect(
+      normalizeRelayQuota({ maxNodes: 2, maxStreams: 4, maxFileBytes: null })?.maxFileBytes
+    ).toBeNull();
+    expect(normalizeRelayQuota({ maxNodes: 2, maxStreams: 4, maxFileBytes: 0 })).toBeNull();
+    expect(normalizeRelayQuota({ maxNodes: 2, maxStreams: 4, maxFileBytes: 1.5 })).toBeNull();
+    expect(
+      normalizeRelayQuota({
+        maxNodes: 2,
+        maxStreams: 4,
+        maxFileBytes: RELAY_QUOTA_MAX_FILE_BYTES + 1,
+      })
+    ).toBeNull();
+  });
+
   test('round-trips through JSON and falls back to the default', () => {
-    const quota = { maxNodes: 3, maxStreams: 5, bandwidthBytesPerSec: 1024 };
+    const quota = {
+      maxNodes: 3,
+      maxStreams: 5,
+      bandwidthBytesPerSec: 1024,
+      maxFileBytes: 2048,
+    };
     expect(parseRelayQuotaJson(serializeRelayQuota(quota))).toEqual(quota);
     expect(parseRelayQuotaJson(null)).toBeNull();
     expect(parseRelayQuotaJson('{')).toBeNull();
@@ -210,6 +238,129 @@ describe('relay quota', () => {
     expect(slept).toBe(0);
     bucket.setRate(10);
     expect(bucket.rateBytesPerSec).toBe(10);
+  });
+});
+
+describe('relay limits', () => {
+  test('normalizes limits and rejects malformed ones', () => {
+    expect(normalizeRelayLimits({})).toEqual(defaultRelayLimits());
+    expect(
+      normalizeRelayLimits({ maxTenants: 4, totalBandwidthBytesPerSec: 1024, fairShare: false })
+    ).toEqual({ maxTenants: 4, totalBandwidthBytesPerSec: 1024, fairShare: false });
+    expect(normalizeRelayLimits({ maxTenants: null, totalBandwidthBytesPerSec: null })).toEqual(
+      defaultRelayLimits()
+    );
+    expect(normalizeRelayLimits({ maxTenants: 0 })).toBeNull();
+    expect(normalizeRelayLimits({ maxTenants: 1.5 })).toBeNull();
+    expect(normalizeRelayLimits({ totalBandwidthBytesPerSec: -1 })).toBeNull();
+    expect(normalizeRelayLimits({ fairShare: 'yes' })).toBeNull();
+    expect(normalizeRelayLimits(null)).toBeNull();
+  });
+});
+
+function bandwidthHarness(limits: RelayLimits): {
+  limiter: RelayBandwidthLimiter;
+  clock: () => number;
+} {
+  let clock = 0;
+  const limiter = new RelayBandwidthLimiter(
+    limits,
+    () => clock,
+    async (ms) => {
+      clock += ms;
+    }
+  );
+  return { limiter, clock: () => clock };
+}
+
+describe('relay bandwidth limiter', () => {
+  test('fair share splits the relay rate evenly between two tenants', async () => {
+    const { limiter, clock } = bandwidthHarness({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 64 * 1024,
+      fairShare: true,
+    });
+    const drive = async (tenantId: string): Promise<number> => {
+      const handle = limiter.acquire(tenantId);
+      let bytes = 0;
+      while (clock() < 5_000) {
+        await handle.take(8 * 1024);
+        bytes += 8 * 1024;
+      }
+      handle.close();
+      return bytes;
+    };
+    const [a, b] = await Promise.all([drive('tenant-a'), drive('tenant-b')]);
+    expect(a).toBeGreaterThan(0);
+    expect(b).toBeGreaterThan(0);
+    expect(Math.min(a, b) / Math.max(a, b)).toBeGreaterThan(0.8);
+  });
+
+  test('an idle relay does not throttle the only active tenant', async () => {
+    const { limiter, clock } = bandwidthHarness({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 8 * 1024,
+      fairShare: true,
+    });
+    // 另外两个租户持有把手但不发字节：空闲租户不该占走轮转位。
+    const idle = [limiter.acquire('idle-a'), limiter.acquire('idle-b')];
+    const active = limiter.acquire('active');
+    for (let i = 0; i < 4; i++) await active.take(8 * 1024);
+    active.close();
+    for (const handle of idle) handle.close();
+    // 首秒的桶存量算一次，其余三次各等一秒；三分带宽的话要 9 秒。
+    expect(clock()).toBeLessThan(4_000);
+  });
+
+  /**
+   * 两租户各排一笔，看谁先完成。先用一笔预热把桶里的初始额度花光——
+   * 否则先调用的那一方会在第二方入队之前把整秒的存量吃掉，结果只反映调用顺序。
+   */
+  const raceTwoTenants = async (fairShare: boolean): Promise<string[]> => {
+    const { limiter } = bandwidthHarness({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 8 * 1024,
+      fairShare,
+    });
+    const warm = limiter.acquire('warmup');
+    await warm.take(8 * 1024);
+    warm.close();
+    const order: string[] = [];
+    const first = limiter.acquire('tenant-a');
+    const second = limiter.acquire('tenant-b');
+    await Promise.all([
+      first.take(16 * 1024).then(() => order.push('a')),
+      second.take(8 * 1024).then(() => order.push('b')),
+    ]);
+    first.close();
+    second.close();
+    limiter.clear();
+    return order;
+  };
+
+  test('fair share off falls back to first-come-first-served', async () => {
+    expect(await raceTwoTenants(false)).toEqual(['a', 'b']);
+  });
+
+  test('fair share on lets the smaller take finish first', async () => {
+    expect(await raceTwoTenants(true)).toEqual(['b', 'a']);
+  });
+
+  test('unlimited never sleeps and setLimits hot-updates the rate', async () => {
+    const { limiter, clock } = bandwidthHarness(defaultRelayLimits());
+    const handle = limiter.acquire('tenant-a');
+    await handle.take(64 * 1024 * 1024);
+    expect(clock()).toBe(0);
+    expect(limiter.rateBytesPerSec).toBeNull();
+    limiter.setLimits({
+      maxTenants: 2,
+      totalBandwidthBytesPerSec: 4_096,
+      fairShare: false,
+    });
+    expect(limiter.rateBytesPerSec).toBe(4_096);
+    expect(limiter.fairShare).toBe(false);
+    handle.close();
+    limiter.clear();
   });
 });
 

@@ -241,6 +241,36 @@ describe('relay quotas', () => {
     expect(info.message).toBe('quota-streams');
     first.end();
   });
+
+  test('中继级总带宽闸串在转发路径上：放行的字节计入 admitted', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha');
+    await tenant.enroll();
+    const b = await tenant.joinNode('alpha-b');
+    const patched = await h.relay.adminFetch('/api/relay/config', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        limits: { maxTenants: null, totalBandwidthBytesPerSec: 1024 * 1024, fairShare: true },
+      }),
+    });
+    expect(patched.status).toBe(200);
+
+    const client = tenant.owner.relayClient();
+    const peer = b.relayClient();
+    if (!client || !peer) throw new Error('tenant is not on a relay');
+    peer.setOnRelayStream(() => {});
+    const stream = await client.openRelay(b.nodeId);
+    const payload = new Uint8Array(8 * 1024).fill(7);
+    await stream.write(payload);
+    // harness 的 sleep 立即返回，断言只看放行记账，不看墙钟。
+    const tenantId = tenant.tenantId();
+    await waitUntil(
+      () => h.relay.runtime.metering.liveAdmittedSnapshot(tenantId) >= payload.byteLength,
+      8_000
+    );
+    expect(h.relay.runtime.metering.liveAdmittedSnapshot(tenantId)).toBe(payload.byteLength);
+    stream.end();
+  });
 });
 
 describe('hub to relay migration', () => {

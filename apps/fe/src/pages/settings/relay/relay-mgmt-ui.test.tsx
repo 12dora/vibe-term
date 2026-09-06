@@ -14,15 +14,22 @@ installWindowStorage();
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { RelayAdminMenuList, TenantsMenuList } = await import('./relay-menus');
 const { DefaultQuotaDialogBody } = await import('./default-quota-dialog');
+const { RelayLimitsDialogBody } = await import('./relay-limits-dialog');
 const { RelayMembersCard, MemberStateFilterGroup, tenantScopeLabel } = await import(
   './members-card'
 );
-const { quotaToDraft } = await import('./relay-forms');
+const { limitsToDraft, quotaToDraft } = await import('./relay-forms');
 const { relayMetricsMember } = await import('./relay-metrics-fixture');
 
-const QUOTA: RelayQuota = { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: 524_288 };
+const QUOTA: RelayQuota = {
+  maxNodes: 8,
+  maxStreams: 16,
+  bandwidthBytesPerSec: 524_288,
+  maxFileBytes: 100 * 1024 * 1024,
+};
 
 type MenuItemElement = ReactElement<{ 'data-testid'?: string; onClick?: () => void }>;
+type MenuFragment = ReactElement<{ children: MenuItemElement[] }>;
 
 function tenant(patch: Partial<RelayTenantSummary> = {}): RelayTenantSummary {
   return {
@@ -44,17 +51,65 @@ function tenant(patch: Partial<RelayTenantSummary> = {}): RelayTenantSummary {
 }
 
 describe('页头「更多」', () => {
-  test('只有「修改接入密码」一项，点它开口令框', () => {
-    let opened = 0;
-    const item = RelayAdminMenuList({
+  test('两项：中继限额与修改接入密码，各自打开对应对话框', () => {
+    let limits = 0;
+    let password = 0;
+    const fragment = RelayAdminMenuList({
       label: '修改接入密码',
+      limitsLabel: '中继限额…',
       onChangePassword: () => {
-        opened += 1;
+        password += 1;
       },
-    }) as MenuItemElement;
-    expect(item.props['data-testid']).toBe('relay-password-change');
-    item.props.onClick?.();
-    expect(opened).toBe(1);
+      onOpenLimits: () => {
+        limits += 1;
+      },
+    }) as MenuFragment;
+    const items = fragment.props.children;
+    expect(items.map((item) => item.props['data-testid'])).toEqual([
+      'relay-limits-open',
+      'relay-password-change',
+    ]);
+    items[0]?.props.onClick?.();
+    items[1]?.props.onClick?.();
+    expect(limits).toBe(1);
+    expect(password).toBe(1);
+  });
+});
+
+describe('中继限额对话框', () => {
+  test('正文摆三项：最大租户数、总带宽、公平分配开关', () => {
+    const html = renderToStaticMarkup(
+      <RelayLimitsDialogBody
+        draft={limitsToDraft({
+          maxTenants: 4,
+          totalBandwidthBytesPerSec: 524_288,
+          fairShare: true,
+        })}
+        errors={{}}
+        busy={false}
+        error={null}
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="relay-limits-body"');
+    expect(html).toContain('data-testid="relay-limits-max-tenants"');
+    expect(html).toContain('data-testid="relay-limits-bandwidth"');
+    expect(html).toContain('data-testid="relay-limits-fair-share"');
+    expect(html).not.toContain('data-testid="relay-limits-error"');
+  });
+
+  test('提交失败时正文里摆错误', () => {
+    const html = renderToStaticMarkup(
+      <RelayLimitsDialogBody
+        draft={limitsToDraft(undefined)}
+        errors={{}}
+        busy
+        error="限额更新失败：boom"
+        onChange={() => undefined}
+      />
+    );
+    expect(html).toContain('data-testid="relay-limits-error"');
+    expect(html).toContain('限额更新失败：boom');
   });
 });
 
@@ -74,7 +129,7 @@ describe('租户卡「更多」', () => {
 });
 
 describe('默认配额对话框', () => {
-  test('正文摆配额三件套', () => {
+  test('正文摆配额四件套', () => {
     const html = renderToStaticMarkup(
       <DefaultQuotaDialogBody
         draft={quotaToDraft(QUOTA)}
@@ -88,6 +143,7 @@ describe('默认配额对话框', () => {
     expect(html).toContain('data-testid="relay-default-quota-max-nodes"');
     expect(html).toContain('data-testid="relay-default-quota-max-streams"');
     expect(html).toContain('data-testid="relay-default-quota-bandwidth"');
+    expect(html).toContain('data-testid="relay-default-quota-max-file"');
     expect(html).not.toContain('data-testid="relay-default-quota-error"');
   });
 

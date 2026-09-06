@@ -2,6 +2,7 @@ import { readJsonObjectBody } from '@tmex/shared/http';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import type { RelayKeyLogStore } from './relay-key-log-store';
+import { normalizeRelayLimits } from './relay-limits';
 import type { RelayMetering } from './relay-metering';
 import type { RelayMetricsCollector, RelayMetricsResponse } from './relay-metrics';
 import { hashRelayPassword, relayPasswordTooShort } from './relay-password';
@@ -64,6 +65,7 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
       passwordEpoch: config.passwordEpoch,
       minTokenEpoch: config.minTokenEpoch,
       defaultQuota: config.defaultQuota,
+      limits: config.limits,
     },
     tenants,
     totals,
@@ -104,17 +106,30 @@ export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): P
   return relayJson({ ok: true, passwordEpoch: next.passwordEpoch });
 }
 
+/** `{ defaultQuota }` 与 `{ limits }` 各自可选，但至少要给一个——空 PATCH 是调用方写错了。 */
 export async function handleRelayConfigPatch(
   deps: RelayAdminDeps,
   req: Request
 ): Promise<Response> {
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
-  const quota = normalizeRelayQuota(body.defaultQuota);
-  if (!quota) return relayError(RelayErrorCode.badQuota, 400);
-  deps.configStore.setDefaultQuota(quota, deps.now());
-  for (const tenant of deps.tenants.list()) {
-    if (tenant.quota === null) deps.uplink.notifyQuota(tenant.id);
+  const wantsQuota = 'defaultQuota' in body;
+  const wantsLimits = 'limits' in body;
+  if (!wantsQuota && !wantsLimits) return relayError(RelayErrorCode.invalidBody, 400);
+  const quota = wantsQuota ? normalizeRelayQuota(body.defaultQuota) : null;
+  if (wantsQuota && !quota) return relayError(RelayErrorCode.badQuota, 400);
+  const limits = wantsLimits ? normalizeRelayLimits(body.limits) : null;
+  if (wantsLimits && !limits) return relayError(RelayErrorCode.badLimits, 400);
+  const now = deps.now();
+  if (limits) {
+    deps.configStore.setLimits(limits, now);
+    deps.uplink.applyLimits(limits);
+  }
+  if (quota) {
+    deps.configStore.setDefaultQuota(quota, now);
+    for (const tenant of deps.tenants.list()) {
+      if (tenant.quota === null) deps.uplink.notifyQuota(tenant.id);
+    }
   }
   return relayJson({ ok: true });
 }

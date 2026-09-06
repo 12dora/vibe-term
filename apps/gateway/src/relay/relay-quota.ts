@@ -8,6 +8,16 @@ import { RELAY_DEFAULT_QUOTA } from './types';
 export const RELAY_QUOTA_MAX_NODES_LIMIT = RELAY_CTL_MAX_NODES;
 export const RELAY_QUOTA_MAX_STREAMS_LIMIT = 65_536;
 export const RELAY_QUOTA_MAX_BANDWIDTH = 10 * 1024 * 1024 * 1024;
+/** 单文件上限的天花板；再大也没有实际意义，且要留住整数精度。 */
+export const RELAY_QUOTA_MAX_FILE_BYTES = 1024 * 1024 * 1024 * 1024;
+
+/** 「非法」与「不限（null）」必须分得开，用哨兵而不是 null 表示非法。 */
+const INVALID = Symbol('invalid');
+
+function optionalPositiveInt(value: unknown, limit: number): number | null | typeof INVALID {
+  if (value === null || value === undefined) return null;
+  return positiveInt(value, limit) ?? INVALID;
+}
 
 function positiveInt(value: unknown, limit: number): number | null {
   if (typeof value !== 'number' || !Number.isInteger(value)) return null;
@@ -33,16 +43,14 @@ export function normalizeRelayQuota(value: unknown): RelayQuota | null {
   const maxNodes = positiveInt(rec.maxNodes, RELAY_QUOTA_MAX_NODES_LIMIT);
   const maxStreams = positiveInt(rec.maxStreams, RELAY_QUOTA_MAX_STREAMS_LIMIT);
   if (maxNodes === null || maxStreams === null) return null;
-  const raw = rec.bandwidthBytesPerSec;
-  let bandwidthBytesPerSec: number | null;
-  if (raw === null || raw === undefined) {
-    bandwidthBytesPerSec = null;
-  } else {
-    const parsed = positiveInt(raw, RELAY_QUOTA_MAX_BANDWIDTH);
-    if (parsed === null) return null;
-    bandwidthBytesPerSec = parsed;
-  }
-  return { maxNodes, maxStreams, bandwidthBytesPerSec };
+  const bandwidthBytesPerSec = optionalPositiveInt(
+    rec.bandwidthBytesPerSec,
+    RELAY_QUOTA_MAX_BANDWIDTH
+  );
+  if (bandwidthBytesPerSec === INVALID) return null;
+  const maxFileBytes = optionalPositiveInt(rec.maxFileBytes, RELAY_QUOTA_MAX_FILE_BYTES);
+  if (maxFileBytes === INVALID) return null;
+  return { maxNodes, maxStreams, bandwidthBytesPerSec, maxFileBytes };
 }
 
 export function serializeRelayQuota(quota: RelayQuota): string {
@@ -50,6 +58,7 @@ export function serializeRelayQuota(quota: RelayQuota): string {
     maxNodes: quota.maxNodes,
     maxStreams: quota.maxStreams,
     bandwidthBytesPerSec: quota.bandwidthBytesPerSec,
+    maxFileBytes: quota.maxFileBytes ?? null,
   });
 }
 

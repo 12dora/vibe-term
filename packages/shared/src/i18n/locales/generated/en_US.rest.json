@@ -1407,7 +1407,8 @@
           "quotaUnlimited": "Unlimited",
           "quotaUnlimitedValue": "{{used}} (Unlimited)",
           "nodeId": "This machine's ID",
-          "hubs": "Hub details"
+          "hubs": "Hub details",
+          "quotaMaxFile": "Max file size"
         },
         "direct": "Direct connection add-on",
         "directUnsupported": "Not supported on this platform",
@@ -2192,6 +2193,122 @@
         "resetConfirmDescription": "All groups will be deleted and every node returns to the top level in default order.",
         "resetFailed": "Failed to reset layout",
         "resetDone": "Layout reset"
+      },
+      "menu": {
+        "more": "More",
+        "fileTransfer": "File Transfer",
+        "portMap": "Port Mapping"
+      },
+      "transfer": {
+        "title": "File Transfer",
+        "description": "Transfer files directly between two nodes.",
+        "node": "Node",
+        "nodePlaceholder": "Select a node",
+        "root": "Directory",
+        "rootPlaceholder": "Select a directory",
+        "rootEmpty": "No file directory configured",
+        "up": "Up",
+        "pathLabel": "Path",
+        "showHidden": "Show hidden files",
+        "empty": "Directory is empty",
+        "loadFailed": "Failed to load directory",
+        "selected": "{{count}} selected",
+        "sendToRight": "Send to Right",
+        "sendToLeft": "Send to Left",
+        "sending": "Submitting...",
+        "sendFailed": "Failed to create transfer job",
+        "pickNodes": "Select a node and directory on both sides first",
+        "pickSource": "Select the items to transfer first",
+        "sameTarget": "Source and target are the same directory",
+        "list": "Transfers",
+        "listEmpty": "No transfers",
+        "clearFinished": "Clear Finished",
+        "cancel": "Cancel",
+        "browser": "Browser",
+        "items": "{{done}}/{{total}} items",
+        "pathLocal": "local",
+        "state": {
+          "queued": "Queued",
+          "running": "Transferring",
+          "done": "Completed",
+          "failed": "Failed",
+          "cancelled": "Cancelled"
+        },
+        "errors": {
+          "node_unreachable": "Node unreachable",
+          "grant_invalid": "Invalid grant",
+          "grant_expired": "Grant expired",
+          "peer_mismatch": "Source node mismatch",
+          "offset_mismatch": "Resume offset mismatch",
+          "incomplete": "Transfer interrupted",
+          "checksum_mismatch": "Checksum mismatch",
+          "dest_exists": "File already exists at target",
+          "quota_file_size": "Exceeds per-file limit",
+          "cancelled": "Cancelled",
+          "not_found": "File not found",
+          "outside_roots": "Path outside the directory",
+          "permission_denied": "Permission denied",
+          "too_large": "File too large",
+          "connection_failed": "Connection failed",
+          "timeout": "Timed out",
+          "unknown": "Transfer failed"
+        }
+      },
+      "portmap": {
+        "title": "Port Mapping",
+        "description": "Forward a local port on one node to a service on another node.",
+        "empty": "No port maps",
+        "loadFailed": "Failed to load port maps",
+        "pause": "Pause",
+        "resume": "Resume",
+        "delete": "Delete",
+        "deleteConfirmTitle": "Delete this port map?",
+        "deleteConfirmDescription": "\"{{name}}\" will be deleted and established connections will drop.",
+        "columns": {
+          "name": "Name",
+          "listen": "This Machine",
+          "target": "Target",
+          "state": "State",
+          "connections": "Connections",
+          "traffic": "Traffic",
+          "actions": "Actions"
+        },
+        "state": {
+          "listening": "Listening",
+          "paused": "Paused",
+          "error": "Error"
+        },
+        "form": {
+          "listenNode": "Listening Node",
+          "listenHost": "Listen Address",
+          "listenHostLocal": "This machine only",
+          "listenHostAny": "All addresses",
+          "listenHostAnyWarning": "With 0.0.0.0, anyone on the LAN can reach this port.",
+          "listenPort": "Listen Port",
+          "targetNode": "Target Node",
+          "targetHost": "Target Address",
+          "targetPort": "Target Port",
+          "nameOptional": "Name (optional)",
+          "submit": "Create",
+          "submitting": "Creating...",
+          "incomplete": "Fill in both nodes and ports first",
+          "portRange": "Port must be between 1 and 65535",
+          "portInUse": "Port already in use",
+          "portReserved": "Reserved port",
+          "targetIdle": "No service on the target port",
+          "sameNode": "Listening and target nodes must differ"
+        },
+        "errors": {
+          "invalid_request": "Invalid request",
+          "port_in_use": "Port already in use",
+          "port_reserved": "Reserved port",
+          "bind_failed": "Failed to listen",
+          "not_found": "Port map not found",
+          "target_unreachable": "Target unreachable",
+          "export_missing": "Target node has no matching allow record",
+          "limit_reached": "Connection limit reached",
+          "unknown": "Operation failed"
+        }
       }
     },
     "relay": {
@@ -2239,7 +2356,14 @@
           "traffic": "Relayed Traffic",
           "trafficSub": "since start",
           "trafficHint": "Each forwarded frame counts on both sides; it is counted once here.",
-          "tenants": "Tenants"
+          "tenants": "Tenants",
+          "bandwidth": "Admitted rate",
+          "bandwidthHint": "Forwarding rate actually admitted by the token bucket.",
+          "bandwidthUnlimited": "No total bandwidth limit",
+          "bandwidthFair": "Fair-shared between tenants",
+          "bandwidthFcfs": "First come, first served",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "No tenant limit"
         },
         "groups": {
           "traffic": "Traffic",
@@ -2394,7 +2518,9 @@
           "RELAY_UNKNOWN": "That relay is not in this machine’s relay list.",
           "RELAY_KICKED": "That relay revoked this tenant’s token. Re-enter the access password first.",
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
-          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later."
+          "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
+          "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
+          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -2467,13 +2593,17 @@
           "unlimitedValue": "Unlimited",
           "inherit": "Follow default",
           "inheritBadge": "Default",
-          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}}",
+          "summary": "{{nodes}} nodes · {{streams}} streams · {{bandwidth}} · file {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "Max nodes must be an integer between 1 and {{max}}.",
           "invalidStreams": "Max streams must be an integer between 1 and {{max}}.",
           "invalidBandwidth": "Max bandwidth must be an integer between 1 and {{max}} KB/s.",
           "saved": "Default quota updated.",
-          "failed": "Could not update the quota: {{message}}"
+          "failed": "Could not update the quota: {{message}}",
+          "maxFile": "Max file size (MB)",
+          "maxFileHint": "Leave empty for no limit. Published by the relay, enforced by tenant nodes.",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "Max file size must be an integer between 1 and {{max}} MB, or empty for no limit."
         },
         "tenants": {
           "title": "Tenants",
@@ -2522,6 +2652,19 @@
           "minutes": "{{n}} min ago",
           "hours": "{{n}} h ago",
           "days": "{{n}} d ago"
+        },
+        "limits": {
+          "title": "Relay Limits",
+          "menuItem": "Relay Limits…",
+          "description": "Applies to this relay as a whole and is never pushed to tenants.",
+          "maxTenants": "Max tenants",
+          "totalBandwidth": "Total bandwidth (KB/s)",
+          "fairShare": "Fair-share bandwidth",
+          "fairShareHint": "On: tenants split the total bandwidth round-robin. Off: first come, first served.",
+          "invalidMaxTenants": "Max tenants must be an integer between 1 and {{max}}, or empty for no limit.",
+          "invalidBandwidth": "Total bandwidth must be an integer between 1 and {{max}} KB/s, or empty for no limit.",
+          "saved": "Relay limits updated.",
+          "failed": "Could not update limits: {{message}}"
         }
       }
     },

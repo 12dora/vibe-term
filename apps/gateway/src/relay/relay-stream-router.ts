@@ -1,5 +1,6 @@
 import type { LinkStream, StreamChunk } from '@tmex/shared/link';
 import { type RelayQuota, decodeRelayOpenStream } from '@tmex/shared/relay';
+import type { RelayBandwidthHandle } from './relay-bandwidth';
 import type { RelayMetering } from './relay-metering';
 import type { RelayTokenBucket, RelayTokenStream } from './relay-quota';
 import { type RelayLiveNode, type RelayRegistry, noteRelayByteFlow } from './relay-registry';
@@ -13,6 +14,8 @@ export type RelayStreamContext = {
   metering: RelayMetering;
   quotaFor(tenantId: string): RelayQuota;
   bucketFor(tenantId: string): RelayTokenBucket;
+  /** 中继级总带宽闸；租户桶放行后还要过这一道。 */
+  bandwidthFor(tenantId: string): RelayBandwidthHandle;
   now(): number;
   isStopped(): boolean;
 };
@@ -86,10 +89,12 @@ function pumpRelayPair(
 ): void {
   let finished = false;
   const limiter = ctx.bucketFor(tenantId).createStream();
+  const global = ctx.bandwidthFor(tenantId);
   const abortBoth = (reason: RelayRstReason): void => {
     if (finished) return;
     finished = true;
     limiter.close();
+    global.close();
     release();
     try {
       a.reset(reason);
@@ -108,11 +113,12 @@ function pumpRelayPair(
     if (finished) return;
     finished = true;
     limiter.close();
+    global.close();
     release();
   };
   void Promise.all([
-    pumpMetered(ctx, tenantId, source, target, a, b, limiter, abortBoth),
-    pumpMetered(ctx, tenantId, target, source, b, a, limiter, abortBoth),
+    pumpMetered(ctx, tenantId, source, target, a, b, limiter, global, abortBoth),
+    pumpMetered(ctx, tenantId, target, source, b, a, limiter, global, abortBoth),
   ]).then(finish, finish);
 }
 
@@ -124,6 +130,7 @@ async function pumpMetered(
   src: LinkStream,
   dst: LinkStream,
   limiter: RelayTokenStream,
+  global: RelayBandwidthHandle,
   onError: (reason: RelayRstReason) => void
 ): Promise<void> {
   const reader = src.readable.getReader();
@@ -150,7 +157,9 @@ async function pumpMetered(
         ctx.metering.recordMember(tenantId, from.nodeId, { bytesIn: bytes.byteLength });
         ctx.metering.recordMember(tenantId, to.nodeId, { bytesOut: bytes.byteLength });
         try {
+          // 先过租户闸再过中继闸：超了自家额度的租户不该在全局轮转里占位。
           await limiter.take(bytes.byteLength);
+          await global.take(bytes.byteLength);
           ctx.metering.recordAdmitted(tenantId, bytes.byteLength);
         } catch {
           await halfCloseOrAbort(dst, onError, 'relay-rst:dst-write');

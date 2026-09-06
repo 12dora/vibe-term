@@ -60,7 +60,10 @@ export function useDirectoryUpload(
       }
       for (const file of accepted) {
         const controller = new AbortController();
-        const tt = startTransferToast(file.name, 'upload', () => controller.abort());
+        const tt = startTransferToast(file.name, 'upload', () => controller.abort(), {
+          nodeId: runtime.nodeId,
+          totalBytes: file.size,
+        });
         try {
           await uploadFileWithTransport(
             runtime.nodeId,

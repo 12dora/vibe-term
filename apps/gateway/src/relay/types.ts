@@ -36,6 +36,7 @@ export const RELAY_DEFAULT_QUOTA: RelayQuota = {
   maxNodes: 16,
   maxStreams: 64,
   bandwidthBytesPerSec: null,
+  maxFileBytes: null,
 };
 
 export type RelayRuntimeConfig = {

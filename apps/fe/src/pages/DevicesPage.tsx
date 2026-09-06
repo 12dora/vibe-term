@@ -11,26 +11,16 @@
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@tmex/api-client';
 import { DeviceManagementActions } from '@tmex/panels/device-management';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogMedia,
-  AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
 import { Button } from '@tmex/ui/button';
 import { IconTooltip } from '@tmex/ui/icon-tooltip';
-import { FolderPlus, Loader2, RotateCcw } from 'lucide-react';
-import { type ReactNode, useEffect, useMemo, useState } from 'react';
+import { FolderPlus, Loader2 } from 'lucide-react';
+import { type ReactNode, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AddDeviceMenu } from './devices/add-device-menu';
 import { useAddDeviceTargets } from './devices/add-device-targets';
 import { DeviceFoldersView } from './devices/device-folders-view';
 import { pruneDeviceSnapshots } from './devices/device-snapshot-store';
+import { DevicesActionsMenu } from './devices/devices-actions-menu';
 import { type NodeDeviceGroupEntry, toNodeDeviceGroups } from './devices/node-device-group';
 import { useDevicesPageCommands } from './devices/page-commands';
 
@@ -111,59 +101,14 @@ export function PageTitle() {
   return <>{t('sidebar.manageDevices')}</>;
 }
 
-function ResetLayoutButton({ onConfirm, disabled }: { onConfirm: () => void; disabled: boolean }) {
-  const { t } = useTranslation();
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <IconTooltip label={t('devices.folders.resetLayout')}>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          data-testid="devices-reset-layout"
-          aria-label={t('devices.folders.resetLayout')}
-          disabled={disabled}
-          onClick={() => setOpen(true)}
-        >
-          <RotateCcw className="h-4 w-4" />
-        </Button>
-      </IconTooltip>
-      <AlertDialog open={open} onOpenChange={setOpen}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogMedia>
-              <RotateCcw className="h-5 w-5" />
-            </AlertDialogMedia>
-            <AlertDialogTitle>{t('devices.folders.resetConfirmTitle')}</AlertDialogTitle>
-            <AlertDialogDescription>
-              {t('devices.folders.resetConfirmDescription')}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>{t('common.cancel')}</AlertDialogCancel>
-            <AlertDialogAction
-              variant="destructive"
-              data-testid="devices-reset-layout-confirm"
-              onClick={() => {
-                setOpen(false);
-                onConfirm();
-              }}
-            >
-              {t('devices.folders.resetLayout')}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </>
-  );
-}
-
 // Page actions component
 //
-// 「新建分组」「恢复默认布局」由页面主体登记入口（两棵子树，见 devices/page-commands.ts），
-// 没挂载就不显示。全页唯一的「+」：只要登记过 ready 节点就恒定展开下拉（「添加远程节点」
-// 与各节点目标都在里面，单节点也不再走快捷路径）；一个都没登记（standalone / 单面板）时
-// 退回派发全局事件，与旧行为一致。
+// 「新建分组」由页面主体登记入口（两棵子树，见 devices/page-commands.ts），没挂载就不显示；
+// 「恢复默认布局」收进「更多」菜单，同样只在登记过命令时可点。全页唯一的「+」：只要登记过
+// ready 节点就恒定展开下拉（「添加远程节点」与各节点目标都在里面，单节点也不再走快捷路径）；
+// 一个都没登记（standalone / 单面板）时退回派发全局事件，与旧行为一致。
+//
+// 「更多」里的文件传输 / 端口映射自带节点列表，与页面主体无关，因此恒定可见。
 export function PageActions() {
   const { t } = useTranslation();
   const targets = useAddDeviceTargets();
@@ -172,22 +117,20 @@ export function PageActions() {
   return (
     <div className="flex items-center gap-0.5">
       {commands && (
-        <>
-          <ResetLayoutButton onConfirm={commands.resetLayout} disabled={commands.layoutBusy} />
-          <IconTooltip label={t('devices.folders.newFolder')}>
-            <Button
-              variant="ghost"
-              size="icon-sm"
-              data-testid="devices-new-folder"
-              aria-label={t('devices.folders.newFolder')}
-              onClick={commands.newFolder}
-            >
-              <FolderPlus className="h-4 w-4" />
-            </Button>
-          </IconTooltip>
-        </>
+        <IconTooltip label={t('devices.folders.newFolder')}>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            data-testid="devices-new-folder"
+            aria-label={t('devices.folders.newFolder')}
+            onClick={commands.newFolder}
+          >
+            <FolderPlus className="h-4 w-4" />
+          </Button>
+        </IconTooltip>
       )}
       {targets.length > 0 ? <AddDeviceMenu targets={targets} /> : <DeviceManagementActions />}
+      <DevicesActionsMenu onResetLayout={commands?.resetLayout} layoutBusy={commands?.layoutBusy} />
     </div>
   );
 }

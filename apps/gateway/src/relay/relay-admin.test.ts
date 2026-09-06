@@ -21,7 +21,17 @@ type StatusBody = {
     hasPassword: boolean;
     passwordEpoch: number;
     minTokenEpoch: number;
-    defaultQuota: { maxNodes: number; maxStreams: number; bandwidthBytesPerSec: number | null };
+    defaultQuota: {
+      maxNodes: number;
+      maxStreams: number;
+      bandwidthBytesPerSec: number | null;
+      maxFileBytes?: number | null;
+    };
+    limits: {
+      maxTenants: number | null;
+      totalBandwidthBytesPerSec: number | null;
+      fairShare: boolean;
+    };
   };
   tenants: Array<{
     id: string;
@@ -121,7 +131,13 @@ describe('relay admin status', () => {
       hasPassword: false,
       passwordEpoch: 0,
       minTokenEpoch: 0,
-      defaultQuota: { maxNodes: 16, maxStreams: 64, bandwidthBytesPerSec: null },
+      defaultQuota: {
+        maxNodes: 16,
+        maxStreams: 64,
+        bandwidthBytesPerSec: null,
+        maxFileBytes: null,
+      },
+      limits: { maxTenants: null, totalBandwidthBytesPerSec: null, fairShare: true },
     });
     expect(body.tenants).toHaveLength(1);
     const row = body.tenants[0];
@@ -196,6 +212,73 @@ describe('relay admin mutations', () => {
     const quota = await client.inbox.takeOf('relay.quota');
     expect(quota.t === 'relay.quota' && quota.maxNodes).toBe(3);
     expect(quota.t === 'relay.quota' && quota.bandwidthBytesPerSec).toBe(2048);
+  });
+
+  test('pushes maxFileBytes to inheriting tenants as part of the quota', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('relay.quota');
+    const res = await relay.adminFetch('/api/relay/config', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        defaultQuota: {
+          maxNodes: 3,
+          maxStreams: 9,
+          bandwidthBytesPerSec: null,
+          maxFileBytes: 4096,
+        },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const quota = await client.inbox.takeOf('relay.quota');
+    expect(quota.t === 'relay.quota' && quota.maxFileBytes).toBe(4096);
+  });
+
+  test('stores relay limits and reports them on status', async () => {
+    const relay = await boot();
+    const res = await relay.adminFetch('/api/relay/config', {
+      method: 'PATCH',
+      body: JSON.stringify({
+        limits: { maxTenants: 2, totalBandwidthBytesPerSec: 4096, fairShare: false },
+      }),
+    });
+    expect(res.status).toBe(200);
+    const body = (await (await relay.adminFetch('/api/relay/status')).json()) as StatusBody;
+    expect(body.config.limits).toEqual({
+      maxTenants: 2,
+      totalBandwidthBytesPerSec: 4096,
+      fairShare: false,
+    });
+    const metrics = (await (await relay.adminFetch('/api/relay/metrics')).json()) as {
+      totals: {
+        bandwidthLimitBytesPerSec: number | null;
+        maxTenants: number | null;
+        fairShare: boolean;
+      };
+    };
+    expect(metrics.totals.bandwidthLimitBytesPerSec).toBe(4096);
+    expect(metrics.totals.maxTenants).toBe(2);
+    expect(metrics.totals.fairShare).toBe(false);
+  });
+
+  test('rejects malformed limits with RELAY_BAD_LIMITS and an empty patch with 400', async () => {
+    const relay = await boot();
+    const bad = await relay.adminFetch('/api/relay/config', {
+      method: 'PATCH',
+      body: JSON.stringify({ limits: { maxTenants: 0 } }),
+    });
+    expect(bad.status).toBe(400);
+    expect(((await bad.json()) as { error: { code: string } }).error.code).toBe('RELAY_BAD_LIMITS');
+    const empty = await relay.adminFetch('/api/relay/config', {
+      method: 'PATCH',
+      body: JSON.stringify({}),
+    });
+    expect(empty.status).toBe(400);
+    expect(((await empty.json()) as { error: { code: string } }).error.code).toBe(
+      'RELAY_INVALID_BODY'
+    );
   });
 
   test('rejects a malformed quota with RELAY_BAD_QUOTA', async () => {

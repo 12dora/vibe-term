@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '../client';
 import {
+  RELAY_QUOTA_LIMITS,
   RelayAdminApi,
   RelayApiError,
   type RelayQuota,
@@ -144,6 +145,29 @@ describe('RelayAdminApi 写接口', () => {
     expect(calls[0]?.init?.body).toBe(
       JSON.stringify({ defaultQuota: { maxNodes: 8, maxStreams: 16, bandwidthBytesPerSec: null } })
     );
+  });
+
+  test('PATCH /api/relay/config 把中继限额包进 limits', async () => {
+    const { api, calls } = recorder([ok({ ok: true })]);
+    await api.updateLimits({
+      maxTenants: 4,
+      totalBandwidthBytesPerSec: 1024,
+      fairShare: false,
+    });
+    expect(calls[0]?.url).toBe('/api/relay/config');
+    expect(calls[0]?.init?.method).toBe('PATCH');
+    expect(calls[0]?.init?.body).toBe(
+      JSON.stringify({
+        limits: { maxTenants: 4, totalBandwidthBytesPerSec: 1024, fairShare: false },
+      })
+    );
+  });
+
+  test('RELAY_QUOTA_LIMITS 与服务端 relay-quota.ts 的硬上限一致', () => {
+    expect(RELAY_QUOTA_LIMITS.maxNodes).toBe(256);
+    expect(RELAY_QUOTA_LIMITS.maxStreams).toBe(65_536);
+    expect(RELAY_QUOTA_LIMITS.bandwidthBytesPerSec).toBe(10 * 1024 * 1024 * 1024);
+    expect(RELAY_QUOTA_LIMITS.maxFileBytes).toBe(1024 * 1024 * 1024 * 1024);
   });
 
   test('PATCH /api/relay/tenants/:id 只发传入的字段', async () => {

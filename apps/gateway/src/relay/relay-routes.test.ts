@@ -94,6 +94,34 @@ describe('relay enroll', () => {
     expect(b.token).not.toBe(a.token);
   });
 
+  test('a full relay rejects a new tenant with 409 but still re-issues tokens', async () => {
+    const relay = await boot();
+    const first = await relay.createTenant();
+    relay.runtime.configStore.setLimits(
+      { maxTenants: 1, totalBandwidthBytesPerSec: null, fairShare: true },
+      relay.now()
+    );
+    const newcomer = rootKeyFromSeed(randomBytes(32));
+    const rejected = await relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enrollBody(relay, newcomer),
+    });
+    expect(rejected.status).toBe(409);
+    expect(((await rejected.json()) as { error: { code: string } }).error.code).toBe(
+      'RELAY_QUOTA_TENANTS'
+    );
+    expect(relay.runtime.tenants.count()).toBe(1);
+    // 已在册的租户重新 enroll（换令牌）不受满员影响，否则被踢后就再也回不来。
+    const reissued = await relay.fetch('/api/relay/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: enrollBody(relay, first.root),
+    });
+    expect(reissued.status).toBe(200);
+    expect(((await reissued.json()) as { tenant_id: string }).tenant_id).toBe(first.id);
+  });
+
   test('rejects a proof signed for another relay host', async () => {
     const relay = await boot();
     const root = rootKeyFromSeed(randomBytes(32));

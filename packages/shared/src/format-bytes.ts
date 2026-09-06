@@ -29,3 +29,17 @@ export function formatRate(bytesPerSec: number): string {
 export function formatBytesPair(used: number, total: number): string {
   return `${formatBytes(used)} / ${formatBytes(total)}`;
 }
+
+/**
+ * 剩余时间。`h:mm:ss`（不足一小时为 `m:ss`），无法估算时为 `--`。
+ * 超过 99 小时按 `99:59:59` 封顶——比展示一个五位数小时更可读。
+ */
+export function formatEta(seconds: number | null | undefined): string {
+  if (seconds == null || !Number.isFinite(seconds) || seconds < 0) return '--';
+  const total = Math.min(Math.round(seconds), 99 * 3600 + 3599);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(s)}` : `${m}:${pad(s)}`;
+}

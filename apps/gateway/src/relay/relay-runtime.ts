@@ -21,6 +21,7 @@ import { RelayConfigStore } from './relay-config-store';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';
 import { RelayErrorCode, relayError } from './relay-http';
 import { RelayKeyLogStore } from './relay-key-log-store';
+import { relayLimitTotals } from './relay-limits';
 import { RelayMetering } from './relay-metering';
 import { RelayMetricsCollector } from './relay-metrics';
 import { dispatchRelayPublic } from './relay-public-routes';
@@ -180,6 +181,7 @@ export class RelayRuntime {
       startedAt: this.startedAt,
       version: this.version,
       quotaFor: (tenantId) => this.uplink.quotaFor(tenantId),
+      limits: () => relayLimitTotals(this.configStore.ensure(this.now()).limits),
       onSample: () => this.uplink.pushQuotaUsageIfChanged(),
     });
     this.uplink.bindTenantRates((tenantId) => this.metrics.tenantRates(tenantId));

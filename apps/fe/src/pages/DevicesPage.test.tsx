@@ -355,12 +355,12 @@ describe('PageActions（全页唯一的 +）', () => {
     expect(html).toContain('data-testid="device-actions"');
     expect(html).toContain('data-callback="false"');
     expect(html).not.toContain('data-testid="devices-add"');
-    // 页面主体没挂载：分组相关的两个按钮都不显示
+    // 页面主体没挂载：「新建分组」不显示；「更多」自带弹窗，恒定可见
     expect(html).not.toContain('data-testid="devices-new-folder"');
-    expect(html).not.toContain('data-testid="devices-reset-layout"');
+    expect(html).toContain('data-testid="devices-more"');
   });
 
-  test('页面主体登记命令后，顶栏出现「恢复默认布局」与「新建分组」', () => {
+  test('页面主体登记命令后，顶栏出现「新建分组」，「更多」始终在最后', () => {
     registerDevicesPageCommands({
       newFolder: () => undefined,
       resetLayout: () => undefined,
@@ -371,34 +371,13 @@ describe('PageActions（全页唯一的 +）', () => {
         <PageActions />
       </MemoryRouter>
     );
-    expect(html).toContain('data-testid="devices-reset-layout"');
     expect(html).toContain('data-testid="devices-new-folder"');
-    expect(html.indexOf('data-testid="devices-reset-layout"')).toBeLessThan(
-      html.indexOf('data-testid="devices-new-folder"')
+    expect(html).toContain('data-testid="devices-more"');
+    expect(html.indexOf('data-testid="devices-new-folder"')).toBeLessThan(
+      html.indexOf('data-testid="devices-more"')
     );
-    const resetTag = html.slice(
-      html.lastIndexOf('<', html.indexOf('data-testid="devices-reset-layout"')),
-      html.indexOf('>', html.indexOf('data-testid="devices-reset-layout"'))
-    );
-    expect(resetTag).not.toContain('disabled=""');
-  });
-
-  test('布局变更在飞时「恢复默认布局」禁用', () => {
-    registerDevicesPageCommands({
-      newFolder: () => undefined,
-      resetLayout: () => undefined,
-      layoutBusy: true,
-    });
-    const html = renderToStaticMarkup(
-      <MemoryRouter>
-        <PageActions />
-      </MemoryRouter>
-    );
-    const resetTag = html.slice(
-      html.lastIndexOf('<', html.indexOf('data-testid="devices-reset-layout"')),
-      html.indexOf('>', html.indexOf('data-testid="devices-reset-layout"'))
-    );
-    expect(resetTag).toContain('disabled=""');
+    // 「恢复默认布局」进了下拉，弹层内容在无 DOM 环境不渲染（结构断言见 devices-actions-menu.test.tsx）
+    expect(html).not.toContain('data-testid="devices-reset-layout"');
   });
 
   test('只有一个 ready node 时也是下拉菜单（「添加远程节点」始终可达）', () => {

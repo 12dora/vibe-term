@@ -1,13 +1,13 @@
-// 中继下发的三档配额：节点、并发流、带宽。
+// 中继下发的四档配额：节点、并发流、带宽、单文件上限。
 //
 // 拆成纯函数是因为「有没有实时用量」这件事要分四种情形：旧中继不下发 `usage`（只剩上限）、
 // 带宽可以无上限、`currentNodes` 与 `usage.currentNodes` 两处都可能给、带宽用量的字段名
 // 还在演进。摊在 JSX 里必然写成一串三元。
 
-import { formatRate } from '@tmex/api-client/format';
+import { formatBytes, formatRate } from '@tmex/api-client/format';
 import type { RelayQuotaView } from '@tmex/api-client/relay/tenant-api';
 
-export type RelayQuotaKind = 'nodes' | 'streams' | 'bandwidth';
+export type RelayQuotaKind = 'nodes' | 'streams' | 'bandwidth' | 'maxFile';
 
 export interface RelayQuotaRow {
   kind: RelayQuotaKind;
@@ -69,6 +69,16 @@ export function relayQuotaRows(quota: RelayQuotaView): RelayQuotaRow[] {
       limitText: unlimited ? null : formatRate(limit),
       limitKey: unlimited ? 'nodes.machine.details.quotaUnlimited' : null,
       percent: unlimited ? null : percentOf(bandwidth, limit),
+    },
+    // 单文件上限没有「已用」可言，只摆上限；中继未下发时也是「不限」。
+    {
+      kind: 'maxFile',
+      labelKey: 'nodes.machine.details.quotaMaxFile',
+      testId: 'nodes-relay-max-file',
+      usedText: null,
+      limitText: quota.maxFileBytes == null ? null : formatBytes(quota.maxFileBytes),
+      limitKey: quota.maxFileBytes == null ? 'nodes.machine.details.quotaUnlimited' : null,
+      percent: null,
     },
   ];
 }

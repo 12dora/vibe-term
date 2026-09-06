@@ -37,6 +37,7 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.kick': async (p, n) => await (await relayAdmin()).runRelayKick(p, n.rest[0] ?? ''),
   'relay.remove': async (p, n) => await (await relayAdmin()).runRelayRemove(p, n.rest[0] ?? ''),
   'relay.quota': async (p, n) => await (await relayAdmin()).runRelayQuota(p, n.rest[0] ?? ''),
+  'relay.limits': async (p) => await (await relayAdmin()).runRelayLimits(p),
   'relay.label': async (p, n) => await (await relayAdmin()).runRelayLabel(p, n.rest),
   'relay.enroll': async (p, n) => await (await relay()).runRelayEnroll(p, n.rest[0] ?? ''),
   'relay.join': async (p) =>

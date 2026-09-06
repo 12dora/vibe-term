@@ -289,6 +289,7 @@ describe('RelayMetricsCollector', () => {
         maxNodes: 16,
         maxStreams: 64,
         bandwidthBytesPerSec: null,
+        maxFileBytes: null,
       });
       expect(tenant?.usage).toEqual({
         currentNodes: 1,
@@ -398,7 +399,12 @@ describe('GET /api/relay/metrics', () => {
     const body = (await res.json()) as {
       totals: { members: number; membersOnline: number; bandwidthBytesPerSec: number };
       tenants: Array<{
-        quota: { maxNodes: number; maxStreams: number; bandwidthBytesPerSec: number | null };
+        quota: {
+          maxNodes: number;
+          maxStreams: number;
+          bandwidthBytesPerSec: number | null;
+          maxFileBytes?: number | null;
+        };
         usage: { currentNodes: number; currentStreams: number; bandwidthBytesPerSec: number };
       }>;
       members: Array<{
@@ -416,6 +422,7 @@ describe('GET /api/relay/metrics', () => {
       maxNodes: 16,
       maxStreams: 64,
       bandwidthBytesPerSec: null,
+      maxFileBytes: null,
     });
     expect(body.tenants[0]?.usage).toMatchObject({
       currentNodes: 1,

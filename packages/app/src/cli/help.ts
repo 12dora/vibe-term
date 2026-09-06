@@ -32,7 +32,8 @@ Usage:
   tmex relay passwd [--clear] [--kick|--keep]
   tmex relay kick <tenantId>
   tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--inherit]
+  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   tmex relay label <tenantId> <text>
 
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
@@ -76,7 +77,8 @@ const HELP_ZH = `tmex CLI
   tmex relay passwd [--clear] [--kick|--keep]
   tmex relay kick <tenantId>
   tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--inherit]
+  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   tmex relay label <tenantId> <text>
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：

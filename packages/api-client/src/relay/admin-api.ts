@@ -19,11 +19,23 @@ export type {
   RelayMetricsTotals,
 } from './metrics-types';
 
-/** 配额三元组；`bandwidthBytesPerSec` 为 `null` 表示不限速。 */
+/** 按租户的配额；`bandwidthBytesPerSec` / `maxFileBytes` 为 `null` 表示不限。 */
 export interface RelayQuota {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 单文件传输上限（字节）；由中继发布、租户节点执行。旧中继不下发。 */
+  maxFileBytes?: number | null;
+}
+
+/**
+ * 中继级限额（不随 `relay.quota` 下发给租户）。
+ * `maxTenants` / `totalBandwidthBytesPerSec` 为 `null` 表示不限；`fairShare` 关掉即先到先得。
+ */
+export interface RelayLimits {
+  maxTenants: number | null;
+  totalBandwidthBytesPerSec: number | null;
+  fairShare: boolean;
 }
 
 /**
@@ -31,9 +43,17 @@ export interface RelayQuota {
  * `400 RELAY_BAD_QUOTA`，表单据此在提交前给字段级报错。
  */
 export const RELAY_QUOTA_LIMITS = {
-  maxNodes: 4096,
+  /** 与服务端一致：`relay.list` 一帧最多带 256 个节点，配大了也连不通。 */
+  maxNodes: 256,
   maxStreams: 65_536,
   bandwidthBytesPerSec: 10 * 1024 * 1024 * 1024,
+  maxFileBytes: 1024 * 1024 * 1024 * 1024,
+} as const;
+
+/** 中继级限额的硬上限（`apps/gateway/src/relay/relay-limits.ts`）；越界回 `400 RELAY_BAD_LIMITS`。 */
+export const RELAY_LIMITS_BOUNDS = {
+  maxTenants: 65_536,
+  totalBandwidthBytesPerSec: 10 * 1024 * 1024 * 1024,
 } as const;
 
 /** 中继全局配置。`hasPassword` 为 false 时任何人都能 enroll。 */
@@ -42,6 +62,8 @@ export interface RelayConfigSummary {
   passwordEpoch: number;
   minTokenEpoch: number;
   defaultQuota: RelayQuota;
+  /** 中继级限额；旧中继不返回。 */
+  limits?: RelayLimits;
 }
 
 /** 租户一行。`quota` 为 `null` 表示跟随默认配额。 */
@@ -196,6 +218,14 @@ export class RelayAdminApi {
     return this.mutate('/api/relay/config', 'relay_config_failed', {
       method: 'PATCH',
       body: { defaultQuota },
+    });
+  }
+
+  /** `PATCH /api/relay/config`：中继级限额（租户数 / 总带宽 / 公平分配）。 */
+  updateLimits(limits: RelayLimits): Promise<void> {
+    return this.mutate('/api/relay/config', 'relay_limits_failed', {
+      method: 'PATCH',
+      body: { limits },
     });
   }
 

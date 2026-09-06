@@ -8,6 +8,7 @@
     ".": "./src/index.ts",
     "./agent": "./src/agent/index.ts",
     "./files": "./src/files/index.ts",
+    "./files/transfers": "./src/files/transfers.ts",
     "./markdown": "./src/markdown/index.ts",
     "./code-viewer": "./src/code-viewer/index.ts",
     "./watch": "./src/watch/index.ts",

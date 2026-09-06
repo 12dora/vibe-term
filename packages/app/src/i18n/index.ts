@@ -247,6 +247,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.label.cleared': 'tenant {{tenantId}} label cleared',
     'relay.quota.default': 'default quota: {{quota}}',
     'relay.quota.tenant': 'tenant {{tenantId}} quota: {{quota}}',
+    'relay.limits.current': 'relay limits: {{limits}}',
+    'relay.limits.updated': 'relay limits updated: {{limits}}',
     'relay.enroll.passwordRequired': 'this relay requires a password',
     'relay.enroll.readmitPending':
       'members still need re-affirming after enroll ({{count}}); aborting before set-relays',
@@ -479,6 +481,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.label.cleared': '已清除租户 {{tenantId}} 的备注',
     'relay.quota.default': '默认配额：{{quota}}',
     'relay.quota.tenant': '租户 {{tenantId}} 配额：{{quota}}',
+    'relay.limits.current': '中继限额：{{limits}}',
+    'relay.limits.updated': '中继限额已更新：{{limits}}',
     'relay.enroll.passwordRequired': '该中继需要口令',
     'relay.enroll.readmitPending': '接入后仍有 {{count}} 个成员待重新确认，已中止 set-relays',
     'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
