@@ -3,6 +3,12 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { canonicalHubUrl } from '../../../../packages/shared/src/auth';
 import { type EnvName, resolveEnvName } from '../../../../packages/shared/src/env/load-env';
 import {
+  type PortProbeResult,
+  type ProbeFetch,
+  parseProbeTarget,
+  probeAddressPorts,
+} from '../../../../packages/shared/src/net/port-candidates';
+import {
   type DirectEnableResult,
   type DisableDirectOptions,
   type EnableDirectOptions,
@@ -23,6 +29,7 @@ import {
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
+import type { FetchInit, FetchLike } from '../lib/fetch-like';
 import {
   requestEnrollmentByPassword as defaultRequestEnrollmentByPassword,
   wipeRootKey,
@@ -57,6 +64,8 @@ import {
 export const SETUP_RESTART_DELAY_MS = 300;
 export const DIRECT_ENABLE_TIMEOUT_MS = 60_000;
 export const PRECHECK_TIMEOUT_MS = 5_000;
+/** 单个候选端口的探测超时；比 healthz 的确认短，八个候选交错跑完仍在几秒内。 */
+export const PRECHECK_PROBE_TIMEOUT_MS = 4_000;
 export const DIRECT_ENABLED_KEY = 'TMEX_DIRECT_ENABLED';
 
 export {
@@ -160,11 +169,20 @@ export type JoinHubResult = {
   admitPending?: boolean;
 };
 
+/** 端口探测与确认用哪套健康判据：Hub 打 `/healthz`，中继打 `/api/relay/health`。 */
+export type PrecheckKind = 'hub' | 'relay';
+
 export type PrecheckResult = {
   reachable: boolean;
   isSelf: boolean;
   status: number | null;
   error: string | null;
+  /** 端口探测确定的地址（含端口）；未探测或一个端口都没答话为 `null`。 */
+  resolvedUrl: string | null;
+  /** 实际发起过探测的端口；未探测为空。 */
+  triedPorts: number[];
+  /** 地址没写端口时才探测候选端口。 */
+  probed: boolean;
 };
 
 export type SetupServiceDeps = SetupEnvHost & {
@@ -376,37 +394,106 @@ export async function setLocalDirect(
   };
 }
 
-export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promise<PrecheckResult> {
+type HealthzOutcome = Pick<PrecheckResult, 'reachable' | 'isSelf' | 'status' | 'error'>;
+
+/** 带本机自签 CA 的 fetch：候选端口探测与 healthz 确认共用同一份 TLS 配置。 */
+function precheckFetch(fetchImpl: FetchLike, caPem: string | null): ProbeFetch {
+  return (input, init) =>
+    fetchImpl(input, { ...init, ...(caPem ? { tls: { ca: [caPem] } } : {}) } as FetchInit);
+}
+
+const HEALTH_PROBE: Record<PrecheckKind, { path: string; label: string }> = {
+  hub: { path: '/healthz', label: 'healthz' },
+  relay: { path: '/api/relay/health', label: 'relay health' },
+};
+
+/** 地址没写端口且是 https 时才探候选端口；显式端口与回环 http 一律照原样确认。 */
+async function precheckProbePorts(
+  url: string,
+  kind: PrecheckKind,
+  fetchImpl: ProbeFetch
+): Promise<PortProbeResult | null> {
+  const target = parseProbeTarget(url);
+  if (target.explicitPort !== null || target.protocol !== 'https:') return null;
+  return await probeAddressPorts(url, {
+    kind,
+    fetchImpl,
+    timeoutMs: PRECHECK_PROBE_TIMEOUT_MS,
+  });
+}
+
+/** 判据与探测同源：Hub 看 `/healthz.status`，中继看 `/api/relay/health.ok`。 */
+function healthOutcome(
+  kind: PrecheckKind,
+  status: number,
+  body: { status?: unknown; ok?: unknown; startedAt?: unknown },
+  startedAt: number
+): HealthzOutcome {
+  const reachable = status === 200 && (kind === 'relay' ? body.ok === true : body.status === 'ok');
+  return {
+    reachable,
+    // 中继的健康接口不下发 startedAt，本机判定只对 Hub 有意义
+    isSelf: reachable && kind === 'hub' && body.startedAt === startedAt,
+    status,
+    error: reachable ? null : `${HEALTH_PROBE[kind].label} status ${status}`,
+  };
+}
+
+async function readHealth(
+  base: string | URL,
+  kind: PrecheckKind,
+  fetchImpl: ProbeFetch,
+  startedAt: number
+): Promise<HealthzOutcome> {
+  const probe = HEALTH_PROBE[kind];
+  const response = await fetchImpl(new URL(probe.path, base).toString(), {
+    signal: AbortSignal.timeout(PRECHECK_TIMEOUT_MS),
+    redirect: 'error',
+  });
+  const status = response.status;
+  let body: { status?: unknown; ok?: unknown; startedAt?: unknown };
+  try {
+    body = (await response.json()) as typeof body;
+  } catch {
+    return {
+      reachable: false,
+      isSelf: false,
+      status,
+      error: `${probe.label} response was not JSON`,
+    };
+  }
+  return healthOutcome(kind, status, body, startedAt);
+}
+
+export async function precheckHubUrl(
+  url: string,
+  deps: SetupServiceDeps,
+  kind: PrecheckKind = 'hub'
+): Promise<PrecheckResult> {
   assertStandalone(deps.roles);
   const parsed = assertSetupUrl(url, deps.nodeEnv);
-  const fetchImpl = deps.fetch ?? fetch;
   const startedAt = deps.startedAt ?? PROCESS_STARTED_AT;
   try {
     const caPem = deps.precheckCaPem ? await deps.precheckCaPem() : null;
-    const response = await fetchImpl(new URL('/healthz', parsed), {
-      signal: AbortSignal.timeout(PRECHECK_TIMEOUT_MS),
-      redirect: 'error',
-      ...(caPem ? { tls: { ca: [caPem] } } : {}),
-    } as RequestInit);
-    const status = response.status;
-    let body: { status?: unknown; startedAt?: unknown } = {};
-    try {
-      body = (await response.json()) as { status?: unknown; startedAt?: unknown };
-    } catch {
+    const fetchImpl = precheckFetch(deps.fetch ?? fetch, caPem);
+    const probe = await precheckProbePorts(url, kind, fetchImpl);
+    if (probe && !probe.url) {
       return {
         reachable: false,
         isSelf: false,
-        status,
-        error: 'healthz response was not JSON',
+        status: null,
+        error: `no response on 443 or the built-in candidate ports (${probe.triedPorts.join(', ')})`,
+        resolvedUrl: null,
+        triedPorts: probe.triedPorts,
+        probed: true,
       };
     }
-    const reachable = status === 200 && body.status === 'ok';
-    const isSelf = reachable && body.startedAt === startedAt;
+    const health = await readHealth(probe?.url ?? parsed, kind, fetchImpl, startedAt);
     return {
-      reachable,
-      isSelf,
-      status,
-      error: reachable ? null : `healthz status ${status}`,
+      ...health,
+      resolvedUrl: probe?.url ?? null,
+      triedPorts: probe?.triedPorts ?? [],
+      probed: probe !== null,
     };
   } catch (error) {
     return {
@@ -414,6 +501,9 @@ export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promi
       isSelf: false,
       status: null,
       error: errorMessage(error),
+      resolvedUrl: null,
+      triedPorts: [],
+      probed: false,
     };
   }
 }

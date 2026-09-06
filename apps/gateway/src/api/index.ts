@@ -1,6 +1,8 @@
 import type { Server } from 'bun';
 import { t } from '../i18n';
+import { portMapRoutes } from '../portmap/routes';
 import { shareAccessRoutes, shareRoutes } from '../share';
+import { transferRoutes } from '../transfer/routes';
 import { agentRoutes } from './agent';
 import { deviceFolderRoutes } from './device-folder-routes';
 import { deviceRoutes } from './device-routes';
@@ -37,6 +39,8 @@ const apiRoutes: ApiRoute[] = [
   ...agentRoutes,
   ...watchRoutes,
   ...filesRoutes,
+  ...transferRoutes,
+  ...portMapRoutes,
   ...domainAccessRoutes,
   ...systemPrefixRoutes,
   ...webhookRoutes,

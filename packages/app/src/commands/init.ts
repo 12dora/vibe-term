@@ -1,5 +1,12 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import { DEFAULT_TLS_PORT } from '../../../../apps/gateway/src/tls/types';
+import { canonicalHubUrl } from '../../../shared/src/auth';
+import {
+  isLoopbackHostname,
+  parseProbeTarget,
+  pickSuggestedPortAvoiding,
+} from '../../../shared/src/net/port-candidates';
 import { normalizeRelayUrl } from '../../../shared/src/relay';
 import {
   DEFAULT_SERVICE_NAME,
@@ -158,7 +165,7 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
         ),
     'service-name'
   );
-  const uplink = await buildUplinkConfig(parsed, ni, ask);
+  const uplink = await buildUplinkConfig(parsed, ni, ask, port);
   return {
     installDir,
     host,
@@ -191,7 +198,8 @@ type UplinkConfig = Pick<
 async function buildUplinkConfig(
   parsed: ParsedArgs,
   ni: boolean,
-  ask: AskFlag
+  ask: AskFlag,
+  gatewayPort: number
 ): Promise<UplinkConfig> {
   const flags = parsed.flags;
   const role = parseTmexRoleName(
@@ -211,12 +219,56 @@ async function buildUplinkConfig(
       String(DEFAULT_PEER_PORT)
   );
   const hubPublicUrlFlag = asString(flags['hub-public-url']) || '';
+  const needsPublicUrl = isRelay || role === 'hub,node';
+  const publicPort = needsPublicUrl
+    ? await resolvePublicHttpsPort(parsed, ni, [gatewayPort, peerPort, DEFAULT_TLS_PORT])
+    : DEFAULT_PUBLIC_HTTPS_PORT;
   const hubPublicUrl =
-    role === 'hub,node' ? await resolveHubPublicUrl(ni, hubPublicUrlFlag) : hubPublicUrlFlag;
+    role === 'hub,node'
+      ? await resolveHubPublicUrl(ni, hubPublicUrlFlag, publicPort)
+      : hubPublicUrlFlag;
   const relayPublicUrl = isRelay
-    ? await resolveRelayPublicUrl(ni, asString(flags['relay-public-url']) || '')
+    ? await resolveRelayPublicUrl(ni, asString(flags['relay-public-url']) || '', publicPort)
     : '';
   return { role, hubUrl, hubPublicUrl, relayPublicUrl, peerPort };
+}
+
+export const DEFAULT_PUBLIC_HTTPS_PORT = 443;
+
+/**
+ * 公网 HTTPS 端口。运营商封 443 时改用高位端口；建议值避开本机已占用的端口。
+ * 非交互不提问：`--public-port` 给了就用，没给沿用 443（地址里已写端口时它不生效）。
+ */
+async function resolvePublicHttpsPort(
+  parsed: ParsedArgs,
+  nonInteractive: boolean,
+  used: number[]
+): Promise<number> {
+  const flag = asString(parsed.flags['public-port']);
+  if (flag) return parsePort(flag);
+  if (nonInteractive) return DEFAULT_PUBLIC_HTTPS_PORT;
+  const suggested = pickSuggestedPortAvoiding(used);
+  const answer = await promptText(
+    { nonInteractive: false },
+    t('init.prompt.publicPort', { suggested }),
+    String(DEFAULT_PUBLIC_HTTPS_PORT)
+  );
+  return parsePort(answer);
+}
+
+/** 地址自己写了端口就以它为准；否则补上选定的公网端口。 */
+export function applyPublicPort(raw: string, port: number): string {
+  const value = raw.trim();
+  if (!value || port === DEFAULT_PUBLIC_HTTPS_PORT) return value;
+  try {
+    const target = parseProbeTarget(value);
+    if (target.explicitPort !== null) return value;
+    const url = new URL(target.base);
+    url.port = String(port);
+    return canonicalHubUrl(url.toString());
+  } catch {
+    return value;
+  }
 }
 
 const RELAY_PUBLIC_URL_ATTEMPTS = 3;
@@ -225,27 +277,44 @@ const RELAY_PUBLIC_URL_ATTEMPTS = 3;
  * 中继的公开地址是节点 uplink 的目标，写坏了整台中继就没人能接入；空值/非 https 一律
  * 在落任何配置之前就拦下（`normalizeRelayUrl` 与 join 串、`set-relays` 同一套规则）。
  */
-async function resolveRelayPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
+async function resolveRelayPublicUrl(
+  nonInteractive: boolean,
+  current: string,
+  publicPort: number
+): Promise<string> {
   if (nonInteractive) {
     if (!current) {
       throw new Error('init --role relay requires --relay-public-url in non-interactive mode');
     }
-    return normalizeRelayPublicUrl(current);
+    return normalizeRelayPublicUrl(applyPublicPort(current, publicPort));
   }
-  let answer = current;
+  const answer = await promptPublicUrl({
+    label: 'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
+    current,
+    publicPort,
+    normalize: normalizeRelayPublicUrl,
+  });
+  if (answer !== null) return answer;
+  throw new Error('init --role relay requires a valid https --relay-public-url');
+}
+
+/** 提问 → 补端口 → 校验，最多重试 `RELAY_PUBLIC_URL_ATTEMPTS` 次；全失败返回 `null`。 */
+async function promptPublicUrl(input: {
+  label: string;
+  current: string;
+  publicPort: number;
+  normalize: (raw: string) => string;
+}): Promise<string | null> {
+  let answer = applyPublicPort(input.current, input.publicPort);
   for (let attempt = 0; attempt < RELAY_PUBLIC_URL_ATTEMPTS; attempt++) {
-    answer = await promptText(
-      { nonInteractive: false },
-      'Relay public URL (TMEX_RELAY_PUBLIC_URL)',
-      answer
-    );
+    answer = await promptText({ nonInteractive: false }, input.label, answer);
     try {
-      return normalizeRelayPublicUrl(answer);
+      return input.normalize(applyPublicPort(answer, input.publicPort));
     } catch (error) {
       console.error(errorMessage(error));
     }
   }
-  throw new Error('init --role relay requires a valid https --relay-public-url');
+  return null;
 }
 
 export function normalizeRelayPublicUrl(raw: string): string {
@@ -260,18 +329,43 @@ export function normalizeRelayPublicUrl(raw: string): string {
   }
 }
 
-async function resolveHubPublicUrl(nonInteractive: boolean, current: string): Promise<string> {
+/** Hub 公网地址与中继同一套规则：https（回环允许 http），写坏了没有节点能加入。 */
+export function normalizeHubPublicUrl(raw: string): string {
+  const value = raw.trim();
+  if (!value) {
+    throw new Error('hub public URL cannot be empty');
+  }
+  let canonical: string;
+  try {
+    canonical = canonicalHubUrl(value);
+  } catch (error) {
+    throw new Error(`invalid hub public URL: ${errorMessage(error)}`);
+  }
+  const url = new URL(canonical);
+  if (url.protocol === 'https:') return canonical;
+  if (url.protocol === 'http:' && isLoopbackHostname(url.hostname)) return canonical;
+  throw new Error('invalid hub public URL: must be https (http allowed for loopback only)');
+}
+
+async function resolveHubPublicUrl(
+  nonInteractive: boolean,
+  current: string,
+  publicPort: number
+): Promise<string> {
   if (nonInteractive) {
     if (!current) {
       throw new Error('init --role hub,node requires --hub-public-url in non-interactive mode');
     }
-    return current;
+    return normalizeHubPublicUrl(applyPublicPort(current, publicPort));
   }
-  return await promptText(
-    { nonInteractive: false },
-    'Hub public URL (TMEX_HUB_PUBLIC_URL)',
-    current
-  );
+  const answer = await promptPublicUrl({
+    label: 'Hub public URL (TMEX_HUB_PUBLIC_URL)',
+    current,
+    publicPort,
+    normalize: normalizeHubPublicUrl,
+  });
+  if (answer !== null) return answer;
+  throw new Error('init --role hub,node requires a valid https --hub-public-url');
 }
 
 async function handleDepFailure(

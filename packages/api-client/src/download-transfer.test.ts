@@ -1,6 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test';
 import { ApiClient } from './client';
-import { prepareDownload } from './download-transfer';
+import { downloadFileWithProgress, prepareDownload } from './download-transfer';
 import { FileApiError } from './file-errors';
 import type { LegProgress } from './transfer-types';
 
@@ -162,5 +162,73 @@ describe('prepareDownload', () => {
 
     expect(calls[0].init?.signal).toBe(controller.signal);
     expect((error as Error).name).toBe('AbortError');
+  });
+});
+
+describe('downloadFileWithProgress content retry', () => {
+  function prepared(payload: string): Response {
+    return ndjson([{ type: 'done', downloadId: 'dl-r', size: payload.length, name: 'r.txt' }]);
+  }
+
+  test('建连阶段被 RST 也走重试，已收字节保留并在收全后回收会话', async () => {
+    const calls: Call[] = [];
+    let contentCall = 0;
+    const client = new ApiClient('', (url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+      if (url.endsWith('/content')) {
+        contentCall += 1;
+        if (contentCall === 1) return Promise.reject(new TypeError('network error'));
+        if (contentCall === 2) {
+          return Promise.resolve(new Response(new TextEncoder().encode('he'), { status: 200 }));
+        }
+        return Promise.resolve(
+          new Response(new TextEncoder().encode('llo'), {
+            status: 206,
+            headers: { 'Content-Range': 'bytes 2-4/5' },
+          })
+        );
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+
+    const file = await downloadFileWithProgress('root-1', '/r.txt', 'r.txt', {}, client);
+    expect(await file.blob.text()).toBe('hello');
+    // 第二次是 Range 续传，不是整份重来
+    const ranged = calls.filter((c) => c.url.endsWith('/content'));
+    expect(ranged).toHaveLength(3);
+    expect((ranged[2].init?.headers as Record<string, string>).Range).toBe('bytes=2-');
+    // 收全并校验长度之后才删远端会话
+    expect(calls.at(-1)?.init?.method).toBe('DELETE');
+    expect(calls.at(-1)?.url).toBe('/api/files/download/dl-r');
+  });
+
+  test('永久性 HTTP 错误立即失败，不再重试', async () => {
+    const calls: Call[] = [];
+    const client = new ApiClient('', (url, init) => {
+      calls.push({ url, init });
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+      if (url.endsWith('/content')) {
+        return Promise.resolve(jsonResponse({ error: 'not_found', code: 'not_found' }, 404));
+      }
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+
+    await expect(
+      downloadFileWithProgress('root-1', '/r.txt', 'r.txt', {}, client)
+    ).rejects.toMatchObject({ status: 404 });
+    expect(calls.filter((c) => c.url.endsWith('/content'))).toHaveLength(1);
+    expect(calls.at(-1)?.init?.method).toBe('DELETE');
+  });
+
+  test('三次都失败时上抛最后一个链路错误', async () => {
+    const client = new ApiClient('', (url) => {
+      if (url.endsWith('/prepare')) return Promise.resolve(prepared('hello'));
+      if (url.endsWith('/content')) return Promise.reject(new TypeError('boom'));
+      return Promise.resolve(new Response(null, { status: 204 }));
+    });
+    await expect(
+      downloadFileWithProgress('root-1', '/r.txt', 'r.txt', {}, client)
+    ).rejects.toMatchObject({ message: 'boom' });
   });
 });

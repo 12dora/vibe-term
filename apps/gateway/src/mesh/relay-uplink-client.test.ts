@@ -558,8 +558,20 @@ describe('RelayUplinkClient', () => {
       maxNodes: 16,
       maxStreams: 64,
       bandwidthBytesPerSec: null,
+      // 中继不下发 maxFileBytes 时归一成 null（不限）。
+      maxFileBytes: null,
       currentNodes: 4,
     });
+
+    server.send({
+      t: 'relay.quota',
+      maxNodes: 16,
+      maxStreams: 64,
+      bandwidthBytesPerSec: null,
+      maxFileBytes: 100 * 1024 * 1024,
+      currentNodes: 4,
+    });
+    await waitUntil(() => client.quota?.maxFileBytes === 100 * 1024 * 1024);
   });
 
   test('relay.quota.usage 写入客户端', async () => {
@@ -603,6 +615,7 @@ describe('RelayUplinkClient', () => {
       maxNodes: 16,
       maxStreams: 64,
       bandwidthBytesPerSec: 1024,
+      maxFileBytes: null,
       currentNodes: 2,
       usage,
     });

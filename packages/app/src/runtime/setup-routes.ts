@@ -2,7 +2,13 @@ import { isStandaloneRoles } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
 import { handleRelayJoinRequest } from './relay-join-routes';
 import { becomeRelay } from './relay-setup-service';
-import { type SetupServiceDeps, becomeHub, joinHub, precheckHubUrl } from './setup-service';
+import {
+  type PrecheckKind,
+  type SetupServiceDeps,
+  becomeHub,
+  joinHub,
+  precheckHubUrl,
+} from './setup-service';
 import { SetupError } from './setup-shared';
 
 const SETUP_PATHS = new Set([
@@ -16,6 +22,16 @@ const SETUP_PATHS = new Set([
 function readString(body: Record<string, unknown>, key: string): string {
   const value = body[key];
   return typeof value === 'string' ? value : '';
+}
+
+/** 缺省 hub；非法值直接拒，别让打错的 kind 静默按 Hub 判据探到一台不是中继的机器。 */
+function readPrecheckKind(body: Record<string, unknown>): PrecheckKind {
+  const kind = body.kind;
+  if (kind === undefined || kind === null || kind === '') return 'hub';
+  if (kind !== 'hub' && kind !== 'relay') {
+    throw new SetupError('invalid_body', "kind must be 'hub' or 'relay'", 400);
+  }
+  return kind;
 }
 
 const TOTP_CODE_RE = /^\d{6,10}$/;
@@ -36,7 +52,7 @@ async function dispatchSetupAction(
   deps: SetupServiceDeps
 ): Promise<Response> {
   if (path === '/api/setup/precheck') {
-    return jsonOk(await precheckHubUrl(readString(body, 'url'), deps));
+    return jsonOk(await precheckHubUrl(readString(body, 'url'), deps, readPrecheckKind(body)));
   }
   if (path === '/api/setup/hub') {
     return jsonOk(

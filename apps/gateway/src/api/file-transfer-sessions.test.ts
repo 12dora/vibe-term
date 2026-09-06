@@ -90,14 +90,14 @@ describe('file-transfer-sessions', () => {
   });
 
   test('filesBulkHooks identity matches the session exports', () => {
-    expect(filesBulkHooks.getTransferOwner).toBe(getTransferOwner);
-    expect(filesBulkHooks.abortTransfer).toBe(abortTransfer);
+    expect(filesBulkHooks.status).toBe(getTransferOwner);
+    expect(filesBulkHooks.abort).toBe(abortTransfer);
   });
 
-  test('appendUpload writes the same temp file HTTP PUT uses', async () => {
+  test('writeRange 收满后 rename 成 HTTP commit 用的临时文件', async () => {
     const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 3 });
     ids.push(session.id);
-    expect(await filesBulkHooks.appendUpload(session.id, new Uint8Array([1, 2, 3]))).toEqual({
+    expect(await filesBulkHooks.writeRange(session.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
       ok: true,
       received: 3,
     });

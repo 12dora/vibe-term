@@ -1,4 +1,13 @@
 import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
+import {
+  PUSH_MAX_ATTEMPTS,
+  PUSH_RETRY_BACKOFF_MS,
+  type PushOutcome,
+  type PushPutOptions,
+  type PushTransport,
+  runPush,
+} from '@tmex/transfer';
+import { openRange } from '@tmex/transfer/node';
 import { getInstallInfo } from './install-info';
 import {
   type DownloadProgressFn,
@@ -6,12 +15,7 @@ import {
   resolveReleaseCacheDir,
   retainReleaseVersion,
 } from './release-download';
-import {
-  abortableSleep,
-  describeUpstream,
-  detachRequest,
-  fileReadableStream,
-} from './remote-upgrade-io';
+import { abortableSleep, describeUpstream, detachRequest } from './remote-upgrade-io';
 import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
@@ -23,11 +27,9 @@ export const REMOTE_UPGRADE_TIMEOUTS = {
   startMs: 60 * 1000,
 };
 
-/** 推包重试的退避梯度（毫秒），封顶 15 s。 */
-export const PUSH_RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 15000, 15000] as const;
-/** 目标支持续传时最多推 8 次；每次只补发缺的那一段。 */
-export const PUSH_MAX_ATTEMPTS = 8;
-/** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。 */
+// 退避梯度与「支持续传时推几次」是引擎的策略，这里只做转出，不再留第二份定义。
+export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@tmex/transfer';
+/** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。升级独有。 */
 export const LEGACY_PUSH_MAX_ATTEMPTS = 3;
 /** 问一次已收偏移的超时；问不到就当 0 从头推，不值得为它挂住整个阶段。 */
 const OFFSET_QUERY_TIMEOUT_MS = 30 * 1000;
@@ -348,24 +350,10 @@ function supportsStagedResume(job: Job): boolean {
   return job.upgradeCapabilities.includes('staged-package-resume');
 }
 
-function backoffMs(attempt: number): number {
-  return (
-    PUSH_RETRY_BACKOFF_MS[attempt - 1] ??
-    PUSH_RETRY_BACKOFF_MS[PUSH_RETRY_BACKOFF_MS.length - 1] ??
-    15000
-  );
-}
-
-/** 一次推送尝试的结论。`retry` 判定为链路问题，可以退避后接着补发。 */
-type PushAttempt =
-  | { kind: 'landed' }
-  | { kind: 'retry'; error: string }
-  | { kind: 'fail'; error: string }
-  | { kind: 'cancelled'; snapshot: RemoteUpgradeJobSnapshot };
-
 /**
  * 推包阶段。目标支持 `staged-package-resume` 时先问一次已收偏移，只补发缺的那一段；
  * 链路断掉（中继复位 / 顶号 / 上行切换）退避重试，整个阶段共用 `pushMs` 预算。
+ * 字节搬运本身由 `@tmex/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
  */
 async function runPushPhase(
   job: Job,
@@ -375,56 +363,47 @@ async function runPushPhase(
   job.phase = 'push';
   job.totalBytes = downloaded.bytes;
   const resume = supportsStagedResume(job);
-  const maxAttempts = resume ? PUSH_MAX_ATTEMPTS : LEGACY_PUSH_MAX_ATTEMPTS;
-  const deadline = deps.nowFn() + deps.timeouts.pushMs;
-  let lastError = 'push failed: push timeout';
-  let fullReupload = false;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    job.attempt = attempt;
-    const status =
-      resume && !fullReupload ? await readPushedOffset(job, deps, downloaded) : NO_STAGED_OFFSET;
-    if (status.complete) {
-      job.pushed = true;
-      job.pushedBytes = downloaded.bytes;
-      return { done: false };
-    }
-    const offset = Math.min(status.offset, downloaded.bytes);
-    job.pushedBytes = offset;
-    const result = await attemptPush(job, deps, downloaded, offset, deadline);
-    if (result.kind === 'landed') {
-      job.pushed = true;
-      job.pushedBytes = downloaded.bytes;
-      return { done: false };
-    }
-    if (result.kind === 'cancelled') return { done: true, snapshot: result.snapshot };
-    if (result.kind === 'fail') {
-      if (!shouldReuploadFromZero(result.error, offset, fullReupload)) {
-        return { done: true, snapshot: fail(job, result.error, deps.nowFn) };
-      }
-      fullReupload = true;
-    }
-    lastError = result.error;
-    if (attempt >= maxAttempts || deps.nowFn() >= deadline) break;
-    if (!(await backoff(job, deps, attempt))) {
-      return { done: true, snapshot: await cancelPush(job, deps) };
-    }
-    if (deps.nowFn() >= deadline) break;
+  const result = await runPush(pushTransport(job, deps, downloaded), {
+    totalBytes: downloaded.bytes,
+    streams: 1,
+    resume,
+    maxAttempts: resume ? PUSH_MAX_ATTEMPTS : LEGACY_PUSH_MAX_ATTEMPTS,
+    backoffMs: PUSH_RETRY_BACKOFF_MS,
+    deadlineMs: deps.nowFn() + deps.timeouts.pushMs,
+    signal: job.abort.signal,
+    now: deps.nowFn,
+    sleep: deps.sleep,
+    timeoutError: 'push failed: push timeout',
+    onAttempt: (attempt) => {
+      job.attempt = attempt;
+    },
+    onProgress: (bytes) => {
+      job.pushedBytes = Math.min(bytes, downloaded.bytes);
+    },
+    shouldRestartFromZero: shouldReuploadFromZero,
+  });
+  if (result.kind === 'done') {
+    job.pushed = true;
+    job.pushedBytes = downloaded.bytes;
+    return { done: false };
   }
-  return { done: true, snapshot: fail(job, lastError, deps.nowFn) };
+  if (result.kind === 'cancelled') return { done: true, snapshot: await cancelPush(job, deps) };
+  return { done: true, snapshot: fail(job, result.error, deps.nowFn) };
+}
+
+function pushTransport(job: Job, deps: JobDeps, downloaded: DownloadedRelease): PushTransport {
+  return {
+    async status() {
+      const staged = await readPushedOffset(job, deps, downloaded);
+      return { receivedBytes: staged.offset, ranges: [], complete: staged.complete };
+    },
+    put: (range, opts) => attemptPush(job, deps, downloaded, range, opts),
+  };
 }
 
 /** 盘上的半成品与 sha 对不上：续传救不回来，整包重传一次（只退一次，避免来回刷带宽）。 */
-function shouldReuploadFromZero(error: string, offset: number, alreadyRetried: boolean): boolean {
-  return !alreadyRetried && offset > 0 && error.includes('PACKAGE_SHA256_MISMATCH');
-}
-
-async function backoff(job: Job, deps: JobDeps, attempt: number): Promise<boolean> {
-  try {
-    await deps.sleep(backoffMs(attempt), job.abort.signal);
-  } catch {
-    return false;
-  }
-  return !job.abort.signal.aborted && !isCancelled(job);
+function shouldReuploadFromZero(error: string, offset: number): boolean {
+  return offset > 0 && error.includes('PACKAGE_SHA256_MISMATCH');
 }
 
 async function cancelPush(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnapshot> {
@@ -478,42 +457,37 @@ async function attemptPush(
   job: Job,
   deps: JobDeps,
   downloaded: DownloadedRelease,
-  offset: number,
-  deadline: number
-): Promise<PushAttempt> {
-  const remaining = deadline - deps.nowFn();
+  range: { offset: number; length: number },
+  push: PushPutOptions
+): Promise<PushOutcome> {
+  const remaining = push.deadlineMs - deps.nowFn();
   if (remaining <= 0) return { kind: 'retry', error: 'push failed: push timeout' };
   let fileStream: ReadableStream<Uint8Array> | null = null;
   try {
-    fileStream = fileReadableStream(downloaded.path, offset);
+    fileStream = openRange(downloaded.path, range.offset, range.offset + range.length);
     job.fileStream = fileStream;
     const pushReq = deps.forward.forwardAuthorizedHttp(deps.req, {
       nodeId: job.nodeId,
       method: 'PUT',
       path: '/api/system/upgrade/package',
-      query: pushQuery(job.version, downloaded.sha256, offset),
+      query: pushQuery(job.version, downloaded.sha256, range.offset),
       rawBody: fileStream,
       headers: {
         'content-type': 'application/octet-stream',
-        'content-length': String(downloaded.bytes - offset),
+        'content-length': String(range.length),
       },
-      signal: combineAbortSignals(AbortSignal.timeout(remaining), job.abort.signal),
-      onProgress: (uploaded) => {
-        job.pushedBytes = Math.min(offset + uploaded, downloaded.bytes);
-      },
+      signal: combineAbortSignals(AbortSignal.timeout(remaining), push.signal),
+      onProgress: (uploaded) => push.onProgress(uploaded),
     });
     job.pushPromise = pushReq;
     const pushed = await withTimeout(pushReq, remaining, 'push timeout');
     fileStream = null;
     job.fileStream = null;
-    return await classifyPushResponse(job, deps, pushed);
+    return await classifyPushResponse(job, pushed);
   } catch (err) {
     await fileStream?.cancel().catch(() => {});
     job.fileStream = null;
-    if (isCancelled(job)) return { kind: 'cancelled', snapshot: snapshotOf(job) };
-    if (job.abort.signal.aborted) {
-      return { kind: 'cancelled', snapshot: await cancelPush(job, deps) };
-    }
+    if (isCancelled(job) || job.abort.signal.aborted) return { kind: 'cancelled' };
     const message = errorMessage(err);
     return {
       kind: 'retry',
@@ -527,14 +501,10 @@ function pushQuery(version: string, sha256: string, offset: number): string {
   return offset > 0 ? `${base}&offset=${offset}` : base;
 }
 
-async function classifyPushResponse(
-  job: Job,
-  deps: JobDeps,
-  pushed: Response
-): Promise<PushAttempt> {
+async function classifyPushResponse(job: Job, pushed: Response): Promise<PushOutcome> {
   if (isCancelled(job)) {
     await pushed.text().catch(() => '');
-    return { kind: 'cancelled', snapshot: snapshotOf(job) };
+    return { kind: 'cancelled' };
   }
   if (pushed.status >= 200 && pushed.status < 300) {
     // 小 JSON 回包读完再走，`body.cancel()` 会给转发层一个假的 aborted 结论。
@@ -543,7 +513,7 @@ async function classifyPushResponse(
   }
   if (job.abort.signal.aborted) {
     await pushed.text().catch(() => '');
-    return { kind: 'cancelled', snapshot: await cancelPush(job, deps) };
+    return { kind: 'cancelled' };
   }
   const detail = await describeUpstream(pushed);
   const error = `push failed: ${detail}`;

@@ -29,6 +29,7 @@ export type NestedCommandName =
   | 'relay.kick'
   | 'relay.remove'
   | 'relay.quota'
+  | 'relay.limits'
   | 'relay.label'
   | 'relay.enroll'
   | 'relay.reauth'
@@ -133,6 +134,7 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   kick: 'relay.kick',
   remove: 'relay.remove',
   quota: 'relay.quota',
+  limits: 'relay.limits',
   label: 'relay.label',
   enroll: 'relay.enroll',
   join: 'relay.join',
@@ -212,6 +214,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'hub-url',
     'hub-public-url',
     'relay-public-url',
+    'public-port',
     'peer-port',
     'stun-servers',
     'no-service',
@@ -282,7 +285,14 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'max-nodes',
     'max-streams',
     'bandwidth',
+    'max-file-mb',
     'inherit',
+  ]),
+  'relay.limits': new Set([
+    ...RELAY_ADMIN_FLAGS,
+    'max-tenants',
+    'total-bandwidth-kb',
+    'fair-share',
   ]),
   'relay.label': RELAY_ADMIN_FLAGS,
   'relay.enroll': RELAY_TENANT_FLAGS,
@@ -300,6 +310,22 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
 };
+
+/**
+ * 取一个必须带值的旗标。光秃秃的 `--flag`（被解析成 true）和空串都算「给了但没给值」，
+ * 直接报用法错误——否则会被当成压根没给这个旗标，用户要求的改动被静默丢掉。
+ */
+export function requireFlagValue(
+  flags: Readonly<Record<string, string | boolean>>,
+  key: string
+): string | undefined {
+  if (!Object.hasOwn(flags, key)) return undefined;
+  const value = flags[key];
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new Error(t('errors.validate.emptyField', { field: `--${key}` }));
+  }
+  return value;
+}
 
 export function assertKnownFlags(parsed: ParsedArgs): void {
   const nested = resolveNestedCommand(parsed);

@@ -37,13 +37,15 @@ function useFileRef(ref?: string): FileRef | null {
 // 应用内下载（与文件树菜单一致）：两段进度 Toast + 可取消；传输与宿主 save 分离。
 // 传输与保存都走当前 runtime（多 node 下不能落到 entry 的 client / host）。
 function triggerDownload(
-  runtime: Pick<AppRuntime, 'apiClient' | 'host'>,
+  runtime: Pick<AppRuntime, 'apiClient' | 'host' | 'nodeId'>,
   rootId: string,
   path: string,
   name: string
 ): void {
   const controller = new AbortController();
-  const tt = startTransferToast(name, 'download', () => controller.abort());
+  const tt = startTransferToast(name, 'download', () => controller.abort(), {
+    nodeId: runtime.nodeId,
+  });
   void downloadFileWithProgress(
     rootId,
     path,

@@ -150,8 +150,8 @@ describe('uploadFileWithTransport', () => {
       'POST /api/files/upload/init',
       'DELETE /api/files/upload/u1',
       'POST /api/files/upload/init',
-      'PUT /api/files/upload/u2?offset=0',
-      'PUT /api/files/upload/u2?offset=1024',
+      'PUT /api/files/upload/u2?offset=0&length=1024',
+      'PUT /api/files/upload/u2?offset=1024&length=476',
       'POST /api/files/upload/u2/commit',
     ]);
     expect(gw.commits).toEqual(['u2']);
@@ -282,7 +282,7 @@ describe('uploadFileWithTransport', () => {
     });
     expect(path).toBe('relay');
     expect(resolved).toBe(0);
-    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0');
+    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0&length=10');
   });
 
   test('直连未就绪（isAvailable=false）时走 REST', async () => {
@@ -291,7 +291,7 @@ describe('uploadFileWithTransport', () => {
       resolveBulk: () => fakeBulk({ isAvailable: () => false }),
     });
     expect(path).toBe('relay');
-    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0');
+    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0&length=10');
   });
 
   test('没有登记 bulk client 时走 REST', async () => {
@@ -323,7 +323,7 @@ function downloadGateway(size: number): Recorded {
 }
 
 describe('downloadFileWithTransport', () => {
-  test('直连可用时走 bulk：prepare 后直接收流，不打 /content', async () => {
+  test('直连可用时走 bulk：prepare 后直接收流，不打 /content，成功后删会话', async () => {
     const gw = downloadGateway(8);
     const bulk = fakeBulk({
       download: (req) => {
@@ -345,7 +345,7 @@ describe('downloadFileWithTransport', () => {
     expect(file.transferPath).toBe('direct');
     expect(file.name).toBe('a.bin');
     expect(await blobBytes(file.blob)).toEqual(new Uint8Array([1, 1, 1, 1, 2, 2, 2, 2]));
-    expect(gw.calls).toEqual(['POST /api/files/download/prepare']);
+    expect(gw.calls).toEqual(['POST /api/files/download/prepare', 'DELETE /api/files/download/d1']);
   });
 
   test('bulk 收流失败时回收会话并整次改走 REST', async () => {
@@ -378,6 +378,8 @@ describe('downloadFileWithTransport', () => {
       'DELETE /api/files/download/d1',
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      // 收全并校验长度之后客户端才回收远端会话（服务端不再在读到文件尾时自清）
+      'DELETE /api/files/download/d1',
     ]);
   });
 
@@ -434,6 +436,8 @@ describe('downloadFileWithTransport', () => {
       'DELETE /api/files/download/d1',
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      // 收全并校验长度之后客户端才回收远端会话（服务端不再在读到文件尾时自清）
+      'DELETE /api/files/download/d1',
     ]);
   });
 
@@ -508,6 +512,7 @@ describe('downloadFileWithTransport', () => {
     expect(gw.calls).toEqual([
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      'DELETE /api/files/download/d1',
     ]);
   });
 });

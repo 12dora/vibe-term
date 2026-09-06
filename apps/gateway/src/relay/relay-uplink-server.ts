@@ -12,11 +12,17 @@ import {
   encodeRelayCtl,
 } from '@tmex/shared/relay';
 import type { AuthDb } from '../auth/types';
+import {
+  type RelayBandwidthHandle,
+  type RelayBandwidthLimiter,
+  createRelayBandwidthLimiter,
+} from './relay-bandwidth';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayCtlQueue } from './relay-ctl-queue';
 import { RelayEnrollCreateRate } from './relay-enroll-limiter';
 import { pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
+import type { RelayLimits } from './relay-limits';
 import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
@@ -94,6 +100,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   private readonly ctlQueue = new RelayCtlQueue();
   private readonly listTimers = new Map<string, ReturnType<typeof setTimeout>>();
   private readonly buckets = new Map<string, RelayTokenBucket>();
+  private readonly bandwidth: RelayBandwidthLimiter;
   private readonly closeTimers = new Set<ReturnType<typeof setTimeout>>();
   private readonly listDeps: RelayListDeps;
   private readonly enrollCreates: RelayEnrollCreateRate;
@@ -126,6 +133,11 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.minClientVersion = opts.minClientVersion ?? MIN_RELAY_CLIENT_VERSION;
     this.authBarrier = opts.authBarrier;
     this.tenantRates = opts.tenantRates;
+    this.bandwidth = createRelayBandwidthLimiter(
+      this.configStore.ensure(this.now()).limits,
+      this.now,
+      this.sleep
+    );
     this.relayHost = hubHostFromUrl(opts.config.publicUrl);
     this.listDeps = {
       tenants: this.tenants,
@@ -195,6 +207,16 @@ export class RelayUplinkServer implements RelayUplinkHost {
       bandwidthBytesPerSec: rates?.bandwidthBytesPerSec ?? 0,
       sampledAt: this.now(),
     };
+  }
+
+  /** 中继级带宽闸；`setLimits` 之后由 `applyLimits` 热更新。 */
+  bandwidthFor(tenantId: string): RelayBandwidthHandle {
+    return this.bandwidth.acquire(tenantId);
+  }
+
+  /** 运营者改完限额后调用：速率与公平分配开关立刻生效，不必等重启。 */
+  applyLimits(limits: RelayLimits): void {
+    this.bandwidth.setLimits(limits);
   }
 
   bucketFor(tenantId: string): RelayTokenBucket {
@@ -343,7 +365,9 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.closeTimers.clear();
     for (const link of [...this.accepted]) link.close('relay-stop');
     this.accepted.clear();
+    for (const bucket of this.buckets.values()) bucket.cancelAll();
     this.buckets.clear();
+    this.bandwidth.clear();
     this.lastUsagePush.clear();
     this.enrollCreates.clear();
     await this.ctlQueue.drain();
@@ -487,6 +511,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
         metering: this.metering,
         quotaFor: (tenantId) => this.quotaFor(tenantId),
         bucketFor: (tenantId) => this.bucketFor(tenantId),
+        bandwidthFor: (tenantId) => this.bandwidthFor(tenantId),
         now: this.now,
         isStopped: () => this.stopped,
       },

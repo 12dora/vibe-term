@@ -2153,7 +2153,8 @@
           "quotaUnlimited": "無制限",
           "quotaUnlimitedValue": "{{used}}（無制限）",
           "nodeId": "本機の ID",
-          "hubs": "Hub の詳細"
+          "hubs": "Hub の詳細",
+          "quotaMaxFile": "1 ファイルの上限"
         },
         "direct": "ダイレクト接続アドオン",
         "directUnsupported": "このプラットフォームでは非対応",
@@ -2264,6 +2265,7 @@
         "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "status": {
           "access": "外部アクセス",
+          "publicUrl": "公開アドレス",
           "accessBuiltin": "HTTPS（内蔵リスナーが提供、ポート {{port}}）",
           "accessProxyVerified": "HTTPS（前段のリバースプロキシが提供、今回のリクエストで確認済み）",
           "accessProxyInferred": "HTTPS（公開アドレス {{url}} からの推定、リクエストでは未確認）",
@@ -2761,7 +2763,19 @@
           "caFingerprint": "CA フィンガープリント",
           "caFingerprintHint": "自己署名証明書の中継のみ必要です。空欄ならシステムが信頼する証明書を使います。",
           "directEnableRelayHint": "中継を経由せず、ノード同士が直接通信します。失敗してもセットアップは続行します。",
-          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。"
+          "directUnsupportedRelayHint": "{{platform}} ではダイレクト接続を利用できません。通信は中継経由になります。",
+          "publicPort": "公開ポート",
+          "publicPortStandard": "標準 443",
+          "publicPortSuggested": "推奨 {{port}}",
+          "publicPortCustom": "カスタム",
+          "publicPortValue": "ポート番号",
+          "publicPortHint": "80/443 が塞がれている場合は高位ポートを使用します。リバースプロキシまたは内蔵 HTTPS リスナーも同じポートで待ち受ける必要があります。"
+        },
+        "probe": {
+          "probing": "一般的なポートを探索中…",
+          "resolvedHub": "ポート {{port}} で Hub を検出し、アドレスを更新しました。",
+          "resolvedRelay": "ポート {{port}} で中継を検出し、アドレスを更新しました。",
+          "failed": "443 および内蔵候補ポートのいずれも応答しません。ポートの開放を確認するか、ポート付きのアドレスを直接入力してください。"
         },
         "precheck": {
           "button": "アドレスを確認",
@@ -2814,6 +2828,7 @@
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
           "invalid_url": "有効な https:// アドレスを入力してください。",
+          "invalid_port": "ポートは 1 から 65535 の間で指定してください。",
           "insecure_local_required": "http:// はこのマシン上のハブにのみ使えます。「このマシンで http:// のハブを許可する」をオンにしてください。",
           "invalid_username": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "weak_password": "8 文字以上で入力してください。",
@@ -2932,6 +2947,135 @@
         "resetConfirmDescription": "すべてのグループを削除し、すべてのノードを既定の順序で最上位に戻します。",
         "resetFailed": "レイアウトのリセットに失敗しました",
         "resetDone": "レイアウトを既定に戻しました"
+      },
+      "menu": {
+        "more": "その他",
+        "fileTransfer": "ファイル転送",
+        "portMap": "ポートマッピング"
+      },
+      "transfer": {
+        "title": "ファイル転送",
+        "description": "2 つのノード間で直接ファイルを転送します。",
+        "node": "ノード",
+        "nodePlaceholder": "ノードを選択",
+        "root": "ディレクトリ",
+        "rootPlaceholder": "ディレクトリを選択",
+        "rootEmpty": "ファイルディレクトリが未設定です",
+        "up": "上へ",
+        "pathLabel": "パス",
+        "showHidden": "隠しファイルを表示",
+        "empty": "ディレクトリは空です",
+        "loadFailed": "ディレクトリの読み込みに失敗しました",
+        "selected": "{{count}} 件選択中",
+        "sendToRight": "右へ送る",
+        "sendToLeft": "左へ送る",
+        "sending": "送信中...",
+        "sendFailed": "転送タスクの作成に失敗しました",
+        "pickNodes": "先に両側のノードとディレクトリを選択してください",
+        "pickSource": "先に転送する項目を選択してください",
+        "sameTarget": "転送元と転送先が同じディレクトリです",
+        "list": "転送一覧",
+        "listEmpty": "転送はありません",
+        "untitled": "転送",
+        "clearFinished": "完了分を消去",
+        "cancel": "キャンセル",
+        "browser": "ブラウザ",
+        "items": "{{done}}/{{total}} 件",
+        "pathLocal": "ローカル",
+        "state": {
+          "queued": "待機中",
+          "running": "転送中",
+          "done": "完了",
+          "failed": "失敗",
+          "cancelled": "キャンセル済み"
+        },
+        "errors": {
+          "node_unreachable": "ノードに到達できません",
+          "grant_invalid": "認可が無効です",
+          "grant_expired": "認可の有効期限が切れています",
+          "peer_mismatch": "転送元ノードが一致しません",
+          "offset_mismatch": "再開位置が一致しません",
+          "incomplete": "転送が中断されました",
+          "checksum_mismatch": "チェックサムが一致しません",
+          "dest_exists": "転送先に同名ファイルがあります",
+          "quota_file_size": "1 ファイルの上限を超えています",
+          "cancelled": "キャンセル済み",
+          "not_found": "ファイルが見つかりません",
+          "outside_roots": "パスがディレクトリの範囲外です",
+          "permission_denied": "アクセス権がありません",
+          "too_large": "ファイルが大きすぎます",
+          "connection_failed": "接続に失敗しました",
+          "timeout": "タイムアウトしました",
+          "dest_conflict": "保存先が他の項目と重複しています",
+          "limit_exceeded": "転送上限を超えました",
+          "too_many_jobs": "進行中の転送が多すぎます",
+          "job_gone": "タスクは存在しません",
+          "unknown": "転送に失敗しました"
+        }
+      },
+      "portmap": {
+        "title": "ポートマッピング",
+        "description": "あるノードのローカルポートを別ノードのサービスへ転送します。",
+        "empty": "マッピングはありません",
+        "loadFailed": "マッピングの読み込みに失敗しました",
+        "pause": "一時停止",
+        "resume": "再開",
+        "delete": "削除",
+        "deleteConfirmTitle": "マッピングを削除しますか？",
+        "deleteConfirmDescription": "「{{name}}」を削除します。確立済みの接続は切断されます。",
+        "cleanup": {
+          "title": "未削除の許可レコード",
+          "description": "マッピングは削除済みですが、転送先ノードの許可レコードは削除するまで有効です。",
+          "retry": "削除",
+          "retrying": "削除中...",
+          "unavailable": "転送先ノードを利用できません",
+          "failed": "削除に失敗しました：転送先ノードに到達できません。"
+        },
+        "columns": {
+          "name": "名称",
+          "listen": "本機",
+          "target": "転送先",
+          "state": "状態",
+          "connections": "接続数",
+          "traffic": "通信量",
+          "actions": "操作"
+        },
+        "state": {
+          "listening": "待ち受け中",
+          "paused": "一時停止中",
+          "error": "異常"
+        },
+        "form": {
+          "listenNode": "待ち受けノード",
+          "listenHost": "待ち受けアドレス",
+          "listenHostLocal": "本機のみ",
+          "listenHostAny": "すべてのアドレス",
+          "listenHostAnyWarning": "0.0.0.0 で待ち受けると、LAN 内の誰でもこのポートに接続できます。",
+          "listenPort": "待ち受けポート",
+          "targetNode": "転送先ノード",
+          "targetHost": "転送先アドレス",
+          "targetPort": "転送先ポート",
+          "nameOptional": "名称（任意）",
+          "submit": "作成",
+          "submitting": "作成中...",
+          "incomplete": "先にノードとポートを入力してください",
+          "portRange": "ポートは 1〜65535 の範囲です",
+          "portInUse": "ポートは使用中です",
+          "portReserved": "予約済みポートです",
+          "targetIdle": "転送先ポートにサービスがありません",
+          "sameNode": "待ち受けノードと転送先ノードは同一にできません"
+        },
+        "errors": {
+          "invalid_request": "パラメータが不正です",
+          "port_in_use": "ポートは使用中です",
+          "port_reserved": "予約済みポートです",
+          "bind_failed": "待ち受けに失敗しました",
+          "not_found": "マッピングが見つかりません",
+          "target_unreachable": "転送先に到達できません",
+          "export_missing": "転送先ノードに許可レコードがありません",
+          "limit_reached": "接続数の上限に達しました",
+          "unknown": "操作に失敗しました"
+        }
       }
     },
     "relay": {
@@ -2979,7 +3123,14 @@
           "traffic": "中継トラフィック",
           "trafficSub": "起動からの累計",
           "trafficHint": "転送フレームは送受信の両方に計上されるため、ここでは一度だけ数えます。",
-          "tenants": "テナント"
+          "tenants": "テナント",
+          "bandwidth": "通過帯域",
+          "bandwidthHint": "トークンバケットが実際に通した転送レートです。",
+          "bandwidthUnlimited": "合計帯域の上限なし",
+          "bandwidthFair": "テナント間で公平配分",
+          "bandwidthFcfs": "先着順",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "テナント数の上限なし"
         },
         "groups": {
           "traffic": "トラフィック",
@@ -3134,7 +3285,9 @@
           "RELAY_UNKNOWN": "その中継は本機の中継一覧にありません。",
           "RELAY_KICKED": "その中継はこのテナントのトークンを失効させました。先に接続パスワードを入力し直してください。",
           "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
-          "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。"
+          "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。",
+          "RELAY_QUOTA_TENANTS": "中継のテナント数が上限に達しています。",
+          "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。"
         },
         "remove": {
           "title": "この中継を削除しますか？",
@@ -3207,13 +3360,17 @@
           "unlimitedValue": "無制限",
           "inherit": "既定に従う",
           "inheritBadge": "既定",
-          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}}",
+          "summary": "{{nodes}} ノード · {{streams}} ストリーム · {{bandwidth}} · ファイル {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "ノード数の上限は 1〜{{max}} の整数で入力してください。",
           "invalidStreams": "同時ストリームの上限は 1〜{{max}} の整数で入力してください。",
           "invalidBandwidth": "帯域の上限は 1〜{{max}} KB/s の整数で入力してください。",
           "saved": "既定クォータを更新しました。",
-          "failed": "クォータを更新できませんでした：{{message}}"
+          "failed": "クォータを更新できませんでした：{{message}}",
+          "maxFile": "1 ファイルの上限（MB）",
+          "maxFileHint": "空欄で無制限です。中継が公開し、テナントのノードが適用します。",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "1 ファイルの上限は 1〜{{max}} の整数（MB）です。空欄で無制限になります。"
         },
         "tenants": {
           "title": "テナント",
@@ -3262,6 +3419,19 @@
           "minutes": "{{n}} 分前",
           "hours": "{{n}} 時間前",
           "days": "{{n}} 日前"
+        },
+        "limits": {
+          "title": "中継の上限",
+          "menuItem": "中継の上限…",
+          "description": "中継全体に適用され、テナントには配信されません。",
+          "maxTenants": "最大テナント数",
+          "totalBandwidth": "合計帯域の上限（KB/s）",
+          "fairShare": "テナント間の帯域を公平配分",
+          "fairShareHint": "有効にすると各テナントがラウンドロビンで合計帯域を分け合います。無効なら先着順です。",
+          "invalidMaxTenants": "最大テナント数は 1〜{{max}} の整数です。空欄で無制限になります。",
+          "invalidBandwidth": "合計帯域の上限は 1〜{{max}} の整数（KB/s）です。空欄で無制限になります。",
+          "saved": "中継の上限を更新しました。",
+          "failed": "上限の更新に失敗しました：{{message}}"
         }
       }
     },

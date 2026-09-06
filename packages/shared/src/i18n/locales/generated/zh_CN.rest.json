@@ -1407,7 +1407,8 @@
           "quotaUnlimited": "不限",
           "quotaUnlimitedValue": "{{used}}（不限）",
           "nodeId": "本机编号",
-          "hubs": "Hub 明细"
+          "hubs": "Hub 明细",
+          "quotaMaxFile": "单文件上限"
         },
         "direct": "直连插件",
         "directUnsupported": "本平台不支持",
@@ -1518,6 +1519,7 @@
         "restartTimeout": "tmex 未能恢复。请手动启动后刷新本页。",
         "status": {
           "access": "对外访问",
+          "publicUrl": "对外地址",
           "accessBuiltin": "HTTPS，由本机内置监听器提供（端口 {{port}}）",
           "accessProxyVerified": "HTTPS，由前置反向代理提供（本次请求已确认）",
           "accessProxyInferred": "HTTPS，按公开地址 {{url}} 推断（未经请求确认）",
@@ -2015,7 +2017,19 @@
           "caFingerprint": "CA 指纹",
           "caFingerprintHint": "仅自签证书的中继需要；留空表示使用系统信任的证书。",
           "directEnableRelayHint": "让节点之间直接通信，而不经中继转发。即使失败也不影响本次设置。",
-          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。"
+          "directUnsupportedRelayHint": "{{platform}} 不支持直连，流量将经中继转发。",
+          "publicPort": "公网端口",
+          "publicPortStandard": "标准 443",
+          "publicPortSuggested": "建议 {{port}}",
+          "publicPortCustom": "自定义",
+          "publicPortValue": "端口号",
+          "publicPortHint": "80/443 被封锁时可改用高位端口；反代或本机 HTTPS 监听须监听同一端口。"
+        },
+        "probe": {
+          "probing": "正在探测常用端口…",
+          "resolvedHub": "已在 {{port}} 端口探测到 Hub，地址已更新。",
+          "resolvedRelay": "已在 {{port}} 端口探测到中继，地址已更新。",
+          "failed": "443 及内置候选端口均无响应。请确认端口已放行，或直接填写带端口的地址。"
         },
         "precheck": {
           "button": "测试地址",
@@ -2068,6 +2082,7 @@
         "errors": {
           "not_standalone": "本机已完成设置。",
           "invalid_url": "请输入合法的 https:// 地址。",
+          "invalid_port": "端口须在 1 到 65535 之间。",
           "insecure_local_required": "http:// 只能用于本机的 Hub，请先勾选「允许本机使用 http:// 的 Hub」。",
           "invalid_username": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "weak_password": "密码至少 8 位。",
@@ -2186,6 +2201,135 @@
         "resetConfirmDescription": "所有分组将被删除，全部节点回到最外层并按默认顺序排列。",
         "resetFailed": "恢复默认布局失败",
         "resetDone": "已恢复默认布局"
+      },
+      "menu": {
+        "more": "更多",
+        "fileTransfer": "文件传输",
+        "portMap": "端口映射"
+      },
+      "transfer": {
+        "title": "文件传输",
+        "description": "在两个节点之间直接传输文件。",
+        "node": "节点",
+        "nodePlaceholder": "选择节点",
+        "root": "目录",
+        "rootPlaceholder": "选择目录",
+        "rootEmpty": "未配置文件目录",
+        "up": "上一级",
+        "pathLabel": "路径",
+        "showHidden": "显示隐藏文件",
+        "empty": "目录为空",
+        "loadFailed": "目录加载失败",
+        "selected": "已选 {{count}} 项",
+        "sendToRight": "发送到右侧",
+        "sendToLeft": "发送到左侧",
+        "sending": "提交中...",
+        "sendFailed": "创建传输任务失败",
+        "pickNodes": "须先选定两侧的节点与目录",
+        "pickSource": "须先勾选要传输的条目",
+        "sameTarget": "源与目标是同一目录",
+        "list": "传输列表",
+        "listEmpty": "暂无传输",
+        "untitled": "传输任务",
+        "clearFinished": "清除已结束",
+        "cancel": "取消",
+        "browser": "浏览器",
+        "items": "{{done}}/{{total}} 项",
+        "pathLocal": "本地",
+        "state": {
+          "queued": "等待中",
+          "running": "传输中",
+          "done": "已完成",
+          "failed": "失败",
+          "cancelled": "已取消"
+        },
+        "errors": {
+          "node_unreachable": "节点不可达",
+          "grant_invalid": "授权无效",
+          "grant_expired": "授权已过期",
+          "peer_mismatch": "来源节点不匹配",
+          "offset_mismatch": "断点不一致",
+          "incomplete": "传输中断",
+          "checksum_mismatch": "校验不一致",
+          "dest_exists": "目标已存在同名文件",
+          "quota_file_size": "超出单文件上限",
+          "cancelled": "已取消",
+          "not_found": "文件不存在",
+          "outside_roots": "路径超出目录范围",
+          "permission_denied": "无权访问",
+          "too_large": "文件过大",
+          "connection_failed": "连接失败",
+          "timeout": "超时",
+          "dest_conflict": "与其它待传文件目标路径重复",
+          "limit_exceeded": "超出传输上限",
+          "too_many_jobs": "同时进行的传输过多",
+          "job_gone": "任务已不存在",
+          "unknown": "传输失败"
+        }
+      },
+      "portmap": {
+        "title": "端口映射",
+        "description": "把一个节点的本地端口转发到另一个节点上的服务。",
+        "empty": "暂无映射",
+        "loadFailed": "映射加载失败",
+        "pause": "暂停",
+        "resume": "继续",
+        "delete": "删除",
+        "deleteConfirmTitle": "删除映射？",
+        "deleteConfirmDescription": "「{{name}}」将被删除，已建立的连接会断开。",
+        "cleanup": {
+          "title": "待清理放行",
+          "description": "映射已删除，目标节点上的放行记录仍有效，清理后才会失效。",
+          "retry": "清理",
+          "retrying": "清理中...",
+          "unavailable": "目标节点不可用",
+          "failed": "清理失败：目标节点暂不可达。"
+        },
+        "columns": {
+          "name": "名称",
+          "listen": "本机",
+          "target": "目标",
+          "state": "状态",
+          "connections": "连接数",
+          "traffic": "流量",
+          "actions": "操作"
+        },
+        "state": {
+          "listening": "监听中",
+          "paused": "已暂停",
+          "error": "异常"
+        },
+        "form": {
+          "listenNode": "监听节点",
+          "listenHost": "监听地址",
+          "listenHostLocal": "仅本机",
+          "listenHostAny": "所有地址",
+          "listenHostAnyWarning": "监听 0.0.0.0 后，局域网内任何人都能访问该端口。",
+          "listenPort": "监听端口",
+          "targetNode": "目标节点",
+          "targetHost": "目标地址",
+          "targetPort": "目标端口",
+          "nameOptional": "名称（可选）",
+          "submit": "创建",
+          "submitting": "创建中...",
+          "incomplete": "须先填全节点与端口",
+          "portRange": "端口须在 1–65535 之间",
+          "portInUse": "端口已被占用",
+          "portReserved": "保留端口",
+          "targetIdle": "目标端口暂无服务",
+          "sameNode": "监听节点与目标节点不能相同"
+        },
+        "errors": {
+          "invalid_request": "参数不合法",
+          "port_in_use": "端口已被占用",
+          "port_reserved": "保留端口",
+          "bind_failed": "监听失败",
+          "not_found": "映射不存在",
+          "target_unreachable": "目标不可达",
+          "export_missing": "目标节点未放行",
+          "limit_reached": "已达连接数上限",
+          "unknown": "操作失败"
+        }
       }
     },
     "relay": {
@@ -2233,7 +2377,14 @@
           "traffic": "累计流量",
           "trafficSub": "自启动累计",
           "trafficHint": "中继每转发一帧都同时计进收发两侧，此处只计一次。",
-          "tenants": "租户"
+          "tenants": "租户",
+          "bandwidth": "放行带宽",
+          "bandwidthHint": "令牌桶实际放行的转发速率。",
+          "bandwidthUnlimited": "未设总带宽上限",
+          "bandwidthFair": "租户间公平分配",
+          "bandwidthFcfs": "先到先得",
+          "usedOfLimit": "{{used}} / {{limit}}",
+          "tenantsUnlimited": "未设租户数上限"
         },
         "groups": {
           "traffic": "流量",
@@ -2388,7 +2539,9 @@
           "RELAY_UNKNOWN": "这条中继不在本机的中继列表里。",
           "RELAY_KICKED": "该中继已作废本租户的令牌，须先重新输入接入密码。",
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
-          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。"
+          "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
+          "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
+          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -2461,13 +2614,17 @@
           "unlimitedValue": "不限",
           "inherit": "跟随默认",
           "inheritBadge": "默认",
-          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}}",
+          "summary": "{{nodes}} 节点 · {{streams}} 流 · {{bandwidth}} · 单文件 {{maxFile}}",
           "bandwidthValue": "{{kb}} KB/s",
           "invalidNodes": "节点数上限须为 1–{{max}} 的整数。",
           "invalidStreams": "并发流上限须为 1–{{max}} 的整数。",
           "invalidBandwidth": "带宽上限须为 1–{{max}} 的整数（KB/s）。",
           "saved": "默认配额已更新。",
-          "failed": "配额更新失败：{{message}}"
+          "failed": "配额更新失败：{{message}}",
+          "maxFile": "单文件上限（MB）",
+          "maxFileHint": "留空即不限。该上限由中继发布、租户节点执行。",
+          "maxFileValue": "{{mb}} MB",
+          "invalidMaxFile": "单文件上限须为 1–{{max}} 的整数（MB），留空即不限。"
         },
         "tenants": {
           "title": "租户",
@@ -2516,6 +2673,19 @@
           "minutes": "{{n}} 分钟前",
           "hours": "{{n}} 小时前",
           "days": "{{n}} 天前"
+        },
+        "limits": {
+          "title": "中继限额",
+          "menuItem": "中继限额…",
+          "description": "作用于本中继整体，不随配额下发给租户。",
+          "maxTenants": "最大租户数",
+          "totalBandwidth": "总带宽上限（KB/s）",
+          "fairShare": "租户带宽公平分配",
+          "fairShareHint": "开启后各租户按轮转均分总带宽；关闭即先到先得。",
+          "invalidMaxTenants": "最大租户数须为 1–{{max}} 的整数，留空即不限。",
+          "invalidBandwidth": "总带宽上限须为 1–{{max}} 的整数（KB/s），留空即不限。",
+          "saved": "中继限额已更新。",
+          "failed": "限额更新失败：{{message}}"
         }
       }
     },

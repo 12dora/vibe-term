@@ -1,4 +1,3 @@
-import { readBodyCappedResult } from '@tmex/shared/http';
 import { config } from '../config';
 import {
   pullFileFromDevice,
@@ -6,20 +5,26 @@ import {
   sanitizeUploadName,
   statFile,
 } from '../files/device-storage';
+import { transferMaxBytesNow } from '../files/transfer-limit';
 import {
-  appendUploadChunkAsync,
   createDownloadSession,
   createUploadSession,
+  downloadSourceChanged,
   getDownloadSession,
   getUploadSession,
+  uploadRanges,
+  writeUploadRange,
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
 import {
+  type ContentRange,
   attachmentHeaders,
   codeError,
   ndjsonResponse,
   parseNonNegativeSafeInt,
+  parseRangeHeader,
+  streamFileRange,
   streamTempFile,
 } from './file-http';
 import { cleanupDownload, cleanupUpload, rememberTransferUid } from './file-transfer-sessions';
@@ -28,6 +33,11 @@ import { type ApiRoute, route } from './route';
 
 function uidFromRequest(req: Request): string {
   return requestDispatchContext.get(req)?.uid ?? '';
+}
+
+/** 复用既有 `too_large`（413）形状，前端已认这一路；额外带上生效上限便于提示。 */
+function tooLargeFor(maxBytes: number): Response {
+  return json({ error: 'too_large', code: 'too_large', maxBytes }, 413);
 }
 
 const UPLOAD_CHUNK_SIZE = 8 * 1024 * 1024;
@@ -44,7 +54,9 @@ async function handleUploadInit(req: Request): Promise<Response> {
   }
   const name = sanitizeUploadName(rawName);
   if (!name) return codeError('invalid');
-  if (size > config.transferMaxBytes) return codeError('too_large');
+  // 生效上限 = 本机配置与中继下发的单文件上限取小；超限把上限一并回给前端。
+  const maxBytes = transferMaxBytesNow(config.transferMaxBytes);
+  if (size > maxBytes) return tooLargeFor(maxBytes);
 
   const stat = await statFile(rootId, destDir);
   if (!stat.ok) return codeError(stat.code, stat.detail);
@@ -52,7 +64,33 @@ async function handleUploadInit(req: Request): Promise<Response> {
 
   const session = createUploadSession({ rootId, destDir, name, size });
   rememberTransferUid(session.id, uidFromRequest(req));
-  return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE });
+  return json({ uploadId: session.id, chunkSize: UPLOAD_CHUNK_SIZE, ranged: true });
+}
+
+/** 本次 PUT 声明的字节数：优先 `length` 查询参数，其次 content-length。 */
+function declaredLength(req: Request, url: URL): number | null | 'invalid' {
+  const raw = url.searchParams.get('length');
+  if (raw !== null) {
+    const parsed = parseNonNegativeSafeInt(raw);
+    return parsed === null ? 'invalid' : parsed;
+  }
+  const header = req.headers.get('Content-Length');
+  if (header === null) return null;
+  const parsed = parseNonNegativeSafeInt(header);
+  return parsed === null ? 'invalid' : parsed;
+}
+
+const EMPTY_BODY = (): ReadableStream<Uint8Array> =>
+  new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.close();
+    },
+  });
+
+function uploadFailure(reason: string): Response {
+  if (reason === 'not_found' || reason === 'cancelled') return codeError('not_found');
+  if (reason === 'too_large') return codeError('too_large');
+  return json({ error: t('apiError.invalidRequest') }, 409);
 }
 
 async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Response> {
@@ -60,34 +98,30 @@ async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Re
   if (offset === null) return json({ error: t('apiError.invalidRequest') }, 400);
   const session = getUploadSession(id);
   if (!session) return codeError('not_found');
-  if (offset !== session.received) return json({ error: t('apiError.invalidRequest') }, 409);
 
-  const remaining = session.size - session.received;
-  const hardCap = remaining < UPLOAD_CHUNK_SIZE ? remaining : UPLOAD_CHUNK_SIZE;
-  const contentLengthRaw = req.headers.get('Content-Length');
-  let cap = hardCap;
-  if (contentLengthRaw !== null) {
-    const contentLength = parseNonNegativeSafeInt(contentLengthRaw);
-    if (contentLength === null) return json({ error: t('apiError.invalidRequest') }, 400);
-    if (contentLength > hardCap) return codeError('too_large');
-    cap = contentLength;
+  const declared = declaredLength(req, url);
+  if (declared === 'invalid') return json({ error: t('apiError.invalidRequest') }, 400);
+  if (declared !== null) {
+    if (declared > UPLOAD_CHUNK_SIZE) return codeError('too_large');
+    if (offset + declared > session.size) return codeError('too_large');
   }
 
-  const body = await readBodyCappedResult(req, cap);
-  if (!body.ok) return codeError('too_large');
-  const res = await appendUploadChunkAsync(id, offset, body.bytes);
-  if (!res.ok) {
-    if (res.reason === 'not_found' || res.reason === 'cancelled') return codeError('not_found');
-    if (res.reason === 'too_large') return codeError('too_large');
-    return json({ error: t('apiError.invalidRequest') }, 409);
-  }
-  return json({ received: res.received });
+  const res = await writeUploadRange(id, {
+    offset,
+    contentLength: declared ?? undefined,
+    // 单次 PUT 的上限与客户端声明无关：不带 length / content-length 的分块请求
+    // 也不能一口气吃掉整个文件配额。
+    maxWriteBytes: Math.max(0, Math.min(UPLOAD_CHUNK_SIZE, session.size - offset)),
+    body: req.body ?? EMPTY_BODY(),
+  });
+  if (!res.ok) return uploadFailure(res.reason);
+  return json({ received: res.received, complete: res.complete });
 }
 
 function handleUploadCommit(id: string): Response {
   const session = getUploadSession(id);
   if (!session) return codeError('not_found');
-  if (session.received !== session.size) return codeError('invalid', 'incomplete upload');
+  if (!session.complete) return codeError('invalid', 'incomplete upload');
   session.committing = true;
 
   return ndjsonResponse({
@@ -109,6 +143,18 @@ function handleUploadCommit(id: string): Response {
     cancel() {
       cleanupUpload(id);
     },
+  });
+}
+
+/** 续传用：客户端断线重连后先问这里已经收了哪些区间，只补发缺口。 */
+async function handleUploadStatus(id: string): Promise<Response> {
+  const session = getUploadSession(id);
+  if (!session) return codeError('not_found');
+  return json({
+    size: session.size,
+    received: session.received,
+    complete: session.complete,
+    ranges: await uploadRanges(session.id),
   });
 }
 
@@ -155,15 +201,42 @@ function handleDownloadPrepare(req: Request): Response {
   });
 }
 
-function handleDownloadContent(id: string): Response {
+/** 支持 `Range`：客户端断线后可以从已收偏移接着拉，不必重跑一次 prepare。 */
+function handleDownloadContent(req: Request, id: string): Response {
   const session = getDownloadSession(id);
   if (!session) return codeError('not_found');
-  const body = streamTempFile(session.tmpPath, () => cleanupDownload(id));
+  if (downloadSourceChanged(session)) {
+    cleanupDownload(id);
+    return codeError('invalid', 'source changed');
+  }
+  const range = parseRangeHeader(req.headers.get('range'), session.size);
+  if (range === 'unsatisfiable') {
+    return new Response(null, {
+      status: 416,
+      headers: { 'Content-Range': `bytes */${session.size}`, 'Cache-Control': 'no-store' },
+    });
+  }
+  // 会话只由客户端显式 DELETE 或 TTL 回收：读到文件尾不代表客户端真的收全了，
+  // 就地清掉会让紧接着的续传请求撞上 404。
+  const body = streamFileRange(session.tmpPath, range);
   if (!body) return codeError('unknown');
-  return new Response(body, {
-    status: 200,
-    headers: attachmentHeaders(session.name, session.mime, session.size),
-  });
+  if (range === null) {
+    return new Response(body, {
+      status: 200,
+      headers: attachmentHeaders(session.name, session.mime, session.size),
+    });
+  }
+  return new Response(body, { status: 206, headers: rangeHeaders(session, range) });
+}
+
+function rangeHeaders(
+  session: { name: string; mime: string | null; size: number },
+  range: ContentRange
+): Record<string, string> {
+  return {
+    ...attachmentHeaders(session.name, session.mime, range.end - range.start),
+    'Content-Range': `bytes ${range.start}-${range.end - 1}/${session.size}`,
+  };
 }
 
 function handleDownloadCancel(id: string): Response {
@@ -201,12 +274,17 @@ export const fileTransferRoutes: ApiRoute[] = [
   route({
     method: 'GET',
     path: '/api/files/download/:id/content',
-    handler: (_req, params) => handleDownloadContent(decodeURIComponent(params.id)),
+    handler: (req, params) => handleDownloadContent(req, decodeURIComponent(params.id)),
   }),
   route({
     method: 'DELETE',
     path: '/api/files/download/:id',
     handler: (_req, params) => handleDownloadCancel(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'GET',
+    path: '/api/files/upload/:id',
+    handler: (_req, params) => handleUploadStatus(decodeURIComponent(params.id)),
   }),
   route({
     method: 'POST',

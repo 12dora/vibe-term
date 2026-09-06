@@ -61,6 +61,22 @@ export function kbToBytes(kb: number): number {
   return kb * 1024;
 }
 
+const MB = 1024 * 1024;
+
+export function bytesToMb(bytes: number): number {
+  return Math.max(1, Math.round(bytes / MB));
+}
+
+export function mbToBytes(mb: number): number {
+  return mb * MB;
+}
+
+/** 单文件上限；`null` / 缺失即不限。 */
+export function maxFileText(t: Translate, bytes: number | null | undefined): string {
+  if (bytes == null) return t('relay.admin.quota.unlimitedValue');
+  return t('relay.admin.quota.maxFileValue', { mb: bytesToMb(bytes) });
+}
+
 export interface QuotaSummary {
   text: string;
   /** 该租户没有自己的配额，用的是默认值。 */
@@ -79,6 +95,7 @@ export function quotaSummary(
       nodes: effective.maxNodes,
       streams: effective.maxStreams,
       bandwidth: bandwidthText(t, effective.bandwidthBytesPerSec),
+      maxFile: maxFileText(t, effective.maxFileBytes),
     }),
     inherited: quota === null,
   };

@@ -1,6 +1,7 @@
 import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
 import { normalizeRelayUrl, signRelayEnrollProof } from '../../../shared/src/relay';
 import { t } from '../i18n';
+import { requireProbedAddress } from '../lib/probe-address';
 import { promptPassword } from '../lib/prompt';
 import { uploadRelayPackFromLocal } from '../lib/relay-pack-upload';
 import {
@@ -161,6 +162,25 @@ async function enrollWithRetry(
   }
 }
 
+/**
+ * 地址没写端口时探候选端口；探不到直接报错，别让后面的健康检查给出一句更含糊的话。
+ * 显式端口必须按**原始输入**判断：`normalizeRelayUrl` 会抹掉 `:443`，先归一化再判会把用户
+ * 明确写下的 443 当成「没写端口」，从而静默改接到别的端口上。
+ */
+async function resolveRelayEnrollUrl(
+  urlRaw: string,
+  command: 'enroll' | 'reauth',
+  io: RelayIo
+): Promise<string> {
+  requireRelayUrl(urlRaw, command);
+  const probed = await requireProbedAddress(urlRaw.trim(), {
+    kind: 'relay',
+    fetcher: io.fetcher,
+    log: (message) => relayLog(io, message),
+  });
+  return normalizeRelayUrl(probed);
+}
+
 function reportRelayStatus(io: RelayIo, relayUrl: string, status: RelayStatusResponse): void {
   const row = status.relays.find((item) => item.url === relayUrl);
   if (status.mode === 'relay' && row?.online) {
@@ -176,7 +196,7 @@ async function runRelayEnrollInternal(
   io: RelayIo,
   command: 'enroll' | 'reauth'
 ): Promise<{ tenantId: string; relayUrl: string; online: boolean }> {
-  const relayUrl = requireRelayUrl(urlRaw, command);
+  const relayUrl = await resolveRelayEnrollUrl(urlRaw, command, io);
   const health = await fetchRelayHealth(relayUrl, io);
   if (!health.ok) {
     throw new Error(`relay is not healthy: ${relayUrl}`);

@@ -97,7 +97,7 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         ? (JSON.parse(init.body) as Record<string, unknown>)
         : undefined;
     calls.push({ path, method: init?.method ?? 'GET', body });
-    if (url.origin === RELAY_URL) {
+    if (url.origin === RELAY_URL || url.origin.startsWith(`${RELAY_URL}:`)) {
       return json(options.health ?? { ok: true, version: '1.1.23', hasPassword: true });
     }
     switch (path) {
@@ -455,11 +455,39 @@ describe('relay enroll', () => {
 
   test('a relay that is not healthy stops before touching the local gateway', async () => {
     const auth = await openAuth();
+    const url = `${RELAY_URL}:8443`;
     const { calls, fetcher } = fakeGateway(auth, { health: { ok: false } });
     await expect(
-      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+      runRelayEnroll(parseArgs(['relay', 'enroll', url]), url, io(auth, fetcher, []))
     ).rejects.toThrow('relay is not healthy');
     expect(calls).toHaveLength(1);
+  });
+
+  test('an explicit :443 is confirmed as written and never swept', async () => {
+    const auth = await openAuth();
+    const url = `${RELAY_URL}:443`;
+    const seen: string[] = [];
+    const { fetcher } = fakeGateway(auth, { health: { ok: false } });
+    const spy = (async (input: unknown, init?: RequestInit) => {
+      const target = new URL(String(input));
+      if (target.hostname === new URL(RELAY_URL).hostname) {
+        seen.push(`${target.port || '443'}${target.pathname}`);
+      }
+      return await fetcher(input as string, init as RequestInit);
+    }) as typeof fetcher;
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', url]), url, io(auth, spy, []))
+    ).rejects.toThrow('relay is not healthy');
+    // 归一化会抹掉 :443；按原始输入判断显式端口，所以只确认这一次，不遍历候选
+    expect(seen).toEqual(['443/api/relay/health']);
+  });
+
+  test('a portless url with no reachable candidate port names the ports tried', async () => {
+    const auth = await openAuth();
+    const { fetcher } = fakeGateway(auth, { health: { ok: false } });
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', RELAY_URL]), RELAY_URL, io(auth, fetcher, []))
+    ).rejects.toThrow(/443/);
   });
 
   test('a missing url is refused', async () => {

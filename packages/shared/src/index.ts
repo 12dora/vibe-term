@@ -66,7 +66,7 @@ export { type DateInput, formatDate, formatDateTime } from './format-date';
 
 // ==================== 字节 / 速率格式化 ====================
 
-export { formatBytes, formatBytesPair, formatRate } from './format-bytes';
+export { formatBytes, formatBytesPair, formatEta, formatRate } from './format-bytes';
 
 // ==================== 领域契约 ====================
 
@@ -88,6 +88,8 @@ export * from './contracts/files';
 export * from './contracts/device-folders';
 export * from './contracts/local-auth';
 export * from './contracts/hub-role';
+export * from './contracts/transfer';
+export * from './contracts/portmap';
 export * from './device-folders';
 
 // ==================== 运行时模块再导出 ====================

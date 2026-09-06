@@ -430,6 +430,31 @@ describe('HttpsSection 状态块', () => {
     expect(html).not.toContain('data-testid="https-proxy-hint"');
   });
 
+  test('内置监听给出对外地址时单列一行，含非默认端口', () => {
+    status = tls({
+      mode: 'acme',
+      https: effective('builtin', true, 'https://hub.example.com:13443'),
+      listener: { running: true, port: 13443, error: null },
+    });
+    const html = render();
+    expect(html).toContain('data-testid="https-public-url"');
+    expect(html).toContain('https://hub.example.com:13443');
+    expect(html).toContain('nodes.https.status.publicUrl');
+  });
+
+  test('反代未确认那档已经把地址写进文案，不再重复单列', () => {
+    status = tls({
+      mode: 'none',
+      https: effective('reverse-proxy', false, 'https://hub.example.com'),
+    });
+    expect(render()).not.toContain('data-testid="https-public-url"');
+  });
+
+  test('拿不到对外地址时不渲染该行', () => {
+    status = tls({ mode: 'selfsigned', https: effective('builtin', true) });
+    expect(render()).not.toContain('data-testid="https-public-url"');
+  });
+
   test('旧版本节点不返回该字段时不渲染该行也不报错', () => {
     status = tls({ mode: 'none' });
     const html = render();

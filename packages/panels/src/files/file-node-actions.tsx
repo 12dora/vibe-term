@@ -30,7 +30,10 @@ export function useFileNodeActions(): FileNodeActions {
   const download = useCallback(
     async (rootId: string, entry: FileEntryDto) => {
       const controller = new AbortController();
-      const tt = startTransferToast(entry.name, 'download', () => controller.abort());
+      const tt = startTransferToast(entry.name, 'download', () => controller.abort(), {
+        nodeId: runtime.nodeId,
+        totalBytes: entry.size ?? undefined,
+      });
       try {
         const { name, blob } = await downloadFileWithTransport(
           runtime.nodeId,

@@ -7,3 +7,4 @@ export * from './schema/mesh';
 export * from './schema/relay';
 export * from './schema/mesh-relay';
 export * from './schema/share';
+export * from './schema/portmap';

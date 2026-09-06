@@ -28,6 +28,7 @@ import {
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
+import { PortPicker } from './port-picker';
 import { submitBecomeHub } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
 import type { RestartWaiter } from './use-restart-waiter';
@@ -51,6 +52,8 @@ export interface BecomeHubFormProps {
   origin?: string | null;
   /** 重启完成后的动作，默认整页跳登录页。 */
   onRestarted?: () => void;
+  /** 测试注入固定的建议端口。 */
+  suggestedPort?: number;
 }
 
 export function BecomeHubForm({
@@ -58,6 +61,7 @@ export function BecomeHubForm({
   client = defaultApiClient,
   origin,
   onRestarted = navigateToLogin,
+  suggestedPort,
 }: BecomeHubFormProps) {
   const { t } = useTranslation();
   const nodeEnv = localStatus.nodeEnv;
@@ -71,6 +75,8 @@ export function BecomeHubForm({
     directEnable: directSupported,
   }));
   const [precheck, setPrecheck] = useState<PrecheckState>({ phase: 'idle' });
+  // 自定义端口填坏了：地址里的端口没被改写，提交必须一起拦住，否则存下去的是上一个端口。
+  const [portError, setPortError] = useState<string | null>(null);
 
   const errors = validateBecomeHub(values, nodeEnv);
   const {
@@ -84,7 +90,7 @@ export function BecomeHubForm({
     handleSubmit,
   } = useHubSetupSubmit<SetupHubResponse>({
     client,
-    hasErrors: hasErrors(errors),
+    hasErrors: hasErrors(errors) || portError !== null,
     submit: () => submitBecomeHub(values, client),
     successMessage: t('nodes.setup.toast.hubCreated'),
     onRestarted,
@@ -134,6 +140,16 @@ export function BecomeHubForm({
               className="min-h-10"
             />
           </FormField>
+
+          <PortPicker
+            idPrefix="setup-hub"
+            url={values.hubPublicUrl}
+            onChange={(next, error) => {
+              update({ hubPublicUrl: next });
+              setPortError(error);
+            }}
+            {...(suggestedPort === undefined ? {} : { suggestedPort })}
+          />
 
           <div className="space-y-2">
             <Button

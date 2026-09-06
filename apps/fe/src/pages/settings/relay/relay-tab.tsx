@@ -16,6 +16,7 @@ import { Notice } from '../components/form-primitives';
 import { DefaultQuotaDialog } from './default-quota-dialog';
 import { RelayMembersCard } from './members-card';
 import { PasswordDialog } from './password-dialog';
+import { RelayLimitsDialog } from './relay-limits-dialog';
 import { RelayAdminMenu } from './relay-menus';
 import { RelayMetricsPanel } from './relay-metrics-panel';
 import { useRelayMetrics } from './relay-metrics-store';
@@ -104,7 +105,10 @@ function RelayTabHeader({
           >
             <RefreshCw className={relay.loading ? 'animate-spin motion-reduce:animate-none' : ''} />
           </Button>
-          <RelayAdminMenu onChangePassword={controller.openPassword} />
+          <RelayAdminMenu
+            onChangePassword={controller.openPassword}
+            onOpenLimits={controller.openLimits}
+          />
         </div>
       </div>
       {!status.config.hasPassword && (
@@ -175,7 +179,7 @@ function RelayTabDialogs({
   status,
 }: { controller: RelayController; status: RelayStatusResponse }) {
   const { t } = useTranslation();
-  const { password, quota, tenant } = controller;
+  const { password, quota, limits, tenant } = controller;
   const tenantError = tenant.error;
 
   return (
@@ -203,6 +207,18 @@ function RelayTabDialogs({
           else controller.closeQuota();
         }}
         onSave={controller.submitDefaultQuota}
+      />
+
+      <RelayLimitsDialog
+        open={controller.limitsOpen}
+        limits={status.config.limits}
+        busy={limits.busy}
+        error={limits.error ? t('relay.admin.limits.failed', { message: limits.error }) : null}
+        onOpenChange={(next) => {
+          if (next) controller.openLimits();
+          else controller.closeLimits();
+        }}
+        onSave={controller.submitLimits}
       />
 
       <TenantEditorDialog

@@ -33,6 +33,7 @@ import {
   relayPayloadHash,
 } from './relay-payloads';
 import { buildReadmitPrepare } from './relay-readmit';
+import { handleRelayResolve } from './relay-resolve-route';
 import {
   type ParsedEnrollment,
   normalizeUrlOrNull,
@@ -109,6 +110,8 @@ export class RelayRoutes {
       'GET /status': (_r, uid) => this.status(uid),
       'POST /switch': (r, uid) => handleRelaySwitch(this.deps, r, () => this.status(uid)),
       'GET /readmit/prepare': (_r, uid) => this.readmitPrepare(uid),
+      'POST /resolve': (r) =>
+        handleRelayResolve(r, { fetchImpl: this.deps.fetchImpl, dial: this.deps.dial }),
       'POST /enroll/proof-material': (r, uid) => this.proofMaterial(r, uid),
       'POST /enroll': (r, uid) => this.enroll(r, uid),
       'POST /leave/prepare': (_r, uid) => this.leavePrepare(uid),

@@ -348,12 +348,13 @@ describe('磁贴排', () => {
     expect(compact).toContain('grid grid-cols-2 gap-2 sm:grid-cols-3');
     expect(compact).not.toContain('grid grid-cols-3 gap-2"');
 
-    // 完整排：每组六格，列数只取 6 的因数（2/3/6），行才不会缺角；窄屏折线已隐藏所以两列也放得下；六列留给 2xl
+    // 完整排：列数只取每组格数的因数，行才不会缺角。
+    // 转发量八格 → 2/4 列；本机负载六格 → 2/3/6 列。窄屏折线已隐藏，两列也放得下。
     const full = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(full).toContain('grid grid-cols-2 gap-3 lg:grid-cols-4');
     expect(full).toContain('grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6');
     expect(full).not.toContain(' xl:grid-cols-6');
     expect(full).not.toContain('md:grid-cols-3');
-    expect(full).not.toContain('lg:grid-cols-4');
 
     const skeleton = renderToStaticMarkup(<RelayTilesSkeleton count={4} />);
     expect(skeleton).toContain('grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4');

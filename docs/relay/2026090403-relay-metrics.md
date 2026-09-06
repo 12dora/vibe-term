@@ -19,6 +19,9 @@
 | `totals.bytesIn / bytesOut` | `RelayMetering` 累计 | `bytesIn` 为从成员收到的字节，`bytesOut` 为发给成员的字节；同一份中转数据两侧各计一次（与落库口径一致） |
 | `totals.*PerSec` | 相邻样本累计值之差 / 间隔 | 累计值回绕视为计数器复位，从 0 起算 |
 | `totals.framesIn/OutPerSec` | `LinkMux.stats()`（在线链路之和 + 已移除链路折入的 `retired` 累计） | 链路关闭或替换不会让速率跌成 0 |
+| `totals.bandwidthBytesPerSec` | 令牌桶放行字节的相邻样本差 / 间隔 | 与限额同口径：被延迟的字节不计入 |
+| `totals.bandwidthLimitBytesPerSec / maxTenants / fairShare` | `relay_config` 的中继级限额（`relayLimitTotals()`，见中继角色文档 §11.2） | 两个上限为 `null` 即不限；旧中继不下发这三项 |
+| `tenants[].quota.maxFileBytes` | 生效配额 | `null` 或缺失即不限；由租户节点执行 |
 | `members[].rttMs / connectedAt / reconnects / activeStreams / bytes*PerSec` | uplink 服务端 ping 时间戳、registry 记账、stream router 记账 | 等待 pong 期间不再重发 ping，RTT 对应原始 ping；吊销成员与删除租户时清理记账 |
 | `tenants[].pack.sizeBytes / updatedAt` | `relay_tenants.sealed_pack` 与新列 `sealed_pack_updated_at`（迁移 0046） | 根轮换时清空时间戳 |
 
@@ -29,7 +32,8 @@
 - `packages/ui`：`Sparkline`（内联 SVG，多序列共享刻度，空/常量序列安全）、`StatTile`（`Card size="sm"`，标签可换行、数值不截断、折线槽位可压缩并在窄屏隐藏）。
 - `apps/fe/src/pages/settings/relay/relay-metrics-store.ts`：页面可见时每 5 s 轮询，隐藏/卸载停止；401/404 进入 `unauthorized`/`unavailable` 后停止轮询，重新挂载或点重试才再探测。
 - 本机卡片「中继服务」段：4 + 3 个精简瓦片（在线节点、活跃流、吞吐、延迟；内存、CPU、运行时长）。
-- 「中继」设置 tab：12 个瓦片分「流量 / 进程」两组（窄屏两列、`lg` 三列、`2xl` 六列），趋势卡三条 5 分钟折线（吞吐、活跃流、事件循环延迟），成员表（RTT、流、速率、重连、接入时间）。
+- 「中继」设置 tab：14 个瓦片分「流量 / 进程」两组——流量组八格（窄屏两列、`lg` 四列），进程组六格（窄屏两列、`lg` 三列、`2xl` 六列）；趋势卡三条 5 分钟折线（吞吐、活跃流、事件循环延迟），成员表（RTT、流、速率、重连、接入时间）。
+- 「租户」与「放行带宽」两格在配了上限时显示 `已用 / 上限`，未配上限时只出当前值并在副行说明未设上限。
 
 ## 验收
 

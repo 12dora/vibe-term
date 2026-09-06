@@ -9,15 +9,16 @@ import * as deviceStorage from '../files/device-storage';
 import { directoryBrowseIo } from '../files/directory-browse';
 import * as sshCommand from '../files/ssh-command';
 import {
-  appendUploadChunkAsync,
   createDownloadSession,
   createUploadSession,
   getDownloadSession,
   getUploadSession,
   removeUploadSession,
+  writeUploadBytes,
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
+import { cleanupDownload } from './file-transfer-sessions';
 import {
   abortTransfer,
   appendUpload,
@@ -176,17 +177,18 @@ describe('files bulk hooks', () => {
   test('appendUpload writes the same temp file HTTP PUT uses so commit can succeed', async () => {
     const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 5 });
     try {
-      expect(await appendUpload(session.id, new Uint8Array([1, 2, 3]))).toEqual({
+      expect(await appendUpload(session.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
         ok: true,
         received: 3,
       });
-      expect(await appendUpload(session.id, new Uint8Array([4, 5]))).toEqual({
+      expect(await appendUpload(session.id, 3, new Uint8Array([4, 5]))).toEqual({
         ok: true,
         received: 5,
       });
       expect(getUploadSession(session.id)?.received).toBe(5);
+      // 收满即 rename 成 tmpPath，commit 阶段推给设备的就是它
       expect(readFileSync(session.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5]));
-      expect(await appendUpload(session.id, new Uint8Array([6]))).toEqual({
+      expect(await appendUpload(session.id, 5, new Uint8Array([6]))).toEqual({
         ok: false,
         code: 'too_large',
       });
@@ -195,48 +197,20 @@ describe('files bulk hooks', () => {
     }
   });
 
-  test('HTTP append suspended mid-write vs RTC append at the same offset: exactly one succeeds', async () => {
+  test('HTTP 与 RTC 抢同一区间：后到的被拒，已确认的字节不会被改写', async () => {
     const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 6 });
-    const realOpen = fsPromises.open;
-    let releaseWrite!: () => void;
-    const held = new Promise<void>((resolve) => {
-      releaseWrite = resolve;
-    });
-    let startedWrite!: () => void;
-    const started = new Promise<void>((resolve) => {
-      startedWrite = resolve;
-    });
-    const spy = spyOn(fsPromises, 'open').mockImplementation(async (path, flags) => {
-      const fh = await realOpen(path, flags);
-      return {
-        write: async (buf: Uint8Array) => {
-          startedWrite();
-          await held;
-          return fh.write(buf);
-        },
-        truncate: (len?: number) => fh.truncate(len),
-        close: () => fh.close(),
-      } as Awaited<ReturnType<typeof realOpen>>;
-    });
     try {
-      const http = appendUploadChunkAsync(session.id, 0, new Uint8Array([1, 1, 1]));
-      await started;
-      const rtc = appendUpload(session.id, new Uint8Array([2, 2, 2]));
-      releaseWrite();
+      const http = writeUploadBytes(session.id, 0, new Uint8Array([1, 1, 1]));
+      const rtc = appendUpload(session.id, 0, new Uint8Array([2, 2, 2]));
       const [httpRes, rtcRes] = [await http, await rtc];
-      const results = [httpRes, rtcRes];
-      const ok = results.filter((r) => r.ok);
-      const bad = results.filter((r) => !r.ok);
-      expect(ok).toHaveLength(1);
-      expect(bad).toHaveLength(1);
-      expect(ok[0]).toEqual({ ok: true, received: 3 });
+      expect([httpRes.ok, rtcRes.ok].filter(Boolean)).toHaveLength(1);
       expect(getUploadSession(session.id)?.received).toBe(3);
-      const onDisk = readFileSync(session.tmpPath);
-      expect(onDisk.byteLength).toBe(3);
-      const winner = httpRes.ok ? Buffer.from([1, 1, 1]) : Buffer.from([2, 2, 2]);
-      expect(onDisk).toEqual(winner);
+      // 已确认的区间不允许再被覆盖：重发同一段只会拿到冲突，退避后按状态重新对齐即可
+      expect(await writeUploadBytes(session.id, 0, new Uint8Array([9, 9, 9]))).toEqual({
+        ok: false,
+        reason: 'conflict',
+      });
     } finally {
-      spy.mockRestore();
       removeUploadSession(session.id);
     }
   });
@@ -272,6 +246,9 @@ describe('files bulk hooks', () => {
       if (value) chunks.push(value);
     }
     expect(Buffer.concat(chunks).toString()).toBe('hello');
+    // 读到文件尾不代表对端收全了：会话留到显式 DELETE / TTL，否则续传请求会撞上 404
+    expect(getDownloadSession(session.id)).toBeDefined();
+    cleanupDownload(session.id);
     expect(getDownloadSession(session.id)).toBeUndefined();
     expect(getTransferOwner(session.id)).toBeNull();
   });
@@ -281,10 +258,10 @@ describe('files bulk hooks', () => {
   });
 
   test('filesBulkHooks exposes the four operations', () => {
-    expect(filesBulkHooks.getTransferOwner).toBe(getTransferOwner);
-    expect(filesBulkHooks.openDownload).toBe(openDownload);
-    expect(filesBulkHooks.appendUpload).toBe(appendUpload);
-    expect(filesBulkHooks.abortTransfer).toBe(abortTransfer);
+    expect(filesBulkHooks.status).toBe(getTransferOwner);
+    expect(filesBulkHooks.openRange).toBe(openDownload);
+    expect(filesBulkHooks.writeRange).toBe(appendUpload);
+    expect(filesBulkHooks.abort).toBe(abortTransfer);
   });
 });
 
@@ -501,7 +478,7 @@ describe('transfer uid cleanup', () => {
     expectReusedUploadHasNoUid(transferId);
   });
 
-  test('download content stream end forgets uid so a reused transfer id has empty owner', async () => {
+  test('download DELETE forgets uid so a reused transfer id has empty owner', async () => {
     const transferId = pinTransferId();
     expect(await prepareOwnedDownload('user-dl-content-1', 'hello')).toBe(transferId);
     expect(getTransferOwner(transferId)?.uid).toBe('user-dl-content-1');
@@ -510,7 +487,11 @@ describe('transfer uid cleanup', () => {
     const res = response as Response;
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('hello');
+    // 整份发完也不回收：客户端校验完整之后才发 DELETE
+    expect(getDownloadSession(transferId)).toBeDefined();
 
+    const del = await dispatch('DELETE', `/api/files/download/${transferId}`);
+    expect((del as Response).status).toBe(200);
     expect(getDownloadSession(transferId)).toBeUndefined();
     expect(getTransferOwner(transferId)).toBeNull();
     expectReusedDownloadHasNoUid(transferId);

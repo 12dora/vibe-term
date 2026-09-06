@@ -10,6 +10,9 @@ export const relayConfig = sqliteTable(
     minTokenEpoch: integer('min_token_epoch').notNull().default(0),
     adminTokenHash: text('admin_token_hash'),
     defaultQuotaJson: text('default_quota_json').notNull(),
+    maxTenants: integer('max_tenants'),
+    totalBandwidthBytesPerSec: integer('total_bandwidth_bytes_per_sec'),
+    fairShare: integer('fair_share', { mode: 'boolean' }).notNull().default(true),
     updatedAt: integer('updated_at').notNull(),
   },
   (table) => [check('relay_config_singleton_check', sql`${table.id} = 1`)]

@@ -10,8 +10,10 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex
 import { Input } from '@tmex/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { type AddressProbeState, precheckProbe, useAddressProbe } from './address-probe';
 import { currentHostname, navigateToLogin } from './browser-location';
 import {
+  AddressProbeNotice,
   FormField,
   RestartPanel,
   ResultRow,
@@ -20,8 +22,9 @@ import {
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
-import { submitJoinHub } from './submit';
+import { submitJoinHubDiscovered } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
+import type { RestartWaiter } from './use-restart-waiter';
 import {
   type JoinHubErrors,
   type JoinHubValues,
@@ -60,12 +63,13 @@ export function JoinHubForm({
     directEnable: directSupported,
     insecureLocal: false,
   }));
+  const probe = useAddressProbe();
   const errors = validateJoinHub(values, nodeEnv);
   const { showErrors, submitting, submitError, result, waiter, blocked, handleSubmit } =
     useHubSetupSubmit<SetupJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
-      submit: () => submitJoinHub(values, nodeEnv, client),
+      submit: () => submitJoinHubDiscovered(values, nodeEnv, resolveHubUrl, client),
       successMessage: t('nodes.setup.toast.joined'),
       onRestarted,
     });
@@ -73,27 +77,20 @@ export function JoinHubForm({
 
   function update(patch: Partial<JoinHubValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
+    // 地址一改，上一次探测的结论就作废，在途的那次也一并丢掉。
+    if (patch.hubUrl !== undefined) probe.reset();
   }
 
-  if (result) {
-    return (
-      <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-join-hub-result">
-        <CardHeader>
-          <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
-          <CardDescription>{t('nodes.setup.result.joinDescription')}</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <ResultRow label={t('nodes.setup.result.hubUrl')} value={result.hubUrl} />
-          <ResultRow label={t('nodes.setup.result.username')} value={result.username} />
-          <ResultRow
-            label={t('nodes.setup.result.directLabel')}
-            value={directOutcomeLabel(t, result.direct, result.directError)}
-          />
-          <RestartPanel waiter={waiter} />
-        </CardContent>
-      </Card>
-    );
+  /** 地址没写端口时探一遍 443 与内置候选端口，返回实际该用的地址（顺带回填输入框）。 */
+  async function resolveHubUrl(typed: string): Promise<string> {
+    if (errors.hubUrl) return typed;
+    const resolved = await probe.run(typed, precheckProbe(client, 'hub'));
+    if (!resolved) return typed;
+    setValues((previous) => ({ ...previous, hubUrl: resolved }));
+    return resolved;
   }
+
+  if (result) return <JoinHubResult result={result} waiter={waiter} />;
 
   return (
     <Card className="border-0 ring-0" data-testid="setup-join-hub-form">
@@ -109,21 +106,13 @@ export function JoinHubForm({
       </CardHeader>
       <CardContent>
         <form className="space-y-6" onSubmit={(event) => void handleSubmit(event)}>
-          <FormField
-            id="setup-hub-url"
-            label={t('nodes.setup.fields.hubUrl')}
-            hint={t('nodes.setup.fields.hubUrlHint')}
-            error={shown.hubUrl && t(shown.hubUrl)}
-          >
-            <Input
-              id="setup-hub-url"
-              value={values.hubUrl}
-              onChange={(event) => update({ hubUrl: event.target.value })}
-              placeholder={t('nodes.setup.fields.urlPlaceholder')}
-              autoComplete="url"
-              className="min-h-10"
-            />
-          </FormField>
+          <HubAddressField
+            value={values.hubUrl}
+            error={shown.hubUrl}
+            probe={probe}
+            onChange={(next) => update({ hubUrl: next })}
+            onProbe={() => void resolveHubUrl(values.hubUrl.trim())}
+          />
 
           <JoinCredentialField
             values={values}
@@ -182,10 +171,77 @@ export function JoinHubForm({
             label={t('nodes.setup.submit.joinHub')}
             submitting={submitting}
             blocked={blocked}
+            {...(probe.phase === 'probing' ? { pendingLabel: t('nodes.setup.probe.probing') } : {})}
           />
         </form>
       </CardContent>
     </Card>
+  );
+}
+
+/** 提交成功：亮出加入到的 Hub 与账号，下面接重启进度。 */
+function JoinHubResult({
+  result,
+  waiter,
+}: {
+  result: SetupJoinResponse;
+  waiter: RestartWaiter;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-join-hub-result">
+      <CardHeader>
+        <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
+        <CardDescription>{t('nodes.setup.result.joinDescription')}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <ResultRow label={t('nodes.setup.result.hubUrl')} value={result.hubUrl} />
+        <ResultRow label={t('nodes.setup.result.username')} value={result.username} />
+        <ResultRow
+          label={t('nodes.setup.result.directLabel')}
+          value={directOutcomeLabel(t, result.direct, result.directError)}
+        />
+        <RestartPanel waiter={waiter} />
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Hub 地址一格：地址失焦时探一遍端口，结论就跟在字段下方。 */
+function HubAddressField({
+  value,
+  error,
+  probe,
+  onChange,
+  onProbe,
+}: {
+  value: string;
+  error?: string;
+  probe: AddressProbeState;
+  onChange: (value: string) => void;
+  onProbe: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <>
+      <FormField
+        id="setup-hub-url"
+        label={t('nodes.setup.fields.hubUrl')}
+        hint={t('nodes.setup.fields.hubUrlHint')}
+        error={error && t(error)}
+      >
+        <Input
+          id="setup-hub-url"
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+          onBlur={onProbe}
+          placeholder={t('nodes.setup.fields.urlPlaceholder')}
+          autoComplete="url"
+          className="min-h-10"
+        />
+      </FormField>
+      <AddressProbeNotice state={probe} kind="hub" testId="setup-join-hub-probe" />
+    </>
   );
 }
 

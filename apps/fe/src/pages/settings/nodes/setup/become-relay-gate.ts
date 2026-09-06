@@ -6,6 +6,7 @@
 // 同一套做法）。
 
 import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import { type FormEvent, useState } from 'react';
 import { type BecomeRelayValues, hasErrors, validateBecomeRelay } from './validation';
 
 export type BecomeRelaySubmitPlan =
@@ -18,9 +19,11 @@ export type BecomeRelaySubmitPlan =
 
 export function pureRelaySubmitPlan(
   values: BecomeRelayValues,
-  nodeEnv: LocalStatusResponse['nodeEnv']
+  nodeEnv: LocalStatusResponse['nodeEnv'],
+  /** 端口选择器里那条校验错误（自定义端口空或越界）。 */
+  portInvalid = false
 ): BecomeRelaySubmitPlan {
-  if (hasErrors(validateBecomeRelay(values, nodeEnv))) return 'invalid';
+  if (portInvalid || hasErrors(validateBecomeRelay(values, nodeEnv))) return 'invalid';
   return values.alsoNode ? 'submit' : 'confirm';
 }
 
@@ -42,5 +45,27 @@ export function becomeRelayGate(event: BecomeRelayGateEvent): BecomeRelayGateSte
   return {
     confirming: event.plan === 'confirm',
     submit: event.plan === 'submit',
+  };
+}
+
+export interface PureRelayGate {
+  /** 确认框该不该开着。 */
+  confirming: boolean;
+  /** 按闸门的判定推进一步：该确认就开框，该提交就提交。 */
+  step: (event: BecomeRelayGateEvent, formEvent?: FormEvent) => void;
+}
+
+/** 确认框的开合与「确认之后才真的提交」这段时序：脱开组件才测得出，也让表单短一截。 */
+export function usePureRelayGate(handleSubmit: (event: FormEvent) => Promise<void>): PureRelayGate {
+  const [confirming, setConfirming] = useState(false);
+  return {
+    confirming,
+    step: (event, formEvent) => {
+      const next = becomeRelayGate(event);
+      setConfirming(next.confirming);
+      if (!next.submit) return;
+      // 确认框里点「创建并重启」时没有真实表单事件，补一个空的。
+      void handleSubmit(formEvent ?? ({ preventDefault: () => undefined } as FormEvent));
+    },
   };
 }

@@ -2,6 +2,7 @@ import { loadavg } from 'node:os';
 import type { LinkSession } from '@tmex/shared/link';
 import type { RelayQuota } from '@tmex/shared/relay';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
+import { type RelayLimitTotals, defaultRelayLimits, relayLimitTotals } from './relay-limits';
 import type { RelayMetering, RelayUsageDelta } from './relay-metering';
 import { defaultRelayQuota } from './relay-quota';
 import { type RelayLiveNode, type RelayRegistry, memberKey } from './relay-registry';
@@ -22,7 +23,7 @@ export type RelayMetricsProcess = {
   authenticatedLinks: number;
 };
 
-export type RelayMetricsTotals = {
+export type RelayMetricsTotals = RelayLimitTotals & {
   tenants: number;
   members: number;
   membersOnline: number;
@@ -52,6 +53,7 @@ export type RelayMetricsTenant = {
     maxNodes: number;
     maxStreams: number;
     bandwidthBytesPerSec: number | null;
+    maxFileBytes?: number | null;
   };
   usage: {
     currentNodes: number;
@@ -125,6 +127,8 @@ export type RelayMetricsCollectorOptions = {
   setIntervalFn?: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
   clearIntervalFn?: (id: ReturnType<typeof setInterval>) => void;
   quotaFor?: (tenantId: string) => RelayQuota;
+  /** 中继级限额的只读投影；缺省即「未配置任何限额」。 */
+  limits?: () => RelayLimitTotals;
   onSample?: () => void;
 };
 
@@ -299,6 +303,7 @@ export class RelayMetricsCollector {
   private readonly setIntervalFn: (cb: () => void, ms: number) => ReturnType<typeof setInterval>;
   private readonly clearIntervalFn: (id: ReturnType<typeof setInterval>) => void;
   private readonly quotaFor: (tenantId: string) => RelayQuota;
+  private readonly limitsFor: () => RelayLimitTotals;
   private readonly onSample: (() => void) | undefined;
   private timer: ReturnType<typeof setInterval> | null = null;
   private prevAt = 0;
@@ -327,6 +332,7 @@ export class RelayMetricsCollector {
     this.clearIntervalFn = opts.clearIntervalFn ?? ((id) => clearInterval(id));
     this.quotaFor =
       opts.quotaFor ?? ((tenantId) => this.tenants.get(tenantId)?.quota ?? defaultRelayQuota());
+    this.limitsFor = opts.limits ?? (() => relayLimitTotals(defaultRelayLimits()));
     this.onSample = opts.onSample;
   }
 
@@ -506,6 +512,7 @@ export class RelayMetricsCollector {
       bytesOut += tenant.bytesOut + pending.bytesOut;
     }
     return {
+      ...this.limitsFor(),
       tenants: this.tenants.count(),
       members,
       membersOnline: this.registry.onlineCount(),

@@ -1,8 +1,12 @@
+// 传输进度 Toast。自 round 32 起它只是 `transfer-jobs-store` 的渲染器之一：
+// 每个 Toast 背后都有一行 store 条目，设备页的传输弹窗读的就是同一份列表。
+
 import { toast } from 'sonner';
 
 import type { LegProgress } from '@tmex/api-client';
 import { Progress } from '@tmex/ui/progress';
 import i18next from 'i18next';
+import { type LocalTransferHandle, combineLegPct, startLocalTransfer } from './transfer-jobs-store';
 
 export type TransferDirection = 'upload' | 'download';
 
@@ -68,6 +72,14 @@ function WorkingBody({ m }: { m: ToastModel }) {
   );
 }
 
+/** 登记到传输列表所需的上下文；不传则只出 Toast（列表里不留行）。 */
+export interface TransferToastEntry {
+  /** 另一端的节点 id（`self` 或 32 位 hex）。 */
+  nodeId: string;
+  /** 已知总字节数；未知时列表只显示百分比。 */
+  totalBytes?: number;
+}
+
 export interface TransferToast {
   leg: (n: 1 | 2, p: LegProgress) => void;
   /** 传输路径确定后调用，在文件名旁显示 direct / relay 徽标。 */
@@ -83,7 +95,8 @@ export interface TransferToast {
 export function startTransferToast(
   fileName: string,
   direction: TransferDirection,
-  onCancel: () => void
+  onCancel: () => void,
+  entry?: TransferToastEntry
 ): TransferToast {
   const id = `transfer-${fileName}-${performance.now()}`;
   const model: ToastModel = {
@@ -93,6 +106,16 @@ export function startTransferToast(
     path: null,
   };
   let lastRender = 0;
+  const row: LocalTransferHandle | null = entry
+    ? startLocalTransfer({
+        id,
+        kind: direction,
+        title: fileName,
+        nodeId: entry.nodeId,
+        totalBytes: entry.totalBytes,
+        onCancel,
+      })
+    : null;
 
   const renderWorking = () => {
     const snapshot: ToastModel = {
@@ -116,6 +139,7 @@ export function startTransferToast(
   return {
     leg(n, p) {
       model.legs[n - 1] = p;
+      row?.setPct(combineLegPct(model.legs[0].pct, model.legs[1].pct));
       const now = performance.now();
       // 100% 立即渲染（保证完成段显示满格），否则节流
       if (p.pct < 100 && now - lastRender < 100) return;
@@ -125,10 +149,12 @@ export function startTransferToast(
     setPath(path) {
       if (model.path === path) return;
       model.path = path;
+      row?.setPath(path);
       lastRender = performance.now();
       renderWorking();
     },
     success(message) {
+      row?.done();
       toast.success(<span data-testid="transfer-toast">{message}</span>, {
         id,
         duration: 4000,
@@ -137,6 +163,7 @@ export function startTransferToast(
       });
     },
     fail(message) {
+      row?.fail();
       toast.error(<span data-testid="transfer-toast">{message}</span>, {
         id,
         duration: Number.POSITIVE_INFINITY,
@@ -145,6 +172,7 @@ export function startTransferToast(
       });
     },
     cancel() {
+      row?.cancelled();
       toast.dismiss(id);
     },
   };

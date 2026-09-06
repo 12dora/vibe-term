@@ -3,7 +3,7 @@ import type { CliLang } from '../i18n';
 const HELP_EN = `tmex CLI
 
 Usage:
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
+  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -32,7 +32,8 @@ Usage:
   tmex relay passwd [--clear] [--kick|--keep]
   tmex relay kick <tenantId>
   tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--inherit]
+  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   tmex relay label <tenantId> <text>
 
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
@@ -47,7 +48,7 @@ Global flags:
 const HELP_ZH = `tmex CLI
 
 用法：
-  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--peer-port <port>] [--no-service]
+  tmex init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
   tmex doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   tmex upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   tmex uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -76,7 +77,8 @@ const HELP_ZH = `tmex CLI
   tmex relay passwd [--clear] [--kick|--keep]
   tmex relay kick <tenantId>
   tmex relay remove <tenantId> [--yes]
-  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--inherit]
+  tmex relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+  tmex relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   tmex relay label <tenantId> <text>
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：

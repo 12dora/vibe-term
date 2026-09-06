@@ -14,6 +14,7 @@
 // 注意：本通道**不经过 `DirectDataChannelCarrier`**——不分片、不走 Borsh envelope，
 // 背压自己按 4 MiB 高水位 / 1 MiB 低水位处理。
 
+import { BULK_FRAME_BYTES, iterateFrames } from '@tmex/transfer';
 import {
   DC_HIGH_WATER_BYTES,
   DC_LOW_WATER_BYTES,
@@ -21,7 +22,8 @@ import {
 } from './data-channel-carrier';
 
 export const BULK_CHANNEL_PREFIX = 'bulk:';
-export const BULK_FRAME_SIZE = 64 * 1024;
+/** 两个方向统一 16 KiB（与 node 侧 `rtc/bulk.ts` 同源，避免收发帧长打架）。 */
+export const BULK_FRAME_SIZE = BULK_FRAME_BYTES;
 export const DEFAULT_BULK_OPEN_TIMEOUT_MS = 15_000;
 /**
  * 操作级空闲超时：通道 open 之后，只要有合法的数据/控制帧收发就续期。
@@ -108,49 +110,8 @@ function parseControlJson(text: string): Record<string, unknown> | null {
   }
 }
 
-function isBlobLike(source: Blob | ReadableStream<Uint8Array>): source is Blob {
-  const candidate = source as Partial<Blob>;
-  return typeof candidate.slice === 'function' && typeof candidate.arrayBuffer === 'function';
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.byteLength + b.byteLength);
-  out.set(a, 0);
-  out.set(b, a.byteLength);
-  return out;
-}
-
-/** 把任意来源切成恰好 `frameSize` 的帧（末帧可短）。 */
-export async function* iterateBulkFrames(
-  source: Blob | ReadableStream<Uint8Array>,
-  frameSize: number
-): AsyncGenerator<Uint8Array> {
-  if (isBlobLike(source)) {
-    const total = source.size;
-    for (let offset = 0; offset < total; offset += frameSize) {
-      const slice = source.slice(offset, Math.min(offset + frameSize, total));
-      yield new Uint8Array(await slice.arrayBuffer());
-    }
-    return;
-  }
-  const reader = source.getReader();
-  let pending: Uint8Array = new Uint8Array(0);
-  try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!value || value.byteLength === 0) continue;
-      pending = concatBytes(pending, value);
-      while (pending.byteLength >= frameSize) {
-        yield pending.subarray(0, frameSize).slice();
-        pending = pending.subarray(frameSize).slice();
-      }
-    }
-  } finally {
-    reader.releaseLock?.();
-  }
-  if (pending.byteLength > 0) yield pending;
-}
+/** 把任意来源切成恰好 `frameSize` 的帧（末帧可短）。实现在 `@tmex/transfer`。 */
+export const iterateBulkFrames = iterateFrames;
 
 /** 单条 bulk 通道的收发外壳：open 等待、控制/数据分流、背压排水。 */
 class BulkChannelSession {

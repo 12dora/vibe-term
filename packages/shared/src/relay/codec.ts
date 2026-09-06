@@ -78,6 +78,8 @@ export type RelayQuota = {
   maxNodes: number;
   maxStreams: number;
   bandwidthBytesPerSec: number | null;
+  /** 单文件传输上限（字节）；`null` 或缺失表示不限。旧中继不下发。 */
+  maxFileBytes?: number | null;
   /** 当前占用（pending + admitted）；旧中继不下发。 */
   currentNodes?: number;
   /** 实时用量；旧中继不下发。 */
@@ -516,11 +518,13 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
     }
     const currentNodes = optUint(obj, 'currentNodes');
     const usage = parseQuotaUsage(obj.usage);
+    const maxFileBytes = optUint(obj, 'maxFileBytes');
     return {
       t: 'relay.quota',
       maxNodes: uint(obj, 'maxNodes'),
       maxStreams: uint(obj, 'maxStreams'),
       bandwidthBytesPerSec: bandwidth === null ? null : (bandwidth as number),
+      ...(maxFileBytes !== undefined ? { maxFileBytes } : {}),
       ...(currentNodes !== undefined ? { currentNodes } : {}),
       ...(usage ? { usage } : {}),
     };

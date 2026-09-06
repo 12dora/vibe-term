@@ -5,6 +5,7 @@
 
 import type {
   RelayAdminApi,
+  RelayLimits,
   RelayPasswordRequest,
   RelayQuota,
   RelayTenantPatch,
@@ -21,9 +22,11 @@ export interface RelayController {
   relay: UseRelayAdminResult;
   password: RelayAction;
   quota: RelayAction;
+  limits: RelayAction;
   tenant: RelayAction;
   passwordOpen: boolean;
   quotaOpen: boolean;
+  limitsOpen: boolean;
   editing: RelayTenantSummary | null;
   kicking: RelayTenantSummary | null;
   removing: RelayTenantSummary | null;
@@ -33,6 +36,8 @@ export interface RelayController {
   closePassword: () => void;
   openQuota: () => void;
   closeQuota: () => void;
+  openLimits: () => void;
+  closeLimits: () => void;
   openEditor: (tenant: RelayTenantSummary) => void;
   closeEditor: () => void;
   openKick: (tenant: RelayTenantSummary) => void;
@@ -41,34 +46,44 @@ export interface RelayController {
   closeRemove: () => void;
   submitPassword: (body: RelayPasswordRequest) => void;
   submitDefaultQuota: (quota: RelayQuota) => void;
+  submitLimits: (limits: RelayLimits) => void;
   submitTenant: (patch: RelayTenantPatch) => void;
   saveLabel: (tenant: RelayTenantSummary, label: string | null) => void;
   confirmKick: () => void;
   confirmRemove: () => void;
 }
 
-export function useRelayController(api: RelayAdminApi, t: Translate): RelayController {
-  const relay = useRelayAdmin({ api, owner: true });
+type OperatorDialogs = Pick<
+  RelayController,
+  | 'password'
+  | 'quota'
+  | 'limits'
+  | 'passwordOpen'
+  | 'quotaOpen'
+  | 'limitsOpen'
+  | 'openPassword'
+  | 'closePassword'
+  | 'openQuota'
+  | 'closeQuota'
+  | 'openLimits'
+  | 'closeLimits'
+  | 'submitPassword'
+  | 'submitDefaultQuota'
+  | 'submitLimits'
+>;
+
+/** 三个只作用于中继本身的对话框（口令 / 默认配额 / 中继限额）：开合、忙错状态与写路径。 */
+function useOperatorDialogs(
+  api: RelayAdminApi,
+  t: Translate,
+  refresh: () => void
+): OperatorDialogs {
   const password = useRelayAction();
   const quota = useRelayAction();
-  const tenant = useRelayAction();
-
+  const limits = useRelayAction();
   const [passwordOpen, setPasswordOpen] = useState(false);
   const [quotaOpen, setQuotaOpen] = useState(false);
-  const [editing, setEditing] = useState<RelayTenantSummary | null>(null);
-  const [kicking, setKicking] = useState<RelayTenantSummary | null>(null);
-  const [removing, setRemoving] = useState<RelayTenantSummary | null>(null);
-  const [busyTenantId, setBusyTenantId] = useState<string | null>(null);
-
-  const refresh = relay.refresh;
-
-  const runTenant = async (id: string, task: () => Promise<void>): Promise<boolean> => {
-    setBusyTenantId(id);
-    const ok = await tenant.run(task);
-    setBusyTenantId(null);
-    if (ok) refresh();
-    return ok;
-  };
+  const [limitsOpen, setLimitsOpen] = useState(false);
 
   const submitPassword = async (body: RelayPasswordRequest) => {
     if (await password.run(() => api.setPassword(body))) {
@@ -84,6 +99,61 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
       toast.success(t('relay.admin.quota.saved'));
       refresh();
     }
+  };
+
+  const submitLimits = async (next: RelayLimits) => {
+    if (await limits.run(() => api.updateLimits(next))) {
+      setLimitsOpen(false);
+      toast.success(t('relay.admin.limits.saved'));
+      refresh();
+    }
+  };
+
+  return {
+    password,
+    quota,
+    limits,
+    passwordOpen,
+    quotaOpen,
+    limitsOpen,
+    openPassword: () => setPasswordOpen(true),
+    closePassword: () => {
+      setPasswordOpen(false);
+      password.reset();
+    },
+    openQuota: () => setQuotaOpen(true),
+    closeQuota: () => {
+      setQuotaOpen(false);
+      quota.reset();
+    },
+    openLimits: () => setLimitsOpen(true),
+    closeLimits: () => {
+      setLimitsOpen(false);
+      limits.reset();
+    },
+    submitPassword: (body) => void submitPassword(body),
+    submitDefaultQuota: (next) => void submitDefaultQuota(next),
+    submitLimits: (next) => void submitLimits(next),
+  };
+}
+
+export function useRelayController(api: RelayAdminApi, t: Translate): RelayController {
+  const relay = useRelayAdmin({ api, owner: true });
+  const tenant = useRelayAction();
+  const refresh = relay.refresh;
+  const operator = useOperatorDialogs(api, t, refresh);
+
+  const [editing, setEditing] = useState<RelayTenantSummary | null>(null);
+  const [kicking, setKicking] = useState<RelayTenantSummary | null>(null);
+  const [removing, setRemoving] = useState<RelayTenantSummary | null>(null);
+  const [busyTenantId, setBusyTenantId] = useState<string | null>(null);
+
+  const runTenant = async (id: string, task: () => Promise<void>): Promise<boolean> => {
+    setBusyTenantId(id);
+    const ok = await tenant.run(task);
+    setBusyTenantId(null);
+    if (ok) refresh();
+    return ok;
   };
 
   const submitTenant = async (patch: RelayTenantPatch) => {
@@ -120,26 +190,13 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
   };
 
   return {
+    ...operator,
     relay,
-    password,
-    quota,
     tenant,
-    passwordOpen,
-    quotaOpen,
     editing,
     kicking,
     removing,
     busyTenantId,
-    openPassword: () => setPasswordOpen(true),
-    closePassword: () => {
-      setPasswordOpen(false);
-      password.reset();
-    },
-    openQuota: () => setQuotaOpen(true),
-    closeQuota: () => {
-      setQuotaOpen(false);
-      quota.reset();
-    },
     openEditor: setEditing,
     closeEditor: () => {
       setEditing(null);
@@ -152,8 +209,6 @@ export function useRelayController(api: RelayAdminApi, t: Translate): RelayContr
       setRemoving(null);
       tenant.reset();
     },
-    submitPassword: (body) => void submitPassword(body),
-    submitDefaultQuota: (next) => void submitDefaultQuota(next),
     submitTenant: (patch) => void submitTenant(patch),
     saveLabel: (row, label) => void saveLabel(row, label),
     confirmKick: () => void confirmKick(),

@@ -189,7 +189,7 @@ describe('切换中继的对话框文案', () => {
   });
 });
 
-describe('三档配额', () => {
+describe('四档配额', () => {
   const quota = {
     maxNodes: 8,
     maxStreams: 16,
@@ -208,12 +208,22 @@ describe('三档配额', () => {
         sampledAt: 1,
       },
     });
-    expect(rows.map((row) => row.kind)).toEqual(['nodes', 'streams', 'bandwidth']);
+    expect(rows.map((row) => row.kind)).toEqual(['nodes', 'streams', 'bandwidth', 'maxFile']);
     expect(rows[0]?.usedText).toBe('6');
     expect(rows[0]?.percent).toBe(75);
     expect(rows[1]?.usedText).toBe('4');
     expect(rows[2]?.usedText).toBe('4.00 KB/s');
     expect(rows[2]?.limitText).toBe('1.00 MB/s');
+  });
+
+  test('单文件上限：中继未下发即「不限」，下发时按字节格式化', () => {
+    const unlimited = relayQuotaRows({ ...quota, usage: null });
+    expect(unlimited[3]?.usedText).toBeNull();
+    expect(unlimited[3]?.limitKey).toBe('nodes.machine.details.quotaUnlimited');
+    expect(unlimited[3]?.percent).toBeNull();
+    const capped = relayQuotaRows({ ...quota, maxFileBytes: 100 * 1024 * 1024, usage: null });
+    expect(capped[3]?.limitText).toBe('100 MB');
+    expect(capped[3]?.limitKey).toBeNull();
   });
 
   test('网关补上合计带宽时以它为准', () => {

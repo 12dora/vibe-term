@@ -285,6 +285,61 @@ function TrafficTile({ data, stale }: MetricsTileProps) {
   );
 }
 
+/**
+ * 中继级带宽：已放行速率与配置上限。没配上限时只出速率，不摆「/ 不限」那种半句话。
+ */
+function BandwidthTile({ data, stale }: MetricsTileProps) {
+  const { t } = useTranslation();
+  const { totals } = data;
+  const used = formatRate(totals.bandwidthBytesPerSec ?? 0);
+  const limit = totals.bandwidthLimitBytesPerSec ?? null;
+  return (
+    <StatTile
+      label={t('relay.metrics.tiles.bandwidth')}
+      value={
+        limit === null
+          ? used
+          : t('relay.metrics.tiles.usedOfLimit', {
+              used,
+              limit: formatRate(limit),
+            })
+      }
+      sub={
+        limit === null
+          ? t('relay.metrics.tiles.bandwidthUnlimited')
+          : t(
+              totals.fairShare === false
+                ? 'relay.metrics.tiles.bandwidthFcfs'
+                : 'relay.metrics.tiles.bandwidthFair'
+            )
+      }
+      hint={t('relay.metrics.tiles.bandwidthHint')}
+      stale={stale}
+      data-testid="relay-metric-bandwidth"
+    />
+  );
+}
+
+/** 租户数与上限。上限未配置时只出当前数。 */
+function TenantsTile({ data, stale }: MetricsTileProps) {
+  const { t } = useTranslation();
+  const { totals } = data;
+  const max = totals.maxTenants ?? null;
+  return (
+    <StatTile
+      label={t('relay.metrics.tiles.tenants')}
+      value={
+        max === null
+          ? totals.tenants
+          : t('relay.metrics.tiles.usedOfLimit', { used: totals.tenants, limit: max })
+      }
+      sub={max === null ? t('relay.metrics.tiles.tenantsUnlimited') : undefined}
+      stale={stale}
+      data-testid="relay-metric-tenants"
+    />
+  );
+}
+
 function SocketsTile({ data, stale }: MetricsTileProps) {
   const { t } = useTranslation();
   const { openSockets, authenticatedLinks } = data.process;
@@ -354,14 +409,18 @@ export function RelayCompactTiles(props: MetricsTileProps) {
  * 六列因此留给 2xl。列数只取 6 的因数（每组六格），否则末行会缺角。
  */
 const FULL_TILE_GRID = 'grid grid-cols-2 gap-3 lg:grid-cols-3 2xl:grid-cols-6';
+/** 转发量一组八格，列数改取 8 的因数，末行才不缺角。 */
+const WIDE_TILE_GRID = 'grid grid-cols-2 gap-3 lg:grid-cols-4';
 
 function TileGroup({
   title,
   testId,
+  gridClassName = FULL_TILE_GRID,
   children,
 }: {
   title: string;
   testId: string;
+  gridClassName?: string;
   children: React.ReactNode;
 }) {
   return (
@@ -369,7 +428,7 @@ function TileGroup({
       <h4 className="text-[11px] font-medium tracking-wider text-muted-foreground uppercase">
         {title}
       </h4>
-      <div className={FULL_TILE_GRID}>{children}</div>
+      <div className={gridClassName}>{children}</div>
     </section>
   );
 }
@@ -379,9 +438,15 @@ export function RelayFullTiles(props: MetricsTileProps) {
   const { t } = useTranslation();
   return (
     <div className="flex flex-col gap-4" data-testid="relay-metrics-tiles">
-      <TileGroup title={t('relay.metrics.groups.traffic')} testId="relay-metrics-group-traffic">
+      <TileGroup
+        title={t('relay.metrics.groups.traffic')}
+        testId="relay-metrics-group-traffic"
+        gridClassName={WIDE_TILE_GRID}
+      >
+        <TenantsTile {...props} />
         <MembersOnlineTile {...props} />
         <ActiveStreamsTile {...props} />
+        <BandwidthTile {...props} />
         <BytesInTile {...props} />
         <BytesOutTile {...props} />
         <FramesTile {...props} />

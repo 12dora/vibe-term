@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { cliHelpText } from '../cli/help';
-import { assertKnownFlags, parseArgs, resolveNestedCommand } from './args';
+import { assertKnownFlags, parseArgs, requireFlagValue, resolveNestedCommand } from './args';
 
 describe('parseArgs', () => {
   test('parses command, flags and positionals', () => {
@@ -277,5 +277,26 @@ describe('cli help', () => {
     expect(help).toContain('tmex mesh reset-root');
     expect(help).toContain('tmex enroll');
     expect(help).toContain('TMEX_PASSWORD');
+  });
+});
+
+describe('requireFlagValue', () => {
+  test('没给的旗标返回 undefined，给了值的返回原文', () => {
+    const parsed = parseArgs(['relay', 'limits', '--max-tenants', '4']);
+    expect(requireFlagValue(parsed.flags, 'max-tenants')).toBe('4');
+    expect(requireFlagValue(parsed.flags, 'fair-share')).toBeUndefined();
+  });
+
+  test('光秃秃的旗标与空值都报用法错，不被当成没给', () => {
+    const bare = parseArgs(['relay', 'limits', '--max-tenants']);
+    expect(bare.flags['max-tenants']).toBe(true);
+    expect(() => requireFlagValue(bare.flags, 'max-tenants')).toThrow('--max-tenants');
+    const chained = parseArgs(['relay', 'limits', '--max-tenants', '--fair-share', 'off']);
+    expect(() => requireFlagValue(chained.flags, 'max-tenants')).toThrow('--max-tenants');
+    expect(requireFlagValue(chained.flags, 'fair-share')).toBe('off');
+    const empty = parseArgs(['relay', 'limits', '--max-tenants=']);
+    expect(() => requireFlagValue(empty.flags, 'max-tenants')).toThrow('--max-tenants');
+    const blank = parseArgs(['relay', 'limits', '--max-tenants=   ']);
+    expect(() => requireFlagValue(blank.flags, 'max-tenants')).toThrow('--max-tenants');
   });
 });

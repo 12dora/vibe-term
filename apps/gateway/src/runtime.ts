@@ -20,6 +20,7 @@ import { t } from './i18n';
 import { type DispatchContext, requestDispatchContext } from './mesh/types';
 import { registerMessagingRuntime, resetMessagingRuntime } from './messaging/context';
 import { createMessagingRuntimeHooks, setMessagingMeshRuntime } from './messaging/runtime-hooks';
+import { startPortMaps, stopPortMaps } from './portmap/manager';
 import { connectionAlertNotifier } from './push/connection-alerts';
 import { pushSupervisor } from './push/supervisor';
 import { registerSettingsBroadcaster, registerTreeOverlayBridge } from './settings/broadcaster';
@@ -128,6 +129,7 @@ export async function startLiveGatewayServices(deps: LiveGatewayStartDeps = {}):
   }
   await (deps.startTunnel ?? (() => tunnelManager.start()))();
   if (messaging) {
+    startPortMaps();
     await (deps.sendOnline ?? sendGatewayOnlineMessages)();
   }
 }
@@ -305,6 +307,7 @@ export async function createGatewayRuntime(
       registerTreeOverlayBridge(null);
       wsServer.closeAll();
       await getShareService().stop();
+      stopPortMaps();
       await tunnelManager.stop();
       await watchService.stop();
       await agentSupervisor.stop();

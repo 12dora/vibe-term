@@ -222,11 +222,12 @@ function applyRelayQuota(
   host: RelayUplinkCtlHost,
   msg: Extract<RelayCtlMessage, { t: 'relay.quota' }>
 ): void {
-  const { maxNodes, maxStreams, bandwidthBytesPerSec, currentNodes, usage } = msg;
+  const { maxNodes, maxStreams, bandwidthBytesPerSec, maxFileBytes, currentNodes, usage } = msg;
   host.quota = {
     maxNodes,
     maxStreams,
     bandwidthBytesPerSec,
+    maxFileBytes: maxFileBytes ?? null,
     ...(currentNodes !== undefined ? { currentNodes } : {}),
     ...(usage ? { usage } : {}),
   };

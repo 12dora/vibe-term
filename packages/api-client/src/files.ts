@@ -14,4 +14,9 @@ export {
 } from './file-resources';
 export { uploadFileChunked } from './upload-transfer';
 export { downloadFileWithProgress, type DownloadedFile } from './download-transfer';
-export type { LegProgress, OnLeg } from './transfer-types';
+export type { LegProgress, OnLeg, TransferOpts } from './transfer-types';
+export {
+  DIRECT_UPLOAD_STREAMS,
+  RELAY_UPLOAD_STREAMS,
+  pickUploadStreams,
+} from './transfer-types';

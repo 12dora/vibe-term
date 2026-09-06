@@ -69,11 +69,26 @@ export interface LocalLeaveResponse {
   restarting: true;
 }
 
+/** 端口探测的服务形态：Hub 打 `/healthz`，中继打 `/api/relay/health`。 */
+export type SetupPrecheckKind = 'hub' | 'relay';
+
+export interface SetupPrecheckRequest {
+  url: string;
+  /** 缺省为 `hub`；旧网关忽略该字段，按 Hub 处理。 */
+  kind?: SetupPrecheckKind;
+}
+
 export interface SetupPrecheckResponse {
   reachable: boolean;
   isSelf: boolean;
   status: number | null;
   error: string | null;
+  /** 端口探测确定的地址（含端口）；未探测或一个端口都没答话为 `null`。 */
+  resolvedUrl: string | null;
+  /** 实际发起过探测的端口；未探测为空。 */
+  triedPorts: number[];
+  /** 地址没写端口时才探测候选端口。 */
+  probed: boolean;
 }
 
 export type SetupDirectOutcome = 'enabled' | 'failed' | 'skipped';

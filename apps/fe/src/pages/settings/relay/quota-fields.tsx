@@ -1,11 +1,16 @@
-// 配额三件套（节点数 / 并发流 / 带宽）的字段组：默认配额表单与单租户覆盖共用。
+// 配额四件套（节点数 / 并发流 / 带宽 / 单文件上限）的字段组：默认配额表单与单租户覆盖共用。
 
 import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
 import { Input } from '@tmex/ui/input';
 import { Switch } from '@tmex/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { FormField } from '../components/form-primitives';
-import { BANDWIDTH_KB_LIMIT, type QuotaDraft, type QuotaErrors } from './relay-forms';
+import {
+  BANDWIDTH_KB_LIMIT,
+  MAX_FILE_MB_LIMIT,
+  type QuotaDraft,
+  type QuotaErrors,
+} from './relay-forms';
 
 export interface QuotaFieldsProps {
   /** 字段 id 前缀：同一页里可能同时存在默认配额与租户配额两组。 */
@@ -57,6 +62,27 @@ export function QuotaFields({ idPrefix, draft, errors, disabled, onChange }: Quo
           data-testid={`${idPrefix}-max-streams`}
         />
       </FormField>
+
+      <div className="sm:col-span-2">
+        <FormField
+          id={`${idPrefix}-max-file`}
+          label={t('relay.admin.quota.maxFile')}
+          error={errors.maxFileMb ? t(errors.maxFileMb, { max: MAX_FILE_MB_LIMIT }) : undefined}
+          hint={t('relay.admin.quota.maxFileHint')}
+          spacing="tight"
+        >
+          <Input
+            id={`${idPrefix}-max-file`}
+            inputMode="numeric"
+            className="sm:max-w-40"
+            placeholder={t('relay.admin.quota.unlimitedValue')}
+            value={draft.maxFileMb}
+            disabled={disabled}
+            onChange={(event) => onChange({ maxFileMb: event.target.value })}
+            data-testid={`${idPrefix}-max-file`}
+          />
+        </FormField>
+      </div>
 
       <div className="sm:col-span-2">
         <FormField

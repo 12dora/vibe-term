@@ -12,13 +12,9 @@ import type {
 } from '@tmex/api-client/local/types';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Input } from '@tmex/ui/input';
-import { type FormEvent, useState } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import {
-  type BecomeRelayGateEvent,
-  becomeRelayGate,
-  pureRelaySubmitPlan,
-} from './become-relay-gate';
+import { pureRelaySubmitPlan, usePureRelayGate } from './become-relay-gate';
 import { currentOrigin, navigateToLogin } from './browser-location';
 import {
   FormField,
@@ -28,6 +24,7 @@ import {
   SetupSubmitRow,
   SwitchRow,
 } from './form-parts';
+import { PortPicker } from './port-picker';
 import { PureRelayConfirm } from './pure-relay-confirm';
 import { writeSelfRelayFollowUp } from './self-relay-followup';
 import { submitBecomeRelay } from './submit';
@@ -49,6 +46,8 @@ export interface BecomeRelayFormProps {
   initialRole?: SetupRelayRole;
   /** 重启完成后的动作，默认整页跳登录页。 */
   onRestarted?: () => void;
+  /** 测试注入固定的建议端口。 */
+  suggestedPort?: number;
 }
 
 function initialValues(input: {
@@ -75,6 +74,7 @@ export function BecomeRelayForm({
   origin,
   initialRole = 'relay,node',
   onRestarted = navigateToLogin,
+  suggestedPort,
 }: BecomeRelayFormProps) {
   const { t } = useTranslation();
   const nodeEnv = localStatus.nodeEnv;
@@ -84,8 +84,8 @@ export function BecomeRelayForm({
     initialValues({ origin, nodeEnv, initialRole, directSupported })
   );
 
-  // 纯中继一提交就没有网页可回，也无法在网页里改回来：这一档必须先确认。
-  const [confirmingPure, setConfirmingPure] = useState(false);
+  // 自定义端口填坏了：地址里的端口没被改写，提交必须一起拦住，否则存下去的是上一个端口。
+  const [portError, setPortError] = useState<string | null>(null);
 
   const errors = validateBecomeRelay(values, nodeEnv);
   const {
@@ -99,7 +99,7 @@ export function BecomeRelayForm({
     handleSubmit,
   } = useHubSetupSubmit<SetupRelayResponse>({
     client,
-    hasErrors: hasErrors(errors),
+    hasErrors: hasErrors(errors) || portError !== null,
     uplink: 'relay',
     submit: async () => {
       const outcome = await submitBecomeRelay(values, client);
@@ -113,17 +113,11 @@ export function BecomeRelayForm({
   });
   const shown = showErrors ? errors : {};
 
+  // 纯中继一提交就没有网页可回，也无法在网页里改回来：这一档必须先确认。
+  const { confirming: confirmingPure, step } = usePureRelayGate(handleSubmit);
+
   function update(patch: Partial<BecomeRelayValues>): void {
     setValues((previous) => ({ ...previous, ...patch }));
-  }
-
-  /** 闸门说提交就提交；说确认就先开确认框（`becomeRelayGate`）。 */
-  function step(event: BecomeRelayGateEvent, formEvent?: FormEvent): void {
-    const next = becomeRelayGate(event);
-    setConfirmingPure(next.confirming);
-    if (!next.submit) return;
-    // 确认框里点「创建并重启」时没有真实表单事件，补一个空的。
-    void handleSubmit(formEvent ?? ({ preventDefault: () => undefined } as FormEvent));
   }
 
   if (result) return <BecomeRelayResult result={result} waiter={waiter} />;
@@ -140,10 +134,19 @@ export function BecomeRelayForm({
           onSubmit={(event) => {
             event.preventDefault();
             revealErrors();
-            step({ kind: 'submit', plan: pureRelaySubmitPlan(values, nodeEnv) }, event);
+            step(
+              { kind: 'submit', plan: pureRelaySubmitPlan(values, nodeEnv, portError !== null) },
+              event
+            );
           }}
         >
-          <RelayServiceFields values={values} shown={shown} onChange={update} />
+          <RelayServiceFields
+            values={values}
+            shown={shown}
+            onChange={update}
+            onPortError={setPortError}
+            {...(suggestedPort === undefined ? {} : { suggestedPort })}
+          />
 
           {values.alsoNode ? (
             <RelayAccountFields
@@ -188,10 +191,14 @@ function RelayServiceFields({
   values,
   shown,
   onChange,
+  onPortError,
+  suggestedPort,
 }: {
   values: BecomeRelayValues;
   shown: Partial<Record<string, string>>;
   onChange: (patch: Partial<BecomeRelayValues>) => void;
+  onPortError: (error: string | null) => void;
+  suggestedPort?: number;
 }) {
   const { t } = useTranslation();
   return (
@@ -211,6 +218,16 @@ function RelayServiceFields({
           className="min-h-10"
         />
       </FormField>
+
+      <PortPicker
+        idPrefix="setup-relay"
+        url={values.relayPublicUrl}
+        onChange={(next, error) => {
+          onChange({ relayPublicUrl: next });
+          onPortError(error);
+        }}
+        {...(suggestedPort === undefined ? {} : { suggestedPort })}
+      />
 
       <FormField
         id="setup-relay-password"

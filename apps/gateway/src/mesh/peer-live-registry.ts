@@ -1,5 +1,6 @@
 import type { LinkSession, LinkStream } from '@tmex/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
+import { dispatchTcpStream } from '../portmap/dispatch';
 import type { WebSocketServer } from '../ws';
 import {
   RTT_EVENT_MIN_INTERVAL_MS,
@@ -310,6 +311,10 @@ export class PeerLiveRegistry {
 
   private handleInboundStream(peerNodeId: string, stream: LinkStream): void {
     const kind = classifyOpenPayload(stream.openPayload);
+    if (kind === 'tcp') {
+      dispatchTcpStream(stream, { peerNodeId, selfNodeId: this.state.identity.nodeId });
+      return;
+    }
     if (kind === 'http') {
       const dispatchHttp = this.dispatchHttp();
       if (!dispatchHttp || !this.sessionStore) {

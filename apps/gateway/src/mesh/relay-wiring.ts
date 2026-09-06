@@ -5,6 +5,7 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import type { AuthDb } from '../auth/types';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
+import { setRelayQuotaProvider } from '../files/transfer-limit';
 import type { MeshRoles } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { type RelayDialContext, relayDialContextFromEnv } from './relay-dial';
@@ -189,6 +190,11 @@ export function createRelayRoutes(input: {
   keyLogService: UserKeyService;
   uplink: UplinkPool;
 }): RelayRoutes {
+  // 文件传输的单文件上限要读中继下发的配额，而 files 侧拿不到 uplink 池，这里做一次注入。
+  setRelayQuotaProvider(() => {
+    const live = input.uplink.liveClient();
+    return live instanceof RelayUplinkClient ? live.quota : null;
+  });
   return new RelayRoutes({
     session: {
       roles: input.roles,

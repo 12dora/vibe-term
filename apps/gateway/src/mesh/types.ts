@@ -111,6 +111,14 @@ export type WsStreamOpenPayload = {
   share?: string;
 };
 
+export type TcpStreamOpenPayload = {
+  type: 'tcp';
+  /** A 侧映射 id；B 侧据此在 port_map_exports 里找放行记录。 */
+  mapId: string;
+  host: string;
+  port: number;
+};
+
 export type InboundRelayHandler = (stream: LinkStream, fromNodeId: string) => void;
 
 /**

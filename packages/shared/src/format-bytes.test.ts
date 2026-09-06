@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { formatBytes, formatBytesPair, formatRate } from './format-bytes';
+import { formatBytes, formatBytesPair, formatEta, formatRate } from './format-bytes';
 
 describe('formatBytes', () => {
   test('按量级换算，KB 以上按大小定小数位', () => {
@@ -43,5 +43,28 @@ describe('formatBytesPair', () => {
   test('已传与总量共用同一套分档', () => {
     expect(formatBytesPair(0, 2048)).toBe('0 B / 2.00 KB');
     expect(formatBytesPair(1024, 2048)).toBe('1.00 KB / 2.00 KB');
+  });
+});
+
+describe('formatEta', () => {
+  test('无法估算时给短横线', () => {
+    expect(formatEta(null)).toBe('--');
+    expect(formatEta(undefined)).toBe('--');
+    expect(formatEta(Number.NaN)).toBe('--');
+    expect(formatEta(Number.POSITIVE_INFINITY)).toBe('--');
+    expect(formatEta(-1)).toBe('--');
+  });
+
+  test('不足一小时为 m:ss', () => {
+    expect(formatEta(0)).toBe('0:00');
+    expect(formatEta(9)).toBe('0:09');
+    expect(formatEta(65.4)).toBe('1:05');
+    expect(formatEta(3599)).toBe('59:59');
+  });
+
+  test('超过一小时为 h:mm:ss，并在 99:59:59 封顶', () => {
+    expect(formatEta(3600)).toBe('1:00:00');
+    expect(formatEta(3661)).toBe('1:01:01');
+    expect(formatEta(1e9)).toBe('99:59:59');
   });
 });

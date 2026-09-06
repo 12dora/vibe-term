@@ -79,6 +79,32 @@ export async function submitJoinRelay(
   return { previousStartedAt, result };
 }
 
+/**
+ * 加入类提交的定端口一步。**必须在这里做，而不是只靠地址栏失焦**：
+ * 「凭据先填好、地址最后粘上直接回车」这条路径根本不触发失焦，就算触发了，
+ * 探测回来时的 `setValues` 也赶不上这一次提交——发出去的仍是不带端口的地址，只会去撞 443。
+ * `discover` 拿到的是用户输入的地址，返回实际该用的地址（探不动就原样返回）。
+ */
+export async function submitJoinHubDiscovered(
+  values: JoinHubValues,
+  nodeEnv: NodeEnv,
+  discover: (url: string) => Promise<string>,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupJoinResponse>> {
+  const hubUrl = await discover(values.hubUrl.trim());
+  return submitJoinHub({ ...values, hubUrl }, nodeEnv, client);
+}
+
+/** 同上，中继侧。 */
+export async function submitJoinRelayDiscovered(
+  values: JoinRelayValues,
+  discover: (url: string) => Promise<string>,
+  client: ApiClient = defaultApiClient
+): Promise<SubmitOutcome<SetupRelayJoinResponse>> {
+  const relayUrl = await discover(values.relayUrl.trim());
+  return submitJoinRelay({ ...values, relayUrl }, client);
+}
+
 export async function submitBecomeRelay(
   values: BecomeRelayValues,
   client: ApiClient = defaultApiClient

@@ -2,6 +2,7 @@ import type { RelayQuota } from '@tmex/shared/relay';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { relayConfig } from '../db/schema';
+import { type RelayLimits, defaultRelayLimits } from './relay-limits';
 import { defaultRelayQuota, parseRelayQuotaJson, serializeRelayQuota } from './relay-quota';
 
 export type RelayConfigRecord = {
@@ -10,6 +11,7 @@ export type RelayConfigRecord = {
   minTokenEpoch: number;
   adminTokenHash: string | null;
   defaultQuota: RelayQuota;
+  limits: RelayLimits;
   updatedAt: number;
 };
 
@@ -41,6 +43,7 @@ export class RelayConfigStore {
         minTokenEpoch: 0,
         adminTokenHash: null,
         defaultQuota: quota,
+        limits: defaultRelayLimits(),
         updatedAt: now,
       }
     );
@@ -55,6 +58,11 @@ export class RelayConfigStore {
       minTokenEpoch: row.minTokenEpoch,
       adminTokenHash: row.adminTokenHash,
       defaultQuota: parseRelayQuotaJson(row.defaultQuotaJson) ?? defaultRelayQuota(),
+      limits: {
+        maxTenants: row.maxTenants,
+        totalBandwidthBytesPerSec: row.totalBandwidthBytesPerSec,
+        fairShare: row.fairShare,
+      },
       updatedAt: row.updatedAt,
     };
   }
@@ -71,6 +79,19 @@ export class RelayConfigStore {
     this.db
       .update(relayConfig)
       .set({ defaultQuotaJson: serializeRelayQuota(quota), updatedAt: now })
+      .where(eq(relayConfig.id, 1))
+      .run();
+  }
+
+  setLimits(limits: RelayLimits, now: number): void {
+    this.db
+      .update(relayConfig)
+      .set({
+        maxTenants: limits.maxTenants,
+        totalBandwidthBytesPerSec: limits.totalBandwidthBytesPerSec,
+        fairShare: limits.fairShare,
+        updatedAt: now,
+      })
       .where(eq(relayConfig.id, 1))
       .run();
   }

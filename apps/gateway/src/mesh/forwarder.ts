@@ -11,6 +11,7 @@ import {
   applyAuthPolicy,
   peekJsonCode,
 } from './forwarder-auth-policy';
+import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
 import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import { parseNodePrefix } from './forwarder-path';
@@ -233,30 +234,54 @@ export class Forwarder {
     this.bindStream(pump, stream, meta?.transport ?? null);
   }
 
+  /**
+   * peer 身份的节点间调用（`/api/mesh-internal/*`）。默认是一次性 JSON POST；
+   * 需要搬字节时给 `rawBody`（只能读一次，续传由调用方按偏移重开）。
+   */
   async forwardInternalHttp(
     nodeId: string,
     path: string,
     body: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    input?: {
+      method?: string;
+      query?: string;
+      headers?: Record<string, string>;
+      rawBody?: ReadableStream<Uint8Array>;
+      /** rawBody 的上行进度（累计已读字节），节流后回调。 */
+      onProgress?: (uploadedBytes: number) => void;
+    }
   ): Promise<Response> {
     const abort = signal ?? new AbortController().signal;
-    const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
-    const bytes = new TextEncoder().encode(payload);
-    const streamBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    });
+    const headers: Record<string, string> = { ...(input?.headers ?? {}) };
+    let streamBody: ReadableStream<Uint8Array> | null;
+    if (input?.rawBody) {
+      let uploaded = 0;
+      const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
+      streamBody = countStreamBytes(input.rawBody, (n) => {
+        uploaded += n;
+        progress?.(uploaded);
+      });
+    } else {
+      const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+      const bytes = new TextEncoder().encode(payload);
+      headers['content-type'] = headers['content-type'] ?? 'application/json';
+      streamBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      });
+    }
     try {
       const link = await this.deps.peers.getLink(nodeId);
       return await this.deps.streams.openHttpStream(
         link,
         {
-          method: 'POST',
+          method: input?.method ?? 'POST',
           path,
-          query: '',
-          headers: { 'content-type': 'application/json' },
+          query: input?.query ?? '',
+          headers,
           origin: 'http://localhost',
           auth: null,
         },
@@ -264,6 +289,8 @@ export class Forwarder {
         abort
       );
     } catch (err) {
+      // 传输层还没接手这个 body：不主动掐掉的话，源端的读取管道与文件句柄就没人再关了
+      await cancelForwardBody(streamBody);
       return nodeUnreachableResponse(nodeId, abort.aborted, err);
     }
   }
@@ -343,6 +370,8 @@ export class Forwarder {
         if (!retryable) break;
       }
     }
+    // 一次也没有被传输层接手：同上，包出来的计数流必须自己收掉
+    await cancelForwardBody(countedRaw);
     return nodeUnreachableResponse(
       input.nodeId,
       abort.aborted,
@@ -897,36 +926,6 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-/** 上行进度节流：至少 1 s 或 256 KiB 才回调一次，别把小块 IO 变成刷屏。 */
-const PROGRESS_MIN_INTERVAL_MS = 1_000;
-const PROGRESS_MIN_BYTES = 256 * 1024;
-
-function throttledProgress(onProgress: (bytes: number) => void): (bytes: number) => void {
-  let lastAt = 0;
-  let lastBytes = 0;
-  return (bytes) => {
-    const at = Date.now();
-    if (at - lastAt < PROGRESS_MIN_INTERVAL_MS && bytes - lastBytes < PROGRESS_MIN_BYTES) return;
-    lastAt = at;
-    lastBytes = bytes;
-    onProgress(bytes);
-  };
-}
-
-function countStreamBytes(
-  body: ReadableStream<Uint8Array>,
-  onBytes: (n: number) => void
-): ReadableStream<Uint8Array> {
-  return body.pipeThrough(
-    new TransformStream<Uint8Array, Uint8Array>({
-      transform(chunk, controller) {
-        onBytes(chunk.byteLength);
-        controller.enqueue(chunk);
-      },
-    })
-  );
 }
 
 function toBytes(message: unknown): Uint8Array | null {

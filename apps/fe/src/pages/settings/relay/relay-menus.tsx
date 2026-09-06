@@ -10,7 +10,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@tmex/ui/dropdown-menu';
-import { Ellipsis, KeyRound, SlidersHorizontal } from 'lucide-react';
+import { Ellipsis, Gauge, KeyRound, SlidersHorizontal } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 function MoreMenu({
@@ -47,24 +47,42 @@ function MoreMenu({
 /** 文案由调用方传进来：菜单内容不带 hook，单测才能当普通函数调用再对元素树断言。 */
 export function RelayAdminMenuList({
   label,
+  limitsLabel,
   onChangePassword,
-}: { label: string; onChangePassword: () => void }) {
+  onOpenLimits,
+}: {
+  label: string;
+  limitsLabel: string;
+  onChangePassword: () => void;
+  onOpenLimits: () => void;
+}) {
   return (
-    <DropdownMenuItem onClick={onChangePassword} data-testid="relay-password-change">
-      <KeyRound className="size-4" />
-      {label}
-    </DropdownMenuItem>
+    <>
+      <DropdownMenuItem onClick={onOpenLimits} data-testid="relay-limits-open">
+        <Gauge className="size-4" />
+        {limitsLabel}
+      </DropdownMenuItem>
+      <DropdownMenuItem onClick={onChangePassword} data-testid="relay-password-change">
+        <KeyRound className="size-4" />
+        {label}
+      </DropdownMenuItem>
+    </>
   );
 }
 
 /** 页头「更多」：中继本身的运营动作。 */
-export function RelayAdminMenu({ onChangePassword }: { onChangePassword: () => void }) {
+export function RelayAdminMenu({
+  onChangePassword,
+  onOpenLimits,
+}: { onChangePassword: () => void; onOpenLimits: () => void }) {
   const { t } = useTranslation();
   return (
     <MoreMenu testId="relay-admin-menu">
       <RelayAdminMenuList
         label={t('relay.admin.password.change')}
+        limitsLabel={t('relay.admin.limits.menuItem')}
         onChangePassword={onChangePassword}
+        onOpenLimits={onOpenLimits}
       />
     </MoreMenu>
   );

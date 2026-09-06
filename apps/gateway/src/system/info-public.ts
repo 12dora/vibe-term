@@ -1,7 +1,7 @@
 /**
  * 系统信息公共面：不依赖 update-check / upgrade 模块，可供 managed 与开源路径共用。
  */
-import type { SystemInfo } from '@tmex/shared';
+import type { SystemInfo, TransferCapability } from '@tmex/shared';
 import { config } from '../config';
 import { getInstallInfo } from './install-info';
 import {
@@ -23,6 +23,12 @@ export {
   resetManagedRuntimeForTests,
 } from './managed';
 
+/** 本节点的文件传输能力位；对端据此决定是否用乱序区间并行推送。 */
+export const TRANSFER_CAPABILITIES: TransferCapability[] = [
+  'transfer-v2',
+  'transfer-ranged-parallel',
+];
+
 /** 汇总系统信息（设置页版本 section 的权威来源） */
 export function getSystemInfo(): SystemInfo {
   const install = getInstallInfo();
@@ -39,6 +45,7 @@ export function getSystemInfo(): SystemInfo {
     canSelfUpdate,
     serviceName: install.serviceName,
     transferMaxBytes: config.transferMaxBytes,
+    transferCapabilities: TRANSFER_CAPABILITIES,
     managementMode: getManagementMode(),
     updateOwner: getUpdateOwner(),
   };

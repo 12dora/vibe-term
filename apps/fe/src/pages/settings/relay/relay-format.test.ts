@@ -3,12 +3,15 @@ import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
 import {
   bandwidthText,
   bytesToKb,
+  bytesToMb,
   epochText,
   formatDuration,
   formatFramesPerSec,
   formatMs,
   formatPercent,
   kbToBytes,
+  maxFileText,
+  mbToBytes,
   median,
   quotaSummary,
   relativeTimeText,
@@ -92,6 +95,14 @@ describe('bandwidthText', () => {
     expect(bytesToKb(1024)).toBe(1);
     expect(kbToBytes(64)).toBe(65_536);
   });
+
+  test('MB 与字节互转，单文件上限缺失即「不限」', () => {
+    expect(bytesToMb(100 * 1024 * 1024)).toBe(100);
+    expect(mbToBytes(100)).toBe(100 * 1024 * 1024);
+    expect(maxFileText(t, null)).toBe('relay.admin.quota.unlimitedValue');
+    expect(maxFileText(t, undefined)).toBe('relay.admin.quota.unlimitedValue');
+    expect(maxFileText(t, 100 * 1024 * 1024)).toBe('relay.admin.quota.maxFileValue({"mb":100})');
+  });
 });
 
 describe('quotaSummary', () => {
@@ -113,6 +124,15 @@ describe('quotaSummary', () => {
     expect(summary.inherited).toBe(false);
     expect(summary.text).toContain('"nodes":2');
     expect(summary.text).toContain('relay.admin.quota.unlimitedValue');
+  });
+
+  test('摘要带上单文件上限', () => {
+    const summary = quotaSummary(
+      t,
+      { maxNodes: 2, maxStreams: 3, bandwidthBytesPerSec: null, maxFileBytes: 100 * 1024 * 1024 },
+      defaults
+    );
+    expect(summary.text).toContain('relay.admin.quota.maxFileValue');
   });
 });
 

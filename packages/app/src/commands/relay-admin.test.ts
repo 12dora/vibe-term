@@ -2,10 +2,13 @@ import { describe, expect, test } from 'bun:test';
 import { parseArgs } from '../lib/args';
 import {
   formatTenantRows,
+  mergeLimits,
   mergeQuota,
+  readLimitsFlags,
   readQuotaFlags,
   runRelayKick,
   runRelayLabel,
+  runRelayLimits,
   runRelayPasswd,
   runRelayQuota,
   runRelayRemove,
@@ -22,6 +25,7 @@ const STATUS = {
     passwordEpoch: 3,
     minTokenEpoch: 2,
     defaultQuota: { maxNodes: 8, maxStreams: 32, bandwidthBytesPerSec: null },
+    limits: { maxTenants: 4, totalBandwidthBytesPerSec: 1_048_576, fairShare: false },
   },
   tenants: [
     {
@@ -92,7 +96,7 @@ describe('relay status / tenants', () => {
     expect(calls[0].headers.authorization).toBe('Bearer admin-token');
     expect(logs).toContain('password: set');
     expect(logs).toContain('password epoch: 3 (min token epoch 2)');
-    expect(logs).toContain('default quota: nodes=8 streams=32 bw=unlimited');
+    expect(logs).toContain('default quota: nodes=8 streams=32 bw=unlimited file=unlimited');
     expect(logs).toContain('tenants: 2');
     expect(logs).toContain('nodes: 2 online / 4 known');
     expect(logs).toContain('traffic: 2.0 KiB in / 4.0 KiB out');
@@ -221,11 +225,21 @@ describe('relay quota', () => {
       'default',
       io
     );
-    expect(next).toEqual({ maxNodes: 16, maxStreams: 32, bandwidthBytesPerSec: null });
+    expect(next).toEqual({
+      maxNodes: 16,
+      maxStreams: 32,
+      bandwidthBytesPerSec: null,
+      maxFileBytes: null,
+    });
     expect(calls[1].url).toBe('http://127.0.0.1:19993/api/relay/config');
     expect(calls[1].method).toBe('PATCH');
     expect(calls[1].body).toEqual({
-      defaultQuota: { maxNodes: 16, maxStreams: 32, bandwidthBytesPerSec: null },
+      defaultQuota: {
+        maxNodes: 16,
+        maxStreams: 32,
+        bandwidthBytesPerSec: null,
+        maxFileBytes: null,
+      },
     });
   });
 
@@ -238,8 +252,28 @@ describe('relay quota', () => {
     );
     expect(calls[1].url).toBe(`http://127.0.0.1:19993/api/relay/tenants/${tenantId}`);
     expect(calls[1].body).toEqual({
-      quota: { maxNodes: 4, maxStreams: 8, bandwidthBytesPerSec: 524_288 },
+      quota: { maxNodes: 4, maxStreams: 8, bandwidthBytesPerSec: 524_288, maxFileBytes: null },
     });
+  });
+
+  test('--max-file-mb 折算成字节，none 表示不限', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    await runRelayQuota(
+      parseArgs(['relay', 'quota', tenantId, '--max-file-mb', '100']),
+      tenantId,
+      io
+    );
+    expect((calls[1].body as { quota: { maxFileBytes: number } }).quota.maxFileBytes).toBe(
+      100 * 1024 * 1024
+    );
+    await runRelayQuota(
+      parseArgs(['relay', 'quota', tenantId, '--max-file-mb', 'none']),
+      tenantId,
+      io
+    );
+    expect((calls[3].body as { quota: { maxFileBytes: number | null } }).quota.maxFileBytes).toBe(
+      null
+    );
   });
 
   test('--inherit clears the tenant override', async () => {
@@ -286,6 +320,33 @@ describe('relay quota', () => {
     expect(() => readQuotaFlags(parseArgs(['relay', 'quota', 'x', '--bandwidth', 'fast']))).toThrow(
       'invalid --bandwidth'
     );
+    expect(() =>
+      readQuotaFlags(parseArgs(['relay', 'quota', 'x', '--max-file-mb', 'big']))
+    ).toThrow('invalid --max-file-mb');
+  });
+
+  test('缺值的配额旗标先报用法错，不发任何请求', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--max-file-mb']), tenantId, io)
+    ).rejects.toThrow('--max-file-mb');
+    await expect(
+      runRelayQuota(
+        parseArgs(['relay', 'quota', tenantId, '--max-file-mb', '--max-nodes', '2']),
+        tenantId,
+        io
+      )
+    ).rejects.toThrow('--max-file-mb');
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--bandwidth=']), tenantId, io)
+    ).rejects.toThrow('--bandwidth');
+    await expect(
+      runRelayQuota(parseArgs(['relay', 'quota', tenantId, '--max-streams=  ']), tenantId, io)
+    ).rejects.toThrow('--max-streams');
+    expect(calls).toHaveLength(0);
+    expect(() => readQuotaFlags(parseArgs(['relay', 'quota', 'x', '--max-nodes']))).toThrow(
+      '--max-nodes'
+    );
   });
 
   test('mergeQuota falls back to the built-in defaults when nothing is known', () => {
@@ -293,7 +354,83 @@ describe('relay quota', () => {
       maxNodes: 8,
       maxStreams: 4,
       bandwidthBytesPerSec: null,
+      maxFileBytes: null,
     });
+  });
+});
+
+describe('relay limits', () => {
+  test('no flag: only reads and prints the current limits', async () => {
+    const { calls, logs, io } = recorder(STATUS_RESPONSES);
+    const limits = await runRelayLimits(parseArgs(['relay', 'limits']), io);
+    expect(limits).toEqual({
+      maxTenants: 4,
+      totalBandwidthBytesPerSec: 1_048_576,
+      fairShare: false,
+    });
+    expect(calls).toHaveLength(1);
+    expect(logs).toContain('relay limits: tenants=4 bw=1024 KB/s fair-share=off');
+  });
+
+  test('patches /api/relay/config keeping unspecified fields', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    const next = await runRelayLimits(
+      parseArgs(['relay', 'limits', '--max-tenants', 'none', '--fair-share', 'on']),
+      io
+    );
+    expect(next).toEqual({
+      maxTenants: null,
+      totalBandwidthBytesPerSec: 1_048_576,
+      fairShare: true,
+    });
+    expect(calls[1].url).toBe('http://127.0.0.1:19993/api/relay/config');
+    expect(calls[1].method).toBe('PATCH');
+    expect(calls[1].body).toEqual({
+      limits: { maxTenants: null, totalBandwidthBytesPerSec: 1_048_576, fairShare: true },
+    });
+  });
+
+  test('flag parsing rejects nonsense', () => {
+    expect(() => readLimitsFlags(parseArgs(['relay', 'limits', '--max-tenants', 'many']))).toThrow(
+      'invalid --max-tenants'
+    );
+    expect(() =>
+      readLimitsFlags(parseArgs(['relay', 'limits', '--total-bandwidth-kb', 'fast']))
+    ).toThrow('invalid --total-bandwidth-kb');
+    expect(() => readLimitsFlags(parseArgs(['relay', 'limits', '--fair-share', 'maybe']))).toThrow(
+      'invalid --fair-share'
+    );
+    expect(readLimitsFlags(parseArgs(['relay', 'limits', '--total-bandwidth-kb', 'none']))).toEqual(
+      { totalBandwidthBytesPerSec: null }
+    );
+  });
+
+  test('缺值的限额旗标先报用法错，不发任何请求', async () => {
+    const { calls, io } = recorder(STATUS_RESPONSES);
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants']), io)
+    ).rejects.toThrow('--max-tenants');
+    // 与另一个有效旗标同时给：不能只应用有效的那个还报成功。
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants', '--fair-share', 'off']), io)
+    ).rejects.toThrow('--max-tenants');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--max-tenants=']), io)
+    ).rejects.toThrow('--max-tenants');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--total-bandwidth-kb=  ']), io)
+    ).rejects.toThrow('--total-bandwidth-kb');
+    await expect(
+      runRelayLimits(parseArgs(['relay', 'limits', '--fair-share']), io)
+    ).rejects.toThrow('--fair-share');
+    expect(calls).toHaveLength(0);
+  });
+
+  test('mergeLimits only overwrites the fields that were given', () => {
+    const base = { maxTenants: 2, totalBandwidthBytesPerSec: 1024, fairShare: true };
+    expect(mergeLimits(base, {})).toEqual(base);
+    expect(mergeLimits(base, { fairShare: false })).toEqual({ ...base, fairShare: false });
+    expect(mergeLimits(base, { maxTenants: null })).toEqual({ ...base, maxTenants: null });
   });
 });
 
