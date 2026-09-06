@@ -755,7 +755,11 @@ describe('an interrupted migration undo', () => {
     const crashed = await readJournal(fromDir);
     expect(crashed?.phase).toBe('reverting');
     expect(crashed?.dirMigration?.undone).toBe(true);
+    expect(crashed?.dbBackup).toBe(true);
     expect(await readCurrentVersion(fromDir)).toBe('2.0.0');
+
+    // 2.0.0 已经写过库：旧版本绝不能跑在它改过的库上，而备份马上就会被清理删掉
+    await writeFile(join(fromDir, 'data', 'tmex.db'), 'db-written-by-2.0.0');
 
     // 调用方在读 journal 之前建好的控制器不能被沿用（目录 / 身份都已经变了）
     const stale = fakeService();
@@ -788,9 +792,72 @@ describe('an interrupted migration undo', () => {
       legacyLabel: true,
     });
     expect(await readCurrentVersion(fromDir)).toBe('1.1.40');
+    expect(await readFile(join(fromDir, 'data', 'tmex.db'), 'utf8')).toBe('db-bytes');
     const journal = await readJournal(fromDir);
     expect(journal?.phase).toBe('aborted');
     expect(journal?.dirMigration).toBeUndefined();
+  });
+
+  test('repair redoes the run.sh / meta restore when the undo was interrupted right after it was recorded', async () => {
+    const { root, fromDir, toDir } = await setup();
+    const legacyRunScript = `#!/usr/bin/env bash\nexport TMEX_INSTALL_DIR='${fromDir}'\n`;
+    await mkdir(join(fromDir, 'backups', 'txn-undone-crash'), { recursive: true });
+    await writeFile(join(fromDir, 'backups', 'txn-undone-crash', 'run.sh'), legacyRunScript);
+    // 崩溃点还原：目录 / env / DB 都已经搬回来，`undone` 也落盘了，但脚本与 meta 还停在迁移后的样子
+    await writeFile(
+      join(fromDir, 'run.sh'),
+      `#!/usr/bin/env bash\nexport VIBETERM_INSTALL_DIR='${toDir}'\n`
+    );
+    await writeFile(
+      join(fromDir, 'install-meta.json'),
+      `${JSON.stringify({
+        serviceName: 'vibeterm',
+        platform: process.platform,
+        autostart: false,
+        installDir: toDir,
+        updatedAt: '2026-01-01T00:00:00.000Z',
+        cliVersion: '1.1.40',
+        bunPath: '/usr/bin/bun',
+      })}\n`
+    );
+    await writeJournal(fromDir, {
+      txnId: 'txn-undone-crash',
+      phase: 'reverting',
+      fromVersion: '1.1.40',
+      toVersion: '2.0.0',
+      startedAt: '2026-09-06T00:00:00.000Z',
+      updatedAt: '2026-09-06T00:00:01.000Z',
+      dirMigration: {
+        ...createMigrationRecord({
+          fromDir,
+          toDir,
+          moveDir: true,
+          oldServiceName: 'tmex',
+          newServiceName: 'vibeterm',
+        }),
+        envRewritten: true,
+        dbRenamed: true,
+        undone: true,
+      },
+    });
+
+    const service = fakeService();
+    service.running = false;
+    const { action } = await repairUpgrade(fromDir, '/usr/bin/bun', {
+      rebuildService: () => service,
+      healthCheck: async () => undefined,
+      shimDirs: [join(root, '_shims'), join(root, '_bun-bin')],
+    });
+
+    expect(action).toBe('restart_old');
+    // run.sh 还指着搬走的新目录，旧服务根本起不来；meta 也得回到旧目录 / 旧服务名
+    expect(await readFile(join(fromDir, 'run.sh'), 'utf8')).toBe(legacyRunScript);
+    expect(await readMeta(fromDir)).toMatchObject({
+      installDir: fromDir,
+      serviceName: 'tmex',
+    });
+    expect(service.starts).toBe(1);
+    expect((await readJournal(fromDir))?.phase).toBe('aborted');
   });
 });
 

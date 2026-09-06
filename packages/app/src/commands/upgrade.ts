@@ -291,6 +291,9 @@ async function runLockedUpgrade(opts: {
   apply?: typeof applyUpgrade;
 }): Promise<void> {
   const noServiceFlag = asBoolean(opts.parsed.flags['no-service']) ?? false;
+  // repair 会改写磁盘上的 meta（提交迁移后的服务名、把安装搬回旧目录），闭包里这份随之过期，
+  // 因此它是可变的：repair 之后重新读盘，后续控制器与 apply 参数一律用新值。
+  let meta = opts.meta;
   // repair 必须能按 journal 推导出的目录 / 服务身份重建控制器：在读 journal 之前建好的那一个
   // 用的是旧身份，迁移中断后会漏停 com.vibeterm.*，撤销迁移后又会去启动已经搬走的 run.sh。
   const buildService = (o: {
@@ -301,7 +304,7 @@ async function runLockedUpgrade(opts: {
   }) =>
     createServiceControl({
       installDir: o.installDir,
-      meta: opts.meta,
+      meta,
       noServiceFlag,
       serviceName: o.serviceName,
       legacyServiceName: o.legacyServiceName,
@@ -325,6 +328,7 @@ async function runLockedUpgrade(opts: {
   const installDir = repaired.installDir;
   const installLayout =
     installDir === opts.installDir ? opts.installLayout : createInstallLayout(installDir);
+  meta = await readMetaAfterRepair(installLayout, meta);
   const service = buildService({ installDir });
 
   const packageLayout = asString(opts.parsed.flags.txn)
@@ -344,14 +348,23 @@ async function runLockedUpgrade(opts: {
       packageLayout,
       bunPath: opts.bunPath,
       keepBackup: opts.keepBackup,
-      noService: resolveServiceMode(opts.meta, noServiceFlag) === 'none',
+      noService: resolveServiceMode(meta, noServiceFlag) === 'none',
       allowMissingNative: opts.allowMissingNative,
       txnId: asString(opts.parsed.flags.txn),
-      serviceName: opts.meta.serviceName,
-      autostart: opts.meta.autostart,
+      serviceName: meta.serviceName,
+      autostart: meta.autostart,
     },
     { service, shimDirs }
   );
+}
+
+/** repair 之后磁盘上的 meta 才是权威的（服务名可能刚被提交为 vibeterm，目录也可能已搬回）。 */
+async function readMetaAfterRepair(
+  layout: InstallLayout,
+  fallback: InstallMeta
+): Promise<InstallMeta> {
+  if (!(await pathExists(layout.metaPath))) return fallback;
+  return await readJsonFile<InstallMeta>(layout.metaPath).catch(() => fallback);
 }
 
 async function packageLayoutFromStaged(installDir: string, txnId: string) {

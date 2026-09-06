@@ -11,8 +11,9 @@
 // 事务内回滚（rollback / repair）靠 backups/<txn>/run.sh 原样还原旧 run.sh，新模板不再写旧前缀。
 
 import { readFile, rename, rm } from 'node:fs/promises';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join, relative, resolve } from 'node:path';
 import { DEFAULT_SERVICE_NAME, legacyInstallDir, newInstallDir } from '../constants';
+import { t } from '../i18n';
 import { readEnvFile, stringifyEnv, writeEnvFile } from './env-file';
 import { ensureDir, pathExists, writeText } from './fs-utils';
 
@@ -299,10 +300,41 @@ export async function migrateInstallDir(
   try {
     return await finishInstallDirMigration(record, { ...opts, persist: track });
   } catch (error) {
-    await revertInstallDirMigration(latest, { txnId: opts.txnId }).catch(() => null);
-    await opts.persist?.({ ...latest, undone: true }, plan.fromDir).catch(() => null);
+    const recovery = await revertOrKeepRetryable(latest, opts);
+    await opts.persist?.(recovery.record, recovery.dir).catch(() => null);
     throw error;
   }
+}
+
+/**
+ * 撤销成功才敢标记 `undone`：失败时留一条仍可重试的记录，并写进安装**实际所在**的目录，
+ * 否则既会让 repair 跳过没做完的还原，又可能在旧路径上凭空造出一个只有 journal 的空目录。
+ */
+async function revertOrKeepRetryable(
+  record: DirMigrationRecord,
+  opts: MigrationOptions
+): Promise<{ record: DirMigrationRecord; dir: string }> {
+  try {
+    await revertInstallDirMigration(record, { txnId: opts.txnId });
+    return { record: { ...record, undone: true }, dir: record.fromDir };
+  } catch {
+    const realigned = await realignRecordAfterFailedRevert(record);
+    return { record: realigned, dir: realigned.toDir };
+  }
+}
+
+/**
+ * 撤销失败后把记录对齐到安装实际所在的目录：目录已经搬回旧路径时，剩下的只是原地的
+ * env / DB 还原，记录里的路径（含 env 备份，它随目录一起搬走了）必须跟着回到旧目录。
+ */
+async function realignRecordAfterFailedRevert(
+  record: DirMigrationRecord
+): Promise<DirMigrationRecord> {
+  if (await pathExists(record.toDir)) return record;
+  const envBackup = record.envBackup
+    ? join(record.fromDir, relative(record.toDir, record.envBackup))
+    : null;
+  return { ...record, toDir: record.fromDir, moveDir: false, envBackup };
 }
 
 /**
@@ -339,7 +371,12 @@ export async function revertInstallDirMigration(
     }
   }
   await restoreLegacyRuntimeFiles(record.toDir);
-  if (record.moveDir && !(await pathExists(record.fromDir))) {
+  if (record.moveDir && resolve(record.toDir) !== resolve(record.fromDir)) {
+    // 旧路径被占住就搬不回去，这时绝不能对外宣称「已撤销」：安装还在新目录上，
+    // 记录必须留在那里等重试（早期版本静默跳过，随后又把 journal 写进旧路径，凭空造出空目录）。
+    if (await pathExists(record.fromDir)) {
+      throw new Error(t('upgrade.migrationRevertBlocked', { dir: record.fromDir }));
+    }
     await rename(record.toDir, record.fromDir);
   }
   if (failure) throw failure;
