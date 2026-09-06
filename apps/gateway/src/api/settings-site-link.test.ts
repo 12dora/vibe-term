@@ -3,7 +3,7 @@ import type { Server } from 'bun';
 import { ensureSiteSettingsInitialized, getStoredSiteSettings, updateSiteSettings } from '../db';
 import { runMigrations } from '../db/migrate';
 import { handleApiRequest } from './index';
-import { setSiteSettingsLinkProvider } from './site-settings-link';
+import { setSiteAccessOriginsProvider, setSiteSettingsLinkProvider } from './site-settings-link';
 
 const fakeServer = {} as Server<unknown>;
 
@@ -14,6 +14,7 @@ beforeAll(() => {
 
 afterEach(() => {
   setSiteSettingsLinkProvider(null);
+  setSiteAccessOriginsProvider(null);
 });
 
 async function call(
@@ -76,6 +77,74 @@ describe('GET /api/settings/site mesh link fields', () => {
     expect((json.settings as Record<string, unknown>).siteUrl).toBe(stored.siteUrl);
     expect(json.siteUrlEditable).toBe(false);
     expect(json.siteNameLinkedToNode).toBe(true);
+  });
+});
+
+describe('GET /api/settings/site 本机可访问地址候选', () => {
+  test('siteAccessOrigins 随 payload 一并下发', async () => {
+    setSiteAccessOriginsProvider(() => [
+      {
+        url: 'https://relay.example.com',
+        kind: 'relay',
+        label: 'relay.example.com',
+        accessUrl: `https://relay.example.com/n/${'ab'.repeat(16)}`,
+      },
+    ]);
+    const { json } = await call('GET');
+    expect(json.siteAccessOrigins).toEqual([
+      {
+        url: 'https://relay.example.com',
+        kind: 'relay',
+        label: 'relay.example.com',
+        accessUrl: `https://relay.example.com/n/${'ab'.repeat(16)}`,
+      },
+    ]);
+    expect((json.settings as Record<string, unknown>).siteAccessOrigins).toEqual(
+      json.siteAccessOrigins as unknown[]
+    );
+  });
+
+  test('未注入时为空数组', async () => {
+    const { json } = await call('GET');
+    expect(json.siteAccessOrigins).toEqual([]);
+  });
+});
+
+describe('中继上联的节点：站点 URL 可编辑、站点名仍与节点同步', () => {
+  const relayLink = {
+    linked: () => true,
+    siteUrlManaged: () => false,
+    localNodeId: () => 'ab'.repeat(16),
+    effectiveSiteUrl: () => null,
+  };
+
+  test('GET 返回可编辑且仍标记站点名托管', async () => {
+    const stored = getStoredSiteSettings();
+    setSiteSettingsLinkProvider(relayLink);
+    const { json } = await call('GET');
+    expect(json.effectiveSiteUrl).toBe(stored.siteUrl);
+    expect(json.siteUrlEditable).toBe(true);
+    expect(json.siteNameLinkedToNode).toBe(true);
+    expect(json.nodeId).toBe('ab'.repeat(16));
+  });
+
+  test('PATCH 可以改站点 URL，但改站点名仍被拒', async () => {
+    const before = getStoredSiteSettings();
+    setSiteSettingsLinkProvider(relayLink);
+    try {
+      const ok = await call('PATCH', { siteUrl: 'https://relay-node.example' });
+      expect(ok.status).toBe(200);
+      expect(getStoredSiteSettings().siteUrl).toBe('https://relay-node.example');
+      expect((ok.json.settings as Record<string, unknown>).siteUrl).toBe(
+        'https://relay-node.example'
+      );
+
+      const rejected = await call('PATCH', { siteName: 'not-the-current-name' });
+      expect(rejected.status).toBe(400);
+      expect(rejected.json).toEqual({ error: 'site_name_managed' });
+    } finally {
+      updateSiteSettings({ siteUrl: before.siteUrl });
+    }
   });
 });
 

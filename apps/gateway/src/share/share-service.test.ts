@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import type { StateSnapshotPayload } from '@tmex/shared';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { PaneRetentionConsumerCallbacks } from '../tmux-client/pane-retention';
+import type { ShareOriginSources } from './share-origins';
 import { SHARE_LOGIN_MAX_CONCURRENT, SHARE_LOGIN_MAX_FAILURES } from './share-rate-limit';
 import type { ShareRecorderRuntime } from './share-recorder';
 import { type ShareService, type ShareServiceDeps, createShareService } from './share-service';
@@ -41,6 +42,38 @@ function snapshotWith(deviceId: string, windowIds: string[]): StateSnapshotPaylo
   };
 }
 
+function hubOriginSources(): ShareOriginSources {
+  return {
+    localNodeId: () => 'node-1',
+    hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: 'hub' }],
+    siteUrl: () => 'https://site.example.com',
+    siteUrlManaged: () => false,
+    tunnelUrl: () => 'https://tunnel.example.com',
+    baseUrl: () => 'http://127.0.0.1:9663',
+    uplinkKind: () => 'hub',
+    relays: () => [],
+    relayProbe: () => ({ state: () => 'unknown', ensure: () => {} }),
+  };
+}
+
+/** 中继上联：中继主机同时担任 node 角色、探测通过，站点 URL 就是隧道域名。 */
+function relayOriginSources(): ShareOriginSources {
+  return {
+    localNodeId: () => 'node-1',
+    hubs: () => [],
+    siteUrl: () => 'https://tunnel.example.com',
+    siteUrlManaged: () => false,
+    tunnelUrl: () => 'https://tunnel.example.com',
+    baseUrl: () => null,
+    uplinkKind: () => 'relay',
+    relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+    relayProbe: () => ({
+      state: (url) => (url === 'https://relay.example.com' ? 'ok' : 'unknown'),
+      ensure: () => {},
+    }),
+  };
+}
+
 function makeService(overrides: ShareServiceDeps = {}): ShareService {
   return createShareService({
     store,
@@ -50,13 +83,7 @@ function makeService(overrides: ShareServiceDeps = {}): ShareService {
     hashPassword: async (password) => `plain:${password}`,
     verifyPassword: async (stored, password) => stored === `plain:${password}`,
     autoStartRecorders: false,
-    originSources: {
-      localNodeId: () => 'node-1',
-      hubs: () => [{ hubNodeId: 'hub-1', publicUrl: 'https://hub.example.com', name: 'hub' }],
-      siteUrl: () => 'https://site.example.com',
-      tunnelUrl: () => 'https://tunnel.example.com',
-      baseUrl: () => 'http://127.0.0.1:9663',
-    },
+    originSources: hubOriginSources(),
     ...overrides,
   });
 }
@@ -500,6 +527,24 @@ describe('设置与地址', () => {
     expect(view.candidates[0]?.kind).toBe('custom');
     expect(view.recommended).toBe('https://hub.example.com');
     expect(view.nodePrefix).toBe('/n/node-1');
+  });
+
+  test('中继上联：中继排在隧道之前被推荐，站点 URL 与隧道同域不重复出现', () => {
+    const service = makeService({ originSources: relayOriginSources() });
+    const view = service.listOrigins();
+    expect(view.candidates.map((item) => item.kind)).toEqual(['relay', 'tunnel']);
+    expect(view.recommended).toBe('https://relay.example.com');
+    expect(view.nodePrefix).toBe('/n/node-1');
+    expect(view.candidates[0]?.accessUrl).toBe('https://relay.example.com/n/node-1');
+  });
+});
+
+describe('中继上联下创建分享', () => {
+  test('默认走中继地址并带 /n/<self> 前缀', async () => {
+    const service = makeService({ originSources: relayOriginSources() });
+    const result = await createShare(service);
+    expect(result.share.origin).toBe('https://relay.example.com');
+    expect(result.share.url).toBe(`https://relay.example.com/n/node-1/s/${result.share.id}`);
   });
 });
 

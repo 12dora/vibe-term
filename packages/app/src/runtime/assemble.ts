@@ -1,8 +1,12 @@
 import { resolve } from 'node:path';
-import { setSiteSettingsLinkProvider } from '../../../../apps/gateway/src/api/site-settings-link';
+import {
+  setSiteAccessOriginsProvider,
+  setSiteSettingsLinkProvider,
+} from '../../../../apps/gateway/src/api/site-settings-link';
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
 import { ChallengeStore } from '../../../../apps/gateway/src/auth/challenge-store';
 import { MeshHubStore } from '../../../../apps/gateway/src/auth/mesh-hub-store';
+import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
@@ -25,6 +29,12 @@ import type { RelayRuntime } from '../../../../apps/gateway/src/relay';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { broadcastSettingsUpdate } from '../../../../apps/gateway/src/settings/broadcaster';
 import { getShareService } from '../../../../apps/gateway/src/share';
+import {
+  buildShareOriginContext,
+  defaultShareOriginSources,
+  primeShareRelayOrigins,
+  setShareOriginAttachedUplink,
+} from '../../../../apps/gateway/src/share/share-origins';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
@@ -346,9 +356,15 @@ function maybeMeshHubStore(roles: TmexRoles, db: GatewayRuntime['db']): MeshHubS
 function applySiteSettingsLink(
   roles: TmexRoles,
   mesh: MeshRuntime | null,
-  meshHubStore: MeshHubStore | undefined
+  meshHubStore: MeshHubStore | undefined,
+  db: GatewayRuntime['db']
 ): void {
+  setSiteAccessOriginsProvider(
+    () => buildShareOriginContext(defaultShareOriginSources, null).candidates
+  );
+  setShareOriginAttachedUplink(() => mesh?.attachedHub()?.publicUrl ?? null);
   if (roles.hub || roles.node) {
+    const relayStore = new MeshRelayStore(db);
     setSiteSettingsLinkProvider(
       createMeshSiteSettingsLink({
         roles,
@@ -357,8 +373,11 @@ function applySiteSettingsLink(
         attachedHub: () => mesh?.attachedHub() ?? null,
         hubPublicUrl: gatewayConfig.hubPublicUrl,
         hubMetaPublicUrl: () => mesh?.userStore.getHubMeta()?.publicUrl ?? null,
+        uplinkKind: () => relayStore.uplinkKind(),
       })
     );
+    // 中继入口是否转发 `/n/<self>` 要实探，开机先探一遍，免得首次打开分享弹窗少一个候选。
+    primeShareRelayOrigins();
   } else {
     setSiteSettingsLinkProvider(null);
   }
@@ -402,7 +421,7 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     meshHubStore,
     onLocalNodeName: syncLocalSiteNameFromMesh,
   });
-  applySiteSettingsLink(roles, mesh, meshHubStore);
+  applySiteSettingsLink(roles, mesh, meshHubStore, gateway.db);
   const localAuthEffective = resolveLocalAuthEffective(opts.localAuthEffective, authHttp);
   // 免登录（standalone 未开启本机登录）部署无法兑现分享隔离：直接禁止创建对外分享。
   getShareService().setAuthRequiredResolver(

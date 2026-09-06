@@ -23,16 +23,18 @@ import { normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 
 function rejectManagedSiteIdentity(body: UpdateSiteSettingsRequest): Response | null {
   const link = getSiteSettingsLinkProvider();
-  if (!link.linked()) return null;
+  const linked = link.linked();
+  const urlManaged = link.siteUrlManaged();
+  if (!linked && !urlManaged) return null;
   const current = toSiteSettingsHttpPayload(getStoredSiteSettings()).settings;
-  if (body.siteUrl !== undefined) {
+  if (urlManaged && body.siteUrl !== undefined) {
     const value = typeof body.siteUrl === 'string' ? body.siteUrl.trim() : '';
     if (!sameManagedSiteUrl(value, current.siteUrl)) {
       return json({ error: 'site_url_managed' }, 400);
     }
     body.siteUrl = undefined;
   }
-  if (body.siteName !== undefined) {
+  if (linked && body.siteName !== undefined) {
     const value = typeof body.siteName === 'string' ? body.siteName.trim() : '';
     if (value !== current.siteName) {
       return json({ error: 'site_name_managed' }, 400);

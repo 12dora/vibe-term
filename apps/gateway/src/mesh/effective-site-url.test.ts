@@ -133,8 +133,49 @@ describe('createMeshSiteSettingsLink', () => {
       hubPublicUrl: 'https://config.example',
     });
     expect(link.linked()).toBe(false);
+    expect(link.siteUrlManaged()).toBe(false);
     expect(link.localNodeId()).toBeNull();
     expect(link.effectiveSiteUrl()).toBeNull();
+  });
+
+  test('中继上联的节点：站点 URL 不托管、保持可编辑，且不看 attachedHub', () => {
+    let attachedReads = 0;
+    const relayLink = createMeshSiteSettingsLink({
+      roles: { hub: false, node: true, relay: false },
+      localNodeId: () => NODE,
+      hubStore: hubStore([
+        {
+          hubNodeId: WRITER,
+          publicUrl: 'https://hub.example',
+          mode: 'active',
+          writerEpoch: 1,
+          priority: 1,
+        },
+      ]),
+      attachedHub: () => {
+        attachedReads += 1;
+        return { publicUrl: 'https://relay.example' };
+      },
+      hubPublicUrl: 'https://config.example',
+      uplinkKind: () => 'relay',
+    });
+    expect(relayLink.linked()).toBe(true);
+    expect(relayLink.siteUrlManaged()).toBe(false);
+    expect(relayLink.effectiveSiteUrl()).toBeNull();
+    expect(attachedReads).toBe(0);
+  });
+
+  test('hub 上联的节点：站点 URL 由 hub 托管', () => {
+    const link = createMeshSiteSettingsLink({
+      roles: { hub: false, node: true, relay: false },
+      localNodeId: () => NODE,
+      hubStore: null,
+      attachedHub: () => ({ publicUrl: 'https://hub.example' }),
+      hubPublicUrl: null,
+      uplinkKind: () => 'hub',
+    });
+    expect(link.siteUrlManaged()).toBe(true);
+    expect(link.effectiveSiteUrl()).toBe(`https://hub.example/n/${NODE}`);
   });
 
   test('standby hub without own public URL uses writer URL /n/<self>', () => {

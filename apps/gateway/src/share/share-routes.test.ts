@@ -83,8 +83,12 @@ beforeEach(() => {
       localNodeId: () => 'node-1',
       hubs: () => [],
       siteUrl: () => 'https://site.example.com',
+      siteUrlManaged: () => false,
       tunnelUrl: () => null,
       baseUrl: () => null,
+      uplinkKind: () => 'hub',
+      relays: () => [],
+      relayProbe: () => ({ state: () => 'unknown', ensure: () => {} }),
     },
   });
   setShareServiceForTests(service);
@@ -201,7 +205,12 @@ describe('分享方 HTTP', () => {
     const origins = await call('GET', '/api/share/origins');
     expect(origins.body.recommended).toBe('https://site.example.com');
     expect(origins.body.candidates).toEqual([
-      { url: 'https://site.example.com', kind: 'site', label: 'site.example.com' },
+      {
+        url: 'https://site.example.com',
+        kind: 'site',
+        label: 'site.example.com',
+        accessUrl: 'https://site.example.com',
+      },
     ]);
     expect(origins.body.nodePrefix).toBeNull();
   });

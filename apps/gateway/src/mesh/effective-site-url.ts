@@ -15,6 +15,8 @@ export type MeshSiteSettingsLinkInput = {
   attachedHub: () => { publicUrl: string } | null;
   hubPublicUrl: string | null;
   hubMetaPublicUrl?: () => string | null;
+  /** 上联种类；中继上联时站点 URL 不由 hub 托管（浏览器经中继访问要带 `/n/<self>`）。 */
+  uplinkKind?: () => 'hub' | 'relay' | null;
 };
 
 export type MeshHubUrlSelection = {
@@ -61,8 +63,11 @@ export function createMeshSiteSettingsLink(
   input: MeshSiteSettingsLinkInput
 ): SiteSettingsLinkProvider {
   const linked = () => input.roles.hub || input.roles.node;
+  const relayUplink = () => (input.uplinkKind?.() ?? 'hub') === 'relay';
+  const siteUrlManaged = () => input.roles.hub || (input.roles.node && !relayUplink());
   return {
     linked,
+    siteUrlManaged,
     localNodeId: () => (linked() ? input.localNodeId() : null),
     effectiveSiteUrl() {
       if (!linked()) return null;
@@ -72,6 +77,8 @@ export function createMeshSiteSettingsLink(
           (localId ? input.hubStore?.get(localId)?.publicUrl : null) || input.hubPublicUrl;
         if (own) return own;
       }
+      // 中继上联时不存在可托管站点 URL 的 hub，存储值继续生效且可编辑。
+      if (relayUplink()) return null;
       const selected = resolveMeshHubSelection({
         hubStore: input.hubStore,
         attachedPublicUrl: input.attachedHub()?.publicUrl ?? null,

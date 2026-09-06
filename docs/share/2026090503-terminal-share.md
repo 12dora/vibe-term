@@ -48,14 +48,36 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
   `captureCanonicalScreen()` 的 `checkpoint`（并按 `baseSeq` 精确裁掉 checkpoint 之前的字节），之后追加
   `out`；输入 / 尺寸由 ws 层回调写 `in` / `resize`；250 ms 批量落库；每 2 s 按设备快照跟随 pane 进出 window。
 - `share-origins.ts` —— 候选构造：`site`（`site_settings.site_url`）、`hub`（每个 `mesh_hubs.publicUrl`，
-  他人 hub 带 `/n/<本机 nodeId>`）、`tunnel`（cloudflared 公开地址）、`ip`（`config.baseUrl` 且 host 为 IP）。
+  他人 hub 带 `/n/<本机 nodeId>`）、`relay`（中继上联时的 `mesh_relays.url`，带 `/n/<本机 nodeId>`，见下）、
+  `tunnel`（cloudflared 公开地址）、`ip`（`config.baseUrl` 且 host 为 IP）。
   排序由 `rankShareOrigins()` 做：`custom > site > hub > relay > tunnel > ip`，同 kind 保序去重；
   **自动候选过滤非公网地址，用户显式填的 `custom` 不过滤**（内网演示分享要能用）。
+  每个候选都带 `accessUrl = origin + 转发前缀`，即浏览器实际要打开的地址（如 `https://relay/n/<nodeId>`）；
+  设置页的「本机可被访问的地址」直接用这份候选（`GET /api/settings/site` 的 `siteAccessOrigins`，不含 `custom`）。
+  另外两条去重规则：**站点 URL 与隧道域名同源时不再单独产出 `site`**（由 `tunnel` 候选代表，避免同一地址
+  以更高优先级的 kind 出现两次）；**站点 URL 由 hub 托管时（`siteUrlManaged()`）也不产出 `site`**，
+  它已经等于 `hub` 候选。手填的「默认分享地址」若与某个转发型候选（`hub` / `relay`）同主机，
+  会继承该候选的 `/n/<nodeId>` 前缀，否则生成的是打不开的死链。
 - `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min。
 - 巡检：开机全扫一遍，之后每 5 s 判到期（`expired`）、设备消失（`device_removed`）、window 关闭
   （`window_closed`）；每小时按 `logRetentionDays` 删日志行、清过期凭证。
 
-本仓库的中继是盲字节转发，浏览器无法经中继直达节点，因此 `relay` 保留在优先级表里但不产出候选。
+### 中继候选与入口探测（`relay-entry-probe.ts`）
+
+中继链路本身是盲字节转发，浏览器不能靠它直达节点；但**同时担任 `node` 角色的中继主机**会跑 mesh
+`Forwarder`（`mesh/mesh-http.ts`），于是 `https://<中继>/n/<本机 nodeId>/…` 这条 HTTP/WS 路径是通的
+（`/s/<shareId>`、`/api/share-access/*`、`/ws?share=` 全部覆盖）。纯 `relay` 角色的主机只有
+`/relay/uplink` 与 `/api/relay/*`，给出去就是死链。两者从节点侧看不出区别，因此中继候选由可达性探测放行：
+
+- 只在 `node_identity.uplink_kind = 'relay'` 时考虑中继（hub 上联下永远不产出 `relay` 候选；
+  切到中继后 `mesh_hubs` 会被清空，`hub` 候选自然消失）。
+- `RelayEntryProbe.ensure(url)` 发即忘地 GET `${url}/n/${localNodeId}/api/auth/mode`（5 s 超时），
+  HTTP 200 且 JSON 的 `nodeId` 等于本机 node id 才记 `ok`；同一地址单飞，`ok` 缓存 10 min、
+  `bad`/异常缓存 2 min，过期后下次读取自动重探。
+- `buildShareOriginContext()` 每次都先 `ensure()` 再读 `state()`，只有 `ok` 的中继进候选——所以
+  冷启动后的第一次调用可能还看不到中继地址，探测回来后的下一次调用就有了；装配层
+  （`packages/app/src/runtime/assemble.ts`）在启动时先 `primeShareRelayOrigins()` 预热一遍。
+- 被踢（`kicked`）的中继不参与；多中继按「当前在用的排最前，其余按 priority」排序。
 
 ## 接口
 
@@ -216,6 +238,9 @@ e2e 环境里 hub 只有 localhost 地址、自动候选为空，用例先 `PUT 
 5. **撤销依赖设备快照的更新时序**：最坏结果是少撤销一拍（下一次 patch 补上），判定本身 fail-closed。
 6. **创建分享依赖设备当前快照里能找到该 window**；设备完全没有客户端连接时会回 `SHARE_WINDOW_NOT_FOUND`
    （分享入口在终端页，实际不会命中）。
+7. **中继入口探测是缓存式的**：中继主机刚掉 `node` 角色时，最长 10 min 内仍可能把它当作候选推荐；
+   反过来刚可用的中继最长 2 min 后才会出现。要立刻纠正只能重启网关（启动时会重新预热）。
+   探测走本机出网直连中继域名，被出网策略挡住时中继候选会静默消失（判定 fail-closed）。
 
 ## 相关
 
