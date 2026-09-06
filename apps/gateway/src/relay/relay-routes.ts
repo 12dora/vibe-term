@@ -22,6 +22,7 @@ import type { RelayKeyLogStore } from './relay-key-log-store';
 import { parseRelayEnvelopeJson } from './relay-key-log-store';
 import { handleRelayJoin } from './relay-pack-http';
 import {
+  constantTimeEqual,
   generateRelayTenantId,
   generateRelayToken,
   sha256Hex,
@@ -126,21 +127,23 @@ type ReissueDecision = 'reuse' | 'recover' | 'rotate';
 /**
  * 同一根公钥重复 enroll 时要不要换令牌。
  *
- * - `reuse`：租户健康且调用方出示的哈希就是当前令牌 → 一动不动。改完接入口令再走一次接入
+ * - `reuse`：租户健康且调用方出示的哈希**就是当前令牌** → 一动不动。改完接入口令再走一次接入
  *   （网页「重新输入接入密码」/ CLI `relay reauth`）落在这里，成员节点因此不掉线。
  * - `recover`：被踢或令牌代次低于门槛 → 换发并断掉旧链路（旧令牌本来就该死）。
- * - `rotate`：租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失）→ 换发，
+ * - `rotate`：租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失、手上只剩上一代）→ 换发，
  *   但保留上一代供成员在宽限期内继续认证，也不主动断链。
+ *
+ * **只认当前令牌**：手持上一代的调用方必须拿到一份新令牌，否则它会把那份即将过期的旧令牌
+ * 再写进 `set-relays` / 密封包，等宽限期一到全网又一起断。
  */
 function shouldReissueToken(
   existing: RelayTenantRecord,
   minTokenEpoch: number,
-  knownTokenHash: string | null,
-  now: number
+  knownTokenHash: string | null
 ): ReissueDecision {
   if (existing.kicked || existing.tokenEpoch < minTokenEpoch) return 'recover';
   if (!knownTokenHash) return 'rotate';
-  return relayTokenHashAccepted(existing, knownTokenHash, now) ? 'reuse' : 'rotate';
+  return constantTimeEqual(knownTokenHash, existing.tokenHash) ? 'reuse' : 'rotate';
 }
 
 /**
@@ -171,7 +174,7 @@ function issueTenantToken(
     });
     return { tenantId, token };
   }
-  const decision = shouldReissueToken(existing, minTokenEpoch, parsed.knownTokenHash, now);
+  const decision = shouldReissueToken(existing, minTokenEpoch, parsed.knownTokenHash);
   if (decision === 'reuse') return { tenantId: existing.id, token: null };
   const token = generateRelayToken();
   const tokenHash = sha256Hex(token);

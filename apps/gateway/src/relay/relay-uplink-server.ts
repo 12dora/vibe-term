@@ -20,28 +20,17 @@ import {
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayCtlQueue } from './relay-ctl-queue';
 import { RelayEnrollCreateRate } from './relay-enroll-limiter';
-import { pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
 import type { RelayLimits } from './relay-limits';
 import type { RelayMetering } from './relay-metering';
 import { type RelayListDeps, encodeRelayList } from './relay-node-list';
 import { type RelaySleep, RelayTokenBucket, effectiveRelayQuota } from './relay-quota';
 import { relayQuotaCtl, relayQuotaUsageFingerprint } from './relay-quota-ctl';
-import {
-  type RelayLiveNode,
-  type RelayRegistry,
-  noteRelayPing,
-  noteRelayPong,
-} from './relay-registry';
+import { type RelayLiveNode, type RelayRegistry, noteRelayPing } from './relay-registry';
 import { acceptRelayStream } from './relay-stream-router';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { handleRelayAuth, liveAuthStillValid, staleLinkKickReason } from './relay-uplink-auth';
-import {
-  type RelayUplinkHost,
-  handleRelayEnrollCreate,
-  handleRelayKeyLogAppend,
-  handleRelayRtc,
-} from './relay-uplink-handlers';
+import { handleRelayAuth, revalidateRelayLive } from './relay-uplink-auth';
+import { type RelayUplinkHost, dispatchRelayAuthedCtl } from './relay-uplink-handlers';
 import {
   RELAY_AUTH_TIMEOUT_MS,
   RELAY_ENROLLMENT_USED_RETENTION_MS,
@@ -49,6 +38,7 @@ import {
   RELAY_HEARTBEAT_MISS_LIMIT,
   RELAY_LIST_DEBOUNCE_MS,
   type RelayRuntimeConfig,
+  type RelayTenantRecord,
 } from './types';
 
 type PendingAuth = { nonce: Uint8Array };
@@ -419,52 +409,22 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.dispatchAuthenticated(live, msg);
   }
 
+  /** 已认证链路的准入复查；不再有效时就地踢掉并返回 null。 */
+  private revalidate(live: RelayLiveNode): RelayTenantRecord | null {
+    return revalidateRelayLive(
+      {
+        tenants: this.tenants,
+        configStore: this.configStore,
+        now: this.now,
+        kick: (target, reason) => this.kickLink(target, reason),
+      },
+      live
+    );
+  }
+
   private dispatchAuthenticated(live: RelayLiveNode, msg: RelayCtlMessage): void {
-    const tenant = this.tenants.get(live.tenantId);
-    if (!tenant) {
-      live.link.close('relay-tenant-gone');
-      return;
-    }
-    const now = this.now();
-    const minTokenEpoch = this.configStore.ensure(now).minTokenEpoch;
-    if (!liveAuthStillValid(live, tenant, minTokenEpoch, now)) {
-      this.kickLink(live, staleLinkKickReason(live, tenant));
-      return;
-    }
-    switch (msg.t) {
-      case 'ping':
-        this.send(live.link, { t: 'pong' });
-        return;
-      case 'pong':
-        noteRelayPong(live, this.now());
-        return;
-      case 'relay.status':
-        live.statusBlob = msg.blob;
-        live.statusEpoch = msg.epoch;
-        this.tenants.patchNode(tenant.id, live.nodeId, { lastSeenAt: this.now() });
-        this.scheduleList(tenant.id);
-        return;
-      case 'relay.keylog.append':
-        handleRelayKeyLogAppend(this, live, tenant, msg);
-        return;
-      case 'relay.keylog.req': {
-        const page = pageRelayKeyLog({ keyLog: this.keyLog }, tenant.id, msg.from_seq, msg.limit);
-        this.send(live.link, {
-          t: 'relay.keylog.res',
-          records: page.records,
-          ...(page.hasMore ? { has_more: true } : {}),
-        });
-        return;
-      }
-      case 'relay.rtc':
-        handleRelayRtc(this, live, msg);
-        return;
-      case 'relay.enroll.create':
-        handleRelayEnrollCreate(this, live, tenant, msg);
-        return;
-      default:
-        return;
-    }
+    const tenant = this.revalidate(live);
+    if (tenant) dispatchRelayAuthedCtl(this, live, tenant, msg);
   }
 
   private async handleAuth(
@@ -505,6 +465,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
       stream.reset('unauthenticated');
       return;
     }
+    if (!this.revalidate(live)) {
+      stream.reset('unauthorized');
+      return;
+    }
     await acceptRelayStream(
       {
         registry: this.registry,
@@ -540,6 +504,8 @@ export class RelayUplinkServer implements RelayUplinkHost {
       this.clearHeartbeat(live);
       return;
     }
+    // 只跑数据流的链路从不进 dispatchAuthenticated，宽限到期只能靠这一拍收掉
+    if (!this.revalidate(live)) return;
     if (live.awaitingPong) {
       if (live.byteFlowSeq !== live.pingByteFlowSeq) {
         live.misses = 0;

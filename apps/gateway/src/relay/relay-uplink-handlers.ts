@@ -3,9 +3,9 @@ import { type RelayCtlMessage, relaySeqToWire } from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
 import type { AuthDb } from '../auth/types';
 import { applyRelayEnrollCreate } from './relay-enroll-create';
-import { appendRelayKeyLog } from './relay-key-log-service';
+import { appendRelayKeyLog, pageRelayKeyLog } from './relay-key-log-service';
 import type { RelayKeyLogStore } from './relay-key-log-store';
-import type { RelayLiveNode, RelayRegistry } from './relay-registry';
+import { type RelayLiveNode, type RelayRegistry, noteRelayPong } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
 import type { RelayTenantRecord } from './types';
 
@@ -25,6 +25,49 @@ export type RelayUplinkHost = {
   /** 每租户 `relay.enroll.create` 频率闸；超了返回 false。 */
   allowEnrollCreate(tenantId: string): boolean;
 };
+
+/** 已通过准入复查的 ctl 分派；`tenant` 是复查时读到的那一份，避免再查一次库。 */
+export function dispatchRelayAuthedCtl(
+  host: RelayUplinkHost,
+  live: RelayLiveNode,
+  tenant: RelayTenantRecord,
+  msg: RelayCtlMessage
+): void {
+  switch (msg.t) {
+    case 'ping':
+      host.send(live.link, { t: 'pong' });
+      return;
+    case 'pong':
+      noteRelayPong(live, host.now());
+      return;
+    case 'relay.status':
+      live.statusBlob = msg.blob;
+      live.statusEpoch = msg.epoch;
+      host.tenants.patchNode(tenant.id, live.nodeId, { lastSeenAt: host.now() });
+      host.scheduleList(tenant.id);
+      return;
+    case 'relay.keylog.append':
+      handleRelayKeyLogAppend(host, live, tenant, msg);
+      return;
+    case 'relay.keylog.req': {
+      const page = pageRelayKeyLog({ keyLog: host.keyLog }, tenant.id, msg.from_seq, msg.limit);
+      host.send(live.link, {
+        t: 'relay.keylog.res',
+        records: page.records,
+        ...(page.hasMore ? { has_more: true } : {}),
+      });
+      return;
+    }
+    case 'relay.rtc':
+      handleRelayRtc(host, live, msg);
+      return;
+    case 'relay.enroll.create':
+      handleRelayEnrollCreate(host, live, tenant, msg);
+      return;
+    default:
+      return;
+  }
+}
 
 export function handleRelayRtc(
   host: RelayUplinkHost,

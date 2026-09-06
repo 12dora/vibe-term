@@ -178,13 +178,15 @@ describe('提醒堆', () => {
     expect(html).toContain('relay.tenant.reauth.notice');
   });
 
-  test('令牌换代：出「等待新令牌」而不是「重新输入接入密码」', () => {
+  test('令牌换代：补一条「等待新令牌」，重新输入接入密码仍然可点', () => {
     const html = render({
       relay: { ...RELAY_MODE, kicked: true, awaitingToken: true },
     });
     expect(html).toContain('data-testid="nodes-relay-awaiting-token"');
     expect(html).toContain('relay.tenant.awaitingToken.notice');
-    expect(html).not.toContain('data-testid="nodes-relay-reauth"');
+    // 被踢的租户只能靠重新接入恢复（单节点租户更是只有本机能做），动作不能被藏起来
+    expect(html).toContain('data-testid="nodes-relay-reauth"');
+    expect(html).toContain('data-testid="nodes-relay-reauth-action"');
   });
 
   test('有旧根签的成员：告警 + 重新确认成员', () => {

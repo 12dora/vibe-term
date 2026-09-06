@@ -1,8 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
+  type RootKey,
   decodeBase64url,
   deriveSeed,
   encodeBase64url,
+  encodeRotateRootKeepPayload,
+  randomBytes,
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
 import { kdfParamsToWire, sealRelayPack } from '@vibeterm/shared/relay';
@@ -12,11 +15,14 @@ import {
   RelayPasswordJoinError,
   performRelayPasswordJoin,
 } from '../../../../../packages/app/src/lib/relay-password-join';
+import { ensureNodeIdentity } from '../../auth';
 import { MeshRelayStore } from '../../auth/mesh-relay-store';
+import { NodeIdentityStore } from '../../auth/node-identity-store';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { kdfParamsFromJson } from '../../auth/user-key-service';
 import { UserStore } from '../../auth/user-store';
 import { relayKeyLog } from '../../db/schema/relay';
+import { RelaySecrets } from '../../mesh/relay-secrets';
 import {
   NODE_PASSWORD,
   RELAY_TEST_PUBLIC_URL,
@@ -85,6 +91,68 @@ async function waitOwnerCaughtUp(h: RelayMeshHarness, tenant: RelayTenant): Prom
     tenant.owner.relayClient()?.requestCatchUpNow();
     return false;
   }, 8_000);
+}
+
+const ROTATED_PASSWORD = 'relay-rotated-pass';
+
+/** 本机 db 上的 RelaySecrets：等价于「网关启动时那一次 reconcile」。 */
+async function localRelaySecrets(
+  db: ReturnType<typeof createMigratedAuthDb>['db'],
+  userId: string
+): Promise<RelaySecrets> {
+  const identity = await ensureNodeIdentity(new NodeIdentityStore(db));
+  return new RelaySecrets({
+    db,
+    identity: {
+      nodeIdHex: identity.nodeIdHex,
+      x25519PrivateKey: identity.x25519PrivateKey,
+    },
+    userIdOf: () => userId,
+  });
+}
+
+/** 主节点换发中继令牌并写下新的 `set-relays`：先弄丢本机那份令牌，enroll 才会走换发分支。 */
+async function rotateTenantRelayToken(tenant: RelayTenant): Promise<void> {
+  const row = tenant.owner.relayStore.listRelayRows()[0];
+  if (!row) throw new Error('owner has no relay row');
+  await tenant.owner.relayStore.setRelayToken({
+    url: row.url,
+    tenantId: row.tenantId,
+    token: randomBytes(32),
+    now: Date.now(),
+  });
+  await tenant.enroll({ password: 'relay-pass' });
+}
+
+/** 用新密码派生的根钥签一条 `rotate-root-keep`，并等中继跟上根公钥。 */
+async function rotateTenantRootByPassword(
+  h: RelayMeshHarness,
+  tenant: RelayTenant,
+  password: string
+): Promise<RootKey> {
+  const kdf = { salt: randomBytes(16), memory_kib: 19_456, iterations: 2, parallelism: 1 };
+  const next = rootKeyFromSeed(await deriveSeed(password, kdf));
+  const applied = await tenant.submitRecord(
+    tenant.owner,
+    'rotate-root-keep',
+    encodeRotateRootKeepPayload({
+      root_public_key: next.publicKey,
+      kdf_params: kdf,
+      totp: null,
+    })
+  );
+  if (applied.status !== 200) {
+    throw new Error(`rotate-root-keep ${applied.status}: ${await applied.text()}`);
+  }
+  tenant.rootKey = next;
+  tenant.rootPublicKey = next.publicKey;
+  tenant.rootEpoch += 1;
+  const tenantId = tenant.tenantId();
+  await waitUntil(
+    () => h.relay.runtime.tenants.get(tenantId)?.rootEpoch === tenant.rootEpoch,
+    8_000
+  );
+  return next;
 }
 
 describe('relay password join', () => {
@@ -168,7 +236,7 @@ describe('relay password join', () => {
     expect(b.relayStore.listRelayRows()[0]?.kicked).toBe(false);
   }, 30_000);
 
-  test('同一账户可用账户密码重新取回中继令牌（rekey）', async () => {
+  test('同一账户重新取回令牌：追平缺失的 set-relays，reconcile 后仍是新令牌', async () => {
     const h = await boot();
     const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
     await tenant.enroll();
@@ -187,15 +255,15 @@ describe('relay password join', () => {
         { auth }
       );
       const store = new MeshRelayStore(created.db);
-      const good = (await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token;
-      if (!good) throw new Error('join stored no relay token');
-      // 模拟「令牌被换发时本机正好离线」：库里剩一份作废的令牌，还被打了踢出标记
-      await store.setRelayToken({
-        url: RELAY_TEST_PUBLIC_URL,
-        tenantId: tenant.tenantId(),
-        token: new Uint8Array(32).fill(9),
-        now: Date.now(),
-      });
+      const stale = (await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token;
+      if (!stale) throw new Error('join stored no relay token');
+
+      // 主节点换发令牌并写下新的 set-relays；本机此刻离线，拿不到这条记录
+      await rotateTenantRelayToken(tenant);
+      await uploadPack(h, tenant);
+      const current = (await tenant.owner.relayStore.getRelay(RELAY_TEST_PUBLIC_URL))?.token;
+      if (!current) throw new Error('owner lost its relay token');
+      expect(current).not.toEqual(stale);
       store.markKicked(RELAY_TEST_PUBLIC_URL, true, 'password_rotated');
 
       const rekeyed = await performRelayPasswordJoin(
@@ -208,9 +276,74 @@ describe('relay password join', () => {
       );
       expect(rekeyed.rekeyed).toBe(true);
       expect(rekeyed.userId).toBe(joined.userId);
-      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(good);
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
       expect(store.listRelayRows()[0]?.kicked).toBe(false);
       expect(new UserStore(created.db).listUsers()).toHaveLength(1);
+
+      // 「下一次网关启动」：reconcile 按投影整表重写，不能再把令牌盖回旧的那份
+      await (await localRelaySecrets(created.db, joined.userId)).reconcile();
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(current);
+    } finally {
+      created.close();
+    }
+  }, 30_000);
+
+  test('漏掉一次根轮换的同账户成员仍能重新取回令牌', async () => {
+    const h = await boot();
+    const tenant = await h.createTenant('alpha', { password: 'relay-pass' });
+    await tenant.enroll();
+    await uploadPack(h, tenant);
+
+    const created = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(created.db, { close: created.close });
+    try {
+      const joined = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: NODE_PASSWORD,
+          name: 'alpha-b',
+        },
+        { auth }
+      );
+      const before = auth.userStore.getById(joined.userId)?.rootPublicKey;
+      // 先上线一次让本机版本进 peer_cache（`rotate-root-keep` 有版本门），再断线
+      const seed = await deriveSeed(
+        NODE_PASSWORD,
+        kdfParamsFromJson(new UserStore(created.db).getById(joined.userId)?.kdfParamsJson ?? '{}')
+      );
+      const b = await h.bootNode('alpha-b', {
+        userId: joined.userId,
+        rootKey: rootKeyFromSeed(seed),
+        db: created.db,
+        close: () => {},
+      });
+      await waitUntil(() => b.mesh.uplink.state === 'online', 8_000);
+      await b.mesh.stop();
+
+      // 主节点常规改密（rotate-root-keep）；本机离线错过了这条记录，本地根公钥就此落后
+      const next = await rotateTenantRootByPassword(h, tenant, ROTATED_PASSWORD);
+      await uploadPack(h, tenant);
+      expect(auth.userStore.getById(joined.userId)?.rootPublicKey).toEqual(
+        before ?? new Uint8Array()
+      );
+
+      const rekeyed = await performRelayPasswordJoin(
+        {
+          relayUrl: RELAY_TEST_PUBLIC_URL,
+          tenantId: tenant.tenantId(),
+          password: ROTATED_PASSWORD,
+        },
+        { auth }
+      );
+      expect(rekeyed.rekeyed).toBe(true);
+      // 轮换记录被追平应用：本地根公钥跟上，令牌也换成了当前那份
+      expect(auth.userStore.getById(joined.userId)?.rootPublicKey).toEqual(next.publicKey);
+      const store = new MeshRelayStore(created.db);
+      const owner = await tenant.owner.relayStore.getRelay(RELAY_TEST_PUBLIC_URL);
+      expect((await store.getRelay(RELAY_TEST_PUBLIC_URL))?.token).toEqual(
+        owner?.token ?? new Uint8Array()
+      );
     } finally {
       created.close();
     }

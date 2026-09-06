@@ -93,10 +93,8 @@ function RelayNoticeList({
   actions: RelayActionsController;
 }) {
   const { t } = useTranslation();
-  // 令牌只是换了代时不出「重新输入接入密码」：本机没有中继接入口令，输了也没用，
-  // 等持账户密码的一方把新令牌经 set-relays 发下来即可。
   const notices = relayNotices({
-    kicked: relay.kicked && !relay.awaitingToken,
+    kicked: relay.kicked,
     readmitPending: relay.readmitPending,
     metaPending: actions.metaPending.length,
     packPending: actions.packPending,
@@ -110,11 +108,6 @@ function RelayNoticeList({
   };
   return (
     <>
-      {relay.awaitingToken && (
-        <Notice tone="warning" testId="nodes-relay-awaiting-token">
-          {t('relay.tenant.awaitingToken.notice')}
-        </Notice>
-      )}
       {notices.map((notice) => (
         <Notice
           key={notice.kind}
@@ -134,6 +127,12 @@ function RelayNoticeList({
           {t(notice.key, notice.params)}
         </Notice>
       ))}
+      {/* 令牌换代：重新输入接入密码那条仍然摆着（本机也可能就是要去接入的那台），这条补足另一条出路 */}
+      {relay.awaitingToken && (
+        <Notice tone="warning" testId="nodes-relay-awaiting-token">
+          {t('relay.tenant.awaitingToken.notice')}
+        </Notice>
+      )}
     </>
   );
 }

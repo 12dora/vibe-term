@@ -1,8 +1,3 @@
-import {
-  MeshRelayStore,
-  RELAY_LOG_KEY_EPOCH,
-} from '../../../../apps/gateway/src/auth/mesh-relay-store';
-import { bytesEqual } from '../../../shared/src/auth';
 import { RelayPackError, normalizeRelayUrl } from '../../../shared/src/relay';
 import { RelayApiError, RelayTimeoutError } from '../commands/relay-shared';
 import { errorMessage } from './error-message';
@@ -17,6 +12,7 @@ import {
   joinSelfAdmitAndPersist,
   joinUploadAndEnv,
 } from './relay-password-join-flow';
+import { rekeyRelayToken } from './relay-token-rekey';
 
 export { RelayPasswordJoinError } from './relay-password-join-flow';
 
@@ -61,7 +57,7 @@ export type RelayPasswordJoinResult = {
  * 那台机器手里只剩一份作废的令牌，又因为连不上中继而拉不到带新令牌的 `set-relays`。
  * 此时用账户密码开密封包、只替换 `mesh_relays` 里的令牌即可，不重建用户、不动证书。
  */
-type JoinMode = { kind: 'join' } | { kind: 'rekey'; userId: string; rootPublicKey: Uint8Array };
+type JoinMode = { kind: 'join' } | { kind: 'rekey'; userId: string };
 
 function parseJoinRelayUrl(raw: string): string {
   try {
@@ -157,7 +153,7 @@ async function resolveJoinMode(ctx: LocalAuthContext): Promise<JoinMode> {
       'this machine already has a mesh user; password join refuses to overwrite it'
     );
   }
-  return { kind: 'rekey', userId: only.id, rootPublicKey: only.rootPublicKey };
+  return { kind: 'rekey', userId: only.id };
 }
 
 async function pinnedFetcher(input: {
@@ -179,37 +175,6 @@ async function pinnedFetcher(input: {
   return {
     fetcher: pinRelayCa(input.fetcher, caPem),
     pin: { caPem, fingerprint: input.caFingerprint },
-  };
-}
-
-/** 只换令牌：用密封包里的当前令牌覆盖 `mesh_relays` 那一行，并刷新 `K_log`。 */
-async function rekeyRelayToken(
-  mode: Extract<JoinMode, { kind: 'rekey' }>,
-  ctx: LocalAuthContext,
-  transport: { relayUrl: string; tenantId: string },
-  pack: Awaited<ReturnType<typeof joinKdfProofAndPack>>,
-  now: number
-): Promise<RelayPasswordJoinResult> {
-  if (!bytesEqual(pack.rootKey.publicKey, mode.rootPublicKey)) {
-    throw new RelayPasswordJoinError(
-      'local_user_exists',
-      'this machine belongs to a different mesh account; password join refuses to overwrite it'
-    );
-  }
-  const store = new MeshRelayStore(ctx.db);
-  await store.setRelayToken({
-    url: transport.relayUrl,
-    tenantId: transport.tenantId,
-    token: pack.pack.token,
-    now,
-  });
-  await store.putSecret('log', RELAY_LOG_KEY_EPOCH, pack.pack.log_key, now);
-  store.setUplinkKind('relay');
-  return {
-    userId: mode.userId,
-    relayUrl: transport.relayUrl,
-    tenantId: transport.tenantId,
-    rekeyed: true,
   };
 }
 
@@ -236,10 +201,18 @@ export async function performRelayPasswordJoin(
       now: deps.now?.() ?? Date.now(),
     });
     await deps.afterUnpack?.(pack);
-    if (mode.kind === 'rekey') {
-      return await rekeyRelayToken(mode, deps.auth, transport, pack, deps.now?.() ?? Date.now());
-    }
     const log = await joinDownloadVerifyReplay(transport, pack);
+    if (mode.kind === 'rekey') {
+      const done = await rekeyRelayToken({
+        auth: deps.auth,
+        transport,
+        pack,
+        log,
+        userId: mode.userId,
+        now: deps.now?.() ?? Date.now(),
+      });
+      return { userId: done.userId, relayUrl, tenantId, rekeyed: true };
+    }
     const admit = await joinSelfAdmitAndPersist({
       auth: deps.auth,
       transport,

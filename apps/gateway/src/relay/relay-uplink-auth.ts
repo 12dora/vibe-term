@@ -55,11 +55,41 @@ export function liveAuthStillValid(
 }
 
 /** 令牌被换发（含宽限期到期）报 password_rotated；租户被踢 / 哈希对不上才是 kicked。 */
-export function staleLinkKickReason(
+function staleLinkKickReason(
   live: RelayLiveNode,
   tenant: RelayTenantRecord
 ): 'password_rotated' | 'kicked' {
   return !tenant.kicked && live.tokenHash === tenant.prevTokenHash ? 'password_rotated' : 'kicked';
+}
+
+export type RelayRevalidateDeps = {
+  tenants: RelayTenantStore;
+  configStore: RelayConfigStore;
+  now: () => number;
+  kick: (live: RelayLiveNode, reason: 'password_rotated' | 'kicked') => void;
+};
+
+/**
+ * 已认证链路的准入复查：租户还在、未被踢、令牌（当前或宽限期内的上一代）仍被接受。
+ *
+ * 三处调用：每条 ctl、心跳一拍、每次开流。只跑数据流的链路不产生 ctl，心跳那一拍是它唯一的
+ * 复查点——少了它，持上一代令牌的链路能活过整个宽限期。
+ */
+export function revalidateRelayLive(
+  deps: RelayRevalidateDeps,
+  live: RelayLiveNode
+): RelayTenantRecord | null {
+  const now = deps.now();
+  const tenant = deps.tenants.get(live.tenantId);
+  if (!tenant) {
+    live.link.close('relay-tenant-gone');
+    return null;
+  }
+  if (liveAuthStillValid(live, tenant, deps.configStore.ensure(now).minTokenEpoch, now)) {
+    return tenant;
+  }
+  deps.kick(live, staleLinkKickReason(live, tenant));
+  return null;
 }
 
 export async function handleRelayAuth(

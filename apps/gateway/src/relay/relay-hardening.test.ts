@@ -11,7 +11,7 @@ import {
   bootRelayHarness,
   enrollRelayRoot,
 } from './relay-test-harness';
-import { RELAY_MAX_UNUSED_ENROLLMENTS } from './types';
+import { RELAY_MAX_UNUSED_ENROLLMENTS, RELAY_PREV_TOKEN_GRACE_MS } from './types';
 
 let harness: RelayHarness | null = null;
 
@@ -61,6 +61,44 @@ describe('relay token reissue', () => {
     expect(again.token_unchanged).toBe(true);
     expect(relay.runtime.tenants.get(tenant.id)?.tokenHash).toBe(before ?? '');
     expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBeNull();
+  });
+
+  test('手持上一代令牌重新 enroll 必换发：不会把将过期的旧令牌再写回去', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const stale = tenant.token;
+    const rotated = await enrollRelayRoot(relay, tenant.root);
+    if (!rotated.token) throw new Error('expected a rotated token');
+    // 拿旧令牌哈希再来一次：必须换发新令牌，而不是回 token_unchanged
+    const again = await enrollRelayRoot(relay, tenant.root, {
+      knownTokenHash: sha256Hex(stale),
+    });
+    expect(again.token_unchanged).toBe(false);
+    expect(again.token).toBeTruthy();
+    expect(again.token).not.toBe(rotated.token);
+    expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBe(sha256Hex(rotated.token));
+  });
+
+  test('只跑数据流的链路在宽限到期后被心跳那一拍收掉', async () => {
+    const relay = await boot({ heartbeatIntervalMs: 5, heartbeatMissLimit: 1_000 });
+    const tenant = await relay.createTenant();
+    const { a, b } = await admittedPair(tenant);
+    const stale = tenant.token;
+    await enrollRelayRoot(relay, tenant.root);
+
+    // a 拿上一代令牌接进来，之后只开流、不发任何 ctl
+    const client = await tenant.connect(a, { token: stale });
+    await client.inbox.takeOf('auth.ok');
+    const peer = await tenant.connect(b);
+    await peer.inbox.takeOf('auth.ok');
+    peer.onStream(() => {});
+    const stream = await client.openRelay(b.nodeId);
+    await stream.write(new Uint8Array([1]));
+
+    relay.advance(RELAY_PREV_TOKEN_GRACE_MS + 1);
+    const kicked = await client.inbox.takeOf('relay.kicked', 4_000);
+    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('password_rotated');
+    expect((await client.link.closed).reason).toBe('relay-password_rotated');
   });
 
   test('宽限期内上一代令牌仍可认证，kick 模式改密后立刻失效', async () => {

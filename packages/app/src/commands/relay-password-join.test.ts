@@ -8,7 +8,12 @@ import {
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
-import { kdfParamsFromWire, kdfParamsToWire, sealRelayPack } from '../../../shared/src/relay';
+import {
+  kdfParamsFromWire,
+  kdfParamsToWire,
+  sealRelayKeyLogRecord,
+  sealRelayPack,
+} from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
@@ -46,9 +51,23 @@ async function openAuth(username?: string): Promise<LocalAuthContext> {
   return auth;
 }
 
-/** 中继侧的最小假象：健康探针 + `/kdf` + `mode:'join'` 的密封包。 */
+type PackKdf = { salt: Uint8Array; memory_kib: number; iterations: number; parallelism: number };
+
+function kdfOf(auth: LocalAuthContext): PackKdf {
+  const user = auth.userStore.listUsers()[0];
+  if (!user) throw new Error('missing local user');
+  const parsed = kdfParamsFromWire(JSON.parse(user.kdfParamsJson));
+  if (!parsed) throw new Error('unparsable kdf params');
+  return parsed;
+}
+
+/**
+ * 中继侧的最小假象：健康探针 + `/kdf` + `mode:'join'` 的密封包 + 密钥日志分页。
+ * `logOwner` 决定日志内容（rekey 的同账户判定看这条链的 genesis uid）。
+ */
 async function packFixture(
-  kdfRaw: { salt: Uint8Array; memory_kib: number; iterations: number; parallelism: number } | null
+  kdfRaw: PackKdf | null,
+  logOwner?: LocalAuthContext
 ): Promise<{ fetcher: FetchLike; token: Uint8Array; logKey: Uint8Array }> {
   const kdf = kdfRaw ?? {
     salt: new Uint8Array(16).fill(3),
@@ -59,6 +78,17 @@ async function packFixture(
   const root = rootKeyFromSeed(await deriveSeed(PASSWORD, kdf));
   const logKey = randomBytes(32);
   const token = randomBytes(32);
+  const owner = logOwner ? logOwner.userStore.listUsers()[0] : undefined;
+  const rows = owner ? await logOwner?.userKeys.list(owner.id, 1n) : [];
+  const page = await Promise.all(
+    (rows ?? []).map(async (row) => ({
+      seq: Number(row.seq),
+      blob: await sealRelayKeyLogRecord(logKey, { bytes: row.bytes, sig: row.sig }),
+    }))
+  );
+  const head = owner
+    ? { seq: BigInt(owner.keyLogHeadSeq), hash: owner.keyLogHeadHash }
+    : { seq: 1n, hash: randomBytes(32) };
   const sealed = await sealRelayPack({
     rootSeed: root.seed,
     tenantId: TENANT_ID,
@@ -67,8 +97,8 @@ async function packFixture(
     plaintext: {
       log_key: new Uint8Array(logKey),
       token: new Uint8Array(token),
-      head_seq: 1n,
-      head_hash: randomBytes(32),
+      head_seq: head.seq,
+      head_hash: head.hash,
       issued_at: 1n,
     },
   });
@@ -78,6 +108,7 @@ async function packFixture(
     if (url.includes('/kdf')) {
       return Response.json({ kdf_params: kdfParamsToWire(kdf), root_epoch: 0 });
     }
+    if (url.includes('/keylog')) return Response.json({ key_log: page });
     if (url.includes('/enroll')) {
       return Response.json({
         sealed_pack: encodeBase64url(sealed),
@@ -142,12 +173,9 @@ describe('performRelayPasswordJoin', () => {
 
   test('本机是别的 mesh 账户时拒绝覆盖', async () => {
     const auth = await openAuth('ivy');
-    const fixture = await packFixture({
-      salt: new Uint8Array(16).fill(9),
-      memory_kib: 8,
-      iterations: 1,
-      parallelism: 1,
-    });
+    const other = await openAuth('mallory');
+    // 密封包与日志都来自另一个账户：genesis uid 对不上，一律拒绝
+    const fixture = await packFixture(kdfOf(other), other);
     await expect(
       performRelayPasswordJoin(
         { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
@@ -158,11 +186,26 @@ describe('performRelayPasswordJoin', () => {
     expect(stored).toBeNull();
   });
 
+  test('本机已有多个 mesh 用户时拒绝覆盖（不发任何请求）', async () => {
+    const auth = await openAuth('ivy');
+    await runHubUserAdd(parseArgs(['hub', 'user', 'add', 'mallory']), 'mallory', {
+      auth,
+      password: PASSWORD,
+      log: () => undefined,
+    });
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: RELAY_URL, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher: async () => new Response('nope', { status: 500 }) }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'local_user_exists' });
+  });
+
   test('同一账户：只换发中继令牌，不重建本机用户', async () => {
     const auth = await openAuth('ivy');
     const user = auth.userStore.listUsers()[0];
     if (!user) throw new Error('missing local user');
-    const fixture = await packFixture(kdfParamsFromWire(JSON.parse(user.kdfParamsJson)) ?? null);
+    const fixture = await packFixture(kdfOf(auth), auth);
     const relayStore = new MeshRelayStore(auth.db);
     await relayStore.replaceRelays(
       [
