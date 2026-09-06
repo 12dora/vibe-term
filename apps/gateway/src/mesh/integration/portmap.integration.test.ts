@@ -24,10 +24,17 @@ import {
 } from '../../auth';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
+import { resetPeerStreamSlots } from '../../portmap/budget';
+import { shutdownWriteHalf } from '../../portmap/half-close';
 import { PortMapManager } from '../../portmap/manager';
 import { isPortFree } from '../../portmap/port-probe';
 import { PortMapExportStore, PortMapStore } from '../../portmap/store';
-import { startEchoServer } from '../../portmap/test-echo-server';
+import {
+  type EchoServer,
+  startAfterFinServer,
+  startEchoServer,
+  startSlowEchoServer,
+} from '../../portmap/test-echo-server';
 import type { GatewayRuntime } from '../../runtime';
 import { WebSocketServer } from '../../ws';
 import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
@@ -58,12 +65,17 @@ function fakeGateway(db: AuthDb): GatewayRuntime {
   } as unknown as GatewayRuntime;
 }
 
+/** 让测试能制造「链路还在拨」的窗口。 */
+const linkDial = { delayMs: 0, count: 0 };
+
 function peerLinkFactory(
   selfId: string,
   remote: { mesh: MeshRuntime | null }
 ): (peerNodeId: string, signal: AbortSignal) => Promise<LinkSession | null> {
   return async (peerNodeId) => {
     if (!remote.mesh || remote.mesh.nodeId !== peerNodeId) return null;
+    linkDial.count += 1;
+    if (linkDial.delayMs > 0) await Bun.sleep(linkDial.delayMs);
     const [local, other] = createInMemoryLinkPair();
     remote.mesh.peers.adoptLink(selfId, other, 'ws-secure', selfId);
     return local;
@@ -291,6 +303,7 @@ async function tcpClient(port: number): Promise<TcpClient> {
   const socket = await Bun.connect({
     hostname: '127.0.0.1',
     port,
+    allowHalfOpen: true,
     socket: {
       binaryType: 'uint8array',
       data(_s, chunk) {
@@ -352,6 +365,9 @@ describe('portmap mesh integration', () => {
   const servers: Array<{ stop: () => void }> = [];
 
   afterEach(async () => {
+    linkDial.delayMs = 0;
+    linkDial.count = 0;
+    resetPeerStreamSlots();
     while (managers.length > 0) managers.pop()?.stop();
     while (servers.length > 0) servers.pop()?.stop();
     while (fixtures.length > 0) {
@@ -361,11 +377,11 @@ describe('portmap mesh integration', () => {
     }
   });
 
-  async function setup(opts: { mapId?: string; withExport?: boolean } = {}) {
+  async function setup(opts: { mapId?: string; withExport?: boolean; target?: EchoServer } = {}) {
     const mapId = opts.mapId ?? 'integration-map-1';
     const a = await bootA();
     const b = await enrollB(a);
-    const echo = startEchoServer();
+    const echo = opts.target ?? startEchoServer();
     servers.push(echo);
     if (opts.withExport !== false) {
       new PortMapExportStore(b.db).insert({
@@ -470,5 +486,75 @@ describe('portmap mesh integration', () => {
     await client.waitClosed();
     expect(isPortFree('127.0.0.1', map.listenPort)).toBe(true);
     expect(manager.list()).toHaveLength(0);
+  });
+
+  async function writeAll(socket: Bun.Socket<unknown>, payload: Uint8Array): Promise<void> {
+    let offset = 0;
+    while (offset < payload.byteLength) {
+      const written = socket.write(payload.subarray(offset));
+      if (written < 0) throw new Error('client socket closed');
+      offset += written;
+      if (offset < payload.byteLength) await Bun.sleep(1);
+    }
+  }
+
+  function ramp(size: number): Uint8Array {
+    const payload = new Uint8Array(size);
+    for (let i = 0; i < size; i += 1) payload[i] = (i * 31) & 0xff;
+    return payload;
+  }
+
+  test('delivers a reply the target only produces after the client half-closes', async () => {
+    const target = startAfterFinServer(new TextEncoder().encode('reply-after-fin'));
+    const { map } = await setup({ target });
+    const client = await tcpClient(map.listenPort);
+    client.socket.write(new TextEncoder().encode('request'));
+    await Bun.sleep(50);
+    // 客户端只关写半边（Bun 的 end() 会连读半边一起关，这里直接走 POSIX shutdown）
+    expect(shutdownWriteHalf(client.socket)).toBe(true);
+    const back = await client.waitFor(15);
+    expect(new TextDecoder().decode(back)).toBe('reply-after-fin');
+    expect(target.received()).toBe(7);
+    client.socket.terminate();
+  });
+
+  test('backs off on a slow target instead of buffering, and the link keeps working', async () => {
+    const slow = startSlowEchoServer();
+    const { manager, map } = await setup({ target: slow });
+    const client = await tcpClient(map.listenPort);
+    const size = 4 * 1024 * 1024;
+    const payload = ramp(size);
+    const pushed = writeAll(client.socket, payload).catch(() => {});
+    await Bun.sleep(400);
+    const stalled = manager.get(map.id).bytesOut;
+    // 目标一个字节都没读：窗口撑满之后就该停在那儿，而不是把 4 MiB 吞进内存
+    expect(stalled).toBeGreaterThan(0);
+    expect(stalled).toBeLessThan(3 * 1024 * 1024);
+    slow.release();
+    await pushed;
+    const back = await client.waitFor(size);
+    expect(back.byteLength).toBe(size);
+    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
+    const second = await tcpClient(map.listenPort);
+    second.socket.write(new TextEncoder().encode('ping'));
+    expect(new TextDecoder().decode(await second.waitFor(4))).toBe('ping');
+    client.socket.terminate();
+    second.socket.terminate();
+  });
+
+  test('keeps the bytes sent while the peer link is still being dialled', async () => {
+    linkDial.delayMs = 300;
+    const { map } = await setup();
+    const before = linkDial.count;
+    const client = await tcpClient(map.listenPort);
+    const size = 2 * 1024 * 1024;
+    const payload = ramp(size);
+    await writeAll(client.socket, payload);
+    const back = await client.waitFor(size);
+    expect(back.byteLength).toBe(size);
+    expect(back[0]).toBe(0);
+    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
+    expect(linkDial.count).toBeGreaterThan(before);
+    client.socket.terminate();
   });
 });

@@ -2,6 +2,7 @@ import { findPaneInSnapshot } from '../agent/tools/pane-info';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, dispatchRoutes, route } from '../api/route';
 import { getDeviceById } from '../db';
+import { createMeshInternalPortMapRoutes } from '../portmap/internal-routes';
 import type { PaneInfo } from '../tmux-client/capture-history';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
@@ -197,6 +198,7 @@ export async function handleMeshInternalTmuxRequest(
     ...createMeshInternalTmuxRoutes(deps),
     ...createMeshInternalNotificationRoutes(),
     ...createMeshInternalTransferRoutes(),
+    ...createMeshInternalPortMapRoutes(),
   ];
   const matched = dispatchRoutes(req, path, routes, { path });
   if (matched) {

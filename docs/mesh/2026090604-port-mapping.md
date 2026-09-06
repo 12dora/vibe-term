@@ -49,7 +49,10 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
   （`port_in_use`），不阻塞启动。
 - mesh 运行时启动时按自身 nodeId 注册绑定（`bindPortMapNode`），提供 `PeerManager` 与本节点的放行表；
   mesh 停止时在 `stopQuietly` 里解绑。同进程跑多个 MeshRuntime（集成测试）因此互不串台。
-- 暂停 = 停监听 + 重置在途流，行保留；删除 = 暂停 + 删行。B 侧的放行行由浏览器自己删。
+- 暂停 = 停监听 + 重置在途流，行保留；恢复是「先绑上再落库」：`checkPortAvailable` 或绑定失败时
+  行仍是 `paused`，端口空出来后再 PATCH 一次还能重试；只要请求的状态是未暂停且当前没有监听就重试
+  绑定，开机时端口被占（`state:'error'`）的行也走这条路。
+- 删除 = 暂停 + 删行，并尽力而为地让 B 删掉对应的放行行（见下）。
 
 ### 背压
 
@@ -59,17 +62,31 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
   才拉下一块。mux 只在应用读取时才回 `WINDOW` 额度，所以「不读」就是跨 mesh 的背压。
 - 本地 → 远端：`socket.data` 拿到的数据入队后立刻 `socket.pause()`，`await stream.write` 完成再
   `resume()`。队列只在极短窗口内存在，超过 8 MiB 直接判定异常并断开。
-- 拨号窗口（`getLink` + `openStream` 期间）不能 `pause`——Bun 的暂停会连 `close` 事件一起压住，
-  客户端中途断开就发现不了。这段时间的数据存在 `early` 缓冲里，上限 1 MiB。
+- 拨号窗口（`getLink` + `openStream` 期间）：连接刚建立时**不**暂停，收到第一块数据才
+  `socket.pause()`——多余的字节留在内核缓冲里由 TCP 自己背压，程序内最多压一块。之所以不一上来就
+  暂停，是因为 Bun 的 `pause()` 会把 `data`/`end`/`close` 一起压住，「连上就走」的客户端否则要等到
+  拨号结束才发现已经断了。
+- 拨号有 15 s 时限（`PORT_MAP_DIAL_DEADLINE_MS`）。超时后迟到的流会被 `reset`，socket 先 `resume`
+  再关掉，让被压住的 `close` 事件出来归还名额——名额只在 socket 真正处置掉时才还。
 
 ### 半关闭与中断
 
-- 本地 FIN → `stream.end()`；对端 END → `socket.end()`；两侧的 RST/异常互相映射为
-  `stream.reset()` / `socket.terminate()`。
-- Bun 的 `socket.end()` 会连读半边一起关（`shutdown(true)` 实测不发 FIN，不可用），所以收到对端 END
-  之后本地 socket 直接关闭；此时不再回 RST，按正常收尾处理。反方向（客户端先 FIN，服务端继续发数据）
-  是完整的半关闭语义。
+- 本地 FIN → `stream.end()`；对端 END → 只关本地 socket 的**写半边**，读半边继续泵，直到目标自己
+  发 FIN；两个方向都结束才整条关闭。目标服务完全可能读到 EOF 之后才产出响应（`nc -N`、某些
+  行协议），少了这一步那类响应会被吞掉。
+- **Bun 1.3.14 没有可用的写半边关闭**（实测，见 `apps/gateway/src/portmap/half-close.ts`）：
+  `socket.end()` 立刻把本地句柄摘掉（`readyState` 变 -1，读半边一起没）；`socket.shutdown(true)`
+  只触发自己的 `end` 回调，对端根本收不到 FIN；`node:net` 在 Bun 上是同一层壳，
+  `allowHalfOpen: true` 也救不回来——`end()` 之后立刻 `end`+`close`，回包全丢。
+  所以走 `bun:ffi` 直接调 POSIX 的 `shutdown(fd, SHUT_WR)`（与 `log/rotate.ts` 加载 `dup2` 同一套
+  路子，macOS 用 `libSystem.B.dylib`，Linux 依次试 glibc / musl 的 so 名）。加载不到就退回
+  `socket.end()`，行为与改动前一致（这类环境下 EOF 之后才产生的响应仍会丢）。
+- 该 `shutdown` 不能与 `socket.resume()` 落在同一个 tick：实测那样 Bun 会把读半边一起丢掉，
+  所以写半边关闭推迟一个宏任务再做。
+- `allowHalfOpen: true` 是必须的：它保证收到对端 FIN 之后本地还能继续写。
 - 链路丢失不重放：字节流没有重放点，`stream.onAbort` 直接关本地 socket，由客户端自己重连。
+  B 侧的中断处理在拨号之前就注册好，流被 RST 时立刻取消底层的 `Bun.connect`——只丢 SYN 的地址
+  否则能靠反复开流把 fd 耗光。
 
 ## 接口
 
@@ -81,7 +98,7 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
 | GET | `/api/portmap` | 列表，含实时计数（`activeConnections`/`totalConnections`/`bytesIn`/`bytesOut`） |
 | POST | `/api/portmap` | 创建；`mapId` 可指定以对齐 B 的放行行；409 `port_in_use` / `port_reserved` |
 | PATCH | `/api/portmap/:id` | 改名 / 暂停 / 恢复 |
-| DELETE | `/api/portmap/:id` | 删除，同时停监听 |
+| DELETE | `/api/portmap/:id` | 删除，同时停监听；返回 `{ ok, exportRemoved }`，`exportRemoved` 表示 B 上的放行行是否已一并清掉 |
 | GET | `/api/portmap/probe?host=&port=` | 本机端口占用探测（`free`/`reserved`/`usedByMapId`） |
 
 节点 B：
@@ -93,11 +110,19 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
 | DELETE | `/api/portmap/exports/:mapId` | 删放行行 |
 | GET | `/api/portmap/target-probe?host=&port=` | 目标端口是否有服务在监听（1.5 s 超时） |
 
+节点间（peer 身份，`apps/gateway/src/portmap/internal-routes.ts`）：
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| DELETE / POST | `/api/mesh-internal/portmap/exports/:mapId` | A 删除映射后顺手清 B 的放行行；只删 `from_node_id` 等于握手对端的行，缺失视为已清。失败只记日志，A 侧照删，界面按 `exportRemoved` 提示使用者自己去 B 上收尾。同时接受 POST 是因为节点间转发只发 POST |
+
 ## 限制
 
-- **每条映射并发连接上限 64**。mux 的 `MAX_LINK_UNACKED = 65 MiB`（65 个满窗）一旦被突破会关掉整条
-  peer 链路——那条链路同时承载着终端会话。64 条并发流即使全部打满也还留有一个窗口的余量，超出的
-  连接在 accept 时直接断开，不会牵连终端。单节点最多 64 条映射行。
+- **并发上限按 peer 链路算**。mux 的 `MAX_LINK_UNACKED = 65 MiB`（65 个满窗）一旦被突破会关掉整条
+  peer 链路——那条链路同时承载着终端会话与文件传输。所以 A 侧指向同一节点的所有映射、B 侧来自同一
+  对端的所有入站流共用一份名额：`PORT_MAP_MAX_PEER_STREAMS = 48`，给其它流量留 17 个窗口；超出的
+  TCP 连接在 accept 时就断开、超出的入站流直接 RST，都发生在开流之前。单条映射另有 64 条的上限
+  （`PORT_MAP_MAX_CONNECTIONS`），单节点最多 64 条映射行。
 - **中继模式的计费**：peer 链路走中继时，整条链路在中继侧只是**一条**流（内层还有一层 mux），
   端口映射的流量与终端流量混在一起，按租户配额限速与计量，不会额外占用 `maxStreams` 名额，
   但中继也无法区分二者。要做「按功能公平分配」只能在节点侧做。

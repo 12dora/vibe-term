@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@tmex/shared/link';
+import { resetPeerStreamSlots } from './budget';
 import { PortMapManager } from './manager';
 import { isPortFree } from './port-probe';
 import { MemoryPortMapStore } from './store';
@@ -49,6 +50,7 @@ function newManager(store: MemoryPortMapStore, peers: PortMapPeers | null = null
 describe('portmap manager', () => {
   afterEach(() => {
     while (managers.length > 0) managers.pop()?.stop();
+    resetPeerStreamSlots();
   });
 
   test('creates a listening map and reports it', () => {
@@ -226,5 +228,80 @@ describe('portmap manager', () => {
     await Bun.sleep(50);
     expect(closed).toBe(true);
     socket.terminate();
+  });
+
+  test('a failed resume keeps the row paused and a later retry still binds', () => {
+    const store = new MemoryPortMapStore();
+    const manager = newManager(store);
+    manager.start();
+    const port = freePort();
+    const dto = manager.create({ listenPort: port, targetNodeId: TARGET_NODE, targetPort: 1 });
+    manager.update(dto.id, { paused: true });
+    const occupied = Bun.listen({ hostname: '127.0.0.1', port, socket: { data() {} } });
+    try {
+      expect(() => manager.update(dto.id, { paused: false })).toThrow(PortMapError);
+      expect(manager.get(dto.id).state).toBe('paused');
+      expect(store.get(dto.id)?.paused).toBe(true);
+    } finally {
+      occupied.stop(true);
+    }
+    expect(manager.update(dto.id, { paused: false }).state).toBe('listening');
+    expect(store.get(dto.id)?.paused).toBe(false);
+  });
+
+  test('resuming retries a map whose bind failed at boot', () => {
+    const store = new MemoryPortMapStore();
+    const occupied = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
+    store.insert(row('taken', occupied.port));
+    const manager = newManager(store);
+    manager.start();
+    expect(manager.get('taken').state).toBe('error');
+    occupied.stop(true);
+    expect(manager.update('taken', { paused: false }).state).toBe('listening');
+  });
+
+  test('two maps to the same node share one peer link budget', async () => {
+    const manager = new PortMapManager({
+      store: new MemoryPortMapStore(),
+      peers: () => hangingPeers,
+      reservedPorts: () => [],
+      peerStreamLimit: 1,
+    });
+    managers.push(manager);
+    manager.start();
+    const firstPort = freePort();
+    const secondPort = freePort();
+    const first = manager.create({
+      listenPort: firstPort,
+      targetNodeId: TARGET_NODE,
+      targetPort: 1,
+    });
+    const second = manager.create({
+      listenPort: secondPort,
+      targetNodeId: TARGET_NODE,
+      targetPort: 2,
+    });
+    const held = await Bun.connect({
+      hostname: '127.0.0.1',
+      port: firstPort,
+      socket: { data() {}, close() {} },
+    });
+    await Bun.sleep(30);
+    expect(manager.get(first.id).activeConnections).toBe(1);
+    let refused = false;
+    await Bun.connect({
+      hostname: '127.0.0.1',
+      port: secondPort,
+      socket: {
+        data() {},
+        close() {
+          refused = true;
+        },
+      },
+    });
+    await Bun.sleep(50);
+    expect(refused).toBe(true);
+    expect(manager.get(second.id).activeConnections).toBe(0);
+    held.terminate();
   });
 });

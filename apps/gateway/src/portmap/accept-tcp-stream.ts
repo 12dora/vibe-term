@@ -1,19 +1,29 @@
 import type { LinkStream } from '@tmex/shared/link';
 import { parseOpenPayload } from '../mesh/peer-protocol';
+import { acquirePeerStreamSlot } from './budget';
+import { type TcpDial, dialTcp } from './dial';
 import {
   type PumpSocketData,
   TcpStreamPump,
   attachPump,
+  bunPumpSocket,
   createPumpSocketData,
-  onSocketData,
+  disposePumpSocketData,
 } from './pump';
+import { pumpSocketHandlers } from './socket-handlers';
 import type { PortMapExportStoreLike } from './store';
-import { PORT_MAP_CONNECT_TIMEOUT_MS, type PortMapExportRow, createPortMapCounters } from './types';
+import {
+  PORT_MAP_CONNECT_TIMEOUT_MS,
+  PORT_MAP_MAX_PEER_STREAMS,
+  type PortMapExportRow,
+  createPortMapCounters,
+} from './types';
 
 export type AcceptTcpStreamContext = {
   peerNodeId: string;
   exports: PortMapExportStoreLike;
   connectTimeoutMs?: number;
+  peerStreamLimit?: number;
 };
 
 type Requested = { mapId: string; host: string; port: number };
@@ -35,68 +45,33 @@ function allows(row: PortMapExportRow | null, peerNodeId: string, req: Requested
   return row.host === req.host && row.port === req.port;
 }
 
-async function connectWithTimeout(
+function startDial(
   row: PortMapExportRow,
   data: PumpSocketData,
   timeoutMs: number
-): Promise<Bun.Socket<PumpSocketData>> {
-  const connect = Bun.connect<PumpSocketData>({
-    hostname: row.host,
-    port: row.port,
-    allowHalfOpen: true,
-    data,
-    socket: {
-      binaryType: 'uint8array',
-      open(socket) {
+): TcpDial<PumpSocketData> {
+  return dialTcp<PumpSocketData>(
+    {
+      hostname: row.host,
+      port: row.port,
+      allowHalfOpen: true,
+      data,
+      socket: pumpSocketHandlers((socket) => {
         try {
           socket.setNoDelay(true);
         } catch {
           // 不支持就算了
         }
-      },
-      data(socket, chunk) {
-        if (!onSocketData(socket.data, chunk as unknown as Uint8Array)) socket.terminate();
-      },
-      drain(socket) {
-        socket.data.pump?.onDrain();
-      },
-      end(socket) {
-        socket.data.fin = true;
-        socket.data.pump?.onEnd();
-      },
-      close(socket) {
-        socket.data.closed = true;
-        socket.data.pump?.onClose();
-      },
-      error(socket) {
-        socket.data.closed = true;
-        socket.data.pump?.onClose();
-      },
+      }),
     },
-  });
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => reject(new Error('portmap-connect-timeout')), timeoutMs);
-  });
-  try {
-    return await Promise.race([connect, timeout]);
-  } catch (err) {
-    void connect
-      .then((socket) => {
-        try {
-          socket.terminate();
-        } catch {
-          // 已经关闭
-        }
-      })
-      .catch(() => {});
-    throw err;
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
+    timeoutMs
+  );
 }
 
-/** B 侧入口：校验放行记录后拨号本机目标端口，接上双向泵。 */
+/**
+ * B 侧入口：校验放行记录、占用本对端的并发名额后拨号本机目标端口，接上双向泵。
+ * 名额在 socket 真正处置掉时才归还——流被 RST 之后底层连接尝试可能还在，不能提前放行。
+ */
 export async function acceptTcpStream(
   stream: LinkStream,
   ctx: AcceptTcpStreamContext
@@ -111,17 +86,36 @@ export async function acceptTcpStream(
     stream.reset('portmap-forbidden');
     return;
   }
-  const data = createPumpSocketData();
-  let socket: Bun.Socket<PumpSocketData>;
-  try {
-    socket = await connectWithTimeout(
-      row,
-      data,
-      ctx.connectTimeoutMs ?? PORT_MAP_CONNECT_TIMEOUT_MS
-    );
-  } catch {
-    stream.reset('portmap-connect-failed');
+  const slot = acquirePeerStreamSlot(
+    ctx.peerNodeId,
+    ctx.peerStreamLimit ?? PORT_MAP_MAX_PEER_STREAMS
+  );
+  if (!slot) {
+    stream.reset('portmap-peer-limit');
     return;
   }
-  attachPump(data, new TcpStreamPump(socket, stream, createPortMapCounters()));
+  const data = createPumpSocketData();
+  data.onDisposed = () => slot.release();
+  // 中断处理必须先于拨号注册：流被 RST 时要立刻取消底层连接
+  let dial: TcpDial<PumpSocketData> | null = null;
+  let aborted = false;
+  stream.onAbort(() => {
+    aborted = true;
+    dial?.cancel();
+  });
+  if (aborted) {
+    disposePumpSocketData(data);
+    return;
+  }
+  dial = startDial(row, data, ctx.connectTimeoutMs ?? PORT_MAP_CONNECT_TIMEOUT_MS);
+  if (aborted) dial.cancel();
+  let socket: Bun.Socket<PumpSocketData>;
+  try {
+    socket = await dial.result;
+  } catch {
+    stream.reset('portmap-connect-failed');
+    disposePumpSocketData(data);
+    return;
+  }
+  attachPump(data, new TcpStreamPump(bunPumpSocket(socket), stream, createPortMapCounters()));
 }

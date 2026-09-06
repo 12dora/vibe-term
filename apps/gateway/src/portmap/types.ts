@@ -41,10 +41,17 @@ export function createPortMapCounters(): PortMapCounters {
   return { activeConnections: 0, totalConnections: 0, bytesIn: 0, bytesOut: 0 };
 }
 
-/** 每条映射的并发连接上限：mux 的 MAX_LINK_UNACKED 为 65 个满窗，留出终端会话的余量。 */
+/** 单条映射的并发连接上限。真正兜底的是下面按 peer 链路算的共享名额。 */
 export const PORT_MAP_MAX_CONNECTIONS = 64;
+/**
+ * 每条 peer 链路上端口映射流的总并发上限（A 侧指向同一节点的全部映射 + B 侧来自同一对端的全部
+ * 入站流）。mux 的 MAX_LINK_UNACKED 是 65 个满窗，留 17 个给 ctl / 终端 / 文件传输。
+ */
+export const PORT_MAP_MAX_PEER_STREAMS = 48;
 export const PORT_MAP_MAX_ROWS = 64;
 export const PORT_MAP_CONNECT_TIMEOUT_MS = 5_000;
+/** getLink + openStream 的总时限：拨号期间 socket 是暂停的，不能无限期占着名额。 */
+export const PORT_MAP_DIAL_DEADLINE_MS = 15_000;
 export const PORT_MAP_TARGET_PROBE_TIMEOUT_MS = 1_500;
 
 export class PortMapError extends Error {

@@ -1,14 +1,21 @@
+import type { LinkStream } from '@tmex/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
 import type { TcpStreamOpenPayload } from '../mesh/types';
+import { type PeerStreamSlot, acquirePeerStreamSlot } from './budget';
+import { withDeadline } from './dial';
 import {
   type PumpSocketData,
   TcpStreamPump,
   attachPump,
+  bunPumpSocket,
   createPumpSocketData,
-  onSocketData,
+  disposePumpSocketData,
 } from './pump';
+import { pumpSocketHandlers } from './socket-handlers';
 import {
+  PORT_MAP_DIAL_DEADLINE_MS,
   PORT_MAP_MAX_CONNECTIONS,
+  PORT_MAP_MAX_PEER_STREAMS,
   type PortMapCounters,
   PortMapError,
   type PortMapPeers,
@@ -20,6 +27,8 @@ export type PortMapListenerOptions = {
   peers: () => PortMapPeers | null;
   counters: PortMapCounters;
   maxConnections?: number;
+  peerStreamLimit?: number;
+  dialDeadlineMs?: number;
 };
 
 type MapSocket = Bun.Socket<PumpSocketData>;
@@ -30,6 +39,8 @@ export class PortMapListener {
   private readonly peers: () => PortMapPeers | null;
   private readonly counters: PortMapCounters;
   private readonly maxConnections: number;
+  private readonly peerStreamLimit: number;
+  private readonly dialDeadlineMs: number;
   private readonly sockets = new Set<MapSocket>();
   private server: Bun.TCPSocketListener<PumpSocketData> | null = null;
   private stopped = false;
@@ -39,6 +50,8 @@ export class PortMapListener {
     this.peers = opts.peers;
     this.counters = opts.counters;
     this.maxConnections = opts.maxConnections ?? PORT_MAP_MAX_CONNECTIONS;
+    this.peerStreamLimit = opts.peerStreamLimit ?? PORT_MAP_MAX_PEER_STREAMS;
+    this.dialDeadlineMs = opts.dialDeadlineMs ?? PORT_MAP_DIAL_DEADLINE_MS;
   }
 
   start(): void {
@@ -49,22 +62,7 @@ export class PortMapListener {
         hostname: this.row.listenHost,
         port: this.row.listenPort,
         allowHalfOpen: true,
-        socket: {
-          binaryType: 'uint8array',
-          open: (socket) => this.onOpen(socket),
-          data: (socket, chunk) => {
-            if (!onSocketData(socket.data, chunk as unknown as Uint8Array)) {
-              socket.terminate();
-            }
-          },
-          drain: (socket) => socket.data.pump?.onDrain(),
-          end: (socket) => {
-            socket.data.fin = true;
-            socket.data.pump?.onEnd();
-          },
-          close: (socket) => this.onClose(socket),
-          error: (socket) => this.onClose(socket),
-        },
+        socket: pumpSocketHandlers((socket) => this.onOpen(socket)),
       });
     } catch (err) {
       throw new PortMapError(
@@ -92,6 +90,7 @@ export class PortMapListener {
       } catch {
         // 已经关闭
       }
+      if (socket.data) disposePumpSocketData(socket.data);
     }
     this.sockets.clear();
     this.counters.activeConnections = 0;
@@ -99,7 +98,11 @@ export class PortMapListener {
 
   private onOpen(socket: MapSocket): void {
     socket.data = createPumpSocketData();
-    if (this.stopped || this.sockets.size >= this.maxConnections) {
+    const slot =
+      this.stopped || this.sockets.size >= this.maxConnections
+        ? null
+        : acquirePeerStreamSlot(this.row.targetNodeId, this.peerStreamLimit);
+    if (!slot) {
       try {
         socket.terminate();
       } catch {
@@ -108,6 +111,7 @@ export class PortMapListener {
       return;
     }
     this.sockets.add(socket);
+    socket.data.onDisposed = () => this.release(socket, slot);
     this.counters.activeConnections = this.sockets.size;
     this.counters.totalConnections += 1;
     try {
@@ -118,38 +122,53 @@ export class PortMapListener {
     void this.dial(socket);
   }
 
-  private onClose(socket: MapSocket): void {
-    if (socket.data) {
-      socket.data.closed = true;
-      socket.data.pump?.onClose();
-    }
+  private release(socket: MapSocket, slot: PeerStreamSlot): void {
     if (this.sockets.delete(socket)) this.counters.activeConnections = this.sockets.size;
+    slot.release();
   }
 
   private async dial(socket: MapSocket): Promise<void> {
     try {
-      const peers = this.peers();
-      if (!peers) throw new Error('mesh not ready');
-      const link = await peers.getLink(this.row.targetNodeId);
-      if (socket.data.closed || this.stopped) throw new Error('client gone');
-      const payload: TcpStreamOpenPayload = {
-        type: 'tcp',
-        mapId: this.row.id,
-        host: this.row.targetHost,
-        port: this.row.targetPort,
-      };
-      const stream = await link.openStream(encodeJsonBytes(payload));
-      if (socket.data.closed || this.stopped) {
-        stream.reset('portmap-client-gone');
-        throw new Error('client gone');
-      }
-      attachPump(socket.data, new TcpStreamPump(socket, stream, this.counters));
+      const stream = await this.openStream(socket);
+      attachPump(socket.data, new TcpStreamPump(bunPumpSocket(socket), stream, this.counters));
     } catch {
+      // 先 resume 再关：被 pause 压住的 close 事件否则出不来
       try {
+        socket.resume();
         socket.terminate();
       } catch {
         // 已经关闭
       }
+      disposePumpSocketData(socket.data);
     }
+  }
+
+  private async openStream(socket: MapSocket): Promise<LinkStream> {
+    const peers = this.peers();
+    if (!peers) throw new Error('mesh not ready');
+    const startedAt = Date.now();
+    const link = await withDeadline(
+      peers.getLink(this.row.targetNodeId),
+      this.dialDeadlineMs,
+      () => {}
+    );
+    if (socket.data.closed || this.stopped) throw new Error('client gone');
+    const payload: TcpStreamOpenPayload = {
+      type: 'tcp',
+      mapId: this.row.id,
+      host: this.row.targetHost,
+      port: this.row.targetPort,
+    };
+    const remaining = Math.max(1, this.dialDeadlineMs - (Date.now() - startedAt));
+    const stream = await withDeadline(
+      link.openStream(encodeJsonBytes(payload)),
+      remaining,
+      (late) => late.reset('portmap-dial-timeout')
+    );
+    if (socket.data.closed || this.stopped) {
+      stream.reset('portmap-client-gone');
+      throw new Error('client gone');
+    }
+    return stream;
   }
 }

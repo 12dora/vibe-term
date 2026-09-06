@@ -1,5 +1,6 @@
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
+import { getDb } from '../db/client';
 import { portMapExports, portMaps } from '../db/schema';
 import type { PortMapExportRow, PortMapRow } from './types';
 
@@ -166,4 +167,12 @@ export class MemoryPortMapExportStore implements PortMapExportStoreLike {
   remove(mapId: string): void {
     this.rows.delete(mapId);
   }
+}
+
+let exportStore: PortMapExportStoreLike | null = null;
+
+/** 网关级放行表单例：浏览器路由与 mesh 内部路由共用同一份。 */
+export function defaultPortMapExportStore(): PortMapExportStoreLike {
+  exportStore ??= new PortMapExportStore(getDb());
+  return exportStore;
 }

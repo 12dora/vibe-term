@@ -1,17 +1,21 @@
 import type { LinkStream } from '@tmex/shared/link';
+import { halfCloseSupported, shutdownWriteHalf } from './half-close';
 import type { PortMapCounters } from './types';
 
 /** socket → 流方向的兜底缓冲上限：正常路径上 pause 已经封住，越界说明对端行为异常。 */
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 /**
- * 拨号期间先攒下的数据上限。此时不能 pause socket——Bun 的暂停会连 close 事件一起压住，
- * 客户端中途断开就发现不了。
+ * 拨号窗口里的兜底缓冲上限。拨号期间 socket 是 pause 的，正常情况下这里始终为空；
+ * 留一份余量只为兜住 pause 生效前底层已经读上来的那一次数据。
  */
 const MAX_EARLY_BYTES = 1024 * 1024;
 
 export type PumpSocket = {
   write(data: Uint8Array): number;
-  end(): unknown;
+  /** 只关写半边、保留读半边。返回 false 表示环境不支持，socket 已被整条关掉。 */
+  endWrite(): boolean;
+  /** 两个方向都结束后的正常收尾（发 FIN，不发 RST）。 */
+  close(): void;
   terminate(): void;
   pause(): void;
   resume(): void;
@@ -24,10 +28,19 @@ export type PumpSocketData = {
   earlyBytes: number;
   fin: boolean;
   closed: boolean;
+  /** socket 真正处置掉（close/error/拨号失败）时回调一次，用来归还并发名额。 */
+  onDisposed: (() => void) | null;
 };
 
 export function createPumpSocketData(): PumpSocketData {
-  return { pump: null, early: [], earlyBytes: 0, fin: false, closed: false };
+  return { pump: null, early: [], earlyBytes: 0, fin: false, closed: false, onDisposed: null };
+}
+
+/** 幂等：无论 socket 是自己关的还是拨号失败被丢弃的，名额只归还一次。 */
+export function disposePumpSocketData(data: PumpSocketData): void {
+  const done = data.onDisposed;
+  data.onDisposed = null;
+  done?.();
 }
 
 export function attachPump(data: PumpSocketData, pump: TcpStreamPump): void {
@@ -37,9 +50,10 @@ export function attachPump(data: PumpSocketData, pump: TcpStreamPump): void {
   for (const chunk of data.early.splice(0)) pump.onData(chunk);
   if (data.fin) pump.onEnd();
   if (data.closed) pump.onClose();
+  pump.resumeReads();
 }
 
-/** 返回 false 表示拨号还没完成就攒过了上限，调用方应直接断开这条连接。 */
+/** 返回 false 表示拨号窗口里攒过了上限，调用方应直接断开这条连接。 */
 export function onSocketData(data: PumpSocketData, chunk: Uint8Array): boolean {
   // Bun 会复用回调里的底层缓冲，异步写出前必须拷一份
   const copy = new Uint8Array(chunk);
@@ -50,6 +64,35 @@ export function onSocketData(data: PumpSocketData, chunk: Uint8Array): boolean {
   data.early.push(copy);
   data.earlyBytes += copy.byteLength;
   return data.earlyBytes <= MAX_EARLY_BYTES;
+}
+
+/** 把 Bun 的 socket 适配成泵要的形状：写半边关闭走 POSIX shutdown，退化时才整条关。 */
+export function bunPumpSocket(socket: Bun.Socket<PumpSocketData>): PumpSocket {
+  const quietly = (fn: () => void): void => {
+    try {
+      fn();
+    } catch {
+      // 已经关闭
+    }
+  };
+  return {
+    write: (data) => socket.write(data),
+    endWrite: () => {
+      if (!halfCloseSupported()) {
+        quietly(() => socket.end());
+        return false;
+      }
+      // 与 socket.resume() 同一个 tick 里做 shutdown，Bun 会把读半边一起丢掉，推迟一个宏任务
+      setTimeout(() => {
+        if (!shutdownWriteHalf(socket)) quietly(() => socket.end());
+      }, 0);
+      return true;
+    },
+    close: () => quietly(() => socket.end()),
+    terminate: () => quietly(() => socket.terminate()),
+    pause: () => quietly(() => socket.pause()),
+    resume: () => quietly(() => socket.resume()),
+  };
 }
 
 /**
@@ -67,6 +110,7 @@ export class TcpStreamPump {
   private uploading = false;
   private paused = false;
   private localFin = false;
+  private writeHalfClosed = false;
   private streamEnded = false;
   private remoteEnded = false;
   private socketClosed = false;
@@ -86,6 +130,12 @@ export class TcpStreamPump {
       this.destroy('portmap-stream-aborted');
     });
     void this.runDownlink();
+  }
+
+  /** 拨号期间可能被停读过，接上泵之后由泵决定继续读还是保持暂停。 */
+  resumeReads(): void {
+    if (this.paused || this.destroyed || this.socketClosed) return;
+    this.socket.resume();
   }
 
   /** 本地 socket 收到数据。 */
@@ -111,16 +161,15 @@ export class TcpStreamPump {
     for (const waiter of waiters) waiter(true);
   }
 
-  /** 本地 socket 收到 FIN。 */
+  /** 本地 socket 收到 FIN：读半边到头，写半边照旧。 */
   onEnd(): void {
+    if (this.localFin) return;
     this.localFin = true;
     if (!this.uploading) void this.endStream();
+    if (this.remoteEnded) this.socket.close();
   }
 
-  /**
-   * 本地 socket 关闭。对端已经 END 时视为正常收尾——Bun 的 `socket.end()` 会连读半边一起关，
-   * 收到 END 后关 socket 是唯一能把 EOF 传给本地客户端的做法，不该再回一个 RST。
-   */
+  /** 本地 socket 关闭。对端已经 END 时视为正常收尾，不再回 RST。 */
   onClose(): void {
     if (this.socketClosed) return;
     this.socketClosed = true;
@@ -139,11 +188,7 @@ export class TcpStreamPump {
     if (this.destroyed) return;
     this.destroyed = true;
     this.resetStream(reason);
-    try {
-      this.socket.terminate();
-    } catch {
-      // 已经关闭
-    }
+    this.socket.terminate();
   }
 
   private resetStream(reason: string): void {
@@ -162,6 +207,20 @@ export class TcpStreamPump {
     } catch {
       // 对端已经收掉
     }
+  }
+
+  /**
+   * 对端 END：把 FIN 传给本地 socket，但保留读半边——目标服务完全可能读到 EOF 之后才产生响应。
+   * 两个方向都结束时才整条关闭。
+   */
+  private finishWriteHalf(): void {
+    if (this.writeHalfClosed || this.socketClosed || this.destroyed) return;
+    this.writeHalfClosed = true;
+    if (this.localFin) {
+      this.socket.close();
+      return;
+    }
+    this.socket.endWrite();
   }
 
   private async flushUplink(): Promise<void> {
@@ -200,7 +259,7 @@ export class TcpStreamPump {
         this.counters.bytesIn += bytes.byteLength;
       }
       this.remoteEnded = true;
-      if (!this.socketClosed && !this.destroyed) this.socket.end();
+      this.finishWriteHalf();
     } catch {
       if (!this.destroyed) this.destroy('portmap-socket-write-failed');
     } finally {

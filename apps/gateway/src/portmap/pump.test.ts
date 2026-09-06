@@ -5,10 +5,16 @@ import {
   type PumpSocketData,
   TcpStreamPump,
   attachPump,
+  bunPumpSocket,
   createPumpSocketData,
-  onSocketData,
 } from './pump';
-import { type EchoServer, startEchoServer, startFinServer } from './test-echo-server';
+import { pumpSocketHandlers } from './socket-handlers';
+import {
+  type EchoServer,
+  startAfterFinServer,
+  startEchoServer,
+  startFinServer,
+} from './test-echo-server';
 import { type PortMapCounters, createPortMapCounters } from './types';
 
 type Fixture = {
@@ -33,30 +39,10 @@ async function connectPump(port: number): Promise<Fixture> {
     port,
     allowHalfOpen: true,
     data,
-    socket: {
-      binaryType: 'uint8array',
-      data(sock, chunk) {
-        onSocketData(sock.data, chunk as unknown as Uint8Array);
-      },
-      drain(sock) {
-        sock.data.pump?.onDrain();
-      },
-      end(sock) {
-        sock.data.fin = true;
-        sock.data.pump?.onEnd();
-      },
-      close(sock) {
-        sock.data.closed = true;
-        sock.data.pump?.onClose();
-      },
-      error(sock) {
-        sock.data.closed = true;
-        sock.data.pump?.onClose();
-      },
-    },
+    socket: pumpSocketHandlers(() => {}),
   });
   const counters = createPortMapCounters();
-  const pump = new TcpStreamPump(socket, local, counters);
+  const pump = new TcpStreamPump(bunPumpSocket(socket), local, counters);
   attachPump(data, pump);
   cleanups.push(() => {
     try {
@@ -147,7 +133,23 @@ describe('portmap pump', () => {
     await fx.remote.end();
     const info = await fx.remote.closed;
     expect(info.reason).toBe('end');
+    await Bun.sleep(50);
     expect(fx.socket.readyState).not.toBe(1);
+  });
+
+  test('keeps the read half after a stream END so a reply produced on EOF still arrives', async () => {
+    const server = startAfterFinServer(new TextEncoder().encode('reply-after-fin'));
+    echo = server;
+    const fx = await connectPump(server.port);
+    await fx.remote.write(new TextEncoder().encode('request'));
+    // 对端 END：泵只该关掉本地 socket 的写半边，目标要在读到 EOF 之后才回复
+    await fx.remote.end();
+    const back = await readExactly(fx.remote, 15);
+    expect(new TextDecoder().decode(back)).toBe('reply-after-fin');
+    expect(server.received()).toBe(7);
+    await Bun.sleep(20);
+    expect(fx.counters.bytesIn).toBe(7);
+    expect(fx.counters.bytesOut).toBe(15);
   });
 
   test('resetting the stream terminates the socket', async () => {

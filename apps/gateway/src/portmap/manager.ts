@@ -32,6 +32,7 @@ export type PortMapManagerDeps = {
   reservedPorts?: () => number[];
   now?: () => number;
   maxConnections?: number;
+  peerStreamLimit?: number;
 };
 
 type Entry = {
@@ -55,6 +56,7 @@ export class PortMapManager {
   private readonly reservedPorts: () => number[];
   private readonly now: () => number;
   private readonly maxConnections: number | undefined;
+  private readonly peerStreamLimit: number | undefined;
   private readonly entries = new Map<string, Entry>();
   private started = false;
 
@@ -64,6 +66,7 @@ export class PortMapManager {
     this.reservedPorts = deps.reservedPorts ?? defaultReservedPorts;
     this.now = deps.now ?? Date.now;
     this.maxConnections = deps.maxConnections;
+    this.peerStreamLimit = deps.peerStreamLimit;
   }
 
   /** 开机恢复：未暂停的行逐条起监听，端口被占的保留行并标 error。 */
@@ -113,6 +116,10 @@ export class PortMapManager {
     return this.toDto(entry);
   }
 
+  /**
+   * 恢复必须「先绑上再落库」：绑定失败时行仍是 paused，端口空出来后再 PATCH 一次还能重试。
+   * 只要请求的状态是未暂停且当前没有监听，就重试一次绑定——开机时端口被占的行也走这条路。
+   */
   update(id: string, patch: UpdatePortMapRequest): PortMapDto {
     const entry = this.require(id);
     const name = patch.name === undefined ? undefined : assertName(patch.name, 'name');
@@ -120,7 +127,8 @@ export class PortMapManager {
     if (paused !== undefined && typeof paused !== 'boolean') {
       throw new PortMapError('invalid_request', 'paused must be a boolean');
     }
-    const wasPaused = entry.row.paused;
+    if (paused === true) this.stopEntry(entry);
+    if (paused === false && !entry.listener) this.resumeEntry(entry);
     const updatedAt = this.now();
     this.store.update(id, {
       updatedAt,
@@ -133,12 +141,18 @@ export class PortMapManager {
       ...(paused === undefined ? {} : { paused }),
       updatedAt,
     };
-    if (paused === true) this.stopEntry(entry);
-    if (paused === false && wasPaused) {
-      this.checkPortAvailable(entry.row.listenHost, entry.row.listenPort, entry.row.id);
-      this.startEntry(entry);
-    }
     return this.toDto(entry);
+  }
+
+  private resumeEntry(entry: Entry): void {
+    const wasPaused = entry.row.paused;
+    this.checkPortAvailable(entry.row.listenHost, entry.row.listenPort, entry.row.id);
+    entry.row = { ...entry.row, paused: false };
+    this.startEntry(entry);
+    if (entry.listener) return;
+    const code = entry.error ?? 'bind_failed';
+    entry.row = { ...entry.row, paused: wasPaused };
+    throw new PortMapError(code, `failed to bind ${entry.row.listenHost}:${entry.row.listenPort}`);
   }
 
   remove(id: string): void {
@@ -187,6 +201,7 @@ export class PortMapManager {
       peers: this.peers,
       counters: entry.counters,
       ...(this.maxConnections === undefined ? {} : { maxConnections: this.maxConnections }),
+      ...(this.peerStreamLimit === undefined ? {} : { peerStreamLimit: this.peerStreamLimit }),
     });
     try {
       listener.start();

@@ -85,3 +85,79 @@ export function startFinServer(payload: Uint8Array): EchoServer {
     stop: () => server.stop(true),
   };
 }
+
+/** 收到 FIN 之后才产生响应：用于验证写半边关闭没把读半边一起带走。 */
+export function startAfterFinServer(payload: Uint8Array): EchoServer & { received: () => number } {
+  const state = { connections: 0, received: 0 };
+  const server = Bun.listen<EchoData>({
+    hostname: '127.0.0.1',
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      binaryType: 'uint8array',
+      open(socket) {
+        socket.data = { queue: [], fin: false };
+        state.connections += 1;
+      },
+      data(_socket, chunk) {
+        state.received += (chunk as unknown as Uint8Array).byteLength;
+      },
+      end(socket) {
+        socket.write(payload);
+        socket.end();
+      },
+    },
+  });
+  return {
+    port: server.port,
+    get connections() {
+      return state.connections;
+    },
+    received: () => state.received,
+    stop: () => server.stop(true),
+  };
+}
+
+/** 一开始完全不读的回声服务：用来把流的窗口撑满，验证背压而不是缓冲。 */
+export function startSlowEchoServer(): EchoServer & { release: () => void } {
+  const state = { connections: 0 };
+  const held: Array<Bun.Socket<EchoData>> = [];
+  let releasedAll = false;
+  const server = Bun.listen<EchoData>({
+    hostname: '127.0.0.1',
+    port: 0,
+    allowHalfOpen: true,
+    socket: {
+      binaryType: 'uint8array',
+      open(socket) {
+        socket.data = { queue: [], fin: false };
+        state.connections += 1;
+        if (releasedAll) return;
+        socket.pause();
+        held.push(socket);
+      },
+      data(socket, chunk) {
+        socket.data.queue.push(new Uint8Array(chunk as unknown as Uint8Array));
+        flush(socket);
+      },
+      drain(socket) {
+        flush(socket);
+      },
+      end(socket) {
+        socket.data.fin = true;
+        flush(socket);
+      },
+    },
+  });
+  return {
+    port: server.port,
+    get connections() {
+      return state.connections;
+    },
+    release() {
+      releasedAll = true;
+      for (const socket of held.splice(0)) socket.resume();
+    },
+    stop: () => server.stop(true),
+  };
+}

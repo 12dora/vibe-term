@@ -18,11 +18,12 @@ type Harness = {
   routes: ApiRoute[];
   manager: PortMapManager;
   exports: MemoryPortMapExportStore;
+  cleanups: Array<{ nodeId: string; mapId: string }>;
 };
 
 const managers: PortMapManager[] = [];
 
-function harness(): Harness {
+function harness(exportRemoved = false): Harness {
   const manager = new PortMapManager({
     store: new MemoryPortMapStore(),
     peers: () => null,
@@ -31,10 +32,19 @@ function harness(): Harness {
   managers.push(manager);
   manager.start();
   const exports = new MemoryPortMapExportStore();
+  const cleanups: Array<{ nodeId: string; mapId: string }> = [];
   return {
     manager,
     exports,
-    routes: createPortMapRoutes({ manager: () => manager, exports: () => exports }),
+    cleanups,
+    routes: createPortMapRoutes({
+      manager: () => manager,
+      exports: () => exports,
+      removePeerExport: async (nodeId, mapId) => {
+        cleanups.push({ nodeId, mapId });
+        return exportRemoved;
+      },
+    }),
   };
 }
 
@@ -174,5 +184,33 @@ describe('portmap routes', () => {
     } finally {
       server.stop(true);
     }
+  });
+
+  test('delete reports whether the export on the target node was removed', async () => {
+    const h = harness(true);
+    await call(h, 'POST', '/api/portmap', {
+      listenPort: freePort(),
+      targetNodeId: NODE,
+      targetPort: 5432,
+      mapId: 'route-map-003',
+    });
+    const removed = await call(h, 'DELETE', '/api/portmap/route-map-003');
+    expect(removed.json).toEqual({ ok: true, exportRemoved: true });
+    expect(h.cleanups).toEqual([{ nodeId: NODE, mapId: 'route-map-003' }]);
+
+    const stubborn = harness(false);
+    await call(stubborn, 'POST', '/api/portmap', {
+      listenPort: freePort(),
+      targetNodeId: NODE,
+      targetPort: 5432,
+      mapId: 'route-map-004',
+    });
+    expect((await call(stubborn, 'DELETE', '/api/portmap/route-map-004')).json).toEqual({
+      ok: true,
+      exportRemoved: false,
+    });
+    const missing = await call(stubborn, 'DELETE', '/api/portmap/nope');
+    expect(missing.status).toBe(404);
+    expect(stubborn.cleanups).toHaveLength(1);
   });
 });

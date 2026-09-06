@@ -6,10 +6,10 @@ import type {
 } from '@tmex/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
-import { getDb } from '../db/client';
+import { requestPeerExportRemoval } from './export-cleanup';
 import { type PortMapManager, portMapManager } from './manager';
 import { isPortListening } from './port-probe';
-import { PortMapExportStore, type PortMapExportStoreLike } from './store';
+import { type PortMapExportStoreLike, defaultPortMapExportStore } from './store';
 import {
   PortMapError,
   type PortMapExportRow,
@@ -24,6 +24,8 @@ import {
 type Deps = {
   manager: () => PortMapManager;
   exports: () => PortMapExportStoreLike;
+  /** 删除映射时顺手清 B 的放行行；尽力而为，返回是否已清掉。 */
+  removePeerExport: (nodeId: string, mapId: string) => Promise<boolean>;
 };
 
 /** 顶层再放一份 code：api-client 的 `toApiError` 只认顶层 `code` 字段。 */
@@ -207,29 +209,28 @@ function itemRoutes(deps: Deps): ApiRoute[] {
     route({
       method: 'DELETE',
       path: '/api/portmap/:id',
-      handler: (_req, params) => {
+      handler: async (_req, params) => {
+        let targetNodeId: string;
         try {
+          targetNodeId = deps.manager().get(params.id).targetNodeId;
           deps.manager().remove(params.id);
-          return json({ ok: true });
         } catch (err) {
           return errorResponse(err);
         }
+        return json({
+          ok: true,
+          exportRemoved: await deps.removePeerExport(targetNodeId, params.id),
+        });
       },
     }),
   ];
 }
 
-let exportStore: PortMapExportStoreLike | null = null;
-
-function defaultExportStore(): PortMapExportStoreLike {
-  exportStore ??= new PortMapExportStore(getDb());
-  return exportStore;
-}
-
 export function createPortMapRoutes(deps: Partial<Deps> = {}): ApiRoute[] {
   const resolved: Deps = {
     manager: deps.manager ?? portMapManager,
-    exports: deps.exports ?? defaultExportStore,
+    exports: deps.exports ?? defaultPortMapExportStore,
+    removePeerExport: deps.removePeerExport ?? requestPeerExportRemoval,
   };
   return [
     ...probeRoutes(resolved),
