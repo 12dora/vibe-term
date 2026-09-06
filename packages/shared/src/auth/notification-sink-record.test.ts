@@ -11,7 +11,6 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEY_LOG_SIGNER_MATRIX,
   MIN_NOTIFICATION_SINK_RECORD_VERSION,
-  NOTIFICATION_SINK_RECORD_TYPES,
   type UserKeyState,
   applyKeyLogRecord,
   buildKeyLogRecord,
@@ -121,10 +120,12 @@ describe('notification-sink payload', () => {
 describe('notification-sink record', () => {
   it('是用户签名记录：签名者只能是 root / passkey，且带版本门', () => {
     expect(KEY_LOG_SIGNER_MATRIX['notification-sink']).toEqual(['root', 'passkey']);
-    expect(NOTIFICATION_SINK_RECORD_TYPES).toEqual(['notification-sink']);
+    // 版本未知的已入网成员（中继模式下没进 peer_cache 的离线节点）也要挡住：
+    // 旧节点解不开这条记录，写进去等于把它的密钥日志同步卡死。
     expect(KEYLOG_RECORD_COMPAT['notification-sink']).toEqual({
       minVersion: MIN_NOTIFICATION_SINK_RECORD_VERSION,
       allowForce: false,
+      failClosedUncached: true,
     });
     expect(MIN_NOTIFICATION_SINK_RECORD_VERSION).toBe('1.1.39');
   });

@@ -95,6 +95,10 @@ POST /api/mesh-internal/notifications
 - **回插溢出**：投递失败的那条回插队首时若队列已满，丢的是**这条最旧的**（记
   `reason=overflow`），不能反过来把队尾刚入队的新事件挤掉；
 - **终止性失败**：汇聚机回 4xx（典型是开关已关的 404）直接丢弃不再重试，429 例外（当作可重试）；
+- **投递前复核声明**：每次投递（含每次重试）之前重新问一遍「这台还是签过名的汇聚机吗」，
+  不是就地丢掉整条队列（`reason=unauthorized`）并 abort 在途请求；`notification-sink` 记录
+  一落地，`key-log-projection` 立刻调 `pruneUnauthorizedSinks()` 收掉被撤销的队列。
+  入队时通过不等于重试时仍然通过：被攻陷的汇聚机可以先让投递失败，等声明被撤销后再收下重试件；
 - **生命周期**：队列被移出集合（`forget`）或 mesh 桥被替换/清空（`setMeshNotificationBridge`
   的变更回调 → `MeshForwardChannel.detach()`）后，定时器与在途投递一并取消，退休的运行时上
   不会再排队；
@@ -160,6 +164,8 @@ POST /api/mesh-internal/notifications
   inventory 不再被读），也不能替别人撤销声明；被攻陷的 hub / 中继同样伪造不出记录——
   链是 prev_hash 串起来的，签名者只能是 root 或 passkey，改一条就整链验不过。
 - 转发件的来源同样不可伪造：`origin.nodeId` 必须与已认证的对端标记一致，否则 400。
+- 声明撤销即时生效于**发送侧**：队列每次投递前复核，桥的 `deliver()` 再兜一道（未授权就地
+  回 403 不出网）。不能只靠汇聚机自己回 404——被攻陷的汇聚机不会拒收。
 
 ## 兼容性
 
@@ -168,6 +174,9 @@ POST /api/mesh-internal/notifications
   `KEYLOG_RECORD_COMPAT`：全网未吊销节点都 ≥ **1.1.39** 才允许写，否则
   `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`，卡片上提示「有节点版本低于 1.1.39，须先升级全部节点」。
   不允许 force 绕过。
+- 版本门对**版本未知的成员**同样 fail closed（兼容规格里的 `failClosedUncached`，与
+  `readmit-node` 同一档）：中继模式下 `peer_cache` 只覆盖握过手的对端，默认策略会跳过
+  没进表的已入网节点——对这类记录跳过等于把那台离线老节点的密钥日志同步写死。
 - 1.1.38 及更早的节点仍在 inventory 里发 `notifySink`，新版本一概忽略：混合版本的网络里，
   旧节点声明的汇聚身份对新节点无效（新节点不会往它转发），升级后由用户在设置里重新打开一次
   开关（签一条记录）即可恢复。旧节点自己仍按老逻辑读 inventory，看不到新记录，也不会因此出错。

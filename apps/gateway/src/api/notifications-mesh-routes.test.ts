@@ -48,6 +48,7 @@ describe('/api/notifications/mesh', () => {
       selfNodeId: () => 'node-a',
       selfName: () => 'A',
       selfSinkEnabled: () => true,
+      sinkAuthorized: () => true,
       listSinks: () => [{ nodeId: 'node-a', name: 'A', self: true, online: true }],
       deliver: async () => new Response('{}'),
     });

@@ -21,21 +21,33 @@ export const ROTATE_ROOT_KEEP_RECORD_TYPES = ['rotate-root-keep'] as const;
 export type KeyLogRecordCompatSpec = {
   minVersion: string;
   allowForce: boolean;
+  /**
+   * 版本未知的成员也要挡住。
+   *
+   * 中继模式下 `peer_cache` 只覆盖握过手的对端，一台离线的已入网节点在表里没有行、版本无从得知；
+   * 默认策略是「已有其它对端可比对时跳过这些行」（否则首台接入永远写不进去）。
+   * 但对**旧节点解不开就会卡住整条链**的记录类型，跳过等于把对方的密钥日志同步写死，
+   * 因此这类记录一律 fail closed：宁可拒写，也不能写坏别人的链。
+   */
+  failClosedUncached?: boolean;
 };
 
 export const RELAY_RECORD_TYPES = ['set-relays', 'meta-key'] as const;
 export const RENAME_NODE_RECORD_TYPES = ['rename-node'] as const;
-export const READMIT_NODE_RECORD_TYPES = ['readmit-node'] as const;
-export const NOTIFICATION_SINK_RECORD_TYPES = ['notification-sink'] as const;
 
 export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRecordCompatSpec>>> = {
   'set-relays': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
   'meta-key': { minVersion: MIN_RELAY_RECORD_VERSION, allowForce: false },
   'rename-node': { minVersion: MIN_RENAME_NODE_RECORD_VERSION, allowForce: false },
-  'readmit-node': { minVersion: MIN_READMIT_NODE_RECORD_VERSION, allowForce: false },
+  'readmit-node': {
+    minVersion: MIN_READMIT_NODE_RECORD_VERSION,
+    allowForce: false,
+    failClosedUncached: true,
+  },
   'notification-sink': {
     minVersion: MIN_NOTIFICATION_SINK_RECORD_VERSION,
     allowForce: false,
+    failClosedUncached: true,
   },
   'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },

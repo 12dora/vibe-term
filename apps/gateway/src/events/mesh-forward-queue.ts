@@ -13,7 +13,7 @@ export const MESH_FORWARD_DELIVER_TIMEOUT_MS = 15_000;
 /** 重试退避：1/2/4/8 s，之后恒定 15 s 封顶。 */
 export const MESH_FORWARD_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 
-export type MeshForwardDropReason = 'overflow' | 'expired';
+export type MeshForwardDropReason = 'overflow' | 'expired' | 'unauthorized';
 
 export type MeshForwardEntry = {
   key: string;
@@ -104,6 +104,12 @@ export class MeshForwardQueue {
 
   clear(): void {
     this.items.length = 0;
+  }
+
+  /** 丢掉剩余全部条目并逐条计数上报（汇聚机的签名声明被撤销时用）。 */
+  discard(reason: MeshForwardDropReason): void {
+    const items = this.items.splice(0, this.items.length);
+    for (const entry of items) this.drop(entry, reason);
   }
 
   private drop(entry: MeshForwardEntry, reason: MeshForwardDropReason): void {

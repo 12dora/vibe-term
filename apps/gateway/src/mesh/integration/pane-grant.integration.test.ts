@@ -5,8 +5,8 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@tmex/shared/link';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
-import { resetPaneGrantClientForTests } from '../../agent/pane-grant/client';
-import { paneGrantRoutes } from '../../agent/pane-grant/routes';
+import { ensureSessionGrant, resetPaneGrantClientForTests } from '../../agent/pane-grant/client';
+import { createPaneGrantRoutes } from '../../agent/pane-grant/routes';
 import { defaultPaneGrantVerifier } from '../../agent/pane-grant/rpc-guard';
 import { defaultAgentRunDeps } from '../../agent/run-deps';
 import type { AgentSupervisor } from '../../agent/supervisor';
@@ -33,6 +33,13 @@ const NODE_X = 'a'.repeat(32);
 const NODE_Y = 'b'.repeat(32);
 const DEVICE_Y = 'pane-grant-e2e-device';
 const PANE = '%5';
+const SERVER_EPOCH = new Uint8Array(16).fill(0x5a);
+
+/** Y 侧的签发路由：设备与 tmux server 世代都由测试运行时给。 */
+const targetGrantRoutes = createPaneGrantRoutes({
+  deviceExists: (deviceId) => deviceId === DEVICE_Y,
+  serverEpochOf: async () => serverEpochHex,
+});
 
 function fakeTmuxRuntime() {
   const state = {
@@ -48,6 +55,7 @@ function fakeTmuxRuntime() {
     async capturePaneText() {
       return 'remote-screen';
     },
+    getServerEpoch: () => serverEpoch,
     async getPaneInfo() {
       return {
         cols: 80,
@@ -62,6 +70,10 @@ function fakeTmuxRuntime() {
   return state;
 }
 
+let serverEpoch: Uint8Array | null = SERVER_EPOCH;
+let serverEpochHex: string | null = Array.from(SERVER_EPOCH, (b) =>
+  b.toString(16).padStart(2, '0')
+).join('');
 let runtime = fakeTmuxRuntime();
 let sessionStore: NodeSessionStore;
 let sid = '';
@@ -83,7 +95,7 @@ async function dispatchNewTarget(req: Request): Promise<Response> {
   if (isMeshInternalPath(path)) {
     return handleMeshInternalTmuxRequest(req, tmuxDeps());
   }
-  const matched = dispatchRoutes(req, path, paneGrantRoutes, { path });
+  const matched = dispatchRoutes(req, path, targetGrantRoutes, { path });
   return matched
     ? await matched
     : new Response(JSON.stringify({ error: 'not_found' }), { status: 404 });
@@ -93,7 +105,11 @@ async function dispatchNewTarget(req: Request): Promise<Response> {
 async function dispatchOldTarget(req: Request): Promise<Response> {
   const path = new URL(req.url).pathname;
   if (isMeshInternalPath(path)) {
-    return handleMeshInternalTmuxRequest(req, tmuxDeps({ verifyGrant: () => ({ ok: true }) }));
+    return handleMeshInternalTmuxRequest(
+      req,
+      // 旧版本不校验授权，世代按运行时当前值放行
+      tmuxDeps({ verifyGrant: () => ({ ok: true, grantId: null, serverEpoch: serverEpochHex }) })
+    );
   }
   return new Response(JSON.stringify({ error: 'not found' }), { status: 404 });
 }
@@ -184,6 +200,7 @@ describe('远程窗格授权（真实 peer 链路）', () => {
     getDb().delete(agentSessions).run();
     getDb().delete(devices).run();
     resetPaneGrantClientForTests();
+    serverEpoch = SERVER_EPOCH;
     runtime = fakeTmuxRuntime();
     const now = new Date().toISOString();
     createDevice({
@@ -275,5 +292,30 @@ describe('远程窗格授权（真实 peer 链路）', () => {
     expect(created.status).toBe(401);
     expect(created.json).toMatchObject({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE_Y });
     expect(getDb().select().from(agentSessions).all()).toEqual([]);
+  });
+
+  test('目标 tmux 重启（server 世代变了）→ 旧授权失效，下一次用户请求重签后恢复', async () => {
+    connect(dispatchNewTarget);
+    const created = await createSession();
+    const session = created.json.session as { id: string };
+    await sendInputThroughRuntime(session.id, 'before\n');
+    expect(runtime.writes).toHaveLength(1);
+
+    // tmux 重启：窗格号会重号，旧授权不该再指向新窗格
+    const restarted = new Uint8Array(16).fill(0x77);
+    serverEpoch = restarted;
+    serverEpochHex = Array.from(restarted, (b) => b.toString(16).padStart(2, '0')).join('');
+    await expect(sendInputThroughRuntime(session.id, 'after\n')).rejects.toThrow(
+      'PANE_GRANT_INVALID'
+    );
+    expect(runtime.writes).toHaveLength(1);
+
+    // 下一次带 cookie 的会话请求补签，绑定到新世代
+    const stored = getAgentSessionById(session.id);
+    if (!stored) throw new Error('session missing');
+    const ensured = await ensureSessionGrant(browserRequest(), stored);
+    expect(ensured.ok).toBe(true);
+    await sendInputThroughRuntime(session.id, 'healed\n');
+    expect(runtime.writes.at(-1)).toEqual({ paneId: PANE, data: 'healed\n' });
   });
 });

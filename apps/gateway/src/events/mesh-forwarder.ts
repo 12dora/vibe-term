@@ -6,6 +6,9 @@
 // 两条硬约束：
 //   1. 单次投递有截止时间（默认 15 s），对端卡住时按可重试失败处理，队列继续排空；
 //   2. 队列被 forget/stop 丢弃后不得再排队、再起定时器（每个 await 之后重新检查 disposed）。
+//
+// 每次投递（含每次重试）之前都要重新问一遍「这台还是用户签过的汇聚机吗」：入队时通过不等于
+// 重试时仍然通过——被攻陷的汇聚机可以先让投递失败，等声明被撤销后再收下重试件。
 
 import type { MeshNotificationForwardRequest } from '@tmex/shared';
 import {
@@ -27,6 +30,8 @@ export type MeshForwardDeliver = (
 export type MeshForwarderDeps = {
   /** 投递一条；抛错、返回非 2xx 或超过截止时间均视为失败并重试。 */
   deliver: MeshForwardDeliver;
+  /** 当前是否仍是用户签过的汇聚机；每次投递前重新问一次，不成立即丢队列。 */
+  isSinkAuthorized?: (sinkNodeId: string) => boolean;
   now?: () => number;
   /** 返回取消函数；默认 setTimeout。 */
   delay?: (ms: number, fn: () => void) => () => void;
@@ -38,6 +43,7 @@ export type MeshForwarderDeps = {
 
 type ResolvedDeps = {
   deliver: MeshForwardDeliver;
+  isSinkAuthorized: (sinkNodeId: string) => boolean;
   now: () => number;
   delay: (ms: number, fn: () => void) => () => void;
   log: (line: string) => void;
@@ -67,10 +73,13 @@ export class MeshNotificationForwarder {
   private readonly lanes = new Map<string, SinkLane>();
   private readonly deps: ResolvedDeps;
   private stopped = false;
+  /** 已经被移除的队列贡献的丢弃数：队列一删，它自己的计数就不在 `lanes` 里了。 */
+  private retiredDropped = 0;
 
   constructor(deps: MeshForwarderDeps) {
     this.deps = {
       deliver: deps.deliver,
+      isSinkAuthorized: deps.isSinkAuthorized ?? (() => true),
       now: deps.now ?? (() => Date.now()),
       delay: deps.delay ?? defaultDelay,
       log: deps.log ?? ((line: string) => console.warn(line)),
@@ -88,20 +97,23 @@ export class MeshNotificationForwarder {
   }
 
   get dropped(): number {
-    let total = 0;
+    let total = this.retiredDropped;
     for (const lane of this.lanes.values()) total += lane.queue.dropped;
     return total;
   }
 
   enqueue(sinkNodeId: string, body: MeshNotificationForwardRequest): void {
-    if (this.stopped) return;
+    if (this.stopped || !this.deps.isSinkAuthorized(sinkNodeId)) return;
     const lane = this.laneOf(sinkNodeId);
     lane.queue.push(body, this.deps.now());
     this.kick(sinkNodeId, lane);
   }
 
-  /** 汇聚机被移出集合：丢掉它的队列，别继续占内存和重试。 */
-  forget(sinkNodeId: string): void {
+  /**
+   * 汇聚机被移出集合：丢掉它的队列，取消在途投递，别继续占内存和重试。
+   * 声明被撤销时传 `'unauthorized'`，队列里剩下的事件逐条计入丢弃并打日志。
+   */
+  forget(sinkNodeId: string, reason?: 'unauthorized'): void {
     const lane = this.lanes.get(sinkNodeId);
     if (!lane) return;
     this.lanes.delete(sinkNodeId);
@@ -110,7 +122,16 @@ export class MeshNotificationForwarder {
     lane.timer = null;
     lane.inflight?.abort();
     lane.inflight = null;
-    lane.queue.clear();
+    if (reason) lane.queue.discard(reason);
+    else lane.queue.clear();
+    this.retiredDropped += lane.queue.dropped;
+  }
+
+  /** 汇聚声明变更后调用：把已经不在集合里的队列连同在途投递一并收掉。 */
+  pruneUnauthorized(): void {
+    for (const id of [...this.lanes.keys()]) {
+      if (!this.deps.isSinkAuthorized(id)) this.forget(id, 'unauthorized');
+    }
   }
 
   /** 桥被替换/清空时调用：不再接受入队，取消全部定时器与在途投递。 */
@@ -172,6 +193,11 @@ export class MeshNotificationForwarder {
     lane.draining = true;
     try {
       while (this.alive(sinkNodeId, lane)) {
+        // 投递前重新核对签名声明：撤销后队列里的事件一条都不许再发出去。
+        if (!this.deps.isSinkAuthorized(sinkNodeId)) {
+          this.forget(sinkNodeId, 'unauthorized');
+          return;
+        }
         const entry = lane.queue.shift(this.deps.now());
         if (!entry) {
           lane.attempt = 0;

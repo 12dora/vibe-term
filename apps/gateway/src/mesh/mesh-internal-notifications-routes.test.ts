@@ -214,6 +214,7 @@ describe('默认判据：签名声明 + 本机开关', () => {
       selfNodeId: () => 'node-a',
       selfName: () => 'A 机',
       selfSinkEnabled: () => selfSinkEnabled,
+      sinkAuthorized: () => false,
       listSinks: () => [],
       deliver: async () => new Response('{}'),
     });

@@ -76,7 +76,7 @@ function fakeDeps(
     acquire: async () => runtime,
     release: async () => {},
     deviceExists: () => true,
-    verifyGrant: () => ({ ok: true }),
+    verifyGrant: () => ({ ok: true, grantId: null, serverEpoch: null }),
     ...overrides,
   };
 }
@@ -210,6 +210,8 @@ describe('mesh-internal tmux routes', () => {
 const GRANT_NODE_X = 'a'.repeat(32);
 const GRANT_NODE_Z = 'c'.repeat(32);
 const GRANT_DEVICE = 'grant-rpc-device';
+const GRANT_EPOCH = new Uint8Array(16).fill(0xab);
+const GRANT_EPOCH_HEX = 'ab'.repeat(16);
 
 /** 真授权账本（不 stub verifyGrant），验证三条 RPC 的闸门确实接在存储上。 */
 describe('mesh-internal tmux routes: 窗格授权闸', () => {
@@ -230,11 +232,23 @@ describe('mesh-internal tmux routes: 窗格授权闸', () => {
     };
   }
 
-  function issue(overrides: { fromNodeId?: string; paneId?: string; now?: number } = {}) {
+  /** 带 server 世代的假运行时：世代变了就等于 tmux 重启过。 */
+  function epochRuntime(epoch: Uint8Array | null = GRANT_EPOCH) {
+    const runtime = fakeRuntime() as ReturnType<typeof fakeRuntime> & {
+      getServerEpoch(): Uint8Array | null;
+    };
+    runtime.getServerEpoch = () => epoch;
+    return runtime;
+  }
+
+  function issue(
+    overrides: { fromNodeId?: string; paneId?: string; now?: number; serverEpoch?: string } = {}
+  ) {
     return issuePaneGrant({
       fromNodeId: overrides.fromNodeId ?? GRANT_NODE_X,
       deviceId: GRANT_DEVICE,
       paneId: overrides.paneId ?? '%3',
+      serverEpoch: overrides.serverEpoch ?? GRANT_EPOCH_HEX,
       ...(overrides.now === undefined ? {} : { now: overrides.now }),
     });
   }
@@ -271,7 +285,7 @@ describe('mesh-internal tmux routes: 窗格授权闸', () => {
   });
 
   test('授权有效 → 放行', async () => {
-    const runtime = fakeRuntime();
+    const runtime = epochRuntime();
     const grant = issue();
     for (const path of PATHS) {
       const res = await handleMeshInternalTmuxRequest(
@@ -284,7 +298,7 @@ describe('mesh-internal tmux routes: 窗格授权闸', () => {
   });
 
   test('别的节点拿着授权 / 换窗格 / 已过期 → 403 PANE_GRANT_INVALID', async () => {
-    const runtime = fakeRuntime();
+    const runtime = epochRuntime();
     const grant = issue();
 
     const wrongPeer = await handleMeshInternalTmuxRequest(
@@ -311,7 +325,7 @@ describe('mesh-internal tmux routes: 窗格授权闸', () => {
   });
 
   test('伪造 token → 403，且不触碰 runtime', async () => {
-    const runtime = fakeRuntime();
+    const runtime = epochRuntime();
     const grant = issue();
     const res = await handleMeshInternalTmuxRequest(
       peerRequest(
@@ -323,5 +337,23 @@ describe('mesh-internal tmux routes: 窗格授权闸', () => {
     );
     expect(res.status).toBe(403);
     expect(runtime.connectCalls).toBe(0);
+  });
+
+  test('tmux 重启（server 世代变了）→ 403，并当场作废这张授权', async () => {
+    const grant = issue();
+    const restarted = epochRuntime(new Uint8Array(16).fill(0x11));
+    const res = await handleMeshInternalTmuxRequest(
+      peerRequest(PATHS[2], bodyFor(PATHS[2], grant), GRANT_NODE_X),
+      realDeps(restarted)
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { code: string }).code).toBe('PANE_GRANT_INVALID');
+    expect(restarted.writes).toEqual([]);
+    // 作废之后连原世代的运行时也不再放行，必须重签
+    const again = await handleMeshInternalTmuxRequest(
+      peerRequest(PATHS[2], bodyFor(PATHS[2], grant), GRANT_NODE_X),
+      realDeps(epochRuntime())
+    );
+    expect(again.status).toBe(403);
   });
 });

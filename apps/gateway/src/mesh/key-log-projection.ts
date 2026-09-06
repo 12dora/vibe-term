@@ -1,7 +1,13 @@
-import { decodeRenameNodePayload, nodeIdToHex, normalizeNodeName } from '@tmex/shared/auth';
+import {
+  decodeRenameNodePayload,
+  decodeRevokeNodePayload,
+  nodeIdToHex,
+  normalizeNodeName,
+} from '@tmex/shared/auth';
 import type { UserKeyService } from '../auth';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
+import { meshForwardChannel } from '../events/channels/mesh-forward';
 import type { HubRuntime } from '../hub';
 import { applyKeyLogHubRuntime } from '../hub/hub-authorization';
 import { type NodeListApplyDeps, emitRenameNodeEvent } from './node-list-apply';
@@ -18,6 +24,8 @@ export type KeyLogProjectionDeps = {
   emitListNodeEvent: NodeListApplyDeps['emitListNodeEvent'];
   onLocalNodeName?: (name: string) => void;
   userIdOf: () => string;
+  /** 吊销落库后就地断链并广播；key log 同步（含中继模式）走的也是这条路径。 */
+  onNodeRevoked: (nodeId: string) => void;
 };
 
 export function bindKeyLogProjection(
@@ -30,6 +38,15 @@ export function bindKeyLogProjection(
       onRetireSelf: () => d.hub?.setMode('standby'),
     });
     d.relay.notifyIfRelayRecord(step.record.type);
+    // 汇聚声明变了：撤销掉的汇聚机队列与在途投递立刻收掉，别等下一次重试才发现。
+    if (step.record.type === 'notification-sink') {
+      meshForwardChannel.pruneUnauthorizedSinks();
+      return;
+    }
+    if (step.record.type === 'revoke-node') {
+      applyRevokeNode(d, step.record.payload);
+      return;
+    }
     if (step.record.type !== 'rename-node') return;
     let name: string | null = null;
     let nodeId: string;
@@ -58,4 +75,15 @@ export function bindKeyLogProjection(
       name
     );
   };
+}
+
+function applyRevokeNode(d: KeyLogProjectionDeps, payload: Uint8Array): void {
+  let nodeId: string;
+  try {
+    nodeId = nodeIdToHex(decodeRevokeNodePayload(payload).node_id);
+  } catch {
+    return;
+  }
+  if (nodeId === d.selfId) return;
+  d.onNodeRevoked(nodeId);
 }

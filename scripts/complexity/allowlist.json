@@ -54,7 +54,7 @@
     "reason": "编排 hook 状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/fe/src/pages/settings/nodes/management/use-node-upgrade.ts": {
-    "fileLines": 864,
+    "fileLines": 865,
     "reason": "升级执行流程内聚体（POST / 轮询 / 回读 / 取消闸门）；round28 T10 把 React 编排层拆到 use-node-upgrade-controller.ts 后剩余部分"
   },
   "apps/fe/src/pages/settings/nodes/membership/use-leave-mesh.ts:useLeaveMesh": {
@@ -590,7 +590,7 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/gateway/src/auth/user-key-service.ts": {
-    "fileLines": 867,
+    "fileLines": 865,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/gateway/src/agent/supervisor.ts": {

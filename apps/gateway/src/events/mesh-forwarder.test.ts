@@ -295,3 +295,71 @@ describe('MeshNotificationForwarder', () => {
     expect(forwarder.pending).toBe(0);
   });
 });
+
+describe('汇聚声明被撤销', () => {
+  test('重试前重新核对：撤销后不再投递，队列与丢弃计数一并收尾', async () => {
+    const sent: string[] = [];
+    const dropped: string[] = [];
+    const clock = fakeClock();
+    let authorized = true;
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      log: (line) => dropped.push(line),
+      isSinkAuthorized: () => authorized,
+      deliver: async (sink) => {
+        sent.push(sink);
+        return new Response('{}', { status: 502 });
+      },
+    });
+
+    forwarder.enqueue('node-b', body());
+    await clock.advance(0);
+    expect(sent).toEqual(['node-b']);
+    expect(forwarder.pending).toBe(1);
+
+    // 首投失败、等重试期间用户撤销了这台汇聚机的签名声明。
+    authorized = false;
+    await clock.advance(1_000);
+    expect(sent).toEqual(['node-b']);
+    expect(forwarder.pending).toBe(0);
+    expect(dropped.some((line) => line.includes('reason=unauthorized'))).toBe(true);
+    expect(forwarder.dropped).toBe(1);
+
+    // 后续事件也不再入队。
+    forwarder.enqueue('node-b', body('%2'));
+    await clock.advance(0);
+    expect(forwarder.pending).toBe(0);
+    expect(sent).toEqual(['node-b']);
+  });
+
+  test('pruneUnauthorized 立刻丢队列并 abort 在途投递', async () => {
+    const clock = fakeClock();
+    let authorized = true;
+    const aborted: boolean[] = [];
+    let release: (res: Response) => void = () => {};
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      isSinkAuthorized: () => authorized,
+      deliver: (_sink, _payload, signal) =>
+        new Promise<Response>((resolve) => {
+          signal.addEventListener('abort', () => aborted.push(true), { once: true });
+          release = resolve;
+        }),
+    });
+
+    forwarder.enqueue('node-b', body());
+    await clock.advance(0);
+    expect(forwarder.pending).toBe(0); // 这一条已经出队，正在途中
+
+    authorized = false;
+    forwarder.pruneUnauthorized();
+    expect(aborted).toEqual([true]);
+
+    // 在途投递即使随后返回 200，也不会再有队列复活。
+    release(new Response('{}', { status: 200 }));
+    await clock.advance(0);
+    expect(forwarder.pending).toBe(0);
+  });
+});

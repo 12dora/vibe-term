@@ -5,12 +5,19 @@ import { createDevice } from '../../db/devices';
 import { runMigrations } from '../../db/migrate';
 import { agentPaneGrants } from '../../db/schema';
 import { X_TMEX_MESH_PEER } from '../../mesh/peer-request-marker';
-import { PANE_GRANT_ROUTE, paneGrantRoutes } from './routes';
+import { PANE_GRANT_ROUTE, createPaneGrantRoutes } from './routes';
 import { getPaneGrant, issuePaneGrant } from './store';
 
 const NODE_X = 'a'.repeat(32);
 const NODE_Z = 'c'.repeat(32);
 const DEVICE = 'pane-grant-route-device';
+const EPOCH = 'e'.repeat(32);
+
+let serverEpoch: string | null = EPOCH;
+const routes = createPaneGrantRoutes({
+  deviceExists: (deviceId) => deviceId === DEVICE,
+  serverEpochOf: async () => serverEpoch,
+});
 
 beforeAll(() => {
   runMigrations();
@@ -30,6 +37,7 @@ beforeAll(() => {
 
 beforeEach(() => {
   getDb().delete(agentPaneGrants).run();
+  serverEpoch = EPOCH;
 });
 
 async function call(
@@ -44,7 +52,7 @@ async function call(
     headers,
     ...(options.body === undefined ? {} : { body: JSON.stringify(options.body) }),
   });
-  const res = await dispatchRoutes(req, path, paneGrantRoutes, { path });
+  const res = await dispatchRoutes(req, path, routes, { path });
   if (!res) throw new Error(`no route for ${method} ${path}`);
   const resolved = await res;
   return { status: resolved.status, json: (await resolved.json()) as Record<string, unknown> };
@@ -62,6 +70,7 @@ describe('POST /api/agent/pane-grants', () => {
       fromNodeId: NODE_X,
       deviceId: DEVICE,
       paneId: '%1',
+      serverEpoch: EPOCH,
     });
   });
 
@@ -91,6 +100,16 @@ describe('POST /api/agent/pane-grants', () => {
     }
   });
 
+  test('拿不到 tmux server 世代 → 503，不签发', async () => {
+    serverEpoch = null;
+    const res = await call('POST', PANE_GRANT_ROUTE, {
+      body: { fromNodeId: NODE_X, deviceId: DEVICE, paneId: '%1' },
+    });
+    expect(res.status).toBe(503);
+    expect(res.json.error).toBe('pane_unavailable');
+    expect(getDb().select().from(agentPaneGrants).all()).toEqual([]);
+  });
+
   test('设备不存在 → 404 device_not_found', async () => {
     const res = await call('POST', PANE_GRANT_ROUTE, {
       body: { fromNodeId: NODE_X, deviceId: 'ghost', paneId: '%1' },
@@ -102,7 +121,12 @@ describe('POST /api/agent/pane-grants', () => {
 
 describe('DELETE /api/agent/pane-grants/:id', () => {
   test('吊销后授权即消失，重复吊销 404', async () => {
-    const issued = issuePaneGrant({ fromNodeId: NODE_X, deviceId: DEVICE, paneId: '%3' });
+    const issued = issuePaneGrant({
+      fromNodeId: NODE_X,
+      deviceId: DEVICE,
+      paneId: '%3',
+      serverEpoch: EPOCH,
+    });
     expect((await call('DELETE', `${PANE_GRANT_ROUTE}/${issued.grantId}`)).status).toBe(200);
     expect(getPaneGrant(issued.grantId)).toBeNull();
     expect((await call('DELETE', `${PANE_GRANT_ROUTE}/${issued.grantId}`)).status).toBe(404);

@@ -29,6 +29,70 @@ const UNSUPPORTED_TTL_MS = 10 * 60_000;
 const unsupportedUntil = new Map<string, number>();
 const staleSessions = new Set<string>();
 const decryptCache = new Map<string, { cipher: string; grant: StoredPaneGrant }>();
+/** 每个会话一条补签链：并发请求排队，避免签出多张只留一张引用。 */
+const mintChains = new Map<string, Promise<unknown>>();
+/** 待吊销的授权 id（按目标节点）：被顶替 / 被丢弃 / 会话已删的那些，冲不掉就留着重试。 */
+const pendingRevocations = new Map<string, Set<string>>();
+const MAX_PENDING_REVOCATIONS = 64;
+
+function withSessionLock<T>(sessionId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = mintChains.get(sessionId) ?? Promise.resolve();
+  const run = prev.then(fn, fn);
+  const tail = run.then(
+    () => undefined,
+    () => undefined
+  );
+  mintChains.set(sessionId, tail);
+  void tail.then(() => {
+    if (mintChains.get(sessionId) === tail) mintChains.delete(sessionId);
+  });
+  return run;
+}
+
+export function enqueueGrantRevocation(nodeId: string, grantId: string): void {
+  let queue = pendingRevocations.get(nodeId);
+  if (!queue) {
+    queue = new Set();
+    pendingRevocations.set(nodeId, queue);
+  }
+  queue.add(grantId);
+  // 冲不掉的老条目不能无限堆：最旧的先丢，它们最终也会自己过期
+  while (queue.size > MAX_PENDING_REVOCATIONS) {
+    const oldest = queue.values().next().value;
+    if (oldest === undefined) break;
+    queue.delete(oldest);
+  }
+}
+
+export function pendingGrantRevocations(nodeId: string): string[] {
+  return [...(pendingRevocations.get(nodeId) ?? [])];
+}
+
+/**
+ * 尽力吊销：目标明确回答「删了」或「没这张」才从队列摘掉，
+ * 其余情况（够不着、旧版本没这条路由）留着，等下一次带 cookie 的请求再来。
+ */
+export async function flushGrantRevocations(req: Request, nodeId: string): Promise<void> {
+  const queue = pendingRevocations.get(nodeId);
+  if (!queue || queue.size === 0) return;
+  const bridge = getMeshAgentBridge();
+  if (!bridge) return;
+  for (const grantId of [...queue]) {
+    let res: Response;
+    try {
+      res = await bridge.forwardAuthorizedHttp(req, {
+        nodeId,
+        method: 'DELETE',
+        path: `${PANE_GRANT_ROUTE}/${encodeURIComponent(grantId)}`,
+      });
+    } catch {
+      return;
+    }
+    await res.text().catch(() => '');
+    if (res.ok || res.status === 404) queue.delete(grantId);
+  }
+  if (queue.size === 0) pendingRevocations.delete(nodeId);
+}
 
 export function markSessionGrantStale(sessionId: string): void {
   staleSessions.add(sessionId);
@@ -41,6 +105,8 @@ export function resetPaneGrantClientForTests(): void {
   unsupportedUntil.clear();
   staleSessions.clear();
   decryptCache.clear();
+  mintChains.clear();
+  pendingRevocations.clear();
 }
 
 async function readMintFailure(res: Response): Promise<PaneGrantMintResult> {
@@ -140,7 +206,7 @@ export async function loadSessionGrant(sessionId: string): Promise<StoredPaneGra
   return grant;
 }
 
-function matchesSession(grant: StoredPaneGrant, session: AgentSessionRecord): boolean {
+function matchesGrant(grant: StoredPaneGrant, session: AgentSessionRecord): boolean {
   return (
     grant.nodeId === session.nodeId &&
     grant.deviceId === session.deviceId &&
@@ -158,7 +224,7 @@ function needsMint(
 ): boolean {
   if (staleSessions.has(session.id)) return true;
   if (!grant) return true;
-  if (!matchesSession(grant, session)) return true;
+  if (!matchesGrant(grant, session)) return true;
   return grant.expiresAt > 0 && grant.expiresAt - RENEW_MARGIN_MS <= now;
 }
 
@@ -176,7 +242,22 @@ export async function ensureSessionGrant(
   now = Date.now()
 ): Promise<EnsureGrantResult> {
   if (!session.nodeId || !session.deviceId || !session.paneId) return { ok: true, grant: null };
+  void flushGrantRevocations(req, session.nodeId);
   const current = await loadSessionGrant(session.id);
+  if (!needsMint(current, session, now)) return { ok: true, grant: current };
+  // 同一会话的补签串行：并发请求各签一张、只留下一张引用，另一张就成了没人管的活授权
+  return withSessionLock(session.id, () => mintForSession(req, session.id, now));
+}
+
+async function mintForSession(
+  req: Request,
+  sessionId: string,
+  now: number
+): Promise<EnsureGrantResult> {
+  const session = getAgentSessionById(sessionId);
+  if (!session?.nodeId || !session.deviceId || !session.paneId) return { ok: true, grant: null };
+  const current = await loadSessionGrant(sessionId);
+  // 锁内重查：排在前面的那次可能已经补签过了
   if (!needsMint(current, session, now)) return { ok: true, grant: current };
   const minted = await mintPaneGrant(req, {
     nodeId: session.nodeId,
@@ -186,18 +267,76 @@ export async function ensureSessionGrant(
   });
   if (minted.kind === 'login-required') return { ok: false, response: minted.response };
   if (minted.kind !== 'ok') return { ok: true, grant: null };
-  await persistSessionGrant(session.id, minted.grant);
-  return { ok: true, grant: minted.grant };
+  const stored = await persistSessionGrant(sessionId, minted.grant, current);
+  return { ok: true, grant: stored ? minted.grant : null };
 }
 
+/**
+ * 落库前再确认一次绑定没被改过，并把被顶替的那张排进吊销队列。
+ * 密文先算好：检查与写入之间不能再有 await，否则又是一个可插入的窗口。
+ */
 export async function persistSessionGrant(
   sessionId: string,
-  grant: StoredPaneGrant
-): Promise<void> {
+  grant: StoredPaneGrant,
+  previous: StoredPaneGrant | null = null
+): Promise<boolean> {
   const cipher = await encryptPaneGrant(grant);
+  const session = getAgentSessionById(sessionId);
+  if (!session || !matchesGrant(grant, session)) {
+    enqueueGrantRevocation(grant.nodeId, grant.grantId);
+    return false;
+  }
   updateAgentSession(sessionId, { remoteGrant: cipher });
   decryptCache.set(sessionId, { cipher, grant });
   staleSessions.delete(sessionId);
+  if (previous && previous.grantId !== grant.grantId) {
+    enqueueGrantRevocation(previous.nodeId, previous.grantId);
+  }
+  return true;
+}
+
+export type PreparedSessionGrant =
+  | { ok: true; grant: StoredPaneGrant | null; cipher: string | null }
+  | { ok: false; response: Response };
+
+/**
+ * 改绑窗格用：先按**将要写入**的窗格签一张，拿到密文再由调用方与绑定一起提交。
+ * 会话本身不动——提交失败时目标节点上多出来的那张由吊销队列收拾。
+ */
+export async function prepareSessionGrant(
+  req: Request,
+  session: AgentSessionRecord,
+  paneId: string
+): Promise<PreparedSessionGrant> {
+  if (!session.nodeId || !session.deviceId) return { ok: true, grant: null, cipher: null };
+  void flushGrantRevocations(req, session.nodeId);
+  const minted = await mintPaneGrant(req, {
+    nodeId: session.nodeId,
+    deviceId: session.deviceId,
+    paneId,
+  });
+  if (minted.kind === 'login-required') return { ok: false, response: minted.response };
+  if (minted.kind !== 'ok') return { ok: true, grant: null, cipher: null };
+  return { ok: true, grant: minted.grant, cipher: await encryptPaneGrant(minted.grant) };
+}
+
+/** 提交成功后：缓存换成新的那张，旧的排队吊销。 */
+export function commitPreparedGrant(
+  sessionId: string,
+  cipher: string,
+  grant: StoredPaneGrant,
+  previous: StoredPaneGrant | null
+): void {
+  decryptCache.set(sessionId, { cipher, grant });
+  staleSessions.delete(sessionId);
+  if (previous && previous.grantId !== grant.grantId) {
+    enqueueGrantRevocation(previous.nodeId, previous.grantId);
+  }
+}
+
+/** 排队吊销一张已经没人引用的授权（提交失败刚签的那张、或被顶替的旧那张）。 */
+export function revokeGrantLater(grant: StoredPaneGrant): void {
+  enqueueGrantRevocation(grant.nodeId, grant.grantId);
 }
 
 export function sessionPaneGrantSource(sessionId: string): PaneGrantSource {
@@ -220,20 +359,18 @@ export function staticPaneGrantSource(grant: PaneGrantRef | null): PaneGrantSour
   };
 }
 
-/** 删会话时顺手吊销目标节点上的授权（尽力而为：目标够不着就等它自己过期）。 */
+/** 删会话时吊销目标节点上的授权：入队后立刻冲一次，没冲掉的留给下一次请求。 */
 export function revokeSessionGrant(req: Request, session: AgentSessionRecord): void {
   if (!session.nodeId || !session.remoteGrant) return;
   const nodeId = session.nodeId;
-  void (async () => {
-    const grant = await loadSessionGrant(session.id);
-    const bridge = getMeshAgentBridge();
-    if (!grant || !bridge) return;
-    await bridge.forwardAuthorizedHttp(req, {
-      nodeId,
-      method: 'DELETE',
-      path: `${PANE_GRANT_ROUTE}/${encodeURIComponent(grant.grantId)}`,
+  void loadSessionGrant(session.id)
+    .then((grant) => {
+      if (grant) enqueueGrantRevocation(nodeId, grant.grantId);
+      decryptCache.delete(session.id);
+      staleSessions.delete(session.id);
+      return flushGrantRevocations(req, nodeId);
+    })
+    .catch(() => {
+      // 吊销失败留在队列里，下一次带 cookie 的请求继续重试
     });
-  })().catch(() => {
-    // 吊销失败无害：授权最长 30 天后自然失效
-  });
 }

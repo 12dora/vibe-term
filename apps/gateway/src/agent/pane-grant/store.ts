@@ -2,13 +2,14 @@
 //
 // `/api/mesh-internal/tmux/*` 只认 peer 标记，也就是「任何一台受信任节点都能调」；
 // 没有这层授权，任意已准入节点都可以往别的节点的任意窗格里注入按键、读走屏幕内容。
-// 授权由浏览器用自己的 Y 会话签发（见 routes.ts），绑死「哪个源节点、哪台设备、哪个窗格」，
-// 源节点每次 RPC 都必须带上。滑动过期：每次使用续 7 天，但从签发起最多活 30 天。
+// 授权由浏览器用自己的 Y 会话签发（见 routes.ts），绑死「哪个源节点、哪台设备、哪个窗格、
+// 哪一代 tmux server」，源节点每次 RPC 都必须带上。滑动过期：每次使用续 7 天，从签发起最多 30 天。
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { and, eq, lte } from 'drizzle-orm';
+import type { AuthDb } from '../../auth/types';
 import { getDb } from '../../db/client';
-import { agentPaneGrants } from '../../db/schema';
+import { agentPaneGrants, nodeCerts } from '../../db/schema';
 
 export const PANE_GRANT_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const PANE_GRANT_MAX_LIFETIME_MS = 30 * 24 * 60 * 60 * 1000;
@@ -19,6 +20,8 @@ export interface PaneGrantRecord {
   fromNodeId: string;
   deviceId: string;
   paneId: string;
+  /** 签发时目标 tmux server 的世代；每次 RPC 由路由与运行时当前世代比对 */
+  serverEpoch: string | null;
   createdAt: number;
   lastUsedAt: number;
   expiresAt: number;
@@ -59,6 +62,7 @@ export function issuePaneGrant(input: {
   fromNodeId: string;
   deviceId: string;
   paneId: string;
+  serverEpoch: string;
   now?: number;
 }): IssuedPaneGrant {
   const now = input.now ?? Date.now();
@@ -73,6 +77,7 @@ export function issuePaneGrant(input: {
       fromNodeId: input.fromNodeId,
       deviceId: input.deviceId,
       paneId: input.paneId,
+      serverEpoch: input.serverEpoch,
       createdAt: now,
       lastUsedAt: now,
       expiresAt: now + PANE_GRANT_TTL_MS,
@@ -103,9 +108,31 @@ export function deletePaneGrant(id: string): boolean {
   return existed;
 }
 
-/** 节点被吊销：它手上的授权全部作废（吊销后重新准入必须重新签发）。 */
-export function deletePaneGrantsForNode(fromNodeId: string): void {
-  getDb().delete(agentPaneGrants).where(eq(agentPaneGrants.fromNodeId, fromNodeId)).run();
+/**
+ * 节点被吊销：它手上的授权全部作废（吊销后重新准入必须重新签发）。
+ * `db` 用于在吊销记录落库的同一个事务里删除——事务回滚时授权也跟着回来，两者不会各说各话。
+ */
+export function deletePaneGrantsForNode(fromNodeId: string, db: AuthDb = getDb()): void {
+  db.delete(agentPaneGrants).where(eq(agentPaneGrants.fromNodeId, fromNodeId)).run();
+}
+
+/** 根密钥重置会删光全部节点证书，随之作废所有授权。 */
+export function deleteAllPaneGrants(db: AuthDb = getDb()): void {
+  db.delete(agentPaneGrants).run();
+}
+
+/**
+ * 证书已被吊销的源节点：吊销时链路不一定已经断，授权这一层必须自己拒。
+ * 没有证书行则不在此判——链路握手本身就要求证书，连不上就发不出这条 RPC；
+ * 重新准入走 `admit-node`，那条会把 `revoked_log_seq` 清回 null。
+ */
+function certRevoked(nodeId: string): boolean {
+  const cert = getDb()
+    .select({ revokedLogSeq: nodeCerts.revokedLogSeq })
+    .from(nodeCerts)
+    .where(eq(nodeCerts.nodeId, nodeId))
+    .get();
+  return cert != null && cert.revokedLogSeq != null;
 }
 
 export function listPaneGrantsForNode(fromNodeId: string): PaneGrantRecord[] {
@@ -119,7 +146,9 @@ export function listPaneGrantsForNode(fromNodeId: string): PaneGrantRecord[] {
 
 /**
  * 校验并续期。token 比对用哈希常量时间比较；源节点、设备、窗格三者必须与请求完全一致，
- * 任一不符一律回 `PANE_GRANT_INVALID`（不区分原因，免得成为探测别的节点/窗格的口子）。
+ * 源节点证书当前被吊销、或授权没绑 server 世代（旧记录）一律不认。
+ * 任一不符都回 `PANE_GRANT_INVALID`（不区分原因，免得成为探测别的节点/窗格的口子）。
+ * server 世代的比对在路由侧完成——那里才拿得到目标运行时的当前世代。
  */
 export function verifyPaneGrant(input: {
   grantId: string;
@@ -142,8 +171,13 @@ export function verifyPaneGrant(input: {
   if (
     row.fromNodeId !== input.peerNodeId ||
     row.deviceId !== input.deviceId ||
-    row.paneId !== input.paneId
+    row.paneId !== input.paneId ||
+    !row.serverEpoch
   ) {
+    return { ok: false, code: 'PANE_GRANT_INVALID' };
+  }
+  if (certRevoked(row.fromNodeId)) {
+    deletePaneGrantsForNode(row.fromNodeId);
     return { ok: false, code: 'PANE_GRANT_INVALID' };
   }
   const expiresAt = nextExpiry(row.createdAt, now);

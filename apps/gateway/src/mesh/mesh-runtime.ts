@@ -14,7 +14,7 @@ import {
   UserKeyService,
   UserStore,
   ensureNodeIdentity,
-  makeVerifyPasskeyAssertion,
+  makeDeferredVerifyPasskeyAssertion,
 } from '../auth';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -84,6 +84,7 @@ import {
 import { pickSelfDisplayName } from './node-list-projection';
 import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
+import { listNotificationSinkNodeIds } from './notification-sink-records';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   bindRelayReconcile,
@@ -545,7 +546,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     userStore,
     keyLogStore,
     nodeSessionStore,
-    verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
+    // 计数器推进与记录落库同一个事务：同一条记录会被验多次（预演 + 落账），只能推进一次。
+    deferredPasskeyVerifier: () => makeDeferredVerifyPasskeyAssertion(userStore),
   });
   const peerHolder = { manager: null } as { manager: PeerManager | null };
   const httpHolder = { runtime: null } as { runtime: MeshHttpRuntime | null };
@@ -754,6 +756,10 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     emitListNodeEvent: stores.emitListNodeEvent,
     onLocalNodeName: opts.onLocalNodeName,
     userIdOf: stores.userIdOf,
+    onNodeRevoked: (nodeId) => {
+      stores.peerHolder.manager?.onRevoked(nodeId);
+      stores.emitRevoked(nodeId);
+    },
   });
   const bindings = createSessionBindings(stores);
   const scheduler = opts.scheduler ?? defaultScheduler();
@@ -1336,7 +1342,7 @@ function wireMeshHttp(
       listReach: () => peers.listReach(),
       listHubOnline: () => peers.listHubOnline(),
       listedNodes: () => state.lastNodeList?.nodes ?? [],
-      userIdOf: d.userIdOf,
+      declaredSinks: () => listNotificationSinkNodeIds(d.userIdOf()),
       forwardInternalHttp: (nodeId, path, body, signal) =>
         http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
     })

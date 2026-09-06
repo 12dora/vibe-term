@@ -1,8 +1,13 @@
 import { DEFAULT_AGENT_SESSION_TITLE } from '@tmex/shared';
 import {
   type StoredPaneGrant,
+  commitPreparedGrant,
   encryptPaneGrant,
   ensureSessionGrant,
+  loadSessionGrant,
+  markSessionGrantStale,
+  prepareSessionGrant,
+  revokeGrantLater,
   revokeSessionGrant,
 } from '../agent/pane-grant/client';
 import type { AgentSupervisor } from '../agent/supervisor';
@@ -14,6 +19,7 @@ import {
   getAgentSessionById,
   getAllAgentSessions,
   updateAgentSession,
+  updateAgentSessionIfUnchanged,
 } from '../db/agent';
 import { t } from '../i18n';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
@@ -197,16 +203,52 @@ async function handleUpdateSession(req: Request, id: string): Promise<Response> 
     return json({ error: parsed.error }, 400);
   }
 
-  const session = updateAgentSession(id, { ...identity.fields, ...parsed.config });
+  const fields = { ...identity.fields, ...parsed.config };
+  const rebound = identity.fields.paneId;
+  // 改绑窗格：授权必须按**将要写入**的窗格先签好，再与绑定一起提交；
+  // 授权没签下来时会话一个字段都不能动，否则前端认为失败、后端却已经换了绑定。
+  if (existing.nodeId && typeof rebound === 'string' && rebound !== existing.paneId) {
+    return commitPaneRebind(req, existing, fields, rebound);
+  }
+
+  const session = updateAgentSession(id, fields);
   if (!session) {
     return json({ error: t('apiError.agentSessionNotFound') }, 404);
   }
-  // 改绑窗格后旧授权已不匹配，就地换一张；改名之类不碰窗格的 PATCH 不牵动授权
-  if (session.paneId !== existing.paneId) {
-    const ensured = await ensureSessionGrant(req, session);
-    if (!ensured.ok) {
-      return ensured.response;
-    }
+  return json({ session: toSessionDto(session) });
+}
+
+async function commitPaneRebind(
+  req: Request,
+  existing: AgentSessionRecord,
+  fields: Record<string, unknown>,
+  paneId: string
+): Promise<Response> {
+  const prepared = await prepareSessionGrant(req, existing, paneId);
+  if (!prepared.ok) {
+    return prepared.response;
+  }
+  const previous = await loadSessionGrant(existing.id);
+  const session = updateAgentSessionIfUnchanged(
+    existing.id,
+    {
+      updatedAt: existing.updatedAt,
+      nodeId: existing.nodeId,
+      deviceId: existing.deviceId,
+      paneId: existing.paneId,
+    },
+    { ...fields, remoteGrant: prepared.cipher }
+  );
+  if (!session) {
+    if (prepared.grant) revokeGrantLater(prepared.grant);
+    return json({ error: t('apiError.agentSessionChanged') }, 409);
+  }
+  if (prepared.grant && prepared.cipher) {
+    commitPreparedGrant(session.id, prepared.cipher, prepared.grant, previous);
+  } else {
+    // 目标节点旧版本或一时够不着：旧授权已不匹配新窗格，标记待补签
+    if (previous) revokeGrantLater(previous);
+    markSessionGrantStale(session.id);
   }
   return json({ session: toSessionDto(session) });
 }

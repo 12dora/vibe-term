@@ -25,6 +25,7 @@ function installBridge(sinks: MeshNotificationSink[]) {
     selfNodeId: () => 'node-a',
     selfName: () => 'A 机',
     selfSinkEnabled: () => false,
+    sinkAuthorized: (nodeId) => sinks.some((row) => row.nodeId === nodeId && !row.self),
     listSinks: () => sinks,
     deliver: async (sink, body) => {
       delivered.push({ sink, body });
@@ -108,6 +109,7 @@ describe('MeshForwardChannel', () => {
       selfNodeId: () => 'node-a',
       selfName: () => 'A 机',
       selfSinkEnabled: () => false,
+      sinkAuthorized: () => true,
       listSinks: () => [sink('node-b')],
       deliver: async () => new Response('{}', { status: 502 }),
     });

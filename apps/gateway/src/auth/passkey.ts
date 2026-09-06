@@ -176,36 +176,86 @@ export async function verifyAssertion(input: VerifyAssertionInput): Promise<Veri
   }
 }
 
+/** 一次验签得出的计数器推进；落库时机由调用方决定。 */
+export type PasskeyCounterUpdate = { credentialId: Uint8Array; counter: number };
+
+/**
+ * 验签本身（不写计数器）。计数器只能推进一次：预演验签写了，随后真正落账的那次验签
+ * 就会因为「新计数器不大于已存计数器」而失败——计数器会自增的认证器上必然踩到。
+ */
+async function verifyStoredAssertion(
+  userStore: UserStore,
+  args: { sig: Uint8Array; credentialId: string; publicKey: Uint8Array; challenge: Uint8Array }
+): Promise<PasskeyCounterUpdate | null> {
+  let assertion: AuthenticationResponseJSON;
+  try {
+    assertion = decodePasskeyAssertionSig(args.sig);
+  } catch {
+    return null;
+  }
+  const credentialIdBytes = decodeBase64url(args.credentialId);
+  const stored = userStore.getKeyByCredentialId(credentialIdBytes);
+  if (!stored) {
+    return null;
+  }
+  const result = await verifyAssertion({
+    response: assertion,
+    expectedChallenge: encodeBase64url(args.challenge),
+    origin: stored.origin,
+    rpId: stored.rpId,
+    credential: {
+      id: args.credentialId,
+      publicKey: args.publicKey,
+      counter: stored.counter,
+      transports: stored.transports,
+    },
+  });
+  if (!result.ok) {
+    return null;
+  }
+  return { credentialId: credentialIdBytes, counter: result.newCounter };
+}
+
+export function commitPasskeyCounters(
+  userStore: UserStore,
+  updates: readonly PasskeyCounterUpdate[]
+): void {
+  for (const update of updates) userStore.updateKeyCounter(update.credentialId, update.counter);
+}
+
+/** 验签并立刻推进计数器：一次性场景（登录、中继接入）用。 */
 export function makeVerifyPasskeyAssertion(userStore: UserStore): VerifyPasskeyAssertion {
-  return async ({ sig, credentialId, publicKey, challenge }) => {
-    let assertion: AuthenticationResponseJSON;
-    try {
-      assertion = decodePasskeyAssertionSig(sig);
-    } catch {
-      return false;
-    }
-    const credentialIdBytes = decodeBase64url(credentialId);
-    const stored = userStore.getKeyByCredentialId(credentialIdBytes);
-    if (!stored) {
-      return false;
-    }
-    const result = await verifyAssertion({
-      response: assertion,
-      expectedChallenge: encodeBase64url(challenge),
-      origin: stored.origin,
-      rpId: stored.rpId,
-      credential: {
-        id: credentialId,
-        publicKey,
-        counter: stored.counter,
-        transports: stored.transports,
-      },
-    });
-    if (!result.ok) {
-      return false;
-    }
-    userStore.updateKeyCounter(credentialIdBytes, result.newCounter);
+  return async (args) => {
+    const update = await verifyStoredAssertion(userStore, args);
+    if (!update) return false;
+    userStore.updateKeyCounter(update.credentialId, update.counter);
     return true;
+  };
+}
+
+export type DeferredPasskeyVerification = {
+  verify: VerifyPasskeyAssertion;
+  /** 本次验签累积的计数器推进；记录真正落库时（同一事务内）才写，被拒就整份丢掉。 */
+  counters(): readonly PasskeyCounterUpdate[];
+};
+
+/**
+ * 验签但不写计数器。同一条记录会被验多次（`hub=sync` 先预演、hub 确认后再本地落账，
+ * 落账内部又要验一次 authorization），写计数器必须只发生一次、且与记录落库同一个事务。
+ */
+export function makeDeferredVerifyPasskeyAssertion(
+  userStore: UserStore
+): DeferredPasskeyVerification {
+  const pending = new Map<string, PasskeyCounterUpdate>();
+  return {
+    verify: async (args) => {
+      const update = await verifyStoredAssertion(userStore, args);
+      if (!update) return false;
+      const existing = pending.get(args.credentialId);
+      if (!existing || update.counter > existing.counter) pending.set(args.credentialId, update);
+      return true;
+    },
+    counters: () => [...pending.values()],
   };
 }
 

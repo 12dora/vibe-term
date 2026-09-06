@@ -4,7 +4,6 @@ import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@tmex
 import { MESH_INTERNAL_NOTIFICATION_ROUTE } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
 import type { MeshNotificationBridge } from './notification-mesh-bridge';
-import { listNotificationSinkNodeIds } from './notification-sink-records';
 import { collectMeshNotificationSinks } from './notification-sink-set';
 import { isMeshNotificationSinkEnabled } from './notification-sink-state';
 import type { PeerReach } from './types';
@@ -16,8 +15,8 @@ export type MeshNotificationBridgeInput = {
   listReach: () => ReadonlyMap<string, PeerReach>;
   listHubOnline: () => ReadonlySet<string>;
   listedNodes: () => ReadonlyArray<{ id: string; name: string }>;
-  /** 当前用户编号；汇聚声明从这名用户的密钥日志里回放。 */
-  userIdOf: () => string;
+  /** 用户签过 `notification-sink` 声明的节点集合（从密钥日志回放，见 notification-sink-records）。 */
+  declaredSinks: () => ReadonlySet<string>;
   forwardInternalHttp: (
     nodeId: string,
     path: string,
@@ -29,7 +28,10 @@ export type MeshNotificationBridgeInput = {
 export function buildMeshNotificationBridge(
   input: MeshNotificationBridgeInput
 ): MeshNotificationBridge {
-  const declared = () => listNotificationSinkNodeIds(input.userIdOf());
+  const declared = () => input.declaredSinks();
+  // 不走 `this`：桥的方法可能被解构后单独传出去（转发器就只拿 deliver）。
+  const authorized = (nodeId: string): boolean =>
+    nodeId !== input.selfNodeId && declared().has(nodeId);
   return {
     selfNodeId: () => input.selfNodeId,
     selfName: () => input.selfName(),
@@ -37,6 +39,7 @@ export function buildMeshNotificationBridge(
     selfSinkEnabled(): boolean {
       return isMeshNotificationSinkEnabled() && declared().has(input.selfNodeId);
     },
+    sinkAuthorized: authorized,
     listSinks(): MeshNotificationSink[] {
       return collectMeshNotificationSinks({
         selfNodeId: input.selfNodeId,
@@ -51,11 +54,18 @@ export function buildMeshNotificationBridge(
         hubOnline: input.listHubOnline(),
       });
     },
+    /**
+     * 投递前最后一道闸：声明已被撤销就地回 403，不出网。
+     * 队列侧也会查一次（`isSinkAuthorized`），这里保证任何调用方都绕不过去。
+     */
     deliver(
       sinkNodeId: string,
       body: MeshNotificationForwardRequest,
       signal?: AbortSignal
     ): Promise<Response> {
+      if (!authorized(sinkNodeId)) {
+        return Promise.resolve(new Response(null, { status: 403 }));
+      }
       return input.forwardInternalHttp(sinkNodeId, MESH_INTERNAL_NOTIFICATION_ROUTE, body, signal);
     },
   };

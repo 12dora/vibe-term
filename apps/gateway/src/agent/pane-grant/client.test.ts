@@ -4,9 +4,13 @@ import { runMigrations } from '../../db/migrate';
 import { type MeshAgentBridge, setMeshAgentBridge } from '../../mesh/mesh-agent-bridge';
 import {
   ensureSessionGrant,
+  flushGrantRevocations,
   loadSessionGrant,
   markSessionGrantStale,
   mintPaneGrant,
+  pendingGrantRevocations,
+  persistSessionGrant,
+  prepareSessionGrant,
   resetPaneGrantClientForTests,
   sessionPaneGrantSource,
 } from './client';
@@ -248,5 +252,104 @@ describe('sessionPaneGrantSource', () => {
     if (!reloaded) throw new Error('session missing');
     await ensureSessionGrant(browserReq(), reloaded);
     expect(await source.load()).toEqual({ grantId: 's-2', token: 'tok' });
+  });
+});
+
+describe('授权替换的串行与吊销', () => {
+  test('并发补签只签一张：后一个请求复用前一个的结果', async () => {
+    let issued = 0;
+    const { calls } = stubBridge(() => {
+      issued += 1;
+      return grantResponse(`c-${issued}`, 'tok');
+    });
+    const session = newRemoteSession('%20');
+    const [first, second] = await Promise.all([
+      ensureSessionGrant(browserReq(), session),
+      ensureSessionGrant(browserReq(), session),
+    ]);
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(1);
+    expect(first).toMatchObject({ ok: true, grant: { grantId: 'c-1' } });
+    expect(second).toMatchObject({ ok: true, grant: { grantId: 'c-1' } });
+    expect(pendingGrantRevocations(NODE_Y)).toEqual([]);
+  });
+
+  test('被顶替的那张进吊销队列，并在下一次请求里 DELETE 掉', async () => {
+    let issued = 0;
+    const deleted: string[] = [];
+    stubBridge((input) => {
+      if (input.method === 'DELETE') {
+        deleted.push(input.path);
+        return new Response('{}', { status: 200 });
+      }
+      issued += 1;
+      return grantResponse(`s-${issued}`, 'tok');
+    });
+    const session = newRemoteSession('%21');
+    await ensureSessionGrant(browserReq(), session);
+
+    markSessionGrantStale(session.id);
+    const again = getAgentSessionById(session.id);
+    if (!again) throw new Error('session missing');
+    await ensureSessionGrant(browserReq(), again);
+    expect(pendingGrantRevocations(NODE_Y)).toEqual(['s-1']);
+
+    await flushGrantRevocations(browserReq(), NODE_Y);
+    expect(deleted).toEqual([`${PANE_GRANT_ROUTE}/s-1`]);
+    expect(pendingGrantRevocations(NODE_Y)).toEqual([]);
+  });
+
+  test('吊销失败的 id 留在队列里重试，成功后才摘掉', async () => {
+    let reachable = false;
+    let issued = 0;
+    stubBridge((input) => {
+      if (input.method !== 'DELETE') {
+        issued += 1;
+        return grantResponse(`r-${issued}`, 'tok');
+      }
+      return reachable ? new Response('{}', { status: 200 }) : new Response('{}', { status: 503 });
+    });
+    const session = newRemoteSession('%22');
+    await ensureSessionGrant(browserReq(), session);
+    markSessionGrantStale(session.id);
+    const again = getAgentSessionById(session.id);
+    if (!again) throw new Error('session missing');
+    await ensureSessionGrant(browserReq(), again);
+
+    await flushGrantRevocations(browserReq(), NODE_Y);
+    expect(pendingGrantRevocations(NODE_Y)).toHaveLength(1);
+    reachable = true;
+    await flushGrantRevocations(browserReq(), NODE_Y);
+    expect(pendingGrantRevocations(NODE_Y)).toEqual([]);
+  });
+
+  test('落库前绑定被改过 → 不覆盖，刚签的那张进吊销队列', async () => {
+    stubBridge(() => grantResponse('late', 'tok'));
+    const session = newRemoteSession('%23');
+    const stale = { ...session, paneId: '%99' };
+    const stored = await persistSessionGrant(session.id, {
+      grantId: 'late',
+      token: 'tok',
+      nodeId: NODE_Y,
+      deviceId: 'remote-device',
+      paneId: '%99',
+      expiresAt: Date.now() + 86_400_000,
+    });
+    expect(stale.paneId).toBe('%99');
+    expect(stored).toBe(false);
+    expect(getAgentSessionById(session.id)?.remoteGrant).toBeNull();
+    expect(pendingGrantRevocations(NODE_Y)).toEqual(['late']);
+  });
+
+  test('prepareSessionGrant 只签不写：会话本身一个字段都不动', async () => {
+    stubBridge(() => grantResponse('prep', 'tok'));
+    const session = newRemoteSession('%24');
+    const prepared = await prepareSessionGrant(browserReq(), session, '%25');
+    expect(prepared.ok).toBe(true);
+    if (!prepared.ok) throw new Error('unreachable');
+    expect(prepared.grant).toMatchObject({ grantId: 'prep', paneId: '%25' });
+    expect(prepared.cipher).not.toBeNull();
+    const reloaded = getAgentSessionById(session.id);
+    expect(reloaded?.paneId).toBe('%24');
+    expect(reloaded?.remoteGrant).toBeNull();
   });
 });

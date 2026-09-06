@@ -8,6 +8,8 @@ export interface MeshNotificationBridge {
   selfName(): string | null;
   /** 本机是否为汇聚机：用户签过的 `notification-sink` 声明 + 本机开关。 */
   selfSinkEnabled(): boolean;
+  /** 目标节点当前是否仍是用户签过的汇聚机；每次投递前都要问。 */
+  sinkAuthorized(nodeId: string): boolean;
   /** 当前已知的汇聚机集合（含本机，`self` 标记区分）。 */
   listSinks(): MeshNotificationSink[];
   /** 投递到指定汇聚机；走对端链路的内部 HTTP，带对端标记。`signal` 是单次投递的截止信号。 */
