@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { Stats } from 'node:fs';
 import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
 import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -48,9 +49,17 @@ type InflightDownload = {
 
 const inflight = new Map<string, InflightDownload>();
 
-/** 已通过校验的缓存包：同一进程内按 size+mtime 复用结果，免去每个任务重算整包 sha256。 */
-type VerifiedRelease = { size: number; mtimeMs: number; sha256: string };
+/**
+ * 已通过校验的缓存包：同一进程内复用结果，免去每个任务重算整包 sha256。身份取 size/mtimeMs/ino/
+ * ctimeMs——只比 size+mtime 的话，等长内容原地覆盖再把 mtime 改回去就能冒充一个已校验的包。
+ */
+type VerifiedRelease = { identity: string; sha256: string };
 const verified = new Map<string, VerifiedRelease>();
+/** 单测用：整包重算 sha256 的次数；记忆命中时不增长。 */
+let rehashCount = 0;
+
+/** 版本级租约：持有期间该版本的缓存文件对任何清扫都免疫（远程推包可能要用它几分钟）。 */
+const retained = new Map<string, number>();
 
 /** 缓存目录里唯一合法的文件名形态：`tmex-cli-<semver>.tgz[.sha256|.part]`。 */
 const RELEASE_CACHE_NAME = /^tmex-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.part)?$/;
@@ -65,16 +74,40 @@ export function isReleaseDownloadInFlight(cacheDir: string, version: string): bo
   return inflight.has(inflightKey(cacheDir, version));
 }
 
+/**
+ * 钉住一个版本的缓存文件直到调用返回的释放函数为止；可重入（引用计数）。远程升级任务下完包后还要
+ * 推几分钟，期间别的节点开始升级会带着新版本来清扫，没有租约就会把在推的整包删掉，重试直接 ENOENT。
+ */
+export function retainReleaseVersion(cacheDir: string, version: string): () => void {
+  const key = inflightKey(cacheDir, version);
+  retained.set(key, (retained.get(key) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (retained.get(key) ?? 1) - 1;
+    if (left > 0) retained.set(key, left);
+    else retained.delete(key);
+  };
+}
+
+export function isReleaseVersionRetained(cacheDir: string, version: string): boolean {
+  return retained.has(inflightKey(cacheDir, version));
+}
+
 export type SweepReleaseCacheOpts = {
-  /** 要保留的版本；空数组表示整目录清空（启动时用）。 */
+  /** 要保留的版本；空数组表示整目录清空（启动时用）。持有租约的版本不受此列表约束。 */
   keepVersions: string[];
   now?: number;
   partTtlMs?: number;
+  /** 单测注入：枚举完成、逐项删除之前的挂起点，用来复现「目录快照过期」。 */
+  afterEnumerateForTests?: () => Promise<void>;
 };
 
 /**
  * 清扫发行包缓存：删掉不在 keepVersions 里的整包与其 sidecar、丢了 `.tgz` 的孤儿 sidecar、
- * 超过 TTL 且不在下载中的 `.part`，以及一切不合法文件名。全程 best-effort，任何一步失败都不抛。
+ * 超过 TTL 且不在下载中的 `.part`，以及一切不合法文件名。持有租约的版本一律跳过。
+ * 全程 best-effort，任何一步失败都不抛。
  */
 export async function sweepReleaseCache(
   cacheDir: string,
@@ -86,6 +119,7 @@ export async function sweepReleaseCache(
   } catch {
     return { removed: [] };
   }
+  if (opts.afterEnumerateForTests) await opts.afterEnumerateForTests();
   const ctx = {
     present: new Set(names),
     keep: new Set(opts.keepVersions),
@@ -117,14 +151,22 @@ async function shouldSweepCacheEntry(
   const matched = RELEASE_CACHE_NAME.exec(name);
   if (!matched) return true;
   const version = matched[1] as string;
+  if (isReleaseVersionRetained(cacheDir, version)) return false;
   const suffix = matched[2];
   if (!suffix) {
     if (!ctx.keep.has(version)) return true;
     // 没有 sidecar 的整包是崩溃残留；下载刚 rename 完还没写 sidecar 时不能误删。
-    return !ctx.present.has(`${name}.sha256`) && !isReleaseDownloadInFlight(cacheDir, version);
+    if (ctx.present.has(`${name}.sha256`) || isReleaseDownloadInFlight(cacheDir, version)) {
+      return false;
+    }
+    // 枚举与删除之间下载可能刚写完 sidecar 并退出在途表：删之前再看一眼盘上。
+    return !existsSync(join(cacheDir, `${name}.sha256`));
   }
   if (suffix === '.sha256') {
-    return !ctx.keep.has(version) || !ctx.present.has(name.slice(0, -'.sha256'.length));
+    if (!ctx.keep.has(version)) return true;
+    const tarball = name.slice(0, -'.sha256'.length);
+    if (ctx.present.has(tarball)) return false;
+    return !existsSync(join(cacheDir, tarball));
   }
   if (isReleaseDownloadInFlight(cacheDir, version)) return false;
   return await partExpired(join(cacheDir, name), ctx.now, ctx.partTtlMs);
@@ -140,8 +182,14 @@ async function partExpired(path: string, now: number, ttlMs: number): Promise<bo
   }
 }
 
+export function readReleaseRehashCountForTests(): number {
+  return rehashCount;
+}
+
 export function resetReleaseDownloadForTests(): void {
   verified.clear();
+  retained.clear();
+  rehashCount = 0;
   for (const entry of inflight.values()) {
     entry.ac.abort();
     const err = abortError();
@@ -441,25 +489,26 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
     const expected = readFileSync(sidecar, 'utf8').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return null;
     const info = statSync(dest);
+    const identity = fileIdentity(info);
     const memo = verified.get(dest);
-    if (
-      memo &&
-      memo.sha256 === expected &&
-      memo.size === info.size &&
-      memo.mtimeMs === info.mtimeMs
-    ) {
+    if (memo && memo.sha256 === expected && memo.identity === identity) {
       return { path: dest, sha256: expected, bytes: info.size };
     }
+    rehashCount += 1;
     const hashed = await sha256File(dest);
     if (hashed.sha256 !== expected) {
       verified.delete(dest);
       return null;
     }
-    verified.set(dest, { size: info.size, mtimeMs: info.mtimeMs, sha256: expected });
+    verified.set(dest, { identity, sha256: expected });
     return { path: dest, sha256: expected, bytes: hashed.bytes };
   } catch {
     return null;
   }
+}
+
+function fileIdentity(info: Stats): string {
+  return `${info.size}:${info.mtimeMs}:${info.ino}:${info.ctimeMs}`;
 }
 
 function throwIfAborted(signal?: AbortSignal): void {

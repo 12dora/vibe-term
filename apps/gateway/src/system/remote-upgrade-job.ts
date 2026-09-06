@@ -4,6 +4,7 @@ import {
   type DownloadProgressFn,
   downloadVerifiedRelease,
   resolveReleaseCacheDir,
+  retainReleaseVersion,
 } from './release-download';
 import {
   abortableSleep,
@@ -299,11 +300,17 @@ type JobDeps = {
 };
 
 async function runJob(job: Job, deps: JobDeps): Promise<RemoteUpgradeJobSnapshot> {
-  const downloaded = await runDownloadPhase(job, deps);
-  if (downloaded.done) return downloaded.snapshot;
-  const pushed = await runPushPhase(job, deps, downloaded.value);
-  if (pushed.done) return pushed.snapshot;
-  return (await runStartPhase(job, deps, downloaded.value)).snapshot;
+  // 推包期间别的节点开始升级会带着新版本清扫缓存；租约保住这一版直到本任务收尾。
+  const releaseLease = retainReleaseVersion(releaseCacheDir(), job.version);
+  try {
+    const downloaded = await runDownloadPhase(job, deps);
+    if (downloaded.done) return downloaded.snapshot;
+    const pushed = await runPushPhase(job, deps, downloaded.value);
+    if (pushed.done) return pushed.snapshot;
+    return (await runStartPhase(job, deps, downloaded.value)).snapshot;
+  } finally {
+    releaseLease();
+  }
 }
 
 async function runDownloadPhase(
@@ -668,14 +675,14 @@ function snapshotOf(job: Job): RemoteUpgradeJobSnapshot {
   };
 }
 
+function releaseCacheDir(): string {
+  return resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
+}
+
 async function defaultDownload(
   version: string,
   signal?: AbortSignal,
   onProgress?: DownloadProgressFn
 ): Promise<DownloadedRelease> {
-  return downloadVerifiedRelease(version, {
-    cacheDir: resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo())),
-    signal,
-    onProgress,
-  });
+  return downloadVerifiedRelease(version, { cacheDir: releaseCacheDir(), signal, onProgress });
 }

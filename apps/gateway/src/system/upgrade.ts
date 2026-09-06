@@ -20,6 +20,7 @@ import {
   downloadVerifiedRelease,
   isReleaseDownloadInFlight,
   resolveReleaseCacheDir,
+  retainReleaseVersion,
   sha256File,
   sweepReleaseCache,
 } from './release-download';
@@ -1010,17 +1011,20 @@ export async function stageGithubRelease(
   version: string,
   signal?: AbortSignal
 ): Promise<string> {
-  const installDir = resolveUpgradeInstallDir(getInstallInfo());
-  const cached = await downloadVerifiedRelease(version, {
-    cacheDir: resolveReleaseCacheDir(installDir),
-    signal,
-  });
-  if (signal?.aborted) {
-    const err = new Error(UPGRADE_CANCELLED);
-    err.name = 'AbortError';
-    throw err;
+  const cacheDir = resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
+  // 解压期间别的节点开始升级会带着新版本清扫缓存，租约保住这一版直到 tar 读完。
+  const releaseLease = retainReleaseVersion(cacheDir, version);
+  try {
+    const cached = await downloadVerifiedRelease(version, { cacheDir, signal });
+    if (signal?.aborted) {
+      const err = new Error(UPGRADE_CANCELLED);
+      err.name = 'AbortError';
+      throw err;
+    }
+    return await extractCliTarball(cached.path, stageDir, signal);
+  } finally {
+    releaseLease();
   }
-  return extractCliTarball(cached.path, stageDir, signal);
 }
 
 export async function extractCliTarball(

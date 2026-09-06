@@ -6,6 +6,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  renameSync,
   rmSync,
   utimesSync,
   writeFileSync,
@@ -16,9 +17,12 @@ import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/s
 import {
   downloadVerifiedRelease,
   isReleaseDownloadInFlight,
+  isReleaseVersionRetained,
+  readReleaseRehashCountForTests,
   resetReleaseDownloadForTests,
   resolveReleaseSha256SumsUrl,
   resolveReleaseTarballUrl,
+  retainReleaseVersion,
   sweepReleaseCache,
 } from './release-download';
 
@@ -593,6 +597,78 @@ describe('sweepReleaseCache', () => {
     expect(isReleaseDownloadInFlight(cacheDir, version)).toBe(false);
   }, 8_000);
 
+  test('持有租约的版本不受 keepVersions 约束：整目录清空也留着它', async () => {
+    const dir = tempDir('tmex-rel-sweep-lease-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz');
+    const lease = retainReleaseVersion(dir, '1.1.34');
+
+    // 另一个节点带着新版本来清扫：租约版本不在 keepVersions 里也不能删
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.40'] });
+    expect(removed).toEqual(['tmex-cli-1.1.30.tgz']);
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(true);
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(true);
+
+    lease();
+    expect(isReleaseVersionRetained(dir, '1.1.34')).toBe(false);
+    const after = await sweepReleaseCache(dir, { keepVersions: [] });
+    expect(after.removed.sort()).toEqual(['tmex-cli-1.1.34.tgz', 'tmex-cli-1.1.34.tgz.sha256']);
+  });
+
+  test('租约按引用计数：两个任务钉同一版本，释放一个还留着，都释放才清', async () => {
+    const dir = tempDir('tmex-rel-sweep-lease-rc-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    const first = retainReleaseVersion(dir, '1.1.34');
+    const second = retainReleaseVersion(dir, '1.1.34');
+
+    first();
+    // 幂等：重复释放不能把别人的引用一起扣掉
+    first();
+    expect(isReleaseVersionRetained(dir, '1.1.34')).toBe(true);
+    expect((await sweepReleaseCache(dir, { keepVersions: [] })).removed).toEqual([]);
+
+    second();
+    expect(isReleaseVersionRetained(dir, '1.1.34')).toBe(false);
+    expect((await sweepReleaseCache(dir, { keepVersions: [] })).removed).toHaveLength(2);
+  });
+
+  test('枚举快照过期：删之前 sidecar 已经落盘，整包与 sidecar 都不动', async () => {
+    const dir = tempDir('tmex-rel-sweep-race-');
+    const name = 'tmex-cli-1.1.34.tgz';
+    writeCacheEntry(dir, name);
+
+    // 枚举时只看到缺 sidecar 的整包；判定之前下载刚写完 sidecar 并退出在途表
+    const { removed } = await sweepReleaseCache(dir, {
+      keepVersions: ['1.1.34'],
+      afterEnumerateForTests: async () => {
+        writeCacheEntry(dir, `${name}.sha256`, `${'cd'.repeat(32)}\n`);
+      },
+    });
+
+    expect(removed).toEqual([]);
+    expect(existsSync(join(dir, name))).toBe(true);
+    expect(existsSync(join(dir, `${name}.sha256`))).toBe(true);
+  });
+
+  test('枚举快照过期：孤儿 sidecar 在删之前等到了整包，也不动', async () => {
+    const dir = tempDir('tmex-rel-sweep-race-side-');
+    const name = 'tmex-cli-1.1.34.tgz';
+    writeCacheEntry(dir, `${name}.sha256`, `${'cd'.repeat(32)}\n`);
+
+    const { removed } = await sweepReleaseCache(dir, {
+      keepVersions: ['1.1.34'],
+      afterEnumerateForTests: async () => {
+        writeCacheEntry(dir, name);
+      },
+    });
+
+    expect(removed).toEqual([]);
+    expect(existsSync(join(dir, name))).toBe(true);
+    expect(existsSync(join(dir, `${name}.sha256`))).toBe(true);
+  });
+
   test('不认识的文件被清掉，目录不存在时是 no-op', async () => {
     const dir = tempDir('tmex-rel-sweep-junk-');
     writeCacheEntry(dir, 'junk.txt');
@@ -611,9 +687,7 @@ describe('sweepReleaseCache', () => {
 describe('已校验缓存的复用', () => {
   const FIXED_MTIME = new Date(1_700_000_000_000);
 
-  test('size/mtime 未变时跳过重算 sha256，mtime 变了才重算', async () => {
-    const version = '8.2.0';
-    const tarball = new Uint8Array(4096).fill(6);
+  function seedVerifiedCache(version: string, tarball: Uint8Array): { dest: string; hex: string } {
     const hex = sha256Hex(tarball);
     const cacheDir = tempDir('tmex-rel-verify-memo-');
     const dest = join(cacheDir, releaseTarballName(version));
@@ -623,17 +697,71 @@ describe('已校验缓存的复用', () => {
     globalThis.fetch = (async (_input: RequestInfo | URL): Promise<Response> => {
       throw new Error('should not download');
     }) as typeof fetch;
+    return { dest, hex };
+  }
+
+  test('文件没被动过：第二次取用命中记忆，不重算也不下载', async () => {
+    const version = '8.2.0';
+    const tarball = new Uint8Array(4096).fill(6);
+    const { dest, hex } = seedVerifiedCache(version, tarball);
+    const cacheDir = join(dest, '..');
 
     const first = await downloadVerifiedRelease(version, { cacheDir });
     expect(first.sha256).toBe(hex);
+    expect(readReleaseRehashCountForTests()).toBe(1);
 
-    // 内容改成等长的别的字节：命中记忆就不会发现，重算就会发现
-    writeFileSync(dest, Buffer.from(new Uint8Array(4096).fill(7)));
-    utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
     const second = await downloadVerifiedRelease(version, { cacheDir });
     expect(second.sha256).toBe(hex);
+    expect(second.bytes).toBe(tarball.byteLength);
+    expect(readReleaseRehashCountForTests()).toBe(1);
+  });
 
-    // mtime 一变记忆失效，重算发现对不上 → 回到下载路径
+  test('等长内容原地覆盖并把 mtime 改回去：ino/ctime 对不上，重算发现不符回到下载路径', async () => {
+    const version = '8.3.0';
+    const tarball = new Uint8Array(4096).fill(6);
+    const { dest, hex } = seedVerifiedCache(version, tarball);
+    const cacheDir = join(dest, '..');
+
+    expect((await downloadVerifiedRelease(version, { cacheDir })).sha256).toBe(hex);
+    const memoHits = readReleaseRehashCountForTests();
+
+    // 只比 size+mtime 的旧记忆会把这份内容当成已校验的包直接放行
+    writeFileSync(dest, Buffer.from(new Uint8Array(4096).fill(7)));
+    utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
+    await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow(
+      /should not download/
+    );
+    expect(readReleaseRehashCountForTests()).toBeGreaterThan(memoHits);
+  });
+
+  test('换成同名新文件（ino 变了）也要重算', async () => {
+    const version = '8.4.0';
+    const tarball = new Uint8Array(2048).fill(2);
+    const { dest, hex } = seedVerifiedCache(version, tarball);
+    const cacheDir = join(dest, '..');
+
+    expect((await downloadVerifiedRelease(version, { cacheDir })).sha256).toBe(hex);
+    const before = readReleaseRehashCountForTests();
+
+    // rename 覆盖：内容与长度都一样，只有 inode 换了
+    const swap = `${dest}.swap`;
+    writeFileSync(swap, Buffer.from(tarball));
+    renameSync(swap, dest);
+    utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
+
+    const again = await downloadVerifiedRelease(version, { cacheDir });
+    expect(again.sha256).toBe(hex);
+    expect(readReleaseRehashCountForTests()).toBe(before + 1);
+  });
+
+  test('mtime 变了记忆失效，重算发现对不上 → 回到下载路径', async () => {
+    const version = '8.5.0';
+    const tarball = new Uint8Array(4096).fill(6);
+    const { dest, hex } = seedVerifiedCache(version, tarball);
+    const cacheDir = join(dest, '..');
+
+    expect((await downloadVerifiedRelease(version, { cacheDir })).sha256).toBe(hex);
+    writeFileSync(dest, Buffer.from(new Uint8Array(4096).fill(7)));
     const later = new Date(FIXED_MTIME.getTime() + 5_000);
     utimesSync(dest, later, later);
     await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow(

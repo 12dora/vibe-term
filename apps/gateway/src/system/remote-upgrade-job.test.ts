@@ -4,7 +4,12 @@ import { existsSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { InstallInfo } from './install-info';
-import { downloadVerifiedRelease, resetReleaseDownloadForTests } from './release-download';
+import {
+  downloadVerifiedRelease,
+  isReleaseVersionRetained,
+  resetReleaseDownloadForTests,
+  sweepReleaseCache,
+} from './release-download';
 import {
   LEGACY_PUSH_MAX_ATTEMPTS,
   PUSH_MAX_ATTEMPTS,
@@ -836,6 +841,99 @@ describe('RemoteUpgradeJob', () => {
     expect(getRemoteUpgradeJob(nodeId)?.state).toBe('cancelled');
     const done = await waitForRemoteUpgradeJob(nodeId);
     expect(done.state).toBe('cancelled');
+  }, 8_000);
+
+  test('推包期间别的节点清扫缓存：租约钉住本任务的整包，不会被删成 ENOENT', async () => {
+    const nodeId = 'de'.repeat(16);
+    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-'));
+    tempDirs.push(cacheDir);
+    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    const bytes = new Uint8Array(64).fill(3);
+    const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
+    writeFileSync(path, bytes);
+    writeFileSync(`${path}.sha256`, `${'aa'.repeat(32)}\n`);
+    const swept: string[][] = [];
+
+    const started = startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'PUT') {
+            // 60 s 版本缓存过期后来了新版本，另一个节点开始升级并按新版本清扫
+            const { removed } = await sweepReleaseCache(cacheDir, { keepVersions: ['9.9.10'] });
+            swept.push(removed);
+            expect(existsSync(path)).toBe(true);
+            const raw = input.rawBody ? await new Response(input.rawBody).bytes() : null;
+            expect(raw).toEqual(bytes);
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      sleep: noSleep,
+    });
+    expect(started.ok).toBe(true);
+
+    const done = await waitForRemoteUpgradeJob(nodeId);
+    expect(done.state).toBe('handed-off');
+    expect(swept).toEqual([[]]);
+    // 任务收尾后租约释放，同样的清扫就能把旧包收走
+    expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(false);
+    const after = await sweepReleaseCache(cacheDir, { keepVersions: ['9.9.10'] });
+    expect(after.removed.sort()).toEqual(['tmex-cli-9.9.9.tgz', 'tmex-cli-9.9.9.tgz.sha256']);
+  });
+
+  test('任务被取消后租约同样释放', async () => {
+    const nodeId = 'df'.repeat(16);
+    const cacheDir = mkdtempSync(join(tmpdir(), 'tmex-job-lease-cancel-'));
+    tempDirs.push(cacheDir);
+    process.env.TMEX_RELEASE_CACHE_DIR = cacheDir;
+    const bytes = new Uint8Array(64).fill(4);
+    const path = join(cacheDir, 'tmex-cli-9.9.9.tgz');
+    writeFileSync(path, bytes);
+    let releasePush!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      releasePush = resolve;
+    });
+
+    startRemoteUpgradeJob({
+      nodeId,
+      version: '9.9.9',
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp(_req, input) {
+          if (input.method === 'PUT') {
+            expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(true);
+            releasePush();
+            // 挂住上行直到取消把 signal abort 掉，模拟真实转发被打断
+            await new Promise<void>((_resolve, rejectPush) => {
+              input.signal?.addEventListener('abort', () => rejectPush(new Error('aborted')), {
+                once: true,
+              });
+            });
+          }
+          return new Response('{}', { status: 200 });
+        },
+      },
+      download: async () => ({ path, sha256: 'aa'.repeat(32), bytes: bytes.byteLength }),
+      sleep: noSleep,
+    });
+    await gate;
+
+    const cancelled = await cancelRemoteUpgradeJob({
+      nodeId,
+      req: authed(nodeId),
+      forward: {
+        async forwardAuthorizedHttp() {
+          return new Response('{}', { status: 200 });
+        },
+      },
+    });
+    expect(cancelled.handled).toBe(true);
+    await waitForRemoteUpgradeJob(nodeId);
+    expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(false);
   }, 8_000);
 
   test('cancel during download removes the cache .part and never leaves a tarball without sidecar', async () => {

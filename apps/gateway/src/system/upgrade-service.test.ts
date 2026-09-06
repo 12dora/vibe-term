@@ -6,7 +6,7 @@ import { releaseTarballName } from '@tmex/shared';
 import type { SystemInfo } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
 import * as infoPublic from './info-public';
-import { resetReleaseDownloadForTests } from './release-download';
+import { resetReleaseDownloadForTests, retainReleaseVersion } from './release-download';
 import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
 import { resetLatestReleaseCache } from './update-check';
 import { upgradeController } from './upgrade';
@@ -484,6 +484,47 @@ describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
     expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(false);
     expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(true);
     await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  }, 8_000);
+
+  test('别的节点还在推的版本被租约钉住：start 的清扫不动它，租约释放后才清', async () => {
+    const cacheDir = releaseCacheTempDir();
+    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'), 'in-flight push');
+    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    const lease = retainReleaseVersion(cacheDir, '1.1.30');
+    mockGithubLatest('9.9.9');
+
+    const first = 'ab'.repeat(16);
+    expect(
+      (
+        await handleMeshNodeUpgradeStart({
+          req: authedRequest(first),
+          nodeId: first,
+          localNodeId,
+          userStore: enrolledStore(first),
+          forward: stagedForward(),
+        })
+      ).status
+    ).toBe(200);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(true);
+
+    lease();
+    resetReleaseCacheSweepMemoForTests();
+    const second = 'ba'.repeat(16);
+    expect(
+      (
+        await handleMeshNodeUpgradeStart({
+          req: authedRequest(second),
+          nodeId: second,
+          localNodeId,
+          userStore: enrolledStore(second),
+          forward: stagedForward(),
+        })
+      ).status
+    ).toBe(200);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(false);
+    await Promise.all([first, second].map((id) => waitForRemoteUpgradeJob(id).catch(() => {})));
   }, 8_000);
 
   test('N 个节点连发 start，GitHub latest 只查一次', async () => {
