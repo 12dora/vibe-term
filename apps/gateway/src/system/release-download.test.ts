@@ -7,6 +7,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -14,9 +15,11 @@ import { join } from 'node:path';
 import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import {
   downloadVerifiedRelease,
+  isReleaseDownloadInFlight,
   resetReleaseDownloadForTests,
   resolveReleaseSha256SumsUrl,
   resolveReleaseTarballUrl,
+  sweepReleaseCache,
 } from './release-download';
 
 const originalFetch = globalThis.fetch;
@@ -500,4 +503,141 @@ describe('downloadVerifiedRelease progress', () => {
     await new Promise((resolve) => setTimeout(resolve, 30));
     expect(seen.length).toBe(settled);
   }, 8_000);
+});
+
+const HOUR_MS = 60 * 60 * 1000;
+
+function writeCacheEntry(dir: string, name: string, body = 'x'): string {
+  const path = join(dir, name);
+  writeFileSync(path, body);
+  return path;
+}
+
+function ageFile(path: string, ms: number): void {
+  const when = new Date(Date.now() - ms);
+  utimesSync(path, when, when);
+}
+
+describe('sweepReleaseCache', () => {
+  test('保留 keepVersions，其余整包与 sidecar 一起清掉', async () => {
+    const dir = tempDir('tmex-rel-sweep-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz.sha256', `${'ab'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34'] });
+
+    expect(removed.sort()).toEqual(['tmex-cli-1.1.30.tgz', 'tmex-cli-1.1.30.tgz.sha256']);
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(true);
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(true);
+  });
+
+  test('keepVersions 为空时整目录清空', async () => {
+    const dir = tempDir('tmex-rel-sweep-all-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    const part = writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.part');
+
+    await sweepReleaseCache(dir, { keepVersions: [], partTtlMs: 0 });
+
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(false);
+    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(false);
+    expect(existsSync(part)).toBe(false);
+  });
+
+  test('丢了整包的孤儿 sidecar 被清掉，保留版本的整包缺 sidecar 也清', async () => {
+    const dir = tempDir('tmex-rel-sweep-orphan-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'tmex-cli-1.1.35.tgz');
+
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34', '1.1.35'] });
+
+    expect(removed.sort()).toEqual(['tmex-cli-1.1.34.tgz.sha256', 'tmex-cli-1.1.35.tgz']);
+  });
+
+  test('保留期内的 .part 与下载中的 .part 都不动，过期孤儿 .part 才清', async () => {
+    const dir = tempDir('tmex-rel-sweep-part-');
+    const fresh = writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.part');
+    const stale = writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz.part');
+    ageFile(stale, 48 * HOUR_MS);
+
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: [] });
+
+    expect(removed).toEqual(['tmex-cli-1.1.30.tgz.part']);
+    expect(existsSync(fresh)).toBe(true);
+    expect(existsSync(stale)).toBe(false);
+  });
+
+  test('下载中的 .part 即使过了保留期也不清', async () => {
+    const version = '8.1.0';
+    const tarball = new Uint8Array(1024 * 1024).fill(4);
+    const streamed = stubStreamedRelease(version, tarball, {
+      chunkSize: 256 * 1024,
+      pauseAfter: 1,
+    });
+    const cacheDir = tempDir('tmex-rel-sweep-inflight-');
+    const pending = downloadVerifiedRelease(version, { cacheDir });
+    await waitFor(() => existsSync(join(cacheDir, `${releaseTarballName(version)}.part`)));
+    expect(isReleaseDownloadInFlight(cacheDir, version)).toBe(true);
+
+    const { removed } = await sweepReleaseCache(cacheDir, {
+      keepVersions: [],
+      partTtlMs: 0,
+    });
+
+    expect(removed).toEqual([]);
+    expect(existsSync(join(cacheDir, `${releaseTarballName(version)}.part`))).toBe(true);
+    streamed.release();
+    await pending;
+    expect(isReleaseDownloadInFlight(cacheDir, version)).toBe(false);
+  }, 8_000);
+
+  test('不认识的文件被清掉，目录不存在时是 no-op', async () => {
+    const dir = tempDir('tmex-rel-sweep-junk-');
+    writeCacheEntry(dir, 'junk.txt');
+    writeCacheEntry(dir, 'tmex-cli-notaversion.tgz');
+    mkdirSync(join(dir, 'leftover-dir'), { recursive: true });
+
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34'] });
+    expect(removed.sort()).toEqual(['junk.txt', 'leftover-dir', 'tmex-cli-notaversion.tgz']);
+
+    await expect(
+      sweepReleaseCache(join(dir, 'does-not-exist'), { keepVersions: [] })
+    ).resolves.toEqual({ removed: [] });
+  });
+});
+
+describe('已校验缓存的复用', () => {
+  const FIXED_MTIME = new Date(1_700_000_000_000);
+
+  test('size/mtime 未变时跳过重算 sha256，mtime 变了才重算', async () => {
+    const version = '8.2.0';
+    const tarball = new Uint8Array(4096).fill(6);
+    const hex = sha256Hex(tarball);
+    const cacheDir = tempDir('tmex-rel-verify-memo-');
+    const dest = join(cacheDir, releaseTarballName(version));
+    writeFileSync(dest, Buffer.from(tarball));
+    writeFileSync(`${dest}.sha256`, `${hex}\n`);
+    utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
+    globalThis.fetch = (async (_input: RequestInfo | URL): Promise<Response> => {
+      throw new Error('should not download');
+    }) as typeof fetch;
+
+    const first = await downloadVerifiedRelease(version, { cacheDir });
+    expect(first.sha256).toBe(hex);
+
+    // 内容改成等长的别的字节：命中记忆就不会发现，重算就会发现
+    writeFileSync(dest, Buffer.from(new Uint8Array(4096).fill(7)));
+    utimesSync(dest, FIXED_MTIME, FIXED_MTIME);
+    const second = await downloadVerifiedRelease(version, { cacheDir });
+    expect(second.sha256).toBe(hex);
+
+    // mtime 一变记忆失效，重算发现对不上 → 回到下载路径
+    const later = new Date(FIXED_MTIME.getTime() + 5_000);
+    utimesSync(dest, later, later);
+    await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow(
+      /should not download/
+    );
+  });
 });

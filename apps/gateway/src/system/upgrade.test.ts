@@ -17,7 +17,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UPGRADE_CANCELLED, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
 import type { InstallInfo } from './install-info';
-import { resetReleaseDownloadForTests } from './release-download';
+import { downloadVerifiedRelease, resetReleaseDownloadForTests } from './release-download';
 import {
   STAGED_PACKAGE_MAX_BYTES,
   UpgradeController,
@@ -1260,9 +1260,70 @@ describe('UpgradeController.cancel', () => {
     expect(stagingEntries(installDir)).toEqual([]);
     expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
     expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(true);
+    // 缓存只留本次目标版本：9.9.9 连同 sidecar 在 run() 开头被清扫掉。
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
     expect(controller.status().error).toBe(UPGRADE_CANCELLED);
   }, 5_000);
+
+  test('取消本机升级不会删掉远程任务正在共享下载的 .part', async () => {
+    const install = makeInstall();
+    const installDir = install.installDir as string;
+    const cacheDir = join(installDir, 'staging', 'release-cache');
+    const version = '1.2.3';
+    const bytes = new Uint8Array(4096).fill(2);
+    let openGate!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('SHA256SUMS')) {
+        return new Response(`${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`, {
+          status: 200,
+        });
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          async start(controller) {
+            controller.enqueue(bytes.slice(0, 16));
+            await gate;
+            controller.enqueue(bytes.slice(16));
+            controller.close();
+          },
+        }),
+        { status: 200 }
+      );
+    }) as typeof fetch;
+
+    const partPath = join(cacheDir, `${releaseTarballName(version)}.part`);
+    const shared = downloadVerifiedRelease(version, { cacheDir });
+    for (let i = 0; i < 200 && !existsSync(partPath); i += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(existsSync(partPath)).toBe(true);
+
+    const controller = new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: (_stageDir, _version, signal): Promise<string> =>
+        new Promise<never>((_resolve, reject) => {
+          signal?.addEventListener('abort', () => {
+            reject(Object.assign(new Error('Aborted'), { name: 'AbortError' }));
+          });
+        }),
+    });
+    expect(controller.start(version)).toBe(true);
+    await settle();
+    // run() 开头的缓存清扫也不能碰在途的 .part
+    expect(existsSync(partPath)).toBe(true);
+    const result = await controller.cancel();
+    expect(result.ok).toBe(true);
+    expect(existsSync(partPath)).toBe(true);
+
+    openGate();
+    await shared;
+    expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(true);
+  }, 8_000);
 
   test('a second cancel after success is UPGRADE_NOT_RUNNING and stays cleaned', async () => {
     const install = makeInstall();
@@ -1369,7 +1430,7 @@ describe('UpgradeController.cancel', () => {
     }
   });
 
-  test('orphan .part and txn leftovers from a crashed cancel are pruned on the next start', async () => {
+  test('stale parts, other versions and txn leftovers are swept on the next start', async () => {
     const install = makeInstall();
     const installDir = install.installDir as string;
     const stagedDir = join(installDir, 'staging', 'staged');
@@ -1383,10 +1444,15 @@ describe('UpgradeController.cancel', () => {
     writeFileSync(join(txnDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
     const cacheDir = join(installDir, 'staging', 'release-cache');
     mkdirSync(cacheDir, { recursive: true });
+    // 新鲜的 .part 可能是同进程另一个远程任务在共享下载，保留期内不碰。
     writeFileSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'), 'x');
+    const stalePart = join(cacheDir, 'tmex-cli-0.0.2.tgz.part');
+    writeFileSync(stalePart, 'x');
+    utimesSync(stalePart, stale, stale);
     writeFileSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'), 'orphan-final');
     writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'keep');
     writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'junk.txt'), 'not ours');
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => undefined;
     const controller = new UpgradeController({
@@ -1398,9 +1464,12 @@ describe('UpgradeController.cancel', () => {
     await settle();
     expect(existsSync(join(stagedDir, 'tmex-cli-1.2.3.tgz.part-deadbeef'))).toBe(false);
     expect(existsSync(txnDir)).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.2.3.tgz.part'))).toBe(true);
+    expect(existsSync(stalePart)).toBe(false);
     expect(existsSync(join(cacheDir, 'tmex-cli-0.0.1.tgz'))).toBe(false);
-    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(true);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'junk.txt'))).toBe(false);
     child.emit('spawn');
     await settle();
   });

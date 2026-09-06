@@ -21,6 +21,8 @@ import {
 import { requireLatestUpgradeRelease } from './update-check';
 
 const RELEASE_VERSION_PATTERN = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
+/** 一次「全部升级」会连发 N 个 start，缓存清扫按目录+目标版本做短时记忆，只做一次。 */
+const RELEASE_CACHE_SWEEP_MEMO_MS = 30_000;
 const REMOTE_UPGRADE_JSON_MAX_BYTES = 64 * 1024;
 const UPGRADE_STATES = new Set<UpgradeState>(['idle', 'downloading', 'executing']);
 
@@ -42,6 +44,34 @@ export type AuthorizedUpgradeForwardInput = {
 export type AuthorizedUpgradeForward = {
   forwardAuthorizedHttp: (req: Request, input: AuthorizedUpgradeForwardInput) => Promise<Response>;
 };
+
+let releaseCacheSweepMemo: { key: string; at: number } | null = null;
+
+export function resetReleaseCacheSweepMemoForTests(): void {
+  releaseCacheSweepMemo = null;
+}
+
+/** 开始下载前清掉缓存里的旧版本，只留本次目标版本；失败不挡升级。 */
+async function sweepReleaseCacheForUpgrade(latestVersion: string): Promise<void> {
+  try {
+    const { getInstallInfo } = await import('./install-info');
+    const { resolveUpgradeInstallDir } = await import('./upgrade');
+    const { resolveReleaseCacheDir, sweepReleaseCache } = await import('./release-download');
+    const cacheDir = resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo()));
+    const key = `${cacheDir}::${latestVersion}`;
+    const now = Date.now();
+    if (
+      releaseCacheSweepMemo?.key === key &&
+      now - releaseCacheSweepMemo.at < RELEASE_CACHE_SWEEP_MEMO_MS
+    ) {
+      return;
+    }
+    releaseCacheSweepMemo = { key, at: now };
+    await sweepReleaseCache(cacheDir, { keepVersions: [latestVersion] });
+  } catch {
+    // 清理是尽力而为，不该让升级因为清不掉旧包而失败
+  }
+}
 
 export function isLocalUpgradeNode(localNodeId: string, nodeId: string): boolean {
   return nodeId === localNodeId || nodeId === MESH_VIA_SELF;
@@ -113,6 +143,7 @@ export async function handleMeshNodeUpgradeStart(opts: {
   if (!RELEASE_VERSION_PATTERN.test(latestVersion)) {
     return jsonError('RELEASE_UNAVAILABLE', 502);
   }
+  await sweepReleaseCacheForUpgrade(latestVersion);
 
   if (local) {
     return startLocalMeshUpgrade(resolvedId, latestVersion);

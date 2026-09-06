@@ -16,7 +16,13 @@ import { errorMessage, releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
-import { downloadVerifiedRelease, resolveReleaseCacheDir, sha256File } from './release-download';
+import {
+  downloadVerifiedRelease,
+  isReleaseDownloadInFlight,
+  resolveReleaseCacheDir,
+  sha256File,
+  sweepReleaseCache,
+} from './release-download';
 import {
   type StagePackageOpts,
   type StagePackageResult,
@@ -366,7 +372,7 @@ export class UpgradeController {
     }
     if (!body) return { ok: false, status: 400, code: 'BAD_REQUEST' };
 
-    await this.repairStagingArtifacts(installDir);
+    await this.repairStagingArtifacts(installDir, version);
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
     const partPath = stagedPartPath(stagedDir, version, expected);
@@ -645,42 +651,29 @@ export class UpgradeController {
     if (txnDir) await rm(txnDir, { recursive: true, force: true }).catch(() => {});
     if (!installDir || !version) return;
     const cacheDir = resolveReleaseCacheDir(installDir);
-    await rm(join(cacheDir, `${releaseTarballName(version)}.part`), { force: true }).catch(
-      () => {}
-    );
+    // 同一版本可能正被远程升级任务共享下载，取消本机升级不能顺手删掉别人的 .part。
+    if (!isReleaseDownloadInFlight(cacheDir, version)) {
+      await rm(join(cacheDir, `${releaseTarballName(version)}.part`), { force: true }).catch(
+        () => {}
+      );
+    }
     const dest = join(cacheDir, releaseTarballName(version));
     if (!existsSync(`${dest}.sha256`)) {
       await rm(dest, { force: true }).catch(() => {});
     }
   }
 
-  private async repairStagingArtifacts(installDir: string): Promise<void> {
+  private async repairStagingArtifacts(
+    installDir: string,
+    keepVersion?: string | null
+  ): Promise<void> {
     this.loadStagedFromDisk(installDir);
     this.dropExpiredStaged(installDir);
     await this.pruneOrphanStagedFiles(installDir);
-    await this.pruneOrphanReleaseCache(installDir);
+    await sweepReleaseCache(resolveReleaseCacheDir(installDir), {
+      keepVersions: keepVersion ? [keepVersion] : [],
+    });
     await this.pruneOrphanTxnDirs(installDir);
-  }
-
-  private async pruneOrphanReleaseCache(installDir: string): Promise<void> {
-    const cacheDir = resolveReleaseCacheDir(installDir);
-    if (!existsSync(cacheDir)) return;
-    let names: string[] = [];
-    try {
-      names = readdirSync(cacheDir);
-    } catch {
-      return;
-    }
-    for (const name of names) {
-      const path = join(cacheDir, name);
-      if (name.includes('.part')) {
-        await rm(path, { force: true, recursive: true }).catch(() => {});
-        continue;
-      }
-      if (name.endsWith('.tgz') && !existsSync(`${path}.sha256`)) {
-        await rm(path, { force: true }).catch(() => {});
-      }
-    }
   }
 
   private async pruneOrphanTxnDirs(installDir: string): Promise<void> {
@@ -722,7 +715,7 @@ export class UpgradeController {
         throw new Error('install directory could not be resolved');
       }
 
-      await this.repairStagingArtifacts(installDir);
+      await this.repairStagingArtifacts(installDir, version);
       this.throwIfCancelled();
 
       const txnId = createTxnId();

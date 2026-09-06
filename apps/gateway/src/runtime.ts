@@ -153,6 +153,21 @@ function createPreflightGatewayRuntime(options: GatewayRuntimeOptions): GatewayR
   };
 }
 
+/** 启动时清空发行包缓存：此刻没有任何下载在途，留着只会一版一版堆到几百 MB。 */
+function sweepReleaseCacheOnStartup(): void {
+  void (async () => {
+    const { getInstallInfo } = await import('./system/install-info');
+    const { resolveUpgradeInstallDir } = await import('./system/upgrade');
+    const { resolveReleaseCacheDir, sweepReleaseCache } = await import('./system/release-download');
+    await sweepReleaseCache(resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo())), {
+      keepVersions: [],
+      partTtlMs: 0,
+    });
+  })().catch(() => {
+    // 清理失败不该挡住启动
+  });
+}
+
 export async function createGatewayRuntime(
   options: GatewayRuntimeOptions = {}
 ): Promise<GatewayRuntime> {
@@ -185,6 +200,7 @@ export async function createGatewayRuntime(
   runtimeController.reset();
   primeLocalShellPath();
   sweepOrphanTransferTemps();
+  sweepReleaseCacheOnStartup();
 
   const wsServer = new WebSocketServer();
   const db = getOrmDb();

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { createReadStream, createWriteStream, existsSync, readFileSync } from 'node:fs';
-import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
+import { createReadStream, createWriteStream, existsSync, readFileSync, statSync } from 'node:fs';
+import { mkdir, readdir, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
@@ -48,7 +48,100 @@ type InflightDownload = {
 
 const inflight = new Map<string, InflightDownload>();
 
+/** 已通过校验的缓存包：同一进程内按 size+mtime 复用结果，免去每个任务重算整包 sha256。 */
+type VerifiedRelease = { size: number; mtimeMs: number; sha256: string };
+const verified = new Map<string, VerifiedRelease>();
+
+/** 缓存目录里唯一合法的文件名形态：`tmex-cli-<semver>.tgz[.sha256|.part]`。 */
+const RELEASE_CACHE_NAME = /^tmex-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.part)?$/;
+const RELEASE_PART_TTL_MS = 24 * 60 * 60 * 1000;
+
+function inflightKey(cacheDir: string, version: string): string {
+  return `${cacheDir}::${version}`;
+}
+
+/** 该版本是否正在下载：清理方（本机取消 / 缓存清扫）据此避开共享中的 `.part`。 */
+export function isReleaseDownloadInFlight(cacheDir: string, version: string): boolean {
+  return inflight.has(inflightKey(cacheDir, version));
+}
+
+export type SweepReleaseCacheOpts = {
+  /** 要保留的版本；空数组表示整目录清空（启动时用）。 */
+  keepVersions: string[];
+  now?: number;
+  partTtlMs?: number;
+};
+
+/**
+ * 清扫发行包缓存：删掉不在 keepVersions 里的整包与其 sidecar、丢了 `.tgz` 的孤儿 sidecar、
+ * 超过 TTL 且不在下载中的 `.part`，以及一切不合法文件名。全程 best-effort，任何一步失败都不抛。
+ */
+export async function sweepReleaseCache(
+  cacheDir: string,
+  opts: SweepReleaseCacheOpts
+): Promise<{ removed: string[] }> {
+  let names: string[];
+  try {
+    names = await readdir(cacheDir);
+  } catch {
+    return { removed: [] };
+  }
+  const ctx = {
+    present: new Set(names),
+    keep: new Set(opts.keepVersions),
+    now: opts.now ?? Date.now(),
+    partTtlMs: opts.partTtlMs ?? RELEASE_PART_TTL_MS,
+  };
+  const removed: string[] = [];
+  for (const name of names) {
+    if (!(await shouldSweepCacheEntry(cacheDir, name, ctx))) continue;
+    const path = join(cacheDir, name);
+    const ok = await rm(path, { force: true, recursive: true }).then(
+      () => true,
+      () => false
+    );
+    if (!ok) continue;
+    verified.delete(path);
+    removed.push(name);
+  }
+  return { removed };
+}
+
+type SweepCtx = { present: Set<string>; keep: Set<string>; now: number; partTtlMs: number };
+
+async function shouldSweepCacheEntry(
+  cacheDir: string,
+  name: string,
+  ctx: SweepCtx
+): Promise<boolean> {
+  const matched = RELEASE_CACHE_NAME.exec(name);
+  if (!matched) return true;
+  const version = matched[1] as string;
+  const suffix = matched[2];
+  if (!suffix) {
+    if (!ctx.keep.has(version)) return true;
+    // 没有 sidecar 的整包是崩溃残留；下载刚 rename 完还没写 sidecar 时不能误删。
+    return !ctx.present.has(`${name}.sha256`) && !isReleaseDownloadInFlight(cacheDir, version);
+  }
+  if (suffix === '.sha256') {
+    return !ctx.keep.has(version) || !ctx.present.has(name.slice(0, -'.sha256'.length));
+  }
+  if (isReleaseDownloadInFlight(cacheDir, version)) return false;
+  return await partExpired(join(cacheDir, name), ctx.now, ctx.partTtlMs);
+}
+
+async function partExpired(path: string, now: number, ttlMs: number): Promise<boolean> {
+  try {
+    const info = await stat(path);
+    // 文件系统的 mtime 可能比 Date.now() 略新（亚毫秒精度），夹到 0 才能让 ttl=0 真正清空。
+    return Math.max(0, now - info.mtimeMs) >= ttlMs;
+  } catch {
+    return false;
+  }
+}
+
 export function resetReleaseDownloadForTests(): void {
+  verified.clear();
   for (const entry of inflight.values()) {
     entry.ac.abort();
     const err = abortError();
@@ -347,8 +440,22 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
   try {
     const expected = readFileSync(sidecar, 'utf8').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return null;
+    const info = statSync(dest);
+    const memo = verified.get(dest);
+    if (
+      memo &&
+      memo.sha256 === expected &&
+      memo.size === info.size &&
+      memo.mtimeMs === info.mtimeMs
+    ) {
+      return { path: dest, sha256: expected, bytes: info.size };
+    }
     const hashed = await sha256File(dest);
-    if (hashed.sha256 !== expected) return null;
+    if (hashed.sha256 !== expected) {
+      verified.delete(dest);
+      return null;
+    }
+    verified.set(dest, { size: info.size, mtimeMs: info.mtimeMs, sha256: expected });
     return { path: dest, sha256: expected, bytes: hashed.bytes };
   } catch {
     return null;

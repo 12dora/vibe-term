@@ -1,28 +1,45 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { releaseTarballName } from '@tmex/shared';
 import type { SystemInfo } from '@tmex/shared';
 import type { UserStore } from '../auth/user-store';
 import * as infoPublic from './info-public';
 import { resetReleaseDownloadForTests } from './release-download';
 import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
+import { resetLatestReleaseCache } from './update-check';
 import { upgradeController } from './upgrade';
+import type { AuthorizedUpgradeForward } from './upgrade-service';
 import {
   handleMeshNodeUpgradeCancel,
   handleMeshNodeUpgradeStart,
   handleMeshNodeUpgradeStatus,
   isAlreadyAtOrAboveLatest,
   mapForwardedUpgradeResponse,
+  resetReleaseCacheSweepMemoForTests,
 } from './upgrade-service';
 
 const originalFetch = globalThis.fetch;
 const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const tempDirs: string[] = [];
+
+function releaseCacheTempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'tmex-svc-cache-'));
+  tempDirs.push(dir);
+  process.env.TMEX_RELEASE_CACHE_DIR = dir;
+  return dir;
+}
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
+  resetLatestReleaseCache();
+  resetReleaseCacheSweepMemoForTests();
   if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
   else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
+  for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('isAlreadyAtOrAboveLatest', () => {
@@ -422,6 +439,88 @@ describe('handleMeshNodeUpgradeStart staged-package job', () => {
       { method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } },
     ]);
   });
+});
+
+describe('handleMeshNodeUpgradeStart release cache housekeeping', () => {
+  const localNodeId = 'cd'.repeat(16);
+
+  function stagedForward(): AuthorizedUpgradeForward {
+    return {
+      async forwardAuthorizedHttp(_req, input) {
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.0.0',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        return new Response('{}', { status: 200 });
+      },
+    };
+  }
+
+  test('start 先清掉缓存里的旧版本，再开始下载', async () => {
+    const nodeId = 'ab'.repeat(16);
+    const cacheDir = releaseCacheTempDir();
+    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'), 'old');
+    writeFileSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'), `${'ab'.repeat(32)}\n`);
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz'), 'target');
+    writeFileSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'), `${'cd'.repeat(32)}\n`);
+    mockGithubLatest('9.9.9');
+
+    const res = await handleMeshNodeUpgradeStart({
+      req: authedRequest(nodeId),
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward: stagedForward(),
+    });
+
+    expect(res.status).toBe(200);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-1.1.30.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(cacheDir, 'tmex-cli-9.9.9.tgz.sha256'))).toBe(true);
+    await waitForRemoteUpgradeJob(nodeId).catch(() => {});
+  }, 8_000);
+
+  test('N 个节点连发 start，GitHub latest 只查一次', async () => {
+    releaseCacheTempDir();
+    const nodeIds = ['a1'.repeat(16), 'b2'.repeat(16), 'c3'.repeat(16)];
+    let apiHits = 0;
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes('api.github.com')) {
+        apiHits += 1;
+        return new Response(
+          JSON.stringify({
+            tag_name: 'v9.9.9',
+            published_at: '2026-08-30T00:00:00.000Z',
+            body: 'notes',
+            assets: [{ name: releaseTarballName('9.9.9') }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      }
+      return new Response('nope', { status: 500 });
+    }) as typeof fetch;
+
+    for (const nodeId of nodeIds) {
+      const res = await handleMeshNodeUpgradeStart({
+        req: authedRequest(nodeId),
+        nodeId,
+        localNodeId,
+        userStore: enrolledStore(nodeId),
+        forward: stagedForward(),
+      });
+      expect(res.status).toBe(200);
+    }
+
+    expect(apiHits).toBe(1);
+    await Promise.all(nodeIds.map((id) => waitForRemoteUpgradeJob(id).catch(() => {})));
+  }, 8_000);
 });
 
 describe('handleMeshNodeUpgradeStatus job overlay', () => {

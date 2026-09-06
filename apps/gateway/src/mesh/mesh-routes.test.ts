@@ -14,6 +14,7 @@ import {
   resetRemoteUpgradeJobsForTests,
   waitForRemoteUpgradeJob,
 } from '../system/remote-upgrade-job';
+import { resetLatestReleaseCache } from '../system/update-check';
 import {
   FakePeers,
   FakeStreams,
@@ -1202,6 +1203,7 @@ afterEach(() => {
   globalThis.fetch = originalFetch;
   resetRemoteUpgradeJobsForTests();
   resetReleaseDownloadForTests();
+  resetLatestReleaseCache();
   resetNodeOperationsForTests();
   if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
   else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;

@@ -4,6 +4,7 @@ import {
   checkForUpdate,
   fetchLatestGithubRelease,
   requireLatestUpgradeRelease,
+  resetLatestReleaseCache,
 } from './update-check';
 import { getBaseVersion } from './version';
 
@@ -11,6 +12,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  resetLatestReleaseCache();
 });
 
 interface GithubReleaseFixture {
@@ -208,5 +210,56 @@ describe('requireLatestUpgradeRelease', () => {
   test('throws when GitHub Releases is unavailable', async () => {
     mockGithub(502, '{"message":"bad gateway"}');
     await expect(requireLatestUpgradeRelease()).rejects.toThrow(/GitHub Releases API HTTP 502/i);
+  });
+});
+
+describe('latest release 缓存', () => {
+  test('成功结果 60 s 内复用，checkForUpdate 与远程升级共享同一次查询', async () => {
+    mockGithub(200, {
+      tag_name: 'v9.9.9',
+      published_at: '2026-08-30T00:00:00.000Z',
+      body: 'notes',
+      assets: [{ name: releaseTarballName('9.9.9') }],
+    });
+
+    await fetchLatestGithubRelease();
+    await requireLatestUpgradeRelease();
+    await checkForUpdate();
+
+    expect(captures.length).toBe(1);
+  });
+
+  test('并发调用合并成一次请求', async () => {
+    mockGithub(200, {
+      tag_name: 'v9.9.9',
+      assets: [{ name: releaseTarballName('9.9.9') }],
+    });
+
+    const all = await Promise.all([
+      fetchLatestGithubRelease(),
+      fetchLatestGithubRelease(),
+      fetchLatestGithubRelease(),
+    ]);
+
+    expect(captures.length).toBe(1);
+    expect(all.every((r) => r.latestVersion === '9.9.9')).toBe(true);
+  });
+
+  test('失败不缓存，下一次照常重试', async () => {
+    mockGithub(502, 'bad gateway');
+    await expect(fetchLatestGithubRelease()).rejects.toThrow(/HTTP 502/);
+    await expect(fetchLatestGithubRelease()).rejects.toThrow(/HTTP 502/);
+    expect(captures.length).toBe(2);
+  });
+
+  test('resetLatestReleaseCache 后重新查询', async () => {
+    mockGithub(200, {
+      tag_name: 'v9.9.9',
+      assets: [{ name: releaseTarballName('9.9.9') }],
+    });
+    await fetchLatestGithubRelease();
+    resetLatestReleaseCache();
+    await fetchLatestGithubRelease();
+    expect(captures.length).toBe(2);
   });
 });

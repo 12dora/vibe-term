@@ -7,6 +7,8 @@ import {
 import { getBaseVersion } from './version';
 
 const FETCH_TIMEOUT_MS = 10_000;
+/** 一次「全部升级」会连发 N 个 start，每个都问一次 GitHub；未认证 API 只有 60 次/小时。 */
+const LATEST_RELEASE_CACHE_TTL_MS = 60_000;
 
 interface GithubReleaseAsset {
   name?: string;
@@ -58,8 +60,33 @@ export async function checkForUpdate(): Promise<UpdateCheckResult> {
   };
 }
 
-/** 解析 GitHub latest Release；不与本机版本比较（远程升级不能用入口节点 hasUpdate）。 */
+let latestReleaseCache: { at: number; value: LatestGithubRelease } | null = null;
+let latestReleaseInflight: Promise<LatestGithubRelease> | null = null;
+
+export function resetLatestReleaseCache(): void {
+  latestReleaseCache = null;
+  latestReleaseInflight = null;
+}
+
+/**
+ * 解析 GitHub latest Release；不与本机版本比较（远程升级不能用入口节点 hasUpdate）。
+ * 成功结果缓存 60 s 并合并并发请求；失败不缓存，下一次照常重试。
+ */
 export async function fetchLatestGithubRelease(): Promise<LatestGithubRelease> {
+  const cached = latestReleaseCache;
+  if (cached && Date.now() - cached.at < LATEST_RELEASE_CACHE_TTL_MS) return cached.value;
+  const pending = latestReleaseInflight ?? fetchLatestGithubReleaseUncached();
+  latestReleaseInflight = pending;
+  try {
+    const value = await pending;
+    latestReleaseCache = { at: Date.now(), value };
+    return value;
+  } finally {
+    if (latestReleaseInflight === pending) latestReleaseInflight = null;
+  }
+}
+
+async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> {
   const res = await fetch(RELEASE_API_LATEST_URL, {
     cache: 'no-store',
     headers: {
