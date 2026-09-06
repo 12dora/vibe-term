@@ -15,12 +15,14 @@ import { useTranslation } from 'react-i18next';
 import type { SetShareDraftField } from './share-create-form';
 import {
   type ShareDraft,
+  type ShareLinkPassword,
   buildCreateShareInput,
   createShareDraft,
   pickDefaultShareOrigin,
   resolveActiveShare,
   validateShareDraft,
 } from './share-dialog-model';
+import { useShareLinkPassword } from './use-share-link-password';
 import { useShareStatus } from './use-share-status';
 
 export const shareOriginsQueryKey = ['share-origins'] as const;
@@ -40,6 +42,8 @@ export interface ShareDialogModel {
   activeShare: ShareRecord | null;
   /** 仅刚创建的那一次拿得到明文密码。 */
   createdPassword: string | null;
+  /** 「链接中包含密码」的勾选态与按需取回的明文。 */
+  linkPassword: ShareLinkPassword;
   loading: boolean;
   creating: boolean;
   stopping: boolean;
@@ -140,6 +144,10 @@ export function useShareDialog({
     revokedId,
   });
 
+  const createdPassword =
+    created && activeShare && created.share.id === activeShare.id ? created.password : null;
+  const linkPassword = useShareLinkPassword({ open, activeShare, createdPassword });
+
   const submit = useCallback(() => {
     const error = validateShareDraft(draft);
     if (error) {
@@ -159,8 +167,8 @@ export function useShareDialog({
     regeneratePassword,
     candidates: origins?.candidates ?? [],
     activeShare,
-    createdPassword:
-      created && activeShare && created.share.id === activeShare.id ? created.password : null,
+    createdPassword,
+    linkPassword,
     loading: status.isLoading || originsQuery.isLoading,
     creating: createMutation.isPending,
     stopping: stopMutation.isPending,

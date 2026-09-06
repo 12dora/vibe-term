@@ -225,3 +225,141 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
     });
   }
 });
+
+/** 入口机自己的窗口 + 一条进行中的分享：两条密码用例共用的起手式。 */
+async function shareOwnWindow(
+  page: Page,
+  sessionName: string,
+  shareName: string
+): Promise<{ deviceId: string; share: ShareListBody['active'][number]; password: string }> {
+  await loginWithPassword(page, state);
+  const created = await page.request.post(meshUrl(state, '/api/devices'), {
+    data: { name: sessionName, type: 'local', session: sessionName, authMode: 'auto' },
+  });
+  expect(created.ok(), await created.text()).toBeTruthy();
+  const deviceId = ((await created.json()) as { device: { id: string } }).device.id;
+  const settings = await page.request.put(meshUrl(state, '/api/share/settings'), {
+    data: { defaultOrigin: state.baseUrl },
+  });
+  expect(settings.ok(), await settings.text()).toBeTruthy();
+
+  await page.goto(meshUrl(state, `/devices/${deviceId}`), { waitUntil: 'domcontentloaded' });
+  await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+  await page.getByTestId('share-open-button').click();
+  await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
+  const password = await page.getByTestId('share-password').inputValue();
+  await page.getByTestId('share-name').fill(shareName);
+  await page.getByTestId('share-create-submit').click();
+  await expect(page.getByTestId('share-active-view')).toBeVisible({ timeout: 15_000 });
+
+  const listed = await page.request.get(meshUrl(state, '/api/share'));
+  const share = ((await listed.json()) as ShareListBody).active[0];
+  return { deviceId, share, password };
+}
+
+function startOwnSession(sessionName: string): void {
+  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+    stdio: 'ignore',
+  });
+  meshTmux(state.hubTmuxSocket, `new-session -d -s ${sessionName} "sh -lc 'exec sh'"`);
+}
+
+function stopOwnSession(sessionName: string): void {
+  spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
+    stdio: 'ignore',
+  });
+}
+
+test('mesh: a link carrying the password prefills the form and drops the fragment', async ({
+  page,
+  browser,
+}) => {
+  const sessionName = `tmex-share-linkpw-${Date.now()}`;
+  startOwnSession(sessionName);
+  let deviceId: string | undefined;
+  let recipient: Page | undefined;
+
+  try {
+    const created = await shareOwnWindow(page, sessionName, 'e2e link password');
+    deviceId = created.deviceId;
+
+    // 勾上「链接中包含密码」，弹窗里的链接本身就带 #p=
+    await page.getByTestId('share-include-password').click();
+    await expect
+      .poll(() => page.getByTestId('share-link').inputValue(), { timeout: 10_000 })
+      .toContain('#p=');
+    const link = await page.getByTestId('share-link').inputValue();
+    expect(link).toBe(`${created.share.url}#p=${encodeURIComponent(created.password)}`);
+
+    recipient = await openRecipient(browser, link);
+    // 密码已填好，但仍要被分享人自己点「继续」；fragment 当场抹掉，不留在地址栏里
+    await expect(recipient.getByTestId('share-password-input')).toHaveValue(created.password);
+    expect(new URL(recipient.url()).hash).toBe('');
+    await recipient.getByTestId('share-password-submit').click();
+    await expect(recipient.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+  } finally {
+    await recipient?.context().close();
+    if (deviceId)
+      await page.request.delete(meshUrl(state, `/api/devices/${deviceId}`)).catch(() => undefined);
+    stopOwnSession(sessionName);
+  }
+});
+
+test('mesh: changing the share password keeps or drops the connected viewer', async ({
+  page,
+  browser,
+}) => {
+  const sessionName = `tmex-share-chpw-${Date.now()}`;
+  const keptPassword = 'Keep1234pw';
+  const nextPassword = 'Next5678pw';
+  startOwnSession(sessionName);
+  let deviceId: string | undefined;
+  let viewer: Page | undefined;
+
+  try {
+    const created = await shareOwnWindow(page, sessionName, 'e2e change password');
+    deviceId = created.deviceId;
+
+    viewer = await openRecipient(browser, created.share.url);
+    await viewer.getByTestId('share-password-input').fill(created.password);
+    await viewer.getByTestId('share-password-submit').click();
+    await expect(viewer.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+
+    // 不勾「断开观看者」：已连接的人继续看，只有新访客要用新密码
+    const kept = await page.request.post(
+      meshUrl(state, `/api/share/${created.share.id}/password`),
+      { data: { password: keptPassword, endSessions: false } }
+    );
+    expect(kept.ok(), await kept.text()).toBeTruthy();
+    expect(((await kept.json()) as { endedSessions: number }).endedSessions).toBe(0);
+    await page.waitForTimeout(3_000);
+    await expect(viewer.getByTestId('share-password')).toHaveCount(0);
+    await expect(viewer.locator('.xterm').first()).toBeVisible();
+
+    // 勾上「同时断开当前所有观看者」（走设置页的对话框）：ws 4401，观看者退回密码表单
+    await page.goto(meshUrl(state, '/settings?tab=share'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId('share-active-table')).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId(`share-menu-${created.share.id}`).click();
+    await page.getByTestId('share-row-change-password').click();
+    await expect(page.getByTestId('share-change-password-dialog')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('share-change-password-input').fill(nextPassword);
+    await page.getByTestId('share-change-password-end-sessions').click();
+    await page.getByTestId('share-change-password-submit').click();
+    await expect(page.getByTestId('share-change-password-dialog')).toHaveCount(0, {
+      timeout: 15_000,
+    });
+
+    await expect(viewer.getByTestId('share-password')).toBeVisible({ timeout: 20_000 });
+    await viewer.getByTestId('share-password-input').fill(keptPassword);
+    await viewer.getByTestId('share-password-submit').click();
+    await expect(viewer.getByTestId('share-password-error')).toBeVisible({ timeout: 10_000 });
+    await viewer.getByTestId('share-password-input').fill(nextPassword);
+    await viewer.getByTestId('share-password-submit').click();
+    await expect(viewer.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+  } finally {
+    await viewer?.context().close();
+    if (deviceId)
+      await page.request.delete(meshUrl(state, `/api/devices/${deviceId}`)).catch(() => undefined);
+    stopOwnSession(sessionName);
+  }
+});

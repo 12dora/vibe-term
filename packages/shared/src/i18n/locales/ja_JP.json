@@ -942,7 +942,19 @@
           "linkCopied": "コピーしました",
           "stop": "停止",
           "stopTitle": "共有を停止",
-          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。"
+          "stopConfirm": "「{{name}}」を停止するとリンクは無効になり、接続中の相手は切断されます。",
+          "viewPassword": "パスワードを表示",
+          "password": "パスワード",
+          "passwordHidden": "この共有は旧バージョンで作成されたため、パスワードは表示できません。変更のみ可能です。",
+          "changePassword": "パスワードを変更",
+          "changePasswordTitle": "共有パスワードの変更",
+          "newPassword": "新しいパスワード",
+          "generate": "生成",
+          "endSessions": "現在の閲覧者をすべて切断する",
+          "endSessionsHint": "チェックしない場合、接続中の相手はそのまま閲覧でき、新しい訪問者のみ新しいパスワードが必要です。",
+          "passwordChanged": "パスワードを更新しました",
+          "passwordChangedAndEnded": "パスワードを更新し、{{count}} 人を切断しました",
+          "copyLinkWithPassword": "パスワード付きリンクをコピー"
         },
         "history": {
           "title": "履歴",
@@ -3284,6 +3296,8 @@
         "copy": "コピー",
         "copied": "コピーしました",
         "copyFailed": "コピーに失敗しました",
+        "includePassword": "リンクにパスワードを含める",
+        "includePasswordHint": "リンクを開くとパスワードが自動入力されますが、「続行」は相手が押します。リンクはパスワードと同等のため、本人にのみ送ってください。",
         "passwordOnce": "パスワードは作成時のみ表示されます。",
         "viewers": "{{count}} 人接続中",
         "expires": "有効期限",
@@ -3304,6 +3318,7 @@
       "error": {
         "nameRequired": "名前を入力してください。",
         "passwordTooShort": "パスワードは {{min}} 文字以上で入力してください。",
+        "passwordUnavailable": "この共有のパスワードは表示できません。新しく設定してください。",
         "noOrigin": "アドレスを選択してください。",
         "invalidDuration": "有効期限は 365 日以内の整数で入力してください。",
         "generic": "操作に失敗しました。再試行してください。",

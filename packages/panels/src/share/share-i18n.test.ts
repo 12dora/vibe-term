@@ -32,6 +32,8 @@ const SHARE_KEYS: readonly string[] = [
   'share.dialog.copied',
   'share.dialog.copyFailed',
   'share.dialog.passwordOnce',
+  'share.dialog.includePassword',
+  'share.dialog.includePasswordHint',
   'share.dialog.viewers',
   'share.dialog.expires',
   'share.dialog.permanent',
@@ -49,6 +51,7 @@ const SHARE_KEYS: readonly string[] = [
   'share.error.passwordTooShort',
   'share.error.noOrigin',
   'share.error.invalidDuration',
+  'share.error.passwordUnavailable',
   // 服务端契约错误码（`shareErrorKey` 直接拼 `share.error.<code>`）与通用兜底
   'share.error.generic',
   'share.error.SHARE_NOT_FOUND',

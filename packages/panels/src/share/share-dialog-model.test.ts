@@ -5,12 +5,15 @@ import {
   SHARE_CUSTOM_MAX_MS,
   SHARE_IDLE_POLL_MS,
   type ShareDraft,
+  type ShareLinkPassword,
   buildCreateShareInput,
+  buildShareLinkWithPassword,
   createShareDraft,
   pickActiveShare,
   pickDefaultShareOrigin,
   resolveActiveShare,
   resolveShareExpiresInMs,
+  shareLinkValue,
   shareRefetchIntervalMs,
   shareRemaining,
   shareRemainingKey,
@@ -270,5 +273,38 @@ describe('resolveActiveShare', () => {
     expect(
       resolveActiveShare({ fromQuery: null, created: null, dataUpdatedAt: 0, revokedId: null })
     ).toBeNull();
+  });
+});
+
+describe('buildShareLinkWithPassword / shareLinkValue', () => {
+  const link = (overrides: Partial<ShareLinkPassword> = {}): ShareLinkPassword => ({
+    include: false,
+    password: null,
+    loading: false,
+    error: null,
+    setInclude: () => undefined,
+    ...overrides,
+  });
+
+  test('密码拼进 fragment 并转义，覆盖原有 fragment', () => {
+    expect(buildShareLinkWithPassword('https://a.example/s/s1', 'Ab3dEf7h')).toBe(
+      'https://a.example/s/s1#p=Ab3dEf7h'
+    );
+    expect(buildShareLinkWithPassword('https://a.example/s/s1', 'a&b c')).toBe(
+      'https://a.example/s/s1#p=a%26b%20c'
+    );
+    expect(buildShareLinkWithPassword('https://a.example/s/s1#p=old', 'new')).toBe(
+      'https://a.example/s/s1#p=new'
+    );
+  });
+
+  test('未勾选、密码还没到手都给裸链接——半截链接比不带密码更糟', () => {
+    const url = 'https://a.example/s/s1';
+    expect(shareLinkValue(url, link())).toBe(url);
+    expect(shareLinkValue(url, link({ password: 'Ab3dEf7h' }))).toBe(url);
+    expect(shareLinkValue(url, link({ include: true, loading: true }))).toBe(url);
+    expect(shareLinkValue(url, link({ include: true, password: 'Ab3dEf7h' }))).toBe(
+      'https://a.example/s/s1#p=Ab3dEf7h'
+    );
   });
 });

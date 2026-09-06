@@ -942,7 +942,19 @@
           "linkCopied": "已复制",
           "stop": "终止",
           "stopTitle": "终止分享",
-          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。"
+          "stopConfirm": "终止「{{name}}」后链接立即失效，已连接的人会被断开。",
+          "viewPassword": "查看密码",
+          "password": "密码",
+          "passwordHidden": "该分享创建于旧版本，密码不可查看，可直接修改。",
+          "changePassword": "修改密码",
+          "changePasswordTitle": "修改分享密码",
+          "newPassword": "新密码",
+          "generate": "生成",
+          "endSessions": "同时断开当前所有观看者",
+          "endSessionsHint": "不勾选时，已连接的人可继续观看，只有新访客需要用新密码。",
+          "passwordChanged": "密码已更新",
+          "passwordChangedAndEnded": "密码已更新，已断开 {{count}} 人",
+          "copyLinkWithPassword": "复制带密码的链接"
         },
         "history": {
           "title": "历史",
@@ -3284,6 +3296,8 @@
         "copy": "复制",
         "copied": "已复制",
         "copyFailed": "复制失败",
+        "includePassword": "链接中包含密码",
+        "includePasswordHint": "打开链接即自动填好密码，仍需点击继续。链接等同密码，请只发给本人。",
         "passwordOnce": "密码仅在创建时显示一次。",
         "viewers": "在线 {{count}} 人",
         "expires": "到期时间",
@@ -3304,6 +3318,7 @@
       "error": {
         "nameRequired": "请填写名称。",
         "passwordTooShort": "密码至少 {{min}} 位。",
+        "passwordUnavailable": "该分享的密码无法查看，请直接修改。",
         "noOrigin": "请选择地址。",
         "invalidDuration": "有效期需为 365 天以内的整数。",
         "generic": "操作失败，请重试。",

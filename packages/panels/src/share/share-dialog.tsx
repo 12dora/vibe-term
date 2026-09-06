@@ -43,6 +43,7 @@ function ShareDialogBody({
       <ShareActiveView
         share={model.activeShare}
         password={model.createdPassword}
+        linkPassword={model.linkPassword}
         stopping={model.stopping}
         onStop={onRequestStop}
       />

@@ -5,18 +5,37 @@ import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { ShareConsole } from '@/share/share-console';
 import { ShareEndedNotice } from '@/share/share-ended';
 import { SHARE_KEYBOARD_AVOIDANCE_DISABLED, useShareKeyboardStyle } from '@/share/share-keyboard';
+import { readPasswordFromHash } from '@/share/share-link-password';
 import { SharePasswordForm } from '@/share/share-password-form';
 import { useShareSession } from '@/share/use-share-session';
 import { parseNodeIdFromPath } from '@tmex/api-client';
 import { SidebarInset } from '@tmex/ui/sidebar';
 import { Loader2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useLocation, useParams } from 'react-router';
+
+/**
+ * 「链接中包含密码」发来的链接：开局读一次 `#p=`，随即把 fragment 抹掉。
+ *
+ * 留着的话密码会一直挂在地址栏、被分享人的浏览历史与他转手贴出去的任何截图里；
+ * 抹掉之后本次会话已经拿到了预填值，刷新则退回手工输入，这正是想要的。
+ */
+function useLinkPassword(hash: string): string | undefined {
+  const [initial] = useState(() => readPasswordFromHash(hash) ?? undefined);
+  useEffect(() => {
+    if (!window.location.hash) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+  }, []);
+  return initial;
+}
 
 export default function SharePage() {
   const { t } = useTranslation();
   const { shareId = '' } = useParams();
-  const nodeId = parseNodeIdFromPath(useLocation().pathname);
+  const location = useLocation();
+  const nodeId = parseNodeIdFromPath(location.pathname);
+  const initialPassword = useLinkPassword(location.hash);
   useAppMonoFont();
 
   const session = useShareSession({ nodeId, shareId });
@@ -41,6 +60,7 @@ export default function SharePage() {
           error={state.error}
           lockedUntil={state.lockedUntil}
           submitting={state.submitting}
+          initialPassword={initialPassword}
           onSubmit={session.submitPassword}
         />
       ) : state.status === 'ended' ? (

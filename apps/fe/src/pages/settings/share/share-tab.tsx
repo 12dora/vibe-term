@@ -12,6 +12,7 @@ import { Notice } from '../components/form-primitives';
 import { ActiveSharesTable } from './active-shares-table';
 import { ShareHistoryTable } from './history-table';
 import { DeleteShareConfirm, StopShareConfirm } from './share-confirms';
+import { useSharePasswordDialogs } from './share-password-dialogs';
 import { ShareSettingsCard } from './share-settings-card';
 import { useShareTab } from './use-share-tab';
 
@@ -23,6 +24,7 @@ export function ShareTab() {
   const [stopping, setStopping] = useState<ShareRecord | null>(null);
   const [deleting, setDeleting] = useState<ShareRecord | null>(null);
   const [replaying, setReplaying] = useState<ShareRecord | null>(null);
+  const password = useSharePasswordDialogs(model);
 
   if (model.loading && model.active.length === 0 && model.history.length === 0) {
     return <ShareTabSkeleton />;
@@ -58,6 +60,7 @@ export function ShareTab() {
               busyShareId={model.busyShareId}
               deviceName={model.deviceName}
               onStop={setStopping}
+              onPasswordAction={password.open}
             />
           </CardContent>
         </Card>
@@ -117,6 +120,8 @@ export function ShareTab() {
           setDeleting(null);
         }}
       />
+
+      {password.dialogs}
 
       {replaying && (
         <Suspense fallback={null}>
