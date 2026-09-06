@@ -30,6 +30,7 @@ function makeDeps(overrides: Partial<MeshInternalNotificationDeps> = {}) {
   const deps: MeshInternalNotificationDeps = {
     sinkEnabled: () => true,
     knownNode: () => true,
+    nodeName: (nodeId) => (nodeId === 'node-b' ? 'B 机' : null),
     notify: async (eventType, event) => {
       received.push({ eventType, event });
     },
@@ -101,7 +102,7 @@ describe('mesh-internal notifications route', () => {
   test('落地时用本机站点信息并把来源节点写进 payload', async () => {
     const { deps, received } = makeDeps();
     const res = await call(deps, request(forwardBody()));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(202);
     expect(received).toHaveLength(1);
     const entry = received[0];
     expect(entry.eventType).toBe('terminal_bell');
@@ -133,12 +134,12 @@ describe('mesh-internal notifications route', () => {
     let now = 1_000;
     const { deps, received } = makeDeps({ now: () => now });
     for (let i = 0; i < 60; i++) {
-      expect((await call(deps, request(forwardBody()))).status).toBe(200);
+      expect((await call(deps, request(forwardBody()))).status).toBe(202);
     }
     expect((await call(deps, request(forwardBody()))).status).toBe(429);
     expect(received).toHaveLength(60);
     now = 61_000;
-    expect((await call(deps, request(forwardBody()))).status).toBe(200);
+    expect((await call(deps, request(forwardBody()))).status).toBe(202);
   });
 
   test('限流按来源节点分桶', async () => {
@@ -146,6 +147,62 @@ describe('mesh-internal notifications route', () => {
     for (let i = 0; i < 60; i++) await call(deps, request(forwardBody()));
     expect((await call(deps, request(forwardBody()))).status).toBe(429);
     const other = forwardBody({ origin: { nodeId: 'node-c', nodeName: 'C' } });
-    expect((await call(deps, request(other, 'node-c'))).status).toBe(200);
+    expect((await call(deps, request(other, 'node-c'))).status).toBe(202);
+  });
+
+  test('别的来源把桶表撑满也不会让已打满的来源重新放行', async () => {
+    let now = 1_000;
+    const { deps } = makeDeps({ now: () => now, nodeName: () => null });
+    for (let i = 0; i < 60; i++) await call(deps, request(forwardBody()));
+    expect((await call(deps, request(forwardBody()))).status).toBe(429);
+    // 同一时刻涌入 64 个新来源：旧实现会 clear() 整张表，把 node-b 的额度也还回去。
+    for (let i = 0; i < 64; i++) {
+      const id = `node-x${i}`;
+      const other = forwardBody({ origin: { nodeId: id, nodeName: id } });
+      expect((await call(deps, request(other, id))).status).toBe(202);
+    }
+    expect((await call(deps, request(forwardBody()))).status).toBe(429);
+    now = 61_000;
+    expect((await call(deps, request(forwardBody()))).status).toBe(202);
+  });
+
+  test('body 里伪造的 origin.nodeName 无效，显示名由本机元数据决定', async () => {
+    const { deps, received } = makeDeps({
+      nodeName: (nodeId) => (nodeId === 'node-b' ? '可信 B' : null),
+    });
+    const body = forwardBody({ origin: { nodeId: 'node-b', nodeName: '<b>伪造名</b>' } });
+    expect((await call(deps, request(body))).status).toBe(202);
+    expect(received[0]?.event.payload).toEqual({
+      source: 'osc9',
+      nodeId: 'node-b',
+      nodeName: '可信 B',
+    });
+  });
+
+  test('本机查不到显示名时回落到节点 id', async () => {
+    const { deps, received } = makeDeps({ nodeName: () => null });
+    await call(deps, request(forwardBody({ origin: { nodeId: 'node-b', nodeName: '伪造' } })));
+    expect(received[0]?.event.payload).toMatchObject({ nodeId: 'node-b', nodeName: 'node-b' });
+  });
+
+  test('本机渠道扇出慢不拖住发送方：先回 202 再扇出', async () => {
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const done: string[] = [];
+    const { deps } = makeDeps({
+      notify: async (eventType) => {
+        await gate;
+        done.push(eventType);
+      },
+    });
+    const res = await call(deps, request(forwardBody()));
+    expect(res.status).toBe(202);
+    expect(done).toEqual([]);
+    release();
+    await gate;
+    await Promise.resolve();
+    expect(done).toEqual(['terminal_bell']);
   });
 });

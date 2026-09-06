@@ -9,6 +9,7 @@ import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@t
 import {
   type MeshNotificationBridge,
   getMeshNotificationBridge,
+  onMeshNotificationBridgeChange,
 } from '../../mesh/notification-mesh-bridge';
 import { MeshNotificationForwarder } from '../mesh-forwarder';
 import { resolveNotificationNodeName } from './notification-format';
@@ -33,6 +34,20 @@ export class MeshForwardChannel implements NotificationChannel {
 
   private forwarder: MeshNotificationForwarder | null = null;
   private boundBridge: MeshNotificationBridge | null = null;
+
+  constructor() {
+    // 桥换人或 mesh 停机时立刻收掉旧队列：否则退休运行时上的重试定时器会一直活着。
+    onMeshNotificationBridgeChange((next) => {
+      if (next !== this.boundBridge) this.detach();
+    });
+  }
+
+  /** 丢掉当前转发器（取消定时器与在途投递）；下一次 notify 会按新桥重建。 */
+  detach(): void {
+    this.forwarder?.stop();
+    this.forwarder = null;
+    this.boundBridge = null;
+  }
 
   async notify(eventType: EventType, event: WebhookEvent): Promise<void> {
     const bridge = getMeshNotificationBridge();
@@ -59,7 +74,7 @@ export class MeshForwardChannel implements NotificationChannel {
     this.forwarder?.stop();
     this.boundBridge = bridge;
     this.forwarder = new MeshNotificationForwarder({
-      deliver: (sinkNodeId, body) => bridge.deliver(sinkNodeId, body),
+      deliver: (sinkNodeId, body, signal) => bridge.deliver(sinkNodeId, body, signal),
     });
     return this.forwarder;
   }

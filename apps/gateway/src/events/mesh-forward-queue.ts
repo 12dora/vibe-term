@@ -8,6 +8,8 @@ import type { MeshNotificationForwardRequest } from '@tmex/shared';
 
 export const MESH_FORWARD_QUEUE_MAX = 20;
 export const MESH_FORWARD_QUEUE_TTL_MS = 3 * 60 * 1000;
+/** 单次投递的截止时间：对端卡住时不能无限占着这条队列的单飞位。 */
+export const MESH_FORWARD_DELIVER_TIMEOUT_MS = 15_000;
 /** 重试退避：1/2/4/8 s，之后恒定 15 s 封顶。 */
 export const MESH_FORWARD_BACKOFF_MS = [1_000, 2_000, 4_000, 8_000, 15_000] as const;
 
@@ -87,14 +89,17 @@ export class MeshForwardQueue {
     return null;
   }
 
-  /** 重试失败后放回队首；期间新入队的同身份事件已经更新，不再回插。 */
+  /**
+   * 重试失败后放回队首；期间新入队的同身份事件已经更新，不再回插。
+   * 队列已满时丢的是这条**最旧**的（与 push 的溢出策略一致），不能反过来把队尾的新事件挤掉。
+   */
   unshift(entry: MeshForwardEntry): void {
     if (this.items.some((item) => item.key === entry.key)) return;
-    this.items.unshift(entry);
-    while (this.items.length > this.max) {
-      const evicted = this.items.pop();
-      if (evicted) this.drop(evicted, 'overflow');
+    if (this.items.length >= this.max) {
+      this.drop(entry, 'overflow');
+      return;
     }
+    this.items.unshift(entry);
   }
 
   clear(): void {

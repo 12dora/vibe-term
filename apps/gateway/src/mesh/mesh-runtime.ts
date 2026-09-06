@@ -1331,8 +1331,8 @@ function wireMeshHttp(
       listReach: () => peers.listReach(),
       listHubOnline: () => peers.listHubOnline(),
       listedNodes: () => state.lastNodeList?.nodes ?? [],
-      forwardInternalHttp: (nodeId, path, body) =>
-        http.forwarder.forwardInternalHttp(nodeId, path, body),
+      forwardInternalHttp: (nodeId, path, body, signal) =>
+        http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
       advertise: () => {
         uplink.sendStatusIfChanged();
         peerManager.refreshAdvertisedStatus();

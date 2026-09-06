@@ -15,7 +15,12 @@ export type MeshNotificationBridgeInput = {
   listReach: () => ReadonlyMap<string, PeerReach>;
   listHubOnline: () => ReadonlySet<string>;
   listedNodes: () => ReadonlyArray<{ id: string; name: string; inventory?: unknown }>;
-  forwardInternalHttp: (nodeId: string, path: string, body: unknown) => Promise<Response>;
+  forwardInternalHttp: (
+    nodeId: string,
+    path: string,
+    body: unknown,
+    signal?: AbortSignal
+  ) => Promise<Response>;
   advertise: () => void;
 };
 
@@ -38,8 +43,12 @@ export function buildMeshNotificationBridge(
         hubOnline: input.listHubOnline(),
       });
     },
-    deliver(sinkNodeId: string, body: MeshNotificationForwardRequest): Promise<Response> {
-      return input.forwardInternalHttp(sinkNodeId, MESH_INTERNAL_NOTIFICATION_ROUTE, body);
+    deliver(
+      sinkNodeId: string,
+      body: MeshNotificationForwardRequest,
+      signal?: AbortSignal
+    ): Promise<Response> {
+      return input.forwardInternalHttp(sinkNodeId, MESH_INTERNAL_NOTIFICATION_ROUTE, body, signal);
     },
     advertise: () => input.advertise(),
   };

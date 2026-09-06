@@ -47,10 +47,16 @@ inventory = { version: "1.1.36", notifySink: true }   // 关闭时不带该键
 开关翻转后立即 `uplink.sendStatusIfChanged()` + `peerManager.refreshAdvertisedStatus()`，
 不等心跳。
 
-`mesh/notification-sink-set.ts` 把三处来源归并成 `MeshNotificationSink[]`：
-**任一来源为真即判定为汇聚机**。三处来源的新鲜度按拓扑不同（叶子节点没有 hub 的
-`user_nodes` 行，hub 自己没有 `node.list`），取「或」保证「开」立刻生效，「关」在所有来源
-刷新后收敛（下一次 `node.status` / `node.list` 就会覆盖）。
+`mesh/notification-sink-set.ts` 把三处来源归并成 `MeshNotificationSink[]`，判据是
+**取最新的一次权威观测**，不是「任一为真」：
+
+1. `peer_cache` 有行就以它为准——它由上行 `node.list`、中继状态块与直连 `peer.status`
+   共同刷新，是最全的一路；
+2. `peer_cache` 与 hub 侧 `user_nodes` 行同时存在时，比两者的 `last_seen_at`，取新的那一路；
+3. `peer_cache` 没有该节点才退回 `node.list` 广播，再没有才退回 `user_nodes` 行。
+
+取「或」会漏掉「关」：节点在上行中断期间通过直连撤销声明后，陈旧的那一路仍为真，
+事件会继续往一台已经不再接收的机器上发（round31 审查项 F2）。
 
 > **未采用密钥日志记录**：`rename-node` 那类记录的签名者只能是 root 或 passkey
 > （`KEY_LOG_SIGNER_MATRIX`），节点自身没有签名能力，一个设置开关每次都要用户输密码
@@ -76,9 +82,11 @@ POST /api/mesh-internal/notifications
 {
   "eventType": "terminal_bell",
   "event": { site, device, tmux?, payload? },   // 不含 eventType / timestamp
-  "origin": { "nodeId": "<hex>", "nodeName": "B 机" }
+  "origin": { "nodeId": "<hex>", "nodeName": "B 机" }   // nodeName 仅供日志，汇聚机不采信
 }
 ```
+
+回包：`202 Accepted`（已收下并入队扇出）。
 
 ### 队列策略
 
@@ -88,8 +96,17 @@ POST /api/mesh-internal/notifications
 - **上限**：20 条，超限丢最旧；
 - **过期**：3 分钟，出队时丢弃；
 - **退避**：单飞投递，失败按 1 / 2 / 4 / 8 s 重试，之后恒定 15 s 封顶；
+- **截止时间**：单次投递 15 s（`MESH_FORWARD_DELIVER_TIMEOUT_MS`），到点 abort 在途请求并当作
+  可重试失败，汇聚机卡死不会永久占住这条队列的单飞位；`AbortSignal` 一路传到
+  `Forwarder.forwardInternalHttp()`；
+- **回插溢出**：投递失败的那条回插队首时若队列已满，丢的是**这条最旧的**（记
+  `reason=overflow`），不能反过来把队尾刚入队的新事件挤掉；
 - **终止性失败**：汇聚机回 4xx（典型是开关已关的 404）直接丢弃不再重试，429 例外（当作可重试）；
-- **丢弃日志**：`[notify] forward dropped sink=<id> reason=overflow|expired|rejected ...`；
+- **生命周期**：队列被移出集合（`forget`）或 mesh 桥被替换/清空（`setMeshNotificationBridge`
+  的变更回调 → `MeshForwardChannel.detach()`）后，定时器与在途投递一并取消，退休的运行时上
+  不会再排队；
+- **丢弃日志**：`[notify] forward dropped sink=<id> reason=overflow|expired|rejected ...`，
+  超时另记 `[notify] forward timeout sink=<id> ...`；
 - 计数经 `GET /api/notifications/mesh` 的 `forwardQueue` 下发。
 
 ### 汇聚机侧
@@ -99,15 +116,21 @@ POST /api/mesh-internal/notifications
 
 1. 本机开关没打开 → **404**（对端据此丢弃，不再重试）；
 2. 没有对端标记，或来源不是本机认识的 mesh 节点（`getMeshAgentBridge().lookupNode()`）→ **403**；
-3. 每来源节点每分钟 60 条（`TokenBucket`），超出 → **429**；
+3. 每来源节点每分钟 60 条（`TokenBucket`），超出 → **429**；桶表用 `IdleLruMap`
+   （容量 1024、空闲 60 s 回收）管理：新来源只回收空闲桶或淘汰最久未用的一个，
+   **不会 clear 整张表**——否则换 64 个来源就能把已经打满的来源重新放行；
 4. `eventType` 必须在 `EventType` 联合内（`isEventType`，值比对而非 `in`，避免 `toString` 之类原型键混入），
    `device.id/name/type` 必填，`origin.nodeId` 必须与对端标记一致，`tmux` 按字段白名单裁剪 → 不合格 **400**。
 
 落地时：
 
 - `site` 换成**汇聚机自己的**站点名与 URL，深链才会是 `<汇聚机>/n/<来源节点>/devices/...`；
-- `payload.nodeId/nodeName` 一律用对端标记覆盖，body 里伪造的值无效；
-- 再调本机 `eventNotifier.notify()`，webhook / telegram / 微信 / ws 广播照常走。
+- `payload.nodeId` 用对端标记覆盖；`payload.nodeName` 由汇聚机**自己**按标记 id 查本机元数据
+  （`mesh/notification-origin-name.ts`：`peer_cache.name` → `nodes.name`，查不到回落节点 id），
+  body 里的 `origin.nodeName` 一律忽略——发送方不能决定汇聚机通知里显示的名字；
+- 再调本机 `eventNotifier.notify()`，webhook / telegram / 微信 / ws 广播照常走；
+- **不等扇出完成**：校验通过即入队并立刻回 **202 Accepted**（`void notify().catch(log)`），
+  汇聚机上一个慢 webhook 不会把发送方的队列拖住；202 与 200 一样算投递成功。
 
 ### 节流键
 
@@ -125,7 +148,7 @@ POST /api/mesh-internal/notifications
 | --- | --- |
 | `GET /api/notifications/mesh` | 返回 `MeshNotificationState`：`supported`（无 mesh 时 false）、`selfEnabled`、`sinks[]`、`forwardQueue` |
 | `PUT /api/notifications/mesh` | body `{ enabled: boolean }`，落库 + 立刻重播状态 + 广播设置变更，返回最新 `MeshNotificationState` |
-| `POST /api/mesh-internal/notifications` | 节点→汇聚机内部投递，对端标记保护，浏览器不可达 |
+| `POST /api/mesh-internal/notifications` | 节点→汇聚机内部投递，对端标记保护，浏览器不可达；成功回 202（已收下，扇出异步） |
 
 设置变更广播命名空间：`notifications-mesh`（前端据此失效缓存）。
 契约在 `packages/shared/src/contracts/mesh-notifications.ts`，客户端在
@@ -136,6 +159,8 @@ POST /api/mesh-internal/notifications
 - 投递只走对端链路，标记由 `acceptHttpStream` 按**已认证的对端身份**写入，浏览器侧的
   `x-tmex-mesh-peer` 头在入口就被 `stripMeshPeerMarkerFromRequest` 剥掉，伪造不进来。
 - 汇聚机独立判据：即便来源节点声称对方是汇聚机，只要本机开关没打开就回 404。
+- 通知文案里的节点名由汇聚机按对端标记自己查，`origin.nodeName` 不采信：发送方伪造不了
+  别人的名字，也塞不进任意文本。
 - **已知取舍**：汇聚声明搭的是 `node.status`/`node.list` 便车，中继模式下状态块用 K_meta 封装，
   中继伪造不了；**hub 模式下一个被攻陷的 hub 可以给某个节点伪造 `notifySink: true`**，
   从而让其它节点把事件转发给它选定的**某台已入网节点**。影响面限于用户自己的机器之间
@@ -146,6 +171,9 @@ POST /api/mesh-internal/notifications
 
 - standalone / 纯中继没有 mesh 桥，`supported=false`，前端不显示卡片。
 - 汇聚机离线超过 3 分钟的事件不补发（有界队列的既定取舍）。
+- 单次投递超过 15 s 视为失败重投：汇聚机侧已收下但回包丢了的极端情况会重复通知一次
+  （事件本身幂等性由渠道侧节流兜底）。
+- 202 只表示「汇聚机收下」，不表示 webhook / bot 已经发出去；扇出失败只在汇聚机侧留日志。
 - 转发的是事件本身，不是渠道配置：汇聚机得自己配好 bot / webhook。
 - 消息指令（round25）仍然只在本机执行，本轮不涉及。
 

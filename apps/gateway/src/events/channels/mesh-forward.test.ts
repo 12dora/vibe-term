@@ -102,4 +102,24 @@ describe('MeshForwardChannel', () => {
     await Promise.resolve();
     expect(delivered).toHaveLength(0);
   });
+
+  test('桥被清空（mesh 停机）时立刻收掉队列与重试', async () => {
+    setMeshNotificationBridge({
+      selfNodeId: () => 'node-a',
+      selfName: () => 'A 机',
+      listSinks: () => [sink('node-b')],
+      deliver: async () => new Response('{}', { status: 502 }),
+      advertise: () => {},
+    });
+    const channel = new MeshForwardChannel();
+    await channel.notify('terminal_bell', event());
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(channel.stats().pending).toBe(1);
+
+    setMeshNotificationBridge(null);
+    expect(channel.stats().pending).toBe(0);
+    await channel.notify('terminal_bell', event());
+    expect(channel.stats().pending).toBe(0);
+  });
 });

@@ -100,4 +100,61 @@ describe('collectMeshNotificationSinks', () => {
     );
     expect(sinks.map((s) => s.name)).toEqual(['本机', 'Alpha', 'Zulu']);
   });
+
+  test('上行中断后对端直接撤销：peer 行为准，node.list 的陈旧声明不再算数', () => {
+    const sinks = collectMeshNotificationSinks(
+      input({
+        listed: [{ id: 'bb', name: 'B', inventory: { notifySink: true } }],
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        peers: [
+          { nodeId: 'bb', name: 'B', inventoryJson: '{"version":"1.1.36"}', lastSeenAt: 2_000 },
+        ],
+        reach: new Map([['bb', 'lan']]),
+      })
+    );
+    expect(sinks).toEqual([]);
+  });
+
+  test('peer 行比 nodes 行新时以 peer 行为准（直连撤销先到）', () => {
+    const sinks = collectMeshNotificationSinks(
+      input({
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        peers: [{ nodeId: 'bb', name: 'B', inventoryJson: '{}', lastSeenAt: 3_000 }],
+        nodes: [{ id: 'bb', name: 'B', inventoryJson: '{"notifySink":true}', lastSeenAt: 1_000 }],
+      })
+    );
+    expect(sinks).toEqual([]);
+  });
+
+  test('nodes 行更新时以 nodes 行为准（hub 侧 node.status 后到）', () => {
+    const stale = { nodeId: 'bb', name: 'B', inventoryJson: '{"notifySink":true}', lastSeenAt: 1 };
+    const off = collectMeshNotificationSinks(
+      input({
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        peers: [stale],
+        nodes: [{ id: 'bb', name: 'B', inventoryJson: '{}', lastSeenAt: 9_000 }],
+      })
+    );
+    expect(off).toEqual([]);
+
+    const on = collectMeshNotificationSinks(
+      input({
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        peers: [{ nodeId: 'bb', name: 'B', inventoryJson: '{}', lastSeenAt: 1 }],
+        nodes: [{ id: 'bb', name: 'B', inventoryJson: '{"notifySink":true}', lastSeenAt: 9_000 }],
+      })
+    );
+    expect(on.map((s) => s.nodeId)).toEqual(['bb']);
+  });
+
+  test('peer 行缺失时才退回 node.list，再退回 nodes 行', () => {
+    const fromList = collectMeshNotificationSinks(
+      input({
+        listed: [{ id: 'bb', name: 'B', inventory: { notifySink: true } }],
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        nodes: [{ id: 'bb', name: 'B', inventoryJson: '{}', lastSeenAt: 9_000 }],
+      })
+    );
+    expect(fromList.map((s) => s.nodeId)).toEqual(['bb']);
+  });
 });

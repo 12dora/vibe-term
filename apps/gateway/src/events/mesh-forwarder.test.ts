@@ -197,4 +197,101 @@ describe('MeshNotificationForwarder', () => {
     expect(sent.sort()).toEqual(['sink-1', 'sink-2']);
     expect(forwarder.pending).toBe(1);
   });
+
+  test('投递卡住时按截止时间超时，队列继续排空', async () => {
+    const logs: string[] = [];
+    const clock = fakeClock();
+    const signals: AbortSignal[] = [];
+    let hang = true;
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      log: (line) => logs.push(line),
+      deadlineMs: 15_000,
+      deliver: (_sink, _body, signal) => {
+        signals.push(signal);
+        if (hang) return new Promise<Response>(() => {});
+        return Promise.resolve(new Response('{}', { status: 202 }));
+      },
+    });
+    forwarder.enqueue('sink-1', body());
+    await clock.advance(0);
+    expect(signals.length).toBe(1);
+    expect(forwarder.pending).toBe(0); // 出队在途
+
+    await clock.advance(15_000);
+    await clock.advance(0);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(logs.some((line) => line.includes('forward timeout sink=sink-1'))).toBe(true);
+    expect(forwarder.pending).toBe(1);
+
+    hang = false;
+    await clock.advance(1_000);
+    await clock.advance(0);
+    expect(signals.length).toBe(2);
+    expect(forwarder.pending).toBe(0);
+  });
+
+  test('投递成功后取消截止定时器，不留悬挂 timer', async () => {
+    const clock = fakeClock();
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      deliver: async () => new Response('{}', { status: 202 }),
+    });
+    forwarder.enqueue('sink-1', body());
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(0);
+  });
+
+  test('stop() 之后在途投递结束也不再回插、不再起定时器', async () => {
+    const clock = fakeClock();
+    let fail = (_err: Error): void => {};
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      deliver: () =>
+        new Promise<Response>((_resolve, reject) => {
+          fail = reject;
+        }),
+    });
+    forwarder.enqueue('sink-1', body());
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(1); // 只有截止定时器
+
+    forwarder.stop();
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(0);
+    fail(new Error('aborted'));
+    await clock.advance(0);
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(0);
+    expect(forwarder.pending).toBe(0);
+
+    forwarder.enqueue('sink-1', body());
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(0);
+    expect(forwarder.pending).toBe(0);
+  });
+
+  test('forget 期间在途投递失败也不会给已丢弃的队列排定时器', async () => {
+    const clock = fakeClock();
+    let fail = (_err: Error): void => {};
+    const forwarder = new MeshNotificationForwarder({
+      now: clock.now,
+      delay: clock.delay,
+      deliver: () =>
+        new Promise<Response>((_resolve, reject) => {
+          fail = reject;
+        }),
+    });
+    forwarder.enqueue('sink-1', body());
+    await clock.advance(0);
+    forwarder.forget('sink-1');
+    fail(new Error('offline'));
+    await clock.advance(0);
+    await clock.advance(0);
+    expect(clock.pending.length).toBe(0);
+    expect(forwarder.pending).toBe(0);
+  });
 });

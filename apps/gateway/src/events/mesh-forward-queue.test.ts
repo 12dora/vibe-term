@@ -111,4 +111,27 @@ describe('MeshForwardQueue', () => {
     expect(again.size).toBe(1);
     expect(again.shift(3)?.body.event.payload?.marker).toBe('fresh');
   });
+
+  test('队列已满时回插丢的是这条最旧的，不能挤掉队尾的新事件', () => {
+    const dropped: Array<{ key: string; reason: string }> = [];
+    const queue = new MeshForwardQueue({
+      max: 2,
+      onDrop: (entry, reason) => dropped.push({ key: entry.key, reason }),
+    });
+    queue.push(body({ paneId: '%1' }), 0);
+    const inFlight = queue.shift(0);
+    expect(inFlight?.key).toBe('node-a:dev-1:%1:terminal_bell');
+    queue.push(body({ paneId: '%2' }), 1);
+    queue.push(body({ paneId: '%3' }), 2);
+    expect(queue.size).toBe(2);
+
+    if (inFlight) queue.unshift(inFlight);
+    expect(queue.size).toBe(2);
+    expect(dropped).toEqual([{ key: 'node-a:dev-1:%1:terminal_bell', reason: 'overflow' }]);
+    expect(queue.dropped).toBe(1);
+    expect([queue.shift(3)?.key, queue.shift(3)?.key]).toEqual([
+      'node-a:dev-1:%2:terminal_bell',
+      'node-a:dev-1:%3:terminal_bell',
+    ]);
+  });
 });

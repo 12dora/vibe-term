@@ -10,8 +10,9 @@ import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { getSiteSettings } from '../db';
 import { eventNotifier } from '../events';
-import { TokenBucket } from '../hub/uplink-rate-limit';
+import { IdleLruMap, TokenBucket } from '../hub/uplink-rate-limit';
 import { getMeshAgentBridge } from './mesh-agent-bridge';
+import { resolveMeshNodeDisplayName } from './notification-origin-name';
 import { isMeshNotificationSinkEnabled } from './notification-sink-state';
 import { readMeshPeerMarker } from './peer-request-marker';
 
@@ -19,21 +20,27 @@ export { MESH_INTERNAL_NOTIFICATION_ROUTE };
 
 /** 每来源节点每分钟 60 条，突发按同额度放行。 */
 export const MESH_NOTIFY_INBOUND_RATE_PER_MIN = 60;
-const RATE_STATE_MAX = 64;
+/** 桶表容量与空闲回收阈值：闲置满一个补充窗口的桶本来就已满额，回收它不放宽任何限流。 */
+const RATE_STATE_MAX = 1024;
+const RATE_STATE_IDLE_TTL_MS = 60_000;
 
 type IncomingEvent = Omit<WebhookEvent, 'eventType' | 'timestamp'>;
 
 export type MeshInternalNotificationDeps = {
   sinkEnabled(): boolean;
   knownNode(nodeId: string): boolean;
+  /** 来源节点的显示名：只查本机元数据，不看 body。 */
+  nodeName(nodeId: string): string | null;
   notify(eventType: EventType, event: IncomingEvent): Promise<void>;
   site(): { name: string; url: string };
   now(): number;
+  log?(line: string): void;
 };
 
 const defaultDeps: MeshInternalNotificationDeps = {
   sinkEnabled: () => isMeshNotificationSinkEnabled(),
   knownNode: (nodeId) => getMeshAgentBridge()?.lookupNode(nodeId) !== 'unknown',
+  nodeName: (nodeId) => resolveMeshNodeDisplayName(nodeId),
   notify: (eventType, event) => eventNotifier.notify(eventType, event),
   site: () => {
     const settings = getSiteSettings();
@@ -42,15 +49,19 @@ const defaultDeps: MeshInternalNotificationDeps = {
   now: () => Date.now(),
 };
 
-const buckets = new Map<string, TokenBucket>();
+// 空闲回收 + LRU 淘汰：新来源不再 clear() 整张表，否则一台机器换 64 个来源就能把
+// 已经打满的来源重新放行。
+const buckets = new IdleLruMap<TokenBucket>(RATE_STATE_MAX, RATE_STATE_IDLE_TTL_MS);
 
 function takeToken(nodeId: string, now: number): boolean {
-  let bucket = buckets.get(nodeId);
-  if (!bucket) {
-    if (buckets.size >= RATE_STATE_MAX) buckets.clear();
-    bucket = new TokenBucket(MESH_NOTIFY_INBOUND_RATE_PER_MIN, MESH_NOTIFY_INBOUND_RATE_PER_MIN);
-    buckets.set(nodeId, bucket);
-  }
+  const existing = buckets.touch(nodeId, now);
+  const bucket =
+    existing ??
+    buckets.set(
+      nodeId,
+      new TokenBucket(MESH_NOTIFY_INBOUND_RATE_PER_MIN, MESH_NOTIFY_INBOUND_RATE_PER_MIN),
+      now
+    );
   return bucket.take(now);
 }
 
@@ -111,7 +122,6 @@ type ParsedBody = {
   device: WebhookEvent['device'];
   tmux: WebhookEvent['tmux'];
   payload: Record<string, unknown>;
-  originName: string;
 };
 
 /** body 形状校验：来源已由对端标记认证，这里只保证字段类型不脏进通知模板。 */
@@ -129,12 +139,12 @@ export function parseForwardBody(
   const eventRow = event as Record<string, unknown>;
   const device = parseDevice(eventRow.device);
   if (!device) return null;
+  // origin.nodeName 由发送方控制，一律忽略：显示名在汇聚机侧按标记 id 自己查。
   return {
     eventType: raw.eventType,
     device,
     tmux: parseTmux(eventRow.tmux),
     payload: parsePayload(eventRow.payload),
-    originName: str(originRow.nodeName) ?? originNodeId,
   };
 }
 
@@ -147,13 +157,20 @@ async function handleForward(req: Request, deps: MeshInternalNotificationDeps): 
   if (!raw) return json({ error: 'invalid_request' }, 400);
   const parsed = parseForwardBody(raw, originNodeId);
   if (!parsed) return json({ error: 'invalid_request' }, 400);
-  await deps.notify(parsed.eventType, {
-    site: deps.site(),
-    device: parsed.device,
-    ...(parsed.tmux ? { tmux: parsed.tmux } : {}),
-    payload: { ...parsed.payload, nodeId: originNodeId, nodeName: parsed.originName },
-  });
-  return json({ ok: true });
+  const originName = deps.nodeName(originNodeId) ?? originNodeId;
+  // 不等本机渠道扇出完成：webhook 慢一秒就会把发送方那条队列卡住，这里只负责收下。
+  void deps
+    .notify(parsed.eventType, {
+      site: deps.site(),
+      device: parsed.device,
+      ...(parsed.tmux ? { tmux: parsed.tmux } : {}),
+      payload: { ...parsed.payload, nodeId: originNodeId, nodeName: originName },
+    })
+    .catch((err: unknown) => {
+      const log = deps.log ?? ((line: string) => console.warn(line));
+      log(`[notify] mesh forward notify failed origin=${originNodeId} err=${String(err)}`);
+    });
+  return json({ ok: true }, 202);
 }
 
 export function createMeshInternalNotificationRoutes(
