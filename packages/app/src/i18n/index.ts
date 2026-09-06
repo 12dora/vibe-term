@@ -124,6 +124,9 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
     'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
     'upgrade.serviceDidNotStop': 'Service did not stop within {{timeout}}ms.',
+    'upgrade.serviceStillRunning': 'the service is still running',
+    'upgrade.migrationStopFailed':
+      'Refusing to undo the install migration: the service in {{dir}} did not stop ({{error}}). Stop it, then run `vibeterm upgrade --repair`.',
     'upgrade.healthStaleStartedAt':
       'Health check startedAt {{actual}} is not newer than restart at {{expected}}.',
     'upgrade.nativeRequired':
@@ -388,6 +391,9 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
     'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
     'upgrade.serviceDidNotStop': '服务未在 {{timeout}}ms 内退出。',
+    'upgrade.serviceStillRunning': '服务仍在运行',
+    'upgrade.migrationStopFailed':
+      '拒绝回退安装迁移：{{dir}} 的服务未停止（{{error}}）。请先停掉它，再执行 `vibeterm upgrade --repair`。',
     'upgrade.healthStaleStartedAt':
       '健康检查 startedAt {{actual}} 不晚于本次重启时间 {{expected}}。',
     'upgrade.nativeRequired':

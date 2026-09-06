@@ -524,3 +524,98 @@ describe('shim compatibility with the pre-rename layout', () => {
     );
   });
 });
+
+describe('shim entry resolution at exec time', () => {
+  async function makeFakeNodeDir(root: string): Promise<string> {
+    const binDir = join(root, 'fake-node-bin');
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(binDir, 'node'),
+      '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "v22.0.0"; exit 0; fi\necho "entry:$1"\n',
+      { mode: 0o755 }
+    );
+    return binDir;
+  }
+
+  async function installShimForEntryTest(prefix: string): Promise<{
+    root: string;
+    installDir: string;
+    cliBinDir: string;
+    shimPath: string;
+    nodeBinDir: string;
+  }> {
+    const packageLayout = await makePackageRoot();
+    const root = await mkdtemp(join(tmpdir(), prefix));
+    tempDirs.push(root);
+    const installDir = join(root, 'install');
+    const localBinDir = join(root, 'local-bin');
+    const installLayout = createInstallLayout(installDir);
+    await deployCliPackage(packageLayout, installLayout);
+    const result = await installVibeTermShim({
+      installLayout,
+      bunPath: '',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      pathEnv: localBinDir,
+    });
+    const cliBinDir = join(installDir, 'current', 'cli', 'bin');
+    await mkdir(cliBinDir, { recursive: true });
+    return {
+      root,
+      installDir,
+      cliBinDir,
+      shimPath: result.shimPath,
+      nodeBinDir: await makeFakeNodeDir(root),
+    };
+  }
+
+  function runShim(shimPath: string, nodeBinDir: string) {
+    return spawnSync(shimPath, [], {
+      encoding: 'utf8',
+      env: { ...process.env, PATH: `${nodeBinDir}:/usr/bin:/bin` },
+    });
+  }
+
+  test('falls back to bin/tmex.js after a rollback to a 1.x version dir', async () => {
+    const ctx = await installShimForEntryTest('vibeterm-shim-entry-legacy-');
+    await writeFile(join(ctx.cliBinDir, 'tmex.js'), 'legacy-entry\n');
+
+    const run = runShim(ctx.shimPath, ctx.nodeBinDir);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe(`entry:${join(ctx.cliBinDir, 'tmex.js')}`);
+  });
+
+  test('prefers bin/vibeterm.js when both bins exist', async () => {
+    const ctx = await installShimForEntryTest('vibeterm-shim-entry-both-');
+    await writeFile(join(ctx.cliBinDir, 'tmex.js'), 'legacy-entry\n');
+    await writeFile(join(ctx.cliBinDir, 'vibeterm.js'), 'entry\n');
+
+    const run = runShim(ctx.shimPath, ctx.nodeBinDir);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe(`entry:${join(ctx.cliBinDir, 'vibeterm.js')}`);
+  });
+
+  test('reports a clear error when neither bin exists', async () => {
+    const ctx = await installShimForEntryTest('vibeterm-shim-entry-none-');
+
+    const run = runShim(ctx.shimPath, ctx.nodeBinDir);
+
+    expect(run.status).toBe(127);
+    expect(run.stdout).toBe('');
+    expect(run.stderr.trim()).toBe(
+      `vibeterm: cli entry not found: ${join(ctx.cliBinDir, 'vibeterm.js')}`
+    );
+  });
+
+  test('the tmex alias shim resolves the same entry', async () => {
+    const ctx = await installShimForEntryTest('vibeterm-shim-entry-alias-');
+    await writeFile(join(ctx.cliBinDir, 'tmex.js'), 'legacy-entry\n');
+
+    const run = runShim(join(ctx.root, 'local-bin', 'tmex'), ctx.nodeBinDir);
+
+    expect(run.status).toBe(0);
+    expect(run.stdout.trim()).toBe(`entry:${join(ctx.cliBinDir, 'tmex.js')}`);
+  });
+});

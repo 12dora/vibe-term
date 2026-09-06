@@ -31,6 +31,16 @@ export function legacyReleaseTarballName(version: string): string {
   return `tmex-cli-${version}.tgz`;
 }
 
+/** 该版本合法的两个资产名：新名与改名前的旧名。发行同时上传两份。 */
+export function releaseAssetNames(version: string): readonly [string, string] {
+  return [releaseTarballName(version), legacyReleaseTarballName(version)];
+}
+
+/** 资产名是否是该版本的合法资产名之一。收到别人指定的资产名时必须先过这一关。 */
+export function isReleaseAssetNameFor(version: string, name: string): boolean {
+  return releaseAssetNames(version).some((asset) => asset === name);
+}
+
 /** 资产名（新旧皆可）解析出版本号，非资产名返回 null */
 export function parseReleaseTarballName(name: string): string | null {
   return RELEASE_TARBALL_NAME_PATTERN.exec(name)?.[1] ?? null;

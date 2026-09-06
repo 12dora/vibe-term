@@ -93,6 +93,7 @@ describe('pushPackageManifest', () => {
     version: '1.1.39',
     sums: `${'ab'.repeat(32)}  vibeterm-cli-1.1.39.tgz\n`,
     sig: 'tmex-release-sig v1 tk AAAA',
+    asset: 'vibeterm-cli-1.1.39.tgz',
     signal: new AbortController().signal,
   };
 

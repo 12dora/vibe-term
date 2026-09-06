@@ -5,7 +5,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
+import {
+  isReleaseAssetNameFor,
+  legacyReleaseTarballName,
+  parseSha256Sums,
+  releaseTarballName,
+} from '@vibeterm/shared';
 import {
   type ReleaseSignatureCode,
   ReleaseSignatureError,
@@ -14,6 +19,8 @@ import {
 
 export type StagedPackageManifest = {
   version: string;
+  /** 推包方选定的资产名（新名或改名前的旧名）；摘要按这个名字从 SHA256SUMS 里取。 */
+  asset: string;
   /** 由已验签的 SHA256SUMS 给出的权威摘要。 */
   sha256: string;
   keyId: string;
@@ -62,25 +69,46 @@ export function stagedManifestVersion(name: string): string | null {
 }
 
 /**
+ * 不带 `asset` 的清单只可能来自 <2.0.0 的推包方，而它只会推改名前的旧资产；
+ * 因此缺省按旧名取摘要，SHA256SUMS 里没有旧名才退回新名。
+ */
+function fallbackManifestAsset(sums: string, version: string): string {
+  const legacy = legacyReleaseTarballName(version);
+  return parseSha256Sums(sums).has(legacy) ? legacy : releaseTarballName(version);
+}
+
+/**
  * 验一份推来的清单。签名必须存在且验得过——推包路径没有「老版本免签」这条退路，
  * 缺签名的包只可能来自不该信的推送方。
+ *
+ * 摘要按推包方选定的资产名精确取：新旧两份包内容不同、摘要也不同，
+ * 双方各按自己的偏好挑名字会让随后的 PUT 一律判为清单不符。资产名只接受该版本的两个合法名，
+ * 否则被攻陷的入口能指向 SHA256SUMS 里任意一行已签名的摘要。
  */
 export function verifyPackageManifest(input: {
   version: string;
   sums: unknown;
   sig: unknown;
+  asset?: unknown;
 }): ManifestVerifyResult {
   const { version } = input;
   if (typeof input.sums !== 'string' || typeof input.sig !== 'string') {
     return { ok: false, status: 400, code: 'BAD_REQUEST' };
+  }
+  if (input.asset !== undefined && input.asset !== null) {
+    if (typeof input.asset !== 'string' || !isReleaseAssetNameFor(version, input.asset)) {
+      return { ok: false, status: 400, code: 'BAD_REQUEST' };
+    }
   }
   const sums = input.sums;
   const sig = input.sig.trim();
   if (!sig || sums.length + sig.length > MANIFEST_MAX_BYTES) {
     return { ok: false, status: 400, code: sig ? 'BAD_REQUEST' : 'RELEASE_UNSIGNED' };
   }
+  const asset =
+    typeof input.asset === 'string' ? input.asset : fallbackManifestAsset(sums, version);
   try {
-    const verified = verifyReleaseSumsBundle(version, { sums, sig });
+    const verified = verifyReleaseSumsBundle(version, { sums, sig }, asset);
     if (!verified.sig || !verified.keyId) {
       return { ok: false, status: 400, code: 'RELEASE_UNSIGNED' };
     }
@@ -88,6 +116,7 @@ export function verifyPackageManifest(input: {
       ok: true,
       manifest: {
         version,
+        asset,
         sha256: verified.sha256,
         keyId: verified.keyId,
         sums: verified.sums,
@@ -165,7 +194,12 @@ export function readStagedManifest(
     return null;
   }
   if (parsed.version !== version) return null;
-  const verified = verifyPackageManifest({ version, sums: parsed.sums, sig: parsed.sig });
+  const verified = verifyPackageManifest({
+    version,
+    sums: parsed.sums,
+    sig: parsed.sig,
+    asset: parsed.asset,
+  });
   return verified.ok ? verified.manifest : null;
 }
 

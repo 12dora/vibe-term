@@ -9,7 +9,6 @@ import {
   RELEASE_SIGNING_KEYS,
   type ReleaseSigningKey,
   expectedTarballHash,
-  parseSha256Sums,
   releaseSignatureRequired,
   releaseTarballName,
   verifyReleaseSums,
@@ -82,9 +81,7 @@ export function verifyReleaseSumsBundle(
       `release ${version} has no SHA256SUMS.sig; refusing to continue`
     );
   }
-  const sha256 = assetName
-    ? (parseSha256Sums(bundle.sums).get(assetName) ?? null)
-    : expectedTarballHash(bundle.sums, version);
+  const sha256 = expectedTarballHash(bundle.sums, version, assetName);
   if (!sha256) {
     throw new ReleaseSignatureError(
       'RELEASE_SUMS_INVALID',

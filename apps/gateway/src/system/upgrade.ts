@@ -293,9 +293,9 @@ export class UpgradeController {
   /** `POST /api/system/upgrade/package/manifest`：验签后把清单落成 sidecar，之后收字节以它为准。 */
   async putPackageManifest(
     version: string,
-    input: { sums: unknown; sig: unknown }
+    input: { sums: unknown; sig: unknown; asset?: unknown }
   ): Promise<PackageManifestResult> {
-    const verified = verifyPackageManifest({ version, sums: input.sums, sig: input.sig });
+    const verified = verifyPackageManifest({ version, ...input });
     if (!verified.ok) return verified;
     const installDir = this.installDir();
     if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };

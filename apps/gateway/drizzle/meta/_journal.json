@@ -379,13 +379,6 @@
       "when": 1790076000000,
       "tag": "0053_pane_grant_server_epoch",
       "breakpoints": true
-    },
-    {
-      "idx": 54,
-      "version": "6",
-      "when": 1790162400000,
-      "tag": "0054_devices_session_default",
-      "breakpoints": true
     }
   ]
 }

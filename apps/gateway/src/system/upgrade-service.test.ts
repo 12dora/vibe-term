@@ -1,8 +1,9 @@
 import { afterAll, afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { releaseTarballName } from '@vibeterm/shared';
+import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import type { SystemInfo } from '@vibeterm/shared';
 import type { UserStore } from '../auth/user-store';
 import { restoreSigningKeys, signSums, useTestSigningKeys } from '../test-support/release-signing';
@@ -11,6 +12,7 @@ import { resetReleaseDownloadForTests, retainReleaseVersion } from './release-do
 import { resetRemoteUpgradeJobsForTests, waitForRemoteUpgradeJob } from './remote-upgrade-job';
 import { resetLatestReleaseCache } from './update-check';
 import { upgradeController } from './upgrade';
+import { type StagedPackageManifest, verifyPackageManifest } from './upgrade-manifest';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 import {
   handleMeshNodeUpgradeCancel,
@@ -753,22 +755,7 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       },
     };
     // The job will try to download from GitHub; stub tarball + sums so it can finish.
-    const payload = new Uint8Array([1, 2, 3]);
-    const { createHash } = await import('node:crypto');
-    const hex = createHash('sha256').update(payload).digest('hex');
-    const latestFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
-        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
-        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
-      }
-      if (url.includes('-cli-')) {
-        return new Response(payload, { status: 200 });
-      }
-      return latestFetch(input);
-    }) as typeof fetch;
+    stubDualAssetRelease('9.9.9');
 
     await handleMeshNodeUpgradeStart({
       req,
@@ -792,6 +779,89 @@ describe('handleMeshNodeUpgradeStatus job overlay', () => {
       error: null,
       startedAt: '2026-09-01T00:00:00.000Z',
     });
+  });
+
+  test('目标 <2.0.0 时推旧资产，接收侧按清单里的资产名验通过', async () => {
+    releaseCacheTempDir();
+    mockGithubLatest('9.9.9');
+    const release = stubDualAssetRelease('9.9.9');
+    const legacyAsset = legacyReleaseTarballName('9.9.9');
+    const req = authedRequest(nodeId);
+    const manifests: StagedPackageManifest[] = [];
+    /** 推包方在清单请求里自报的资产名；不自报就退回到「按名字猜」，那正是两边挑不到一起去的根因。 */
+    const declaredAssets: unknown[] = [];
+    const rejected: string[] = [];
+    const forward = {
+      async forwardAuthorizedHttp(
+        _req: Request,
+        input: { method: string; path: string; query?: string; body?: unknown }
+      ) {
+        if (input.path === '/api/system/info') {
+          return new Response(
+            JSON.stringify({
+              baseVersion: '1.1.40',
+              canSelfUpdate: true,
+              upgradeCapabilities: ['staged-package'],
+            }),
+            { status: 200, headers: { 'content-type': 'application/json' } }
+          );
+        }
+        // 接收侧走真实验签，而不是无脑回 200
+        if (input.path === '/api/system/upgrade/package/manifest') {
+          declaredAssets.push((input.body as { asset?: unknown }).asset);
+          const verified = verifyPackageManifest(
+            input.body as { version: string; sums: unknown; sig: unknown; asset: unknown }
+          );
+          if (!verified.ok) {
+            rejected.push(verified.code);
+            return new Response(JSON.stringify({ code: verified.code }), {
+              status: verified.status,
+            });
+          }
+          manifests.push(verified.manifest);
+          return new Response('{}', { status: 200 });
+        }
+        // 收字节以清单摘要为准：对不上就是 409 UPGRADE_MANIFEST_MISMATCH
+        if (input.method === 'PUT' && input.path === '/api/system/upgrade/package') {
+          const pushed = new URLSearchParams(input.query ?? '').get('sha256');
+          if (manifests.at(-1)?.sha256 !== pushed) {
+            rejected.push('UPGRADE_MANIFEST_MISMATCH');
+            return new Response(JSON.stringify({ code: 'UPGRADE_MANIFEST_MISMATCH' }), {
+              status: 409,
+            });
+          }
+          return new Response('{}', { status: 200 });
+        }
+        return new Response(
+          JSON.stringify({
+            state: 'executing',
+            targetVersion: '9.9.9',
+            error: null,
+            startedAt: '2026-09-01T00:00:00.000Z',
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        );
+      },
+    };
+
+    await handleMeshNodeUpgradeStart({
+      req,
+      nodeId,
+      localNodeId,
+      userStore: enrolledStore(nodeId),
+      forward,
+    });
+    const snapshot = await waitForRemoteUpgradeJob(nodeId);
+
+    expect(rejected).toEqual([]);
+    expect(release.tarballRequests).toEqual([legacyAsset]);
+    expect(declaredAssets).toEqual([legacyAsset]);
+    expect(manifests).toHaveLength(1);
+    expect(manifests[0]?.asset).toBe(legacyAsset);
+    expect(manifests[0]?.sha256).toBe(release.hashOf(legacyAsset));
+    expect(release.hashOf(legacyAsset)).not.toBe(release.hashOf(releaseTarballName('9.9.9')));
+    expect(snapshot.state).toBe('handed-off');
+    expect(snapshot.error).toBeNull();
   });
 });
 
@@ -1021,22 +1091,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
       join(tmpdir(), 'vibeterm-svc-cancel-cache-')
     );
     mockGithubLatest('9.9.9');
-    const payload = new Uint8Array([1, 2, 3]);
-    const { createHash } = await import('node:crypto');
-    const hex = createHash('sha256').update(payload).digest('hex');
-    const latestFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
-        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
-        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
-      }
-      if (url.includes('-cli-')) {
-        return new Response(payload, { status: 200 });
-      }
-      return latestFetch(input);
-    }) as typeof fetch;
+    stubDualAssetRelease('9.9.9');
     const req = authedRequest(nodeId);
     const forwarded: string[] = [];
     const forward = {
@@ -1096,22 +1151,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { join } = await import('node:path');
     process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-post-200-'));
     mockGithubLatest('9.9.9');
-    const payload = new Uint8Array([1, 2, 3]);
-    const { createHash } = await import('node:crypto');
-    const hex = createHash('sha256').update(payload).digest('hex');
-    const latestFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
-        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
-        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
-      }
-      if (url.includes('-cli-')) {
-        return new Response(payload, { status: 200 });
-      }
-      return latestFetch(input);
-    }) as typeof fetch;
+    stubDualAssetRelease('9.9.9');
     const req = authedRequest(nodeId);
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => {
@@ -1192,22 +1232,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { join } = await import('node:path');
     process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-post-409-'));
     mockGithubLatest('9.9.9');
-    const payload = new Uint8Array([1, 2, 3]);
-    const { createHash } = await import('node:crypto');
-    const hex = createHash('sha256').update(payload).digest('hex');
-    const latestFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
-        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
-        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
-      }
-      if (url.includes('-cli-')) {
-        return new Response(payload, { status: 200 });
-      }
-      return latestFetch(input);
-    }) as typeof fetch;
+    stubDualAssetRelease('9.9.9');
     const req = authedRequest(nodeId);
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => {
@@ -1288,22 +1313,7 @@ describe('handleMeshNodeUpgradeCancel', () => {
     const { join } = await import('node:path');
     process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'vibeterm-svc-1111-'));
     mockGithubLatest('9.9.9');
-    const payload = new Uint8Array([1, 2, 3]);
-    const { createHash } = await import('node:crypto');
-    const hex = createHash('sha256').update(payload).digest('hex');
-    const latestFetch = globalThis.fetch;
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-      if (url.includes('SHA256SUMS')) {
-        // 真实 release 同时列出新旧两个资产名；hub 按目标节点版本挑一个。
-        const body = `${hex}  vibeterm-cli-9.9.9.tgz\n${hex}  tmex-cli-9.9.9.tgz\n`;
-        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
-      }
-      if (url.includes('-cli-')) {
-        return new Response(payload, { status: 200 });
-      }
-      return latestFetch(input);
-    }) as typeof fetch;
+    stubDualAssetRelease('9.9.9');
     const req = authedRequest(nodeId);
     let releaseStart!: () => void;
     const startGate = new Promise<void>((resolve) => {
@@ -1403,6 +1413,39 @@ describe('handleMeshNodeUpgradeCancel', () => {
     expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId });
   });
 });
+
+/**
+ * 发行同时上传新旧两份资产：内容不同，摘要也不同。按 URL 里的资产名回对应字节，
+ * 「推包方挑哪一份」才会真的传导到下游的摘要上。必须在 `mockGithubLatest` 之后调用。
+ */
+function stubDualAssetRelease(version: string): {
+  hashOf: (assetName: string) => string;
+  tarballRequests: string[];
+} {
+  const bytes = new Map<string, Uint8Array<ArrayBuffer>>([
+    [releaseTarballName(version), new Uint8Array([1, 2, 3])],
+    [legacyReleaseTarballName(version), new Uint8Array([4, 5, 6, 7])],
+  ]);
+  const digests = new Map(
+    [...bytes].map(([name, body]) => [name, createHash('sha256').update(body).digest('hex')])
+  );
+  const sums = [...digests].map(([name, hex]) => `${hex}  ${name}\n`).join('');
+  const tarballRequests: string[] = [];
+  const latestFetch = globalThis.fetch;
+  globalThis.fetch = (async (input: RequestInfo | URL) => {
+    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes('SHA256SUMS')) {
+      return new Response(url.endsWith('.sig') ? `${signSums(sums)}\n` : sums, { status: 200 });
+    }
+    const asset = [...bytes.keys()].find((name) => url.endsWith(name));
+    if (asset) {
+      tarballRequests.push(asset);
+      return new Response(bytes.get(asset) as Uint8Array<ArrayBuffer>, { status: 200 });
+    }
+    return latestFetch(input);
+  }) as typeof fetch;
+  return { hashOf: (name) => digests.get(name) ?? '', tarballRequests };
+}
 
 function stubUserStore(): UserStore {
   return { listCerts: () => [] } as unknown as UserStore;

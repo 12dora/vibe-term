@@ -662,7 +662,7 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/gateway/src/system/remote-upgrade-job.ts": {
-    "fileLines": 729,
+    "fileLines": 730,
     "reason": "round28 T4：推包阶段改为查偏移 + 续传 + 退避重试，与取消状态机共享 Job 内部结构，拆开要把一半私有状态导出；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   }
 }

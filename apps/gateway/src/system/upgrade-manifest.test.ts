@@ -5,6 +5,7 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import {
   FOREIGN_SIGNING_SEED,
   restoreSigningKeys,
@@ -107,6 +108,52 @@ describe('verifyPackageManifest', () => {
     });
   });
 
+  /** 一版同时列出新旧两个资产的 SHA256SUMS：两份包内容不同，摘要也不同。 */
+  function dualAssetSums(
+    v: string,
+    newHex: string,
+    legacyHex: string
+  ): { sums: string; sig: string } {
+    const sums = `${newHex}  ${releaseTarballName(v)}\n${legacyHex}  ${legacyReleaseTarballName(v)}\n`;
+    return { sums, sig: signSums(sums) };
+  }
+
+  test('资产名决定取哪一份摘要', () => {
+    const legacyHex = 'cd'.repeat(32);
+    const signed = dualAssetSums(version, hex, legacyHex);
+    const picked = verifyPackageManifest({
+      version,
+      ...signed,
+      asset: legacyReleaseTarballName(version),
+    });
+    if (!picked.ok) throw new Error('expected ok');
+    expect(picked.manifest.asset).toBe(legacyReleaseTarballName(version));
+    expect(picked.manifest.sha256).toBe(legacyHex);
+
+    const fresh = verifyPackageManifest({ version, ...signed, asset: releaseTarballName(version) });
+    if (!fresh.ok) throw new Error('expected ok');
+    expect(fresh.manifest.sha256).toBe(hex);
+  });
+
+  test('不带资产名的清单按旧名取摘要：老推包方只会推旧资产', () => {
+    const legacyHex = 'cd'.repeat(32);
+    const result = verifyPackageManifest({ version, ...dualAssetSums(version, hex, legacyHex) });
+    if (!result.ok) throw new Error('expected ok');
+    expect(result.manifest.asset).toBe(legacyReleaseTarballName(version));
+    expect(result.manifest.sha256).toBe(legacyHex);
+  });
+
+  test('资产名不是该版本的两个合法名之一时是 BAD_REQUEST', () => {
+    const sums = `${hex}  ${releaseTarballName(version)}\n${'cd'.repeat(32)}  install.sh\n`;
+    for (const asset of ['install.sh', releaseTarballName('9.9.9'), 42]) {
+      expect(verifyPackageManifest({ version, sums, sig: signSums(sums), asset })).toEqual({
+        ok: false,
+        status: 400,
+        code: 'BAD_REQUEST',
+      });
+    }
+  });
+
   test('non-string fields and oversized bodies are BAD_REQUEST', () => {
     expect(verifyPackageManifest({ version, sums: 42, sig: 'x' })).toMatchObject({
       code: 'BAD_REQUEST',
@@ -127,6 +174,24 @@ describe('UpgradeController.putPackageManifest', () => {
     expect(result).toEqual({ ok: true, version: '1.1.39', sha256: hex, keyId: 'tk' });
     expect(existsSync(stagedManifestPath(stagedDirOf(install), '1.1.39'))).toBe(true);
     expect(readStagedManifest(stagedDirOf(install), '1.1.39')?.sha256).toBe(hex);
+  });
+
+  test('落盘的清单记住资产名，读回来仍是那一份摘要', async () => {
+    const install = tempInstall();
+    const controller = new UpgradeController({ getInstallInfo: () => install });
+    const version = '1.1.39';
+    const newHex = 'ab'.repeat(32);
+    const legacyHex = 'cd'.repeat(32);
+    const sums = `${newHex}  ${releaseTarballName(version)}\n${legacyHex}  ${legacyReleaseTarballName(version)}\n`;
+    const result = await controller.putPackageManifest(version, {
+      sums,
+      sig: signSums(sums),
+      asset: legacyReleaseTarballName(version),
+    });
+    expect(result).toEqual({ ok: true, version, sha256: legacyHex, keyId: 'tk' });
+    const stored = readStagedManifest(stagedDirOf(install), version);
+    expect(stored?.asset).toBe(legacyReleaseTarballName(version));
+    expect(stored?.sha256).toBe(legacyHex);
   });
 
   test('a rejected manifest writes nothing', async () => {

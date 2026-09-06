@@ -85,8 +85,18 @@ export interface InstallVibeTermShimResult {
   skipWarning: string | null;
 }
 
-function buildShimScript(cliJsPath: string, bunPath: string, installDir: string): string {
+/**
+ * 入口在运行时解析：回滚到 1.x 版本目录后 `current/cli/bin/` 里只有 `tmex.js`，
+ * shim 若把新名写死就会连 `upgrade --repair` 都跑不起来。
+ */
+function buildShimScript(
+  cliJsPath: string,
+  legacyCliJsPath: string,
+  bunPath: string,
+  installDir: string
+): string {
   const quotedCli = quotePosixShellArg(cliJsPath);
+  const quotedLegacyCli = quotePosixShellArg(legacyCliJsPath);
   const quotedBun = quotePosixShellArg(bunPath);
   return [
     '#!/usr/bin/env bash',
@@ -94,6 +104,15 @@ function buildShimScript(cliJsPath: string, bunPath: string, installDir: string)
     `${VIBETERM_INSTALL_DIR_PREFIX} ${installDir}`,
     'set -euo pipefail',
     `CLI_JS=${quotedCli}`,
+    `CLI_JS_LEGACY=${quotedLegacyCli}`,
+    'if [ ! -f "$CLI_JS" ]; then',
+    '  if [ -f "$CLI_JS_LEGACY" ]; then',
+    '    CLI_JS="$CLI_JS_LEGACY"',
+    '  else',
+    '    echo "vibeterm: cli entry not found: $CLI_JS" >&2',
+    '    exit 127',
+    '  fi',
+    'fi',
     'if command -v node >/dev/null 2>&1; then',
     '  NODE_VER="$(node --version 2>/dev/null || true)"',
     '  NODE_MAJOR="${NODE_VER#v}"',
@@ -221,9 +240,14 @@ export async function installVibeTermShim(
   const localBinDir = options.localBinDir ?? defaultLocalBinDir();
   const bunBinDir = options.bunBinDir ?? defaultBunBinDir();
   const pathEnv = options.pathEnv ?? process.env.PATH ?? '';
-  const cliJsPath = join(options.installLayout.installDir, 'current', 'cli', 'bin', 'vibeterm.js');
+  const cliBinDir = join(options.installLayout.installDir, 'current', 'cli', 'bin');
   const installDir = options.installLayout.installDir;
-  const content = buildShimScript(cliJsPath, options.bunPath, installDir);
+  const content = buildShimScript(
+    join(cliBinDir, CLI_BIN_FILES[0]),
+    join(cliBinDir, CLI_BIN_FILES[1]),
+    options.bunPath,
+    installDir
+  );
 
   await ensureDir(localBinDir);
 

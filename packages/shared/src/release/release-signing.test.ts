@@ -159,6 +159,23 @@ describe('parseSha256Sums / expectedTarballHash', () => {
       'd'.repeat(64)
     );
   });
+
+  test('给了资产名就精确查，不做任何回退', () => {
+    const both = [
+      `${'c'.repeat(64)}  vibeterm-cli-2.0.0.tgz`,
+      `${'d'.repeat(64)}  tmex-cli-2.0.0.tgz`,
+      '',
+    ].join('\n');
+    expect(expectedTarballHash(both, '2.0.0', 'tmex-cli-2.0.0.tgz')).toBe('d'.repeat(64));
+    expect(expectedTarballHash(both, '2.0.0', 'vibeterm-cli-2.0.0.tgz')).toBe('c'.repeat(64));
+    expect(
+      expectedTarballHash(
+        `${'c'.repeat(64)}  vibeterm-cli-2.0.0.tgz\n`,
+        '2.0.0',
+        'tmex-cli-2.0.0.tgz'
+      )
+    ).toBeNull();
+  });
 });
 
 describe('releaseSignatureRequired', () => {

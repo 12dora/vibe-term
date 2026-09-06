@@ -33,6 +33,7 @@ import {
 import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
 import type { AuthKdfParamsJson, MeshNode } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { migrateStorageKey } from '@vibeterm/stores';
 import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
 import { Check, Loader2, ShieldCheck } from 'lucide-react';
@@ -88,6 +89,8 @@ export interface JoinSession {
 export const ADMITTED_SESSION_TTL_MS = 24 * 60 * 60 * 1000;
 
 const SESSION_STORAGE_KEY = 'vibeterm.connectDevices.joinSession';
+/** 改名前的键：升级后刷新页面仍要接上等待确认的加入流程 */
+const LEGACY_SESSION_STORAGE_KEY = 'tmex.connectDevices.joinSession';
 
 function sessionStore(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | null {
   return (globalThis as { sessionStorage?: Storage }).sessionStorage ?? null;
@@ -95,7 +98,9 @@ function sessionStore(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> | n
 
 function readJoinSession(): JoinSession | null {
   try {
-    const raw = sessionStore()?.getItem(SESSION_STORAGE_KEY);
+    const store = sessionStore();
+    if (store) migrateStorageKey(store, LEGACY_SESSION_STORAGE_KEY, SESSION_STORAGE_KEY);
+    const raw = store?.getItem(SESSION_STORAGE_KEY);
     const parsed: unknown = raw ? JSON.parse(raw) : null;
     if (!parsed || typeof parsed !== 'object') return null;
     const row = parsed as Record<string, unknown>;

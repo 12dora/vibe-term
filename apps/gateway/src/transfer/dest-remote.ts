@@ -13,6 +13,9 @@ import { quoteShellArg } from '../tmux-client/command-builder';
 import type { DestContext } from './dest';
 import { splitRelPath } from './dest';
 
+const DIR_MARKER = 'VTDIR ';
+const EXISTS_MARKER = 'VTEXISTS ';
+
 const WALK_TIMEOUT_MS = 20_000;
 const PUSH_IDLE_TIMEOUT_MS = 120_000;
 
@@ -53,18 +56,19 @@ function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: strin
   }
   lines.push(
     `if [ -e ${quoteShellArg(name)} ] || [ -L ${quoteShellArg(name)} ]; then e=1; else e=0; fi`,
-    'printf \'VTDIR %s\\nVTEXISTS %s\\n\' "$d" "$e"'
+    `printf '${DIR_MARKER}%s\\n${EXISTS_MARKER}%s\\n' "$d" "$e"`
   );
   return lines.join('\n');
 }
 
-function parseWalkOutput(stdout: Uint8Array): { dir: string; exists: boolean } | null {
+export function parseWalkOutput(stdout: Uint8Array): { dir: string; exists: boolean } | null {
   const text = new TextDecoder().decode(stdout);
   let dir: string | null = null;
   let exists: boolean | null = null;
   for (const line of text.split('\n')) {
-    if (line.startsWith('VTDIR ')) dir = line.slice(8).replace(/\r$/, '');
-    else if (line.startsWith('VTEXISTS ')) exists = line.slice(11).trim() === '1';
+    if (line.startsWith(DIR_MARKER)) dir = line.slice(DIR_MARKER.length).replace(/\r$/, '');
+    else if (line.startsWith(EXISTS_MARKER))
+      exists = line.slice(EXISTS_MARKER.length).trim() === '1';
   }
   return dir && exists !== null ? { dir, exists } : null;
 }

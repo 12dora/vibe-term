@@ -1035,8 +1035,16 @@ describe('RemoteUpgradeJob', () => {
     expect(isReleaseVersionRetained(cacheDir, '9.9.9')).toBe(false);
   }, 8_000);
 
-  test('cancel during download removes the cache .part and never leaves a tarball without sidecar', async () => {
-    const nodeId = 'bb'.repeat(16);
+  /**
+   * 下载中途取消：`.part` 必须先真的存在，再断言被删掉，否则名字挑错了也一样「通过」。
+   * 资产名由目标版本决定，两种名字各跑一遍。
+   */
+  async function cancelDuringDownload(opts: {
+    nodeId: string;
+    targetCurrentVersion: string;
+    assetName: string;
+  }): Promise<void> {
+    const { nodeId, assetName } = opts;
     const cacheDir = mkdtempSync(join(tmpdir(), 'vibeterm-job-cancel-dl-'));
     tempDirs.push(cacheDir);
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
@@ -1044,7 +1052,8 @@ describe('RemoteUpgradeJob', () => {
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${'ab'.repeat(32)}  vibeterm-cli-9.9.9.tgz\n`, { status: 200 });
+        const body = `${'ab'.repeat(32)}  vibeterm-cli-9.9.9.tgz\n${'cd'.repeat(32)}  tmex-cli-9.9.9.tgz\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       const signal = init?.signal;
       const body = new ReadableStream<Uint8Array>({
@@ -1083,12 +1092,14 @@ describe('RemoteUpgradeJob', () => {
             throw new Error('should not push');
           },
         },
+        targetCurrentVersion: opts.targetCurrentVersion,
       });
       expect(started.ok).toBe(true);
-      const part = join(cacheDir, 'vibeterm-cli-9.9.9.tgz.part');
-      for (let i = 0; i < 50 && !existsSync(part); i += 1) {
+      const part = join(cacheDir, `${assetName}.part`);
+      for (let i = 0; i < 100 && !existsSync(part); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      expect(existsSync(part)).toBe(true);
       const cancelled = await cancelRemoteUpgradeJob({
         nodeId,
         req: authed(nodeId),
@@ -1101,11 +1112,27 @@ describe('RemoteUpgradeJob', () => {
       expect(cancelled.handled).toBe(true);
       await waitForRemoteUpgradeJob(nodeId);
       expect(existsSync(part)).toBe(false);
-      expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz'))).toBe(false);
-      expect(existsSync(join(cacheDir, 'vibeterm-cli-9.9.9.tgz.sha256'))).toBe(false);
+      expect(existsSync(join(cacheDir, assetName))).toBe(false);
+      expect(existsSync(join(cacheDir, `${assetName}.sha256`))).toBe(false);
     } finally {
       globalThis.fetch = originalFetch;
     }
+  }
+
+  test('cancel during download removes the cache .part and never leaves a tarball without sidecar', async () => {
+    await cancelDuringDownload({
+      nodeId: 'bb'.repeat(16),
+      targetCurrentVersion: '2.0.0',
+      assetName: 'vibeterm-cli-9.9.9.tgz',
+    });
+  }, 8_000);
+
+  test('推旧资产时取消同样清掉旧名的 .part', async () => {
+    await cancelDuringDownload({
+      nodeId: 'b9'.repeat(16),
+      targetCurrentVersion: '1.1.40',
+      assetName: 'tmex-cli-9.9.9.tgz',
+    });
   }, 8_000);
 
   test('cancel after push but before start DELETEs the staged package on the target', async () => {
@@ -1386,6 +1413,7 @@ describe('RemoteUpgradeJob', () => {
     process.env.VIBETERM_RELEASE_CACHE_DIR = cacheDir;
     const tarball = new Uint8Array([4, 5, 6, 7, 8]);
     const hex = createHash('sha256').update(tarball).digest('hex');
+    const tarballRequests: string[] = [];
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -1393,6 +1421,7 @@ describe('RemoteUpgradeJob', () => {
         const body = `${hex}  vibeterm-cli-${version}.tgz\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
+      tarballRequests.push(url);
       const signal = init?.signal;
       let offset = 0;
       const body = new ReadableStream<Uint8Array>({
@@ -1428,6 +1457,7 @@ describe('RemoteUpgradeJob', () => {
       for (let i = 0; i < 50 && !existsSync(part); i += 1) {
         await new Promise((resolve) => setTimeout(resolve, 10));
       }
+      // 目标版本 ≥2.0.0 才和本地这次下载挑同一份资产，否则各下各的，也就谈不上「共享」。
       const started = startRemoteUpgradeJob({
         nodeId,
         version,
@@ -1437,6 +1467,7 @@ describe('RemoteUpgradeJob', () => {
             return new Response('{}', { status: 200 });
           },
         },
+        targetCurrentVersion: '2.0.0',
       });
       expect(started.ok).toBe(true);
       const cancelled = await cancelRemoteUpgradeJob({
@@ -1452,6 +1483,9 @@ describe('RemoteUpgradeJob', () => {
       const result = await local;
       expect(result.sha256).toBe(hex);
       expect(existsSync(join(cacheDir, `vibeterm-cli-${version}.tgz`))).toBe(true);
+      // 两个下载者共用一次拉取：远端作业被取消也不该让本地这次重下
+      expect(tarballRequests).toHaveLength(1);
+      expect(tarballRequests[0]).toContain(`vibeterm-cli-${version}.tgz`);
     } finally {
       globalThis.fetch = originalFetch;
     }

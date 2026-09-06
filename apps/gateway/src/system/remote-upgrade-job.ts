@@ -451,6 +451,7 @@ function sendPackageManifest(
     version: job.version,
     sums: downloaded.sums,
     sig: downloaded.sig,
+    asset: job.assetName,
     signal: job.abort.signal,
   });
 }

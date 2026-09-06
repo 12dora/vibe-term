@@ -4,7 +4,7 @@ License: Mozilla Public License 2.0 (see LICENSE).
 
 Upstream: https://github.com/murat-dogan/node-datachannel
 
-Modifications by tmex:
+Modifications by VibeTerm:
 
 - Replaced optionalDependency / local-build loader with an absolute-path
   `require` of `<VIBETERM_NATIVE_DIR>/node_datachannel.node` (or
@@ -12,4 +12,4 @@ Modifications by tmex:
 - Annotated the implicit `any` in `datachannel-stream.ts` /
   `websocket-server.ts` so the vendored copy passes `tsc --strict`.
 - Dropped `detect-libc` from this JS layer; libc detection lives in
-  `packages/app/src/lib/native-manifest.ts` and is used by `tmex direct enable`.
+  `packages/app/src/lib/native-manifest.ts` and is used by `vibeterm direct enable`.

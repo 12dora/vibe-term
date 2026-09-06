@@ -116,6 +116,8 @@ export async function pushPackageManifest(input: {
   version: string;
   sums: string;
   sig: string;
+  /** 推的是哪一份资产：目标按这个名字从 SHA256SUMS 取摘要，两边必须一致。 */
+  asset: string;
   signal: AbortSignal;
   /** 整个来回（含读回包）的预算；缺省 `MANIFEST_TIMEOUT_MS`，单测用来把它压短。 */
   timeoutMs?: number;
@@ -127,7 +129,12 @@ export async function pushPackageManifest(input: {
         nodeId: input.nodeId,
         method: 'POST',
         path: '/api/system/upgrade/package/manifest',
-        body: { version: input.version, sums: input.sums, sig: input.sig },
+        body: {
+          version: input.version,
+          sums: input.sums,
+          sig: input.sig,
+          asset: input.asset,
+        },
         signal: input.signal,
         retry: { attempts: 2 },
       }),

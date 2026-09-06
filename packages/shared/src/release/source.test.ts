@@ -5,10 +5,12 @@ import {
   INSTALL_COMMAND,
   INSTALL_SCRIPT_URL,
   RELEASE_REPO,
+  isReleaseAssetNameFor,
   isReleaseTarballName,
   legacyReleaseTarballName,
   legacyReleaseTarballUrl,
   parseReleaseTarballName,
+  releaseAssetNames,
   releaseTarballName,
   releaseTarballUrl,
   selectReleaseAssetForTarget,
@@ -49,6 +51,16 @@ describe('资产名', () => {
     expect(isReleaseTarballName('vibeterm-cli-2.0.0.tgz.part')).toBe(false);
     expect(isReleaseTarballName('other-cli-2.0.0.tgz')).toBe(false);
     expect(parseReleaseTarballName('dist/vibeterm-cli-2.0.0.tgz')).toBeNull();
+  });
+});
+
+describe('releaseAssetNames / isReleaseAssetNameFor', () => {
+  it('只认该版本的新旧两个资产名', () => {
+    expect(releaseAssetNames('2.0.0')).toEqual(['vibeterm-cli-2.0.0.tgz', 'tmex-cli-2.0.0.tgz']);
+    expect(isReleaseAssetNameFor('2.0.0', 'vibeterm-cli-2.0.0.tgz')).toBe(true);
+    expect(isReleaseAssetNameFor('2.0.0', 'tmex-cli-2.0.0.tgz')).toBe(true);
+    expect(isReleaseAssetNameFor('2.0.0', 'vibeterm-cli-2.0.1.tgz')).toBe(false);
+    expect(isReleaseAssetNameFor('2.0.0', 'install.sh')).toBe(false);
   });
 });
 
