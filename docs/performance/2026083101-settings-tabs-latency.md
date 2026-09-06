@@ -1,6 +1,6 @@
 # 设置页各 tab 加载慢的根因与处置
 
-## 根因（见 prompt-archives/2026083101-onboarding-remote-access-round8/sub/E5-result.md）
+## 根因
 
 - 远程访问：`GET /api/tunnel/status` 同步等待外部隧道检测——`ps`、launchd/systemd 目录扫描、cloudflared 配置读取、多次串行 Cloudflare API（隧道名/ingress/Access `listApps` 最多 50 页），且无超时；30s 缓存过期即整段重跑。
 - 多节点互联：整页等 `/api/auth/mode`（每次重算 TLS 信息、主用户扫描）；`/api/local/status` 串行等本机状态再等 TLS 解析。

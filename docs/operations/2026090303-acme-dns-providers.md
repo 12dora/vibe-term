@@ -67,7 +67,7 @@ cloudflareToken?: string   // 旧字段，等价于 dnsProvider='cloudflare' + {
 ## DNSPod 实现要点
 
 - 端点 `https://dnsapi.cn/<Method>`，`POST` + `application/x-www-form-urlencoded`，鉴权字段 `login_token=<ID>,<Token>`（旧版 API Token），`format=json`、`lang=en`。
-- `User-Agent: tmex/<version> (<email>)`——DNSPod 要求带联系邮箱，这里用 ACME 账户邮箱。
+- `User-Agent: vibeterm/<version> (<email>)`——DNSPod 要求带联系邮箱，这里用 ACME 账户邮箱。
 - 用到的方法：`Domain.Info`（找 zone / 取 NS）、`Domain.List`（兜底枚举）、`Record.Create`、`Record.Remove`。
 - zone 推断：从 `_acme-challenge.<fqdn>` 逐级去掉左侧标签试 `Domain.Info`，全部失败再用 `Domain.List` 里已拥有的域名匹配。
 - 建 TXT 记录时同时带 `record_line_id=0` 与 `record_line=默认`，`ttl=600`；部分账号只认其中一个。

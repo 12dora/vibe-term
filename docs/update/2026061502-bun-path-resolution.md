@@ -31,7 +31,7 @@ issue 建议的修复（在 `locateBunFromShell()` 之后加 homebrew 路径检�
 升级本就会重写 `install-meta.json`，故 `bunPath` 只需纳入重写字段。`InstallMeta.bunPath` 声明为**可选**（旧 meta 无此字段，运行时为 `undefined`，由优先级链安全处理）。
 
 - **网页自更新**：新 cli 被旧 gateway 用 bun 拉起 → `process.versions.bun` 存在 → #2 `process.execPath` 确定性命中正确 bun，**不依赖旧 meta、不依赖旧 gateway 改动**，结果写入重建的 meta。
-- **手动 `npx tmex-cli upgrade`**：execPath 为 node（#2 不命中）、旧 meta 无 bunPath（#3 不命中）→ #4 动态探测（已修健壮）→ 结果写入重建 meta。
+- **手动 `vibeterm upgrade`**：execPath 为 node（#2 不命中）、旧 meta 无 bunPath（#3 不命中）→ #4 动态探测（已修健壮）→ 结果写入重建 meta。
 - gateway 侧 `spawnUpgrade` 额外显式传 `--bun-path process.execPath`，对装新版后的后续升级生效（属显式加固，非兼容必需）。
 
 ## 非交互环境 / fail-fast

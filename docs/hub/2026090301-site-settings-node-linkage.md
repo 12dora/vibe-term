@@ -53,7 +53,7 @@ mesh 下 `PATCH` 携带**与当前有效值不同**的字段直接 400：
 
 ## 注意
 
-- **TOTP issuer 不随站点名变**：`totpOtpauthUri()` 的 issuer 硬编码为 `tmex`，改名不会让验证器 App 里已有的条目改标签，也不需要重新绑定。
+- **TOTP issuer 不随站点名变**：`totpOtpauthUri()` 的 issuer 硬编码为 `vibeterm`，改名不会让验证器 App 里已有的条目改标签，也不需要重新绑定。
 - 存储的 `site_url` 只在 standalone 下有意义；mesh 下它是最后一层兜底，不要拿它当「用户配置的地址」来读。
 - hub 公开地址为空（既没配 `VIBETERM_HUB_PUBLIC_URL` 也没有 hub 行）时，纯 node 的有效地址会回退到存储值，页面可能显示一个过期地址——这是提示运维补 hub 公开地址，不是 bug。
 - `auth-routes.ts` 里另有一份私有的 hub 选择逻辑，本轮未合并；它在「已有 writer 但 `publicUrl` 为空」时不会继续回退到 attached hub，与本文顺序略有差异。

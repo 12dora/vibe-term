@@ -1,32 +1,34 @@
 # 数据库复制后启动失败与 journald 排障说明
 
 ## 背景
-在 tmex 部署目录中直接替换数据库文件（例如复制测试环境的 `tmex.db`）后，服务可能启动失败并持续重启。
+在 VibeTerm 部署目录中直接替换数据库文件（例如复制测试环境的 `vibeterm.db`）后，服务可能启动失败并持续重启。
 
 常见表现：
-- `systemctl --user status tmex.service` 显示 `activating (auto-restart)`。
-- `journalctl --user -u tmex.service` 出现 `OperationError` 或解密失败相关日志。
+- `systemctl --user status vibeterm.service` 显示 `activating (auto-restart)`。
+- `journalctl --user -u vibeterm.service` 出现 `OperationError` 或解密失败相关日志。
 
 ## 根因
-tmex 会对部分敏感字段做加密存储（如 Telegram Bot Token、SSH 密码/私钥）。
+VibeTerm 会对部分敏感字段做加密存储（如 Telegram Bot Token、SSH 密码/私钥）。
 如果数据库中的密文与当前 `app.env` 里的 `VIBETERM_MASTER_KEY` 不匹配，启动阶段解密会失败，服务按“严格失败”策略退出。
+
+> 服务名取自 `install-meta.json`，默认 `vibeterm`；自定义过服务名的实例请替换下文的 `vibeterm.service`。
 
 ## 快速排查
 1. 查看服务状态：
 ```bash
-systemctl --user status tmex.service -l --no-pager
+systemctl --user status vibeterm.service -l --no-pager
 ```
 2. 查看最近日志：
 ```bash
-journalctl --user -u tmex.service -n 200 --no-pager
+journalctl --user -u vibeterm.service -n 200 --no-pager
 ```
 3. 连续追踪日志：
 ```bash
-journalctl --user -u tmex.service -f
+journalctl --user -u vibeterm.service -f
 ```
 4. 核对当前 key：
 ```bash
-grep '^VIBETERM_MASTER_KEY=' /home/<user>/.local/share/tmex/app.env
+grep '^VIBETERM_MASTER_KEY=' /home/<user>/.local/share/vibeterm/app.env
 ```
 
 ## 修复建议（保留数据）
@@ -36,12 +38,12 @@ grep '^VIBETERM_MASTER_KEY=' /home/<user>/.local/share/tmex/app.env
 - SSH 设备认证：重新填写密码/私钥。
 3. 修复后重启服务：
 ```bash
-systemctl --user restart tmex.service
+systemctl --user restart vibeterm.service
 ```
 
 ## 日志可观测性
 当前 systemd user unit 已显式配置输出到 journald：
-- `SyslogIdentifier=tmex`
+- `SyslogIdentifier=vibeterm`
 - `StandardOutput=journal`
 - `StandardError=journal`
 

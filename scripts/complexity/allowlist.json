@@ -1,40 +1,40 @@
 {
   "apps/fe/src/components/side-panels/account-security/passkey-section.tsx:PasskeySection": {
     "lines": 166,
-    "reason": "同上，纯条件 JSX 表单区（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
+    "reason": "同上，纯条件 JSX 表单区（第二十一轮复核）"
   },
   "apps/fe/src/components/side-panels/account-security/totp-section.tsx:TotpSection": {
     "lines": 191,
-    "reason": "纯条件 JSX 表单区，单一职责；1.1.16/1.1.18/1.1.20 的 TOTP/passkey 增量把行数推高，拆分只会把同一段条件渲染搬到另一个文件（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
+    "reason": "纯条件 JSX 表单区，单一职责；1.1.16/1.1.18/1.1.20 的 TOTP/passkey 增量把行数推高，拆分只会把同一段条件渲染搬到另一个文件（第二十一轮复核）"
   },
   "apps/fe/src/pages/LoginPage.tsx:LoginForm": {
     "lines": 207,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/devices/use-device-folders.ts:useDeviceFolders": {
     "lines": 198,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/https/acme-panel.tsx:AcmePanel": {
     "lines": 171,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/https/selfsigned-panel.tsx:SelfSignedPanel": {
     "lines": 122,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/local-machine-card.tsx:LocalMachineCard": {
     "lines": 161,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/management/enrollment-section.tsx:EnrollmentSection": {
     "lines": 152,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/management/nodes-management.tsx:NodesManagement": {
     "lines": 250,
     "cc": 18,
-    "reason": "节点管理页装配根：状态与子组件接线，无独立业务分支可抽（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）"
+    "reason": "节点管理页装配根：状态与子组件接线，无独立业务分支可抽（第二十一轮复核）"
   },
   "apps/fe/src/pages/settings/nodes/management/nodes-table.tsx:NodeRowView": {
     "cc": 19,
@@ -59,23 +59,23 @@
   },
   "apps/fe/src/pages/settings/nodes/membership/use-leave-mesh.ts:useLeaveMesh": {
     "lines": 184,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/setup/become-hub-form.tsx:BecomeHubForm": {
     "lines": 187,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/nodes/setup/join-hub-form.tsx:JoinHubForm": {
     "lines": 150,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/notification-settings-tab.tsx:NotificationSettingsTab": {
     "lines": 140,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/remote-access/named-step.tsx:HostnameStep": {
     "lines": 137,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/fe/src/pages/settings/remote-access/status-card.tsx:TunnelStatusCard": {
     "cc": 33,
@@ -155,8 +155,8 @@
     "reason": "协议/编排状态机内聚体，拆分只增行（G8 判定）"
   },
   "apps/gateway/src/managed-entry.ts:runManagedGateway": {
-    "lines": 154,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "lines": 159,
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   },
   "apps/gateway/src/mesh/auth-routes.ts:handlePasskeyRegisterVerify": {
     "cc": 16,
@@ -193,7 +193,7 @@
   },
   "apps/gateway/src/mesh/mesh-runtime.ts:createMeshStoresAndServices": {
     "lines": 137,
-    "reason": "mesh 装配根，第六轮已按职责拆过一次；剩下的是依赖注入清单本身（第二十一轮复核，prompt-archives/2026090302-round21-perf-idle-smell）",
+    "reason": "mesh 装配根，第六轮已按职责拆过一次；剩下的是依赖注入清单本身（第二十一轮复核）",
     "cc": 16
   },
   "apps/gateway/src/mesh/peer-status-sync.ts:applyPeerStatus": {
@@ -206,15 +206,15 @@
   },
   "apps/gateway/src/mesh/rtc/bulk.ts:pumpDownload": {
     "cc": 17,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/gateway/src/mesh/rtc/channel-fanout.ts:fanoutDataChannel": {
     "lines": 135,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/gateway/src/mesh/rtc/dc-handshake.ts:handshakeDataChannel": {
     "lines": 128,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/gateway/src/mesh/session-middleware.ts:authenticateRequest": {
     "cc": 17,
@@ -250,15 +250,15 @@
   },
   "apps/gateway/src/runtime.ts:createGatewayRuntime": {
     "lines": 148,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/gateway/src/system/remote-upgrade-job.ts:cancelRemoteUpgradeJob": {
     "cc": 19,
     "reason": "远程升级取消状态机（G8 判定）"
   },
   "apps/gateway/src/system/upgrade.ts": {
-    "fileLines": 1087,
-    "reason": "升级控制器内聚体，拆分只搬行（G8 判定）；round28 T4 加入暂存包断点续传，落盘细节已抽到 upgrade-staging.ts"
+    "fileLines": 1098,
+    "reason": "升级控制器内聚体，拆分只搬行（G8 判定）；round28 T4 加入暂存包断点续传，落盘细节已抽到 upgrade-staging.ts；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   },
   "apps/gateway/src/tls/tls-config-store.ts:get": {
     "cc": 16,
@@ -270,7 +270,7 @@
   },
   "apps/gateway/src/tmux-client/external-tmux-core.ts:bindCollaboratorHost": {
     "lines": 134,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "apps/gateway/src/tmux-client/pane-stream-parser.ts:dispatchPaneStreamByte": {
     "cc": 18,
@@ -319,7 +319,7 @@
   },
   "apps/gateway/src/ws/tmux-kind-handlers.ts:createTmuxKindHandlers": {
     "lines": 145,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/app/src/cli-auth-entry.ts:dispatchAuthCli": {
     "cc": 24,
@@ -330,8 +330,8 @@
     "reason": "顺序轮询/SIGINT/准入流程（S2 判定）"
   },
   "packages/app/src/commands/hub.ts": {
-    "fileLines": 1298,
-    "reason": "CLI 参数/命令分派（G8 判定）"
+    "fileLines": 1307,
+    "reason": "CLI 参数/命令分派（G8 判定）；VibeTerm 改名后标识符变长，biome 重排多出 9 行"
   },
   "packages/app/src/lib/args.ts:resolveNestedCommand": {
     "cc": 32,
@@ -351,35 +351,35 @@
   },
   "packages/panels/src/agent/chat-thread.tsx:ChatThread": {
     "lines": 134,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-console/device-console.tsx:DeviceConsole": {
     "lines": 128,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-console/use-editor-input.ts:useEditorInput": {
     "lines": 127,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-console/use-pane-active-follow.ts:usePaneActiveFollow": {
     "lines": 206,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-console/use-pane-selection-dispatch.ts:usePaneSelectionDispatch": {
     "lines": 129,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-console/use-pane-selection-state.ts:usePaneSelectionState": {
     "lines": 140,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-folders/device-folder-tree.tsx:DeviceFolderTree": {
     "lines": 240,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-folders/folder-section.tsx:FolderSection": {
     "lines": 174,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-folders/folder-tree-model.ts:resolveDrop": {
     "cc": 19,
@@ -391,63 +391,63 @@
   },
   "packages/panels/src/device-management/use-device-management-state.ts:useDeviceManagementState": {
     "lines": 122,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/device-tree/sidebar-device-list.tsx:SideBarDeviceList": {
     "lines": 238,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/directory-picker-modal.tsx:DirectoryPickerModal": {
     "lines": 177,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/llm-provider-form-modal.tsx:LlmProviderFormModal": {
     "lines": 204,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/llm-provider-row.tsx:LlmProviderRow": {
     "lines": 170,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/llm-providers-tab.tsx:LlmDefaultsCard": {
     "lines": 133,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/search-tab.tsx:SearchTab": {
     "lines": 201,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/telegram-bot-chats-modal.tsx:TelegramBotChatsModal": {
     "lines": 148,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/terminal-settings-panel.tsx:TerminalSettingsPanel": {
     "lines": 169,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/use-version-tab.ts:useVersionTab": {
     "lines": 136,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/webhooks-tab.tsx:WebhooksTab": {
     "lines": 198,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/weixin-account-login-modal.tsx:WeixinAccountLoginModal": {
     "lines": 249,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/settings/weixin-account-row.tsx:WeixinAccountRow": {
     "lines": 178,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/watch/regex-trigger-fields.tsx:RegexTriggerFields": {
     "lines": 165,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/panels/src/watch/watch-rule-form.tsx:WatchRuleForm": {
     "lines": 150,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/shared/src/auth/key-log.ts:applyAdmitNode": {
     "cc": 17,
@@ -471,63 +471,63 @@
   },
   "packages/shared/src/ws-borsh/test-fakes.ts:referenceApply": {
     "cc": 24,
-    "reason": "测试夹具的参考实现：刻意与被测实现独立编写以交叉验证，简化它就等于让它向被测实现靠拢（第二十一轮由 bench/test 两份合并而来，prompt-archives/2026090302-round21-perf-idle-smell）"
+    "reason": "测试夹具的参考实现：刻意与被测实现独立编写以交叉验证，简化它就等于让它向被测实现靠拢（第二十一轮由 bench/test 两份合并而来）"
   },
   "packages/stores/src/agent-session-crud-actions.ts:createAgentSessionCrudActions": {
     "lines": 175,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/stores/src/site.ts:createSiteStore": {
     "lines": 135,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/stores/src/tmux-selection-actions.ts:createTmuxSelectionActions": {
     "lines": 125,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/stores/src/tmux.ts:createTmuxStore": {
     "lines": 195,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/components/SplitTerminalArea.tsx:SplitTerminalArea": {
     "lines": 211,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/components/Terminal.tsx:<anon>": {
     "lines": 214,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/components/TerminalPreview.tsx:TerminalPreview": {
     "lines": 160,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/components/split/SplitPaneView.tsx:SplitPaneView": {
     "lines": 127,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts:<anon>": {
     "lines": 185,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/terminal-ui/src/hooks/use-keyboard-avoidance.ts:useKeyboardAvoidance": {
     "lines": 194,
-    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见 prompt-archives/2026083003-perf-smell-gates-round6）"
+    "reason": "内聚顺序逻辑，拆分只增行（S1/S2 报告判定，见）"
   },
   "packages/ws-client/src/direct/direct-carrier-controller.ts": {
-    "fileLines": 1114,
-    "reason": "WebRTC 直连生命周期状态机（S2 判定）"
+    "fileLines": 1115,
+    "reason": "WebRTC 直连生命周期状态机（S2 判定）；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   },
   "apps/fe/src/auth/session-login.ts": {
-    "fileLines": 704,
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+    "fileLines": 708,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告；2.0 改名后 biome 重排 +行"
   },
   "apps/fe/src/components/side-panels/account-security-panel.tsx": {
     "fileLines": 831,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/fe/src/node/enrollment.ts": {
-    "fileLines": 776,
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+    "fileLines": 780,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   },
   "apps/fe/src/node/enrollment-engine.ts": {
     "fileLines": 881,
@@ -574,8 +574,8 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/gateway/src/tmux-client/external-tmux-core.ts": {
-    "fileLines": 712,
-    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
+    "fileLines": 715,
+    "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   },
   "apps/gateway/src/tmux-client/local-external-connection.ts": {
     "fileLines": 680,
@@ -662,7 +662,7 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "apps/gateway/src/system/remote-upgrade-job.ts": {
-    "fileLines": 712,
-    "reason": "round28 T4：推包阶段改为查偏移 + 续传 + 退避重试，与取消状态机共享 Job 内部结构，拆开要把一半私有状态导出"
+    "fileLines": 729,
+    "reason": "round28 T4：推包阶段改为查偏移 + 续传 + 退避重试，与取消状态机共享 Job 内部结构，拆开要把一半私有状态导出；2.0 改名桥接（新旧名双读/双发、别名回退）+行"
   }
 }

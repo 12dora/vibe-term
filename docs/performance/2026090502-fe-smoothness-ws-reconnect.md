@@ -2,7 +2,7 @@
 
 ## 背景
 
-round 28 探索（`prompt-archives/2026090502-round28-net-perf-smell/sub/EX4、EX3`）确认终端本身（自研 ghostty WASM + canvas、输出合帧、按键不 debounce）无可捡便宜，剩余卡顿来自路由切换与长列表；浏览器 WebSocket 5 次重连后永久放弃且只靠 `visibilitychange` 自愈。
+round 28 探索确认终端本身（自研 ghostty WASM + canvas、输出合帧、按键不 debounce）无可捡便宜，剩余卡顿来自路由切换与长列表；浏览器 WebSocket 5 次重连后永久放弃且只靠 `visibilitychange` 自愈。
 
 ## 前端
 

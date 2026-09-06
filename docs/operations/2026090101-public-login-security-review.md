@@ -1,8 +1,10 @@
 # 公网启用账号密码登录的安全评估
 
+> 本文写于产品名为 tmex 时期（2026-09 改名 VibeTerm），历史内容保持原样。
+
 ## 背景
 
-tmex 可经 Cloudflare Tunnel 或直连端口暴露到公网，并启用账号密码登录（`local-auth`）。本文回答「暴露后实际风险有多大、值得改什么」，原则是只改有实际收益的点，**不做过度防御**。结论基于 2026-09-01 的源码审计（探索记录 `prompt-archives/2026090101-round11-pwa-files-auth/sub/EX4-result.md`）。
+VibeTerm 可经 Cloudflare Tunnel 或直连端口暴露到公网，并启用账号密码登录（`local-auth`）。本文回答「暴露后实际风险有多大、值得改什么」，原则是只改有实际收益的点，**不做过度防御**。结论基于 2026-09-01 的源码审计。
 
 ## 现有机制（比常规密码登录强）
 
@@ -21,7 +23,7 @@ tmex 可经 Cloudflare Tunnel 或直连端口暴露到公网，并启用账号�
 | 高 | HTTP 直连暴露时会话可被嗅探；cookie `Secure` 依赖 HTTPS 探测 | 不改代码：公网一律走 Tunnel HTTPS 或自配 TLS，反代后开 `VIBETERM_TRUST_PROXY` |
 | 中 | 限流 IP 桶在隧道后全员共桶（误伤为主，非绕过） | **已修**：信任代理时按 `CF-Connecting-IP`/`X-Forwarded-For`/`X-Real-IP` 分桶 |
 | 中 | 密码最短 8 位、无复杂度要求；拿到 DB 可离线撞根公钥 | 不改：argon2id 已足够贵；建议用密码管理器生成 16+ 位或改用 passkey。**不加复杂度规则** |
-| 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：tmex 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |
+| 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：VibeTerm 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |
 | 低 | 登录 404/401 可枚举用户名；无持久审计日志 | 不改：用户名不是安全边界；限流已覆盖 |
 | 低 | 无通用 Origin 校验，CSRF 依赖 `SameSite=Lax` + 无 CORS 放行 | 不改：当前威胁模型足够 |
 | 低 | TOTP 由同一密码派生，不是独立第二因子 | 不改；不宣传为 MFA，需要第二因子用 passkey |

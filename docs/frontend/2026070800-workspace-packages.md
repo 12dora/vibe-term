@@ -8,7 +8,7 @@
 
 ## 包结构
 
-根 `package.json` 的 workspaces 为 `apps/*` + `packages/*`。`packages/` 下共 11 个包，其中 10 个属前端/共享层，`packages/app`（npm 包名 `tmex-cli`）是 Node 兼容的安装/升级 CLI，不参与前端依赖图（见 `packages/app/README.md`）。
+根 `package.json` 的 workspaces 为 `apps/*` + `packages/*`。`packages/` 下共 11 个包，其中 10 个属前端/共享层，`packages/app`（npm 包名 `vibeterm-cli`）是 Node 兼容的安装/升级 CLI，不参与前端依赖图（见 `packages/app/README.md`）。
 
 | 包 | 目录 | 职责 | 出口 |
 |---|---|---|---|

@@ -3,7 +3,7 @@
 	admin off
 }
 
-hub.tmex.test {
+hub.vibeterm.test {
 	tls /certs/hub.crt /certs/hub.key
 	encode gzip
 	reverse_proxy hub:9883 {
@@ -15,7 +15,7 @@ hub.tmex.test {
 	}
 }
 
-entry.tmex.test {
+entry.vibeterm.test {
 	tls /certs/hub.crt /certs/hub.key
 	encode gzip
 	reverse_proxy node-a:9883 {

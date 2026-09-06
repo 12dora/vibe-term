@@ -36,7 +36,7 @@ terminal agent 的系统提示词原先由 `apps/gateway/src/agent/prompts.ts` �
 
 ## 凭证处理（不对称策略）
 
-凭证（屏幕上的 `show run` 密码 / `cat` 私钥 / token，以及用户输入）会外发 LLM provider 并落进 `tmex.db`。采用**不对称**策略：
+凭证（屏幕上的 `show run` 密码 / `cat` 私钥 / token，以及用户输入）会外发 LLM provider 并落进 `vibeterm.db`。采用**不对称**策略：
 
 ### 机器来源内容（屏幕/网页）：DB 存真实，仅出站 LLM 消毒
 
@@ -53,9 +53,9 @@ terminal agent 的系统提示词原先由 `apps/gateway/src/agent/prompts.ts` �
 
 `secret-scan.ts` 的 `redactSecrets`/`detectSecrets`，高置信度模式串：私钥块、已知前缀 token（`sk-`/`ghp_`/`AKIA`/`xoxb-`/`ya29.`/`AIza`/`glpat-` 等）、`Authorization: Bearer`、含密码连接串/URL、网络设备 typed 口令（`password 7`/`secret 5`）/`enable secret`/`snmp-server community`。配套负样本单测确保不误伤普通配置/散文。
 
-## 重要权衡：tmex.db 含明文凭证
+## 重要权衡：vibeterm.db 含明文凭证
 
-**`tmex.db` 的 agent 消息表会保存真实的终端/网页内容，可能含明文凭证**——这是「DB 存真实、仅出站 LLM 消毒」的直接后果，目的是保留用户对自己终端历史的完整审计/重放能力。消毒边界**仅止于外部 LLM provider**。因此：数据库文件本身需按敏感数据对待（备份、同步、外泄都可能泄露凭证）。用户输入的凭证更是明文外发 LLM 且落库，仅靠告警知情。
+**`vibeterm.db` 的 agent 消息表会保存真实的终端/网页内容，可能含明文凭证**——这是「DB 存真实、仅出站 LLM 消毒」的直接后果，目的是保留用户对自己终端历史的完整审计/重放能力。消毒边界**仅止于外部 LLM provider**。因此：数据库文件本身需按敏感数据对待（备份、同步、外泄都可能泄露凭证）。用户输入的凭证更是明文外发 LLM 且落库，仅靠告警知情。
 
 ## 验收
 

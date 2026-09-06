@@ -1,4 +1,4 @@
-# tmex hub/node e2e 运行时。只从 ubuntu:24.04 构建；Caddy 另用 caddy:2。
+# vibeterm hub/node e2e 运行时。只从 ubuntu:24.04 构建；Caddy 另用 caddy:2。
 # 多架构：TARGETARCH=amd64|arm64（远端 x86 服务器 / 本机 Apple Silicon 原生，不走 qemu）。
 FROM ubuntu:24.04
 ARG TARGETARCH
@@ -48,22 +48,25 @@ RUN BUN_ARCH="$([ "${TARGETARCH}" = "arm64" ] && echo aarch64 || echo x64)" \
        fi \
     && bun --version
 
-RUN cp /tmp/build/tmex-cli.tgz /tmp/tmex-cli.tgz && mkdir -p /opt/tmex-pkg /opt/tmex/runtime /opt/tmex/resources /opt/tmex/native /var/lib/tmex \
-    && tar -xzf /tmp/tmex-cli.tgz -C /opt/tmex-pkg \
-    && cp -a /opt/tmex-pkg/package/dist/runtime/. /opt/tmex/runtime/ \
-    && cp -a /opt/tmex-pkg/package/resources/fe-dist /opt/tmex/resources/fe-dist \
-    && cp -a /opt/tmex-pkg/package/resources/gateway-drizzle /opt/tmex/resources/gateway-drizzle \
-    && test -f /opt/tmex/runtime/server.js \
-    && test -f /opt/tmex/runtime/cli-auth.js \
-    && test -f /opt/tmex-pkg/package/bin/tmex.js \
-    && rm -rf /tmp/tmex-cli.tgz /tmp/build
+# 改名前的 tarball 只有 bin/tmex.js，补一个 bin/vibeterm.js 符号链接，下游脚本统一按新名调用。
+RUN cp /tmp/build/vibeterm-cli.tgz /tmp/vibeterm-cli.tgz && mkdir -p /opt/vibeterm-pkg /opt/vibeterm/runtime /opt/vibeterm/resources /opt/vibeterm/native /var/lib/vibeterm \
+    && tar -xzf /tmp/vibeterm-cli.tgz -C /opt/vibeterm-pkg \
+    && cp -a /opt/vibeterm-pkg/package/dist/runtime/. /opt/vibeterm/runtime/ \
+    && cp -a /opt/vibeterm-pkg/package/resources/fe-dist /opt/vibeterm/resources/fe-dist \
+    && cp -a /opt/vibeterm-pkg/package/resources/gateway-drizzle /opt/vibeterm/resources/gateway-drizzle \
+    && test -f /opt/vibeterm/runtime/server.js \
+    && test -f /opt/vibeterm/runtime/cli-auth.js \
+    && { test -f /opt/vibeterm-pkg/package/bin/vibeterm.js \
+      || ln -s tmex.js /opt/vibeterm-pkg/package/bin/vibeterm.js; } \
+    && test -f /opt/vibeterm-pkg/package/bin/vibeterm.js \
+    && rm -rf /tmp/vibeterm-cli.tgz /tmp/build
 
-COPY entrypoint.sh /usr/local/bin/tmex-entrypoint.sh
-RUN chmod 755 /usr/local/bin/tmex-entrypoint.sh
+COPY entrypoint.sh /usr/local/bin/vibeterm-entrypoint.sh
+RUN chmod 755 /usr/local/bin/vibeterm-entrypoint.sh
 
-WORKDIR /opt/tmex
+WORKDIR /opt/vibeterm
 EXPOSE 9883 39001
 HEALTHCHECK --interval=5s --timeout=5s --start-period=90s --retries=24 \
     CMD curl -fsS http://127.0.0.1:9883/healthz || exit 1
 
-ENTRYPOINT ["/usr/local/bin/tmex-entrypoint.sh"]
+ENTRYPOINT ["/usr/local/bin/vibeterm-entrypoint.sh"]

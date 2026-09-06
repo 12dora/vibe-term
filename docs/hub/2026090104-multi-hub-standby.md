@@ -19,7 +19,7 @@
 - 主 hub 把 hub 集合随 `node.list` 广播（`hubs[]`、`writerHubId`、`writerEpoch`）；各 node 落入 `mesh_hubs`；
 - node uplink **有序 failover**：active（最高 `writerEpoch`）→ standby（按 `priority` 升序）；主 hub 恢复后自动切回；
 - standby 复制签名状态与注册表快照，**拒绝写操作**；
-- 显式 `tmex hub promote` / `demote`；`writerEpoch` 单调递增。active 见到更高 epoch 的 active 会自动降级。
+- 显式 `vibeterm hub promote` / `demote`；`writerEpoch` 单调递增。active 见到更高 epoch 的 active 会自动降级。
 
 **第一阶段不做：**
 
@@ -115,7 +115,7 @@
 
 ## 写入围栏
 
-写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-Tmex-Force-Keylog）, body, uid?, writerHubId?, writerEpoch? }`，写者执行前校验 `isWriter()`、本机 ID 与当前 epoch，不匹配则 409 `HUB_NOT_WRITER` ack。执行后回 ack（status / body）；超 48 KiB 的 ACK 按 `{id, part, final, bytes}` 分片，standby 重组。请求体发送前做尺寸检查，超限返回 413 `payload_too_large`。写者按 `(fromHubId, id)` 做有界幂等缓存：同摘要重放原 ACK，不同摘要拒绝。响应加 `X-Tmex-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
+写者可达且 advertised version ≥ 1.1.13 时，standby 把下列写入经**已认证 hub↔hub uplink** 发成控制帧 `hub.write-forward { id, method, path, headers（仅 content-type 与 X-VibeTerm-Force-Keylog）, body, uid?, writerHubId?, writerEpoch? }`，写者执行前校验 `isWriter()`、本机 ID 与当前 epoch，不匹配则 409 `HUB_NOT_WRITER` ack。执行后回 ack（status / body）；超 48 KiB 的 ACK 按 `{id, part, final, bytes}` 分片，standby 重组。请求体发送前做尺寸检查，超限返回 413 `payload_too_large`。写者按 `(fromHubId, id)` 做有界幂等缓存：同摘要重放原 ACK，不同摘要拒绝。响应加 `X-VibeTerm-Forwarded-By: <standbyHubId>`。帧里**不带** `cookie` / `authorization`。已带该响应头的请求不再转发（环路守卫）。无活的写者 uplink 或对端版本不够时，仍 409 `HUB_NOT_WRITER`。
 
 写者把请求归到转发 hub：enrollment create 的用户签名、redeem 的 enroll-key 证书、keylog（含 `revoke-node`）的签名记录均自认证。**rename** 额外带 `uid`：standby 断言「该用户已在本机通过会话认证」，写者接受该 uid **仅因为发送方是已授权 hub**（不复验 standby 侧会话）。失陷的已授权 standby 可以冒用其已认证用户做 rename。
 
@@ -136,7 +136,7 @@
 
 **epoch 围栏：** 本机 `mode=active` 时，若收到**已授权**的另一台 `mode=active` 且 `writerEpoch` **更大** 的广告，立即日志 `[hub] fenced: higher writerEpoch=… from hub=…`，`setMode('standby')`，把本机在 `mesh_hubs` 的行写成 standby。默认**不会**自动 promote；见下节 opt-in 自动 promote。
 
-围栏必须跨重启存活：被 fence 的 hub 下次启动会读 `mesh_hubs` 里更高 epoch 的已授权 active，仍以 standby 起来（日志 `[hub] starting fenced: …`），即使 `app.env` 里 `VIBETERM_HUB_MODE=active` 也一样。要重新当写者，必须显式 `tmex hub promote`。
+围栏必须跨重启存活：被 fence 的 hub 下次启动会读 `mesh_hubs` 里更高 epoch 的已授权 active，仍以 standby 起来（日志 `[hub] starting fenced: …`），即使 `app.env` 里 `VIBETERM_HUB_MODE=active` 也一样。要重新当写者，必须显式 `vibeterm hub promote`。
 
 **脑裂告警：** 两台 active 的 epoch **相等** 时，每 60 s 打一条 `split-brain` 警告，两边继续服务。必须人工 `demote` 其中一台。
 
@@ -184,31 +184,31 @@ Promote 复用 `POST /api/hub/role` 的过渡：写 `VIBETERM_HUB_MODE=active` �
 
 - 未授权的广告一律丢弃，不进 `mesh_hubs`、不参与 `pickWriterHub`、不触发 fencing、不广播其 CA 指纹；
 - 新版本只需在 UI 提交 `admit-hub`，standby 即可出现在 `hubs[]`，不必每台机器手写 env；
-- `tmex hub allow` / `disallow` 仍改 env，但签名授权优先，且由 UI 管理。
+- `vibeterm hub allow` / `disallow` 仍改 env，但签名授权优先，且由 UI 管理。
 
-**兼容门：** 旧节点无法解码新记录类型，链回放会停在 `malformed_payload`。写者在追加 `admit-hub` / `retire-hub` 前，若 `nodes` 里任一未吊销节点的 last-reported version `< 1.1.13` 或为空/无法解析，则拒绝：HTTP 409 `{ code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES, minVersion, nodes }`（uplink `key.log.append` 同样返回该 error code）。HTTP 可用 `X-Tmex-Force-Keylog: 1` 强制写入并打警告。
+**兼容门：** 旧节点无法解码新记录类型，链回放会停在 `malformed_payload`。写者在追加 `admit-hub` / `retire-hub` 前，若 `nodes` 里任一未吊销节点的 last-reported version `< 1.1.13` 或为空/无法解析，则拒绝：HTTP 409 `{ code: KEYLOG_TYPE_UNSUPPORTED_BY_NODES, minVersion, nodes }`（uplink `key.log.append` 同样返回该 error code）。HTTP 可用 `X-VibeTerm-Force-Keylog: 1` 强制写入并打警告。
 
 ## 操作手册
 
-命令都跑在**目标机器本机**，要求已 `tmex init`。`hub join` 行为不变（只写一个种子 `VIBETERM_HUB_URL`）；其它 hub 靠 `node.list` 学习，不必改 join。
+命令都跑在**目标机器本机**，要求已 `vibeterm init`。`hub join` 行为不变（只写一个种子 `VIBETERM_HUB_URL`）；其它 hub 靠 `node.list` 学习，不必改 join。
 
 ### 两步启用 standby（standby 自动授权主 hub；主 hub 仍须手动 allow）
 
 standby 自己改角色还不够：当前 active **不会**把未授权的 hub 广告写入 `hubs[]`。顺序是：
 
-1. 在已加入的 **node** 上执行 `tmex hub standby --public-url https://hub-b.example`。命令会：
+1. 在已加入的 **node** 上执行 `vibeterm hub standby --public-url https://hub-b.example`。命令会：
    - 把本机写成 `hub,node` + `standby`；
-   - **自动把当前主 hub 的 node id 写入本机 `VIBETERM_HUB_PEERS`**（来源：本地 `mesh_hubs` 的 active 行，找不到则退到 `peer_cache` 哨兵行 `node_id='hub'` 的 `inventory_json.nodeId`）。找不到时打印警告，须手动 `tmex hub allow`。
-   - 打印本机 32 位 hex node id，以及要在 active 上跑的命令：`tmex hub allow <thisNodeId>`。
-2. 在 **当前 active hub** 上执行打印出来的 `tmex hub allow <nodeId>`（写入 `VIBETERM_HUB_PEERS` 并重启，除非 `--no-restart`）。**主 hub 不会自动授权备用 hub。**
-3. 之后 `tmex hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `signed` / `env` / `self` / `no`：签名授权优先于 env。首选在 UI 提交 `admit-hub`，env 仅作 bootstrap。
+   - **自动把当前主 hub 的 node id 写入本机 `VIBETERM_HUB_PEERS`**（来源：本地 `mesh_hubs` 的 active 行，找不到则退到 `peer_cache` 哨兵行 `node_id='hub'` 的 `inventory_json.nodeId`）。找不到时打印警告，须手动 `vibeterm hub allow`。
+   - 打印本机 32 位 hex node id，以及要在 active 上跑的命令：`vibeterm hub allow <thisNodeId>`。
+2. 在 **当前 active hub** 上执行打印出来的 `vibeterm hub allow <nodeId>`（写入 `VIBETERM_HUB_PEERS` 并重启，除非 `--no-restart`）。**主 hub 不会自动授权备用 hub。**
+3. 之后 `vibeterm hub list` / `node.list.hubs[]` 才会出现这台 standby。`AUTH` 列为 `signed` / `env` / `self` / `no`：签名授权优先于 env。首选在 UI 提交 `admit-hub`，env 仅作 bootstrap。
 
-反过来：新写者 `promote` 之后，**旧写者**也必须 `tmex hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。`promote` / `demote` **不改** `VIBETERM_HUB_PEERS`，但会打印当前名单。
+反过来：新写者 `promote` 之后，**旧写者**也必须 `vibeterm hub allow <新写者 nodeId>`，否则旧写者不会承认它，也无法被它 fence。`promote` / `demote` **不改** `VIBETERM_HUB_PEERS`，但会打印当前名单。
 
 ### 把已加入的 node 变成 standby
 
 ```bash
-tmex hub standby --public-url https://hub-b.example [--priority 200]
+vibeterm hub standby --public-url https://hub-b.example [--priority 200]
 ```
 
 写入：
@@ -236,8 +236,8 @@ tmex hub standby --public-url https://hub-b.example [--priority 200]
 仅 `hub,node` 安装可用。
 
 ```bash
-tmex hub allow <nodeId> [<nodeId>...]
-tmex hub disallow <nodeId>
+vibeterm hub allow <nodeId> [<nodeId>...]
+vibeterm hub disallow <nodeId>
 ```
 
 - node id 必须是 32 位十六进制（大小写不敏感，写入时小写）；非法值拒绝，不改 env；
@@ -248,7 +248,7 @@ tmex hub disallow <nodeId>
 ### 提升写者（promote）
 
 ```bash
-tmex hub promote --yes
+vibeterm hub promote --yes
 ```
 
 - 仅 `hub,node` 安装可用；
@@ -256,13 +256,13 @@ tmex hub promote --yes
 - `VIBETERM_HUB_WRITER_EPOCH = max(当前 env, max(mesh_hubs.writer_epoch)) + 1`；本地库不可读时退化为 `env + 1`（env 缺省按 1）；
 - **一定**打印红字警告：原写者必须先 `demote` 或停机，否则脑裂；
 - 必须 `--yes`，或在 TTY 交互确认。非 TTY 不加 `--yes` 会拒绝；
-- 提醒原写者执行 `tmex hub allow <本机 nodeId>`。若本机 `VIBETERM_HUB_PEERS` 为空，额外警告：本机未授权任何对端，旧写者无法 fencing 本机（可以接受），但旧写者仍须把本机加入它的名单。
+- 提醒原写者执行 `vibeterm hub allow <本机 nodeId>`。若本机 `VIBETERM_HUB_PEERS` 为空，额外警告：本机未授权任何对端，旧写者无法 fencing 本机（可以接受），但旧写者仍须把本机加入它的名单。
 - **不改** `VIBETERM_HUB_PEERS`，结束时打印当前名单。
 
 ### 降为备援（demote）
 
 ```bash
-tmex hub demote
+vibeterm hub demote
 ```
 
 只改 `VIBETERM_HUB_MODE=standby` 并重启。**不改** `VIBETERM_HUB_PEERS`，结束时打印当前名单。原主恢复上线前必须先做这一步。
@@ -280,12 +280,12 @@ FE 在节点表的「主 Hub / 备 Hub」标签旁提供「切换」。入口把
 3. `restarting`：约 1 s 后走既有自重启（`RuntimeController.requestRestart()`，与 `POST /api/settings/restart` 相同），以便 202 先刷出。
 4. 下次启动读 env：若最新过渡为 `restarting` 且 env 与目标一致则标 `complete`，否则 `failed`。过渡存在独立表 `hub_role_transitions`，不会被 `mesh_hubs.replaceAll()` 清掉。
 
-**把 X 设为写者的顺序：** 当前写者为 A、目标为 X。A 可达时先 demote A（`mode=standby`），再 promote X（`mode=active`，`writerEpoch = max(已知 epoch)+1`）。A 不可达时不能声称 HTTP demote 成功，只能依赖 X 的更高 epoch 把 A fence 成 standby；同 epoch 双 active 仍会脑裂。CLI `tmex hub promote/demote` 在本机库可写时也会落一条 `hub_role_transitions`（`phase=restarting`），`tmex hub list` 打印最新过渡 phase。
+**把 X 设为写者的顺序：** 当前写者为 A、目标为 X。A 可达时先 demote A（`mode=standby`），再 promote X（`mode=active`，`writerEpoch = max(已知 epoch)+1`）。A 不可达时不能声称 HTTP demote 成功，只能依赖 X 的更高 epoch 把 A fence 成 standby；同 epoch 双 active 仍会脑裂。CLI `vibeterm hub promote/demote` 在本机库可写时也会落一条 `hub_role_transitions`（`phase=restarting`），`vibeterm hub list` 打印最新过渡 phase。
 
 ### 查看 hub 集合
 
 ```bash
-tmex hub list
+vibeterm hub list
 ```
 
 读本机 `mesh_hubs`：短 node id、name、mode、priority、writerEpoch、authorized、publicUrl、online、lastSeen。写者行以 `*` 标记（规则与运行时 `pickWriterHub` 相同）。`AUTH=yes` 当且仅当该 id 在本机 `VIBETERM_HUB_PEERS` 中，或就是本机 self。表空表示还没从 `node.list` 学到集合（旧 hub、尚未 uplink，或对端尚未被 allow）。
@@ -312,10 +312,10 @@ tmex hub list
 
 正确顺序：
 
-1. 确认新主已经 `promote` 且 node 已切过去（`tmex hub list` / `GET /api/mesh/hubs`）；
-2. 在**旧主**上 `tmex hub demote`（或停机并手改 `VIBETERM_HUB_MODE=standby`）；
-3. 新主若尚未 `tmex hub allow <旧主 nodeId>`，先补上；再启动旧主。它会以 standby 身份 uplink 到新写者、复制注册表，并出现在 `hubs[]` 里；
-4. 若要把写者切回旧主：旧主 `tmex hub promote --yes`，且新主必须已 allow 旧主（否则无法 fence）。仍建议先把现写者 demote，再 promote 旧主。
+1. 确认新主已经 `promote` 且 node 已切过去（`vibeterm hub list` / `GET /api/mesh/hubs`）；
+2. 在**旧主**上 `vibeterm hub demote`（或停机并手改 `VIBETERM_HUB_MODE=standby`）；
+3. 新主若尚未 `vibeterm hub allow <旧主 nodeId>`，先补上；再启动旧主。它会以 standby 身份 uplink 到新写者、复制注册表，并出现在 `hubs[]` 里；
+4. 若要把写者切回旧主：旧主 `vibeterm hub promote --yes`，且新主必须已 allow 旧主（否则无法 fence）。仍建议先把现写者 demote，再 promote 旧主。
 
 ## 环境变量
 
@@ -325,7 +325,7 @@ tmex hub list
 | `VIBETERM_HUB_PRIORITY` | active `100` / standby `200` | 同 mode 下越小越优先，整数 ≥ 0 |
 | `VIBETERM_HUB_WRITER_EPOCH` | `1` | 写者世代，整数 ≥ 1，只增不减 |
 | `VIBETERM_HUB_URLS` | 空 | 逗号分隔的备用种子，接在 `VIBETERM_HUB_URL` 后按字面去重 |
-| `VIBETERM_HUB_PEERS` | 空 | 逗号分隔的 **其它** 已授权 hub 的 32 位 hex node id。空名单 = 只信任 self。由 `tmex hub allow` / `disallow` 维护 |
+| `VIBETERM_HUB_PEERS` | 空 | 逗号分隔的 **其它** 已授权 hub 的 32 位 hex node id。空名单 = 只信任 self。由 `vibeterm hub allow` / `disallow` 维护 |
 | `VIBETERM_HUB_PUBLIC_URL` | 空 | 本机 hub 对外 HTTPS 基址 |
 | `VIBETERM_HUB_URL` | 空 | 种子主 hub。`hub join` 写入；standby **不要改掉** |
 
@@ -346,16 +346,16 @@ tmex hub list
 
 ## 验收清单
 
-- [ ] 已加入的 node 上 `tmex hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`VIBETERM_HUB_URL` 未改，服务重启；输出含本机 node id 与 `tmex hub allow <id>`；本机 `VIBETERM_HUB_PEERS` 已含当前主 hub（或打印找不到主 hub 的警告）。
+- [ ] 已加入的 node 上 `vibeterm hub standby --public-url https://…` 后角色为 `hub,node`、mode=`standby`，`VIBETERM_HUB_URL` 未改，服务重启；输出含本机 node id 与 `vibeterm hub allow <id>`；本机 `VIBETERM_HUB_PEERS` 已含当前主 hub（或打印找不到主 hub 的警告）。
 - [ ] 未加入 / 已是 active hub 的机器执行 standby 被拒绝。
-- [ ] 未 `allow` 前，active 的 `hubs[]` 不含该 standby；active 执行 `tmex hub allow <id>` 后才出现。
-- [ ] `tmex hub allow` / `disallow` 校验 32 位 hex、去重保序、非 `hub,node` 拒绝、`--no-restart` 不重启。
-- [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `tmex hub list` 能看到主与备，写者打 `*`，`AUTH` 列对 self / 已 allow 的为 yes。
+- [ ] 未 `allow` 前，active 的 `hubs[]` 不含该 standby；active 执行 `vibeterm hub allow <id>` 后才出现。
+- [ ] `vibeterm hub allow` / `disallow` 校验 32 位 hex、去重保序、非 `hub,node` 拒绝、`--no-restart` 不重启。
+- [ ] 主 hub 的 `node.list` 含 `hubs[]`；各 node `vibeterm hub list` 能看到主与备，写者打 `*`，`AUTH` 列对 self / 已 allow 的为 yes。
 - [ ] 停主 hub 后，node 在阈值内切到 standby；`GET /api/mesh/hubs` 的 `attached` 指向备机。
 - [ ] 写者可达时，备机 enroll / redeem / rename / revoke 转发到写者并成功；写者不可达时仍 409 `HUB_NOT_WRITER`，带写者 URL。
 - [ ] 主 hub 停机后 node 日志出现对备用 hub 的 `[uplink] try` / `candidate failed`（而不只是 `offline reason=stopped`）；`GET /api/mesh/hubs.candidates[].lastError` 能看到失败原因。
 - [ ] 主 hub 按「先 demote 再启动」恢复后，node 切回主；跳过 demote 会看到 fence 或 split-brain 日志。
-- [ ] `tmex hub promote --yes` 把 epoch 提到 `max(env, db)+1`；无 `--yes` 且非 TTY 拒绝。
+- [ ] `vibeterm hub promote --yes` 把 epoch 提到 `max(env, db)+1`；无 `--yes` 且非 TTY 拒绝。
 - [ ] 旧节点（v1.1.5）仍能解码 `node.list` 并保持单 hub uplink。
 
 ## 已知限制

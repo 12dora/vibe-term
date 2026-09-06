@@ -1,8 +1,10 @@
 # 隧道边缘 fake-IP 绕行（1.1.31）
 
+> 本文写于产品名为 tmex 时期（2026-09 改名 VibeTerm），历史内容保持原样。
+
 ## 背景
 
-本机（macOS + Surge 增强模式）远程访问卡片长期显示「无边缘连接」。只读排查：cloudflared `/ready` 报 `readyConnections: 0`；其预检把 `region1/2.v2.argotunnel.com` 解析成 `198.18.91.209 / 198.18.92.12`（RFC 2544 段，Surge fake-IP），QUIC / TCP 7844 均失败；直连真实边缘 `198.41.192.7:7844` 通。Surge 日志自网络切换后持续报 `[SGUDPForwarder] Unknown VIF virtual IP: 198.18.91.209:7844, client: cloudflared`——代理自己发出的 fake-IP 在其转发表里查不到，直接丢包。用户配置已含 `always-real-ip = *.argotunnel.com` 与 DIRECT 规则，问题出在代理侧缓存/状态，不是规则缺失，也不是 tmex 代码 bug。
+本机（macOS + Surge 增强模式）远程访问卡片长期显示「无边缘连接」。只读排查：cloudflared `/ready` 报 `readyConnections: 0`；其预检把 `region1/2.v2.argotunnel.com` 解析成 `198.18.91.209 / 198.18.92.12`（RFC 2544 段，Surge fake-IP），QUIC / TCP 7844 均失败；直连真实边缘 `198.41.192.7:7844` 通。Surge 日志自网络切换后持续报 `[SGUDPForwarder] Unknown VIF virtual IP: 198.18.91.209:7844, client: cloudflared`——代理自己发出的 fake-IP 在其转发表里查不到，直接丢包。用户配置已含 `always-real-ip = *.argotunnel.com` 与 DIRECT 规则，问题出在代理侧缓存/状态，不是规则缺失，也不是 VibeTerm 代码 bug。
 
 ## 设计
 

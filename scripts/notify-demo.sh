@@ -16,7 +16,7 @@ printf '\a'
 pause
 
 say "2) OSC 9"
-printf '\033]9;tmex osc9 test\a'
+printf '\033]9;vibeterm osc9 test\a'
 pause
 
 say "3) OSC 777"

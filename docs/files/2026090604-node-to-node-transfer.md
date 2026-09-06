@@ -92,5 +92,5 @@ DELETE /sessions/:sid                       → { ok }                      // �
   会话在写（进程内声明），第二个会话拿到 `dest_conflict`。
 - **孤儿清扫**（`transfer/sweep.ts`）：开机 30 s 后跑一次，之后每 6 小时一次。
   本机 root 下按广度优先扫 `.part-<16 位十六进制>`（目录数 ≤ 2000、层级 ≤ 6，不跟符号链接），
-  ssh 暂存目录 `tmex-rx-*` 整目录按 TTL（24 小时）回收；正在被会话使用的一律跳过。
+  ssh 暂存目录 `vibeterm-rx-*` 整目录按 TTL（24 小时）回收；正在被会话使用的一律跳过。
   测试环境（`NODE_ENV=test`）不挂这两个定时器。

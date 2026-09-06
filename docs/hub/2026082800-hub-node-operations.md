@@ -1,6 +1,6 @@
-# tmex hub / node 运维指南
+# VibeTerm hub / node 运维指南
 
-本文面向把单机 tmex 扩成「一台公网入口 + 多台 NAT 后设备」的安装与日常运维。架构与威胁模型见 [hub/node 多节点架构设计](./2026082700-hub-node-architecture.md)（v3.2）。本文只描述当前已落地行为；已知限制单独列出，不把设计里尚未实现的项写成操作步骤。
+本文面向把单机 VibeTerm 扩成「一台公网入口 + 多台 NAT 后设备」的安装与日常运维。架构与威胁模型见 [hub/node 多节点架构设计](./2026082700-hub-node-architecture.md)（v3.2）。本文只描述当前已落地行为；已知限制单独列出，不把设计里尚未实现的项写成操作步骤。
 
 鉴权已从 JWT / 管理员密码 / OIDC 改为**用户自持根钥（密码派生 Ed25519）+ 可选 passkey / TOTP**。存量 `standalone` 安装升级后仍无登录页、旧路由可用。
 
@@ -71,9 +71,9 @@
 
 ## 首次搭 hub
 
-推荐路径：一台有公网 HTTPS 的机器做 `hub,node`，内网机器 `init` 后 `hub join`。包与升级流程与单机相同（`bash install.sh` / `tmex upgrade`）。
+推荐路径：一台有公网 HTTPS 的机器做 `hub,node`，内网机器 `init` 后 `hub join`。包与升级流程与单机相同（`bash install.sh` / `vibeterm upgrade`）。
 
-安装目录默认：macOS `~/Library/Application Support/tmex/`，Linux `~/.local/share/tmex/`。服务由 launchd / systemd 用户单元拉起。**不要**手改正在跑的生产安装目录里的库或 `app.env` 做试验。
+安装目录默认：macOS `~/Library/Application Support/vibeterm/`，Linux `~/.local/share/vibeterm/`；改名前（1.1.x）装在 `.../tmex/` 的实例升到 2.0.0 时由升级器整体搬到新路径（库、`app.env` 键、服务 label 一并迁移，见 [改名迁移](../release/2026090607-rename-vibeterm.md)），自定义 `--install-dir` 的安装不搬。服务名取自 `install-meta.json`，默认 `vibeterm`（launchd label `com.vibeterm.vibeterm`，systemd `vibeterm.service`）。**不要**手改正在跑的生产安装目录里的库或 `app.env` 做试验。
 
 ### 1. 在入口机安装并指定角色
 
@@ -81,15 +81,15 @@
 bash install.sh --role hub,node
 ```
 
-交互模式会询问 `VIBETERM_HUB_PUBLIC_URL`（浏览器与 `hub join` 使用的 HTTPS 基址，例如 `https://tmex.example.com`）。非交互：
+交互模式会询问 `VIBETERM_HUB_PUBLIC_URL`（浏览器与 `hub join` 使用的 HTTPS 基址，例如 `https://vibeterm.example.com`）。非交互：
 
 ```bash
 bash install.sh --role hub,node --no-interactive \
-  --install-dir "$HOME/Library/Application Support/tmex" \
+  --install-dir "$HOME/Library/Application Support/vibeterm" \
   --host 127.0.0.1 --port 9883 \
-  --db-path "$HOME/Library/Application Support/tmex/data/tmex.db" \
+  --db-path "$HOME/Library/Application Support/vibeterm/data/vibeterm.db" \
   --autostart true \
-  --hub-public-url https://tmex.example.com
+  --hub-public-url https://vibeterm.example.com
 ```
 
 `init --role node|hub,node` 结束时默认执行 `direct enable`（下载当前平台 `.node`）；失败只打日志，不阻断安装。随后 `direct_capable=false`，数据面走 hub relay。
@@ -99,7 +99,7 @@ bash install.sh --role hub,node --no-interactive \
 在 **hub 机本机**（服务已起来，命令走安装版 Bun 的 `runtime/cli-auth.js`）：
 
 ```bash
-tmex hub user add <username>
+vibeterm hub user add <username>
 ```
 
 TTY 隐藏输入密码并二次确认；非 TTY 用 `VIBETERM_PASSWORD`。密码经 NFKC 后再做 argon2id。成功后：
@@ -115,7 +115,7 @@ TTY 隐藏输入密码并二次确认；非 TTY 用 `VIBETERM_PASSWORD`。密码
 **CLI（任意已加入的 node，含 hub 机）：**
 
 ```bash
-tmex enroll [--ttl 10m]
+vibeterm enroll [--ttl 10m]
 ```
 
 输入密码（若该用户已启用 TOTP，再输入 `VIBETERM_TOTP` 或交互验证码）。打印 join 串与完整 `hub join` 命令，然后等待对端 redeem：
@@ -139,7 +139,7 @@ join 串有两个版本：
 在每台要加入的机器上（可先 `init --role standalone` 或 `--role node`）：
 
 ```bash
-tmex hub join https://tmex.example.com --token <join 串> [--name 书房]
+vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房]
 ```
 
 约束：
@@ -153,7 +153,7 @@ tmex hub join https://tmex.example.com --token <join 串> [--name 书房]
 - 不必先 `hub leave`：从角色 `node` 直接 join 另一台 hub 即可，`leave` 只清角色与 `VIBETERM_HUB_URL`；
 - 成功后提示在内网防火墙放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。替换了旧账号时会打印一条明确日志。
 
-加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`tmex hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
+加入后各入口侧边栏自动出现新 node，无需手动添加设备。退出 mesh：`vibeterm hub leave`（清 `hub_url`，角色改回 `standalone`，重启）。
 
 ## Nodes 页
 
@@ -163,7 +163,7 @@ tmex hub join https://tmex.example.com --token <join 串> [--name 书房]
 
 `GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
 
-node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的 hub `rtc.signal` 通道发一条签名 wake（`sdp` 内 `type=rtc.wake`，对 `{domain:tmex-rtc-wake, from, to, rtcSession, nonce, issued_at}` 用发送方节点 Ed25519 私钥签名）唤醒较小 id 去 `getLink`；hub 只转发、不解释、不验签。接收端用 `node_certs` 验签，拒绝坏签名、时钟偏差 > 60s、重放 nonce，以及自己并非该对 offerer 的 wake；每对端有接收冷却。发送侧 5s 冷却若挡住了仍需要的 wake，会在 `nextEligibleAt` 补发（DC 到达或本次拨号结束则取消）。已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
+node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请求只发生在较大 id 一侧时，该侧会经已认证的 hub `rtc.signal` 通道发一条签名 wake（`sdp` 内 `type=rtc.wake`，对 `{domain:vibeterm-rtc-wake, from, to, rtcSession, nonce, issued_at}` 用发送方节点 Ed25519 私钥签名）唤醒较小 id 去 `getLink`；hub 只转发、不解释、不验签。接收端用 `node_certs` 验签，拒绝坏签名、时钟偏差 > 60s、重放 nonce，以及自己并非该对 offerer 的 wake；每对端有接收冷却。发送侧 5s 冷却若挡住了仍需要的 wake，会在 `nextEligibleAt` 补发（DC 到达或本次拨号结束则取消）。已是 `dc` 的忽略。`node.list` / 对端 `direct_capable` 翻成 true 时两边都会 `maybeUpgrade()`。已打开的 node↔node stream 留在旧链路上，**不会**随 carrier-switch 迁到 DC（carrier-switch 只服务浏览器 `sess`）；新 stream 在 `waitForTransport(id, 'dc')` 成功后再开才会走 DC。
 
 | 动作 | 行为 |
 |---|---|
@@ -179,17 +179,17 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 
 ## 远程卸载
 
-入口「设置 → 多节点互联 → 节点管理」可对已登录的远程节点执行「卸载 tmex」。入口不能卸载自己（`UNINSTALL_SELF_BLOCKED`）。
+入口「设置 → 多节点互联 → 节点管理」可对已登录的远程节点执行「卸载 VibeTerm」。入口不能卸载自己（`UNINSTALL_SELF_BLOCKED`）。
 
 流程：
 
 1. 入口 `POST /api/mesh/nodes/:id/uninstall` 要求本机会话、目标已在该入口登录（否则 `NODE_LOGIN_REQUIRED`）且 peer 可达（否则 `NODE_UNREACHABLE`），再经 peer link 转发 `POST /api/system/uninstall`，body 为 `{ mode: "full" }`。
 2. 目标必须是 CLI 安装（`installedViaCli` 且 `deployment` 为 `launchd` / `systemd`）。容器、手动部署或 managed 构建返回 409 `UNINSTALL_NOT_ALLOWED`；正在升级返回 409 `UPGRADE_IN_PROGRESS`。旧版本没有该接口（404/405）→ 501 `UNINSTALL_UNSUPPORTED`。`GET /api/system/info` 的 `upgradeCapabilities` 含 `uninstall`，入口用来区分旧目标。
-3. 目标把 `current/cli`（解析 `current` 符号链接到 `versions/<v>`）整目录拷到 `tmpdir/tmex-uninstall-<id>/`，再 detached 拉起 `tmex uninstall --yes --purge --install-dir <installDir> --delay-ms 1500`，立刻 202 `{ state: "scheduled" }`。`--delay-ms` 让 202 先刷出再停服务。随后卸载器停 launchd/systemd 用户服务、删安装目录（`versions/`、`current`、`staging`、`backups`、`app.env`、`data/` 含 SQLite `-wal`/`-shm`）、带 tmex 标记的 shim（`~/.local/bin/tmex`、`~/.bun/bin/tmex`），并尽量删掉这份临时拷贝。不会碰安装目录、unit/plist 和已标记 shim 以外的路径。
+3. 目标把 `current/cli`（解析 `current` 符号链接到 `versions/<v>`）整目录拷到 `tmpdir/vibeterm-uninstall-<id>/`，再 detached 拉起 `vibeterm uninstall --yes --purge --install-dir <installDir> --delay-ms 1500`，立刻 202 `{ state: "scheduled" }`。`--delay-ms` 让 202 先刷出再停服务。随后卸载器停 launchd/systemd 用户服务、删安装目录（`versions/`、`current`、`staging`、`backups`、`app.env`、`data/` 含 SQLite `-wal`/`-shm`）、带 VibeTerm 标记的 shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`），并尽量删掉这份临时拷贝。不会碰安装目录、unit/plist 和已标记 shim 以外的路径。
 4. 入口把长事务记在 `gateway_kv` 键 `mesh.node-op.<nodeId>`（`MeshNodeOperation`）：`requested`（转发前）→ `uninstalling`（目标 202）→ `failed`（带 `error`）。`GET /api/mesh/nodes` 每行带 `operation`（无则 `null`），页面刷新仍显示卸载中。记录自 `updatedAt` 起 TTL 30 分钟；节点从列表消失（吊销 / 移除）时在列表投影里惰性清除；也可 `DELETE /api/mesh/nodes/:id/operation`。`GET /api/mesh/nodes/:id/operation` 返回该记录或 404。
 5. 前端随后走既有签名 `revoke-node` 从 hub 去掉该节点。卸载不代替吊销。
 
-本机手动卸载仍用 `tmex uninstall [--yes] [--purge] [--delay-ms <n>]`。
+本机手动卸载仍用 `vibeterm uninstall [--yes] [--purge] [--delay-ms <n>]`。
 
 ## 账号安全：passkey 与 TOTP
 
@@ -209,23 +209,23 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 - 防远程猜密码 / 旁观，**不是**独立于口令的第二因素（与根钥同源派生）。需要独立第二因素时用 passkey。
 - UI 两段式：先生成密钥与 otpauth URI（不写日志）→ 扫码并输入 6 位码 → 本地校验通过才追加 `set-totp`。取消或离开页面会清零密钥。
 - **启用 TOTP 只能用密码**（需要 seed）。关闭 TOTP、增删 passkey 可用 passkey 授权。
-- CLI：`tmex hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。
+- CLI：`vibeterm hub user totp <username>` 打印 otpauth URI（无 ASCII QR）。
 
 ### 改密
 
-日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；该类型不允许 `x-tmex-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
+日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；该类型不允许 `x-vibeterm-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
 
-`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`tmex hub user passwd <username>` 若仍走 `rotate-root`，语义与此相同。非 TTY：旧密码 `VIBETERM_PASSWORD_OLD`，新密码 `VIBETERM_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
+`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`vibeterm hub user passwd <username>` 若仍走 `rotate-root`，语义与此相同。非 TTY：旧密码 `VIBETERM_PASSWORD_OLD`，新密码 `VIBETERM_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
 
-登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `tmex_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `tmex_s_<nodeId>` / `tmex_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
+登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `vibeterm_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `vibeterm_s_<nodeId>` / `vibeterm_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
 
 ## 直连：`direct enable|disable`
 
 直连是同一逻辑 WS 会话的第二条载体（浏览器↔目标 node 的 `sess` DataChannel），失败自动回落 hub relay，功能不变。
 
 ```bash
-tmex direct enable
-tmex direct disable
+vibeterm direct enable
+vibeterm direct disable
 ```
 
 `enable` 按 `platform / arch / libc` 查 pinned manifest，从 npm 拉单平台 tarball，校验 sha512 后解出 `node_datachannel.node` 到 `<installDir>/native/`，并写 `native/manifest.json`。`disable` 删除整个 `native/` 目录。`upgrade` 在部署 runtime 后若已有 native 且版本变化则重下；standalone 无 `native/` 则跳过。
@@ -275,7 +275,7 @@ hub 恢复后无需重新登录（cookie 仍有效）。
 ### `mesh reset-root`（任意 mesh 机器）
 
 ```bash
-tmex mesh reset-root
+vibeterm mesh reset-root
 ```
 
 `VIBETERM_ROLES=standalone` 会拒绝。输入新密码后保留用户名，在本机重建根钥并自签 `admit-node`。用于「密码在失陷入口上泄露、攻击者抢先 `rotate-root`」这类无法依赖旧根钥的场景。
@@ -285,7 +285,7 @@ tmex mesh reset-root
 ### `hub user reset`（仅 hub 机）
 
 ```bash
-tmex hub user reset
+vibeterm hub user reset
 ```
 
 停服务 → 删除 `nodes` 与 `enrollment_tokens`（**保留 `node_certs`**）→ 再启动。日志提示：失陷节点在重新注册前须先 `revoke-node`。这只清注册表，不是改密。
@@ -319,7 +319,7 @@ tmex hub user reset
 | enroll 一直「待确认」 | 证书未到本会话，或 passkey 路径需手动确认，或 hubAck 未到 | 等 join 完成再点确认；查 hub 是否在线；根钥路径才自动 admit |
 | 登录页没有 passkey | `passkeyAvailable=false` 或本 origin 无凭证 | 用域名 HTTPS（加 `VIBETERM_TRUST_PROXY`）；先在本入口注册 |
 | TOTP 登录 `TOTP_INVALID` | epoch 与派生盐不一致，或验证码过期 | 确认用的是当前 epoch 的密码；日常改密会重封装 TOTP，无需重设；破坏性 `rotate-root` 后须重设 |
-| HTTP 409 `HUB_NOT_WRITER` | 打到了 standby hub 的写接口（enroll / redeem / rename / revoke） | 改打 body 里的 `writerPublicUrl`。要把这台变成写者，先让原主 `tmex hub demote`，再 `tmex hub promote --yes`。见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
+| HTTP 409 `HUB_NOT_WRITER` | 打到了 standby hub 的写接口（enroll / redeem / rename / revoke） | 改打 body 里的 `writerPublicUrl`。要把这台变成写者，先让原主 `vibeterm hub demote`，再 `vibeterm hub promote --yes`。见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
 | 两台 hub 同时 `mode=active` | epoch 围栏未生效或旧主恢复时没先 demote | 立即把其中一台 `demote` 或停机。日志会有 `split-brain` 或 `fenced: higher writerEpoch`。切回顺序见 [多 hub 主/备](./2026090104-multi-hub-standby.md) |
 
 限速：每个 node 对同一 `uid` 或 IP 每分钟 10 次登录，超出 429。转发登录的限速桶目前是 `peer:<entryNodeId>`，不是浏览器真实 IP。

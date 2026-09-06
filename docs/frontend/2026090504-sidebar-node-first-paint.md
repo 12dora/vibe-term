@@ -2,7 +2,7 @@
 
 ## 背景
 
-现象：每次重开 PWA，侧栏里 `tmex`、`work-mac` 两个远端节点要等很久才出现——不是「显示为离线」，
+现象：每次重开 PWA，侧栏里 `vibeterm`、`work-mac` 两个远端节点要等很久才出现——不是「显示为离线」，
 而是**整个分节连节点名一起没有**。`/api/mesh/nodes` 的服务端处理器是同步的、不做任何探测（1.3 ms），
 所以问题不在后端列表本身。
 
@@ -34,13 +34,13 @@
 - `sidebar-device-list-runtime.tsx`：pending 时渲染**分节头 + 占位设备行**（有本地快照就灰显上次的设备名，
   一台都不知道时给两条骨架），落地后才挂真实设备树。
 - `sidebar-node-section.tsx`：首帧占位取自 `offlineDevices(runtimeNodeId, inventory)`
-  （`tmex:device-snapshot:*`），并在真实列表落地时回写快照——**此前只有设备页写快照**，从没进过设备页的
+  （`vibeterm:device-snapshot:*`），并在真实列表落地时回写快照——**此前只有设备页写快照**，从没进过设备页的
   用户永远没有首帧数据。回写只认 `succeeded`：一次网络故障不再把成功过的快照覆盖成空数组
   （成功返回的空列表照常保存）。
 
 **H4 —— 首帧缓存 + mode 不再「失败即永久记住」**
 
-- 新增 `mesh-nodes-cache.ts`：localStorage `tmex:mesh-nodes`（版本号 + `savedAt`，7 天过期、≤64 行、
+- 新增 `mesh-nodes-cache.ts`：localStorage `vibeterm:mesh-nodes`（版本号 + `savedAt`，7 天过期、≤64 行、
   读写全部 try/catch）。**只落身份与在线态**，链路现场（reach / transport / rttMs / peerAddress /
   linkSinceAt / directFailure）一律清空——它们描述上一次会话的那条链路，冷启动后必然是错的。
   也不落整份 `mode`（含 `passkeySecondFactorWaived` 等鉴权语义字段），只留 `mesh: boolean` 与 `entryNodeId`。

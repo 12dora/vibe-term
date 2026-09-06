@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# 在远端机上构建 tmex-e2e:split 并拉起 compose 项目 tmex-split（caddy + hub）。
-# 不触碰 tmex-e2e 项目、nginx、80/443。
+# 在远端机上构建 vibeterm-e2e:split 并拉起 compose 项目 vibeterm-split（caddy + hub）。
+# 不触碰 vibeterm-e2e 项目、nginx、80/443。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -11,16 +11,16 @@ if [[ -n "${REMOTE_SUDO}" ]]; then
 else
   DOCKER=(docker)
 fi
-COMPOSE=("${DOCKER[@]}" compose -p tmex-split -f "${ROOT}/docker-compose.remote.yml")
-IMAGE_NAME="tmex-e2e:split"
+COMPOSE=("${DOCKER[@]}" compose -p vibeterm-split -f "${ROOT}/docker-compose.remote.yml")
+IMAGE_NAME="vibeterm-e2e:split"
 PLATFORM="linux/amd64"
 export VIBETERM_E2E_HUB_HOST="${VIBETERM_E2E_HUB_HOST:-ai.example.com}"
 export VIBETERM_E2E_HUB_IP="${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
 export VIBETERM_E2E_HUB_PORT="${VIBETERM_E2E_HUB_PORT:-18443}"
-export VIBETERM_E2E_REMOTE_DIR="${VIBETERM_E2E_REMOTE_DIR:-/root/tmex-e2e}"
+export VIBETERM_E2E_REMOTE_DIR="${VIBETERM_E2E_REMOTE_DIR:-/root/vibeterm-e2e}"
 export VIBETERM_E2E_TLS_MODE="${VIBETERM_E2E_TLS_MODE:-letsencrypt}"
 export VIBETERM_E2E_TURN_EXTERNAL_IP="${VIBETERM_E2E_TURN_EXTERNAL_IP:-${VIBETERM_E2E_HUB_IP}}"
-TARBALL="${VIBETERM_TARBALL:-${VIBETERM_E2E_REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
+TARBALL="${VIBETERM_TARBALL:-${VIBETERM_E2E_REMOTE_DIR}/vibeterm-cli.tgz}"
 HUB_PUBLIC_URL="${VIBETERM_HUB_PUBLIC_URL:-https://${VIBETERM_E2E_HUB_HOST}:${VIBETERM_E2E_HUB_PORT}}"
 if [[ "${VIBETERM_E2E_TLS_MODE}" == "private-ca" ]]; then
   export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${VIBETERM_E2E_REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
@@ -73,14 +73,14 @@ else
     exit 2
   fi
   mkdir -p "${HUB_E2E}/build"
-  cp "${TARBALL}" "${HUB_E2E}/build/tmex-cli.tgz"
+  cp "${TARBALL}" "${HUB_E2E}/build/vibeterm-cli.tgz"
   log "building ${IMAGE_NAME} (--platform ${PLATFORM}) from ${TARBALL}"
   "${DOCKER[@]}" build --platform "${PLATFORM}" -t "${IMAGE_NAME}" -f "${HUB_E2E}/Dockerfile" "${HUB_E2E}"
 fi
 
 render_caddyfile
 
-log "compose down (tmex-split only)"
+log "compose down (vibeterm-split only)"
 "${COMPOSE[@]}" down -v --remove-orphans || true
 
 log "compose up hub"
@@ -92,9 +92,9 @@ fi
 wait_healthy hub
 
 log "patch hub app.env public URL → ${HUB_PUBLIC_URL}"
-"${DOCKER[@]}" exec tmex-split-hub bash -lc "
+"${DOCKER[@]}" exec vibeterm-split-hub bash -lc "
   set -euo pipefail
-  f=/var/lib/tmex/app.env
+  f=/var/lib/vibeterm/app.env
   test -f \"\$f\"
   sed -i 's|^VIBETERM_BASE_URL=.*|VIBETERM_BASE_URL=${HUB_PUBLIC_URL}|' \"\$f\"
   sed -i 's|^VIBETERM_HUB_PUBLIC_URL=.*|VIBETERM_HUB_PUBLIC_URL=${HUB_PUBLIC_URL}|' \"\$f\"
@@ -102,7 +102,7 @@ log "patch hub app.env public URL → ${HUB_PUBLIC_URL}"
   grep -q '^VIBETERM_PEER_BIND_HOST=' \"\$f\" && sed -i 's|^VIBETERM_PEER_BIND_HOST=.*|VIBETERM_PEER_BIND_HOST=0.0.0.0|' \"\$f\" || echo 'VIBETERM_PEER_BIND_HOST=0.0.0.0' >> \"\$f\"
   grep -E 'VIBETERM_BASE_URL|VIBETERM_HUB_PUBLIC_URL|VIBETERM_TRUST_PROXY|VIBETERM_PEER_BIND_HOST|VIBETERM_ROLES' \"\$f\"
 "
-"${DOCKER[@]}" restart tmex-split-hub
+"${DOCKER[@]}" restart vibeterm-split-hub
 wait_healthy hub
 
 log "compose up caddy (prefer 0.0.0.0:${VIBETERM_E2E_HUB_PORT})"
@@ -110,10 +110,10 @@ caddy_ok=0
 if "${COMPOSE[@]}" up -d caddy; then
   caddy_ok=1
 else
-  log "0.0.0.0:${VIBETERM_E2E_HUB_PORT} 被占用（不动 tmex-e2e）；改绑公网 IP ${VIBETERM_E2E_HUB_IP}:${VIBETERM_E2E_HUB_PORT}"
+  log "0.0.0.0:${VIBETERM_E2E_HUB_PORT} 被占用（不动 vibeterm-e2e）；改绑公网 IP ${VIBETERM_E2E_HUB_IP}:${VIBETERM_E2E_HUB_PORT}"
   bind_file="${ROOT}/.compose-bind.yml"
   sed "s/0.0.0.0:/${VIBETERM_E2E_HUB_IP}:/" "${ROOT}/docker-compose.remote.yml" > "${bind_file}"
-  if "${DOCKER[@]}" compose -p tmex-split -f "${bind_file}" up -d caddy; then
+  if "${DOCKER[@]}" compose -p vibeterm-split -f "${bind_file}" up -d caddy; then
     caddy_ok=1
   fi
 fi

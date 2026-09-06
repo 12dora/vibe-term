@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tmex 节点容器的生命周期脚本。
+# vibeterm 节点容器的生命周期脚本。
 #   scripts/docker-node/run.sh up      # 创建并启动
 #   scripts/docker-node/run.sh down    # 停止并删除容器（加 -v 连数据卷一起删）
 #   scripts/docker-node/run.sh logs    # 跟随日志
@@ -11,8 +11,8 @@
 #         VIBETERM_SITE_NAME、VIBETERM_BASE_URL。
 set -euo pipefail
 
-NAME="${VIBETERM_DOCKER_NAME:-tmex-node-docker}"
-IMAGE="${VIBETERM_DOCKER_IMAGE:-tmex-node}"
+NAME="${VIBETERM_DOCKER_NAME:-vibeterm-node-docker}"
+IMAGE="${VIBETERM_DOCKER_IMAGE:-vibeterm-node}"
 TAG="${VIBETERM_DOCKER_TAG:-latest}"
 HTTP_PORT="${VIBETERM_HTTP_PORT:-29883}"
 # 网页/setup 接口默认只发布到宿主回环；要远程访问时显式设 VIBETERM_DOCKER_HTTP_BIND=0.0.0.0。
@@ -40,8 +40,8 @@ cmd_up() {
   docker run -d \
     --name "${NAME}" \
     --restart unless-stopped \
-    -v "${VOL_OPT}:/opt/tmex" \
-    -v "${VOL_DATA}:/var/lib/tmex" \
+    -v "${VOL_OPT}:/opt/vibeterm" \
+    -v "${VOL_DATA}:/var/lib/vibeterm" \
     -p "${HTTP_BIND}:${HTTP_PORT}:9883" \
     -p "${PEER_PORT}:39001" \
     ${env_args[@]+"${env_args[@]}"} \
@@ -62,7 +62,7 @@ cmd_down() {
 cmd_status() {
   docker ps -a --filter "name=^/${NAME}$" --format 'container: {{.Names}} {{.Status}} {{.Ports}}'
   curl -fsS -m 3 "http://127.0.0.1:${HTTP_PORT}/healthz" && printf '\n' || log "healthz not reachable"
-  docker exec "${NAME}" cat /opt/tmex/install-meta.json 2>/dev/null || log "install-meta.json not found"
+  docker exec "${NAME}" cat /opt/vibeterm/install-meta.json 2>/dev/null || log "install-meta.json not found"
 }
 
 case "${1:-}" in

@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 /**
  * 浏览器式密码登录：Argon2 seed → Ed25519 root → delegation → challenge/login。
- * 从仓库根运行：bun scripts/hub-e2e/driver/login.ts --base-url https://hub.tmex.test ...
+ * 从仓库根运行：bun scripts/hub-e2e/driver/login.ts --base-url https://hub.vibeterm.test ...
  */
 import {
   buildLogin,
@@ -114,6 +114,7 @@ async function loginSelf(
     throw new Error(`POST /api/auth/login ${loginRes.res.status}: ${loginRes.text}`);
   }
   const cookies = loginRes.cookies;
+  // 协议常量，沿用 tmex 时期的值以保持跨版本兼容
   if (!cookies.tmex_s_self) {
     throw new Error(`login succeeded but no tmex_s_self cookie: ${loginRes.text}`);
   }
@@ -185,6 +186,7 @@ async function loginRemote(
       `POST /n/${targetNodeId}/api/auth/login ${loginRes.res.status}: ${loginRes.text}`
     );
   }
+  // 协议常量，沿用 tmex 时期的值以保持跨版本兼容
   const cookieName = `tmex_s_${targetNodeId}`;
   if (!loginRes.cookies[cookieName]) {
     throw new Error(`remote login missing ${cookieName}: ${loginRes.text}`);

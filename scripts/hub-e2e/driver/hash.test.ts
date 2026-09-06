@@ -13,6 +13,7 @@ describe('sha256Hex', () => {
 });
 
 describe('collectVibeTermHeaders', () => {
+  // 头名是协议常量，沿用 tmex 时期的值以保持跨版本兼容
   test('keeps x-tmex-* plus length/type', () => {
     const headers = new Headers({
       'Content-Type': 'application/octet-stream',

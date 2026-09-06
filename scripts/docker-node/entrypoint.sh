@@ -1,16 +1,17 @@
 #!/usr/bin/env bash
-# tmex 节点容器 PID 1：首启用 tmex-cli 以 serviceMode=none 铺装 /opt/tmex，之后做轻量看护。
-# 看护刻意「慢」：只有 tmex.pid 连续 20s 不存活且没有升级事务在跑时才拉起 run.sh，
-# 否则会和就地升级器的 stop→start 间隙抢跑，第二个 run.sh 覆盖 tmex.pid 后因端口占用退出，
+# vibeterm 节点容器 PID 1：首启用 vibeterm-cli 以 serviceMode=none 铺装 /opt/vibeterm，之后做轻量看护。
+# 看护刻意「慢」：只有 vibeterm.pid 连续 20s 不存活且没有升级事务在跑时才拉起 run.sh，
+# 否则会和就地升级器的 stop→start 间隙抢跑，第二个 run.sh 覆盖 vibeterm.pid 后因端口占用退出，
 # 升级器的健康检查就会误判。
 set -uo pipefail
 
-INSTALL_DIR=/opt/tmex
-DATA_DIR=/var/lib/tmex
-PKG_DIR=/opt/tmex-pkg/package
+INSTALL_DIR=/opt/vibeterm
+DATA_DIR=/var/lib/vibeterm
+PKG_DIR=/opt/vibeterm-pkg/package
 BUN_PATH=/usr/local/bin/bun
 NODE_PATH_BIN=/usr/local/bin/node
-PID_FILE="${INSTALL_DIR}/tmex.pid"
+PID_FILE="${INSTALL_DIR}/vibeterm.pid"
+LEGACY_PID_FILE="${INSTALL_DIR}/tmex.pid"
 LOCK_FILE="${INSTALL_DIR}/upgrade.lock"
 JOURNAL_FILE="${INSTALL_DIR}/upgrade-state.json"
 
@@ -24,12 +25,33 @@ DEMO_SESSION="${VIBETERM_DEMO_SESSION:-demo}"
 
 log() { printf '[docker-node] %s\n' "$*"; }
 
+# 改名前的包只有 bin/tmex.js。
+pkg_bin() {
+  local dir="$1"
+  if [[ -f "${dir}/bin/vibeterm.js" ]]; then
+    printf '%s' "${dir}/bin/vibeterm.js"
+  else
+    printf '%s' "${dir}/bin/tmex.js"
+  fi
+}
+
 # ---------------------------------------------------------------- 状态探测
 
+# 镜像可能由改名前的 CLI 铺装，pid 文件仍叫 tmex.pid。
+resolve_pid_file() {
+  if [[ -f "${PID_FILE}" ]]; then
+    printf '%s' "${PID_FILE}"
+  elif [[ -f "${LEGACY_PID_FILE}" ]]; then
+    printf '%s' "${LEGACY_PID_FILE}"
+  else
+    return 1
+  fi
+}
+
 read_runtime_pid() {
-  local raw
-  [[ -f "${PID_FILE}" ]] || return 1
-  raw="$(tr -d '\r\n' < "${PID_FILE}" 2>/dev/null)" || return 1
+  local raw file
+  file="$(resolve_pid_file)" || return 1
+  raw="$(tr -d '\r\n' < "${file}" 2>/dev/null)" || return 1
   if [[ "${raw}" =~ ^[0-9]+$ ]]; then
     printf '%s' "${raw}"
     return 0
@@ -50,7 +72,7 @@ runtime_alive() {
 json_number() { sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p" "$1" | head -n1; }
 json_string() { sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\([^\"]*\)\".*/\1/p" "$1" | head -n1; }
 
-# upgrade.lock 由 tmex upgrade 全程持有；持锁进程死了就是残留锁，不算占用。
+# upgrade.lock 由 vibeterm upgrade 全程持有；持锁进程死了就是残留锁，不算占用。
 lock_active() {
   local pid
   [[ -f "${LOCK_FILE}" ]] || return 1
@@ -96,21 +118,21 @@ require_clean_install_dir() {
 run_init() {
   require_clean_install_dir
   mkdir -p "${DATA_DIR}"
-  log "first boot: installing tmex-cli into ${INSTALL_DIR} (serviceMode=none)"
-  "${NODE_PATH_BIN}" "${PKG_DIR}/bin/tmex.js" init \
+  log "first boot: installing vibeterm-cli into ${INSTALL_DIR} (serviceMode=none)"
+  "${NODE_PATH_BIN}" "$(pkg_bin "${PKG_DIR}")" init \
     --no-interactive \
     --no-service \
     --role=standalone \
     --install-dir="${INSTALL_DIR}" \
     --host=0.0.0.0 \
     --port="${GATEWAY_PORT_IN}" \
-    --db-path="${DATA_DIR}/tmex.db" \
+    --db-path="${DATA_DIR}/vibeterm.db" \
     --peer-port="${PEER_PORT_IN}" \
     --autostart=false \
     --bun-path="${BUN_PATH}"
 }
 
-# init 写的 app.env 缺 VIBETERM_PEER_BIND_HOST，VIBETERM_SITE_NAME 固定为 tmex；
+# init 写的 app.env 缺 VIBETERM_PEER_BIND_HOST，VIBETERM_SITE_NAME 固定为 vibeterm；
 # 只在首启覆盖，之后 join / 用户手改的值一律保留。
 set_env_key() {
   local key="$1" value="$2" file="${INSTALL_DIR}/app.env"
@@ -145,7 +167,7 @@ stop_runtime() {
   kill -KILL "${pid}" 2>/dev/null || true
 }
 
-# run.sh 自己把 $$ 写进 tmex.pid 后 exec bun，所以这里不需要额外记 pid。
+# run.sh 自己把 $$ 写进 vibeterm.pid 后 exec bun，所以这里不需要额外记 pid。
 start_runtime() {
   log "starting ${INSTALL_DIR}/run.sh"
   bash "${INSTALL_DIR}/run.sh" &
@@ -153,8 +175,8 @@ start_runtime() {
 
 repair_if_interrupted() {
   journal_active || return 0
-  log "found an interrupted upgrade transaction, running 'tmex upgrade --repair'"
-  "${NODE_PATH_BIN}" "${INSTALL_DIR}/current/cli/bin/tmex.js" upgrade --repair \
+  log "found an interrupted upgrade transaction, running 'vibeterm upgrade --repair'"
+  "${NODE_PATH_BIN}" "$(pkg_bin "${INSTALL_DIR}/current/cli")" upgrade --repair \
     --no-service --install-dir="${INSTALL_DIR}" --bun-path="${BUN_PATH}" || true
 }
 

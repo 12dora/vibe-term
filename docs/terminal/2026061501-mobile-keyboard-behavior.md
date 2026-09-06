@@ -31,7 +31,7 @@
 
 ### 状态与持久化
 
-`useUIStore`（zustand + persist，key `tmex-ui`）新增 `keyboardBehaviorMode: 'lift' | 'resize' | 'follow'`（默认 `'follow'`）+ `setKeyboardBehaviorMode`，并加入 `partialize`。复用既有机制，零额外基建。旧用户无此字段时 `merge` 用 `current` 默认值兜底（即 `follow`）。
+`useUIStore`（zustand + persist，key `vibeterm-ui`）新增 `keyboardBehaviorMode: 'lift' | 'resize' | 'follow'`（默认 `'follow'`）+ `setKeyboardBehaviorMode`，并加入 `partialize`。复用既有机制，零额外基建。旧用户无此字段时 `merge` 用 `current` 默认值兜底（即 `follow`）。
 
 ### 避让计算重构
 
@@ -59,7 +59,7 @@ offset             = clamp(round(naturalBottom + margin - keyboardTopClientY), 0
 // maxOffset 默认 inset；follow 模式传 inset + 快捷键栏高度
 ```
 
-`clamp` 上界是**避免露白**的核心：默认为 `inset`，位移不超过键盘高度，否则 `<main>` 底边升过键盘顶、暴露下方空白。`follow` 模式下 direct 输入的快捷键栏会浮到键盘正上方（hook 写 CSS 变量 `--tmex-shortcut-lift = inset - offset`，ShortcutsBar 据此再 `translateY`，与 `<main>` 的 `-offset` 叠加后总位移恰为 `-inset`），栏本身填住了那段空白，因此上界放宽到 `inset + 快捷键栏高度`，让光标能停在浮动栏之上而不被它遮挡。`naturalBottom = 当前 client 底 + appliedOffset`：因 transform 把元素上移了 `appliedOffset`，加回即得未位移的自然坐标，计算对自身位移稳定收敛（不抖动）。坐标用 `innerHeight - inset` 表示键盘顶 client Y，兼容旧版 iOS（`offsetTop>0`）。
+`clamp` 上界是**避免露白**的核心：默认为 `inset`，位移不超过键盘高度，否则 `<main>` 底边升过键盘顶、暴露下方空白。`follow` 模式下 direct 输入的快捷键栏会浮到键盘正上方（hook 写 CSS 变量 `--vibeterm-shortcut-lift = inset - offset`，ShortcutsBar 据此再 `translateY`，与 `<main>` 的 `-offset` 叠加后总位移恰为 `-inset`），栏本身填住了那段空白，因此上界放宽到 `inset + 快捷键栏高度`，让光标能停在浮动栏之上而不被它遮挡。`naturalBottom = 当前 client 底 + appliedOffset`：因 transform 把元素上移了 `appliedOffset`，加回即得未位移的自然坐标，计算对自身位移稳定收敛（不抖动）。坐标用 `innerHeight - inset` 表示键盘顶 client Y，兼容旧版 iOS（`offsetTop>0`）。
 
 ### 光标位置获取（跨包，模式 `follow` 专用）
 

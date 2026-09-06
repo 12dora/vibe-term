@@ -1,8 +1,10 @@
 # 直连信令代次、链路活性与在途流保护（1.1.31）
 
+> 本文写于产品名为 tmex 时期（2026-09 改名 VibeTerm），历史内容保持原样。
+
 ## 背景
 
-生产 hub 日志反复出现 `[mesh][rtc] dial failed reason=datachannel open timeout` 与 `Unexpected remote answer description in signaling state stable`，熔断器升到 level 3/4（240 s / 480 s 冷却）后再也回不来。经中继推送 13 MB 升级包时收到 `rst recv reason=relay-rst` 导致整次升级失败。round 28 探索（`prompt-archives/2026090502-round28-net-perf-smell/sub/EX1、EX3`）定位到两组根因。
+生产 hub 日志反复出现 `[mesh][rtc] dial failed reason=datachannel open timeout` 与 `Unexpected remote answer description in signaling state stable`，熔断器升到 level 3/4（240 s / 480 s 冷却）后再也回不来。经中继推送 13 MB 升级包时收到 `rst recv reason=relay-rst` 导致整次升级失败。round 28 探索定位到两组根因。
 
 ## 根因
 

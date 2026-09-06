@@ -2,14 +2,14 @@
 
 ## 背景与目标
 
-tmex 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gateway 服务端，绑定到某个 tmux pane，可以读屏、写终端（受确认机制约束）、做 web 搜索、抓取网页。设计目标：
+VibeTerm 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 gateway 服务端，绑定到某个 tmux pane，可以读屏、写终端（受确认机制约束）、做 web 搜索、抓取网页。设计目标：
 
 - **服务端运行**：浏览器页面关闭不影响 agent 继续跑，多客户端通过 WS 订阅天然同步。
 - **设备故障 fail-fast**：SSH 设备断开属于故障场景，终端工具调用立即失败反馈给模型/用户，不挂起硬等重连。
 - **多 Provider**：支持任意 OpenAI 兼容 LLM（Chat Completions / Responses 两种协议），自动拉取模型列表，API key 加密落库（AES-256-GCM，复用 `apps/gateway/src/crypto/`）。
 - **对话历史持久化**：消息按 step 边界落库（AI SDK ModelMessage 原样），流式 delta 只广播不落库。
 
-实现计划与执行记录见 `prompt-archives/2026061300-terminal-agent-watch/`。
+
 
 ## 架构
 

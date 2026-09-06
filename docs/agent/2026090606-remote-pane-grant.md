@@ -17,13 +17,13 @@
 - **签发**：`POST /api/agent/pane-grants`（Y 上，常规节点会话鉴权）。浏览器能看到 Y 的窗格，
   就必然已经登录过 Y——授权由用户自己的 Y 会话换取，不引入新的信任关系。
   X 在建会话时用 `forwardAuthorizedHttp` 代浏览器发这一次请求（带的是浏览器的
-  `tmex_s_<Y>` cookie）。
+  `vibeterm_s_<Y>` cookie）。
 - **绑定**：授权表 `agent_pane_grants`（id、token_hash、from_node_id、device_id、pane_id、
   server_epoch、created_at、last_used_at、expires_at）。经 mesh 转发签发时，`from_node_id` 一律取
   peer 标记，请求体里的值只做一致性校验，签发方无法把授权签给别的节点。
 - **窗格世代**：tmux 的窗格号在同一个 server 内不复用，但 server 重启后从 `%0` 重新开始——
   只绑窗格号等于把「同一个号」当成「同一个窗格」。因此签发时一并绑上该设备当前的
-  `@tmex-server-epoch`（`ensureStableServerEpoch` 写在 tmux 全局选项里，跨 gateway 重启稳定），
+  `@vibeterm-server-epoch`（`ensureStableServerEpoch` 写在 tmux 全局选项里，跨 gateway 重启稳定），
   每次 RPC 拿到运行时后比对：不一致即删除授权并回 `PANE_GRANT_INVALID`，由源节点重签。
   签发时读不到世代（tmux 连不上）就不签发（503 `pane_unavailable`），绝不签一张不绑世代的。
 - **存放**：token 只在签发响应里出现一次，Y 侧存 SHA-256 哈希；X 侧以主密钥加密后存进

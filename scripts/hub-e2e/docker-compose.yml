@@ -1,22 +1,22 @@
-name: tmex-e2e
+name: vibeterm-e2e
 
 networks:
   edge:
-    name: tmex-e2e_edge
+    name: vibeterm-e2e_edge
   uplink-a:
-    name: tmex-e2e_uplink-a
+    name: vibeterm-e2e_uplink-a
   # hub 不加入 uplink-b：node-b 只经 Caddy HTTPS 连 hub，避免与 hub 共网导致
   # peer:39001 被当成 lan，场景 3 的 reach=relay 才有意义。
   uplink-b:
-    name: tmex-e2e_uplink-b
+    name: vibeterm-e2e_uplink-b
 
 volumes:
   hub-data:
   node-a-data:
   node-b-data:
 
-x-tmex-common: &tmex-common
-  image: tmex-e2e:latest
+x-vibeterm-common: &vibeterm-common
+  image: vibeterm-e2e:latest
   platform: linux/amd64
   init: true
   stop_grace_period: 25s
@@ -29,7 +29,7 @@ services:
   caddy:
     image: caddy:2
     platform: linux/amd64
-    container_name: tmex-e2e-caddy
+    container_name: vibeterm-e2e-caddy
     ports:
       - "127.0.0.1:18543:443"
     volumes:
@@ -39,65 +39,65 @@ services:
     networks:
       edge:
         aliases:
-          - hub.tmex.test
-          - entry.tmex.test
+          - hub.vibeterm.test
+          - entry.vibeterm.test
       uplink-a:
         aliases:
-          - hub.tmex.test
-          - entry.tmex.test
+          - hub.vibeterm.test
+          - entry.vibeterm.test
       uplink-b:
         aliases:
-          - hub.tmex.test
+          - hub.vibeterm.test
     depends_on:
       hub:
         condition: service_healthy
     restart: unless-stopped
 
   hub:
-    <<: *tmex-common
-    container_name: tmex-e2e-hub
+    <<: *vibeterm-common
+    container_name: vibeterm-e2e-hub
     hostname: hub
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
       VIBETERM_INSTANCE: hub
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
-      - hub-data:/var/lib/tmex
+      - hub-data:/var/lib/vibeterm
     networks:
       - edge
       - uplink-a
 
   node-a:
-    <<: *tmex-common
-    container_name: tmex-e2e-node-a
+    <<: *vibeterm-common
+    container_name: vibeterm-e2e-node-a
     hostname: node-a
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
       VIBETERM_INSTANCE: node-a
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
-      - node-a-data:/var/lib/tmex
+      - node-a-data:/var/lib/vibeterm
     networks:
       - edge
       - uplink-a
 
   node-b:
-    <<: *tmex-common
-    container_name: tmex-e2e-node-b
+    <<: *vibeterm-common
+    container_name: vibeterm-e2e-node-b
     hostname: node-b
     environment:
       NODE_EXTRA_CA_CERTS: /ca/ca.crt
       VIBETERM_INSTANCE: node-b
     volumes:
       - ./ca/ca.crt:/ca/ca.crt:ro
-      - node-b-data:/var/lib/tmex
+      - node-b-data:/var/lib/vibeterm
     networks:
       - uplink-b
 
   driver:
-    image: tmex-e2e:latest
+    image: vibeterm-e2e:latest
     platform: linux/amd64
-    container_name: tmex-e2e-driver
+    container_name: vibeterm-e2e-driver
     hostname: driver
     init: true
     working_dir: /workspace

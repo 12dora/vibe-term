@@ -1,19 +1,19 @@
-name: tmex-split-local
+name: vibeterm-split-local
 
 networks:
   nat-a:
-    name: tmex-split-local_nat-a
+    name: vibeterm-split-local_nat-a
   nat-b:
-    name: tmex-split-local_nat-b
+    name: vibeterm-split-local_nat-b
   lan:
-    name: tmex-split-local_lan
+    name: vibeterm-split-local_lan
 
 volumes:
   node-a-data:
   node-b-data:
 
-x-tmex-node: &tmex-node
-  image: tmex-e2e:split
+x-vibeterm-node: &vibeterm-node
+  image: vibeterm-e2e:split
   init: true
   stop_grace_period: 25s
   cap_add:
@@ -25,42 +25,42 @@ x-tmex-node: &tmex-node
 
 services:
   node-a:
-    <<: *tmex-node
-    container_name: tmex-split-node-a
+    <<: *vibeterm-node
+    container_name: vibeterm-split-node-a
     hostname: node-a
     environment:
       NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
       VIBETERM_INSTANCE: node-a
       VIBETERM_E2E_STUN_SERVERS: ${VIBETERM_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
       VIBETERM_E2E_TURN_URL: ${VIBETERM_E2E_TURN_URL:-}
-      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-tmex}
-      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-vibeterm}
+      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-vibeterm-e2e}
     volumes:
-      - node-a-data:/var/lib/tmex
+      - node-a-data:/var/lib/vibeterm
       - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-a
 
   node-b:
-    <<: *tmex-node
-    container_name: tmex-split-node-b
+    <<: *vibeterm-node
+    container_name: vibeterm-split-node-b
     hostname: node-b
     environment:
       NODE_EXTRA_CA_CERTS: ${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}
       VIBETERM_INSTANCE: node-b
       VIBETERM_E2E_STUN_SERVERS: ${VIBETERM_E2E_STUN_SERVERS:-stun:111.206.174.2:3478,stun:stun.miwifi.com:3478}
       VIBETERM_E2E_TURN_URL: ${VIBETERM_E2E_TURN_URL:-}
-      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-tmex}
-      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-tmex-e2e}
+      VIBETERM_E2E_TURN_USERNAME: ${VIBETERM_E2E_TURN_USERNAME:-vibeterm}
+      VIBETERM_E2E_TURN_CREDENTIAL: ${VIBETERM_E2E_TURN_CREDENTIAL:-vibeterm-e2e}
     volumes:
-      - node-b-data:/var/lib/tmex
+      - node-b-data:/var/lib/vibeterm
       - ../ca/ca.crt:/ca/ca.crt:ro
     networks:
       - nat-b
 
   driver:
-    image: tmex-e2e:split
-    container_name: tmex-split-driver
+    image: vibeterm-e2e:split
+    container_name: vibeterm-split-driver
     hostname: driver
     init: true
     working_dir: /workspace

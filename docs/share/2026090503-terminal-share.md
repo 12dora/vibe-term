@@ -175,16 +175,18 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 
 ## 凭证流
 
-1. **登录**：节点侧 login 成功不直接写 `Set-Cookie`，而是回内部响应头 `x-tmex-set-share: <token>` +
-   `x-tmex-set-share-max-age: <秒>`（登出为 `x-tmex-clear-share: 1`）。token 格式 `<shareId>.<32 字节 base64url>`，
+> 头名与 cookie 名在 2.0.0 由 `x-tmex-*` / `tmex_sh_*` 改为 `x-vibeterm-*` / `vibeterm_sh_*`；混合版本期两组同时收发，读取新名优先。见 [改名迁移](../release/2026090607-rename-vibeterm.md)。
+
+1. **登录**：节点侧 login 成功不直接写 `Set-Cookie`，而是回内部响应头 `x-vibeterm-set-share: <token>` +
+   `x-vibeterm-set-share-max-age: <秒>`（登出为 `x-vibeterm-clear-share: 1`）。token 格式 `<shareId>.<32 字节 base64url>`，
    服务端只存 SHA-256，TTL 7 天并滑动续期。
 2. **翻成 cookie**：本机由 `session-middleware.consumeSetSessionForBrowser`、Hub 由
-   `forwarder-auth-policy.applyAuthPolicy` 转成 `tmex_sh_<via>=<token>; Path=/; HttpOnly; SameSite=Lax[; Secure]`
+   `forwarder-auth-policy.applyAuthPolicy` 转成 `vibeterm_sh_<via>=<token>; Path=/; HttpOnly; SameSite=Lax[; Secure]`
    （via = `self` 或节点 id）。三个内部头归入 `INTERNAL_CREDENTIAL_HEADERS`，绝不外传。
    续期同样走这条路：`GET /api/share-access/:id` 校验时若发生续期就重新下发这两个头，永久分享的 cookie
    不会在 7 天后无声消失。
 3. **经 Hub 的流**：`forwardHttp` 对 `/api/share-access/*` 用 `share:<token>` 作为流 auth；节点侧
-   `stream-auth.verifyStreamAuth` 识别 `share:` 前缀，并把 token 合成回 `cookie: tmex_sh_<peerNodeId>=<token>`。
+   `stream-auth.verifyStreamAuth` 识别 `share:` 前缀，并把 token 合成回 `cookie: vibeterm_sh_<peerNodeId>=<token>`。
    Hub 侧 `skip401Rewrite` 对分享路径置真，节点的 401 不会被改写成 `NODE_LOGIN_REQUIRED`，也不会误清 cookie。
    **失效的分享 cookie 在分享公开 HTTP 路径上降级为匿名请求**（并清掉该 cookie），否则 A 被撤销后残留的
    HttpOnly cookie 会让同节点分享 B 的查询与登录全部 401，页面永远回不来；WS 仍严格拒绝。
