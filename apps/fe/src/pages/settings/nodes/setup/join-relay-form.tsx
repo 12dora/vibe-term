@@ -21,7 +21,7 @@ import {
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
-import { submitJoinRelay } from './submit';
+import { submitJoinRelayDiscovered } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
 import type { RestartWaiter } from './use-restart-waiter';
 import {
@@ -65,7 +65,7 @@ export function JoinRelayForm({
       client,
       hasErrors: hasErrors(errors),
       uplink: 'relay',
-      submit: () => submitJoinRelay(values, client),
+      submit: () => submitJoinRelayDiscovered(values, resolveRelayUrl, client),
       successMessage: t('nodes.setup.toast.relayJoined'),
       onRestarted,
     });
@@ -77,11 +77,17 @@ export function JoinRelayForm({
     if (patch.relayUrl !== undefined) probe.reset();
   }
 
-  /** 地址没写端口时探一遍 443 与内置候选端口；探到别的端口就把地址改写成带端口的。 */
-  async function probeRelayUrl(): Promise<void> {
-    if (errors.relayUrl) return;
-    const resolved = await probe.run(values.relayUrl, precheckProbe(client));
-    if (resolved) setValues((previous) => ({ ...previous, relayUrl: resolved }));
+  /**
+   * 地址没写端口时探一遍 443 与内置候选端口，返回实际该用的地址（顺带回填输入框）。
+   * 判据必须按中继来（`/api/relay/health`）：只看 `/healthz` 的话，443 被封时另一台
+   * 非中继实例会先答话，把地址改写成一个根本不是中继的端口。
+   */
+  async function resolveRelayUrl(typed: string): Promise<string> {
+    if (errors.relayUrl) return typed;
+    const resolved = await probe.run(typed, precheckProbe(client, 'relay'));
+    if (!resolved) return typed;
+    setValues((previous) => ({ ...previous, relayUrl: resolved }));
+    return resolved;
   }
 
   if (result) return <JoinRelayResult result={result} waiter={waiter} />;
@@ -99,7 +105,7 @@ export function JoinRelayForm({
             shown={shown}
             onChange={update}
             probe={probe}
-            onProbe={() => void probeRelayUrl()}
+            onProbe={() => void resolveRelayUrl(values.relayUrl.trim())}
           />
 
           <SwitchRow
@@ -128,6 +134,7 @@ export function JoinRelayForm({
             label={t('nodes.setup.submit.joinRelay')}
             submitting={submitting}
             blocked={blocked}
+            {...(probe.phase === 'probing' ? { pendingLabel: t('nodes.setup.probe.probing') } : {})}
           />
         </form>
       </CardContent>

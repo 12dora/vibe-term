@@ -75,6 +75,8 @@ export function BecomeHubForm({
     directEnable: directSupported,
   }));
   const [precheck, setPrecheck] = useState<PrecheckState>({ phase: 'idle' });
+  // 自定义端口填坏了：地址里的端口没被改写，提交必须一起拦住，否则存下去的是上一个端口。
+  const [portError, setPortError] = useState<string | null>(null);
 
   const errors = validateBecomeHub(values, nodeEnv);
   const {
@@ -88,7 +90,7 @@ export function BecomeHubForm({
     handleSubmit,
   } = useHubSetupSubmit<SetupHubResponse>({
     client,
-    hasErrors: hasErrors(errors),
+    hasErrors: hasErrors(errors) || portError !== null,
     submit: () => submitBecomeHub(values, client),
     successMessage: t('nodes.setup.toast.hubCreated'),
     onRestarted,
@@ -142,7 +144,10 @@ export function BecomeHubForm({
           <PortPicker
             idPrefix="setup-hub"
             url={values.hubPublicUrl}
-            onChange={(next) => update({ hubPublicUrl: next })}
+            onChange={(next, error) => {
+              update({ hubPublicUrl: next });
+              setPortError(error);
+            }}
             {...(suggestedPort === undefined ? {} : { suggestedPort })}
           />
 

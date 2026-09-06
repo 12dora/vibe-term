@@ -148,9 +148,11 @@ describe('createAddressProbeCore', () => {
 });
 
 describe('precheckProbe', () => {
-  test('后端探到端口时交出带端口的地址', async () => {
-    const client = new ApiClient('', async () =>
-      Response.json({
+  test('后端探到端口时交出带端口的地址，并如实带上服务形态', async () => {
+    const bodies: unknown[] = [];
+    const client = new ApiClient('', async (_url, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return Response.json({
         reachable: true,
         isSelf: false,
         status: 200,
@@ -158,19 +160,20 @@ describe('precheckProbe', () => {
         resolvedUrl: 'https://hub.example.com:13443',
         triedPorts: [443, 13443],
         probed: true,
-      })
-    );
-    expect(await precheckProbe(client)('https://hub.example.com')).toEqual({
+      });
+    });
+    expect(await precheckProbe(client, 'hub')('https://hub.example.com')).toEqual({
       url: 'https://hub.example.com:13443',
       probed: true,
     });
+    expect(bodies).toEqual([{ url: 'https://hub.example.com', kind: 'hub' }]);
   });
 
-  test('没探测过的响应一律当作无结论', async () => {
+  test('中继探测按中继判据发问，没探测过的响应一律当作无结论', async () => {
     const client = new ApiClient('', async () =>
       Response.json({ reachable: false, isSelf: false, status: null, error: 'x' })
     );
-    expect(await precheckProbe(client)('https://hub.example.com')).toEqual({
+    expect(await precheckProbe(client, 'relay')('https://relay.example.com')).toEqual({
       url: null,
       probed: false,
     });

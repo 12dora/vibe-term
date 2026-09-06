@@ -58,12 +58,14 @@ function parseJoinRelayUrl(raw: string): string {
   }
 }
 
-/** 地址没写端口时探候选端口；探不到按「中继不可达」报，与其它传输失败同一个错误码。 */
-async function resolveJoinRelayPort(
-  relayUrl: string,
-  deps: RelayPasswordJoinDeps
-): Promise<string> {
-  const probed = await probeAddressForCli(relayUrl, {
+/**
+ * 地址没写端口时探候选端口；探不到按「中继不可达」报，与其它传输失败同一个错误码。
+ * 显式端口按**原始输入**判断：`normalizeRelayUrl` 会抹掉 `:443`，归一化后再判会把用户写下的
+ * 443 当成「没写端口」去遍历候选，可能静默接到另一台服务上。
+ */
+async function resolveJoinRelayPort(rawUrl: string, deps: RelayPasswordJoinDeps): Promise<string> {
+  parseJoinRelayUrl(rawUrl);
+  const probed = await probeAddressForCli(rawUrl.trim(), {
     kind: 'relay',
     fetcher: deps.fetcher,
     log: deps.log,
@@ -72,7 +74,7 @@ async function resolveJoinRelayPort(
   if (probed.probed && !probed.found) {
     throw new RelayPasswordJoinError('relay_unreachable', probeNotFoundMessage(probed.triedPorts));
   }
-  return probed.url;
+  return parseJoinRelayUrl(probed.url);
 }
 
 function isRelayUnreachableCause(error: unknown): boolean {
@@ -171,7 +173,7 @@ export async function performRelayPasswordJoin(
   deps: RelayPasswordJoinDeps
 ): Promise<RelayPasswordJoinResult> {
   await assertJoinable(deps.auth);
-  const relayUrl = await resolveJoinRelayPort(parseJoinRelayUrl(input.relayUrl), deps);
+  const relayUrl = await resolveJoinRelayPort(input.relayUrl, deps);
   const tenantId = input.tenantId.trim().toLowerCase();
   const { fetcher, pin } = await pinnedFetcher({
     relayUrl,

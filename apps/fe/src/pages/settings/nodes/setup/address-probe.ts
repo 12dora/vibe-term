@@ -7,6 +7,7 @@
 import { createStateStore } from '@/node/create-polling-store';
 import type { ApiClient } from '@tmex/api-client';
 import { SetupApi } from '@tmex/api-client/local/setup-api';
+import type { SetupPrecheckKind } from '@tmex/api-client/local/types';
 import { useEffect, useMemo, useSyncExternalStore } from 'react';
 import { isLocalHostname } from './validation';
 
@@ -165,11 +166,12 @@ export function useAddressProbe(): AddressProbeHandle {
 
 /**
  * 向导只有 `/api/setup/precheck` 可用：standalone 实例没有 node-session，够不到 `/api/mesh/relay/*`。
- * 中继与 Hub 同一套网关，`/healthz` 两边都答话，端口探测的结论对两条路径都成立。
+ * `kind` 必须如实传：Hub 与中继共用一套网关端口，只看 `/healthz` 的话，443 被封时
+ * 另一台非中继实例可能先答话而抢走候选端口。
  */
-export function precheckProbe(client: ApiClient): AddressProbe {
+export function precheckProbe(client: ApiClient, kind: SetupPrecheckKind): AddressProbe {
   return async (url) => {
-    const data = await new SetupApi(client).precheck(url);
+    const data = await new SetupApi(client).precheck(url, kind);
     if (data.probed !== true) return { url: null, probed: false };
     return { url: typeof data.resolvedUrl === 'string' ? data.resolvedUrl : null, probed: true };
   };

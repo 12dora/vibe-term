@@ -26,26 +26,29 @@ export type RelayResolveResult = {
   triedPorts: number[];
 };
 
-/**
- * 候选端口与本机中继公网地址的端口不同，`resolveRelayDialUrl` 按 host（含端口）比对会漏判，
- * 这里先把候选端口换成公网地址的端口再比，`relay,node` 探自己时仍走回环。
- */
-export function relayProbeDialUrl(candidate: string, ctx: RelayDialContext): string {
-  const publicUrl = ctx.relayPublicUrl?.trim();
-  if (!ctx.roles.relay || !publicUrl) return candidate;
-  try {
-    const probe = new URL(candidate);
-    const own = new URL(publicUrl);
-    if (probe.hostname !== own.hostname) return candidate;
-    return resolveRelayDialUrl(publicUrl, ctx);
-  } catch {
-    return resolveRelayDialUrl(candidate, ctx);
-  }
-}
-
 function normalizedOrNull(raw: string): string | null {
   try {
     return normalizeRelayUrl(parseProbeTarget(raw).base);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 本机就是中继（`relay,node`）且用户填的是本机中继的主机名但没写端口时，端口不能靠候选表去
+ * 「发现」：`resolveRelayDialUrl` 会把这台机器的请求改写到回环 gateway，任何候选端口都会答话，
+ * 443 必然抢先胜出，随后 enroll 又按精确 host 比对不走回环，直接打到错误的公网端口上。
+ * 这种情况下地址是已知的——就是 `TMEX_RELAY_PUBLIC_URL`——只需回环确认一次。
+ */
+function selfRelayUrl(raw: string, ctx: RelayDialContext): string | null {
+  const publicUrl = ctx.relayPublicUrl?.trim();
+  if (!ctx.roles.relay || !publicUrl) return null;
+  const own = normalizedOrNull(publicUrl);
+  if (!own) return null;
+  try {
+    const target = parseProbeTarget(raw);
+    if (target.explicitPort !== null) return null;
+    return new URL(target.base).hostname === new URL(own).hostname ? own : null;
   } catch {
     return null;
   }
@@ -56,12 +59,19 @@ export async function resolveRelayAddress(
   deps: RelayResolveDeps
 ): Promise<PortProbeResult> {
   const ctx = deps.dial ?? relayDialContextFromEnv();
-  return await probeAddressPorts(raw, {
-    kind: 'relay',
+  const self = selfRelayUrl(raw, ctx);
+  const options = {
+    kind: 'relay' as const,
     timeoutMs: deps.timeoutMs ?? RELAY_RESOLVE_TIMEOUT_MS,
     ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
-    resolveDialUrl: (base) => relayProbeDialUrl(base, ctx),
-  });
+    // 候选端口的拨号改写保持精确比对（host 含端口）：只有真正等于本机公网地址的那一条
+    // 才走回环，其余候选照常走网络，回环的回答不会被算到别的端口头上。
+    resolveDialUrl: (base: string) => resolveRelayDialUrl(base, ctx),
+  };
+  if (!self) return await probeAddressPorts(raw, options);
+  // 只确认这一条地址（`ports: []` 关掉候选表），端口取自公网地址本身。
+  const confirmed = await probeAddressPorts(self, { ...options, ports: [] });
+  return { ...confirmed, explicit: false };
 }
 
 export async function handleRelayResolve(req: Request, deps: RelayResolveDeps): Promise<Response> {

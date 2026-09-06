@@ -55,12 +55,15 @@ export function SetupSubmitRow({
   label,
   submitting,
   blocked,
+  pendingLabel,
 }: {
   /** 表单前缀，如 `setup-join-relay`；按钮与说明条各自补后缀。 */
   testId: string;
   label: string;
   submitting: boolean;
   blocked: boolean;
+  /** 提交中正在做的具体事（如探测端口）；不给就用通用的「处理中…」。 */
+  pendingLabel?: string;
 }) {
   const { t } = useTranslation();
   return (
@@ -72,7 +75,7 @@ export function SetupSubmitRow({
       )}
       <Button type="submit" disabled={submitting || blocked} data-testid={`${testId}-submit`}>
         {submitting && <Loader2 className="animate-spin" />}
-        {submitting ? t('nodes.setup.submit.pending') : label}
+        {submitting ? (pendingLabel ?? t('nodes.setup.submit.pending')) : label}
       </Button>
     </>
   );

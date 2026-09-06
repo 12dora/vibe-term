@@ -6,7 +6,12 @@ export const HUB_CA_FETCH_TIMEOUT_MS = 15_000;
 
 export type HubJoinProbeIo = { fetcher?: FetchLike; log?: (message: string) => void };
 
-/** 地址没写端口时探 443 与内置候选端口；`--insecure-local` 与回环地址不探。 */
+/**
+ * 地址没写端口时探 443 与内置候选端口；`--insecure-local` 与回环地址不探。
+ *
+ * `urlRaw` 必须是用户的**原始输入**：`canonicalHubUrl` 会抹掉 `:443`，先归一化再进来就会把
+ * 显式写下的 443 当成「没写端口」，从而静默改接到别的端口。
+ */
 export function probeHubJoinUrl(
   urlRaw: string,
   io: HubJoinProbeIo,

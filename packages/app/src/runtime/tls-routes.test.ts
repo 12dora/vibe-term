@@ -100,14 +100,35 @@ describe('resolveEffectiveHttps', () => {
     expect(resolveEffectiveHttps(listenerStatus(true), req, 'https://configured.example')).toEqual({
       source: 'builtin',
       verified: true,
-      publicUrl: 'https://configured.example:9443',
+      publicUrl: 'https://configured.example',
     });
   });
 
-  test('builtin publicUrl prefers a certificate SAN and drops an explicit 443', () => {
+  test('builtin publicUrl keeps the configured public port instead of the listener port', () => {
+    // NAT 把公网 13443 转到本机 9443：报监听端口等于给出一个外面连不上的地址
+    const req = requestWithForwarded({ proto: 'https', host: 'box.example.com' });
+    const status = listenerStatus(true, { sans: ['box.example.com'], tlsPort: 9443 });
+    expect(resolveEffectiveHttps(status, req, 'https://box.example.com:13443')).toEqual({
+      source: 'builtin',
+      verified: true,
+      publicUrl: 'https://box.example.com:13443',
+    });
+  });
+
+  test('builtin publicUrl falls back to a certificate SAN plus the listener port', () => {
     const req = requestWithForwarded({ proto: 'https', host: 'hub.example' });
-    const status = listenerStatus(true, { sans: ['localhost', 'box.example.com'], tlsPort: 443 });
-    expect(resolveEffectiveHttps(status, req, 'https://configured.example')).toEqual({
+    const status = listenerStatus(true, { sans: ['localhost', 'box.example.com'], tlsPort: 13443 });
+    expect(resolveEffectiveHttps(status, req, null)).toEqual({
+      source: 'builtin',
+      verified: true,
+      publicUrl: 'https://box.example.com:13443',
+    });
+  });
+
+  test('builtin publicUrl drops an explicit 443 when derived from the certificate', () => {
+    const req = requestWithForwarded({ proto: 'https', host: 'hub.example' });
+    const status = listenerStatus(true, { sans: ['box.example.com'], tlsPort: 443 });
+    expect(resolveEffectiveHttps(status, req, null)).toEqual({
       source: 'builtin',
       verified: true,
       publicUrl: 'https://box.example.com',
@@ -527,7 +548,7 @@ describe('createTlsRoutes', () => {
     expect(putBody.https).toEqual({
       source: 'builtin',
       verified: true,
-      publicUrl: 'https://hub.example:9443',
+      publicUrl: 'https://hub.example',
     });
 
     const renewed = await ctx.handle(
@@ -538,7 +559,7 @@ describe('createTlsRoutes', () => {
     expect(renewBody.https).toEqual({
       source: 'builtin',
       verified: true,
-      publicUrl: 'https://hub.example:9443',
+      publicUrl: 'https://hub.example',
     });
   });
 });

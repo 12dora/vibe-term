@@ -125,6 +125,36 @@ describe('POST /api/setup/precheck', () => {
     });
   });
 
+  test("kind:'relay' switches the health predicate to /api/relay/health", async () => {
+    const seen: string[] = [];
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://relay.example.com', kind: 'relay' }),
+        deps({
+          fetch: (async (input: unknown) => {
+            seen.push(new URL(String(input)).pathname);
+            return Response.json({ ok: true });
+          }) as FetchLike,
+        })
+      )
+    );
+    expect(status).toBe(200);
+    expect((body as { reachable: boolean; isSelf: boolean }).reachable).toBe(true);
+    expect((body as { isSelf: boolean }).isSelf).toBe(false);
+    expect(seen).toEqual(['/api/relay/health', '/api/relay/health']);
+  });
+
+  test('an unknown kind is 400', async () => {
+    const { status, body } = await jsonOf(
+      await handleSetupRequest(
+        post('/api/setup/precheck', { url: 'https://hub.example.com', kind: 'proxy' }),
+        deps()
+      )
+    );
+    expect(status).toBe(400);
+    expect((body as { error: { code: string } }).error.code).toBe('invalid_body');
+  });
+
   test('invalid_url is 400', async () => {
     const { status, body } = await jsonOf(
       await handleSetupRequest(

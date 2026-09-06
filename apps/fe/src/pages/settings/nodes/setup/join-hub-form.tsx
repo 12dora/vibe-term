@@ -22,7 +22,7 @@ import {
   SwitchRow,
   directOutcomeLabel,
 } from './form-parts';
-import { submitJoinHub } from './submit';
+import { submitJoinHubDiscovered } from './submit';
 import { useHubSetupSubmit } from './use-hub-setup-submit';
 import type { RestartWaiter } from './use-restart-waiter';
 import {
@@ -69,7 +69,7 @@ export function JoinHubForm({
     useHubSetupSubmit<SetupJoinResponse>({
       client,
       hasErrors: hasErrors(errors),
-      submit: () => submitJoinHub(values, nodeEnv, client),
+      submit: () => submitJoinHubDiscovered(values, nodeEnv, resolveHubUrl, client),
       successMessage: t('nodes.setup.toast.joined'),
       onRestarted,
     });
@@ -81,11 +81,13 @@ export function JoinHubForm({
     if (patch.hubUrl !== undefined) probe.reset();
   }
 
-  /** 地址没写端口时探一遍 443 与内置候选端口；探到别的端口就把地址改写成带端口的。 */
-  async function probeHubUrl(): Promise<void> {
-    if (errors.hubUrl) return;
-    const resolved = await probe.run(values.hubUrl, precheckProbe(client));
-    if (resolved) setValues((previous) => ({ ...previous, hubUrl: resolved }));
+  /** 地址没写端口时探一遍 443 与内置候选端口，返回实际该用的地址（顺带回填输入框）。 */
+  async function resolveHubUrl(typed: string): Promise<string> {
+    if (errors.hubUrl) return typed;
+    const resolved = await probe.run(typed, precheckProbe(client, 'hub'));
+    if (!resolved) return typed;
+    setValues((previous) => ({ ...previous, hubUrl: resolved }));
+    return resolved;
   }
 
   if (result) return <JoinHubResult result={result} waiter={waiter} />;
@@ -109,7 +111,7 @@ export function JoinHubForm({
             error={shown.hubUrl}
             probe={probe}
             onChange={(next) => update({ hubUrl: next })}
-            onProbe={() => void probeHubUrl()}
+            onProbe={() => void resolveHubUrl(values.hubUrl.trim())}
           />
 
           <JoinCredentialField
@@ -169,6 +171,7 @@ export function JoinHubForm({
             label={t('nodes.setup.submit.joinHub')}
             submitting={submitting}
             blocked={blocked}
+            {...(probe.phase === 'probing' ? { pendingLabel: t('nodes.setup.probe.probing') } : {})}
           />
         </form>
       </CardContent>

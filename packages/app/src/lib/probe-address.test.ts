@@ -47,6 +47,22 @@ describe('probeAddressForCli', () => {
     expect(seen).toEqual([]);
   });
 
+  test('an explicit :443 is treated as explicit and never swept', async () => {
+    const seen: string[] = [];
+    const result = await probeAddressForCli('https://hub.example.com:443', {
+      kind: 'hub',
+      fetcher: healthOn([443], seen),
+      timeoutMs: 150,
+    });
+    expect(result).toEqual({
+      url: 'https://hub.example.com:443',
+      probed: false,
+      found: false,
+      triedPorts: [],
+    });
+    expect(seen).toEqual([]);
+  });
+
   test('loopback and skip both bypass probing', async () => {
     const seen: string[] = [];
     const local = await probeAddressForCli('https://localhost', {

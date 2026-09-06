@@ -1,10 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { RelayDialContext } from './relay-dial';
-import {
-  type RelayResolveResult,
-  handleRelayResolve,
-  relayProbeDialUrl,
-} from './relay-resolve-route';
+import { type RelayResolveResult, handleRelayResolve } from './relay-resolve-route';
 
 function post(url: unknown): Request {
   return new Request('http://localhost/api/mesh/relay/resolve', {
@@ -101,31 +97,95 @@ describe('handleRelayResolve', () => {
   });
 });
 
-describe('relayProbeDialUrl', () => {
+describe('handleRelayResolve on a relay,node machine', () => {
   const ctx: RelayDialContext = {
     roles: { relay: true },
-    relayPublicUrl: 'https://me.example.com:13443',
+    relayPublicUrl: 'https://relay.example.com:13443',
     gatewayPort: 19663,
   };
 
-  test('candidates on the local relay host dial the loopback gateway', () => {
-    expect(relayProbeDialUrl('https://me.example.com', ctx)).toBe('http://127.0.0.1:19663');
-    expect(relayProbeDialUrl('https://me.example.com:2053', ctx)).toBe('http://127.0.0.1:19663');
+  /** 回环 gateway 什么端口都答；真实网络上这台机器一个端口都不通（hairpin NAT）。 */
+  function loopbackOnly(seen: string[] = []) {
+    return ((input: unknown, init?: RequestInit) => {
+      const target = new URL(String(input));
+      seen.push(`${target.host}${target.pathname}`);
+      if (target.hostname === '127.0.0.1') return Promise.resolve(Response.json({ ok: true }));
+      return new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      });
+    }) as typeof fetch;
+  }
+
+  test('a portless self-address resolves to the configured public url, not 443', async () => {
+    const seen: string[] = [];
+    const res = await handleRelayResolve(post('https://relay.example.com'), {
+      fetchImpl: loopbackOnly(seen),
+      dial: ctx,
+      timeoutMs: 150,
+    });
+    expect(await resolveOf(res)).toEqual({
+      url: 'https://relay.example.com:13443',
+      port: 13443,
+      explicit: false,
+      triedPorts: [13443],
+    });
+    // 只确认了公网地址那一条，候选端口一个都没发
+    expect(seen).toEqual(['127.0.0.1:19663/api/relay/health']);
   });
 
-  test('other hosts are dialled as-is', () => {
-    expect(relayProbeDialUrl('https://other.example.com:2053', ctx)).toBe(
-      'https://other.example.com:2053'
-    );
+  test('an explicit self port still only confirms that port through the loopback', async () => {
+    const seen: string[] = [];
+    const res = await handleRelayResolve(post('https://relay.example.com:13443'), {
+      fetchImpl: loopbackOnly(seen),
+      dial: ctx,
+      timeoutMs: 150,
+    });
+    expect(await resolveOf(res)).toEqual({
+      url: 'https://relay.example.com:13443',
+      port: 13443,
+      explicit: true,
+      triedPorts: [13443],
+    });
+    expect(seen).toEqual(['127.0.0.1:19663/api/relay/health']);
   });
 
-  test('machines without the relay role never rewrite', () => {
+  test('an explicit wrong self port is not rewritten to the loopback and stays unresolved', async () => {
+    const seen: string[] = [];
+    const res = await handleRelayResolve(post('https://relay.example.com:2053'), {
+      fetchImpl: loopbackOnly(seen),
+      dial: ctx,
+      timeoutMs: 150,
+    });
+    expect(await resolveOf(res)).toEqual({
+      url: null,
+      port: null,
+      explicit: true,
+      triedPorts: [2053],
+    });
+    expect(seen).toEqual(['relay.example.com:2053/api/relay/health']);
+  });
+
+  test('another host is swept normally even on a relay machine', async () => {
+    const seen: string[] = [];
+    const res = await handleRelayResolve(post('https://other.example.com'), {
+      fetchImpl: relayOn([8443], seen),
+      dial: ctx,
+      timeoutMs: 150,
+    });
+    const body = await resolveOf(res);
+    expect(body.url).toBe('https://other.example.com:8443');
+    expect(body.triedPorts).toContain(443);
+  });
+
+  test('a node without the relay role never short-circuits', async () => {
     const node: RelayDialContext = { ...ctx, roles: { relay: false } };
-    expect(relayProbeDialUrl('https://me.example.com', node)).toBe('https://me.example.com');
-  });
-
-  test('a relay without a public url never rewrites', () => {
-    const bare: RelayDialContext = { ...ctx, relayPublicUrl: null };
-    expect(relayProbeDialUrl('https://me.example.com', bare)).toBe('https://me.example.com');
+    const seen: string[] = [];
+    const res = await handleRelayResolve(post('https://relay.example.com'), {
+      fetchImpl: loopbackOnly(seen),
+      dial: node,
+      timeoutMs: 150,
+    });
+    expect((await resolveOf(res)).url).toBeNull();
+    expect(seen.some((item) => item.startsWith('127.0.0.1'))).toBe(false);
   });
 });

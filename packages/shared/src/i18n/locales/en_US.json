@@ -2833,6 +2833,7 @@
         "errors": {
           "not_standalone": "This machine is already set up.",
           "invalid_url": "Enter a valid https:// address.",
+          "invalid_port": "The port must be between 1 and 65535.",
           "insecure_local_required": "http:// is only allowed for a hub on this machine. Turn on “Allow an http:// hub on this machine”.",
           "invalid_username": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "weak_password": "Use at least 8 characters.",

@@ -49,19 +49,34 @@ SUGGESTED_HIGH_PORTS = [2053, 2083, 2087, 2096, 8443, 13443, 23443, 31443]
 1. 先发 443，给约 800 ms 的先手窗口——绝大多数部署在这一步就结束了；
 2. 443 还没答话，就按约 150 ms 的间隔逐个发出八个候选端口，443 仍在跑，晚到也算数；
 3. 谁先答话谁赢，其余请求立即中止；每次请求各带 4 s 超时，`redirect: 'error'`；
-4. 中继探 `GET /api/relay/health`（要求 `ok === true`），Hub 探 `GET /healthz`（要求 `status === 'ok'`），两条路径都免鉴权、也不受域名访问白名单与 Cloudflare Access 拦截；
+4. 中继探 `GET /api/relay/health`（要求 `ok === true`），Hub 探 `GET /healthz`（要求 `status === 'ok'`），两条路径都免鉴权、也不受域名访问白名单与 Cloudflare Access 拦截；判据必须与目标形态一致，否则会「探到」一台不是中继的机器；
 5. 一个都不答话时报「443 及内置候选端口均无响应」，并列出探过的端口。
 
 回环地址（`localhost` / `127.0.0.1` / `[::1]`）与 http 地址不参与候选扫描，只确认本身那个端口。
+显式端口按**用户原始输入**判断：`canonicalHubUrl` 会抹掉 `:443`，先归一化再判就会把明确写下的 443
+当成「没写端口」，从而静默改接到别的端口——CLI 与服务端都在归一化之前取这个判断。
+
+`relay,node` 机器上填自己中继的主机名且没写端口时不做候选扫描：回环 gateway 什么端口都答话，
+443 必然抢先胜出，而随后的 enroll 按精确 host（含端口）比对并不会走回环，会打到错误的公网端口。
+这种情况地址是已知的（就是 `TMEX_RELAY_PUBLIC_URL`），只在回环上确认一次。
 
 浏览器**不做**跨域探测：网页表单调本机 gateway 的接口，由 Bun 进程去探。相关接口：
 
-- `POST /api/setup/precheck`（接入向导，Hub）：返回值多了 `resolvedUrl` / `triedPorts` / `probed`；
+- `POST /api/setup/precheck`（接入向导）：返回值多了 `resolvedUrl` / `triedPorts` / `probed`；
+  请求可带 `kind: 'hub' | 'relay'`（缺省 `hub`），决定探测与确认用哪套健康判据——
+  加入中继的表单必须带 `kind: 'relay'`，否则 443 被封时可能选中一台恰好占着候选端口的 Hub；
 - `POST /api/mesh/relay/resolve`（中继接入 / 追加 / 迁移，node-session 鉴权）：`{ url }` → `{ url, port, explicit, triedPorts }`。
   必须在 `POST /api/mesh/relay/enroll/proof-material` **之前**调用——enroll proof 签的是含端口的 host，端口定晚了签名直接作废。
 
 CLI 同样行为：`tmex relay enroll <url>`、`tmex relay join <url> --tenant …`、`tmex hub join <url>` 在地址没写端口时探测，
 命中打印「已在 13443 端口探测到中继，使用 https://relay.example.com:13443」。`--insecure-local` 与回环地址跳过探测。
+
+## HTTPS 卡片上的对外地址
+
+设置 → 节点 → HTTPS 在内置监听器运行时给出对外地址：**配置了公网地址（`TMEX_HUB_PUBLIC_URL` /
+`TMEX_RELAY_PUBLIC_URL`）就原样显示它**——监听端口是本机内部的，NAT / 端口转发进来的公网端口
+往往并不相同，拿监听端口去替换公网端口只会给出一个外面连不上的地址。只有在完全不知道对外地址时，
+才用证书域名（ACME 域名或可对外解析的 SAN）加监听端口拼一个。
 
 ## 安装时选端口
 

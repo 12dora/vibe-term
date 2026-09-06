@@ -463,6 +463,25 @@ describe('relay enroll', () => {
     expect(calls).toHaveLength(1);
   });
 
+  test('an explicit :443 is confirmed as written and never swept', async () => {
+    const auth = await openAuth();
+    const url = `${RELAY_URL}:443`;
+    const seen: string[] = [];
+    const { fetcher } = fakeGateway(auth, { health: { ok: false } });
+    const spy = (async (input: unknown, init?: RequestInit) => {
+      const target = new URL(String(input));
+      if (target.hostname === new URL(RELAY_URL).hostname) {
+        seen.push(`${target.port || '443'}${target.pathname}`);
+      }
+      return await fetcher(input as string, init as RequestInit);
+    }) as typeof fetcher;
+    await expect(
+      runRelayEnroll(parseArgs(['relay', 'enroll', url]), url, io(auth, spy, []))
+    ).rejects.toThrow('relay is not healthy');
+    // 归一化会抹掉 :443；按原始输入判断显式端口，所以只确认这一次，不遍历候选
+    expect(seen).toEqual(['443/api/relay/health']);
+  });
+
   test('a portless url with no reachable candidate port names the ports tried', async () => {
     const auth = await openAuth();
     const { fetcher } = fakeGateway(auth, { health: { ok: false } });

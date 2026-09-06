@@ -855,6 +855,41 @@ describe('precheckHubUrl', () => {
     expect(result.error).toContain('443');
   });
 
+  test("kind:'relay' probes and confirms with /api/relay/health", async () => {
+    const seen: string[] = [];
+    const deps = await baseDeps({
+      startedAt: 7,
+      fetch: (async (input: unknown) => {
+        const url = new URL(String(input));
+        seen.push(`${url.port || '443'}${url.pathname}`);
+        if (url.port !== '13443') throw new Error('connection refused');
+        return Response.json({ ok: true, version: '1.1.37' });
+      }) as FetchLike,
+    });
+    const result = await precheckHubUrl('https://relay.example.com', deps, 'relay');
+    expect(result.reachable).toBe(true);
+    // 中继健康接口不下发 startedAt，本机判定只对 Hub 有意义
+    expect(result.isSelf).toBe(false);
+    expect(result.resolvedUrl).toBe('https://relay.example.com:13443');
+    expect(seen.every((item) => item.endsWith('/api/relay/health'))).toBe(true);
+  });
+
+  test("kind:'relay' refuses a hub answering on a candidate port", async () => {
+    const deps = await baseDeps({
+      fetch: (async (input: unknown) => {
+        // 一台 Hub / 普通节点占着 2053：/healthz 是 ok 的，但 /api/relay/health 不是
+        if (new URL(String(input)).pathname === '/healthz') {
+          return Response.json({ status: 'ok', startedAt: 1 });
+        }
+        return new Response('not found', { status: 404 });
+      }) as FetchLike,
+    });
+    const result = await precheckHubUrl('https://relay.example.com', deps, 'relay');
+    expect(result.reachable).toBe(false);
+    expect(result.resolvedUrl).toBeNull();
+    expect(result.probed).toBe(true);
+  });
+
   test('rejects non-https remote urls', async () => {
     const deps = await baseDeps();
     await expect(precheckHubUrl('http://example.com', deps)).rejects.toMatchObject({

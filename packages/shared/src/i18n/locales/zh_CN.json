@@ -2828,6 +2828,7 @@
         "errors": {
           "not_standalone": "本机已完成设置。",
           "invalid_url": "请输入合法的 https:// 地址。",
+          "invalid_port": "端口须在 1 到 65535 之间。",
           "insecure_local_required": "http:// 只能用于本机的 Hub，请先勾选「允许本机使用 http:// 的 Hub」。",
           "invalid_username": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "weak_password": "密码至少 8 位。",

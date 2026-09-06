@@ -169,6 +169,9 @@ export type JoinHubResult = {
   admitPending?: boolean;
 };
 
+/** 端口探测与确认用哪套健康判据：Hub 打 `/healthz`，中继打 `/api/relay/health`。 */
+export type PrecheckKind = 'hub' | 'relay';
+
 export type PrecheckResult = {
   reachable: boolean;
   isSelf: boolean;
@@ -399,53 +402,81 @@ function precheckFetch(fetchImpl: FetchLike, caPem: string | null): ProbeFetch {
     fetchImpl(input, { ...init, ...(caPem ? { tls: { ca: [caPem] } } : {}) } as FetchInit);
 }
 
+const HEALTH_PROBE: Record<PrecheckKind, { path: string; label: string }> = {
+  hub: { path: '/healthz', label: 'healthz' },
+  relay: { path: '/api/relay/health', label: 'relay health' },
+};
+
 /** 地址没写端口且是 https 时才探候选端口；显式端口与回环 http 一律照原样确认。 */
 async function precheckProbePorts(
   url: string,
+  kind: PrecheckKind,
   fetchImpl: ProbeFetch
 ): Promise<PortProbeResult | null> {
   const target = parseProbeTarget(url);
   if (target.explicitPort !== null || target.protocol !== 'https:') return null;
   return await probeAddressPorts(url, {
-    kind: 'hub',
+    kind,
     fetchImpl,
     timeoutMs: PRECHECK_PROBE_TIMEOUT_MS,
   });
 }
 
-async function readHealthz(
+/** 判据与探测同源：Hub 看 `/healthz.status`，中继看 `/api/relay/health.ok`。 */
+function healthOutcome(
+  kind: PrecheckKind,
+  status: number,
+  body: { status?: unknown; ok?: unknown; startedAt?: unknown },
+  startedAt: number
+): HealthzOutcome {
+  const reachable = status === 200 && (kind === 'relay' ? body.ok === true : body.status === 'ok');
+  return {
+    reachable,
+    // 中继的健康接口不下发 startedAt，本机判定只对 Hub 有意义
+    isSelf: reachable && kind === 'hub' && body.startedAt === startedAt,
+    status,
+    error: reachable ? null : `${HEALTH_PROBE[kind].label} status ${status}`,
+  };
+}
+
+async function readHealth(
   base: string | URL,
+  kind: PrecheckKind,
   fetchImpl: ProbeFetch,
   startedAt: number
 ): Promise<HealthzOutcome> {
-  const response = await fetchImpl(new URL('/healthz', base).toString(), {
+  const probe = HEALTH_PROBE[kind];
+  const response = await fetchImpl(new URL(probe.path, base).toString(), {
     signal: AbortSignal.timeout(PRECHECK_TIMEOUT_MS),
     redirect: 'error',
   });
   const status = response.status;
-  let body: { status?: unknown; startedAt?: unknown };
+  let body: { status?: unknown; ok?: unknown; startedAt?: unknown };
   try {
-    body = (await response.json()) as { status?: unknown; startedAt?: unknown };
+    body = (await response.json()) as typeof body;
   } catch {
-    return { reachable: false, isSelf: false, status, error: 'healthz response was not JSON' };
+    return {
+      reachable: false,
+      isSelf: false,
+      status,
+      error: `${probe.label} response was not JSON`,
+    };
   }
-  const reachable = status === 200 && body.status === 'ok';
-  return {
-    reachable,
-    isSelf: reachable && body.startedAt === startedAt,
-    status,
-    error: reachable ? null : `healthz status ${status}`,
-  };
+  return healthOutcome(kind, status, body, startedAt);
 }
 
-export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promise<PrecheckResult> {
+export async function precheckHubUrl(
+  url: string,
+  deps: SetupServiceDeps,
+  kind: PrecheckKind = 'hub'
+): Promise<PrecheckResult> {
   assertStandalone(deps.roles);
   const parsed = assertSetupUrl(url, deps.nodeEnv);
   const startedAt = deps.startedAt ?? PROCESS_STARTED_AT;
   try {
     const caPem = deps.precheckCaPem ? await deps.precheckCaPem() : null;
     const fetchImpl = precheckFetch(deps.fetch ?? fetch, caPem);
-    const probe = await precheckProbePorts(url, fetchImpl);
+    const probe = await precheckProbePorts(url, kind, fetchImpl);
     if (probe && !probe.url) {
       return {
         reachable: false,
@@ -457,7 +488,7 @@ export async function precheckHubUrl(url: string, deps: SetupServiceDeps): Promi
         probed: true,
       };
     }
-    const health = await readHealthz(probe?.url ?? parsed, fetchImpl, startedAt);
+    const health = await readHealth(probe?.url ?? parsed, kind, fetchImpl, startedAt);
     return {
       ...health,
       resolvedUrl: probe?.url ?? null,

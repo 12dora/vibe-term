@@ -93,6 +93,13 @@ describe('pureRelaySubmitPlan', () => {
     expect(pureRelaySubmitPlan(values(), 'production')).toBe('confirm');
     expect(pureRelaySubmitPlan(alsoNodeValues(), 'production')).toBe('submit');
   });
+
+  test('自定义端口填坏了同样拦住：地址里的端口没被改写，不能带着旧端口提交', () => {
+    expect(pureRelaySubmitPlan(values(), 'production', true)).toBe('invalid');
+    expect(pureRelaySubmitPlan(alsoNodeValues(), 'production', true)).toBe('invalid');
+    // 端口没问题时行为不变
+    expect(pureRelaySubmitPlan(alsoNodeValues(), 'production', false)).toBe('submit');
+  });
 });
 
 describe('becomeRelayGate', () => {

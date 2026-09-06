@@ -57,6 +57,24 @@ describe('performRelayPasswordJoin', () => {
     ).rejects.toMatchObject({ name: 'RelayPasswordJoinError', code: 'relay_unreachable' });
   });
 
+  test('显式 :443 只确认一次，不因归一化抹掉端口而遍历候选', async () => {
+    const auth = await openAuth();
+    const seen: string[] = [];
+    const fetcher: FetchLike = async (input) => {
+      const url = new URL(String(input));
+      seen.push(`${url.port || '443'}${url.pathname}`);
+      return new Response('nope', { status: 404 });
+    };
+    await expect(
+      performRelayPasswordJoin(
+        { relayUrl: `${RELAY_URL}:443`, tenantId: TENANT_ID, password: PASSWORD },
+        { auth, fetcher, timeoutMs: 100 }
+      )
+    ).rejects.toMatchObject({ name: 'RelayPasswordJoinError' });
+    expect(seen.some((item) => item.startsWith('443/api/relay/health'))).toBe(false);
+    expect(seen.every((item) => item.startsWith('443/'))).toBe(true);
+  });
+
   test('探到候选端口后按带端口的地址继续接入', async () => {
     const auth = await openAuth();
     const seen: string[] = [];

@@ -17,21 +17,11 @@ export type TlsEffectiveHttps = {
   publicUrl: string | null;
 };
 
-/** 内置监听器实际服务的域名：证书说了算，其次才是配置的公网地址。 */
-function builtinHost(
-  status: Pick<TlsStatus, 'mode' | 'sans' | 'acme'>,
-  configuredPublicUrl: string | null | undefined
-): string | null {
+/** 内置监听器服务的域名：ACME 域名优先，其次是证书里能对外解析的 SAN。 */
+function certificateHost(status: Pick<TlsStatus, 'mode' | 'sans' | 'acme'>): string | null {
   if (status.mode === 'acme' && status.acme?.domain) return status.acme.domain.toLowerCase();
   const san = status.sans?.find((entry) => isPublicDnsName(entry));
-  if (san) return san.toLowerCase();
-  const configured = httpsConfiguredUrl(configuredPublicUrl);
-  if (!configured) return null;
-  try {
-    return new URL(configured).hostname;
-  } catch {
-    return null;
-  }
+  return san ? san.toLowerCase() : null;
 }
 
 /** 只认能对外解析的域名：IP 字面量、通配符与回环名都不该出现在对外地址里。 */
@@ -41,12 +31,20 @@ function isPublicDnsName(entry: string): boolean {
   return !/^[0-9.]+$/.test(name) && !name.includes(':');
 }
 
-/** 内置 HTTPS 监听器的对外地址；非 443 一律显式带端口。 */
+/**
+ * 内置 HTTPS 监听器的对外地址。
+ *
+ * 配置了公网地址就**原样**给出：监听端口是本机内部的（NAT / 端口转发进来的公网端口经常不同），
+ * 拿它替换掉公网地址里的端口会给出一个外面根本连不上的地址。只有在完全不知道对外地址时，
+ * 才用证书域名 + 监听端口拼一个。
+ */
 function builtinPublicUrl(
   status: Pick<TlsStatus, 'mode' | 'sans' | 'acme' | 'tlsPort' | 'listener'>,
   configuredPublicUrl: string | null | undefined
 ): string | null {
-  const host = builtinHost(status, configuredPublicUrl);
+  const configured = httpsConfiguredUrl(configuredPublicUrl);
+  if (configured) return configured;
+  const host = certificateHost(status);
   if (!host) return null;
   const port = status.listener.port ?? status.tlsPort;
   return port === 443 ? `https://${host}` : `https://${host}:${port}`;

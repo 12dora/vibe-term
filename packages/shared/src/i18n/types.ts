@@ -2545,6 +2545,7 @@ export type TranslationKey =
   | 'nodes.setup.errors'
   | 'nodes.setup.errors.not_standalone'
   | 'nodes.setup.errors.invalid_url'
+  | 'nodes.setup.errors.invalid_port'
   | 'nodes.setup.errors.insecure_local_required'
   | 'nodes.setup.errors.invalid_username'
   | 'nodes.setup.errors.weak_password'

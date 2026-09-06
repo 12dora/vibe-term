@@ -10,6 +10,7 @@ import type {
   SetupHubResponse,
   SetupJoinRequest,
   SetupJoinResponse,
+  SetupPrecheckKind,
   SetupPrecheckResponse,
   SetupRelayJoinRequest,
   SetupRelayJoinResponse,
@@ -75,11 +76,12 @@ export async function readHealthStartedAt(
 export class SetupApi {
   constructor(private readonly client: ApiClient = defaultApiClient) {}
 
-  async precheck(url: string): Promise<SetupPrecheckResponse> {
+  /** `kind` 决定端口探测用哪套健康判据（中继打 `/api/relay/health`）；旧网关忽略该字段。 */
+  async precheck(url: string, kind?: SetupPrecheckKind): Promise<SetupPrecheckResponse> {
     const res = await this.client.fetch('/api/setup/precheck', {
       method: 'POST',
       headers: JSON_HEADERS,
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(kind ? { url, kind } : { url }),
     });
     if (!res.ok) throw await readError(res, 'precheck_failed');
     return (await res.json()) as SetupPrecheckResponse;

@@ -2839,6 +2839,7 @@ export const I18N_RESOURCES = {
         "errors": {
           "not_standalone": "This machine is already set up.",
           "invalid_url": "Enter a valid https:// address.",
+          "invalid_port": "The port must be between 1 and 65535.",
           "insecure_local_required": "http:// is only allowed for a hub on this machine. Turn on “Allow an http:// hub on this machine”.",
           "invalid_username": "1-64 characters: letters, digits, dot, underscore or hyphen.",
           "weak_password": "Use at least 8 characters.",
@@ -6343,6 +6344,7 @@ export const I18N_RESOURCES = {
         "errors": {
           "not_standalone": "本机已完成设置。",
           "invalid_url": "请输入合法的 https:// 地址。",
+          "invalid_port": "端口须在 1 到 65535 之间。",
           "insecure_local_required": "http:// 只能用于本机的 Hub，请先勾选「允许本机使用 http:// 的 Hub」。",
           "invalid_username": "1-64 个字符，可用字母、数字、点、下划线和连字符。",
           "weak_password": "密码至少 8 位。",
@@ -9846,6 +9848,7 @@ export const I18N_RESOURCES = {
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
           "invalid_url": "有効な https:// アドレスを入力してください。",
+          "invalid_port": "ポートは 1 から 65535 の間で指定してください。",
           "insecure_local_required": "http:// はこのマシン上のハブにのみ使えます。「このマシンで http:// のハブを許可する」をオンにしてください。",
           "invalid_username": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "weak_password": "8 文字以上で入力してください。",

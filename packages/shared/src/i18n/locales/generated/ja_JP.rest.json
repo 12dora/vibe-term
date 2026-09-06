@@ -2082,6 +2082,7 @@
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
           "invalid_url": "有効な https:// アドレスを入力してください。",
+          "invalid_port": "ポートは 1 から 65535 の間で指定してください。",
           "insecure_local_required": "http:// はこのマシン上のハブにのみ使えます。「このマシンで http:// のハブを許可する」をオンにしてください。",
           "invalid_username": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "weak_password": "8 文字以上で入力してください。",

@@ -69,6 +69,15 @@ export interface LocalLeaveResponse {
   restarting: true;
 }
 
+/** 端口探测的服务形态：Hub 打 `/healthz`，中继打 `/api/relay/health`。 */
+export type SetupPrecheckKind = 'hub' | 'relay';
+
+export interface SetupPrecheckRequest {
+  url: string;
+  /** 缺省为 `hub`；旧网关忽略该字段，按 Hub 处理。 */
+  kind?: SetupPrecheckKind;
+}
+
 export interface SetupPrecheckResponse {
   reachable: boolean;
   isSelf: boolean;
