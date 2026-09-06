@@ -3,8 +3,8 @@
 // 没有 i18next 实例时 `t` 原样返回 key，因此断言的是 key 与 testId。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareRecord } from '@tmex/shared/share';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { ShareRow } from './share-rows';
 
 installWindowStorage();
 
@@ -16,8 +16,10 @@ const { ShareHistoryTable } = await import('./history-table');
 
 const NOW = 1_700_000_000_000;
 
-function record(patch: Partial<ShareRecord> = {}): ShareRecord {
+function record(patch: Partial<ShareRow> = {}): ShareRow {
   return {
+    nodeId: 'self',
+    nodeName: '本机',
     id: 'sh1',
     name: 'demo share',
     deviceId: 'dev1',
@@ -38,15 +40,16 @@ function record(patch: Partial<ShareRecord> = {}): ShareRecord {
   };
 }
 
-const deviceName = (id: string) => (id === 'dev1' ? 'MacBook' : null);
+const deviceName = (row: ShareRow) => (row.deviceId === 'dev1' ? 'MacBook' : null);
 
 describe('ActiveSharesTable', () => {
   test('一行一条分享，摆出在线人数、终端与地址', () => {
     const html = renderToStaticMarkup(
       <ActiveSharesTable
+        showNode={false}
         shares={[record()]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onStop={() => undefined}
         onPasswordAction={() => undefined}
@@ -64,9 +67,10 @@ describe('ActiveSharesTable', () => {
   test('正在写入的那一行禁用终止', () => {
     const html = renderToStaticMarkup(
       <ActiveSharesTable
+        showNode={false}
         shares={[record()]}
         now={NOW}
-        busyShareId="sh1"
+        busyRowKey="self:sh1"
         deviceName={deviceName}
         onStop={() => undefined}
         onPasswordAction={() => undefined}
@@ -76,12 +80,67 @@ describe('ActiveSharesTable', () => {
     expect(html).toContain('disabled=""');
   });
 
+  test('多节点时多一列节点名，行按节点点名', () => {
+    const html = renderToStaticMarkup(
+      <ActiveSharesTable
+        showNode
+        shares={[
+          record(),
+          record({ id: 'sh2', nodeId: 'node-b', nodeName: 'studio', deviceId: 'dev2' }),
+        ]}
+        now={NOW}
+        busyRowKey={null}
+        deviceName={deviceName}
+        onStop={() => undefined}
+        onPasswordAction={() => undefined}
+      />
+    );
+    expect(html).toContain('settings.share.active.columns.node');
+    expect(html).toContain('data-testid="share-node-sh1"');
+    expect(html).toContain('data-testid="share-node-sh2"');
+    expect(html).toContain('studio');
+  });
+
+  test('单机时不摆节点列', () => {
+    const html = renderToStaticMarkup(
+      <ActiveSharesTable
+        showNode={false}
+        shares={[record()]}
+        now={NOW}
+        busyRowKey={null}
+        deviceName={deviceName}
+        onStop={() => undefined}
+        onPasswordAction={() => undefined}
+      />
+    );
+    expect(html).not.toContain('settings.share.active.columns.node');
+    expect(html).not.toContain('data-testid="share-node-sh1"');
+  });
+
+  test('忙的那一行按「节点 + 分享」定位，同名分享不会互相禁用', () => {
+    const rows = [record(), record({ id: 'sh1', nodeId: 'node-b', nodeName: 'studio' })];
+    const html = renderToStaticMarkup(
+      <ActiveSharesTable
+        showNode
+        shares={rows}
+        now={NOW}
+        busyRowKey="node-b:sh1"
+        deviceName={deviceName}
+        onStop={() => undefined}
+        onPasswordAction={() => undefined}
+      />
+    );
+    // 两行同 id，只有远端那一行的终止被禁用（Base UI 的按钮同时带 data-disabled）。
+    expect(html.match(/data-disabled=""/g)).toHaveLength(1);
+  });
+
   test('空表出空状态而不是空白', () => {
     const html = renderToStaticMarkup(
       <ActiveSharesTable
+        showNode={false}
         shares={[]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onStop={() => undefined}
         onPasswordAction={() => undefined}
@@ -106,7 +165,7 @@ describe('ShareHistoryTable', () => {
       <ShareHistoryTable
         shares={[ended]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onReplay={() => undefined}
         onDelete={() => undefined}
@@ -123,7 +182,7 @@ describe('ShareHistoryTable', () => {
       <ShareHistoryTable
         shares={[record({ state: 'ended', endReason: 'revoked', endedAt: NOW, logBytes: 0 })]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onReplay={() => undefined}
         onDelete={() => undefined}
@@ -138,7 +197,7 @@ describe('ShareHistoryTable', () => {
       <ShareHistoryTable
         shares={[record({ deviceId: 'gone', state: 'ended', endReason: 'device_removed' })]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onReplay={() => undefined}
         onDelete={() => undefined}
@@ -153,7 +212,7 @@ describe('ShareHistoryTable', () => {
       <ShareHistoryTable
         shares={[]}
         now={NOW}
-        busyShareId={null}
+        busyRowKey={null}
         deviceName={deviceName}
         onReplay={() => undefined}
         onDelete={() => undefined}

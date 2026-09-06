@@ -940,6 +940,7 @@ export const I18N_RESOURCES = {
           "empty": "No active shares",
           "columns": {
             "name": "Name",
+            "node": "Node",
             "terminal": "Terminal",
             "viewers": "Viewers",
             "created": "Created",
@@ -963,7 +964,8 @@ export const I18N_RESOURCES = {
           "endSessionsHint": "Left unchecked, connected viewers keep watching and only new visitors need the new password.",
           "passwordChanged": "Password updated",
           "passwordChangedAndEnded": "Password updated, {{count}} viewers disconnected",
-          "copyLinkWithPassword": "Copy Link with Password"
+          "copyLinkWithPassword": "Copy Link with Password",
+          "nodeUnavailable": "Shares on {{names}} failed to load."
         },
         "history": {
           "title": "History",
@@ -987,7 +989,8 @@ export const I18N_RESOURCES = {
           "logTruncated": "{{size}} (limit reached)",
           "replay": "Replay",
           "deleteTitle": "Delete Record",
-          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone."
+          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone.",
+          "localOnly": "Records on this node only."
         },
         "form": {
           "title": "Share Settings",
@@ -4456,6 +4459,7 @@ export const I18N_RESOURCES = {
           "empty": "暂无进行中的分享",
           "columns": {
             "name": "名称",
+            "node": "节点",
             "terminal": "终端",
             "viewers": "在线",
             "created": "创建",
@@ -4479,7 +4483,8 @@ export const I18N_RESOURCES = {
           "endSessionsHint": "不勾选时，已连接的人可继续观看，只有新访客需要用新密码。",
           "passwordChanged": "密码已更新",
           "passwordChangedAndEnded": "密码已更新，已断开 {{count}} 人",
-          "copyLinkWithPassword": "复制带密码的链接"
+          "copyLinkWithPassword": "复制带密码的链接",
+          "nodeUnavailable": "{{names}} 的分享未能加载。"
         },
         "history": {
           "title": "历史",
@@ -4503,7 +4508,8 @@ export const I18N_RESOURCES = {
           "logTruncated": "{{size}}（已达上限）",
           "replay": "回放",
           "deleteTitle": "删除记录",
-          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。"
+          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。",
+          "localOnly": "仅显示本节点的记录。"
         },
         "form": {
           "title": "分享设置",
@@ -7966,6 +7972,7 @@ export const I18N_RESOURCES = {
           "empty": "進行中の共有はありません",
           "columns": {
             "name": "名前",
+            "node": "ノード",
             "terminal": "ターミナル",
             "viewers": "接続数",
             "created": "作成",
@@ -7989,7 +7996,8 @@ export const I18N_RESOURCES = {
           "endSessionsHint": "チェックしない場合、接続中の相手はそのまま閲覧でき、新しい訪問者のみ新しいパスワードが必要です。",
           "passwordChanged": "パスワードを更新しました",
           "passwordChangedAndEnded": "パスワードを更新し、{{count}} 人を切断しました",
-          "copyLinkWithPassword": "パスワード付きリンクをコピー"
+          "copyLinkWithPassword": "パスワード付きリンクをコピー",
+          "nodeUnavailable": "{{names}} の共有を読み込めませんでした。"
         },
         "history": {
           "title": "履歴",
@@ -8013,7 +8021,8 @@ export const I18N_RESOURCES = {
           "logTruncated": "{{size}}（上限到達）",
           "replay": "再生",
           "deleteTitle": "記録を削除",
-          "deleteConfirm": "「{{name}}」を削除するとログも削除され、元に戻せません。"
+          "deleteConfirm": "「{{name}}」を削除するとログも削除され、元に戻せません。",
+          "localOnly": "このノードの記録のみ表示します。"
         },
         "form": {
           "title": "共有設定",

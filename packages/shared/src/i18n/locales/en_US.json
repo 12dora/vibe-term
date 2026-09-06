@@ -934,6 +934,7 @@
           "empty": "No active shares",
           "columns": {
             "name": "Name",
+            "node": "Node",
             "terminal": "Terminal",
             "viewers": "Viewers",
             "created": "Created",
@@ -957,7 +958,8 @@
           "endSessionsHint": "Left unchecked, connected viewers keep watching and only new visitors need the new password.",
           "passwordChanged": "Password updated",
           "passwordChangedAndEnded": "Password updated, {{count}} viewers disconnected",
-          "copyLinkWithPassword": "Copy Link with Password"
+          "copyLinkWithPassword": "Copy Link with Password",
+          "nodeUnavailable": "Shares on {{names}} failed to load."
         },
         "history": {
           "title": "History",
@@ -981,7 +983,8 @@
           "logTruncated": "{{size}} (limit reached)",
           "replay": "Replay",
           "deleteTitle": "Delete Record",
-          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone."
+          "deleteConfirm": "Deleting \"{{name}}\" also deletes its log. This cannot be undone.",
+          "localOnly": "Records on this node only."
         },
         "form": {
           "title": "Share Settings",

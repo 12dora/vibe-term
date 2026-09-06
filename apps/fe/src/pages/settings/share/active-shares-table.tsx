@@ -1,8 +1,9 @@
 // 进行中的分享：一行一条，复制链接与终止两个常用动作直接摆出来，
 // 密码三件事（查看 / 修改 / 复制带密码的链接）收进行尾菜单——再加三枚按钮这一列就装不下了。
 // 终止走二次确认（对方会立刻断开）。
+//
+// 列表跨节点汇总，行里带着自己的节点：多节点时多一列点名是哪台，单机时这一列没有信息量，不出。
 
-import type { ShareRecord } from '@tmex/shared/share';
 import { Button } from '@tmex/ui/button';
 import {
   DropdownMenu,
@@ -22,21 +23,26 @@ import {
   shareTerminalText,
 } from './share-format';
 import type { SharePasswordAction } from './share-password-dialogs';
+import { type ShareRow, shareRowKey } from './share-rows';
 import { EmptyRow, Td, Th, TimeCell } from './table-parts';
 
 export interface ActiveSharesTableProps {
-  shares: ShareRecord[];
+  shares: ShareRow[];
   now: number;
-  busyShareId: string | null;
-  deviceName: (deviceId: string) => string | null;
-  onStop: (record: ShareRecord) => void;
-  onPasswordAction: (action: SharePasswordAction, record: ShareRecord) => void;
+  /** 正在写入的那一行（`shareRowKey`）。 */
+  busyRowKey: string | null;
+  /** 多节点时才有节点列。 */
+  showNode: boolean;
+  deviceName: (row: ShareRow) => string | null;
+  onStop: (row: ShareRow) => void;
+  onPasswordAction: (action: SharePasswordAction, row: ShareRow) => void;
 }
 
 export function ActiveSharesTable({
   shares,
   now,
-  busyShareId,
+  busyRowKey,
+  showNode,
   deviceName,
   onStop,
   onPasswordAction,
@@ -48,6 +54,7 @@ export function ActiveSharesTable({
         <thead className="text-muted-foreground">
           <tr className="border-b border-border">
             <Th>{t('settings.share.active.columns.name')}</Th>
+            {showNode && <Th>{t('settings.share.active.columns.node')}</Th>}
             <Th>{t('settings.share.active.columns.terminal')}</Th>
             <Th>{t('settings.share.active.columns.viewers')}</Th>
             <Th>{t('settings.share.active.columns.created')}</Th>
@@ -59,17 +66,18 @@ export function ActiveSharesTable({
         <tbody>
           {shares.map((share) => (
             <ActiveRow
-              key={share.id}
+              key={shareRowKey(share)}
               share={share}
               now={now}
-              busy={busyShareId === share.id}
-              deviceName={deviceName(share.deviceId)}
+              busy={busyRowKey === shareRowKey(share)}
+              showNode={showNode}
+              deviceName={deviceName(share)}
               onStop={onStop}
               onPasswordAction={onPasswordAction}
             />
           ))}
           {shares.length === 0 && (
-            <EmptyRow colSpan={7} testId="share-active-empty">
+            <EmptyRow colSpan={showNode ? 8 : 7} testId="share-active-empty">
               {t('settings.share.active.empty')}
             </EmptyRow>
           )}
@@ -83,16 +91,18 @@ function ActiveRow({
   share,
   now,
   busy,
+  showNode,
   deviceName,
   onStop,
   onPasswordAction,
 }: {
-  share: ShareRecord;
+  share: ShareRow;
   now: number;
   busy: boolean;
+  showNode: boolean;
   deviceName: string | null;
-  onStop: (record: ShareRecord) => void;
-  onPasswordAction: (action: SharePasswordAction, record: ShareRecord) => void;
+  onStop: (row: ShareRow) => void;
+  onPasswordAction: (action: SharePasswordAction, row: ShareRow) => void;
 }) {
   const { t } = useTranslation();
   return (
@@ -101,6 +111,11 @@ function ActiveRow({
       data-testid={`share-active-row-${share.id}`}
     >
       <Td className="max-w-48 truncate">{share.name}</Td>
+      {showNode && (
+        <Td className="max-w-36 truncate" testId={`share-node-${share.id}`} title={share.nodeName}>
+          {share.nodeName}
+        </Td>
+      )}
       <Td className="max-w-56 truncate" title={shareTerminalText(share, deviceName)}>
         {shareTerminalText(share, deviceName)}
       </Td>
@@ -210,7 +225,7 @@ export function ActiveShareMenuList({
   );
 }
 
-function CopyLinkButton({ share }: { share: ShareRecord }) {
+function CopyLinkButton({ share }: { share: ShareRow }) {
   const { t } = useTranslation();
   const { copied, copy } = useCopyToClipboard(share.url);
   return (

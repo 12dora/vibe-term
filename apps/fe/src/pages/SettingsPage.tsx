@@ -292,7 +292,13 @@ export default function SettingsPage() {
     (tab: SettingsTab) => {
       preloadChunk(TAB_CHUNK_LOADERS[tab]);
       if (!runtime) return;
-      prefetchTabData(nodeQueryClient(routeNodeId), tab, runtime.apiClient, prefetchedTabs.current);
+      prefetchTabData(
+        nodeQueryClient(routeNodeId),
+        tab,
+        runtime.apiClient,
+        prefetchedTabs.current,
+        routeNodeId
+      );
     },
     [runtime, routeNodeId]
   );
