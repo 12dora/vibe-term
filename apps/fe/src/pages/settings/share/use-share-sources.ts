@@ -4,6 +4,7 @@
 // 「明明分享着却看不见」的成因）。这里照端口映射弹窗的做法，对每台在线且已登录的节点各发
 // 一次 `GET /n/<id>/api/share`：查询按节点分片，单台失败只摘掉那一行来源，不会整表变空。
 
+import { useInventoryReadiness } from '@/node/inventory-readiness';
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { type DialogNodeOption, toDialogNodeOptions } from '@/pages/devices/dialog-nodes';
 import { type UseQueryOptions, useQueries, useQuery } from '@tanstack/react-query';
@@ -36,11 +37,14 @@ export function useShareNodes(): ShareNodesModel {
   const { t } = useTranslation();
   const { meshEnabled, entryNodeId } = useSharedAuthMode();
   const { nodes } = useMeshNodes({ enabled: meshEnabled });
+  const { loading } = useInventoryReadiness();
   const selfName = t('device.addTo.self');
 
+  // 成员列表还在同步（加入中继后重启的那几秒）时一台来源都不给：否则会按「只有本机」
+  // 去问分享列表，把别处正在进行的分享渲染成不存在。
   const options = useMemo(
-    () => toDialogNodeOptions(nodes, entryNodeId, selfName),
-    [nodes, entryNodeId, selfName]
+    () => toDialogNodeOptions(nodes, entryNodeId, selfName, { loading }),
+    [nodes, entryNodeId, selfName, loading]
   );
   const usable = useMemo(() => options.filter((option) => option.usable), [options]);
 
@@ -72,6 +76,8 @@ export interface ActiveSharesModel {
 }
 
 export function useActiveShares(nodes: DialogNodeOption[]): ActiveSharesModel {
+  // 成员列表还没到齐时来源集是空的，此时「查完了、一条都没有」是假结论：仍按加载中算。
+  const { loading: nodesLoading } = useInventoryReadiness();
   const results = useQueries({
     queries: nodes.map((node) => shareListQueryOptions(node.id)),
   });
@@ -82,7 +88,7 @@ export function useActiveShares(nodes: DialogNodeOption[]): ActiveSharesModel {
 
   return {
     rows,
-    loading: results.some((result) => result.isPending),
+    loading: nodesLoading || results.some((result) => result.isPending),
     failedNodes,
     allFailed: results.length > 0 && results.every((result) => result.isError),
     updatedAt: updatedAt || Date.now(),
