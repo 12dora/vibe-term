@@ -46,7 +46,7 @@ import { requestDispatchContext } from '../types';
 const PASSWORD = 'tmex-test';
 const dummyServer = { upgrade: () => false };
 
-const origGetTransferOwner = filesBulkHooks.getTransferOwner;
+const origGetTransferOwner = filesBulkHooks.status;
 const transferUids = new Map<string, string>();
 
 function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
@@ -161,7 +161,7 @@ async function loginSelf(
 describe('direct path integration', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
   afterEach(async () => {
-    filesBulkHooks.getTransferOwner = origGetTransferOwner;
+    filesBulkHooks.status = origGetTransferOwner;
     for (const id of transferUids.keys()) {
       try {
         removeUploadSession(id);
@@ -217,7 +217,7 @@ describe('direct path integration', () => {
     fixtures.push({ close, stop: () => mesh.stop() });
     await mesh.start();
     await waitUntil(() => mesh.uplink.state === 'online', 5_000);
-    filesBulkHooks.getTransferOwner = (id) => {
+    filesBulkHooks.status = (id) => {
       const owner = origGetTransferOwner(id);
       if (!owner) return null;
       const uid = transferUids.get(id);

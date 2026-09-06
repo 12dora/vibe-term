@@ -1,11 +1,11 @@
 import {
-  appendUploadChunkAsync,
   getDownloadSession,
   getUploadSession,
   removeDownloadSession,
   removeUploadSession,
+  writeUploadBytes,
 } from '../files/transfer-session';
-import { streamTempFile } from './file-http';
+import { type ContentRange, streamFileRange } from './file-http';
 
 const transferUids = new Map<string, string>();
 
@@ -16,14 +16,19 @@ export type BulkTransferOwner = {
   kind: 'upload' | 'download';
 };
 
+/**
+ * RTC bulk 直连与 REST 会话之间的窄接口。区间化之后上传写入带偏移、下载读取带区间，
+ * 两条路径共用同一个可续传 sink。
+ */
 export type FilesBulkHooks = {
-  getTransferOwner(transferId: string): BulkTransferOwner | null;
-  openDownload(transferId: string): ReadableStream<Uint8Array> | null;
-  appendUpload(
+  status(transferId: string): BulkTransferOwner | null;
+  writeRange(
     transferId: string,
+    offset: number,
     bytes: Uint8Array
   ): Promise<{ ok: true; received: number } | { ok: false; code: string }>;
-  abortTransfer(transferId: string): void;
+  openRange(transferId: string, range?: ContentRange | null): ReadableStream<Uint8Array> | null;
+  abort(transferId: string): void;
 };
 
 export function rememberTransferUid(transferId: string, uid: string): void {
@@ -66,19 +71,26 @@ export function getTransferOwner(transferId: string): BulkTransferOwner | null {
   return null;
 }
 
-export function openDownload(transferId: string): ReadableStream<Uint8Array> | null {
+export function openDownload(
+  transferId: string,
+  range?: ContentRange | null
+): ReadableStream<Uint8Array> | null {
   const session = getDownloadSession(transferId);
   if (!session) return null;
-  return streamTempFile(session.tmpPath, () => cleanupDownload(transferId));
+  const atEof = !range || range.end >= session.size;
+  return streamFileRange(session.tmpPath, range ?? null, () => {
+    if (atEof) cleanupDownload(transferId);
+  });
 }
 
 export async function appendUpload(
   transferId: string,
+  offset: number,
   bytes: Uint8Array
 ): Promise<{ ok: true; received: number } | { ok: false; code: string }> {
   const session = getUploadSession(transferId);
   if (!session) return { ok: false, code: 'not_found' };
-  const res = await appendUploadChunkAsync(transferId, session.received, bytes);
+  const res = await writeUploadBytes(transferId, offset, bytes);
   if (!res.ok) {
     if (res.reason === 'too_large') return { ok: false, code: 'too_large' };
     if (res.reason === 'not_found') return { ok: false, code: 'not_found' };
@@ -93,8 +105,8 @@ export function abortTransfer(transferId: string): void {
 }
 
 export const filesBulkHooks: FilesBulkHooks = {
-  getTransferOwner,
-  openDownload,
-  appendUpload,
-  abortTransfer,
+  status: getTransferOwner,
+  writeRange: appendUpload,
+  openRange: openDownload,
+  abort: abortTransfer,
 };

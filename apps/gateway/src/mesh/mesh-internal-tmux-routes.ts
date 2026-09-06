@@ -5,6 +5,7 @@ import { getDeviceById } from '../db';
 import type { PaneInfo } from '../tmux-client/capture-history';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { isTmuxPaneId } from '../tmux-client/snapshot-format';
+import { createMeshInternalTransferRoutes } from '../transfer/mesh-routes';
 import { createMeshInternalNotificationRoutes } from './mesh-internal-notifications-routes';
 import { readMeshPeerMarker } from './peer-request-marker';
 import { jsonError } from './session-middleware';
@@ -192,7 +193,11 @@ export async function handleMeshInternalTmuxRequest(
     return denied;
   }
   const path = new URL(req.url).pathname;
-  const routes = [...createMeshInternalTmuxRoutes(deps), ...createMeshInternalNotificationRoutes()];
+  const routes = [
+    ...createMeshInternalTmuxRoutes(deps),
+    ...createMeshInternalNotificationRoutes(),
+    ...createMeshInternalTransferRoutes(),
+  ];
   const matched = dispatchRoutes(req, path, routes, { path });
   if (matched) {
     return matched;

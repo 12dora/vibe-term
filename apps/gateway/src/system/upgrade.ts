@@ -14,6 +14,7 @@ import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
 import { errorMessage, releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
+import { partPathOf, resumableSink } from '@tmex/transfer/node';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
 import { type InstallInfo, getInstallInfo } from './install-info';
 import {
@@ -30,10 +31,10 @@ import {
   type StagedPackageRecord,
   type StagedPackageStatusResult,
   fileSizeOrZero,
-  resumeStagedPart,
+  stageFailureToResult,
   stagedPartExpired,
   stagedPartPath,
-  truncatedTransfer,
+  stagedSinkDescriptor,
 } from './upgrade-staging';
 
 export {
@@ -376,92 +377,28 @@ export class UpgradeController {
     await this.repairStagingArtifacts(installDir, version);
     const stagedDir = join(installDir, 'staging', 'staged');
     await mkdir(stagedDir, { recursive: true, mode: 0o700 });
-    const partPath = stagedPartPath(stagedDir, version, expected);
     const maxBytes = this.deps.maxPackageBytes ?? STAGED_PACKAGE_MAX_BYTES;
-    const hash = createHash('sha256');
-    const resumed = await resumeStagedPart(partPath, opts?.offset ?? 0, maxBytes, hash);
-    if (!resumed.ok) return resumed.result;
+    const descriptor = stagedSinkDescriptor({ stagedDir, version, sha256: expected, maxBytes });
+    const offset = opts?.offset ?? 0;
+    const declared =
+      opts?.expectedBytes !== undefined ? Math.max(0, opts.expectedBytes - offset) : undefined;
 
-    const received = await this.receiveStagedBody({
-      body,
-      partPath,
-      offset: resumed.offset,
-      maxBytes,
-      hash,
+    // 同一个包的续传：上一条 PUT 多半挂在已经死掉的链路上，交出取消句柄让它被顶掉。
+    const written = await resumableSink.write(descriptor, body, {
+      offset,
+      contentLength: declared,
+      registerCancel: (cancel) => {
+        this.stagingPreempt = cancel;
+      },
     });
-    if (!received.ok) return received.result;
-    const truncated = truncatedTransfer(received.bytes, opts?.expectedBytes);
-    if (truncated) {
-      // 半截包留在盘上等下一次续传，别把已经收到的十几兆一起扔掉。
-      return { ok: false, status: 500, code: 'PACKAGE_INCOMPLETE', receivedBytes: received.bytes };
-    }
-    if (received.digest !== expected) {
-      await rm(partPath, { force: true }).catch(() => {});
-      return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
-    }
+    this.stagingPreempt = null;
+    if (!written.ok) return stageFailureToResult(written);
     return this.commitStagedPackage(installDir, {
       version,
       sha256: expected,
-      bytes: received.bytes,
-      partPath,
+      bytes: written.receivedBytes,
+      partPath: partPathOf(descriptor),
     });
-  }
-
-  /**
-   * 收包主循环。链路中断（read 抛错 / 被同包的新 PUT 顶掉）只关文件、**保留 `.part`**，
-   * 下一次 PUT 带 offset 接着写；只有超限这种确定性失败才把半成品删掉。
-   */
-  private async receiveStagedBody(input: {
-    body: ReadableStream<Uint8Array>;
-    partPath: string;
-    offset: number;
-    maxBytes: number;
-    hash: ReturnType<typeof createHash>;
-  }): Promise<
-    { ok: true; bytes: number; digest: string } | { ok: false; result: StagePackageResult }
-  > {
-    const { body, partPath, offset, maxBytes, hash } = input;
-    let bytes = offset;
-    const reader = body.getReader();
-    let preempted = false;
-    this.stagingPreempt = () => {
-      preempted = true;
-      void reader.cancel().catch(() => {});
-    };
-    let fh: Awaited<ReturnType<typeof open>> | null = null;
-    try {
-      fh = await open(partPath, offset > 0 ? 'a' : 'w', 0o600);
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (!value?.byteLength) continue;
-        bytes += value.byteLength;
-        if (bytes > maxBytes) {
-          await fh.close().catch(() => {});
-          fh = null;
-          await rm(partPath, { force: true });
-          try {
-            reader.releaseLock();
-          } catch {
-            // already released
-          }
-          return { ok: false, result: { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' } };
-        }
-        hash.update(value);
-        await fh.write(value);
-      }
-      await fh.close();
-      fh = null;
-    } catch {
-      await fh?.close().catch(() => {});
-      return { ok: false, result: { ok: false, status: 500, code: 'STAGE_FAILED' } };
-    } finally {
-      this.stagingPreempt = null;
-    }
-    if (preempted) {
-      return { ok: false, result: { ok: false, status: 500, code: 'STAGE_FAILED' } };
-    }
-    return { ok: true, bytes, digest: hash.digest('hex') };
   }
 
   private async commitStagedPackage(

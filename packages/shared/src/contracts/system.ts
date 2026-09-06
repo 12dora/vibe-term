@@ -1,5 +1,7 @@
 // 系统信息与自更新契约
 
+import type { TransferCapability } from './transfer';
+
 /** 部署方式：launchd（macOS）/ systemd（Linux）/ none（非 CLI 安装，如手动部署/dev） */
 export type GatewayDeployment = 'launchd' | 'systemd' | 'none';
 
@@ -40,6 +42,13 @@ export interface SystemInfo {
    * `PUT` 带 `offset` 从该处续写，链路中断不再丢掉已收到的部分。
    */
   upgradeCapabilities?: string[];
+  /**
+   * 本节点支持的文件传输能力。旧节点无此字段，按「只支持顺序追加上传」处理。
+   * `'transfer-v2'`：上传会话走可续传 sink（`PUT /api/files/upload/:id` 接受 `offset`/`length`，
+   * 下载内容支持 `Range`），失败按偏移续传而不是整包重来。
+   * `'transfer-ranged-parallel'`：接受乱序区间写入，可以开多条并行流。
+   */
+  transferCapabilities?: TransferCapability[];
 }
 
 /** 检查更新结果 */

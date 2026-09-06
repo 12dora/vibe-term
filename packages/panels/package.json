@@ -39,6 +39,7 @@
     "@tmex/shared": "workspace:*",
     "@tmex/stores": "workspace:*",
     "@tmex/terminal-ui": "workspace:*",
+    "@tmex/transfer": "workspace:*",
     "@tmex/theme": "workspace:*",
     "@tmex/ui": "workspace:*",
     "@tmex/ws-client": "workspace:*",

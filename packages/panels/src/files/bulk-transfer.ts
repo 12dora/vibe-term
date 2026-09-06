@@ -30,6 +30,7 @@ import { parseError } from '@tmex/api-client/file-errors';
 import { readNdjsonStream } from '@tmex/api-client/ndjson-stream';
 import type { TransferOpts } from '@tmex/api-client/transfer-types';
 import type { UploadCommitEvent, UploadInitRequest, UploadInitResponse } from '@tmex/shared';
+import { ProgressTracker } from '@tmex/transfer';
 import { getBulkClient } from '@tmex/ws-client/direct/bulk-client';
 
 /** 本次传输实际走的通道：`direct` = 浏览器↔node 直连，`relay` = 经 hub 中转的 REST。 */
@@ -165,7 +166,7 @@ async function uploadViaBulk(
 
     // leg1：浏览器 → node（直连 DataChannel）
     onLeg?.(1, { pct: total === 0 ? 100 : 0, detail: detail(0) });
-    const startedAt = performance.now();
+    const tracker = new ProgressTracker({ totalBytes: total });
     // 送出的字节数必须与 init 登记的一致：多了 bulk 客户端自己会 abort，少了 node 会回
     // `{ok:false, invalid}`；这里再自己核一遍，避免任何一侧漏判后把截断文件 commit 上去。
     let sentBytes = 0;
@@ -176,10 +177,10 @@ async function uploadViaBulk(
       signal,
       onProgress: (sent) => {
         sentBytes = sent;
-        const elapsed = (performance.now() - startedAt) / 1000;
+        tracker.set(sent);
         onLeg?.(1, {
           pct: total > 0 ? Math.round((sent / total) * 100) : 100,
-          rate: elapsed > 0 && sent > 0 ? formatRate(sent / elapsed) : undefined,
+          rate: tracker.ratePerSec() > 0 ? formatRate(tracker.ratePerSec()) : undefined,
           detail: detail(sent),
         });
       },
@@ -277,15 +278,15 @@ async function drainBulkDownload(
   const { onLeg, signal } = opts;
   const detail = (n: number) => formatBytesPair(n, size);
   onLeg?.(2, { pct: 0, detail: detail(0) });
-  const startedAt = performance.now();
+  const tracker = new ProgressTracker({ totalBytes: size });
   const stream = bulk.download({
     transferId: downloadId,
     signal,
     onProgress: (received) => {
-      const elapsed = (performance.now() - startedAt) / 1000;
+      tracker.set(received);
       onLeg?.(2, {
         pct: size > 0 ? Math.round((received / size) * 100) : 0,
-        rate: elapsed > 0 && received > 0 ? formatRate(received / elapsed) : undefined,
+        rate: tracker.ratePerSec() > 0 ? formatRate(tracker.ratePerSec()) : undefined,
         detail: detail(received),
       });
     },

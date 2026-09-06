@@ -1,0 +1,17 @@
+{
+  "name": "@tmex/transfer",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "files": ["src"],
+  "exports": {
+    ".": "./src/index.ts",
+    "./node": "./src/node.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.3"
+  }
+}

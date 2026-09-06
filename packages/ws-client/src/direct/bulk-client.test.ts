@@ -223,7 +223,7 @@ describe('BulkClient.upload', () => {
     expect(channel.closeCount).toBe(1);
   });
 
-  test('默认帧长为 64 KiB', async () => {
+  test('默认帧长为 16 KiB（与 node 侧一致）', async () => {
     const source = new FakeSource();
     const client = new BulkClient(source);
     const size = BULK_FRAME_SIZE + 5;

@@ -6,7 +6,6 @@ import {
   getUploadSession,
   removeUploadSession,
 } from '../files/transfer-session';
-import { t } from '../i18n';
 import { filesRoutes } from './files';
 import { dispatchRoutes } from './route';
 
@@ -85,7 +84,6 @@ describe('PUT /api/files/upload/:id bounded body', () => {
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: 'too_large', code: 'too_large' });
     expect(getUploadSession(s.id)?.received).toBe(0);
-    expect(readFileSync(s.tmpPath).byteLength).toBe(0);
   });
 
   test('body exactly at remaining size → 200 with received = size', async () => {
@@ -99,7 +97,7 @@ describe('PUT /api/files/upload/:id bounded body', () => {
       })
     )) as Response;
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ received: 10 });
+    expect(await res.json()).toEqual({ received: 10, complete: true });
     expect(getUploadSession(s.id)?.received).toBe(10);
     expect(readFileSync(s.tmpPath)).toEqual(Buffer.from(body));
   });
@@ -115,7 +113,6 @@ describe('PUT /api/files/upload/:id bounded body', () => {
     expect(res.status).toBe(413);
     expect(await res.json()).toEqual({ error: 'too_large', code: 'too_large' });
     expect(getUploadSession(s.id)?.received).toBe(0);
-    expect(readFileSync(s.tmpPath).byteLength).toBe(0);
   });
 
   test('happy path: sequential chunks written asynchronously, received matches bytes', async () => {
@@ -127,9 +124,8 @@ describe('PUT /api/files/upload/:id bounded body', () => {
       })
     )) as Response;
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ received: 3 });
+    expect(await first.json()).toEqual({ received: 3, complete: false });
     expect(getUploadSession(s.id)?.received).toBe(3);
-    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3]));
 
     const second = (await dispatch(
       new Request(`http://localhost/api/files/upload/${s.id}?offset=3`, {
@@ -138,34 +134,41 @@ describe('PUT /api/files/upload/:id bounded body', () => {
       })
     )) as Response;
     expect(second.status).toBe(200);
-    expect(await second.json()).toEqual({ received: 6 });
+    expect(await second.json()).toEqual({ received: 6, complete: true });
     expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
   });
 
-  test('concurrent offset=0 PUTs: one 200, the other 409', async () => {
+  test('乱序 / 并行区间：两段不相交的 PUT 都成功且字节一致', async () => {
     const s = session(6);
     const [a, b] = await Promise.all([
       dispatch(
-        new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
-          method: 'PUT',
-          body: new Uint8Array([1, 2, 3]),
-        })
-      ) as Promise<Response>,
-      dispatch(
-        new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+        new Request(`http://localhost/api/files/upload/${s.id}?offset=3&length=3`, {
           method: 'PUT',
           body: new Uint8Array([4, 5, 6]),
         })
       ) as Promise<Response>,
+      dispatch(
+        new Request(`http://localhost/api/files/upload/${s.id}?offset=0&length=3`, {
+          method: 'PUT',
+          body: new Uint8Array([1, 2, 3]),
+        })
+      ) as Promise<Response>,
     ]);
-    const statuses = [a.status, b.status].sort((x, y) => x - y);
-    expect(statuses).toEqual([200, 409]);
-    const winner = a.status === 200 ? a : b;
-    const loser = a.status === 409 ? a : b;
-    expect(await winner.json()).toEqual({ received: 3 });
-    expect(await loser.json()).toEqual({ error: t('apiError.invalidRequest') });
+    expect([a.status, b.status]).toEqual([200, 200]);
+    expect(getUploadSession(s.id)?.received).toBe(6);
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  test('length 查询参数与 content-length 不符时以 length 为准判定截断', async () => {
+    const s = session(10);
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/upload/${s.id}?offset=0&length=10`, {
+        method: 'PUT',
+        body: new Uint8Array([1, 2, 3]),
+      })
+    )) as Response;
+    expect(res.status).toBe(409);
     expect(getUploadSession(s.id)?.received).toBe(3);
-    expect(readFileSync(s.tmpPath).byteLength).toBe(3);
   });
 
   test('DELETE while PUT append is in flight does not report success', async () => {

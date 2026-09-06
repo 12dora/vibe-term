@@ -1,4 +1,5 @@
 import type { FileErrorCode } from '@tmex/shared';
+import { openRange } from '@tmex/transfer/node';
 import { json } from './http';
 
 const CODE_STATUS: Record<FileErrorCode, number> = {
@@ -49,16 +50,51 @@ export function attachmentHeaders(
     'Content-Length': String(size),
     'Content-Disposition': `attachment; filename="${ascii}"; filename*=UTF-8''${encoded}`,
     'Cache-Control': 'no-store',
+    'Accept-Ranges': 'bytes',
   };
 }
 
-export function streamTempFile(
-  tmpPath: string,
+/** 半开区间 `[start, end)`；`unsatisfiable` 对应 416。 */
+export type ContentRange = { start: number; end: number };
+
+/**
+ * 只支持单段 `bytes=a-b` / `bytes=a-` / `bytes=-n`——下载续传用不到多段。
+ * 没有 Range 头返回 null（整文件）。
+ */
+export function parseRangeHeader(
+  header: string | null,
+  size: number
+): ContentRange | null | 'unsatisfiable' {
+  if (!header) return null;
+  const match = /^bytes=(\d*)-(\d*)$/.exec(header.trim());
+  if (!match) return 'unsatisfiable';
+  const [, rawStart, rawEnd] = match;
+  if (!rawStart && !rawEnd) return 'unsatisfiable';
+  if (size <= 0) return 'unsatisfiable';
+  if (!rawStart) {
+    const suffix = Number(rawEnd);
+    if (!Number.isSafeInteger(suffix) || suffix <= 0) return 'unsatisfiable';
+    return { start: Math.max(0, size - suffix), end: size };
+  }
+  const start = Number(rawStart);
+  if (!Number.isSafeInteger(start) || start >= size) return 'unsatisfiable';
+  const end = rawEnd ? Number(rawEnd) + 1 : size;
+  if (!Number.isSafeInteger(end) || end <= start) return 'unsatisfiable';
+  return { start, end: Math.min(end, size) };
+}
+
+/**
+ * 区间流式读文件。`cleanupAfter` 在读完或出错时调用一次——只有读到文件尾才该回收，
+ * 否则续传的下一段就没得读了。
+ */
+export function streamFileRange(
+  path: string,
+  range: ContentRange | null,
   cleanupAfter: () => void
 ): ReadableStream<Uint8Array> | null {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {
-    reader = Bun.file(tmpPath).stream().getReader();
+    reader = openRange(path, range?.start ?? 0, range?.end).getReader();
   } catch {
     cleanupAfter();
     return null;
@@ -83,6 +119,13 @@ export function streamTempFile(
       cleanupAfter();
     },
   });
+}
+
+export function streamTempFile(
+  tmpPath: string,
+  cleanupAfter: () => void
+): ReadableStream<Uint8Array> | null {
+  return streamFileRange(tmpPath, null, cleanupAfter);
 }
 
 export function ndjsonResponse(handlers: {

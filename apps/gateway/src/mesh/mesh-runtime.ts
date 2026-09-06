@@ -35,6 +35,7 @@ import { bindPortMapNode } from '../portmap/binding';
 import { PortMapExportStore } from '../portmap/store';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
+import { setTransferMeshBridge, wireTransferBridge } from '../transfer/bridge';
 import type { GatewaySession } from '../ws/gateway-session';
 import { openAdaptedWsStream } from './adapted-ws-stream';
 import {
@@ -1314,6 +1315,7 @@ function wireMeshHttp(
   http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
   wireRelayRoutes(http, { d, config, nodeId: identity.nodeIdHex, userStore, uplink });
   d.httpHolder.runtime = http;
+  wireTransferBridge(identity.nodeIdHex, peers.transportOf, http.forwarder);
   setMeshAgentBridge({
     lookupNode(nodeId) {
       return lookupRemoteNode(
@@ -1466,6 +1468,7 @@ function assembleMeshRuntime(
         unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();
         setMeshAgentBridge(null);
+        setTransferMeshBridge(null);
         setMeshNotificationBridge(null);
         setMessagingMeshRuntime(null);
         await stopQuietly([

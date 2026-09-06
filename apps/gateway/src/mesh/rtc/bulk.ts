@@ -1,11 +1,13 @@
+import { BULK_FRAME_BYTES, BULK_MAX_FRAME_BYTES, iterateFrames } from '@tmex/transfer';
 import type { FilesBulkHooks } from '../../api/files';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import type { DataChannelLike } from './native';
 import { copyBytes, sendBinary, toUint8Array } from './native';
 
 export const BULK_CHANNEL_PREFIX = 'bulk:';
-export const BULK_FRAME_SIZE = 16 * 1024;
-export const BULK_MAX_RECEIVED_FRAME_SIZE = 64 * 1024;
+/** 两个方向统一 16 KiB；接收侧仍放宽到 64 KiB 兼容老版本浏览器端。 */
+export const BULK_FRAME_SIZE = BULK_FRAME_BYTES;
+export const BULK_MAX_RECEIVED_FRAME_SIZE = BULK_MAX_FRAME_BYTES;
 export const BULK_IDLE_TIMEOUT_MS = 30_000;
 export const BULK_CONTROL_MAX_BYTES = 4096;
 export const BULK_UPLOAD_QUEUE_BUDGET_BYTES = 8 * 1024 * 1024;
@@ -82,13 +84,6 @@ function parseControlText(text: string): BulkControl | null {
   } catch {
     return null;
   }
-}
-
-function concatBytes(a: Uint8Array, b: Uint8Array): Uint8Array {
-  const out = new Uint8Array(a.byteLength + b.byteLength);
-  out.set(a, 0);
-  out.set(b, a.byteLength);
-  return out;
 }
 
 function maxMessageSize(dc: DataChannelLike): number {
@@ -231,7 +226,7 @@ export class BulkTransferService {
       this.fail(ch, 'invalid', { cleanup: false });
       return;
     }
-    const owner = this.files.getTransferOwner(transferId);
+    const owner = this.files.status(transferId);
     if (!owner) {
       this.fail(ch, 'not_found', { cleanup: false });
       return;
@@ -266,7 +261,7 @@ export class BulkTransferService {
       return;
     }
     try {
-      const res = await this.files.appendUpload(transferId, bytes);
+      const res = await this.files.writeRange(transferId, ch.received, bytes);
       if (ch.state !== 'put') return;
       if (!res.ok) {
         this.fail(ch, res.code, { cleanup: true });
@@ -292,7 +287,7 @@ export class BulkTransferService {
 
   private startGet(ch: BulkChannel): void {
     const transferId = ch.labelId;
-    const owner = this.files.getTransferOwner(transferId);
+    const owner = this.files.status(transferId);
     if (!owner) {
       this.fail(ch, 'not_found', { cleanup: false });
       return;
@@ -305,7 +300,7 @@ export class BulkTransferService {
       this.fail(ch, 'invalid', { cleanup: false });
       return;
     }
-    const stream = this.files.openDownload(transferId);
+    const stream = this.files.openRange(transferId);
     if (!stream) {
       this.fail(ch, 'not_found', { cleanup: false });
       return;
@@ -317,36 +312,23 @@ export class BulkTransferService {
   }
 
   private async pumpDownload(ch: BulkChannel, stream: ReadableStream<Uint8Array>): Promise<void> {
-    const reader = stream.getReader();
-    ch.cancelDownload = () => {
-      void reader.cancel();
-    };
-    let pending: Uint8Array = new Uint8Array(0);
+    const frames = iterateFrames(stream, BULK_FRAME_SIZE, {
+      onCancel: (cancel) => {
+        ch.cancelDownload = cancel;
+      },
+    });
     try {
-      while (ch.state === 'get' && ch.dc.isOpen()) {
+      for await (const frame of frames) {
         await this.waitDrain(ch);
         if (ch.state !== 'get' || !ch.dc.isOpen()) return;
-        const { done, value } = await reader.read();
-        if (done) {
-          if (pending.byteLength > 0) {
-            if (!(await this.sendFrame(ch, pending))) return;
-          }
-          if (ch.state === 'get' && ch.dc.isOpen()) {
-            if (!this.ensureVerified(ch)) return;
-            ch.state = 'eof';
-            this.clearIdle(ch);
-            sendJson(ch.dc, { op: 'eof' });
-          }
-          return;
-        }
-        if (!value || value.byteLength === 0) continue;
-        pending = concatBytes(pending, value);
         this.armIdle(ch);
-        while (pending.byteLength >= BULK_FRAME_SIZE) {
-          const frame = pending.subarray(0, BULK_FRAME_SIZE).slice();
-          pending = pending.subarray(BULK_FRAME_SIZE).slice();
-          if (!(await this.sendFrame(ch, frame))) return;
-        }
+        if (!(await this.sendFrame(ch, frame))) return;
+      }
+      if (ch.state === 'get' && ch.dc.isOpen()) {
+        if (!this.ensureVerified(ch)) return;
+        ch.state = 'eof';
+        this.clearIdle(ch);
+        sendJson(ch.dc, { op: 'eof' });
       }
     } catch {
       if (ch.state === 'get') this.fail(ch, 'unknown', { cleanup: true });
@@ -426,7 +408,7 @@ export class BulkTransferService {
     }
     if (opts.cleanup && ch.transferId) {
       try {
-        this.files.abortTransfer(ch.transferId);
+        this.files.abort(ch.transferId);
       } catch {
         // best-effort
       }

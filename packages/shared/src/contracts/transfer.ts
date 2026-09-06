@@ -112,7 +112,19 @@ export interface ListTransferJobsResponse {
 /** `GET /api/transfer/jobs/:id/events` NDJSON 事件 */
 export type TransferJobEvent =
   | { type: 'snapshot'; job: TransferJobSnapshot }
-  | { type: 'progress'; jobId: string; currentIndex: number; progress: TransferProgress; updatedAt: number }
+  | {
+      type: 'progress';
+      jobId: string;
+      currentIndex: number;
+      progress: TransferProgress;
+      updatedAt: number;
+    }
   | { type: 'item'; jobId: string; index: number; item: TransferJobItem }
-  | { type: 'state'; jobId: string; state: TransferJobState; error?: TransferErrorCode; errorDetail?: string }
+  | {
+      type: 'state';
+      jobId: string;
+      state: TransferJobState;
+      error?: TransferErrorCode;
+      errorDetail?: string;
+    }
   | { type: 'end' };

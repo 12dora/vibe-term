@@ -1,8 +1,5 @@
-// 远程升级作业的收发管道：请求脱壳、包体读流、退避睡眠、上游错误摘要。
+// 远程升级作业的收发管道：请求脱壳、退避睡眠、上游错误摘要（包体读流已并入 `@tmex/transfer/node`）。
 // 都是与作业状态机无关的纯管道，单独放一处让状态机文件只剩流程。
-
-import { createReadStream, statSync } from 'node:fs';
-import { Readable } from 'node:stream';
 
 /** 作业跑在原请求之外，只带鉴权必需的头，避免把已关闭请求的 body / signal 拖进来。 */
 export function detachRequest(req: Request): Request {
@@ -12,21 +9,6 @@ export function detachRequest(req: Request): Request {
   const origin = req.headers.get('origin');
   if (origin) headers.set('origin', origin);
   return new Request(req.url, { headers });
-}
-
-/** `start` 用于续传：只读没推过去的那一段。 */
-export function fileReadableStream(path: string, start = 0): ReadableStream<Uint8Array> {
-  const size = statSync(path).size;
-  if (size === 0 || start >= size) {
-    return new ReadableStream({
-      start(controller) {
-        controller.close();
-      },
-    });
-  }
-  return Readable.toWeb(
-    start > 0 ? createReadStream(path, { start }) : createReadStream(path)
-  ) as unknown as ReadableStream<Uint8Array>;
 }
 
 export function abortableSleep(ms: number, signal: AbortSignal): Promise<void> {

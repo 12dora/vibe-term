@@ -80,7 +80,7 @@ function createHarness() {
   }
 
   const hooks: FilesBulkHooks = {
-    getTransferOwner(transferId) {
+    status(transferId) {
       const up = uploads.get(transferId);
       if (up) {
         return {
@@ -101,7 +101,7 @@ function createHarness() {
       }
       return null;
     },
-    openDownload(transferId) {
+    openRange(transferId) {
       const down = downloads.get(transferId);
       if (!down) return null;
       down.streamOpened = true;
@@ -143,7 +143,7 @@ function createHarness() {
         },
       });
     },
-    async appendUpload(transferId, bytes) {
+    async writeRange(transferId, _offset, bytes) {
       const up = uploads.get(transferId);
       if (!up) return { ok: false, code: 'not_found' };
       if (up.received + bytes.byteLength > up.expectedSize) {
@@ -153,7 +153,7 @@ function createHarness() {
       up.received += bytes.byteLength;
       return { ok: true, received: up.received };
     },
-    abortTransfer(transferId) {
+    abort(transferId) {
       const up = uploads.get(transferId);
       if (up) {
         uploads.delete(transferId);
@@ -456,7 +456,7 @@ describe('BulkTransferService', () => {
     expect(BULK_IDLE_TIMEOUT_MS).toBe(30_000);
   });
 
-  test('put awaits a slow appendUpload before accepting done', async () => {
+  test('put awaits a slow writeRange before accepting done', async () => {
     const id = 'tx-await-put';
     const harness = createHarness();
     harnesses.push(harness);
@@ -464,10 +464,10 @@ describe('BulkTransferService', () => {
     const held = new Promise<void>((resolve) => {
       release = resolve;
     });
-    const orig = harness.hooks.appendUpload.bind(harness.hooks);
-    harness.hooks.appendUpload = async (transferId, bytes) => {
+    const orig = harness.hooks.writeRange.bind(harness.hooks);
+    harness.hooks.writeRange = async (transferId, offset, bytes) => {
       await held;
-      return orig(transferId, bytes);
+      return orig(transferId, offset, bytes);
     };
     const service = new BulkTransferService({ files: harness.hooks });
     services.push(service);
@@ -543,15 +543,15 @@ describe('BulkTransferService', () => {
     let queued = 0;
     let maxQueued = 0;
     const gates: Array<() => void> = [];
-    const orig = harness.hooks.appendUpload.bind(harness.hooks);
-    harness.hooks.appendUpload = async (transferId, bytes) => {
+    const orig = harness.hooks.writeRange.bind(harness.hooks);
+    harness.hooks.writeRange = async (transferId, offset, bytes) => {
       queued += bytes.byteLength;
       maxQueued = Math.max(maxQueued, queued);
       await new Promise<void>((resolve) => {
         gates.push(resolve);
       });
       queued -= bytes.byteLength;
-      return orig(transferId, bytes);
+      return orig(transferId, offset, bytes);
     };
     const service = new BulkTransferService({
       files: harness.hooks,
@@ -580,10 +580,10 @@ describe('BulkTransferService', () => {
     const id = 'tx-idle-progress';
     const harness = createHarness();
     harnesses.push(harness);
-    const orig = harness.hooks.appendUpload.bind(harness.hooks);
-    harness.hooks.appendUpload = async (transferId, bytes) => {
+    const orig = harness.hooks.writeRange.bind(harness.hooks);
+    harness.hooks.writeRange = async (transferId, offset, bytes) => {
       await Bun.sleep(35);
-      return orig(transferId, bytes);
+      return orig(transferId, offset, bytes);
     };
     const service = new BulkTransferService({
       files: harness.hooks,

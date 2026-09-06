@@ -1,182 +1,125 @@
-import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync } from 'node:fs';
-import * as fsPromises from 'node:fs/promises';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
-  appendUploadChunkAsync,
   createUploadSession,
   getUploadSession,
   removeUploadSession,
   sweepOrphanTransferTemps,
+  writeUploadBytes,
+  writeUploadRange,
 } from './transfer-session';
 
-describe('upload session chunking', () => {
-  test('sequential append; rejects bad offset / overflow / missing session', async () => {
-    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 6 });
-    expect(existsSync(s.tmpPath)).toBe(true);
+function streamOf(bytes: Uint8Array): ReadableStream<Uint8Array> {
+  return new ReadableStream<Uint8Array>({
+    start(controller) {
+      controller.enqueue(bytes);
+      controller.close();
+    },
+  });
+}
 
-    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
+describe('upload session ranged writes', () => {
+  const ids: string[] = [];
+  afterEach(() => {
+    for (const id of ids) removeUploadSession(id);
+    ids.length = 0;
+  });
+
+  function session(size: number) {
+    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size });
+    ids.push(s.id);
+    return s;
+  }
+
+  test('sequential ranges fill the file and rename it into place on completion', async () => {
+    const s = session(6);
+    // 收满之前只有 `.part`，最终文件到位才代表可以 commit
+    expect(existsSync(s.tmpPath)).toBe(false);
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
       ok: true,
       received: 3,
+      complete: false,
     });
-    // 非顺序 offset 被拒
-    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([9]))).toEqual({
-      ok: false,
-      reason: 'bad_offset',
+    expect(getUploadSession(s.id)?.received).toBe(3);
+    expect(await writeUploadBytes(s.id, 3, new Uint8Array([4, 5, 6]))).toEqual({
+      ok: true,
+      received: 6,
+      complete: true,
     });
-    // 超出声明 size 被拒
-    expect(await appendUploadChunkAsync(s.id, 3, new Uint8Array([4, 5, 6, 7]))).toEqual({
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  test('out-of-order ranges reassemble', async () => {
+    const s = session(6);
+    expect(await writeUploadBytes(s.id, 3, new Uint8Array([4, 5, 6]))).toMatchObject({
+      ok: true,
+      received: 3,
+      complete: false,
+    });
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1, 2, 3]))).toMatchObject({
+      ok: true,
+      complete: true,
+    });
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4, 5, 6]));
+  });
+
+  test('parallel disjoint ranges are byte identical to a sequential write', async () => {
+    const s = session(4096);
+    const bytes = new Uint8Array(4096);
+    for (let i = 0; i < bytes.length; i += 1) bytes[i] = i % 251;
+    await Promise.all(
+      [0, 1024, 2048, 3072].map((offset) =>
+        writeUploadRange(s.id, {
+          offset,
+          contentLength: 1024,
+          body: streamOf(bytes.subarray(offset, offset + 1024)),
+        })
+      )
+    );
+    expect(getUploadSession(s.id)?.received).toBe(4096);
+    expect(getUploadSession(s.id)?.complete).toBe(true);
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from(bytes));
+  });
+
+  test('a range past the declared size is rejected', async () => {
+    const s = session(4);
+    expect(await writeUploadBytes(s.id, 3, new Uint8Array([1, 2, 3]))).toEqual({
       ok: false,
       reason: 'too_large',
     });
-    // 正确补齐
-    expect(await appendUploadChunkAsync(s.id, 3, new Uint8Array([4, 5, 6]))).toEqual({
-      ok: true,
-      received: 6,
-    });
-    expect(getUploadSession(s.id)?.received).toBe(6);
+    expect(getUploadSession(s.id)?.received).toBe(0);
+  });
 
+  test('a body shorter than the declared length reports incomplete and keeps what landed', async () => {
+    const s = session(10);
+    expect(
+      await writeUploadRange(s.id, {
+        offset: 0,
+        contentLength: 10,
+        body: streamOf(new Uint8Array([1, 2, 3])),
+      })
+    ).toEqual({ ok: false, reason: 'incomplete' });
+    expect(getUploadSession(s.id)?.received).toBe(3);
+  });
+
+  test('a removed session rejects further writes', async () => {
+    const s = session(4);
     const tmpDir = s.tmpDir;
     removeUploadSession(s.id);
     expect(getUploadSession(s.id)).toBeUndefined();
     expect(existsSync(tmpDir)).toBe(false);
-    expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1]))).toEqual({
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1]))).toEqual({
       ok: false,
       reason: 'not_found',
     });
   });
 
-  test('appendUploadChunkAsync writes then advances received', async () => {
-    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 4 });
-    const pending = appendUploadChunkAsync(s.id, 0, new Uint8Array([9, 8]));
-    expect(pending).toBeInstanceOf(Promise);
-    expect(await pending).toEqual({ ok: true, received: 2 });
-    expect(getUploadSession(s.id)?.received).toBe(2);
-    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([9, 8]));
-    expect(await appendUploadChunkAsync(s.id, 2, new Uint8Array([7, 6]))).toEqual({
-      ok: true,
-      received: 4,
-    });
-    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([9, 8, 7, 6]));
-    removeUploadSession(s.id);
-  });
-
-  test('concurrent offset=0 appends: one succeeds, the other is bad_offset', async () => {
-    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 6 });
-    const a = new Uint8Array([1, 1, 1]);
-    const b = new Uint8Array([2, 2, 2]);
-    const [r1, r2] = await Promise.all([
-      appendUploadChunkAsync(s.id, 0, a),
-      appendUploadChunkAsync(s.id, 0, b),
-    ]);
-    const results = [r1, r2];
-    const ok = results.filter((r) => r.ok);
-    const bad = results.filter((r) => !r.ok);
-    expect(ok).toEqual([{ ok: true, received: 3 }]);
-    expect(bad).toEqual([{ ok: false, reason: 'bad_offset' }]);
-    expect(getUploadSession(s.id)?.received).toBe(3);
-    const onDisk = readFileSync(s.tmpPath);
-    expect(onDisk.byteLength).toBe(3);
-    const winner = r1.ok ? a : b;
-    expect(onDisk).toEqual(Buffer.from(winner));
-    removeUploadSession(s.id);
-  });
-
-  describe('async append fs edge cases', () => {
-    const realOpen = fsPromises.open;
-    const spies: Array<ReturnType<typeof spyOn>> = [];
-    afterEach(() => {
-      for (const spy of spies) spy.mockRestore();
-      spies.length = 0;
-    });
-
-    function mockOpen(
-      wrap: (fh: Awaited<ReturnType<typeof realOpen>>) => {
-        write: (buf: Uint8Array) => Promise<{ bytesWritten: number; buffer: Uint8Array }>;
-        truncate: (len?: number) => Promise<void>;
-        close: () => Promise<void>;
-      }
-    ) {
-      spies.push(
-        spyOn(fsPromises, 'open').mockImplementation(async (path, flags) => {
-          const fh = await realOpen(path, flags);
-          return wrap(fh) as Awaited<ReturnType<typeof realOpen>>;
-        })
-      );
-    }
-
-    test('loops until the full buffer is persisted', async () => {
-      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 4 });
-      mockOpen((fh) => ({
-        write: async (buf) => {
-          const n = Math.min(1, buf.byteLength);
-          await fh.write(buf.subarray(0, n));
-          return { bytesWritten: n, buffer: buf };
-        },
-        truncate: (len) => fh.truncate(len),
-        close: () => fh.close(),
-      }));
-      expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3, 4]))).toEqual({
-        ok: true,
-        received: 4,
-      });
-      expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3, 4]));
-      removeUploadSession(s.id);
-    });
-
-    test('write half then throw truncates back to received', async () => {
-      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 8 });
-      mockOpen((fh) => ({
-        write: async (buf) => {
-          const n = Math.max(1, Math.floor(buf.byteLength / 2));
-          await fh.write(buf.subarray(0, n));
-          throw new Error('ENOSPC');
-        },
-        truncate: (len) => fh.truncate(len),
-        close: () => fh.close(),
-      }));
-      await expect(appendUploadChunkAsync(s.id, 0, new Uint8Array(8).fill(9))).rejects.toThrow(
-        'ENOSPC'
-      );
-      expect(statSync(s.tmpPath).size).toBe(0);
-      expect(getUploadSession(s.id)?.received).toBe(0);
-      spies[0]?.mockRestore();
-      spies.length = 0;
-      expect(await appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
-        ok: true,
-        received: 3,
-      });
-      expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3]));
-      removeUploadSession(s.id);
-    });
-
-    test('cancel while append is in flight does not report success', async () => {
-      const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size: 8 });
-      let releaseWrite!: () => void;
-      const held = new Promise<void>((resolve) => {
-        releaseWrite = resolve;
-      });
-      let startedWrite!: () => void;
-      const started = new Promise<void>((resolve) => {
-        startedWrite = resolve;
-      });
-      mockOpen((fh) => ({
-        write: async (buf) => {
-          startedWrite();
-          await held;
-          return fh.write(buf);
-        },
-        truncate: (len) => fh.truncate(len),
-        close: () => fh.close(),
-      }));
-      const pending = appendUploadChunkAsync(s.id, 0, new Uint8Array([1, 2, 3, 4]));
-      await started;
-      removeUploadSession(s.id);
-      releaseWrite();
-      expect(await pending).toEqual({ ok: false, reason: 'cancelled' });
-      expect(getUploadSession(s.id)).toBeUndefined();
-    });
+  test('a zero-byte upload is complete on creation', () => {
+    const s = session(0);
+    expect(s.complete).toBe(true);
+    expect(readFileSync(s.tmpPath).byteLength).toBe(0);
   });
 
   test('sweepOrphanTransferTemps 仅清理超期的传输临时目录', () => {

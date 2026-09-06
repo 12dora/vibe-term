@@ -24,6 +24,7 @@ import {
 } from './rsync';
 import { type FileOpResult, fail, ok, withDeviceRsync } from './rsync-operation';
 import { type RsyncDeviceSpec, rsyncCopyArgs, rsyncListArgs, rsyncUploadArgs } from './ssh-command';
+import { transferMaxBytesNow } from './transfer-limit';
 
 export type { FileOpResult };
 
@@ -133,14 +134,32 @@ function looksBinary(buf: Buffer): boolean {
 async function withNormalizedRsync<T>(
   rootId: string,
   inputPath: string | null,
-  fn: (ctx: { spec: RsyncDeviceSpec; path: string }) => Promise<FileOpResult<T>>
+  fn: (ctx: { spec: RsyncDeviceSpec; path: string; device: Device }) => Promise<FileOpResult<T>>
 ): Promise<FileOpResult<T>> {
   const r = resolveContext(rootId);
   if (!r.ok) return fail(r.code);
   const { root, device } = r.ctx;
   const norm = checkAndNormalize(device, root.path, inputPath ?? root.path);
   if (!norm.ok) return fail(norm.code);
-  return withDeviceRsync(device, (spec) => fn({ spec, path: norm.path }));
+  return withDeviceRsync(device, (spec) => fn({ spec, path: norm.path, device }));
+}
+
+/**
+ * 本机设备的下载：文件本来就在本地盘上，再 rsync 复制一份到 tmpdir 是白花一遍 IO。
+ * 直接把真实路径交出去，`cleanup` 自然是空操作——绝不能删用户的原文件。
+ */
+function localFileForDownload(path: string): FileOpResult<PulledFile> {
+  let size: number;
+  try {
+    const st = statSync(path);
+    if (st.isDirectory()) return fail('is_directory');
+    size = st.size;
+  } catch {
+    return fail('not_found');
+  }
+  if (size > config.transferMaxBytes) return fail('too_large');
+  const name = posixBasename(path);
+  return ok<PulledFile>({ tmpPath: path, size, name, mime: mimeOf(name), cleanup: () => {} });
 }
 
 export async function listDirectory(
@@ -403,7 +422,11 @@ export async function pullFileFromDevice(
     const st = await statViaRsync(spec, path);
     if (!st.ok) return st;
     if (st.data.type === 'dir') return fail('is_directory');
-    if (st.data.size != null && st.data.size > config.transferMaxBytes) return fail('too_large');
+    // 生效上限 = 本机配置与中继下发的单文件上限取小；detail 带上限，前端可直接提示。
+    const maxBytes = transferMaxBytesNow(config.transferMaxBytes);
+    if (st.data.size != null && st.data.size > maxBytes) {
+      return fail('too_large', String(maxBytes));
+    }
 
     const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
     const dest = join(dir, 'f');
@@ -438,9 +461,9 @@ export async function pullFileFromDevice(
     } catch {
       // 退回 stat 大小
     }
-    if (size > config.transferMaxBytes) {
+    if (size > maxBytes) {
       cleanup();
-      return fail('too_large');
+      return fail('too_large', String(maxBytes));
     }
     return ok<PulledFile>({ tmpPath: dest, size, name, mime: mimeOf(name), cleanup });
   });

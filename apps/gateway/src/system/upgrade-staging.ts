@@ -1,17 +1,21 @@
-// 暂存升级包的落盘细节：`.part` 命名、断点续传的偏移校验与前缀重算。
-// 从 upgrade.ts 抽出来是因为这几步与升级状态机无关，且要单独讲清楚续传的判定。
+// 暂存升级包的落盘细节。字节层（`.part` 命名、偏移校验、前缀重算、截断判定、落位）
+// 已经统一到 `@tmex/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
-import type { createHash } from 'node:crypto';
-import { createReadStream, statSync } from 'node:fs';
-import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { releaseTarballName } from '@tmex/shared';
+import {
+  PART_TTL_MS,
+  type SinkDescriptor,
+  type SinkWriteResult,
+  deterministicPartPath,
+  fileExpired,
+  fileSizeOrZero,
+} from '@tmex/transfer/node';
+
+export { fileSizeOrZero };
 
 /** 断点续传的半成品保留期：超过这个时长没人接着传就当垃圾清掉。 */
-export const STAGED_PART_TTL_MS = 24 * 60 * 60 * 1000;
-const RESUME_HASH_CHUNK_BYTES = 1024 * 1024;
-
-type Hash = ReturnType<typeof createHash>;
+export const STAGED_PART_TTL_MS = PART_TTL_MS;
 
 export type StagedPackageRecord = {
   version: string;
@@ -45,80 +49,54 @@ export type StagedPackageStatusResult =
 
 /** `.part` 名按 (version, sha256) 确定，续传才找得回上一次写到哪。 */
 export function stagedPartPath(stagedDir: string, version: string, sha256: string): string {
-  return join(stagedDir, `${releaseTarballName(version)}.part-${sha256.slice(0, 16)}`);
-}
-
-export function fileSizeOrZero(path: string): number {
-  try {
-    return statSync(path).size;
-  } catch {
-    return 0;
-  }
+  return deterministicPartPath(join(stagedDir, releaseTarballName(version)), sha256);
 }
 
 export function stagedPartExpired(path: string, now: number): boolean {
-  try {
-    return now - statSync(path).mtimeMs > STAGED_PART_TTL_MS;
-  } catch {
-    return true;
-  }
+  return fileExpired(path, now, STAGED_PART_TTL_MS);
 }
 
-/** 声明了 content-length 却没收满：链路中断，不是包坏了。 */
-export function truncatedTransfer(received: number, expected?: number): boolean {
-  if (expected === undefined || !Number.isFinite(expected) || expected <= 0) return false;
-  return received < expected;
+export function stagedSinkDescriptor(input: {
+  stagedDir: string;
+  version: string;
+  sha256: string;
+  maxBytes: number;
+}): SinkDescriptor {
+  return {
+    destPath: join(input.stagedDir, releaseTarballName(input.version)),
+    key: input.sha256,
+    sha256: input.sha256,
+    maxBytes: input.maxBytes,
+    mode: 'append',
+    fileMode: 0o600,
+  };
 }
 
-/** 续传时把已落盘的前缀重新过一遍 hash：流式读，内存占用与包大小无关。 */
-async function hashFilePrefix(path: string, length: number, hash: Hash): Promise<boolean> {
-  try {
-    const stream = createReadStream(path, {
-      start: 0,
-      end: length - 1,
-      highWaterMark: RESUME_HASH_CHUNK_BYTES,
-    });
-    let read = 0;
-    for await (const chunk of stream) {
-      const buf = chunk as Buffer;
-      read += buf.byteLength;
-      hash.update(buf);
-    }
-    return read === length;
-  } catch {
-    return false;
+/** 引擎的失败码 → 升级接口既有的 HTTP 语义。 */
+export function stageFailureToResult(
+  result: Extract<SinkWriteResult, { ok: false }>
+): StagePackageResult {
+  switch (result.code) {
+    case 'offset_mismatch':
+      return {
+        ok: false,
+        status: 409,
+        code: 'UPGRADE_OFFSET_MISMATCH',
+        receivedBytes: result.receivedBytes,
+      };
+    case 'too_large':
+      return { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' };
+    case 'incomplete':
+      // 半截包留在盘上等下一次续传，别把已经收到的十几兆一起扔掉。
+      return {
+        ok: false,
+        status: 500,
+        code: 'PACKAGE_INCOMPLETE',
+        receivedBytes: result.receivedBytes,
+      };
+    case 'checksum_mismatch':
+      return { ok: false, status: 400, code: 'PACKAGE_SHA256_MISMATCH' };
+    default:
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
   }
-}
-
-/**
- * 落笔前的续传校验：`offset` 必须与 `.part` 当前长度严格一致，否则回 409 并带上真实偏移，
- * 让推送端重新对齐；偏移为 0 一律从头覆写。
- */
-export async function resumeStagedPart(
-  partPath: string,
-  rawOffset: number,
-  maxBytes: number,
-  hash: Hash
-): Promise<{ ok: true; offset: number } | { ok: false; result: StagePackageResult }> {
-  const offset = Number.isFinite(rawOffset) ? Math.max(0, Math.trunc(rawOffset)) : 0;
-  if (offset === 0) return { ok: true, offset: 0 };
-  const onDisk = fileSizeOrZero(partPath);
-  if (onDisk !== offset) {
-    return {
-      ok: false,
-      result: { ok: false, status: 409, code: 'UPGRADE_OFFSET_MISMATCH', receivedBytes: onDisk },
-    };
-  }
-  if (offset > maxBytes) {
-    await rm(partPath, { force: true }).catch(() => {});
-    return { ok: false, result: { ok: false, status: 413, code: 'PACKAGE_TOO_LARGE' } };
-  }
-  if (!(await hashFilePrefix(partPath, offset, hash))) {
-    await rm(partPath, { force: true }).catch(() => {});
-    return {
-      ok: false,
-      result: { ok: false, status: 409, code: 'UPGRADE_OFFSET_MISMATCH', receivedBytes: 0 },
-    };
-  }
-  return { ok: true, offset };
 }

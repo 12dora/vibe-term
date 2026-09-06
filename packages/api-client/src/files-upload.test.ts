@@ -6,7 +6,7 @@ function ndjsonText(lines: object[]): string {
   return `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`;
 }
 
-const PUT_URL = /\/api\/files\/upload\/([^/?]+)\?offset=(\d+)$/;
+const PUT_URL = /\/api\/files\/upload\/([^/?]+)\?offset=(\d+)&length=(\d+)$/;
 
 describe('uploadFileChunked', () => {
   test('按 chunkSize 顺序 PUT 分块，并透传 commit 的两段进度', async () => {
@@ -47,7 +47,7 @@ describe('uploadFileChunked', () => {
       new ApiClient('', transport)
     );
 
-    expect(puts).toEqual([
+    expect(puts.slice().sort((a, b) => a.offset - b.offset)).toEqual([
       { offset: 0, size: 4 },
       { offset: 4, size: 4 },
       { offset: 8, size: 2 },

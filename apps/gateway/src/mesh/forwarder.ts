@@ -233,30 +233,54 @@ export class Forwarder {
     this.bindStream(pump, stream, meta?.transport ?? null);
   }
 
+  /**
+   * peer 身份的节点间调用（`/api/mesh-internal/*`）。默认是一次性 JSON POST；
+   * 需要搬字节时给 `rawBody`（只能读一次，续传由调用方按偏移重开）。
+   */
   async forwardInternalHttp(
     nodeId: string,
     path: string,
     body: unknown,
-    signal?: AbortSignal
+    signal?: AbortSignal,
+    input?: {
+      method?: string;
+      query?: string;
+      headers?: Record<string, string>;
+      rawBody?: ReadableStream<Uint8Array>;
+      /** rawBody 的上行进度（累计已读字节），节流后回调。 */
+      onProgress?: (uploadedBytes: number) => void;
+    }
   ): Promise<Response> {
     const abort = signal ?? new AbortController().signal;
-    const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
-    const bytes = new TextEncoder().encode(payload);
-    const streamBody = new ReadableStream<Uint8Array>({
-      start(controller) {
-        controller.enqueue(bytes);
-        controller.close();
-      },
-    });
+    const headers: Record<string, string> = { ...(input?.headers ?? {}) };
+    let streamBody: ReadableStream<Uint8Array> | null;
+    if (input?.rawBody) {
+      let uploaded = 0;
+      const progress = input.onProgress ? throttledProgress(input.onProgress) : null;
+      streamBody = countStreamBytes(input.rawBody, (n) => {
+        uploaded += n;
+        progress?.(uploaded);
+      });
+    } else {
+      const payload = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+      const bytes = new TextEncoder().encode(payload);
+      headers['content-type'] = headers['content-type'] ?? 'application/json';
+      streamBody = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(bytes);
+          controller.close();
+        },
+      });
+    }
     try {
       const link = await this.deps.peers.getLink(nodeId);
       return await this.deps.streams.openHttpStream(
         link,
         {
-          method: 'POST',
+          method: input?.method ?? 'POST',
           path,
-          query: '',
-          headers: { 'content-type': 'application/json' },
+          query: input?.query ?? '',
+          headers,
           origin: 'http://localhost',
           auth: null,
         },

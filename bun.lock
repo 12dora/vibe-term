@@ -58,6 +58,7 @@
         "@ai-sdk/openai-compatible": "^2.0.50",
         "@simplewebauthn/server": "13.3.3",
         "@tmex/shared": "workspace:*",
+        "@tmex/transfer": "workspace:*",
         "ai": "^6.0.203",
         "drizzle-orm": "^0.45.1",
         "ghostty-terminal": "workspace:*",
@@ -78,6 +79,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@tmex/shared": "workspace:*",
+        "@tmex/transfer": "workspace:*",
       },
       "devDependencies": {
         "typescript": "^5.7.3",
@@ -85,7 +87,7 @@
     },
     "packages/app": {
       "name": "tmex-cli",
-      "version": "1.1.33",
+      "version": "1.1.36",
       "bin": {
         "tmex": "./bin/tmex.js",
         "tmex-cli": "./bin/tmex.js",
@@ -132,6 +134,7 @@
         "@tmex/stores": "workspace:*",
         "@tmex/terminal-ui": "workspace:*",
         "@tmex/theme": "workspace:*",
+        "@tmex/transfer": "workspace:*",
         "@tmex/ui": "workspace:*",
         "@tmex/ws-client": "workspace:*",
         "highlight.js": "^11.11.1",
@@ -236,6 +239,13 @@
         "typescript": "^5.7.3",
       },
     },
+    "packages/transfer": {
+      "name": "@tmex/transfer",
+      "version": "0.1.0",
+      "devDependencies": {
+        "typescript": "^5.7.3",
+      },
+    },
     "packages/ui": {
       "name": "@tmex/ui",
       "version": "0.1.0",
@@ -261,6 +271,7 @@
       "version": "0.1.0",
       "dependencies": {
         "@tmex/shared": "workspace:*",
+        "@tmex/transfer": "workspace:*",
       },
       "devDependencies": {
         "typescript": "^5.7.3",
@@ -598,11 +609,13 @@
 
     "@tmex/theme": ["@tmex/theme@workspace:packages/theme"],
 
+    "@tmex/transfer": ["@tmex/transfer@workspace:packages/transfer"],
+
     "@tmex/ui": ["@tmex/ui@workspace:packages/ui"],
 
     "@tmex/ws-client": ["@tmex/ws-client@workspace:packages/ws-client"],
 
-    "@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
+    "@types/bun": ["@types/bun@1.4.1", "", { "dependencies": { "bun-types": "1.4.1" } }, "sha512-0AVGiTXGajf1rgKom3N+c5L7CBxuoyyv1i44M0nX4UDK0G/fnRAMiri93nHuVPIb429KKtAgj7HatVmmOjeQLA=="],
 
     "@types/d3": ["@types/d3@7.4.3", "", { "dependencies": { "@types/d3-array": "*", "@types/d3-axis": "*", "@types/d3-brush": "*", "@types/d3-chord": "*", "@types/d3-color": "*", "@types/d3-contour": "*", "@types/d3-delaunay": "*", "@types/d3-dispatch": "*", "@types/d3-drag": "*", "@types/d3-dsv": "*", "@types/d3-ease": "*", "@types/d3-fetch": "*", "@types/d3-force": "*", "@types/d3-format": "*", "@types/d3-geo": "*", "@types/d3-hierarchy": "*", "@types/d3-interpolate": "*", "@types/d3-path": "*", "@types/d3-polygon": "*", "@types/d3-quadtree": "*", "@types/d3-random": "*", "@types/d3-scale": "*", "@types/d3-scale-chromatic": "*", "@types/d3-selection": "*", "@types/d3-shape": "*", "@types/d3-time": "*", "@types/d3-time-format": "*", "@types/d3-timer": "*", "@types/d3-transition": "*", "@types/d3-zoom": "*" } }, "sha512-lZXZ9ckh5R8uiFVt8ogUNf+pIrK4EsWrx2Np75WvF/eTpJ0FMHNhjXk8CKEx/+gpHbNQyJWehbFaTvqmHWB3ww=="],
 
@@ -1364,7 +1377,7 @@
 
     "@tmex/terminal-ui/bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
 
-    "@types/bun/bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
+    "@types/bun/bun-types": ["bun-types@1.4.1", "", { "dependencies": { "@types/node": "*" } }, "sha512-loKuVrAFZKfEv+JvWkHRS9GW5IqLuLRjVXN9p+vZvBN86O5hf/pBZQ5hSoyipsrMmWObZBDvWnlmKvjKTM0PdA=="],
 
     "cytoscape-fcose/cose-base": ["cose-base@2.2.0", "", { "dependencies": { "layout-base": "^2.0.0" } }, "sha512-AzlgcsCbUMymkADOJtQm3wO9S3ltPfYOFD5033keQn9NJzIbtnZj+UdBJe7DYml/8TdbtHJW3j58SOnKhWY/5g=="],
 
@@ -1381,6 +1394,8 @@
     "playwright/fsevents": ["fsevents@2.3.2", "", { "os": "darwin" }, "sha512-xiqMQR4xAeHTuB9uWm+fFRcIOgKBMiOBP+eXiyT7jsgVCq1bkVygt00oASowB7EdtpOHaaPgKt812P9ab+DDKA=="],
 
     "source-map-support/source-map": ["source-map@0.6.1", "", {}, "sha512-UjgapumWlbMhkBgzT7Ykc5YXUT46F0iKu8SGXq0bcwP5dz/h0Plj6enJqjz1Zbq2l5WaqYnrVbwWOWMyF3F47g=="],
+
+    "tmex-cli/@types/bun": ["@types/bun@1.4.0", "", { "dependencies": { "bun-types": "1.4.0" } }, "sha512-K+lZULY23vRgK/CfTjFIV+tyifaNdSMlPh9j+6mQ/cLfpOznLyAuzgV/JQysyECpkBQLVMSyvjlr2fBUSA9wFQ=="],
 
     "tsyringe/tslib": ["tslib@1.14.1", "", {}, "sha512-Xni35NKzjgMrwevysHTCArtLDpPvye8zV/0E4EyYn43P7/7qvQwPh9BGkHewbMulVntbigmcT7rdX3BNo9wRJg=="],
 
@@ -1431,5 +1446,7 @@
     "cytoscape-fcose/cose-base/layout-base": ["layout-base@2.0.1", "", {}, "sha512-dp3s92+uNI1hWIpPGH3jK2kxE2lMjdXdr+DH8ynZHpd6PUlH6x6cbuXnoMmiNumznqaNO31xu9e79F0uuZ0JFg=="],
 
     "d3-sankey/d3-shape/d3-path": ["d3-path@1.0.9", "", {}, "sha512-VLaYcn81dtHVTjEHd8B+pbe9yHWpXKZUC87PzoFmsFrJqgFwDe/qxfp5MlfsfM1V5E/iVt0MmEbWQ7FVIXh/bg=="],
+
+    "tmex-cli/@types/bun/bun-types": ["bun-types@1.4.0", "", { "dependencies": { "@types/node": "*" } }, "sha512-iIKw23BspnQQYd3prITOBxeUsxBHnwzX6YJfGMuNOZzeNcMmVqzIIVGRm1l69ogaPQmb4wB6BN8mA5bE9YuC5Q=="],
   }
 }

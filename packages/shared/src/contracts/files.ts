@@ -136,6 +136,20 @@ export interface UploadInitRequest {
 export interface UploadInitResponse {
   uploadId: string;
   chunkSize: number;
+  /**
+   * 节点支持乱序区间写入（`PUT /api/files/upload/:id?offset=&length=`）。
+   * 旧节点无此字段，客户端退回单流顺序追加。
+   */
+  ranged?: boolean;
+}
+
+/** `GET /api/files/upload/:id`：断线重连后据此只补发缺口 */
+export interface UploadStatusResponse {
+  size: number;
+  received: number;
+  complete: boolean;
+  /** 已收区间 `[offset, length][]`，升序不重叠 */
+  ranges: Array<[number, number]>;
 }
 
 /** commit 阶段流式返回的 NDJSON 事件（rsync 推送进度 / 完成 / 失败） */

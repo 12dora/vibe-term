@@ -150,8 +150,8 @@ describe('uploadFileWithTransport', () => {
       'POST /api/files/upload/init',
       'DELETE /api/files/upload/u1',
       'POST /api/files/upload/init',
-      'PUT /api/files/upload/u2?offset=0',
-      'PUT /api/files/upload/u2?offset=1024',
+      'PUT /api/files/upload/u2?offset=0&length=1024',
+      'PUT /api/files/upload/u2?offset=1024&length=476',
       'POST /api/files/upload/u2/commit',
     ]);
     expect(gw.commits).toEqual(['u2']);
@@ -282,7 +282,7 @@ describe('uploadFileWithTransport', () => {
     });
     expect(path).toBe('relay');
     expect(resolved).toBe(0);
-    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0');
+    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0&length=10');
   });
 
   test('直连未就绪（isAvailable=false）时走 REST', async () => {
@@ -291,7 +291,7 @@ describe('uploadFileWithTransport', () => {
       resolveBulk: () => fakeBulk({ isAvailable: () => false }),
     });
     expect(path).toBe('relay');
-    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0');
+    expect(gw.calls).toContain('PUT /api/files/upload/u1?offset=0&length=10');
   });
 
   test('没有登记 bulk client 时走 REST', async () => {
