@@ -2222,6 +2222,7 @@
         "sameTarget": "Source and target are the same directory",
         "list": "Transfers",
         "listEmpty": "No transfers",
+        "untitled": "Transfer",
         "clearFinished": "Clear Finished",
         "cancel": "Cancel",
         "browser": "Browser",

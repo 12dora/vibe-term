@@ -2216,6 +2216,7 @@
         "sameTarget": "転送元と転送先が同じディレクトリです",
         "list": "転送一覧",
         "listEmpty": "転送はありません",
+        "untitled": "転送",
         "clearFinished": "完了分を消去",
         "cancel": "キャンセル",
         "browser": "ブラウザ",

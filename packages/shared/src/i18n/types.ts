@@ -2666,6 +2666,7 @@ export type TranslationKey =
   | 'devices.transfer.sameTarget'
   | 'devices.transfer.list'
   | 'devices.transfer.listEmpty'
+  | 'devices.transfer.untitled'
   | 'devices.transfer.clearFinished'
   | 'devices.transfer.cancel'
   | 'devices.transfer.browser'

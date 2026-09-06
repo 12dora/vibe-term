@@ -60,7 +60,9 @@ function TransferRow({ view, options }: { view: TransferJobView; options: Dialog
   return (
     <div className="flex flex-col gap-1 rounded-md px-2 py-1.5" data-testid="transfer-row">
       <div className="flex min-w-0 items-center gap-2">
-        <span className="min-w-0 flex-1 truncate text-xs font-medium">{view.title}</span>
+        <span className="min-w-0 flex-1 truncate text-xs font-medium">
+          {view.title || t('devices.transfer.untitled')}
+        </span>
         {view.path && (
           <span className="shrink-0 rounded border px-1 py-px text-[10px] leading-none text-muted-foreground">
             {t(PATH_KEYS[view.path])}

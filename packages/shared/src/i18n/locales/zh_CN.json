@@ -2962,6 +2962,7 @@
         "sameTarget": "源与目标是同一目录",
         "list": "传输列表",
         "listEmpty": "暂无传输",
+        "untitled": "传输任务",
         "clearFinished": "清除已结束",
         "cancel": "取消",
         "browser": "浏览器",
