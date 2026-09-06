@@ -56,7 +56,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
-import { gatePasskeySecondFactor } from './auth-passkey-origin';
+import { gatePasskeySecondFactor, sameCanonicalOrigin } from './auth-passkey-origin';
 import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
 import { handleTotpRecordRequest, parseTotpBody } from './auth-totp-record';
@@ -492,7 +492,9 @@ export class AuthRoutes {
     const rpId = rpIdFromOrigin(origin);
     const user = resolveUser(this.deps.userStore, fields.uid);
     const keys = user
-      ? this.deps.userStore.listKeysByUser(user.id).filter((k) => k.origin === origin)
+      ? this.deps.userStore
+          .listKeysByUser(user.id)
+          .filter((k) => sameCanonicalOrigin(k.origin, origin))
       : [];
     if (keys.length === 0) {
       return jsonError('NO_PASSKEY_FOR_ORIGIN', 404);
@@ -518,7 +520,7 @@ export class AuthRoutes {
       origin: k.origin,
       created_at: k.createdAt,
       log_seq: k.logSeq,
-      usableHere: k.origin === origin,
+      usableHere: sameCanonicalOrigin(k.origin, origin),
     }));
     return jsonBody({ passkeys });
   }

@@ -25,12 +25,18 @@ export function passkeyOriginScope(
   keys: readonly UserKeyRecord[],
   origin: string
 ): PasskeyOriginScope {
-  const here = keys.filter((key) => key.origin === origin);
+  // 凭证归属与入口比对必须用同一把尺子，否则大小写 / 默认端口 / 尾斜杠的变体会一边落空、
+  // 一边命中，正好凑出「这里没有凭证，但这是已知入口」的放行组合。
+  const target = canonicalOrigin(origin);
+  const here = target === null ? [] : keys.filter((key) => canonicalOrigin(key.origin) === target);
   return { here, registeredElsewhere: here.length === 0 && keys.length > 0 };
 }
 
-/** 规范化到 scheme + host + port，用来与服务端配置里的入口地址比对。 */
-export function normalizeEntryOrigin(value: string | null | undefined): string | null {
+/**
+ * WebAuthn origin 的规范形态：小写 scheme + host，省略默认端口，无路径与尾斜杠。
+ * 浏览器发出的 `Origin` 永远长这样，`new URL(...).origin` 也是。
+ */
+export function canonicalOrigin(value: string | null | undefined): string | null {
   if (!value) return null;
   try {
     return new URL(value).origin.toLowerCase();
@@ -39,14 +45,23 @@ export function normalizeEntryOrigin(value: string | null | undefined): string |
   }
 }
 
+/** 两个地址是否指向同一个 origin（用于凭证归属、可用性标记）。 */
+export function sameCanonicalOrigin(
+  left: string | null | undefined,
+  right: string | null | undefined
+): boolean {
+  const canonical = canonicalOrigin(left);
+  return canonical !== null && canonical === canonicalOrigin(right);
+}
+
 /** 请求 origin 是不是服务端自己认得的入口地址。 */
 export function isKnownEntryOrigin(
   origin: string,
   entryOrigins: readonly (string | null | undefined)[]
 ): boolean {
-  const target = normalizeEntryOrigin(origin);
+  const target = canonicalOrigin(origin);
   if (!target) return false;
-  return entryOrigins.some((entry) => normalizeEntryOrigin(entry) === target);
+  return entryOrigins.some((entry) => canonicalOrigin(entry) === target);
 }
 
 /** 断言用的凭证必须就是本 origin 注册的那批，不能拿别处的凭证来顶。 */
@@ -83,6 +98,11 @@ export type PasskeySecondFactorInput = {
 
 /** 密码（root delegation）登录该怎么过通行密钥这一关。 */
 export function gatePasskeySecondFactor(input: PasskeySecondFactorInput): PasskeySecondFactorGate {
+  // 非规范形态的 Origin 只可能是手工构造的：名下有通行密钥时一律拒绝，
+  // 不给「变体绕开凭证归属、又命中已知入口」留缝。
+  if (input.keys.length > 0 && canonicalOrigin(input.origin) !== input.origin) {
+    return { kind: 'reject', code: 'PASSKEY_REQUIRED' };
+  }
   const scope = passkeyOriginScope(input.keys, input.origin);
   if (scope.here.length > 0) return verifyAgainstScope(scope, input.body);
   // 名下一把通行密钥都没有：这一关本来就不存在。

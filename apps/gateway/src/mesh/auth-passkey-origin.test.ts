@@ -3,6 +3,7 @@
 // 而注册过通行密钥的那个 origin 一如既往要过断言。
 
 import { describe, expect, test } from 'bun:test';
+import { resolve } from 'node:path';
 import {
   deriveSeed,
   deriveTotpKey,
@@ -12,16 +13,20 @@ import {
   sha256,
   totpCode,
 } from '@vibeterm/shared/auth';
+import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { setSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createEs256Authenticator } from '../auth/passkey-test-fixtures';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
+import { getDb } from '../db/client';
+import { getSiteSettings, updateSiteSettings } from '../db/site-settings';
 import {
+  canonicalOrigin,
   gatePasskeySecondFactor,
   isKnownEntryOrigin,
-  normalizeEntryOrigin,
   passkeyOriginScope,
+  sameCanonicalOrigin,
 } from './auth-passkey-origin';
 import { PASSWORD, bootMesh, call, challengeAndLogin } from './auth-routes.test';
 
@@ -156,6 +161,34 @@ describe('passkey second factor is scoped to the request origin', () => {
     }
   });
 
+  // 已知入口的大小写 / 默认端口 / 尾斜杠变体：凭证归属与入口比对若用两把尺子，
+  // 正好凑出「这里没有凭证 + 命中已知入口」的放行组合。
+  test('a non-canonical variant of a known entry origin is rejected', async () => {
+    const mesh = await bootMesh();
+    const restore = declareSiteUrl(ORIGIN_B);
+    try {
+      await enrollPasskeyAt(mesh.userStore, mesh.boot.userId, ORIGIN_A);
+
+      for (const variant of [ORIGIN_B.toUpperCase(), `${ORIGIN_B}:443`, `${ORIGIN_B}/`]) {
+        const res = await challengeAndLogin(mesh.runtime, mesh.boot, {
+          clientIp: '203.0.113.10',
+          headers: { origin: variant },
+        });
+        expect(res.res.status).toBe(401);
+        expect((await res.res.json()).code).toBe('PASSKEY_REQUIRED');
+      }
+
+      const canonical = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: ORIGIN_B },
+      });
+      expect(canonical.res.status).toBe(200);
+    } finally {
+      restore();
+      mesh.close();
+    }
+  });
+
   // Origin 头不可验证：陌生 origin 不能靠「这里没有凭证」把二次验证跳过去。
   test('a forged origin is rejected, with or without a bogus totp field', async () => {
     const mesh = await bootMesh();
@@ -245,6 +278,36 @@ describe('passkey second factor is scoped to the request origin', () => {
     }
   });
 
+  // standalone 没有 mesh link，站点 URL 只存在库里：换了反代域名的单机实例必须还能用密码登录。
+  test('a standalone instance trusts its saved site URL', async () => {
+    migrate(getDb(), { migrationsFolder: resolve(import.meta.dir, '../../drizzle') });
+    const previousSiteUrl = getSiteSettings().siteUrl;
+    const restore = declareSiteUrl(null);
+    updateSiteSettings({ siteUrl: ORIGIN_B });
+    const mesh = await bootMesh({ roles: { hub: false, node: false, relay: false } });
+    try {
+      await enrollPasskeyAt(mesh.userStore, mesh.boot.userId, ORIGIN_A);
+
+      const saved = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: ORIGIN_B },
+      });
+      expect(saved.res.status).toBe(200);
+
+      // 只有存下来的那个地址算数，别的 origin 照旧拒绝。
+      const other = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: ORIGIN_FORGED },
+      });
+      expect(other.res.status).toBe(401);
+      expect((await other.res.json()).code).toBe('PASSKEY_REQUIRED');
+    } finally {
+      updateSiteSettings({ siteUrl: previousSiteUrl });
+      restore();
+      mesh.close();
+    }
+  });
+
   test('a credential from another origin cannot satisfy this origin', async () => {
     const mesh = await bootMesh();
     try {
@@ -276,14 +339,54 @@ describe('gatePasskeySecondFactor', () => {
     expect(passkeyOriginScope([], ORIGIN_B).registeredElsewhere).toBe(false);
   });
 
-  test('entry origins compare by scheme + host + port', () => {
-    expect(normalizeEntryOrigin('https://a.example/n/abc?x=1')).toBe('https://a.example');
-    expect(normalizeEntryOrigin('HTTPS://A.example:443/')).toBe('https://a.example');
-    expect(normalizeEntryOrigin('a.example')).toBeNull();
-    expect(normalizeEntryOrigin(null)).toBeNull();
+  test('origins compare by canonical scheme + host + port', () => {
+    expect(canonicalOrigin('https://a.example/n/abc?x=1')).toBe('https://a.example');
+    expect(canonicalOrigin('HTTPS://A.example:443/')).toBe('https://a.example');
+    expect(canonicalOrigin('a.example')).toBeNull();
+    expect(canonicalOrigin(null)).toBeNull();
     expect(isKnownEntryOrigin('https://a.example', ['https://a.example/n/x'])).toBe(true);
     expect(isKnownEntryOrigin('https://a.example:8443', ['https://a.example'])).toBe(false);
     expect(isKnownEntryOrigin('https://a.example', [null, undefined, ''])).toBe(false);
+    // 凭证归属用同一把尺子：历史行里带默认端口也仍然算「这个 origin 的钥匙」。
+    expect(sameCanonicalOrigin('https://a.example:443', 'https://a.example')).toBe(true);
+    expect(sameCanonicalOrigin('https://a.example', 'http://a.example')).toBe(false);
+    expect(sameCanonicalOrigin(null, 'https://a.example')).toBe(false);
+    const scope = passkeyOriginScope([key('https://a.example:443', 3)], 'https://a.example');
+    expect(scope.here).toHaveLength(1);
+    expect(scope.registeredElsewhere).toBe(false);
+  });
+
+  test('a non-canonical Origin never buys a skip', () => {
+    for (const variant of [
+      `${ORIGIN_B.toUpperCase()}`,
+      `${ORIGIN_B}:443`,
+      `${ORIGIN_B}/`,
+      `${ORIGIN_B}/n/abc`,
+    ]) {
+      expect(
+        gatePasskeySecondFactor({
+          ...base,
+          entryOrigins: [ORIGIN_B],
+          keys: [key(ORIGIN_A, 1)],
+          origin: variant,
+          body: null,
+        })
+      ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED' });
+    }
+    // 规范形态照旧放行。
+    expect(
+      gatePasskeySecondFactor({
+        ...base,
+        entryOrigins: [ORIGIN_B],
+        keys: [key(ORIGIN_A, 1)],
+        origin: ORIGIN_B,
+        body: null,
+      }).kind
+    ).toBe('skip');
+    // 名下没有通行密钥时这条不适用（本来就没有可绕的东西）。
+    expect(
+      gatePasskeySecondFactor({ ...base, keys: [], origin: `${ORIGIN_B}/`, body: null }).kind
+    ).toBe('skip');
   });
 
   test('this origin has a key: the assertion decides', () => {

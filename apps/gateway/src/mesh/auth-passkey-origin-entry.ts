@@ -8,6 +8,7 @@ import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';
 import { getDb } from '../db/client';
 import { meshRelays } from '../db/schema';
+import { getSiteSettings } from '../db/site-settings';
 import { TunnelConfigStore } from '../tunnel/config-store';
 import { resolveMeshHubPublicUrl } from './effective-site-url';
 
@@ -26,8 +27,16 @@ function safe<T>(read: () => T): T | null {
   }
 }
 
+/**
+ * 生效的站点 URL：`getSiteSettings()` 已经把「hub 托管的地址」盖在存储值上，
+ * standalone（没有 mesh link）也读得到用户自己填的那个域名——换了反代域名的单机实例
+ * 就是靠这一项才登得进去。存储不可用时退回 mesh link。
+ */
 function siteUrl(): string | null {
-  return safe(() => getSiteSettingsLinkProvider().effectiveSiteUrl());
+  return (
+    safe(() => getSiteSettings().siteUrl) ??
+    safe(() => getSiteSettingsLinkProvider().effectiveSiteUrl())
+  );
 }
 
 /** 已配置的隧道主机名；`mode==='off'` 时不算入口。 */

@@ -31,15 +31,18 @@ passkeySecondFactor: keys.length > 0 && !waived;
 伪造一个陌生 Origin 就能跳过二次验证**。因此密码登录按下面的顺序判定（`gatePasskeySecondFactor`）：
 
 1. 命中本机 / 内网豁免（`waivesPasskeySecondFactor`）→ 放行。
-2. 当前 origin 有凭证 → 必须带断言，且断言绑定的凭证属于这批（否则 `PASSKEY_INVALID`）。
-3. 账户名下压根没有通行密钥 → 这一关不存在，放行。
-4. 本次登录已过 TOTP（账户开了两步验证）→ 放行并记审计：2FA 仍然成立。
-5. 请求 origin 就是服务端自己配置的入口地址 → 放行并记审计。
-   入口来自 `auth-passkey-origin-entry.ts`：`VIBETERM_BASE_URL`、托管的站点 URL
-   （`effective-site-url.ts` / `site-settings-link`）、已配置的 Cloudflare 隧道域名
-   （`tunnel_config.hostname`，`mode==='off'` 不算）、hub 公网地址、已接入的中继地址；
-   按规范化 origin（scheme + host + port）判等。
-6. 其余（伪造的 / 陌生的 origin）→ `PASSKEY_REQUIRED`，登录页给
+2. 名下有通行密钥、但 `Origin` 不是规范形态（浏览器发出的永远是小写 scheme+host、省略默认端口、
+   无路径尾斜杠）→ 直接 `PASSKEY_REQUIRED`。凭证归属与入口比对都按 `canonicalOrigin()` 判等，
+   两边同一把尺子，`https://LOGIN.example` / `…:443` / `…/` 这类变体换不来任何放行。
+3. 当前 origin 有凭证 → 必须带断言，且断言绑定的凭证属于这批（否则 `PASSKEY_INVALID`）。
+4. 账户名下压根没有通行密钥 → 这一关不存在，放行。
+5. 本次登录已过 TOTP（账户开了两步验证）→ 放行并记审计：2FA 仍然成立。
+6. 请求 origin 就是服务端自己配置的入口地址 → 放行并记审计。
+   入口来自 `auth-passkey-origin-entry.ts`：`VIBETERM_BASE_URL`、生效的站点 URL
+   （`getSiteSettings().siteUrl`——存储值 + hub 托管时的覆盖，standalone 也读得到）、
+   已配置的 Cloudflare 隧道域名（`tunnel_config.hostname`，`mode==='off'` 不算）、
+   hub 公网地址、已接入的中继地址；按规范化 origin（scheme + host + port）判等。
+7. 其余（伪造的 / 陌生的 origin）→ `PASSKEY_REQUIRED`，登录页给
    `auth.login.passkeySecondFactorNotRegistered`，那句话里带着 CLI 逃生口。
 
 | 位置 | 改动 |
