@@ -1,3 +1,4 @@
+import { ensureSessionGrant } from '../agent/pane-grant/client';
 import type { AgentSupervisor } from '../agent/supervisor';
 import { getAgentSessionById, listAgentMessages, listQueuedAgentMessages } from '../db/agent';
 import { t } from '../i18n';
@@ -36,6 +37,17 @@ async function handleListMessages(req: Request, id: string): Promise<Response> {
   return json({ messages: messages.map(toMessageDto) });
 }
 
+/**
+ * 远端窗格会话：这是唯一带着用户 cookie 的时机，缺授权或上一轮被目标节点拒收就在这里补签。
+ * 浏览器没有目标节点的会话时把 401 透出去，前端既有的节点登录提示接手。
+ */
+async function ensureRemoteGrant(req: Request, id: string): Promise<Response | null> {
+  const session = getAgentSessionById(id);
+  if (!session) return null;
+  const ensured = await ensureSessionGrant(req, session);
+  return ensured.ok ? null : ensured.response;
+}
+
 async function handlePostMessage(
   req: Request,
   id: string,
@@ -47,6 +59,8 @@ async function handlePostMessage(
   }
   const text = readMessageText(raw);
   if (!text.ok) return text.response;
+  const denied = await ensureRemoteGrant(req, id);
+  if (denied) return denied;
 
   try {
     const result = supervisor.submitUserMessage(id, text.text);
@@ -82,6 +96,8 @@ async function handleEnqueue(
   if (steer !== undefined && typeof steer !== 'boolean') {
     return json({ error: t('apiError.invalidRequest') }, 400);
   }
+  const denied = await ensureRemoteGrant(req, id);
+  if (denied) return denied;
 
   try {
     const result = supervisor.submitUserMessage(id, text.text, steer === true);

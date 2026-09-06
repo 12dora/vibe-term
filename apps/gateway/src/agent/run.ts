@@ -135,6 +135,7 @@ export class AgentRun {
         nodeId: session.nodeId,
         deviceId: runtimeDeviceId,
         paneId: session.paneId,
+        sessionId: this.sessionId,
         acquireRuntime: this.deps.acquireRuntime,
       });
       if (acquired.runtimeError) {

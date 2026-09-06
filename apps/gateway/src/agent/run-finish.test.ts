@@ -25,6 +25,7 @@ function fakeSession(overrides: Partial<AgentSessionRecord> = {}): AgentSessionR
     allowControlChars: false,
     originPaneTitle: null,
     originProcessName: null,
+    remoteGrant: null,
     status: 'running',
     lastError: null,
     maxStepsPerTurn: 25,

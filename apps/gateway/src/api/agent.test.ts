@@ -239,12 +239,16 @@ describe('POST /api/agent/sessions', () => {
 
   test('远端 nodeId：未知 → 404，离线 → 503，在线跳过本机 device 校验', async () => {
     setMeshAgentBridge({
+      selfNodeId: 'a'.repeat(32),
       lookupNode(nodeId) {
         if (nodeId === 'online-peer') return 'online';
         if (nodeId === 'offline-peer') return 'offline';
         return 'unknown';
       },
       forwardInternalHttp: async () => new Response(JSON.stringify({ info: {} }), { status: 200 }),
+      // 目标节点是旧版本（没有签发路由）：建会话退化成不带授权
+      forwardAuthorizedHttp: async () =>
+        new Response(JSON.stringify({ error: 'not found' }), { status: 404 }),
     });
     try {
       expect(

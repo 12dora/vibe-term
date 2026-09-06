@@ -1,3 +1,9 @@
+import {
+  type PaneGrantVerifier,
+  defaultPaneGrantVerifier,
+  guardPaneGrant,
+  readPaneGrantRef,
+} from '../agent/pane-grant/rpc-guard';
 import { findPaneInSnapshot } from '../agent/tools/pane-info';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, dispatchRoutes, route } from '../api/route';
@@ -26,6 +32,7 @@ export type MeshInternalTmuxDeps = {
   acquire(deviceId: string): Promise<MeshInternalTmuxRuntime>;
   release(deviceId: string, runtime: MeshInternalTmuxRuntime): Promise<void>;
   deviceExists(deviceId: string): boolean;
+  verifyGrant: PaneGrantVerifier;
 };
 
 const defaultMeshInternalTmuxDeps: MeshInternalTmuxDeps = {
@@ -38,6 +45,7 @@ const defaultMeshInternalTmuxDeps: MeshInternalTmuxDeps = {
       return false;
     }
   },
+  verifyGrant: defaultPaneGrantVerifier,
 };
 
 function requirePeerMarker(req: Request): Response | null {
@@ -47,7 +55,9 @@ function requirePeerMarker(req: Request): Response | null {
   return jsonError('FORBIDDEN', 403);
 }
 
+/** 顺序固定：先校验入参与设备，再验授权——授权失败的回应不该泄漏别的窗格是否存在。 */
 function readRequiredIds(
+  req: Request,
   raw: Record<string, unknown>,
   deps: MeshInternalTmuxDeps
 ): { deviceId: string; paneId: string } | Response {
@@ -59,7 +69,16 @@ function readRequiredIds(
   if (!deps.deviceExists(deviceId)) {
     return json({ error: 'device_not_found' }, 404);
   }
-  return { deviceId, paneId };
+  const denied = guardPaneGrant(
+    {
+      grant: readPaneGrantRef(raw.grant),
+      peerNodeId: readMeshPeerMarker(req) ?? '',
+      deviceId,
+      paneId,
+    },
+    deps.verifyGrant
+  );
+  return denied ?? { deviceId, paneId };
 }
 
 function readHistoryLines(raw: unknown): { ok: true; value?: number } | { ok: false } {
@@ -96,7 +115,7 @@ async function handlePaneInfo(req: Request, deps: MeshInternalTmuxDeps): Promise
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }
@@ -120,7 +139,7 @@ async function handleCapture(req: Request, deps: MeshInternalTmuxDeps): Promise<
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }
@@ -146,7 +165,7 @@ async function handleSendInput(req: Request, deps: MeshInternalTmuxDeps): Promis
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }

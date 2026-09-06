@@ -11,6 +11,7 @@ import {
 } from '../llm/provider-registry';
 import { getMeshAgentBridge } from '../mesh/mesh-agent-bridge';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
+import { sessionPaneGrantSource } from './pane-grant/client';
 import { RemotePaneRuntime, RemotePaneUnreachableError } from './remote-pane-runtime';
 import type { TerminalRuntimeLike } from './tools/terminal';
 import { createFetchUrlTool, createWebSearchTool } from './tools/web';
@@ -27,7 +28,11 @@ export interface AgentRunDeps {
   createFetchUrlTool: () => Tool;
   hasQueuedMessages: (sessionId: string) => boolean;
   drainQueuedMessages: (sessionId: string) => string[];
-  acquireRuntime: (nodeId: string | null, deviceId: string) => Promise<TerminalRuntimeLike>;
+  acquireRuntime: (
+    nodeId: string | null,
+    deviceId: string,
+    sessionId?: string | null
+  ) => Promise<TerminalRuntimeLike>;
   releaseRuntime: (
     nodeId: string | null,
     deviceId: string,
@@ -69,13 +74,18 @@ export const defaultAgentRunDeps: AgentRunDeps = {
     agentWsHub.broadcastAgentEvent(sessionId, wsBorsh.AGENT_EVENT_QUEUE_UPDATED, { queued: [] }, 0);
     return items.map((item) => item.text);
   },
-  acquireRuntime: async (nodeId, deviceId) => {
+  acquireRuntime: async (nodeId, deviceId, sessionId) => {
     if (nodeId) {
       const bridge = getMeshAgentBridge();
       if (!bridge) {
         throw new RemotePaneUnreachableError(nodeId);
       }
-      return new RemotePaneRuntime(nodeId, deviceId, bridge.forwardInternalHttp);
+      return new RemotePaneRuntime(
+        nodeId,
+        deviceId,
+        bridge.forwardInternalHttp,
+        sessionId ? sessionPaneGrantSource(sessionId) : undefined
+      );
     }
     return tmuxRuntimeRegistry.acquire(deviceId);
   },

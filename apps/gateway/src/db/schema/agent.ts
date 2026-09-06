@@ -97,6 +97,8 @@ export const agentSessions = sqliteTable(
     // 起源元数据：创建会话时绑定 pane 的终端标题与进程名（旧记录为 null，前端不显示）
     originPaneTitle: text('origin_pane_title'),
     originProcessName: text('origin_process_name'),
+    // 远端 pane 的窗格授权（master key 加密的 { grantId, token, ... }）；本机 pane 恒为 null
+    remoteGrant: text('remote_grant'),
     status: text('status').$type<AgentSessionStatus>().notNull().default('idle'),
     lastError: text('last_error'),
     maxStepsPerTurn: integer('max_steps_per_turn').notNull().default(25),
@@ -111,6 +113,25 @@ export const agentSessions = sqliteTable(
     ),
     index('agent_sessions_node_id_idx').on(table.nodeId),
   ]
+);
+
+/**
+ * 目标节点签发的窗格授权：源节点调 `/api/mesh-internal/tmux/*` 时必须带上，
+ * peer 标记只证明「是本用户的某台节点」，真正的授权在这里（绑死源节点 + 设备 + 窗格）。
+ */
+export const agentPaneGrants = sqliteTable(
+  'agent_pane_grants',
+  {
+    id: text('id').primaryKey(),
+    tokenHash: text('token_hash').notNull(),
+    fromNodeId: text('from_node_id').notNull(),
+    deviceId: text('device_id').notNull(),
+    paneId: text('pane_id').notNull(),
+    createdAt: integer('created_at').notNull(),
+    lastUsedAt: integer('last_used_at').notNull(),
+    expiresAt: integer('expires_at').notNull(),
+  },
+  (table) => [index('agent_pane_grants_from_node_idx').on(table.fromNodeId)]
 );
 
 export const agentMessages = sqliteTable(
