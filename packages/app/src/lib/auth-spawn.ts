@@ -28,6 +28,7 @@ export const AUTH_COMMANDS = new Set([
   'hub.allow',
   'hub.disallow',
   'mesh.reset-root',
+  'mesh.passkey.remove-all',
   'relay.status',
   'relay.tenants',
   'relay.passwd',

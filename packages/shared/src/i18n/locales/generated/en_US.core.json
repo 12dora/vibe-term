@@ -24,6 +24,10 @@
       "yes": "Yes",
       "no": "No",
       "unknown": "Unknown",
+      "direction": {
+        "in": "Received",
+        "out": "Sent"
+      },
       "llmModel": {
         "placeholder": "Select a model",
         "empty": "No models available. Enable a model under a provider first.",

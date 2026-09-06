@@ -31,6 +31,8 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'hub.allow': async (p, n) => await (await hub()).runHubAllow(p, n.rest),
   'hub.disallow': async (p, n) => await (await hub()).runHubDisallow(p, n.rest[0] ?? ''),
   'mesh.reset-root': async (p) => await (await import('./commands/mesh')).runMeshResetRoot(p),
+  'mesh.passkey.remove-all': async (p, n) =>
+    await (await import('./commands/mesh')).runMeshPasskeyRemoveAll(p, n.rest[0] ?? ''),
   enroll: async (p) => await (await import('./commands/enroll')).runEnroll(p),
   'relay.status': async (p) => await (await relayAdmin()).runRelayStatus(p),
   'relay.tenants': async (p) => await (await relayAdmin()).runRelayTenants(p),
@@ -44,6 +46,7 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.join': async (p) =>
     await (await import('./commands/relay-password-join')).runRelayPasswordJoin(p),
   'relay.reauth': async (p, n) => await (await relay()).runRelayReauth(p, n.rest[0] ?? ''),
+  'relay.resend-token': async (p) => await (await relay()).runRelayResendToken(p),
   'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
   'relay.list': async (p) => await (await relay()).runRelayList(p),
 };

@@ -20,11 +20,13 @@ Usage:
   vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
   vibeterm hub disallow <nodeId> [--no-restart]
   vibeterm mesh reset-root
+  vibeterm mesh passkey remove-all [<username>]
   vibeterm enroll [--ttl 10m]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
+  vibeterm relay resend-token
   vibeterm relay leave
   vibeterm relay list [--json]
   vibeterm relay status [--json]
@@ -65,11 +67,13 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm hub allow <nodeId> [<nodeId>...] [--no-restart]
   vibeterm hub disallow <nodeId> [--no-restart]
   vibeterm mesh reset-root
+  vibeterm mesh passkey remove-all [<username>]
   vibeterm enroll [--ttl 10m]
   vibeterm direct enable|disable
   vibeterm relay enroll <url> [--password <p>] [--username <name>]
   vibeterm relay join <url> --tenant <id> [--password <p>] [--name <n>] [--ca-fingerprint <hex>] [--no-restart]
   vibeterm relay reauth <url> [--password <p>]
+  vibeterm relay resend-token
   vibeterm relay leave
   vibeterm relay list [--json]
   vibeterm relay status [--json]

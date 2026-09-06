@@ -20,6 +20,8 @@ export interface DoctorEnvironmentResult {
   installChecks: DoctorCheck[];
   healthHost: string;
   healthPort: string;
+  /** app.env 里的对外地址；未配置时为 null。 */
+  baseUrl: string | null;
 }
 
 export async function checkDependencies(input: {
@@ -113,6 +115,7 @@ export async function checkEnvironment(input: {
   const installChecks: DoctorCheck[] = [];
   let healthHost = '127.0.0.1';
   let healthPort = '9883';
+  let baseUrl: string | null = null;
 
   if (await pathExists(input.installDir)) {
     installChecks.push({
@@ -183,6 +186,7 @@ export async function checkEnvironment(input: {
     if (env.VIBETERM_BIND_HOST) {
       healthHost = env.VIBETERM_BIND_HOST;
     }
+    baseUrl = env.VIBETERM_BASE_URL || null;
   } else {
     installChecks.push({
       id: 'env',
@@ -191,7 +195,64 @@ export async function checkEnvironment(input: {
     });
   }
 
-  return { platformChecks, installChecks, healthHost, healthPort };
+  return { platformChecks, installChecks, healthHost, healthPort, baseUrl };
+}
+
+/** 对外地址是不是一个真正的域名：本机名与 IP 字面量都不算（那上面注册不了通行密钥）。 */
+export function isDomainOrigin(origin: string): boolean {
+  let host: string;
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    return false;
+  }
+  if (!host || host === 'localhost' || host.endsWith('.localhost')) return false;
+  if (host.includes(':') || /^[0-9.]+$/.test(host)) return false;
+  return host.includes('.');
+}
+
+/**
+ * 通行密钥二次验证按 origin 生效：名下有钥匙、但对外那个域名上一把都没有时，那个地址的登录
+ * 只剩密码把关。对外地址不是域名（默认就是回环）时判断不出来，直接不产生这条检查。
+ */
+export function classifyPasskeyOrigin(input: {
+  origin: string;
+  mode: { passkeysForThisOrigin?: boolean; passkeysRegisteredElsewhere?: boolean } | null;
+}): DoctorCheck[] {
+  if (!isDomainOrigin(input.origin)) return [];
+  if (!input.mode?.passkeysRegisteredElsewhere) return [];
+  return [
+    {
+      id: 'passkey-origin',
+      level: 'warn',
+      message: t('doctor.passkey.otherOrigin', { origin: input.origin }),
+    },
+  ];
+}
+
+/** 从本机 gateway 读 `/api/auth/mode`（登录前公开面），Origin 声明成对外地址。 */
+export async function checkPasskeyOrigins(input: {
+  healthHost: string;
+  healthPort: string;
+  baseUrl: string | null;
+}): Promise<DoctorCheck[]> {
+  if (!input.baseUrl || !isDomainOrigin(input.baseUrl)) return [];
+  const origin = new URL(input.baseUrl).origin;
+  const url = formatHttpEndpoint(
+    rewriteWildcardBindHost(input.healthHost),
+    input.healthPort,
+    '/api/auth/mode'
+  );
+  const res = await fetch(url, {
+    headers: { origin },
+    signal: AbortSignal.timeout(3000),
+  }).catch(() => null);
+  if (!res?.ok) return [];
+  const mode = (await res.json().catch(() => null)) as {
+    passkeysForThisOrigin?: boolean;
+    passkeysRegisteredElsewhere?: boolean;
+  } | null;
+  return classifyPasskeyOrigin({ origin, mode });
 }
 
 export async function checkService(input: {

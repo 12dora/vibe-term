@@ -23,6 +23,7 @@ export type NestedCommandName =
   | 'hub.allow'
   | 'hub.disallow'
   | 'mesh.reset-root'
+  | 'mesh.passkey.remove-all'
   | 'relay.status'
   | 'relay.tenants'
   | 'relay.passwd'
@@ -33,6 +34,7 @@ export type NestedCommandName =
   | 'relay.label'
   | 'relay.enroll'
   | 'relay.reauth'
+  | 'relay.resend-token'
   | 'relay.leave'
   | 'relay.list'
   | 'relay.join'
@@ -139,12 +141,17 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
   enroll: 'relay.enroll',
   join: 'relay.join',
   reauth: 'relay.reauth',
+  'resend-token': 'relay.resend-token',
   leave: 'relay.leave',
   list: 'relay.list',
 };
 
 const MESH_SUBCOMMANDS: Record<string, NestedCommandName> = {
   'reset-root': 'mesh.reset-root',
+};
+
+const MESH_PASSKEY_SUBCOMMANDS: Record<string, NestedCommandName> = {
+  'remove-all': 'mesh.passkey.remove-all',
 };
 
 function group(
@@ -178,7 +185,12 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
     return group(HUB_SUBCOMMANDS, parsed, command, 1);
   }
   if (command === 'relay') return group(RELAY_SUBCOMMANDS, parsed, command, 1);
-  if (command === 'mesh') return group(MESH_SUBCOMMANDS, parsed, command, 1);
+  if (command === 'mesh') {
+    if (parsed.positionals[0] === 'passkey') {
+      return group(MESH_PASSKEY_SUBCOMMANDS, parsed, command, 2);
+    }
+    return group(MESH_SUBCOMMANDS, parsed, command, 1);
+  }
 
   return { name: 'unknown', rest: parsed.positionals, raw: command };
 }
@@ -275,6 +287,12 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'mesh.reset-root': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'mesh.passkey.remove-all': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'service-name',
+    'no-interactive',
+  ]),
   'relay.status': RELAY_ADMIN_FLAGS,
   'relay.tenants': RELAY_ADMIN_FLAGS,
   'relay.passwd': new Set([...RELAY_ADMIN_FLAGS, 'clear', 'kick', 'keep']),
@@ -307,6 +325,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'no-restart',
   ]),
   'relay.reauth': RELAY_TENANT_FLAGS,
+  'relay.resend-token': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),
 };

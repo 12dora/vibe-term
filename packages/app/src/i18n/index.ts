@@ -97,6 +97,11 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.service.noManager': '{{detail}}',
     'doctor.health.pass': 'Health check OK: {{url}}',
     'doctor.health.fail': 'Health check failed or unreachable: {{url}}',
+    'doctor.passkey.otherOrigin':
+      'Passkeys exist, but none is registered for {{origin}}; signing in there falls back to the password. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
+
+    'mesh.passkey.removed':
+      'Removed {{count}} passkey(s) for {{username}}. Two-step verification and existing sessions are unchanged.',
 
     'upgrade.delegateFailed': 'Upgrade delegation failed with exit code {{code}}',
     'upgrade.missingMeta': 'Install metadata not found: {{path}}. Please run init first.',
@@ -276,6 +281,8 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.enroll.done': 'attached to relay {{url}} (tenant {{tenantId}})',
     'relay.enroll.pending':
       'set-relays was accepted but the relay is not attached yet: {{url}} {{error}}',
+    'relay.resendToken.done':
+      'set-relays re-published with the current relay token for {{count}} member node(s)',
     'relay.leave.done': 'left the relay; this node has no upstream until you join a hub or a relay',
     'relay.leave.pending': 'set-relays was accepted but the relay uplink is still attached',
   },
@@ -367,6 +374,11 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.service.noManager': '{{detail}}',
     'doctor.health.pass': '健康检查通过：{{url}}',
     'doctor.health.fail': '健康检查失败或不可达：{{url}}',
+    'doctor.passkey.otherOrigin':
+      '已有通行密钥，但 {{origin}} 上没有：该地址登录只靠密码。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
+
+    'mesh.passkey.removed':
+      '已移除 {{username}} 的 {{count}} 把通行密钥；两步验证与现有会话保持不变。',
 
     'upgrade.delegateFailed': '委托升级失败，退出码 {{code}}',
     'upgrade.missingMeta': '未找到安装元数据：{{path}}，请先执行 init',
@@ -526,6 +538,7 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'relay.enroll.readmitPending': '接入后仍有 {{count}} 个成员待重新确认，已中止 set-relays',
     'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
     'relay.enroll.pending': 'set-relays 已提交，但中继尚未挂上：{{url}} {{error}}',
+    'relay.resendToken.done': '已按当前令牌重新下发 set-relays，覆盖 {{count}} 个成员节点',
     'relay.leave.done': '已离开中继；在接入 hub 或中继前该节点没有上级',
     'relay.leave.pending': 'set-relays 已提交，但中继上行仍处于挂载状态',
   },

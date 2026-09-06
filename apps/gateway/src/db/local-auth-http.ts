@@ -4,6 +4,7 @@ import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';
 import type { UserRecord, UserStore } from '../auth/user-store';
+import { passkeyOriginScope } from '../mesh/auth-passkey-origin';
 import { requestIsLoopback } from '../mesh/client-ip';
 import type { MeshRoles } from '../mesh/mesh-deps';
 import {
@@ -49,17 +50,20 @@ export function meshAuthModeUserFields(
   opts?: { waivePasskeySecondFactor?: boolean }
 ) {
   const keys = user ? userStore.listKeysByUser(user.id) : [];
-  const hasPasskeys = keys.length > 0;
-  const waived = Boolean(opts?.waivePasskeySecondFactor) && hasPasskeys;
+  const scope = passkeyOriginScope(keys, origin);
+  const hasKeysHere = scope.here.length > 0;
+  const waived = Boolean(opts?.waivePasskeySecondFactor) && hasKeysHere;
   return {
     mode: 'mesh' as const,
     uid: user?.id ?? null,
     username: user?.username ?? null,
     kdfParams: user ? publicKdfParams(user.kdfParamsJson) : null,
-    passkeysForThisOrigin: keys.some((k) => k.origin === origin),
-    // Origin 头可被伪造，二次验证是否启用必须看任意 origin 是否已有通行密钥
-    passkeySecondFactor: hasPasskeys && !waived,
+    passkeysForThisOrigin: hasKeysHere,
+    // 断言只能在注册它的 origin 上完成：本 origin 没有凭证就不能要求二次验证，
+    // 否则换入口域名后密码正确也永远登不进来（见 auth-passkey-origin.ts）。
+    passkeySecondFactor: hasKeysHere && !waived,
     passkeySecondFactorWaived: waived,
+    passkeysRegisteredElsewhere: scope.registeredElsewhere,
     totpEnabled: user?.totpRecordSeq != null,
     rootEpoch: user?.rootEpoch ?? null,
     rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,

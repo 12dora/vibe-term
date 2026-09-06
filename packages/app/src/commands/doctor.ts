@@ -19,6 +19,7 @@ import {
   checkEnvironment,
   checkHealth,
   checkLegacyLeftovers,
+  checkPasskeyOrigins,
   checkService,
   renderDoctorResult,
 } from './doctor-checks';
@@ -129,6 +130,17 @@ export const DOCTOR_CHECK_TABLE: DoctorCheckStep[] = [
     collect: async (ctx) => {
       const env = await ensureEnvironment(ctx);
       return checkHealth(env.healthHost, env.healthPort);
+    },
+  },
+  {
+    id: 'passkey-origin',
+    collect: async (ctx) => {
+      const env = await ensureEnvironment(ctx);
+      return checkPasskeyOrigins({
+        healthHost: env.healthHost,
+        healthPort: env.healthPort,
+        baseUrl: env.baseUrl,
+      });
     },
   },
 ];

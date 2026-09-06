@@ -56,6 +56,7 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
+import { gatePasskeySecondFactor } from './auth-passkey-origin';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
 import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
@@ -594,16 +595,22 @@ export class AuthRoutes {
   ): Promise<{ ok: true } | { ok: false; code: string }> {
     if (delegation.method !== 'root') return { ok: true };
     if (waivesPasskeySecondFactor(req)) return { ok: true };
-    if (this.deps.userStore.listKeysByUser(user.id).length === 0) return { ok: true };
-    const parsed = parsePasskeySecondFactor(passkeyBody);
-    if (!parsed) return { ok: false, code: 'PASSKEY_REQUIRED' };
+    const gate = gatePasskeySecondFactor({
+      keys: this.deps.userStore.listKeysByUser(user.id),
+      origin: requestOrigin(req),
+      uid: user.id,
+      body: passkeyBody,
+    });
+    if (gate.kind !== 'verify') {
+      return gate.kind === 'skip' ? { ok: true } : { ok: false, code: gate.code };
+    }
     try {
-      const assertion = decodePasskeyAssertionSig(decodeBase64url(parsed.sig));
+      const assertion = decodePasskeyAssertionSig(decodeBase64url(gate.sig));
       const ok = await this.verifyPasskey({
         challenge: delegationChallenge(delegation),
         delegation,
         assertion,
-        credentialId: parsed.credentialId,
+        credentialId: gate.credentialId,
       });
       return ok ? { ok: true } : { ok: false, code: 'PASSKEY_INVALID' };
     } catch {
@@ -693,14 +700,6 @@ function credentialIdBytes(id: string | null): Uint8Array | null {
   } catch {
     return new TextEncoder().encode(id);
   }
-}
-
-function parsePasskeySecondFactor(value: unknown): { credentialId: string; sig: string } | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const rec = value as { credential_id?: unknown; sig?: unknown };
-  if (typeof rec.credential_id !== 'string' || rec.credential_id.length === 0) return null;
-  if (typeof rec.sig !== 'string' || rec.sig.length === 0) return null;
-  return { credentialId: rec.credential_id, sig: rec.sig };
 }
 
 function parseTotpBody(value: unknown): { code: string; kTotp: Uint8Array } | null {

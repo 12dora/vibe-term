@@ -12,6 +12,7 @@ import {
   runCheckTable,
   shouldPrintFixHint,
 } from './doctor';
+import { classifyPasskeyOrigin, isDomainOrigin } from './doctor-checks';
 
 const failFixable = (id: string, message = 'missing'): DoctorCheck => ({
   id,
@@ -49,7 +50,7 @@ function recordingReporter(): DoctorReporter & {
 }
 
 describe('DOCTOR_CHECK_TABLE', () => {
-  test('runs platform, dependencies, install, service, legacy-layout, then health', () => {
+  test('runs platform, dependencies, install, service, legacy-layout, health, passkey-origin', () => {
     expect(DOCTOR_CHECK_TABLE.map((step) => step.id)).toEqual([
       'platform',
       'dependencies',
@@ -57,6 +58,7 @@ describe('DOCTOR_CHECK_TABLE', () => {
       'service',
       'legacy-layout',
       'health',
+      'passkey-origin',
     ]);
   });
 });
@@ -218,5 +220,39 @@ describe('reportDoctorRun', () => {
     expect(reporter.renders).toEqual([{ checks, json: false }]);
     expect(reporter.lines).toEqual([]);
     expect(reporter.exitCodes).toEqual([]);
+  });
+});
+
+describe('passkey origin check', () => {
+  test('only domain origins are classifiable', () => {
+    expect(isDomainOrigin('https://term.example.com')).toBe(true);
+    expect(isDomainOrigin('http://localhost:9883')).toBe(false);
+    expect(isDomainOrigin('http://127.0.0.1:9883')).toBe(false);
+    expect(isDomainOrigin('http://[::1]:9883')).toBe(false);
+    expect(isDomainOrigin('not-a-url')).toBe(false);
+  });
+
+  test('warns only when the domain has no passkey while others do', () => {
+    const origin = 'https://term.example.com';
+    expect(
+      classifyPasskeyOrigin({
+        origin,
+        mode: { passkeysForThisOrigin: false, passkeysRegisteredElsewhere: true },
+      })
+    ).toHaveLength(1);
+    expect(
+      classifyPasskeyOrigin({
+        origin,
+        mode: { passkeysForThisOrigin: true, passkeysRegisteredElsewhere: false },
+      })
+    ).toEqual([]);
+    expect(classifyPasskeyOrigin({ origin, mode: null })).toEqual([]);
+    // 对外地址是回环时判断不出来，不产生噪音。
+    expect(
+      classifyPasskeyOrigin({
+        origin: 'http://127.0.0.1:9883',
+        mode: { passkeysRegisteredElsewhere: true },
+      })
+    ).toEqual([]);
   });
 });

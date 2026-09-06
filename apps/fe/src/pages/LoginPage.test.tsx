@@ -59,6 +59,7 @@ const {
   missingRequiredCredentials,
   passkeyAffordance,
   passkeyBlockReason,
+  passkeyOtherOriginHint,
   resolveLoginUid,
   runPasskeyLogin,
 } = await import('./LoginPage');
@@ -262,6 +263,25 @@ describe('passkey 入口判定', () => {
       'auth.login.passkeyNotRegistered'
     );
     expect(passkeyBlockReason({ passkeysForThisOrigin: true })).toBeNull();
+  });
+
+  test('别处有通行密钥、这里没有：密码表单下给一行「登录后添加」，不是硬错误', () => {
+    expect(
+      passkeyOtherOriginHint({ passkeysForThisOrigin: false, passkeysRegisteredElsewhere: true })
+    ).toBe('auth.login.passkeyOtherOriginHint');
+    expect(
+      passkeyOtherOriginHint({ passkeysForThisOrigin: false, passkeysRegisteredElsewhere: false })
+    ).toBeNull();
+    expect(
+      passkeyOtherOriginHint({ passkeysForThisOrigin: true, passkeysRegisteredElsewhere: true })
+    ).toBeNull();
+  });
+
+  test('提示只在别处有钥匙时渲染', () => {
+    expect(render({ ...BASE, passkeysRegisteredElsewhere: true })).toContain(
+      'data-testid="login-passkey-other-origin"'
+    );
+    expect(render(BASE)).not.toContain('data-testid="login-passkey-other-origin"');
   });
 
   test('被拦下时不发起 WebAuthn 仪式，只回文案 key', async () => {

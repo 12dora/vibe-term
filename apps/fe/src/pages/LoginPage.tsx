@@ -102,6 +102,17 @@ export function passkeyBlockReason(
   return mode.passkeysForThisOrigin ? null : 'auth.login.passkeyNotRegistered';
 }
 
+/**
+ * 别的地址有通行密钥、这个地址没有：二次验证在这里不会触发（服务端同样按 origin 判定），
+ * 但用户该知道登录之后要为这个地址补一把，否则这个入口一直只有密码把关。
+ */
+export function passkeyOtherOriginHint(
+  mode: Pick<AuthModeResponse, 'passkeysForThisOrigin' | 'passkeysRegisteredElsewhere'>
+): string | null {
+  if (mode.passkeysForThisOrigin) return null;
+  return mode.passkeysRegisteredElsewhere ? 'auth.login.passkeyOtherOriginHint' : null;
+}
+
 /** 「使用通行密钥」的动作：前置判定没过就只回文案 key，绝不发起 WebAuthn 仪式。成功回 null。 */
 export async function attemptPasskeyLogin(args: {
   mode: AuthModeResponse;
@@ -248,6 +259,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
   const [error, setError] = useState<string | null>(null);
 
   const affordance = passkeyAffordance(mode);
+  const otherOriginHint = passkeyOtherOriginHint(mode);
 
   const resolveUid = useCallback(() => resolveLoginUid(mode, username), [mode, username]);
 
@@ -417,6 +429,12 @@ function LoginForm({ mode, api }: LoginFormProps) {
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
             <span>{error}</span>
+          </p>
+        ) : null}
+
+        {otherOriginHint ? (
+          <p className="text-xs text-muted-foreground" data-testid="login-passkey-other-origin">
+            {t(otherOriginHint)}
           </p>
         ) : null}
 

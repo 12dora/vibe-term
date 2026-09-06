@@ -44,16 +44,34 @@ describe('meshAuthModeUserFields', () => {
     const fields = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', fakeStore([]), hub);
     expect(fields.passkeySecondFactor).toBe(false);
     expect(fields.passkeysForThisOrigin).toBe(false);
+    expect(fields.passkeysRegisteredElsewhere).toBe(false);
   });
 
-  test('passkeySecondFactor is true for any origin once a key exists', () => {
+  // 二次验证按 origin：别处注册的钥匙在这里做不出断言，要求它等于把用户锁死在门外。
+  test('passkeySecondFactor follows the current origin, not any origin', () => {
     const store = fakeStore(['https://other.example']);
     const local = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store, hub);
     const other = meshAuthModeUserFields(fakeUser(), 'https://other.example', store, hub);
     expect(local.passkeysForThisOrigin).toBe(false);
-    expect(local.passkeySecondFactor).toBe(true);
+    expect(local.passkeySecondFactor).toBe(false);
+    expect(local.passkeysRegisteredElsewhere).toBe(true);
     expect(other.passkeysForThisOrigin).toBe(true);
     expect(other.passkeySecondFactor).toBe(true);
+    expect(other.passkeysRegisteredElsewhere).toBe(false);
+  });
+
+  test('waiver only applies where the origin actually has a key', () => {
+    const store = fakeStore(['https://other.example']);
+    const here = meshAuthModeUserFields(fakeUser(), 'https://other.example', store, hub, {
+      waivePasskeySecondFactor: true,
+    });
+    expect(here.passkeySecondFactor).toBe(false);
+    expect(here.passkeySecondFactorWaived).toBe(true);
+    const elsewhere = meshAuthModeUserFields(fakeUser(), 'http://localhost:19663', store, hub, {
+      waivePasskeySecondFactor: true,
+    });
+    expect(elsewhere.passkeySecondFactor).toBe(false);
+    expect(elsewhere.passkeySecondFactorWaived).toBe(false);
   });
 
   test('null user does not require a passkey second factor', () => {

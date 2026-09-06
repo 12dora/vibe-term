@@ -1199,15 +1199,20 @@ describe('密码登录的通行密钥二次验证', () => {
     expect((captured.login as { passkey?: unknown }).passkey).toBeUndefined();
   });
 
-  test('本地址没注册通行密钥（404）：可判别错误 + sk_sess 清零，不留会话', async () => {
+  // 服务端的二次验证同样按 origin 判定：本地址一把凭证都没有时它不会要求断言，
+  // 前端也必须跳过这一步，否则 mode 快照一旦过期用户就永远登不进这个地址。
+  test('本地址没注册通行密钥（404）：跳过二次验证，密码登录照常建立会话', async () => {
     const backend = secondFactorApi({
       optionsStatus: 404,
       optionsBody: { code: 'NO_PASSKEY_FOR_ORIGIN' },
     });
-    const secretKey = fill(64, 0x6a);
-    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+    let ceremonies = 0;
+    setPasskeyCeremonyForTest(async () => {
+      ceremonies += 1;
+      return fakeAssertion(CRED_A);
+    });
 
-    const error = await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
+    await establishSessionFromSeed(new Uint8Array(ROOT_SEED), {
       uid: UID,
       entryNodeId: ENTRY,
       rootEpoch: 0,
@@ -1215,15 +1220,13 @@ describe('密码登录的通行密钥二次验证', () => {
       passkeySecondFactor: true,
       api: backend.api,
       origin: 'https://node.example',
-      generateSessionKeyPair: () => ({ publicKey: fill(32, 0x6b), secretKey }),
-    }).then(
-      () => null,
-      (err: unknown) => err
-    );
+    });
 
-    expect((error as { code?: string })?.code).toBe('NO_PASSKEY_FOR_ORIGIN');
-    expect(secretKey.every((byte) => byte === 0)).toBe(true);
-    expect(hasSessionKey()).toBe(false);
+    expect(ceremonies).toBe(0);
+    expect(hasSessionKey()).toBe(true);
+    const { api, captured } = mockApi({});
+    expect(await loginToNode(NODE_A, { api })).toEqual({ ok: true });
+    expect((captured.login as { passkey?: unknown }).passkey).toBeUndefined();
   });
 
   test('用户取消仪式：seed 与 sk_sess 都清零，不留会话', async () => {

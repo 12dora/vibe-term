@@ -3083,7 +3083,9 @@ describe('auth-routes', () => {
     const mesh = await bootMesh();
     try {
       const enrolled = await enrollSyntheticPasskey(mesh.userStore, mesh.boot.userId);
-      const missing = await challengeAndLogin(mesh.runtime, mesh.boot, { headers: { origin: 'http://localhost:19663' } });
+      const missing = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        headers: { origin: 'http://localhost:19663' },
+      });
       expect(missing.res.status).toBe(401);
       expect((await missing.res.json()).code).toBe('PASSKEY_REQUIRED');
 

@@ -24,6 +24,10 @@
       "yes": "是",
       "no": "否",
       "unknown": "未知",
+      "direction": {
+        "in": "接收",
+        "out": "发送"
+      },
       "llmModel": {
         "placeholder": "选择模型",
         "empty": "无可用模型，请先在提供商中启用模型",

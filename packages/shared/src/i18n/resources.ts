@@ -30,6 +30,10 @@ export const I18N_RESOURCES = {
       "yes": "Yes",
       "no": "No",
       "unknown": "Unknown",
+      "direction": {
+        "in": "Received",
+        "out": "Sent"
+      },
       "llmModel": {
         "placeholder": "Select a model",
         "empty": "No models available. Enable a model under a provider first.",
@@ -3563,6 +3567,10 @@ export const I18N_RESOURCES = {
       "yes": "是",
       "no": "否",
       "unknown": "未知",
+      "direction": {
+        "in": "接收",
+        "out": "发送"
+      },
       "llmModel": {
         "placeholder": "选择模型",
         "empty": "无可用模型，请先在提供商中启用模型",
@@ -7090,6 +7098,10 @@ export const I18N_RESOURCES = {
       "yes": "はい",
       "no": "いいえ",
       "unknown": "不明",
+      "direction": {
+        "in": "受信",
+        "out": "送信"
+      },
       "llmModel": {
         "placeholder": "モデルを選択",
         "empty": "利用可能なモデルがありません。プロバイダーでモデルを有効にしてください。",

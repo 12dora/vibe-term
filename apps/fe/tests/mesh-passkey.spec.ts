@@ -199,6 +199,50 @@ test('mesh: a forwarded public source still enforces the passkey second factor',
   }
 });
 
+/**
+ * 换一个入口地址（同一实例、不同 origin）：那把通行密钥绑在 `localhost:<hubPort>` 上，
+ * 在 `127.0.0.1:<hubPort>` 既弹不出来也做不完断言，因此二次验证在这里必须整体不生效，
+ * 密码要能一次登进去。这是「从中继域名切到 Cloudflare 域名后被锁在门外」那个故障的回归。
+ *
+ * 同样带 `x-forwarded-for` 声明公网来源：否则本机豁免会先一步放行，证不了 per-origin 这条。
+ */
+test('mesh: a second origin without a passkey signs in with the password alone', async ({
+  browser,
+}) => {
+  const other = await newForwardedContext(browser);
+  await other.addInitScript(() => {
+    const store = window as unknown as { __vibetermPasskeyGetCalls?: number };
+    store.__vibetermPasskeyGetCalls = 0;
+    const credentials = navigator.credentials;
+    if (!credentials) return;
+    const original = credentials.get.bind(credentials);
+    credentials.get = (options?: CredentialRequestOptions) => {
+      store.__vibetermPasskeyGetCalls = (store.__vibetermPasskeyGetCalls ?? 0) + 1;
+      return original(options);
+    };
+  });
+  const otherPage = await other.newPage();
+  try {
+    await otherPage.goto(`http://127.0.0.1:${state.hubPort}/login`, {
+      waitUntil: 'domcontentloaded',
+    });
+    await expect(otherPage.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });
+    expect(await authModeFlag(otherPage, 'passkeySecondFactor')).toBe(false);
+    expect(await authModeFlag(otherPage, 'passkeysRegisteredElsewhere')).toBe(true);
+    await expect(otherPage.getByTestId('login-passkey-other-origin')).toBeVisible();
+
+    await fillCredentials(otherPage, state.password);
+    await otherPage.getByTestId('login-submit').click();
+    await expect(otherPage.getByTestId('sidebar')).toBeVisible({ timeout: 90_000 });
+
+    // 一次仪式都没起过，会话却是真的：这个地址只靠密码就登进来了。
+    expect(await passkeyGetCalls(otherPage)).toBe(0);
+    expect(await meshNodesStatus(otherPage)).toBe(200);
+  } finally {
+    await other.close();
+  }
+});
+
 // 密码错误只给一句中性文案：账号是否存在、错在密码还是签名，一律不外泄。
 test('mesh: a wrong password shows the neutral message and stays on the login page', async () => {
   await logout(page);
