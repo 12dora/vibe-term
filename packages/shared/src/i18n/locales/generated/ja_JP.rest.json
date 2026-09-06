@@ -2223,6 +2223,7 @@
         "selected": "{{count}} 件選択中",
         "sendToRight": "右へ送る",
         "sendToLeft": "左へ送る",
+        "sendTo": "{{node}} へ送信",
         "sending": "送信中...",
         "sendFailed": "転送タスクの作成に失敗しました",
         "pickNodes": "先に両側のノードとディレクトリを選択してください",

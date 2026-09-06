@@ -136,11 +136,13 @@ export function TransferPane(props: TransferPaneProps) {
         size="sm"
         className="w-full"
         data-testid={`${testId}-send`}
-        title={props.sendBlockedReason ?? undefined}
+        title={props.sendBlockedReason ?? props.sendLabel}
         disabled={props.sendBlockedReason !== null || props.busy}
         onClick={props.onSend}
       >
-        {props.sending ? t('devices.transfer.sending') : props.sendLabel}
+        <span className="min-w-0 truncate">
+          {props.sending ? t('devices.transfer.sending') : props.sendLabel}
+        </span>
       </Button>
     </section>
   );

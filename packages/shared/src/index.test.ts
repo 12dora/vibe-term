@@ -40,6 +40,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'TERMINAL_THEME_DARK',
   'TERMINAL_THEME_LIGHT',
   'UPGRADE_CANCELLED',
+  'VIRTUAL_FS_ROOT_ID',
   'b',
   'basename',
   'collectLayoutLeaves',

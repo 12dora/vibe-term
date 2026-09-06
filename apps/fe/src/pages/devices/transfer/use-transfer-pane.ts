@@ -5,6 +5,7 @@ import { createNodeApiClient } from '@tmex/api-client';
 import type { FileEntryDto, FileRootDto } from '@tmex/shared';
 import { type Dispatch, type KeyboardEvent, useEffect, useMemo, useRef } from 'react';
 
+import { paneRoots } from './pane-roots';
 import {
   type TransferPaneAction,
   type TransferPaneState,
@@ -44,10 +45,7 @@ export function useTransferPane(
     enabled: client !== null,
     retry: false,
   });
-  const roots = useMemo(
-    () => (rootsQuery.data?.roots ?? []).filter((root) => root.enabled),
-    [rootsQuery.data]
-  );
+  const roots = useMemo(() => paneRoots(rootsQuery.data?.roots), [rootsQuery.data]);
 
   // 根目录只在没选过时自动落到第一个：用户手动切走之后不再被查询回填覆盖。
   useEffect(() => {

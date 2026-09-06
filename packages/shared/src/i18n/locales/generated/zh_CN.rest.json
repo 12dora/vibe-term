@@ -2223,6 +2223,7 @@
         "selected": "已选 {{count}} 项",
         "sendToRight": "发送到右侧",
         "sendToLeft": "发送到左侧",
+        "sendTo": "发送到 {{node}}",
         "sending": "提交中...",
         "sendFailed": "创建传输任务失败",
         "pickNodes": "须先选定两侧的节点与目录",

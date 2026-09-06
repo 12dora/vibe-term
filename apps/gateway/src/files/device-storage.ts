@@ -11,8 +11,9 @@ import type {
 } from '@tmex/shared';
 import { config } from '../config';
 import { getDeviceById } from '../db';
-import { type FileRootRecord, getFileRootById } from '../db/file-roots';
+import type { FileRootRecord } from '../db/file-roots';
 import { MAX_ENTRIES, MAX_TEXT_BYTES, categorize, mimeOf } from './categorize';
+import { resolveFileRoot } from './file-root';
 import {
   type RsyncEntry,
   RsyncMissingLocalError,
@@ -103,12 +104,11 @@ interface OpContext {
 function resolveContext(
   rootId: string
 ): { ok: true; ctx: OpContext } | { ok: false; code: FileErrorCode } {
-  const root = getFileRootById(rootId);
-  if (!root) return { ok: false, code: 'root_not_found' };
-  if (!root.enabled) return { ok: false, code: 'root_disabled' };
-  const device = getDeviceById(root.deviceId);
+  const resolved = resolveFileRoot(rootId);
+  if (!resolved.ok) return { ok: false, code: resolved.code };
+  const device = getDeviceById(resolved.root.deviceId);
   if (!device) return { ok: false, code: 'device_not_found' };
-  return { ok: true, ctx: { root, device } };
+  return { ok: true, ctx: { root: resolved.root, device } };
 }
 
 function entryToDto(entry: RsyncEntry, parentPath: string): FileEntryDto {

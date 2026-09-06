@@ -181,3 +181,10 @@ export interface BrowseDirectoryResponse {
   /** 条目数达到上限被截断 */
   truncated: boolean;
 }
+
+/**
+ * 虚拟文件根：节点一条启用的文件根都没有时，浏览退化为直接从文件系统根 `/` 开始。
+ * 只在「零启用根」这一种情况下成立，运维一旦配置了白名单根，该 id 立即失效。
+ * 不出现在 `GET /api/files/roots` 的返回里，由前端在列表为空时自行合成。
+ */
+export const VIRTUAL_FS_ROOT_ID = 'fs-root';

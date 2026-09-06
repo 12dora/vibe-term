@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:te
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TransferJobEvent } from '@tmex/shared';
+import { type TransferJobEvent, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
 import { dispatchRoutes } from '../api/route';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
@@ -405,5 +405,96 @@ describe('source expansion', () => {
     const resolved = resolveDestContext(rootId, `${rootDir}/./`);
     expect(resolved.ok).toBe(true);
     if (resolved.ok) expect(resolved.data.destDir).toBe(rootDir);
+  });
+});
+
+// 零启用文件根时，前端合成的 `fs-root` 必须一路通到 grant 与任务创建。
+describe('transfer routes on the virtual fs root', () => {
+  let destDir = '';
+  let deviceId = '';
+
+  beforeAll(() => runMigrations());
+
+  beforeEach(() => {
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    resetTransferGrantsForTests();
+    resetTransferJobsForTests();
+    destDir = tempDir();
+    const now = new Date().toISOString();
+    deviceId = `dev-${Math.random().toString(16).slice(2)}`;
+    createDevice({
+      id: deviceId,
+      name: 'local',
+      type: 'local',
+      authMode: 'agent',
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+    setTransferMeshBridge({
+      selfNodeId: NODE_A,
+      transportOf: () => 'relay',
+      forwardInternalHttp: async () => new Response('{}', { status: 200 }),
+    });
+  });
+
+  afterEach(() => {
+    setTransferMeshBridge(null);
+    resetTransferJobsForTests();
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('grant 与任务都接受 fs-root', async () => {
+    writeFileSync(join(destDir, 'v.txt'), 'hello');
+    const granted = (await dispatch('POST', '/api/transfer/grants', {
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_FS_ROOT_ID,
+      destPath: destDir,
+    })) as Response;
+    expect(granted.status).toBe(200);
+    const grant = (await granted.json()) as { grantId: string; token: string };
+
+    const created = (await dispatch('POST', '/api/transfer/jobs', {
+      toNodeId: 'self',
+      items: [{ rootId: VIRTUAL_FS_ROOT_ID, path: join(destDir, 'v.txt') }],
+      destRootId: VIRTUAL_FS_ROOT_ID,
+      destPath: destDir,
+      grant,
+    })) as Response;
+    expect(created.status).toBe(200);
+    const { job } = (await created.json()) as { job: { destRootId: string } };
+    expect(job.destRootId).toBe(VIRTUAL_FS_ROOT_ID);
+  });
+
+  test('源侧展开经 fs-root 可以枚举授权目录之外的路径', async () => {
+    const other = tempDir();
+    writeFileSync(join(other, 'x.txt'), 'x');
+    const expanded = await expandItems(
+      [{ rootId: VIRTUAL_FS_ROOT_ID, path: join(other, 'x.txt') }],
+      {
+        maxFileBytes: 1024,
+        signal: new AbortController().signal,
+      }
+    );
+    expect(expanded.ok).toBe(true);
+    if (!expanded.ok) return;
+    expect(expanded.entries.map((entry) => entry.relPath)).toEqual(['x.txt']);
+  });
+
+  test('配置了启用的文件根之后 fs-root 立即被拒', async () => {
+    createFileRoot({ deviceId, path: destDir });
+    const granted = (await dispatch('POST', '/api/transfer/grants', {
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_FS_ROOT_ID,
+      destPath: destDir,
+    })) as Response;
+    expect(granted.status).toBe(400);
+    expect(await granted.json()).toMatchObject({ code: 'root_not_found' });
   });
 });

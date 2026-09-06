@@ -2672,6 +2672,7 @@ export type TranslationKey =
   | 'devices.transfer.selected'
   | 'devices.transfer.sendToRight'
   | 'devices.transfer.sendToLeft'
+  | 'devices.transfer.sendTo'
   | 'devices.transfer.sending'
   | 'devices.transfer.sendFailed'
   | 'devices.transfer.pickNodes'

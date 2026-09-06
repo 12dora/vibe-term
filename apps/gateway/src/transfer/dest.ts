@@ -4,8 +4,9 @@
 import { realpathSync } from 'node:fs';
 import type { Device, FileErrorCode } from '@tmex/shared';
 import { getDeviceById } from '../db';
-import { type FileRootRecord, getFileRootById } from '../db/file-roots';
+import type { FileRootRecord } from '../db/file-roots';
 import { checkAndNormalize } from '../files/device-storage';
+import { resolveFileRoot } from '../files/file-root';
 
 export interface DestContext {
   root: FileRootRecord;
@@ -26,9 +27,9 @@ export function destFail<T>(code: FileErrorCode): DestResult<T> {
 }
 
 export function resolveDestContext(destRootId: string, destPath: string): DestResult<DestContext> {
-  const root = getFileRootById(destRootId);
-  if (!root) return destFail('root_not_found');
-  if (!root.enabled) return destFail('root_disabled');
+  const resolved = resolveFileRoot(destRootId);
+  if (!resolved.ok) return destFail(resolved.code);
+  const root = resolved.root;
   const device = getDeviceById(root.deviceId);
   if (!device) return destFail('device_not_found');
   const norm = checkAndNormalize(device, root.path, destPath);
