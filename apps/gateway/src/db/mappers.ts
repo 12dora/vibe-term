@@ -1,9 +1,9 @@
 import {
   DEFAULT_LOCALE,
   DEFAULT_TERMINAL_SHORTCUTS,
-  I18N_MANIFEST,
   type Device,
   type EventType,
+  I18N_MANIFEST,
   type LocaleCode,
   type SiteSettings,
   type TelegramBotChat,
