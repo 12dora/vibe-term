@@ -98,10 +98,12 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.health.pass': 'Health check OK: {{url}}',
     'doctor.health.fail': 'Health check failed or unreachable: {{url}}',
     'doctor.passkey.otherOrigin':
-      'Passkeys exist, but none is registered for {{origin}}; signing in there falls back to the password. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
+      'Passkeys exist, but none is registered for {{origin}}; signing in there is protected by the password alone. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
+    'doctor.passkey.otherOriginTotp':
+      'Passkeys exist, but none is registered for {{origin}}; signing in there is protected by the password and two-step verification. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
 
     'mesh.passkey.removed':
-      'Removed {{count}} passkey(s) for {{username}}. Two-step verification and existing sessions are unchanged.',
+      'Removed {{count}} passkey(s) for {{username}}. Two-step verification and password sessions stay; sessions created with those passkeys are signed out.',
 
     'upgrade.delegateFailed': 'Upgrade delegation failed with exit code {{code}}',
     'upgrade.missingMeta': 'Install metadata not found: {{path}}. Please run init first.',
@@ -375,10 +377,12 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'doctor.health.pass': '健康检查通过：{{url}}',
     'doctor.health.fail': '健康检查失败或不可达：{{url}}',
     'doctor.passkey.otherOrigin':
-      '已有通行密钥，但 {{origin}} 上没有：该地址登录只靠密码。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
+      '已有通行密钥，但 {{origin}} 上没有：该地址登录只有密码把关。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
+    'doctor.passkey.otherOriginTotp':
+      '已有通行密钥，但 {{origin}} 上没有：该地址登录由密码与两步验证把关。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
 
     'mesh.passkey.removed':
-      '已移除 {{username}} 的 {{count}} 把通行密钥；两步验证与现有会话保持不变。',
+      '已移除 {{username}} 的 {{count}} 把通行密钥；两步验证与密码会话保持不变，用这些通行密钥建立的会话已注销。',
 
     'upgrade.delegateFailed': '委托升级失败，退出码 {{code}}',
     'upgrade.missingMeta': '未找到安装元数据：{{path}}，请先执行 init',

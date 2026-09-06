@@ -651,7 +651,7 @@
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
-        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。",
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。既存のパスキーがどれも使えない場合は、サーバーで vibeterm mesh passkey remove-all を実行してください。",
         "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
       },
       "node": {

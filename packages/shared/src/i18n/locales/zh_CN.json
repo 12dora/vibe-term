@@ -1925,7 +1925,7 @@
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。",
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥；通行密钥均已不可用时，在服务器执行 vibeterm mesh passkey remove-all。",
         "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
       },
       "node": {
@@ -3320,7 +3320,7 @@
           "done": "已移除该中继。"
         },
         "awaitingToken": {
-          "notice": "中继令牌已换代，等待持账户密码的一方下发新令牌。"
+          "notice": "中继令牌已换代。持账户密码的节点重新输入接入密码即可恢复，其余节点等待新令牌下发。"
         }
       },
       "admin": {

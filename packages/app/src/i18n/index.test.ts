@@ -87,6 +87,34 @@ describe('i18n', () => {
     }
   });
 
+  // 两个结局都要说清：密码会话与两步验证留着，用被删凭证建立的会话会掉线。
+  test('mesh.passkey.removed states both session outcomes', () => {
+    setLang('en');
+    const en = t('mesh.passkey.removed', { count: 2, username: 'bob' });
+    expect(en).toContain('bob');
+    expect(en).toContain('2');
+    expect(en).toMatch(/two-step verification and password sessions stay/i);
+    expect(en).toMatch(/signed out/i);
+    expect(en).not.toMatch(/existing sessions are unchanged/i);
+    setLang('zh-CN');
+    const zh = t('mesh.passkey.removed', { count: 2, username: 'bob' });
+    expect(zh).toContain('两步验证与密码会话保持不变');
+    expect(zh).toContain('已注销');
+    expect(zh).not.toContain('你');
+    expect(zh).not.toContain('您');
+  });
+
+  test('doctor.passkey origin hints exist in both languages', () => {
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      for (const key of ['doctor.passkey.otherOrigin', 'doctor.passkey.otherOriginTotp'] as const) {
+        const message = t(key, { origin: 'https://term.example.com' });
+        expect(message).not.toBe(key);
+        expect(message).toContain('vibeterm mesh passkey remove-all');
+      }
+    }
+  });
+
   test('skipForeign exists in both languages and zh-CN avoids 你', () => {
     setLang('en');
     expect(t('cli.shim.skipForeign', { path: '/tmp/vibeterm' })).toContain('/tmp/vibeterm');

@@ -121,6 +121,55 @@ describe('mesh passkey remove-all', () => {
     expect(auth.keyLogStore.list(added.userId).map((row) => row.seq)).toEqual([1, 2, 3, 4]);
   });
 
+  // remove-passkey 的副作用是按凭证注销会话：密码会话不受影响，通行密钥会话必须掉线。
+  test('password sessions survive, passkey sessions are revoked', async () => {
+    const auth = await openAuth();
+    const added = await runHubUserAdd(parsed, 'judy', {
+      auth,
+      password: 'first-pass-word',
+      log: () => undefined,
+    });
+    const credentialId = new Uint8Array(16).fill(7);
+    auth.userStore.insertKey({
+      id: crypto.randomUUID(),
+      userId: added.userId,
+      credentialId,
+      publicKey: new Uint8Array(32).fill(7),
+      rpId: 'relay.example',
+      origin: 'https://relay.example',
+      counter: 0,
+      name: 'key-7',
+      logSeq: 1,
+      now: Date.now(),
+    });
+    const now = Date.now();
+    const viaNodeId = 'self';
+    const password = auth.nodeSessionStore.issue({
+      userId: added.userId,
+      viaNodeId,
+      sessPublicKey: new Uint8Array(32).fill(1),
+      delegationMethod: 'root',
+      now,
+    });
+    const passkey = auth.nodeSessionStore.issue({
+      userId: added.userId,
+      viaNodeId,
+      sessPublicKey: new Uint8Array(32).fill(2),
+      delegationMethod: 'passkey',
+      credentialId,
+      now,
+    });
+
+    await runMeshPasskeyRemoveAll(parsed, 'judy', {
+      auth,
+      password: 'first-pass-word',
+      log: () => undefined,
+    });
+
+    expect(auth.nodeSessionStore.verify(password.sid, { viaNodeId, now: now + 1 }).ok).toBe(true);
+    expect(auth.nodeSessionStore.verify(passkey.sid, { viaNodeId, now: now + 1 }).ok).toBe(false);
+  });
+
   test('a wrong password changes nothing', async () => {
     const auth = await openAuth();
     const added = await runHubUserAdd(parsed, 'grace', {

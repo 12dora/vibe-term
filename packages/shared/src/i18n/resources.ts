@@ -1931,7 +1931,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address.",
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address. If none of the existing passkeys can be used any more, run vibeterm mesh passkey remove-all on the server.",
         "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
       },
       "node": {
@@ -3332,7 +3332,7 @@ export const I18N_RESOURCES = {
           "done": "Relay removed."
         },
         "awaitingToken": {
-          "notice": "The relay token was rotated. Waiting for the new token to be distributed."
+          "notice": "The relay token was rotated. Re-enter the access password on a node that holds the account password; other nodes wait for the new token."
         }
       },
       "admin": {
@@ -5468,7 +5468,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",
         "passkeySecondFactor": "请完成通行密钥验证…",
-        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥。",
+        "passkeySecondFactorNotRegistered": "此地址未注册通行密钥，无法完成二次验证。请改从已注册通行密钥的地址、或本机与局域网地址登录，再为此地址添加通行密钥；通行密钥均已不可用时，在服务器执行 vibeterm mesh passkey remove-all。",
         "passkeyOtherOriginHint": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。"
       },
       "node": {
@@ -6863,7 +6863,7 @@ export const I18N_RESOURCES = {
           "done": "已移除该中继。"
         },
         "awaitingToken": {
-          "notice": "中继令牌已换代，等待持账户密码的一方下发新令牌。"
+          "notice": "中继令牌已换代。持账户密码的节点重新输入接入密码即可恢复，其余节点等待新令牌下发。"
         }
       },
       "admin": {
@@ -8999,7 +8999,7 @@ export const I18N_RESOURCES = {
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",
         "passkeySecondFactor": "パスキーの確認を完了してください…",
-        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。",
+        "passkeySecondFactorNotRegistered": "このアドレスにはパスキーが登録されていないため、二段階の確認を完了できません。パスキーを登録済みのアドレス、またはこのマシンや LAN アドレスからサインインし、このアドレス用のパスキーを追加してください。既存のパスキーがどれも使えない場合は、サーバーで vibeterm mesh passkey remove-all を実行してください。",
         "passkeyOtherOriginHint": "このアドレスにはまだパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。"
       },
       "node": {
@@ -10394,7 +10394,7 @@ export const I18N_RESOURCES = {
           "done": "中継を削除しました。"
         },
         "awaitingToken": {
-          "notice": "中継トークンが更新されました。新しいトークンの配布を待っています。"
+          "notice": "中継トークンが更新されました。アカウントパスワードを持つノードで接続パスワードを再入力すると復旧します。他のノードは新しいトークンの配布を待ちます。"
         }
       },
       "admin": {

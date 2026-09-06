@@ -217,15 +217,23 @@ export function isDomainOrigin(origin: string): boolean {
  */
 export function classifyPasskeyOrigin(input: {
   origin: string;
-  mode: { passkeysForThisOrigin?: boolean; passkeysRegisteredElsewhere?: boolean } | null;
+  mode: {
+    passkeysForThisOrigin?: boolean;
+    passkeysRegisteredElsewhere?: boolean;
+    totpEnabled?: boolean;
+  } | null;
 }): DoctorCheck[] {
   if (!isDomainOrigin(input.origin)) return [];
   if (!input.mode?.passkeysRegisteredElsewhere) return [];
+  // 开了两步验证的账号并不是「只剩密码」，文案必须按状态说，否则等于误报。
+  const key = input.mode.totpEnabled
+    ? 'doctor.passkey.otherOriginTotp'
+    : 'doctor.passkey.otherOrigin';
   return [
     {
       id: 'passkey-origin',
       level: 'warn',
-      message: t('doctor.passkey.otherOrigin', { origin: input.origin }),
+      message: t(key, { origin: input.origin }),
     },
   ];
 }
@@ -251,6 +259,7 @@ export async function checkPasskeyOrigins(input: {
   const mode = (await res.json().catch(() => null)) as {
     passkeysForThisOrigin?: boolean;
     passkeysRegisteredElsewhere?: boolean;
+    totpEnabled?: boolean;
   } | null;
   return classifyPasskeyOrigin({ origin, mode });
 }

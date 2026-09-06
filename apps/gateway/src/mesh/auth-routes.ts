@@ -57,8 +57,9 @@ import {
   withAuthModeInvalidation,
 } from './auth-mode-cache';
 import { gatePasskeySecondFactor } from './auth-passkey-origin';
+import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
-import { handleTotpRecordRequest } from './auth-totp-record';
+import { handleTotpRecordRequest, parseTotpBody } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
@@ -595,11 +596,15 @@ export class AuthRoutes {
   ): Promise<{ ok: true } | { ok: false; code: string }> {
     if (delegation.method !== 'root') return { ok: true };
     if (waivesPasskeySecondFactor(req)) return { ok: true };
+    const state = this.deps.keyLogService.currentState(user.id);
     const gate = gatePasskeySecondFactor({
       keys: this.deps.userStore.listKeysByUser(user.id),
       origin: requestOrigin(req),
       uid: user.id,
       body: passkeyBody,
+      // 与 checkTotp 同一个条件：它先跑且失败即返回，所以这两项同时成立就等于本次已验过 TOTP。
+      totpVerified: Boolean(state.totp) && user.totpRecordSeq != null,
+      entryOrigins: defaultEntryOrigins(this.deps),
     });
     if (gate.kind !== 'verify') {
       return gate.kind === 'skip' ? { ok: true } : { ok: false, code: gate.code };
@@ -699,17 +704,6 @@ function credentialIdBytes(id: string | null): Uint8Array | null {
     return decodeBase64url(id);
   } catch {
     return new TextEncoder().encode(id);
-  }
-}
-
-function parseTotpBody(value: unknown): { code: string; kTotp: Uint8Array } | null {
-  if (typeof value !== 'object' || value === null) return null;
-  const rec = value as { code?: unknown; k_totp?: unknown };
-  if (typeof rec.code !== 'string' || typeof rec.k_totp !== 'string') return null;
-  try {
-    return { code: rec.code, kTotp: decodeBase64url(rec.k_totp) };
-  } catch {
-    return null;
   }
 }
 

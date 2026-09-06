@@ -2572,7 +2572,7 @@
           "done": "Relay removed."
         },
         "awaitingToken": {
-          "notice": "The relay token was rotated. Waiting for the new token to be distributed."
+          "notice": "The relay token was rotated. Re-enter the access password on a node that holds the account password; other nodes wait for the new token."
         }
       },
       "admin": {

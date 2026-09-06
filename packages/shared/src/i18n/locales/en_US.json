@@ -1925,7 +1925,7 @@
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",
         "passkeySecondFactor": "Complete the passkey check…",
-        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address.",
+        "passkeySecondFactorNotRegistered": "No passkey is registered for this address, so the second step cannot be completed. Sign in from an address that has a passkey, or from the local machine or a LAN address, then add one for this address. If none of the existing passkeys can be used any more, run vibeterm mesh passkey remove-all on the server.",
         "passkeyOtherOriginHint": "No passkey is registered for this address. Add one under Settings → Account security after signing in."
       },
       "node": {
@@ -3326,7 +3326,7 @@
           "done": "Relay removed."
         },
         "awaitingToken": {
-          "notice": "The relay token was rotated. Waiting for the new token to be distributed."
+          "notice": "The relay token was rotated. Re-enter the access password on a node that holds the account password; other nodes wait for the new token."
         }
       },
       "admin": {

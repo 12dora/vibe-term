@@ -1,4 +1,4 @@
-import { encodeBase64url, encodeSetTotpPayload } from '@vibeterm/shared/auth';
+import { decodeBase64url, encodeBase64url, encodeSetTotpPayload } from '@vibeterm/shared/auth';
 import type { UserKeyService } from '../auth/user-key-service';
 import type { UserStore } from '../auth/user-store';
 import { jsonBody, jsonError } from './session-middleware';
@@ -51,4 +51,16 @@ function totpRecordBody(
 function seqToJson(seq: bigint | number): number | string {
   const value = typeof seq === 'bigint' ? seq : BigInt(seq);
   return value <= BigInt(Number.MAX_SAFE_INTEGER) ? Number(value) : value.toString();
+}
+
+/** 登录体里的 TOTP 字段：`k_totp` 必须是 base64url，解不出即视为没带。 */
+export function parseTotpBody(value: unknown): { code: string; kTotp: Uint8Array } | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const rec = value as { code?: unknown; k_totp?: unknown };
+  if (typeof rec.code !== 'string' || typeof rec.k_totp !== 'string') return null;
+  try {
+    return { code: rec.code, kTotp: decodeBase64url(rec.k_totp) };
+  } catch {
+    return null;
+  }
 }

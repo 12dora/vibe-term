@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { setLang } from '../i18n';
 import type { DoctorCheck } from '../types';
 import {
   DOCTOR_CHECK_TABLE,
@@ -240,6 +241,7 @@ describe('passkey origin check', () => {
         mode: { passkeysForThisOrigin: false, passkeysRegisteredElsewhere: true },
       })
     ).toHaveLength(1);
+
     expect(
       classifyPasskeyOrigin({
         origin,
@@ -254,5 +256,37 @@ describe('passkey origin check', () => {
         mode: { passkeysRegisteredElsewhere: true },
       })
     ).toEqual([]);
+  });
+
+  test('the wording follows the two-step verification state', () => {
+    const origin = 'https://term.example.com';
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      const plain = classifyPasskeyOrigin({
+        origin,
+        mode: { passkeysRegisteredElsewhere: true, totpEnabled: false },
+      })[0]?.message;
+      const guarded = classifyPasskeyOrigin({
+        origin,
+        mode: { passkeysRegisteredElsewhere: true, totpEnabled: true },
+      })[0]?.message;
+      expect(plain).toBeTruthy();
+      expect(guarded).toBeTruthy();
+      expect(plain).not.toBe(guarded);
+      expect(plain).toContain(origin);
+      expect(guarded).toContain(origin);
+      expect(guarded).toContain('vibeterm mesh passkey remove-all');
+    }
+    setLang('en');
+    const plainEn = classifyPasskeyOrigin({
+      origin,
+      mode: { passkeysRegisteredElsewhere: true, totpEnabled: false },
+    })[0]?.message;
+    const guardedEn = classifyPasskeyOrigin({
+      origin,
+      mode: { passkeysRegisteredElsewhere: true, totpEnabled: true },
+    })[0]?.message;
+    expect(plainEn).toContain('password alone');
+    expect(guardedEn).toContain('two-step verification');
   });
 });

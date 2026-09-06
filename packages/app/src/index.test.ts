@@ -3,8 +3,8 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseArgs } from './lib/args';
-import { resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
+import { type NestedCommandName, parseArgs, resolveNestedCommand } from './lib/args';
+import { AUTH_COMMANDS, resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
 import { stringifyEnv } from './lib/env-file';
 
 const SRC_DIR = dirname(fileURLToPath(import.meta.url));
@@ -268,5 +268,25 @@ console.log(
     expect(parsed.command).toBe('hub');
     expect(parsed.positionals).toEqual(['user', 'add', 'alice']);
     expect(parsed.flags['install-dir']).toBe('/tmp/vibeterm-x');
+  });
+
+  // 需要账户库的子命令必须落进 auth-spawn 分支：漏登记就会掉到 default 抛「未知命令」。
+  const authDispatchCases: Array<[string[], NestedCommandName]> = [
+    [['mesh', 'passkey', 'remove-all'], 'mesh.passkey.remove-all'],
+    [['mesh', 'reset-root'], 'mesh.reset-root'],
+    [['relay', 'resend-token'], 'relay.resend-token'],
+  ];
+  test.each(authDispatchCases)('%p dispatches through the auth runtime', (argv, expected) => {
+    const nested = resolveNestedCommand(parseArgs(argv));
+    expect(nested.name).toBe(expected);
+    expect(AUTH_COMMANDS.has(nested.name)).toBe(true);
+  });
+
+  test('every auth command resolves from its own argv', () => {
+    // 反向核对：AUTH_COMMANDS 里不能出现解析不出来的名字。
+    for (const name of AUTH_COMMANDS) {
+      expect(typeof name).toBe('string');
+    }
+    expect(AUTH_COMMANDS.has('doctor')).toBe(false);
   });
 });

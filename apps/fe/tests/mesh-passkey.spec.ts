@@ -14,6 +14,7 @@ import {
 const INVALID_CREDENTIALS_COPY = /Incorrect username or password\.|用户名或密码错误。/;
 const PASSKEY_ABORTED_COPY = /Passkey sign-in was cancelled\.|通行密钥授权已取消。/;
 const PASSKEY_CHECK_COPY = /Complete the passkey check|请完成通行密钥验证/;
+const PASSKEY_NOT_HERE_COPY = /No passkey is registered for this address|此地址未注册通行密钥/;
 
 /**
  * 强路径用例声明的「公网来源」。
@@ -201,12 +202,17 @@ test('mesh: a forwarded public source still enforces the passkey second factor',
 
 /**
  * 换一个入口地址（同一实例、不同 origin）：那把通行密钥绑在 `localhost:<hubPort>` 上，
- * 在 `127.0.0.1:<hubPort>` 既弹不出来也做不完断言，因此二次验证在这里必须整体不生效，
- * 密码要能一次登进去。这是「从中继域名切到 Cloudflare 域名后被锁在门外」那个故障的回归。
+ * 在 `127.0.0.1:<hubPort>` 既弹不出来也做不完断言。
  *
- * 同样带 `x-forwarded-for` 声明公网来源：否则本机豁免会先一步放行，证不了 per-origin 这条。
+ * `Origin` 头不可验证，所以「这里没有凭证」不能直接换来放行：这个地址既不在服务端配置的入口
+ * 里（`VIBETERM_BASE_URL` 是 `localhost:<hubPort>`），账号也没开两步验证，因此必须被拦下，
+ * 并且给出「此地址未注册通行密钥」那句而不是一句泛泛的登录失败。
+ * 服务端认得的入口（站点 URL / 隧道域名 / hub / 中继）能只凭密码登录，那条由网关单测覆盖
+ * （`apps/gateway/src/mesh/auth-passkey-origin.test.ts`）。
+ *
+ * 同样带 `x-forwarded-for` 声明公网来源：否则本机豁免会先一步放行，证不了这条。
  */
-test('mesh: a second origin without a passkey signs in with the password alone', async ({
+test('mesh: an unrecognized origin cannot trade a missing passkey for a password login', async ({
   browser,
 }) => {
   const other = await newForwardedContext(browser);
@@ -227,17 +233,21 @@ test('mesh: a second origin without a passkey signs in with the password alone',
       waitUntil: 'domcontentloaded',
     });
     await expect(otherPage.getByTestId('login-page')).toBeVisible({ timeout: 30_000 });
-    expect(await authModeFlag(otherPage, 'passkeySecondFactor')).toBe(false);
+    expect(await authModeFlag(otherPage, 'passkeysForThisOrigin')).toBe(false);
     expect(await authModeFlag(otherPage, 'passkeysRegisteredElsewhere')).toBe(true);
     await expect(otherPage.getByTestId('login-passkey-other-origin')).toBeVisible();
 
     await fillCredentials(otherPage, state.password);
     await otherPage.getByTestId('login-submit').click();
-    await expect(otherPage.getByTestId('sidebar')).toBeVisible({ timeout: 90_000 });
 
-    // 一次仪式都没起过，会话却是真的：这个地址只靠密码就登进来了。
+    await expect(otherPage.getByTestId('login-error')).toHaveText(PASSKEY_NOT_HERE_COPY, {
+      timeout: 60_000,
+    });
+    await expect(otherPage.getByTestId('sidebar')).toHaveCount(0);
+    expect(new URL(otherPage.url()).pathname).toBe('/login');
+    // 本地址一把凭证都没有，前端不该把用户丢进注定失败的系统弹窗。
     expect(await passkeyGetCalls(otherPage)).toBe(0);
-    expect(await meshNodesStatus(otherPage)).toBe(200);
+    expect(await meshNodesStatus(otherPage)).not.toBe(200);
   } finally {
     await other.close();
   }
