@@ -34,7 +34,6 @@ export interface TerminalScroller {
     clientY: number;
   }) => boolean;
   noteTouchHandled?: () => void;
-  focus?: () => void;
   buffer?: {
     active?: {
       viewportY?: number;

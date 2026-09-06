@@ -2,6 +2,7 @@
 
 import { useRuntime, useTmuxStore } from '@tmex/stores/react';
 import { type RefObject, useCallback, useEffect, useRef } from 'react';
+import { refocusTerminalInput } from '../../utils/terminal-input-focus';
 import type { SplitLayoutGeometry } from '../splitLayoutGeometry';
 import type { TerminalRef } from '../types';
 
@@ -90,9 +91,7 @@ export function useSplitPaneTerminals({
   // 焦点变化时聚焦对应实例
   useEffect(() => {
     if (inputMode !== 'direct') return;
-    const isMobileLike = window.innerWidth < 768 || 'ontouchstart' in window;
-    if (isMobileLike) return;
-    terminalRefs.current.get(focusedPaneId)?.getTerminal()?.focus();
+    refocusTerminalInput(terminalRefs.current.get(focusedPaneId)?.getTerminal());
   }, [focusedPaneId, inputMode]);
 
   // 各实例 cols/rows 跟随 tmux layout（tmux 是尺寸权威）

@@ -5,15 +5,20 @@ import { useQuery } from '@tanstack/react-query';
 import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
 import type { TerminalShortcutItem } from '@tmex/shared';
 import { useRuntime } from '@tmex/stores/react';
-import { memo, useMemo } from 'react';
+import type { TerminalRef } from '@tmex/terminal-ui';
+import { type RefObject, memo, useMemo } from 'react';
 import { ShortcutButtonRow } from '../settings/ShortcutButtonRow';
+import { TerminalKeyboardButton } from './terminal-keyboard-button';
 
 export const ShortcutsBar = memo(function ShortcutsBar({
   onActivate,
   disabled,
+  keyboardToggle,
 }: {
   onActivate: (item: TerminalShortcutItem) => void;
   disabled: boolean;
+  /** 触屏软键盘开关要用的终端 ref；不传即不渲染该按钮（桌面点终端就能输入） */
+  keyboardToggle?: RefObject<TerminalRef | null>;
 }) {
   const runtime = useRuntime();
   const { data } = useQuery({
@@ -31,20 +36,29 @@ export const ShortcutsBar = memo(function ShortcutsBar({
     }
     return all.filter((item) => !(item.type === 'action' && item.action === 'newAgentSession'));
   }, [agentUi, data?.items]);
-  if (items.length === 0) {
+  if (items.length === 0 && !keyboardToggle) {
     return null;
   }
   return (
-    <div className="terminal-shortcuts-strip" data-testid="terminal-shortcuts-strip">
-      <ShortcutButtonRow
-        items={items}
-        useIcons={data?.useIcons ?? false}
-        onActivate={onActivate}
-        disabled={disabled}
-        preventFocusSteal
-        rowTestId="terminal-shortcuts-row"
-        idPrefix="terminal-shortcut"
-      />
+    <div
+      className="terminal-shortcuts-strip flex items-center gap-1.5"
+      data-testid="terminal-shortcuts-strip"
+    >
+      {keyboardToggle && (
+        <TerminalKeyboardButton terminalRef={keyboardToggle} disabled={disabled} />
+      )}
+      {items.length > 0 && (
+        <ShortcutButtonRow
+          items={items}
+          useIcons={data?.useIcons ?? false}
+          onActivate={onActivate}
+          disabled={disabled}
+          preventFocusSteal
+          className="min-w-0 flex-1"
+          rowTestId="terminal-shortcuts-row"
+          idPrefix="terminal-shortcut"
+        />
+      )}
     </div>
   );
 });
@@ -55,6 +69,8 @@ export interface TerminalShortcutsSlotProps {
   background: string;
   onActivate: (item: TerminalShortcutItem) => void;
   disabled: boolean;
+  /** 触屏才传：软键盘开关按钮作用的终端 ref */
+  keyboardToggle?: RefObject<TerminalRef | null>;
 }
 
 /**
@@ -67,13 +83,14 @@ export function TerminalShortcutsSlot({
   background,
   onActivate,
   disabled,
+  keyboardToggle,
 }: TerminalShortcutsSlotProps) {
   if (!visible) {
     return null;
   }
   return (
     <div className="kb-floating-shortcuts" style={{ backgroundColor: background }}>
-      <ShortcutsBar onActivate={onActivate} disabled={disabled} />
+      <ShortcutsBar onActivate={onActivate} disabled={disabled} keyboardToggle={keyboardToggle} />
     </div>
   );
 }

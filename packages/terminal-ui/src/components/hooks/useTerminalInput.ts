@@ -5,6 +5,7 @@ import {
   registerCursorRectGetter,
   unregisterCursorRectGetter,
 } from '../../utils/keyboard-cursor-bridge';
+import { refocusTerminalInput } from '../../utils/terminal-input-focus';
 import type { TerminalProps } from '../types';
 import { useLatestRef } from './useLatestRef';
 
@@ -85,11 +86,7 @@ export function useTerminalInput({
     if (!instance || inputMode !== 'direct' || !autoFocus) {
       return;
     }
-    const isMobileLike = window.innerWidth < 768 || 'ontouchstart' in window;
-    if (isMobileLike) {
-      return;
-    }
-    instance.focus();
+    refocusTerminalInput(instance);
   }, [instance, inputMode, autoFocus]);
 
   useEffect(() => {

@@ -238,7 +238,9 @@
           "separator": ", ",
           "queue": "{{pending}} pending, {{dropped}} dropped",
           "loadFailed": "Failed to load mesh notification state: {{message}}",
-          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+          "saveFailed": "Failed to save mesh notification setting: {{message}}",
+          "nodesTooOld": "Some nodes are older than {{minVersion}}. Update every node first.",
+          "unavailable": "Cannot save the mesh notification setting. Sign in again and retry."
         },
         "scope": {
           "remote": "Editing notification channels of \"{{name}}\".",

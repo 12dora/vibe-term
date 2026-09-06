@@ -18,6 +18,13 @@ function focusIfEnabled(context: PointerEventContext): void {
   }
 }
 
+// 触摸手势消费过的那次点按，浏览器随后仍会合成一整套鼠标事件。它们必须整体作废：
+// 合成 click 会聚焦 helper textarea（触屏上等于弹软键盘），合成 mousedown 的默认动作
+// 又会把焦点从 textarea 上夺走（键盘闪收）。软键盘只由「显示键盘」按钮唤起。
+function isSyntheticAfterTouch(context: PointerEventContext): boolean {
+  return Date.now() < context.mouse.suppressSyntheticUntil;
+}
+
 // xterm 约定：Shift+左键绕过鼠标上报、走本地文本选择（上报 TUI 下唯一的复制入口）。
 // 返回 true 表示该 mousedown 已被上报路径消费，后续本地逻辑不再执行。
 function consumeReportingMousedown(context: PointerEventContext, event: MouseEvent): boolean {
@@ -68,6 +75,9 @@ function consumeLinkMousedown(context: PointerEventContext, event: MouseEvent): 
 
 function createClickListener(context: PointerEventContext): () => void {
   return (): void => {
+    if (isSyntheticAfterTouch(context)) {
+      return;
+    }
     focusIfEnabled(context);
   };
 }
@@ -78,8 +88,10 @@ function createMousedownListener(context: PointerEventContext): (event: MouseEve
       return;
     }
     // 触摸手势刚被 useMobileTouch 消费过：忽略浏览器随后合成的鼠标事件，
-    // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）
-    if (Date.now() < context.mouse.suppressSyntheticUntil) {
+    // 防止 tap 双触发与"合成 mousedown 清掉长按选择"（不查 isTrusted，保证测试可驱动）。
+    // 同时吃掉默认动作——否则浏览器会把焦点移出 helper textarea，正在显示的软键盘被收起。
+    if (isSyntheticAfterTouch(context)) {
+      event.preventDefault();
       return;
     }
     context.showScrollbarTransient();

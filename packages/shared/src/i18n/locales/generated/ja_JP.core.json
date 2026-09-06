@@ -187,6 +187,8 @@
       "copyPending": "画面をタップしてコピーを完了してください",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
+      "showKeyboard": "キーボードを表示",
+      "hideKeyboard": "キーボードを非表示",
       "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
       "linkOpenFailed": "リンクを開けませんでした"
     },
@@ -746,7 +748,8 @@
           "admit": "新しいノードを承認",
           "revoke": "ノードを削除",
           "passkey": "パスキーの追加・削除",
-          "totp": "認証アプリをオフにする"
+          "totp": "認証アプリをオフにする",
+          "notifySink": "マルチノード通知の設定"
         }
       }
     }

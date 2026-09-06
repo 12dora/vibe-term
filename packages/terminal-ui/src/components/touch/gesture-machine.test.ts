@@ -148,7 +148,6 @@ function createHarness(options: {
       calls.push(`updateSelection(${clientX},${clientY})`),
     endTouchSelection: () => calls.push('endSelection'),
     noteTouchHandled: () => calls.push('noteTouchHandled'),
-    focus: () => calls.push('focus'),
   };
   terminal._core = {
     _renderService: { dimensions: { css: { cell: { height: CELL_HEIGHT } } } },
@@ -190,7 +189,8 @@ describe('mouse reporting gestures', () => {
     const end = touchEvent([], [touch(1, 103, 101)]);
     machine.handleTouchEnd(asTouchEvent(end));
 
-    expect(calls).toEqual(['press(100,100)', 'release(100,100)', 'noteTouchHandled', 'focus']);
+    // 轻点不碰焦点：软键盘只由快捷键栏的「显示键盘」唤起
+    expect(calls).toEqual(['press(100,100)', 'release(100,100)', 'noteTouchHandled']);
     expect(end.defaultPrevented).toBe(true);
     expect(machine.currentState()).toBe('idle');
   });
@@ -209,7 +209,7 @@ describe('mouse reporting gestures', () => {
     machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
     machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 100)])));
 
-    expect(calls).toEqual(['press-rejected(100,100)', 'noteTouchHandled', 'focus']);
+    expect(calls).toEqual(['press-rejected(100,100)', 'noteTouchHandled']);
     expect(machine.currentState()).toBe('idle');
   });
 
@@ -312,6 +312,46 @@ describe('non-reporting scroll', () => {
 
     expect(calls).toEqual([]);
     expect(move.defaultPrevented).toBe(false);
+  });
+});
+
+// 触屏轻点画布只是"看一眼"：合成鼠标序列会聚焦 helper textarea（弹软键盘）或反过来夺走
+// 它的焦点（收键盘），因此整套序列作废；软键盘只由快捷键栏的「显示键盘」开合。
+describe('tap on the canvas never touches the keyboard', () => {
+  const surface = () => new FakeElement(['.xterm']);
+
+  test('轻点画布：压掉合成鼠标序列，且不聚焦', () => {
+    const { machine, calls } = createHarness({ reporting: false });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, surface())));
+    const end = touchEvent([], [touch(1, 101, 201)], surface());
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual(['noteTouchHandled']);
+    expect(end.defaultPrevented).toBe(true);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('滚动过的手势不算轻点，抬指不额外干预', () => {
+    const { machine, calls } = createHarness({ reporting: false });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, surface())));
+    machine.handleTouchMove(asTouchEvent(touchEvent([touch(1, 100, 160)], undefined, surface())));
+    calls.length = 0;
+    const end = touchEvent([], [touch(1, 100, 160)], surface());
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual([]);
+    expect(end.defaultPrevented).toBe(false);
+  });
+
+  test('覆盖层（选区工具条）上的轻点放行，按钮仍可点', () => {
+    const { machine, calls } = createHarness({ reporting: false });
+    const toolbar = new FakeElement(['[data-testid="terminal-selection-toolbar"]']);
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, toolbar)));
+    const end = touchEvent([], [touch(1, 100, 200)], toolbar);
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual([]);
+    expect(end.defaultPrevented).toBe(false);
   });
 });
 

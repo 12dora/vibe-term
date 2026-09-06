@@ -238,7 +238,9 @@
           "separator": "、",
           "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
           "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
-          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}",
+          "nodesTooOld": "{{minVersion}} より古いノードがあります。先にすべてのノードを更新してください。",
+          "unavailable": "マルチノード通知の設定を保存できません。再度サインインしてください。"
         },
         "scope": {
           "remote": "「{{name}}」の通知チャンネルを編集しています。",

@@ -187,6 +187,8 @@
       "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
+      "showKeyboard": "Show Keyboard",
+      "hideKeyboard": "Hide Keyboard",
       "fileLinkNotFound": "File does not exist or is not accessible",
       "linkOpenFailed": "Could not open link"
     },
@@ -746,7 +748,8 @@
           "admit": "Approve the new node",
           "revoke": "Remove a node",
           "passkey": "Add or remove a passkey",
-          "totp": "Turn off the authenticator"
+          "totp": "Turn off the authenticator",
+          "notifySink": "Change mesh notifications"
         }
       }
     }

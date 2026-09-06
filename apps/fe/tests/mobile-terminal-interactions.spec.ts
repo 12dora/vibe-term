@@ -541,3 +541,71 @@ test('mobile: long press should select word and selection toolbar copies it', as
     ensureCleanSession(sessionName);
   }
 });
+
+// 触屏上软键盘只由快捷键栏的「显示键盘」开合：点终端画布不弹键盘（也不收），
+// 保证滚动 / 长按选择这些「看」的手势不会被键盘顶掉半屏。
+test('mobile: tapping the canvas never toggles the keyboard, the toggle button does', async ({
+  page,
+  request,
+}) => {
+  const sessionName = `tmex-e2e-mobile-kbd-${Date.now()}`;
+  createTwoPaneSession(sessionName);
+
+  const createRes = await request.post('/api/devices', {
+    data: {
+      name: `e2e-mobile-kbd-${Date.now()}`,
+      type: 'local',
+      session: sessionName,
+      authMode: 'auto',
+    },
+  });
+  expect(createRes.ok()).toBeTruthy();
+  const created = (await createRes.json()) as { device: { id: string } };
+  const deviceId = created.device.id;
+
+  const inputFocused = () =>
+    page.evaluate(() =>
+      Boolean((document.activeElement as HTMLElement | null)?.closest('.xterm-helper-textarea'))
+    );
+
+  try {
+    await page.goto(`/devices/${deviceId}`);
+    await expect(page.getByTestId('device-page')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+
+    const toggle = page.getByTestId('terminal-keyboard-toggle');
+    await expect(toggle).toBeVisible();
+
+    const terminal = page.locator('.xterm').first();
+    const box = await terminal.boundingBox();
+    expect(box).not.toBeNull();
+    if (!box) return;
+    const center = { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+
+    // 移动端挂载不自动聚焦
+    expect(await inputFocused()).toBe(false);
+
+    // 画布轻点：不聚焦、不弹键盘
+    await page.touchscreen.tap(center.x, center.y);
+    await page.waitForTimeout(300);
+    expect(await inputFocused()).toBe(false);
+
+    // 输入入口：聚焦终端输入元素（= 弹出软键盘）
+    await toggle.tap();
+    await expect.poll(inputFocused, { timeout: 5_000 }).toBe(true);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'true');
+
+    // 键盘弹着时再点画布：焦点保持，不闪收
+    await page.touchscreen.tap(center.x, center.y);
+    await page.waitForTimeout(300);
+    expect(await inputFocused()).toBe(true);
+
+    // 再点一次入口：收起
+    await toggle.tap();
+    await expect.poll(inputFocused, { timeout: 5_000 }).toBe(false);
+    await expect(toggle).toHaveAttribute('aria-pressed', 'false');
+  } finally {
+    await request.delete(`/api/devices/${deviceId}`);
+    ensureCleanSession(sessionName);
+  }
+});

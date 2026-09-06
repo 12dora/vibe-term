@@ -2,6 +2,7 @@ import { useRuntime } from '@tmex/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { refocusTerminalInput } from '../../utils/terminal-input-focus';
 
 export interface UseTerminalClipboardOptions {
   instance: CompatibleTerminalLike | null;
@@ -52,7 +53,7 @@ export function useTerminalClipboard({ instance }: UseTerminalClipboardOptions):
       })
       .finally(() => {
         instance.clearSelection?.();
-        instance.focus();
+        refocusTerminalInput(instance);
       });
   }, [instance, runtime, t]);
 
@@ -66,7 +67,7 @@ export function useTerminalClipboard({ instance }: UseTerminalClipboardOptions):
           instance.paste(text);
         }
         instance.clearSelection?.();
-        instance.focus();
+        refocusTerminalInput(instance);
       })
       .catch(() => {
         runtime.notifications.error(t('terminal.pasteFailed'));
@@ -75,7 +76,7 @@ export function useTerminalClipboard({ instance }: UseTerminalClipboardOptions):
 
   const dismissSelection = useCallback(() => {
     instance?.clearSelection?.();
-    instance?.focus();
+    refocusTerminalInput(instance);
   }, [instance]);
 
   return { hasSelection, copySelection, pasteClipboard, dismissSelection };

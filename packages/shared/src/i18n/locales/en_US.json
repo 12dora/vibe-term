@@ -393,6 +393,8 @@
       "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
+      "showKeyboard": "Show Keyboard",
+      "hideKeyboard": "Hide Keyboard",
       "fileLinkNotFound": "File does not exist or is not accessible",
       "linkOpenFailed": "Could not open link"
     },
@@ -428,7 +430,9 @@
           "separator": ", ",
           "queue": "{{pending}} pending, {{dropped}} dropped",
           "loadFailed": "Failed to load mesh notification state: {{message}}",
-          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+          "saveFailed": "Failed to save mesh notification setting: {{message}}",
+          "nodesTooOld": "Some nodes are older than {{minVersion}}. Update every node first.",
+          "unavailable": "Cannot save the mesh notification setting. Sign in again and retry."
         },
         "scope": {
           "remote": "Editing notification channels of \"{{name}}\".",
@@ -2009,7 +2013,8 @@
           "admit": "Approve the new node",
           "revoke": "Remove a node",
           "passkey": "Add or remove a passkey",
-          "totp": "Turn off the authenticator"
+          "totp": "Turn off the authenticator",
+          "notifySink": "Change mesh notifications"
         }
       }
     },
