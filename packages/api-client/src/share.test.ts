@@ -7,6 +7,7 @@ import {
   listShares,
   revokeShare,
   shareListPath,
+  shareNodeQueryKey,
   sharePasswordPath,
   shareQueryKey,
   updateSharePassword,
@@ -57,6 +58,17 @@ describe('shareQueryKey', () => {
   test('缺省过滤补 null，保证同一形状便于失效', () => {
     expect(shareQueryKey()).toEqual(['share', null, null]);
     expect(shareQueryKey({ deviceId: 'd1', windowId: '@1' })).toEqual(['share', 'd1', '@1']);
+  });
+
+  test('按节点分片的键只在末尾追加 nodeId，前缀仍能整片失效', () => {
+    expect(shareNodeQueryKey('self')).toEqual(['share', null, null, 'self']);
+    expect(shareNodeQueryKey('node-b', { deviceId: 'd1' })).toEqual([
+      'share',
+      'd1',
+      null,
+      'node-b',
+    ]);
+    expect(shareNodeQueryKey('node-b')).not.toEqual(shareNodeQueryKey('self'));
   });
 });
 

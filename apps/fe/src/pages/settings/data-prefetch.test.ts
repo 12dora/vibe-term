@@ -51,10 +51,17 @@ describe('tabPrefetchSpecs', () => {
     expect(specs.map((s) => s.queryKey)).toEqual([['tunnel-status']]);
   });
 
-  test('分享标签预取分享列表（首屏两张表都等它）', () => {
+  test('分享标签预取分享列表（首屏两张表都等它），键按节点分片', () => {
     const specs = tabPrefetchSpecs('share', apiClient);
-    expect(specs.map((s) => s.queryKey)).toEqual([['share', null, null]]);
+    expect(specs.map((s) => s.queryKey)).toEqual([['share', null, null, 'self']]);
     expect(specs[0].staleTime).toBeUndefined();
+    // 路由在 `/n/<id>/settings` 时预取的是那台节点那一条。
+    expect(tabPrefetchSpecs('share', apiClient, 'node-b')[0].queryKey).toEqual([
+      'share',
+      null,
+      null,
+      'node-b',
+    ]);
   });
 
   test('节点标签预取本机运行态与 TLS 状态', () => {

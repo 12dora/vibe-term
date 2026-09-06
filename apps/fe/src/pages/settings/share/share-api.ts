@@ -14,6 +14,7 @@ export {
   listShares,
   revokeShare,
   shareListPath,
+  shareNodeQueryKey,
   shareQueryKey,
   updateSharePassword,
 } from '@tmex/api-client/share';

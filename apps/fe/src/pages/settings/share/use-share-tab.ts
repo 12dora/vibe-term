@@ -1,34 +1,42 @@
-// 「分享」标签的数据与写操作：列表（每 10 秒一拍）、设备名、地址候选、分享设置。
-// 组件只读这里的投影，不自己发请求。
+// 「分享」标签的数据与写操作：进行中的列表跨全部节点汇总，历史与分享设置仍只问本节点
+//（它们是节点本地的记录与配置）。组件只读这里的投影，不自己发请求。
+//
+// 每一行都带着自己的 nodeId：终止、查看/修改密码、复制带密码的链接一律用那台节点的客户端，
+// 失效也只失效那台节点的分片键。
 
+import { useRouteNodeId } from '@/node/node-runtime-boundary';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { devicesQueryKey, fetchDevices } from '@tmex/api-client';
-import type { ShareRecord, ShareSettings } from '@tmex/shared/share';
+import { createNodeApiClient } from '@tmex/api-client';
+import type { ShareSettings } from '@tmex/shared/share';
 import { useRuntime } from '@tmex/stores/react';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SETTINGS_STALE_MS } from '../data-prefetch';
+import { createShareRowApi } from './share-actions';
 import {
-  type ShareListResponse,
   type ShareOriginsResponse,
-  deleteShare,
   fetchShareSettings,
   getShareOrigins,
-  getSharePassword,
-  listShares,
-  revokeShare,
   saveShareSettings,
   shareErrorKey,
+  shareNodeQueryKey,
   shareOriginsQueryKey,
   shareQueryKey,
   shareSettingsQueryKey,
-  updateSharePassword,
 } from './share-api';
+import type { ShareRow, ShareRowSource } from './share-rows';
+import { toShareRows } from './share-rows';
+import { useShareRowActions } from './use-share-row-actions';
+import {
+  SHARE_POLL_MS,
+  useActiveShares,
+  useNodeShareList,
+  useShareDeviceNames,
+  useShareNodes,
+} from './use-share-sources';
 
-/** 进行中的分享要看在线人数与剩余期限，一拍 10 秒；标签不在前台时 react-query 自动停。 */
-export const SHARE_POLL_MS = 10_000;
-
-const EMPTY_LIST: ShareListResponse = { active: [], history: [] };
+export { SHARE_POLL_MS };
+export type { ShareRow };
 
 /** 服务端 message 是英文，界面只认契约错误码；没有码的失败走通用兜底。 */
 type Translate = (key: string) => string;
@@ -38,49 +46,63 @@ function errorText(t: Translate, error: unknown): string | null {
 }
 
 export interface ShareTabModel {
-  active: ShareRecord[];
-  history: ShareRecord[];
+  /** 全部节点上进行中的分享，本机的排在前面。 */
+  active: ShareRow[];
+  /** 只有本节点的历史记录。 */
+  history: ShareRow[];
   /** 相对时间的基准：随每一拍推进，中间不逐秒重渲染。 */
   now: number;
   loading: boolean;
   loadError: string | null;
-  deviceName: (deviceId: string) => string | null;
+  /** 没拉回来的节点名；其余节点的行照常出。 */
+  failedNodes: string[];
+  /** mesh 里不止一台节点：进行中摆节点列，历史加「仅本节点」的说明。 */
+  multiNode: boolean;
+  deviceName: (row: ShareRow) => string | null;
   origins: ShareOriginsResponse | null;
   settings: ShareSettings | null;
   settingsError: string | null;
-  /** 正在写入的分享 id：该行动作禁用。 */
-  busyShareId: string | null;
+  /** 正在写入的那一行（`shareRowKey`）：该行动作禁用。 */
+  busyRowKey: string | null;
   actionError: string | null;
   savingSettings: boolean;
   saveError: string | null;
   refresh: () => void;
   /** 取回明文密码；失败原样抛出，由对话框就地翻译（旧分享的 409 要单独说明）。 */
-  fetchPassword: (shareId: string) => Promise<string>;
+  fetchPassword: (row: ShareRow) => Promise<string>;
   /** 改密码；返回被断开的观看者数量。 */
-  changePassword: (shareId: string, password: string, endSessions: boolean) => Promise<number>;
-  revoke: (record: ShareRecord) => void;
-  remove: (record: ShareRecord) => void;
+  changePassword: (row: ShareRow, password: string, endSessions: boolean) => Promise<number>;
+  revoke: (row: ShareRow) => void;
+  remove: (row: ShareRow) => void;
   saveSettings: (next: ShareSettings) => void;
 }
+
+/** 设备名按节点分别取；路由节点未必在可用清单里（未登录时仍要出本节点历史的终端名）。 */
+function useDeviceNameNodes(
+  usable: readonly ShareRowSource[],
+  routeNodeId: string
+): ShareRowSource[] {
+  return useMemo(() => {
+    const nodes = usable.map((node) => ({ id: node.id, name: node.name }));
+    if (nodes.some((node) => node.id === routeNodeId)) return nodes;
+    nodes.push({ id: routeNodeId, name: '' });
+    return nodes;
+  }, [usable, routeNodeId]);
+}
+
+/** 客户端工厂无状态，模块级建一次即可。 */
+const rowApi = createShareRowApi(createNodeApiClient);
 
 export function useShareTab(): ShareTabModel {
   const { t } = useTranslation();
   const { apiClient } = useRuntime();
   const queryClient = useQueryClient();
-  const [busyShareId, setBusyShareId] = useState<string | null>(null);
-  const [actionError, setActionError] = useState<string | null>(null);
-
-  const listQuery = useQuery({
-    queryKey: shareQueryKey(),
-    queryFn: ({ signal }) => listShares(apiClient, {}, signal),
-    refetchInterval: SHARE_POLL_MS,
-  });
-
-  const devicesQuery = useQuery({
-    queryKey: devicesQueryKey,
-    queryFn: ({ signal }) => fetchDevices(apiClient, { signal }),
-    staleTime: SETTINGS_STALE_MS,
-  });
+  const routeNodeId = useRouteNodeId();
+  const { options, usable, multiNode } = useShareNodes();
+  const active = useActiveShares(usable);
+  const localList = useNodeShareList(routeNodeId);
+  const deviceNodes = useDeviceNameNodes(usable, routeNodeId);
+  const lookupDeviceName = useShareDeviceNames(deviceNodes);
 
   const originsQuery = useQuery({
     queryKey: shareOriginsQueryKey,
@@ -98,51 +120,11 @@ export function useShareTab(): ShareTabModel {
     void queryClient.invalidateQueries({ queryKey: shareQueryKey() });
   }, [queryClient]);
 
-  const runAction = useCallback(
-    async (record: ShareRecord, action: () => Promise<unknown>) => {
-      setBusyShareId(record.id);
-      setActionError(null);
-      try {
-        await action();
-        await queryClient.invalidateQueries({ queryKey: shareQueryKey() });
-      } catch (error) {
-        setActionError(shareErrorKey(error));
-      } finally {
-        setBusyShareId(null);
-      }
-    },
+  const invalidateNode = useCallback(
+    (nodeId: string) => queryClient.invalidateQueries({ queryKey: shareNodeQueryKey(nodeId) }),
     [queryClient]
   );
-
-  // 密码两族动作的失败要就地摆在对话框里（旧分享不可查看、密码太短），
-  // 不能像 revoke/remove 那样吞进页头的 actionError，所以只借这里的「行内忙」标记。
-  const runPasswordAction = useCallback(
-    async <T>(shareId: string, action: () => Promise<T>): Promise<T> => {
-      setBusyShareId(shareId);
-      try {
-        return await action();
-      } finally {
-        setBusyShareId(null);
-      }
-    },
-    []
-  );
-
-  const fetchPassword = useCallback(
-    (shareId: string) =>
-      runPasswordAction(shareId, async () => (await getSharePassword(apiClient, shareId)).password),
-    [apiClient, runPasswordAction]
-  );
-
-  const changePassword = useCallback(
-    (shareId: string, password: string, endSessions: boolean) =>
-      runPasswordAction(shareId, async () => {
-        const result = await updateSharePassword(apiClient, shareId, { password, endSessions });
-        await queryClient.invalidateQueries({ queryKey: shareQueryKey() });
-        return result.endedSessions;
-      }),
-    [apiClient, queryClient, runPasswordAction]
-  );
+  const rowActions = useShareRowActions(rowApi, invalidateNode);
 
   const settingsMutation = useMutation({
     mutationFn: (next: ShareSettings) => saveShareSettings(apiClient, next),
@@ -151,32 +133,39 @@ export function useShareTab(): ShareTabModel {
     },
   });
 
-  const deviceNames = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const device of devicesQuery.data?.devices ?? []) map.set(device.id, device.name);
-    return map;
-  }, [devicesQuery.data]);
+  const routeNode = useMemo(
+    () => options.find((option) => option.id === routeNodeId) ?? { id: routeNodeId, name: '' },
+    [options, routeNodeId]
+  );
+  const history = useMemo(
+    () => toShareRows(routeNode, localList.data?.history ?? []),
+    [routeNode, localList.data]
+  );
 
-  const list = listQuery.data ?? EMPTY_LIST;
+  // 一台都没成功才算整页加载失败；只挂了其中几台时列表照出，上方点名是哪几台。
+  const allDown = localList.isError && (usable.length === 0 || active.allFailed);
+
   return {
-    active: list.active,
-    history: list.history,
-    now: listQuery.dataUpdatedAt || Date.now(),
-    loading: listQuery.isPending,
-    loadError: errorText(t, listQuery.error),
-    deviceName: (deviceId: string) => deviceNames.get(deviceId) ?? null,
+    active: active.rows,
+    history,
+    now: Math.max(active.updatedAt, localList.dataUpdatedAt) || Date.now(),
+    loading: active.loading || localList.isPending,
+    loadError: allDown ? errorText(t, localList.error) : null,
+    failedNodes: allDown ? [] : active.failedNodes,
+    multiNode,
+    deviceName: (row: ShareRow) => lookupDeviceName(row.nodeId, row.deviceId),
     origins: originsQuery.data ?? null,
     settings: settingsQuery.data ?? null,
     settingsError: errorText(t, settingsQuery.error),
-    busyShareId,
-    actionError: actionError === null ? null : t(actionError),
+    busyRowKey: rowActions.busyRowKey,
+    actionError: rowActions.actionErrorKey === null ? null : t(rowActions.actionErrorKey),
     savingSettings: settingsMutation.isPending,
     saveError: errorText(t, settingsMutation.error),
     refresh,
-    fetchPassword,
-    changePassword,
-    revoke: (record) => void runAction(record, () => revokeShare(apiClient, record.id)),
-    remove: (record) => void runAction(record, () => deleteShare(apiClient, record.id)),
+    fetchPassword: rowActions.fetchPassword,
+    changePassword: rowActions.changePassword,
+    revoke: rowActions.revoke,
+    remove: rowActions.remove,
     saveSettings: (next) => settingsMutation.mutate(next),
   };
 }

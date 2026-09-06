@@ -2,7 +2,6 @@
 // 数据与写操作在 use-share-tab.ts；回放窗按需加载（终端渲染器不该跟着这个标签一起下载）。
 
 import { lazyChunk } from '@/lazy-chunk';
-import type { ShareRecord } from '@tmex/shared/share';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
 import { Reveal } from '@tmex/ui/motion';
 import { Skeleton } from '@tmex/ui/skeleton';
@@ -12,18 +11,19 @@ import { Notice } from '../components/form-primitives';
 import { ActiveSharesTable } from './active-shares-table';
 import { ShareHistoryTable } from './history-table';
 import { DeleteShareConfirm, StopShareConfirm } from './share-confirms';
-import { useSharePasswordDialogs } from './share-password-dialogs';
+import { type SharePasswordDialogs, useSharePasswordDialogs } from './share-password-dialogs';
+import type { ShareRow } from './share-rows';
 import { ShareSettingsCard } from './share-settings-card';
-import { useShareTab } from './use-share-tab';
+import { type ShareTabModel, useShareTab } from './use-share-tab';
 
 const ReplayViewer = lazyChunk(() => import('./replay-viewer').then((m) => m.ReplayViewer));
 
 export function ShareTab() {
   const { t } = useTranslation();
   const model = useShareTab();
-  const [stopping, setStopping] = useState<ShareRecord | null>(null);
-  const [deleting, setDeleting] = useState<ShareRecord | null>(null);
-  const [replaying, setReplaying] = useState<ShareRecord | null>(null);
+  const [stopping, setStopping] = useState<ShareRow | null>(null);
+  const [deleting, setDeleting] = useState<ShareRow | null>(null);
+  const [replaying, setReplaying] = useState<ShareRow | null>(null);
   const password = useSharePasswordDialogs(model);
 
   if (model.loading && model.active.length === 0 && model.history.length === 0) {
@@ -48,41 +48,9 @@ export function ShareTab() {
         </Notice>
       )}
 
-      <Reveal>
-        <Card data-testid="share-active-card">
-          <CardHeader>
-            <CardTitle>{t('settings.share.active.title')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ActiveSharesTable
-              shares={model.active}
-              now={model.now}
-              busyShareId={model.busyShareId}
-              deviceName={model.deviceName}
-              onStop={setStopping}
-              onPasswordAction={password.open}
-            />
-          </CardContent>
-        </Card>
-      </Reveal>
+      <ActiveShareCard model={model} onStop={setStopping} onPasswordAction={password.open} />
 
-      <Reveal delayMs={60}>
-        <Card data-testid="share-history-card">
-          <CardHeader>
-            <CardTitle>{t('settings.share.history.title')}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <ShareHistoryTable
-              shares={model.history}
-              now={model.now}
-              busyShareId={model.busyShareId}
-              deviceName={model.deviceName}
-              onReplay={setReplaying}
-              onDelete={setDeleting}
-            />
-          </CardContent>
-        </Card>
-      </Reveal>
+      <HistoryShareCard model={model} onReplay={setReplaying} onDelete={setDeleting} />
 
       {model.settings && (
         <Reveal delayMs={120}>
@@ -103,7 +71,7 @@ export function ShareTab() {
 
       <StopShareConfirm
         share={stopping}
-        busy={model.busyShareId !== null}
+        busy={model.busyRowKey !== null}
         onCancel={() => setStopping(null)}
         onConfirm={(share) => {
           model.revoke(share);
@@ -113,7 +81,7 @@ export function ShareTab() {
 
       <DeleteShareConfirm
         share={deleting}
-        busy={model.busyShareId !== null}
+        busy={model.busyRowKey !== null}
         onCancel={() => setDeleting(null)}
         onConfirm={(share) => {
           model.remove(share);
@@ -129,6 +97,80 @@ export function ShareTab() {
         </Suspense>
       )}
     </div>
+  );
+}
+
+function ActiveShareCard({
+  model,
+  onStop,
+  onPasswordAction,
+}: {
+  model: ShareTabModel;
+  onStop: (row: ShareRow) => void;
+  onPasswordAction: SharePasswordDialogs['open'];
+}) {
+  const { t } = useTranslation();
+  return (
+    <Reveal>
+      <Card data-testid="share-active-card">
+        <CardHeader>
+          <CardTitle>{t('settings.share.active.title')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {model.failedNodes.length > 0 && (
+            <p className="mb-2 text-xs text-muted-foreground" data-testid="share-node-failed">
+              {t('settings.share.active.nodeUnavailable', { names: model.failedNodes.join('、') })}
+            </p>
+          )}
+          <ActiveSharesTable
+            shares={model.active}
+            now={model.now}
+            busyRowKey={model.busyRowKey}
+            showNode={model.multiNode}
+            deviceName={model.deviceName}
+            onStop={onStop}
+            onPasswordAction={onPasswordAction}
+          />
+        </CardContent>
+      </Card>
+    </Reveal>
+  );
+}
+
+function HistoryShareCard({
+  model,
+  onReplay,
+  onDelete,
+}: {
+  model: ShareTabModel;
+  onReplay: (row: ShareRow) => void;
+  onDelete: (row: ShareRow) => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Reveal delayMs={60}>
+      <Card data-testid="share-history-card">
+        <CardHeader>
+          <CardTitle>{t('settings.share.history.title')}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {/* 历史是节点本地的记录：多节点时先说清这张表只出当前节点的。 */}
+          {model.multiNode && (
+            <p className="mb-2 text-xs text-muted-foreground" data-testid="share-history-scope">
+              {t('settings.share.history.localOnly')}
+            </p>
+          )}
+          <ShareHistoryTable
+            shares={model.history}
+            now={model.now}
+            busyRowKey={model.busyRowKey}
+            deviceName={model.deviceName}
+            onReplay={onReplay}
+            onDelete={onDelete}
+          />
+        </CardContent>
+      </Card>
+    </Reveal>
   );
 }
 

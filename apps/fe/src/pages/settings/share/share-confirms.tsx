@@ -1,15 +1,15 @@
 // 两个破坏性操作的二次确认：终止进行中的分享、删除历史记录（连日志）。
 
-import type { ShareRecord } from '@tmex/shared/share';
 import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
+import type { ShareRow } from './share-rows';
 
 export interface ShareConfirmProps {
   /** 待确认的分享；`null` 即不展示。 */
-  share: ShareRecord | null;
+  share: ShareRow | null;
   busy: boolean;
   onCancel: () => void;
-  onConfirm: (share: ShareRecord) => void;
+  onConfirm: (share: ShareRow) => void;
 }
 
 export function StopShareConfirm({ share, busy, onCancel, onConfirm }: ShareConfirmProps) {

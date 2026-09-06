@@ -7,8 +7,20 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { ApiError } from '@tmex/api-client';
 import { SHARE_PASSWORD_MIN_LENGTH } from '@tmex/shared/share';
 import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { ShareRow } from './share-rows';
 
 installWindowStorage();
+
+/** 只有行内动作要用到的三件事：id、所属节点、链接。 */
+function row(patch: Partial<ShareRow> = {}): ShareRow {
+  return {
+    id: 'sh1',
+    nodeId: 'self',
+    nodeName: '本机',
+    url: 'https://tmex.example.com/s/sh1',
+    ...patch,
+  } as ShareRow;
+}
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const {
@@ -39,9 +51,9 @@ describe('validateSharePasswordDraft', () => {
 
 describe('submitSharePasswordChange', () => {
   function recorder(ended = 0) {
-    const calls: Array<[string, string, boolean]> = [];
-    const change = (shareId: string, password: string, endSessions: boolean) => {
-      calls.push([shareId, password, endSessions]);
+    const calls: Array<[string, string, string, boolean]> = [];
+    const change = (share: ShareRow, password: string, endSessions: boolean) => {
+      calls.push([share.nodeId, share.id, password, endSessions]);
       return Promise.resolve(ended);
     };
     return { calls, change };
@@ -50,27 +62,33 @@ describe('submitSharePasswordChange', () => {
   test('不勾「断开观看者」时 endSessions 为 false，密码去掉首尾空白', async () => {
     const { calls, change } = recorder();
     const failure = await submitSharePasswordChange(
-      'sh1',
+      row(),
       { password: '  Ab3dEf7h  ', endSessions: false },
       change,
       t
     );
     expect(failure).toBeNull();
-    expect(calls).toEqual([['sh1', 'Ab3dEf7h', false]]);
+    expect(calls).toEqual([['self', 'sh1', 'Ab3dEf7h', false]]);
   });
 
   test('勾了就把 endSessions 一并送上去', async () => {
     const { calls, change } = recorder(3);
     expect(
-      await submitSharePasswordChange('sh1', { password: 'Ab3dEf7h', endSessions: true }, change, t)
+      await submitSharePasswordChange(
+        row({ id: 'sh2', nodeId: 'node-b' }),
+        { password: 'Ab3dEf7h', endSessions: true },
+        change,
+        t
+      )
     ).toBeNull();
-    expect(calls).toEqual([['sh1', 'Ab3dEf7h', true]]);
+    // 远端那一行改密码，节点原样带下去。
+    expect(calls).toEqual([['node-b', 'sh2', 'Ab3dEf7h', true]]);
   });
 
   test('密码太短就地拒掉，请求根本不发', async () => {
     const { calls, change } = recorder();
     expect(
-      await submitSharePasswordChange('sh1', { password: 'ab', endSessions: false }, change, t)
+      await submitSharePasswordChange(row(), { password: 'ab', endSessions: false }, change, t)
     ).toEqual({
       key: 'share.error.passwordTooShort',
       params: { min: SHARE_PASSWORD_MIN_LENGTH },
@@ -80,7 +98,7 @@ describe('submitSharePasswordChange', () => {
 
   test('服务端失败原样翻成 key 摆回对话框', async () => {
     const failure = await submitSharePasswordChange(
-      'sh1',
+      row(),
       { password: 'Ab3dEf7h', endSessions: false },
       () => Promise.reject(apiError('SHARE_ENDED')),
       t
@@ -143,10 +161,7 @@ describe('copyShareLinkWithPassword', () => {
     else Reflect.deleteProperty(globalThis, 'ClipboardItem');
   });
 
-  const share = {
-    id: 'sh1',
-    url: 'https://tmex.example.com/s/sh1',
-  } as Parameters<typeof copyShareLinkWithPassword>[0];
+  const share = row();
 
   test('有 ClipboardItem 时点下去就发起写入，不等取密码——手势不能丢在 await 里', async () => {
     const state = stubAsyncClipboard();
@@ -165,7 +180,7 @@ describe('copyShareLinkWithPassword', () => {
 
   test('没有 ClipboardItem 时退回「取完再写」', async () => {
     const written = stubTextClipboard();
-    await copyShareLinkWithPassword(share, (id) => Promise.resolve(`pw-${id}`), t);
+    await copyShareLinkWithPassword(share, (target) => Promise.resolve(`pw-${target.id}`), t);
     expect(written).toEqual(['https://tmex.example.com/s/sh1#p=pw-sh1']);
   });
 
@@ -190,7 +205,7 @@ describe('copyShareLinkWithPassword', () => {
     Reflect.deleteProperty(globalThis, 'ClipboardItem');
     setNavigator({ writeText: () => Promise.reject(new Error('denied')) });
     let manual = 0;
-    await copyShareLinkWithPassword(share, (id) => Promise.resolve(`pw-${id}`), t, {
+    await copyShareLinkWithPassword(share, (target) => Promise.resolve(`pw-${target.id}`), t, {
       onManualCopy: () => {
         manual += 1;
       },

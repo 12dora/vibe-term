@@ -50,6 +50,17 @@ export function shareQueryKey(filter: ShareListFilter = {}): readonly unknown[] 
   return ['share', filter.deviceId ?? null, filter.windowId ?? null] as const;
 }
 
+/**
+ * 聚合列表的分片键：一条分享存在它所属终端的那台节点上，设置页要把所有节点的列表并起来，
+ * 同一个 QueryClient 里每台节点各占一条，互不覆盖。前缀仍是 `share`，整片失效照旧一次搞定。
+ */
+export function shareNodeQueryKey(
+  nodeId: string,
+  filter: ShareListFilter = {}
+): readonly unknown[] {
+  return [...shareQueryKey(filter), nodeId] as const;
+}
+
 export function shareListPath(filter: ShareListFilter = {}): string {
   const params = new URLSearchParams();
   if (filter.deviceId) params.set('deviceId', filter.deviceId);

@@ -22,6 +22,7 @@
 import type { QueryClient } from '@tanstack/react-query';
 import {
   type ApiClient,
+  SELF_NODE_ID,
   fetchAgentLlmSettings,
   fetchLlmProviders,
   fetchTerminalShortcuts,
@@ -29,7 +30,7 @@ import {
   llmSettingsQueryKey,
   terminalShortcutsQueryKey,
 } from '@tmex/api-client';
-import { listShares, shareQueryKey } from '@tmex/api-client/share';
+import { listShares, shareNodeQueryKey } from '@tmex/api-client/share';
 import {
   LOCAL_STATUS_QUERY_KEY,
   TLS_STATUS_QUERY_KEY,
@@ -57,7 +58,11 @@ export interface TabPrefetchSpec {
  * 该标签值得在悬停时预取的查询；没有可安全预取的返回空数组。
  * 错误兜底文案与面板里那份不同无所谓：预取失败不写缓存，面板自己重发时会用自己的文案。
  */
-export function tabPrefetchSpecs(tab: string, apiClient: ApiClient): TabPrefetchSpec[] {
+export function tabPrefetchSpecs(
+  tab: string,
+  apiClient: ApiClient,
+  nodeId: string = SELF_NODE_ID
+): TabPrefetchSpec[] {
   if (tab === 'ai') {
     return [
       {
@@ -93,8 +98,9 @@ export function tabPrefetchSpecs(tab: string, apiClient: ApiClient): TabPrefetch
     ];
   }
   // 分享列表带在线人数与剩余期限，自身每 10 秒一拍：预取只为消掉首屏那一转，不给 staleTime。
+  // 键按节点分片（列表在设置页里跨节点汇总），这里预取的是当前路由节点那一条。
   if (tab === 'share') {
-    return [{ queryKey: shareQueryKey(), queryFn: () => listShares(apiClient) }];
+    return [{ queryKey: shareNodeQueryKey(nodeId), queryFn: () => listShares(apiClient) }];
   }
   return [];
 }
@@ -116,10 +122,11 @@ export function prefetchTabData(
   queryClient: QueryClient,
   tab: string,
   apiClient: ApiClient,
-  done: Set<string>
+  done: Set<string>,
+  nodeId: string = SELF_NODE_ID
 ): void {
   if (done.has(tab)) return;
-  const specs = tabPrefetchSpecs(tab, apiClient);
+  const specs = tabPrefetchSpecs(tab, apiClient, nodeId);
   if (specs.length === 0) return;
   done.add(tab);
   for (const spec of specs) {

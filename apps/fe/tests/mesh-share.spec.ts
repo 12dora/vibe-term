@@ -363,3 +363,65 @@ test('mesh: changing the share password keeps or drops the connected viewer', as
     stopOwnSession(sessionName);
   }
 });
+
+// 分享存在被分享终端所在的那台节点上：入口节点的 `/api/share` 里根本没有它。
+// 设置页的「进行中」必须跨节点汇总，否则「明明分享着却看不见」。
+test('mesh: a share on a remote node shows up in the entry node settings and can be stopped there', async ({
+  page,
+}) => {
+  const sessionName = `tmex-mesh-agg-${Date.now()}`;
+  createRemoteTmuxSession(state, sessionName);
+  let deviceId: string | undefined;
+  const nodeId = state.remoteNodeId;
+
+  try {
+    await loginWithPassword(page, state);
+    await signInToNodeFromDevicesPage(page, nodeId);
+    deviceId = await createDeviceOnNode(page, state, nodeId, {
+      name: sessionName,
+      session: sessionName,
+    });
+    const settings = await page.request.put(meshUrl(state, `/n/${nodeId}/api/share/settings`), {
+      data: { defaultOrigin: state.baseUrl },
+    });
+    expect(settings.ok(), await settings.text()).toBeTruthy();
+
+    await page.goto(meshUrl(state, `/n/${nodeId}/devices/${deviceId}`), {
+      waitUntil: 'domcontentloaded',
+    });
+    await expect(page.locator('.xterm').first()).toBeVisible({ timeout: 30_000 });
+    await page.getByTestId('share-open-button').click();
+    await expect(page.getByTestId('share-create-form')).toBeVisible({ timeout: 15_000 });
+    await page.getByTestId('share-name').fill('e2e remote share');
+    await page.getByTestId('share-create-submit').click();
+    await expect(page.getByTestId('share-active-view')).toBeVisible({ timeout: 15_000 });
+
+    const share = (await listShares(page, nodeId)).active[0];
+    expect(share).toBeTruthy();
+    // 入口节点自己那份列表里根本没有它——正是只问当前路由节点会漏掉的那种分享。
+    const onEntry = await page.request.get(meshUrl(state, '/api/share'));
+    const entryIds = ((await onEntry.json()) as ShareListBody).active.map((row) => row.id);
+    expect(entryIds).not.toContain(share.id);
+
+    await page.goto(meshUrl(state, '/settings?tab=share'), { waitUntil: 'domcontentloaded' });
+    await expect(page.getByTestId(`share-active-row-${share.id}`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId(`share-node-${share.id}`)).toHaveText(state.remoteNodeName);
+    // 历史仍只出本节点的记录，界面上要写明。
+    await expect(page.getByTestId('share-history-scope')).toBeVisible();
+
+    // 终止要打在那一行自己的节点上。
+    await page.getByTestId(`share-stop-${share.id}`).click();
+    await page.getByTestId('share-stop-confirm-ok').click();
+    await expect(page.getByTestId(`share-active-row-${share.id}`)).toHaveCount(0, {
+      timeout: 20_000,
+    });
+
+    const after = await listShares(page, nodeId);
+    expect(after.active).toHaveLength(0);
+    expect(after.history[0]?.id).toBe(share.id);
+    expect(after.history[0]?.endReason).toBe('revoked');
+  } finally {
+    if (deviceId) await deleteDeviceOnNode(page, state, nodeId, deviceId);
+    killRemoteTmuxSession(state, sessionName);
+  }
+});

@@ -9,7 +9,6 @@
 import { buildShareLinkWithPassword } from '@/share/share-link-password';
 import { ApiError } from '@tmex/api-client';
 import { writeTextToClipboard } from '@tmex/shared';
-import type { ShareRecord } from '@tmex/shared/share';
 import { SHARE_PASSWORD_MIN_LENGTH, generateSharePassword } from '@tmex/shared/share';
 import { Button } from '@tmex/ui/button';
 import { Checkbox } from '@tmex/ui/checkbox';
@@ -29,6 +28,7 @@ import { useTranslation } from 'react-i18next';
 import { Notice } from '../components/form-primitives';
 import { CopyButton } from '../nodes/copy-feedback';
 import { shareErrorKey } from './share-api';
+import type { ShareRow } from './share-rows';
 import type { ShareTabModel } from './use-share-tab';
 
 const MASKED = '••••••••';
@@ -41,8 +41,9 @@ export interface SharePasswordError {
   params?: Record<string, unknown>;
 }
 
-type LoadPassword = (shareId: string) => Promise<string>;
-type ChangePassword = (shareId: string, password: string, endSessions: boolean) => Promise<number>;
+// 分享存在它自己那台节点上，取密码 / 改密码都得连着行一起传下去，不能只传 id。
+type LoadPassword = (row: ShareRow) => Promise<string>;
+type ChangePassword = (row: ShareRow, password: string, endSessions: boolean) => Promise<number>;
 
 /**
  * 旧分享（0048 之前创建，库里只有哈希）的 409 在设置页要说清「只能改」，
@@ -83,12 +84,12 @@ export interface CopyShareLinkOptions {
  * 密码回来之后由浏览器自己兑现。拿不到这套 API（老浏览器）才退回「取完再写」。
  */
 export function copyShareLinkWithPassword(
-  share: ShareRecord,
+  share: ShareRow,
   load: LoadPassword,
   t: Translate,
   options: CopyShareLinkOptions = {}
 ): Promise<void> {
-  const link = load(share.id).then((password) => buildShareLinkWithPassword(share.url, password));
+  const link = load(share).then((password) => buildShareLinkWithPassword(share.url, password));
   const clipboard = asyncClipboard();
   const written = clipboard
     ? clipboard.write([
@@ -128,7 +129,7 @@ export function validateSharePasswordDraft(draft: ChangePasswordDraft): SharePas
 
 /** 提交改密码：成功给 toast 并返回 `null`，失败返回要就地摆出来的错误。 */
 export async function submitSharePasswordChange(
-  shareId: string,
+  share: ShareRow,
   draft: ChangePasswordDraft,
   change: ChangePassword,
   t: Translate
@@ -136,7 +137,7 @@ export async function submitSharePasswordChange(
   const invalid = validateSharePasswordDraft(draft);
   if (invalid) return invalid;
   try {
-    const ended = await change(shareId, draft.password.trim(), draft.endSessions);
+    const ended = await change(share, draft.password.trim(), draft.endSessions);
     toast.success(
       ended > 0
         ? t('settings.share.active.passwordChangedAndEnded', { count: ended })
@@ -157,16 +158,17 @@ export interface SharePasswordValue {
 
 const IDLE: SharePasswordValue = { loading: false, password: null, errorKey: null };
 
-function useSharePasswordValue(shareId: string | null, load: LoadPassword): SharePasswordValue {
+function useSharePasswordValue(share: ShareRow | null, load: LoadPassword): SharePasswordValue {
   const [value, setValue] = useState<SharePasswordValue>(IDLE);
+  // `share` 是对话框的一份状态，开框到关框之间引用恒定，直接进依赖即可。
   useEffect(() => {
-    if (shareId === null) {
+    if (share === null) {
       setValue(IDLE);
       return;
     }
     let live = true;
     setValue({ loading: true, password: null, errorKey: null });
-    load(shareId).then(
+    load(share).then(
       (password) => {
         if (live) setValue({ loading: false, password, errorKey: null });
       },
@@ -177,7 +179,7 @@ function useSharePasswordValue(shareId: string | null, load: LoadPassword): Shar
     return () => {
       live = false;
     };
-  }, [shareId, load]);
+  }, [share, load]);
   return value;
 }
 
@@ -229,9 +231,9 @@ function ViewSharePasswordDialog({
   share,
   load,
   onClose,
-}: { share: ShareRecord | null; load: LoadPassword; onClose: () => void }) {
+}: { share: ShareRow | null; load: LoadPassword; onClose: () => void }) {
   const { t } = useTranslation();
-  const value = useSharePasswordValue(share?.id ?? null, load);
+  const value = useSharePasswordValue(share, load);
   return (
     <Dialog
       open={share !== null}
@@ -323,7 +325,7 @@ function ChangeSharePasswordDialog({
   change,
   onClose,
 }: {
-  share: ShareRecord | null;
+  share: ShareRow | null;
   busy: boolean;
   change: ChangePassword;
   onClose: () => void;
@@ -331,18 +333,16 @@ function ChangeSharePasswordDialog({
   const { t } = useTranslation();
   const [draft, setDraft] = useState<ChangePasswordDraft>(newDraft);
   const [error, setError] = useState<SharePasswordError | null>(null);
-  const shareId = share?.id ?? null;
-
   // 每次开框都换一份新的建议密码：把上一条分享的草稿留下来只会被误提交。
   useEffect(() => {
-    if (shareId === null) return;
+    if (share === null) return;
     setDraft(newDraft());
     setError(null);
-  }, [shareId]);
+  }, [share]);
 
   const submit = () => {
-    if (shareId === null) return;
-    void submitSharePasswordChange(shareId, draft, change, t).then((failure) => {
+    if (share === null) return;
+    void submitSharePasswordChange(share, draft, change, t).then((failure) => {
       setError(failure);
       if (!failure) onClose();
     });
@@ -383,18 +383,18 @@ function ChangeSharePasswordDialog({
 export type SharePasswordAction = 'view' | 'change' | 'copy-link';
 
 export interface SharePasswordDialogs {
-  open: (action: SharePasswordAction, share: ShareRecord) => void;
+  open: (action: SharePasswordAction, share: ShareRow) => void;
   dialogs: ReactNode;
 }
 
 export function useSharePasswordDialogs(model: ShareTabModel): SharePasswordDialogs {
   const { t } = useTranslation();
-  const [viewing, setViewing] = useState<ShareRecord | null>(null);
-  const [changing, setChanging] = useState<ShareRecord | null>(null);
+  const [viewing, setViewing] = useState<ShareRow | null>(null);
+  const [changing, setChanging] = useState<ShareRow | null>(null);
   const { fetchPassword, changePassword } = model;
 
   const open = useCallback(
-    (action: SharePasswordAction, share: ShareRecord) => {
+    (action: SharePasswordAction, share: ShareRow) => {
       if (action === 'view') setViewing(share);
       else if (action === 'change') setChanging(share);
       else {
@@ -417,7 +417,7 @@ export function useSharePasswordDialogs(model: ShareTabModel): SharePasswordDial
         />
         <ChangeSharePasswordDialog
           share={changing}
-          busy={model.busyShareId !== null}
+          busy={model.busyRowKey !== null}
           change={changePassword}
           onClose={() => setChanging(null)}
         />

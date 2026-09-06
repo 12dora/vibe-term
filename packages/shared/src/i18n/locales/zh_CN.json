@@ -934,6 +934,7 @@
           "empty": "暂无进行中的分享",
           "columns": {
             "name": "名称",
+            "node": "节点",
             "terminal": "终端",
             "viewers": "在线",
             "created": "创建",
@@ -957,7 +958,8 @@
           "endSessionsHint": "不勾选时，已连接的人可继续观看，只有新访客需要用新密码。",
           "passwordChanged": "密码已更新",
           "passwordChangedAndEnded": "密码已更新，已断开 {{count}} 人",
-          "copyLinkWithPassword": "复制带密码的链接"
+          "copyLinkWithPassword": "复制带密码的链接",
+          "nodeUnavailable": "{{names}} 的分享未能加载。"
         },
         "history": {
           "title": "历史",
@@ -981,7 +983,8 @@
           "logTruncated": "{{size}}（已达上限）",
           "replay": "回放",
           "deleteTitle": "删除记录",
-          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。"
+          "deleteConfirm": "删除「{{name}}」将连同日志一并移除，无法恢复。",
+          "localOnly": "仅显示本节点的记录。"
         },
         "form": {
           "title": "分享设置",

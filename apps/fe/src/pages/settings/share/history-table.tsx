@@ -1,6 +1,6 @@
 // 已结束的分享：回放日志与删除记录。删除会连日志一起删，走二次确认。
+// 历史是节点本地的记录，这张表只出当前节点的（多节点时表上方另有一行说明）。
 
-import type { ShareRecord } from '@tmex/shared/share';
 import { Button } from '@tmex/ui/button';
 import { Play, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -13,21 +13,23 @@ import {
   relativePastText,
   shareTerminalText,
 } from './share-format';
+import type { ShareRow } from './share-rows';
+import { shareRowKey } from './share-rows';
 import { EmptyRow, Td, Th, TimeCell } from './table-parts';
 
 export interface HistoryTableProps {
-  shares: ShareRecord[];
+  shares: ShareRow[];
   now: number;
-  busyShareId: string | null;
-  deviceName: (deviceId: string) => string | null;
-  onReplay: (record: ShareRecord) => void;
-  onDelete: (record: ShareRecord) => void;
+  busyRowKey: string | null;
+  deviceName: (row: ShareRow) => string | null;
+  onReplay: (row: ShareRow) => void;
+  onDelete: (row: ShareRow) => void;
 }
 
 export function ShareHistoryTable({
   shares,
   now,
-  busyShareId,
+  busyRowKey,
   deviceName,
   onReplay,
   onDelete,
@@ -49,11 +51,11 @@ export function ShareHistoryTable({
         <tbody>
           {shares.map((share) => (
             <HistoryRow
-              key={share.id}
+              key={shareRowKey(share)}
               share={share}
               now={now}
-              busy={busyShareId === share.id}
-              deviceName={deviceName(share.deviceId)}
+              busy={busyRowKey === shareRowKey(share)}
+              deviceName={deviceName(share)}
               onReplay={onReplay}
               onDelete={onDelete}
             />
@@ -77,12 +79,12 @@ function HistoryRow({
   onReplay,
   onDelete,
 }: {
-  share: ShareRecord;
+  share: ShareRow;
   now: number;
   busy: boolean;
   deviceName: string | null;
-  onReplay: (record: ShareRecord) => void;
-  onDelete: (record: ShareRecord) => void;
+  onReplay: (row: ShareRow) => void;
+  onDelete: (row: ShareRow) => void;
 }) {
   const { t } = useTranslation();
   const hasLog = share.logBytes > 0;
