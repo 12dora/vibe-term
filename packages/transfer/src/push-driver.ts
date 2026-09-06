@@ -17,6 +17,10 @@ export type PushOutcome =
   | { kind: 'cancelled' };
 
 export interface PushPutOptions {
+  /**
+   * 本轮尝试的信号：调用方取消、剩余期限用尽、或本轮已经出结论时都会 abort。
+   * 传输层必须把它接到请求与响应体的消费上，否则卡住的响应能拖过整个截止时间。
+   */
   signal: AbortSignal;
   /** 本区间已上行的字节数（相对区间起点）。 */
   onProgress: (uploadedInRange: number) => void;
@@ -77,12 +81,56 @@ const OUTCOME_RANK: Record<PushOutcome['kind'], number> = {
   cancelled: 3,
 };
 
+/**
+ * 本轮尝试的信号：调用方取消、剩余期限用尽都会 abort，本轮出结论后也主动 abort，
+ * 把还挂着的并行请求一起收掉——否则一条卡死的响应能把整个工作池吊在那里。
+ */
+type AttemptScope = { signal: AbortSignal; abort: () => void; dispose: () => void };
+
+function attemptScope(opts: RunPushOptions): AttemptScope {
+  const controller = new AbortController();
+  const onAbort = (): void => controller.abort();
+  const remaining = opts.deadlineMs - (opts.now ?? Date.now)();
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  if (opts.signal.aborted || !(remaining > 0)) controller.abort();
+  else {
+    opts.signal.addEventListener('abort', onAbort, { once: true });
+    if (Number.isFinite(remaining)) {
+      timer = setTimeout(onAbort, remaining);
+      (timer as unknown as { unref?: () => void }).unref?.();
+    }
+  }
+  return {
+    signal: controller.signal,
+    abort: onAbort,
+    dispose: () => {
+      if (timer) clearTimeout(timer);
+      opts.signal.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/**
+ * 本轮尝试被我们自己收掉（期限到 / 已出结论）时传输层报的 `cancelled` 不是用户取消，
+ * 降级成可重试的链路错误，免得盖掉真正的失败原因。
+ */
+function normalizeOutcome(
+  outcome: PushOutcome,
+  opts: RunPushOptions,
+  scope: AttemptScope
+): PushOutcome {
+  if (outcome.kind !== 'cancelled') return outcome;
+  if (opts.signal.aborted || !scope.signal.aborted) return outcome;
+  return { kind: 'retry', error: 'push attempt aborted' };
+}
+
 /** 并发上限为 `limit` 的工作池：区间按序发放，任一段出问题就不再发新的。 */
 async function runAttempt(
   transport: PushTransport,
   ranges: readonly ByteRange[],
   opts: RunPushOptions,
-  base: number
+  base: number,
+  scope: AttemptScope
 ): Promise<PushOutcome> {
   const uploaded = new Map<number, number>();
   let worst: PushOutcome = { kind: 'landed' };
@@ -94,25 +142,33 @@ async function runAttempt(
   };
   const worker = async (): Promise<void> => {
     for (;;) {
-      if (worst.kind !== 'landed') return;
+      if (worst.kind !== 'landed' || opts.signal.aborted || scope.signal.aborted) return;
       const range = ranges[cursor];
       cursor += 1;
       if (range === undefined) return;
-      const outcome = await transport.put(range, {
-        signal: opts.signal,
-        deadlineMs: opts.deadlineMs,
-        onProgress: (n) => {
-          uploaded.set(range.offset, Math.max(0, Math.min(n, range.length)));
-          report();
-        },
-      });
+      const outcome = normalizeOutcome(
+        await transport.put(range, {
+          signal: scope.signal,
+          deadlineMs: opts.deadlineMs,
+          onProgress: (n) => {
+            uploaded.set(range.offset, Math.max(0, Math.min(n, range.length)));
+            report();
+          },
+        }),
+        opts,
+        scope
+      );
       if (outcome.kind === 'landed') uploaded.set(range.offset, range.length);
       report();
       if (OUTCOME_RANK[outcome.kind] > OUTCOME_RANK[worst.kind]) worst = outcome;
+      // 本轮已经出结论：把还在飞的请求一起中止，不必等它们各自超时。
+      if (worst.kind !== 'landed') scope.abort();
     }
   };
   const lanes = Math.max(1, Math.min(opts.streams ?? 1, ranges.length));
   await Promise.all(Array.from({ length: lanes }, () => worker()));
+  // 取消永远压过其它结论：哪怕有几段已经落地，整次推送也算取消。
+  if (opts.signal.aborted) return { kind: 'cancelled' };
   return worst;
 }
 
@@ -121,9 +177,10 @@ type PushPlan = { complete: boolean; ranges: ByteRange[]; base: number };
 async function negotiate(
   transport: PushTransport,
   opts: RunPushOptions,
-  fromZero: boolean
+  fromZero: boolean,
+  scope: AttemptScope
 ): Promise<PushPlan> {
-  const state = fromZero || opts.resume === false ? null : await transport.status(opts.signal);
+  const state = fromZero || opts.resume === false ? null : await transport.status(scope.signal);
   if (state?.complete) return { complete: true, ranges: [], base: opts.totalBytes };
   const known = receivedRanges(state, opts.totalBytes);
   const base = Math.min(coveredBytes(known), opts.totalBytes);
@@ -176,26 +233,46 @@ export async function runPush(
   let lastError = timeoutError;
   let fromZero = false;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (opts.signal.aborted) return { kind: 'cancelled' };
     opts.onAttempt?.(attempt);
-    const plan = await negotiate(transport, opts, fromZero);
-    if (plan.complete) return { kind: 'done', transferredBytes: opts.totalBytes };
-    if (now() >= opts.deadlineMs) return { kind: 'failed', error: timeoutError };
-    const decision = decide(
-      await runAttempt(transport, plan.ranges, opts, plan.base),
-      plan,
-      opts,
-      fromZero
-    );
+    const decision = await runAttemptOnce(transport, opts, fromZero, timeoutError);
     if (decision.kind === 'done') return { kind: 'done', transferredBytes: opts.totalBytes };
     if (decision.kind === 'cancelled') return { kind: 'cancelled' };
     if (decision.kind === 'failed') return { kind: 'failed', error: decision.error };
     fromZero = decision.fromZero;
     lastError = decision.error;
-    if (attempt >= maxAttempts || now() >= opts.deadlineMs) break;
+    if (now() >= opts.deadlineMs) return { kind: 'failed', error: timeoutError };
+    if (attempt >= maxAttempts) break;
     if (!(await backoff(opts, attempt, ladder))) return { kind: 'cancelled' };
-    if (now() >= opts.deadlineMs) break;
+    if (now() >= opts.deadlineMs) return { kind: 'failed', error: timeoutError };
   }
   return { kind: 'failed', error: lastError };
+}
+
+/** 一轮：协商缺口 → 并行推送 → 归类。整轮共用一个带期限的中止信号。 */
+async function runAttemptOnce(
+  transport: PushTransport,
+  opts: RunPushOptions,
+  fromZero: boolean,
+  timeoutError: string
+): Promise<AttemptDecision> {
+  const now = opts.now ?? Date.now;
+  const scope = attemptScope(opts);
+  try {
+    const plan = await negotiate(transport, opts, fromZero, scope);
+    if (opts.signal.aborted) return { kind: 'cancelled' };
+    if (plan.complete) return { kind: 'done' };
+    if (now() >= opts.deadlineMs) return { kind: 'failed', error: timeoutError };
+    return decide(
+      await runAttempt(transport, plan.ranges, opts, plan.base, scope),
+      plan,
+      opts,
+      fromZero
+    );
+  } finally {
+    scope.abort();
+    scope.dispose();
+  }
 }
 
 async function backoff(

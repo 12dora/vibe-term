@@ -18,6 +18,7 @@ import {
 } from '../files/transfer-session';
 import { t } from '../i18n';
 import { requestDispatchContext } from '../mesh/types';
+import { cleanupDownload } from './file-transfer-sessions';
 import {
   abortTransfer,
   appendUpload,
@@ -196,15 +197,19 @@ describe('files bulk hooks', () => {
     }
   });
 
-  test('HTTP 与 RTC 写同一区间：区间化写入允许覆盖，最后一次落盘的内容为准', async () => {
+  test('HTTP 与 RTC 抢同一区间：后到的被拒，已确认的字节不会被改写', async () => {
     const session = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.bin', size: 6 });
     try {
       const http = writeUploadBytes(session.id, 0, new Uint8Array([1, 1, 1]));
       const rtc = appendUpload(session.id, 0, new Uint8Array([2, 2, 2]));
       const [httpRes, rtcRes] = [await http, await rtc];
-      expect(httpRes.ok).toBe(true);
-      expect(rtcRes.ok).toBe(true);
+      expect([httpRes.ok, rtcRes.ok].filter(Boolean)).toHaveLength(1);
       expect(getUploadSession(session.id)?.received).toBe(3);
+      // 已确认的区间不允许再被覆盖：重发同一段只会拿到冲突，退避后按状态重新对齐即可
+      expect(await writeUploadBytes(session.id, 0, new Uint8Array([9, 9, 9]))).toEqual({
+        ok: false,
+        reason: 'conflict',
+      });
     } finally {
       removeUploadSession(session.id);
     }
@@ -241,6 +246,9 @@ describe('files bulk hooks', () => {
       if (value) chunks.push(value);
     }
     expect(Buffer.concat(chunks).toString()).toBe('hello');
+    // 读到文件尾不代表对端收全了：会话留到显式 DELETE / TTL，否则续传请求会撞上 404
+    expect(getDownloadSession(session.id)).toBeDefined();
+    cleanupDownload(session.id);
     expect(getDownloadSession(session.id)).toBeUndefined();
     expect(getTransferOwner(session.id)).toBeNull();
   });
@@ -470,7 +478,7 @@ describe('transfer uid cleanup', () => {
     expectReusedUploadHasNoUid(transferId);
   });
 
-  test('download content stream end forgets uid so a reused transfer id has empty owner', async () => {
+  test('download DELETE forgets uid so a reused transfer id has empty owner', async () => {
     const transferId = pinTransferId();
     expect(await prepareOwnedDownload('user-dl-content-1', 'hello')).toBe(transferId);
     expect(getTransferOwner(transferId)?.uid).toBe('user-dl-content-1');
@@ -479,7 +487,11 @@ describe('transfer uid cleanup', () => {
     const res = response as Response;
     expect(res.status).toBe(200);
     expect(await res.text()).toBe('hello');
+    // 整份发完也不回收：客户端校验完整之后才发 DELETE
+    expect(getDownloadSession(transferId)).toBeDefined();
 
+    const del = await dispatch('DELETE', `/api/files/download/${transferId}`);
+    expect((del as Response).status).toBe(200);
     expect(getDownloadSession(transferId)).toBeUndefined();
     expect(getTransferOwner(transferId)).toBeNull();
     expectReusedDownloadHasNoUid(transferId);

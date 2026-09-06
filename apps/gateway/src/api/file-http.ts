@@ -84,13 +84,13 @@ export function parseRangeHeader(
 }
 
 /**
- * 区间流式读文件。`cleanupAfter` 在读完或出错时调用一次——只有读到文件尾才该回收，
- * 否则续传的下一段就没得读了。
+ * 区间流式读文件。`cleanupAfter` 在读完或出错时调用一次；可续传的下载会话不该传它——
+ * 读到文件尾只说明字节发出去了，不代表客户端收下了，回收要等客户端显式 DELETE 或 TTL。
  */
 export function streamFileRange(
   path: string,
   range: ContentRange | null,
-  cleanupAfter: () => void
+  cleanupAfter: () => void = () => {}
 ): ReadableStream<Uint8Array> | null {
   let reader: ReadableStreamDefaultReader<Uint8Array>;
   try {

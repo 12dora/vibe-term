@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  createDownloadSession,
   createUploadSession,
+  downloadSourceChanged,
   getUploadSession,
+  removeDownloadSession,
   removeUploadSession,
   sweepOrphanTransferTemps,
   writeUploadBytes,
@@ -138,5 +141,114 @@ describe('upload session ranged writes', () => {
       rmSync(unrelated, { recursive: true, force: true });
       rmSync(oldDir, { recursive: true, force: true });
     }
+  });
+});
+
+describe('upload session review regressions', () => {
+  const ids: string[] = [];
+  afterEach(() => {
+    for (const id of ids) removeUploadSession(id);
+    ids.length = 0;
+  });
+
+  function session(size: number) {
+    const s = createUploadSession({ rootId: 'r', destDir: '/d', name: 'a.txt', size });
+    ids.push(s.id);
+    return s;
+  }
+
+  test('maxWriteBytes 与客户端声明无关：超出即 413 语义的 too_large', async () => {
+    const s = session(100);
+    expect(
+      await writeUploadRange(s.id, {
+        offset: 0,
+        maxWriteBytes: 4,
+        body: streamOf(new Uint8Array([1, 2, 3, 4, 5, 6])),
+      })
+    ).toEqual({ ok: false, reason: 'too_large' });
+    expect(getUploadSession(s.id)?.received).toBe(0);
+  });
+
+  test('重复写已确认的区间被拒为 conflict', async () => {
+    const s = session(6);
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1, 2, 3]))).toMatchObject({ ok: true });
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([9, 9, 9]))).toEqual({
+      ok: false,
+      reason: 'conflict',
+    });
+    expect(getUploadSession(s.id)?.received).toBe(3);
+  });
+
+  test('收满落位后迟到的重复区间如实回「已完成」', async () => {
+    const s = session(3);
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
+      ok: true,
+      received: 3,
+      complete: true,
+    });
+    expect(await writeUploadBytes(s.id, 0, new Uint8Array([1, 2, 3]))).toEqual({
+      ok: true,
+      received: 3,
+      complete: true,
+    });
+    expect(readFileSync(s.tmpPath)).toEqual(Buffer.from([1, 2, 3]));
+  });
+
+  test('会话被删除时在写的 body 立刻被掐掉', async () => {
+    const s = session(8);
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1, 2]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const pending = writeUploadRange(s.id, { offset: 0, contentLength: 8, body });
+    await Bun.sleep(5);
+    removeUploadSession(s.id);
+    const res = await pending;
+    expect(res.ok).toBe(false);
+    expect(cancelled).toBe(true);
+  });
+});
+
+describe('download session source guard', () => {
+  test('源文件被改写后续传请求干净失败', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const tmpPath = join(dir, 'f');
+    try {
+      writeFileSync(tmpPath, Buffer.from('hello'));
+      const s = createDownloadSession({
+        tmpPath,
+        size: 5,
+        name: 'a.bin',
+        mime: null,
+        cleanup: () => {},
+      });
+      expect(downloadSourceChanged(s)).toBe(false);
+      writeFileSync(tmpPath, Buffer.from('hello world'));
+      expect(downloadSourceChanged(s)).toBe(true);
+      removeDownloadSession(s.id);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('源文件消失也算变了', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from('x'));
+    const s = createDownloadSession({
+      tmpPath,
+      size: 1,
+      name: 'a.bin',
+      mime: null,
+      cleanup: () => {},
+    });
+    rmSync(dir, { recursive: true, force: true });
+    expect(downloadSourceChanged(s)).toBe(true);
+    removeDownloadSession(s.id);
   });
 });

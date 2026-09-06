@@ -378,6 +378,8 @@ describe('downloadFileWithTransport', () => {
       'DELETE /api/files/download/d1',
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      // 收全并校验长度之后客户端才回收远端会话（服务端不再在读到文件尾时自清）
+      'DELETE /api/files/download/d1',
     ]);
   });
 
@@ -434,6 +436,8 @@ describe('downloadFileWithTransport', () => {
       'DELETE /api/files/download/d1',
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      // 收全并校验长度之后客户端才回收远端会话（服务端不再在读到文件尾时自清）
+      'DELETE /api/files/download/d1',
     ]);
   });
 
@@ -508,6 +512,7 @@ describe('downloadFileWithTransport', () => {
     expect(gw.calls).toEqual([
       'POST /api/files/download/prepare',
       'GET /api/files/download/d1/content',
+      'DELETE /api/files/download/d1',
     ]);
   });
 });

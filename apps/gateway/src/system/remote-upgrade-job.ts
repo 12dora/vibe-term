@@ -1,5 +1,12 @@
 import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
-import { type PushOutcome, type PushPutOptions, type PushTransport, runPush } from '@tmex/transfer';
+import {
+  PUSH_MAX_ATTEMPTS,
+  PUSH_RETRY_BACKOFF_MS,
+  type PushOutcome,
+  type PushPutOptions,
+  type PushTransport,
+  runPush,
+} from '@tmex/transfer';
 import { openRange } from '@tmex/transfer/node';
 import { getInstallInfo } from './install-info';
 import {
@@ -20,11 +27,9 @@ export const REMOTE_UPGRADE_TIMEOUTS = {
   startMs: 60 * 1000,
 };
 
-/** 推包重试的退避梯度（毫秒），封顶 15 s。 */
-export const PUSH_RETRY_BACKOFF_MS = [1000, 2000, 4000, 8000, 15000, 15000, 15000] as const;
-/** 目标支持续传时最多推 8 次；每次只补发缺的那一段。 */
-export const PUSH_MAX_ATTEMPTS = 8;
-/** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。 */
+// 退避梯度与「支持续传时推几次」是引擎的策略，这里只做转出，不再留第二份定义。
+export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@tmex/transfer';
+/** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。升级独有。 */
 export const LEGACY_PUSH_MAX_ATTEMPTS = 3;
 /** 问一次已收偏移的超时；问不到就当 0 从头推，不值得为它挂住整个阶段。 */
 const OFFSET_QUERY_TIMEOUT_MS = 30 * 1000;

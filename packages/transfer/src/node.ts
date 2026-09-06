@@ -2,6 +2,7 @@
 // 浏览器侧请从 `@tmex/transfer` 主入口导入。
 
 export * from './index';
+export * from './node/part-gate';
 export * from './node/sink';
 export * from './node/sink-state';
 export * from './node/source';

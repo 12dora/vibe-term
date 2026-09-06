@@ -135,3 +135,48 @@ describe('uploadFileChunked', () => {
     expect(calls).toEqual(['POST /api/files/upload/init', 'DELETE /api/files/upload/up-4']);
   });
 });
+
+describe('uploadFileChunked 的取消与期限', () => {
+  test('PUT 挂在本轮派生的信号上：用户取消时在飞的请求立刻被中止', async () => {
+    const putSignals: Array<AbortSignal | undefined | null> = [];
+    const controller = new AbortController();
+    const deleted: string[] = [];
+    const transport = mock(async (input: string, init?: RequestInit) => {
+      if (input.endsWith('/api/files/upload/init')) {
+        return new Response(JSON.stringify({ uploadId: 'up-5', chunkSize: 4, ranged: true }), {
+          status: 200,
+        });
+      }
+      if (input.endsWith('/api/files/upload/up-5') && init?.method === 'DELETE') {
+        deleted.push(input);
+        return new Response(null, { status: 204 });
+      }
+      if (PUT_URL.test(input) && init?.method === 'PUT') {
+        putSignals.push(init.signal);
+        controller.abort();
+        return new Promise<Response>((_resolve, reject) => {
+          const fail = () => reject(new DOMException('Aborted', 'AbortError'));
+          if (init.signal?.aborted) fail();
+          else init.signal?.addEventListener('abort', fail, { once: true });
+        });
+      }
+      throw new Error(`unexpected fetch ${input}`);
+    });
+
+    const file = new File([new Uint8Array(8)], 'e.bin');
+    await expect(
+      uploadFileChunked(
+        'root-1',
+        '/dest',
+        file,
+        { signal: controller.signal, streams: 1 },
+        new ApiClient('', transport)
+      )
+    ).rejects.toMatchObject({ name: 'AbortError' });
+    expect(putSignals.length).toBeGreaterThan(0);
+    // 派生信号，不是调用方那个；被中止后请求不会继续挂着
+    expect(putSignals[0]).not.toBe(controller.signal);
+    expect(putSignals[0]?.aborted).toBe(true);
+    expect(deleted).toEqual(['/api/files/upload/up-5']);
+  });
+});

@@ -1,9 +1,14 @@
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
+  createDownloadSession,
   createUploadSession,
+  getDownloadSession,
   getUploadSession,
+  removeDownloadSession,
   removeUploadSession,
 } from '../files/transfer-session';
 import { filesRoutes } from './files';
@@ -212,5 +217,111 @@ describe('PUT /api/files/upload/:id bounded body', () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+
+describe('分块 PUT 的硬上限与下载会话保留', () => {
+  const ids: string[] = [];
+  const dirs: string[] = [];
+  afterEach(() => {
+    for (const id of ids) {
+      removeUploadSession(id);
+      removeDownloadSession(id);
+    }
+    ids.length = 0;
+    for (const dir of dirs) rmSync(dir, { recursive: true, force: true });
+    dirs.length = 0;
+  });
+
+  test('不带 length / content-length 的分块请求仍受 8 MiB 上限约束', async () => {
+    const s = createUploadSession({
+      rootId: 'r',
+      destDir: '/d',
+      name: 'big.bin',
+      size: CHUNK_SIZE * 2,
+    });
+    ids.push(s.id);
+    const chunk = new Uint8Array(64 * 1024).fill(3);
+    let sent = 0;
+    const body = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        if (sent > CHUNK_SIZE) {
+          controller.close();
+          return;
+        }
+        sent += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+    });
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/upload/${s.id}?offset=0`, {
+        method: 'PUT',
+        body,
+        duplex: 'half',
+      } as RequestInit)
+    )) as Response;
+    expect(res.status).toBe(413);
+    expect(getUploadSession(s.id)?.received).toBe(0);
+  });
+
+  test('下载内容读完不回收会话：可以再用 Range 续传，DELETE 才清理', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from('hello'));
+    const session = createDownloadSession({
+      tmpPath,
+      size: 5,
+      name: 'a.bin',
+      mime: 'application/octet-stream',
+      cleanup: () => rmSync(dir, { recursive: true, force: true }),
+    });
+    ids.push(session.id);
+
+    const full = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`)
+    )) as Response;
+    expect(full.status).toBe(200);
+    expect(await full.text()).toBe('hello');
+    expect(getDownloadSession(session.id)).toBeDefined();
+
+    const resumed = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=2-' },
+      })
+    )) as Response;
+    expect(resumed.status).toBe(206);
+    expect(await resumed.text()).toBe('llo');
+    expect(getDownloadSession(session.id)).toBeDefined();
+
+    const del = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}`, { method: 'DELETE' })
+    )) as Response;
+    expect(del.status).toBe(200);
+    expect(getDownloadSession(session.id)).toBeUndefined();
+  });
+
+  test('源文件在续传途中被改写：干净失败并回收会话', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    dirs.push(dir);
+    const tmpPath = join(dir, 'f');
+    writeFileSync(tmpPath, Buffer.from('hello'));
+    const session = createDownloadSession({
+      tmpPath,
+      size: 5,
+      name: 'a.bin',
+      mime: null,
+      cleanup: () => {},
+    });
+    ids.push(session.id);
+    writeFileSync(tmpPath, Buffer.from('HELLO WORLD'));
+    const res = (await dispatch(
+      new Request(`http://localhost/api/files/download/${session.id}/content`, {
+        headers: { Range: 'bytes=2-' },
+      })
+    )) as Response;
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ code: 'invalid' });
+    expect(getDownloadSession(session.id)).toBeUndefined();
   });
 });

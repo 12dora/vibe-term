@@ -1,4 +1,5 @@
 import {
+  downloadSourceChanged,
   getDownloadSession,
   getUploadSession,
   removeDownloadSession,
@@ -77,10 +78,12 @@ export function openDownload(
 ): ReadableStream<Uint8Array> | null {
   const session = getDownloadSession(transferId);
   if (!session) return null;
-  const atEof = !range || range.end >= session.size;
-  return streamFileRange(session.tmpPath, range ?? null, () => {
-    if (atEof) cleanupDownload(transferId);
-  });
+  if (downloadSourceChanged(session)) {
+    cleanupDownload(transferId);
+    return null;
+  }
+  // 会话由客户端显式 DELETE 或 TTL 回收；读完最后一个字节不等于对端收全了。
+  return streamFileRange(session.tmpPath, range ?? null);
 }
 
 export async function appendUpload(

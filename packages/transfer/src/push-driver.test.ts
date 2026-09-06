@@ -256,3 +256,109 @@ describe('runPush', () => {
     expect(s.puts).toEqual([]);
   });
 });
+
+describe('runPush cancellation and deadlines', () => {
+  test('取消压过已落地的区间：中途 abort 的整次推送算取消', async () => {
+    const controller = new AbortController();
+    const puts: ByteRange[] = [];
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      async put(range) {
+        puts.push(range);
+        controller.abort();
+        return { kind: 'landed' };
+      },
+    };
+    const res = await runPush(transport, {
+      totalBytes: 4000,
+      streams: 1,
+      maxRangeBytes: 1000,
+      deadlineMs: Date.now() + 60_000,
+      signal: controller.signal,
+      sleep: async () => {},
+    });
+    expect(res).toEqual({ kind: 'cancelled' });
+    // abort 之后不再发放新的区间
+    expect(puts).toHaveLength(1);
+  });
+
+  test('已 abort 的信号根本不发起推送', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const puts: ByteRange[] = [];
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      async put(range) {
+        puts.push(range);
+        return { kind: 'landed' };
+      },
+    };
+    expect(
+      await runPush(transport, {
+        totalBytes: 100,
+        deadlineMs: Date.now() + 60_000,
+        signal: controller.signal,
+      })
+    ).toEqual({ kind: 'cancelled' });
+    expect(puts).toEqual([]);
+  });
+
+  test('剩余期限用尽会 abort 卡住的 PUT，整轮不会无限等下去', async () => {
+    const seen: { signal: AbortSignal | null } = { signal: null };
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      put(_range, opts) {
+        seen.signal = opts.signal;
+        return new Promise((resolve) => {
+          opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' }), {
+            once: true,
+          });
+        });
+      },
+    };
+    const res = await runPush(transport, {
+      totalBytes: 100,
+      maxAttempts: 1,
+      deadlineMs: Date.now() + 30,
+      signal: NEVER_ABORT,
+      timeoutError: 'push timeout',
+      sleep: async () => {},
+    });
+    expect(res).toEqual({ kind: 'failed', error: 'push timeout' });
+    expect(seen.signal?.aborted).toBe(true);
+  });
+
+  test('本轮出结论后收掉还在飞的并行请求', async () => {
+    const signals: AbortSignal[] = [];
+    const transport: PushTransport = {
+      async status() {
+        return { receivedBytes: 0, ranges: [], complete: false };
+      },
+      put(range, opts) {
+        signals.push(opts.signal);
+        if (range.offset === 0) return Promise.resolve({ kind: 'fail', error: 'HTTP 400 BAD' });
+        return new Promise((resolve) => {
+          opts.signal.addEventListener('abort', () => resolve({ kind: 'cancelled' }), {
+            once: true,
+          });
+        });
+      },
+    };
+    const res = await runPush(transport, {
+      totalBytes: 4000,
+      streams: 4,
+      deadlineMs: Date.now() + 60_000,
+      signal: NEVER_ABORT,
+      sleep: async () => {},
+    });
+    expect(res).toEqual({ kind: 'failed', error: 'HTTP 400 BAD' });
+    expect(signals.length).toBeGreaterThan(1);
+    expect(signals.every((s) => s.aborted)).toBe(true);
+  });
+});

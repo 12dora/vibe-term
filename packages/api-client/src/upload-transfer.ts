@@ -42,13 +42,14 @@ function uploadTransport(
 ): PushTransport {
   let asked = false;
   return {
-    async status() {
+    // 状态查询也走本轮的带期限信号：卡死的响应不能把整轮尝试吊在这里。
+    async status(attemptSignal) {
       if (!asked) {
         asked = true;
         return null;
       }
       try {
-        const res = await client.fetch(`/api/files/upload/${uploadId}`, { signal });
+        const res = await client.fetch(`/api/files/upload/${uploadId}`, { signal: attemptSignal });
         if (!res.ok) return null;
         const body = (await res.json()) as UploadStatusResponse;
         const ranges = (body.ranges ?? []).map(([offset, length]) => ({ offset, length }));
@@ -63,13 +64,15 @@ function uploadTransport(
     },
     async put(range, opts) {
       if (signal?.aborted) return { kind: 'cancelled' };
+      if (opts.signal.aborted) return { kind: 'retry', error: 'upload attempt aborted' };
       const query = `?offset=${range.offset}&length=${range.length}`;
       let res: Response;
       try {
+        // 请求与响应体都挂在本轮信号上：期限一到或本轮已出结论，在飞的 PUT 立刻收掉。
         res = await client.fetch(`/api/files/upload/${uploadId}${query}`, {
           method: 'PUT',
           body: file.slice(range.offset, range.offset + range.length),
-          signal,
+          signal: opts.signal,
         });
       } catch (err) {
         if (signal?.aborted) return { kind: 'cancelled' };
@@ -82,7 +85,7 @@ function uploadTransport(
       }
       if (signal?.aborted) return { kind: 'cancelled' };
       const error = await parseError(res);
-      // 409 = 半截区间，5xx = 链路/服务端抖动；都可以退避后按新偏移续传。
+      // 409 = 半截区间 / 区间冲突，5xx = 链路或服务端抖动；都可以退避后按新偏移续传。
       return res.status === 409 || res.status >= 500
         ? { kind: 'retry', error: error.message }
         : { kind: 'fail', error: error.message };

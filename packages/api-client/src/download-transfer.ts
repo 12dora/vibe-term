@@ -60,16 +60,21 @@ export async function downloadFileWithProgress(
     });
     onLeg?.(1, { pct: 100, detail: formatBytes(prepared.size) });
     const blob = await drainContent(client, downloadId, prepared.size, opts);
+    // 整份收齐并校验过长度之后才回收远端会话——服务端不会在读到文件尾时自行清理，
+    // 否则中途断线的续传请求会撞上 404。
+    await deleteDownloadSession(client, downloadId);
     return { name: prepared.name, blob };
   } catch (e) {
-    if (downloadId) {
-      try {
-        await client.fetch(`/api/files/download/${downloadId}`, { method: 'DELETE' });
-      } catch {
-        // 忽略
-      }
-    }
+    if (downloadId) await deleteDownloadSession(client, downloadId);
     throw e;
+  }
+}
+
+async function deleteDownloadSession(client: ApiClient, downloadId: string): Promise<void> {
+  try {
+    await client.fetch(`/api/files/download/${downloadId}`, { method: 'DELETE' });
+  } catch {
+    // 忽略
   }
 }
 
@@ -99,6 +104,49 @@ async function readContentBody(
   }
 }
 
+/**
+ * 一次内容请求：建连也算在重试范围内——响应头还没回来就被 RST 是最常见的断法，
+ * 让它逃到外层只会白扔掉已经收到的字节。永久性的 HTTP 错误（4xx/5xx 回包）直接上抛。
+ */
+async function fetchContentOnce(input: {
+  client: ApiClient;
+  downloadId: string;
+  size: number;
+  state: ContentState;
+  signal: AbortSignal | undefined;
+  report: (received: number, total: number) => void;
+}): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  const { client, downloadId, size, state, signal, report } = input;
+  const headers = state.received > 0 ? { Range: `bytes=${state.received}-` } : undefined;
+  let res: Response;
+  try {
+    res = await client.fetch(`/api/files/download/${downloadId}/content`, { headers, signal });
+  } catch (err) {
+    if (signal?.aborted) throw abortError();
+    return { ok: false, error: err };
+  }
+  if (!res.ok || !res.body) throw await parseError(res);
+  if (state.received > 0 && res.status !== 206) {
+    // 对端不认 Range，只能整份重来
+    state.chunks = [];
+    state.received = 0;
+  }
+  const total = size > 0 ? size : Number(res.headers.get('Content-Length') ?? '0');
+  try {
+    await readContentBody(res.body, state, total, report);
+  } catch (err) {
+    if (signal?.aborted) throw abortError();
+    return { ok: false, error: err };
+  }
+  if (size > 0 && state.received < size) {
+    return {
+      ok: false,
+      error: new FileApiError(500, `download truncated: ${state.received}/${size}`, 'unknown'),
+    };
+  }
+  return { ok: true };
+}
+
 // leg2：tmex → 客户端。链路中断按已收字节数续传（服务端支持 `Range`）。
 async function drainContent(
   client: ApiClient,
@@ -123,26 +171,9 @@ async function drainContent(
 
   for (let attempt = 1; attempt <= CONTENT_MAX_ATTEMPTS; attempt += 1) {
     if (signal?.aborted) throw abortError();
-    const headers = state.received > 0 ? { Range: `bytes=${state.received}-` } : undefined;
-    const res = await client.fetch(`/api/files/download/${downloadId}/content`, {
-      headers,
-      signal,
-    });
-    if (!res.ok || !res.body) throw await parseError(res);
-    if (state.received > 0 && res.status !== 206) {
-      // 对端不认 Range，只能整份重来
-      state.chunks = [];
-      state.received = 0;
-    }
-    const total = size > 0 ? size : Number(res.headers.get('Content-Length') ?? '0');
-    try {
-      await readContentBody(res.body, state, total, report);
-      if (size > 0 && state.received < size) {
-        throw new FileApiError(500, `download truncated: ${state.received}/${size}`, 'unknown');
-      }
-    } catch (err) {
-      if (signal?.aborted) throw abortError();
-      lastError = err;
+    const outcome = await fetchContentOnce({ client, downloadId, size, state, signal, report });
+    if (!outcome.ok) {
+      lastError = outcome.error;
       continue;
     }
     onLeg?.(2, { pct: 100, detail: bytes(size) });

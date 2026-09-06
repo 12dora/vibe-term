@@ -44,6 +44,8 @@ export interface DownloadSession {
   mime: string | null;
   cleanup: () => void;
   createdAt: number;
+  /** 建会话那一刻源文件的 mtime；本机设备的下载直接读原文件，续传前要确认它没被改过 */
+  sourceMtimeMs: number | null;
 }
 const downloads = new Map<string, DownloadSession>();
 
@@ -61,12 +63,40 @@ function sweepStale(now: number): void {
 }
 
 export function createDownloadSession(
-  data: Omit<DownloadSession, 'id' | 'createdAt'>
+  data: Omit<DownloadSession, 'id' | 'createdAt' | 'sourceMtimeMs'>
 ): DownloadSession {
   sweepStale(Date.now());
-  const session: DownloadSession = { id: crypto.randomUUID(), createdAt: Date.now(), ...data };
+  const session: DownloadSession = {
+    id: crypto.randomUUID(),
+    createdAt: Date.now(),
+    sourceMtimeMs: fileMtimeMs(data.tmpPath),
+    ...data,
+  };
   downloads.set(session.id, session);
   return session;
+}
+
+function fileMtimeMs(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 续传前的源文件校验。本机设备的下载不再复制一份到 tmpdir，读的就是用户的原文件——
+ * 中途被改写的话，接着拉只会拼出一份半新半旧的内容，必须干脆地失败。
+ */
+export function downloadSourceChanged(session: DownloadSession): boolean {
+  let stat: { size: number; mtimeMs: number };
+  try {
+    stat = statSync(session.tmpPath);
+  } catch {
+    return true;
+  }
+  if (stat.size !== session.size) return true;
+  return session.sourceMtimeMs !== null && stat.mtimeMs !== session.sourceMtimeMs;
 }
 
 export function getDownloadSession(id: string): DownloadSession | undefined {
@@ -143,6 +173,7 @@ export type UploadWriteFailure =
   | 'too_large'
   | 'cancelled'
   | 'incomplete'
+  | 'conflict'
   | 'unknown';
 
 export type UploadWriteResult =
@@ -157,15 +188,23 @@ const FAILURE_MAP: Record<string, UploadWriteFailure> = {
   aborted: 'cancelled',
   invalid: 'unknown',
   io_error: 'unknown',
+  conflict: 'conflict',
+  sealed: 'conflict',
 };
 
 /**
  * 写入一段区间。允许乱序、允许并行——收满后自动 rename 成 `tmpPath`。
- * `contentLength` 用于判定链路中断（收到的比声明的少）与提前拒绝越界区间。
+ * `contentLength` 用于判定链路中断（收到的比声明的少）与提前拒绝越界区间；
+ * `maxWriteBytes` 是本次 PUT 的硬上限，与客户端声明无关。
  */
 export async function writeUploadRange(
   id: string,
-  input: { offset: number; contentLength?: number; body: ReadableStream<Uint8Array> }
+  input: {
+    offset: number;
+    contentLength?: number;
+    maxWriteBytes?: number;
+    body: ReadableStream<Uint8Array>;
+  }
 ): Promise<UploadWriteResult> {
   const session = sessions.get(id);
   if (!session) return { ok: false, reason: 'not_found' };
@@ -173,14 +212,11 @@ export async function writeUploadRange(
   const written = await sink.write(session.descriptor, input.body, {
     offset: input.offset,
     contentLength: input.contentLength,
+    maxWriteBytes: input.maxWriteBytes,
+    signal: session.abort.signal,
   });
   if (sessions.get(id) !== session) return { ok: false, reason: 'cancelled' };
-  if (!written.ok) {
-    if (written.code === 'incomplete') {
-      session.received = Math.max(session.received, written.receivedBytes);
-    }
-    return { ok: false, reason: FAILURE_MAP[written.code] ?? 'unknown' };
-  }
+  if (!written.ok) return failedWrite(session, written);
   session.received = Math.max(session.received, written.receivedBytes);
   if (written.complete && !session.complete) {
     // 并行写入时可能有多条流同时看到「收满」，落位只做一次
@@ -191,6 +227,20 @@ export async function writeUploadRange(
     session.complete = true;
   }
   return { ok: true, received: session.received, complete: session.complete };
+}
+
+/** 已经落位封存的会话再收到迟到的重复区间：内容早就齐了，如实回「已完成」即可。 */
+function failedWrite(
+  session: UploadSession,
+  written: Extract<Awaited<ReturnType<typeof sink.write>>, { ok: false }>
+): UploadWriteResult {
+  if (written.code === 'sealed' && session.complete) {
+    return { ok: true, received: session.received, complete: true };
+  }
+  if (written.code === 'incomplete') {
+    session.received = Math.max(session.received, written.receivedBytes);
+  }
+  return { ok: false, reason: FAILURE_MAP[written.code] ?? 'unknown' };
 }
 
 /** 字节版便捷入口（RTC bulk 直连按顺序送帧时用）。 */
@@ -205,7 +255,12 @@ export function writeUploadBytes(
       controller.close();
     },
   });
-  return writeUploadRange(id, { offset, contentLength: bytes.byteLength, body });
+  return writeUploadRange(id, {
+    offset,
+    contentLength: bytes.byteLength,
+    maxWriteBytes: bytes.byteLength,
+    body,
+  });
 }
 
 // 移除会话：中止进行中的 rsync 推送 + 删除临时文件。

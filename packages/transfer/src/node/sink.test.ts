@@ -1,7 +1,8 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { createHash } from 'node:crypto';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { utimesSync } from 'node:fs';
+import * as fsPromises from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ResumableSink, type SinkDescriptor, deterministicPartPath, partPathOf } from './sink';
@@ -271,5 +272,343 @@ describe('ResumableSink ranged mode', () => {
     expect(res).toEqual({ ok: false, code: 'checksum_mismatch' });
     expect(existsSync(partPathOf(d))).toBe(false);
     expect((await sink.status(d)).receivedBytes).toBe(0);
+  });
+});
+
+describe('ResumableSink review regressions', () => {
+  function partialWriteSpy(perCall: number) {
+    const realOpen = fsPromises.open;
+    return spyOn(fsPromises, 'open').mockImplementation(async (path, flags, mode) => {
+      const fh = await realOpen(path as string, flags as string, mode as number);
+      return {
+        write: async (buf: Uint8Array, off: number, len: number, pos?: number | null) =>
+          perCall > 0
+            ? fh.write(buf, off, Math.min(perCall, len), pos ?? null)
+            : { bytesWritten: 0, buffer: buf },
+        truncate: (len?: number) => fh.truncate(len),
+        close: () => fh.close(),
+      } as unknown as Awaited<ReturnType<typeof realOpen>>;
+    });
+  }
+
+  test('短写循环补齐：分两次落盘的区间字节完整（乱序模式）', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const bytes = payload(4);
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'short.bin'),
+      key: 'short-ranged',
+      mode: 'ranged',
+      totalBytes: 4,
+      sha256: sha256(bytes),
+    };
+    const spy = partialWriteSpy(2);
+    try {
+      const res = await sink.write(d, bodyOf(bytes), { offset: 0, contentLength: 4 });
+      expect(res).toMatchObject({ ok: true, complete: true, receivedBytes: 4 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await sink.commit(d)).ok).toBe(true);
+    expect(readFileSync(d.destPath)).toEqual(Buffer.from(bytes));
+  });
+
+  test('短写循环补齐：追加模式同样按实际写入字节推进摘要', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const bytes = payload(6);
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'short-append.tgz'),
+      sha256: sha256(bytes),
+      totalBytes: 6,
+    };
+    const spy = partialWriteSpy(2);
+    try {
+      const res = await sink.write(d, bodyOf(bytes), { offset: 0, contentLength: 6 });
+      expect(res).toMatchObject({ ok: true, complete: true, receivedBytes: 6 });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(readFileSync(partPathOf(d))).toEqual(Buffer.from(bytes));
+  });
+
+  test('一个字节都写不进去算 IO 错误，不记成已收', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'stuck.bin'),
+      key: 'stuck',
+      mode: 'ranged',
+      totalBytes: 4,
+    };
+    const spy = partialWriteSpy(0);
+    try {
+      expect(await sink.write(d, bodyOf(payload(4)), { offset: 0, contentLength: 4 })).toEqual({
+        ok: false,
+        code: 'io_error',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await sink.status(d)).receivedBytes).toBe(0);
+  });
+
+  test('与在写区间重叠的写入被拒，已确认的字节不被改写', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'overlap.bin'),
+      key: 'overlap',
+      mode: 'ranged',
+      totalBytes: 8,
+    };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const slow = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        controller.enqueue(new Uint8Array([1, 1, 1, 1]));
+        await held;
+        controller.close();
+      },
+    });
+    const first = sink.write(d, slow, { offset: 0, contentLength: 4 });
+    await Bun.sleep(5);
+    expect(await sink.write(d, bodyOf(new Uint8Array([9, 9])), { offset: 2 })).toEqual({
+      ok: false,
+      code: 'conflict',
+    });
+    release();
+    expect(await first).toMatchObject({ ok: true, receivedBytes: 4 });
+    // 已确认的区间同样不可再写
+    expect(await sink.write(d, bodyOf(new Uint8Array([9, 9])), { offset: 2 })).toEqual({
+      ok: false,
+      code: 'conflict',
+    });
+    // 不相交的缺口照常接受
+    expect(
+      await sink.write(d, bodyOf(new Uint8Array([2, 2, 2, 2])), { offset: 4, contentLength: 4 })
+    ).toMatchObject({ ok: true, complete: true });
+    expect((await sink.commit(d)).ok).toBe(true);
+    expect(readFileSync(d.destPath)).toEqual(Buffer.from([1, 1, 1, 1, 2, 2, 2, 2]));
+  });
+
+  test('落位排空在写的流，并封存后续写入', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'seal.bin'),
+      key: 'seal',
+      mode: 'ranged',
+      totalBytes: 8,
+    };
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let finished = false;
+    const slow = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        controller.enqueue(new Uint8Array([1, 1, 1, 1]));
+        await held;
+        controller.close();
+      },
+    });
+    const first = sink.write(d, slow, { offset: 4, contentLength: 4 }).then((r) => {
+      finished = true;
+      return r;
+    });
+    await Bun.sleep(5);
+    await sink.write(d, bodyOf(new Uint8Array([2, 2, 2, 2])), { offset: 0, contentLength: 4 });
+    const committing = sink.commit(d);
+    await Bun.sleep(5);
+    expect(finished).toBe(false);
+    release();
+    await first;
+    expect(await committing).toMatchObject({ ok: true, committed: true, skipped: false });
+    expect(await sink.write(d, bodyOf(new Uint8Array([3])), { offset: 0 })).toEqual({
+      ok: false,
+      code: 'sealed',
+    });
+  });
+
+  test('overwrite 落位直接改名盖过去；重复落位幂等且不误删目标', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const dest = join(dir, 'dest.bin');
+    writeFileSync(dest, Buffer.from('old-content'));
+    const d: SinkDescriptor = {
+      destPath: dest,
+      key: 'ow',
+      mode: 'ranged',
+      totalBytes: 3,
+    };
+    await sink.write(d, bodyOf(new Uint8Array([7, 7, 7])), { offset: 0, contentLength: 3 });
+    expect(await sink.commit(d)).toMatchObject({ ok: true, committed: true, skipped: false });
+    expect(readFileSync(dest)).toEqual(Buffer.from([7, 7, 7]));
+    // 第二次 commit 返回同一个结论，目标文件仍在
+    expect(await sink.commit(d)).toMatchObject({ ok: true, committed: true });
+    expect(readFileSync(dest)).toEqual(Buffer.from([7, 7, 7]));
+  });
+
+  test('skip 落位在目标已存在时原子跳过，不动目标也不留半成品', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const dest = join(dir, 'keep.bin');
+    const d: SinkDescriptor = { destPath: dest, key: 'skip', mode: 'ranged', totalBytes: 3 };
+    await sink.write(d, bodyOf(new Uint8Array([7, 7, 7])), { offset: 0, contentLength: 3 });
+    writeFileSync(dest, Buffer.from('other'));
+    expect(await sink.commit(d, { onConflict: 'skip' })).toMatchObject({
+      ok: true,
+      committed: false,
+      skipped: true,
+    });
+    expect(readFileSync(dest)).toEqual(Buffer.from('other'));
+    expect(existsSync(partPathOf(d))).toBe(false);
+  });
+
+  test('skip 落位在目标不存在时正常落地', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'fresh.bin'),
+      key: 'skip-fresh',
+      mode: 'ranged',
+      totalBytes: 2,
+    };
+    await sink.write(d, bodyOf(new Uint8Array([5, 6])), { offset: 0, contentLength: 2 });
+    expect(await sink.commit(d, { onConflict: 'skip' })).toMatchObject({
+      ok: true,
+      committed: true,
+      skipped: false,
+    });
+    expect(readFileSync(d.destPath)).toEqual(Buffer.from([5, 6]));
+    expect(existsSync(partPathOf(d))).toBe(false);
+  });
+
+  test('位图落盘失败按可重试 IO 错误上报，区间不算已收', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'sidecar.bin'),
+      key: 'sidecar',
+      mode: 'ranged',
+      totalBytes: 4,
+    };
+    const realWriteFile = fsPromises.writeFile;
+    const spy = spyOn(fsPromises, 'writeFile').mockImplementation(async (target, data, options) => {
+      if (String(target).includes('.rx')) throw new Error('ENOSPC');
+      return realWriteFile(target as string, data as string, options as undefined);
+    });
+    try {
+      expect(await sink.write(d, bodyOf(payload(4)), { offset: 0, contentLength: 4 })).toEqual({
+        ok: false,
+        code: 'io_error',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await sink.status(d)).receivedBytes).toBe(0);
+  });
+
+  test('位图整份原子发布，不留临时文件', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'atomic.bin'),
+      key: 'atomic',
+      mode: 'ranged',
+      totalBytes: 6,
+    };
+    await sink.write(d, bodyOf(payload(3)), { offset: 0, contentLength: 3 });
+    const sidecar = `${partPathOf(d)}.rx`;
+    expect(existsSync(sidecar)).toBe(true);
+    expect(existsSync(`${sidecar}.tmp`)).toBe(false);
+    expect(JSON.parse(readFileSync(sidecar, 'utf8'))).toEqual([[0, 3]]);
+  });
+
+  test('会话信号 abort 立刻停止读 body 并掐掉源流', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'cancel.bin'),
+      key: 'cancel',
+      mode: 'ranged',
+      totalBytes: 8,
+    };
+    const controller = new AbortController();
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1, 1]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const pending = sink.write(d, body, { offset: 0, contentLength: 8, signal: controller.signal });
+    await Bun.sleep(5);
+    controller.abort();
+    expect(await pending).toEqual({ ok: false, code: 'aborted' });
+    expect(cancelled).toBe(true);
+  });
+
+  test('已 abort 的信号直接拒绝写入，不开文件也不读 body', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'pre-cancel.bin'),
+      key: 'pre-cancel',
+      mode: 'ranged',
+      totalBytes: 4,
+    };
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const controller = new AbortController();
+    controller.abort();
+    expect(await sink.write(d, body, { offset: 0, signal: controller.signal })).toEqual({
+      ok: false,
+      code: 'aborted',
+    });
+    expect(cancelled).toBe(true);
+    expect(existsSync(partPathOf(d))).toBe(false);
+  });
+
+  test('写失败提前退出时同样掐掉源流', async () => {
+    const dir = tempDir();
+    const sink = new ResumableSink();
+    const d: SinkDescriptor = {
+      destPath: join(dir, 'io-cancel.bin'),
+      key: 'io-cancel',
+      mode: 'ranged',
+      totalBytes: 4,
+    };
+    let cancelled = false;
+    const body = new ReadableStream<Uint8Array>({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1, 2, 3, 4]));
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const spy = partialWriteSpy(0);
+    try {
+      expect(await sink.write(d, body, { offset: 0, contentLength: 4 })).toEqual({
+        ok: false,
+        code: 'io_error',
+      });
+    } finally {
+      spy.mockRestore();
+    }
+    expect(cancelled).toBe(true);
   });
 });

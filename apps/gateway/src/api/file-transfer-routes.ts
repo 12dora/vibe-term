@@ -9,6 +9,7 @@ import { transferMaxBytesNow } from '../files/transfer-limit';
 import {
   createDownloadSession,
   createUploadSession,
+  downloadSourceChanged,
   getDownloadSession,
   getUploadSession,
   uploadRanges,
@@ -108,6 +109,9 @@ async function handleUploadChunk(req: Request, id: string, url: URL): Promise<Re
   const res = await writeUploadRange(id, {
     offset,
     contentLength: declared ?? undefined,
+    // 单次 PUT 的上限与客户端声明无关：不带 length / content-length 的分块请求
+    // 也不能一口气吃掉整个文件配额。
+    maxWriteBytes: Math.max(0, Math.min(UPLOAD_CHUNK_SIZE, session.size - offset)),
     body: req.body ?? EMPTY_BODY(),
   });
   if (!res.ok) return uploadFailure(res.reason);
@@ -201,6 +205,10 @@ function handleDownloadPrepare(req: Request): Response {
 function handleDownloadContent(req: Request, id: string): Response {
   const session = getDownloadSession(id);
   if (!session) return codeError('not_found');
+  if (downloadSourceChanged(session)) {
+    cleanupDownload(id);
+    return codeError('invalid', 'source changed');
+  }
   const range = parseRangeHeader(req.headers.get('range'), session.size);
   if (range === 'unsatisfiable') {
     return new Response(null, {
@@ -208,11 +216,9 @@ function handleDownloadContent(req: Request, id: string): Response {
       headers: { 'Content-Range': `bytes */${session.size}`, 'Cache-Control': 'no-store' },
     });
   }
-  // 只有读到文件尾才回收临时文件，否则下一段续传就没得读了。
-  const atEof = range === null || range.end >= session.size;
-  const body = streamFileRange(session.tmpPath, range, () => {
-    if (atEof) cleanupDownload(id);
-  });
+  // 会话只由客户端显式 DELETE 或 TTL 回收：读到文件尾不代表客户端真的收全了，
+  // 就地清掉会让紧接着的续传请求撞上 404。
+  const body = streamFileRange(session.tmpPath, range);
   if (!body) return codeError('unknown');
   if (range === null) {
     return new Response(body, {

@@ -4,7 +4,7 @@
 
 import { createHash } from 'node:crypto';
 import { readdirSync, statSync } from 'node:fs';
-import { readFile, rm, writeFile } from 'node:fs/promises';
+import { readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { normalizeRanges } from '../ranges';
 import type { ByteRange } from '../types';
@@ -14,6 +14,7 @@ export const PART_TTL_MS = 24 * 60 * 60 * 1000;
 
 const PART_MARK = '.part-';
 const RANGES_SUFFIX = '.rx';
+const TMP_SUFFIX = '.tmp';
 
 export function partToken(key: string): string {
   const trimmed = key.trim();
@@ -27,7 +28,8 @@ export function deterministicPartPath(destPath: string, key: string): string {
 }
 
 export function isPartFileName(name: string): boolean {
-  return name.includes(PART_MARK) && !name.endsWith(RANGES_SUFFIX);
+  if (!name.includes(PART_MARK)) return false;
+  return !name.endsWith(RANGES_SUFFIX) && !name.endsWith(`${RANGES_SUFFIX}${TMP_SUFFIX}`);
 }
 
 export function rangesSidecarPath(partPath: string): string {
@@ -67,13 +69,19 @@ export function withPartLock<T>(partPath: string, fn: () => Promise<T>): Promise
   return next;
 }
 
-/** 记一段已收区间并返回合并后的全集（在锁内完成读-改-写）。 */
+/**
+ * 记一段已收区间并返回合并后的全集。**调用方必须已持有 `withPartLock`**——
+ * 预约释放与位图落盘要在同一个临界区里完成，否则下一个写入者会读到过期的已确认区间。
+ */
+export async function mergeReceivedRange(partPath: string, range: ByteRange): Promise<ByteRange[]> {
+  const merged = normalizeRanges([...(await readReceivedRanges(partPath)), range]);
+  await writeReceivedRanges(partPath, merged);
+  return merged;
+}
+
+/** 记一段已收区间并返回合并后的全集（自带锁）。 */
 export function recordReceivedRange(partPath: string, range: ByteRange): Promise<ByteRange[]> {
-  return withPartLock(partPath, async () => {
-    const merged = normalizeRanges([...(await readReceivedRanges(partPath)), range]);
-    await writeReceivedRanges(partPath, merged);
-    return merged;
-  });
+  return withPartLock(partPath, () => mergeReceivedRange(partPath, range));
 }
 
 export async function readReceivedRanges(partPath: string): Promise<ByteRange[]> {
@@ -94,16 +102,29 @@ export async function readReceivedRanges(partPath: string): Promise<ByteRange[]>
   }
 }
 
+/**
+ * 位图必须整份原子发布：就地覆写会让并发的状态查询读到半截 JSON，写失败被吞掉更会
+ * 让「已确认」凭空消失。写临时文件再 rename，失败一律抛出交给调用方判为可重试 IO 错误。
+ */
 export async function writeReceivedRanges(
   partPath: string,
   ranges: readonly ByteRange[]
 ): Promise<void> {
+  const target = rangesSidecarPath(partPath);
+  const tmp = `${target}${TMP_SUFFIX}`;
   const payload = JSON.stringify(normalizeRanges(ranges).map((r) => [r.offset, r.length]));
-  await writeFile(rangesSidecarPath(partPath), payload, { mode: 0o600 }).catch(() => {});
+  try {
+    await writeFile(tmp, payload, { mode: 0o600 });
+    await rename(tmp, target);
+  } catch (error) {
+    await rm(tmp, { force: true }).catch(() => {});
+    throw error;
+  }
 }
 
 export async function removeReceivedRanges(partPath: string): Promise<void> {
   await rm(rangesSidecarPath(partPath), { force: true }).catch(() => {});
+  await rm(`${rangesSidecarPath(partPath)}${TMP_SUFFIX}`, { force: true }).catch(() => {});
 }
 
 /** 清掉目录里过期的 `.part-*` 及其旁挂；返回删掉的半成品个数。 */

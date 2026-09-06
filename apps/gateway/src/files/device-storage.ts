@@ -147,8 +147,10 @@ async function withNormalizedRsync<T>(
 /**
  * 本机设备的下载：文件本来就在本地盘上，再 rsync 复制一份到 tmpdir 是白花一遍 IO。
  * 直接把真实路径交出去，`cleanup` 自然是空操作——绝不能删用户的原文件。
+ * 续传期间原文件被改写的情况由下载会话按 size/mtime 复核（见 `downloadSourceChanged`）。
  */
 function localFileForDownload(path: string): FileOpResult<PulledFile> {
+  const maxBytes = transferMaxBytesNow(config.transferMaxBytes);
   let size: number;
   try {
     const st = statSync(path);
@@ -157,7 +159,7 @@ function localFileForDownload(path: string): FileOpResult<PulledFile> {
   } catch {
     return fail('not_found');
   }
-  if (size > config.transferMaxBytes) return fail('too_large');
+  if (size > maxBytes) return fail('too_large', String(maxBytes));
   const name = posixBasename(path);
   return ok<PulledFile>({ tmpPath: path, size, name, mime: mimeOf(name), cleanup: () => {} });
 }
@@ -418,7 +420,9 @@ export async function pullFileFromDevice(
   inputPath: string,
   opts: TransferOptions = {}
 ): Promise<FileOpResult<PulledFile>> {
-  return withNormalizedRsync(rootId, inputPath, async ({ spec, path }) => {
+  return withNormalizedRsync(rootId, inputPath, async ({ spec, path, device }) => {
+    // 本机设备：路径已经过 root + realpath 校验，直接读原文件，省掉整份复制到 tmpdir。
+    if (device.type === 'local') return localFileForDownload(path);
     const st = await statViaRsync(spec, path);
     if (!st.ok) return st;
     if (st.data.type === 'dir') return fail('is_directory');
