@@ -1289,7 +1289,9 @@ function wireMeshHttp(
     selfStatus: d.statusProvider,
     listedNames: () => {
       const rows: Array<{ id: string; name: string }> = [];
-      if (!state.lastNodeList) return rows;
+      // `null` = 本进程还没应用过任何成员列表；空数组是「应用过、但一台对端都没有」
+      // （中继列表不含本机，单节点租户就是这一档），两者对同步进度的含义完全相反。
+      if (!state.lastNodeList) return null;
       for (const node of state.lastNodeList.nodes) rows.push({ id: node.id, name: node.name });
       if (state.lastNodeList.hubs) {
         for (const hub of state.lastNodeList.hubs) {

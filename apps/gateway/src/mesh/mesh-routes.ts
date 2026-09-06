@@ -76,7 +76,7 @@ export type MeshRoutesDeps = {
   registerSocket?: (ws: MeshServerWebSocket, auth: { sid: string; uid: string }) => void;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
-  listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
+  listedNames?: () => ReadonlyArray<{ id: string; name: string }> | null;
   selfName?: () => string | null;
   hubStore?: MeshHubStore;
   attachedHub?: () => AttachedHub | null;
@@ -225,7 +225,7 @@ export class MeshRoutes {
   private handleNodes(req: Request): Response {
     const nodes = this.collectNodes(req);
     sweepStaleNodeOperations(new Set(nodes.map((n) => n.id)));
-    const listedRows = this.deps.roles.hub ? nodes : (this.deps.listedNames?.() ?? []);
+    const listedRows = this.deps.roles.hub ? nodes : (this.deps.listedNames?.() ?? null);
     return jsonBody({
       ...meshListReadiness(this.deps.userStore, this.deps.nodeId, nodes, listedRows),
       nodes: nodes.map((n) => ({ ...n, operation: readNodeOperation(n.id) })),

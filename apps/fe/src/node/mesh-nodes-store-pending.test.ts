@@ -81,10 +81,12 @@ describe('refreshMeshNodes 的同步进度', () => {
 
 describe('shouldRefreshPendingMembers', () => {
   const nodes = [node({ id: 'a', inventory: null }), node({ id: 'b', inventory: { v: 1 } })];
-  const state = (overrides: Partial<Parameters<typeof shouldRefreshPendingMembers>[0]> = {}) => ({
+  type PredicateState = Parameters<typeof shouldRefreshPendingMembers>[0];
+  const state = (overrides: Partial<PredicateState> = {}): PredicateState => ({
     nodes,
-    pendingMembers: 1 as number | null,
-    loadedAt: 1 as number | null,
+    pendingMembers: 1,
+    pendingMemberIds: ['a'],
+    loadedAt: 1,
     ...overrides,
   });
 
@@ -144,14 +146,34 @@ describe('shouldRefreshPendingMembers', () => {
     ).toBe(false);
   });
 
-  test('首拉在飞时的成员状态事件排一次尾随请求（在飞的响应可能带着过期计数落地）', () => {
-    const first = state({ loadedAt: null, pendingMembers: null });
+  test('首拉在飞时任何成员事件都排一次尾随请求（在飞的响应带着过期成员集与计数落地）', () => {
+    const first = state({ loadedAt: null, pendingMembers: null, pendingMemberIds: null });
+    for (const frame of [
+      event({ nodeId: 'a', inventory: { v: 2 } }),
+      event({ nodeId: 'a', status: 'revoked' }),
+      event({ nodeId: 'a', status: 'offline' }),
+    ]) {
+      expect(shouldRefreshPendingMembers(first, frame, true)).toBe(true);
+      // 没有在飞的请求就不发：首拉失败时事件不该变成新的定时器
+      expect(shouldRefreshPendingMembers(first, frame, false)).toBe(false);
+    }
+  });
+
+  test('待同步成员掉线：网关不再把它算作同步中，本地计数只能靠回源纠正', () => {
     expect(
-      shouldRefreshPendingMembers(first, event({ nodeId: 'a', inventory: { v: 2 } }), true)
+      shouldRefreshPendingMembers(state(), event({ nodeId: 'a', status: 'offline' }), false)
     ).toBe(true);
-    // 没有在飞的请求就不发：首拉失败时事件不该变成新的定时器
+    // 不在待同步名单里的节点掉线不回源，否则上下线就成了新的定时器
     expect(
-      shouldRefreshPendingMembers(first, event({ nodeId: 'a', inventory: { v: 2 } }), false)
+      shouldRefreshPendingMembers(state(), event({ nodeId: 'b', status: 'offline' }), false)
+    ).toBe(false);
+    // 旧网关不下发名单时同样不回源
+    expect(
+      shouldRefreshPendingMembers(
+        state({ pendingMemberIds: null }),
+        event({ nodeId: 'a', status: 'offline' }),
+        false
+      )
     ).toBe(false);
   });
 });
@@ -178,6 +200,53 @@ describe('applyMeshNodeEvent', () => {
     expect(calls()).toBe(1);
     pending[0]({ nodes: [node({ id: 'b', inventory: { v: 1 } })], pendingMembers: 0 });
     await flush();
+    expect(getMeshNodesState().pendingMembers).toBe(0);
+    resetMeshNodesStateForTest();
+  });
+
+  test('待同步成员掉线：当场回源，不必等五分钟的兜底轮询把计数纠正回来', async () => {
+    resetMeshNodesStateForTest();
+    setMeshNodesStateForTest({
+      nodes: [node({ id: 'a' }), node({ id: 'b', inventory: { v: 1 } })],
+      pendingMembers: 1,
+      pendingMemberIds: ['a'],
+      loadedAt: 1,
+    });
+    const { api, pending, calls } = deferredApi();
+
+    applyMeshNodeEvent(event({ nodeId: 'a', status: 'offline' }), api);
+    expect(calls()).toBe(1);
+    // 网关不再把掉线的成员算作同步中
+    pending[0]({
+      nodes: [node({ id: 'a', online: false }), node({ id: 'b', inventory: { v: 1 } })],
+      pendingMembers: 0,
+      pendingMemberIds: [],
+    });
+    await flush();
+    expect(getMeshNodesState().pendingMembers).toBe(0);
+    expect(getMeshNodesState().pendingMemberIds).toEqual([]);
+    resetMeshNodesStateForTest();
+  });
+
+  test('吊销事件先到、首拉的旧响应后落地：尾随请求把被加回来的成员再摘掉', async () => {
+    resetMeshNodesStateForTest();
+    const { api, pending, calls } = deferredApi();
+
+    const first = refreshMeshNodes(api);
+    expect(calls()).toBe(1);
+    // 首拉还在飞，此刻 pendingMembers 还是「不知道」
+    applyMeshNodeEvent(event({ nodeId: 'a', status: 'revoked' }), api);
+    expect(calls()).toBe(1);
+
+    // 在飞的那次早于吊销发出：它会把已经吊销的成员连同计数一起加回来
+    pending[0]({ nodes: [node({ id: 'a' })], pendingMembers: 1, pendingMemberIds: ['a'] });
+    await first;
+    expect(getMeshNodesState().nodes.map((row) => row.id)).toEqual(['a']);
+    // 尾随请求补上，成员集与计数当场收敛
+    expect(calls()).toBe(2);
+    pending[1]({ nodes: [], pendingMembers: 0, pendingMemberIds: [] });
+    await flush();
+    expect(getMeshNodesState().nodes).toEqual([]);
     expect(getMeshNodesState().pendingMembers).toBe(0);
     resetMeshNodesStateForTest();
   });

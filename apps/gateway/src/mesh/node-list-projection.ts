@@ -293,15 +293,17 @@ type ReadinessStore = {
  *
  * 判据必须收敛：状态块只随**活着的链路**广播，所以本进程已经应用过成员列表之后，列表里
  * 没有（已不在中继）或列表说它离线的成员就再也等不到状态块了——那几行按离线渲染，不再算
- * 同步中，否则节点表会永远停在骨架上。`listed` 为空即「本进程还没应用过任何列表」
- * （刚重启的那几秒），此时一律算同步中；hub 自己就是成员集的权威，调用方直接把整份投影
- * 当成 `listed` 传进来。
+ * 同步中，否则节点表会永远停在骨架上。
+ *
+ * `listed` 为 `null` 才是「本进程还没应用过任何列表」（刚重启的那几秒），此时一律算同步中；
+ * **空数组是已应用过的空列表**（中继列表不含本机，单节点租户就是这一档），本地残留的证书
+ * 该按离线渲染而不是永远同步中。hub 自己就是成员集的权威，调用方直接把整份投影当 `listed`。
  */
 export function meshListReadiness(
   store: ReadinessStore,
   selfNodeId: string,
   nodes: ReadonlyArray<{ id: string; online: boolean }>,
-  listed: ReadonlyArray<{ id: string }>
+  listed: ReadonlyArray<{ id: string }> | null
 ): MeshListReadiness {
   const cached = new Set<string>();
   let listVersion = 0;
@@ -309,15 +311,16 @@ export function meshListReadiness(
     cached.add(peer.nodeId);
     if (peer.listVersion > listVersion) listVersion = peer.listVersion;
   }
-  const listedIds = new Set(listed.map((row) => row.id));
+  const listedIds = listed === null ? null : new Set(listed.map((row) => row.id));
   const onlineIds = new Set(nodes.filter((node) => node.online).map((node) => node.id));
   const pendingMemberIds: string[] = [];
   for (const cert of store.listCerts()) {
     if (cert.revokedLogSeq != null) continue;
     if (cert.nodeId === selfNodeId) continue;
     if (cached.has(cert.nodeId)) continue;
-    const absent = !listedIds.has(cert.nodeId) || !onlineIds.has(cert.nodeId);
-    if (listedIds.size > 0 && absent) continue;
+    if (listedIds !== null && (!listedIds.has(cert.nodeId) || !onlineIds.has(cert.nodeId))) {
+      continue;
+    }
     pendingMemberIds.push(cert.nodeId);
   }
   return { listVersion, pendingMembers: pendingMemberIds.length, pendingMemberIds };

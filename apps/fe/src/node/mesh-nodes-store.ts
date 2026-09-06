@@ -256,27 +256,30 @@ export function meshEnabledOf(state: MeshNodesState): boolean {
 /**
  * 这条 NODE_EVENT 是否让同步进度失效，需要补一次 REST。
  *
- * `pendingMembers` 只有 REST 算得出来，而列表应用后网关只推 NODE_EVENT，兜底轮询要五分钟：
- * 不补拉的话界面会一直停在加载态。三种情形都必须补：
+ * `pendingMembers` / `pendingMemberIds` 只有 REST 算得出来，而列表应用后网关只推 NODE_EVENT，
+ * 兜底轮询要五分钟：不补拉的话界面会一直停在加载态。四种情形必须补：
+ *  - **首拉还在飞**：此刻同步进度还是「不知道」，而在飞的那次响应可能早于事件发出，带着
+ *    过期的成员集与计数落地（吊销的成员会被它重新加回来）。任何成员事件都排一次尾随请求，
+ *    `ensureFreshMeshNodes` 会把这一串合并成一次；
  *  - 待同步成员的库存被补上（状态块解开了）；
  *  - 待同步成员被别处吊销（revoke 事件不带库存，计数只会一直挂着）；
- *  - **首拉还在飞**：此刻 `pendingMembers` 还是「不知道」，事件会被丢掉，而在飞的那次响应
- *    可能早于事件发出、带着过期的计数落地。排一次尾随请求即可（`ensureFreshMeshNodes` 合并）。
+ *  - 待同步成员掉线：网关不再把掉线的成员算作同步中，本地计数只能靠回源纠正。
  *
  * 其余情况一律不触发：解不开状态块的成员每次上下线都补拉会变成新的定时器。
  */
 export function shouldRefreshPendingMembers(
-  state: Pick<MeshNodesState, 'nodes' | 'pendingMembers' | 'loadedAt'>,
+  state: Pick<MeshNodesState, 'nodes' | 'pendingMembers' | 'pendingMemberIds' | 'loadedAt'>,
   event: NodeEventPayload,
   firstFetchInFlight: boolean
 ): boolean {
-  const known = state.nodes.some((node) => node.id === event.nodeId);
-  const pending = state.pendingMembers !== null && state.pendingMembers > 0;
-  if (event.status === 'revoked') return pending && known;
-  if (event.inventory == null) return false;
+  // 首拉在飞时先于其余判据处理：这一刻的 `pendingMembers` 还没有任何参考价值。
   if (state.loadedAt === null) return firstFetchInFlight;
+  const pending = state.pendingMembers !== null && state.pendingMembers > 0;
   if (!pending) return false;
   const row = state.nodes.find((node) => node.id === event.nodeId);
+  if (event.status === 'revoked') return row !== undefined;
+  if (event.status === 'offline') return state.pendingMemberIds?.includes(event.nodeId) === true;
+  if (event.inventory == null) return false;
   return row !== undefined && row.inventory == null;
 }
 

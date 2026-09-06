@@ -82,7 +82,8 @@ export type MeshHttpRuntimeOptions = {
   trustProxy?: boolean;
   connectionLookup?: ConnectionLookup;
   selfStatus?: () => UplinkStatus;
-  listedNames?: () => ReadonlyArray<{ id: string; name: string }>;
+  /** `null` = 本进程还没应用过任何成员列表（见 mesh-runtime 的实现注释）。 */
+  listedNames?: () => ReadonlyArray<{ id: string; name: string }> | null;
   selfName?: () => string | null;
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
   streamLog?: (line: string) => void;

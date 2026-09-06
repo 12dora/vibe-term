@@ -305,6 +305,12 @@ describe('meshListReadiness', () => {
   const online = (...ids: string[]) => ids.map((id) => ({ id, online: true }));
   const offline = (...ids: string[]) => ids.map((id) => ({ id, online: false }));
 
+  test('已应用但是空列表（单节点租户）：本地残留的证书按离线渲染，不再永远同步中', () => {
+    expect(
+      meshListReadiness(store([], [{ nodeId: 'c', revokedLogSeq: null }]), 'self', online('c'), [])
+    ).toEqual({ listVersion: 0, pendingMembers: 0, pendingMemberIds: [] });
+  });
+
   test('本进程还没应用过成员列表：证书有、peer_cache 没有的成员都算同步中', () => {
     expect(
       meshListReadiness(
@@ -318,7 +324,7 @@ describe('meshListReadiness', () => {
         ),
         'self',
         offline('self', 'b', 'c'),
-        []
+        null
       )
     ).toEqual({ listVersion: 7, pendingMembers: 1, pendingMemberIds: ['c'] });
   });
@@ -362,7 +368,7 @@ describe('meshListReadiness', () => {
         ),
         'self',
         online('self', 'gone'),
-        []
+        null
       )
     ).toEqual({ listVersion: 0, pendingMembers: 0, pendingMemberIds: [] });
   });
@@ -382,7 +388,7 @@ describe('meshListReadiness', () => {
         ),
         'self',
         online('b', 'c'),
-        []
+        null
       )
     ).toEqual({ listVersion: 9, pendingMembers: 0, pendingMemberIds: [] });
   });
