@@ -2229,6 +2229,7 @@
         "selected": "{{count}} selected",
         "sendToRight": "Send to Right",
         "sendToLeft": "Send to Left",
+        "sendTo": "Send to {{node}}",
         "sending": "Submitting...",
         "sendFailed": "Failed to create transfer job",
         "pickNodes": "Select a node and directory on both sides first",

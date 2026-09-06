@@ -14,6 +14,7 @@ import { useEffect, useMemo, useReducer } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { firstUsableNode, toDialogNodeOptions } from '../dialog-nodes';
+import { type SendLabel, sendLabel } from './pane-roots';
 import {
   type SendBlock,
   createTransferPaneState,
@@ -68,6 +69,8 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
 
   const leftBlock = sendBlock(left, right);
   const rightBlock = sendBlock(right, left);
+  const labelOf = (label: SendLabel) =>
+    label.node === null ? t(label.key) : t(label.key, { node: label.node });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -87,7 +90,7 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
               state={left}
               dispatch={dispatchLeft}
               nodeOptions={options}
-              sendLabel={t('devices.transfer.sendToRight')}
+              sendLabel={labelOf(sendLabel(options, right.nodeId, 'devices.transfer.sendToRight'))}
               sendBlockedReason={leftBlock ? t(BLOCK_KEYS[leftBlock]) : null}
               sending={sender.sending === 'left'}
               busy={sender.busy}
@@ -103,7 +106,7 @@ export default function TransferDialog({ open, onOpenChange }: TransferDialogPro
               state={right}
               dispatch={dispatchRight}
               nodeOptions={options}
-              sendLabel={t('devices.transfer.sendToLeft')}
+              sendLabel={labelOf(sendLabel(options, left.nodeId, 'devices.transfer.sendToLeft'))}
               sendBlockedReason={rightBlock ? t(BLOCK_KEYS[rightBlock]) : null}
               sending={sender.sending === 'right'}
               busy={sender.busy}

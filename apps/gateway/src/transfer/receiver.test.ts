@@ -13,6 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
 import { createFileRoot } from '../db/file-roots';
@@ -232,5 +233,95 @@ describe('receiver authorization and budgets', () => {
     expect(await makeDirectory(session, 'tree/empty')).toEqual({ ok: true });
     expect(existsSync(join(rootDir, 'tree/empty'))).toBe(true);
     expect(await makeDirectory(session, '../escape')).toMatchObject({ ok: false, code: 'invalid' });
+  });
+});
+
+// 虚拟根：零启用文件根时 `fs-root` 折算成本机设备的 `/`，授权边界仍然是 grant 绑定的那个目录。
+describe('receiver on the virtual fs root', () => {
+  let destDir = '';
+
+  beforeAll(() => runMigrations());
+
+  beforeEach(async () => {
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    resetTransferGrantsForTests();
+    await resetTransferSessionsForTests();
+    destDir = tempDir();
+    const now = new Date().toISOString();
+    createDevice({
+      id: `dev-${Math.random().toString(16).slice(2)}`,
+      name: 'local',
+      type: 'local',
+      authMode: 'agent',
+      sortOrder: 0,
+      createdAt: now,
+      updatedAt: now,
+    });
+  });
+
+  afterEach(async () => {
+    await resetTransferSessionsForTests();
+    getDb().delete(fileRoots).run();
+    getDb().delete(devices).run();
+    while (dirs.length > 0) {
+      const dir = dirs.pop();
+      if (dir) rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  function openVirtual(destPath = destDir): TransferSession {
+    const grant = createGrant({
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_FS_ROOT_ID,
+      destPath,
+      uid: 'u1',
+    });
+    const opened = openSession({
+      grantId: grant.id,
+      token: grant.token,
+      peerNodeId: NODE_A,
+      onConflict: 'overwrite',
+    });
+    if (!opened.ok) throw new Error(`open failed: ${opened.code}`);
+    const session = getSession(opened.sessionId, NODE_A);
+    if (!session) throw new Error('session missing');
+    return session;
+  }
+
+  test('授权到 / 之下的任意目录，文件正常落盘', async () => {
+    const session = openVirtual();
+    const bytes = new TextEncoder().encode('virt');
+    expect((await putWhole(session, 'sub/v.txt', bytes)).ok).toBe(true);
+    expect(await commitFile(session, 'sub/v.txt', bytes.byteLength)).toMatchObject({ ok: true });
+    expect(readFileSync(join(destDir, 'sub/v.txt'), 'utf8')).toBe('virt');
+  });
+
+  test('边界仍是授权目录：其中的符号链接写不出去', async () => {
+    const outside = tempDir();
+    symlinkSync(outside, join(destDir, 'link'));
+    const session = openVirtual();
+    const written = await putWhole(session, 'link/pwned.txt', new TextEncoder().encode('x'));
+    expect(written).toMatchObject({ ok: false, code: 'outside_roots' });
+    expect(existsSync(join(outside, 'pwned.txt'))).toBe(false);
+  });
+
+  test('一旦配置了启用的文件根，虚拟根授权不再能开会话', () => {
+    const deviceId = getDb().select().from(devices).all()[0]?.id ?? '';
+    createFileRoot({ deviceId, path: destDir });
+    const grant = createGrant({
+      fromNodeId: NODE_A,
+      destRootId: VIRTUAL_FS_ROOT_ID,
+      destPath: destDir,
+      uid: 'u1',
+    });
+    expect(
+      openSession({
+        grantId: grant.id,
+        token: grant.token,
+        peerNodeId: NODE_A,
+        onConflict: 'skip',
+      })
+    ).toMatchObject({ ok: false, code: 'root_not_found' });
   });
 });

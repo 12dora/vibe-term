@@ -4,8 +4,8 @@
 
 import type { FileErrorCode } from '@tmex/shared';
 import { getDeviceById } from '../db';
-import { getFileRootById } from '../db/file-roots';
 import { checkAndNormalize } from '../files/device-storage';
+import { resolveFileRoot } from '../files/file-root';
 import { classifyRsyncFailure, createListOnlyCollector, runRsync } from '../files/rsync';
 import { withDeviceRsync } from '../files/rsync-operation';
 import { type RsyncDeviceSpec, rsyncTargetArg } from '../files/ssh-command';
@@ -47,9 +47,9 @@ export async function enumerateTree(
   dirPath: string,
   opts: { maxEntries: number; maxDepth: number }
 ): Promise<EnumerateResult> {
-  const root = getFileRootById(rootId);
-  if (!root) return { ok: false, code: 'root_not_found' };
-  if (!root.enabled) return { ok: false, code: 'root_disabled' };
+  const resolved = resolveFileRoot(rootId);
+  if (!resolved.ok) return { ok: false, code: resolved.code };
+  const root = resolved.root;
   const device = getDeviceById(root.deviceId);
   if (!device) return { ok: false, code: 'device_not_found' };
   const norm = checkAndNormalize(device, root.path, dirPath);
