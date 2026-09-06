@@ -265,3 +265,37 @@ describe('mergeMissingKeys legacy prefix equivalence', () => {
     expect(text).toContain('VIBETERM_PEER_PORT=9884');
   });
 });
+
+describe('legacy env key aliases', () => {
+  test('readEnvFile exposes TMEX_* keys under their VIBETERM_* name', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-alias-'));
+    tempDirs.push(dir);
+    const envPath = join(dir, 'app.env');
+    await writeFile(
+      envPath,
+      ['TMEX_RELAY_ADMIN_TOKEN=tok', 'TMEX_ROLES=node', 'VIBETERM_ROLES=hub', ''].join('\n')
+    );
+
+    const values = await readEnvFile(envPath);
+    // 迁移之前直接读 app.env 的命令（relay status 等）也要能拿到新键
+    expect(values.VIBETERM_RELAY_ADMIN_TOKEN).toBe('tok');
+    expect(values.TMEX_RELAY_ADMIN_TOKEN).toBe('tok');
+    // 显式写过的新键优先
+    expect(values.VIBETERM_ROLES).toBe('hub');
+  });
+
+  test('writing back a read env does not duplicate the aliased keys', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-env-alias-write-'));
+    tempDirs.push(dir);
+    const envPath = join(dir, 'app.env');
+    await writeFile(envPath, ['TMEX_MASTER_KEY=k', 'GATEWAY_PORT=9883', ''].join('\n'));
+
+    const values = await readEnvFile(envPath);
+    await writeEnvFile(envPath, { ...values, GATEWAY_PORT: '9884' });
+
+    const text = await readFile(envPath, 'utf8');
+    expect(text).toContain('TMEX_MASTER_KEY=k');
+    expect(text).not.toContain('VIBETERM_MASTER_KEY=');
+    expect(text).toContain('GATEWAY_PORT=9884');
+  });
+});

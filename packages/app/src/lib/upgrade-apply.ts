@@ -9,33 +9,41 @@ import { pathExists } from './fs-utils';
 import { writeRunScript } from './install';
 import { createInstallLayout, packageLayoutFromRoot } from './install-layout';
 import { readJsonFile } from './json-file';
-import {
-  getServiceStatus,
-  installLegacyLabelledService,
-  installService,
-  stopService,
-} from './service';
 import { restoreDbTrio } from './upgrade-db';
 import { finishCommittedCleanup, sweepUpgradeGarbage } from './upgrade-gc';
 import type { HealthCheckFn } from './upgrade-health';
 import { liveHealthUrl, pollHealthz, verifyOldHealthz } from './upgrade-health';
 import { convertLegacyLayout } from './upgrade-legacy';
 import { acquireUpgradeLock, releaseUpgradeLock } from './upgrade-lock';
-import { finishInstallDirMigration, planInstallDirMigration } from './upgrade-migrate-dir';
+import {
+  type DirMigrationRecord,
+  type MigrationPersist,
+  finishInstallDirMigration,
+  planInstallMigration,
+} from './upgrade-migrate-dir';
 import {
   type UpgradeServiceControl,
   createDirectProcessControl,
   hasLivePidFile,
   hasOwnedLivePidFile,
   pidFilePath,
-  waitUntil,
 } from './upgrade-process';
-import { type UpgradeJournal, readJournal, recoveryAction, writeJournal } from './upgrade-state';
+import {
+  createManagedServiceControl,
+  createServiceControl,
+  resolveServiceMode,
+} from './upgrade-service-control';
+import {
+  type RecoveryKind,
+  type UpgradeJournal,
+  readJournal,
+  recoveryAction,
+  writeJournal,
+} from './upgrade-state';
 import { readCurrentVersion, switchCurrent } from './upgrade-switch';
 import {
   type ApplyUpgradeOptions,
   HEALTH_TIMEOUT_MS,
-  STOP_TIMEOUT_MS,
   type UpgradeApplyDeps,
   cleanupTxn,
   commitSuccess,
@@ -44,7 +52,9 @@ import {
   removeCandidateVersion,
   rollbackToOld,
 } from './upgrade-txn';
+import { revertMigrationAfterFailure, stopBeforeMigrationUndo } from './upgrade-txn-migrate';
 
+export { createManagedServiceControl, createServiceControl, resolveServiceMode };
 export type { UpgradeServiceControl };
 export { createDirectProcessControl, hasLivePidFile, hasOwnedLivePidFile, pidFilePath };
 export type {
@@ -59,71 +69,6 @@ export function createTxnId(): string {
   return `${Date.now().toString(16)}-${randomBytes(4).toString('hex')}`;
 }
 
-export function resolveServiceMode(meta: InstallMeta, noServiceFlag?: boolean): ServiceMode {
-  if (meta.serviceMode === 'none' || meta.serviceMode === 'managed') return meta.serviceMode;
-  return noServiceFlag ? 'none' : 'managed';
-}
-
-export function createManagedServiceControl(opts: {
-  serviceName: string;
-  installDir: string;
-  autostart: boolean;
-  runScriptPath: string;
-  /** 回滚安装目录迁移时用改名前的 launchd label 重新注册 */
-  legacyLabel?: boolean;
-}): UpgradeServiceControl {
-  return {
-    async stop() {
-      await stopService(opts.serviceName, opts.installDir);
-      await waitUntil(
-        async () => {
-          const status = await getServiceStatus(opts.serviceName, opts.installDir);
-          return !status.running;
-        },
-        STOP_TIMEOUT_MS,
-        t('upgrade.serviceDidNotStop', { timeout: STOP_TIMEOUT_MS })
-      );
-    },
-    async start() {
-      const install = opts.legacyLabel ? installLegacyLabelledService : installService;
-      await install({
-        serviceName: opts.serviceName,
-        runScriptPath: opts.runScriptPath,
-        installDir: opts.installDir,
-        autostart: opts.autostart,
-      });
-    },
-    async isRunning() {
-      return (await getServiceStatus(opts.serviceName, opts.installDir)).running;
-    },
-  };
-}
-
-export function createServiceControl(opts: {
-  installDir: string;
-  meta: InstallMeta;
-  noServiceFlag?: boolean;
-  serviceName?: string;
-  legacyLabel?: boolean;
-}): UpgradeServiceControl {
-  const layout = createInstallLayout(opts.installDir);
-  const mode = resolveServiceMode(opts.meta, opts.noServiceFlag);
-  if (mode === 'none') {
-    return createDirectProcessControl({
-      runScriptPath: layout.runScriptPath,
-      pidPath: pidFilePath(opts.installDir),
-      installDir: opts.installDir,
-    });
-  }
-  return createManagedServiceControl({
-    serviceName: opts.serviceName ?? opts.meta.serviceName,
-    installDir: opts.installDir,
-    autostart: opts.meta.autostart,
-    runScriptPath: layout.runScriptPath,
-    legacyLabel: opts.legacyLabel,
-  });
-}
-
 function repairShimDirs(deps: UpgradeApplyDeps): string[] {
   return deps.shimDirs ?? [defaultLocalBinDir(), defaultBunBinDir()];
 }
@@ -133,6 +78,59 @@ async function sweepRepairGarbage(installDir: string, deps: UpgradeApplyDeps): P
     keepTxnId: deps.activeTxnId,
     shimDirs: repairShimDirs(deps),
   });
+}
+
+async function readInstallMeta(installDir: string): Promise<InstallMeta | null> {
+  const layout = createInstallLayout(installDir);
+  if (!(await pathExists(layout.metaPath))) return null;
+  return await readJsonFile<InstallMeta>(layout.metaPath).catch(() => null);
+}
+
+interface ServiceIdentity {
+  serviceName?: string;
+  legacyServiceName?: string;
+  legacyLabel?: boolean;
+}
+
+/** repair 期间用到的一切上下文：目录 / 服务身份都可能被迁移回退改写。 */
+interface RepairRuntime {
+  installDir: string;
+  bunPath: string;
+  deps: UpgradeApplyDeps;
+  log: (message: string) => void;
+  meta: InstallMeta | null;
+  journal: UpgradeJournal | null;
+  service: UpgradeServiceControl;
+  /** 仍然生效的安装迁移记录（已回退时为 null） */
+  migration: DirMigrationRecord | null;
+}
+
+function resolveRepairService(
+  installDir: string,
+  deps: UpgradeApplyDeps,
+  meta: InstallMeta | null,
+  identity: ServiceIdentity
+): UpgradeServiceControl {
+  if (deps.service) return deps.service;
+  if (meta) return createServiceControl({ installDir, meta, ...identity });
+  return createManagedServiceControl({
+    serviceName: identity.serviceName ?? DEFAULT_SERVICE_NAME,
+    legacyServiceName: identity.legacyServiceName,
+    installDir,
+    autostart: true,
+    runScriptPath: createInstallLayout(installDir).runScriptPath,
+    legacyLabel: identity.legacyLabel,
+  });
+}
+
+/** 迁移记录只有当前确实站在它的目标目录上才算数：rename 没成功时记录作废。 */
+function activeMigration(
+  installDir: string,
+  journal: UpgradeJournal | null
+): DirMigrationRecord | null {
+  const record = journal?.dirMigration;
+  if (!record) return null;
+  return resolve(installDir) === resolve(record.toDir) ? record : null;
 }
 
 async function verifyOldServiceRunning(
@@ -177,7 +175,7 @@ async function markAborted(installDir: string, journal: UpgradeJournal): Promise
 
 /**
  * `--repair`：目录已搬到新路径但 app.env / DB / run.sh 还没改完（rename 与改写之间崩溃）时补完。
- * 幂等；目录没搬成或已搬回时什么也不做。
+ * 幂等；每一步都写回 journal，中途再崩仍能继续。
  */
 async function completeInterruptedMigration(
   installDir: string,
@@ -186,11 +184,16 @@ async function completeInterruptedMigration(
   deps: UpgradeApplyDeps
 ): Promise<UpgradeJournal> {
   const record = journal.dirMigration;
-  if (!record || resolve(installDir) !== resolve(record.toDir)) return journal;
+  if (!record) return journal;
 
-  const finished = record.envRewritten
-    ? record
-    : await finishInstallDirMigration(record, { txnId: journal.txnId });
+  let current = journal;
+  const persist: MigrationPersist = async (next, currentDir) => {
+    current = { ...current, dirMigration: next, updatedAt: new Date().toISOString() };
+    await writeJournal(currentDir, current);
+  };
+  if (!record.envRewritten) {
+    await finishInstallDirMigration(record, { txnId: journal.txnId, persist });
+  }
   // run.sh 里是旧目录的绝对路径，不重写服务起不来。
   await writeRunScript(createInstallLayout(installDir), bunPath).catch(() => null);
   const [localBinDir, bunBinDir] = repairShimDirs(deps);
@@ -201,14 +204,100 @@ async function completeInterruptedMigration(
     localBinDir,
     bunBinDir,
   }).catch(() => null);
+  await writeJournal(installDir, current);
+  return current;
+}
 
-  const next: UpgradeJournal = {
-    ...journal,
-    dirMigration: finished,
-    updatedAt: new Date().toISOString(),
+/** 撤销迁移并把上下文切回旧目录 / 旧服务身份；新服务停不下来就直接抛。 */
+async function undoMigrationInRepair(
+  rt: RepairRuntime,
+  journal: UpgradeJournal,
+  record: DirMigrationRecord
+): Promise<RepairRuntime> {
+  await stopBeforeMigrationUndo(rt.service, record);
+  const reverted = await revertMigrationAfterFailure({
+    record,
+    journal,
+    bunPath: rt.bunPath,
+    shimDirs: repairShimDirs(rt.deps),
+    log: rt.log,
+  });
+  const meta = await readInstallMeta(record.fromDir);
+  const target = repairServiceIdentity(rt.installDir, journal, 'restart_old');
+  return {
+    ...rt,
+    installDir: record.fromDir,
+    journal: reverted,
+    meta,
+    migration: null,
+    service: resolveRepairService(record.fromDir, rt.deps, meta, target.identity),
   };
-  await writeJournal(installDir, next);
-  return next;
+}
+
+/**
+ * repair 最终要操作的目录与服务身份。迁移已经落地时按新身份走；事务还没起过新版本
+ * （restart_old）时整体回退，按旧目录 + 旧 label 走——绝不拿旧服务名去启动新前缀的 label。
+ */
+export function repairServiceIdentity(
+  installDir: string,
+  journal: UpgradeJournal | null,
+  action: RecoveryKind
+): { installDir: string; identity: ServiceIdentity } {
+  const record = activeMigration(installDir, journal);
+  if (!record) return { installDir, identity: {} };
+  if (action === 'restart_old') {
+    return {
+      installDir: record.fromDir,
+      identity: {
+        serviceName: record.oldServiceName,
+        legacyServiceName: record.newServiceName,
+        legacyLabel: true,
+      },
+    };
+  }
+  return {
+    installDir,
+    identity: { serviceName: record.newServiceName, legacyServiceName: record.oldServiceName },
+  };
+}
+
+async function prepareRepair(input: {
+  installDir: string;
+  bunPath: string;
+  deps: UpgradeApplyDeps;
+  log: (message: string) => void;
+  journal: UpgradeJournal | null;
+  action: RecoveryKind;
+}): Promise<RepairRuntime> {
+  const record = activeMigration(input.installDir, input.journal);
+  const identity: ServiceIdentity = record
+    ? { serviceName: record.newServiceName, legacyServiceName: record.oldServiceName }
+    : {};
+  const meta = await readInstallMeta(input.installDir);
+  const rt: RepairRuntime = {
+    installDir: input.installDir,
+    bunPath: input.bunPath,
+    deps: input.deps,
+    log: input.log,
+    meta,
+    journal: input.journal,
+    migration: record,
+    service: resolveRepairService(input.installDir, input.deps, meta, identity),
+  };
+  if (!record || !input.journal) return rt;
+
+  // 新版本还没起来过（stopping / migrate / backup / switching 中断）：整体撤回迁移，
+  // 回到旧目录与旧 label 上恢复旧版本，绝不拿旧服务名去启动新前缀的 label。
+  if (input.action === 'restart_old') {
+    return await undoMigrationInRepair(rt, input.journal, record);
+  }
+  const journal = await completeInterruptedMigration(
+    input.installDir,
+    input.journal,
+    input.bunPath,
+    input.deps
+  );
+  return { ...rt, journal, migration: journal.dirMigration ?? record };
 }
 
 async function repairMissingJournal(
@@ -220,53 +309,48 @@ async function repairMissingJournal(
   await sweepRepairGarbage(installDir, deps);
 }
 
-async function repairAbortCandidate(
-  installDir: string,
-  journal: UpgradeJournal,
-  deps: UpgradeApplyDeps
-): Promise<void> {
-  await killRecordedCandidate(installDir, journal);
-  await removeCandidateVersion(installDir, journal.toVersion);
-  await cleanupTxn(installDir, journal, false, deps.activeTxnId);
-  await sweepRepairGarbage(installDir, deps);
-  await markAborted(installDir, journal);
+async function repairAbortCandidate(rt: RepairRuntime, journal: UpgradeJournal): Promise<void> {
+  await killRecordedCandidate(rt.installDir, journal);
+  await removeCandidateVersion(rt.installDir, journal.toVersion);
+  await cleanupTxn(rt.installDir, journal, false, rt.deps.activeTxnId);
+  await sweepRepairGarbage(rt.installDir, rt.deps);
+  await markAborted(rt.installDir, journal);
 }
 
 async function repairRestartOld(
-  installDir: string,
+  rt: RepairRuntime,
   journal: UpgradeJournal,
-  service: UpgradeServiceControl,
-  healthCheck: HealthCheckFn,
-  deps: UpgradeApplyDeps,
-  serviceMode?: ServiceMode
+  healthCheck: HealthCheckFn
 ): Promise<void> {
-  const current = await readCurrentVersion(installDir);
+  const current = await readCurrentVersion(rt.installDir);
   if (current && current !== journal.fromVersion && journal.fromVersion) {
-    await switchCurrent(installDir, journal.fromVersion);
+    await switchCurrent(rt.installDir, journal.fromVersion);
   }
-  await verifyOldServiceRunning(installDir, journal, service, healthCheck, serviceMode);
-  await removeCandidateVersion(installDir, journal.toVersion);
-  await cleanupTxn(installDir, journal, false, deps.activeTxnId);
-  await sweepRepairGarbage(installDir, deps);
-  await markAborted(installDir, journal);
+  await verifyOldServiceRunning(
+    rt.installDir,
+    journal,
+    rt.service,
+    healthCheck,
+    rt.meta?.serviceMode
+  );
+  await removeCandidateVersion(rt.installDir, journal.toVersion);
+  await cleanupTxn(rt.installDir, journal, false, rt.deps.activeTxnId);
+  await sweepRepairGarbage(rt.installDir, rt.deps);
+  await markAborted(rt.installDir, journal);
 }
 
 async function repairVerifyOrRollback(
-  installDir: string,
+  rt: RepairRuntime,
   journal: UpgradeJournal,
-  bunPath: string,
-  service: UpgradeServiceControl,
-  healthCheck: HealthCheckFn,
-  log: (message: string) => void,
-  serviceMode?: ServiceMode
+  healthCheck: HealthCheckFn
 ): Promise<void> {
-  const url = await liveHealthUrl(installDir);
+  const url = await liveHealthUrl(rt.installDir);
   try {
     if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
     // 服务仍在运行时绝不能再 start()：第二个 run.sh 会覆盖 pid 文件后因端口占用退出，
     // 留下指向死 pid 的记录，使后续 stop/repair 误判「未运行」而在活进程持库时动 DB。
-    if (!(await service.isRunning())) {
-      await service.start().catch(() => null);
+    if (!(await rt.service.isRunning())) {
+      await rt.service.start().catch(() => null);
     }
     await healthCheck({
       url,
@@ -275,57 +359,41 @@ async function repairVerifyOrRollback(
       requireTlsListener: true,
     });
     await commitSuccess(
-      installDir,
+      rt.installDir,
       journal,
-      bunPath,
+      rt.bunPath,
       Boolean(journal.keepBackup),
-      log,
-      serviceMode
+      rt.log,
+      rt.meta?.serviceMode,
+      rt.migration?.newServiceName
     );
   } catch (error) {
     const message = errorMessage(error);
+    const back = rt.migration
+      ? await undoMigrationInRepair(rt, journal, rt.migration)
+      : { ...rt, journal };
     await rollbackToOld(
-      installDir,
-      journal,
-      bunPath,
-      service,
+      back.installDir,
+      back.journal ?? journal,
+      rt.bunPath,
+      back.service,
       healthCheck,
       message,
-      log,
-      serviceMode
+      rt.log,
+      back.meta?.serviceMode
     );
   }
 }
 
-async function repairTerminalCleanup(
-  installDir: string,
-  journal: UpgradeJournal,
-  deps: UpgradeApplyDeps
-): Promise<void> {
-  await cleanupTxn(installDir, journal, Boolean(journal.keepBackup), deps.activeTxnId);
+async function repairTerminalCleanup(rt: RepairRuntime, journal: UpgradeJournal): Promise<void> {
+  await cleanupTxn(rt.installDir, journal, Boolean(journal.keepBackup), rt.deps.activeTxnId);
   if (journal.phase === 'committed') {
-    await finishCommittedCleanup(installDir, {
+    await finishCommittedCleanup(rt.installDir, {
       current: journal.toVersion,
       previous: journal.fromVersion !== journal.toVersion ? journal.fromVersion : null,
     });
   }
-  await sweepRepairGarbage(installDir, deps);
-}
-
-function resolveRepairService(
-  installDir: string,
-  deps: UpgradeApplyDeps,
-  meta: InstallMeta | null,
-  layout: ReturnType<typeof createInstallLayout>
-): UpgradeServiceControl {
-  if (deps.service) return deps.service;
-  if (meta) return createServiceControl({ installDir, meta });
-  return createManagedServiceControl({
-    serviceName: DEFAULT_SERVICE_NAME,
-    installDir,
-    autostart: true,
-    runScriptPath: layout.runScriptPath,
-  });
+  await sweepRepairGarbage(rt.installDir, rt.deps);
 }
 
 export async function repairUpgrade(
@@ -335,42 +403,28 @@ export async function repairUpgrade(
 ): Promise<string> {
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
-  const readJournalResult = await readJournal(installDir);
-  const journal = readJournalResult?.dirMigration
-    ? await completeInterruptedMigration(installDir, readJournalResult, bunPath, deps)
-    : readJournalResult;
-  const action = recoveryAction(journal);
-  const layout = createInstallLayout(installDir);
-  const meta = (await pathExists(layout.metaPath))
-    ? await readJsonFile<InstallMeta>(layout.metaPath).catch(() => null)
-    : null;
-  const service = resolveRepairService(installDir, deps, meta, layout);
+  const initial = await readJournal(installDir);
+  const action = recoveryAction(initial);
+  const rt = await prepareRepair({ installDir, bunPath, deps, log, journal: initial, action });
+  const journal = rt.journal;
 
   if (!journal) {
-    await repairMissingJournal(installDir, bunPath, deps);
+    await repairMissingJournal(rt.installDir, bunPath, deps);
     return action;
   }
   if (action === 'abort_candidate') {
-    await repairAbortCandidate(installDir, journal, deps);
+    await repairAbortCandidate(rt, journal);
     return action;
   }
   if (action === 'restart_old') {
-    await repairRestartOld(installDir, journal, service, healthCheck, deps, meta?.serviceMode);
+    await repairRestartOld(rt, journal, healthCheck);
     return action;
   }
   if (action === 'verify_or_rollback') {
-    await repairVerifyOrRollback(
-      installDir,
-      journal,
-      bunPath,
-      service,
-      healthCheck,
-      log,
-      meta?.serviceMode
-    );
+    await repairVerifyOrRollback(rt, journal, healthCheck);
     return action;
   }
-  await repairTerminalCleanup(installDir, journal, deps);
+  await repairTerminalCleanup(rt, journal);
   return action;
 }
 
@@ -401,7 +455,7 @@ export async function applyUpgrade(
     return;
   }
 
-  const migrationPlan = await planInstallDirMigration({
+  const migrationPlan = await planInstallMigration({
     installDir,
     platform: process.platform,
     serviceName: meta.serviceName,
@@ -414,6 +468,7 @@ export async function applyUpgrade(
         meta,
         noServiceFlag: options.noService,
         serviceName: opts.serviceName,
+        legacyServiceName: opts.legacyServiceName,
         legacyLabel: opts.legacyLabel,
       }));
 

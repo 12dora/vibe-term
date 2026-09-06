@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { basename, join } from 'node:path';
 import { parsePidFileRecord } from '../../../shared/src/process/pid-file';
 import { processCommandLine } from '../../../shared/src/process/process-identity';
 import { t } from '../i18n';
+import { readEnvFile } from './env-file';
 import { writeTextAtomic } from './fs-utils';
 import { isPidAlive, processStartIdentity } from './upgrade-lock';
 
@@ -223,6 +225,48 @@ export function hasOwnedLivePidFile(installDir: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** 端口还有没有人在听：能 bind 上就说明没有。 */
+export async function isPortBusy(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(true));
+    server.listen({ port, host, exclusive: true }, () => {
+      server.close(() => resolve(false));
+    });
+  });
+}
+
+export type ServiceReleaseProbes = {
+  portBusy?: (port: number, host: string) => Promise<boolean>;
+  ownedAlive?: (installDir: string) => boolean;
+};
+
+/**
+ * `launchctl bootout` / `systemctl stop` 可能先于进程真正退出返回：现网见过服务已「停止」、
+ * 端口仍被占着的机器，随后的 bootstrap 必然失败。等到自己的 pid 死透、且 app.env 里的端口
+ * 没人在听为止。
+ */
+export async function waitForServiceRelease(opts: {
+  installDir: string;
+  timeoutMs: number;
+  probes?: ServiceReleaseProbes;
+}): Promise<void> {
+  const env = await readEnvFile(join(opts.installDir, 'app.env')).catch(() => null);
+  const port = Number.parseInt(env?.GATEWAY_PORT ?? '', 10);
+  const host = env?.VIBETERM_BIND_HOST || env?.TMEX_BIND_HOST || '127.0.0.1';
+  const portBusy = opts.probes?.portBusy ?? isPortBusy;
+  const ownedAlive = opts.probes?.ownedAlive ?? hasOwnedLivePidFile;
+  await waitUntil(
+    async () => {
+      if (ownedAlive(opts.installDir)) return false;
+      if (!Number.isFinite(port) || port <= 0) return true;
+      return !(await portBusy(port, host));
+    },
+    opts.timeoutMs,
+    t('upgrade.serviceDidNotStop', { timeout: opts.timeoutMs })
+  );
 }
 
 const STOP_TIMEOUT_MS = 20_000;

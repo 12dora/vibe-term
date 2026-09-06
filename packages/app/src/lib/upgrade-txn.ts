@@ -37,6 +37,7 @@ import {
   killPidAndWait,
   waitForPidExit,
 } from './upgrade-process';
+import { backupRunScript, restoreRunScript } from './upgrade-run-script';
 import {
   type UpgradeJournal,
   advanceJournal,
@@ -45,7 +46,11 @@ import {
   writeJournal,
 } from './upgrade-state';
 import { readCurrentVersion, switchCurrent, versionDirPath } from './upgrade-switch';
-import { revertMigrationAfterFailure, runInstallDirMigration } from './upgrade-txn-migrate';
+import {
+  revertMigrationAfterFailure,
+  runInstallDirMigration,
+  stopBeforeMigrationUndo,
+} from './upgrade-txn-migrate';
 
 export const STOP_TIMEOUT_MS = 20_000;
 
@@ -60,10 +65,12 @@ export type UpgradeApplyDeps = {
   now?: () => Date;
   activeTxnId?: string | null;
   shimDirs?: string[];
-  /** 安装目录迁移后按新路径 / 新服务名重建服务控制器；不给则迁移后沿用原控制器。 */
+  /** 安装迁移后按新路径 / 新服务名重建服务控制器；不给则迁移后沿用原控制器。 */
   rebuildService?: (opts: {
     installDir: string;
     serviceName: string;
+    /** 改名前注册用的服务名，安装 / 停止时要一并拆掉它留下的注册 */
+    legacyServiceName?: string;
     legacyLabel?: boolean;
   }) => UpgradeServiceControl;
 };
@@ -156,6 +163,8 @@ async function persistUpgradeMeta(
   meta.updatedAt = new Date().toISOString();
   meta.cliVersion = toVersion;
   meta.bunPath = bunPath;
+  // 迁移把目录搬走后，meta 必须指向自己所在的目录：网页卸载 / 外部工具都按它找安装。
+  meta.installDir = installDir;
   if (serviceMode === 'none' || serviceMode === 'managed') {
     meta.serviceMode = serviceMode;
   }
@@ -226,7 +235,7 @@ export async function rollbackToOld(
       })
     );
   }
-  await writeRunScript(createInstallLayout(installDir), bunPath);
+  await restoreRunScript(installDir, journal.txnId, bunPath);
   const restartAt = new Date().toISOString();
   await service.start();
   const url = await liveHealthUrl(installDir);
@@ -404,19 +413,27 @@ async function handleTxnFailure(
   let latest = (await readJournal(state.installDir)) ?? journal;
   const { migration } = state;
   if (migration) {
-    await state.service.stop().catch(() => null);
-    latest = await revertMigrationAfterFailure(
-      migration,
-      latest,
-      ctx.bunPath,
-      options.skipShims,
-      ctx.log
-    );
+    try {
+      await stopBeforeMigrationUndo(state.service, migration);
+    } catch (stopError) {
+      // 新服务没停下就动目录 / DB 只会把库改坏；把 journal 留给 --repair，抛出可操作的原因。
+      ctx.log(`upgrade failed: ${errorMessage(error)}`);
+      throw stopError;
+    }
+    latest = await revertMigrationAfterFailure({
+      record: migration,
+      journal: latest,
+      bunPath: ctx.bunPath,
+      skipShims: options.skipShims,
+      shimDirs: deps.shimDirs,
+      log: ctx.log,
+    });
     state.installDir = migration.fromDir;
     state.service =
       deps.rebuildService?.({
         installDir: migration.fromDir,
         serviceName: migration.oldServiceName,
+        legacyServiceName: migration.newServiceName,
         legacyLabel: true,
       }) ?? state.service;
     state.migration = null;
@@ -461,6 +478,7 @@ export async function executeUpgradeTxn(
     journal = await advanceJournal(state.installDir, journal, 'stopping', {
       keepBackup: ctx.keepBackup,
     });
+    await backupRunScript(state.installDir, ctx.txnId);
     await ctx.service.stop();
     await assertStopped(ctx.service);
 
@@ -474,10 +492,16 @@ export async function executeUpgradeTxn(
     journal = migrated.journal;
     if (migrated.record) {
       state.migration = migrated.record;
-      state.installDir = migrated.record.toDir;
-      serviceName = migrated.record.newServiceName;
-      state.service =
-        deps.rebuildService?.({ installDir: state.installDir, serviceName }) ?? state.service;
+      if (migrated.record.moveDir) {
+        state.installDir = migrated.record.toDir;
+        serviceName = migrated.record.newServiceName;
+        state.service =
+          deps.rebuildService?.({
+            installDir: state.installDir,
+            serviceName,
+            legacyServiceName: migrated.record.oldServiceName,
+          }) ?? state.service;
+      }
     }
 
     journal = await advanceJournal(state.installDir, journal, 'backup', {
