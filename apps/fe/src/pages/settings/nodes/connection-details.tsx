@@ -9,9 +9,9 @@
 
 import type { MeshHubsState } from '@/node/mesh-hubs';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
-import { Progress } from '@tmex/ui/progress';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
+import { Progress } from '@vibeterm/ui/progress';
 import { ChevronRight } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -40,7 +40,7 @@ export function ConnectionDetails({ relay, hubs, selfNodeId }: ConnectionDetails
         className="group/details flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
         data-testid="local-machine-details-toggle"
       >
-        <ChevronRight className="size-3.5 transition-transform duration-(--tmex-motion-fast) group-data-panel-open/details:rotate-90 motion-reduce:transition-none" />
+        <ChevronRight className="size-3.5 transition-transform duration-(--vibeterm-motion-fast) group-data-panel-open/details:rotate-90 motion-reduce:transition-none" />
         {t('nodes.machine.details.title')}
       </CollapsibleTrigger>
       <CollapsibleContent>

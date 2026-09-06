@@ -1,6 +1,6 @@
 // 设备列表加载失败的分类：面板据此换文案，纯函数以便单测。
 
-import { ApiError, isNodeLoginRequiredError, isNodeUnreachableError } from '@tmex/api-client';
+import { ApiError, isNodeLoginRequiredError, isNodeUnreachableError } from '@vibeterm/api-client';
 
 export type DeviceLoadErrorKind = 'loginRequired' | 'unreachable' | 'generic';
 

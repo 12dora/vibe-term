@@ -1,15 +1,15 @@
 // 中继模式的加入码：join 串 v3 的字段、pending 只落公开字段、地址表来自 join-material。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   decodeBase64url,
   encodeBase64url,
   rootKeyFromSeed,
   signEd25519,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import { decodeRelayJoinToken, isRelayJoinToken } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { decodeRelayJoinToken, isRelayJoinToken } from '@vibeterm/shared/relay';
 import type { PendingStorage } from './enrollment';
 import { listPendingEnrollments, setPendingStorage } from './enrollment';
 import { type HubApi, HubApiError } from './hub-api';

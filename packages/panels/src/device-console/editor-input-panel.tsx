@@ -1,10 +1,10 @@
 // editor 输入模式面板：移动端在编辑器上方额外挂快捷键栏，其余为文本域 + 发送/清空动作。
 // DOM 结构与 data-testid 被 e2e 依赖，改动需同步 apps/fe/tests。
 
-import type { TerminalShortcutItem } from '@tmex/shared';
-import { useUIStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import type { TerminalShortcutItem } from '@vibeterm/shared';
+import { useUIStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2, Send, Trash2 } from 'lucide-react';
 import { type KeyboardEvent, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -76,7 +76,7 @@ export function EditorInputPanel({
       <textarea
         ref={editorTextareaRef}
         data-testid="editor-input"
-        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors duration-(--tmex-motion-fast) ease-out focus:border-ring motion-reduce:transition-none"
+        className="min-h-[88px] max-h-[28vh] w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground shadow-xs outline-none transition-colors duration-(--vibeterm-motion-fast) ease-out focus:border-ring motion-reduce:transition-none"
         value={editorText}
         onChange={(e) => editor.handleEditorChange(e.target.value)}
         placeholder={t('terminal.inputPlaceholder')}

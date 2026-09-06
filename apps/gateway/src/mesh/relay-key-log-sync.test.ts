@@ -8,7 +8,7 @@ import {
   encodeSetTotpPayload,
   genesisHead,
   randomBytes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   RELAY_KEYLOG_ENVELOPE_KIND,
   RELAY_KEYLOG_SEQ_MISMATCH,
@@ -21,7 +21,7 @@ import {
   relaySeqToWire,
   sealEnvelope,
   sealRelayKeyLogRecord,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
 import { waitUntil } from './test-support';
 import type { KeyLogApplier } from './types';

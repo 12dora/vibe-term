@@ -1,7 +1,7 @@
 // 手机要访问的地址：不是浏览器当前的 origin（本机打开时是 127.0.0.1，别的设备根本连不上），
 // 而是按可达性排出来的候选——公网入口（隧道 / Hub 公开地址）、局域网 IP、以及非回环的当前地址。
 
-import type { AccessAddressesResponse, TunnelStatusResponse } from '@tmex/shared';
+import type { AccessAddressesResponse, TunnelStatusResponse } from '@vibeterm/shared';
 import { entryStatus } from './host-status';
 
 // 种类只用来给候选打标签（界面上要区分「隧道 / Hub / 局域网 / 当前地址」），排序仍按可达性。

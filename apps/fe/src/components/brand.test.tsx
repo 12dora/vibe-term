@@ -2,15 +2,15 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 sidebar-title 测试同一套做法）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import type { SiteSettings } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import type { SiteSettings } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { Brand, BRAND_LOGO_SRC, PRODUCT_NAME } = await import('./brand');

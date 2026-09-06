@@ -80,7 +80,7 @@ test('devices: create/edit/delete local device (ui)', async ({ page }) => {
 });
 
 test('devices: card connect entry navigates to the device page', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-devices-connect-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-devices-connect-${Date.now()}`;
   createSinglePaneSession(sessionName);
   let deviceId: string | undefined;
 

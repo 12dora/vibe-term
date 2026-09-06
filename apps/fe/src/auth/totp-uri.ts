@@ -5,9 +5,9 @@ import {
   TOTP_DEFAULT_STEP,
   encodeBase32,
   randomBytes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 
-export { encodeBase32 as base32Encode, decodeBase32 as base32Decode } from '@tmex/shared/auth';
+export { encodeBase32 as base32Encode, decodeBase32 as base32Decode } from '@vibeterm/shared/auth';
 
 /** TOTP 共享密钥：20 字节（HMAC-SHA1 的推荐长度）。 */
 export function generateTotpSecret(): Uint8Array {
@@ -21,7 +21,7 @@ export function buildOtpauthUri(input: {
   digits?: number;
   period?: number;
 }): string {
-  const issuer = input.issuer ?? 'tmex';
+  const issuer = input.issuer ?? 'VibeTerm';
   const label = `${encodeURIComponent(issuer)}:${encodeURIComponent(input.account)}`;
   const params = new URLSearchParams({
     secret: encodeBase32(input.secret),

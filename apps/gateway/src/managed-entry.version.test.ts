@@ -13,15 +13,15 @@ afterEach(() => {
 
 describe('managed gateway --version', () => {
   test('exits immediately without loading production config, creating DB, or binding a port', async () => {
-    const work = mkdtempSync(join(tmpdir(), 'tmex-managed-version-'));
+    const work = mkdtempSync(join(tmpdir(), 'vibeterm-managed-version-'));
     temporaryDirectories.push(work);
     const databasePath = join(work, 'must-not-exist.db');
     const env = { ...process.env };
-    Reflect.deleteProperty(env, 'TMEX_MASTER_KEY');
+    Reflect.deleteProperty(env, 'VIBETERM_MASTER_KEY');
     env.NODE_ENV = 'production';
     env.DATABASE_URL = databasePath;
     env.GATEWAY_PORT = 'not-a-port';
-    env.TMEX_BIND_HOST = '127.0.0.1';
+    env.VIBETERM_BIND_HOST = '127.0.0.1';
 
     const startedAt = performance.now();
     const child = Bun.spawn(
@@ -51,7 +51,7 @@ describe('managed gateway --version', () => {
 
       const [exitCode, stdout, stderr] = completed;
       expect(exitCode).toBe(0);
-      expect(stdout.trim()).toMatch(/^tmex-gateway \S+$/);
+      expect(stdout.trim()).toMatch(/^vibeterm-gateway \S+$/);
       expect(stderr).toBe('');
       expect(performance.now() - startedAt).toBeLessThan(1000);
       expect(existsSync(databasePath)).toBe(false);

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { RelayMetering } from './relay-metering';
 import { RelayMetricsCollector } from './relay-metrics';

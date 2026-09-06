@@ -1,6 +1,6 @@
 // 两个破坏性操作的二次确认：终止进行中的分享、删除历史记录（连日志）。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 import type { ShareRow } from './share-rows';
 

@@ -2,7 +2,7 @@
 // legacy 选择事务下线后，reselect 重试一并消失，只留这两条设备面行为）。
 
 import { describe, expect, test } from 'bun:test';
-import type { GatewayTransportCommand } from '@tmex/ws-client';
+import type { GatewayTransportCommand } from '@vibeterm/ws-client';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import { createTmuxStore } from './tmux';

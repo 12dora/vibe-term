@@ -7,11 +7,11 @@ import type {
   TlsAcmeStatus,
   TlsDnsProviderId,
   TlsStatusResponse,
-} from '@tmex/api-client/local/tls-types';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/api-client/local/tls-types';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2, RefreshCw, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

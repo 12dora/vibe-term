@@ -19,7 +19,6 @@ const SKIP_DIRS = new Set([
   'fe-dist',
   '.git',
   'resources',
-  'prompt-archives',
   'docs',
   'bench',
   'scripts',

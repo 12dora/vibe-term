@@ -1,14 +1,14 @@
 // 端口映射弹窗：上方新建表单，下方是所有在线已登录节点上的映射汇总（打开期间 2 秒轮询）。
 
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { Trash2 } from 'lucide-react';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -1,7 +1,7 @@
 // 回放时间轴的纯计算：建索引、跳转计划、事件翻译、速度与时钟。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareLogEntry } from '@tmex/shared/share';
+import type { ShareLogEntry } from '@vibeterm/shared/share';
 import {
   REPLAY_SPEEDS,
   base64ByteLength,

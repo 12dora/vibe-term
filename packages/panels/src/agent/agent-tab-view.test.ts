@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentSessionDto, Device, StateSnapshotPayload } from '@tmex/shared';
+import type { AgentSessionDto, Device, StateSnapshotPayload } from '@vibeterm/shared';
 
 import { deriveAgentTabView } from './agent-tab-view';
 import type { AgentStoreHandle, AgentTabState } from './use-agent-tab-state';

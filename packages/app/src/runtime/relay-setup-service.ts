@@ -82,7 +82,7 @@ async function persistRelayPassword(
 
 async function resolveRelayAdminToken(deps: SetupServiceDeps): Promise<string> {
   const existing = await readExistingEnv(deps);
-  const current = existing.TMEX_RELAY_ADMIN_TOKEN?.trim();
+  const current = existing.VIBETERM_RELAY_ADMIN_TOKEN?.trim();
   return current && current.length > 0 ? current : generateRelayAdminToken();
 }
 
@@ -127,11 +127,11 @@ export async function becomeRelay(
     const adminToken = await resolveRelayAdminToken(deps);
     const direct = await maybeEnableDirect(input.directEnable === true, deps);
     await patchOwnedEnvKeys(deps, {
-      TMEX_ROLES: role,
-      TMEX_RELAY_PUBLIC_URL: relayPublicUrl,
-      TMEX_HUB_URL: '',
-      TMEX_HUB_PUBLIC_URL: '',
-      TMEX_RELAY_ADMIN_TOKEN: adminToken,
+      VIBETERM_ROLES: role,
+      VIBETERM_RELAY_PUBLIC_URL: relayPublicUrl,
+      VIBETERM_HUB_URL: '',
+      VIBETERM_HUB_PUBLIC_URL: '',
+      VIBETERM_RELAY_ADMIN_TOKEN: adminToken,
       ...(direct.direct === 'enabled' ? { [DIRECT_ENABLED_KEY]: 'true' } : {}),
     });
     return {

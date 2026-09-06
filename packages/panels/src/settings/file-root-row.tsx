@@ -1,9 +1,9 @@
-import type { FileRootDto } from '@tmex/shared';
+import type { FileRootDto } from '@vibeterm/shared';
 import { Pencil, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,9 +14,9 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 
 import { FileRootDeviceIcon } from './file-root-device-icon';
 import { useFileRootDeleteMutation, useFileRootToggleMutation } from './file-root-query';

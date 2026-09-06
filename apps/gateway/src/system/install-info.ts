@@ -1,9 +1,9 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
-import type { GatewayDeployment } from '@tmex/shared';
+import type { GatewayDeployment } from '@vibeterm/shared';
 import { config } from '../config';
 
-/** install-meta.json 形状（由 tmex-cli init/upgrade 写入） */
+/** install-meta.json 形状（由 vibeterm-cli init/upgrade 写入） */
 export interface InstallMetaShape {
   serviceName?: string;
   platform?: string;
@@ -24,13 +24,13 @@ export interface InstallInfo {
 }
 
 /**
- * 反推安装目录：优先由 run.sh export 的 TMEX_FE_DIST_DIR
+ * 反推安装目录：优先由 run.sh export 的 VIBETERM_FE_DIST_DIR
  * （= installDir/resources/fe-dist）上溯两级，回退到 cwd（服务 WorkingDirectory=installDir）。
  */
 export function resolveInstallDir(): string {
-  const explicit = process.env.TMEX_INSTALL_DIR;
+  const explicit = process.env.VIBETERM_INSTALL_DIR;
   if (explicit) return resolve(explicit);
-  const feDist = process.env.TMEX_FE_DIST_DIR;
+  const feDist = process.env.VIBETERM_FE_DIST_DIR;
   if (feDist) {
     const resourcesParent = resolve(feDist, '..', '..');
     if (basename(resourcesParent) === 'current') return resolve(resourcesParent, '..');

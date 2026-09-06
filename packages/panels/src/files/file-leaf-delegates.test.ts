@@ -2,7 +2,7 @@
 // panels 的测试环境没有 DOM，这里用 `AttrElement` 的替身搭一棵结构相同的假树。
 
 import { describe, expect, test } from 'bun:test';
-import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@tmex/shared';
+import type { FileEntryDto, FileRootDto, ListFilesResponse } from '@vibeterm/shared';
 import {
   FILE_LEAF_LONG_PRESS_MOVE_PX,
   FILE_LEAF_LONG_PRESS_MS,

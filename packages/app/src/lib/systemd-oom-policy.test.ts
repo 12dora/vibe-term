@@ -18,7 +18,7 @@ import {
 const dirs: string[] = [];
 
 async function makeConfigDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-oom-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-oom-'));
   dirs.push(dir);
   return join(dir, 'systemd');
 }
@@ -104,7 +104,7 @@ describe('ensureSystemdOomPolicyDropIn', () => {
   });
 
   test('目录不可创建时只告警，不抛错', async () => {
-    const parent = await mkdtemp(join(tmpdir(), 'tmex-oom-'));
+    const parent = await mkdtemp(join(tmpdir(), 'vibeterm-oom-'));
     dirs.push(parent);
     const blocker = join(parent, 'systemd');
     await writeFile(blocker, 'not a directory');

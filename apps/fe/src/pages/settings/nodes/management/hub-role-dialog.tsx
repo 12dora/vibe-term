@@ -18,8 +18,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Checkbox } from '@tmex/ui/checkbox';
+} from '@vibeterm/ui/alert-dialog';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import { TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

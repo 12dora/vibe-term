@@ -1,5 +1,5 @@
 import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
-import { decodeBase64url, encodeBase64url, randomBytes, sha256 } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url, randomBytes, sha256 } from '@vibeterm/shared/auth';
 
 export type Es256Authenticator = {
   credentialId: Uint8Array;

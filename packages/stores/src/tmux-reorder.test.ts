@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@tmex/shared';
-import type { GatewayTransportCommand } from '@tmex/ws-client';
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import type { GatewayTransportCommand } from '@vibeterm/ws-client';
 import type { RuntimeCore } from './runtime';
 import type { SiteStore } from './site';
 import { createTmuxStore } from './tmux';

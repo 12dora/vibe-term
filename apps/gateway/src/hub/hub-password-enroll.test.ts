@@ -5,8 +5,8 @@ import {
   encodeBase64url,
   hubHostFromUrl,
   signHubEnrollProof,
-} from '@tmex/shared/auth';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { HUB_ENROLL_FAIL_LIMIT, HUB_ENROLL_SUCCESS_LIMIT } from './hub-enroll-limiter';
 import { HubRuntime, type HubTlsInfoProvider } from './hub-runtime';

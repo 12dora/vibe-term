@@ -20,9 +20,9 @@ import {
   sha256,
   signLogin,
   totpCode,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
-import type { HubMode } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -40,8 +40,8 @@ import {
   type MeshRtcDeps,
   type OpenedWsStream,
   type PeerLinkProvider,
+  SET_SESSION_HEADER,
   type StreamOpener,
-  X_TMEX_SET_SESSION,
   isMeshRewritten,
   setMeshRequestContext,
 } from './mesh-deps';
@@ -53,7 +53,7 @@ export const NODE_ID = 'aa'.repeat(16);
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export const NODE_PK = Uint8Array.from({ length: 32 }, () => 9);
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
-export const PASSWORD = 'tmex-test';
+export const PASSWORD = 'vibeterm-test';
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export class FakePeers implements PeerLinkProvider {
@@ -328,15 +328,17 @@ export function asResponse(res: unknown): Response {
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
 export function sidFromLogin(res: Response): string {
-  const internal = res.headers.get(X_TMEX_SET_SESSION);
+  const internal = res.headers.get(SET_SESSION_HEADER.name);
   if (internal) {
     const sid = internal.split(';')[0]?.trim();
     if (sid) return sid;
   }
   const cookie = res.headers.get('set-cookie') ?? '';
-  const match = cookie.match(/tmex_s_self=([^;]*)/);
+  const match = cookie.match(/vibeterm_s_self=([^;]*)/);
   if (match?.[1]) return match[1];
-  throw new Error('login response did not carry a sid');
+  throw new Error(
+    `login response did not carry a sid: ${JSON.stringify([...res.headers.entries()])}`
+  );
 }
 
 // biome-ignore lint/suspicious/noExportsInTest: shared harness
@@ -625,7 +627,7 @@ describe('auth-routes', () => {
       const remoteBoot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        body: JSON.stringify({ username: 'owner', password: 'vibeterm-test' }),
         clientIp: '8.8.8.8',
       });
       expect(remoteBoot.status).toBe(403);
@@ -634,7 +636,7 @@ describe('auth-routes', () => {
       const boot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        body: JSON.stringify({ username: 'owner', password: 'vibeterm-test' }),
         clientIp: '127.0.0.1',
       });
       expect(boot.status).toBe(200);
@@ -677,7 +679,7 @@ describe('auth-routes', () => {
       const again = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'eve', password: 'tmex-test' }),
+        body: JSON.stringify({ username: 'eve', password: 'vibeterm-test' }),
         clientIp: '127.0.0.1',
       });
       expect(again.status).toBe(409);
@@ -690,7 +692,7 @@ describe('auth-routes', () => {
       const { sid } = await challengeAndLogin(mesh.runtime, {
         userId: modeBody.uid,
         rootKey: (
-          await mesh.keyLogService.bootstrapUser({ username: 'owner', password: 'tmex-test' })
+          await mesh.keyLogService.bootstrapUser({ username: 'owner', password: 'vibeterm-test' })
         ).rootKey,
       });
       expect(sid).toBeTruthy();
@@ -698,7 +700,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({ enabled: false }),
         clientIp: '8.8.8.8',
@@ -940,7 +942,7 @@ describe('auth-routes', () => {
       const boot = await call(mesh.runtime, 'http://localhost/api/auth/local/bootstrap', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        body: JSON.stringify({ username: 'owner', password: 'vibeterm-test' }),
         clientIp: '127.0.0.1',
       });
       expect(boot.status).toBe(200);
@@ -1056,13 +1058,13 @@ describe('auth-routes', () => {
       expect(anonBody.rootPublicKey).toBeNull();
 
       const bogus = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
-        headers: { cookie: 'tmex_s_self=not-a-session' },
+        headers: { cookie: 'vibeterm_s_self=not-a-session' },
       });
       expect(((await bogus.json()) as { rootPublicKey: string | null }).rootPublicKey).toBeNull();
 
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const authed = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const authedBody = (await authed.json()) as { rootPublicKey: string | null };
       expect(authed.status).toBe(200);
@@ -1082,11 +1084,11 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const authed = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const anon = await call(mesh.runtime, 'http://localhost/api/auth/mode');
       const authedAgain = await call(mesh.runtime, 'http://localhost/api/auth/mode', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(((await authed.json()) as { rootPublicKey: string | null }).rootPublicKey).toBe(
         encodeBase64url(mesh.boot.rootPublicKey)
@@ -1110,7 +1112,7 @@ describe('auth-routes', () => {
       expect(deniedKeys.status).toBe(401);
 
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      const cookie = { headers: { cookie: `vibeterm_s_self=${sid}` } };
       const head = await call(mesh.runtime, 'http://localhost/api/auth/keylog/head', cookie);
       expect(head.status).toBe(200);
       const headBody = (await head.json()) as {
@@ -1183,7 +1185,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1199,7 +1201,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1241,7 +1243,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1257,7 +1259,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1278,7 +1280,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1294,7 +1296,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1314,7 +1316,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh();
     try {
       const { buildKeyLogRecord, computeRecordHash, encodeKeyLogRecord, signKeyLogRecordWithRoot } =
-        await import('@tmex/shared/auth');
+        await import('@vibeterm/shared/auth');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
         uid: mesh.boot.userId,
@@ -1354,7 +1356,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1397,7 +1399,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1413,7 +1415,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1439,7 +1441,7 @@ describe('auth-routes', () => {
       expect(body.expires_at).toBeGreaterThan(Date.now());
       expect(res.headers.get('x-tmex-set-session')).toBeNull();
       const cookie = res.headers.get('set-cookie') ?? '';
-      expect(cookie).toContain(`tmex_s_self=${sid}`);
+      expect(cookie).toContain(`vibeterm_s_self=${sid}`);
       expect(cookie).toContain('HttpOnly');
       expect(cookie).toContain('SameSite=Lax');
       expect(cookie).toContain('Path=/');
@@ -1556,7 +1558,7 @@ describe('auth-routes', () => {
   test('wrong TOTP rejected; missing TOTP required when enabled', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -1602,7 +1604,7 @@ describe('auth-routes', () => {
       expect(denied.headers.get('Cache-Control')).toBe('private, no-store');
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const missing = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(missing.status).toBe(404);
       expect(missing.headers.get('Cache-Control')).toBe('private, no-store');
@@ -1621,7 +1623,7 @@ describe('auth-routes', () => {
         buildKeyLogRecord,
         encodeKeyLogRecord,
         signKeyLogRecordWithRoot,
-      } = await import('@tmex/shared/auth');
+      } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const user = mesh.userStore.getById(mesh.boot.userId);
       if (!user) throw new Error('missing user');
@@ -1650,7 +1652,7 @@ describe('auth-routes', () => {
           k_totp: encodeBase64url(oldKTotp),
         },
       });
-      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      const cookie = { headers: { cookie: `vibeterm_s_self=${sid}` } };
       const head = await call(mesh.runtime, 'http://localhost/api/auth/totp-record', cookie);
       expect(head.status).toBe(200);
       expect(head.headers.get('Cache-Control')).toBe('private, no-store');
@@ -1696,7 +1698,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1747,7 +1749,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1767,7 +1769,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1800,7 +1802,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1827,7 +1829,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -1847,7 +1849,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -1872,7 +1874,7 @@ describe('auth-routes', () => {
     const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       mesh.userStore.createNode({
         id: 'bb'.repeat(16),
@@ -1909,7 +1911,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
           'x-tmex-force-keylog': '1',
         },
         body: JSON.stringify({
@@ -1951,7 +1953,7 @@ describe('auth-routes', () => {
   test('TOTP_REQUIRED and PASSKEY_REQUIRED are not counted as login failures', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -2282,7 +2284,7 @@ describe('auth-routes', () => {
       call(runtime, 'http://localhost/api/auth/local/bootstrap', {
         method: 'POST',
         headers: { 'content-type': 'application/json', ...opts.headers },
-        body: JSON.stringify({ username: 'owner', password: 'tmex-test' }),
+        body: JSON.stringify({ username: 'owner', password: 'vibeterm-test' }),
         clientIp: opts.clientIp,
         trustProxy: opts.trustProxy,
       });
@@ -2360,7 +2362,7 @@ describe('auth-routes', () => {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const opts = await call(mesh.runtime, 'http://localhost/api/auth/passkey/register/options', {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}`, origin: 'http://localhost:19663' },
+        headers: { cookie: `vibeterm_s_self=${sid}`, origin: 'http://localhost:19663' },
       });
       expect(opts.status).toBe(200);
       const body = (await opts.json()) as {
@@ -2371,7 +2373,7 @@ describe('auth-routes', () => {
       expect(body.rp.id).toBe('localhost');
       expect(body.challenge_id).toBeTruthy();
 
-      const { encodeDelegation } = await import('@tmex/shared/auth');
+      const { encodeDelegation } = await import('@vibeterm/shared/auth');
       const sess = generateEd25519KeyPair();
       const del = createDelegation(mesh.boot.rootKey, {
         uid: mesh.boot.userId,
@@ -2418,7 +2420,7 @@ describe('auth-routes', () => {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const out = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(out.status).toBe(200);
       expect(out.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
@@ -2436,7 +2438,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const recA = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2452,7 +2454,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytesA),
@@ -2480,7 +2482,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytesB),
@@ -2544,7 +2546,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2560,7 +2562,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -2589,7 +2591,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2605,7 +2607,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -2652,7 +2654,7 @@ describe('auth-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2668,7 +2670,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -2698,7 +2700,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(state.head, state.rootEpoch, {
@@ -2714,7 +2716,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -2737,7 +2739,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2753,7 +2755,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -2777,7 +2779,7 @@ describe('auth-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const { buildKeyLogRecord, encodeKeyLogRecord, signKeyLogRecordWithRoot } = await import(
-        '@tmex/shared/auth'
+        '@vibeterm/shared/auth'
       );
       const before = mesh.keyLogService.currentState(mesh.boot.userId);
       const rec = buildKeyLogRecord(before.head, before.rootEpoch, {
@@ -2793,7 +2795,7 @@ describe('auth-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           bytes: encodeBase64url(bytes),
@@ -3101,7 +3103,7 @@ describe('auth-routes', () => {
   test('TOTP then passkey: both enrolled means both required', async () => {
     const mesh = await bootMesh();
     try {
-      const { deriveSeed, deriveTotpKey } = await import('@tmex/shared/auth');
+      const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
       const state = mesh.keyLogService.currentState(mesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
@@ -3288,7 +3290,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('passkey login/options trusted origin follows TMEX_TRUST_PROXY rules', async () => {
+  test('passkey login/options trusted origin follows VIBETERM_TRUST_PROXY rules', async () => {
     const mesh = await bootMesh();
     try {
       const forwardedOrigin = 'https://app.example.com';
@@ -3370,7 +3372,7 @@ describe('auth-routes', () => {
         name: 'elsewhere',
       });
       const keys = await call(mesh.runtime, 'http://localhost/api/auth/passkeys', {
-        headers: { cookie: `tmex_s_self=${sid}`, origin: originHere },
+        headers: { cookie: `vibeterm_s_self=${sid}`, origin: originHere },
       });
       expect(keys.status).toBe(200);
       const body = (await keys.json()) as {
@@ -3403,7 +3405,7 @@ describe('auth-routes', () => {
       const opts = await call(mesh.runtime, 'http://localhost/api/auth/passkey/register/options', {
         method: 'POST',
         headers: {
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
           origin: trustedOrigin,
         },
       });
@@ -3429,7 +3431,7 @@ describe('auth-routes', () => {
           method: 'POST',
           headers: {
             'content-type': 'application/json',
-            cookie: `tmex_s_self=${sid}`,
+            cookie: `vibeterm_s_self=${sid}`,
             origin: 'http://localhost:19663',
           },
           body: JSON.stringify({
@@ -3449,7 +3451,7 @@ describe('auth-routes', () => {
         {
           method: 'POST',
           headers: {
-            cookie: `tmex_s_self=${sid}`,
+            cookie: `vibeterm_s_self=${sid}`,
             'x-forwarded-proto': 'https',
             'x-forwarded-host': 'app.example.com',
           },

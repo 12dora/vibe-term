@@ -1,7 +1,7 @@
 // editor 输入模式：草稿持久化、整段/逐行发送、历史与发送反馈。
 // 两种发送只在 payload 切分上不同，其余（守卫、发送反馈、历史、清草稿、清空）共用一条路径。
 
-import { useRuntime, useUIStore } from '@tmex/stores/react';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
 import { type RefObject, useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

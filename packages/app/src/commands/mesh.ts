@@ -1,6 +1,6 @@
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { resolvePassword } from '../lib/password';
-import { isStandaloneRoles, parseTmexRoles } from '../lib/roles';
+import { isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 import type { ParsedArgs } from '../types';
 import type { HubIo } from './hub';
@@ -14,9 +14,9 @@ export async function runMeshResetRoot(
   parsed: ParsedArgs,
   io: HubIo = {}
 ): Promise<{ userId: string; rootEpoch: number; fingerprint: string }> {
-  const roles = parseTmexRoles(io.auth?.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
+  const roles = parseVibeTermRoles(io.auth?.env.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES);
   if (isStandaloneRoles(roles)) {
-    throw new Error('mesh reset-root is refused when TMEX_ROLES is standalone');
+    throw new Error('mesh reset-root is refused when VIBETERM_ROLES is standalone');
   }
 
   const password = await resolvePassword({

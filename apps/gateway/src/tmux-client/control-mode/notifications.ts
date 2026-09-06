@@ -38,7 +38,7 @@ export function createNotificationParseState(): NotificationParseState {
 function warnInvalidEscape(state: NotificationParseState): void {
   if (!state.warnedInvalidEscape) {
     state.warnedInvalidEscape = true;
-    console.warn('[tmex] control mode parser met invalid escape sequence, passing through');
+    console.warn('[vibeterm] control mode parser met invalid escape sequence, passing through');
   }
 }
 
@@ -147,7 +147,7 @@ function handleBlockClose(
   if (args !== state.currentBlock.args) {
     const kind = isError ? 'error' : 'end';
     console.warn(
-      `[tmex] control mode block guard mismatch: begin "${state.currentBlock.args}" vs ${kind} "${args}"`
+      `[vibeterm] control mode block guard mismatch: begin "${state.currentBlock.args}" vs ${kind} "${args}"`
     );
   }
   state.currentBlock.isError = isError;
@@ -240,7 +240,7 @@ function dispatchControlModeLineLeased(
     if (!state.warnedUnexpectedLine) {
       state.warnedUnexpectedLine = true;
       console.warn(
-        `[tmex] control mode parser ignored unexpected line: ${decoder.decode(line.subarray(0, 80))}`
+        `[vibeterm] control mode parser ignored unexpected line: ${decoder.decode(line.subarray(0, 80))}`
       );
     }
     return;

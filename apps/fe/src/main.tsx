@@ -1,5 +1,5 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { PRODUCT_NAME, formatDisplayVersion } from '@tmex/shared';
+import { PRODUCT_NAME, formatDisplayVersion } from '@vibeterm/shared';
 import { type CSSProperties, type ComponentType, StrictMode, useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { Navigate, Outlet, RouterProvider, createBrowserRouter } from 'react-router';
@@ -37,21 +37,26 @@ import {
 import { PageWrapper } from '@/page-wrapper';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
-import { installSessionInterceptor } from '@tmex/api-client/auth/index';
-import { ConnectionIndicator } from '@tmex/panels';
-import { SettingsEventsInit } from '@tmex/panels/settings/events';
-import { WatchEventsInit } from '@tmex/panels/watch';
-import { SELF_NODE_ID, useNodeRuntime } from '@tmex/stores';
-import { RuntimeProvider, useUIStore } from '@tmex/stores/react';
-import { useKeyboardAvoidance } from '@tmex/terminal-ui/hooks/use-keyboard-avoidance';
-import { applyThemePreset, isThemePreset } from '@tmex/theme';
-import { SidebarInset, SidebarProvider, useSidebar } from '@tmex/ui/sidebar';
-import { markToasterReady } from '@tmex/ui/toast';
-import { setDefaultClientVersion } from '@tmex/ws-client';
+import { installSessionInterceptor } from '@vibeterm/api-client/auth/index';
+import { ConnectionIndicator } from '@vibeterm/panels';
+import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
+import { WatchEventsInit } from '@vibeterm/panels/watch';
+import { SELF_NODE_ID, migrateLocalStorageKey, useNodeRuntime } from '@vibeterm/stores';
+import { RuntimeProvider, useUIStore } from '@vibeterm/stores/react';
+import { useKeyboardAvoidance } from '@vibeterm/terminal-ui/hooks/use-keyboard-avoidance';
+import { applyThemePreset, isThemePreset } from '@vibeterm/theme';
+import { SidebarInset, SidebarProvider, useSidebar } from '@vibeterm/ui/sidebar';
+import { markToasterReady } from '@vibeterm/ui/toast';
+import { setDefaultClientVersion } from '@vibeterm/ws-client';
+
+// 宿主级 UI 偏好的裸 key。下面两个防 FOUC 的读取跑在 UIStore 建立之前，
+// 因此改名迁移必须先在这里做一次（migrateStorageKey 幂等，UIStore 再迁一次是空操作）。
+const HOST_UI_STORAGE_KEY = 'vibeterm-ui';
+migrateLocalStorageKey('tmex-ui', HOST_UI_STORAGE_KEY);
 
 function applyInitialTheme(): void {
   try {
-    const raw = localStorage.getItem('tmex-ui');
+    const raw = localStorage.getItem(HOST_UI_STORAGE_KEY);
     if (!raw) {
       document.documentElement.classList.add('dark');
       return;
@@ -69,10 +74,10 @@ function applyInitialTheme(): void {
 applyInitialTheme();
 
 // 主题预设（dormant preset 激活机制）：初始从持久化状态应用，变更时跟随。
-// UI 偏好是宿主级的（所有 node 共用一个 UIStore，key 仍为 tmex-ui），因此这里直接读裸 key。
+// UI 偏好是宿主级的（所有 node 共用一个 UIStore），因此这里直接读裸 key。
 function applyInitialThemePreset(): void {
   try {
-    const raw = localStorage.getItem('tmex-ui');
+    const raw = localStorage.getItem(HOST_UI_STORAGE_KEY);
     const parsed = raw ? (JSON.parse(raw) as { state?: { themePreset?: unknown } }) : null;
     const preset = parsed?.state?.themePreset;
     applyThemePreset(isThemePreset(preset) ? preset : null);
@@ -293,7 +298,7 @@ function MainInset() {
       </NodeRuntimeBoundary>
       <div
         style={{
-          height: active ? 0 : 'var(--tmex-safe-area-bottom)',
+          height: active ? 0 : 'var(--vibeterm-safe-area-bottom)',
           transition: 'height 0.12s ease-out',
         }}
       />

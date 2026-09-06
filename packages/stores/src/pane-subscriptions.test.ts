@@ -3,8 +3,8 @@
 // 撤订阅贡献后 sink 仍在，注册表因此没有理由开始缓冲。
 
 import { describe, expect, test } from 'bun:test';
-import { type GatewayTransportCommand, createSharedGatewayTransport } from '@tmex/ws-client';
-import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
+import { type GatewayTransportCommand, createSharedGatewayTransport } from '@vibeterm/ws-client';
+import type { PaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import { createAppRuntime } from './app-runtime';
 import { installWindowStorage } from './test-utils';
 

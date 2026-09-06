@@ -3,11 +3,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { ApiError, NODE_UNREACHABLE, devicesQueryKey } from '@tmex/api-client';
-import { I18N_RESOURCES } from '@tmex/shared';
-import { createAppRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { ApiError, NODE_UNREACHABLE, devicesQueryKey } from '@vibeterm/api-client';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import { createAppRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

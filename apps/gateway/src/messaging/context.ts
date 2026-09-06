@@ -1,5 +1,5 @@
-import { type TmexRoles, isStandaloneRoles } from '@tmex/shared';
-import type { CommandResult, CommandSpec, MeshNodeRef } from '@tmex/shared/messaging';
+import { type VibeTermRoles, isStandaloneRoles } from '@vibeterm/shared';
+import type { CommandResult, CommandSpec, MeshNodeRef } from '@vibeterm/shared/messaging';
 import { eq } from 'drizzle-orm';
 import { config } from '../config';
 import { decideAgentConfirmation, getAgentConfirmationById } from '../db/agent';
@@ -80,7 +80,7 @@ export interface CommandContext {
   localNodeId: string | null;
   localName: string;
   version: string;
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   uplink: UplinkStatus;
   meshMode: 'standalone' | 'mesh';
   listNodes(): MeshNodeView[];

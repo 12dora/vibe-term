@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import type { DeviceSessionRuntimeListener } from '../tmux-client/device-session-runtime';
 import {

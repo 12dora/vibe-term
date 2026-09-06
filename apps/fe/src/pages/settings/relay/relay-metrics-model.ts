@@ -5,7 +5,7 @@ import type {
   RelayMetricsMember,
   RelayMetricsResponse,
   RelayMetricsSample,
-} from '@tmex/api-client/relay/metrics-types';
+} from '@vibeterm/api-client/relay/metrics-types';
 import { median } from './relay-format';
 
 /** 趋势区一次画一条线所需的取值与端点标注。 */

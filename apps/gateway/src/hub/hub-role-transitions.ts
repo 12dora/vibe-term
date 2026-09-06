@@ -1,4 +1,4 @@
-import type { HubRoleMode, HubRoleTransition, HubRoleTransitionPhase } from '@tmex/shared';
+import type { HubRoleMode, HubRoleTransition, HubRoleTransitionPhase } from '@vibeterm/shared';
 import { desc, eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { hubRoleTransitions } from '../db/schema';

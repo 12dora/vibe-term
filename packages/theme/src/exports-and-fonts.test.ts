@@ -21,7 +21,7 @@ function listFontFiles(dir: string): string[] {
   return out;
 }
 
-describe('@tmex/theme package exports', () => {
+describe('@vibeterm/theme package exports', () => {
   test('export map 覆盖 font API/manifest/types、CSS 与 fonts resource 子路径', () => {
     const exports = packageJson.exports as Record<string, string>;
     expect(exports['./fonts']).toBe('./src/fonts/index.ts');
@@ -40,11 +40,11 @@ describe('@tmex/theme package exports', () => {
       expect(existsSync(path.join(themeRoot, rel))).toBe(true);
     }
 
-    const fonts = await import('@tmex/theme/fonts');
+    const fonts = await import('@vibeterm/theme/fonts');
     expect(fonts.DEFAULT_FONT_ID).toBe(DEFAULT_FONT_ID);
     expect(fonts.FONT_MANIFEST.length).toBeGreaterThan(0);
 
-    const manifest = await import('@tmex/theme/fonts/manifest');
+    const manifest = await import('@vibeterm/theme/fonts/manifest');
     expect(manifest.FONT_MANIFEST.length).toBe(FONT_MANIFEST.length);
 
     expect(getFontEntry(DEFAULT_FONT_ID).isDefault).toBe(true);

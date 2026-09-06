@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { LinkError } from '@tmex/shared/link';
+import { LinkError } from '@vibeterm/shared/link';
 import { PeerHandshakeError } from '../mesh/types';
 import {
   appendNodeSessionCookie,
@@ -7,9 +7,12 @@ import {
   buildSetCookie,
   clearNodeSessionCookie,
   formatSafeErrorLog,
+  hasNodeSessionCookie,
   isCanonicalNodeId,
+  legacyNodeSessionCookieName,
   nodeSessionCookieName,
   parseCookies,
+  readNodeSessionCookie,
 } from './cookies';
 
 describe('parseCookies', () => {
@@ -20,8 +23,8 @@ describe('parseCookies', () => {
   });
 
   test('parses name/value pairs and keeps values that contain =', () => {
-    const cookies = parseCookies('tmex_s_self=abc; other=x=y;  spaced = z ');
-    expect(cookies.get('tmex_s_self')).toBe('abc');
+    const cookies = parseCookies('vibeterm_s_self=abc; other=x=y;  spaced = z ');
+    expect(cookies.get('vibeterm_s_self')).toBe('abc');
     expect(cookies.get('other')).toBe('x=y');
     expect(cookies.get('spaced')).toBe('z');
   });
@@ -32,9 +35,16 @@ describe('parseCookies', () => {
 });
 
 describe('nodeSessionCookieName', () => {
-  test('prefixes tmex_s_ and uses self for the local node', () => {
-    expect(nodeSessionCookieName('self')).toBe('tmex_s_self');
-    expect(nodeSessionCookieName('node-abc')).toBe('tmex_s_node-abc');
+  test('prefixes vibeterm_s_ 并保留 tmex_s_ 旧名', () => {
+    expect(nodeSessionCookieName('self')).toBe('vibeterm_s_self');
+    expect(nodeSessionCookieName('node-abc')).toBe('vibeterm_s_node-abc');
+    expect(legacyNodeSessionCookieName('self')).toBe('tmex_s_self');
+    expect(readNodeSessionCookie(parseCookies('tmex_s_self=old'), 'self')).toBe('old');
+    expect(
+      readNodeSessionCookie(parseCookies('tmex_s_self=old; vibeterm_s_self=new'), 'self')
+    ).toBe('new');
+    expect(hasNodeSessionCookie(parseCookies('tmex_s_self=old'), 'self')).toBe(true);
+    expect(hasNodeSessionCookie(parseCookies('x=1'), 'self')).toBe(false);
   });
 });
 
@@ -52,26 +62,26 @@ describe('isCanonicalNodeId', () => {
 
 describe('buildSetCookie / buildClearCookie', () => {
   test('formats Path/HttpOnly/SameSite/Max-Age without Secure', () => {
-    expect(buildSetCookie('tmex_s_self', 'sidvalue', { maxAgeSec: 64800, secure: false })).toBe(
-      'tmex_s_self=sidvalue; Path=/; HttpOnly; SameSite=Lax; Max-Age=64800'
+    expect(buildSetCookie('vibeterm_s_self', 'sidvalue', { maxAgeSec: 64800, secure: false })).toBe(
+      'vibeterm_s_self=sidvalue; Path=/; HttpOnly; SameSite=Lax; Max-Age=64800'
     );
   });
 
   test('appends Secure when requested', () => {
-    expect(buildSetCookie('tmex_s_self', 'sidvalue', { maxAgeSec: 64800, secure: true })).toBe(
-      'tmex_s_self=sidvalue; Path=/; HttpOnly; SameSite=Lax; Max-Age=64800; Secure'
+    expect(buildSetCookie('vibeterm_s_self', 'sidvalue', { maxAgeSec: 64800, secure: true })).toBe(
+      'vibeterm_s_self=sidvalue; Path=/; HttpOnly; SameSite=Lax; Max-Age=64800; Secure'
     );
   });
 
   test('clear cookie expires immediately', () => {
-    expect(buildClearCookie('tmex_s_self')).toBe(
-      'tmex_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'
+    expect(buildClearCookie('vibeterm_s_self')).toBe(
+      'vibeterm_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'
     );
   });
 
   test('clear cookie appends Secure when requested', () => {
-    expect(buildClearCookie('tmex_s_self', { secure: true })).toBe(
-      'tmex_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'
+    expect(buildClearCookie('vibeterm_s_self', { secure: true })).toBe(
+      'vibeterm_s_self=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0; Secure'
     );
   });
 });
@@ -82,6 +92,9 @@ describe('appendNodeSessionCookie / clearNodeSessionCookie', () => {
     appendNodeSessionCookie(ok, 'aa'.repeat(16), 'sid', { maxAgeSec: 60, secure: false });
     clearNodeSessionCookie(ok, 'bb'.repeat(16), { secure: false });
     const cookies = ok.getSetCookie();
+    expect(cookies.some((c) => c.startsWith(`vibeterm_s_${'aa'.repeat(16)}=`))).toBe(true);
+    expect(cookies.some((c) => c.startsWith(`vibeterm_s_${'bb'.repeat(16)}=`))).toBe(true);
+    // 混合版本桥：旧名同时下发/清除
     expect(cookies.some((c) => c.startsWith(`tmex_s_${'aa'.repeat(16)}=`))).toBe(true);
     expect(cookies.some((c) => c.startsWith(`tmex_s_${'bb'.repeat(16)}=`))).toBe(true);
 
@@ -89,7 +102,7 @@ describe('appendNodeSessionCookie / clearNodeSessionCookie', () => {
     appendNodeSessionCookie(bad, 'self=', 'sid', { maxAgeSec: 60, secure: false });
     clearNodeSessionCookie(bad, 'self=', { secure: false });
     clearNodeSessionCookie(bad, 'BB'.repeat(16));
-    clearNodeSessionCookie(bad, 'aa;tmex_s_self');
+    clearNodeSessionCookie(bad, 'aa;vibeterm_s_self');
     expect(bad.getSetCookie()).toEqual([]);
   });
 });

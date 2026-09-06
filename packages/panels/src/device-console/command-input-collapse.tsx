@@ -3,10 +3,10 @@
 // 用 grid-template-rows 0fr↔1fr 做高度过渡（内容高度不用写死），
 // 叠一点透明度与位移；收起先播完动画再卸载，故本组件自己管挂载。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { type ReactNode, useEffect, useState } from 'react';
 
-/** 与 --tmex-motion-layout 对齐：动画跑完才卸载面板 */
+/** 与 --vibeterm-motion-layout 对齐：动画跑完才卸载面板 */
 export const COMMAND_INPUT_COLLAPSE_MS = 200;
 
 export type CollapseDataState = 'open' | 'closed';
@@ -64,7 +64,7 @@ export function CommandInputCollapse({ open, children }: CommandInputCollapsePro
       className={cn(
         // Tailwind v4 的 translate-* 写的是 translate 属性而不是 transform，过渡要点名它
         'grid grid-rows-[1fr] transition-[grid-template-rows,opacity,translate]',
-        'duration-(--tmex-motion-layout) ease-out motion-reduce:transition-none',
+        'duration-(--vibeterm-motion-layout) ease-out motion-reduce:transition-none',
         'data-[state=closed]:grid-rows-[0fr] data-[state=closed]:translate-y-1',
         'data-[state=closed]:opacity-0 data-[state=closed]:ease-in'
       )}

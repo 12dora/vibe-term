@@ -5,7 +5,7 @@
 // `useUpgradeRuntime` / `useUpgradeBatch` / `useUpgradeRestore` / `useUpgradeRowActions` 共用同一份。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { UpgradeStatus } from '@tmex/shared';
+import type { UpgradeStatus } from '@vibeterm/shared';
 import type { UpgradeRunOutcome } from './types';
 import type { BatchPlanSink, UpgradeBatchPlan } from './upgrade-batch-storage';
 import {

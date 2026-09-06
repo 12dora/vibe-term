@@ -1,7 +1,7 @@
 /**
  * Managed Gateway artifact fail-closed scanner。
  *
- * 拒绝：Bun sidecar、源码、node_modules、tmex CLI、fe-dist、自更新 route/npm/CDN 特征。
+ * 拒绝：Bun sidecar、源码、node_modules、CLI（新旧包名）、fe-dist、自更新 route/npm/CDN 特征。
  */
 
 import { createHash } from 'node:crypto';
@@ -13,6 +13,9 @@ const FORBIDDEN_NAME_PATTERNS = [
   /^node(\.exe)?$/i,
   /node_modules/i,
   /fe-dist/i,
+  /^vibeterm(\.js)?$/i,
+  /^vibeterm-cli/i,
+  // 改名前的 CLI 名同样禁止出现在产物旁
   /^tmex(\.js)?$/i,
   /^tmex-cli/i,
   /\.ts$/i,
@@ -25,10 +28,10 @@ const FORBIDDEN_NAME_PATTERNS = [
 ];
 
 const FORBIDDEN_CONTENT_PATTERNS: Array<{ id: string; re: RegExp }> = [
-  { id: 'npm-registry', re: /registry\.npmjs\.org\/tmex-cli/i },
-  { id: 'jsdelivr-cdn', re: /cdn\.jsdelivr\.net\/npm\/tmex-cli/i },
+  { id: 'npm-registry', re: /registry\.npmjs\.org\/(?:vibeterm|tmex)-cli/i },
+  { id: 'jsdelivr-cdn', re: /cdn\.jsdelivr\.net\/npm\/(?:vibeterm|tmex)-cli/i },
   // managed 可保留 route 字面量以返回 managed_externally；禁止真实自更新实现特征
-  { id: 'bun-add-upgrade', re: /bun\s+add\s+tmex-cli@/i },
+  { id: 'bun-add-upgrade', re: /bun\s+add\s+(?:vibeterm|tmex)-cli@/i },
   { id: 'apply-current-package', re: /--apply-current-package/ },
   { id: 'npm-packument-fetch', re: /dist-tags[\s\S]{0,40}latest/i },
 ];
@@ -94,9 +97,9 @@ export function scanManagedArtifact(artifactPath: string): ScanResult {
     }
   }
 
-  // artifact 自身不得叫 bun / tmex cli
+  // artifact 自身不得叫 bun / CLI 名（含改名前的旧名）
   const base = basename(abs);
-  if (/^bun/i.test(base) || /^tmex\.js$/i.test(base)) {
+  if (/^bun/i.test(base) || /^(?:vibeterm|tmex)\.js$/i.test(base)) {
     findings.push(`bad_artifact_name:${base}`);
   }
 

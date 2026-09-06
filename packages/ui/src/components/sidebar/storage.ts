@@ -23,3 +23,17 @@ export function removeSidebarStorage(key: string): void {
     return;
   }
 }
+
+// 改名遗留 key 的一次性搬运：新 key 缺失时复制旧值，随后删掉旧 key。
+export function migrateSidebarStorage(oldKey: string, newKey: string): void {
+  try {
+    const legacy = window.localStorage.getItem(oldKey);
+    if (legacy === null) return;
+    if (window.localStorage.getItem(newKey) === null) {
+      window.localStorage.setItem(newKey, legacy);
+    }
+    window.localStorage.removeItem(oldKey);
+  } catch {
+    return;
+  }
+}

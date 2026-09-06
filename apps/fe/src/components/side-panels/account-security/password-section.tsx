@@ -1,9 +1,9 @@
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
-import { Input } from '@tmex/ui/input';
-import { OtpInput } from '@tmex/ui/otp-input';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
+import { Input } from '@vibeterm/ui/input';
+import { OtpInput } from '@vibeterm/ui/otp-input';
 import { AlertTriangle, KeyRound, Loader2 } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';

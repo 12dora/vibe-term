@@ -1,11 +1,11 @@
-import type { ShareScope } from '@tmex/shared/share';
+import { CONNECTION_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
+import type { ShareScope } from '@vibeterm/shared/share';
 import {
   MESH_GATEWAY_WS_KIND,
   MESH_REJECT_4401_KIND,
   MESH_SHARE_WS_KIND,
   MESH_VIA_SELF,
   type MeshUpgradeServer,
-  X_TMEX_CONNECTION,
 } from './mesh-deps';
 import { jsonError } from './session-middleware';
 import { type ShareWsClose, resolveShareWsAuth } from './share-credential';
@@ -17,7 +17,7 @@ export function isGatewayWsPath(path: string, nodeId: string): boolean {
 export function connectionIdOf(req: Request): string {
   return (
     new URL(req.url).searchParams.get('cid')?.trim() ||
-    req.headers.get(X_TMEX_CONNECTION)?.trim() ||
+    readHeaderPair(req.headers, CONNECTION_HEADER)?.trim() ||
     ''
   );
 }

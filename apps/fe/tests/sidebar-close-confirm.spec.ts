@@ -26,7 +26,7 @@ function createTwoWindowSession(sessionName: string): {
 }
 
 test('sidebar: close window/pane requires confirm dialog', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-close-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-close-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length).toBe(2);
   expect(windowIds.length).toBe(2);
@@ -89,7 +89,7 @@ test.describe('mobile', () => {
     page,
     request,
   }) => {
-    const sessionName = `tmex-e2e-close-m-${Date.now()}`;
+    const sessionName = `vibeterm-e2e-close-m-${Date.now()}`;
     const { paneIds, windowIds } = createTwoWindowSession(sessionName);
 
     const createRes = await request.post('/api/devices', {

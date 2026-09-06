@@ -1,5 +1,5 @@
 import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { getSqliteClient } from './client';
 import { createDevice } from './devices';
 import {
@@ -28,7 +28,7 @@ function makeDevice(id: string): Device {
     id,
     name: id,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,

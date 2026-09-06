@@ -12,10 +12,10 @@ afterEach(async () => {
 
 describe('createGatewayRuntime preflight', () => {
   test('runs migrations once and never starts live side effects', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-preflight-rt-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-preflight-rt-'));
     tempDirs.push(dir);
     const previous = process.env.DATABASE_URL;
-    process.env.DATABASE_URL = join(dir, 'tmex.db');
+    process.env.DATABASE_URL = join(dir, 'vibeterm.db');
     let migrations = 0;
     let live = 0;
     try {

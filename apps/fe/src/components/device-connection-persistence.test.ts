@@ -24,11 +24,11 @@ function createMemoryStorage(initial: Record<string, string> = {}): DeviceIdStor
 }
 
 describe('存储键', () => {
-  test('键名以 tmex: 命名空间结尾，并按 runtime 前缀隔离', () => {
-    expect(connectedDevicesKey('')).toBe('tmex:connectedDevices');
-    expect(disconnectedDevicesKey('')).toBe('tmex:disconnectedDevices');
+  test('键名以 vibeterm: 命名空间结尾，并按 runtime 前缀隔离', () => {
+    expect(connectedDevicesKey('')).toBe('vibeterm:connectedDevices');
+    expect(disconnectedDevicesKey('')).toBe('vibeterm:disconnectedDevices');
     expect(connectedDevicesKey('')).not.toBe(disconnectedDevicesKey(''));
-    expect(connectedDevicesKey('n:abc:')).toBe('n:abc:tmex:connectedDevices');
+    expect(connectedDevicesKey('n:abc:')).toBe('n:abc:vibeterm:connectedDevices');
     expect(connectedDevicesKey('n:abc:')).not.toBe(connectedDevicesKey(''));
   });
 });

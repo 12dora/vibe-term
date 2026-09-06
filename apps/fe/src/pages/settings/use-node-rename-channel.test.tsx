@@ -6,9 +6,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshHubsStateForTest, setMeshHubsStateForTest } from '@/node/mesh-hubs';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from '@/node/mesh-nodes';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { MeshHubEndpoint, MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { MeshHubEndpoint, MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { SiteSettingsLinkage } from './site-settings-form';
 
 installWindowStorage();

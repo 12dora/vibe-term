@@ -55,8 +55,8 @@ test('theme-notify-2031: 订阅 pane 收到 997 通知，idle shell pane 零污�
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-2031-${Date.now()}`;
-  const workDir = mkdtempSync(path.join(tmpdir(), 'tmex-2031-'));
+  const sessionName = `vibeterm-e2e-2031-${Date.now()}`;
+  const workDir = mkdtempSync(path.join(tmpdir(), 'vibeterm-2031-'));
   const logFile = path.join(workDir, 'tui.log');
   const { paneIds } = createTwoPaneSession(sessionName);
   const [tuiPane, idlePane] = paneIds as [string, string];

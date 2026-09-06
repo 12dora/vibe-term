@@ -1,9 +1,9 @@
 // 暂存升级包的落盘细节。字节层（`.part` 命名、偏移校验、前缀重算、截断判定、落位）
-// 已经统一到 `@tmex/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
+// 已经统一到 `@vibeterm/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
 import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { releaseTarballName } from '@tmex/shared';
+import { legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import {
   PART_TTL_MS,
   type SinkDescriptor,
@@ -11,7 +11,7 @@ import {
   deterministicPartPath,
   fileExpired,
   fileSizeOrZero,
-} from '@tmex/transfer/node';
+} from '@vibeterm/transfer/node';
 import { stagedManifestVersion } from './upgrade-manifest';
 
 export { fileSizeOrZero };
@@ -109,14 +109,30 @@ export type StagedEntry =
   | { kind: 'manifest' | 'sidecar'; version: string }
   | { kind: 'tarball'; version: null };
 
+/** 记录 sidecar 名由整包名派生（`.tgz` → `.json`）；旧名同样要认，否则孤儿清理会漏掉。 */
+const SIDECAR_PREFIXES = ['vibeterm-cli-', 'tmex-cli-'];
+
+function recordName(tarballName: string): string {
+  return tarballName.replace(/\.tgz$/, '.json');
+}
+
+/** 暂存包的记录 sidecar 路径。 */
+export function stagedRecordPath(stagedDir: string, version: string): string {
+  return join(stagedDir, recordName(releaseTarballName(version)));
+}
+
+/** 改名前留在暂存目录里的记录 sidecar 路径。 */
+export function legacyStagedRecordPath(stagedDir: string, version: string): string {
+  return join(stagedDir, recordName(legacyReleaseTarballName(version)));
+}
+
 export function classifyStagedEntry(name: string): StagedEntry {
   if (name.includes('.part')) return { kind: 'part', version: null };
   const manifestVersion = stagedManifestVersion(name);
   if (manifestVersion) return { kind: 'manifest', version: manifestVersion };
   if (name.endsWith('.json')) {
-    const version = name.startsWith('tmex-cli-')
-      ? name.slice('tmex-cli-'.length, -'.json'.length)
-      : '';
+    const prefix = SIDECAR_PREFIXES.find((p) => name.startsWith(p));
+    const version = prefix ? name.slice(prefix.length, -'.json'.length) : '';
     return { kind: 'sidecar', version };
   }
   if (name.endsWith('.tgz')) return { kind: 'tarball', version: null };
@@ -132,7 +148,11 @@ export function removeExpiredStagedFiles(
   version: string,
   tarballPath: string
 ): void {
-  for (const path of [tarballPath, join(stagedDir, `tmex-cli-${version}.json`)]) {
+  for (const path of [
+    tarballPath,
+    stagedRecordPath(stagedDir, version),
+    legacyStagedRecordPath(stagedDir, version),
+  ]) {
     try {
       rmSync(path, { force: true });
     } catch {

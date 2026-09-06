@@ -5,10 +5,10 @@ import {
   listPendingMetaKeys,
   relayPackDebt,
 } from '@/node/relay-meta-key-pending';
-import { ApiClient } from '@tmex/api-client';
-import { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayPackUpload } from '@tmex/api-client/relay/tenant-api';
-import { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import { ApiClient } from '@vibeterm/api-client';
+import { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayPackUpload } from '@vibeterm/api-client/relay/tenant-api';
+import { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   bytesEqual,
   computeRecordHash,
@@ -25,9 +25,9 @@ import {
   encryptTotpSecret,
   rootKeyFromSeed,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
-import { totpCode } from '@tmex/shared/auth';
-import { openRelayPack } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { totpCode } from '@vibeterm/shared/auth';
+import { openRelayPack } from '@vibeterm/shared/relay';
 import {
   beginTotpSetup,
   changePassword,
@@ -580,8 +580,8 @@ describe('TOTP 两段式设置', () => {
   test('第一段只生成密钥与 URI，不写任何 key-log 记录', () => {
     const { api, posted } = mockApi();
     void api;
-    const draft = beginTotpSetup({ uid: UID, issuer: 'tmex', secret });
-    expect(draft.otpauthUri.startsWith('otpauth://totp/tmex:alice?')).toBe(true);
+    const draft = beginTotpSetup({ uid: UID, issuer: 'VibeTerm', secret });
+    expect(draft.otpauthUri.startsWith('otpauth://totp/VibeTerm:alice?')).toBe(true);
     expect(posted).toHaveLength(0);
   });
 

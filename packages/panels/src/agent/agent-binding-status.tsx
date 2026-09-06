@@ -1,7 +1,7 @@
 import { useTranslation } from 'react-i18next';
 
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { ListTreeIcon, PlusIcon, TerminalIcon } from 'lucide-react';
 
 import type { BindingInfo } from './use-agent-tab-model';

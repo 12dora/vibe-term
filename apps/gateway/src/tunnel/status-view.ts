@@ -7,7 +7,7 @@ import type {
   TunnelJobStatus,
   TunnelProcessState,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type TunnelAccessPersisted, computeAccessEffective } from './access-store';
 import type { TunnelPersisted } from './config-store';
 import { isTunnelPlatformSupported, tunnelPlatformLabel } from './platform';

@@ -1,8 +1,8 @@
 // auth mode 的 React 绑定。
 
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
+import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useState } from 'react';
 
 export interface AuthModeState {

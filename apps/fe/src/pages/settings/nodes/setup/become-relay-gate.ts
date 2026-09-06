@@ -5,7 +5,7 @@
 // 组件里内联的话「取消之后到底发没发请求」只能靠读代码猜（与 `DirectMutationController`
 // 同一套做法）。
 
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import { type FormEvent, useState } from 'react';
 import { type BecomeRelayValues, hasErrors, validateBecomeRelay } from './validation';
 

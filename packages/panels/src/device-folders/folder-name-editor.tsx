@@ -5,8 +5,8 @@ import {
   DEVICE_FOLDER_NAME_MAX_LENGTH,
   type DeviceFolderNameError,
   validateDeviceFolderName,
-} from '@tmex/shared';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/shared';
+import { Input } from '@vibeterm/ui/input';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

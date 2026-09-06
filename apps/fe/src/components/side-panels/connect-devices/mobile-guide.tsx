@@ -2,7 +2,7 @@
 // 手输地址是这一步以前唯一的路径，实际上没人愿意在手机上敲 `http://192.168.x.x:9883`；
 // 二维码才是主路径，命令块留作扫不了码时的兜底。
 
-import { Tabs, TabsContent } from '@tmex/ui/tabs';
+import { Tabs, TabsContent } from '@vibeterm/ui/tabs';
 import { QRCodeSVG } from 'qrcode.react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -87,7 +87,7 @@ export function AddressChoiceList({
             key={item.url}
             data-testid={`connect-address-${index}`}
             data-kind={item.kind}
-            className={`flex w-full cursor-pointer items-start gap-2 rounded-lg border p-2 transition-colors duration-(--tmex-motion-fast) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none ${
+            className={`flex w-full cursor-pointer items-start gap-2 rounded-lg border p-2 transition-colors duration-(--vibeterm-motion-fast) has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-ring motion-reduce:transition-none ${
               checked ? 'border-primary/50 bg-primary/5' : 'border-border/60 hover:bg-muted/50'
             }`}
           >

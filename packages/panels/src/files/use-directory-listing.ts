@@ -1,10 +1,10 @@
 // 单个目录节点的列表数据：展开态、查询与轮询、以及刷新后的展开态修正。
 
 import { type UseQueryResult, useQuery } from '@tanstack/react-query';
-import { type FileApiError, fetchFileList } from '@tmex/api-client';
-import type { FileEntryDto, FileErrorCode, ListFilesResponse } from '@tmex/shared';
-import { fileNodeKey } from '@tmex/stores';
-import { useFileTreeStore, useRuntime } from '@tmex/stores/react';
+import { type FileApiError, fetchFileList } from '@vibeterm/api-client';
+import type { FileEntryDto, FileErrorCode, ListFilesResponse } from '@vibeterm/shared';
+import { fileNodeKey } from '@vibeterm/stores';
+import { useFileTreeStore, useRuntime } from '@vibeterm/stores/react';
 import { useCallback, useEffect, useRef } from 'react';
 import { stabilizeFileEntries } from './file-entry-identity';
 import { staleChildExpansionPaths } from './file-tree-logic';

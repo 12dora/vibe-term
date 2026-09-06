@@ -7,7 +7,7 @@ test('device: terminal ui renders and editor input toggles', async ({ page, requ
     data: {
       name,
       type: 'local',
-      session: 'tmex',
+      session: 'vibeterm',
       authMode: 'auto',
     },
   });
@@ -21,7 +21,7 @@ test('device: terminal ui renders and editor input toggles', async ({ page, requ
     .poll(
       () =>
         page.evaluate(() => {
-          return (window as any).__tmexE2eTerminalEngine ?? null;
+          return (window as any).__vibetermE2eTerminalEngine ?? null;
         }),
       { timeout: 20_000 }
     )
@@ -30,7 +30,7 @@ test('device: terminal ui renders and editor input toggles', async ({ page, requ
     .poll(
       () =>
         page.evaluate(() => {
-          return (window as any).__tmexE2eTerminalRenderer ?? null;
+          return (window as any).__vibetermE2eTerminalRenderer ?? null;
         }),
       { timeout: 20_000 }
     )

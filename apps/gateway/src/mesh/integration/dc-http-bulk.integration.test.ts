@@ -1,14 +1,14 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 // 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
-const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
+const describeRtc = process.env.VIBETERM_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
 import {
   FRAME_HEADER_SIZE,
   FrameOp,
   LinkMux,
   MAX_DATA_SEND_PAYLOAD,
   MAX_FRAME_PAYLOAD,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { DataChannelLink } from '../rtc/data-channel-link';
@@ -346,7 +346,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
 
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const open = new TextEncoder().encode('{"type":"http"}');
@@ -408,7 +408,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
     ]);
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
@@ -449,7 +449,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
     ]);
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const peerReady = Promise.withResolvers<import('@tmex/shared/link').LinkStream>();
+    const peerReady = Promise.withResolvers<import('@vibeterm/shared/link').LinkStream>();
     muxB.onStream(async (stream) => {
       const head = new TextEncoder().encode(
         `{"status":200,"headers":{"content-type":"application/octet-stream","content-length":"${EIGHT_MIB}"}}`
@@ -508,7 +508,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
     ]);
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
@@ -534,7 +534,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
     ]);
     const muxA = new LinkMux(la.link, { role: la.role });
     const muxB = new LinkMux(lb.link, { role: lb.role });
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await muxA.openStream(new Uint8Array([1]));
@@ -589,7 +589,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
 
       const muxA = new LinkMux(left, { role: 'initiator' });
       const muxB = new LinkMux(right, { role: 'acceptor' });
-      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
         muxB.onStream(resolve)
       );
       const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
@@ -677,7 +677,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
 
       const muxA = new LinkMux(left, { role: 'initiator' });
       const muxB = new LinkMux(right, { role: 'acceptor' });
-      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
         muxB.onStream(resolve)
       );
       const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));
@@ -742,7 +742,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
       fixtures.push({ close: () => right0.close() });
       const muxA0 = new LinkMux(left0, { role: 'initiator' });
       const muxB0 = new LinkMux(right0, { role: 'acceptor' });
-      const incoming0 = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      const incoming0 = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
         muxB0.onStream(resolve)
       );
       const probe = await muxA0.openStream(new TextEncoder().encode('{"type":"http"}'));
@@ -781,7 +781,7 @@ describeRtc('HTTP-style bulk over PeerManager DataChannel', () => {
 
       const muxA = new LinkMux(left, { role: 'initiator' });
       const muxB = new LinkMux(right, { role: 'acceptor' });
-      const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+      const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
         muxB.onStream(resolve)
       );
       const out = await muxA.openStream(new TextEncoder().encode('{"type":"http"}'));

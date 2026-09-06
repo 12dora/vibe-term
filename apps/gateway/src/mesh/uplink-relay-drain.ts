@@ -1,4 +1,4 @@
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 import type { InboundRelayHandler, MeshScheduler, PooledUplink } from './types';
 
 export const UPLINK_RELAY_DRAIN_RECHECK_MS = 3_000;

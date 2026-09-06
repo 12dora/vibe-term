@@ -6,8 +6,8 @@ import type {
   StreamChunk,
   StreamCloseInfo,
   WriteOptions,
-} from '@tmex/shared/link';
-import { encodeRelayOpenStream } from '@tmex/shared/relay';
+} from '@vibeterm/shared/link';
+import { encodeRelayOpenStream } from '@vibeterm/shared/relay';
 import { RelayBandwidthLimiter } from './relay-bandwidth';
 import { defaultRelayLimits } from './relay-limits';
 import { RelayMetering } from './relay-metering';

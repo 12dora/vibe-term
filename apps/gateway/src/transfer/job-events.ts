@@ -2,7 +2,7 @@
 // 一个连上就不读的客户端，否则能把整个任务生命周期的事件全攒在进程里。
 // 可替换的事件（进度、同一条目的状态）就地合并，终态事件永远保留，超预算的消费者直接断开。
 
-import type { TransferJobEvent } from '@tmex/shared';
+import type { TransferJobEvent } from '@vibeterm/shared';
 import { type TransferJobRecord, subscribeJob } from './job-registry';
 
 const NDJSON_HEADERS = {

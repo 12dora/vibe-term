@@ -4,7 +4,7 @@ import {
   type TmuxSession,
   type TmuxWindow,
   wsBorsh,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 import {
   applyPaneHints,

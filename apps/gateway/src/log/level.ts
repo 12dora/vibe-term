@@ -20,7 +20,7 @@ export function parseLogLevel(raw: string | undefined): LogLevel {
 }
 
 export function getLogLevel(env: NodeJS.ProcessEnv = process.env): LogLevel {
-  return parseLogLevel(env.TMEX_LOG_LEVEL);
+  return parseLogLevel(env.VIBETERM_LOG_LEVEL);
 }
 
 export function shouldLog(level: LogLevel, configured: LogLevel = getLogLevel()): boolean {

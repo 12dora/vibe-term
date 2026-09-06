@@ -12,7 +12,7 @@
 //   3. 有效集合去重后必须**恰好一条 sha-256**，冲突或多余（含多算法并存、多个
 //      `m=application` 段）一律返回 `null`，由调用方放弃本次直连。
 //
-// 与 `@tmex/shared/auth` 的 `parseSdpFingerprint` **刻意不同**：后者是宽松的首条匹配。
+// 与 `@vibeterm/shared/auth` 的 `parseSdpFingerprint` **刻意不同**：后者是宽松的首条匹配。
 // 这里重写而不复用 shared，是不让 ws-client 为了两个正则把 argon2 wasm / noble 曲线
 // 拖进前端 bundle；`normalizeFingerprint` 的语义仍与 shared 逐字段一致（有对拍用例）。
 //

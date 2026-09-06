@@ -1,4 +1,5 @@
-// PID 文件解析核心。CLI 与网关操作同一个 `<installDir>/tmex.pid`，但语义已分叉：
+// PID 文件解析核心。CLI 与网关操作同一个 `<installDir>/vibeterm.pid`（改名前安装的实例
+// 在服务重新注册前仍是 `tmex.pid`，读侧两者都试），但语义已分叉：
 // - CLI `parsePidRecord`：JSON 的 pid 必须是 number；保留 runtimePath。
 // - 网关 `parsePidFileRecord`：JSON pid 走 asPositiveInt（数字字符串也接受），丢弃 runtimePath。
 // 本模块实现 CLI 更严语义。两侧调用点均在其他 agent 占用的文件内，此处不改调用方。

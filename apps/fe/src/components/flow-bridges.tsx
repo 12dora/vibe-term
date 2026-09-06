@@ -1,5 +1,5 @@
-import { setNavigateBridge, setSidebarBridge } from '@tmex/stores';
-import { useSidebar } from '@tmex/ui/sidebar';
+import { setNavigateBridge, setSidebarBridge } from '@vibeterm/stores';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { useEffect } from 'react';
 import { useNavigate } from 'react-router';
 

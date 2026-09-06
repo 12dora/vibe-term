@@ -80,7 +80,7 @@ async function resolveRelayPassword(
   if (health.hasPassword === false) return undefined;
   if (health.hasPassword === null) return undefined;
   return await promptPassword('Relay password', {
-    envKey: 'TMEX_RELAY_PASSWORD',
+    envKey: 'VIBETERM_RELAY_PASSWORD',
     confirm: false,
   });
 }
@@ -155,7 +155,7 @@ async function enrollWithRetry(
     if (input.password !== undefined || !isPasswordRejection(error)) throw error;
     relayLog(input.io, t('relay.enroll.passwordRequired'));
     const password = await promptPassword('Relay password', {
-      envKey: 'TMEX_RELAY_PASSWORD',
+      envKey: 'VIBETERM_RELAY_PASSWORD',
       confirm: false,
     });
     return await exchangeRelayEnroll(session, { relayUrl: input.relayUrl, password });
@@ -295,7 +295,7 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   if (status.tenantId) lines.push(`tenant: ${status.tenantId}`);
   lines.push(`meta epoch: ${status.metaEpoch}`);
   lines.push(`peers via relay: ${status.nodesViaRelay}`);
-  if (status.reauthRequired) lines.push('reauth required: run tmex relay reauth <url>');
+  if (status.reauthRequired) lines.push('reauth required: run vibeterm relay reauth <url>');
   if (status.relays.length === 0) {
     lines.push('no relays configured');
     return lines;

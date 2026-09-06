@@ -2,10 +2,10 @@
 // 调用点必须排在 select 派发与 active 跟随之后（见 use-pane-size-sync.ts 顶部说明）：
 // 它可能触发 fetchPaneHistory，提前会让 history 请求越过同一次提交里的 TMUX_SELECT。
 
-import type { TmuxPane } from '@tmex/shared';
-import { selectPaneViewportOwner } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import type { TmuxPane } from '@vibeterm/shared';
+import { selectPaneViewportOwner } from '@vibeterm/stores';
+import { useTmuxStore } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, useEffect, useState } from 'react';
 import { resolvePaneSizeSyncPlan } from './pane-size-sync-plan';
 

@@ -17,7 +17,7 @@ type VisibleTextRange = {
 
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange | null> {
   return page.evaluate((target) => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) {
       return null;
     }
@@ -54,7 +54,7 @@ async function waitForVisibleText(page: Page, needle: string): Promise<VisibleTe
 // 数 link 下划线层上该文本区间行带内的非透明像素（下划线用 stroke 画，alpha > 0 即有墨迹）。
 async function countUnderlinePixels(page: Page, range: VisibleTextRange): Promise<number> {
   return page.evaluate((target) => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas[data-layer="link"]');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return -1;
@@ -85,7 +85,7 @@ async function countUnderlinePixels(page: Page, range: VisibleTextRange): Promis
 
 async function cellCenter(page: Page, row: number, col: number): Promise<{ x: number; y: number }> {
   const metrics = await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return null;
@@ -120,8 +120,8 @@ test('terminal: 有效文件路径与 URL 画虚线下划线，修饰键点击�
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-file-links-${Date.now()}`;
-  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-flink-')));
+  const sessionName = `vibeterm-e2e-file-links-${Date.now()}`;
+  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-flink-')));
   writeFileSync(join(sandbox, 'hello.txt'), 'hello from file link');
   createSinglePaneSession(sessionName);
 
@@ -177,8 +177,8 @@ test('terminal: 有效文件路径与 URL 画虚线下划线，修饰键点击�
 });
 
 test('terminal: 相对路径基于 pane cwd 解析后画下划线', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-file-links-rel-${Date.now()}`;
-  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-e2e-flink-rel-')));
+  const sessionName = `vibeterm-e2e-file-links-rel-${Date.now()}`;
+  const sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-e2e-flink-rel-')));
   writeFileSync(join(sandbox, 'rel.txt'), 'rel');
   createSinglePaneSession(sessionName);
 

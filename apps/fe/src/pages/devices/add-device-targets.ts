@@ -5,7 +5,7 @@
 // 挂载时登记自己的 `openAddDevice`，顶栏按 useSyncExternalStore 订阅当前可添加的节点。
 // 空注册表 = standalone / 单面板形态，顶栏退回派发全局事件（旧行为不变）。
 
-import type { AddDevicePreset } from '@tmex/panels/device-management';
+import type { AddDevicePreset } from '@vibeterm/panels/device-management';
 import { useSyncExternalStore } from 'react';
 
 export interface AddDeviceTarget {

@@ -1,6 +1,6 @@
 import { promises as dnsPromises } from 'node:dns';
-import { errorMessage } from '@tmex/shared';
-import type { TunnelEdgeResolution } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { TunnelEdgeResolution } from '@vibeterm/shared';
 
 export const EDGE_SRV_NAME = '_v2-origintunneld._tcp.argotunnel.com';
 export const WELL_KNOWN_EDGE_HOSTS = [
@@ -8,7 +8,7 @@ export const WELL_KNOWN_EDGE_HOSTS = [
   'region2.v2.argotunnel.com',
 ] as const;
 export const DEFAULT_EDGE_PORT = 7844;
-export const EDGE_ADDRS_ENV = 'TMEX_TUNNEL_EDGE_ADDRS';
+export const EDGE_ADDRS_ENV = 'VIBETERM_TUNNEL_EDGE_ADDRS';
 export const MAX_EDGE_ADDRS = 8;
 export const DOH_ENDPOINTS = [
   'https://cloudflare-dns.com/dns-query',

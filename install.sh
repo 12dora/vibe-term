@@ -1,27 +1,27 @@
 #!/usr/bin/env bash
-# tmex installer: download the CLI tarball from GitHub Releases and run `init`.
+# VibeTerm installer: download the CLI tarball from GitHub Releases and run `init`.
 # Usage:
-#   curl -fsSL https://raw.githubusercontent.com/12dora/tmex-enhanced/main/install.sh | bash
+#   curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
 #   bash install.sh [init flags...]
 #   bash install.sh --allow-unverified [init flags...]  # checksum skip, versions < 1.1.4 only
 # Env:
-#   TMEX_VERSION  pin a release (with or without leading v)
+#   VIBETERM_VERSION  pin a release (with or without leading v); TMEX_VERSION is accepted as an alias
 
-TMEX_RELEASE_REPO='12dora/tmex-enhanced'
-TMEX_MIN_BUN_VERSION='1.3.0'
+VIBETERM_RELEASE_REPO='12dora/vibe-term'
+VIBETERM_MIN_BUN_VERSION='1.3.0'
 
-tmex_parse_tag_name() {
+vibeterm_parse_tag_name() {
   printf '%s' "$1" | grep -o '"tag_name"[[:space:]]*:[[:space:]]*"[^"]*"' | head -n 1 | sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p'
 }
 
-tmex_version_from_tag() {
+vibeterm_version_from_tag() {
   local tag="$1"
   tag="${tag#v}"
   tag="${tag#V}"
   printf '%s' "$tag"
 }
 
-tmex_classify_checksum_http() {
+vibeterm_classify_checksum_http() {
   case "$1" in
     404) printf '%s' 'missing' ;;
     200) printf '%s' 'ok' ;;
@@ -31,7 +31,7 @@ tmex_classify_checksum_http() {
 
 # Print the hex for a filename field that is EXACTLY $2 (no directories, no *).
 # Rejects path-qualified entries such as /tmp/foo.tgz or ../foo.tgz.
-tmex_sha256sums_hex_for() {
+vibeterm_sha256sums_hex_for() {
   local sums_file="$1"
   local want="$2"
   awk -v want="$want" '
@@ -48,11 +48,11 @@ tmex_sha256sums_hex_for() {
   ' "$sums_file"
 }
 
-tmex_is_semver() {
+vibeterm_is_semver() {
   printf '%s' "$1" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'
 }
 
-tmex_tag_from_location_headers() {
+vibeterm_tag_from_location_headers() {
   local headers="$1"
   local location
   location="$(printf '%s' "$headers" | grep -i '^location:' | head -n 1 | tr -d '\r')"
@@ -67,7 +67,7 @@ tmex_tag_from_location_headers() {
 }
 
 # Compare dotted versions. Returns 0 if $1 >= $2.
-tmex_version_ge() {
+vibeterm_version_ge() {
   local IFS=.
   # shellcheck disable=SC2206
   local a=($1) b=($2)
@@ -89,7 +89,7 @@ tmex_version_ge() {
   return 0
 }
 
-tmex_node_version_ok() {
+vibeterm_node_version_ok() {
   local ver="${1:-}"
   local major="${ver#v}"
   major="${major%%.*}"
@@ -99,7 +99,7 @@ tmex_node_version_ok() {
   [ "$major" -ge 20 ]
 }
 
-tmex_dir_on_path() {
+vibeterm_dir_on_path() {
   local needle="${1%/}"
   local IFS=:
   local entry
@@ -111,134 +111,141 @@ tmex_dir_on_path() {
   return 1
 }
 
-tmex_need_cmd() {
+vibeterm_need_cmd() {
   local name="$1"
   if ! command -v "$name" >/dev/null 2>&1; then
-    echo "tmex install: missing required command: $name" >&2
+    echo "vibeterm install: missing required command: $name" >&2
     exit 1
   fi
 }
 
-tmex_detect_os() {
+vibeterm_detect_os() {
   local os
   os="$(uname -s 2>/dev/null || true)"
   case "$os" in
     Darwin | Linux) ;;
     *)
-      echo "tmex install: unsupported OS: ${os:-unknown} (need macOS or Linux)" >&2
+      echo "vibeterm install: unsupported OS: ${os:-unknown} (need macOS or Linux)" >&2
       exit 1
       ;;
   esac
 }
 
-tmex_ensure_bun() {
+vibeterm_ensure_bun() {
   export PATH="${HOME}/.bun/bin:${PATH:-}"
   if command -v bun >/dev/null 2>&1; then
     local ver
     ver="$(bun --version 2>/dev/null || true)"
-    if [ -n "$ver" ] && tmex_version_ge "$ver" "$TMEX_MIN_BUN_VERSION"; then
+    if [ -n "$ver" ] && vibeterm_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
       return 0
     fi
-    echo "tmex install: Bun ${ver:-unknown} is older than ${TMEX_MIN_BUN_VERSION}; installing a newer Bun"
+    echo "vibeterm install: Bun ${ver:-unknown} is older than ${VIBETERM_MIN_BUN_VERSION}; installing a newer Bun"
   else
-    echo "tmex install: Bun not found; installing via bun.sh"
+    echo "vibeterm install: Bun not found; installing via bun.sh"
   fi
   curl -fsSL https://bun.sh/install | bash
   export PATH="${HOME}/.bun/bin:${PATH:-}"
   if ! command -v bun >/dev/null 2>&1; then
-    echo "tmex install: Bun install failed" >&2
+    echo "vibeterm install: Bun install failed" >&2
     exit 1
   fi
   local ver
   ver="$(bun --version 2>/dev/null || true)"
-  if [ -z "$ver" ] || ! tmex_version_ge "$ver" "$TMEX_MIN_BUN_VERSION"; then
-    echo "tmex install: Bun ${ver:-unknown} is still older than ${TMEX_MIN_BUN_VERSION}" >&2
+  if [ -z "$ver" ] || ! vibeterm_version_ge "$ver" "$VIBETERM_MIN_BUN_VERSION"; then
+    echo "vibeterm install: Bun ${ver:-unknown} is still older than ${VIBETERM_MIN_BUN_VERSION}" >&2
     exit 1
   fi
 }
 
-tmex_github_json() {
+vibeterm_github_json() {
   local url="$1"
   curl -fsSL \
     -H 'Accept: application/vnd.github+json' \
-    -H 'User-Agent: tmex-install' \
+    -H 'User-Agent: vibeterm-install' \
     "$url"
 }
 
-tmex_tag_from_latest_redirect() {
+vibeterm_tag_from_latest_redirect() {
   local headers
-  headers="$(curl -sI -H 'User-Agent: tmex-install' "https://github.com/${TMEX_RELEASE_REPO}/releases/latest")" || return 1
-  tmex_tag_from_location_headers "$headers"
+  headers="$(curl -sI -H 'User-Agent: vibeterm-install' "https://github.com/${VIBETERM_RELEASE_REPO}/releases/latest")" || return 1
+  vibeterm_tag_from_location_headers "$headers"
 }
 
-tmex_resolve_version() {
-  if [ -n "${TMEX_VERSION:-}" ]; then
+vibeterm_release_asset_url() {
+  printf '%s' "https://github.com/${VIBETERM_RELEASE_REPO}/releases/download/v${1}/${2}"
+}
+
+vibeterm_resolve_version() {
+  # 改名前的变量名继续接受，老脚本 / 老文档里写的是 TMEX_VERSION。
+  local requested="${VIBETERM_VERSION:-${TMEX_VERSION:-}}"
+  if [ -n "$requested" ]; then
     local pinned
-    pinned="$(tmex_version_from_tag "$TMEX_VERSION")"
-    if ! tmex_is_semver "$pinned"; then
-      echo "tmex install: invalid TMEX_VERSION: ${TMEX_VERSION}" >&2
+    pinned="$(vibeterm_version_from_tag "$requested")"
+    if ! vibeterm_is_semver "$pinned"; then
+      echo "vibeterm install: invalid VIBETERM_VERSION: ${requested}" >&2
       exit 1
     fi
     printf '%s' "$pinned"
     return 0
   fi
   local tag version
-  tag="$(tmex_tag_from_latest_redirect 2>/dev/null || true)"
+  tag="$(vibeterm_tag_from_latest_redirect 2>/dev/null || true)"
   if [ -z "$tag" ]; then
     local json
-    json="$(tmex_github_json "https://api.github.com/repos/${TMEX_RELEASE_REPO}/releases/latest")" || {
-      echo "tmex install: failed to query GitHub Releases" >&2
+    json="$(vibeterm_github_json "https://api.github.com/repos/${VIBETERM_RELEASE_REPO}/releases/latest")" || {
+      echo "vibeterm install: failed to query GitHub Releases" >&2
       exit 1
     }
-    tag="$(tmex_parse_tag_name "$json")"
+    tag="$(vibeterm_parse_tag_name "$json")"
   fi
-  version="$(tmex_version_from_tag "$tag")"
+  version="$(vibeterm_version_from_tag "$tag")"
   if [ -z "$version" ]; then
-    echo "tmex install: latest release is missing a tag" >&2
+    echo "vibeterm install: latest release is missing a tag" >&2
     exit 1
   fi
   printf '%s' "$version"
 }
 
-tmex_print_latest() {
-  tmex_resolve_version
+vibeterm_print_latest() {
+  vibeterm_resolve_version
   printf '\n'
 }
 
-tmex_run_init() {
+vibeterm_run_init() {
   local pkg_dir="$1"
   shift
-  local cli_js="${pkg_dir}/bin/tmex.js"
-  if command -v node >/dev/null 2>&1 && tmex_node_version_ok "$(node --version 2>/dev/null || true)"; then
+  local cli_js="${pkg_dir}/bin/vibeterm.js"
+  [ -f "$cli_js" ] || cli_js="${pkg_dir}/bin/tmex.js"
+  if command -v node >/dev/null 2>&1 && vibeterm_node_version_ok "$(node --version 2>/dev/null || true)"; then
     node "$cli_js" init "$@"
   else
     bun "$cli_js" init "$@"
   fi
 }
 
-TMEX_INSTALL_TMP=
+VIBETERM_INSTALL_TMP=
 
-tmex_cleanup_tmp() {
-  if [ -n "${TMEX_INSTALL_TMP:-}" ] && [ -d "$TMEX_INSTALL_TMP" ]; then
-    rm -rf "$TMEX_INSTALL_TMP"
-    TMEX_INSTALL_TMP=
+vibeterm_cleanup_tmp() {
+  if [ -n "${VIBETERM_INSTALL_TMP:-}" ] && [ -d "$VIBETERM_INSTALL_TMP" ]; then
+    rm -rf "$VIBETERM_INSTALL_TMP"
+    VIBETERM_INSTALL_TMP=
   fi
 }
 
-tmex_print_path_hint() {
+vibeterm_print_path_hint() {
   local local_bin="${HOME}/.local/bin"
   local bun_bin="${HOME}/.bun/bin"
-  if tmex_dir_on_path "$local_bin"; then
+  if vibeterm_dir_on_path "$local_bin"; then
     return 0
   fi
-  if { [ -L "${bun_bin}/tmex" ] || [ -f "${bun_bin}/tmex" ]; } && tmex_dir_on_path "$bun_bin"; then
+  if { [ -L "${bun_bin}/vibeterm" ] || [ -f "${bun_bin}/vibeterm" ]; } && vibeterm_dir_on_path "$bun_bin"; then
     return 0
   fi
-  echo "If 'tmex' is not found, add ~/.local/bin to PATH:"
+  echo "If 'vibeterm' is not found, add ~/.local/bin to PATH:"
   echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
 }
 
-tmex_install() {
+vibeterm_install() {
   set -euo pipefail
 
   local allow_unverified=0
@@ -252,52 +259,61 @@ tmex_install() {
     fi
   done
 
-  tmex_need_cmd curl
-  tmex_need_cmd tar
-  tmex_detect_os
-  tmex_ensure_bun
+  vibeterm_need_cmd curl
+  vibeterm_need_cmd tar
+  vibeterm_detect_os
+  vibeterm_ensure_bun
 
-  local version tarball_url tgz
-  version="$(tmex_resolve_version)"
-  tarball_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/tmex-cli-${version}.tgz"
-  echo "tmex install: downloading ${tarball_url}"
+  local version asset tarball_url tgz
+  version="$(vibeterm_resolve_version)"
+  asset="vibeterm-cli-${version}.tgz"
 
-  TMEX_INSTALL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/tmex-install.XXXXXX")"
-  trap tmex_cleanup_tmp EXIT
-  tgz="${TMEX_INSTALL_TMP}/tmex-cli-${version}.tgz"
+  VIBETERM_INSTALL_TMP="$(mktemp -d "${TMPDIR:-/tmp}/vibeterm-install.XXXXXX")"
+  trap vibeterm_cleanup_tmp EXIT
+  tgz="${VIBETERM_INSTALL_TMP}/package.tgz"
 
-  if ! curl -fsSL -o "$tgz" -H 'User-Agent: tmex-install' "$tarball_url"; then
-    echo "tmex install: failed to download ${tarball_url} (version not found or network error)" >&2
-    exit 1
+  tarball_url="$(vibeterm_release_asset_url "$version" "$asset")"
+  echo "vibeterm install: downloading ${tarball_url}"
+  if ! curl -fsSL -o "$tgz" -H 'User-Agent: vibeterm-install' "$tarball_url"; then
+    # 桥接期：只发了改名前资产名的 release
+    asset="tmex-cli-${version}.tgz"
+    tarball_url="$(vibeterm_release_asset_url "$version" "$asset")"
+    echo "vibeterm install: retrying with ${tarball_url}"
+    if ! curl -fsSL -o "$tgz" -H 'User-Agent: vibeterm-install' "$tarball_url"; then
+      echo "vibeterm install: failed to download ${asset} (version not found or network error)" >&2
+      exit 1
+    fi
   fi
 
-  local sums_url="https://github.com/${TMEX_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
-  local sums_file="${TMEX_INSTALL_TMP}/SHA256SUMS"
+  local sums_url="https://github.com/${VIBETERM_RELEASE_REPO}/releases/download/v${version}/SHA256SUMS"
+  local sums_file="${VIBETERM_INSTALL_TMP}/SHA256SUMS"
   local sums_code
-  sums_code="$(curl -sS -L -o "$sums_file" -w '%{http_code}' -H 'User-Agent: tmex-install' "$sums_url")" || {
-    echo "tmex install: failed to fetch SHA256SUMS (network error)" >&2
+  sums_code="$(curl -sS -L -o "$sums_file" -w '%{http_code}' -H 'User-Agent: vibeterm-install' "$sums_url")" || {
+    echo "vibeterm install: failed to fetch SHA256SUMS (network error)" >&2
     exit 1
   }
   local sums_class
-  sums_class="$(tmex_classify_checksum_http "$sums_code")"
+  sums_class="$(vibeterm_classify_checksum_http "$sums_code")"
   if [ "$sums_class" = "missing" ]; then
-    if tmex_version_ge "$version" "1.1.4"; then
-      echo "tmex install: Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue." >&2
+    if vibeterm_version_ge "$version" "1.1.4"; then
+      echo "vibeterm install: Release ${version} requires SHA256SUMS (HTTP 200, matching digest). Refusing to continue." >&2
       exit 1
     fi
     if [ "$allow_unverified" -ne 1 ]; then
-      echo "tmex install: Release ${version} has no SHA256SUMS. Re-run with --allow-unverified to proceed." >&2
+      echo "vibeterm install: Release ${version} has no SHA256SUMS. Re-run with --allow-unverified to proceed." >&2
       exit 1
     fi
-    echo "tmex install: SHA256SUMS not found; tarball integrity is unverified"
+    echo "vibeterm install: SHA256SUMS not found; tarball integrity is unverified"
   elif [ "$sums_class" != "ok" ]; then
-    echo "tmex install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
+    echo "vibeterm install: failed to fetch SHA256SUMS (HTTP ${sums_code})" >&2
     exit 1
   else
     local expected_hex actual_hex
-    if ! expected_hex="$(tmex_sha256sums_hex_for "$sums_file" "tmex-cli-${version}.tgz")"; then
-      echo "tmex install: SHA256SUMS does not list tmex-cli-${version}.tgz" >&2
-      exit 1
+    if ! expected_hex="$(vibeterm_sha256sums_hex_for "$sums_file" "$asset")"; then
+      if ! expected_hex="$(vibeterm_sha256sums_hex_for "$sums_file" "tmex-cli-${version}.tgz")"; then
+        echo "vibeterm install: SHA256SUMS does not list ${asset}" >&2
+        exit 1
+      fi
     fi
     if command -v shasum >/dev/null 2>&1; then
       actual_hex="$(shasum -a 256 "$tgz" | awk '{print $1}')"
@@ -307,41 +323,41 @@ tmex_install() {
     expected_hex="$(printf '%s' "$expected_hex" | tr 'A-F' 'a-f')"
     actual_hex="$(printf '%s' "$actual_hex" | tr 'A-F' 'a-f')"
     if [ "$actual_hex" != "$expected_hex" ]; then
-      echo "tmex install: Release tarball sha256 mismatch for tmex-cli-${version}.tgz" >&2
+      echo "vibeterm install: Release tarball sha256 mismatch for ${asset}" >&2
       exit 1
     fi
   fi
 
-  tar -xzf "$tgz" -C "$TMEX_INSTALL_TMP"
-  local pkg_dir="${TMEX_INSTALL_TMP}/package"
-  if [ ! -f "${pkg_dir}/bin/tmex.js" ]; then
-    echo "tmex install: tarball is missing package/bin/tmex.js" >&2
+  tar -xzf "$tgz" -C "$VIBETERM_INSTALL_TMP"
+  local pkg_dir="${VIBETERM_INSTALL_TMP}/package"
+  if [ ! -f "${pkg_dir}/bin/vibeterm.js" ] && [ ! -f "${pkg_dir}/bin/tmex.js" ]; then
+    echo "vibeterm install: tarball is missing package/bin/vibeterm.js" >&2
     exit 1
   fi
 
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
-      echo "tmex install: stdin is not a TTY; attaching /dev/tty for prompts"
-      tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
+      echo "vibeterm install: stdin is not a TTY; attaching /dev/tty for prompts"
+      vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" <&3
       exec 3<&-
     else
-      echo "tmex install: no TTY; passing --no-interactive"
-      tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
+      echo "vibeterm install: no TTY; passing --no-interactive"
+      vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}" --no-interactive
     fi
   else
-    tmex_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}"
+    vibeterm_run_init "$pkg_dir" "${init_args[@]+"${init_args[@]}"}"
   fi
 
   echo
-  echo "tmex install: done. The tmex command is installed to ~/.local/bin/tmex"
-  tmex_print_path_hint
+  echo "vibeterm install: done. The vibeterm command is installed to ~/.local/bin/vibeterm"
+  vibeterm_print_path_hint
 }
 
 # When sourced (unit tests), functions stay defined and main does not run.
 if [[ "${1:-}" == "--print-latest" ]]; then
   set -euo pipefail
-  tmex_print_latest
+  vibeterm_print_latest
   exit 0
 fi
 
-return 0 2>/dev/null || tmex_install "$@"
+return 0 2>/dev/null || vibeterm_install "$@"

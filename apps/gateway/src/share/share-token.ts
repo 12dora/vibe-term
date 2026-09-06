@@ -1,11 +1,16 @@
-import { encodeBase64url, randomBytes, sha256 } from '@tmex/shared/auth';
+import { encodeBase64url, randomBytes, sha256 } from '@vibeterm/shared/auth';
+import {
+  CLEAR_SHARE_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
+} from '@vibeterm/shared/http/mesh-headers';
 
-export const SHARE_COOKIE_PREFIX = 'tmex_sh_';
+export const SHARE_COOKIE_PREFIX = 'vibeterm_sh_';
+/** tmex 时期的分享 cookie 前缀：混合版本期同时签发与扫描，全网 ≥2.0 后删除。 */
+export const LEGACY_SHARE_COOKIE_PREFIX = 'tmex_sh_';
 export const SHARE_AUTH_PREFIX = 'share:';
 
-export const X_TMEX_SET_SHARE = 'x-tmex-set-share';
-export const X_TMEX_SET_SHARE_MAX_AGE = 'x-tmex-set-share-max-age';
-export const X_TMEX_CLEAR_SHARE = 'x-tmex-clear-share';
+export { CLEAR_SHARE_HEADER, SET_SHARE_HEADER, SET_SHARE_MAX_AGE_HEADER };
 
 export const SHARE_ID_BYTES = 16;
 export const SHARE_SECRET_BYTES = 32;
@@ -18,6 +23,10 @@ const SECRET_RE = /^[A-Za-z0-9_-]{16,128}$/;
 
 export function shareCookieName(via: string): string {
   return `${SHARE_COOKIE_PREFIX}${via}`;
+}
+
+export function legacyShareCookieName(via: string): string {
+  return `${LEGACY_SHARE_COOKIE_PREFIX}${via}`;
 }
 
 export function isValidShareCookieVia(via: string): boolean {

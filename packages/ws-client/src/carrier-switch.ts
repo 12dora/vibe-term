@@ -25,7 +25,7 @@
 // 并触发 resume——关闭时排空会把直连帧插到 primary 上排在切换帧之前的旧帧后面，造成乱序，
 // 切回后再排空还会在恢复结果之后重复写入终端。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 export type ActiveCarrier = 'primary' | 'direct';
 

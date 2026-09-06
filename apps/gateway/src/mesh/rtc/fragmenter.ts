@@ -13,7 +13,7 @@ import {
   RECEIVER_MAX_FRAGMENTS,
   fragmentBytes,
   pickFragmentPayloadSize,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 
 export {
   DC_MAX_MESSAGE_BYTES,

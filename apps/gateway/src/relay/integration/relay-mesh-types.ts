@@ -1,6 +1,6 @@
-import type { TmexRoles } from '@tmex/shared';
-import type { RootKey } from '@tmex/shared/auth';
-import type { RelayEnvelope } from '@tmex/shared/relay';
+import type { VibeTermRoles } from '@vibeterm/shared';
+import type { RootKey } from '@vibeterm/shared/auth';
+import type { RelayEnvelope } from '@vibeterm/shared/relay';
 import type { MeshRelayStore } from '../../auth/mesh-relay-store';
 import type { AuthDb } from '../../auth/types';
 import type { UserKeyService } from '../../auth/user-key-service';
@@ -28,8 +28,8 @@ export async function waitUntilAsync(
 }
 
 export const NODE_PASSWORD = 'relay-integration-pass';
-export const NODE_ROLES: TmexRoles = { hub: false, node: true, relay: false };
-export const HUB_NODE_ROLES: TmexRoles = { hub: true, node: true, relay: false };
+export const NODE_ROLES: VibeTermRoles = { hub: false, node: true, relay: false };
+export const HUB_NODE_ROLES: VibeTermRoles = { hub: true, node: true, relay: false };
 
 /**
  * 池子在没有可用上级时会立刻重试；`FastScheduler` 的 sleep 直接 resolve 会把测试拖成热循环。
@@ -105,7 +105,7 @@ export type RelayMeshHarness = {
 
 export type TenantOptions = {
   password?: string;
-  roles?: TmexRoles;
+  roles?: VibeTermRoles;
   hubUrl?: string | null;
   hubPublicUrl?: string | null;
   wsFactory?: UplinkWsFactory;
@@ -117,7 +117,7 @@ export type NodeBoot = {
   rootKey: RootKey;
   db?: AuthDb;
   close?: () => void;
-  roles?: TmexRoles;
+  roles?: VibeTermRoles;
   hubUrl?: string | null;
   hubPublicUrl?: string | null;
   wsFactory?: UplinkWsFactory;

@@ -1,11 +1,11 @@
 // 进行中的分享：链接 / 密码 / 在线人数 / 有效期 + 终止。
 // 密码只有刚创建那一次自动拿得到；已有分享遮罩显示，勾「链接中包含密码」时才按需取回。
 
-import { formatDateTime } from '@tmex/shared';
-import type { ShareRecord } from '@tmex/shared/share';
-import { useSiteStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { formatDateTime } from '@vibeterm/shared';
+import type { ShareRecord } from '@vibeterm/shared/share';
+import { useSiteStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import { Loader2 } from 'lucide-react';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';

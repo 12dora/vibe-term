@@ -11,7 +11,12 @@ import {
 } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
-import { type TmexRoles, isStandaloneRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
+import {
+  type VibeTermRoles,
+  isStandaloneRoles,
+  parseVibeTermRoles,
+  roleNameFromFlags,
+} from '../lib/roles';
 
 export const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
 
@@ -109,7 +114,7 @@ export function wrapJoinEnvWriteError(error: unknown, joinedHubUrl?: string): Se
   if (joinedHubUrl) {
     return new SetupError(
       'env_write_failed',
-      `node has joined locally; only the env keys TMEX_ROLES=node, TMEX_HUB_URL=${joinedHubUrl} need to be written manually`,
+      `node has joined locally; only the env keys VIBETERM_ROLES=node, VIBETERM_HUB_URL=${joinedHubUrl} need to be written manually`,
       500
     );
   }
@@ -133,7 +138,7 @@ export function isUniqueConstraintFailure(error: unknown): boolean {
   return /UNIQUE constraint failed/i.test(errorCause(error));
 }
 
-export function assertStandalone(roles: TmexRoles): void {
+export function assertStandalone(roles: VibeTermRoles): void {
   if (!isStandaloneRoles(roles)) {
     throw new SetupError('not_standalone', 'setup is only available in standalone mode', 409);
   }
@@ -296,9 +301,9 @@ export function newStagedEnvPath(envPath: string): string {
 
 /** 密码加入中继后的角色：本机已是 relay 则 `relay,node`，否则 `node`。 */
 export function relayPasswordJoinRoleName(current: string | undefined): string {
-  let roles: TmexRoles;
+  let roles: VibeTermRoles;
   try {
-    roles = parseTmexRoles(current);
+    roles = parseVibeTermRoles(current);
   } catch {
     roles = { hub: false, node: false, relay: false };
   }
@@ -310,9 +315,9 @@ export function applyRelayPasswordJoinEnv(
 ): Record<string, string> {
   return {
     ...existing,
-    TMEX_ROLES: relayPasswordJoinRoleName(existing.TMEX_ROLES),
-    TMEX_HUB_URL: '',
-    TMEX_HUB_PUBLIC_URL: '',
+    VIBETERM_ROLES: relayPasswordJoinRoleName(existing.VIBETERM_ROLES),
+    VIBETERM_HUB_URL: '',
+    VIBETERM_HUB_PUBLIC_URL: '',
   };
 }
 

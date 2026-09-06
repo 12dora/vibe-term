@@ -1,7 +1,7 @@
 // window 级尺寸上报（resize-window 语义）：容器尺寸 / cell 尺寸 → 整窗 cols/rows，
 // ResizeObserver 防抖触发；cell 尺寸未就绪（实例仍在异步创建）时有限重试。
 
-import type { TmuxLayoutNode } from '@tmex/shared';
+import type { TmuxLayoutNode } from '@vibeterm/shared';
 import { type RefObject, useCallback, useEffect, useRef } from 'react';
 import { computeSplitWindowGridSize } from '../splitLayoutGeometry';
 import {

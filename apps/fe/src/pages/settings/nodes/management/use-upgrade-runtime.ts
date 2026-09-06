@@ -2,7 +2,7 @@
 // 行内按钮、批量与回读续跑三条入口全部经由 `runExclusive` 领锁，也在那里领各自的 `AbortController`。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { UpgradeStatus } from '@tmex/shared';
+import type { UpgradeStatus } from '@vibeterm/shared';
 import { useCallback, useEffect, useState } from 'react';
 import { toast } from 'sonner';
 import {

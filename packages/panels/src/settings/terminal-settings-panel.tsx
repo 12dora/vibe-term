@@ -1,10 +1,10 @@
-import type { KeyboardBehaviorMode } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores/react';
-import { FONT_MANIFEST, getFontEntry } from '@tmex/theme';
-import { cn } from '@tmex/ui';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Skeleton } from '@tmex/ui/skeleton';
+import type { KeyboardBehaviorMode } from '@vibeterm/stores';
+import { useUIStore } from '@vibeterm/stores/react';
+import { FONT_MANIFEST, getFontEntry } from '@vibeterm/theme';
+import { cn } from '@vibeterm/ui';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { Check } from 'lucide-react';
 import {
   type KeyboardEvent,
@@ -22,7 +22,7 @@ import { type NumericDraftController, createNumericDraft } from './numeric-setti
 // 预览要拉起 Ghostty 的 WASM 与终端字体，是这个面板最重的一块，却和上手就要改的
 // 字号/行高/字体/快捷键毫无依赖关系：切成独立 chunk，控件先出来，预览随后补上。
 const TerminalPreview = lazy(() =>
-  import('@tmex/terminal-ui').then((m) => ({ default: m.TerminalPreview }))
+  import('@vibeterm/terminal-ui').then((m) => ({ default: m.TerminalPreview }))
 );
 
 const FONT_SIZE_MIN = 8;

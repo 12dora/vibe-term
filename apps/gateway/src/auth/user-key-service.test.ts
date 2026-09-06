@@ -19,7 +19,7 @@ import {
   genesisHead,
   rootKeyFromSeed,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { KeyLogStore } from './key-log-store';
 import { ensureNodeIdentity, selfSignedNodeCertificate } from './node-identity-service';
 import { NodeIdentityStore } from './node-identity-store';
@@ -41,7 +41,7 @@ describe('UserKeyService', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const { service, userStore, keyLogStore } = createService(db);
-      const boot = await service.bootstrapUser({ username: 'alice', password: 'tmex-test' });
+      const boot = await service.bootstrapUser({ username: 'alice', password: 'vibeterm-test' });
       expect(boot.rootEpoch).toBe(1);
       expect(boot.rootPublicKey.length).toBe(32);
       expect(bytesEqual(boot.rootPublicKey, boot.rootKey.publicKey)).toBe(true);

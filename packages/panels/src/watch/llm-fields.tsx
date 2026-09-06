@@ -1,7 +1,7 @@
-import type { LlmProviderDto } from '@tmex/shared';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Switch } from '@tmex/ui/switch';
-import { Textarea } from '@tmex/ui/textarea';
+import type { LlmProviderDto } from '@vibeterm/shared';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
+import { Switch } from '@vibeterm/ui/switch';
+import { Textarea } from '@vibeterm/ui/textarea';
 import { useTranslation } from 'react-i18next';
 import { LlmModelSelect } from '../settings/llm-model-select';
 import type { SetWatchRuleField } from './use-watch-rule-draft';

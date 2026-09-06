@@ -217,7 +217,7 @@ test.describe
     let deviceId: string;
     let windowId: string;
     let paneId: string;
-    const sessionName = `tmex-e2e-agent-${Date.now()}`;
+    const sessionName = `vibeterm-e2e-agent-${Date.now()}`;
 
     test.beforeAll(async ({ request }) => {
       // 记录测试前的默认 LLM settings，afterAll 复原，避免 reuseExistingServer 本地复用时污染

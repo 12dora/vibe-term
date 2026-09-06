@@ -5,7 +5,7 @@ import type { ShareOriginCandidate } from './types';
 describe('isPublicShareOrigin', () => {
   test('公网域名与公网 IP 通过', () => {
     for (const url of [
-      'https://tmex.example.com',
+      'https://vibeterm.example.com',
       'http://example.co.jp:8443',
       'https://203.0.113.9',
       'https://[2001:db8::1]',

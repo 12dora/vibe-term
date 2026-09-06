@@ -4,20 +4,20 @@
 // 点击展开诊断浮层：明细按链路种类给，走中转就说清中转地址与未直连的原因，
 // ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import { DIRECT_FAILURE_CODES } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { DIRECT_FAILURE_CODES } from '@vibeterm/api-client/auth/index';
 import type {
   DirectFailureCode,
   MeshNodeDirectFailure,
   MeshNodeReach,
   MeshNodeTransport,
-} from '@tmex/api-client/auth/index';
-import { cn } from '@tmex/ui';
+} from '@vibeterm/api-client/auth/index';
+import { cn } from '@vibeterm/ui';
 import type {
   DirectCarrierPath,
   DirectDiagnostics,
   DirectIceDiagnostics,
-} from '@tmex/ws-client/direct/types';
+} from '@vibeterm/ws-client/direct/types';
 import { Activity } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -317,7 +317,7 @@ function Badge({
   testId: string;
 }) {
   const className = cn(
-    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+    'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
     tone === 'ok'
       ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
       : 'border-border text-muted-foreground'
@@ -402,7 +402,7 @@ export function NodeLinkDiagnostics({
   const failures = kind === 'relay' ? directFailureRows(link.directFailure) : [];
   return (
     <div
-      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--tmex-motion-fast) ease-out motion-reduce:animate-none"
+      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--vibeterm-motion-fast) ease-out motion-reduce:animate-none"
       data-testid="ice-diagnostics"
     >
       <div className="mb-1 font-semibold">{t('nodes.badge.iceTitle')}</div>

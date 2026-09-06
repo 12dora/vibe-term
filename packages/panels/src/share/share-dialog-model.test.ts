@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { ShareOriginCandidate, ShareRecord } from '@tmex/shared/share';
+import type { ShareOriginCandidate, ShareRecord } from '@vibeterm/shared/share';
 import {
   SHARE_ACTIVE_POLL_MS,
   SHARE_CUSTOM_MAX_MS,

@@ -1,5 +1,5 @@
-import { errorMessage } from '@tmex/shared';
-import type { Device } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { Device } from '@vibeterm/shared';
 import { Client, type ClientChannel } from 'ssh2';
 
 import { config } from '../config';
@@ -47,7 +47,7 @@ interface ControlChannelHandle extends ExternalControlHandle {
   stop: () => void;
 }
 
-const COMMAND_SENTINEL = '\x1eTMEX_END ';
+const COMMAND_SENTINEL = '\x1eVIBETERM_END ';
 
 export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected readonly logPrefix = '[ssh]';
@@ -86,7 +86,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
         throw new Error(`SshExternalTmuxConnection only supports ssh device: ${this.deviceId}`);
       }
 
-      this.sessionName = this.device.session?.trim() || 'tmex';
+      this.sessionName = this.device.session?.trim() || 'vibeterm';
 
       await this.awaitConnectStep(generation, () => this.connectSshClient());
       await this.awaitConnectStep(generation, () => this.openCommandChannel());
@@ -368,7 +368,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
     const version = parseTmuxVersion(parsed.tmuxVersion);
     if (!isControlModeSupported(version)) {
-      const message = `remote tmux too old for tmex (control mode requires tmux >= 3.0, found ${parsed.tmuxVersion || 'unknown'})`;
+      const message = `remote tmux too old for VibeTerm (control mode requires tmux >= 3.0, found ${parsed.tmuxVersion || 'unknown'})`;
       updateDeviceRuntimeStatus(this.deviceId, {
         lastSeenAt: new Date().toISOString(),
         tmuxAvailable: false,
@@ -593,7 +593,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     }
 
     const commandId = crypto.randomUUID();
-    const wrappedCommand = `{ ${command}; } 2>&1\nprintf '\\036TMEX_END %s %d\\036\\n' ${quoteShellArg(
+    const wrappedCommand = `{ ${command}; } 2>&1\nprintf '\\036VIBETERM_END %s %d\\036\\n' ${quoteShellArg(
       commandId
     )} $?\n`;
 

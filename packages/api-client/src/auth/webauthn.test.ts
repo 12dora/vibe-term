@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { AuthenticationResponseJSON } from './types';
 import {
   isWebAuthnAvailable,
@@ -25,7 +25,7 @@ describe('webauthn 适配层', () => {
   test('creation options 的 base64url 字段转成 ArrayBuffer', () => {
     const challenge = bytes(1, 2, 3, 4);
     const options = toCreationOptions({
-      rp: { id: 'example.com', name: 'tmex' },
+      rp: { id: 'example.com', name: 'VibeTerm' },
       user: { id: encodeBase64url(bytes(9, 9)), name: 'alice', displayName: 'alice' },
       challenge: encodeBase64url(challenge),
       pubKeyCredParams: [{ alg: -7, type: 'public-key' }],

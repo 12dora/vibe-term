@@ -1,4 +1,4 @@
-import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import type { UserStore } from '../auth/user-store';
 import { fakeSocketPair } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';

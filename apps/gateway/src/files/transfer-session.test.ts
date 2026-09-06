@@ -126,9 +126,9 @@ describe('upload session ranged writes', () => {
   });
 
   test('sweepOrphanTransferTemps 仅清理超期的传输临时目录', () => {
-    const oldDir = mkdtempSync(join(tmpdir(), 'tmex-up-'));
-    const freshDir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
-    const unrelated = mkdtempSync(join(tmpdir(), 'tmex-keep-'));
+    const oldDir = mkdtempSync(join(tmpdir(), 'vibeterm-up-'));
+    const freshDir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
+    const unrelated = mkdtempSync(join(tmpdir(), 'vibeterm-keep-'));
     const old = new Date(Date.now() - 2 * 60 * 60 * 1000); // 2h 前
     utimesSync(oldDir, old, old);
     try {
@@ -216,7 +216,7 @@ describe('upload session review regressions', () => {
 
 describe('download session source guard', () => {
   test('源文件被改写后续传请求干净失败', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     try {
       writeFileSync(tmpPath, Buffer.from('hello'));
@@ -237,7 +237,7 @@ describe('download session source guard', () => {
   });
 
   test('源文件消失也算变了', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('x'));
     const s = createDownloadSession({

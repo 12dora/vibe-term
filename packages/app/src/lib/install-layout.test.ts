@@ -6,21 +6,23 @@ import { createInstallLayout, hasCurrentLayout } from './install-layout';
 
 describe('createInstallLayout', () => {
   test('nativeDir is <installDir>/native when current is absent', () => {
-    const layout = createInstallLayout('/tmp/tmex-install-test');
-    expect(layout.nativeDir).toBe(join('/tmp/tmex-install-test', 'native'));
-    expect(layout.runtimeDir).toBe(join('/tmp/tmex-install-test', 'runtime'));
+    const layout = createInstallLayout('/tmp/vibeterm-install-test');
+    expect(layout.nativeDir).toBe(join('/tmp/vibeterm-install-test', 'native'));
+    expect(layout.runtimeDir).toBe(join('/tmp/vibeterm-install-test', 'runtime'));
     expect(layout.runtimeCliAuthPath).toBe(
-      join('/tmp/tmex-install-test', 'runtime', 'cli-auth.js')
+      join('/tmp/vibeterm-install-test', 'runtime', 'cli-auth.js')
     );
-    expect(layout.runtimeServerPath).toBe(join('/tmp/tmex-install-test', 'runtime', 'server.js'));
-    expect(layout.envPath).toBe(join('/tmp/tmex-install-test', 'app.env'));
-    expect(layout.cliDir).toBe(join('/tmp/tmex-install-test', 'cli'));
-    expect(layout.currentLink).toBe(join('/tmp/tmex-install-test', 'current'));
-    expect(layout.versionsDir).toBe(join('/tmp/tmex-install-test', 'versions'));
+    expect(layout.runtimeServerPath).toBe(
+      join('/tmp/vibeterm-install-test', 'runtime', 'server.js')
+    );
+    expect(layout.envPath).toBe(join('/tmp/vibeterm-install-test', 'app.env'));
+    expect(layout.cliDir).toBe(join('/tmp/vibeterm-install-test', 'cli'));
+    expect(layout.currentLink).toBe(join('/tmp/vibeterm-install-test', 'current'));
+    expect(layout.versionsDir).toBe(join('/tmp/vibeterm-install-test', 'versions'));
   });
 
   test('resolves versioned paths through current when the symlink exists', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-layout-cur-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-layout-cur-'));
     await mkdir(join(installDir, 'versions', '1.2.3'), { recursive: true });
     await symlink(join('versions', '1.2.3'), join(installDir, 'current'));
     expect(hasCurrentLayout(installDir)).toBe(true);

@@ -3,10 +3,10 @@
 // （包内的每一次导航都经 host.appPath 映射回来，见 ./share-route）。
 
 import { QueryClientProvider } from '@tanstack/react-query';
-import { DeviceConsole, DeviceConsoleActions } from '@tmex/panels/device-console';
-import type { TmuxPane } from '@tmex/shared';
-import { RuntimeProvider, useRuntime, useTmuxStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
+import { DeviceConsole, DeviceConsoleActions } from '@vibeterm/panels/device-console';
+import type { TmuxPane } from '@vibeterm/shared';
+import { RuntimeProvider, useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
 import { LogOut } from 'lucide-react';
 import { useCallback, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -4,7 +4,7 @@
 // 残余风险：远端目录不在本进程控制下，核对与 rsync 之间仍有 TOCTOU 窗口（对端 root 可在两步之间
 // 把目录换成符号链接）。本机目标没有这个窗口（逐段 lstat + realpath 复核）。
 
-import type { FileErrorCode } from '@tmex/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 import { execSshCommand } from '../files/directory-browse';
 import { classifyRsyncFailure, runRsync } from '../files/rsync';
 import { type FileOpResult, fail, ok, withDeviceRsync } from '../files/rsync-operation';
@@ -12,6 +12,9 @@ import { type RsyncDeviceSpec, rsyncTargetArg } from '../files/ssh-command';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import type { DestContext } from './dest';
 import { splitRelPath } from './dest';
+
+const DIR_MARKER = 'VTDIR ';
+const EXISTS_MARKER = 'VTEXISTS ';
 
 const WALK_TIMEOUT_MS = 20_000;
 const PUSH_IDLE_TIMEOUT_MS = 120_000;
@@ -53,18 +56,19 @@ function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: strin
   }
   lines.push(
     `if [ -e ${quoteShellArg(name)} ] || [ -L ${quoteShellArg(name)} ]; then e=1; else e=0; fi`,
-    'printf \'TMEXDIR %s\\nTMEXEXISTS %s\\n\' "$d" "$e"'
+    `printf '${DIR_MARKER}%s\\n${EXISTS_MARKER}%s\\n' "$d" "$e"`
   );
   return lines.join('\n');
 }
 
-function parseWalkOutput(stdout: Uint8Array): { dir: string; exists: boolean } | null {
+export function parseWalkOutput(stdout: Uint8Array): { dir: string; exists: boolean } | null {
   const text = new TextDecoder().decode(stdout);
   let dir: string | null = null;
   let exists: boolean | null = null;
   for (const line of text.split('\n')) {
-    if (line.startsWith('TMEXDIR ')) dir = line.slice(8).replace(/\r$/, '');
-    else if (line.startsWith('TMEXEXISTS ')) exists = line.slice(11).trim() === '1';
+    if (line.startsWith(DIR_MARKER)) dir = line.slice(DIR_MARKER.length).replace(/\r$/, '');
+    else if (line.startsWith(EXISTS_MARKER))
+      exists = line.slice(EXISTS_MARKER.length).trim() === '1';
   }
   return dir && exists !== null ? { dir, exists } : null;
 }

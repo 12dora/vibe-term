@@ -2,7 +2,7 @@
 // 与标签壳分开成文件，一是壳被 SettingsPage 的测试整模块替换（`mock.module`）后这两个字段就
 // 没法单独渲染断言，二是这两个字段的联动逻辑本来就与卡片版式无关。
 
-import { Input } from '@tmex/ui/input';
+import { Input } from '@vibeterm/ui/input';
 import { useTranslation } from 'react-i18next';
 import { SiteUrlCandidates } from './site-url-candidates';
 import type { SiteSettingsForm } from './use-site-settings-form';

@@ -1,10 +1,10 @@
 # 发版 changelog 与版本注入（设计说明）
 
-> 操作步骤以 [tmex-cli 发布流程](2026041300-cli-release-process.md) 为准；本文只记录 2026-06-14 引入的 changelog 生成与版本注入机制的设计与缘由。
+> 操作步骤以 [vibeterm-cli 发布流程](2026041300-cli-release-process.md) 为准；本文只记录 2026-06-14 引入的 changelog 生成与版本注入机制的设计与缘由。
 
 ## 背景
 
-`tmex-cli` 版本此前手动 bump（提交 `chore(release): tmex-cli X`），仓库无 CHANGELOG。程序内自更新（见 [自更新与版本展示](../update/2026061406-self-update.md)）需要展示「目标版本」的更新日志，故在 bump 步骤中加入「读 commit 生成 changelog」。
+`vibeterm-cli` 版本此前手动 bump（提交 `chore(release): vibeterm-cli X`），仓库无 CHANGELOG。程序内自更新（见 [自更新与版本展示](../update/2026061406-self-update.md)）需要展示「目标版本」的更新日志，故在 bump 步骤中加入「读 commit 生成 changelog」。
 
 ## 设计要点
 
@@ -13,8 +13,8 @@
 - **changelog 只含当前版本**：每次发版重写 `packages/app/CHANGELOG.md`（已加入包 `files`），随包发布。这样 gateway 检查更新时直接拉「目标版本包内」的 CHANGELOG 即可，无需跨版本聚合。
 - **草稿来源**：commit 范围 = 上一条 `chore(release)` 提交 .. HEAD，按 conventional commit 前缀分组（feat/fix/perf/refactor/docs，其余 Other），排除 `chore(release)` 自身。
 - **DRAFT 护栏**：草稿首行是 HTML 注释 `<!-- DRAFT… -->`。漏改写时它不会在前端 markdown 渲染中显示（不污染用户视图），但维护者在文件 / `npm pack` 里仍可见——发布前确认它已被删除即代表改写完成。
-- **展示**：gateway 从 `https://cdn.jsdelivr.net/npm/tmex-cli@<latest>/CHANGELOG.md` 拉取（`no-store`）；失败回退「版本号 + 发布时间」（npm registry `time`），覆盖历史无 changelog 的旧版本。
-- **版本注入**：版本号在 `bun run build` 期由 `bun build --define TMEX_MONOREPO_VERSION` 烧进 runtime bundle（`packages/app/scripts/build-runtime.ts`），前端走 vite `define`。**故发版顺序必须「先 bump 再 build」**。
+- **展示**：gateway 取 GitHub Release 的 body 作为 changelog（`apps/gateway/src/system/update-check.ts` 的 `releaseChangelog`）；body 为空则只显示版本号与发布时间。（本条早期版本走 npm CDN 拉 `CHANGELOG.md`，发行源切到 GitHub Releases 后已不再使用。）
+- **版本注入**：版本号在 `bun run build` 期由 `bun build --define VIBETERM_MONOREPO_VERSION` 烧进 runtime bundle（`packages/app/scripts/build-runtime.ts`），前端走 vite `define`。**故发版顺序必须「先 bump 再 build」**。
 
 ## 改写规范（agent 步骤）
 
@@ -44,7 +44,7 @@ _2026-06-15_
 
 ### New
 
-- File browser (Files): browse files on this machine and remote servers directly inside tmex…
+- File browser (Files): browse files on this machine and remote servers directly inside vibeterm…
 
 ---
 
@@ -52,15 +52,15 @@ _2026-06-15_
 
 ### 新增
 
-- 文件浏览（Files）：现在可以直接在 tmex 里浏览本机和远程服务器上的文件…
+- 文件浏览（Files）：现在可以直接在 vibeterm 里浏览本机和远程服务器上的文件…
 ```
 
 ## 工具
 
-`scripts/release.ts`（根脚本 `release:tmex`）：
+`scripts/release.ts`（根脚本 `release`）：
 
 ```bash
-bun run release:tmex <newVersion>
+bun run release <newVersion>
 # 可选：--from <ref> --to <ref> --no-bump --date <YYYY-MM-DD>
 ```
 

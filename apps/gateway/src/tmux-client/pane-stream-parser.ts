@@ -33,7 +33,7 @@ export type PaneStreamNotification = {
 export type PromptMarker = {
   kind: 'A' | 'B' | 'C' | 'D';
   exitCode: number | null;
-  // kind 之后的分号分隔参数（如 D 的退出码、我们注入的 tmex=<nonce>）
+  // kind 之后的分号分隔参数（如 D 的退出码、我们注入的 vibeterm=<nonce>）
   params: string[];
 };
 

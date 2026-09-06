@@ -9,7 +9,7 @@
 //      失败窗口，顺带让面板离线可用；
 //   2) 兜底条从第一次失败起就给出「重新加载应用」，并解释多半是发布了新版本。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { type ComponentType, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

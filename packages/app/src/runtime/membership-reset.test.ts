@@ -55,8 +55,8 @@ async function openAuth(roles = 'node'): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: roles,
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: roles,
     },
   });
   authHandles.push(ctx);
@@ -64,7 +64,7 @@ async function openAuth(roles = 'node'): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-leave-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-leave-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -73,7 +73,7 @@ async function seedMembership(auth: LocalAuthContext): Promise<void> {
   const identity = await ensureNodeIdentity(auth.identityStore);
   await auth.userKeys.bootstrapUserWithSelfAdmit({
     username: 'alice',
-    password: 'tmex-test-pass',
+    password: 'vibeterm-test-pass',
     identity,
     now: 1_700_000_000_000,
   });
@@ -199,11 +199,11 @@ async function baseDeps(overrides: Partial<SetupServiceDeps> = {}): Promise<Setu
   await writeFile(
     envPath,
     [
-      'TMEX_ROLES=node',
-      'TMEX_HUB_URL=https://hub.example',
-      'TMEX_HUB_PUBLIC_URL=https://stale.example',
-      'TMEX_RELAY_PUBLIC_URL=https://stale-relay.example',
-      'TMEX_RELAY_ADMIN_TOKEN=stale-token',
+      'VIBETERM_ROLES=node',
+      'VIBETERM_HUB_URL=https://hub.example',
+      'VIBETERM_HUB_PUBLIC_URL=https://stale.example',
+      'VIBETERM_RELAY_PUBLIC_URL=https://stale-relay.example',
+      'VIBETERM_RELAY_ADMIN_TOKEN=stale-token',
       'OTHER=keep',
       '',
     ].join('\n'),
@@ -255,17 +255,17 @@ describe('leaveMesh', () => {
     expect(deps.auth.db.select().from(users).all()).toHaveLength(0);
     expect(await deps.auth.identityStore.load()).toBeNull();
     const env = await readEnvFile(deps.envPath);
-    expect(env.TMEX_ROLES).toBe('standalone');
-    expect(env.TMEX_HUB_URL).toBe('');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
-    expect(env.TMEX_RELAY_PUBLIC_URL).toBeUndefined();
-    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBeUndefined();
+    expect(env.VIBETERM_ROLES).toBe('standalone');
+    expect(env.VIBETERM_HUB_URL).toBe('');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_RELAY_PUBLIC_URL).toBeUndefined();
+    expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toBeUndefined();
     expect(env.OTHER).toBe('keep');
     const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('TMEX_HUB_URL=\n');
-    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=\n');
-    expect(envText).not.toContain('TMEX_RELAY_PUBLIC_URL');
-    expect(envText).not.toContain('TMEX_RELAY_ADMIN_TOKEN');
+    expect(envText).toContain('VIBETERM_HUB_URL=\n');
+    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=\n');
+    expect(envText).not.toContain('VIBETERM_RELAY_PUBLIC_URL');
+    expect(envText).not.toContain('VIBETERM_RELAY_ADMIN_TOKEN');
   });
 
   test('relay,node 可以退出：中继令牌与租户密钥一并清空', async () => {
@@ -285,7 +285,7 @@ describe('leaveMesh', () => {
     // uplink_kind / name 随 node_identity 整行删除
     expect(deps.auth.db.select().from(nodeIdentity).all()).toHaveLength(0);
     expect(deps.auth.userStore.listUsers()).toHaveLength(0);
-    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('standalone');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('standalone');
   });
 
   test('纯 relay 没有成员身份：400 not_member 且不清库', async () => {
@@ -297,7 +297,7 @@ describe('leaveMesh', () => {
     expect((err as SetupError).httpStatus).toBe(400);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
     expect(deps.auth.db.select().from(meshRelays).all()).toHaveLength(1);
-    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
   });
 
   test('relay,node 报成 node 时仍是 409 role_mismatch', async () => {
@@ -331,7 +331,7 @@ describe('leaveMesh', () => {
     expect((err as SetupError).code).toBe('role_mismatch');
     expect((err as SetupError).httpStatus).toBe(409);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
   });
 
   test('setup_in_progress when another transition holds the lock', async () => {
@@ -366,7 +366,7 @@ describe('leaveMesh', () => {
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
     expect(deps.auth.userStore.listUsers()).toHaveLength(1);
     expect(deps.auth.db.select().from(users).all()).toHaveLength(1);
-    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
   });
 
   test('database failure leaves env untouched and removes the staged file', async () => {
@@ -380,8 +380,8 @@ describe('leaveMesh', () => {
       expect(err).toBeInstanceOf(Error);
       expect((err as Error).message).toBe('SQLITE_BUSY');
       expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-      expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
-      expect((await readEnvFile(deps.envPath)).TMEX_HUB_URL).toBe('https://hub.example');
+      expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
+      expect((await readEnvFile(deps.envPath)).VIBETERM_HUB_URL).toBe('https://hub.example');
       const leftovers = (await readdir(dirname(deps.envPath))).filter((name) =>
         name.endsWith('.tmp')
       );
@@ -451,11 +451,11 @@ describe('leaveMesh', () => {
         .map((row) => row.tenantId)
     ).toEqual([FOREIGN_TENANT_ID]);
     const env = await readEnvFile(deps.envPath);
-    expect(env.TMEX_ROLES).toBe('relay');
-    expect(env.TMEX_HUB_URL).toBe('');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
-    expect(env.TMEX_RELAY_PUBLIC_URL).toBe('https://stale-relay.example');
-    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBe('stale-token');
+    expect(env.VIBETERM_ROLES).toBe('relay');
+    expect(env.VIBETERM_HUB_URL).toBe('');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_RELAY_PUBLIC_URL).toBe('https://stale-relay.example');
+    expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toBe('stale-token');
   });
 
   test('relay,node → standalone clears operator state and relay env keys', async () => {
@@ -466,9 +466,9 @@ describe('leaveMesh', () => {
     expect(deps.auth.db.select().from(relayConfig).all()).toHaveLength(0);
     expect(deps.auth.db.select().from(relayTenants).all()).toHaveLength(0);
     const env = await readEnvFile(deps.envPath);
-    expect(env.TMEX_ROLES).toBe('standalone');
-    expect(env.TMEX_RELAY_PUBLIC_URL).toBeUndefined();
-    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBeUndefined();
+    expect(env.VIBETERM_ROLES).toBe('standalone');
+    expect(env.VIBETERM_RELAY_PUBLIC_URL).toBeUndefined();
+    expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toBeUndefined();
   });
 
   test('node → relay is 400 invalid_target', async () => {
@@ -480,7 +480,7 @@ describe('leaveMesh', () => {
     expect((err as SetupError).code).toBe('invalid_target');
     expect((err as SetupError).httpStatus).toBe(400);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
-    expect((await readEnvFile(deps.envPath)).TMEX_ROLES).toBe('node');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('node');
   });
 
   test('hub,node → relay is 400 invalid_target', async () => {

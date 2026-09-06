@@ -1,8 +1,8 @@
 // 端口选择器与探测提示的呈现：档位由地址里的端口决定，地址还没填时整组不可点。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

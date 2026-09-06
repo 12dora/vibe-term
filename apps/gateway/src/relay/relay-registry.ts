@@ -1,5 +1,5 @@
-import type { LinkSession } from '@tmex/shared/link';
-import type { RelayEnvelope } from '@tmex/shared/relay';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { RelayEnvelope } from '@vibeterm/shared/relay';
 
 export type RelayLiveNode = {
   tenantId: string;

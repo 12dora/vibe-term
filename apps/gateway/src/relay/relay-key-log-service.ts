@@ -7,7 +7,7 @@ import {
   type RelaySeqWire,
   relaySeqFromWire,
   relaySeqToWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { AuthDb } from '../auth/types';
 import { trimRelayKeyLogPage } from './relay-key-log-page';
 import type { RelayKeyLogStore } from './relay-key-log-store';

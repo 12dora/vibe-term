@@ -1,8 +1,8 @@
 // 中继链路 store：状态映射、404 退化、纯判定函数。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { RelayApiError } from '@tmex/api-client/relay/admin-api';
-import type { RelayTenantApi, RelayTenantStatus } from '@tmex/api-client/relay/tenant-api';
+import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayTenantApi, RelayTenantStatus } from '@vibeterm/api-client/relay/tenant-api';
 import {
   attachedRelay,
   getMeshRelayState,

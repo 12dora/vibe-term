@@ -1,4 +1,4 @@
-import type { Device, EventType, SiteSettings, WebhookEvent } from '@tmex/shared';
+import type { Device, EventType, SiteSettings, WebhookEvent } from '@vibeterm/shared';
 import type { ConnectionAlertSource } from './connection-alerts';
 
 export const BRIDGE_EVENT_SOURCES = new Set<ConnectionAlertSource>(['close', 'connect', 'probe']);
@@ -37,7 +37,7 @@ export function buildConnectionBridgeEvent(
   return {
     site: { name: settings.siteName, url: settings.siteUrl },
     device: { id: device.id, name: device.name, type: device.type, host: device.host },
-    tmux: { sessionName: device.session?.trim() || 'tmex' },
+    tmux: { sessionName: device.session?.trim() || 'vibeterm' },
     payload: { message: friendlyMessage },
   };
 }

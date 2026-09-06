@@ -1,7 +1,7 @@
 import { type ChunkPreloadTarget, preloadChunk } from '@/lib/chunk-preload';
-import { hostAppPath } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import { useSidebar } from '@tmex/ui/sidebar';
+import { hostAppPath } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { Link, type LinkProps } from 'react-router';
 
 interface NavLinkProps extends LinkProps {

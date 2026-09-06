@@ -1,7 +1,7 @@
 // 指引里的命令 / 地址块：等宽展示 + 一键复制。复制状态与播报沿用节点设置那套。
 
 import { CopyLabel, useCopyToClipboard } from '@/pages/settings/nodes/copy-feedback';
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Check, Copy } from 'lucide-react';
 
 export function CommandBlock({
@@ -31,7 +31,11 @@ export function CommandBlock({
           onClick={copy}
           data-testid={`command-block-${testId}-copy`}
         >
-          {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+          {copied ? (
+            <Check className="vibeterm-scale-in" />
+          ) : (
+            <Copy className="vibeterm-scale-in" />
+          )}
           <CopyLabel copied={copied} />
         </Button>
       </div>

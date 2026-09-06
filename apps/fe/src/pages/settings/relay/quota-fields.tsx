@@ -1,8 +1,8 @@
 // 配额四件套（节点数 / 并发流 / 带宽 / 单文件上限）的字段组：默认配额表单与单租户覆盖共用。
 
-import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import { RELAY_QUOTA_LIMITS } from '@vibeterm/api-client/relay/admin-api';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { FormField } from '../components/form-primitives';
 import {

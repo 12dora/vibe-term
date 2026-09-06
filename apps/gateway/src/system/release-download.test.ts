@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { RELEASE_REPO_URL, releaseTarballName, releaseTarballUrl } from '@vibeterm/shared';
 import {
   TEST_SIGNING_KEY,
   restoreSigningKeys,
@@ -50,13 +50,13 @@ function sumsAsset(url: string, version: string, hex: string): Response | null {
 }
 
 const originalFetch = globalThis.fetch;
-const originalBase = process.env.TMEX_RELEASE_BASE_URL;
+const originalBase = process.env.VIBETERM_RELEASE_BASE_URL;
 const tempDirs: string[] = [];
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
-  if (originalBase === undefined) delete process.env.TMEX_RELEASE_BASE_URL;
-  else process.env.TMEX_RELEASE_BASE_URL = originalBase;
+  if (originalBase === undefined) delete process.env.VIBETERM_RELEASE_BASE_URL;
+  else process.env.VIBETERM_RELEASE_BASE_URL = originalBase;
   resetReleaseDownloadForTests();
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
@@ -98,17 +98,17 @@ function stubReleaseFetch(
 
 describe('resolveReleaseTarballUrl', () => {
   test('defaults to the GitHub release asset URL', () => {
-    delete process.env.TMEX_RELEASE_BASE_URL;
+    delete process.env.VIBETERM_RELEASE_BASE_URL;
     expect(resolveReleaseTarballUrl('1.2.3')).toBe(releaseTarballUrl('1.2.3'));
     expect(resolveReleaseSha256SumsUrl('1.2.3')).toContain(
       `${RELEASE_REPO_URL}/releases/download/v1.2.3/SHA256SUMS`
     );
   });
 
-  test('TMEX_RELEASE_BASE_URL overrides the GitHub host while keeping the path layout', () => {
-    process.env.TMEX_RELEASE_BASE_URL = 'http://127.0.0.1:19991';
+  test('VIBETERM_RELEASE_BASE_URL overrides the GitHub host while keeping the path layout', () => {
+    process.env.VIBETERM_RELEASE_BASE_URL = 'http://127.0.0.1:19991';
     expect(resolveReleaseTarballUrl('1.2.3')).toBe(
-      'http://127.0.0.1:19991/releases/download/v1.2.3/tmex-cli-1.2.3.tgz'
+      'http://127.0.0.1:19991/releases/download/v1.2.3/vibeterm-cli-1.2.3.tgz'
     );
   });
 });
@@ -118,7 +118,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '9.9.9';
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     stubReleaseFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-cache-');
+    const cacheDir = tempDir('vibeterm-rel-cache-');
     const result = await downloadVerifiedRelease(version, { cacheDir });
     expect(result.sha256).toBe(sha256Hex(tarball));
     expect(result.bytes).toBe(tarball.byteLength);
@@ -132,7 +132,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '9.9.9';
     const tarball = new Uint8Array([9, 8, 7]);
     const stub = stubReleaseFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-cache-');
+    const cacheDir = tempDir('vibeterm-rel-cache-');
     await downloadVerifiedRelease(version, { cacheDir });
     const firstHits = stub.tarballHits;
     const again = await downloadVerifiedRelease(version, { cacheDir });
@@ -144,7 +144,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '3.2.1';
     const tarball = new Uint8Array(32).fill(4);
     const stub = stubReleaseFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-cache-');
+    const cacheDir = tempDir('vibeterm-rel-cache-');
     const [a, b] = await Promise.all([
       downloadVerifiedRelease(version, { cacheDir }),
       downloadVerifiedRelease(version, { cacheDir }),
@@ -163,7 +163,7 @@ describe('downloadVerifiedRelease', () => {
       if (sums) return sums;
       return new Response(Buffer.from(tarball), { status: 200 });
     }) as typeof fetch;
-    const cacheDir = tempDir('tmex-rel-cache-');
+    const cacheDir = tempDir('vibeterm-rel-cache-');
     await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow(
       /sha256 mismatch/i
     );
@@ -173,7 +173,7 @@ describe('downloadVerifiedRelease', () => {
   test('ignores a cache file whose recorded sha256 no longer matches', async () => {
     const version = '8.8.8';
     const good = new Uint8Array([1, 1, 1]);
-    const cacheDir = tempDir('tmex-rel-cache-');
+    const cacheDir = tempDir('vibeterm-rel-cache-');
     writeFileSync(join(cacheDir, releaseTarballName(version)), Buffer.from([9, 9, 9]));
     writeFileSync(join(cacheDir, `${releaseTarballName(version)}.sha256`), `${'a'.repeat(64)}\n`);
     stubReleaseFetch(good, version);
@@ -186,7 +186,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '7.7.7';
     const tarball = new Uint8Array([3, 2, 1]);
     stubReleaseFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-nowrite-');
+    const cacheDir = tempDir('vibeterm-rel-nowrite-');
     chmodSync(cacheDir, 0o555);
     const unhandled: unknown[] = [];
     const onUnhandled = (err: unknown) => {
@@ -243,7 +243,7 @@ describe('downloadVerifiedRelease', () => {
       });
       return new Response(body, { status: 200 });
     }) as typeof fetch;
-    const cacheDir = tempDir('tmex-rel-abort-');
+    const cacheDir = tempDir('vibeterm-rel-abort-');
     const pending = downloadVerifiedRelease(version, { cacheDir, signal: ac.signal });
     const part = join(cacheDir, `${releaseTarballName(version)}.part`);
     const dest = join(cacheDir, releaseTarballName(version));
@@ -299,7 +299,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '4.4.4';
     const tarball = new Uint8Array([9, 8, 7, 6, 5]);
     stubSlowTarballFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-share-first-');
+    const cacheDir = tempDir('vibeterm-rel-share-first-');
     const first = new AbortController();
     const second = new AbortController();
     const pendingFirst = downloadVerifiedRelease(version, { cacheDir, signal: first.signal });
@@ -345,7 +345,7 @@ describe('downloadVerifiedRelease', () => {
       });
       return new Response(body, { status: 200 });
     }) as typeof fetch;
-    const cacheDir = tempDir('tmex-rel-share-all-');
+    const cacheDir = tempDir('vibeterm-rel-share-all-');
     const first = new AbortController();
     const second = new AbortController();
     const pendingFirst = downloadVerifiedRelease(version, { cacheDir, signal: first.signal });
@@ -379,7 +379,7 @@ describe('downloadVerifiedRelease', () => {
     const version = '6.6.6';
     const tarball = new Uint8Array([4, 5, 6]);
     stubReleaseFetch(tarball, version);
-    const cacheDir = tempDir('tmex-rel-sidecar-');
+    const cacheDir = tempDir('vibeterm-rel-sidecar-');
     mkdirSync(join(cacheDir, `${releaseTarballName(version)}.sha256`));
     await expect(downloadVerifiedRelease(version, { cacheDir })).rejects.toThrow();
     expect(existsSync(join(cacheDir, releaseTarballName(version)))).toBe(false);
@@ -438,7 +438,7 @@ describe('downloadVerifiedRelease progress', () => {
     const chunks = 100;
     const tarball = new Uint8Array(chunkSize * chunks).fill(7);
     stubStreamedRelease(version, tarball, { chunkSize });
-    const cacheDir = tempDir('tmex-rel-progress-');
+    const cacheDir = tempDir('vibeterm-rel-progress-');
     const seen: Array<[number, number]> = [];
 
     const result = await downloadVerifiedRelease(version, {
@@ -461,7 +461,7 @@ describe('downloadVerifiedRelease progress', () => {
     const version = '7.2.0';
     const tarball = new Uint8Array(4096).fill(3);
     stubStreamedRelease(version, tarball, { chunkSize: 1024, contentLength: null });
-    const cacheDir = tempDir('tmex-rel-progress-nolen-');
+    const cacheDir = tempDir('vibeterm-rel-progress-nolen-');
     const seen: Array<[number, number]> = [];
 
     await downloadVerifiedRelease(version, {
@@ -478,7 +478,7 @@ describe('downloadVerifiedRelease progress', () => {
     const chunkSize = 1024 * 1024;
     const tarball = new Uint8Array(chunkSize * 4).fill(5);
     const streamed = stubStreamedRelease(version, tarball, { chunkSize, pauseAfter: 1 });
-    const cacheDir = tempDir('tmex-rel-progress-join-');
+    const cacheDir = tempDir('vibeterm-rel-progress-join-');
     const first: Array<[number, number]> = [];
     const late: Array<[number, number]> = [];
 
@@ -509,7 +509,7 @@ describe('downloadVerifiedRelease progress', () => {
     const version = '7.4.0';
     const tarball = new Uint8Array(2048).fill(9);
     stubStreamedRelease(version, tarball, { chunkSize: 512 });
-    const cacheDir = tempDir('tmex-rel-progress-settle-');
+    const cacheDir = tempDir('vibeterm-rel-progress-settle-');
     const seen: Array<[number, number]> = [];
 
     await downloadVerifiedRelease(version, {
@@ -537,51 +537,65 @@ function ageFile(path: string, ms: number): void {
 
 describe('sweepReleaseCache', () => {
   test('保留 keepVersions，其余整包与 sidecar 一起清掉', async () => {
-    const dir = tempDir('tmex-rel-sweep-');
-    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz');
-    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz.sha256', `${'ab'.repeat(32)}\n`);
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    const dir = tempDir('vibeterm-rel-sweep-');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.30.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.30.tgz.sha256', `${'ab'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
 
     const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34'] });
 
-    expect(removed.sort()).toEqual(['tmex-cli-1.1.30.tgz', 'tmex-cli-1.1.30.tgz.sha256']);
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(true);
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(true);
+    expect(removed.sort()).toEqual(['vibeterm-cli-1.1.30.tgz', 'vibeterm-cli-1.1.30.tgz.sha256']);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz'))).toBe(true);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz.sha256'))).toBe(true);
+  });
+
+  test('改名前的旧资产名同样被当成合法缓存项按版本保留 / 清理', async () => {
+    const dir = tempDir('vibeterm-rel-sweep-legacy-');
+    writeCacheEntry(dir, 'tmex-cli-1.1.40.tgz');
+    writeCacheEntry(dir, 'tmex-cli-1.1.40.tgz.sha256', `${'ab'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'tmex-cli-2.0.0.tgz');
+    writeCacheEntry(dir, 'tmex-cli-2.0.0.tgz.sha256', `${'cd'.repeat(32)}\n`);
+
+    const { removed } = await sweepReleaseCache(dir, { keepVersions: ['2.0.0'] });
+
+    expect(removed.sort()).toEqual(['tmex-cli-1.1.40.tgz', 'tmex-cli-1.1.40.tgz.sha256']);
+    expect(existsSync(join(dir, 'tmex-cli-2.0.0.tgz'))).toBe(true);
+    expect(existsSync(join(dir, 'tmex-cli-2.0.0.tgz.sha256'))).toBe(true);
   });
 
   test('keepVersions 为空时整目录清空', async () => {
-    const dir = tempDir('tmex-rel-sweep-all-');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
-    const part = writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.part');
+    const dir = tempDir('vibeterm-rel-sweep-all-');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    const part = writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.part');
 
     await sweepReleaseCache(dir, { keepVersions: [], partTtlMs: 0 });
 
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(false);
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(false);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz'))).toBe(false);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz.sha256'))).toBe(false);
     expect(existsSync(part)).toBe(false);
   });
 
   test('丢了整包的孤儿 sidecar 被清掉，保留版本的整包缺 sidecar 也清', async () => {
-    const dir = tempDir('tmex-rel-sweep-orphan-');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
-    writeCacheEntry(dir, 'tmex-cli-1.1.35.tgz');
+    const dir = tempDir('vibeterm-rel-sweep-orphan-');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.35.tgz');
 
     const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34', '1.1.35'] });
 
-    expect(removed.sort()).toEqual(['tmex-cli-1.1.34.tgz.sha256', 'tmex-cli-1.1.35.tgz']);
+    expect(removed.sort()).toEqual(['vibeterm-cli-1.1.34.tgz.sha256', 'vibeterm-cli-1.1.35.tgz']);
   });
 
   test('保留期内的 .part 与下载中的 .part 都不动，过期孤儿 .part 才清', async () => {
-    const dir = tempDir('tmex-rel-sweep-part-');
-    const fresh = writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.part');
-    const stale = writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz.part');
+    const dir = tempDir('vibeterm-rel-sweep-part-');
+    const fresh = writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.part');
+    const stale = writeCacheEntry(dir, 'vibeterm-cli-1.1.30.tgz.part');
     ageFile(stale, 48 * HOUR_MS);
 
     const { removed } = await sweepReleaseCache(dir, { keepVersions: [] });
 
-    expect(removed).toEqual(['tmex-cli-1.1.30.tgz.part']);
+    expect(removed).toEqual(['vibeterm-cli-1.1.30.tgz.part']);
     expect(existsSync(fresh)).toBe(true);
     expect(existsSync(stale)).toBe(false);
   });
@@ -593,7 +607,7 @@ describe('sweepReleaseCache', () => {
       chunkSize: 256 * 1024,
       pauseAfter: 1,
     });
-    const cacheDir = tempDir('tmex-rel-sweep-inflight-');
+    const cacheDir = tempDir('vibeterm-rel-sweep-inflight-');
     const pending = downloadVerifiedRelease(version, { cacheDir });
     await waitFor(() => existsSync(join(cacheDir, `${releaseTarballName(version)}.part`)));
     expect(isReleaseDownloadInFlight(cacheDir, version)).toBe(true);
@@ -611,28 +625,31 @@ describe('sweepReleaseCache', () => {
   }, 8_000);
 
   test('持有租约的版本不受 keepVersions 约束：整目录清空也留着它', async () => {
-    const dir = tempDir('tmex-rel-sweep-lease-');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
-    writeCacheEntry(dir, 'tmex-cli-1.1.30.tgz');
+    const dir = tempDir('vibeterm-rel-sweep-lease-');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.30.tgz');
     const lease = retainReleaseVersion(dir, '1.1.34');
 
     // 另一个节点带着新版本来清扫：租约版本不在 keepVersions 里也不能删
     const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.40'] });
-    expect(removed).toEqual(['tmex-cli-1.1.30.tgz']);
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz'))).toBe(true);
-    expect(existsSync(join(dir, 'tmex-cli-1.1.34.tgz.sha256'))).toBe(true);
+    expect(removed).toEqual(['vibeterm-cli-1.1.30.tgz']);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz'))).toBe(true);
+    expect(existsSync(join(dir, 'vibeterm-cli-1.1.34.tgz.sha256'))).toBe(true);
 
     lease();
     expect(isReleaseVersionRetained(dir, '1.1.34')).toBe(false);
     const after = await sweepReleaseCache(dir, { keepVersions: [] });
-    expect(after.removed.sort()).toEqual(['tmex-cli-1.1.34.tgz', 'tmex-cli-1.1.34.tgz.sha256']);
+    expect(after.removed.sort()).toEqual([
+      'vibeterm-cli-1.1.34.tgz',
+      'vibeterm-cli-1.1.34.tgz.sha256',
+    ]);
   });
 
   test('租约按引用计数：两个任务钉同一版本，释放一个还留着，都释放才清', async () => {
-    const dir = tempDir('tmex-rel-sweep-lease-rc-');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz');
-    writeCacheEntry(dir, 'tmex-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
+    const dir = tempDir('vibeterm-rel-sweep-lease-rc-');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-1.1.34.tgz.sha256', `${'cd'.repeat(32)}\n`);
     const first = retainReleaseVersion(dir, '1.1.34');
     const second = retainReleaseVersion(dir, '1.1.34');
 
@@ -648,8 +665,8 @@ describe('sweepReleaseCache', () => {
   });
 
   test('枚举快照过期：删之前 sidecar 已经落盘，整包与 sidecar 都不动', async () => {
-    const dir = tempDir('tmex-rel-sweep-race-');
-    const name = 'tmex-cli-1.1.34.tgz';
+    const dir = tempDir('vibeterm-rel-sweep-race-');
+    const name = 'vibeterm-cli-1.1.34.tgz';
     writeCacheEntry(dir, name);
 
     // 枚举时只看到缺 sidecar 的整包；判定之前下载刚写完 sidecar 并退出在途表
@@ -666,8 +683,8 @@ describe('sweepReleaseCache', () => {
   });
 
   test('枚举快照过期：孤儿 sidecar 在删之前等到了整包，也不动', async () => {
-    const dir = tempDir('tmex-rel-sweep-race-side-');
-    const name = 'tmex-cli-1.1.34.tgz';
+    const dir = tempDir('vibeterm-rel-sweep-race-side-');
+    const name = 'vibeterm-cli-1.1.34.tgz';
     writeCacheEntry(dir, `${name}.sha256`, `${'cd'.repeat(32)}\n`);
 
     const { removed } = await sweepReleaseCache(dir, {
@@ -683,13 +700,13 @@ describe('sweepReleaseCache', () => {
   });
 
   test('不认识的文件被清掉，目录不存在时是 no-op', async () => {
-    const dir = tempDir('tmex-rel-sweep-junk-');
+    const dir = tempDir('vibeterm-rel-sweep-junk-');
     writeCacheEntry(dir, 'junk.txt');
-    writeCacheEntry(dir, 'tmex-cli-notaversion.tgz');
+    writeCacheEntry(dir, 'vibeterm-cli-notaversion.tgz');
     mkdirSync(join(dir, 'leftover-dir'), { recursive: true });
 
     const { removed } = await sweepReleaseCache(dir, { keepVersions: ['1.1.34'] });
-    expect(removed.sort()).toEqual(['junk.txt', 'leftover-dir', 'tmex-cli-notaversion.tgz']);
+    expect(removed.sort()).toEqual(['junk.txt', 'leftover-dir', 'vibeterm-cli-notaversion.tgz']);
 
     await expect(
       sweepReleaseCache(join(dir, 'does-not-exist'), { keepVersions: [] })
@@ -702,7 +719,7 @@ describe('已校验缓存的复用', () => {
 
   function seedVerifiedCache(version: string, tarball: Uint8Array): { dest: string; hex: string } {
     const hex = sha256Hex(tarball);
-    const cacheDir = tempDir('tmex-rel-verify-memo-');
+    const cacheDir = tempDir('vibeterm-rel-verify-memo-');
     const dest = join(cacheDir, releaseTarballName(version));
     writeFileSync(dest, Buffer.from(tarball));
     writeFileSync(`${dest}.sha256`, `${hex}\n`);

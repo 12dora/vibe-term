@@ -1,6 +1,6 @@
 // 「服务器或电脑」页的三条接入路径与默认选择：只按本机现状推导，与 React 无关。
 
-import type { LocalRole } from '@tmex/api-client/local/types';
+import type { LocalRole } from '@vibeterm/api-client/local/types';
 
 /** 一级：新机器怎么接进来。 */
 export type ConnectPath = 'relay' | 'hub' | 'ssh';

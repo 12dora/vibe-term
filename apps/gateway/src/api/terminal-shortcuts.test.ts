@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type UpdateTerminalShortcutSettingsRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { MAX_TERMINAL_SHORTCUTS, normalizeTerminalShortcutsInput } from './terminal-shortcuts';
 
 // 用于构造非法输入（绕过编译期类型检查）

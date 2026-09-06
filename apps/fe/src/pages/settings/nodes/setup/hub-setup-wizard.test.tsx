@@ -1,8 +1,8 @@
 // 向导的静态渲染：路径选择、按 nodeEnv 显隐 insecureLocal、预填规则、校验文案的呈现。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -118,9 +118,9 @@ describe('HubSetupWizard', () => {
 describe('BecomeHubForm', () => {
   test('https origin 预填到公开地址；production 下 http origin 不预填', () => {
     const https = renderToStaticMarkup(
-      <BecomeHubForm localStatus={status()} origin="https://tmex.example.com" />
+      <BecomeHubForm localStatus={status()} origin="https://vibeterm.example.com" />
     );
-    expect(https).toContain('value="https://tmex.example.com"');
+    expect(https).toContain('value="https://vibeterm.example.com"');
 
     const http = renderToStaticMarkup(
       <BecomeHubForm localStatus={status()} origin="http://localhost:19663" />

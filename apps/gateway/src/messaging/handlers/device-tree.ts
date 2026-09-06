@@ -1,4 +1,4 @@
-import type { CommandResult } from '@tmex/shared/messaging';
+import type { CommandResult } from '@vibeterm/shared/messaging';
 import type { CommandContext } from '../context';
 import { errorResult } from '../context';
 import { resolveDeviceRef } from '../resolve-refs';

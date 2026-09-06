@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import {
   DcUpgradeCoordinator,
   type DcUpgradeLivePeer,

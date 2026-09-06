@@ -7,7 +7,7 @@ async function waitForCanvasTerminal(page: Page): Promise<void> {
       () =>
         page.evaluate(() => {
           return {
-            renderer: (window as any).__tmexE2eTerminalRenderer ?? null,
+            renderer: (window as any).__vibetermE2eTerminalRenderer ?? null,
             hasCanvas: Boolean(document.querySelector('.xterm canvas')),
           };
         }),
@@ -21,7 +21,7 @@ async function waitForCanvasTerminal(page: Page): Promise<void> {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -39,7 +39,7 @@ test('desktop: visible terminal should follow the latest viewport contents', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-viewport-render-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-viewport-render-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-viewport-render-${Date.now()}`;
@@ -62,26 +62,26 @@ test('desktop: visible terminal should follow the latest viewport contents', asy
     await waitForCanvasTerminal(page);
 
     tmux(
-      `send-keys -t ${sessionName}.0 "for i in \\$(seq 1 120); do echo TMEX_VIEWPORT_LATEST_\\$i; done" C-m`
+      `send-keys -t ${sessionName}.0 "for i in \\$(seq 1 120); do echo VIBETERM_VIEWPORT_LATEST_\\$i; done" C-m`
     );
 
     await expect
       .poll(() =>
         page.evaluate(() => {
-          const term = (window as any).__tmexE2eXterm;
+          const term = (window as any).__vibetermE2eXterm;
           return term?.buffer?.active?.baseY ?? 0;
         })
       )
       .toBeGreaterThan(50);
 
     await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       term?.scrollToBottom();
     });
 
     await expect
       .poll(() => readVisibleTerminalText(page), { timeout: 20_000 })
-      .toContain('TMEX_VIEWPORT_LATEST_120');
+      .toContain('VIBETERM_VIEWPORT_LATEST_120');
   } finally {
     await request.delete(`/api/devices/${deviceId}`);
     ensureCleanSession(sessionName);
@@ -92,7 +92,7 @@ test('desktop: direct input should become visible in the current viewport', asyn
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-desktop-input-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-desktop-input-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-desktop-input-${Date.now()}`;
@@ -107,7 +107,7 @@ test('desktop: direct input should become visible in the current viewport', asyn
   expect(createRes.ok()).toBeTruthy();
   const created = (await createRes.json()) as { device: { id: string } };
   const deviceId = created.device.id;
-  const marker = `TMEX_DESKTOP_INPUT_${Date.now()}`;
+  const marker = `VIBETERM_DESKTOP_INPUT_${Date.now()}`;
 
   try {
     await page.goto(`/devices/${deviceId}`);

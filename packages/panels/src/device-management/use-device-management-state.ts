@@ -4,10 +4,10 @@
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type DevicesResponse, fetchDevices, reorderDevices } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime, useSiteStore, useTmuxStore } from '@tmex/stores/react';
-import { staggerItemStyle } from '@tmex/ui/motion';
+import { type DevicesResponse, fetchDevices, reorderDevices } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime, useSiteStore, useTmuxStore } from '@vibeterm/stores/react';
+import { staggerItemStyle } from '@vibeterm/ui/motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

@@ -2,7 +2,7 @@
 // 菜单/关闭按钮的 absolute 锚点必须只包住行本身（children/actions 同层），
 // 若锚在外层（含 footer 里的 Agent session 分支），挂了会话后 top-1/2 会随容器撑高而错位。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { GripVertical } from 'lucide-react';
 import type { MouseEvent, ReactNode } from 'react';
 import type { SortableRow } from './device-tree-dnd';

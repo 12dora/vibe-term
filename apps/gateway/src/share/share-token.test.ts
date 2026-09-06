@@ -1,20 +1,24 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  LEGACY_SHARE_COOKIE_PREFIX,
   SHARE_AUTH_PREFIX,
   SHARE_COOKIE_PREFIX,
   generateShareId,
   generateShareToken,
   hashShareToken,
   isValidShareCookieVia,
+  legacyShareCookieName,
   parseShareToken,
   shareCookieName,
 } from './share-token';
 
 describe('share token', () => {
   test('shareCookieName 与前缀常量', () => {
-    expect(SHARE_COOKIE_PREFIX).toBe('tmex_sh_');
+    expect(SHARE_COOKIE_PREFIX).toBe('vibeterm_sh_');
+    expect(LEGACY_SHARE_COOKIE_PREFIX).toBe('tmex_sh_');
     expect(SHARE_AUTH_PREFIX).toBe('share:');
-    expect(shareCookieName('self')).toBe('tmex_sh_self');
+    expect(shareCookieName('self')).toBe('vibeterm_sh_self');
+    expect(legacyShareCookieName('self')).toBe('tmex_sh_self');
     expect(isValidShareCookieVia('self')).toBe(true);
     expect(isValidShareCookieVia('a'.repeat(32))).toBe(true);
     expect(isValidShareCookieVia('bad;name')).toBe(false);

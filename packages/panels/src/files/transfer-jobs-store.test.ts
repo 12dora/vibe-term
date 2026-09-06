@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { TransferJobSnapshot } from '@tmex/shared';
+import type { TransferJobSnapshot } from '@vibeterm/shared';
 import {
   TRANSFER_JOB_GONE,
   applyTransferJobEvent,

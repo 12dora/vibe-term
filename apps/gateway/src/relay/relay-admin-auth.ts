@@ -1,10 +1,11 @@
+import { RELAY_ADMIN_TOKEN_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import type { RelayConfigStore } from './relay-config-store';
 import { constantTimeEqual, generateRelayAdminToken, sha256Hex } from './relay-password';
 
 export type RelayLocalAuthCheck = (req: Request) => boolean | Promise<boolean>;
 
 export type RelayAdminAuthOptions = {
-  /** `TMEX_RELAY_ADMIN_TOKEN`；缺失时首启生成一枚并把 sha256 写进 relay_config。 */
+  /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成一枚并把 sha256 写进 relay_config。 */
   configuredToken?: string | null;
   store: RelayConfigStore;
   now: () => number;
@@ -25,7 +26,7 @@ function bearerToken(req: Request): string | null {
     const match = /^Bearer\s+(.+)$/i.exec(header.trim());
     if (match?.[1]) return match[1].trim();
   }
-  const direct = req.headers.get('x-tmex-relay-admin-token');
+  const direct = readHeaderPair(req.headers, RELAY_ADMIN_TOKEN_HEADER);
   return direct?.trim() || null;
 }
 
@@ -51,16 +52,16 @@ export async function ensureRelayAdminToken(opts: RelayAdminAuthOptions): Promis
   let persisted = false;
   if (opts.patchEnv) {
     try {
-      await opts.patchEnv({ TMEX_RELAY_ADMIN_TOKEN: token });
+      await opts.patchEnv({ VIBETERM_RELAY_ADMIN_TOKEN: token });
       persisted = true;
     } catch (err) {
-      log(`[relay] failed to persist TMEX_RELAY_ADMIN_TOKEN: ${String(err)}`);
+      log(`[relay] failed to persist VIBETERM_RELAY_ADMIN_TOKEN: ${String(err)}`);
     }
   }
   log(
     persisted
-      ? `[relay] generated admin token and wrote TMEX_RELAY_ADMIN_TOKEN to app.env: ${token}`
-      : `[relay] generated admin token (not persisted, set TMEX_RELAY_ADMIN_TOKEN to keep it): ${token}`
+      ? `[relay] generated admin token and wrote VIBETERM_RELAY_ADMIN_TOKEN to app.env: ${token}`
+      : `[relay] generated admin token (not persisted, set VIBETERM_RELAY_ADMIN_TOKEN to keep it): ${token}`
   );
   return token;
 }

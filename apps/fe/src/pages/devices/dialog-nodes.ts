@@ -5,8 +5,8 @@
 // `fromNodeId`、放行记录的 `fromNodeId` 要的是对端认得的真实 mesh id。
 
 import { sortNodes, toRuntimeNodeId } from '@/node/mesh-nodes';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 
 export interface DialogNodeOption {
   /** 拼 `/n/<id>` 与建 ApiClient 用；entry 自身为 `self`。 */

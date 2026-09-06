@@ -287,7 +287,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
     });
 
     expect(intervalCalls).toHaveLength(0);
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeFalse();
     expect(cursorCanvas.style.opacity).toBe('1');
   });
 
@@ -300,12 +300,12 @@ describe('drawCursor 遵循 cursor.blinking', () => {
     });
 
     expect(intervalCalls).toHaveLength(0);
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeTrue();
     expect(styleSheets).toHaveLength(1);
-    expect(styleSheets[0]?.textContent).toContain('@keyframes tmex-cursor-blink');
+    expect(styleSheets[0]?.textContent).toContain('@keyframes vibeterm-cursor-blink');
     // 后台/隐藏槽必须整条停掉动画
     expect(styleSheets[0]?.textContent).toContain(
-      '[data-tmex-terminal-hidden] canvas.tmex-cursor-blink{animation:none}'
+      '[data-vibeterm-terminal-hidden] canvas.vibeterm-cursor-blink{animation:none}'
     );
     renderer.dispose();
   });
@@ -331,7 +331,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
       rows: [],
       cellDimensions: CELL,
     });
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeTrue();
 
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: false }),
@@ -340,7 +340,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
     });
 
     expect(clearedIntervals).toHaveLength(0);
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeFalse();
     expect(cursorCanvas.style.opacity).toBe('1');
   });
 
@@ -354,7 +354,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
       });
     }
 
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeTrue();
     renderer.dispose();
   });
 
@@ -365,7 +365,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
       rows: [],
       cellDimensions: CELL,
     });
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeTrue();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeTrue();
 
     renderer.render({
       meta: makeMeta({ style: 'block', blinking: true, visible: false }),
@@ -373,7 +373,7 @@ describe('drawCursor 遵循 cursor.blinking', () => {
       cellDimensions: CELL,
     });
 
-    expect(cursorCanvas.classes.has('tmex-cursor-blink')).toBeFalse();
+    expect(cursorCanvas.classes.has('vibeterm-cursor-blink')).toBeFalse();
     renderer.dispose();
   });
 

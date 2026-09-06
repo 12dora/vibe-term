@@ -2,8 +2,12 @@
 // 光靠「节点事件」是等不到的。
 
 import { describe, expect, test } from 'bun:test';
-import type { KeyLogRecord } from '@tmex/shared/auth';
-import { encodeRenameNodePayload, encodeRevokeNodePayload, hexToBytes } from '@tmex/shared/auth';
+import type { KeyLogRecord } from '@vibeterm/shared/auth';
+import {
+  encodeRenameNodePayload,
+  encodeRevokeNodePayload,
+  hexToBytes,
+} from '@vibeterm/shared/auth';
 import type { AppliedKeyLogStep } from '../auth/user-key-persistence';
 import { type KeyLogProjectionDeps, bindKeyLogProjection } from './key-log-projection';
 

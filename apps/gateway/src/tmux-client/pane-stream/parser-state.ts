@@ -190,7 +190,7 @@ export function appendOscPayloadByte(ctx: ParserContext, byte: number): boolean 
   if (state.oscPayloadBytes.length >= MAX_OSC_PAYLOAD_BYTES) {
     if (!state.warnedOscPayloadOverflow) {
       state.warnedOscPayloadOverflow = true;
-      console.warn('[tmex] pane stream parser dropped oversized OSC payload');
+      console.warn('[vibeterm] pane stream parser dropped oversized OSC payload');
     }
     state.oscPayloadBytes = [];
     state.phase = 'osc-body-ignore';
@@ -219,7 +219,7 @@ export function appendDcsByte(ctx: ParserContext, byte: number): boolean {
   if (state.dcsBytes.length >= MAX_DCS_PASSTHROUGH_BYTES) {
     if (!state.warnedDcsOverflow) {
       state.warnedDcsOverflow = true;
-      console.warn('[tmex] pane stream parser dropped oversized tmux passthrough payload');
+      console.warn('[vibeterm] pane stream parser dropped oversized tmux passthrough payload');
     }
     state.dcsBytes = [];
     state.phase = 'dcs-tmux-ignore';
@@ -246,7 +246,7 @@ export function appendDcsRun(
 export function warnTitleOverflow(state: ParserState): void {
   if (!state.warnedTitleOverflow) {
     state.warnedTitleOverflow = true;
-    console.warn('[tmex] pane stream parser dropped oversized title');
+    console.warn('[vibeterm] pane stream parser dropped oversized title');
   }
 }
 

@@ -10,9 +10,9 @@ import type {
   AuthKdfParamsJson,
   AuthModeResponse,
   PasskeySummary,
-} from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
+} from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
 import { Loader2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

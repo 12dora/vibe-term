@@ -48,7 +48,7 @@ describe('ThemeSubscriptionController', () => {
     expect(sent).toEqual([]);
   });
 
-  test('note and clear persist @tmex_2031 pane options', async () => {
+  test('note and clear persist @vibeterm_2031 pane options', async () => {
     const { host, argvLog } = createHost();
     const controller = new ThemeSubscriptionController(host);
     controller.noteThemeSubscription('%1', true);
@@ -58,9 +58,9 @@ describe('ThemeSubscriptionController', () => {
     controller.clearThemeSubscription('%3');
     await Bun.sleep(0);
     expect(argvLog.map((argv) => argv.join(' '))).toEqual([
-      'set-option -p -t %1 @tmex_2031 on',
-      'set-option -p -t %1 @tmex_2031 off',
-      'set-option -p -t %2 @tmex_2031 off',
+      'set-option -p -t %1 @vibeterm_2031 on',
+      'set-option -p -t %1 @vibeterm_2031 off',
+      'set-option -p -t %2 @vibeterm_2031 off',
     ]);
     expect(controller.has('%2')).toBe(false);
   });
@@ -70,7 +70,7 @@ describe('ThemeSubscriptionController', () => {
     const { host } = createHost({
       async runTmuxAllowFailure() {
         calls += 1;
-        return ok('%1|on\n%2|off\n%3|on\n');
+        return ok('%1|on|\n%2|off|\n%3|on|\n');
       },
     });
     const controller = new ThemeSubscriptionController(host);
@@ -78,6 +78,29 @@ describe('ThemeSubscriptionController', () => {
     controller.restoreThemeSubscriptionsOnce();
     await Bun.sleep(0);
     expect(calls).toBe(1);
+    expect(controller.has('%1')).toBe(true);
+    expect(controller.has('%2')).toBe(false);
+    expect(controller.has('%3')).toBe(true);
+  });
+
+  test('1.x 升上来的 pane 只有 @tmex_2031：搬到新名、删旧值，订阅状态保留', async () => {
+    const argvLog: string[][] = [];
+    const { host } = createHost({
+      async runTmuxAllowFailure(argv) {
+        argvLog.push(argv);
+        if (argv[0] === 'list-panes') return ok('%1||on\n%2||off\n%3|on|on\n');
+        return ok();
+      },
+    });
+    const controller = new ThemeSubscriptionController(host);
+    controller.restoreThemeSubscriptionsOnce();
+    await Bun.sleep(0);
+    expect(argvLog.slice(1).map((argv) => argv.join(' '))).toEqual([
+      'set-option -p -t %1 @vibeterm_2031 on',
+      'set-option -pu -t %1 @tmex_2031',
+      'set-option -p -t %2 @vibeterm_2031 off',
+      'set-option -pu -t %2 @tmex_2031',
+    ]);
     expect(controller.has('%1')).toBe(true);
     expect(controller.has('%2')).toBe(false);
     expect(controller.has('%3')).toBe(true);

@@ -1,4 +1,4 @@
-import type { CommandSpec } from '@tmex/shared/messaging';
+import type { CommandSpec } from '@vibeterm/shared/messaging';
 import { errorResult } from '../context';
 import { findWindow } from '../resolve-refs';
 import { requireDevice } from './device-tree';

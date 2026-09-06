@@ -1,5 +1,5 @@
 // 站点品牌（logo + 名称）的唯一渲染点：侧栏顶部、无侧栏页面的顶栏、登录卡片都用它，
-// 换名/换图只改这里与 `@tmex/shared` 的品牌常量。
+// 换名/换图只改这里与 `@vibeterm/shared` 的品牌常量。
 //
 // 主标题恒为**产品名**（`PRODUCT_NAME`），副标题是**本机 node 名**（浏览器所连的那台
 // 入口机，不是 `/n/:nodeId` 当前浏览的 node）。
@@ -9,8 +9,8 @@
 // 拿不到运行时就只剩产品名。
 
 import { getMeshNodesState, subscribeMeshNodes } from '@/node/mesh-nodes';
-import { BRAND_LOGO_SRC, PRODUCT_NAME } from '@tmex/shared';
-import { useOptionalRuntime } from '@tmex/stores/react';
+import { BRAND_LOGO_SRC, PRODUCT_NAME } from '@vibeterm/shared';
+import { useOptionalRuntime } from '@vibeterm/stores/react';
 import { type ComponentType, type ReactNode, useSyncExternalStore } from 'react';
 import { Link } from 'react-router';
 
@@ -38,8 +38,8 @@ export function useBrandName(): string {
  * standalone 下这里拿不到 mesh 名字，退回站点名。
  *
  * standalone 没有 node 概念，`/api/auth/mode` 只返回 `{mode:'none'}`，本机压根没有对外
- * 暴露的 node 名——退回站点名（默认也叫 `tmex`）。与产品名相同时返回 `null`，避免
- * 品牌块出现「tmex / tmex」两行重复。
+ * 暴露的 node 名——退回站点名（默认也叫 `VibeTerm`）。与产品名相同时返回 `null`，避免
+ * 品牌块出现「VibeTerm / VibeTerm」两行重复。
  */
 export function useLocalNodeName(): string | null {
   const mesh = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);

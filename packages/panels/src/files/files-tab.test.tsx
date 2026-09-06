@@ -4,8 +4,8 @@
 // 「关掉开关就消失」由 root-visibility 的单测覆盖。
 
 import { describe, expect, test } from 'bun:test';
-import type { FileEntryDto, FileRootDto } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ReactNode } from 'react';
 
 installWindowStorage();
@@ -18,14 +18,14 @@ installWindowStorage();
 });
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { I18N_RESOURCES } = await import('@tmex/shared');
-const { createAppRuntime, fileRoute, hostAppPath } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { I18N_RESOURCES } = await import('@vibeterm/shared');
+const { createAppRuntime, fileRoute, hostAppPath } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const i18next = (await import('i18next')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { I18nextProvider } = await import('react-i18next');
 const { MemoryRouter } = await import('react-router');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { FilesTab } = await import('./files-tab');
 
 const i18n = i18next.createInstance();

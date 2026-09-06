@@ -14,16 +14,16 @@ import {
   devicesQueryKey,
   nodeWsUrl,
   terminalShortcutsQueryKey,
-} from '@tmex/api-client';
-import { DEFAULT_TERMINAL_SHORTCUTS, type TerminalShortcutSettings } from '@tmex/shared';
+} from '@vibeterm/api-client';
+import { DEFAULT_TERMINAL_SHORTCUTS, type TerminalShortcutSettings } from '@vibeterm/shared';
 import {
   type AppRuntime,
   type TerminalFileLinksProvider,
   type UIStore,
   createAppRuntime,
   createBrowserHostServices,
-} from '@tmex/stores';
-import { type GatewayConnection, createGatewayConnection } from '@tmex/ws-client';
+} from '@vibeterm/stores';
+import { type GatewayConnection, createGatewayConnection } from '@vibeterm/ws-client';
 import { createShareAppPath, sharePagePath } from './share-route';
 
 /** 会话失效 / 分享结束的 WS 关闭码（契约见 plan §2.4）。 */
@@ -33,7 +33,8 @@ export const SHARE_WS_LOGIN_REQUIRED_CODE = 4401;
 /**
  * 握手上声明本页绑定的分享：`/ws?cid=<nonce>&share=<shareId>`。
  *
- * 浏览器给不了自定义请求头，cookie 又是按 `tmex_sh_<via>` 单槽存的——同一个 node 上打开
+ * 浏览器给不了自定义请求头，cookie 又是按 `tmex_sh_<via>`（协议常量，沿用 tmex 时期的值以保持
+ * 跨版本兼容）单槽存的——同一个 node 上打开
  * 两个分享，后登录的那个会覆盖前一个的 cookie。不在握手里点名 shareId，服务端就只能
  * 「有什么凭证用什么」：已登录的浏览器会拿常规会话直接进（拿到全量设备元数据、撤销
  * 分享也踢不掉），两个分享互串时旧页面还会悄悄绑到新分享的权限与生命周期上。

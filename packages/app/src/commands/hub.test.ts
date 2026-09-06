@@ -84,8 +84,8 @@ async function openHubAuth(roles = 'hub,node'): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: roles,
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: roles,
     },
   });
 }
@@ -105,7 +105,7 @@ describe('hub user commands', () => {
     authHandles.push(auth);
     const result = await runHubUserAdd(parsed, 'alice', {
       auth,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       log: () => undefined,
     });
     expect(result.userId).toBeTruthy();
@@ -314,7 +314,7 @@ describe('hub user commands', () => {
     authHandles.push(auth);
     await runHubUserAdd(parsed, 'alice', {
       auth,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       log: () => undefined,
     });
     await expect(
@@ -390,12 +390,12 @@ async function openEnvAuth(
   roles: string,
   extraEnv: Record<string, string> = {}
 ): Promise<{ auth: LocalAuthContext; envPath: string; dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-hub-cli-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-hub-cli-'));
   tempDirs.push(dir);
   const envPath = join(dir, 'app.env');
   const env = {
-    TMEX_ROLES: roles,
-    TMEX_HUB_URL: 'https://hub.example',
+    VIBETERM_ROLES: roles,
+    VIBETERM_HUB_URL: 'https://hub.example',
     ...extraEnv,
   };
   await writeFile(envPath, stringifyEnv(env), 'utf8');
@@ -456,11 +456,11 @@ describe('hub standby/promote/demote/list', () => {
     expect(result.priority).toBe(50);
     expect(restarted).toBe(1);
     const env = await readEnvFile(envPath);
-    expect(env.TMEX_ROLES).toBe('hub,node');
-    expect(env.TMEX_HUB_MODE).toBe('standby');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('https://standby.example');
-    expect(env.TMEX_HUB_PRIORITY).toBe('50');
-    expect(env.TMEX_HUB_URL).toBe('https://hub.example');
+    expect(env.VIBETERM_ROLES).toBe('hub,node');
+    expect(env.VIBETERM_HUB_MODE).toBe('standby');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('https://standby.example');
+    expect(env.VIBETERM_HUB_PRIORITY).toBe('50');
+    expect(env.VIBETERM_HUB_URL).toBe('https://hub.example');
   });
 
   test('standby defaults priority to 200', async () => {
@@ -471,7 +471,7 @@ describe('hub standby/promote/demote/list', () => {
       log: () => undefined,
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PRIORITY).toBe('200');
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PRIORITY).toBe('200');
   });
 
   test('standby refuses when the node is not joined', async () => {
@@ -483,11 +483,11 @@ describe('hub standby/promote/demote/list', () => {
         skipRestart: true,
       })
     ).rejects.toThrow(/node_identity|尚未加入|not joined/i);
-    expect((await readEnvFile(envPath)).TMEX_ROLES).toBe('standalone');
+    expect((await readEnvFile(envPath)).VIBETERM_ROLES).toBe('standalone');
   });
 
   test('standby refuses an active hub,node and tells the user to demote first', async () => {
-    const { auth, envPath } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'active' });
+    const { auth, envPath } = await openEnvAuth('hub,node', { VIBETERM_HUB_MODE: 'active' });
     await seedJoinedIdentity(auth);
     await expect(
       runHubStandby(parseArgs(['hub', 'standby', '--public-url', 'https://standby.example']), {
@@ -496,7 +496,7 @@ describe('hub standby/promote/demote/list', () => {
         skipRestart: true,
       })
     ).rejects.toThrow(/demote/i);
-    expect((await readEnvFile(envPath)).TMEX_HUB_MODE).toBe('active');
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_MODE).toBe('active');
   });
 
   test('standby refuses http public url without --insecure-local', async () => {
@@ -513,8 +513,8 @@ describe('hub standby/promote/demote/list', () => {
 
   test('promote requires --yes or interactive confirmation, then bumps writerEpoch', async () => {
     const { auth, envPath } = await openEnvAuth('hub,node', {
-      TMEX_HUB_MODE: 'standby',
-      TMEX_HUB_WRITER_EPOCH: '3',
+      VIBETERM_HUB_MODE: 'standby',
+      VIBETERM_HUB_WRITER_EPOCH: '3',
     });
     await seedJoinedIdentity(auth);
     insertMeshHub(auth, {
@@ -542,7 +542,7 @@ describe('hub standby/promote/demote/list', () => {
         confirm: async () => false,
       })
     ).rejects.toThrow(/cancel|取消/i);
-    expect((await readEnvFile(envPath)).TMEX_HUB_MODE).toBe('standby');
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_MODE).toBe('standby');
 
     const logs: string[] = [];
     let restarted = 0;
@@ -556,16 +556,16 @@ describe('hub standby/promote/demote/list', () => {
     expect(promoted.writerEpoch).toBe(6);
     expect(restarted).toBe(1);
     const env = await readEnvFile(envPath);
-    expect(env.TMEX_HUB_MODE).toBe('active');
-    expect(env.TMEX_HUB_WRITER_EPOCH).toBe('6');
+    expect(env.VIBETERM_HUB_MODE).toBe('active');
+    expect(env.VIBETERM_HUB_WRITER_EPOCH).toBe('6');
     expect(logs.some((line) => /split-brain|脑裂/i.test(line))).toBe(true);
     expect(logs.some((line) => line.includes('\u001b[31m'))).toBe(true);
   });
 
   test('promote falls back to env+1 when mesh_hubs is unreadable', async () => {
     const { auth, envPath } = await openEnvAuth('hub,node', {
-      TMEX_HUB_MODE: 'standby',
-      TMEX_HUB_WRITER_EPOCH: '4',
+      VIBETERM_HUB_MODE: 'standby',
+      VIBETERM_HUB_WRITER_EPOCH: '4',
     });
     await seedJoinedIdentity(auth);
     const sqlite = auth.sqlite as { exec?: (sql: string) => void };
@@ -576,7 +576,7 @@ describe('hub standby/promote/demote/list', () => {
       skipRestart: true,
     });
     expect(promoted.writerEpoch).toBe(5);
-    expect((await readEnvFile(envPath)).TMEX_HUB_WRITER_EPOCH).toBe('5');
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_WRITER_EPOCH).toBe('5');
   });
 
   test('promote refuses a node-only install', async () => {
@@ -591,8 +591,8 @@ describe('hub standby/promote/demote/list', () => {
     ).rejects.toThrow(/hub,node/);
   });
 
-  test('demote sets TMEX_HUB_MODE=standby and restarts', async () => {
-    const { auth, envPath } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'active' });
+  test('demote sets VIBETERM_HUB_MODE=standby and restarts', async () => {
+    const { auth, envPath } = await openEnvAuth('hub,node', { VIBETERM_HUB_MODE: 'active' });
     await seedJoinedIdentity(auth);
     let restarted = 0;
     await runHubDemote(parseArgs(['hub', 'demote']), {
@@ -603,7 +603,7 @@ describe('hub standby/promote/demote/list', () => {
       },
     });
     expect(restarted).toBe(1);
-    expect((await readEnvFile(envPath)).TMEX_HUB_MODE).toBe('standby');
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_MODE).toBe('standby');
   });
 
   test('list prints mesh_hubs and marks the writer', async () => {
@@ -670,7 +670,7 @@ describe('hub standby/promote/demote/list', () => {
     expect(result.nodeId).toBe(identity.nodeId);
     const text = logs.join('\n');
     expect(text).toContain(identity.nodeId);
-    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+    expect(text).toContain(`vibeterm hub allow ${identity.nodeId}`);
     expect(text).toMatch(/ignore|忽略/i);
   });
 
@@ -692,7 +692,7 @@ describe('hub standby/promote/demote/list', () => {
       log: (message) => logs.push(message),
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(primary);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(primary);
     expect(logs.join('\n')).toContain(primary);
   });
 
@@ -711,7 +711,7 @@ describe('hub standby/promote/demote/list', () => {
       log: (message) => logs.push(message),
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(primary);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(primary);
     expect(logs.join('\n')).toContain(primary);
   });
 
@@ -724,15 +724,15 @@ describe('hub standby/promote/demote/list', () => {
       log: (message) => logs.push(message),
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBeUndefined();
     expect(logs.join('\n')).toMatch(/WARNING|警告/);
   });
 
-  test('promote and demote print TMEX_HUB_PEERS without changing it', async () => {
+  test('promote and demote print VIBETERM_HUB_PEERS without changing it', async () => {
     const keep = 'cc'.repeat(16);
     const { auth, envPath } = await openEnvAuth('hub,node', {
-      TMEX_HUB_MODE: 'standby',
-      TMEX_HUB_PEERS: keep,
+      VIBETERM_HUB_MODE: 'standby',
+      VIBETERM_HUB_PEERS: keep,
     });
     await seedJoinedIdentity(auth);
     const promoteLogs: string[] = [];
@@ -741,7 +741,7 @@ describe('hub standby/promote/demote/list', () => {
       log: (message) => promoteLogs.push(message),
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(keep);
     expect(promoteLogs.join('\n')).toContain(keep);
 
     const demoteLogs: string[] = [];
@@ -750,12 +750,12 @@ describe('hub standby/promote/demote/list', () => {
       log: (message) => demoteLogs.push(message),
       skipRestart: true,
     });
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(keep);
     expect(demoteLogs.join('\n')).toContain(keep);
   });
 
-  test('promote warns when TMEX_HUB_PEERS is empty and reminds the old writer', async () => {
-    const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
+  test('promote warns when VIBETERM_HUB_PEERS is empty and reminds the old writer', async () => {
+    const { auth } = await openEnvAuth('hub,node', { VIBETERM_HUB_MODE: 'standby' });
     await seedJoinedIdentity(auth);
     const identity = await auth.identityStore.load();
     if (!identity) throw new Error('missing identity');
@@ -766,14 +766,14 @@ describe('hub standby/promote/demote/list', () => {
       skipRestart: true,
     });
     const text = logs.join('\n');
-    expect(text).toMatch(/TMEX_HUB_PEERS/);
+    expect(text).toMatch(/VIBETERM_HUB_PEERS/);
     expect(text).toMatch(/empty|空/i);
-    expect(text).toContain(`tmex hub allow ${identity.nodeId}`);
+    expect(text).toContain(`vibeterm hub allow ${identity.nodeId}`);
   });
 
-  test('list marks authorized for self and TMEX_HUB_PEERS, not others', async () => {
+  test('list marks authorized for self and VIBETERM_HUB_PEERS, not others', async () => {
     const { auth } = await openEnvAuth('hub,node', {
-      TMEX_HUB_PEERS: 'ab'.repeat(16),
+      VIBETERM_HUB_PEERS: 'ab'.repeat(16),
     });
     await seedJoinedIdentity(auth);
     const identity = await auth.identityStore.load();
@@ -820,7 +820,7 @@ describe('hub standby/promote/demote/list', () => {
   });
 
   test('promote/demote persist hub_role_transitions; list prints latest phase', async () => {
-    const { auth } = await openEnvAuth('hub,node', { TMEX_HUB_MODE: 'standby' });
+    const { auth } = await openEnvAuth('hub,node', { VIBETERM_HUB_MODE: 'standby' });
     await seedJoinedIdentity(auth);
     await runHubPromote(parseArgs(['hub', 'promote', '--yes']), {
       auth,
@@ -851,12 +851,12 @@ describe('hub standby/promote/demote/list', () => {
 });
 
 describe('hub allow/disallow', () => {
-  test('allow validates 32-hex, de-dups keeping order, writes TMEX_HUB_PEERS, and restarts', async () => {
+  test('allow validates 32-hex, de-dups keeping order, writes VIBETERM_HUB_PEERS, and restarts', async () => {
     const first = 'aa'.repeat(16);
     const second = 'bb'.repeat(16);
     const third = 'cc'.repeat(16);
     const { auth, envPath } = await openEnvAuth('hub,node', {
-      TMEX_HUB_PEERS: `${second},${first}`,
+      VIBETERM_HUB_PEERS: `${second},${first}`,
     });
     let restarted = 0;
     const logs: string[] = [];
@@ -873,7 +873,7 @@ describe('hub allow/disallow', () => {
     );
     expect(result.peers).toEqual([second, first, third]);
     expect(restarted).toBe(1);
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(`${second},${first},${third}`);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(`${second},${first},${third}`);
     const text = logs.join('\n');
     expect(text).toContain(second);
     expect(text).toContain(first);
@@ -890,7 +890,7 @@ describe('hub allow/disallow', () => {
         skipRestart: true,
       })
     ).rejects.toThrow(/32|hex|node id/i);
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBeUndefined();
   });
 
   test('allow refuses a node-only install', async () => {
@@ -902,7 +902,7 @@ describe('hub allow/disallow', () => {
         skipRestart: true,
       })
     ).rejects.toThrow(/hub,node/);
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBeUndefined();
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBeUndefined();
   });
 
   test('allow --no-restart skips restart', async () => {
@@ -917,7 +917,7 @@ describe('hub allow/disallow', () => {
       },
     });
     expect(restarted).toBe(0);
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe('dd'.repeat(16));
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe('dd'.repeat(16));
     expect(logs.join('\n')).toContain(HUB_MANUAL_RESTART_HINT);
   });
 
@@ -925,7 +925,7 @@ describe('hub allow/disallow', () => {
     const keep = 'aa'.repeat(16);
     const drop = 'bb'.repeat(16);
     const { auth, envPath } = await openEnvAuth('hub,node', {
-      TMEX_HUB_PEERS: `${keep},${drop}`,
+      VIBETERM_HUB_PEERS: `${keep},${drop}`,
     });
     const logs: string[] = [];
     const result = await runHubDisallow(parseArgs(['hub', 'disallow']), drop, {
@@ -934,11 +934,11 @@ describe('hub allow/disallow', () => {
       skipRestart: true,
     });
     expect(result.peers).toEqual([keep]);
-    expect((await readEnvFile(envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect((await readEnvFile(envPath)).VIBETERM_HUB_PEERS).toBe(keep);
     expect(logs.join('\n')).toContain(keep);
     expect(logs.join('\n')).not.toContain(drop);
 
-    const nodeOnly = await openEnvAuth('node', { TMEX_HUB_PEERS: keep });
+    const nodeOnly = await openEnvAuth('node', { VIBETERM_HUB_PEERS: keep });
     await expect(
       runHubDisallow(parseArgs(['hub', 'disallow']), keep, {
         auth: nodeOnly.auth,
@@ -946,6 +946,6 @@ describe('hub allow/disallow', () => {
         skipRestart: true,
       })
     ).rejects.toThrow(/hub,node/);
-    expect((await readEnvFile(nodeOnly.envPath)).TMEX_HUB_PEERS).toBe(keep);
+    expect((await readEnvFile(nodeOnly.envPath)).VIBETERM_HUB_PEERS).toBe(keep);
   });
 });

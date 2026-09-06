@@ -5,7 +5,7 @@ import {
   UPLINK_CTL_MAX_ATTACHMENT_ENTRIES,
   UPLINK_CTL_MAX_BYTES,
   encodeHubUplinkCtl,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 
 export { HUB_ATTACHMENTS_FRAME_MAX_BYTES, UPLINK_CTL_MAX_ATTACHMENT_ENTRIES };
 

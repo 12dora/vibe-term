@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 生成私有 CA 与 hub.tmex.test / entry.tmex.test 的服务端证书。
+# 生成私有 CA 与 hub.vibeterm.test / entry.vibeterm.test 的服务端证书。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -10,13 +10,13 @@ umask 077
 
 openssl genrsa -out "${CA_DIR}/ca.key" 4096
 openssl req -x509 -new -nodes -key "${CA_DIR}/ca.key" -sha256 -days 3650 \
-  -subj "/CN=tmex-e2e-ca" -out "${CA_DIR}/ca.crt"
+  -subj "/CN=vibeterm-e2e-ca" -out "${CA_DIR}/ca.crt"
 
 openssl genrsa -out "${CA_DIR}/hub.key" 2048
-openssl req -new -key "${CA_DIR}/hub.key" -subj "/CN=hub.tmex.test" -out "${CA_DIR}/hub.csr"
+openssl req -new -key "${CA_DIR}/hub.key" -subj "/CN=hub.vibeterm.test" -out "${CA_DIR}/hub.csr"
 
 cat > "${CA_DIR}/hub.ext" <<'EOF'
-subjectAltName=DNS:hub.tmex.test,DNS:entry.tmex.test
+subjectAltName=DNS:hub.vibeterm.test,DNS:entry.vibeterm.test
 extendedKeyUsage=serverAuth
 keyUsage=digitalSignature,keyEncipherment
 basicConstraints=CA:FALSE

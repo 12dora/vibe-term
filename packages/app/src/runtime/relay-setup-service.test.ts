@@ -8,7 +8,7 @@ import { verifyRelayPassword } from '../../../../apps/gateway/src/relay/relay-pa
 import { readEnvFile } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
-import { parseTmexRoles } from '../lib/roles';
+import { parseVibeTermRoles } from '../lib/roles';
 import { becomeRelay } from './relay-setup-service';
 import {
   SetupError,
@@ -33,8 +33,8 @@ async function openAuth(): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: 'standalone',
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: 'standalone',
     },
   });
   authHandles.push(ctx);
@@ -42,7 +42,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-setup-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-setup-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -97,15 +97,15 @@ describe('becomeRelay', () => {
       restarting: true,
     });
     expect(result).not.toHaveProperty('fingerprint');
-    expect(JSON.stringify(result)).not.toContain('TMEX_RELAY_ADMIN_TOKEN');
+    expect(JSON.stringify(result)).not.toContain('VIBETERM_RELAY_ADMIN_TOKEN');
     expect(deps.auth.userStore.listUsers()).toHaveLength(0);
     expect(await deps.auth.identityStore.load()).toBeNull();
     const env = await readEnvFile(deps.envPath);
-    expect(env.TMEX_ROLES).toBe('relay');
-    expect(env.TMEX_RELAY_PUBLIC_URL).toBe('https://relay.example');
-    expect(env.TMEX_HUB_URL).toBe('');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
-    expect(env.TMEX_RELAY_ADMIN_TOKEN).toBeTruthy();
+    expect(env.VIBETERM_ROLES).toBe('relay');
+    expect(env.VIBETERM_RELAY_PUBLIC_URL).toBe('https://relay.example');
+    expect(env.VIBETERM_HUB_URL).toBe('');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toBeTruthy();
     expect(env.OTHER).toBe('keep');
     expect(restarts).toEqual([1]);
     const config = new RelayConfigStore(deps.auth.db).read();
@@ -123,7 +123,7 @@ describe('becomeRelay', () => {
         role: 'relay,node',
         relayPublicUrl: 'https://relay.example',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
       },
       deps
     );
@@ -132,10 +132,10 @@ describe('becomeRelay', () => {
     expect(result.fingerprint).toHaveLength(64);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
     const env = await readEnvFile(deps.envPath);
-    expect(parseTmexRoles(env.TMEX_ROLES)).toEqual({ hub: false, node: true, relay: true });
+    expect(parseVibeTermRoles(env.VIBETERM_ROLES)).toEqual({ hub: false, node: true, relay: true });
     const status = await getLocalStatus({
       ...deps,
-      roles: parseTmexRoles(env.TMEX_ROLES),
+      roles: parseVibeTermRoles(env.VIBETERM_ROLES),
     });
     expect(status.role).toBe('relay,node');
     expect(status.relay).toEqual({
@@ -150,14 +150,14 @@ describe('becomeRelay', () => {
   test('preserves an existing admin token and does not return it', async () => {
     const dir = await tempDir();
     const envPath = join(dir, 'app.env');
-    await writeFile(envPath, 'TMEX_RELAY_ADMIN_TOKEN=keep-this-token\nOTHER=keep\n', 'utf8');
+    await writeFile(envPath, 'VIBETERM_RELAY_ADMIN_TOKEN=keep-this-token\nOTHER=keep\n', 'utf8');
     const deps = await baseDeps({ envPath, installDir: dir });
     const result = await becomeRelay(
       { role: 'relay', relayPublicUrl: 'https://relay.example' },
       deps
     );
     expect(JSON.stringify(result)).not.toContain('keep-this-token');
-    expect((await readEnvFile(deps.envPath)).TMEX_RELAY_ADMIN_TOKEN).toBe('keep-this-token');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_RELAY_ADMIN_TOKEN).toBe('keep-this-token');
   });
 
   test('null or empty relayPassword means no password and does not rotate epoch', async () => {
@@ -225,7 +225,7 @@ describe('becomeRelay', () => {
         role: 'relay,node',
         relayPublicUrl: 'https://relay.example',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
       },
       deps
     );
@@ -242,7 +242,7 @@ describe('becomeRelay', () => {
           role: 'relay,node',
           relayPublicUrl: 'https://relay.example',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
         },
         again
       )

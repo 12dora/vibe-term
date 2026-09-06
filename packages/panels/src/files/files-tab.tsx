@@ -4,11 +4,11 @@
 // （`FilesNodeSection`，各自套自己的运行时）作为 `sections` 传进来，外壳只管头部与滚动。
 
 import { useIsFetching, useQueryClient } from '@tanstack/react-query';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { ScrollArea } from '@tmex/ui/scroll-area';
-import { SidebarGroup } from '@tmex/ui/sidebar';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { ScrollArea } from '@vibeterm/ui/scroll-area';
+import { SidebarGroup } from '@vibeterm/ui/sidebar';
 import { RotateCw } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';

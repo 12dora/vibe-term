@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { notifyDeviceClose } from '../agent/device-close-bus';
 
 export interface WatchRuntimeLike {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { CanonicalPendingCommands } from './canonical-pending-commands';
 import { BorshWebSocketClient } from './client';
 import { PendingSendQueue, STALE_INPUT_TTL_MS } from './pending-send-queue';

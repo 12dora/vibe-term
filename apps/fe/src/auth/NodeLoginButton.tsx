@@ -1,7 +1,7 @@
 // 「登录此节点」按钮。F4-3 会把它放进侧边栏的 node 行。
 // sk_sess 还在（内存里，或能从 IndexedDB 恢复）时直接静默完成登录；已失效则带 `?node=` 去登录页。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Loader2, LogIn } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';

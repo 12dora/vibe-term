@@ -2,8 +2,8 @@
 // （effect 不会执行，因此这里测的纯粹是**该不该挡**，静默登录本身由 ensureNodeLogin 的用例覆盖）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

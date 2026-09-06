@@ -1,4 +1,4 @@
-import type { TunnelAccessPolicyRule } from '@tmex/shared';
+import type { TunnelAccessPolicyRule } from '@vibeterm/shared';
 import { TunnelError } from './errors';
 import { normalizeTunnelHostname } from './hostname';
 

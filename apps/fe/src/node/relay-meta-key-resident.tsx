@@ -7,7 +7,7 @@
 // 回路本体走**动态** import：它牵出 key log 引擎与整套中继流程，不能进首屏 chunk
 // （`i18n/core-coverage` 守卫的正是这条线）。
 
-import type { AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { useEffect, useMemo } from 'react';
 import { useSharedAuthMode } from './mesh-nodes';
 import type { RelayFlowMode } from './relay-enroll';

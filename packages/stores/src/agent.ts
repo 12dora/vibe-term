@@ -1,8 +1,8 @@
 // Agent 会话 store 组合根：装配订阅、事件路由、历史同步、REST 动作，产出 zustand store。
 // 模式仿 tmux.ts：模块级 initialized 防重入、client.onMessage 独立 handler、READY 重连补发订阅。
 
-import type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';
-import { buildAgentSubscribe, buildAgentUnsubscribe } from '@tmex/ws-client';
+import type { AgentSessionDto, AgentSessionStatus } from '@vibeterm/shared';
+import { buildAgentSubscribe, buildAgentUnsubscribe } from '@vibeterm/ws-client';
 import { create } from 'zustand';
 import { type PersistStorage, createJSONStorage, persist } from 'zustand/middleware';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';
@@ -13,6 +13,7 @@ import { AGENT_PERSIST_VERSION, migrateAgentPersistedState } from './agent-persi
 import { createAgentSessionActions } from './agent-session-actions';
 import { type AgentState, createInitialAgentStateData } from './agent-state';
 import type { RuntimeCore } from './runtime';
+import { migrateLocalStorageKey } from './storage-migration';
 
 export type {
   AgentActions,
@@ -52,9 +53,15 @@ function dedupedStorage(): PersistStorage<AgentPersisted> | undefined {
   });
 }
 
+function agentStorageKeyFor(prefix: string): string {
+  const key = `${prefix}vibeterm-agent`;
+  migrateLocalStorageKey(`${prefix}tmex-agent`, key);
+  return key;
+}
+
 export function createAgentStore(core: RuntimeCore, disposers: Array<() => void> = []) {
   let initialized = false;
-
+  const agentStorageKey = agentStorageKeyFor(core.storagePrefix);
   // 已订阅 session 集合：READY 重连后重发订阅
   const subscribedSessions = new Set<string>();
 
@@ -160,7 +167,7 @@ export function createAgentStore(core: RuntimeCore, disposers: Array<() => void>
         };
       },
       {
-        name: `${core.storagePrefix}tmex-agent`,
+        name: agentStorageKey,
         version: AGENT_PERSIST_VERSION,
         migrate: migrateAgentPersistedState,
         storage: dedupedStorage(),

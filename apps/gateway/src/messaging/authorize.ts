@@ -1,4 +1,4 @@
-import type { CommandActor } from '@tmex/shared/messaging';
+import type { CommandActor } from '@vibeterm/shared/messaging';
 import { getTelegramBotById, getTelegramChatByBotAndChatId } from '../db/telegram';
 import { getWeixinAccountById, getWeixinUserByAccountAndUserId } from '../db/weixin';
 

@@ -11,9 +11,9 @@ import {
 import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
 import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { withKeyLogLock } from '@/node/enrollment-engine';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { HUB_NOT_WRITER } from '@tmex/api-client/auth/index';
-import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@tmex/shared/auth';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { HUB_NOT_WRITER } from '@vibeterm/api-client/auth/index';
+import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
 
 const HUB_TIMEOUT = 'HUB_TIMEOUT';
 

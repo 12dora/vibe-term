@@ -1,4 +1,4 @@
-import type { TelegramBotConfig, WeixinAccountConfig } from '@tmex/shared';
+import type { TelegramBotConfig, WeixinAccountConfig } from '@vibeterm/shared';
 
 export interface DeviceTreeOrderRecord {
   deviceId: string;

@@ -8,7 +8,7 @@ import {
   type ShareLogPage,
   type ShareSettings,
   type ShareState,
-} from '@tmex/shared/share';
+} from '@vibeterm/shared/share';
 import { and, asc, desc, eq, gt, lt, sql } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { getDb as getOrmDb } from '../db/client';

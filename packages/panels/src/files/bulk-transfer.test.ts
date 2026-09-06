@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import {
   type FileBulkClient,
   downloadFileWithTransport,

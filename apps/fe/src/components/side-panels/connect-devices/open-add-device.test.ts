@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { AddDeviceTarget } from '@/pages/devices/add-device-targets';
-import type { AddDevicePreset } from '@tmex/panels/device-management';
+import type { AddDevicePreset } from '@vibeterm/panels/device-management';
 import { type AddDeviceTargetSource, openSelfAddDevice } from './open-add-device';
 import { SSH_ADD_DEVICE_PRESET, startAddDeviceFlow } from './ssh-steps';
 

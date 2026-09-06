@@ -1,4 +1,4 @@
-import { bytesEqual, decodeAuthorization, verifyEd25519 } from '@tmex/shared/auth';
+import { bytesEqual, decodeAuthorization, verifyEd25519 } from '@vibeterm/shared/auth';
 import { decodeB64url } from '../api/route-input';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import { ED25519_SIG_BYTES } from './relay-member';

@@ -11,8 +11,8 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
-import { type LinkSession, createInMemoryLinkPair } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { type LinkSession, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -43,7 +43,7 @@ import { MESH_VIA_SELF, setMeshRequestContext } from '../mesh-deps';
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 function fakeGateway(db: AuthDb): GatewayRuntime {

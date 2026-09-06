@@ -4,8 +4,8 @@ import {
   PANE_MODE_ALT_SCREEN,
   PANE_MODE_FLAGS_PRESENT,
   encodePaneModes,
-} from '@tmex/shared';
-import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@tmex/ws-client';
+} from '@vibeterm/shared';
+import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import type { GhosttyTerminalModeSnapshot } from 'ghostty-terminal';
 import {
   type CanonicalSnapshotTarget,

@@ -1,4 +1,4 @@
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 
 export interface RefreshConfirmDialogProps {

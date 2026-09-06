@@ -1,10 +1,11 @@
 import { sha256 } from '@noble/hashes/sha2.js';
-import { deriveSecureChannelKeys } from '../link/secure-channel-link';
+import { SC_SESSION_INFO_PREFIX, deriveSecureChannelKeys } from '../link/secure-channel-link';
 import type { DtlsFingerprint, PeerHello, PeerPath, PeerTranscript } from './encoding';
 import { DOMAIN_PEER, compareBytes, encodePeerTranscript } from './encoding';
 import { signEd25519, verifyEd25519 } from './root-key';
 
-export const PEER_SESSION_INFO_PREFIX = 'tmex-sc/v1/';
+// 与 secure-channel-link 的 HKDF info 前缀是同一个值，单点定义避免两处漂移
+export const PEER_SESSION_INFO_PREFIX = SC_SESSION_INFO_PREFIX;
 
 export type PeerSessionKeys = {
   sendKey: Uint8Array;

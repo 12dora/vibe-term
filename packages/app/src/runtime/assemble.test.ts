@@ -41,7 +41,7 @@ import { deriveRootKey } from '../lib/password';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
 import {
   SHUTDOWN_TIMEOUT_MS,
-  assembleTmex,
+  assembleVibeTerm,
   createProcessShutdown,
   installShutdownHandlers,
   meshShutdownNeeded,
@@ -142,26 +142,26 @@ function serverWithClientIp(address: string | null): Bun.Server<unknown> {
   } as unknown as Bun.Server<unknown>;
 }
 
-describe('assembleTmex role matrix', () => {
-  const originalRoles = process.env.TMEX_ROLES;
+describe('assembleVibeTerm role matrix', () => {
+  const originalRoles = process.env.VIBETERM_ROLES;
 
   afterEach(() => {
     if (originalRoles === undefined) {
-      process.env.TMEX_ROLES = undefined;
+      process.env.VIBETERM_ROLES = undefined;
     } else {
-      process.env.TMEX_ROLES = originalRoles;
+      process.env.VIBETERM_ROLES = originalRoles;
     }
   });
 
-  test('TMEX_DIRECT_ENABLED=false skips native load even when nativeDir is set', async () => {
-    const original = process.env.TMEX_DIRECT_ENABLED;
-    process.env.TMEX_DIRECT_ENABLED = 'false';
+  test('VIBETERM_DIRECT_ENABLED=false skips native load even when nativeDir is set', async () => {
+    const original = process.env.VIBETERM_DIRECT_ENABLED;
+    process.env.VIBETERM_DIRECT_ENABLED = 'false';
     try {
       let loadNative: LoadNative | undefined;
       let canLoadNative: (() => boolean) | undefined;
-      await assembleTmex({
+      await assembleVibeTerm({
         roles: { hub: false, node: true, relay: false },
-        nativeDir: '/tmp/tmex-native-should-not-load',
+        nativeDir: '/tmp/vibeterm-native-should-not-load',
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async (opts) => {
           loadNative = opts.loadNative;
@@ -184,9 +184,9 @@ describe('assembleTmex role matrix', () => {
       expect(warnings.some((line) => line.includes('native-datachannel'))).toBe(false);
     } finally {
       if (original === undefined) {
-        process.env.TMEX_DIRECT_ENABLED = undefined;
+        process.env.VIBETERM_DIRECT_ENABLED = undefined;
       } else {
-        process.env.TMEX_DIRECT_ENABLED = original;
+        process.env.VIBETERM_DIRECT_ENABLED = original;
       }
     }
   });
@@ -210,7 +210,7 @@ describe('assembleTmex role matrix', () => {
         stops += 1;
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -238,7 +238,7 @@ describe('assembleTmex role matrix', () => {
         order.push('mesh');
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -259,7 +259,7 @@ describe('assembleTmex role matrix', () => {
         order.push('mesh');
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -276,7 +276,7 @@ describe('assembleTmex role matrix', () => {
         refresh += 1;
       },
     });
-    await assembleTmex({
+    await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
@@ -291,7 +291,7 @@ describe('assembleTmex role matrix', () => {
 
   test('tlsInfo withholds CA fingerprint while the HTTPS listener is not running', async () => {
     let tlsInfo: HubTlsInfoProvider | undefined;
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
@@ -341,7 +341,7 @@ describe('assembleTmex role matrix', () => {
         closeSession() {},
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -365,7 +365,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone does not construct mesh and /api/auth/mode returns {mode:none}', async () => {
-    process.env.TMEX_ROLES = 'standalone';
+    process.env.VIBETERM_ROLES = 'standalone';
     const { db, close } = createMigratedAuthDb();
     let meshBuilt = 0;
     try {
@@ -379,7 +379,7 @@ describe('assembleTmex role matrix', () => {
           return undefined;
         },
       });
-      const assembled = await assembleTmex({
+      const assembled = await assembleVibeTerm({
         createGatewayRuntime: async () => gateway,
         createMeshRuntime: async () => {
           meshBuilt += 1;
@@ -448,7 +448,7 @@ describe('assembleTmex role matrix', () => {
         return null;
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -496,7 +496,7 @@ describe('assembleTmex role matrix', () => {
       },
     });
     let seenHub: HubRuntime | undefined;
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async (opts) => {
@@ -517,7 +517,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('SPA deep links /login /nodes /n/:id fall through to frontend', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),
@@ -584,7 +584,7 @@ describe('assembleTmex role matrix', () => {
         closeSession() {},
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -645,7 +645,7 @@ describe('assembleTmex role matrix', () => {
         order.push('gateway');
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -672,7 +672,7 @@ describe('assembleTmex role matrix', () => {
         order.push('gateway');
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -710,7 +710,7 @@ describe('assembleTmex role matrix', () => {
         return new Response('gw');
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
@@ -739,8 +739,8 @@ describe('assembleTmex role matrix', () => {
     expect(seen).toEqual(['ws:/ws']);
   });
 
-  test('local gateway responses get x-tmex-session-renewed from attached auth', async () => {
-    const { setMeshRequestContext, X_TMEX_SESSION_RENEWED } = await import(
+  test('local gateway responses get the session-renewed header from attached auth', async () => {
+    const { setMeshRequestContext, SESSION_RENEWED_HEADER } = await import(
       '../../../../apps/gateway/src/mesh/mesh-deps'
     );
     const mesh = fakeMesh({
@@ -761,13 +761,14 @@ describe('assembleTmex role matrix', () => {
         });
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => gateway,
       createMeshRuntime: async () => mesh,
     });
     const res = await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer);
-    expect(res?.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+    expect(res?.headers.get(SESSION_RENEWED_HEADER.name)).toBeTruthy();
+    expect(res?.headers.get(SESSION_RENEWED_HEADER.legacy)).toBeTruthy();
   });
 
   test('passes persisted identity userId to createMeshRuntime', async () => {
@@ -787,7 +788,7 @@ describe('assembleTmex role matrix', () => {
         userId: 'uid-from-join',
       });
       let seen: string | undefined;
-      await assembleTmex({
+      await assembleVibeTerm({
         roles: { hub: false, node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway({ db }),
         createMeshRuntime: async (opts) => {
@@ -802,7 +803,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('fake Bun.serve captures fetch and websocket from the assembly', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -827,8 +828,8 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone /api/local/status is served before gateway dispatch', async () => {
-    process.env.TMEX_ROLES = 'standalone';
-    const assembled = await assembleTmex({
+    process.env.VIBETERM_ROLES = 'standalone';
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -849,8 +850,8 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone GET /api/tls is served through assembled.fetch and returns mode none', async () => {
-    process.env.TMEX_ROLES = 'standalone';
-    const assembled = await assembleTmex({
+    process.env.VIBETERM_ROLES = 'standalone';
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
@@ -873,7 +874,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('mesh GET /api/tls without a session is 401 UNAUTHORIZED', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => fakeMesh(),
@@ -886,8 +887,8 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone localAuth 生效时 GET /api/tls 与 node 一样要求会话', async () => {
-    process.env.TMEX_ROLES = 'standalone';
-    const assembled = await assembleTmex({
+    process.env.VIBETERM_ROLES = 'standalone';
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       localAuthEffective: () => true,
       createGatewayRuntime: async () => fakeGateway(),
@@ -903,9 +904,9 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone localAuth 未生效时 GET /api/tls 仍开放；开关 live 读', async () => {
-    process.env.TMEX_ROLES = 'standalone';
+    process.env.VIBETERM_ROLES = 'standalone';
     let effective = false;
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       localAuthEffective: () => effective,
       createGatewayRuntime: async () => fakeGateway(),
@@ -924,7 +925,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('免登录 standalone 下禁止创建分享；开启登录后放开', async () => {
-    process.env.TMEX_ROLES = 'standalone';
+    process.env.VIBETERM_ROLES = 'standalone';
     const captured: Array<(() => boolean) | null> = [];
     setShareServiceForTests({
       setAuthRequiredResolver: (fn: (() => boolean) | null) => captured.push(fn),
@@ -932,7 +933,7 @@ describe('assembleTmex role matrix', () => {
     } as unknown as ShareService);
     try {
       let effective = false;
-      await assembleTmex({
+      await assembleVibeTerm({
         roles: { hub: false, node: false, relay: false },
         localAuthEffective: () => effective,
         createGatewayRuntime: async () => fakeGateway(),
@@ -956,7 +957,7 @@ describe('assembleTmex role matrix', () => {
       startSweeper: () => {},
     } as unknown as ShareService);
     try {
-      await assembleTmex({
+      await assembleVibeTerm({
         roles: { hub: false, node: true, relay: false },
         localAuthEffective: () => false,
         createGatewayRuntime: async () => fakeGateway(),
@@ -969,7 +970,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('node GET /api/tls 不因 localAuthEffective=false 而放行', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       localAuthEffective: () => false,
       createGatewayRuntime: async () => fakeGateway(),
@@ -980,7 +981,7 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('unknown ACME challenge token is 404, not SPA fallback', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => {
@@ -1000,7 +1001,7 @@ describe('assembleTmex role matrix', () => {
   test('startup with stored selfsigned config starts https listener; shutdown stops it', async () => {
     const { db, close } = createMigratedAuthDb();
     const port = 20000 + Math.floor(Math.random() * 10000);
-    const ca = await createCa({ name: 'tmex assemble CA' });
+    const ca = await createCa({ name: 'VibeTerm assemble CA' });
     const leaf = await issueLeaf({
       ca,
       sans: ['localhost', '127.0.0.1'],
@@ -1019,7 +1020,7 @@ describe('assembleTmex role matrix', () => {
       certNotBefore: parsed.notBefore,
       certNotAfter: parsed.notAfter,
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
@@ -1075,7 +1076,7 @@ describe('assembleTmex role matrix', () => {
         return new Response('guarded', { status: 401 });
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
@@ -1087,7 +1088,7 @@ describe('assembleTmex role matrix', () => {
         body: JSON.stringify({
           hubPublicUrl: 'https://hub.example',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         }),
       }),
@@ -1106,7 +1107,7 @@ describe('assembleTmex role matrix', () => {
         return Response.json({ status: 'ok' });
       },
     });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
@@ -1119,10 +1120,10 @@ describe('assembleTmex role matrix', () => {
   });
 
   test('standalone localAuth 生效时 /api/local/status 与 /api/devices 要求会话', async () => {
-    process.env.TMEX_ROLES = 'standalone';
+    process.env.VIBETERM_ROLES = 'standalone';
     const { db, close } = createMigratedAuthDb();
     try {
-      const assembled = await assembleTmex({
+      const assembled = await assembleVibeTerm({
         roles: { hub: false, node: false, relay: false },
         localAuthEffective: () => true,
         createGatewayRuntime: async () =>
@@ -1159,16 +1160,16 @@ describe('assembleTmex role matrix', () => {
   });
 });
 
-describe('assembleTmex standalone auth surface', () => {
-  const originalRoles = process.env.TMEX_ROLES;
+describe('assembleVibeTerm standalone auth surface', () => {
+  const originalRoles = process.env.VIBETERM_ROLES;
   afterEach(() => {
-    if (originalRoles === undefined) process.env.TMEX_ROLES = undefined;
-    else process.env.TMEX_ROLES = originalRoles;
+    if (originalRoles === undefined) process.env.VIBETERM_ROLES = undefined;
+    else process.env.VIBETERM_ROLES = originalRoles;
   });
 
   async function assembleStandalone(db: GatewayRuntime['db']) {
-    process.env.TMEX_ROLES = 'standalone';
-    return assembleTmex({
+    process.env.VIBETERM_ROLES = 'standalone';
+    return assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
@@ -1188,14 +1189,14 @@ describe('assembleTmex standalone auth surface', () => {
     });
   }
 
-  async function json(assembled: Awaited<ReturnType<typeof assembleTmex>>, req: Request) {
+  async function json(assembled: Awaited<ReturnType<typeof assembleVibeTerm>>, req: Request) {
     const res = await assembled.fetch(req, dummyServer);
     if (!res) throw new Error(`no response for ${req.url}`);
     return { res, body: (await res.json()) as Record<string, unknown> };
   }
 
   async function loginWithPassword(
-    assembled: Awaited<ReturnType<typeof assembleTmex>>,
+    assembled: Awaited<ReturnType<typeof assembleVibeTerm>>,
     uid: string,
     password: string,
     kdf: { salt: string; memory_kib: number; iterations: number; parallelism: number },
@@ -1278,7 +1279,7 @@ describe('assembleTmex standalone auth surface', () => {
         new Request('http://127.0.0.1/api/auth/local/bootstrap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+          body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
         })
       );
       expect(boot.res.status).toBe(200);
@@ -1313,7 +1314,7 @@ describe('assembleTmex standalone auth surface', () => {
         iterations: number;
         parallelism: number;
       };
-      const sid = await loginWithPassword(assembled, uid, 'tmex-test-pass', kdf, nodeId);
+      const sid = await loginWithPassword(assembled, uid, 'vibeterm-test-pass', kdf, nodeId);
       const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
 
       const authedDevices = await assembled.fetch(
@@ -1354,7 +1355,7 @@ describe('assembleTmex standalone auth surface', () => {
         new Request('http://127.0.0.1/api/auth/local/bootstrap', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ username: 'owner', password: 'tmex-test-pass' }),
+          body: JSON.stringify({ username: 'owner', password: 'vibeterm-test-pass' }),
         })
       );
       await json(
@@ -1463,7 +1464,7 @@ describe('installShutdownHandlers', () => {
   });
 });
 
-describe('assembleTmex Access guard at outermost fetch', () => {
+describe('assembleVibeTerm Access guard at outermost fetch', () => {
   afterEach(() => {
     resetAccessGuardForTests();
   });
@@ -1479,7 +1480,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
   test('header without JWT is 403 before TLS/local/hub handlers', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
     let gatewayHits = 0;
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
@@ -1510,7 +1511,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
         exp: Math.floor(Date.now() / 1000) + 120,
       }
     );
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       createGatewayRuntime: async () =>
         fakeGateway({
@@ -1532,7 +1533,7 @@ describe('assembleTmex Access guard at outermost fetch', () => {
 
   test('/hub/uplink without JWT is not blocked by the guard', async () => {
     setAccessGuardSnapshot(() => ENFORCED);
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       hub: fakeHub({
         handleRequest: async () => new Response('uplink-ok'),
@@ -1548,19 +1549,19 @@ describe('assembleTmex Access guard at outermost fetch', () => {
   });
 });
 
-describe('assembleTmex domain access guard', () => {
+describe('assembleVibeTerm domain access guard', () => {
   afterEach(() => {
     resetDomainAccessForTests();
   });
 
-  const HOSTS = ['tmex.example.com'];
+  const HOSTS = ['vibeterm.example.com'];
 
   async function assembleDisabled(overrides?: {
     hub?: HubRuntime;
     gateway?: GatewayRuntime;
   }) {
     setDomainAccessGuardForTests({ allowed: false, hosts: HOSTS });
-    return assembleTmex({
+    return assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
       hub:
@@ -1588,24 +1589,27 @@ describe('assembleTmex domain access guard', () => {
   }
 
   test('default allowed does not change public dispatch', async () => {
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: false, node: false, relay: false },
       serveFrontend: async () => new Response('spa'),
       createGatewayRuntime: async () => fakeGateway(),
     });
-    const res = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    const res = await assembled.fetch(new Request('https://vibeterm.example.com/'), dummyServer);
     expect(res?.status).toBe(200);
     expect(await res?.text()).toBe('spa');
   });
 
   test('disabled domain: / is 403 text, /api and /ws are 403 JSON', async () => {
     const assembled = await assembleDisabled();
-    const page = await assembled.fetch(new Request('https://tmex.example.com/'), dummyServer);
+    const page = await assembled.fetch(new Request('https://vibeterm.example.com/'), dummyServer);
     expect(page?.status).toBe(403);
     expect(page?.headers.get('content-type')).toContain('text/plain');
     expect(await page?.text()).toBe('Domain access is disabled for this host.');
 
-    const api = await assembled.fetch(new Request('https://tmex.example.com/api/x'), dummyServer);
+    const api = await assembled.fetch(
+      new Request('https://vibeterm.example.com/api/x'),
+      dummyServer
+    );
     expect(api?.status).toBe(403);
     expect(await api?.json()).toEqual({
       error: {
@@ -1614,7 +1618,7 @@ describe('assembleTmex domain access guard', () => {
       },
     });
 
-    const ws = await assembled.fetch(new Request('https://tmex.example.com/ws'), dummyServer);
+    const ws = await assembled.fetch(new Request('https://vibeterm.example.com/ws'), dummyServer);
     expect(ws?.status).toBe(403);
     expect(await ws?.json()).toEqual({
       error: {
@@ -1638,7 +1642,7 @@ describe('assembleTmex domain access guard', () => {
       }),
     });
     const nodeApi = await assembled.fetch(
-      new Request('https://tmex.example.com/n/abc/api/x'),
+      new Request('https://vibeterm.example.com/n/abc/api/x'),
       dummyServer
     );
     expect(nodeApi?.status).toBe(403);
@@ -1647,13 +1651,13 @@ describe('assembleTmex domain access guard', () => {
     });
 
     const health = await assembled.fetch(
-      new Request('https://tmex.example.com/healthz'),
+      new Request('https://vibeterm.example.com/healthz'),
       dummyServer
     );
     expect(health?.status).toBe(200);
 
     const uplink = await assembled.fetch(
-      new Request('https://tmex.example.com/hub/uplink'),
+      new Request('https://vibeterm.example.com/hub/uplink'),
       dummyServer
     );
     expect(uplink?.status).toBe(200);
@@ -1661,32 +1665,32 @@ describe('assembleTmex domain access guard', () => {
     expect(hubHits).toBe(1);
 
     const acme = await assembled.fetch(
-      new Request('https://tmex.example.com/.well-known/acme-challenge/tok'),
+      new Request('https://vibeterm.example.com/.well-known/acme-challenge/tok'),
       dummyServer
     );
     expect(acme?.status).not.toBe(403);
 
     const redeem = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
+      new Request('https://vibeterm.example.com/api/hub/enrollments/redeem', { method: 'POST' }),
       dummyServer
     );
     expect(redeem?.status).toBe(200);
     expect(await redeem?.text()).toBe('api-ok');
 
     const hubStatus = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/status'),
+      new Request('https://vibeterm.example.com/api/hub/status'),
       dummyServer
     );
     expect(hubStatus?.status).toBe(200);
 
     const enroll = await assembled.fetch(
-      new Request('https://tmex.example.com/api/hub/enrollments/tok-1'),
+      new Request('https://vibeterm.example.com/api/hub/enrollments/tok-1'),
       dummyServer
     );
     expect(enroll?.status).toBe(200);
 
     const lan = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('192.168.1.5')
     );
     expect(lan?.status).toBe(200);
@@ -1695,7 +1699,7 @@ describe('assembleTmex domain access guard', () => {
 
   test('peer-inbound via=<nodeId> is not blocked by the public dispatcher guard', async () => {
     const assembled = await assembleDisabled();
-    const req = new Request('https://tmex.example.com/api/x');
+    const req = new Request('https://vibeterm.example.com/api/x');
     setMeshRequestContext(req, { via: 'ab'.repeat(16) });
     const res = await assembled.fetch(req, dummyServer);
     expect(res?.status).toBe(200);
@@ -1714,17 +1718,17 @@ describe('assembleTmex domain access guard', () => {
   test('loopback and CGNAT clients are allowed; unknown source is 403', async () => {
     const assembled = await assembleDisabled();
     const loopback = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('127.0.0.1')
     );
     expect(loopback?.status).toBe(200);
     const cgnat = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp('100.64.1.2')
     );
     expect(cgnat?.status).toBe(200);
     const unknown = await assembled.fetch(
-      new Request('https://tmex.example.com/'),
+      new Request('https://vibeterm.example.com/'),
       serverWithClientIp(null)
     );
     expect(unknown?.status).toBe(403);
@@ -1733,14 +1737,14 @@ describe('assembleTmex domain access guard', () => {
   test('untrusted spoofed XFF is judged by the socket address', async () => {
     const assembled = await assembleDisabled();
     const lanSocket = await assembled.fetch(
-      new Request('https://tmex.example.com/', {
+      new Request('https://vibeterm.example.com/', {
         headers: { 'x-forwarded-for': '203.0.113.9' },
       }),
       serverWithClientIp('10.0.0.8')
     );
     expect(lanSocket?.status).toBe(200);
     const publicSocket = await assembled.fetch(
-      new Request('https://tmex.example.com/', {
+      new Request('https://vibeterm.example.com/', {
         headers: { 'x-forwarded-for': '10.0.0.8' },
       }),
       serverWithClientIp('203.0.113.9')
@@ -1749,12 +1753,12 @@ describe('assembleTmex domain access guard', () => {
   });
 });
 
-describe('assembleTmex preflight', () => {
+describe('assembleVibeTerm preflight', () => {
   test('skips mesh/TLS/frontend and only serves /healthz', async () => {
     let meshCalls = 0;
     let frontendCalls = 0;
     let restored = 0;
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       runtimeMode: 'preflight',
       roles: { hub: false, node: true, relay: false },
       createGatewayRuntime: async () =>
@@ -1792,7 +1796,7 @@ describe('assembleTmex preflight', () => {
   });
 });
 
-describe('assembleTmex multi-hub wiring', () => {
+describe('assembleVibeTerm multi-hub wiring', () => {
   test('passes a shared MeshHubStore and hub config into createMeshRuntime', async () => {
     const { MeshHubStore } = await import('../../../../apps/gateway/src/auth/mesh-hub-store');
     const { config } = await import('../../../../apps/gateway/src/config');
@@ -1804,7 +1808,7 @@ describe('assembleTmex multi-hub wiring', () => {
       hubNodeId?: unknown;
     } = {};
     const hub = fakeHub();
-    await assembleTmex({
+    await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async (opts) => {
@@ -1857,7 +1861,7 @@ describe('assembleTmex multi-hub wiring', () => {
         };
       },
     } as Partial<MeshRuntime> & { hub: HubRuntime });
-    const assembled = await assembleTmex({
+    const assembled = await assembleVibeTerm({
       roles: { hub: true, node: true, relay: false },
       createGatewayRuntime: async () => fakeGateway(),
       createMeshRuntime: async () => mesh,
@@ -1878,7 +1882,7 @@ describe('assembleTmex multi-hub wiring', () => {
       lines.push(args.map(String).join(' '));
     };
     try {
-      await assembleTmex({
+      await assembleVibeTerm({
         roles: { hub: true, node: true, relay: false },
         createGatewayRuntime: async () => fakeGateway(),
         createMeshRuntime: async () => fakeMesh({ hub: fakeHub() }),

@@ -9,7 +9,7 @@ import type {
   TransferGrantResponse,
   TransferJobEvent,
   TransferJobSnapshot,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, toApiError } from './client';
 import { requestJson, requestOk } from './json-mutation';
 import { readNdjsonStream } from './ndjson-stream';

@@ -1,7 +1,7 @@
 // nodeId → 展示名的解析：包内提示语（如「终端连接失败：节点 xxx 版本过低」）靠它点名。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import { resolveMeshNodeName } from './node-names';
 

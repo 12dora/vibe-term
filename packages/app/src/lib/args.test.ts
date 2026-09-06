@@ -94,9 +94,9 @@ describe('resolveNestedCommand', () => {
       '--no-restart',
     ]);
     expect(join.flags['no-restart']).toBe(true);
-    const leave = parseArgs(['hub', 'leave', '--no-restart', '--install-dir', '/tmp/tmex']);
+    const leave = parseArgs(['hub', 'leave', '--no-restart', '--install-dir', '/tmp/vibeterm']);
     expect(leave.flags['no-restart']).toBe(true);
-    expect(leave.flags['install-dir']).toBe('/tmp/tmex');
+    expect(leave.flags['install-dir']).toBe('/tmp/vibeterm');
   });
 
   test('resolves hub leave, mesh reset-root, enroll, direct', () => {
@@ -254,29 +254,29 @@ describe('assertKnownFlags', () => {
 describe('cli help', () => {
   test('lists nested hub commands and existing init/doctor', () => {
     const help = cliHelpText('en');
-    expect(help).toContain('tmex init');
-    expect(help).toContain('tmex doctor');
-    expect(help).toContain('tmex hub user add <username>');
-    expect(help).toContain('tmex hub user passwd <username> [--full-reset]');
+    expect(help).toContain('vibeterm init');
+    expect(help).toContain('vibeterm doctor');
+    expect(help).toContain('vibeterm hub user add <username>');
+    expect(help).toContain('vibeterm hub user passwd <username> [--full-reset]');
     expect(help).toContain(
       'also remove all passkeys and two-step verification and sign out everywhere'
     );
     expect(cliHelpText('zh-CN')).toContain('同时移除所有通行密钥、两步验证并注销全部会话');
-    expect(help).toContain('tmex hub join');
+    expect(help).toContain('vibeterm hub join');
     expect(help).toContain('--password');
     expect(help).toContain('--totp');
-    expect(help).toContain('TMEX_TOTP');
-    expect(help).toContain('tmex relay join');
-    expect(help).toContain('tmex hub standby --public-url');
-    expect(help).toContain('tmex hub promote');
-    expect(help).toContain('tmex hub demote');
-    expect(help).toContain('tmex hub list');
-    expect(help).toContain('tmex hub allow');
-    expect(help).toContain('tmex hub disallow');
+    expect(help).toContain('VIBETERM_TOTP');
+    expect(help).toContain('vibeterm relay join');
+    expect(help).toContain('vibeterm hub standby --public-url');
+    expect(help).toContain('vibeterm hub promote');
+    expect(help).toContain('vibeterm hub demote');
+    expect(help).toContain('vibeterm hub list');
+    expect(help).toContain('vibeterm hub allow');
+    expect(help).toContain('vibeterm hub disallow');
     expect(help).toContain('--no-restart');
-    expect(help).toContain('tmex mesh reset-root');
-    expect(help).toContain('tmex enroll');
-    expect(help).toContain('TMEX_PASSWORD');
+    expect(help).toContain('vibeterm mesh reset-root');
+    expect(help).toContain('vibeterm enroll');
+    expect(help).toContain('VIBETERM_PASSWORD');
   });
 });
 

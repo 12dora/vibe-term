@@ -1,5 +1,5 @@
 {
-  "name": "@tmex/terminal-ui",
+  "name": "@vibeterm/terminal-ui",
   "version": "0.1.0",
   "type": "module",
   "private": true,
@@ -13,13 +13,13 @@
     "test": "bun test"
   },
   "dependencies": {
-    "@tmex/api-client": "workspace:*",
-    "@tmex/notifications": "workspace:*",
-    "@tmex/shared": "workspace:*",
-    "@tmex/stores": "workspace:*",
-    "@tmex/theme": "workspace:*",
-    "@tmex/ui": "workspace:*",
-    "@tmex/ws-client": "workspace:*",
+    "@vibeterm/api-client": "workspace:*",
+    "@vibeterm/notifications": "workspace:*",
+    "@vibeterm/shared": "workspace:*",
+    "@vibeterm/stores": "workspace:*",
+    "@vibeterm/theme": "workspace:*",
+    "@vibeterm/ui": "workspace:*",
+    "@vibeterm/ws-client": "workspace:*",
     "ghostty-terminal": "workspace:*",
     "lucide-react": "^0.564.0"
   },

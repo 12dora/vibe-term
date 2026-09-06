@@ -2,7 +2,7 @@
 // 宿主本体渲染在 Base UI 的 portal 里，静态渲染取不到标记，所以只测抽出来的内容区。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -15,9 +15,9 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { SidePanelBody, loadConnectDevicesPanel, loadAccountSecurityPanel } = await import(
   './side-panel-host'

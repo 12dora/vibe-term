@@ -1,6 +1,6 @@
-import { useUIStore } from '@tmex/stores/react';
-import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@tmex/theme';
-import { cn } from '@tmex/ui';
+import { useUIStore } from '@vibeterm/stores/react';
+import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@vibeterm/theme';
+import { cn } from '@vibeterm/ui';
 import { FitAddon, createTerminalController } from 'ghostty-terminal';
 import { useEffect, useMemo, useRef } from 'react';
 import { useLatestRef } from './hooks/useLatestRef';
@@ -18,7 +18,7 @@ import { applyTerminalTheme, attachTerminalWithLatestTheme } from './theme';
 // 主题感知：深色 #d0d0d0 / 浅色 #616161）。同理别用 white/brightWhite 当文字（浅色下不可见）。
 const E = '\x1b';
 const PREVIEW_ANSI = [
-  `${E}[1;32m  feat/terminal-font${E}[0m  ${E}[39m~/projects/tmex${E}[0m`,
+  `${E}[1;32m  feat/terminal-font${E}[0m  ${E}[39m~/projects/vibeterm${E}[0m`,
   `${E}[39m// 渲染中文与彩色代码块：字号 / 字体 / 行高 实时预览${E}[0m`,
   `${E}[35mexport const${E}[0m ${E}[36mgreeting${E}[0m = ${E}[33m"你好，世界 🌏"${E}[0m;`,
   `${E}[35mfunction${E}[0m ${E}[34mfib${E}[0m(${E}[36mn${E}[0m: ${E}[32mnumber${E}[0m) {`,

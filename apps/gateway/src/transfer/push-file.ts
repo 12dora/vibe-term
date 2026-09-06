@@ -1,9 +1,9 @@
 // 单个文件的推送：源侧取字节（ssh 源先 rsync 拉到本机暂存）→ runPush 推区间 → 落位。
 // 暂存可能很慢，期间要给目标会话续期，否则等第一段字节到达时会话已经被空闲 GC 收掉了。
 
-import type { TransferErrorCode } from '@tmex/shared';
-import { type ByteRange, runPush } from '@tmex/transfer';
-import { openRange } from '@tmex/transfer/node';
+import type { TransferErrorCode } from '@vibeterm/shared';
+import { type ByteRange, runPush } from '@vibeterm/transfer';
+import { openRange } from '@vibeterm/transfer/node';
 import { type PulledFile, pullFileFromDevice } from '../files/device-storage';
 import { abortableSleep } from '../system/remote-upgrade-io';
 import type { TransferChannel } from './channel';

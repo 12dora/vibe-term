@@ -4,7 +4,7 @@ import {
   MESH_NOTIFICATION_ROUTE,
   type MeshNotificationState,
   type UpdateMeshNotificationRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 
 export async function fetchMeshNotificationState(

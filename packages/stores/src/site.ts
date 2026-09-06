@@ -1,13 +1,13 @@
-import { fetchSiteSettings } from '@tmex/api-client';
+import { fetchSiteSettings } from '@vibeterm/api-client';
 import {
   DEFAULT_LOCALE,
   type LocaleCode,
   PRODUCT_NAME,
   type SiteSettings,
   type ThemeMode,
-} from '@tmex/shared';
-import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@tmex/theme';
-import { buildSiteThemeUpdate } from '@tmex/ws-client';
+} from '@vibeterm/shared';
+import { THEME_PRESET_META, type ThemeAppearance, type ThemePreset } from '@vibeterm/theme';
+import { buildSiteThemeUpdate } from '@vibeterm/ws-client';
 import i18next from 'i18next';
 import { create } from 'zustand';
 import type { RuntimeCore } from './runtime';
@@ -151,7 +151,7 @@ export function createSiteStore(
       return;
     }
     try {
-      const key = `${core.storagePrefix}tmex-ui`;
+      const key = `${core.storagePrefix}vibeterm-ui`;
       const raw = localStorage.getItem(key);
       const parsed = raw ? (JSON.parse(raw) as { state?: { theme?: unknown } }) : { state: {} };
       parsed.state = { ...(parsed.state ?? {}), theme };

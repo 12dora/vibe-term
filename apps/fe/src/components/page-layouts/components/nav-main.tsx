@@ -1,5 +1,5 @@
 import type { ChunkPreloadTarget } from '@/lib/chunk-preload';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import {
   SidebarGroup,
   SidebarMenu,
@@ -9,7 +9,7 @@ import {
   SidebarMenuSub,
   SidebarMenuSubButton,
   SidebarMenuSubItem,
-} from '@tmex/ui/sidebar';
+} from '@vibeterm/ui/sidebar';
 import { ChevronRight, type LucideIcon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useLocation } from 'react-router';

@@ -1,13 +1,13 @@
 // 弹窗打开时把两侧节点上已有的任务拉回来并订阅进度；关闭时停掉所有订阅
 // （任务本身跑在节点上，停的只是进度流）。
 
-import { createNodeApiClient, listTransferJobs } from '@tmex/api-client';
+import { createNodeApiClient, listTransferJobs } from '@vibeterm/api-client';
 import {
   isTerminalTransferState,
   stopAllTransferSubscriptions,
   subscribeTransferJob,
   upsertTransferJobSnapshot,
-} from '@tmex/panels/files/transfers';
+} from '@vibeterm/panels/files/transfers';
 import { useEffect } from 'react';
 
 export function useTransferJobsSync(open: boolean, nodeIds: readonly (string | null)[]): void {

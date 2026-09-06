@@ -5,7 +5,7 @@
 // Cloudflare Access 分支：凭证 → 允许访问的用户 → 应用状态；
 // API token 与 account id 只往服务端送一次，状态里永远只回「是否已保存」。
 
-import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -15,9 +15,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import {
   KeyRound,
   Loader2,
@@ -278,7 +278,7 @@ function useCredentialsSavedToast(hasCredentials: boolean): void {
 
 /**
  * 只读探测：Cloudflare 控制台上有没有覆盖这个主机名的 Access 应用。
- * 它与 `access.configured`（tmex 托管、网关校验 JWT）是两回事，措辞上必须分清；
+ * 它与 `access.configured`（VibeTerm 托管、网关校验 JWT）是两回事，措辞上必须分清；
  * 「查不了」（无凭证 / API 失败）也不能说成「未配置」。
  */
 function ExternalAccessNotice({ status }: { status: TunnelStatusResponse }) {
@@ -559,7 +559,7 @@ function RuleRow({
               type="button"
               disabled={disabled}
               aria-pressed={draft.kind === kind}
-              className={`rounded-[calc(var(--radius-lg)-2px)] px-2 py-1 text-xs transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+              className={`rounded-[calc(var(--radius-lg)-2px)] px-2 py-1 text-xs transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
                 draft.kind === kind
                   ? 'bg-background font-medium shadow-xs'
                   : 'text-muted-foreground'

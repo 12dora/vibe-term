@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { parseArgs } from '../lib/args';
 import { assertKnownFlags } from '../lib/args';
-import { TMEX_SHIM_MARKER } from '../lib/cli-shim';
+import { VIBETERM_SHIM_MARKER } from '../lib/cli-shim';
 import { pathExists } from '../lib/fs-utils';
 import { runUninstall } from './uninstall';
 
@@ -20,7 +20,7 @@ async function makeInstallTree(): Promise<{
   localBinDir: string;
   bunBinDir: string;
 }> {
-  const root = await mkdtemp(join(tmpdir(), 'tmex-uninst-'));
+  const root = await mkdtemp(join(tmpdir(), 'vibeterm-uninst-'));
   tempDirs.push(root);
   const installDir = join(root, 'install');
   const versionDir = join(installDir, 'versions', '1.2.3');
@@ -34,7 +34,7 @@ async function makeInstallTree(): Promise<{
   await writeFile(join(installDir, 'run.sh'), '#!/bin/bash\n');
   await writeFile(
     join(installDir, 'install-meta.json'),
-    `${JSON.stringify({ serviceName: 'tmex-test', platform: 'darwin', installDir })}\n`
+    `${JSON.stringify({ serviceName: 'vibeterm-test', platform: 'darwin', installDir })}\n`
   );
   await writeFile(
     join(installDir, 'app.env'),
@@ -119,7 +119,7 @@ describe('runUninstall --yes --purge', () => {
       removeShims: async () => undefined,
       log: () => undefined,
     });
-    expect(serviceCalls).toEqual([{ serviceName: 'tmex-test', installDir }]);
+    expect(serviceCalls).toEqual([{ serviceName: 'vibeterm-test', installDir }]);
     expect(await pathExists(installDir)).toBe(false);
     expect(await pathExists(outsider)).toBe(true);
     expect(await readFile(outsider, 'utf8')).toBe('safe');
@@ -144,11 +144,11 @@ describe('runUninstall --yes --purge', () => {
     const foreign = join(localBinDir, 'other');
     await writeFile(
       marked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
     );
     await writeFile(
       bunMarked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: ${installDir}\n`
     );
     await writeFile(foreign, '#!/bin/sh\necho hi\n');
     await runUninstall(parseArgs(['uninstall', '--yes', '--purge', '--install-dir', installDir]), {
@@ -166,7 +166,7 @@ describe('runUninstall --yes --purge', () => {
     const marked = join(localBinDir, 'tmex');
     await writeFile(
       marked,
-      `#!/usr/bin/env bash\n${TMEX_SHIM_MARKER}\n# tmex-install-dir: /other/install\n`
+      `#!/usr/bin/env bash\n${VIBETERM_SHIM_MARKER}\n# tmex-install-dir: /other/install\n`
     );
     await runUninstall(parseArgs(['uninstall', '--yes', '--purge', '--install-dir', installDir]), {
       uninstallService: async () => undefined,
@@ -191,7 +191,7 @@ describe('runUninstall --yes --purge', () => {
 
   test('best-effort removes the temp copy of itself', async () => {
     const { installDir } = await makeInstallTree();
-    const copyRoot = await mkdtemp(join(tmpdir(), 'tmex-uninstall-'));
+    const copyRoot = await mkdtemp(join(tmpdir(), 'vibeterm-uninstall-'));
     tempDirs.push(copyRoot);
     await mkdir(join(copyRoot, 'bin'), { recursive: true });
     const argv1 = join(copyRoot, 'bin', 'tmex.js');
@@ -207,7 +207,7 @@ describe('runUninstall --yes --purge', () => {
 
   test('does not delete a CLI tree that is not a temp uninstall copy', async () => {
     const { installDir } = await makeInstallTree();
-    const otherCli = await mkdtemp(join(tmpdir(), 'tmex-real-cli-'));
+    const otherCli = await mkdtemp(join(tmpdir(), 'vibeterm-real-cli-'));
     tempDirs.push(otherCli);
     await mkdir(join(otherCli, 'bin'), { recursive: true });
     const argv1 = join(otherCli, 'bin', 'tmex.js');

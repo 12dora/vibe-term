@@ -95,7 +95,7 @@ function embeddedFile(name: string): Blob {
 export async function materializeManagedMigrations(): Promise<MaterializedMigrations> {
   const path = join(
     process.env.TMPDIR || tmpdir(),
-    `tmex-managed-migrations-${process.pid}-${crypto.randomUUID()}`
+    `vibeterm-managed-migrations-${process.pid}-${crypto.randomUUID()}`
   );
   mkdirSync(join(path, 'meta'), { recursive: true, mode: 0o700 });
   await Bun.write(join(path, 'meta', '_journal.json'), `${JSON.stringify(journal)}\n`);

@@ -2,13 +2,13 @@
 // CRUD 后通过 watchService.refreshRule/removeRule 热更新调度；
 // assist-regex 用 LLM 生成正则（可带当前屏幕做上下文），返回前服务端试编译 + 试跑 preview。
 
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type {
   CreateWatchRuleRequest,
   UpdateWatchRuleRequest,
   WatchRuleDto,
   WatchRuleStateDto,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import type { LanguageModel } from 'ai';
 import { generateObject } from 'ai';
 import { z } from 'zod';

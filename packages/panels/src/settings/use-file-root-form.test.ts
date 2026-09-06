@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Device, FileRootDto } from '@tmex/shared';
+import type { Device, FileRootDto } from '@vibeterm/shared';
 
 import type { FileRootDeviceGroup } from './file-root-query';
 import {

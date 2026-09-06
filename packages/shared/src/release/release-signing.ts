@@ -8,8 +8,9 @@
 
 import { ed25519 } from '@noble/curves/ed25519.js';
 import { compareSemver } from '../semver';
-import { releaseTarballName } from './source';
+import { legacyReleaseTarballName, releaseTarballName } from './source';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 /** 签名行的固定前缀与格式版本。整行形如 `tmex-release-sig v1 <keyId> <base64 sig>`。 */
 export const RELEASE_SIG_PREFIX = 'tmex-release-sig';
 export const RELEASE_SIG_VERSION = 'v1';
@@ -149,7 +150,20 @@ export function parseSha256Sums(text: string): Map<string, string> {
   return out;
 }
 
-/** SHA256SUMS 里 `tmex-cli-<version>.tgz` 的摘要；没有该条目返回 null。 */
-export function expectedTarballHash(sumsText: string, version: string): string | null {
-  return parseSha256Sums(sumsText).get(releaseTarballName(version)) ?? null;
+/**
+ * SHA256SUMS 里发行 tarball 的摘要。
+ * 给了 `assetName` 就只按这个名字精确查——推包双方必须对同一个资产名取摘要，
+ * 否则新旧两份包摘要不同，收字节那一步会判为清单不符。
+ * 不给则先查新资产名、回退到改名前的旧名；都没有返回 null。
+ */
+export function expectedTarballHash(
+  sumsText: string,
+  version: string,
+  assetName?: string
+): string | null {
+  const sums = parseSha256Sums(sumsText);
+  if (assetName !== undefined) return sums.get(assetName) ?? null;
+  return (
+    sums.get(releaseTarballName(version)) ?? sums.get(legacyReleaseTarballName(version)) ?? null
+  );
 }

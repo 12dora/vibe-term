@@ -104,7 +104,7 @@ describe('relay admin auth', () => {
       log: () => {},
     });
     expect(generated).not.toBeNull();
-    expect(patched[0]?.TMEX_RELAY_ADMIN_TOKEN).toBe(generated ?? '');
+    expect(patched[0]?.VIBETERM_RELAY_ADMIN_TOKEN).toBe(generated ?? '');
     expect(store.read()?.adminTokenHash).toBe(sha256Hex(generated ?? ''));
     const second = await ensureRelayAdminToken({
       configuredToken: null,

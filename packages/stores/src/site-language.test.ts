@@ -3,7 +3,7 @@
 // `/n/<id>/...` 子树时被掀翻（见 f4 任务 B）。
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
@@ -22,7 +22,7 @@ const { createAppRuntime } = await import('./app-runtime');
 const { SITE_LANGUAGE_CACHE_KEY } = await import('./site-language-cache');
 
 const SETTINGS: SiteSettings = {
-  siteName: 'tmex',
+  siteName: 'VibeTerm',
   siteUrl: 'http://localhost',
   bellThrottleSeconds: 6,
   notificationThrottleSeconds: 3,

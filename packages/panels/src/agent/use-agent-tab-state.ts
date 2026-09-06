@@ -4,7 +4,7 @@ import { useEffect, useMemo } from 'react';
 import { useMatch } from 'react-router';
 
 import { useQuery } from '@tanstack/react-query';
-import { fetchDevices } from '@tmex/api-client';
+import { fetchDevices } from '@vibeterm/api-client';
 import type {
   AgentMessageDto,
   AgentQueuedMessageDto,
@@ -12,14 +12,14 @@ import type {
   AgentWriteMode,
   Device,
   StateSnapshotPayload,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import type {
   AppRuntime,
   DraftSession,
   HostServices,
   PendingConfirmationUi,
   SessionInProgress,
-} from '@tmex/stores';
+} from '@vibeterm/stores';
 import {
   activeSessionIdOnNode,
   draftOnNode,
@@ -27,8 +27,8 @@ import {
   isDraftMaterializingOnNode,
   normalizeAgentNodeId,
   resolveAgentStore,
-} from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+} from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 
 import { bindingSource, deviceSnapshot, findPaneTitle } from './agent-binding';
 import { shouldRedraftForRoute } from './agent-route-sync';

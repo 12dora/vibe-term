@@ -5,13 +5,14 @@ import { EventEmitter } from 'node:events';
 import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { SystemInfo } from '@tmex/shared';
+import { type SystemInfo, legacyReleaseTarballName, releaseTarballName } from '@vibeterm/shared';
 import { requestDispatchContext } from '../mesh/types';
 import * as infoPublic from '../system/info-public';
 import { uninstallController } from '../system/uninstall';
 import { STAGED_PACKAGE_MAX_BYTES, upgradeController } from '../system/upgrade';
 import {
   restoreSigningKeys,
+  signSums,
   signedSumsFor,
   sumsTextFor,
   useTestSigningKeys,
@@ -44,7 +45,7 @@ function selfUpdateInfo(): SystemInfo {
     installedViaCli: true,
     deployment: 'launchd',
     canSelfUpdate: true,
-    serviceName: 'tmex',
+    serviceName: 'vibeterm',
     transferMaxBytes: 1,
   };
 }
@@ -235,20 +236,20 @@ describe('PUT /api/system/upgrade/package', () => {
 
 describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
   const installDirs: string[] = [];
-  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
 
   afterEach(() => {
     upgradeController.resetForTests();
-    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
-    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
     for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   });
 
   function installDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-resume-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-resume-'));
     installDirs.push(dir);
     writeFileSync(join(dir, 'install-meta.json'), '{}');
-    process.env.TMEX_INSTALL_DIR = dir;
+    process.env.VIBETERM_INSTALL_DIR = dir;
     return dir;
   }
 
@@ -324,7 +325,7 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
         '/api/system/upgrade/package'
       );
       expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }
@@ -371,8 +372,8 @@ describe('GET/PUT /api/system/upgrade/package 断点续传', () => {
         '/api/system/upgrade/package'
       );
       expect(await done?.json()).toMatchObject({ receivedBytes: 64, complete: true });
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz'))).toBe(true);
-      expect(existsSync(join(dir, 'staging', 'staged', 'tmex-cli-1.2.3.json'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz'))).toBe(true);
+      expect(existsSync(join(dir, 'staging', 'staged', 'vibeterm-cli-1.2.3.json'))).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }
@@ -622,17 +623,17 @@ describe('DELETE /api/system/upgrade/package', () => {
     const { mkdtempSync, existsSync, rmSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-del-pkg-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-del-pkg-'));
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
-    const prevInstall = process.env.TMEX_INSTALL_DIR;
-    process.env.TMEX_INSTALL_DIR = installDir;
+    const prevInstall = process.env.VIBETERM_INSTALL_DIR;
+    process.env.VIBETERM_INSTALL_DIR = installDir;
     try {
       const bytes = new Uint8Array([1, 2, 3, 4]);
       const hex = sha256Hex(bytes);
       const staged = await upgradeController.stagePackage('1.2.3', hex, bytesStream(bytes));
       expect(staged.ok).toBe(true);
-      const tgz = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.tgz');
-      const sidecar = join(installDir, 'staging', 'staged', 'tmex-cli-1.2.3.json');
+      const tgz = join(installDir, 'staging', 'staged', 'vibeterm-cli-1.2.3.tgz');
+      const sidecar = join(installDir, 'staging', 'staged', 'vibeterm-cli-1.2.3.json');
       expect(existsSync(tgz)).toBe(true);
       const response = await handleSystemApiRequest(
         withMeshAuth(
@@ -647,8 +648,8 @@ describe('DELETE /api/system/upgrade/package', () => {
       expect(existsSync(sidecar)).toBe(false);
     } finally {
       infoSpy.mockRestore();
-      if (prevInstall === undefined) delete process.env.TMEX_INSTALL_DIR;
-      else process.env.TMEX_INSTALL_DIR = prevInstall;
+      if (prevInstall === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+      else process.env.VIBETERM_INSTALL_DIR = prevInstall;
       rmSync(installDir, { recursive: true, force: true });
     }
   });
@@ -706,12 +707,12 @@ describe('POST/GET /api/system/uninstall', () => {
   });
 
   test('POST schedules uninstall through the injected spawner', async () => {
-    const installDir = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-'));
-    const copyRoot = mkdtempSync(join(tmpdir(), 'tmex-sys-uninst-tmp-'));
+    const installDir = mkdtempSync(join(tmpdir(), 'vibeterm-sys-uninst-'));
+    const copyRoot = mkdtempSync(join(tmpdir(), 'vibeterm-sys-uninst-tmp-'));
     try {
       const versionDir = join(installDir, 'versions', '1.2.3');
       mkdirSync(join(versionDir, 'cli', 'bin'), { recursive: true });
-      writeFileSync(join(versionDir, 'cli', 'bin', 'tmex.js'), '#!/usr/bin/env node\n');
+      writeFileSync(join(versionDir, 'cli', 'bin', 'vibeterm.js'), '#!/usr/bin/env node\n');
       symlinkSync(versionDir, join(installDir, 'current'));
       const spawned: string[][] = [];
       uninstallController.setDepsForTests({
@@ -719,7 +720,7 @@ describe('POST/GET /api/system/uninstall', () => {
           installedViaCli: true,
           deployment: 'launchd',
           installDir,
-          serviceName: 'tmex',
+          serviceName: 'vibeterm',
           cliVersion: '1.2.3',
           bunPath: process.execPath,
         }),
@@ -778,7 +779,7 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   const version = '1.1.39';
   const hex = 'ab'.repeat(32);
   const tempDirs: string[] = [];
-  const originalInstallDir = process.env.TMEX_INSTALL_DIR;
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
 
   beforeAll(() => {
     useTestSigningKeys();
@@ -789,8 +790,8 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   });
 
   afterEach(() => {
-    if (originalInstallDir === undefined) delete process.env.TMEX_INSTALL_DIR;
-    else process.env.TMEX_INSTALL_DIR = originalInstallDir;
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
     for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
     upgradeController.resetForTests();
   });
@@ -815,17 +816,17 @@ describe('POST /api/system/upgrade/package/manifest', () => {
   }
 
   test('a signed manifest is accepted and reports the authoritative digest', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-api-manifest-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-manifest-'));
     tempDirs.push(dir);
-    process.env.TMEX_INSTALL_DIR = dir;
+    process.env.VIBETERM_INSTALL_DIR = dir;
     const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
     try {
       const res = await post({ version, ...signedSumsFor(version, hex) });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({ version, sha256: hex, keyId: 'tk' });
-      expect(existsSync(join(dir, 'staging', 'staged', `tmex-cli-${version}.manifest.json`))).toBe(
-        true
-      );
+      expect(
+        existsSync(join(dir, 'staging', 'staged', `vibeterm-cli-${version}.manifest.json`))
+      ).toBe(true);
     } finally {
       infoSpy.mockRestore();
     }
@@ -920,6 +921,134 @@ describe('POST /api/system/upgrade 远程降级防护', () => {
       expect(res.status).toBe(409);
       expect(await res.json()).toEqual({ code: 'UPGRADE_SIGNATURE_REQUIRED' });
       expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+});
+
+describe('POST /api/system/upgrade/package/manifest + PUT 双资产', () => {
+  const version = '1.1.39';
+  const installDirs: string[] = [];
+  const originalInstallDir = process.env.VIBETERM_INSTALL_DIR;
+
+  const currentAsset = releaseTarballName(version);
+  const legacyAsset = legacyReleaseTarballName(version);
+  const currentBytes = new Uint8Array([1, 2, 3]);
+  const legacyBytes = new Uint8Array([4, 5, 6, 7]);
+  const currentDigest = sha256Hex(currentBytes);
+  const legacyDigest = sha256Hex(legacyBytes);
+  // 发行同时上传新旧两份资产：内容不同、摘要也不同，推包方挑哪一份必须精确传导到清单摘要上。
+  const sums = `${currentDigest}  ${currentAsset}\n${legacyDigest}  ${legacyAsset}\n`;
+  const sig = signSums(sums);
+
+  beforeAll(() => {
+    useTestSigningKeys();
+  });
+
+  afterAll(() => {
+    restoreSigningKeys();
+  });
+
+  afterEach(() => {
+    upgradeController.resetForTests();
+    if (originalInstallDir === undefined) delete process.env.VIBETERM_INSTALL_DIR;
+    else process.env.VIBETERM_INSTALL_DIR = originalInstallDir;
+    for (const dir of installDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  function installDir(): string {
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-api-dual-asset-'));
+    installDirs.push(dir);
+    writeFileSync(join(dir, 'install-meta.json'), '{}');
+    process.env.VIBETERM_INSTALL_DIR = dir;
+    return dir;
+  }
+
+  async function postManifest(body: unknown): Promise<Response> {
+    const res = await handleSystemApiRequest(
+      withMeshAuth(
+        new Request('http://localhost/api/system/upgrade/package/manifest', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+      ),
+      '/api/system/upgrade/package/manifest'
+    );
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  async function putBytes(sha256: string, bytes: Uint8Array): Promise<Response> {
+    const res = await handleSystemApiRequest(
+      withMeshAuth(
+        new Request(
+          `http://localhost/api/system/upgrade/package?version=${version}&sha256=${sha256}`,
+          {
+            method: 'PUT',
+            headers: {
+              'content-type': 'application/octet-stream',
+              'content-length': String(bytes.byteLength),
+            },
+            body: bytesStream(bytes),
+          }
+        )
+      ),
+      '/api/system/upgrade/package'
+    );
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  test('清单点名新资产：摘要按新资产取，随后推来的新资产字节被收下', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const manifest = await postManifest({ version, sums, sig, asset: currentAsset });
+      expect(manifest.status).toBe(200);
+      expect(await manifest.json()).toEqual({ version, sha256: currentDigest, keyId: 'tk' });
+
+      const staged = await putBytes(currentDigest, currentBytes);
+      expect(staged.status).toBe(200);
+      expect(await staged.json()).toEqual({
+        version,
+        sha256: currentDigest,
+        bytes: currentBytes.byteLength,
+      });
+      expect(existsSync(join(dir, 'staging', 'staged', currentAsset))).toBe(true);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('清单点名新资产却推来旧资产字节：409 UPGRADE_MANIFEST_MISMATCH', async () => {
+    const dir = installDir();
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const manifest = await postManifest({ version, sums, sig, asset: currentAsset });
+      expect(manifest.status).toBe(200);
+
+      const staged = await putBytes(legacyDigest, legacyBytes);
+      expect(staged.status).toBe(409);
+      expect(await staged.json()).toEqual({ code: 'UPGRADE_MANIFEST_MISMATCH' });
+      expect(existsSync(join(dir, 'staging', 'staged', currentAsset))).toBe(false);
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('清单不带 asset：按旧资产兜底，推来的新资产字节被判为清单不符', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    installDir();
+    try {
+      const manifest = await postManifest({ version, sums, sig });
+      expect(manifest.status).toBe(200);
+      expect(await manifest.json()).toEqual({ version, sha256: legacyDigest, keyId: 'tk' });
+
+      const staged = await putBytes(currentDigest, currentBytes);
+      expect(staged.status).toBe(409);
+      expect(await staged.json()).toEqual({ code: 'UPGRADE_MANIFEST_MISMATCH' });
     } finally {
       infoSpy.mockRestore();
     }

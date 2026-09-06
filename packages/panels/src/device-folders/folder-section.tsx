@@ -5,15 +5,15 @@
 
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { DeviceFolder } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import type { DeviceFolder } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuGroup,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import {
   ChevronRight,
   Folder,
@@ -54,7 +54,7 @@ export interface FolderSectionProps {
 }
 
 const HANDLE_CLASS =
-  'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity duration-(--tmex-motion-fast) ease-out group-hover/folder:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100';
+  'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground/70 opacity-0 transition-opacity duration-(--vibeterm-motion-fast) ease-out group-hover/folder:opacity-100 focus-visible:opacity-100 motion-reduce:transition-none [@media(pointer:coarse)]:opacity-100';
 
 export function FolderSection({
   folder,
@@ -103,7 +103,7 @@ export function FolderSection({
       data-dragging={isDragging ? 'true' : undefined}
       data-drop-target={dropTarget ? 'true' : undefined}
       className={cn(
-        'group/folder min-w-0 rounded-xl border-2 border-dashed border-border/80 bg-muted/10 transition-[border-color,background-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        'group/folder min-w-0 rounded-xl border-2 border-dashed border-border/80 bg-muted/10 transition-[border-color,background-color,box-shadow] duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         dropTarget && 'border-solid border-ring/70 bg-accent/40 ring-2 ring-ring/30',
         isDragging && 'opacity-40'
       )}
@@ -147,7 +147,7 @@ export function FolderSection({
             >
               <ChevronRight
                 className={cn(
-                  'size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+                  'size-3.5 shrink-0 text-muted-foreground transition-transform duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
                   expanded && 'rotate-90'
                 )}
               />
@@ -209,7 +209,7 @@ export function FolderSection({
       </div>
 
       <div
-        className="grid transition-[grid-template-rows] duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none"
+        className="grid transition-[grid-template-rows] duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none"
         style={{ gridTemplateRows: expanded ? '1fr' : '0fr' }}
         onTransitionEnd={(event) => {
           if (event.target === event.currentTarget && !expanded) setContentMounted(false);
@@ -218,7 +218,7 @@ export function FolderSection({
         <div
           aria-hidden={!expanded}
           className={cn(
-            'overflow-hidden transition-[visibility] duration-(--tmex-motion-standard) motion-reduce:transition-none',
+            'overflow-hidden transition-[visibility] duration-(--vibeterm-motion-standard) motion-reduce:transition-none',
             !expanded && 'invisible'
           )}
         >
@@ -259,7 +259,7 @@ export function FolderDropArea({
       data-testid={testId}
       data-drop-target={active ? 'true' : undefined}
       className={cn(
-        'rounded-lg border-2 border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground transition-[background-color,border-color,box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        'rounded-lg border-2 border-dashed border-border/70 px-3 py-4 text-center text-xs text-muted-foreground transition-[background-color,border-color,box-shadow] duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         active && 'border-solid border-ring/60 bg-accent/50 text-foreground ring-2 ring-ring/40',
         className
       )}

@@ -13,18 +13,18 @@
 //
 // 与「来源节点自己的运行时」之间**不按路由排除**：浏览器是不是订阅着那台机器无从假设
 //（另一个浏览器持着订阅、懒登录门闸还没放行、刚离开那条路由但运行时还在宽限期都可能），
-// 排除掉就会漏弹或弹两遍。改成按事件身份认领（`@tmex/notifications` 的 toast-dedupe）：
+// 排除掉就会漏弹或弹两遍。改成按事件身份认领（`@vibeterm/notifications` 的 toast-dedupe）：
 // 直投与转发谁先到谁弹，另一条丢掉。
 
 import { getMeshNodesState } from '@/node/mesh-nodes';
-import { isValidNodeId, nodeAppPath } from '@tmex/api-client';
-import { buildPaneLocationLabel, claimToastFor } from '@tmex/notifications';
-import type { ToastIdentity } from '@tmex/notifications';
-import type { WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import type { AppRuntime } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
+import { isValidNodeId, nodeAppPath } from '@vibeterm/api-client';
+import { buildPaneLocationLabel, claimToastFor } from '@vibeterm/notifications';
+import type { ToastIdentity } from '@vibeterm/notifications';
+import type { WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import { encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import type { AppRuntime } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
 import i18next from 'i18next';
 import { useEffect } from 'react';
 

@@ -43,7 +43,7 @@ function baseClientOpts(wsFactory: UplinkClientOptions['wsFactory']): UplinkClie
 }
 
 const originalFetch = globalThis.fetch;
-const envKeys = ['TMEX_ROLES', 'TMEX_RELAY_PUBLIC_URL', 'GATEWAY_PORT'] as const;
+const envKeys = ['VIBETERM_ROLES', 'VIBETERM_RELAY_PUBLIC_URL', 'GATEWAY_PORT'] as const;
 const envSaved: Record<string, string | undefined> = {};
 
 function saveEnv(): void {
@@ -66,8 +66,8 @@ afterEach(() => {
 describe('relayUplinkOverrides dial', () => {
   test('把构造时的 RelayDialContext 传给客户端，不读后续 env', async () => {
     saveEnv();
-    process.env.TMEX_ROLES = 'node';
-    process.env.TMEX_RELAY_PUBLIC_URL = 'https://other.example';
+    process.env.VIBETERM_ROLES = 'node';
+    process.env.VIBETERM_RELAY_PUBLIC_URL = 'https://other.example';
     process.env.GATEWAY_PORT = '1';
     const [ws] = fakeSocketPair();
     const dialed: string[] = [];
@@ -93,12 +93,12 @@ describe('relayUplinkOverrides dial', () => {
 
   test('未传入 dial 时从 env 快照一次，之后改 env 不影响拨号', async () => {
     saveEnv();
-    process.env.TMEX_ROLES = 'relay,node';
-    process.env.TMEX_RELAY_PUBLIC_URL = RELAY_URL;
+    process.env.VIBETERM_ROLES = 'relay,node';
+    process.env.VIBETERM_RELAY_PUBLIC_URL = RELAY_URL;
     process.env.GATEWAY_PORT = '19993';
     const overrides = relayUplinkOverrides(stubWiring(), { nameProvider: () => 'n' });
-    process.env.TMEX_ROLES = 'node';
-    process.env.TMEX_RELAY_PUBLIC_URL = 'https://other.example';
+    process.env.VIBETERM_ROLES = 'node';
+    process.env.VIBETERM_RELAY_PUBLIC_URL = 'https://other.example';
     process.env.GATEWAY_PORT = '1';
     const [ws] = fakeSocketPair();
     const dialed: string[] = [];

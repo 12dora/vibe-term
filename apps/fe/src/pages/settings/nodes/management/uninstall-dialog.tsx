@@ -12,7 +12,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+} from '@vibeterm/ui/alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeUninstallController, UninstallPlan, UninstallSkipReason } from './types';

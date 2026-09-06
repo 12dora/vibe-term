@@ -1,5 +1,5 @@
-import { isStandaloneRoles } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { isStandaloneRoles } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { readJsonObjectBody } from '../api/http';
 import type { UserKeyService } from '../auth/user-key-service';
 import { kdfParamsFromJson } from '../auth/user-key-service';

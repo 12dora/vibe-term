@@ -3,12 +3,12 @@
 // → 补一次静默重登 → 成功就回源；失败才把它标未登录，让界面退回登录入口。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
-const { ApiError, NODE_UNREACHABLE } = await import('@tmex/api-client');
+const { ApiError, NODE_UNREACHABLE } = await import('@vibeterm/api-client');
 const { getMeshNodesState, resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import(
   './mesh-nodes'
 );

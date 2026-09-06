@@ -10,7 +10,7 @@ interface RunningRuntime {
 }
 
 async function main(): Promise<void> {
-  console.log(`[gateway] tmex ${getDisplayVersion()}`);
+  console.log(`[gateway] VibeTerm ${getDisplayVersion()}`);
   while (true) {
     const gateway = await createGatewayRuntime({ systemApiHandler: handleSystemApiRequest });
     const server = Bun.serve({

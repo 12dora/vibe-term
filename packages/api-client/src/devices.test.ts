@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { CreateDeviceRequest, UpdateDeviceRequest } from '@tmex/shared';
+import type { CreateDeviceRequest, UpdateDeviceRequest } from '@vibeterm/shared';
 import { ApiClient } from './client';
 import {
   createDevice,
@@ -63,7 +63,7 @@ describe('createDevice', () => {
     host: 'vm.example',
     port: 2222,
     username: 'root',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     password: 's3cret',
   };

@@ -14,8 +14,8 @@
   "rtl": false,
   "aliases": {
     "components": "@/components",
-    "utils": "@tmex/ui",
-    "ui": "@tmex/ui",
+    "utils": "@vibeterm/ui",
+    "ui": "@vibeterm/ui",
     "lib": "@/lib",
     "hooks": "@/hooks"
   },

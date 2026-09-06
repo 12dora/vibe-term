@@ -6,8 +6,8 @@
 
 import { NodeLoginButton } from '@/auth/NodeLoginButton';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
   ArrowLeftRight,
   Download,
@@ -97,7 +97,10 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
           )}
           {rows.length === 0 && (
             <tr>
-              <td colSpan={10} className="tmex-fade px-3 py-6 text-center text-muted-foreground">
+              <td
+                colSpan={10}
+                className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
+              >
                 {t('nodes.empty')}
               </td>
             </tr>

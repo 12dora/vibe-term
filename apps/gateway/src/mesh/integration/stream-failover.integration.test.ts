@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 import {
   buildLogin,
   createDelegation,
@@ -11,7 +11,7 @@ import {
   encodeLogin,
   generateEd25519KeyPair,
   signLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -45,7 +45,7 @@ import { createFakeNativeModule } from '../rtc/test-fakes';
 import { waitUntil } from '../test-support';
 import { requestDispatchContext } from '../types';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 
 function fakeGateway(db: AuthDb, wsServer?: WebSocketServer): GatewayRuntime {
   const server = wsServer ?? new WebSocketServer();
@@ -196,7 +196,7 @@ function paneSnapshot(deviceId: string): StateSnapshotPayload {
     deviceId,
     session: {
       id: '$1',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',

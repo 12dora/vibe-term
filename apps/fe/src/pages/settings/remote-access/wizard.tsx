@@ -3,9 +3,9 @@
 //   临时隧道 连接方式 → 安装 → 隧道类型 → 启动 → 反向代理信任
 //   直接连接 连接方式 → 访问保护（不建隧道，也就不需要 cloudflared 与反向代理信任两步）
 
-import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Cloud, Download, Loader2, Rocket, RotateCcw, Server, Zap } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { checkAndNormalize } from './device-storage';
 
 const LOCAL = { type: 'local' } as Device;
@@ -13,7 +13,7 @@ let root: string;
 let outside: string;
 
 beforeAll(() => {
-  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'tmex-pathsafe-')));
+  sandbox = realpathSync(mkdtempSync(join(tmpdir(), 'vibeterm-pathsafe-')));
   root = join(sandbox, 'root');
   outside = join(sandbox, 'outside');
   mkdirSync(root);

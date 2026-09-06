@@ -3,7 +3,7 @@ export interface ManagedGatewayArgs {
   tmuxNamespace?: string;
 }
 
-const TMUX_NAMESPACE_ENV = 'TMEX_TMUX_SOCKET';
+const TMUX_NAMESPACE_ENV = 'VIBETERM_TMUX_SOCKET';
 const TMUX_NAMESPACE_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
 
 function validateTmuxNamespace(value: string): string {

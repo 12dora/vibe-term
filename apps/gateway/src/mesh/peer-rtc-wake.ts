@@ -1,14 +1,14 @@
-import { decodeCertificate } from '@tmex/shared/auth';
+import { decodeCertificate } from '@vibeterm/shared/auth';
 import type { UserStore } from '../auth/user-store';
 import type { RtcSignalMessage } from './mesh-deps';
 import {
-  RTC_WAKE_DOMAIN,
   RTC_WAKE_MAX_SKEW_MS,
   type RtcSignaling,
   type RtcWakeFields,
   decodeSdpSignal,
   encodeRtcWakeSdp,
   isCanonicalRtcWakeNonce,
+  isRtcWakeDomain,
   parseRtcWakeSdp,
   peerRtcSession,
   verifyRtcWakeSignature,
@@ -217,7 +217,7 @@ export class RtcWakeGate {
   }
 
   acceptSignedRtcWake(fromNodeId: string, msg: RtcSignalMessage, wake: RtcWakeFields): boolean {
-    if (wake.domain !== RTC_WAKE_DOMAIN) return false;
+    if (!isRtcWakeDomain(wake.domain)) return false;
     if (wake.from.toLowerCase() !== fromNodeId.toLowerCase()) return false;
     if (wake.to.toLowerCase() !== this.ports.identity.nodeId.toLowerCase()) return false;
     const session = peerRtcSession(wake.from, wake.to);

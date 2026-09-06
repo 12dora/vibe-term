@@ -1,9 +1,9 @@
 // 趋势卡：近 5 分钟采样窗口的三张大图（吞吐叠画进出、活跃流、事件循环延迟）。
 // 每张图右上角标出这段窗口里的峰值与谷值——没有坐标轴的折线，端点标注就是唯一的量纲。
 
-import { formatRate } from '@tmex/api-client/format';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Sparkline, type SparklineTone } from '@tmex/ui/sparkline';
+import { formatRate } from '@vibeterm/api-client/format';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Sparkline, type SparklineTone } from '@vibeterm/ui/sparkline';
 import { useTranslation } from 'react-i18next';
 import { formatDuration, formatMs } from './relay-format';
 import type { MetricSeries, RelayTrendSeries } from './relay-metrics-model';

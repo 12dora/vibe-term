@@ -6,7 +6,7 @@ import {
   encodeBase64url,
   randomBytes,
   sha256,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { RELAY_ADMIN_TOKEN_BYTES, RELAY_TENANT_ID_BYTES, RELAY_TOKEN_BYTES } from './types';
 
 export const RELAY_PASSWORD_SALT_LENGTH = 16;

@@ -2,7 +2,7 @@ import * as React from 'react';
 
 import { cn } from '../utils';
 
-// 与 packages/theme/src/motion.css 中的 --tmex-motion-* token 一一对应（单位 ms）。
+// 与 packages/theme/src/motion.css 中的 --vibeterm-motion-* token 一一对应（单位 ms）。
 export const motionDurations = {
   fast: 100,
   standard: 150,
@@ -10,10 +10,10 @@ export const motionDurations = {
   slow: 300,
 } as const;
 
-export const revealClassName = 'tmex-reveal';
+export const revealClassName = 'vibeterm-reveal';
 
 export function staggerItemStyle(index: number): React.CSSProperties {
-  return { '--tmex-stagger-index': Math.max(0, index) } as React.CSSProperties;
+  return { '--vibeterm-stagger-index': Math.max(0, index) } as React.CSSProperties;
 }
 
 export function revealDelayStyle(delayMs?: number): React.CSSProperties | undefined {

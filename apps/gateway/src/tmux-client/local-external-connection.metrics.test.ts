@@ -18,10 +18,10 @@ const sample = {
 };
 
 describe('tmux-metrics log-level gate', () => {
-  const prev = process.env.TMEX_LOG_LEVEL;
+  const prev = process.env.VIBETERM_LOG_LEVEL;
   afterEach(() => {
-    if (prev === undefined) delete process.env.TMEX_LOG_LEVEL;
-    else process.env.TMEX_LOG_LEVEL = prev;
+    if (prev === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+    else process.env.VIBETERM_LOG_LEVEL = prev;
   });
 
   test('format includes raw_bytes vs terminal_output_bytes ratio fields', () => {
@@ -32,7 +32,7 @@ describe('tmux-metrics log-level gate', () => {
     expect(line).toContain('interval_ms=30000');
   });
 
-  test('emits at TMEX_LOG_LEVEL=debug and stays silent at info', () => {
+  test('emits at VIBETERM_LOG_LEVEL=debug and stays silent at info', () => {
     const logged: string[] = [];
     const spy = (...args: unknown[]) => {
       logged.push(String(args[0]));
@@ -44,10 +44,10 @@ describe('tmux-metrics log-level gate', () => {
     console.warn = spy as typeof console.warn;
     console.error = spy as typeof console.error;
     try {
-      process.env.TMEX_LOG_LEVEL = 'info';
+      process.env.VIBETERM_LOG_LEVEL = 'info';
       logAt('debug', formatTmuxMetricsLine(sample));
       expect(logged).toEqual([]);
-      process.env.TMEX_LOG_LEVEL = 'debug';
+      process.env.VIBETERM_LOG_LEVEL = 'debug';
       logAt('debug', formatTmuxMetricsLine(sample));
       expect(logged).toHaveLength(1);
       expect(logged[0]).toContain('[tmux-metrics]');

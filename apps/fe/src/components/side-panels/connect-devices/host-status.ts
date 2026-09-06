@@ -1,8 +1,8 @@
 // 「本机作为中继」分支的现状推导：把隧道状态与 `/api/auth/mode` 折成三步各自要展示的结论。
 // 与 React 无关，也不碰远程访问那套模块（一 import 就把它的 lazy chunk 拽进侧滑面板）。
 
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
 
 /** 公网入口的形态：命名隧道 / 临时隧道 / 只有 Hub 公开地址（直接连接） / 什么都没有。 */
 export type EntryKind = 'named' | 'quick' | 'hubUrl' | 'none';

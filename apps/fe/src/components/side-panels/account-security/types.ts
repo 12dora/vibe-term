@@ -1,4 +1,4 @@
-import type { AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type { PasswordChangeFeedback } from '../account-security-password';
 
 /** 动作成功后的反馈：由哪一块发出的（决定摆在哪里）、什么调子、什么文案。 */

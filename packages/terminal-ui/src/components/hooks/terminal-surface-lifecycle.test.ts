@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { GatewayPaneScreenSnapshot } from '@tmex/ws-client';
+import type { GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import {
   TERMINAL_INIT_ERROR_MESSAGE,
   TERMINAL_RECOVERY_ERROR_MESSAGE,

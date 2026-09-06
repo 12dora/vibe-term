@@ -7,14 +7,14 @@ import type {
   KeyLogAppendRequest,
   KeyLogAppendResult,
   KeyLogHeadResponse,
-} from '@tmex/api-client/auth/index';
+} from '@vibeterm/api-client/auth/index';
 import {
   decodeBase64url,
   decodeKeyLogRecord,
   decodeRevokeNodePayload,
   encodeBase64url,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { SELF_REVOKE_REASON, selfRevokeNode } from './self-revoke';
 
 const UID = 'user-1';

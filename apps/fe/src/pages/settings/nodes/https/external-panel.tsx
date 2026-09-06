@@ -1,10 +1,10 @@
-// 外部反代模式：TLS 由 Cloudflare Tunnel / nginx / caddy 终止，tmex 只保留明文监听。
+// 外部反代模式：TLS 由 Cloudflare Tunnel / nginx / caddy 终止，VibeTerm 只保留明文监听。
 //
 // 唯一的开关是 `trustProxy`——它写进 env 文件，只有换进程才生效，因此保存后会出现重启提示。
 
-import type { TlsStatusResponse } from '@tmex/api-client/local/tls-types';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import type { TlsStatusResponse } from '@vibeterm/api-client/local/tls-types';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -24,7 +24,7 @@ export function ExternalPanel({
 }) {
   const { t } = useTranslation();
   const [trustProxy, setTrustProxy] = useState(status.trustProxy);
-  // 已经在经反代的 HTTPS 上访问，但 tmex 还没信任代理头：此时协议判断只能靠公开地址推断。
+  // 已经在经反代的 HTTPS 上访问，但 VibeTerm 还没信任代理头：此时协议判断只能靠公开地址推断。
   const unverified =
     status.https?.source === 'reverse-proxy' && !status.https.verified && !status.trustProxy;
 

@@ -1,10 +1,10 @@
 // 入口机上「其它节点事件」的 toast 判据与订阅接线。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { claimToastFor, resetToastDedupeForTest } from '@tmex/notifications';
-import type { WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { claimToastFor, resetToastDedupeForTest } from '@vibeterm/notifications';
+import type { WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -32,7 +32,7 @@ function event(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: new Date(0).toISOString(),
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'd1', name: 'laptop', type: 'local' },
     tmux: { windowId: '@1', paneId: '%2', windowIndex: 0 },
     payload: { nodeId: NODE_B, nodeName: 'laptop' },

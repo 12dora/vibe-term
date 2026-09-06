@@ -17,7 +17,7 @@ function launchVimWithMouse(paneId: string): void {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -35,7 +35,7 @@ test('desktop: sidebar new-window click does not inject SGR mouse sequences into
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-sidebar-no-inject-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-sidebar-no-inject-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const vimPaneId = paneIds[1] ?? paneIds[0];
   expect(vimPaneId).toBeTruthy();

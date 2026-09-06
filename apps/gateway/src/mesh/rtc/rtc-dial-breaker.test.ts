@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { encodeJsonBytes } from '../ctl';
@@ -310,13 +310,13 @@ describe('PeerManager DataChannel breaker', () => {
       await item?.stop?.();
       item?.close();
     }
-    delete process.env.TMEX_RTC_DIAL_BREAKER_MS;
-    delete process.env.TMEX_RTC_DIAL_DISABLE_AFTER;
+    delete process.env.VIBETERM_RTC_DIAL_BREAKER_MS;
+    delete process.env.VIBETERM_RTC_DIAL_DISABLE_AFTER;
   });
 
   async function setupManager(opts?: { breakerMs?: string; disableAfter?: string }) {
-    if (opts?.breakerMs) process.env.TMEX_RTC_DIAL_BREAKER_MS = opts.breakerMs;
-    if (opts?.disableAfter) process.env.TMEX_RTC_DIAL_DISABLE_AFTER = opts.disableAfter;
+    if (opts?.breakerMs) process.env.VIBETERM_RTC_DIAL_BREAKER_MS = opts.breakerMs;
+    if (opts?.disableAfter) process.env.VIBETERM_RTC_DIAL_DISABLE_AFTER = opts.disableAfter;
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new UserStore(db);
@@ -340,7 +340,7 @@ describe('PeerManager DataChannel breaker', () => {
         throw new Error('dc-fail');
       },
     } as unknown as RtcPeerManager;
-    const remotes: Array<import('@tmex/shared/link').LinkSession> = [];
+    const remotes: Array<import('@vibeterm/shared/link').LinkSession> = [];
     const manager = new PeerManager({
       identity: self,
       userStore: store,

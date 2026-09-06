@@ -3,8 +3,8 @@
 // 「所属设备连着」这一条是刻意的：SSH 设备断开后目录点开只会一路报错，留在树里纯属噪声。
 // 断开 / 重连由 tmux store 的 deviceConnected 驱动，React Query 的缓存不用动——过滤器负责隐藏。
 
-import type { DeviceType, FileRootDto } from '@tmex/shared';
-import { isSidebarFilesVisible } from '@tmex/stores';
+import type { DeviceType, FileRootDto } from '@vibeterm/shared';
+import { isSidebarFilesVisible } from '@vibeterm/stores';
 
 export interface FileRootVisibilityInput {
   roots: readonly FileRootDto[];

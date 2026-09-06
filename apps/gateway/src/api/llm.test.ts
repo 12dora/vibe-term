@@ -4,7 +4,7 @@ import type {
   AgentLlmSettingsDto,
   LlmProviderDto,
   RefreshLlmProviderModelsResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { registerSearchProvider } from '../agent/tools/web';
 import { decrypt } from '../crypto';

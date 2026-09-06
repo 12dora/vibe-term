@@ -2,7 +2,7 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { noopNotificationSink } from '@tmex/notifications';
+import { noopNotificationSink } from '@vibeterm/notifications';
 
 import { createAgentStore } from './agent';
 import { createAgentDeltaBuffer } from './agent-delta-buffer';
@@ -100,6 +100,6 @@ describe('agent persist 写盘门控', () => {
     store.getState().setDefaultWriteMode('auto');
     expect(writes).toBe(before + 1);
 
-    expect(localStorage.getItem('persist-gate-test-tmex-agent')).toContain('"auto"');
+    expect(localStorage.getItem('persist-gate-test-vibeterm-agent')).toContain('"auto"');
   });
 });

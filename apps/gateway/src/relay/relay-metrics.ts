@@ -1,6 +1,6 @@
 import { loadavg } from 'node:os';
-import type { LinkSession } from '@tmex/shared/link';
-import type { RelayQuota } from '@tmex/shared/relay';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { RelayQuota } from '@vibeterm/shared/relay';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import { type RelayLimitTotals, defaultRelayLimits, relayLimitTotals } from './relay-limits';
 import type { RelayMetering, RelayUsageDelta } from './relay-metering';

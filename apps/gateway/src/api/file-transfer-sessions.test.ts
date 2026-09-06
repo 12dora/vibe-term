@@ -46,7 +46,7 @@ describe('file-transfer-sessions', () => {
   });
 
   test('cleanupDownload forgets uid and removes the session', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('hello'));
     const session = createDownloadSession({
@@ -72,7 +72,7 @@ describe('file-transfer-sessions', () => {
     expect(getUploadSession(upload.id)).toBeUndefined();
     expect(getTransferOwner(upload.id)).toBeNull();
 
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-dl-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-dl-'));
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, Buffer.from('x'));
     const download = createDownloadSession({

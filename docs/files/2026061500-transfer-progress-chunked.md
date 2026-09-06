@@ -1,6 +1,6 @@
 # 文件传输：进度/速度、取消、大文件分块、2GB 上限
 
-> 修订（2026-06-15）：下载改为两步（prepare 流式 NDJSON 进度 + content 流式文件），修复大文件/远程下载因 Bun.serve 默认 10s 空闲超时导致的 socket hang up / 500（`apps/gateway/src/index.ts` 设 `idleTimeout: 255`；prepare 持续吐进度使连接不空闲）。Toast 同时显示**两段**进度条（上传：用户→tmex、tmex→服务器；下载：服务器→tmex、tmex→用户），文案明确各段方向。文件预览页（`FilePage.tsx`）右上角与兜底下载按钮改走应用内 `downloadFileWithProgress`（带进度 Toast），不再用 `<a download>` 直链；预览用的 `fileRawUrl`（图片/音视频/openRaw）保持不变。拖到桌面仍用单次 `GET /api/files/download`（浏览器原生）。
+> 修订（2026-06-15）：下载改为两步（prepare 流式 NDJSON 进度 + content 流式文件），修复大文件/远程下载因 Bun.serve 默认 10s 空闲超时导致的 socket hang up / 500（`apps/gateway/src/index.ts` 设 `idleTimeout: 255`；prepare 持续吐进度使连接不空闲）。Toast 同时显示**两段**进度条（上传：用户→VibeTerm、VibeTerm→服务器；下载：服务器→VibeTerm、VibeTerm→用户），文案明确各段方向。文件预览页（`FilePage.tsx`）右上角与兜底下载按钮改走应用内 `downloadFileWithProgress`（带进度 Toast），不再用 `<a download>` 直链；预览用的 `fileRawUrl`（图片/音视频/openRaw）保持不变。拖到桌面仍用单次 `GET /api/files/download`（浏览器原生）。
 
 ## 背景
 
@@ -8,7 +8,7 @@ Files Tab 的上传/下载入口（右键菜单、长按菜单、拖拽）由更
 
 ## 配置
 
-- `TMEX_TRANSFER_MAX_BYTES`（默认 `2147483648` = 2GB）→ `config.transferMaxBytes`（`apps/gateway/src/config.ts`），上传下载共用。
+- `VIBETERM_TRANSFER_MAX_BYTES`（默认 `2147483648` = 2GB）→ `config.transferMaxBytes`（`apps/gateway/src/config.ts`），上传下载共用。
 - 经 `GET /api/system/info` 的 `SystemInfo.transferMaxBytes` 暴露给前端，上传前预校验文件大小。
 
 ## rsync 进度（跨版本）
@@ -61,11 +61,11 @@ Files Tab 的上传/下载入口（右键菜单、长按菜单、拖拽）由更
 
 ## 临时文件清理与权限
 
-- **临时目录位置/权限**：上传会话（`tmex-up-*`）与下载拉取（`tmex-dl-*`）均用 `os.tmpdir()` + `mkdtempSync`（每用户临时区，目录权限 `0700`）。`os.tmpdir()` 在 Linux(`/tmp` 或 `$TMPDIR`)/macOS(`$TMPDIR`) 均为当前用户可写，rsync 子进程同用户可读写，无跨平台权限问题；不触碰安装目录。
+- **临时目录位置/权限**：上传会话（`vibeterm-up-*`）与下载拉取（`vibeterm-dl-*`）均用 `os.tmpdir()` + `mkdtempSync`（每用户临时区，目录权限 `0700`）。`os.tmpdir()` 在 Linux(`/tmp` 或 `$TMPDIR`)/macOS(`$TMPDIR`) 均为当前用户可写，rsync 子进程同用户可读写，无跨平台权限问题；不触碰安装目录。
 - **清理三重保障**（成功 / 失败 / 中断 / 取消都妥善清理）：
   1. **显式清理**：上传 commit 的 `.finally` 与流 `cancel`、`DELETE` 端点均 `removeUploadSession`（中止 rsync + 删临时）；下载流 `pull` 完成 / `cancel` / `error` 均 `cleanup`，rsync 失败/超限路径也先 `cleanup`；下载拉取成功后若构造响应流同步失败也兜底 `cleanup`。
   2. **周期 GC**：每 5min 扫描内存会话，清理 >30min 未完成的遗弃会话（如客户端关页面未发 DELETE）；定时器 `unref`，不阻塞退出。
-  3. **启动孤儿扫描**：gateway 启动调用 `sweepOrphanTransferTemps()`，清理上次崩溃残留的 `tmex-up-*`/`tmex-dl-*`（>1h，多实例安全）。
+  3. **启动孤儿扫描**：gateway 启动调用 `sweepOrphanTransferTemps()`，清理上次崩溃残留的 `vibeterm-up-*`/`vibeterm-dl-*`（>1h，多实例安全）。
 
 ## 注意 / 限制
 

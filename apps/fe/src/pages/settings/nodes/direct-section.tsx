@@ -1,18 +1,18 @@
-// 直连插件区：安装（下载 `native/`）和启用（`TMEX_DIRECT_ENABLED`）是两件独立的事——装好的插件
+// 直连插件区：安装（下载 `native/`）和启用（`VIBETERM_DIRECT_ENABLED`）是两件独立的事——装好的插件
 // 可以先关着，关掉也不必删文件，两者只在「未安装时开关不可用」上耦合，所以按钮管安装 / 删除，
 // 开关管启用 / 停用。四个动作都要重启网关才生效，横幅与重启入口由调用方给出。
 
-import { LocalApiError } from '@tmex/api-client/local/local-api';
+import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import type {
   LocalDirectAction,
   LocalDirectResponse,
   LocalDirectStatus,
-} from '@tmex/api-client/local/types';
-import { errorMessage } from '@tmex/shared';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
+} from '@vibeterm/api-client/local/types';
+import { errorMessage } from '@vibeterm/shared';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import { Download, Loader2, Trash2 } from 'lucide-react';
 import { useMemo, useRef, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';

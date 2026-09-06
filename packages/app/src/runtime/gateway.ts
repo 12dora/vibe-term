@@ -4,7 +4,7 @@ import type { RuntimeMode } from './mode';
 
 type GatewayRuntimeFactory = typeof createGatewayRuntime;
 
-export function createTmexGatewayRuntime(
+export function createVibeTermGatewayRuntime(
   factory: GatewayRuntimeFactory = createGatewayRuntime,
   extras?: { mode?: RuntimeMode }
 ): ReturnType<GatewayRuntimeFactory> {

@@ -1,4 +1,5 @@
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import type { StoredMeshRelayRow } from '../auth/mesh-relay-store';
 import { type RelayDialContext, resolveRelayDialUrl } from './relay-dial';
 import { readRelayErrorCode } from './relay-routes-input';
@@ -87,7 +88,7 @@ async function postEnrollmentHttp(input: {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-tmex-relay-token': input.token,
+          ...assignHeaderPair({}, RELAY_TOKEN_HEADER, input.token),
         },
         body: JSON.stringify({
           id: input.payload.id,

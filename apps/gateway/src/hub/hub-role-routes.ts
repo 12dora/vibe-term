@@ -1,6 +1,6 @@
-import { errorMessage } from '@tmex/shared';
-import type { HubRoleError, HubRoleTransition } from '@tmex/shared';
-import type { HubMode } from '@tmex/shared/uplink';
+import { errorMessage } from '@vibeterm/shared';
+import type { HubRoleError, HubRoleTransition } from '@vibeterm/shared';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import { json, readJsonObjectBody } from '../api/http';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { AuthDb } from '../auth/types';
@@ -72,9 +72,9 @@ export async function executeHubRoleTransition(
   });
   try {
     store.update(input.operationId, { phase: 'persisting' }, ctx.now());
-    const patch: Record<string, string> = { TMEX_HUB_MODE: input.mode };
+    const patch: Record<string, string> = { VIBETERM_HUB_MODE: input.mode };
     if (input.mode === 'active' && input.writerEpoch != null) {
-      patch.TMEX_HUB_WRITER_EPOCH = String(input.writerEpoch);
+      patch.VIBETERM_HUB_WRITER_EPOCH = String(input.writerEpoch);
     }
     await ctx.patchHostEnv(patch);
     if (input.mode === 'active' && input.writerEpoch != null) {
@@ -108,7 +108,7 @@ export function reconcileHubRoleOnStart(ctx: HubRoleRouteContext): void {
 
 export async function handlePostHubRole(req: Request, ctx: HubRoleRouteContext): Promise<Response> {
   if (!ctx.hubRoleInstalled) {
-    return errorJson('HUB_NOT_HUB', 'TMEX_ROLES does not include hub', 409);
+    return errorJson('HUB_NOT_HUB', 'VIBETERM_ROLES does not include hub', 409);
   }
   if (!ctx.patchHostEnv) {
     return errorJson(
@@ -188,7 +188,7 @@ export async function handlePostHubRole(req: Request, ctx: HubRoleRouteContext):
 
 export function handleGetHubRoleStatus(req: Request, ctx: HubRoleRouteContext): Response {
   if (!ctx.hubRoleInstalled) {
-    return errorJson('HUB_NOT_HUB', 'TMEX_ROLES does not include hub', 409);
+    return errorJson('HUB_NOT_HUB', 'VIBETERM_ROLES does not include hub', 409);
   }
   const store = new HubRoleTransitionStore(ctx.db);
   const operationId = new URL(req.url).searchParams.get('operationId');

@@ -2,10 +2,10 @@
 // 单屏与分屏两种终端布局共用同一个浮层槽位。
 
 import { useQuery } from '@tanstack/react-query';
-import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@tmex/api-client';
-import type { TerminalShortcutItem } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import { fetchTerminalShortcuts, terminalShortcutsQueryKey } from '@vibeterm/api-client';
+import type { TerminalShortcutItem } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, memo, useMemo } from 'react';
 import { ShortcutButtonRow } from '../settings/ShortcutButtonRow';
 import { TerminalHideKeyboardButton } from './terminal-keyboard-button';
@@ -73,7 +73,7 @@ export interface TerminalShortcutsSlotProps {
 
 /**
  * direct 模式：快捷键栏拼在终端可视区域下方，与终端共用 seoul256 配色。
- * follow 键盘模式弹起时，外层 .kb-floating-shortcuts 按 --tmex-kb-shortcut-lift
+ * follow 键盘模式弹起时，外层 .kb-floating-shortcuts 按 --vibeterm-kb-shortcut-lift
  * 把这排快捷键 translateY 浮到键盘正上方（不脱流，故不触发终端 resize）。
  */
 export function TerminalShortcutsSlot({

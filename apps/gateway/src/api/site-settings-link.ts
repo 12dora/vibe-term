@@ -1,5 +1,5 @@
-import type { SiteSettings, SiteSettingsLinkFields, SiteSettingsView } from '@tmex/shared';
-import type { ShareOriginCandidate } from '@tmex/shared/share';
+import type { SiteSettings, SiteSettingsLinkFields, SiteSettingsView } from '@vibeterm/shared';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
 
 export type SiteSettingsLinkProvider = {
   effectiveSiteUrl(): string | null;

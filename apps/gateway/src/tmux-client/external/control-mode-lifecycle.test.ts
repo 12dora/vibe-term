@@ -173,8 +173,8 @@ describe('ControlModeLifecycle', () => {
 
     host.lastControlActivityAt = () => recent - 30_001;
     lifecycle.sendHeartbeat();
-    expect(commands).toEqual(['display-message -p "tmex-hb"']);
-    expect(written).toEqual(['display-message -p "tmex-hb"\n']);
+    expect(commands).toEqual(['display-message -p "vibeterm-hb"']);
+    expect(written).toEqual(['display-message -p "vibeterm-hb"\n']);
     expect(host.heartbeatPending).toBe(true);
     expect(host.heartbeatTimeoutTimer).not.toBeNull();
     lifecycle.stopHeartbeat();

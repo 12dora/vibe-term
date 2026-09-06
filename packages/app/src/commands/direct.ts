@@ -52,7 +52,7 @@ export function shouldEnableDirectForRoles(roles: string | string[]): boolean {
 }
 
 function logLine(log: ((message: string) => void) | undefined, message: string): void {
-  (log ?? ((line: string) => console.log(`[tmex] ${line}`)))(message);
+  (log ?? ((line: string) => console.log(`[vibeterm] ${line}`)))(message);
 }
 
 function fail(
@@ -338,27 +338,29 @@ export async function runDirect(parsed: ParsedArgs, deps: RunDirectDeps = {}): P
     });
     if (!result.ok) {
       if (result.unsupported || result.kind === 'unsupported') {
-        console.log(`[tmex] direct enable skipped: ${result.reason}`);
+        console.log(`[vibeterm] direct enable skipped: ${result.reason}`);
         return;
       }
-      console.error(`[tmex] direct enable failed: ${result.reason}`);
+      console.error(`[vibeterm] direct enable failed: ${result.reason}`);
       process.exitCode = 1;
       return;
     }
     if (result.skipped) {
-      console.log(`[tmex] direct already enabled (${result.platformId} ${result.version})`);
+      console.log(`[vibeterm] direct already enabled (${result.platformId} ${result.version})`);
       return;
     }
-    console.log(`[tmex] direct enabled (${result.platformId} ${result.version})`);
+    console.log(`[vibeterm] direct enabled (${result.platformId} ${result.version})`);
     console.log(`- addon: ${result.addonPath}`);
     return;
   }
 
   if (action === 'disable') {
     await disableDirect({ installDir });
-    console.log(`[tmex] direct disabled (removed ${createInstallLayout(installDir).nativeDir})`);
+    console.log(
+      `[vibeterm] direct disabled (removed ${createInstallLayout(installDir).nativeDir})`
+    );
     return;
   }
 
-  throw new Error('Usage: tmex direct enable|disable [--install-dir <path>]');
+  throw new Error('Usage: vibeterm direct enable|disable [--install-dir <path>]');
 }

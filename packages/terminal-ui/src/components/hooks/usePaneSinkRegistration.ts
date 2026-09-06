@@ -1,5 +1,5 @@
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import type { PaneSink } from '@tmex/ws-client/pane-sink-registry';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import type { PaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import type { TerminalSurface } from '../TerminalSurface';

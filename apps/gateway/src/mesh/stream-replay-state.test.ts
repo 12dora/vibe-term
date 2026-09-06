@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { type InboundReplayNote, StreamReplayState } from './stream-replay-state';
 
 function encodeDeviceConnect(deviceId: string): Uint8Array {
@@ -44,7 +44,7 @@ function encodeHelloS2C(maxFrameBytes: number, serverVersion = '1.1.23'): Uint8A
   return wsBorsh.encodeEnvelope(
     wsBorsh.KIND_HELLO_S2C,
     wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion,
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes,

@@ -22,7 +22,7 @@ export interface MeshState {
 const BOOT_SCRIPT = join('apps', 'fe', 'tests', 'helpers', 'mesh-boot.ts');
 
 export function meshStatePath(): string {
-  return process.env.TMEX_MESH_E2E_STATE || '/tmp/tmex-mesh-e2e-state.json';
+  return process.env.VIBETERM_MESH_E2E_STATE || '/tmp/vibeterm-mesh-e2e-state.json';
 }
 
 // Playwright 在 CJS / ESM 两种转译下 __dirname 与 import.meta 各只有一个可用，
@@ -38,7 +38,7 @@ function repoRoot(): string {
 }
 
 function bunExecutable(): string {
-  const explicit = process.env.TMEX_E2E_BUN;
+  const explicit = process.env.VIBETERM_E2E_BUN;
   if (explicit) return explicit;
   const home = process.env.HOME;
   if (home) {
@@ -186,7 +186,7 @@ export async function logout(page: Page): Promise<void> {
 }
 
 /**
- * 删掉 IndexedDB 里持久化的会话钥（`tmex-auth` / `session` / `current`）。
+ * 删掉 IndexedDB 里持久化的会话钥（`vibeterm-auth` / `session` / `current`）。
  *
  * 会话钥现在能跨 document 活下来（不可导出的 WebCrypto 私钥 + 18 小时 delegation），所以
  * 「回到未登录状态」除了清 cookie 还得清它，否则下一次进页面会被静默登录接管。
@@ -200,7 +200,7 @@ export async function clearPersistedSessionKey(page: Page): Promise<void> {
     .evaluate(
       () =>
         new Promise<void>((resolve) => {
-          const open = indexedDB.open('tmex-auth', 1);
+          const open = indexedDB.open('vibeterm-auth', 1);
           open.onupgradeneeded = () => {
             const db = open.result;
             if (!db.objectStoreNames.contains('session')) db.createObjectStore('session');
@@ -272,7 +272,7 @@ export async function addVirtualAuthenticator(page: Page): Promise<VirtualAuthen
 /** 读整个 xterm buffer（不止视口），marker 被滚出屏幕时也能命中。 */
 export async function readTerminalBuffer(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as unknown as { __tmexE2eXterm?: XtermHandle }).__tmexE2eXterm;
+    const term = (window as unknown as { __vibetermE2eXterm?: XtermHandle }).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const lines: string[] = [];

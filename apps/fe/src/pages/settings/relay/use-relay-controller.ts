@@ -10,7 +10,7 @@ import type {
   RelayQuota,
   RelayTenantPatch,
   RelayTenantSummary,
-} from '@tmex/api-client/relay/admin-api';
+} from '@vibeterm/api-client/relay/admin-api';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { type UseRelayAdminResult, useRelayAdmin } from './relay-status-store';

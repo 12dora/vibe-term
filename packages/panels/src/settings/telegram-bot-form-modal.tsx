@@ -1,4 +1,4 @@
-import type { TelegramBotWithStats } from '@tmex/shared';
+import type { TelegramBotWithStats } from '@vibeterm/shared';
 
 import {
   IntegrationAccountFormModal,

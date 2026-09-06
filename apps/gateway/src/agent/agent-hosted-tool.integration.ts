@@ -3,12 +3,12 @@
 // 凭证来自 test.env.local：TEST_LLM_BASE_URL / TEST_LLM_API_KEY / TEST_LLM_MODEL，
 // 且需 TEST_LLM_PROTOCOL=openai-responses（hosted 工具仅 Responses API 可用）。
 //
-// 运行：bun run --filter @tmex/gateway test:live:hosted-tool
+// 运行：bun run --filter @vibeterm/gateway test:live:hosted-tool
 
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import type { AgentEventPayloadMap } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { AgentEventPayloadMap } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { encrypt } from '../crypto';
 import {

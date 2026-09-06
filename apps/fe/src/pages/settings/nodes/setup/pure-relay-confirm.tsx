@@ -1,6 +1,6 @@
 // 选「纯中继」前的确认：这一档重启后网页整个消失，只剩 CLI，选错了没法在网页里改回来。
 
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { useTranslation } from 'react-i18next';
 
 export function PureRelayConfirm({
@@ -27,7 +27,7 @@ export function PureRelayConfirm({
       confirmTestId="setup-pure-relay-confirm-ok"
     >
       <span className="block">{t('nodes.setup.pureRelayConfirm.description')}</span>
-      <span className="mt-2 block font-mono">tmex relay status</span>
+      <span className="mt-2 block font-mono">vibeterm relay status</span>
     </ConfirmDialog>
   );
 }

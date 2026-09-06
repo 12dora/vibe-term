@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@tmex/shared';
+import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@vibeterm/shared';
 
 import type { AtomicPaneCapture } from '../control-mode-capture';
 import type { PaneIdentity, PaneTerminalCursor } from '../pane-retention';

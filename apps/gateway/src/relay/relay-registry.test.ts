@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { RelayRegistry, noteRelayPing, noteRelayPong } from './relay-registry';
 
 function put(

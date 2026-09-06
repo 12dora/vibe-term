@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
 import { type RelayHarness, bootRelayHarness } from './relay-test-harness';
 import { RELAY_ENROLL_CREATE_LIMIT, RELAY_MAX_UNUSED_ENROLLMENTS } from './types';
 

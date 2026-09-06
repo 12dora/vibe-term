@@ -1,5 +1,5 @@
-import type { NodeUnreachableReason } from '@tmex/shared';
-import { LinkError } from '@tmex/shared/link';
+import type { NodeUnreachableReason } from '@vibeterm/shared';
+import { LinkError } from '@vibeterm/shared/link';
 import { jsonError } from './session-middleware';
 import { NodeUnreachableError, PeerHandshakeError } from './types';
 

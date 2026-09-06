@@ -8,7 +8,7 @@ import {
 
 async function readVisibleTerminalText(page: Page): Promise<string> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return '';
     const buffer = term.buffer.active;
     const start = buffer.viewportY;
@@ -24,21 +24,21 @@ async function readVisibleTerminalText(page: Page): Promise<string> {
 
 async function readViewportY(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.buffer?.active?.viewportY ?? 0;
   });
 }
 
 async function readBaseY(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.buffer?.active?.baseY ?? 0;
   });
 }
 
 async function scrollViewportToTop(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     term?.scrollToTop?.();
   });
 }
@@ -122,7 +122,7 @@ function exitVim(paneId: string): void {
 
 function emitScrollback(paneId: string): void {
   tmux(`send-keys -t ${paneId} C-c`);
-  tmux(`send-keys -t ${paneId} -l 'for i in $(seq 1 120); do echo TMEX_SCROLL_$i; done'`);
+  tmux(`send-keys -t ${paneId} -l 'for i in $(seq 1 120); do echo VIBETERM_SCROLL_$i; done'`);
   tmux(`send-keys -t ${paneId} C-m`);
 }
 
@@ -130,7 +130,7 @@ test('desktop: vim alternate screen survives page refresh with content and mouse
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-refresh-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-refresh-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const vimPaneId = paneIds[1] ?? paneIds[0];
   expect(vimPaneId).toBeTruthy();
@@ -165,7 +165,7 @@ test('desktop: vim alternate screen survives page refresh with content and mouse
 });
 
 test('desktop: vim mouse modes survive pane round-trip navigation', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-vim-pane-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-pane-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const shellPaneId = paneIds[0];
   const vimPaneId = paneIds[1] ?? paneIds[0];
@@ -211,7 +211,7 @@ test('desktop: vim exit releases mouse wheel back to viewport scrolling after re
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-exit-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-exit-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const vimPaneId = paneId;
   expect(vimPaneId).toBeTruthy();
@@ -266,7 +266,7 @@ test('desktop: vim exit releases mouse wheel back to viewport scrolling without 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-vim-exit-direct-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-vim-exit-direct-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const vimPaneId = paneId;
   expect(vimPaneId).toBeTruthy();
@@ -316,7 +316,7 @@ test('desktop: opencode refresh should not render pre-launch normal screen', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-refresh-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-refresh-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[1] ?? paneIds[0];
   expect(targetPaneId).toBeTruthy();
@@ -360,7 +360,7 @@ test('desktop: opencode pane round-trip should not render pre-launch normal scre
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-pane-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-pane-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   const shellPaneId = paneIds[0];
   const targetPaneId = paneIds[1] ?? paneIds[0];
@@ -412,7 +412,7 @@ test('desktop: focus restore repaints a cleared terminal canvas even when termin
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-opencode-focus-repaint-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-opencode-focus-repaint-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
   const targetPaneId = paneId;
   expect(targetPaneId).toBeTruthy();

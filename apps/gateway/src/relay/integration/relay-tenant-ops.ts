@@ -17,8 +17,8 @@ import {
   signEd25519,
   signKeyLogRecordWithRoot,
   verifyKeyLogChain,
-} from '@tmex/shared/auth';
-import { openRelayKeyLogRecord, signRelayEnrollProof } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { openRelayKeyLogRecord, signRelayEnrollProof } from '@vibeterm/shared/relay';
 import {
   KeyLogStore,
   NodeIdentityStore,

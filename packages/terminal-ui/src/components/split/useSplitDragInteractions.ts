@@ -2,7 +2,7 @@
 // 命中判定全部走 dragHitTesting 的纯函数，这里只负责事件接线与提交。
 // pointermove 一律经 dragScheduling 的 rAF 调度器合并；rect 量测在 pointerdown 缓存一次。
 
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { type RefObject, useCallback, useState } from 'react';
 import type { SplitGutter, SplitLayoutGeometry } from '../splitLayoutGeometry';
 import { PANE_DRAG_THRESHOLD_PX } from './constants';

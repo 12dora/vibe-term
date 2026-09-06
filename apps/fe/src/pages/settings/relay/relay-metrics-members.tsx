@@ -1,9 +1,9 @@
 // 接入节点表：一行一个成员。租户表管「谁被允许接入」，这张表管「此刻谁在转发」。
 // 排序与筛选由调用方（members-card）持有，本文件只摆版式并把表头点击回传。
 
-import { formatRate } from '@tmex/api-client/format';
-import type { RelayMetricsMember } from '@tmex/api-client/relay/metrics-types';
-import { Badge } from '@tmex/ui/badge';
+import { formatRate } from '@vibeterm/api-client/format';
+import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
+import { Badge } from '@vibeterm/ui/badge';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll } from '../components/wide-table';
@@ -75,7 +75,7 @@ export function RelayMembersTable({
             <tr>
               <td
                 colSpan={COLUMNS.length}
-                className="tmex-fade px-3 py-6 text-center text-muted-foreground"
+                className="vibeterm-fade px-3 py-6 text-center text-muted-foreground"
                 data-testid={filtered ? 'relay-members-no-match' : 'relay-members-empty'}
               >
                 {t(filtered ? 'relay.metrics.members.noMatch' : 'relay.metrics.members.empty')}

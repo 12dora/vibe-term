@@ -1,7 +1,7 @@
 // Gateway Borsh 集成测试
 
 import { describe, expect, it } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { createGatewaySession } from '../test-helpers';
 import { createBorshSessionState, encodePayloadFrames } from './codec-borsh';
 import { sessionStateStore } from './session-state';
@@ -22,7 +22,7 @@ describe('borsh codec', () => {
     const seq = state.seqGen();
 
     const helloS2C = {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion: '0.1.0',
       selectedVersion: 1,
       maxFrameBytes: 65536,

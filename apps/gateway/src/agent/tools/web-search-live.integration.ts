@@ -2,7 +2,7 @@
 // 凭证来自 test.env.local：TEST_TAVILY_API_KEY / TEST_BRAVE_API_KEY，二者任选其一即可
 // （配了哪个就测哪个，都配则都测）；一个都没配才报错退出。
 //
-// 运行：bun run --filter @tmex/gateway test:live:search
+// 运行：bun run --filter @vibeterm/gateway test:live:search
 
 import { describe, expect, test } from 'bun:test';
 import { encrypt } from '../../crypto';

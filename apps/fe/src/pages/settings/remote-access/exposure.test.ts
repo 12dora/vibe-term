@@ -2,7 +2,7 @@
 // 保护状态或隧道运行态一变也作废；后端 409 之后的「勾选再重试」照常走得通。
 
 import { describe, expect, test } from 'bun:test';
-import type { TunnelActionRequest, TunnelStatusResponse } from '@tmex/shared';
+import type { TunnelActionRequest, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   EXPOSURE_ACK,
   type ExposureState,
@@ -20,8 +20,8 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
     auth: { loggedIn: true, loginUrl: null },
     config: {
       mode: 'named',
-      hostname: 'tmex.example.com',
-      tunnelName: 'tmex',
+      hostname: 'vibeterm.example.com',
+      tunnelName: 'vibeterm',
       tunnelId: 'd8e1f0aa',
       autoStart: false,
       externallyManaged: false,
@@ -32,7 +32,7 @@ function status(overrides: Partial<TunnelStatusResponse> = {}): TunnelStatusResp
       state: 'running',
       pid: 42,
       startedAt: '2026-08-30T00:00:00.000Z',
-      publicUrl: 'https://tmex.example.com',
+      publicUrl: 'https://vibeterm.example.com',
       lastError: null,
       restarts: 0,
     },

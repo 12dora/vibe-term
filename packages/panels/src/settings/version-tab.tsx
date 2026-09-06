@@ -1,6 +1,6 @@
 // 版本设置页组装：数据来自 ./use-version-tab，展示块来自 ./version-tab-sections。
 
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { useTranslation } from 'react-i18next';
 
 import { useVersionTab } from './use-version-tab';

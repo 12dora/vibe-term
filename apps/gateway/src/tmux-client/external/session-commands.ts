@@ -1,5 +1,5 @@
-import { encodePaneModes } from '@tmex/shared';
-import type { TmuxWindow } from '@tmex/shared';
+import { encodePaneModes } from '@vibeterm/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 
 import { config } from '../../config';
 import {
@@ -25,7 +25,11 @@ import { TmuxTargetMissingError, isTargetMissingMessage } from '../target-missin
 import { resolveTmuxWindowStyle } from '../window-style';
 import { logTmuxDestroy } from './destroy-log';
 import { hasRenderableTerminalContent, isTmuxServerGoneMessage } from './helpers';
-import { createParkingWindow, removeParkingWindow } from './parking-window';
+import {
+  createParkingWindow,
+  removeParkingWindow,
+  renameLegacyParkingWindows,
+} from './parking-window';
 import type { CommandResult } from './types';
 
 export interface SessionCommandHost {
@@ -474,6 +478,10 @@ export class SessionCommands {
         windowStyle,
       ]);
     }
+  }
+
+  async renameLegacyParkingWindows(): Promise<void> {
+    return renameLegacyParkingWindows(this.host);
   }
 
   async createParkingWindow(): Promise<string | null> {

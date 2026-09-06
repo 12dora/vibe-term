@@ -6,9 +6,9 @@
 //   page  —— 挂在根路由的 errorElement 上，整页替换；
 //   panel —— 侧滑面板内部，出错只毁这块内容，页面其他部分照常可用。
 
-import { formatDisplayVersion, writeTextToClipboard } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
+import { formatDisplayVersion, writeTextToClipboard } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { AlertTriangle, Check, ChevronRight, Copy, Home, RotateCw } from 'lucide-react';
 import {
   Component,
@@ -157,7 +157,7 @@ export function AppErrorFallback({
               data-testid="app-error-details-toggle"
             >
               <ChevronRight
-                className={`transition-transform duration-(--tmex-motion-fast) motion-reduce:transition-none ${detailsOpen ? 'rotate-90' : ''}`}
+                className={`transition-transform duration-(--vibeterm-motion-fast) motion-reduce:transition-none ${detailsOpen ? 'rotate-90' : ''}`}
               />
               {t('appError.details')}
             </Button>
@@ -168,9 +168,9 @@ export function AppErrorFallback({
                 </pre>
                 <Button variant="outline" size="xs" onClick={copy} data-testid="app-error-copy">
                   {copied ? (
-                    <Check className="tmex-scale-in" />
+                    <Check className="vibeterm-scale-in" />
                   ) : (
-                    <Copy className="tmex-scale-in" />
+                    <Copy className="vibeterm-scale-in" />
                   )}
                   {copied ? t('appError.copied') : t('appError.copyDetails')}
                 </Button>

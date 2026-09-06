@@ -1,14 +1,14 @@
 // 目录节点的呈现层：可拖入上传的行 + 右键菜单 + 隐藏的文件选择框；子节点由调用方传入。
 
-import type { FileRootDto } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import type { FileRootDto } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import {
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-} from '@tmex/ui/context-menu';
+} from '@vibeterm/ui/context-menu';
 import { ChevronRight, ChevronsUpDown, GripVertical, Upload } from 'lucide-react';
 import type { CSSProperties, ChangeEvent, ReactNode, RefObject } from 'react';
 import { useTranslation } from 'react-i18next';

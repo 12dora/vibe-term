@@ -2,8 +2,8 @@
 // 停用模型的占位显示与空态禁用。弹层走 portal，无 DOM 环境只能静态渲染触发器。
 
 import { describe, expect, test } from 'bun:test';
-import type { LlmProviderDto } from '@tmex/shared';
-import { I18N_RESOURCES } from '@tmex/shared';
+import type { LlmProviderDto } from '@vibeterm/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

@@ -39,14 +39,14 @@ describe('isIpLiteral / isLocalName', () => {
     expect(isIpLiteral('::1')).toBe(true);
     expect(isIpLiteral('2001:db8::1')).toBe(true);
     expect(isIpLiteral('::ffff:127.0.0.1')).toBe(true);
-    expect(isIpLiteral('tmex.example.com')).toBe(false);
+    expect(isIpLiteral('vibeterm.example.com')).toBe(false);
     expect(isIpLiteral('localhost')).toBe(false);
   });
 
   test('localhost, *.localhost, *.local, loopback', () => {
     expect(isLocalName('localhost')).toBe(true);
     expect(isLocalName('Foo.Localhost')).toBe(true);
-    expect(isLocalName('tmex.local')).toBe(true);
+    expect(isLocalName('vibeterm.local')).toBe(true);
     expect(isLocalName('printer.local:8443')).toBe(true);
     expect(isLocalName('127.0.0.1')).toBe(true);
     expect(isLocalName('127.1.2.3:9883')).toBe(true);
@@ -54,7 +54,7 @@ describe('isIpLiteral / isLocalName', () => {
     expect(isLocalName('[::1]:443')).toBe(true);
     expect(isLocalName('::ffff:127.0.0.1')).toBe(true);
     expect(isLocalName('192.168.1.5')).toBe(false);
-    expect(isLocalName('tmex.example.com')).toBe(false);
+    expect(isLocalName('vibeterm.example.com')).toBe(false);
     expect(isLocalName('notlocal.com')).toBe(false);
   });
 });
@@ -68,7 +68,7 @@ describe('collectConfiguredHosts', () => {
         'https://a.example.com:9443/',
         'http://127.0.0.1:8085',
         'http://localhost:19663',
-        'tmex.local',
+        'vibeterm.local',
         'https://B.example.com.',
         'named.example.com',
         null,
@@ -79,18 +79,18 @@ describe('collectConfiguredHosts', () => {
 
   test('strips default ports from URL sources', () => {
     expect(
-      collectConfiguredHosts(['https://tmex.example.com:443', 'http://tmex.example.com:80'])
-    ).toEqual(['tmex.example.com']);
+      collectConfiguredHosts(['https://vibeterm.example.com:443', 'http://vibeterm.example.com:80'])
+    ).toEqual(['vibeterm.example.com']);
   });
 });
 
 describe('isViaDomain', () => {
-  const hosts = ['tmex.example.com', 'alt.example.com:8443'];
+  const hosts = ['vibeterm.example.com', 'alt.example.com:8443'];
 
   test('domain without port matches any port on that hostname', () => {
-    expect(isViaDomain(new URL('https://tmex.example.com/'), hosts)).toBe(true);
-    expect(isViaDomain(new URL('https://tmex.example.com:443/'), hosts)).toBe(true);
-    expect(isViaDomain(new URL('https://tmex.example.com:9443/x'), hosts)).toBe(true);
+    expect(isViaDomain(new URL('https://vibeterm.example.com/'), hosts)).toBe(true);
+    expect(isViaDomain(new URL('https://vibeterm.example.com:443/'), hosts)).toBe(true);
+    expect(isViaDomain(new URL('https://vibeterm.example.com:9443/x'), hosts)).toBe(true);
   });
 
   test('configured host with explicit port is exact', () => {
@@ -103,7 +103,7 @@ describe('isViaDomain', () => {
     expect(isViaDomain(new URL('http://192.168.1.5/'), ['192.168.1.5'])).toBe(false);
     expect(isViaDomain(new URL('http://[::1]/'), ['::1'])).toBe(false);
     expect(isViaDomain(new URL('http://localhost/'), ['localhost'])).toBe(false);
-    expect(isViaDomain(new URL('http://tmex.local/'), ['tmex.local'])).toBe(false);
+    expect(isViaDomain(new URL('http://vibeterm.local/'), ['vibeterm.local'])).toBe(false);
   });
 });
 
@@ -118,18 +118,18 @@ describe('x-forwarded-host via publicRequestUrl', () => {
 
   test('trusted x-forwarded-host is used (first value only)', () => {
     const req = new Request('http://192.168.1.5/', {
-      headers: { 'x-forwarded-host': 'tmex.example.com, other.example' },
+      headers: { 'x-forwarded-host': 'vibeterm.example.com, other.example' },
     });
     setMeshRequestContext(req, { via: MESH_VIA_SELF, trustProxy: true });
-    expect(isViaDomain(publicRequestUrl(req), ['tmex.example.com'])).toBe(true);
+    expect(isViaDomain(publicRequestUrl(req), ['vibeterm.example.com'])).toBe(true);
   });
 
   test('trusted x-forwarded-host is ignored when via is not self', () => {
     const req = new Request('http://192.168.1.5/', {
-      headers: { 'x-forwarded-host': 'tmex.example.com' },
+      headers: { 'x-forwarded-host': 'vibeterm.example.com' },
     });
     setMeshRequestContext(req, { via: 'ab'.repeat(16), trustProxy: true });
-    expect(isViaDomain(publicRequestUrl(req), ['tmex.example.com'])).toBe(false);
+    expect(isViaDomain(publicRequestUrl(req), ['vibeterm.example.com'])).toBe(false);
   });
 });
 
@@ -300,7 +300,7 @@ describe('decideDomainAccess', () => {
     );
   });
 
-  test('TMEX_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
+  test('VIBETERM_TRUST_PROXY=false uses socket IP and ignores spoofed XFF', () => {
     const spoofed = new Headers({ 'x-forwarded-for': '203.0.113.9' });
     expect(
       decideDomainAccess({
@@ -324,7 +324,7 @@ describe('decideDomainAccess', () => {
     ).toBe('deny-text');
   });
 
-  test('TMEX_TRUST_PROXY=true judges XFF last segment', () => {
+  test('VIBETERM_TRUST_PROXY=true judges XFF last segment', () => {
     expect(
       decideDomainAccess({
         ...base,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { sessionStateStore } from './borsh/session-state';
 import { WebSocketServer } from './index';
 import { createGatewaySession, setupConnectionEntry } from './test-helpers';
@@ -116,7 +116,7 @@ function snapshot(
 ): StateSnapshotPayload {
   return {
     deviceId: 'device-a',
-    session: { id: '$1', name: 'tmex', windows },
+    session: { id: '$1', name: 'VibeTerm', windows },
   };
 }
 

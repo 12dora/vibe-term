@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { decodeKeyLogRecord } from '@tmex/shared/auth';
+import { decodeKeyLogRecord } from '@vibeterm/shared/auth';
 import { KeyLogStore } from './key-log-store';
 import { ensureNodeIdentity } from './node-identity-service';
 import { NodeIdentityStore } from './node-identity-store';

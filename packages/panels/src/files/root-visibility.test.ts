@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { FileRootDto } from '@tmex/shared';
+import type { FileRootDto } from '@vibeterm/shared';
 import { isFileRootDeviceReachable, selectVisibleFileRoots } from './root-visibility';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';

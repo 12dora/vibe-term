@@ -20,12 +20,12 @@ export function resolveJoinTotpCode(parsed: ParsedArgs, io: JoinTotpIo): string 
   const flag = asString(parsed.flags.totp);
   if (flag) return flag;
   if (typeof io.totpCode === 'string' && io.totpCode.trim()) return io.totpCode.trim();
-  const env = process.env.TMEX_TOTP?.trim();
+  const env = process.env.VIBETERM_TOTP?.trim();
   return env || undefined;
 }
 
 export async function promptJoinTotpCode(): Promise<string> {
-  return await promptPassword('TOTP code', { envKey: 'TMEX_TOTP', confirm: false });
+  return await promptPassword('TOTP code', { envKey: 'VIBETERM_TOTP', confirm: false });
 }
 
 function isTotpRequired(error: unknown): boolean {

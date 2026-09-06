@@ -7,15 +7,15 @@
 // 单测只能对元素树做结构断言。
 
 import { lazyChunk } from '@/lazy-chunk';
-import { Button } from '@tmex/ui/button';
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { ArrowLeftRight, Ellipsis, Network, RotateCcw } from 'lucide-react';
 import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';

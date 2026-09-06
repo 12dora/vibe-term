@@ -12,6 +12,7 @@ import {
 } from '../../../shared/src/auth';
 import type { KdfParams, RootKey, UserKeyState } from '../../../shared/src/auth';
 import { assertKdfParamsWithinBudget } from '../../../shared/src/auth/root-key';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import type { RelayPackPlaintext } from '../../../shared/src/relay';
 import {
   kdfParamsFromWire,
@@ -74,7 +75,7 @@ export type JoinAdmitPhase = {
 };
 
 function tenantHeaders(token: Uint8Array): Record<string, string> {
-  return { 'x-tmex-relay-token': encodeBase64url(token) };
+  return assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(token));
 }
 
 export function pinHead(

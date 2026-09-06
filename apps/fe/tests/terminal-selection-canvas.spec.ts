@@ -30,7 +30,7 @@ type VisibleTextRange = {
 async function findVisibleTextRange(page: Page, needle: string): Promise<VisibleTextRange> {
   const handle = await page.waitForFunction(
     (target) => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) {
         return null;
       }
@@ -71,7 +71,7 @@ async function getCanvasMetrics(page: Page): Promise<{
   cellHeight: number;
 }> {
   const metrics = await page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     const canvas = document.querySelector('.xterm canvas');
     if (!term || !(canvas instanceof HTMLCanvasElement)) {
       return null;
@@ -128,7 +128,7 @@ async function clickVisibleText(page: Page, needle: string, clickCount: number):
 
 async function readSelectionText(page: Page): Promise<string | null> {
   return page.evaluate(() => {
-    return (window as any).__tmexE2eTerminalSelectionText ?? null;
+    return (window as any).__vibetermE2eTerminalSelectionText ?? null;
   });
 }
 
@@ -140,7 +140,7 @@ test('desktop: canvas selection supports drag, double click, triple click and co
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-canvas-selection-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-canvas-selection-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const deviceId = await createLocalDevice(
@@ -184,7 +184,7 @@ test('desktop: pane switch, reconnect and resize should clear canvas selection s
   request,
 }) => {
   // 分屏时代同窗切 pane 不再重建终端；「切换清选区」语义由跨 window 切换保留
-  const sessionName = `tmex-e2e-canvas-selection-reset-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-canvas-selection-reset-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 
@@ -233,7 +233,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-canvas-selection-autoscroll-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-canvas-selection-autoscroll-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const deviceId = await createLocalDevice(
@@ -252,7 +252,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .poll(
         () =>
           page.evaluate(() => {
-            const term = (window as any).__tmexE2eXterm;
+            const term = (window as any).__vibetermE2eXterm;
             return term?.buffer?.active?.baseY ?? 0;
           }),
         { timeout: 20_000 }
@@ -260,7 +260,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .toBeGreaterThan(80);
 
     await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       term?.scrollToBottom();
     });
 
@@ -284,7 +284,7 @@ test('desktop: dragging outside viewport should auto scroll and extend canvas se
       .poll(
         () =>
           page.evaluate(() => {
-            const term = (window as any).__tmexE2eXterm;
+            const term = (window as any).__vibetermE2eXterm;
             return term?.buffer?.active?.viewportY ?? 0;
           }),
         { timeout: 10_000 }
@@ -300,7 +300,7 @@ test('desktop: selection toolbar copies via GUI and copy shortcut clears selecti
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-canvas-selection-toolbar-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-canvas-selection-toolbar-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(

@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { fetchAgentLlmSettings, parseApiError } from '@tmex/api-client';
-import type { AgentSearchProvider, UpdateAgentLlmSettingsRequest } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import { fetchAgentLlmSettings, parseApiError } from '@vibeterm/api-client';
+import type { AgentSearchProvider, UpdateAgentLlmSettingsRequest } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { Loader2, Save, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -16,11 +16,11 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 
 import { SETTINGS_STALE_MS } from './settings-query';
 

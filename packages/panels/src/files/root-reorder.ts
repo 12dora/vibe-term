@@ -4,7 +4,7 @@
 // 否则一次拖动会把隐藏的根统统挤到末尾。合并规则与设备树同一套。
 
 import type { QueryClient } from '@tanstack/react-query';
-import type { FileRootDto, ListFileRootsResponse } from '@tmex/shared';
+import type { FileRootDto, ListFileRootsResponse } from '@vibeterm/shared';
 import { reorderDevicesOptimistically } from '../device-tree/device-reorder';
 import { mergeReorderedVisibleIds } from '../device-tree/device-tree-selectors';
 

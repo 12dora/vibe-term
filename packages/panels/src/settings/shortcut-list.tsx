@@ -15,11 +15,11 @@ import {
   verticalListSortingStrategy,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { TerminalShortcutAction, TerminalShortcutItem } from '@tmex/shared';
-import { escapeForDisplay, parseEscapeSequence } from '@tmex/terminal-ui';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { TerminalShortcutAction, TerminalShortcutItem } from '@vibeterm/shared';
+import { escapeForDisplay, parseEscapeSequence } from '@vibeterm/terminal-ui';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { GripVertical, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

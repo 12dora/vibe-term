@@ -17,8 +17,8 @@ import {
 } from '@/node/relay-meta-key-pending';
 import type { RelayPackRefreshOutcome } from '@/node/relay-pack';
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { useCallback, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

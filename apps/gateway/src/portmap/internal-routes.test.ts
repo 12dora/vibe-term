@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { dispatchRoutes } from '../api/route';
-import { X_TMEX_MESH_PEER } from '../mesh/peer-request-marker';
+import { MESH_PEER_HEADER } from '../mesh/peer-request-marker';
 import { createMeshInternalPortMapRoutes, meshInternalExportPath } from './internal-routes';
 import { MemoryPortMapExportStore } from './store';
 import type { PortMapExportRow } from './types';
@@ -21,7 +21,7 @@ async function call(
   const url = `http://node${path}`;
   const req = new Request(url, {
     method: 'POST',
-    headers: peer ? { [X_TMEX_MESH_PEER]: peer } : {},
+    headers: peer ? { [MESH_PEER_HEADER.name]: peer } : {},
   });
   const res = await dispatchRoutes(
     req,

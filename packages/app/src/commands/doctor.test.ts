@@ -49,12 +49,13 @@ function recordingReporter(): DoctorReporter & {
 }
 
 describe('DOCTOR_CHECK_TABLE', () => {
-  test('runs platform, dependencies, install, service, then health', () => {
+  test('runs platform, dependencies, install, service, legacy-layout, then health', () => {
     expect(DOCTOR_CHECK_TABLE.map((step) => step.id)).toEqual([
       'platform',
       'dependencies',
       'install',
       'service',
+      'legacy-layout',
       'health',
     ]);
   });

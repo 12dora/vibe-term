@@ -14,6 +14,7 @@ import {
   signSums,
   useTestSigningKeys,
 } from '../lib/test-support/release-signing';
+import { applyUpgrade, repairUpgrade } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
 import { readCurrentVersion } from '../lib/upgrade-switch';
 import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
@@ -37,10 +38,83 @@ function currentExitCode(): number | string | undefined {
   return process.exitCode;
 }
 
+async function writeInstallMetaFixture(
+  installDir: string,
+  meta: {
+    serviceName: string;
+    cliVersion: string;
+    serviceMode: 'none' | 'managed';
+    autostart?: boolean;
+  }
+): Promise<void> {
+  await writeFile(
+    join(installDir, 'install-meta.json'),
+    `${JSON.stringify({
+      serviceName: meta.serviceName,
+      platform: process.platform,
+      autostart: meta.autostart ?? false,
+      installDir,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      cliVersion: meta.cliVersion,
+      bunPath: process.execPath,
+      serviceMode: meta.serviceMode,
+    })}\n`
+  );
+}
+
+/** 造一份下载解压之后的候选包，让 `--txn` 走 staging 里的布局而不是仓库自身。 */
+async function stagePackage(installDir: string, txnId: string, version: string): Promise<void> {
+  const extract = join(installDir, 'staging', txnId, 'extract', 'package');
+  await mkdir(join(extract, 'bin'), { recursive: true });
+  await mkdir(join(extract, 'dist', 'runtime'), { recursive: true });
+  await mkdir(join(extract, 'resources', 'fe-dist'), { recursive: true });
+  await mkdir(join(extract, 'resources', 'gateway-drizzle'), { recursive: true });
+  await writeFile(
+    join(extract, 'package.json'),
+    `{"name":"vibeterm-cli","version":"${version}"}\n`
+  );
+  await writeFile(join(extract, 'bin', 'vibeterm.js'), 'export {}\n');
+  await writeFile(join(extract, 'dist', 'cli-node.js'), 'export {}\n');
+  await writeFile(join(extract, 'dist', 'runtime', 'server.js'), 'export {}\n');
+  await writeFile(join(extract, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+  await writeFile(join(extract, 'resources', 'gateway-drizzle', '0000.sql'), '--\n');
+}
+
+function upgradeArgs(installDir: string, extra: string[]) {
+  return parseArgs([
+    'upgrade',
+    '--apply-current-package',
+    '--install-dir',
+    installDir,
+    '--txn',
+    'live-txn',
+    '--version',
+    '2.0.0',
+    '--bun-path',
+    process.execPath,
+    ...extra,
+  ]);
+}
+
+function fakeService() {
+  return {
+    running: true,
+    async stop(): Promise<void> {
+      this.running = false;
+    },
+    async start(): Promise<void> {
+      this.running = true;
+    },
+    async isRunning(): Promise<boolean> {
+      return this.running;
+    },
+  };
+}
+
 function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response> {
   return async (url) => {
     const href = String(url);
-    if (href === releaseTarballUrl('1.1.0') || href.includes('tmex-cli-')) {
+    if (href === releaseTarballUrl('1.1.0') || href.includes('vibeterm-cli-')) {
       return new Response(new Uint8Array(tarball), { status: 200 });
     }
     if (href.includes('SHA256SUMS')) {
@@ -53,7 +127,7 @@ function fakeFetch(tarball: Uint8Array): (url: string | URL) => Promise<Response
 describe('reenableDirectAfterUpgrade', () => {
   test('calls reenableDirectIfNeeded with installDir', async () => {
     let calledWith: string | undefined;
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade', {
       reenableDirectIfNeeded: async ({ installDir }) => {
         calledWith = installDir;
         return {
@@ -65,12 +139,12 @@ describe('reenableDirectAfterUpgrade', () => {
         };
       },
     });
-    expect(calledWith).toBe('/tmp/tmex-upgrade');
+    expect(calledWith).toBe('/tmp/vibeterm-upgrade');
   });
 
   test('does not throw when reenable reports failure', async () => {
     const logs: string[] = [];
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade-fail', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade-fail', {
       reenableDirectIfNeeded: async () => ({ ok: false, reason: 'integrity mismatch' }),
       log: (message) => logs.push(message),
     });
@@ -78,7 +152,7 @@ describe('reenableDirectAfterUpgrade', () => {
   });
 
   test('swallows thrown errors from reenableDirectIfNeeded', async () => {
-    await reenableDirectAfterUpgrade('/tmp/tmex-upgrade-throw', {
+    await reenableDirectAfterUpgrade('/tmp/vibeterm-upgrade-throw', {
       reenableDirectIfNeeded: async () => {
         throw new Error('no network');
       },
@@ -89,11 +163,12 @@ describe('reenableDirectAfterUpgrade', () => {
 
 describe('delegateUpgrade', () => {
   test('downloads the GitHub release tarball and re-execs upgrade --apply-current-package', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-dl-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-dl-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
-      'package/package.json': '{"name":"tmex-cli","version":"1.1.0"}\n',
-      'package/bin/tmex.js': 'export {}\n',
+      'package/package.json': '{"name":"vibeterm-cli","version":"1.1.0"}\n',
+      'package/bin/vibeterm.js': 'export {}\n',
+      'package/bin/tmex.js': "import './vibeterm.js';\n",
     });
     const spawned: Array<{ command: string; args: string[] }> = [];
     const logs: string[] = [];
@@ -131,7 +206,7 @@ describe('delegateUpgrade', () => {
 
     const apply = spawned.find((call) => call.command === '/usr/local/bin/node');
     expect(apply).toBeDefined();
-    expect(apply?.args[0]).toMatch(/package\/bin\/tmex\.js$/);
+    expect(apply?.args[0]).toMatch(/package\/bin\/vibeterm\.js$/);
     expect(apply?.args.slice(1, 3)).toEqual(['upgrade', '--apply-current-package']);
     expect(apply?.args).toContain('--lang');
     expect(apply?.args).toContain('en');
@@ -145,8 +220,40 @@ describe('delegateUpgrade', () => {
     expect(releaseSha256SumsUrl('1.1.0')).toContain('SHA256SUMS');
   });
 
+  test('execs bin/tmex.js when the tarball only ships the pre-rename entry', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-legacy-bin-'));
+    tempDirs.push(installDir);
+    const tarball = packNpmTarball({
+      'package/package.json': '{"name":"tmex-cli","version":"1.1.0"}\n',
+      'package/bin/tmex.js': 'export {}\n',
+    });
+    const spawned: Array<{ command: string; args: string[] }> = [];
+
+    await delegateUpgrade(
+      {
+        command: 'upgrade',
+        positionals: [],
+        flags: { 'install-dir': installDir, 'allow-unverified': true },
+      },
+      '1.1.0',
+      {
+        fetch: fakeFetch(tarball),
+        runCommand: async (command, args, options) => {
+          spawned.push({ command, args });
+          if (command === 'tar') return runCommand(command, args, options);
+          return { code: 0, stdout: '', stderr: '' };
+        },
+        execPath: '/usr/bin/node',
+        log: () => undefined,
+      }
+    );
+
+    const apply = spawned.find((call) => call.command === '/usr/bin/node');
+    expect(apply?.args[0]).toMatch(/package\/bin\/tmex\.js$/);
+  });
+
   test('propagates the extracted CLI exit code', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-exit-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-exit-'));
     tempDirs.push(installDir);
     const previous = process.exitCode;
     process.exitCode = undefined;
@@ -180,7 +287,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('does not spawn npx on 404', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-404-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-404-'));
     tempDirs.push(installDir);
     const spawned: string[] = [];
     await expect(
@@ -200,7 +307,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('1.1.0 without --allow-unverified fails on SHA256SUMS 404', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-noflag-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-noflag-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
       'package/bin/tmex.js': 'export {}\n',
@@ -223,7 +330,7 @@ describe('delegateUpgrade', () => {
   });
 
   test('1.1.4 SHA256SUMS 404 fails even with --allow-unverified', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-114-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-114-'));
     tempDirs.push(installDir);
     const tarball = packNpmTarball({
       'package/bin/tmex.js': 'export {}\n',
@@ -240,7 +347,7 @@ describe('delegateUpgrade', () => {
           fetch: async (url) => {
             const href = String(url);
             if (href.includes('SHA256SUMS')) return new Response('missing', { status: 404 });
-            if (href.includes('tmex-cli-'))
+            if (href.includes('vibeterm-cli-'))
               return new Response(new Uint8Array(tarball), { status: 200 });
             return new Response('nope', { status: 404 });
           },
@@ -264,7 +371,7 @@ describe('upgrade flag unification', () => {
       '--version',
       '1.1.4',
       '--install-dir',
-      '/tmp/tmex',
+      '/tmp/vibeterm',
       '--allow-missing-native',
       '--keep-backup',
     ]);
@@ -280,7 +387,7 @@ describe('upgrade flag unification', () => {
   });
 
   test('runUpgrade apply-current-package threads parsed --txn into repairUpgrade', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-run-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-run-'));
     tempDirs.push(installDir);
     await writeFile(
       join(installDir, 'install-meta.json'),
@@ -326,9 +433,9 @@ describe('upgrade flag unification', () => {
     let repairTxn: string | null | undefined;
     let applyTxn: string | undefined;
     await runUpgrade(parsed, {
-      repair: async (_installDir, _bunPath, opts) => {
+      repair: async (installDir, _bunPath, opts) => {
         repairTxn = opts?.activeTxnId ?? null;
-        return 'none';
+        return { action: 'cleanup' as const, installDir };
       },
       apply: async (opts) => {
         applyTxn = opts.txnId;
@@ -338,8 +445,103 @@ describe('upgrade flag unification', () => {
     expect(applyTxn).toBe('live-txn');
   });
 
+  test('the full repair+apply entry backs up the pre-conversion run.sh before converting', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-legacy-layout-'));
+    tempDirs.push(installDir);
+    // 没有 current 的 1.x 布局：run.sh 是那一版真正写出来的脚本（只导出 TMEX_* 路径变量）
+    await mkdir(join(installDir, 'cli', 'bin'), { recursive: true });
+    await mkdir(join(installDir, 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'resources', 'fe-dist'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'cli', 'bin', 'tmex.js'), 'legacy-cli\n');
+    await writeFile(join(installDir, 'runtime', 'server.js'), 'legacy-runtime\n');
+    await writeFile(join(installDir, 'resources', 'fe-dist', 'index.html'), '<html></html>\n');
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    const legacyRunScript = [
+      '#!/usr/bin/env bash',
+      `export TMEX_INSTALL_DIR='${installDir}'`,
+      `export TMEX_FE_DIST_DIR='${join(installDir, 'current', 'resources', 'fe-dist')}'`,
+      '',
+    ].join('\n');
+    await writeFile(join(installDir, 'run.sh'), legacyRunScript);
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.1.40',
+      serviceMode: 'none',
+    });
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'GATEWAY_PORT=19883',
+        'VIBETERM_BIND_HOST=127.0.0.1',
+        'VIBETERM_MASTER_KEY=test',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        '',
+      ].join('\n')
+    );
+    await stagePackage(installDir, 'live-txn', '2.0.0');
+    const shimDirs = [join(installDir, '_shims'), join(installDir, '_bun-bin')];
+
+    await expect(
+      runUpgrade(upgradeArgs(installDir, ['--no-service']), {
+        repair: (dir, bunPath, opts) => repairUpgrade(dir, bunPath, { ...opts, shimDirs }),
+        apply: (options) =>
+          applyUpgrade(
+            { ...options, skipShims: true },
+            {
+              service: fakeService(),
+              runCandidate: async () => ({ stop: async () => undefined }),
+              healthCheck: async () => {
+                throw new Error('preflight-boom');
+              },
+              shimDirs,
+            }
+          ),
+      })
+    ).rejects.toThrow(/preflight-boom|Preflight/i);
+
+    // repair 抢在事务备份之前转换布局，备份到的就是新模板，旧 runtime 再也起不来
+    expect(await readFile(join(installDir, 'run.sh'), 'utf8')).toBe(legacyRunScript);
+  }, 20_000);
+
+  test('the service identity after a repair comes from the repaired meta, not the stale one', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-repaired-meta-'));
+    tempDirs.push(installDir);
+    // 上一次 1.1.40 -> 2.0.0 停在 started：磁盘上的 meta 此刻还是 serviceName=tmex
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.1.40',
+      serviceMode: 'managed',
+    });
+    await stagePackage(installDir, 'live-txn', '2.0.0');
+
+    let applyOptions: Parameters<typeof applyUpgrade>[0] | undefined;
+    await runUpgrade(upgradeArgs(installDir, []), {
+      repair: async (dir) => {
+        // repair 验证通过后把迁移后的服务身份提交到磁盘（commitSuccess 就是这么写的）
+        await writeInstallMetaFixture(dir, {
+          serviceName: 'vibeterm',
+          cliVersion: '2.0.0',
+          serviceMode: 'none',
+          autostart: true,
+        });
+        return { action: 'verify_or_rollback' as const, installDir: dir };
+      },
+      apply: async (options) => {
+        applyOptions = options;
+      },
+    });
+
+    // 沿用闭包里的旧 meta 会去建 tmex 的控制器，它停不掉正在跑的 com.vibeterm.vibeterm
+    expect(applyOptions).toBeDefined();
+    expect(applyOptions?.serviceName).toBe('vibeterm');
+    expect(applyOptions?.noService).toBe(true);
+    expect(applyOptions?.autostart).toBe(true);
+  });
+
   test('download extract then extracted CLI repair+apply commits and later cleans staging', async () => {
-    const installDir = await mkdtemp(join(tmpdir(), 'tmex-upg-e2e-'));
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-e2e-'));
     tempDirs.push(installDir);
     await mkdir(join(installDir, 'versions', '1.0.0', 'runtime'), { recursive: true });
     await mkdir(join(installDir, 'data'), { recursive: true });
@@ -367,11 +569,11 @@ describe('upgrade flag unification', () => {
       join(installDir, 'app.env'),
       [
         'NODE_ENV=production',
-        'TMEX_BIND_HOST=127.0.0.1',
+        'VIBETERM_BIND_HOST=127.0.0.1',
         'GATEWAY_PORT=19883',
         `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
-        'TMEX_MASTER_KEY=test',
-        'TMEX_ROLES=standalone',
+        'VIBETERM_MASTER_KEY=test',
+        'VIBETERM_ROLES=standalone',
         '',
       ].join('\n')
     );

@@ -8,10 +8,10 @@ import type {
   HubEndpointInfo,
   MeshHubEndpoint,
   MeshNode,
-} from '@tmex/api-client/auth/index';
-import type { UpgradeStatus } from '@tmex/shared';
-import { encodeBase64url } from '@tmex/shared/auth';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+} from '@vibeterm/api-client/auth/index';
+import type { UpgradeStatus } from '@vibeterm/shared';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import { Children, type ReactElement, type ReactNode } from 'react';
 import type {
   NodeActionDeps,
@@ -75,7 +75,7 @@ const {
   upgradeErrorText,
   upgradePhaseText,
 } = await import('./use-node-upgrade');
-const { rootKeyFromSeed } = await import('@tmex/shared/auth');
+const { rootKeyFromSeed } = await import('@vibeterm/shared/auth');
 
 const MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -1006,7 +1006,7 @@ describe('「更多」菜单的可点性', () => {
   test('三个菜单项：升级带选中数量，禁用原因进 title', () => {
     const list = BulkActionsMenuList({
       states: bulkMenuStates({ ...base, selectedCount: 0 }, t),
-      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 tmex' },
+      labels: { upgrade: '升级（3）', revoke: '移除节点', uninstall: '卸载 VibeTerm' },
       onUpgrade: () => undefined,
       onRevoke: () => undefined,
       onUninstall: () => undefined,

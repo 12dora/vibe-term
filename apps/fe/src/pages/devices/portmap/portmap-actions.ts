@@ -13,9 +13,9 @@ import {
   deletePortMap,
   deletePortMapExport,
   listPortMaps,
-} from '@tmex/api-client';
-import type { ApiClient } from '@tmex/api-client';
-import type { PortMapDto, PortMapErrorCode } from '@tmex/shared';
+} from '@vibeterm/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
+import type { PortMapDto, PortMapErrorCode } from '@vibeterm/shared';
 
 import {
   type PendingExportCleanup,

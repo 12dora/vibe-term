@@ -1,7 +1,7 @@
 import { Database } from 'bun:sqlite';
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import { DEFAULT_TERMINAL_SHORTCUTS } from '@tmex/shared';
+import { DEFAULT_TERMINAL_SHORTCUTS } from '@vibeterm/shared';
 import { drizzle } from 'drizzle-orm/bun-sqlite';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 

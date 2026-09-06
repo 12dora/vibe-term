@@ -1,8 +1,8 @@
 // 端口探测：输入停顿 500 ms 后各发一次。监听端口打 A 的 `/api/portmap/probe`，
 // 目标端口打 B 的 `/api/portmap/target-probe`；失败一律当作「没探到」，不阻断表单。
 
-import { createNodeApiClient, probeListenPort, probeTargetPort } from '@tmex/api-client';
-import type { PortProbeResponse, TargetPortProbeResponse } from '@tmex/shared';
+import { createNodeApiClient, probeListenPort, probeTargetPort } from '@vibeterm/api-client';
+import type { PortProbeResponse, TargetPortProbeResponse } from '@vibeterm/shared';
 import { useEffect, useState } from 'react';
 
 import { probeTarget } from './portmap-form-state';

@@ -74,7 +74,7 @@ function createHarness() {
   const dirs: string[] = [];
 
   function makeDir(): string {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-bulk-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-bulk-'));
     dirs.push(dir);
     return dir;
   }

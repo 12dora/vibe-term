@@ -1,7 +1,7 @@
 // pane 绑定解析：把 (deviceId, paneId) 映射到快照中的 window/pane 与展示标签。
 
-import type { Device, StateSnapshotPayload, TmuxSession } from '@tmex/shared';
-import { buildTerminalLabel } from '@tmex/stores';
+import type { Device, StateSnapshotPayload, TmuxSession } from '@vibeterm/shared';
+import { buildTerminalLabel } from '@vibeterm/stores';
 
 export interface BindingInfo {
   label: string;

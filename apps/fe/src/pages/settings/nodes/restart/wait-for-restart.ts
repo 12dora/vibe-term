@@ -7,8 +7,8 @@
 // 每次探活都带自己的 AbortSignal，超时预算取「离总截止还剩多久」：反代或隧道可以把 `/healthz`
 // 挂住到天荒地老，只靠外层 60 秒截止是拦不住的。
 
-import type { FetchLike } from '@tmex/api-client';
-import { sleepOrAbort } from '@tmex/shared';
+import type { FetchLike } from '@vibeterm/api-client';
+import { sleepOrAbort } from '@vibeterm/shared';
 
 export type RestartOutcome = 'restarted' | 'timeout' | 'aborted';
 

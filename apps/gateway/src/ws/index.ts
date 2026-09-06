@@ -4,8 +4,8 @@ import type {
   StateSnapshotPayload,
   ThemeMode,
   WebhookEvent,
-} from '@tmex/shared';
-import { GATEWAY_CAPABILITIES, wsBorsh } from '@tmex/shared';
+} from '@vibeterm/shared';
+import { GATEWAY_CAPABILITIES, wsBorsh } from '@vibeterm/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
 import type { DeviceTreeOrderRecord } from '../db';
@@ -582,7 +582,7 @@ export class WebSocketServer
     if (!ws.shareScope) agentWsHub.registerClient(ws);
 
     const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
-      serverImpl: 'tmex-gateway',
+      serverImpl: 'vibeterm-gateway',
       serverVersion: getDisplayVersion(),
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes: serverMaxFrameBytes,

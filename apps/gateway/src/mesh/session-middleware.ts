@@ -1,15 +1,22 @@
 import {
+  SESSION_RENEWED_HEADER,
+  SET_SESSION_HEADER,
+  deleteHeaderPair,
+  readHeaderPair,
+  setHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
+import {
   buildClearCookie,
   buildSetCookie,
+  legacyNodeSessionCookieName,
   nodeSessionCookieName,
   parseCookies,
+  readNodeSessionCookie,
 } from '../auth/cookies';
 import type { NodeSessionRecord, NodeSessionStore } from '../auth/node-session-store';
 import {
   MESH_VIA_SELF,
   type MeshRoles,
-  X_TMEX_SESSION_RENEWED,
-  X_TMEX_SET_SESSION,
   getMeshRequestContext,
   isStandaloneRoles,
   parseSetSessionHeader,
@@ -19,7 +26,7 @@ import {
 import {
   applyShareCookieHeaders,
   hasShareCookieHeaders,
-  staleShareCookieName,
+  staleShareCookieNames,
 } from './share-credential';
 
 export type AuthenticateOk = {
@@ -116,6 +123,20 @@ export function attachAuthToRequest(req: Request, auth: AuthenticateOk, via?: st
   });
 }
 
+/** 本机会话 cookie（via=self，不是规范节点 id）：新旧两个名字都下发。 */
+function appendSelfSessionCookie(
+  headers: Headers,
+  sid: string,
+  options: { maxAgeSec: number; secure: boolean }
+): void {
+  for (const name of [
+    nodeSessionCookieName(MESH_VIA_SELF),
+    legacyNodeSessionCookieName(MESH_VIA_SELF),
+  ]) {
+    headers.append('set-cookie', buildSetCookie(name, sid, options));
+  }
+}
+
 export function applySessionHeaders(
   response: Response,
   auth: AuthenticateOk,
@@ -125,17 +146,11 @@ export function applySessionHeaders(
     return response;
   }
   const headers = new Headers(response.headers);
-  headers.set(X_TMEX_SESSION_RENEWED, String(auth.renewedExpiresAt));
+  setHeaderPair(headers, SESSION_RENEWED_HEADER, String(auth.renewedExpiresAt));
   const via = getMeshRequestContext(req).via ?? MESH_VIA_SELF;
   if (via === MESH_VIA_SELF) {
     const maxAgeSec = Math.max(0, Math.floor((auth.renewedExpiresAt - Date.now()) / 1000));
-    headers.append(
-      'set-cookie',
-      buildSetCookie(nodeSessionCookieName(MESH_VIA_SELF), auth.sid, {
-        maxAgeSec,
-        secure: isHttps(req),
-      })
-    );
+    appendSelfSessionCookie(headers, auth.sid, { maxAgeSec, secure: isHttps(req) });
   }
   return new Response(response.body, {
     status: response.status,
@@ -172,28 +187,22 @@ export function consumeSetSessionForBrowser(req: Request, response: Response): R
   if (via !== MESH_VIA_SELF) {
     return response;
   }
-  const rawSession = response.headers.get(X_TMEX_SET_SESSION);
+  const rawSession = readHeaderPair(response.headers, SET_SESSION_HEADER);
   const share = hasShareCookieHeaders(response);
-  const stale = share ? null : staleShareCookieName(req, MESH_VIA_SELF);
-  if (!rawSession && !share && !stale) {
+  const stale = share ? [] : staleShareCookieNames(req, MESH_VIA_SELF);
+  if (!rawSession && !share && stale.length === 0) {
     return response;
   }
   const headers = new Headers(response.headers);
   const secure = isHttps(req);
-  if (stale) {
-    headers.append('set-cookie', buildClearCookie(stale, { secure }));
+  for (const name of stale) {
+    headers.append('set-cookie', buildClearCookie(name, { secure }));
   }
   if (rawSession) {
-    headers.delete(X_TMEX_SET_SESSION);
+    deleteHeaderPair(headers, SET_SESSION_HEADER);
     const parsed = parseSetSessionHeader(rawSession);
     if (parsed) {
-      headers.append(
-        'set-cookie',
-        buildSetCookie(nodeSessionCookieName(MESH_VIA_SELF), parsed.sid, {
-          maxAgeSec: parsed.maxAgeSec,
-          secure,
-        })
-      );
+      appendSelfSessionCookie(headers, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
     }
   }
   if (share) {
@@ -265,6 +274,5 @@ function firstForwarded(value: string | null): string | null {
 }
 
 function readSelfCookie(req: Request): string | null {
-  const cookies = parseCookies(req.headers.get('cookie'));
-  return cookies.get(nodeSessionCookieName(MESH_VIA_SELF)) ?? null;
+  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), MESH_VIA_SELF);
 }

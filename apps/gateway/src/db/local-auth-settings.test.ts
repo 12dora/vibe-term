@@ -175,7 +175,7 @@ describe('validateLocalAuthUsername / password', () => {
   test('用户名与口令规则与 hub setup 对齐', () => {
     expect(validateLocalAuthUsername('alice')).toEqual({ ok: true });
     expect(validateLocalAuthUsername('bad name').ok).toBe(false);
-    expect(validateLocalAuthPassword('tmex-test')).toEqual({ ok: true });
+    expect(validateLocalAuthPassword('vibeterm-test')).toEqual({ ok: true });
     expect(validateLocalAuthPassword('short').ok).toBe(false);
   });
 });

@@ -6,8 +6,8 @@ import { mkdirSync, rmdirSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TransferCapability, TransferErrorCode } from '@tmex/shared';
-import type { SinkDescriptor } from '@tmex/transfer/node';
+import type { TransferCapability, TransferErrorCode } from '@vibeterm/shared';
+import type { SinkDescriptor } from '@vibeterm/transfer/node';
 import { config } from '../config';
 import { transferMaxBytesNow } from '../files/transfer-limit';
 import type { DestContext } from './dest';
@@ -95,7 +95,7 @@ function scopeKeyOf(grant: TransferGrant, dest: DestContext): string {
 
 function stagingDirFor(scopeKey: string): string {
   const digest = createHash('sha256').update(scopeKey).digest('hex').slice(0, 16);
-  return join(tmpdir(), `tmex-rx-${digest}`);
+  return join(tmpdir(), `vibeterm-rx-${digest}`);
 }
 
 function countSessionsFor(peerNodeId: string): number {

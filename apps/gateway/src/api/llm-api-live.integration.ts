@@ -2,7 +2,7 @@
 // 覆盖 UI 实际触发的路径——创建（自动拉模型）/ 列表 / 刷新模型 / 设默认 / 真实对话 /
 // provider 内置搜索工具 / 删除。凭证来自 test.env.local。
 //
-// 运行：bun run --filter @tmex/gateway test:live:llm-api
+// 运行：bun run --filter @vibeterm/gateway test:live:llm-api
 
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';

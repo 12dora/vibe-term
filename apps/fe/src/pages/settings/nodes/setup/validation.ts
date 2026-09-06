@@ -3,9 +3,9 @@
 // 规则与 `prompt-archives/2026082900-hub-ui-tls` 批次 1 契约（POST /api/setup/hub|join）逐条对齐：
 // 前端先拦一遍只是为了少一次往返，后端仍是权威。
 
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
-import { canonicalHubUrl } from '@tmex/shared/auth';
-import { normalizeRelayUrl } from '@tmex/shared/relay';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { normalizeRelayUrl } from '@vibeterm/shared/relay';
 
 export type NodeEnv = LocalStatusResponse['nodeEnv'];
 

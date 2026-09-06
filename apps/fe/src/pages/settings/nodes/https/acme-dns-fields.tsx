@@ -1,6 +1,6 @@
-import type { TlsDnsProviderId } from '@tmex/api-client/local/tls-types';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import type { TlsDnsProviderId } from '@vibeterm/api-client/local/tls-types';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { useTranslation } from 'react-i18next';
 import { Field } from './parts';
 import { type AcmeDraft, type AcmeDraftErrors, TLS_DNS_PROVIDERS } from './tls-form';

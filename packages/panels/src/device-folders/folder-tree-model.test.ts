@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
+import type { DeviceFolder, DeviceFolderLayout } from '@vibeterm/shared';
 import {
   PLACEHOLDER_ITEM_ID,
   ROOT_CONTAINER_ID,

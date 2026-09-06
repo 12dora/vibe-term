@@ -12,8 +12,8 @@
 import { DndContext, DragOverlay, MeasuringStrategy, useDndContext } from '@dnd-kit/core';
 import type { DragEndEvent, DragOverEvent, DragStartEvent } from '@dnd-kit/core';
 import { SortableContext, verticalListSortingStrategy } from '@dnd-kit/sortable';
-import { type DeviceFolder, type DeviceFolderLayout, countFolderItems } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import { type DeviceFolder, type DeviceFolderLayout, countFolderItems } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -24,7 +24,7 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+} from '@vibeterm/ui/alert-dialog';
 import { Folder, Server, Trash2 } from 'lucide-react';
 import {
   type ReactNode,
@@ -316,7 +316,7 @@ function TreeRoot({
       data-testid="device-folder-tree"
       data-drop-target={active ? 'true' : undefined}
       className={cn(
-        'flex min-w-0 flex-col gap-3 rounded-xl transition-[box-shadow] duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+        'flex min-w-0 flex-col gap-3 rounded-xl transition-[box-shadow] duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
         active && 'ring-2 ring-ring/25',
         className
       )}

@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { matchPath } from 'react-router';
 
-import { createBrowserHostServices, hostAppPath } from '@tmex/stores';
+import { createBrowserHostServices, hostAppPath } from '@vibeterm/stores';
 
 import { AGENT_PANE_ROUTE_PATH } from './use-agent-tab-state';
 

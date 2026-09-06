@@ -7,9 +7,9 @@ import {
   deviceFoldersQueryKey,
   devicesQueryKey,
   terminalShortcutsQueryKey,
-} from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
-import type { GatewayTransport } from '@tmex/ws-client';
+} from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
+import type { GatewayTransport } from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 
 export type SettingsQueryKey = readonly unknown[];

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 
 import { createTmuxRuntimeRegistry } from '../tmux-client/runtime-registry';
 import { handleDeviceTestConnection } from './test-connection';
@@ -28,7 +28,7 @@ function createLocalDevice(): Device {
     name: 'local-device',
     type: 'local',
     authMode: 'auto',
-    session: 'tmex',
+    session: 'vibeterm',
     sortOrder: 0,
     createdAt: now,
     updatedAt: now,

@@ -6,7 +6,7 @@
 // `INVALID_CREDENTIALS`，前端也必须只给同一句中性文案。同一个码在 passkey 路径下含义完全
 // 不同（那里没有密码可言），因此按方式分表。
 
-import { WebAuthnError } from '@tmex/api-client/auth/index';
+import { WebAuthnError } from '@vibeterm/api-client/auth/index';
 
 export type LoginMethod = 'password' | 'passkey';
 

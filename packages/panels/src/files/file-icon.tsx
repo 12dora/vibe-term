@@ -1,4 +1,4 @@
-import type { FileCategory, FileEntryType } from '@tmex/shared';
+import type { FileCategory, FileEntryType } from '@vibeterm/shared';
 import {
   File,
   FileArchive,

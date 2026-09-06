@@ -1,12 +1,12 @@
 // gateway transport 事件路由：按事件类型分发到独立 handler，替代单个大 switch。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import {
   type DeferredClipboardWriter,
   type EventDevicePayload,
   createDeferredClipboardWriter,
-} from '@tmex/shared';
-import type { ConnectionState, GatewayTransportEvent } from '@tmex/ws-client';
+} from '@vibeterm/shared';
+import type { ConnectionState, GatewayTransportEvent } from '@vibeterm/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
   type TmuxDomainEventContext,

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
-import { RELAY_PACK_MAX_BYTES } from '@tmex/shared/relay';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
+import { RELAY_PACK_MAX_BYTES } from '@vibeterm/shared/relay';
 import { handleMeshRelayPack, parseMeshRelayPackBody } from './relay-pack-routes';
 import type { RelaySecrets } from './relay-secrets';
 

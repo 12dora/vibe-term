@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { encodeBase64url, randomBytes, rootKeyFromSeed } from '../../../shared/src/auth';
+import { SET_SESSION_HEADER } from '../../../shared/src/http/mesh-headers';
 import type { FetchLike } from './fetch-like';
 import {
   REDEEM_NETWORK_RETRY_LIMIT,
@@ -252,22 +253,67 @@ function loginFetcher(options: {
 describe('loginWithRootKey session extraction', () => {
   const rootKey = rootKeyFromSeed(randomBytes(32));
 
-  test('reads sid from x-tmex-set-session header (no sid in body)', async () => {
+  test('reads sid from the set-session header and sends both cookie prefixes', async () => {
     const session = await loginWithRootKey({
       baseUrl: 'https://hub.example',
       rootKey,
       uid: 'u1',
       fetcher: loginFetcher({
-        loginHeaders: { 'x-tmex-set-session': 'header-sid;60' },
+        loginHeaders: { [SET_SESSION_HEADER.name]: 'header-sid;60' },
         loginBody: { expires_at: 1_700_000_000_000 },
       }),
     });
     expect(session.sid).toBe('header-sid');
     expect(session.expiresAt).toBe(1_700_000_000_000);
+    expect(session.cookieHeader).toContain('vibeterm_s_self=header-sid');
     expect(session.cookieHeader).toContain('tmex_s_self=header-sid');
   });
 
-  test('falls back to Set-Cookie tmex_s_self when header is absent', async () => {
+  test('reads the pre-rename set-session header from an older hub', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        loginHeaders: { [SET_SESSION_HEADER.legacy]: 'legacy-sid;60' },
+        loginBody: { expires_at: 1_700_000_000_000 },
+      }),
+    });
+    expect(session.sid).toBe('legacy-sid');
+  });
+
+  test('prefers the new set-session header when both are present', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        loginHeaders: {
+          [SET_SESSION_HEADER.name]: 'new-sid;60',
+          [SET_SESSION_HEADER.legacy]: 'old-sid;60',
+        },
+        loginBody: { expires_at: 1_700_000_000_000 },
+      }),
+    });
+    expect(session.sid).toBe('new-sid');
+  });
+
+  test('falls back to Set-Cookie vibeterm_s_self when header is absent', async () => {
+    const session = await loginWithRootKey({
+      baseUrl: 'https://hub.example',
+      rootKey,
+      uid: 'u1',
+      fetcher: loginFetcher({
+        loginHeaders: {
+          'set-cookie': 'vibeterm_s_self=cookie-sid; Path=/; HttpOnly; SameSite=Lax; Max-Age=60',
+        },
+      }),
+    });
+    expect(session.sid).toBe('cookie-sid');
+    expect(session.cookieHeader).toContain('vibeterm_s_self=cookie-sid');
+  });
+
+  test('falls back to the pre-rename Set-Cookie tmex_s_self', async () => {
     const session = await loginWithRootKey({
       baseUrl: 'https://hub.example',
       rootKey,
@@ -279,10 +325,11 @@ describe('loginWithRootKey session extraction', () => {
       }),
     });
     expect(session.sid).toBe('cookie-sid');
+    expect(session.cookieHeader).toContain('vibeterm_s_self=cookie-sid');
     expect(session.cookieHeader).toContain('tmex_s_self=cookie-sid');
   });
 
-  test('falls back to Set-Cookie tmex_s_<nodeId>', async () => {
+  test('falls back to Set-Cookie <prefix>_<nodeId>', async () => {
     const session = await loginWithRootKey({
       baseUrl: 'https://hub.example',
       rootKey,
@@ -295,8 +342,10 @@ describe('loginWithRootKey session extraction', () => {
       }),
     });
     expect(session.sid).toBe('node-sid');
-    expect(session.cookieHeader).toContain('tmex_s_self=node-sid');
-    expect(session.cookieHeader).toContain('tmex_s_n1=node-sid');
+    for (const prefix of ['vibeterm_s_', 'tmex_s_']) {
+      expect(session.cookieHeader).toContain(`${prefix}self=node-sid`);
+      expect(session.cookieHeader).toContain(`${prefix}n1=node-sid`);
+    }
   });
 
   test('does not read sid from the JSON body', async () => {
@@ -321,7 +370,7 @@ describe('loginWithRootKey session extraction', () => {
         return Response.json({ ok: true, id: 'e1' }, { status: 201 });
       }
       return loginFetcher({
-        loginHeaders: { 'x-tmex-set-session': 'sess-9;60' },
+        loginHeaders: { [SET_SESSION_HEADER.name]: 'sess-9;60' },
       })(input, init);
     };
     const session = await loginWithRootKey({
@@ -339,6 +388,7 @@ describe('loginWithRootKey session extraction', () => {
       exp: Date.now() + 60_000,
       fetcher,
     });
+    expect(cookies[0]).toContain('vibeterm_s_self=sess-9');
     expect(cookies[0]).toContain('tmex_s_self=sess-9');
   });
 

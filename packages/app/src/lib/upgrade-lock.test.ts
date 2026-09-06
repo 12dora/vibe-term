@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 async function installDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-lock-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-lock-'));
   tempDirs.push(dir);
   return dir;
 }

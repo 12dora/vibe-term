@@ -1,16 +1,17 @@
 import {
+  SESSION_RENEWED_HEADER,
+  SET_SESSION_HEADER,
+  readHeaderPair,
+  setHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
+import {
   appendNodeSessionCookie,
   clearNodeSessionCookie,
-  nodeSessionCookieName,
   parseCookies,
+  readNodeSessionCookie,
 } from '../auth/cookies';
 import { AUTH_LOGIN_PUBLIC_PATHS } from './auth-public-paths';
-import {
-  AUTH_401_BODY_LIMIT,
-  X_TMEX_SESSION_RENEWED,
-  X_TMEX_SET_SESSION,
-  parseSetSessionHeader,
-} from './mesh-deps';
+import { AUTH_401_BODY_LIMIT, parseSetSessionHeader } from './mesh-deps';
 import { isHttps } from './session-middleware';
 import { applyShareCookieHeaders } from './share-credential';
 
@@ -28,6 +29,19 @@ const DROP_ON_401_REWRITE = new Set([
   'content-disposition',
 ]);
 
+function loginRequiredBody(raw: string, nodeId: string): Record<string, unknown> {
+  const body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      return { ...(parsed as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
+    }
+  } catch {
+    if (raw) body.message = raw;
+  }
+  return body;
+}
+
 export async function applyAuthPolicy(
   req: Request,
   headers: Headers,
@@ -35,16 +49,17 @@ export async function applyAuthPolicy(
   nodeId: string,
   skip401Rewrite = false
 ): Promise<Response | null> {
-  const parsed = parseSetSessionHeader(upstream.headers.get(X_TMEX_SET_SESSION) ?? '');
+  const parsed = parseSetSessionHeader(readHeaderPair(upstream.headers, SET_SESSION_HEADER) ?? '');
   const secure = isHttps(req);
   applyShareCookieHeaders(headers, upstream, nodeId, secure);
-  const presented = parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId));
+  const presented =
+    readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId) ?? undefined;
   if (parsed) {
     appendNodeSessionCookie(headers, nodeId, parsed.sid, { maxAgeSec: parsed.maxAgeSec, secure });
   }
-  const renewed = upstream.headers.get(X_TMEX_SESSION_RENEWED);
+  const renewed = readHeaderPair(upstream.headers, SESSION_RENEWED_HEADER);
   if (renewed) {
-    headers.set(X_TMEX_SESSION_RENEWED, renewed);
+    setHeaderPair(headers, SESSION_RENEWED_HEADER, renewed);
     const expiresAt = Number(renewed);
     if (presented && Number.isFinite(expiresAt)) {
       appendNodeSessionCookie(headers, nodeId, presented, {
@@ -54,16 +69,7 @@ export async function applyAuthPolicy(
     }
   }
   if (upstream.status !== 401 || skip401Rewrite) return null;
-  const raw = await readBodyLimited(upstream, AUTH_401_BODY_LIMIT);
-  let body: Record<string, unknown> = { code: 'NODE_LOGIN_REQUIRED', nodeId };
-  try {
-    const parsedBody = JSON.parse(raw) as unknown;
-    if (typeof parsedBody === 'object' && parsedBody !== null && !Array.isArray(parsedBody)) {
-      body = { ...(parsedBody as Record<string, unknown>), code: 'NODE_LOGIN_REQUIRED', nodeId };
-    }
-  } catch {
-    if (raw) body.message = raw;
-  }
+  const body = loginRequiredBody(await readBodyLimited(upstream, AUTH_401_BODY_LIMIT), nodeId);
   for (const name of DROP_ON_401_REWRITE) headers.delete(name);
   headers.set('content-type', 'application/json');
   if (shouldExpirePresentedCookie(presented, body)) {

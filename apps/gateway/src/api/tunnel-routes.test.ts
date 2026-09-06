@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { TunnelStatusResponse } from '@tmex/shared';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
 import { MESH_VIA_SELF, requestDispatchContext, setMeshRequestContext } from '../mesh/mesh-deps';
 import { MemoryTunnelConfigStore } from '../tunnel/config-store';
 import { FakeSpawner, argsInclude } from '../tunnel/fake-spawn';
@@ -11,8 +11,8 @@ import { dispatchRoutes } from './route';
 import { createTunnelRoutes } from './tunnel-routes';
 
 async function setup() {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-'));
-  const homeDir = await mkdtemp(join(tmpdir(), 'tmex-tun-rt-home-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-rt-'));
+  const homeDir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-rt-home-'));
   const spawner = new FakeSpawner();
   spawner.on((s) => argsInclude(s, '--version'), {
     stdout: 'cloudflared version 2025.8.1\n',

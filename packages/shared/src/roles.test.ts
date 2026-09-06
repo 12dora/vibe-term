@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import {
   isStandaloneRoles,
-  isTmexRoleName,
+  isVibeTermRoleName,
   roleNameFromFlags,
   rolesFromName,
   validateRoles,
@@ -13,18 +13,18 @@ const HUB_NODE = { hub: true, node: true, relay: false };
 const RELAY = { hub: false, node: false, relay: true };
 const RELAY_NODE = { hub: false, node: true, relay: true };
 
-describe('isTmexRoleName', () => {
+describe('isVibeTermRoleName', () => {
   it('接受受支持的角色名', () => {
-    expect(isTmexRoleName('standalone')).toBe(true);
-    expect(isTmexRoleName('node')).toBe(true);
-    expect(isTmexRoleName('hub,node')).toBe(true);
-    expect(isTmexRoleName('relay')).toBe(true);
-    expect(isTmexRoleName('relay,node')).toBe(true);
+    expect(isVibeTermRoleName('standalone')).toBe(true);
+    expect(isVibeTermRoleName('node')).toBe(true);
+    expect(isVibeTermRoleName('hub,node')).toBe(true);
+    expect(isVibeTermRoleName('relay')).toBe(true);
+    expect(isVibeTermRoleName('relay,node')).toBe(true);
   });
 
   it('拒绝其它写法', () => {
     for (const raw of ['', 'hub', 'node,hub', 'HUB,NODE', 'hub,node,extra', 'node,relay']) {
-      expect(isTmexRoleName(raw)).toBe(false);
+      expect(isVibeTermRoleName(raw)).toBe(false);
     }
   });
 });

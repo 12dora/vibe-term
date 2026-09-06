@@ -12,8 +12,8 @@
 // `./session-login`，由 `ensureNodeLogin()` 在真的要登录时才 `import()` 进来。
 
 import { markLoggedIn } from '@/node/mesh-nodes';
-import type { AuthApi, MeshNode } from '@tmex/api-client/auth/index';
-import type { Delegation } from '@tmex/shared/auth';
+import type { AuthApi, MeshNode } from '@vibeterm/api-client/auth/index';
+import type { Delegation } from '@vibeterm/shared/auth';
 import {
   PERSISTED_SESSION_VERSION,
   clearPersistedSession,

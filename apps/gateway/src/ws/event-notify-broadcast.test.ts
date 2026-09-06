@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized } from '../db';
 import { runMigrations } from '../db/migrate';
 import { registerEventNotifyBroadcaster } from '../events/broadcaster';
@@ -40,7 +40,7 @@ function buildEvent(timestamp: string): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp,
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'device-1', name: 'dev-1', type: 'local' },
     tmux: { windowId: '@1', paneId: '%1', windowIndex: 1, paneIndex: 2 },
   };
@@ -99,7 +99,7 @@ describe('broadcastEventNotify', () => {
     try {
       const notifier = new EventNotifier();
       await notifier.notify('watch_rule_error', {
-        site: { name: 'tmex', url: 'https://tmex.example.com' },
+        site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
         device: { id: 'device-chain', name: 'dev-chain', type: 'local' },
         tmux: { windowId: '@1', paneId: '%1', windowIndex: 1, paneIndex: 2 },
         payload: { message: 'chained' },
@@ -129,7 +129,7 @@ describe('broadcastEventNotify', () => {
 
     const notifier = new EventNotifier();
     await notifier.notify('watch_rule_error', {
-      site: { name: 'tmex', url: 'https://tmex.example.com' },
+      site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
       device: { id: 'device-unregistered', name: 'dev-u', type: 'local' },
       tmux: { windowId: '@1', paneId: '%1', windowIndex: 1, paneIndex: 2 },
       payload: { message: 'dropped' },

@@ -1,4 +1,4 @@
-import type { RelayQuota } from '@tmex/shared/relay';
+import type { RelayQuota } from '@vibeterm/shared/relay';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { relayConfig } from '../db/schema';

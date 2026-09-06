@@ -10,7 +10,7 @@
 - 右侧滑出面板 `?panel=connect`（`apps/fe/src/components/side-panels/connect-devices/`），入口在侧栏底部「管理设备」左侧（`nav.connectDevices` / 短标签 `nav.connectDevicesShort`）。顶栏「多节点互联」图标与 `?panel=nodes` 移除，多节点互联只保留在设置页；设备页「+」菜单顶部新增「添加远程节点」跳 `/settings?tab=nodes`。
 - 面板两个标签（Base UI Tabs + TabsContent，静态内容）：
   - 移动设备（仅控制）：iOS / Android 子标签，各四步（选择地址 → 扫码打开 → 添加到主屏幕/安装应用 → 从主屏幕打开，见下节），末尾提示局域网限制并链到远程访问设置。
-  - 服务器或电脑：① 安装（`INSTALL_COMMAND` 命令块 + PATH 提示）② 选择方式子标签：「加入已有中继」（准备中继 → 生成加入码 → `tmex hub join` 示例 → 确认加入）/「本机作为中继」（配置公网入口 → 设为 Hub（公开地址不可改的警示）→ 接入其他机器）。
+  - 服务器或电脑：① 安装（`INSTALL_COMMAND` 命令块 + PATH 提示）② 选择方式子标签：「加入已有中继」（准备中继 → 生成加入码 → `vibeterm hub join` 示例 → 确认加入）/「本机作为中继」（配置公网入口 → 设为 Hub（公开地址不可改的警示）→ 接入其他机器）。
   - 命令块 `command-block.tsx` 复用 `copy-feedback.tsx` 的复制反馈。
 - 「加入已有中继」第 4 步就地生成加入码（`use-create-enrollment.ts` 与节点管理页共用），第 5 步命令与加入码/节点名称联动，第 6 步就地确认加入：证书监听 + admit 签名收敛为 `apps/fe/src/node/enrollment-engine.ts` 单例（一条轮询、全局 key-log 写互斥、签前重校验、已签记录先入未确认存储、签名者租约、面板会话 id 持久化）。
 - 「本机作为中继」第 3–5 步由 `host-status.ts` 按隧道状态与 auth mode 推导（命名/接管/临时隧道、Hub 公开地址；本机 self/node/standalone）。
@@ -33,7 +33,7 @@
 ## 非标端口
 
 Hub 与中继可以架在 443 以外的高位端口（运营商封 80/443 时的常规做法）。面板里展示的加入命令带的是各自公开地址的原样端口，不需要额外处理；
-用户手输地址的地方（接入向导、中继接入 / 追加 / 迁移对话框、`tmex hub join` / `tmex relay enroll`）在没写端口时会先探 443，再探内置候选端口，
+用户手输地址的地方（接入向导、中继接入 / 追加 / 迁移对话框、`vibeterm hub join` / `vibeterm relay enroll`）在没写端口时会先探 443，再探内置候选端口，
 探到就把地址补全成带端口的形式。端口选择、候选表与部署形态见 [非标端口部署](../deployment/2026090605-nonstandard-ports.md)。
 
 ## 验收

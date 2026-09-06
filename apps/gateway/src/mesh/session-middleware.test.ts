@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { NODE_SESSION_RENEW_THROTTLE_MS } from '../auth/node-session-store';
 import { asResponse, bootMesh, call, challengeAndLogin } from './auth-routes.test';
-import { X_TMEX_SESSION_RENEWED, requestDispatchContext, setMeshRequestContext } from './mesh-deps';
+import { SESSION_RENEWED_HEADER, requestDispatchContext, setMeshRequestContext } from './mesh-deps';
 import {
   authenticateRequest,
   consumeSetSessionForBrowser,
@@ -10,9 +10,9 @@ import {
   requireSession,
 } from './session-middleware';
 import {
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  CLEAR_SHARE_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
   setShareAccessVerifier,
 } from './share-credential';
 
@@ -71,7 +71,7 @@ describe('session-middleware', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const req = new Request('http://localhost/api/devices', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const auth = authenticateRequest(req, {
         roles: { hub: false, node: false, relay: false },
@@ -108,10 +108,10 @@ describe('session-middleware', () => {
       now += NODE_SESSION_RENEW_THROTTLE_MS + 1000;
       const req = new Request('http://localhost/api/auth/passkey/register/options', {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const out = asResponse(await mesh.runtime.handleRequest(req, { upgrade: () => false }));
-      expect(out.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+      expect(out.headers.get(SESSION_RENEWED_HEADER.name)).toBeTruthy();
     } finally {
       mesh.close();
     }
@@ -144,7 +144,7 @@ describe('session-middleware', () => {
       });
       const req = new Request('http://localhost/api/auth/logout', {
         method: 'POST',
-        headers: { cookie: 'tmex_s_self=wrong' },
+        headers: { cookie: 'vibeterm_s_self=wrong' },
       });
       const { setMeshRequestContext } = await import('./mesh-deps');
       setMeshRequestContext(req, { via: 'entry-a', auth: sid });
@@ -168,16 +168,16 @@ describe('session-middleware', () => {
       now += NODE_SESSION_RENEW_THROTTLE_MS + 1000;
       const req = new Request('http://localhost/api/auth/logout', {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const out = asResponse(await mesh.runtime.handleRequest(req, { upgrade: () => false }));
-      expect(out.headers.get(X_TMEX_SESSION_RENEWED)).toBeTruthy();
+      expect(out.headers.get(SESSION_RENEWED_HEADER.name)).toBeTruthy();
     } finally {
       mesh.close();
     }
   });
 
-  test('TMEX_TRUST_PROXY only applies to via=self', () => {
+  test('VIBETERM_TRUST_PROXY only applies to via=self', () => {
     const req = new Request('http://127.0.0.1:19663/api/auth/mode', {
       headers: {
         'x-forwarded-proto': 'https',
@@ -219,23 +219,23 @@ describe('session-middleware', () => {
       }
     });
   });
-  test('本机路径把 x-tmex-set-share 翻成 tmex_sh_self cookie 并抹掉内部头', () => {
+  test('本机路径把 x-tmex-set-share 翻成 vibeterm_sh_self cookie 并抹掉内部头', () => {
     const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
     const upstream = new Response('{}', {
       headers: {
-        [X_TMEX_SET_SHARE]: 'abc.secret',
-        [X_TMEX_SET_SHARE_MAX_AGE]: '3600',
+        [SET_SHARE_HEADER.name]: 'abc.secret',
+        [SET_SHARE_MAX_AGE_HEADER.name]: '3600',
       },
     });
     const out = consumeSetSessionForBrowser(req, upstream);
     const cookie = out.headers.get('set-cookie') ?? '';
-    expect(cookie).toContain('tmex_sh_self=abc.secret');
+    expect(cookie).toContain('vibeterm_sh_self=abc.secret');
     expect(cookie).toContain('Max-Age=3600');
     expect(cookie).toContain('HttpOnly');
     expect(cookie).toContain('SameSite=Lax');
     expect(cookie).not.toContain('Secure');
-    expect(out.headers.get(X_TMEX_SET_SHARE)).toBeNull();
-    expect(out.headers.get(X_TMEX_SET_SHARE_MAX_AGE)).toBeNull();
+    expect(out.headers.get(SET_SHARE_HEADER.name)).toBeNull();
+    expect(out.headers.get(SET_SHARE_MAX_AGE_HEADER.name)).toBeNull();
   });
 
   test('https 请求的分享 cookie 带 Secure；clear 头写过期 cookie', () => {
@@ -245,29 +245,29 @@ describe('session-middleware', () => {
     const set = consumeSetSessionForBrowser(
       secureReq,
       new Response('{}', {
-        headers: { [X_TMEX_SET_SHARE]: 'abc.secret', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+        headers: { [SET_SHARE_HEADER.name]: 'abc.secret', [SET_SHARE_MAX_AGE_HEADER.name]: '60' },
       })
     );
     expect(set.headers.get('set-cookie')).toContain('Secure');
 
     const cleared = consumeSetSessionForBrowser(
       new Request('http://localhost/api/share-access/abc/logout', { method: 'POST' }),
-      new Response('{}', { headers: { [X_TMEX_CLEAR_SHARE]: '1' } })
+      new Response('{}', { headers: { [CLEAR_SHARE_HEADER.name]: '1' } })
     );
     const cookie = cleared.headers.get('set-cookie') ?? '';
-    expect(cookie).toContain('tmex_sh_self=;');
+    expect(cookie).toContain('vibeterm_sh_self=;');
     expect(cookie).toContain('Max-Age=0');
-    expect(cleared.headers.get(X_TMEX_CLEAR_SHARE)).toBeNull();
+    expect(cleared.headers.get(CLEAR_SHARE_HEADER.name)).toBeNull();
   });
 
   test('本机分享公开面上的死 cookie 被顺手清掉', () => {
     setShareAccessVerifier(() => null);
     try {
       const req = new Request('http://localhost/api/share-access/abc', {
-        headers: { cookie: 'tmex_sh_self=abc.dead' },
+        headers: { cookie: 'vibeterm_sh_self=abc.dead' },
       });
       const out = consumeSetSessionForBrowser(req, new Response('{}'));
-      expect(out.headers.get('set-cookie')).toContain('tmex_sh_self=;');
+      expect(out.headers.get('set-cookie')).toContain('vibeterm_sh_self=;');
     } finally {
       setShareAccessVerifier(null);
     }
@@ -281,13 +281,13 @@ describe('session-middleware', () => {
     }));
     try {
       const live = new Request('http://localhost/api/share-access/abc', {
-        headers: { cookie: 'tmex_sh_self=abc.live' },
+        headers: { cookie: 'vibeterm_sh_self=abc.live' },
       });
       expect(consumeSetSessionForBrowser(live, new Response('{}')).headers.get('set-cookie')).toBe(
         null
       );
       const other = new Request('http://localhost/api/devices', {
-        headers: { cookie: 'tmex_sh_self=abc.live' },
+        headers: { cookie: 'vibeterm_sh_self=abc.live' },
       });
       expect(consumeSetSessionForBrowser(other, new Response('{}')).headers.get('set-cookie')).toBe(
         null
@@ -302,11 +302,13 @@ describe('session-middleware', () => {
     try {
       const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
       const upstream = new Response('{}', {
-        headers: { [X_TMEX_SET_SHARE]: 'abc.fresh', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+        headers: { [SET_SHARE_HEADER.name]: 'abc.fresh', [SET_SHARE_MAX_AGE_HEADER.name]: '60' },
       });
       const cookies = consumeSetSessionForBrowser(req, upstream).headers.getSetCookie();
-      expect(cookies.length).toBe(1);
-      expect(cookies[0]).toContain('tmex_sh_self=abc.fresh');
+      // 新旧两个分享 cookie 名各一条，都是新签发的凭证，没有被 clear 覆盖
+      expect(cookies.length).toBe(2);
+      expect(cookies[0]).toContain('vibeterm_sh_self=abc.fresh');
+      expect(cookies[1]).toContain('tmex_sh_self=abc.fresh');
     } finally {
       setShareAccessVerifier(null);
     }
@@ -316,10 +318,10 @@ describe('session-middleware', () => {
     const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
     setMeshRequestContext(req, { via: 'aa'.repeat(16) });
     const upstream = new Response('{}', {
-      headers: { [X_TMEX_SET_SHARE]: 'abc.secret', [X_TMEX_SET_SHARE_MAX_AGE]: '60' },
+      headers: { [SET_SHARE_HEADER.name]: 'abc.secret', [SET_SHARE_MAX_AGE_HEADER.name]: '60' },
     });
     const out = consumeSetSessionForBrowser(req, upstream);
     expect(out.headers.get('set-cookie')).toBeNull();
-    expect(out.headers.get(X_TMEX_SET_SHARE)).toBe('abc.secret');
+    expect(out.headers.get(SET_SHARE_HEADER.name)).toBe('abc.secret');
   });
 });

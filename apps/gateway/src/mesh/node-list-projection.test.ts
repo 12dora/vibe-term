@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@tmex/shared/auth';
+import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
 import {
   parseJson,
   pickMeshNodeName,

@@ -2,7 +2,7 @@ import { afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:te
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type TransferJobEvent, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { type TransferJobEvent, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import { dispatchRoutes } from '../api/route';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
@@ -23,7 +23,7 @@ const NODE_B = 'b'.repeat(32);
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-tx-unit-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-tx-unit-'));
   dirs.push(dir);
   return dir;
 }

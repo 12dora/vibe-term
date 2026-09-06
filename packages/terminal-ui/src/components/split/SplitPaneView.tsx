@@ -1,8 +1,8 @@
 // 单个 pane 的渲染单元：浮起式标题栏（名称 + 进程@路径 + 关闭）+ 终端实例 + 落点预览。
 
-import { useBellStore } from '@tmex/notifications';
-import type { TmuxPane } from '@tmex/shared';
-import { usePaneAgentState } from '@tmex/stores/react';
+import { useBellStore } from '@vibeterm/notifications';
+import type { TmuxPane } from '@vibeterm/shared';
+import { usePaneAgentState } from '@vibeterm/stores/react';
 import { memo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Terminal } from '../Terminal';
@@ -86,7 +86,7 @@ function PaneCloseButton({ paneId, onClose }: { paneId: string; onClose: () => v
       data-pane-close=""
       aria-label={t('window.closePane')}
       title={t('window.closePane')}
-      className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--tmex-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"
+      className="ml-auto flex h-4 w-4 shrink-0 items-center justify-center rounded text-muted-foreground/50 opacity-70 transition-[opacity,color,background-color] duration-(--vibeterm-motion-fast) ease-out hover:bg-foreground/10 hover:text-foreground hover:opacity-100 group-hover/pane-titlebar:opacity-100 motion-reduce:transition-none"
       onPointerDown={(event) => event.stopPropagation()}
       onClick={(event) => {
         event.stopPropagation();
@@ -156,7 +156,7 @@ function SplitPaneView({
         <div
           data-testid="split-pane-titlebar"
           data-active={isFocused || undefined}
-          className={`group/pane-titlebar flex h-6 select-none items-center gap-1.5 rounded-md px-2.5 transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
+          className={`group/pane-titlebar flex h-6 select-none items-center gap-1.5 rounded-md px-2.5 transition-colors duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none ${
             structureActions ? 'cursor-grab touch-none active:cursor-grabbing' : ''
           } ${isFocused ? 'bg-foreground/10' : 'bg-foreground/[0.04]'}`}
           onPointerDown={
@@ -166,7 +166,7 @@ function SplitPaneView({
           <PaneBellIcon paneId={paneId} />
           <PaneAgentBadge deviceId={deviceId} paneId={paneId} />
           <span
-            className={`shrink-0 truncate font-mono text-[10.5px] leading-none transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
+            className={`shrink-0 truncate font-mono text-[10.5px] leading-none transition-colors duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none ${
               isFocused ? 'text-foreground/90' : 'text-foreground/50'
             }`}
           >
@@ -174,7 +174,7 @@ function SplitPaneView({
           </span>
           {meta && (
             <span
-              className={`min-w-0 flex-1 truncate font-mono text-[10px] leading-none transition-colors duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none ${
+              className={`min-w-0 flex-1 truncate font-mono text-[10px] leading-none transition-colors duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none ${
                 isFocused ? 'text-muted-foreground' : 'text-muted-foreground/60'
               }`}
             >

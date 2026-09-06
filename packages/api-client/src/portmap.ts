@@ -13,7 +13,7 @@ import type {
   PortProbeResponse,
   TargetPortProbeResponse,
   UpdatePortMapRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, toApiError } from './client';
 import { requestJson, requestOk } from './json-mutation';
 

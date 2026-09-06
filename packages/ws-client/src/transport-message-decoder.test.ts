@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { decodeGatewayTransportMessage, decodeNodeEventMessage } from './transport-message-decoder';
 import type { GatewayTransportEvent } from './transport-types';
 

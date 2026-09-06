@@ -1,12 +1,12 @@
-import type { LlmModelInfo } from '@tmex/shared';
+import type { LlmModelInfo } from '@vibeterm/shared';
 import { Plus, X } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 
 export interface ModelDraft {
   id: string;

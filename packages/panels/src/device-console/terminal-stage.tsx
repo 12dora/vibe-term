@@ -5,14 +5,19 @@
 // 最近看过的 N 个 pane 同时挂载在同一个盒子里，只有路由点名的那个可见，
 // 其余 visibility:hidden 继续吃 live 输出，切回时即时呈现。
 
-import type { TerminalShortcutItem, TerminalThemeColors, TmuxPane, TmuxWindow } from '@tmex/shared';
-import { selectPaneViewportOwner } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import type {
+  TerminalShortcutItem,
+  TerminalThemeColors,
+  TmuxPane,
+  TmuxWindow,
+} from '@vibeterm/shared';
+import { selectPaneViewportOwner } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import {
   SplitTerminalArea,
   Terminal as TerminalComponent,
   type TerminalRef,
-} from '@tmex/terminal-ui';
+} from '@vibeterm/terminal-ui';
 import { Loader2, SearchX } from 'lucide-react';
 import {
   type ReactNode,
@@ -50,7 +55,7 @@ const noopResize = (): void => {};
 
 function CenteredNotice({ children }: { children: ReactNode }) {
   return (
-    <div className="tmex-fade absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
+    <div className="vibeterm-fade absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
       <div className="max-w-sm space-y-4">{children}</div>
     </div>
   );
@@ -121,7 +126,7 @@ function ResolvingOverlay() {
   const { t } = useTranslation();
   return (
     <div
-      className="tmex-fade absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur-sm"
+      className="vibeterm-fade absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur-sm"
       data-testid="terminal-status-overlay"
     >
       <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card/90 px-4 py-3 shadow-sm">
@@ -254,7 +259,7 @@ function useDeviceLivePaneIds(deviceId: string): ReadonlySet<string> | null {
  * 因此改用 opacity（合成阶段生效，后代无法反选）+ z-index（可见槽恒在最上层，
  * 顺带拿下命中测试），两者都不依赖继承。
  *
- * 隐藏槽另打 data-tmex-terminal-hidden：opacity:0 的子树里 CSS 动画照跑，光标闪烁靠这个
+ * 隐藏槽另打 data-vibeterm-terminal-hidden：opacity:0 的子树里 CSS 动画照跑，光标闪烁靠这个
  * 标记在样式层整条停掉（见 ghostty-terminal/cursor-layer.ts）。
  */
 export function KeepAlivePaneSlot({
@@ -272,7 +277,7 @@ export function KeepAlivePaneSlot({
       data-testid="terminal-keep-alive-pane"
       data-pane-id={paneId}
       data-visible={visible || undefined}
-      data-tmex-terminal-hidden={visible ? undefined : true}
+      data-vibeterm-terminal-hidden={visible ? undefined : true}
       aria-hidden={visible ? undefined : true}
       style={visible ? { zIndex: 1 } : { opacity: 0, pointerEvents: 'none', zIndex: 0 }}
     >
@@ -542,7 +547,7 @@ export function TerminalStage(props: TerminalStageProps) {
         {/* 重连指示：非遮挡、置顶居中，保持已有终端内容可见 */}
         {isReconnecting && (
           <div
-            className="tmex-fade pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
+            className="vibeterm-fade pointer-events-none absolute inset-x-0 top-2 z-10 flex justify-center"
             data-testid="terminal-reconnecting-indicator"
           >
             <DeviceStatusBadge deviceId={deviceId} className="shadow-sm" />

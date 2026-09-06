@@ -22,15 +22,15 @@
 | `/ws`、`/n/:id/ws`、`/mesh/ws` | 同上 JSON 403（在 upgrade 之前拒绝） |
 | 其它（SPA、静态资源…） | `403` `text/plain`：`Domain access is disabled for this host.` |
 
-**源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts`：默认是 socket 对端地址；`TMEX_TRUST_PROXY` 开启时按 `cf-connecting-ip → x-real-ip → XFF 最后一段`。解析不出源地址时按公网处理（fail closed）。**反向代理部署必须开启信任代理头**，否则判定的是代理自身的 socket 地址（通常是私网，会误放行）。
+**源地址豁免**（这些来源即使带着域名 Host 也照常可用）：loopback、RFC1918 私网、链路本地、CGNAT `100.64/10`（Tailscale）、IPv6 ULA / 链路本地 / loopback，以及它们的 IPv4-mapped 写法。源地址取自 `client-ip.ts`：默认是 socket 对端地址；`VIBETERM_TRUST_PROXY` 开启时按 `cf-connecting-ip → x-real-ip → XFF 最后一段`。解析不出源地址时按公网处理（fail closed）。**反向代理部署必须开启信任代理头**，否则判定的是代理自身的 socket 地址（通常是私网，会误放行）。
 
 **服务白名单**（公网仍可访问）：`/hub/uplink`、`/healthz`、`/.well-known/acme-challenge/*`、`POST /api/hub/enrollments/redeem`、`GET /api/hub/status`、`GET /api/hub/enrollments/:id`。所以 uplink、健康检查、ACME 续期与加入码兑换不会被这个开关打断。peer 入站（`via=<nodeId>`）不经过这个守卫。
 
 ### `hosts` 与 `viaDomain`（仅供界面提示）
 
-`listDomainAccessHosts()` 汇总：`TMEX_BASE_URL`（`config.baseUrl`）、数据库里的 `site_settings.site_url` 与 mesh 投影后的有效地址（两者都算）、hub 角色下的 `TMEX_HUB_PUBLIC_URL` 与本机在 `mesh_hubs` 里的 `public_url`、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。**不含** `TMEX_HUB_URL`（那是远端 hub），也不读证书 SAN。规范化后小写、去尾点、剥默认端口；IP 字面量、`localhost`、`*.local` 不进集合。
+`listDomainAccessHosts()` 汇总：`VIBETERM_BASE_URL`（`config.baseUrl`）、数据库里的 `site_settings.site_url` 与 mesh 投影后的有效地址（两者都算）、hub 角色下的 `VIBETERM_HUB_PUBLIC_URL` 与本机在 `mesh_hubs` 里的 `public_url`、`tunnel_config.hostname`、运行中隧道的 `publicUrl`。**不含** `VIBETERM_HUB_URL`（那是远端 hub），也不读证书 SAN。规范化后小写、去尾点、剥默认端口；IP 字面量、`localhost`、`*.local` 不进集合。
 
-`viaDomain` = 当前请求的有效 URL（`publicRequestUrl(req)`，仅在 `TMEX_TRUST_PROXY` 且 `via=self` 时采信 `X-Forwarded-Host`）命中 `hosts`。它只用来在关开关时提醒「你正经域名访问，关闭后会失联」，不参与拦截。
+`viaDomain` = 当前请求的有效 URL（`publicRequestUrl(req)`，仅在 `VIBETERM_TRUST_PROXY` 且 `via=self` 时采信 `X-Forwarded-Host`）命中 `hosts`。它只用来在关开关时提醒「你正经域名访问，关闭后会失联」，不参与拦截。
 
 ## API
 

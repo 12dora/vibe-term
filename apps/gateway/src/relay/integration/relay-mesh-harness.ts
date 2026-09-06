@@ -1,4 +1,4 @@
-import { WebSocketLink } from '@tmex/shared/link';
+import { WebSocketLink } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,

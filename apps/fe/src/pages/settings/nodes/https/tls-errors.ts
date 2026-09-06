@@ -1,5 +1,5 @@
-import { TlsApiError } from '@tmex/api-client/local/tls-api';
-import { errorMessage } from '@tmex/shared';
+import { TlsApiError } from '@vibeterm/api-client/local/tls-api';
+import { errorMessage } from '@vibeterm/shared';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 

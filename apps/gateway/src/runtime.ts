@@ -1,4 +1,4 @@
-import type { ShareScope } from '@tmex/shared/share';
+import type { ShareScope } from '@vibeterm/shared/share';
 import { agentSupervisor } from './agent/supervisor';
 import { type SystemApiHandler, handleApiRequest } from './api';
 import { json } from './api/http';
@@ -163,11 +163,16 @@ async function sweepReleaseCacheOnStartup(): Promise<void> {
   try {
     const { getInstallInfo } = await import('./system/install-info');
     const { resolveUpgradeInstallDir } = await import('./system/upgrade');
-    const { resolveReleaseCacheDir, sweepReleaseCache } = await import('./system/release-download');
+    const { legacyTmpReleaseCacheDir, resolveReleaseCacheDir, sweepReleaseCache } = await import(
+      './system/release-download'
+    );
     await sweepReleaseCache(resolveReleaseCacheDir(resolveUpgradeInstallDir(getInstallInfo())), {
       keepVersions: [],
       partTtlMs: 0,
     });
+    // 改名前留在 /tmp 的缓存目录整个清掉（目录已不再使用）。
+    const { rm } = await import('node:fs/promises');
+    await rm(legacyTmpReleaseCacheDir(), { recursive: true, force: true }).catch(() => {});
   } catch {
     // 清理失败不该挡住启动
   }
@@ -183,7 +188,7 @@ export async function createGatewayRuntime(
     systemApiHandler,
   } = options;
   const mode =
-    options.mode ?? (process.env.TMEX_RUNTIME_MODE === 'preflight' ? 'preflight' : 'normal');
+    options.mode ?? (process.env.VIBETERM_RUNTIME_MODE === 'preflight' ? 'preflight' : 'normal');
   const applyMigrations = options.runMigrationsFn ?? runMigrations;
   const liveStart = options.liveStart ?? startLiveGatewayServices;
 

@@ -12,6 +12,16 @@ import { readEnvFile } from './env-file';
 import { errorMessage } from './error-message';
 import { ensureDir, pathExists } from './fs-utils';
 import { deployRuntimeFiles, writeInstallMeta, writeRunScript } from './install';
+import {
+  type CandidateHandle,
+  type CandidateRunner,
+  HEALTH_TIMEOUT_MS,
+  allocateEphemeralPort,
+  runPreflight,
+} from './upgrade-txn-preflight';
+
+export { HEALTH_TIMEOUT_MS, allocateEphemeralPort };
+export type { CandidateHandle, CandidateRunner };
 import { type PackageLayout, createInstallLayout, createVersionLayout } from './install-layout';
 import { readJsonFile } from './json-file';
 import { copyDbTrio, copyPreflightDb, restoreDbTrio } from './upgrade-db';
@@ -19,6 +29,12 @@ import { finishCommittedCleanup, removeTxnDirs, safeRemoveDir } from './upgrade-
 import type { HealthCheckFn } from './upgrade-health';
 import { liveHealthUrl, pollHealthz, verifyOldHealthz } from './upgrade-health';
 import { isPidAlive } from './upgrade-lock';
+import {
+  type DirMigrationPlan,
+  type DirMigrationRecord,
+  cleanNewRuntimeFiles,
+  isLegacyLabelVersion,
+} from './upgrade-migrate-dir';
 import { ensureCandidateNativeAddon } from './upgrade-native';
 import {
   type UpgradeServiceControl,
@@ -26,6 +42,7 @@ import {
   killPidAndWait,
   waitForPidExit,
 } from './upgrade-process';
+import { backupRunScript, restoreRunScript, runScriptBackupPath } from './upgrade-run-script';
 import {
   type UpgradeJournal,
   advanceJournal,
@@ -34,17 +51,13 @@ import {
   writeJournal,
 } from './upgrade-state';
 import { readCurrentVersion, switchCurrent, versionDirPath } from './upgrade-switch';
+import {
+  revertMigrationAfterFailure,
+  runInstallDirMigration,
+  stopBeforeMigrationUndo,
+} from './upgrade-txn-migrate';
 
-export const HEALTH_TIMEOUT_MS = 60_000;
 export const STOP_TIMEOUT_MS = 20_000;
-
-export type CandidateHandle = { stop: () => Promise<void>; logTail?: () => string; pid?: number };
-
-export type CandidateRunner = (opts: {
-  bunPath: string;
-  serverJs: string;
-  env: NodeJS.ProcessEnv;
-}) => Promise<CandidateHandle>;
 
 export type UpgradeApplyDeps = {
   log?: (message: string) => void;
@@ -57,6 +70,14 @@ export type UpgradeApplyDeps = {
   now?: () => Date;
   activeTxnId?: string | null;
   shimDirs?: string[];
+  /** 安装迁移后按新路径 / 新服务名重建服务控制器；不给则迁移后沿用原控制器。 */
+  rebuildService?: (opts: {
+    installDir: string;
+    serviceName: string;
+    /** 改名前注册用的服务名，安装 / 停止时要一并拆掉它留下的注册 */
+    legacyServiceName?: string;
+    legacyLabel?: boolean;
+  }) => UpgradeServiceControl;
 };
 
 export type ApplyUpgradeOptions = {
@@ -72,53 +93,6 @@ export type ApplyUpgradeOptions = {
   autostart?: boolean;
   skipShims?: boolean;
 };
-
-const CANDIDATE_LOG_TAIL_LINES = 20;
-
-const defaultCandidateRunner: CandidateRunner = async ({ bunPath, serverJs, env }) => {
-  const child = spawn(bunPath, [serverJs], { env, stdio: ['ignore', 'pipe', 'pipe'] });
-  const tail: string[] = [];
-  const collect = (chunk: Buffer) => {
-    for (const line of chunk.toString('utf8').split('\n')) {
-      if (!line.trim()) continue;
-      tail.push(line);
-      if (tail.length > CANDIDATE_LOG_TAIL_LINES) tail.shift();
-    }
-  };
-  child.stdout?.on('data', collect);
-  child.stderr?.on('data', collect);
-  return {
-    pid: child.pid,
-    logTail: () => tail.join('\n'),
-    async stop() {
-      if (child.pid && isPidAlive(child.pid)) {
-        const ownedPid = child.pid;
-        await killPidAndWait(ownedPid, 8_000, {
-          assertOwned: () => {
-            if (!commandLineContains(ownedPid, serverJs)) {
-              throw new Error(t('upgrade.pidNotOwned', { pid: String(ownedPid), installDir: '' }));
-            }
-          },
-        });
-      }
-    },
-  };
-};
-
-export async function allocateEphemeralPort(): Promise<number> {
-  return await new Promise((resolve, reject) => {
-    const server = createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const addr = server.address();
-      const port = typeof addr === 'object' && addr ? addr.port : 0;
-      server.close((error) => {
-        if (error) reject(error);
-        else resolve(port);
-      });
-    });
-    server.on('error', reject);
-  });
-}
 
 export async function removeCandidateVersion(installDir: string, version: string): Promise<void> {
   const current = await readCurrentVersion(installDir);
@@ -185,7 +159,8 @@ async function persistUpgradeMeta(
   installDir: string,
   toVersion: string,
   bunPath: string,
-  serviceMode?: ServiceMode
+  serviceMode?: ServiceMode,
+  serviceName?: string
 ): Promise<void> {
   const layout = createInstallLayout(installDir);
   if (!(await pathExists(layout.metaPath))) return;
@@ -193,9 +168,13 @@ async function persistUpgradeMeta(
   meta.updatedAt = new Date().toISOString();
   meta.cliVersion = toVersion;
   meta.bunPath = bunPath;
+  // 迁移把目录搬走后，meta 必须指向自己所在的目录：网页卸载 / 外部工具都按它找安装。
+  meta.installDir = installDir;
   if (serviceMode === 'none' || serviceMode === 'managed') {
     meta.serviceMode = serviceMode;
   }
+  // 服务名只在健康检查通过后才落盘（迁移把默认 tmex 改成 vibeterm）。
+  if (serviceName) meta.serviceName = serviceName;
   await writeInstallMeta(layout, meta);
 }
 
@@ -205,9 +184,10 @@ export async function commitSuccess(
   bunPath: string,
   keepBackup: boolean,
   log: (message: string) => void,
-  serviceMode?: ServiceMode
+  serviceMode?: ServiceMode,
+  serviceName?: string
 ): Promise<void> {
-  await persistUpgradeMeta(installDir, journal.toVersion, bunPath, serviceMode);
+  await persistUpgradeMeta(installDir, journal.toVersion, bunPath, serviceMode, serviceName);
   const committed: UpgradeJournal = {
     ...journal,
     phase: 'committed',
@@ -260,7 +240,8 @@ export async function rollbackToOld(
       })
     );
   }
-  await writeRunScript(createInstallLayout(installDir), bunPath);
+  await restoreRunScript(installDir, journal.txnId, bunPath);
+  if (isLegacyLabelVersion(journal.fromVersion)) await cleanNewRuntimeFiles(installDir);
   const restartAt = new Date().toISOString();
   await service.start();
   const url = await liveHealthUrl(installDir);
@@ -274,6 +255,8 @@ export async function rollbackToOld(
   await writeJournal(installDir, {
     ...journal,
     phase: 'rolled_back',
+    // 旧版本已经切回并验证通过，迁移撤销到此收尾。
+    dirMigration: undefined,
     updatedAt: new Date().toISOString(),
     error,
   });
@@ -296,76 +279,6 @@ export async function killRecordedCandidate(
     });
   }
   if (isPidAlive(pid) && owned()) await waitForPidExit(pid, 5_000);
-}
-
-async function runPreflight(
-  installDir: string,
-  toVersion: string,
-  bunPath: string,
-  txnId: string,
-  journal: UpgradeJournal,
-  deps: UpgradeApplyDeps
-): Promise<UpgradeJournal> {
-  const healthCheck = deps.healthCheck ?? pollHealthz;
-  const runCandidate = deps.runCandidate ?? defaultCandidateRunner;
-  const envPath = join(installDir, 'app.env');
-  const env = (await pathExists(envPath)) ? await readEnvFile(envPath) : {};
-  const versionDir = versionDirPath(installDir, toVersion);
-  const port = await allocateEphemeralPort();
-  const preflightDir = join(installDir, 'staging', txnId, 'preflight-db');
-  const liveDb = env.DATABASE_URL;
-  let preflightDb = join(preflightDir, 'tmex.db');
-  if (liveDb && (await pathExists(liveDb))) {
-    await copyPreflightDb(liveDb, preflightDir, bunPath);
-    preflightDb = join(preflightDir, basename(liveDb));
-  } else {
-    await ensureDir(preflightDir);
-  }
-
-  const candidateEnv: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...env,
-    TMEX_BIND_HOST: '127.0.0.1',
-    GATEWAY_PORT: String(port),
-    TMEX_BASE_URL: formatHttpEndpoint('127.0.0.1', port),
-    DATABASE_URL: preflightDb,
-    TMEX_ROLES: 'standalone',
-    [RUNTIME_MODE_ENV]: 'preflight',
-    TMEX_HUB_URL: '',
-    TMEX_PEER_PORT: String(await allocateEphemeralPort()),
-    TMEX_FE_DIST_DIR: join(versionDir, 'resources', 'fe-dist'),
-    TMEX_MIGRATIONS_DIR: join(versionDir, 'resources', 'gateway-drizzle'),
-    TMEX_NATIVE_DIR: join(versionDir, 'native'),
-    NODE_ENV: 'production',
-  };
-
-  const handle = await runCandidate({
-    bunPath,
-    serverJs: join(versionDir, 'runtime', 'server.js'),
-    env: candidateEnv,
-  });
-  let next = journal;
-  if (handle.pid) {
-    next = await advanceJournal(installDir, journal, 'preflight', {
-      candidatePid: handle.pid,
-      candidateStartedAt: new Date().toISOString(),
-    });
-  }
-  try {
-    await healthCheck({
-      url: formatHttpEndpoint('127.0.0.1', port, '/healthz'),
-      expectedVersion: toVersion,
-      timeoutMs: HEALTH_TIMEOUT_MS,
-    });
-  } catch (err) {
-    const detail = handle.logTail?.();
-    const message = errorMessage(err);
-    throw new Error(detail ? `${message}\n${detail}` : message);
-  } finally {
-    await handle.stop();
-    await rm(preflightDir, { recursive: true, force: true }).catch(() => null);
-  }
-  return next;
 }
 
 async function stageCandidate(
@@ -407,8 +320,8 @@ async function backupAndSwitch(
   await switchCurrent(installDir, toVersion);
   await writeRunScript(createInstallLayout(installDir), bunPath);
   if (!skipShims) {
-    const { installTmexShim } = await import('./cli-shim');
-    await installTmexShim({
+    const { installVibeTermShim } = await import('./cli-shim');
+    await installVibeTermShim({
       installLayout: createInstallLayout(installDir),
       bunPath,
     });
@@ -425,7 +338,8 @@ async function startNewAndCommit(
   service: UpgradeServiceControl,
   healthCheck: HealthCheckFn,
   log: (message: string) => void,
-  serviceMode?: ServiceMode
+  serviceMode?: ServiceMode,
+  serviceName?: string
 ): Promise<void> {
   const next = await advanceJournal(installDir, journal, 'started');
   await service.start();
@@ -437,26 +351,158 @@ async function startNewAndCommit(
     timeoutMs: HEALTH_TIMEOUT_MS,
     requireTlsListener: true,
   });
-  await commitSuccess(installDir, next, bunPath, keepBackup, log, serviceMode);
+  await commitSuccess(installDir, next, bunPath, keepBackup, log, serviceMode, serviceName);
+}
+
+async function stageAndPreflight(
+  installDir: string,
+  journal: UpgradeJournal,
+  options: ApplyUpgradeOptions,
+  deps: UpgradeApplyDeps,
+  ctx: TxnContext
+): Promise<UpgradeJournal> {
+  let next = await advanceJournal(installDir, journal, 'staging', { keepBackup: ctx.keepBackup });
+  await stageCandidate(installDir, ctx.txnId, ctx.toVersion, ctx.packageLayout);
+  await ensureCandidateNativeAddon({
+    installDir,
+    fromVersion: ctx.resolvedFrom,
+    toVersion: ctx.toVersion,
+    allowMissingNative: options.allowMissingNative,
+    enableDirect: deps.enableDirect,
+    log: ctx.log,
+  });
+
+  next = await advanceJournal(installDir, next, 'preflight', { keepBackup: ctx.keepBackup });
+  try {
+    return await runPreflight(installDir, ctx.toVersion, ctx.bunPath, ctx.txnId, next, deps);
+  } catch (error) {
+    const message = errorMessage(error);
+    await killRecordedCandidate(installDir, next);
+    await removeCandidateVersion(installDir, ctx.toVersion);
+    // 旧布局转换已经用新模板重写过 run.sh：中止前把事务备份还回去，
+    // 否则一次失败的升级会把还在跑 1.x 的安装留在起不来的状态。
+    if (await pathExists(runScriptBackupPath(installDir, ctx.txnId))) {
+      await restoreRunScript(installDir, ctx.txnId, ctx.bunPath).catch(() => null);
+    }
+    await removeTxnDirs(installDir, ctx.txnId);
+    await writeJournal(installDir, {
+      ...next,
+      phase: 'aborted',
+      updatedAt: new Date().toISOString(),
+      error: message,
+    });
+    throw new Error(t('upgrade.preflightFailed', { version: ctx.toVersion, error: message }));
+  }
+}
+
+export interface TxnContext {
+  installDir: string;
+  toVersion: string;
+  packageLayout: PackageLayout;
+  bunPath: string;
+  txnId: string;
+  keepBackup: boolean;
+  resolvedFrom: string;
+  service: UpgradeServiceControl;
+  healthCheck: HealthCheckFn;
+  log: (message: string) => void;
+  serviceMode: ServiceMode;
+  migrationPlan?: DirMigrationPlan | null;
+  /** 当前注册用的服务名；回滚到 < 2.0.0 时要用它重建成旧 label 的控制器 */
+  serviceName?: string;
+}
+
+/**
+ * 恢复 < 2.0.0 时一律换成旧 label 的控制器：旧 runtime 只认 `com.tmex.<服务名>`，
+ * 用新 label 注册它，1.1.x 的 CLI 就找不到自己的 job，下一次升级会因端口占用失败。
+ * 迁移分支已经重建过控制器，这里只处理「没发生迁移」的情况。
+ */
+function restoreServiceControl(
+  state: { installDir: string; service: UpgradeServiceControl },
+  journal: UpgradeJournal,
+  deps: UpgradeApplyDeps,
+  ctx: TxnContext
+): UpgradeServiceControl {
+  if (!isLegacyLabelVersion(journal.fromVersion)) return state.service;
+  if (!ctx.serviceName || !deps.rebuildService) return state.service;
+  return deps.rebuildService({
+    installDir: state.installDir,
+    serviceName: ctx.serviceName,
+    legacyServiceName: ctx.serviceName,
+    legacyLabel: true,
+  });
+}
+
+/** 失败收尾：先把可能已经搬走的安装目录还原，再决定要不要回滚版本。 */
+async function handleTxnFailure(
+  state: {
+    installDir: string;
+    service: UpgradeServiceControl;
+    migration: DirMigrationRecord | null;
+  },
+  journal: UpgradeJournal,
+  error: unknown,
+  options: ApplyUpgradeOptions,
+  deps: UpgradeApplyDeps,
+  ctx: TxnContext
+): Promise<void> {
+  let latest = (await readJournal(state.installDir)) ?? journal;
+  // 迁移撤销会把 phase 改成 reverting，先按撤销前的阶段决定要不要回滚版本。
+  const needsRollback = latest.phase === 'started' || latest.phase === 'switching';
+  const { migration } = state;
+  if (migration) {
+    try {
+      await stopBeforeMigrationUndo(state.service, migration);
+    } catch (stopError) {
+      // 新服务没停下就动目录 / DB 只会把库改坏；把 journal 留给 --repair，抛出可操作的原因。
+      ctx.log(`upgrade failed: ${errorMessage(error)}`);
+      throw stopError;
+    }
+    latest = await revertMigrationAfterFailure({
+      record: migration,
+      journal: latest,
+      bunPath: ctx.bunPath,
+      skipShims: options.skipShims,
+      shimDirs: deps.shimDirs,
+      log: ctx.log,
+    });
+    state.installDir = migration.fromDir;
+    state.service =
+      deps.rebuildService?.({
+        installDir: migration.fromDir,
+        serviceName: migration.oldServiceName,
+        legacyServiceName: migration.newServiceName,
+        legacyLabel: isLegacyLabelVersion(latest.fromVersion),
+      }) ?? state.service;
+    state.migration = null;
+  }
+  if (!needsRollback) return;
+  // 迁移分支已经重建成旧 label 的控制器（还带着要拆掉的新服务名），别再覆盖它。
+  const service = migration ? state.service : restoreServiceControl(state, latest, deps, ctx);
+  await rollbackToOld(
+    state.installDir,
+    latest,
+    ctx.bunPath,
+    service,
+    ctx.healthCheck,
+    errorMessage(error),
+    ctx.log,
+    ctx.serviceMode
+  );
 }
 
 export async function executeUpgradeTxn(
   options: ApplyUpgradeOptions,
   deps: UpgradeApplyDeps,
-  ctx: {
-    installDir: string;
-    toVersion: string;
-    packageLayout: PackageLayout;
-    bunPath: string;
-    txnId: string;
-    keepBackup: boolean;
-    resolvedFrom: string;
-    service: UpgradeServiceControl;
-    healthCheck: HealthCheckFn;
-    log: (message: string) => void;
-    serviceMode: ServiceMode;
-  }
-): Promise<void> {
+  ctx: TxnContext
+): Promise<string> {
+  const state = {
+    installDir: ctx.installDir,
+    service: ctx.service,
+    migration: null as DirMigrationRecord | null,
+  };
+  let serviceName: string | undefined;
+
   let journal = createJournal({
     txnId: ctx.txnId,
     fromVersion: ctx.resolvedFrom,
@@ -464,89 +510,65 @@ export async function executeUpgradeTxn(
     now: deps.now?.(),
   });
   journal.keepBackup = ctx.keepBackup;
-  await writeJournal(ctx.installDir, journal);
+  await writeJournal(state.installDir, journal);
 
   try {
-    journal = await advanceJournal(ctx.installDir, journal, 'staging', {
-      keepBackup: ctx.keepBackup,
-    });
-    await stageCandidate(ctx.installDir, ctx.txnId, ctx.toVersion, ctx.packageLayout);
-    await ensureCandidateNativeAddon({
-      installDir: ctx.installDir,
-      fromVersion: ctx.resolvedFrom,
-      toVersion: ctx.toVersion,
-      allowMissingNative: options.allowMissingNative,
-      enableDirect: deps.enableDirect,
-      log: ctx.log,
-    });
+    journal = await stageAndPreflight(state.installDir, journal, options, deps, ctx);
 
-    journal = await advanceJournal(ctx.installDir, journal, 'preflight', {
+    journal = await advanceJournal(state.installDir, journal, 'stopping', {
       keepBackup: ctx.keepBackup,
     });
-    try {
-      journal = await runPreflight(
-        ctx.installDir,
-        ctx.toVersion,
-        ctx.bunPath,
-        ctx.txnId,
-        journal,
-        deps
-      );
-    } catch (error) {
-      const message = errorMessage(error);
-      await killRecordedCandidate(ctx.installDir, journal);
-      await removeCandidateVersion(ctx.installDir, ctx.toVersion);
-      await removeTxnDirs(ctx.installDir, ctx.txnId);
-      await writeJournal(ctx.installDir, {
-        ...journal,
-        phase: 'aborted',
-        updatedAt: new Date().toISOString(),
-        error: message,
-      });
-      throw new Error(t('upgrade.preflightFailed', { version: ctx.toVersion, error: message }));
-    }
-
-    journal = await advanceJournal(ctx.installDir, journal, 'stopping', {
-      keepBackup: ctx.keepBackup,
-    });
+    await backupRunScript(state.installDir, ctx.txnId);
     await ctx.service.stop();
     await assertStopped(ctx.service);
-    journal = await advanceJournal(ctx.installDir, journal, 'backup', {
+
+    journal = await advanceJournal(state.installDir, journal, 'migrate-install-dir', {
+      keepBackup: ctx.keepBackup,
+    });
+    const migrated = await runInstallDirMigration(
+      { txnId: ctx.txnId, migrationPlan: ctx.migrationPlan ?? null, log: ctx.log },
+      journal
+    );
+    journal = migrated.journal;
+    if (migrated.record) {
+      state.migration = migrated.record;
+      if (migrated.record.moveDir) {
+        state.installDir = migrated.record.toDir;
+        serviceName = migrated.record.newServiceName;
+        state.service =
+          deps.rebuildService?.({
+            installDir: state.installDir,
+            serviceName,
+            legacyServiceName: migrated.record.oldServiceName,
+          }) ?? state.service;
+      }
+    }
+
+    journal = await advanceJournal(state.installDir, journal, 'backup', {
       keepBackup: ctx.keepBackup,
     });
     journal = await backupAndSwitch(
-      ctx.installDir,
+      state.installDir,
       journal,
       ctx.toVersion,
       ctx.bunPath,
       options.skipShims
     );
     await startNewAndCommit(
-      ctx.installDir,
+      state.installDir,
       journal,
       ctx.toVersion,
       ctx.bunPath,
       ctx.keepBackup,
-      ctx.service,
+      state.service,
       ctx.healthCheck,
       ctx.log,
-      ctx.serviceMode
+      ctx.serviceMode,
+      serviceName
     );
+    return state.installDir;
   } catch (error) {
-    const latest = (await readJournal(ctx.installDir)) ?? journal;
-    if (latest.phase === 'started' || latest.phase === 'switching') {
-      const message = errorMessage(error);
-      await rollbackToOld(
-        ctx.installDir,
-        latest,
-        ctx.bunPath,
-        ctx.service,
-        ctx.healthCheck,
-        message,
-        ctx.log,
-        ctx.serviceMode
-      );
-    }
+    await handleTxnFailure(state, journal, error, options, deps, ctx);
     throw error;
   }
 }

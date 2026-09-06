@@ -3,9 +3,9 @@
 // 「直接连接」与「访问控制 → 账号密码」两条路径共用同一块 UI：档位与文案由 `directProtection`
 // 单点推导，两处的 testid 保持一致（同一时刻只会渲染其中一处，勾选框 id 不会撞）。
 
-import type { LocalAuthStatus } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { LocalAuthStatus } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

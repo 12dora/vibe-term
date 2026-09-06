@@ -1,4 +1,4 @@
-import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@tmex/shared';
+import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, encodePaneModes } from '@vibeterm/shared';
 
 import { bytesEqual, concatBytes, truncateUtf8Tail } from '../../bytes';
 import type { AtomicPaneCapture } from '../control-mode-capture';

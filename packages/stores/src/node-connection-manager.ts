@@ -5,7 +5,7 @@
 //   每条 socket 另带一个 client nonce `?cid=`（见 `createDefaultNodeConnection`）。
 // - REST：`new ApiClient(nodePathPrefix(id))`，端点函数照旧传 `/api/...`。
 // - storage：agent / file-tree 等 key 带 node 前缀；UI 偏好（主题、侧栏、终端字号）是
-//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `tmex-ui`）。
+//   宿主级偏好，所有 node 共用同一个 UIStore（key 仍为 `vibeterm-ui`）。
 // - 路由：host.appPath 注入 `/n/<id>` 前缀，包内构造的应用内路径与 matchPath pattern 一并生效。
 
 import {
@@ -16,23 +16,23 @@ import {
   nodeAppPath,
   nodeWsUrl,
   normalizeNodeId,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import {
   handleGlobalUnauthorized,
   handleNodeLoginRequired,
-} from '@tmex/api-client/auth/session-interceptor';
-import type { NotificationSink } from '@tmex/notifications';
+} from '@vibeterm/api-client/auth/session-interceptor';
+import type { NotificationSink } from '@vibeterm/notifications';
 import {
   type GatewayConnection,
   type SocketFactory,
   createGatewayConnection,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
 import { type AppRuntimeOptions, createBrowserHostServices } from './runtime';
 import { type UIStore, createUIStore } from './ui';
 
-export { SELF_NODE_ID, normalizeNodeId } from '@tmex/api-client';
+export { SELF_NODE_ID, normalizeNodeId } from '@vibeterm/api-client';
 
 /** 引用计数归零后的默认释放宽限期 */
 export const DEFAULT_RELEASE_GRACE_MS = 30_000;
@@ -125,7 +125,7 @@ export class NodeConnectionManager {
     );
   }
 
-  /** 所有 node 共用的 UI 偏好 store（key 恒为 `tmex-ui`，与单 node 时一致）。 */
+  /** 所有 node 共用的 UI 偏好 store（key 恒为 `vibeterm-ui`，与单 node 时一致）。 */
   private uiStore(): UIStore {
     if (!this.sharedUiStore) this.sharedUiStore = createUIStore({ storagePrefix: '' });
     return this.sharedUiStore;

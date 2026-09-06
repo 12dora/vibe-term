@@ -3,8 +3,8 @@
 // 单独成模块是为了避开环：`app-sidebar → sidebar-device-list → sidebar-agent-sessions →
 // use-sidebar-agent-sessions`，两端都不能互相 import。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { useMeshNodes } from './mesh-nodes';
 
 export interface NodeOfflineSnapshot {

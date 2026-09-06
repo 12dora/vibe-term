@@ -2,9 +2,9 @@
 // 列表渲染（文件夹图标 / 符号链接 / 隐藏目录灰显 / 空态）用 react-dom/server 静态渲染断言。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse } from '@tmex/shared';
-import { I18N_RESOURCES } from '@tmex/shared';
+import { ApiClient } from '@vibeterm/api-client';
+import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse } from '@vibeterm/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

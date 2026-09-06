@@ -55,7 +55,7 @@ tunnel: 550e8400-e29b-41d4-a716-446655440000
 credentials-file: /tmp/cred.json
 metrics: 127.0.0.1:20301
 ingress:
-  - hostname: tmex.example.com
+  - hostname: vibeterm.example.com
     service: http://127.0.0.1:19883
   - hostname: other.example.com
     service: http://127.0.0.1:80
@@ -68,7 +68,7 @@ ingress:
       (yml?.ingress ?? [])
         .filter((row) => serviceHitsOrigin(row.service, 19883))
         .map((r) => r.hostname)
-    ).toEqual(['tmex.example.com']);
+    ).toEqual(['vibeterm.example.com']);
   });
 
   test('parses launchd ProgramArguments and logfile ingress JSON', () => {
@@ -88,10 +88,10 @@ ingress:
     expect(args[0]).toContain('cloudflared');
     expect(args).toContain('--token-file');
     const hosts = parseIngressFromLog(
-      'noise\n{"ingress":[{"hostname":"old.example","service":"http://127.0.0.1:1"}]}\nfinal {"ingress":[{"hostname":"tmex.example.com","service":"http://127.0.0.1:19883"}]}\n',
+      'noise\n{"ingress":[{"hostname":"old.example","service":"http://127.0.0.1:1"}]}\nfinal {"ingress":[{"hostname":"vibeterm.example.com","service":"http://127.0.0.1:19883"}]}\n',
       19883
     );
-    expect(hosts).toEqual(['tmex.example.com']);
+    expect(hosts).toEqual(['vibeterm.example.com']);
   });
 
   test('keeps launchd token-file paths that contain spaces', () => {
@@ -102,39 +102,39 @@ ingress:
     <string>/opt/homebrew/bin/cloudflared</string>
     <string>tunnel</string>
     <string>--logfile</string>
-    <string>/Users/me/Library/Application Support/tmex-cloudflared/cloudflared.log</string>
+    <string>/Users/me/Library/Application Support/vibeterm-cloudflared/cloudflared.log</string>
     <string>run</string>
     <string>--token-file</string>
-    <string>/Users/me/Library/Application Support/tmex-cloudflared/token</string>
+    <string>/Users/me/Library/Application Support/vibeterm-cloudflared/token</string>
   </array>
 </dict></plist>`);
     expect(parseArgv(args).tokenFile).toBe(
-      '/Users/me/Library/Application Support/tmex-cloudflared/token'
+      '/Users/me/Library/Application Support/vibeterm-cloudflared/token'
     );
   });
 
   test('detector prefers launchd + origin-matching log ingress and caches for 30s', async () => {
     const files = new Map<string, string>([
       [
-        '/Users/me/Library/LaunchAgents/com.tmex.cloudflared.plist',
+        '/Users/me/Library/LaunchAgents/com.vibeterm.cloudflared.plist',
         `<plist><dict><key>ProgramArguments</key><array>
           <string>/opt/homebrew/bin/cloudflared</string><string>tunnel</string>
           <string>--logfile</string><string>/tmp/cf.log</string>
-          <string>run</string><string>--token-file</string><string>/tmp/tmex-cf/token</string>
+          <string>run</string><string>--token-file</string><string>/tmp/vibeterm-cf/token</string>
         </array></dict></plist>`,
       ],
       [
-        '/tmp/tmex-cf/token',
+        '/tmp/vibeterm-cf/token',
         Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 'secret' })).toString('base64'),
       ],
       [
         '/tmp/cf.log',
-        '{"ingress":[{"hostname":"tmex.example.org","service":"http://127.0.0.1:19883"}]}\n',
+        '{"ingress":[{"hostname":"vibeterm.example.org","service":"http://127.0.0.1:19883"}]}\n',
       ],
-      ['/tmp/tmex-cf/tunnel-id', 'tid\n'],
+      ['/tmp/vibeterm-cf/tunnel-id', 'tid\n'],
     ]);
     const dirs = new Map<string, string[]>([
-      ['/Users/me/Library/LaunchAgents', ['com.tmex.cloudflared.plist']],
+      ['/Users/me/Library/LaunchAgents', ['com.vibeterm.cloudflared.plist']],
       ['/Library/LaunchDaemons', []],
     ]);
     let now = 1_000;
@@ -144,7 +144,7 @@ ingress:
       homedir: () => '/Users/me',
       platform: 'darwin',
       listProcesses: async () =>
-        '9 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/tmex-cf/token\n',
+        '9 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/vibeterm-cf/token\n',
       readFile: async (path) => files.get(path) ?? null,
       listDir: async (path) => dirs.get(path) ?? [],
     });
@@ -154,15 +154,15 @@ ingress:
       source: 'launchd',
       running: true,
       tunnelId: 'tid',
-      hostnames: ['tmex.example.org'],
+      hostnames: ['vibeterm.example.org'],
     });
     now += 10_000;
     files.delete('/tmp/cf.log');
     const cached = await d.detect();
-    expect(cached.hostnames).toEqual(['tmex.example.org']);
+    expect(cached.hostnames).toEqual(['vibeterm.example.org']);
   });
 
-  test('treats sibling hostname file as origin-pointing (tmex managed layout)', async () => {
+  test('treats sibling hostname file as origin-pointing (vibeterm managed layout)', async () => {
     const d = new ExternalTunnelDetector({
       originPort: 19883,
       now: () => 1,
@@ -173,13 +173,13 @@ ingress:
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.org\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.org\n';
         return null;
       },
       listDir: async () => [],
     });
     const found = await d.detect();
-    expect(found.hostnames).toEqual(['tmex.example.org']);
+    expect(found.hostnames).toEqual(['vibeterm.example.org']);
     expect(found.running).toBe(true);
     expect(found.tunnelId).toBe('tid');
   });
@@ -266,17 +266,17 @@ ingress:
       listProcesses: async () =>
         '9 /opt/homebrew/bin/cloudflared tunnel run --token-file /tmp/other/token\n',
       readFile: async (path) => {
-        if (path === '/Users/me/Library/LaunchAgents/com.tmex.cloudflared.plist') {
+        if (path === '/Users/me/Library/LaunchAgents/com.vibeterm.cloudflared.plist') {
           return `<plist><dict><key>ProgramArguments</key><array>
             <string>/opt/homebrew/bin/cloudflared</string><string>tunnel</string>
-            <string>--config</string><string>/tmp/tmex/config.yml</string>
+            <string>--config</string><string>/tmp/vibeterm/config.yml</string>
             <string>run</string>
           </array></dict></plist>`;
         }
-        if (path === '/tmp/tmex/config.yml') {
+        if (path === '/tmp/vibeterm/config.yml') {
           return `tunnel: 550e8400-e29b-41d4-a716-446655440000
 ingress:
-  - hostname: tmex.example.com
+  - hostname: vibeterm.example.com
     service: http://127.0.0.1:19883
 `;
         }
@@ -286,11 +286,11 @@ ingress:
         return null;
       },
       listDir: async (path) =>
-        path === '/Users/me/Library/LaunchAgents' ? ['com.tmex.cloudflared.plist'] : [],
+        path === '/Users/me/Library/LaunchAgents' ? ['com.vibeterm.cloudflared.plist'] : [],
     });
     const found = await d.detect();
     expect(found.source).toBe('launchd');
-    expect(found.hostnames).toEqual(['tmex.example.com']);
+    expect(found.hostnames).toEqual(['vibeterm.example.com']);
     expect(found.running).toBe(false);
   });
 
@@ -348,7 +348,7 @@ ingress:
           { hostname: 'api.example.com', service: 'http://127.0.0.1:19883' },
           { hostname: 'other.example.com', service: 'http://127.0.0.1:80' },
         ],
-        getTunnel: async () => ({ id: 'tid', name: 'tmex-ext' }),
+        getTunnel: async () => ({ id: 'tid', name: 'vibeterm-ext' }),
       },
     });
     const found = await d.detect();
@@ -356,7 +356,7 @@ ingress:
       detected: true,
       source: 'process',
       tunnelId: 'tid',
-      tunnelName: 'tmex-ext',
+      tunnelName: 'vibeterm-ext',
       hostnames: ['api.example.com'],
       tokenAccountId: 'acct',
     });
@@ -393,8 +393,8 @@ describe('toExternalStatus', () => {
       detected: true,
       source: 'process' as const,
       tunnelId: 'tid',
-      tunnelName: 'tmex',
-      hostnames: ['tmex.example.com'],
+      tunnelName: 'vibeterm',
+      hostnames: ['vibeterm.example.com'],
       hasOriginCert: true,
       running: true,
     };
@@ -404,8 +404,8 @@ describe('toExternalStatus', () => {
       source: 'process',
       configPath: null,
       tunnelId: 'tid',
-      tunnelName: 'tmex',
-      hostnames: ['tmex.example.com'],
+      tunnelName: 'vibeterm',
+      hostnames: ['vibeterm.example.com'],
       hasOriginCert: true,
       running: true,
       externalAccess: {
@@ -418,7 +418,7 @@ describe('toExternalStatus', () => {
     });
     expect(status.hostnames).not.toBe(detected.hostnames);
     status.hostnames.push('other.example.com');
-    expect(detected.hostnames).toEqual(['tmex.example.com']);
+    expect(detected.hostnames).toEqual(['vibeterm.example.com']);
   });
 });
 
@@ -441,17 +441,19 @@ function escapedConfigLogLine(hostname: string, port: number): string {
 
 describe('token-tunnel log + Access probe', () => {
   test('parses escaped config JSON string from token-tunnel logs', () => {
-    const line = escapedConfigLogLine('tmex.example.org', 9883);
+    const line = escapedConfigLogLine('vibeterm.example.org', 9883);
     expect(line).toContain('\\"ingress\\"');
-    expect(parseIngressFromLog(line, 9883)).toEqual(['tmex.example.org']);
+    expect(parseIngressFromLog(line, 9883)).toEqual(['vibeterm.example.org']);
     expect(parseIngressFromLog(line, 19883)).toEqual([]);
   });
 
   test('prefers the last escaped ingress in a tailed multi-MB log', () => {
     const prefix = `${'noise\n'.repeat(20_000)}${'x'.repeat(200_000)}\n`;
     const old = escapedConfigLogLine('old.example.com', 19883);
-    const latest = escapedConfigLogLine('tmex.example.org', 19883);
-    expect(parseIngressFromLog(`${prefix}${old}\n${latest}\n`, 19883)).toEqual(['tmex.example.org']);
+    const latest = escapedConfigLogLine('vibeterm.example.org', 19883);
+    expect(parseIngressFromLog(`${prefix}${old}\n${latest}\n`, 19883)).toEqual([
+      'vibeterm.example.org',
+    ]);
   });
 
   test('detector uses escaped log ingress when token tunnel has no config.yml', async () => {
@@ -461,20 +463,20 @@ describe('token-tunnel log + Access probe', () => {
       homedir: () => '/Users/me',
       platform: 'darwin',
       listProcesses: async () =>
-        '42 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/tmex-cf/token\n',
+        '42 /opt/homebrew/bin/cloudflared tunnel --logfile /tmp/cf.log run --token-file /tmp/vibeterm-cf/token\n',
       readFile: async (path) => {
-        if (path === '/tmp/tmex-cf/token') {
+        if (path === '/tmp/vibeterm-cf/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 'secret' })).toString(
             'base64'
           );
         }
-        if (path === '/tmp/cf.log') return `${escapedConfigLogLine('tmex.example.org', 9883)}\n`;
+        if (path === '/tmp/cf.log') return `${escapedConfigLogLine('vibeterm.example.org', 9883)}\n`;
         return null;
       },
       listDir: async () => [],
     });
     const found = await d.detect();
-    expect(found.hostnames).toEqual(['tmex.example.org']);
+    expect(found.hostnames).toEqual(['vibeterm.example.org']);
     expect(found.running).toBe(true);
   });
 
@@ -520,7 +522,7 @@ describe('token-tunnel log + Access probe', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -546,7 +548,7 @@ describe('token-tunnel log + Access probe', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -554,7 +556,7 @@ describe('token-tunnel log + Access probe', () => {
       accessClient: {
         getTunnelIngress: async () => [],
         listApps: async () => [
-          { id: 'app-1', aud: 'aud-1', name: 'tmex', domain: 'tmex.example.com' },
+          { id: 'app-1', aud: 'aud-1', name: 'vibeterm', domain: 'vibeterm.example.com' },
           { id: 'other', aud: 'aud-x', name: 'other', domain: 'other.example.com' },
         ],
         getOrganization: async () => ({ teamDomain: 'team.cloudflareaccess.com' }),
@@ -581,7 +583,7 @@ describe('token-tunnel log + Access probe', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -612,12 +614,12 @@ describe('token-tunnel log + Access probe', () => {
       listProcesses: async () => '',
       readFile: async () => null,
       listDir: async () => [],
-      configuredHostnames: () => ['tmex.example.com'],
+      configuredHostnames: () => ['vibeterm.example.com'],
       getCredentials: async () => ({ accountId: 'acct', apiToken: 'tok' }),
       accessClient: {
         getTunnelIngress: async () => [],
         listApps: async () => [
-          { id: 'app-1', aud: 'aud-1', name: 'tmex', domain: 'tmex.example.com' },
+          { id: 'app-1', aud: 'aud-1', name: 'vibeterm', domain: 'vibeterm.example.com' },
         ],
       },
     });
@@ -644,7 +646,7 @@ describe('token-tunnel log + Access probe', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -681,7 +683,7 @@ describe('外部 Access 探测的凭证来源区分', () => {
       if (path === '/tmp/token') {
         return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
       }
-      if (path === '/tmp/hostname') return 'tmex.example.com\n';
+      if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
       return null;
     },
     listDir: async () => [],
@@ -769,7 +771,7 @@ describe('external detector stale-while-revalidate', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -781,7 +783,7 @@ describe('external detector stale-while-revalidate', () => {
     await Bun.sleep(20);
     const second = await d.detect();
     expect(second.detected).toBe(true);
-    expect(second.hostnames).toEqual(['tmex.example.com']);
+    expect(second.hostnames).toEqual(['vibeterm.example.com']);
     expect(second.probing).toBeUndefined();
   });
 
@@ -817,7 +819,7 @@ describe('external detector stale-while-revalidate', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -856,7 +858,7 @@ describe('external detector stale-while-revalidate', () => {
         if (path === '/tmp/token') {
           return Buffer.from(JSON.stringify({ a: 'acct', t: 'tid', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],
@@ -927,7 +929,7 @@ describe('external detector stale-while-revalidate', () => {
         if (path === '/tmp/new') {
           return Buffer.from(JSON.stringify({ a: 'a', t: 'new-id', s: 's' })).toString('base64');
         }
-        if (path === '/tmp/hostname') return 'tmex.example.com\n';
+        if (path === '/tmp/hostname') return 'vibeterm.example.com\n';
         return null;
       },
       listDir: async () => [],

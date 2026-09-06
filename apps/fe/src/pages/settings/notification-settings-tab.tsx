@@ -1,6 +1,6 @@
-import { TelegramBotsTab } from '@tmex/panels/settings/telegram-bots';
-import { WebhooksTab } from '@tmex/panels/settings/webhooks';
-import { WeixinAccountsTab } from '@tmex/panels/settings/weixin-accounts';
+import { TelegramBotsTab } from '@vibeterm/panels/settings/telegram-bots';
+import { WebhooksTab } from '@vibeterm/panels/settings/webhooks';
+import { WeixinAccountsTab } from '@vibeterm/panels/settings/weixin-accounts';
 import { memo } from 'react';
 import { MeshNotificationCard } from './notifications/mesh-notification-card';
 import { NotifyScopeBanner } from './notifications/notify-scope-banner';

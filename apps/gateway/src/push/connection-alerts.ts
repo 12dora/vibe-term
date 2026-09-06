@@ -4,7 +4,7 @@ import type {
   EventType,
   SiteSettings,
   WebhookEvent,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { getSiteSettings, updateDeviceRuntimeStatus } from '../db';
 import { DEVICE_CONNECTION_ERROR_EVENT } from '../events/channels/types';
 import { t } from '../i18n';
@@ -254,7 +254,7 @@ export class ConnectionAlertNotifier {
       await this.eventEmitter(DEVICE_CONNECTION_ERROR_EVENT, {
         site: { name: settings.siteName, url: settings.siteUrl },
         device: { id: device.id, name: device.name, type: device.type, host: device.host },
-        tmux: { sessionName: device.session?.trim() || 'tmex' },
+        tmux: { sessionName: device.session?.trim() || 'vibeterm' },
         payload: {
           message: friendlyMessage || rawMessage,
           errorType,

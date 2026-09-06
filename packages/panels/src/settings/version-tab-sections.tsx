@@ -1,9 +1,9 @@
 // 版本设置页的展示块：信息行、更新检查行、变更日志、升级进度、升级确认弹窗。
 // 数据与动作由 ./use-version-tab 提供，这里只负责渲染。
 
-import type { SystemInfo, UpdateCheckResult } from '@tmex/shared';
-import { formatDate } from '@tmex/shared';
-import { useSiteStore } from '@tmex/stores/react';
+import type { SystemInfo, UpdateCheckResult } from '@vibeterm/shared';
+import { formatDate } from '@vibeterm/shared';
+import { useSiteStore } from '@vibeterm/stores/react';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -13,8 +13,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
 import { AlertTriangle, Download, Loader2, RefreshCw } from 'lucide-react';
 import { Suspense, lazy } from 'react';
 import { useTranslation } from 'react-i18next';

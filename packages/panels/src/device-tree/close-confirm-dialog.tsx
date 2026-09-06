@@ -1,4 +1,4 @@
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { CloseDialogState } from './use-close-dialog';

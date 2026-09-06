@@ -2,7 +2,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 NodesPage / NodesTab 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { TlsStatusResponse, TlsUpdateRequest } from '@tmex/api-client/local/tls-types';
+import type { TlsStatusResponse, TlsUpdateRequest } from '@vibeterm/api-client/local/tls-types';
 import type { TlsMutationKind } from './tls-mutations';
 
 let status: TlsStatusResponse | null = null;
@@ -43,8 +43,8 @@ mock.module('./tls-mutations', () => ({
 }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { ApiClient } = await import('@tmex/api-client');
-const { TlsApi } = await import('@tmex/api-client/local/tls-api');
+const { ApiClient } = await import('@vibeterm/api-client');
+const { TlsApi } = await import('@vibeterm/api-client/local/tls-api');
 const { HttpsSection } = await import('./https-section');
 
 const api = new TlsApi(new ApiClient('', () => Promise.resolve(new Response('{}'))));
@@ -144,7 +144,7 @@ describe('HttpsSection selfsigned', () => {
         sans: ['hub.lan', '192.168.1.10'],
         notBefore: Date.now() - 1000,
         notAfter: Date.now() + 86_400_000 * 100,
-        issuer: 'CN=tmex local CA',
+        issuer: 'CN=VibeTerm local CA',
       },
       listener: { running: true, port: 9443, error: null },
     });
@@ -156,7 +156,7 @@ describe('HttpsSection selfsigned', () => {
     expect(html).toContain('data-testid="https-ca-fingerprint"');
     expect(html).toContain('data-testid="https-ca-download"');
     expect(html).toContain('href="/api/tls/ca.crt"');
-    expect(html).toContain('download="tmex-ca.crt"');
+    expect(html).toContain('download="vibeterm-ca.crt"');
     for (const platform of ['macos', 'ios', 'windows', 'android', 'linux']) {
       expect(html).toContain(`data-testid="https-ca-guide-${platform}"`);
     }
@@ -168,7 +168,7 @@ describe('HttpsSection selfsigned', () => {
     const html = render();
     expect(html).toContain('hub.lan');
     expect(html).toContain('192.168.1.10');
-    expect(html).toContain('CN=tmex local CA');
+    expect(html).toContain('CN=VibeTerm local CA');
     expect(html).toContain('data-testid="https-listener-state"');
     expect(html).toContain('data-testid="https-cert-valid-until"');
   });

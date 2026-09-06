@@ -1,4 +1,4 @@
-import { canonicalHubUrl } from '@tmex/shared/auth';
+import { canonicalHubUrl } from '@vibeterm/shared/auth';
 import type { PooledUplink } from './types';
 import type { AttachedHub, UplinkCandidate } from './uplink-pool';
 

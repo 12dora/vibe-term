@@ -16,7 +16,7 @@ export interface SystemInfo {
   baseVersion: string;
   /** 是否 production 环境 */
   isProd: boolean;
-  /** 是否通过 CLI（tmex init）安装 */
+  /** 是否通过 CLI（vibeterm init）安装 */
   installedViaCli: boolean;
   /** 部署方式 */
   deployment: GatewayDeployment;
@@ -163,7 +163,7 @@ export interface NodeUnreachableErrorBody {
   reason?: NodeUnreachableReason;
 }
 
-/** 节点管理页「卸载 tmex」的稳定错误码 */
+/** 节点管理页「卸载 VibeTerm」的稳定错误码 */
 export type MeshUninstallErrorCode =
   | 'NODE_LOGIN_REQUIRED'
   | 'NODE_UNREACHABLE'
@@ -195,7 +195,7 @@ export interface MeshNodeOperation {
 
 /** 本机可被其他设备访问的地址线索（`GET /api/system/addresses`），供「接入更多设备」面板拼地址 */
 export interface AccessAddressesResponse {
-  /** 网关监听地址（app.env `TMEX_BIND_HOST`） */
+  /** 网关监听地址（app.env `VIBETERM_BIND_HOST`） */
   bindHost: string;
   /** 网关监听端口 */
   port: number;

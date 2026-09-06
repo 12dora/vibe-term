@@ -14,8 +14,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/alert-dialog';
+import { Input } from '@vibeterm/ui/input';
 import { useId, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { RevokeController, RevokePlan } from './types';

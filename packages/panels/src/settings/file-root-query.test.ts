@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { ApiClient } from '@tmex/api-client';
+import type { ApiClient } from '@vibeterm/api-client';
 
-import type { FileRootDto } from '@tmex/shared';
+import type { FileRootDto } from '@vibeterm/shared';
 
 import {
   type FileRootDeviceGroup,

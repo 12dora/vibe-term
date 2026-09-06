@@ -1,4 +1,10 @@
-import { UPGRADE_CANCELLED, combineAbortSignals, errorMessage, withTimeout } from '@tmex/shared';
+import {
+  UPGRADE_CANCELLED,
+  combineAbortSignals,
+  errorMessage,
+  selectReleaseAssetForTarget,
+  withTimeout,
+} from '@vibeterm/shared';
 import {
   PUSH_MAX_ATTEMPTS,
   PUSH_RETRY_BACKOFF_MS,
@@ -6,8 +12,8 @@ import {
   type PushPutOptions,
   type PushTransport,
   runPush,
-} from '@tmex/transfer';
-import { openRange } from '@tmex/transfer/node';
+} from '@vibeterm/transfer';
+import { openRange } from '@vibeterm/transfer/node';
 import { getInstallInfo } from './install-info';
 import {
   type DownloadProgressFn,
@@ -35,7 +41,7 @@ export const REMOTE_UPGRADE_TIMEOUTS = {
 };
 
 // 退避梯度与「支持续传时推几次」是引擎的策略，这里只做转出，不再留第二份定义。
-export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@tmex/transfer';
+export { PUSH_MAX_ATTEMPTS, PUSH_RETRY_BACKOFF_MS } from '@vibeterm/transfer';
 /** 目标不支持续传：重传只能从头来，最多 3 次，且只在链路断了才重试。升级独有。 */
 export const LEGACY_PUSH_MAX_ATTEMPTS = 3;
 /** 问一次已收偏移的超时；问不到就当 0 从头推，不值得为它挂住整个阶段。 */
@@ -80,7 +86,8 @@ type DownloadedRelease = {
 type DownloadFn = (
   version: string,
   signal?: AbortSignal,
-  onProgress?: DownloadProgressFn
+  onProgress?: DownloadProgressFn,
+  assetName?: string
 ) => Promise<DownloadedRelease>;
 
 type Job = {
@@ -103,6 +110,8 @@ type Job = {
   pushPromise: Promise<Response> | null;
   startPromise: Promise<Response> | null;
   upgradeCapabilities: string[];
+  /** 推给目标节点的发行资产名：<2.0.0 的节点只认改名前的那份。 */
+  assetName: string;
 };
 
 type RemoteUpgradeTimeouts = {
@@ -164,6 +173,8 @@ export function startRemoteUpgradeJob(opts: {
   now?: () => number;
   timeouts?: Partial<RemoteUpgradeTimeouts>;
   upgradeCapabilities?: readonly string[];
+  /** 目标节点当前版本；决定推新资产还是改名前的旧资产。未知时按旧资产处理。 */
+  targetCurrentVersion?: string | null;
   /** 单测注入：跳过退避真实等待。 */
   sleep?: SleepFn;
 }): RemoteUpgradeStartResult {
@@ -197,6 +208,7 @@ export function startRemoteUpgradeJob(opts: {
     pushPromise: null,
     startPromise: null,
     upgradeCapabilities: [...(opts.upgradeCapabilities ?? ['staged-package', 'upgrade-cancel'])],
+    assetName: selectReleaseAssetForTarget(opts.targetCurrentVersion, opts.version),
   };
   jobs.set(opts.nodeId, job);
 
@@ -337,10 +349,15 @@ async function runDownloadPhase(
   job.phase = 'download';
   try {
     const downloaded = await withTimeout(
-      deps.download(job.version, job.abort.signal, (downloadedBytes, totalBytes) => {
-        job.downloadedBytes = downloadedBytes;
-        job.downloadTotalBytes = totalBytes;
-      }),
+      deps.download(
+        job.version,
+        job.abort.signal,
+        (downloadedBytes, totalBytes) => {
+          job.downloadedBytes = downloadedBytes;
+          job.downloadTotalBytes = totalBytes;
+        },
+        job.assetName
+      ),
       deps.timeouts.downloadMs,
       'download timeout'
     );
@@ -375,7 +392,7 @@ function supportsStagedResume(job: Job): boolean {
 /**
  * 推包阶段。目标支持 `staged-package-resume` 时先问一次已收偏移，只补发缺的那一段；
  * 链路断掉（中继复位 / 顶号 / 上行切换）退避重试，整个阶段共用 `pushMs` 预算。
- * 字节搬运本身由 `@tmex/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
+ * 字节搬运本身由 `@vibeterm/transfer` 的 `runPush` 驱动，这里只留升级作业的状态机。
  */
 async function runPushPhase(
   job: Job,
@@ -434,6 +451,7 @@ function sendPackageManifest(
     version: job.version,
     sums: downloaded.sums,
     sig: downloaded.sig,
+    asset: job.assetName,
     signal: job.abort.signal,
   });
 }
@@ -699,7 +717,13 @@ function releaseCacheDir(): string {
 async function defaultDownload(
   version: string,
   signal?: AbortSignal,
-  onProgress?: DownloadProgressFn
+  onProgress?: DownloadProgressFn,
+  assetName?: string
 ): Promise<DownloadedRelease> {
-  return downloadVerifiedRelease(version, { cacheDir: releaseCacheDir(), signal, onProgress });
+  return downloadVerifiedRelease(version, {
+    cacheDir: releaseCacheDir(),
+    signal,
+    onProgress,
+    assetName,
+  });
 }

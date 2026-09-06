@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { canonicalHubUrl } from '@tmex/shared/auth';
-import { generateTenantKey } from '@tmex/shared/relay';
+import { canonicalHubUrl } from '@vibeterm/shared/auth';
+import { generateTenantKey } from '@vibeterm/shared/relay';
 import { KeyLogStore } from '../auth/key-log-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';
 import { NodeIdentityStore } from '../auth/node-identity-store';

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { LinkStream, StreamChunk, StreamCloseInfo } from '@tmex/shared/link';
+import type { LinkStream, StreamChunk, StreamCloseInfo } from '@vibeterm/shared/link';
 import { pumpHubRelay } from './hub-relay-pump';
 
 const never = <T>(): Promise<T> => new Promise<T>(() => {});

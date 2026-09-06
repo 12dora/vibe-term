@@ -1,6 +1,6 @@
 // 工具确认域动作：本地乐观移除 + 冲突时静默重拉 pending 列表。
 
-import { decideAgentConfirmation, fetchAgentConfirmations } from '@tmex/api-client';
+import { decideAgentConfirmation, fetchAgentConfirmations } from '@vibeterm/api-client';
 import { type AgentSessionActionsDeps, reportActionError } from './agent-session-deps';
 import type { AgentActions } from './agent-state';
 

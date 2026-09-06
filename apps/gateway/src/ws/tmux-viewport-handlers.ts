@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { type BorshDispatchHost, type BorshKindHandler, schemaHandler } from './borsh-kind-types';
 
 export function createTmuxViewportHandlers(

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url, randomBytes } from '@tmex/shared/auth';
+import { encodeBase64url, randomBytes } from '@vibeterm/shared/auth';
 import {
   KEY_LOG_PAGE_MAX_BYTES,
   UPLINK_CTL_MAX_BYTES,

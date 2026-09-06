@@ -8,7 +8,7 @@ function Progress({ value = 0, className }: { value?: number; className?: string
       className={cn('bg-secondary relative h-1.5 w-full overflow-hidden rounded-full', className)}
     >
       <div
-        className="bg-primary h-full rounded-full transition-[width] duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none"
+        className="bg-primary h-full rounded-full transition-[width] duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none"
         style={{ width: `${pct}%` }}
       />
     </div>

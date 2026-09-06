@@ -1,7 +1,7 @@
 // 重启等待核心：注入 fetch + 假时钟，不依赖真实定时器；超时与取消两条路径用真实的短定时器跑。
 
 import { describe, expect, test } from 'bun:test';
-import type { FetchLike } from '@tmex/api-client';
+import type { FetchLike } from '@vibeterm/api-client';
 import { probeHealth, readStartedAt, waitForRestart } from './wait-for-restart';
 
 type Step = number | 'down';

@@ -16,7 +16,7 @@ export interface AgentSystemPromptContext {
 const Identity = ({ paneId }: { paneId: string | null }) => (
   <Section>
     <Item>
-      You are a terminal assistant agent operating inside tmex, a tmux web terminal manager.
+      You are a terminal assistant agent operating inside VibeTerm, a tmux web terminal manager.
     </Item>
     <Item>
       You are bound to a single tmux pane (pane {paneId ?? 'none'}). You can read the pane screen,
@@ -29,7 +29,7 @@ const Identity = ({ paneId }: { paneId: string | null }) => (
 const Environment = ({ env }: { env: AgentEnvironmentInfo }) => (
   <Section title="## Entry host">
     <Item>
-      These facts describe the ENTRY host where tmex attached the tmux session — not necessarily
+      These facts describe the ENTRY host where VibeTerm attached the tmux session — not necessarily
       where your commands ultimately run.
     </Item>
     {env.deviceName && (

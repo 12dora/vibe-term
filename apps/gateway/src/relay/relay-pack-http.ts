@@ -1,4 +1,4 @@
-import { bytesEqual, encodeBase64url } from '@tmex/shared/auth';
+import { bytesEqual, encodeBase64url } from '@vibeterm/shared/auth';
 import {
   RELAY_KEYLOG_SEQ_MISMATCH,
   RELAY_PACK_MAX_BYTES,
@@ -7,7 +7,7 @@ import {
   kdfParamsToWire,
   relaySeqFromWire,
   relaySeqToWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
 import type { RelayConfigStore } from './relay-config-store';
 import type { RelayEnrollLimiter } from './relay-enroll-limiter';

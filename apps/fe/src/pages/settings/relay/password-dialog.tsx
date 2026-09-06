@@ -3,8 +3,8 @@
 // 默认「保留」——改口令多数时候只是换一把新的，不该顺手把在线租户全踢下线。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
-import type { RelayPasswordRequest } from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
+import type { RelayPasswordRequest } from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -12,8 +12,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/dialog';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

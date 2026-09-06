@@ -1,4 +1,4 @@
-import type { GatewayPaneScreenSnapshot, GatewayRebaseReason } from '@tmex/ws-client';
+import type { GatewayPaneScreenSnapshot, GatewayRebaseReason } from '@vibeterm/ws-client';
 import type { TerminalSurfaceTarget } from '../TerminalSurface';
 import type { TerminalDiagnosticStage } from '../terminal-diagnostics';
 

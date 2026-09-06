@@ -4,7 +4,7 @@
 // 这里只出按钮行：内容必须由调用方用 <TabsContent> 放进**同一个** <Tabs> 根下，
 // 关联 id（aria-controls / role=tabpanel / aria-labelledby）才立得起来。
 
-import { TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
+import { TabsList, TabsTrigger, pillTabTriggerClassName } from '@vibeterm/ui/tabs';
 
 export interface GuideTabOption<T extends string> {
   value: T;

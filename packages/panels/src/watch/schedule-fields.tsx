@@ -1,5 +1,5 @@
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { useTranslation } from 'react-i18next';
 import type { SetWatchRuleField } from './use-watch-rule-draft';
 import {

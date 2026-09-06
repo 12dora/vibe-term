@@ -1,4 +1,4 @@
-import type { DeviceConnectionStatus } from '@tmex/panels';
+import type { DeviceConnectionStatus } from '@vibeterm/panels';
 import type { PendingConnectionRequest, PendingConnectionSnapshot } from './device-intent-store';
 
 export interface DeviceConnectionSnapshot {

@@ -1,9 +1,12 @@
 // 设备对话框提交逻辑：payload 构造（纯函数）、create/update mutation 选择与错误提示。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { createDevice as createDeviceApi, updateDevice as updateDeviceApi } from '@tmex/api-client';
-import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import {
+  createDevice as createDeviceApi,
+  updateDevice as updateDeviceApi,
+} from '@vibeterm/api-client';
+import type { CreateDeviceRequest, Device, UpdateDeviceRequest } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

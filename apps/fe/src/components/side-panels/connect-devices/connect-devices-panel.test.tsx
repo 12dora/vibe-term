@@ -2,9 +2,9 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染，点不了标签；换页后的内容直接渲染对应子组件。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { INSTALL_COMMAND } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { INSTALL_COMMAND } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { AccessAddress } from './access-addresses';
 
 installWindowStorage();
@@ -18,9 +18,9 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const ConnectDevicesPanel = (await import('./connect-devices-panel')).default;
@@ -174,7 +174,7 @@ describe('ConnectDevicesPanel', () => {
 });
 
 const ADDRESSES: AccessAddress[] = [
-  { kind: 'tunnel', url: 'https://tmex.example.com' },
+  { kind: 'tunnel', url: 'https://vibeterm.example.com' },
   { kind: 'lan', url: 'http://192.168.1.20:9883' },
 ];
 
@@ -281,7 +281,7 @@ describe('ComputerGuide 的路径选择', () => {
     expect(html).toContain('connectDevices.computer.join.uplink.relayUrl');
     expect(html).toContain(RELAY_URL);
     expect(html).toContain('data-testid="command-block-join-tenant-id"');
-    expect(html).toContain(`tmex relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
+    expect(html).toContain(`vibeterm relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
   });
 
   test('一级 tab 之下再套一层二级 tab，两层各只挂当前面板', () => {
@@ -333,7 +333,7 @@ describe('本机自建中继的三步', () => {
     expect(html).toContain('data-testid="connect-relay-password-done"');
     expect(html).toContain('connectDevices.computer.relayHost.enroll.description');
     expect(html).toContain('data-testid="connect-relay-enroll-link"');
-    expect(html).toContain(`tmex relay enroll &#x27;${RELAY_URL}&#x27;`);
+    expect(html).toContain(`vibeterm relay enroll &#x27;${RELAY_URL}&#x27;`);
     // 没有租户编号，加入步骤给不出可执行的命令。
     expect(html).toContain('connectDevices.computer.relayHost.invite.blocked');
     expect(html).not.toContain('data-testid="connect-relay-goto-join"');
@@ -444,7 +444,7 @@ describe('加入码折叠区', () => {
     expect(html).toContain('connectDevices.computer.join.token.unavailable');
     expect(html).toContain('connectDevices.computer.join.token.description');
     expect(html).not.toContain('data-testid="connect-join-generate"');
-    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('vibeterm.example.com');
     expect(html).toContain(`--token ${TOKEN_KEY} --name ${NAME_KEY}`);
     expect(html).toContain('connectDevices.computer.join.run.description');
     expect(html).not.toContain('data-testid="connect-join-pending"');
@@ -488,7 +488,9 @@ describe('joinCommandPreview', () => {
         tokenPlaceholder: '<join-token>',
         namePlaceholder: '<node-name>',
       })
-    ).toBe("tmex hub join 'https://tmex.example.com' --token <join-token> --name <node-name>");
+    ).toBe(
+      "vibeterm hub join 'https://vibeterm.example.com' --token <join-token> --name <node-name>"
+    );
   });
 
   test('可信 hub 地址与输入的节点名实时进命令，节点名按真实命令的规则引用', () => {
@@ -499,7 +501,7 @@ describe('joinCommandPreview', () => {
         tokenPlaceholder: '<join-token>',
         namePlaceholder: '<node-name>',
       })
-    ).toBe(`tmex hub join '${HUB_URL}' --token <join-token> --name 'my node'`);
+    ).toBe(`vibeterm hub join '${HUB_URL}' --token <join-token> --name 'my node'`);
   });
 
   test('不可信的 hub 地址一律不进命令（畸形值等于命令注入）', () => {
@@ -510,7 +512,7 @@ describe('joinCommandPreview', () => {
         tokenPlaceholder: '<t>',
         namePlaceholder: '<n>',
       })
-    ).toBe("tmex hub join 'https://tmex.example.com' --token <t> --name a");
+    ).toBe("vibeterm hub join 'https://vibeterm.example.com' --token <t> --name a");
   });
 });
 

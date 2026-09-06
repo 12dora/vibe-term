@@ -3,10 +3,10 @@ import { Plus, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { fetchDevices } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { fetchDevices } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 
 import { FileRootFormModal } from './file-root-form-modal';
 import {

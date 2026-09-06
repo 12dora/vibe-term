@@ -1,8 +1,8 @@
 // 远程访问的纯推导：状态徽标、向导步进、主机名校验、轮询节奏与错误 / 进度文案键。
 
 import { describe, expect, test } from 'bun:test';
-import { TunnelApiError } from '@tmex/api-client/local/tunnel-api';
-import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@tmex/shared';
+import { TunnelApiError } from '@vibeterm/api-client/local/tunnel-api';
+import type { LocalAuthStatus, TunnelAccessMode, TunnelStatusResponse } from '@vibeterm/shared';
 import {
   TUNNEL_ACTIVE_POLL_MS,
   TUNNEL_IDLE_POLL_MS,
@@ -120,7 +120,7 @@ describe('tunnelPill', () => {
     );
   });
 
-  test('接管来的隧道按探测到的运行态显示，不看 tmex 自己的进程', () => {
+  test('接管来的隧道按探测到的运行态显示，不看 VibeTerm 自己的进程', () => {
     const config = { ...status().config, mode: 'named' as const, externallyManaged: true };
     const external = { ...status().external, detected: true, running: true };
     expect(tunnelPill(status({ config, external }))).toBe('running');
@@ -690,13 +690,13 @@ function withAccess(
   const base = status(overrides);
   return {
     ...base,
-    config: { ...base.config, mode: 'named', hostname: 'tmex.example.com' },
+    config: { ...base.config, mode: 'named', hostname: 'vibeterm.example.com' },
     process: { ...base.process, state: 'running' },
     access: {
       ...base.access,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       ...accessOverrides,
     },
@@ -736,14 +736,14 @@ describe('accessPill', () => {
     expect(accessPill(withAccess())).toBe('protected');
   });
 
-  test('tmex 没托管应用时用只读探测：控制台已覆盖 / 查不了 / 查过了没有', () => {
+  test('VibeTerm 没托管应用时用只读探测：控制台已覆盖 / 查不了 / 查过了没有', () => {
     const named = (
       externalAccess: TunnelStatusResponse['external']['externalAccess'] | undefined
     ): TunnelStatusResponse => {
       const base = status();
       return {
         ...base,
-        config: { ...base.config, mode: 'named', hostname: 'tmex.example.com' },
+        config: { ...base.config, mode: 'named', hostname: 'vibeterm.example.com' },
         external: { ...base.external, externalAccess },
       };
     };
@@ -769,7 +769,7 @@ describe('accessPill', () => {
     expect(accessPill(status())).toBe('notConfigured');
   });
 
-  test('tmex 已托管的应用优先于只读探测', () => {
+  test('VibeTerm 已托管的应用优先于只读探测', () => {
     const covered = {
       checked: true,
       hostnameMatch: true,
@@ -910,7 +910,7 @@ describe('wouldDropLastProtection', () => {
 });
 
 describe('暴露确认', () => {
-  test('只有会把 tmex 开放出去的动作才需要确认', () => {
+  test('只有会把 VibeTerm 开放出去的动作才需要确认', () => {
     expect(isExposingAction({ action: 'quick_start' })).toBe(true);
     expect(isExposingAction({ action: 'start' })).toBe(true);
     expect(isExposingAction({ action: 'create', hostname: 'a.example.com' })).toBe(true);
@@ -998,7 +998,7 @@ describe('暴露确认', () => {
 
 describe('isValidHostname', () => {
   test('接受小写多级主机名', () => {
-    expect(isValidHostname('tmex.example.com')).toBe(true);
+    expect(isValidHostname('vibeterm.example.com')).toBe(true);
     expect(isValidHostname('a-b.c-d.example.co.uk')).toBe(true);
   });
 
@@ -1010,14 +1010,14 @@ describe('isValidHostname', () => {
     expect(isValidHostname('-a.example.com')).toBe(false);
     expect(isValidHostname('a-.example.com')).toBe(false);
     expect(isValidHostname(`${'a'.repeat(64)}.example.com`)).toBe(false);
-    expect(isValidHostname('tmex.example.com/path')).toBe(false);
+    expect(isValidHostname('vibeterm.example.com/path')).toBe(false);
   });
 });
 
 describe('isValidTunnelName', () => {
   test('接受小写字母、数字、连字符与下划线', () => {
-    expect(isValidTunnelName('tmex')).toBe(true);
-    expect(isValidTunnelName('tmex-01_a')).toBe(true);
+    expect(isValidTunnelName('vibeterm')).toBe(true);
+    expect(isValidTunnelName('vibeterm-01_a')).toBe(true);
     expect(isValidTunnelName('9')).toBe(true);
   });
 
@@ -1026,10 +1026,10 @@ describe('isValidTunnelName', () => {
     expect(isValidTunnelName('a/b')).toBe(false);
     expect(isValidTunnelName('a\\b')).toBe(false);
     expect(isValidTunnelName('a.b')).toBe(false);
-    expect(isValidTunnelName('Tmex')).toBe(false);
+    expect(isValidTunnelName('VibeTerm')).toBe(false);
     expect(isValidTunnelName('')).toBe(false);
-    expect(isValidTunnelName('-tmex')).toBe(false);
-    expect(isValidTunnelName('_tmex')).toBe(false);
+    expect(isValidTunnelName('-vibeterm')).toBe(false);
+    expect(isValidTunnelName('_vibeterm')).toBe(false);
     expect(isValidTunnelName('a'.repeat(64))).toBe(false);
     expect(isValidTunnelName('a'.repeat(63))).toBe(true);
   });

@@ -1,4 +1,4 @@
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type {
   HubAdvertisement,
   HubAttachmentsMessage,
@@ -6,7 +6,7 @@ import type {
   HubMode,
   HubNotWriterError,
   HubWriteForwardMessage,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import type { UserStore } from '../auth/user-store';
 import { RtcHubRouteTable } from '../mesh/rtc/signaling';

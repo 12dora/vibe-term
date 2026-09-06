@@ -3,8 +3,8 @@
 // 口令是给别人抄走的东西，不是给人记的：默认生成一串足够长的随机串，用户想自己填也随时能改。
 // 字母表去掉了 0/O、1/l/I 这些抄写时会认错的字符——口令多半要口头或截图传给另一台机器。
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Check, Copy, Eye, EyeOff, RefreshCw } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -139,7 +139,7 @@ function CopyValueButton({ value, testId }: { value: string; testId: string }) {
 
   return (
     <Button type="button" size="xs" variant="ghost" onClick={copy} data-testid={testId}>
-      {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+      {copied ? <Check className="vibeterm-scale-in" /> : <Copy className="vibeterm-scale-in" />}
       <span>{t(copied ? 'nodes.actions.copied' : 'nodes.actions.copy')}</span>
       <output className="sr-only" aria-live="polite">
         {copied ? t('nodes.actions.copied') : ''}

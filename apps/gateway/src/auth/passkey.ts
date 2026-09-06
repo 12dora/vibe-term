@@ -11,15 +11,15 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/server';
-import type { AddPasskeyPayload, Delegation, VerifyPasskeyAssertion } from '@tmex/shared/auth';
-import type { VerifyDelegationPasskey } from '@tmex/shared/auth';
+import type { AddPasskeyPayload, Delegation, VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
+import type { VerifyDelegationPasskey } from '@vibeterm/shared/auth';
 import {
   decodeBase64url,
   decodePasskeyAssertion,
   encodeBase64url,
   encodePasskeyAssertion,
   verifyDelegationTimes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { UserStore } from './user-store';
 
 export type CreateRegistrationOptionsInput = {
@@ -95,7 +95,8 @@ export async function createRegistrationOptions(
   input: CreateRegistrationOptionsInput
 ): Promise<PublicKeyCredentialCreationOptionsJSON> {
   return generateRegistrationOptions({
-    rpName: 'tmex',
+    // 仅用于认证器 UI 的展示名；rpID 由 origin 推导，不随品牌改名变化（改动会作废已注册的通行密钥）
+    rpName: 'VibeTerm',
     rpID: input.rpId,
     userName: input.uid,
     userID: Uint8Array.from(new TextEncoder().encode(input.userId)),

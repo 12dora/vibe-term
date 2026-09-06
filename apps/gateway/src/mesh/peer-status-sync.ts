@@ -1,4 +1,4 @@
-import { decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
+import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
 import { isRecord, jsonStable, parseSeq } from './ctl';
 import { jsonText } from './json-text';
 import { sanitizeEndpoints } from './peer-dc-upgrade';

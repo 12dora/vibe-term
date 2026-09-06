@@ -40,7 +40,7 @@ describe('parseArgoTunnelCert', () => {
 
 describe('ensureManagedOriginCert', () => {
   test('copies default-path cert into tunnelDir at 0600 and never deletes the original', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-cert-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-cert-'));
     try {
       const homeDir = join(root, 'home');
       const tunnelDir = join(root, 'tunnel');
@@ -61,7 +61,7 @@ describe('ensureManagedOriginCert', () => {
   });
 
   test('returns false when neither path exists', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-cert-empty-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-cert-empty-'));
     try {
       expect(ensureManagedOriginCert(join(root, 't'), join(root, 'h'))).toBe(false);
     } finally {

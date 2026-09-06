@@ -1,4 +1,4 @@
-import type { LocalAuthStatus, TmexRoles } from '@tmex/shared';
+import type { LocalAuthStatus, VibeTermRoles } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { config } from '../config';
@@ -136,7 +136,7 @@ export function validateLocalAuthPassword(password: string): LocalAuthDenied | {
 }
 
 export function defaultLoginEnforced(
-  roles: TmexRoles = config.roles,
+  roles: VibeTermRoles = config.roles,
   localAuthEffective: () => boolean = readLocalAuthEffective
 ): boolean {
   return roles.hub || roles.node || localAuthEffective();

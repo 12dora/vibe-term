@@ -1,4 +1,4 @@
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { GatewaySession } from '../ws/gateway-session';
 import type { ConnectionLookupResult } from './mesh-deps';
 

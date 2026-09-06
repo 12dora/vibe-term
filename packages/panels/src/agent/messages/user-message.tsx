@@ -1,4 +1,4 @@
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { memo } from 'react';
 
 export const UserMessage = memo(function UserMessage({

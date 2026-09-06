@@ -18,7 +18,7 @@ export async function createLocalDevice(
 }
 
 export interface WaitForCanvasTerminalOptions {
-  // 除 canvas 元素外，是否一并断言 __tmexE2eTerminalRenderer === 'canvas'
+  // 除 canvas 元素外，是否一并断言 __vibetermE2eTerminalRenderer === 'canvas'
   requireCanvasRenderer?: boolean;
 }
 
@@ -44,7 +44,7 @@ export async function waitForCanvasTerminal(
     .poll(
       () =>
         page.evaluate(() => ({
-          renderer: (window as any).__tmexE2eTerminalRenderer ?? null,
+          renderer: (window as any).__vibetermE2eTerminalRenderer ?? null,
           hasCanvas: Boolean(document.querySelector('.xterm canvas')),
         })),
       { timeout: 20_000 }
@@ -69,7 +69,7 @@ export async function readTerminalLines(
 
   return page.evaluate(
     (args) => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) return [];
 
       const buffer = term.buffer.active;
@@ -103,7 +103,7 @@ export interface FocusTerminalOptions {
 export async function focusTerminal(page: Page, options: FocusTerminalOptions = {}): Promise<void> {
   if (options.waitForTextarea) {
     await expect
-      .poll(() => page.evaluate(() => Boolean((globalThis as any).__tmexE2eXterm?.textarea)), {
+      .poll(() => page.evaluate(() => Boolean((globalThis as any).__vibetermE2eXterm?.textarea)), {
         timeout: 15_000,
       })
       .toBeTruthy();

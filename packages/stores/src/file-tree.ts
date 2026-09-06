@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { RuntimeCore } from './runtime';
+import { migrateLocalStorageKey } from './storage-migration';
 
 // 文件树展开状态，按 (rootId, path) 复合键记录（不同设备/根下路径可能同名）。
 // 持久化到 localStorage，刷新后恢复展开（req3）；陈旧键（根/设备已不存在）在加载时由 UI 剪枝。
@@ -20,6 +21,8 @@ export interface FileTreeState {
 }
 
 export function createFileTreeStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
+  const fileTreeStorageKey = `${core.storagePrefix}vibeterm-file-tree`;
+  migrateLocalStorageKey(`${core.storagePrefix}tmex-file-tree`, fileTreeStorageKey);
   return create<FileTreeState>()(
     persist(
       (set) => ({
@@ -67,7 +70,7 @@ export function createFileTreeStore(core: Pick<RuntimeCore, 'storagePrefix'>) {
             return changed ? { expanded: next } : s;
           }),
       }),
-      { name: `${core.storagePrefix}tmex-file-tree`, partialize: (s) => ({ expanded: s.expanded }) }
+      { name: fileTreeStorageKey, partialize: (s) => ({ expanded: s.expanded }) }
     )
   );
 }

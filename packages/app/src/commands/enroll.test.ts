@@ -38,9 +38,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -83,9 +83,9 @@ describe('enroll', () => {
       },
     });
     expect(result.token).toHaveLength(JOIN_TOKEN_CHARS);
-    expect(result.joinCommand).toContain('tmex hub join');
+    expect(result.joinCommand).toContain('vibeterm hub join');
     expect(result.joinCommand).toContain(
-      `tmex hub join https://hub.example --token ${result.token}`
+      `vibeterm hub join https://hub.example --token ${result.token}`
     );
     expect(result.admitted).toBe(true);
     const user = auth.userStore.getByUsername('frank');
@@ -98,8 +98,8 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
       },
     });
     handles.push(auth);
@@ -117,7 +117,7 @@ describe('enroll', () => {
     });
     expect(result.joinCommand).toContain("'https://hub.example/join?x=1&y=2'");
     expect(result.joinCommand).toContain('--token');
-    expect(result.joinCommand.startsWith('tmex hub join ')).toBe(true);
+    expect(result.joinCommand.startsWith('vibeterm hub join ')).toBe(true);
   });
 
   test('hub enroll with selfsigned TLS appends CA fingerprint to the join token', async () => {
@@ -125,9 +125,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -136,7 +136,7 @@ describe('enroll', () => {
       password: 'enroll-pass-word',
       log: () => undefined,
     });
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     await new TlsConfigStore(auth.db).upsert({
       mode: 'selfsigned',
@@ -157,9 +157,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -190,9 +190,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -237,9 +237,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'node',
-        TMEX_HUB_URL: '',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+        VIBETERM_HUB_URL: '',
       },
     });
     handles.push(auth);
@@ -290,7 +290,7 @@ describe('enroll', () => {
       },
     });
     const hubUrl = `http://127.0.0.1:${server.port}`;
-    auth.env.TMEX_HUB_URL = hubUrl;
+    auth.env.VIBETERM_HUB_URL = hubUrl;
     const result = await runEnroll(parsed, {
       auth,
       password: 'enroll-pass-word',
@@ -316,9 +316,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'node',
-        TMEX_HUB_URL: 'http://127.0.0.1:9',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+        VIBETERM_HUB_URL: 'http://127.0.0.1:9',
       },
     });
     handles.push(auth);
@@ -356,9 +356,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'node',
-        TMEX_HUB_URL: 'http://127.0.0.1:9',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+        VIBETERM_HUB_URL: 'http://127.0.0.1:9',
       },
     });
     handles.push(auth);
@@ -390,9 +390,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -445,9 +445,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'node',
-        TMEX_HUB_URL: '',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+        VIBETERM_HUB_URL: '',
       },
     });
     handles.push(auth);
@@ -492,7 +492,7 @@ describe('enroll', () => {
       },
     });
     const hubUrl = `http://127.0.0.1:${server.port}`;
-    auth.env.TMEX_HUB_URL = hubUrl;
+    auth.env.VIBETERM_HUB_URL = hubUrl;
     const result = await runEnroll(parsed, {
       auth,
       password: 'enroll-pass-word',
@@ -591,9 +591,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -630,9 +630,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);
@@ -687,9 +687,9 @@ describe('enroll', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
-        TMEX_HUB_PUBLIC_URL: 'https://hub.example',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
+        VIBETERM_HUB_PUBLIC_URL: 'https://hub.example',
       },
     });
     handles.push(auth);

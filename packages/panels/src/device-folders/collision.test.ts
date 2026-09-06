@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { CollisionDetection } from '@dnd-kit/core';
-import type { DeviceFolder, DeviceFolderLayout } from '@tmex/shared';
+import type { DeviceFolder, DeviceFolderLayout } from '@vibeterm/shared';
 import { deviceFolderCollisionDetection } from './collision';
 import {
   ROOT_CONTAINER_ID,

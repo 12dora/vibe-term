@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
 import { acceptTcpStream } from './accept-tcp-stream';
 import { peerStreamSlotsInUse, resetPeerStreamSlots } from './budget';

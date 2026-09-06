@@ -1,12 +1,16 @@
 // 设备事件与 tmux 事件（bell / notification / pane-active）的状态与副作用处理。
 
-import { claimToastFor, formatTerminalNotificationToast, useBellStore } from '@tmex/notifications';
+import {
+  claimToastFor,
+  formatTerminalNotificationToast,
+  useBellStore,
+} from '@vibeterm/notifications';
 import type {
   DeviceEventType,
   EventDevicePayload,
   EventTmuxPayload,
   TmuxEventType,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { toAppPath } from './app-navigation';
 import { type RuntimeCore, hostAppPath } from './runtime';
 import type { SiteStore } from './site';
@@ -108,7 +112,7 @@ export function handleDeviceEvent(ctx: TmuxDomainEventContext, payload: EventDev
 }
 
 const handleBell: TmuxEventHandler = (ctx, payload) => {
-  console.log('[tmex] bell', payload.data);
+  console.log('[vibeterm] bell', payload.data);
   const data = eventData(payload);
   const paneId = stringField(data, 'paneId') ?? stringField(data, 'windowId');
   if (paneId) {
@@ -128,7 +132,7 @@ function shouldSuppressNotification(ctx: TmuxDomainEventContext): boolean {
 }
 
 const handleNotification: TmuxEventHandler = (ctx, payload) => {
-  console.log('[tmex] notification', payload.data);
+  console.log('[vibeterm] notification', payload.data);
   if (shouldSuppressNotification(ctx)) {
     return;
   }

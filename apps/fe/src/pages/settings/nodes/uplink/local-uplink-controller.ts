@@ -20,8 +20,8 @@ import {
   useMeshNodes,
 } from '@/node/mesh-nodes';
 import { type UseMeshRelayResult, useMeshRelay } from '@/node/mesh-relay';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { useCallback, useMemo } from 'react';
 import { PLACEHOLDER_KDF, type ResolvedMode } from '../management/types';
 import { type RelayActionsController, useRelayActions } from '../relay/use-relay-actions';

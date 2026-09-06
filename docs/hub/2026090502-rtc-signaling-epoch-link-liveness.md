@@ -1,8 +1,10 @@
 # 直连信令代次、链路活性与在途流保护（1.1.31）
 
+> 本文写于产品名为 tmex 时期（2026-09 改名 VibeTerm），历史内容保持原样。
+
 ## 背景
 
-生产 hub 日志反复出现 `[mesh][rtc] dial failed reason=datachannel open timeout` 与 `Unexpected remote answer description in signaling state stable`，熔断器升到 level 3/4（240 s / 480 s 冷却）后再也回不来。经中继推送 13 MB 升级包时收到 `rst recv reason=relay-rst` 导致整次升级失败。round 28 探索（`prompt-archives/2026090502-round28-net-perf-smell/sub/EX1、EX3`）定位到两组根因。
+生产 hub 日志反复出现 `[mesh][rtc] dial failed reason=datachannel open timeout` 与 `Unexpected remote answer description in signaling state stable`，熔断器升到 level 3/4（240 s / 480 s 冷却）后再也回不来。经中继推送 13 MB 升级包时收到 `rst recv reason=relay-rst` 导致整次升级失败。round 28 探索定位到两组根因。
 
 ## 根因
 
@@ -21,7 +23,7 @@
 
 ### ICE / 拨号
 
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`TMEX_RTC_PORT_RANGE=begin-end` 映射端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤）。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤）。
 - `connectToPeer` 四阶段共用一个 15 s deadline；`waitLocalFingerprint` 改回调扇出。
 - 熔断器 `skipKinds` 排除本地信令状态错误；到达永久禁用阈值后每 10 min 允许一次 `forceProbe`。
 - 按 peer 聚合候选对类型的成功/失败与拨号耗时，`[mesh][rtc] summary` 每 peer 最多 60 s 一条。

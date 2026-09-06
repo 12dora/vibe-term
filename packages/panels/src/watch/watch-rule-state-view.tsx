@@ -1,8 +1,13 @@
-import type { LocaleCode, WatchRuleDto, WatchRuleSampleDto, WatchRuleStateDto } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
-import { useSiteStore } from '@tmex/stores/react';
-import { Badge } from '@tmex/ui/badge';
-import { Button } from '@tmex/ui/button';
+import type {
+  LocaleCode,
+  WatchRuleDto,
+  WatchRuleSampleDto,
+  WatchRuleStateDto,
+} from '@vibeterm/shared';
+import { formatDateTime } from '@vibeterm/shared';
+import { useSiteStore } from '@vibeterm/stores/react';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
 import { ArrowLeft, Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { type WatchQueryStatus, useWatchRuleState } from './use-watch-rules';

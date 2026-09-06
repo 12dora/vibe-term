@@ -1,10 +1,10 @@
 // 上传/下载会话状态：分块传输期间在内存维护 session + 本机临时文件。
-// 字节落盘交给 `@tmex/transfer/node` 的 `ResumableSink`（乱序区间 + 位图 + rename 落位），
+// 字节落盘交给 `@vibeterm/transfer/node` 的 `ResumableSink`（乱序区间 + 位图 + rename 落位），
 // 这里只管会话生命周期。清理三重保障：显式清理 + 周期 GC + 启动孤儿扫描。
 import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { ResumableSink, type SinkDescriptor } from '@tmex/transfer/node';
+import { ResumableSink, type SinkDescriptor } from '@vibeterm/transfer/node';
 
 const sink = new ResumableSink();
 
@@ -123,7 +123,7 @@ export function createUploadSession(args: {
 }): UploadSession {
   const now = Date.now();
   sweepStale(now);
-  const tmpDir = mkdtempSync(join(tmpdir(), 'tmex-up-'));
+  const tmpDir = mkdtempSync(join(tmpdir(), 'vibeterm-up-'));
   const tmpPath = join(tmpDir, 'f');
   const id = crypto.randomUUID();
   const session: UploadSession = {
@@ -286,7 +286,15 @@ const transferGcTimer = setInterval(() => sweepStale(Date.now()), 5 * 60_000);
 transferGcTimer.unref?.();
 
 // 传输临时目录前缀（上传会话 / 下载拉取 / 节点间接收暂存），用于启动孤儿扫描
-const ORPHAN_PREFIXES = ['tmex-up-', 'tmex-dl-', 'tmex-rx-'];
+// 新前缀 + tmex 时期的旧前缀：升级后残留的旧临时目录同样要被清掉
+const ORPHAN_PREFIXES = [
+  'vibeterm-up-',
+  'vibeterm-dl-',
+  'vibeterm-rx-',
+  'tmex-up-',
+  'tmex-dl-',
+  'tmex-rx-',
+];
 const ORPHAN_MAX_AGE_MS = 60 * 60_000; // 仅清理 >1h 的，确保不会误删进行中传输（即便多实例）
 
 // 启动时扫描 tmpdir，清理上次崩溃/异常退出残留的传输临时目录。由 gateway 启动时调用一次。

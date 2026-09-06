@@ -1,9 +1,9 @@
 // TLS 变更锁：保存 / 续签互斥、ACME 签发期间全禁用、失败后必须重拉状态、停监听前必须确认。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import { TlsApi, TlsApiError } from '@tmex/api-client/local/tls-api';
-import type { TlsStatusResponse, TlsUpdateRequest } from '@tmex/api-client/local/tls-types';
+import { ApiClient } from '@vibeterm/api-client';
+import { TlsApi, TlsApiError } from '@vibeterm/api-client/local/tls-api';
+import type { TlsStatusResponse, TlsUpdateRequest } from '@vibeterm/api-client/local/tls-types';
 import { TlsMutationController, isTlsBusy, stopsRunningListener } from './tls-mutations';
 
 function tls(overrides: Partial<TlsStatusResponse> = {}): TlsStatusResponse {

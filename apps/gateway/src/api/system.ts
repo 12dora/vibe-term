@@ -1,4 +1,4 @@
-import type { StartUpgradeRequest } from '@tmex/shared';
+import type { StartUpgradeRequest } from '@vibeterm/shared';
 import { t } from '../i18n';
 import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
@@ -9,10 +9,10 @@ import { STAGED_PACKAGE_MAX_BYTES } from '../system/upgrade';
 import { json } from './http';
 
 // 构建期 define：managed compile 为 true，使自更新模块落入死分支并被剔除。
-declare const TMEX_MANAGED_BUILD: boolean | undefined;
+declare const VIBETERM_MANAGED_BUILD: boolean | undefined;
 
 function isManagedBuild(): boolean {
-  return typeof TMEX_MANAGED_BUILD !== 'undefined' && TMEX_MANAGED_BUILD === true;
+  return typeof VIBETERM_MANAGED_BUILD !== 'undefined' && VIBETERM_MANAGED_BUILD === true;
 }
 
 function managedExternallyResponse(status = 403): Response {
@@ -311,7 +311,7 @@ async function handleStagedPackageStatusOpen(req: Request): Promise<Response> {
 /** 清单体上限：SHA256SUMS 原文 + 一行签名，正常只有几百字节。 */
 const MANIFEST_BODY_MAX_BYTES = 64 * 1024;
 
-type ManifestBody = { version: string; sums: unknown; sig: unknown };
+type ManifestBody = { version: string; sums: unknown; sig: unknown; asset: unknown };
 
 async function readManifestBody(req: Request): Promise<ManifestBody | null> {
   const declared = Number(req.headers.get('content-length') ?? '');
@@ -326,9 +326,14 @@ async function readManifestBody(req: Request): Promise<ManifestBody | null> {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed !== 'object' || parsed === null) return null;
-    const body = parsed as { version?: unknown; sums?: unknown; sig?: unknown };
+    const body = parsed as {
+      version?: unknown;
+      sums?: unknown;
+      sig?: unknown;
+      asset?: unknown;
+    };
     if (typeof body.version !== 'string' || !isReleaseVersion(body.version.trim())) return null;
-    return { version: body.version.trim(), sums: body.sums, sig: body.sig };
+    return { version: body.version.trim(), sums: body.sums, sig: body.sig, asset: body.asset };
   } catch {
     return null;
   }
@@ -343,6 +348,7 @@ async function handleStagePackageManifestOpen(req: Request): Promise<Response> {
   const result = await upgradeController.putPackageManifest(body.version, {
     sums: body.sums,
     sig: body.sig,
+    asset: body.asset,
   });
   if (!result.ok) return json({ code: result.code }, result.status);
   return json({ version: result.version, sha256: result.sha256, keyId: result.keyId });

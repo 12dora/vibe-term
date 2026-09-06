@@ -3,13 +3,16 @@ import { resolve } from 'node:path';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { t } from '../i18n';
 import { checkBunVersion } from '../lib/bun';
+import { findLegacyMarkedShims } from '../lib/cli-shim';
 import { getInstallHintAsync } from '../lib/dep-install';
 import { readEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
 import { isSupportedPlatform } from '../lib/platform';
 import { runCommand } from '../lib/process';
+import { findLegacyLaunchdPlists } from '../lib/service';
 import { getServiceStatus } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
+import { LEGACY_SERVICE_NAME } from '../lib/upgrade-migrate-dir';
 import type { DoctorCheck } from '../types';
 
 export interface DoctorEnvironmentResult {
@@ -133,7 +136,7 @@ export async function checkEnvironment(input: {
     });
 
     const env = await readEnvFile(input.envPath);
-    const required = ['TMEX_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'TMEX_BIND_HOST'];
+    const required = ['VIBETERM_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'VIBETERM_BIND_HOST'];
     for (const key of required) {
       if (!env[key]) {
         installChecks.push({
@@ -177,8 +180,8 @@ export async function checkEnvironment(input: {
         });
       }
     }
-    if (env.TMEX_BIND_HOST) {
-      healthHost = env.TMEX_BIND_HOST;
+    if (env.VIBETERM_BIND_HOST) {
+      healthHost = env.VIBETERM_BIND_HOST;
     }
   } else {
     installChecks.push({
@@ -274,4 +277,30 @@ export function renderDoctorResult(checks: DoctorCheck[], json: boolean): void {
       console.log(`  ${t('deps.install.hint', { command: check.hint })}`);
     }
   }
+}
+
+/**
+ * 迁移到新安装目录后可能残留改名前的 launchd plist 或 shim；留着它们会让旧 CLI
+ * 拉起第二个实例抢端口。没有残留就不产生这条检查，避免噪音。
+ */
+export async function checkLegacyLeftovers(input: {
+  serviceName: string;
+  installDir: string;
+}): Promise<DoctorCheck[]> {
+  const leftovers = [
+    ...(await findLegacyLaunchdPlists(
+      [...new Set([input.serviceName, LEGACY_SERVICE_NAME])],
+      input.installDir
+    )),
+    ...(await findLegacyMarkedShims()),
+  ];
+  if (leftovers.length === 0) return [];
+  return [
+    {
+      id: 'legacy-layout',
+      level: 'warn',
+      message: t('doctor.legacyLayout.leftovers'),
+      detail: leftovers.join('\n'),
+    },
+  ];
 }

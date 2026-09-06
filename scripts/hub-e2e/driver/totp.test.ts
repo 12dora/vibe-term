@@ -39,7 +39,7 @@ describe('decodeBase32', () => {
 describe('parseOtpauthSecret', () => {
   test('extracts secret from hub user totp URI', () => {
     const uri =
-      'otpauth://totp/tmex%3Aalice?secret=JBSWY3DPEHPK3PXP&issuer=tmex&algorithm=SHA1&digits=6&period=30';
+      'otpauth://totp/vibeterm%3Aalice?secret=JBSWY3DPEHPK3PXP&issuer=vibeterm&algorithm=SHA1&digits=6&period=30';
     expect(parseOtpauthSecret(uri)).toBe('JBSWY3DPEHPK3PXP');
   });
 
@@ -52,7 +52,9 @@ describe('parseOtpauthSecret', () => {
   });
 
   test('rejects missing secret', () => {
-    expect(() => parseOtpauthSecret('otpauth://totp/tmex:alice?issuer=tmex')).toThrow(/secret/);
+    expect(() => parseOtpauthSecret('otpauth://totp/vibeterm:alice?issuer=vibeterm')).toThrow(
+      /secret/
+    );
   });
 });
 
@@ -68,7 +70,7 @@ describe('resolveTotpCode', () => {
     ).toBe('111111');
   });
 
-  test('TMEX_TOTP wins over --totp-secret', () => {
+  test('VIBETERM_TOTP wins over --totp-secret', () => {
     expect(
       resolveTotpCode({
         totpSecret: RFC6238_BASE32,

@@ -3,7 +3,7 @@
 //  2. 同一个 node 并存多份 provider（路由层 + 侧栏聚合视图）——意图必须是同一份。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { DeviceIntentSnapshot } from './device-intent-store';
 
 installWindowStorage();
@@ -20,11 +20,11 @@ const PREFIX_A = 'n:0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a:';
 const PREFIX_B = 'n:0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b:';
 
 function connectedKey(prefix: string): string {
-  return `${prefix}tmex:connectedDevices`;
+  return `${prefix}vibeterm:connectedDevices`;
 }
 
 function disconnectedKey(prefix: string): string {
-  return `${prefix}tmex:disconnectedDevices`;
+  return `${prefix}vibeterm:disconnectedDevices`;
 }
 
 beforeEach(() => {
@@ -40,8 +40,8 @@ describe('deviceIntentStore 实例表', () => {
 
   test('self 的空前缀沿用旧键名', () => {
     const store = new DeviceIntentStore('');
-    expect(store.connectedKey).toBe('tmex:connectedDevices');
-    expect(store.disconnectedKey).toBe('tmex:disconnectedDevices');
+    expect(store.connectedKey).toBe('vibeterm:connectedDevices');
+    expect(store.disconnectedKey).toBe('vibeterm:disconnectedDevices');
   });
 
   test('实例从自己的两个键读取初值', () => {

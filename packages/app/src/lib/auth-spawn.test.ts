@@ -39,7 +39,7 @@ async function waitUntil(predicate: () => boolean, timeoutMs = 3000): Promise<vo
 
 describe('spawnAuthCli', () => {
   test('live-forwards fake child stdout/stderr on a non-TTY destination and propagates exit code', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-auth-spawn-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-auth-spawn-'));
     tempDirs.push(dir);
     const readyPath = join(dir, 'ready');
     const goPath = join(dir, 'go');
@@ -93,7 +93,7 @@ setTimeout(() => process.exit(99), 8000);
   });
 
   test('forwards SIGINT to a trapping child, drains the hint line, and exits 130', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-auth-spawn-int-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-auth-spawn-int-'));
     tempDirs.push(dir);
     const readyPath = join(dir, 'ready');
     const childPath = join(dir, 'fake-child.mjs');
@@ -135,7 +135,7 @@ setTimeout(() => process.exit(99), 8000);
   });
 
   test('maps a SIGTERM-killed child to exit code 143', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-auth-spawn-term-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-auth-spawn-term-'));
     tempDirs.push(dir);
     const readyPath = join(dir, 'ready');
     const childPath = join(dir, 'fake-child.mjs');

@@ -5,7 +5,7 @@
 // 所以这里**不用 `useRuntime()`**——设备页可能挂在 `/n/<nodeId>/devices` 下，那时上下文
 // runtime 是远端 node，用它会去读**远端机器自己的**分组布局（页面上会冒出本机没有的分组），
 // 写回更会把远端的布局改掉。runtime 与 QueryClient 一律显式取 self 的那份。
-// 移动与排序统一走 `PUT /api/device-folders/layout`：新布局由 `@tmex/shared` 的纯函数算出，
+// 移动与排序统一走 `PUT /api/device-folders/layout`：新布局由 `@vibeterm/shared` 的纯函数算出，
 // 乐观写进 query cache，失败整份回滚；上一次提交在飞时禁用拖拽（`pending`）。
 // 「恢复默认布局」走 `POST /api/device-folders/reset`，服务端一个事务删光分组与 placement。
 
@@ -19,13 +19,13 @@ import {
   replaceDeviceFolderLayout,
   resetDeviceFolderLayout,
   updateDeviceFolder,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import {
   type DeviceFolderLayout,
   type UpdateDeviceFolderLayoutRequest,
   reparentOnFolderDelete,
-} from '@tmex/shared';
-import { useNodeRuntime } from '@tmex/stores';
+} from '@vibeterm/shared';
+import { useNodeRuntime } from '@vibeterm/stores';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

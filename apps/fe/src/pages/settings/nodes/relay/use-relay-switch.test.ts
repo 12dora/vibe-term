@@ -1,7 +1,7 @@
 // 切换中继的状态机：在途期间锁死目标与对话框，回来之后只关自己那一张。
 
 import { describe, expect, test } from 'bun:test';
-import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
+import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { createRelaySwitchCore } from './use-relay-switch';
 
 function link(url: string): RelayLinkStatus {

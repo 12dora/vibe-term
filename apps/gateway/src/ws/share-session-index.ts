@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 import type { GatewaySession } from './gateway-session';
 import { shareVisibleClients } from './share-gate';
 import { getShareWsService } from './share-hooks';

@@ -6,18 +6,18 @@ import {
   sha256Hex,
 } from './verify';
 
-const FILE = 'tmex-cli-1.2.3.tgz';
+const FILE = 'vibeterm-cli-1.2.3.tgz';
 
 describe('parseSha256Sums', () => {
   test('valid: GNU two-space and BSD asterisk lines', () => {
     const text = [
       `${'a'.repeat(64)}  other.tgz`,
-      `${'b'.repeat(64)}  tmex-cli-1.2.3.tgz`,
-      `${'c'.repeat(64)} *tmex-cli-9.9.9.tgz`,
+      `${'b'.repeat(64)}  vibeterm-cli-1.2.3.tgz`,
+      `${'c'.repeat(64)} *vibeterm-cli-9.9.9.tgz`,
       '',
     ].join('\n');
     expect(parseSha256Sums(text, FILE)).toBe('b'.repeat(64));
-    expect(parseSha256Sums(text, 'tmex-cli-9.9.9.tgz')).toBe('c'.repeat(64));
+    expect(parseSha256Sums(text, 'vibeterm-cli-9.9.9.tgz')).toBe('c'.repeat(64));
   });
 
   test('missing entry returns null', () => {

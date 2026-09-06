@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { type WatchRuntimeLike, WatchRuntimePool } from './runtime-pool';
 
 function createRuntime(

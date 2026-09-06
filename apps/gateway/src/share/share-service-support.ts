@@ -1,4 +1,4 @@
-import { normalizeShareOrigin } from '@tmex/shared/share';
+import { normalizeShareOrigin } from '@vibeterm/shared/share';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import type { ShareRecorderRuntime } from './share-recorder';
 import { SHARE_ACCESS_TTL_MS } from './share-token';

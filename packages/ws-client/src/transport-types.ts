@@ -1,7 +1,7 @@
 // Gateway transport 的对外契约：事件、命令与能力声明。
 // 编码器 / 解码器 / 具体 transport 实现共用本模块，避免相互 import 成环。
 
-import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@tmex/shared';
+import type { EventDevicePayload, EventTmuxPayload, StateSnapshotPayload } from '@vibeterm/shared';
 import type { ClientSendResult, ConnectionState, StateFeedMode } from './client';
 import type { MovePanePosition } from './message-builder';
 import type { PendingDropReason } from './pending-send-queue';

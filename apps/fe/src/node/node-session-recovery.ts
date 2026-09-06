@@ -1,7 +1,8 @@
 // 每 node 请求撞上 401 `NODE_LOGIN_REQUIRED` 之后的会话自愈。
 //
 // 背景：入口站点换过 node id（`hub leave` → `relay join`）之后，浏览器手上仍留着按旧入口
-// 签发的 `tmex_s_<target>` cookie。目标 node 的 via 校验不认它，一路回 401，而
+// 签发的 `tmex_s_<target>` cookie（cookie 名是协议常量，沿用 tmex 时期的值以保持跨版本兼容）。
+// 目标 node 的 via 校验不认它，一路回 401，而
 // `/api/mesh/nodes` 的 `loggedIn` 只表示「有没有这只 cookie」，门闸（`useNodeLoginGate`）
 // 因此永远判定「已登录」，不会再登一次——设备列表就一直加载失败。
 //
@@ -17,7 +18,7 @@
 // 就地登出会抽掉整棵子树再静默登回来，表现为设备卡片闪断。
 
 import { isCredentialFailure } from '@/auth/login-errors';
-import { SELF_NODE_ID, isNodeLoginRequiredError } from '@tmex/api-client';
+import { SELF_NODE_ID, isNodeLoginRequiredError } from '@vibeterm/api-client';
 import { markLoggedOut } from './mesh-nodes';
 
 export type NodeSessionRecoveryOutcome =

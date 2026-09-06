@@ -1,5 +1,5 @@
-import { encodeBase64url, hubHostFromUrl, randomBytes } from '@tmex/shared/auth';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import { encodeBase64url, hubHostFromUrl, randomBytes } from '@vibeterm/shared/auth';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import {
   MIN_RELAY_CLIENT_VERSION,
   RELAY_CTL_MAX_BYTES,
@@ -10,7 +10,7 @@ import {
   type RelayRtcConfig,
   decodeRelayCtl,
   encodeRelayCtl,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import type { AuthDb } from '../auth/types';
 import {
   type RelayBandwidthHandle,

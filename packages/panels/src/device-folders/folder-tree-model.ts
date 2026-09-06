@@ -1,6 +1,6 @@
 // 分组列表的容器 / 落点模型：把 `DeviceFolderLayout` + 宿主给出的隐式根节点摊平成
 // 「每个容器的有序节点 id」，并把一次 dnd 的 (active, over) 翻译成布局变更。
-// 布局本身的合法性与重排全部复用 `@tmex/shared` 的纯函数，这里只负责 id 编解码与落点判定。
+// 布局本身的合法性与重排全部复用 `@vibeterm/shared` 的纯函数，这里只负责 id 编解码与落点判定。
 //
 // 分组只有一层：分组只能在根层彼此排序；节点只能在根层与分组之间移动。设备不是本模型的
 // 条目——它永远跟着自己的节点走，节点内的顺序由设备自己的 sortOrder 决定。
@@ -10,7 +10,7 @@ import {
   type DeviceFolderPlacement,
   moveFolderInLayout,
   moveNodeInLayout,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 /** 根容器 id；分组容器为 `folder:<id>` */
 export const ROOT_CONTAINER_ID = 'root';

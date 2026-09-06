@@ -1,5 +1,5 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { GatewayTransportCommand, GatewayTransportEvent } from './transport';
 import { createSharedGatewayTransport, encodeGatewayTransportCommand } from './transport';
 

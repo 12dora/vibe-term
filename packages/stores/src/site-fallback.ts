@@ -2,7 +2,7 @@
 // 不再硬读默认 runtime——由当前活跃的 node 边界注册自己的 site 设置读取器，
 // 未注册时退回内置缺省值，多 runtime 下不会串到 entry 的站点信息。
 
-import { PRODUCT_NAME } from '@tmex/shared';
+import { PRODUCT_NAME } from '@vibeterm/shared';
 
 export interface SiteFallbackSnapshot {
   siteName?: string | null;

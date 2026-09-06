@@ -1,5 +1,5 @@
 // enrollment / admit / revoke：pending 落 sessionStorage、证书匹配、admit-node 记录能过
-// `@tmex/shared/auth` 的验签与 reducer、非匹配证书忽略、过期 pending 拒绝、revoke 记录形状。
+// `@vibeterm/shared/auth` 的验签与 reducer、非匹配证书忽略、过期 pending 拒绝、revoke 记录形状。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
 import {
@@ -9,8 +9,8 @@ import {
   takeRememberedSigner,
 } from '@/auth/credential-prompt';
 import { buildAddPasskeyRecord } from '@/auth/key-log-actions';
-import type { AuthenticationResponseJSON } from '@tmex/api-client/auth/index';
-import type { VerifyPasskeyAssertion } from '@tmex/shared/auth';
+import type { AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index';
+import type { VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
 import {
   applyKeyLogRecord,
   computeRecordHash,
@@ -36,7 +36,7 @@ import {
   signEd25519,
   verifyEd25519,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { PendingStorage } from './enrollment';
 import {
   PENDING_STORAGE_KEY,
@@ -859,11 +859,11 @@ describe('凭据复用窗口', () => {
 describe('joinCommand', () => {
   test('带名称时加 --name，特殊字符加引号', () => {
     expect(joinCommand('https://hub.example', 'TOKEN', 'studio')).toBe(
-      "tmex hub join 'https://hub.example' --token TOKEN --name studio"
+      "vibeterm hub join 'https://hub.example' --token TOKEN --name studio"
     );
     expect(joinCommand('https://hub.example', 'TOKEN', 'my node')).toContain("--name 'my node'");
     expect(joinCommand('https://hub.example', 'TOKEN', null)).toBe(
-      "tmex hub join 'https://hub.example' --token TOKEN"
+      "vibeterm hub join 'https://hub.example' --token TOKEN"
     );
   });
 
@@ -872,7 +872,7 @@ describe('joinCommand', () => {
     expect(command).toContain("'https://hub.example/x?a=1&b=2'");
     expect(command).not.toContain('& b');
     // 引号之外不应再出现裸的 shell 元字符
-    expect(command.split("'")[0]).toBe('tmex hub join ');
+    expect(command.split("'")[0]).toBe('vibeterm hub join ');
   });
 
   test('注入型 URL 直接拒绝，不是「引起来就算了」', () => {

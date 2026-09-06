@@ -2,8 +2,8 @@
 // （前端不知道该给哪台节点写声明），端到端表现是点开关只弹一条「无法保存」。
 
 import { describe, expect, test } from 'bun:test';
-import type { ApiClient } from '@tmex/api-client';
-import { MESH_NOTIFICATION_ROUTE } from '@tmex/shared';
+import type { ApiClient } from '@vibeterm/api-client';
+import { MESH_NOTIFICATION_ROUTE } from '@vibeterm/shared';
 import { fetchMeshNotificationState } from './mesh-api';
 
 function client(body: unknown, status = 200): ApiClient {

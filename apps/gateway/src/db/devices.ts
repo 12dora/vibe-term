@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import type { Device, DeviceRuntimeStatus } from '@tmex/shared';
+import type { Device, DeviceRuntimeStatus } from '@vibeterm/shared';
 import { asc, count, desc, eq, inArray, max } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import { removeDeviceFolderPlacementsForDevice } from './device-folders';
@@ -98,7 +98,7 @@ export function ensureDefaultLocalDeviceSeeded(): void {
       id: crypto.randomUUID(),
       name: hostname().trim() || 'local',
       type: 'local',
-      session: 'tmex',
+      session: 'vibeterm',
       authMode: 'auto',
       sortOrder: 0,
       createdAt: now,
@@ -129,7 +129,7 @@ export function createDevice(device: Device): void {
         port: device.port ?? 22,
         username: device.username ?? null,
         sshConfigRef: device.sshConfigRef ?? null,
-        session: device.session ?? 'tmex',
+        session: device.session ?? 'vibeterm',
         authMode: device.authMode,
         passwordEnc: device.passwordEnc ?? null,
         privateKeyEnc: device.privateKeyEnc ?? null,

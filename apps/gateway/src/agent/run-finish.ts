@@ -1,5 +1,5 @@
-import type { AgentEventPayloadMap, EventType } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { AgentEventPayloadMap, EventType } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { type AgentSessionRecord, appendAgentMessage, createAgentConfirmation } from '../db/agent';
 import { t } from '../i18n';
 import type { AgentStopReason } from './outcome-resolver';

@@ -18,8 +18,8 @@ import {
 const STRUCTURE_RECONCILE_MS = 50;
 
 export const SOURCE_METADATA_SUBSCRIPTION_COMMANDS = [
-  'refresh-client -B "tmex-cwd:%*:#{pane_current_path}"\n',
-  'refresh-client -B "tmex-command:%*:#{pane_current_command}"\n',
+  'refresh-client -B "vibeterm-cwd:%*:#{pane_current_path}"\n',
+  'refresh-client -B "vibeterm-command:%*:#{pane_current_command}"\n',
 ] as const;
 
 export interface ControlModeSubscriptionCallbacks {
@@ -43,7 +43,7 @@ export interface ControlModeSubscription {
   push(chunk: Uint8Array): void;
   end(): void;
   prunePanes(validPaneIds: ReadonlySet<string>): void;
-  /** 登记本次 attach 的 `tmex-park` 窗口，使其元数据事件不外泄。 */
+  /** 登记本次 attach 的 `vibeterm-park` 窗口，使其元数据事件不外泄。 */
   noteParkingWindow(windowId: string | null): void;
   dispose(): void;
 }

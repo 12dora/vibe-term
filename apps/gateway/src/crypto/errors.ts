@@ -22,7 +22,7 @@ export class CryptoDecryptError extends Error {
   constructor(context: CryptoContext, cause: unknown) {
     const causeText = cause instanceof Error ? `${cause.name}: ${cause.message}` : String(cause);
     super(
-      `解密失败（${contextLabel(context)}）。通常意味着 TMEX_MASTER_KEY 与数据库中的加密数据不匹配，或密文已损坏。原因：${causeText}`
+      `解密失败（${contextLabel(context)}）。通常意味着 VIBETERM_MASTER_KEY 与数据库中的加密数据不匹配，或密文已损坏。原因：${causeText}`
     );
     this.name = 'CryptoDecryptError';
     this.context = context;

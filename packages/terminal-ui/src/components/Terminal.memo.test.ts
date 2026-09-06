@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TerminalThemeColors } from '@tmex/shared';
+import type { TerminalThemeColors } from '@vibeterm/shared';
 import { Terminal, type TerminalComponentProps, terminalPropsEqual } from './Terminal';
 import { applyTerminalRenderSuspension } from './hooks/useTerminalBootSurface';
 import { SplitPaneView } from './split/SplitPaneView';

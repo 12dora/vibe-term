@@ -80,7 +80,7 @@ async function swipe(
 }
 
 test('mobile: editor interactions keep focus and send ws messages', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-mobile-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-term-${Date.now()}`;
@@ -148,7 +148,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-ime-symbol-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-ime-symbol-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-ime-symbol-${Date.now()}`;
@@ -176,7 +176,7 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
 
   try {
     await page.addInitScript(() => {
-      (globalThis as any).__TMEX_E2E_DEBUG = true;
+      (globalThis as any).__VIBETERM_E2E_DEBUG = true;
     });
 
     await page.goto(`/devices/${deviceId}`);
@@ -187,14 +187,14 @@ test('mobile: direct input falls back to compositionend data for ime symbols', a
       .poll(() =>
         page.evaluate(() => {
           const g = globalThis as any;
-          return Boolean(g.__tmexE2eXterm?.textarea);
+          return Boolean(g.__vibetermE2eXterm?.textarea);
         })
       )
       .toBeTruthy();
 
     await page.evaluate(() => {
       const g = globalThis as any;
-      const term = g.__tmexE2eXterm;
+      const term = g.__vibetermE2eXterm;
       const textarea = term?.textarea as HTMLTextAreaElement | undefined;
       if (!term || !textarea) {
         throw new Error('xterm instance not ready');
@@ -217,7 +217,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-ime-cancel-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-ime-cancel-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-ime-cancel-${Date.now()}`;
@@ -245,7 +245,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
 
   try {
     await page.addInitScript(() => {
-      (globalThis as any).__TMEX_E2E_DEBUG = true;
+      (globalThis as any).__VIBETERM_E2E_DEBUG = true;
     });
 
     await page.goto(`/devices/${deviceId}`);
@@ -256,14 +256,14 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
       .poll(() =>
         page.evaluate(() => {
           const g = globalThis as any;
-          return Boolean(g.__tmexE2eXterm?.textarea);
+          return Boolean(g.__vibetermE2eXterm?.textarea);
         })
       )
       .toBeTruthy();
 
     await page.evaluate(() => {
       const g = globalThis as any;
-      const term = g.__tmexE2eXterm;
+      const term = g.__vibetermE2eXterm;
       const textarea = term?.textarea as HTMLTextAreaElement | undefined;
       if (!term || !textarea) {
         throw new Error('xterm instance not ready');
@@ -292,7 +292,7 @@ test('mobile: cancelled ime composition should not send fallback text', async ({
 });
 
 test('mobile: terminal can scroll with touch gesture', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-mobile-scroll-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-scroll-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-mobile-scroll-${Date.now()}`;
@@ -310,7 +310,7 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
 
   try {
     await page.addInitScript(() => {
-      (globalThis as any).__TMEX_E2E_DEBUG = true;
+      (globalThis as any).__VIBETERM_E2E_DEBUG = true;
     });
     await page.goto(`/devices/${deviceId}`);
     await expect(page.getByTestId('mobile-topbar')).toBeVisible({ timeout: 30_000 });
@@ -318,14 +318,14 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
     await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
 
     tmux(
-      `send-keys -t ${sessionName}.0 "for i in \\$(seq 1 320); do echo TMEX_SCROLL_\\$i; done" C-m`
+      `send-keys -t ${sessionName}.0 "for i in \\$(seq 1 320); do echo VIBETERM_SCROLL_\\$i; done" C-m`
     );
 
     await expect
       .poll(() =>
         page.evaluate(() => {
           const g = globalThis as any;
-          const term = g.__tmexE2eXterm;
+          const term = g.__vibetermE2eXterm;
           if (!term) return 0;
           return term.buffer?.active?.baseY ?? 0;
         })
@@ -334,7 +334,7 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
 
     const before = await page.evaluate(() => {
       const g = globalThis as any;
-      const term = g.__tmexE2eXterm;
+      const term = g.__vibetermE2eXterm;
       if (!term) {
         return { viewportY: 0, baseY: 0 };
       }
@@ -363,7 +363,7 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
         () =>
           page.evaluate(() => {
             const g = globalThis as any;
-            const term = g.__tmexE2eXterm;
+            const term = g.__vibetermE2eXterm;
             return term?.buffer?.active?.viewportY ?? Number.MAX_SAFE_INTEGER;
           }),
         { timeout: 10_000 }
@@ -372,7 +372,7 @@ test('mobile: terminal can scroll with touch gesture', async ({ page, request })
 
     const after = await page.evaluate(() => {
       const g = globalThis as any;
-      const term = g.__tmexE2eXterm;
+      const term = g.__vibetermE2eXterm;
       if (!term) {
         return { viewportY: 0, baseY: 0 };
       }
@@ -395,7 +395,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-longpress-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-longpress-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {
@@ -421,7 +421,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
       .poll(
         () =>
           page.evaluate(() => {
-            const term = (window as any).__tmexE2eXterm;
+            const term = (window as any).__vibetermE2eXterm;
             if (!term) return '';
             const buffer = term.buffer.active;
             const lines: string[] = [];
@@ -440,7 +440,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
       .toContain('longpress_target');
 
     const point = await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       const canvas = document.querySelector('.xterm canvas');
       if (!term || !(canvas instanceof HTMLCanvasElement)) {
         throw new Error('terminal not ready');
@@ -521,7 +521,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
     }, point);
 
     await expect
-      .poll(() => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null), {
+      .poll(() => page.evaluate(() => (window as any).__vibetermE2eTerminalSelectionText ?? null), {
         timeout: 10_000,
       })
       .toBe('longpress_target');
@@ -532,7 +532,7 @@ test('mobile: long press should select word and selection toolbar copies it', as
       .poll(() => page.evaluate(async () => navigator.clipboard.readText()), { timeout: 10_000 })
       .toContain('longpress_target');
     await expect
-      .poll(() => page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null), {
+      .poll(() => page.evaluate(() => (window as any).__vibetermE2eTerminalSelectionText ?? null), {
         timeout: 10_000,
       })
       .toBeNull();
@@ -548,7 +548,7 @@ test('mobile: only the cursor row wakes the keyboard, the hide button dismisses 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mobile-kbd-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mobile-kbd-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {
@@ -571,7 +571,7 @@ test('mobile: only the cursor row wakes the keyboard, the hide button dismisses 
   // 光标行 / 远离光标的行的 client 坐标：与渲染同源（最近一帧光标 + .xterm-screen 基准）
   const rowPoints = () =>
     page.evaluate(() => {
-      const term = (globalThis as any).__tmexE2eXterm;
+      const term = (globalThis as any).__vibetermE2eXterm;
       const screen = document.querySelector('.xterm-screen');
       if (!term || !(screen instanceof HTMLElement)) return null;
       const rect = screen.getBoundingClientRect();

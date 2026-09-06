@@ -1,6 +1,6 @@
-import { type TmexRoles, isStandaloneRoles } from '@tmex/shared';
-import type { LinkSession } from '@tmex/shared/link';
-import type { ShareScope } from '@tmex/shared/share';
+import { type VibeTermRoles, isStandaloneRoles } from '@vibeterm/shared';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { ShareScope } from '@vibeterm/shared/share';
 import { type DispatchContext, requestDispatchContext } from './types';
 
 export { isStandaloneRoles, requestDispatchContext };
@@ -8,9 +8,11 @@ export type { DispatchContext };
 
 export const MESH_VIA_SELF = 'self';
 
-export const X_TMEX_SET_SESSION = 'x-tmex-set-session';
-export const X_TMEX_SESSION_RENEWED = 'x-tmex-session-renewed';
-export const X_TMEX_CONNECTION = 'x-tmex-connection';
+export {
+  CONNECTION_HEADER,
+  SESSION_RENEWED_HEADER,
+  SET_SESSION_HEADER,
+} from '@vibeterm/shared/http/mesh-headers';
 
 export const LOGIN_RATE_LIMIT = 10;
 export const LOGIN_RATE_WINDOW_MS = 60_000;
@@ -58,7 +60,7 @@ export const MESH_ALLOWED_MIME = new Set([
   'application/octet-stream',
 ]);
 
-export type MeshRoles = TmexRoles;
+export type MeshRoles = VibeTermRoles;
 
 export type HubTlsInfo = {
   caFingerprint: string | null;

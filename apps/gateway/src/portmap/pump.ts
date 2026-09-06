@@ -1,4 +1,4 @@
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 import type { PortMapCounters } from './types';
 
 /**

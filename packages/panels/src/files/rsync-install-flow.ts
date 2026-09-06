@@ -1,10 +1,10 @@
-import type { AppRuntime } from '@tmex/stores';
+import type { AppRuntime } from '@vibeterm/stores';
 import {
   encodePaneIdForUrl,
   hostAppPath,
   normalizeAgentNodeId,
   resolveAgentStore,
-} from '@tmex/stores';
+} from '@vibeterm/stores';
 import i18next from 'i18next';
 import { toast } from 'sonner';
 

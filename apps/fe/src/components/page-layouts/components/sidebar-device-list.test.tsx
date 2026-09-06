@@ -2,9 +2,9 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 F4-2 的边界测试同一套做法）。
 
 import { describe, expect, mock, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import type { AppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import type { AppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -30,8 +30,8 @@ mock.module('./sidebar-device-list-runtime', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { sidebarDeviceVisibilityKey } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { sidebarDeviceVisibilityKey } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const {
   SideBarDeviceList,
   applySidebarNodeOrder,
@@ -52,7 +52,7 @@ const { clearDeviceSnapshot, writeDeviceSnapshot } = await import(
 );
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { sidebarNodeExpansionKey } = await import('@/node/sidebar-node-expansion');
-const { SortableVerticalList, useSortableRow } = await import('@tmex/panels/device-tree');
+const { SortableVerticalList, useSortableRow } = await import('@vibeterm/panels/device-tree');
 
 /**
  * 分节自身要读宿主级共享的 UI store（设备可见性、node 分节展开态）；生产里 AppSidebar 永远在

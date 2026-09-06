@@ -1,6 +1,6 @@
 // 选择面：当前设备的选中 window/pane 与最近上报的终端尺寸。
 
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import type { RuntimeCore } from './runtime';
 import { dispatchSelectPane, normalizeTerminalSize } from './select-pane-dispatch';
 import type { TmuxStoreAccess } from './tmux-state';

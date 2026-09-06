@@ -18,8 +18,8 @@ import {
   signEd25519,
   signKeyLogRecordWithRoot,
   uplinkAuthMessage,
-} from '@tmex/shared/auth';
-import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { type LinkSession, type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
   MIN_RELAY_CLIENT_VERSION,
   RELAY_PROTO_VERSION,
@@ -30,7 +30,7 @@ import {
   encodeRelayCtl,
   encodeRelayOpenStream,
   signRelayEnrollProof,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { encodePasskeyAssertionSig } from '../auth/passkey';
 import { createEs256Authenticator } from '../auth/passkey-test-fixtures';
 import { encodeRedeemPopMessage } from '../hub/redeem-pop';

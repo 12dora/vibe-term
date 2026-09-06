@@ -1,8 +1,8 @@
 // select 下发的两件小事：尺寸换算与「最近下发过」的记账（用于压制 tmux active 回声）。
 // 从 use-pane-selection-dispatch 拆出来，那边只留路由改写与用户动作编排。
 
-import type { TmuxWindow } from '@tmex/shared';
-import type { TerminalRef, TerminalSizeSnapshot } from '@tmex/terminal-ui';
+import type { TmuxWindow } from '@vibeterm/shared';
+import type { TerminalRef, TerminalSizeSnapshot } from '@vibeterm/terminal-ui';
 import { type RefObject, useCallback } from 'react';
 import {
   appendRecentSelectRequest,

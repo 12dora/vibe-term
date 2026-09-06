@@ -1,9 +1,9 @@
 // 创建分享表单：名称 / 有效期 / 密码 / 地址。校验与时长换算在 share-dialog-model。
 
-import type { ShareOriginCandidate } from '@tmex/shared/share';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { Loader2, RefreshCw } from 'lucide-react';
 import { useId } from 'react';
 import { useTranslation } from 'react-i18next';

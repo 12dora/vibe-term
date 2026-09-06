@@ -4,7 +4,7 @@
 // 「复制」变成一条新内容再播一次，读屏用户听到的是一句莫名其妙的第二次提示。
 // 可见标签因此留在 live region 外面。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Check, Copy } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -69,7 +69,7 @@ export function CopyButton({
   const { copied, copy } = useCopyToClipboard(value);
   return (
     <Button type="button" size="xs" variant={variant} onClick={copy} data-testid={`${testId}-copy`}>
-      {copied ? <Check className="tmex-scale-in" /> : <Copy className="tmex-scale-in" />}
+      {copied ? <Check className="vibeterm-scale-in" /> : <Copy className="vibeterm-scale-in" />}
       <CopyLabel copied={copied} />
     </Button>
   );

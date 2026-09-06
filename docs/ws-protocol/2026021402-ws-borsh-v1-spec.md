@@ -1,4 +1,4 @@
-# tmex-ws-borsh-v1：WebSocket 二进制协议规范
+# vibeterm-ws-borsh-v1：WebSocket 二进制协议规范
 
 > 状态：**已实现**，本文是 wire 格式的唯一真源。
 >
@@ -16,7 +16,7 @@
 - pane 切换与 history/live 合并缺少事务屏障，容易出现乱序、丢失、重复。
 - resize、bell、事件语义分散，难以系统性测试与回归。
 
-因此定义 `tmex-ws-borsh-v1`：基于 Borsh 的全二进制 WS 协议，配合显式状态机提供确定性行为。（当年的 `selectToken` 屏障已在 1.1.23 由 canonical 首屏事务取代，见下文。）
+因此定义 `vibeterm-ws-borsh-v1`：基于 Borsh 的全二进制 WS 协议，配合显式状态机提供确定性行为。（当年的 `selectToken` 屏障已在 1.1.23 由 canonical 首屏事务取代，见下文。）
 
 ## 依赖与约束
 
@@ -242,7 +242,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 
 字段：
 
-- `clientImpl: string`（例：`tmex-fe`）
+- `clientImpl: string`（例：`vibeterm-fe`）
 - `clientVersion: string`（例：`0.1.0`）
 - `maxFrameBytes: u32`（客户端可接收最大帧）
 - `supportsCompression: bool`（v1 固定 false）
@@ -256,12 +256,12 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 
 字段：
 
-- `serverImpl: string`（`tmex-gateway`）
+- `serverImpl: string`（`vibeterm-gateway`）
 - `serverVersion: string`
 - `selectedVersion: u16`（当前 1）
 - `maxFrameBytes: u32`（服务端可接收最大帧）
 - `heartbeatIntervalMs: u32`（默认 15000）
-- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `tmex-ws-borsh-v1`、`tmex-agent-v1`、`tmex-split-v1`、`canonical-state-v1`。
+- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `canonical-state-v1`、`canonical-state-v1.1`。
 
 ### PING/PONG（0x0003/0x0004）
 
@@ -437,7 +437,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 语义：
 
 - 客户端在主题切换、设备连接/重连后发送，gateway 据此更新会话所有 window 的 `window-style` 及 `after-new-window` hook。
-- gateway 按 `TMEX_TMUX_WINDOW_STYLE` 的白名单规则校验 style，非法值忽略；该配置为 `off` 时忽略本消息。
+- gateway 按 `VIBETERM_TMUX_WINDOW_STYLE` 的白名单规则校验 style，非法值忽略；该配置为 `off` 时忽略本消息。
 
 ### TMUX_REORDER_WINDOWS（0x020B）
 

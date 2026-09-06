@@ -3,10 +3,10 @@
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import type { DomainAccessPolicy } from '@tmex/api-client';
-import enUS from '@tmex/shared/i18n/locales/en_US.json';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { DomainAccessPolicy } from '@vibeterm/api-client';
+import enUS from '@vibeterm/shared/i18n/locales/en_US.json';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { DomainAccessState } from './node-detail-types';
 
 installWindowStorage();
@@ -68,7 +68,7 @@ const SELF = nodeRow({
 });
 
 function policy(overrides: Partial<DomainAccessPolicy> = {}): DomainAccessPolicy {
-  return { allowed: true, viaDomain: false, hosts: ['tmex.example.com'], ...overrides };
+  return { allowed: true, viaDomain: false, hosts: ['vibeterm.example.com'], ...overrides };
 }
 
 const realFetch = globalThis.fetch;
@@ -112,7 +112,7 @@ describe('域名访问的请求通道', () => {
       kind: 'ready',
       allowed: true,
       viaDomain: false,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
   });
 

@@ -1,7 +1,7 @@
 // 发行包签名：给 SHA256SUMS 产出分离签名 `SHA256SUMS.sig`。
 //
 // 用法：
-//   TMEX_RELEASE_SIGNING_KEY=<base64 32 字节种子> bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
+//   VIBETERM_RELEASE_SIGNING_KEY=<base64 32 字节种子> bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
 //
 // 说明：
 //   - 私钥只来自环境变量（CI 里是 secret），脚本不打印、不落盘任何私钥材料。
@@ -17,7 +17,9 @@ import {
   verifyReleaseSums,
 } from '../../packages/shared/src/release/release-signing';
 
-const SECRET_ENV = 'TMEX_RELEASE_SIGNING_KEY';
+const SECRET_ENV = 'VIBETERM_RELEASE_SIGNING_KEY';
+/** 改名前的变量名；CI secret 仍叫这个，本地手动签名时两者皆可 */
+const LEGACY_SECRET_ENV = 'TMEX_RELEASE_SIGNING_KEY';
 
 function die(message: string): never {
   console.error(`[sign-sums] ${message}`);
@@ -25,7 +27,7 @@ function die(message: string): never {
 }
 
 const sumsPath = resolve(process.argv[2] ?? 'packages/app/SHA256SUMS');
-const seed = (process.env[SECRET_ENV] ?? '').trim();
+const seed = (process.env[SECRET_ENV] ?? process.env[LEGACY_SECRET_ENV] ?? '').trim();
 if (!seed) {
   die(`${SECRET_ENV} is not set; refusing to publish an unsigned release.`);
 }

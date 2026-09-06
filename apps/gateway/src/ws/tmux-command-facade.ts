@@ -1,4 +1,4 @@
-import type { wsBorsh } from '@tmex/shared';
+import type { wsBorsh } from '@vibeterm/shared';
 import type { GatewaySession } from './gateway-session';
 import type { TmuxCommandHost } from './tmux-command-handlers';
 import * as tmuxCommands from './tmux-command-handlers';

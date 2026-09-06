@@ -1,5 +1,5 @@
-import { useUIStore } from '@tmex/stores/react';
-import { loadTerminalFonts, resolveFontStack } from '@tmex/theme';
+import { useUIStore } from '@vibeterm/stores/react';
+import { loadTerminalFonts, resolveFontStack } from '@vibeterm/theme';
 import { useEffect } from 'react';
 
 // 挂在应用根：把选中的等宽字体派生成 --font-mono 写到 :root，全应用所有 font-mono

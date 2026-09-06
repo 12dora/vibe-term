@@ -2,14 +2,14 @@
 // （运行时在渲染期就已解析，effect 只负责引用计数）。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter, Outlet, Route, Routes } = await import('react-router');
-const { useRuntime } = await import('@tmex/stores/react');
+const { useRuntime } = await import('@vibeterm/stores/react');
 const { NodeRouteGate, NodeRuntimeBoundary } = await import('./node-runtime-boundary');
 const { appNodeRuntimes, nodeQueryClient } = await import('./node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('./mesh-nodes');

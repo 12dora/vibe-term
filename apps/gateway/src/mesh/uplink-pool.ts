@@ -1,7 +1,7 @@
 import { X509Certificate, createHash } from 'node:crypto';
-import { combineAbortSignals } from '@tmex/shared/async';
-import { canonicalHubUrl, hubHostFromUrl } from '@tmex/shared/auth';
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import { combineAbortSignals } from '@vibeterm/shared/async';
+import { canonicalHubUrl, hubHostFromUrl } from '@vibeterm/shared/auth';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type {
   HubAdvertisement,
   HubAttachmentsMessage,
@@ -9,7 +9,7 @@ import type {
   HubMode,
   HubTokensMessage,
   HubWriteForwardMessage,
-} from '@tmex/shared/uplink';
+} from '@vibeterm/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
 import type { MeshHubRecord } from '../auth/mesh-hub-store';
 import { hubListToRecords, pickWriterHub } from '../auth/mesh-hub-store';

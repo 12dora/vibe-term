@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import { ENVELOPE_BYTES } from './bytes';
 import { canonicalEventPayloadBytes } from './encoded-size';

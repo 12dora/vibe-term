@@ -1,7 +1,7 @@
 // 设备表单纯逻辑：默认值归一（authMode auto → agent）、create/update payload 的字段裁剪与校验。
 
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import {
   type DeviceFormValues,
   buildCreatePayload,
@@ -42,7 +42,7 @@ function sshValues(overrides: Partial<DeviceFormValues> = {}): DeviceFormValues 
     port: 2222,
     username: '  root  ',
     sshConfigRef: '  prod  ',
-    session: '  tmex  ',
+    session: '  vibeterm  ',
     defaultWorkingDir: '  /srv  ',
     authMode: 'agent',
     password: 'pw',
@@ -71,7 +71,7 @@ describe('createDefaultFormValues', () => {
     const values = createDefaultFormValues();
     expect(values.type).toBe('local');
     expect(values.authMode).toBe('auto');
-    expect(values.session).toBe('tmex');
+    expect(values.session).toBe('vibeterm');
   });
 
   test('编辑 SSH 设备时 authMode=auto 原样保留（下拉有对应选项），保存仍提交 auto', () => {
@@ -108,7 +108,7 @@ describe('buildCreatePayload', () => {
     expect(payload).toEqual({
       name: '书房',
       type: 'local',
-      session: 'tmex',
+      session: 'vibeterm',
       defaultWorkingDir: '/srv',
       authMode: 'auto',
     });
@@ -139,7 +139,7 @@ describe('buildUpdatePayload', () => {
     expect(payload).not.toHaveProperty('type');
     expect(payload).toEqual({
       name: '书房',
-      session: 'tmex',
+      session: 'vibeterm',
       defaultWorkingDir: '/srv',
       authMode: 'auto',
     });

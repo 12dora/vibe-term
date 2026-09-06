@@ -1,4 +1,5 @@
 import { encodeBase64url } from '../auth/encoding';
+import { FORCE_KEYLOG_HEADER, matchesHeaderPair } from '../http/mesh-headers';
 import {
   type HubMode,
   type RtcSignalFrom,
@@ -84,7 +85,8 @@ export type HubForwardMessage = {
 };
 export type HubWriteForwardHeaders = {
   'content-type'?: string;
-  'x-tmex-force-keylog'?: string;
+  /** 新旧两个名字同时携带：≤1.x 的 hub / 节点只认 legacy 名 */
+  [name: string]: string | undefined;
 };
 export type HubWriteForwardMessage = {
   t: 'hub.write-forward';
@@ -325,8 +327,11 @@ export function encodeHubForwardMessage(msg: HubForwardMessage, legacy: boolean)
 }
 
 const WRITE_FORWARD_METHODS = new Set(['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE']);
-const WRITE_FORWARD_HEADER_KEYS = new Set(['content-type', 'x-tmex-force-keylog']);
+function isWriteForwardHeaderKey(key: string): boolean {
+  return key === 'content-type' || matchesHeaderPair(key, FORCE_KEYLOG_HEADER);
+}
 
+// 白名单过滤后重新按新旧两名落回：≤1.x 的对端只认 legacy 名，2.0 起优先读新名。
 function parseWriteForwardHeaders(value: unknown): HubWriteForwardHeaders | undefined {
   if (value === undefined || value === null) return undefined;
   if (!isRecord(value)) throw new Error('hub.write-forward headers must be an object');
@@ -334,12 +339,16 @@ function parseWriteForwardHeaders(value: unknown): HubWriteForwardHeaders | unde
   for (const [rawKey, rawVal] of Object.entries(value)) {
     const key = rawKey.toLowerCase();
     if (key === 'cookie' || key === 'authorization') continue;
-    if (!WRITE_FORWARD_HEADER_KEYS.has(key)) continue;
+    if (!isWriteForwardHeaderKey(key)) continue;
     if (typeof rawVal !== 'string') {
       throw new Error(`hub.write-forward headers.${key} must be a string`);
     }
-    if (key === 'content-type') headers['content-type'] = rawVal;
-    else headers['x-tmex-force-keylog'] = rawVal;
+    if (key === 'content-type') {
+      headers['content-type'] = rawVal;
+    } else {
+      headers[FORCE_KEYLOG_HEADER.name] = rawVal;
+      headers[FORCE_KEYLOG_HEADER.legacy] = rawVal;
+    }
   }
   return Object.keys(headers).length > 0 ? headers : undefined;
 }

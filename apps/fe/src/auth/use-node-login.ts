@@ -10,8 +10,8 @@ import {
   refreshMeshNodes,
   subscribeMeshNodes,
 } from '@/node/mesh-nodes';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { type LoginFailureCode, ensureNodeLogin } from './session-key-store';
 

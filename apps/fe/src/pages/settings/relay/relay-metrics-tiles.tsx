@@ -1,10 +1,10 @@
 // 指标磁贴：紧凑排（本机卡片）与完整排（中继标签）共用同一批格子，差别只在摆哪几个。
 
-import { formatBytes, formatRate } from '@tmex/api-client/format';
-import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types';
-import { Skeleton } from '@tmex/ui/skeleton';
-import { Sparkline } from '@tmex/ui/sparkline';
-import { StatTile } from '@tmex/ui/stat-tile';
+import { formatBytes, formatRate } from '@vibeterm/api-client/format';
+import type { RelayMetricsResponse } from '@vibeterm/api-client/relay/metrics-types';
+import { Skeleton } from '@vibeterm/ui/skeleton';
+import { Sparkline } from '@vibeterm/ui/sparkline';
+import { StatTile } from '@vibeterm/ui/stat-tile';
 import type * as React from 'react';
 import { useTranslation } from 'react-i18next';
 import {

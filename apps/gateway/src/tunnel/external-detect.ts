@@ -1,8 +1,8 @@
 import { readFile, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@tmex/shared';
-import { errorMessage } from '@tmex/shared';
+import type { TunnelExternalAccessProbe, TunnelExternalStatus } from '@vibeterm/shared';
+import { errorMessage } from '@vibeterm/shared';
 import { normalizeTunnelHostname } from './hostname';
 
 export type ExternalProcess = { pid: number; command: string };

@@ -1,5 +1,5 @@
-import type { KeyLogEffect, KeyLogType } from '@tmex/shared/auth';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { KeyLogEffect, KeyLogType } from '@vibeterm/shared/auth';
+import type { HubMode } from '@vibeterm/shared/uplink';
 
 export type HubKeyLogAppendSuccess = {
   ok: true;

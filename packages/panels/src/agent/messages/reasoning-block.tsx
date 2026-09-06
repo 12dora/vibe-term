@@ -1,5 +1,5 @@
-import { cn } from '@tmex/ui';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@tmex/ui/collapsible';
+import { cn } from '@vibeterm/ui';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@vibeterm/ui/collapsible';
 import { BrainIcon, ChevronRightIcon, Loader2Icon } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';

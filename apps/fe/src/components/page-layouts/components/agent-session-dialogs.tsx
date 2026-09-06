@@ -10,10 +10,16 @@ import {
   AlertDialogHeader,
   AlertDialogMedia,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
-import { Button } from '@tmex/ui/button';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/alert-dialog';
+import { Button } from '@vibeterm/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
 import { X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useSidebarAgentDialogs } from './use-sidebar-agent-sessions';

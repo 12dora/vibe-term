@@ -54,7 +54,7 @@ all endpoints backing off (next eligible in Xs)
 
 | 变量 | 默认 | 说明 |
 | --- | --- | --- |
-| `TMEX_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限，整数 ≥ 1 |
+| `VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限，整数 ≥ 1 |
 
 ## 强制探测
 

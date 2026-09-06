@@ -641,7 +641,7 @@ export class TlsService {
         'tls CA remaining validity below 30 days, rotating CA; joined nodes must re-join'
       );
     }
-    const ca = await createCa({ name: 'tmex local CA', now: this.now() });
+    const ca = await createCa({ name: 'VibeTerm local CA', now: this.now() });
     await this.upsert({ caCertPem: ca.certPem, caKeyPem: ca.keyPem });
     return ca;
   }
@@ -717,7 +717,7 @@ function isValidSan(value: string): boolean {
 
 async function readTrustProxy(envPath: string): Promise<boolean | null> {
   try {
-    const raw = (await readEnvFile(envPath)).TMEX_TRUST_PROXY;
+    const raw = (await readEnvFile(envPath)).VIBETERM_TRUST_PROXY;
     if (raw === undefined) return null;
     const normalized = raw.trim().toLowerCase();
     return normalized === '1' || normalized === 'true' || normalized === 'yes';
@@ -734,5 +734,5 @@ async function writeTrustProxy(envPath: string, trustProxy: boolean): Promise<vo
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  await writeEnvFile(envPath, { ...existing, TMEX_TRUST_PROXY: trustProxy ? 'true' : 'false' });
+  await writeEnvFile(envPath, { ...existing, VIBETERM_TRUST_PROXY: trustProxy ? 'true' : 'false' });
 }

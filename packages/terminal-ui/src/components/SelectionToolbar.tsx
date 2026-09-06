@@ -28,12 +28,12 @@ export function SelectionToolbar({
 
   return (
     <div
-      className="tmex-reveal absolute top-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background/95 p-1 shadow-md backdrop-blur"
+      className="vibeterm-reveal absolute top-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-lg border bg-background/95 p-1 shadow-md backdrop-blur"
       data-testid="terminal-selection-toolbar"
     >
       <button
         type="button"
-        className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
+        className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
         onMouseDown={preventFocusSteal}
         onClick={onCopy}
         data-testid="terminal-selection-copy"
@@ -44,7 +44,7 @@ export function SelectionToolbar({
       {canPaste && (
         <button
           type="button"
-          className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
+          className="flex h-9 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md px-3 text-sm font-medium transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
           onMouseDown={preventFocusSteal}
           onClick={onPaste}
           data-testid="terminal-selection-paste"
@@ -55,7 +55,7 @@ export function SelectionToolbar({
       )}
       <button
         type="button"
-        className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
+        className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-accent hover:text-accent-foreground motion-reduce:transition-none"
         onMouseDown={preventFocusSteal}
         onClick={onDismiss}
         aria-label={t('terminal.clearSelection')}

@@ -4,10 +4,10 @@
 // 三条路径都会写 env 并重启网关，因此向导只在 `role === 'standalone'` 下出现；
 // 一旦成功，本页所在的 SPA 会在重启完成后整页跳到 `/login`（纯中继除外：那一档没有网页）。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { LocalStatusResponse, SetupRelayRole } from '@tmex/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Reveal } from '@tmex/ui/motion';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { LocalStatusResponse, SetupRelayRole } from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Reveal } from '@vibeterm/ui/motion';
 import { Radio, Server, Share2, Waypoints } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -174,7 +174,7 @@ function PathCard({
     <label
       data-testid={testId}
       data-selected={selected ? 'true' : 'false'}
-      className={`flex flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+      className={`flex flex-col gap-1.5 rounded-xl p-3 text-left ring-1 transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
         disabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
       } ${selected ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10 hover:bg-muted/50'}`}
     >

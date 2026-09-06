@@ -1,4 +1,4 @@
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import {
   SHARE_DEFAULT_SETTINGS,
   SHARE_PASSWORD_MIN_LENGTH,
@@ -9,7 +9,7 @@ import {
   type ShareSettings,
   buildShareUrl,
   normalizeShareOrigin,
-} from '@tmex/shared/share';
+} from '@vibeterm/shared/share';
 import { getDeviceById } from '../db';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';

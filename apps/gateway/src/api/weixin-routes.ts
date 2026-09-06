@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { toBCP47 } from '@tmex/shared';
+import { toBCP47 } from '@vibeterm/shared';
 import {
   approveWeixinUser,
   createWeixinAccount,

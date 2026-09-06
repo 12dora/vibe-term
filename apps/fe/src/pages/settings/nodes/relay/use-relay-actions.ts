@@ -14,9 +14,9 @@ import { forgetRelayPackDebt, rememberRelayPackDebt } from '@/node/relay-meta-ke
 import type { RelayPackRefreshResult } from '@/node/relay-pack';
 import { refreshRelayPack } from '@/node/relay-pack';
 import { shouldProbeAddress } from '@/pages/settings/nodes/setup/address-probe';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

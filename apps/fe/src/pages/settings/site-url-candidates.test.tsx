@@ -5,7 +5,7 @@
 // 「填入」是回调，直接调用无 hook 的行组件并驱动它的 onClick。
 
 import { describe, expect, test } from 'bun:test';
-import type { ShareOriginCandidate } from '@tmex/shared/share';
+import type { ShareOriginCandidate } from '@vibeterm/shared/share';
 import { Children, type ReactElement, type ReactNode, isValidElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { SiteUrlField } from './general-fields';
@@ -24,10 +24,10 @@ function candidate(overrides: Partial<ShareOriginCandidate> = {}): ShareOriginCa
 }
 
 const TUNNEL = candidate({
-  url: 'https://tmex.example',
+  url: 'https://vibeterm.example',
   kind: 'tunnel',
-  label: 'tmex.example',
-  accessUrl: 'https://tmex.example',
+  label: 'vibeterm.example',
+  accessUrl: 'https://vibeterm.example',
 });
 
 function form(
@@ -60,7 +60,7 @@ function findByTestId(node: ReactNode, testId: string): ReactElement | null {
 describe('visibleSiteUrlCandidates', () => {
   test('与当前值相同的候选不再列出，末尾斜杠不算差异', () => {
     const list = [candidate(), TUNNEL];
-    expect(visibleSiteUrlCandidates(list, 'https://tmex.example/')).toEqual([candidate()]);
+    expect(visibleSiteUrlCandidates(list, 'https://vibeterm.example/')).toEqual([candidate()]);
     expect(visibleSiteUrlCandidates(list, 'https://other.example')).toEqual(list);
   });
 });
@@ -106,7 +106,7 @@ describe('SiteUrlField', () => {
     // 种类前缀由 `originKindLabel` 拼，前半截是 key 还是中文取决于同进程里谁先跑；host 一定在。
     expect(html).toContain('· relay.example');
     expect(html).toContain('https://relay.example/n/abc');
-    expect(html).toContain('https://tmex.example');
+    expect(html).toContain('https://vibeterm.example');
     // 「填入」在场即说明这一列走的是可编辑那一支（标题随之是「可用地址」）。
     expect(html).toContain('data-testid="settings-site-url-candidate-use"');
   });
@@ -116,7 +116,7 @@ describe('SiteUrlField', () => {
       <SiteUrlField
         form={form({
           siteUrlEditable: false,
-          effectiveSiteUrl: 'https://tmex.example',
+          effectiveSiteUrl: 'https://vibeterm.example',
           siteAccessOrigins: [TUNNEL, candidate()],
         })}
       />

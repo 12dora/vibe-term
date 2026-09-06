@@ -1,7 +1,7 @@
 // FE Borsh WebSocket 客户端
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@vibeterm/shared';
 import {
   type ActiveCarrier,
   type AttachDirectOptions,
@@ -91,7 +91,7 @@ export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined
 }
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
-  clientImpl: 'tmex-fe',
+  clientImpl: 'vibeterm-fe',
   clientVersion: getDefaultClientVersion(),
   maxFrameBytes: 1048576, // 1MB
   reconnectDelayMs: 1000,

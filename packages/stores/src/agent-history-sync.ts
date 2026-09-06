@@ -1,7 +1,7 @@
 // 历史消息增量同步：REST 增量拉取、去抖调度、in-flight 去重与补跑、stale 流式段清理。
 
-import { type ApiClient, fetchAgentMessages } from '@tmex/api-client';
-import type { AgentMessageDto } from '@tmex/shared';
+import { type ApiClient, fetchAgentMessages } from '@vibeterm/api-client';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import type { AgentDataGetState, AgentDataSetState } from './agent-state';
 import { maxMessageSeq } from './agent-thread';
 

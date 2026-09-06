@@ -1,13 +1,13 @@
 // 「加入已有 Hub」表单：默认用 mesh 账户密码加入（等价于 CLI `hub join <hubUrl> --password`），
 // 也可以切回加入码（`--token`，见 docs/hub/2026082800-hub-node-operations.md「4. 各机加入」）。
 //
-// 加入码由 hub 侧 `tmex-cli enroll` 或任意已登录入口的节点页签发，默认 10 分钟有效；
+// 加入码由 hub 侧 `vibeterm-cli enroll` 或任意已登录入口的节点页签发，默认 10 分钟有效；
 // 密码路径不需要任何人在 Hub 上先操作一次，因此作为默认。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { LocalStatusResponse, SetupJoinResponse } from '@tmex/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { LocalStatusResponse, SetupJoinResponse } from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type AddressProbeState, precheckProbe, useAddressProbe } from './address-probe';
@@ -189,7 +189,7 @@ function JoinHubResult({
 }) {
   const { t } = useTranslation();
   return (
-    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-join-hub-result">
+    <Card className="border-0 ring-0 vibeterm-reveal" data-testid="setup-join-hub-result">
       <CardHeader>
         <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
         <CardDescription>{t('nodes.setup.result.joinDescription')}</CardDescription>

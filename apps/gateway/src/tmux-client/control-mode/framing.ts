@@ -71,7 +71,7 @@ export function createLineFramer(onLine: (line: Uint8Array) => void): LineFramer
         if (pendingLength + rest.length > MAX_LINE_BYTES) {
           if (!warnedOversizedLine) {
             warnedOversizedLine = true;
-            console.warn('[tmex] control mode parser dropped oversized line');
+            console.warn('[vibeterm] control mode parser dropped oversized line');
           }
           discardingOversizedLine = true;
           pendingChunks = [];

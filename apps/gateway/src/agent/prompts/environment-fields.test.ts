@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import os from 'node:os';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import {
   AGENT_ENV_FIELD_KEYS,
   AGENT_ENV_RESOLVERS,

@@ -66,11 +66,11 @@ export async function runRelayPasswordJoin(
       await writeRelayNodeEnv(ctx.envPath);
     } else {
       const next = applyRelayPasswordJoinEnv({
-        TMEX_ROLES: ctx.env?.TMEX_ROLES ?? process.env.TMEX_ROLES ?? '',
+        VIBETERM_ROLES: ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? '',
       });
-      process.env.TMEX_ROLES = next.TMEX_ROLES;
-      process.env.TMEX_HUB_URL = '';
-      process.env.TMEX_HUB_PUBLIC_URL = '';
+      process.env.VIBETERM_ROLES = next.VIBETERM_ROLES;
+      process.env.VIBETERM_HUB_URL = '';
+      process.env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);

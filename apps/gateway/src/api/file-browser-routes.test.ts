@@ -23,7 +23,7 @@ describe('GET /api/files/raw streams the temp file', () => {
   });
 
   function tempRaw(bytes: string, name = 'pic.png') {
-    const dir = mkdtempSync(join(tmpdir(), 'tmex-rfile-test-'));
+    const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rfile-test-'));
     dirs.push(dir);
     const tmpPath = join(dir, 'f');
     writeFileSync(tmpPath, bytes);

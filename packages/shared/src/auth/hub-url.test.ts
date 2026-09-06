@@ -10,7 +10,7 @@ describe('canonicalHubUrl', () => {
   });
 
   test('keeps non-root path without a trailing slash', () => {
-    expect(canonicalHubUrl('https://hub.example/tmex/')).toBe('https://hub.example/tmex');
+    expect(canonicalHubUrl('https://hub.example/vibeterm/')).toBe('https://hub.example/vibeterm');
     expect(canonicalHubUrl('https://hub.example/a/b')).toBe('https://hub.example/a/b');
   });
 

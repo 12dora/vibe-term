@@ -1,7 +1,7 @@
 // 发版准备：读取自上次 release 以来的 commit，生成「仅含当前版本」的 CHANGELOG 草稿，并 bump 版本号。
 //
 // 用法：
-//   bun scripts/release.ts <newVersion>                 # 生成 changelog 草稿并把 tmex-cli 版本 bump 到 newVersion
+//   bun scripts/release.ts <newVersion>                 # 生成 changelog 草稿并把 vibeterm-cli 版本 bump 到 newVersion
 //   bun scripts/release.ts <ver> --from <ref> --to <ref> --no-bump --date <YYYY-MM-DD>
 //
 // 说明：
@@ -183,7 +183,7 @@ function main(): void {
     const prev = pkg.version;
     pkg.version = args.version;
     writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`);
-    console.log(`[release] bumped tmex-cli ${prev} -> ${args.version}`);
+    console.log(`[release] bumped vibeterm-cli ${prev} -> ${args.version}`);
   }
 
   console.log('[release] CHANGELOG.md 当前是双语 commit 原文草稿（含 DRAFT 标记）。');
@@ -195,11 +195,13 @@ function main(): void {
   console.log(
     '  2) review packages/app/CHANGELOG.md（确认无 DRAFT 标记、无 commit 黑话、英中两段齐全）'
   );
-  console.log('  3) bun run build && bun run test:tmex');
+  console.log('  3) bun run build && bun run test:app');
   console.log(
-    `  4) git commit -am "chore(release): tmex-cli ${args.version}" && git tag v${args.version} && git push origin v${args.version}`
+    `  4) git commit -am "chore(release): vibeterm-cli ${args.version}" && git tag v${args.version} && git push origin v${args.version}`
   );
-  console.log('     Pushing the v* tag publishes tmex-cli-<version>.tgz to GitHub Releases.');
+  console.log(
+    '     Pushing the v* tag publishes vibeterm-cli-<version>.tgz (plus the tmex-cli-<version>.tgz bridge asset) to GitHub Releases.'
+  );
 }
 
 main();

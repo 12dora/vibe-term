@@ -18,12 +18,12 @@ afterEach(async () => {
 });
 
 async function deps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupServiceDeps> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-join-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-join-'));
   tempDirs.push(dir);
   const envPath = join(dir, 'app.env');
   await writeFile(
     envPath,
-    'TMEX_ROLES=standalone\nOTHER=keep\nTMEX_HUB_URL=https://stale.example\n',
+    'VIBETERM_ROLES=standalone\nOTHER=keep\nVIBETERM_HUB_URL=https://stale.example\n',
     'utf8'
   );
   return {
@@ -46,7 +46,7 @@ describe('handleRelayJoinRequest', () => {
       {
         relayUrl: 'https://relay.example',
         tenantId: 'abc',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
         caFingerprint: 'ab'.repeat(32),
         directEnable: false,
@@ -63,27 +63,27 @@ describe('handleRelayJoinRequest', () => {
     expect(seen).toMatchObject({
       relayUrl: 'https://relay.example',
       tenantId: 'abc',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       name: 'studio',
       caFingerprint: 'ab'.repeat(32),
     });
     const env = await readEnvFile(base.envPath);
-    expect(env.TMEX_ROLES).toBe('node');
-    expect(env.TMEX_HUB_URL).toBe('');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_ROLES).toBe('node');
+    expect(env.VIBETERM_HUB_URL).toBe('');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
     expect(env.OTHER).toBe('keep');
   });
 
   test('keeps the relay role when the machine already runs relay', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-relay-join-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-join-'));
     tempDirs.push(dir);
     const envPath = join(dir, 'app.env');
-    await writeFile(envPath, 'TMEX_ROLES=relay\n', 'utf8');
+    await writeFile(envPath, 'VIBETERM_ROLES=relay\n', 'utf8');
     const res = await handleRelayJoinRequest(
       {
         relayUrl: 'https://relay.example',
         tenantId: 'abc',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
       },
       {
@@ -98,14 +98,14 @@ describe('handleRelayJoinRequest', () => {
       }
     );
     expect(res.status).toBe(200);
-    expect((await readEnvFile(envPath)).TMEX_ROLES).toBe('relay,node');
+    expect((await readEnvFile(envPath)).VIBETERM_ROLES).toBe('relay,node');
   });
 });
 
 const JOIN_BODY = {
   relayUrl: 'https://relay.example',
   tenantId: 'abc',
-  password: 'tmex-test-pass',
+  password: 'vibeterm-test-pass',
   name: 'studio',
 };
 

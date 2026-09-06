@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react';
 
-import type { UiThreadBlock } from '@tmex/stores';
+import type { UiThreadBlock } from '@vibeterm/stores';
 
 import { type AgentTabView, deriveAgentTabView } from './agent-tab-view';
 import { buildBlocksWithConfirmations, buildConfirmationMap } from './agent-thread-blocks';

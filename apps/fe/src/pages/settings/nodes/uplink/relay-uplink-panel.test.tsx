@@ -4,7 +4,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
-import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
+import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { Children, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { RelayActionsController } from '../relay/use-relay-actions';

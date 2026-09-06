@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { HUB_NOT_WRITER, type HubWriteForwardMessage } from '@tmex/shared/uplink';
+import { HUB_NOT_WRITER, type HubWriteForwardMessage } from '@vibeterm/shared/uplink';
 import {
   WRITER_FORWARD_HEADER,
   WRITER_FORWARD_TIMEOUT_MS,
@@ -67,10 +67,10 @@ describe('writer-forward', () => {
     });
   });
 
-  test('已带 X-Tmex-Forwarded-By 的请求不转发（环路守卫）', async () => {
+  test('已带 forwarded-by 头的请求不转发（环路守卫）', async () => {
     const req = new Request('http://standby/api/hub/enrollments', {
       method: 'POST',
-      headers: { [WRITER_FORWARD_HEADER]: SELF, cookie: 'tmex_s_self=abc' },
+      headers: { [WRITER_FORWARD_HEADER.name]: SELF, cookie: 'vibeterm_s_self=abc' },
       body: '{}',
     });
     expect(requestAlreadyForwarded(req)).toBe(true);
@@ -93,7 +93,7 @@ describe('writer-forward', () => {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        cookie: 'tmex_s_self=sess-1',
+        cookie: 'vibeterm_s_self=sess-1',
         authorization: 'Bearer secret',
         'X-Tmex-Force-Keylog': '1',
       },
@@ -102,6 +102,7 @@ describe('writer-forward', () => {
     const headers = collectWriteForwardHeaders(req);
     expect(headers).toEqual({
       'content-type': 'application/json',
+      'x-vibeterm-force-keylog': '1',
       'x-tmex-force-keylog': '1',
     });
     const msg = await buildWriteForwardRequest(req, { id: 'fwd-1', uid: 'user-1' });
@@ -131,7 +132,7 @@ describe('writer-forward', () => {
       const sent: HubWriteForwardMessage[] = [];
       const req = new Request(`http://standby${path}`, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', cookie: 'tmex_s_self=sess-1' },
+        headers: { 'content-type': 'application/json', cookie: 'vibeterm_s_self=sess-1' },
         body: JSON.stringify({ name: 'x' }),
       });
       const res = await forwardWriteToWriter(req, {
@@ -153,7 +154,7 @@ describe('writer-forward', () => {
       });
       expect(res).not.toBeNull();
       expect(res?.status).toBe(201);
-      expect(res?.headers.get(WRITER_FORWARD_HEADER)).toBe(SELF);
+      expect(res?.headers.get(WRITER_FORWARD_HEADER.name)).toBe(SELF);
       expect(await res?.json()).toEqual({ ok: true, path });
       expect(sent).toHaveLength(1);
       expect(sent[0]?.path).toBe(path);
@@ -208,7 +209,7 @@ describe('writer-forward', () => {
     );
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toBe('text/plain');
-    expect(res.headers.get(WRITER_FORWARD_HEADER)).toBe(SELF);
+    expect(res.headers.get(WRITER_FORWARD_HEADER.name)).toBe(SELF);
     expect(await res.text()).toBe('ok');
   });
 

@@ -1,5 +1,5 @@
-import { normalizePosixPath } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import { normalizePosixPath } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeKatex from 'rehype-katex';

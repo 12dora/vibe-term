@@ -1,7 +1,7 @@
 // 分享设置表单的纯逻辑：服务端值 ↔ 草稿、校验、以及「有没有改动」。
 // 组件只负责摆控件与把草稿交回来。
 
-import type { ShareSettings } from '@tmex/shared/share';
+import type { ShareSettings } from '@vibeterm/shared/share';
 
 export const SHARE_RETENTION_DAYS_MAX = 3650;
 export const SHARE_LOG_MB_MAX = 1024;

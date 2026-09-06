@@ -1,15 +1,15 @@
-// 多节点通知（汇聚声明）的 REST 客户端。契约在 `@tmex/shared`（contracts/mesh-notifications）。
+// 多节点通知（汇聚声明）的 REST 客户端。契约在 `@vibeterm/shared`（contracts/mesh-notifications）。
 //
 // 端点缺席（老节点、或对端网关还没带这一族路由）一律折成 `supported: false`：卡片整块不渲染，
 // standalone 与旧版本节点上看不出任何变化。
 
-import { type ApiClient, parseApiError } from '@tmex/api-client';
-import { requestJson } from '@tmex/api-client/json-mutation';
+import { type ApiClient, parseApiError } from '@vibeterm/api-client';
+import { requestJson } from '@vibeterm/api-client/json-mutation';
 import {
   MESH_NOTIFICATION_ROUTE,
   type MeshNotificationState,
   type UpdateMeshNotificationRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 
 export const meshNotificationQueryKey = ['notifications-mesh'] as const;
 

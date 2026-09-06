@@ -3,7 +3,7 @@
 
 import { describe, expect, mock, test } from 'bun:test';
 import * as actualReactQuery from '@tanstack/react-query';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import * as actualReactI18next from 'react-i18next';
 
 installWindowStorage();
@@ -23,10 +23,10 @@ mock.module('react-i18next', () => ({
   useTranslation: () => ({ t: (key: string) => key }),
 }));
 
-mock.module('@tmex/panels/code-viewer', () => ({
+mock.module('@vibeterm/panels/code-viewer', () => ({
   CodeViewer: () => null,
 }));
-mock.module('@tmex/panels/files', () => ({
+mock.module('@vibeterm/panels/files', () => ({
   startTransferToast: () => ({
     leg: () => {},
     success: () => {},
@@ -34,7 +34,7 @@ mock.module('@tmex/panels/files', () => ({
     cancel: () => {},
   }),
 }));
-mock.module('@tmex/panels/markdown', () => ({
+mock.module('@vibeterm/panels/markdown', () => ({
   MarkdownPreview: ({ urlResolver }: { urlResolver: (p: string) => string }) => (
     <span data-markdown-image={urlResolver('img/a.png')} />
   ),
@@ -42,8 +42,8 @@ mock.module('@tmex/panels/markdown', () => ({
 mock.module('@/i18n', () => ({ default: { t: (key: string) => key } }));
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { encodeFileRef } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { encodeFileRef } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { appNodeRuntimes } = await import('./../node/node-runtimes');
 
 const routeParams: { ref?: string } = {};

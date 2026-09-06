@@ -15,12 +15,12 @@
 ## KI-3：直连 ICE 候选无法按网卡过滤
 
 `node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。
-可用 `TMEX_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
+可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
 [直连地址退避](./hub/2026090305-peer-endpoint-backoff.md)。
 
 ## KI-4：TURN 仍需手工配置三个环境变量
 
-`TMEX_TURN_URL` / `TMEX_TURN_USERNAME` / `TMEX_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
+`VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
 libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
 `[mesh][rtc] summary` 的现网数据再定。
 
@@ -33,7 +33,7 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 ## KI-6：待现网实测的两项
 
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
-2. 直连的 ICE-TCP 与 `TMEX_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
+2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
 
 ## KI-8：Hub 转发不把浏览器来源 IP 带给节点
 
@@ -61,10 +61,10 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 发行包签名自 1.1.39 起生效（见[发行包签名](./release/2026090606-release-signing.md)）。新节点只装
 「带可验签清单」的暂存包，而旧版本入口不会发 `POST /api/system/upgrade/package/manifest`：字节能推上去，
 装包一步返回 `UPGRADE_SIGNATURE_REQUIRED`，节点停在原版本（不会装上任何东西，安全侧是对的）。
-处置：先把入口升到 1.1.39+，再对节点发起升级；或者在节点本机跑一次 `tmex upgrade`。
+处置：先把入口升到 1.1.39+，再对节点发起升级；或者在节点本机跑一次 `vibeterm upgrade`。
 
 `install.sh` 首次安装仍只校验 SHA256SUMS，没有验签——shell 里没有可依赖的 Ed25519 实现，
 首次安装本来也要信任下载源。
 
 另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
-≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `tmex upgrade --version <ver>`。
+≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `vibeterm upgrade --version <ver>`；且**升到 2.0.0 完成安装目录迁移之后不支持降回 1.x**（旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键），见 [改名迁移](./release/2026090607-rename-vibeterm.md)。

@@ -1,4 +1,4 @@
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import {
   FolderOpen,
   Pencil,

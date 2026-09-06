@@ -3,9 +3,9 @@
 // 两个接口都只允许从本机访问（远程调用返回 403 `LOCAL_ONLY`），响应体统一带回最新的
 // `localAuth` 状态——调用方直接用它覆盖本地快照，不必再拉一次 `/api/auth/mode`。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { LocalAuthApiError, type LocalAuthMutationResponse } from '@tmex/api-client/auth/index';
-import type { BootstrapLocalAuthRequest, LocalAuthStatus } from '@tmex/shared';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { LocalAuthApiError, type LocalAuthMutationResponse } from '@vibeterm/api-client/auth/index';
+import type { BootstrapLocalAuthRequest, LocalAuthStatus } from '@vibeterm/shared';
 
 const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 

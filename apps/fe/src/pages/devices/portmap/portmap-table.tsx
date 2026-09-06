@@ -1,8 +1,8 @@
 // 映射列表表格。行动作只有暂停 / 继续 / 删除，删除走二次确认。
 
-import { formatBytes } from '@tmex/api-client';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import { formatBytes } from '@vibeterm/api-client';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import { Pause, Play, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

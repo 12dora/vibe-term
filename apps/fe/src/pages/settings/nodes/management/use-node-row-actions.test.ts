@@ -6,9 +6,9 @@ import type { RecordSigner } from '@/auth/key-log-actions';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { clearPendingMetaKeysForTest, listPendingMetaKeys } from '@/node/relay-meta-key-pending';
-import { ApiClient } from '@tmex/api-client';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import { ApiClient } from '@vibeterm/api-client';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   decodeBase64url,
   decodeKeyLogRecord,
@@ -16,7 +16,7 @@ import {
   deriveSeed,
   encodeBase64url,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { ResolvedMode } from './types';
 import type { NodeActionDeps } from './types';
 import { revokeNodeRecord, useBulkRevoke, useNodeRowActions } from './use-node-row-actions';

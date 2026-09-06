@@ -1,12 +1,12 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { formatDisplayVersion } from '@tmex/shared';
+import { formatDisplayVersion } from '@vibeterm/shared';
 import { config } from '../config';
 import { readInstallMeta } from './install-info';
 
 // 构建期注入（packages/app build:runtime / apps/gateway build）。未注入时为 undefined，
 // 用 typeof 守卫避免 ReferenceError。打包产物总会注入，从而短路下方运行时回退。
-declare const TMEX_MONOREPO_VERSION: string | undefined;
+declare const VIBETERM_MONOREPO_VERSION: string | undefined;
 
 let cachedBase: string | undefined;
 
@@ -28,15 +28,15 @@ function readRepoPackageVersion(): string | null {
   }
 }
 
-/** monorepo 原始版本号（= 发布的 tmex-cli 版本，唯一真相源） */
+/** monorepo 原始版本号（= 发布的 vibeterm-cli 版本，唯一真相源） */
 export function getBaseVersion(): string {
   if (cachedBase !== undefined) return cachedBase;
 
   let base: string | null = null;
 
   // 1. 构建期注入（主生产路径）
-  if (typeof TMEX_MONOREPO_VERSION === 'string' && TMEX_MONOREPO_VERSION) {
-    base = TMEX_MONOREPO_VERSION;
+  if (typeof VIBETERM_MONOREPO_VERSION === 'string' && VIBETERM_MONOREPO_VERSION) {
+    base = VIBETERM_MONOREPO_VERSION;
   }
 
   // 2. production 兜底：install-meta.cliVersion

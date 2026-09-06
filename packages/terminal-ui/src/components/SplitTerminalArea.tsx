@@ -12,7 +12,7 @@
 //
 // 本文件是组合根：几何、尺寸上报、拖拽交互、单 pane 渲染分别在 ./split/ 下。
 
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 import { useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SplitPaneView } from './split/SplitPaneView';
@@ -239,7 +239,7 @@ export function SplitTerminalArea({
               onPointerDown={(event) => handleGutterPointerDown(index, gutter, event)}
             >
               <div
-                className={`absolute bg-foreground/[0.08] transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+                className={`absolute bg-foreground/[0.08] transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
                   isVertical
                     ? 'inset-y-0 left-1/2 w-px -translate-x-1/2'
                     : 'inset-x-0 top-1/2 h-px -translate-y-1/2'

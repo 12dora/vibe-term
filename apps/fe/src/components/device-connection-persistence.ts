@@ -1,7 +1,11 @@
+import { type SyncKeyValueStorage, migrateStorageKey } from '@vibeterm/stores';
+
 /** 仅需 get/set 的 Storage 子集，便于纯函数在无 DOM 环境下被测试 */
 export interface DeviceIdStorage {
   getItem(key: string): string | null;
   setItem(key: string, value: string): void;
+  /** 只有改名迁移需要；测试里的假存储可以不实现 */
+  removeItem?(key: string): void;
 }
 
 /**
@@ -10,11 +14,35 @@ export interface DeviceIdStorage {
  * 避免旧版本读到无法解析的数据。
  */
 export function connectedDevicesKey(storagePrefix: string): string {
-  return `${storagePrefix}tmex:connectedDevices`;
+  return `${storagePrefix}vibeterm:connectedDevices`;
 }
 
 export function disconnectedDevicesKey(storagePrefix: string): string {
-  return `${storagePrefix}tmex:disconnectedDevices`;
+  return `${storagePrefix}vibeterm:disconnectedDevices`;
+}
+
+/** 改名迁移：把该 prefix 下的旧键搬到新键。DeviceIntentStore 构造时调用一次。 */
+export function migrateDeviceIntentKeys(
+  storagePrefix: string,
+  storage?: DeviceIdStorage | null
+): void {
+  const target = resolveStorage(storage);
+  if (!target) return;
+  const adapter: SyncKeyValueStorage = {
+    getItem: (key) => target.getItem(key),
+    setItem: (key, value) => target.setItem(key, value),
+    removeItem: (key) => target.removeItem?.(key),
+  };
+  migrateStorageKey(
+    adapter,
+    `${storagePrefix}tmex:connectedDevices`,
+    connectedDevicesKey(storagePrefix)
+  );
+  migrateStorageKey(
+    adapter,
+    `${storagePrefix}tmex:disconnectedDevices`,
+    disconnectedDevicesKey(storagePrefix)
+  );
 }
 
 function resolveStorage(storage?: DeviceIdStorage | null): DeviceIdStorage | null {

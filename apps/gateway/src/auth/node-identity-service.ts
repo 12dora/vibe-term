@@ -1,4 +1,4 @@
-import type { AdmitNodePayload, EnrollmentSigner } from '@tmex/shared/auth';
+import type { AdmitNodePayload, EnrollmentSigner } from '@vibeterm/shared/auth';
 import {
   createEnrollment,
   createNodeCertificate,
@@ -10,7 +10,7 @@ import {
   nodeIdToHex,
   randomBytes,
   rootKeyFromSeed,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { NodeIdentityRecord, NodeIdentityStore } from './node-identity-store';
 
 export type NodeIdentityKeys = {

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { assertKnownFlags, parseArgs, resolveNestedCommand } from './args';
 import { AUTH_COMMANDS } from './auth-spawn';
 import { buildAppEnvValues, generateRelayAdminToken, relayEnvDefaults } from './install';
-import { parseTmexRoleName, parseTmexRoles, validateRoles } from './roles';
+import { parseVibeTermRoleName, parseVibeTermRoles, validateRoles } from './roles';
 
 function nested(argv: string[]) {
   return resolveNestedCommand(parseArgs(argv));
@@ -150,14 +150,14 @@ describe('relay commands run on the Bun auth runtime', () => {
 
 describe('relay roles', () => {
   test('relay and relay,node are accepted role names', () => {
-    expect(parseTmexRoleName('relay')).toBe('relay');
-    expect(parseTmexRoleName('relay,node')).toBe('relay,node');
-    expect(parseTmexRoles('relay')).toEqual({ hub: false, node: false, relay: true });
-    expect(parseTmexRoles('relay,node')).toEqual({ hub: false, node: true, relay: true });
+    expect(parseVibeTermRoleName('relay')).toBe('relay');
+    expect(parseVibeTermRoleName('relay,node')).toBe('relay,node');
+    expect(parseVibeTermRoles('relay')).toEqual({ hub: false, node: false, relay: true });
+    expect(parseVibeTermRoles('relay,node')).toEqual({ hub: false, node: true, relay: true });
   });
 
   test('the error message lists the relay names', () => {
-    expect(() => parseTmexRoleName('relay,hub')).toThrow(
+    expect(() => parseVibeTermRoleName('relay,hub')).toThrow(
       'role must be one of standalone | node | hub,node | relay | relay,node'
     );
   });
@@ -177,13 +177,14 @@ describe('relay env keys', () => {
 
   test('a relay install gets a public url and a generated admin token', () => {
     const env = relayEnvDefaults({ role: 'relay', relayPublicUrl: 'https://r.example' });
-    expect(env.TMEX_RELAY_PUBLIC_URL).toBe('https://r.example');
-    expect(env.TMEX_RELAY_ADMIN_TOKEN).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(env.VIBETERM_RELAY_PUBLIC_URL).toBe('https://r.example');
+    expect(env.VIBETERM_RELAY_ADMIN_TOKEN).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });
 
   test('an explicit admin token is kept', () => {
     expect(
-      relayEnvDefaults({ role: 'relay,node', relayAdminToken: 'keep-me' }).TMEX_RELAY_ADMIN_TOKEN
+      relayEnvDefaults({ role: 'relay,node', relayAdminToken: 'keep-me' })
+        .VIBETERM_RELAY_ADMIN_TOKEN
     ).toBe('keep-me');
   });
 
@@ -200,14 +201,14 @@ describe('relay env keys', () => {
       databasePath: '/tmp/x.db',
       masterKey: 'k',
     };
-    expect(buildAppEnvValues({ ...base, role: 'node' }).TMEX_RELAY_ADMIN_TOKEN).toBeUndefined();
+    expect(buildAppEnvValues({ ...base, role: 'node' }).VIBETERM_RELAY_ADMIN_TOKEN).toBeUndefined();
     const relay = buildAppEnvValues({
       ...base,
       role: 'relay',
       relayPublicUrl: 'https://r.example',
     });
-    expect(relay.TMEX_ROLES).toBe('relay');
-    expect(relay.TMEX_RELAY_PUBLIC_URL).toBe('https://r.example');
-    expect(relay.TMEX_RELAY_ADMIN_TOKEN).toBeTruthy();
+    expect(relay.VIBETERM_ROLES).toBe('relay');
+    expect(relay.VIBETERM_RELAY_PUBLIC_URL).toBe('https://r.example');
+    expect(relay.VIBETERM_RELAY_ADMIN_TOKEN).toBeTruthy();
   });
 });

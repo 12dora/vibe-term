@@ -6,7 +6,7 @@
 // 回放靠 checkpoint 做随机访问：跳到 t 时先回到 t 之前最后一个 checkpoint，再把中间的
 // 事件快进一遍——所以 checkpoint 的下标要在建索引时就记下来。
 
-import type { ShareLogEntry, ShareLogKind } from '@tmex/shared/share';
+import type { ShareLogEntry, ShareLogKind } from '@vibeterm/shared/share';
 
 export const REPLAY_SPEEDS = [1, 2, 4, 8] as const;
 export type ReplaySpeed = (typeof REPLAY_SPEEDS)[number];

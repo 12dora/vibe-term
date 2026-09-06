@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { wsBorsh } from '@vibeterm/shared';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { encodePayloadFrames } from '../../ws/borsh/codec-borsh';
 import { createFakeCarrier, createGatewaySession } from '../../ws/test-helpers';
 import { WebSocketSendGuard } from '../../ws/websocket-send-guard';
@@ -392,7 +392,7 @@ describe('CarrierSwitchController', () => {
 
   test('real WebSocketSendGuard + LinkStreamCarrier: queued-backpressure does not resend', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));
@@ -444,7 +444,7 @@ describe('CarrierSwitchController', () => {
 
   test('real WebSocketSendGuard + LinkStreamCarrier: blocked sends once after drain', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       b.onStream(resolve)
     );
     const out = await a.openStream(new Uint8Array([1]));

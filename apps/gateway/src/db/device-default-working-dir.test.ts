@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { getDb as getOrmDb } from './client';
 import { createDevice, getDeviceById, updateDevice } from './index';
@@ -15,7 +15,7 @@ function makeDevice(id: string, name: string, defaultWorkingDir?: string): Devic
     id,
     name,
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     defaultWorkingDir,
     sortOrder: 0,

@@ -1,7 +1,7 @@
 // 退出失败的文案映射：已知错误码走专用文案，未知的退化成通用文案 + 原始信息。
 
 import { describe, expect, test } from 'bun:test';
-import { LocalApiError } from '@tmex/api-client/local/local-api';
+import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import { describeLeaveError } from './use-leave-mesh';
 
 const t = (key: string, options?: Record<string, unknown>) =>

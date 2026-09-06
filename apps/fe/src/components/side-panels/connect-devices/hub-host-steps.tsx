@@ -4,7 +4,7 @@
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { GuideLink, GuideNote, GuideStep } from './guide-step';
 import { type EntryStatus, type HubStatus, entryStatus, hubStatus } from './host-status';

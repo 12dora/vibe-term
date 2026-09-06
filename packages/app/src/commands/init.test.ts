@@ -65,7 +65,7 @@ describe('enableDirectAfterInit', () => {
     const calls: string[] = [];
     const logs: string[] = [];
     await enableDirectAfterInit(
-      { role: 'node', installDir: '/tmp/tmex-init-node' },
+      { role: 'node', installDir: '/tmp/vibeterm-init-node' },
       {
         enableDirect: async ({ installDir }) => {
           calls.push(installDir);
@@ -74,7 +74,7 @@ describe('enableDirectAfterInit', () => {
         log: (message) => logs.push(message),
       }
     );
-    expect(calls).toEqual(['/tmp/tmex-init-node']);
+    expect(calls).toEqual(['/tmp/vibeterm-init-node']);
     expect(logs.join('\n')).toContain('fake registry down');
   });
 
@@ -87,7 +87,7 @@ describe('enableDirectAfterInit', () => {
       addonPath: '/tmp/native/node_datachannel.node',
     };
     await enableDirectAfterInit(
-      { role: 'hub,node', installDir: '/tmp/tmex-init-hub' },
+      { role: 'hub,node', installDir: '/tmp/vibeterm-init-hub' },
       {
         enableDirect: async () => ok,
         log: (message) => logs.push(message),
@@ -99,7 +99,7 @@ describe('enableDirectAfterInit', () => {
   test('does not call enableDirect for standalone', async () => {
     let called = false;
     await enableDirectAfterInit(
-      { role: 'standalone', installDir: '/tmp/tmex-init-standalone' },
+      { role: 'standalone', installDir: '/tmp/vibeterm-init-standalone' },
       {
         enableDirect: async () => {
           called = true;
@@ -113,7 +113,7 @@ describe('enableDirectAfterInit', () => {
   test('swallows thrown errors from enableDirect and logs the real message', async () => {
     const logs: string[] = [];
     await enableDirectAfterInit(
-      { role: 'node', installDir: '/tmp/tmex-init-throw' },
+      { role: 'node', installDir: '/tmp/vibeterm-init-throw' },
       {
         enableDirect: async () => {
           throw new Error('network exploded');

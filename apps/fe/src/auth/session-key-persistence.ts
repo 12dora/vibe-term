@@ -9,10 +9,12 @@
 //   * `k_totp` 与一次性 TOTP 码**绝不写盘**；delegation 的 18 小时 TTL 就是这份记录的上限。
 //   * 任何一步失败（隐私模式、配额、被其它 tab 阻塞）都退化成纯内存，绝不把异常抛给 UI。
 
-import type { Delegation } from '@tmex/shared/auth';
+import type { Delegation } from '@vibeterm/shared/auth';
 import type { SessionKeyInfo } from './session-key-store';
 
-const DB_NAME = 'tmex-auth';
+const DB_NAME = 'vibeterm-auth';
+/** 改名前的库名。首次访问时把会话记录搬过来，搬完删掉，失败就当没有持久化（用户重登）。 */
+const LEGACY_DB_NAME = 'tmex-auth';
 const STORE_NAME = 'session';
 const RECORD_KEY = 'current';
 export const PERSISTED_SESSION_VERSION = 1;
@@ -48,26 +50,144 @@ export function isSessionPersistenceAvailable(): boolean {
   return factory() !== null;
 }
 
-function openDb(): Promise<IDBDatabase | null> {
+/** `created` 为真表示这次 open 才建出这个库——用来判断旧库本来存不存在。 */
+function rawOpen(
+  name: string,
+  onUpgrade: ((db: IDBDatabase) => void) | null
+): Promise<{ db: IDBDatabase; created: boolean } | null> {
   const idb = factory();
   if (!idb) return Promise.resolve(null);
   return new Promise((resolve) => {
     let request: IDBOpenDBRequest;
     try {
-      request = idb.open(DB_NAME, 1);
+      request = idb.open(name, 1);
     } catch {
       resolve(null);
       return;
     }
+    let created = false;
     request.onupgradeneeded = () => {
-      const db = request.result;
-      if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+      created = true;
+      onUpgrade?.(request.result);
     };
-    request.onsuccess = () => resolve(request.result);
+    request.onsuccess = () => resolve({ db: request.result, created });
     request.onerror = () => resolve(null);
     // 另一个 tab 拿着旧版本的连接不放：不等，直接当成没有持久化。
     request.onblocked = () => resolve(null);
   });
+}
+
+function createSessionStore(db: IDBDatabase): void {
+  if (!db.objectStoreNames.contains(STORE_NAME)) db.createObjectStore(STORE_NAME);
+}
+
+function closeQuiet(db: IDBDatabase): void {
+  try {
+    db.close();
+  } catch {
+    // 关不掉也无所谓，连接随文档一起释放。
+  }
+}
+
+function readCurrent(db: IDBDatabase): Promise<PersistedSession | null> {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      tx.onabort = () => resolve(null);
+      tx.onerror = () => resolve(null);
+      const request = tx.objectStore(STORE_NAME).get(RECORD_KEY);
+      request.onsuccess = () => resolve((request.result as PersistedSession | undefined) ?? null);
+      request.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+function writeCurrent(db: IDBDatabase, record: PersistedSession): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.onabort = () => resolve();
+      tx.onerror = () => resolve();
+      tx.oncomplete = () => resolve();
+      tx.objectStore(STORE_NAME).put(record, RECORD_KEY);
+    } catch {
+      resolve();
+    }
+  });
+}
+
+function deleteDb(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    const idb = factory();
+    if (!idb) {
+      resolve();
+      return;
+    }
+    try {
+      const request = idb.deleteDatabase(name);
+      request.onsuccess = () => resolve();
+      request.onerror = () => resolve();
+      request.onblocked = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/** 有 `databases()` 就先问一句，免得白白建出一个空的旧库；没有就只能试着打开。 */
+async function legacyDbExists(): Promise<boolean> {
+  const idb = factory() as (IDBFactory & { databases?: () => Promise<{ name?: string }[]> }) | null;
+  if (!idb) return false;
+  if (typeof idb.databases !== 'function') return true;
+  try {
+    return (await idb.databases()).some((entry) => entry.name === LEGACY_DB_NAME);
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * 旧库 → 新库的一次性搬运。`CryptoKey` 是可结构化克隆的，不可导出属性照样保留，
+ * 因此升级后会话不会断。新库已有记录时不覆盖，只把旧库删掉。
+ */
+async function migrateLegacyDb(): Promise<void> {
+  if (!(await legacyDbExists())) return;
+  const current = await rawOpen(DB_NAME, createSessionStore);
+  if (!current) return;
+  try {
+    if ((await readCurrent(current.db)) === null) {
+      // 不建表打开旧库：`created` 为真说明它本来就不存在，这次是被我们建出来的。
+      const legacy = await rawOpen(LEGACY_DB_NAME, null);
+      if (legacy) {
+        const usable = !legacy.created && legacy.db.objectStoreNames.contains(STORE_NAME);
+        const record = usable ? await readCurrent(legacy.db) : null;
+        closeQuiet(legacy.db);
+        if (record) await writeCurrent(current.db, record);
+      }
+    }
+  } finally {
+    closeQuiet(current.db);
+  }
+  await deleteDb(LEGACY_DB_NAME);
+}
+
+let legacyMigration: Promise<void> | null = null;
+
+function ensureLegacyMigration(): Promise<void> {
+  legacyMigration ??= migrateLegacyDb().catch(() => undefined);
+  return legacyMigration;
+}
+
+/** 仅供测试：让下一次访问重新跑一遍旧库搬运。 */
+export function resetLegacyDbMigrationForTest(): void {
+  legacyMigration = null;
+}
+
+async function openDb(): Promise<IDBDatabase | null> {
+  await ensureLegacyMigration();
+  return (await rawOpen(DB_NAME, createSessionStore))?.db ?? null;
 }
 
 type TxOutcome<T> = { ok: true; value: T } | { ok: false; value: null };

@@ -9,10 +9,10 @@
 // 内层面板一律 `w-full`，不再各自套 max-width / padding。
 
 import { useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import { DeviceManagementActions } from '@tmex/panels/device-management';
-import { Button } from '@tmex/ui/button';
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { DeviceManagementActions } from '@vibeterm/panels/device-management';
+import { Button } from '@vibeterm/ui/button';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { FolderPlus, Loader2 } from 'lucide-react';
 import { type ReactNode, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';

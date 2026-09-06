@@ -1,4 +1,4 @@
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { LanguageModel, LanguageModelMiddleware, ModelMessage, Tool, ToolSet } from 'ai';
 import { stepCountIs, wrapLanguageModel } from 'ai';
 import type { PaneEmulator } from '../tmux-client/pane-emulator';

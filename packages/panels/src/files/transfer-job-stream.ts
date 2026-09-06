@@ -7,7 +7,7 @@ import {
   cancelTransferJob,
   getTransferJob as fetchTransferJob,
   streamTransferJobEvents,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import {
   applyTransferJobEvent,
   getTransferJobView,

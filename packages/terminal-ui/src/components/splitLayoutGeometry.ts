@@ -4,8 +4,8 @@
 // （tmux pane border），该间隙即 splitter（gutter）的渲染与命中位置。
 // px 换算统一为 cells × cellSize。
 
-import type { TmuxLayoutNode } from '@tmex/shared';
-import { layoutLeafPaneId } from '@tmex/shared';
+import type { TmuxLayoutNode } from '@vibeterm/shared';
+import { layoutLeafPaneId } from '@vibeterm/shared';
 
 export interface PxRect {
   left: number;

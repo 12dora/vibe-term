@@ -1,14 +1,14 @@
-// 设置页「远程访问」标签：把本机的 tmex 开放到外网，走 Cloudflare Tunnel 或直接连接两条路径之一。
+// 设置页「远程访问」标签：把本机的 VibeTerm 开放到外网，走 Cloudflare Tunnel 或直接连接两条路径之一。
 //
 // `/api/tunnel/*` 与 TLS / LocalApi 一样只作用于浏览器直连的那台机器：它要落盘二进制、写 env、
 // 起常驻进程，经 `/n/<id>` 转发过去只会改到入口机自己。因此浏览远端 node 时整块不渲染，只给提示。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useRouteNodeId } from '@/node/node-runtime-boundary';
-import { isSelfNode } from '@tmex/api-client';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import type { LocalAuthStatus, TunnelStatusResponse } from '@tmex/shared';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import { isSelfNode } from '@vibeterm/api-client';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import type { LocalAuthStatus, TunnelStatusResponse } from '@vibeterm/shared';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';

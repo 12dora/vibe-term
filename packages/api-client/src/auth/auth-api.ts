@@ -1,8 +1,9 @@
 // mesh 鉴权 REST 客户端。所有 `/n/:T/...` 路径由 nodeId 决定，`self` 退化为不带前缀的旧路由。
 
+import { assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import { type ApiClient, defaultApiClient, parseApiError } from '../client';
 import { SELF_NODE_ID, resolveNodeUrl } from '../node-url';
-import { NoPasskeyForOriginError, X_TMEX_CONNECTION_HEADER } from './types';
+import { CONNECTION_HEADER, NoPasskeyForOriginError } from './types';
 import type {
   AuthChallengeResponse,
   AuthLoginErrorCode,
@@ -135,7 +136,7 @@ export class AuthApi {
 
   /**
    * `GET /api/auth/nodes`（**公开**）：只有 `{id, name, online}`。
-   * 登录页在拿到 `tmex_s_self` 之前只能用它——公钥要登录后才下发。
+   * 登录页在拿到会话 cookie 之前只能用它——公钥要登录后才下发。
    */
   async listPublicNodes(): Promise<PublicNode[]> {
     const res = await this.client.fetch('/api/auth/nodes');
@@ -164,7 +165,7 @@ export class AuthApi {
     const { connectionId, cid } = options;
     const query = cid ? `?cid=${encodeURIComponent(cid)}` : '';
     const res = await this.client.fetch(nodeAuthPath(nodeId, `/api/mesh/connection${query}`), {
-      ...(connectionId ? { headers: { [X_TMEX_CONNECTION_HEADER]: connectionId } } : {}),
+      ...(connectionId ? { headers: assignHeaderPair({}, CONNECTION_HEADER, connectionId) } : {}),
     });
     if (!res.ok) {
       return {

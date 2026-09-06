@@ -1,4 +1,4 @@
-import type { RelayEnvelope } from '@tmex/shared/relay';
+import type { RelayEnvelope } from '@vibeterm/shared/relay';
 import { and, asc, desc, eq, gte } from 'drizzle-orm';
 import type { AuthDb } from '../auth/types';
 import { relayKeyLog } from '../db/schema';

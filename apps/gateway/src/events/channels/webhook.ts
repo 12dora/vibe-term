@@ -1,4 +1,10 @@
-import type { EventType, WebhookEndpoint, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEndpoint, WebhookEvent } from '@vibeterm/shared';
+import {
+  WEBHOOK_EVENT_HEADER,
+  WEBHOOK_SIGNATURE_HEADER,
+  WEBHOOK_TIMESTAMP_HEADER,
+  assignHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
 import { getAllWebhookEndpoints, getSiteSettings } from '../../db';
 import { logAt } from '../../log/level';
 import type { NotificationChannel } from './types';
@@ -56,9 +62,10 @@ export class WebhookChannel implements NotificationChannel {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'X-Tmex-Signature': `sha256=${signature}`,
-        'X-Tmex-Event': event.eventType,
-        'X-Tmex-Timestamp': event.timestamp,
+        // 第三方接收方可能只认其中一组：新旧两组签名头同时发送
+        ...assignHeaderPair({}, WEBHOOK_SIGNATURE_HEADER, `sha256=${signature}`),
+        ...assignHeaderPair({}, WEBHOOK_EVENT_HEADER, event.eventType),
+        ...assignHeaderPair({}, WEBHOOK_TIMESTAMP_HEADER, event.timestamp),
       },
       body,
     });

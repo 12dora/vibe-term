@@ -1,6 +1,6 @@
 // 打包 runtime（内联 gateway），并在构建期注入 monorepo 版本号。
 //
-// 注入 TMEX_MONOREPO_VERSION 后，运行时 apps/gateway/src/system/version.ts 的
+// 注入 VIBETERM_MONOREPO_VERSION 后，运行时 apps/gateway/src/system/version.ts 的
 // typeof 守卫被短路，安装版/容器版无需再依赖 install-meta 或仓库 package.json 即可拿到版本。
 
 import { spawnSync } from 'node:child_process';
@@ -23,9 +23,9 @@ export const cpuFeaturesStubPlugin: BunPlugin = {
   setup(build) {
     build.onResolve({ filter: /^cpu-features$/ }, () => ({
       path: 'cpu-features',
-      namespace: 'tmex-optional-stub',
+      namespace: 'vibeterm-optional-stub',
     }));
-    build.onLoad({ filter: /.*/, namespace: 'tmex-optional-stub' }, () => ({
+    build.onLoad({ filter: /.*/, namespace: 'vibeterm-optional-stub' }, () => ({
       contents: "throw new Error('cpu-features unavailable');\n",
       loader: 'js',
     }));
@@ -73,7 +73,7 @@ export async function buildRuntimeEntry(options: {
     format: 'esm',
     plugins: [cpuFeaturesStubPlugin],
     define: {
-      TMEX_MONOREPO_VERSION: JSON.stringify(options.version),
+      VIBETERM_MONOREPO_VERSION: JSON.stringify(options.version),
     },
     throw: false,
   });
@@ -96,7 +96,7 @@ function runBunBuild(args: string[]): void {
 }
 
 function verifyVendoredNativeBundle(): void {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-native-bundle-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-native-bundle-'));
   try {
     const outfile = join(workDir, 'native-datachannel.js');
     runBunBuild([
@@ -122,7 +122,7 @@ function verifyVendoredNativeBundle(): void {
       );
       process.exit(1);
     }
-    if (!text.includes('TMEX_NATIVE_DIR') || !text.includes('node_datachannel.node')) {
+    if (!text.includes('VIBETERM_NATIVE_DIR') || !text.includes('node_datachannel.node')) {
       console.error('[build:runtime] vendored native JS is missing absolute-path loader');
       process.exit(1);
     }
@@ -136,7 +136,7 @@ function verifyVendoredNativeBundle(): void {
 }
 
 function verifyCryptoBundles(): void {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-crypto-bundle-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-crypto-bundle-'));
   const entry = join(pkgRoot, 'scripts', '.crypto-smoke.ts');
   try {
     writeFileSync(
@@ -196,7 +196,7 @@ function assertNoUnresolvedPackageRequires(filePath: string): void {
 }
 
 async function main(): Promise<void> {
-  console.log(`[build:runtime] injecting TMEX_MONOREPO_VERSION="${version}"`);
+  console.log(`[build:runtime] injecting VIBETERM_MONOREPO_VERSION="${version}"`);
 
   mkdirSync(join(pkgRoot, 'dist/runtime'), { recursive: true });
 

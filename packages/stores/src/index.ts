@@ -1,5 +1,5 @@
 // 应用状态层：runtime 工厂、每 node 运行时管理器与纯函数工具。
-// 默认 runtime 与其原名 store 导出移到 `@tmex/stores/default-runtime`（见该文件注释）。
+// 默认 runtime 与其原名 store 导出移到 `@vibeterm/stores/default-runtime`（见该文件注释）。
 
 export { createAppRuntime, type AppRuntime } from './app-runtime';
 export {
@@ -82,6 +82,11 @@ export {
   setNavigateBridge,
   setSidebarBridge,
 } from './flow-bridges';
+export {
+  migrateLocalStorageKey,
+  migrateStorageKey,
+  type SyncKeyValueStorage,
+} from './storage-migration';
 export { selectPaneAgentState, type PaneAgentState } from './use-pane-agent-state';
 export {
   applyViewportPolicy,
@@ -94,4 +99,4 @@ export {
   type ViewportPolicyMap,
 } from './viewport-policy';
 
-export type { AgentSessionDto, AgentSessionStatus } from '@tmex/shared';
+export type { AgentSessionDto, AgentSessionStatus } from '@vibeterm/shared';

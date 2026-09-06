@@ -1,5 +1,5 @@
 import { createServer } from 'node:net';
-import type { TunnelEdgeResolution } from '@tmex/shared';
+import type { TunnelEdgeResolution } from '@vibeterm/shared';
 
 export type SpawnSpec = {
   command: string;

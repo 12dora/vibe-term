@@ -1,7 +1,7 @@
 // 「隐藏键盘」按钮只在终端输入元素持有焦点时出现。bun test 无 DOM，
 // 用 react-dom/server 静态渲染断言首帧形态，焦点态靠桩 document.activeElement 驱动。
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import type { RefObject } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { TerminalHideKeyboardButton } from './terminal-keyboard-button';

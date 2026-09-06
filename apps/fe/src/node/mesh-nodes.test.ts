@@ -2,9 +2,9 @@
 // 以及宿主级唯一那条轮询回路（单例引用计数 + 后台暂停）。
 
 import { describe, expect, test } from 'bun:test';
-import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/auth/index';
-import { wsBorsh } from '@tmex/shared';
-import { bytesToHex, encodeBase64url, sha256 } from '@tmex/shared/auth';
+import type { AuthApi, AuthRequiredDetail, MeshNode } from '@vibeterm/api-client/auth/index';
+import { wsBorsh } from '@vibeterm/shared';
+import { bytesToHex, encodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { HubApiError, type HubNodeRow } from './hub-api';
 import { HUB_STALE_MS, startHubPolling } from './hub-polling';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';

@@ -1,4 +1,4 @@
-import type { StoredRelayList } from '@tmex/shared/auth';
+import type { StoredRelayList } from '@vibeterm/shared/auth';
 import {
   decodeCertificate,
   encodeMetaKeyPayload,
@@ -6,8 +6,8 @@ import {
   hexToBytes,
   sha256,
   wrapEntryToBytes,
-} from '@tmex/shared/auth';
-import { type WrapEntry, wrapKeyForNodes } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { type WrapEntry, wrapKeyForNodes } from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 
 export type RelayNodeKey = { nodeId: string; x25519Pk: Uint8Array };

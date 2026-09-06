@@ -1,5 +1,9 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@tmex/shared';
+import {
+  TERMINAL_THEME_DARK,
+  TERMINAL_THEME_LIGHT,
+  type TerminalThemeColors,
+} from '@vibeterm/shared';
 import {
   applyTerminalTheme,
   attachTerminalWithLatestTheme,

@@ -54,7 +54,7 @@ export function isPasteShortcut(event: KeyboardEvent): boolean {
   return Boolean(isMacPlatform() ? event.metaKey : event.ctrlKey);
 }
 
-// 与 @tmex/shared 的 browser-clipboard 同实现：本包是零依赖的可独立发布包，
+// 与 @vibeterm/shared 的 browser-clipboard 同实现：本包是零依赖的可独立发布包，
 // 不能引入 workspace 私有包，故保留本地副本。
 export async function writeTextToClipboard(text: string): Promise<void> {
   if (!text) {

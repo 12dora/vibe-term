@@ -6,7 +6,7 @@ import type {
   AgentQueuedMessageDto,
   AgentSessionDto,
   AgentWriteMode,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { type ApiClient, defaultApiClient } from './client';
 import { requestJson, requestOk } from './json-mutation';
 

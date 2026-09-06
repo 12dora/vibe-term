@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
 import { ensureSiteSettingsInitialized, updateSiteSettings } from '../../db';
 import { runMigrations } from '../../db/migrate';
 import { telegramService } from '../../telegram/service';
@@ -14,7 +14,7 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: new Date().toISOString(),
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'dev-1', name: 'mac', type: 'local' },
     tmux: { windowId: '@1', paneId: '%1', windowIndex: 7, paneIndex: 3 },
     ...overrides,

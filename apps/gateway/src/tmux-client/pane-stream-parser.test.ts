@@ -59,8 +59,8 @@ describe('pane stream parser - OSC 133 prompt markers', () => {
 
   test('D 带 nonce 参数', () => {
     const { parser, markers } = collectMarkers();
-    parser.push(bytes(0x1b, ']', '133;D;137;tmex=abc123', ST));
-    expect(markers[0]).toEqual({ kind: 'D', exitCode: 137, params: ['137', 'tmex=abc123'] });
+    parser.push(bytes(0x1b, ']', '133;D;137;vibeterm=abc123', ST));
+    expect(markers[0]).toEqual({ kind: 'D', exitCode: 137, params: ['137', 'vibeterm=abc123'] });
   });
 
   test('A/B 提示符标记', () => {
@@ -171,11 +171,11 @@ describe('pane stream parser', () => {
     });
 
     const output = parser.push(
-      bytes('A', 0x1b, 0x5d, '9;hello from tmex', 0x07, 'B', 0x1b, 0x5d, '9;4;1;42', 0x07, 'C')
+      bytes('A', 0x1b, 0x5d, '9;hello from VibeTerm', 0x07, 'B', 0x1b, 0x5d, '9;4;1;42', 0x07, 'C')
     );
 
     expect(Array.from(output)).toEqual(Array.from(bytes('ABC')));
-    expect(notifications).toEqual([{ source: 'osc9', body: 'hello from tmex' }]);
+    expect(notifications).toEqual([{ source: 'osc9', body: 'hello from VibeTerm' }]);
     expect(bells).toEqual([]);
   });
 

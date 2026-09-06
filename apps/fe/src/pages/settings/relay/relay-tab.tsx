@@ -4,11 +4,11 @@
 // 直接敲 `?tab=relay` 进来的话，这里照样给出「未启用」的说明，而不是空白页。
 // 状态与写操作全在 `useRelayController` 里，本文件只摆版式。
 
-import type { RelayAdminApi, RelayStatusResponse } from '@tmex/api-client/relay/admin-api';
-import { defaultRelayAdminApi } from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
-import { Reveal } from '@tmex/ui/motion';
-import { Skeleton } from '@tmex/ui/skeleton';
+import type { RelayAdminApi, RelayStatusResponse } from '@vibeterm/api-client/relay/admin-api';
+import { defaultRelayAdminApi } from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

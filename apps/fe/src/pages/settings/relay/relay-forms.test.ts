@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { RelayQuota } from '@tmex/api-client/relay/admin-api';
-import { RELAY_QUOTA_LIMITS } from '@tmex/api-client/relay/admin-api';
+import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
+import { RELAY_QUOTA_LIMITS } from '@vibeterm/api-client/relay/admin-api';
 import {
   BANDWIDTH_KB_LIMIT,
   MAX_FILE_MB_LIMIT,

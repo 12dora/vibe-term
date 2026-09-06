@@ -26,7 +26,7 @@ describe('RemotePaneRuntime', () => {
             windowName: 'main',
             windowId: '@1',
             sessionId: '$0',
-            sessionName: 'tmex',
+            sessionName: 'vibeterm',
             splitPaneCount: 1,
           },
           snapshotExists: true,

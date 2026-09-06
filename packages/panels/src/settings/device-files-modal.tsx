@@ -2,10 +2,10 @@
 // 卡片本身已经挂在该 node 的 `NodeRuntimeScope` 下，弹窗直接沿用 `useRuntime()` 的 client，
 // 增删改与列表都落在这台设备所属的 gateway 上。
 
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@tmex/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@vibeterm/ui/dialog';
 
 import { FilesSettingsTab } from './files-tab';
 

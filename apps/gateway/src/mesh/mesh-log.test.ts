@@ -19,7 +19,7 @@ describe('mesh-log', () => {
   });
 
   test('envInt reads a finite integer with a floor, else the fallback', () => {
-    const key = 'TMEX_MESH_LOG_ENVINT_TEST';
+    const key = 'VIBETERM_MESH_LOG_ENVINT_TEST';
     const prev = process.env[key];
     try {
       delete process.env[key];

@@ -16,8 +16,8 @@
 import { AppErrorBoundary } from '@/components/app-error-boundary';
 import { withI18nRest } from '@/i18n/rest-prerequisite';
 import { lazyChunk } from '@/lazy-chunk';
-import { Button } from '@tmex/ui/button';
-import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
+import { Button } from '@vibeterm/ui/button';
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle } from '@vibeterm/ui/sheet';
 import { Loader2, X } from 'lucide-react';
 import { Suspense, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -82,7 +82,7 @@ export function SidePanelHost() {
               不会像原来那页那样被撑出可视区又滚不动。
               bg-muted/50 与页面内容区一致，卡片（bg-background）才有对比。 */}
           <div
-            className="bg-muted/50 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--tmex-safe-area-bottom))] [-webkit-overflow-scrolling:touch]"
+            className="bg-muted/50 flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain p-4 pb-[max(1rem,var(--vibeterm-safe-area-bottom))] [-webkit-overflow-scrolling:touch]"
             data-testid="side-panel-body"
           >
             <SidePanelBody panel={rendered} onClose={close} />

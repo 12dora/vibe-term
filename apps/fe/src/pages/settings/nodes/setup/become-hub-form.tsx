@@ -1,19 +1,19 @@
-// 「把这台机器变成 hub」表单：创建首个用户 + 写 `TMEX_ROLES=hub,node` + 重启。
+// 「把这台机器变成 hub」表单：创建首个用户 + 写 `VIBETERM_ROLES=hub,node` + 重启。
 //
 // 对应 CLI 的 `init --role hub,node` + `hub user add`（见 docs/hub/2026082800-hub-node-operations.md
 // 「首次搭 hub」）。HTTPS 由反代 / Cloudflare Tunnel 提供，本批次不内建。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import { SetupApi } from '@tmex/api-client/local/setup-api';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import { SetupApi } from '@vibeterm/api-client/local/setup-api';
 import type {
   LocalStatusResponse,
   SetupHubResponse,
   SetupPrecheckResponse,
-} from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/api-client/local/types';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -254,7 +254,7 @@ function BecomeHubResult({
 }) {
   const { t } = useTranslation();
   return (
-    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-become-hub-result">
+    <Card className="border-0 ring-0 vibeterm-reveal" data-testid="setup-become-hub-result">
       <CardHeader>
         <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
         <CardDescription>{t('nodes.setup.result.becomeHubDescription')}</CardDescription>

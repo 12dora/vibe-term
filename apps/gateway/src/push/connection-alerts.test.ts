@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings } from '@tmex/shared';
+import type { Device, SiteSettings } from '@vibeterm/shared';
 import { ConnectionAlertNotifier } from './connection-alerts';
 
 function makeDevice(id: string): Device {
@@ -10,7 +10,7 @@ function makeDevice(id: string): Device {
     host: '10.0.0.1',
     port: 22,
     username: 'root',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     sortOrder: 0,
     createdAt: '2026-04-18T00:00:00Z',
@@ -20,8 +20,8 @@ function makeDevice(id: string): Device {
 
 function makeSettings(): SiteSettings {
   return {
-    siteName: 'tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'VibeTerm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,
     enableBrowserNotificationToast: true,
@@ -203,9 +203,9 @@ describe('ConnectionAlertNotifier event bridge', () => {
       tmux: { sessionName?: string };
       payload: { message?: string };
     };
-    expect(event.site.name).toBe('tmex');
+    expect(event.site.name).toBe('VibeTerm');
     expect(event.device.id).toBe('d1');
-    expect(event.tmux.sessionName).toBe('tmex');
+    expect(event.tmux.sessionName).toBe('vibeterm');
     expect(typeof event.payload.message).toBe('string');
   });
 

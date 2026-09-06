@@ -1,6 +1,6 @@
-// @tmex/shared 主入口的运行时导出面锁定
+// @vibeterm/shared 主入口的运行时导出面锁定
 //
-// index.ts 是全仓库的公共契约入口，任何包都从 '@tmex/shared' 消费它。
+// index.ts 是全仓库的公共契约入口，任何包都从 '@vibeterm/shared' 消费它。
 // 拆分/重排模块时若漏掉一条 re-export，类型侧未必立刻报错，但运行时值会静默消失。
 // 这里把运行时导出名快照下来，少一个或多一个都要显式改这张表。
 
@@ -32,6 +32,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'PANE_MODE_FLAGS_PRESENT',
   'PRODUCT_NAME',
   'RELEASE_API_LATEST_URL',
+  'RELEASE_ASSET_RENAME_VERSION',
   'RELEASE_REPO',
   'RELEASE_REPO_URL',
   'RELEASE_SIGNING_KEYS',
@@ -39,6 +40,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'RELEASE_SIG_FILE_NAME',
   'RELEASE_SIG_PREFIX',
   'RELEASE_SIG_VERSION',
+  'RELEASE_TARBALL_NAME_PATTERN',
   'SUPPORTED_LOCALES',
   'TERMINAL_SHORTCUT_ACTIONS',
   'TERMINAL_THEME_DARK',
@@ -75,19 +77,25 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'isDeviceFolderLayoutValid',
   'isEventType',
   'isFolderListValid',
+  'isReleaseAssetNameFor',
+  'isReleaseTarballName',
   'isStandaloneRoles',
-  'isTmexRoleName',
+  'isVibeTermRoleName',
   'layoutLeafPaneId',
+  'legacyReleaseTarballName',
+  'legacyReleaseTarballUrl',
   'moveFolderInLayout',
   'moveNodeInLayout',
   'normalizeDeviceFolderName',
   'normalizeFolderLayoutOrder',
   'normalizePosixPath',
+  'parseReleaseTarballName',
   'parseSemver',
   'parseSha256Sums',
   'parseTmuxVersion',
   'parseWindowLayout',
   'releaseApiUrl',
+  'releaseAssetNames',
   'releaseSignatureRequired',
   'releaseSumsFileName',
   'releaseTag',
@@ -99,6 +107,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'rewriteWildcardBindHost',
   'roleNameFromFlags',
   'rolesFromName',
+  'selectReleaseAssetForTarget',
   'signReleaseSums',
   'sleep',
   'sleepOrAbort',
@@ -111,7 +120,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'wsBorsh',
 ];
 
-describe('@tmex/shared 主入口', () => {
+describe('@vibeterm/shared 主入口', () => {
   it('运行时导出面与快照一致', async () => {
     const mod = await import('./index');
     expect(Object.keys(mod).sort()).toEqual(EXPECTED_RUNTIME_EXPORTS);

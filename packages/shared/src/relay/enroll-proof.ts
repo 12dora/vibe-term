@@ -2,6 +2,7 @@ import { b } from '@zorsh/zorsh';
 import { bytesEqual } from '../auth/encoding';
 import { verifyEd25519 } from '../auth/root-key';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const DOMAIN_RELAY_ENROLL = 'tmex/relay-enroll/v1';
 /** 调用方（中继侧 `/api/relay/enroll`）按此窗口判定 `ts`。 */
 export const RELAY_ENROLL_PROOF_MAX_SKEW_MS = 5 * 60 * 1000;

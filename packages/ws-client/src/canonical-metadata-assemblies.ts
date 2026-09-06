@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   MAX_METADATA_ASSEMBLIES,
   MAX_METADATA_BUFFERED_BYTES,

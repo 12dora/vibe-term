@@ -1,7 +1,7 @@
 // 「分享」标签的展示格式化：全是纯函数，文案一律经 `t` 出。
 
-import { formatBytes } from '@tmex/api-client/format';
-import type { ShareEndReason, ShareRecord } from '@tmex/shared/share';
+import { formatBytes } from '@vibeterm/api-client/format';
+import type { ShareEndReason, ShareRecord } from '@vibeterm/shared/share';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 

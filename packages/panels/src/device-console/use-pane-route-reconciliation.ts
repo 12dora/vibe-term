@@ -1,8 +1,8 @@
 // URL 是真相源：本 hook 把快照与路由对账（目标失效回落、window-only 路由补 pane、
 // 空路由自动选中），并在路由身份就绪后下发 select / 轻量 FOCUS_PANE。
 
-import type { TmuxWindow } from '@tmex/shared';
-import { useTmuxStore } from '@tmex/stores/react';
+import type { TmuxWindow } from '@vibeterm/shared';
+import { useTmuxStore } from '@vibeterm/stores/react';
 import { useEffect, useRef } from 'react';
 import { resolveSelectDispatch } from './pane-selection-rules';
 import { isWarmSelectTarget } from './terminal-keep-alive';

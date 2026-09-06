@@ -1,7 +1,7 @@
 // 文件树的纯逻辑：路径换算、展开态修正、上传前的体积分流、rsync 缺失的安装目标解析。
 
-import type { FileErrorCode, FileRootDto } from '@tmex/shared';
-import { basename as nodeBasename, dirname as parentOf } from '@tmex/shared';
+import type { FileErrorCode, FileRootDto } from '@vibeterm/shared';
+import { basename as nodeBasename, dirname as parentOf } from '@vibeterm/shared';
 
 export { nodeBasename, parentOf };
 

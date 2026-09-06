@@ -1,6 +1,6 @@
 import { createOpenAI } from '@ai-sdk/openai';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type { LanguageModel, Tool } from 'ai';
 import { HOSTED_TOOL_FACTORIES } from '../agent/tools/hosted';
 import { decrypt, decryptWithContext } from '../crypto';

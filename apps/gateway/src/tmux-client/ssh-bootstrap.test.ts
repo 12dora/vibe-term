@@ -7,14 +7,14 @@ describe('ssh-bootstrap', () => {
     const script = buildSshBootstrapScript();
 
     expect(script).toContain('command -v tmux');
-    expect(script).toContain('TMEX_BOOT_OK');
-    expect(script).toContain('TMEX_BOOT_FAIL');
+    expect(script).toContain('VIBETERM_BOOT_OK');
+    expect(script).toContain('VIBETERM_BOOT_FAIL');
     expect(script).toContain('HOME_DIR="${HOME:-$(pwd)}"');
   });
 
   test('parseSshBootstrapOutput parses success payload', () => {
     expect(
-      parseSshBootstrapOutput('noise\nTMEX_BOOT_OK\t/usr/bin/tmux\ttmux 3.4\t/home/alice\n')
+      parseSshBootstrapOutput('noise\nVIBETERM_BOOT_OK\t/usr/bin/tmux\ttmux 3.4\t/home/alice\n')
     ).toEqual({
       ok: true,
       tmuxBin: '/usr/bin/tmux',
@@ -24,7 +24,7 @@ describe('ssh-bootstrap', () => {
   });
 
   test('parseSshBootstrapOutput parses failure payload', () => {
-    expect(parseSshBootstrapOutput('TMEX_BOOT_FAIL\ttmux_not_found\n')).toEqual({
+    expect(parseSshBootstrapOutput('VIBETERM_BOOT_FAIL\ttmux_not_found\n')).toEqual({
       ok: false,
       reason: 'tmux_not_found',
     });

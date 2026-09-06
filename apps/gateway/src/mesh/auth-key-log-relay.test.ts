@@ -20,8 +20,8 @@ import {
   generateKdfParams,
   hexToBytes,
   signKeyLogRecordWithRoot,
-} from '@tmex/shared/auth';
-import { generateTenantKey } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { generateTenantKey } from '@vibeterm/shared/relay';
 import { ChallengeStore } from '../auth/challenge-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -182,7 +182,7 @@ async function postRecord(
   const sig = signKeyLogRecordWithRoot(b.user.rootKey, bytes);
   const req = new Request('http://localhost/api/auth/keylog?hub=sync', {
     method: 'POST',
-    headers: { 'content-type': 'application/json', cookie: `tmex_s_self=${b.sid}` },
+    headers: { 'content-type': 'application/json', cookie: `vibeterm_s_self=${b.sid}` },
     body: JSON.stringify({ bytes: encodeBase64url(bytes), sig: encodeBase64url(sig) }),
   });
   const res = await b.runtime.handleRequest(req, { upgrade: () => true });

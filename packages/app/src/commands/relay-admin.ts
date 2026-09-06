@@ -191,7 +191,7 @@ async function resolveNewRelayPassword(parsed: ParsedArgs, io: RelayIo): Promise
     return io.newRelayPassword;
   }
   return await promptPassword('New relay password', {
-    envKey: 'TMEX_RELAY_PASSWORD',
+    envKey: 'VIBETERM_RELAY_PASSWORD',
     confirm: true,
     confirmMessage: 'Confirm new relay password',
   });
@@ -360,7 +360,7 @@ export function mergeLimits(base: RelayLimits, patch: LimitsPatch): RelayLimits 
   };
 }
 
-/** `tmex relay limits`：中继级限额（租户数 / 总带宽 / 公平分配）。 */
+/** `vibeterm relay limits`：中继级限额（租户数 / 总带宽 / 公平分配）。 */
 export async function runRelayLimits(parsed: ParsedArgs, io: RelayIo = {}): Promise<RelayLimits> {
   const patch = readLimitsFlags(parsed);
   const call = await adminCall(parsed, io);

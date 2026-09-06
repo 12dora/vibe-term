@@ -1,6 +1,6 @@
-import type { MeshNodeOperation, MeshNodeOperationKind } from '@tmex/shared';
+import type { MeshNodeOperation, MeshNodeOperationKind } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
-import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { getDb } from '../db/client';
 import { getGatewayKv, setGatewayKv } from '../db/kv';
@@ -147,7 +147,7 @@ function isEnrolledNode(localNodeId: string, userStore: UserStore, nodeId: strin
 }
 
 function readNodeSession(req: Request, nodeId: string): string | null {
-  return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
+  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
 }
 
 function failOperation(nodeId: string, error: string, now = Date.now()): void {

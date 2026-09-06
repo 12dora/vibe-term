@@ -2,7 +2,7 @@
 // 传输不能吃这种截断（少传的文件不会有人发现），所以这里改用一次递归 `rsync --list-only`：
 // 一趟拿到整棵树（相对路径 + 类型 + 大小），条目数超过硬上限就整体失败，绝不静默少传。
 
-import type { FileErrorCode } from '@tmex/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import { checkAndNormalize } from '../files/device-storage';
 import { resolveFileRoot } from '../files/file-root';

@@ -3,9 +3,9 @@
 //
 // 多于一条时行本身是选择器：当前挂载的那条高亮，点其余任意一条即切过去。
 
-import type { RelayLinkErrorCode, RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
+import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -97,7 +97,7 @@ function RelayRow({
       {selectable && !relay.attached ? (
         <button
           type="button"
-          className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--tmex-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
+          className="flex w-fit items-center gap-2 rounded-md py-0.5 text-left transition-opacity duration-(--vibeterm-motion-fast) hover:opacity-70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring motion-reduce:transition-none"
           onClick={() => onSelect?.(relay)}
           data-testid={`nodes-relay-switch-${host}`}
         >

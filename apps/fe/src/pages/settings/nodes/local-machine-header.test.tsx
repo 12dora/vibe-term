@@ -2,8 +2,8 @@
 // 当普通函数调用，再对元素树断言（同 `BulkActionsMenuList`）。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalRole } from '@tmex/api-client/local/types';
-import { DropdownMenuGroup, DropdownMenuLabel } from '@tmex/ui/dropdown-menu';
+import type { LocalRole } from '@vibeterm/api-client/local/types';
+import { DropdownMenuGroup, DropdownMenuLabel } from '@vibeterm/ui/dropdown-menu';
 import { Children, type ReactElement, type ReactNode } from 'react';
 import { LocalMachineMenuList } from './local-machine-header';
 import { roleMenuTargets } from './machine-status';

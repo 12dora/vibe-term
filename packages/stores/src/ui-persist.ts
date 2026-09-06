@@ -21,7 +21,7 @@ export interface DeferredPersistTimers {
   clear: (handle: unknown) => void;
 }
 
-type WritableStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+export type WritableStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
 
 export interface DeferredPersistOptions<T extends object> {
   /** 只有这些字段变化时才允许延后落盘 */
@@ -45,7 +45,7 @@ const defaultTimers: DeferredPersistTimers = {
 };
 
 /** 沙箱 iframe / 隐私模式下访问 localStorage 会抛，一律降级为无操作 */
-function browserStorage(): WritableStorage | null {
+export function browserStorage(): WritableStorage | null {
   try {
     return globalThis.localStorage ?? null;
   } catch {

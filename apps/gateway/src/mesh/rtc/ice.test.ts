@@ -4,7 +4,7 @@ import {
   generateEd25519KeyPair,
   randomBytes,
   signEd25519,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   RTC_WAKE_DOMAIN,
   RTC_WAKE_MAX_SKEW_MS,

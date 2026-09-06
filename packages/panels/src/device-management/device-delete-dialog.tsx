@@ -1,10 +1,10 @@
 // 设备删除确认：删除 mutation 与确认框成对，随卡片宿主一起挂载。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { deleteDevice as deleteDeviceApi } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { ConfirmDialog } from '@tmex/ui/confirm-dialog';
+import { deleteDevice as deleteDeviceApi } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { ConfirmDialog } from '@vibeterm/ui/confirm-dialog';
 import { Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

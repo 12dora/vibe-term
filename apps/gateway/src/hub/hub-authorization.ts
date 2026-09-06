@@ -1,4 +1,4 @@
-import { compareSemver } from '@tmex/shared';
+import { compareSemver } from '@vibeterm/shared';
 import {
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
@@ -10,7 +10,7 @@ import {
   decodeRetireHubPayload,
   decodeRevokeNodePayload,
   nodeIdToHex,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import { HUB_META_PEER_ID, type UserStore } from '../auth/user-store';
 
@@ -272,7 +272,7 @@ export function inspectHubAuthRecordCompat(
   };
 }
 
-/** `x-tmex-force-keylog` 仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
+/** force-keylog 内部头仅对 allowForce 的记录类型生效；`rotate-root-keep` 不可绕过。 */
 export function applyForcedKeyLogCompat(
   compat: HubAuthRecordCompatResult,
   forced: boolean

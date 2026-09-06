@@ -1,4 +1,4 @@
-import type { Device, FileErrorCode } from '@tmex/shared';
+import type { Device, FileErrorCode } from '@vibeterm/shared';
 import { enqueueDeviceJob } from './queue';
 import { RsyncAuthError, type RsyncDeviceSpec, buildRsyncDeviceSpec } from './ssh-command';
 

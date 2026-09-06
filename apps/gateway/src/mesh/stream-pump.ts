@@ -1,4 +1,4 @@
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 
 type Chunk = Uint8Array | { bytes: Uint8Array; head?: boolean };
 

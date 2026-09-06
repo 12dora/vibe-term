@@ -1,5 +1,5 @@
 import type { Socket } from 'node:net';
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 import { parseOpenPayload } from '../mesh/peer-protocol';
 import { acquirePeerStreamSlot } from './budget';
 import { type TcpDial, dialTcp } from './dial';

@@ -1,4 +1,4 @@
-import { useRuntime } from '@tmex/stores/react';
+import { useRuntime } from '@vibeterm/stores/react';
 import { type ReactNode, useCallback, useState } from 'react';
 import { DeferredWatchDialog } from '../watch/deferred-watch-dialog';
 import { CloseConfirmDialog } from './close-confirm-dialog';

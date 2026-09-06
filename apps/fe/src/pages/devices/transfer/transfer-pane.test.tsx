@@ -6,8 +6,8 @@
 // 根目录下拉直接喂 props 渲染，i18n 文案用自建实例单独核对。
 
 import { describe, expect, test } from 'bun:test';
-import { I18N_RESOURCES, VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { I18N_RESOURCES, VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { DialogNodeOption } from '../dialog-nodes';
 
 installWindowStorage();

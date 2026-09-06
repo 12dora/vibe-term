@@ -2,8 +2,8 @@ import type { Dirent } from 'node:fs';
 import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import path from 'node:path';
-import { errorMessage } from '@tmex/shared';
-import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse, Device } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { BrowseDirectoryEntryDto, BrowseDirectoryResponse, Device } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import { MAX_ENTRIES } from './categorize';
@@ -223,7 +223,7 @@ export async function execSshCommand(
     if (timedOut) {
       return {
         stdout: new Uint8Array(stdoutBuf),
-        stderr: `${stderr}\n[tmex] ssh timed out`,
+        stderr: `${stderr}\n[vibeterm] ssh timed out`,
         exitCode: 124,
       };
     }

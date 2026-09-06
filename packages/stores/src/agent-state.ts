@@ -5,7 +5,7 @@ import type {
   AgentQueuedMessageDto,
   AgentSessionDto,
   AgentWriteMode,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import type { SessionInProgress } from './agent-thread';
 
 export interface PendingConfirmationUi {

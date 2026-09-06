@@ -1,33 +1,34 @@
 #!/usr/bin/env bash
-# 构建可升级的 tmex 节点镜像。
+# 构建可升级的 vibeterm 节点镜像。
 #   scripts/docker-node/build.sh                     # 先在仓库根 bun run build，再 npm pack
-#   TMEX_TARBALL=/path/tmex-cli-1.1.25.tgz scripts/docker-node/build.sh   # 跳过构建
+#   VIBETERM_TARBALL=/path/vibeterm-cli-<version>.tgz scripts/docker-node/build.sh   # 跳过构建
+#   升级测试可以直接喂改名前的 tmex-cli-<version>.tgz。
 # 可选：把 build/bun-linux-{aarch64,x64}.zip 预下载到构建上下文，镜像构建就不联网装 bun。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "${ROOT}/../.." && pwd)"
-IMAGE="${TMEX_DOCKER_IMAGE:-tmex-node}"
-PLATFORM="${TMEX_DOCKER_PLATFORM:-}"
+IMAGE="${VIBETERM_DOCKER_IMAGE:-vibeterm-node}"
+PLATFORM="${VIBETERM_DOCKER_PLATFORM:-}"
 
 log() { printf '[docker-node build] %s\n' "$*" >&2; }
 
 resolve_tarball() {
-  if [[ -n "${TMEX_TARBALL:-}" ]]; then
-    if [[ ! -f "${TMEX_TARBALL}" ]]; then
-      echo "tarball not found: ${TMEX_TARBALL}" >&2
+  if [[ -n "${VIBETERM_TARBALL:-}" ]]; then
+    if [[ ! -f "${VIBETERM_TARBALL}" ]]; then
+      echo "tarball not found: ${VIBETERM_TARBALL}" >&2
       exit 2
     fi
-    printf '%s' "${TMEX_TARBALL}"
+    printf '%s' "${VIBETERM_TARBALL}"
     return
   fi
   log "building the workspace (bun run build)"
   (cd "${REPO_ROOT}" && bun run build) >&2
-  rm -f "${ROOT}/build"/tmex-cli-*.tgz
-  log "npm pack tmex-cli"
+  rm -f "${ROOT}/build"/vibeterm-cli-*.tgz
+  log "npm pack vibeterm-cli"
   (cd "${REPO_ROOT}/packages/app" && npm pack --pack-destination "${ROOT}/build") >&2
   local packed
-  packed="$(ls -t "${ROOT}/build"/tmex-cli-*.tgz 2>/dev/null | head -n1)"
+  packed="$(ls -t "${ROOT}/build"/vibeterm-cli-*.tgz 2>/dev/null | head -n1)"
   if [[ -z "${packed}" ]]; then
     echo "npm pack produced no tarball" >&2
     exit 1
@@ -38,7 +39,7 @@ resolve_tarball() {
 package_version() {
   local name version
   name="$(basename "$1")"
-  version="$(printf '%s' "${name}" | sed -n 's/^tmex-cli-\(.*\)\.tgz$/\1/p')"
+  version="$(printf '%s' "${name}" | sed -n 's/^vibeterm-cli-\(.*\)\.tgz$/\1/p')"
   if [[ -z "${version}" ]]; then
     version="$(node -p "require('${REPO_ROOT}/packages/app/package.json').version")"
   fi
@@ -50,11 +51,11 @@ VERSION="$(package_version "${TARBALL}")"
 log "tarball=${TARBALL} version=${VERSION}"
 
 mkdir -p "${ROOT}/build"
-if [[ "$(cd "$(dirname "${TARBALL}")" && pwd)/$(basename "${TARBALL}")" != "${ROOT}/build/tmex-cli.tgz" ]]; then
-  cp -f "${TARBALL}" "${ROOT}/build/tmex-cli.tgz"
+if [[ "$(cd "$(dirname "${TARBALL}")" && pwd)/$(basename "${TARBALL}")" != "${ROOT}/build/vibeterm-cli.tgz" ]]; then
+  cp -f "${TARBALL}" "${ROOT}/build/vibeterm-cli.tgz"
 fi
 
-BUILD_ARGS=(--build-arg "TMEX_TARBALL=build/tmex-cli.tgz")
+BUILD_ARGS=(--build-arg "VIBETERM_TARBALL=build/vibeterm-cli.tgz")
 [[ -n "${PLATFORM}" ]] && BUILD_ARGS+=(--platform "${PLATFORM}")
 
 docker build "${BUILD_ARGS[@]}" \

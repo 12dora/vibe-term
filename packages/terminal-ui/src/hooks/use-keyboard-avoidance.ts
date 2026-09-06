@@ -1,4 +1,4 @@
-import type { KeyboardBehaviorMode } from '@tmex/stores';
+import type { KeyboardBehaviorMode } from '@vibeterm/stores';
 import { useEffect, useState } from 'react';
 import { FollowLoopScheduler } from '../utils/follow-loop';
 import { AppliedTransformReader, ShortcutStripTracker } from '../utils/keyboard-avoidance-dom';
@@ -27,11 +27,11 @@ const MIN_RESIZE_AVAILABLE_PX = 60;
 const MAIN_SLOT_SELECTOR = '[data-slot="sidebar-inset"]';
 // direct 模式终端下方的快捷键栏；follow 模式键盘弹起时让它浮到键盘正上方
 const SHORTCUT_BAR_SELECTOR = '.terminal-shortcuts-strip';
-// 承载快捷键栏浮动位移的外层：--tmex-kb-shortcut-lift 的唯一消费者
+// 承载快捷键栏浮动位移的外层：--vibeterm-kb-shortcut-lift 的唯一消费者
 const SHORTCUT_FLOAT_SELECTOR = '.kb-floating-shortcuts';
 // 快捷键栏额外上移量的 CSS 变量（= inset - offset）：本 hook 写、ShortcutsBar 用其做 translateY。
 // 叠加 <main> 已有的 -offset 后总位移恰为 -inset，贴键盘顶。
-const SHORTCUT_LIFT_VAR = '--tmex-kb-shortcut-lift';
+const SHORTCUT_LIFT_VAR = '--vibeterm-kb-shortcut-lift';
 
 function sameAvoidance(a: KeyboardAvoidance, b: KeyboardAvoidance): boolean {
   if (a.strategy !== b.strategy) {

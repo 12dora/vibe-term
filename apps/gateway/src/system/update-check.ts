@@ -2,8 +2,9 @@ import {
   RELEASE_API_LATEST_URL,
   type UpdateCheckResult,
   compareSemver,
+  legacyReleaseTarballName,
   releaseTarballName,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { getBaseVersion } from './version';
 
 const FETCH_TIMEOUT_MS = 10_000;
@@ -103,10 +104,14 @@ async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> 
   const latest = stripLeadingV(release.tag_name);
   const publishedAt = latest ? (release.published_at ?? null) : null;
   const changelog = releaseChangelog(release.body);
+  // 新旧资产任一存在即可升级：改名后的 release 两份都传，混合版本的节点各取所需。
   const hasTarball =
     latest !== null &&
     Array.isArray(release.assets) &&
-    release.assets.some((asset) => asset.name === releaseTarballName(latest));
+    release.assets.some(
+      (asset) =>
+        asset.name === releaseTarballName(latest) || asset.name === legacyReleaseTarballName(latest)
+    );
 
   return {
     latestVersion: latest,
@@ -116,7 +121,7 @@ async function fetchLatestGithubReleaseUncached(): Promise<LatestGithubRelease> 
   };
 }
 
-/** 远程/本机升级用：必须有具体版本且存在 tmex-cli tarball。 */
+/** 远程/本机升级用：必须有具体版本且存在 CLI tarball 资产。 */
 export async function requireLatestUpgradeRelease(): Promise<{
   latestVersion: string;
   changelog: string | null;

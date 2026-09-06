@@ -3,7 +3,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

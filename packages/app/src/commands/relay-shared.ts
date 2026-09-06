@@ -82,24 +82,24 @@ export function joinRelayUrl(base: string, path: string): string {
 
 /** 绑到 IPv6 字面量（`::`、`::1`、某个 v6 地址）的实例只在 v6 回环上可达。 */
 export function loopbackHost(env: Record<string, string | undefined>): string {
-  const bind = (env.TMEX_BIND_HOST ?? '').trim().replace(/^\[|\]$/g, '');
+  const bind = (env.VIBETERM_BIND_HOST ?? '').trim().replace(/^\[|\]$/g, '');
   return bind.includes(':') ? '[::1]' : '127.0.0.1';
 }
 
-/** CLI 只走回环访问本机 gateway：TMEX_BIND_HOST 可能是 0.0.0.0/::，不能直接拼。 */
+/** CLI 只走回环访问本机 gateway：VIBETERM_BIND_HOST 可能是 0.0.0.0/::，不能直接拼。 */
 export function gatewayBaseUrl(env: Record<string, string | undefined>): string {
   const port = (env.GATEWAY_PORT ?? '').trim();
   if (!port || !/^\d+$/.test(port)) {
-    throw new Error('GATEWAY_PORT missing from app.env; run tmex init first');
+    throw new Error('GATEWAY_PORT missing from app.env; run vibeterm init first');
   }
   return `http://${loopbackHost(env)}:${port}`;
 }
 
 export function relayAdminToken(env: Record<string, string | undefined>): string {
-  const token = (env.TMEX_RELAY_ADMIN_TOKEN ?? '').trim();
+  const token = (env.VIBETERM_RELAY_ADMIN_TOKEN ?? '').trim();
   if (!token) {
     throw new Error(
-      'TMEX_RELAY_ADMIN_TOKEN missing from app.env; this machine is not running the relay role'
+      'VIBETERM_RELAY_ADMIN_TOKEN missing from app.env; this machine is not running the relay role'
     );
   }
   return token;

@@ -2,16 +2,16 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与侧边栏聚合视图的测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import type { AppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import type { AppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
 // 设备管理面板换成探针：本文件测的是**分组与分支**，面板自身由 packages/panels 覆盖；
 // 真实面板要 QueryClient + runtime，而 `src/pages/FilePage.test.tsx` 用 mock.module 全局
 // 替换过 `@tanstack/react-query`，真实渲染会被那份泄漏的 mock 打断。
-mock.module('@tmex/panels/device-management', () => ({
+mock.module('@vibeterm/panels/device-management', () => ({
   DeviceManagementPanel: ({
     listenOpenAddDeviceEvent,
     offline,
@@ -54,7 +54,7 @@ mock.module('./devices/use-device-folders', () => ({
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const DevicesPageModule = await import('./DevicesPage');
 const DevicesPage = DevicesPageModule.default;

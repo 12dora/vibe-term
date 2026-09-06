@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 import { consoleWindowPresentationKey, consoleWindowsTopologyKey } from './use-console-targets';
 
 function windows(): TmuxWindow[] {

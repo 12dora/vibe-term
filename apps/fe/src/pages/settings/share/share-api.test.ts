@@ -1,7 +1,7 @@
 // 分享端点的 URL 形状与请求方法：写错一个字就是 404 或写进别的资源。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import {
   SHARE_SETTINGS_PATH,
   deleteShare,

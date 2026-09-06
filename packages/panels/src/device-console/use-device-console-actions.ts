@@ -2,11 +2,11 @@
 // 视图层只消费这里返回的 model，不再直接读 store。
 
 import { useQuery } from '@tanstack/react-query';
-import { fetchWatchRules, watchRulesQueryKey } from '@tmex/api-client';
-import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@tmex/shared';
-import { decodePaneIdFromUrlParam, encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore, useUIStore } from '@tmex/stores/react';
-import { useIsMobile } from '@tmex/ui';
+import { fetchWatchRules, watchRulesQueryKey } from '@vibeterm/api-client';
+import type { StateSnapshotPayload, TmuxPane, TmuxWindow, WatchRuleDto } from '@vibeterm/shared';
+import { decodePaneIdFromUrlParam, encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore, useUIStore } from '@vibeterm/stores/react';
+import { useIsMobile } from '@vibeterm/ui';
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router';
 import { useShareStatus } from '../share/use-share-status';

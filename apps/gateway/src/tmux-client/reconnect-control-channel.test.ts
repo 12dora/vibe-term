@@ -47,7 +47,7 @@ function createHost(
     connected: true,
     manualDisconnect: false,
     activePaneId: '%1',
-    sessionName: 'tmex',
+    sessionName: 'vibeterm',
     deviceId: 'dev-1',
     logPrefix: '[local]',
     runTmuxAllowFailure: async () => {
@@ -180,7 +180,7 @@ describe('reconnectControlChannel', () => {
     };
     const statusSpy = spyOn(db, 'updateDeviceRuntimeStatus').mockImplementation(() => undefined);
     const host = createHost({
-      probe: result(1, "can't find session: tmex", ''),
+      probe: result(1, "can't find session: vibeterm", ''),
     });
     try {
       await reconnectControlChannel(policy, {
@@ -193,14 +193,14 @@ describe('reconnectControlChannel', () => {
         classifyProbe: (probe) => (probe.exitCode === 0 ? 'alive' : 'gone'),
         now: () => 0,
       });
-      expect(host.sessionGone).toEqual(["can't find session: tmex"]);
+      expect(host.sessionGone).toEqual(["can't find session: vibeterm"]);
       expect(host.shutdowns).toEqual([true]);
       expect(host.snapshots).toBe(0);
       expect(warns.some((line) => line.includes('[local] tmux session gone on dev-1'))).toBe(true);
       expect(statusSpy).toHaveBeenCalledWith('dev-1', {
         lastSeenAt: expect.any(String),
         tmuxAvailable: false,
-        lastError: "can't find session: tmex",
+        lastError: "can't find session: vibeterm",
       });
     } finally {
       console.warn = originalWarn;

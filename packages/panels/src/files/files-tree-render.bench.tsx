@@ -3,8 +3,8 @@
 //
 //   bun packages/panels/src/files/files-tree-render.bench.tsx
 
-import type { FileEntryDto, FileRootDto } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 (globalThis.window as unknown as { matchMedia: unknown }).matchMedia = () => ({
@@ -14,14 +14,14 @@ installWindowStorage();
 });
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { I18N_RESOURCES } = await import('@tmex/shared');
-const { createAppRuntime } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { I18N_RESOURCES } = await import('@vibeterm/shared');
+const { createAppRuntime } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const i18next = (await import('i18next')).default;
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { I18nextProvider } = await import('react-i18next');
 const { MemoryRouter } = await import('react-router');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { FilesTab } = await import('./files-tab');
 
 const i18n = i18next.createInstance();

@@ -9,7 +9,7 @@ describe('ChallengeStore', () => {
       entryNodeId: 'entry-a',
       kind: 'login',
       ttlMs: 60_000,
-      payload: { origin: 'https://tmex.example' },
+      payload: { origin: 'https://vibeterm.example' },
     });
 
     expect(created.nonce.byteLength).toBe(32);
@@ -20,7 +20,7 @@ describe('ChallengeStore', () => {
     expect(entry?.uid).toBe('user-1');
     expect(entry?.entryNodeId).toBe('entry-a');
     expect(entry?.kind).toBe('login');
-    expect(entry?.payload).toEqual({ origin: 'https://tmex.example' });
+    expect(entry?.payload).toEqual({ origin: 'https://vibeterm.example' });
     expect(entry?.nonce).toEqual(created.nonce);
     expect(entry?.expiresAt).toBe(61_000);
   });

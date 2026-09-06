@@ -1,9 +1,9 @@
 // 设备页顶栏的「+」：恒定展开下拉——首项跳设置页的多节点标签页添加远程节点，
 // 其下按 ready 节点列出「添加设备到已有节点」的目标。
 
-import { hostAppPath } from '@tmex/stores';
-import { useOptionalRuntime } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
+import { hostAppPath } from '@vibeterm/stores';
+import { useOptionalRuntime } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -12,7 +12,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Network, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';

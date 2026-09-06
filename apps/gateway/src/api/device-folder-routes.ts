@@ -5,7 +5,7 @@ import {
   type UpdateDeviceFolderLayoutRequest,
   isDeviceFolderLayoutValid,
   validateDeviceFolderName,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import {
   createDeviceFolder,
   deleteDeviceFolder,

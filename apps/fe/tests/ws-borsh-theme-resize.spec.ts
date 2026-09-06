@@ -18,7 +18,7 @@ async function readTerminalSize(page: import('@playwright/test').Page): Promise<
   rows: number;
 } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return { cols: term.cols, rows: term.rows };
   });
@@ -90,7 +90,7 @@ test('ws-borsh: rapid theme toggle × browser resize converges back to window si
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-resize-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 

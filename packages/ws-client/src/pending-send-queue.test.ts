@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,

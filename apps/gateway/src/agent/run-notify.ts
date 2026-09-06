@@ -1,4 +1,4 @@
-import type { EventType, WebhookEvent } from '@tmex/shared';
+import type { EventType, WebhookEvent } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { getDeviceById, getSiteSettings } from '../db';
 import type { AgentSessionRecord } from '../db/agent';

@@ -223,7 +223,7 @@ function OtpInput({
           onPaste={handlePaste(index)}
           onFocus={(event) => event.currentTarget.select()}
           className={cn(
-            'dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/30 h-10 w-9 rounded-lg border bg-transparent text-center font-mono text-base tabular-nums transition-colors duration-(--tmex-motion-fast) ease-out outline-none focus-visible:ring-2 motion-reduce:transition-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
+            'dark:bg-input/30 border-input focus-visible:border-ring focus-visible:ring-ring/30 h-10 w-9 rounded-lg border bg-transparent text-center font-mono text-base tabular-nums transition-colors duration-(--vibeterm-motion-fast) ease-out outline-none focus-visible:ring-2 motion-reduce:transition-none disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50',
             inputClassName
           )}
         />

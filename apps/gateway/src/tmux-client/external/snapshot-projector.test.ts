@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
+import type { StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 
 import {
   PANE_SNAPSHOT_FORMAT,
@@ -35,8 +35,8 @@ function warnCtx() {
 
 describe('parseSnapshotSession', () => {
   test('parses the first non-empty session row', () => {
-    const session = parseSnapshotSession(['', '  ', '$1|tmex-snapshot', '$2|ignored'], ctx);
-    expect(session).toEqual({ id: '$1', name: 'tmex-snapshot' });
+    const session = parseSnapshotSession(['', '  ', '$1|vibeterm-snapshot', '$2|ignored'], ctx);
+    expect(session).toEqual({ id: '$1', name: 'vibeterm-snapshot' });
   });
 
   test('keeps empty session name and stops after the first data line', () => {
@@ -45,7 +45,7 @@ describe('parseSnapshotSession', () => {
 
   test('warns and returns null for an invalid session id without reading further lines', () => {
     const local = warnCtx();
-    const session = parseSnapshotSession(['bogus|tmex', '$1|tmex'], local);
+    const session = parseSnapshotSession(['bogus|vibeterm', '$1|vibeterm'], local);
     expect(session).toBeNull();
     expect(local.warnings).toEqual(['[test] ignoring invalid tmux session id on dev-1: bogus']);
   });
@@ -161,7 +161,13 @@ describe('discardInvalidSnapshot', () => {
 
   test('drops a session that has no valid windows', () => {
     const local = warnCtx();
-    const result = discardInvalidSnapshot({ id: '$1', name: 'tmex' }, new Map(), local, '@1', '%1');
+    const result = discardInvalidSnapshot(
+      { id: '$1', name: 'vibeterm' },
+      new Map(),
+      local,
+      '@1',
+      '%1'
+    );
     expect(result.session).toBeNull();
     expect(result.activeWindowId).toBeNull();
     expect(result.activePaneId).toBeNull();
@@ -174,7 +180,7 @@ describe('discardInvalidSnapshot', () => {
     const windows = new Map<string, TmuxWindow>([
       ['@1', { id: '@1', index: 0, name: 'main', active: true, panes: [] }],
     ]);
-    const session = { id: '$1', name: 'tmex' };
+    const session = { id: '$1', name: 'vibeterm' };
     const result = discardInvalidSnapshot(session, windows, ctx, '@1', '%1');
     expect(result.session).toBe(session);
     expect(result.windows).toBe(windows);
@@ -217,7 +223,7 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
     emitSnapshot(
       {
         deviceId: 'dev-1',
-        snapshotSession: { id: '$1', name: 'tmex' },
+        snapshotSession: { id: '$1', name: 'vibeterm' },
         snapshotWindows: windows,
         callbacks: {
           onSnapshot: (payload, baseRevision) => snapshots.push({ payload, baseRevision }),
@@ -232,7 +238,7 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
           deviceId: 'dev-1',
           session: {
             id: '$1',
-            name: 'tmex',
+            name: 'vibeterm',
             windows: [windows.get('@1'), windows.get('@2')],
           },
         },
@@ -257,7 +263,7 @@ describe('getExpectedPaneIds / emitSnapshot', () => {
       const snapshots: StateSnapshotPayload[] = [];
       emitSnapshot({
         deviceId: 'dev-1',
-        snapshotSession: { id: '$1', name: 'tmex' },
+        snapshotSession: { id: '$1', name: 'vibeterm' },
         snapshotWindows: parsed.windows,
         callbacks: {
           onSnapshot: (payload) => snapshots.push(payload),
@@ -366,7 +372,7 @@ describe('SnapshotProjector.performSnapshot', () => {
       connectGeneration: 0,
       manualDisconnect: false,
       deviceId: 'dev-1',
-      sessionName: 'tmex',
+      sessionName: 'vibeterm',
       logPrefix: '[test]',
       snapshotSession: null,
       snapshotWindows: new Map(),
@@ -444,7 +450,7 @@ describe('SnapshotProjector.performSnapshot', () => {
     };
     return {
       resolveAll() {
-        sessionGate.resolve(ok('$1|tmex\n'));
+        sessionGate.resolve(ok('$1|vibeterm\n'));
         windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
         panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
       },
@@ -532,11 +538,11 @@ describe('SnapshotProjector.performSnapshot', () => {
         'display-message',
         '-p',
         '-t',
-        'tmex',
+        'vibeterm',
         `#{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
       ],
-      ['list-windows', '-t', 'tmex', '-F', WINDOW_SNAPSHOT_FORMAT],
-      ['list-panes', '-s', '-t', 'tmex', '-F', PANE_SNAPSHOT_FORMAT],
+      ['list-windows', '-t', 'vibeterm', '-F', WINDOW_SNAPSHOT_FORMAT],
+      ['list-panes', '-s', '-t', 'vibeterm', '-F', PANE_SNAPSHOT_FORMAT],
     ]);
     expect(timeline).toEqual([
       'query:start:display-message',
@@ -547,7 +553,7 @@ describe('SnapshotProjector.performSnapshot', () => {
     expect(host.snapshots).toEqual([]);
     expect(host.closures).toBe(0);
 
-    sessionGate.resolve(ok('$1|tmex\n'));
+    sessionGate.resolve(ok('$1|vibeterm\n'));
     windowsGate.resolve(ok('@1|0|1|ba9d,80x24,0,0,1|main\n'));
     panesGate.resolve(ok('%1|@1|0|1|80|24|0|0|1|bash|node|/home/user\n'));
     await done;
@@ -563,7 +569,7 @@ describe('SnapshotProjector.performSnapshot', () => {
       'snapshot-emit',
       'closure',
     ]);
-    expect(host.snapshotSession).toEqual({ id: '$1', name: 'tmex' });
+    expect(host.snapshotSession).toEqual({ id: '$1', name: 'vibeterm' });
     expect(host.activePaneId).toBe('%1');
     expect(host.activeWindowId).toBe('@1');
     expect(host.pruned).toEqual([['%1']]);
@@ -580,7 +586,7 @@ describe('SnapshotProjector.performSnapshot', () => {
         deviceId: 'dev-1',
         session: {
           id: '$1',
-          name: 'tmex',
+          name: 'vibeterm',
           windows: [projectedWindow],
         },
       },
@@ -591,15 +597,15 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('performSnapshot emits the same windows for shuffled tmux list output', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1|tmex\n')
+      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1|vibeterm\n')
     );
     host.setResponse(
-      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
+      `list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`,
       ok('@2|1|0|layout-b|mid\n@1|0|1|layout-a|main\n')
     );
     host.setResponse(
-      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
       ok(
         '%2|@1|1|0|40|24|40|0|1|side|vim|/src\n%1|@1|0|1|40|24|0|0|1|bash|node|/home\n%3|@2|0|0|80|24|0|0|0|only|sh|/opt\n'
       )
@@ -630,11 +636,11 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('shuts down when snapshot stderr shows a gone tmux server', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      fail("can't find session: tmex\n")
+      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      fail("can't find session: vibeterm\n")
     );
-    host.setResponse(`list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
-    host.setResponse(`list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(`list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
 
     const closed: string[] = [];
     host.lifecycle.notifySessionClosed = (message) => {
@@ -643,8 +649,8 @@ describe('SnapshotProjector.performSnapshot', () => {
 
     await new SnapshotProjector(host).performSnapshot();
 
-    expect(host.unavailable).toEqual(["can't find session: tmex"]);
-    expect(closed).toEqual(["can't find session: tmex"]);
+    expect(host.unavailable).toEqual(["can't find session: vibeterm"]);
+    expect(closed).toEqual(["can't find session: vibeterm"]);
     expect(host.shutdowns).toEqual([true]);
     expect(host.snapshots).toEqual([]);
   });
@@ -652,11 +658,11 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('emits a null snapshot when commands fail for a non-gone reason', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
       fail('permission denied')
     );
-    host.setResponse(`list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
-    host.setResponse(`list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, fail(''));
+    host.setResponse(`list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`, fail(''));
 
     await new SnapshotProjector(host).performSnapshot();
 
@@ -670,12 +676,12 @@ describe('SnapshotProjector.performSnapshot', () => {
   test('drops underscore-rendered snapshot rows instead of emitting composite tmux ids', async () => {
     const host = createHost();
     host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1_tmex\n')
+      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1_vibeterm\n')
     );
-    host.setResponse(`list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`, ok('@0_0_bash_1\n'));
+    host.setResponse(`list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`, ok('@0_0_bash_1\n'));
     host.setResponse(
-      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
       ok('%1_@0_0_bash_1_80_24_1_node_/home/user\n')
     );
 
@@ -701,15 +707,15 @@ describe('SnapshotProjector.performSnapshot', () => {
     host.activeWindowId = '@1';
     host.activePaneId = '%1';
     host.setResponse(
-      `display-message -p -t tmex #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
-      ok('$1|tmex\n')
+      `display-message -p -t vibeterm #{session_id}${SNAPSHOT_FIELD_SEPARATOR}#{session_name}`,
+      ok('$1|vibeterm\n')
     );
     host.setResponse(
-      `list-windows -t tmex -F ${WINDOW_SNAPSHOT_FORMAT}`,
+      `list-windows -t vibeterm -F ${WINDOW_SNAPSHOT_FORMAT}`,
       ok(`@1|0|0|ba9d,80x24,0,0,1|main\n@9|1|1|ba9d,80x24,0,0,2|${PARKING_WINDOW_NAME}\n`)
     );
     host.setResponse(
-      `list-panes -s -t tmex -F ${PANE_SNAPSHOT_FORMAT}`,
+      `list-panes -s -t vibeterm -F ${PANE_SNAPSHOT_FORMAT}`,
       ok('%1|@1|0|1|80|24|0|0|0|bash|node|/home/user\n%9|@9|0|1|80|24|0|0|1|park|sleep|/tmp\n')
     );
 

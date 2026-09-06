@@ -6,20 +6,20 @@
 // 建模：断言的是 provider 暴露出来的连接意图与调用序列，而不是 React 的调度细节。
 
 import { beforeEach, describe, expect, test } from 'bun:test';
-import type { AppRuntime } from '@tmex/stores';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AppRuntime } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type {
   ConnectionState,
   GatewayTransport,
   GatewayTransportCommand,
   GatewayTransportEvent,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 
 installWindowStorage();
 
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { createAppRuntime } = await import('@tmex/stores');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { createAppRuntime } = await import('@vibeterm/stores');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { GlobalDeviceProvider, useGlobalDevice } = await import('./global-device-provider');
@@ -76,11 +76,11 @@ const PREFIX_A = 'n:0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a:';
 const PREFIX_B = 'n:0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b:';
 
 function connectedKey(prefix: string): string {
-  return `${prefix}tmex:connectedDevices`;
+  return `${prefix}vibeterm:connectedDevices`;
 }
 
 function disconnectedKey(prefix: string): string {
-  return `${prefix}tmex:disconnectedDevices`;
+  return `${prefix}vibeterm:disconnectedDevices`;
 }
 
 function createRuntime(storagePrefix: string): { runtime: AppRuntime; transport: FakeTransport } {
@@ -221,7 +221,10 @@ describe('缺陷 1：不同 node 的 provider 各用自己的意图与存储键'
     const writes: string[] = [];
     const setItem = localStorage.setItem.bind(localStorage);
     localStorage.setItem = (key: string, value: string) => {
-      if (key.endsWith('tmex:connectedDevices') || key.endsWith('tmex:disconnectedDevices')) {
+      if (
+        key.endsWith('vibeterm:connectedDevices') ||
+        key.endsWith('vibeterm:disconnectedDevices')
+      ) {
         writes.push(key);
       }
       setItem(key, value);

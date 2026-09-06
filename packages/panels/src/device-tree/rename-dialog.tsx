@@ -1,4 +1,4 @@
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -6,8 +6,8 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
 import { useTranslation } from 'react-i18next';
 import type { RenameDialogState } from './use-rename-dialog';
 

@@ -1,6 +1,6 @@
-import type { StoredRelayList } from '@tmex/shared/auth';
-import { encodeBase64url } from '@tmex/shared/auth';
-import { type WrapEntry, findWrapEntry, unwrapKeyForNode } from '@tmex/shared/relay';
+import type { StoredRelayList } from '@vibeterm/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { type WrapEntry, findWrapEntry, unwrapKeyForNode } from '@vibeterm/shared/relay';
 import {
   MeshRelayStore,
   RELAY_LOG_KEY_EPOCH,

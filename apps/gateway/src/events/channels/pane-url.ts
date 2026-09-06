@@ -1,4 +1,4 @@
-import type { WebhookEvent } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
 
 function trimTrailingSlash(url: string): string {
   return url.endsWith('/') ? url.slice(0, -1) : url;

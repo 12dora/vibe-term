@@ -5,8 +5,8 @@
 // 用户没签过本机的 `notification-sink` 声明、或本机开关没打开，一律 404
 // （对方据此丢弃，不再重试）。
 
-import type { DeviceType, EventType, WebhookEvent } from '@tmex/shared';
-import { MESH_INTERNAL_NOTIFICATION_ROUTE, isEventType } from '@tmex/shared';
+import type { DeviceType, EventType, WebhookEvent } from '@vibeterm/shared';
+import { MESH_INTERNAL_NOTIFICATION_ROUTE, isEventType } from '@vibeterm/shared';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { getSiteSettings } from '../db';

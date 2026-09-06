@@ -4,7 +4,7 @@
 // 动作发出后立即作废，保护状态或隧道运行态一变也作废。
 // 只有勾上之后动作才会带 `acknowledgeExposure`，否则后端回 409 `exposure_ack_required`。
 
-import type { TunnelActionRequest, TunnelStatusResponse } from '@tmex/shared';
+import type { TunnelActionRequest, TunnelStatusResponse } from '@vibeterm/shared';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { SetupNotice } from '../nodes/setup/form-parts';

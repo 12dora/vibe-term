@@ -6,7 +6,7 @@ import {
   encodeRotateRootKeepPayload,
   generateKdfParams,
   genesisHead,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { KeyLogStore, projectPayloadJson } from './key-log-store';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';

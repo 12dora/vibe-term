@@ -3,8 +3,8 @@ import type {
   StateSnapshotPayload,
   WatchEventPayloadMap,
   WebhookEvent,
-} from '@tmex/shared';
-import { errorMessage, wsBorsh } from '@tmex/shared';
+} from '@vibeterm/shared';
+import { errorMessage, wsBorsh } from '@vibeterm/shared';
 import type { getDeviceById, getSiteSettings } from '../db';
 import type { WatchRuleRecord } from '../db/watch';
 import { t } from '../i18n';

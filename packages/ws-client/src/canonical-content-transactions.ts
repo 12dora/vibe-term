@@ -1,4 +1,4 @@
-import type { wsBorsh } from '@tmex/shared';
+import type { wsBorsh } from '@vibeterm/shared';
 import { bytesEqual, bytesKey, copyBytes } from './canonical-state-helpers';
 import type {
   GatewayRebaseReason,

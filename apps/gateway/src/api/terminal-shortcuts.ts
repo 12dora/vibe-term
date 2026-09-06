@@ -2,7 +2,7 @@ import {
   TERMINAL_SHORTCUT_ACTIONS,
   type TerminalShortcutItem,
   type UpdateTerminalShortcutSettingsRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { t } from '../i18n';
 
 export const MAX_TERMINAL_SHORTCUTS = 50;

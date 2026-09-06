@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { CommandInvocation } from '@tmex/shared/messaging';
+import type { CommandInvocation } from '@vibeterm/shared/messaging';
 import { handleApprove, handleDeny } from './handlers/approve';
 import { handleDevices } from './handlers/devices';
 import { handleHelp } from './handlers/help';

@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { handlePreflightHttp, preflightHealthzBody, readRuntimeMode } from './mode';
 
 describe('runtime mode', () => {
-  test('reads TMEX_RUNTIME_MODE', () => {
+  test('reads VIBETERM_RUNTIME_MODE', () => {
     expect(readRuntimeMode({})).toBe('normal');
-    expect(readRuntimeMode({ TMEX_RUNTIME_MODE: 'preflight' })).toBe('preflight');
+    expect(readRuntimeMode({ VIBETERM_RUNTIME_MODE: 'preflight' })).toBe('preflight');
   });
 
   test('preflight HTTP only exposes /healthz', async () => {

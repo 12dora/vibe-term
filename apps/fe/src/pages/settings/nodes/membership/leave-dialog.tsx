@@ -4,7 +4,7 @@
 // 当前会话立刻失效。因此确认文案必须把后果讲全，进度也留在同一个对话框里——退出期间
 // 页面其它部分已经没有意义了。
 
-import type { LocalLeaveTargetRole, LocalRole } from '@tmex/api-client/local/types';
+import type { LocalLeaveTargetRole, LocalRole } from '@vibeterm/api-client/local/types';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -14,7 +14,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+} from '@vibeterm/ui/alert-dialog';
 import { Loader2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetupIntentRecord } from './intent';
@@ -108,7 +108,7 @@ export function LeaveDialog({
 
         {warning && (
           <p
-            className="tmex-fade rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+            className="vibeterm-fade rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
             data-testid="membership-leave-warning"
           >
             {warning}
@@ -116,7 +116,7 @@ export function LeaveDialog({
         )}
         {error && (
           <p
-            className="tmex-fade rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
+            className="vibeterm-fade rounded-lg bg-destructive/10 p-2 text-xs text-destructive"
             data-testid="membership-leave-error"
           >
             {error}
@@ -171,11 +171,11 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
   if (phase === 'timeout') {
     return (
       <div
-        className="tmex-fade space-y-1 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
+        className="vibeterm-fade space-y-1 rounded-lg bg-amber-500/10 p-2 text-xs text-amber-600 dark:text-amber-400"
         data-testid="membership-leave-restart-timeout"
       >
         <p>{t('nodes.membership.restartTimeout')}</p>
-        <p className="font-mono">tmex restart</p>
+        <p className="font-mono">vibeterm restart</p>
       </div>
     );
   }
@@ -193,7 +193,7 @@ function LeaveProgress({ leave }: { leave: LeaveMesh }) {
     // 每个阶段换一次 key：进度文案切换时重放一次淡入，比原地换字更好读。
     <p
       key={phase}
-      className="tmex-fade flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
+      className="vibeterm-fade flex items-center gap-1.5 rounded-lg bg-muted/60 p-2 text-xs text-muted-foreground"
       data-testid={`membership-leave-${phase}`}
     >
       {phase !== 'restarted' && (
@@ -213,9 +213,9 @@ function PureRelayWarning() {
       data-testid="membership-leave-pure-relay-warning"
     >
       <p>{t('nodes.membership.leaveToRelayConfirm.webGone')}</p>
-      <p className="font-mono">tmex relay status</p>
+      <p className="font-mono">vibeterm relay status</p>
       <p>{t('nodes.membership.leaveToRelayConfirm.restore')}</p>
-      <p className="font-mono">tmex init --role relay,node</p>
+      <p className="font-mono">vibeterm init --role relay,node</p>
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { MeshNotificationForwardRequest } from '@tmex/shared';
+import type { MeshNotificationForwardRequest } from '@vibeterm/shared';
 import { MeshNotificationForwarder } from './mesh-forwarder';
 
 function body(paneId = '%1'): MeshNotificationForwardRequest {

@@ -1,7 +1,7 @@
-import type { TerminalShortcutAction } from '@tmex/shared';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { TerminalShortcutAction } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

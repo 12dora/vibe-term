@@ -1,5 +1,5 @@
 import { setPageModulePrerequisite } from '@/use-page-module';
-import { DEFAULT_LOCALE } from '@tmex/shared';
+import { DEFAULT_LOCALE } from '@vibeterm/shared';
 import i18n from 'i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';

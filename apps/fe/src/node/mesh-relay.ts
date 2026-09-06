@@ -12,9 +12,9 @@ import type {
   RelayTenantApi,
   RelayTenantStatus,
   RelayUplinkMode,
-} from '@tmex/api-client/relay/tenant-api';
-import { defaultRelayTenantApi, isRelayRoutesMissing } from '@tmex/api-client/relay/tenant-api';
-import { errorMessage } from '@tmex/shared';
+} from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi, isRelayRoutesMissing } from '@vibeterm/api-client/relay/tenant-api';
+import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import {
   type PollingTimingOptions,

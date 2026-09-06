@@ -3,7 +3,7 @@
 // themes.css 与 hljs-terminal-theme.css 的 [data-theme-preset="…"] 区块由
 // scripts/theme/build-theme-presets.ts 从此文件生成，改完请重新生成并跑测试。
 
-import type { TerminalThemeColors } from '@tmex/shared';
+import type { TerminalThemeColors } from '@vibeterm/shared';
 import type { ThemePreset } from './presets';
 
 export type ThemeAppearance = 'light' | 'dark';

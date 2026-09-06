@@ -1,4 +1,4 @@
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { getSiteSettingsLinkProvider } from '../api/site-settings-link';
 import { config } from '../config';

@@ -12,14 +12,14 @@ import { nodeQueryClient } from '@/node/node-runtimes';
 import { selfAgentStore } from '@/node/self-agent-store';
 import { sidebarSectionExpanded, useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
 import { devicesPageModule } from '@/page-modules';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import { SortableVerticalList, useSortableRow } from '@tmex/panels/device-tree';
-import type { FilesNodeInfo } from '@tmex/panels/files';
-import { SettingsEventsInit } from '@tmex/panels/settings/events';
-import { useUIStore } from '@tmex/stores/react';
-import { Reveal } from '@tmex/ui/motion';
-import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@tmex/ui/sidebar';
-import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@tmex/ui/tabs';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import { SortableVerticalList, useSortableRow } from '@vibeterm/panels/device-tree';
+import type { FilesNodeInfo } from '@vibeterm/panels/files';
+import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
+import { useUIStore } from '@vibeterm/stores/react';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Sidebar, SidebarContent, SidebarFooter, SidebarHeader } from '@vibeterm/ui/sidebar';
+import { Tabs, TabsList, TabsTrigger, pillTabTriggerClassName } from '@vibeterm/ui/tabs';
 import { NavMain, type NavMainItem } from './nav-main';
 import {
   SideBarDeviceList,
@@ -32,10 +32,14 @@ import { SidebarTitle } from './sidebar-title';
 
 // AgentTab / FilesTab 仅在选中对应 tab 时才渲染，改 React.lazy 懒加载，
 // 把 agent / files 两个子系统（含各自 store + 重组件链）移出首屏 entry chunk。
-const AgentTab = lazy(() => import('@tmex/panels/agent').then((m) => ({ default: m.AgentTab })));
-const FilesTab = lazy(() => import('@tmex/panels/files').then((m) => ({ default: m.FilesTab })));
+const AgentTab = lazy(() =>
+  import('@vibeterm/panels/agent').then((m) => ({ default: m.AgentTab }))
+);
+const FilesTab = lazy(() =>
+  import('@vibeterm/panels/files').then((m) => ({ default: m.FilesTab }))
+);
 const FilesNodeSection = lazy(() =>
-  import('@tmex/panels/files').then((m) => ({ default: m.FilesNodeSection }))
+  import('@vibeterm/panels/files').then((m) => ({ default: m.FilesNodeSection }))
 );
 
 const FILES_QUERY_KEY = ['files'];
@@ -204,7 +208,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
 
   return (
     <Sidebar variant="inset" {...props}>
-      <div className="h-[var(--tmex-safe-area-top)]" />
+      <div className="h-[var(--vibeterm-safe-area-top)]" />
       <SidebarHeader className="gap-4 pt-3 pb-0">
         <SidebarTitle />
         {/* 上移 5px（gap 20→16 再 -1px）：让 TabsList 里可见的 active 药丸上沿与右侧
@@ -276,7 +280,7 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
           下缘齐平；横向仍是 footer px-2 + group px-2，按钮左右位置不变。 */}
       <SidebarFooter className="gap-0 px-2 pt-1.5 pb-0">
         <NavMain items={footerItems} />
-        <div className="h-[var(--tmex-safe-area-bottom)]" />
+        <div className="h-[var(--vibeterm-safe-area-bottom)]" />
       </SidebarFooter>
     </Sidebar>
   );

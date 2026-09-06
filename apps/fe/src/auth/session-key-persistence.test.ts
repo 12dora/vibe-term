@@ -4,8 +4,8 @@
 // get-put-delete，值走真正的 `structuredClone`，所以不可导出 CryptoKey 的往返是真的）。
 
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import { AuthApi, type MeshNode } from '@tmex/api-client/auth/index';
+import { ApiClient } from '@vibeterm/api-client';
+import { AuthApi, type MeshNode } from '@vibeterm/api-client/auth/index';
 import {
   createDelegation,
   decodeBase64url,
@@ -16,13 +16,14 @@ import {
   generateWebCryptoEd25519KeyPair,
   rootKeyFromSeed,
   verifyLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   PERSISTED_SESSION_VERSION,
   type PersistedSession,
   clearPersistedSession,
   isSessionPersistenceAvailable,
   loadPersistedSession,
+  resetLegacyDbMigrationForTest,
   savePersistedSession,
 } from './session-key-persistence';
 import {
@@ -49,16 +50,36 @@ interface FakeRequest {
   onblocked?: (() => void) | null;
 }
 
+const DB_NAME = 'vibeterm-auth';
+const LEGACY_DB_NAME = 'tmex-auth';
+
+type FakeTables = Map<string, Map<string, unknown>>;
+
 class FakeIndexedDb {
-  readonly tables = new Map<string, Map<string, unknown>>();
+  /** 按库名隔离；改名搬运要同时看得见新旧两个库。 */
+  readonly dbs = new Map<string, FakeTables>();
   /** 隐私模式：连库都开不出来。 */
   failOpen = false;
   /** 配额用尽：事务写不进去。 */
   failWrite = false;
   /** 规范允许的时序：请求 `success` 已经发过，事务随后才 abort，改动整体回滚。 */
   abortAfterSuccess = false;
+  /** 默认库（新名）的表，保留旧断言写法。 */
+  get tables(): FakeTables {
+    let tables = this.dbs.get(DB_NAME);
+    if (!tables) {
+      tables = new Map();
+      this.dbs.set(DB_NAME, tables);
+    }
+    return tables;
+  }
 
-  open(_name: string, _version: number): FakeRequest {
+  /** 造一个改名前留下的旧库。 */
+  seedLegacy(record: unknown): void {
+    this.dbs.set(LEGACY_DB_NAME, new Map([['session', new Map([['current', record]])]]));
+  }
+
+  open(name: string, _version: number): FakeRequest {
     const request: FakeRequest = {
       result: null,
       onsuccess: null,
@@ -71,9 +92,27 @@ class FakeIndexedDb {
         request.onerror?.();
         return;
       }
-      const fresh = this.tables.size === 0;
-      request.result = new FakeDb(this);
+      let tables = this.dbs.get(name);
+      const fresh = !tables;
+      if (!tables) {
+        tables = new Map();
+        this.dbs.set(name, tables);
+      }
+      request.result = new FakeDb(this, tables);
       if (fresh) request.onupgradeneeded?.();
+      request.onsuccess?.();
+    });
+    return request;
+  }
+
+  databases(): Promise<{ name: string }[]> {
+    return Promise.resolve([...this.dbs.keys()].map((name) => ({ name })));
+  }
+
+  deleteDatabase(name: string): FakeRequest {
+    const request: FakeRequest = { result: null, onsuccess: null, onerror: null };
+    queueMicrotask(() => {
+      this.dbs.delete(name);
       request.onsuccess?.();
     });
     return request;
@@ -88,18 +127,21 @@ interface FakeTransaction {
 }
 
 class FakeDb {
-  constructor(private readonly idb: FakeIndexedDb) {}
+  constructor(
+    private readonly idb: FakeIndexedDb,
+    private readonly tables: FakeTables
+  ) {}
 
   get objectStoreNames(): { contains: (name: string) => boolean } {
-    return { contains: (name: string) => this.idb.tables.has(name) };
+    return { contains: (name: string) => this.tables.has(name) };
   }
 
   createObjectStore(name: string): void {
-    this.idb.tables.set(name, new Map());
+    this.tables.set(name, new Map());
   }
 
   transaction(name: string, _mode: string): FakeTransaction {
-    const table = this.idb.tables.get(name);
+    const table = this.tables.get(name);
     if (!table) throw new Error(`NotFoundError: ${name}`);
     const tx: FakeTransaction = {
       onabort: null,
@@ -179,6 +221,8 @@ let idb: FakeIndexedDb;
 function installFakeIndexedDb(): FakeIndexedDb {
   idb = new FakeIndexedDb();
   (globalThis as { indexedDB?: unknown }).indexedDB = idb;
+  // 旧库搬运只跑一次并被记住，换了假 IndexedDB 就得让它重跑。
+  resetLegacyDbMigrationForTest();
   return idb;
 }
 
@@ -290,6 +334,51 @@ afterEach(async () => {
 afterAll(() => {
   // 别把 indexedDB 漏给同进程里的其它测试文件。
   uninstallIndexedDb();
+});
+
+describe('旧库（tmex-auth）搬运', () => {
+  test('新库还没有记录时把旧库那条搬过来，随后删掉旧库', async () => {
+    const record = await persistedFixture();
+    idb.seedLegacy(record);
+
+    const loaded = await loadPersistedSession();
+    expect(loaded?.info.uid).toBe(UID);
+    expect(loaded?.privateKey.extractable).toBe(false);
+    expect(rawRecord()).toBeDefined();
+    expect(idb.dbs.has('tmex-auth')).toBe(false);
+  });
+
+  test('新库已有记录时不覆盖，只删旧库', async () => {
+    await savePersistedSession(await persistedFixture());
+    resetLegacyDbMigrationForTest();
+    idb.seedLegacy(await persistedFixture({ version: 99 }));
+
+    const loaded = await loadPersistedSession();
+    expect(loaded?.version).toBe(PERSISTED_SESSION_VERSION);
+    expect(idb.dbs.has('tmex-auth')).toBe(false);
+  });
+
+  test('旧库不存在时不建出一个空库', async () => {
+    expect(await loadPersistedSession()).toBeNull();
+    expect(idb.dbs.has('tmex-auth')).toBe(false);
+  });
+
+  test('浏览器没有 databases() 时靠试开判断：空的旧库照样删掉，不影响读写', async () => {
+    (idb as { databases?: unknown }).databases = undefined;
+    expect(await loadPersistedSession()).toBeNull();
+    expect(idb.dbs.has('tmex-auth')).toBe(false);
+
+    const record = await persistedFixture();
+    expect(await savePersistedSession(record)).toBe(true);
+    expect((await loadPersistedSession())?.info.uid).toBe(UID);
+  });
+
+  test('搬运期间开库失败：退化成没有持久化，不抛', async () => {
+    idb.seedLegacy(await persistedFixture());
+    idb.failOpen = true;
+    expect(await loadPersistedSession()).toBeNull();
+    idb.failOpen = false;
+  });
 });
 
 describe('session-key-persistence', () => {

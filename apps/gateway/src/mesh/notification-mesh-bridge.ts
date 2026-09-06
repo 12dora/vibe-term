@@ -1,7 +1,7 @@
 // 通知转发用的 mesh 桥：由 mesh-runtime 在装配后注入，standalone / 纯中继下恒为 null。
 // events 层不认识 mesh 装配，只经这层拿汇聚机集合与投递通道（与 mesh-agent-bridge 同构）。
 
-import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@tmex/shared';
+import type { MeshNotificationForwardRequest, MeshNotificationSink } from '@vibeterm/shared';
 
 export interface MeshNotificationBridge {
   selfNodeId(): string;

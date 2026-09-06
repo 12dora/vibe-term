@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { TmuxPane } from '@tmex/shared';
+import type { TmuxPane } from '@vibeterm/shared';
 import { paneDisplayName, paneMetaText } from './paneLabels';
 
 const pane = (partial: Partial<TmuxPane>): TmuxPane => partial as TmuxPane;

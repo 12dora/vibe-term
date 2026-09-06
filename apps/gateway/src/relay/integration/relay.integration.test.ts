@@ -6,8 +6,8 @@ import {
   decodeBase64url,
   encodeBase64url,
   signEd25519,
-} from '@tmex/shared/auth';
-import { openEnvelope, signRelayEnrollProof } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { openEnvelope, signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { ensureNodeIdentity } from '../../auth';
 import { NodeIdentityStore } from '../../auth/node-identity-store';
 import { createMigratedAuthDb } from '../../auth/test-db';

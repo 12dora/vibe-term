@@ -3,8 +3,8 @@ import type {
   WatchEventPayloadMap,
   WatchRuleSampleDto,
   WebhookEvent,
-} from '@tmex/shared';
-import { errorMessage } from '@tmex/shared';
+} from '@vibeterm/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type { LanguageModel } from 'ai';
 import { agentWsHub } from '../agent/ws-hub';
 import { getDeviceById, getSiteSettings } from '../db';

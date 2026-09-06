@@ -4,13 +4,13 @@
 // Base UI 的菜单走 portal，静态渲染什么都不输出，因此下拉内容也单独导出成不带 hook 的组件。
 
 import type { NodeRow } from '@/node/mesh-nodes';
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { CircleArrowUp, Ellipsis, ShieldAlert, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { NodeUninstallController, NodeUpgradeController } from './types';

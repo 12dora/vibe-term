@@ -1,8 +1,8 @@
 // 中继限额对话框：作用于中继本身（能接多少租户、总共放行多少带宽），不随配额下发给租户。
 // 入口在页头「更多」里，与「修改接入密码」并列。
 
-import type { RelayLimits } from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
+import type { RelayLimits } from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
 import {
   Dialog,
   DialogContent,
@@ -10,9 +10,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { Switch } from '@tmex/ui/switch';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

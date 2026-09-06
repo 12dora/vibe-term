@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { MeshNode } from '@tmex/api-client/auth/index';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { type NodeOfflineSnapshot, isNodeOffline } from './node-offline';
 
 const ENTRY_ID = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';

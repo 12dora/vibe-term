@@ -4,10 +4,10 @@ import {
   removePasskey,
 } from '@/auth/account-security-actions';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import type { AuthApi, PasskeySummary } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { AuthApi, PasskeySummary } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Fingerprint, Loader2, Trash2 } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';

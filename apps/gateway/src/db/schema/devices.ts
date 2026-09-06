@@ -11,6 +11,8 @@ export const devices = sqliteTable(
     port: integer('port').default(22),
     username: text('username'),
     sshConfigRef: text('ssh_config_ref'),
+    // 列默认值冻结在 tmex 时期的取值：SQLite 改默认值要重建整张表，而重建会触发外键级联；
+    // 应用层写入 devices 时总是显式给出 session（默认 vibeterm），列默认值仅对历史行有意义。
     session: text('session').default('tmex'),
     authMode: text('auth_mode').notNull(),
     passwordEnc: text('password_enc'),

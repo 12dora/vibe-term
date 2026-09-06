@@ -9,12 +9,12 @@
 // 拿别的 origin 的凭证发起仪式必然 `NotAllowedError`，给用户一个注定失败的按钮比不给更糟。
 
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
-import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@tmex/api-client/auth/index';
-import { WebAuthnError, defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { bytesEqual, decodeBase64url } from '@tmex/shared/auth';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import type { AuthApi, AuthKdfParamsJson, PasskeySummary } from '@vibeterm/api-client/auth/index';
+import { WebAuthnError, defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { Fingerprint, KeyRound, Loader2 } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -299,10 +299,10 @@ export function CredentialPromptDialog({
 
   return (
     <div
-      className="tmex-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+      className="vibeterm-fade fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
       data-testid="credential-prompt"
     >
-      <div className="tmex-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
+      <div className="vibeterm-scale-in flex w-full max-w-sm flex-col gap-3 rounded-xl border border-border bg-background p-4 shadow-lg">
         <div className="flex flex-col gap-0.5">
           <h2 className="text-sm font-semibold">{t('auth.credential.title')}</h2>
           <p className="text-xs text-muted-foreground" data-testid="credential-prompt-purpose">
@@ -326,7 +326,10 @@ export function CredentialPromptDialog({
           {error ? t(error, { defaultValue: error }) : ''}
         </output>
         {error ? (
-          <p className="tmex-fade text-xs text-destructive" data-testid="credential-prompt-error">
+          <p
+            className="vibeterm-fade text-xs text-destructive"
+            data-testid="credential-prompt-error"
+          >
             {t(error, { defaultValue: error })}
           </p>
         ) : null}

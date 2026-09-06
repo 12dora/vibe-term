@@ -21,7 +21,7 @@ describe('ControlModeMetadataBridge', () => {
     expect(
       bridge.parse({
         type: 'subscription-changed',
-        args: 'tmex-cwd $1 @1 0 %7 : /work/tree with spaces',
+        args: 'vibeterm-cwd $1 @1 0 %7 : /work/tree with spaces',
         raw: '',
       })
     ).toEqual({ type: 'pane-current-path', paneId: '%7', currentPath: '/work/tree with spaces' });
@@ -85,7 +85,7 @@ describe('parking window events never reach the frontend', () => {
 
   test('a rename to the parking name is swallowed and learns the id', () => {
     const bridge = new ControlModeMetadataBridge();
-    expect(bridge.parse({ type: 'window-renamed', args: '@7 tmex-park', raw: '' })).toBeNull();
+    expect(bridge.parse({ type: 'window-renamed', args: '@7 vibeterm-park', raw: '' })).toBeNull();
     expect(bridge.isParkingWindow('@7')).toBe(true);
     expect(bridge.parse({ type: 'window-renamed', args: '@7 zsh', raw: '' })).toBeNull();
   });

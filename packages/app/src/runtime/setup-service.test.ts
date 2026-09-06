@@ -54,8 +54,8 @@ async function openAuth(): Promise<LocalAuthContext> {
     memory: true,
     migrationsFolder: MIGRATIONS,
     env: {
-      TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-      TMEX_ROLES: 'standalone',
+      VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+      VIBETERM_ROLES: 'standalone',
     },
   });
   authHandles.push(ctx);
@@ -63,7 +63,7 @@ async function openAuth(): Promise<LocalAuthContext> {
 }
 
 async function tempDir(): Promise<string> {
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-setup-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-setup-'));
   tempDirs.push(dir);
   return dir;
 }
@@ -115,7 +115,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -130,8 +130,8 @@ describe('becomeHub', () => {
     expect(result.fingerprint).toHaveLength(64);
     expect(deps.auth.userStore.getByUsername('alice')).toBeTruthy();
     const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('TMEX_ROLES=hub,node');
-    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=https://hub.example.com');
+    expect(envText).toContain('VIBETERM_ROLES=hub,node');
+    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=https://hub.example.com');
     expect(envText).toContain('GATEWAY_PORT=21111');
     expect(envText).toContain('OTHER=keep');
     expect(restarts).toEqual([1]);
@@ -149,7 +149,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: true,
       },
       deps
@@ -157,7 +157,7 @@ describe('becomeHub', () => {
     expect(result.direct).toBe('enabled');
     expect(result.directError).toBeNull();
     expect(enabled).toBe(1);
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 
   test('direct enable failure is non-fatal', async () => {
@@ -168,7 +168,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: true,
       },
       deps
@@ -186,7 +186,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'http://example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -197,7 +197,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'bad name',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -223,14 +223,14 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'http://127.0.0.1:9443',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
     );
     expect(result.ok).toBe(true);
     const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=http://127.0.0.1:9443');
+    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=http://127.0.0.1:9443');
   });
 
   test('user_exists is 409 and does not restart', async () => {
@@ -246,7 +246,7 @@ describe('becomeHub', () => {
     const identity = await ensureNodeIdentity(deps.auth.identityStore);
     await deps.auth.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: 1,
     });
@@ -255,7 +255,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -286,7 +286,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'alice',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -316,7 +316,7 @@ describe('becomeHub', () => {
     const input = (username: string) => ({
       hubPublicUrl: 'https://hub.example.com',
       username,
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       directEnable: false,
     });
     const first = becomeHub(input('alice'), deps);
@@ -348,7 +348,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -359,7 +359,7 @@ describe('becomeHub', () => {
         {
           hubPublicUrl: 'https://hub.example.com',
           username: 'carol',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           directEnable: false,
         },
         deps
@@ -393,7 +393,7 @@ describe('becomeHub', () => {
       {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         directEnable: false,
       },
       deps
@@ -422,7 +422,7 @@ describe('joinHub', () => {
     });
     await writeFile(
       deps.envPath,
-      'GATEWAY_PORT=21111\nOTHER=keep\nTMEX_HUB_PUBLIC_URL=https://stale.example\n',
+      'GATEWAY_PORT=21111\nOTHER=keep\nVIBETERM_HUB_PUBLIC_URL=https://stale.example\n',
       'utf8'
     );
     const result = await joinHub(
@@ -443,15 +443,15 @@ describe('joinHub', () => {
       restarting: true,
     });
     const envText = await readFile(deps.envPath, 'utf8');
-    expect(envText).toContain('TMEX_ROLES=node');
-    expect(envText).toContain('TMEX_HUB_URL=https://hub.example.com');
-    expect(envText).toContain('TMEX_HUB_PUBLIC_URL=');
-    expect((await readEnvFile(deps.envPath)).TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(envText).toContain('VIBETERM_ROLES=node');
+    expect(envText).toContain('VIBETERM_HUB_URL=https://hub.example.com');
+    expect(envText).toContain('VIBETERM_HUB_PUBLIC_URL=');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_HUB_PUBLIC_URL).toBe('');
     expect(envText).toContain('OTHER=keep');
     expect(restarts).toEqual([1]);
   });
 
-  test('directEnable true installs addon and writes TMEX_DIRECT_ENABLED', async () => {
+  test('directEnable true installs addon and writes VIBETERM_DIRECT_ENABLED', async () => {
     const deps = await baseDeps({
       performHubJoin: async () => ({
         userId: 'uid-1',
@@ -475,7 +475,7 @@ describe('joinHub', () => {
       deps
     );
     expect(result.direct).toBe('enabled');
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 
   test('join env rename failure after commit returns 500 recovery and does not restart', async () => {
@@ -506,8 +506,8 @@ describe('joinHub', () => {
     expect((err as SetupError).code).toBe('env_write_failed');
     expect((err as SetupError).httpStatus).toBe(500);
     expect((err as SetupError).message).toMatch(/joined locally/);
-    expect((err as SetupError).message).toContain('TMEX_ROLES=node');
-    expect((err as SetupError).message).toContain('TMEX_HUB_URL=https://hub.example.com');
+    expect((err as SetupError).message).toContain('VIBETERM_ROLES=node');
+    expect((err as SetupError).message).toContain('VIBETERM_HUB_URL=https://hub.example.com');
     expect(restarts).toEqual([]);
     const leftovers = (await readdir(dirname(deps.envPath))).filter((name) =>
       name.endsWith('.tmp')
@@ -546,8 +546,8 @@ describe('joinHub', () => {
     expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
     expect(await realpath(linkPath)).toBe(await realpath(realPath));
     expect(await readEnvFile(realPath)).toMatchObject({
-      TMEX_ROLES: 'node',
-      TMEX_HUB_URL: 'https://hub.example.com',
+      VIBETERM_ROLES: 'node',
+      VIBETERM_HUB_URL: 'https://hub.example.com',
       OTHER: 'keep',
     });
   });
@@ -582,8 +582,8 @@ describe('joinHub', () => {
     );
     expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
     expect(await readEnvFile(realPath)).toMatchObject({
-      TMEX_ROLES: 'node',
-      TMEX_HUB_URL: 'https://hub.example.com',
+      VIBETERM_ROLES: 'node',
+      VIBETERM_HUB_URL: 'https://hub.example.com',
     });
   });
 
@@ -616,8 +616,8 @@ describe('joinHub', () => {
     );
     expect((await lstat(linkPath)).isSymbolicLink()).toBe(true);
     expect(await readEnvFile(realPath)).toMatchObject({
-      TMEX_ROLES: 'node',
-      TMEX_HUB_URL: 'https://hub.example.com',
+      VIBETERM_ROLES: 'node',
+      VIBETERM_HUB_URL: 'https://hub.example.com',
     });
   });
 
@@ -626,7 +626,7 @@ describe('joinHub', () => {
     deps.performHubJoin = async () => {
       await withEnvLock(async () => {
         const current = await readEnvFile(deps.envPath);
-        await writeEnvFile(deps.envPath, { ...current, TMEX_TRUST_PROXY: 'true' });
+        await writeEnvFile(deps.envPath, { ...current, VIBETERM_TRUST_PROXY: 'true' });
       });
       return {
         userId: 'uid-1',
@@ -644,9 +644,9 @@ describe('joinHub', () => {
       deps
     );
     const env = await readEnvFile(deps.envPath);
-    expect(env.TMEX_ROLES).toBe('node');
-    expect(env.TMEX_HUB_URL).toBe('https://hub.example.com');
-    expect(env.TMEX_TRUST_PROXY).toBe('true');
+    expect(env.VIBETERM_ROLES).toBe('node');
+    expect(env.VIBETERM_HUB_URL).toBe('https://hub.example.com');
+    expect(env.VIBETERM_TRUST_PROXY).toBe('true');
     expect(env.OTHER).toBe('keep');
   });
 
@@ -694,7 +694,7 @@ describe('joinHub', () => {
         {
           hubUrl: 'https://hub.example.com',
           method: 'password',
-          password: 'tmex-test-pass',
+          password: 'vibeterm-test-pass',
           name: 'studio',
           directEnable: false,
         },
@@ -727,7 +727,7 @@ describe('joinHub', () => {
       {
         hubUrl: 'https://hub.example.com',
         method: 'password',
-        password: 'tmex-test-pass',
+        password: 'vibeterm-test-pass',
         name: 'studio',
         directEnable: false,
         totpCode: '999000',
@@ -941,12 +941,12 @@ describe('direct status and setLocalDirect', () => {
     expect(status.direct.capable).toBe(false);
   });
 
-  test('getLocalStatus enabled is false when TMEX_DIRECT_ENABLED is false', async () => {
+  test('getLocalStatus enabled is false when VIBETERM_DIRECT_ENABLED is false', async () => {
     const deps = await baseDeps({
       readNativeManifest: async () => ({ version: '0.33.1' }),
       rtcCapable: true,
     });
-    await writeFile(deps.envPath, 'TMEX_DIRECT_ENABLED=false\n', 'utf8');
+    await writeFile(deps.envPath, 'VIBETERM_DIRECT_ENABLED=false\n', 'utf8');
     const status = await getLocalStatus(deps);
     expect(status.direct.enabled).toBe(false);
     expect(status.direct.installed).toBe(true);
@@ -972,7 +972,7 @@ describe('direct status and setLocalDirect', () => {
       capable: false,
       restartRequired: true,
     });
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 
   test('setLocalDirect unsupported is 409', async () => {
@@ -1079,10 +1079,10 @@ describe('direct status and setLocalDirect', () => {
       restartRequired: true,
     });
     expect(disabled).toBe(1);
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('false');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('false');
   });
 
-  test('setLocalDirect enable requires install and writes TMEX_DIRECT_ENABLED=true', async () => {
+  test('setLocalDirect enable requires install and writes VIBETERM_DIRECT_ENABLED=true', async () => {
     let downloaded = 0;
     const deps = await baseDeps({
       enableDirect: async () => {
@@ -1100,7 +1100,7 @@ describe('direct status and setLocalDirect', () => {
       restartRequired: true,
     });
     expect(downloaded).toBe(0);
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('true');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 
   test('setLocalDirect enable without install is 409 direct_not_installed', async () => {
@@ -1117,7 +1117,7 @@ describe('direct status and setLocalDirect', () => {
       httpStatus: 409,
     });
     expect(downloaded).toBe(0);
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBeUndefined();
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBeUndefined();
   });
 
   test('setLocalDirect disable writes env false without removing native', async () => {
@@ -1137,7 +1137,7 @@ describe('direct status and setLocalDirect', () => {
       restartRequired: true,
     });
     expect(removed).toBe(0);
-    expect((await readEnvFile(deps.envPath)).TMEX_DIRECT_ENABLED).toBe('false');
+    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('false');
   });
 
   test('getLocalStatus relay block is null unless roles.relay', async () => {

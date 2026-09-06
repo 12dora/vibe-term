@@ -1,8 +1,8 @@
 // 源节点 A 看到的「目标侧」抽象。两种实现：经 peer 链路的 mesh 通道，
 // 以及 A === B 时直接调本进程接收服务的本机通道。
 
-import type { TransferCapability, TransferErrorCode } from '@tmex/shared';
-import type { ByteRange, PushOutcome, ReceivedState } from '@tmex/transfer';
+import type { TransferCapability, TransferErrorCode } from '@vibeterm/shared';
+import type { ByteRange, PushOutcome, ReceivedState } from '@vibeterm/transfer';
 import { normalizeTransferError } from './errors';
 import {
   type OpenSessionResult,

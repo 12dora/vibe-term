@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings, TmuxWindow } from '@tmex/shared';
+import type { Device, SiteSettings, TmuxWindow } from '@vibeterm/shared';
 import { ConnectionLifecycleEmitter } from './lifecycle-emitter';
 
 function makeDevice(): Device {
@@ -7,7 +7,7 @@ function makeDevice(): Device {
     id: 'd1',
     name: 'dev',
     type: 'local',
-    session: 'tmex-le',
+    session: 'vibeterm-le',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: '2026-04-18T00:00:00Z',
@@ -17,8 +17,8 @@ function makeDevice(): Device {
 
 function makeSettings(): SiteSettings {
   return {
-    siteName: 'tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'VibeTerm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,
     enableBrowserNotificationToast: true,
@@ -62,7 +62,7 @@ function makeEmitter(options?: {
   const events: Array<{ eventType: string; event: any }> = [];
   const emitter = new ConnectionLifecycleEmitter({
     getDevice: () => makeDevice(),
-    getSessionName: () => 'tmex-le',
+    getSessionName: () => 'vibeterm-le',
     isEmittable: () => options?.emittable ?? true,
     getSnapshotWindows: () => options?.windows ?? new Map(),
     settingsProvider: options?.settingsProvider ?? makeSettings,
@@ -80,12 +80,12 @@ function makeEmitter(options?: {
 describe('ConnectionLifecycleEmitter', () => {
   test('emit builds full event shape from context', () => {
     const { emitter, events } = makeEmitter();
-    emitter.emit('session_created', { sessionName: 'tmex-le' });
+    emitter.emit('session_created', { sessionName: 'vibeterm-le' });
     expect(events).toHaveLength(1);
     expect(events[0].eventType).toBe('session_created');
-    expect(events[0].event.site.name).toBe('tmex');
+    expect(events[0].event.site.name).toBe('VibeTerm');
     expect(events[0].event.device.id).toBe('d1');
-    expect(events[0].event.tmux.sessionName).toBe('tmex-le');
+    expect(events[0].event.tmux.sessionName).toBe('vibeterm-le');
   });
 
   test('emit is a no-op without notifyEvent wiring', () => {

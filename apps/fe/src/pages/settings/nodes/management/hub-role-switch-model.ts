@@ -4,15 +4,16 @@
 import { type HubApi, defaultHubApi } from '@/node/hub-api';
 import { getMeshHubsState, refreshMeshHubs } from '@/node/mesh-hubs';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@tmex/api-client';
-import type { HubAuthorizationKind, MeshHubEndpoint } from '@tmex/api-client/auth/index';
-import { errorMessage, sleepOrAbort } from '@tmex/shared';
-import type { HubRoleErrorCode, HubRoleRequest, HubRoleTransitionPhase } from '@tmex/shared';
+import { defaultApiClient } from '@vibeterm/api-client';
+import type { HubAuthorizationKind, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
+import { errorMessage, sleepOrAbort } from '@vibeterm/shared';
+import type { HubRoleErrorCode, HubRoleRequest, HubRoleTransitionPhase } from '@vibeterm/shared';
 import {
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
   encodeBase64url,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
+import { FORCE_KEYLOG_HEADER as FORCE_KEYLOG_HEADER_PAIR } from '@vibeterm/shared/http/mesh-headers';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -27,7 +28,13 @@ export const HUB_ROLE_WRITER_TIMEOUT_MS = 60_000;
 /** 续跑前读一次 `/api/mesh/hubs` 的重试上限：入口在切换期间可能短暂断连，但不能无限等。 */
 export const HUB_ROLE_HUBS_TIMEOUT_MS = 20_000;
 
-export const HUB_ROLE_SWITCH_KEY = 'tmex.nodes.hub-role-switch';
+// 强制补齐密钥日志的请求头：新旧名一起发（旧节点只认旧名），定义见 @vibeterm/shared。
+export const FORCE_KEYLOG_HEADER = FORCE_KEYLOG_HEADER_PAIR.name;
+export const LEGACY_FORCE_KEYLOG_HEADER = FORCE_KEYLOG_HEADER_PAIR.legacy;
+
+export const HUB_ROLE_SWITCH_KEY = 'vibeterm.nodes.hub-role-switch';
+/** 改名前的键，读取前搬运 */
+export const LEGACY_HUB_ROLE_SWITCH_KEY = 'tmex.nodes.hub-role-switch';
 /** 超过这个时长的记录一律作废：目标早该起来了，接着轮询只会对着一份陈旧的 operationId。 */
 export const HUB_ROLE_SWITCH_TTL_MS = 30 * 60_000;
 
@@ -196,7 +203,7 @@ export interface HubsSnapshot {
 
 /** 状态机与真实请求之间的接缝：单测注入假实现，不碰网络与计时器。 */
 export interface HubRoleIo {
-  /** `POST /api/auth/keylog?hub=sync`；`force` 打 `X-Tmex-Force-Keylog: 1`。 */
+  /** `POST /api/auth/keylog?hub=sync`；`force` 打强制头（新旧两个名字都发）。 */
   appendAdmitHub(
     record: { bytes: Uint8Array; sig: Uint8Array },
     force: boolean
@@ -235,7 +242,10 @@ export async function submitAdmitHubRecord(
     defaultApiClient.fetch(path, init)
 ): Promise<AdmitHubOutcome> {
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (force) headers['X-Tmex-Force-Keylog'] = '1';
+  if (force) {
+    headers[FORCE_KEYLOG_HEADER] = '1';
+    headers[LEGACY_FORCE_KEYLOG_HEADER] = '1';
+  }
   let res: Response;
   try {
     res = await fetchImpl('/api/auth/keylog?hub=sync', {

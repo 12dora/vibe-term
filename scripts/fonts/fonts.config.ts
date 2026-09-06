@@ -11,7 +11,7 @@ export interface FontSource {
   id: string;
   /** 选择器展示名（纯文本，无字样预览） */
   displayName: string;
-  /** @font-face 用的 CSS family 名（避免与系统同名字体冲突，统一加 Tmex 后缀） */
+  /** @font-face 用的 CSS family 名（避免与系统同名字体冲突，统一加 VibeTerm 后缀） */
   cssFamily: string;
   /** Nerd Fonts release 资产名（zip）。useExisting 时忽略 */
   asset?: string;
@@ -35,7 +35,7 @@ export const FONTS: FontSource[] = [
   {
     id: 'geist-mono',
     displayName: 'Geist Mono',
-    cssFamily: 'GeistMonoTmex',
+    cssFamily: 'GeistMonoVibeTerm',
     isDefault: true,
     useExisting: {
       regular: '/fonts/GeistMonoNerdFontMono-Regular.woff2',
@@ -45,7 +45,7 @@ export const FONTS: FontSource[] = [
   {
     id: 'jetbrains-mono',
     displayName: 'JetBrains Mono',
-    cssFamily: 'JetBrainsMonoTmex',
+    cssFamily: 'JetBrainsMonoVibeTerm',
     asset: 'JetBrainsMono.zip',
     matchPrefix: 'JetBrainsMono',
     excludePathTokens: ['NoLigatures'],
@@ -53,28 +53,28 @@ export const FONTS: FontSource[] = [
   {
     id: 'fira-code',
     displayName: 'Fira Code',
-    cssFamily: 'FiraCodeTmex',
+    cssFamily: 'FiraCodeVibeTerm',
     asset: 'FiraCode.zip',
     matchPrefix: 'FiraCode',
   },
   {
     id: 'blex-mono',
     displayName: 'Blex Mono (IBM Plex Mono)',
-    cssFamily: 'BlexMonoTmex',
+    cssFamily: 'BlexMonoVibeTerm',
     asset: 'IBMPlexMono.zip',
     matchPrefix: 'BlexMono',
   },
   {
     id: 'noto-sans-mono',
     displayName: 'Noto Sans Mono',
-    cssFamily: 'NotoSansMTmex',
+    cssFamily: 'NotoSansMVibeTerm',
     asset: 'Noto.zip',
     matchPrefix: 'NotoSansM',
   },
   {
     id: 'zed-mono',
     displayName: 'Zed Mono',
-    cssFamily: 'ZedMonoTmex',
+    cssFamily: 'ZedMonoVibeTerm',
     asset: 'ZedMono.zip',
     matchPrefix: 'ZedMono',
     excludePathTokens: ['Extended'],
@@ -82,7 +82,7 @@ export const FONTS: FontSource[] = [
   {
     id: 'victor-mono',
     displayName: 'Victor Mono',
-    cssFamily: 'VictorMonoTmex',
+    cssFamily: 'VictorMonoVibeTerm',
     asset: 'VictorMono.zip',
     matchPrefix: 'VictorMono',
   },
@@ -90,21 +90,21 @@ export const FONTS: FontSource[] = [
   {
     id: '3270',
     displayName: '3270',
-    cssFamily: 'IbmThreeTwoSevenZeroTmex',
+    cssFamily: 'IbmThreeTwoSevenZeroVibeTerm',
     asset: '3270.zip',
     matchPrefix: '3270',
   },
   {
     id: 'big-blue-term',
     displayName: 'BigBlue Terminal',
-    cssFamily: 'BigBlueTermTmex',
+    cssFamily: 'BigBlueTermVibeTerm',
     asset: 'BigBlueTerminal.zip',
     matchPrefix: 'BigBlueTerm',
   },
   {
     id: 'departure-mono',
     displayName: 'Departure Mono',
-    cssFamily: 'DepartureMonoTmex',
+    cssFamily: 'DepartureMonoVibeTerm',
     asset: 'DepartureMono.zip',
     matchPrefix: 'DepartureMono',
   },

@@ -2,7 +2,7 @@
 // 有侧栏时左上角是侧栏开关而不是品牌。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
@@ -15,7 +15,7 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { BRAND_LOGO_SRC } = await import('@/components/brand');
 const { PageWrapper } = await import('./page-wrapper');
 const { clearPageModuleCache, requestPageModule } = await import('./use-page-module');

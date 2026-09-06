@@ -1,8 +1,8 @@
 // 面板的数据与键盘逻辑：两组查询 + 条目整理 + 高亮跟焦点。组件只管渲染。
 
 import { useQuery } from '@tanstack/react-query';
-import { createNodeApiClient } from '@tmex/api-client';
-import type { FileEntryDto, FileRootDto } from '@tmex/shared';
+import { createNodeApiClient } from '@vibeterm/api-client';
+import type { FileEntryDto, FileRootDto } from '@vibeterm/shared';
 import { type Dispatch, type KeyboardEvent, useEffect, useMemo, useRef } from 'react';
 
 import { paneRoots } from './pane-roots';

@@ -1,4 +1,4 @@
-import type { UiThreadBlock } from '@tmex/stores';
+import type { UiThreadBlock } from '@vibeterm/stores';
 import type { CSSProperties, ReactElement } from 'react';
 
 import { AssistantMessage } from './messages/assistant-message';

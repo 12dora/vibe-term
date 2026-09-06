@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   buildKeyLogRecord,
   buildLogin,
@@ -14,7 +14,7 @@ import {
   generateEd25519KeyPair,
   signKeyLogRecordWithRoot,
   signLogin,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -38,7 +38,7 @@ import {
 import { type MeshRuntime, createMeshRuntime } from '../mesh-runtime';
 import { waitUntil } from '../test-support';
 
-const PASSWORD = 'tmex-test';
+const PASSWORD = 'vibeterm-test';
 const dummyServer = { upgrade: () => false };
 
 function fakeGateway(db: AuthDb): GatewayRuntime {

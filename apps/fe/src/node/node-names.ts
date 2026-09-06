@@ -3,7 +3,7 @@
 //
 // 单独成文件而不是并进 `mesh-nodes.ts`：后者已经顶着文件行数门禁的存量上限（只降不升）。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { getMeshNodesState } from './mesh-nodes';
 
 /**

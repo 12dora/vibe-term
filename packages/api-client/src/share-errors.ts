@@ -2,7 +2,7 @@
 //
 // 刻意**不**从 `./index` 导出：`share.*` 在 rest 语言包里，而 index 处在前端入口的静态
 // import 图上，core 覆盖守卫会因此要求这些 key 进 core。分享弹窗与设置页都是懒加载 chunk，
-// 直接 `@tmex/api-client/share-errors` 引用即可。
+// 直接 `@vibeterm/api-client/share-errors` 引用即可。
 
 import { ApiError } from './client';
 

@@ -62,7 +62,7 @@ test('desktop: multi-pane window renders split view with focus indicator and dra
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-split-desktop-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-split-desktop-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
 
   const createRes = await request.post('/api/devices', {

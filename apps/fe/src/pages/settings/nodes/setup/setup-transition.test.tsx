@@ -2,7 +2,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与本目录其它组件测试同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

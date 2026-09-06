@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device, FileErrorCode } from '@tmex/shared';
+import type { Device, FileErrorCode } from '@vibeterm/shared';
 import { decryptWithContext } from '../crypto';
 import { quoteShellArg } from '../tmux-client/command-builder';
 import { resolveSshConnectConfig } from '../tmux-client/ssh-connect-config';
@@ -31,15 +31,17 @@ const SSH_BASE_OPTS = ['-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectT
 // 用 SSH_ASKPASS 非交互地回答密码/passphrase 提示（OpenSSH 8.4+ 的 SSH_ASKPASS_REQUIRE=force）。
 // 临时 askpass 脚本本身不含密钥，密钥经环境变量传入；脚本 0700，用后清理。
 function setupAskpass(secret: string): { env: Record<string, string>; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rsync-ap-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rsync-ap-'));
   const scriptPath = join(dir, 'askpass.sh');
-  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$TMEX_RSYNC_SECRET"\n', { mode: 0o700 });
+  writeFileSync(scriptPath, '#!/bin/sh\nprintf \'%s\\n\' "$VIBETERM_RSYNC_SECRET"\n', {
+    mode: 0o700,
+  });
   chmodSync(scriptPath, 0o700);
   return {
     env: {
       SSH_ASKPASS: scriptPath,
       SSH_ASKPASS_REQUIRE: 'force',
-      TMEX_RSYNC_SECRET: secret,
+      VIBETERM_RSYNC_SECRET: secret,
       // 老版 ssh 在无 tty 时需要 DISPLAY 才会调用 askpass；新版靠 REQUIRE=force 即可
       DISPLAY: process.env.DISPLAY || ':0',
     },
@@ -54,7 +56,7 @@ function setupAskpass(secret: string): { env: Record<string, string>; cleanup: (
 }
 
 function writeTempKey(privateKey: string): { keyPath: string; cleanup: () => void } {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rsync-key-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rsync-key-'));
   const keyPath = join(dir, 'id');
   writeFileSync(keyPath, privateKey, { mode: 0o600 });
   chmodSync(keyPath, 0o600);

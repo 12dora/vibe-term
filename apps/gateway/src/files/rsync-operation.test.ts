@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { fail, ok, withDeviceRsync } from './rsync-operation';
 import { RsyncAuthError, type RsyncDeviceSpec } from './ssh-command';
 

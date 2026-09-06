@@ -3,7 +3,7 @@ import { createTwoWindowSession, ensureCleanSession, getPaneSize, tmux } from '.
 
 async function readTerminalSize(page: Page): Promise<{ cols: number; rows: number } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return { cols: term.cols, rows: term.rows };
   });
@@ -17,7 +17,7 @@ test('single-pane window switch resizes target window to webapp viewport', async
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-switch-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-switch-resize-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 

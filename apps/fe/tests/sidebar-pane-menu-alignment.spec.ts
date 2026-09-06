@@ -6,7 +6,7 @@ import { expect, test } from '@playwright/test';
 import { createTwoPaneSession, ensureCleanSession } from './helpers/tmux';
 
 test.describe('sidebar pane row action buttons alignment', () => {
-  const sessionName = `tmex-e2e-pane-menu-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-pane-menu-${Date.now()}`;
   let deviceId: string;
   let windowId: string;
   let paneIds: string[];

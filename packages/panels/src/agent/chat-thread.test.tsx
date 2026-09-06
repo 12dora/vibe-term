@@ -1,9 +1,9 @@
 // bun test 无 DOM，行重渲染数按 React.memo 的默认浅比较语义推算（type 相同 + props 浅相等即跳过）。
 
 import { describe, expect, test } from 'bun:test';
-import type { AgentMessageDto } from '@tmex/shared';
-import { I18N_RESOURCES } from '@tmex/shared';
-import type { SessionInProgress } from '@tmex/stores';
+import type { AgentMessageDto } from '@vibeterm/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import type { SessionInProgress } from '@vibeterm/stores';
 import i18next from 'i18next';
 import type { ReactElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';

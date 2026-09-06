@@ -1,8 +1,8 @@
 // 收起软键盘的按钮：只在终端输入元素持有焦点（键盘弹着）时出现在快捷键栏最左侧。
 // 唤起键盘不需要按钮——点终端的输入行（光标所在行）即可，见 docs/frontend/2026090606。
 
-import { type TerminalRef, blurTerminalInput, isTerminalInputFocused } from '@tmex/terminal-ui';
-import { Button } from '@tmex/ui/button';
+import { type TerminalRef, blurTerminalInput, isTerminalInputFocused } from '@vibeterm/terminal-ui';
+import { Button } from '@vibeterm/ui/button';
 import { KeyboardOff } from 'lucide-react';
 import { type RefObject, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

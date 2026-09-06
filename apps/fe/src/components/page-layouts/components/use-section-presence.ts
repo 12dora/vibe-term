@@ -2,16 +2,16 @@
 // 这里给一层最轻的 presence 外壳——入场淡入、退场淡出后再卸载，reduced motion 下直接落到终态
 // （与 connection-indicator 同一套做法：没有过渡就不能等 transitionend）。
 //
-// 只用 transition 不用 tmex-fade：动画的 fill-mode 是 both，播完会把 opacity 永久钉在 1，
+// 只用 transition 不用 vibeterm-fade：动画的 fill-mode 是 both，播完会把 opacity 永久钉在 1，
 // 分节根上拖拽用的 opacity-60 就再也压不住了；纯 class 才能让 tailwind-merge 正常收敛。
 
-import { motionDurations, useReducedMotion } from '@tmex/ui/motion';
+import { motionDurations, useReducedMotion } from '@vibeterm/ui/motion';
 import { useEffect, useRef, useState } from 'react';
 
 type Phase = 'hidden' | 'entering' | 'visible' | 'exiting';
 
 const TRANSITION =
-  'transition-opacity duration-(--tmex-motion-standard) motion-reduce:transition-none';
+  'transition-opacity duration-(--vibeterm-motion-standard) motion-reduce:transition-none';
 
 const CLASS_BY_PHASE: Record<Phase, string> = {
   hidden: `${TRANSITION} ease-out opacity-0`,

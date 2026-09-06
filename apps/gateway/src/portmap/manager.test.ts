@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { resetPeerStreamSlots } from './budget';
 import { PortMapManager } from './manager';
 import { isPortFree } from './port-probe';
@@ -93,7 +93,7 @@ describe('portmap manager', () => {
     ).toThrow(PortMapError);
     expect(() =>
       manager.create({ listenPort: 19_663, targetNodeId: TARGET_NODE, targetPort: 1 })
-    ).toThrow(/reserved|tmex itself/);
+    ).toThrow(/reserved|VibeTerm itself/);
     const occupied = Bun.listen({ hostname: '127.0.0.1', port: 0, socket: { data() {} } });
     try {
       expect(() =>

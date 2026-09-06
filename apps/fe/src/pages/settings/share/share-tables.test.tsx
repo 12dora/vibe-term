@@ -3,7 +3,7 @@
 // 没有 i18next 实例时 `t` 原样返回 key，因此断言的是 key 与 testId。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ShareRow } from './share-rows';
 
 installWindowStorage();
@@ -30,8 +30,8 @@ function record(patch: Partial<ShareRow> = {}): ShareRow {
     createdAt: NOW - 600_000,
     expiresAt: NOW + 3_600_000,
     endedAt: null,
-    origin: 'https://tmex.example.com',
-    url: 'https://tmex.example.com/s/sh1',
+    origin: 'https://vibeterm.example.com',
+    url: 'https://vibeterm.example.com/s/sh1',
     viewers: 2,
     logBytes: 0,
     logTruncated: false,
@@ -57,7 +57,7 @@ describe('ActiveSharesTable', () => {
     );
     expect(html).toContain('data-testid="share-active-row-sh1"');
     expect(html).toContain('MacBook · build');
-    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('vibeterm.example.com');
     expect(html).toContain('data-testid="share-viewers-sh1"');
     expect(html).toContain('data-testid="share-copy-sh1"');
     expect(html).toContain('data-testid="share-stop-sh1"');

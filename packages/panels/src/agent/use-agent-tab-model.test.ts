@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 import { resolveBinding } from './use-agent-tab-model';
 
 const devices: Device[] = [{ id: 'd1', name: 'laptop' } as Device];

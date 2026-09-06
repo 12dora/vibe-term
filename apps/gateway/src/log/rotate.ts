@@ -137,29 +137,58 @@ export function shouldInstallProcessLogRotation(
   env: NodeJS.ProcessEnv = process.env,
   platform: NodeJS.Platform = process.platform
 ): boolean {
-  if (env.TMEX_LOG_DISABLE === '1') return false;
-  if (env.NODE_ENV === 'test' && env.TMEX_LOG_ROTATE !== '1') return false;
-  if (env.TMEX_LOG_FILE?.trim()) return true;
+  if (env.VIBETERM_LOG_DISABLE === '1') return false;
+  if (env.NODE_ENV === 'test' && env.VIBETERM_LOG_ROTATE !== '1') return false;
+  if (env.VIBETERM_LOG_FILE?.trim()) return true;
   return (
-    platform === 'darwin' && env.NODE_ENV === 'production' && Boolean(env.TMEX_INSTALL_DIR?.trim())
+    platform === 'darwin' &&
+    env.NODE_ENV === 'production' &&
+    Boolean(env.VIBETERM_INSTALL_DIR?.trim())
   );
 }
 
+/**
+ * 安装目录下的日志文件名：优先新名，旧名存在而新名不存在时沿用旧名。
+ * 改名前安装的实例，其 plist/unit 在服务重新注册前仍写 tmex.log，这里必须继续轮转它。
+ */
+function installedLogPath(
+  installDir: string,
+  name: string,
+  legacyName: string,
+  fileExists: (path: string) => boolean
+): string {
+  const current = join(installDir, name);
+  if (fileExists(current)) return current;
+  const legacy = join(installDir, legacyName);
+  return fileExists(legacy) ? legacy : current;
+}
+
 export function resolveProcessLogRotationConfig(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  fileExists: (path: string) => boolean = existsSync
 ): ProcessLogRotationConfig | null {
-  const explicit = env.TMEX_LOG_FILE?.trim();
-  const installDir = env.TMEX_INSTALL_DIR?.trim();
-  const stdoutPath = explicit || (installDir ? join(installDir, 'tmex.log') : '');
+  const explicit = env.VIBETERM_LOG_FILE?.trim();
+  const installDir = env.VIBETERM_INSTALL_DIR?.trim();
+  const stdoutPath =
+    explicit ||
+    (installDir ? installedLogPath(installDir, 'vibeterm.log', 'tmex.log', fileExists) : '');
   if (!stdoutPath) return null;
-  const errExplicit = env.TMEX_LOG_ERR_FILE?.trim();
+  const errExplicit = env.VIBETERM_LOG_ERR_FILE?.trim();
   const stderrPath =
-    errExplicit || (installDir ? join(installDir, 'tmex.err.log') : `${stdoutPath}.err`);
+    errExplicit ||
+    (installDir
+      ? installedLogPath(installDir, 'vibeterm.err.log', 'tmex.err.log', fileExists)
+      : `${stdoutPath}.err`);
   return {
     stdoutPath,
     stderrPath,
-    maxBytes: envInt(env, 'TMEX_LOG_MAX_BYTES', DEFAULT_LOG_MAX_BYTES, MIN_LOG_MAX_BYTES),
-    generations: envInt(env, 'TMEX_LOG_GENERATIONS', DEFAULT_LOG_GENERATIONS, MIN_LOG_GENERATIONS),
+    maxBytes: envInt(env, 'VIBETERM_LOG_MAX_BYTES', DEFAULT_LOG_MAX_BYTES, MIN_LOG_MAX_BYTES),
+    generations: envInt(
+      env,
+      'VIBETERM_LOG_GENERATIONS',
+      DEFAULT_LOG_GENERATIONS,
+      MIN_LOG_GENERATIONS
+    ),
   };
 }
 

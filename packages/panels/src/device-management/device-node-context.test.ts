@@ -1,7 +1,7 @@
 // 设备种类：Device.type（local/ssh）× 节点上下文（self/远端）→ 四种展示种类与文案。
 
 import { describe, expect, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import { deviceDisplayKind, deviceKindLabel, isRemoteDeviceKind } from './device-node-context';
 

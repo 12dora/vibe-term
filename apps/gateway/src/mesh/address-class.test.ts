@@ -459,7 +459,7 @@ describe('unified IP classifier (per-caller semantics)', () => {
     ['::ffff:999.1.1.1', true],
     ['1:2:3:4:5:6:7:8', true],
     ['localhost', false],
-    ['tmex.example.com', false],
+    ['vibeterm.example.com', false],
     ['127.000.000.001', false],
     ['127.0.0.1:8080', false],
     ['1:2:3:4:5:6:7:8::', false],

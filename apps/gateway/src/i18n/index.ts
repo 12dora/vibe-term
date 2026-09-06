@@ -1,4 +1,4 @@
-import { I18N_RESOURCES } from '@tmex/shared';
+import { I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 
 i18next.init({

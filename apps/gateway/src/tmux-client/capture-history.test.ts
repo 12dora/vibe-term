@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { PaneModeFlags } from '@tmex/shared';
+import type { PaneModeFlags } from '@vibeterm/shared';
 import { appendCursorRestore, parsePaneScreenInfo } from './capture-history';
 
 const NO_MODES: PaneModeFlags = {

@@ -279,7 +279,7 @@ ws.onmessage = (ev) => {
 };
 
 const helloPayload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
-  clientImpl: 'tmex-e2e',
+  clientImpl: 'vibeterm-e2e',
   // 网关的 canonical v1.1 版本门是 fail-closed 的，低于门槛直接被拒并关连接
   clientVersion: wsBorsh.CANONICAL_V11_MIN_PEER_VERSION,
   maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,

@@ -1,13 +1,13 @@
 // 分享弹窗的纯逻辑：草稿形态、时长换算与校验、地址缺省选取、剩余期限分档。
 // 组件只消费这里的结果，不再自己算时间和拼请求体。
 
-import type { CreateShareInput } from '@tmex/api-client';
+import type { CreateShareInput } from '@vibeterm/api-client';
 import {
   SHARE_DURATION_PRESETS_MS,
   SHARE_PASSWORD_MIN_LENGTH,
   type ShareOriginCandidate,
   type ShareRecord,
-} from '@tmex/shared/share';
+} from '@vibeterm/shared/share';
 
 export type ShareDurationChoice = 'hour' | 'day' | 'week' | 'permanent' | 'custom';
 export type ShareDurationUnit = 'hours' | 'days';

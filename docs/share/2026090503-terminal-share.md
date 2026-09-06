@@ -36,7 +36,7 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
 | `share_settings` | `id = 1` 单例：`record_logs`、`log_retention_days`、`log_max_bytes`、`default_origin` |
 
 口令用仓库既有的 argon2id（`relay-password.ts`，与根密钥同参数）；访问 token 只存 SHA-256。
-共享类型与纯函数在 `packages/shared/src/share/`（导出为 `@tmex/shared/share`，零 `node:` 依赖，浏览器可用）。
+共享类型与纯函数在 `packages/shared/src/share/`（导出为 `@vibeterm/shared/share`，零 `node:` 依赖，浏览器可用）。
 
 ## 服务组成（`apps/gateway/src/share/`）
 
@@ -79,7 +79,7 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
   排序后的 `candidates`（即推荐与自动选取）。否则 `ok` 一过期就会存下
   `https://<中继>/s/<id>` 这种没有前缀的死链。
 - 探测要等本机上联真的挂到该中继之后才可能通（中继主机得把 `/n/<self>` 经 mesh 转回来），
-  所以**装配期不预热**：`assembleTmex()` 在 `start()` 之后延迟 10 s 首探，之后每 5 min 补探一次
+  所以**装配期不预热**：`assembleVibeTerm()` 在 `start()` 之后延迟 10 s 首探，之后每 5 min 补探一次
   （定时器 `unref`，`stop()` 时清理）。另外 `buildShareOriginContext()` 与
   `primeShareRelayOrigins()` 都记着上次「在用中继」，一旦变化（含从无到有）就
   `RelayEntryProbe.invalidate()` 掉该地址的 `bad` 结论并立即重探，不必干等 2 min；
@@ -134,15 +134,15 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
 
 `shares` 新增可空列 `password_enc`（迁移 `0048_share_password_enc.sql`）：口令同时落两份——
 `password_hash` 是 argon2id，**登录校验只认它**；`password_enc` 是 `apps/gateway/src/crypto` 的
-AES-256-GCM 密文（主密钥 `TMEX_MASTER_KEY`，与 Telegram token、LLM key 同一套），只服务于回显。
+AES-256-GCM 密文（主密钥 `VIBETERM_MASTER_KEY`，与 Telegram token、LLM key 同一套），只服务于回显。
 两份都在 `apps/gateway/src/share/share-password-service.ts` 的 `SharePasswordManager` 里成对写入。
 
 - **0048 之前创建的分享** `password_enc` 为 null：`GET /api/share/:id/password` 回 409
   `SHARE_PASSWORD_UNAVAILABLE`（前端文案 `share.error.passwordUnavailable`：「该分享的口令无法查看，
   请直接修改。」），改一次口令即补上密文。
-- **主密钥与密文对不上**（换了 `TMEX_MASTER_KEY`、密文损坏）是部署故障，不是「不可回显」：
+- **主密钥与密文对不上**（换了 `VIBETERM_MASTER_KEY`、密文损坏）是部署故障，不是「不可回显」：
   `decryptWithContext` 抛的 `CryptoDecryptError` 冒到路由层，回 500 `SHARE_PASSWORD_DECRYPT_FAILED`
-  并带上原始诊断（含「TMEX_MASTER_KEY 与数据库中的加密数据不匹配」）。绝不降级成 409，否则会把
+  并带上原始诊断（含「VIBETERM_MASTER_KEY 与数据库中的加密数据不匹配」）。绝不降级成 409，否则会把
   运维故障伪装成正常业务态。
 
 ### 修改与踢人语义
@@ -175,16 +175,18 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 
 ## 凭证流
 
-1. **登录**：节点侧 login 成功不直接写 `Set-Cookie`，而是回内部响应头 `x-tmex-set-share: <token>` +
-   `x-tmex-set-share-max-age: <秒>`（登出为 `x-tmex-clear-share: 1`）。token 格式 `<shareId>.<32 字节 base64url>`，
+> 头名与 cookie 名在 2.0.0 由 `x-tmex-*` / `tmex_sh_*` 改为 `x-vibeterm-*` / `vibeterm_sh_*`；混合版本期两组同时收发，读取新名优先。见 [改名迁移](../release/2026090607-rename-vibeterm.md)。
+
+1. **登录**：节点侧 login 成功不直接写 `Set-Cookie`，而是回内部响应头 `x-vibeterm-set-share: <token>` +
+   `x-vibeterm-set-share-max-age: <秒>`（登出为 `x-vibeterm-clear-share: 1`）。token 格式 `<shareId>.<32 字节 base64url>`，
    服务端只存 SHA-256，TTL 7 天并滑动续期。
 2. **翻成 cookie**：本机由 `session-middleware.consumeSetSessionForBrowser`、Hub 由
-   `forwarder-auth-policy.applyAuthPolicy` 转成 `tmex_sh_<via>=<token>; Path=/; HttpOnly; SameSite=Lax[; Secure]`
+   `forwarder-auth-policy.applyAuthPolicy` 转成 `vibeterm_sh_<via>=<token>; Path=/; HttpOnly; SameSite=Lax[; Secure]`
    （via = `self` 或节点 id）。三个内部头归入 `INTERNAL_CREDENTIAL_HEADERS`，绝不外传。
    续期同样走这条路：`GET /api/share-access/:id` 校验时若发生续期就重新下发这两个头，永久分享的 cookie
    不会在 7 天后无声消失。
 3. **经 Hub 的流**：`forwardHttp` 对 `/api/share-access/*` 用 `share:<token>` 作为流 auth；节点侧
-   `stream-auth.verifyStreamAuth` 识别 `share:` 前缀，并把 token 合成回 `cookie: tmex_sh_<peerNodeId>=<token>`。
+   `stream-auth.verifyStreamAuth` 识别 `share:` 前缀，并把 token 合成回 `cookie: vibeterm_sh_<peerNodeId>=<token>`。
    Hub 侧 `skip401Rewrite` 对分享路径置真，节点的 401 不会被改写成 `NODE_LOGIN_REQUIRED`，也不会误清 cookie。
    **失效的分享 cookie 在分享公开 HTTP 路径上降级为匿名请求**（并清掉该 cookie），否则 A 被撤销后残留的
    HttpOnly cookie 会让同节点分享 B 的查询与登录全部 401，页面永远回不来；WS 仍严格拒绝。
@@ -285,7 +287,7 @@ checkpoint 重建；倍速 1x/2x/4x/8x；`in` 条目**只**进终端下方的标
 - mesh e2e：`apps/fe/tests/mesh-share.spec.ts`（Hub 转发路径、口令、只见该 window、终止 4410、日志有内容）。
 
 ```bash
-cd apps/fe && TMEX_E2E_MESH=1 TMEX_E2E_MESH_ONLY=1 bun run scripts/run-e2e.ts tests/mesh-share.spec.ts
+cd apps/fe && VIBETERM_E2E_MESH=1 VIBETERM_E2E_MESH_ONLY=1 bun run scripts/run-e2e.ts tests/mesh-share.spec.ts
 ```
 
 e2e 环境里 hub 只有 localhost 地址、自动候选为空，用例先 `PUT /api/share/settings` 显式指定「默认分享地址」
@@ -303,7 +305,7 @@ e2e 环境里 hub 只有 localhost 地址、自动候选为空，用例先 `PUT 
 5. **撤销依赖设备快照的更新时序**：最坏结果是少撤销一拍（下一次 patch 补上），判定本身 fail-closed。
 6. **创建分享依赖设备当前快照里能找到该 window**；设备完全没有客户端连接时会回 `SHARE_WINDOW_NOT_FOUND`
    （分享入口在终端页，实际不会命中）。
-7. **口令密文与主密钥同生死**：轮换 `TMEX_MASTER_KEY` 后，历史分享的 `password_enc` 一律解不开，
+7. **口令密文与主密钥同生死**：轮换 `VIBETERM_MASTER_KEY` 后，历史分享的 `password_enc` 一律解不开，
    查看口令会报 500；登录不受影响（走哈希），改一次口令即用新主密钥重新落密文。
 8. **带口令的链接不可撤回**：`#p=` 只是前端拼接，服务端既不知道谁发过、也没法作废单条链接；
    泄漏后只能改口令 + 踢人。

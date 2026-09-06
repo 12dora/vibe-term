@@ -180,4 +180,4 @@ FFI 取不到时退化为只看句柄，行为不比改动前差。健康连接�
   `server.address()` 立刻为 `null` 就说明端口被占，`PortMapListener.start()` 据此照旧同步抛
   `PortMapError('port_in_use')`；异步才冒出来的 `error` 事件走 `onBindFailed`，把行改回 `error` 态。
 - `listen_host` 默认 `127.0.0.1`；填 `0.0.0.0` 等于把 B 的服务开放给 A 所在的局域网，需要使用者自己承担。
-- 端口保留：网关端口与 `TMEX_PEER_PORT` 拒绝映射（`port_reserved`）。
+- 端口保留：网关端口与 `VIBETERM_PEER_PORT` 拒绝映射（`port_reserved`）。

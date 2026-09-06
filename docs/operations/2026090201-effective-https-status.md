@@ -15,7 +15,7 @@ https: { source: 'builtin' | 'reverse-proxy' | 'none'; verified: boolean; public
 按请求在 `tls-routes.ts` 里计算（`TlsService.status()` 保持与请求无关、可缓存）：
 
 1. 内置监听器在运行 → `builtin`（verified=true）。
-2. 当前请求经 `publicRequestUrl(req)` 解析为 https → `reverse-proxy`，verified=true。该函数只在 `TMEX_TRUST_PROXY` 开启且 `via = self` 时采信 `X-Forwarded-Proto/Host`，不直接读转发头。
+2. 当前请求经 `publicRequestUrl(req)` 解析为 https → `reverse-proxy`，verified=true。该函数只在 `VIBETERM_TRUST_PROXY` 开启且 `via = self` 时采信 `X-Forwarded-Proto/Host`，不直接读转发头。
 3. 配置的公开地址（hub 取 `hubPublicUrl ?? hubUrl`，否则 `baseUrl`）为 https → `reverse-proxy`，verified=false（仅推断）。
 4. 否则 `none`。
 

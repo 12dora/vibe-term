@@ -10,7 +10,7 @@ import {
   createNodeApiClient,
   fetchDomainAccess,
   updateDomainAccess,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import { actionErrorText } from './errors';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;

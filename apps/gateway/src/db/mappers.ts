@@ -13,7 +13,7 @@ import {
   type WebhookEndpoint,
   type WeixinAccountUser,
   type WeixinUserStatus,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import type {
   devices,
   siteSettings,
@@ -43,7 +43,7 @@ export function toDevice(row: typeof devices.$inferSelect): Device {
     port: optional(row.port),
     username: optional(row.username),
     sshConfigRef: optional(row.sshConfigRef),
-    session: row.session ?? 'tmex',
+    session: row.session ?? 'vibeterm',
     authMode: row.authMode as Device['authMode'],
     passwordEnc: optional(row.passwordEnc),
     privateKeyEnc: optional(row.privateKeyEnc),

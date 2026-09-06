@@ -1,3 +1,9 @@
+import {
+  CLEAR_SHARE_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
+  assignHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, route } from '../api/route';
 import { parseCookies } from '../auth/cookies';
@@ -5,24 +11,24 @@ import { clientIpFromRequest } from '../mesh/client-ip';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { getShareService } from './share-service';
 import {
+  LEGACY_SHARE_COOKIE_PREFIX,
   SHARE_COOKIE_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
   parseShareToken,
   shareCookieName,
 } from './share-token';
 
 export const SHARE_ACCESS_PATH_PREFIX = '/api/share-access/';
 
-/** 优先读本次入口 via 对应的分享 cookie；不匹配时回退扫描任意 `tmex_sh_*`。 */
+/** 优先读本次入口 via 对应的分享 cookie；不匹配时回退扫描任意 `vibeterm_sh_*` / `tmex_sh_*`。 */
 export function readShareCookieToken(req: Request, shareId: string): string | null {
   const cookies = parseCookies(req.headers.get('cookie'));
   const via = getMeshRequestContext(req).via || MESH_VIA_SELF;
   const primary = cookies.get(shareCookieName(via));
   if (primary && parseShareToken(primary)?.shareId === shareId) return primary;
   for (const [name, value] of cookies) {
-    if (!name.startsWith(SHARE_COOKIE_PREFIX)) continue;
+    if (!name.startsWith(SHARE_COOKIE_PREFIX) && !name.startsWith(LEGACY_SHARE_COOKIE_PREFIX)) {
+      continue;
+    }
     if (parseShareToken(value)?.shareId === shareId) return value;
   }
   return null;
@@ -53,8 +59,8 @@ export const shareAccessRoutes: ApiRoute[] = [
       // 长期分享靠这里滑动续期：只延长服务端 token 的话，浏览器 cookie 仍会在 7 天后消失。
       const renewal: Record<string, string> = {};
       if (token && verified.renewed && verified.maxAgeSec) {
-        renewal[X_TMEX_SET_SHARE] = token;
-        renewal[X_TMEX_SET_SHARE_MAX_AGE] = String(verified.maxAgeSec);
+        assignHeaderPair(renewal, SET_SHARE_HEADER, token);
+        assignHeaderPair(renewal, SET_SHARE_MAX_AGE_HEADER, String(verified.maxAgeSec));
       }
       return json({ ...base, deviceId: share.deviceId, windowId: share.windowId }, 200, renewal);
     },
@@ -68,10 +74,10 @@ export const shareAccessRoutes: ApiRoute[] = [
       const clientIp = clientIpFromRequest(req) ?? 'local';
       const result = await getShareService().loginAccess(params.id, password, clientIp);
       if (result.ok) {
-        return json({ ok: true, expiresAt: result.expiresAt }, 200, {
-          [X_TMEX_SET_SHARE]: result.token,
-          [X_TMEX_SET_SHARE_MAX_AGE]: String(result.maxAgeSec),
-        });
+        const issued: Record<string, string> = {};
+        assignHeaderPair(issued, SET_SHARE_HEADER, result.token);
+        assignHeaderPair(issued, SET_SHARE_MAX_AGE_HEADER, String(result.maxAgeSec));
+        return json({ ok: true, expiresAt: result.expiresAt }, 200, issued);
       }
       if (result.code === 'SHARE_NOT_FOUND') return notFound();
       if (result.code === 'SHARE_ENDED') {
@@ -97,7 +103,7 @@ export const shareAccessRoutes: ApiRoute[] = [
     handler: (req, params) => {
       const token = readShareCookieToken(req, params.id);
       if (token) getShareService().logoutAccess(token);
-      return json({ ok: true }, 200, { [X_TMEX_CLEAR_SHARE]: '1' });
+      return json({ ok: true }, 200, assignHeaderPair({}, CLEAR_SHARE_HEADER, '1'));
     },
   }),
 ];

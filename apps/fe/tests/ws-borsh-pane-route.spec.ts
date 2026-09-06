@@ -8,7 +8,7 @@ test('ws-borsh: canonical feed preserves encoded pane id and loads target pane',
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-pane-route-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-pane-route-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 

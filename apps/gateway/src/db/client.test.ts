@@ -6,7 +6,7 @@ import { join } from 'node:path';
 
 import { applyPragmas } from './client';
 
-const tmpPath = join(tmpdir(), `tmex-client-test-${process.pid}-${Date.now()}.db`);
+const tmpPath = join(tmpdir(), `vibeterm-client-test-${process.pid}-${Date.now()}.db`);
 
 afterAll(() => {
   for (const suffix of ['', '-wal', '-shm']) {

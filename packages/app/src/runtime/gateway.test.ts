@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { handleSystemApiRequest } from '../../../../apps/gateway/src/api/system';
-import { createTmexGatewayRuntime } from './gateway';
+import { createVibeTermGatewayRuntime } from './gateway';
 
-describe('createTmexGatewayRuntime', () => {
+describe('createVibeTermGatewayRuntime', () => {
   test('passes the system API handler to the bundled gateway runtime', async () => {
     let receivedHandler: unknown;
 
-    await createTmexGatewayRuntime(async (options) => {
+    await createVibeTermGatewayRuntime(async (options) => {
       receivedHandler = options?.systemApiHandler;
       const response = await options?.systemApiHandler?.(
         new Request('http://localhost/api/system/info'),

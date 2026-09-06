@@ -2,9 +2,9 @@
 // 只做读取与派生，不写 store；下游（pane 选择、editor、渲染）都消费这里的结果。
 
 import { useQuery } from '@tanstack/react-query';
-import { type DeviceWithRuntime, fetchDevices } from '@tmex/api-client';
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
+import { type DeviceWithRuntime, fetchDevices } from '@vibeterm/api-client';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import { useMemo } from 'react';
 
 function appendKeyPart(parts: string[], value: string | number | boolean | undefined): void {

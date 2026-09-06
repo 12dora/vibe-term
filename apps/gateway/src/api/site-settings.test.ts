@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { UpdateSiteSettingsRequest } from '@tmex/shared';
+import type { UpdateSiteSettingsRequest } from '@vibeterm/shared';
 import {
   type SiteSettingsUpdates,
   normalizeDisabledNotificationChannels,
@@ -17,13 +17,13 @@ function asBody(value: unknown): UpdateSiteSettingsRequest {
 
 describe('normalizeSiteSettingsInput', () => {
   test('composes per-section normalizers and ignores omitted fields', () => {
-    expect(normalizeSiteSettingsInput({ siteName: '  tmex  ', language: 'zh_CN' })).toEqual({
-      siteName: 'tmex',
+    expect(normalizeSiteSettingsInput({ siteName: '  VibeTerm  ', language: 'zh_CN' })).toEqual({
+      siteName: 'VibeTerm',
       language: 'zh_CN',
     });
 
     const result = normalizeSiteSettingsInput({
-      siteName: '  tmex  ',
+      siteName: '  VibeTerm  ',
       siteUrl: 'https://example.test',
       language: 'zh_CN',
       bellThrottleSeconds: 1.9,
@@ -37,7 +37,7 @@ describe('normalizeSiteSettingsInput', () => {
       disabledNotificationChannels: [' a ', '', 'a', 'b'],
     });
     expect(result).toEqual({
-      siteName: 'tmex',
+      siteName: 'VibeTerm',
       siteUrl: 'https://example.test',
       language: 'zh_CN',
       bellThrottleSeconds: 1,

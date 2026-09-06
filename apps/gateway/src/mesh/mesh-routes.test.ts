@@ -1,13 +1,13 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { releaseTarballName, wsBorsh } from '@tmex/shared';
+import { legacyReleaseTarballName, releaseTarballName, wsBorsh } from '@vibeterm/shared';
 import {
   DOMAIN_CERTIFICATE,
   encodeBase64url,
   encodeCertificate,
   hexToBytes,
-} from '@tmex/shared/auth';
-import type { LinkSession } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { runMigrations } from '../db/migrate';
 import { resetReleaseDownloadForTests } from '../system/release-download';
 import {
@@ -103,7 +103,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}; tmex_s_${PEER_ID}=xyz` },
+        headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${PEER_ID}=xyz` },
       });
       const body = (await list.json()) as {
         nodes: Array<{
@@ -168,7 +168,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{
@@ -239,7 +239,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{
@@ -299,7 +299,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; name: string }>;
@@ -344,7 +344,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; name: string }>;
@@ -386,7 +386,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; name: string }>;
@@ -434,7 +434,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; name: string }>;
@@ -459,7 +459,7 @@ describe('mesh-routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{
@@ -502,7 +502,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; online: boolean; reach: string | null }>;
@@ -526,7 +526,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as { nodes: Array<{ id: string; isHub: boolean }> };
       expect(body.nodes.find((n) => n.id === NODE_ID)?.isHub).toBe(true);
@@ -619,7 +619,7 @@ describe('mesh-routes', () => {
       );
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -701,7 +701,7 @@ describe('mesh-routes', () => {
       });
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as { writerHubId: string | null };
@@ -728,7 +728,7 @@ describe('mesh-routes', () => {
       ];
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as {
@@ -803,7 +803,7 @@ describe('mesh-routes', () => {
       );
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       const body = (await list.json()) as {
         nodes: Array<{ id: string; isHub: boolean; hubMode?: 'active' | 'standby' }>;
@@ -832,7 +832,7 @@ describe('mesh-routes', () => {
       expect(denied.status).toBe(401);
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const cfg = await call(mesh.runtime, 'http://localhost/api/mesh/rtc-config', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null });
     } finally {
@@ -846,7 +846,7 @@ describe('mesh-routes', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          cookie: `tmex_s_self=${sid}`,
+          cookie: `vibeterm_s_self=${sid}`,
         },
         body: JSON.stringify({
           rtcSession: 's1',
@@ -889,7 +889,7 @@ describe('mesh-routes', () => {
             method: 'POST',
             headers: {
               'content-type': 'application/json',
-              cookie: `tmex_s_self=${sid}`,
+              cookie: `vibeterm_s_self=${sid}`,
             },
             body: JSON.stringify({
               rtcSession: 's1',
@@ -953,7 +953,7 @@ describe('mesh-routes', () => {
         primaryUserId: mesh.boot.userId,
       });
       const { sid } = await challengeAndLogin(runtime, mesh.boot);
-      const cookie = `tmex_s_self=${sid}`;
+      const cookie = `vibeterm_s_self=${sid}`;
       const one = asResponse(
         await runtime.handleRequest(
           new Request('http://localhost/api/mesh/connection', { headers: { cookie } }),
@@ -1072,7 +1072,7 @@ describe('mesh-routes', () => {
         },
       };
       const up = await mesh.runtime.handleRequest(
-        new Request('http://localhost/mesh/ws', { headers: { cookie: `tmex_s_self=${sid}` } }),
+        new Request('http://localhost/mesh/ws', { headers: { cookie: `vibeterm_s_self=${sid}` } }),
         server
       );
       expect(up).toBeUndefined();
@@ -1110,7 +1110,7 @@ describe('mesh-routes', () => {
 
       const logout = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(logout.status).toBe(200);
       expect(loggedOut).toBe(WS_CLOSE_LOGIN_REQUIRED);
@@ -1204,7 +1204,7 @@ describe('mesh-routes', () => {
 });
 
 const originalFetch = globalThis.fetch;
-const originalReleaseCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
+const originalReleaseCacheDir = process.env.VIBETERM_RELEASE_CACHE_DIR;
 const UPGRADE_PEER = 'ee'.repeat(16);
 const dummyLink = {} as LinkSession;
 
@@ -1214,8 +1214,8 @@ afterEach(() => {
   resetReleaseDownloadForTests();
   resetLatestReleaseCache();
   resetNodeOperationsForTests();
-  if (originalReleaseCacheDir === undefined) delete process.env.TMEX_RELEASE_CACHE_DIR;
-  else process.env.TMEX_RELEASE_CACHE_DIR = originalReleaseCacheDir;
+  if (originalReleaseCacheDir === undefined) delete process.env.VIBETERM_RELEASE_CACHE_DIR;
+  else process.env.VIBETERM_RELEASE_CACHE_DIR = originalReleaseCacheDir;
 });
 
 class RecordingStreams extends FakeStreams {
@@ -1279,7 +1279,10 @@ function mockGithubLatest(
         tag_name: `v${version}`,
         published_at: opts?.publishedAt ?? '2026-08-30T00:00:00.000Z',
         body: opts?.changelog === undefined ? 'notes' : opts.changelog,
-        assets: opts?.tarball === false ? [] : [{ name: releaseTarballName(version) }],
+        assets:
+          opts?.tarball === false
+            ? []
+            : [{ name: releaseTarballName(version) }, { name: legacyReleaseTarballName(version) }],
       }),
       { status: 200, headers: { 'content-type': 'application/json' } }
     );
@@ -1335,7 +1338,7 @@ describe('mesh upgrade routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(200);
       const body = (await res.json()) as Record<string, unknown>;
@@ -1357,7 +1360,7 @@ describe('mesh upgrade routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(502);
       expect(await res.json()).toEqual({ code: 'RELEASE_UNAVAILABLE' });
@@ -1372,7 +1375,7 @@ describe('mesh upgrade routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/upgrade/latest', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(502);
       expect(await res.json()).toEqual({ code: 'RELEASE_UNAVAILABLE' });
@@ -1409,7 +1412,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(200);
@@ -1450,7 +1453,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }
       );
       expect(res.status).toBe(401);
@@ -1474,7 +1477,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(503);
@@ -1510,7 +1513,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(409);
@@ -1538,7 +1541,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(404);
@@ -1566,7 +1569,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(403);
@@ -1591,7 +1594,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(409);
@@ -1622,7 +1625,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(503);
@@ -1658,7 +1661,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(200);
@@ -1679,7 +1682,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${REVOKED_ID}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${REVOKED_ID}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${REVOKED_ID}=remote-sid` },
         }
       );
       expect(res.status).toBe(404);
@@ -1709,7 +1712,7 @@ describe('mesh upgrade routes', () => {
         mesh.runtime,
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(200);
@@ -1732,7 +1735,7 @@ describe('mesh upgrade routes', () => {
     try {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(200);
       expect(await res.json()).toEqual({
@@ -1755,7 +1758,7 @@ describe('mesh upgrade routes', () => {
         mesh.runtime,
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }
       );
       expect(res.status).toBe(401);
@@ -1772,7 +1775,7 @@ describe('mesh upgrade routes', () => {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: NODE_ID });
@@ -1788,7 +1791,7 @@ describe('mesh upgrade routes', () => {
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${NODE_ID}/upgrade`, {
         method: 'POST',
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(res.status).toBe(403);
       expect(await res.json()).toEqual({ code: 'UPGRADE_NOT_ALLOWED', nodeId: NODE_ID });
@@ -1801,7 +1804,9 @@ describe('mesh upgrade routes', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-rel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(
+      join(tmpdir(), 'vibeterm-mesh-rel-cache-')
+    );
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     mockGithubLatest('9.9.9');
@@ -1810,7 +1815,9 @@ describe('mesh upgrade routes', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('api.github.com')) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  ${releaseTarballName('9.9.9')}\n`;
+        const body =
+          `${hex}  ${releaseTarballName('9.9.9')}\n` +
+          `${hex}  ${legacyReleaseTarballName('9.9.9')}\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(Buffer.from(tarball), { status: 200 });
@@ -1842,7 +1849,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(200);
@@ -1890,7 +1897,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'DELETE',
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }
       );
       expect(res.status).toBe(401);
@@ -1910,7 +1917,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'DELETE',
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }
       );
       expect(res.status).toBe(404);
@@ -1946,7 +1953,7 @@ describe('mesh upgrade routes', () => {
     try {
       enrollPeer(mesh, UPGRADE_PEER);
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid`;
+      const cookie = `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid`;
       const started = await call(
         mesh.runtime,
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
@@ -2000,7 +2007,7 @@ describe('mesh upgrade routes', () => {
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
         {
           method: 'DELETE',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(501);
@@ -2021,7 +2028,9 @@ describe('mesh upgrade routes', () => {
     const { mkdtempSync } = await import('node:fs');
     const { tmpdir } = await import('node:os');
     const { join } = await import('node:path');
-    process.env.TMEX_RELEASE_CACHE_DIR = mkdtempSync(join(tmpdir(), 'tmex-mesh-cancel-cache-'));
+    process.env.VIBETERM_RELEASE_CACHE_DIR = mkdtempSync(
+      join(tmpdir(), 'vibeterm-mesh-cancel-cache-')
+    );
     const tarball = new Uint8Array([1, 2, 3, 4, 5]);
     const hex = createHash('sha256').update(tarball).digest('hex');
     mockGithubLatest('9.9.9');
@@ -2030,7 +2039,9 @@ describe('mesh upgrade routes', () => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('api.github.com')) return latestFetch(input, init);
       if (url.includes('SHA256SUMS')) {
-        const body = `${hex}  ${releaseTarballName('9.9.9')}\n`;
+        const body =
+          `${hex}  ${releaseTarballName('9.9.9')}\n` +
+          `${hex}  ${legacyReleaseTarballName('9.9.9')}\n`;
         return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(Buffer.from(tarball), { status: 200 });
@@ -2067,7 +2078,7 @@ describe('mesh upgrade routes', () => {
     try {
       enrollPeer(mesh, UPGRADE_PEER);
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = `tmex_s_self=${sid}; tmex_s_${UPGRADE_PEER}=remote-sid`;
+      const cookie = `vibeterm_s_self=${sid}; vibeterm_s_${UPGRADE_PEER}=remote-sid`;
       const started = await call(
         mesh.runtime,
         `http://localhost/api/mesh/nodes/${UPGRADE_PEER}/upgrade`,
@@ -2127,7 +2138,7 @@ describe('mesh uninstall routes', () => {
       for (const id of [NODE_ID, 'self']) {
         const res = await call(mesh.runtime, `http://localhost/api/mesh/nodes/${id}/uninstall`, {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
           body: JSON.stringify({ mode: 'full' }),
         });
         expect(res.status).toBe(409);
@@ -2151,7 +2162,7 @@ describe('mesh uninstall routes', () => {
         `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }
       );
       expect(res.status).toBe(401);
@@ -2174,7 +2185,7 @@ describe('mesh uninstall routes', () => {
         `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UNINSTALL_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(503);
@@ -2201,7 +2212,7 @@ describe('mesh uninstall routes', () => {
         `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UNINSTALL_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(501);
@@ -2230,7 +2241,7 @@ describe('mesh uninstall routes', () => {
         `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
         {
           method: 'POST',
-          headers: { cookie: `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid` },
+          headers: { cookie: `vibeterm_s_self=${sid}; vibeterm_s_${UNINSTALL_PEER}=remote-sid` },
         }
       );
       expect(res.status).toBe(409);
@@ -2256,7 +2267,7 @@ describe('mesh uninstall routes', () => {
     try {
       enrollPeer(mesh, UNINSTALL_PEER);
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid`;
+      const cookie = `vibeterm_s_self=${sid}; vibeterm_s_${UNINSTALL_PEER}=remote-sid`;
       const res = await call(
         mesh.runtime,
         `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`,
@@ -2309,7 +2320,7 @@ describe('mesh uninstall routes', () => {
     try {
       enrollPeer(mesh, UNINSTALL_PEER);
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = `tmex_s_self=${sid}; tmex_s_${UNINSTALL_PEER}=remote-sid`;
+      const cookie = `vibeterm_s_self=${sid}; vibeterm_s_${UNINSTALL_PEER}=remote-sid`;
       await call(mesh.runtime, `http://localhost/api/mesh/nodes/${UNINSTALL_PEER}/uninstall`, {
         method: 'POST',
         headers: { cookie },

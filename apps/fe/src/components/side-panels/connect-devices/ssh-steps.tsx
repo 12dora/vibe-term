@@ -1,10 +1,10 @@
-// 「SSH 直连」路径：新机器不装 tmex，由本机以 SSH 设备的形式接上。
+// 「SSH 直连」路径：新机器不装 VibeTerm，由本机以 SSH 设备的形式接上。
 // 按钮跳设备页并打开新建设备对话框，类型已预选为 SSH。
 
-import type { AddDevicePreset } from '@tmex/panels/device-management';
-import { hostAppPath } from '@tmex/stores';
-import { useRuntime } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
+import type { AddDevicePreset } from '@vibeterm/panels/device-management';
+import { hostAppPath } from '@vibeterm/stores';
+import { useRuntime } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router';
 import { GuideNote, GuideStep } from './guide-step';
@@ -12,7 +12,7 @@ import { type OpenAddDeviceOptions, openSelfAddDevice } from './open-add-device'
 
 const PREFIX = 'connectDevices.computer.ssh';
 
-/** 一级选择占第 1 步，SSH 不需要安装 tmex，直接接第 2 步。 */
+/** 一级选择占第 1 步，SSH 不需要安装 VibeTerm，直接接第 2 步。 */
 export const SSH_STEP_OFFSET = 2;
 
 /** 这条路径只做 SSH 设备：对话框直接开在 SSH 上，不让用户再选一次类型。 */

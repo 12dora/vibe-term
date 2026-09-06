@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import type { StoredMeshRelayRow } from '../auth/mesh-relay-store';
 import type { RelayDialContext } from './relay-dial';
 import { type EnrollmentFanoutPayload, fanOutEnrollmentCreate } from './relay-enrollment-fanout';

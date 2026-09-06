@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { ENDPOINT_BACKOFF_MIN_MS, PeerEndpointBackoff } from './peer-endpoint-backoff';

@@ -1,4 +1,4 @@
-import type { TunnelEdgeResolution, TunnelProcessState } from '@tmex/shared';
+import type { TunnelEdgeResolution, TunnelProcessState } from '@vibeterm/shared';
 import { extractLastError } from './connector-health';
 import type { LogRingBuffer } from './log-buffer';
 import { type CloudflaredProvider, isRegisteredLine, parseQuickUrl } from './provider';

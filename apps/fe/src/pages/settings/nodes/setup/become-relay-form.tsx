@@ -1,17 +1,17 @@
-// 「本机作为中继」表单：写 `TMEX_ROLES=relay[,node]` + 中继公网地址 + 接入口令，然后重启。
+// 「本机作为中继」表单：写 `VIBETERM_ROLES=relay[,node]` + 中继公网地址 + 接入口令，然后重启。
 //
 // 两档角色的差别很大：`relay,node` 本机仍有账号与网页，重启后跳登录页；纯 `relay` 重启后
-// 网页整个消失，只剩 `tmex relay` 命令，因此那一档提交完不等重启（等不到网页回来）。
+// 网页整个消失，只剩 `vibeterm relay` 命令，因此那一档提交完不等重启（等不到网页回来）。
 
 import { PasswordFieldWithGenerate } from '@/components/forms/password-field-with-generate';
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
 import type {
   LocalStatusResponse,
   SetupRelayResponse,
   SetupRelayRole,
-} from '@tmex/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+} from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { pureRelaySubmitPlan, usePureRelayGate } from './become-relay-gate';
@@ -341,7 +341,7 @@ function BecomeRelayResult({
   const { t } = useTranslation();
   const pure = result.role === 'relay';
   return (
-    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-become-relay-result">
+    <Card className="border-0 ring-0 vibeterm-reveal" data-testid="setup-become-relay-result">
       <CardHeader>
         <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
         <CardDescription>
@@ -362,7 +362,7 @@ function BecomeRelayResult({
         {pure ? (
           <SetupNotice tone="warning" testId="setup-relay-web-gone">
             <p>{t('nodes.setup.result.relayWebGone')}</p>
-            <p className="font-mono">tmex relay status</p>
+            <p className="font-mono">vibeterm relay status</p>
           </SetupNotice>
         ) : (
           <RestartPanel waiter={waiter} />

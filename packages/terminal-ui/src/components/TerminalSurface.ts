@@ -4,7 +4,7 @@ import type {
   GatewayPaneScreenSnapshot,
   GatewayRebaseReason,
   GatewayTerminalData,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import {
   type HistoryPageValidation,
   type HistoryPageValidationContext,

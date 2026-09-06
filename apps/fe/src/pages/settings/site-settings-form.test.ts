@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
-import type { LocaleCode } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
+import type { LocaleCode } from '@vibeterm/shared';
 import {
   type SiteSettingsLinkage,
   type SiteSettingsWithLinkage,
@@ -19,8 +19,8 @@ import {
 
 function makeSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
-    siteName: 'my-tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'my-vibeterm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 12,
     notificationThrottleSeconds: 7,
     enableBrowserNotificationToast: false,
@@ -42,7 +42,7 @@ describe('createDefaultSiteSettingsDraft', () => {
     const draft = createDefaultSiteSettingsDraft('https://local.example');
 
     expect(draft).toEqual({
-      siteName: 'tmex',
+      siteName: 'VibeTerm',
       siteUrl: 'https://local.example',
       language: 'en_US',
       bellThrottleSeconds: 6,
@@ -62,8 +62,8 @@ describe('siteSettingsToDraft', () => {
     const draft = siteSettingsToDraft(makeSettings());
 
     expect(draft).toEqual({
-      siteName: 'my-tmex',
-      siteUrl: 'https://tmex.example.com',
+      siteName: 'my-vibeterm',
+      siteUrl: 'https://vibeterm.example.com',
       language: 'zh_CN',
       bellThrottleSeconds: 12,
       notificationThrottleSeconds: 7,
@@ -383,7 +383,7 @@ describe('pinSiteName', () => {
   });
 
   test('钉住的名字与基线一致：不必造新对象', () => {
-    expect(pinSiteName(baseline, 'my-tmex')).toBe(baseline);
+    expect(pinSiteName(baseline, 'my-vibeterm')).toBe(baseline);
   });
 
   test('改名已落地：基线的名字推进到新值，其余字段照旧', () => {

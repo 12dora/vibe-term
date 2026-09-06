@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { generateEd25519KeyPair } from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
+import { generateEd25519KeyPair } from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
@@ -137,7 +137,7 @@ describe('peer handshake', () => {
   test('relay handshake derives matching keys and carries a mux stream', async () => {
     const { store, a, b } = setup();
     const [outerA, outerB] = createInMemoryLinkPair();
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       outerB.onStream(resolve)
     );
     const out = await outerA.openStream(new TextEncoder().encode(JSON.stringify({ to: b.nodeId })));
@@ -151,7 +151,7 @@ describe('peer handshake', () => {
     expect(ha.sendKey).toEqual(hb.recvKey);
     expect(ha.recvKey).toEqual(hb.sendKey);
 
-    const got = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const got = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       hb.session.onStream(resolve)
     );
     const stream = await ha.session.openStream(new TextEncoder().encode('{"type":"http"}'));

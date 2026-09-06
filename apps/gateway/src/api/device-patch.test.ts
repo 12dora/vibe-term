@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { t } from '../i18n';
 import {
   nextDevicePushAction,
@@ -16,7 +16,7 @@ function sampleDevice(overrides: Partial<Device> = {}): Device {
     port: 22,
     username: 'root',
     sshConfigRef: 'work',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     passwordEnc: 'pw-enc',
     privateKeyEnc: 'key-enc',

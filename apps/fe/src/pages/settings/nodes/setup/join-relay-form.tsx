@@ -1,12 +1,12 @@
-// 「加入已有中继」表单：等价于 CLI `tmex relay join <relayUrl> --tenant <id>`。
+// 「加入已有中继」表单：等价于 CLI `vibeterm relay join <relayUrl> --tenant <id>`。
 //
 // 加入所需的三样东西全部来自中继那侧已经接进去的机器：中继地址、租户编号、mesh 账户密码。
 // 中继不认识加入码，也不签发加入码——这条路径没有「先在别处生成一次」的步骤。
 
-import { type ApiClient, defaultApiClient } from '@tmex/api-client';
-import type { LocalStatusResponse, SetupRelayJoinResponse } from '@tmex/api-client/local/types';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
+import { type ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import type { LocalStatusResponse, SetupRelayJoinResponse } from '@vibeterm/api-client/local/types';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type AddressProbeState, precheckProbe, useAddressProbe } from './address-probe';
@@ -151,7 +151,7 @@ function JoinRelayResult({
 }) {
   const { t } = useTranslation();
   return (
-    <Card className="border-0 ring-0 tmex-reveal" data-testid="setup-join-relay-result">
+    <Card className="border-0 ring-0 vibeterm-reveal" data-testid="setup-join-relay-result">
       <CardHeader>
         <CardTitle>{t('nodes.setup.result.title')}</CardTitle>
         <CardDescription>{t('nodes.setup.result.relayJoinDescription')}</CardDescription>

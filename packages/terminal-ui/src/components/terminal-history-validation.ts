@@ -2,7 +2,7 @@ import type {
   GatewayHistoryCursor,
   GatewayPaneHistoryPage,
   GatewayPaneScreenSnapshot,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 
 export type HistoryPageRejectionReason =
   | 'pane_mismatch'

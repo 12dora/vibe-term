@@ -1,7 +1,7 @@
 // sessions 映射的纯函数工具：排序、派生 sessionOrder、列表拉取结果与本地写入的合并。
 
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { AgentSessionDto } from '@tmex/shared';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { AgentSessionDto } from '@vibeterm/shared';
 
 export type SessionMap = Record<string, AgentSessionDto | undefined>;
 

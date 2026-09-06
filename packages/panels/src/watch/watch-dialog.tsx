@@ -1,4 +1,4 @@
-import type { WatchRuleDto } from '@tmex/shared';
+import type { WatchRuleDto } from '@vibeterm/shared';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -8,14 +8,14 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '@tmex/ui/alert-dialog';
+} from '@vibeterm/ui/alert-dialog';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
+} from '@vibeterm/ui/dialog';
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { type WatchQueryStatus, useWatchRuleMutations, useWatchRules } from './use-watch-rules';

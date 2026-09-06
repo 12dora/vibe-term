@@ -3,8 +3,8 @@
 
 import { toast } from 'sonner';
 
-import type { LegProgress } from '@tmex/api-client';
-import { Progress } from '@tmex/ui/progress';
+import type { LegProgress } from '@vibeterm/api-client';
+import { Progress } from '@vibeterm/ui/progress';
 import i18next from 'i18next';
 import { type LocalTransferHandle, combineLegPct, startLocalTransfer } from './transfer-jobs-store';
 
@@ -26,7 +26,7 @@ function PathBadge({ path }: { path: TransferToastPath }) {
     <span
       data-testid="transfer-path-badge"
       title={i18next.t(direct ? 'files.transfer.pathDirectHint' : 'files.transfer.pathRelayHint')}
-      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none"
+      className="shrink-0 rounded border px-1 text-[10px] leading-4 text-muted-foreground transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none"
     >
       {i18next.t(direct ? 'files.transfer.pathDirect' : 'files.transfer.pathRelay')}
     </span>
@@ -36,12 +36,12 @@ function PathBadge({ path }: { path: TransferToastPath }) {
 function legLabel(direction: TransferDirection, leg: 1 | 2): string {
   if (direction === 'upload') {
     return leg === 1
-      ? i18next.t('files.transfer.legUserToTmex')
-      : i18next.t('files.transfer.legTmexToServer');
+      ? i18next.t('files.transfer.legUserToVibeTerm')
+      : i18next.t('files.transfer.legVibeTermToServer');
   }
   return leg === 1
-    ? i18next.t('files.transfer.legServerToTmex')
-    : i18next.t('files.transfer.legTmexToUser');
+    ? i18next.t('files.transfer.legServerToVibeTerm')
+    : i18next.t('files.transfer.legVibeTermToUser');
 }
 
 function LegRow({ label, leg }: { label: string; leg: LegProgress }) {

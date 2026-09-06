@@ -5,7 +5,7 @@ import type {
   TlsAcmeState,
   TlsAcmeStatus,
   TlsStatusResponse,
-} from '@tmex/api-client/local/tls-types';
+} from '@vibeterm/api-client/local/tls-types';
 import { ACME_POLL_INTERVAL_MS, acmePollInterval } from './tls-form';
 
 function statusWithAcme(state: TlsAcmeState | null): TlsStatusResponse {

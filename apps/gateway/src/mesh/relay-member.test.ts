@@ -6,7 +6,7 @@ import {
   encodeBase64url,
   encodeKeyLogRecord,
   genesisHead,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { KeyLogStore } from '../auth/key-log-store';
 import { ensureNodeIdentity, selfSignedNodeCertificate } from '../auth/node-identity-service';
 import { NodeIdentityStore } from '../auth/node-identity-store';

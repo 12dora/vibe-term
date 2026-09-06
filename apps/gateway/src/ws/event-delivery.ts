@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { sessionStateStore } from './borsh/session-state';
 import type { GatewaySession } from './gateway-session';
 

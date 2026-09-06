@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import { DEVICE_FOLDER_SELF_NODE_ID } from '@tmex/shared';
+import { DEVICE_FOLDER_SELF_NODE_ID } from '@vibeterm/shared';
 import { getDb as getOrmDb } from './client';
 import {
   createDeviceFolder,

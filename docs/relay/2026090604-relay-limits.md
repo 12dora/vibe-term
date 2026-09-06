@@ -99,8 +99,8 @@
 ### CLI
 
 ```
-tmex relay quota <tenantId|default> [--max-nodes N] [--max-streams N] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
-tmex relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
+vibeterm relay quota <tenantId|default> [--max-nodes N] [--max-streams N] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
+vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
 ```
 
 `relay limits` 不带任何参数时只读并打印当前限额；给了参数则按字段合并后 PATCH。

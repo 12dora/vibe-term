@@ -1,11 +1,11 @@
 // 分享设置：记录日志、保留天数、单条上限、默认分享地址。
 // 草稿与校验在 share-settings-form.ts，这里只摆控件。
 
-import type { ShareOriginCandidate, ShareSettings } from '@tmex/shared/share';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Switch } from '@tmex/ui/switch';
+import type { ShareOriginCandidate, ShareSettings } from '@vibeterm/shared/share';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
+import { Switch } from '@vibeterm/ui/switch';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { FormField, Notice } from '../components/form-primitives';

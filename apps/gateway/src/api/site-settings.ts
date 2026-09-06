@@ -1,5 +1,5 @@
-import type { LocaleCode, SiteSettings, UpdateSiteSettingsRequest } from '@tmex/shared';
-import { SUPPORTED_LOCALES } from '@tmex/shared';
+import type { LocaleCode, SiteSettings, UpdateSiteSettingsRequest } from '@vibeterm/shared';
+import { SUPPORTED_LOCALES } from '@vibeterm/shared';
 import { t } from '../i18n';
 
 export type SiteSettingsUpdates = Partial<Omit<SiteSettings, 'updatedAt'>>;

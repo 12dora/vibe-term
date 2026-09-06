@@ -10,17 +10,17 @@
 
 import { kdfParamsFromJson } from '@/auth/key-log-actions';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import type {
   RelayJoinMaterialRelay,
   RelayPackEntry,
   RelayPackUploadResult,
   RelayTenantApi,
-} from '@tmex/api-client/relay/tenant-api';
-import { defaultRelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { decodeBase64url, encodeBase64url, rootKeyFromSeed } from '@tmex/shared/auth';
-import { kdfParamsToWire, sealRelayPack } from '@tmex/shared/relay';
+} from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { decodeBase64url, encodeBase64url, rootKeyFromSeed } from '@vibeterm/shared/auth';
+import { kdfParamsToWire, sealRelayPack } from '@vibeterm/shared/relay';
 import { getMeshRelayState, isRelayMode } from './mesh-relay';
 import { forgetRelayPackDebt, rememberRelayPackDebt } from './relay-meta-key-pending';
 

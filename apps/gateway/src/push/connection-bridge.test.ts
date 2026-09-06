@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings } from '@tmex/shared';
+import type { Device, SiteSettings } from '@vibeterm/shared';
 import {
   buildConnectionBridgeEvent,
   isWithinThrottleWindow,
@@ -16,7 +16,7 @@ function makeDevice(id = 'd1'): Device {
     host: '10.0.0.1',
     port: 22,
     username: 'root',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'password',
     sortOrder: 0,
     createdAt: '2026-04-18T00:00:00Z',
@@ -26,8 +26,8 @@ function makeDevice(id = 'd1'): Device {
 
 function makeSettings(): SiteSettings {
   return {
-    siteName: 'tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'VibeTerm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,
     enableBrowserNotificationToast: true,
@@ -85,23 +85,25 @@ describe('resolveConnectionBridgeEvent', () => {
 });
 
 describe('buildConnectionBridgeEvent', () => {
-  test('组装 site/device/tmux/payload，session 缺省 tmex', () => {
+  test('组装 site/device/tmux/payload，session 缺省 vibeterm', () => {
     const event = buildConnectionBridgeEvent(makeDevice(), makeSettings(), 'down');
-    expect(event.site).toEqual({ name: 'tmex', url: 'https://tmex.example.com' });
+    expect(event.site).toEqual({ name: 'VibeTerm', url: 'https://vibeterm.example.com' });
     expect(event.device).toEqual({
       id: 'd1',
       name: 'dev-d1',
       type: 'ssh',
       host: '10.0.0.1',
     });
-    expect(event.tmux).toEqual({ sessionName: 'tmex' });
+    expect(event.tmux).toEqual({ sessionName: 'vibeterm' });
     expect(event.payload).toEqual({ message: 'down' });
   });
 
-  test('空白 session 回退 tmex', () => {
+  test('空白 session 回退 vibeterm', () => {
     const device = makeDevice();
     device.session = '  ';
-    expect(buildConnectionBridgeEvent(device, makeSettings(), 'x').tmux?.sessionName).toBe('tmex');
+    expect(buildConnectionBridgeEvent(device, makeSettings(), 'x').tmux?.sessionName).toBe(
+      'vibeterm'
+    );
   });
 });
 

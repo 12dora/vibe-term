@@ -7,11 +7,11 @@
 // 「分享」标签只管把元素摆下去，两边都不必知道这里有几个对话框、各自有几种状态。
 
 import { buildShareLinkWithPassword } from '@/share/share-link-password';
-import { ApiError } from '@tmex/api-client';
-import { writeTextToClipboard } from '@tmex/shared';
-import { SHARE_PASSWORD_MIN_LENGTH, generateSharePassword } from '@tmex/shared/share';
-import { Button } from '@tmex/ui/button';
-import { Checkbox } from '@tmex/ui/checkbox';
+import { ApiError } from '@vibeterm/api-client';
+import { writeTextToClipboard } from '@vibeterm/shared';
+import { SHARE_PASSWORD_MIN_LENGTH, generateSharePassword } from '@vibeterm/shared/share';
+import { Button } from '@vibeterm/ui/button';
+import { Checkbox } from '@vibeterm/ui/checkbox';
 import {
   Dialog,
   DialogContent,
@@ -19,9 +19,9 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '@tmex/ui/dialog';
-import { Input } from '@tmex/ui/input';
-import { toast } from '@tmex/ui/toast';
+} from '@vibeterm/ui/dialog';
+import { Input } from '@vibeterm/ui/input';
+import { toast } from '@vibeterm/ui/toast';
 import { Eye, EyeOff, Loader2, RefreshCw } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';

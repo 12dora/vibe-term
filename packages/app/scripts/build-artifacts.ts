@@ -93,7 +93,7 @@ function randomSmokePort(): number {
 }
 
 async function smokeTest(outdir: string): Promise<void> {
-  const workDir = mkdtempSync(join(tmpdir(), 'tmex-artifacts-smoke-'));
+  const workDir = mkdtempSync(join(tmpdir(), 'vibeterm-artifacts-smoke-'));
 
   try {
     for (let attempt = 1; attempt <= SMOKE_PORT_ATTEMPTS; attempt++) {
@@ -121,11 +121,11 @@ async function smokeRunOnce(
       ...process.env,
       NODE_ENV: 'production',
       GATEWAY_PORT: String(port),
-      TMEX_BIND_HOST: '127.0.0.1',
+      VIBETERM_BIND_HOST: '127.0.0.1',
       DATABASE_URL: dbPath,
-      TMEX_MASTER_KEY: randomBytes(32).toString('base64'),
-      TMEX_FE_DIST_DIR: join(outdir, 'fe-dist'),
-      TMEX_MIGRATIONS_DIR: join(outdir, 'gateway-drizzle'),
+      VIBETERM_MASTER_KEY: randomBytes(32).toString('base64'),
+      VIBETERM_FE_DIST_DIR: join(outdir, 'fe-dist'),
+      VIBETERM_MIGRATIONS_DIR: join(outdir, 'gateway-drizzle'),
     },
     stdout: 'pipe',
     stderr: 'pipe',

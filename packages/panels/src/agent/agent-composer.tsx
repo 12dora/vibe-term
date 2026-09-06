@@ -1,10 +1,10 @@
 import { memo, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import type { AgentWriteMode } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
-import { Textarea } from '@tmex/ui/textarea';
+import type { AgentWriteMode } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
+import { Textarea } from '@vibeterm/ui/textarea';
 import { SendIcon, SparklesIcon, SquareIcon, ZapIcon } from 'lucide-react';
 
 import { ModelPicker } from './model-picker';

@@ -1,4 +1,4 @@
-// 远程卸载：把目标机器上的 tmex 服务、程序与数据一并删掉，随后把它从 mesh 里移除。
+// 远程卸载：把目标机器上的 VibeTerm 服务、程序与数据一并删掉，随后把它从 mesh 里移除。
 //
 // 两步且顺序不能反：先 `POST /api/mesh/nodes/:id/uninstall`（目标受理后自己脱离进程去删），
 // 再对同一台跑一次签名吊销。反过来做的话，证书一撤入口就再也发不出卸载指令，机器上会留下
@@ -11,10 +11,10 @@
 
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import type { NodeRow } from '@/node/mesh-nodes';
-import { defaultApiClient } from '@tmex/api-client';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import type { MeshUninstallErrorCode } from '@tmex/shared';
-import { compareSemver } from '@tmex/shared';
+import { defaultApiClient } from '@vibeterm/api-client';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import type { MeshUninstallErrorCode } from '@vibeterm/shared';
+import { compareSemver } from '@vibeterm/shared';
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

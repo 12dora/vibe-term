@@ -30,7 +30,7 @@ export type MeshInternalTmuxRuntime = {
   sendInputAndWait(paneId: string, data: string): Promise<void>;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
-  /** tmux server 世代（`@tmex-server-epoch`）；连上之后才有值。 */
+  /** tmux server 世代（`@vibeterm-server-epoch`）；连上之后才有值。 */
   getServerEpoch?(): Uint8Array | null;
 };
 

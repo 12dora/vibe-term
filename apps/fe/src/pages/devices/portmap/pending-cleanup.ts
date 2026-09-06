@@ -3,9 +3,12 @@
 // 拿着同一个 mapId 的 A 仍能连上 B 的那个服务。所以这类残留必须留痕并可重试，
 // 且要跨刷新存活——落在 localStorage 里，隐私模式 / 配额异常时退化成「只在本次会话里有效」。
 
+import { migrateStorageKey } from '@vibeterm/stores';
 import { useCallback, useSyncExternalStore } from 'react';
 
-export const PENDING_CLEANUP_KEY = 'tmex:portmap-pending-cleanup';
+export const PENDING_CLEANUP_KEY = 'vibeterm:portmap-pending-cleanup';
+/** 改名前的键，首次读取时搬运 */
+const LEGACY_PENDING_CLEANUP_KEY = 'tmex:portmap-pending-cleanup';
 /** 上限：残留是异常路径，攒到这个数说明目标节点长期不可用，只保留最近的。 */
 export const MAX_PENDING_CLEANUPS = 20;
 
@@ -95,7 +98,12 @@ function commit(list: readonly PendingExportCleanup[]): void {
 export function pendingExportCleanups(): readonly PendingExportCleanup[] {
   if (cache) return cache;
   const storage = activeStorage();
-  cache = storage ? parsePendingCleanups(storage.getItem(PENDING_CLEANUP_KEY)) : [];
+  if (!storage) {
+    cache = [];
+    return cache;
+  }
+  migrateStorageKey(storage, LEGACY_PENDING_CLEANUP_KEY, PENDING_CLEANUP_KEY);
+  cache = parsePendingCleanups(storage.getItem(PENDING_CLEANUP_KEY));
   return cache;
 }
 

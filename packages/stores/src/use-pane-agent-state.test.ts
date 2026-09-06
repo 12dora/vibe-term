@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 
-import type { AgentSessionDto } from '@tmex/shared';
+import type { AgentSessionDto } from '@vibeterm/shared';
 import { type AgentState, createInitialAgentStateData } from './agent-state';
 import { selectPaneAgentState } from './use-pane-agent-state';
 

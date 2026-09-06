@@ -24,7 +24,7 @@ describe('HttpsListener', () => {
   });
 
   test('serves HTTPS with self-signed material and captures bind failure', async () => {
-    const ca = await createCa({ name: 'tmex listener CA' });
+    const ca = await createCa({ name: 'VibeTerm listener CA' });
     const leaf = await issueLeaf({
       ca,
       sans: ['localhost', '127.0.0.1'],
@@ -70,7 +70,7 @@ describe('HttpsListener', () => {
   });
 
   test('same-port reapply awaits stop and does not report EADDRINUSE', async () => {
-    const ca = await createCa({ name: 'tmex reapply CA' });
+    const ca = await createCa({ name: 'VibeTerm reapply CA' });
     const leaf = await issueLeaf({
       ca,
       sans: ['localhost', '127.0.0.1'],

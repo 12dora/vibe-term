@@ -1,6 +1,10 @@
 // 预设元数据：宿主渲染主题选择器（label / 色块预览 / 外观）与终端配色解析的唯一入口。
 
-import { TERMINAL_THEME_DARK, TERMINAL_THEME_LIGHT, type TerminalThemeColors } from '@tmex/shared';
+import {
+  TERMINAL_THEME_DARK,
+  TERMINAL_THEME_LIGHT,
+  type TerminalThemeColors,
+} from '@vibeterm/shared';
 import { PRESET_PALETTES, type ThemeAppearance } from './preset-palettes';
 import { THEME_PRESETS, type ThemePreset } from './presets';
 

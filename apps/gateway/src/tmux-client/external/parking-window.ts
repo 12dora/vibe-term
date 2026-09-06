@@ -1,6 +1,26 @@
-import { PARKING_WINDOW_NAME } from './constants';
+import { LEGACY_PARKING_WINDOW_NAME, PARKING_WINDOW_NAME } from './constants';
 import { formatTmuxDestroyLog } from './destroy-log';
 import type { SessionCommandHost } from './session-commands';
+
+/**
+ * 1.x 崩在 attach 中途会留下 `tmex-park` 窗口：attach 时统一改成新名，
+ * 后续过滤 / 清理只认一个名字。
+ */
+export async function renameLegacyParkingWindows(host: SessionCommandHost): Promise<void> {
+  const listed = await host.runTmuxAllowFailure([
+    'list-windows',
+    '-t',
+    host.sessionName,
+    '-F',
+    '#{window_id}|#{window_name}',
+  ]);
+  if (listed.exitCode !== 0) return;
+  for (const line of listed.stdout.split('\n')) {
+    const [windowId, name] = line.trim().split('|');
+    if (!windowId || name !== LEGACY_PARKING_WINDOW_NAME) continue;
+    await host.runTmuxAllowFailure(['rename-window', '-t', windowId, PARKING_WINDOW_NAME]);
+  }
+}
 
 /**
  * 控制客户端 attach 前先建一个活动的护盾窗口，让 attach 引发的焦点/尺寸抖动落在它身上，

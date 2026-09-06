@@ -1,7 +1,7 @@
 // 角色切换分类：五个角色的 5×5 组合。
 
 import { describe, expect, test } from 'bun:test';
-import type { LocalRole } from '@tmex/api-client/local/types';
+import type { LocalRole } from '@vibeterm/api-client/local/types';
 import {
   type RoleTransition,
   classifyRoleChange,

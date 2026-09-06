@@ -1,37 +1,52 @@
 import { rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { ensureDir, pathExists, writeText } from './fs-utils';
-import { type ServiceManagerKind, detectServiceManager } from './platform';
+import { detectServiceManager } from './platform';
 import { runCommand } from './process';
+import {
+  installLaunchdService,
+  installLegacyLabelledLaunchdService,
+  queryLaunchdStatus,
+  restartLaunchdService,
+  startLaunchdService,
+  stopLaunchdService,
+  uninstallLaunchdService,
+} from './service-launchd';
+import type {
+  ServiceDeps,
+  ServiceIdentityOptions,
+  ServiceInstallOptions,
+  ServiceStatus,
+  ServiceUninstallOptions,
+} from './service-types';
 import { ensureSystemdOomPolicyDropIn, removeSystemdOomPolicyDropIn } from './systemd-oom-policy';
 
-export interface ServiceInstallOptions {
-  serviceName: string;
-  runScriptPath: string;
-  installDir: string;
-  autostart: boolean;
+export type {
+  ServiceDeps,
+  ServiceIdentityOptions,
+  ServiceInstallOptions,
+  ServiceStatus,
+  ServiceUninstallOptions,
+};
+export {
+  buildLaunchdPlist,
+  buildLegacyLaunchdPlist,
+  findLegacyLaunchdPlists,
+  launchdLabel,
+  legacyLaunchdLabel,
+  legacyLaunchdPlistPaths,
+  removeLegacyLaunchdJob,
+  removeOtherLaunchdRegistrations,
+} from './service-launchd';
+
+function systemdUnitPath(serviceName: string, homeDir?: string): string {
+  return join(homeDir ?? homedir(), '.config', 'systemd', 'user', `${serviceName}.service`);
 }
 
-export interface ServiceUninstallOptions {
-  serviceName: string;
-  installDir?: string;
-}
-
-export interface ServiceStatus {
-  manager: ServiceManagerKind;
-  installed: boolean;
-  running: boolean;
-  autostartEnabled: boolean;
-  detail?: string;
-}
-
-function systemdUnitPath(serviceName: string): string {
-  return join(homedir(), '.config', 'systemd', 'user', `${serviceName}.service`);
-}
-
-export function tmexSystemdUnitPath(serviceName = 'tmex'): string {
+export function vibeTermSystemdUnitPath(serviceName = DEFAULT_SERVICE_NAME): string {
   return systemdUnitPath(serviceName);
 }
 
@@ -45,18 +60,20 @@ export function systemdUnitLacksKillModeProcess(unitContent: string | null): boo
 }
 
 export const SYSTEMD_KILL_MODE_WARNING =
-  '[service] tmex.service lacks KillMode=process; tmux may be killed on restart — run tmex upgrade / re-install to refresh the unit';
+  '[service] the systemd unit lacks KillMode=process; tmux may be killed on restart — run vibeterm upgrade / re-install to refresh the unit';
 
-function launchdLabel(serviceName: string): string {
-  return `com.tmex.${serviceName}`;
-}
-
-function launchdLaunchAgentsPlistPath(serviceName: string): string {
-  return join(homedir(), 'Library', 'LaunchAgents', `${launchdLabel(serviceName)}.plist`);
-}
-
-function launchdLocalPlistPath(serviceName: string, installDir: string): string {
-  return join(installDir, `${launchdLabel(serviceName)}.plist`);
+/** 只有服务名真的换了才需要拆旧 unit；同名时新内容直接原地覆盖。 */
+async function removeLegacySystemdUnit(
+  serviceName: string,
+  legacyName: string | undefined,
+  deps?: ServiceDeps
+): Promise<void> {
+  if (!legacyName || legacyName === serviceName) return;
+  const run = deps?.run ?? runCommand;
+  const unitPath = systemdUnitPath(legacyName, deps?.homeDir);
+  if (!(await pathExists(unitPath))) return;
+  await run('systemctl', ['--user', 'disable', '--now', legacyName]).catch(() => null);
+  await rm(unitPath, { force: true }).catch(() => null);
 }
 
 export function buildSystemdServiceContent({
@@ -68,14 +85,14 @@ export function buildSystemdServiceContent({
   const escapedRunScriptPath = runScriptPath.replaceAll('\\', '\\\\').replaceAll('"', '\\"');
 
   return `[Unit]
-Description=tmex (${serviceName})
+Description=VibeTerm (${serviceName})
 After=network.target
 
 [Service]
 Type=simple
 KillMode=process
 WorkingDirectory=${escapedInstallDir}
-SyslogIdentifier=tmex
+SyslogIdentifier=vibeterm
 StandardOutput=journal
 StandardError=journal
 ExecStart=/usr/bin/env bash "${escapedRunScriptPath}"
@@ -88,64 +105,18 @@ WantedBy=default.target
 `;
 }
 
-function escapeXml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&apos;');
-}
-
-export function buildLaunchdPlist({
-  serviceName,
-  runScriptPath,
-  installDir,
-}: ServiceInstallOptions): string {
-  const label = launchdLabel(serviceName);
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${escapeXml(label)}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/bin/bash</string>
-    <string>${escapeXml(runScriptPath)}</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${escapeXml(installDir)}</string>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>AbandonProcessGroup</key>
-  <true/>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>TMEX_LOG_FILE</key>
-    <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
-    <key>TMEX_LOG_ERR_FILE</key>
-    <string>${escapeXml(join(installDir, 'tmex.err.log'))}</string>
-  </dict>
-  <key>StandardOutPath</key>
-  <string>${escapeXml(join(installDir, 'tmex.log'))}</string>
-  <key>StandardErrorPath</key>
-  <string>${escapeXml(join(installDir, 'tmex.err.log'))}</string>
-</dict>
-</plist>
-`;
-}
-
-async function installSystemdService(options: ServiceInstallOptions): Promise<void> {
-  const unitPath = systemdUnitPath(options.serviceName);
-  await ensureDir(join(homedir(), '.config', 'systemd', 'user'));
+async function installSystemdService(
+  options: ServiceInstallOptions,
+  deps?: ServiceDeps
+): Promise<void> {
+  const run = deps?.run ?? runCommand;
+  await removeLegacySystemdUnit(options.serviceName, options.legacyServiceName, deps);
+  const unitPath = systemdUnitPath(options.serviceName, deps?.homeDir);
+  await ensureDir(join(deps?.homeDir ?? homedir(), '.config', 'systemd', 'user'));
   await writeText(unitPath, buildSystemdServiceContent(options));
-  await ensureSystemdOomPolicyDropIn().catch(() => 'failed');
+  await ensureSystemdOomPolicyDropIn({ configDir: deps?.oomConfigDir }).catch(() => 'failed');
 
-  const daemonReload = await runCommand('systemctl', ['--user', 'daemon-reload']);
+  const daemonReload = await run('systemctl', ['--user', 'daemon-reload']);
   if (daemonReload.code !== 0) {
     throw new Error(
       t('service.systemd.daemonReloadFailed', {
@@ -155,7 +126,7 @@ async function installSystemdService(options: ServiceInstallOptions): Promise<vo
   }
 
   if (options.autostart) {
-    const enable = await runCommand('systemctl', ['--user', 'enable', options.serviceName]);
+    const enable = await run('systemctl', ['--user', 'enable', options.serviceName]);
     if (enable.code !== 0) {
       throw new Error(
         t('service.systemd.enableFailed', {
@@ -165,7 +136,7 @@ async function installSystemdService(options: ServiceInstallOptions): Promise<vo
     }
   }
 
-  const restart = await runCommand('systemctl', ['--user', 'restart', options.serviceName]);
+  const restart = await run('systemctl', ['--user', 'restart', options.serviceName]);
   if (restart.code !== 0) {
     throw new Error(
       t('service.systemd.restartFailed', {
@@ -175,86 +146,74 @@ async function installSystemdService(options: ServiceInstallOptions): Promise<vo
   }
 }
 
-async function bootoutLaunchd(serviceName: string): Promise<void> {
-  const uid = String(process.getuid?.() ?? 0);
-  const plistPath = launchdLaunchAgentsPlistPath(serviceName);
-  await runCommand('launchctl', ['bootout', `gui/${uid}`, plistPath]).catch(() => null);
+async function resolveManager(deps?: ServiceDeps) {
+  return deps?.manager ?? (await detectServiceManager());
 }
 
-async function installLaunchdService(options: ServiceInstallOptions): Promise<void> {
-  const launchAgentsPath = launchdLaunchAgentsPlistPath(options.serviceName);
-  const localPath = launchdLocalPlistPath(options.serviceName, options.installDir);
-  const targetPath = options.autostart ? launchAgentsPath : localPath;
-
-  if (options.autostart) {
-    await ensureDir(join(homedir(), 'Library', 'LaunchAgents'));
-  }
-
-  await writeText(targetPath, buildLaunchdPlist(options));
-
-  // Ensure no duplicate jobs in this user domain.
-  await runCommand('launchctl', [
-    'bootout',
-    `gui/${process.getuid?.() ?? 0}`,
-    launchAgentsPath,
-  ]).catch(() => null);
-  await runCommand('launchctl', ['bootout', `gui/${process.getuid?.() ?? 0}`, localPath]).catch(
-    () => null
-  );
-
-  const uid = String(process.getuid?.() ?? 0);
-  const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
-  if (bootstrap.code !== 0) {
-    throw new Error(
-      t('service.launchd.bootstrapFailed', {
-        detail: bootstrap.stderr || bootstrap.stdout,
-      })
-    );
-  }
-}
-
-export async function installService(options: ServiceInstallOptions): Promise<void> {
-  const manager = await detectServiceManager();
+export async function installService(
+  options: ServiceInstallOptions,
+  deps?: ServiceDeps
+): Promise<void> {
+  const manager = await resolveManager(deps);
 
   if (manager === 'systemd-user') {
-    await installSystemdService(options);
+    await installSystemdService(options, deps);
     return;
   }
 
   if (manager === 'launchd') {
-    await installLaunchdService(options);
+    await installLaunchdService(options, deps);
     return;
   }
 
   throw new Error(t('service.install.unsupportedPlatform', { platform: process.platform }));
 }
 
-async function stopSystemd(serviceName: string): Promise<void> {
-  await runCommand('systemctl', ['--user', 'stop', serviceName]).catch(() => null);
+/**
+ * 迁移回滚：launchd 侧写回旧 label 的 plist；systemd 侧 unit 名就是服务名本身，
+ * 走普通安装即可（此时 options.legacyServiceName 是迁移后的新名，会被拆掉）。
+ */
+export async function installLegacyLabelledService(
+  options: ServiceInstallOptions,
+  deps?: ServiceDeps
+): Promise<void> {
+  const manager = await resolveManager(deps);
+  if (manager !== 'launchd') {
+    await installService(options, deps);
+    return;
+  }
+  await installLegacyLabelledLaunchdService(options, deps);
 }
 
-export async function stopService(serviceName: string, installDir?: string): Promise<void> {
-  const manager = await detectServiceManager();
+export async function stopService(
+  serviceName: string,
+  installDir?: string,
+  opts?: ServiceIdentityOptions
+): Promise<void> {
+  const manager = await resolveManager(opts?.deps);
   if (manager === 'systemd-user') {
-    await stopSystemd(serviceName);
+    const run = opts?.deps?.run ?? runCommand;
+    const names = [serviceName, opts?.legacyServiceName].filter(Boolean) as string[];
+    for (const name of new Set(names)) {
+      await run('systemctl', ['--user', 'stop', name]).catch(() => null);
+    }
     return;
   }
 
   if (manager === 'launchd') {
-    const uid = String(process.getuid?.() ?? 0);
-    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
-    await runCommand('launchctl', ['bootout', `gui/${uid}`, launchAgentsPath]).catch(() => null);
-    if (installDir) {
-      const localPath = launchdLocalPlistPath(serviceName, installDir);
-      await runCommand('launchctl', ['bootout', `gui/${uid}`, localPath]).catch(() => null);
-    }
+    await stopLaunchdService(serviceName, installDir, opts);
   }
 }
 
-export async function startService(serviceName: string, installDir?: string): Promise<void> {
-  const manager = await detectServiceManager();
+export async function startService(
+  serviceName: string,
+  installDir?: string,
+  deps?: ServiceDeps
+): Promise<void> {
+  const manager = await resolveManager(deps);
   if (manager === 'systemd-user') {
-    const start = await runCommand('systemctl', ['--user', 'start', serviceName]);
+    const run = deps?.run ?? runCommand;
+    const start = await run('systemctl', ['--user', 'start', serviceName]);
     if (start.code !== 0) {
       throw new Error(
         t('service.systemd.restartFailed', {
@@ -266,74 +225,47 @@ export async function startService(serviceName: string, installDir?: string): Pr
   }
 
   if (manager === 'launchd') {
-    const uid = String(process.getuid?.() ?? 0);
-    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
-    const localPath = installDir ? launchdLocalPlistPath(serviceName, installDir) : null;
-    const targetPath = (await pathExists(launchAgentsPath))
-      ? launchAgentsPath
-      : localPath && (await pathExists(localPath))
-        ? localPath
-        : null;
-    if (!targetPath) {
-      throw new Error(t('service.launchd.bootstrapFailed', { detail: 'plist not found' }));
-    }
-    const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
-    if (bootstrap.code !== 0) {
-      throw new Error(
-        t('service.launchd.bootstrapFailed', {
-          detail: bootstrap.stderr || bootstrap.stdout,
-        })
-      );
-    }
+    await startLaunchdService(serviceName, installDir, deps);
     return;
   }
 
   throw new Error(t('service.install.unsupportedPlatform', { platform: process.platform }));
 }
 
-async function uninstallSystemdService(serviceName: string): Promise<void> {
-  await runCommand('systemctl', ['--user', 'disable', '--now', serviceName]).catch(() => null);
-  const unitPath = systemdUnitPath(serviceName);
+async function uninstallSystemdService(serviceName: string, deps?: ServiceDeps): Promise<void> {
+  const run = deps?.run ?? runCommand;
+  await run('systemctl', ['--user', 'disable', '--now', serviceName]).catch(() => null);
+  const unitPath = systemdUnitPath(serviceName, deps?.homeDir);
   if (await pathExists(unitPath)) {
     await rm(unitPath, { force: true });
   }
-  await removeSystemdOomPolicyDropIn().catch(() => 'failed');
-  await runCommand('systemctl', ['--user', 'daemon-reload']).catch(() => null);
+  await removeSystemdOomPolicyDropIn({ configDir: deps?.oomConfigDir }).catch(() => 'failed');
+  await run('systemctl', ['--user', 'daemon-reload']).catch(() => null);
 }
 
-export async function uninstallService(options: ServiceUninstallOptions): Promise<void> {
-  const manager = await detectServiceManager();
+export async function uninstallService(
+  options: ServiceUninstallOptions,
+  deps?: ServiceDeps
+): Promise<void> {
+  const manager = await resolveManager(deps);
 
   if (manager === 'systemd-user') {
-    await uninstallSystemdService(options.serviceName);
+    await uninstallSystemdService(options.serviceName, deps);
     return;
   }
 
   if (manager === 'launchd') {
-    const uid = String(process.getuid?.() ?? 0);
-    const launchAgentsPath = launchdLaunchAgentsPlistPath(options.serviceName);
-    await runCommand('launchctl', ['bootout', `gui/${uid}`, launchAgentsPath]).catch(() => null);
-    await rm(launchAgentsPath, { force: true }).catch(() => null);
-
-    if (options.installDir) {
-      const localPath = launchdLocalPlistPath(options.serviceName, options.installDir);
-      await runCommand('launchctl', ['bootout', `gui/${uid}`, localPath]).catch(() => null);
-      await rm(localPath, { force: true }).catch(() => null);
-    }
-    return;
+    await uninstallLaunchdService(options.serviceName, options.installDir, deps);
   }
 }
 
-async function querySystemdStatus(serviceName: string): Promise<ServiceStatus> {
-  const unitPath = systemdUnitPath(serviceName);
+async function querySystemdStatus(serviceName: string, deps?: ServiceDeps): Promise<ServiceStatus> {
+  const run = deps?.run ?? runCommand;
+  const unitPath = systemdUnitPath(serviceName, deps?.homeDir);
   const installed = await pathExists(unitPath);
 
-  const active = await runCommand('systemctl', ['--user', 'is-active', serviceName]).catch(
-    () => null
-  );
-  const enabled = await runCommand('systemctl', ['--user', 'is-enabled', serviceName]).catch(
-    () => null
-  );
+  const active = await run('systemctl', ['--user', 'is-active', serviceName]).catch(() => null);
+  const enabled = await run('systemctl', ['--user', 'is-enabled', serviceName]).catch(() => null);
 
   return {
     manager: 'systemd-user',
@@ -344,45 +276,19 @@ async function querySystemdStatus(serviceName: string): Promise<ServiceStatus> {
   };
 }
 
-async function queryLaunchdStatus(
-  serviceName: string,
-  installDir?: string
-): Promise<ServiceStatus> {
-  const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
-  const localPath = installDir ? launchdLocalPlistPath(serviceName, installDir) : null;
-  const hasLaunchAgents = await pathExists(launchAgentsPath);
-  const hasLocal = localPath ? await pathExists(localPath) : false;
-  const installed = hasLaunchAgents || hasLocal;
-
-  const uid = String(process.getuid?.() ?? 0);
-  const label = launchdLabel(serviceName);
-  const printed = await runCommand('launchctl', ['print', `gui/${uid}/${label}`]).catch(() => null);
-
-  return {
-    manager: 'launchd',
-    installed,
-    running: printed?.code === 0,
-    autostartEnabled: hasLaunchAgents,
-    detail: installed
-      ? printed?.code === 0
-        ? 'loaded'
-        : (printed?.stderr || printed?.stdout || '').trim()
-      : t('service.status.plistMissing'),
-  };
-}
-
 export async function getServiceStatus(
   serviceName: string,
-  installDir?: string
+  installDir?: string,
+  opts?: ServiceIdentityOptions
 ): Promise<ServiceStatus> {
-  const manager = await detectServiceManager();
+  const manager = await resolveManager(opts?.deps);
 
   if (manager === 'systemd-user') {
-    return await querySystemdStatus(serviceName);
+    return await querySystemdStatus(serviceName, opts?.deps);
   }
 
   if (manager === 'launchd') {
-    return await queryLaunchdStatus(serviceName, installDir);
+    return await queryLaunchdStatus(serviceName, installDir, opts);
   }
 
   return {
@@ -405,10 +311,15 @@ export async function serviceHint(serviceName: string): Promise<string> {
   return t('service.hint.none');
 }
 
-export async function restartService(serviceName: string, installDir?: string): Promise<void> {
-  const manager = await detectServiceManager();
+export async function restartService(
+  serviceName: string,
+  installDir?: string,
+  deps?: ServiceDeps
+): Promise<void> {
+  const manager = await resolveManager(deps);
   if (manager === 'systemd-user') {
-    const restart = await runCommand('systemctl', ['--user', 'restart', serviceName]);
+    const run = deps?.run ?? runCommand;
+    const restart = await run('systemctl', ['--user', 'restart', serviceName]);
     if (restart.code !== 0) {
       throw new Error(
         t('service.systemd.restartFailed', {
@@ -420,32 +331,7 @@ export async function restartService(serviceName: string, installDir?: string): 
   }
 
   if (manager === 'launchd') {
-    const uid = String(process.getuid?.() ?? 0);
-    const label = launchdLabel(serviceName);
-    const kick = await runCommand('launchctl', ['kickstart', '-k', `gui/${uid}/${label}`]);
-    if (kick.code === 0) {
-      return;
-    }
-
-    const launchAgentsPath = launchdLaunchAgentsPlistPath(serviceName);
-    const localPath = installDir ? launchdLocalPlistPath(serviceName, installDir) : null;
-    const targetPath = (await pathExists(launchAgentsPath))
-      ? launchAgentsPath
-      : localPath && (await pathExists(localPath))
-        ? localPath
-        : null;
-    if (!targetPath) {
-      throw new Error(t('service.launchd.bootstrapFailed', { detail: kick.stderr || kick.stdout }));
-    }
-    await runCommand('launchctl', ['bootout', `gui/${uid}`, targetPath]).catch(() => null);
-    const bootstrap = await runCommand('launchctl', ['bootstrap', `gui/${uid}`, targetPath]);
-    if (bootstrap.code !== 0) {
-      throw new Error(
-        t('service.launchd.bootstrapFailed', {
-          detail: bootstrap.stderr || bootstrap.stdout,
-        })
-      );
-    }
+    await restartLaunchdService(serviceName, installDir, deps);
     return;
   }
 

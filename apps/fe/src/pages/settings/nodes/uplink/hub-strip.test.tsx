@@ -2,7 +2,7 @@
 // 详情文案本身由「连接详情」逐字段摆出来（见 `connection-details.test.tsx`），这里只测纯函数。
 
 import { describe, expect, test } from 'bun:test';
-import type { MeshHubEndpoint } from '@tmex/api-client/auth/index';
+import type { MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import {
   candidateFailure,
   hubAuthorizationText,

@@ -44,8 +44,8 @@ export function lockManagedRuntime(options?: {
     return { ...state };
   }
 
-  const mode = options?.managementMode ?? parseManagementMode(process.env.TMEX_MANAGEMENT_MODE);
-  let owner = options?.updateOwner ?? parseUpdateOwner(process.env.TMEX_UPDATE_OWNER);
+  const mode = options?.managementMode ?? parseManagementMode(process.env.VIBETERM_MANAGEMENT_MODE);
+  let owner = options?.updateOwner ?? parseUpdateOwner(process.env.VIBETERM_UPDATE_OWNER);
 
   if (mode === 'app') {
     owner = 'app';
@@ -60,8 +60,8 @@ export function lockManagedRuntime(options?: {
   state.locked = true;
 
   // 回写锁定值，使后续读取 env 的代码看到受控值；用户无法在锁定前再覆盖。
-  process.env.TMEX_MANAGEMENT_MODE = mode;
-  process.env.TMEX_UPDATE_OWNER = owner;
+  process.env.VIBETERM_MANAGEMENT_MODE = mode;
+  process.env.VIBETERM_UPDATE_OWNER = owner;
 
   return { ...state };
 }
@@ -74,21 +74,21 @@ export function resetManagedRuntimeForTests(): void {
   state.managementMode = 'none';
   state.updateOwner = 'self';
   state.locked = false;
-  Reflect.deleteProperty(process.env, 'TMEX_MANAGEMENT_MODE');
-  Reflect.deleteProperty(process.env, 'TMEX_UPDATE_OWNER');
+  Reflect.deleteProperty(process.env, 'VIBETERM_MANAGEMENT_MODE');
+  Reflect.deleteProperty(process.env, 'VIBETERM_UPDATE_OWNER');
 }
 
 export function getManagementMode(): ManagementMode {
   if (!state.locked) {
     // 非 managed entry 默认路径：惰性读取但不锁定（保持开源默认行为）。
-    return parseManagementMode(process.env.TMEX_MANAGEMENT_MODE);
+    return parseManagementMode(process.env.VIBETERM_MANAGEMENT_MODE);
   }
   return state.managementMode;
 }
 
 export function getUpdateOwner(): UpdateOwner {
   if (!state.locked) {
-    return parseUpdateOwner(process.env.TMEX_UPDATE_OWNER);
+    return parseUpdateOwner(process.env.VIBETERM_UPDATE_OWNER);
   }
   return state.updateOwner;
 }

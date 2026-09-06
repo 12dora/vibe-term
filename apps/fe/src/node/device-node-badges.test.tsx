@@ -2,9 +2,9 @@
 // 无 DOM 测试环境，渲染用 react-dom/server；未初始化 i18n 时 `t()` 原样返回 key。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { MeshNode } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
-import type { DirectDiagnostics, DirectIceDiagnostics } from '@tmex/ws-client/direct/types';
+import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import type { DirectDiagnostics, DirectIceDiagnostics } from '@vibeterm/ws-client/direct/types';
 import type { NodeLink } from './direct-diagnostics';
 
 installWindowStorage();

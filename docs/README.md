@@ -13,7 +13,8 @@
 | 路径 | 用途 |
 | --- | --- |
 | `deployment/2026021000-production-install.md` | 生产部署：一键安装、launchd / systemd 用户服务、env 与数据目录、HTTPS 反代、备份、升级与排障 |
-| `deployment/2026061400-process-survival.md` | tmex 崩溃 / 重启时 tmux 进程的存活边界（`KillMode=process`、`AbandonProcessGroup`、linger） |
+| `deployment/2026061400-process-survival.md` | VibeTerm 崩溃 / 重启时 tmux 进程的存活边界（`KillMode=process`、`AbandonProcessGroup`、linger） |
+| `deployment/2026090605-nonstandard-ports.md` | 80/443 不可用时的非标端口部署：端口透明性、候选端口表与自动探测 |
 | `env/2026061301-three-tier-env.md` | development / test / production 三套环境的加载规则与变量清单 |
 | `onboarding/2026083101-connect-devices-panel.md` | 「接入更多设备」面板（移动端选地址→扫码、服务器接入）与远程访问入口 |
 
@@ -30,16 +31,18 @@
 | `hub/2026090502-rtc-signaling-epoch-link-liveness.md` | 直连信令代次、ICE 配置、链路活性与在途流保护（1.1.31） |
 | `hub/2026090505-direct-failure-codes.md` | 直连失败码（ws / DataChannel）、链路信息窗按码 i18n 与原文兜底 |
 | `hub/2026082801-hub-docker-e2e.md` | Docker 多容器 hub/node 实测 harness（单机 compose 与远端分体拓扑） |
-| `hub/2026090402-docker-node.md` | 可升级的 tmex 节点容器：容器内自装、事务式升级、看护循环 |
+| `hub/2026090402-docker-node.md` | 可升级的 VibeTerm 节点容器：容器内自装、事务式升级、看护循环 |
+| `mesh/2026090604-port-mapping.md` | 端口映射：node A 的 TCP 监听器经 peer 流复用器隧道到 node B 的拨号器 |
 | `relay/2026090304-relay-role.md` | 公共中继（relay）角色实现参考：盲中继协议、租户密钥、接口、CLI 与运维 |
 | `relay/2026090403-relay-metrics.md` | `GET /api/relay/metrics`：采样口径、字段来源与设置页可视化 |
 | `relay/2026090501-relay-mgmt-switch-usage.md` | 中继管理页、手动切换中继、三档配额实时用量与当前错误语义 |
+| `relay/2026090604-relay-limits.md` | 中继运营限额：租户数上限、全局带宽闸门与单文件大小约束 |
 
 ## 架构：WebSocket 协议
 
 | 路径 | 用途 |
 | --- | --- |
-| `ws-protocol/2026021402-ws-borsh-v1-spec.md` | `tmex-ws-borsh-v1` wire 格式唯一真源：kind 编号、payload schema、作废号段、能力协商 |
+| `ws-protocol/2026021402-ws-borsh-v1-spec.md` | `vibeterm-ws-borsh-v1` wire 格式唯一真源：kind 编号、payload schema、作废号段、能力协商 |
 | `ws-protocol/2026021403-ws-state-machines.md` | 两端状态机规范：连接、设备、canonical 首屏 / 订阅 / resize / bell / feed，附 selectToken 屏障的历史对应 |
 | `ws-protocol/2026070402-site-theme-update.md` | `KIND_SITE_THEME_UPDATE` 站点主题跨端广播与 last-writer-wins |
 
@@ -62,6 +65,7 @@
 | `agent/2026061300-terminal-agent-overview.md` | Agent 总览：数据模型、REST/WS 接口分工、消息队列、事件流、生命周期与已知限制 |
 | `agent/2026061302-system-prompt-and-credential-handling.md` | 类 JSX system prompt 模板、环境注入、注入防护与出站 LLM 凭证消毒 |
 | `agent/2026061303-run-command-headless-ghostty.md` | `run_command` 工具与服务端 headless ghostty per-pane 模拟器 |
+| `agent/2026090606-remote-pane-grant.md` | 远程窗格授权：`/api/mesh-internal/tmux/*` 的按窗格授权与失陷边界 |
 
 ## 功能模块
 
@@ -70,12 +74,15 @@
 | `device-tree/2026061400-reorder.md` | 设备 / 窗口 / pane 的拖拽排序与服务端顺序持久化（经 canonical metadata 下发） |
 | `files/2026061500-transfer-progress-chunked.md` | 分块上传、两阶段进度与速度、取消、2GB 上限、上传路径安全与临时文件清理 |
 | `files/2026090101-files-sidebar-visibility-default.md` | 文件侧栏的可见性缺省与竖向拖拽 |
+| `files/2026090604-node-to-node-transfer.md` | 节点间文件传输：源节点直推目标节点、`@vibeterm/transfer` 引擎与断点续传 |
 | `watch/2026061300-watch-monitor-overview.md` | Watch 规则模型、调度、三种触发（正则 / 不变 / LLM）与 API |
 | `notify/2026062000-weixin-clawbot-channel.md` | 微信（iLink / ClawBot）渠道：扫码登录、用户授权、半主动推送语义与 API |
+| `notify/2026090603-mesh-notification-sink.md` | 多节点通知汇聚：开关式 sink、配置复制、合并队列与 toast 去重 |
 | `messaging/2026090402-messaging-command-template.md` | 平台无关的消息命令层（Telegram / 微信）：解析、授权、命令表与新平台适配 |
 | `frontend/2026070800-workspace-packages.md` | workspace 包清单与出口、依赖方向、Connection / Runtime 两层工厂与嵌入用法 |
 | `frontend/2026090307-app-error-boundary.md` | 路由 `errorElement` / 面板级错误边界 / 懒加载 chunk 重试 |
 | `frontend/2026090504-sidebar-node-first-paint.md` | 侧栏节点首屏：设备列表 pending 占位、mesh 节点缓存与有界重试、前台拨号竞速与 hub presence 陈旧窗口 |
+| `frontend/2026090606-mobile-keyboard-trigger.md` | 触屏软键盘唤起入口收敛到输入行，终端画布轻点不再弹键盘 |
 | `fonts/2026061501-font-pipeline.md` | Nerd Fonts 精选清单、woff2 构建工具链、动态 manifest 与运行时懒加载 |
 
 ## 功能模块：终端分享
@@ -112,17 +119,20 @@
 | 路径 | 用途 |
 | --- | --- |
 | `testing/2026061302-live-integration-tests.md` | 打真实 endpoint 的 live integration 测试约定与凭证守卫 |
+| `testing/2026090604-relay-live-harness.md` | 中继三进程实测主管 `relay-boot`：拓扑、鉴权助手与 state JSON |
 
 ## 发版与更新
 
 | 路径 | 用途 |
 | --- | --- |
-| `release/2026041300-cli-release-process.md` | `tmex-cli` 发布流程：版本注入、全量构建、校验、打 tag 触发 Actions |
+| `release/2026041300-cli-release-process.md` | `vibeterm-cli` 发布流程：版本注入、全量构建、校验、打 tag 触发 Actions |
 | `release/2026061406-release-changelog-flow.md` | `scripts/release.ts` 的双语 changelog 生成与 agent 改写规范 |
 | `release/2026083101-github-releases-distribution.md` | 发行源切换到本仓库 GitHub Releases 与 `install.sh` |
 | `release/2026083101-upgrade-crash-safety.md` | 自升级的 BIOS 式事务：落地布局、阶段与崩溃表、回滚与修复 |
+| `release/2026090606-release-signing.md` | 发行包 Ed25519 签名：密钥与轮换、`SHA256SUMS.sig`、各校验点与兼容矩阵 |
+| `release/2026090607-rename-vibeterm.md` | tmex → VibeTerm 改名（2.0.0）：命名表、冻结值、安装迁移与兼容桥、升级手册 |
 | `update/2026061406-self-update.md` | 程序内自更新状态机、`canSelfUpdate` 判定与版本展示 |
-| `update/2026061502-bun-path-resolution.md` | bun 路径解析：优先级、`TMEX_BUN_PATH`、路径消毒与超时 |
+| `update/2026061502-bun-path-resolution.md` | bun 路径解析：优先级、`VIBETERM_BUN_PATH`、路径消毒与超时 |
 | `update/2026090502-resumable-remote-upgrade-push.md` | 远程升级推包续传：偏移协议、`.part` 生命周期、重试预算与前端进度 |
 
 ## 已知问题

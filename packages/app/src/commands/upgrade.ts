@@ -55,7 +55,7 @@ export async function reenableDirectAfterUpgrade(
   deps: ReenableDirectAfterUpgradeDeps = {}
 ): Promise<void> {
   const reenable = deps.reenableDirectIfNeeded ?? reenableDirectIfNeeded;
-  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
   try {
     const result = await reenable({ installDir });
     if (!result.ok) {
@@ -96,6 +96,13 @@ export function passthroughUpgradeFlags(
   return args;
 }
 
+async function firstExistingPath(candidates: string[]): Promise<string | null> {
+  for (const candidate of candidates) {
+    if (await pathExists(candidate)) return candidate;
+  }
+  return null;
+}
+
 export async function delegateUpgrade(
   parsed: ParsedArgs,
   targetVersion: string,
@@ -104,7 +111,7 @@ export async function delegateUpgrade(
   const fetchFn = deps.fetch ?? fetch;
   const run = deps.runCommand ?? runCommand;
   const execPath = deps.execPath ?? process.execPath;
-  const log = deps.log ?? ((message: string) => console.log(`[tmex] ${message}`));
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
   const version = await resolveReleaseVersion(targetVersion, fetchFn);
   const installDir = resolveInstallDir(
     asString(parsed.flags['install-dir']) || defaultInstallDir(process.platform)
@@ -115,13 +122,13 @@ export async function delegateUpgrade(
 
   try {
     const tarballPath = join(stagingDir, releaseTarballName(version));
-    await downloadReleaseTarball(version, tarballPath, fetchFn);
+    const assetName = await downloadReleaseTarball(version, tarballPath, fetchFn);
     const bytes = await readFile(tarballPath);
-    const sums = await fetchReleaseSha256Sums(version, releaseTarballName(version), fetchFn);
+    const sums = await fetchReleaseSha256Sums(version, assetName, fetchFn);
     const allowUnverified = asBoolean(parsed.flags['allow-unverified']) === true;
     assertReleaseIntegrity(version, bytes, sums, {
       allowUnverified,
-      fileName: releaseTarballName(version),
+      fileName: assetName,
     });
     // 摘要对上了只说明字节没被中途改；签名才回答「这份 SHA256SUMS 是不是发布方给的」。
     if (!sums.unpublished) {
@@ -139,8 +146,12 @@ export async function delegateUpgrade(
     }
 
     const packageRoot = join(extractDir, 'package');
-    const cliJs = join(packageRoot, 'bin', 'tmex.js');
-    if (!(await pathExists(cliJs))) {
+    // 桥接期的旧名资产里两个 bin 都在；再老的包只有 `bin/tmex.js`。
+    const cliJs = await firstExistingPath([
+      join(packageRoot, 'bin', 'vibeterm.js'),
+      join(packageRoot, 'bin', 'tmex.js'),
+    ]);
+    if (cliJs === null) {
       throw new Error(t('upgrade.assetMissing', { version }));
     }
 
@@ -177,9 +188,9 @@ function printUpgradeDone(
   targetVersion: string,
   env: Record<string, string>
 ): void {
-  const host = rewriteWildcardBindHost(String(env.TMEX_BIND_HOST || '127.0.0.1'));
+  const host = rewriteWildcardBindHost(String(env.VIBETERM_BIND_HOST || '127.0.0.1'));
   const port = String(env.GATEWAY_PORT || '9883');
-  console.log(`[tmex] ${t('upgrade.done')}`);
+  console.log(`[vibeterm] ${t('upgrade.done')}`);
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
   console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
@@ -240,10 +251,19 @@ export async function runUpgrade(parsed: ParsedArgs, deps: RunUpgradeDeps = {}):
 
   if (flags.repairOnly) return;
 
-  const env = (await pathExists(installLayout.envPath))
-    ? await readEnvFile(installLayout.envPath).catch(() => ({}) as Record<string, string>)
+  const finalDir = await resolvePostUpgradeInstallDir(installDir);
+  const finalEnvPath = createInstallLayout(finalDir).envPath;
+  const env = (await pathExists(finalEnvPath))
+    ? await readEnvFile(finalEnvPath).catch(() => ({}) as Record<string, string>)
     : {};
-  printUpgradeDone(installDir, flags.targetVersion, env);
+  printUpgradeDone(finalDir, flags.targetVersion, env);
+}
+
+/** 升级可能把安装目录搬到新默认路径，摘要要按搬完之后的位置打印。 */
+async function resolvePostUpgradeInstallDir(installDir: string): Promise<string> {
+  if (await pathExists(join(installDir, 'install-meta.json'))) return installDir;
+  const migrated = defaultInstallDir(process.platform);
+  return (await pathExists(join(migrated, 'install-meta.json'))) ? migrated : installDir;
 }
 
 async function requireUpgradeBun(parsed: ParsedArgs, meta: InstallMeta): Promise<string> {
@@ -269,47 +289,79 @@ async function runLockedUpgrade(opts: {
   repair?: typeof repairUpgrade;
   apply?: typeof applyUpgrade;
 }): Promise<void> {
-  const service = createServiceControl({
-    installDir: opts.installDir,
-    meta: opts.meta,
-    noServiceFlag: asBoolean(opts.parsed.flags['no-service']) ?? false,
-  });
+  const noServiceFlag = asBoolean(opts.parsed.flags['no-service']) ?? false;
+  // repair 会改写磁盘上的 meta（提交迁移后的服务名、把安装搬回旧目录），闭包里这份随之过期，
+  // 因此它是可变的：repair 之后重新读盘，后续控制器与 apply 参数一律用新值。
+  let meta = opts.meta;
+  // repair 必须能按 journal 推导出的目录 / 服务身份重建控制器：在读 journal 之前建好的那一个
+  // 用的是旧身份，迁移中断后会漏停 com.vibeterm.*，撤销迁移后又会去启动已经搬走的 run.sh。
+  const buildService = (o: {
+    installDir: string;
+    serviceName?: string;
+    legacyServiceName?: string;
+    legacyLabel?: boolean;
+  }) =>
+    createServiceControl({
+      installDir: o.installDir,
+      meta,
+      noServiceFlag,
+      serviceName: o.serviceName,
+      legacyServiceName: o.legacyServiceName,
+      legacyLabel: o.legacyLabel,
+    });
   const repair = opts.repair ?? repairUpgrade;
   const apply = opts.apply ?? applyUpgrade;
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
-  const action = await repair(opts.installDir, opts.bunPath, { service, activeTxnId });
+  const repaired = await repair(opts.installDir, opts.bunPath, {
+    rebuildService: buildService,
+    activeTxnId,
+  });
   if (opts.repairOnly) {
-    console.log(`[tmex] ${t('upgrade.repairDone', { action })}`);
+    console.log(`[vibeterm] ${t('upgrade.repairDone', { action: repaired.action })}`);
     return;
   }
 
+  // 撤销迁移会把安装搬回旧目录，后面的一切都要按恢复之后的路径来。
+  const installDir = repaired.installDir;
+  const installLayout =
+    installDir === opts.installDir ? opts.installLayout : createInstallLayout(installDir);
+  meta = await readMetaAfterRepair(installLayout, meta);
+  const service = buildService({ installDir });
+
   const packageLayout = asString(opts.parsed.flags.txn)
-    ? await packageLayoutFromStaged(opts.installDir, asString(opts.parsed.flags.txn) as string)
+    ? await packageLayoutFromStaged(installDir, asString(opts.parsed.flags.txn) as string)
     : await resolvePackageLayout(import.meta.url);
   const cliVersion = await readPackageVersion(packageLayout.packageRoot);
   const toVersion = asString(opts.parsed.flags.version) || cliVersion;
 
-  if (await pathExists(opts.installLayout.envPath)) {
-    await mergeMissingEnvFileKeys(opts.installLayout.envPath, hubEnvDefaults());
+  if (await pathExists(installLayout.envPath)) {
+    await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
   }
 
   await apply(
     {
-      installDir: opts.installDir,
+      installDir,
       toVersion,
       packageLayout,
       bunPath: opts.bunPath,
       keepBackup: opts.keepBackup,
-      noService:
-        resolveServiceMode(opts.meta, asBoolean(opts.parsed.flags['no-service']) ?? false) ===
-        'none',
+      noService: resolveServiceMode(meta, noServiceFlag) === 'none',
       allowMissingNative: opts.allowMissingNative,
       txnId: asString(opts.parsed.flags.txn),
-      serviceName: opts.meta.serviceName,
-      autostart: opts.meta.autostart,
+      serviceName: meta.serviceName,
+      autostart: meta.autostart,
     },
     { service }
   );
+}
+
+/** repair 之后磁盘上的 meta 才是权威的（服务名可能刚被提交为 vibeterm，目录也可能已搬回）。 */
+async function readMetaAfterRepair(
+  layout: InstallLayout,
+  fallback: InstallMeta
+): Promise<InstallMeta> {
+  if (!(await pathExists(layout.metaPath))) return fallback;
+  return await readJsonFile<InstallMeta>(layout.metaPath).catch(() => fallback);
 }
 
 async function packageLayoutFromStaged(installDir: string, txnId: string) {

@@ -1,5 +1,5 @@
 import { open } from 'node:fs/promises';
-import type { TunnelConnectorStatus } from '@tmex/shared';
+import type { TunnelConnectorStatus } from '@vibeterm/shared';
 import { redactSecrets } from './redact';
 
 export const EMPTY_CONNECTOR: TunnelConnectorStatus = {

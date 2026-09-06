@@ -3,7 +3,7 @@
 // 只做词法校验是不够的——`inbox/link -> /root/private` 这种存量链接会把字节写到授权范围外。
 
 import { lstatSync, mkdirSync, realpathSync } from 'node:fs';
-import type { FileErrorCode } from '@tmex/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 import { type DestResult, destFail, joinPosix, splitRelPath } from './dest';
 
 type LinkStat = { isSymbolicLink(): boolean; isDirectory(): boolean };

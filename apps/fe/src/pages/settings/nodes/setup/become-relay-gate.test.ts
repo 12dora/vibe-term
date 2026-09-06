@@ -5,7 +5,7 @@
 // 用记账的 ApiClient 数请求条数。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import {
   type BecomeRelayGateEvent,
   becomeRelayGate,

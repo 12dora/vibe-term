@@ -1,4 +1,4 @@
-import type { AuthMode } from '@tmex/shared';
+import type { AuthMode } from '@vibeterm/shared';
 
 type EnvLike = {
   SSH_AUTH_SOCK?: string | undefined;

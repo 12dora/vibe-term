@@ -8,7 +8,7 @@ import type {
   TlsDnsProviderId,
   TlsStatusResponse,
   TlsUpdateAcmeRequest,
-} from '@tmex/api-client/local/tls-types';
+} from '@vibeterm/api-client/local/tls-types';
 
 export const ACME_POLL_INTERVAL_MS = 3000;
 

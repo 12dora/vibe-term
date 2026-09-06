@@ -19,7 +19,7 @@ const PASSKEY_CHECK_COPY = /Complete the passkey check|请完成通行密钥验�
  * 强路径用例声明的「公网来源」。
  *
  * entry 把来源判成 trusted-local（loopback / 私网 / CGNAT）的登录一律豁免通行密钥二次验证，
- * 而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以 `TMEX_TRUST_PROXY=true` 启动
+ * 而 Playwright 的浏览器正是从 loopback 连过来的。mesh 实例因此以 `VIBETERM_TRUST_PROXY=true` 启动
  * （见 helpers/mesh-boot.ts），用例给自己的 context 挂上 `x-forwarded-for` 就能把来源声明成公网，
  * 强制走严格路径。TEST-NET-3（RFC 5737）地址，永远不会撞上真实网段。
  */
@@ -127,13 +127,13 @@ test('mesh: a loopback client source waives the passkey second factor', async ({
   test.setTimeout(180_000);
   const local = await browser.newContext();
   await local.addInitScript(() => {
-    const store = window as unknown as { __tmexPasskeyGetCalls?: number };
-    store.__tmexPasskeyGetCalls = 0;
+    const store = window as unknown as { __vibetermPasskeyGetCalls?: number };
+    store.__vibetermPasskeyGetCalls = 0;
     const credentials = navigator.credentials;
     if (!credentials) return;
     const original = credentials.get.bind(credentials);
     credentials.get = (options?: CredentialRequestOptions) => {
-      store.__tmexPasskeyGetCalls = (store.__tmexPasskeyGetCalls ?? 0) + 1;
+      store.__vibetermPasskeyGetCalls = (store.__vibetermPasskeyGetCalls ?? 0) + 1;
       return original(options);
     };
   });
@@ -384,7 +384,8 @@ async function meshNodesStatus(target: Page): Promise<number> {
 /** 本 document 至今起过几次 WebAuthn 断言仪式（由 context 的 init script 计数）。 */
 async function passkeyGetCalls(target: Page): Promise<number> {
   return target.evaluate(
-    () => (window as unknown as { __tmexPasskeyGetCalls?: number }).__tmexPasskeyGetCalls ?? 0
+    () =>
+      (window as unknown as { __vibetermPasskeyGetCalls?: number }).__vibetermPasskeyGetCalls ?? 0
   );
 }
 
@@ -399,20 +400,20 @@ async function totalSignCount(): Promise<{ credentials: number; signCount: numbe
 /** 录下登录按钮上出现过的所有文案：`passkeyCheck` 那一帧只存在于仪式的那几毫秒里。 */
 async function watchSubmitLabels(target: Page): Promise<void> {
   await target.evaluate(() => {
-    const store = window as unknown as { __tmexSubmitLabels?: string[] };
-    store.__tmexSubmitLabels = [];
+    const store = window as unknown as { __vibetermSubmitLabels?: string[] };
+    store.__vibetermSubmitLabels = [];
     const button = document.querySelector('[data-testid="login-submit"]');
     if (!button) return;
-    store.__tmexSubmitLabels.push(button.textContent ?? '');
+    store.__vibetermSubmitLabels.push(button.textContent ?? '');
     new MutationObserver(() => {
-      store.__tmexSubmitLabels?.push(button.textContent ?? '');
+      store.__vibetermSubmitLabels?.push(button.textContent ?? '');
     }).observe(button, { childList: true, characterData: true, subtree: true });
   });
 }
 
 async function readSubmitLabels(target: Page): Promise<string[]> {
   return target.evaluate(
-    () => (window as unknown as { __tmexSubmitLabels?: string[] }).__tmexSubmitLabels ?? []
+    () => (window as unknown as { __vibetermSubmitLabels?: string[] }).__vibetermSubmitLabels ?? []
   );
 }
 

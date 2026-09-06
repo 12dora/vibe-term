@@ -3,7 +3,7 @@
 // 所以这里只覆盖纯函数与 `useSidePanel` 在真实 router 上下文里算出来的链接。
 
 import { describe, expect, test } from 'bun:test';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

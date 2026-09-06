@@ -35,7 +35,7 @@ function createFakeEmu(initial = { alt: false, screen: 'user@host:~$ ' }) {
 }
 
 function nonceOf(data: string): string | null {
-  const m = /tmex=([^\\;'"\s]+)/.exec(data);
+  const m = /vibeterm=([^\\;'"\s]+)/.exec(data);
   return m ? m[1] : null;
 }
 
@@ -62,7 +62,7 @@ describe('executeRunCommand', () => {
           setTimeout(() => {
             fake.emit('ls -la; printf ...\r\n'); // 输入行回显
             fake.emit('total 8\r\ndrwxr-xr-x 2 u u 4096 file\r\n');
-            fake.marker({ kind: 'D', exitCode: 0, params: ['0', `tmex=${nonce}`] });
+            fake.marker({ kind: 'D', exitCode: 0, params: ['0', `vibeterm=${nonce}`] });
           }, 5);
         },
       }
@@ -87,7 +87,7 @@ describe('executeRunCommand', () => {
           const nonce = nonceOf(data);
           setTimeout(() => {
             fake.emit('false; printf ...\r\n');
-            fake.marker({ kind: 'D', exitCode: 1, params: ['1', `tmex=${nonce}`] });
+            fake.marker({ kind: 'D', exitCode: 1, params: ['1', `vibeterm=${nonce}`] });
           }, 5);
         },
       }
@@ -107,10 +107,10 @@ describe('executeRunCommand', () => {
           setTimeout(() => {
             fake.emit('echo hi; printf ...\r\nhi\r\n');
             // 先来一个别的 nonce 的 D（应被忽略）
-            fake.marker({ kind: 'D', exitCode: 99, params: ['99', 'tmex=OTHER'] });
+            fake.marker({ kind: 'D', exitCode: 99, params: ['99', 'vibeterm=OTHER'] });
             // 再来自己的
             setTimeout(() => {
-              fake.marker({ kind: 'D', exitCode: 0, params: ['0', `tmex=${nonce}`] });
+              fake.marker({ kind: 'D', exitCode: 0, params: ['0', `vibeterm=${nonce}`] });
             }, 10);
           }, 5);
         },
@@ -215,7 +215,7 @@ describe('executeRunCommand', () => {
           setTimeout(() => {
             fake.emit('echo; printf ...\r\n');
             fake.emit(overflow);
-            fake.marker({ kind: 'D', exitCode: 0, params: ['0', `tmex=${nonce}`] });
+            fake.marker({ kind: 'D', exitCode: 0, params: ['0', `vibeterm=${nonce}`] });
           }, 5);
         },
       }

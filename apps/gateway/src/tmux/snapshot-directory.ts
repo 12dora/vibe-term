@@ -2,7 +2,7 @@
 // 但 agent 等子系统无法直接引用 wsServer 实例（runtime 局部创建）。
 // 仿 connectionAlertNotifier.setBroadcaster 的注册模式解耦。
 
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 
 type SnapshotLookup = (deviceId: string) => StateSnapshotPayload | null;
 

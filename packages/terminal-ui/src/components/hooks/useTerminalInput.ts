@@ -1,4 +1,4 @@
-import { useTmuxStore } from '@tmex/stores/react';
+import { useTmuxStore } from '@vibeterm/stores/react';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { useCallback, useEffect } from 'react';
 import {

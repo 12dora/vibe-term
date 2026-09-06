@@ -35,7 +35,7 @@ function relayValues(overrides: Partial<BecomeRelayValues> = {}): BecomeRelayVal
 
 function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues {
   return {
-    hubPublicUrl: 'https://tmex.example.com',
+    hubPublicUrl: 'https://vibeterm.example.com',
     username: 'alice',
     password: 'hunter2hunter2',
     confirmPassword: 'hunter2hunter2',
@@ -47,7 +47,7 @@ function becomeValues(overrides: Partial<BecomeHubValues> = {}): BecomeHubValues
 function joinValues(overrides: Partial<JoinHubValues> = {}): JoinHubValues {
   return {
     method: 'token',
-    hubUrl: 'https://tmex.example.com',
+    hubUrl: 'https://vibeterm.example.com',
     token: 'a'.repeat(128),
     password: '',
     name: 'studio',
@@ -59,7 +59,7 @@ function joinValues(overrides: Partial<JoinHubValues> = {}): JoinHubValues {
 
 describe('classifyHubUrl', () => {
   test('https 永远可用', () => {
-    expect(classifyHubUrl('https://tmex.example.com', 'production')).toBe('ok');
+    expect(classifyHubUrl('https://vibeterm.example.com', 'production')).toBe('ok');
   });
 
   test('http 本地地址在非 production 下是 insecure，production 下直接非法', () => {
@@ -69,12 +69,12 @@ describe('classifyHubUrl', () => {
   });
 
   test('http 非本地地址一律非法', () => {
-    expect(classifyHubUrl('http://tmex.example.com', 'development')).toBe('invalid');
+    expect(classifyHubUrl('http://vibeterm.example.com', 'development')).toBe('invalid');
   });
 
   test('非 http(s) 协议与不可解析的串非法', () => {
-    expect(classifyHubUrl('ws://tmex.example.com', 'development')).toBe('invalid');
-    expect(classifyHubUrl('tmex.example.com', 'development')).toBe('invalid');
+    expect(classifyHubUrl('ws://vibeterm.example.com', 'development')).toBe('invalid');
+    expect(classifyHubUrl('vibeterm.example.com', 'development')).toBe('invalid');
     expect(classifyHubUrl('   ', 'development')).toBe('invalid');
   });
 });
@@ -179,8 +179,8 @@ describe('normalizeToken', () => {
 
 describe('defaultHubPublicUrl', () => {
   test('https origin 预填；production 下 http origin 留空；非 production 下本地 http 预填', () => {
-    expect(defaultHubPublicUrl('https://tmex.example.com', 'production')).toBe(
-      'https://tmex.example.com'
+    expect(defaultHubPublicUrl('https://vibeterm.example.com', 'production')).toBe(
+      'https://vibeterm.example.com'
     );
     expect(defaultHubPublicUrl('http://localhost:19663', 'production')).toBe('');
     expect(defaultHubPublicUrl('http://localhost:19663', 'development')).toBe(
@@ -415,13 +415,15 @@ describe('setupErrorKey 认识密码加入的错误码', () => {
 
 describe('classifyHubUrl 与后端同一把尺子', () => {
   test('带凭据 / query / fragment 的地址一律不合法（后端 canonicalHubUrl 也会拒）', () => {
-    expect(classifyHubUrl('https://alice:secret@tmex.example.com', 'production')).toBe('invalid');
-    expect(classifyHubUrl('https://tmex.example.com/?token=x', 'production')).toBe('invalid');
-    expect(classifyHubUrl('https://tmex.example.com/#frag', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://alice:secret@vibeterm.example.com', 'production')).toBe(
+      'invalid'
+    );
+    expect(classifyHubUrl('https://vibeterm.example.com/?token=x', 'production')).toBe('invalid');
+    expect(classifyHubUrl('https://vibeterm.example.com/#frag', 'production')).toBe('invalid');
   });
 
   test('普通地址与本机 http 判定不受影响', () => {
-    expect(classifyHubUrl('https://tmex.example.com/', 'production')).toBe('ok');
+    expect(classifyHubUrl('https://vibeterm.example.com/', 'production')).toBe('ok');
     expect(classifyHubUrl('http://127.0.0.1:19883', 'development')).toBe('insecure');
   });
 });

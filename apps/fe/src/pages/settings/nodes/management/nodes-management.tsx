@@ -14,10 +14,10 @@ import {
 } from '@/node/enrollment-engine';
 import { defaultRelayEnrollmentApi } from '@/node/hub-api';
 import { mergeNodes, setEntryNodeId, useMeshNodes } from '@/node/mesh-nodes';
-import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { Button } from '@tmex/ui/button';
-import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';

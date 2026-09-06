@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { RELEASE_API_LATEST_URL, releaseTarballName } from '@tmex/shared';
+import { RELEASE_API_LATEST_URL, releaseTarballName } from '@vibeterm/shared';
 import {
   checkForUpdate,
   fetchLatestGithubRelease,

@@ -8,8 +8,8 @@
 
 import { createStateStore } from '@/node/create-polling-store';
 import { switchMeshRelay } from '@/node/mesh-relay';
-import type { RelayLinkStatus, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { defaultRelayTenantApi, relayErrorCode } from '@tmex/api-client/relay/tenant-api';
+import type { RelayLinkStatus, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { defaultRelayTenantApi, relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
 import { useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';

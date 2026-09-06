@@ -1,20 +1,24 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test';
-import { ApiClient, defaultApiClient } from '@tmex/api-client';
-import { type BellPlayer, type NotificationSink, noopNotificationSink } from '@tmex/notifications';
+import { ApiClient, defaultApiClient } from '@vibeterm/api-client';
+import {
+  type BellPlayer,
+  type NotificationSink,
+  noopNotificationSink,
+} from '@vibeterm/notifications';
 import {
   type GatewayConnection,
   LazyWebSocketGatewayTransport,
   type PaneSink,
   createGatewayConnection,
   createSharedGatewayTransport,
-} from '@tmex/ws-client';
-import { dispatchPaneTerminalData, registerPaneSink } from '@tmex/ws-client/pane-sink-registry';
+} from '@vibeterm/ws-client';
+import { dispatchPaneTerminalData, registerPaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import type { HostServices, TerminalFileLinksProvider } from './runtime';
 
 // runtime.ts 在模块求值时把 playBellSound 固化进 defaultBell，必须先于首次求值替换，
 // 否则默认 bell 相关用例会真的去建 AudioContext。
-const notificationsActual = await import('@tmex/notifications');
-mock.module('@tmex/notifications', () => ({
+const notificationsActual = await import('@vibeterm/notifications');
+mock.module('@vibeterm/notifications', () => ({
   ...notificationsActual,
   playBellSound: mock(() => {}),
 }));

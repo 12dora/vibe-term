@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { HubRoleTransition } from '@tmex/shared';
+import type { HubRoleTransition } from '@vibeterm/shared';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { HUB_ROLE_RESTART_DELAY_MS } from './hub-role-routes';
@@ -41,8 +41,8 @@ async function openRoleHub(opts?: {
   const user = seedUser(userStore, { now: 1_000 });
   const entry = seedAdmittedNode(userStore, user.id, { name: 'hub-self', now: 1_000 });
   const env: Record<string, string> = {
-    TMEX_HUB_MODE: opts?.mode ?? 'active',
-    TMEX_HUB_WRITER_EPOCH: String(opts?.writerEpoch ?? 1),
+    VIBETERM_HUB_MODE: opts?.mode ?? 'active',
+    VIBETERM_HUB_WRITER_EPOCH: String(opts?.writerEpoch ?? 1),
   };
   const restarts: number[] = [];
   const meshHubs = new MeshHubStore(db);
@@ -223,7 +223,7 @@ describe('POST /api/hub/role', () => {
         const res = await postRole(hub, { mode: 'active', operationId: OP_A });
         expect(res.status).toBe(202);
         expect(res.json).toMatchObject({ mode: 'active', writerEpoch: 8, phase: 'restarting' });
-        expect(env.TMEX_HUB_WRITER_EPOCH).toBe('8');
+        expect(env.VIBETERM_HUB_WRITER_EPOCH).toBe('8');
         expect(hub.writerEpoch()).toBe(8);
         expect(meshHubs.get(entry.nodeId)).toMatchObject({ mode: 'active', writerEpoch: 8 });
         expect(logs.some((line) => line.includes('allocated writerEpoch=8'))).toBe(true);
@@ -282,8 +282,8 @@ describe('POST /api/hub/role', () => {
       });
       expect(typeof body.startedAt).toBe('number');
       expect(typeof body.updatedAt).toBe('number');
-      expect(env.TMEX_HUB_MODE).toBe('standby');
-      expect(env.TMEX_HUB_WRITER_EPOCH).toBe('4');
+      expect(env.VIBETERM_HUB_MODE).toBe('standby');
+      expect(env.VIBETERM_HUB_WRITER_EPOCH).toBe('4');
       expect(hub.mode()).toBe('standby');
       expect(hub.writerEpoch()).toBe(4);
       expect(meshHubs.get(entry.nodeId)?.mode).toBe('standby');
@@ -294,7 +294,7 @@ describe('POST /api/hub/role', () => {
     }
   });
 
-  test('promote 校验 epoch、写 TMEX_HUB_WRITER_EPOCH 并立刻提升内存 epoch', async () => {
+  test('promote 校验 epoch、写 VIBETERM_HUB_WRITER_EPOCH 并立刻提升内存 epoch', async () => {
     const { hub, close, env, restarts, meshHubs, entry } = await openRoleHub({
       mode: 'standby',
       writerEpoch: 2,
@@ -309,8 +309,8 @@ describe('POST /api/hub/role', () => {
         writerEpoch: 6,
         phase: 'restarting',
       });
-      expect(env.TMEX_HUB_MODE).toBe('active');
-      expect(env.TMEX_HUB_WRITER_EPOCH).toBe('6');
+      expect(env.VIBETERM_HUB_MODE).toBe('active');
+      expect(env.VIBETERM_HUB_WRITER_EPOCH).toBe('6');
       expect(hub.mode()).toBe('active');
       expect(hub.writerEpoch()).toBe(6);
       expect(meshHubs.get(entry.nodeId)).toMatchObject({ mode: 'active', writerEpoch: 6 });

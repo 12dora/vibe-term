@@ -1,4 +1,4 @@
-// `@tmex/transfer` 浏览器安全入口。落盘相关（source / sink）在 `@tmex/transfer/node`。
+// `@vibeterm/transfer` 浏览器安全入口。落盘相关（source / sink）在 `@vibeterm/transfer/node`。
 
 export * from './bytes';
 export * from './chunker';

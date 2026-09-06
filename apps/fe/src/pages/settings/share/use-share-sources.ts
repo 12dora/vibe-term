@@ -12,7 +12,7 @@ import {
   createNodeApiClient,
   devicesQueryKey,
   fetchDevices,
-} from '@tmex/api-client';
+} from '@vibeterm/api-client';
 import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SETTINGS_STALE_MS } from '../data-prefetch';

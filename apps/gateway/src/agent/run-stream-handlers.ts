@@ -1,5 +1,5 @@
-import type { AgentEventPayloadMap } from '@tmex/shared';
-import { errorMessage, wsBorsh } from '@tmex/shared';
+import type { AgentEventPayloadMap } from '@vibeterm/shared';
+import { errorMessage, wsBorsh } from '@vibeterm/shared';
 import type { StreamPartHandlers } from './stream-part-router';
 
 export interface PendingApproval {

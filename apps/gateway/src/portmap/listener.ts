@@ -1,5 +1,5 @@
 import { type Server, type Socket, createServer } from 'node:net';
-import type { LinkStream } from '@tmex/shared/link';
+import type { LinkStream } from '@vibeterm/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
 import type { TcpStreamOpenPayload } from '../mesh/types';
 import { type PeerStreamSlot, acquirePeerStreamSlot } from './budget';

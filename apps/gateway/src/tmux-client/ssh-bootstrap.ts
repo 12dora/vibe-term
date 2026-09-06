@@ -25,9 +25,9 @@ export function buildSshBootstrapScript(): string {
     'fi',
     'HOME_DIR="${HOME:-$(pwd)}"',
     'if [ -z "$TMUX_BIN" ]; then',
-    "  printf 'TMEX_BOOT_FAIL\\ttmux_not_found\\n'",
+    "  printf 'VIBETERM_BOOT_FAIL\\ttmux_not_found\\n'",
     'else',
-    `  printf 'TMEX_BOOT_OK\\t%s\\t%s\\t%s\\n' "$TMUX_BIN" "$("$TMUX_BIN" -V 2>/dev/null)" "$HOME_DIR"`,
+    `  printf 'VIBETERM_BOOT_OK\\t%s\\t%s\\t%s\\n' "$TMUX_BIN" "$("$TMUX_BIN" -V 2>/dev/null)" "$HOME_DIR"`,
     'fi',
   ].join('\n');
 }
@@ -39,7 +39,7 @@ export function parseSshBootstrapOutput(output: string): ParsedSshBootstrap {
     .filter(Boolean);
 
   for (const line of lines) {
-    if (line.startsWith('TMEX_BOOT_OK\t')) {
+    if (line.startsWith('VIBETERM_BOOT_OK\t')) {
       const [, tmuxBin = '', tmuxVersion = '', homeDir = ''] = line.split('\t');
       if (!tmuxBin || !homeDir) {
         return { ok: false, reason: 'invalid_bootstrap_payload' };
@@ -47,7 +47,7 @@ export function parseSshBootstrapOutput(output: string): ParsedSshBootstrap {
       return { ok: true, tmuxBin, tmuxVersion, homeDir };
     }
 
-    if (line.startsWith('TMEX_BOOT_FAIL\t')) {
+    if (line.startsWith('VIBETERM_BOOT_FAIL\t')) {
       const [, reason = 'tmux_bootstrap_failed'] = line.split('\t');
       return { ok: false, reason };
     }

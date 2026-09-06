@@ -14,7 +14,7 @@
 // 注意：本通道**不经过 `DirectDataChannelCarrier`**——不分片、不走 Borsh envelope，
 // 背压自己按 4 MiB 高水位 / 1 MiB 低水位处理。
 
-import { BULK_FRAME_BYTES, iterateFrames } from '@tmex/transfer';
+import { BULK_FRAME_BYTES, iterateFrames } from '@vibeterm/transfer';
 import {
   DC_HIGH_WATER_BYTES,
   DC_LOW_WATER_BYTES,
@@ -110,7 +110,7 @@ function parseControlJson(text: string): Record<string, unknown> | null {
   }
 }
 
-/** 把任意来源切成恰好 `frameSize` 的帧（末帧可短）。实现在 `@tmex/transfer`。 */
+/** 把任意来源切成恰好 `frameSize` 的帧（末帧可短）。实现在 `@vibeterm/transfer`。 */
 export const iterateBulkFrames = iterateFrames;
 
 /** 单条 bulk 通道的收发外壳：open 等待、控制/数据分流、背压排水。 */

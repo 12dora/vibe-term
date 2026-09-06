@@ -1,4 +1,4 @@
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { ConnectConfig } from 'ssh2';
 
 import type { decryptWithContext } from '../crypto';

@@ -3,7 +3,7 @@
 // 提醒过去是四种背景色 + 各自的内联样式散在三个文件里，同一类问题在 hub 面板与中继面板
 // 长得不一样。这里收成一个组件：档位决定颜色，动作永远在右边，行高一致换档不跳版。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import type { ReactNode } from 'react';
 

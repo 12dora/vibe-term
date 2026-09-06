@@ -3,7 +3,7 @@
 // 设计要点：
 // - production 走专属分支：只校验生产契约（变量由安装版 run.sh 经 app.env 注入），
 //   绝不读取仓库 env 文件、绝不净化路径键（生产里这些键正是安装目录路径）。
-// - development / test：净化继承的安装版毒变量 → 读 <env>.env / <env>.env.local
+// - development / test：净化继承的安装版毒变量 → 读 env/<env>.env / env/<env>.env.local
 //   → override=true 应用，使仓库文件成为该环境的唯一真相。
 // 详见 docs 与 prompt-archives/2026061301-env-three-tier/plan-00.md。
 
@@ -11,22 +11,54 @@ import { existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** 安装目录标记：继承自安装版 app.env 的路径键会带此片段 */
-const INSTALL_MARKER = 'Application Support/tmex';
+/**
+ * 安装目录标记：继承自安装版 app.env 的路径键会带其中之一。
+ * `tmex` 目录是改名前的安装位置，已有安装原地升级后仍留在旧目录，必须继续识别。
+ */
+const INSTALL_MARKERS = [
+  'Application Support/vibeterm',
+  'Application Support/tmex',
+  '.local/share/vibeterm',
+  '.local/share/tmex',
+] as const;
+
+function isInstallDirPath(value: string): boolean {
+  return INSTALL_MARKERS.some((marker) => value.includes(marker));
+}
+
+/** 改名前的环境变量前缀 */
+const LEGACY_ENV_PREFIX = 'TMEX_';
+const ENV_PREFIX = 'VIBETERM_';
+
+/**
+ * 把旧前缀变量镜像到新前缀：`TMEX_X` → `VIBETERM_X`（仅在后者未设置时）。
+ * 已有安装的 app.env 本版不改写（保证回滚到旧版仍可读），故 gateway / CLI / runtime
+ * 各入口都必须在读取任何配置前调用本函数。
+ */
+export function applyLegacyEnvAliases(env: MutableEnv = process.env as MutableEnv): void {
+  for (const key of Object.keys(env)) {
+    if (!key.startsWith(LEGACY_ENV_PREFIX)) continue;
+    const value = env[key];
+    if (value === undefined) continue;
+    const target = `${ENV_PREFIX}${key.slice(LEGACY_ENV_PREFIX.length)}`;
+    if (env[target] !== undefined) continue;
+    env[target] = value;
+  }
+}
 
 /** 指向安装目录、dev/test 下需要净化的路径键 */
-const PATH_KEYS = ['TMEX_MIGRATIONS_DIR', 'TMEX_FE_DIST_DIR'] as const;
+const PATH_KEYS = ['VIBETERM_MIGRATIONS_DIR', 'VIBETERM_FE_DIST_DIR'] as const;
 
 /** 生产必需且非空的键 */
 const PRODUCTION_REQUIRED = [
-  'TMEX_MASTER_KEY',
+  'VIBETERM_MASTER_KEY',
   'GATEWAY_PORT',
-  'TMEX_BIND_HOST',
+  'VIBETERM_BIND_HOST',
   'DATABASE_URL',
 ] as const;
 
 /** 生产必需且必须指向真实存在目录的键（由 run.sh export） */
-const PRODUCTION_REQUIRED_DIRS = ['TMEX_FE_DIST_DIR', 'TMEX_MIGRATIONS_DIR'] as const;
+const PRODUCTION_REQUIRED_DIRS = ['VIBETERM_FE_DIST_DIR', 'VIBETERM_MIGRATIONS_DIR'] as const;
 
 export type EnvName = 'development' | 'test' | 'production';
 
@@ -115,6 +147,7 @@ function isSpecialDatabaseUrl(value: string): boolean {
  */
 export function loadEnv(options: LoadEnvOptions = {}): EnvName {
   const env = options.env ?? (process.env as MutableEnv);
+  applyLegacyEnvAliases(env);
   const name = resolveEnvName(options.nodeEnv ?? env.NODE_ENV);
   const log = options.silent ? () => {} : (msg: string) => console.log(`[env] ${msg}`);
 
@@ -148,13 +181,13 @@ function applyProductionEnv(
 
   if (missing.length > 0) {
     throw new Error(
-      `[env] 生产环境启动校验失败，缺少/无效的必需变量：${missing.join('、')}。生产变量应由安装版 run.sh 经 app.env 注入；请检查 app.env 是否完整、TMEX_FE_DIST_DIR/TMEX_MIGRATIONS_DIR 是否指向已部署的 resources 目录，或重新执行 \`tmex upgrade\` 重建 run.sh。`
+      `[env] 生产环境启动校验失败，缺少/无效的必需变量：${missing.join('、')}。生产变量应由安装版 run.sh 经 app.env 注入；请检查 app.env 是否完整、VIBETERM_FE_DIST_DIR/VIBETERM_MIGRATIONS_DIR 是否指向已部署的 resources 目录，或重新执行 \`vibeterm upgrade\` 重建 run.sh。`
     );
   }
 
   // 生产不读取任何仓库文件、不修改注入值，仅打印可观测摘要。
   log(
-    `production: 使用 app.env 注入变量（不读仓库 env 文件） port=${env.GATEWAY_PORT} host=${env.TMEX_BIND_HOST} db=${env.DATABASE_URL}`
+    `production: 使用 app.env 注入变量（不读仓库 env 文件） port=${env.GATEWAY_PORT} host=${env.VIBETERM_BIND_HOST} db=${env.DATABASE_URL}`
   );
 }
 
@@ -167,20 +200,24 @@ function applyRepoEnv(
   const repoRoot = options.repoRoot ?? defaultRepoRoot();
   const readFile = options.readFile ?? defaultReadFile;
 
-  // 1. 净化继承的安装版毒变量（收敛 dev-supervisor / test-preload 散点 hack）
+  // 1. 净化继承的安装版毒变量（收敛 dev-supervisor / test-preload 散点 hack）。
+  //    旧前缀一并删除，否则后续再次调用别名函数会把毒值重新镜像回来。
   for (const key of PATH_KEYS) {
-    const value = env[key];
-    if (value?.includes(INSTALL_MARKER)) {
-      delete env[key];
-      log(`净化继承的安装版变量 ${key}`);
-    }
+    const legacyKey = `${LEGACY_ENV_PREFIX}${key.slice(ENV_PREFIX.length)}`;
+    const poisoned = [key, legacyKey].filter((k) => {
+      const value = env[k];
+      return value !== undefined && isInstallDirPath(value);
+    });
+    if (poisoned.length === 0) continue;
+    for (const k of poisoned) delete env[k];
+    log(`净化继承的安装版变量 ${poisoned.join('、')}`);
   }
 
   // 2. 读取 <env>.env 与 <env>.env.local（后者覆盖前者）
   const merged: Record<string, string> = {};
   let loadedAny = false;
   for (const file of [`${name}.env`, `${name}.env.local`]) {
-    const content = readFile(resolve(repoRoot, file));
+    const content = readFile(resolve(repoRoot, 'env', file));
     if (content == null) continue;
     Object.assign(merged, parseEnvFile(content));
     loadedAny = true;

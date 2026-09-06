@@ -1,4 +1,4 @@
-import type { CommandSpec } from '@tmex/shared/messaging';
+import type { CommandSpec } from '@vibeterm/shared/messaging';
 import { formatArgUsage } from '../context';
 import type { CommandHandler } from './types';
 

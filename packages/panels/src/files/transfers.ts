@@ -1,6 +1,6 @@
-// 传输 store 的独立入口（`@tmex/panels/files/transfers`）。
+// 传输 store 的独立入口（`@vibeterm/panels/files/transfers`）。
 //
-// 与 `./index` 分开是有意的：`@tmex/panels/files` 在若干单测里被 `mock.module` 整体替换，
+// 与 `./index` 分开是有意的：`@vibeterm/panels/files` 在若干单测里被 `mock.module` 整体替换，
 // store 跟着一起消失；弹窗与 store 的消费方走这个只含 store 的子路径，不受那些替身影响。
 
 export {

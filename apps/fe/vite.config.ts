@@ -5,7 +5,7 @@ import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { type Plugin, type PluginOption, defineConfig } from 'vite';
 
-// monorepo 版本真相源：发布的 tmex-cli（packages/app）版本。读取失败退回 0.0.0。
+// monorepo 版本真相源：发布的 vibeterm-cli（packages/app）版本。读取失败退回 0.0.0。
 function readMonorepoVersion(): string {
   try {
     const pkgPath = path.resolve(__dirname, '../../packages/app/package.json');
@@ -19,7 +19,7 @@ function readMonorepoVersion(): string {
 // 后两者只会白白进 dist 与 npm 包（~880 KB），这里在 CSS 阶段剔掉。
 function katexWoff2Only(): Plugin {
   return {
-    name: 'tmex-katex-woff2-only',
+    name: 'vibeterm-katex-woff2-only',
     enforce: 'pre',
     transform(code, id) {
       if (!id.includes('katex') || !id.endsWith('.css')) return null;
@@ -64,8 +64,8 @@ export default defineConfig(({ mode }) => {
   // 前端只需要两个非密钥的接线值：网关地址与前端端口。
   // 这两者由 launcher 经 process.env 提供（dev-supervisor source development.env；
   // e2e 由 playwright 注入）。刻意不在这里加载后端 env 文件——否则会把
-  // TMEX_MASTER_KEY 等后端密钥拉进 vite 进程，存在被打进前端 bundle 的风险。
-  const gatewayUrl = process.env.TMEX_GATEWAY_URL || 'http://localhost:9663';
+  // VIBETERM_MASTER_KEY 等后端密钥拉进 vite 进程，存在被打进前端 bundle 的风险。
+  const gatewayUrl = process.env.VIBETERM_GATEWAY_URL || 'http://localhost:9663';
   const fePort = Number(process.env.FE_PORT) || 9883;
   const gatewayWsUrl = gatewayUrl.replace('http://', 'ws://').replace('https://', 'wss://');
   const monorepoVersion = readMonorepoVersion();

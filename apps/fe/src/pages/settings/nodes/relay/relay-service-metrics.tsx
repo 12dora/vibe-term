@@ -2,7 +2,7 @@
 //
 // 数据源与「中继」标签是同一份宿主级 store，两处同时挂载也只有一条 5 秒轮询回路。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { ArrowRight } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { relayTrendSeries } from '../../relay/relay-metrics-model';

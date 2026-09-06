@@ -1,5 +1,5 @@
-import { errorMessage } from '@tmex/shared';
-import type { FileErrorCode } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
+import type { FileErrorCode } from '@vibeterm/shared';
 
 export interface RsyncResult {
   stdout: string;
@@ -49,12 +49,12 @@ export class RsyncMissingLocalError extends Error {
 
 const SENSITIVE_ENV_KEYS = new Set(['DATABASE_URL', 'NODE_ENV', 'GATEWAY_PORT', 'FE_PORT']);
 
-// 子进程基础环境：保留 PATH/HOME/SSH_AUTH_SOCK 等，剔除 TMEX_* 与接线键，强制 LC_ALL=C
+// 子进程基础环境：保留 PATH/HOME/SSH_AUTH_SOCK 等，剔除 VIBETERM_* 与接线键，强制 LC_ALL=C
 function baseSubprocessEnv(): Record<string, string> {
   const out: Record<string, string> = {};
   for (const [k, v] of Object.entries(process.env)) {
     if (v === undefined) continue;
-    if (k.startsWith('TMEX_')) continue;
+    if (k.startsWith('VIBETERM_')) continue;
     if (SENSITIVE_ENV_KEYS.has(k)) continue;
     out[k] = v;
   }
@@ -193,7 +193,7 @@ export async function runRsync(
       proc.exited,
     ]);
     if (timedOut) {
-      return { stdout, stderr: `${stderr}\n[tmex] rsync timed out`, exitCode: 124 };
+      return { stdout, stderr: `${stderr}\n[vibeterm] rsync timed out`, exitCode: 124 };
     }
     return { stdout, stderr, exitCode };
   } finally {

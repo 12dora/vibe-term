@@ -1,7 +1,7 @@
 // 流式 markdown 渲染：按 fence 感知的空行分块，块级 memo，
 // 流式追加时只重扫最后一个未封口块并只 parse 它，前面的块直接命中 memo。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { memo, useMemo, useRef } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';

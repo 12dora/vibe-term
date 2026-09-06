@@ -54,7 +54,7 @@ function UplinkMissing({ uplink }: { uplink: JoinUplink }) {
   );
 }
 
-/** 中继路径要地址和租户编号齐了才算备齐：`tmex relay join` 两个都是必填。 */
+/** 中继路径要地址和租户编号齐了才算备齐：`vibeterm relay join` 两个都是必填。 */
 export function uplinkReady(uplink: JoinUplink): boolean {
   return uplink.url !== null && (uplink.kind === 'hub' || uplink.tenantId !== null);
 }

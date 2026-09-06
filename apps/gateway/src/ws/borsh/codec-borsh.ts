@@ -1,7 +1,7 @@
 // Gateway Borsh 编解码与发送工具
 // 封装 ws-borsh 协议,提供面向 Gateway 的便捷接口
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { Carrier } from '../carrier';
 import { gatewayWebSocketSendGuard } from '../websocket-send-guard';
 

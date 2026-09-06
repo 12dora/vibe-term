@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { encodeBase64url, encodeSetTotpPayload, encryptTotpSecret } from '@tmex/shared/auth';
+import { encodeBase64url, encodeSetTotpPayload, encryptTotpSecret } from '@vibeterm/shared/auth';
 import { KeyLogStore } from '../auth/key-log-store';
 import { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
@@ -22,7 +22,10 @@ describe('handleTotpRecord cache control', () => {
       expect(denied.status).toBe(401);
       expect(denied.headers.get('Cache-Control')).toBe('private, no-store');
 
-      const boot = await keyLogService.bootstrapUser({ username: 'alice', password: 'tmex-test' });
+      const boot = await keyLogService.bootstrapUser({
+        username: 'alice',
+        password: 'vibeterm-test',
+      });
       const missing = handleTotpRecord({ userStore, keyLogService }, boot.userId);
       expect(missing.status).toBe(404);
       expect(missing.headers.get('Cache-Control')).toBe('private, no-store');
@@ -60,7 +63,7 @@ describe('handleTotpRecord cache control', () => {
 
   test('forwarded /n/:id/api/auth/totp-record keeps Cache-Control private, no-store', async () => {
     const peers = new FakePeers();
-    peers.links.set(OTHER, {} as import('@tmex/shared/link').LinkSession);
+    peers.links.set(OTHER, {} as import('@vibeterm/shared/link').LinkSession);
     const streams = new FakeStreams();
     streams.nextResponse = new Response(
       JSON.stringify({ record_seq: 2, root_epoch: 1, payload: 'x' }),

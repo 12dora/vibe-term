@@ -5,7 +5,7 @@ import type {
   RelayMetricsMember,
   RelayMetricsResponse,
   RelayMetricsSample,
-} from '@tmex/api-client/relay/metrics-types';
+} from '@vibeterm/api-client/relay/metrics-types';
 
 export const RELAY_METRICS_SAMPLED_AT = 1_700_000_600_000;
 

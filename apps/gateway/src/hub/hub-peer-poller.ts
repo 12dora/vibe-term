@@ -1,11 +1,11 @@
 /**
  * Hub 间状态探测。对端 GET /api/hub/status 可信，当且仅当：
  * 1. URL 经 TLS 认证（HubTrustStore 的 per-URL CA pin；无 pin 的 https 走系统 CA）；
- * 2. 返回的 32-hex hubNodeId 在本机 TMEX_HUB_PEERS allowlist 中，且与 mesh_hubs 行 id 一致。
+ * 2. 返回的 32-hex hubNodeId 在本机 VIBETERM_HUB_PEERS allowlist 中，且与 mesh_hubs 行 id 一致。
  * 未授权的 URL / id 不能 fencing 本机。
  */
-import { errorMessage } from '@tmex/shared';
-import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
+import { errorMessage } from '@vibeterm/shared';
+import type { HubAdvertisement, HubMode } from '@vibeterm/shared/uplink';
 import type { HubTrustStore } from '../auth/hub-trust-store';
 import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/mesh-hub-store';
 import { uplinkWebSocketTls } from '../mesh/uplink-client';

@@ -10,9 +10,9 @@ import { warnOnStaleSystemdUnit, warnOnSystemdOomPolicy } from './service-selfch
 describe('systemdUnitLacksKillModeProcess', () => {
   test('当前模板不告警', () => {
     const unit = buildSystemdServiceContent({
-      serviceName: 'tmex',
-      runScriptPath: '/opt/tmex/run.sh',
-      installDir: '/opt/tmex',
+      serviceName: 'vibeterm',
+      runScriptPath: '/opt/vibeterm/run.sh',
+      installDir: '/opt/vibeterm',
       autostart: true,
     });
     expect(systemdUnitLacksKillModeProcess(unit)).toBe(false);

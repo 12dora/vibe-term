@@ -16,19 +16,19 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { leaseSigner } from '@/auth/credential-prompt';
 import { type RecordSigner, buildSignedRecord, signWithPasskey } from '@/auth/key-log-actions';
 import { headFromResponse } from '@/auth/key-log-actions';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import type { RelayReadmitEntry, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
-import { errorMessage } from '@tmex/shared';
-import type { Authorization } from '@tmex/shared/auth';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import type { RelayReadmitEntry, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
+import { errorMessage } from '@vibeterm/shared';
+import type { Authorization } from '@vibeterm/shared/auth';
 import {
   buildRootReadmitAuthorization,
   decodeAuthorization,
   decodeBase64url,
   encodeAdmitNodePayload,
   encodeBase64url,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 
 /** 用户在凭据对话框里取消。 */
 export const READMIT_CANCELLED = 'READMIT_CANCELLED';

@@ -9,7 +9,7 @@ test('terminal regains focus on load, pane switch, mode toggle and refresh', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-focus-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-focus-${Date.now()}`;
   const { paneIds, windowId } = createTwoPaneSession(sessionName);
   expect(paneIds.length >= 2).toBeTruthy();
 

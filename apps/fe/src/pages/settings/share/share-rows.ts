@@ -3,7 +3,7 @@
 //
 // 摊平与「哪些节点没拉回来」两件事都是纯函数，聚合查询只把结果喂进来。
 
-import type { ShareRecord } from '@tmex/shared/share';
+import type { ShareRecord } from '@vibeterm/shared/share';
 
 export interface ShareRow extends ShareRecord {
   /** 运行时 node id（entry 自身为 `self`），行内动作据此建客户端。 */

@@ -1,7 +1,7 @@
 // 将持久化的 AI SDK ModelMessage 序列与流式中的 inProgress 状态合并为对话流 UI 块。
 // 解析持久化消息的纯逻辑在 agent-message-parser.ts。
 
-import type { AgentMessageDto } from '@tmex/shared';
+import type { AgentMessageDto } from '@vibeterm/shared';
 import { extractText, isRecord, parsePersistedMessages } from './agent-message-parser';
 import type { UiThreadBlock, UiToolCall } from './agent-message-parser';
 

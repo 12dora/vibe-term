@@ -9,8 +9,8 @@
 // 只从 key-log-actions 直接取：走 `@/auth` barrel 会把 React 组件一起拖进来。
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { buildSignedRecord, enrollmentSignerFrom } from '@/auth/key-log-actions';
-import { ProtocolMismatchError } from '@tmex/api-client/auth/index';
-import type { KeyLogHead } from '@tmex/shared/auth';
+import { ProtocolMismatchError } from '@vibeterm/api-client/auth/index';
+import type { KeyLogHead } from '@vibeterm/shared/auth';
 import {
   JOIN_TOKEN_BYTES,
   JOIN_TOKEN_CHARS,
@@ -23,10 +23,13 @@ import {
   encodeRevokeNodePayload,
   hexToBytes,
   verifyNodeCertificate,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
+import { migrateStorageKey } from '@vibeterm/stores';
 import type { HubApi } from './hub-api';
 
-export const PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
+export const PENDING_STORAGE_KEY = 'vibeterm.enrollment.pending';
+/** 改名前的键，首次读取时搬运 */
+const LEGACY_PENDING_STORAGE_KEY = 'tmex.enrollment.pending';
 
 /**
  * sessionStorage 里的一条待确认 enrollment。二进制字段一律 base64url。
@@ -179,6 +182,7 @@ export function listPendingEnrollments(): PendingEnrollment[] {
     cache = [];
     return cache;
   }
+  migrateStorageKey(store, LEGACY_PENDING_STORAGE_KEY, PENDING_STORAGE_KEY);
   let raw: string | null = null;
   let rows: PendingEnrollment[] = [];
   try {
@@ -555,7 +559,7 @@ export interface AdmitHubInput {
 }
 
 /**
- * 构造并签一条 `admit-hub`：hub 授权的**权威来源**，`TMEX_HUB_PEERS` 只是 bootstrap 回退。
+ * 构造并签一条 `admit-hub`：hub 授权的**权威来源**，`VIBETERM_HUB_PEERS` 只是 bootstrap 回退。
  * 与 `revoke-node` 走同一条 key log，因此同样要在写锁内读 head 再签（见 `revokeNodeRecord`）。
  */
 export function buildAdmitHubRecord(input: AdmitHubInput): Promise<{
@@ -691,7 +695,7 @@ export async function createEnrollmentOnHub(
 /**
  * `base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，**并把 96 字节临时缓冲清零**。
  *
- * 没有直接用 `@tmex/shared/auth` 的 `encodeJoinToken()`：它在内部另建一份含 `enroll_sk` 的
+ * 没有直接用 `@vibeterm/shared/auth` 的 `encodeJoinToken()`：它在内部另建一份含 `enroll_sk` 的
  * 96 字节数组且从不清零，调用方够不着那份副本（见 F4-fix 评审 Major）。这里自己拼、自己清，
  * 布局与长度校验与共享实现逐字对齐（`decodeJoinToken()` 是它的反函数）。
  * 共享实现同样应当在 `finally` 里清零——CLI 侧还在用它，需由 `packages/shared` 的负责人处理。
@@ -767,7 +771,7 @@ export function joinCommand(hubPublicUrl: string, token: string, name?: string |
     throw new Error('hub public url must be an https url');
   }
   const suffix = name?.trim() ? ` --name ${shellQuote(name.trim())}` : '';
-  return `tmex hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
+  return `vibeterm hub join ${shellQuote(hubPublicUrl)} --token ${shellQuote(token)}${suffix}`;
 }
 
 function shellQuote(value: string): string {

@@ -3,8 +3,12 @@
 // mesh 下 `GET /api/local/status` 需要 self 会话，未登录返回 401——这里把 401 单独摘出来，
 // 由调用方渲染「请先登录」提示，而不是当成加载失败或直接崩掉。
 
-import { type LocalApi, LocalApiError, defaultLocalApi } from '@tmex/api-client/local/local-api';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import {
+  type LocalApi,
+  LocalApiError,
+  defaultLocalApi,
+} from '@vibeterm/api-client/local/local-api';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import { LOCAL_STATUS_QUERY_KEY } from '../status-queries';
 import { useProtectedStatusQuery } from '../use-protected-status-query';
 

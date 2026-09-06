@@ -1,8 +1,8 @@
 // 线程块拼装：把 store 中的消息、在途增量与待确认工具调用合成视图块。
 
-import type { AgentMessageDto } from '@tmex/shared';
-import type { PendingConfirmationUi, SessionInProgress, UiThreadBlock } from '@tmex/stores';
-import { buildThreadBlocks } from '@tmex/stores';
+import type { AgentMessageDto } from '@vibeterm/shared';
+import type { PendingConfirmationUi, SessionInProgress, UiThreadBlock } from '@vibeterm/stores';
+import { buildThreadBlocks } from '@vibeterm/stores';
 
 type Confirmations = PendingConfirmationUi[] | undefined;
 

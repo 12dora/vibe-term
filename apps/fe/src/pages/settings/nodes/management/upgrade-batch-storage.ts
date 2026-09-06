@@ -13,6 +13,8 @@
 // localStorage 在隐私模式 / 配额耗尽时会抛：所有读写都吞掉异常，最坏结果是退化成刷新即丢，
 // 绝不能让存储问题把升级本身带塌。
 
+import { migrateStorageKeyPrefix } from '@/lib/storage-migration';
+import { migrateStorageKey } from '@vibeterm/stores';
 import type { UpgradeRunOutcome } from './types';
 
 export const UPGRADE_BATCH_SCHEMA = 1;
@@ -23,8 +25,11 @@ export const UPGRADE_BATCH_OWNER_STALE_MS = 30_000;
 /** 批量推进期间的心跳间隔；必须明显小于 `UPGRADE_BATCH_OWNER_STALE_MS`。 */
 export const UPGRADE_BATCH_HEARTBEAT_MS = 10_000;
 
-const KEY_PREFIX = 'tmex.nodes.upgrade-batch.';
+const KEY_PREFIX = 'vibeterm.nodes.upgrade-batch.';
+/** 改名前的前缀，读取计划前整批搬运（`storage` 事件的过滤也随之切到新前缀） */
+const LEGACY_KEY_PREFIX = 'tmex.nodes.upgrade-batch.';
 const TAB_KEY = `${KEY_PREFIX}tab`;
+const LEGACY_TAB_KEY = `${LEGACY_KEY_PREFIX}tab`;
 
 /** 这个入口节点的计划落在哪个 localStorage 键上；`storage` 事件靠它认出「是我们这份」。 */
 export function batchPlanKey(entryNodeId: string): string {
@@ -83,6 +88,7 @@ let fallbackTabId: string | null = null;
 export function currentTabId(): string {
   const store = storageOf('sessionStorage');
   if (store) {
+    migrateStorageKey(store, LEGACY_TAB_KEY, TAB_KEY);
     try {
       const existing = store.getItem(TAB_KEY);
       if (existing) return existing;
@@ -206,6 +212,7 @@ export function clearBatchPlan(entryNodeId: string): void {
 export function loadBatchPlan(entryNodeId: string, now: number): UpgradeBatchPlan | null {
   const store = storageOf('localStorage');
   if (!store) return null;
+  migrateStorageKeyPrefix(store, LEGACY_KEY_PREFIX, KEY_PREFIX);
   let raw: string | null;
   try {
     raw = store.getItem(batchPlanKey(entryNodeId));

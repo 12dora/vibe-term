@@ -5,7 +5,7 @@
 //      本来就会收到发起机那份），要么是本机作为汇聚机刚收下的转发件，再转一次会成环；
 //   2. 没有汇聚机时直接返回，不建队列。
 
-import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@tmex/shared';
+import type { EventType, MeshNotificationForwardRequest, WebhookEvent } from '@vibeterm/shared';
 import {
   type MeshNotificationBridge,
   getMeshNotificationBridge,

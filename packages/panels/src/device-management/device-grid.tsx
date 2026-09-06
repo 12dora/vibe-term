@@ -16,10 +16,10 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { useQuery } from '@tanstack/react-query';
-import { fetchFileRoots } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
+import { fetchFileRoots } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
 import { GripVertical } from 'lucide-react';
 import { type CSSProperties, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -28,7 +28,7 @@ import { deviceGridCollisionDetection } from './device-grid-collision';
 import type { useDeviceManagementState } from './use-device-management-state';
 
 const HANDLE_CLASS =
-  'inline-flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/60 transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-accent hover:text-foreground active:cursor-grabbing motion-reduce:transition-none';
+  'inline-flex size-6 shrink-0 cursor-grab touch-none items-center justify-center rounded-md text-muted-foreground/60 transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-accent hover:text-foreground active:cursor-grabbing motion-reduce:transition-none';
 
 // hasRoots 逐设备不同，不进这份「整列表共用」的 props
 type CardProps = Omit<
@@ -128,7 +128,7 @@ export function DeviceGrid({
           // 自适应列数：每列至少 24rem，设备名与 SSH 目标才有地方放（窄屏退回单列）
           className={cn(
             'grid grid-cols-[repeat(auto-fill,minmax(min(24rem,100%),1fr))] gap-3',
-            state.staggering && 'tmex-stagger'
+            state.staggering && 'vibeterm-stagger'
           )}
           onAnimationEnd={state.onAnimationEnd}
         >

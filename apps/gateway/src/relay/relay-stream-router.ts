@@ -1,5 +1,5 @@
-import type { LinkStream, StreamChunk } from '@tmex/shared/link';
-import { type RelayQuota, decodeRelayOpenStream } from '@tmex/shared/relay';
+import type { LinkStream, StreamChunk } from '@vibeterm/shared/link';
+import { type RelayQuota, decodeRelayOpenStream } from '@vibeterm/shared/relay';
 import type { RelayBandwidthHandle } from './relay-bandwidth';
 import type { RelayMetering } from './relay-metering';
 import type { RelayTokenBucket, RelayTokenStream } from './relay-quota';

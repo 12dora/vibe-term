@@ -2,9 +2,9 @@
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { ApiClient, type FetchLike } from '@tmex/api-client';
-import { noopNotificationSink } from '@tmex/notifications';
-import type { AgentMessageDto, AgentSessionDto } from '@tmex/shared';
+import { ApiClient, type FetchLike } from '@vibeterm/api-client';
+import { noopNotificationSink } from '@vibeterm/notifications';
+import type { AgentMessageDto, AgentSessionDto } from '@vibeterm/shared';
 
 import { createAgentStore } from './agent';
 import {

@@ -4,8 +4,8 @@
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
-import type { AccessAddressesResponse } from '@tmex/shared';
-import { useRuntime } from '@tmex/stores/react';
+import type { AccessAddressesResponse } from '@vibeterm/shared';
+import { useRuntime } from '@vibeterm/stores/react';
 import { type AccessAddress, buildAccessAddresses, showLoopbackHint } from './access-addresses';
 
 export const ACCESS_ADDRESSES_QUERY_KEY = ['system-access-addresses'] as const;

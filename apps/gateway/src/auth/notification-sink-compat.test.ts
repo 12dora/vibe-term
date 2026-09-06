@@ -12,7 +12,7 @@ import {
   encodeKeyLogRecord,
   genesisHead,
   hexToBytes,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { inspectHubAuthRecordCompat } from '../hub/hub-authorization';
 import { createMigratedAuthDb } from './test-db';
 import { UserStore } from './user-store';

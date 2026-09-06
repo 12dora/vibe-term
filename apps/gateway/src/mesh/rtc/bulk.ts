@@ -1,4 +1,4 @@
-import { BULK_FRAME_BYTES, BULK_MAX_FRAME_BYTES, iterateFrames } from '@tmex/transfer';
+import { BULK_FRAME_BYTES, BULK_MAX_FRAME_BYTES, iterateFrames } from '@vibeterm/transfer';
 import type { FilesBulkHooks } from '../../api/files';
 import { DC_HIGH_WATER_BYTES, DC_LOW_WATER_BYTES } from './data-channel-carrier';
 import type { DataChannelLike } from './native';

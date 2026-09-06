@@ -1,10 +1,10 @@
 // 控制台的副作用集合：输入模式切换后的回到底部、设备错误提示、浏览器标题。
 
-import { useBellStore } from '@tmex/notifications';
-import { PRODUCT_NAME, type TmuxPane, type TmuxWindow } from '@tmex/shared';
-import { buildBrowserTitle, buildTerminalLabel, forceTextPresentation } from '@tmex/stores';
-import { useSiteStore } from '@tmex/stores/react';
-import type { TerminalRef } from '@tmex/terminal-ui';
+import { useBellStore } from '@vibeterm/notifications';
+import { PRODUCT_NAME, type TmuxPane, type TmuxWindow } from '@vibeterm/shared';
+import { buildBrowserTitle, buildTerminalLabel, forceTextPresentation } from '@vibeterm/stores';
+import { useSiteStore } from '@vibeterm/stores/react';
+import type { TerminalRef } from '@vibeterm/terminal-ui';
 import { type RefObject, useEffect, useMemo } from 'react';
 import { toast } from 'sonner';
 

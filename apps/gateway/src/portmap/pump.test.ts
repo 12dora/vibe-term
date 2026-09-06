@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { Socket } from 'node:net';
-import { type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
+import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
 import { dialTcp } from './dial';
 import { type PumpSocket, TcpStreamPump, attachPump, createPumpSocketData } from './pump';

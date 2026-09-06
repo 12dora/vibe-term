@@ -1,5 +1,5 @@
-import type { FileErrorCode } from '@tmex/shared';
-import { openRange } from '@tmex/transfer/node';
+import type { FileErrorCode } from '@vibeterm/shared';
+import { openRange } from '@vibeterm/transfer/node';
 import { json } from './http';
 
 const CODE_STATUS: Record<FileErrorCode, number> = {

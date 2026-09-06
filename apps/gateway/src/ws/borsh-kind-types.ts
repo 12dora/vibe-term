@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { CanonicalFeedSession } from './canonical-feed-session';
 import type { GatewaySession } from './gateway-session';
 

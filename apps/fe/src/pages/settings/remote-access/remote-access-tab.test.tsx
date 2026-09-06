@@ -3,7 +3,7 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 HttpsSection / SettingsPage 测试同一套做法）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type {
   LocalAuthStatus,
   TunnelAccessMode,
@@ -11,8 +11,8 @@ import type {
   TunnelMode,
   TunnelProcessState,
   TunnelStatusResponse,
-} from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+} from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import { EXPOSURE_ACK, type ExposureState } from './exposure';
 import type { NamedDraft } from './named-step';
 import type { TunnelActions } from './tunnel-actions';
@@ -141,7 +141,7 @@ function configured(
   const base = tunnel(overrides);
   return {
     ...base,
-    config: { ...base.config, mode, hostname: mode === 'named' ? 'tmex.example.com' : null },
+    config: { ...base.config, mode, hostname: mode === 'named' ? 'vibeterm.example.com' : null },
     process: { ...base.process, state },
   };
 }
@@ -590,7 +590,7 @@ describe('Access 徽标', () => {
         ...tunnel().access,
         configured: true,
         enforceJwt: true,
-        hostname: 'tmex.example.com',
+        hostname: 'vibeterm.example.com',
         effective: true,
       },
     });
@@ -621,7 +621,7 @@ describe('Access 只读探测', () => {
       })
     );
 
-  test('控制台已覆盖：徽标与说明都不能说成 tmex 托管', () => {
+  test('控制台已覆盖：徽标与说明都不能说成 VibeTerm 托管', () => {
     status = withProbe(
       probe({ hostnameMatch: true, appId: 'app-1', teamDomain: 'team.cloudflareaccess.com' })
     );
@@ -660,14 +660,14 @@ describe('Access 只读探测', () => {
     expect(render()).not.toContain('data-testid="remote-access-access-probe-need-credentials"');
   });
 
-  test('tmex 已托管应用时不再渲染只读探测提示', () => {
+  test('VibeTerm 已托管应用时不再渲染只读探测提示', () => {
     const base = tunnel();
     status = configured('named', 'running', {
       access: {
         ...base.access,
         configured: true,
         enforceJwt: true,
-        hostname: 'tmex.example.com',
+        hostname: 'vibeterm.example.com',
         effective: true,
       },
       external: { ...base.external, externalAccess: probe({ hostnameMatch: true }) },
@@ -686,7 +686,7 @@ describe('系统隧道接管', () => {
     configPath: '/Users/me/.cloudflared/config.yml',
     tunnelId: 'd8e1f0aa-0000-4000-8000-000000000000',
     tunnelName: 'home',
-    hostnames: ['tmex.example.com'],
+    hostnames: ['vibeterm.example.com'],
     hasOriginCert: true,
     running: true,
     ...overrides,
@@ -698,7 +698,7 @@ describe('系统隧道接管', () => {
     expect(html).toContain('data-testid="remote-access-external"');
     expect(html).toContain('settings.remoteAccess.external.sourceValue.launchd');
     expect(html).toContain('home');
-    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('vibeterm.example.com');
     expect(html).toContain('settings.remoteAccess.external.runningValue.on');
     expect(html).toContain('data-testid="remote-access-external-adopt"');
     expect(html).toContain('data-testid="remote-access-external-dismiss"');
@@ -759,7 +759,7 @@ describe('系统隧道接管', () => {
     expect(html).not.toContain('data-testid="remote-access-start"');
     expect(html).not.toContain('data-testid="remote-access-stop"');
     expect(html).not.toContain('data-testid="remote-access-remove"');
-    // 运行态以探测结果为准，tmex 侧没有进程。
+    // 运行态以探测结果为准，VibeTerm 侧没有进程。
     expect(html).toContain('settings.remoteAccess.state.running');
   });
 
@@ -847,7 +847,7 @@ describe('暴露警示与确认', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       rules: [{ kind: 'email' as const, value: 'you@example.com' }],
     };
@@ -1055,7 +1055,7 @@ describe('向导步进', () => {
     expect(html).not.toContain('data-testid="remote-access-quick-start"');
   });
 
-  test('反向代理信任与随 tmex 启动两个开关都在；需要重启时给立即重启', () => {
+  test('反向代理信任与随 VibeTerm 启动两个开关都在；需要重启时给立即重启', () => {
     status = configured('quick', 'running', { restartRequired: true });
     const html = render();
     expect(html).toContain('data-testid="remote-access-trust-proxy"');
@@ -1064,7 +1064,7 @@ describe('向导步进', () => {
     expect(html).toContain('data-testid="remote-access-restart-now"');
   });
 
-  test('接管来的隧道不给「随 tmex 启动」开关', () => {
+  test('接管来的隧道不给「随 VibeTerm 启动」开关', () => {
     status = configured('named', 'stopped');
     status.config.externallyManaged = true;
     expect(render()).not.toContain('data-testid="remote-access-auto-start"');
@@ -1148,7 +1148,7 @@ describe('命名隧道', () => {
     expect(invalid).toContain('settings.remoteAccess.steps.named.hostnameInvalid');
 
     const valid = renderWizard('named', {
-      draft: namedDraft({ hostname: 'tmex.example.com' }),
+      draft: namedDraft({ hostname: 'vibeterm.example.com' }),
     });
     expect(isDisabled(valid, 'remote-access-hostname-confirm')).toBe(false);
   });
@@ -1156,7 +1156,7 @@ describe('命名隧道', () => {
   test('隧道名称非法时同样挡住下一步', () => {
     status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
     const html = renderWizard('named', {
-      draft: namedDraft({ hostname: 'tmex.example.com', tunnelName: '../../pkg' }),
+      draft: namedDraft({ hostname: 'vibeterm.example.com', tunnelName: '../../pkg' }),
     });
     expect(html).toContain('settings.remoteAccess.steps.named.tunnelNameInvalid');
     expect(isDisabled(html, 'remote-access-hostname-confirm')).toBe(true);
@@ -1165,7 +1165,7 @@ describe('命名隧道', () => {
   test('确认主机名后创建步才出现「创建并启动」', () => {
     status = tunnel({ auth: { loggedIn: true, loginUrl: null } });
     const html = renderWizard('named', {
-      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+      draft: namedDraft({ hostname: 'vibeterm.example.com', confirmed: true }),
     });
     expect(html).toContain('data-testid="remote-access-hostname-confirmed"');
     expect(html).toContain('data-testid="remote-access-hostname-edit"');
@@ -1179,7 +1179,7 @@ describe('命名隧道', () => {
       job: job({ kind: 'create', state: 'running', step: 'route_dns' }),
     });
     const html = renderWizard('named', {
-      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+      draft: namedDraft({ hostname: 'vibeterm.example.com', confirmed: true }),
     });
     expect(html).toContain('data-testid="remote-access-create-progress"');
     expect(html).toContain('settings.remoteAccess.jobStep.route_dns');
@@ -1195,7 +1195,7 @@ describe('命名隧道', () => {
       }),
     });
     const html = renderWizard('named', {
-      draft: namedDraft({ hostname: 'tmex.example.com', confirmed: true }),
+      draft: namedDraft({ hostname: 'vibeterm.example.com', confirmed: true }),
     });
     expect(html).toContain('settings.remoteAccess.errors.dns_route_failed');
   });
@@ -1204,11 +1204,11 @@ describe('命名隧道', () => {
     status = configured('named', 'running', {
       auth: { loggedIn: true, loginUrl: null },
     });
-    status.config.tunnelName = 'tmex';
+    status.config.tunnelName = 'vibeterm';
     status.config.tunnelId = 'd8e1f0aa-0000-4000-8000-000000000000';
     const html = render();
     expect(html).toContain('data-testid="remote-access-named-summary"');
-    expect(html).toContain('tmex.example.com');
+    expect(html).toContain('vibeterm.example.com');
     expect(html).toContain('d8e1f0aa-0000-4000-8000-000000000000');
     expect(html).not.toContain('data-testid="remote-access-create-submit"');
     expect(html).not.toContain('data-testid="remote-access-hostname"');
@@ -1337,7 +1337,7 @@ describe('访问控制三选一', () => {
     config: { ...base.config, accessMode },
   });
   /** 访问控制排在主机名之后：隧道还没建时要先确认主机名，这一步才轮得到。 */
-  const confirmedDraft = () => namedDraft({ hostname: 'tmex.example.com', confirmed: true });
+  const confirmedDraft = () => namedDraft({ hostname: 'vibeterm.example.com', confirmed: true });
 
   /** 选中态只看单选卡自身的 `data-selected`。 */
   function isSelected(html: string, testId: string): boolean {
@@ -1417,7 +1417,7 @@ describe('访问控制三选一', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
     };
     status = withMode(
@@ -1510,7 +1510,7 @@ describe('访问控制三选一', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
     };
 
@@ -1570,13 +1570,13 @@ describe('Cloudflare Access 区块', () => {
         ...tunnel().access,
         hasCredentials: true,
         accountId: 'acc-123',
-        teamDomain: 'tmex.cloudflareaccess.com',
+        teamDomain: 'vibeterm.cloudflareaccess.com',
       },
     });
     const html = render();
     expect(html).toContain('data-testid="remote-access-access-credentials-saved"');
     expect(html).toContain('acc-123');
-    expect(html).toContain('tmex.cloudflareaccess.com');
+    expect(html).toContain('vibeterm.cloudflareaccess.com');
     expect(html).toContain('data-testid="remote-access-access-clear-credentials"');
     expect(html).not.toContain('data-testid="remote-access-access-token"');
   });
@@ -1694,7 +1694,7 @@ describe('Cloudflare Access 区块', () => {
         configured: true,
         appId: 'app-1',
         aud: 'aud-hash',
-        hostname: 'tmex.example.com',
+        hostname: 'vibeterm.example.com',
         rules: [{ kind: 'email', value: 'you@example.com' }],
       },
     });
@@ -1769,7 +1769,7 @@ describe('Cloudflare Access 区块', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       rules: [{ kind: 'email' as const, value: 'you@example.com' }],
     };
@@ -1795,7 +1795,7 @@ describe('Cloudflare Access 区块', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       rules: [{ kind: 'email' as const, value: 'you@example.com' }],
     };
@@ -1843,7 +1843,7 @@ describe('Cloudflare Access 区块', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       rules: [{ kind: 'email' as const, value: 'you@example.com' }],
     };
@@ -1870,7 +1870,7 @@ describe('Cloudflare Access 区块', () => {
       hasCredentials: true,
       configured: true,
       enforceJwt: true,
-      hostname: 'tmex.example.com',
+      hostname: 'vibeterm.example.com',
       effective: true,
       rules: [{ kind: 'email' as const, value: 'you@example.com' }],
     };

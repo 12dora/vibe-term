@@ -1,8 +1,8 @@
 // 会话动作各域工厂共享的依赖形状与错误上报。
 
-import type { ApiClient } from '@tmex/api-client';
-import type { NotificationSink } from '@tmex/notifications';
-import { errorMessage } from '@tmex/shared';
+import type { ApiClient } from '@vibeterm/api-client';
+import type { NotificationSink } from '@vibeterm/notifications';
+import { errorMessage } from '@vibeterm/shared';
 import type { AgentHistorySync } from './agent-history-sync';
 import type { AgentGetState, AgentSetState } from './agent-state';
 

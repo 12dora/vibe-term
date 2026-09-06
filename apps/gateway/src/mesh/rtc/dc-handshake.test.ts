@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 
 // 真实 node-datachannel 的 ICE/DC 用例需要可用的本地网络候选；CI runner 没有，用环境变量跳过。
-const describeRtc = process.env.TMEX_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
-import { encodeBase64url } from '@tmex/shared/auth';
-import { LinkMux } from '@tmex/shared/link';
+const describeRtc = process.env.VIBETERM_SKIP_RTC_TESTS === '1' ? describe.skip : describe;
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { LinkMux } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { seedNodeIdentity, seedUser } from '../test-support';
@@ -256,7 +256,7 @@ describeRtc('handshakeDataChannel', () => {
       linkClosed += 1;
     });
     const muxB = new LinkMux(linkB, { role: initiator ? 'acceptor' : 'initiator' });
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       muxB.onStream(resolve)
     );
     const out = await opened;

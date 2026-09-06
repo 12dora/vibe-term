@@ -67,7 +67,7 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   await expect(page.getByTestId(`devices-node-header-${state.remoteNodeId}`)).toBeVisible();
   await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toHaveCount(0);
 
-  const deviceName = `tmex-mesh-sidebar-${Date.now()}`;
+  const deviceName = `vibeterm-mesh-sidebar-${Date.now()}`;
   const deviceId = await createDeviceOnNode(page, state, state.remoteNodeId, {
     name: deviceName,
     session: deviceName,
@@ -108,6 +108,7 @@ test('mesh: the remote node signs in silently, and survives a full page reload',
 
   // 撤掉远端 node 的会话 cookie 再整页刷新：新 document 的内存是空的，只能靠 IndexedDB 里
   // 那把不可导出的 sk_sess 恢复出会话钥再登一次——iOS PWA 每次冷启动就是这个场景。
+  // cookie 名是协议常量，沿用 tmex 时期的值以保持跨版本兼容
   await page.context().clearCookies({ name: `tmex_s_${state.remoteNodeId}` });
   expect(await nodeLoggedIn(page, state.remoteNodeId)).toBe(false);
 
@@ -124,8 +125,8 @@ test('mesh: the remote node signs in silently, and survives a full page reload',
 });
 
 test('mesh: terminal on the joined node echoes through the entry', async ({ page }) => {
-  const sessionName = `tmex-mesh-e2e-${Date.now()}`;
-  const marker = `TMEX_MESH_MARKER_${Date.now()}`;
+  const sessionName = `vibeterm-mesh-e2e-${Date.now()}`;
+  const marker = `VIBETERM_MESH_MARKER_${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   let deviceId: string | undefined;
 

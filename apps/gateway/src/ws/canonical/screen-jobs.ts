@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import type { PaneDataSegment, PaneScreenCheckpoint } from '../../tmux-client/pane-retention';
 import { copyBytes, paneKey } from './bytes';

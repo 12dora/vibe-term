@@ -1,15 +1,15 @@
 // 分享弹窗数据面：草稿、地址候选、创建/终止两个变更，以及「创建态 / 进行中态」的选择。
 
 import { useMutation, useQuery } from '@tanstack/react-query';
-import { createShare, getShareOrigins, revokeShare } from '@tmex/api-client';
-import { shareErrorKey } from '@tmex/api-client/share-errors';
+import { createShare, getShareOrigins, revokeShare } from '@vibeterm/api-client';
+import { shareErrorKey } from '@vibeterm/api-client/share-errors';
 import {
   type ShareOriginCandidate,
   type ShareRecord,
   generateSharePassword,
-} from '@tmex/shared/share';
-import { useRuntime } from '@tmex/stores/react';
-import { toast } from '@tmex/ui/toast';
+} from '@vibeterm/shared/share';
+import { useRuntime } from '@vibeterm/stores/react';
+import { toast } from '@vibeterm/ui/toast';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { SetShareDraftField } from './share-create-form';

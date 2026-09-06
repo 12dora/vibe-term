@@ -1,4 +1,4 @@
-import { decodeKeyLogRecord, encodeBase64url } from '@tmex/shared/auth';
+import { decodeKeyLogRecord, encodeBase64url } from '@vibeterm/shared/auth';
 import {
   RELAY_KEYLOG_PAGE_DEFAULT_LIMIT,
   RELAY_KEYLOG_PAGE_MAX_LIMIT,
@@ -11,7 +11,7 @@ import {
   relaySeqFromWire,
   relaySeqToWire,
   sealRelayKeyLogRecord,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { stamp } from './mesh-log';
 import type { KeyLogApplier, MeshScheduler } from './types';
 

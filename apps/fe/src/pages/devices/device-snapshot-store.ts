@@ -5,10 +5,13 @@
 // 一个小索引键记录每个节点快照的 updatedAt：条目上限 MAX_SNAPSHOTS（LRU 淘汰最旧的），
 // 写入撞上配额时先淘汰最旧的再重试一次；节点从 mesh 列表消失后由页面调用 prune 清掉。
 
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 
-const KEY_PREFIX = 'tmex:device-snapshot:';
-const INDEX_KEY = 'tmex:device-snapshot-index';
+const KEY_PREFIX = 'vibeterm:device-snapshot:';
+const INDEX_KEY = 'vibeterm:device-snapshot-index';
+// 改名前的键。快照只是离线兜底，节点在线时会立刻重建，因此不搬运，直接清掉旧的那份。
+const LEGACY_KEY_PREFIX = 'tmex:device-snapshot:';
+const LEGACY_INDEX_KEY = 'tmex:device-snapshot-index';
 export const MAX_SNAPSHOTS = 32;
 
 export interface DeviceSnapshotStorage {
@@ -48,6 +51,26 @@ export function toSnapshotDevice(device: Device): Device {
     createdAt: device.createdAt,
     updatedAt: device.updatedAt,
   };
+}
+
+/**
+ * 改名遗留的旧快照：只是离线兜底缓存，节点一在线就会整份重写，没有搬运价值，直接清掉。
+ * 旧索引列出了全部条目键，据此逐个删；索引本身读不到时旧条目就留给浏览器自己回收。
+ */
+function dropLegacyDeviceSnapshots(storage: DeviceSnapshotStorage): void {
+  try {
+    const raw = storage.getItem(LEGACY_INDEX_KEY);
+    if (raw === null) return;
+    const parsed: unknown = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      for (const nodeId of Object.keys(parsed as Record<string, unknown>)) {
+        storage.removeItem(`${LEGACY_KEY_PREFIX}${nodeId}`);
+      }
+    }
+    storage.removeItem(LEGACY_INDEX_KEY);
+  } catch {
+    // 存储不可用 / 旧索引是脏数据：残留的旧键不影响新逻辑
+  }
 }
 
 function readIndex(storage: DeviceSnapshotStorage): SnapshotIndex {
@@ -101,6 +124,7 @@ export function writeDeviceSnapshot(
   now = Date.now()
 ): void {
   if (!storage || !runtimeNodeId) return;
+  dropLegacyDeviceSnapshots(storage);
   const index = readIndex(storage);
   const payload = JSON.stringify(devices.map(toSnapshotDevice));
   const key = deviceSnapshotKey(runtimeNodeId);
@@ -160,6 +184,7 @@ export function readDeviceSnapshot(
   storage: DeviceSnapshotStorage | null = defaultStorage()
 ): Device[] | null {
   if (!storage) return null;
+  dropLegacyDeviceSnapshots(storage);
   try {
     const raw = storage.getItem(deviceSnapshotKey(runtimeNodeId));
     if (!raw) return null;

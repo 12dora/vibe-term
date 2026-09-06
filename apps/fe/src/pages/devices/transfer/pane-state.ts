@@ -3,7 +3,7 @@
 // 与目录选择器（`directory-picker-modal.tsx`）同一套写法：交互全部收敛成纯 reducer，
 // 无 DOM 的单测直接对它断言；区别是这里要列文件 + 目录，并支持复选框多选与 shift 区间选择。
 
-import type { FileEntryDto } from '@tmex/shared';
+import type { FileEntryDto } from '@vibeterm/shared';
 
 export interface TransferPaneState {
   /** 运行时 node id（`self` 或 32 位 hex）；未选为 null。 */

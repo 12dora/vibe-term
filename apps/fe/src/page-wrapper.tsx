@@ -5,10 +5,10 @@
 import { PageLoadFallback } from '@/PageLoadFallback';
 import { Brand } from '@/components/brand';
 import { type PageModuleLoader, usePageModule } from '@/use-page-module';
-import { cn } from '@tmex/ui';
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
-import { Separator } from '@tmex/ui/separator';
-import { SidebarTrigger, useSidebar } from '@tmex/ui/sidebar';
+import { cn } from '@vibeterm/ui';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
+import { Separator } from '@vibeterm/ui/separator';
+import { SidebarTrigger, useSidebar } from '@vibeterm/ui/sidebar';
 import { useTranslation } from 'react-i18next';
 import { useParams } from 'react-router';
 
@@ -78,7 +78,7 @@ export function PageWrapper({
           key={animateContent ? state.status : undefined}
           className={cn(
             'bg-muted/50 min-h-0 flex-1 overflow-auto overscroll-auto rounded-xl [-webkit-overflow-scrolling:touch]',
-            animateContent && 'tmex-reveal'
+            animateContent && 'vibeterm-reveal'
           )}
         >
           {state.status === 'error' ? <PageLoadFallback onRetry={retry} /> : Page ? <Page /> : null}

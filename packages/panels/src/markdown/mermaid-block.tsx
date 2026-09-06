@@ -1,6 +1,6 @@
-import { errorMessage } from '@tmex/shared';
-import { useUIStore } from '@tmex/stores/react';
-import { THEME_PRESET_META } from '@tmex/theme';
+import { errorMessage } from '@vibeterm/shared';
+import { useUIStore } from '@vibeterm/stores/react';
+import { THEME_PRESET_META } from '@vibeterm/theme';
 import { useEffect, useId, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 

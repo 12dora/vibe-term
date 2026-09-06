@@ -11,8 +11,8 @@
 // ——每个 node 一个 QueryClient，N 个离线 node 就是 N 条注定失败的 `/api/devices`。
 
 import { QueryClientProvider } from '@tanstack/react-query';
-import { useNodeRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
+import { useNodeRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
 import type { ReactNode } from 'react';
 
 import { GlobalDeviceProvider } from '@/components/global-device-provider';

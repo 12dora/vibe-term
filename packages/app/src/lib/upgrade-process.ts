@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
-import { readFileSync, realpathSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
+import { createServer } from 'node:net';
 import { basename, join } from 'node:path';
 import { parsePidFileRecord } from '../../../shared/src/process/pid-file';
 import { processCommandLine } from '../../../shared/src/process/process-identity';
 import { t } from '../i18n';
+import { readEnvFile } from './env-file';
 import { writeTextAtomic } from './fs-utils';
 import { isPidAlive, processStartIdentity } from './upgrade-lock';
 
@@ -169,8 +171,15 @@ export function readPidRecord(pidPath: string): PidRecord | null {
   }
 }
 
+/**
+ * 新 run.sh 写 `vibeterm.pid`；升级过程中服务可能还是改名前的 run.sh（写 `tmex.pid`），
+ * 新文件不存在时回退到旧名，否则会认不出正在运行的实例。
+ */
 export function pidFilePath(installDir: string): string {
-  return join(installDir, 'tmex.pid');
+  const current = join(installDir, 'vibeterm.pid');
+  if (existsSync(current)) return current;
+  const legacy = join(installDir, 'tmex.pid');
+  return existsSync(legacy) ? legacy : current;
 }
 
 export function assertOwnedInstallProcess(opts: {
@@ -215,6 +224,59 @@ export function hasOwnedLivePidFile(installDir: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+/** 端口还有没有人在听：能 bind 上就说明没有。 */
+export async function isPortBusy(port: number, host = '127.0.0.1'): Promise<boolean> {
+  return await new Promise<boolean>((resolve) => {
+    const server = createServer();
+    server.once('error', () => resolve(true));
+    server.listen({ port, host, exclusive: true }, () => {
+      server.close(() => resolve(false));
+    });
+  });
+}
+
+export type ServiceReleaseProbes = {
+  portBusy?: (port: number, host: string) => Promise<boolean>;
+  ownedAlive?: (installDir: string) => boolean;
+};
+
+/** 端口迟迟不放开时最多再等这么久，然后只警告不失败 */
+export const PORT_RELEASE_GRACE_MS = 5_000;
+
+/**
+ * `launchctl bootout` / `systemctl stop` 可能先于进程真正退出返回。**硬条件**是自己的 pid 必须
+ * 死透（服务是否还挂在管理器里由调用方先行确认）；端口释放只是尽力而为——端口可能被别的进程占着，
+ * 那不该让停服流程失败，更不该因此拒绝回退迁移，只记一条警告，后面的健康检查自会暴露问题。
+ */
+export async function waitForServiceRelease(opts: {
+  installDir: string;
+  timeoutMs: number;
+  probes?: ServiceReleaseProbes;
+  log?: (message: string) => void;
+  portGraceMs?: number;
+}): Promise<void> {
+  const ownedAlive = opts.probes?.ownedAlive ?? hasOwnedLivePidFile;
+  await waitUntil(
+    () => !ownedAlive(opts.installDir),
+    opts.timeoutMs,
+    t('upgrade.serviceDidNotStop', { timeout: opts.timeoutMs })
+  );
+
+  const env = await readEnvFile(join(opts.installDir, 'app.env')).catch(() => null);
+  const port = Number.parseInt(env?.GATEWAY_PORT ?? '', 10);
+  if (!Number.isFinite(port) || port <= 0) return;
+  const host = env?.VIBETERM_BIND_HOST || '127.0.0.1';
+  const portBusy = opts.probes?.portBusy ?? isPortBusy;
+  const grace = Math.max(0, Math.min(opts.portGraceMs ?? PORT_RELEASE_GRACE_MS, opts.timeoutMs));
+  try {
+    await waitUntil(async () => !(await portBusy(port, host)), grace);
+  } catch {
+    (opts.log ?? console.warn)(
+      `[vibeterm] port ${port} is still in use after the service stopped; continuing`
+    );
   }
 }
 

@@ -2,10 +2,10 @@
 // 避免整棵树跟着 snapshots 这张大表在每次 metadata patch 上重渲染。
 // 返回值要么是原始值，要么是 store 里原样透出的引用，故无需额外的相等性比较。
 
-import type { Device, LocaleCode, StateSnapshotPayload, TmuxWindow } from '@tmex/shared';
-import { toBCP47 } from '@tmex/shared';
-import { isSidebarDeviceVisible } from '@tmex/stores';
-import { useTmuxStore } from '@tmex/stores/react';
+import type { Device, LocaleCode, StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
+import { toBCP47 } from '@vibeterm/shared';
+import { isSidebarDeviceVisible } from '@vibeterm/stores';
+import { useTmuxStore } from '@vibeterm/stores/react';
 import { useCallback } from 'react';
 
 export interface DeviceSnapshotSlice {
@@ -53,7 +53,7 @@ export function useDeviceOnline(deviceId: string): boolean {
 
 /**
  * 侧边栏该展示哪些设备：远端 node 的设备默认隐藏，由「管理设备」逐台开启（可见性规则见
- * `@tmex/stores` 的 `isSidebarDeviceVisible`）。
+ * `@vibeterm/stores` 的 `isSidebarDeviceVisible`）。
  *
  * 当前路由选中的那台**无条件保留**：从「管理设备」点进一台未开启显示的远端设备后，
  * 侧边栏若把它一并滤掉，用户既看不到它、也没有窗口 / pane 树可点。

@@ -5,7 +5,7 @@ import {
   encodeKeyLogRecord,
   encodeSetRelaysPayload,
   genesisHead,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import { planKeyLogAppend } from './auth-key-log-routes';
 
 function recordBytes(type: 'readmit-node' | 'admit-node' | 'set-relays'): Uint8Array {

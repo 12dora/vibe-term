@@ -1,7 +1,7 @@
 // 「允许聊天指令」徽标：仅在开启时出现，文案取自源 locale JSON（不依赖生成的 resources）。
 
 import { describe, expect, test } from 'bun:test';
-import zhCN from '@tmex/shared/i18n/locales/zh_CN.json';
+import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

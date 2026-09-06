@@ -79,19 +79,19 @@ describe('display helpers 应用归一', () => {
 
 describe('buildBrowserTitle', () => {
   test('无标签时站点名同样归一', () => {
-    const restore = setSiteFallbackReader(() => ({ siteName: '✳ tmex' }));
+    const restore = setSiteFallbackReader(() => ({ siteName: '✳ VibeTerm' }));
     try {
-      expect(buildBrowserTitle(null)).toBe(`✳${VS15} tmex`);
-      expect(buildBrowserTitle('   ')).toBe(`✳${VS15} tmex`);
+      expect(buildBrowserTitle(null)).toBe(`✳${VS15} VibeTerm`);
+      expect(buildBrowserTitle('   ')).toBe(`✳${VS15} VibeTerm`);
     } finally {
       restore();
     }
   });
 
   test('带标签时站点名与标签都归一', () => {
-    const restore = setSiteFallbackReader(() => ({ siteName: '✳ tmex' }));
+    const restore = setSiteFallbackReader(() => ({ siteName: '✳ VibeTerm' }));
     try {
-      expect(buildBrowserTitle('✴ vim')).toBe(`[✳${VS15} tmex]✴${VS15} vim`);
+      expect(buildBrowserTitle('✴ vim')).toBe(`[✳${VS15} VibeTerm]✴${VS15} vim`);
     } finally {
       restore();
     }

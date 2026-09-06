@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { SiteSettings } from '@tmex/shared';
+import type { SiteSettings } from '@vibeterm/shared';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
@@ -13,7 +13,7 @@ const { useSiteStore, useUIStore } = await import('./default-runtime');
 
 function makeSiteSettings(overrides: Partial<SiteSettings> = {}): SiteSettings {
   return {
-    siteName: 'tmex',
+    siteName: 'VibeTerm',
     siteUrl: 'http://localhost',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,

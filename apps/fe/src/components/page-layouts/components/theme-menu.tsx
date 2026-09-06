@@ -1,14 +1,14 @@
 // 侧边栏主题选择菜单：Light / Dark 切站点外观（服务端同步），其余项为主题预设（本地持久化）。
 // 两类取值共用一个 radio group，故预设 id 之外用 `appearance:` 前缀区分默认外观项。
 
-import { useSiteStore, useUIStore } from '@tmex/stores/react';
+import { useSiteStore, useUIStore } from '@vibeterm/stores/react';
 import {
   THEME_PRESETS,
   THEME_PRESET_META,
   type ThemeAppearance,
   type ThemePreset,
   type ThemePresetMeta,
-} from '@tmex/theme';
+} from '@vibeterm/theme';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,8 +16,8 @@ import {
   DropdownMenuRadioItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { IconTooltip } from '@tmex/ui/icon-tooltip';
+} from '@vibeterm/ui/dropdown-menu';
+import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { Moon, Palette, Sun } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 

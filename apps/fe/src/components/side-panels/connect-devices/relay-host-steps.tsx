@@ -4,7 +4,7 @@
 // 第三步不能省：租户编号是本机接入这条中继之后才有的，没有它，新机器拿到的 relay join 命令
 // 只能是带占位符的半成品。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { isRelayRole } from './connect-path';

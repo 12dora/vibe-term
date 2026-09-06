@@ -32,7 +32,7 @@ describe('parseStrictSinglePemCertificate', () => {
 
 describe('parseAndValidateCaPem', () => {
   test('accepts a real CA and returns canonical PEM plus SPKI fingerprint', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const parsed = await parseAndValidateCaPem(`\n${ca.certPem}\n`);
     expect(parsed.canonicalPem).toContain('BEGIN CERTIFICATE');
     expect(parsed.fingerprint).toBe(await spkiFingerprint(ca.certPem));
@@ -40,7 +40,7 @@ describe('parseAndValidateCaPem', () => {
   });
 
   test('rejects a non-CA leaf even when the PEM is well-formed', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const leaf = await issueLeaf({ ca, sans: ['127.0.0.1'], days: 1 });
     await expect(parseAndValidateCaPem(leaf.certPem)).rejects.toThrow(/not a CA/);
   });

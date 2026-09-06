@@ -1,7 +1,7 @@
 // 非标端口探测：80/443 被封锁时，Hub / 中继会架在高位端口上，而用户手里往往只有一个不带端口的地址。
 //
 // 这里只做两件事：给出内置的高位端口候选表，以及按候选表探一遍找出真正在监听的那个端口。
-// 模块必须保持浏览器安全（不引 `node:*`）：前端 bundle 会带上 `@tmex/shared/net`。
+// 模块必须保持浏览器安全（不引 `node:*`）：前端 bundle 会带上 `@vibeterm/shared/net`。
 // 探测本身仍只在 Bun 侧执行——浏览器跨域打不到 `/api/relay/health`。
 
 import { canonicalHubUrl } from '../auth/hub-url';

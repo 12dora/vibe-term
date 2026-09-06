@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { AuthenticationResponseJSON } from '@tmex/api-client/auth/index';
+import type { AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index';
 import {
   bytesEqual,
   decodeKeyLogRecord,
@@ -11,7 +11,7 @@ import {
   rootKeyFromSeed,
   sha256,
   verifyKeyLogRecord,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   buildRemovePasskeyRecord,
   buildRotateRootKeepRecord,

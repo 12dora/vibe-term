@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
-  TMEX_SERVER_EPOCH_OPTION,
+  LEGACY_SERVER_EPOCH_OPTION,
   type TmuxCommandResult,
+  VIBETERM_SERVER_EPOCH_OPTION,
   decodeServerEpoch,
   ensureStableServerEpoch,
 } from './server-epoch';
@@ -38,9 +39,29 @@ describe('stable tmux server epoch', () => {
       Array.from(decodeServerEpoch(SECOND))
     );
     expect(commands).toEqual([
-      ['show-options', '-gqv', TMEX_SERVER_EPOCH_OPTION],
-      ['set-option', '-gq', '-o', TMEX_SERVER_EPOCH_OPTION, FIRST],
-      ['show-options', '-gqv', TMEX_SERVER_EPOCH_OPTION],
+      ['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION],
+      ['show-options', '-gqv', LEGACY_SERVER_EPOCH_OPTION],
+      ['set-option', '-gq', '-o', VIBETERM_SERVER_EPOCH_OPTION, FIRST],
+      ['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION],
+    ]);
+  });
+
+  test('1.x 升上来的服务端：旧选项值搬到新名并删掉旧值，epoch 不变', async () => {
+    const commands: string[][] = [];
+    const runner = async (argv: string[]): Promise<TmuxCommandResult> => {
+      commands.push(argv);
+      if (argv[0] === 'show-options' && argv[2] === LEGACY_SERVER_EPOCH_OPTION) return ok(FIRST);
+      return ok();
+    };
+
+    expect(Array.from(await ensureStableServerEpoch(runner, SECOND))).toEqual(
+      Array.from(decodeServerEpoch(FIRST))
+    );
+    expect(commands).toEqual([
+      ['show-options', '-gqv', VIBETERM_SERVER_EPOCH_OPTION],
+      ['show-options', '-gqv', LEGACY_SERVER_EPOCH_OPTION],
+      ['set-option', '-gq', '-o', VIBETERM_SERVER_EPOCH_OPTION, FIRST],
+      ['set-option', '-gqu', LEGACY_SERVER_EPOCH_OPTION],
     ]);
   });
 
@@ -54,7 +75,7 @@ describe('stable tmux server epoch', () => {
     expect(writes).toBe(0);
 
     await expect(ensureStableServerEpoch(async () => ok('not-an-epoch'), SECOND)).rejects.toThrow(
-      `invalid ${TMEX_SERVER_EPOCH_OPTION} value`
+      `invalid ${VIBETERM_SERVER_EPOCH_OPTION} value`
     );
   });
 });

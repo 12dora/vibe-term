@@ -5,13 +5,14 @@ import {
   nodeIdToHex,
   verifyEd25519,
   verifyNodeCertificate,
-} from '@tmex/shared/auth';
-import { readJsonObjectBody } from '@tmex/shared/http';
+} from '@vibeterm/shared/auth';
+import { readJsonObjectBody } from '@vibeterm/shared/http';
+import { RELAY_TOKEN_HEADER, readHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import {
   RELAY_ENROLL_PROOF_MAX_SKEW_MS,
   relaySeqToWire,
   verifyRelayEnrollProof,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { decodeB64url, requireB64url } from '../api/route-input';
 import { encodeRedeemPopMessage } from '../hub/redeem-pop';
 import type { RelayConfigStore } from './relay-config-store';
@@ -31,7 +32,7 @@ import type { RelayTenantStore } from './relay-tenant-store';
 import type { RelayUplinkServer } from './relay-uplink-server';
 import type { RelayEnrollmentRecord, RelayTenantRecord } from './types';
 
-export const RELAY_TOKEN_HEADER = 'x-tmex-relay-token';
+export { RELAY_TOKEN_HEADER };
 
 export type RelayPublicRoutesDeps = {
   tenants: RelayTenantStore;
@@ -189,7 +190,7 @@ export function authenticateRelayTenant(
   req: Request,
   tenantId: string
 ): RelayTenantRecord | Response {
-  const presented = req.headers.get(RELAY_TOKEN_HEADER)?.trim();
+  const presented = readHeaderPair(req.headers, RELAY_TOKEN_HEADER)?.trim();
   if (!presented) return relayError(RelayErrorCode.unauthorized, 401);
   const tenant = deps.tenants.get(tenantId);
   if (!tenant) return relayError(RelayErrorCode.tenantNotFound, 404);

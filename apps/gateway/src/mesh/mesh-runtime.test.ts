@@ -6,8 +6,8 @@ import {
   encodeCertificate,
   hexToBytes,
   randomBytes,
-} from '@tmex/shared/auth';
-import { WebSocketLink } from '@tmex/shared/link';
+} from '@vibeterm/shared/auth';
+import { WebSocketLink } from '@vibeterm/shared/link';
 import {
   KeyLogStore,
   NodeIdentityStore,

@@ -1,7 +1,7 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { createDevice, ensureSiteSettingsInitialized } from '../db';
 import {
@@ -218,7 +218,7 @@ beforeAll(() => {
     id: TEST_DEVICE_ID,
     name: 'supervisor-test-device',
     type: 'local',
-    session: 'tmex-test',
+    session: 'vibeterm-test',
     authMode: 'agent',
     port: 22,
     sortOrder: 0,
@@ -850,7 +850,7 @@ describe('AgentSupervisor - stop 语义', () => {
       id: OTHER_DEVICE_ID,
       name: 'other-device',
       type: 'local',
-      session: 'tmex-test',
+      session: 'vibeterm-test',
       authMode: 'agent',
       port: 22,
       sortOrder: 0,

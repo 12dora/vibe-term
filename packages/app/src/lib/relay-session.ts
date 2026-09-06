@@ -122,7 +122,7 @@ async function resolveTotp(
   const user = ctx.userStore.getById(input.userId);
   if (!user) throw new Error('user missing');
   const code =
-    io.totpCode ?? (await promptPassword('TOTP code', { envKey: 'TMEX_TOTP', confirm: false }));
+    io.totpCode ?? (await promptPassword('TOTP code', { envKey: 'VIBETERM_TOTP', confirm: false }));
   if (!code) throw new Error('TOTP code cannot be empty');
   return { code, kTotp: deriveTotpKey(input.rootKey.seed, user.id, user.rootEpoch) };
 }

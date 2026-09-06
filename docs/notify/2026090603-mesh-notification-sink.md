@@ -2,11 +2,11 @@
 
 ## 背景
 
-通知在 tmex 里一直是**严格按机器**发的：`EventNotifier`（`apps/gateway/src/events/index.ts`）
+通知在 VibeTerm 里一直是**严格按机器**发的：`EventNotifier`（`apps/gateway/src/events/index.ts`）
 把事件扇出给 webhook / telegram / 微信 / ws 广播四个渠道，四者读的全是**本机**表。
 hub 只复制节点表、证书和密钥日志，通知配置不在其中。结果是 hub A + 节点 B/C 的部署里，
 用户只在 A 上配了 bot，就永远收不到 B/C 的响铃、watch 命中和设备掉线。
-（审计详见 `prompt-archives/2026090603-round31-mesh-notifications/sub/EX6-notifications-mesh-report.md`）
+
 
 唯一的例外是远端 agent 会话：它由**发起机**的 `AgentSupervisor` 拥有，`agent_*` 事件走发起机
 的渠道，并在 `payload.nodeId/nodeName` 上打了来源节点；`events/channels/pane-url.ts` 据此把深链
@@ -156,7 +156,7 @@ POST /api/mesh-internal/notifications
 ## 安全边界
 
 - 投递只走对端链路，标记由 `acceptHttpStream` 按**已认证的对端身份**写入，浏览器侧的
-  `x-tmex-mesh-peer` 头在入口就被 `stripMeshPeerMarkerFromRequest` 剥掉，伪造不进来。
+  `x-vibeterm-mesh-peer` 头在入口就被 `stripMeshPeerMarkerFromRequest` 剥掉，伪造不进来。
 - 汇聚机独立判据：即便来源节点声称对方是汇聚机，只要本机没签过声明或开关没打开就回 404。
 - 通知文案里的节点名由汇聚机按对端标记自己查，`origin.nodeName` 不采信：发送方伪造不了
   别人的名字，也塞不进任意文本。

@@ -8,9 +8,12 @@
 // 崩掉／代理超时），这时记号既不能立刻清掉（重启真的发生了就该接力），也不能永远留着
 // ——否则几天后一次无关的「退出 mesh」会把这条陈旧记号消费掉，莫名其妙地打开旧向导。
 
-import type { SetupRelayRole } from '@tmex/api-client/local/types';
+import type { SetupRelayRole } from '@vibeterm/api-client/local/types';
+import { migrateStorageKey } from '@vibeterm/stores';
 
-export const SETUP_INTENT_KEY = 'tmex.setup.intent';
+export const SETUP_INTENT_KEY = 'vibeterm.setup.intent';
+/** 改名前的键，读取前搬运 */
+const LEGACY_SETUP_INTENT_KEY = 'tmex.setup.intent';
 
 /** 记号保质期：一次退出 + 重启的量级是几十秒，10 分钟已经足够宽松。 */
 export const SETUP_INTENT_TTL_MS = 10 * 60 * 1000;
@@ -97,6 +100,7 @@ export function takeSetupIntent(
   storage: IntentStorage | null = browserIntentStorage(),
   now: number = Date.now()
 ): SetupIntentRecord | null {
+  migrateStorageKey(storage, LEGACY_SETUP_INTENT_KEY, SETUP_INTENT_KEY);
   let raw: string | null = null;
   try {
     raw = storage?.getItem(SETUP_INTENT_KEY) ?? null;

@@ -1,12 +1,12 @@
-# tmex hub / node 多节点架构设计
+# VibeTerm hub / node 多节点架构设计
 
-状态：详细设计 v3.2（v3.1 + 二次审查 `design-review-02.md` 修正：admit 绑定本地 pending、临时钥只能登录、TOTP 判定从 delegation 导出、opaque sid + 7 天绝对上限、本机 `reset-root` 恢复、transcript 规范排序、指纹/WebAuthn/Borsh 细节）。v1 与需求方确认 §1–§5；v2 改为 mesh（任意 node 都是入口、自动发现、hub 不可达时内网直连）；v3 按"**任意点失陷（含 hub）只影响该点**"重做鉴权：hub 不再是信任根，用户身份为用户自持密钥（密码派生 Ed25519 + passkey），移除 OIDC；v3.1 吸收 codex 对 v3 的审查（用户签发的节点证书链、浏览器临时钥、DTLS 指纹绑定、SecureChannel 会话密钥、根轮换 epoch、响应头 sandbox、18 小时滑动会话）。审查记录：`design-review-00.md`、`security-review-01.md`、`design-review-01.md`（均位于 `prompt-archives/2026082701-hub-multinode-design/`）。
+状态：详细设计 v3.2（v3.1 + 二次审查 `design-review-02.md` 修正：admit 绑定本地 pending、临时钥只能登录、TOTP 判定从 delegation 导出、opaque sid + 7 天绝对上限、本机 `reset-root` 恢复、transcript 规范排序、指纹/WebAuthn/Borsh 细节）。v1 与需求方确认 §1–§5；v2 改为 mesh（任意 node 都是入口、自动发现、hub 不可达时内网直连）；v3 按"**任意点失陷（含 hub）只影响该点**"重做鉴权：hub 不再是信任根，用户身份为用户自持密钥（密码派生 Ed25519 + passkey），移除 OIDC；v3.1 吸收 codex 对 v3 的审查（用户签发的节点证书链、浏览器临时钥、DTLS 指纹绑定、SecureChannel 会话密钥、根轮换 epoch、响应头 sandbox、18 小时滑动会话）。审查记录：`design-review-00.md`、`security-review-01.md`、`design-review-01.md`（均位于）。
 
 ## 背景
 
-现有 tmex 的"多设备"是 gateway 通过 SSH 主动连接远程主机（`DeviceType = local | ssh`），要求 gateway 能直达目标地址。用户当前以 Cloudflare Tunnel 暴露单机，一个域名只能对应一台机器，内网多台设备无法在单一入口管理。同时 gateway 没有任何应用层鉴权（依赖网络边界）。
+现有 VibeTerm 的"多设备"是 gateway 通过 SSH 主动连接远程主机（`DeviceType = local | ssh`），要求 gateway 能直达目标地址。用户当前以 Cloudflare Tunnel 暴露单机，一个域名只能对应一台机器，内网多台设备无法在单一入口管理。同时 gateway 没有任何应用层鉴权（依赖网络边界）。
 
-**设计当时（2026-08）的代码事实**，非当前实现（详见 `prompt-archives/2026082701-hub-multinode-design/explore-multidevice-result.md`）；其中的 legacy 终端消息已在 1.1.23 整体下线，改由 canonical 承担：
+**设计当时（2026-08）的代码事实**，非当前实现；其中的 legacy 终端消息已在 1.1.23 整体下线，改由 canonical 承担：
 
 - 浏览器 ↔ gateway 只有一条 Borsh 二进制 WebSocket，按 `deviceId` 多路复用；REST 与 WS 都在 gateway 本地解析设备并调用 runtime。浏览器终端走 `TERM_OUTPUT / TERM_HISTORY / SWITCH_ACK / LIVE_RESUME` 等旧终端消息；canonical 协议（`CANONICAL_COMMAND/EVENT`）仅服务端实现，前端未采用。
 - Borsh envelope 的 `seq` 是每个 socket 独立的计数器，接收端不校验连续性，不能用于跨传输去重。
@@ -15,7 +15,7 @@
 - WS handler 对 socket 的依赖：`send()` 返回值、`getBufferedAmount()`、drain 回调、`close/terminate`、`ws.data.borshState`，且以 socket 对象身份作为多处 Map 的键（`ws/index.ts:82`、`ws/types.ts:19`、`websocket-send-guard.ts`）。
 - 前端：只有 tmux 状态按 `deviceId` 分区；agent 订阅按 sessionId、文件树按 `rootId+path`。但 `createGatewayConnection` + 可注入 `ApiClient` + `createAppRuntime` + `RuntimeProvider` 已构成"每个 gateway 一套运行时"的隔离边界（`packages/stores/src/app-runtime.ts:23`、`react.tsx:17`）。文件媒体/下载 URL 由 `packages/api-client/src/file-urls.ts` 拼出未加前缀的 `/api/files/*`，部分设置页直接调用全局 `fetch('/api/...')`。
 - 文件上传是 `init → 顺序 HTTP PUT 分块（8 MiB）→ commit（NDJSON）`，下载是 `prepare（NDJSON）→ HTTP 流`，依赖 `Request.signal` / 响应流取消来终止 rsync 与清理临时文件（`apps/gateway/src/api/files.ts`）。
-- 打包产物是单文件 `runtime/server.js`，安装目录无 `node_modules`；tmex-cli 1.0.2 tarball 20.7 MB；安装布局（`packages/app/src/lib/install-layout.ts`）无 native 目录。
+- 打包产物是单文件 `runtime/server.js`，安装目录无 `node_modules`；vibeterm-cli 1.0.2 tarball 20.7 MB；安装布局（`packages/app/src/lib/install-layout.ts`）无 native 目录。
 
 ## 目标
 
@@ -26,7 +26,7 @@
 5. hub 在境外、用户与设备在境内的场景下，**尽量直连**以降低延迟；复杂 NAT 下多级穿透，最终兜底 hub 中转。
 6. hub 可同时作为一台设备使用（同进程双角色）。
 7. hub 不可达时，设备本地仍可登录使用，且同内网的 node 之间仍可互相操作。
-8. tmex-cli 包体积基本不变；hub 与 node 同一个包、同一套升级流程。
+8. vibeterm-cli 包体积基本不变；hub 与 node 同一个包、同一套升级流程。
 9. 未加入 hub 的 standalone 安装行为不变。
 
 ## 已确认的取舍
@@ -42,17 +42,17 @@
 | 会话 | 浏览器临时钥 18 小时（只能登录）；`node-session` 18 小时滑动续期，绝对上限 7 天 |
 | OIDC | 移除 |
 | hub 兼设备 | hub 角色**总是**与 node 角色同进程（`hub,node`），不再有纯 hub 角色 |
-| hub 部署 | `npx tmex-cli init --role hub,node`，systemd/launchd + SQLite |
+| hub 部署 | `vibeterm init --role hub,node`，systemd/launchd + SQLite |
 | WebRTC 依赖 | `node-datachannel` 的 JS 层内联进 runtime，`.node` 二进制按平台在安装期按需下载到 `<installDir>/native/` |
 | 文件传输 | 直连 `bulk` 流，失败回落中转（v1 失败即整体重传） |
-| UI 壳 | 不引入 EasyUI，沿用 tmex 现有 UI 体系 |
+| UI 壳 | 不引入 EasyUI，沿用 VibeTerm 现有 UI 体系 |
 | 直连承载范围 | 直连是同一逻辑 WS 会话的第二条载体（§3），不迁移会话 |
 | node 离线展示 | 每个 node 缓存清单，离线时灰显其设备 |
 | 直连支持平台（v1） | macOS arm64 / x64，Linux glibc x64 / arm64；musl、Windows 不在 v1 |
 
 ## §1 总体拓扑
 
-**核心决策：每台机器仍运行完整的 tmex gateway，并且都是完整入口。hub 不接管业务、不参与登录，只做节点注册表、清单广播、WebRTC 信令与兜底中转（只搬密文）。**
+**核心决策：每台机器仍运行完整的 VibeTerm gateway，并且都是完整入口。hub 不接管业务、不参与登录，只做节点注册表、清单广播、WebRTC 信令与兜底中转（只搬密文）。**
 
 术语：mesh 中的一台机器称 **node**（一个 gateway 实例）；node 内部仍是现有 `local` / `ssh` device。用户当前打开的那个 node 称 **entry**。UI 把所有 node 的 device 拍平显示（带 node 徽标），路由 `/n/:nodeId/devices/:deviceId`；`nodeId = self` 表示 entry 自身。
 
@@ -77,7 +77,7 @@
 
 peer link 传输选择（自动，按序）：
 
-1. **内网 / v6 / 公网直达**：目标 node 的 **peer 监听端口**（`TMEX_PEER_PORT`，默认 39001，绑定 `0.0.0.0` / `::`）只承载 **签名信令**（明文 WS）；数据面走 node↔node WebRTC DataChannel（DTLS 加密、ICE host 候选零跳）。hub 不可达时这是唯一路径，地址来自 `peer_cache`。
+1. **内网 / v6 / 公网直达**：目标 node 的 **peer 监听端口**（`VIBETERM_PEER_PORT`，默认 39001，绑定 `0.0.0.0` / `::`）只承载 **签名信令**（明文 WS）；数据面走 node↔node WebRTC DataChannel（DTLS 加密、ICE host 候选零跳）。hub 不可达时这是唯一路径，地址来自 `peer_cache`。
 2. **hub 信令 + ICE**：peer 端口不可达时，信令经 hub `ctl` 流转发，ICE 走 STUN / v6 / TURN。
 3. **hub relay**：ICE 失败或任一端 `direct_capable=false`，经 hub `relay` 流中转（`SecureChannel` 加密）。
 
@@ -95,6 +95,10 @@ peer link 传输选择（自动，按序）：
 
 ### 规范编码（所有签名对象共用）
 
+> **线上标识在 2.0.0 已改名，混合版本期双发双读。** `x-vibeterm-*` 头与 `vibeterm_s_*` / `vibeterm_sh_*` cookie 是 2.0 起的正式名；发送方同时写出 tmex 时期的 `x-tmex-*` / `tmex_s_*` / `tmex_sh_*`，读取方新名优先、回退旧名，转发规则与帧白名单两种前缀都认。全网升到 ≥ 2.0 后删旧的一侧。定义处见 `packages/shared/src/http/mesh-headers.ts`，迁移全貌见 [改名迁移](../release/2026090607-rename-vibeterm.md)。
+
+> **`tmex/…` 域串是永久冻结的协议常量。** 产品在 2.0.0 由 tmex 改名 VibeTerm，但所有签名 / HKDF 域串（`tmex/delegation/v1`、`tmex/login/v1`、`tmex/enroll/v1`、`tmex/nodecert/v1`、`tmex/keylog/v1`、`tmex/peer/v1`、`tmex/hub-enroll/v1`、`tmex/uplink-auth/v1`、`tmex/relay-enroll/v1`、`tmex/redeem-pop/v1`、`tmex-sc/v1/`、`tmex-relay-wrap/v1`、`tmex-relay/`、`tmex-relay-pack/v1`、`tmex-totp`、`tmex-release-sig`）保持原值不变：它们已经进了持久化的 `user_key_log`、节点证书与已发布的签名文件，改一个字节就等于让全网历史记录验不过。线上标识（`x-vibeterm-*` 头、`vibeterm_s_*` / `vibeterm_sh_*` cookie、tmux 选项名）另有迁移方案，见 [改名迁移](../release/2026090607-rename-vibeterm.md)。
+
 - 签名对象一律用 **Borsh** 固定 schema 编码（复用 `packages/shared/src/ws-borsh` 的编解码器），字段顺序固定、字符串带长度前缀，不存在拼接歧义。每个对象第一个字段为 `domain: string`（如 `tmex/login/v1`），防跨用途重放。
 - 密码：UTF-8，NFKC 归一化后再送 KDF。
 - KDF：`hash-wasm` argon2id，`memorySize=65536`（KiB）、`iterations=3`、`parallelism=1`、`hashLength=32`、Argon2 v0x13，salt 随机 16 字节。输出即 `seed`。
@@ -109,7 +113,7 @@ peer link 传输选择（自动，按序）：
 - **浏览器临时钥（session key）**：登录时浏览器生成一把内存 Ed25519 `sk_sess`，由根钥或 passkey 签发**授权**：`delegation = {domain:'tmex/delegation/v1', uid, sess_pk, issued_at, exp = issued_at + 18h, method:'root'|'passkey', credential_id?}`；根钥直接签；passkey 路径：entry 先给出 authentication options（`challenge = sha256(borsh(delegation))`、`rpId`、`allowCredentials`、`userVerification:'required'`），浏览器 `startAuthentication({optionsJSON})`，得到的 assertion（`clientDataJSON / authenticatorData / signature`）整体作为 `delegation_sig`。之后对每台 node 的登录挑战都由 `sk_sess` 签，只需**一次**密码输入或一次 passkey 交互。**`sk_sess` 只能用于登录，不能签任何 `user_key_log` 记录**；持久变更（加/删 passkey、TOTP、admit/revoke node、改密）一律要求根钥或 passkey 对该条记录做一次专用 assertion（UI 在这些操作时再要一次密码或 passkey）。`sk_sess` 的**私钥字节**在任何形态下都不出浏览器密钥库：环境支持 WebCrypto Ed25519 时它是一把不可导出的 `CryptoKey`，连同 `delegation` 存进 IndexedDB，在 18 小时 TTL 内跨 document 有效（见「会话钥的跨文档持久化（PWA 冷启动）」）；不支持时退回 `@noble` 原始私钥并只留内存、页面关闭即失。cookie 中的 `node-session` 让刷新页面不必重新登录。
 - **密钥变更日志 `user_key_log`**：记录 = Borsh 编码的 `{domain:'tmex/keylog/v1', uid, seq: u64, prev_hash: [u8;32], root_epoch: u32, type, payload, signer:'root'|'passkey', credential_id?}`，`sig` 覆盖整条编码字节；`hash = sha256(记录字节 ‖ sig)`；数据库保存**原始 Borsh 字节与 sig**（`record_bytes`、`sig`），JSON 仅作只读投影。type ∈ `add-passkey | remove-passkey | rotate-root | set-totp | clear-totp | admit-node | revoke-node`。验签规则：记录外层 `root_epoch` = 应用它时的当前 epoch；`signer = root` 用当前 `root_public_key` 验，`signer = passkey` 用 `user_keys` 中该 credential 的公钥验 assertion（challenge = sha256(记录字节)）；`rotate-root` 由当前（即将成为旧）根钥签，payload 含新 `root_public_key`、新 `kdf_params`，应用后 `root_epoch += 1` 并切换验签钥，之后到达的记录必须带新 epoch。node 只接受 `seq = 本地 head + 1 && prev_hash = 本地 head hash` 的记录；遇到同一 `seq/prev_hash` 的两个不同后继即**硬失败**并在 UI 报"密钥日志分叉"，不由 hub 选胜者。hub 存全量并在 `node.list` 里带 `key_log_head {seq, hash}`；node 落后时向 hub 或任一 peer 拉取。
 - **根轮换 = 新安全 epoch**：`rotate-root` 应用后，各 node 撤销该 uid 全部 `node_sessions`，删除全部 `user_keys`（passkey 需重新注册），清空 TOTP（需重新设置）。密码改密流程在 UI 中明确提示"将注销所有设备上的 passkey 与 TOTP"。
-- **不依赖旧根钥的恢复（密码在失陷 entry 上泄露、攻击者抢先 `rotate-root` 时）**：在每台机器**本地**执行 `tmex-cli mesh reset-root`（输入新密码 → 新根公钥、`root_epoch += 1`、清空 `user_keys` / TOTP / `node_sessions`、`user_key_log` 从一条本地生成的 `reset-root` 记录重新开始，并把本机证书重新自签 `admit-node`）；该命令只信任本机 root 权限（拥有机器 = 拥有该点，与威胁模型一致），不接受任何远程触发。恢复后各机器需重新 `enroll`/`join` 建立成员关系；hub 侧 `hub user reset` 清空注册表。这是灾难恢复路径，不是日常流程。
+- **不依赖旧根钥的恢复（密码在失陷 entry 上泄露、攻击者抢先 `rotate-root` 时）**：在每台机器**本地**执行 `vibeterm-cli mesh reset-root`（输入新密码 → 新根公钥、`root_epoch += 1`、清空 `user_keys` / TOTP / `node_sessions`、`user_key_log` 从一条本地生成的 `reset-root` 记录重新开始，并把本机证书重新自签 `admit-node`）；该命令只信任本机 root 权限（拥有机器 = 拥有该点，与威胁模型一致），不接受任何远程触发。恢复后各机器需重新 `enroll`/`join` 建立成员关系；hub 侧 `hub user reset` 清空注册表。这是灾难恢复路径，不是日常流程。
 - **TOTP**：`k_totp = HKDF(seed, salt = "tmex-totp" ‖ root_epoch(u32 LE), info = uid)`；记录 `set-totp` 的 payload = `{alg:'A256GCM', nonce(12B 随机), ciphertext, tag(16B)}`，AAD = `borsh({uid, root_epoch, seq})`。密码登录时浏览器把 `k_totp` 与 6 位码随 `delegation` 一起送到**每台**目标 node，node 现场解密校验后丢弃 `k_totp`。**边界**：TOTP 防"密码被远程猜测 / 被旁观"这类不掌握任何 node 数据的攻击；对"已取得某台 node 数据 + 离线爆破出弱口令"的攻击者，同一 seed 同时给出根钥与 `k_totp`，TOTP 不构成独立第二因素——该场景的防线是口令强度与 argon2id 成本。需要独立第二因素时用 passkey。
 
 ### 表结构（hub 与 node 同库同迁移链，standalone 下空表无害）
@@ -144,7 +148,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 
 `node-session` 绑定 `via`：从别的地方拿着票来，T 不认；entry 被吊销，票随之失效。entry 访问自身时 `via = self`，只在本地 Bun socket 上接受。
 
-有效期 **18 小时滑动**：签发时 `expires_at = now + 18h`；T 每次验票通过后若距 `renewed_at` 超过 5 分钟，则把 `expires_at` 重置为 `now + 18h`（写库节流），并在响应头 `x-tmex-session-renewed: <expires_at>` 通知 entry 刷新 cookie `Max-Age`（WS 会话在每次 Borsh 入站消息上按同一节流规则续期，cookie 由下一次 REST 响应刷新）。18 小时内未使用即过期，需重新登录。另设**绝对上限** `hard_expires_at = issued_at + 7 天`，续期不能越过它——否则失陷 entry 只要每 18 小时用一次被留存的 `sid` 就能永久保持访问；7 天后必须重新登录（需要浏览器持有的根钥 / passkey，entry 没有）。
+有效期 **18 小时滑动**：签发时 `expires_at = now + 18h`；T 每次验票通过后若距 `renewed_at` 超过 5 分钟，则把 `expires_at` 重置为 `now + 18h`（写库节流），并在响应头 `x-vibeterm-session-renewed: <expires_at>` 通知 entry 刷新 cookie `Max-Age`（WS 会话在每次 Borsh 入站消息上按同一节流规则续期，cookie 由下一次 REST 响应刷新）。18 小时内未使用即过期，需重新登录。另设**绝对上限** `hard_expires_at = issued_at + 7 天`，续期不能越过它——否则失陷 entry 只要每 18 小时用一次被留存的 `sid` 就能永久保持访问；7 天后必须重新登录（需要浏览器持有的根钥 / passkey，entry 没有）。
 
 ### 登录（对每台目标 node 独立进行，hub 在线与否流程相同）
 
@@ -152,7 +156,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 
 1. `POST /n/:T/api/auth/challenge {uid}` → T 生成 `challenge_id`、`nonce(32B)`，登记 `{challenge_id, nonce, uid, entry: 链路对端 node_id, exp: 60s}`，返回 `{challenge_id, nonce, nodePk: pk_T}`。浏览器校验 `pk_T` 与本地 `node_certs` 投影（来自 `/api/mesh/nodes`，entry 从自己的 `node_certs` 读）中 T 的公钥一致。
 2. 浏览器构造 `login = {domain:'tmex/login/v1', challenge_id, nonce, target: T, target_pk: pk_T, uid, entry: E}`，`sig = Ed25519.sign(sk_sess, borsh(login))`；`POST /n/:T/api/auth/login {login, sig, delegation, delegation_sig, totp?:{code, k_totp}}`。
-3. T 按顺序：按 `challenge_id` 取出登记并**原子消费**，登记已过期（60 s）即拒绝；核对 `login.entry` 与登记的链路对端一致、`target = self`、`target_pk = 自己的公钥`、`login.uid = delegation.uid`；验 `delegation`（`now < exp`；`method = root` 用当前 `root_public_key` 验签，`method = passkey` 用 `user_keys` 中该 credential 按 WebAuthn 完整流程验 assertion，`expectedOrigin` / `expectedRPID` 取该记录）；验 `sig`（`delegation.sess_pk`）；**是否校验 TOTP 由已验证的 `delegation.method` 决定**（`root` 且用户设了 TOTP → 解密校验；`passkey` → 不需要）→ 写入 `node_sessions{sid, via: E, sess_pk, delegation_method, credential_id}` → entry 以 `tmex_s_<T>` `Set-Cookie`（`Path=/; HttpOnly; SameSite=Lax; Max-Age=64800`；https 加 `Secure`）。
+3. T 按顺序：按 `challenge_id` 取出登记并**原子消费**，登记已过期（60 s）即拒绝；核对 `login.entry` 与登记的链路对端一致、`target = self`、`target_pk = 自己的公钥`、`login.uid = delegation.uid`；验 `delegation`（`now < exp`；`method = root` 用当前 `root_public_key` 验签，`method = passkey` 用 `user_keys` 中该 credential 按 WebAuthn 完整流程验 assertion，`expectedOrigin` / `expectedRPID` 取该记录）；验 `sig`（`delegation.sess_pk`）；**是否校验 TOTP 由已验证的 `delegation.method` 决定**（`root` 且用户设了 TOTP → 解密校验；`passkey` → 不需要）→ 写入 `node_sessions{sid, via: E, sess_pk, delegation_method, credential_id}` → entry 以 `vibeterm_s_<T>` `Set-Cookie`（`Path=/; HttpOnly; SameSite=Lax; Max-Age=64800`；https 加 `Secure`）。
 4. 签名把 `target_pk` 绑进消息：若任何人（含失陷 hub）把 T 的公钥掉包做中间人，用户签的内容对真 T 无效。
 
 登录页体验：输入一次密码（或一次 passkey）→ 生成 `delegation` → 前端对 `/api/mesh/nodes` 中当前可达的每个 node 并行执行 1–3；`sk_sess` 留在内存供后续新出现的 node 登录；页面刷新后靠 cookie 继续，cookie 过期或新 node 出现且 `sk_sess` 已失时提示"登录此节点"。失败限速：每个 node 对同一 `uid` 或 ip 每分钟 10 次，超出 429。
@@ -163,7 +167,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 
 **问题**：`sk_sess` 原本纯内存。iOS 上以 PWA 打开时每次冷启动都是一个新 document——entry 的 HttpOnly cookie 还在，会话钥却没了，于是每台远端 node 都退回"登录该节点"，逼用户逐台重输密码。
 
-**做法**：浏览器支持 WebCrypto 的 Ed25519（`crypto.subtle.generateKey({name:'Ed25519'}, false, ['sign','verify'])` 能成功，Safari 17+ / Chrome 137+ / Firefox 130+）时，`sk_sess` 直接生成为**不可导出**（`extractable:false`）的 `CryptoKey`，登录签名走 `crypto.subtle.sign('Ed25519', …)`；输出仍是标准 64 字节 Ed25519 签名，**node 侧验签一个字都不用改**。会话记录 `{info, privateKey(CryptoKey), sess_pk, delegation, delegation_sig}` 存进 IndexedDB（库 `tmex-auth`，单表单记录）——structured clone 保留 non-extractable，私钥字节从头到尾没进过 JS。不支持 Ed25519 的环境回退到 `@noble` 的原始私钥并**不持久化**，行为与改造前完全一致。
+**做法**：浏览器支持 WebCrypto 的 Ed25519（`crypto.subtle.generateKey({name:'Ed25519'}, false, ['sign','verify'])` 能成功，Safari 17+ / Chrome 137+ / Firefox 130+）时，`sk_sess` 直接生成为**不可导出**（`extractable:false`）的 `CryptoKey`，登录签名走 `crypto.subtle.sign('Ed25519', …)`；输出仍是标准 64 字节 Ed25519 签名，**node 侧验签一个字都不用改**。会话记录 `{info, privateKey(CryptoKey), sess_pk, delegation, delegation_sig}` 存进 IndexedDB（库 `vibeterm-auth`，单表单记录）——structured clone 保留 non-extractable，私钥字节从头到尾没进过 JS。不支持 Ed25519 的环境回退到 `@noble` 的原始私钥并**不持久化**，行为与改造前完全一致。
 
 **不写盘的东西**：`k_totp` 与一次性 TOTP 码永远只在内存，因此开了 TOTP 的密码会话整条记录都不落盘——冷启动后仍旧回登录页当场输码。
 
@@ -173,14 +177,14 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 
 **安全边界**：持久化的是一把不可导出私钥，能力上限就是"在本 origin 上签 login"，且受 18 小时 delegation TTL 约束。
 
-- 本 origin 的 XSS：能在页面存活期间用它签 login——这与现有 HttpOnly `tmex_s_*` cookie 属于同一暴露等级（XSS 本来就能带着 cookie 直接调 API），没有新增攻击面；它依然签不了任何 `user_key_log` 记录（那要根钥或 passkey 的专用 assertion）。
+- 本 origin 的 XSS：能在页面存活期间用它签 login——这与现有 HttpOnly `vibeterm_s_*` cookie 属于同一暴露等级（XSS 本来就能带着 cookie 直接调 API），没有新增攻击面；它依然签不了任何 `user_key_log` 记录（那要根钥或 passkey 的专用 assertion）。
 - 设备失窃：攻击者拿到的是同一把 18 小时后自动失效的钥，与已签发的 `node-session` 上限一致。
 - node 侧验证完全不变：登录签名仍绑定 `target_pk` 与一次性 challenge，`node-session` 仍绑定 `via`，被偷的会话在别处依旧无法重放。
 
 ### node 注册（enrollment）与节点证书
 
-1. 在任意 entry 的 Nodes 页（或 `tmex-cli enroll`）：此操作要求根钥或 passkey（UI 当场要密码 / passkey）。浏览器生成一次性 **enrollment 密钥对** `(enroll_sk, enroll_pk)`，签 `authorization = {domain:'tmex/enroll/v1', uid, enroll_pk, exp: +10min, root_epoch}`（根钥签，或 passkey 专用 assertion），经 entry 的 `hub.call` 送到 hub 存 `enrollment_tokens`（单次）；页面把 `{enroll_pk, authorization}` 记为 **pending**（内存 + `sessionStorage`）。展示给用户的 join 串 = `base64url(enroll_sk(32) ‖ root_public_key(32) ‖ key_log_head_hash(32))`（共 128 字符）。**`enroll_sk` 不经过 hub。**
-2. 设备执行 `tmex-cli hub join <https-url> --token <join 串> [--name]`：join 只接受系统信任链验证通过的 HTTPS。生成 Ed25519 与 X25519 密钥对，构造 `certificate = {domain:'tmex/nodecert/v1', uid, node_id(随机 16B), ed_pk, x25519_pk, enroll_pk, issued_at}`，`cert_sig = sign(enroll_sk, borsh(certificate))`；`POST /api/hub/enrollments/redeem {certificate, cert_sig, name, version}` → hub 核对 `enroll_pk` 与 `authorization` 一致、验 `cert_sig`、`authorization` 未过期未使用 → 回 `{user:{…}, user_key_log(全量), node_certs(全量)}`。node **以 join 串里的 `root_public_key` 为准**，从日志中找到 `key_log_head_hash` 对应的记录并验证整条链（历史 `rotate-root` 由上一根钥签，链从首条记录起顺序验证到头；首条记录的签名钥必须能通过链到达 join 串的根公钥），校验通过才落库；然后立即用自身链路身份连 uplink。
+1. 在任意 entry 的 Nodes 页（或 `vibeterm-cli enroll`）：此操作要求根钥或 passkey（UI 当场要密码 / passkey）。浏览器生成一次性 **enrollment 密钥对** `(enroll_sk, enroll_pk)`，签 `authorization = {domain:'tmex/enroll/v1', uid, enroll_pk, exp: +10min, root_epoch}`（根钥签，或 passkey 专用 assertion），经 entry 的 `hub.call` 送到 hub 存 `enrollment_tokens`（单次）；页面把 `{enroll_pk, authorization}` 记为 **pending**（内存 + `sessionStorage`）。展示给用户的 join 串 = `base64url(enroll_sk(32) ‖ root_public_key(32) ‖ key_log_head_hash(32))`（共 128 字符）。**`enroll_sk` 不经过 hub。**
+2. 设备执行 `vibeterm-cli hub join <https-url> --token <join 串> [--name]`：join 只接受系统信任链验证通过的 HTTPS。生成 Ed25519 与 X25519 密钥对，构造 `certificate = {domain:'tmex/nodecert/v1', uid, node_id(随机 16B), ed_pk, x25519_pk, enroll_pk, issued_at}`，`cert_sig = sign(enroll_sk, borsh(certificate))`；`POST /api/hub/enrollments/redeem {certificate, cert_sig, name, version}` → hub 核对 `enroll_pk` 与 `authorization` 一致、验 `cert_sig`、`authorization` 未过期未使用 → 回 `{user:{…}, user_key_log(全量), node_certs(全量)}`。node **以 join 串里的 `root_public_key` 为准**，从日志中找到 `key_log_head_hash` 对应的记录并验证整条链（历史 `rotate-root` 由上一根钥签，链从首条记录起顺序验证到头；首条记录的签名钥必须能通过链到达 join 串的根公钥），校验通过才落库；然后立即用自身链路身份连 uplink。
 3. **admit**：hub 收到 redeem 后把 `{certificate, cert_sig}` 推给发起 enrollment 的 entry 页面；页面**只在** `certificate.enroll_pk` 等于本地 pending 的 `enroll_pk`、`cert_sig` 用该 `enroll_pk` 验证通过、且 `authorization` 未过期时，才签一条 `admit-node {authorization, authorization_sig, certificate, cert_sig}` 记录（根钥或 passkey 专用 assertion，同 enroll 时那次交互后的 5 分钟内免二次输入）写入 `user_key_log`，并清除 pending。不匹配的推送一律忽略并告警"收到未知节点证书"。页面已关时 Nodes 页显示"待确认"，需再次密码 / passkey。其他 node **只接受有 `admit-node` 记录且未被 `revoke-node` 的节点证书**，验证时用根钥验记录签名、用 `authorization.enroll_pk` 验 `cert_sig`；hub 塞进 `node.list` 的任何未经承认的节点一律忽略。
 4. 证书链（全部内嵌在 `admit-node` 记录里，其他 node 可独立验证）：`root_public_key`（join 串 / 已钉住）→ `authorization`（根签 `enroll_pk`）→ `certificate`（`enroll_sk` 签节点公钥）→ `admit-node`（根钥 / passkey 签，覆盖前两者）。hub 全程只搬运，无法伪造任何一环；hub 失陷时能做的只是拒绝服务。
 5. 重装换钥 = 重新 enroll + `revoke-node` 旧证书。
@@ -195,7 +199,7 @@ peer_cache          node_id, name, endpoints_json, inventory_json, direct_capabl
 4. 响应带回 enrollment id、Hub URL、CA 指纹与 `key_log_head_hash`；客户端据此编码普通 join 串，后续 `performHubJoin()` / redeem 不变。
 5. 限流：`apps/gateway/src/hub/hub-enroll-limiter.ts`，滑动窗口，键为 `ip + uid`；累计 proof 失败，并限制每 uid 每小时成功创建次数。不记录 proof / 密码材料。
 
-CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无值时隐藏输入；尊重 `TMEX_PASSWORD`）。本机 setup：`POST /api/setup/join` 的 `method: 'password'`。
+CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；无值时隐藏输入；尊重 `VIBETERM_PASSWORD`）。本机 setup：`POST /api/setup/join` 的 `method: 'password'`。
 
 ### 链路身份与握手
 
@@ -208,7 +212,7 @@ CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无�
 
 ### 首个用户与 hub 管理
 
-- hub 机 `init --role hub,node` 后执行 `tmex-cli hub user add <username>`：本机提示输入密码 → 派生根钥 → 写 `users`、生成本机 enrollment 授权与节点证书并自签 `admit-node`（hub 机既是 hub 又是第一个 node，无需 join）。`hub user passwd` 生成 `rotate-root` 记录（旧钥签）；`hub user totp` 生成 `set-totp` 记录。
+- hub 机 `init --role hub,node` 后执行 `vibeterm-cli hub user add <username>`：本机提示输入密码 → 派生根钥 → 写 `users`、生成本机 enrollment 授权与节点证书并自签 `admit-node`（hub 机既是 hub 又是第一个 node，无需 join）。`hub user passwd` 生成 `rotate-root` 记录（旧钥签）；`hub user totp` 生成 `set-totp` 记录。
 - hub 管理 API（`nodes` list/rename、`enrollments` create）以 hub 机的 node 为目标 `/n/<hubNodeId>/api/hub/*`，鉴权即普通 `node-session`。撤销不走 hub 管理 API：前端签出 `revoke-node` 记录后走 `POST /api/auth/keylog?hub=sync`，由 hub 的 key-log 追加与 append effects 生效。非 hub 机的 entry 经 peer link / relay 转发，hub 离线时按钮禁用。
 
 ### 撤销
@@ -224,7 +228,7 @@ CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无�
 
 ### 流类型
 
-- `http`：OPEN 载荷 `{method, path, query, headers, origin, auth}`。entry 侧：剥掉 `/n/:nodeId` 前缀，保留编码后的 path 与 query；**过滤 `cookie / authorization / host / connection / upgrade / proxy-* / x-forwarded-*`**；`auth` 为从 cookie `tmex_s_<T>` 取出的 `node-session`。目标侧：验 `auth`（签名、过期、`via` 与链路对端一致）→ 构造 `Request`（body `ReadableStream`，`signal` 绑定 RST）→ `GatewayRuntime.dispatchHttp(Request, {uid})`（新增的与 Bun `Server` 无关的入口；`handleRequest` 保留处理 upgrade）。响应首个 DATA 帧带 `flags.head`，内容 `{status, headers}`。`/api/auth/challenge|login` 无需 `auth`。
+- `http`：OPEN 载荷 `{method, path, query, headers, origin, auth}`。entry 侧：剥掉 `/n/:nodeId` 前缀，保留编码后的 path 与 query；**过滤 `cookie / authorization / host / connection / upgrade / proxy-* / x-forwarded-*`**；`auth` 为从 cookie `vibeterm_s_<T>` 取出的 `node-session`。目标侧：验 `auth`（签名、过期、`via` 与链路对端一致）→ 构造 `Request`（body `ReadableStream`，`signal` 绑定 RST）→ `GatewayRuntime.dispatchHttp(Request, {uid})`（新增的与 Bun `Server` 无关的入口；`handleRequest` 保留处理 upgrade）。响应首个 DATA 帧带 `flags.head`，内容 `{status, headers}`。`/api/auth/challenge|login` 无需 `auth`。
 - `ws`：OPEN 载荷 `{auth}`；DATA 为原样 Borsh 帧。目标侧验 `auth` 后把流包装为 **carrier** 挂到新建的 `GatewaySession`。
 - `relay`（仅 uplink）：OPEN 载荷 `{to: nodeId}`；hub 校验发起 node 与目标 node 同属一个 `user_id` 后向目标 uplink 开对应流并双向拷贝。其上运行 `SecureChannelLink`，内层再复用 `http / ws / ctl`。hub 看不到内层任何字段。
 - `ctl`（stream 0）JSON `{t, ...}`：
@@ -234,7 +238,7 @@ CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无�
 
 ### 响应头策略（entry 转发 `/n/:id/*` 响应）
 
-目标 node 的响应体在 **entry origin** 下呈现，失陷 node 可返回 HTML/SVG 造成同源 XSS。entry 对所有 `/n/:id/*` 响应采用**响应头 allowlist**（只透传 `content-type / content-length / content-range / accept-ranges / cache-control / etag / last-modified / content-disposition / x-tmex-*`，其余一律丢弃），并强制：`Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-action 'none'`（导航打开时在 opaque origin 渲染，脚本无法触及 entry origin 的 cookie 与 API）、`X-Content-Type-Options: nosniff`；`Content-Type` 采用精确 allowlist：`image/png image/jpeg image/gif image/webp image/avif video/mp4 video/webm audio/mpeg audio/ogg audio/wav text/plain application/json application/x-ndjson application/pdf application/octet-stream`，不在其中（含 `image/svg+xml`、任何 `*/xml`、`text/html`）的一律**覆盖**为 `application/octet-stream` + `Content-Disposition: attachment`。PDF 预览在 sandbox 下仍可 iframe 内联。
+目标 node 的响应体在 **entry origin** 下呈现，失陷 node 可返回 HTML/SVG 造成同源 XSS。entry 对所有 `/n/:id/*` 响应采用**响应头 allowlist**（只透传 `content-type / content-length / content-range / accept-ranges / cache-control / etag / last-modified / content-disposition / x-vibeterm-*`，其余一律丢弃），并强制：`Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-action 'none'`（导航打开时在 opaque origin 渲染，脚本无法触及 entry origin 的 cookie 与 API）、`X-Content-Type-Options: nosniff`；`Content-Type` 采用精确 allowlist：`image/png image/jpeg image/gif image/webp image/avif video/mp4 video/webm audio/mpeg audio/ogg audio/wav text/plain application/json application/x-ndjson application/pdf application/octet-stream`，不在其中（含 `image/svg+xml`、任何 `*/xml`、`text/html`）的一律**覆盖**为 `application/octet-stream` + `Content-Disposition: attachment`。PDF 预览在 sandbox 下仍可 iframe 内联。
 
 ### 直连授权（浏览器 ↔ 目标 node 的 `sess` 通道）
 
@@ -254,17 +258,17 @@ CLI：`tmex hub join <https-url> --password [<p>]`（与 `--token` 互斥；无�
 ### entry 侧路由
 
 - `/api/auth/*`、`/api/mesh/*`、`/mesh/ws` **先于** gateway 路由；hub 角色再加 `/api/hub/*`、`/hub/uplink`。
-- `/n/self/*` 或旧路由 → 本地 gateway（`auth` 为 `tmex_s_self`，`via = self`）；`/n/:id/api/*`、`/n/:id/ws` → `PeerManager.getLink(id)`（已有 peer link → 复用；否则按 §1 顺序建链，失败回 hub `relay`；全部失败 503 `NODE_UNREACHABLE`）→ 开流。目标返回 401 时 entry 原样透传并附 `{code:'NODE_LOGIN_REQUIRED', nodeId}`。
+- `/n/self/*` 或旧路由 → 本地 gateway（`auth` 为 `vibeterm_s_self`，`via = self`）；`/n/:id/api/*`、`/n/:id/ws` → `PeerManager.getLink(id)`（已有 peer link → 复用；否则按 §1 顺序建链，失败回 hub `relay`；全部失败 503 `NODE_UNREACHABLE`）→ 开流。目标返回 401 时 entry 原样透传并附 `{code:'NODE_LOGIN_REQUIRED', nodeId}`。
 - `/api/mesh/nodes`：合并 `node_certs`（公钥）、`peer_cache`（元数据）与实时链路状态：`id, name, publicKey, online, reach, version, direct_capable, inventory, loggedIn`；未 admit 的节点不出现。
 - `/api/mesh/rtc-config`：从 `peer_cache` 最近的 `node.list` 读 STUN/TURN，离线可用。
-- `/mesh/ws`（需 `tmex_s_self`）：Borsh 新 kind `NODE_EVENT{nodeId, status, reach, inventory?}`、`RTC_SIGNAL`。
+- `/mesh/ws`（需 `vibeterm_s_self`）：Borsh 新 kind `NODE_EVENT{nodeId, status, reach, inventory?}`、`RTC_SIGNAL`。
 
 ### node 侧
 
 - `UplinkClient`：指数退避 1 s → 60 s 带抖动；连接后先 `auth.*`，再上报 `node.status`；收到 `node.list` 落 `peer_cache`（仅元数据）、`key_log_head` 落后时拉 `key.log` 逐条验签应用（含 `admit-node` → `node_certs`）。
 - `PeerManager`：维护到每个 peer 的 `LinkSession`（懒建、空闲 5 分钟关闭）；peer 监听端口只接受签名信令与 `ctl`，证书不在 `node_certs` 或验签失败即关，按源 ip 限速；数据面 `DataChannelLink`（握手绑定 DTLS 指纹）；建不起来时经 hub `relay` 起 `SecureChannelLink`。hub 不可达时依次尝试 `peer_cache.endpoints_json` 中的全部缓存地址。
 - `RtcPeerManager`：浏览器↔node 与 node↔node 共用 `node-datachannel` 装载与 ICE 配置（来自 `node.list`，开启 IPv6）；浏览器为 offerer；node↔node 由 nodeId 字典序小者 offer。Bun 侧适配器使用 `bufferedAmount() / setBufferedAmountLowThreshold() / onBufferedAmountLow() / maxMessageSize() / remoteFingerprint()`，浏览器侧用对应属性与事件，两套实现同一 `Carrier` 语义。装载方式：`build-runtime` 内联 node-datachannel 的 JS 层（含 `detect-libc` 逻辑）并把原生绑定改为按绝对路径 `require('<installDir>/native/node_datachannel.node')`，manifest 记录 tarball 内 addon 路径与 N-API 版本，启动时探测失败即 `direct_capable=false`。
-- 默认 `TMEX_BIND_HOST=127.0.0.1`（本地 UI），peer 端口独立绑定。
+- 默认 `VIBETERM_BIND_HOST=127.0.0.1`（本地 UI），peer 端口独立绑定。
 - 双角色：`InMemoryLink` 实现 `LinkSession`，hub 侧无差别对待。
 
 ### DataChannel 消息尺寸与背压 / bulk 协议
@@ -279,7 +283,7 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 
 - 登录页（用户名 + 密码/TOTP；passkey 按钮；"注册本入口的 passkey"入口）所有 node 共用，由 `GET /api/auth/mode → {mode:'none'|'mesh', nodeId, username, kdfParams, passkeysForThisOrigin: bool, passkeyAvailable: bool}` 驱动；standalone 不渲染。密码派生、`delegation`、登录签名在 `packages/shared/src/auth/`（浏览器与 Bun 共用，`hash-wasm` + `@noble/curves`）。`passkeyAvailable` = `isSecureContext && host 为域名或 localhost`。
 - 401 统一拦截：`api-client` 收到 401 → 跳 `/login?next=`；WS 关闭码 4401 同理；`NODE_LOGIN_REQUIRED` 不跳全局登录页，在该 node 行显示"登录此节点"（`sk_sess` 仍在内存时自动完成）。
-- **Nodes 管理页** `/nodes`（任意 entry 可用）：列表（在线/离线、到达路径、版本、心跳、直连能力、登录状态、公钥指纹）、生成 enrollment（生成 enroll 密钥对、签授权、展示 join 串与可复制的 `npx tmex-cli hub join …` 命令；join 完成后自动签 `admit-node`，页面已关则显示"待确认"）、重命名、吊销（签 `revoke-node`）；**账号安全**区：修改密码（提示将注销所有 passkey 与 TOTP）、设置 TOTP、注册/移除 passkey（均生成签名记录）；hub 离线时管理动作禁用。
+- **Nodes 管理页** `/nodes`（任意 entry 可用）：列表（在线/离线、到达路径、版本、心跳、直连能力、登录状态、公钥指纹）、生成 enrollment（生成 enroll 密钥对、签授权、展示 join 串与可复制的 `vibeterm hub join …` 命令；join 完成后自动签 `admit-node`，页面已关则显示"待确认"）、重命名、吊销（签 `revoke-node`）；**账号安全**区：修改密码（提示将注销所有 passkey 与 TOTP）、设置 TOTP、注册/移除 passkey（均生成签名记录）；hub 离线时管理动作禁用。
 
 ### 每 node 一套运行时
 
@@ -301,7 +305,7 @@ bulk（与现有 REST 分块协议独立）：上传 REST `init`（经 entry 转
 
 ### 角色与启动矩阵
 
-`TMEX_ROLES`：`standalone`（默认）| `node` | `hub,node` | `relay` | `relay,node`。`hub` 与 `relay` 不能同机。
+`VIBETERM_ROLES`：`standalone`（默认）| `node` | `hub,node` | `relay` | `relay,node`。`hub` 与 `relay` 不能同机。
 
 | 角色 | 构造 | 前端 | 迁移 | tmux 检查 | supervisors |
 |---|---|---|---|---|---|
@@ -317,8 +321,8 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 
 ### 配置
 
-- hub：`TMEX_HUB_PUBLIC_URL`、`TMEX_STUN_SERVERS`（逗号分隔）、`TMEX_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `TMEX_MASTER_KEY` 加密落库。
-- node：`TMEX_HUB_URL`、`TMEX_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
+- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
+- node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
 - STUN/TURN：hub 配置 → `node.list` 下发 → 浏览器 `GET /api/mesh/rtc-config`。
 
 ### CLI 新命令（`packages/app/src/commands/`）
@@ -329,7 +333,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 - `hub join <https-url> --token <join 串> [--name <n>]`（仅接受系统信任链验证的 HTTPS）/ `hub leave`
 - `direct enable|disable`：按 `platform / arch / libc` 查 pinned manifest（`packages/app/src/lib/native-manifest.ts`：包名、addon 文件名、`integrity`、N-API 版本），从 npm registry 下载单平台 tarball，校验后解出 `.node` 到 `<installDir>/native/`（`install-layout` 新增 `nativeDir`）。缺失则 `direct_capable=false`。`init --role node|hub,node` 默认执行，失败不阻断。
 - `init --role <roles>`；`upgrade` manifest 变化时重下。
-- `hub join` 提示放行 `TMEX_PEER_PORT`（仅内网直连需要）。
+- `hub join` 提示放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。
 
 ### 兼容与迁移
 
@@ -362,7 +366,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 3. hub 停机：在 node A 本地 UI 用密码登录，仍能操作同内网的 node B（B 的缓存地址仍有效）；hub 恢复后无需重新登录。
 4. 失陷模拟（集成测试）：仅持 node A 或 hub 的全部私钥与数据库、无用户密钥的客户端，对其他 node 的所有 `http/ws/relay` 请求被拒绝，且无法向任何 node 注入新成员；relay 抓包不含明文 Borsh 帧。
 5. 存量 standalone 安装升级后无登录页、旧路由可用、e2e 基线不退化。
-6. tmex-cli tarball 增量 < 1 MB（`hash-wasm` 的 argon2 wasm 与 `@noble/curves` 计入）。
+6. vibeterm-cli tarball 增量 < 1 MB（`hash-wasm` 的 argon2 wasm 与 `@noble/curves` 计入）。
 
 ## 风险与待验证项
 
@@ -376,4 +380,4 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](../re
 
 ## §6 任务拆分
 
-见 `prompt-archives/2026082701-hub-multinode-design/plan-00.md`。
+本文 §1–§8 即最终设计；实施计划已随存档目录移除。

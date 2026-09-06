@@ -1,11 +1,11 @@
-// 系统里已有的 cloudflared：探测到就先问用户是接管它，还是让 tmex 另建一条。
+// 系统里已有的 cloudflared：探测到就先问用户是接管它，还是让 VibeTerm 另建一条。
 //
-// 接管（`adopt_external`）只把 mode / hostname 记进 tmex，不去碰那个由 launchd/systemd
+// 接管（`adopt_external`）只把 mode / hostname 记进 VibeTerm，不去碰那个由 launchd/systemd
 // 管着的进程——两边同时拉起同一条隧道只会互相顶掉。
 
-import type { TunnelStatusResponse } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import type { TunnelStatusResponse } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { Loader2, PlugZap } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';

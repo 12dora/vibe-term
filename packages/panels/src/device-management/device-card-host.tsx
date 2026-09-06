@@ -1,7 +1,7 @@
 // 单张设备卡片的宿主：把编辑对话框与删除确认的状态下放到每张卡片，
 // 这样分组、拖拽等外层容器可以直接复用一张「自带交互」的卡片。
 
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useState } from 'react';
 import type { DeviceConnectionAdapter } from '../device-connection';
 import { DeviceCard } from './device-card';

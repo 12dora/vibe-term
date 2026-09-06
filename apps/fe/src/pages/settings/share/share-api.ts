@@ -1,12 +1,12 @@
 // 设置页「分享」标签的 REST 客户端。
 //
-// 列表 / 终止 / 地址候选 / 密码读写四族端点由 `@tmex/api-client/share` 提供（终端工具栏的分享弹窗也用同一份），
+// 列表 / 终止 / 地址候选 / 密码读写四族端点由 `@vibeterm/api-client/share` 提供（终端工具栏的分享弹窗也用同一份），
 // 这里只补上设置页独有的三族：设置读写、历史删除、日志分页。查询键一并放在这里，
 // 悬停预取与面板挂载共用同一份，避免同一个键里写进形状不同的数据。
 
-import { type ApiClient, toApiError } from '@tmex/api-client';
-import { requestJson, requestOk } from '@tmex/api-client/json-mutation';
-import type { ShareLogPage, ShareSettings } from '@tmex/shared/share';
+import { type ApiClient, toApiError } from '@vibeterm/api-client';
+import { requestJson, requestOk } from '@vibeterm/api-client/json-mutation';
+import type { ShareLogPage, ShareSettings } from '@vibeterm/shared/share';
 
 export {
   getShareOrigins,
@@ -17,12 +17,12 @@ export {
   shareNodeQueryKey,
   shareQueryKey,
   updateSharePassword,
-} from '@tmex/api-client/share';
-export { shareErrorKey } from '@tmex/api-client/share-errors';
+} from '@vibeterm/api-client/share';
+export { shareErrorKey } from '@vibeterm/api-client/share-errors';
 export type {
   ShareListResponse,
   ShareOriginsResponse,
-} from '@tmex/api-client/share';
+} from '@vibeterm/api-client/share';
 
 /** 契约错误码要留到 UI 层才好翻译，四条端点一律抛带 code 的 `ApiError`。 */
 function shareError(fallback: string) {

@@ -1,6 +1,6 @@
 // 中继动作的目标挑选、次级菜单的条目表，以及「上级不可写」那一句。
 
-import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
+import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { relayLabel } from '../relay/relay-rows';
 
 /**

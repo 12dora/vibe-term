@@ -4,8 +4,8 @@
 // 状态本体（store、`/api/auth/mode`、`/api/mesh/nodes`、首帧缓存与有界重试）在
 // `./mesh-nodes-store`；这里原样再导出一遍，调用方仍然只 import 本模块。
 
-import type { AuthApi, AuthRequiredDetail, MeshNode } from '@tmex/api-client/auth/index';
-import { defaultAuthApi, onAuthRequired } from '@tmex/api-client/auth/index';
+import type { AuthApi, AuthRequiredDetail, MeshNode } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi, onAuthRequired } from '@vibeterm/api-client/auth/index';
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import {
   type PollingControls,

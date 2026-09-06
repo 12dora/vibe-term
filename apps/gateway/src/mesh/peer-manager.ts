@@ -1,5 +1,5 @@
 import os from 'node:os';
-import type { LinkSession } from '@tmex/shared/link';
+import type { LinkSession } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';

@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
-import { fetchAgentLlmSettings, fetchLlmProviders } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
+import { fetchAgentLlmSettings, fetchLlmProviders } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
 import {
   Select,
   SelectContent,
@@ -9,7 +9,7 @@ import {
   SelectItem,
   SelectLabel,
   SelectTrigger,
-} from '@tmex/ui/select';
+} from '@vibeterm/ui/select';
 import { useTranslation } from 'react-i18next';
 import { decodeModelValue, encodeModelValue } from './model-value';
 

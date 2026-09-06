@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 const pkgRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const packageJson = await Bun.file(path.join(pkgRoot, 'package.json')).json();
 
-describe('@tmex/shared i18n package exports', () => {
+describe('@vibeterm/shared i18n package exports', () => {
   test('export map 覆盖 resources/types/manifest 与三语 JSON', () => {
     const exports = packageJson.exports as Record<string, string>;
     expect(exports['./i18n/resources']).toBe('./src/i18n/resources.ts');
@@ -24,7 +24,7 @@ describe('@tmex/shared i18n package exports', () => {
       expect(existsSync(abs)).toBe(true);
     }
 
-    const manifest = await import('@tmex/shared/i18n/locales/manifest.json');
+    const manifest = await import('@vibeterm/shared/i18n/locales/manifest.json');
     expect((manifest.default ?? manifest).locales?.length).toBeGreaterThan(0);
   });
 });

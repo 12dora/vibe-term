@@ -2,7 +2,7 @@
 // 持久化格式见 gateway run.ts：assistant content 为 string 或 parts(text/reasoning/tool-call)，
 // tool content 为 parts(tool-result/tool-approval-response)，tool-result 按 toolCallId 配对。
 
-import type { AgentMessageDto } from '@tmex/shared';
+import type { AgentMessageDto } from '@vibeterm/shared';
 
 export interface UiToolCall {
   toolCallId: string;

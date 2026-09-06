@@ -16,7 +16,7 @@ async function readTerminalSize(page: Page): Promise<{
   rows: number;
 } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return {
       cols: term.cols,
@@ -62,7 +62,7 @@ test('ws-borsh: resize does not spam canonical geometry-change commands', async 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-${Date.now()}`;
@@ -105,7 +105,7 @@ test('ws-borsh: initial load and browser resize converge to tmux pane size', asy
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-sync-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-sync-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 
@@ -142,7 +142,7 @@ test('ws-borsh: growing viewport converges to latest tmux pane size instead of s
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-grow-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-grow-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const targetPaneId = paneIds[0];
 
@@ -179,7 +179,7 @@ test('ws-borsh: remote tmux resize does not trigger resize echo from another bro
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-multi-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-multi-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-multi-${Date.now()}`;
@@ -226,7 +226,7 @@ test('ws-borsh: focus restore emits no geometry command when terminal size is al
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-focus-stable-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-focus-stable-${Date.now()}`;
   createTwoPaneSession(sessionName);
 
   const name = `e2e-borsh-resize-focus-stable-${Date.now()}`;
@@ -264,7 +264,7 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-resize-focus-stale-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-resize-focus-stale-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const name = `e2e-borsh-resize-focus-stale-${Date.now()}`;
@@ -299,7 +299,7 @@ test('ws-borsh: focus restore resyncs one stale terminal without reintroducing r
 
     // 只把本地模拟器改小（不动容器）：制造一个「尺寸没变但画面已陈旧」的跟随者
     await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) {
         throw new Error('missing e2e terminal');
       }

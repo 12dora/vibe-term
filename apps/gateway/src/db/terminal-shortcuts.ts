@@ -2,7 +2,7 @@ import {
   DEFAULT_TERMINAL_SHORTCUTS,
   type TerminalShortcutItem,
   type TerminalShortcutSettings,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { getDb as getOrmDb } from './client';
 import { toTerminalShortcutSettings } from './mappers';

@@ -3,9 +3,9 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（与 sidebar-device-list.test.tsx 同一套做法）。
 
 import { describe, expect, test } from 'bun:test';
-import type { SidebarDeviceStatsResult } from '@tmex/panels/device-tree';
-import type { Device } from '@tmex/shared';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { SidebarDeviceStatsResult } from '@vibeterm/panels/device-tree';
+import type { Device } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

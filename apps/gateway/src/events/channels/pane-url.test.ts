@@ -1,12 +1,12 @@
 import { describe, expect, test } from 'bun:test';
-import type { WebhookEvent } from '@tmex/shared';
+import type { WebhookEvent } from '@vibeterm/shared';
 import { buildPaneUrl, eventNodeId, normalizeHttpUrl } from './pane-url';
 
 function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
   return {
     eventType: 'terminal_bell',
     timestamp: '2026-01-02T03:04:05.000Z',
-    site: { name: 'tmex', url: 'https://tmex.example.com' },
+    site: { name: 'VibeTerm', url: 'https://vibeterm.example.com' },
     device: { id: 'dev-1', name: 'mac', type: 'local' },
     tmux: { windowId: '@1', paneId: '%1' },
     ...overrides,
@@ -16,7 +16,7 @@ function makeEvent(overrides: Partial<WebhookEvent> = {}): WebhookEvent {
 describe('buildPaneUrl', () => {
   test('local pane uses /devices/... without node prefix', () => {
     expect(buildPaneUrl(makeEvent())).toBe(
-      'https://tmex.example.com/devices/dev-1/windows/%401/panes/%251'
+      'https://vibeterm.example.com/devices/dev-1/windows/%401/panes/%251'
     );
   });
 
@@ -28,7 +28,7 @@ describe('buildPaneUrl', () => {
           payload: { nodeId },
         })
       )
-    ).toBe(`https://tmex.example.com/n/${nodeId}/devices/dev-1/windows/%401/panes/%251`);
+    ).toBe(`https://vibeterm.example.com/n/${nodeId}/devices/dev-1/windows/%401/panes/%251`);
   });
 
   test('remote node without window/pane falls back to the device page', () => {
@@ -40,7 +40,7 @@ describe('buildPaneUrl', () => {
           payload: { nodeId },
         })
       )
-    ).toBe(`https://tmex.example.com/n/${nodeId}/devices/dev-1`);
+    ).toBe(`https://vibeterm.example.com/n/${nodeId}/devices/dev-1`);
   });
 
   test('missing window/pane on a local event still returns null', () => {

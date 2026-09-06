@@ -6,7 +6,7 @@ import type {
   TunnelAccessPolicyRule,
   TunnelActionRequest,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { directProtected } from './direct-model';
 import type { StepState } from './tunnel-model';
 
@@ -173,7 +173,7 @@ export function accessStepState(
 /**
  * 外部只读探测的三态：`unknown` 是「查不了」（没有可用凭证或 Cloudflare API 失败），
  * 与「查过了，没有」是两回事，不能都显示成未配置。
- * 探测结果只描述 Cloudflare 控制台上的现状，与 `access.configured`（tmex 托管、网关校验 JWT）无关。
+ * 探测结果只描述 Cloudflare 控制台上的现状，与 `access.configured`（VibeTerm 托管、网关校验 JWT）无关。
  */
 export type ExternalAccessState = 'unknown' | 'covered' | 'absent';
 

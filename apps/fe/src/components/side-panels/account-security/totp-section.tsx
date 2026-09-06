@@ -5,11 +5,11 @@ import {
   confirmTotpSetup,
 } from '@/auth/account-security-actions';
 import type { CredentialPromptHandle } from '@/auth/credential-prompt';
-import type { AuthApi, PasskeySummary } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { OtpInput } from '@tmex/ui/otp-input';
+import type { AuthApi, PasskeySummary } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { OtpInput } from '@vibeterm/ui/otp-input';
 import { Loader2 } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { useCallback, useEffect, useState } from 'react';
@@ -58,7 +58,7 @@ export function TotpSection({
     setError(null);
     publishFeedback(null);
     setCode('');
-    setDraft(beginTotpSetup({ uid, issuer: 'tmex' }));
+    setDraft(beginTotpSetup({ uid, issuer: 'VibeTerm' }));
   }, [publishFeedback, uid]);
 
   const confirm = useCallback(async () => {

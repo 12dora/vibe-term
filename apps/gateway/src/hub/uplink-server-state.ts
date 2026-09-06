@@ -1,5 +1,5 @@
-import type { LinkSession } from '@tmex/shared/link';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import type { AttachmentRouter } from './attachment-router';
 import type { UplinkCtlMessage } from './uplink-protocol';
 import { IdleLruMap, KeyLogReqLimiter } from './uplink-rate-limit';

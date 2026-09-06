@@ -69,8 +69,8 @@ describe('probeTmuxHealth', () => {
   });
 
   test('keeps psmux provenance separate and compares only the tmux-compatible first line', async () => {
-    (config as { tmuxBin: string }).tmuxBin = 'C:\\Program Files\\tmex\\psmux.exe';
-    (config as { tmuxSocket: string }).tmuxSocket = 'tmex-stable';
+    (config as { tmuxBin: string }).tmuxBin = 'C:\\Program Files\\vibeterm\\psmux.exe';
+    (config as { tmuxSocket: string }).tmuxSocket = 'vibeterm-stable';
     const calls: string[][] = [];
     const result = await probeTmuxHealth(
       sequence(
@@ -93,7 +93,12 @@ describe('probeTmuxHealth', () => {
       serverVersion: '3.3.7',
       reason: 'ok',
     });
-    expect(calls[0]).toEqual(['C:\\Program Files\\tmex\\psmux.exe', '-L', 'tmex-stable', '-V']);
+    expect(calls[0]).toEqual([
+      'C:\\Program Files\\vibeterm\\psmux.exe',
+      '-L',
+      'vibeterm-stable',
+      '-V',
+    ]);
   });
 
   test('fails closed for a mismatched server, unavailable client, or ambiguous probe error', async () => {

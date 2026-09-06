@@ -13,7 +13,7 @@ import {
 } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { VIRTUAL_FS_ROOT_ID } from '@tmex/shared';
+import { VIRTUAL_FS_ROOT_ID } from '@vibeterm/shared';
 import { getDb } from '../db/client';
 import { createDevice } from '../db/devices';
 import { createFileRoot } from '../db/file-roots';
@@ -35,7 +35,7 @@ const NODE_A = 'a'.repeat(32);
 const dirs: string[] = [];
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-rx-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-rx-test-'));
   dirs.push(dir);
   return dir;
 }

@@ -24,8 +24,31 @@ export function isCanonicalNodeId(id: string): boolean {
   return CANONICAL_NODE_ID_HEX.test(id);
 }
 
+export const NODE_SESSION_COOKIE_PREFIX = 'vibeterm_s_';
+/** tmex 时期的会话 cookie 前缀：混合版本期同时签发与读取，全网 ≥2.0 后可删。 */
+export const LEGACY_NODE_SESSION_COOKIE_PREFIX = 'tmex_s_';
+
 export function nodeSessionCookieName(nodeId: string): string {
-  return `tmex_s_${nodeId}`;
+  return `${NODE_SESSION_COOKIE_PREFIX}${nodeId}`;
+}
+
+export function legacyNodeSessionCookieName(nodeId: string): string {
+  return `${LEGACY_NODE_SESSION_COOKIE_PREFIX}${nodeId}`;
+}
+
+/** 读会话 cookie：新名优先，回退旧名。 */
+export function readNodeSessionCookie(cookies: Map<string, string>, nodeId: string): string | null {
+  return (
+    cookies.get(nodeSessionCookieName(nodeId)) ??
+    cookies.get(legacyNodeSessionCookieName(nodeId)) ??
+    null
+  );
+}
+
+export function hasNodeSessionCookie(cookies: Map<string, string>, nodeId: string): boolean {
+  return (
+    cookies.has(nodeSessionCookieName(nodeId)) || cookies.has(legacyNodeSessionCookieName(nodeId))
+  );
 }
 
 export function buildSetCookie(
@@ -50,6 +73,7 @@ export function appendNodeSessionCookie(
 ): void {
   if (!isCanonicalNodeId(nodeId)) return;
   headers.append('set-cookie', buildSetCookie(nodeSessionCookieName(nodeId), value, options));
+  headers.append('set-cookie', buildSetCookie(legacyNodeSessionCookieName(nodeId), value, options));
 }
 
 export function clearNodeSessionCookie(
@@ -59,6 +83,7 @@ export function clearNodeSessionCookie(
 ): void {
   if (!isCanonicalNodeId(nodeId)) return;
   headers.append('set-cookie', buildClearCookie(nodeSessionCookieName(nodeId), options));
+  headers.append('set-cookie', buildClearCookie(legacyNodeSessionCookieName(nodeId), options));
 }
 
 export function formatSafeErrorLog(err: unknown): string {

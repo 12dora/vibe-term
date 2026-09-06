@@ -11,7 +11,7 @@
 //    白发十来个请求还要跟当前标签自己的 chunk / 请求抢带宽——隧道场景下得不偿失。
 //    悬停是高意图信号，窗口又短，正好落在 staleTime 内。
 //
-// 2) 只列 queryFn 能从 `@tmex/api-client` 的薄封装直接拿到的标签。面板组件本身绝不 import
+// 2) 只列 queryFn 能从 `@vibeterm/api-client` 的薄封装直接拿到的标签。面板组件本身绝不 import
 //    进来——那会把整块面板代码搬回设置页 chunk，正好抵消掉按标签分块的收益。
 //    「节点」「远程访问」两个状态查询的键与 fetcher 因此单独放在 status-queries.ts，
 //    hook 与这里共用一份（见该文件的说明）。
@@ -29,8 +29,8 @@ import {
   llmProvidersQueryKey,
   llmSettingsQueryKey,
   terminalShortcutsQueryKey,
-} from '@tmex/api-client';
-import { listShares, shareNodeQueryKey } from '@tmex/api-client/share';
+} from '@vibeterm/api-client';
+import { listShares, shareNodeQueryKey } from '@vibeterm/api-client/share';
 import {
   LOCAL_STATUS_QUERY_KEY,
   TLS_STATUS_QUERY_KEY,

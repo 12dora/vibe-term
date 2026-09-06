@@ -6,10 +6,10 @@
 // 重复拉取，也拿不到跨边界的实时事件。用一个模块级 store + useSyncExternalStore 更直接。
 
 import { isAuthTransitionActive } from '@/auth/auth-transition';
-import { SELF_NODE_ID } from '@tmex/api-client';
-import type { AuthApi, AuthModeResponse, MeshNode } from '@tmex/api-client/auth/index';
-import { defaultAuthApi } from '@tmex/api-client/auth/index';
-import { errorMessage } from '@tmex/shared';
+import { SELF_NODE_ID } from '@vibeterm/api-client';
+import type { AuthApi, AuthModeResponse, MeshNode } from '@vibeterm/api-client/auth/index';
+import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
+import { errorMessage } from '@vibeterm/shared';
 import { createStateStore } from './create-polling-store';
 import type { NodeEventPayload } from './mesh-events';
 import { clearMeshNodesCache, readMeshNodesCache, writeMeshNodesCache } from './mesh-nodes-cache';

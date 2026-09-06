@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 
 import { CanonicalFrameSizer } from './frame-sizer';
 import { CanonicalTransactionSender } from './transaction-sender';

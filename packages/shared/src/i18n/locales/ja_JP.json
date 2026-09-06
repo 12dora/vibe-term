@@ -107,7 +107,7 @@
           },
           "launch": {
             "title": "ホーム画面から起動",
-            "description": "ホーム画面の tmex アイコンをタップして起動します。ログインが有効な場合は、初回のみログインが必要です。"
+            "description": "ホーム画面の VibeTerm アイコンをタップして起動します。ログインが有効な場合は、初回のみログインが必要です。"
           }
         },
         "android": {
@@ -120,7 +120,7 @@
           },
           "launch": {
             "title": "ホーム画面から起動",
-            "description": "ホーム画面またはアプリ一覧から tmex を開きます。ログインが有効な場合は、初回のみログインが必要です。"
+            "description": "ホーム画面またはアプリ一覧から VibeTerm を開きます。ログインが有効な場合は、初回のみログインが必要です。"
           }
         },
         "remoteHint": "現在のアドレスがローカルネットワーク内でのみ到達可能な場合は、端末を同じネットワークに接続してください。どこからでもアクセスするには、先にリモートアクセスを設定します。",
@@ -136,12 +136,12 @@
           "hint": {
             "relay": "中継：ノードが NAT 内にあり、公開の合流点だけが必要な場合。",
             "hub": "Hub：アカウントとノードを集中管理する場合。",
-            "ssh": "SSH 直結：本機が SSH で新しいマシンに接続し、tmex の導入が不要な場合。"
+            "ssh": "SSH 直結：本機が SSH で新しいマシンに接続し、VibeTerm の導入が不要な場合。"
           },
           "tip": {
             "relay": "中継は暗号化された通信を転送するだけで、アカウントや鍵は保持しません。NAT やファイアウォールの内側にあるマシンに向いています。",
             "hub": "Hub は信頼の中心で、アカウントとノードの所属を保持します。固定の公開 HTTPS アドレスが必要です。",
-            "ssh": "新しいマシンでは tmex を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
+            "ssh": "新しいマシンでは VibeTerm を動かさず、本機が SSH で接続してデバイス一覧に表示されます。"
           }
         },
         "side": {
@@ -155,10 +155,10 @@
           }
         },
         "install": {
-          "title": "tmex をインストール",
+          "title": "VibeTerm をインストール",
           "description": "新しいマシンでインストールスクリプトを実行します。Linux では tmux 3.0 以上が必要です。",
           "command": "インストールコマンド",
-          "pathHint": "tmex コマンドが見つからない場合は、ターミナルを開き直すか次を実行します："
+          "pathHint": "vibeterm コマンドが見つからない場合は、ターミナルを開き直すか次を実行します："
         },
         "join": {
           "uplink": {
@@ -230,7 +230,7 @@
           },
           "invite": {
             "title": "新しいマシンを参加させる",
-            "description": "新しいマシンに tmex をインストールし、「既存の中継に参加」の手順で接続します。",
+            "description": "新しいマシンに VibeTerm をインストールし、「既存の中継に参加」の手順で接続します。",
             "blocked": "前の手順を完了すると、本機のテナント ID が得られます。",
             "gotoJoin": "参加手順を見る"
           }
@@ -260,13 +260,13 @@
           },
           "invite": {
             "title": "新しいマシンを参加させる",
-            "description": "新しいマシンに tmex をインストールし、「既存の Hub に参加」の手順で接続します。",
+            "description": "新しいマシンに VibeTerm をインストールし、「既存の Hub に参加」の手順で接続します。",
             "ready": "本機は Hub です。「既存の Hub に参加」に切り替えて続けます。",
             "gotoJoin": "参加手順を見る"
           }
         },
         "ssh": {
-          "description": "本機が SSH で新しいマシンに接続します。新しいマシンに tmex は不要です。",
+          "description": "本機が SSH で新しいマシンに接続します。新しいマシンに VibeTerm は不要です。",
           "title": "SSH デバイスを追加",
           "stepDescription": "デバイスのダイアログで種類を SSH にし、ホストのアドレスとログイン方法を入力します。",
           "button": "デバイスを追加",
@@ -294,7 +294,7 @@
       "username": "ユーザー名",
       "usernamePlaceholder": "root",
       "session": "Tmux セッション名",
-      "sessionPlaceholder": "tmex",
+      "sessionPlaceholder": "vibeterm",
       "defaultWorkingDir": "デフォルト作業ディレクトリ",
       "defaultWorkingDirPlaceholder": "空の場合、ユーザーのホームディレクトリを使用",
       "authMode": "認証モード",
@@ -400,7 +400,7 @@
     "settings": {
       "siteSettings": "サイト設定",
       "siteName": "サイト名",
-      "siteNamePlaceholder": "tmex",
+      "siteNamePlaceholder": "VibeTerm",
       "siteUrl": "サイト URL",
       "siteUrlPlaceholder": "http://localhost:3000",
       "general": {
@@ -498,10 +498,10 @@
       "remoteAccess": {
         "title": "リモートアクセス",
         "wizardTitle": "セットアップ",
-        "description": "Cloudflare Tunnel または直接接続で、このマシンの tmex にリモートアクセスします。",
+        "description": "Cloudflare Tunnel または直接接続で、このマシンの VibeTerm にリモートアクセスします。",
         "remoteNodeNotice": "リモートアクセスは、ブラウザが直接接続しているノードでのみ設定できます。先にそのノードに切り替えてください。",
         "loginRequired": "リモートアクセスを設定する前にログインしてください。",
-        "loadFailed": "リモートアクセスの状態を取得できませんでした。tmex ゲートウェイが稼働しているか確認し、ページを再読み込みしてください。",
+        "loadFailed": "リモートアクセスの状態を取得できませんでした。VibeTerm ゲートウェイが稼働しているか確認し、ページを再読み込みしてください。",
         "unsupported": "このプラットフォーム（{{platform}}）向けの cloudflared がないため、Cloudflare Tunnel は利用できません。",
         "modeLabel": "方式",
         "publicUrl": "公開アドレス",
@@ -545,7 +545,7 @@
         "path": {
           "tunnel": {
             "title": "Cloudflare Tunnel",
-            "description": "グローバル IP やポート開放は不要です。cloudflared は tmex が管理します。"
+            "description": "グローバル IP やポート開放は不要です。cloudflared は VibeTerm が管理します。"
           },
           "direct": {
             "title": "直接接続",
@@ -564,15 +564,15 @@
             },
             "unprotected": {
               "title": "アクセス保護が未設定です",
-              "description": "アドレスを知った人は誰でもこのマシンの tmex を使えます。ログイン保護を有効にすると、アクセスにログインが必要になります。"
+              "description": "アドレスを知った人は誰でもこのマシンの VibeTerm を使えます。ログイン保護を有効にすると、アクセスにログインが必要になります。"
             },
             "unknown": {
               "title": "アクセス保護の状態を確認できません",
-              "description": "ゲートウェイがローカルログインの状態を返していません。多くはバージョンが古いためです。tmex を更新してから再度お試しください。"
+              "description": "ゲートウェイがローカルログインの状態を返していません。多くはバージョンが古いためです。VibeTerm を更新してから再度お試しください。"
             }
           },
           "entryLabel": "現在の入口",
-          "entryHint": "tmex のアクセスアドレスです。外部に公開する場合は、このマシンの {{port}} 番ポートまたはリバースプロキシに向けてください。",
+          "entryHint": "VibeTerm のアクセスアドレスです。外部に公開する場合は、このマシンの {{port}} 番ポートまたはリバースプロキシに向けてください。",
           "tls": {
             "hint": "HTTPS を有効にしてください。平文の HTTP ではパスワードとセッション情報が経路上に流れます。",
             "link": "ノード設定で HTTPS を設定する"
@@ -590,7 +590,7 @@
               "password": "パスワードは 8 文字以上にしてください。",
               "confirm": "パスワードが一致しません。"
             },
-            "warning": "有効にすると tmex へのアクセスにログインが必要になり、開いているセッションはすべてログインし直しになります。",
+            "warning": "有効にすると VibeTerm へのアクセスにログインが必要になり、開いているセッションはすべてログインし直しになります。",
             "acknowledge": "開いているセッションがすべてログインし直しになることを理解しました",
             "action": "ローカルログインを有効にする"
           },
@@ -605,7 +605,7 @@
             "malformed": "リクエストの形式が正しくありません。ページを再読み込みしてやり直してください。",
             "unknown": "処理に失敗しました。しばらくしてからやり直してください。"
           },
-          "caveat": "補足：アクセス保護が保証するのは「tmex へのアクセスにログインが必要になる」ことのみです。他の安全対策と併用してください。"
+          "caveat": "補足：アクセス保護が保証するのは「VibeTerm へのアクセスにログインが必要になる」ことのみです。他の安全対策と併用してください。"
         },
         "actions": {
           "start": "開始",
@@ -636,16 +636,16 @@
         "steps": {
           "path": {
             "title": "接続方法",
-            "description": "このマシンの tmex にリモートアクセスする方法を選びます。"
+            "description": "このマシンの VibeTerm にリモートアクセスする方法を選びます。"
           },
           "install": {
             "title": "cloudflared のインストール",
-            "description": "cloudflared を tmex のデータディレクトリにダウンロードします。既存のインストールには手を加えません。",
+            "description": "cloudflared を VibeTerm のデータディレクトリにダウンロードします。既存のインストールには手を加えません。",
             "version": "バージョン",
             "path": "パス",
             "source": "取得元",
             "sourceValue": {
-              "managed": "tmex が管理",
+              "managed": "VibeTerm が管理",
               "system": "システムに導入済み（PATH）"
             },
             "skipped": "cloudflared はシステムサービスが提供しているため、再インストールは不要です。"
@@ -668,17 +668,17 @@
             "title": "名前付きトンネル",
             "description": "Cloudflare で管理中のドメインを使うため、公開アドレスは変わりません。",
             "login": {
-              "description": "開いた Cloudflare のページで認可するドメインを選び、このページに戻ってください。以降は tmex が自動で続行します。",
+              "description": "開いた Cloudflare のページで認可するドメインを選び、このページに戻ってください。以降は VibeTerm が自動で続行します。",
               "waiting": "Cloudflare での認可の完了を待っています",
               "done": "Cloudflare の認可が完了しました。"
             },
             "hostname": "ホスト名",
-            "hostnamePlaceholder": "tmex.example.com",
+            "hostnamePlaceholder": "vibeterm.example.com",
             "hostnameHint": "Cloudflare で管理しているサブドメインを指定します。",
-            "hostnameInvalid": "tmex.example.com のような小文字のホスト名を入力してください。",
+            "hostnameInvalid": "vibeterm.example.com のような小文字のホスト名を入力してください。",
             "tunnelName": "トンネル名",
-            "tunnelNamePlaceholder": "tmex",
-            "tunnelNameHint": "空欄可（tmex が生成します）。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
+            "tunnelNamePlaceholder": "vibeterm",
+            "tunnelNameHint": "空欄可（VibeTerm が生成します）。使用できるのは小文字・数字・ハイフン・アンダースコアのみです。",
             "hubHint": "このマシンは Hub です。Hub の公開アドレスをこのホスト名に設定すると、他のノードがトンネル経由で接続できます。",
             "hubHintLink": "マルチノード設定を開く",
             "tunnelId": "トンネル ID",
@@ -688,16 +688,16 @@
           },
           "proxy": {
             "title": "リバースプロキシの信頼",
-            "description": "トンネルはリクエストのクライアントアドレスとプロトコルを置き換えるため、tmex 側の信頼設定を合わせる必要があります。",
+            "description": "トンネルはリクエストのクライアントアドレスとプロトコルを置き換えるため、VibeTerm 側の信頼設定を合わせる必要があります。",
             "trustProxy": "リバースプロキシヘッダーを信頼する",
-            "trustProxyHint": "tmex にこのトンネル経由でしか到達できない場合のみ有効にしてください。",
-            "autoStart": "tmex と同時に起動",
+            "trustProxyHint": "VibeTerm にこのトンネル経由でしか到達できない場合のみ有効にしてください。",
+            "autoStart": "VibeTerm と同時に起動",
             "autoStartHint": "ゲートウェイの起動時にトンネルを自動で立ち上げます。",
-            "restartRequired": "保存しました。tmex を再起動すると有効になります。",
+            "restartRequired": "保存しました。VibeTerm を再起動すると有効になります。",
             "restartNow": "今すぐ再起動",
-            "restarting": "tmex を再起動しています",
-            "restartTimeout": "再起動の待機がタイムアウトしました。tmex を手動で再起動し、ページを再読み込みしてください。",
-            "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。",
+            "restarting": "VibeTerm を再起動しています",
+            "restartTimeout": "再起動の待機がタイムアウトしました。VibeTerm を手動で再起動し、ページを再読み込みしてください。",
+            "trustProxyDetail": "有効にすると VibeTerm は X-Forwarded-Proto と X-Forwarded-For を信頼します。トンネルを迂回してヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。",
             "trustProxyEffective": "現在の適用値",
             "trustProxyState": {
               "on": "信頼中",
@@ -706,8 +706,8 @@
           },
           "login": {
             "title": "Cloudflare にログイン",
-            "description": "トンネルと DNS レコードを作成する権限を tmex に付与します。認可情報はこのマシンにのみ保存されます。",
-            "skipped": "トンネルはシステムサービスが実行しているため、tmex 内でのログインは不要です。"
+            "description": "トンネルと DNS レコードを作成する権限を VibeTerm に付与します。認可情報はこのマシンにのみ保存されます。",
+            "skipped": "トンネルはシステムサービスが実行しているため、VibeTerm 内でのログインは不要です。"
           },
           "hostname": {
             "title": "ホスト名",
@@ -755,7 +755,7 @@
           "download_failed": "cloudflared のダウンロードに失敗しました。このマシンから github.com に到達できるか確認して、再試行してください。",
           "not_logged_in": "Cloudflare の認可が完了していません。「Cloudflare にログイン」に戻って認可を済ませてください。",
           "login_timeout": "Cloudflare の認可がタイムアウトしました。ログインをやり直し、開いたページでドメインを選択してください。",
-          "invalid_hostname": "ホスト名の形式が正しくありません。tmex.example.com のような小文字のホスト名を入力してください。",
+          "invalid_hostname": "ホスト名の形式が正しくありません。vibeterm.example.com のような小文字のホスト名を入力してください。",
           "tunnel_exists": "同名のトンネルが Cloudflare に既に存在します。別の名前を指定するか、既存のトンネルを削除してください。",
           "dns_route_failed": "DNS レコードの追加に失敗しました。同じ Cloudflare アカウントでドメインが管理されているか、既存レコードと競合していないか確認してください。",
           "process_failed": "cloudflared が起動できませんでした。cloudflared ログを開いて原因を確認してください。",
@@ -764,12 +764,12 @@
           "not_configured": "リモートアクセスは未設定です。下のセットアップで接続方法を選んでください。",
           "invalid_request": "リクエストが不正として拒否されました。ページの内容が古い可能性があります。再読み込みしてから操作してください。",
           "unknown": "操作に失敗しました：{{message}}",
-          "auth_required": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも tmex に入れてしまいます。",
+          "auth_required": "このマシンではログインが有効になっていません。公開する前に有効化しないと、誰でも VibeTerm に入れてしまいます。",
           "access_api_failed": "Cloudflare API の呼び出しに失敗しました：{{message}}。API トークンの権限とアカウント ID を確認して再試行してください。",
-          "exposure_ack_required": "この操作は tmex をインターネットに公開します。先にリスクを確認してください。"
+          "exposure_ack_required": "この操作は VibeTerm をインターネットに公開します。先にリスクを確認してください。"
         },
         "authRequired": {
-          "notice": "警告: ログインが有効になっていません。公開する前に有効化しないと、誰でも tmex にアクセスできます。",
+          "notice": "警告：ログインが有効になっていません。公開する前に有効化しないと、誰でも VibeTerm にアクセスできます。",
           "link": "マルチノード設定を開く"
         },
         "confirmRemove": {
@@ -794,8 +794,8 @@
           "hint": "アクセス保護の方式を選択してください。",
           "none": {
             "title": "なし",
-            "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の tmex を使えます。",
-            "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の tmex を使えます。",
+            "description": "アクセス保護を設定しません。アドレスを知った人は誰でも本機の VibeTerm を使えます。",
+            "warning": "アクセス保護が無効です。アドレスを知った人は誰でも本機の VibeTerm を使えます。",
             "appRemains": "Access アプリは削除されていません。ここで削除できます。"
           },
           "login": {
@@ -808,14 +808,14 @@
           }
         },
         "externallyManaged": "システムサービスが実行",
-        "externallyManagedNotice": "トンネルはシステムサービスが実行しており、tmex は状態を表示するだけで起動・停止はできません。tmex で管理するには、先に引き継ぎを解除してください。",
+        "externallyManagedNotice": "トンネルはシステムサービスが実行しており、VibeTerm は状態を表示するだけで起動・停止はできません。VibeTerm で管理するには、先に引き継ぎを解除してください。",
         "exposure": {
-          "warning": "アクセス保護が未設定です。トンネルのアドレスを知っている人は誰でも tmex を使えます。ログイン（マルチノード）を有効にするか、Access を設定してトークン検証を有効にしてください。",
-          "warningShort": "現在、アクセス保護がありません。トンネルの URL を知っている人は誰でも tmex を使えます。",
+          "warning": "アクセス保護が未設定です。トンネルのアドレスを知っている人は誰でも VibeTerm を使えます。ログイン（マルチノード）を有効にするか、Access を設定してトークン検証を有効にしてください。",
+          "warningShort": "現在、アクセス保護がありません。トンネルの URL を知っている人は誰でも VibeTerm を使えます。",
           "acknowledge": "リスクを理解した上でインターネットに公開する",
-          "ackRequired": "この操作は tmex をインターネットに公開します。確認にチェックを入れてください。",
+          "ackRequired": "この操作は VibeTerm をインターネットに公開します。確認にチェックを入れてください。",
           "enableLogin": "ログインを有効にする（マルチノード）",
-          "dropWarning": "警告：トンネルは動作したままで、解除すると誰でも tmex を使えるようになります。"
+          "dropWarning": "警告：トンネルは動作したままで、解除すると誰でも VibeTerm を使えるようになります。"
         },
         "access": {
           "tag": {
@@ -856,17 +856,17 @@
           },
           "sync": {
             "action": "Cloudflare から同期",
-            "hint": "認証情報は保存済みですが、tmex 側に Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複を避けるため先に同期してください。"
+            "hint": "認証情報は保存済みですが、VibeTerm 側に Access アプリケーションの記録がありません。{{hostname}} 用のアプリケーションを Cloudflare ダッシュボードで作成済みの場合は、重複を避けるため先に同期してください。"
           },
           "probe": {
             "unknown": "{{hostname}} の Cloudflare Access 状態を確認できません。利用できる認証情報がないか、照会に失敗しました。未設定という意味ではありません。下で API トークンとアカウント ID を保存すると、自動的に再確認します。",
-            "covered": "読み取り専用の検出結果：Cloudflare ダッシュボード上に {{hostname}} を対象とする Access アプリケーションが既にあります。これは tmex の管理外で、ゲートウェイはそのトークンを検証しません。「Cloudflare から同期」で tmex の管理下に取り込めます。",
+            "covered": "読み取り専用の検出結果：Cloudflare ダッシュボード上に {{hostname}} を対象とする Access アプリケーションが既にあります。これは VibeTerm の管理外で、ゲートウェイはそのトークンを検証しません。「Cloudflare から同期」で VibeTerm の管理下に取り込めます。",
             "absent": "読み取り専用の検出結果：{{hostname}} を対象とする Access アプリケーションは Cloudflare にありません。下で許可するユーザーを指定して適用すると作成できます。",
             "teamDomain": "チームドメイン：{{teamDomain}}",
-            "needCredentials": "tmex の管理下に置き、ゲートウェイでトークンを検証するには、まず下で Cloudflare の API トークンとアカウント ID を保存してください。"
+            "needCredentials": "VibeTerm の管理下に置き、ゲートウェイでトークンを検証するには、まず下で Cloudflare の API トークンとアカウント ID を保存してください。"
           },
           "app": {
-            "title": "Access アプリケーション（tmex が管理）",
+            "title": "Access アプリケーション（VibeTerm が管理）",
             "appId": "アプリケーション ID",
             "aud": "AUD",
             "hostname": "対象ホスト名",
@@ -887,7 +887,7 @@
         },
         "external": {
           "title": "システム上の Cloudflare Tunnel を検出しました",
-          "description": "このマシンには tmex の管理外のトンネルがあります。tmex に引き継がせるか、無視して新規作成できます。",
+          "description": "このマシンには VibeTerm の管理外のトンネルがあります。VibeTerm に引き継がせるか、無視して新規作成できます。",
           "source": "検出元",
           "sourceValue": {
             "launchd": "launchd サービス",
@@ -907,7 +907,7 @@
             "absent": "このホスト名を対象とする Access アプリは未検出",
             "unknown": "検出不可（利用できる認証情報がありません）"
           },
-          "noHostname": "このトンネルの設定に、このマシンの tmex（127.0.0.1:{{port}}）を指すホスト名が見つからないため、引き継げません。ingress の設定を確認するか、tmex で別のトンネルを作成してください。",
+          "noHostname": "このトンネルの設定に、このマシンの VibeTerm（127.0.0.1:{{port}}）を指すホスト名が見つからないため、引き継げません。ingress の設定を確認するか、VibeTerm で別のトンネルを作成してください。",
           "chooseHostname": "引き継ぐホスト名を選択",
           "adopt": "既存のトンネルを引き継ぐ",
           "adoptHint": "引き継ぐと、このホスト名を公開アドレスとして設定し、トンネルの状態とアクセス制御を表示します。",
@@ -1148,7 +1148,7 @@
         "stateExecuting": "更新を適用中、サービスを再起動しています…",
         "interruptNotice": "サービス再起動中は接続が切断されますが、まもなく復旧します。",
         "checkFailed": "更新の確認に失敗しました",
-        "terminalHint": "またはターミナルから更新：tmex upgrade"
+        "terminalHint": "またはターミナルから更新：vibeterm upgrade"
       }
     },
     "messaging": {
@@ -1292,15 +1292,15 @@
       "deviceConnectionError": "🔴 {{siteName}}：デバイス「{{deviceName}}」({{host}}) で接続エラー [{{category}}]\n{{error}}",
       "agentCredentialWarning": "⚠️ {{siteName}}：エージェントセッション「{{sessionTitle}}」のメッセージに認証情報が含まれている可能性があります（{{types}}）。LLM に送信され保存されるため、漏洩のリスクがあります。",
       "authSuccess": "✅ 承認されました。通知を受信できます。",
-      "authPending": "⏳ 認証リクエストを受信しました。tmex 設定ページで承認してください。",
+      "authPending": "⏳ 認証リクエストを受信しました。VibeTerm 設定ページで承認してください。",
       "authFailed": "❌ 認証リクエストに失敗しました。管理者に連絡してください。",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時間：{{time}}",
-      "approveMessageTemplate": "✅ tmex で承認されました。\nBot：{{botName}}\n時間：{{time}}",
+      "approveMessageTemplate": "✅ VibeTerm で承認されました。\nBot：{{botName}}\n時間：{{time}}",
       "botNotRunning": "Bot が起動していないか利用できません"
     },
     "weixin": {
       "title": "WeChat (ClawBot) 管理",
-      "subtitle": "iLink bot プロトコルで tmex のアラートを個人 WeChat へ送信します。",
+      "subtitle": "iLink bot プロトコルで VibeTerm のアラートを個人 WeChat へ送信します。",
       "replyOnlyNotice": "iLink はアクティブな会話ウィンドウ内でのみ返信できます。まず bot にメッセージを送って有効化すると、以降のアラートはそのセッションを再利用します。一定時間操作がないとセッションは失効するため、再度 bot にメッセージを送って再有効化してください。",
       "accountName": "アカウント名",
       "accountNamePlaceholder": "例：my-wechat",
@@ -1340,15 +1340,15 @@
       "accountNotRunning": "アカウントが未ログインまたは未起動です",
       "userNotFound": "ユーザーが見つかりません",
       "testMessageTemplate": "🧪 テストメッセージ\nサイト：{{siteName}}\n時刻：{{time}}",
-      "approveMessageTemplate": "✅ tmex 経由で認証しました。\nアカウント：{{accountName}}\n時刻：{{time}}",
-      "keepalivePrompt": "【tmex】通知を確実に受け取るため、任意の内容を返信して接続を維持してください 🙏",
+      "approveMessageTemplate": "✅ VibeTerm 経由で認証しました。\nアカウント：{{accountName}}\n時刻：{{time}}",
+      "keepalivePrompt": "【VibeTerm】通知の接続を維持するため、任意の内容を返信してください 🙏",
       "scanConfirmedSendHint": "スキャン完了！WeChat でこの bot に任意のメッセージを送信して紐付けを完了してください。",
       "bindingInProgress": "メッセージを受信、紐付けを完了しています…",
       "bindSuccess": "WeChat を紐付けました。通知を受け取れます。",
       "bound": "紐付け済み",
       "unbound": "未紐付け",
       "bindAction": "スキャンして紐付け",
-      "gatewayOnline": "🟢 tmex オンライン @ {{siteName}}"
+      "gatewayOnline": "🟢 VibeTerm オンライン @ {{siteName}}"
     },
     "webhook": {
       "title": "Webhooks",
@@ -1400,8 +1400,8 @@
     "websocket": {
       "inputDropped": "接続が中断されたため、直前の入力は送信されませんでした。再接続後にもう一度入力または貼り付けてください。",
       "gatewayTooOld": "端末接続に失敗しました：Gateway のバージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
-      "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
-      "nodeTooOldUnnamed": "端末接続に失敗しました：ノードの tmex バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
+      "nodeTooOld": "端末接続に失敗しました：ノード {{name}} の VibeTerm バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
+      "nodeTooOldUnnamed": "端末接続に失敗しました：ノードの VibeTerm バージョン {{version}} が古いため、{{minVersion}} 以降へ更新してください。",
       "clientTooOld": "端末接続に失敗しました：ページのバージョンが古いため、再読み込みしてください。",
       "unknownVersion": "不明",
       "reconnecting": "再接続中",
@@ -1866,10 +1866,10 @@
         "fail": "{{name}} のアップロードに失敗しました"
       },
       "transfer": {
-        "legUserToTmex": "ブラウザ → tmex",
-        "legTmexToServer": "tmex → サーバー",
-        "legServerToTmex": "サーバー → tmex",
-        "legTmexToUser": "tmex → ブラウザ",
+        "legUserToVibeTerm": "ブラウザ → VibeTerm",
+        "legVibeTermToServer": "VibeTerm → サーバー",
+        "legServerToVibeTerm": "サーバー → VibeTerm",
+        "legVibeTermToUser": "VibeTerm → ブラウザ",
         "cancel": "キャンセル",
         "downloaded": "{{name}} をダウンロードしました",
         "downloadFailed": "{{name}} のダウンロードに失敗しました",
@@ -2180,7 +2180,7 @@
           "descriptionRelay": "セッションは中継経由で継続します。いつでも再インストールできます。"
         },
         "directNeedsInstall": "先にアドオンをインストールしてください。",
-        "directRestartRequired": "tmex を再起動すると反映されます。",
+        "directRestartRequired": "VibeTerm を再起動すると反映されます。",
         "directFailed": "ダイレクト接続アドオンを更新できませんでした。",
         "directErrorUnsupported": "このプラットフォーム向けのダイレクト接続アドオンはありません。",
         "directErrorDownloadFailed": "アドオンをダウンロードできませんでした。",
@@ -2188,7 +2188,7 @@
         "directErrorDetail": "{{base}}（{{detail}}）",
         "restartNow": "今すぐ再起動",
         "restarting": "再起動しています…",
-        "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "domainAccess": {
           "label": "ドメインアクセスを許可",
           "description": "オフにすると公開インターネットからのウェブと API アクセスを拒否します。LAN・本機・ノード間の通信は影響を受けません。公開ドメイン：{{hosts}}",
@@ -2198,7 +2198,7 @@
           "confirm": {
             "title": "ドメインアクセスをオフにしますか？",
             "description": "{{hosts}} 上のウェブ画面と API は直ちに停止し、ハブ／ノード間の通信のみが残ります。元に戻すには、LAN の IP アドレスまたは localhost でこのページを開き直す必要があります。",
-            "viaDomain": "このページはそのドメイン経由で表示されているため、オフにすると直ちに切断されます。先に LAN の IP アドレスまたは localhost で tmex を開けることを確認してください。",
+            "viaDomain": "このページはそのドメイン経由で表示されているため、オフにすると直ちに切断されます。先に LAN の IP アドレスまたは localhost で VibeTerm を開けることを確認してください。",
             "confirm": "オフにする",
             "cancel": "キャンセル"
           }
@@ -2215,8 +2215,8 @@
         "changeHub": "ハブを変更",
         "confirm": "退出して再起動",
         "cancel": "キャンセル",
-        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
-        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、tmex が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
+        "consequencesNode": "退出すると、このマシンのマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。退出前にハブ側でこのマシンを自動的に失効させます。",
+        "consequencesHub": "このマシンがハブです。退出するとマルチノード連携の状態はすべて削除され、VibeTerm が再起動して現在のセッションは終了します。配下のノードはハブを失い、復旧には別のハブへ参加し直す必要があります。",
         "leaveConfirm": {
           "title": "ハブから退出しますか？",
           "description": "このマシンはスタンドアロン動作に戻ります。"
@@ -2233,7 +2233,7 @@
         "leaving": "退出しています…",
         "restarting": "再起動しています…（{{seconds}} 秒）",
         "restarted": "再起動しました。設定に戻ります…",
-        "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "reload": "ページを再読み込み",
         "checkAgain": "もう一度確認",
         "revokeFailed": "以前のハブでこのマシンを失効できませんでした（{{error}}）。退出は続行します。後で以前のハブのノード一覧から失効させてください。",
@@ -2253,8 +2253,8 @@
           "webGone": "再起動後、本機は Web を提供せず、中継はコマンドラインで管理します。",
           "restore": "Web を戻すには、本機で次のコマンドを実行して中継兼ノードとして設定し直してください。"
         },
-        "consequencesRelayKeepService": "本機のノード ID と相互接続の状態はすべて削除され、tmex が再起動して現在のセッションは失効します。中継サービス、テナント、運用ログは保持されます。",
-        "consequencesRelayReset": "中継サービス、テナント、運用ログはすべて削除され、復元できません。本機のノード ID と相互接続の状態も削除され、tmex が再起動して現在のセッションは失効します。"
+        "consequencesRelayKeepService": "本機のノード ID と相互接続の状態はすべて削除され、VibeTerm が再起動して現在のセッションは失効します。中継サービス、テナント、運用ログは保持されます。",
+        "consequencesRelayReset": "中継サービス、テナント、運用ログはすべて削除され、復元できません。本機のノード ID と相互接続の状態も削除され、VibeTerm が再起動して現在のセッションは失効します。"
       },
       "https": {
         "title": "HTTPS 設定",
@@ -2267,10 +2267,10 @@
         "renewStarted": "更新を開始しました",
         "loginRequired": "サインインすると HTTPS 設定を表示します。",
         "loadFailed": "HTTPS 設定を読み込めませんでした。",
-        "restartRequired": "tmex を再起動すると反映されます。",
+        "restartRequired": "VibeTerm を再起動すると反映されます。",
         "restartNow": "今すぐ再起動",
         "restarting": "再起動しています…",
-        "restartTimeout": "tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
+        "restartTimeout": "VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください。",
         "status": {
           "access": "外部アクセス",
           "publicUrl": "公開アドレス",
@@ -2327,10 +2327,10 @@
           "none": "証明書はまだありません。"
         },
         "external": {
-          "intro": "tmex は平文 HTTP を提供し続け、前段のプロキシが TLS を処理します。プロキシを平文ポートに向け、元のホスト・プロトコル・クライアントアドレスを転送してください。",
+          "intro": "VibeTerm は平文 HTTP を提供し続け、前段のプロキシが TLS を処理します。プロキシを平文ポートに向け、元のホスト・プロトコル・クライアントアドレスを転送してください。",
           "trustProxy": "プロキシヘッダーを信頼する",
-          "trustProxyHint": "tmex にプロキシ経由でしか到達できない場合のみ有効にしてください。",
-          "trustProxyDetail": "有効にすると tmex は X-Forwarded-Proto と X-Forwarded-For を信頼します。直接接続でヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。"
+          "trustProxyHint": "VibeTerm にプロキシ経由でしか到達できない場合のみ有効にしてください。",
+          "trustProxyDetail": "有効にすると VibeTerm は X-Forwarded-Proto と X-Forwarded-For を信頼します。直接接続でヘッダーを偽装されるリスクがあるため、そのポートへの外部アクセスは禁止してください。"
         },
         "selfsigned": {
           "intro": "公開ドメインがない LAN やトンネル向けです。プライベート認証局（CA）はこのマシンに保存され、証明書の有効期間は 398 日です。",
@@ -2346,10 +2346,10 @@
           "renew": "証明書を再発行",
           "guide": {
             "title": "デバイスに CA をインストールする",
-            "intro": "tmex-ca.crt をダウンロードし、各プラットフォームの手順に従ってください。インストール後は上のフィンガープリントを確認してください。",
+            "intro": "vibeterm-ca.crt をダウンロードし、各プラットフォームの手順に従ってください。インストール後は上のフィンガープリントを確認してください。",
             "macos": {
               "title": "macOS",
-              "steps": "tmex-ca.crt をダブルクリックしてキーチェーンアクセスを開き、「システム」キーチェーンに入れ、項目を開いて「この証明書を使用するとき」を「常に信頼」にします。"
+              "steps": "vibeterm-ca.crt をダブルクリックしてキーチェーンアクセスを開き、「システム」キーチェーンに入れ、項目を開いて「この証明書を使用するとき」を「常に信頼」にします。"
             },
             "ios": {
               "title": "iOS / iPadOS",
@@ -2357,7 +2357,7 @@
             },
             "windows": {
               "title": "Windows",
-              "steps": "certmgr.msc を実行し、「信頼されたルート証明機関 → 証明書 → すべてのタスク → インポート」で tmex-ca.crt を選びます。Firefox は独自ストアなので別途インポートしてください。"
+              "steps": "certmgr.msc を実行し、「信頼されたルート証明機関 → 証明書 → すべてのタスク → インポート」で vibeterm-ca.crt を選びます。Firefox は独自ストアなので別途インポートしてください。"
             },
             "android": {
               "title": "Android",
@@ -2365,7 +2365,7 @@
             },
             "linux": {
               "title": "Linux",
-              "steps": "ファイルを /usr/local/share/ca-certificates/tmex-ca.crt にコピーして sudo update-ca-certificates（Debian/Ubuntu）、または /etc/pki/ca-trust/source/anchors/ にコピーして sudo update-ca-trust（Fedora/RHEL）を実行します。"
+              "steps": "ファイルを /usr/local/share/ca-certificates/vibeterm-ca.crt にコピーして sudo update-ca-certificates（Debian/Ubuntu）、または /etc/pki/ca-trust/source/anchors/ にコピーして sudo update-ca-trust（Fedora/RHEL）を実行します。"
             }
           }
         },
@@ -2488,7 +2488,7 @@
         "domainAccessHosts": "公開ドメイン：{{hosts}}",
         "disableTitle": "ドメインアクセスをオフにしますか？",
         "disableText": "オフにすると、設定した公開ドメインではウェブ画面と API を提供しなくなり、ハブ／ノード間の通信のみが残ります。",
-        "disableSelfWarning": "現在このドメイン経由で tmex にアクセスしています。オフにするとこのページは直ちに接続を失います。LAN の IP アドレスまたは localhost からアクセスできることを確認してください。",
+        "disableSelfWarning": "現在このドメイン経由で VibeTerm にアクセスしています。オフにするとこのページは直ちに接続を失います。LAN の IP アドレスまたは localhost からアクセスできることを確認してください。",
         "disableConfirm": "オフにする",
         "renameUnavailable": "現在のハブが書き込みを受け付けないため、名前を変更できません。",
         "renameFailed": "名前の変更に失敗しました：{{error}}",
@@ -2506,11 +2506,11 @@
         "upgradeWithSelf": "アップグレード（{{count}}、本機を含む）",
         "upgradeSelfNotice": "本機は最後にアップグレードされ、サービス再起動でこのページは一時的に切断されます。",
         "revoke": "ノードを削除",
-        "uninstall": "tmex をアンインストール"
+        "uninstall": "VibeTerm をアンインストール"
       },
       "uninstall": {
-        "confirmTitle": "tmex をアンインストール",
-        "confirmText": "ノード上の tmex のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
+        "confirmTitle": "VibeTerm をアンインストール",
+        "confirmText": "ノード上の VibeTerm のサービス、プログラム、データを削除し、その後マルチノード接続から除外します。この操作は取り消せません。",
         "targets": "アンインストール対象（{{count}}）",
         "skipped": "スキップ（{{count}}）",
         "noTargets": "選択したノードはいずれもリモートでアンインストールできません。",
@@ -2536,7 +2536,7 @@
         "errors": {
           "loginRequired": "先にそのノードにログインしてください。",
           "unreachable": "そのノードに接続できません。",
-          "notAllowed": "そのノードは tmex インストーラーで導入されていないため、リモートでアンインストールできません。",
+          "notAllowed": "そのノードは VibeTerm インストーラーで導入されていないため、リモートでアンインストールできません。",
           "unsupported": "そのノードのバージョンはリモートアンインストールに対応していません。",
           "selfBlocked": "本機はアンインストールできません。",
           "upgradeInProgress": "そのノードはアップグレード中です。しばらくしてからお試しください。",
@@ -2604,7 +2604,7 @@
         "nodeGone": "このノードはネットワークから削除されています。",
         "inProgress": "このノードではアップグレードが実行中です。",
         "notAllowed": "このノードのインストール形態では自己更新できません（サービスマネージャーがない、またはコンテナ内で動作）。手動でアップグレードしてください。",
-        "unsupported": "このノードはバージョンが古く、リモートアップグレードに対応していません。該当マシンで npx tmex-cli upgrade を実行してください。",
+        "unsupported": "このノードはバージョンが古く、リモートアップグレードに対応していません。該当マシンで tmex upgrade（2.0 より前のコマンド名）を実行してください。",
         "releaseUnavailable": "最新バージョンを取得できません。",
         "linkLost": "このノードとの接続が切断され、再試行しても完了しませんでした。しばらくしてから再度お試しください。",
         "pushFailed": "アップグレードパッケージの送信に失敗しました。しばらくしてから再度お試しください。",
@@ -2613,7 +2613,7 @@
         "startFailed": "ノードがインストールを開始できませんでした。しばらくしてから再度お試しください。",
         "timeout": "結果を確認できませんでした。ノード一覧を更新してバージョンをご確認ください。",
         "atLatest": "すでに最新バージョンです。",
-        "tooOld": "このノード（{{version}}）はバージョンが古く、リモートアップグレードに対応していません。該当マシンで npx tmex-cli upgrade を実行してください。",
+        "tooOld": "このノード（{{version}}）はバージョンが古く、リモートアップグレードに対応していません。該当マシンで tmex upgrade（2.0 より前のコマンド名）を実行してください。",
         "allNone": "アップグレードできるノードはありません。",
         "allBusy": "アップグレードが実行中です。完了してからすべてアップグレードしてください。",
         "confirmAll": "{{count}} 個のノードを {{version}} にアップグレードしますか？ノードが順に再起動し、セッションは切断されます。",
@@ -2704,7 +2704,7 @@
       "setup": {
         "title": "このマシンのセットアップ",
         "intro": "このマシンはまだ他のマシンと接続していません。セットアップ方法を選んでください。",
-        "introDetail": "いずれの方法でも設定を保存し、tmex が一度再起動します。",
+        "introDetail": "いずれの方法でも設定を保存し、VibeTerm が一度再起動します。",
         "path": {
           "becomeHub": {
             "title": "このマシンをハブにする",
@@ -2725,26 +2725,26 @@
         },
         "becomeHub": {
           "title": "このマシンをハブにする",
-          "description": "このマシンに最初のアカウントを作成し、ハブとして tmex を再起動します。"
+          "description": "このマシンに最初のアカウントを作成し、ハブとして VibeTerm を再起動します。"
         },
         "joinHub": {
           "title": "既存のハブに参加する",
-          "description": "このマシンをハブに登録し、ノードとして tmex を再起動します。",
-          "passwordDescription": "Hub のアドレスとアカウントのパスワードで本機を登録し、ノードとして tmex を再起動します。",
+          "description": "このマシンをハブに登録し、ノードとして VibeTerm を再起動します。",
+          "passwordDescription": "Hub のアドレスとアカウントのパスワードで本機を登録し、ノードとして VibeTerm を再起動します。",
           "useToken": "参加コードを使う",
           "usePassword": "パスワードを使う"
         },
         "fields": {
           "hubPublicUrl": "ハブの公開アドレス",
-          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://tmex.example.com）。参加するすべてのノードから到達できる必要があります。",
+          "hubPublicUrlHint": "外部から到達できる https アドレス（例：https://vibeterm.example.com）。参加するすべてのノードから到達できる必要があります。",
           "username": "ユーザー名",
           "usernameHint": "1〜64 文字。英数字、ドット、アンダースコア、ハイフンが使えます。",
           "password": "パスワード",
           "passwordHint": "8 文字以上。サーバー側ではリセットできないため、大切に保管してください。",
           "confirmPassword": "パスワードの確認",
           "hubUrl": "ハブのアドレス",
-          "hubUrlHint": "ハブの https アドレス（例：https://tmex.example.com）。",
-          "urlPlaceholder": "https://tmex.example.com",
+          "hubUrlHint": "ハブの https アドレス（例：https://vibeterm.example.com）。",
+          "urlPlaceholder": "https://vibeterm.example.com",
           "token": "参加コード",
           "tokenHint": "ハブの「ノード」ページで作成します。有効期間は 10 分です。コード全体を貼り付けてください。",
           "tokenPlaceholder": "ハブで作成した参加コードを貼り付け",
@@ -2788,7 +2788,7 @@
         "precheck": {
           "button": "アドレスを確認",
           "reachableSelf": "到達でき、応答したのはこのマシンです。このアドレスをそのまま使えます。",
-          "reachableOther": "到達できました（HTTP {{status}}）が、別の tmex が応答しました。アドレスを確認してください。",
+          "reachableOther": "到達できました（HTTP {{status}}）が、別の VibeTerm が応答しました。アドレスを確認してください。",
           "unreachable": "到達できません：{{error}}",
           "httpsHint": "「ノード」タブで HTTPS を設定するか、このマシンの前段にリバースプロキシまたは Cloudflare Tunnel を配置してください。"
         },
@@ -2801,8 +2801,8 @@
         },
         "result": {
           "title": "セットアップ完了",
-          "becomeHubDescription": "アカウントを作成しました。tmex がハブとして再起動しています。",
-          "joinDescription": "このマシンはハブに参加しました。tmex が再起動しています。",
+          "becomeHubDescription": "アカウントを作成しました。VibeTerm がハブとして再起動しています。",
+          "joinDescription": "このマシンはハブに参加しました。VibeTerm が再起動しています。",
           "fingerprint": "アカウントのフィンガープリント",
           "hubPublicUrl": "ハブの公開アドレス",
           "hubUrl": "ハブのアドレス",
@@ -2813,25 +2813,25 @@
             "skipped": "スキップ",
             "failed": "失敗（{{error}}）——通信はハブ経由になります。後で再試行できます"
           },
-          "relayDescription": "中継を設定し、tmex を再起動しています。再起動後は Web が利用できません。",
-          "relayNodeDescription": "中継を設定し、中継兼ノードとして tmex を再起動しています。",
+          "relayDescription": "中継を設定し、VibeTerm を再起動しています。再起動後は Web が利用できません。",
+          "relayNodeDescription": "中継を設定し、中継兼ノードとして VibeTerm を再起動しています。",
           "relayPublicUrl": "中継の公開アドレス",
           "relayPassword": "接続パスワード",
           "relayWebGone": "まもなく Web が利用できなくなります。以降は本機のターミナルで管理します:",
-          "relayJoinDescription": "本機は中継に参加しました。tmex が再起動しています。",
+          "relayJoinDescription": "本機は中継に参加しました。VibeTerm が再起動しています。",
           "relayUrl": "中継アドレス",
           "tenantId": "テナント ID"
         },
         "restart": {
-          "waiting": "tmex の復帰を待っています… {{seconds}} 秒",
-          "restarted": "tmex が復帰しました。サインインページに移動します。",
-          "timeout": "60 秒以内に tmex が復帰しませんでした。手動で起動してからページを再読み込みしてください："
+          "waiting": "VibeTerm の復帰を待っています… {{seconds}} 秒",
+          "restarted": "VibeTerm が復帰しました。サインインページに移動します。",
+          "timeout": "60 秒以内に VibeTerm が復帰しませんでした。手動で起動してからページを再読み込みしてください："
         },
         "toast": {
-          "hubCreated": "ハブを作成しました。tmex が再起動しています",
-          "joined": "ハブに参加しました。tmex が再起動しています",
-          "relayCreated": "中継を設定しました。tmex を再起動しています",
-          "relayJoined": "中継に参加しました。tmex が再起動しています"
+          "hubCreated": "ハブを作成しました。VibeTerm が再起動しています",
+          "joined": "ハブに参加しました。VibeTerm が再起動しています",
+          "relayCreated": "中継を設定しました。VibeTerm を再起動しています",
+          "relayJoined": "中継に参加しました。VibeTerm が再起動しています"
         },
         "errors": {
           "not_standalone": "このマシンは設定済みです。",
@@ -2876,7 +2876,7 @@
         },
         "becomeRelay": {
           "title": "本機を中継にする",
-          "description": "中継の公開アドレスと接続パスワードを設定し、中継として tmex を再起動します。",
+          "description": "中継の公開アドレスと接続パスワードを設定し、中継として VibeTerm を再起動します。",
           "pureNotice": "中継のみの構成では再起動後に Web が提供されず、コマンドラインで管理します。"
         },
         "password": {
@@ -2891,7 +2891,7 @@
         },
         "joinRelay": {
           "title": "既存の中継に参加する",
-          "description": "中継アドレス、テナント ID、アカウントのパスワードで既存のテナントに接続し、ノードとして tmex を再起動します。",
+          "description": "中継アドレス、テナント ID、アカウントのパスワードで既存のテナントに接続し、ノードとして VibeTerm を再起動します。",
           "advanced": "詳細設定",
           "hideAdvanced": "詳細設定を閉じる"
         },

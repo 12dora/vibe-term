@@ -18,7 +18,7 @@ import { HUB_JOIN_ADMIT_ATTEMPTS, publishHubJoinSelfAdmit } from './hub-password
 import { type LocalAuthContext, createAuthContextFromDb, openLocalAuth } from './local-auth';
 
 const HUB = 'https://hub.example';
-const PASSWORD = 'tmex-test-pass';
+const PASSWORD = 'vibeterm-test-pass';
 
 function b64(bytes: Uint8Array): string {
   return encodeBase64url(bytes);
@@ -350,7 +350,7 @@ async function openAuth(roles: string): Promise<LocalAuthContext> {
   const ctx = await openLocalAuth({
     memory: true,
     migrationsFolder: MIGRATIONS,
-    env: { TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '', TMEX_ROLES: roles },
+    env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: roles },
   });
   handles.push(ctx);
   return ctx;

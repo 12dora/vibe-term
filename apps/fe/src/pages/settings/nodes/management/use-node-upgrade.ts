@@ -19,8 +19,8 @@
 // 照样把升级跑起来。因此由 `createUpgradeCancelGate` 记账，等 POST 落地再补发（`UpgradeStartHandoff`）。
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
-import { defaultApiClient, formatBytes, formatBytesPair } from '@tmex/api-client';
-import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@tmex/shared';
+import { defaultApiClient, formatBytes, formatBytesPair } from '@vibeterm/api-client';
+import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@vibeterm/shared';
 import type {
   NodeUpgradeEntry,
   NodeUpgradeLatest,

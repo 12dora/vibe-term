@@ -1,4 +1,4 @@
-import type { HubEndpointInfo, HubMode } from '@tmex/shared/uplink';
+import type { HubEndpointInfo, HubMode } from '@vibeterm/shared/uplink';
 import { eq, notInArray } from 'drizzle-orm';
 import { meshHubs } from '../db/schema';
 import type { AuthDb } from './types';

@@ -1,8 +1,8 @@
 // 租户卡：租户表 + 卡头的「更多」（默认配额）。选中的租户由上层持有，表只负责回传点击。
 
-import type { RelayStatusResponse } from '@tmex/api-client/relay/admin-api';
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
+import type { RelayStatusResponse } from '@vibeterm/api-client/relay/admin-api';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { useTranslation } from 'react-i18next';
 import { TenantsMenu } from './relay-menus';
 import { TenantTable } from './tenant-table';

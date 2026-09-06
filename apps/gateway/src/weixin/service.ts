@@ -1,10 +1,10 @@
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type {
   StartWeixinLoginResponse,
   WeixinAccountUser,
   WeixinLoginStatus,
   WeixinLoginStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { decryptWithContext, encrypt } from '../crypto';
 import {
   type WeixinAccountConfigRecord,
@@ -250,7 +250,7 @@ export class WeixinService {
     updateWeixinAccount(accountId, { botTokenEnc: null, baseUrl: null, weixinUin: null });
   }
 
-  /** 启动上线通知（最佳努力）：向已绑定用户发一条「tmex 上线」。 */
+  /** 启动上线通知（最佳努力）：向已绑定用户发一条「VibeTerm 上线」。 */
   async sendGatewayOnlineMessage(siteName: string): Promise<void> {
     await this.sendToAuthorizedUsers({ text: t('weixin.gatewayOnline', { siteName }) });
   }

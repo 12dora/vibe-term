@@ -1,7 +1,7 @@
 import type {
   UpdateSiteSettingsRequest,
   UpdateTerminalShortcutSettingsRequest,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { runtimeController } from '../control/runtime';
 import {
   getStoredSiteSettings,

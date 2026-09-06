@@ -125,7 +125,7 @@ describe('GET /api/local/status', () => {
           domainAccess: () => ({
             allowed: false,
             viaDomain: true,
-            hosts: ['tmex.example.com'],
+            hosts: ['vibeterm.example.com'],
           }),
         })
       )
@@ -134,7 +134,7 @@ describe('GET /api/local/status', () => {
     expect((body as { domainAccess: unknown }).domainAccess).toEqual({
       allowed: false,
       viaDomain: true,
-      hosts: ['tmex.example.com'],
+      hosts: ['vibeterm.example.com'],
     });
   });
 
@@ -174,7 +174,7 @@ describe('GET /api/local/status', () => {
         deps({
           readNativeManifest: async () => ({ version: '1' }),
           rtcCapable: true,
-          readEnvFile: async () => ({ TMEX_DIRECT_ENABLED: 'false' }),
+          readEnvFile: async () => ({ VIBETERM_DIRECT_ENABLED: 'false' }),
         })
       )
     );
@@ -534,15 +534,15 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'hub,node',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'hub,node',
       },
     });
     authHandles.push(ctx);
     const identity = await ensureNodeIdentity(ctx.identityStore);
     await ctx.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: Date.now(),
     });
@@ -657,15 +657,15 @@ describe('POST /api/local/leave', () => {
       memory: true,
       migrationsFolder: MIGRATIONS,
       env: {
-        TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '',
-        TMEX_ROLES: 'node',
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
       },
     });
     authHandles.push(ctx);
     const identity = await ensureNodeIdentity(ctx.identityStore);
     await ctx.userKeys.bootstrapUserWithSelfAdmit({
       username: 'alice',
-      password: 'tmex-test-pass',
+      password: 'vibeterm-test-pass',
       identity,
       now: Date.now(),
     });
@@ -686,9 +686,9 @@ describe('POST /api/local/leave', () => {
     );
     expect(hubs.list()).toHaveLength(1);
     const env: Record<string, string> = {
-      TMEX_ROLES: 'node',
-      TMEX_HUB_URL: 'https://hub.example',
-      TMEX_HUB_PUBLIC_URL: 'https://stale.example',
+      VIBETERM_ROLES: 'node',
+      VIBETERM_HUB_URL: 'https://hub.example',
+      VIBETERM_HUB_PUBLIC_URL: 'https://stale.example',
     };
     let staged = '';
     const restarts: number[] = [];
@@ -726,9 +726,9 @@ describe('POST /api/local/leave', () => {
     expect(ctx.userStore.listUsers()).toHaveLength(0);
     expect(await ctx.identityStore.load()).toBeNull();
     expect(hubs.list()).toHaveLength(0);
-    expect(env.TMEX_ROLES).toBe('standalone');
-    expect(env.TMEX_HUB_URL).toBe('');
-    expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+    expect(env.VIBETERM_ROLES).toBe('standalone');
+    expect(env.VIBETERM_HUB_URL).toBe('');
+    expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
   });
 
   test('relay,node 被接受（不再 409 role_mismatch）', async () => {

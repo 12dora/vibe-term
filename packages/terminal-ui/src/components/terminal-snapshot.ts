@@ -1,5 +1,5 @@
-import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, decodePaneModes } from '@tmex/shared';
-import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@tmex/ws-client';
+import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, decodePaneModes } from '@vibeterm/shared';
+import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import type { GhosttyTerminalModeSnapshot, createTerminalController } from 'ghostty-terminal';
 import type { TerminalSurfaceTarget } from './TerminalSurface';
 import { normalizeHistoryForTerminal, normalizeLiveOutputForTerminal } from './normalization';

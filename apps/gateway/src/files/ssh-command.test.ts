@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync } from 'node:fs';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { ConnectConfig } from 'ssh2';
 import {
   RsyncAuthError,
@@ -47,7 +47,7 @@ describe('buildRsyncDeviceSpec', () => {
     );
     expect(spec.targetPrefix).toBe('u@h:');
     expect(spec.env.SSH_ASKPASS_REQUIRE).toBe('force');
-    expect(spec.env.TMEX_RSYNC_SECRET).toBe('secret');
+    expect(spec.env.VIBETERM_RSYNC_SECRET).toBe('secret');
     expect(existsSync(spec.env.SSH_ASKPASS)).toBe(true);
     expect(spec.rsh).not.toContain('BatchMode=yes');
     expect(spec.rsh).toContain('PreferredAuthentications=password');
@@ -114,7 +114,7 @@ describe('buildRsyncDeviceSpec', () => {
       resolveConfig
     );
     expect(spec.rsh).toContain('-i ');
-    expect(spec.env.TMEX_RSYNC_SECRET).toBe('pp');
+    expect(spec.env.VIBETERM_RSYNC_SECRET).toBe('pp');
     expect(existsSync(spec.env.SSH_ASKPASS)).toBe(true);
     expect(spec.rsh).not.toContain('BatchMode=yes');
     spec.cleanup();

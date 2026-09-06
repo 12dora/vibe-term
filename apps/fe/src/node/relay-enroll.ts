@@ -1,7 +1,8 @@
 // 中继接入 / 离开 / 换元数据密钥的浏览器侧流程（plan-00 §1.9、§1.11）。
 //
 // 三条硬性质：
-// - **enroll proof 只能由根密码签**：它是根钥对 Borsh `tmex/relay-enroll/v1` 的 Ed25519 签名，
+// - **enroll proof 只能由根密码签**：它是根钥对 Borsh `tmex/relay-enroll/v1`（协议常量，沿用 tmex
+//   时期的值以保持跨版本兼容）的 Ed25519 签名，
 //   passkey 断言给不出这种签名（见 plan §1.7）。因此接入对话框必须要根密码，不给 passkey 选项。
 //   随后的 `set-relays` / `meta-key` 记录则与吊销同档，根密码或 passkey 都行。
 // - payload 一律由本机节点算好（`/api/mesh/relay/*` 的 prepare 端点）：封装 `K_log` / `K_meta`
@@ -18,14 +19,14 @@ import {
   headFromResponse,
   kdfParamsFromJson,
 } from '@/auth/key-log-actions';
-import type { AuthApi, AuthKdfParamsJson } from '@tmex/api-client/auth/index';
-import { requireRootEpoch } from '@tmex/api-client/auth/index';
-import type { RelayMetaKeyOp, RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
-import { relayErrorCode } from '@tmex/api-client/relay/tenant-api';
-import { errorMessage } from '@tmex/shared';
-import type { RootKey } from '@tmex/shared/auth';
-import { bytesEqual, decodeBase64url, encodeBase64url } from '@tmex/shared/auth';
-import { signRelayEnrollProof } from '@tmex/shared/relay';
+import type { AuthApi, AuthKdfParamsJson } from '@vibeterm/api-client/auth/index';
+import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
+import type { RelayMetaKeyOp, RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
+import { relayErrorCode } from '@vibeterm/api-client/relay/tenant-api';
+import { errorMessage } from '@vibeterm/shared';
+import type { RootKey } from '@vibeterm/shared/auth';
+import { bytesEqual, decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
+import { signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
 import type { ReadmitResult } from './readmit-members';
 import { READMIT_PENDING, readmitStaleMembers } from './readmit-members';

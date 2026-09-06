@@ -4,7 +4,7 @@
 // 高亮不在渲染路径上：先把纯文本上屏，highlight.js 在 worker 里跑完再换成高亮 HTML
 // （worker 不可用时退回主线程，但先让出一帧）。语言模块按当前文件按需注册，不再全量急加载。
 
-import { cn } from '@tmex/ui';
+import { cn } from '@vibeterm/ui';
 import { useMemo } from 'react';
 import './hljs-terminal-theme.css';
 import { HIGHLIGHT_LIMIT } from './language-map';

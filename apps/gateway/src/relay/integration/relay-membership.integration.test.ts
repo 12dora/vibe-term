@@ -4,8 +4,8 @@ import {
   createNodeCertificate,
   encodeBase64url,
   signEd25519,
-} from '@tmex/shared/auth';
-import { RelayCipherError, openEnvelope } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { RelayCipherError, openEnvelope } from '@vibeterm/shared/relay';
 import { ensureNodeIdentity } from '../../auth';
 import { NodeIdentityStore } from '../../auth/node-identity-store';
 import { createMigratedAuthDb } from '../../auth/test-db';

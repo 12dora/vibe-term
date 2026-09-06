@@ -1,7 +1,7 @@
 // 被分享页的密码表单：标题即分享名称，一行错误，限速时按秒倒数并禁用提交。
 
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
 import { AlertTriangle, Eye, EyeOff, Loader2 } from 'lucide-react';
 import { type FormEvent, useState } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -63,7 +63,7 @@ export function SharePasswordForm({
   return (
     <div className="flex min-h-full items-center justify-center p-4" data-testid="share-password">
       <form
-        className="tmex-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
+        className="vibeterm-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={submit}
       >
         <h1 className="truncate text-base font-semibold" data-testid="share-name">
@@ -104,7 +104,7 @@ export function SharePasswordForm({
         </output>
         {message ? (
           <p
-            className="tmex-fade flex items-start gap-1.5 text-sm text-destructive"
+            className="vibeterm-fade flex items-start gap-1.5 text-sm text-destructive"
             data-testid="share-password-error"
           >
             <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />

@@ -1,4 +1,4 @@
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@tmex/ui/sheet';
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '@vibeterm/ui/sheet';
 import { useTranslation } from 'react-i18next';
 import { TerminalSettingsPanel } from './terminal-settings-panel';
 
@@ -17,7 +17,7 @@ export function TerminalSettingsSheet({ open, onOpenChange }: TerminalSettingsSh
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
         side="bottom"
-        className="max-h-[88dvh] overflow-y-auto pb-[var(--tmex-safe-area-bottom)] sm:mx-auto sm:max-w-md sm:rounded-t-2xl sm:border sm:border-b-0"
+        className="max-h-[88dvh] overflow-y-auto pb-[var(--vibeterm-safe-area-bottom)] sm:mx-auto sm:max-w-md sm:rounded-t-2xl sm:border sm:border-b-0"
         data-testid="keyboard-behavior-sheet"
       >
         <SheetHeader>

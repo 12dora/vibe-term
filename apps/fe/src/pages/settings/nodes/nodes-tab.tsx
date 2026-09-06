@@ -5,9 +5,9 @@
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
-import type { SetupRelayRole } from '@tmex/api-client/local/types';
-import { Reveal } from '@tmex/ui/motion';
-import { Skeleton } from '@tmex/ui/skeleton';
+import type { SetupRelayRole } from '@vibeterm/api-client/local/types';
+import { Reveal } from '@vibeterm/ui/motion';
+import { Skeleton } from '@vibeterm/ui/skeleton';
 import { Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { HttpsSection } from './https/https-section';

@@ -16,7 +16,7 @@ afterEach(() => {
 });
 
 function tempDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-sink-test-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-sink-test-'));
   dirs.push(dir);
   return dir;
 }

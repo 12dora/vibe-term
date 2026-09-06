@@ -1,8 +1,8 @@
-import type { Device, FileRootDto } from '@tmex/shared';
+import type { Device, FileRootDto } from '@vibeterm/shared';
 import { useEffect, useState } from 'react';
 
-import type { ApiClient } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import type { ApiClient } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 
 import {
   type FileRootDeviceGroup,

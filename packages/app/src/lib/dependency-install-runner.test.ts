@@ -120,7 +120,7 @@ describe('executeDependencyInstall', () => {
     expect(harness.tmuxChecks()).toBe(1);
     expect(harness.bunChecks()).toBe(0);
     expect(harness.promptCalls).toEqual([]);
-    expect(harness.logs).toContain(`[tmex] ${t('deps.install.success', { dep: 'tmux' })}`);
+    expect(harness.logs).toContain(`[vibeterm] ${t('deps.install.success', { dep: 'tmux' })}`);
   });
 
   test('returns false and skips verification when the install command exits non-zero', async () => {
@@ -134,8 +134,8 @@ describe('executeDependencyInstall', () => {
     expect(ok).toBe(false);
     expect(harness.spawnCalls).toHaveLength(1);
     expect(harness.tmuxChecks()).toBe(0);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.failed', { dep: 'tmux' })}`);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.manual')}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.failed', { dep: 'tmux' })}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.manual')}`);
   });
 
   test('returns false when install succeeds but version verification fails', async () => {
@@ -149,8 +149,8 @@ describe('executeDependencyInstall', () => {
     expect(ok).toBe(false);
     expect(harness.spawnCalls).toHaveLength(1);
     expect(harness.tmuxChecks()).toBe(1);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.failed', { dep: 'tmux' })}`);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.manual')}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.failed', { dep: 'tmux' })}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.manual')}`);
   });
 
   test('does not spawn when the user declines confirmation', async () => {
@@ -166,7 +166,7 @@ describe('executeDependencyInstall', () => {
     expect(harness.tmuxChecks()).toBe(0);
     expect(harness.promptCalls).toEqual([t('deps.install.confirm', { dep: 'tmux' })]);
     expect(harness.logs).toContain(
-      `[tmex] ${t('deps.install.hint', { command: 'brew install tmux' })}`
+      `[vibeterm] ${t('deps.install.hint', { command: 'brew install tmux' })}`
     );
     expect(harness.errors).toEqual([]);
   });
@@ -210,7 +210,7 @@ describe('executeDependencyInstall', () => {
 
     expect(ok).toBe(false);
     expect(harness.tmuxChecks()).toBe(0);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.failed', { dep: 'tmux' })}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.failed', { dep: 'tmux' })}`);
   });
 
   test('reports brew missing when tmux has no install commands on darwin', async () => {
@@ -223,8 +223,8 @@ describe('executeDependencyInstall', () => {
 
     expect(ok).toBe(false);
     expect(harness.spawnCalls).toHaveLength(0);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.brewMissing')}`);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.manual')}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.brewMissing')}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.manual')}`);
   });
 
   test('reports unknown distro when there are no install commands off darwin', async () => {
@@ -236,7 +236,9 @@ describe('executeDependencyInstall', () => {
     );
 
     expect(ok).toBe(false);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.unknownDistro', { dep: 'tmux' })}`);
+    expect(harness.errors).toContain(
+      `[vibeterm] ${t('deps.install.unknownDistro', { dep: 'tmux' })}`
+    );
   });
 
   test('refuses non-interactive sudo install when sudo is unavailable', async () => {
@@ -249,6 +251,6 @@ describe('executeDependencyInstall', () => {
 
     expect(ok).toBe(false);
     expect(harness.spawnCalls).toHaveLength(0);
-    expect(harness.errors).toContain(`[tmex] ${t('deps.install.sudoUnavailable')}`);
+    expect(harness.errors).toContain(`[vibeterm] ${t('deps.install.sudoUnavailable')}`);
   });
 });

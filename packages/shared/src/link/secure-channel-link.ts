@@ -18,7 +18,9 @@ import {
   SC_REKEY_COUNTER,
 } from './types';
 
-const HKDF_INFO_PREFIX = new TextEncoder().encode('tmex-sc/v1/');
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
+export const SC_SESSION_INFO_PREFIX = 'tmex-sc/v1/';
+const HKDF_INFO_PREFIX = new TextEncoder().encode(SC_SESSION_INFO_PREFIX);
 
 /** WebCrypto BufferSource is typed against ArrayBuffer, not ArrayBufferLike. */
 function asBufferSource(bytes: Uint8Array): BufferSource {

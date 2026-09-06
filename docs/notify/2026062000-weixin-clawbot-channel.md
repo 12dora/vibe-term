@@ -2,7 +2,7 @@
 
 ## 背景
 
-tmex 通知系统原有两条出站渠道：通用 Webhook（HMAC 签名）与 Telegram Bot。本次新增第三条「微信」渠道，让用户在**真·个人微信号**（非企业微信群、非公众号）上收到 tmex 告警（终端响铃、终端通知、agent 完成/待确认、设备断连、watch 触发等）。
+VibeTerm 通知系统原有两条出站渠道：通用 Webhook（HMAC 签名）与 Telegram Bot。本次新增第三条「微信」渠道，让用户在**真·个人微信号**（非企业微信群、非公众号）上收到 VibeTerm 告警（终端响铃、终端通知、agent 完成/待确认、设备断连、watch 触发等）。
 
 底层走腾讯 **iLink bot 协议**（`https://ilinkai.weixin.qq.com`）。未采用官方 `@tencent-weixin/openclaw-weixin-cli`（它只是 OpenClaw 框架的微信插件安装器，需常驻整个框架，过重），而是在仓库内自行 vendor iLink 协议（Bun 原生、零外部依赖）。
 
@@ -10,7 +10,7 @@ tmex 通知系统原有两条出站渠道：通用 Webhook（HMAC 签名）与 T
 
 **iLink 只能在会话激活窗口内回复**：每条 `sendmessage` 必须回传一个来自某条 inbound 消息的 `context_token`，否则消息被静默丢弃；协议**没有主动 push 能力**。
 
-这与 Telegram Bot「可随时主动发消息」的模型根本不同。映射到 tmex 的「主动告警」场景，采用**半主动·最佳努力**语义：
+这与 Telegram Bot「可随时主动发消息」的模型根本不同。映射到 VibeTerm 的「主动告警」场景，采用**半主动·最佳努力**语义：
 
 1. 用户先给 bot 发一条消息「激活」会话；
 2. 长轮询 daemon 缓存该用户最新 `context_token` 并落库；
@@ -93,7 +93,7 @@ channels = [WebhookChannel, TelegramChannel, WeixinChannel]
 - **context_token TTL 实测**（头号风险，需人工）：
   1. 设置页扫码登录 bot，给它发一条消息激活；
   2. 从 gateway 日志或 `weixin_account_users.last_context_token` 取 token，连同 `bot_token` / `base_url` / `user_id` 填入 `test.env.local`（`TEST_WEIXIN_*`）；
-  3. `bun run --filter @tmex/gateway test:live:weixin`（立即发送应成功）；
+  3. `bun run --filter @vibeterm/gateway test:live:weixin`（立即发送应成功）；
   4. 设 `TEST_WEIXIN_TTL_DELAY_MS` 跨多次运行二分失效时长，结论看日志 `expired=…`。
 - 端到端：设置页加账号 → 扫码 → 激活 → 触发终端响铃 → 确认微信收到 → 闲置观察过期 + UI 重激活提示。
 

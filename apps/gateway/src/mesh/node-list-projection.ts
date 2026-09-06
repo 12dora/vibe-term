@@ -1,5 +1,5 @@
-import { decodeCertificate, encodeBase64url } from '@tmex/shared/auth';
-import { nodeSessionCookieName } from '../auth/cookies';
+import { decodeCertificate, encodeBase64url } from '@vibeterm/shared/auth';
+import { hasNodeSessionCookie } from '../auth/cookies';
 import { isPeerReachable } from './address-class';
 import { MESH_VIA_SELF } from './mesh-deps';
 
@@ -257,7 +257,7 @@ export function projectMeshListNode(
     version: core.version || versionFromInventory(core.inventory),
     direct_capable: core.direct_capable,
     inventory: core.inventory,
-    loggedIn: cookies.has(nodeSessionCookieName(isSelf ? MESH_VIA_SELF : id)),
+    loggedIn: hasNodeSessionCookie(cookies, isSelf ? MESH_VIA_SELF : id),
     isHub: hubIds ? hubIds.has(id) : hubNodeId === id,
     ...(hubModeOf?.(id) ? { hubMode: hubModeOf(id) } : {}),
     ...(attachedHubIdOf?.(id) ? { attachedHubId: attachedHubIdOf(id) ?? undefined } : {}),

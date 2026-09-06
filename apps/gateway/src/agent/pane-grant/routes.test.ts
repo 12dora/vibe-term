@@ -4,7 +4,7 @@ import { getDb } from '../../db/client';
 import { createDevice } from '../../db/devices';
 import { runMigrations } from '../../db/migrate';
 import { agentPaneGrants } from '../../db/schema';
-import { X_TMEX_MESH_PEER } from '../../mesh/peer-request-marker';
+import { MESH_PEER_HEADER } from '../../mesh/peer-request-marker';
 import { PANE_GRANT_ROUTE, createPaneGrantRoutes } from './routes';
 import { getPaneGrant, issuePaneGrant } from './store';
 
@@ -26,7 +26,7 @@ beforeAll(() => {
     id: DEVICE,
     name: 'grant-route-device',
     type: 'local',
-    session: 'tmex-test',
+    session: 'vibeterm-test',
     authMode: 'agent',
     port: 22,
     sortOrder: 0,
@@ -46,7 +46,7 @@ async function call(
   options: { body?: unknown; peer?: string } = {}
 ): Promise<{ status: number; json: Record<string, unknown> }> {
   const headers: Record<string, string> = { 'content-type': 'application/json' };
-  if (options.peer) headers[X_TMEX_MESH_PEER] = options.peer;
+  if (options.peer) headers[MESH_PEER_HEADER.name] = options.peer;
   const req = new Request(`http://localhost${path}`, {
     method,
     headers,

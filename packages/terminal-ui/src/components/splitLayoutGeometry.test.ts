@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { parseWindowLayout } from '@tmex/shared';
+import { parseWindowLayout } from '@vibeterm/shared';
 import {
   computeSplitLayoutGeometry,
   computeSplitWindowGridSize,

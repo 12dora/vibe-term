@@ -39,7 +39,7 @@ import { createInstallLayout } from '../lib/install-layout';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { readInstalledNativeManifest } from '../lib/native-datachannel';
 import { detectCurrentNativePin } from '../lib/native-manifest';
-import { type TmexRoleName, type TmexRoles, roleNameFromFlags } from '../lib/roles';
+import { type VibeTermRoleName, type VibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
 import {
   type SetupEnvHost,
@@ -66,7 +66,7 @@ export const DIRECT_ENABLE_TIMEOUT_MS = 60_000;
 export const PRECHECK_TIMEOUT_MS = 5_000;
 /** 单个候选端口的探测超时；比 healthz 的确认短，八个候选交错跑完仍在几秒内。 */
 export const PRECHECK_PROBE_TIMEOUT_MS = 4_000;
-export const DIRECT_ENABLED_KEY = 'TMEX_DIRECT_ENABLED';
+export const DIRECT_ENABLED_KEY = 'VIBETERM_DIRECT_ENABLED';
 
 export {
   SetupError,
@@ -112,7 +112,7 @@ const EMPTY_RELAY_STATUS: LocalRelayStatus = {
 };
 
 export type LocalStatus = {
-  role: TmexRoleName;
+  role: VibeTermRoleName;
   nodeEnv: EnvName;
   hubUrl: string | null;
   hubPublicUrl: string | null;
@@ -186,7 +186,7 @@ export type PrecheckResult = {
 };
 
 export type SetupServiceDeps = SetupEnvHost & {
-  roles: TmexRoles;
+  roles: VibeTermRoles;
   nodeEnv: string;
   auth: LocalAuthContext;
   installDir: string;
@@ -539,8 +539,8 @@ export async function becomeHub(
     }
     const direct = await maybeEnableDirect(input.directEnable, deps);
     await patchOwnedEnvKeys(deps, {
-      TMEX_ROLES: 'hub,node',
-      TMEX_HUB_PUBLIC_URL: hubPublicUrl,
+      VIBETERM_ROLES: 'hub,node',
+      VIBETERM_HUB_PUBLIC_URL: hubPublicUrl,
       ...(direct.direct === 'enabled' ? { [DIRECT_ENABLED_KEY]: 'true' } : {}),
     });
     return {
@@ -580,9 +580,9 @@ export async function joinHub(input: JoinHubInput, deps: SetupServiceDeps): Prom
         stagedPath,
         stringifyEnv({
           ...base,
-          TMEX_ROLES: 'node',
-          TMEX_HUB_URL: url,
-          TMEX_HUB_PUBLIC_URL: '',
+          VIBETERM_ROLES: 'node',
+          VIBETERM_HUB_URL: url,
+          VIBETERM_HUB_PUBLIC_URL: '',
         })
       );
     };

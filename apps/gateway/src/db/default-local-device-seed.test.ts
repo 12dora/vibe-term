@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { hostname } from 'node:os';
 import { resolve } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import { eq } from 'drizzle-orm';
 import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import {
@@ -38,7 +38,7 @@ function makeManualDevice(id: string): Device {
     id,
     name: 'manual',
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,
@@ -57,7 +57,7 @@ describe('ensureDefaultLocalDeviceSeeded', () => {
     const device = all[0];
     expect(device.name).toBe(hostname().trim() || 'local');
     expect(device.type).toBe('local');
-    expect(device.session).toBe('tmex');
+    expect(device.session).toBe('vibeterm');
     expect(device.authMode).toBe('auto');
 
     // 走 createDevice 既有路径：device_runtime_status 副作用一致

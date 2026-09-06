@@ -64,7 +64,7 @@ test('theme-broadcast: concurrent last-writer-wins — two pages toggle differen
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-lww-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-lww-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-lww-${Date.now()}`);
@@ -119,7 +119,7 @@ test('theme-broadcast: offline fallback — toggle while offline, sync after rec
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-offline-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-offline-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-offline-${Date.now()}`);
@@ -179,7 +179,7 @@ test('theme-broadcast: serverTimestamp strictly monotonic across rapid toggles',
   browser,
   request,
 }) => {
-  const sessionName = `tmex-e2e-theme-ts-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-theme-ts-${Date.now()}`;
   createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-theme-ts-${Date.now()}`);

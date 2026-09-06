@@ -1,10 +1,10 @@
 // 远端节点上的设备：只读的归属信息（节点名 / 节点 id / 设备 id）+「显示在侧栏」偏好。
 // 连接参数由该节点自己管理，这里不提供任何可写的连接字段。
 
-import type { Device } from '@tmex/shared';
-import { isSidebarDeviceVisible, sidebarDeviceVisibilityKey } from '@tmex/stores';
-import { useUIStore } from '@tmex/stores/react';
-import { Switch } from '@tmex/ui/switch';
+import type { Device } from '@vibeterm/shared';
+import { isSidebarDeviceVisible, sidebarDeviceVisibilityKey } from '@vibeterm/stores';
+import { useUIStore } from '@vibeterm/stores/react';
+import { Switch } from '@vibeterm/ui/switch';
 import { useTranslation } from 'react-i18next';
 import { SectionHeading } from './device-field-primitives';
 import type { DeviceNodeContext } from './device-node-context';

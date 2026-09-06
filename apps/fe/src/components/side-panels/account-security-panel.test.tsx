@@ -2,8 +2,8 @@
 // 无 DOM 测试环境，用 react-dom/server 静态渲染（副作用里的 passkey 列表请求不会跑）。
 
 import { beforeEach, describe, expect, mock, test } from 'bun:test';
-import type { AuthApi, AuthModeResponse } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 

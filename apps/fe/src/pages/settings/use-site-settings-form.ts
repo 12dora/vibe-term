@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import type { SiteSettings } from '@tmex/shared';
-import { useRuntime, useSiteStore } from '@tmex/stores/react';
+import type { SiteSettings } from '@vibeterm/shared';
+import { useRuntime, useSiteStore } from '@vibeterm/stores/react';
 import { type ReactElement, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import i18n from '../../i18n';

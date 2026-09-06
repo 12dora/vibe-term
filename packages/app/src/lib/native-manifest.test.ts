@@ -91,7 +91,7 @@ describe('detectLibcFamily', () => {
 
 describe('verifyNpmIntegrity', () => {
   test('accepts matching sha512 and rejects mismatch', () => {
-    const payload = new TextEncoder().encode('tmex-native-pin');
+    const payload = new TextEncoder().encode('vibeterm-native-pin');
     const digest = createHash('sha512').update(payload).digest('base64');
     expect(verifyNpmIntegrity(payload, `sha512-${digest}`)).toBe(true);
     expect(

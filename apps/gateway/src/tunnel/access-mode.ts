@@ -1,4 +1,4 @@
-import type { TunnelActionRequest, TunnelProcessState } from '@tmex/shared';
+import type { TunnelActionRequest, TunnelProcessState } from '@vibeterm/shared';
 
 export function processUp(state: TunnelProcessState): boolean {
   return state === 'running' || state === 'degraded';

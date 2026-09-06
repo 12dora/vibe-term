@@ -53,13 +53,13 @@ function resolveRunnerDeps(deps: DependencyInstallRunnerDeps = {}): ResolvedRunn
   };
 }
 
-function tmexLog(write: (message: string) => void, message: string): void {
-  write(`[tmex] ${message}`);
+function vibeTermLog(write: (message: string) => void, message: string): void {
+  write(`[vibeterm] ${message}`);
 }
 
 function reportFailedInstall(dep: DepName, error: (message: string) => void): void {
-  tmexLog(error, t('deps.install.failed', { dep }));
-  tmexLog(error, t('deps.install.manual'));
+  vibeTermLog(error, t('deps.install.failed', { dep }));
+  vibeTermLog(error, t('deps.install.manual'));
 }
 
 function reportMissingCommands(
@@ -67,11 +67,11 @@ function reportMissingCommands(
   deps: ResolvedRunnerDeps
 ): ResolvedInstallPlan {
   if (plan.dep === 'tmux' && deps.platform === 'darwin') {
-    tmexLog(deps.error, t('deps.install.brewMissing'));
+    vibeTermLog(deps.error, t('deps.install.brewMissing'));
   } else {
-    tmexLog(deps.error, t('deps.install.unknownDistro', { dep: plan.dep }));
+    vibeTermLog(deps.error, t('deps.install.unknownDistro', { dep: plan.dep }));
   }
-  tmexLog(deps.error, t('deps.install.manual'));
+  vibeTermLog(deps.error, t('deps.install.manual'));
   return { ok: false };
 }
 
@@ -86,7 +86,7 @@ async function ensureSudoReady(
   if (await deps.isSudoAvailable()) {
     return true;
   }
-  tmexLog(deps.error, t('deps.install.sudoUnavailable'));
+  vibeTermLog(deps.error, t('deps.install.sudoUnavailable'));
   return false;
 }
 
@@ -104,7 +104,7 @@ export async function resolveInstallPlan(
     return { ok: false };
   }
   const fullCommand = resolveInstallCommand(command, resolved.uid);
-  tmexLog(resolved.log, t('deps.install.hint', { command: fullCommand }));
+  vibeTermLog(resolved.log, t('deps.install.hint', { command: fullCommand }));
   return { ok: true, command, fullCommand };
 }
 
@@ -117,7 +117,7 @@ export async function confirmInstall(
 
   const resolved = resolveRunnerDeps(deps);
   if (options.nonInteractive) {
-    tmexLog(resolved.error, t('deps.install.nonInteractive', { dep: plan.dep }));
+    vibeTermLog(resolved.error, t('deps.install.nonInteractive', { dep: plan.dep }));
     return false;
   }
 
@@ -145,7 +145,7 @@ export async function runInstallCommand(
   deps: DependencyInstallRunnerDeps = {}
 ): Promise<boolean> {
   const resolved = resolveRunnerDeps(deps);
-  tmexLog(resolved.log, t('deps.install.running', { dep }));
+  vibeTermLog(resolved.log, t('deps.install.running', { dep }));
   const result = await spawnInstallCommand(fullCommand, resolved.runCommand);
   if (result?.code === 0) {
     return true;
@@ -162,7 +162,7 @@ export async function verifyInstalledDependency(
   const check =
     dep === 'bun' ? await resolved.checkBunVersion() : await resolved.checkTmuxVersion();
   if (check.ok) {
-    tmexLog(resolved.log, t('deps.install.success', { dep }));
+    vibeTermLog(resolved.log, t('deps.install.success', { dep }));
     return true;
   }
   reportFailedInstall(dep, resolved.error);

@@ -1,4 +1,4 @@
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { ERROR_CANONICAL_V11_REQUIRED, peerNodeTooOldMessage } from '../ws/canonical-gate';
 import { ViewportReplayCache } from './stream-replay-state-viewport';
 

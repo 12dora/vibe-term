@@ -1,7 +1,7 @@
-import type { AssistRegexResponse } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import type { AssistRegexResponse } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 import { Loader2, Sparkles } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SetWatchRuleField } from './use-watch-rule-draft';

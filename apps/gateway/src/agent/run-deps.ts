@@ -1,5 +1,5 @@
-import type { AgentEventPayloadMap, EventType, WebhookEvent } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { AgentEventPayloadMap, EventType, WebhookEvent } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { LanguageModel, Tool } from 'ai';
 import { generateText } from 'ai';
 import { deleteAllQueuedAgentMessages, listQueuedAgentMessages } from '../db/agent';

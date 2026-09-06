@@ -3,8 +3,8 @@
 // 浏览器不能直接探中继（跨域 + 混合内容），一律由本机 gateway 代探；enroll proof 绑的是
 // `hubHostFromUrl(url)`（含端口），所以端口必须在 `proof-material` 之前定下来。
 
-import { type PortProbeResult, parseProbeTarget, probeAddressPorts } from '@tmex/shared/net';
-import { normalizeRelayUrl } from '@tmex/shared/relay';
+import { type PortProbeResult, parseProbeTarget, probeAddressPorts } from '@vibeterm/shared/net';
+import { normalizeRelayUrl } from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
 import { jsonBody, jsonError } from './session-middleware';
@@ -38,7 +38,7 @@ function normalizedOrNull(raw: string): string | null {
  * 本机就是中继（`relay,node`）且用户填的是本机中继的主机名但没写端口时，端口不能靠候选表去
  * 「发现」：`resolveRelayDialUrl` 会把这台机器的请求改写到回环 gateway，任何候选端口都会答话，
  * 443 必然抢先胜出，随后 enroll 又按精确 host 比对不走回环，直接打到错误的公网端口上。
- * 这种情况下地址是已知的——就是 `TMEX_RELAY_PUBLIC_URL`——只需回环确认一次。
+ * 这种情况下地址是已知的——就是 `VIBETERM_RELAY_PUBLIC_URL`——只需回环确认一次。
  */
 function selfRelayUrl(raw: string, ctx: RelayDialContext): string | null {
   const publicUrl = ctx.relayPublicUrl?.trim();

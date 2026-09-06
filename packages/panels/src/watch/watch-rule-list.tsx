@@ -1,5 +1,5 @@
-import type { WatchRuleDto } from '@tmex/shared';
-import { Button } from '@tmex/ui/button';
+import type { WatchRuleDto } from '@vibeterm/shared';
+import { Button } from '@vibeterm/ui/button';
 import { Bell, Loader2, Plus } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { WatchQueryStatus } from './use-watch-rules';

@@ -8,7 +8,7 @@ test('keyboard behavior settings: entry visible on large screens, sheet selects 
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-kb-ui-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-kb-ui-${Date.now()}`;
   createTwoPaneSession(sessionName);
   const name = `e2e-kb-ui-${Date.now()}`;
   const createRes = await request.post('/api/devices', {
@@ -46,7 +46,7 @@ test('keyboard behavior settings: entry visible on large screens, sheet selects 
     await expect(followOption).toHaveAttribute('aria-pressed', 'false');
 
     const persisted = await page.evaluate(() => {
-      const raw = localStorage.getItem('tmex-ui');
+      const raw = localStorage.getItem('vibeterm-ui');
       return raw ? (JSON.parse(raw).state?.keyboardBehaviorMode ?? null) : null;
     });
     expect(persisted).toBe('resize');

@@ -1,4 +1,4 @@
-import { DEFAULT_AGENT_SESSION_TITLE } from '@tmex/shared';
+import { DEFAULT_AGENT_SESSION_TITLE } from '@vibeterm/shared';
 import { buildTitleGenerationPrompt } from './prompts';
 
 export function extractUserMessageText(content: unknown): string {

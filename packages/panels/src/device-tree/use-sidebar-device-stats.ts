@@ -7,9 +7,9 @@ import {
   type DevicesResponse,
   devicesQueryKey as defaultDevicesQueryKey,
   fetchDevices,
-} from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
+} from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
 import { useMemo } from 'react';
 import { useDeviceTreeSelection } from './device-tree-navigation';
 import { type SidebarDeviceStats, selectSidebarVisibleDevices } from './device-tree-selectors';

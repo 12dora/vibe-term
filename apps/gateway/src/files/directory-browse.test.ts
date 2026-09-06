@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import path from 'node:path';
-import type { BrowseDirectoryResponse, Device } from '@tmex/shared';
+import type { BrowseDirectoryResponse, Device } from '@vibeterm/shared';
 import { type DirectoryBrowseDeps, type SshExecResult, browseDirectory } from './directory-browse';
 import type { RsyncDeviceSpec } from './ssh-command';
 
@@ -63,7 +63,7 @@ function expectOk(result: Awaited<ReturnType<typeof browseDirectory>>): BrowseDi
 let sandbox: string | null = null;
 
 function makeSandbox(): string {
-  sandbox = mkdtempSync(path.join(tmpdir(), 'tmex-browse-'));
+  sandbox = mkdtempSync(path.join(tmpdir(), 'vibeterm-browse-'));
   return sandbox;
 }
 
@@ -368,7 +368,7 @@ describe('browseDirectory — SSH', () => {
     await expectCode(
       async () => ({
         stdout: new Uint8Array(),
-        stderr: '[tmex] ssh timed out',
+        stderr: '[vibeterm] ssh timed out',
         exitCode: 124,
       }),
       'timeout'

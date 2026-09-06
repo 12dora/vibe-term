@@ -4,7 +4,7 @@ import {
   LinkMux,
   type LinkSession,
   createInMemoryLinkPair,
-} from '@tmex/shared/link';
+} from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
@@ -732,7 +732,7 @@ describe('PeerManager upgrade review fixes', () => {
     });
     expect(manager.adoptLink(peer.nodeId, oldLocal, 'relay', self.nodeId)).toBe(oldLocal);
     await waitUntil(() => manager.quiesceCapableOf(peer.nodeId), 2_000);
-    const incoming = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       oldRemote.onStream(resolve)
     );
     const outbound = await oldLocal.openStream(HTTP_OPEN);
@@ -977,7 +977,7 @@ describe('PeerManager upgrade review fixes', () => {
     echoQuiesceCaps(relayB);
     expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
     await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
-    const incomingP = new Promise<import('@tmex/shared/link').LinkStream>((resolve) =>
+    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
       relayB.onStream(resolve)
     );
     const held = await managerA.getLink(peer.nodeId);

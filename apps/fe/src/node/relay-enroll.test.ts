@@ -2,9 +2,9 @@
 
 import { describe, expect, test } from 'bun:test';
 import type { RecordSigner } from '@/auth/key-log-actions';
-import type { AuthApi } from '@tmex/api-client/auth/index';
-import { RelayApiError } from '@tmex/api-client/relay/admin-api';
-import type { RelayTenantApi } from '@tmex/api-client/relay/tenant-api';
+import type { AuthApi } from '@vibeterm/api-client/auth/index';
+import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import {
   DOMAIN_AUTHORIZATION,
   decodeBase64url,
@@ -14,8 +14,8 @@ import {
   encodeBase64url,
   rootKeyFromSeed,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import { decodeRelayEnrollProof } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import { decodeRelayEnrollProof } from '@vibeterm/shared/relay';
 import { READMIT_PENDING } from './readmit-members';
 import {
   ROOT_PASSWORD_INVALID,

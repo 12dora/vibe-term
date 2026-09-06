@@ -3,8 +3,8 @@ import { delimiter, join, win32 } from 'node:path';
 
 import { type RunSyncResult, defaultRunSync } from './run-sync';
 
-const SHELL_ENV_BEGIN_MARKER = '__TMEX_SHELL_ENV_BEGIN__';
-const SHELL_ENV_END_MARKER = '__TMEX_SHELL_ENV_END__';
+const SHELL_ENV_BEGIN_MARKER = '__VIBETERM_SHELL_ENV_BEGIN__';
+const SHELL_ENV_END_MARKER = '__VIBETERM_SHELL_ENV_END__';
 const SHELL_ENV_PROBE_COMMAND = `printf '${SHELL_ENV_BEGIN_MARKER}\\n'; /usr/bin/env; printf '${SHELL_ENV_END_MARKER}\\n'`;
 
 interface LocalShellPathCacheDeps {
@@ -229,16 +229,26 @@ export function getLocalShellPath(): string | null {
   return defaultLocalShellPathCache.get();
 }
 
-// tmex 自身注入的环境变量（生产由 run.sh 经 app.env 注入 gateway 进程）。
-// 这些绝不能漏进 tmex 拉起的 tmux 服务端——否则用户终端会继承：
-// - 污染正常环境（NODE_ENV=production / DATABASE_URL / 各 TMEX_* 配置）；
-// - 泄露密钥（TMEX_MASTER_KEY 是加密所有凭证的主密钥）。
-// 绝大多数为 TMEX_ 前缀，少数非前缀键单列。
-const TMEX_INJECTED_ENV_EXACT = new Set(['NODE_ENV', 'DATABASE_URL', 'GATEWAY_PORT', 'FE_PORT']);
+// VibeTerm 自身注入的环境变量（生产由 run.sh 经 app.env 注入 gateway 进程）。
+// 这些绝不能漏进 VibeTerm 拉起的 tmux 服务端——否则用户终端会继承：
+// - 污染正常环境（NODE_ENV=production / DATABASE_URL / 各 VIBETERM_* 配置）；
+// - 泄露密钥（VIBETERM_MASTER_KEY 是加密所有凭证的主密钥）。
+// 绝大多数为 VIBETERM_ 前缀，少数非前缀键单列。
+// TMEX_ 是 1.x 的前缀：原地升级的安装仍在用旧 app.env，同样不能漏进 tmux。
+const VIBETERM_INJECTED_ENV_EXACT = new Set([
+  'NODE_ENV',
+  'DATABASE_URL',
+  'GATEWAY_PORT',
+  'FE_PORT',
+]);
+const VIBETERM_INJECTED_ENV_PREFIXES = ['VIBETERM_', 'TMEX_'];
 
-function isTmexInjectedEnvKey(key: string, caseInsensitive: boolean): boolean {
+function isVibeTermInjectedEnvKey(key: string, caseInsensitive: boolean): boolean {
   const normalized = caseInsensitive ? key.toUpperCase() : key;
-  return normalized.startsWith('TMEX_') || TMEX_INJECTED_ENV_EXACT.has(normalized);
+  return (
+    VIBETERM_INJECTED_ENV_PREFIXES.some((prefix) => normalized.startsWith(prefix)) ||
+    VIBETERM_INJECTED_ENV_EXACT.has(normalized)
+  );
 }
 
 function isUtf8Locale(value: string | undefined): boolean {
@@ -253,7 +263,7 @@ export function buildLocalTmuxEnv(
   const caseInsensitive = platform === 'win32';
   const nextEnv: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(baseEnv)) {
-    if (isTmexInjectedEnvKey(key, caseInsensitive)) {
+    if (isVibeTermInjectedEnvKey(key, caseInsensitive)) {
       continue;
     }
     nextEnv[key] = value;

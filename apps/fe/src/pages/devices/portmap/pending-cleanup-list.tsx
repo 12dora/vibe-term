@@ -1,7 +1,7 @@
 // 待清理放行：映射已经删了，但目标节点上的放行记录还在。列出来并提供重试，
 // 否则这条放行会一直有效——拿着同一个 mapId 的监听方仍能连上目标服务。
 
-import { Button } from '@tmex/ui/button';
+import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 
 import type { DialogNodeOption } from '../dialog-nodes';

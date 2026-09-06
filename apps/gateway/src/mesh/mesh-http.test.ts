@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
 import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-routes.test';
 import {
@@ -15,7 +15,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
-import { X_TMEX_MESH_PEER } from './peer-request-marker';
+import { MESH_PEER_HEADER } from './peer-request-marker';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 
 const LOGIN_PUBLIC = [
@@ -86,14 +86,14 @@ describe('mesh-http share access', () => {
     }
   });
 
-  test('tmex_sh_self 有效 → 以分享作用域升级，不登记会话', async () => {
+  test('vibeterm_sh_self 有效 → 以分享作用域升级，不登记会话', async () => {
     acceptOnly(new Set([SHARE_TOKEN]));
     const mesh = await bootMesh();
     try {
       const spy = shareSpy();
       const res = mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws?cid=c1', {
-          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_self=${SHARE_TOKEN}` },
         }),
         spy.server
       );
@@ -116,7 +116,7 @@ describe('mesh-http share access', () => {
     try {
       const spy = shareSpy();
       mesh.runtime.guardGatewayWebSocket(
-        new Request('http://localhost/ws', { headers: { cookie: 'tmex_sh_self=stale.token' } }),
+        new Request('http://localhost/ws', { headers: { cookie: 'vibeterm_sh_self=stale.token' } }),
         spy.server
       );
       const data = spy.dataOf();
@@ -161,7 +161,7 @@ describe('mesh-http share access', () => {
       const spy = shareSpy();
       mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws', {
-          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_self=${SHARE_TOKEN}` },
         }),
         spy.server
       );
@@ -199,7 +199,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       const res = mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws?cid=c1&share=sh-1', {
-          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_self=${SHARE_TOKEN}` },
         }),
         spy.server
       );
@@ -218,7 +218,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws?share=sh-2', {
-          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_self=${SHARE_TOKEN}` },
         }),
         spy.server
       );
@@ -238,7 +238,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws?share=sh-1', {
-          headers: { cookie: `tmex_s_self=${sid}` },
+          headers: { cookie: `vibeterm_s_self=${sid}` },
         }),
         spy.server
       );
@@ -257,7 +257,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws?share=sh-1', {
-          headers: { cookie: 'tmex_sh_self=sh-1.stale' },
+          headers: { cookie: 'vibeterm_sh_self=sh-1.stale' },
         }),
         spy.server
       );
@@ -284,7 +284,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       const res = mesh.runtime.guardGatewayWebSocket(
         new Request('http://localhost/ws', {
-          headers: { cookie: `tmex_sh_self=${SHARE_TOKEN}` },
+          headers: { cookie: `vibeterm_sh_self=${SHARE_TOKEN}` },
         }),
         spy.server
       );
@@ -317,7 +317,7 @@ describe('mesh-http share ws binding', () => {
       const spy = shareSpy();
       expect(
         mesh.runtime.guardGatewayWebSocket(
-          new Request('http://localhost/ws', { headers: { cookie: 'tmex_sh_self=sh-9.dead' } }),
+          new Request('http://localhost/ws', { headers: { cookie: 'vibeterm_sh_self=sh-9.dead' } }),
           spy.server
         )
       ).toBeNull();
@@ -437,7 +437,7 @@ describe('mesh-http', () => {
         },
       };
       const req = new Request('http://localhost/ws?cid=tab-nonce', {
-        headers: { cookie: `tmex_s_self=${sid}` },
+        headers: { cookie: `vibeterm_s_self=${sid}` },
       });
       expect(mesh.runtime.guardGatewayWebSocket(req, server)).toBeUndefined();
       expect(data?.kind).toBe(MESH_GATEWAY_WS_KIND);
@@ -534,7 +534,7 @@ describe('mesh-http', () => {
 
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const authed = await mesh.runtime.handleRequest(
-        new Request('http://localhost/healthz', { headers: { cookie: `tmex_s_self=${sid}` } }),
+        new Request('http://localhost/healthz', { headers: { cookie: `vibeterm_s_self=${sid}` } }),
         dummyServer
       );
       expect(authed).toBeNull();
@@ -580,7 +580,7 @@ describe('mesh-http', () => {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          [X_TMEX_MESH_PEER]: 'entry-peer',
+          [MESH_PEER_HEADER.name]: 'entry-peer',
         },
         body: JSON.stringify({ deviceId: 'missing', paneId: '%1' }),
       });
@@ -661,7 +661,7 @@ describe('mesh-http 整站门 × localAuth', () => {
       expect(dataOf()?.kind).toBe(MESH_REJECT_4401_KIND);
 
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
-      const cookie = { headers: { cookie: `tmex_s_self=${sid}` } };
+      const cookie = { headers: { cookie: `vibeterm_s_self=${sid}` } };
       expect(
         mesh.runtime.localUiGuard(new Request('http://localhost/api/devices', cookie))
       ).toBeNull();
@@ -672,7 +672,7 @@ describe('mesh-http 整站门 × localAuth', () => {
       const authed = upgradeSpy();
       expect(
         mesh.runtime.guardGatewayWebSocket(
-          new Request('http://localhost/ws', { headers: { cookie: `tmex_s_self=${sid}` } }),
+          new Request('http://localhost/ws', { headers: { cookie: `vibeterm_s_self=${sid}` } }),
           authed.server
         )
       ).toBeUndefined();

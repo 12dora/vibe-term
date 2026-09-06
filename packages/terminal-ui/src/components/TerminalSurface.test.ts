@@ -1,11 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { PANE_MODE_FLAGS_PRESENT } from '@tmex/shared';
+import { PANE_MODE_FLAGS_PRESENT } from '@vibeterm/shared';
 import type {
   GatewayHistoryCursor,
   GatewayPaneHistoryPage,
   GatewayPaneScreenSnapshot,
   GatewayRebaseReason,
-} from '@tmex/ws-client';
+} from '@vibeterm/ws-client';
 import { TerminalSurface, type TerminalSurfaceTarget } from './TerminalSurface';
 import {
   type CanonicalSnapshotTarget,

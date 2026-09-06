@@ -2,7 +2,7 @@
 
 ## 背景
 
-站点名与访问地址存在 `site_settings` 单行（`site_name` / `site_url`），首次由 `TMEX_SITE_NAME` / `TMEX_BASE_URL` 播种，之后 env 不再覆盖。加入 mesh 后这两项就有了第二个真源：显示名的真源是 hub 的 `nodes.name`，访问地址的真源是 hub 公开地址（纯 node 还要带 `/n/<nodeId>` 前缀）。用户在「设置 → 通用」里改的值改不动真源，改完还会和节点管理页对不上。
+站点名与访问地址存在 `site_settings` 单行（`site_name` / `site_url`），首次由 `VIBETERM_SITE_NAME` / `VIBETERM_BASE_URL` 播种，之后 env 不再覆盖。加入 mesh 后这两项就有了第二个真源：显示名的真源是 hub 的 `nodes.name`，访问地址的真源是 hub 公开地址（纯 node 还要带 `/n/<nodeId>` 前缀）。用户在「设置 → 通用」里改的值改不动真源，改完还会和节点管理页对不上。
 
 本轮把 mesh 下的这两项托管给节点身份：设置页只读展示有效值，改名走 hub 的 rename 接口，反向由 hub 同步回本地 `site_settings`。standalone 行为完全不变。
 
@@ -53,7 +53,7 @@ mesh 下 `PATCH` 携带**与当前有效值不同**的字段直接 400：
 
 ## 注意
 
-- **TOTP issuer 不随站点名变**：`totpOtpauthUri()` 的 issuer 硬编码为 `tmex`，改名不会让验证器 App 里已有的条目改标签，也不需要重新绑定。
+- **TOTP issuer 不随站点名变**：`totpOtpauthUri()` 的 issuer 硬编码为 `vibeterm`，改名不会让验证器 App 里已有的条目改标签，也不需要重新绑定。
 - 存储的 `site_url` 只在 standalone 下有意义；mesh 下它是最后一层兜底，不要拿它当「用户配置的地址」来读。
-- hub 公开地址为空（既没配 `TMEX_HUB_PUBLIC_URL` 也没有 hub 行）时，纯 node 的有效地址会回退到存储值，页面可能显示一个过期地址——这是提示运维补 hub 公开地址，不是 bug。
+- hub 公开地址为空（既没配 `VIBETERM_HUB_PUBLIC_URL` 也没有 hub 行）时，纯 node 的有效地址会回退到存储值，页面可能显示一个过期地址——这是提示运维补 hub 公开地址，不是 bug。
 - `auth-routes.ts` 里另有一份私有的 hub 选择逻辑，本轮未合并；它在「已有 writer 但 `publicUrl` 为空」时不会继续回退到 attached hub，与本文顺序略有差异。

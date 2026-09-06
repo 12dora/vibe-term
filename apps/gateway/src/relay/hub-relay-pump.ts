@@ -1,4 +1,4 @@
-import type { LinkStream, StreamChunk } from '@tmex/shared/link';
+import type { LinkStream, StreamChunk } from '@vibeterm/shared/link';
 
 type HubRelayRstReason = 'relay-rst:src-read' | 'relay-rst:dst-write' | 'relay-rst:peer-abort';
 

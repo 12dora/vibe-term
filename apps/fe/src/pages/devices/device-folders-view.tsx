@@ -1,6 +1,6 @@
 // 设备管理页的主体：分组列表 + 节点分组的映射。
 //
-// 列表本身（拖拽、折叠、菜单、落点判定）在 `@tmex/panels/device-folders`，与业务解耦；
+// 列表本身（拖拽、折叠、菜单、落点判定）在 `@vibeterm/panels/device-folders`，与业务解耦；
 // 这里只负责把节点 id 翻译成「一个 node 分组」（把手塞进分组头），以及把布局变更
 // 交给 `use-device-folders`（只打 self 节点），并把顶栏用的命令登记出去。
 
@@ -11,10 +11,10 @@ import {
   type DeviceFolderTreeHandle,
   applyDrop,
   implicitRootNodeIds,
-} from '@tmex/panels/device-folders';
-import { useUIStore } from '@tmex/stores/react';
-import { Button } from '@tmex/ui/button';
-import { Reveal } from '@tmex/ui/motion';
+} from '@vibeterm/panels/device-folders';
+import { useUIStore } from '@vibeterm/stores/react';
+import { Button } from '@vibeterm/ui/button';
+import { Reveal } from '@vibeterm/ui/motion';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NodeDeviceGroup, type NodeDeviceGroupEntry } from './node-device-group';

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 
-import type { UiToolCall } from '@tmex/stores';
+import type { UiToolCall } from '@vibeterm/stores';
 
 import { TOOL_BRIEFS, actionBrief, asBriefText } from './tool-brief';
 

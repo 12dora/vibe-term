@@ -53,7 +53,7 @@ beforeAll(() => {
     id: testDeviceId,
     name: 'agent-watch-test-device',
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: now,

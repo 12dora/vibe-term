@@ -7,8 +7,8 @@ import {
   decodeRotateRootPayload,
   nodeIdToHex,
   verifyEd25519,
-} from '@tmex/shared/auth';
-import type { RelayKeylogMemberOp } from '@tmex/shared/relay';
+} from '@vibeterm/shared/auth';
+import type { RelayKeylogMemberOp } from '@vibeterm/shared/relay';
 import { decodeB64url } from '../api/route-input';
 
 export type RelayMemberSigner = 'root' | 'passkey';

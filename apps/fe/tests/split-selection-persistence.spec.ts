@@ -53,7 +53,7 @@ async function waitForCanvasInPane(page: Page, paneId: string): Promise<void> {
 }
 
 async function readVisibleTerminalTextByPane(page: Page, paneId: string): Promise<string> {
-  // __tmexE2eXterm 是全局单例，分屏时只指向最后挂载的 pane；用 tmux capture-pane 直接
+  // __vibetermE2eXterm 是全局单例，分屏时只指向最后挂载的 pane；用 tmux capture-pane 直接
   // 读 pane 屏幕文本，不依赖前端 terminal 实例（更可靠，且 per-pane 准确）。
   void page;
   try {
@@ -68,7 +68,7 @@ async function findVisibleTextRangeInPane(
   paneId: string,
   needle: string
 ): Promise<VisibleTextRange> {
-  // 用 tmux capture-pane 找文本位置（不依赖 __tmexE2eXterm 全局单例）。
+  // 用 tmux capture-pane 找文本位置（不依赖 __vibetermE2eXterm 全局单例）。
   // capture-pane 输出按行，row 是屏幕行号（从 0 开始）。
   const capture = tmux(`capture-pane -p -t ${paneId}`);
   const lines = capture.split('\n');
@@ -91,7 +91,7 @@ async function getCanvasMetricsInPane(
   cellHeight: number;
 }> {
   // 从 DOM canvas bounding rect + tmux pane cols/rows 计算 cell 尺寸，
-  // 不依赖 __tmexE2eXterm（分屏时全局单例只指向最后挂载的 pane）。
+  // 不依赖 __vibetermE2eXterm（分屏时全局单例只指向最后挂载的 pane）。
   const metrics = await page.evaluate((id) => {
     const paneEl = document.querySelector(`[data-pane-id="${id}"]`);
     if (!paneEl) return null;
@@ -156,7 +156,7 @@ test('bug1: split-pane B selection persists while A continuously outputs (5s / 1
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-bug1-persist-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-persist-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const paneA = paneIds[0]!;
   const paneB = paneIds[1]!;
@@ -202,7 +202,7 @@ test('bug1: 2x2 split — any pane output does not affect other panes selection'
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-bug1-2x2-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-2x2-${Date.now()}`;
   const { paneIds } = createFourPaneSession(sessionName);
   expect(paneIds.length).toBe(4);
 
@@ -253,7 +253,7 @@ test('bug1: split-pane focus switch (same window) does not clear selection', asy
 }) => {
   // 分屏同窗切 pane 走轻量 FOCUS_PANE（不重建终端），selection 应保留。
   // 跨 window 切换清 selection 的语义由 terminal-selection-canvas.spec.ts 覆盖。
-  const sessionName = `tmex-e2e-bug1-focus-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-bug1-focus-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const paneA = paneIds[0]!;
   const paneB = paneIds[1]!;
@@ -317,8 +317,8 @@ test('bug1: cross-window switch still clears selection (existing expected semant
   request,
 }) => {
   // 跨 window 切换重建终端，selection 被清——这是现有 expected 语义，不应被 bug1 修复破坏。
-  // 单 pane 视图（非分屏），用全局 __tmexE2eXterm 读 selection。
-  const sessionName = `tmex-e2e-bug1-xwindow-${Date.now()}`;
+  // 单 pane 视图（非分屏），用全局 __vibetermE2eXterm 读 selection。
+  const sessionName = `vibeterm-e2e-bug1-xwindow-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   const pane0 = paneIds[0]!;
   const pane1 = paneIds[1]!;
@@ -328,12 +328,12 @@ test('bug1: cross-window switch still clears selection (existing expected semant
   const deviceId = await createDevice(request, sessionName, `e2e-bug1-xwindow-${Date.now()}`);
 
   async function readSelectionText(): Promise<string | null> {
-    return page.evaluate(() => (window as any).__tmexE2eTerminalSelectionText ?? null);
+    return page.evaluate(() => (window as any).__vibetermE2eTerminalSelectionText ?? null);
   }
 
   async function readVisibleText(): Promise<string> {
     return page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) return '';
       const buffer = term.buffer.active;
       const start = buffer.viewportY;
@@ -349,7 +349,7 @@ test('bug1: cross-window switch still clears selection (existing expected semant
 
   async function findVisibleTextRange(needle: string): Promise<VisibleTextRange> {
     const match = await page.evaluate((target) => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       if (!term) return null;
       const buffer = term.buffer.active;
       const start = buffer.viewportY;
@@ -375,7 +375,7 @@ test('bug1: cross-window switch still clears selection (existing expected semant
     cellHeight: number;
   }> {
     const metrics = await page.evaluate(() => {
-      const term = (window as any).__tmexE2eXterm;
+      const term = (window as any).__vibetermE2eXterm;
       const canvas = document.querySelector('.xterm canvas') as HTMLCanvasElement | null;
       if (!term || !canvas) return null;
       const rect = canvas.getBoundingClientRect();

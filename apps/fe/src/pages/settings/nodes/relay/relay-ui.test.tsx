@@ -2,8 +2,8 @@
 // 提交前校验、切换对话框的文案路由。
 
 import { describe, expect, test } from 'bun:test';
-import { RelayApiError } from '@tmex/api-client/relay/admin-api';
-import type { RelayLinkStatus } from '@tmex/api-client/relay/tenant-api';
+import { RelayApiError } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   kickedRelays,

@@ -1,6 +1,6 @@
 // 草稿会话动作：草稿的开启/更新/清空，以及首条消息触发的物化。草稿按 node 分片存放。
 
-import type { AgentSessionDto } from '@tmex/shared';
+import type { AgentSessionDto } from '@vibeterm/shared';
 import { agentNodeKey } from './agent-node-state';
 import { createSessionRequest } from './agent-session-crud-actions';
 import type { AgentSessionActionsDeps } from './agent-session-deps';

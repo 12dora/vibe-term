@@ -9,9 +9,13 @@ import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useMeshRelay } from '@/node/mesh-relay';
 import { LOCAL_STATUS_QUERY_KEY } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { type LocalApi, LocalApiError, defaultLocalApi } from '@tmex/api-client/local/local-api';
-import type { LocalStatusResponse } from '@tmex/api-client/local/types';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import {
+  type LocalApi,
+  LocalApiError,
+  defaultLocalApi,
+} from '@vibeterm/api-client/local/local-api';
+import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
 import type { ConnectStatus } from './connect-path';
 
 /** 指引专用的查询键：口径与设置页不同，不能共用同一份缓存。 */

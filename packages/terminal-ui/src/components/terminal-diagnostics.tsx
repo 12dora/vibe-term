@@ -1,4 +1,4 @@
-import type { GatewayRebaseReason, GatewayTransportSourceRoute } from '@tmex/ws-client';
+import type { GatewayRebaseReason, GatewayTransportSourceRoute } from '@vibeterm/ws-client';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type ReactNode, createContext, useContext } from 'react';
 

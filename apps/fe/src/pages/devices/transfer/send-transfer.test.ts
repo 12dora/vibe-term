@@ -1,12 +1,12 @@
 // 发送一次传输的请求顺序与落库。`createNodeApiClient` 走 `globalThis.fetch`，这里整体替换掉。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { ApiError } from '@tmex/api-client';
+import { ApiError } from '@vibeterm/api-client';
 import {
   getTransferJobsSnapshot,
   resetTransferJobsForTest,
   stopAllTransferSubscriptions,
-} from '@tmex/panels/files/transfers';
+} from '@vibeterm/panels/files/transfers';
 import { sendTransfer, transferErrorKey, transferErrorKeyOf } from './send-transfer';
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';

@@ -2,8 +2,8 @@
 // 两者都接受显式的 `ApiClient`（`createNodeApiClient(nodeId)` 建的），所以同一个 QueryClient
 // 里可以并存多个节点的缓存——查询键第二段就是 nodeId。
 
-import { type ApiClient, fetchFileList, fetchFileRoots } from '@tmex/api-client';
-import type { ListFileRootsResponse, ListFilesResponse } from '@tmex/shared';
+import { type ApiClient, fetchFileList, fetchFileRoots } from '@vibeterm/api-client';
+import type { ListFileRootsResponse, ListFilesResponse } from '@vibeterm/shared';
 
 export const TRANSFER_QUERY_KEY = 'devices-transfer';
 

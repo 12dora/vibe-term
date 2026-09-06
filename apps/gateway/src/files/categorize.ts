@@ -1,5 +1,5 @@
 import { extname } from 'node:path';
-import type { FileCategory } from '@tmex/shared';
+import type { FileCategory } from '@vibeterm/shared';
 
 export const MAX_ENTRIES = 2000;
 export const MAX_TEXT_BYTES = 2 * 1024 * 1024; // 2MB

@@ -2,8 +2,8 @@
 // 弹窗打开期间每 2 秒轮询一次（关闭即停，请求由 react-query 随查询卸载中止）。
 
 import { useQueries } from '@tanstack/react-query';
-import { createNodeApiClient, listPortMaps } from '@tmex/api-client';
-import type { PortMapDto } from '@tmex/shared';
+import { createNodeApiClient, listPortMaps } from '@vibeterm/api-client';
+import type { PortMapDto } from '@vibeterm/shared';
 import { useMemo } from 'react';
 
 import type { DialogNodeOption } from '../dialog-nodes';

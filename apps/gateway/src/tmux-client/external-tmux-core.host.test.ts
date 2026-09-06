@@ -1,5 +1,5 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 
 import { runMigrations } from '../db/migrate';
 import type { TmuxConnectionOptions } from './connection-types';
@@ -213,7 +213,7 @@ describe('ExternalTmuxConnectionCore collaborator host', () => {
         return { exitCode: 0, stdout: '00112233445566778899aabbccddeeff\n', stderr: '' };
       }
       if (argv[0] === 'display-message') {
-        return { exitCode: 0, stdout: '$1|tmex\n', stderr: '' };
+        return { exitCode: 0, stdout: '$1|vibeterm\n', stderr: '' };
       }
       if (argv[0] === 'list-windows' && argv.at(-1) !== '#{window_id}') {
         return { exitCode: 0, stdout: '@1|0|1|ba9d,80x24,0,0,1|main\n', stderr: '' };

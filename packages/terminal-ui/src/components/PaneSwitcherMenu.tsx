@@ -1,13 +1,13 @@
 // 移动端 pane 切换按钮：当前 window 多 pane 时出现在标题栏 PageActions，
 // 点击弹出 pane 列表（与侧栏 pane 行同款两行排版：标题 + 进程@路径），点击项切换 pane。
 
-import type { TmuxWindow } from '@tmex/shared';
+import type { TmuxWindow } from '@vibeterm/shared';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
+} from '@vibeterm/ui/dropdown-menu';
 import { Columns2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -26,7 +26,7 @@ export function PaneSwitcherMenu({ window, currentPaneId, onSelectPane }: PaneSw
         data-testid="pane-switcher-button"
         aria-label={t('window.switchPane')}
         title={t('window.switchPane')}
-        className="relative inline-flex size-7 items-center justify-center rounded-[min(var(--radius-md),12px)] text-sm transition-colors duration-(--tmex-motion-fast) ease-out hover:bg-muted hover:text-foreground motion-reduce:transition-none data-popup-open:bg-muted"
+        className="relative inline-flex size-7 items-center justify-center rounded-[min(var(--radius-md),12px)] text-sm transition-colors duration-(--vibeterm-motion-fast) ease-out hover:bg-muted hover:text-foreground motion-reduce:transition-none data-popup-open:bg-muted"
       >
         <Columns2 className="h-4 w-4" />
         <span className="absolute -right-0.5 -top-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full bg-primary px-0.5 text-[9px] font-medium leading-none text-primary-foreground">

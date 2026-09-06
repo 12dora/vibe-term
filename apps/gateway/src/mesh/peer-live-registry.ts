@@ -1,4 +1,4 @@
-import type { LinkSession, LinkStream } from '@tmex/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { dispatchTcpStream } from '../portmap/dispatch';
 import type { WebSocketServer } from '../ws';

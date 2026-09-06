@@ -1,4 +1,4 @@
-import type { EventType } from '@tmex/shared';
+import type { EventType } from '@vibeterm/shared';
 import { sql } from 'drizzle-orm';
 import { check, integer, sqliteTable, text, unique } from 'drizzle-orm/sqlite-core';
 

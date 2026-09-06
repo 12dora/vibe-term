@@ -1,10 +1,11 @@
-import { encodeBase64url } from '@tmex/shared/auth';
+import { encodeBase64url } from '@vibeterm/shared/auth';
+import { RELAY_TOKEN_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import {
   RELAY_PACK_MAX_BYTES,
   kdfParamsFromWire,
   kdfParamsToWire,
   relaySeqFromWire,
-} from '@tmex/shared/relay';
+} from '@vibeterm/shared/relay';
 import { readJsonObjectBody } from '../api/http';
 import { decodeB64url } from '../api/route-input';
 import { type RelayDialContext, relayDialContextFromEnv, resolveRelayDialUrl } from './relay-dial';
@@ -66,7 +67,7 @@ async function forwardPackToRelay(input: {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-tmex-relay-token': encodeBase64url(input.token),
+          ...assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(input.token)),
         },
         body: input.payload,
         signal: ac.signal,

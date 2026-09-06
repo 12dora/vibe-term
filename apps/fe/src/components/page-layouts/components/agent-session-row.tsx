@@ -1,17 +1,17 @@
 // 侧边栏 agent 会话行：pane 分支下的紧凑行、孤立会话区的带元信息行，及共用的操作菜单。
 
-import type { AgentSessionDto } from '@tmex/shared';
-import { formatDateTime } from '@tmex/shared';
-import { useSiteStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Button } from '@tmex/ui/button';
+import type { AgentSessionDto } from '@vibeterm/shared';
+import { formatDateTime } from '@vibeterm/shared';
+import { useSiteStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Button } from '@vibeterm/ui/button';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { useSidebar } from '@tmex/ui/sidebar';
+} from '@vibeterm/ui/dropdown-menu';
+import { useSidebar } from '@vibeterm/ui/sidebar';
 import { Bot, MoreHorizontal, Pencil, Trash2 } from 'lucide-react';
 import { memo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -56,7 +56,7 @@ function SessionActionsMenu({
             aria-label={t('agent.session.menu')}
             onClick={(e) => e.stopPropagation()}
             className={cn(
-              'size-5 shrink-0 text-muted-foreground transition-opacity duration-(--tmex-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100',
+              'size-5 shrink-0 text-muted-foreground transition-opacity duration-(--vibeterm-motion-standard) ease-out motion-reduce:transition-none data-popup-open:opacity-100',
               isMobile
                 ? 'opacity-100'
                 : 'opacity-0 group-hover:opacity-100 [@media(any-pointer:coarse)]:opacity-100',
@@ -122,7 +122,7 @@ export const PaneSessionRow = memo(function PaneSessionRow({
         data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
+          'w-full flex items-center gap-1.5 px-2 py-1 pr-7 rounded-md text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none [@media(any-pointer:coarse)]:min-h-11 [@media(any-pointer:coarse)]:py-2 [@media(any-pointer:coarse)]:pr-12',
           isMobile && 'min-h-11 py-2 pr-12',
           paused
             ? 'text-muted-foreground/60'
@@ -170,7 +170,7 @@ export const OrphanSessionRow = memo(function OrphanSessionRow({
         data-paused={paused ? '' : undefined}
         onClick={() => onSelect(session)}
         className={cn(
-          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none',
+          'w-full flex flex-col gap-0.5 px-2 py-1.5 pr-7 rounded-lg text-left transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
           paused
             ? 'text-muted-foreground/60'
             : isActive

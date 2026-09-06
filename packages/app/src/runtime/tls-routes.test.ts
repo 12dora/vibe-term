@@ -64,7 +64,7 @@ class FakeListener implements TlsListener {
 
 async function bootTlsRoutes(opts?: { configuredPublicUrl?: string | null }) {
   const { db, close } = createMigratedAuthDb();
-  const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-https-'));
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-https-'));
   const service = new TlsService({
     store: new TlsConfigStore(db),
     listener: new FakeListener(),
@@ -219,7 +219,7 @@ describe('createTlsRoutes', () => {
 
   test('authorizes API routes, serves CA, and answers http-01 challenges without auth', async () => {
     const { db, close } = createMigratedAuthDb();
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-routes-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-routes-'));
     const challenge = new AcmeHttp01Challenge();
     const jobs: Array<Promise<void>> = [];
     const service = new TlsService({
@@ -285,7 +285,7 @@ describe('createTlsRoutes', () => {
     const ca = await handle(new Request('http://127.0.0.1/api/tls/ca.crt'));
     expect(ca?.status).toBe(200);
     expect(ca?.headers.get('content-type')).toBe('application/x-x509-ca-cert');
-    expect(ca?.headers.get('content-disposition')).toContain('tmex-ca.crt');
+    expect(ca?.headers.get('content-disposition')).toContain('vibeterm-ca.crt');
     expect(await ca?.text()).toContain('BEGIN CERTIFICATE');
 
     const other = await handle(new Request('http://127.0.0.1/healthz'));
@@ -295,7 +295,7 @@ describe('createTlsRoutes', () => {
 
   test('PUT /api/tls and POST /api/tls/renew call onApplied after success', async () => {
     const { db, close } = createMigratedAuthDb();
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-applied-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-applied-'));
     const service = new TlsService({
       store: new TlsConfigStore(db),
       listener: new FakeListener(),
@@ -345,7 +345,7 @@ describe('createTlsRoutes', () => {
 
   test('PUT acme dns-01 accepts dnsProvider/dnsCredentials and keeps legacy cloudflareToken', async () => {
     const { db, close } = createMigratedAuthDb();
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-dns-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-dns-'));
     const service = new TlsService({
       store: new TlsConfigStore(db),
       listener: new FakeListener(),
@@ -434,7 +434,7 @@ describe('createTlsRoutes', () => {
 
   test('maps validation errors to { error: { code, message } }', async () => {
     const { db, close } = createMigratedAuthDb();
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tls-routes-err-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-routes-err-'));
     const service = new TlsService({
       store: new TlsConfigStore(db),
       listener: new FakeListener(),

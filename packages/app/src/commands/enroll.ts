@@ -26,7 +26,7 @@ import { quotePosixShellArg } from '../lib/install';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { promptPassword } from '../lib/prompt';
-import { parseTmexRoles } from '../lib/roles';
+import { parseVibeTermRoles } from '../lib/roles';
 import { asString } from '../lib/validate';
 import { spkiFingerprint } from '../tls/cert-authority';
 import type { ParsedArgs } from '../types';
@@ -114,10 +114,10 @@ function quoteJoinArg(value: string): string {
 function hubJoinUrl(ctx: LocalAuthContext, io?: EnrollIo): string {
   return (
     io?.joinUrl ||
-    ctx.env.TMEX_HUB_PUBLIC_URL ||
-    ctx.env.TMEX_HUB_URL ||
-    process.env.TMEX_HUB_PUBLIC_URL ||
-    process.env.TMEX_HUB_URL ||
+    ctx.env.VIBETERM_HUB_PUBLIC_URL ||
+    ctx.env.VIBETERM_HUB_URL ||
+    process.env.VIBETERM_HUB_PUBLIC_URL ||
+    process.env.VIBETERM_HUB_URL ||
     'https://<hub-host>'
   );
 }
@@ -269,7 +269,7 @@ async function resolveTotpCode(io?: EnrollIo): Promise<string> {
     if (!io.totpCode) throw new Error('TOTP code cannot be empty');
     return io.totpCode;
   }
-  return await promptPassword('TOTP code', { envKey: 'TMEX_TOTP', confirm: false });
+  return await promptPassword('TOTP code', { envKey: 'VIBETERM_TOTP', confirm: false });
 }
 
 async function enrollOnLocalHub(
@@ -298,9 +298,9 @@ async function enrollOnLocalHub(
 }
 
 async function assertCliPasswordEnrollAllowed(ctx: LocalAuthContext, io: EnrollIo): Promise<void> {
-  const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
+  const hubUrl = ctx.env.VIBETERM_HUB_URL || process.env.VIBETERM_HUB_URL;
   if (!hubUrl) {
-    throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
+    throw new Error('VIBETERM_HUB_URL is required to enroll from a non-hub node');
   }
   const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
   const mode = await fetchAuthMode(hubUrl, fetcher);
@@ -318,9 +318,9 @@ async function enrollOnRemoteHub(
   now: number,
   ttlMs: number
 ) {
-  const hubUrl = ctx.env.TMEX_HUB_URL || process.env.TMEX_HUB_URL;
+  const hubUrl = ctx.env.VIBETERM_HUB_URL || process.env.VIBETERM_HUB_URL;
   if (!hubUrl) {
-    throw new Error('TMEX_HUB_URL is required to enroll from a non-hub node');
+    throw new Error('VIBETERM_HUB_URL is required to enroll from a non-hub node');
   }
   const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
   const mode = await fetchAuthMode(hubUrl, fetcher);
@@ -467,7 +467,7 @@ export async function runEnroll(
     if (!user) {
       throw new Error('user missing');
     }
-    const roles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
+    const roles = parseVibeTermRoles(ctx.env.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES);
     if (!roles.hub) {
       await assertCliPasswordEnrollAllowed(ctx, io);
     }
@@ -499,7 +499,7 @@ export async function runEnroll(
       user.keyLogHeadHash,
       caFingerprint
     );
-    const joinCommand = `tmex hub join ${quoteJoinArg(hubJoinUrl(ctx, io))} --token ${quoteJoinArg(token)}`;
+    const joinCommand = `vibeterm hub join ${quoteJoinArg(hubJoinUrl(ctx, io))} --token ${quoteJoinArg(token)}`;
     log(io, `join token: ${token}`);
     log(io, joinCommand);
     if (io.wait === false) {

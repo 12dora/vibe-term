@@ -69,7 +69,7 @@ export function nativeManifestPath(nativeDir: string): string {
 }
 
 function defaultLog(message: string): void {
-  console.warn(`[tmex][native-datachannel] ${message}`);
+  console.warn(`[vibeterm][native-datachannel] ${message}`);
 }
 
 export async function readInstalledNativeManifest(
@@ -130,7 +130,7 @@ export async function loadNodeDatachannel(
     return null;
   }
 
-  process.env.TMEX_NATIVE_DIR = options.nativeDir;
+  process.env.VIBETERM_NATIVE_DIR = options.nativeDir;
 
   try {
     const imported = await import('../vendor/node-datachannel/index');

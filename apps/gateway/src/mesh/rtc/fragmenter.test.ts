@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { FragmentAssembler, fragmentBytes } from '@tmex/shared/link';
+import { FragmentAssembler, fragmentBytes } from '@vibeterm/shared/link';
 import {
   DC_MAX_MESSAGE_BYTES,
   FRAGMENT_HEADER_SIZE,

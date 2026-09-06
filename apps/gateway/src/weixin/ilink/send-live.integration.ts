@@ -3,7 +3,7 @@
 // 再从 gateway 日志或 weixin_account_users.last_context_token 取到 context_token，填入 test.env.local：
 //   TEST_WEIXIN_BASE_URL / TEST_WEIXIN_BOT_TOKEN / TEST_WEIXIN_USER_ID / TEST_WEIXIN_CONTEXT_TOKEN
 //   可选 TEST_WEIXIN_TTL_DELAY_MS：探测延迟（毫秒），跨多次运行二分 TTL。
-// 运行：bun run --filter @tmex/gateway test:live:weixin
+// 运行：bun run --filter @vibeterm/gateway test:live:weixin
 
 import { describe, expect, test } from 'bun:test';
 import { requireLiveEnv } from '../../test-support/live-env';
@@ -34,7 +34,7 @@ async function probeSend(label: string) {
     toUserId: env.TEST_WEIXIN_USER_ID,
     contextToken: env.TEST_WEIXIN_CONTEXT_TOKEN,
     clientId: makeClientId(),
-    items: [{ text: `tmex live probe (${label}) ${new Date().toISOString()}` }],
+    items: [{ text: `vibeterm live probe (${label}) ${new Date().toISOString()}` }],
   });
   const expired = resp.ret === SESSION_EXPIRED_ERRCODE || resp.errcode === SESSION_EXPIRED_ERRCODE;
   console.log(

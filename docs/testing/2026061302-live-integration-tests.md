@@ -8,7 +8,7 @@ LLM Provider 与 Web 搜索（Tavily / Brave）的单元测试用打桩 upstream
 
 ### 凭证只放 test.env.local
 
-实测凭证写仓库根 `test.env.local`（已 gitignore）。`NODE_ENV=test` 下由 `apps/gateway/test-preload.ts` 的 `loadEnv()` 自动加载进 `process.env`，覆盖 `test.env`。`test.env` 里有一段注释模板列出所有实测键，照抄到 `test.env.local` 填真实值即可。
+实测凭证写 `env/test.env.local`（已 gitignore）。`NODE_ENV=test` 下由测试 preload（`scripts/test/preload.ts`）的 `loadEnv()` 自动加载进 `process.env`，覆盖 `env/test.env`。`env/test.env` 里有一段注释模板列出所有实测键，照抄到 `env/test.env.local` 填真实值即可。
 
 | 键 | 用途 | 必需性 |
 | --- | --- | --- |
@@ -36,9 +36,9 @@ LLM Provider 与 Web 搜索（Tavily / Brave）的单元测试用打桩 upstream
 
 ```bash
 # 先把 test.env 注释里的实测键复制到 test.env.local 填真实值
-bun run --filter @tmex/gateway test:live:llm      # LLM：模型列表 + 真实 chat
-bun run --filter @tmex/gateway test:live:search   # 搜索：Tavily / Brave 任选其一
-bun run --filter @tmex/gateway test:live          # 全部
+bun run --filter @vibeterm/gateway test:live:llm      # LLM：模型列表 + 真实 chat
+bun run --filter @vibeterm/gateway test:live:search   # 搜索：Tavily / Brave 任选其一
+bun run --filter @vibeterm/gateway test:live          # 全部
 ```
 
 未填对应凭证时脚本以退出码 1 报错退出，并打印需要补哪个键。

@@ -3,7 +3,7 @@
 // 终端数据面（输入 / 尺寸 / 订阅 / 截屏 / 历史）已整体迁到 canonical 命令，这里只剩
 // tmux 控制面与设备连接面；canonical 覆盖的命令没有 legacy 编码器，编码它们即编程错误。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import {
   buildDeviceConnect,
   buildDeviceDisconnect,

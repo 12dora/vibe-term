@@ -2,7 +2,7 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import * as devicesDb from '../db';
 import * as fileRootsDb from '../db/file-roots';
 import { pullFileFromDevice } from './device-storage';
@@ -45,7 +45,7 @@ function mockRoot(rootPath: string): void {
 
 describe('pullFileFromDevice 对本机设备的直读', () => {
   test('直接交出原文件路径，cleanup 是空操作', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'tmex-local-root-'));
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-local-root-'));
     dirs.push(root);
     const file = join(root, 'a.txt');
     writeFileSync(file, 'hello');
@@ -63,7 +63,7 @@ describe('pullFileFromDevice 对本机设备的直读', () => {
   });
 
   test('目录与不存在的路径按既有错误码返回', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'tmex-local-root-'));
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-local-root-'));
     dirs.push(root);
     mockRoot(root);
 
@@ -78,8 +78,8 @@ describe('pullFileFromDevice 对本机设备的直读', () => {
   });
 
   test('root 之外的路径仍然被拒', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'tmex-local-root-'));
-    const outside = mkdtempSync(join(tmpdir(), 'tmex-local-out-'));
+    const root = mkdtempSync(join(tmpdir(), 'vibeterm-local-root-'));
+    const outside = mkdtempSync(join(tmpdir(), 'vibeterm-local-out-'));
     dirs.push(root, outside);
     const file = join(outside, 'secret.txt');
     writeFileSync(file, 'x');

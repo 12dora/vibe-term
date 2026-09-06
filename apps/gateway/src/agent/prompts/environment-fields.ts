@@ -1,5 +1,5 @@
 import os from 'node:os';
-import type { Device } from '@tmex/shared';
+import type { Device } from '@vibeterm/shared';
 import type { AgentEnvironmentInfo } from './environment';
 
 export interface EnvCollectContext {

@@ -4,8 +4,8 @@ set -u -o pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-ENV_FILE="${PROJECT_DIR}/development.env"
-ENV_LOCAL_FILE="${PROJECT_DIR}/development.env.local"
+ENV_FILE="${PROJECT_DIR}/env/development.env"
+ENV_LOCAL_FILE="${PROJECT_DIR}/env/development.env.local"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/dev-supervisor-pids.sh"
 
@@ -24,8 +24,8 @@ fi
 cd "$PROJECT_DIR"
 
 # 加载 development.env（+ 可选 .local 覆盖），让 supervisor 自身拿到 GATEWAY_PORT/
-# FE_PORT 做健康检查与日志。继承的安装版毒变量（TMEX_MIGRATIONS_DIR 等）与相对
-# DATABASE_URL 的解析，统一交给应用启动时的 @tmex/shared loadEnv() 处理，这里不再重复。
+# FE_PORT 做健康检查与日志。继承的安装版毒变量（VIBETERM_MIGRATIONS_DIR 等）与相对
+# DATABASE_URL 的解析，统一交给应用启动时的 @vibeterm/shared loadEnv() 处理，这里不再重复。
 export NODE_ENV=development
 
 load_env_file() {

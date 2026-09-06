@@ -1,4 +1,4 @@
-import type { CommandSpec } from '@tmex/shared/messaging';
+import type { CommandSpec } from '@vibeterm/shared/messaging';
 
 export interface CommandRegistry {
   register(spec: CommandSpec): void;

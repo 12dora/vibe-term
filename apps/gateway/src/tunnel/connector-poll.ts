@@ -1,4 +1,4 @@
-import type { TunnelConnectorStatus } from '@tmex/shared';
+import type { TunnelConnectorStatus } from '@vibeterm/shared';
 
 export type ConnectorPollDeps = {
   intervalMs: number;

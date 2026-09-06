@@ -1,6 +1,6 @@
-import type { KeyLogEffect } from '@tmex/shared/auth';
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
-import type { HubMode } from '@tmex/shared/uplink';
+import type { KeyLogEffect } from '@vibeterm/shared/auth';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
+import type { HubMode } from '@vibeterm/shared/uplink';
 import type { ChallengeStore } from '../auth/challenge-store';
 import type { MeshHubStore } from '../auth/mesh-hub-store';
 import type { NodeSessionStore } from '../auth/node-session-store';

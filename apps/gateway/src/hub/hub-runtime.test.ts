@@ -17,9 +17,9 @@ import {
   rootKeyFromSeed,
   sha256,
   signEd25519,
-} from '@tmex/shared/auth';
-import { createInMemoryLinkPair } from '@tmex/shared/link';
-import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
+} from '@vibeterm/shared/auth';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { encodePasskeyAssertionSig, verifyRegistration } from '../auth/passkey';
 import { createEs256Authenticator } from '../auth/passkey-test-fixtures';

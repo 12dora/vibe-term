@@ -22,12 +22,12 @@ describe('buildOtpauthUri', () => {
     const uri = buildOtpauthUri({
       secret: new TextEncoder().encode('foobar'),
       account: 'alice',
-      issuer: 'tmex',
+      issuer: 'VibeTerm',
     });
-    expect(uri.startsWith('otpauth://totp/tmex:alice?')).toBe(true);
+    expect(uri.startsWith('otpauth://totp/VibeTerm:alice?')).toBe(true);
     const params = new URLSearchParams(uri.split('?')[1]);
     expect(params.get('secret')).toBe('MZXW6YTBOI');
-    expect(params.get('issuer')).toBe('tmex');
+    expect(params.get('issuer')).toBe('VibeTerm');
     expect(params.get('algorithm')).toBe('SHA1');
     expect(params.get('digits')).toBe('6');
     expect(params.get('period')).toBe('30');

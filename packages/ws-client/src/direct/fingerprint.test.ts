@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import * as shared from '@tmex/shared/auth';
+import * as shared from '@vibeterm/shared/auth';
 import { fingerprintsEqual, normalizeFingerprint, parseSdpFingerprint } from './fingerprint';
 
 const FP_A =
@@ -138,7 +138,7 @@ describe('parseSdpFingerprint（RFC 8122 作用域）', () => {
     );
   });
 
-  test('normalizeFingerprint 与 @tmex/shared/auth 逐字段一致', () => {
+  test('normalizeFingerprint 与 @vibeterm/shared/auth 逐字段一致', () => {
     // parseSdpFingerprint 与 shared 的宽松首条匹配**刻意不等价**（见本模块头注释），
     // 只有归一化语义要求完全一致。
     const raw = { algorithm: ' SHA-256 ', value: 'aa:bb cc' };

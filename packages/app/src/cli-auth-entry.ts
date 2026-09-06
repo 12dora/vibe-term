@@ -1,3 +1,4 @@
+import { applyLegacyEnvAliases } from '../../shared/src/env/load-env';
 import { errorMessage } from './lib/error-message';
 import 'reflect-metadata';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
@@ -65,11 +66,13 @@ export async function dispatchAuthCli(parsed: ParsedArgs, lang: CliLang): Promis
 }
 
 export async function main(): Promise<void> {
-  process.env.TMEX_CLI_AUTH_RUNTIME = '1';
+  // 已有安装的 app.env / 用户脚本里仍是 TMEX_*，读任何配置前先镜像成 VIBETERM_*。
+  applyLegacyEnvAliases();
+  process.env.VIBETERM_CLI_AUTH_RUNTIME = '1';
   const parsed = parseArgs(process.argv.slice(2));
   const requestedLang =
     (typeof parsed.flags.lang === 'string' ? parsed.flags.lang : undefined) ||
-    process.env.TMEX_CLI_LANG;
+    process.env.VIBETERM_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
   if (parsed.flags.help === true) {

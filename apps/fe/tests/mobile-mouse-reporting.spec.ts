@@ -35,7 +35,7 @@ async function waitFeButtonTracking(page: Page): Promise<void> {
     .poll(
       () =>
         page.evaluate(() => {
-          const t = (window as any).__tmexE2eTerminal;
+          const t = (window as any).__vibetermE2eTerminal;
           return t?.exportModeSnapshot?.()?.mouseButton ?? false;
         }),
       { timeout: 15_000 }
@@ -173,7 +173,7 @@ test('mobile: tap sends press+release on the same cell when reporting is on', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mtap-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mtap-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { deviceId } = await setupTuiPage(page, request, sessionName, logPath);
 
@@ -207,7 +207,7 @@ test('mobile: single-finger drag sends wheel events (not drag motion) when repor
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mscroll-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mscroll-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { deviceId } = await setupTuiPage(page, request, sessionName, logPath);
 
@@ -247,7 +247,7 @@ test('mobile: two-finger vertical swipe sends wheel events when reporting is on'
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-mwheel-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-mwheel-${Date.now()}`;
   const logPath = `/tmp/${sessionName}.log`;
   const { deviceId } = await setupTuiPage(page, request, sessionName, logPath);
 

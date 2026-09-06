@@ -12,10 +12,10 @@ import {
   createStateStore,
   startPollingLoop,
 } from '@/node/create-polling-store';
-import type { ApiClient } from '@tmex/api-client/client';
-import { RelayAdminApi, defaultRelayAdminApi } from '@tmex/api-client/relay/admin-api';
-import type { RelayMetricsResponse } from '@tmex/api-client/relay/metrics-types';
-import { errorMessage } from '@tmex/shared';
+import type { ApiClient } from '@vibeterm/api-client/client';
+import { RelayAdminApi, defaultRelayAdminApi } from '@vibeterm/api-client/relay/admin-api';
+import type { RelayMetricsResponse } from '@vibeterm/api-client/relay/metrics-types';
+import { errorMessage } from '@vibeterm/shared';
 import { useCallback, useEffect, useSyncExternalStore } from 'react';
 import { classifyRelayFailure } from './relay-status-store';
 

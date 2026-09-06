@@ -43,8 +43,8 @@ test('mesh: a shared window is reachable through the hub with only that window v
   page,
   browser,
 }) => {
-  const sessionName = `tmex-mesh-share-${Date.now()}`;
-  const marker = `TMEX_SHARE_MARKER_${Date.now()}`;
+  const sessionName = `vibeterm-mesh-share-${Date.now()}`;
+  const marker = `VIBETERM_SHARE_MARKER_${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   let deviceId: string | undefined;
   let recipient: Page | undefined;
@@ -163,8 +163,8 @@ test('mesh: a window on the entry node itself is shared over the direct path', a
   page,
   browser,
 }) => {
-  const sessionName = `tmex-self-share-${Date.now()}`;
-  const marker = `TMEX_SELF_SHARE_${Date.now()}`;
+  const sessionName = `vibeterm-self-share-${Date.now()}`;
+  const marker = `VIBETERM_SELF_SHARE_${Date.now()}`;
   spawnSync('sh', ['-c', `tmux -L ${state.hubTmuxSocket} kill-session -t ${sessionName}`], {
     stdio: 'ignore',
   });
@@ -274,7 +274,7 @@ test('mesh: a link carrying the password prefills the form and drops the fragmen
   page,
   browser,
 }) => {
-  const sessionName = `tmex-share-linkpw-${Date.now()}`;
+  const sessionName = `vibeterm-share-linkpw-${Date.now()}`;
   startOwnSession(sessionName);
   let deviceId: string | undefined;
   let recipient: Page | undefined;
@@ -309,7 +309,7 @@ test('mesh: changing the share password keeps or drops the connected viewer', as
   page,
   browser,
 }) => {
-  const sessionName = `tmex-share-chpw-${Date.now()}`;
+  const sessionName = `vibeterm-share-chpw-${Date.now()}`;
   const keptPassword = 'Keep1234pw';
   const nextPassword = 'Next5678pw';
   startOwnSession(sessionName);
@@ -369,7 +369,7 @@ test('mesh: changing the share password keeps or drops the connected viewer', as
 test('mesh: a share on a remote node shows up in the entry node settings and can be stopped there', async ({
   page,
 }) => {
-  const sessionName = `tmex-mesh-agg-${Date.now()}`;
+  const sessionName = `vibeterm-mesh-agg-${Date.now()}`;
   createRemoteTmuxSession(state, sessionName);
   let deviceId: string | undefined;
   const nodeId = state.remoteNodeId;

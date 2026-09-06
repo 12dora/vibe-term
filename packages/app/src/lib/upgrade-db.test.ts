@@ -14,17 +14,17 @@ afterEach(async () => {
 
 describe('restoreDbTrio', () => {
   test('removes leftover WAL/SHM then restores exactly the backed-up set', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-db-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-db-'));
     tempDirs.push(root);
     const live = join(root, 'data');
     const backup = join(root, 'backup');
     await mkdir(live, { recursive: true });
     await mkdir(backup, { recursive: true });
-    const destDb = join(live, 'tmex.db');
+    const destDb = join(live, 'vibeterm.db');
     await writeFile(destDb, 'new-db');
     await writeFile(`${destDb}-wal`, 'new-wal');
     await writeFile(`${destDb}-shm`, 'new-shm');
-    await writeFile(join(backup, 'tmex.db'), 'old-db');
+    await writeFile(join(backup, 'vibeterm.db'), 'old-db');
 
     await restoreDbTrio(backup, destDb);
 
@@ -34,17 +34,17 @@ describe('restoreDbTrio', () => {
   });
 
   test('restores wal and shm when the backup contains them', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-db-full-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-db-full-'));
     tempDirs.push(root);
     const live = join(root, 'data');
     const backup = join(root, 'backup');
     await mkdir(live, { recursive: true });
     await mkdir(backup, { recursive: true });
-    const destDb = join(live, 'tmex.db');
+    const destDb = join(live, 'vibeterm.db');
     await writeFile(destDb, 'new-db');
     await writeFile(`${destDb}-wal`, 'new-wal');
-    await writeFile(join(backup, 'tmex.db'), 'old-db');
-    await writeFile(join(backup, 'tmex.db-wal'), 'old-wal');
+    await writeFile(join(backup, 'vibeterm.db'), 'old-db');
+    await writeFile(join(backup, 'vibeterm.db-wal'), 'old-wal');
 
     await restoreDbTrio(backup, destDb);
 
@@ -56,16 +56,16 @@ describe('restoreDbTrio', () => {
 
 describe('copyDbTrio', () => {
   test('copies only existing members of the trio', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-db-copy-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-db-copy-'));
     tempDirs.push(root);
-    const srcDb = join(root, 'tmex.db');
+    const srcDb = join(root, 'vibeterm.db');
     await writeFile(srcDb, 'db');
     await writeFile(`${srcDb}-wal`, 'wal');
     const dest = join(root, 'out');
     const copied = await copyDbTrio(srcDb, dest);
     expect(copied).toHaveLength(2);
-    expect(await readFile(join(dest, 'tmex.db'), 'utf8')).toBe('db');
-    expect(await pathExists(join(dest, 'tmex.db-shm'))).toBe(false);
+    expect(await readFile(join(dest, 'vibeterm.db'), 'utf8')).toBe('db');
+    expect(await pathExists(join(dest, 'vibeterm.db-shm'))).toBe(false);
   });
 });
 
@@ -77,16 +77,16 @@ describe('copyPreflightDb', () => {
   });
 
   test('VACUUM INTO copies a real sqlite database', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-db-vacuum-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-db-vacuum-'));
     tempDirs.push(root);
-    const srcDb = join(root, 'tmex.db');
+    const srcDb = join(root, 'vibeterm.db');
     const db = new Database(srcDb);
     db.run('CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)');
     db.run("INSERT INTO items (name) VALUES ('alpha')");
     db.close();
     const destDir = join(root, 'out');
     await copyPreflightDb(srcDb, destDir, process.execPath);
-    const dest = new Database(join(destDir, 'tmex.db'));
+    const dest = new Database(join(destDir, 'vibeterm.db'));
     try {
       expect(dest.query('SELECT name FROM items').get()).toEqual({ name: 'alpha' });
     } finally {
@@ -95,9 +95,9 @@ describe('copyPreflightDb', () => {
   });
 
   test('passes src and dest after -e to spawnSync', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'tmex-db-argv-'));
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-db-argv-'));
     tempDirs.push(root);
-    const srcDb = join(root, 'tmex.db');
+    const srcDb = join(root, 'vibeterm.db');
     await writeFile(srcDb, 'db');
     let captured: string[] = [];
     await copyPreflightDb(srcDb, join(root, 'out'), '/usr/bin/bun', ((cmd, args) => {
@@ -106,6 +106,6 @@ describe('copyPreflightDb', () => {
     }) as typeof import('node:child_process').spawnSync);
     expect(captured[0]).toBe('-e');
     expect(captured[2]).toBe(srcDb);
-    expect(captured[3]).toBe(join(root, 'out', 'tmex.db'));
+    expect(captured[3]).toBe(join(root, 'out', 'vibeterm.db'));
   });
 });

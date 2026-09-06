@@ -20,7 +20,7 @@ describe('webcrypto ed25519', () => {
 
   test('签名与 @noble 实现互通：node 侧的 verifyEd25519 直接可验', async () => {
     const pair = await generateWebCryptoEd25519KeyPair();
-    const message = new TextEncoder().encode('tmex/webcrypto/interop');
+    const message = new TextEncoder().encode('vibeterm/webcrypto/interop');
     const sig = await signWithWebCryptoEd25519(pair.privateKey, message);
     expect(sig).toHaveLength(64);
     expect(verifyEd25519(sig, message, pair.publicKey)).toBe(true);

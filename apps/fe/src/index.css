@@ -22,14 +22,14 @@
    已子集化裁掉 Cyrillic/Greek/CJK 标点等非拉丁文字，CJK 仍走系统 monospace。
    正常/粗体各挂一个 face，Canvas 请求 400/700 时各取各的，不靠浏览器合成加粗。 */
 @font-face {
-  font-family: GeistMonoTmex;
+  font-family: GeistMonoVibeTerm;
   src: url("/fonts/GeistMonoNerdFontMono-Regular.woff2") format("woff2");
   font-weight: 400;
   font-style: normal;
   font-display: swap;
 }
 @font-face {
-  font-family: GeistMonoTmex;
+  font-family: GeistMonoVibeTerm;
   src: url("/fonts/GeistMonoNerdFontMono-Bold.woff2") format("woff2");
   font-weight: 700;
   font-style: normal;
@@ -37,7 +37,7 @@
 }
 /* 符号兜底：媒体控制(⏵⏸⏺)、Braille(⣿)、勾选(✔✓)、几何/装饰符号 */
 @font-face {
-  font-family: NotoSansSymbols2Tmex;
+  font-family: NotoSansSymbols2VibeTerm;
   src: url("/fonts/NotoSansSymbols2-Regular.woff2") format("woff2");
   font-weight: normal;
   font-style: normal;
@@ -80,7 +80,7 @@
   /* 等宽栈与终端 XTERM_FONT_FAMILY 保持一致（components/terminal/theme.ts）：
      Geist Mono Nerd Font 打底 + Noto Sans Symbols 2 兜符号 + monospace 走系统 CJK。
      所有 font-mono 工具类（代码块/ID/URL 等）一并指向此栈。 */
-  --font-mono: GeistMonoTmex, NotoSansSymbols2Tmex, monospace;
+  --font-mono: GeistMonoVibeTerm, NotoSansSymbols2VibeTerm, monospace;
 }
 
 * {
@@ -151,20 +151,20 @@
 }
 
 /* follow 键盘模式：direct 快捷键栏浮到键盘正上方（issue #27）。
-   --tmex-kb-shortcut-lift 由 use-keyboard-avoidance 写（= inset - offset），叠加 <main>
+   --vibeterm-kb-shortcut-lift 由 use-keyboard-avoidance 写（= inset - offset），叠加 <main>
    的 -offset 后总位移恰为 -inset，贴键盘顶。transform 不脱离文档流，终端 canvas 高度
    不变、不触发 resize。变量未设时默认 0，快捷键栏正常拼在终端下方。 */
 .kb-floating-shortcuts {
   position: relative;
   z-index: 20;
-  transform: translateY(calc(-1 * var(--tmex-kb-shortcut-lift, 0px)));
+  transform: translateY(calc(-1 * var(--vibeterm-kb-shortcut-lift, 0px)));
 }
 
 /* 只在快捷键栏真的抬起来的那段时间预留合成层：常驻 will-change 会让这个元素一直占一层，
    而键盘绝大多数时候是收着的。`use-keyboard-avoidance` 把位移量写成行内自定义属性，键盘
    落下时写回 0px，据此判定当前是否在浮动。选择器认不出行内写法时退化回常驻，不会漏层。 */
-.kb-floating-shortcuts[style*="--tmex-kb-shortcut-lift"]:not(
-    [style*="--tmex-kb-shortcut-lift: 0px"]
+.kb-floating-shortcuts[style*="--vibeterm-kb-shortcut-lift"]:not(
+    [style*="--vibeterm-kb-shortcut-lift: 0px"]
   ) {
   will-change: transform;
 }

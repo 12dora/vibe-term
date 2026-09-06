@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
-import type { TransferJobSnapshot } from '@tmex/shared';
+import { ApiClient } from '@vibeterm/api-client';
+import type { TransferJobSnapshot } from '@vibeterm/shared';
 import { subscribeTransferJob } from './transfer-job-stream';
 import {
   TRANSFER_JOB_GONE,

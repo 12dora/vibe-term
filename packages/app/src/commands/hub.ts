@@ -30,6 +30,7 @@ import {
   verifyKeyLogChain,
 } from '../../../shared/src/auth';
 import { isRelayJoinToken } from '../../../shared/src/relay';
+import { DEFAULT_SERVICE_NAME } from '../constants';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
@@ -53,7 +54,12 @@ import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/pas
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { isInteractiveStdin, promptConfirm } from '../lib/prompt';
-import { DEFAULT_PEER_PORT, type TmexRoles, parseTmexRoles, roleNameFromFlags } from '../lib/roles';
+import {
+  DEFAULT_PEER_PORT,
+  type VibeTermRoles,
+  parseVibeTermRoles,
+  roleNameFromFlags,
+} from '../lib/roles';
 import { restartService, startService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
@@ -100,10 +106,10 @@ export type HubListRow = {
 };
 
 export const HUB_SIGNED_AUTH_PRECEDENCE_NOTE =
-  'signed admit-hub/retire-hub takes precedence over TMEX_HUB_PEERS; manage signed authorization from the UI';
+  'signed admit-hub/retire-hub takes precedence over VIBETERM_HUB_PEERS; manage signed authorization from the UI';
 
 export const HUB_MANUAL_RESTART_HINT =
-  'skipped service restart; restart tmex manually to apply the change';
+  'skipped service restart; restart VibeTerm manually to apply the change';
 
 export const NODE_REVOKED_REJOIN_ERROR =
   'this node identity was revoked; use a fresh identity (mesh reset / re-init)';
@@ -279,17 +285,17 @@ function nowMs(io?: HubIo): number {
 async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: string): Promise<void> {
   await withEnvLock(async () => {
     const env = await readEnvFile(envPath);
-    env.TMEX_ROLES = roles;
-    env.TMEX_HUB_URL = hubUrl;
+    env.VIBETERM_ROLES = roles;
+    env.VIBETERM_HUB_URL = hubUrl;
     if (roles === 'node') {
-      env.TMEX_HUB_PUBLIC_URL = '';
+      env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     await writeEnvFile(envPath, env);
   });
 }
 
 async function resolveServiceName(parsed: ParsedArgs, installDir: string): Promise<string> {
-  let serviceName = asString(parsed.flags['service-name']) || 'tmex';
+  let serviceName = asString(parsed.flags['service-name']) || DEFAULT_SERVICE_NAME;
   if (!installDir) return serviceName;
   const layout = createInstallLayout(installDir);
   if (await pathExists(layout.metaPath)) {
@@ -651,15 +657,15 @@ export async function runHubJoin(
         log(io, t('hub.join.replacedStale', { username: joined.replacedStaleUsername }));
       }
 
-      const currentRoles = parseTmexRoles(ctx.env.TMEX_ROLES ?? process.env.TMEX_ROLES);
+      const currentRoles = parseVibeTermRoles(ctx.env.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES);
       const nextRole = currentRoles.hub ? 'hub,node' : 'node';
       if (ctx.envPath) {
         await writeRolesAndHubUrl(ctx.envPath, nextRole, joined.hubUrl);
       } else {
-        process.env.TMEX_ROLES = nextRole;
-        process.env.TMEX_HUB_URL = joined.hubUrl;
+        process.env.VIBETERM_ROLES = nextRole;
+        process.env.VIBETERM_HUB_URL = joined.hubUrl;
         if (nextRole === 'node') {
-          process.env.TMEX_HUB_PUBLIC_URL = '';
+          process.env.VIBETERM_HUB_PUBLIC_URL = '';
         }
       }
       if (ctx.installDir) {
@@ -667,8 +673,11 @@ export async function runHubJoin(
       }
       log(io, `joined hub ${joined.hubUrl}`);
       const peerPort =
-        ctx.env.TMEX_PEER_PORT || process.env.TMEX_PEER_PORT || String(DEFAULT_PEER_PORT);
-      log(io, `allow inbound TMEX_PEER_PORT (${peerPort}) on the LAN firewall for direct links`);
+        ctx.env.VIBETERM_PEER_PORT || process.env.VIBETERM_PEER_PORT || String(DEFAULT_PEER_PORT);
+      log(
+        io,
+        `allow inbound VIBETERM_PEER_PORT (${peerPort}) on the LAN firewall for direct links`
+      );
       return {
         userId: joined.userId,
         hubUrl: joined.hubUrl,
@@ -824,16 +833,16 @@ export async function runHubLeave(parsed: ParsedArgs, io: HubIo = {}): Promise<v
   log(io, 'left hub; role set to standalone');
 }
 
-async function rolesForLeave(ctx: LocalAuthContext): Promise<TmexRoles> {
+async function rolesForLeave(ctx: LocalAuthContext): Promise<VibeTermRoles> {
   if (ctx.envPath) {
     try {
       const env = await readEnvFile(ctx.envPath);
-      if (env.TMEX_ROLES) return parseTmexRoles(env.TMEX_ROLES);
+      if (env.VIBETERM_ROLES) return parseVibeTermRoles(env.VIBETERM_ROLES);
     } catch {
       // fall through to process/ctx env
     }
   }
-  return parseTmexRoles(process.env.TMEX_ROLES ?? ctx.env.TMEX_ROLES);
+  return parseVibeTermRoles(process.env.VIBETERM_ROLES ?? ctx.env.VIBETERM_ROLES);
 }
 
 function ansiRed(message: string): string {
@@ -841,11 +850,11 @@ function ansiRed(message: string): string {
 }
 
 function envHubMode(env: Record<string, string>): 'active' | 'standby' {
-  return env.TMEX_HUB_MODE?.trim() === 'standby' ? 'standby' : 'active';
+  return env.VIBETERM_HUB_MODE?.trim() === 'standby' ? 'standby' : 'active';
 }
 
 function isHubNodeInstall(env: Record<string, string>): boolean {
-  const roles = parseTmexRoles(env.TMEX_ROLES);
+  const roles = parseVibeTermRoles(env.VIBETERM_ROLES);
   return roles.hub && roles.node;
 }
 
@@ -1117,13 +1126,13 @@ export async function runHubStandby(
     if (isHubNodeInstall(env) && envHubMode(env) === 'active') {
       throw new Error(t('hub.standby.alreadyActive'));
     }
-    if (!env.TMEX_HUB_URL?.trim()) {
+    if (!env.VIBETERM_HUB_URL?.trim()) {
       throw new Error(t('hub.standby.missingHubUrl'));
     }
     const primaryId = findPrimaryHubNodeId(ctx, identity.nodeId);
     const peers = primaryId
-      ? mergeHubPeerIds(parseHubPeerIds(env.TMEX_HUB_PEERS), [primaryId])
-      : parseHubPeerIds(env.TMEX_HUB_PEERS);
+      ? mergeHubPeerIds(parseHubPeerIds(env.VIBETERM_HUB_PEERS), [primaryId])
+      : parseHubPeerIds(env.VIBETERM_HUB_PEERS);
     await patchInstallEnv(
       ctx,
       applyHubModeEnvKeys(env, {
@@ -1165,12 +1174,12 @@ export async function runHubPromote(
     await confirmPromote(parsed, io);
     const identity = await ctx.identityStore.load();
     const nodeId = identity?.nodeId ?? '';
-    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
+    const peers = parseHubPeerIds(env.VIBETERM_HUB_PEERS);
     if (peers.length === 0) {
       log(io, ansiRed(t('hub.promote.emptyPeers', { nodeId })));
     }
     log(io, t('hub.promote.allowReminder', { nodeId }));
-    const envEpoch = parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH);
+    const envEpoch = parseEnvWriterEpoch(env.VIBETERM_HUB_WRITER_EPOCH);
     const dbMax = maxMeshHubWriterEpoch(ctx);
     const writerEpoch = dbMax == null ? envEpoch + 1 : Math.max(envEpoch, dbMax) + 1;
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'active', writerEpoch }));
@@ -1190,11 +1199,11 @@ export async function runHubDemote(parsed: ParsedArgs, io: HubIo = {}): Promise<
     if (!isHubNodeInstall(env)) {
       throw new Error(t('hub.demote.notHub'));
     }
-    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS);
+    const peers = parseHubPeerIds(env.VIBETERM_HUB_PEERS);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { mode: 'standby' }));
     await recordCliRoleTransition(ctx, {
       mode: 'standby',
-      writerEpoch: parseEnvWriterEpoch(env.TMEX_HUB_WRITER_EPOCH),
+      writerEpoch: parseEnvWriterEpoch(env.VIBETERM_HUB_WRITER_EPOCH),
     });
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
@@ -1211,7 +1220,7 @@ export async function runHubList(
   return await withAuth(parsed, io, async (ctx) => {
     const env = await loadCommandEnv(ctx);
     const identity = await ctx.identityStore.load();
-    const peerIds = new Set(parseHubPeerIds(env.TMEX_HUB_PEERS));
+    const peerIds = new Set(parseHubPeerIds(env.VIBETERM_HUB_PEERS));
     let hubs: HubListRow[] = [];
     try {
       hubs = readMeshHubRows(ctx, {
@@ -1257,7 +1266,7 @@ export async function runHubAllow(
     if (!isHubNodeInstall(env)) {
       throw new Error(t('hub.allow.notHub'));
     }
-    const peers = mergeHubPeerIds(parseHubPeerIds(env.TMEX_HUB_PEERS), added);
+    const peers = mergeHubPeerIds(parseHubPeerIds(env.VIBETERM_HUB_PEERS), added);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { hubPeers: peers }));
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);
@@ -1283,7 +1292,7 @@ export async function runHubDisallow(
     if (!isHubNodeInstall(env)) {
       throw new Error(t('hub.disallow.notHub'));
     }
-    const peers = parseHubPeerIds(env.TMEX_HUB_PEERS).filter((id) => id !== drop);
+    const peers = parseHubPeerIds(env.VIBETERM_HUB_PEERS).filter((id) => id !== drop);
     await patchInstallEnv(ctx, applyHubModeEnvKeys(env, { hubPeers: peers }));
     if (ctx.installDir) {
       await maybeRestart(parsed, io, ctx.installDir);

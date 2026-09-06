@@ -1,7 +1,7 @@
 // become-hub / join-hub 两个表单共用的展示件：通用原语取自 settings/components。
 
-import { Button } from '@tmex/ui/button';
-import { Switch } from '@tmex/ui/switch';
+import { Button } from '@vibeterm/ui/button';
+import { Switch } from '@vibeterm/ui/switch';
 import { Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -153,7 +153,7 @@ export function RestartPanel({ waiter }: { waiter: RestartWaiter }) {
   return (
     <Notice tone="warning" testId="setup-restart-timeout">
       <p>{t('nodes.setup.restart.timeout')}</p>
-      <p className="font-mono">tmex restart</p>
+      <p className="font-mono">vibeterm restart</p>
     </Notice>
   );
 }

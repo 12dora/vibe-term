@@ -8,17 +8,17 @@ describe('motion tokens', () => {
   });
 
   it('类名与 motion.css 中定义的一致', () => {
-    expect(revealClassName).toBe('tmex-reveal');
+    expect(revealClassName).toBe('vibeterm-reveal');
   });
 });
 
 describe('staggerItemStyle', () => {
-  it('把序号写进 --tmex-stagger-index', () => {
-    expect(staggerItemStyle(3)).toEqual({ '--tmex-stagger-index': 3 } as never);
+  it('把序号写进 --vibeterm-stagger-index', () => {
+    expect(staggerItemStyle(3)).toEqual({ '--vibeterm-stagger-index': 3 } as never);
   });
 
   it('负序号收敛到 0', () => {
-    expect(staggerItemStyle(-2)).toEqual({ '--tmex-stagger-index': 0 } as never);
+    expect(staggerItemStyle(-2)).toEqual({ '--vibeterm-stagger-index': 0 } as never);
   });
 });
 

@@ -1,7 +1,7 @@
 // 端口探测的纯逻辑：地址改写只碰端口一段、状态机三态、过期结果一律丢弃。
 
 import { describe, expect, test } from 'bun:test';
-import { ApiClient } from '@tmex/api-client';
+import { ApiClient } from '@vibeterm/api-client';
 import {
   type AddressProbeOutcome,
   createAddressProbeCore,

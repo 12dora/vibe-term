@@ -2,6 +2,7 @@ import { b } from '@zorsh/zorsh';
 import { bytesEqual } from './encoding';
 import { verifyEd25519 } from './root-key';
 
+// 协议常量，沿用 tmex 时期的值以保持跨版本兼容
 export const DOMAIN_HUB_ENROLL = 'tmex/hub-enroll/v1';
 /** 调用方（Hub `/api/hub/enrollments/by-password`）按此窗口判定 `ts`。 */
 export const HUB_ENROLL_PROOF_MAX_SKEW_MS = 5 * 60 * 1000;

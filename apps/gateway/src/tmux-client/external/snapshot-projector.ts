@@ -1,4 +1,4 @@
-import type { TmuxPane, TmuxSession, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxSession, TmuxWindow } from '@vibeterm/shared';
 
 import type { TmuxConnectionOptions } from '../connection-types';
 import type { ControlModeSubscription } from '../control-mode-subscription';
@@ -13,7 +13,7 @@ import {
   parseWindowSnapshotRow,
   splitSnapshotFields,
 } from '../snapshot-format';
-import { PARKING_WINDOW_NAME } from './constants';
+import { isParkingWindowName } from './constants';
 import { isTmuxServerGoneMessage } from './helpers';
 import type { CommandResult } from './types';
 
@@ -98,7 +98,7 @@ export function parseSnapshotWindows(
     }
     // 聚焦护盾窗口只在控制客户端 attach 的那几秒存在，前端不该看见它，
     // 更不该被「跟随活动窗口」拉进去再随它被杀。
-    if (row.name === PARKING_WINDOW_NAME) {
+    if (isParkingWindowName(row.name)) {
       continue;
     }
     if (row.active) {

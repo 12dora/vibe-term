@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import type { Device, SiteSettings } from '@tmex/shared';
+import type { Device, SiteSettings } from '@vibeterm/shared';
 import { dispatchTmuxPushEvent, parseTmuxNotificationPayload } from './tmux-push-events';
 
 function makeDevice(): Device {
@@ -7,7 +7,7 @@ function makeDevice(): Device {
     id: 'd1',
     name: 'd1',
     type: 'local',
-    session: 'tmex',
+    session: 'vibeterm',
     authMode: 'auto',
     sortOrder: 0,
     createdAt: '2026-02-11T00:00:00.000Z',
@@ -17,8 +17,8 @@ function makeDevice(): Device {
 
 function makeSettings(): SiteSettings {
   return {
-    siteName: 'tmex',
-    siteUrl: 'https://tmex.example.com',
+    siteName: 'VibeTerm',
+    siteUrl: 'https://vibeterm.example.com',
     bellThrottleSeconds: 6,
     notificationThrottleSeconds: 3,
     enableBrowserNotificationToast: true,

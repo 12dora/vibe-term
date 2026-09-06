@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import { agentWsHub } from '../agent/ws-hub';
 import { runMigrations } from '../db/migrate';
 import { WebSocketServer } from './index';
@@ -16,7 +16,7 @@ function snapshot(): StateSnapshotPayload {
     deviceId: SCOPE.deviceId,
     session: {
       id: '$0',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',
@@ -39,7 +39,7 @@ function snapshot(): StateSnapshotPayload {
 
 function helloPayload(): Uint8Array {
   return wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
-    clientImpl: 'tmex-fe',
+    clientImpl: 'vibeterm-fe',
     clientVersion: '1.1.33',
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     supportsCompression: false,

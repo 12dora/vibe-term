@@ -4,7 +4,7 @@
 // 超时不当失败，只提示「未确认」，但预算太短会把一次仍在正常传输的升级误判成停摆——所以按
 // 后端的阶段超时给预算，而不是拿一个固定值一刀切。
 
-import type { RemoteUpgradeProgress, UpgradeStatus } from '@tmex/shared';
+import type { RemoteUpgradeProgress, UpgradeStatus } from '@vibeterm/shared';
 import type { NodeUpgradeTransfer } from './types';
 
 /** 没有任何进展时的等待预算：下载 + 解包 + 重启 + 版本回传。旧入口不报阶段，只能用它。 */

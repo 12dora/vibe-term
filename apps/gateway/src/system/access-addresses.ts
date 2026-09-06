@@ -2,7 +2,7 @@
 // 公网地址（隧道 / Hub 公开地址）由前端从 tunnel status 与 auth mode 取，这里只管本机能看到的。
 
 import { networkInterfaces } from 'node:os';
-import type { AccessAddressesResponse } from '@tmex/shared';
+import type { AccessAddressesResponse } from '@vibeterm/shared';
 import { config } from '../config';
 
 type InterfaceMap = ReturnType<typeof networkInterfaces>;

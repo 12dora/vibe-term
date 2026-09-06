@@ -1,4 +1,4 @@
-import { type StateSnapshotPayload, wsBorsh } from '@tmex/shared';
+import { type StateSnapshotPayload, wsBorsh } from '@vibeterm/shared';
 
 import type { TmuxSourceMetadataEvent } from './events';
 import { MetadataEventApplier } from './metadata/event-applier';

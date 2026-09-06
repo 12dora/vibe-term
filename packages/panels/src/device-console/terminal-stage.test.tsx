@@ -4,11 +4,11 @@
 
 import { describe, expect, test } from 'bun:test';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { I18N_RESOURCES, type TmuxPane, type TmuxWindow } from '@tmex/shared';
-import { createAppRuntime } from '@tmex/stores';
-import { RuntimeProvider } from '@tmex/stores/react';
-import { installWindowStorage } from '@tmex/stores/test-utils';
-import { resolveTerminalTheme } from '@tmex/theme';
+import { I18N_RESOURCES, type TmuxPane, type TmuxWindow } from '@vibeterm/shared';
+import { createAppRuntime } from '@vibeterm/stores';
+import { RuntimeProvider } from '@vibeterm/stores/react';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import { resolveTerminalTheme } from '@vibeterm/theme';
 import i18next from 'i18next';
 import { createRef } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -191,7 +191,7 @@ describe('KeepAlivePaneSlot', () => {
     // 祖先用 visibility/pointer-events 藏不住，只能靠 opacity + z-index
     expect(html).toContain('z-index:1');
     expect(html).not.toContain('aria-hidden');
-    expect(html).not.toContain('data-tmex-terminal-hidden');
+    expect(html).not.toContain('data-vibeterm-terminal-hidden');
   });
 
   test('the hidden slot keeps its layout box but is inert', () => {
@@ -211,6 +211,6 @@ describe('KeepAlivePaneSlot', () => {
     expect(html).toContain('z-index:0');
     expect(html).not.toContain('data-visible');
     // opacity:0 的子树里 CSS 动画照跑：光标闪烁靠这个标记在样式层整条停掉
-    expect(html).toContain('data-tmex-terminal-hidden="true"');
+    expect(html).toContain('data-vibeterm-terminal-hidden="true"');
   });
 });

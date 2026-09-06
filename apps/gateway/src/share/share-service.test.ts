@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { PaneRetentionConsumerCallbacks } from '../tmux-client/pane-retention';
 import type { ShareOriginSources } from './share-origins';
@@ -21,7 +21,7 @@ function snapshotWith(deviceId: string, windowIds: string[]): StateSnapshotPaylo
     deviceId,
     session: {
       id: '$0',
-      name: 'tmex-test',
+      name: 'vibeterm-test',
       windows: windowIds.map((id, index) => ({
         id,
         name: `win-${index}`,

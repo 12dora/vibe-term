@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { EventEmitter } from 'node:events';
-import type { Device, StateSnapshotPayload } from '@tmex/shared';
+import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 import type { Client, ClientChannel, ConnectConfig } from 'ssh2';
 
 import { createDevice as createDeviceRow, getDeviceRuntimeStatus } from '../db';
@@ -11,7 +11,7 @@ import { TmuxTargetMissingError } from './target-missing';
 
 const now = '2026-04-14T00:00:00.000Z';
 
-function createDevice(session = 'tmex-ssh-test'): Device {
+function createDevice(session = 'vibeterm-ssh-test'): Device {
   return {
     id: 'device-ssh',
     name: 'ssh',
@@ -29,7 +29,7 @@ function createDevice(session = 'tmex-ssh-test'): Device {
 }
 
 function extractCommandId(command: string): string {
-  const match = command.match(/printf '\\036TMEX_END %s %d\\036\\n' '([^']+)' \$\?/);
+  const match = command.match(/printf '\\036VIBETERM_END %s %d\\036\\n' '([^']+)' \$\?/);
   if (!match) {
     throw new Error(`missing command id in payload: ${command}`);
   }
@@ -58,12 +58,15 @@ function respondToPayload(
   tmuxVersion = 'tmux 3.4'
 ): { stdout: string; exitCode: number } | null {
   if (payload.includes('command -v tmux')) {
-    return { stdout: `TMEX_BOOT_OK\t/usr/bin/tmux\t${tmuxVersion}\t/home/alice\n`, exitCode: 0 };
+    return {
+      stdout: `VIBETERM_BOOT_OK\t/usr/bin/tmux\t${tmuxVersion}\t/home/alice\n`,
+      exitCode: 0,
+    };
   }
   if (payload.includes(`'has-session' '-t' '${session}'`)) {
     return { stdout: '', exitCode: 0 };
   }
-  if (payload.includes("'show-options' '-gqv' '@tmex-server-epoch'")) {
+  if (payload.includes("'show-options' '-gqv' '@vibeterm-server-epoch'")) {
     return { stdout: '00112233445566778899aabbccddeeff\n', exitCode: 0 };
   }
   if (isConfigureSessionOptionPayload(payload, session)) {
@@ -71,7 +74,7 @@ function respondToPayload(
   }
   if (
     payload.includes(
-      `'new-window' '-t' '${session}' '-n' 'tmex-park' '-P' '-F' '#{window_id}' 'sleep 30'`
+      `'new-window' '-t' '${session}' '-n' 'vibeterm-park' '-P' '-F' '#{window_id}' 'sleep 30'`
     )
   ) {
     return { stdout: '@99\n', exitCode: 0 };
@@ -234,7 +237,7 @@ function setupCommandChannel(
     }
     fakeClient.commandChannel.emit(
       'data',
-      Buffer.from(`${response.stdout}\x1eTMEX_END ${commandId} ${response.exitCode}\x1e\n`)
+      Buffer.from(`${response.stdout}\x1eVIBETERM_END ${commandId} ${response.exitCode}\x1e\n`)
     );
   };
 }
@@ -280,13 +283,15 @@ describe('SshExternalTmuxConnection', () => {
   test('connect configures control-mode session options and attaches control client', async () => {
     const fakeClient = new FakeClient();
     const writes: string[] = [];
-    setupCommandChannel(fakeClient, 'tmex-ssh-configure', {
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-configure', {
       record: writes,
       overrides: (payload) => {
-        if (payload.includes("'has-session' '-t' 'tmex-ssh-configure'")) {
-          return { stdout: "can't find session: tmex-ssh-configure\n", exitCode: 1 };
+        if (payload.includes("'has-session' '-t' 'vibeterm-ssh-configure'")) {
+          return { stdout: "can't find session: vibeterm-ssh-configure\n", exitCode: 1 };
         }
-        if (payload.includes("'new-session' '-d' '-c' '/home/alice' '-s' 'tmex-ssh-configure'")) {
+        if (
+          payload.includes("'new-session' '-d' '-c' '/home/alice' '-s' 'vibeterm-ssh-configure'")
+        ) {
           return { stdout: '', exitCode: 0 };
         }
         return null;
@@ -294,7 +299,7 @@ describe('SshExternalTmuxConnection', () => {
     });
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-configure'),
+      getDevice: () => createDevice('vibeterm-ssh-configure'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -303,19 +308,19 @@ describe('SshExternalTmuxConnection', () => {
 
     expect(
       writes.some((payload) =>
-        payload.includes("'set-option' '-t' 'tmex-ssh-configure' '-g' 'focus-events' 'off'")
+        payload.includes("'set-option' '-t' 'vibeterm-ssh-configure' '-g' 'focus-events' 'off'")
       )
     ).toBe(true);
     expect(
       writes.some((payload) =>
-        payload.includes("'set-option' '-t' 'tmex-ssh-configure' 'destroy-unattached' 'off'")
+        payload.includes("'set-option' '-t' 'vibeterm-ssh-configure' 'destroy-unattached' 'off'")
       )
     ).toBe(true);
     // parking 舞步
     expect(
       writes.some((payload) =>
         payload.includes(
-          "'new-window' '-t' 'tmex-ssh-configure' '-n' 'tmex-park' '-P' '-F' '#{window_id}' 'sleep 30'"
+          "'new-window' '-t' 'vibeterm-ssh-configure' '-n' 'vibeterm-park' '-P' '-F' '#{window_id}' 'sleep 30'"
         )
       )
     ).toBe(true);
@@ -328,7 +333,7 @@ describe('SshExternalTmuxConnection', () => {
 
   test('connect rejects when remote tmux is too old for control mode', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-old', { tmuxVersion: 'tmux 2.9a' });
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-old', { tmuxVersion: 'tmux 2.9a' });
 
     const connection = new SshExternalTmuxConnection(
       {
@@ -336,7 +341,7 @@ describe('SshExternalTmuxConnection', () => {
         onError: () => {},
       },
       {
-        getDevice: () => createDevice('tmex-ssh-old'),
+        getDevice: () => createDevice('vibeterm-ssh-old'),
         decrypt: async () => 'secret',
         createClient: () => fakeClient as unknown as Client,
       }
@@ -348,7 +353,7 @@ describe('SshExternalTmuxConnection', () => {
 
   test('control channel %output flows through pane stream parser to terminal output', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-stream', {});
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-stream', {});
 
     const outputs: Array<{ paneId: string; text: string }> = [];
     const events: TmuxEvent[] = [];
@@ -362,7 +367,7 @@ describe('SshExternalTmuxConnection', () => {
         },
       }),
       {
-        getDevice: () => createDevice('tmex-ssh-stream'),
+        getDevice: () => createDevice('vibeterm-ssh-stream'),
         decrypt: async () => 'secret',
         createClient: () => fakeClient as unknown as Client,
       }
@@ -389,7 +394,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('control title updates stay on realtime metadata without remote tmux snapshots', async () => {
-    const session = 'tmex-ssh-title';
+    const session = 'vibeterm-ssh-title';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     const snapshots: StateSnapshotPayload[] = [];
@@ -444,12 +449,12 @@ describe('SshExternalTmuxConnection', () => {
   test('connect parses real tmux snapshot output that is pipe-delimited', async () => {
     const snapshots: StateSnapshotPayload[] = [];
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-pipe', {
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-pipe', {
       overrides: (payload) => {
-        if (payload.includes("'has-session' '-t' 'tmex-ssh-pipe'")) {
-          return { stdout: "can't find session: tmex-ssh-pipe\n", exitCode: 1 };
+        if (payload.includes("'has-session' '-t' 'vibeterm-ssh-pipe'")) {
+          return { stdout: "can't find session: vibeterm-ssh-pipe\n", exitCode: 1 };
         }
-        if (payload.includes("'new-session' '-d' '-c' '/home/alice' '-s' 'tmex-ssh-pipe'")) {
+        if (payload.includes("'new-session' '-d' '-c' '/home/alice' '-s' 'vibeterm-ssh-pipe'")) {
           return { stdout: '', exitCode: 0 };
         }
         return null;
@@ -459,7 +464,7 @@ describe('SshExternalTmuxConnection', () => {
     const connection = new SshExternalTmuxConnection(
       createCallbacks({ onSnapshot: (payload) => snapshots.push(payload) }),
       {
-        getDevice: () => createDevice('tmex-ssh-pipe'),
+        getDevice: () => createDevice('vibeterm-ssh-pipe'),
         decrypt: async () => 'secret',
         createClient: () => fakeClient as unknown as Client,
       }
@@ -472,7 +477,7 @@ describe('SshExternalTmuxConnection', () => {
         deviceId: 'device-ssh',
         session: {
           id: '$1',
-          name: 'tmex-ssh-pipe',
+          name: 'vibeterm-ssh-pipe',
           windows: [
             {
               id: '@1',
@@ -506,10 +511,10 @@ describe('SshExternalTmuxConnection', () => {
 
   test('connect bootstraps remote tmux over dedicated command and control channels', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-snapshot', {});
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-snapshot', {});
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-snapshot'),
+      getDevice: () => createDevice('vibeterm-ssh-snapshot'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -536,7 +541,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('logs tmux command context when a non-target-missing command fails', async () => {
-    const session = 'tmex-ssh-command-context';
+    const session = 'vibeterm-ssh-command-context';
     const fakeClient = new FakeClient();
     const errors: Error[] = [];
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
@@ -589,7 +594,7 @@ describe('SshExternalTmuxConnection', () => {
   test('capturePaneText runs plain capture-pane and fails fast when unavailable', async () => {
     const fakeClient = new FakeClient();
     const writes: string[] = [];
-    setupCommandChannel(fakeClient, 'tmex-ssh-capture', {
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-capture', {
       record: writes,
       overrides: (payload) => {
         if (payload.includes("'capture-pane' '-t' '%1' '-p' '-J' '-S' '-120'")) {
@@ -606,7 +611,7 @@ describe('SshExternalTmuxConnection', () => {
     });
 
     const captureDeviceId = 'device-ssh-capture-status';
-    const captureDevice = { ...createDevice('tmex-ssh-capture'), id: captureDeviceId };
+    const captureDevice = { ...createDevice('vibeterm-ssh-capture'), id: captureDeviceId };
     createDeviceRow(captureDevice);
 
     const connection = new SshExternalTmuxConnection(
@@ -657,7 +662,7 @@ describe('SshExternalTmuxConnection', () => {
 
   test('history pages use an isolated bounded SSH channel instead of the input queue', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-history-page');
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-history-page');
     fakeClient.onIsolatedExec = (command, channel) => {
       if (
         command.includes("'display-message'") &&
@@ -673,7 +678,7 @@ describe('SshExternalTmuxConnection', () => {
       channel.close();
     };
     const connection = new SshExternalTmuxConnection(createCallbacks(), {
-      getDevice: () => createDevice('tmex-ssh-history-page'),
+      getDevice: () => createDevice('vibeterm-ssh-history-page'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -697,10 +702,10 @@ describe('SshExternalTmuxConnection', () => {
   test('connect no longer provisions remote fifo dirs or hooks', async () => {
     const fakeClient = new FakeClient();
     const writes: string[] = [];
-    setupCommandChannel(fakeClient, 'tmex-ssh-no-cleanup', { record: writes });
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-no-cleanup', { record: writes });
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-no-cleanup'),
+      getDevice: () => createDevice('vibeterm-ssh-no-cleanup'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -715,7 +720,7 @@ describe('SshExternalTmuxConnection', () => {
       )
     ).toBe(false);
     expect(
-      writes.some((payload) => payload.includes('find ') && payload.includes('/tmp/tmex'))
+      writes.some((payload) => payload.includes('find ') && payload.includes('/tmp/vibeterm'))
     ).toBe(false);
     expect(writes.some((payload) => payload.includes('rm -rf'))).toBe(false);
 
@@ -723,7 +728,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('createWindow uses remoteHomeDir when defaultWorkingDir is empty', async () => {
-    const session = 'tmex-ssh-cwd-empty';
+    const session = 'vibeterm-ssh-cwd-empty';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     setupCommandChannel(fakeClient, session, { record: writes });
@@ -750,7 +755,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('createWindow uses custom dir when defaultWorkingDir is set', async () => {
-    const session = 'tmex-ssh-cwd-custom';
+    const session = 'vibeterm-ssh-cwd-custom';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     const device = createDevice(session);
@@ -783,10 +788,10 @@ describe('SshExternalTmuxConnection', () => {
 
   test('control channel supports write after connect', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-ctrl-write', {});
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-ctrl-write', {});
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-ctrl-write'),
+      getDevice: () => createDevice('vibeterm-ssh-ctrl-write'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -802,10 +807,10 @@ describe('SshExternalTmuxConnection', () => {
 
   test('heartbeat sends display-message to control channel', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-hb-send', {});
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-hb-send', {});
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-hb-send'),
+      getDevice: () => createDevice('vibeterm-ssh-hb-send'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -817,13 +822,15 @@ describe('SshExternalTmuxConnection', () => {
     (connection as any).sendHeartbeat();
     await Bun.sleep(20);
 
-    expect(controlChannel.writes.some((w) => w === 'display-message -p "tmex-hb"\n')).toBe(true);
+    expect(controlChannel.writes.some((w) => w === 'display-message -p "vibeterm-hb"\n')).toBe(
+      true
+    );
 
     connection.disconnect();
   });
 
   test('heartbeat timeout stops control channel', async () => {
-    const session = 'tmex-ssh-hb-timeout';
+    const session = 'vibeterm-ssh-hb-timeout';
     const fakeClient = new FakeClient();
     const warn = spyOn(console, 'warn').mockImplementation(() => {});
     setupCommandChannel(fakeClient, session, {});
@@ -863,10 +870,10 @@ describe('SshExternalTmuxConnection', () => {
 
   test('%pause triggers continue command on control channel', async () => {
     const fakeClient = new FakeClient();
-    setupCommandChannel(fakeClient, 'tmex-ssh-pause', {});
+    setupCommandChannel(fakeClient, 'vibeterm-ssh-pause', {});
 
     const connection = new SshExternalTmuxConnection(createCallbacks({}), {
-      getDevice: () => createDevice('tmex-ssh-pause'),
+      getDevice: () => createDevice('vibeterm-ssh-pause'),
       decrypt: async () => 'secret',
       createClient: () => fakeClient as unknown as Client,
     });
@@ -884,7 +891,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('configureWindowStyle batches set-option into a single shell command to minimize SSH round-trips', async () => {
-    const session = 'tmex-ssh-batch-style';
+    const session = 'vibeterm-ssh-batch-style';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     setupCommandChannel(fakeClient, session, {
@@ -934,7 +941,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('setWindowStyle triggers configureWindowStyle with custom style value', async () => {
-    const session = 'tmex-ssh-set-style';
+    const session = 'vibeterm-ssh-set-style';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     setupCommandChannel(fakeClient, session, {
@@ -973,7 +980,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('reconnect re-applies configureWindowStyle to restore OSC 11 reply state', async () => {
-    const session = 'tmex-ssh-reconnect-style';
+    const session = 'vibeterm-ssh-reconnect-style';
     const writes: string[] = [];
     let listWindowsCallCount = 0;
     let connectCount = 0;
@@ -1031,7 +1038,7 @@ describe('SshExternalTmuxConnection', () => {
   });
 
   test('concurrent setWindowStyle calls on same connection are serialized via commandQueue without loss', async () => {
-    const session = 'tmex-ssh-concurrent-style';
+    const session = 'vibeterm-ssh-concurrent-style';
     const fakeClient = new FakeClient();
     const writes: string[] = [];
     setupCommandChannel(fakeClient, session, {
@@ -1111,7 +1118,7 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
   }
 
   test('emits session_created only when the session is actually created', async () => {
-    const session = 'tmex-ssh-lc-created';
+    const session = 'vibeterm-ssh-lc-created';
     let created = false;
     const { connection, events } = makeLifecycleConnection({
       session,
@@ -1135,7 +1142,7 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
   });
 
   test('snapshot server-gone emits session_closed once and raises the closed flag', async () => {
-    const session = 'tmex-ssh-lc-gone';
+    const session = 'vibeterm-ssh-lc-gone';
     let gone = false;
     const { connection, events } = makeLifecycleConnection({
       session,
@@ -1169,7 +1176,7 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
   });
 
   test('emits tmux_pane_close when a pane disappears from the snapshot', async () => {
-    const session = 'tmex-ssh-lc-pane';
+    const session = 'vibeterm-ssh-lc-pane';
     let panesGone = false;
     const { connection, events } = makeLifecycleConnection({
       session,
@@ -1201,7 +1208,7 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
   });
 
   test('disconnect during blocked connect does not resurrect after the block resolves', async () => {
-    const session = 'tmex-ssh-cancel-connect';
+    const session = 'vibeterm-ssh-cancel-connect';
     const snapshots: StateSnapshotPayload[] = [];
     const sourceReady: Uint8Array[] = [];
     let epochStarted = false;
@@ -1221,10 +1228,10 @@ describe('SshExternalTmuxConnection lifecycle events', () => {
         }
         fakeClient.commandChannel.emit(
           'data',
-          Buffer.from(`${response.stdout}\x1eTMEX_END ${commandId} ${response.exitCode}\x1e\n`)
+          Buffer.from(`${response.stdout}\x1eVIBETERM_END ${commandId} ${response.exitCode}\x1e\n`)
         );
       };
-      if (payload.includes("'show-options' '-gqv' '@tmex-server-epoch'")) {
+      if (payload.includes("'show-options' '-gqv' '@vibeterm-server-epoch'")) {
         epochStarted = true;
         void epochGate.then(respond);
         return;

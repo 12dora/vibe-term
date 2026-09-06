@@ -1,20 +1,20 @@
 // 工具卡片的详情 Dialog 只在打开后才挂载：工具密集会话里一屏上百张卡，
-// 常驻的 Dialog root 是纯浪费。用 mock 包住 @tmex/ui/dialog（转发真实实现）数挂载次数。
+// 常驻的 Dialog root 是纯浪费。用 mock 包住 @vibeterm/ui/dialog（转发真实实现）数挂载次数。
 
 import { describe, expect, mock, test } from 'bun:test';
-import { I18N_RESOURCES } from '@tmex/shared';
-import type { UiToolCall } from '@tmex/stores';
+import { I18N_RESOURCES } from '@vibeterm/shared';
+import type { UiToolCall } from '@vibeterm/stores';
 import i18next from 'i18next';
 import type { ComponentType } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';
 
-const realDialog = (await import('@tmex/ui/dialog')) as unknown as Record<string, unknown>;
+const realDialog = (await import('@vibeterm/ui/dialog')) as unknown as Record<string, unknown>;
 const RealDialog = realDialog.Dialog as ComponentType<Record<string, unknown>>;
 
 const mounts = { roots: 0 };
 
-mock.module('@tmex/ui/dialog', () => ({
+mock.module('@vibeterm/ui/dialog', () => ({
   ...realDialog,
   Dialog: (props: Record<string, unknown>) => {
     mounts.roots += 1;

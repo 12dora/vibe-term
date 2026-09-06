@@ -1,4 +1,4 @@
-import type { CommandActor, CommandResult } from '@tmex/shared/messaging';
+import type { CommandActor, CommandResult } from '@vibeterm/shared/messaging';
 import type { MessagingAdapter } from './adapter';
 import { createCommandContext } from './context';
 import { dispatchInboundText } from './executor';

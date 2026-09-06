@@ -2,8 +2,8 @@
 // 加入码只在本机签得出来的时候才出现。无 DOM 测试环境，用 react-dom/server 静态渲染。
 
 import { afterEach, describe, expect, test } from 'bun:test';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
-import { installWindowStorage } from '@tmex/stores/test-utils';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { ConnectMachine } from './use-connect-machine';
 
 installWindowStorage();
@@ -17,9 +17,9 @@ installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
-const { RuntimeProvider } = await import('@tmex/stores/react');
+const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { QueryClient, QueryClientProvider } = await import('@tanstack/react-query');
-const { SidebarProvider } = await import('@tmex/ui/sidebar');
+const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { appNodeRuntimes } = await import('@/node/node-runtimes');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { resetMeshRelayStateForTest, setMeshRelayStateForTest } = await import('@/node/mesh-relay');
@@ -167,22 +167,24 @@ describe('uplinkReady', () => {
 
 describe('密码加入的命令', () => {
   test('Hub：地址未知时退回示例地址，口令不进命令行', () => {
-    expect(passwordJoinCommand(null)).toBe("tmex hub join 'https://tmex.example.com' --password");
-    expect(passwordJoinCommand(HUB_URL)).toBe(`tmex hub join '${HUB_URL}' --password`);
+    expect(passwordJoinCommand(null)).toBe(
+      "vibeterm hub join 'https://vibeterm.example.com' --password"
+    );
+    expect(passwordJoinCommand(HUB_URL)).toBe(`vibeterm hub join '${HUB_URL}' --password`);
   });
 
   test('中继：租户编号未知时用占位符', () => {
     expect(
       relayJoinCommand({ relayUrl: RELAY_URL, tenantId: TENANT, tenantPlaceholder: '<id>' })
-    ).toBe(`tmex relay join '${RELAY_URL}' --tenant ${TENANT}`);
+    ).toBe(`vibeterm relay join '${RELAY_URL}' --tenant ${TENANT}`);
     expect(relayJoinCommand({ relayUrl: null, tenantId: null, tenantPlaceholder: '<id>' })).toBe(
-      "tmex relay join 'https://relay.example.com' --tenant '<id>'"
+      "vibeterm relay join 'https://relay.example.com' --tenant '<id>'"
     );
   });
 
   test('不可信地址一律不进命令（畸形值等于命令注入）', () => {
     expect(passwordJoinCommand('https://hub.example; touch /tmp/pwn')).toContain(
-      'tmex.example.com'
+      'vibeterm.example.com'
     );
   });
 });
@@ -195,7 +197,7 @@ describe('JoinSteps', () => {
     expect(html).toContain(HUB_URL);
     expect(html).toContain('connectDevices.computer.join.uplink.hubUrl');
     expect(html).toContain('connectDevices.computer.join.password.hubDescription');
-    expect(html).toContain(`tmex hub join &#x27;${HUB_URL}&#x27; --password`);
+    expect(html).toContain(`vibeterm hub join &#x27;${HUB_URL}&#x27; --password`);
     expect(html).not.toContain('data-testid="command-block-join-tenant-id"');
     expect(html).toContain('<details');
     expect(html).toContain('connectDevices.computer.join.advanced.title');
@@ -228,7 +230,7 @@ describe('JoinSteps', () => {
     expect(html).toContain('data-testid="command-block-join-tenant-id-copy"');
     expect(html).toContain(TENANT);
     expect(html).toContain('connectDevices.computer.join.password.relayDescription');
-    expect(html).toContain(`tmex relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
+    expect(html).toContain(`vibeterm relay join &#x27;${RELAY_URL}&#x27; --tenant ${TENANT}`);
     expect(html).toContain('data-testid="connect-join-token-advanced"');
   });
 

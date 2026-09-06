@@ -22,7 +22,7 @@ const nodeAName = arg('node-a-name', 'node-a');
 const nodeBName = arg('node-b-name', 'node-b');
 const deviceAId = arg('device-a-id');
 const nodeAId = arg('node-a-id');
-const marker = arg('marker', 'TMEX_SPLIT_PW_MARKER');
+const marker = arg('marker', 'VIBETERM_SPLIT_PW_MARKER');
 const mapHost = arg('map-host', 'ai.example.com');
 const mapIp = arg('map-ip', '4.2.2.1');
 const caFile = arg('ca-file');
@@ -40,7 +40,7 @@ async function readTerminal(page: Page): Promise<string> {
   return page.evaluate(() => {
     const term = (
       window as unknown as {
-        __tmexE2eXterm?: {
+        __vibetermE2eXterm?: {
           buffer: {
             active: {
               length: number;
@@ -49,7 +49,7 @@ async function readTerminal(page: Page): Promise<string> {
           };
         };
       }
-    ).__tmexE2eXterm;
+    ).__vibetermE2eXterm;
     if (!term) return '';
     const buf = term.buffer.active;
     const lines: string[] = [];

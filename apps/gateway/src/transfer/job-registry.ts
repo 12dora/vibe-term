@@ -11,8 +11,8 @@ import type {
   TransferJobSnapshot,
   TransferJobState,
   TransferPath,
-} from '@tmex/shared';
-import { ProgressTracker, throttleProgress } from '@tmex/transfer';
+} from '@vibeterm/shared';
+import { ProgressTracker, throttleProgress } from '@vibeterm/transfer';
 import { MAX_FINISHED_JOBS } from './limits';
 
 const FINISHED_TTL_MS = 30 * 60_000;

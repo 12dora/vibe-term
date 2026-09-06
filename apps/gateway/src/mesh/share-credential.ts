@@ -1,13 +1,20 @@
-import { SHARE_WS_CLOSE_ENDED } from '@tmex/shared/share';
+import {
+  CLEAR_SHARE_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
+  deleteHeaderPair,
+  hasHeaderPair,
+  readHeaderPair,
+} from '@vibeterm/shared/http/mesh-headers';
+import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import { buildClearCookie, buildSetCookie, parseCookies } from '../auth/cookies';
 import { getShareService } from '../share';
 import {
+  LEGACY_SHARE_COOKIE_PREFIX,
   SHARE_AUTH_PREFIX,
   SHARE_COOKIE_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
   isValidShareCookieVia,
+  legacyShareCookieName,
   parseShareToken,
   shareCookieName,
 } from '../share/share-token';
@@ -17,9 +24,10 @@ import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 
 export {
   SHARE_AUTH_PREFIX,
-  X_TMEX_CLEAR_SHARE,
-  X_TMEX_SET_SHARE,
-  X_TMEX_SET_SHARE_MAX_AGE,
+  CLEAR_SHARE_HEADER,
+  SET_SHARE_HEADER,
+  SET_SHARE_MAX_AGE_HEADER,
+  legacyShareCookieName,
   shareCookieName,
 };
 
@@ -72,7 +80,8 @@ export function verifyShareAccessToken(
 
 export function readShareCookie(req: Request, via: string): string | null {
   if (!isValidShareCookieVia(via)) return null;
-  return parseCookies(req.headers.get('cookie')).get(shareCookieName(via)) ?? null;
+  const cookies = parseCookies(req.headers.get('cookie'));
+  return cookies.get(shareCookieName(via)) ?? cookies.get(legacyShareCookieName(via)) ?? null;
 }
 
 export function shareAuthValue(token: string): string {
@@ -87,12 +96,15 @@ export function parseShareAuth(auth: string | null | undefined): string | null {
 }
 
 export function hasShareCookieHeaders(response: Response): boolean {
-  return response.headers.has(X_TMEX_SET_SHARE) || response.headers.has(X_TMEX_CLEAR_SHARE);
+  return (
+    hasHeaderPair(response.headers, SET_SHARE_HEADER) ||
+    hasHeaderPair(response.headers, CLEAR_SHARE_HEADER)
+  );
 }
 
 /**
- * 把节点端的 `x-tmex-set-share` / `x-tmex-clear-share` 翻成浏览器 cookie，并抹掉内部头。
- * 本机路径 via = `self`，Hub 路径 via = 目标节点 id。
+ * 把节点端的 set-share / clear-share 内部头翻成浏览器 cookie，并抹掉内部头。
+ * 本机路径 via = `self`，Hub 路径 via = 目标节点 id；新旧两个 cookie 名同时下发/清除。
  */
 export function applyShareCookieHeaders(
   headers: Headers,
@@ -100,21 +112,23 @@ export function applyShareCookieHeaders(
   via: string,
   secure: boolean
 ): void {
-  headers.delete(X_TMEX_SET_SHARE);
-  headers.delete(X_TMEX_SET_SHARE_MAX_AGE);
-  headers.delete(X_TMEX_CLEAR_SHARE);
+  deleteHeaderPair(headers, SET_SHARE_HEADER);
+  deleteHeaderPair(headers, SET_SHARE_MAX_AGE_HEADER);
+  deleteHeaderPair(headers, CLEAR_SHARE_HEADER);
   if (!isValidShareCookieVia(via)) return;
-  const name = shareCookieName(via);
-  const token = upstream.headers.get(X_TMEX_SET_SHARE)?.trim();
-  const maxAgeRaw = Number(upstream.headers.get(X_TMEX_SET_SHARE_MAX_AGE) ?? '');
+  const names = [shareCookieName(via), legacyShareCookieName(via)];
+  const token = readHeaderPair(upstream.headers, SET_SHARE_HEADER)?.trim();
+  const maxAgeRaw = Number(readHeaderPair(upstream.headers, SET_SHARE_MAX_AGE_HEADER) ?? '');
   if (token && Number.isFinite(maxAgeRaw)) {
-    headers.append(
-      'set-cookie',
-      buildSetCookie(name, token, { maxAgeSec: Math.max(0, Math.floor(maxAgeRaw)), secure })
-    );
+    const maxAgeSec = Math.max(0, Math.floor(maxAgeRaw));
+    for (const name of names) {
+      headers.append('set-cookie', buildSetCookie(name, token, { maxAgeSec, secure }));
+    }
   }
-  if (upstream.headers.get(X_TMEX_CLEAR_SHARE)) {
-    headers.append('set-cookie', buildClearCookie(name, { secure }));
+  if (readHeaderPair(upstream.headers, CLEAR_SHARE_HEADER)) {
+    for (const name of names) {
+      headers.append('set-cookie', buildClearCookie(name, { secure }));
+    }
   }
 }
 
@@ -160,11 +174,19 @@ export function resolveShareWsAuth(
  * 分享公开面上残留的死 cookie：响应里顺手清掉，否则浏览器会一直带着它。
  * 本次响应已经在下发 / 清除分享 cookie 时不插手。
  */
-export function staleShareCookieName(req: Request, via: string): string | null {
+export function staleShareCookieNames(req: Request, via: string): string[] {
   // 每个本机响应都会走到这里：先用一次 substring 把绝大多数请求挡在解析之外。
-  if (!req.headers.get('cookie')?.includes(SHARE_COOKIE_PREFIX)) return null;
-  if (!isShareAccessPath(new URL(req.url).pathname, req.method)) return null;
+  const cookieHeader = req.headers.get('cookie');
+  if (
+    !cookieHeader?.includes(SHARE_COOKIE_PREFIX) &&
+    !cookieHeader?.includes(LEGACY_SHARE_COOKIE_PREFIX)
+  ) {
+    return [];
+  }
+  if (!isShareAccessPath(new URL(req.url).pathname, req.method)) return [];
   const token = readShareCookie(req, via);
-  if (!token || verifyShareAccessToken(token)) return null;
-  return isValidShareCookieVia(via) ? shareCookieName(via) : null;
+  if (!token || verifyShareAccessToken(token)) return [];
+  if (!isValidShareCookieVia(via)) return [];
+  const cookies = parseCookies(cookieHeader);
+  return [shareCookieName(via), legacyShareCookieName(via)].filter((name) => cookies.has(name));
 }

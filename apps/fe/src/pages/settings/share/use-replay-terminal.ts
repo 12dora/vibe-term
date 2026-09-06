@@ -8,8 +8,8 @@
 // 平移视口：内容表面按录制尺寸完整绘制，容器只负责裁剪 + 双向滚动（与跟随者终端同一套
 // 机制）。不开的话 Ghostty 视口是 overflow:hidden，底部命令和右侧内容根本看不到。
 
-import { useUIStore } from '@tmex/stores/react';
-import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@tmex/theme';
+import { useUIStore } from '@vibeterm/stores/react';
+import { loadTerminalFonts, resolveFontStack, resolveTerminalTheme } from '@vibeterm/theme';
 import { FitAddon, createTerminalController } from 'ghostty-terminal';
 import { type RefObject, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 

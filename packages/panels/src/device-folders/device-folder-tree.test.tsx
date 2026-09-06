@@ -2,7 +2,7 @@
 // 交互态（重命名 / 新建行）由外部 props 驱动的 FolderSection / FolderNameEditor 直接覆盖。
 
 import { describe, expect, test } from 'bun:test';
-import { type DeviceFolder, type DeviceFolderLayout, I18N_RESOURCES } from '@tmex/shared';
+import { type DeviceFolder, type DeviceFolderLayout, I18N_RESOURCES } from '@vibeterm/shared';
 import i18next from 'i18next';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nextProvider } from 'react-i18next';

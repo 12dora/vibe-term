@@ -1,4 +1,4 @@
-import { readJsonObjectBody } from '@tmex/shared/http';
+import { readJsonObjectBody } from '@vibeterm/shared/http';
 import type { RelayConfigStore } from './relay-config-store';
 import { RelayErrorCode, relayError, relayJson } from './relay-http';
 import type { RelayKeyLogStore } from './relay-key-log-store';

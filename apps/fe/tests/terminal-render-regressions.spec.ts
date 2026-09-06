@@ -19,7 +19,7 @@ import {
 
 async function readTerminalSize(page: Page): Promise<{ cols: number; rows: number } | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return null;
     return { cols: term.cols, rows: term.rows };
   });
@@ -34,7 +34,7 @@ async function readScreenLines(page: Page): Promise<string[]> {
 // 与 tmux #{cursor_y} 同坐标系）
 async function readCursorRow(page: Page): Promise<number | null> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     return term?.lastCursor?.y ?? null;
   });
 }
@@ -42,7 +42,7 @@ async function readCursorRow(page: Page): Promise<number | null> {
 // 调试用：controller 内部尺寸真相（JS rows vs WASM 渲染态）
 async function readTerminalInternals(page: Page): Promise<Record<string, unknown>> {
   return page.evaluate(() => {
-    const term = (window as any).__tmexE2eXterm;
+    const term = (window as any).__vibetermE2eXterm;
     if (!term) return { missing: true };
     let scrollbar: unknown = null;
     try {
@@ -135,7 +135,7 @@ async function measureInkRatio(page: Page): Promise<number> {
 // 光标停在块底行尾，重绘用 CSI (N-1)F 回到块顶）。
 // historyLines > 0 时先输出等量的超宽历史行（118 列），让窄↔宽 resize 触发真实 reflow。
 function writeInlineTuiScript(lines: number, historyLines = 0): string {
-  const dir = mkdtempSync(join(tmpdir(), 'tmex-e2e-tui-'));
+  const dir = mkdtempSync(join(tmpdir(), 'vibeterm-e2e-tui-'));
   const path = join(dir, 'inline-tui.sh');
   writeFileSync(
     path,
@@ -187,7 +187,7 @@ test('bug1: cold start onto a single-pane window renders existing content', asyn
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-coldstart-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-coldstart-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
 
   // 预先产生内容：滚动历史 + 结尾 marker，模拟已有工作现场
@@ -242,7 +242,7 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-tui-align-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-tui-align-${Date.now()}`;
   const { paneIds, windowIds } = createTwoWindowSession(sessionName);
   const paneA = paneIds[0] as string;
   const paneB = paneIds[1] as string;
@@ -337,7 +337,7 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
 });
 
 test('bug3: full-viewport inline TUI redraw stays aligned', async ({ page, request }) => {
-  const sessionName = `tmex-e2e-fullredraw-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-fullredraw-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-fullredraw-${Date.now()}`);
@@ -416,7 +416,7 @@ test('bug3b: stdin-driven full-viewport inline TUI redraw stays aligned (no resi
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-stdinredraw-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-stdinredraw-${Date.now()}`;
   const { paneId } = createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-stdinredraw-${Date.now()}`);
@@ -479,7 +479,7 @@ test('bug4: remote resize (another client) rebuilds local screen aligned', async
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-remote-resize-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-remote-resize-${Date.now()}`;
   const { paneId, windowId } = createSinglePaneSession(sessionName);
 
   const deviceId = await createLocalDevice(request, sessionName, `e2e-remote-resize-${Date.now()}`);

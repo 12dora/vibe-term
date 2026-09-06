@@ -1,10 +1,10 @@
 // SSH 认证字段：认证方式选择 + 各模式自己的输入项（agent / auto 无额外输入；auto 由 gateway 依次
 // 尝试 agent、已保存私钥、密码，是历史 SSH 记录的缺省值）。
 
-import type { CreateDeviceRequest } from '@tmex/shared';
-import { Input } from '@tmex/ui/input';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
-import { Textarea } from '@tmex/ui/textarea';
+import type { CreateDeviceRequest } from '@vibeterm/shared';
+import { Input } from '@vibeterm/ui/input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
+import { Textarea } from '@vibeterm/ui/textarea';
 import { useTranslation } from 'react-i18next';
 import {
   type DeviceFieldsProps,

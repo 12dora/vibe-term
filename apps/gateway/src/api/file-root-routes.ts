@@ -1,4 +1,4 @@
-import type { FileRootDto, UpdateFileRootRequest } from '@tmex/shared';
+import type { FileRootDto, UpdateFileRootRequest } from '@vibeterm/shared';
 import { getDeviceById } from '../db';
 import {
   type FileRootRecord,

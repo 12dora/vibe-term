@@ -1,7 +1,7 @@
 // pane 订阅面：挂载引用计数、手动订阅集合、订阅代数（generation），
 // 以及基于订阅关系的截屏 / 历史分页请求。
 
-import { type GatewayHistoryCursor, generateSelectToken } from '@tmex/ws-client';
+import { type GatewayHistoryCursor, generateSelectToken } from '@vibeterm/ws-client';
 import type { RuntimeCore } from './runtime';
 
 const SCREEN_BYTE_LIMIT = 512 * 1024;

@@ -7,20 +7,20 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 HUB_E2E="$(cd "${ROOT}/.." && pwd)"
 REPO_ROOT="$(cd "${HUB_E2E}/../.." && pwd)"
-export TMEX_REPO_ROOT="${TMEX_REPO_ROOT:-${REPO_ROOT}}"
-LOCAL_COMPOSE=(docker compose -p tmex-split-local -f "${ROOT}/docker-compose.local.yml")
+export VIBETERM_REPO_ROOT="${VIBETERM_REPO_ROOT:-${REPO_ROOT}}"
+LOCAL_COMPOSE=(docker compose -p vibeterm-split-local -f "${ROOT}/docker-compose.local.yml")
 # RSSH：一个可执行文件，把参数当远端命令执行（例如封装 sshpass/ssh 的脚本）；凭据不入库。
 # RSYNC_SSH：rsync -e 使用的 ssh 命令（同样由调用方提供，可含 sshpass 包装），例如 RSYNC_SSH=/path/to/ssh-wrap。
 RSYNC_SSH="${RSYNC_SSH:?set RSYNC_SSH to an ssh command for rsync -e (e.g. a wrapper script that adds -p/-o/sshpass)}"
 RSSH="${RSSH:?set RSSH to an ssh wrapper script, e.g. RSSH=/path/to/rssh (runs: rssh '<remote command>')}"
-HUB_HOST="${TMEX_E2E_HUB_HOST:-ai.example.com}"
-HUB_IP="${TMEX_E2E_HUB_IP:-4.2.2.1}"
-HUB_PORT="${TMEX_E2E_HUB_PORT:-18443}"
-HUB_PUBLIC_URL="${TMEX_HUB_PUBLIC_URL:-https://${HUB_HOST}:${HUB_PORT}}"
-REMOTE_USER="${TMEX_E2E_REMOTE_USER:-root}"
-REMOTE_DIR="${TMEX_E2E_REMOTE_DIR:-/root/tmex-e2e}"
-if [[ -n "${TMEX_E2E_REMOTE_SUDO+x}" ]]; then
-  REMOTE_SUDO="${TMEX_E2E_REMOTE_SUDO}"
+HUB_HOST="${VIBETERM_E2E_HUB_HOST:-ai.example.com}"
+HUB_IP="${VIBETERM_E2E_HUB_IP:-4.2.2.1}"
+HUB_PORT="${VIBETERM_E2E_HUB_PORT:-18443}"
+HUB_PUBLIC_URL="${VIBETERM_HUB_PUBLIC_URL:-https://${HUB_HOST}:${HUB_PORT}}"
+REMOTE_USER="${VIBETERM_E2E_REMOTE_USER:-root}"
+REMOTE_DIR="${VIBETERM_E2E_REMOTE_DIR:-/root/vibeterm-e2e}"
+if [[ -n "${VIBETERM_E2E_REMOTE_SUDO+x}" ]]; then
+  REMOTE_SUDO="${VIBETERM_E2E_REMOTE_SUDO}"
 elif [[ "${REMOTE_USER}" != "root" ]]; then
   REMOTE_SUDO="sudo"
 else
@@ -31,35 +31,35 @@ if [[ -n "${REMOTE_SUDO}" ]]; then
 else
   REMOTE_DOCKER="docker"
 fi
-TLS_MODE="${TMEX_E2E_TLS_MODE:-letsencrypt}"
+TLS_MODE="${VIBETERM_E2E_TLS_MODE:-letsencrypt}"
 if [[ "${TLS_MODE}" != "letsencrypt" && "${TLS_MODE}" != "private-ca" ]]; then
-  echo "TMEX_E2E_TLS_MODE must be letsencrypt or private-ca (got ${TLS_MODE})" >&2
+  echo "VIBETERM_E2E_TLS_MODE must be letsencrypt or private-ca (got ${TLS_MODE})" >&2
   exit 2
 fi
-REMOTE_TARBALL="${TMEX_E2E_REMOTE_TARBALL:-${REMOTE_DIR}/tmex-cli-1.0.2.tgz}"
-export TMEX_E2E_HUB_HOST="${HUB_HOST}"
-export TMEX_E2E_HUB_IP="${HUB_IP}"
-export TMEX_E2E_HUB_PORT="${HUB_PORT}"
-export TMEX_E2E_REMOTE_DIR="${REMOTE_DIR}"
-export TMEX_E2E_TLS_MODE="${TLS_MODE}"
-export TMEX_E2E_TURN_EXTERNAL_IP="${TMEX_E2E_TURN_EXTERNAL_IP:-${HUB_IP}}"
+REMOTE_TARBALL="${VIBETERM_E2E_REMOTE_TARBALL:-${REMOTE_DIR}/vibeterm-cli.tgz}"
+export VIBETERM_E2E_HUB_HOST="${HUB_HOST}"
+export VIBETERM_E2E_HUB_IP="${HUB_IP}"
+export VIBETERM_E2E_HUB_PORT="${HUB_PORT}"
+export VIBETERM_E2E_REMOTE_DIR="${REMOTE_DIR}"
+export VIBETERM_E2E_TLS_MODE="${TLS_MODE}"
+export VIBETERM_E2E_TURN_EXTERNAL_IP="${VIBETERM_E2E_TURN_EXTERNAL_IP:-${HUB_IP}}"
 if [[ "${TLS_MODE}" == "private-ca" ]]; then
-  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
+  NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/ca/ca.crt}"
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.crt}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/hub.key}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-${REMOTE_DIR}/repo/scripts/hub-e2e/ca/ca.crt}"
 else
-  NODE_CA_CERTS="${TMEX_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
-  export TMEX_E2E_TLS_CERT="${TMEX_E2E_TLS_CERT:-${REMOTE_DIR}/certs/fullchain.pem}"
-  export TMEX_E2E_TLS_KEY="${TMEX_E2E_TLS_KEY:-${REMOTE_DIR}/certs/privkey.pem}"
-  export TMEX_E2E_CA_CRT="${TMEX_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
+  NODE_CA_CERTS="${VIBETERM_E2E_NODE_CA_CERTS:-/etc/ssl/certs/ca-certificates.crt}"
+  export VIBETERM_E2E_TLS_CERT="${VIBETERM_E2E_TLS_CERT:-${REMOTE_DIR}/certs/fullchain.pem}"
+  export VIBETERM_E2E_TLS_KEY="${VIBETERM_E2E_TLS_KEY:-${REMOTE_DIR}/certs/privkey.pem}"
+  export VIBETERM_E2E_CA_CRT="${VIBETERM_E2E_CA_CRT:-/etc/ssl/certs/ca-certificates.crt}"
 fi
-export TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}"
-USER_NAME="${TMEX_E2E_USER:-alice}"
-PASSWORD="${TMEX_E2E_PASSWORD:-TmexE2e!alice-2026}"
+export VIBETERM_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}"
+USER_NAME="${VIBETERM_E2E_USER:-alice}"
+PASSWORD="${VIBETERM_E2E_PASSWORD:-VibeTermE2e!alice-2026}"
 OUT="${ROOT}/out"
-IMAGE_NAME="tmex-e2e:split"
-TARBALL="${TMEX_TARBALL:?set TMEX_TARBALL to the tmex-cli tarball used to build the local image}"
+IMAGE_NAME="vibeterm-e2e:split"
+TARBALL="${VIBETERM_TARBALL:?set VIBETERM_TARBALL to the vibeterm-cli tarball used to build the local image}"
 FAILS=0
 declare -a REPORT_ROWS=()
 
@@ -75,7 +75,7 @@ DIRECT_SKIPPED=0
 LAN_NETEM_ON=0
 LAN_NETEM_IFACE_A=""
 LAN_NETEM_IFACE_B=""
-LAN_NET="tmex-split-local_lan"
+LAN_NET="vibeterm-split-local_lan"
 
 usage() {
   cat <<'EOF'
@@ -92,8 +92,8 @@ fi
 
 if [[ "${1:-}" == "down" ]]; then
   "${LOCAL_COMPOSE[@]}" down -v --remove-orphans || true
-  docker network rm tmex-split-local_lan 2>/dev/null || true
-  rssh_docker "compose -p tmex-split -f ${REMOTE_DIR}/repo/scripts/hub-e2e/split/docker-compose.remote.yml down -v --remove-orphans" || true
+  docker network rm vibeterm-split-local_lan 2>/dev/null || true
+  rssh_docker "compose -p vibeterm-split -f ${REMOTE_DIR}/repo/scripts/hub-e2e/split/docker-compose.remote.yml down -v --remove-orphans" || true
   exit 0
 fi
 
@@ -130,15 +130,15 @@ wait_local_healthy() {
 
 wait_remote_hub() {
   local n=0
-  local max=$(( ${TMEX_E2E_HEALTH_TIMEOUT:-600} / 2 ))
+  local max=$(( ${VIBETERM_E2E_HEALTH_TIMEOUT:-600} / 2 ))
   while (( n < max )); do
-    if rssh_docker "exec tmex-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
+    if rssh_docker "exec vibeterm-split-hub curl -fsS -m 2 http://127.0.0.1:9883/healthz" >/dev/null 2>&1; then
       return 0
     fi
     sleep 2
     n=$((n + 1))
   done
-  rssh_docker "logs tmex-split-hub 2>&1 | tail -40" || true
+  rssh_docker "logs vibeterm-split-hub 2>&1 | tail -40" || true
   return 1
 }
 
@@ -146,23 +146,23 @@ driver() {
   local name="$1"
   local bundled="${HUB_E2E}/driver-dist/${name%.ts}.js"
   if [[ -f "${bundled}" ]]; then
-    docker exec -w /workspace tmex-split-driver \
+    docker exec -w /workspace vibeterm-split-driver \
       bun "/workspace/scripts/hub-e2e/driver-dist/${name%.ts}.js" "${@:2}"
   else
-    docker exec -w /workspace tmex-split-driver \
+    docker exec -w /workspace vibeterm-split-driver \
       bun "/workspace/scripts/hub-e2e/driver/${name}" "${@:2}"
   fi
 }
 
 split_bun() {
-  docker exec -w /workspace tmex-split-driver bun "$@"
+  docker exec -w /workspace vibeterm-split-driver bun "$@"
 }
 
 curl_hub() {
   if [[ "${TLS_MODE}" == "private-ca" ]]; then
-    docker exec tmex-split-driver curl -fsS --cacert /ca/ca.crt "$@"
+    docker exec vibeterm-split-driver curl -fsS --cacert /ca/ca.crt "$@"
   else
-    docker exec tmex-split-driver curl -fsS "$@"
+    docker exec vibeterm-split-driver curl -fsS "$@"
   fi
 }
 
@@ -171,25 +171,25 @@ dump_logs() {
   "${LOCAL_COMPOSE[@]}" logs --no-color node-a > "${OUT}/node-a.log" 2>&1 || true
   "${LOCAL_COMPOSE[@]}" logs --no-color node-b > "${OUT}/node-b.log" 2>&1 || true
   "${LOCAL_COMPOSE[@]}" logs --no-color driver > "${OUT}/driver.log" 2>&1 || true
-  rssh_docker "logs --tail 400 tmex-split-hub" > "${OUT}/hub.log" 2>&1 || true
-  rssh_docker "logs --tail 200 tmex-split-caddy" > "${OUT}/caddy.log" 2>&1 || true
+  rssh_docker "logs --tail 400 vibeterm-split-hub" > "${OUT}/hub.log" 2>&1 || true
+  rssh_docker "logs --tail 200 vibeterm-split-caddy" > "${OUT}/caddy.log" 2>&1 || true
 }
 
 dump_rtc_logs() {
   local peer="${1:-hub}"
-  docker logs tmex-split-node-a 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
+  docker logs vibeterm-split-node-a 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
   if [[ ! -s "${OUT}/direct-logs-node-a.txt" ]]; then
-    docker logs tmex-split-node-a 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
+    docker logs vibeterm-split-node-a 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-a.txt" || true
   fi
   if [[ "${peer}" == "node-b" ]]; then
-    docker logs tmex-split-node-b 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
+    docker logs vibeterm-split-node-b 2>&1 | grep -E '\[mesh\]\[rtc\]' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
     if [[ ! -s "${OUT}/direct-logs-node-b.txt" ]]; then
-      docker logs tmex-split-node-b 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
+      docker logs vibeterm-split-node-b 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120 > "${OUT}/direct-logs-node-b.txt" || true
     fi
   else
-    rssh_docker "logs tmex-split-hub 2>&1 | grep -E '\\[mesh\\]\\[rtc\\]' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+    rssh_docker "logs vibeterm-split-hub 2>&1 | grep -E '\\[mesh\\]\\[rtc\\]' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
     if [[ ! -s "${OUT}/direct-logs-hub.txt" ]]; then
-      rssh_docker "logs tmex-split-hub 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
+      rssh_docker "logs vibeterm-split-hub 2>&1 | grep -iE 'rtc|datachannel|ice failed|ws-secure' | tail -120" > "${OUT}/direct-logs-hub.txt" || true
     fi
   fi
 }
@@ -209,21 +209,21 @@ rtc_evidence() {
 }
 
 ensure_udp_drop_tool() {
-  if docker exec tmex-split-node-a bash -lc 'command -v iptables >/dev/null'; then
+  if docker exec vibeterm-split-node-a bash -lc 'command -v iptables >/dev/null'; then
     DIRECT_DROP_MODE=iptables
     log "udp drop mode=iptables"
     return
   fi
-  if docker exec tmex-split-node-a bash -lc 'command -v nft >/dev/null'; then
+  if docker exec vibeterm-split-node-a bash -lc 'command -v nft >/dev/null'; then
     DIRECT_DROP_MODE=nft
     log "udp drop mode=nft"
     return
   fi
   log "iptables/nft absent in image; attempting apt-get install iptables"
-  docker exec tmex-split-node-a bash -lc \
+  docker exec vibeterm-split-node-a bash -lc \
     'apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq iptables' \
     >/dev/null 2>&1 || true
-  if docker exec tmex-split-node-a bash -lc 'command -v iptables >/dev/null'; then
+  if docker exec vibeterm-split-node-a bash -lc 'command -v iptables >/dev/null'; then
     DIRECT_DROP_MODE=iptables
     log "udp drop mode=iptables (installed at runtime)"
     return
@@ -235,16 +235,16 @@ ensure_udp_drop_tool() {
 drop_direct_udp() {
   case "${DIRECT_DROP_MODE}" in
     iptables)
-      docker exec tmex-split-node-a iptables -I OUTPUT -p udp -j DROP
+      docker exec vibeterm-split-node-a iptables -I OUTPUT -p udp -j DROP
       ;;
     nft)
-      docker exec tmex-split-node-a bash -lc \
-        'nft add table ip tmex_e2e 2>/dev/null || true; nft "add chain ip tmex_e2e output { type filter hook output priority 0 ; }"; nft add rule ip tmex_e2e output udp drop'
+      docker exec vibeterm-split-node-a bash -lc \
+        'nft add table ip vibeterm_e2e 2>/dev/null || true; nft "add chain ip vibeterm_e2e output { type filter hook output priority 0 ; }"; nft add rule ip vibeterm_e2e output udp drop'
       ;;
     network)
-      docker network disconnect tmex-split-local_nat-a tmex-split-node-a || true
+      docker network disconnect vibeterm-split-local_nat-a vibeterm-split-node-a || true
       sleep 1
-      docker network connect tmex-split-local_nat-a tmex-split-node-a || true
+      docker network connect vibeterm-split-local_nat-a vibeterm-split-node-a || true
       ;;
     *)
       log "udp drop skipped (no mode)"
@@ -256,13 +256,13 @@ drop_direct_udp() {
 undrop_direct_udp() {
   case "${DIRECT_DROP_MODE}" in
     iptables)
-      docker exec tmex-split-node-a iptables -D OUTPUT -p udp -j DROP || true
+      docker exec vibeterm-split-node-a iptables -D OUTPUT -p udp -j DROP || true
       ;;
     nft)
-      docker exec tmex-split-node-a nft delete table ip tmex_e2e || true
+      docker exec vibeterm-split-node-a nft delete table ip vibeterm_e2e || true
       ;;
     network)
-      docker network connect tmex-split-local_nat-a tmex-split-node-a 2>/dev/null || true
+      docker network connect vibeterm-split-local_nat-a vibeterm-split-node-a 2>/dev/null || true
       ;;
   esac
 }
@@ -328,9 +328,9 @@ apply_lan_netem_on() {
   local container="$1"
   local resolved="" iface="" ip=""
   local -a args
-  read -r -a args <<< "${TMEX_E2E_LAN_NETEM:-}"
+  read -r -a args <<< "${VIBETERM_E2E_LAN_NETEM:-}"
   if ((${#args[@]} == 0)); then
-    log "lan netem: empty TMEX_E2E_LAN_NETEM"
+    log "lan netem: empty VIBETERM_E2E_LAN_NETEM"
     return 1
   fi
   if ! docker exec "${container}" bash -lc 'command -v tc >/dev/null && command -v ip >/dev/null'; then
@@ -350,20 +350,20 @@ apply_lan_netem_on() {
     return 1
   fi
   case "${container}" in
-    tmex-split-node-a) LAN_NETEM_IFACE_A="${iface}" ;;
-    tmex-split-node-b) LAN_NETEM_IFACE_B="${iface}" ;;
+    vibeterm-split-node-a) LAN_NETEM_IFACE_A="${iface}" ;;
+    vibeterm-split-node-b) LAN_NETEM_IFACE_B="${iface}" ;;
   esac
-  log "lan netem: ${container} dev=${iface} ip=${ip} netem ${TMEX_E2E_LAN_NETEM:-}"
+  log "lan netem: ${container} dev=${iface} ip=${ip} netem ${VIBETERM_E2E_LAN_NETEM:-}"
   log "lan netem qdisc ${container}: $(docker exec "${container}" tc qdisc show dev "${iface}" 2>/dev/null | tr '\n' ' ' | tr '|' '/' || true)"
 }
 
 apply_lan_netem() {
-  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ -z "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     return 0
   fi
   local rc=0
-  apply_lan_netem_on tmex-split-node-a || rc=1
-  apply_lan_netem_on tmex-split-node-b || rc=1
+  apply_lan_netem_on vibeterm-split-node-a || rc=1
+  apply_lan_netem_on vibeterm-split-node-b || rc=1
   if [[ "${rc}" -eq 0 ]]; then
     LAN_NETEM_ON=1
   fi
@@ -384,11 +384,11 @@ clear_lan_netem_on() {
 }
 
 clear_lan_netem() {
-  if [[ -z "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ -z "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     return 0
   fi
-  clear_lan_netem_on tmex-split-node-a "${LAN_NETEM_IFACE_A:-}"
-  clear_lan_netem_on tmex-split-node-b "${LAN_NETEM_IFACE_B:-}"
+  clear_lan_netem_on vibeterm-split-node-a "${LAN_NETEM_IFACE_A:-}"
+  clear_lan_netem_on vibeterm-split-node-b "${LAN_NETEM_IFACE_B:-}"
   LAN_NETEM_ON=0
 }
 
@@ -410,9 +410,9 @@ show_lan_qdisc() {
 lan_netem_qdisc_evidence() {
   printf 'qdisc node-a[%s]=%s; node-b[%s]=%s' \
     "${LAN_NETEM_IFACE_A:-?}" \
-    "$(show_lan_qdisc tmex-split-node-a "${LAN_NETEM_IFACE_A:-}")" \
+    "$(show_lan_qdisc vibeterm-split-node-a "${LAN_NETEM_IFACE_A:-}")" \
     "${LAN_NETEM_IFACE_B:-?}" \
-    "$(show_lan_qdisc tmex-split-node-b "${LAN_NETEM_IFACE_B:-}")"
+    "$(show_lan_qdisc vibeterm-split-node-b "${LAN_NETEM_IFACE_B:-}")"
 }
 
 write_report() {
@@ -421,7 +421,7 @@ write_report() {
     rows="$(printf '%s\n' "${REPORT_ROWS[@]}")"
   fi
   cat > "${OUT}/report.md" <<EOF
-# tmex split hub-e2e report
+# vibeterm split hub-e2e report
 
 - date: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 - image: ${IMAGE_NAME}
@@ -430,7 +430,7 @@ write_report() {
 - hub host/ip: ${HUB_HOST} / ${HUB_IP}
 - tls: ${TLS_MODE}
 - remote: ${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}
-- lan netem: ${TMEX_E2E_LAN_NETEM:-off}
+- lan netem: ${VIBETERM_E2E_LAN_NETEM:-off}
 
 | scenario | result | evidence |
 |---|---|---|
@@ -462,7 +462,7 @@ wait_file_match() {
 }
 
 kill_enroll() {
-  rssh_docker "exec tmex-split-hub bash -lc 'pkill -f \"cli-auth.js enroll\" || true; pkill -f \"enroll --ttl\" || true'" || true
+  rssh_docker "exec vibeterm-split-hub bash -lc 'pkill -f \"cli-auth.js enroll\" || true; pkill -f \"enroll --ttl\" || true'" || true
 }
 
 enroll_and_join() {
@@ -470,11 +470,11 @@ enroll_and_join() {
   local log_file="${OUT}/enroll-${node_name}.log"
   : > "${log_file}"
   kill_enroll
-  rssh_docker "exec tmex-split-hub bash -lc 'rm -f /tmp/enroll.log'"
-  rssh_docker "exec -d -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bash -lc 'nohup stdbuf -oL bun /opt/tmex/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/tmex >/tmp/enroll.log 2>&1'"
+  rssh_docker "exec vibeterm-split-hub bash -lc 'rm -f /tmp/enroll.log'"
+  rssh_docker "exec -d -e VIBETERM_PASSWORD='${PASSWORD}' vibeterm-split-hub bash -lc 'nohup stdbuf -oL bun /opt/vibeterm/runtime/cli-auth.js enroll --ttl 10m --install-dir /opt/vibeterm >/tmp/enroll.log 2>&1'"
   local n=0
   while (( n < 45 )); do
-    rssh_docker "exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
+    rssh_docker "exec vibeterm-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
     if grep -E 'join token: [A-Za-z0-9_-]+' "${log_file}" >/dev/null 2>&1; then
       break
     fi
@@ -501,30 +501,30 @@ enroll_and_join() {
   "${LOCAL_COMPOSE[@]}" run --rm --no-deps --entrypoint bash "${node_name}" -lc "
     set +e
     export NODE_EXTRA_CA_CERTS=${NODE_CA_CERTS}
-    rm -f /opt/tmex/app.env
-    cp /var/lib/tmex/app.env /opt/tmex/app.env
-    mkdir -p /opt/tmex/native /var/lib/tmex/native
-    bun /opt/tmex/runtime/cli-auth.js hub join ${HUB_PUBLIC_URL} --token '${token}' --name '${node_name}' --install-dir /opt/tmex --no-restart
+    rm -f /opt/vibeterm/app.env
+    cp /var/lib/vibeterm/app.env /opt/vibeterm/app.env
+    mkdir -p /opt/vibeterm/native /var/lib/vibeterm/native
+    bun /opt/vibeterm/runtime/cli-auth.js hub join ${HUB_PUBLIC_URL} --token '${token}' --name '${node_name}' --install-dir /opt/vibeterm --no-restart
     join_code=\$?
     echo JOIN_EXIT=\$join_code
-    cp /opt/tmex/app.env /var/lib/tmex/app.env
-    grep -E '^TMEX_HUB_URL=' /var/lib/tmex/app.env || true
-    grep -E '^TMEX_ROLES=' /var/lib/tmex/app.env || true
-    grep -q 'TMEX_HUB_URL=${HUB_PUBLIC_URL}' /var/lib/tmex/app.env || exit 20
-    grep -q 'TMEX_ROLES=node' /var/lib/tmex/app.env || exit 21
+    cp /opt/vibeterm/app.env /var/lib/vibeterm/app.env
+    grep -E '^VIBETERM_HUB_URL=' /var/lib/vibeterm/app.env || true
+    grep -E '^VIBETERM_ROLES=' /var/lib/vibeterm/app.env || true
+    grep -q 'VIBETERM_HUB_URL=${HUB_PUBLIC_URL}' /var/lib/vibeterm/app.env || exit 20
+    grep -q 'VIBETERM_ROLES=node' /var/lib/vibeterm/app.env || exit 21
     exit 0
   " | tee "${OUT}/join-${node_name}.log"
   local join_ok=${PIPESTATUS[0]}
   set -e
   if [[ "${join_ok}" -ne 0 ]]; then
     kill_enroll
-    echo "hub join did not persist TMEX_HUB_URL/TMEX_ROLES for ${node_name}" >&2
+    echo "hub join did not persist VIBETERM_HUB_URL/VIBETERM_ROLES for ${node_name}" >&2
     return 1
   fi
 
   n=0
   while (( n < 60 )); do
-    rssh_docker "exec tmex-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
+    rssh_docker "exec vibeterm-split-hub cat /tmp/enroll.log" > "${log_file}" 2>/dev/null || true
     if grep -E 'node admitted' "${log_file}" >/dev/null 2>&1; then
       break
     fi
@@ -542,7 +542,7 @@ enroll_and_join() {
 jread() {
   local file="$1"
   local expr="$2"
-  docker exec tmex-split-driver bun -e "const j=await Bun.file('${file}').json(); process.stdout.write(String(${expr})||'')"
+  docker exec vibeterm-split-driver bun -e "const j=await Bun.file('${file}').json(); process.stdout.write(String(${expr})||'')"
 }
 
 sync_clocks() {
@@ -550,7 +550,7 @@ sync_clocks() {
   # 远端 NTP 不同步会得到 DELEGATION_ISSUED_IN_FUTURE。时钟应由远端 NTP 修正（timedatectl set-ntp true）。
   local hub_now driver_now
   hub_now="$(rssh 'date -u +%s')"
-  driver_now="$(docker exec tmex-split-driver date -u +%s)"
+  driver_now="$(docker exec vibeterm-split-driver date -u +%s)"
   local delta=$(( driver_now - hub_now ))
   if (( delta < 0 )); then delta=$(( -delta )); fi
   log "clock skew hub↔driver = ${delta}s"
@@ -565,7 +565,7 @@ sync_clocks() {
 preflight_udp() {
   local target_port="${1:-3478}"
   local probe
-  probe="$(docker exec tmex-split-driver bun /workspace/scripts/hub-e2e/split/udp-probe.ts "${HUB_IP}" "${target_port}" 2>/dev/null || true)"
+  probe="$(docker exec vibeterm-split-driver bun /workspace/scripts/hub-e2e/split/udp-probe.ts "${HUB_IP}" "${target_port}" 2>/dev/null || true)"
   if [[ "${probe}" == reply* ]]; then
     log "udp preflight: ${HUB_IP}:${target_port} reachable (${probe})"
     return 0
@@ -601,7 +601,7 @@ ensure_private_ca() {
   openssl genrsa -out "${ca_dir}/hub.key" 2048
   openssl req -new -key "${ca_dir}/hub.key" -subj "/CN=${HUB_HOST}" -out "${ca_dir}/hub.csr"
   cat > "${ca_dir}/hub.ext" <<EOF
-subjectAltName=DNS:${HUB_HOST},DNS:hub.tmex.test,DNS:entry.tmex.test
+subjectAltName=DNS:${HUB_HOST},DNS:hub.vibeterm.test,DNS:entry.vibeterm.test
 extendedKeyUsage=serverAuth
 keyUsage=digitalSignature,keyEncipherment
 basicConstraints=CA:FALSE
@@ -628,16 +628,16 @@ rsync -az -e "${RSYNC_SSH}" "${RSYNC_EXCLUDES[@]}" \
   "${HUB_E2E}/" "${REMOTE_USER}@${HUB_IP}:${REMOTE_DIR}/repo/scripts/hub-e2e/"
 
 log "setup remote hub"
-rssh "TMEX_E2E_TURN_URL='${TMEX_E2E_TURN_URL:-}' TMEX_E2E_TURN_USERNAME='${TMEX_E2E_TURN_USERNAME:-tmex}' TMEX_E2E_TURN_CREDENTIAL='${TMEX_E2E_TURN_CREDENTIAL:-tmex-e2e}' TMEX_E2E_TURN_EXTERNAL_IP='${TMEX_E2E_TURN_EXTERNAL_IP}' TMEX_E2E_SKIP_BUILD=${TMEX_E2E_SKIP_BUILD:-1} TMEX_TARBALL='${REMOTE_TARBALL}' TMEX_E2E_HUB_HOST='${HUB_HOST}' TMEX_E2E_HUB_IP='${HUB_IP}' TMEX_E2E_HUB_PORT='${HUB_PORT}' TMEX_HUB_PUBLIC_URL='${HUB_PUBLIC_URL}' TMEX_E2E_REMOTE_DIR='${REMOTE_DIR}' TMEX_E2E_REMOTE_SUDO='${REMOTE_SUDO}' TMEX_E2E_TLS_MODE='${TLS_MODE}' TMEX_E2E_TLS_CERT='${TMEX_E2E_TLS_CERT}' TMEX_E2E_TLS_KEY='${TMEX_E2E_TLS_KEY}' TMEX_E2E_CA_CRT='${TMEX_E2E_CA_CRT}' TMEX_E2E_NODE_CA_CERTS='${NODE_CA_CERTS}' bash ${REMOTE_DIR}/repo/scripts/hub-e2e/split/setup-remote.sh"
+rssh "VIBETERM_E2E_TURN_URL='${VIBETERM_E2E_TURN_URL:-}' VIBETERM_E2E_TURN_USERNAME='${VIBETERM_E2E_TURN_USERNAME:-vibeterm}' VIBETERM_E2E_TURN_CREDENTIAL='${VIBETERM_E2E_TURN_CREDENTIAL:-vibeterm-e2e}' VIBETERM_E2E_TURN_EXTERNAL_IP='${VIBETERM_E2E_TURN_EXTERNAL_IP}' VIBETERM_E2E_SKIP_BUILD=${VIBETERM_E2E_SKIP_BUILD:-1} VIBETERM_TARBALL='${REMOTE_TARBALL}' VIBETERM_E2E_HUB_HOST='${HUB_HOST}' VIBETERM_E2E_HUB_IP='${HUB_IP}' VIBETERM_E2E_HUB_PORT='${HUB_PORT}' VIBETERM_HUB_PUBLIC_URL='${HUB_PUBLIC_URL}' VIBETERM_E2E_REMOTE_DIR='${REMOTE_DIR}' VIBETERM_E2E_REMOTE_SUDO='${REMOTE_SUDO}' VIBETERM_E2E_TLS_MODE='${TLS_MODE}' VIBETERM_E2E_TLS_CERT='${VIBETERM_E2E_TLS_CERT}' VIBETERM_E2E_TLS_KEY='${VIBETERM_E2E_TLS_KEY}' VIBETERM_E2E_CA_CRT='${VIBETERM_E2E_CA_CRT}' VIBETERM_E2E_NODE_CA_CERTS='${NODE_CA_CERTS}' bash ${REMOTE_DIR}/repo/scripts/hub-e2e/split/setup-remote.sh"
 
 log "setup local nodes"
-TMEX_TARBALL="${TARBALL}" TMEX_E2E_SKIP_BUILD="${TMEX_E2E_SKIP_BUILD:-1}" \
-  TMEX_E2E_HUB_HOST="${HUB_HOST}" TMEX_E2E_HUB_IP="${HUB_IP}" \
-  TMEX_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}" \
+VIBETERM_TARBALL="${TARBALL}" VIBETERM_E2E_SKIP_BUILD="${VIBETERM_E2E_SKIP_BUILD:-1}" \
+  VIBETERM_E2E_HUB_HOST="${HUB_HOST}" VIBETERM_E2E_HUB_IP="${HUB_IP}" \
+  VIBETERM_E2E_NODE_CA_CERTS="${NODE_CA_CERTS}" \
   bash "${ROOT}/setup-local.sh"
 
 sync_clocks || log "clock sync imperfect, login may hit DELEGATION_ISSUED_IN_FUTURE"
-preflight_udp "${TMEX_E2E_UDP_PROBE_PORT:-3478}" || true
+preflight_udp "${VIBETERM_E2E_UDP_PROBE_PORT:-3478}" || true
 
 # ---------- A ----------
 set +e
@@ -651,7 +651,7 @@ else
 fi
 
 set +e
-add_out="$(rssh_docker "exec -e TMEX_PASSWORD='${PASSWORD}' tmex-split-hub bun /opt/tmex/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/tmex" 2>&1)"
+add_out="$(rssh_docker "exec -e VIBETERM_PASSWORD='${PASSWORD}' vibeterm-split-hub bun /opt/vibeterm/runtime/cli-auth.js hub user add ${USER_NAME} --install-dir /opt/vibeterm" 2>&1)"
 add_rc=$?
 set -e
 printf '%s\n' "${add_out}" | tee "${OUT}/hub-user-add.log"
@@ -714,11 +714,11 @@ fi
 
 ensure_local() {
   local svc="$1"
-  if docker exec "tmex-split-${svc}" curl -fsS -m 3 http://127.0.0.1:9883/healthz >/dev/null 2>&1; then
+  if docker exec "vibeterm-split-${svc}" curl -fsS -m 3 http://127.0.0.1:9883/healthz >/dev/null 2>&1; then
     return 0
   fi
   log "restarting wedged ${svc}"
-  docker restart "tmex-split-${svc}" >/dev/null || true
+  docker restart "vibeterm-split-${svc}" >/dev/null || true
   wait_local_healthy "${svc}"
 }
 
@@ -738,7 +738,7 @@ login_via_hub() {
       return 0
     fi
     log "hub→${svc} login failed (rc=${rc}), restart and retry ${i}"
-    docker restart "tmex-split-${svc}" >/dev/null || true
+    docker restart "vibeterm-split-${svc}" >/dev/null || true
     wait_local_healthy "${svc}"
     driver nodes.ts wait-hub-online --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
       --names "${svc}" --timeout 60000 || true
@@ -767,15 +767,15 @@ fi
 
 ensure_local node-a
 ensure_local node-b
-docker exec tmex-split-node-a bash -lc '
-  tmux -L tmex-node-a kill-session -t e2e-a 2>/dev/null || true
-  tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc '"'"'echo READY; exec sh'"'"'"
+docker exec vibeterm-split-node-a bash -lc '
+  tmux -L vibeterm-node-a kill-session -t e2e-a 2>/dev/null || true
+  tmux -L vibeterm-node-a new-session -d -s e2e-a "sh -lc '"'"'echo READY; exec sh'"'"'"
 '
-docker exec tmex-split-node-b bash -lc '
+docker exec vibeterm-split-node-b bash -lc '
   mkdir -p /e2e
   echo "hello-e2e" > /e2e/marker.txt
-  tmux -L tmex-node-b kill-session -t e2e-b 2>/dev/null || true
-  tmux -L tmex-node-b new-session -d -s e2e-b "sh -lc '"'"'echo READY; exec sh'"'"'"
+  tmux -L vibeterm-node-b kill-session -t e2e-b 2>/dev/null || true
+  tmux -L vibeterm-node-b new-session -d -s e2e-b "sh -lc '"'"'echo READY; exec sh'"'"'"
 '
 
 set +e
@@ -800,7 +800,7 @@ for _try in 1 2 3 4 5; do
     break
   fi
   log "create-device node-a failed try=${_try}: ${dev_a_json}"
-  docker restart tmex-split-node-a >/dev/null || true
+  docker restart vibeterm-split-node-a >/dev/null || true
   wait_local_healthy node-a
   login_via_hub "${NODE_A_ID}" node-a || true
   sleep 2
@@ -813,7 +813,7 @@ else
   fail "A6 create local device on node-a (${dev_a_json})"
 fi
 
-MARKER_A="TMEX_SPLIT_A_MARKER"
+MARKER_A="VIBETERM_SPLIT_A_MARKER"
 term_a_rc=1
 if [[ -n "${DEVICE_A_ID}" ]]; then
   set +e
@@ -888,7 +888,7 @@ mesh_entry="$(driver nodes.ts mesh-list --base-url http://node-a:9883 --cookie-f
 mesh_entry_rc=$?
 set -e
 printf '%s\n' "${mesh_entry}" | tee "${OUT}/mesh-nodes-entry.json"
-HUB_NODE_ID="$(docker exec tmex-split-driver bun -e '
+HUB_NODE_ID="$(docker exec vibeterm-split-driver bun -e '
   const j = await Bun.file("/out/mesh-nodes-entry.json").json();
   const n = (j.nodes ?? []).find((x) => x.isHub === true);
   if (n) process.stdout.write(n.id);
@@ -911,7 +911,7 @@ else
   login_hub_via_a_rc=1
 fi
 
-rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "tmux -L tmex-hub kill-session -t e2e-hub 2>/dev/null || true; tmux -L tmex-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")"
+rssh_docker "exec vibeterm-split-hub bash -lc $(printf '%q' "tmux -L vibeterm-hub kill-session -t e2e-hub 2>/dev/null || true; tmux -L vibeterm-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")"
 set +e
 dev_h_json="$(driver files.ts create-device --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${HUB_NODE_ID}" --name hub-local --session e2e-hub)"
@@ -925,7 +925,7 @@ else
   fail "B4 create local device on hub container (${dev_h_json})"
 fi
 
-REACH_B="$(docker exec tmex-split-driver bun -e '
+REACH_B="$(docker exec vibeterm-split-driver bun -e '
   const j = await Bun.file("/out/mesh-nodes-entry.json").json();
   const n = (j.nodes ?? []).find((x) => x.isHub === true);
   process.stdout.write(String(n?.reach ?? "null"));
@@ -933,7 +933,7 @@ REACH_B="$(docker exec tmex-split-driver bun -e '
 log "observed hub reach from node-a: ${REACH_B}"
 printf '%s\n' "${REACH_B}" > "${OUT}/reach-hub-from-a.txt"
 
-MARKER_B="TMEX_SPLIT_B_MARKER"
+MARKER_B="VIBETERM_SPLIT_B_MARKER"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker "${MARKER_B}" --timeout 25000
@@ -949,9 +949,9 @@ fi
 log "connecting lan network"
 ensure_local node-a
 ensure_local node-b
-docker network create tmex-split-local_lan >/dev/null 2>&1 || true
-docker network connect tmex-split-local_lan tmex-split-node-a || true
-docker network connect tmex-split-local_lan tmex-split-node-b || true
+docker network create vibeterm-split-local_lan >/dev/null 2>&1 || true
+docker network connect vibeterm-split-local_lan vibeterm-split-node-a || true
+docker network connect vibeterm-split-local_lan vibeterm-split-node-b || true
 sleep 5
 ensure_local node-a
 ensure_local node-b
@@ -974,7 +974,7 @@ else
   fail "C1 node-a sees node-b reach=lan within 90s"
 fi
 
-MARKER_C="TMEX_SPLIT_C_LAN"
+MARKER_C="VIBETERM_SPLIT_C_LAN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_C}" --timeout 25000
@@ -987,10 +987,10 @@ else
 fi
 
 log "stopping remote hub"
-rssh_docker "stop tmex-split-hub"
+rssh_docker "stop vibeterm-split-hub"
 sleep 2
 
-MARKER_CD="TMEX_SPLIT_C_HUBDOWN"
+MARKER_CD="VIBETERM_SPLIT_C_HUBDOWN"
 set +e
 driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
   --node-id "${NODE_B_ID}" --device-id "${DEVICE_B_ID}" --marker "${MARKER_CD}" --timeout 25000
@@ -1019,7 +1019,7 @@ else
 fi
 
 log "starting remote hub"
-rssh_docker "start tmex-split-hub"
+rssh_docker "start vibeterm-split-hub"
 wait_remote_hub
 ensure_local node-a
 ensure_local node-b
@@ -1046,7 +1046,7 @@ fi
 
 # ---------- E before D so D's native install does not pollute restart assertions ----------
 log "restart local node-a"
-docker restart tmex-split-node-a
+docker restart vibeterm-split-node-a
 wait_local_healthy node-a
 sleep 2
 set +e
@@ -1058,9 +1058,9 @@ re_login_rc=$?
 driver nodes.ts wait-hub-online --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
   --names node-a --timeout 90000
 re_up_rc=$?
-env_a="$(docker exec tmex-split-node-a bash -lc 'grep -E "TMEX_HUB_URL|TMEX_ROLES" /var/lib/tmex/app.env')"
+env_a="$(docker exec vibeterm-split-node-a bash -lc 'grep -E "VIBETERM_HUB_URL|VIBETERM_ROLES" /var/lib/vibeterm/app.env')"
 term_e_json="$(driver terminal.ts --base-url http://node-a:9883 --cookie-file /out/cookies-entry.json \
-  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker TMEX_SPLIT_E_A --timeout 25000)"
+  --node-id "${HUB_NODE_ID}" --device-id "${DEVICE_H_ID}" --marker VIBETERM_SPLIT_E_A --timeout 25000)"
 term_e_rc=$?
 set -e
 printf '%s\n' "${env_a}" | tee "${OUT}/node-a-env-after-restart.txt"
@@ -1076,7 +1076,7 @@ else
 fi
 
 log "restart remote hub"
-rssh_docker "restart tmex-split-hub"
+rssh_docker "restart vibeterm-split-hub"
 wait_remote_hub
 ensure_local node-a
 ensure_local node-b
@@ -1087,7 +1087,7 @@ driver nodes.ts wait-hub-online --base-url "${HUB_PUBLIC_URL}" --cookie-file /ou
 hub_re_rc=$?
 driver nodes.ts hub-list --base-url "${HUB_PUBLIC_URL}" --cookie-file /out/cookies-hub.json \
   > "${OUT}/hub-nodes-after-restart.json"
-docker exec tmex-split-driver bun -e 'const j=await Bun.file("/out/hub-nodes-after-restart.json").json(); const names=(j.nodes||[]).map(n=>n.name); const d=names.filter((n,i)=>names.indexOf(n)!==i); await Bun.write("/out/ghost.txt", d.length?d.join(","):"none");'
+docker exec vibeterm-split-driver bun -e 'const j=await Bun.file("/out/hub-nodes-after-restart.json").json(); const names=(j.nodes||[]).map(n=>n.name); const d=names.filter((n,i)=>names.indexOf(n)!==i); await Bun.write("/out/ghost.txt", d.length?d.join(","):"none");'
 ghost="$(cat "${OUT}/ghost.txt" 2>/dev/null || echo unknown)"
 set -e
 if [[ "${hub_re_rc}" -eq 0 && "${ghost}" == "none" ]]; then
@@ -1100,8 +1100,8 @@ target_exec() {
   local target="$1"
   shift
   case "${target}" in
-    hub) rssh_docker "exec tmex-split-hub $*" ;;
-    node-b) docker exec tmex-split-node-b "$@" ;;
+    hub) rssh_docker "exec vibeterm-split-hub $*" ;;
+    node-b) docker exec vibeterm-split-node-b "$@" ;;
     *) echo "unknown target ${target}" >&2; return 2 ;;
   esac
 }
@@ -1110,8 +1110,8 @@ target_bash() {
   local target="$1"
   local script="$2"
   case "${target}" in
-    hub) rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "${script}")" ;;
-    node-b) docker exec tmex-split-node-b bash -lc "${script}" ;;
+    hub) rssh_docker "exec vibeterm-split-hub bash -lc $(printf '%q' "${script}")" ;;
+    node-b) docker exec vibeterm-split-node-b bash -lc "${script}" ;;
     *) echo "unknown target ${target}" >&2; return 2 ;;
   esac
 }
@@ -1119,11 +1119,11 @@ target_bash() {
 target_restart() {
   case "$1" in
     hub)
-      rssh_docker "restart tmex-split-hub"
+      rssh_docker "restart vibeterm-split-hub"
       wait_remote_hub
       ;;
     node-b)
-      docker restart tmex-split-node-b
+      docker restart vibeterm-split-node-b
       wait_local_healthy node-b
       ;;
     *) echo "unknown target $1" >&2; return 2 ;;
@@ -1133,11 +1133,11 @@ target_restart() {
 target_ensure_tmux() {
   case "$1" in
     hub)
-      rssh_docker "exec tmex-split-hub bash -lc $(printf '%q' "tmux -L tmex-hub has-session -t e2e-hub 2>/dev/null || tmux -L tmex-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")" || true
+      rssh_docker "exec vibeterm-split-hub bash -lc $(printf '%q' "tmux -L vibeterm-hub has-session -t e2e-hub 2>/dev/null || tmux -L vibeterm-hub new-session -d -s e2e-hub 'sh -lc echo READY; exec sh'")" || true
       ;;
     node-b)
-      docker exec tmex-split-node-b bash -lc \
-        'tmux -L tmex-node-b has-session -t e2e-b 2>/dev/null || tmux -L tmex-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
+      docker exec vibeterm-split-node-b bash -lc \
+        'tmux -L vibeterm-node-b has-session -t e2e-b 2>/dev/null || tmux -L vibeterm-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
       ;;
     *) echo "unknown target $1" >&2; return 2 ;;
   esac
@@ -1147,7 +1147,7 @@ write_mesh_path() {
   local mesh="$1"
   local path_out="$2"
   local tid="$3"
-  docker exec -e MESH="${mesh}" -e PATH_OUT="${path_out}" -e TARGET="${tid}" tmex-split-driver bun -e '
+  docker exec -e MESH="${mesh}" -e PATH_OUT="${path_out}" -e TARGET="${tid}" vibeterm-split-driver bun -e '
     const j = await Bun.file(process.env.MESH).json();
     const n = (j.nodes ?? []).find((x) => x.id === process.env.TARGET);
     const body = {
@@ -1204,7 +1204,7 @@ run_direct_scenarios() {
       bulk_relay_json=/out/files-bulk-relay.json
       root_json_file=/out/file-root-hub.json
       enable_log="${OUT}/direct-enable-hub.log"
-      marker=TMEX_SPLIT_D
+      marker=VIBETERM_SPLIT_D
       ;;
     lan)
       d1="L1 both rows direct_capable=true"
@@ -1230,7 +1230,7 @@ run_direct_scenarios() {
       bulk_relay_json=/out/files-bulk-relay-lan.json
       root_json_file=/out/file-root-lan.json
       enable_log="${OUT}/direct-enable-node-b.log"
-      marker=TMEX_SPLIT_D_LAN
+      marker=VIBETERM_SPLIT_D_LAN
       ;;
     *)
       echo "run_direct_scenarios: unknown kind ${kind}" >&2
@@ -1254,17 +1254,17 @@ run_direct_scenarios() {
 
   set +e
   local direct_a direct_a_rc direct_t direct_t_rc
-  direct_a="$(docker exec tmex-split-node-a \
-    bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
+  direct_a="$(docker exec vibeterm-split-node-a \
+    bun /opt/vibeterm-pkg/package/bin/vibeterm.js direct enable --install-dir /opt/vibeterm 2>&1)"
   direct_a_rc=$?
-  direct_t="$(target_exec "${target}" bun /opt/tmex-pkg/package/bin/tmex.js direct enable --install-dir /opt/tmex 2>&1)"
+  direct_t="$(target_exec "${target}" bun /opt/vibeterm-pkg/package/bin/vibeterm.js direct enable --install-dir /opt/vibeterm 2>&1)"
   direct_t_rc=$?
   set -e
   printf '%s\n' "${direct_a}" | tee "${OUT}/direct-enable-node-a.log"
   printf '%s\n' "${direct_t}" | tee "${enable_log}"
   local has_native_a has_native_t
-  has_native_a="$(docker exec tmex-split-node-a bash -lc 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
-  has_native_t="$(target_bash "${target}" 'test -f /opt/tmex/native/node_datachannel.node && test -f /opt/tmex/native/manifest.json && echo yes || echo no')"
+  has_native_a="$(docker exec vibeterm-split-node-a bash -lc 'test -f /opt/vibeterm/native/node_datachannel.node && test -f /opt/vibeterm/native/manifest.json && echo yes || echo no')"
+  has_native_t="$(target_bash "${target}" 'test -f /opt/vibeterm/native/node_datachannel.node && test -f /opt/vibeterm/native/manifest.json && echo yes || echo no')"
   if [[ "${has_native_a}" != "yes" || "${has_native_t}" != "yes" ]]; then
     skip "${d1}" "native missing a=${has_native_a} t=${has_native_t} a_rc=${direct_a_rc} t_rc=${direct_t_rc}"
     skip "${d2}" "native missing"
@@ -1280,15 +1280,15 @@ run_direct_scenarios() {
     return 0
   fi
 
-  docker restart tmex-split-node-a
+  docker restart vibeterm-split-node-a
   target_restart "${target}"
   wait_local_healthy node-a
-  docker exec tmex-split-node-a bash -lc \
-    'tmux -L tmex-node-a has-session -t e2e-a 2>/dev/null || tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
+  docker exec vibeterm-split-node-a bash -lc \
+    'tmux -L vibeterm-node-a has-session -t e2e-a 2>/dev/null || tmux -L vibeterm-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
   target_ensure_tmux "${target}"
   sleep 3
   # docker restart drops tc qdisc; re-apply so L2–L8 actually see netem
-  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ "${kind}" == "lan" && -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     apply_lan_netem || log "WARNING: lan netem re-apply after restart failed"
   fi
 
@@ -1331,7 +1331,7 @@ run_direct_scenarios() {
   set -e
   dump_rtc_logs "${target}"
   local netem_ev=""
-  if [[ "${kind}" == "lan" && -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
+  if [[ "${kind}" == "lan" && -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
     netem_ev="; $(lan_netem_qdisc_evidence || true)"
   fi
   if [[ "${transport_dc_rc}" -eq 0 ]]; then
@@ -1473,8 +1473,8 @@ run_direct_scenarios() {
   set -e
   printf '%s\n' "${i1_json}" | tee "${OUT}/$(basename "${bulk_dc_json}")"
   local I1_SHA I1_HDR
-  I1_SHA="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
-  I1_HDR="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
+  I1_SHA="$(docker exec vibeterm-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
+  I1_HDR="$(docker exec vibeterm-split-driver bun -e "const j=await Bun.file('${bulk_dc_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
   if [[ "${bulk_sum_rc}" -eq 0 && "${i1_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I1_SHA}" == "${EXPECT_SHA}" ]]; then
     pass "${i1}" "sha256=${I1_SHA} ${I1_HDR}; bulk DataChannel is browser-only (BulkClient bulk:<id>), REST /api/files/raw rides the mesh link"
   else
@@ -1494,8 +1494,8 @@ run_direct_scenarios() {
   set -e
   printf '%s\n' "${i2_json}" | tee "${OUT}/$(basename "${bulk_relay_json}")"
   local I2_SHA I2_HDR
-  I2_SHA="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
-  I2_HDR="$(docker exec tmex-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
+  I2_SHA="$(docker exec vibeterm-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(String(j.sha256??''))" || true)"
+  I2_HDR="$(docker exec vibeterm-split-driver bun -e "const j=await Bun.file('${bulk_relay_json}').json(); process.stdout.write(JSON.stringify({bytes:j.bytes,headers:j.headers,bulkPath:j.bulkPath}))" || true)"
   if [[ "${i2_rc}" -eq 0 && -n "${EXPECT_SHA}" && "${I2_SHA}" == "${EXPECT_SHA}" ]]; then
     pass "${i2}" "relay_wait=${i2_relay_rc} sha256=${I2_SHA} ${I2_HDR}"
   else
@@ -1508,8 +1508,8 @@ run_direct_scenarios() {
 # These L1–L8 rows are REQUIRED (count toward FAILS). Hub D/H/I stay after, and still FAIL
 # with evidence when the WAN path cannot establish (VPS UDP filter / symmetric NAT / no TURN-TCP).
 log "LAN DataChannel scenarios (node-a ↔ node-b)"
-if [[ -n "${TMEX_E2E_LAN_NETEM:-}" ]]; then
-  log "lan netem requested: ${TMEX_E2E_LAN_NETEM}"
+if [[ -n "${VIBETERM_E2E_LAN_NETEM:-}" ]]; then
+  log "lan netem requested: ${VIBETERM_E2E_LAN_NETEM}"
   apply_lan_netem || log "WARNING: lan netem apply failed before L scenarios"
 fi
 run_direct_scenarios lan
@@ -1519,8 +1519,8 @@ log "WAN DataChannel scenarios (node-a ↔ hub)"
 run_direct_scenarios hub
 
 # tmux session 不进 volume：D/E 重启后需补回来，否则 F 终端是空的。
-docker exec tmex-split-node-a bash -lc 'tmux -L tmex-node-a has-session -t e2e-a 2>/dev/null || tmux -L tmex-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
-docker exec tmex-split-node-b bash -lc 'tmux -L tmex-node-b has-session -t e2e-b 2>/dev/null || tmux -L tmex-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
+docker exec vibeterm-split-node-a bash -lc 'tmux -L vibeterm-node-a has-session -t e2e-a 2>/dev/null || tmux -L vibeterm-node-a new-session -d -s e2e-a "sh -lc echo READY; exec sh"' || true
+docker exec vibeterm-split-node-b bash -lc 'tmux -L vibeterm-node-b has-session -t e2e-b 2>/dev/null || tmux -L vibeterm-node-b new-session -d -s e2e-b "sh -lc echo READY; exec sh"' || true
 target_ensure_tmux hub
 
 # ---------- F Playwright from Mac ----------
@@ -1534,7 +1534,7 @@ BROWSER_ARGS=(
   --node-b-name node-b
   --node-a-id "${NODE_A_ID}"
   --device-a-id "${DEVICE_A_ID}"
-  --marker TMEX_SPLIT_PW_MARKER
+  --marker VIBETERM_SPLIT_PW_MARKER
   --map-host "${HUB_HOST}"
   --map-ip "${HUB_IP}"
 )

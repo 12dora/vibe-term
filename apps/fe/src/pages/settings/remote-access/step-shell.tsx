@@ -1,6 +1,6 @@
 // 远程访问向导的步骤外壳与几个小展示件。
 
-import { Badge } from '@tmex/ui/badge';
+import { Badge } from '@vibeterm/ui/badge';
 import { Check, Loader2 } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -30,7 +30,7 @@ export function WizardStepCard({
     <section
       data-testid={testId}
       data-step-state={state}
-      className={`rounded-xl p-3 ring-1 transition-colors duration-(--tmex-motion-fast) ease-out motion-reduce:transition-none ${
+      className={`rounded-xl p-3 ring-1 transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none ${
         state === 'current' ? 'bg-primary/5 ring-primary' : 'bg-card ring-foreground/10'
       }`}
     >

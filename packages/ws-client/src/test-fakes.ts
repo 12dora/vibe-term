@@ -1,7 +1,7 @@
 // 各测试套共用的 WS 假件：手工驱动的 transport 与 HELLO_S2C 帧构造器。
 // 仅供 *.test.ts 使用，不从包入口导出。
 
-import { wsBorsh } from '@tmex/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { WebSocketLike } from './client';
 
 export interface FakeSocketOptions {
@@ -99,7 +99,7 @@ export interface HelloFrameOptions {
 /** 构造一帧 HELLO_S2C；缺省值对应「不支持任何能力的老网关」。 */
 export function helloFrame(options: HelloFrameOptions = {}): Uint8Array {
   const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
-    serverImpl: 'tmex-gateway',
+    serverImpl: 'vibeterm-gateway',
     serverVersion: options.serverVersion ?? '0.1.0',
     selectedVersion: 1,
     maxFrameBytes: options.maxFrameBytes ?? 1048576,

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type {
   TunnelAccessMode,
   TunnelAccessStatus,
@@ -17,7 +17,7 @@ import type {
   TunnelMode,
   TunnelProcessState,
   TunnelStatusResponse,
-} from '@tmex/shared';
+} from '@vibeterm/shared';
 import { PROCESS_STARTED_AT } from '../api/system-routes';
 import { config, originUrlFromBindHost } from '../config';
 import { getDb as getOrmDb } from '../db/client';
@@ -26,6 +26,7 @@ import { CloudflareAccessClient, type TunnelFetch, sanitizeAccessMessage } from 
 import { setAccessGuardSource, setAccessJwtVerifier } from './access-guard';
 import { AccessJwtVerifier } from './access-jwt';
 import { type AccessControlAction, isAccessControlAction, processUp } from './access-mode';
+import { VIBETERM_ALLOW_POLICY_NAME, isManagedAllowPolicyName } from './access-paths';
 import { parseAccessRules } from './access-rules';
 import {
   MemoryTunnelAccessStore,
@@ -1093,11 +1094,13 @@ export class TunnelManager {
         apiToken,
         verified.id
       );
-      const allow = verifiedPolicies.find((p) => p.name === 'tmex-allow' && p.decision === 'allow');
+      const allow = verifiedPolicies.find(
+        (p) => isManagedAllowPolicyName(p.name) && p.decision === 'allow'
+      );
       if (!allow) {
         throw new TunnelError(
           'access_api_failed',
-          'Cloudflare Access did not persist the tmex-allow policy'
+          `Cloudflare Access did not persist the ${VIBETERM_ALLOW_POLICY_NAME} policy`
         );
       }
       await this.accessStore.save({

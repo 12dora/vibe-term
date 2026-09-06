@@ -59,7 +59,7 @@ test('desktop: closing the focused pane from the split view moves the route to a
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-split-close-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-split-close-${Date.now()}`;
   createFourPaneSession(sessionName);
   const deviceId = await createDevice(request, sessionName, `e2e-split-close-${Date.now()}`);
 
@@ -92,7 +92,7 @@ test('desktop: closing a non-focused pane keeps the URL on the focused pane', as
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-split-close-other-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-split-close-other-${Date.now()}`;
   const { paneIds } = createFourPaneSession(sessionName);
   const deviceId = await createDevice(request, sessionName, `e2e-split-close-other-${Date.now()}`);
 
@@ -126,7 +126,7 @@ test('desktop: closing one of two panes leaves the survivor mounted without a co
   page,
   request,
 }) => {
-  const sessionName = `tmex-e2e-split-close-last-${Date.now()}`;
+  const sessionName = `vibeterm-e2e-split-close-last-${Date.now()}`;
   const { paneIds } = createTwoPaneSession(sessionName);
   const deviceId = await createDevice(request, sessionName, `e2e-split-close-last-${Date.now()}`);
 

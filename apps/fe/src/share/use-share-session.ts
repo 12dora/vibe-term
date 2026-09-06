@@ -1,7 +1,7 @@
 // 被分享页的会话编排：取分享信息 → 输密码 → 建专用运行时 → 断开 / 结束时收摊。
 
-import { nodePathPrefix } from '@tmex/api-client';
-import { useOptionalRuntime } from '@tmex/stores/react';
+import { nodePathPrefix } from '@vibeterm/api-client';
+import { useOptionalRuntime } from '@vibeterm/stores/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import {
   ShareAccessError,
@@ -52,7 +52,7 @@ export function useShareSession({ nodeId, shareId, fetchImpl }: ShareSessionOpti
   const [state, dispatch] = useReducer(shareViewReducer, INITIAL_SHARE_VIEW_STATE);
   const [handle, setHandle] = useState<ShareRuntimeHandle | null>(null);
   const handleRef = useRef<{ key: string; handle: ShareRuntimeHandle } | null>(null);
-  // 主题 / 字号 / 输入模式是宿主级偏好，和外壳共用同一份 store（key 仍为 tmex-ui）。
+  // 主题 / 字号 / 输入模式是宿主级偏好，和外壳共用同一份 store（key 仍为 vibeterm-ui）。
   const uiStore = useOptionalRuntime()?.stores.ui;
 
   // 卸载或换分享后到达的响应一律丢弃：否则一发迟到的 access 能把已经收摊的页面重新点亮。

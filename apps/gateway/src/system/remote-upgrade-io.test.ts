@@ -91,8 +91,9 @@ describe('pushPackageManifest', () => {
     req: new Request('http://localhost/api/mesh/nodes/x/upgrade'),
     nodeId: 'ab'.repeat(16),
     version: '1.1.39',
-    sums: `${'ab'.repeat(32)}  tmex-cli-1.1.39.tgz\n`,
+    sums: `${'ab'.repeat(32)}  vibeterm-cli-1.1.39.tgz\n`,
     sig: 'tmex-release-sig v1 tk AAAA',
+    asset: 'vibeterm-cli-1.1.39.tgz',
     signal: new AbortController().signal,
   };
 

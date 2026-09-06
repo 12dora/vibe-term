@@ -7,7 +7,7 @@ import {
   encodeBase64url,
   randomBytes,
   sha256,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import {
   commitPasskeyCounters,
   createAuthenticationOptions,

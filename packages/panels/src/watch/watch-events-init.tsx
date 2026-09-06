@@ -3,20 +3,20 @@
 
 import type { QueryClient } from '@tanstack/react-query';
 import { useQueryClient } from '@tanstack/react-query';
-import { fetchWatchRule } from '@tmex/api-client';
-import type { ToastIdentity } from '@tmex/notifications';
-import { claimToastFor, formatWatchTriggeredNotification } from '@tmex/notifications';
+import { fetchWatchRule } from '@vibeterm/api-client';
+import type { ToastIdentity } from '@vibeterm/notifications';
+import { claimToastFor, formatWatchTriggeredNotification } from '@vibeterm/notifications';
 import type {
   WatchModelUnavailablePayload,
   WatchRuleDto,
   WatchRuleErrorPayload,
   WatchTriggeredPayload,
-} from '@tmex/shared';
-import { wsBorsh } from '@tmex/shared';
-import type { AppRuntime } from '@tmex/stores';
-import { encodePaneIdForUrl, hostAppPath } from '@tmex/stores';
-import { useRuntime, useTmuxStore } from '@tmex/stores/react';
-import type { BorshWebSocketClient } from '@tmex/ws-client';
+} from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
+import type { AppRuntime } from '@vibeterm/stores';
+import { USER_INITIATED_SELECTION_EVENT, encodePaneIdForUrl, hostAppPath } from '@vibeterm/stores';
+import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import type { BorshWebSocketClient } from '@vibeterm/ws-client';
 import i18next from 'i18next';
 import { useEffect } from 'react';
 
@@ -26,14 +26,14 @@ const initializedClients = new WeakSet<BorshWebSocketClient>();
 const PANE_URL_RE = /\/devices\/([^/]+)\/windows\/([^/]+)\/panes\/([^/]+)$/;
 
 // 「sidebar device list 点击同款」跳转语义（与 stores/app-navigation.ts 保持一致）：
-// pane 路由先 dispatch tmex:user-initiated-selection（2s 内防自动跟踪覆盖该选择）再导航（replace）。
+// pane 路由先 dispatch USER_INITIATED_SELECTION_EVENT（2s 内防自动跟踪覆盖该选择）再导航（replace）。
 // detail 里的 paneId 与 sidebar navigateToPane 保持一致：原始未编码值。
 function navigateToWatchUrl(runtime: AppRuntime, url: string): void {
   const match = PANE_URL_RE.exec(url);
   if (match) {
     const [, deviceId, windowId, encodedPaneId] = match;
     window.dispatchEvent(
-      new CustomEvent('tmex:user-initiated-selection', {
+      new CustomEvent(USER_INITIATED_SELECTION_EVENT, {
         detail: { deviceId, windowId, paneId: decodeURIComponent(encodedPaneId) },
       })
     );
@@ -140,7 +140,7 @@ export function watchToastIdentity(
 
 /**
  * 本条事件的 toast 归本页面这条通道弹吗？同一事件也可能经汇聚节点转发回来（见
- * `@tmex/notifications/toast-dedupe`），先到的那条认领成功，另一条静默丢弃。
+ * `@vibeterm/notifications/toast-dedupe`），先到的那条认领成功，另一条静默丢弃。
  * 查询失效不受影响——那是另一件事，两条路都该做。
  */
 function claimWatchToast(runtime: AppRuntime, decoded: DecodedWatchEvent): boolean {

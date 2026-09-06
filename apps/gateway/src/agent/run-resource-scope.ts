@@ -1,4 +1,4 @@
-import { errorMessage } from '@tmex/shared';
+import { errorMessage } from '@vibeterm/shared';
 import type { EmulatorStreamSource, PaneEmulator } from '../tmux-client/pane-emulator';
 import { PaneEmulatorRegistry } from '../tmux-client/pane-emulator';
 import type { TerminalRuntimeLike } from './tools/terminal-context';

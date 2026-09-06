@@ -139,10 +139,10 @@ export class ControlModeLifecycle {
     }
     host.heartbeatPending = true;
     void host.controlCommands
-      .execute((value) => write(value), 'display-message -p "tmex-hb"', {
+      .execute((value) => write(value), 'display-message -p "vibeterm-hb"', {
         timeoutMs: HEARTBEAT_TIMEOUT_MS,
         transform: (block) => {
-          if (block.lines.length !== 1 || block.lines[0] !== 'tmex-hb') {
+          if (block.lines.length !== 1 || block.lines[0] !== 'vibeterm-hb') {
             throw new Error('invalid tmux heartbeat response');
           }
         },

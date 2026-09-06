@@ -21,7 +21,7 @@ import { redactSecrets } from './redact';
 
 describe('normalizeTunnelHostname', () => {
   test('accepts RFC 1123 lowercase names and rejects junk', () => {
-    expect(normalizeTunnelHostname('Tmex.Example.COM')).toBe('tmex.example.com');
+    expect(normalizeTunnelHostname('VibeTerm.Example.COM')).toBe('vibeterm.example.com');
     expect(normalizeTunnelHostname('localhost')).toBe('localhost');
     expect(normalizeTunnelHostname('')).toBeNull();
     expect(normalizeTunnelHostname('-bad.com')).toBeNull();
@@ -29,7 +29,7 @@ describe('normalizeTunnelHostname', () => {
   });
 
   test('default tunnel name uses the first label', () => {
-    expect(defaultTunnelName('remote.example.com')).toBe('tmex-remote');
+    expect(defaultTunnelName('remote.example.com')).toBe('vibeterm-remote');
   });
 
   test('default tunnel name stays within the identifier length limit', () => {
@@ -42,8 +42,8 @@ describe('normalizeTunnelHostname', () => {
 
 describe('normalizeTunnelName', () => {
   test('accepts cloudflared-safe identifiers and rejects traversal', () => {
-    expect(normalizeTunnelName('tmex-remote')).toBe('tmex-remote');
-    expect(normalizeTunnelName('Tmex_Remote1')).toBe('tmex_remote1');
+    expect(normalizeTunnelName('vibeterm-remote')).toBe('vibeterm-remote');
+    expect(normalizeTunnelName('VibeTerm_Remote1')).toBe('vibeterm_remote1');
     expect(normalizeTunnelName('../../x')).toBeNull();
     expect(normalizeTunnelName('/abs')).toBeNull();
     expect(normalizeTunnelName('foo\nbar')).toBeNull();
@@ -162,7 +162,7 @@ describe('cloudflared output parsers', () => {
   test('parses create id and credentials path', () => {
     const out = [
       'Tunnel credentials written to /tmp/tunnel/foo.json. Keep this file secret.',
-      'Created tunnel tmex-foo with id 550e8400-e29b-41d4-a716-446655440000',
+      'Created tunnel vibeterm-foo with id 550e8400-e29b-41d4-a716-446655440000',
     ].join('\n');
     expect(parseCreateOutput(out)).toEqual({
       tunnelId: '550e8400-e29b-41d4-a716-446655440000',
@@ -175,17 +175,20 @@ describe('cloudflared output parsers', () => {
       'https://random-words-123.trycloudflare.com'
     );
     expect(
-      parseTunnelList(JSON.stringify([{ id: 'abc-def', name: 'tmex-foo', created_at: 'x' }]))
-    ).toEqual([{ id: 'abc-def', name: 'tmex-foo' }]);
+      parseTunnelList(JSON.stringify([{ id: 'abc-def', name: 'vibeterm-foo', created_at: 'x' }]))
+    ).toEqual([{ id: 'abc-def', name: 'vibeterm-foo' }]);
   });
 });
 
 describe('resolveTunnelDir', () => {
-  test('uses TMEX_TUNNEL_DIR or a tunnel directory next to the sqlite file', () => {
-    expect(resolveTunnelDir({ TMEX_TUNNEL_DIR: '/data/tun' })).toBe('/data/tun');
+  test('uses VIBETERM_TUNNEL_DIR or a tunnel directory next to the sqlite file', () => {
+    expect(resolveTunnelDir({ VIBETERM_TUNNEL_DIR: '/data/tun' })).toBe('/data/tun');
     expect(
-      resolveTunnelDir({ DATABASE_URL: '/var/tmex/tmex.db', TMEX_TUNNEL_DIR: undefined })
-    ).toBe('/var/tmex/tunnel');
+      resolveTunnelDir({
+        DATABASE_URL: '/var/vibeterm/vibeterm.db',
+        VIBETERM_TUNNEL_DIR: undefined,
+      })
+    ).toBe('/var/vibeterm/tunnel');
   });
 });
 
@@ -209,7 +212,7 @@ describe('tunnelHttpStatus', () => {
 
 describe('CloudflaredProvider metrics flag', () => {
   test('injects --metrics from pickPort on named and quick spawn', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-metrics-'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-metrics-'));
     const spawner = new FakeSpawner();
     const provider = new CloudflaredProvider(spawner.spawn, dir, async () => 4242);
     const quick = await provider.spawnQuickRun('/usr/bin/cloudflared', 'http://127.0.0.1:19883');
@@ -232,8 +235,8 @@ describe('CloudflaredProvider metrics flag', () => {
 
 describe('credentialsPathFor', () => {
   test('resolves inside tunnelDir and rejects path traversal', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-tun-cred-'));
-    expect(credentialsPathFor(dir, 'tmex-ok')).toBe(resolve(dir, 'tmex-ok.json'));
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tun-cred-'));
+    expect(credentialsPathFor(dir, 'vibeterm-ok')).toBe(resolve(dir, 'vibeterm-ok.json'));
     for (const name of ['../../x', '/abs', 'foo/bar']) {
       expect(() => credentialsPathFor(dir, name)).toThrow(TunnelError);
     }

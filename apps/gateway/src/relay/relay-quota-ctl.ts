@@ -1,4 +1,4 @@
-import type { RelayCtlMessage, RelayQuota, RelayQuotaUsage } from '@tmex/shared/relay';
+import type { RelayCtlMessage, RelayQuota, RelayQuotaUsage } from '@vibeterm/shared/relay';
 
 export type { RelayQuotaUsage };
 

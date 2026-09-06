@@ -1,9 +1,9 @@
 // 「网络」段：直连插件与允许域名访问。两者都是本机的安装态 / 监听态，与角色无关，
 // 因此不再挂在原来那个只有一行内容的「通用设置」标题下面。
 
-import type { DomainAccessPolicy } from '@tmex/api-client';
-import type { LocalDirectAction, LocalDirectStatus } from '@tmex/api-client/local/types';
-import { Button } from '@tmex/ui/button';
+import type { DomainAccessPolicy } from '@vibeterm/api-client';
+import type { LocalDirectAction, LocalDirectStatus } from '@vibeterm/api-client/local/types';
+import { Button } from '@vibeterm/ui/button';
 import { Loader2, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { DirectSection } from './direct-section';

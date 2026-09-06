@@ -4,8 +4,8 @@ import {
   type UpgradeState,
   type UpgradeStatus,
   compareSemver,
-} from '@tmex/shared';
-import { nodeSessionCookieName, parseCookies } from '../auth/cookies';
+} from '@vibeterm/shared';
+import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import type { UserStore } from '../auth/user-store';
 import { MESH_VIA_SELF } from '../mesh/mesh-deps';
 import { jsonBody, jsonError } from '../mesh/session-middleware';
@@ -393,6 +393,7 @@ async function startRemoteMeshUpgrade(
       req,
       forward,
       upgradeCapabilities: readUpgradeCapabilities(info.upgradeCapabilities),
+      targetCurrentVersion: current,
     });
     if (!started.ok) {
       return jsonError('UPGRADE_IN_PROGRESS', 409, { nodeId });
@@ -435,7 +436,7 @@ function readUpgradeCapabilities(raw: unknown): string[] {
 }
 
 function readNodeSession(req: Request, nodeId: string): string | null {
-  return parseCookies(req.headers.get('cookie')).get(nodeSessionCookieName(nodeId)) ?? null;
+  return readNodeSessionCookie(parseCookies(req.headers.get('cookie')), nodeId);
 }
 
 function pickUpgradeStatusFields(raw: Record<string, unknown>): Record<string, unknown> {

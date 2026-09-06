@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/bun-sqlite/migrator';
 import { getDb } from './client';
 
 function resolveMigrationsFolder(): string {
-  const fromEnv = process.env.TMEX_MIGRATIONS_DIR;
+  const fromEnv = process.env.VIBETERM_MIGRATIONS_DIR;
   if (fromEnv) return fromEnv;
 
   const byCwd = resolve(process.cwd(), 'drizzle');

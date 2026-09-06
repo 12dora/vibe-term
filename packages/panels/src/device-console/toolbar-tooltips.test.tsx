@@ -3,7 +3,7 @@
 // 关闭态不进静态 HTML，故这里断言的是触发器就位 + 标签文案。
 
 import { describe, expect, test } from 'bun:test';
-import type { TmuxPane, TmuxWindow } from '@tmex/shared';
+import type { TmuxPane, TmuxWindow } from '@vibeterm/shared';
 import { renderToStaticMarkup } from 'react-dom/server';
 import {
   type ToolbarButtonsInput,

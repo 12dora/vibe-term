@@ -11,7 +11,7 @@ import {
   normalizeFingerprint,
   signTranscript,
   verifyTranscript,
-} from '@tmex/shared/auth';
+} from '@vibeterm/shared/auth';
 import type { UserStore } from '../../auth/user-store';
 import { decodeJsonBytes, isRecord, requireString } from '../ctl';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';

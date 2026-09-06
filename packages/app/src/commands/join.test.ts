@@ -60,7 +60,7 @@ async function openAuth(roles: string): Promise<LocalAuthContext> {
   const ctx = await openLocalAuth({
     memory: true,
     migrationsFolder: MIGRATIONS,
-    env: { TMEX_MASTER_KEY: process.env.TMEX_MASTER_KEY || '', TMEX_ROLES: roles },
+    env: { VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '', VIBETERM_ROLES: roles },
   });
   handles.push(ctx);
   return ctx;
@@ -193,7 +193,9 @@ describe('hub join against fake hub', () => {
       }
     );
     expect(joined.userId).toBe(user.id);
-    expect(logs.some((line) => /TMEX_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(true);
+    expect(logs.some((line) => /VIBETERM_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(
+      true
+    );
     const nodeUser = node.userStore.getById(user.id);
     expect(nodeUser).toBeTruthy();
     expect(node.keyLogStore.list(user.id).length).toBe(records.length);
@@ -502,7 +504,7 @@ describe('hub join against fake hub', () => {
 describe('hub join/leave service restart', () => {
   test('hub leave --no-restart stops a managed service, leaves it stopped, and prints a hint', async () => {
     const node = await openAuth('node');
-    node.installDir = '/tmp/tmex-leave-no-restart';
+    node.installDir = '/tmp/vibeterm-leave-no-restart';
     const logs: string[] = [];
     const events: string[] = [];
     await runHubLeave(parseArgs(['hub', 'leave', '--no-restart']), {
@@ -520,13 +522,13 @@ describe('hub join/leave service restart', () => {
       log: (message) => logs.push(message),
     });
     expect(events).toEqual(['stop']);
-    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => /restart VibeTerm manually/i.test(line))).toBe(true);
     expect(logs.some((line) => /left hub/i.test(line))).toBe(true);
   });
 
   test('hub leave stops a managed service before reset and starts it afterwards', async () => {
     const node = await openAuth('node');
-    node.installDir = '/tmp/tmex-leave-managed';
+    node.installDir = '/tmp/vibeterm-leave-managed';
     const events: string[] = [];
     await runHubLeave(parseArgs(['hub', 'leave']), {
       auth: node,
@@ -548,7 +550,7 @@ describe('hub join/leave service restart', () => {
 
   test('hub leave does not throw when there is no service manager', async () => {
     const node = await openAuth('node');
-    node.installDir = '/tmp/tmex-leave-none-manager';
+    node.installDir = '/tmp/vibeterm-leave-none-manager';
     const logs: string[] = [];
     const events: string[] = [];
     await runHubLeave(parseArgs(['hub', 'leave']), {
@@ -566,7 +568,7 @@ describe('hub join/leave service restart', () => {
       log: (message) => logs.push(message),
     });
     expect(events).toEqual([]);
-    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => /restart VibeTerm manually/i.test(line))).toBe(true);
     expect(logs.some((line) => /left hub/i.test(line))).toBe(true);
   });
 
@@ -632,7 +634,7 @@ describe('hub join/leave service restart', () => {
     servers.push(server);
     const hubUrl = `http://127.0.0.1:${server.port}`;
     const node = await openAuth('standalone');
-    node.installDir = '/tmp/tmex-join-no-restart';
+    node.installDir = '/tmp/vibeterm-join-no-restart';
     const logs: string[] = [];
     let restarted = false;
     await runHubJoin(
@@ -648,23 +650,23 @@ describe('hub join/leave service restart', () => {
       }
     );
     expect(restarted).toBe(false);
-    expect(logs.some((line) => /restart tmex manually/i.test(line))).toBe(true);
+    expect(logs.some((line) => /restart VibeTerm manually/i.test(line))).toBe(true);
     expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
   });
 
-  test('hub join writes TMEX_ROLES/TMEX_HUB_URL and calls restart', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'tmex-join-env-'));
+  test('hub join writes VIBETERM_ROLES/VIBETERM_HUB_URL and calls restart', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vibeterm-join-env-'));
     try {
       const envPath = join(dir, 'app.env');
       await writeFile(
         envPath,
-        'TMEX_ROLES=standalone\nOTHER=keep\nTMEX_HUB_PUBLIC_URL=https://stale.example\n',
+        'VIBETERM_ROLES=standalone\nOTHER=keep\nVIBETERM_HUB_PUBLIC_URL=https://stale.example\n',
         'utf8'
       );
       const hub = await startJoinableHub('alice', 'hub-pass-word');
       const node = await openAuth('standalone');
       node.envPath = envPath;
-      node.env = { TMEX_ROLES: 'standalone', OTHER: 'keep' };
+      node.env = { VIBETERM_ROLES: 'standalone', OTHER: 'keep' };
       node.installDir = dir;
       let restarted = 0;
       const joined = await runHubJoin(
@@ -682,9 +684,9 @@ describe('hub join/leave service restart', () => {
       expect(joined.hubUrl).toBe(hub.url);
       expect(restarted).toBe(1);
       const env = await readEnvFile(envPath);
-      expect(env.TMEX_ROLES).toBe('node');
-      expect(env.TMEX_HUB_URL).toBe(hub.url);
-      expect(env.TMEX_HUB_PUBLIC_URL).toBe('');
+      expect(env.VIBETERM_ROLES).toBe('node');
+      expect(env.VIBETERM_HUB_URL).toBe(hub.url);
+      expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
       expect(env.OTHER).toBe('keep');
     } finally {
       await rm(dir, { recursive: true, force: true });
@@ -1059,7 +1061,7 @@ describe('performHubJoin CA pin', () => {
   });
 
   test('v2 token mismatch rejects before redeem', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const token = encodeJoinToken(
       randomBytes(32),
       randomBytes(32),
@@ -1096,7 +1098,7 @@ describe('performHubJoin CA pin', () => {
   });
 
   test('v2 token match pins CA and persists hub_trust', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const hub = await openAuth('hub,node');
     const added = await runHubUserAdd(parseArgs([]), 'hubuser', {
@@ -1212,7 +1214,7 @@ describe('performHubJoin CA pin', () => {
   });
 
   test('rejects trailing garbage after the CA PEM', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
     const fetcher: FetchLike = async (input) => {
@@ -1238,7 +1240,7 @@ describe('performHubJoin CA pin', () => {
   });
 
   test('rejects an oversized CA response', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
     const fetcher: FetchLike = async (input) => {
@@ -1264,7 +1266,7 @@ describe('performHubJoin CA pin', () => {
   });
 
   test('rejects a non-CA leaf certificate', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const leaf = await issueLeaf({ ca, sans: ['127.0.0.1'], days: 1 });
     const fingerprint = await spkiFingerprint(leaf.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
@@ -1316,7 +1318,7 @@ describe('performHubJoin auth mode errors', () => {
   });
 
   test('pinned TLS failure advises checking the CA and hostname', async () => {
-    const ca = await createCa({ name: 'tmex-test' });
+    const ca = await createCa({ name: 'vibeterm-test' });
     const fingerprint = await spkiFingerprint(ca.certPem);
     const token = encodeJoinToken(randomBytes(32), randomBytes(32), randomBytes(32), fingerprint);
     const fetcher: FetchLike = async (input) => {

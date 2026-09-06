@@ -8,28 +8,28 @@
 // 要打远端 API 的动作禁用；连接开关仍可点（手动发起一次连接尝试）。
 
 import { useMutation } from '@tanstack/react-query';
-import { testDeviceConnection } from '@tmex/api-client';
-import type { Device } from '@tmex/shared';
+import { testDeviceConnection } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
 import {
   hostAppPath,
   isSidebarDeviceVisible,
   isSidebarFilesVisible,
   sidebarDeviceVisibilityKey,
-} from '@tmex/stores';
-import { useRuntime, useUIStore } from '@tmex/stores/react';
-import { cn } from '@tmex/ui';
-import { Badge } from '@tmex/ui/badge';
-import { Button, buttonVariants } from '@tmex/ui/button';
-import { Card, CardContent } from '@tmex/ui/card';
+} from '@vibeterm/stores';
+import { useRuntime, useUIStore } from '@vibeterm/stores/react';
+import { cn } from '@vibeterm/ui';
+import { Badge } from '@vibeterm/ui/badge';
+import { Button, buttonVariants } from '@vibeterm/ui/button';
+import { Card, CardContent } from '@vibeterm/ui/card';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from '@tmex/ui/dropdown-menu';
-import { Switch } from '@tmex/ui/switch';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@tmex/ui/tooltip';
+} from '@vibeterm/ui/dropdown-menu';
+import { Switch } from '@vibeterm/ui/switch';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@vibeterm/ui/tooltip';
 import {
   ArrowUpRight,
   FolderCog,
@@ -74,7 +74,7 @@ export interface DeviceCardProps {
   hasRoots?: boolean;
   /** 节点内排序的把手（宿主注入），渲染在第一行最左 */
   dragHandle?: ReactNode;
-  /** 卡片根节点内联样式；列表用它挂 `--tmex-stagger-index` 做逐项入场 */
+  /** 卡片根节点内联样式；列表用它挂 `--vibeterm-stagger-index` 做逐项入场 */
   style?: CSSProperties;
   className?: string;
 }
@@ -301,7 +301,7 @@ export const DeviceCard = memo(function DeviceCard({
         data-offline={offline ? 'true' : undefined}
         style={style}
         className={cn(
-          'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color,opacity] duration-(--tmex-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
+          'gap-2 overflow-hidden border-border/50 py-2.5 transition-[box-shadow,border-color,opacity] duration-(--vibeterm-motion-standard) ease-out hover:shadow-md hover:ring-foreground/20 motion-reduce:transition-none',
           offline && 'border-dashed bg-muted/20 opacity-75 hover:shadow-none',
           className
         )}

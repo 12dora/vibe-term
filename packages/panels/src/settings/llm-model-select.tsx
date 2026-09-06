@@ -1,5 +1,5 @@
-import type { LlmProviderDto } from '@tmex/shared';
-import { cn } from '@tmex/ui';
+import type { LlmProviderDto } from '@vibeterm/shared';
+import { cn } from '@vibeterm/ui';
 import {
   Select,
   SelectContent,
@@ -7,7 +7,7 @@ import {
   SelectItem,
   SelectLabel,
   SelectTrigger,
-} from '@tmex/ui/select';
+} from '@vibeterm/ui/select';
 import { useTranslation } from 'react-i18next';
 import { decodeModelValue, encodeModelValue } from '../agent/model-value';
 

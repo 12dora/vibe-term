@@ -1,7 +1,7 @@
 // bun test 无 DOM：复用 watch 的静态渲染夹具（i18n + RuntimeProvider + QueryClient）断言输出。
 
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { ShareOriginCandidate, ShareRecord } from '@tmex/shared/share';
+import type { ShareOriginCandidate, ShareRecord } from '@vibeterm/shared/share';
 import { renderWatch as renderPanel, setupWatchTestEnv } from '../watch/watch-test-harness';
 import { ShareActiveView } from './share-active-view';
 import { ShareCreateForm } from './share-create-form';

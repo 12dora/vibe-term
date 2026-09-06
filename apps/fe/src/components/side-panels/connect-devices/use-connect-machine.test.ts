@@ -2,7 +2,7 @@
 
 import { describe, expect, test } from 'bun:test';
 import { LOCAL_STATUS_QUERY_KEY } from '@/pages/settings/status-queries';
-import { LocalApiError } from '@tmex/api-client/local/local-api';
+import { LocalApiError } from '@vibeterm/api-client/local/local-api';
 import { GUIDE_LOCAL_STATUS_QUERY_KEY, isLocalStatusMissing } from './use-connect-machine';
 
 describe('isLocalStatusMissing', () => {

@@ -14,9 +14,9 @@ describe('command builder', () => {
   });
 
   test('supports nested sh -c command quoting by reusing quoteShellArg on the inner command', () => {
-    const redirectCommand = 'cat > /tmp/tmex/device 1/panes/%1.fifo';
+    const redirectCommand = 'cat > /tmp/vibeterm/device 1/panes/%1.fifo';
     const wrapped = joinShellArgs(['/bin/sh', '-c', quoteShellArg(redirectCommand)]);
 
-    expect(wrapped).toBe(`'/bin/sh' '-c' ''\\''cat > /tmp/tmex/device 1/panes/%1.fifo'\\'''`);
+    expect(wrapped).toBe(`'/bin/sh' '-c' ''\\''cat > /tmp/vibeterm/device 1/panes/%1.fifo'\\'''`);
   });
 });

@@ -1,15 +1,15 @@
 import { useQuery } from '@tanstack/react-query';
-import type { LlmProviderDto } from '@tmex/shared';
+import type { LlmProviderDto } from '@vibeterm/shared';
 import { Loader2, Plus, Save } from 'lucide-react';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import { Button } from '@tmex/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
+import { Button } from '@vibeterm/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@vibeterm/ui/select';
 
-import { fetchLlmProviders } from '@tmex/api-client';
-import { useRuntime } from '@tmex/stores/react';
+import { fetchLlmProviders } from '@vibeterm/api-client';
+import { useRuntime } from '@vibeterm/stores/react';
 import { useLlmDefaultsState } from './llm-defaults-state';
 import { LlmModelSelect } from './llm-model-select';
 import { LlmProviderFormModal } from './llm-provider-form-modal';

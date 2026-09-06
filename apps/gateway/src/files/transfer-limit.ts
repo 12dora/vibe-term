@@ -3,7 +3,7 @@
 // 中继看不到流里传的是什么（peer 会话整段是 AES-GCM 密文），单文件上限只能由中继发布、
 // 租户节点执行；真正保护运营者的是中继级带宽闸。这里是节点侧唯一的执行点。
 
-import type { RelayQuota } from '@tmex/shared/relay';
+import type { RelayQuota } from '@vibeterm/shared/relay';
 
 type RelayQuotaLike = { maxFileBytes?: number | null } | null | undefined;
 

@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, test } from 'bun:test';
-import type { StateSnapshotPayload } from '@tmex/shared';
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@tmex/shared';
+import type { StateSnapshotPayload } from '@vibeterm/shared';
+import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@vibeterm/shared';
 import { runMigrations } from '../db/migrate';
 import {
   CANONICAL_V11_REQUIRED_PREFIX,
@@ -17,7 +17,7 @@ beforeAll(() => {
 
 function helloPayload(clientVersion: string): Uint8Array {
   return wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
-    clientImpl: 'tmex-fe',
+    clientImpl: 'vibeterm-fe',
     clientVersion,
     maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
     supportsCompression: false,
@@ -116,7 +116,7 @@ function snapshotWith(cols: number, rows: number): StateSnapshotPayload {
     deviceId: 'device-a',
     session: {
       id: '$1',
-      name: 'tmex',
+      name: 'VibeTerm',
       windows: [
         {
           id: '@1',

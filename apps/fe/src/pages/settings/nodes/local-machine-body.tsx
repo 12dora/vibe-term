@@ -3,14 +3,14 @@
 // 卡片的状态门禁（未登录 / 加载中 / 读取失败）在这里之前就分完了，进到这里一定有一份
 // 完整的 `status` 与 `direct`。
 
-import type { DomainAccessPolicy } from '@tmex/api-client';
-import type { AuthModeResponse } from '@tmex/api-client/auth/index';
+import type { DomainAccessPolicy } from '@vibeterm/api-client';
+import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import type {
   LocalDirectAction,
   LocalDirectStatus,
   LocalStatusResponse,
   SetupRelayRole,
-} from '@tmex/api-client/local/types';
+} from '@vibeterm/api-client/local/types';
 import { useTranslation } from 'react-i18next';
 import { CardSection } from './card-parts';
 import type { DomainAccessApi } from './domain-access-row';
