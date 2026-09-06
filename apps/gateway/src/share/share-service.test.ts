@@ -52,7 +52,7 @@ function hubOriginSources(): ShareOriginSources {
     baseUrl: () => 'http://127.0.0.1:9663',
     uplinkKind: () => 'hub',
     relays: () => [],
-    relayProbe: () => ({ state: () => 'unknown', ensure: () => {} }),
+    relayProbe: () => ({ state: () => 'unknown', ensure: () => {}, invalidate: () => {} }),
   };
 }
 
@@ -70,6 +70,7 @@ function relayOriginSources(): ShareOriginSources {
     relayProbe: () => ({
       state: (url) => (url === 'https://relay.example.com' ? 'ok' : 'unknown'),
       ensure: () => {},
+      invalidate: () => {},
     }),
   };
 }

@@ -165,6 +165,49 @@ describe('createMeshSiteSettingsLink', () => {
     expect(attachedReads).toBe(0);
   });
 
+  test('中继上联：存储值是回环地址时退回中继入口 <relay>/n/<self>', () => {
+    const link = createMeshSiteSettingsLink({
+      roles: { hub: false, node: true, relay: false },
+      localNodeId: () => NODE,
+      hubStore: null,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+      uplinkKind: () => 'relay',
+      storedSiteUrl: () => 'http://127.0.0.1:9883',
+      relayAccessUrl: () => `https://relay.example/n/${NODE}`,
+    });
+    expect(link.siteUrlManaged()).toBe(false);
+    expect(link.effectiveSiteUrl()).toBe(`https://relay.example/n/${NODE}`);
+  });
+
+  test('中继上联：存储值本身是公网域名时以存储值为准', () => {
+    const link = createMeshSiteSettingsLink({
+      roles: { hub: false, node: true, relay: false },
+      localNodeId: () => NODE,
+      hubStore: null,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+      uplinkKind: () => 'relay',
+      storedSiteUrl: () => 'https://box.example.com',
+      relayAccessUrl: () => `https://relay.example/n/${NODE}`,
+    });
+    expect(link.effectiveSiteUrl()).toBe('https://box.example.com');
+  });
+
+  test('中继上联：入口未探通时返回 null，调用方回落存储值', () => {
+    const link = createMeshSiteSettingsLink({
+      roles: { hub: false, node: true, relay: false },
+      localNodeId: () => NODE,
+      hubStore: null,
+      attachedHub: () => null,
+      hubPublicUrl: null,
+      uplinkKind: () => 'relay',
+      storedSiteUrl: () => 'http://127.0.0.1:9883',
+      relayAccessUrl: () => null,
+    });
+    expect(link.effectiveSiteUrl()).toBeNull();
+  });
+
   test('hub 上联的节点：站点 URL 由 hub 托管', () => {
     const link = createMeshSiteSettingsLink({
       roles: { hub: false, node: true, relay: false },

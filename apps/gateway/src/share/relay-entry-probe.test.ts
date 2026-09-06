@@ -133,6 +133,22 @@ describe('RelayEntryProbe', () => {
     expect(probe.state(RELAY)).toBe('unknown');
   });
 
+  test('invalidate 丢弃缓存结论，下次 ensure 立即重探（末尾斜杠等价）', async () => {
+    let nodeId = 'ef'.repeat(16);
+    const { probe, calls } = makeProbe(async () => jsonResponse({ nodeId }));
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(probe.state(RELAY)).toBe('bad');
+
+    probe.invalidate(`${RELAY}/`);
+    expect(probe.state(RELAY)).toBe('unknown');
+    nodeId = NODE;
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+    expect(probe.state(RELAY)).toBe('ok');
+  });
+
   test('没有本机 nodeId 时不发请求', async () => {
     const calls: string[] = [];
     const probe = new RelayEntryProbe({

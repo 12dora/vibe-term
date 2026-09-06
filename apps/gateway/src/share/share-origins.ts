@@ -27,6 +27,7 @@ export type ShareOriginRelayRow = { url: string; priority: number; attached: boo
 export type ShareOriginProbe = {
   state(url: string): RelayProbeState;
   ensure(url: string): void;
+  invalidate(url: string): void;
 };
 
 export type ShareOriginSources = {
@@ -119,10 +120,13 @@ function readUplinkKind(): 'hub' | 'relay' | null {
 }
 
 let attachedUplinkUrl: (() => string | null) | null = null;
+let lastAttachedRelayKey: string | null = null;
 
 /** 由装配层注入：当前 uplink 实际连上的中继 / hub 公网地址（用于把在用中继排到候选前面）。 */
 export function setShareOriginAttachedUplink(resolver: (() => string | null) | null): void {
   attachedUplinkUrl = resolver;
+  lastAttachedRelayKey = null;
+  relayAccessCache = null;
 }
 
 function readAttachedUplinkUrl(): string | null {
@@ -196,13 +200,50 @@ export const defaultShareOriginSources: ShareOriginSources = {
   relayProbe: defaultRelayProbe,
 };
 
-/** 启动时先探一遍中继入口，免得第一次打开分享弹窗只看得到隧道地址。 */
+/**
+ * 探一遍中继入口，免得第一次打开分享弹窗只看得到隧道地址。
+ * 必须在 HTTP 监听与 mesh 上联起来之后调用：过早探测只会把 `bad` 写进缓存。
+ */
 export function primeShareRelayOrigins(
   sources: ShareOriginSources = defaultShareOriginSources
 ): void {
   if (sources.uplinkKind() !== 'relay') return;
   const probe = sources.relayProbe();
-  for (const relay of sources.relays()) probe.ensure(relay.url);
+  const relays = sources.relays();
+  invalidateOnAttachedChange(probe, relays);
+  for (const relay of relays) probe.ensure(relay.url);
+}
+
+export const SHARE_RELAY_PRIME_DELAY_MS = 10_000;
+export const SHARE_RELAY_PRIME_INTERVAL_MS = 5 * 60_000;
+
+/**
+ * 启动后延迟预热中继入口探测，并定期补探；返回停机时用的清理函数。
+ * 不能在装配期跑：那会儿 HTTP 监听与 mesh 上联都还没起来，探测必失败并把 `bad` 缓存 2 min。
+ */
+export function startShareRelayPriming(
+  sources: ShareOriginSources = defaultShareOriginSources
+): () => void {
+  const first = setTimeout(() => primeShareRelayOrigins(sources), SHARE_RELAY_PRIME_DELAY_MS);
+  const repeat = setInterval(() => primeShareRelayOrigins(sources), SHARE_RELAY_PRIME_INTERVAL_MS);
+  first.unref?.();
+  repeat.unref?.();
+  return () => {
+    clearTimeout(first);
+    clearInterval(repeat);
+  };
+}
+
+/**
+ * 上联刚接上中继时，接上之前探到的 `bad` 必须立刻作废并重探，否则要干等 2 min 才会出现中继候选。
+ * 只丢 `bad`：`ok` 结论仍然成立，丢了反而让候选在切换瞬间凭空消失。
+ */
+function invalidateOnAttachedChange(probe: ShareOriginProbe, relays: ShareOriginRelayRow[]): void {
+  const attached = relays.find((row) => row.attached) ?? null;
+  const key = attached ? normalizeShareOrigin(attached.url) : null;
+  if (key === lastAttachedRelayKey) return;
+  lastAttachedRelayKey = key;
+  if (attached && probe.state(attached.url) === 'bad') probe.invalidate(attached.url);
 }
 
 function isIpHost(url: string): boolean {
@@ -215,18 +256,33 @@ function isIpHost(url: string): boolean {
   }
 }
 
-type RawCandidate = { url: string; kind: ShareOriginCandidate['kind']; prefix: string | null };
+type RawCandidate = {
+  url: string;
+  kind: ShareOriginCandidate['kind'];
+  prefix: string | null;
+  /** 是否进入排序后的候选列表（供自动选取 / 推荐）；前缀映射不受此位影响。 */
+  listed: boolean;
+};
 
+/**
+ * 中继原始候选恒定产出：`/n/<self>` 前缀是链路属性，不随探测状态漂移——
+ * 否则探测过期的那一刻建分享就会存下 `https://<中继>/s/<id>` 这种死链。
+ * 探测只决定要不要把它推荐给用户。
+ */
 function collectRelays(sources: ShareOriginSources, prefix: string | null): RawCandidate[] {
   if (!prefix || sources.uplinkKind() !== 'relay') return [];
   const probe = sources.relayProbe();
-  const raw: RawCandidate[] = [];
-  for (const relay of sources.relays()) {
+  const relays = sources.relays();
+  invalidateOnAttachedChange(probe, relays);
+  return relays.map((relay) => {
     probe.ensure(relay.url);
-    if (probe.state(relay.url) !== 'ok') continue;
-    raw.push({ url: relay.url, kind: 'relay', prefix });
-  }
-  return raw;
+    return {
+      url: relay.url,
+      kind: 'relay' as const,
+      prefix,
+      listed: probe.state(relay.url) === 'ok',
+    };
+  });
 }
 
 function collectRaw(sources: ShareOriginSources): RawCandidate[] {
@@ -238,27 +294,28 @@ function collectRaw(sources: ShareOriginSources): RawCandidate[] {
   const site = sources.siteUrl();
   // 站点 URL 常被填成隧道域名；由 hub 托管时它更是历史残留，两种情况都由对应 kind 的候选代表。
   if (site && !sources.siteUrlManaged() && originOf(site) !== originOf(tunnel)) {
-    raw.push({ url: site, kind: 'site', prefix: null });
+    raw.push({ url: site, kind: 'site', prefix: null, listed: true });
   }
 
   for (const hub of sources.hubs()) {
     if (!hub.publicUrl) continue;
     const ownHub = Boolean(localNodeId) && hub.hubNodeId === localNodeId;
-    raw.push({ url: hub.publicUrl, kind: 'hub', prefix: ownHub ? null : prefix });
+    raw.push({ url: hub.publicUrl, kind: 'hub', prefix: ownHub ? null : prefix, listed: true });
   }
 
   raw.push(...collectRelays(sources, prefix));
 
-  if (tunnel) raw.push({ url: tunnel, kind: 'tunnel', prefix: null });
+  if (tunnel) raw.push({ url: tunnel, kind: 'tunnel', prefix: null, listed: true });
 
   const base = sources.baseUrl();
-  if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null });
+  if (base && isIpHost(base)) raw.push({ url: base, kind: 'ip', prefix: null, listed: true });
 
   return raw;
 }
 
 /**
- * 分享地址候选。中继只有同时担任 `node` 角色时才转发 `/n/<nodeId>/*`，故中继候选由可达性探测放行。
+ * 分享地址候选。中继只有同时担任 `node` 角色时才转发 `/n/<nodeId>/*`，故中继**候选列表**由可达性探测放行；
+ * 前缀映射（`prefixes`）与自定义地址的前缀继承始终按链路事实给出，与探测状态无关。
  * 自定义地址来自设置里的默认分享地址，优先级最高。
  */
 export function buildShareOriginContext(
@@ -279,6 +336,7 @@ export function buildShareOriginContext(
       url: customOrigin,
       kind: 'custom',
       prefix: forwardPrefixes.get(labelOf(customOrigin)) ?? null,
+      listed: true,
     });
   }
 
@@ -290,12 +348,14 @@ export function buildShareOriginContext(
   }
 
   const ranked = rankShareOrigins(
-    raw.map((item) => ({
-      url: item.url,
-      kind: item.kind,
-      label: labelOf(item.url),
-      accessUrl: item.url,
-    }))
+    raw
+      .filter((item) => item.listed)
+      .map((item) => ({
+        url: item.url,
+        kind: item.kind,
+        label: labelOf(item.url),
+        accessUrl: item.url,
+      }))
   );
   const candidates = ranked.map((candidate) => {
     const prefix = prefixes.get(candidate.url) ?? null;
@@ -308,6 +368,24 @@ export function resolveSharePrefix(context: ShareOriginContext, origin: string):
   const normalized = normalizeShareOrigin(origin);
   if (!normalized) return null;
   return context.prefixes.get(normalized) ?? null;
+}
+
+const RELAY_ACCESS_URL_TTL_MS = 5_000;
+let relayAccessCache: { value: string | null; expiresAt: number } | null = null;
+
+/**
+ * 当前可用的中继访问地址 `<relay>/n/<self>`；探测未通过（或不是中继上联）时为 null。
+ * 站点 URL 兜底会在每次读设置时调用，故加 5 s 记忆化，避免高频重建候选上下文。
+ */
+export function relayShareAccessUrl(
+  sources: ShareOriginSources = defaultShareOriginSources,
+  now: number = Date.now()
+): string | null {
+  if (relayAccessCache && now < relayAccessCache.expiresAt) return relayAccessCache.value;
+  const context = buildShareOriginContext(sources, null);
+  const value = context.candidates.find((item) => item.kind === 'relay')?.accessUrl ?? null;
+  relayAccessCache = { value, expiresAt: now + RELAY_ACCESS_URL_TTL_MS };
+  return value;
 }
 
 export function isUsableShareOrigin(origin: string): boolean {

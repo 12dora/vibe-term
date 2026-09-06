@@ -1,25 +1,41 @@
-import { describe, expect, test } from 'bun:test';
+import { beforeEach, describe, expect, test } from 'bun:test';
 import type { RelayProbeState } from './relay-entry-probe';
 import {
   type ShareOriginProbe,
   type ShareOriginSources,
   buildShareOriginContext,
   primeShareRelayOrigins,
+  relayShareAccessUrl,
   resolveSharePrefix,
+  setShareOriginAttachedUplink,
+  startShareRelayPriming,
 } from './share-origins';
 
 function fakeProbe(states: Record<string, RelayProbeState> = {}): ShareOriginProbe & {
   ensured: string[];
+  invalidated: string[];
 } {
   const ensured: string[] = [];
+  const invalidated: string[] = [];
+  const current = { ...states };
   return {
     ensured,
-    state: (url) => states[url] ?? 'unknown',
+    invalidated,
+    state: (url) => current[url] ?? 'unknown',
     ensure: (url) => {
       ensured.push(url);
     },
+    invalidate: (url) => {
+      invalidated.push(url);
+      delete current[url];
+    },
   };
 }
+
+// 模块内记着「上次观察到的在用中继」，逐个用例复位，免得互相污染。
+beforeEach(() => {
+  setShareOriginAttachedUplink(null);
+});
 
 function sources(overrides: Partial<ShareOriginSources> = {}): ShareOriginSources {
   return {
@@ -210,6 +226,139 @@ describe('buildShareOriginContext', () => {
     expect(context.nodePrefix).toBeNull();
     expect(context.candidates.map((item) => item.kind)).toEqual(['hub']);
     expect(resolveSharePrefix(context, 'https://hub.example.com')).toBeNull();
+  });
+});
+
+describe('中继前缀与探测状态解耦', () => {
+  const relays = () => [{ url: 'https://relay.example.com', priority: 0, attached: true }];
+
+  test('探测未完成时中继不进候选，但前缀映射照给', () => {
+    const context = buildShareOriginContext(
+      sources({ uplinkKind: () => 'relay', relays, relayProbe: () => fakeProbe() })
+    );
+    expect(context.candidates).toEqual([]);
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
+  });
+
+  test('探测已过期时保存的中继默认地址仍带 /n/<self>', () => {
+    const context = buildShareOriginContext(
+      sources({ uplinkKind: () => 'relay', relays, relayProbe: () => fakeProbe() }),
+      'https://relay.example.com'
+    );
+    expect(context.candidates[0]).toMatchObject({
+      kind: 'custom',
+      accessUrl: 'https://relay.example.com/n/node-a',
+    });
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
+  });
+
+  test('探测 bad 时中继不在候选里，同主机的自定义地址仍继承前缀', () => {
+    const context = buildShareOriginContext(
+      sources({
+        uplinkKind: () => 'relay',
+        relays,
+        relayProbe: () => fakeProbe({ 'https://relay.example.com': 'bad' }),
+      }),
+      'https://relay.example.com'
+    );
+    expect(context.candidates.map((item) => item.kind)).toEqual(['custom']);
+    expect(resolveSharePrefix(context, 'https://relay.example.com')).toBe('/n/node-a');
+  });
+});
+
+describe('在用中继变化时作废探测缓存', () => {
+  test('从未接上到接上：invalidate 后重新 ensure', () => {
+    const probe = fakeProbe({ 'https://relay-a.example.com': 'bad' });
+    const detached = sources({
+      uplinkKind: () => 'relay',
+      relays: () => [{ url: 'https://relay-a.example.com', priority: 0, attached: false }],
+      relayProbe: () => probe,
+    });
+    buildShareOriginContext(detached);
+    expect(probe.invalidated).toEqual([]);
+
+    const attached = sources({
+      uplinkKind: () => 'relay',
+      relays: () => [{ url: 'https://relay-a.example.com', priority: 0, attached: true }],
+      relayProbe: () => probe,
+    });
+    buildShareOriginContext(attached);
+    expect(probe.invalidated).toEqual(['https://relay-a.example.com']);
+    expect(probe.state('https://relay-a.example.com')).toBe('unknown');
+    expect(probe.ensured.at(-1)).toBe('https://relay-a.example.com');
+
+    buildShareOriginContext(attached);
+    expect(probe.invalidated).toEqual(['https://relay-a.example.com']);
+  });
+
+  test('primeShareRelayOrigins 同样在切换中继时作废旧结论', () => {
+    const probe = fakeProbe({
+      'https://relay-a.example.com': 'bad',
+      'https://relay-b.example.com': 'bad',
+    });
+    const relayRows = [
+      { url: 'https://relay-a.example.com', priority: 0, attached: true },
+      { url: 'https://relay-b.example.com', priority: 1, attached: false },
+    ];
+    primeShareRelayOrigins(
+      sources({ uplinkKind: () => 'relay', relays: () => relayRows, relayProbe: () => probe })
+    );
+    expect(probe.invalidated).toEqual(['https://relay-a.example.com']);
+
+    const switched = [
+      { url: 'https://relay-b.example.com', priority: 1, attached: true },
+      { url: 'https://relay-a.example.com', priority: 0, attached: false },
+    ];
+    primeShareRelayOrigins(
+      sources({ uplinkKind: () => 'relay', relays: () => switched, relayProbe: () => probe })
+    );
+    expect(probe.invalidated).toEqual([
+      'https://relay-a.example.com',
+      'https://relay-b.example.com',
+    ]);
+  });
+});
+
+describe('startShareRelayPriming', () => {
+  test('不同步预热（装配期探测必失败），返回的清理函数可撤销定时器', () => {
+    const probe = fakeProbe();
+    const stop = startShareRelayPriming(
+      sources({
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+        relayProbe: () => probe,
+      })
+    );
+    expect(probe.ensured).toEqual([]);
+    stop();
+    expect(probe.ensured).toEqual([]);
+  });
+});
+
+describe('relayShareAccessUrl', () => {
+  const relaySources = (state: RelayProbeState) =>
+    sources({
+      uplinkKind: () => 'relay',
+      relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true }],
+      relayProbe: () => fakeProbe({ 'https://relay.example.com': state }),
+    });
+
+  test('探测通过时给出 <relay>/n/<self>，未通过时为 null', () => {
+    expect(relayShareAccessUrl(relaySources('ok'), 1_000)).toBe(
+      'https://relay.example.com/n/node-a'
+    );
+    expect(relayShareAccessUrl(relaySources('bad'), 100_000)).toBeNull();
+    expect(relayShareAccessUrl(sources(), 200_000)).toBeNull();
+  });
+
+  test('5 s 内记忆化，避免每次读站点设置都重建候选', () => {
+    expect(relayShareAccessUrl(relaySources('ok'), 300_000)).toBe(
+      'https://relay.example.com/n/node-a'
+    );
+    expect(relayShareAccessUrl(relaySources('bad'), 302_000)).toBe(
+      'https://relay.example.com/n/node-a'
+    );
+    expect(relayShareAccessUrl(relaySources('bad'), 310_000)).toBeNull();
   });
 });
 

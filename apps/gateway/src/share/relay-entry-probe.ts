@@ -54,6 +54,11 @@ export class RelayEntryProbe {
     return entry.state;
   }
 
+  /** 丢弃某地址的缓存结论：上联刚接上中继时，接上之前的 `bad` 不该继续挡住候选。 */
+  invalidate(url: string): void {
+    this.cache.delete(probeKey(url));
+  }
+
   /** 发即忘：缓存有效或已有在途探测时不重复发起，结果落在下一次 `state()`。 */
   ensure(url: string): void {
     const key = probeKey(url);

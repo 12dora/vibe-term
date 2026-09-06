@@ -32,8 +32,9 @@ import { getShareService } from '../../../../apps/gateway/src/share';
 import {
   buildShareOriginContext,
   defaultShareOriginSources,
-  primeShareRelayOrigins,
+  relayShareAccessUrl,
   setShareOriginAttachedUplink,
+  startShareRelayPriming,
 } from '../../../../apps/gateway/src/share/share-origins';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
@@ -374,10 +375,10 @@ function applySiteSettingsLink(
         hubPublicUrl: gatewayConfig.hubPublicUrl,
         hubMetaPublicUrl: () => mesh?.userStore.getHubMeta()?.publicUrl ?? null,
         uplinkKind: () => relayStore.uplinkKind(),
+        storedSiteUrl: () => getStoredSiteSettings().siteUrl || null,
+        relayAccessUrl: () => relayShareAccessUrl(),
       })
     );
-    // 中继入口是否转发 `/n/<self>` 要实探，开机先探一遍，免得首次打开分享弹窗少一个候选。
-    primeShareRelayOrigins();
   } else {
     setSiteSettingsLinkProvider(null);
   }
@@ -473,6 +474,17 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     mesh,
     hub,
   });
+  const lifecycle = createAssembledLifecycle({
+    mesh,
+    gateway,
+    authHttp,
+    hub,
+    relay,
+    unsubscribeNodeList,
+    shutdown,
+  });
+  // 中继入口探测必须等 HTTP 监听与 mesh 上联起来之后再做，故推迟到 start() 之后。
+  let stopRelayPriming: (() => void) | null = null;
   return {
     roles,
     gateway,
@@ -483,15 +495,16 @@ export async function assembleTmex(opts: AssembleTmexOptions = {}): Promise<Asse
     httpsListener: tlsLife.httpsListener,
     fetch: http.fetch,
     websocket: http.websocket,
-    ...createAssembledLifecycle({
-      mesh,
-      gateway,
-      authHttp,
-      hub,
-      relay,
-      unsubscribeNodeList,
-      shutdown,
-    }),
+    ...lifecycle,
+    async start() {
+      await lifecycle.start();
+      if (roles.hub || roles.node) stopRelayPriming ??= startShareRelayPriming();
+    },
+    async stop() {
+      stopRelayPriming?.();
+      stopRelayPriming = null;
+      await lifecycle.stop();
+    },
   };
 }
 

@@ -1,3 +1,4 @@
+import { isPublicShareOrigin, normalizeShareOrigin } from '@tmex/shared/share';
 import type { SiteSettingsLinkProvider } from '../api/site-settings-link';
 import { type MeshHubRecord, pickWriterHub } from '../auth/mesh-hub-store';
 
@@ -17,6 +18,10 @@ export type MeshSiteSettingsLinkInput = {
   hubMetaPublicUrl?: () => string | null;
   /** 上联种类；中继上联时站点 URL 不由 hub 托管（浏览器经中继访问要带 `/n/<self>`）。 */
   uplinkKind?: () => 'hub' | 'relay' | null;
+  /** 存储的站点 URL；中继上联时用来判断用户是否已填了公网可达的自有域名。 */
+  storedSiteUrl?: () => string | null;
+  /** 中继上联时的实际访问地址 `<relay>/n/<self>`；入口未探通时为 null。 */
+  relayAccessUrl?: () => string | null;
 };
 
 export type MeshHubUrlSelection = {
@@ -65,6 +70,14 @@ export function createMeshSiteSettingsLink(
   const linked = () => input.roles.hub || input.roles.node;
   const relayUplink = () => (input.uplinkKind?.() ?? 'hub') === 'relay';
   const siteUrlManaged = () => input.roles.hub || (input.roles.node && !relayUplink());
+  // 中继上联下站点 URL 不托管、可编辑，但通知深链仍要一个能点开的地址：
+  // 存储值是公网地址就用它，否则（多数是种子回环地址）退回当前中继入口。
+  const relayUplinkSiteUrl = (): string | null => {
+    const stored = input.storedSiteUrl?.() ?? null;
+    const normalized = stored ? normalizeShareOrigin(stored) : null;
+    if (normalized && isPublicShareOrigin(normalized)) return stored;
+    return input.relayAccessUrl?.() ?? null;
+  };
   return {
     linked,
     siteUrlManaged,
@@ -77,8 +90,7 @@ export function createMeshSiteSettingsLink(
           (localId ? input.hubStore?.get(localId)?.publicUrl : null) || input.hubPublicUrl;
         if (own) return own;
       }
-      // 中继上联时不存在可托管站点 URL 的 hub，存储值继续生效且可编辑。
-      if (relayUplink()) return null;
+      if (relayUplink()) return relayUplinkSiteUrl();
       const selected = resolveMeshHubSelection({
         hubStore: input.hubStore,
         attachedPublicUrl: input.attachedHub()?.publicUrl ?? null,

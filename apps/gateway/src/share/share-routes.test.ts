@@ -88,7 +88,7 @@ beforeEach(() => {
       baseUrl: () => null,
       uplinkKind: () => 'hub',
       relays: () => [],
-      relayProbe: () => ({ state: () => 'unknown', ensure: () => {} }),
+      relayProbe: () => ({ state: () => 'unknown', ensure: () => {}, invalidate: () => {} }),
     },
   });
   setShareServiceForTests(service);

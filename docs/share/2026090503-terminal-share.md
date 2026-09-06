@@ -74,10 +74,24 @@ window**（含分屏），看不到节点名、设备名与其它 window。分�
 - `RelayEntryProbe.ensure(url)` 发即忘地 GET `${url}/n/${localNodeId}/api/auth/mode`（5 s 超时），
   HTTP 200 且 JSON 的 `nodeId` 等于本机 node id 才记 `ok`；同一地址单飞，`ok` 缓存 10 min、
   `bad`/异常缓存 2 min，过期后下次读取自动重探。
-- `buildShareOriginContext()` 每次都先 `ensure()` 再读 `state()`，只有 `ok` 的中继进候选——所以
-  冷启动后的第一次调用可能还看不到中继地址，探测回来后的下一次调用就有了；装配层
-  （`packages/app/src/runtime/assemble.ts`）在启动时先 `primeShareRelayOrigins()` 预热一遍。
+- **前缀与探测状态无关**：只要是中继上联且拿得到本机 node id，中继就恒定产出原始候选，
+  `/n/<self>` 一定进 `prefixes`，同主机的自定义/默认分享地址照常继承前缀。探测只决定它进不进
+  排序后的 `candidates`（即推荐与自动选取）。否则 `ok` 一过期就会存下
+  `https://<中继>/s/<id>` 这种没有前缀的死链。
+- 探测要等本机上联真的挂到该中继之后才可能通（中继主机得把 `/n/<self>` 经 mesh 转回来），
+  所以**装配期不预热**：`assembleTmex()` 在 `start()` 之后延迟 10 s 首探，之后每 5 min 补探一次
+  （定时器 `unref`，`stop()` 时清理）。另外 `buildShareOriginContext()` 与
+  `primeShareRelayOrigins()` 都记着上次「在用中继」，一旦变化（含从无到有）就
+  `RelayEntryProbe.invalidate()` 掉该地址的 `bad` 结论并立即重探，不必干等 2 min；
+  `ok` 结论不丢，免得候选在切换瞬间凭空消失。
 - 被踢（`kicked`）的中继不参与；多中继按「当前在用的排最前，其余按 priority」排序。
+
+中继上联下的**站点 URL**（`mesh/effective-site-url.ts`）：`effectiveSiteUrl()` 不再一律返回 null——
+存储值本身是公网地址就以存储值为准，否则退回当前中继入口 `<relay>/n/<self>`
+（`relayShareAccessUrl()` 提供，探测未通过时返回 null，调用方回落存储值）。通知深链
+（push/supervisor、agent run-notify、连接告警）都读 `getSiteSettings().siteUrl`，而装机种子值多是
+`http://127.0.0.1:9883`，不兜底就会退化成点不开的链接。站点 URL 仍然不托管
+（`siteUrlManaged() === false`）、设置页可编辑，保存即写回存储值。
 
 ## 接口
 

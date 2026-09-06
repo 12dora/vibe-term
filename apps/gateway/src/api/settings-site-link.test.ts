@@ -128,6 +128,16 @@ describe('中继上联的节点：站点 URL 可编辑、站点名仍与节点�
     expect(json.nodeId).toBe('ab'.repeat(16));
   });
 
+  test('存储值不是公网地址时 GET 展示中继入口，且仍可编辑', async () => {
+    const relayAccess = `https://relay.example.com/n/${'ab'.repeat(16)}`;
+    setSiteSettingsLinkProvider({ ...relayLink, effectiveSiteUrl: () => relayAccess });
+    const { json } = await call('GET');
+    expect(json.effectiveSiteUrl).toBe(relayAccess);
+    expect(json.siteUrlEditable).toBe(true);
+    expect((json.settings as Record<string, unknown>).siteUrl).toBe(relayAccess);
+    expect(getStoredSiteSettings().siteUrl).not.toBe(relayAccess);
+  });
+
   test('PATCH 可以改站点 URL，但改站点名仍被拒', async () => {
     const before = getStoredSiteSettings();
     setSiteSettingsLinkProvider(relayLink);
