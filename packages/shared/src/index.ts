@@ -88,6 +88,8 @@ export * from './contracts/files';
 export * from './contracts/device-folders';
 export * from './contracts/local-auth';
 export * from './contracts/hub-role';
+export * from './contracts/transfer';
+export * from './contracts/portmap';
 export * from './device-folders';
 
 // ==================== 运行时模块再导出 ====================
