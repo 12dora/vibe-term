@@ -6,8 +6,11 @@ import type {
   UpdatePortMapRequest,
 } from '@tmex/shared';
 import type { PortMapErrorCode } from '@tmex/shared';
+import { eq } from 'drizzle-orm';
 import { config } from '../config';
 import { getDb } from '../db/client';
+import { tlsConfig } from '../db/schema';
+import { DEFAULT_TLS_PORT, TLS_CONFIG_ROW_ID } from '../tls/types';
 import { solePortMapPeers } from './binding';
 import { PortMapListener } from './listener';
 import { isPortFree } from './port-probe';
@@ -46,8 +49,25 @@ function randomMapId(): string {
   return crypto.randomUUID().replace(/-/g, '');
 }
 
+/** 本机 HTTPS 监听端口也不能被映射占用，否则下次重启时监听会失败。 */
+function tlsListenPort(): number | null {
+  try {
+    const row = getDb()
+      .select({ tlsPort: tlsConfig.tlsPort })
+      .from(tlsConfig)
+      .where(eq(tlsConfig.id, TLS_CONFIG_ROW_ID))
+      .get();
+    return row?.tlsPort ?? DEFAULT_TLS_PORT;
+  } catch {
+    return DEFAULT_TLS_PORT;
+  }
+}
+
 function defaultReservedPorts(): number[] {
-  return [config.port, config.peerPort];
+  const ports = [config.port, config.peerPort];
+  const tls = tlsListenPort();
+  if (tls !== null) ports.push(tls);
+  return ports;
 }
 
 export class PortMapManager {
@@ -200,6 +220,7 @@ export class PortMapManager {
       row: entry.row,
       peers: this.peers,
       counters: entry.counters,
+      onBindFailed: () => this.markBindFailed(entry, listener),
       ...(this.maxConnections === undefined ? {} : { maxConnections: this.maxConnections }),
       ...(this.peerStreamLimit === undefined ? {} : { peerStreamLimit: this.peerStreamLimit }),
     });
@@ -212,6 +233,13 @@ export class PortMapManager {
       entry.error = err instanceof PortMapError ? err.code : 'bind_failed';
       if (!isPortFree(entry.row.listenHost, entry.row.listenPort)) entry.error = 'port_in_use';
     }
+  }
+
+  /** listen 之后才冒出来的绑定错误（同步窗口没抓到的竞态）：把行改回 error 状态。 */
+  private markBindFailed(entry: Entry, listener: PortMapListener): void {
+    if (entry.listener !== listener) return;
+    entry.listener = null;
+    entry.error = 'port_in_use';
   }
 
   private stopEntry(entry: Entry): void {

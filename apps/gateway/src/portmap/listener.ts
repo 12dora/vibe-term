@@ -1,3 +1,4 @@
+import { type Server, type Socket, createServer } from 'node:net';
 import type { LinkStream } from '@tmex/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
 import type { TcpStreamOpenPayload } from '../mesh/types';
@@ -7,11 +8,15 @@ import {
   type PumpSocketData,
   TcpStreamPump,
   attachPump,
-  bunPumpSocket,
   createPumpSocketData,
   disposePumpSocketData,
 } from './pump';
-import { pumpSocketHandlers } from './socket-handlers';
+import {
+  attachPumpSocketHandlers,
+  destroySocket,
+  netPumpSocket,
+  prepareSocket,
+} from './socket-handlers';
 import {
   PORT_MAP_DIAL_DEADLINE_MS,
   PORT_MAP_MAX_CONNECTIONS,
@@ -29,9 +34,11 @@ export type PortMapListenerOptions = {
   maxConnections?: number;
   peerStreamLimit?: number;
   dialDeadlineMs?: number;
+  /** listen 之后异步冒出来的绑定错误（同步的那次已经在 start() 里抛了）。 */
+  onBindFailed?: () => void;
 };
 
-type MapSocket = Bun.Socket<PumpSocketData>;
+type Conn = { socket: Socket; data: PumpSocketData };
 
 /** A 侧监听端：每条本地连接懒拨一次 peer 链路并开一条 tcp 流，链路断了就关连接，不重放。 */
 export class PortMapListener {
@@ -41,8 +48,9 @@ export class PortMapListener {
   private readonly maxConnections: number;
   private readonly peerStreamLimit: number;
   private readonly dialDeadlineMs: number;
-  private readonly sockets = new Set<MapSocket>();
-  private server: Bun.TCPSocketListener<PumpSocketData> | null = null;
+  private readonly onBindFailed: (() => void) | null;
+  private readonly conns = new Set<Conn>();
+  private server: Server | null = null;
   private stopped = false;
 
   constructor(opts: PortMapListenerOptions) {
@@ -52,26 +60,32 @@ export class PortMapListener {
     this.maxConnections = opts.maxConnections ?? PORT_MAP_MAX_CONNECTIONS;
     this.peerStreamLimit = opts.peerStreamLimit ?? PORT_MAP_MAX_PEER_STREAMS;
     this.dialDeadlineMs = opts.dialDeadlineMs ?? PORT_MAP_DIAL_DEADLINE_MS;
+    this.onBindFailed = opts.onBindFailed ?? null;
   }
 
+  /**
+   * node 的 `listen()` 只在事件里报错，但绑定本身是同步做完的：`address()` 立刻为 null 就说明
+   * 端口被占，可以照旧同步抛 `PortMapError`；异步兜底的 error 事件走 `onBindFailed`。
+   */
   start(): void {
     if (this.server) return;
     this.stopped = false;
-    try {
-      this.server = Bun.listen<PumpSocketData>({
-        hostname: this.row.listenHost,
-        port: this.row.listenPort,
-        allowHalfOpen: true,
-        socket: pumpSocketHandlers((socket) => this.onOpen(socket)),
-      });
-    } catch (err) {
+    const server = createServer({ allowHalfOpen: true, noDelay: true });
+    server.on('error', () => this.handleBindError(server));
+    server.on('connection', (socket) => this.onOpen(socket));
+    server.listen({ host: this.row.listenHost, port: this.row.listenPort });
+    if (!server.address()) {
+      try {
+        server.close();
+      } catch {
+        // 本来就没绑上
+      }
       throw new PortMapError(
-        'bind_failed',
-        `failed to bind ${this.row.listenHost}:${this.row.listenPort}: ${
-          err instanceof Error ? err.message : 'bind failed'
-        }`
+        'port_in_use',
+        `failed to bind ${this.row.listenHost}:${this.row.listenPort}`
       );
     }
+    this.server = server;
   }
 
   stop(): void {
@@ -79,71 +93,67 @@ export class PortMapListener {
     const server = this.server;
     this.server = null;
     try {
-      server?.stop(true);
+      server?.close();
     } catch {
       // 已经关闭
     }
-    for (const socket of [...this.sockets]) {
-      socket.data?.pump?.destroy('portmap-stopped');
-      try {
-        socket.terminate();
-      } catch {
-        // 已经关闭
-      }
-      if (socket.data) disposePumpSocketData(socket.data);
+    for (const conn of [...this.conns]) {
+      conn.data.pump?.destroy('portmap-stopped');
+      destroySocket(conn.socket);
+      disposePumpSocketData(conn.data);
     }
-    this.sockets.clear();
+    this.conns.clear();
     this.counters.activeConnections = 0;
   }
 
-  private onOpen(socket: MapSocket): void {
-    socket.data = createPumpSocketData();
+  private handleBindError(server: Server): void {
+    if (this.server !== server) return;
+    this.server = null;
+    this.onBindFailed?.();
+  }
+
+  private onOpen(socket: Socket): void {
+    const data = createPumpSocketData();
     const slot =
-      this.stopped || this.sockets.size >= this.maxConnections
+      this.stopped || this.conns.size >= this.maxConnections
         ? null
         : acquirePeerStreamSlot(this.row.targetNodeId, this.peerStreamLimit);
     if (!slot) {
-      try {
-        socket.terminate();
-      } catch {
-        // 已经关闭
-      }
+      destroySocket(socket);
       return;
     }
-    this.sockets.add(socket);
-    socket.data.onDisposed = () => this.release(socket, slot);
-    this.counters.activeConnections = this.sockets.size;
+    const conn: Conn = { socket, data };
+    this.conns.add(conn);
+    data.onDisposed = () => this.release(conn, slot);
+    this.counters.activeConnections = this.conns.size;
     this.counters.totalConnections += 1;
-    try {
-      socket.setNoDelay(true);
-    } catch {
-      // 不支持就算了
-    }
-    void this.dial(socket);
+    prepareSocket(socket);
+    attachPumpSocketHandlers(socket, data);
+    void this.dial(conn);
   }
 
-  private release(socket: MapSocket, slot: PeerStreamSlot): void {
-    if (this.sockets.delete(socket)) this.counters.activeConnections = this.sockets.size;
+  private release(conn: Conn, slot: PeerStreamSlot): void {
+    if (this.conns.delete(conn)) this.counters.activeConnections = this.conns.size;
     slot.release();
   }
 
-  private async dial(socket: MapSocket): Promise<void> {
+  private async dial(conn: Conn): Promise<void> {
     try {
-      const stream = await this.openStream(socket);
-      attachPump(socket.data, new TcpStreamPump(bunPumpSocket(socket), stream, this.counters));
+      const stream = await this.openStream(conn);
+      attachPump(conn.data, new TcpStreamPump(netPumpSocket(conn.socket), stream, this.counters));
     } catch {
-      // 先 resume 再关：被 pause 压住的 close 事件否则出不来
+      // 先 resume 再关：拨号期间停读的 socket 否则收不到 close
       try {
-        socket.resume();
-        socket.terminate();
+        conn.socket.resume();
       } catch {
         // 已经关闭
       }
-      disposePumpSocketData(socket.data);
+      destroySocket(conn.socket);
+      disposePumpSocketData(conn.data);
     }
   }
 
-  private async openStream(socket: MapSocket): Promise<LinkStream> {
+  private async openStream(conn: Conn): Promise<LinkStream> {
     const peers = this.peers();
     if (!peers) throw new Error('mesh not ready');
     const startedAt = Date.now();
@@ -152,7 +162,7 @@ export class PortMapListener {
       this.dialDeadlineMs,
       () => {}
     );
-    if (socket.data.closed || this.stopped) throw new Error('client gone');
+    if (conn.data.closed || this.stopped) throw new Error('client gone');
     const payload: TcpStreamOpenPayload = {
       type: 'tcp',
       mapId: this.row.id,
@@ -165,7 +175,7 @@ export class PortMapListener {
       remaining,
       (late) => late.reset('portmap-dial-timeout')
     );
-    if (socket.data.closed || this.stopped) {
+    if (conn.data.closed || this.stopped) {
       stream.reset('portmap-client-gone');
       throw new Error('client gone');
     }

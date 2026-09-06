@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { Socket } from 'node:net';
 import {
   buildLogin,
   createDelegation,
@@ -25,6 +26,7 @@ import {
 import { createMigratedAuthDb } from '../../auth/test-db';
 import type { AuthDb } from '../../auth/types';
 import { resetPeerStreamSlots } from '../../portmap/budget';
+import { dialTcp } from '../../portmap/dial';
 import { shutdownWriteHalf } from '../../portmap/half-close';
 import { PortMapManager } from '../../portmap/manager';
 import { isPortFree } from '../../portmap/port-probe';
@@ -290,52 +292,70 @@ async function enrollB(a: Awaited<ReturnType<typeof bootA>>) {
 }
 
 type TcpClient = {
-  socket: Bun.Socket<unknown>;
+  socket: Socket;
+  send: (payload: Uint8Array) => Promise<void>;
   waitFor: (total: number) => Promise<Uint8Array>;
+  waitHash: (total: number) => Promise<number>;
   waitClosed: () => Promise<void>;
+  halfClose: () => void;
+  close: () => void;
 };
 
+const KEEP_CHUNKS_LIMIT = 8 * 1024 * 1024;
+
+function fnv1a(bytes: Uint8Array, seed = 2_166_136_261): number {
+  let hash = seed >>> 0;
+  for (let i = 0; i < bytes.byteLength; i += 1) {
+    hash = Math.imul(hash ^ (bytes[i] as number), 16_777_619) >>> 0;
+  }
+  return hash >>> 0;
+}
+
 async function tcpClient(port: number): Promise<TcpClient> {
+  const socket = await dialTcp({ host: '127.0.0.1', port }, 5_000).result;
+  // 普通客户端：不打 allowHalfOpen，对端 FIN 就整条收掉，close 事件才会来
+  socket.allowHalfOpen = false;
+  socket.setNoDelay(true);
   const chunks: Uint8Array[] = [];
-  let received = 0;
-  let closed = false;
+  const state = { received: 0, hash: 2_166_136_261, closed: false };
   const wake: Array<() => void> = [];
-  const socket = await Bun.connect({
-    hostname: '127.0.0.1',
-    port,
-    allowHalfOpen: true,
-    socket: {
-      binaryType: 'uint8array',
-      data(_s, chunk) {
-        chunks.push(new Uint8Array(chunk as unknown as Uint8Array));
-        received += chunk.length;
-        for (const fn of wake.splice(0)) fn();
-      },
-      close() {
-        closed = true;
-        for (const fn of wake.splice(0)) fn();
-      },
-      error() {
-        closed = true;
-        for (const fn of wake.splice(0)) fn();
-      },
-    },
+  const ping = (): void => {
+    for (const fn of wake.splice(0)) fn();
+  };
+  socket.on('data', (chunk: Buffer) => {
+    const bytes = new Uint8Array(chunk);
+    if (state.received < KEEP_CHUNKS_LIMIT) chunks.push(bytes);
+    state.received += bytes.byteLength;
+    state.hash = fnv1a(bytes, state.hash);
+    ping();
   });
-  const tick = () =>
+  socket.on('close', () => {
+    state.closed = true;
+    ping();
+  });
+  socket.on('error', () => {});
+  const tick = (): Promise<void> =>
     new Promise<void>((resolve) => {
       wake.push(resolve);
       setTimeout(resolve, 25);
     });
+  const until = async (total: number): Promise<void> => {
+    const deadline = Date.now() + 120_000;
+    while (state.received < total) {
+      if (state.closed) throw new Error(`socket closed after ${state.received} of ${total} bytes`);
+      if (Date.now() > deadline) throw new Error(`timed out at ${state.received} of ${total}`);
+      await tick();
+    }
+  };
   return {
     socket,
+    send: (payload) =>
+      new Promise<void>((resolve, reject) => {
+        socket.write(payload, (err) => (err ? reject(err) : resolve()));
+      }),
     async waitFor(total) {
-      const deadline = Date.now() + 10_000;
-      while (received < total) {
-        if (closed) throw new Error(`socket closed after ${received} of ${total} bytes`);
-        if (Date.now() > deadline) throw new Error(`timed out at ${received} of ${total} bytes`);
-        await tick();
-      }
-      const out = new Uint8Array(received);
+      await until(total);
+      const out = new Uint8Array(state.received);
       let offset = 0;
       for (const chunk of chunks) {
         out.set(chunk, offset);
@@ -343,12 +363,23 @@ async function tcpClient(port: number): Promise<TcpClient> {
       }
       return out.subarray(0, total);
     },
+    async waitHash(total) {
+      await until(total);
+      return state.hash;
+    },
     async waitClosed() {
-      const deadline = Date.now() + 5_000;
-      while (!closed) {
+      const deadline = Date.now() + 10_000;
+      while (!state.closed) {
         if (Date.now() > deadline) throw new Error('socket stayed open');
         await tick();
       }
+    },
+    halfClose() {
+      const handle = (socket as Socket & { _handle?: { readyState: number; fd: number } })._handle;
+      if (!handle || !shutdownWriteHalf(handle)) throw new Error('half close unavailable');
+    },
+    close() {
+      socket.destroy();
     },
   };
 }
@@ -410,10 +441,16 @@ describe('portmap mesh integration', () => {
     return { a, b, echo, manager, map };
   }
 
+  function ramp(size: number): Uint8Array {
+    const payload = new Uint8Array(size);
+    for (let i = 0; i < size; i += 1) payload[i] = (i * 31) & 0xff;
+    return payload;
+  }
+
   test('round-trips bytes from A to an echo server on B', async () => {
     const { manager, map, echo } = await setup();
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('hello mesh'));
+    await client.send(new TextEncoder().encode('hello mesh'));
     const back = await client.waitFor(10);
     expect(new TextDecoder().decode(back)).toBe('hello mesh');
     expect(echo.connections).toBe(1);
@@ -423,37 +460,65 @@ describe('portmap mesh integration', () => {
     expect(dto.totalConnections).toBe(1);
     expect(dto.bytesIn).toBe(10);
     expect(dto.bytesOut).toBe(10);
-    client.socket.terminate();
+    client.close();
   });
 
   test('carries more than one MiB through the mesh', async () => {
     const { manager, map } = await setup();
     const client = await tcpClient(map.listenPort);
     const size = 1024 * 1024 + 8192;
-    const payload = new Uint8Array(size);
-    for (let i = 0; i < size; i += 1) payload[i] = (i * 7) & 0xff;
-    let offset = 0;
-    while (offset < size) {
-      const written = client.socket.write(payload.subarray(offset));
-      if (written < 0) throw new Error('client socket closed');
-      offset += written;
-      if (offset < size) await Bun.sleep(1);
-    }
+    const payload = ramp(size);
+    await client.send(payload);
     const back = await client.waitFor(size);
     expect(back.byteLength).toBe(size);
-    expect(back[size - 1]).toBe(((size - 1) * 7) & 0xff);
+    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
     await Bun.sleep(50);
     expect(manager.get(map.id).bytesOut).toBe(size);
-    client.socket.terminate();
+    client.close();
   });
+
+  test('carries a payload far larger than the mux window', async () => {
+    const { manager, map } = await setup();
+    const client = await tcpClient(map.listenPort);
+    const size = 56 * 1024 * 1024;
+    const payload = ramp(size);
+    const sent = client.send(payload);
+    const hash = await client.waitHash(size);
+    await sent;
+    expect(hash).toBe(fnv1a(payload));
+    await Bun.sleep(50);
+    expect(manager.get(map.id).bytesOut).toBe(size);
+    expect(manager.get(map.id).bytesIn).toBe(size);
+    client.close();
+  }, 180_000);
+
+  test('runs eight concurrent connections over one peer link', async () => {
+    const { manager, map } = await setup();
+    const size = 6 * 1024 * 1024;
+    const payload = ramp(size);
+    const expected = fnv1a(payload);
+    const clients = await Promise.all(Array.from({ length: 8 }, () => tcpClient(map.listenPort)));
+    const runs = clients.map(async (client) => {
+      const sent = client.send(payload);
+      const hash = await client.waitHash(size);
+      await sent;
+      return hash;
+    });
+    for (const hash of await Promise.all(runs)) expect(hash).toBe(expected);
+    await Bun.sleep(50);
+    const dto = manager.get(map.id);
+    expect(dto.totalConnections).toBe(8);
+    expect(dto.bytesOut).toBe(8 * size);
+    for (const client of clients) client.close();
+  }, 180_000);
 
   test('propagates half-close from the local client', async () => {
     const { map } = await setup();
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('bye'));
+    await client.send(new TextEncoder().encode('bye'));
     const back = await client.waitFor(3);
     expect(new TextDecoder().decode(back)).toBe('bye');
-    client.socket.end();
+    client.halfClose();
     await client.waitClosed();
   });
 
@@ -464,15 +529,15 @@ describe('portmap mesh integration', () => {
     await expect(tcpClient(map.listenPort)).rejects.toThrow();
     expect(manager.update(map.id, { paused: false }).state).toBe('listening');
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('up'));
+    await client.send(new TextEncoder().encode('up'));
     expect(new TextDecoder().decode(await client.waitFor(2))).toBe('up');
-    client.socket.terminate();
+    client.close();
   });
 
   test('closes the connection when B has no matching export row', async () => {
     const { echo, map } = await setup({ withExport: false });
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('nope'));
+    await client.send(new TextEncoder().encode('nope'));
     await client.waitClosed();
     expect(echo.connections).toBe(0);
   });
@@ -480,7 +545,7 @@ describe('portmap mesh integration', () => {
   test('delete stops the listener and frees the port', async () => {
     const { manager, map } = await setup();
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('x'));
+    await client.send(new TextEncoder().encode('x'));
     await client.waitFor(1);
     manager.remove(map.id);
     await client.waitClosed();
@@ -488,59 +553,42 @@ describe('portmap mesh integration', () => {
     expect(manager.list()).toHaveLength(0);
   });
 
-  async function writeAll(socket: Bun.Socket<unknown>, payload: Uint8Array): Promise<void> {
-    let offset = 0;
-    while (offset < payload.byteLength) {
-      const written = socket.write(payload.subarray(offset));
-      if (written < 0) throw new Error('client socket closed');
-      offset += written;
-      if (offset < payload.byteLength) await Bun.sleep(1);
-    }
-  }
-
-  function ramp(size: number): Uint8Array {
-    const payload = new Uint8Array(size);
-    for (let i = 0; i < size; i += 1) payload[i] = (i * 31) & 0xff;
-    return payload;
-  }
-
   test('delivers a reply the target only produces after the client half-closes', async () => {
     const target = startAfterFinServer(new TextEncoder().encode('reply-after-fin'));
     const { map } = await setup({ target });
     const client = await tcpClient(map.listenPort);
-    client.socket.write(new TextEncoder().encode('request'));
+    await client.send(new TextEncoder().encode('request'));
     await Bun.sleep(50);
-    // 客户端只关写半边（Bun 的 end() 会连读半边一起关，这里直接走 POSIX shutdown）
-    expect(shutdownWriteHalf(client.socket)).toBe(true);
+    // 客户端只关写半边（node:net 的 end() 也会连读半边一起关，这里直接走 POSIX shutdown）
+    client.halfClose();
     const back = await client.waitFor(15);
     expect(new TextDecoder().decode(back)).toBe('reply-after-fin');
     expect(target.received()).toBe(7);
-    client.socket.terminate();
+    client.close();
   });
 
   test('backs off on a slow target instead of buffering, and the link keeps working', async () => {
     const slow = startSlowEchoServer();
     const { manager, map } = await setup({ target: slow });
     const client = await tcpClient(map.listenPort);
-    const size = 4 * 1024 * 1024;
+    const size = 32 * 1024 * 1024;
     const payload = ramp(size);
-    const pushed = writeAll(client.socket, payload).catch(() => {});
-    await Bun.sleep(400);
+    const pushed = client.send(payload).catch(() => {});
+    await Bun.sleep(600);
     const stalled = manager.get(map.id).bytesOut;
-    // 目标一个字节都没读：窗口撑满之后就该停在那儿，而不是把 4 MiB 吞进内存
+    // 目标一个字节都没读：窗口 + 内核缓冲撑满之后就该停在那儿，而不是把 32 MiB 吞进内存
     expect(stalled).toBeGreaterThan(0);
-    expect(stalled).toBeLessThan(3 * 1024 * 1024);
+    expect(stalled).toBeLessThan(8 * 1024 * 1024);
     slow.release();
     await pushed;
-    const back = await client.waitFor(size);
-    expect(back.byteLength).toBe(size);
-    expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
+    const hash = await client.waitHash(size);
+    expect(hash).toBe(fnv1a(payload));
     const second = await tcpClient(map.listenPort);
-    second.socket.write(new TextEncoder().encode('ping'));
+    await second.send(new TextEncoder().encode('ping'));
     expect(new TextDecoder().decode(await second.waitFor(4))).toBe('ping');
-    client.socket.terminate();
-    second.socket.terminate();
-  });
+    client.close();
+    second.close();
+  }, 180_000);
 
   test('keeps the bytes sent while the peer link is still being dialled', async () => {
     linkDial.delayMs = 300;
@@ -549,12 +597,12 @@ describe('portmap mesh integration', () => {
     const client = await tcpClient(map.listenPort);
     const size = 2 * 1024 * 1024;
     const payload = ramp(size);
-    await writeAll(client.socket, payload);
+    await client.send(payload);
     const back = await client.waitFor(size);
     expect(back.byteLength).toBe(size);
     expect(back[0]).toBe(0);
     expect(back[size - 1]).toBe(((size - 1) * 31) & 0xff);
     expect(linkDial.count).toBeGreaterThan(before);
-    client.socket.terminate();
+    client.close();
   });
 });

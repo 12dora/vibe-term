@@ -1,10 +1,11 @@
 import { createRequire } from 'node:module';
 
 /**
- * Bun 1.3.14 没有可用的写半边关闭：`socket.end()` 会立刻摘掉本地句柄（readyState 变 -1，读半边
- * 一起消失），`socket.shutdown(true)` 更糟——只触发自己的 `end` 回调，对端根本收不到 FIN；
- * node:net 在 Bun 上是同一层壳，实测行为一致。所以直接调 POSIX 的 `shutdown(fd, SHUT_WR)`，
+ * Bun 1.3.14 没有可用的写半边关闭：`Bun.Socket.end()` 会立刻摘掉本地句柄（readyState 变 -1，
+ * 读半边一起消失），`socket.shutdown(true)` 更糟——只触发自己的 `end` 回调，对端收不到 FIN；
+ * node:net 的 `socket.end()` 同样两半一起关。所以直接调 POSIX 的 `shutdown(fd, SHUT_WR)`，
  * 加载方式与 `log/rotate.ts` 的 dup2 相同，取不到就退回整条关闭。
+ * 传进来的对象要带 `fd` 与 `readyState`：Bun socket 本身，或 node:net socket 的 `_handle`。
  */
 const SHUT_WR = 1;
 

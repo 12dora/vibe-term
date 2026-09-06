@@ -1,58 +1,55 @@
-export type TcpDial<T> = {
+import { type Socket, connect } from 'node:net';
+import { destroySocket } from './socket-handlers';
+
+export type TcpDial = {
   /** 连上返回 socket；超时或被取消则 reject。 */
-  readonly result: Promise<Bun.Socket<T>>;
+  readonly result: Promise<Socket>;
   cancel(): void;
 };
 
-function closeQuietly(socket: { terminate(): void }): void {
-  try {
-    socket.terminate();
-  } catch {
-    // 已经关闭
-  }
-}
+export type TcpDialTarget = { host: string; port: number };
 
 /**
- * 可取消的 TCP 拨号。`Promise.race` 只能让调用方不再等，底层的连接尝试还在跑，所以超时/取消时
- * 一并接管迟到的 socket 并关掉——否则对着一个只丢 SYN 的地址反复开流就能耗光 fd。
+ * 可取消的 TCP 拨号。超时/取消时把底层 socket 一并关掉——否则对着一个只丢 SYN 的地址反复开流
+ * 就能耗光 fd。已经连上之后再 cancel 也会关掉，供流被 RST 时收拾残局。
  */
-export function dialTcp<T>(options: Bun.TCPSocketConnectOptions<T>, timeoutMs: number): TcpDial<T> {
-  let cancelled = false;
-  let abort: ((err: Error) => void) | null = null;
+export function dialTcp(target: TcpDialTarget, timeoutMs: number): TcpDial {
+  const socket = connect({ host: target.host, port: target.port, allowHalfOpen: true });
+  socket.allowHalfOpen = true;
+  let settled = false;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let onConnected: ((value: Socket) => void) | null = null;
+  let onFailed: ((err: Error) => void) | null = null;
+  const result = new Promise<Socket>((resolve, reject) => {
+    onConnected = resolve;
+    onFailed = reject;
+  });
   const stopTimer = (): void => {
     if (timer) clearTimeout(timer);
     timer = null;
   };
-  const connect = Bun.connect<T>(options);
-  const cancel = (reason: string): void => {
-    if (cancelled) return;
-    cancelled = true;
+  const fail = (reason: string): void => {
+    if (settled) return;
+    settled = true;
     stopTimer();
-    void connect.then(closeQuietly).catch(() => {});
-    abort?.(new Error(reason));
+    destroySocket(socket);
+    onFailed?.(new Error(reason));
   };
-  const aborted = new Promise<never>((_resolve, reject) => {
-    abort = reject;
+  socket.once('connect', () => {
+    if (settled) return;
+    settled = true;
+    stopTimer();
+    onConnected?.(socket);
   });
-  const connected = connect.then(
-    (socket) => {
-      stopTimer();
-      if (cancelled) {
-        closeQuietly(socket);
-        throw new Error('portmap-dial-cancelled');
-      }
-      return socket;
-    },
-    (err: unknown) => {
-      stopTimer();
-      throw err;
-    }
-  );
-  timer = setTimeout(() => cancel('portmap-dial-timeout'), timeoutMs);
+  socket.once('error', (err: Error) => fail(err.message || 'portmap-dial-failed'));
+  socket.once('close', () => fail('portmap-dial-closed'));
+  timer = setTimeout(() => fail('portmap-dial-timeout'), timeoutMs);
   return {
-    result: Promise.race([connected, aborted]),
-    cancel: () => cancel('portmap-dial-cancelled'),
+    result,
+    cancel: () => {
+      fail('portmap-dial-cancelled');
+      destroySocket(socket);
+    },
   };
 }
 

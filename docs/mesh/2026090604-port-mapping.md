@@ -12,13 +12,13 @@ hub/中继三条链路最终都收敛成同一个 `LinkSession`，`openStream(pa
 ## 设计
 
 ```
-TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
+TCP 客户端 ──connect──> [A: net.createServer 127.0.0.1:5678]
                               │ 每条连接一条 LinkStream
                               │ openPayload {"type":"tcp","mapId":…,"host":…,"port":…}
                               ▼
                      PeerManager.getLink(B)（dc / ws-secure / relay 自动择优）
                               ▼
-                      [B: acceptTcpStream] ──Bun.connect──> 127.0.0.1:12345
+                      [B: acceptTcpStream] ──net.connect──> 127.0.0.1:12345
 ```
 
 ### 流类型与授权
@@ -54,18 +54,44 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
   绑定，开机时端口被占（`state:'error'`）的行也走这条路。
 - 删除 = 暂停 + 删行，并尽力而为地让 B 删掉对应的放行行（见下）。
 
+### 为什么两侧都用 `node:net`
+
+第一版两侧都用 `Bun.listen` / `Bun.connect`，实测（Bun 1.3.14，脚本见本轮存档）在真实的饱和发送
+（python `socket.sendall` 循环）下会被 RST 掉，原因是 **Bun socket 的 `pause()` 只在第一次
+`resume()` 之前有效**：一旦 resume 过，饱和发送方再打过来时 `pause()` 基本被忽略，即便每个 `data`
+回调里都调用也拦不住——实测单条连接的程序内待发队列能涨到 32–43 MiB，泵只能判定
+`portmap-buffer-overflow` 并断开。这就是 ≥ 20–50 MiB 的传输在真实中继链路上必然失败的原因。
+
+同一台机器上 `node:net` 的 `pause()` 是**真背压**：pause 之后一个字节都不再上来，
+`readableLength` 停在 ~3 MiB，发送方的 `sendall` 被内核堵住。所以监听端与拨号端都换成 `node:net`。
+
+`node:net` 在 Bun 上有三个必须绕开的坑（都已实测确认）：
+
+- `createServer({ allowHalfOpen: true })` / `connect({ allowHalfOpen: true })` 的选项**被忽略**
+  （accept 出来的 socket 读回来是 `false`），于是对端的 FIN 会直接把 socket 销毁。必须在每个
+  socket **实例**上打 `socket.allowHalfOpen = true`（`prepareSocket()`），打了之后 FIN 之后 300 ms
+  才写出的回包能正常送达。
+- `socket.end()` 仍然是两半一起关，所以写半边关闭继续走 `bun:ffi` 的 POSIX
+  `shutdown(fd, SHUT_WR)`，只是作用对象换成 `socket._handle`（node:net socket 底下的原生句柄，
+  带 `fd` 与 `readyState`，服务端 accept 的 socket 与 `net.connect` 连上后的 socket 都有）。
+- 对端被 RST 掉时 Bun 的 net 壳同样只报 `end`，不报 `error`/`close`；区别在于此时 `socket._handle`
+  已经没了（正常 FIN 时它还在且 `readyState === 1`）。`attachPumpSocketHandlers` 用这一点把「对端
+  消失」与「对端半关闭」分开：句柄没了就当连接消失，销毁 socket 让 `close` 事件把并发名额还回来。
+
 ### 背压
 
-泵（`apps/gateway/src/portmap/pump.ts`）不引入额外缓冲，直接把 TCP 背压与 mux 的信用额度接在一起：
+泵（`apps/gateway/src/portmap/pump.ts`）不引入无界缓冲，直接把 TCP 背压与 mux 的信用额度接在一起：
 
-- 远端 → 本地：`stream.readable` 的每一块都要等 `socket.write` 完全写入（部分写入则等 `drain`）
-  才拉下一块。mux 只在应用读取时才回 `WINDOW` 额度，所以「不读」就是跨 mesh 的背压。
-- 本地 → 远端：`socket.data` 拿到的数据入队后立刻 `socket.pause()`，`await stream.write` 完成再
-  `resume()`。队列只在极短窗口内存在，超过 8 MiB 直接判定异常并断开。
-- 拨号窗口（`getLink` + `openStream` 期间）：连接刚建立时**不**暂停，收到第一块数据才
+- 远端 → 本地：`stream.readable` 的每一块写进 socket 后，只要 `socket.write()` 返回 `false`（越过
+  socket 的 `writableHighWaterMark`）就等 `drain` 再拉下一块。mux 只在应用读取时才回 `WINDOW`
+  额度，所以「不读」就是跨 mesh 的背压。
+- 本地 → 远端：待发字节越过**高水位 1 MiB** 就 `socket.pause()`，`await stream.write` 把队列消到
+  **低水位 256 KiB** 以下再 `resume()`。硬上限 `MAX_PENDING_BYTES = 8 MiB` 只兜异常，正常路径碰不到：
+  实测 300 MiB 的饱和发送 + 慢消费者（每块 sleep 2 ms）跑满 20 s，队列峰值 1.49 MiB（≈ 1.5× 高水位），
+  进程 RSS 158 MiB，全程没有 overflow。
+- 拨号窗口（`getLink` + `openStream` 期间）：连接刚建立时**不**停读，收到第一块数据才
   `socket.pause()`——多余的字节留在内核缓冲里由 TCP 自己背压，程序内最多压一块。之所以不一上来就
-  暂停，是因为 Bun 的 `pause()` 会把 `data`/`end`/`close` 一起压住，「连上就走」的客户端否则要等到
-  拨号结束才发现已经断了。
+  停读，是为了让「连上就走」的客户端立刻被发现。
 - 拨号有 15 s 时限（`PORT_MAP_DIAL_DEADLINE_MS`）。超时后迟到的流会被 `reset`，socket 先 `resume`
   再关掉，让被压住的 `close` 事件出来归还名额——名额只在 socket 真正处置掉时才还。
 
@@ -74,18 +100,18 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
 - 本地 FIN → `stream.end()`；对端 END → 只关本地 socket 的**写半边**，读半边继续泵，直到目标自己
   发 FIN；两个方向都结束才整条关闭。目标服务完全可能读到 EOF 之后才产出响应（`nc -N`、某些
   行协议），少了这一步那类响应会被吞掉。
-- **Bun 1.3.14 没有可用的写半边关闭**（实测，见 `apps/gateway/src/portmap/half-close.ts`）：
-  `socket.end()` 立刻把本地句柄摘掉（`readyState` 变 -1，读半边一起没）；`socket.shutdown(true)`
-  只触发自己的 `end` 回调，对端根本收不到 FIN；`node:net` 在 Bun 上是同一层壳，
-  `allowHalfOpen: true` 也救不回来——`end()` 之后立刻 `end`+`close`，回包全丢。
-  所以走 `bun:ffi` 直接调 POSIX 的 `shutdown(fd, SHUT_WR)`（与 `log/rotate.ts` 加载 `dup2` 同一套
-  路子，macOS 用 `libSystem.B.dylib`，Linux 依次试 glibc / musl 的 so 名）。加载不到就退回
-  `socket.end()`，行为与改动前一致（这类环境下 EOF 之后才产生的响应仍会丢）。
-- 该 `shutdown` 不能与 `socket.resume()` 落在同一个 tick：实测那样 Bun 会把读半边一起丢掉，
-  所以写半边关闭推迟一个宏任务再做。
-- `allowHalfOpen: true` 是必须的：它保证收到对端 FIN 之后本地还能继续写。
+- **写半边关闭只能走 FFI**（实测矩阵见 `apps/gateway/src/portmap/half-close.ts`）：
+  `Bun.Socket.end()` 立刻把本地句柄摘掉（`readyState` 变 -1，读半边一起没）；
+  `socket.shutdown(true)` 只触发自己的 `end` 回调，对端根本收不到 FIN；`node:net` 的 `socket.end()`
+  同样两半一起关。所以用 `bun:ffi` 直接调 POSIX 的 `shutdown(fd, SHUT_WR)`（与 `log/rotate.ts`
+  加载 `dup2` 同一套路子，macOS 用 `libSystem.B.dylib`，Linux 依次试 glibc / musl 的 so 名），
+  作用对象是 `socket._handle`。加载不到就退回 `socket.end()`，那类环境下 EOF 之后才产生的响应会丢。
+- FFI 的 `shutdown` 绕过了 node 的写队列，所以必须等本 socket 上排队的写全部落盘（适配器记录在途
+  写的回调）之后再关，否则未发出的字节会被丢掉。
+- `socket.allowHalfOpen = true` 是必须的（实例级，见上）：它保证收到对端 FIN 之后本地还能继续写。
+  代价是半关闭的连接要等目标那侧也结束才会释放；对端硬断（RST）靠 `_handle` 消失识别，立即释放。
 - 链路丢失不重放：字节流没有重放点，`stream.onAbort` 直接关本地 socket，由客户端自己重连。
-  B 侧的中断处理在拨号之前就注册好，流被 RST 时立刻取消底层的 `Bun.connect`——只丢 SYN 的地址
+  B 侧的中断处理在拨号之前就注册好，流被 RST 时立刻取消底层的 `net.connect`——只丢 SYN 的地址
   否则能靠反复开流把 fd 耗光。
 
 ## 接口
@@ -127,5 +153,8 @@ TCP 客户端 ──connect──> [A: Bun.listen 127.0.0.1:5678]
   端口映射的流量与终端流量混在一起，按租户配额限速与计量，不会额外占用 `maxStreams` 名额，
   但中继也无法区分二者。要做「按功能公平分配」只能在节点侧做。
 - **链路升级不迁移**：长连接会把旧载体（如 relay）钉住，DC 升级只对新连接生效，符合 TCP 语义。
+- **绑定失败的报错时机**：`net` 的 `listen()` 只在事件里报错，但绑定本身是同步完成的——
+  `server.address()` 立刻为 `null` 就说明端口被占，`PortMapListener.start()` 据此照旧同步抛
+  `PortMapError('port_in_use')`；异步才冒出来的 `error` 事件走 `onBindFailed`，把行改回 `error` 态。
 - `listen_host` 默认 `127.0.0.1`；填 `0.0.0.0` 等于把 B 的服务开放给 A 所在的局域网，需要使用者自己承担。
 - 端口保留：网关端口与 `TMEX_PEER_PORT` 拒绝映射（`port_reserved`）。

@@ -1,14 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { Socket } from 'node:net';
 import { type LinkStream, createInMemoryLinkPair } from '@tmex/shared/link';
 import { encodeJsonBytes } from '../mesh/ctl';
+import { dialTcp } from './dial';
+import { type PumpSocket, TcpStreamPump, attachPump, createPumpSocketData } from './pump';
 import {
-  type PumpSocketData,
-  TcpStreamPump,
-  attachPump,
-  bunPumpSocket,
-  createPumpSocketData,
-} from './pump';
-import { pumpSocketHandlers } from './socket-handlers';
+  attachPumpSocketHandlers,
+  destroySocket,
+  netPumpSocket,
+  prepareSocket,
+} from './socket-handlers';
 import {
   type EchoServer,
   startAfterFinServer,
@@ -19,12 +20,23 @@ import { type PortMapCounters, createPortMapCounters } from './types';
 
 type Fixture = {
   remote: LinkStream;
-  socket: Bun.Socket<PumpSocketData>;
+  socket: Socket;
   counters: PortMapCounters;
   pump: TcpStreamPump;
 };
 
 const cleanups: Array<() => void> = [];
+
+function fakeSocket(calls: string[] = []): PumpSocket {
+  return {
+    write: () => true,
+    endWrite: () => calls.push('endWrite'),
+    close: () => calls.push('close'),
+    terminate: () => calls.push('terminate'),
+    pause: () => calls.push('pause'),
+    resume: () => calls.push('resume'),
+  };
+}
 
 async function connectPump(port: number): Promise<Fixture> {
   const [linkA, linkB] = createInMemoryLinkPair();
@@ -34,22 +46,14 @@ async function connectPump(port: number): Promise<Fixture> {
   );
   const remote = await remoteReady;
   const data = createPumpSocketData();
-  const socket = await Bun.connect<PumpSocketData>({
-    hostname: '127.0.0.1',
-    port,
-    allowHalfOpen: true,
-    data,
-    socket: pumpSocketHandlers(() => {}),
-  });
+  const socket = await dialTcp({ host: '127.0.0.1', port }, 2_000).result;
+  prepareSocket(socket);
+  attachPumpSocketHandlers(socket, data);
   const counters = createPortMapCounters();
-  const pump = new TcpStreamPump(bunPumpSocket(socket), local, counters);
+  const pump = new TcpStreamPump(netPumpSocket(socket), local, counters);
   attachPump(data, pump);
   cleanups.push(() => {
-    try {
-      socket.terminate();
-    } catch {
-      // 已经关闭
-    }
+    destroySocket(socket);
     linkA.close('test-done');
     linkB.close('test-done');
   });
@@ -133,8 +137,8 @@ describe('portmap pump', () => {
     await fx.remote.end();
     const info = await fx.remote.closed;
     expect(info.reason).toBe('end');
-    await Bun.sleep(50);
-    expect(fx.socket.readyState).not.toBe(1);
+    await Bun.sleep(80);
+    expect(fx.socket.destroyed).toBe(true);
   });
 
   test('keeps the read half after a stream END so a reply produced on EOF still arrives', async () => {
@@ -159,14 +163,88 @@ describe('portmap pump', () => {
     await readExactly(fx.remote, 1);
     fx.remote.reset('test-abort');
     await Bun.sleep(50);
-    expect(fx.socket.readyState).not.toBe(1);
+    expect(fx.socket.destroyed).toBe(true);
   });
 
   test('closing the socket resets the stream', async () => {
     echo = startEchoServer();
     const fx = await connectPump(echo.port);
-    fx.socket.terminate();
+    destroySocket(fx.socket);
     const info = await fx.remote.closed;
     expect(info.reason).toBe('rst');
+  });
+
+  test('a socket that closes without a FIN resets the stream', async () => {
+    const [linkA, linkB] = createInMemoryLinkPair();
+    cleanups.push(() => {
+      linkA.close('test-done');
+      linkB.close('test-done');
+    });
+    const remoteReady = new Promise<LinkStream>((resolve) => linkB.onStream(resolve));
+    const local = await linkA.openStream(encodeJsonBytes({ type: 'tcp' }));
+    const remote = await remoteReady;
+    const pump = new TcpStreamPump(fakeSocket(), local, createPortMapCounters());
+    pump.start();
+    pump.onClose();
+    const info = await remote.closed;
+    expect(info.reason).toBe('rst');
+    expect(info.message).toContain('portmap-socket-closed');
+  });
+
+  test('stops reading above the high water mark and resumes below the low one', async () => {
+    const [linkA, linkB] = createInMemoryLinkPair();
+    cleanups.push(() => {
+      linkA.close('test-done');
+      linkB.close('test-done');
+    });
+    const remoteReady = new Promise<LinkStream>((resolve) => linkB.onStream(resolve));
+    const local = await linkA.openStream(encodeJsonBytes({ type: 'tcp' }));
+    const remote = await remoteReady;
+    const calls: string[] = [];
+    const pump = new TcpStreamPump(fakeSocket(calls), local, createPortMapCounters());
+    pump.start();
+    // 对端一个字节都不读：写满 1 MiB 窗口之后 stream.write 就挂住，pending 越过高水位必须停读
+    for (let i = 0; i < 48; i += 1) pump.onData(new Uint8Array(64 * 1024));
+    expect(calls).toContain('pause');
+    const reader = remote.readable.getReader();
+    let read = 0;
+    while (read < 48 * 64 * 1024) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      read += value?.bytes.byteLength ?? 0;
+    }
+    reader.releaseLock();
+    await Bun.sleep(50);
+    expect(calls).toContain('resume');
+    expect(read).toBe(48 * 64 * 1024);
+  });
+
+  test('waits for drain before pulling the next chunk from the stream', async () => {
+    const [linkA, linkB] = createInMemoryLinkPair();
+    cleanups.push(() => {
+      linkA.close('test-done');
+      linkB.close('test-done');
+    });
+    const remoteReady = new Promise<LinkStream>((resolve) => linkB.onStream(resolve));
+    const local = await linkA.openStream(encodeJsonBytes({ type: 'tcp' }));
+    const remote = await remoteReady;
+    const counters = createPortMapCounters();
+    let accepted = 0;
+    const socket: PumpSocket = {
+      ...fakeSocket(),
+      write(data) {
+        accepted += data.byteLength;
+        return false;
+      },
+    };
+    const pump = new TcpStreamPump(socket, local, counters);
+    pump.start();
+    for (let i = 0; i < 8; i += 1) await remote.write(new Uint8Array(64 * 1024));
+    await Bun.sleep(30);
+    // 第一块之后就在等 drain，绝不能把整条流吞进内存
+    expect(accepted).toBe(64 * 1024);
+    pump.onDrain();
+    await Bun.sleep(30);
+    expect(accepted).toBe(2 * 64 * 1024);
   });
 });

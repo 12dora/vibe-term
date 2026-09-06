@@ -1,19 +1,24 @@
 import type { LinkStream } from '@tmex/shared/link';
-import { halfCloseSupported, shutdownWriteHalf } from './half-close';
 import type { PortMapCounters } from './types';
 
-/** socket → 流方向的兜底缓冲上限：正常路径上 pause 已经封住，越界说明对端行为异常。 */
+/**
+ * socket → 流方向的水位。node:net 的 `pause()` 是真背压（内核窗口收紧，发送方被堵住），
+ * 到高水位就停读，回落到低水位再继续；`MAX_PENDING_BYTES` 只兜异常，正常路径永远碰不到。
+ */
+const PENDING_HIGH_WATER = 1024 * 1024;
+const PENDING_LOW_WATER = 256 * 1024;
 const MAX_PENDING_BYTES = 8 * 1024 * 1024;
 /**
- * 拨号窗口里的兜底缓冲上限。拨号期间 socket 是 pause 的，正常情况下这里始终为空；
+ * 拨号窗口里的兜底缓冲上限。拨号期间收到第一块数据就会停读，正常情况下这里最多压一块；
  * 留一份余量只为兜住 pause 生效前底层已经读上来的那一次数据。
  */
 const MAX_EARLY_BYTES = 1024 * 1024;
 
 export type PumpSocket = {
-  write(data: Uint8Array): number;
-  /** 只关写半边、保留读半边。返回 false 表示环境不支持，socket 已被整条关掉。 */
-  endWrite(): boolean;
+  /** 返回 false 表示写缓冲已过高水位，调用方要等 `onDrain` 之后再写。 */
+  write(data: Uint8Array): boolean;
+  /** 只关写半边、保留读半边；做不到时退回整条关闭。 */
+  endWrite(): void;
   /** 两个方向都结束后的正常收尾（发 FIN，不发 RST）。 */
   close(): void;
   terminate(): void;
@@ -21,7 +26,7 @@ export type PumpSocket = {
   resume(): void;
 };
 
-/** Bun socket 回调与泵之间的中转：拨号还没完成时先把早到的数据存下。 */
+/** socket 回调与泵之间的中转：拨号还没完成时先把早到的数据存下。 */
 export type PumpSocketData = {
   pump: TcpStreamPump | null;
   early: Uint8Array[];
@@ -55,7 +60,6 @@ export function attachPump(data: PumpSocketData, pump: TcpStreamPump): void {
 
 /** 返回 false 表示拨号窗口里攒过了上限，调用方应直接断开这条连接。 */
 export function onSocketData(data: PumpSocketData, chunk: Uint8Array): boolean {
-  // Bun 会复用回调里的底层缓冲，异步写出前必须拷一份
   const copy = new Uint8Array(chunk);
   if (data.pump) {
     data.pump.onData(copy);
@@ -66,39 +70,10 @@ export function onSocketData(data: PumpSocketData, chunk: Uint8Array): boolean {
   return data.earlyBytes <= MAX_EARLY_BYTES;
 }
 
-/** 把 Bun 的 socket 适配成泵要的形状：写半边关闭走 POSIX shutdown，退化时才整条关。 */
-export function bunPumpSocket(socket: Bun.Socket<PumpSocketData>): PumpSocket {
-  const quietly = (fn: () => void): void => {
-    try {
-      fn();
-    } catch {
-      // 已经关闭
-    }
-  };
-  return {
-    write: (data) => socket.write(data),
-    endWrite: () => {
-      if (!halfCloseSupported()) {
-        quietly(() => socket.end());
-        return false;
-      }
-      // 与 socket.resume() 同一个 tick 里做 shutdown，Bun 会把读半边一起丢掉，推迟一个宏任务
-      setTimeout(() => {
-        if (!shutdownWriteHalf(socket)) quietly(() => socket.end());
-      }, 0);
-      return true;
-    },
-    close: () => quietly(() => socket.end()),
-    terminate: () => quietly(() => socket.terminate()),
-    pause: () => quietly(() => socket.pause()),
-    resume: () => quietly(() => socket.resume()),
-  };
-}
-
 /**
  * 一条 TCP 连接与一条 mux 流之间的双向泵。
- * 下行只在 socket 写入被接受后再取下一块，让 mux 的 WINDOW 额度直接成为跨 mesh 的背压；
- * 上行在 `stream.write` 未决期间暂停 socket，两侧都不额外缓冲。
+ * 下行只在 socket 写入被接受（或排空）之后再取下一块，让 mux 的 WINDOW 额度成为跨 mesh 的背压；
+ * 上行在 pending 越过高水位时停读 socket，回落到低水位再恢复。两侧都不无界缓冲。
  */
 export class TcpStreamPump {
   private readonly socket: PumpSocket;
@@ -132,7 +107,7 @@ export class TcpStreamPump {
     void this.runDownlink();
   }
 
-  /** 拨号期间可能被停读过，接上泵之后由泵决定继续读还是保持暂停。 */
+  /** 拨号期间被停读过，接上泵之后由泵决定继续读还是保持暂停。 */
   resumeReads(): void {
     if (this.paused || this.destroyed || this.socketClosed) return;
     this.socket.resume();
@@ -147,7 +122,7 @@ export class TcpStreamPump {
       this.destroy('portmap-buffer-overflow');
       return;
     }
-    if (!this.paused) {
+    if (!this.paused && this.pendingBytes >= PENDING_HIGH_WATER) {
       this.paused = true;
       this.socket.pause();
     }
@@ -176,7 +151,9 @@ export class TcpStreamPump {
     const waiters = this.drainWaiters;
     this.drainWaiters = [];
     for (const waiter of waiters) waiter(false);
-    if (this.streamEnded) return;
+    if (this.streamEnded || this.destroyed) return;
+    // 本地已经发过 FIN：剩余上行数据由 flushUplink 收尾（发完再 end），这里不能改成 RST
+    if (this.localFin) return;
     if (this.remoteEnded) {
       void this.endStream();
       return;
@@ -232,6 +209,7 @@ export class TcpStreamPump {
         this.pendingBytes -= chunk.byteLength;
         await this.stream.write(chunk);
         this.counters.bytesOut += chunk.byteLength;
+        this.maybeResume();
       }
     } catch {
       this.uploading = false;
@@ -240,11 +218,15 @@ export class TcpStreamPump {
     }
     this.uploading = false;
     if (this.destroyed) return;
-    if (this.paused && !this.socketClosed) {
-      this.paused = false;
-      this.socket.resume();
-    }
+    this.maybeResume();
     if (this.localFin) await this.endStream();
+  }
+
+  private maybeResume(): void {
+    if (!this.paused || this.socketClosed || this.destroyed) return;
+    if (this.pendingBytes > PENDING_LOW_WATER) return;
+    this.paused = false;
+    this.socket.resume();
   }
 
   private async runDownlink(): Promise<void> {
@@ -268,16 +250,9 @@ export class TcpStreamPump {
   }
 
   private async writeToSocket(bytes: Uint8Array): Promise<void> {
-    let offset = 0;
-    while (offset < bytes.byteLength) {
-      if (this.socketClosed || this.destroyed) throw new Error('socket closed');
-      const written = this.socket.write(offset === 0 ? bytes : bytes.subarray(offset));
-      if (written < 0) throw new Error('socket closed');
-      offset += written;
-      if (offset < bytes.byteLength && !(await this.waitDrain())) {
-        throw new Error('socket closed');
-      }
-    }
+    if (this.socketClosed || this.destroyed) throw new Error('socket closed');
+    if (this.socket.write(bytes)) return;
+    if (!(await this.waitDrain())) throw new Error('socket closed');
   }
 
   private waitDrain(): Promise<boolean> {

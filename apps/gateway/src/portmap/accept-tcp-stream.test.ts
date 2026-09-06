@@ -47,10 +47,12 @@ async function openTcpStream(
 describe('portmap acceptTcpStream', () => {
   let echo: EchoServer | null = null;
 
-  afterEach(() => {
+  afterEach(async () => {
     while (links.length > 0) links.pop()?.close('test-done');
     echo?.stop();
     echo = null;
+    // socket 的 close 事件是异步的，等它把名额还回来再清零，否则会串到下一条用例
+    await Bun.sleep(30);
     resetPeerStreamSlots();
   });
 

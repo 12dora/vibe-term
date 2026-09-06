@@ -1,13 +1,6 @@
 import { dialTcp } from './dial';
+import { destroySocket } from './socket-handlers';
 import { PORT_MAP_TARGET_PROBE_TIMEOUT_MS } from './types';
-
-function closeQuietly(socket: { terminate(): void }): void {
-  try {
-    socket.terminate();
-  } catch {
-    // 已经关闭
-  }
-}
 
 /** 绑定再立刻释放：能绑上即视为空闲。不做重试，调用方拿到 false 就报端口占用。 */
 export function isPortFree(host: string, port: number): boolean {
@@ -32,12 +25,9 @@ export async function isPortListening(
   port: number,
   timeoutMs = PORT_MAP_TARGET_PROBE_TIMEOUT_MS
 ): Promise<boolean> {
-  const dial = dialTcp<undefined>(
-    { hostname: host, port, socket: { data() {}, error() {}, close() {} } },
-    timeoutMs
-  );
+  const dial = dialTcp({ host, port }, timeoutMs);
   try {
-    closeQuietly(await dial.result);
+    destroySocket(await dial.result);
     return true;
   } catch {
     return false;
