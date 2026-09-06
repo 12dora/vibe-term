@@ -9,6 +9,7 @@ import { filesRoutes } from './files';
 import { json } from './http';
 import { llmRoutes } from './llm';
 import { telegramRoutes, webhookRoutes, weixinRoutes } from './messaging-routes';
+import { notificationsMeshRoutes } from './notifications-mesh-routes';
 import {
   type ApiRoute,
   type ApiRouteContext,
@@ -32,6 +33,7 @@ const apiRoutes: ApiRoute[] = [
   ...telegramRoutes,
   ...weixinRoutes,
   ...llmRoutes,
+  ...notificationsMeshRoutes,
   ...agentRoutes,
   ...watchRoutes,
   ...filesRoutes,
