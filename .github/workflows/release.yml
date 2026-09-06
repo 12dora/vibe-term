@@ -66,6 +66,13 @@ jobs:
           shasum -a 256 "tmex-cli-${VERSION}.tgz" > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Sign SHA256SUMS
+        env:
+          TMEX_RELEASE_SIGNING_KEY: ${{ secrets.TMEX_RELEASE_SIGNING_KEY }}
+        run: |
+          bun scripts/release/sign-sums.ts packages/app/SHA256SUMS
+          cat packages/app/SHA256SUMS.sig
+
       - name: Publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,13 +81,14 @@ jobs:
           VERSION="${{ steps.tag.outputs.version }}"
           TGZ="packages/app/tmex-cli-${VERSION}.tgz"
           SUMS="packages/app/SHA256SUMS"
+          SIG="packages/app/SHA256SUMS.sig"
           NOTES_ARGS=(--generate-notes)
           if [ -f packages/app/CHANGELOG.md ]; then
             NOTES_ARGS=(--notes-file packages/app/CHANGELOG.md)
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release edit "$TAG" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"
-            gh release upload "$TAG" "$TGZ" "$SUMS" --clobber
+            gh release upload "$TAG" "$TGZ" "$SUMS" "$SIG" --clobber
           else
-            gh release create "$TAG" "$TGZ" "$SUMS" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"
+            gh release create "$TAG" "$TGZ" "$SUMS" "$SIG" --title "tmex-cli ${VERSION}" "${NOTES_ARGS[@]}"
           fi

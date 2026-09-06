@@ -175,4 +175,5 @@ export {
   rolesFromName,
   validateRoles,
 } from './roles';
+export * from './release/release-signing';
 export * from './release/source';

@@ -3,7 +3,6 @@ import {
   KEYLOG_RECORD_COMPAT,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
   MIN_HUB_AUTH_RECORD_VERSION,
-  READMIT_NODE_RECORD_TYPES,
   RELAY_RECORD_TYPES,
   RENAME_NODE_RECORD_TYPES,
   decodeAdmitHubPayload,
@@ -257,7 +256,8 @@ export function inspectHubAuthRecordCompat(
   if (isNodeSideRecordType(type) && !hasKnownMembers(userStore, relayMode)) {
     return { ok: true };
   }
-  const failClosedUncached = (READMIT_NODE_RECORD_TYPES as readonly string[]).includes(type);
+  // 版本未知的成员是否也要挡：由记录类型自己的兼容规格说了算（见 KeyLogRecordCompatSpec）。
+  const failClosedUncached = spec.failClosedUncached === true;
   const nodes = nodesBlockingMinVersion(userStore, spec.minVersion, userId, {
     ...opts,
     failClosedUncached,

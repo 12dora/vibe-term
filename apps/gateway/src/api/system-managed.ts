@@ -9,7 +9,8 @@ export function handleManagedSystemApiRequest(req: Request, path: string): Respo
   if (
     path === '/api/system/update-check' ||
     path === '/api/system/upgrade' ||
-    path === '/api/system/upgrade/package'
+    path === '/api/system/upgrade/package' ||
+    path === '/api/system/upgrade/package/manifest'
   ) {
     return json(
       {

@@ -136,6 +136,11 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.integrityUnverifiedDenied':
       'Release {{version}} has no SHA256SUMS. Re-run with --allow-unverified to proceed.',
     'upgrade.integrityMissingEntry': 'SHA256SUMS does not list {{file}}.',
+    'upgrade.signatureRequired':
+      'Release {{version}} has no SHA256SUMS.sig. Signed releases are required from {{since}} on; refusing to continue.',
+    'upgrade.signatureInvalid':
+      'Release {{version}} SHA256SUMS signature is not valid ({{reason}}). Refusing to continue.',
+    'upgrade.signatureHttpFailed': 'Failed to fetch SHA256SUMS.sig: {{detail}}',
     'upgrade.pidNotOwned': 'PID {{pid}} is not the tmex runtime for this install ({{installDir}}).',
     'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
 
@@ -390,6 +395,10 @@ const MESSAGES: Record<CliLang, Record<string, string>> = {
     'upgrade.integrityUnverifiedDenied':
       '版本 {{version}} 缺少 SHA256SUMS。若需跳过校验，请显式传入 --allow-unverified。',
     'upgrade.integrityMissingEntry': 'SHA256SUMS 中没有 {{file}}。',
+    'upgrade.signatureRequired':
+      '版本 {{version}} 缺少 SHA256SUMS.sig。{{since}} 起的发行包必须带签名，拒绝继续。',
+    'upgrade.signatureInvalid': '版本 {{version}} 的 SHA256SUMS 签名无效（{{reason}}），拒绝继续。',
+    'upgrade.signatureHttpFailed': '获取 SHA256SUMS.sig 失败：{{detail}}',
     'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 tmex 运行时（{{installDir}}）。',
     'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
 

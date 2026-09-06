@@ -1,5 +1,15 @@
 import { DEFAULT_AGENT_SESSION_TITLE } from '@tmex/shared';
-import { RemotePaneRuntime } from '../agent/remote-pane-runtime';
+import {
+  type StoredPaneGrant,
+  commitPreparedGrant,
+  encryptPaneGrant,
+  ensureSessionGrant,
+  loadSessionGrant,
+  markSessionGrantStale,
+  prepareSessionGrant,
+  revokeGrantLater,
+  revokeSessionGrant,
+} from '../agent/pane-grant/client';
 import type { AgentSupervisor } from '../agent/supervisor';
 import { getDeviceById } from '../db';
 import {
@@ -9,11 +19,12 @@ import {
   getAgentSessionById,
   getAllAgentSessions,
   updateAgentSession,
+  updateAgentSessionIfUnchanged,
 } from '../db/agent';
 import { t } from '../i18n';
-import { getMeshAgentBridge } from '../mesh/mesh-agent-bridge';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { mapSupervisorError, toSessionDto } from './agent-dtos';
+import { createRemotePaneRuntime, prepareRemotePane } from './agent-remote-pane';
 import { parseAgentSessionConfig } from './agent-session-config';
 import { type ConfigFieldSpec, type FieldParseResult, applyConfigFields } from './config-field';
 import { json, readJsonObjectBody } from './http';
@@ -60,14 +71,14 @@ async function captureSessionOrigin(
   deviceId: string,
   paneId: string,
   fallbackTitle: string | null,
-  nodeId: string | null
+  nodeId: string | null,
+  grant: StoredPaneGrant | null = null
 ): Promise<{ title: string | null; processName: string | null }> {
   let processName: string | null = null;
   try {
     if (nodeId) {
-      const bridge = getMeshAgentBridge();
-      if (bridge) {
-        const runtime = new RemotePaneRuntime(nodeId, deviceId, bridge.forwardInternalHttp);
+      const runtime = createRemotePaneRuntime(nodeId, deviceId, grant);
+      if (runtime) {
         const info = await runtime.getPaneInfo(paneId);
         processName = info.currentCommand ?? info.title ?? null;
       }
@@ -122,17 +133,6 @@ async function handleCreateSession(req: Request): Promise<Response> {
   if (!nodeId && !getDeviceById(deviceId)) {
     return json({ error: t('apiError.deviceNotFound') }, 404);
   }
-  if (nodeId) {
-    const bridge = getMeshAgentBridge();
-    const status = bridge?.lookupNode(nodeId) ?? 'unknown';
-    if (status === 'unknown') {
-      return json({ error: 'NODE_NOT_FOUND' }, 404);
-    }
-    if (status === 'offline') {
-      return json({ error: 'NODE_UNREACHABLE' }, 503);
-    }
-  }
-
   const paneId = typeof raw.paneId === 'string' ? raw.paneId.trim() : '';
   if (!paneId) {
     return json({ error: t('apiError.agentPaneRequired') }, 400);
@@ -143,11 +143,21 @@ async function handleCreateSession(req: Request): Promise<Response> {
     return json({ error: parsed.error }, 400);
   }
 
+  let grant: StoredPaneGrant | null = null;
+  if (nodeId) {
+    const prepared = await prepareRemotePane(req, { nodeId, deviceId, paneId });
+    if (!prepared.ok) {
+      return prepared.response;
+    }
+    grant = prepared.grant;
+  }
+
   const origin = await captureSessionOrigin(
     deviceId,
     paneId,
     typeof raw.originPaneTitle === 'string' ? raw.originPaneTitle : null,
-    nodeId
+    nodeId,
+    grant
   );
 
   const session = createAgentSession({
@@ -158,6 +168,7 @@ async function handleCreateSession(req: Request): Promise<Response> {
     ...parsed.config,
     originPaneTitle: origin.title,
     originProcessName: origin.processName,
+    remoteGrant: grant ? await encryptPaneGrant(grant) : null,
   });
 
   return json({ session: toSessionDto(session) }, 201);
@@ -192,14 +203,61 @@ async function handleUpdateSession(req: Request, id: string): Promise<Response> 
     return json({ error: parsed.error }, 400);
   }
 
-  const session = updateAgentSession(id, { ...identity.fields, ...parsed.config });
+  const fields = { ...identity.fields, ...parsed.config };
+  const rebound = identity.fields.paneId;
+  // 改绑窗格：授权必须按**将要写入**的窗格先签好，再与绑定一起提交；
+  // 授权没签下来时会话一个字段都不能动，否则前端认为失败、后端却已经换了绑定。
+  if (existing.nodeId && typeof rebound === 'string' && rebound !== existing.paneId) {
+    return commitPaneRebind(req, existing, fields, rebound);
+  }
+
+  const session = updateAgentSession(id, fields);
   if (!session) {
     return json({ error: t('apiError.agentSessionNotFound') }, 404);
   }
   return json({ session: toSessionDto(session) });
 }
 
-async function handleDeleteSession(id: string, supervisor: AgentSupervisor): Promise<Response> {
+async function commitPaneRebind(
+  req: Request,
+  existing: AgentSessionRecord,
+  fields: Record<string, unknown>,
+  paneId: string
+): Promise<Response> {
+  const prepared = await prepareSessionGrant(req, existing, paneId);
+  if (!prepared.ok) {
+    return prepared.response;
+  }
+  const previous = await loadSessionGrant(existing.id);
+  const session = updateAgentSessionIfUnchanged(
+    existing.id,
+    {
+      updatedAt: existing.updatedAt,
+      nodeId: existing.nodeId,
+      deviceId: existing.deviceId,
+      paneId: existing.paneId,
+    },
+    { ...fields, remoteGrant: prepared.cipher }
+  );
+  if (!session) {
+    if (prepared.grant) revokeGrantLater(prepared.grant);
+    return json({ error: t('apiError.agentSessionChanged') }, 409);
+  }
+  if (prepared.grant && prepared.cipher) {
+    commitPreparedGrant(session.id, prepared.cipher, prepared.grant, previous);
+  } else {
+    // 目标节点旧版本或一时够不着：旧授权已不匹配新窗格，标记待补签
+    if (previous) revokeGrantLater(previous);
+    markSessionGrantStale(session.id);
+  }
+  return json({ session: toSessionDto(session) });
+}
+
+async function handleDeleteSession(
+  req: Request,
+  id: string,
+  supervisor: AgentSupervisor
+): Promise<Response> {
   const existing = getAgentSessionById(id);
   if (!existing) {
     return json({ error: t('apiError.agentSessionNotFound') }, 404);
@@ -209,6 +267,7 @@ async function handleDeleteSession(id: string, supervisor: AgentSupervisor): Pro
     await supervisor.stopSession(id);
   }
 
+  revokeSessionGrant(req, existing);
   deleteAgentSession(id);
   return json({ success: true });
 }
@@ -248,7 +307,7 @@ export function createAgentSessionRoutes(supervisor: AgentSupervisor): ApiRoute[
     route({
       method: 'DELETE',
       path: '/api/agent/sessions/:id',
-      handler: (_req, params) => handleDeleteSession(params.id, supervisor),
+      handler: (req, params) => handleDeleteSession(req, params.id, supervisor),
     }),
     route({
       method: 'POST',

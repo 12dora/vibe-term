@@ -13,7 +13,7 @@ import { HUB_NOT_WRITER } from '@tmex/shared/uplink';
 import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import { pickWriterHub } from '../auth/mesh-hub-store';
-import { makeVerifyPasskeyAssertion } from '../auth/passkey';
+import { makeDeferredVerifyPasskeyAssertion } from '../auth/passkey';
 import type { UserRecord } from '../auth/user-store';
 import {
   applyForcedKeyLogCompat,
@@ -335,7 +335,11 @@ export class AuthKeyLogRoutes {
     }
     try {
       const state = this.deps.keyLogService.currentState(userId);
-      const verifyPasskeyAssertion = makeVerifyPasskeyAssertion(this.deps.userStore);
+      // 预演必须无副作用：计数器只在记录真正落库那一次推进（见 makeDeferredVerifyPasskeyAssertion），
+      // 否则计数器会自增的认证器上，紧随其后的本地落账验签必然失败。
+      const { verify: verifyPasskeyAssertion } = makeDeferredVerifyPasskeyAssertion(
+        this.deps.userStore
+      );
       const verified = await verifyKeyLogRecord(bytes, sig, {
         head: state.head,
         rootEpoch: state.rootEpoch,

@@ -1,5 +1,6 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
+import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
 import { getAccessAddresses } from '../system/access-addresses';
@@ -41,6 +42,7 @@ export function handleSystemApiRequest(
         'upgrade-cancel',
         'uninstall',
         'staged-package-resume',
+        'signed-package',
       ],
     });
   }
@@ -66,6 +68,11 @@ function handleUpgradeApiRequest(
   }
   if (path === '/api/system/upgrade') return dispatchUpgradeCollection(req);
   if (path === '/api/system/upgrade/package') return dispatchUpgradePackage(req);
+  if (path === '/api/system/upgrade/package/manifest') {
+    if (req.method !== 'POST') return undefined;
+    if (isManaged()) return managedExternallyResponse();
+    return handleStagePackageManifestOpen(req);
+  }
   return undefined;
 }
 
@@ -150,6 +157,16 @@ function requestIsStagedAuthenticated(req: Request): boolean {
   return Boolean(ctx.sid && ctx.uid);
 }
 
+/**
+ * 请求是不是别的节点转发进来的。远程发起的升级不享受「老版本免签」——入口被攻陷时，
+ * 先降级到没有验签的旧版本、再往那个版本推任意代码是一条完整的提权链。
+ */
+function requestIsRemotelyInitiated(req: Request): boolean {
+  const dispatch = requestDispatchContext.get(req);
+  if (dispatch && dispatch.viaNodeId !== MESH_VIA_SELF) return true;
+  return isPeerRequest(req);
+}
+
 function stagedRequiresAuth(): Response {
   return json({ code: 'UPGRADE_NOT_ALLOWED', reason: 'staged_requires_auth' }, 403);
 }
@@ -189,12 +206,16 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   const result = await startLocalUpgradeAttempt(parsed.version, {
     source: parsed.source,
     sha256: parsed.sha256,
+    remote: requestIsRemotelyInitiated(req),
   });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);
   }
   if (!result.ok && result.code === 'PACKAGE_NOT_STAGED') {
     return json({ code: 'PACKAGE_NOT_STAGED' }, 409);
+  }
+  if (!result.ok && result.code === 'UPGRADE_SIGNATURE_REQUIRED') {
+    return json({ code: 'UPGRADE_SIGNATURE_REQUIRED' }, 409);
   }
   if (!result.ok) {
     return json({ ...result.status, error: t('apiError.upgradeInProgress') }, 409);
@@ -285,6 +306,46 @@ async function handleStagedPackageStatusOpen(req: Request): Promise<Response> {
     receivedBytes: result.receivedBytes,
     complete: result.complete,
   });
+}
+
+/** 清单体上限：SHA256SUMS 原文 + 一行签名，正常只有几百字节。 */
+const MANIFEST_BODY_MAX_BYTES = 64 * 1024;
+
+type ManifestBody = { version: string; sums: unknown; sig: unknown };
+
+async function readManifestBody(req: Request): Promise<ManifestBody | null> {
+  const declared = Number(req.headers.get('content-length') ?? '');
+  if (Number.isFinite(declared) && declared > MANIFEST_BODY_MAX_BYTES) return null;
+  let raw: string;
+  try {
+    raw = await req.text();
+  } catch {
+    return null;
+  }
+  if (raw.length > MANIFEST_BODY_MAX_BYTES) return null;
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    if (typeof parsed !== 'object' || parsed === null) return null;
+    const body = parsed as { version?: unknown; sums?: unknown; sig?: unknown };
+    if (typeof body.version !== 'string' || !isReleaseVersion(body.version.trim())) return null;
+    return { version: body.version.trim(), sums: body.sums, sig: body.sig };
+  } catch {
+    return null;
+  }
+}
+
+async function handleStagePackageManifestOpen(req: Request): Promise<Response> {
+  const blocked = rejectStagedPackageRequest(req);
+  if (blocked) return blocked;
+  const body = await readManifestBody(req);
+  if (!body) return json({ code: 'BAD_REQUEST' }, 400);
+  const { upgradeController } = await import('../system/upgrade');
+  const result = await upgradeController.putPackageManifest(body.version, {
+    sums: body.sums,
+    sig: body.sig,
+  });
+  if (!result.ok) return json({ code: result.code }, result.status);
+  return json({ version: result.version, sha256: result.sha256, keyId: result.keyId });
 }
 
 async function handleStagePackageOpen(req: Request): Promise<Response> {

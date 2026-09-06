@@ -12,7 +12,7 @@ import {
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
-import { errorMessage, releaseTarballName } from '@tmex/shared';
+import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { partPathOf, resumableSink } from '@tmex/transfer/node';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
@@ -26,24 +26,29 @@ import {
   sweepReleaseCache,
 } from './release-download';
 import {
+  type PackageManifestResult,
+  persistStagedManifest,
+  removeStagedManifest,
+  stagedManifestExpired,
+  stagedManifestMatches,
+  stagedManifestSha256,
+  verifyPackageManifest,
+} from './upgrade-manifest';
+import {
   type StagePackageOpts,
   type StagePackageResult,
   type StagedPackageRecord,
   type StagedPackageStatusResult,
+  classifyStagedEntry,
   fileSizeOrZero,
+  removeExpiredStagedFiles,
   stageFailureToResult,
   stagedPartExpired,
   stagedPartPath,
   stagedSinkDescriptor,
 } from './upgrade-staging';
 
-export {
-  assertReleaseIntegrity,
-  fetchReleaseSha256Sums,
-  parseSha256Sums,
-  releaseSha256SumsUrl,
-  sha256Hex,
-} from './release-download';
+export { parseSha256Sums, releaseSha256SumsUrl, sha256Hex } from './release-download';
 export { processCommandLine, processStartIdentity };
 export type {
   StagePackageOpts,
@@ -96,11 +101,19 @@ export type UpgradeControllerDeps = {
 export type UpgradeStartOpts = {
   source?: 'release' | 'staged';
   sha256?: string;
+  /**
+   * 从别的节点转发进来的升级：一律要求版本在签名下限之上，否则被攻陷的入口可以先让节点
+   * 装回没有验签的老版本、再往那个版本推任意代码。缺签名的历史版本只留给本机操作者。
+   */
+  remote?: boolean;
 };
 
 export type UpgradeStartResult =
   | { ok: true }
-  | { ok: false; code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' };
+  | {
+      ok: false;
+      code: 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED' | 'UPGRADE_SIGNATURE_REQUIRED';
+    };
 
 export type UpgradeCancelResult =
   | { ok: true; status: UpgradeStatus }
@@ -217,11 +230,20 @@ export class UpgradeController {
 
   tryStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
     if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+    // 远程发起：版本必须在签名下限之上，装的东西才一定经过验签（含 source:'release' 的自下载）。
+    if (opts?.remote && !releaseSignatureRequired(version)) {
+      return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
+    }
     const source = opts?.source ?? 'release';
     let staged: StagedPackageRecord | null = null;
     if (source === 'staged') {
       staged = this.lookupStaged(version, opts?.sha256);
       if (!staged) return { ok: false, code: 'PACKAGE_NOT_STAGED' };
+      // 推来的包一律要有可验签的清单，且清单摘要就是盘上这个包；没有开关能绕过。
+      const installDir = this.installDir();
+      if (!installDir || !stagedManifestMatches(installDir, version, staged.sha256)) {
+        return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
+      }
     }
     this.state = 'downloading';
     this.targetVersion = version;
@@ -259,6 +281,35 @@ export class UpgradeController {
     });
   }
 
+  private installDir(): string | null {
+    return resolveUpgradeInstallDir((this.deps.getInstallInfo ?? getInstallInfo)());
+  }
+
+  /** `POST /api/system/upgrade/package/manifest`：验签后把清单落成 sidecar，之后收字节以它为准。 */
+  async putPackageManifest(
+    version: string,
+    input: { sums: unknown; sig: unknown }
+  ): Promise<PackageManifestResult> {
+    const verified = verifyPackageManifest({ version, sums: input.sums, sig: input.sig });
+    if (!verified.ok) return verified;
+    const installDir = this.installDir();
+    if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    try {
+      // 先把过期的暂存包清干净（同步完成），再落新清单：顺序反了会被上一轮的过期清理连带删掉。
+      this.loadStagedFromDisk(installDir);
+      this.dropExpiredStaged(installDir);
+      await persistStagedManifest(installDir, verified.manifest, (this.deps.now ?? Date.now)());
+    } catch {
+      return { ok: false, status: 500, code: 'STAGE_FAILED' };
+    }
+    return {
+      ok: true,
+      version,
+      sha256: verified.manifest.sha256,
+      keyId: verified.manifest.keyId,
+    };
+  }
+
   async removeStagedPackage(version: string): Promise<{ ok: true } | { ok: false; status: 404 }> {
     if (this.stagingVersion === version) {
       await this.stagingDone;
@@ -277,6 +328,7 @@ export class UpgradeController {
     this.staged.delete(version);
     await rm(tgz, { force: true }).catch(() => {});
     await rm(sidecar, { force: true }).catch(() => {});
+    await removeStagedManifest(stagedDir, version);
     for (const part of parts) await rm(part, { force: true }).catch(() => {});
     return { ok: true };
   }
@@ -367,12 +419,16 @@ export class UpgradeController {
     if (!/^[0-9a-f]{64}$/.test(expected)) {
       return { ok: false, status: 400, code: 'BAD_REQUEST' };
     }
-    const install = (this.deps.getInstallInfo ?? getInstallInfo)();
-    const installDir = resolveUpgradeInstallDir(install);
+    const installDir = this.installDir();
     if (!installDir) {
       return { ok: false, status: 500, code: 'STAGE_FAILED' };
     }
     if (!body) return { ok: false, status: 400, code: 'BAD_REQUEST' };
+    // 已有清单就以清单摘要为准：推包方自报的 sha256 对不上，收字节这一步就断掉。
+    const manifestSha256 = stagedManifestSha256(installDir, version);
+    if (manifestSha256 !== null && manifestSha256 !== expected) {
+      return { ok: false, status: 409, code: 'UPGRADE_MANIFEST_MISMATCH' };
+    }
 
     await this.repairStagingArtifacts(installDir, version);
     const stagedDir = join(installDir, 'staging', 'staged');
@@ -501,10 +557,8 @@ export class UpgradeController {
       const at = Date.parse(record.stagedAt);
       if (!Number.isFinite(at) || now - at > STAGED_PACKAGE_TTL_MS) {
         this.staged.delete(version);
-        void rm(record.path, { force: true }).catch(() => {});
-        void rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
-          force: true,
-        }).catch(() => {});
+        // 清单不在这里删：重试时它可能刚被换成新的一份，按自报时间在孤儿清理里过期。
+        removeExpiredStagedFiles(join(installDir, 'staging', 'staged'), version, record.path);
       }
     }
   }
@@ -526,8 +580,15 @@ export class UpgradeController {
       await rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
         force: true,
       }).catch(() => {});
+      await removeStagedManifest(join(installDir, 'staging', 'staged'), version);
     }
     await this.pruneOrphanStagedFiles(installDir);
+  }
+
+  /** 暂存记录 sidecar 是不是孤儿：版本非法、整包没了、或内存里已经不认这一版。 */
+  private stagedSidecarIsOrphan(stagedDir: string, version: string): boolean {
+    if (!version) return true;
+    return !existsSync(join(stagedDir, releaseTarballName(version))) || !this.staged.has(version);
   }
 
   private async pruneOrphanStagedFiles(installDir: string): Promise<void> {
@@ -543,24 +604,28 @@ export class UpgradeController {
     const now = (this.deps.now ?? Date.now)();
     for (const name of names) {
       const path = join(stagedDir, name);
-      if (name.includes('.part')) {
+      const entry = classifyStagedEntry(name);
+      if (entry.kind === 'part') {
         // 断点续传的半成品要留着给下一次 PUT 接力，只清超过保留期的。
         if (stagedPartExpired(path, now)) {
           await rm(path, { force: true, recursive: true }).catch(() => {});
         }
         continue;
       }
-      if (name.endsWith('.json')) {
-        const version = name.startsWith('tmex-cli-')
-          ? name.slice('tmex-cli-'.length, -'.json'.length)
-          : '';
-        const tgz = version ? join(stagedDir, releaseTarballName(version)) : '';
-        if (!version || !existsSync(tgz) || !this.staged.has(version)) {
+      if (entry.kind === 'manifest') {
+        // 清单比字节先到，没有 tgz 不代表它是孤儿；按它自报的时间过期。
+        if (stagedManifestExpired(stagedDir, entry.version, now, STAGED_PACKAGE_TTL_MS)) {
           await rm(path, { force: true }).catch(() => {});
         }
         continue;
       }
-      if (name.endsWith('.tgz') && !keptPaths.has(path)) {
+      if (entry.kind === 'sidecar') {
+        if (this.stagedSidecarIsOrphan(stagedDir, entry.version)) {
+          await rm(path, { force: true }).catch(() => {});
+        }
+        continue;
+      }
+      if (entry.kind === 'tarball' && !keptPaths.has(path)) {
         await rm(path, { force: true }).catch(() => {});
       }
     }
@@ -671,6 +736,7 @@ export class UpgradeController {
           force: true,
         });
         await rename(record.path, consumedPath);
+        await removeStagedManifest(join(installDir, 'staging', 'staged'), version);
         this.throwIfCancelled();
         const hashed = await sha256File(consumedPath);
         if (hashed.sha256 !== record.sha256) {

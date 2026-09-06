@@ -7,7 +7,8 @@
 ## 设计
 
 - 常量集中在 `packages/shared/src/release/source.ts`：`RELEASE_REPO`、`RELEASE_API_LATEST_URL`、`releaseTarballUrl(version)`、`INSTALL_COMMAND` 等。网关经 `@tmex/shared` 引用；`packages/app`（Node 兼容 CLI）按惯例相对路径引用。
-- 发行物：tag `v<version>`，资产 `tmex-cli-<version>.tgz`（`npm pack` 产物，自包含：`dist/cli-node.js` 由 bun 打包，`bin/tmex.js` 无需 `npm install`）+ `SHA256SUMS`。由 `.github/workflows/release.yml` 在 tag push 时构建上传（`gh release create` / 已存在则 `edit` + `upload --clobber`）。
+- 发行物：tag `v<version>`，资产 `tmex-cli-<version>.tgz`（`npm pack` 产物，自包含：`dist/cli-node.js` 由 bun 打包，`bin/tmex.js` 无需 `npm install`）+ `SHA256SUMS` + `SHA256SUMS.sig`。由 `.github/workflows/release.yml` 在 tag push 时构建上传（`gh release create` / 已存在则 `edit` + `upload --clobber`）。
+- 发行包签名（1.1.39 起）：`SHA256SUMS` 由发布私钥做 Ed25519 分离签名，公钥内嵌在 `packages/shared/src/release/release-signing.ts`。入口下载、入口推包给节点、节点装包、CLI 升级四处都用内嵌公钥离线验签；推来的暂存包没有可验签的清单一律装不上。密钥轮换、兼容矩阵与校验点见 `docs/release/2026090606-release-signing.md`。
 - 更新检查（`apps/gateway/src/system/update-check.ts`）：读 `releases/latest`，`tag_name` 去 `v` 比较；release body 即 changelog；缺对应 tarball 资产时 `hasUpdate=false`。403/404/429 直接报错，不回退 npm。
 - 网关一键升级（`apps/gateway/src/system/upgrade.ts`）：下载 tarball → `tar -xzf` → 预检包结构 → detached 执行 `package/bin/tmex.js upgrade --apply-current-package`，状态机与回滚逻辑不变。
 - CLI `tmex upgrade`（`packages/app/src/commands/upgrade.ts`）：解析目标版本（`--version` 或 latest）→ 下载 → 解包 → 用当前运行时重新执行解包后的 CLI；退出码透传。

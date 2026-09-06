@@ -9,10 +9,12 @@ import {
   sha256,
 } from '@tmex/shared/auth';
 import {
+  commitPasskeyCounters,
   createAuthenticationOptions,
   createRegistrationOptions,
   decodePasskeyAssertionSig,
   encodePasskeyAssertionSig,
+  makeDeferredVerifyPasskeyAssertion,
   makeVerifyDelegationPasskey,
   makeVerifyPasskeyAssertion,
   verifyAssertion,
@@ -434,6 +436,85 @@ describe('passkey', () => {
       });
       expect(uidRejected).toBe(false);
       expect(users.getKeyByCredentialId(decodeBase64url(payload.credential_id))?.counter).toBe(0);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('makeDeferredVerifyPasskeyAssertion', () => {
+  test('验签通过但不写计数器，推进量由调用方在落库事务里提交', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const users = new UserStore(db);
+      users.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32).fill(1),
+        rootEpoch: 1,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 1,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const authenticator = await createEs256Authenticator();
+      const challenge = randomBytes(32);
+      const registration = await authenticator.register({
+        challenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        counter: 3,
+      });
+      const payload = await verifyRegistration({
+        response: registration,
+        expectedChallenge: encodeBase64url(challenge),
+        origin: ORIGIN,
+        rpId: RP_ID,
+      });
+      if (!payload) throw new Error('registration failed');
+      const credentialId = decodeBase64url(payload.credential_id);
+      users.insertKey({
+        id: 'key-1',
+        userId: 'user-1',
+        credentialId,
+        publicKey: payload.public_key,
+        rpId: payload.rp_id,
+        origin: payload.origin,
+        counter: payload.counter,
+        transports: payload.transports,
+        name: 'synth',
+        logSeq: 1,
+        now: 2,
+      });
+
+      const recordBytes = randomBytes(40);
+      const recordChallenge = sha256(recordBytes);
+      const assertion = await authenticator.assert({
+        challenge: recordChallenge,
+        rpId: RP_ID,
+        origin: ORIGIN,
+        counter: 4,
+      });
+      const args = {
+        recordBytes,
+        sig: encodePasskeyAssertionSig(assertion),
+        credentialId: payload.credential_id,
+        publicKey: payload.public_key,
+        challenge: recordChallenge,
+      };
+
+      const deferred = makeDeferredVerifyPasskeyAssertion(users);
+      expect(await deferred.verify(args)).toBe(true);
+      // 同一条断言验第二次（预演 + 落账）照样通过：库里的计数器还没动。
+      expect(await deferred.verify(args)).toBe(true);
+      expect(users.getKeyByCredentialId(credentialId)?.counter).toBe(3);
+      expect(deferred.counters()).toEqual([{ credentialId, counter: 4 }]);
+
+      commitPasskeyCounters(users, deferred.counters());
+      expect(users.getKeyByCredentialId(credentialId)?.counter).toBe(4);
+
+      // 提交之后同一条断言就不再被接受（重放挡住了）。
+      expect(await makeDeferredVerifyPasskeyAssertion(users).verify(args)).toBe(false);
     } finally {
       close();
     }

@@ -15,7 +15,14 @@ import {
   resolveReleaseCacheDir,
   retainReleaseVersion,
 } from './release-download';
-import { abortableSleep, describeUpstream, detachRequest } from './remote-upgrade-io';
+import { ReleaseSignatureError, assertPushableRelease } from './release-signature';
+import {
+  abortableSleep,
+  consumeBoundedBody,
+  describeUpstream,
+  detachRequest,
+  pushPackageManifest,
+} from './remote-upgrade-io';
 import { resolveUpgradeInstallDir } from './upgrade';
 import type { AuthorizedUpgradeForward } from './upgrade-service';
 
@@ -60,7 +67,15 @@ export type RemoteUpgradeStartResult =
   | { ok: true; snapshot: RemoteUpgradeJobSnapshot }
   | { ok: false; code: 'UPGRADE_IN_PROGRESS' };
 
-type DownloadedRelease = { path: string; sha256: string; bytes: number };
+type DownloadedRelease = {
+  path: string;
+  sha256: string;
+  bytes: number;
+  /** 已验签的 SHA256SUMS 原文，随清单交给目标。 */
+  sums: string;
+  /** 签名行；缺失表示这一版没有签名，一律不推。 */
+  sig: string | null;
+};
 
 type DownloadFn = (
   version: string,
@@ -333,6 +348,13 @@ async function runDownloadPhase(
     if (job.abort.signal.aborted) {
       return { done: true, snapshot: markCancelled(job, deps.nowFn) };
     }
+    // 推给别的节点的包必须是签过名的：目标离线也能自证这堆字节确实来自发布流水线。
+    try {
+      assertPushableRelease(job.version, downloaded);
+    } catch (err) {
+      const detail = err instanceof ReleaseSignatureError ? err.message : errorMessage(err);
+      return { done: true, snapshot: fail(job, `download failed: ${detail}`, deps.nowFn) };
+    }
     return { done: false, value: downloaded };
   } catch (err) {
     if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
@@ -362,6 +384,12 @@ async function runPushPhase(
 ): Promise<PhaseEnd | { done: false }> {
   job.phase = 'push';
   job.totalBytes = downloaded.bytes;
+  const manifest = await sendPackageManifest(job, deps, downloaded);
+  if (!manifest.ok) {
+    if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
+    if (job.abort.signal.aborted) return { done: true, snapshot: await cancelPush(job, deps) };
+    return { done: true, snapshot: fail(job, manifest.error, deps.nowFn) };
+  }
   const resume = supportsStagedResume(job);
   const result = await runPush(pushTransport(job, deps, downloaded), {
     totalBytes: downloaded.bytes,
@@ -389,6 +417,25 @@ async function runPushPhase(
   }
   if (result.kind === 'cancelled') return { done: true, snapshot: await cancelPush(job, deps) };
   return { done: true, snapshot: fail(job, result.error, deps.nowFn) };
+}
+
+function sendPackageManifest(
+  job: Job,
+  deps: JobDeps,
+  downloaded: DownloadedRelease
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  if (!downloaded.sig) {
+    return Promise.resolve({ ok: false, error: 'push failed: RELEASE_UNSIGNED' });
+  }
+  return pushPackageManifest({
+    forward: deps.forward,
+    req: deps.req,
+    nodeId: job.nodeId,
+    version: job.version,
+    sums: downloaded.sums,
+    sig: downloaded.sig,
+    signal: job.abort.signal,
+  });
 }
 
 function pushTransport(job: Job, deps: JobDeps, downloaded: DownloadedRelease): PushTransport {
@@ -439,7 +486,7 @@ async function readPushedOffset(
       OFFSET_QUERY_TIMEOUT_MS,
       'offset timeout'
     );
-    const text = await res.text().catch(() => '');
+    const text = await consumeBoundedBody(res);
     if (res.status < 200 || res.status >= 300) return NO_STAGED_OFFSET;
     const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object') return NO_STAGED_OFFSET;
@@ -503,16 +550,16 @@ function pushQuery(version: string, sha256: string, offset: number): string {
 
 async function classifyPushResponse(job: Job, pushed: Response): Promise<PushOutcome> {
   if (isCancelled(job)) {
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'cancelled' };
   }
   if (pushed.status >= 200 && pushed.status < 300) {
     // 小 JSON 回包读完再走，`body.cancel()` 会给转发层一个假的 aborted 结论。
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'landed' };
   }
   if (job.abort.signal.aborted) {
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'cancelled' };
   }
   const detail = await describeUpstream(pushed);
@@ -556,7 +603,7 @@ async function runStartPhase(
     job.startPromise = startReq;
     const started = await withTimeout(startReq, timeouts.startMs, 'start timeout');
     if (isCancelled(job)) {
-      await started.text().catch(() => '');
+      await consumeBoundedBody(started);
       return { done: true, snapshot: snapshotOf(job) };
     }
     if (started.status < 200 || started.status >= 300) {
@@ -565,7 +612,7 @@ async function runStartPhase(
         snapshot: fail(job, `start failed: ${await describeUpstream(started)}`, nowFn),
       };
     }
-    await started.text().catch(() => '');
+    await consumeBoundedBody(started);
   } catch (err) {
     if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
     const message = errorMessage(err);
@@ -616,7 +663,7 @@ async function deleteStagedBestEffort(
       query: `?version=${encodeURIComponent(job.version)}`,
       retry: { attempts: 2 },
     });
-    await res.text().catch(() => '');
+    await consumeBoundedBody(res);
     if (res.status < 200 || res.status >= 300) {
       console.warn(
         `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} status=${res.status}`

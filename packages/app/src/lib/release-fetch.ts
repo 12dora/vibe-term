@@ -99,11 +99,36 @@ export function releaseSha256SumsUrl(version: string): string {
   return `${RELEASE_REPO_URL}/releases/download/${releaseTag(version)}/SHA256SUMS`;
 }
 
+export function releaseSha256SumsSigUrl(version: string): string {
+  return `${releaseSha256SumsUrl(version)}.sig`;
+}
+
+/** 取发行包签名行；404（老 release 没有这个资产）返回 null，由调用方按版本门槛判定。 */
+export async function fetchReleaseSumsSignature(
+  version: string,
+  fetchFn: ReleaseFetch = fetch
+): Promise<string | null> {
+  let response: Response;
+  try {
+    response = await fetchFn(releaseSha256SumsSigUrl(version), {
+      headers: GITHUB_HEADERS,
+      redirect: 'follow',
+    });
+  } catch (error) {
+    throw new Error(t('upgrade.signatureHttpFailed', { detail: errorMessage(error) }));
+  }
+  if (response.status === 404) return null;
+  if (!response.ok) {
+    throw new Error(t('upgrade.signatureHttpFailed', { detail: `HTTP ${response.status}` }));
+  }
+  return (await response.text()).trim() || null;
+}
+
 export async function fetchReleaseSha256Sums(
   version: string,
   fileName: string,
   fetchFn: ReleaseFetch = fetch
-): Promise<{ hex: string | null; missing: boolean; unpublished: boolean }> {
+): Promise<{ hex: string | null; missing: boolean; unpublished: boolean; text: string }> {
   let response: Response;
   try {
     response = await fetchFn(releaseSha256SumsUrl(version), {
@@ -114,10 +139,11 @@ export async function fetchReleaseSha256Sums(
     const detail = errorMessage(error);
     throw new Error(t('upgrade.checksumHttpFailed', { detail }));
   }
-  if (response.status === 404) return { hex: null, missing: true, unpublished: true };
+  if (response.status === 404) return { hex: null, missing: true, unpublished: true, text: '' };
   if (!response.ok) {
     throw new Error(t('upgrade.checksumHttpFailed', { detail: `HTTP ${response.status}` }));
   }
-  const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
-  return { hex, missing: hex === null, unpublished: false };
+  const text = await response.text();
+  const hex = parseSha256Sums(text, fileName || releaseTarballName(version));
+  return { hex, missing: hex === null, unpublished: false, text };
 }

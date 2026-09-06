@@ -104,6 +104,7 @@ export interface CreateAgentSessionInput {
   allowControlChars?: boolean;
   originPaneTitle?: string | null;
   originProcessName?: string | null;
+  remoteGrant?: string | null;
   maxStepsPerTurn?: number;
 }
 
@@ -125,6 +126,7 @@ export function createAgentSession(input: CreateAgentSessionInput): AgentSession
     allowControlChars: input.allowControlChars ?? false,
     originPaneTitle: input.originPaneTitle ?? null,
     originProcessName: input.originProcessName ?? null,
+    remoteGrant: input.remoteGrant ?? null,
     status: 'idle',
     lastError: null,
     maxStepsPerTurn: input.maxStepsPerTurn ?? 25,
@@ -170,38 +172,90 @@ export function getAgentSessionsByStatus(status: AgentSessionStatus): AgentSessi
     .all();
 }
 
-export function updateAgentSession(
-  id: string,
-  updates: Partial<Omit<AgentSessionRecord, 'id' | 'createdAt' | 'updatedAt'>>
-): AgentSessionRecord | null {
-  const orm = getOrmDb();
+type AgentSessionUpdates = Partial<Omit<AgentSessionRecord, 'id' | 'createdAt' | 'updatedAt'>>;
+
+const AGENT_SESSION_UPDATABLE = [
+  'title',
+  'nodeId',
+  'deviceId',
+  'paneId',
+  'providerId',
+  'modelId',
+  'systemPrompt',
+  'writeMode',
+  'useProviderWebSearch',
+  'providerHostedTools',
+  'allowControlChars',
+  'remoteGrant',
+  'status',
+  'lastError',
+  'maxStepsPerTurn',
+] as const;
+
+function buildSessionUpdate(
+  updates: AgentSessionUpdates
+): Partial<typeof agentSessions.$inferInsert> {
   const setValues: Partial<typeof agentSessions.$inferInsert> = {
     updatedAt: new Date().toISOString(),
   };
-
-  for (const key of [
-    'title',
-    'nodeId',
-    'deviceId',
-    'paneId',
-    'providerId',
-    'modelId',
-    'systemPrompt',
-    'writeMode',
-    'useProviderWebSearch',
-    'providerHostedTools',
-    'allowControlChars',
-    'status',
-    'lastError',
-    'maxStepsPerTurn',
-  ] as const) {
+  for (const key of AGENT_SESSION_UPDATABLE) {
     if (updates[key] !== undefined) {
       (setValues as Record<string, unknown>)[key] = updates[key];
     }
   }
+  return setValues;
+}
 
-  orm.update(agentSessions).set(setValues).where(eq(agentSessions.id, id)).run();
+export function updateAgentSession(
+  id: string,
+  updates: AgentSessionUpdates
+): AgentSessionRecord | null {
+  const orm = getOrmDb();
+  orm.update(agentSessions).set(buildSessionUpdate(updates)).where(eq(agentSessions.id, id)).run();
   return getAgentSessionById(id);
+}
+
+/** 并发校验的比对基准：授权绑定的三要素 + 时间戳。 */
+export interface AgentSessionExpectation {
+  updatedAt: string;
+  nodeId: string | null;
+  deviceId: string | null;
+  paneId: string | null;
+}
+
+/**
+ * 带并发校验的更新：库里的绑定或时间戳与 `expected` 不一致（别处已改过）时一个字段都不写，
+ * 返回 null。改绑窗格要把绑定与授权一起提交，中途被别人改了绑定就必须整体作废重来。
+ *
+ * 只比 `updatedAt` 不够：它是毫秒 ISO 串，同一毫秒内的两次写会得到相同的值。
+ */
+export function updateAgentSessionIfUnchanged(
+  id: string,
+  expected: AgentSessionExpectation,
+  updates: AgentSessionUpdates
+): AgentSessionRecord | null {
+  const orm = getOrmDb();
+  const row = orm
+    .update(agentSessions)
+    .set(buildSessionUpdate(updates))
+    .where(
+      and(
+        eq(agentSessions.id, id),
+        eq(agentSessions.updatedAt, expected.updatedAt),
+        expected.nodeId === null
+          ? isNull(agentSessions.nodeId)
+          : eq(agentSessions.nodeId, expected.nodeId),
+        expected.deviceId === null
+          ? isNull(agentSessions.deviceId)
+          : eq(agentSessions.deviceId, expected.deviceId),
+        expected.paneId === null
+          ? isNull(agentSessions.paneId)
+          : eq(agentSessions.paneId, expected.paneId)
+      )
+    )
+    .returning()
+    .get();
+  return row ?? null;
 }
 
 export function deleteAgentSession(id: string): void {

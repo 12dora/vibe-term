@@ -48,3 +48,23 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 远程升级的下载进度已在 1.1.34 补齐（原 KI-2），本机自升级仍只有阶段名：`UpgradeStatus` 的 `progress`
 面按合约只服务远程升级，`stageGithubRelease` 没有上报出口，且 `apps/gateway/src/system/upgrade.ts`
 贴着 allowlist 的行数上限，新开一条进度通道要先拆文件。
+
+## KI-10：旧版本入口节点操作新版本节点上的远程窗格会被拒
+
+`/api/mesh-internal/tmux/*` 自本轮起要求窗格授权（见
+[远程 agent 窗格授权](./agent/2026090606-remote-pane-grant.md)）。目标节点已升级、发起节点仍是旧版本时，
+旧发起方不会带授权，远端窗格的 agent 会话会一直收到 403 `PANE_GRANT_REQUIRED`。发起节点升级后，
+下一次发消息 / 改绑窗格就会自动补签，无需人工干预；升级前该会话不可用。
+
+## KI-11：旧版本入口推包给新版本节点会卡在装包这一步
+
+发行包签名自 1.1.39 起生效（见[发行包签名](./release/2026090606-release-signing.md)）。新节点只装
+「带可验签清单」的暂存包，而旧版本入口不会发 `POST /api/system/upgrade/package/manifest`：字节能推上去，
+装包一步返回 `UPGRADE_SIGNATURE_REQUIRED`，节点停在原版本（不会装上任何东西，安全侧是对的）。
+处置：先把入口升到 1.1.39+，再对节点发起升级；或者在节点本机跑一次 `tmex upgrade`。
+
+`install.sh` 首次安装仍只校验 SHA256SUMS，没有验签——shell 里没有可依赖的 Ed25519 实现，
+首次安装本来也要信任下载源。
+
+另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
+≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `tmex upgrade --version <ver>`。

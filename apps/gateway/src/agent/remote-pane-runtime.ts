@@ -1,6 +1,6 @@
 import type { InternalHttpForwarder } from '../mesh/mesh-agent-bridge';
-import { NodeUnreachableError } from '../mesh/types';
 import type { PaneInfo } from '../tmux-client/capture-history';
+import type { PaneGrantRef, PaneGrantSource } from './pane-grant/types';
 import type { PaneSnapshotLookup, SnapshotPaneContext } from './tools/pane-info';
 import type { TerminalRuntimeLike } from './tools/terminal-context';
 
@@ -24,13 +24,19 @@ export class RemotePaneUnreachableError extends Error {
   }
 }
 
+/** 目标节点拒收授权的两个码：缺授权与授权无效，都要重签。 */
+function isGrantRejection(code: string): boolean {
+  return code === 'PANE_GRANT_REQUIRED' || code === 'PANE_GRANT_INVALID';
+}
+
 export class RemotePaneRuntime implements TerminalRuntimeLike {
   private lastSnapshot: { paneId: string; lookup: PaneSnapshotLookup } | null = null;
 
   constructor(
     private readonly nodeId: string,
     private readonly deviceId: string,
-    private readonly forward: InternalHttpForwarder
+    private readonly forward: InternalHttpForwarder,
+    private readonly grants?: PaneGrantSource
   ) {}
 
   async sendInput(paneId: string, data: string): Promise<void> {
@@ -79,24 +85,46 @@ export class RemotePaneRuntime implements TerminalRuntimeLike {
     return payload;
   }
 
-  private async rpc<T>(path: string, body: unknown): Promise<T> {
-    let response: Response;
+  private async rpc<T>(path: string, body: Record<string, unknown>): Promise<T> {
+    const grant = (await this.grants?.load()) ?? null;
+    const response = await this.send(path, body, grant);
+    if (response.status !== 403) {
+      return this.readPayload<T>(response);
+    }
+    const code = await readErrorMessage(response);
+    if (!isGrantRejection(code)) {
+      throw new Error(code);
+    }
+    // 目标节点不认这张：标记待重签，若别的请求刚补过一张就地再试一次。
+    this.grants?.reject();
+    const retry = (await this.grants?.load()) ?? null;
+    if (!retry || retry.grantId === grant?.grantId) {
+      throw new Error(code);
+    }
+    return this.readPayload<T>(await this.send(path, body, retry));
+  }
+
+  private async send(
+    path: string,
+    body: Record<string, unknown>,
+    grant: PaneGrantRef | null
+  ): Promise<Response> {
     try {
-      response = await this.forward(this.nodeId, path, body);
+      return await this.forward(this.nodeId, path, grant ? { ...body, grant } : body);
     } catch (error) {
-      if (error instanceof NodeUnreachableError || error instanceof RemotePaneUnreachableError) {
-        throw error instanceof RemotePaneUnreachableError
-          ? error
-          : new RemotePaneUnreachableError(this.nodeId, error);
+      if (error instanceof RemotePaneUnreachableError) {
+        throw error;
       }
       throw new RemotePaneUnreachableError(this.nodeId, error);
     }
+  }
+
+  private async readPayload<T>(response: Response): Promise<T> {
     if (response.status === 503) {
       throw new RemotePaneUnreachableError(this.nodeId);
     }
     if (!response.ok) {
-      const message = await readErrorMessage(response);
-      throw new Error(message);
+      throw new Error(await readErrorMessage(response));
     }
     return (await response.json()) as T;
   }

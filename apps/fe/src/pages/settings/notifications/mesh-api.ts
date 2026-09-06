@@ -19,6 +19,10 @@ function toState(wire: unknown): MeshNotificationState {
   const state = wire as Partial<MeshNotificationState> | null;
   return {
     supported: state?.supported !== false,
+    // 本机节点编号：签 `notification-sink` 记录要按它写 payload，老网关不下发时留空。
+    ...(typeof state?.selfNodeId === 'string' && state.selfNodeId
+      ? { selfNodeId: state.selfNodeId }
+      : {}),
     selfEnabled: state?.selfEnabled === true,
     sinks: Array.isArray(state?.sinks) ? state.sinks : [],
     ...(state?.forwardQueue ? { forwardQueue: state.forwardQueue } : {}),

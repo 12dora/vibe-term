@@ -254,12 +254,16 @@ export async function readLocalUpgradeStatus(): Promise<UpgradeStatus> {
 
 export async function startLocalUpgradeAttempt(
   version: string,
-  opts?: { source?: 'release' | 'staged'; sha256?: string }
+  opts?: { source?: 'release' | 'staged'; sha256?: string; remote?: boolean }
 ): Promise<
   | { ok: true; status: UpgradeStatus }
   | {
       ok: false;
-      code: 'UPGRADE_NOT_ALLOWED' | 'UPGRADE_IN_PROGRESS' | 'PACKAGE_NOT_STAGED';
+      code:
+        | 'UPGRADE_NOT_ALLOWED'
+        | 'UPGRADE_IN_PROGRESS'
+        | 'PACKAGE_NOT_STAGED'
+        | 'UPGRADE_SIGNATURE_REQUIRED';
       status: UpgradeStatus;
     }
 > {

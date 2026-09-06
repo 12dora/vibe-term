@@ -56,6 +56,9 @@ const MIGRATIONS = [
   '0048_share_password_enc.sql',
   '0049_relay_limits.sql',
   '0050_port_maps.sql',
+  '0051_agent_pane_grants.sql',
+  '0052_notification_sink_keylog.sql',
+  '0053_pane_grant_server_epoch.sql',
 ] as const;
 
 /** 打包运行时嵌入的迁移清单；必须与 drizzle 目录 / journal 完全一致（见同名测试）。 */

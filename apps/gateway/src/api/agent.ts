@@ -1,6 +1,7 @@
 // Agent session REST API
 // 用户消息 / 停止 / 确认决策统一走 REST（确认可能来自通知链接等非 WS 渠道）。
 
+import { paneGrantRoutes } from '../agent/pane-grant/routes';
 import { type AgentSupervisor, agentSupervisor } from '../agent/supervisor';
 import { createAgentConfirmationRoutes } from './agent-confirmation-routes';
 import { createAgentMessageRoutes } from './agent-message-routes';
@@ -12,6 +13,7 @@ export function createAgentRoutes(supervisor: AgentSupervisor = agentSupervisor)
     ...createAgentSessionRoutes(supervisor),
     ...createAgentMessageRoutes(supervisor),
     ...createAgentConfirmationRoutes(supervisor),
+    ...paneGrantRoutes,
   ];
 }
 

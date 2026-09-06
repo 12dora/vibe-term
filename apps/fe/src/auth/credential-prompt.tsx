@@ -132,7 +132,7 @@ export function forgetSigner(owner?: SignerOwner): void {
 // 纯逻辑：可选凭据、由用户选择造签名者
 // ---------------------------------------------------------------------------
 
-export type CredentialPurpose = 'enroll' | 'admit' | 'revoke' | 'passkey' | 'totp';
+export type CredentialPurpose = 'enroll' | 'admit' | 'revoke' | 'passkey' | 'totp' | 'notifySink';
 
 export type CredentialChoice =
   | { kind: 'password'; password: string }

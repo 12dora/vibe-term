@@ -1,5 +1,5 @@
-// 多节点通知（汇聚）e2e：入口机（hub）声明为汇聚点后，远端 node 上触发的 watch 事件
-// 要在**入口机这一页**弹出 toast，并点名来源节点。
+// 多节点通知（汇聚）e2e：入口机（hub）声明为汇聚点（一条用户签名的 `notification-sink`
+// 密钥日志记录）后，远端 node 上触发的 watch 事件要在**入口机这一页**弹出 toast，并点名来源节点。
 //
 // 两页并存是刻意的：远端设备要连上才有 watch 采样，那一页停在 `/n/<B>/...`；
 // 入口那一页全程停在本机路由（`/settings`），toast 若出现就只能来自入口自身的连接。
@@ -72,6 +72,11 @@ test('mesh: the sink toasts events forwarded from another node', async ({ page, 
     const toggle = page.getByTestId('settings-mesh-notify-switch');
     if ((await toggle.getAttribute('aria-checked')) !== 'true') {
       await toggle.click();
+      // 汇聚声明是用户签名记录（`notification-sink`），每次翻转都要当场确认一次凭据。
+      await expect(page.getByTestId('credential-prompt')).toBeVisible({ timeout: 15_000 });
+      await page.getByTestId('credential-prompt-password').fill(state.password);
+      await page.getByTestId('credential-prompt-submit').click();
+      await expect(page.getByTestId('credential-prompt')).toHaveCount(0, { timeout: 30_000 });
     }
     await expect(toggle).toHaveAttribute('aria-checked', 'true', { timeout: 15_000 });
     await expect(page.getByTestId('settings-mesh-notify-sinks')).toBeVisible();

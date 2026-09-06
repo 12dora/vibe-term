@@ -64,6 +64,14 @@ export class MeshForwardChannel implements NotificationChannel {
     for (const sink of targets) forwarder.enqueue(sink.nodeId, body);
   }
 
+  /**
+   * 汇聚声明变更（`notification-sink` 记录落地）后调用：撤销掉的汇聚机队列连同在途投递
+   * 立刻收掉，不等下一次重试才发现。
+   */
+  pruneUnauthorizedSinks(): void {
+    this.forwarder?.pruneUnauthorized();
+  }
+
   /** 队列统计：`GET /api/notifications/mesh` 用来展示待发/丢弃数。 */
   stats(): { pending: number; dropped: number } {
     return { pending: this.forwarder?.pending ?? 0, dropped: this.forwarder?.dropped ?? 0 };
@@ -75,6 +83,7 @@ export class MeshForwardChannel implements NotificationChannel {
     this.boundBridge = bridge;
     this.forwarder = new MeshNotificationForwarder({
       deliver: (sinkNodeId, body, signal) => bridge.deliver(sinkNodeId, body, signal),
+      isSinkAuthorized: (sinkNodeId) => bridge.sinkAuthorized(sinkNodeId),
     });
     return this.forwarder;
   }

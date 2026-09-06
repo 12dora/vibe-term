@@ -7,27 +7,40 @@ import { join } from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
-import { combineAbortSignals, errorMessage } from '@tmex/shared';
-import { RELEASE_REPO_URL, releaseTag, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import { combineAbortSignals, releaseTarballName } from '@tmex/shared';
+import { parseSha256Sums, sha256Hex } from '../../../../packages/shared/src/release/verify';
 import {
-  assertReleaseChecksum,
-  parseSha256Sums,
-  sha256Hex,
-} from '../../../../packages/shared/src/release/verify';
+  assertReleaseSha256,
+  fetchVerifiedReleaseSums,
+  resolveReleaseTarballUrl,
+} from './release-assets';
+import {
+  type VerifiedReleaseSums,
+  readReleaseSigSidecar,
+  removeReleaseSigSidecar,
+  writeReleaseSigSidecar,
+} from './release-signature';
+
+export {
+  RELEASE_BASE_URL_ENV,
+  assertReleaseSha256,
+  fetchVerifiedReleaseSums,
+  releaseSha256SumsUrl,
+  resolveReleaseBaseUrl,
+  resolveReleaseSha256SumsSigUrl,
+  resolveReleaseSha256SumsUrl,
+  resolveReleaseTarballUrl,
+} from './release-assets';
 
 export { parseSha256Sums, sha256Hex };
 
 const TARBALL_FETCH_TIMEOUT_MS = 10 * 60 * 1000;
-const SHA256SUMS_FETCH_TIMEOUT_MS = 30_000;
 /** 进度上报节流：够前端看出「还在动」，又不会把每个 64 KiB 分片都变成一次回调。 */
 const PROGRESS_MIN_BYTES = 512 * 1024;
 const PROGRESS_MIN_MS = 500;
 
 /** 下载进度回调；`totalBytes` 为 0 表示发行源没给 `content-length`。 */
 export type DownloadProgressFn = (downloadedBytes: number, totalBytes: number) => void;
-
-/** 覆盖 GitHub 仓库根 URL；缺省为当前发行源。路径布局保持 `/releases/download/v<ver>/...`。 */
-export const RELEASE_BASE_URL_ENV = 'TMEX_RELEASE_BASE_URL';
 
 type InflightWaiter = {
   resolve: (value: DownloadedRelease) => void;
@@ -62,7 +75,8 @@ let rehashCount = 0;
 const retained = new Map<string, number>();
 
 /** 缓存目录里唯一合法的文件名形态：`tmex-cli-<semver>.tgz[.sha256|.part]`。 */
-const RELEASE_CACHE_NAME = /^tmex-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.part)?$/;
+const RELEASE_CACHE_NAME =
+  /^tmex-cli-(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)\.tgz(\.sha256|\.sig\.json|\.part)?$/;
 const RELEASE_PART_TTL_MS = 24 * 60 * 60 * 1000;
 
 function inflightKey(cacheDir: string, version: string): string {
@@ -162,9 +176,9 @@ async function shouldSweepCacheEntry(
     // 枚举与删除之间下载可能刚写完 sidecar 并退出在途表：删之前再看一眼盘上。
     return !existsSync(join(cacheDir, `${name}.sha256`));
   }
-  if (suffix === '.sha256') {
+  if (suffix === '.sha256' || suffix === '.sig.json') {
     if (!ctx.keep.has(version)) return true;
-    const tarball = name.slice(0, -'.sha256'.length);
+    const tarball = name.slice(0, -suffix.length);
     if (ctx.present.has(tarball)) return false;
     return !existsSync(join(cacheDir, tarball));
   }
@@ -228,73 +242,15 @@ export function resolveReleaseCacheDir(installDir?: string | null): string {
   return join(tmpdir(), 'tmex-release-cache');
 }
 
-export function resolveReleaseBaseUrl(): string {
-  const override = process.env[RELEASE_BASE_URL_ENV]?.trim().replace(/\/+$/, '');
-  return override && override.length > 0 ? override : RELEASE_REPO_URL;
-}
-
-export function resolveReleaseTarballUrl(version: string): string {
-  const base = resolveReleaseBaseUrl();
-  if (base === RELEASE_REPO_URL) return releaseTarballUrl(version);
-  return `${base}/releases/download/${releaseTag(version)}/${releaseTarballName(version)}`;
-}
-
-export function resolveReleaseSha256SumsUrl(version: string): string {
-  return resolveReleaseTarballUrl(version).replace(releaseTarballName(version), 'SHA256SUMS');
-}
-
-export function releaseSha256SumsUrl(version: string): string {
-  return resolveReleaseSha256SumsUrl(version);
-}
-
-export function assertReleaseSha256(
-  version: string,
-  sha256: string,
-  sums: { hex: string | null; missing: boolean }
-): void {
-  assertReleaseChecksum(sha256, sums, releaseTarballName(version));
-}
-
-export function assertReleaseIntegrity(
-  version: string,
-  bytes: Uint8Array,
-  sums: { hex: string | null; missing: boolean }
-): void {
-  assertReleaseSha256(version, sha256Hex(bytes), sums);
-}
-
-export async function fetchReleaseSha256Sums(
-  version: string,
-  fileName: string,
-  fetchFn: typeof fetch = fetch,
-  signal?: AbortSignal
-): Promise<{ hex: string | null; missing: boolean }> {
-  let response: Response;
-  try {
-    response = await fetchFn(resolveReleaseSha256SumsUrl(version), {
-      redirect: 'follow',
-      cache: 'no-store',
-      signal: combineAbortSignals(AbortSignal.timeout(SHA256SUMS_FETCH_TIMEOUT_MS), signal),
-    });
-  } catch (error) {
-    const detail = errorMessage(error);
-    throw new Error(`SHA256SUMS network error: ${detail}`);
-  }
-  if (response.status === 404) return { hex: null, missing: true };
-  if (!response.ok) {
-    throw new Error(`SHA256SUMS HTTP ${response.status}`);
-  }
-  const hex = parseSha256Sums(await response.text(), fileName || releaseTarballName(version));
-  if (!hex) {
-    throw new Error(`SHA256SUMS does not list ${fileName}`);
-  }
-  return { hex, missing: false };
-}
-
 export type DownloadedRelease = {
   path: string;
   sha256: string;
   bytes: number;
+  /** 已验签的 SHA256SUMS 原文；推包给别的节点时原样带过去。 */
+  sums: string;
+  /** 签名行；老版本（`RELEASE_SIGNING_SINCE` 之前）允许为 null，推包路径会拒绝。 */
+  sig: string | null;
+  keyId: string | null;
 };
 
 export async function downloadVerifiedRelease(
@@ -310,7 +266,7 @@ export async function downloadVerifiedRelease(
   await mkdir(opts.cacheDir, { recursive: true, mode: 0o700 });
   const dest = join(opts.cacheDir, releaseTarballName(version));
   const sidecar = `${dest}.sha256`;
-  const cached = await readVerifiedCache(dest, sidecar);
+  const cached = await readVerifiedCache(dest, sidecar, version);
   if (cached) return cached;
 
   const key = `${opts.cacheDir}::${version}`;
@@ -444,13 +400,14 @@ async function downloadVerifiedReleaseUncached(
   const fileName = releaseTarballName(version);
   const dest = join(opts.cacheDir, fileName);
   const sidecar = `${dest}.sha256`;
-  const cached = await readVerifiedCache(dest, sidecar);
+  const cached = await readVerifiedCache(dest, sidecar, version);
   if (cached) return cached;
 
   const fetchFn = opts.fetchFn ?? fetch;
   const part = `${dest}.part`;
   await rm(part, { force: true }).catch(() => {});
   let downloaded: { sha256: string; bytes: number };
+  let verified: VerifiedReleaseSums;
   try {
     throwIfAborted(opts.signal);
     downloaded = await downloadTarballToFile(
@@ -461,8 +418,8 @@ async function downloadVerifiedReleaseUncached(
       opts.onProgress
     );
     throwIfAborted(opts.signal);
-    const sums = await fetchReleaseSha256Sums(version, fileName, fetchFn, opts.signal);
-    assertReleaseSha256(version, downloaded.sha256, sums);
+    verified = await fetchVerifiedReleaseSums(version, fetchFn, opts.signal);
+    assertReleaseSha256(version, downloaded.sha256, { hex: verified.sha256, missing: false });
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
     throw err;
@@ -473,26 +430,50 @@ async function downloadVerifiedReleaseUncached(
     await rename(part, dest);
     renamed = true;
     throwIfAborted(opts.signal);
+    // 签名 sidecar 先落盘：`.sha256` 才是「这个缓存包可用」的标记，顺序反了会漏签名。
+    await writeReleaseSigSidecar(dest, {
+      version,
+      sha256: downloaded.sha256,
+      keyId: verified.keyId,
+      sums: verified.sums,
+      sig: verified.sig,
+    });
     await writeFile(sidecar, `${downloaded.sha256}\n`, { mode: 0o600 });
   } catch (err) {
     await rm(part, { force: true }).catch(() => {});
     if (renamed) await rm(dest, { force: true }).catch(() => {});
     await rm(sidecar, { force: true, recursive: true }).catch(() => {});
+    await removeReleaseSigSidecar(dest);
     throw err;
   }
-  return { path: dest, sha256: downloaded.sha256, bytes: downloaded.bytes };
+  return {
+    path: dest,
+    sha256: downloaded.sha256,
+    bytes: downloaded.bytes,
+    sums: verified.sums,
+    sig: verified.sig,
+    keyId: verified.keyId,
+  };
 }
 
-async function readVerifiedCache(dest: string, sidecar: string): Promise<DownloadedRelease | null> {
+async function readVerifiedCache(
+  dest: string,
+  sidecar: string,
+  version: string
+): Promise<DownloadedRelease | null> {
   if (!existsSync(dest) || !existsSync(sidecar)) return null;
   try {
     const expected = readFileSync(sidecar, 'utf8').trim().toLowerCase();
     if (!/^[0-9a-f]{64}$/.test(expected)) return null;
+    // 缓存包也得过签名这一关：sidecar 缺失 / 被改过就当没缓存，重下一次比放行一个不可信的包便宜。
+    const signed = readReleaseSigSidecar(dest, version, expected);
+    if (!signed) return null;
     const info = statSync(dest);
     const identity = fileIdentity(info);
     const memo = verified.get(dest);
+    const sums = { sums: signed.sums, sig: signed.sig, keyId: signed.keyId };
     if (memo && memo.sha256 === expected && memo.identity === identity) {
-      return { path: dest, sha256: expected, bytes: info.size };
+      return { path: dest, sha256: expected, bytes: info.size, ...sums };
     }
     rehashCount += 1;
     const hashed = await sha256File(dest);
@@ -501,7 +482,7 @@ async function readVerifiedCache(dest: string, sidecar: string): Promise<Downloa
       return null;
     }
     verified.set(dest, { identity, sha256: expected });
-    return { path: dest, sha256: expected, bytes: hashed.bytes };
+    return { path: dest, sha256: expected, bytes: hashed.bytes, ...sums };
   } catch {
     return null;
   }

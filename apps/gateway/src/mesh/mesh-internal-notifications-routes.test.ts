@@ -7,6 +7,7 @@ import {
   createMeshInternalNotificationRoutes,
   resetMeshNotificationRateLimit,
 } from './mesh-internal-notifications-routes';
+import { setMeshNotificationBridge } from './notification-mesh-bridge';
 import { X_TMEX_MESH_PEER } from './peer-request-marker';
 
 type Received = { eventType: EventType; event: Omit<WebhookEvent, 'eventType' | 'timestamp'> };
@@ -204,5 +205,43 @@ describe('mesh-internal notifications route', () => {
     await gate;
     await Promise.resolve();
     expect(done).toEqual(['terminal_bell']);
+  });
+});
+
+describe('默认判据：签名声明 + 本机开关', () => {
+  function installBridge(selfSinkEnabled: boolean): void {
+    setMeshNotificationBridge({
+      selfNodeId: () => 'node-a',
+      selfName: () => 'A 机',
+      selfSinkEnabled: () => selfSinkEnabled,
+      sinkAuthorized: () => false,
+      listSinks: () => [],
+      deliver: async () => new Response('{}'),
+    });
+  }
+
+  function callDefault(req: Request): Promise<Response> {
+    const path = new URL(req.url).pathname;
+    const res = dispatchRoutes(req, path, createMeshInternalNotificationRoutes(), { path });
+    if (!res) throw new Error('route not matched');
+    return Promise.resolve(res);
+  }
+
+  test('桥说本机不是汇聚机（没签声明或开关关着）时 404', async () => {
+    installBridge(false);
+    expect((await callDefault(request(forwardBody()))).status).toBe(404);
+    setMeshNotificationBridge(null);
+  });
+
+  test('没有 mesh 桥时同样 404', async () => {
+    setMeshNotificationBridge(null);
+    expect((await callDefault(request(forwardBody()))).status).toBe(404);
+  });
+
+  test('声明与开关都成立时才继续走对端标记校验', async () => {
+    installBridge(true);
+    // 对端标记缺失 → 403，说明已经越过了 404 那一关。
+    expect((await callDefault(request(forwardBody(), null))).status).toBe(403);
+    setMeshNotificationBridge(null);
   });
 });

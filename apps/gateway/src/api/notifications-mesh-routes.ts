@@ -18,8 +18,10 @@ import { type ApiRoute, route } from './route';
 
 export function readMeshNotificationState(): MeshNotificationState {
   const bridge = getMeshNotificationBridge();
+  const selfNodeId = bridge?.selfNodeId();
   return {
     supported: bridge != null,
+    ...(selfNodeId ? { selfNodeId } : {}),
     selfEnabled: isMeshNotificationSinkEnabled(),
     sinks: bridge?.listSinks() ?? [],
     forwardQueue: meshForwardChannel.stats(),
@@ -36,7 +38,6 @@ async function handlePut(req: Request): Promise<Response> {
     return json({ error: 'invalid_request' }, 400);
   }
   setMeshNotificationSinkEnabled(raw.enabled);
-  getMeshNotificationBridge()?.advertise();
   broadcastSettingsUpdate(MESH_NOTIFICATION_SETTINGS_NAMESPACE);
   return json(readMeshNotificationState());
 }

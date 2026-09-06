@@ -51,6 +51,7 @@ export * from './components/splitLayoutGeometry';
 export * from './utils/keyboard-cursor-bridge';
 export * from './utils/virtualKeyboard';
 export * from './utils/terminalKeySequence';
+export * from './utils/terminal-input-focus';
 export * from './utils/resizeSyncGuards';
 export * from './utils/selectionGuards';
 

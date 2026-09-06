@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
 import { EventEmitter } from 'node:events';
@@ -16,6 +16,12 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { UPGRADE_CANCELLED, releaseTarballName, releaseTarballUrl } from '@tmex/shared';
+import {
+  restoreSigningKeys,
+  signSums,
+  signedSumsFor,
+  useTestSigningKeys,
+} from '../test-support/release-signing';
 import type { InstallInfo } from './install-info';
 import { downloadVerifiedRelease, resetReleaseDownloadForTests } from './release-download';
 import {
@@ -30,6 +36,24 @@ import {
   stageGithubRelease,
   waitForSpawnAndDetach,
 } from './upgrade';
+
+beforeAll(() => {
+  useTestSigningKeys();
+});
+
+afterAll(() => {
+  restoreSigningKeys();
+});
+
+/** 一份签名清单：`tryStart(source:'staged')` 没有它一律拒绝装包。 */
+async function putTestManifest(
+  controller: UpgradeController,
+  version: string,
+  sha256: string
+): Promise<void> {
+  const result = await controller.putPackageManifest(version, signedSumsFor(version, sha256));
+  expect(result.ok).toBe(true);
+}
 
 const originalFetch = globalThis.fetch;
 const originalCacheDir = process.env.TMEX_RELEASE_CACHE_DIR;
@@ -104,6 +128,11 @@ function stubGithubFetch(tarballBytes: Buffer, sums: { status: number; body: str
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     requested.push(url);
     if (url.includes('SHA256SUMS')) {
+      if (url.endsWith('.sig')) {
+        // 老版本（< RELEASE_SIGNING_SINCE）的 release 没有 .sig 资产，用 404 复刻。
+        if (sums.status !== 200) return new Response('not published', { status: 404 });
+        return new Response(`${signSums(sums.body)}\n`, { status: 200 });
+      }
       return new Response(sums.body, { status: sums.status });
     }
     expect(init?.redirect === undefined || init.redirect === 'follow').toBe(true);
@@ -488,6 +517,7 @@ describe('stageGithubRelease checksums', () => {
     const bytes = packFakeCliTarball(version);
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith('SHA256SUMS.sig')) return new Response('none', { status: 404 });
       if (url.includes('SHA256SUMS')) return new Response('nope', { status: 500 });
       return new Response(toResponseBody(bytes), { status: 200 });
     }) as typeof fetch;
@@ -503,7 +533,8 @@ describe('stageGithubRelease checksums', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${hex}  ${releaseTarballName(version)}\n`, { status: 200 });
+        const body = `${hex}  ${releaseTarballName(version)}\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(toResponseBody(bytes), { status: 200 });
     }) as typeof fetch;
@@ -668,6 +699,7 @@ describe('staged package', () => {
     const hex = sha256Hex(bytes);
     const staged = await controller.stagePackage('1.2.3', hex, bytesStream(bytes));
     expect(staged.ok).toBe(true);
+    await putTestManifest(controller, '1.2.3', hex);
     const started = controller.tryStart('1.2.3', { source: 'staged', sha256: hex });
     expect(started).toEqual({ ok: true });
     expect(controller.status().state).toBe('downloading');
@@ -690,6 +722,7 @@ describe('staged package', () => {
     const bytes = packFakeCliTarball('2.0.0');
     const hex = sha256Hex(bytes);
     expect((await first.stagePackage('2.0.0', hex, bytesStream(bytes))).ok).toBe(true);
+    await putTestManifest(first, '2.0.0', hex);
     const child = new EventEmitter() as EventEmitter & { unref: () => void };
     child.unref = () => undefined;
     const second = new UpgradeController({
@@ -786,6 +819,7 @@ describe('staged package', () => {
       'tmex-cli-1.2.3.tgz'
     );
     expect(existsSync(stagedPath)).toBe(true);
+    await putTestManifest(controller, '1.2.3', hex);
     expect(controller.tryStart('1.2.3', { source: 'staged', sha256: hex }).ok).toBe(true);
     for (let i = 0; i < 50 && existsSync(stagedPath); i += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
@@ -1279,9 +1313,8 @@ describe('UpgradeController.cancel', () => {
     globalThis.fetch = (async (input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
       if (url.includes('SHA256SUMS')) {
-        return new Response(`${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`, {
-          status: 200,
-        });
+        const body = `${sha256Hex(bytes)}  ${releaseTarballName(version)}\n`;
+        return new Response(url.endsWith('.sig') ? `${signSums(body)}\n` : body, { status: 200 });
       }
       return new Response(
         new ReadableStream<Uint8Array>({
@@ -1367,6 +1400,7 @@ describe('UpgradeController.cancel', () => {
     const bytes = packFakeCliTarball('1.2.3');
     const hex = sha256Hex(bytes);
     expect((await controller.stagePackage('1.2.3', hex, bytesStream(bytes))).ok).toBe(true);
+    await putTestManifest(controller, '1.2.3', hex);
     const stagedPath = join(
       install.installDir as string,
       'staging',

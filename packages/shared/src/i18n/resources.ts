@@ -399,6 +399,7 @@ export const I18N_RESOURCES = {
       "copyPending": "Tap the screen to finish copying",
       "pasteFailed": "Could not read clipboard, check browser permissions",
       "clearSelection": "Dismiss selection",
+      "hideKeyboard": "Hide Keyboard",
       "fileLinkNotFound": "File does not exist or is not accessible",
       "linkOpenFailed": "Could not open link"
     },
@@ -434,7 +435,9 @@ export const I18N_RESOURCES = {
           "separator": ", ",
           "queue": "{{pending}} pending, {{dropped}} dropped",
           "loadFailed": "Failed to load mesh notification state: {{message}}",
-          "saveFailed": "Failed to save mesh notification setting: {{message}}"
+          "saveFailed": "Failed to save mesh notification setting: {{message}}",
+          "nodesTooOld": "Some nodes are older than {{minVersion}}. Update every node first.",
+          "unavailable": "Cannot save the mesh notification setting. Sign in again and retry."
         },
         "scope": {
           "remote": "Editing notification channels of \"{{name}}\".",
@@ -1440,6 +1443,7 @@ export const I18N_RESOURCES = {
       "llmSearchProviderInvalid": "Search provider must be none, tavily or brave",
       "llmFetchModelsFailed": "Failed to fetch model list: {{detail}}",
       "agentSessionNotFound": "Agent session not found",
+      "agentSessionChanged": "Agent session changed elsewhere, retry",
       "agentSessionBusy": "Agent session is currently running, stop it or wait for completion",
       "agentSessionAwaitingConfirmation": "Agent session has pending confirmations, resolve them first",
       "agentDeviceRequired": "Device is required",
@@ -2015,7 +2019,8 @@ export const I18N_RESOURCES = {
           "admit": "Approve the new node",
           "revoke": "Remove a node",
           "passkey": "Add or remove a passkey",
-          "totp": "Turn off the authenticator"
+          "totp": "Turn off the authenticator",
+          "notifySink": "Change mesh notifications"
         }
       }
     },
@@ -3910,6 +3915,7 @@ export const I18N_RESOURCES = {
       "copyPending": "点一下屏幕以完成复制",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
+      "hideKeyboard": "隐藏键盘",
       "fileLinkNotFound": "文件不存在或无法访问",
       "linkOpenFailed": "无法打开链接"
     },
@@ -3945,7 +3951,9 @@ export const I18N_RESOURCES = {
           "separator": "、",
           "queue": "待补发 {{pending}} 条，已丢弃 {{dropped}} 条",
           "loadFailed": "多节点通知状态读取失败：{{message}}",
-          "saveFailed": "多节点通知设置保存失败：{{message}}"
+          "saveFailed": "多节点通知设置保存失败：{{message}}",
+          "nodesTooOld": "有节点版本低于 {{minVersion}}，须先升级全部节点。",
+          "unavailable": "无法保存多节点通知设置，请重新登录后重试。"
         },
         "scope": {
           "remote": "当前编辑的是「{{name}}」的通知通道。",
@@ -4951,6 +4959,7 @@ export const I18N_RESOURCES = {
       "llmSearchProviderInvalid": "搜索服务必须是 none、tavily 或 brave",
       "llmFetchModelsFailed": "拉取模型列表失败：{{detail}}",
       "agentSessionNotFound": "智能体会话不存在",
+      "agentSessionChanged": "智能体会话已被改动，请重试",
       "agentSessionBusy": "智能体会话正在运行中，请先停止或等待完成",
       "agentSessionAwaitingConfirmation": "智能体会话有待处理的确认请求，请先处理",
       "agentDeviceRequired": "必须指定设备",
@@ -5526,7 +5535,8 @@ export const I18N_RESOURCES = {
           "admit": "确认新节点加入",
           "revoke": "移除节点",
           "passkey": "添加或删除通行密钥",
-          "totp": "关闭验证码"
+          "totp": "关闭验证码",
+          "notifySink": "设置多节点通知"
         }
       }
     },
@@ -7415,6 +7425,7 @@ export const I18N_RESOURCES = {
       "copyPending": "画面をタップしてコピーを完了してください",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
+      "hideKeyboard": "キーボードを隠す",
       "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
       "linkOpenFailed": "リンクを開けませんでした"
     },
@@ -7450,7 +7461,9 @@ export const I18N_RESOURCES = {
           "separator": "、",
           "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
           "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
-          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}",
+          "nodesTooOld": "{{minVersion}} より古いノードがあります。先にすべてのノードを更新してください。",
+          "unavailable": "マルチノード通知の設定を保存できません。再度サインインしてください。"
         },
         "scope": {
           "remote": "「{{name}}」の通知チャンネルを編集しています。",
@@ -8456,6 +8469,7 @@ export const I18N_RESOURCES = {
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
       "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionChanged": "エージェントセッションが変更されました。再試行してください",
       "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
       "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",
@@ -9031,7 +9045,8 @@ export const I18N_RESOURCES = {
           "admit": "新しいノードを承認",
           "revoke": "ノードを削除",
           "passkey": "パスキーの追加・削除",
-          "totp": "認証アプリをオフにする"
+          "totp": "認証アプリをオフにする",
+          "notifySink": "マルチノード通知の設定"
         }
       }
     },

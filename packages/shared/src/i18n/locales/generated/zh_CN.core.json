@@ -187,6 +187,7 @@
       "copyPending": "点一下屏幕以完成复制",
       "pasteFailed": "无法读取剪贴板，请检查浏览器权限",
       "clearSelection": "取消选择",
+      "hideKeyboard": "隐藏键盘",
       "fileLinkNotFound": "文件不存在或无法访问",
       "linkOpenFailed": "无法打开链接"
     },
@@ -746,7 +747,8 @@
           "admit": "确认新节点加入",
           "revoke": "移除节点",
           "passkey": "添加或删除通行密钥",
-          "totp": "关闭验证码"
+          "totp": "关闭验证码",
+          "notifySink": "设置多节点通知"
         }
       }
     }

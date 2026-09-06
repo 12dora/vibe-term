@@ -4,6 +4,7 @@ import {
   decodeAdmitHubPayload,
   decodeAdmitNodePayload,
   decodeClearTotpPayload,
+  decodeNotificationSinkPayload,
   decodeRemovePasskeyPayload,
   decodeRenameNodePayload,
   decodeResetRootPayload,
@@ -134,6 +135,8 @@ function decodePayload(type: string, payload: Uint8Array): unknown {
       return decodeRetireHubPayload(payload);
     case 'rename-node':
       return decodeRenameNodePayload(payload);
+    case 'notification-sink':
+      return decodeNotificationSinkPayload(payload);
     default:
       return {};
   }

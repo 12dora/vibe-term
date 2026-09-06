@@ -3,6 +3,7 @@ import { canonicalHubUrl, encodeBase64url } from '@tmex/shared/auth';
 import { createInMemoryLinkPair } from '@tmex/shared/link';
 import type { HubAdvertisement, HubMode } from '@tmex/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
+import { dropPaneGrantsOfNode } from '../agent/pane-grant/revoke';
 import { filesBulkHooks } from '../api/files';
 import {
   ChallengeStore,
@@ -13,7 +14,7 @@ import {
   UserKeyService,
   UserStore,
   ensureNodeIdentity,
-  makeVerifyPasskeyAssertion,
+  makeDeferredVerifyPasskeyAssertion,
 } from '../auth';
 import { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -83,7 +84,7 @@ import {
 import { pickSelfDisplayName } from './node-list-projection';
 import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
-import { isMeshNotificationSinkEnabled } from './notification-sink-state';
+import { listNotificationSinkNodeIds } from './notification-sink-records';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
 import {
   bindRelayReconcile,
@@ -545,7 +546,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
     userStore,
     keyLogStore,
     nodeSessionStore,
-    verifyPasskeyAssertion: makeVerifyPasskeyAssertion(userStore),
+    // 计数器推进与记录落库同一个事务：同一条记录会被验多次（预演 + 落账），只能推进一次。
+    deferredPasskeyVerifier: () => makeDeferredVerifyPasskeyAssertion(userStore),
   });
   const peerHolder = { manager: null } as { manager: PeerManager | null };
   const httpHolder = { runtime: null } as { runtime: MeshHttpRuntime | null };
@@ -575,6 +577,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const hubStore = opts.meshHubStore ?? new MeshHubStore(db);
   const emitNodeEvent = (event: NodeEventPayload) => {
     if (event.status === 'offline' || event.status === 'revoked') notifyNodeOffline(event.nodeId);
+    // 吊销即失信：这台节点手上的窗格授权全部作废，重新准入后必须重签
+    if (event.status === 'revoked') dropPaneGrantsOfNode(event.nodeId);
     for (const cb of nodeEvents)
       try {
         cb(event);
@@ -752,6 +756,10 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     emitListNodeEvent: stores.emitListNodeEvent,
     onLocalNodeName: opts.onLocalNodeName,
     userIdOf: stores.userIdOf,
+    onNodeRevoked: (nodeId) => {
+      stores.peerHolder.manager?.onRevoked(nodeId);
+      stores.emitRevoked(nodeId);
+    },
   });
   const bindings = createSessionBindings(stores);
   const scheduler = opts.scheduler ?? defaultScheduler();
@@ -769,10 +777,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
       version,
       tmux: true,
       direct_capable: bindings.rtc.available,
-      inventory: {
-        version,
-        ...(isMeshNotificationSinkEnabled() ? { notifySink: true } : {}),
-      },
+      inventory: { version },
       endpoints: enumeratePeerEndpoints(
         stores.peerHolder.manager?.listenPort ?? stores.config.peerPort,
         ifaceCache.get()
@@ -1317,6 +1322,7 @@ function wireMeshHttp(
   d.httpHolder.runtime = http;
   wireTransferBridge(identity.nodeIdHex, peers.transportOf, http.forwarder);
   setMeshAgentBridge({
+    selfNodeId: identity.nodeIdHex,
     lookupNode(nodeId) {
       return lookupRemoteNode(
         nodeId,
@@ -1326,6 +1332,7 @@ function wireMeshHttp(
     },
     forwardInternalHttp: (nodeId, path, body, signal) =>
       http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
+    forwardAuthorizedHttp: (req, input) => http.forwarder.forwardAuthorizedHttp(req, input),
   });
   setMeshNotificationBridge(
     buildMeshNotificationBridge({
@@ -1335,12 +1342,9 @@ function wireMeshHttp(
       listReach: () => peers.listReach(),
       listHubOnline: () => peers.listHubOnline(),
       listedNodes: () => state.lastNodeList?.nodes ?? [],
+      declaredSinks: () => listNotificationSinkNodeIds(d.userIdOf()),
       forwardInternalHttp: (nodeId, path, body, signal) =>
         http.forwarder.forwardInternalHttp(nodeId, path, body, signal),
-      advertise: () => {
-        uplink.sendStatusIfChanged();
-        peerManager.refreshAdvertisedStatus();
-      },
     })
   );
   return http;

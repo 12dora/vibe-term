@@ -14,6 +14,7 @@ import type {
 import {
   applyKeyLogRecord,
   buildKeyLogRecord,
+  bytesEqual,
   decodeBase64url,
   decodeKeyLogRecord,
   decodeResetRootPayload,
@@ -39,6 +40,7 @@ import { projectRelayKeyLogState } from './mesh-relay-store';
 import { type NodeIdentityKeys, selfSignedNodeCertificate } from './node-identity-service';
 import type { SaveNodeIdentityInput } from './node-identity-store';
 import type { NodeSessionStore } from './node-session-store';
+import type { DeferredPasskeyVerification } from './passkey';
 import type { AuthDb } from './types';
 import {
   type AppliedKeyLogStep,
@@ -131,6 +133,8 @@ export type UserKeyServiceDeps = {
   keyLogStore: KeyLogStore;
   nodeSessionStore: NodeSessionStore;
   verifyPasskeyAssertion?: VerifyPasskeyAssertion;
+  /** 每条记录一份的延迟验签器（计数器随记录落库一起提交）；给了它就不再用上面那个。 */
+  deferredPasskeyVerifier?: () => DeferredPasskeyVerification;
   onApplied?: (userId: string, step: AppliedKeyLogStep) => void;
 };
 
@@ -170,6 +174,7 @@ export class UserKeyService {
   private readonly keyLogStore: KeyLogStore;
   private readonly nodeSessionStore: NodeSessionStore;
   private readonly verifyPasskeyAssertion?: VerifyPasskeyAssertion;
+  private readonly deferredPasskeyVerifier?: () => DeferredPasskeyVerification;
   onApplied?: (userId: string, step: AppliedKeyLogStep) => void;
 
   constructor(deps: UserKeyServiceDeps) {
@@ -178,6 +183,7 @@ export class UserKeyService {
     this.keyLogStore = deps.keyLogStore;
     this.nodeSessionStore = deps.nodeSessionStore;
     this.verifyPasskeyAssertion = deps.verifyPasskeyAssertion;
+    this.deferredPasskeyVerifier = deps.deferredPasskeyVerifier;
     this.onApplied = deps.onApplied;
   }
 
@@ -657,18 +663,20 @@ export class UserKeyService {
     const existing = opts?.userId
       ? this.keyLogStore.getAtSeq(opts.userId, Number(record.seq))
       : undefined;
+    const deferred = this.deferredPasskeyVerifier?.();
+    const verifyPasskeyAssertion = deferred?.verify ?? this.verifyPasskeyAssertion;
     const verified = await verifyKeyLogRecord(input.bytes, input.sig, {
       head: state.head,
       rootEpoch: state.rootEpoch,
       rootPublicKey: state.rootPublicKey,
       resolvePasskey: (id) => state.passkeys.get(id)?.public_key ?? null,
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      verifyPasskeyAssertion,
       existingAtSeq: existing ? { bytes: existing.bytes, sig: existing.sig } : undefined,
       allowGenesis: opts?.allowGenesis,
     });
     if (!verified.ok) return { ok: false, error: verified.error };
     const applied = await applyKeyLogRecord(state, verified.record, verified.hash, {
-      verifyPasskeyAssertion: this.verifyPasskeyAssertion,
+      verifyPasskeyAssertion,
     });
     if (!applied.ok) return { ok: false, error: applied.error };
     return {
@@ -678,6 +686,7 @@ export class UserKeyService {
       hash: verified.hash,
       next: applied.state,
       effects: applied.effects,
+      ...(deferred ? { passkeyCounters: deferred.counters() } : {}),
     };
   }
 
@@ -750,13 +759,13 @@ export class UserKeyService {
       const byId = userStore.getById(genesisUid);
       const byName = userStore.getByUsername(username);
       if (byName && byName.id !== genesisUid) {
-        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, byName.id);
+        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, byName.id, stores.db);
         userStore.deleteById(byName.id);
         userStore.deleteAllPeers();
         replacedStaleUsername = username;
       }
       if (byId) {
-        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, genesisUid);
+        wipeUserDerivedState(userStore, keyLogStore, nodeSessionStore, genesisUid, stores.db);
         userStore.setKeyLogHead(genesisUid, { seq: 0, hash: ZERO_HASH, now });
         userStore.setTotpRecordSeq(genesisUid, null, now);
         userStore.updateRoot(genesisUid, {
@@ -852,15 +861,4 @@ function joinEpochBroke(
     type === 'rotate-root-keep' ||
     (epochAtAnchor != null && epoch !== epochAtAnchor)
   );
-}
-
-function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
-  if (a.length !== b.length) {
-    return false;
-  }
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) {
-    diff |= a[i] ^ b[i];
-  }
-  return diff === 0;
 }

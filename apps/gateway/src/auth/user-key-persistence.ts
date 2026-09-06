@@ -15,11 +15,13 @@ import {
   normalizeNodeName,
 } from '@tmex/shared/auth';
 import { eq } from 'drizzle-orm';
+import { deleteAllPaneGrants, deletePaneGrantsForNode } from '../agent/pane-grant/store';
 import { nodeIdentity } from '../db/schema';
 import { patchNode } from '../hub/node-persistence';
 import { toBuffer } from './binary';
 import { type KeyLogStore, projectPayloadJson } from './key-log-store';
 import type { NodeSessionStore } from './node-session-store';
+import { type PasskeyCounterUpdate, commitPasskeyCounters } from './passkey';
 import type { AuthDb } from './types';
 import type { UserStore } from './user-store';
 
@@ -39,6 +41,8 @@ export type AppliedKeyLogStep = {
   hash: Uint8Array;
   next: UserKeyState;
   effects: KeyLogEffect[];
+  /** 本条记录验签时得出的 passkey 计数器推进：与记录同一个事务写，记录没落库就不写。 */
+  passkeyCounters?: readonly PasskeyCounterUpdate[];
 };
 
 export type EncryptedIdentity = {
@@ -101,8 +105,11 @@ export function wipeUserDerivedState(
   userStore: UserStore,
   keyLogStore: KeyLogStore,
   nodeSessionStore: NodeSessionStore,
-  userId: string
+  userId: string,
+  db?: AuthDb
 ): void {
+  // 证书与会话都清了，凭证书说话的窗格授权同样不能留（db 缺省时由调用方保证同库）
+  if (db) deleteAllPaneGrants(db);
   keyLogStore.deleteAll(userId);
   userStore.deleteKeysByUser(userId);
   nodeSessionStore.deleteAllForUser(userId);
@@ -141,6 +148,8 @@ export function persistApplied(
     now,
   });
   userStore.setKeyLogHead(userId, { seq: Number(next.head.seq), hash: next.head.hash, now });
+  // 计数器推进与记录同生共死：这里是唯一一处写入，事务回滚时它也跟着回滚。
+  if (step.passkeyCounters?.length) commitPasskeyCounters(userStore, step.passkeyCounters);
   projectRecord(stores, userId, record, seq, now);
   applyEffects(stores, userId, effects, now);
   if (
@@ -167,6 +176,8 @@ function projectRecord(
     if (record.type === 'reset-root') {
       userStore.deleteCertsByUser(userId);
       userStore.deleteHubAuthorizationsByUser(userId);
+      // 证书全没了，凭证书说话的窗格授权也不该留
+      deleteAllPaneGrants(stores.db);
     }
   }
   const byType: Partial<Record<KeyLogRecord['type'], () => void>> = {
@@ -204,6 +215,8 @@ function projectRecord(
       const hex = nodeIdToHex(decodeRevokeNodePayload(record.payload).node_id);
       userStore.markCertRevoked(hex, seq);
       userStore.deletePeer(hex);
+      // 与吊销记录同一个事务：这台节点手上的窗格授权当场作废，不依赖任何事后事件
+      deletePaneGrantsForNode(hex, stores.db);
       const existing = userStore.getHubAuthorization(userId, hex);
       if (existing) {
         userStore.upsertHubAuthorization({

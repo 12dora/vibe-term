@@ -1,3 +1,13 @@
+import {
+  PaneGenerationError,
+  type PaneGrantVerifier,
+  assertPaneGeneration,
+  defaultPaneGrantVerifier,
+  guardPaneGrant,
+  paneGrantDenied,
+  readPaneGrantRef,
+  toServerEpochHex,
+} from '../agent/pane-grant/rpc-guard';
 import { findPaneInSnapshot } from '../agent/tools/pane-info';
 import { json, readJsonObjectBody } from '../api/http';
 import { type ApiRoute, dispatchRoutes, route } from '../api/route';
@@ -20,12 +30,15 @@ export type MeshInternalTmuxRuntime = {
   sendInputAndWait(paneId: string, data: string): Promise<void>;
   capturePaneText(paneId: string, opts?: { historyLines?: number }): Promise<string>;
   getPaneInfo(paneId: string): Promise<PaneInfo>;
+  /** tmux server 世代（`@tmex-server-epoch`）；连上之后才有值。 */
+  getServerEpoch?(): Uint8Array | null;
 };
 
 export type MeshInternalTmuxDeps = {
   acquire(deviceId: string): Promise<MeshInternalTmuxRuntime>;
   release(deviceId: string, runtime: MeshInternalTmuxRuntime): Promise<void>;
   deviceExists(deviceId: string): boolean;
+  verifyGrant: PaneGrantVerifier;
 };
 
 const defaultMeshInternalTmuxDeps: MeshInternalTmuxDeps = {
@@ -38,6 +51,7 @@ const defaultMeshInternalTmuxDeps: MeshInternalTmuxDeps = {
       return false;
     }
   },
+  verifyGrant: defaultPaneGrantVerifier,
 };
 
 function requirePeerMarker(req: Request): Response | null {
@@ -47,10 +61,18 @@ function requirePeerMarker(req: Request): Response | null {
   return jsonError('FORBIDDEN', 403);
 }
 
+type GrantedPane = {
+  deviceId: string;
+  paneId: string;
+  granted: { grantId: string | null; serverEpoch: string | null };
+};
+
+/** 顺序固定：先校验入参与设备，再验授权——授权失败的回应不该泄漏别的窗格是否存在。 */
 function readRequiredIds(
+  req: Request,
   raw: Record<string, unknown>,
   deps: MeshInternalTmuxDeps
-): { deviceId: string; paneId: string } | Response {
+): GrantedPane | Response {
   const deviceId = typeof raw.deviceId === 'string' ? raw.deviceId.trim() : '';
   const paneId = typeof raw.paneId === 'string' ? raw.paneId : '';
   if (!deviceId || !isTmuxPaneId(paneId)) {
@@ -59,7 +81,27 @@ function readRequiredIds(
   if (!deps.deviceExists(deviceId)) {
     return json({ error: 'device_not_found' }, 404);
   }
-  return { deviceId, paneId };
+  const guarded = guardPaneGrant(
+    {
+      grant: readPaneGrantRef(raw.grant),
+      peerNodeId: readMeshPeerMarker(req) ?? '',
+      deviceId,
+      paneId,
+    },
+    deps.verifyGrant
+  );
+  if (!guarded.ok) {
+    return guarded.denied;
+  }
+  return { deviceId, paneId, granted: guarded };
+}
+
+/** RPC 失败的统一出口：世代对不上是授权问题（403），其余当目标侧故障（502）。 */
+function rpcFailure(error: unknown, fallback: string): Response {
+  if (error instanceof PaneGenerationError) {
+    return paneGrantDenied('PANE_GRANT_INVALID');
+  }
+  return json({ error: error instanceof Error ? error.message : fallback }, 502);
 }
 
 function readHistoryLines(raw: unknown): { ok: true; value?: number } | { ok: false } {
@@ -72,12 +114,12 @@ function readHistoryLines(raw: unknown): { ok: true; value?: number } | { ok: fa
   return { ok: true, value: raw };
 }
 
-async function withDeviceRuntime<T>(
-  deviceId: string,
+async function withGrantedPane<T>(
+  ids: GrantedPane,
   deps: MeshInternalTmuxDeps,
   fn: (runtime: MeshInternalTmuxRuntime) => Promise<T>
 ): Promise<T> {
-  const runtime = await deps.acquire(deviceId);
+  const runtime = await deps.acquire(ids.deviceId);
   try {
     if (!runtime.isConnected()) {
       await runtime.connect();
@@ -85,9 +127,10 @@ async function withDeviceRuntime<T>(
     if (!runtime.isConnected()) {
       throw new Error('runtime not connected');
     }
+    assertPaneGeneration(ids.granted, toServerEpochHex(runtime.getServerEpoch?.()));
     return await fn(runtime);
   } finally {
-    await deps.release(deviceId, runtime);
+    await deps.release(ids.deviceId, runtime);
   }
 }
 
@@ -96,14 +139,12 @@ async function handlePaneInfo(req: Request, deps: MeshInternalTmuxDeps): Promise
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }
   try {
-    const info = await withDeviceRuntime(ids.deviceId, deps, (runtime) =>
-      runtime.getPaneInfo(ids.paneId)
-    );
+    const info = await withGrantedPane(ids, deps, (runtime) => runtime.getPaneInfo(ids.paneId));
     const snapshot = findPaneInSnapshot(ids.deviceId, ids.paneId);
     return json({
       info,
@@ -111,7 +152,7 @@ async function handlePaneInfo(req: Request, deps: MeshInternalTmuxDeps): Promise
       snapshotExists: snapshot.found || snapshot.snapshotExists,
     });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : 'pane_info_failed' }, 502);
+    return rpcFailure(error, 'pane_info_failed');
   }
 }
 
@@ -120,7 +161,7 @@ async function handleCapture(req: Request, deps: MeshInternalTmuxDeps): Promise<
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }
@@ -129,7 +170,7 @@ async function handleCapture(req: Request, deps: MeshInternalTmuxDeps): Promise<
     return json({ error: 'invalid_request' }, 400);
   }
   try {
-    const text = await withDeviceRuntime(ids.deviceId, deps, (runtime) =>
+    const text = await withGrantedPane(ids, deps, (runtime) =>
       runtime.capturePaneText(
         ids.paneId,
         historyLines.value === undefined ? undefined : { historyLines: historyLines.value }
@@ -137,7 +178,7 @@ async function handleCapture(req: Request, deps: MeshInternalTmuxDeps): Promise<
     );
     return json({ text });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : 'capture_failed' }, 502);
+    return rpcFailure(error, 'capture_failed');
   }
 }
 
@@ -146,7 +187,7 @@ async function handleSendInput(req: Request, deps: MeshInternalTmuxDeps): Promis
   if (!raw) {
     return json({ error: 'invalid_request' }, 400);
   }
-  const ids = readRequiredIds(raw, deps);
+  const ids = readRequiredIds(req, raw, deps);
   if (ids instanceof Response) {
     return ids;
   }
@@ -154,12 +195,12 @@ async function handleSendInput(req: Request, deps: MeshInternalTmuxDeps): Promis
     return json({ error: 'invalid_request' }, 400);
   }
   try {
-    await withDeviceRuntime(ids.deviceId, deps, async (runtime) => {
+    await withGrantedPane(ids, deps, async (runtime) => {
       await runtime.sendInputAndWait(ids.paneId, raw.data as string);
     });
     return json({ ok: true });
   } catch (error) {
-    return json({ error: error instanceof Error ? error.message : 'send_input_failed' }, 502);
+    return rpcFailure(error, 'send_input_failed');
   }
 }
 

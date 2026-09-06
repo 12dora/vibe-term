@@ -20,7 +20,13 @@ export interface AcquireRunResourcesParams {
   nodeId?: string | null;
   deviceId: string | null;
   paneId: string | null;
-  acquireRuntime: (nodeId: string | null, deviceId: string) => Promise<TerminalRuntimeLike>;
+  /** 远端窗格取授权用（授权随 agent 会话持久化）。 */
+  sessionId?: string | null;
+  acquireRuntime: (
+    nodeId: string | null,
+    deviceId: string,
+    sessionId?: string | null
+  ) => Promise<TerminalRuntimeLike>;
   acquireEmulator?: (
     deviceId: string,
     paneId: string,
@@ -47,7 +53,11 @@ export async function acquireRunResources(
 
   let runtime: TerminalRuntimeLike;
   try {
-    runtime = await params.acquireRuntime(params.nodeId ?? null, params.deviceId);
+    runtime = await params.acquireRuntime(
+      params.nodeId ?? null,
+      params.deviceId,
+      params.sessionId ?? null
+    );
   } catch (error) {
     return {
       runtime: null,

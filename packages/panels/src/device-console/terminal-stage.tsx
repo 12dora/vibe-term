@@ -432,9 +432,11 @@ function StageContent(props: TerminalStageProps) {
     deviceConnected,
     isReconnecting,
     isIntentionallyDisconnected,
+    isMobile,
     inputMode,
     terminalTheme,
     terminalContainerRef,
+    terminalRef,
     bindFocusedTerminalRef,
     prepareResources,
     onActivateShortcut,
@@ -449,6 +451,7 @@ function StageContent(props: TerminalStageProps) {
       background={terminalTheme.background}
       onActivate={onActivateShortcut}
       disabled={!canInteractWithPane}
+      keyboardToggle={isMobile ? terminalRef : undefined}
     />
   );
 

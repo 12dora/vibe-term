@@ -1,7 +1,15 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { sha256Hex } from './artifacts-manifest';
 import {
+  restoreSigningKeys,
+  signSums,
+  sumsTextFor,
+  useTestSigningKeys,
+} from './test-support/release-signing';
+import {
+  RELEASE_SIGNING_SINCE,
   assertReleaseIntegrity,
+  assertReleaseSignature,
   parseSha256Sums,
   sha256SumsRequired,
   verifyTarballSha256,
@@ -99,5 +107,41 @@ describe('assertReleaseIntegrity', () => {
     expect(() =>
       assertReleaseIntegrity('1.1.4', bytes, { hex, missing: false, unpublished: false })
     ).not.toThrow();
+  });
+});
+
+describe('assertReleaseSignature', () => {
+  beforeAll(() => {
+    useTestSigningKeys();
+  });
+
+  afterAll(() => {
+    restoreSigningKeys();
+  });
+
+  const hex = 'ab'.repeat(32);
+
+  test('accepts a signature made by an embedded key', () => {
+    const sums = sumsTextFor(RELEASE_SIGNING_SINCE, hex);
+    expect(() => assertReleaseSignature(RELEASE_SIGNING_SINCE, sums, signSums(sums))).not.toThrow();
+  });
+
+  test('a missing signature is fatal from RELEASE_SIGNING_SINCE on', () => {
+    const sums = sumsTextFor(RELEASE_SIGNING_SINCE, hex);
+    expect(() => assertReleaseSignature(RELEASE_SIGNING_SINCE, sums, null)).toThrow(
+      /SHA256SUMS\.sig/
+    );
+  });
+
+  test('older releases may be unsigned', () => {
+    expect(() => assertReleaseSignature('1.1.30', sumsTextFor('1.1.30', hex), null)).not.toThrow();
+  });
+
+  test('a present but invalid signature is fatal even on an old release', () => {
+    const sums = sumsTextFor('1.1.30', hex);
+    const sig = signSums(sums);
+    const tampered = sums.replace(hex, 'cd'.repeat(32));
+    expect(() => assertReleaseSignature('1.1.30', tampered, sig)).toThrow(/signature/i);
+    expect(() => assertReleaseSignature('1.1.30', sums, 'garbage')).toThrow(/signature/i);
   });
 });

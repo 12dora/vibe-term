@@ -541,3 +541,91 @@ test('mobile: long press should select word and selection toolbar copies it', as
     ensureCleanSession(sessionName);
   }
 });
+
+// 触屏上软键盘只由「输入行」（光标所在行，含上下一行容差）唤起：点画布其他位置不弹也不收，
+// 保证滚动 / 长按选择这些「看」的手势不会被键盘顶掉半屏；收起走快捷键栏的「隐藏键盘」。
+test('mobile: only the cursor row wakes the keyboard, the hide button dismisses it', async ({
+  page,
+  request,
+}) => {
+  const sessionName = `tmex-e2e-mobile-kbd-${Date.now()}`;
+  createTwoPaneSession(sessionName);
+
+  const createRes = await request.post('/api/devices', {
+    data: {
+      name: `e2e-mobile-kbd-${Date.now()}`,
+      type: 'local',
+      session: sessionName,
+      authMode: 'auto',
+    },
+  });
+  expect(createRes.ok()).toBeTruthy();
+  const created = (await createRes.json()) as { device: { id: string } };
+  const deviceId = created.device.id;
+
+  const inputFocused = () =>
+    page.evaluate(() =>
+      Boolean((document.activeElement as HTMLElement | null)?.closest('.xterm-helper-textarea'))
+    );
+
+  // 光标行 / 远离光标的行的 client 坐标：与渲染同源（最近一帧光标 + .xterm-screen 基准）
+  const rowPoints = () =>
+    page.evaluate(() => {
+      const term = (globalThis as any).__tmexE2eXterm;
+      const screen = document.querySelector('.xterm-screen');
+      if (!term || !(screen instanceof HTMLElement)) return null;
+      const rect = screen.getBoundingClientRect();
+      const cell = term.cellDimensions();
+      const cursorRow = term.lastCursor?.y ?? null;
+      if (cursorRow === null || cell.height <= 0) return null;
+      const rowCenterY = (row: number) => rect.top + (row + 0.5) * cell.height;
+      const farRow = Math.min(cursorRow + 8, Math.floor(rect.height / cell.height) - 2);
+      return {
+        x: rect.left + rect.width / 2,
+        cursorY: rowCenterY(cursorRow),
+        farY: rowCenterY(farRow),
+        cursorRow,
+        farRow,
+      };
+    });
+
+  try {
+    await page.goto(`/devices/${deviceId}`);
+    await expect(page.getByTestId('device-page')).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId('terminal-shortcut-ctrl-c')).toBeEnabled({ timeout: 20_000 });
+
+    const hideButton = page.getByTestId('terminal-keyboard-hide');
+    // 移动端挂载不自动聚焦，因此「隐藏键盘」按钮此刻不存在
+    expect(await inputFocused()).toBe(false);
+    await expect(hideButton).toHaveCount(0);
+
+    const points = await rowPoints();
+    expect(points).not.toBeNull();
+    if (!points) return;
+    expect(points.farRow).toBeGreaterThan(points.cursorRow + 1);
+
+    // 远离光标的行：不聚焦、不弹键盘
+    await page.touchscreen.tap(points.x, points.farY);
+    await page.waitForTimeout(300);
+    expect(await inputFocused()).toBe(false);
+    await expect(hideButton).toHaveCount(0);
+
+    // 光标所在的输入行：聚焦（= 弹出软键盘），「隐藏键盘」按钮随之出现
+    await page.touchscreen.tap(points.x, points.cursorY);
+    await expect.poll(inputFocused, { timeout: 5_000 }).toBe(true);
+    await expect(hideButton).toBeVisible();
+
+    // 键盘弹着时点别的行：焦点保持，不闪收
+    await page.touchscreen.tap(points.x, points.farY);
+    await page.waitForTimeout(300);
+    expect(await inputFocused()).toBe(true);
+
+    // 「隐藏键盘」收起，按钮随焦点一起消失
+    await hideButton.tap();
+    await expect.poll(inputFocused, { timeout: 5_000 }).toBe(false);
+    await expect(hideButton).toHaveCount(0);
+  } finally {
+    await request.delete(`/api/devices/${deviceId}`);
+    ensureCleanSession(sessionName);
+  }
+});

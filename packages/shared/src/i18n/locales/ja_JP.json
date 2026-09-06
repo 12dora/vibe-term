@@ -393,6 +393,7 @@
       "copyPending": "画面をタップしてコピーを完了してください",
       "pasteFailed": "クリップボードを読み取れません。ブラウザの権限を確認してください",
       "clearSelection": "選択を解除",
+      "hideKeyboard": "キーボードを隠す",
       "fileLinkNotFound": "ファイルが存在しないかアクセスできません",
       "linkOpenFailed": "リンクを開けませんでした"
     },
@@ -428,7 +429,9 @@
           "separator": "、",
           "queue": "再送待ち {{pending}} 件、破棄 {{dropped}} 件",
           "loadFailed": "マルチノード通知の状態を取得できません：{{message}}",
-          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}"
+          "saveFailed": "マルチノード通知の設定を保存できません：{{message}}",
+          "nodesTooOld": "{{minVersion}} より古いノードがあります。先にすべてのノードを更新してください。",
+          "unavailable": "マルチノード通知の設定を保存できません。再度サインインしてください。"
         },
         "scope": {
           "remote": "「{{name}}」の通知チャンネルを編集しています。",
@@ -1434,6 +1437,7 @@
       "llmSearchProviderInvalid": "検索プロバイダーは none、tavily、brave のいずれかである必要があります",
       "llmFetchModelsFailed": "モデル一覧の取得に失敗しました：{{detail}}",
       "agentSessionNotFound": "エージェントセッションが存在しません",
+      "agentSessionChanged": "エージェントセッションが変更されました。再試行してください",
       "agentSessionBusy": "エージェントセッションは実行中です。停止するか完了をお待ちください",
       "agentSessionAwaitingConfirmation": "エージェントセッションに未処理の確認リクエストがあります。先に処理してください",
       "agentDeviceRequired": "デバイスを指定してください",
@@ -2009,7 +2013,8 @@
           "admit": "新しいノードを承認",
           "revoke": "ノードを削除",
           "passkey": "パスキーの追加・削除",
-          "totp": "認証アプリをオフにする"
+          "totp": "認証アプリをオフにする",
+          "notifySink": "マルチノード通知の設定"
         }
       }
     },
