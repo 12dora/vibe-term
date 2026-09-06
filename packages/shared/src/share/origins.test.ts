@@ -82,6 +82,7 @@ describe('rankShareOrigins', () => {
     url,
     kind,
     label: kind,
+    accessUrl: url,
   });
 
   test('按 custom > site > hub > relay > tunnel > ip 排序', () => {
@@ -121,7 +122,14 @@ describe('rankShareOrigins', () => {
       candidate('https://a.example.com/', 'site'),
       candidate('https://a.example.com', 'hub'),
     ]);
-    expect(ranked).toEqual([{ url: 'https://a.example.com', kind: 'site', label: 'site' }]);
+    expect(ranked).toEqual([
+      {
+        url: 'https://a.example.com',
+        kind: 'site',
+        label: 'site',
+        accessUrl: 'https://a.example.com/',
+      },
+    ]);
   });
 
   test('空输入返回空数组', () => {
