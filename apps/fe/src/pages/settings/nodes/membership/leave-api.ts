@@ -1,7 +1,7 @@
 // 退出 mesh 的接口边界。
 //
-// 实现就是 api-client 的 `LocalApi.leave()`（`POST /api/local/leave`，契约见
-// `prompt-archives/2026082901-nodes-settings-devices-polish/sub/api-contract.md`）；
+// 实现就是 api-client 的 `LocalApi.leave()`（`POST /api/local/leave`，服务端在
+// `packages/app/src/runtime/local-routes.ts`，类型见 `@vibeterm/api-client/local/types`）；
 // 这里只留一个窄接口，让 hook 的依赖可注入、可替换，同时把角色收敛到 `MeshRole`。
 
 import { defaultLocalApi } from '@vibeterm/api-client/local/local-api';
