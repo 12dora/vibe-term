@@ -66,7 +66,16 @@ export { type DateInput, formatDate, formatDateTime } from './format-date';
 
 // ==================== 字节 / 速率格式化 ====================
 
-export { formatBytes, formatBytesPair, formatEta, formatRate } from './format-bytes';
+export {
+  type FormattedRate,
+  type ScaledByteUnit,
+  formatBytes,
+  formatBytesFixed,
+  formatBytesPair,
+  formatEta,
+  formatRate,
+  formatRateParts,
+} from './format-bytes';
 
 // ==================== 领域契约 ====================
 

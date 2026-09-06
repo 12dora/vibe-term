@@ -1032,6 +1032,7 @@ describe('推包进度与预算', () => {
     ).toEqual({ kind: 'push', transferredBytes: 10, totalBytes: 20 });
   });
 
+  // 进度文案走宽度稳定的一档（固定一位小数、单位从 KB 起），按钮宽度不随字节数抖。
   test('按钮文案：推包摆「已传 / 总量」，下载摆已下载量', () => {
     expect(upgradePhaseText(t, 'downloading')).toBe('nodes.upgrade.stateDownloading');
     expect(
@@ -1040,21 +1041,21 @@ describe('推包进度与预算', () => {
         transferredBytes: 1024,
         totalBytes: 2048,
       })
-    ).toBe('nodes.upgrade.statePushing:{"progress":"1.00 KB / 2.00 KB"}');
+    ).toBe('nodes.upgrade.statePushing:{"progress":"1.0 KB / 2.0 KB"}');
     expect(
       upgradePhaseText(t, 'downloading', {
         kind: 'download',
         transferredBytes: 1024,
         totalBytes: 2048,
       })
-    ).toBe('nodes.upgrade.stateDownloadingBytes:{"progress":"1.00 KB / 2.00 KB"}');
+    ).toBe('nodes.upgrade.stateDownloadingBytes:{"progress":"1.0 KB / 2.0 KB"}');
     expect(
       upgradePhaseText(t, 'downloading', {
         kind: 'download',
         transferredBytes: 1024,
         totalBytes: 0,
       })
-    ).toBe('nodes.upgrade.stateDownloadingSize:{"size":"1.00 KB"}');
+    ).toBe('nodes.upgrade.stateDownloadingSize:{"size":"1.0 KB"}');
   });
 
   /** 慢但在动的下载：字节一直在涨，看门狗按下载阶段预算重新计时，不能报未确认。 */

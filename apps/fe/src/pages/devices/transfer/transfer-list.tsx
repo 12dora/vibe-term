@@ -1,6 +1,6 @@
 // 弹窗下方的传输列表：节点间任务与浏览器上传 / 下载共用同一份 store，因此一起列。
 
-import { formatBytes, formatEta, formatRate } from '@vibeterm/api-client';
+import { formatBytesPair, formatEta, formatRate } from '@vibeterm/api-client';
 import {
   BROWSER_ENDPOINT_ID,
   type TransferJobView,
@@ -11,6 +11,7 @@ import {
 } from '@vibeterm/panels/files/transfers';
 import { cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Progress } from '@vibeterm/ui/progress';
 import { ScrollArea } from '@vibeterm/ui/scroll-area';
 import { ArrowRight, X } from 'lucide-react';
@@ -52,7 +53,10 @@ function StateBadge({ view }: { view: TransferJobView }) {
   );
 }
 
-function TransferRow({ view, options }: { view: TransferJobView; options: DialogNodeOption[] }) {
+export function TransferRow({
+  view,
+  options,
+}: { view: TransferJobView; options: DialogNodeOption[] }) {
   const { t } = useTranslation();
   const browser = t('devices.transfer.browser');
   const total = view.progress.totalBytes;
@@ -90,14 +94,14 @@ function TransferRow({ view, options }: { view: TransferJobView; options: Dialog
             {t('devices.transfer.items', { done: view.itemsDone, total: view.itemsTotal })}
           </span>
         )}
-        <span className="ml-auto shrink-0 tabular-nums">
-          {total > 0
-            ? `${formatBytes(view.progress.transferredBytes)} / ${formatBytes(total)}`
-            : `${view.pct}%`}
-        </span>
+        <ByteRate className="ml-auto shrink-0" minWidthClass="min-w-[15ch]">
+          {total > 0 ? formatBytesPair(view.progress.transferredBytes, total) : `${view.pct}%`}
+        </ByteRate>
         {!isTerminalTransferState(view.state) && (
-          <span className="shrink-0 tabular-nums">
-            {formatRate(view.progress.ratePerSec)} · {formatEta(view.progress.etaSec)}
+          <span className="flex shrink-0 items-center gap-1">
+            <ByteRate>{formatRate(view.progress.ratePerSec)}</ByteRate>
+            <span aria-hidden>·</span>
+            <ByteRate minWidthClass="min-w-[5ch]">{formatEta(view.progress.etaSec)}</ByteRate>
           </span>
         )}
       </div>

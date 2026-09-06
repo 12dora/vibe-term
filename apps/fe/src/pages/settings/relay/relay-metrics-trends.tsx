@@ -2,6 +2,7 @@
 // 每张图右上角标出这段窗口里的峰值与谷值——没有坐标轴的折线，端点标注就是唯一的量纲。
 
 import { formatRate } from '@vibeterm/api-client/format';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Card, CardContent, CardHeader, CardTitle } from '@vibeterm/ui/card';
 import { Sparkline, type SparklineTone } from '@vibeterm/ui/sparkline';
 import { useTranslation } from 'react-i18next';
@@ -58,14 +59,15 @@ function TrendChart({ title, testId, series, tones, format, legend }: TrendChart
             </span>
           ))}
         </div>
-        <span className="text-[11px] text-muted-foreground tabular-nums">
+        {/* 峰谷标注每 5 秒重算一次，宽度定死才不会把图例往左推。 */}
+        <ByteRate className="text-[11px] text-muted-foreground" minWidthClass="min-w-[14ch]">
           {empty
             ? t('relay.metrics.empty')
             : t('relay.metrics.trends.range', {
                 max: format(max),
                 min: format(Number.isFinite(min) ? min : 0),
               })}
-        </span>
+        </ByteRate>
       </header>
       <Sparkline
         className="h-16 w-full"

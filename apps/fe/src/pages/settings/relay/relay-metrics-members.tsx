@@ -4,6 +4,7 @@
 import { formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsMember } from '@vibeterm/api-client/relay/metrics-types';
 import { Badge } from '@vibeterm/ui/badge';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll } from '../components/wide-table';
@@ -22,12 +23,15 @@ const RTT_TONE_CLASS = {
   destructive: 'text-destructive',
 } as const;
 
-const COLUMNS: { key: MemberSortKey; align: 'left' | 'right' }[] = [
+/** 速率列固定宽度：两个读数各自等宽还不够，列本身也要定死，否则整表随刷新重排。 */
+const RATE_COLUMN_CLASS = 'w-[11rem] min-w-[11rem]';
+
+const COLUMNS: { key: MemberSortKey; align: 'left' | 'right'; className?: string }[] = [
   { key: 'node', align: 'left' },
   { key: 'state', align: 'left' },
   { key: 'rtt', align: 'right' },
   { key: 'streams', align: 'right' },
-  { key: 'rate', align: 'right' },
+  { key: 'rate', align: 'right', className: RATE_COLUMN_CLASS },
   { key: 'reconnects', align: 'right' },
   { key: 'connected', align: 'left' },
 ];
@@ -61,6 +65,7 @@ export function RelayMembersTable({
                 key={column.key}
                 column={column.key}
                 align={column.align}
+                className={column.className}
                 sort={sort}
                 onSort={onSort}
               />
@@ -111,12 +116,15 @@ function MemberRow({ member, now }: { member: RelayMetricsMember; now: number })
         {formatMs(rtt)}
       </Td>
       <Td align="right">{member.activeStreams}</Td>
-      <Td align="right">
-        <span className="whitespace-nowrap">
-          {t('relay.metrics.tiles.throughputSub', {
-            out: formatRate(member.bytesOutPerSec),
-            in: formatRate(member.bytesInPerSec),
-          })}
+      <Td align="right" className={RATE_COLUMN_CLASS}>
+        {/* 出 / 入两个读数各自包一层：整句插值成一个字符串就没法让两半分别定宽。
+            ↑ ↓ · 三个符号与语言无关，沿用 relay.metrics.tiles.throughputSub 的排法。 */}
+        <span className="inline-flex items-center justify-end gap-1 whitespace-nowrap">
+          <span aria-hidden>↑</span>
+          <ByteRate>{formatRate(member.bytesOutPerSec)}</ByteRate>
+          <span aria-hidden>·</span>
+          <span aria-hidden>↓</span>
+          <ByteRate>{formatRate(member.bytesInPerSec)}</ByteRate>
         </span>
       </Td>
       <Td align="right">{member.reconnects}</Td>
@@ -132,11 +140,13 @@ function MemberRow({ member, now }: { member: RelayMetricsMember; now: number })
 function SortableTh({
   column,
   align,
+  className = '',
   sort,
   onSort,
 }: {
   column: MemberSortKey;
   align: 'left' | 'right';
+  className?: string;
   sort: MemberSort;
   onSort: (key: MemberSortKey) => void;
 }) {
@@ -145,7 +155,7 @@ function SortableTh({
   const Arrow = sort.direction === 'asc' ? ArrowUp : ArrowDown;
   return (
     <th
-      className={`px-3 py-2 font-normal ${align === 'right' ? 'text-right' : 'text-left'}`}
+      className={`px-3 py-2 font-normal ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}
       scope="col"
       aria-sort={active ? (sort.direction === 'asc' ? 'ascending' : 'descending') : undefined}
     >

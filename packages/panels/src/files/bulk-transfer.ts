@@ -20,7 +20,7 @@ import {
   SELF_NODE_ID,
   defaultApiClient,
   downloadFileWithProgress,
-  formatBytes,
+  formatBytesFixed,
   formatBytesPair,
   formatRate,
   uploadFileChunked,
@@ -255,7 +255,7 @@ export async function downloadFileWithTransport(
       const prepared = await prepareDownload(rootId, path, name, opts, client, (id) => {
         downloadId = id;
       });
-      opts.onLeg?.(1, { pct: 100, detail: formatBytes(prepared.size) });
+      opts.onLeg?.(1, { pct: 100, detail: formatBytesFixed(prepared.size) });
       const blob = await drainBulkDownload(bulk, downloadId, prepared.size, opts);
       await deleteQuietly(client, `/api/files/download/${downloadId}`);
       return { name: prepared.name, blob, transferPath: 'direct' };

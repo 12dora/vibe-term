@@ -60,7 +60,8 @@ describe('prepareDownload', () => {
     expect(onDownloadId).toHaveBeenCalledWith('dl-1');
     expect(legs.map(([leg]) => leg)).toEqual([1, 1]);
     expect(legs[0][1].pct).toBe(0);
-    expect(legs[1][1]).toEqual({ pct: 40, rate: '1 B/s', detail: '4 B' });
+    // detail 走宽度稳定的 `formatBytesFixed`：进度每几百毫秒刷一次，位数不能跟着变
+    expect(legs[1][1]).toEqual({ pct: 40, rate: '1 B/s', detail: '0.0 KB' });
   });
 
   test('done 事件缺 name 时退回调用方传入的文件名', async () => {

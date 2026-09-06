@@ -6,7 +6,7 @@ import type { FileErrorCode } from '@vibeterm/shared';
 import { ProgressTracker } from '@vibeterm/transfer';
 import { type ApiClient, defaultApiClient } from './client';
 import { FileApiError, parseError } from './file-errors';
-import { formatBytes, formatBytesPair, formatRate } from './format';
+import { formatBytesFixed, formatBytesPair, formatRate } from './format';
 import { readNdjsonStream } from './ndjson-stream';
 import type { TransferOpts } from './transfer-types';
 
@@ -58,7 +58,7 @@ export async function downloadFileWithProgress(
     const prepared = await prepareDownload(rootId, path, name, opts, client, (id) => {
       downloadId = id;
     });
-    onLeg?.(1, { pct: 100, detail: formatBytes(prepared.size) });
+    onLeg?.(1, { pct: 100, detail: formatBytesFixed(prepared.size) });
     const blob = await drainContent(client, downloadId, prepared.size, opts);
     // 整份收齐并校验过长度之后才回收远端会话——服务端不会在读到文件尾时自行清理，
     // 否则中途断线的续传请求会撞上 404。
@@ -216,7 +216,7 @@ export async function prepareDownload(
       onLeg?.(1, {
         pct: ev.pct ?? 0,
         rate: ev.rate,
-        detail: ev.transferred != null ? formatBytes(ev.transferred) : undefined,
+        detail: ev.transferred != null ? formatBytesFixed(ev.transferred) : undefined,
       });
     } else if (ev.type === 'done') {
       downloadId = ev.downloadId ?? '';

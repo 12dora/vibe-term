@@ -22,7 +22,7 @@ export interface StatTileProps extends Omit<React.ComponentProps<'div'>, 'title'
   value?: React.ReactNode;
   /** 跟在数值后的单位，字号更小且不参与 tone 着色。 */
   unit?: string;
-  /** 副行：一句更细的补充（如 ↑ 12.3 KB/s · ↓ 4.1 KB/s）。 */
+  /** 副行：一句更细的补充（如 ↑ 12.3 KB/s · ↓ 4.1 KB/s）；两个读数各自包 `ByteRate` 才不抖。 */
   sub?: React.ReactNode;
   tone?: StatTileTone;
   /** 右侧的迷你折线槽位：宽度不够时先被挤扁，`sm` 以下直接不画。 */
@@ -77,7 +77,8 @@ export function StatTile({
             <div className="mt-0.5 flex items-baseline gap-1">
               <span
                 className={cn(
-                  'text-xl leading-tight font-semibold whitespace-nowrap tabular-nums',
+                  // shrink-0：数值可能是一个带最小宽度的 ByteRate，被折线挤扁就前功尽弃。
+                  'shrink-0 text-xl leading-tight font-semibold whitespace-nowrap tabular-nums',
                   VALUE_TONE_CLASS[tone]
                 )}
                 data-slot="stat-tile-value"

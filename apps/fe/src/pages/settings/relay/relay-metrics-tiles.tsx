@@ -2,6 +2,7 @@
 
 import { formatBytes, formatRate } from '@vibeterm/api-client/format';
 import type { RelayMetricsResponse } from '@vibeterm/api-client/relay/metrics-types';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Skeleton } from '@vibeterm/ui/skeleton';
 import { Sparkline } from '@vibeterm/ui/sparkline';
 import { StatTile } from '@vibeterm/ui/stat-tile';
@@ -88,7 +89,7 @@ export function ThroughputTile({
   return (
     <StatTile
       label={t('relay.metrics.tiles.throughput')}
-      value={formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}
+      value={<ByteRate>{formatRate(totals.bytesInPerSec + totals.bytesOutPerSec)}</ByteRate>}
       sub={
         showTotal
           ? t('relay.metrics.tiles.throughputTotal', { total: trafficText(totals.bytesOut) })
@@ -118,7 +119,7 @@ function BytesInTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesIn')}
-      value={formatRate(data.totals.bytesInPerSec)}
+      value={<ByteRate>{formatRate(data.totals.bytesInPerSec)}</ByteRate>}
       stale={stale}
       sparkline={
         <Sparkline
@@ -139,7 +140,7 @@ function BytesOutTile({ data, trends, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.bytesOut')}
-      value={formatRate(data.totals.bytesOutPerSec)}
+      value={<ByteRate>{formatRate(data.totals.bytesOutPerSec)}</ByteRate>}
       stale={stale}
       sparkline={
         <Sparkline
@@ -236,7 +237,7 @@ function MemoryTile({
   return (
     <StatTile
       label={t('relay.metrics.tiles.memory')}
-      value={formatBytes(memory.rssBytes)}
+      value={<ByteRate>{formatBytes(memory.rssBytes)}</ByteRate>}
       sub={
         showHeapTotal
           ? t('relay.metrics.tiles.memoryHeapSub', {
@@ -276,7 +277,7 @@ function TrafficTile({ data, stale }: MetricsTileProps) {
   return (
     <StatTile
       label={t('relay.metrics.tiles.traffic')}
-      value={trafficText(data.totals.bytesOut)}
+      value={<ByteRate>{trafficText(data.totals.bytesOut)}</ByteRate>}
       sub={t('relay.metrics.tiles.trafficSub')}
       hint={t('relay.metrics.tiles.trafficHint')}
       stale={stale}
@@ -297,12 +298,14 @@ function BandwidthTile({ data, stale }: MetricsTileProps) {
     <StatTile
       label={t('relay.metrics.tiles.bandwidth')}
       value={
-        limit === null
-          ? used
-          : t('relay.metrics.tiles.usedOfLimit', {
-              used,
-              limit: formatRate(limit),
-            })
+        <ByteRate minWidthClass={limit === null ? 'min-w-[7.5ch]' : 'min-w-[16ch]'}>
+          {limit === null
+            ? used
+            : t('relay.metrics.tiles.usedOfLimit', {
+                used,
+                limit: formatRate(limit),
+              })}
+        </ByteRate>
       }
       sub={
         limit === null

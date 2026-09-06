@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
+import type { TransferJobView } from '@vibeterm/panels/files/transfers';
+import { renderToStaticMarkup } from 'react-dom/server';
 import type { DialogNodeOption } from '../dialog-nodes';
-import { endpointLabel } from './transfer-list';
+import { TransferRow, endpointLabel } from './transfer-list';
 import { fileListQueryOptions, fileRootsQueryOptions } from './transfer-queries';
 
 const ENTRY = '0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e';
@@ -61,5 +63,50 @@ describe('查询选项', () => {
       'r1',
       '/a',
     ]);
+  });
+});
+
+function jobView(patch: Partial<TransferJobView> = {}): TransferJobView {
+  return {
+    key: 'self:j1',
+    kind: 'node',
+    nodeId: 'self',
+    jobId: 'j1',
+    fromNodeId: ENTRY,
+    toNodeId: REMOTE,
+    title: 'a.bin',
+    state: 'running',
+    progress: { transferredBytes: 1024, totalBytes: 2048, ratePerSec: 4096, etaSec: 12 },
+    pct: 50,
+    path: null,
+    itemStates: [],
+    itemsDone: 0,
+    itemsTotal: 1,
+    createdAt: 0,
+    updatedAt: 0,
+    finishedAt: null,
+    cancellable: true,
+    ...patch,
+  };
+}
+
+describe('传输进度行的宽度', () => {
+  test('已传 / 总量与速率 / 剩余时间各自定宽，位数变化不挤动端点名', () => {
+    const html = renderToStaticMarkup(<TransferRow view={jobView()} options={OPTIONS} />);
+    expect(html).toContain('data-slot="byte-rate"');
+    expect(html).toContain('min-w-[15ch]');
+    expect(html).toContain('min-w-[7.5ch]');
+    expect(html).toContain('min-w-[5ch]');
+    // 固定一位小数、单位从 KB 起
+    expect(html).toContain('1.0 KB / 2.0 KB');
+    expect(html).toContain('4.0 KB/s');
+    expect(html).toContain('0:12');
+  });
+
+  test('终态行不摆速率与剩余时间', () => {
+    const html = renderToStaticMarkup(
+      <TransferRow view={jobView({ state: 'done', pct: 100 })} options={OPTIONS} />
+    );
+    expect(html).not.toContain('KB/s');
   });
 });

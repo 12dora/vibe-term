@@ -1,8 +1,9 @@
 // 映射列表表格。行动作只有暂停 / 继续 / 删除，删除走二次确认。
 
-import { formatBytes } from '@vibeterm/api-client';
+import { formatBytesFixed } from '@vibeterm/api-client';
 import { cn } from '@vibeterm/ui';
 import { Button } from '@vibeterm/ui/button';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Pause, Play, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
@@ -53,7 +54,9 @@ export function PortMapTable({ rows, options, busyId, onToggle, onDelete }: Port
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.target')}</th>
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.state')}</th>
             <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.connections')}</th>
-            <th className="px-2 py-1.5 font-medium">{t('devices.portmap.columns.traffic')}</th>
+            <th className="w-[11rem] min-w-[11rem] px-2 py-1.5 font-medium">
+              {t('devices.portmap.columns.traffic')}
+            </th>
             <th className="px-2 py-1.5 font-medium text-right">
               {t('devices.portmap.columns.actions')}
             </th>
@@ -78,8 +81,19 @@ export function PortMapTable({ rows, options, busyId, onToggle, onDelete }: Port
               <td className="px-2 py-1.5 tabular-nums">
                 {row.activeConnections} / {row.totalConnections}
               </td>
-              <td className="px-2 py-1.5 tabular-nums">
-                ↓ {formatBytes(row.bytesIn)} · ↑ {formatBytes(row.bytesOut)}
+              {/* 流量随连接持续增长：两个读数各自定宽，整列才不会随刷新重排。 */}
+              <td className="w-[11rem] min-w-[11rem] px-2 py-1.5 tabular-nums">
+                <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                  <span aria-hidden>↓</span>
+                  <ByteRate data-testid={`portmap-bytes-in-${row.id}`}>
+                    {formatBytesFixed(row.bytesIn)}
+                  </ByteRate>
+                  <span aria-hidden>·</span>
+                  <span aria-hidden>↑</span>
+                  <ByteRate data-testid={`portmap-bytes-out-${row.id}`}>
+                    {formatBytesFixed(row.bytesOut)}
+                  </ByteRate>
+                </span>
               </td>
               <td className="px-2 py-1.5">
                 <div className="flex items-center justify-end gap-0.5">

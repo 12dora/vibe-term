@@ -4,6 +4,7 @@
 import { toast } from 'sonner';
 
 import type { LegProgress } from '@vibeterm/api-client';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Progress } from '@vibeterm/ui/progress';
 import i18next from 'i18next';
 import { type LocalTransferHandle, combineLegPct, startLocalTransfer } from './transfer-jobs-store';
@@ -45,12 +46,16 @@ function legLabel(direction: TransferDirection, leg: 1 | 2): string {
 }
 
 function LegRow({ label, leg }: { label: string; leg: LegProgress }) {
-  const meta = [leg.rate, leg.detail].filter(Boolean).join(' · ');
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">{label}</span>
-        <span className="shrink-0 tabular-nums">{meta}</span>
+        {/* 速率与「已传 / 总量」各自定宽：拼成一个字符串就会随位数变化把文件名挤来挤去。 */}
+        <span className="flex shrink-0 items-center gap-1">
+          {leg.rate && <ByteRate>{leg.rate}</ByteRate>}
+          {leg.rate && leg.detail && <span aria-hidden>·</span>}
+          {leg.detail && <ByteRate minWidthClass="min-w-[15ch]">{leg.detail}</ByteRate>}
+        </span>
       </div>
       <Progress value={leg.pct} />
     </div>

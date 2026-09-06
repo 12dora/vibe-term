@@ -1,6 +1,6 @@
 // 中继运营面的展示格式化：全是纯函数，文案一律经 `t` 出。
 
-import { formatBytes } from '@vibeterm/api-client/format';
+import { formatBytesFixed } from '@vibeterm/api-client/format';
 import type { RelayQuota } from '@vibeterm/api-client/relay/admin-api';
 
 export type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -106,7 +106,7 @@ export function quotaSummary(
  * 两个计数逐字节相等，摆两列只会让人以为统计坏了——所以只出一个数。
  */
 export function trafficText(bytes: number): string {
-  return formatBytes(bytes);
+  return formatBytesFixed(bytes);
 }
 
 /** 代次一格：口令 / 令牌 / 元数据密钥统一说「第 N 代」。 */

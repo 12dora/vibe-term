@@ -138,7 +138,14 @@ describe('quotaSummary', () => {
 
 describe('trafficText', () => {
   test('只出一个中转流量值', () => {
-    expect(trafficText(2048)).toBe('2.00 KB');
+    expect(trafficText(2048)).toBe('2.0 KB');
+  });
+
+  test('固定一位小数、单位从 KB 起，租户表流量列不随刷新变宽', () => {
+    expect(trafficText(0)).toBe('0.0 KB');
+    expect(trafficText(512)).toBe('0.5 KB');
+    expect(trafficText(20 * 1024 * 1024)).toBe('20.0 MB');
+    expect(trafficText(200 * 1024 * 1024)).toBe('200.0 MB');
   });
 });
 

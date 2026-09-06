@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { ByteRate } from './byte-rate';
 import { StatTile } from './stat-tile';
 
 /** 取某个 data-slot 元素的 class 串（静态标记里 className 紧挨在 data-slot 前面）。 */
@@ -27,6 +28,19 @@ describe('<StatTile />', () => {
   test('数值用等宽数字，刷新时不抖', () => {
     const html = renderToStaticMarkup(<StatTile label="延迟" value="42" />);
     expect(html).toContain('tabular-nums');
+  });
+
+  test('数值槽位不被折线挤扁，传进来的固定宽度读数保得住', () => {
+    const html = renderToStaticMarkup(
+      <StatTile
+        label="吞吐"
+        value={<ByteRate>12.3 MB/s</ByteRate>}
+        sparkline={<i data-testid="spark" />}
+      />
+    );
+    expect(slotClass(html, 'stat-tile-value')).toContain('shrink-0');
+    expect(html).toContain('data-slot="byte-rate"');
+    expect(html).toContain('min-w-[7.5ch]');
   });
 
   test('没有数值时出破折号而不是空白', () => {

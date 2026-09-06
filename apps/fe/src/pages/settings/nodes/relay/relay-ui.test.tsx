@@ -212,8 +212,8 @@ describe('四档配额', () => {
     expect(rows[0]?.usedText).toBe('6');
     expect(rows[0]?.percent).toBe(75);
     expect(rows[1]?.usedText).toBe('4');
-    expect(rows[2]?.usedText).toBe('4.00 KB/s');
-    expect(rows[2]?.limitText).toBe('1.00 MB/s');
+    expect(rows[2]?.usedText).toBe('4.0 KB/s');
+    expect(rows[2]?.limitText).toBe('1.0 MB/s');
   });
 
   test('单文件上限：中继未下发即「不限」，下发时按字节格式化', () => {
@@ -238,10 +238,10 @@ describe('四档配额', () => {
         sampledAt: 1,
       } as never,
     });
-    expect(rows[2]?.usedText).toBe('6.00 KB/s');
+    expect(rows[2]?.usedText).toBe('6.0 KB/s');
   });
 
-  test('带宽用量是浮点时最多两位小数', () => {
+  test('带宽用量是浮点时收成一位小数，且不塌回单字符的 B/s', () => {
     const rows = relayQuotaRows({
       ...quota,
       usage: {
@@ -252,7 +252,7 @@ describe('四档配额', () => {
         sampledAt: 1,
       },
     });
-    expect(rows[2]?.usedText).toBe('237.52 B/s');
+    expect(rows[2]?.usedText).toBe('0.2 KB/s');
   });
 
   test('旧中继不下发用量：只剩上限，也没有进度条', () => {

@@ -367,6 +367,19 @@ describe('磁贴排', () => {
     expect(html).toContain('13%');
   });
 
+  test('速率 / 字节量的数值格进 ByteRate，刷新时磁贴宽度不变', () => {
+    const html = renderToStaticMarkup(<RelayFullTiles data={data} trends={trends} />);
+    expect(html).toContain('data-slot="byte-rate"');
+    expect(html).toContain('min-w-[7.5ch]');
+  });
+
+  test('带宽格摆「已用 / 上限」两个读数时留更宽的位置', () => {
+    const capped = relayMetricsFixture();
+    capped.totals.bandwidthLimitBytesPerSec = 1024 * 1024;
+    const html = renderToStaticMarkup(<RelayFullTiles data={capped} trends={trends} />);
+    expect(html).toContain('min-w-[16ch]');
+  });
+
   test('事件循环延迟过高时磁贴转告警色', () => {
     const hot = relayMetricsFixture();
     hot.process.eventLoop = { lagMs: 320, maxLagMs: 500 };
@@ -421,6 +434,25 @@ describe('接入节点表', () => {
     expect(html).toContain('上海节点');
     // 没名字的成员用节点号前 8 位
     expect(html).toContain('ffeeddcc');
+  });
+
+  test('速率格把出 / 入拆成两个定宽读数，整列跟着定死', () => {
+    const data = relayMetricsFixture();
+    const html = renderToStaticMarkup(
+      <RelayMembersTable
+        members={data.members}
+        now={data.sampledAt}
+        sort={DEFAULT_MEMBER_SORT}
+        onSort={() => undefined}
+      />
+    );
+    // 出 8192 B/s、入 4096 B/s：固定一位小数、单位从 KB 起
+    expect(html).toContain('8.0 KB/s');
+    expect(html).toContain('4.0 KB/s');
+    expect(html).toContain('data-slot="byte-rate"');
+    expect(html).toContain('min-w-[7.5ch]');
+    // 表头与单元格用同一个列宽，排序切换也不重排
+    expect(html.match(/w-\[11rem\] min-w-\[11rem\]/g)?.length).toBeGreaterThan(1);
   });
 
   test('一个成员都没有时出空态', () => {

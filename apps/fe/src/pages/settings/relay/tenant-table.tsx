@@ -5,6 +5,7 @@ import type { RelayQuota, RelayTenantSummary } from '@vibeterm/api-client/relay/
 import { cn } from '@vibeterm/ui';
 import { Badge } from '@vibeterm/ui/badge';
 import { Button } from '@vibeterm/ui/button';
+import { ByteRate } from '@vibeterm/ui/byte-rate';
 import { Input } from '@vibeterm/ui/input';
 import { Pencil, Trash2, Unplug } from 'lucide-react';
 import { type KeyboardEvent, type MouseEvent, useState } from 'react';
@@ -133,9 +134,9 @@ function TenantRow({
       <TenantNodesCell tenant={tenant} />
       <Td>{tenant.streams}</Td>
       <Td>
-        <span data-testid={`relay-tenant-traffic-${tenant.id}`}>
+        <ByteRate data-testid={`relay-tenant-traffic-${tenant.id}`}>
           {trafficText(tenant.bytesOut)}
-        </span>
+        </ByteRate>
       </Td>
       <TenantQuotaCell tenant={tenant} defaultQuota={defaultQuota} />
       <TenantEpochCell tenant={tenant} />

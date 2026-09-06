@@ -21,13 +21,62 @@ export function formatBytes(n: number): string {
   return `${v.toFixed(digits)} ${units[i]}`;
 }
 
-export function formatRate(bytesPerSec: number): string {
-  return `${formatBytes(bytesPerSec)}/s`;
+/** 从 KB 起档的单位表。速率与表格里的字节量都不摆 `B`：单字符单位会让列宽在边界上跳。 */
+const SCALED_UNITS = ['KB', 'MB', 'GB', 'TB'] as const;
+
+export type ScaledByteUnit = (typeof SCALED_UNITS)[number];
+
+export interface FormattedRate {
+  /** 完整读数，如 `12.3 MB/s`。等于 `${value} ${unit}/s`。 */
+  text: string;
+  /** 只有数字部分，固定一位小数，如 `12.3`。 */
+  value: string;
+  /** 字节量级单位，不含 `/s`。 */
+  unit: ScaledByteUnit;
 }
 
-/** 「已传 / 总量」一行。两个数走同一套分档，读起来才能比。 */
+/**
+ * 从 KB 起档换算。进位判断按「收成一位小数之后」的值来做，
+ * 否则 1048570 字节会摆成 `1024.0 KB` 而不是 `1.0 MB`。
+ * 非有限值与负数按 0 计——速率是差分算出来的，跨采样重启时可能为负。
+ */
+function scaleFromKb(bytes: number): { value: number; unit: ScaledByteUnit } {
+  const safe = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  let value = safe / 1024;
+  let index = 0;
+  while (index < SCALED_UNITS.length - 1 && Math.round(value * 10) / 10 >= 1024) {
+    value /= 1024;
+    index += 1;
+  }
+  return { value, unit: SCALED_UNITS[index] };
+}
+
+/**
+ * 速率。固定一位小数、固定两字符单位、最低一档是 `0.0 KB/s`——
+ * 位数与单位长度都不随数值变，列宽才不会跟着刷新抖。
+ */
+export function formatRateParts(bytesPerSec: number): FormattedRate {
+  const { value, unit } = scaleFromKb(bytesPerSec);
+  const text = value.toFixed(1);
+  return { text: `${text} ${unit}/s`, value: text, unit };
+}
+
+export function formatRate(bytesPerSec: number): string {
+  return formatRateParts(bytesPerSec).text;
+}
+
+/**
+ * 表格 / 实时计数器用的字节量：与 `formatRate` 同一套定档，宽度稳定。
+ * 文件大小仍走 `formatBytes`（`200 MB` 这种零位小数是有意的）。
+ */
+export function formatBytesFixed(n: number): string {
+  const { value, unit } = scaleFromKb(n);
+  return `${value.toFixed(1)} ${unit}`;
+}
+
+/** 「已传 / 总量」一行。传输进度每几百毫秒刷一次，两个数都走宽度稳定的那一档。 */
 export function formatBytesPair(used: number, total: number): string {
-  return `${formatBytes(used)} / ${formatBytes(total)}`;
+  return `${formatBytesFixed(used)} / ${formatBytesFixed(total)}`;
 }
 
 /**

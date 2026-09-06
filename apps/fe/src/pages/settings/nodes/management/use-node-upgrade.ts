@@ -19,7 +19,7 @@
 // 照样把升级跑起来。因此由 `createUpgradeCancelGate` 记账，等 POST 落地再补发（`UpgradeStartHandoff`）。
 
 import { type NodeRow, getMeshNodesState, refreshMeshNodes } from '@/node/mesh-nodes';
-import { defaultApiClient, formatBytes, formatBytesPair } from '@vibeterm/api-client';
+import { defaultApiClient, formatBytesFixed, formatBytesPair } from '@vibeterm/api-client';
 import { UPGRADE_CANCELLED, type UpgradeStatus, sleepOrAbort } from '@vibeterm/shared';
 import type {
   NodeUpgradeEntry,
@@ -811,7 +811,7 @@ function downloadingText(t: Translate, transfer?: NodeUpgradeEntry['transfer']):
   if (transfer.kind === 'push') return t('nodes.upgrade.statePushing', { progress: pair });
   if (transfer.totalBytes > 0) return t('nodes.upgrade.stateDownloadingBytes', { progress: pair });
   return t('nodes.upgrade.stateDownloadingSize', {
-    size: formatBytes(transfer.transferredBytes),
+    size: formatBytesFixed(transfer.transferredBytes),
   });
 }
 
