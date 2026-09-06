@@ -27,6 +27,9 @@ const ERROR_MESSAGE: Record<ShareErrorCode, () => string> = {
   SHARE_ENDED: () => 'Share has already ended.',
 };
 
+/** 口令明文只发给这一次请求：别让浏览器/反代把它留在任何缓存里。 */
+const PASSWORD_CACHE_CONTROL = 'private, no-store';
+
 export function shareError(code: ShareErrorCode): Response {
   return json({ error: ERROR_MESSAGE[code](), code }, ERROR_STATUS[code]);
 }
@@ -137,7 +140,9 @@ export const shareRoutes: ApiRoute[] = [
     handler: async (_req, params) => {
       try {
         const result = await getShareService().getPassword(params.id);
-        return result.ok ? json({ password: result.password }) : shareError(result.code);
+        return result.ok
+          ? json({ password: result.password }, 200, { 'Cache-Control': PASSWORD_CACHE_CONTROL })
+          : shareError(result.code);
       } catch (error) {
         if (error instanceof CryptoDecryptError) return cryptoFailure(error);
         throw error;

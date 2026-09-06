@@ -1,6 +1,7 @@
-// 改密码的提交载荷与失败形态，以及两个对话框正文的静态渲染。
-// 无 DOM 测试环境，用 react-dom/server 静态渲染（与设置页其余用例同一套做法）；
-// 没有 i18next 实例时 `t` 原样返回 key，因此断言的是 key 与 testId。
+// 改密码的提交载荷与失败形态、「复制带密码的链接」的两条剪贴板路径，以及两个对话框正文的静态渲染。
+// 无 DOM 测试环境，用 react-dom/server 静态渲染（与设置页其余用例同一套做法）。
+// 渲染结果一概只断言结构（testId 与自带常量）：同进程里别的用例会初始化 react-i18next，
+// `t` 的产出因此单跑与合跑并不一致，断言 key 会在合跑时崩（与 site-url-candidates.test.tsx 同因）。
 
 import { afterEach, describe, expect, test } from 'bun:test';
 import { ApiError } from '@tmex/api-client';
@@ -89,28 +90,57 @@ describe('submitSharePasswordChange', () => {
 });
 
 describe('copyShareLinkWithPassword', () => {
-  const original = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
+  const originalItem = Object.getOwnPropertyDescriptor(globalThis, 'ClipboardItem');
 
-  function stubClipboard() {
-    const written: string[] = [];
+  function setNavigator(clipboard: unknown) {
     Object.defineProperty(globalThis, 'navigator', {
-      value: {
-        clipboard: {
-          writeText: (text: string) => {
-            written.push(text);
-            return Promise.resolve();
-          },
-        },
-      },
+      value: { clipboard },
       configurable: true,
       writable: true,
+    });
+  }
+
+  /** Safari 那条路：`clipboard.write` + `ClipboardItem`，收 `Promise<Blob>`。 */
+  function stubAsyncClipboard() {
+    const state = { writes: 0, written: [] as string[] };
+    class FakeClipboardItem {
+      constructor(readonly items: Record<string, Blob | PromiseLike<Blob>>) {}
+    }
+    Object.defineProperty(globalThis, 'ClipboardItem', {
+      value: FakeClipboardItem,
+      configurable: true,
+      writable: true,
+    });
+    setNavigator({
+      write: async (items: FakeClipboardItem[]) => {
+        state.writes += 1;
+        const blob = await items[0]?.items['text/plain'];
+        if (blob) state.written.push(await blob.text());
+      },
+      writeText: () => Promise.reject(new Error('should not be used')),
+    });
+    return state;
+  }
+
+  /** 老浏览器那条路：只有 `writeText`。 */
+  function stubTextClipboard() {
+    const written: string[] = [];
+    Reflect.deleteProperty(globalThis, 'ClipboardItem');
+    setNavigator({
+      writeText: (text: string) => {
+        written.push(text);
+        return Promise.resolve();
+      },
     });
     return written;
   }
 
   afterEach(() => {
-    if (original) Object.defineProperty(globalThis, 'navigator', original);
+    if (originalNavigator) Object.defineProperty(globalThis, 'navigator', originalNavigator);
     else Reflect.deleteProperty(globalThis, 'navigator');
+    if (originalItem) Object.defineProperty(globalThis, 'ClipboardItem', originalItem);
+    else Reflect.deleteProperty(globalThis, 'ClipboardItem');
   });
 
   const share = {
@@ -118,20 +148,54 @@ describe('copyShareLinkWithPassword', () => {
     url: 'https://tmex.example.com/s/sh1',
   } as Parameters<typeof copyShareLinkWithPassword>[0];
 
-  test('先取密码，再把带密码的链接写进剪贴板', async () => {
-    const written = stubClipboard();
+  test('有 ClipboardItem 时点下去就发起写入，不等取密码——手势不能丢在 await 里', async () => {
+    const state = stubAsyncClipboard();
+    let release!: (password: string) => void;
+    const pending = new Promise<string>((resolve) => {
+      release = resolve;
+    });
+    const done = copyShareLinkWithPassword(share, () => pending, t);
+    // 同步这一刻写入就已经发起：密码还没回来。
+    expect(state.writes).toBe(1);
+    expect(state.written).toEqual([]);
+    release('pw-sh1');
+    await done;
+    expect(state.written).toEqual(['https://tmex.example.com/s/sh1#p=pw-sh1']);
+  });
+
+  test('没有 ClipboardItem 时退回「取完再写」', async () => {
+    const written = stubTextClipboard();
     await copyShareLinkWithPassword(share, (id) => Promise.resolve(`pw-${id}`), t);
     expect(written).toEqual(['https://tmex.example.com/s/sh1#p=pw-sh1']);
   });
 
-  test('旧分享取不到密码时什么都不复制', async () => {
-    const written = stubClipboard();
+  test('旧分享取不到密码时什么都不复制，也不去开「查看密码」（那儿同样看不到）', async () => {
+    const written = stubTextClipboard();
+    let manual = 0;
     await copyShareLinkWithPassword(
       share,
       () => Promise.reject(apiError('SHARE_PASSWORD_UNAVAILABLE')),
-      t
+      t,
+      {
+        onManualCopy: () => {
+          manual += 1;
+        },
+      }
     );
     expect(written).toEqual([]);
+    expect(manual).toBe(0);
+  });
+
+  test('密码到手但剪贴板拒了：打开「查看密码」让人自己抄', async () => {
+    Reflect.deleteProperty(globalThis, 'ClipboardItem');
+    setNavigator({ writeText: () => Promise.reject(new Error('denied')) });
+    let manual = 0;
+    await copyShareLinkWithPassword(share, (id) => Promise.resolve(`pw-${id}`), t, {
+      onManualCopy: () => {
+        manual += 1;
+      },
+    });
+    expect(manual).toBe(1);
   });
 });
 
@@ -158,7 +222,7 @@ describe('ViewSharePasswordBody', () => {
       />
     );
     expect(html).toContain('data-testid="share-password-unavailable"');
-    expect(html).toContain('settings.share.active.passwordHidden');
+    expect(html).not.toContain('data-testid="share-password-value"');
   });
 
   test('取密码期间只出转圈', () => {
@@ -183,7 +247,6 @@ describe('ChangeSharePasswordBody', () => {
     expect(html).toContain('value="Ab3dEf7h"');
     expect(html).toContain('data-testid="share-change-password-generate"');
     expect(html).toContain('data-testid="share-change-password-end-sessions"');
-    expect(html).toContain('settings.share.active.endSessionsHint');
     expect(html).not.toContain('data-testid="share-change-password-error"');
   });
 
@@ -196,6 +259,5 @@ describe('ChangeSharePasswordBody', () => {
       />
     );
     expect(html).toContain('data-testid="share-change-password-error"');
-    expect(html).toContain('share.error.passwordTooShort');
   });
 });

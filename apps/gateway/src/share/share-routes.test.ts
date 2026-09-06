@@ -346,6 +346,8 @@ describe('口令查看 / 修改端点', () => {
     const view = await call('GET', `/api/share/${share.id}/password`);
     expect(view.status).toBe(200);
     expect(view.body.password).toBe('secret123');
+    // 明文口令不许被浏览器/反代缓存下来。
+    expect(view.headers.get('Cache-Control')).toBe('private, no-store');
 
     const missing = await call('GET', '/api/share/nope/password');
     expect(missing.status).toBe(404);

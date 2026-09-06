@@ -668,6 +668,53 @@ describe('口令查看与修改', () => {
     expect(seen).toEqual([created.share.id, created.share.id]);
   });
 
+  /** 口令校验挂起在这里：进入校验时通知调用方，等 `release()` 才算完。 */
+  function pausedVerifier() {
+    let release!: () => void;
+    let entered!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const inVerify = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const verifyPassword = async (stored: string, password: string) => {
+      entered();
+      await gate;
+      return stored === `plain:${password}`;
+    };
+    return { verifyPassword, inVerify, release };
+  }
+
+  test('校验口令期间被改密：这次登录不发凭证，旧口令不能抢在改密前面', async () => {
+    const verifier = pausedVerifier();
+    const service = makeService({ verifyPassword: verifier.verifyPassword });
+    const created = await createShare(service);
+    const login = service.loginAccess(created.share.id, 'secret123', '203.0.113.9');
+    await verifier.inVerify;
+    // 站长在 argon2 还没算完的时候把口令换了（并踢掉全部凭证）。
+    const rotated = await service.setPassword(created.share.id, 'brand-new-pass', {
+      endSessions: true,
+    });
+    expect(rotated.ok).toBe(true);
+    verifier.release();
+    await expect(login).resolves.toEqual({ ok: false, code: 'SHARE_PASSWORD_INVALID' });
+    // 新口令照常可登录：拦的是过期的那一次，不是这条分享。
+    const fresh = await service.loginAccess(created.share.id, 'brand-new-pass', '203.0.113.10');
+    expect(fresh.ok).toBe(true);
+  });
+
+  test('校验口令期间分享被终止：这次登录报 SHARE_ENDED', async () => {
+    const verifier = pausedVerifier();
+    const service = makeService({ verifyPassword: verifier.verifyPassword });
+    const created = await createShare(service);
+    const login = service.loginAccess(created.share.id, 'secret123', '203.0.113.11');
+    await verifier.inVerify;
+    service.revoke(created.share.id);
+    verifier.release();
+    await expect(login).resolves.toEqual({ ok: false, code: 'SHARE_ENDED' });
+  });
+
   test('太短的口令、已结束与不存在的分享按码拒绝', async () => {
     const service = makeService();
     const created = await createShare(service);

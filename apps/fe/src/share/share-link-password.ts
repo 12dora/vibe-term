@@ -29,3 +29,61 @@ export function readPasswordFromHash(hash: string): string | null {
   }
   return null;
 }
+
+export interface ShareLocationParts {
+  pathname: string;
+  search: string;
+  hash: string;
+}
+
+export interface HashPasswordConsumption {
+  password: string | null;
+  /** 要写回地址栏的 URL；`null` 表示地址栏本来就没有 fragment，不必动 history。 */
+  cleanedUrl: string | null;
+}
+
+/**
+ * 读走 fragment 里的密码并给出抹掉它之后的地址。
+ *
+ * 「有 fragment 就抹」而不是「取到密码才抹」：`#p=` 坏了也一样是别人贴过来的东西，
+ * 留在地址栏与浏览历史里没有任何好处。
+ */
+export function consumeHashPassword(location: ShareLocationParts): HashPasswordConsumption {
+  return {
+    password: readPasswordFromHash(location.hash),
+    cleanedUrl: location.hash ? `${location.pathname}${location.search}` : null,
+  };
+}
+
+export interface ShareLinkPrefill {
+  /** 预填给密码表单的明文；没有就是 `undefined`。 */
+  password: string | undefined;
+  /** 每消费掉一次 fragment 就 +1：作为表单的 key，让它带着新预填重挂。 */
+  seq: number;
+}
+
+export const EMPTY_SHARE_LINK_PREFILL: ShareLinkPrefill = { password: undefined, seq: 0 };
+
+/** 没有新密码可填、原本也没填过就原样返回（不必让表单白重挂一次）。 */
+export function advanceShareLinkPrefill(
+  prev: ShareLinkPrefill,
+  password: string | null
+): ShareLinkPrefill {
+  if (password === null && prev.password === undefined) return prev;
+  return { password: password ?? undefined, seq: prev.seq + 1 };
+}
+
+export interface ShareLinkHistory {
+  state: unknown;
+  replaceState: (state: unknown, unused: string, url: string) => void;
+}
+
+/** 读走密码，并把地址栏里的 fragment 抹掉（`history.state` 原样保留）。 */
+export function consumeShareLinkFragment(
+  location: ShareLocationParts,
+  history: ShareLinkHistory
+): string | null {
+  const consumed = consumeHashPassword(location);
+  if (consumed.cleanedUrl !== null) history.replaceState(history.state, '', consumed.cleanedUrl);
+  return consumed.password;
+}

@@ -54,18 +54,65 @@ function passwordErrorKey(error: unknown): string {
     : shareErrorKey(error);
 }
 
-export async function copyShareLinkWithPassword(
+type ClipboardItemCtor = new (items: Record<string, Blob | PromiseLike<Blob>>) => ClipboardItem;
+
+interface AsyncClipboard {
+  write: (items: ClipboardItem[]) => Promise<void>;
+  Item: ClipboardItemCtor;
+}
+
+/** 异步剪贴板：能收下 `Promise<Blob>`，所以点下去那一刻就能发起写入。缺其一即视作不可用。 */
+function asyncClipboard(): AsyncClipboard | null {
+  const clipboard = typeof navigator === 'undefined' ? undefined : navigator.clipboard;
+  const Item = (globalThis as { ClipboardItem?: ClipboardItemCtor }).ClipboardItem;
+  if (!clipboard || typeof clipboard.write !== 'function' || typeof Item !== 'function')
+    return null;
+  return { write: (items) => clipboard.write(items), Item };
+}
+
+export interface CopyShareLinkOptions {
+  /** 复制没成的兜底：打开「查看密码」对话框，让人自己抄。 */
+  onManualCopy?: () => void;
+}
+
+/**
+ * 复制带密码的链接。
+ *
+ * Safari 只认用户手势那一刻同步发起的剪贴板写入：先 `await` 取密码再写，手势早就过期了，
+ * 写入会被拒。因此把 `Promise<Blob>` 交给 `ClipboardItem`，点击当下就把写入发起出去，
+ * 密码回来之后由浏览器自己兑现。拿不到这套 API（老浏览器）才退回「取完再写」。
+ */
+export function copyShareLinkWithPassword(
   share: ShareRecord,
   load: LoadPassword,
-  t: Translate
+  t: Translate,
+  options: CopyShareLinkOptions = {}
 ): Promise<void> {
-  try {
-    const password = await load(share.id);
-    await writeTextToClipboard(buildShareLinkWithPassword(share.url, password));
-    toast.success(t('settings.share.active.linkCopied'));
-  } catch (error) {
-    toast.error(t(passwordErrorKey(error)));
-  }
+  const link = load(share.id).then((password) => buildShareLinkWithPassword(share.url, password));
+  const clipboard = asyncClipboard();
+  const written = clipboard
+    ? clipboard.write([
+        new clipboard.Item({
+          'text/plain': link.then((url) => new Blob([url], { type: 'text/plain' })),
+        }),
+      ])
+    : link.then((url) => writeTextToClipboard(url));
+  return written.then(
+    () => {
+      toast.success(t('settings.share.active.linkCopied'));
+    },
+    // 写不进去分两种：密码根本没取到（说清原因），或密码到手但剪贴板拒了（让人自己抄）。
+    () =>
+      link.then(
+        () => {
+          toast.error(t('share.dialog.copyFailed'));
+          options.onManualCopy?.();
+        },
+        (error) => {
+          toast.error(t(passwordErrorKey(error)));
+        }
+      )
+  );
 }
 
 export interface ChangePasswordDraft {
@@ -350,7 +397,11 @@ export function useSharePasswordDialogs(model: ShareTabModel): SharePasswordDial
     (action: SharePasswordAction, share: ShareRecord) => {
       if (action === 'view') setViewing(share);
       else if (action === 'change') setChanging(share);
-      else void copyShareLinkWithPassword(share, fetchPassword, t);
+      else {
+        void copyShareLinkWithPassword(share, fetchPassword, t, {
+          onManualCopy: () => setViewing(share),
+        });
+      }
     },
     [fetchPassword, t]
   );
