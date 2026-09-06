@@ -21,10 +21,9 @@ if (!db || PROD_MARKERS.some((marker) => db.includes(marker))) {
 // bun test 已将 NODE_ENV 设为 test：loadEnv 命中 test.env，并净化继承的安装版路径键。
 loadEnv();
 
-// bun 只读工作目录下的 bunfig.toml：从仓库根直接跑 `bun test packages/app/...` 时
-// packages/app/bunfig.toml 不生效，主目录沙箱要在这里补上。只在目标全部属于该包时挂载，
-// 其余包的测试仍用真实主目录（gateway 的文件浏览 / 隧道用例依赖它）。
-const testTargets = Bun.argv.slice(1).filter((arg) => !arg.startsWith('-'));
-if (testTargets.length > 0 && testTargets.every((target) => target.includes('/packages/app'))) {
-  await import('../../packages/app/scripts/test/home-sandbox');
-}
+// 这里刻意不挂 packages/app 的主目录沙箱。实测 bun 1.3.14：preload 里的 `Bun.argv` /
+// `process.argv` 只带得到一个测试文件（多目标时既不是第一个也不是最后一个），无法判断本次
+// 运行是否只跑该包；一旦误判，`mock.module('node:os')` 会不可撤销地把沙箱 HOME 泄漏给
+// 同进程的其它包（gateway 的文件浏览 / 隧道用例依赖真实主目录）。
+// 沙箱只由 packages/app/bunfig.toml 提供：`bun run test`（--filter，逐包以包目录为 cwd）与
+// scripts/ci/unit-tests.ts（spawnSync 时 cwd = 包目录）都会命中它。

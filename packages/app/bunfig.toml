@@ -1,5 +1,7 @@
-# bun 只读工作目录下的 bunfig.toml，不会向上找仓库根的那一份：
-# `bun test`（含 `bun run test:app` 与 scripts/ci/unit-tests.ts）都以本包为 cwd，
-# 因此测试主目录沙箱必须挂在这里。
+# bun 只读工作目录下的 bunfig.toml，不会向上找仓库根的那一份（实测 bun 1.3.14）。
+# `bun test`、`bun run test:app`（--filter 以本包为 cwd）与 scripts/ci/unit-tests.ts
+# （spawnSync 时 cwd = 本包）都会命中这里，主目录沙箱因此必须挂在本包。
+# 从仓库根直接指定文件跑（`bun test packages/app/...`）走的是根 bunfig，没有沙箱：
+# 断言沙箱的用例按 VIBETERM_TEST_HOME 自行跳过，其余用例一律显式注入目录，照样安全。
 [test]
 preload = ["./scripts/test/home-sandbox.ts"]

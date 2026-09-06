@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readEnvFile } from './env-file';
 import { pathExists } from './fs-utils';
+import { createInstallLayout } from './install-layout';
 import type { PackageLayout } from './install-layout';
 import { type UpgradeServiceControl, repairServiceIdentity, repairUpgrade } from './upgrade-apply';
 import {
@@ -191,6 +192,41 @@ function txnOptions(fromDir: string, pkg: PackageLayout): TxnRun {
     noService: true,
     skipShims: true,
   };
+}
+
+/** 打开 shim 写入的事务参数：接管与否交给 cli-shim 的归属守卫判断。 */
+function shimTxnOptions(fromDir: string, pkg: PackageLayout): Omit<TxnRun, 'skipShims'> {
+  return {
+    installDir: fromDir,
+    toVersion: '2.0.0',
+    packageLayout: pkg,
+    bunPath: '/usr/bin/bun',
+    noService: true,
+  };
+}
+
+/** 预置一份记录着旧安装目录的 shim 与 bun 软链。 */
+async function seedShims(installDir: string): Promise<{ localBinDir: string; bunBinDir: string }> {
+  const [localBinDir, bunBinDir] = shimDirs(installDir);
+  await mkdir(bunBinDir, { recursive: true });
+  const { installVibeTermShim } = await import('./cli-shim');
+  await installVibeTermShim({
+    installLayout: createInstallLayout(installDir),
+    bunPath: '/usr/bin/bun',
+    localBinDir,
+    bunBinDir,
+    pathEnv: localBinDir,
+  });
+  return { localBinDir, bunBinDir };
+}
+
+async function recordedInstallDir(shimPath: string): Promise<string | undefined> {
+  const text = await readFile(shimPath, 'utf8');
+  return text
+    .split('\n')
+    .find((line) => line.startsWith('# vibeterm-install-dir:'))
+    ?.slice('# vibeterm-install-dir:'.length)
+    .trim();
 }
 
 async function readMeta(dir: string): Promise<{
@@ -382,6 +418,88 @@ describe('executeUpgradeTxn install dir migration', () => {
     const meta = await readMeta(fromDir);
     expect(meta.serviceName).toBe('tmex');
     expect(meta.installDir).toBe(fromDir);
+  });
+
+  test('hands the shims over to the new dir only after the rename', async () => {
+    const { fromDir, toDir, plan, pkg } = await setup();
+    const { localBinDir, bunBinDir } = await seedShims(fromDir);
+    const service = fakeService();
+
+    expect(await recordedInstallDir(join(localBinDir, 'vibeterm'))).toBe(fromDir);
+
+    const finalDir = await executeUpgradeTxn(
+      shimTxnOptions(fromDir, pkg),
+      {
+        shimDirs: [localBinDir, bunBinDir],
+        service,
+        runCandidate: async () => ({ stop: async () => undefined }),
+        healthCheck: async () => undefined,
+        rebuildService: () => service,
+      },
+      {
+        installDir: fromDir,
+        toVersion: '2.0.0',
+        packageLayout: pkg,
+        bunPath: '/usr/bin/bun',
+        txnId: 'txn-mig-shims',
+        keepBackup: false,
+        resolvedFrom: '1.1.40',
+        service,
+        healthCheck: async () => undefined,
+        log: () => undefined,
+        serviceMode: 'none',
+        migrationPlan: plan,
+      }
+    );
+
+    expect(finalDir).toBe(toDir);
+    // 顺序证明：接管守卫只在「记录的安装目录已消失」时才放行，
+    // 所以 shim 记录变成新目录，等价于 rename 先于 shim 写入发生。
+    expect(await pathExists(fromDir)).toBe(false);
+    expect(await recordedInstallDir(join(localBinDir, 'vibeterm'))).toBe(toDir);
+    expect(await recordedInstallDir(join(localBinDir, 'tmex'))).toBe(toDir);
+    expect(await readlink(join(bunBinDir, 'vibeterm'))).toBe(join(localBinDir, 'vibeterm'));
+    expect(await readlink(join(bunBinDir, 'tmex'))).toBe(join(localBinDir, 'tmex'));
+  });
+
+  test('restores the shims to the old dir when the migration is rolled back', async () => {
+    const { fromDir, toDir, plan, pkg } = await setup();
+    const { localBinDir, bunBinDir } = await seedShims(fromDir);
+    const service = fakeService();
+
+    await expect(
+      executeUpgradeTxn(
+        shimTxnOptions(fromDir, pkg),
+        {
+          shimDirs: [localBinDir, bunBinDir],
+          service,
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+          rebuildService: () => service,
+        },
+        {
+          installDir: fromDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          txnId: 'txn-mig-shims-fail',
+          keepBackup: false,
+          resolvedFrom: '1.1.40',
+          service,
+          healthCheck: async ({ expectedVersion }) => {
+            if (expectedVersion === '2.0.0') throw new Error('unhealthy');
+          },
+          log: () => undefined,
+          serviceMode: 'none',
+          migrationPlan: plan,
+        }
+      )
+    ).rejects.toThrow();
+
+    expect(await pathExists(toDir)).toBe(false);
+    expect(await recordedInstallDir(join(localBinDir, 'vibeterm'))).toBe(fromDir);
+    expect(await recordedInstallDir(join(localBinDir, 'tmex'))).toBe(fromDir);
+    expect(await readlink(join(bunBinDir, 'vibeterm'))).toBe(join(localBinDir, 'vibeterm'));
   });
 
   test('keeps the migration in place when the new service refuses to stop', async () => {

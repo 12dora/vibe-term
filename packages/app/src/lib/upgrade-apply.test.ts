@@ -12,6 +12,9 @@ import { readCurrentVersion, switchCurrent } from './upgrade-switch';
 
 const tempDirs: string[] = [];
 
+/** 只有挂上测试预载（工作目录 = packages/app）时才有值。 */
+const sandboxHome = process.env.VIBETERM_TEST_HOME ?? '';
+
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
 });
@@ -298,42 +301,47 @@ Bun.serve({
 });
 
 describe('applyUpgrade', () => {
-  test('installs shims only into the injected dirs and leaves the home dir untouched', async () => {
-    // 2026-09-07 事故回归：shim 目录未注入时会写穿真实的 ~/.local/bin 与 ~/.bun/bin。
-    expect(homedir().startsWith(tmpdir())).toBe(true);
-    expect(homedir()).toContain('vibeterm-test-home-');
+  // 主目录沙箱由 packages/app/bunfig.toml 的测试预载挂上（工作目录必须是本包）；
+  // 没有沙箱就不跑这条，避免在真实主目录上做断言。
+  test.skipIf(!sandboxHome)(
+    'installs shims only into the injected dirs and leaves the home dir untouched',
+    async () => {
+      // 2026-09-07 事故回归：shim 目录未注入时会写穿真实的 ~/.local/bin 与 ~/.bun/bin。
+      expect(homedir()).toBe(sandboxHome);
 
-    const installDir = await scratch();
-    await seedInstall(installDir, '1.0.0');
-    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
-    const [localBinDir, bunBinDir] = shimDirs(installDir);
-    await mkdir(bunBinDir, { recursive: true });
-    const homeBefore = (await readdir(homedir())).sort();
+      const installDir = await scratch();
+      await seedInstall(installDir, '1.0.0');
+      const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+      const [localBinDir, bunBinDir] = shimDirs(installDir);
+      await mkdir(bunBinDir, { recursive: true });
+      const homeBefore = (await readdir(homedir())).sort();
 
-    await applyUpgrade(
-      {
-        installDir,
-        toVersion: '2.0.0',
-        packageLayout: pkg,
-        bunPath: '/usr/bin/bun',
-        noService: true,
-      },
-      {
-        shimDirs: [localBinDir, bunBinDir],
-        service: fakeService(),
-        runCandidate: async () => ({ stop: async () => undefined }),
-        healthCheck: async () => undefined,
-      }
-    );
+      await applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+        },
+        {
+          shimDirs: [localBinDir, bunBinDir],
+          service: fakeService(),
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async () => undefined,
+        }
+      );
 
-    expect(await readFile(join(localBinDir, 'vibeterm'), 'utf8')).toContain(
-      `# vibeterm-install-dir: ${installDir}`
-    );
-    expect(await pathExists(join(bunBinDir, 'vibeterm'))).toBe(true);
-    expect(await pathExists(join(homedir(), '.local', 'bin'))).toBe(false);
-    expect(await pathExists(join(homedir(), '.bun', 'bin'))).toBe(false);
-    expect((await readdir(homedir())).sort()).toEqual(homeBefore);
-  }, 30_000);
+      expect(await readFile(join(localBinDir, 'vibeterm'), 'utf8')).toContain(
+        `# vibeterm-install-dir: ${installDir}`
+      );
+      expect(await pathExists(join(bunBinDir, 'vibeterm'))).toBe(true);
+      expect(await pathExists(join(homedir(), '.local', 'bin'))).toBe(false);
+      expect(await pathExists(join(homedir(), '.bun', 'bin'))).toBe(false);
+      expect((await readdir(homedir())).sort()).toEqual(homeBefore);
+    },
+    30_000
+  );
 
   test('switches current after a successful preflight and prunes older versions', async () => {
     const installDir = await scratch();

@@ -10,6 +10,8 @@ import { join } from 'node:path';
 const sandboxHome = mkdtempSync(join(nodeOs.tmpdir(), 'vibeterm-test-home-'));
 process.env.HOME = sandboxHome;
 process.env.USERPROFILE = sandboxHome;
+// 用例据此判断沙箱是否生效（只有以 packages/app 为工作目录跑 bun test 才会挂上预载）。
+process.env.VIBETERM_TEST_HOME = sandboxHome;
 
 // bun 在进程启动时就把 HOME 快照进了 os.homedir()，改 process.env 追不上，只能整体替换模块。
 const homedir = (): string => sandboxHome;

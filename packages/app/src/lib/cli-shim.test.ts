@@ -93,13 +93,20 @@ describe('deployCliPackage', () => {
   });
 });
 
+// 主目录沙箱由 packages/app/bunfig.toml 的测试预载挂上，只在以本包为工作目录跑
+// `bun test` 时生效；从仓库根直接指定文件跑没有沙箱，断言沙箱的用例跳过而不是误报。
+const sandboxHome = process.env.VIBETERM_TEST_HOME ?? '';
+
 describe('defaultShimDirs', () => {
-  test('points at the home dir and is sandboxed under bun test', () => {
+  test('points at the home dir', () => {
     const [localBinDir, bunBinDir] = defaultShimDirs();
     expect(localBinDir).toBe(join(homedir(), '.local', 'bin'));
     expect(bunBinDir).toBe(join(homedir(), '.bun', 'bin'));
-    // 测试预载把 HOME 钉在临时目录：任何默认落点都碰不到真实主目录。
-    expect(homedir().startsWith(tmpdir())).toBe(true);
+  });
+
+  test.skipIf(!sandboxHome)('resolves inside the test home sandbox', () => {
+    expect(homedir()).toBe(sandboxHome);
+    expect(defaultShimDirs()[0]).toBe(join(sandboxHome, '.local', 'bin'));
   });
 });
 
