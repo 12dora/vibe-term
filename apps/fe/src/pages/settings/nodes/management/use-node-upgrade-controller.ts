@@ -18,6 +18,7 @@ import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import type { NodeUpgradeController, NodeUpgradeLatest } from './types';
 import { type Translate, eligibleUpgradeRows } from './upgrade-batch';
+import { type UpgradeConfirmGate, useUpgradeConfirmGate } from './upgrade-confirm-gate';
 import { type UpgradeRefs, createUpgradeRefs } from './upgrade-refs';
 import { type UpgradeIo, defaultUpgradeIo, launchRowUpgrade } from './use-node-upgrade';
 import { useUpgradeBatch, useUpgradeBatchPlan, useUpgradeRestore } from './use-upgrade-batch';
@@ -28,28 +29,36 @@ function useUpgradeRowActions(p: {
   refs: UpgradeRefs;
   t: Translate;
   latest: NodeUpgradeLatest | null;
+  gate: UpgradeConfirmGate;
   patch: UpgradeRuntime['patch'];
   runOnce: UpgradeRuntime['runOnce'];
   runCancel: UpgradeRuntime['runCancel'];
 }): { start: (row: NodeRow) => void; cancel: (row: NodeRow) => void } {
-  const { refs, t, latest, patch, runOnce, runCancel } = p;
+  const { refs, t, latest, gate, patch, runOnce, runCancel } = p;
 
   const start = useCallback(
     (row: NodeRow) => {
       const signal = refs.abort.current?.signal;
       if (!signal || signal.aborted) return;
+      const version = latest?.latestVersion ?? null;
       void launchRowUpgrade({
         row,
-        latestVersion: latest?.latestVersion ?? null,
+        latestVersion: version,
         batchRunning: refs.batchRunning.current,
         nodeRunning: refs.running.has(row.id),
         restoring: refs.restoring.current.has(row.id),
         t,
-        confirm: (message) => globalThis.confirm?.(message) === true,
-        runOne: (target, version) => runOnce(target, version, toast),
+        // 确认框开着的这段时间里，批量续跑或回读可能已经接管了这台机器：拍板后再核一遍。
+        confirm: async () =>
+          (await gate.ask({ kind: 'row', row, version })) &&
+          !signal.aborted &&
+          !refs.batchRunning.current &&
+          !refs.running.has(row.id) &&
+          !refs.restoring.current.has(row.id),
+        runOne: (target, targetVersion) => runOnce(target, targetVersion, toast),
       });
     },
-    [latest, refs, runOnce, t]
+    [gate, latest, refs, runOnce, t]
   );
 
   const cancel = useCallback(
@@ -79,6 +88,8 @@ export function useNodeUpgrade(
   const refs = refsRef.current;
 
   const runtime = useUpgradeRuntime(refs, onChanged, io, t);
+  // 行内与批量共用一个确认闸门：任一时刻只开一个框，页面也只需挂一个对话框。
+  const gate = useUpgradeConfirmGate();
   const plan = useUpgradeBatchPlan(refs, rows, io);
   const restoringIds = useUpgradeRestore({
     refs,
@@ -96,11 +107,13 @@ export function useNodeUpgrade(
     alive: runtime.alive,
     runOnce: runtime.runOnce,
     plan,
+    gate,
   });
   const { start, cancel } = useUpgradeRowActions({
     refs,
     t,
     latest: runtime.latest,
+    gate,
     patch: runtime.patch,
     runOnce: runtime.runOnce,
     runCancel: runtime.runCancel,
@@ -123,5 +136,8 @@ export function useNodeUpgrade(
     anyRunning: runtime.anyRunning,
     restoring: restoringIds.size > 0,
     restoringIds,
+    pending: gate.pending,
+    confirmPending: gate.confirm,
+    dismissPending: gate.dismiss,
   };
 }

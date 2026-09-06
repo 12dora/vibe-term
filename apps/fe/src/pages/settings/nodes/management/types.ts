@@ -93,6 +93,11 @@ export interface NodeUpgradeBatchState {
   completed: number;
 }
 
+/** 待确认的升级：行内一台（latest 未知时 `version` 为 `null`），或批量一组。 */
+export type NodeUpgradePending =
+  | { kind: 'row'; row: NodeRow; version: string | null }
+  | { kind: 'batch'; targets: NodeRow[]; version: string };
+
 /** 升级状态机对外的只读视图 + 触发入口。 */
 export interface NodeUpgradeController {
   latest: NodeUpgradeLatest | null;
@@ -111,6 +116,10 @@ export interface NodeUpgradeController {
   restoring: boolean;
   /** 回读还没收尾的行：这些行的升级按钮先锁住，避免与回读到的在途升级抢同一台机器。 */
   restoringIds: ReadonlySet<string>;
+  /** 当前待用户确认的升级；没有时为 `null`。确认框据此渲染。 */
+  pending: NodeUpgradePending | null;
+  confirmPending: () => void;
+  dismissPending: () => void;
 }
 
 export const IDLE_UPGRADE_BATCH: NodeUpgradeBatchState = {
@@ -174,4 +183,24 @@ export interface NodeUninstallController {
   dismiss: () => void;
   /** 清除一行的卸载失败记录（`DELETE /api/mesh/nodes/:id/operation`）。 */
   clear: (row: NodeRow) => void;
+}
+
+// ---------------------------------------------------------------------------
+// 吊销确认
+// ---------------------------------------------------------------------------
+
+/** 待确认的吊销：行内一台，或卡头选中的一批。 */
+export interface RevokePlan {
+  kind: 'single' | 'bulk';
+  targets: NodeRow[];
+}
+
+/**
+ * 吊销确认框的只读视图 + 两个出口。确认即关框：紧随其后的凭据对话框不能与它叠在一起。
+ */
+export interface RevokeController {
+  plan: RevokePlan | null;
+  /** 带上（可为空串的）原因确认。 */
+  confirm: (reason: string) => void;
+  dismiss: () => void;
 }

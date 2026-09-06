@@ -15,6 +15,7 @@ import { IDLE_UPGRADE_BATCH, type NodeUpgradeBatchState, type NodeUpgradeLatest 
 import {
   type Translate,
   type UpgradeBatchSummary,
+  eligibleUpgradeRows,
   launchUpgradeBatch,
   resumeUpgradeBatch,
 } from './upgrade-batch';
@@ -31,6 +32,7 @@ import {
   isBatchPlanStorageEvent,
   loadBatchPlan,
 } from './upgrade-batch-storage';
+import type { UpgradeConfirmGate } from './upgrade-confirm-gate';
 import { EMPTY_IDS, type UpgradeRefs, withId } from './upgrade-refs';
 import {
   type UpgradeIo,
@@ -40,7 +42,8 @@ import {
 } from './use-node-upgrade';
 import type { UpgradeRuntime } from './use-upgrade-runtime';
 
-type TrackBatch = (running: Promise<UpgradeBatchSummary>) => void;
+/** `started` 缺省即「这一批一定跑起来了」；确认框那条路径要等用户拍板，故显式给一个判据。 */
+type TrackBatch = (running: Promise<UpgradeBatchSummary | null>, started?: () => boolean) => void;
 export type ReadPlan = () => UpgradeBatchPlan | null;
 
 export interface UpgradeBatchControl {
@@ -191,15 +194,19 @@ export function useUpgradeBatch(p: {
   runOnce: UpgradeRuntime['runOnce'];
   /** 由调用方先建好并交给 `useUpgradeRestore`，保证回读的 effect 排在续跑之前。 */
   plan: UpgradeBatchPlanControl;
+  /** 与行内升级共用的确认闸门。 */
+  gate: UpgradeConfirmGate;
 }): UpgradeBatchControl {
-  const { refs, rows, io, t, latest, alive, runOnce } = p;
+  const { refs, rows, io, t, latest, alive, runOnce, gate } = p;
   const [batch, setBatch] = useState<NodeUpgradeBatchState>(IDLE_UPGRADE_BATCH);
   const { entryNodeId, readPlan, openPlan } = p.plan;
 
   /** 一批跑完的收尾记账：running 标记、进度条与心跳用的 sink 一起归位。 */
   const trackBatch = useCallback<TrackBatch>(
-    (running) => {
+    (running, started) => {
       void running.finally(() => {
+        // 用户在确认框上点了取消：这一批从没跑起来，别把别人的记账清掉。
+        if (started && !started()) return;
         refs.batchRunning.current = false;
         refs.planSink.current = null;
         if (alive()) setBatch(IDLE_UPGRADE_BATCH);
@@ -224,26 +231,36 @@ export function useUpgradeBatch(p: {
         toast.info(t('nodes.upgrade.allOtherTab'));
         return;
       }
+      const version = latest?.latestVersion ?? null;
+      // 确认框上列的名字必须与真正会跑的那一批一致：与 `launchUpgradeBatch` 用同一把筛子。
+      const targets = version ? eligibleUpgradeRows(target, version) : [];
+      let started = false;
       const running = launchUpgradeBatch({
         rows: target,
-        latestVersion: latest?.latestVersion ?? null,
+        latestVersion: version,
         rowRunning: refs.running.size > 0,
         restoring: refs.restoring.current.size > 0,
         signal,
         t,
         toasts: toast,
-        confirm: (message) => globalThis.confirm?.(message) === true,
-        runOne: (row, version, toasts) => runOnce(row, version, toasts),
+        // 确认框开着的这段时间里，续跑可能已经把一批接管过去：拍板后再核一遍。
+        confirm: async () =>
+          version !== null &&
+          (await gate.ask({ kind: 'batch', targets, version })) &&
+          !signal.aborted &&
+          !refs.batchRunning.current,
+        runOne: (row, targetVersion, toasts) => runOnce(row, targetVersion, toasts),
         openPlan,
         onStart: (total, completed) => {
+          started = true;
           refs.batchRunning.current = true;
           setBatch({ running: true, total, completed });
         },
         onProgress,
       });
-      if (running) trackBatch(running);
+      trackBatch(running, () => started);
     },
-    [entryNodeId, io, latest, onProgress, openPlan, refs, runOnce, t, trackBatch]
+    [entryNodeId, gate, io, latest, onProgress, openPlan, refs, runOnce, t, trackBatch]
   );
 
   useUpgradeBatchResume({

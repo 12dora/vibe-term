@@ -362,3 +362,131 @@ describe('useNodeUpgrade 的挂载时序', () => {
     harness.unmount();
   });
 });
+
+describe('行内升级的确认框', () => {
+  const realFetch = globalThis.fetch;
+  let clock = 1_700_000_000_000;
+
+  beforeEach(() => {
+    clock = 1_700_000_000_000;
+    globalThis.localStorage.clear();
+  });
+
+  afterEach(() => {
+    if (host) {
+      for (const slot of host.slots) slot.cleanup?.();
+      host = null;
+    }
+    globalThis.fetch = realFetch;
+    globalThis.localStorage.clear();
+  });
+
+  /** 起一个只有 latest 的实例，节点列表一次到位，回读收尾后交出控制器。 */
+  function mountIdle(starts: string[]) {
+    globalThis.fetch = ((input: string) =>
+      Promise.resolve(
+        String(input).includes('/api/mesh/upgrade/latest')
+          ? Response.json({ latestVersion: LATEST })
+          : new Response(null, { status: 404 })
+      )) as typeof fetch;
+
+    const io: UpgradeIo = {
+      start: async (nodeId) => {
+        starts.push(nodeId);
+        return { kind: 'started', status: status({ state: 'downloading', targetVersion: LATEST }) };
+      },
+      poll: async () => ({ kind: 'status', status: status() }),
+      cancel: async () => ({ kind: 'failed', code: 'UPGRADE_NOT_RUNNING', httpStatus: 409 }),
+      nodeVersion: async () => LATEST,
+      wait: async () => {
+        clock += 2_000;
+        return true;
+      },
+      now: () => clock,
+    };
+
+    const rows = [
+      row({ id: SELF_ID, isSelf: true, version: LATEST }),
+      row({ id: NODE_ID, version: '1.1.30' }),
+    ];
+    const harness = mountController(
+      () => rows,
+      io,
+      () => undefined
+    );
+    return { harness, rows };
+  }
+
+  test('点「升级」先开确认框：确认之后才发 POST', async () => {
+    const starts: string[] = [];
+    const { harness, rows } = mountIdle(starts);
+    await settle();
+    harness.act();
+    await settle();
+
+    let controller = harness.act();
+    controller.start(rows[1]);
+    controller = harness.act();
+
+    expect(controller.pending).toEqual({ kind: 'row', row: rows[1], version: LATEST });
+    expect(starts).toEqual([]);
+
+    controller.confirmPending();
+    await settle();
+    controller = harness.act();
+    await settle();
+
+    expect(controller.pending).toBeNull();
+    expect(starts).toEqual([NODE_ID]);
+
+    harness.unmount();
+  });
+
+  test('「全部升级」的确认框列出真正会跑的那一批', async () => {
+    const starts: string[] = [];
+    const { harness, rows } = mountIdle(starts);
+    await settle();
+    harness.act();
+    await settle();
+
+    let controller = harness.act();
+    controller.startAll(rows);
+    controller = harness.act();
+
+    // 本机已是最新，筛不进这一批。
+    expect(controller.pending).toEqual({ kind: 'batch', targets: [rows[1]], version: LATEST });
+    expect(starts).toEqual([]);
+
+    controller.confirmPending();
+    await settle();
+    controller = harness.act();
+    await settle();
+
+    expect(starts).toEqual([NODE_ID]);
+
+    harness.unmount();
+  });
+
+  test('在确认框上取消：一条 POST 都不发', async () => {
+    const starts: string[] = [];
+    const { harness, rows } = mountIdle(starts);
+    await settle();
+    harness.act();
+    await settle();
+
+    let controller = harness.act();
+    controller.start(rows[1]);
+    controller = harness.act();
+    expect(controller.pending).not.toBeNull();
+
+    controller.dismissPending();
+    await settle();
+    controller = harness.act();
+    await settle();
+
+    expect(controller.pending).toBeNull();
+    expect(starts).toEqual([]);
+
+    harness.unmount();
+  });
+});

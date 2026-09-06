@@ -214,7 +214,8 @@ export interface UpgradeBatchLaunch {
   signal: AbortSignal;
   t: Translate;
   toasts: UpgradeToasts;
-  confirm: (message: string) => boolean;
+  /** 二次确认；接的是页面上的确认框，用户拍板之前一直挂着。 */
+  confirm: (message: string) => Promise<boolean>;
   runOne: (row: NodeRow, version: string, toasts: UpgradeToasts) => Promise<UpgradeRunOutcome>;
   onStart: (total: number, completed: number) => void;
   onProgress: (completed: number) => void;
@@ -227,7 +228,9 @@ export interface UpgradeBatchLaunch {
  * 计划落盘 → 按序执行 → 一条汇总 toast。没启动（有行内任务 / 正在回读 / latest 未知 /
  * 没有候选 / 用户取消）返回 `null`，调用方据此不进入 running 态。
  */
-export function launchUpgradeBatch(p: UpgradeBatchLaunch): Promise<UpgradeBatchSummary> | null {
+export async function launchUpgradeBatch(
+  p: UpgradeBatchLaunch
+): Promise<UpgradeBatchSummary | null> {
   if (p.rowRunning) {
     p.toasts.info(p.t('nodes.upgrade.allBusy'));
     return null;
@@ -241,7 +244,10 @@ export function launchUpgradeBatch(p: UpgradeBatchLaunch): Promise<UpgradeBatchS
   if (!version) return null;
   const targets = eligibleUpgradeRows(p.rows, version);
   if (targets.length === 0) return null;
-  if (!p.confirm(p.t('nodes.upgrade.confirmAll', { count: targets.length, version }))) return null;
+  const confirmed = await p.confirm(
+    p.t('nodes.upgrade.confirmAll', { count: targets.length, version })
+  );
+  if (!confirmed) return null;
   const groups = orderUpgradeGroups(targets);
   p.onStart(targets.length, 0);
   const sink = p.openPlan?.(

@@ -443,6 +443,9 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
       anyRunning: false,
       restoring: false,
       restoringIds: new Set<string>(),
+      pending: null,
+      confirmPending: () => undefined,
+      dismissPending: () => undefined,
     };
   }
 

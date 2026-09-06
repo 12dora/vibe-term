@@ -773,14 +773,15 @@ export interface UpgradeRowLaunch {
   /** 这一行的升级状态还在回读：先不受理，免得与回读到的在途升级抢同一台机器。 */
   restoring: boolean;
   t: Translate;
-  confirm: (message: string) => boolean;
+  /** 二次确认；接的是页面上的确认框，用户拍板之前一直挂着。 */
+  confirm: (message: string) => Promise<boolean>;
   runOne: (row: NodeRow, version: string | null) => Promise<UpgradeRunOutcome>;
 }
 
 /** 行内「升级」的准入与确认；没启动返回 `null`。与 `launchUpgradeBatch` 互斥。 */
-export function launchRowUpgrade(p: UpgradeRowLaunch): Promise<UpgradeRunOutcome> | null {
+export async function launchRowUpgrade(p: UpgradeRowLaunch): Promise<UpgradeRunOutcome | null> {
   if (p.batchRunning || p.nodeRunning || p.restoring) return null;
-  if (!p.confirm(confirmText(p.t, p.row, p.latestVersion))) return null;
+  if (!(await p.confirm(confirmText(p.t, p.row, p.latestVersion)))) return null;
   return p.runOne(p.row, p.latestVersion);
 }
 

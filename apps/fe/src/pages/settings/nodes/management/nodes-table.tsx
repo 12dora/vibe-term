@@ -25,6 +25,7 @@ import { WideTableScroll, stickyActionColumn } from '../../components/wide-table
 import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { PendingNodeRow } from './pending-node-row';
+import { RevokeDialog } from './revoke-dialog';
 import { Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
@@ -128,7 +129,7 @@ function NodeRowView({
   roleSwitch: HubRoleSwitchController;
 } & NodeActionDeps) {
   const { t } = useTranslation();
-  const { busy, rename, revoke } = useNodeRowActions(row, deps);
+  const { busy, rename, revoke, revokeDialog } = useNodeRowActions(row, deps);
   const [detailOpen, setDetailOpen] = useState(false);
   const uninstalling = isUninstalling(row, uninstall.scheduledIds);
   const writable = deps.hubOnline && deps.hubWritable;
@@ -212,13 +213,14 @@ function NodeRowView({
             variant="destructive"
             disabled={!writable || busy || row.isSelf}
             title={row.isSelf ? t('nodes.revoke.selfBlocked') : disabledHint}
-            onClick={() => void revoke()}
+            onClick={revoke}
             data-testid={`nodes-revoke-${row.id}`}
           >
             <ShieldAlert />
             {t('nodes.actions.revoke')}
           </Button>
         </div>
+        <RevokeDialog controller={revokeDialog} />
         {detailOpen && (
           <NodeDetailDialog
             row={row}

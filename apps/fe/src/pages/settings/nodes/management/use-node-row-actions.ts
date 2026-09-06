@@ -23,7 +23,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { actionErrorText } from './errors';
-import type { NodeActionDeps, ResolvedMode } from './types';
+import type { NodeActionDeps, ResolvedMode, RevokeController, RevokePlan } from './types';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
 
@@ -196,6 +196,27 @@ export async function revokeNodesSequentially(
   return summary;
 }
 
+/**
+ * 吊销确认框的开合。确认即关框：紧随其后的凭据对话框（吊销每次都要用户当场确认）
+ * 不能与它叠在一起，原因随确认一并交给执行体。
+ */
+function useRevokePlan(run: (plan: RevokePlan, reason: string) => void): {
+  request: (plan: RevokePlan) => void;
+  controller: RevokeController;
+} {
+  const [plan, setPlan] = useState<RevokePlan | null>(null);
+  const dismiss = useCallback(() => setPlan(null), []);
+  const confirm = useCallback(
+    (reason: string) => {
+      if (!plan) return;
+      setPlan(null);
+      run(plan, reason);
+    },
+    [plan, run]
+  );
+  return { request: setPlan, controller: { plan, confirm, dismiss } };
+}
+
 export function useNodeRowActions(
   row: NodeRow,
   { hubApi, mode, api, prompt, onChanged, writerPublicUrl }: NodeActionDeps
@@ -233,24 +254,30 @@ export function useNodeRowActions(
    * 凭据走 `withSigner`（**不**进 5 分钟复用窗口）：吊销是破坏性动作，每次都要用户当场确认；
    * 根钥路径签完立刻清零 seed。
    */
-  const revoke = useCallback(async () => {
-    const confirmed = globalThis.confirm?.(t('nodes.revoke.confirmText', { name: row.name }));
-    if (!confirmed) return;
-    const reason = globalThis.prompt?.(t('nodes.revoke.reasonPrompt')) ?? '';
-    setBusy(true);
-    try {
-      const attempt = await prompt.withSigner(
-        (signer) => revokeNodeRecord(signer, row, reason, { api, mode, writerPublicUrl, t }),
-        { purpose: 'revoke' }
-      );
-      if (!attempt) return;
-      if (reportRevokeAttempt(t, attempt)) onChanged();
-    } finally {
-      setBusy(false);
-    }
-  }, [api, mode, onChanged, prompt, row, t, writerPublicUrl]);
+  const runRevoke = useCallback(
+    async (reason: string) => {
+      setBusy(true);
+      try {
+        const attempt = await prompt.withSigner(
+          (signer) => revokeNodeRecord(signer, row, reason, { api, mode, writerPublicUrl, t }),
+          { purpose: 'revoke' }
+        );
+        if (!attempt) return;
+        if (reportRevokeAttempt(t, attempt)) onChanged();
+      } finally {
+        setBusy(false);
+      }
+    },
+    [api, mode, onChanged, prompt, row, t, writerPublicUrl]
+  );
 
-  return { busy, rename, revoke };
+  const gate = useRevokePlan(
+    useCallback((_plan: RevokePlan, reason: string) => void runRevoke(reason), [runRevoke])
+  );
+  const request = gate.request;
+  const revoke = useCallback(() => request({ kind: 'single', targets: [row] }), [request, row]);
+
+  return { busy, rename, revoke, revokeDialog: gate.controller };
 }
 
 /** 「批准加入」需要的那几项依赖（与吊销同源，只是不需要 hub 通道）。 */
@@ -356,21 +383,15 @@ export interface BulkRevokeDeps {
  */
 export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }: BulkRevokeDeps): {
   busy: boolean;
-  revokeRows: (rows: NodeRow[]) => Promise<void>;
+  revokeRows: (rows: NodeRow[]) => void;
+  revokeDialog: RevokeController;
 } {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
 
-  const revokeRows = useCallback(
-    async (rows: NodeRow[]) => {
-      const targets = rows.filter((row) => !row.isSelf);
-      if (targets.length === 0 || !mode) return;
-      const names = targets.map((row) => row.name).join('、');
-      const confirmed = globalThis.confirm?.(
-        t('nodes.revoke.bulkConfirm', { count: targets.length, names })
-      );
-      if (!confirmed) return;
-      const reason = globalThis.prompt?.(t('nodes.revoke.reasonPrompt')) ?? '';
+  const runRevoke = useCallback(
+    async (targets: NodeRow[], reason: string) => {
+      if (!mode) return;
       setBusy(true);
       try {
         const summary = await prompt.withSigner(
@@ -403,5 +424,21 @@ export function useBulkRevoke({ mode, api, prompt, onChanged, writerPublicUrl }:
     [api, mode, onChanged, prompt, t, writerPublicUrl]
   );
 
-  return { busy, revokeRows };
+  const gate = useRevokePlan(
+    useCallback(
+      (plan: RevokePlan, reason: string) => void runRevoke(plan.targets, reason),
+      [runRevoke]
+    )
+  );
+  const request = gate.request;
+  const revokeRows = useCallback(
+    (rows: NodeRow[]) => {
+      const targets = rows.filter((row) => !row.isSelf);
+      if (targets.length === 0 || !mode) return;
+      request({ kind: 'bulk', targets });
+    },
+    [mode, request]
+  );
+
+  return { busy, revokeRows, revokeDialog: gate.controller };
 }

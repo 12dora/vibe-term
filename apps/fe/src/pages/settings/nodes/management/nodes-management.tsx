@@ -34,8 +34,10 @@ import {
 import { EnrollmentSection } from './enrollment-section';
 import { HubRoleDialog } from './hub-role-dialog';
 import { NodesTable } from './nodes-table';
+import { RevokeDialog } from './revoke-dialog';
 import type { NodeSelection, ResolvedMode } from './types';
 import { UninstallDialog } from './uninstall-dialog';
+import { UpgradeConfirmDialog } from './upgrade-confirm-dialog';
 import { useHubRoleSwitch } from './use-hub-role-switch';
 import { useBulkRevoke } from './use-node-row-actions';
 import { useNodeUninstall } from './use-node-uninstall';
@@ -213,7 +215,7 @@ export function NodesManagement({
             upgrade={upgrade}
             uninstall={uninstall}
             revoking={bulkRevoke.busy}
-            onRevoke={() => void bulkRevoke.revokeRows(selectedRows)}
+            onRevoke={() => bulkRevoke.revokeRows(selectedRows)}
             writable={writable}
             blockedHint={blockedHint}
           />
@@ -270,6 +272,8 @@ export function NodesManagement({
 
         <UninstallDialog uninstall={uninstall} />
         <HubRoleDialog roleSwitch={roleSwitch} />
+        <UpgradeConfirmDialog upgrade={upgrade} />
+        <RevokeDialog controller={bulkRevoke.revokeDialog} />
       </CardContent>
     </Card>
   );

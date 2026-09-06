@@ -1249,7 +1249,7 @@ describe('launchUpgradeBatch', () => {
       signal: controller.signal,
       t,
       toasts: rec.toasts,
-      confirm: (message) => {
+      confirm: async (message) => {
         confirms.push(message);
         return true;
       },
@@ -1266,10 +1266,10 @@ describe('launchUpgradeBatch', () => {
 
   test('一次确认列出候选数与目标版本，已最新与过旧的节点被排除', async () => {
     const run = launch();
+    await run.running;
     expect(run.confirms).toHaveLength(1);
     expect(run.confirms[0]).toBe('nodes.upgrade.confirmAll:{"count":3,"version":"1.2.0"}');
     expect(run.starts).toEqual([3]);
-    await run.running;
     expect(run.seen.map((item) => item.name)).toEqual(['a', 'hub', 'self']);
   });
 
@@ -1280,32 +1280,32 @@ describe('launchUpgradeBatch', () => {
     expect(run.rec.log).toEqual([['success', 'nodes.upgrade.allDone:{"success":3,"failed":0}']]);
   });
 
-  test('用户取消确认框：不启动，也不提示', () => {
-    const run = launch({ confirm: () => false });
-    expect(run.running).toBeNull();
+  test('用户取消确认框：不启动，也不提示', async () => {
+    const run = launch({ confirm: async () => false });
+    expect(await run.running).toBeNull();
     expect(run.starts).toEqual([]);
     expect(run.rec.log).toEqual([]);
   });
 
-  test('latest 未知或没有候选：直接返回 null，不弹确认框', () => {
-    expect(launch({ latestVersion: null }).running).toBeNull();
+  test('latest 未知或没有候选：直接返回 null，不弹确认框', async () => {
+    expect(await launch({ latestVersion: null }).running).toBeNull();
     const none = launch({ rows: [row({ id: 'latest', name: 'latest', version: '1.2.0' })] });
-    expect(none.running).toBeNull();
+    expect(await none.running).toBeNull();
     expect(none.confirms).toEqual([]);
   });
 
-  test('已有行内升级在跑：不启动、不弹确认框，只给一条 info', () => {
+  test('已有行内升级在跑：不启动、不弹确认框，只给一条 info', async () => {
     const run = launch({ rowRunning: true });
-    expect(run.running).toBeNull();
+    expect(await run.running).toBeNull();
     expect(run.confirms).toEqual([]);
     expect(run.starts).toEqual([]);
     expect(run.seen).toEqual([]);
     expect(run.rec.log).toEqual([['info', 'nodes.upgrade.allBusy']]);
   });
 
-  test('还在回读升级状态：整批让路，只给一条 info', () => {
+  test('还在回读升级状态：整批让路，只给一条 info', async () => {
     const run = launch({ restoring: true });
-    expect(run.running).toBeNull();
+    expect(await run.running).toBeNull();
     expect(run.confirms).toEqual([]);
     expect(run.starts).toEqual([]);
     expect(run.seen).toEqual([]);
@@ -1324,7 +1324,7 @@ describe('launchRowUpgrade', () => {
       nodeRunning: false,
       restoring: false,
       t,
-      confirm: (message) => {
+      confirm: async (message) => {
         confirms.push(message);
         return true;
       },
@@ -1339,35 +1339,35 @@ describe('launchRowUpgrade', () => {
 
   test('正常路径：确认后跑起来', async () => {
     const run = launch();
+    expect(await run.started).toBe('done');
     expect(run.confirms).toHaveLength(1);
     expect(run.confirms[0]).toContain('nodes.upgrade.confirmRemote');
-    expect(await run.started).toBe('done');
     expect(run.seen).toEqual(['hub']);
   });
 
-  test('批量正在推进：行内升级不受理，连确认框都不弹', () => {
+  test('批量正在推进：行内升级不受理，连确认框都不弹', async () => {
     const run = launch({ batchRunning: true });
-    expect(run.started).toBeNull();
+    expect(await run.started).toBeNull();
     expect(run.confirms).toEqual([]);
     expect(run.seen).toEqual([]);
   });
 
-  test('同一节点已有升级在跑：不重复触发', () => {
+  test('同一节点已有升级在跑：不重复触发', async () => {
     const run = launch({ nodeRunning: true });
-    expect(run.started).toBeNull();
+    expect(await run.started).toBeNull();
     expect(run.confirms).toEqual([]);
   });
 
-  test('这一行正在回读升级状态：先不受理，免得与回读到的在途升级抢同一台机器', () => {
+  test('这一行正在回读升级状态：先不受理，免得与回读到的在途升级抢同一台机器', async () => {
     const run = launch({ restoring: true });
-    expect(run.started).toBeNull();
+    expect(await run.started).toBeNull();
     expect(run.confirms).toEqual([]);
     expect(run.seen).toEqual([]);
   });
 
-  test('用户取消确认框：不跑', () => {
-    const run = launch({ confirm: () => false });
-    expect(run.started).toBeNull();
+  test('用户取消确认框：不跑', async () => {
+    const run = launch({ confirm: async () => false });
+    expect(await run.started).toBeNull();
     expect(run.seen).toEqual([]);
   });
 });
@@ -1488,6 +1488,15 @@ describe('批量计划的落盘与续跑', () => {
   test('批量开跑即落盘（分组顺序 + 目标版本），汇总弹完才清掉', async () => {
     const rec = recorder();
     const opened: Array<{ order: string[][]; version: string }> = [];
+    // 确认之后、跑完之前的那一段要能停住：确认与每台机器的执行各挂一个可控的 deferred。
+    let confirmUser: (ok: boolean) => void = () => undefined;
+    const confirmed = new Promise<boolean>((resolve) => {
+      confirmUser = resolve;
+    });
+    let finishRuns: () => void = () => undefined;
+    const held = new Promise<void>((resolve) => {
+      finishRuns = resolve;
+    });
     const running = launchUpgradeBatch({
       rows: [
         row({ id: 'self', name: 'self', isSelf: true, version: '1.1.9' }),
@@ -1500,8 +1509,11 @@ describe('批量计划的落盘与续跑', () => {
       signal: new AbortController().signal,
       t,
       toasts: rec.toasts,
-      confirm: () => true,
-      runOne: async () => 'done',
+      confirm: () => confirmed,
+      runOne: async () => {
+        await held;
+        return 'done';
+      },
       onStart: () => undefined,
       onProgress: () => undefined,
       openPlan: (order, version) => {
@@ -1509,9 +1521,17 @@ describe('批量计划的落盘与续跑', () => {
         return sinkFor(order, version).sink;
       },
     });
+    // 用户还没拍板：计划一个字都不能落盘。
+    await flush();
+    expect(opened).toEqual([]);
+    expect(loadBatchPlan('self', NOW)).toBeNull();
+
+    confirmUser(true);
+    await flush();
     expect(opened).toEqual([{ order: [['a'], ['hub'], ['self']], version: '1.2.0' }]);
     expect(loadBatchPlan('self', NOW)).not.toBeNull();
 
+    finishRuns();
     await running;
     expect(rec.log).toEqual([['success', 'nodes.upgrade.allDone:{"success":3,"failed":0}']]);
     expect(loadBatchPlan('self', NOW)).toBeNull();
@@ -1532,7 +1552,7 @@ describe('批量计划的落盘与续跑', () => {
       signal: controller.signal,
       t,
       toasts: rec.toasts,
-      confirm: () => true,
+      confirm: async () => true,
       runOne: async () => {
         // 页面在第一台机器跑完时被关掉
         controller.abort();
