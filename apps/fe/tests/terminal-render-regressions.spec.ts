@@ -25,6 +25,21 @@ async function readTerminalSize(page: Page): Promise<{ cols: number; rows: numbe
   });
 }
 
+// 探针跟着可见终端实例走：切窗 / 重挂期间会被清空，单次读会撞上 null，这里轮询到有值为止。
+async function waitForTerminalSize(page: Page): Promise<{ cols: number; rows: number }> {
+  let size: { cols: number; rows: number } | null = null;
+  await expect
+    .poll(
+      async () => {
+        size = await readTerminalSize(page);
+        return size !== null;
+      },
+      { timeout: 20_000 }
+    )
+    .toBe(true);
+  return size as unknown as { cols: number; rows: number };
+}
+
 // 前端终端"屏幕"（buffer 末尾 rows 行，即 tmux 视口对应区域）逐行文本
 async function readScreenLines(page: Page): Promise<string[]> {
   return readTerminalLines(page, { origin: 'screen', trim: true });
@@ -225,7 +240,7 @@ test('bug1: cold start onto a single-pane window renders existing content', asyn
       )
       .toBe('match');
 
-    const term = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const term = await waitForTerminalSize(page);
     await expect
       .poll(
         async () => diffScreens(await readScreenLines(page), capturePaneScreen(paneId), term.rows),
@@ -271,7 +286,7 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
     // TUI_START + rows 行块 = rows+1 行，正好 1 行 scrollback（claude code 清屏后
     // 重画的典型形态）。曾经的回归：切窗后首条 live 输出触发 scrollToTop 把视口
     // pin 在顶部，之后整个 TUI 恒定错位一行。
-    const viewport = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const viewport = await waitForTerminalSize(page);
     tmux(`resize-window -t '${windowB}' -x ${viewport.cols} -y ${viewport.rows}`);
     await expect
       .poll(() => {
@@ -289,6 +304,12 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
     // 切换到窗口 B
     await expect(page.getByTestId(`window-item-${windowB}`)).toBeVisible({ timeout: 20_000 });
     await page.getByTestId(`window-item-${windowB}`).click();
+    // 路由切到窗口 B 后终端实例才会换成 B 的：先等路由，再等新探针挂上，
+    // 否则下面的尺寸轮询会拿着 A 的实例（与 B 同尺寸）瞬间通过。
+    await page.waitForURL((url) => url.pathname.includes(`/windows/${windowB}/`), {
+      timeout: 20_000,
+    });
+    await waitForTerminalSize(page);
 
     // 等 B 收敛到视口尺寸
     await expect
@@ -313,7 +334,7 @@ test('bug2: switching to a single-pane window keeps inline TUI aligned', async (
       .toMatch(/TUI_ROW_01_FRAME_[1-9]/);
 
     // 核心断言：前端屏幕与 tmux 视口逐行一致（错位一行在此暴露）
-    const term = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const term = await waitForTerminalSize(page);
     await expect
       .poll(
         async () => {
@@ -359,7 +380,7 @@ test('bug3: full-viewport inline TUI redraw stays aligned', async ({ page, reque
       .toBe('match');
 
     // 起一个"整视口高度"的 inline TUI（超长选择列表场景：重绘块占满 rows）
-    const term = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const term = await waitForTerminalSize(page);
     const tuiScript = writeInlineTuiScript(term.rows);
     tmux(`send-keys -t '${paneId}' "sh ${tuiScript}" C-m`);
     await expect
@@ -389,7 +410,7 @@ test('bug3: full-viewport inline TUI redraw stays aligned', async ({ page, reque
     await expect
       .poll(
         async () => {
-          const t = (await readTerminalSize(page)) as { cols: number; rows: number };
+          const t = await waitForTerminalSize(page);
           const fe = await readScreenLines(page);
           const tm = capturePaneScreen(paneId);
           const diffs = diffScreens(fe, tm, t.rows);
@@ -438,7 +459,7 @@ test('bug3b: stdin-driven full-viewport inline TUI redraw stays aligned (no resi
       .toBe('match');
 
     // 尺寸稳定后起整视口高度 TUI，用 stdin 驱动帧推进（对应 /theme 里按方向键换选项）
-    const term = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const term = await waitForTerminalSize(page);
     const tuiScript = writeInlineTuiScript(term.rows);
     tmux(`send-keys -t '${paneId}' "TUI_STDIN_DRIVEN=1 sh ${tuiScript}" C-m`);
     await expect
@@ -501,7 +522,7 @@ test('bug4: remote resize (another client) rebuilds local screen aligned', async
       .toBe('match');
 
     // 满屏 inline TUI（claude code 形态）
-    const viewport = (await readTerminalSize(page)) as { cols: number; rows: number };
+    const viewport = await waitForTerminalSize(page);
     const tuiScript = writeInlineTuiScript(viewport.rows);
     tmux(`send-keys -t '${paneId}' "TUI_STDIN_DRIVEN=1 sh ${tuiScript}" C-m`);
     await expect
