@@ -31,6 +31,8 @@ import { createHubKeyLogSource } from '../hub/hub-key-log-source';
 import type { HubPeerFetch } from '../hub/hub-peer-poller';
 import type { HubTlsInfoProvider } from '../hub/hub-runtime';
 import { setMessagingMeshRuntime } from '../messaging/runtime-hooks';
+import { bindPortMapNode } from '../portmap/binding';
+import { PortMapExportStore } from '../portmap/store';
 import type { GatewayRuntime } from '../runtime';
 import { getDisplayVersion } from '../system/version';
 import type { GatewaySession } from '../ws/gateway-session';
@@ -1357,6 +1359,14 @@ function createTlsRefresher(d: MeshDeps, uplink: UplinkPool): () => Promise<void
   };
 }
 
+/** 端口映射的入站放行按 nodeId 注册，链路直接复用本节点的 PeerManager。 */
+function bindPortMaps(d: MeshDeps, peerManager: PeerManager): () => void {
+  return bindPortMapNode(d.identity.nodeIdHex, {
+    peers: peerManager,
+    exports: new PortMapExportStore(d.db),
+  });
+}
+
 function assembleMeshRuntime(
   d: MeshDeps,
   w: ReturnType<typeof wireMeshEventsAndSessions>,
@@ -1364,6 +1374,7 @@ function assembleMeshRuntime(
 ): MeshRuntime {
   const { opts, config, identity, hub, sessions, userStore, rtc, bulk, state } = d;
   const { uplink, peerManager } = w;
+  const unbindPortMap = bindPortMaps(d, peerManager);
   let stopPromise: Promise<void> | null = null;
   let tlsPoll: { clear: () => void } | null = null;
   const refreshTlsAndAdvertise = createTlsRefresher(d, uplink);
@@ -1465,6 +1476,7 @@ function assembleMeshRuntime(
           ['mesh http', () => http.stop()],
           ['rtc', () => rtc.close()],
           ['bulk', () => bulk.close()],
+          ['portmap', () => unbindPortMap()],
         ]);
       })();
       return stopPromise;

@@ -580,9 +580,12 @@ export async function openWsStream(
   };
 }
 
-export function classifyOpenPayload(bytes: Uint8Array): 'http' | 'ws' | 'relay' | 'unknown' {
+export function classifyOpenPayload(
+  bytes: Uint8Array
+): 'http' | 'ws' | 'tcp' | 'relay' | 'unknown' {
   const open = parseOpenPayload(bytes);
   if (!open) return 'unknown';
+  if (open.type === 'tcp') return 'tcp';
   if (open.type === 'http' || (typeof open.method === 'string' && typeof open.path === 'string')) {
     return 'http';
   }
