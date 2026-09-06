@@ -12,7 +12,7 @@ import {
 import { chmod, mkdir, open, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { UPGRADE_CANCELLED, type UpgradeState, type UpgradeStatus } from '@tmex/shared';
-import { errorMessage, releaseTarballName } from '@tmex/shared';
+import { errorMessage, releaseSignatureRequired, releaseTarballName } from '@tmex/shared';
 import { processCommandLine, processStartIdentity } from '@tmex/shared/process';
 import { partPathOf, resumableSink } from '@tmex/transfer/node';
 import { parsePidFileRecord as parseSharedPidFileRecord } from '../../../../packages/shared/src/process/pid-file';
@@ -29,6 +29,7 @@ import {
   type PackageManifestResult,
   persistStagedManifest,
   removeStagedManifest,
+  stagedManifestExpired,
   stagedManifestMatches,
   stagedManifestSha256,
   verifyPackageManifest,
@@ -40,6 +41,7 @@ import {
   type StagedPackageStatusResult,
   classifyStagedEntry,
   fileSizeOrZero,
+  removeExpiredStagedFiles,
   stageFailureToResult,
   stagedPartExpired,
   stagedPartPath,
@@ -99,6 +101,11 @@ export type UpgradeControllerDeps = {
 export type UpgradeStartOpts = {
   source?: 'release' | 'staged';
   sha256?: string;
+  /**
+   * 从别的节点转发进来的升级：一律要求版本在签名下限之上，否则被攻陷的入口可以先让节点
+   * 装回没有验签的老版本、再往那个版本推任意代码。缺签名的历史版本只留给本机操作者。
+   */
+  remote?: boolean;
 };
 
 export type UpgradeStartResult =
@@ -223,6 +230,10 @@ export class UpgradeController {
 
   tryStart(version: string, opts?: UpgradeStartOpts): UpgradeStartResult {
     if (this.isBusy() || this.stagingInFlight) return { ok: false, code: 'UPGRADE_IN_PROGRESS' };
+    // 远程发起：版本必须在签名下限之上，装的东西才一定经过验签（含 source:'release' 的自下载）。
+    if (opts?.remote && !releaseSignatureRequired(version)) {
+      return { ok: false, code: 'UPGRADE_SIGNATURE_REQUIRED' };
+    }
     const source = opts?.source ?? 'release';
     let staged: StagedPackageRecord | null = null;
     if (source === 'staged') {
@@ -284,7 +295,10 @@ export class UpgradeController {
     const installDir = this.installDir();
     if (!installDir) return { ok: false, status: 500, code: 'STAGE_FAILED' };
     try {
-      await persistStagedManifest(installDir, verified.manifest);
+      // 先把过期的暂存包清干净（同步完成），再落新清单：顺序反了会被上一轮的过期清理连带删掉。
+      this.loadStagedFromDisk(installDir);
+      this.dropExpiredStaged(installDir);
+      await persistStagedManifest(installDir, verified.manifest, (this.deps.now ?? Date.now)());
     } catch {
       return { ok: false, status: 500, code: 'STAGE_FAILED' };
     }
@@ -543,11 +557,8 @@ export class UpgradeController {
       const at = Date.parse(record.stagedAt);
       if (!Number.isFinite(at) || now - at > STAGED_PACKAGE_TTL_MS) {
         this.staged.delete(version);
-        void rm(record.path, { force: true }).catch(() => {});
-        void rm(join(installDir, 'staging', 'staged', `tmex-cli-${version}.json`), {
-          force: true,
-        }).catch(() => {});
-        void removeStagedManifest(join(installDir, 'staging', 'staged'), version);
+        // 清单不在这里删：重试时它可能刚被换成新的一份，按自报时间在孤儿清理里过期。
+        removeExpiredStagedFiles(join(installDir, 'staging', 'staged'), version, record.path);
       }
     }
   }
@@ -574,6 +585,12 @@ export class UpgradeController {
     await this.pruneOrphanStagedFiles(installDir);
   }
 
+  /** 暂存记录 sidecar 是不是孤儿：版本非法、整包没了、或内存里已经不认这一版。 */
+  private stagedSidecarIsOrphan(stagedDir: string, version: string): boolean {
+    if (!version) return true;
+    return !existsSync(join(stagedDir, releaseTarballName(version))) || !this.staged.has(version);
+  }
+
   private async pruneOrphanStagedFiles(installDir: string): Promise<void> {
     const stagedDir = join(installDir, 'staging', 'staged');
     if (!existsSync(stagedDir)) return;
@@ -588,17 +605,24 @@ export class UpgradeController {
     for (const name of names) {
       const path = join(stagedDir, name);
       const entry = classifyStagedEntry(name);
-      if (entry.kind === 'part' || entry.kind === 'manifest') {
-        // 续传半成品与签名清单都可能先于正式包到达，只清过了保留期的。
+      if (entry.kind === 'part') {
+        // 断点续传的半成品要留着给下一次 PUT 接力，只清超过保留期的。
         if (stagedPartExpired(path, now)) {
           await rm(path, { force: true, recursive: true }).catch(() => {});
         }
         continue;
       }
+      if (entry.kind === 'manifest') {
+        // 清单比字节先到，没有 tgz 不代表它是孤儿；按它自报的时间过期。
+        if (stagedManifestExpired(stagedDir, entry.version, now, STAGED_PACKAGE_TTL_MS)) {
+          await rm(path, { force: true }).catch(() => {});
+        }
+        continue;
+      }
       if (entry.kind === 'sidecar') {
-        const tgz = entry.version ? join(stagedDir, releaseTarballName(entry.version)) : '';
-        const live = Boolean(tgz) && existsSync(tgz) && this.staged.has(entry.version);
-        if (!live) await rm(path, { force: true }).catch(() => {});
+        if (this.stagedSidecarIsOrphan(stagedDir, entry.version)) {
+          await rm(path, { force: true }).catch(() => {});
+        }
         continue;
       }
       if (entry.kind === 'tarball' && !keptPaths.has(path)) {

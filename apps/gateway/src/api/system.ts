@@ -1,5 +1,6 @@
 import type { StartUpgradeRequest } from '@tmex/shared';
 import { t } from '../i18n';
+import { isPeerRequest } from '../mesh/client-source';
 import { MESH_VIA_SELF, getMeshRequestContext } from '../mesh/mesh-deps';
 import { requestDispatchContext } from '../mesh/types';
 import { getAccessAddresses } from '../system/access-addresses';
@@ -156,6 +157,16 @@ function requestIsStagedAuthenticated(req: Request): boolean {
   return Boolean(ctx.sid && ctx.uid);
 }
 
+/**
+ * 请求是不是别的节点转发进来的。远程发起的升级不享受「老版本免签」——入口被攻陷时，
+ * 先降级到没有验签的旧版本、再往那个版本推任意代码是一条完整的提权链。
+ */
+function requestIsRemotelyInitiated(req: Request): boolean {
+  const dispatch = requestDispatchContext.get(req);
+  if (dispatch && dispatch.viaNodeId !== MESH_VIA_SELF) return true;
+  return isPeerRequest(req);
+}
+
 function stagedRequiresAuth(): Response {
   return json({ code: 'UPGRADE_NOT_ALLOWED', reason: 'staged_requires_auth' }, 403);
 }
@@ -195,6 +206,7 @@ async function handleStartUpgradeOpen(req: Request): Promise<Response> {
   const result = await startLocalUpgradeAttempt(parsed.version, {
     source: parsed.source,
     sha256: parsed.sha256,
+    remote: requestIsRemotelyInitiated(req),
   });
   if (!result.ok && result.code === 'UPGRADE_NOT_ALLOWED') {
     return json({ error: t('apiError.upgradeNotAllowed') }, 403);

@@ -877,3 +877,51 @@ describe('POST /api/system/upgrade/package/manifest', () => {
     expect(res.status).toBe(403);
   });
 });
+
+describe('POST /api/system/upgrade 远程降级防护', () => {
+  afterEach(() => {
+    upgradeController.resetForTests();
+  });
+
+  function startRequest(body: unknown, opts: { remote: boolean }): Request {
+    const req = new Request('http://localhost/api/system/upgrade', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    return opts.remote ? withMeshAuth(req) : req;
+  }
+
+  async function start(body: unknown, opts: { remote: boolean }): Promise<Response> {
+    const res = await handleSystemApiRequest(startRequest(body, opts), '/api/system/upgrade');
+    if (!res) throw new Error('expected a response');
+    return res;
+  }
+
+  test('入口让节点自下载一个签名下限之前的版本：拒绝，控制器保持 idle', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await start({ version: '1.1.38', source: 'release' }, { remote: true });
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_SIGNATURE_REQUIRED' });
+      expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+
+  test('降级防护与 source 无关：staged 也走同一条下限', async () => {
+    const infoSpy = spyOn(infoPublic, 'getSystemInfo').mockReturnValue(selfUpdateInfo());
+    try {
+      const res = await start(
+        { version: '1.1.38', source: 'staged', sha256: 'ab'.repeat(32) },
+        { remote: true }
+      );
+      expect(res.status).toBe(409);
+      expect(await res.json()).toEqual({ code: 'UPGRADE_SIGNATURE_REQUIRED' });
+      expect(upgradeController.status().state).toBe('idle');
+    } finally {
+      infoSpy.mockRestore();
+    }
+  });
+});

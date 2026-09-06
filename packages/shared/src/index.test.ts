@@ -89,6 +89,7 @@ const EXPECTED_RUNTIME_EXPORTS = [
   'parseWindowLayout',
   'releaseApiUrl',
   'releaseSignatureRequired',
+  'releaseSumsFileName',
   'releaseTag',
   'releaseTarballName',
   'releaseTarballUrl',

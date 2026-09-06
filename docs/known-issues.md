@@ -65,3 +65,6 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 
 `install.sh` 首次安装仍只校验 SHA256SUMS，没有验签——shell 里没有可依赖的 Ed25519 实现，
 首次安装本来也要信任下载源。
+
+另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
+≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `tmex upgrade --version <ver>`。

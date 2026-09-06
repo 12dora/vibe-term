@@ -1,5 +1,7 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test';
+import type { ChildProcess } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -241,5 +243,116 @@ describe('staged manifest lifecycle', () => {
     // stagePackage 会先跑一遍孤儿清理；清单不能在那时被当成垃圾删掉。
     expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
     expect(readStagedManifest(stagedDirOf(install), '1.1.39')?.sha256).toBe(hex);
+  });
+});
+
+describe('远程发起的升级要过签名下限', () => {
+  function stubbedController(install: InstallInfo): UpgradeController {
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    return new UpgradeController({
+      getInstallInfo: () => install,
+      stageRelease: async () => '/tmp/pkg/bin/tmex.js',
+      spawn: () => child as unknown as ChildProcess,
+    });
+  }
+
+  test('远程 + 下限之前的版本：拒绝，不进 downloading', () => {
+    const controller = stubbedController(tempInstall());
+    expect(controller.tryStart('1.1.38', { remote: true })).toEqual({
+      ok: false,
+      code: 'UPGRADE_SIGNATURE_REQUIRED',
+    });
+    expect(controller.status().state).toBe('idle');
+  });
+
+  test('本机操作者仍可装历史版本', () => {
+    const controller = stubbedController(tempInstall());
+    expect(controller.tryStart('1.1.38')).toEqual({ ok: true });
+    expect(controller.status().state).toBe('downloading');
+  });
+
+  test('远程 + 下限之上的版本照常放行（走下载路径自己验签）', () => {
+    const controller = stubbedController(tempInstall());
+    expect(controller.tryStart('1.1.39', { remote: true })).toEqual({ ok: true });
+    expect(controller.status().state).toBe('downloading');
+  });
+});
+
+describe('暂存包过期后重试', () => {
+  const DAY_MS = 24 * 60 * 60 * 1000;
+
+  function clockedController(
+    install: InstallInfo,
+    now: () => number,
+    stub = false
+  ): UpgradeController {
+    const child = new EventEmitter() as EventEmitter & { unref: () => void };
+    child.unref = () => undefined;
+    return new UpgradeController({
+      getInstallInfo: () => install,
+      now,
+      ...(stub
+        ? {
+            spawn: () => child as unknown as ChildProcess,
+            extractPackage: async () => '/tmp/pkg/bin/tmex.js',
+          }
+        : {}),
+    });
+  }
+
+  test('过期清理不会删掉刚收到的新清单，重传后仍装得上', async () => {
+    const install = tempInstall();
+    let now = Date.now();
+    const controller = clockedController(install, () => now, true);
+    const bytes = new Uint8Array([3, 1, 4, 1, 5]);
+    const hex = sha256Hex(bytes);
+
+    await controller.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
+    expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
+
+    // 25 小时没人装它：暂存记录过期，重试要能从头走一遍
+    now += DAY_MS + 60 * 60 * 1000;
+    await controller.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
+    const status = await controller.stagedPackageStatus('1.1.39', hex);
+    expect(status).toMatchObject({ ok: true, complete: false });
+    expect(readStagedManifest(stagedDirOf(install), '1.1.39')?.sha256).toBe(hex);
+
+    expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
+    expect(readStagedManifest(stagedDirOf(install), '1.1.39')?.sha256).toBe(hex);
+    expect(controller.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({ ok: true });
+  });
+
+  test('重试跨控制器重启也成立', async () => {
+    const install = tempInstall();
+    let now = Date.now();
+    const first = clockedController(install, () => now);
+    const bytes = new Uint8Array([9, 8, 7, 6]);
+    const hex = sha256Hex(bytes);
+    await first.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
+    expect((await first.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
+
+    now += DAY_MS + 60 * 60 * 1000;
+    const second = clockedController(install, () => now, true);
+    await second.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
+    expect((await second.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
+    expect(second.tryStart('1.1.39', { source: 'staged', sha256: hex })).toEqual({ ok: true });
+  });
+
+  test('没人来重试的清单按自报时间过期', async () => {
+    const install = tempInstall();
+    let now = Date.now();
+    const controller = clockedController(install, () => now);
+    const bytes = new Uint8Array([1, 1, 1]);
+    const hex = sha256Hex(bytes);
+    await controller.putPackageManifest('1.1.39', signedSumsFor('1.1.39', hex));
+    expect((await controller.stagePackage('1.1.39', hex, bytesStream(bytes))).ok).toBe(true);
+
+    now += DAY_MS + 60 * 60 * 1000;
+    // 换一版触发一次清理：老清单没人续，应当被清掉
+    await controller.putPackageManifest('1.1.40', signedSumsFor('1.1.40', hex));
+    expect((await controller.stagePackage('1.1.40', hex, bytesStream(bytes))).ok).toBe(true);
+    expect(existsSync(stagedManifestPath(stagedDirOf(install), '1.1.39'))).toBe(false);
+    expect(readStagedManifest(stagedDirOf(install), '1.1.40')?.sha256).toBe(hex);
   });
 });

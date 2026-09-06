@@ -86,15 +86,41 @@ export function verifyPackageManifest(input: {
   }
 }
 
+/** 盘上的清单多带一个 `createdAt`：过期判定要和暂存包用同一把（可注入的）时钟，不能靠文件 mtime。 */
+type StoredManifest = StagedPackageManifest & { createdAt: string };
+
 export async function writeStagedManifest(
   stagedDir: string,
-  manifest: StagedPackageManifest
+  manifest: StagedPackageManifest,
+  createdAt: number
 ): Promise<void> {
-  await writeFile(
-    stagedManifestPath(stagedDir, manifest.version),
-    `${JSON.stringify(manifest)}\n`,
-    { mode: 0o600 }
-  );
+  const stored: StoredManifest = { ...manifest, createdAt: new Date(createdAt).toISOString() };
+  await writeFile(stagedManifestPath(stagedDir, manifest.version), `${JSON.stringify(stored)}\n`, {
+    mode: 0o600,
+  });
+}
+
+/**
+ * 清单是否已过保留期。读不出来 / 时间戳不合法一律当过期——那是坏文件，留着也没用。
+ * 只按清单自报的时间判，避免「刚收到的新清单被上一次的过期清理连带删掉」。
+ */
+export function stagedManifestExpired(
+  stagedDir: string,
+  version: string,
+  now: number,
+  ttlMs: number
+): boolean {
+  let parsed: Partial<StoredManifest>;
+  try {
+    parsed = JSON.parse(
+      readFileSync(stagedManifestPath(stagedDir, version), 'utf8')
+    ) as Partial<StoredManifest>;
+  } catch {
+    return true;
+  }
+  const at = Date.parse(parsed.createdAt ?? '');
+  if (!Number.isFinite(at)) return true;
+  return now - at > ttlMs;
 }
 
 export async function removeStagedManifest(stagedDir: string, version: string): Promise<void> {
@@ -144,9 +170,10 @@ export function stagedManifestSha256(installDir: string, version: string): strin
 
 export async function persistStagedManifest(
   installDir: string,
-  manifest: StagedPackageManifest
+  manifest: StagedPackageManifest,
+  createdAt: number
 ): Promise<void> {
   const dir = stagedPackageDir(installDir);
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  await writeStagedManifest(dir, manifest);
+  await writeStagedManifest(dir, manifest, createdAt);
 }

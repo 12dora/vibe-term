@@ -18,6 +18,7 @@ import {
 import { ReleaseSignatureError, assertPushableRelease } from './release-signature';
 import {
   abortableSleep,
+  consumeBoundedBody,
   describeUpstream,
   detachRequest,
   pushPackageManifest,
@@ -485,7 +486,7 @@ async function readPushedOffset(
       OFFSET_QUERY_TIMEOUT_MS,
       'offset timeout'
     );
-    const text = await res.text().catch(() => '');
+    const text = await consumeBoundedBody(res);
     if (res.status < 200 || res.status >= 300) return NO_STAGED_OFFSET;
     const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== 'object') return NO_STAGED_OFFSET;
@@ -549,16 +550,16 @@ function pushQuery(version: string, sha256: string, offset: number): string {
 
 async function classifyPushResponse(job: Job, pushed: Response): Promise<PushOutcome> {
   if (isCancelled(job)) {
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'cancelled' };
   }
   if (pushed.status >= 200 && pushed.status < 300) {
     // 小 JSON 回包读完再走，`body.cancel()` 会给转发层一个假的 aborted 结论。
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'landed' };
   }
   if (job.abort.signal.aborted) {
-    await pushed.text().catch(() => '');
+    await consumeBoundedBody(pushed);
     return { kind: 'cancelled' };
   }
   const detail = await describeUpstream(pushed);
@@ -602,7 +603,7 @@ async function runStartPhase(
     job.startPromise = startReq;
     const started = await withTimeout(startReq, timeouts.startMs, 'start timeout');
     if (isCancelled(job)) {
-      await started.text().catch(() => '');
+      await consumeBoundedBody(started);
       return { done: true, snapshot: snapshotOf(job) };
     }
     if (started.status < 200 || started.status >= 300) {
@@ -611,7 +612,7 @@ async function runStartPhase(
         snapshot: fail(job, `start failed: ${await describeUpstream(started)}`, nowFn),
       };
     }
-    await started.text().catch(() => '');
+    await consumeBoundedBody(started);
   } catch (err) {
     if (isCancelled(job)) return { done: true, snapshot: snapshotOf(job) };
     const message = errorMessage(err);
@@ -662,7 +663,7 @@ async function deleteStagedBestEffort(
       query: `?version=${encodeURIComponent(job.version)}`,
       retry: { attempts: 2 },
     });
-    await res.text().catch(() => '');
+    await consumeBoundedBody(res);
     if (res.status < 200 || res.status >= 300) {
       console.warn(
         `[mesh][upgrade] cancel staged package failed node=${job.nodeId} version=${job.version} status=${res.status}`

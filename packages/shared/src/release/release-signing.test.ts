@@ -7,6 +7,7 @@ import {
   expectedTarballHash,
   parseSha256Sums,
   releaseSignatureRequired,
+  releaseSumsFileName,
   signReleaseSums,
   verifyReleaseSums,
 } from './release-signing';
@@ -127,6 +128,13 @@ describe('parseSha256Sums / expectedTarballHash', () => {
       '\r\n'
     );
     expect(parseSha256Sums(text).get('tmex-cli-1.2.3.tgz')).toBe('a'.repeat(64));
+  });
+
+  test('trailing separators and directory prefixes resolve to the same file name', () => {
+    const text = `${'a'.repeat(64)}  dist/pkg/tmex-cli-1.2.3.tgz\n`;
+    expect(parseSha256Sums(text).get('tmex-cli-1.2.3.tgz')).toBe('a'.repeat(64));
+    expect(releaseSumsFileName('dist/pkg/')).toBe('pkg');
+    expect(releaseSumsFileName('tmex-cli-1.2.3.tgz')).toBe('tmex-cli-1.2.3.tgz');
   });
 
   test('duplicate file names keep the first entry', () => {

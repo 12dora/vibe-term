@@ -254,7 +254,7 @@ export async function readLocalUpgradeStatus(): Promise<UpgradeStatus> {
 
 export async function startLocalUpgradeAttempt(
   version: string,
-  opts?: { source?: 'release' | 'staged'; sha256?: string }
+  opts?: { source?: 'release' | 'staged'; sha256?: string; remote?: boolean }
 ): Promise<
   | { ok: true; status: UpgradeStatus }
   | {

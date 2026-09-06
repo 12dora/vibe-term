@@ -1,6 +1,7 @@
 // 暂存升级包的落盘细节。字节层（`.part` 命名、偏移校验、前缀重算、截断判定、落位）
 // 已经统一到 `@tmex/transfer/node` 的 `ResumableSink`，这里只剩「升级语义 ↔ 引擎」的映射。
 
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { releaseTarballName } from '@tmex/shared';
 import {
@@ -120,4 +121,22 @@ export function classifyStagedEntry(name: string): StagedEntry {
   }
   if (name.endsWith('.tgz')) return { kind: 'tarball', version: null };
   return { kind: 'other', version: null };
+}
+
+/**
+ * 尽力而为地删掉过期暂存包的整包与记录 sidecar。**同步**完成：异步的 fire-and-forget
+ * 会跑到「重试时新写的 sidecar」后面去，把刚写好的那份删掉。
+ */
+export function removeExpiredStagedFiles(
+  stagedDir: string,
+  version: string,
+  tarballPath: string
+): void {
+  for (const path of [tarballPath, join(stagedDir, `tmex-cli-${version}.json`)]) {
+    try {
+      rmSync(path, { force: true });
+    } catch {
+      // 删不掉的残留留给下一轮孤儿清理
+    }
+  }
 }

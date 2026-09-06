@@ -126,10 +126,14 @@ export function verifyReleaseSums(
 
 const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)$/;
 
-/** 只取路径最后一段：shasum 有时带目录前缀，比对时统一按文件名。 */
-function fileNameOf(path: string): string {
-  const cut = path.lastIndexOf('/');
-  return cut >= 0 ? path.slice(cut + 1) : path;
+/**
+ * 只取路径最后一段：shasum 有时带目录前缀，比对时统一按文件名。
+ * 解析与查询共用这一个实现——CLI 与网关一旦各用一套 basename，同一份 SHA256SUMS 会给出不同结论。
+ */
+export function releaseSumsFileName(path: string): string {
+  const trimmed = path.replace(/\/+$/, '');
+  const cut = trimmed.lastIndexOf('/');
+  return cut >= 0 ? trimmed.slice(cut + 1) : trimmed;
 }
 
 /** 解析 SHA256SUMS 为「文件名 → 小写摘要」。重复文件名以首次出现为准，非法行跳过。 */
@@ -138,7 +142,7 @@ export function parseSha256Sums(text: string): Map<string, string> {
   for (const raw of text.split(/\r?\n/)) {
     const matched = SUM_LINE.exec(raw.trim());
     if (!matched) continue;
-    const name = fileNameOf(matched[2] as string);
+    const name = releaseSumsFileName(matched[2] as string);
     if (out.has(name)) continue;
     out.set(name, (matched[1] as string).toLowerCase());
   }

@@ -3,9 +3,7 @@
 // 缺校验和一律拒绝（fail-closed）；版本门槛由调用方决定是否再包一层兼容分支。
 
 import { createHash } from 'node:crypto';
-import { basename } from 'node:path';
-
-const SUM_LINE = /^([a-fA-F0-9]{64})\s+\*?(\S+)\s*$/;
+import { parseSha256Sums as parseReleaseSums, releaseSumsFileName } from './release-signing';
 
 export type ReleaseChecksumSums = {
   hex: string | null;
@@ -16,14 +14,9 @@ export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex');
 }
 
+/** 单文件查询的薄封装：解析用 `release-signing` 里那一份浏览器安全的实现。 */
 export function parseSha256Sums(text: string, fileName: string): string | null {
-  const want = basename(fileName);
-  for (const raw of text.split(/\r?\n/)) {
-    const match = raw.trim().match(SUM_LINE);
-    if (!match) continue;
-    if (basename(match[2]) === want) return match[1].toLowerCase();
-  }
-  return null;
+  return parseReleaseSums(text).get(releaseSumsFileName(fileName)) ?? null;
 }
 
 export function checksumStatus(
