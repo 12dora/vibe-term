@@ -893,6 +893,8 @@ export type TranslationKey =
   | 'settings.llm.defaultProviderNone'
   | 'settings.llm.defaultModel'
   | 'settings.llm.defaultModelPlaceholder'
+  | 'settings.llm.defaultModelUnavailable'
+  | 'settings.llm.defaultModelEmpty'
   | 'settings.llm.saveDefaults'
   | 'settings.llm.loadFailed'
   | 'settings.llm.createFailed'

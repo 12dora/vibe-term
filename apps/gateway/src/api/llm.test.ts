@@ -338,6 +338,31 @@ describe('llm provider api', () => {
     expect(missing.status).toBe(404);
   });
 
+  test('delete provider clears the dangling default model id', async () => {
+    const upstream = createMockModelsServer({ models: ['model-alpha'] });
+    const createResponse = await callApi('POST', '/api/llm/providers', {
+      name: 'default-target',
+      protocol: 'openai-chat',
+      baseUrl: upstream.baseUrl,
+      apiKey: 'sk-k',
+    });
+    const created = ((await createResponse.json()) as { provider: LlmProviderDto }).provider;
+
+    const patched = await callApi('PATCH', '/api/llm/settings', {
+      defaultProviderId: created.id,
+      defaultModelId: 'model-alpha',
+    });
+    expect(patched.status).toBe(200);
+    expect(getAgentSettings().defaultModelId).toBe('model-alpha');
+
+    const response = await callApi('DELETE', `/api/llm/providers/${created.id}`);
+    expect(response.status).toBe(200);
+
+    const settings = getAgentSettings();
+    expect(settings.defaultProviderId).toBeNull();
+    expect(settings.defaultModelId).toBeNull();
+  });
+
   test('create broadcasts llm settings only after models cache is populated', async () => {
     const name = `delayed-create-${crypto.randomUUID()}`;
     const upstream = createDelayedModelsServer(['final-b', 'final-a']);

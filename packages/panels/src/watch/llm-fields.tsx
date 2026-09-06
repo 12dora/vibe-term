@@ -1,9 +1,9 @@
 import type { LlmProviderDto } from '@tmex/shared';
-import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 import { Switch } from '@tmex/ui/switch';
 import { Textarea } from '@tmex/ui/textarea';
 import { useTranslation } from 'react-i18next';
+import { LlmModelSelect } from '../settings/llm-model-select';
 import type { SetWatchRuleField } from './use-watch-rule-draft';
 import {
   FOLLOW_DEFAULT_VALUE,
@@ -60,7 +60,6 @@ export function ModelFields({
   const { t } = useTranslation();
   const enabledProviders = providers.filter((provider) => provider.enabled);
   const selectedProvider = providers.find((provider) => provider.id === draft.providerId);
-  const modelOptions = selectedProvider?.models ?? [];
 
   return (
     <div className="space-y-2">
@@ -99,19 +98,20 @@ export function ModelFields({
             ))}
           </SelectContent>
         </Select>
-        <Input
-          data-testid="watch-form-model"
-          list={`${formId}-model-options`}
-          value={draft.modelId}
-          disabled={!draft.providerId}
-          onChange={(event) => setField('modelId', event.target.value)}
-          placeholder={t('watch.form.modelPlaceholder')}
+        <LlmModelSelect
+          id={`${formId}-model`}
+          testId="watch-form-model"
+          className="h-8"
+          providers={providers}
+          providerId={draft.providerId}
+          modelId={draft.modelId || null}
+          allowNone
+          noneLabel={t('watch.form.followGlobalDefault')}
+          onChange={(next) => {
+            onSelectProvider(next.providerId);
+            setField('modelId', next.modelId ?? '');
+          }}
         />
-        <datalist id={`${formId}-model-options`}>
-          {modelOptions.map((model) => (
-            <option key={model} value={model} />
-          ))}
-        </datalist>
       </div>
       {needsModelFor(draft) && (
         <p

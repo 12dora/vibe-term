@@ -7,11 +7,11 @@ import { toast } from 'sonner';
 
 import { Button } from '@tmex/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@tmex/ui/card';
-import { Input } from '@tmex/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@tmex/ui/select';
 
 import { fetchAgentLlmSettings, fetchLlmProviders, parseApiError } from '@tmex/api-client';
 import { useRuntime } from '@tmex/stores/react';
+import { LlmModelSelect } from './llm-model-select';
 import { LlmProviderFormModal } from './llm-provider-form-modal';
 import { LlmProviderRow } from './llm-provider-row';
 import { SETTINGS_STALE_MS } from './settings-query';
@@ -135,7 +135,14 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
 
   const enabledProviders = providers.filter((provider) => provider.enabled);
   const selectedProvider = providers.find((provider) => provider.id === defaultProviderId);
-  const modelOptions = selectedProvider?.models ?? [];
+
+  const selectProvider = (nextProviderId: string | null) => {
+    setDefaultProviderId(nextProviderId);
+    const nextProvider = providers.find((provider) => provider.id === nextProviderId);
+    if (!nextProvider?.models.includes(defaultModelId)) {
+      setDefaultModelId('');
+    }
+  };
 
   return (
     <Card className="border-0 ring-0" data-testid="llm-defaults-section">
@@ -152,7 +159,7 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
               value={defaultProviderId ?? NONE_PROVIDER_VALUE}
               onValueChange={(value) => {
                 if (!value) return;
-                setDefaultProviderId(value === NONE_PROVIDER_VALUE ? null : value);
+                selectProvider(value === NONE_PROVIDER_VALUE ? null : value);
               }}
             >
               <SelectTrigger
@@ -178,23 +185,21 @@ function LlmDefaultsCard({ providers }: LlmDefaultsCardProps) {
           </div>
 
           <div className="space-y-2">
-            <label className="block text-sm font-medium" htmlFor="llm-default-model-input">
+            <label className="block text-sm font-medium" htmlFor="llm-default-model-select">
               {t('settings.llm.defaultModel')}
             </label>
-            <Input
-              id="llm-default-model-input"
-              data-testid="llm-default-model-input"
-              list="llm-default-model-options"
-              value={defaultModelId}
-              onChange={(event) => setDefaultModelId(event.target.value)}
-              placeholder={t('settings.llm.defaultModelPlaceholder')}
-              className="h-9"
+            <LlmModelSelect
+              id="llm-default-model-select"
+              testId="llm-default-model-select"
+              providers={providers}
+              providerId={defaultProviderId}
+              modelId={defaultModelId || null}
+              allowNone
+              onChange={(next) => {
+                setDefaultProviderId(next.providerId);
+                setDefaultModelId(next.modelId ?? '');
+              }}
             />
-            <datalist id="llm-default-model-options">
-              {modelOptions.map((model) => (
-                <option key={model} value={model} />
-              ))}
-            </datalist>
           </div>
         </div>
 

@@ -244,7 +244,11 @@ async function handleDeleteProvider(id: string): Promise<Response> {
     return json({ error: t('apiError.llmProviderNotFound') }, 404);
   }
 
+  const settings = getAgentSettings();
   deleteLlmProvider(id);
+  if (settings.defaultProviderId === id && settings.defaultModelId !== null) {
+    updateAgentSettings({ defaultModelId: null });
+  }
   broadcastSettingsUpdate('llm');
   return json({ success: true });
 }

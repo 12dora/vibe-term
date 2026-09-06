@@ -11,19 +11,7 @@ import {
   SelectTrigger,
 } from '@tmex/ui/select';
 import { useTranslation } from 'react-i18next';
-
-const SEP = '::';
-
-export function encodeModelValue(providerId: string | null, modelId: string): string {
-  return `${providerId ?? ''}${SEP}${modelId}`;
-}
-
-function decodeModelValue(value: string): { providerId: string | null; modelId: string } {
-  const idx = value.indexOf(SEP);
-  if (idx < 0) return { providerId: null, modelId: value };
-  const providerId = value.slice(0, idx);
-  return { providerId: providerId || null, modelId: value.slice(idx + SEP.length) };
-}
+import { decodeModelValue, encodeModelValue } from './model-value';
 
 /** 为 session（或草稿）选择 provider+model；运行中禁用 */
 export function ModelPicker({

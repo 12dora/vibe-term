@@ -282,10 +282,15 @@ test('settings: llm providers crud, defaults, search provider keys', async ({ pa
     .poll(() => providers[0]?.models)
     .toEqual(['model-alpha', 'model-gamma', 'manual-model-x']);
 
-  // Global defaults: pick provider + type model id, then save.
+  // Global defaults: pick provider + pick model from the grouped select, then save.
   await page.getByTestId('llm-default-provider-select').click();
   await page.locator('[data-slot="select-content"]').getByText(providerName).click();
-  await page.getByTestId('llm-default-model-input').fill('model-alpha');
+  await page.getByTestId('llm-default-model-select').click();
+  await page
+    .locator('[data-slot="select-content"]')
+    .getByText('model-alpha', { exact: true })
+    .click();
+  await expect(page.getByTestId('llm-default-model-select')).toContainText('model-alpha');
   await page.getByTestId('llm-defaults-save').click();
 
   await expect
