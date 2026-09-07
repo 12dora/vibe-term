@@ -67,6 +67,14 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 - 预启动禁用 mesh/uplink：候选进程设 `VIBETERM_ROLES=standalone`（不连 Hub、不开 peer 口）。`/healthz` 现带 `version`（构建期 `VIBETERM_MONOREPO_VERSION`）。mesh 节点未登录时的精简 `/healthz` 由 runtime `attachStartedAt` 补上 `version`。
 - Web 触发的升级把 stage 放在 `<installDir>/staging/<txn>`，并传 `--txn` 给 CLI；清理交给 journal。
 
+## 安装元数据损坏
+
+`current` 若指向本安装的 `versions/<v>` 且目标仍存在，可以恢复当前版本号；不能据此恢复自定义服务名、`serviceMode=none` 等部署信息。不要删除 `current` 或其目标来修复 JSON。
+
+`vibeterm upgrade --repair --install-dir <dir>` 已接入元数据恢复。JSON 不可读、文件缺失或缺少有效 `cliVersion` 时，从有效 `current → versions/<v>` 推导版本；拒绝外部链接、悬空链接和非目录目标。仍可读取的服务配置优先保留；服务身份无法推断时，必须显式指定 `--service-name <原服务名>`，无服务安装则指定 `--no-service`，否则在操作服务前退出。
+
+修复成功后才写回重建元数据，版本、目录和服务名与最终提交或回滚结果一致；失败时保留原始元数据与恢复所需 journal。执行前可自行备份损坏文件以便排查。若 `current` 也不可用，须从同一安装的可信备份恢复元数据并核对版本、服务名及服务模式；不要复制其它安装的服务名。
+
 ## 已知限制
 
 - **preflight 仍会执行 import-time 模块初始化。** `VIBETERM_RUNTIME_MODE=preflight` 会跳过 Telegram/微信、push、agent、watch、tunnel 外部进程、TLS、mesh 和远程 session restore 等显式启动链，但 `runtime.ts` 静态导入的 `transfer-session` 仍会在 import 时启动 GC interval；`tunnelManager` 构造函数也会打开拷贝后的候选库并注册全局 access guard。也就是说：外部服务不会被显式拉起，但模块级副作用（定时器、打开拷贝库）仍然发生。

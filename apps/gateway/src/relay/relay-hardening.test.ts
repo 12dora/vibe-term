@@ -37,7 +37,7 @@ describe('relay token reissue', () => {
     const tenant = await relay.createTenant();
     const node = tenant.addNode();
     const client = await tenant.connect(node);
-    await client.inbox.takeOf('auth.ok');
+    expect(await client.inbox.takeOf('auth.ok')).toMatchObject({ token_rotated: false });
 
     const reissued = await enrollRelayRoot(relay, tenant.root);
     expect(reissued.tenant_id).toBe(tenant.id);
@@ -47,6 +47,44 @@ describe('relay token reissue', () => {
     // 新令牌还在密钥日志里没送到成员手上，旧链路必须继续活着
     client.send({ t: 'ping' });
     expect((await client.inbox.takeOf('pong')).t).toBe('pong');
+  });
+
+  test('三次换发仍允许最初令牌重新连接与开流，第四次淘汰最老代', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const firstHash = sha256Hex(tenant.token);
+    const node = tenant.addNode();
+    const peerNode = tenant.addNode();
+    for (let i = 0; i < 3; i++) {
+      relay.advance(1_000);
+      await enrollRelayRoot(relay, tenant.root);
+    }
+    const ring = relay.runtime.tenants.get(tenant.id)?.previousTokens;
+    expect(ring?.length).toBe(3);
+    expect(ring?.[2]?.hash).toBe(firstHash);
+    expect(ring?.map((entry) => entry.issued_at)).toEqual([
+      relay.now(),
+      relay.now() - 1_000,
+      relay.now() - 2_000,
+    ]);
+    const client = await tenant.connect(node);
+    expect(await client.inbox.takeOf('auth.ok')).toMatchObject({ token_rotated: true });
+    const peer = await tenant.connect(peerNode);
+    expect(await peer.inbox.takeOf('auth.ok')).toMatchObject({ token_rotated: true });
+    peer.onStream(() => {});
+    const stream = await client.openRelay(peerNode.nodeId);
+    await stream.write(new Uint8Array([1]));
+    client.send({ t: 'ping' });
+    expect((await client.inbox.takeOf('pong')).t).toBe('pong');
+    await enrollRelayRoot(relay, tenant.root);
+    expect(
+      relay.runtime.tenants
+        .get(tenant.id)
+        ?.previousTokens?.some((entry) => entry.hash === firstHash)
+    ).toBe(false);
+    client.send({ t: 'ping' });
+    const kicked = await client.inbox.takeOf('relay.kicked');
+    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('kicked');
   });
 
   test('出示当前令牌重新 enroll：令牌不换发', async () => {
@@ -97,8 +135,26 @@ describe('relay token reissue', () => {
 
     relay.advance(RELAY_PREV_TOKEN_GRACE_MS + 1);
     const kicked = await client.inbox.takeOf('relay.kicked', 4_000);
-    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('password_rotated');
-    expect((await client.link.closed).reason).toBe('relay-password_rotated');
+    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('kicked');
+    expect((await client.link.closed).reason).toBe('relay-kicked');
+  });
+
+  test('历史令牌宽限到期后，新开流触发准入复查', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const client = await tenant.connect(tenant.addNode());
+    await client.inbox.takeOf('auth.ok');
+    const rotated = await enrollRelayRoot(relay, tenant.root);
+    if (!rotated.token) throw new Error('expected rotated token');
+    const peerNode = tenant.addNode();
+    const peer = await tenant.connect(peerNode, { token: rotated.token });
+    await peer.inbox.takeOf('auth.ok');
+    peer.onStream(() => {});
+    relay.advance(RELAY_PREV_TOKEN_GRACE_MS + 1);
+    const opening = openAndSettle(client.openRelay(peerNode.nodeId));
+    const kicked = await client.inbox.takeOf('relay.kicked');
+    expect(kicked.t === 'relay.kicked' && kicked.reason).toBe('kicked');
+    expect(await opening).toBe('rejected');
   });
 
   test('宽限期内上一代令牌仍可认证，kick 模式改密后立刻失效', async () => {
@@ -114,7 +170,7 @@ describe('relay token reissue', () => {
 
     const rotated = await relay.adminFetch('/api/relay/password', {
       method: 'POST',
-      body: JSON.stringify({ password: 'kick-pass', mode: 'kick' }),
+      body: JSON.stringify({ password: 'kick-pass', mode: 'kick', force: true }),
     });
     expect(rotated.status).toBe(200);
     expect(relay.runtime.tenants.get(tenant.id)?.prevTokenHash).toBeNull();

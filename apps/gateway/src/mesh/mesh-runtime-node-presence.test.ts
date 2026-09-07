@@ -13,10 +13,12 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
+import { defaultScheduler } from './ctl';
 import { getMeshAgentBridge } from './mesh-agent-bridge';
 import type { PeerReachKind } from './mesh-deps';
-import { createMeshRuntime } from './mesh-runtime';
-import { fakeSocketPair, seedUser, waitUntil } from './test-support';
+import { HUB_PRESENCE_STALE_MS, createMeshRuntime } from './mesh-runtime';
+import { ImmediateScheduler, fakeSocketPair, seedUser, waitUntil } from './test-support';
+import type { MeshScheduler } from './types';
 import { encodeUplinkCtl } from './uplink-protocol';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -52,7 +54,7 @@ describe('mesh node presence for agent sessions', () => {
     }
   });
 
-  async function bootListedPeer(): Promise<{
+  async function bootListedPeer(scheduler?: MeshScheduler): Promise<{
     mesh: Awaited<ReturnType<typeof createMeshRuntime>>;
     hub: WebSocketLink;
     peerId: string;
@@ -93,6 +95,7 @@ describe('mesh node presence for agent sessions', () => {
     hub.ctl.onMessage(() => {});
     const mesh = await createMeshRuntime({
       db,
+      scheduler,
       gateway: fakeGateway(db),
       config: {
         roles: { hub: false, node: true, relay: false },
@@ -137,6 +140,48 @@ describe('mesh node presence for agent sessions', () => {
     await waitUntil(() => mesh.lastNodeList !== null);
     expect(getMeshAgentBridge()?.lookupNode(peerId)).toBe('online');
   });
+
+  test.each([false, true])(
+    'stop clears presence timers before database teardown (already offline: %s)',
+    async (alreadyOffline) => {
+      const clock = new ImmediateScheduler();
+      const { mesh, hub, peerId } = await bootListedPeer({
+        ...defaultScheduler(),
+        interval: clock.interval.bind(clock),
+      });
+      hub.ctl.send(
+        encodeUplinkCtl({
+          t: 'node.list',
+          version: 1,
+          key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+          rtc: { stun: [], turn: null },
+          nodes: [
+            {
+              id: peerId,
+              name: 'peer',
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: '1.0.0',
+            },
+          ],
+        })
+      );
+      await waitUntil(() => mesh.lastNodeList !== null);
+      if (alreadyOffline) await mesh.uplink.stop();
+      const timersBeforeStop = clock.intervals.filter(
+        (timer) => timer.ms === HUB_PRESENCE_STALE_MS
+      );
+      expect(timersBeforeStop).toHaveLength(alreadyOffline ? 1 : 0);
+      await mesh.stop();
+      const presenceTimers = clock.intervals.filter((timer) => timer.ms === HUB_PRESENCE_STALE_MS);
+      expect(presenceTimers).toHaveLength(timersBeforeStop.length);
+      expect(presenceTimers.every((timer) => timer.cleared)).toBe(true);
+      fixtures.pop()?.close();
+      for (const timer of presenceTimers) expect(() => timer.fn()).not.toThrow();
+    }
+  );
 
   test('hub offline + live direct link → no offline event', async () => {
     const { mesh, hub, peerId } = await bootListedPeer();

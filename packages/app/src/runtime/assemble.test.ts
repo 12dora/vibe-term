@@ -4,8 +4,10 @@ import {
   resetDomainAccessForTests,
   setDomainAccessGuardForTests,
 } from '../../../../apps/gateway/src/api/domain-access-routes';
+import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
+import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import type { HubTlsInfoProvider } from '../../../../apps/gateway/src/hub/hub-runtime';
 import {
@@ -37,6 +39,7 @@ import {
   generateEd25519KeyPair,
   signLogin,
 } from '../../../shared/src/auth';
+import { createAuthContextFromDb } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
 import {
@@ -45,6 +48,7 @@ import {
   createProcessShutdown,
   installShutdownHandlers,
   meshShutdownNeeded,
+  startTlsWithRecovery,
 } from './assemble';
 
 function fakeIdentityDb(): GatewayRuntime['db'] {
@@ -1346,6 +1350,133 @@ describe('assembleVibeTerm standalone auth surface', () => {
     }
   });
 
+  test('identity decrypt failure preserves password login and authenticated gateway access', async () => {
+    const { db, sqlite, close } = createMigratedAuthDb();
+    const errors: string[] = [];
+    const originalError = console.error;
+    let assembled: Awaited<ReturnType<typeof assembleVibeTerm>> | undefined;
+    try {
+      const auth = await createAuthContextFromDb(db);
+      const identity = await ensureNodeIdentity(auth.identityStore);
+      await auth.userKeys.bootstrapUserWithSelfAdmit({
+        username: 'owner',
+        password: 'vibeterm-test-pass',
+        identity,
+        now: Date.now(),
+      });
+      sqlite.run("UPDATE node_identity SET private_key = 'unreadable'");
+      console.error = (...args) => {
+        errors.push(args.map(String).join(' '));
+      };
+      let meshCalls = 0;
+      for (const hub of [false, true]) {
+        assembled = await assembleVibeTerm({
+          roles: { hub, node: true, relay: false },
+          createGatewayRuntime: async () =>
+            fakeGateway({
+              db,
+              handleRequest: (req) =>
+                new URL(req.url).pathname.startsWith('/api/')
+                  ? Response.json({ devices: [] })
+                  : undefined,
+            }),
+          createMeshRuntime: async () => {
+            meshCalls += 1;
+            return fakeMesh();
+          },
+          serveFrontend: async () => new Response('spa'),
+        });
+        await assembled.start();
+        expect(meshCalls).toBe(0);
+        expect(assembled.mesh).toBeNull();
+        expect(assembled.hub).toBeNull();
+        const health = await json(assembled, new Request('http://127.0.0.1/healthz'));
+        expect(health.res.status).toBe(200);
+        expect(health.body).toMatchObject({ status: 'ok', degraded: 'master_key_mismatch' });
+        expect(typeof health.body.version).toBe('string');
+        expect(typeof health.body.startedAt).toBe('number');
+        const page = await assembled.fetch(new Request('http://127.0.0.1/login'), dummyServer);
+        expect(await page?.text()).toBe('spa');
+        expect(
+          (await assembled.fetch(new Request('http://127.0.0.1/api/devices'), dummyServer))?.status
+        ).toBe(401);
+        const badLogin = await assembled.fetch(
+          new Request('http://127.0.0.1/api/auth/login', {
+            method: 'POST',
+            body: '{}',
+            headers: { 'content-type': 'application/json' },
+          }),
+          dummyServer
+        );
+        expect(badLogin?.status).toBe(400);
+        const mode = await json(assembled, new Request('http://127.0.0.1/api/auth/mode'));
+        expect(mode.body.mode).toBe('mesh');
+        expect(mode.body.nodeId).toBe(identity.nodeIdHex);
+        const challenge = await json(
+          assembled,
+          new Request('http://127.0.0.1/api/auth/challenge', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ uid: mode.body.uid }),
+          })
+        );
+        expect(challenge.body.nodePk).toBe(encodeBase64url(identity.edPublicKey));
+        const sid = await loginWithPassword(
+          assembled,
+          mode.body.uid as string,
+          'vibeterm-test-pass',
+          mode.body.kdfParams as {
+            salt: string;
+            memory_kib: number;
+            iterations: number;
+            parallelism: number;
+          },
+          mode.body.nodeId as string
+        );
+        const devices = await assembled.fetch(
+          new Request('http://127.0.0.1/api/devices', {
+            headers: { cookie: `vibeterm_s_self=${sid}` },
+          }),
+          dummyServer
+        );
+        expect(devices?.status).toBe(200);
+        await assembled.stop();
+        assembled = undefined;
+      }
+      expect(
+        errors.some(
+          (line) =>
+            line.includes('backups/app.env.*') && line.includes('vibeterm mesh reset-identity')
+        )
+      ).toBe(true);
+      expect(() => sqlite.query('SELECT private_key FROM node_identity').get()).not.toThrow();
+      expect(sqlite.query('SELECT private_key FROM node_identity').get()).toEqual({
+        private_key: 'unreadable',
+      });
+    } finally {
+      console.error = originalError;
+      await assembled?.stop();
+      close();
+    }
+  });
+
+  test('mesh startup errors outside identity decrypt remain fatal', async () => {
+    for (const error of [
+      new Error('broken mesh configuration'),
+      new CryptoDecryptError({ scope: 'other' }, 'broken'),
+    ]) {
+      await expect(
+        assembleVibeTerm({
+          roles: { hub: false, node: true, relay: false },
+          createGatewayRuntime: async () => fakeGateway(),
+          createMeshRuntime: async () => {
+            throw error;
+          },
+        })
+      ).rejects.toBe(error);
+    }
+  });
+
   test('standalone 生效时未登录 WS upgrade 走 4401；auth-only 不挂 /api/mesh', async () => {
     const { db, close } = createMigratedAuthDb();
     try {
@@ -1389,7 +1520,132 @@ describe('assembleVibeTerm standalone auth surface', () => {
   });
 });
 
+describe('local keylog diagnostics', () => {
+  test('exposes observed remote heads and compares a common sequence without changing the log', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const auth = await createAuthContextFromDb(db);
+    let assembled: Awaited<ReturnType<typeof assembleVibeTerm>> | undefined;
+    try {
+      const identity = await ensureNodeIdentity(auth.identityStore);
+      const boot = await auth.userKeys.bootstrapUserWithSelfAdmit({
+        username: 'diagnostic-owner',
+        password: 'vibeterm-test-pass',
+        identity,
+        now: Date.now(),
+      });
+      const head = auth.keyLogStore.head(boot.userId)!;
+      const headRecord = auth.keyLogStore.getAtSeq(boot.userId, Number(head.seq))!;
+      const previous = auth.keyLogStore.getAtSeq(boot.userId, Number(head.seq) - 1)!;
+      let remote: { seq: bigint; hash: Uint8Array } | null = head;
+      let fail = false;
+      let commonMissing = false;
+      const queries: bigint[] = [];
+      assembled = await assembleVibeTerm({
+        roles: { hub: false, node: true, relay: false },
+        createGatewayRuntime: async () => fakeGateway({ db }),
+        createMeshRuntime: async () =>
+          fakeMesh({
+            uplink: {
+              queryHubHead: async () => {
+                if (fail) throw new Error('offline');
+                return remote;
+              },
+              queryKeyLogAt: async (seq: bigint) => {
+                queries.push(seq);
+                return commonMissing ? null : headRecord;
+              },
+            } as MeshRuntime['uplink'],
+          }),
+      });
+      const query = async () => {
+        const response = await assembled!.fetch(
+          new Request('http://localhost/api/mesh/keylog/status'),
+          serverWithClientIp('127.0.0.1')
+        );
+        expect(response?.status).toBe(200);
+        return await response!.json();
+      };
+      const same = await query();
+      expect(same).toMatchObject({
+        userId: boot.userId,
+        local: { seq: Number(head.seq), hash: encodeBase64url(head.hash) },
+        remoteKind: 'hub',
+      });
+      expect(same.remote).toEqual(same.local);
+      expect(queries).toEqual([]);
+      remote = { seq: head.seq + 1n, hash: new Uint8Array(32).fill(2) };
+      expect((await query()).remoteAtLocal).toBe(encodeBase64url(head.hash));
+      expect(queries).toEqual([head.seq]);
+      commonMissing = true;
+      expect((await query()).error).toBe('common_head_unavailable');
+      remote = { seq: BigInt(previous.seq), hash: previous.hash };
+      expect((await query()).localAtRemote).toBe(encodeBase64url(previous.hash));
+      remote = null;
+      expect((await query()).error).toBe('remote_head_unavailable');
+      fail = true;
+      expect((await query()).error).toBe('uplink_unavailable');
+      expect(auth.keyLogStore.head(boot.userId)).toEqual(head);
+      for (const address of ['203.0.113.3', '192.168.0.2', '127.0.0.1', null]) {
+        const denied = await assembled.fetch(
+          new Request('http://localhost/api/mesh/keylog/status', {
+            headers: { 'x-forwarded-for': '127.0.0.1' },
+          }),
+          serverWithClientIp(address)
+        );
+        expect(denied?.status).toBe(403);
+        expect(await denied?.json()).toEqual({ error: { code: 'LOOPBACK_REQUIRED' } });
+      }
+      const method = await assembled.fetch(
+        new Request('http://localhost/api/mesh/keylog/status', { method: 'POST' }),
+        serverWithClientIp('::1')
+      );
+      expect(method?.status).toBe(405);
+      const mapped = await assembled.fetch(
+        new Request('http://localhost/api/mesh/keylog/status'),
+        serverWithClientIp('::ffff:127.0.0.1')
+      );
+      expect(mapped?.status).toBe(200);
+    } finally {
+      await assembled?.stop();
+      close();
+    }
+  });
+});
+
 describe('installShutdownHandlers', () => {
+  test('TLS decrypt failure disables only HTTPS; unrelated startup errors propagate', async () => {
+    const originalError = console.error;
+    const errors: string[] = [];
+    let stops = 0;
+    console.error = (...args) => {
+      errors.push(args.map(String).join(' '));
+    };
+    try {
+      await startTlsWithRecovery({
+        startup: async () => {
+          throw new CryptoDecryptError({ scope: 'tls_config', field: 'key' }, 'wrong key');
+        },
+        stop: () => {
+          stops += 1;
+        },
+      });
+      expect(stops).toBe(1);
+      expect(errors[0]).toContain('local HTTP remains available');
+      expect(errors[0]).toContain('backups/app.env.*');
+      const error = new Error('port bind failure');
+      await expect(
+        startTlsWithRecovery({
+          startup: async () => {
+            throw error;
+          },
+          stop() {},
+        })
+      ).rejects.toBe(error);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   test('SIGINT runs stop then exits 0', async () => {
     const handlers = new Map<string, () => void>();
     let exited: number | undefined;

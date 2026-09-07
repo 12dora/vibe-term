@@ -32,6 +32,7 @@ import {
   createServiceControl,
   createTxnId,
   repairUpgrade,
+  resolveRepairMeta,
   resolveServiceMode,
   withUpgradeLock,
 } from '../lib/upgrade-apply';
@@ -228,11 +229,17 @@ export async function runUpgrade(parsed: ParsedArgs, deps: RunUpgradeDeps = {}):
   );
   const installLayout = createInstallLayout(installDir);
 
-  if (!(await pathExists(installLayout.metaPath))) {
+  const recovered = flags.repairOnly
+    ? await resolveRepairMeta(installDir, {
+        repairServiceName: asString(parsed.flags['service-name']),
+        repairNoService: asBoolean(parsed.flags['no-service']) === true,
+      })
+    : null;
+  if (!recovered && !(await pathExists(installLayout.metaPath))) {
     throw new Error(t('upgrade.missingMeta', { path: installLayout.metaPath }));
   }
 
-  const meta = await readJsonFile<InstallMeta>(installLayout.metaPath);
+  const meta = recovered?.meta ?? (await readJsonFile<InstallMeta>(installLayout.metaPath));
   const bunPath = await requireUpgradeBun(parsed, meta);
 
   await withUpgradeLock(installDir, async () => {
@@ -315,6 +322,8 @@ async function runLockedUpgrade(opts: {
   const activeTxnId = asString(opts.parsed.flags.txn) ?? null;
   const shimDirs = defaultShimDirs();
   const repaired = await repair(opts.installDir, opts.bunPath, {
+    repairServiceName: asString(opts.parsed.flags['service-name']),
+    repairNoService: noServiceFlag,
     rebuildService: buildService,
     activeTxnId,
     shimDirs,

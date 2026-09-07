@@ -22,6 +22,14 @@ export type NestedCommandName =
   | 'hub.list'
   | 'hub.allow'
   | 'hub.disallow'
+  | 'hub.trust.refresh'
+  | 'hub.ca.fingerprint'
+  | 'hub.ca.rotate'
+  | 'hub.urls.list'
+  | 'hub.urls.add'
+  | 'hub.urls.remove'
+  | 'mesh.reset-identity'
+  | 'mesh.keylog.status'
   | 'mesh.reset-root'
   | 'mesh.passkey.remove-all'
   | 'relay.status'
@@ -34,6 +42,7 @@ export type NestedCommandName =
   | 'relay.label'
   | 'relay.enroll'
   | 'relay.reauth'
+  | 'relay.pack.upload'
   | 'relay.resend-token'
   | 'relay.leave'
   | 'relay.list'
@@ -148,6 +157,7 @@ const RELAY_SUBCOMMANDS: Record<string, NestedCommandName> = {
 
 const MESH_SUBCOMMANDS: Record<string, NestedCommandName> = {
   'reset-root': 'mesh.reset-root',
+  'reset-identity': 'mesh.reset-identity',
 };
 
 const MESH_PASSKEY_SUBCOMMANDS: Record<string, NestedCommandName> = {
@@ -180,17 +190,25 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
   const topLevel = TOP_LEVEL_COMMANDS[command];
   if (topLevel) return { name: topLevel, rest: parsed.positionals, raw: command };
 
-  if (command === 'hub') {
-    if (parsed.positionals[0] === 'user') return group(HUB_USER_SUBCOMMANDS, parsed, command, 2);
-    return group(HUB_SUBCOMMANDS, parsed, command, 1);
-  }
-  if (command === 'relay') return group(RELAY_SUBCOMMANDS, parsed, command, 1);
-  if (command === 'mesh') {
-    if (parsed.positionals[0] === 'passkey') {
-      return group(MESH_PASSKEY_SUBCOMMANDS, parsed, command, 2);
-    }
-    return group(MESH_SUBCOMMANDS, parsed, command, 1);
-  }
+  const nestedGroups: Record<string, Record<string, NestedCommandName>> = {
+    'hub.user': HUB_USER_SUBCOMMANDS,
+    'hub.trust': { refresh: 'hub.trust.refresh' },
+    'hub.ca': { fingerprint: 'hub.ca.fingerprint', rotate: 'hub.ca.rotate' },
+    'hub.urls': { list: 'hub.urls.list', add: 'hub.urls.add', remove: 'hub.urls.remove' },
+    'relay.pack': { upload: 'relay.pack.upload' },
+    'mesh.keylog': { status: 'mesh.keylog.status' },
+    'mesh.passkey': MESH_PASSKEY_SUBCOMMANDS,
+  };
+  const nestedGroup = nestedGroups[`${command}.${parsed.positionals[0]}`];
+  if (nestedGroup) return group(nestedGroup, parsed, command, 2);
+  const groups: Record<string, Record<string, NestedCommandName>> = {
+    hub: HUB_SUBCOMMANDS,
+    relay: RELAY_SUBCOMMANDS,
+    'relay-admin': { passwd: 'relay.passwd', kick: 'relay.kick' },
+    mesh: MESH_SUBCOMMANDS,
+  };
+  const commandGroup = groups[command];
+  if (commandGroup) return group(commandGroup, parsed, command, 1);
 
   return { name: 'unknown', rest: parsed.positionals, raw: command };
 }
@@ -283,10 +301,25 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'service-name',
     'no-interactive',
     'full-reset',
+    'yes',
   ]),
   'hub.user.totp': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
   'hub.user.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
-  'mesh.reset-root': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'no-interactive']),
+  'mesh.reset-root': new Set([
+    ...GLOBAL_FLAGS,
+    'install-dir',
+    'service-name',
+    'no-interactive',
+    'yes',
+  ]),
+  'hub.trust.refresh': new Set([...GLOBAL_FLAGS, 'install-dir', 'fingerprint']),
+  'hub.ca.fingerprint': new Set([...GLOBAL_FLAGS, 'install-dir']),
+  'hub.ca.rotate': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
+  'hub.urls.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
+  'hub.urls.add': new Set([...GLOBAL_FLAGS, 'install-dir']),
+  'hub.urls.remove': new Set([...GLOBAL_FLAGS, 'install-dir']),
+  'mesh.reset-identity': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
+  'mesh.keylog.status': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'mesh.passkey.remove-all': new Set([
     ...GLOBAL_FLAGS,
     'install-dir',
@@ -295,8 +328,8 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   ]),
   'relay.status': RELAY_ADMIN_FLAGS,
   'relay.tenants': RELAY_ADMIN_FLAGS,
-  'relay.passwd': new Set([...RELAY_ADMIN_FLAGS, 'clear', 'kick', 'keep']),
-  'relay.kick': RELAY_ADMIN_FLAGS,
+  'relay.passwd': new Set([...RELAY_ADMIN_FLAGS, 'clear', 'kick', 'keep', 'force']),
+  'relay.kick': new Set([...RELAY_ADMIN_FLAGS, 'force']),
   'relay.remove': new Set([...RELAY_ADMIN_FLAGS, 'yes']),
   'relay.quota': new Set([
     ...RELAY_ADMIN_FLAGS,
@@ -325,6 +358,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'no-restart',
   ]),
   'relay.reauth': RELAY_TENANT_FLAGS,
+  'relay.pack.upload': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.resend-token': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.leave': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name']),
   'relay.list': new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']),

@@ -100,6 +100,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   lastConnectError: { reason: string; at: number } | null = null;
   quota: RelayQuota | null = null;
   kickedReason: RelayKickReason | null = null;
+  awaitingToken = false;
   tenantId: string | null = null;
   listVersion = 0;
   nodesViaRelay = 0;
@@ -526,6 +527,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.heartbeat.reset();
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
+    this.awaitingToken = false;
     this.lastStatusJson = '';
     this.enroll.reset('RELAY_OFFLINE');
     if (this.state === 'online') this.setState('connecting');

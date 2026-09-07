@@ -9,6 +9,7 @@ import {
   createProcessShutdown,
   installShutdownHandlers,
   meshShutdownNeeded,
+  startTlsWithRecovery,
 } from './assemble';
 import { handlePreflightHttp, readRuntimeMode } from './mode';
 import { warnOnStaleSystemdUnit, warnOnSystemdOomPolicy } from './service-selfcheck';
@@ -50,7 +51,7 @@ async function main(): Promise<void> {
   });
 
   await assembled.start();
-  await assembled.tls.startup();
+  await startTlsWithRecovery(assembled.tls);
 
   const stopAll = async () => {
     assembled.tls.stop();

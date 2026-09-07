@@ -1,14 +1,121 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { mkdir, mkdtemp, readFile, readlink, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readlink, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathExists } from './fs-utils';
-import { convertLegacyLayout } from './upgrade-legacy';
+import { convertLegacyLayout, readRepairInstallMeta } from './upgrade-legacy';
 
 const tempDirs: string[] = [];
 
 afterEach(async () => {
   await Promise.all(tempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+});
+
+describe('readRepairInstallMeta', () => {
+  async function currentInstall(version = '2.0.0'): Promise<string> {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-repair-meta-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', version), { recursive: true });
+    await symlink(join('versions', version), join(installDir, 'current'));
+    return installDir;
+  }
+
+  test.each(['{', 'null', '{}', '{"cliVersion":42}', '{"cliVersion":" "}'])(
+    'derives metadata from current for invalid metadata %s without writing it',
+    async (contents) => {
+      const installDir = await currentInstall();
+      const path = join(installDir, 'install-meta.json');
+      await writeFile(path, contents);
+      const result = await readRepairInstallMeta(installDir, '/usr/bin/bun');
+      expect(result?.rebuilt).toBe(true);
+      expect(result?.meta).toMatchObject({
+        cliVersion: '2.0.0',
+        serviceName: 'vibeterm',
+        serviceMode: 'managed',
+        installDir,
+        bunPath: '/usr/bin/bun',
+        platform: process.platform,
+      });
+      expect(await readFile(path, 'utf8')).toBe(contents);
+    }
+  );
+
+  test('recovers missing metadata and selects the old default service name for 1.x', async () => {
+    const installDir = await currentInstall('1.1.40');
+    const result = await readRepairInstallMeta(installDir);
+    expect(result?.meta.cliVersion).toBe('1.1.40');
+    expect(result?.meta.serviceName).toBe('tmex');
+    expect(await pathExists(join(installDir, 'install-meta.json'))).toBe(false);
+  });
+
+  test('preserves available service settings while rebuilding missing cliVersion', async () => {
+    const installDir = await currentInstall();
+    await writeFile(
+      join(installDir, 'install-meta.json'),
+      JSON.stringify({
+        serviceName: 'custom',
+        serviceMode: 'none',
+        autostart: false,
+        bunPath: '/custom/bun',
+        installSource: 'install-script',
+      })
+    );
+    expect((await readRepairInstallMeta(installDir))?.meta).toMatchObject({
+      cliVersion: '2.0.0',
+      serviceName: 'custom',
+      serviceMode: 'none',
+      autostart: false,
+      bunPath: '/custom/bun',
+      installSource: 'install-script',
+    });
+  });
+
+  test('does not infer a version from an external current target or missing version directory', async () => {
+    const installDir = await currentInstall();
+    await rm(join(installDir, 'current'));
+    await symlink('../external/2.0.0', join(installDir, 'current'));
+    expect(await readRepairInstallMeta(installDir)).toBeNull();
+    await rm(join(installDir, 'current'));
+    await symlink('versions/9.9.9', join(installDir, 'current'));
+    expect(await readRepairInstallMeta(installDir)).toBeNull();
+  });
+
+  test.each(['version-link', 'versions-link', 'file'] as const)(
+    'rejects current targets that escape the install or are not directories: %s',
+    async (kind) => {
+      const installDir = await currentInstall();
+      const externalDir = await mkdtemp(join(tmpdir(), 'vibeterm-external-version-'));
+      tempDirs.push(externalDir);
+      const versionDir = join(installDir, 'versions', '2.0.0');
+      if (kind === 'versions-link') {
+        await rm(join(installDir, 'versions'), { recursive: true });
+        await mkdir(join(externalDir, '2.0.0'));
+        await symlink(externalDir, join(installDir, 'versions'));
+      } else {
+        await rm(versionDir, { recursive: true });
+        if (kind === 'version-link') await symlink(externalDir, versionDir);
+        else await writeFile(versionDir, 'not a directory');
+      }
+      expect(await readRepairInstallMeta(installDir)).toBeNull();
+    }
+  );
+
+  test('keeps readable metadata intact and does not fabricate a legacy layout version', async () => {
+    const installDir = await currentInstall();
+    const meta = {
+      cliVersion: '1.1.40',
+      serviceName: 'custom',
+      platform: process.platform,
+      autostart: false,
+      installDir,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    await writeFile(join(installDir, 'install-meta.json'), JSON.stringify(meta));
+    expect(await readRepairInstallMeta(installDir)).toEqual({ meta, rebuilt: false });
+    await rm(join(installDir, 'current'));
+    await writeFile(join(installDir, 'install-meta.json'), '{}');
+    expect(await readRepairInstallMeta(installDir)).toBeNull();
+  });
 });
 
 describe('convertLegacyLayout', () => {

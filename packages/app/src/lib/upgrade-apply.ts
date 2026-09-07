@@ -29,6 +29,12 @@ import {
   hasOwnedLivePidFile,
   pidFilePath,
 } from './upgrade-process';
+import {
+  type RepairMetaOptions,
+  persistRepairMeta,
+  readInstallMeta,
+  resolveRepairMeta,
+} from './upgrade-repair-meta';
 import { backupRunScript } from './upgrade-run-script';
 import {
   createManagedServiceControl,
@@ -61,6 +67,7 @@ import {
   stopBeforeMigrationUndo,
 } from './upgrade-txn-migrate';
 
+export { resolveRepairMeta } from './upgrade-repair-meta';
 export { createManagedServiceControl, createServiceControl, resolveServiceMode };
 export type { UpgradeServiceControl };
 export { createDirectProcessControl, hasLivePidFile, hasOwnedLivePidFile, pidFilePath };
@@ -83,11 +90,7 @@ async function sweepRepairGarbage(installDir: string, deps: UpgradeApplyDeps): P
   });
 }
 
-async function readInstallMeta(installDir: string): Promise<InstallMeta | null> {
-  const layout = createInstallLayout(installDir);
-  if (!(await pathExists(layout.metaPath))) return null;
-  return await readJsonFile<InstallMeta>(layout.metaPath).catch(() => null);
-}
+type RepairDeps = UpgradeApplyDeps & RepairMetaOptions;
 
 interface ServiceIdentity {
   serviceName?: string;
@@ -99,7 +102,7 @@ interface ServiceIdentity {
 interface RepairRuntime {
   installDir: string;
   bunPath: string;
-  deps: UpgradeApplyDeps;
+  deps: RepairDeps;
   log: (message: string) => void;
   meta: InstallMeta | null;
   journal: UpgradeJournal | null;
@@ -211,10 +214,7 @@ async function markAborted(installDir: string, journal: UpgradeJournal): Promise
   });
 }
 
-/**
- * `--repair`：目录已搬到新路径但 app.env / DB / run.sh 还没改完（rename 与改写之间崩溃）时补完。
- * 幂等；每一步都写回 journal，中途再崩仍能继续。
- */
+/** 补完目录迁移；每一步落 journal，便于崩溃后继续。 */
 async function completeInterruptedMigration(
   installDir: string,
   journal: UpgradeJournal,
@@ -267,7 +267,7 @@ async function undoMigrationInRepair(
     shimDirs: rt.deps.shimDirs,
     log: rt.log,
   });
-  const meta = await readInstallMeta(record.fromDir);
+  const meta = await readInstallMeta(record.fromDir, rt.bunPath, rt.deps, record.oldServiceName);
   const target = repairServiceIdentity(rt.installDir, journal, 'restart_old');
   return {
     ...rt,
@@ -312,7 +312,7 @@ export function repairServiceIdentity(
 async function prepareRepair(input: {
   installDir: string;
   bunPath: string;
-  deps: UpgradeApplyDeps;
+  deps: RepairDeps;
   log: (message: string) => void;
   journal: UpgradeJournal | null;
   action: RecoveryKind;
@@ -321,7 +321,12 @@ async function prepareRepair(input: {
   const identity: ServiceIdentity = record
     ? { serviceName: record.newServiceName, legacyServiceName: record.oldServiceName }
     : {};
-  const meta = await readInstallMeta(input.installDir);
+  const meta = await readInstallMeta(
+    input.installDir,
+    input.bunPath,
+    input.deps,
+    identity.serviceName
+  );
   const rt: RepairRuntime = {
     installDir: input.installDir,
     bunPath: input.bunPath,
@@ -345,7 +350,9 @@ async function prepareRepair(input: {
         shimDirs: input.deps.shimDirs,
       });
     }
-    const meta2 = undone ? await readInstallMeta(undone.fromDir) : meta;
+    const meta2 = undone
+      ? await readInstallMeta(undone.fromDir, input.bunPath, input.deps, undone.oldServiceName)
+      : meta;
     const target = repairServiceIdentity(input.installDir, input.journal, 'restore');
     return {
       ...rt,
@@ -408,7 +415,7 @@ async function repairVerifyOrRollback(
   rt: RepairRuntime,
   journal: UpgradeJournal,
   healthCheck: HealthCheckFn
-): Promise<string> {
+): Promise<RepairRuntime> {
   const url = await liveHealthUrl(rt.installDir);
   try {
     if (!url) throw new Error(t('upgrade.healthFailed', { status: 'missing-env' }));
@@ -423,6 +430,7 @@ async function repairVerifyOrRollback(
       timeoutMs: HEALTH_TIMEOUT_MS,
       requireTlsListener: true,
     });
+    const recovered = await resolveRepairMeta(rt.installDir, rt.deps, rt.bunPath);
     await commitSuccess(
       rt.installDir,
       journal,
@@ -430,9 +438,10 @@ async function repairVerifyOrRollback(
       Boolean(journal.keepBackup),
       rt.log,
       rt.meta?.serviceMode,
-      rt.migration?.newServiceName
+      rt.migration?.newServiceName,
+      recovered?.rebuilt ? recovered.meta : undefined
     );
-    return rt.installDir;
+    return rt;
   } catch (error) {
     const message = errorMessage(error);
     const back = rt.migration
@@ -448,7 +457,7 @@ async function repairVerifyOrRollback(
       rt.log,
       back.meta?.serviceMode
     );
-    return back.installDir;
+    return back;
   }
 }
 
@@ -472,7 +481,7 @@ export interface RepairOutcome {
 export async function repairUpgrade(
   installDir: string,
   bunPath: string,
-  deps: UpgradeApplyDeps
+  deps: RepairDeps
 ): Promise<RepairOutcome> {
   const log = deps.log ?? ((message) => console.log(`[vibeterm] ${message}`));
   const healthCheck = deps.healthCheck ?? pollHealthz;
@@ -481,26 +490,28 @@ export async function repairUpgrade(
   const rt = await prepareRepair({ installDir, bunPath, deps, log, journal: initial, action });
   const journal = rt.journal;
 
+  let finalRuntime = rt;
   if (!journal) {
     // 旧布局（没有 current）的转换一律留给 applyUpgrade：它会先把旧 run.sh 备份进事务再重写。
     // 在这里提前转换，事务备份拿到的就是新模板，回滚时旧 runtime 缺 TMEX_* 路径变量起不来。
     await sweepRepairGarbage(rt.installDir, deps);
-    return { action, installDir: rt.installDir };
-  }
-  if (action === 'abort_candidate') {
+  } else if (action === 'abort_candidate') {
     await repairAbortCandidate(rt, journal);
-    return { action, installDir: rt.installDir };
-  }
-  if (action === 'restart_old') {
+  } else if (action === 'restart_old') {
     await repairRestartOld(rt, journal, healthCheck);
-    return { action, installDir: rt.installDir };
+  } else if (action === 'verify_or_rollback') {
+    finalRuntime = await repairVerifyOrRollback(rt, journal, healthCheck);
+  } else {
+    await repairTerminalCleanup(rt, journal);
   }
-  if (action === 'verify_or_rollback') {
-    const finalDir = await repairVerifyOrRollback(rt, journal, healthCheck);
-    return { action, installDir: finalDir };
-  }
-  await repairTerminalCleanup(rt, journal);
-  return { action, installDir: rt.installDir };
+  await persistRepairMeta(
+    finalRuntime.installDir,
+    bunPath,
+    deps,
+    log,
+    finalRuntime.meta?.serviceName
+  );
+  return { action, installDir: finalRuntime.installDir };
 }
 
 export async function applyUpgrade(

@@ -122,7 +122,7 @@ type Harness = {
   streams: LinkStream[];
 };
 
-function fakeRelayServer(link: WebSocketLink, headSeq: number): Harness {
+function fakeRelayServer(link: WebSocketLink, headSeq: number, tokenRotated?: boolean): Harness {
   const received: RelayCtlMessage[] = [];
   const streams: LinkStream[] = [];
   const send = (msg: RelayCtlMessage) => link.ctl.send(encodeRelayCtl(msg));
@@ -134,6 +134,7 @@ function fakeRelayServer(link: WebSocketLink, headSeq: number): Harness {
         t: 'auth.ok',
         tenant_id: msg.tenant_id,
         key_log_head_seq: headSeq,
+        ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}),
         rtc: { stun: ['stun:stun.example:3478'], turn: null },
       });
     }
@@ -203,6 +204,45 @@ describe('RelayUplinkClient', () => {
     expect(blob.version).toBe('1.1.23');
     expect(blob.endpoints).toEqual(['ws://10.0.0.1:39001/peer']);
   });
+
+  for (const tokenRotated of [true, false]) {
+    test(`auth.ok token_rotated=${tokenRotated} 更新等待令牌状态且保持上联`, async () => {
+      const b = await bootRelayNode();
+      fixtures.push({ close: b.close });
+      const [clientWs, serverWs] = fakeSocketPair();
+      const server = fakeRelayServer(
+        new WebSocketLink(serverWs, { role: 'acceptor' }),
+        2,
+        tokenRotated
+      );
+      const client = new RelayUplinkClient({
+        hubUrl: RELAY_URL,
+        identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+        userId: () => b.user.userId,
+        keyLogApplier: noopApplier(2n),
+        userStore: b.userStore,
+        secrets: b.secrets,
+        statusProvider: status,
+        wsFactory: () => clientWs,
+      });
+      fixtures.push({ close: () => {}, stop: () => client.stop() });
+      client.awaitingToken = !tokenRotated;
+      const connecting = client.attemptConnect();
+      await waitUntil(() => client.link !== null);
+      server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+      await connecting;
+      await waitUntil(() => server.received.some((msg) => msg.t === 'relay.status'));
+      expect(client.awaitingToken).toBe(tokenRotated);
+      expect(client.state).toBe('online');
+      expect(client.isAuthenticated()).toBe(true);
+      expect(client.kickedReason).toBeNull();
+      expect(b.secrets.relayRows()[0]?.kicked).toBe(false);
+      server.send({ t: 'relay.kicked', reason: 'kicked' });
+      await waitUntil(() => client.kickedReason === 'kicked');
+      expect(client.awaitingToken).toBe(false);
+      expect(client.state).not.toBe('online');
+    });
+  }
 
   test('relay.list 解密对端状态块写 peer_cache，并产出 node.list 形状', async () => {
     const b = await bootRelayNode();
@@ -437,11 +477,13 @@ describe('RelayUplinkClient', () => {
       wsFactory: () => clientWs,
     });
     fixtures.push({ close: () => {}, stop: () => client.stop() });
+    client.awaitingToken = true;
     const connecting = client.attemptConnect();
     await waitUntil(() => client.link !== null);
     server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
     await connecting;
 
+    expect(client.awaitingToken).toBe(false);
     expect(b.secrets.relayRows()[0]?.kicked).toBe(false);
     expect(b.secrets.relayRows()[0]?.kickedReason).toBeNull();
   });

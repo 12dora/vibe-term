@@ -23,6 +23,7 @@ describe('relay command parsing', () => {
     expect(nested(['relay', 'reauth', 'https://r.example']).name).toBe('relay.reauth');
     expect(nested(['relay', 'leave']).name).toBe('relay.leave');
     expect(nested(['relay', 'list']).name).toBe('relay.list');
+    expect(nested(['relay', 'pack', 'upload']).name).toBe('relay.pack.upload');
   });
 
   test('positionals after the subcommand become rest', () => {
@@ -33,6 +34,8 @@ describe('relay command parsing', () => {
   test('an unknown relay subcommand is unknown', () => {
     expect(nested(['relay', 'nope']).name).toBe('unknown');
     expect(nested(['relay']).name).toBe('unknown');
+    expect(nested(['relay', 'pack']).name).toBe('unknown');
+    expect(nested(['relay', 'pack', 'download']).name).toBe('unknown');
   });
 
   test('hub and mesh parsing is unchanged by the relay group', () => {
@@ -47,6 +50,10 @@ describe('relay command parsing', () => {
 
 describe('relay flag allowlists', () => {
   test('operator flags are accepted', () => {
+    expect(() =>
+      assertKnownFlags(parseArgs(['relay', 'passwd', '--kick', '--force']))
+    ).not.toThrow();
+    expect(() => assertKnownFlags(parseArgs(['relay', 'kick', 'abc', '--force']))).not.toThrow();
     expect(() => assertKnownFlags(parseArgs(['relay', 'status', '--json']))).not.toThrow();
     expect(() =>
       assertKnownFlags(parseArgs(['relay', 'passwd', '--clear', '--kick']))
@@ -89,6 +96,11 @@ describe('relay flag allowlists', () => {
 
   test('tenant flags are accepted', () => {
     expect(() =>
+      assertKnownFlags(
+        parseArgs(['relay', 'pack', 'upload', '--install-dir', '/tmp/relay-cli-test'])
+      )
+    ).not.toThrow();
+    expect(() =>
       assertKnownFlags(parseArgs(['relay', 'enroll', 'https://r.example', '--password', 'p']))
     ).not.toThrow();
     expect(() =>
@@ -128,7 +140,7 @@ describe('relay flag allowlists', () => {
 });
 
 describe('relay commands run on the Bun auth runtime', () => {
-  test('all twelve relay commands are auth commands', () => {
+  test('all relay commands are auth commands', () => {
     for (const name of [
       'status',
       'tenants',
@@ -140,6 +152,8 @@ describe('relay commands run on the Bun auth runtime', () => {
       'enroll',
       'join',
       'reauth',
+      'resend-token',
+      'pack.upload',
       'leave',
       'list',
     ]) {

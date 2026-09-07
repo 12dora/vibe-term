@@ -6,9 +6,12 @@ import { join } from 'node:path';
 import { pathExists } from './fs-utils';
 import type { PackageLayout } from './install-layout';
 import { type UpgradeServiceControl, applyUpgrade, repairUpgrade } from './upgrade-apply';
+import { readRepairInstallMeta } from './upgrade-legacy';
 import { isPidAlive } from './upgrade-lock';
+import { createMigrationRecord } from './upgrade-migrate-dir';
 import { readJournal, writeJournal } from './upgrade-state';
 import { readCurrentVersion, switchCurrent } from './upgrade-switch';
+import { commitSuccess } from './upgrade-txn';
 
 const tempDirs: string[] = [];
 
@@ -116,6 +119,187 @@ function fakeService(): UpgradeServiceControl & {
 }
 
 describe('repairUpgrade journal recovery', () => {
+  test.each([
+    'lock',
+    'staging',
+    'preflight',
+    'stopping',
+    'migrate-install-dir',
+    'backup',
+    'switching',
+    'started',
+    'reverting',
+    'committed',
+    'rolled_back',
+    'aborted',
+    null,
+  ] as const)('rebuilds corrupt metadata after successful recovery of phase %s', async (phase) => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '2.0.0');
+    await mkdir(join(installDir, 'versions', '2.1.0'), { recursive: true });
+    if (phase === 'started' || phase === 'committed') {
+      await switchCurrent(installDir, '2.1.0');
+    }
+    if (phase) {
+      await writeJournal(installDir, {
+        txnId: 'txn-corrupt-meta',
+        phase,
+        fromVersion: '2.0.0',
+        toVersion: '2.1.0',
+        startedAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+      });
+    }
+    await writeFile(join(installDir, 'install-meta.json'), '{');
+    const logs: string[] = [];
+    await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
+      service: fakeService(),
+      repairNoService: true,
+      healthCheck: async () => undefined,
+      log: (line) => logs.push(line),
+    });
+    const meta = JSON.parse(await readFile(join(installDir, 'install-meta.json'), 'utf8'));
+    expect(meta.cliVersion).toBe(await readCurrentVersion(installDir));
+    expect(meta.serviceMode).toBe('none');
+    expect(logs.some((line) => line.includes('install-meta.json rebuilt'))).toBe(true);
+  });
+
+  test('does not guess a lost service identity or rewrite metadata when recovery fails', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '2.0.0');
+    await writeFile(join(installDir, 'install-meta.json'), '{');
+    const service = fakeService();
+    await expect(
+      repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
+        service,
+      })
+    ).rejects.toThrow('--service-name');
+    expect(service.starts).toBe(0);
+    expect(service.stops).toBe(0);
+    await writeJournal(installDir, {
+      txnId: 'txn-failed-recovery',
+      phase: 'switching',
+      fromVersion: '2.0.0',
+      toVersion: '2.1.0',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+    await expect(
+      repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(installDir),
+        service,
+        repairServiceName: 'custom-service',
+        healthCheck: async () => {
+          throw new Error('unhealthy');
+        },
+      })
+    ).rejects.toThrow('unhealthy');
+    expect(await readFile(join(installDir, 'install-meta.json'), 'utf8')).toBe('{');
+  });
+
+  test('rebuilds metadata for the old version after a started candidate rolls back', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '2.0.0');
+    await mkdir(join(installDir, 'versions', '2.1.0'), { recursive: true });
+    await switchCurrent(installDir, '2.1.0');
+    await writeFile(join(installDir, 'install-meta.json'), '{');
+    await writeJournal(installDir, {
+      txnId: 'txn-corrupt-rollback',
+      phase: 'started',
+      fromVersion: '2.0.0',
+      toVersion: '2.1.0',
+      startedAt: '2026-09-01T00:00:00.000Z',
+      updatedAt: '2026-09-01T00:00:00.000Z',
+    });
+    await repairUpgrade(installDir, '/usr/bin/bun', {
+      shimDirs: shimDirs(installDir),
+      service: fakeService(),
+      repairServiceName: 'custom-service',
+      healthCheck: async ({ expectedVersion }) => {
+        if (expectedVersion === '2.1.0') throw new Error('candidate-unhealthy');
+      },
+    });
+    const meta = JSON.parse(await readFile(join(installDir, 'install-meta.json'), 'utf8'));
+    expect(meta.cliVersion).toBe('2.0.0');
+    expect(meta.serviceName).toBe('custom-service');
+    expect((await readJournal(installDir))?.phase).toBe('rolled_back');
+  });
+
+  test.each(['committed', 'switching', 'started'] as const)(
+    'rebuilds the actual service identity after migration repair: %s',
+    async (phase) => {
+      const root = await scratch();
+      const installDir = join(root, 'migrated');
+      const oldDir = join(root, 'original');
+      await seedInstall(installDir, '2.0.0');
+      await mkdir(join(installDir, 'versions', '2.1.0'), { recursive: true });
+      if (phase !== 'switching') await switchCurrent(installDir, '2.1.0');
+      await writeFile(join(installDir, 'install-meta.json'), '{');
+      await writeJournal(installDir, {
+        txnId: 'txn-corrupt-migration',
+        phase,
+        fromVersion: '2.0.0',
+        toVersion: '2.1.0',
+        startedAt: '2026-09-01T00:00:00.000Z',
+        updatedAt: '2026-09-01T00:00:00.000Z',
+        dirMigration: {
+          ...createMigrationRecord({
+            fromDir: oldDir,
+            toDir: installDir,
+            moveDir: true,
+            oldServiceName: 'old-service',
+            newServiceName: 'new-service',
+          }),
+          envRewritten: true,
+        },
+      });
+      const result = await repairUpgrade(installDir, '/usr/bin/bun', {
+        shimDirs: shimDirs(root),
+        service: fakeService(),
+        repairServiceName: 'old-service',
+        healthCheck: async ({ expectedVersion }) => {
+          if (phase === 'started' && expectedVersion === '2.1.0') throw new Error('unhealthy');
+        },
+      });
+      const meta = JSON.parse(await readFile(join(result.installDir, 'install-meta.json'), 'utf8'));
+      expect(meta.installDir).toBe(phase === 'committed' ? installDir : oldDir);
+      expect(meta.serviceName).toBe(phase === 'committed' ? 'new-service' : 'old-service');
+      expect(meta.cliVersion).toBe(phase === 'committed' ? '2.1.0' : '2.0.0');
+    }
+  );
+
+  test('repair commit writes recovered metadata after validating the candidate', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '2.0.0');
+    await writeFile(join(installDir, 'install-meta.json'), '{');
+    const recovered = await readRepairInstallMeta(installDir, '/usr/bin/bun');
+    expect(recovered?.rebuilt).toBe(true);
+    const logs: string[] = [];
+    await commitSuccess(
+      installDir,
+      {
+        txnId: 'txn-rebuild-meta',
+        phase: 'started',
+        fromVersion: '1.1.40',
+        toVersion: '2.0.0',
+        startedAt: '2026-08-31T00:00:00.000Z',
+        updatedAt: '2026-08-31T00:00:01.000Z',
+      },
+      '/usr/bin/bun',
+      false,
+      (line) => logs.push(line),
+      undefined,
+      undefined,
+      recovered?.meta
+    );
+    const meta = JSON.parse(await readFile(join(installDir, 'install-meta.json'), 'utf8'));
+    expect(meta).toMatchObject({ cliVersion: '2.0.0', installDir, bunPath: '/usr/bin/bun' });
+    expect((await readJournal(installDir))?.phase).toBe('committed');
+    expect(logs).toContain('install-meta.json rebuilt from current: 2.0.0');
+  });
+
   test('staging deletes candidate and staging then marks aborted', async () => {
     const installDir = await scratch();
     await seedInstall(installDir, '1.0.0');

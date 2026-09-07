@@ -1,4 +1,3 @@
-import { isIP } from 'node:net';
 import type { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
 import type {
   AcmeChallengeType,
@@ -37,12 +36,16 @@ import { DnspodDnsClient } from './dnspod-dns';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
 
+import {
+  validateBindHost,
+  validateDomain,
+  validateEmail,
+  validatePort,
+  validateSans,
+} from './tls-validation';
+
 const SELF_SIGNED_DAYS = 398;
 const TLS_STATUS_CACHE_TTL_MS = 10_000;
-const HOSTNAME_RE =
-  /^(?=.{1,253}$)(?!-)[A-Za-z0-9-]{1,63}(?<!-)(\.(?!-)[A-Za-z0-9-]{1,63}(?<!-))*$/;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export type ApplyModeInput =
   | { mode: 'none' }
   | { mode: 'external'; trustProxy: boolean }
@@ -634,11 +637,17 @@ export class TlsService {
     const secrets = await this.opts.store.getPrivateMaterial();
     if (row.caCertPem && secrets.caKeyPem) {
       const parsed = parseCertificate(row.caCertPem);
-      if (parsed.notAfter - this.now() >= CA_MIN_REMAINING_MS) {
+      const remainingMs = parsed.notAfter - this.now();
+      if (remainingMs > 0) {
+        if (remainingMs < CA_MIN_REMAINING_MS) {
+          this.opts.log?.(
+            `WARNING: TLS CA expires in ${Math.ceil(remainingMs / 86_400_000)} days; automatic rotation is disabled to preserve Hub trust pins. Schedule vibeterm hub ca rotate, then run vibeterm hub trust refresh <hubUrl> --fingerprint <sha256> on every member.`
+          );
+        }
         return { certPem: row.caCertPem, keyPem: secrets.caKeyPem };
       }
       this.opts.log?.(
-        'tls CA remaining validity below 30 days, rotating CA; joined nodes must re-join'
+        'WARNING: TLS CA has expired; rotating CA. Every member must run vibeterm hub trust refresh <hubUrl> --fingerprint <sha256> before its Hub uplink can recover.'
       );
     }
     const ca = await createCa({ name: 'VibeTerm local CA', now: this.now() });
@@ -673,46 +682,25 @@ export class TlsService {
   }
 }
 
-function validatePort(value: number): number {
-  if (!Number.isInteger(value) || value < 1 || value > 65535) {
-    throw new TlsApiError('invalid_port', 400, 'tlsPort must be an integer in 1..65535');
-  }
-  return value;
-}
-
-function validateBindHost(value: string): string {
-  const host = value.trim();
-  if (!host) throw new TlsApiError('invalid_port', 400, 'bindHost is required');
-  return host;
-}
-
-function validateSans(sans: string[]): string[] {
-  if (!Array.isArray(sans) || sans.length < 1 || sans.length > 20) {
-    throw new TlsApiError('invalid_sans', 400, 'sans must contain 1 to 20 hostnames or IPs');
-  }
-  const normalized = sans.map((item) => item.trim()).filter(Boolean);
-  if (normalized.length !== sans.length || !normalized.every(isValidSan)) {
-    throw new TlsApiError('invalid_sans', 400, 'each SAN must be a valid hostname or IP');
-  }
-  return normalized;
-}
-
-function validateDomain(value: string): string {
-  const domain = value.trim().toLowerCase();
-  if (!domain || domain.includes('*') || isIP(domain) !== 0 || !HOSTNAME_RE.test(domain)) {
-    throw new TlsApiError('invalid_domain', 400, 'domain must be a hostname without wildcards');
-  }
-  return domain;
-}
-
-function validateEmail(value: string): string {
-  const email = value.trim();
-  if (!EMAIL_RE.test(email)) throw new TlsApiError('invalid_email', 400, 'email is invalid');
-  return email;
-}
-
-function isValidSan(value: string): boolean {
-  return isIP(value) !== 0 || HOSTNAME_RE.test(value);
+export async function rotateSelfSignedCa(
+  store: TlsConfigStore,
+  options: { now?: number } = {}
+): Promise<{ fingerprint: string }> {
+  const row = await store.get();
+  if (row.mode !== 'selfsigned') throw new Error('TLS mode must be selfsigned to rotate its CA');
+  const now = options.now ?? Date.now();
+  const ca = await createCa({ name: 'VibeTerm local CA', now });
+  const leaf = await issueLeaf({ ca, sans: row.sans, days: SELF_SIGNED_DAYS, now });
+  const parsed = parseCertificate(leaf.certPem);
+  await store.upsert({
+    caCertPem: ca.certPem,
+    caKeyPem: ca.keyPem,
+    certPem: `${leaf.certPem.trim()}\n${ca.certPem.trim()}\n`,
+    keyPem: leaf.keyPem,
+    certNotBefore: parsed.notBefore,
+    certNotAfter: parsed.notAfter,
+  });
+  return { fingerprint: await spkiFingerprint(ca.certPem) };
 }
 
 async function readTrustProxy(envPath: string): Promise<boolean | null> {

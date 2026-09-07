@@ -219,7 +219,7 @@ describe('hub user commands', () => {
     const before = must(auth.userStore.getByUsername('bob'), 'bob');
     const logs: string[] = [];
     const rotated = await runHubUserPasswd(
-      parseArgs(['hub', 'user', 'passwd', 'bob', '--full-reset']),
+      parseArgs(['hub', 'user', 'passwd', 'bob', '--full-reset', '--yes']),
       'bob',
       {
         auth,
@@ -230,7 +230,10 @@ describe('hub user commands', () => {
     );
     expect(rotated.mode).toBe('full-reset');
     expect(lastKeyLogType(auth, before.id)).toBe('rotate-root');
-    expect(logs).toEqual([t('hub.user.passwd.doneFullReset', { username: 'bob' })]);
+    expect(logs).toEqual([
+      t('mesh.reset.warning'),
+      t('hub.user.passwd.doneFullReset', { username: 'bob' }),
+    ]);
 
     const after = must(auth.userStore.getByUsername('bob'), 'bob after full-reset');
     expect(after.totpRecordSeq).toBeNull();

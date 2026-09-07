@@ -14,7 +14,11 @@ import { verifyRelayMemberProof } from './relay-member';
 import { sha256Hex } from './relay-password';
 import type { RelayLiveNode, RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
-import { relayPrevTokenUsable, relayTokenHashAccepted } from './relay-token-grace';
+import {
+  relayPrevTokenUsable,
+  relayTokenHashAccepted,
+  relayTokenHashState,
+} from './relay-token-grace';
 import type { RelayTenantRecord } from './types';
 
 export type RelayAuthHost = {
@@ -51,15 +55,18 @@ export function liveAuthStillValid(
   if (tenant.kicked) return false;
   if (live.tokenEpoch < minTokenEpoch) return false;
   if (live.tokenHash === tenant.tokenHash) return live.tokenEpoch >= tenant.tokenEpoch;
-  return relayPrevTokenUsable(tenant, now) && live.tokenHash === tenant.prevTokenHash;
+  return relayPrevTokenUsable(tenant, now, live.tokenHash);
 }
 
-/** 令牌被换发（含宽限期到期）报 password_rotated；租户被踢 / 哈希对不上才是 kicked。 */
+/** 只有仍在宽限内的历史令牌属于换代；过期、未知令牌和显式踢出均不可恢复上联。 */
 function staleLinkKickReason(
   live: RelayLiveNode,
-  tenant: RelayTenantRecord
+  tenant: RelayTenantRecord,
+  now: number
 ): 'password_rotated' | 'kicked' {
-  return !tenant.kicked && live.tokenHash === tenant.prevTokenHash ? 'password_rotated' : 'kicked';
+  return !tenant.kicked && relayTokenHashState(tenant, live.tokenHash, now) === 'password_rotated'
+    ? 'password_rotated'
+    : 'kicked';
 }
 
 export type RelayRevalidateDeps = {
@@ -88,7 +95,7 @@ export function revalidateRelayLive(
   if (liveAuthStillValid(live, tenant, deps.configStore.ensure(now).minTokenEpoch, now)) {
     return tenant;
   }
-  deps.kick(live, staleLinkKickReason(live, tenant));
+  deps.kick(live, staleLinkKickReason(live, tenant, now));
   return null;
 }
 
@@ -230,6 +237,7 @@ function finishAuth(
   host.send(link, {
     t: 'auth.ok',
     tenant_id: fresh.id,
+    token_rotated: relayTokenHashState(fresh, presentedHash, now) === 'password_rotated',
     key_log_head_seq: relaySeqToWire(host.tenants.get(fresh.id)?.keyLogHeadSeq ?? 0n),
     rtc: host.rtcConfig(),
   });

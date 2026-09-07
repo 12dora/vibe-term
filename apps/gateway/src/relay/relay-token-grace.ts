@@ -1,31 +1,49 @@
 import { constantTimeEqual } from './relay-password';
 import { RELAY_PREV_TOKEN_GRACE_MS } from './types';
 
-/**
- * 令牌换发的宽限窗口。
- *
- * 新令牌只能经密钥日志（`set-relays`）分发给成员节点，而成员必须先通过 `relay.auth` 才拉得到日志。
- * 换发那一刻就作废旧令牌 = 成员在拿到新记录之前先被踢下线，从此永远拉不到 → 死锁。
- * 因此非踢出场景的换发保留上一代哈希，宽限期内两代都认；踢出 / 吊销一律清掉，不留后门。
- */
+export const RELAY_PREV_TOKEN_LIMIT = 3;
+
+export type RelayPreviousToken = { hash: string; issued_at: number };
+
 export type RelayTokenGraceRow = {
   tokenHash: string;
   prevTokenHash: string | null;
   prevTokenIssuedAt: number | null;
+  previousTokens?: RelayPreviousToken[];
 };
 
-export function relayPrevTokenUsable(row: RelayTokenGraceRow, now: number): boolean {
-  if (!row.prevTokenHash || row.prevTokenIssuedAt === null) return false;
-  return now - row.prevTokenIssuedAt <= RELAY_PREV_TOKEN_GRACE_MS;
+export function relayPreviousTokens(row: RelayTokenGraceRow): RelayPreviousToken[] {
+  if (row.previousTokens !== undefined) return row.previousTokens.slice(0, RELAY_PREV_TOKEN_LIMIT);
+  return row.prevTokenHash && row.prevTokenIssuedAt !== null
+    ? [{ hash: row.prevTokenHash, issued_at: row.prevTokenIssuedAt }]
+    : [];
 }
 
-/** 常数时间比较当前哈希；不中再比宽限期内的上一代。 */
+export function relayPrevTokenUsable(
+  row: RelayTokenGraceRow,
+  now: number,
+  presentedHash?: string
+): boolean {
+  return relayPreviousTokens(row).some(
+    (entry) =>
+      now - entry.issued_at <= RELAY_PREV_TOKEN_GRACE_MS &&
+      (presentedHash === undefined || constantTimeEqual(presentedHash, entry.hash))
+  );
+}
+
+export function relayTokenHashState(
+  row: RelayTokenGraceRow,
+  presentedHash: string,
+  now: number
+): 'current' | 'password_rotated' | 'kicked' {
+  if (constantTimeEqual(presentedHash, row.tokenHash)) return 'current';
+  return relayPrevTokenUsable(row, now, presentedHash) ? 'password_rotated' : 'kicked';
+}
+
 export function relayTokenHashAccepted(
   row: RelayTokenGraceRow,
   presentedHash: string,
   now: number
 ): boolean {
-  if (constantTimeEqual(presentedHash, row.tokenHash)) return true;
-  if (!relayPrevTokenUsable(row, now)) return false;
-  return constantTimeEqual(presentedHash, row.prevTokenHash ?? '');
+  return relayTokenHashState(row, presentedHash, now) !== 'kicked';
 }

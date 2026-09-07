@@ -248,7 +248,7 @@ export class RelayRuntime {
       case 'tenant-patch':
         return handleRelayTenantPatch(this.adminDeps, req, route.tenantId);
       case 'tenant-kick':
-        return handleRelayTenantKick(this.adminDeps, route.tenantId);
+        return handleRelayTenantKick(this.adminDeps, req, route.tenantId);
       case 'tenant-delete':
         return handleRelayTenantDelete(this.adminDeps, route.tenantId);
     }

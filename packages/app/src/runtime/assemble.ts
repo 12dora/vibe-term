@@ -11,11 +11,13 @@ import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-ident
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
 import { runtimeController } from '../../../../apps/gateway/src/control/runtime';
+import { CryptoDecryptError } from '../../../../apps/gateway/src/crypto/errors';
 import { getStoredSiteSettings, updateSiteSettings } from '../../../../apps/gateway/src/db';
 import {
   LocalAuthStore,
   readLocalAuthEffective,
 } from '../../../../apps/gateway/src/db/local-auth-settings';
+import { nodeIdentity } from '../../../../apps/gateway/src/db/schema';
 import type { HubRuntime } from '../../../../apps/gateway/src/hub';
 import { createMeshSiteSettingsLink } from '../../../../apps/gateway/src/mesh/effective-site-url';
 import { MeshHttpRuntime } from '../../../../apps/gateway/src/mesh/mesh-http';
@@ -38,6 +40,7 @@ import {
 } from '../../../../apps/gateway/src/share/share-origins';
 import { resolveInstallDir as resolveGatewayInstallDir } from '../../../../apps/gateway/src/system/install-info';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
+import { decodeCertificate } from '../../../shared/src/auth';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { type LocalAuthContext, createAuthContextFromDb } from '../lib/local-auth';
@@ -45,6 +48,7 @@ import { loadNodeDatachannel } from '../lib/native-datachannel';
 import { type VibeTermRoles, isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { HttpsListener } from '../tls/https-listener';
 import type { TlsService } from '../tls/tls-service';
+import { withRuntimeDiagnostics } from './assemble-diagnostics';
 import { createAssembledRelay } from './assemble-relay';
 import {
   advertisedTlsInfo,
@@ -59,7 +63,29 @@ import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
 
-export const SHUTDOWN_TIMEOUT_MS = 20_000;
+export {
+  SHUTDOWN_TIMEOUT_MS,
+  createProcessShutdown,
+  installShutdownHandlers,
+} from './assemble-shutdown';
+
+export const MASTER_KEY_RECOVERY_HINT =
+  'Restore VIBETERM_MASTER_KEY from backups/app.env.* and restart; if the key is lost, run vibeterm mesh reset-identity and re-join. Reconfigure other affected encrypted credentials locally.';
+
+export async function startTlsWithRecovery(
+  tls: Pick<TlsService, 'startup' | 'stop'>
+): Promise<void> {
+  try {
+    await tls.startup();
+  } catch (error) {
+    if (!(error instanceof CryptoDecryptError)) throw error;
+    tls.stop();
+    console.error(
+      `[vibeterm][tls] master_key_mismatch; HTTPS disabled, local HTTP remains available. ${MASTER_KEY_RECOVERY_HINT}`,
+      error
+    );
+  }
+}
 
 export function meshShutdownNeeded(roles: VibeTermRoles): boolean {
   return roles.hub || roles.node || roles.relay;
@@ -117,8 +143,9 @@ async function createStandaloneAuthHttp(input: {
   auth: LocalAuthContext;
   localAuthEffective?: () => boolean;
   tlsSlot: { service?: TlsService };
+  keys?: { nodeIdHex: string; edPublicKey: Uint8Array };
 }): Promise<MeshHttpRuntime> {
-  const keys = await standaloneNodeKeys(input.auth.identityStore);
+  const keys = input.keys ?? (await standaloneNodeKeys(input.auth.identityStore));
   const runtime = new MeshHttpRuntime({
     roles: input.roles,
     nodeId: keys.nodeIdHex,
@@ -315,20 +342,44 @@ async function createAssembleAuthSurface(input: {
   });
   let mesh: MeshRuntime | null = null;
   let authHttp: MeshHttpRuntime | null = null;
+  let degraded: 'master_key_mismatch' | null = null;
   if (isRelayOnly(input.roles)) {
     // relay 单跑：没有用户、没有节点身份，不挂 auth surface
   } else if (input.roles.node) {
-    mesh = await createNodeMesh({
-      roles: input.roles,
-      gateway: input.gateway,
-      createMesh: input.createMesh,
-      hub: input.opts.hub,
-      loadNative: input.opts.loadNative,
-      nativeDir: input.opts.nativeDir,
-      tlsSlot: input.tlsSlot,
-      meshHubStore: input.meshHubStore,
-      onLocalNodeName: input.onLocalNodeName,
-    });
+    try {
+      mesh = await createNodeMesh({
+        roles: input.roles,
+        gateway: input.gateway,
+        createMesh: input.createMesh,
+        hub: input.opts.hub,
+        loadNative: input.opts.loadNative,
+        nativeDir: input.opts.nativeDir,
+        tlsSlot: input.tlsSlot,
+        meshHubStore: input.meshHubStore,
+        onLocalNodeName: input.onLocalNodeName,
+      });
+    } catch (error) {
+      if (!(error instanceof CryptoDecryptError) || error.context.scope !== 'node_identity') {
+        throw error;
+      }
+      degraded = 'master_key_mismatch';
+      console.error(
+        `[vibeterm][mesh] master_key_mismatch; mesh disabled, local login remains available. ${MASTER_KEY_RECOVERY_HINT}`,
+        error
+      );
+      const row = input.gateway.db.select({ nodeId: nodeIdentity.nodeId }).from(nodeIdentity).get();
+      const cert = row ? auth.userStore.getCert(row.nodeId) : null;
+      authHttp = await createStandaloneAuthHttp({
+        roles: input.roles,
+        gateway: input.gateway,
+        auth,
+        tlsSlot: input.tlsSlot,
+        keys: {
+          nodeIdHex: row?.nodeId ?? '00'.repeat(16),
+          edPublicKey: cert ? decodeCertificate(cert.certificateBytes).ed_pk : new Uint8Array(32),
+        },
+      });
+    }
   } else {
     authHttp = await createStandaloneAuthHttp({
       roles: input.roles,
@@ -338,7 +389,13 @@ async function createAssembleAuthSurface(input: {
       tlsSlot: input.tlsSlot,
     });
   }
-  return { auth, mesh, authHttp, hub: mesh?.hub ?? input.opts.hub ?? null };
+  return {
+    auth,
+    mesh,
+    authHttp,
+    degraded,
+    hub: degraded ? null : (mesh?.hub ?? input.opts.hub ?? null),
+  };
 }
 
 /** `relay` 单跑（不带 node）：无前端、无用户存储、无 tmux 依赖。 */
@@ -422,7 +479,7 @@ export async function assembleVibeTerm(
   const gateway = await createGateway();
   const tlsSlot: { service?: TlsService } = {};
   const meshHubStore = maybeMeshHubStore(roles, gateway.db);
-  const { auth, mesh, authHttp, hub } = await createAssembleAuthSurface({
+  const { auth, mesh, authHttp, hub, degraded } = await createAssembleAuthSurface({
     roles,
     gateway,
     opts,
@@ -474,6 +531,7 @@ export async function assembleVibeTerm(
     serveFrontend,
     staticRoot,
   });
+  http.fetch = withRuntimeDiagnostics(http.fetch, auth, mesh, degraded);
   const tlsLife = wireTlsLifecycle({
     http,
     gateway,
@@ -515,56 +573,4 @@ export async function assembleVibeTerm(
       await lifecycle.stop();
     },
   };
-}
-
-type ShutdownHooks = {
-  on?: (event: string, listener: (...args: unknown[]) => void) => unknown;
-  exit?: (code: number) => void;
-  timeoutMs?: number;
-};
-
-export function createProcessShutdown(
-  stop: () => Promise<void>,
-  hooks: ShutdownHooks = {}
-): () => Promise<void> {
-  const exit = hooks.exit ?? ((code) => process.exit(code));
-  const timeoutMs = hooks.timeoutMs ?? SHUTDOWN_TIMEOUT_MS;
-  let promise: Promise<void> | null = null;
-  return () => {
-    if (promise) return promise;
-    promise = new Promise<void>((resolve) => {
-      let finished = false;
-      const timer = setTimeout(() => done(1), timeoutMs);
-      function done(code: number) {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        exit(code);
-        resolve();
-      }
-      void Promise.resolve()
-        .then(stop)
-        .then(
-          () => done(0),
-          () => done(1)
-        );
-    });
-    return promise;
-  };
-}
-
-export function installShutdownHandlers(
-  stop: () => Promise<void>,
-  hooks: ShutdownHooks = {}
-): () => Promise<void> {
-  const on =
-    hooks.on ??
-    ((event, listener) => {
-      process.on(event as NodeJS.Signals, listener as NodeJS.SignalsListener);
-    });
-  const run = createProcessShutdown(stop, hooks);
-  const handler = () => void run();
-  on('SIGINT', handler);
-  on('SIGTERM', handler);
-  return run;
 }

@@ -359,6 +359,8 @@ export class AuthApi {
         hash?: string;
         hubAck?: boolean;
         hubError?: string;
+        relayAck?: boolean;
+        relayError?: string;
       };
       return {
         ok: true,
@@ -367,6 +369,9 @@ export class AuthApi {
         // 非 hub=sync 模式没有 hubAck 字段，保持 undefined（调用方只在 hubSync 下判定）。
         hubAck: payload.hubAck,
         hubError: payload.hubError,
+        // 只有中继模式下发；`hubAck:true` 不代表中继收到了，两者必须分开判。
+        relayAck: payload.relayAck,
+        relayError: payload.relayError,
       };
     } catch {
       return { ok: true };

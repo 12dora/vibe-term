@@ -211,22 +211,28 @@ function layoutForDirect(options: EnableDirectOptions): InstallLayout {
   return createInstallLayout(options.installDir);
 }
 
+async function existingDirectResult(
+  layout: InstallLayout,
+  skipExisting: boolean | undefined
+): Promise<DirectEnableResult | null> {
+  if (!skipExisting) return null;
+  const installed = await readInstalledNativeManifest(layout.nativeDir);
+  if (!installed) return null;
+  return {
+    ok: true,
+    skipped: true,
+    platformId: installed.platform,
+    version: installed.version,
+    addonPath: nativeAddonPath(layout.nativeDir),
+  };
+}
+
 export async function enableDirect(options: EnableDirectOptions): Promise<DirectEnableResult> {
   const log = (message: string) => logLine(options.log, message);
   const layout = layoutForDirect(options);
   const signal = options.signal;
-  if (options.skipExisting) {
-    const installed = await readInstalledNativeManifest(layout.nativeDir);
-    if (installed) {
-      return {
-        ok: true,
-        skipped: true,
-        platformId: installed.platform,
-        version: installed.version,
-        addonPath: nativeAddonPath(layout.nativeDir),
-      };
-    }
-  }
+  const installed = await existingDirectResult(layout, options.skipExisting);
+  if (installed) return installed;
 
   const pin =
     options.pin === undefined

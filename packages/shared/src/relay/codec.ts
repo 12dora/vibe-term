@@ -106,7 +106,13 @@ export type RelayCtlMessage =
       client_version: string;
       member?: RelayMemberProof;
     }
-  | { t: 'auth.ok'; tenant_id: string; key_log_head_seq: RelaySeqWire; rtc: RelayRtcConfig }
+  | {
+      t: 'auth.ok';
+      tenant_id: string;
+      key_log_head_seq: RelaySeqWire;
+      rtc: RelayRtcConfig;
+      token_rotated?: boolean;
+    }
   | { t: 'ping' }
   | { t: 'pong' }
   | { t: 'relay.status'; blob: RelayEnvelope; epoch: number }
@@ -432,12 +438,16 @@ type RelayCtlParser = (obj: Record<string, unknown>) => RelayCtlMessage;
 const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
   'auth.challenge': (obj) => ({ t: 'auth.challenge', nonce: b64(obj, 'nonce', 32) }),
   'relay.auth': parseAuth,
-  'auth.ok': (obj) => ({
-    t: 'auth.ok',
-    tenant_id: hexId(obj, 'tenant_id'),
-    key_log_head_seq: seq(obj, 'key_log_head_seq'),
-    rtc: rtcConfig(obj, 'rtc'),
-  }),
+  'auth.ok': (obj) => {
+    const tokenRotated = optBool(obj, 'token_rotated');
+    return {
+      t: 'auth.ok',
+      tenant_id: hexId(obj, 'tenant_id'),
+      key_log_head_seq: seq(obj, 'key_log_head_seq'),
+      rtc: rtcConfig(obj, 'rtc'),
+      ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}),
+    };
+  },
   ping: () => ({ t: 'ping' }),
   pong: () => ({ t: 'pong' }),
   'relay.status': (obj) => ({

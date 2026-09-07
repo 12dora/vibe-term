@@ -468,6 +468,34 @@ describe('hub auth record compat gate', () => {
     }
   });
 
+  test('relay keep rotation blocks an uncached member until its version is known or its cert revoked', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const store = new UserStore(db);
+      seedUser(store);
+      seedCert(store, 'user-1', SELF);
+      seedCert(store, 'user-1', PEER);
+      seedCert(store, 'user-1', OTHER);
+      seedPeer(store, PEER, 'current', '1.1.16');
+      const relay = { relayMode: true, localNodeId: SELF } as const;
+      const record = rotateRootKeepRecord();
+      const blocked = inspectHubAuthRecordCompat(store, record, 'user-1', relay);
+      expect(blocked.ok).toBe(false);
+      if (!blocked.ok) {
+        expect(blocked.code).toBe(KEYLOG_TYPE_UNSUPPORTED_BY_NODES);
+        expect(blocked.allowForce).toBe(false);
+        expect(blocked.nodes).toEqual([{ id: OTHER, name: OTHER, version: null }]);
+      }
+      seedPeer(store, OTHER, 'recovered', '1.1.16');
+      expect(inspectHubAuthRecordCompat(store, record, 'user-1', relay)).toEqual({ ok: true });
+      seedPeer(store, OTHER, 'old', '1.1.15');
+      store.markCertRevoked(OTHER, 10);
+      expect(inspectHubAuthRecordCompat(store, record, 'user-1', relay)).toEqual({ ok: true });
+    } finally {
+      close();
+    }
+  });
+
   test('relay mode blocks old or unversioned peers and allows current peers', () => {
     const { db, close } = createMigratedAuthDb();
     try {
@@ -476,7 +504,7 @@ describe('hub auth record compat gate', () => {
       seedCert(store, 'user-1', SELF);
       seedCert(store, 'user-1', PEER);
       seedPeer(store, PEER, 'old', '1.1.15');
-      const relay = { relayMode: true } as const;
+      const relay = { relayMode: true, localNodeId: SELF } as const;
       const blocked = inspectHubAuthRecordCompat(store, rotateRootKeepRecord(), 'user-1', relay);
       expect(blocked.ok).toBe(false);
       if (!blocked.ok) {

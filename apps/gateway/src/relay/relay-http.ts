@@ -9,6 +9,7 @@ export const RelayErrorCode = {
   badProof: 'RELAY_BAD_PROOF',
   tokenInvalid: 'RELAY_TOKEN_INVALID',
   tenantKicked: 'RELAY_TENANT_KICKED',
+  membersOffline: 'relay_members_offline',
   tenantNotFound: 'RELAY_TENANT_NOT_FOUND',
   quotaNodes: 'RELAY_QUOTA_NODES',
   quotaTenants: 'RELAY_QUOTA_TENANTS',

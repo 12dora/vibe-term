@@ -9,8 +9,9 @@
 
 import type { HubEnrollmentStatus } from '../auth/types';
 import { type ApiClient, defaultApiClient } from '../client';
-import { type JsonRequestOptions, readCodedError, requestJson } from '../json-mutation';
+import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
+import { readRelayTenantError } from './tenant-error';
 
 /** 本机 uplink 的形态：接中继 / 接 hub / 都没有。 */
 export type RelayUplinkMode = 'relay' | 'hub' | 'none';
@@ -192,6 +193,18 @@ export interface RelayReadmitEntry {
 export interface RelayReadmitPrepare {
   rootEpoch: number;
   entries: RelayReadmitEntry[];
+}
+
+/**
+ * `POST /api/mesh/relay/resend-token/prepare`：把当前租户令牌重新封给全体成员的待签
+ * `set-relays`。离线成员错过上一次换发时靠它补发，**提交后必须检查 `relayAck`**——
+ * 记录只落本机不上中继，成员一条都收不到。
+ */
+export interface RelayResendTokenPrepare extends RelayPreparedPayload {
+  /** 这份 payload 覆盖的成员节点数。 */
+  nodes: number;
+  /** 服务端声明：本条记录只有中继确认才算送达。 */
+  requireRelayAck?: boolean;
 }
 
 /** `POST /api/mesh/relay/meta-key/prepare` 的请求体。 */
@@ -403,41 +416,6 @@ export function normalizeJoinMaterial(wire: Partial<RelayJoinMaterial>): RelayJo
   };
 }
 
-/**
- * `/api/mesh/relay/*` 的错误体是 `{ code, ... }`（`session-middleware.ts` 的 `jsonError`），
- * 与运营者侧的 `{ error: { code, message } }` 不同一形，这里两种都认。
- */
-function readError(res: Response, fallback: string): Promise<RelayApiError> {
-  return readCodedError(
-    res,
-    fallback,
-    (code, message, status) => new RelayApiError(code, message, status),
-    (body, status) => {
-      const own = body as
-        | { code?: unknown; reason?: unknown; lastError?: unknown; lastErrorCode?: unknown }
-        | undefined;
-      if (own && typeof own.code === 'string') {
-        const reason = typeof own.reason === 'string' ? `${own.code}: ${own.reason}` : own.code;
-        return new RelayApiError(own.code, reason, status, detailsFromBody(own));
-      }
-      return undefined;
-    }
-  );
-}
-
-function detailsFromBody(body: { lastError?: unknown; lastErrorCode?: unknown }) {
-  const lastError = readOptionalString(body.lastError);
-  const lastErrorCode = readOptionalString(body.lastErrorCode);
-  if (lastError === undefined && lastErrorCode === undefined) return undefined;
-  return { lastError, lastErrorCode };
-}
-
-function readOptionalString(value: unknown): string | null | undefined {
-  if (value === undefined) return undefined;
-  if (value === null) return null;
-  return typeof value === 'string' ? value : undefined;
-}
-
 const BASE = '/api/mesh/relay';
 
 export class RelayTenantApi {
@@ -446,7 +424,7 @@ export class RelayTenantApi {
   private json<T>(path: string, fallback: string, options: JsonRequestOptions = {}): Promise<T> {
     return requestJson<T>(this.client, path, {
       ...options,
-      toError: (res) => readError(res, fallback),
+      toError: (res) => readRelayTenantError(res, fallback),
     });
   }
 
@@ -522,6 +500,18 @@ export class RelayTenantApi {
       method: 'POST',
       body: { url },
     });
+  }
+
+  /**
+   * `POST /api/mesh/relay/resend-token/prepare`：待签的 `set-relays`（把当前令牌重发给成员）。
+   * 只准备载荷，不代表中继已收到记录——签名提交后按 `relayAck` 判断送达。
+   */
+  resendTokenPrepare(): Promise<RelayResendTokenPrepare> {
+    return this.json<RelayResendTokenPrepare>(
+      `${BASE}/resend-token/prepare`,
+      'relay_resend_token_failed',
+      { method: 'POST', body: {} }
+    );
   }
 
   /** `POST /api/mesh/relay/meta-key/prepare`：待签的 `meta-key`（admit 补发 / rotate 换代）。 */

@@ -306,6 +306,14 @@ vibeterm hub list
 [uplink] no CA pin for <url> and no advertised fingerprint
 ```
 
+### Hub URL 迁移与离线成员
+
+`vibeterm hub urls list|add <url>|remove <url>` 管理本机 `VIBETERM_HUB_URLS`；写入后须重启。单值 `VIBETERM_HUB_URL` 和已学到的 `mesh_hubs` 不随 remove 清除，因此 remove 不是吊销 Hub。
+
+迁移 `VIBETERM_HUB_PUBLIC_URL` 时，先同时开放新旧地址，在各成员添加新种子，再重启并逐台核对实际 uplink URL。只有确认全部成员（包括长期离线成员）已能连新地址后才能撤掉旧地址。`attachedHubId` 只表示所连 Hub 的身份，不能证明成员使用了哪个 URL；同 Hub 的 URL 迁移必须结合成员端连接日志确认。
+
+旧地址已不可达的离线成员无法从广告发现新地址，需在该机执行 `vibeterm hub urls add https://new.example` 后重启，或重新 `hub join`。自签名 CA 的 pin 按 URL 保存；广告与旧 pin 冲突时不会覆盖，须核对 Hub 本机 `hub ca fingerprint` 并执行 `hub trust refresh`，详见 [mesh 运维](./mesh-operations.md)。
+
 ### 主 hub 恢复：先 demote，再启动
 
 错误顺序：旧主带着原来的 `VIBETERM_HUB_MODE=active` 和旧 epoch 直接开机 → 与新主 epoch 相等或旧主更大 → 脑裂或把新主 fence 掉。

@@ -1,10 +1,4 @@
-// 中继模式下 `POST /api/auth/keylog?hub=sync` 的本地优先落账。
-//
-// 中继设计里本地成员表 / 密钥日志才是权威，中继的注册表只是可重建缓存（plan §1.4 / §1.12），
-// 因此 `hub=sync` 永远不能等中继确认——否则三条路都会死锁：
-//   (a) 首次接入：还没有中继可问，`set-relays` 里的令牌就是接下来要用的那把；
-//   (b) 改密踢出后重新接入：旧令牌已作废、链路已断，新令牌只存在于这条还没落账的记录里；
-//   (c) hub → 中继迁移：旧 hub 可能根本不认识 `set-relays`（minVersion 1.1.23）。
+// 中继模式先本地落账，再单独报告中继 ACK；远端失败不回滚本地记录。
 
 import { describe, expect, test } from 'bun:test';
 import {
@@ -223,6 +217,8 @@ async function successBody(res: Response) {
     seq: number;
     hubAck?: boolean;
     localApply?: boolean;
+    relayAck?: boolean;
+    relayError?: string;
   };
 }
 
@@ -363,9 +359,9 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect(body.hubAck).toBe(true);
       expect(body.localApply).toBe(true);
       expect(headSeq(b)).toBe(before + 1n);
-      // 中继不做仲裁：不等 ack，直接尽力推
-      expect(b.publisher.acked).toHaveLength(0);
-      expect(b.publisher.published).toHaveLength(1);
+      expect(body.relayAck).toBe(true);
+      expect(b.publisher.acked).toHaveLength(1);
+      expect(b.publisher.published).toHaveLength(0);
     } finally {
       b.close();
     }
@@ -380,9 +376,9 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect(res.status).toBe(200);
       expect((await successBody(res)).hubAck).toBe(true);
       expect(headSeq(b)).toBe(before + 1n);
-      // publish 抛了也不影响落账；记录由 RelayKeyLogSync 在重连后补推
-      expect(b.publisher.published).toHaveLength(1);
-      expect(b.publisher.acked).toHaveLength(0);
+      // ACK 失败不影响落账；记录由 RelayKeyLogSync 在重连后补推。
+      expect(b.publisher.published).toHaveLength(0);
+      expect(b.publisher.acked).toHaveLength(1);
     } finally {
       b.close();
     }
@@ -465,7 +461,7 @@ describe('中继模式的密钥日志落账（hub=sync 本地优先）', () => {
       expect((await successBody(res)).hubAck).toBe(true);
       expect(headSeq(b)).toBe(before + 1n);
       // 推给中继的那一条就是这条吊销记录（RelayKeyLogSync 会给它挂 member 证明）
-      expect(b.publisher.published).toHaveLength(1);
+      expect(b.publisher.acked).toHaveLength(1);
       expect(b.userStore.getCert(b.identity.nodeIdHex)?.revokedLogSeq).not.toBeNull();
     } finally {
       b.close();

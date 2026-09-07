@@ -141,7 +141,7 @@ MetaKeyPayload : epoch(u32) ‖ entries(vec<RelayWrapEntry>)
 
 根轮换（`rotate-root-keep`）不会重签历史 `admit-node`。中继租户是按**当前**根公钥与 `root_epoch` 创建的，`relay.auth` 要求成员证明记录的 `root_epoch` 等于租户当前 epoch，且必须由当前根签过。迁到中继之前（以及此后每次根轮换之后），必须对每个未吊销节点补一条 `readmit-node`：解码原 `Authorization`，按相同 `uid` / `enroll_pk` / `exp` 等绑定重编码为 `signer: 'root'`、`credential_id: null`、当前 `root_epoch` 的授权并由当前根签名；证书字节不变。原先由 passkey 承认的成员因此也能用当前根重新确认。`node_certs.admit_record_seq` 指向这条新记录，节点再向中继出示时才能过 `member-epoch_mismatch`。
 
-`GET /api/mesh/relay/readmit/prepare` 列出 `admit_record_seq` 对应记录的 `root_epoch` 小于当前 epoch 的未吊销证书（含本机）。`GET /api/mesh/relay/status` 的 `readmitPending` 与 `POST /api/mesh/relay/enroll` 的 `readmitRequired` 是同一计数。CLI `vibeterm relay enroll` / `reauth` 与网页接入的顺序是 **readmit → enroll → set-relays**：先走本机 `GET /api/mesh/relay/readmit/prepare` 补签全部成员，再取 proof 并调用远端 enroll（令牌换发不可逆），最后才提交 `set-relays`。远端 enroll 响应里的 `readmitRequired` 只作事后校验：若仍大于 0，中止 `set-relays`。
+`GET /api/mesh/relay/readmit/prepare` 列出 `admit_record_seq` 对应记录的 `root_epoch` 小于当前 epoch 的未吊销证书（含本机）。`GET /api/mesh/relay/status` 的 `readmitPending` 与 `POST /api/mesh/relay/enroll` 的 `readmitRequired` 是同一计数。CLI `vibeterm relay enroll` / `reauth` 与网页接入的顺序是 **readmit → enroll → set-relays**：先走本机 `GET /api/mesh/relay/readmit/prepare` 补签全部成员，再取 proof 并调用远端 enroll（令牌换发不可逆），最后才提交 `set-relays`。节点侧 `POST /api/mesh/relay/enroll` 在调用远端之前再次检查，若仍有待 readmit 的成员，则返回 HTTP 409 `{ code: 'readmit_required', count }`，不换发令牌。响应中的 `readmitRequired` 保留供调用方校验。
 
 `UserKeyState` 因此多了四个字段：`relays`（投影）、`metaKeyEpoch`、`metaKeyEntries`、`nodeNames`（`rename-node` 投影，nodeId hex → 已 trim 的显示名）。
 
@@ -361,10 +361,10 @@ lookup 找不到（含 b64url 非法、跨租户）一律 404 `RELAY_NOT_FOUND`�
 | 方法 路由 | 说明 |
 |---|---|
 | `GET /api/relay/status` | `{ config: { hasPassword, passwordEpoch, minTokenEpoch, defaultQuota, limits }, tenants: [...], totals: { tenants, nodes, nodesOnline, streams, bytesIn, bytesOut } }`；`bytesIn/Out` = 落库值 + 未刷新的内存增量；`totals.nodes` 是全部租户 pending+admitted 之和（与配额占用同口径）；`limits` 见 §11.2 |
-| `POST /api/relay/password` | `{ password: string \| null, mode: 'kick' \| 'keep' }` → `password_epoch += 1`；`kick` 时 `min_token_epoch = password_epoch` 并立刻断开 `token_epoch` 过旧的链路 |
+| `POST /api/relay/password` | `{ password: string \| null, mode: 'kick' \| 'keep', force?: boolean }` → `password_epoch += 1`；`kick` 时 `min_token_epoch = password_epoch` 并立刻断开 `token_epoch` 过旧的链路 |
 | `PATCH /api/relay/config` | `{ defaultQuota? , limits? }`，二者至少给一个（都不给 400 `RELAY_INVALID_BODY`）。`defaultQuota` 落库并把新配额推给所有「跟随默认」的在线租户（非法 400 `RELAY_BAD_QUOTA`）；`limits` 落库并热更新中继级带宽闸（非法 400 `RELAY_BAD_LIMITS`） |
 | `PATCH /api/relay/tenants/:id` | `{ quota?: RelayQuota \| null, label?: string \| null }`；`quota: null` 回到默认，`label` 空串或 null 清空（≤128 字符） |
-| `POST /api/relay/tenants/:id/kick` | 置 `kicked` + 断开；该租户须重新 enroll 才能再连 |
+| `POST /api/relay/tenants/:id/kick` | 可选 body `{ force?: boolean }`；置 `kicked` + 断开；该租户须重新 enroll 才能再连 |
 | `DELETE /api/relay/tenants/:id` | 断开 + 删注册表、enrollment、密钥日志、计量 |
 
 租户表每行：`{ id, label, createdAt, lastSeenAt, nodes, nodesOnline, streams, bytesIn, bytesOut, quota, tokenEpoch, kicked }`。
@@ -384,6 +384,7 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 | `POST /enroll/proof-material` | body `{url}` → `{ url, relayHost, ts, maxSkewMs, rootPublicKey, rootEpoch }`；调用方据此本地签 proof。错误 `400 INVALID_URL`、`404 UNKNOWN_USER` |
 | `POST /enroll` | body `{ url, password?, proof: {bytes, sig} }` → `{ tenantId, token, passwordEpoch, metaEpoch, payload, payloadHash }`。**hub 模式也允许**（迁移入口）。错误 `400 INVALID_URL\|MALFORMED\|BAD_PROOF`、`401 <中继返回的 code>`、`409 NO_ADMITTED_NODES`、`502 RELAY_UNREACHABLE\|RELAY_BAD_RESPONSE\|RELAY_ENROLL_FAILED` |
 | `POST /leave/prepare` | 仅 relay 模式 → `{ metaEpoch, payload, payloadHash }`（空 `relays` 的 `set-relays`） |
+| `POST /resend-token/prepare` | 按当前中继表生成 `{ metaEpoch, nodes, payload, payloadHash, requireRelayAck: true }`；这里只准备待签记录，提交后须检查 `relayAck` |
 | `POST /remove/prepare` | body `{url}`，摘掉多中继里的某一条，**世代不变**、密钥重新封装给全部未吊销节点。错误 `400 INVALID_URL`、`404 RELAY_NOT_FOUND`、`409 RELAY_LAST\|RELAY_NOT_CONFIGURED\|NO_ADMITTED_NODES\|RELAY_KEY_MISSING` |
 | `POST /meta-key/prepare` | body `{op:'admit', node_id}` 或 `{op:'rotate', exclude?:[]}` → `{ epoch, payload, payloadHash }`。错误 `409 RELAY_NOT_CONFIGURED\|NO_ADMITTED_NODES`、`404 UNKNOWN_NODE`、`400 MALFORMED` |
 | `GET /join-material` | 仅 relay 模式 → `{ logKey, relays: [{url, tenantId, token}] }`；`?scope=all` 返回全表 |
@@ -417,15 +418,15 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
 
 | 情形 | 行为 |
 |---|---|
-| `set-relays` / `meta-key`（**任何模式**） | 跳过 attached-writer 判定；不等上级 ACK；本地验签 + 链校验后落账；**不推给旧上级**（hub → 中继迁移时不能把旧 hub 也拖进中继模式），由记录应用触发的重连后 catch-up 补推 |
-| 中继模式的其它记录 | 跳过 attached-writer 判定；不等中继 ACK；本地落账后尽力 `publish()`；中继离线时由重连后的 catch-up 补推 |
+| hub 模式的 `set-relays` / `meta-key` | 跳过 attached-writer 判定；本地验签 + 链校验后落账；**不推给旧 hub**，由记录应用触发的重连后 catch-up 补推 |
+| 中继模式的所有记录 | 跳过 attached-writer 判定；本地落账后 `publishAndAck()` 并报告确认结果；中继离线不回滚本地，由重连后的 catch-up 补推 |
 | hub 模式的其它记录 | **完全不变**：attached-writer 判定 → 版本门 → 等 hub ACK / 重试 / 504 `HUB_TIMEOUT` |
 
 「中继模式」的判定来源是已应用的密钥日志本身（`currentState(uid).relays` 非空），
 比 `node_identity.uplink_kind` 早一步生效。
 
-本地优先落账时响应体是 `{ ok, seq, hash, hubAck: true, localApply: true }`。
-`hubAck: true` 是**故意**的——中继模式下本地日志就是权威，「已确认」= 已落账，前端三处判定因此照旧成立。
+本地优先落账时仍返回 `{ ok, seq, hash, hubAck: true, localApply: true }`，中继模式另返回 `relayAck: boolean`，失败时带 `relayError: string`。只有中继实际确认追加，`relayAck` 才是 `true`；离线、超时或 `SEQ_MISMATCH` 均返回 `false`，HTTP 200 与本地落账不回滚。相同记录的重试会重新尝试发布并等待确认。
+`hubAck: true` 保留旧兼容语义，表示本地已落账；判断令牌是否送达中继必须检查 `relayAck`。首次从 hub 迁移时不会把 `set-relays` 回灌旧 hub，此次返回 `relayAck: false, relayError: 'not_published'`，后续由中继同步补推。
 `localApply` 只是排查用的附加字段。中继回的 `SEQ_MISMATCH` 之类 ack 错误**刻意不转成 HTTP 错误**：
 它同样可能只是「中继落后于本地」，转成 409 会把节点永久卡死。
 
@@ -696,6 +697,10 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 - **改口令**：`vibeterm relay passwd`。`--keep`（默认）只推进 `password_epoch`，已接入的租户不受影响；
   `--kick` 同时把 `min_token_epoch` 抬到 `password_epoch`，所有旧令牌立刻失效并断链，
   租户需用新口令 `vibeterm relay reauth <url>`（或网页上「重新输入口令」）恢复，`tenant_id` 不变。
+  kick 模式改密检查全部受影响租户，kick 单租户只检查目标租户。只要在线 admitted 成员少于 admitted 总数，返回 HTTP 409
+  `{ error: { code: 'relay_members_offline', message: 'relay_members_offline', online, admitted } }`；`force: true` 可覆盖。
+  CLI 对应 `--force`，拒绝时显示人数与恢复链：可达节点先 reauth 并刷新密封包，离线成员再执行
+  `vibeterm relay join <url> --tenant <id> --password`。pending、revoked 不计入 admitted。
 - **踢租户 / 删租户**：`kick` 只作废令牌与断链，数据留着；`remove` 连注册表、enrollment、密钥日志一起删。
   注意被吊销节点如果在吊销当时中继正好离线，中继侧会留一条陈旧的 `admitted` 行，需要运营者手动 `kick`。
 - **健康探针**：`GET /api/relay/health` 无鉴权，反代健康检查与节点拨号前探测都用它。
@@ -706,7 +711,7 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 - **限速**：enroll 的按 IP 闸用 `clientIpFromRequest()`（trusted-proxy 感知），反代后面不会让所有人共用一个桶。
 - **升级**：中继与租户节点必须同版本升级到 ≥ 1.1.23——`relay.auth` 上有硬版本门，
   且 `relay.status` / `relay.list` 不带明文 `direct_capable`，与 1.1.23 之前的实现不兼容。
-- **迁到中继前若已轮换过根**：须先签 `readmit-node`，再 enroll，最后提交 `set-relays`。CLI 与网页接入会自动按该顺序执行。中继只认识当前根，历史 `admit-node` 无法作为成员证明。远端 enroll 会立刻换发并作废旧令牌，因此 readmit 必须发生在 enroll 之前。
+- **迁到中继前若已轮换过根**：须先签 `readmit-node`，再 enroll，最后提交 `set-relays`。CLI 与网页接入会自动按该顺序执行。中继只认识当前根，历史 `admit-node` 无法作为成员证明。远端 enroll 可能换发令牌，因此 readmit 必须发生在 enroll 之前；服务端以 `readmit_required` 防止跳过该顺序。
 
 ## 13. 已知边界
 
@@ -792,12 +797,14 @@ bun packages/app/src/runtime/server.ts
 | 判定 | 触发条件 | 行为 |
 |---|---|---|
 | `reuse` | 租户未被踢、`token_epoch ≥ min_token_epoch`，且 `known_token_hash` **等于当前令牌**（常数时间比较，上一代不算） | **不换发**。响应 `token: null`、`token_unchanged: true`，节点沿用本机已存的令牌 |
-| `recover` | `kicked` 或 `token_epoch < min_token_epoch` | 换发，清空 `prev_token_hash`，并 `enforceTokenReissue` 断掉持旧令牌的链路 |
-| `rotate` | 租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失） | 换发，旧哈希挪进 `prev_token_hash`，**不断链** |
+| `recover` | `kicked` 或 `token_epoch < min_token_epoch` | 换发，清空全部历史令牌，并 `enforceTokenReissue` 断掉持旧令牌的链路 |
+| `rotate` | 租户健康但调用方拿不出当前令牌（离开后重新接入、令牌丢失） | 换发，旧哈希推入历史环，**不断链** |
 
-### 上一代令牌的宽限
+### 三代历史令牌的宽限
 
-迁移 `0054_relay_prev_token.sql` 给 `relay_tenants` 加了 `prev_token_hash` / `prev_token_issued_at`。
+迁移 `0055_relay_token_ring.sql` 给 `relay_tenants` 加了 `previous_tokens_json`，按新到旧保存最多三条 `{ hash, issued_at }`。
+迁移会将 0054 的单槽内容及原始时间转入历史环；新列为空时读侧仍兼容旧单槽。新写入同步保留最新单槽，显式空环不会回退复活旧令牌。
+**30 天内最多三次换发仍可恢复最初那一代；第四次换发会淘汰最老的一代。** 每条记录独立计算 30 天期限，后续换发不会延长它。
 `rotate` 换发时旧哈希在 `RELAY_PREV_TOKEN_GRACE_MS`（30 天）内仍可认证——`relay.auth`、租户令牌 REST 鉴权、
 `putPack`、`relay.keylog.append` 的写鉴权都走 `relayTokenHashAccepted()`。链路存续期的复查
 （`liveAuthStillValid`）记的是**实际出示的那一代哈希**，因此宽限期内的老链路不会被当成「哈希不符」踢掉。
@@ -805,14 +812,19 @@ bun packages/app/src/runtime/server.ts
 复查点有三个（`revalidateRelayLive`）：每条 ctl、**心跳那一拍**、每次开流。只跑数据流的链路不产生 ctl，
 心跳是它唯一的复查点——少了这一拍，持上一代令牌的链路能活过整个宽限期。
 
-手持**上一代**令牌来 enroll 一律走 `rotate` 拿一份新令牌，绝不回 `token_unchanged`：
+手持**任一历史代**令牌来 enroll 一律走 `rotate` 拿一份新令牌，绝不回 `token_unchanged`：
 否则调用方会把那份即将过期的旧令牌再写进 `set-relays` / 密封包，等宽限期一到全网又一起断。
 
-清空 `prev_token_hash` 的两条路：`POST /api/relay/tenants/:id/kick`（踢租户）与
+清空历史环与旧单槽的两条路：`POST /api/relay/tenants/:id/kick`（踢租户）与
 `POST /api/relay/password` `mode: 'kick'`（`enforceMinTokenEpoch`）。也就是说 **kick 语义一字未变**：
 运营者要作废旧令牌时，宽限不给任何后门。
 
 ### 成员侧
+
+哈希分类区分当前令牌、仍在宽限内的历史令牌（`password_rotated`）与未知、过期令牌（`kicked`）。
+`auth.ok` 可选字段 `token_rotated` 在有效历史令牌认证时为 `true`，当前令牌为 `false`；旧消息缺失该字段仍兼容。
+成员据此设置 `awaitingToken`，`GET /api/mesh/relay/status` 在链路在线时返回 `awaitingToken: true`，同时保留 `reauthRequired: false`、行级 `kicked: false` 和 `kickedReason: null`，避免把宽限内成员误判为已踢出。使用当前令牌重新认证后清除等待状态；旧节点按原有解码规则忽略可选字段。
+宽限期内链路保持可用以追平日志，不能为了发送换代提示而主动断链；心跳与开流仍执行相同准入复查。
 
 `mesh_relays` 加了 `kicked_reason`。`relay.kicked` 的 `password_rotated` 只表示令牌换代——成员既没有中继接入口令、
 也签不出 enroll proof，唯一出路是等持账户密码的一方把新令牌发下来，所以
@@ -849,3 +861,15 @@ UI 上「令牌已换代」不再顶掉「重新输入接入密码」那条提�
 动作必须一直摆在那里；换代提醒作为补充说明另一条出路。
 
 kick 模式改密之后主节点必须先用**新接入口令**重新接入（令牌换发，不留宽限），各成员再按上表第二行自救。
+
+
+### 密封包与 30 天恢复期限
+
+CLI `enroll` / `reauth` 必须成功刷新密封包才报告完成。上传失败时退出码为 1，并给出原因与
+`vibeterm relay pack upload` 重试命令；该命令使用与 enroll 相同的本机账户鉴权，从当前令牌和日志头重新生成密封包。
+多中继配置必须确认全部目标上传成功，不能用一台成功掩盖另一台失败。
+
+**成员离线超过 30 天、旧令牌宽限已过后，只能通过密码加入恢复，而且前提是密封包已刷新。**
+若密封包仍旧或因根轮换被清空，先在可达节点执行 `vibeterm relay reauth <url>` 并完成密封包上传，
+再在离线成员执行 `vibeterm relay join <url> --tenant <id> --password`。第四次换发淘汰或显式 kick 会提前触发同样的恢复要求。
+`resend-token` 只在 `relayAck: true` 时报告成功；未确认则退出 1，本地已追加的记录保留。它无法救回已经不能认证读取日志的成员。

@@ -162,11 +162,12 @@ async function persistUpgradeMeta(
   toVersion: string,
   bunPath: string,
   serviceMode?: ServiceMode,
-  serviceName?: string
+  serviceName?: string,
+  repairedMeta?: InstallMeta
 ): Promise<void> {
   const layout = createInstallLayout(installDir);
-  if (!(await pathExists(layout.metaPath))) return;
-  const meta = await readJsonFile<InstallMeta>(layout.metaPath);
+  if (!repairedMeta && !(await pathExists(layout.metaPath))) return;
+  const meta = repairedMeta ?? (await readJsonFile<InstallMeta>(layout.metaPath));
   meta.updatedAt = new Date().toISOString();
   meta.cliVersion = toVersion;
   // 老安装的 meta 里没有安装来源，借这次升级补上；已记过的一律保留（升级方式不代表安装方式）。
@@ -189,9 +190,17 @@ export async function commitSuccess(
   keepBackup: boolean,
   log: (message: string) => void,
   serviceMode?: ServiceMode,
-  serviceName?: string
+  serviceName?: string,
+  repairedMeta?: InstallMeta
 ): Promise<void> {
-  await persistUpgradeMeta(installDir, journal.toVersion, bunPath, serviceMode, serviceName);
+  await persistUpgradeMeta(
+    installDir,
+    journal.toVersion,
+    bunPath,
+    serviceMode,
+    serviceName,
+    repairedMeta
+  );
   const committed: UpgradeJournal = {
     ...journal,
     phase: 'committed',
@@ -205,6 +214,7 @@ export async function commitSuccess(
     current: journal.toVersion,
     previous: journal.fromVersion !== journal.toVersion ? journal.fromVersion : null,
   });
+  if (repairedMeta) log(`install-meta.json rebuilt from current: ${journal.toVersion}`);
   log(`upgrade committed ${journal.fromVersion} -> ${journal.toVersion}`);
 }
 

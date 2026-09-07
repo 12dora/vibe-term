@@ -131,6 +131,14 @@ describe('RelayAdminApi 写接口', () => {
     expect(calls[0]?.init?.body).toBe(JSON.stringify({ password: 'hunter22', mode: 'kick' }));
   });
 
+  test('force 传给改密与踢租户请求', async () => {
+    const { api, calls } = recorder([ok({ ok: true }), ok({ ok: true })]);
+    await api.setPassword({ password: 'hunter22', mode: 'kick', force: true });
+    await api.kickTenant('t1', { force: true });
+    expect(JSON.parse(calls[0]?.init?.body as string).force).toBe(true);
+    expect(JSON.parse(calls[1]?.init?.body as string)).toEqual({ force: true });
+  });
+
   test('清除口令：password 为 null 且照样带 mode', async () => {
     const { api, calls } = recorder([ok({ ok: true })]);
     await api.setPassword({ password: null, mode: 'keep' });
@@ -209,6 +217,25 @@ describe('RelayAdminApi 错误', () => {
     expect(err.code).toBe('RELAY_TENANT_UNKNOWN');
     expect(err.message).toBe('no');
     expect(err.status).toBe(409);
+  });
+
+  test('离线成员错误保留人数供界面确认', async () => {
+    const { api } = recorder([
+      new Response(
+        JSON.stringify({
+          error: {
+            code: 'relay_members_offline',
+            message: 'relay_members_offline',
+            online: 1,
+            admitted: 3,
+          },
+        }),
+        { status: 409 }
+      ),
+    ]);
+    const error = await api.kickTenant('t1').catch((error) => error);
+    expect(error).toBeInstanceOf(RelayApiError);
+    expect(error.details).toEqual({ online: 1, admitted: 3 });
   });
 
   test('非 JSON 错误体退回 fallback code', async () => {

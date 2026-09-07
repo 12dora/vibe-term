@@ -34,6 +34,7 @@ import {
   WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
 } from './mesh-deps';
+import { serializeHubCandidate } from './mesh-hub-candidates';
 import {
   type MeshNodeDto,
   type MeshNodeLinkDetail,
@@ -94,25 +95,6 @@ const STATUS_TO_U8: Record<string, number> = {
   offline: wsBorsh.NODE_EVENT_STATUS_OFFLINE,
   revoked: wsBorsh.NODE_EVENT_STATUS_REVOKED,
 };
-
-function serializeHubCandidate(entry: string | UplinkCandidate): {
-  publicUrl: string;
-  lastError: string | null;
-  lastAttemptAt: number | null;
-  rttMs: number | null;
-  rttAt: number | null;
-} {
-  if (typeof entry === 'string') {
-    return { publicUrl: entry, lastError: null, lastAttemptAt: null, rttMs: null, rttAt: null };
-  }
-  return {
-    publicUrl: entry.publicUrl,
-    lastError: entry.lastError ?? null,
-    lastAttemptAt: entry.lastAttemptAt ?? null,
-    rttMs: entry.rttMs ?? null,
-    rttAt: entry.rttAt ?? null,
-  };
-}
 
 export class MeshRoutes {
   private readonly sessionDeps: SessionMiddlewareDeps;

@@ -1,6 +1,5 @@
 import { X509Certificate, createHash } from 'node:crypto';
 import { combineAbortSignals } from '@vibeterm/shared/async';
-import { canonicalHubUrl, hubHostFromUrl } from '@vibeterm/shared/auth';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import type {
   HubAdvertisement,
@@ -44,9 +43,22 @@ import {
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
+import {
+  isSelfHubCandidate,
+  normalizeHubEndpointUrl,
+  redactUrl,
+  sameHubUrl,
+} from './uplink-pool-url';
 import { UplinkRelayDrain } from './uplink-relay-drain';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
+export {
+  attachedHubHost,
+  isSelfHubCandidate,
+  normalizeHubEndpointUrl,
+  redactUrl,
+  sameHubUrl,
+} from './uplink-pool-url';
 export {
   UPLINK_RTT_MIN_SAMPLES,
   UPLINK_RTT_SWITCH_MIN_MS,
@@ -91,6 +103,7 @@ export type UplinkCandidate = {
   writerEpoch: number;
   priority: number;
   caFingerprint: string | null;
+  caMismatch?: { advertised: string; pinned: string };
   lastError?: string | null;
   lastErrorAt?: number | null;
   lastAttemptAt?: number | null;
@@ -162,44 +175,6 @@ export type UplinkPoolOptions = {
   relayDrainTimeoutMs?: number;
 };
 
-export function redactUrl(raw: string): string {
-  try {
-    return new URL(raw).origin;
-  } catch {
-    const stripped = raw
-      .replace(/[?#].*$/, '')
-      .replace(/^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/)[^/?#]*@/, '$1');
-    try {
-      return new URL(stripped).origin;
-    } catch {
-      return stripped.replace(/\/+$/, '') || raw;
-    }
-  }
-}
-
-export function normalizeHubEndpointUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) return trimmed;
-  try {
-    return canonicalHubUrl(trimmed);
-  } catch {
-    return trimmed.replace(/\/+$/, '');
-  }
-}
-
-export function sameHubUrl(a: string, b: string): boolean {
-  return normalizeHubEndpointUrl(a) === normalizeHubEndpointUrl(b);
-}
-
-export function isSelfHubCandidate(
-  cand: Pick<UplinkCandidate, 'hubNodeId' | 'publicUrl'>,
-  self: { nodeId?: string | null; publicUrl?: string | null }
-): boolean {
-  if (self.nodeId && cand.hubNodeId && cand.hubNodeId === self.nodeId) return true;
-  if (self.publicUrl && sameHubUrl(cand.publicUrl, self.publicUrl)) return true;
-  return false;
-}
-
 export function isCaFingerprintHex(value: string): boolean {
   return /^[0-9a-f]{64}$/i.test(value.trim());
 }
@@ -255,6 +230,14 @@ export function parseSingleCaCertificate(pem: string): X509Certificate {
   if (usages && !usages.includes('keyCertSign')) throw new Error('ca_no_key_cert_sign');
   if (cert.ca !== true) throw new Error('ca_not_ca');
   return cert;
+}
+
+export function spkiFingerprintFromPem(pem: string): string {
+  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  if (!match) throw new Error('PEM does not contain a certificate');
+  const cert = new X509Certificate(match[0]);
+  const spki = cert.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+  return createHash('sha256').update(spki).digest('hex');
 }
 
 export function jitteredIntervalMs(baseMs: number, jitter = UPLINK_POOL_PROBE_JITTER): number {
@@ -387,14 +370,6 @@ export function recordsFromNodeList(list: UplinkNodeList): Array<Omit<MeshHubRec
   ];
 }
 
-export function spkiFingerprintFromPem(pem: string): string {
-  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
-  if (!match) throw new Error('PEM does not contain a certificate');
-  const cert = new X509Certificate(match[0]);
-  const spki = cert.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
-  return createHash('sha256').update(spki).digest('hex');
-}
-
 function fallbackCandidate(): UplinkCandidate {
   return {
     hubNodeId: null,
@@ -454,6 +429,7 @@ export class UplinkPool {
   private lastHubView: HubView | null = null;
   private wrapAttempt = 0;
   private readonly caBootstraps = new Map<string, Promise<void>>();
+  private readonly caMismatches = new Map<string, { advertised: string; pinned: string }>();
   private readonly diagByUrl = new Map<string, UrlDiag>();
   private readonly candLogAt = new Map<
     string,
@@ -518,6 +494,7 @@ export class UplinkPool {
     const list = this.opts.candidates();
     const base = list.length > 0 ? list : [fallbackCandidate()];
     const withDiag = base.map((row) => {
+      const caMismatch = this.caMismatchOf(row.publicUrl, row.caFingerprint);
       const diag = this.diagByUrl.get(normalizeHubEndpointUrl(row.publicUrl));
       let version = row.version ?? null;
       if (version == null && row.hubNodeId) {
@@ -529,7 +506,8 @@ export class UplinkPool {
       }
       return {
         ...row,
-        lastError: diag?.lastError ?? row.lastError ?? null,
+        ...(caMismatch ? { caMismatch } : {}),
+        lastError: caMismatch ? 'hub_ca_changed' : (diag?.lastError ?? row.lastError ?? null),
         lastErrorAt: diag?.lastErrorAt ?? row.lastErrorAt ?? null,
         lastAttemptAt: diag?.lastAttemptAt ?? row.lastAttemptAt ?? null,
         rttMs: diag?.rttMs ?? row.rttMs ?? null,
@@ -796,11 +774,7 @@ export class UplinkPool {
         } catch (err) {
           if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
           failures += 1;
-          const msg = errMessage(err);
-          this.lastConnectError = { reason: msg, at: this.scheduler.now() };
-          this.noteFailure(cand, msg);
-          this.logCandidateFailed(cand, msg, failures, index, transport);
-          this.logMissingCaPin(cand, err);
+          this.noteCandidateFailure(cand, err, failures, index, transport);
           if (combined.aborted || failures >= this.failLimit) break;
         }
       }
@@ -821,6 +795,20 @@ export class UplinkPool {
         }
       }
     }
+  }
+
+  private noteCandidateFailure(
+    cand: UplinkCandidate,
+    err: unknown,
+    failures: number,
+    index: number,
+    transport: string
+  ): void {
+    const msg = this.caMismatchOf(cand.publicUrl) ? 'hub_ca_changed' : errMessage(err);
+    this.lastConnectError = { reason: msg, at: this.scheduler.now() };
+    this.noteFailure(cand, msg);
+    this.logCandidateFailed(cand, msg, failures, index, transport);
+    this.logMissingCaPin(cand, err);
   }
 
   spawn(cand: UplinkCandidate): PooledUplink {
@@ -979,8 +967,23 @@ export class UplinkPool {
   }): Promise<void> {
     const advertised = hub.caFingerprint?.trim().toLowerCase() ?? '';
     if (!advertised || !isCaFingerprintHex(advertised)) return Promise.resolve();
-    if (this.opts.hubTrust.get(hub.publicUrl)) return Promise.resolve();
     const key = normalizeHubEndpointUrl(hub.publicUrl);
+    const stored = this.opts.hubTrust.get(hub.publicUrl);
+    if (stored) {
+      const pinned = stored.fingerprint.toLowerCase();
+      if (pinned !== advertised) {
+        const previous = this.caMismatches.get(key);
+        this.caMismatches.set(key, { advertised, pinned });
+        if (previous?.advertised !== advertised || previous.pinned !== pinned) {
+          this.logInfo(
+            `[uplink] hub_ca_changed url=${redactUrl(hub.publicUrl)} advertised=${advertised} pinned=${pinned}; verify the Hub CA fingerprint and run vibeterm hub trust refresh`
+          );
+        }
+      } else {
+        this.caMismatches.delete(key);
+      }
+      return Promise.resolve();
+    }
     const existing = this.caBootstraps.get(key);
     if (existing) return existing;
     const work = this.doPinAdvertisedCa(hub.publicUrl, advertised).finally(() => {
@@ -1007,6 +1010,10 @@ export class UplinkPool {
         this.logInfo(
           `[uplink] ca bootstrap failed url=${redactUrl(publicUrl)} err=fingerprint_mismatch`
         );
+        return;
+      }
+      if (this.opts.hubTrust.get(publicUrl)) {
+        await this.pinAdvertisedCa({ publicUrl, caFingerprint: advertised });
         return;
       }
       this.opts.hubTrust.put({
@@ -1428,7 +1435,30 @@ export class UplinkPool {
   }
 
   lastErrorOf(cand: UplinkCandidate): string | null {
+    if (this.caMismatchOf(cand.publicUrl)) return 'hub_ca_changed';
     return this.diagByUrl.get(normalizeHubEndpointUrl(cand.publicUrl))?.lastError ?? null;
+  }
+
+  private caMismatchOf(
+    publicUrl: string,
+    advertisedFingerprint?: string | null
+  ): UplinkCandidate['caMismatch'] {
+    const key = normalizeHubEndpointUrl(publicUrl);
+    const stored = this.opts.hubTrust.get(publicUrl);
+    const advertised = advertisedFingerprint?.trim().toLowerCase();
+    if (stored && advertised && isCaFingerprintHex(advertised)) {
+      this.caMismatches.set(key, { advertised, pinned: stored.fingerprint.toLowerCase() });
+    }
+    const mismatch = this.caMismatches.get(key);
+    if (!mismatch) return undefined;
+    if (!stored || stored.fingerprint.toLowerCase() === mismatch.advertised) {
+      this.caMismatches.delete(key);
+      if (this.diagByUrl.get(key)?.lastError === 'hub_ca_changed') {
+        this.patchDiag(publicUrl, { lastError: null, lastErrorAt: null });
+      }
+      return undefined;
+    }
+    return { advertised: mismatch.advertised, pinned: stored.fingerprint.toLowerCase() };
   }
 
   logCandidateFailed(
@@ -1556,17 +1586,4 @@ function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
     const tls = uplinkWebSocketTls(tlsCa);
     return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
   };
-}
-
-export function attachedHubHost(
-  attached: AttachedHub | null,
-  fallbackUrl?: string | null
-): string | null {
-  const url = attached?.publicUrl ?? fallbackUrl;
-  if (!url) return null;
-  try {
-    return hubHostFromUrl(url);
-  } catch {
-    return null;
-  }
 }

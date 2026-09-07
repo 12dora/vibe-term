@@ -76,6 +76,7 @@ function recorder(responses?: Record<string, unknown>) {
     });
     const path = new URL(url).pathname;
     const payload = responses?.[`${init?.method ?? 'GET'} ${path}`] ?? responses?.[path] ?? {};
+    if (payload instanceof Response) return payload.clone();
     return new Response(JSON.stringify(payload), {
       status: 200,
       headers: { 'content-type': 'application/json' },
@@ -155,6 +156,41 @@ describe('relay passwd', () => {
     expect(logs[0]).toContain('kick mode');
   });
 
+  test('offline-member refusal prints counts and recovery commands, without reporting success', async () => {
+    const { calls, logs, io } = recorder({
+      'POST /api/relay/password': new Response(
+        JSON.stringify({
+          error: {
+            code: 'relay_members_offline',
+            online: 2,
+            admitted: 4,
+          },
+        }),
+        { status: 409 }
+      ),
+    });
+    await expect(
+      runRelayPasswd(parseArgs(['relay', 'passwd', '--kick']), {
+        ...io,
+        newRelayPassword: 'new-password',
+      })
+    ).rejects.toThrow('--force');
+    expect(calls).toHaveLength(1);
+    expect(logs.join('\n')).toContain('2 online / 4 admitted');
+    expect(logs.join('\n')).toContain('vibeterm relay reauth <url>');
+    expect(logs.join('\n')).toContain('vibeterm relay join <url> --tenant <id> --password');
+    expect(logs.join('\n')).not.toContain('updated');
+  });
+
+  test('--force is forwarded for kick-mode password changes', async () => {
+    const { calls, io } = recorder({ 'POST /api/relay/password': { passwordEpoch: 5 } });
+    await runRelayPasswd(parseArgs(['relay', 'passwd', '--kick', '--force']), {
+      ...io,
+      newRelayPassword: 'new-password',
+    });
+    expect(calls[0].body).toEqual({ password: 'new-password', mode: 'kick', force: true });
+  });
+
   test('--clear sends a null password without prompting', async () => {
     const { calls, logs, io } = recorder({ 'POST /api/relay/password': { passwordEpoch: 6 } });
     const result = await runRelayPasswd(parseArgs(['relay', 'passwd', '--clear']), io);
@@ -179,6 +215,35 @@ describe('relay kick / remove / label', () => {
     await runRelayKick(parseArgs(['relay', 'kick', tenantId]), tenantId, io);
     expect(calls[0].url).toBe(`http://127.0.0.1:19993/api/relay/tenants/${tenantId}/kick`);
     expect(calls[0].method).toBe('POST');
+  });
+
+  test('kick reports offline counts and requires --force', async () => {
+    const { calls, logs, io } = recorder({
+      [`POST /api/relay/tenants/${tenantId}/kick`]: new Response(
+        JSON.stringify({
+          error: {
+            code: 'relay_members_offline',
+            online: 0,
+            admitted: 2,
+          },
+        }),
+        { status: 409 }
+      ),
+    });
+    await expect(
+      runRelayKick(parseArgs(['relay', 'kick', tenantId]), tenantId, io)
+    ).rejects.toThrow('--force');
+    expect(calls).toHaveLength(1);
+    expect(logs.join('\n')).toContain('0 online / 2 admitted');
+    expect(logs.join('\n')).toContain('vibeterm relay reauth <url>');
+    expect(logs.join('\n')).toContain('vibeterm relay join <url> --tenant <id> --password');
+    expect(logs.join('\n')).not.toContain('kicked');
+  });
+
+  test('kick forwards --force', async () => {
+    const { calls, io } = recorder();
+    await runRelayKick(parseArgs(['relay', 'kick', tenantId, '--force']), tenantId, io);
+    expect(calls[0].body).toEqual({ force: true });
   });
 
   test('kick rejects a malformed tenant id', async () => {

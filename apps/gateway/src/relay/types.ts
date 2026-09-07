@@ -1,4 +1,5 @@
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
+import type { RelayPreviousToken } from './relay-token-grace';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_UPLINK_WS_KIND = 'relay-uplink';
@@ -64,6 +65,7 @@ export type RelayTenantRecord = {
   /** 上一代令牌的哈希：非踢出场景换发时保留，宽限期内仍可认证。 */
   prevTokenHash: string | null;
   prevTokenIssuedAt: number | null;
+  previousTokens?: RelayPreviousToken[];
   quota: RelayQuota | null;
   label: string | null;
   kicked: boolean;

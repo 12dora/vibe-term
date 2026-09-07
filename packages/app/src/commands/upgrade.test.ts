@@ -16,10 +16,66 @@ import {
 } from '../lib/test-support/release-signing';
 import { applyUpgrade, repairUpgrade } from '../lib/upgrade-apply';
 import { readJournal } from '../lib/upgrade-state';
-import { readCurrentVersion } from '../lib/upgrade-switch';
+import { readCurrentVersion, switchCurrent } from '../lib/upgrade-switch';
 import { delegateUpgrade, reenableDirectAfterUpgrade, runUpgrade } from './upgrade';
 
 const tempDirs: string[] = [];
+
+test.each(['{', '{}', 'missing'])(
+  '--repair recovers %s metadata through the CLI',
+  async (contents) => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-repair-entry-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', '2.0.0'), { recursive: true });
+    await switchCurrent(installDir, '2.0.0');
+    if (contents !== 'missing') await writeFile(join(installDir, 'install-meta.json'), contents);
+    await runUpgrade(
+      parseArgs([
+        'upgrade',
+        '--repair',
+        '--install-dir',
+        installDir,
+        '--bun-path',
+        process.execPath,
+        '--no-service',
+      ])
+    );
+    const meta = JSON.parse(await readFile(join(installDir, 'install-meta.json'), 'utf8'));
+    expect(meta.cliVersion).toBe('2.0.0');
+    expect(meta.serviceMode).toBe('none');
+    expect(meta.bunPath).toBe(process.execPath);
+  }
+);
+
+test('--repair refuses a lost service identity before starting orchestration', async () => {
+  const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-repair-entry-'));
+  tempDirs.push(installDir);
+  await mkdir(join(installDir, 'versions', '2.0.0'), { recursive: true });
+  await switchCurrent(installDir, '2.0.0');
+  const metaPath = join(installDir, 'install-meta.json');
+  await writeFile(metaPath, '{');
+  let called = false;
+  await expect(
+    runUpgrade(
+      parseArgs([
+        'upgrade',
+        '--repair',
+        '--install-dir',
+        installDir,
+        '--bun-path',
+        process.execPath,
+      ]),
+      {
+        repair: async (dir) => {
+          called = true;
+          return { action: 'cleanup', installDir: dir };
+        },
+      }
+    )
+  ).rejects.toThrow('--service-name');
+  expect(called).toBe(false);
+  expect(await readFile(metaPath, 'utf8')).toBe('{');
+});
 
 beforeAll(() => {
   useTestSigningKeys();

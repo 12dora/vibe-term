@@ -729,7 +729,11 @@ describe('relay kick', () => {
     const node = tenant.addNode();
     const connecting = tenant.connect(node);
     await enteredAt;
-    await relay.adminFetch(`/api/relay/tenants/${tenant.id}/kick`, { method: 'POST' });
+    const kicked = await relay.adminFetch(`/api/relay/tenants/${tenant.id}/kick`, {
+      method: 'POST',
+      body: JSON.stringify({ force: true }),
+    });
+    expect(kicked.status).toBe(200);
     release();
     expect(await closed(await connecting)).toBe('tenant-kicked');
   });
@@ -755,7 +759,7 @@ describe('relay kick', () => {
     await enteredAt;
     const res = await relay.adminFetch('/api/relay/password', {
       method: 'POST',
-      body: JSON.stringify({ password: 'new-secret-word', mode: 'kick' }),
+      body: JSON.stringify({ password: 'new-secret-word', mode: 'kick', force: true }),
     });
     expect(res.status).toBe(200);
     release();

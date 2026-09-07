@@ -132,9 +132,41 @@ join 串有两个版本：
 
 - **v1**：`base64url(enroll_sk ‖ root_public_key ‖ key_log_head_hash)`，恰好 128 字符。
 - **v2**（hub 为 self-signed HTTPS 时）：`<v1>.<64 位小写 hex>`，hex 是该 hub CA 的 SPKI SHA-256。加入端用它 pin 住 `GET /api/tls/ca.crt` 拉到的 PEM，写入本机 `hub_trust`（按 hub URL 一行）；之后对该 URL 的 hub-client HTTP 与 uplink WebSocket 都带 `tls.ca`。无 fingerprint 的旧串仍可 join，行为与 v1 相同。
-- **CA 轮换**：本地 CA 剩余有效期不足 30 天时 `TlsService` 会生成新 CA 并重签叶子证书，SPKI 指纹随之改变；已加入的 node 里 `hub_trust` 仍是旧 CA，uplink 会握手失败，需在 hub 上重新生成 join 串并让各 node 重新 `hub join`（或通过设置页向导加入）。CA 有效期 10 年，正常部署内不会触发。
+- **CA 轮换**：未过期 CA 不自动轮换；不足 30 天时日志提示剩余天数和手动命令，已过期才允许自动重建。手动轮换及逐节点更新信任见下节。
 
 **`enroll_sk` 不经过 hub。** CA pin 只约束那一台 hub 的 URL，换 hub 要重新 enroll / join。
+
+### CA 指纹与信任恢复
+
+在 Hub 的本机终端执行 `vibeterm hub ca fingerprint`，输出 `SHA256 SPKI <64 位小写 hex>`。这是 CA 公钥指纹，与 v2 join 串一致，不是整张证书的 SHA-256。
+
+计划轮换前须确保每台成员都保留本机终端或独立 SSH 入口。执行：
+
+```bash
+vibeterm hub ca rotate
+```
+
+命令先提示全网断连风险，交互终端须输入完整 `yes`；非交互须加 `--yes`。轮换后重启 Hub，再通过可信渠道把新指纹交给各节点。在各节点执行：
+
+```bash
+vibeterm hub trust refresh https://hub.example --fingerprint <64-hex>
+```
+
+命令先核对 Hub 提供的 CA 指纹，再用该 CA 校验真实 HTTPS 连接及主机名；全部通过才更新该 URL 的 `hub_trust`。之后重启节点。无需更换用户根钥或重新 enroll。校验失败保留旧 pin；不要从未核实的错误页面复制指纹。
+
+已存 pin 与广告指纹不同时保留原信任，`GET /api/mesh/hubs` 的候选响应保留 `lastError: "hub_ca_changed"` 和 `caMismatch: { advertised, pinned }`。尚未收到新广告的离线节点可能只显示 TLS 握手失败，同样按上述命令恢复。
+
+### Hub 地址迁移
+
+在每台节点预置备用种子并重启：
+
+```bash
+vibeterm hub urls list
+vibeterm hub urls add https://new-hub.example
+vibeterm hub urls remove https://old-hub.example
+```
+
+这些命令只维护 `app.env` 的 `VIBETERM_HUB_URLS`，不会删除单值 `VIBETERM_HUB_URL` 或缓存的 `mesh_hubs`。Hub 改 `VIBETERM_HUB_PUBLIC_URL` 前先让新旧地址同时可用；全部成员（含原离线成员）验证能从新地址接入后才下线旧地址。成员一直离线就无法从 `node.list` 学到新地址，须在该机本地添加种子或重新 `hub join`。当前设置 API 没有更新 Hub public URL 的保存入口；安装配置及 `hub standby --public-url` 仍需运维按此顺序迁移。详见 [多 hub 主/备](./multi-hub-standby.md)。
 
 ### 4. 各机加入
 
@@ -215,9 +247,9 @@ hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 
 
 ### 改密
 
-日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；该类型不允许 `x-vibeterm-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
+日常改密走 `rotate-root-keep`（旧根钥签）：更新根公钥、KDF 与 `root_epoch`，**保留** passkey、已启用的 TOTP（随记录按新 epoch / 新 seq 重封装）以及当前入口会话。未使用的 enrollment token 会立即失效，须重新签发。写入前所有未吊销节点须 ≥ 1.1.16，否则 409 `KEYLOG_TYPE_UNSUPPORTED_BY_NODES`；中继模式下，未出现在 `peer_cache` 的未吊销证书也按版本未知阻断。该类型不允许 `x-vibeterm-force-keylog` 绕过，以免旧节点按未知类型丢弃记录、造成状态分裂。
 
-`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`vibeterm hub user passwd <username>` 若仍走 `rotate-root`，语义与此相同。非 TTY：旧密码 `VIBETERM_PASSWORD_OLD`，新密码 `VIBETERM_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
+`rotate-root` 仍是破坏性改密：撤销全部 `node-session`、清空 passkey 与 TOTP，须在各入口重新注册。`vibeterm hub user passwd <username>` 默认保留登录方式，只有 `--full-reset` 执行破坏性改密。全量重置会先警告通行密钥、TOTP、全部会话和中继密封包的影响；TTY 必须输入完整 `yes`，非 TTY 必须加 `--yes`。非 TTY：旧密码 `VIBETERM_PASSWORD_OLD`，新密码 `VIBETERM_PASSWORD`。灾难恢复仍用 `reset-root` / `mesh reset-root`，不要用日常改密代替。
 
 登录体验：输入一次密码（或一次 passkey）生成 18 小时 `delegation`，先登当前入口 `self`，再用 `vibeterm_s_self` 拉 `/api/mesh/nodes`，对在线未登录的 node 并行登录。cookie `vibeterm_s_<nodeId>` / `vibeterm_s_self`：`HttpOnly; SameSite=Lax; Max-Age=64800`（18 h），HTTPS 加 `Secure`。滑动续期 18 小时，绝对上限 7 天。
 
@@ -272,7 +304,7 @@ hub 恢复后无需重新登录（cookie 仍有效）。
 
 ## 灾难恢复
 
-两条都是**本机**命令，不接受远程触发。拥有机器 root = 拥有该点。
+以下恢复操作都是**本机**命令，不接受远程触发。拥有机器 root = 拥有该点。
 
 ### `mesh reset-root`（任意 mesh 机器）
 
@@ -280,9 +312,23 @@ hub 恢复后无需重新登录（cookie 仍有效）。
 vibeterm mesh reset-root
 ```
 
-`VIBETERM_ROLES=standalone` 会拒绝。输入新密码后保留用户名，在本机重建根钥并自签 `admit-node`。用于「密码在失陷入口上泄露、攻击者抢先 `rotate-root`」这类无法依赖旧根钥的场景。
+`VIBETERM_ROLES=standalone` 会拒绝。操作前提示通行密钥、TOTP、会话和中继密封包的破坏性影响；TTY 必须输入完整 `yes`，非 TTY 必须加 `--yes`。输入新密码后保留用户名，在本机重建根钥并自签 `admit-node`。用于「密码在失陷入口上泄露、攻击者抢先 `rotate-root`」这类无法依赖旧根钥的场景。
 
 之后：**每台机器都要再执行一次**；其它机器需重新 `enroll` / `hub join`。hub 侧配合下面的 registry 清空。其它机器本地即使仍留着同名旧用户（uid / 根钥已变），`hub join` 也会原子替换该账号，不必先 `hub leave`。
+
+### 节点私钥丢失
+
+`node_identity` 解密失败时保留 HTTP 与本地登录，`/healthz` 返回 `degraded: "master_key_mismatch"`，mesh 和 Hub 控制面停用。优先从 `backups/app.env.*` 恢复与数据库配套的 `VIBETERM_MASTER_KEY`。无法恢复时，先停止该安装的服务，在本机执行 `vibeterm mesh reset-identity`（非 TTY 加 `--yes`），更换节点身份、撤销本机会话并清除中继连接密钥及节点缓存；账户凭据与日志保留。然后重新加入可信 Hub 或中继并启动服务。TLS 私钥须单独恢复或重新配置；该命令不悄悄轮换 CA。详见 [主密钥排障](./troubleshooting-db-master-key.md)。
+
+### 日志分叉诊断
+
+```bash
+vibeterm mesh keylog status
+```
+
+输出本地 `seq/hash`、本机运行时可见的 Hub／中继日志头与判定：`IN_SYNC`、`BEHIND`、`AHEAD`、`FORK`。不同长度的日志还须核对公共位置的 hash，不能仅按长度断言链一致。网关停止时读取本地数据库，远端无法验证则明确显示 `UNKNOWN` 并退出 1；不把没有远端数据当成同步成功。`FORK` 退出 2，其余已确认状态退出 0。
+
+发现分叉不要重放或强行追加；先确定可信链，在分叉节点执行 `vibeterm mesh reset-root` 后重新加入。改密、成员授权等变更应由一个入口依次完成，避免多个入口同时写控制日志。
 
 ### `hub user reset`（仅 hub 机）
 

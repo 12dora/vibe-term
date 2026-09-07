@@ -30,6 +30,15 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'hub.list': async (p) => await (await hub()).runHubList(p),
   'hub.allow': async (p, n) => await (await hub()).runHubAllow(p, n.rest),
   'hub.disallow': async (p, n) => await (await hub()).runHubDisallow(p, n.rest[0] ?? ''),
+  'hub.trust.refresh': async (p, n) => await (await hub()).runHubTrustRefresh(p, n.rest[0] ?? ''),
+  'hub.ca.fingerprint': async (p) => await (await hub()).runHubCaFingerprint(p),
+  'hub.ca.rotate': async (p) => await (await hub()).runHubCaRotate(p),
+  'hub.urls.list': async (p) => await (await hub()).runHubUrls(p, 'list'),
+  'hub.urls.add': async (p, n) => await (await hub()).runHubUrls(p, 'add', n.rest[0] ?? ''),
+  'hub.urls.remove': async (p, n) => await (await hub()).runHubUrls(p, 'remove', n.rest[0] ?? ''),
+  'mesh.reset-identity': async (p) =>
+    await (await import('./commands/mesh')).runMeshResetIdentity(p),
+  'mesh.keylog.status': async (p) => await (await import('./commands/mesh')).runMeshKeylogStatus(p),
   'mesh.reset-root': async (p) => await (await import('./commands/mesh')).runMeshResetRoot(p),
   'mesh.passkey.remove-all': async (p, n) =>
     await (await import('./commands/mesh')).runMeshPasskeyRemoveAll(p, n.rest[0] ?? ''),
@@ -46,6 +55,7 @@ const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
   'relay.join': async (p) =>
     await (await import('./commands/relay-password-join')).runRelayPasswordJoin(p),
   'relay.reauth': async (p, n) => await (await relay()).runRelayReauth(p, n.rest[0] ?? ''),
+  'relay.pack.upload': async (p) => await (await relay()).runRelayPackUpload(p),
   'relay.resend-token': async (p) => await (await relay()).runRelayResendToken(p),
   'relay.leave': async (p) => await (await relay()).runRelayLeave(p),
   'relay.list': async (p) => await (await relay()).runRelayList(p),

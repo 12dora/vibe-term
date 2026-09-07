@@ -380,6 +380,140 @@ describe('relay admin mutations', () => {
     expect(body.config.minTokenEpoch).toBe(2);
   });
 
+  test('kick-mode password change rejects offline members across tenants unless forced', async () => {
+    const relay = await boot();
+    const first = await relay.createTenant();
+    const live = await first.connect(first.addNode());
+    await live.inbox.takeOf('auth.ok');
+    const second = await relay.createTenant();
+    const offline = await second.connect(second.addNode());
+    await offline.inbox.takeOf('auth.ok');
+    offline.close();
+    const before = relay.runtime.configStore.read();
+    const denied = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'new-password', mode: 'kick' }),
+    });
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toEqual({
+      error: {
+        code: 'relay_members_offline',
+        message: 'relay_members_offline',
+        online: 1,
+        admitted: 2,
+      },
+    });
+    expect(relay.runtime.configStore.read()).toEqual(before);
+    expect(relay.runtime.registry.listTenant(first.id)).toHaveLength(1);
+    const forced = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: 'new-password', mode: 'kick', force: true }),
+    });
+    expect(forced.status).toBe(200);
+    expect(relay.runtime.configStore.read()?.minTokenEpoch).toBe(1);
+    await live.inbox.takeOf('relay.kicked');
+  });
+
+  test('keep-mode password change allows offline admitted members', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const client = await tenant.connect(tenant.addNode());
+    await client.inbox.takeOf('auth.ok');
+    client.close();
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: null, mode: 'keep' }),
+    });
+    expect(res.status).toBe(200);
+    expect(relay.runtime.configStore.read()?.minTokenEpoch).toBe(0);
+  });
+
+  test('tenant kick checks only that tenant and requires force for its offline members', async () => {
+    const relay = await boot();
+    const first = await relay.createTenant();
+    const live = await first.connect(first.addNode());
+    await live.inbox.takeOf('auth.ok');
+    const second = await relay.createTenant();
+    const offline = await second.connect(second.addNode());
+    await offline.inbox.takeOf('auth.ok');
+    offline.close();
+    const denied = await relay.adminFetch(`/api/relay/tenants/${second.id}/kick`, {
+      method: 'POST',
+    });
+    expect(denied.status).toBe(409);
+    expect(await denied.json()).toEqual({
+      error: {
+        code: 'relay_members_offline',
+        message: 'relay_members_offline',
+        online: 0,
+        admitted: 1,
+      },
+    });
+    expect(relay.runtime.tenants.get(second.id)?.kicked).toBe(false);
+    expect(
+      (await relay.adminFetch(`/api/relay/tenants/${first.id}/kick`, { method: 'POST' })).status
+    ).toBe(200);
+    await live.inbox.takeOf('relay.kicked');
+    expect(
+      (
+        await relay.adminFetch(`/api/relay/tenants/${second.id}/kick`, {
+          method: 'POST',
+          body: JSON.stringify({ force: true }),
+        })
+      ).status
+    ).toBe(200);
+    expect(relay.runtime.tenants.get(second.id)?.kicked).toBe(true);
+  });
+
+  test('pending and revoked members do not block a kick', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    await client.inbox.takeOf('auth.ok');
+    const record = relay.runtime.tenants.getNode(tenant.id, node.nodeId);
+    if (!record) throw new Error('missing fixture member');
+    relay.runtime.tenants.upsertNode({
+      ...record,
+      nodeId: 'a'.repeat(32),
+      status: 'pending',
+      now: relay.now(),
+    });
+    relay.runtime.tenants.upsertNode({
+      ...record,
+      nodeId: 'b'.repeat(32),
+      status: 'revoked',
+      now: relay.now(),
+    });
+    const res = await relay.adminFetch('/api/relay/password', {
+      method: 'POST',
+      body: JSON.stringify({ password: null, mode: 'kick' }),
+    });
+    expect(res.status).toBe(200);
+  });
+
+  test('force must be a boolean for password changes and tenant kicks', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    expect(
+      (
+        await relay.adminFetch('/api/relay/password', {
+          method: 'POST',
+          body: JSON.stringify({ password: null, mode: 'kick', force: 'true' }),
+        })
+      ).status
+    ).toBe(400);
+    expect(
+      (
+        await relay.adminFetch(`/api/relay/tenants/${tenant.id}/kick`, {
+          method: 'POST',
+          body: JSON.stringify({ force: 'true' }),
+        })
+      ).status
+    ).toBe(400);
+    expect(relay.runtime.tenants.get(tenant.id)?.kicked).toBe(false);
+  });
+
   test('rejects a password shorter than 8 characters when non-empty', async () => {
     const relay = await boot();
     const res = await relay.adminFetch('/api/relay/password', {

@@ -167,7 +167,9 @@ export class RelayRoutes {
       nodesViaRelay: client?.nodesViaRelay ?? 0,
       reauthRequired: rows.some((row) => row.kicked),
       // 令牌换代：本节点无从自救，只能等持根钥的一方把新令牌经 `set-relays` 发下来
-      awaitingToken: rows.some((row) => row.kicked && row.kickedReason === 'password_rotated'),
+      awaitingToken:
+        client?.awaitingToken === true ||
+        rows.some((row) => row.kicked && row.kickedReason === 'password_rotated'),
       readmitPending,
       quota: client?.quota ?? null,
       // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
@@ -225,6 +227,10 @@ export class RelayRoutes {
       now: this.now(),
     });
     if (!verified.ok) return jsonError('BAD_PROOF', 400, { reason: verified.error });
+    const readmitRequired = (await this.readmitPrepareFor(userId)).entries.length;
+    if (readmitRequired > 0) {
+      return jsonError('readmit_required', 409, { count: readmitRequired });
+    }
     const password = typeof body?.password === 'string' ? body.password : undefined;
     // 本机已持有的那份令牌：与中继当前令牌一致时中继不再换发，成员节点因此不掉线
     const stored = await this.deps.secrets.store.getRelay(url).catch(() => null);
@@ -316,7 +322,12 @@ export class RelayRoutes {
       nodes,
     });
     const prepared = this.stash(payload, { logKey, metaKey: meta.key, epoch: meta.epoch });
-    return jsonBody({ metaEpoch: meta.epoch, nodes: nodes.length, ...prepared });
+    return jsonBody({
+      metaEpoch: meta.epoch,
+      nodes: nodes.length,
+      requireRelayAck: true,
+      ...prepared,
+    });
   }
 
   /**

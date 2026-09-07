@@ -805,7 +805,7 @@ describe('mesh-routes', () => {
     }
   });
 
-  test('GET /api/mesh/hubs candidates include lastError and lastAttemptAt', async () => {
+  test('GET /api/mesh/hubs candidates serialize CA mismatch alongside diagnostics and preserve older candidates', async () => {
     const mesh = await bootMesh();
     try {
       const routes = mesh.runtime.mesh as unknown as {
@@ -819,6 +819,12 @@ describe('mesh-routes', () => {
           rttMs: 17,
           rttAt: 99,
         },
+        {
+          publicUrl: 'https://rotated.example',
+          lastError: 'hub_ca_changed',
+          caMismatch: { advertised: 'a'.repeat(64), pinned: 'b'.repeat(64) },
+        },
+        'https://seed.example',
       ];
       const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
       const res = await call(mesh.runtime, 'http://localhost/api/mesh/hubs', {
@@ -828,6 +834,7 @@ describe('mesh-routes', () => {
       const body = (await res.json()) as {
         candidates: Array<{
           publicUrl: string;
+          caMismatch?: { advertised: string; pinned: string };
           lastError: string | null;
           lastAttemptAt: number | null;
           rttMs: number | null;
@@ -841,6 +848,21 @@ describe('mesh-routes', () => {
           lastAttemptAt: 42,
           rttMs: 17,
           rttAt: 99,
+        },
+        {
+          publicUrl: 'https://rotated.example',
+          lastError: 'hub_ca_changed',
+          caMismatch: { advertised: 'a'.repeat(64), pinned: 'b'.repeat(64) },
+          lastAttemptAt: null,
+          rttMs: null,
+          rttAt: null,
+        },
+        {
+          publicUrl: 'https://seed.example',
+          lastError: null,
+          lastAttemptAt: null,
+          rttMs: null,
+          rttAt: null,
         },
       ]);
     } finally {

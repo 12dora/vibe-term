@@ -73,7 +73,11 @@ import {
 import { HUB_CA_FETCH_TIMEOUT_MS, probeHubJoinUrl } from './hub-join-probe';
 import { publishHubJoinAdmitForCli, resolveJoinTotpCode } from './hub-join-totp';
 import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
+import { type HubListRow, formatHubList, log, nowMs } from './hub-output';
 import { withAuth } from './with-auth';
+
+export type { HubListRow } from './hub-output';
+export { runHubUrls, runHubCaFingerprint, runHubCaRotate } from './hub-maintenance';
 
 export type HubIo = {
   enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
@@ -93,22 +97,10 @@ export type HubIo = {
   totpCode?: string;
   serviceManager?: ServiceManagerKind;
   confirm?: () => boolean | Promise<boolean>;
+  isTTY?: boolean;
+  readConfirmation?: () => Promise<string>;
   /** r3 加入时每个中继请求的超时（毫秒）；只在测试里下调。 */
   relayTimeoutMs?: number;
-};
-
-export type HubListRow = {
-  hubNodeId: string;
-  name: string | null;
-  mode: 'active' | 'standby';
-  priority: number;
-  writerEpoch: number;
-  publicUrl: string;
-  online: boolean;
-  lastSeenAt: number | null;
-  writer: boolean;
-  authorized: boolean;
-  authorization: 'signed' | 'env' | 'self' | 'no';
 };
 
 export const HUB_SIGNED_AUTH_PRECEDENCE_NOTE =
@@ -278,14 +270,6 @@ async function fetchPinnedHubCa(
     throw new JoinError('join_failed', 'ca_fingerprint_mismatch');
   }
   return parsed.canonicalPem;
-}
-
-function log(io: HubIo | undefined, message: string): void {
-  (io?.log ?? console.log)(message);
-}
-
-function nowMs(io?: HubIo): number {
-  return io?.now?.() ?? Date.now();
 }
 
 async function writeRolesAndHubUrl(envPath: string, roles: string, hubUrl: string): Promise<void> {
@@ -1055,42 +1039,6 @@ function maxMeshHubWriterEpoch(ctx: LocalAuthContext): number | null {
   }
 }
 
-function pad(value: string, width: number): string {
-  if (value.length >= width) return value;
-  return value + ' '.repeat(width - value.length);
-}
-
-function formatLastSeen(value: number | null): string {
-  if (value == null || !Number.isFinite(value) || value <= 0) return '-';
-  try {
-    return new Date(value).toISOString();
-  } catch {
-    return '-';
-  }
-}
-
-function formatHubList(rows: HubListRow[]): string[] {
-  const lines = [t('hub.list.header')];
-  for (const row of rows) {
-    const short = row.hubNodeId.slice(0, 8);
-    const mark = row.writer ? '*' : ' ';
-    lines.push(
-      [
-        `${mark}${pad(short, 10)}`,
-        pad(row.name ?? '-', 15),
-        pad(row.mode, 8),
-        pad(String(row.priority), 4),
-        pad(String(row.writerEpoch), 6),
-        pad(row.authorization, 6),
-        pad(row.online ? 'yes' : 'no', 7),
-        pad(formatLastSeen(row.lastSeenAt), 21),
-        row.publicUrl,
-      ].join(' ')
-    );
-  }
-  return lines;
-}
-
 async function confirmPromote(parsed: ParsedArgs, io: HubIo | undefined): Promise<void> {
   if (parsed.flags.yes === true) return;
   if (io?.confirm) {
@@ -1311,3 +1259,33 @@ export async function runHubDisallow(
 }
 
 export { nodes, enrollmentTokens };
+
+export async function runHubTrustRefresh(
+  parsed: ParsedArgs,
+  rawUrl: string,
+  io: HubIo = {}
+): Promise<{ hubUrl: string; fingerprint: string }> {
+  const hubUrl = canonicalHubUrl(assertHubJoinUrl(rawUrl).href);
+  const fingerprint = (asString(parsed.flags.fingerprint) ?? '').trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(fingerprint)) {
+    throw new Error(
+      '--fingerprint requires the 64-hex SHA-256 SPKI fingerprint from vibeterm hub ca fingerprint'
+    );
+  }
+  const fetcher = io.fetcher ?? fetch;
+  const caPem = await fetchPinnedHubCa(hubUrl, fingerprint, fetcher);
+  const verified = await pinHubCa(fetcher, caPem)(`${hubUrl}/api/tls/ca.crt`, {
+    redirect: 'error',
+    signal: AbortSignal.timeout(HUB_CA_FETCH_TIMEOUT_MS),
+  });
+  if (!verified.ok)
+    throw new Error(`live certificate verification failed: HTTP ${verified.status}`);
+  const liveCa = await parseAndValidateCaPem(await readBoundedResponseText(verified));
+  if (liveCa.fingerprint !== fingerprint) throw new Error('ca_fingerprint_mismatch');
+  return await withAuth(parsed, io, async (ctx) => {
+    new HubTrustStore(ctx.db).put({ hubUrl, caPem, fingerprint, createdAt: nowMs(io) });
+    log(io, `hub CA pinned: ${hubUrl} SHA256 SPKI ${fingerprint}`);
+    log(io, t('hub.trust.restartHint'));
+    return { hubUrl, fingerprint };
+  });
+}

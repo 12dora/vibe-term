@@ -84,9 +84,30 @@ export function handleRelayMetrics(deps: RelayAdminDeps, req: Request): Response
   return relayJson(rest);
 }
 
+function offlineMembersGuard(
+  deps: RelayAdminDeps,
+  tenantIds: string[],
+  force: unknown
+): Response | null {
+  if (force === true) return null;
+  let online = 0;
+  let admitted = 0;
+  for (const tenantId of tenantIds) {
+    const members = deps.tenants.listNodes(tenantId).filter((node) => node.status === 'admitted');
+    admitted += members.length;
+    online += members.filter((node) => deps.registry.get(tenantId, node.nodeId)).length;
+  }
+  return online < admitted
+    ? relayError(RelayErrorCode.membersOffline, 409, { online, admitted })
+    : null;
+}
+
 export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): Promise<Response> {
   const body = await readJsonObjectBody(req);
   if (!body) return relayError(RelayErrorCode.invalidBody, 400);
+  if ('force' in body && typeof body.force !== 'boolean') {
+    return relayError(RelayErrorCode.invalidBody, 400);
+  }
   const mode = body.mode;
   if (mode !== 'kick' && mode !== 'keep') return relayError(RelayErrorCode.invalidBody, 400);
   const password = body.password;
@@ -97,6 +118,14 @@ export async function handleRelayPassword(deps: RelayAdminDeps, req: Request): P
     return relayError(RelayErrorCode.invalidBody, 400);
   }
   const passwordHash = password === null ? null : await hashRelayPassword(password);
+  if (mode === 'kick') {
+    const blocked = offlineMembersGuard(
+      deps,
+      deps.tenants.list().map((tenant) => tenant.id),
+      body.force
+    );
+    if (blocked) return blocked;
+  }
   const next = deps.configStore.rotatePassword({
     passwordHash,
     kick: mode === 'kick',
@@ -167,8 +196,18 @@ export async function handleRelayTenantPatch(
   return relayJson({ ok: true });
 }
 
-export function handleRelayTenantKick(deps: RelayAdminDeps, tenantId: string): Response {
+export async function handleRelayTenantKick(
+  deps: RelayAdminDeps,
+  req: Request,
+  tenantId: string
+): Promise<Response> {
   if (!deps.tenants.get(tenantId)) return relayError(RelayErrorCode.tenantNotFound, 404);
+  const body = req.body === null ? {} : await readJsonObjectBody(req);
+  if (!body || ('force' in body && typeof body.force !== 'boolean')) {
+    return relayError(RelayErrorCode.invalidBody, 400);
+  }
+  const blocked = offlineMembersGuard(deps, [tenantId], body.force);
+  if (blocked) return blocked;
   deps.tenants.setKicked(tenantId, true);
   deps.uplink.kickTenant(tenantId, 'kicked');
   return relayJson({ ok: true });

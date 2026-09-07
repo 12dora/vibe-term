@@ -89,6 +89,23 @@ describe('relay ctl 编解码', () => {
     }
   });
 
+  it('auth.ok 的 token_rotated 可选，兼容旧中继并保留两种令牌状态', () => {
+    const legacy: RelayCtlMessage = {
+      t: 'auth.ok',
+      tenant_id: TENANT,
+      key_log_head_seq: 12,
+      rtc: RTC,
+    };
+    expect(decodeRelayCtl(encodeRelayCtl(legacy))).toEqual(legacy);
+    for (const token_rotated of [false, true]) {
+      const msg = { ...legacy, token_rotated };
+      expect(decodeRelayCtl(encodeRelayCtl(msg))).toEqual(msg);
+    }
+    expect(() => decodeRelayCtl(JSON.stringify({ ...legacy, token_rotated: 'true' }))).toThrow(
+      RelayCtlError
+    );
+  });
+
   it('接受字符串输入并丢弃未知字段', () => {
     const wire = JSON.stringify({ t: 'ping', extra: 'x' });
     expect(decodeRelayCtl(wire)).toEqual({ t: 'ping' });

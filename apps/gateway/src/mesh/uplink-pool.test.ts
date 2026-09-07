@@ -1802,6 +1802,123 @@ describe('UplinkPool', () => {
     }
   });
 
+  test('restores a CA mismatch from stored candidate metadata before any connection', () => {
+    const advertised = 'cd'.repeat(32);
+    const pinned = 'ab'.repeat(32);
+    const { pool, hubTrust } = boot({
+      urls: ['https://b.example'],
+      candidates: () => [
+        {
+          hubNodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'active',
+          writerEpoch: 1,
+          priority: 10,
+          caFingerprint: advertised,
+        },
+      ],
+    });
+    hubTrust.put({ hubUrl: 'https://b.example', caPem: 'old-ca', fingerprint: pinned });
+    expect(pool.candidates()[0]?.caMismatch).toEqual({ advertised, pinned });
+    expect(pool.candidates()[0]?.lastError).toBe('hub_ca_changed');
+    pool.noteFailure({ publicUrl: 'https://b.example' }, 'hub_ca_changed');
+    hubTrust.put({ hubUrl: 'https://b.example', caPem: 'new-ca', fingerprint: advertised });
+    expect(pool.candidates()[0]?.caMismatch).toBeUndefined();
+    expect(pool.candidates()[0]?.lastError).toBeNull();
+  });
+
+  test('keeps an existing pin and exposes a persistent CA mismatch until locally refreshed', async () => {
+    const pinned = 'ab'.repeat(32);
+    const advertised = 'cd'.repeat(32);
+    let fetches = 0;
+    const { pool, created, hubTrust } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      fetchCaPem: async () => {
+        fetches += 1;
+        return 'new-ca';
+      },
+      fingerprintPem: () => advertised,
+    });
+    hubTrust.put({ hubUrl: 'https://b.example', caPem: 'old-ca', fingerprint: pinned });
+    pool.start();
+    await waitMicro();
+    created[0]?.emitStaleList({
+      t: 'node.list',
+      version: 2,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hubs: [
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example/',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          caFingerprint: advertised.toUpperCase(),
+        },
+      ],
+    });
+    await waitMicro();
+    expect(fetches).toBe(0);
+    expect(hubTrust.get('https://b.example')?.caPem).toBe('old-ca');
+    const candidate = pool.candidates().find((row) => row.publicUrl === 'https://b.example');
+    expect(candidate?.caMismatch).toEqual({ advertised, pinned });
+    expect(candidate?.lastError).toBe('hub_ca_changed');
+    pool.noteFailure({ publicUrl: 'https://b.example' }, 'certificate failed');
+    expect(pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.lastError).toBe(
+      'hub_ca_changed'
+    );
+    hubTrust.put({ hubUrl: 'https://b.example', caPem: 'new-ca', fingerprint: advertised });
+    expect(
+      pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.caMismatch
+    ).toBeUndefined();
+    expect(
+      pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.lastError
+    ).not.toBe('hub_ca_changed');
+  });
+
+  test('a pin written during CA bootstrap is never overwritten by the advertisement', async () => {
+    const pinned = 'ab'.repeat(32);
+    const advertised = 'cd'.repeat(32);
+    let finish!: (pem: string) => void;
+    const { pool, created, hubTrust } = boot({
+      urls: ['https://a.example', 'https://b.example'],
+      fetchCaPem: () =>
+        new Promise<string>((resolve) => {
+          finish = resolve;
+        }),
+      fingerprintPem: () => advertised,
+    });
+    pool.start();
+    await waitMicro();
+    created[0]?.emitStaleList({
+      t: 'node.list',
+      version: 2,
+      key_log_head: { seq: 0n, hash: new Uint8Array(32) },
+      rtc: { stun: [], turn: null },
+      nodes: [],
+      hubs: [
+        {
+          nodeId: ID.c,
+          publicUrl: 'https://b.example',
+          mode: 'standby',
+          priority: 20,
+          writerEpoch: 1,
+          caFingerprint: advertised,
+        },
+      ],
+    });
+    await waitMicro();
+    hubTrust.put({ hubUrl: 'https://b.example', caPem: 'operator-ca', fingerprint: pinned });
+    finish('advertised-ca');
+    await waitMicro();
+    expect(hubTrust.get('https://b.example')?.caPem).toBe('operator-ca');
+    expect(
+      pool.candidates().find((row) => row.publicUrl === 'https://b.example')?.caMismatch
+    ).toEqual({ advertised, pinned });
+  });
+
   test('logs CA pin stored and bootstrap failures', async () => {
     const lines: string[] = [];
     const originalInfo = console.info;

@@ -146,14 +146,14 @@ export function definesUplink(bytes: Uint8Array): boolean {
 }
 
 export type KeyLogAppendPlan = {
-  /** 本地日志权威：先落账再尽力推给上级，不等上级确认。 */
+  /** 本地日志权威：先落账再推给上级，上级确认不影响本地提交。 */
   localFirst: boolean;
   /** 是否把记录发给当前上级（迁移中的 set-relays 不能回灌旧 hub）。 */
   publish: boolean;
 };
 
 /**
- * 中继模式下本地成员表/密钥日志是权威，中继注册表只是可重建缓存，因此 `hub=sync` 永远不等中继确认。
+ * 中继模式下本地成员表/密钥日志是权威，先本地提交，再通过 relayAck 单独报告中继确认。
  * hub 模式只有 `set-relays` / `meta-key` 走本地优先。`readmit-node` 与 `admit-node` 一样：
  * 任意模式都 publish；hub 模式走 writer（`localFirst: false`）。
  */
@@ -220,7 +220,8 @@ export class AuthKeyLogRoutes {
     userId: string,
     record: { bytes: Uint8Array; sig: Uint8Array; force: boolean }
   ): Promise<Response> {
-    const plan = planKeyLogAppend({ relayMode: this.inRelayMode(userId), bytes: record.bytes });
+    const relayMode = this.inRelayMode(userId);
+    const plan = planKeyLogAppend({ relayMode, bytes: record.bytes });
     if (!plan.localFirst) {
       const blocked = this.refuseIfAttachedNotWriter();
       if (blocked) return blocked;
@@ -231,22 +232,39 @@ export class AuthKeyLogRoutes {
     if (hubSync && !plan.localFirst) {
       return this.handleKeyLogHubSync(userId, record.bytes, record.sig, record.force);
     }
-    return this.applyKeyLogLocally(userId, record, { hubSync, plan });
+    return this.applyKeyLogLocally(userId, record, { hubSync, plan, relayMode });
   }
 
   /** 本地先落账（验签/链校验照旧），再尽力把记录推给上级；上级不可达不算失败。 */
   private async applyKeyLogLocally(
     userId: string,
     record: { bytes: Uint8Array; sig: Uint8Array },
-    opts: { hubSync: boolean; plan: KeyLogAppendPlan }
+    opts: { hubSync: boolean; plan: KeyLogAppendPlan; relayMode: boolean }
   ): Promise<Response> {
     const { bytes, sig } = record;
-    const done = (seq: number | bigint, hash: Uint8Array): Response =>
-      this.keyLogSuccess(seq, hash, {
+    const done = async (seq: number | bigint, hash: Uint8Array): Promise<Response> => {
+      const relayMode = opts.relayMode || this.inRelayMode(userId);
+      let relayDelivery: { relayAck: boolean; relayError?: string } | undefined;
+      if (opts.plan.publish && (!relayMode || !this.deps.publisher.publishAndAck)) {
+        try {
+          await this.deps.publisher.publish(record);
+        } catch {
+          // 本地提交不依赖上级可达。
+        }
+      }
+      if (relayMode) {
+        const ack = opts.plan.publish
+          ? await this.safePublishAndAck(record)
+          : { ok: false as const, error: 'not_published' };
+        relayDelivery = ack.ok ? { relayAck: true } : { relayAck: false, relayError: ack.error };
+      }
+      return this.keyLogSuccess(seq, hash, {
         hubSync: opts.hubSync,
         hubAck: opts.hubSync,
         localApply: opts.plan.localFirst,
+        ...relayDelivery,
       });
+    };
     const applied = await this.deps.keyLogService.apply(userId, { bytes, sig });
     if (!applied.ok) {
       const replayed = this.identicalAppliedRecord(userId, bytes, sig);
@@ -260,13 +278,6 @@ export class AuthKeyLogRoutes {
       return jsonError(applied.error, 400);
     }
     this.deps.onKeyLogEffects?.(userId, applied.effects);
-    if (opts.plan.publish) {
-      try {
-        await this.deps.publisher.publish({ bytes, sig });
-      } catch {
-        // local apply is authoritative; uplink fan-out is best-effort
-      }
-    }
     return done(applied.seq, applied.hash);
   }
 
@@ -476,16 +487,29 @@ export class AuthKeyLogRoutes {
   private keyLogSuccess(
     seq: number | bigint,
     hash: Uint8Array,
-    opts: { hubSync: boolean; hubAck?: boolean; hubError?: string; localApply?: boolean }
+    opts: {
+      hubSync: boolean;
+      hubAck?: boolean;
+      hubError?: string;
+      localApply?: boolean;
+      relayAck?: boolean;
+      relayError?: string;
+    }
   ): Response {
     this.host.invalidateAuthModeCache();
-    const base = { ok: true, seq, hash: encodeBase64url(hash) };
+    const base = {
+      ok: true,
+      seq,
+      hash: encodeBase64url(hash),
+      ...(opts.relayAck !== undefined ? { relayAck: opts.relayAck } : {}),
+      ...(opts.relayError ? { relayError: opts.relayError } : {}),
+    };
     if (!opts.hubSync) return jsonBody(base);
     return jsonBody({
       ...base,
       hubAck: opts.hubAck === true,
       ...(opts.hubError ? { hubError: opts.hubError } : {}),
-      // 中继模式（或换上级的记录）不等上级确认：本地日志即权威，随后由密钥日志同步补推
+      // 本地日志即权威；relayAck 单独表示中继确认，未确认记录由同步补推
       ...(opts.localApply ? { localApply: true } : {}),
     });
   }

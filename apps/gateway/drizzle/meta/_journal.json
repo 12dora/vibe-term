@@ -386,6 +386,13 @@
       "when": 1790162400000,
       "tag": "0054_relay_prev_token",
       "breakpoints": true
+    },
+    {
+      "idx": 55,
+      "version": "6",
+      "when": 1790248800000,
+      "tag": "0055_relay_token_ring",
+      "breakpoints": true
     }
   ]
 }

@@ -1,6 +1,7 @@
 import { decodeBase64url, encodeBase64url } from '../../../shared/src/auth';
 import { normalizeRelayUrl, signRelayEnrollProof } from '../../../shared/src/relay';
 import { t } from '../i18n';
+import { errorMessage } from '../lib/error-message';
 import { requireProbedAddress } from '../lib/probe-address';
 import { promptPassword } from '../lib/prompt';
 import { uploadRelayPackFromLocal } from '../lib/relay-pack-upload';
@@ -226,19 +227,57 @@ async function runRelayEnrollInternal(
         current.mode === 'relay' &&
         current.relays.some((item) => item.url === relayUrl && item.online)
     );
+    await uploadRequiredRelayPack(parsed, session, io);
     reportRelayStatus(io, relayUrl, status);
-    await uploadRelayPackFromLocal({
-      ctx,
-      rootKey: session.rootKey,
-      userId: session.userId,
-      fetcher: io.fetcher,
-    }).catch(() => false);
     const row = status.relays.find((item) => item.url === relayUrl);
     return {
       tenantId: exchange.tenantId || (status.tenantId ?? ''),
       relayUrl,
       online: Boolean(row?.online),
     };
+  });
+}
+
+function relayPackRetryCommand(parsed: ParsedArgs): string {
+  let command = 'vibeterm relay pack upload';
+  for (const flag of ['install-dir', 'service-name']) {
+    const value = asString(parsed.flags[flag]);
+    if (value) command += ` --${flag} '${value.replaceAll("'", "'\\''")}'`;
+  }
+  return command;
+}
+
+async function uploadRequiredRelayPack(
+  parsed: ParsedArgs,
+  session: RelayTenantSession,
+  io: RelayIo
+): Promise<void> {
+  try {
+    const uploaded = await uploadRelayPackFromLocal({
+      ctx: session.ctx,
+      rootKey: session.rootKey,
+      userId: session.userId,
+      fetcher: io.fetcher,
+    });
+    if (!uploaded) throw new Error(t('relay.pack.materialMissing'));
+  } catch (error) {
+    throw new Error(
+      t('relay.pack.failed', {
+        reason: (error instanceof RelayApiError
+          ? `${error.code} (HTTP ${error.status})`
+          : errorMessage(error)
+        ).replaceAll(/[\r\n]+/g, ' '),
+        command: relayPackRetryCommand(parsed),
+      })
+    );
+  }
+}
+
+export async function runRelayPackUpload(parsed: ParsedArgs, io: RelayIo = {}): Promise<void> {
+  await withAuth(parsed, io, async (ctx) => {
+    const session = await openRelayTenantSession(parsed, ctx, io);
+    await uploadRequiredRelayPack(parsed, session, io);
+    relayLog(io, t('relay.pack.done'));
   });
 }
 
@@ -276,11 +315,18 @@ export async function runRelayResendToken(
         label: 'relay resend-token',
       });
     const prepared = await prepare();
-    await signAndSubmitRelayRecord(session, {
+    const appended = await signAndSubmitRelayRecord(session, {
       type: 'set-relays',
       payload: setRelaysPayload(prepared),
       rebuild: async () => setRelaysPayload(await prepare()),
     });
+    if (appended.relayAck !== true) {
+      throw new Error(
+        t('relay.resendToken.failed', {
+          reason: appended.relayError ?? t('relay.resendToken.unconfirmed'),
+        })
+      );
+    }
     const nodes = asNumber(prepared.nodes);
     relayLog(io, t('relay.resendToken.done', { count: nodes }));
     return { nodes };

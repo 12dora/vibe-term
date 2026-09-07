@@ -78,11 +78,18 @@ export class TelegramService {
         continue;
       }
 
-      const token = await decryptWithContext(config.tokenEnc, {
-        scope: 'telegram_bot',
-        entityId: config.id,
-        field: 'token_enc',
-      });
+      let token: string;
+      try {
+        token = await decryptWithContext(config.tokenEnc, {
+          scope: 'telegram_bot',
+          entityId: config.id,
+          field: 'token_enc',
+        });
+      } catch (error) {
+        await this.stopBot(config.id);
+        console.error(`[telegram] failed to decrypt token for ${config.id}:`, error);
+        continue;
+      }
       const running = this.runningBots.get(config.id);
       if (running && running.token === token) {
         continue;

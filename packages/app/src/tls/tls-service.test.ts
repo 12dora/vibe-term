@@ -10,7 +10,7 @@ import { type AcmeIssuedMaterial, acmeDirectoryUrl } from './acme-service';
 import { createCa, spkiFingerprint } from './cert-authority';
 import { TlsApiError } from './errors';
 import type { HttpsListenerConfig, HttpsListenerState } from './https-listener';
-import { type TlsListener, TlsService } from './tls-service';
+import { type TlsListener, TlsService, rotateSelfSignedCa } from './tls-service';
 
 class FakeListener implements TlsListener {
   failNext = false;
@@ -72,6 +72,7 @@ async function setup(overrides?: {
   issueAcme?: (input: unknown) => Promise<AcmeIssuedMaterial>;
   now?: () => number;
   onStatusChange?: () => void;
+  log?: (message: string) => void;
 }) {
   const { db, close } = createMigratedAuthDb();
   const dir = await mkdtemp(join(tmpdir(), 'vibeterm-tls-'));
@@ -92,6 +93,7 @@ async function setup(overrides?: {
     issueAcme: overrides?.issueAcme ?? (async () => dummyMaterial()),
     now: overrides?.now,
     onStatusChange: overrides?.onStatusChange,
+    log: overrides?.log,
   });
   return {
     service,
@@ -583,8 +585,9 @@ describe('TlsService', () => {
     second.stop();
   });
 
-  test('rotates the CA when remaining validity is below 30 days', async () => {
-    const ctx = await setup();
+  test('preserves an unexpired CA near expiry and prints the manual recovery commands', async () => {
+    const logs: string[] = [];
+    const ctx = await setup({ log: (line) => logs.push(line) });
     cleanups.push(ctx.close);
     const shortLived = await createCa({ name: 'expiring CA', days: 10 });
     const oldFingerprint = await spkiFingerprint(shortLived.certPem);
@@ -599,7 +602,55 @@ describe('TlsService', () => {
       bindHost: '127.0.0.1',
     });
     expect(status.caFingerprint).toMatch(/^[0-9a-f]{64}$/);
-    expect(status.caFingerprint).not.toBe(oldFingerprint);
+    expect(status.caFingerprint).toBe(oldFingerprint);
+    expect(logs.join(' ')).toContain('expires in 10 days');
+    expect(logs.join(' ')).toContain('vibeterm hub ca rotate');
+    expect(logs.join(' ')).toContain('vibeterm hub trust refresh');
+  });
+
+  test('automatically replaces an already expired CA', async () => {
+    const now = Date.now();
+    const ctx = await setup({ now: () => now });
+    cleanups.push(ctx.close);
+    const expired = await createCa({ name: 'expired CA', days: 1, now: now - 2 * 86_400_000 });
+    await ctx.store.upsert({ caCertPem: expired.certPem, caKeyPem: expired.keyPem });
+    const status = await ctx.service.applyMode({
+      mode: 'selfsigned',
+      sans: ['localhost'],
+      tlsPort: 9443,
+      bindHost: '127.0.0.1',
+    });
+    expect(status.caFingerprint).not.toBe(await spkiFingerprint(expired.certPem));
+    expect(status.listener.running).toBe(true);
+  });
+
+  test('explicit CA rotation replaces the CA and leaf together while preserving listener settings', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const before = await ctx.service.applyMode({
+      mode: 'selfsigned',
+      sans: ['localhost'],
+      tlsPort: 9443,
+      bindHost: '127.0.0.1',
+    });
+    const oldRow = await ctx.store.get();
+    const rotated = await rotateSelfSignedCa(ctx.store);
+    const row = await ctx.store.get();
+    expect(rotated.fingerprint).not.toBe(before.caFingerprint);
+    expect(rotated.fingerprint).toBe(await spkiFingerprint(row.caCertPem ?? ''));
+    expect(row.certPem).not.toBe(oldRow.certPem);
+    expect(row.certPem).toContain(row.caCertPem?.trim() ?? '');
+    expect(row.sans).toEqual(['localhost']);
+    expect(row.tlsPort).toBe(9443);
+    expect(row.bindHost).toBe('127.0.0.1');
+  });
+
+  test('explicit CA rotation refuses non-selfsigned mode without changing material', async () => {
+    const ctx = await setup();
+    cleanups.push(ctx.close);
+    const before = await ctx.store.get();
+    await expect(rotateSelfSignedCa(ctx.store)).rejects.toThrow('TLS mode must be selfsigned');
+    expect(await ctx.store.get()).toEqual(before);
   });
 
   test('status reuses the projection within TTL', async () => {

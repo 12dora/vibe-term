@@ -41,6 +41,7 @@ export type RelayUplinkCtlHost = {
   rtcConfig: RelayRtcConfig;
   quota: RelayQuota | null;
   kickedReason: RelayKickReason | null;
+  awaitingToken: boolean;
   listVersion: number;
   nodesViaRelay: number;
   lastStatusJson: string;
@@ -139,6 +140,7 @@ export function acceptRelayAuthOk(
   host.tenantId = msg.tenant_id;
   host.rtcConfig = msg.rtc;
   host.kickedReason = null;
+  host.awaitingToken = msg.token_rotated === true;
   host.markUnkicked();
   host.authWaiter?.resolve();
   host.keyLog.noteRemoteHead(relaySeqFromWire(msg.key_log_head_seq));

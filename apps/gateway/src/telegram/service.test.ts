@@ -16,6 +16,43 @@ beforeAll(() => {
 });
 
 describe('TelegramService.handleIncomingText', () => {
+  test('unreadable enabled tokens do not reject refresh or start bots', async () => {
+    const ids = [crypto.randomUUID(), crypto.randomUUID()];
+    const now = new Date().toISOString();
+    for (const id of ids) {
+      createTelegramBot({
+        id,
+        name: id,
+        tokenEnc: 'unreadable',
+        enabled: true,
+        allowAuthRequests: false,
+        allowCommands: false,
+        lastUpdateId: null,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+    const errors: string[] = [];
+    const originalError = console.error;
+    console.error = (...args) => {
+      errors.push(args.map(String).join(' '));
+    };
+    const service = new TelegramService();
+    try {
+      await service.refresh();
+      for (const id of ids) {
+        expect(
+          errors.some((message) => message.includes(`failed to decrypt token for ${id}`))
+        ).toBe(true);
+        await expect(service.sendTestMessage(id, 'chat', 'test')).rejects.toThrow();
+      }
+    } finally {
+      console.error = originalError;
+      await service.stopAll();
+      for (const id of ids) updateTelegramBot(id, { enabled: false });
+    }
+  });
+
   test('/start records from.id and keeps binding replies', async () => {
     const botId = crypto.randomUUID();
     const now = new Date().toISOString();

@@ -28,6 +28,7 @@ import type { RelayDialContext } from './relay-dial';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
 import { RelayRoutes, type RelayUplinkView } from './relay-routes';
 import { RelaySecrets } from './relay-secrets';
+import { RelayUplinkClient } from './relay-uplink-client';
 import { waitUntil } from './test-support';
 
 const RELAY_URL = 'https://relay.example';
@@ -186,6 +187,42 @@ describe('RelayRoutes', () => {
     }
   });
 
+  test('status 在线旧令牌成员等待换代，不标记重新认证', async () => {
+    const client = Object.assign(Object.create(RelayUplinkClient.prototype), {
+      state: 'online',
+      awaitingToken: true,
+      nodesViaRelay: 1,
+      quota: null,
+      heartbeat: { rttMs: null },
+      keyLog: { skipped: 0, blockedSeq: null, caughtUp: true },
+    }) as RelayUplinkClient;
+    const b = await boot({
+      uplink: {
+        liveClient: () => client,
+        attachedHub: () => ({
+          hubNodeId: null,
+          publicUrl: canonicalHubUrl(RELAY_URL),
+          mode: 'active',
+          writerEpoch: 0,
+          since: 1,
+        }),
+      },
+    });
+    try {
+      await configureRelay(b);
+      const current = async () => (await b.call('/api/mesh/relay/status')).json();
+      expect(await current()).toMatchObject({
+        awaitingToken: true,
+        reauthRequired: false,
+        relays: [{ online: true, kicked: false, kickedReason: null }],
+      });
+      client.awaitingToken = false;
+      expect(await current()).toMatchObject({ awaitingToken: false, reauthRequired: false });
+    } finally {
+      b.close();
+    }
+  });
+
   test('status 未挂上的中继行暴露 candidate lastError', async () => {
     const url = canonicalHubUrl(RELAY_URL);
     const url2 = canonicalHubUrl(RELAY_URL_2);
@@ -262,7 +299,7 @@ describe('RelayRoutes', () => {
     }
   });
 
-  test('readmit/prepare lists stale certs and enroll reports readmitRequired', async () => {
+  test('readmit/prepare lists stale certs and enroll refuses before contacting the relay', async () => {
     const calls: Array<{ url: string; body: Record<string, unknown> }> = [];
     const fetchImpl = (async (input: RequestInfo | URL, init?: RequestInit) => {
       calls.push({
@@ -339,9 +376,9 @@ describe('RelayRoutes', () => {
           proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
         }),
       });
-      expect(enrolled.status).toBe(200);
-      const body = (await enrolled.json()) as { readmitRequired: number };
-      expect(body.readmitRequired).toBe(1);
+      expect(enrolled.status).toBe(409);
+      expect(await enrolled.json()).toEqual({ code: 'readmit_required', count: 1 });
+      expect(calls).toHaveLength(0);
 
       b.userStore.markCertRevoked(b.identity.nodeIdHex, 9);
       const afterRevoke = (await (await b.call('/api/mesh/relay/readmit/prepare')).json()) as {
@@ -531,9 +568,15 @@ describe('RelayRoutes', () => {
       await configureRelay(b);
       const res = await b.call('/api/mesh/relay/resend-token/prepare', { method: 'POST' });
       expect(res.status).toBe(200);
-      const body = (await res.json()) as { payload: string; metaEpoch: number; nodes: number };
+      const body = (await res.json()) as {
+        payload: string;
+        metaEpoch: number;
+        nodes: number;
+        requireRelayAck: boolean;
+      };
       expect(body.metaEpoch).toBe(1);
       expect(body.nodes).toBe(1);
+      expect(body.requireRelayAck).toBe(true);
       const payload = decodeSetRelaysPayload(decodeBase64url(body.payload));
       expect(payload.relays).toHaveLength(1);
       expect(payload.relays[0]?.url).toBe(canonicalHubUrl(RELAY_URL));

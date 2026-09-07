@@ -11,6 +11,7 @@ import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import type { LocalAuthContext } from './local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
+import { isInteractiveStdin, promptText } from './prompt';
 import { uploadRelayPackFromLocal } from './relay-pack-upload';
 
 export type PasswdMode = 'keep' | 'full-reset';
@@ -28,6 +29,26 @@ export function mapPasswdApplyError(error: string): string {
 
 export function isPasswdFullReset(parsed: ParsedArgs): boolean {
   return parsed.flags['full-reset'] === true;
+}
+
+export async function confirmDestructiveReset(
+  parsed: ParsedArgs,
+  io: {
+    log?: (message: string) => void;
+    isTTY?: boolean;
+    readConfirmation?: () => Promise<string>;
+  },
+  warning = t('mesh.reset.warning')
+): Promise<void> {
+  (io.log ?? console.log)(warning);
+  if (!(io.isTTY ?? isInteractiveStdin())) {
+    if (parsed.flags.yes === true) return;
+    throw new Error(t('mesh.reset.requiresYes'));
+  }
+  const answer = io.readConfirmation
+    ? await io.readConfirmation()
+    : await promptText({ nonInteractive: false }, t('mesh.reset.confirm'));
+  if (answer.trim() !== 'yes') throw new Error(t('mesh.reset.cancelled'));
 }
 
 async function rewrapTotpForKeep(input: {
@@ -85,12 +106,16 @@ export async function applyHubUserPasswd(
     password?: string;
     oldPassword?: string;
     newPassword?: string;
+    isTTY?: boolean;
+    readConfirmation?: () => Promise<string>;
   }
 ): Promise<{ rootEpoch: number; mode: PasswdMode }> {
   const user = ctx.userStore.getByUsername(username);
   if (!user) {
     throw new Error(`user not found: ${username}`);
   }
+  const fullReset = isPasswdFullReset(parsed);
+  if (fullReset) await confirmDestructiveReset(parsed, io);
   const oldPassword = await resolvePassword({
     password: io.oldPassword,
     envKey: 'VIBETERM_PASSWORD_OLD',
@@ -109,7 +134,6 @@ export async function applyHubUserPasswd(
   });
   const kdfParams = generateKdfParams();
   const newKey = await deriveRootKey(newPassword, kdfParams);
-  const fullReset = isPasswdFullReset(parsed);
   const mode: PasswdMode = fullReset ? 'full-reset' : 'keep';
   try {
     const totp = fullReset

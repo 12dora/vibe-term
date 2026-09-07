@@ -378,6 +378,7 @@ export interface MeshHubsResponse {
   candidates: Array<{
     publicUrl: string;
     lastError: string | null;
+    caMismatch?: { advertised: string; pinned: string };
     lastAttemptAt: number | null;
     rttMs?: number | null;
     rttAt?: number | null;
@@ -443,7 +444,20 @@ export interface KeyLogAppendRequest {
  * 只有 `hubAck === true` 才代表 hub 已持久化该记录，admit / revoke 必须据此决定是否清 pending。
  */
 export type KeyLogAppendResult =
-  | { ok: true; seq?: number | string; hash?: string; hubAck?: boolean; hubError?: string }
+  | {
+      ok: true;
+      seq?: number | string;
+      hash?: string;
+      hubAck?: boolean;
+      hubError?: string;
+      /**
+       * 中继模式专有：记录已本地落库，`relayAck` 才说明上级中继也确认了。
+       * `false` 时成员节点**收不到**这条记录，调用方必须显式告警（旧节点不下发该字段）。
+       */
+      relayAck?: boolean;
+      /** `relayAck:false` 时的上联原始错误（`offline` / `timeout` / `unavailable` 等）。 */
+      relayError?: string;
+    }
   | { ok: false; code: 'KEY_LOG_FORK' | (string & {}) };
 
 /** `GET /api/auth/passkeys`（需会话）。 */

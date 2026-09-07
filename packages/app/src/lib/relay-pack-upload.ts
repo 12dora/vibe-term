@@ -113,8 +113,7 @@ async function postPacksToRelays(input: {
     Number(input.headSeq) <= Number.MAX_SAFE_INTEGER
       ? Number(input.headSeq)
       : input.headSeq.toString();
-  let lastError: unknown;
-  let ok = false;
+  const errors: unknown[] = [];
   for (const pack of input.packs) {
     try {
       await requestRelayJson({
@@ -130,12 +129,11 @@ async function postPacksToRelays(input: {
         },
         label: 'relay pack upload',
       });
-      ok = true;
     } catch (error) {
-      lastError = error;
+      errors.push(error);
     }
   }
-  if (!ok && lastError) throw lastError;
+  if (errors.length > 0) throw errors[0];
 }
 
 /** 本机已接入中继时：按每台中继各自的 tenant/token 密封并 POST `/pack`。 */

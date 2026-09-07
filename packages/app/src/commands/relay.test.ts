@@ -2,6 +2,11 @@ import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
 import {
+  MeshRelayStore,
+  RELAY_LOG_KEY_EPOCH,
+} from '../../../../apps/gateway/src/auth/mesh-relay-store';
+import { kdfParamsFromJson } from '../../../../apps/gateway/src/auth/user-key-service';
+import {
   DOMAIN_AUTHORIZATION,
   decodeAdmitNodePayload,
   decodeAuthorization,
@@ -12,9 +17,14 @@ import {
   randomBytes,
   verifyEd25519,
 } from '../../../shared/src/auth';
-import { decodeRelayEnrollProof, verifyRelayEnrollProof } from '../../../shared/src/relay';
+import {
+  decodeRelayEnrollProof,
+  openRelayPack,
+  verifyRelayEnrollProof,
+} from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
+import { deriveRootKey } from '../lib/password';
 import { RELAY_RECORD_MAX_ATTEMPTS, RELAY_ROOT_ROTATED } from '../lib/relay-session';
 import { runHubUserAdd } from './hub';
 import {
@@ -23,6 +33,8 @@ import {
   runRelayEnroll,
   runRelayLeave,
   runRelayList,
+  runRelayPackUpload,
+  runRelayReauth,
   runRelayResendToken,
 } from './relay';
 import type { RelayIo } from './relay-shared';
@@ -54,6 +66,12 @@ async function openAuth(): Promise<LocalAuthContext> {
     password: PASSWORD,
     log: () => undefined,
   });
+  const store = new MeshRelayStore(auth.db);
+  await store.replaceRelays(
+    [{ url: RELAY_URL, tenantId: 'd'.repeat(32), token: randomBytes(32), priority: 0 }],
+    Date.now()
+  );
+  await store.putSecret('log', RELAY_LOG_KEY_EPOCH, randomBytes(32), Date.now());
   return auth;
 }
 
@@ -61,6 +79,7 @@ type Call = { path: string; method: string; body: Record<string, unknown> | unde
 
 type FakeOptions = {
   health?: Record<string, unknown>;
+  pack?: () => Response;
   status?: Record<string, unknown>[];
   rejectUnauthedStatus?: boolean;
   enroll?: () => Response;
@@ -100,6 +119,7 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         : undefined;
     calls.push({ path, method: init?.method ?? 'GET', body });
     if (url.origin === RELAY_URL || url.origin.startsWith(`${RELAY_URL}:`)) {
+      if (url.pathname.endsWith('/pack')) return options.pack?.() ?? json({ ok: true });
       return json(options.health ?? { ok: true, version: '1.1.23', hasPassword: true });
     }
     switch (path) {
@@ -169,7 +189,7 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
         if (make) return make();
         headSeq += 1;
         headHash = encodeBase64url(randomBytes(32));
-        return json({ seq: headSeq, hash: headHash });
+        return json({ seq: headSeq, hash: headHash, relayAck: true });
       }
       case '/api/mesh/relay/status': {
         const headerBag = init?.headers as Headers | Record<string, string> | undefined;
@@ -522,6 +542,113 @@ describe('relay enroll', () => {
   });
 });
 
+describe('relay pack upload', () => {
+  test.each([
+    ['enroll', runRelayEnroll],
+    ['reauth', runRelayReauth],
+  ] as const)(
+    '%s fails with a retry command when sealed pack upload fails',
+    async (command, run) => {
+      const auth = await openAuth();
+      const logs: string[] = [];
+      const { fetcher, calls } = fakeGateway(auth, {
+        status: [ATTACHED_STATUS],
+        pack: () => new Response(JSON.stringify({ code: 'PACK_UNAVAILABLE' }), { status: 503 }),
+      });
+      await expect(
+        run(parseArgs(['relay', command, RELAY_URL]), RELAY_URL, io(auth, fetcher, logs))
+      ).rejects.toThrow(
+        'Relay pack upload failed: PACK_UNAVAILABLE (HTTP 503) Retry: vibeterm relay pack upload'
+      );
+      expect(calls.some((call) => call.path === '/api/auth/keylog?hub=sync')).toBe(true);
+      expect(logs.some((line) => line.includes('attached to relay'))).toBe(false);
+    }
+  );
+
+  test('missing local material is a hard failure with installation-specific retry', async () => {
+    const auth = await openAuth();
+    new MeshRelayStore(auth.db).clearRelays();
+    const { fetcher } = fakeGateway(auth, { status: [ATTACHED_STATUS] });
+    await expect(
+      runRelayEnroll(
+        parseArgs([
+          'relay',
+          'enroll',
+          RELAY_URL,
+          '--install-dir',
+          "/tmp/ivy's node",
+          '--service-name',
+          'dev',
+        ]),
+        RELAY_URL,
+        io(auth, fetcher, [])
+      )
+    ).rejects.toThrow(
+      "Retry: vibeterm relay pack upload --install-dir '/tmp/ivy'\\''s node' --service-name 'dev'"
+    );
+  });
+
+  test('pack upload authenticates and uploads the current pack without another enroll or append', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { fetcher, calls, user } = fakeGateway(auth);
+    const token = randomBytes(32);
+    await new MeshRelayStore(auth.db).setRelayToken({
+      url: RELAY_URL,
+      tenantId: 'd'.repeat(32),
+      token,
+      now: Date.now(),
+    });
+    await runRelayPackUpload(parseArgs(['relay', 'pack', 'upload']), io(auth, fetcher, logs));
+    const uploaded = calls.find((call) => call.path.endsWith('/pack'));
+    const rootKey = await deriveRootKey(PASSWORD, kdfParamsFromJson(user.kdfParamsJson));
+    const pack = await openRelayPack({
+      rootSeed: rootKey.seed,
+      rootPublicKey: user.rootPublicKey,
+      rootEpoch: user.rootEpoch,
+      tenantId: 'd'.repeat(32),
+      sealedPack: decodeBase64url(String(uploaded?.body?.sealed_pack)),
+    });
+    expect(pack.token).toEqual(token);
+    expect(pack.head_seq).toBe(BigInt(user.keyLogHeadSeq));
+    const paths = calls.map((call) => call.path);
+    expect(paths).toContain('/api/auth/login');
+    expect(paths).toContain(`/api/relay/tenants/${'d'.repeat(32)}/pack`);
+    expect(paths).not.toContain('/api/mesh/relay/enroll');
+    expect(paths).not.toContain('/api/auth/keylog?hub=sync');
+    expect(logs).toEqual(['Current sealed relay packs uploaded.']);
+  });
+
+  test.each([0, 1])(
+    'partial pack upload failure is reported when relay %i fails',
+    async (failedIndex) => {
+      const auth = await openAuth();
+      await new MeshRelayStore(auth.db).setRelayToken({
+        url: `${RELAY_URL}:8443`,
+        tenantId: 'e'.repeat(32),
+        token: randomBytes(32),
+        now: Date.now(),
+      });
+      let uploads = 0;
+      const { fetcher } = fakeGateway(auth, {
+        pack: () => new Response('{}', { status: uploads++ === failedIndex ? 503 : 200 }),
+      });
+      await expect(
+        runRelayPackUpload(parseArgs(['relay', 'pack', 'upload']), io(auth, fetcher, []))
+      ).rejects.toThrow('Retry: vibeterm relay pack upload');
+      expect(uploads).toBe(2);
+    }
+  );
+
+  test('pack-only retry also fails when upload fails', async () => {
+    const auth = await openAuth();
+    const { fetcher } = fakeGateway(auth, { pack: () => new Response('{}', { status: 503 }) });
+    await expect(
+      runRelayPackUpload(parseArgs(['relay', 'pack', 'upload']), io(auth, fetcher, []))
+    ).rejects.toThrow('Retry: vibeterm relay pack upload');
+  });
+});
+
 describe('并发追加下的 set-relays', () => {
   const conflict = () =>
     new Response(JSON.stringify({ code: 'seq_gap' }), {
@@ -620,6 +747,22 @@ describe('relay resend-token', () => {
     );
     expect(logs.at(-1)).toContain('3');
   });
+
+  test.each([{ relayAck: false, relayError: 'RELAY_UNAVAILABLE' }, { relayAck: false }, {}])(
+    'unacknowledged append is not reported as successful: %j',
+    async (response) => {
+      const auth = await openAuth();
+      const logs: string[] = [];
+      const { fetcher, calls } = fakeGateway(auth, {
+        appends: [() => new Response(JSON.stringify({ seq: 2, ...response }))],
+      });
+      await expect(
+        runRelayResendToken(parseArgs(['relay', 'resend-token']), io(auth, fetcher, logs))
+      ).rejects.toThrow('Relay did not acknowledge set-relays:');
+      expect(calls.filter((call) => call.path === '/api/auth/keylog?hub=sync')).toHaveLength(1);
+      expect(logs).toEqual([]);
+    }
+  );
 
   test('prepare 没给 payload 时报错清楚', async () => {
     const auth = await openAuth();

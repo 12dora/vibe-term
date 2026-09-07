@@ -240,7 +240,12 @@ export type RelayRecordSubmission = {
 export async function signAndSubmitRelayRecord(
   session: RelayTenantSession,
   input: RelayRecordSubmission
-): Promise<{ seq: number | string | undefined; hash: string | undefined }> {
+): Promise<{
+  seq: number | string | undefined;
+  hash: string | undefined;
+  relayAck?: boolean;
+  relayError?: string;
+}> {
   const attempts = Math.max(1, input.attempts ?? RELAY_RECORD_MAX_ATTEMPTS);
   let payload = input.payload;
   let epoch: number | null = null;
@@ -267,6 +272,8 @@ export async function signAndSubmitRelayRecord(
       return {
         seq: body.seq as number | string | undefined,
         hash: typeof body.hash === 'string' ? body.hash : undefined,
+        ...(typeof body.relayAck === 'boolean' ? { relayAck: body.relayAck } : {}),
+        ...(typeof body.relayError === 'string' ? { relayError: body.relayError } : {}),
       };
     } catch (error) {
       if (attempt + 1 >= attempts || !isKeyLogConflict(error)) throw error;

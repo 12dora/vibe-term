@@ -51,5 +51,9 @@ export const KEYLOG_RECORD_COMPAT: Readonly<Partial<Record<KeyLogType, KeyLogRec
   },
   'admit-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
   'retire-hub': { minVersion: MIN_HUB_AUTH_RECORD_VERSION, allowForce: true },
-  'rotate-root-keep': { minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION, allowForce: false },
+  'rotate-root-keep': {
+    minVersion: MIN_ROTATE_ROOT_KEEP_RECORD_VERSION,
+    allowForce: false,
+    failClosedUncached: true,
+  },
 };

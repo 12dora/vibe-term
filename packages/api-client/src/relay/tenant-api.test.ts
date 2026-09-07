@@ -228,6 +228,15 @@ describe('RelayTenantApi 接入', () => {
     expect(isRelayNotConfigured(missing)).toBe(true);
   });
 
+  test('readmit_required 保留待处理成员数', async () => {
+    const { api } = recorder([fail(409, 'readmit_required', { count: 2 })]);
+    const error = await api
+      .enroll({ url: 'https://r.example', proof: { bytes: 'Ym8', sig: 'c2ln' } })
+      .catch((error: unknown) => error);
+    expect((error as RelayApiError).code).toBe('readmit_required');
+    expect((error as RelayApiError).details?.count).toBe(2);
+  });
+
   test('BAD_PROOF 的 reason 进 message，便于排查', async () => {
     const { api } = recorder([fail(400, 'BAD_PROOF', { reason: 'ts_skew' })]);
     const error = await api

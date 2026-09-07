@@ -1008,7 +1008,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     },
   });
   d.peerHolder.manager = peerManager;
-  uplink.onStateChange((liveState) => {
+  const unsubscribeUplinkState = uplink.onStateChange((liveState) => {
     if (liveState === 'online') {
       peerManager.onHubSwitched();
       return;
@@ -1016,7 +1016,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     if (!state.hubPresenceLive) return;
     scheduleHubPresenceDecay(d, state, () => peerManager.listReach());
   });
-  return peerManager;
+  return { peerManager, unsubscribeUplinkState };
 }
 
 /**
@@ -1193,8 +1193,13 @@ function createRtcBrowserWiring(
 }
 function wireMeshEventsAndSessions(d: MeshDeps) {
   const { uplink, ensureDc } = createUplinkWiring(d);
-  const peerManager = createPeerWiring(d, uplink, ensureDc);
-  return { uplink, peerManager, ...createRtcBrowserWiring(d, uplink, peerManager, ensureDc) };
+  const { peerManager, unsubscribeUplinkState } = createPeerWiring(d, uplink, ensureDc);
+  return {
+    uplink,
+    peerManager,
+    unsubscribeUplinkState,
+    ...createRtcBrowserWiring(d, uplink, peerManager, ensureDc),
+  };
 }
 
 /** standalone 机器也要能走中继接入；本机登录门未建好时读不到就当未生效。 */
@@ -1470,6 +1475,7 @@ function assembleMeshRuntime(
       stopPromise = (async () => {
         tlsPoll?.clear();
         tlsPoll = null;
+        w.unsubscribeUplinkState();
         clearHubPresenceDecay(d.state);
         unsubscribeHubMode?.();
         d.nodeEventDedupe.clear();

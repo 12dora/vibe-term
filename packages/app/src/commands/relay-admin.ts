@@ -5,6 +5,7 @@ import { loadInstallEnv } from '../lib/local-auth';
 import { promptPassword } from '../lib/prompt';
 import type { ParsedArgs } from '../types';
 import {
+  RelayApiError,
   type RelayIo,
   type RelayLimits,
   type RelayQuota,
@@ -197,20 +198,46 @@ async function resolveNewRelayPassword(parsed: ParsedArgs, io: RelayIo): Promise
   });
 }
 
+function kickGuardFetcher(call: AdminCall, io: RelayIo): FetchLike {
+  return async (input, init) => {
+    const response = await (call.fetcher ?? fetch)(input, init);
+    if (response.status === 409) {
+      const body = (await response
+        .clone()
+        .json()
+        .catch(() => null)) as {
+        error?: { code?: string; online?: number; admitted?: number };
+      } | null;
+      if (body?.error?.code === 'relay_members_offline') {
+        relayLog(
+          io,
+          t('relay.kick.offline', {
+            online: asNumber(body.error.online),
+            admitted: asNumber(body.error.admitted),
+          })
+        );
+        throw new RelayApiError(409, 'relay_members_offline', t('relay.kick.forceRequired'));
+      }
+    }
+    return response;
+  };
+}
+
 export async function runRelayPasswd(
   parsed: ParsedArgs,
   io: RelayIo = {}
 ): Promise<{ mode: 'kick' | 'keep'; cleared: boolean; passwordEpoch: number }> {
   const mode = passwdMode(parsed);
   relayLog(io, t(mode === 'kick' ? 'relay.passwd.modeKick' : 'relay.passwd.modeKeep'));
+  if (mode === 'kick') relayLog(io, t('relay.kick.recovery'));
   const password = await resolveNewRelayPassword(parsed, io);
   const call = await adminCall(parsed, io);
   const body = await requestRelayJson({
-    fetcher: call.fetcher,
+    fetcher: kickGuardFetcher(call, io),
     url: joinRelayUrl(call.baseUrl, '/api/relay/password'),
     method: 'POST',
     headers: call.headers,
-    body: { password, mode },
+    body: { password, mode, ...(parsed.flags.force === true ? { force: true } : {}) },
     label: 'relay passwd',
   });
   const passwordEpoch = asNumber(body.passwordEpoch);
@@ -238,12 +265,13 @@ export async function runRelayKick(
 ): Promise<void> {
   const tenantId = requireTenantId(tenantIdRaw, 'kick');
   const call = await adminCall(parsed, io);
+  relayLog(io, t('relay.kick.recovery'));
   await requestRelayJson({
-    fetcher: call.fetcher,
+    fetcher: kickGuardFetcher(call, io),
     url: joinRelayUrl(call.baseUrl, `/api/relay/tenants/${tenantId}/kick`),
     method: 'POST',
     headers: call.headers,
-    body: {},
+    body: parsed.flags.force === true ? { force: true } : {},
     label: 'relay kick',
   });
   relayLog(io, t('relay.kick.done', { tenantId }));

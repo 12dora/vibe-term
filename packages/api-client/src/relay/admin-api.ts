@@ -121,6 +121,7 @@ export type RelayPasswordMode = 'kick' | 'keep';
 export interface RelayPasswordRequest {
   password: string | null;
   mode: RelayPasswordMode;
+  force?: boolean;
 }
 
 /** `PATCH /api/relay/tenants/:id`；`quota: null` 改回跟随默认，`label: null` 清空备注。 */
@@ -132,6 +133,9 @@ export interface RelayTenantPatch {
 export type RelayApiErrorDetails = {
   lastError?: string | null;
   lastErrorCode?: string | null;
+  online?: number;
+  admitted?: number;
+  count?: number;
 };
 
 /** 契约错误体 `{ error: { code, message } }` 解出来的类型化错误。 */
@@ -161,7 +165,31 @@ function readError(res: Response, fallback: string): Promise<RelayApiError> {
   return readCodedError(
     res,
     fallback,
-    (code, message, status) => new RelayApiError(code, message, status)
+    (code, message, status) => new RelayApiError(code, message, status),
+    (body, status) => {
+      const error = (body as { error?: unknown } | null)?.error;
+      if (!error || typeof error !== 'object') return undefined;
+      const value = error as {
+        code?: unknown;
+        message?: unknown;
+        online?: unknown;
+        admitted?: unknown;
+      };
+      if (
+        value.code !== 'relay_members_offline' ||
+        typeof value.online !== 'number' ||
+        !Number.isFinite(value.online) ||
+        typeof value.admitted !== 'number' ||
+        !Number.isFinite(value.admitted)
+      )
+        return undefined;
+      return new RelayApiError(
+        value.code,
+        typeof value.message === 'string' ? value.message : value.code,
+        status,
+        { online: value.online, admitted: value.admitted }
+      );
+    }
   );
 }
 
@@ -238,8 +266,11 @@ export class RelayAdminApi {
   }
 
   /** `POST /api/relay/tenants/:id/kick`：作废该租户令牌并断开。 */
-  kickTenant(tenantId: string): Promise<void> {
-    return this.mutate(tenantPath(tenantId, '/kick'), 'relay_kick_failed', { method: 'POST' });
+  kickTenant(tenantId: string, body?: { force?: boolean }): Promise<void> {
+    return this.mutate(tenantPath(tenantId, '/kick'), 'relay_kick_failed', {
+      method: 'POST',
+      body,
+    });
   }
 
   /** `DELETE /api/relay/tenants/:id`：删注册表与密钥日志。 */
