@@ -635,6 +635,7 @@ describe('hub join/leave service restart', () => {
     const hubUrl = `http://127.0.0.1:${server.port}`;
     const node = await openAuth('standalone');
     node.installDir = '/tmp/vibeterm-join-no-restart';
+    let directAttempted = false;
     const logs: string[] = [];
     let restarted = false;
     await runHubJoin(
@@ -643,12 +644,19 @@ describe('hub join/leave service restart', () => {
       {
         auth: node,
         insecureLocal: true,
+        enableDirect: async ({ signal }) => {
+          directAttempted = true;
+          expect(signal).toBeInstanceOf(AbortSignal);
+          throw new Error('registry offline');
+        },
         restart: async () => {
           restarted = true;
         },
         log: (message) => logs.push(message),
       }
     );
+    expect(directAttempted).toBe(true);
+    expect(logs.some((line) => line.includes('registry offline'))).toBe(true);
     expect(restarted).toBe(false);
     expect(logs.some((line) => /restart VibeTerm manually/i.test(line))).toBe(true);
     expect(logs.some((line) => line.startsWith('joined hub'))).toBe(true);
@@ -675,6 +683,19 @@ describe('hub join/leave service restart', () => {
         {
           auth: node,
           insecureLocal: true,
+          enableDirect: async ({ installDir, signal }) => {
+            expect(installDir).toBe(dir);
+            expect(signal).toBeInstanceOf(AbortSignal);
+            expect((await readEnvFile(envPath)).VIBETERM_HUB_URL).toBe(hub.url);
+            expect(restarted).toBe(0);
+            return {
+              ok: true,
+              platformId: 'linux-x64-gnu',
+              version: '0.33.0',
+              addonPath: '',
+              skipped: true,
+            };
+          },
           restart: async () => {
             restarted += 1;
           },
@@ -687,6 +708,7 @@ describe('hub join/leave service restart', () => {
       expect(env.VIBETERM_ROLES).toBe('node');
       expect(env.VIBETERM_HUB_URL).toBe(hub.url);
       expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
+      expect(env.VIBETERM_DIRECT_ENABLED).toBe('true');
       expect(env.OTHER).toBe('keep');
     } finally {
       await rm(dir, { recursive: true, force: true });

@@ -29,6 +29,7 @@ import { persistRelayUplink } from '../lib/relay-store';
 import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
+import { enableDirectForOnboarding } from './direct';
 import { type HubIo, JoinError, maybeRestart } from './hub';
 import { assertChainUids } from './hub-join-verify';
 import {
@@ -427,6 +428,7 @@ export async function runRelayJoin(
       process.env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     if (ctx.installDir) {
+      await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
       await maybeRestart(parsed, io, ctx.installDir);
     }
     log(io, `joined relay ${attempt.entry.url} (tenant ${attempt.entry.tenantId})`);

@@ -1,10 +1,13 @@
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import {
   deriveSeed,
   encodeBase64url,
+  encodeSetRelaysPayload,
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
@@ -15,6 +18,7 @@ import {
   sealRelayPack,
 } from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
+import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { performRelayPasswordJoin } from '../lib/relay-password-join';
@@ -334,6 +338,95 @@ describe('performRelayPasswordJoin', () => {
 });
 
 describe('runRelayPasswordJoin', () => {
+  for (const failure of [false, true]) {
+    test(`密码加入在提交配置后安装直连插件，失败不影响加入（failure=${failure}）`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-password-direct-'));
+      try {
+        const owner = await openAuth('owner');
+        const ownerUser = owner.userStore.listUsers()[0];
+        if (!ownerUser) throw new Error('missing owner');
+        const ownerRoot = rootKeyFromSeed(await deriveSeed(PASSWORD, kdfOf(owner)));
+        const relays = await owner.userKeys.signAndApply(ownerUser.id, ownerRoot, {
+          type: 'set-relays',
+          payload: encodeSetRelaysPayload({
+            mode: 'ordered',
+            relays: [
+              {
+                url: RELAY_URL,
+                tenant_id: new Uint8Array(16).fill(0xab),
+                token: randomBytes(32),
+                priority: 0,
+              },
+            ],
+            log_key: [],
+            meta_key: {
+              epoch: owner.userKeys.currentState(ownerUser.id).metaKeyEpoch,
+              entries: [],
+            },
+          }),
+        });
+        expect(relays.ok).toBe(true);
+        const auth = await openAuth();
+        auth.installDir = dir;
+        auth.envPath = join(dir, 'app.env');
+        await writeFile(auth.envPath, 'VIBETERM_ROLES=standalone\nOTHER=keep\n');
+        const fixture = await packFixture(kdfOf(owner), owner);
+        const logs: string[] = [];
+        let installed = false;
+        let restarted = false;
+        const result = await runRelayPasswordJoin(
+          parseArgs([
+            'relay',
+            'join',
+            RELAY_URL,
+            '--tenant',
+            TENANT_ID,
+            ...(failure ? ['--no-restart'] : []),
+          ]),
+          {
+            auth,
+            password: PASSWORD,
+            fetcher: async (input, init) => {
+              if (init?.method === 'POST' && String(input).endsWith('/keylog'))
+                return Response.json({ ok: true });
+              if (init?.method === 'POST' && String(input).endsWith('/pack'))
+                return Response.json({ ok: true });
+              return fixture.fetcher(input, init);
+            },
+            enableDirect: async ({ installDir, signal }) => {
+              installed = true;
+              expect(installDir).toBe(dir);
+              expect(signal).toBeInstanceOf(AbortSignal);
+              expect((await readEnvFile(auth.envPath)).VIBETERM_ROLES).toBe('node');
+              expect(restarted).toBe(false);
+              if (failure) throw new Error('registry offline');
+              return {
+                ok: true,
+                platformId: 'linux-x64-gnu',
+                version: '0.33.0',
+                addonPath: '',
+                skipped: true,
+              };
+            },
+            restart: async () => {
+              restarted = true;
+            },
+            log: (line) => logs.push(line),
+          }
+        );
+        expect(result.userId).toBe(owner.userStore.listUsers()[0]?.id);
+        expect(installed).toBe(true);
+        expect(restarted).toBe(!failure);
+        const env = await readEnvFile(auth.envPath);
+        expect(env.OTHER).toBe('keep');
+        if (failure) expect(logs.some((line) => line.includes('registry offline'))).toBe(true);
+        else expect(env.VIBETERM_DIRECT_ENABLED).toBe('true');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
   test('requires --tenant', async () => {
     const auth = await openAuth();
     await expect(

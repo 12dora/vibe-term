@@ -33,6 +33,12 @@ async function deps(overrides: Partial<SetupServiceDeps> = {}): Promise<SetupSer
     envPath,
     installDir: dir,
     scheduleRestart: () => undefined,
+    enableDirect: async () => ({
+      ok: true,
+      platformId: 'darwin-arm64',
+      version: '1',
+      addonPath: '',
+    }),
     setupLock: createSetupTransitionLock(),
     ...overrides,
   };
@@ -180,4 +186,63 @@ describe('handleRelayJoinRequest error mapping', () => {
       expect(body.error.message).toBe(row.message);
     });
   }
+});
+
+describe('relay join 直连插件', () => {
+  test.each([undefined, true, false])(
+    'directEnable %s 按默认值安装或跳过',
+    async (directEnable) => {
+      let calls = 0;
+      const base = await deps({
+        enableDirect: async () => {
+          calls += 1;
+          return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: '' };
+        },
+      });
+      const response = await handleRelayJoinRequest(
+        { ...JOIN_BODY, directEnable },
+        {
+          ...base,
+          performRelayPasswordJoin: async (input) => ({
+            relayUrl: input.relayUrl,
+            tenantId: input.tenantId,
+            userId: 'alice',
+          }),
+        }
+      );
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        direct: directEnable === false ? 'skipped' : 'enabled',
+        directError: null,
+      });
+      expect(calls).toBe(directEnable === false ? 0 : 1);
+      const enabled = (await readEnvFile(base.envPath)).VIBETERM_DIRECT_ENABLED;
+      if (directEnable === false) expect(enabled).toBeUndefined();
+      else expect(enabled).toBe('true');
+    }
+  );
+
+  test('下载失败仍提交配置并重启', async () => {
+    let restarted = false;
+    const base = await deps({
+      enableDirect: async () => {
+        throw new Error('offline');
+      },
+      scheduleRestart: () => {
+        restarted = true;
+      },
+    });
+    const response = await handleRelayJoinRequest(JOIN_BODY, {
+      ...base,
+      performRelayPasswordJoin: async (input) => ({
+        relayUrl: input.relayUrl,
+        tenantId: input.tenantId,
+        userId: 'alice',
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ direct: 'failed', directError: 'offline' });
+    expect((await readEnvFile(base.envPath)).VIBETERM_ROLES).toBe('node');
+    expect(restarted).toBe(true);
+  });
 });

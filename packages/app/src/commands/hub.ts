@@ -65,12 +65,18 @@ import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
+import {
+  type DirectEnableResult,
+  type EnableDirectOptions,
+  enableDirectForOnboarding,
+} from './direct';
 import { HUB_CA_FETCH_TIMEOUT_MS, probeHubJoinUrl } from './hub-join-probe';
 import { publishHubJoinAdmitForCli, resolveJoinTotpCode } from './hub-join-totp';
 import { assertChainUids, assertResponseCertsMatchProjections } from './hub-join-verify';
 import { withAuth } from './with-auth';
 
 export type HubIo = {
+  enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
   log?: (message: string) => void;
   password?: string;
   oldPassword?: string;
@@ -669,6 +675,7 @@ export async function runHubJoin(
         }
       }
       if (ctx.installDir) {
+        await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
         await maybeRestart(parsed, io, ctx.installDir);
       }
       log(io, `joined hub ${joined.hubUrl}`);

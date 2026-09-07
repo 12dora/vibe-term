@@ -89,7 +89,7 @@ export async function handleRelayJoinRequest(
       throw asSetupRelayJoinError(error);
     }
     await commitRelayPasswordJoinEnv(deps);
-    const direct = await maybeEnableDirect(body.directEnable === true, deps);
+    const direct = await maybeEnableDirect(body.directEnable !== false, deps);
     if (direct.direct === 'enabled') {
       await patchOwnedEnvKeys(deps, { [DIRECT_ENABLED_KEY]: 'true' });
     }

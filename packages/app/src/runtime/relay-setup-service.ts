@@ -7,7 +7,12 @@ import {
 import { RelayJoinTokenError, normalizeRelayUrl } from '../../../../packages/shared/src/relay';
 import { generateRelayAdminToken } from '../lib/install';
 import { fingerprintPublicKey } from '../lib/totp-uri';
-import { DIRECT_ENABLED_KEY, type SetupServiceDeps, maybeEnableDirect } from './setup-service';
+import {
+  DIRECT_ENABLED_KEY,
+  type SetupDirectOutcome,
+  type SetupServiceDeps,
+  maybeEnableDirect,
+} from './setup-service';
 import {
   SetupError,
   assertPassword,
@@ -35,6 +40,8 @@ export type BecomeRelayResult = {
   role: SetupRelayRole;
   relayPublicUrl: string;
   hasPassword: boolean;
+  direct: SetupDirectOutcome;
+  directError: string | null;
   restarting: true;
   fingerprint?: string;
 };
@@ -125,7 +132,7 @@ export async function becomeRelay(
       role === 'relay,node' ? await bootstrapRelayNodeUser(input, deps) : undefined;
     const hasPassword = await persistRelayPassword(deps, relayPassword, deps.now?.() ?? Date.now());
     const adminToken = await resolveRelayAdminToken(deps);
-    const direct = await maybeEnableDirect(input.directEnable === true, deps);
+    const direct = await maybeEnableDirect(input.directEnable !== false, deps);
     await patchOwnedEnvKeys(deps, {
       VIBETERM_ROLES: role,
       VIBETERM_RELAY_PUBLIC_URL: relayPublicUrl,
@@ -139,6 +146,8 @@ export async function becomeRelay(
       role,
       relayPublicUrl,
       hasPassword,
+      direct: direct.direct,
+      directError: direct.directError,
       restarting: true as const,
       ...(fingerprint ? { fingerprint } : {}),
     };

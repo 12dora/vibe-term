@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -19,12 +19,13 @@ import {
 import { integrityOf, packNpmTarball } from '../lib/native-tarball';
 import type { ParsedArgs } from '../types';
 import {
+  DIRECT_ENABLE_TIMEOUT_MS,
   disableDirect,
   enableDirect,
+  enableDirectForOnboarding,
   promoteNativeDirectory,
   reenableDirectIfNeeded,
   runDirect,
-  shouldEnableDirectForRoles,
 } from './direct';
 
 const tempDirs: string[] = [];
@@ -76,16 +77,6 @@ async function serveTarball(bytes: Uint8Array): Promise<{ url: string; stop: () 
     stop: () => server.stop(true),
   };
 }
-
-describe('shouldEnableDirectForRoles', () => {
-  test('node and hub,node enable by default; standalone does not', () => {
-    expect(shouldEnableDirectForRoles('node')).toBe(true);
-    expect(shouldEnableDirectForRoles('hub,node')).toBe(true);
-    expect(shouldEnableDirectForRoles(['hub', 'node'])).toBe(true);
-    expect(shouldEnableDirectForRoles('standalone')).toBe(false);
-    expect(shouldEnableDirectForRoles('hub')).toBe(false);
-  });
-});
 
 describe('enableDirect / disableDirect', () => {
   test('rejects integrity mismatch and does not write native files', async () => {
@@ -451,4 +442,86 @@ describe('runDirect', () => {
       process.exitCode = 0;
     }
   });
+});
+
+describe('默认安装直连插件', () => {
+  test('已有 manifest 时不访问 registry，并重新启用 env 开关', async () => {
+    const installDir = await makeInstallDir();
+    const layout = createInstallLayout(installDir);
+    await mkdir(layout.nativeDir, { recursive: true });
+    await writeFile(
+      nativeManifestPath(layout.nativeDir),
+      JSON.stringify({
+        platform: 'darwin-arm64',
+        version: '0.33.1',
+        sha256: 'abc',
+        napiVersion: 8,
+      })
+    );
+    const envPath = join(installDir, 'app.env');
+    await writeFile(envPath, 'VIBETERM_DIRECT_ENABLED=false\n');
+    const logs: string[] = [];
+    await enableDirectForOnboarding(
+      installDir,
+      {
+        enableDirect: (options) =>
+          enableDirect({
+            ...options,
+            fetchImpl: async () => {
+              throw new Error('registry must not be called');
+            },
+          }),
+        log: (line) => logs.push(line),
+      },
+      envPath
+    );
+    expect(await readFile(envPath, 'utf8')).toContain('VIBETERM_DIRECT_ENABLED=true');
+    expect(logs).toEqual(['direct plugin: skipped (already installed)']);
+  });
+
+  test('下载失败只输出一行且保留原 env', async () => {
+    const installDir = await makeInstallDir();
+    const envPath = join(installDir, 'app.env');
+    await writeFile(envPath, 'VIBETERM_DIRECT_ENABLED=false\n');
+    const logs: string[] = [];
+    await enableDirectForOnboarding(
+      installDir,
+      {
+        enableDirect: async () => ({ ok: false, kind: 'download', reason: 'offline' }),
+        log: (line) => logs.push(line),
+      },
+      envPath
+    );
+    expect(logs).toEqual(['direct plugin: skipped (download failed: offline)']);
+    expect(await readFile(envPath, 'utf8')).toContain('VIBETERM_DIRECT_ENABLED=false');
+  });
+});
+
+test('默认安装在 registry 无响应时超时并继续', async () => {
+  const installDir = await makeInstallDir();
+  const timeout = AbortSignal.timeout.bind(AbortSignal);
+  const requested: number[] = [];
+  const mock = spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    requested.push(ms);
+    return timeout(5);
+  });
+  const logs: string[] = [];
+  try {
+    await enableDirectForOnboarding(installDir, {
+      enableDirect: (options) =>
+        enableDirect({
+          ...options,
+          pin: fakePin('https://example.test/hung.tgz', 'sha512-unused'),
+          fetchImpl: () => new Promise<Response>(() => undefined),
+        }),
+      log: (line) => logs.push(line),
+    });
+    expect(requested).toEqual([DIRECT_ENABLE_TIMEOUT_MS]);
+    expect(DIRECT_ENABLE_TIMEOUT_MS).toBe(60_000);
+    expect(logs).toHaveLength(1);
+    expect(logs[0]).toContain('direct plugin: skipped (download failed:');
+    expect(await pathExists(createInstallLayout(installDir).nativeDir)).toBe(false);
+  } finally {
+    mock.mockRestore();
+  }
 });

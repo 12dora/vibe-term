@@ -512,6 +512,8 @@ describe('POST /api/setup/relay', () => {
       role: 'relay',
       relayPublicUrl: 'https://relay.example',
       hasPassword: true,
+      direct: 'enabled',
+      directError: null,
       restarting: true,
     });
     expect(JSON.stringify(body)).not.toMatch(/admin/i);
@@ -563,4 +565,36 @@ describe('POST /api/setup/relay-join', () => {
       restarting: true,
     });
   });
+});
+
+describe('setup 默认安装直连插件', () => {
+  test.each(['/api/setup/hub', '/api/setup/join'])(
+    '%s 未传 directEnable 时启用插件',
+    async (path) => {
+      const auth = await openAuth();
+      let calls = 0;
+      const { status, body } = await jsonOf(
+        await handleSetupRequest(
+          post(path, {
+            hubUrl: 'https://hub.example.com',
+            hubPublicUrl: 'https://hub.example.com',
+            username: 'alice',
+            password: path === '/api/setup/hub' ? 'vibeterm-test-pass' : undefined,
+            token: 'token-value',
+            name: 'studio',
+          }),
+          deps({
+            auth,
+            enableDirect: async () => {
+              calls += 1;
+              return { ok: true, platformId: 'darwin-arm64', version: '1', addonPath: 'x' };
+            },
+          })
+        )
+      );
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ direct: 'enabled', directError: null });
+      expect(calls).toBe(1);
+    }
+  );
 });

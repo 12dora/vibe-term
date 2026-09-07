@@ -194,7 +194,7 @@ describe('ensureCandidateNativeAddon', () => {
     expect(called).toBe(true);
   });
 
-  test('is a no-op when the current version has no native manifest', async () => {
+  test('从未安装插件时升级成功，即使下载不可用', async () => {
     const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-native-skip-'));
     tempDirs.push(installDir);
     let called = false;
@@ -204,7 +204,7 @@ describe('ensureCandidateNativeAddon', () => {
       toVersion: '2.0.0',
       enableDirect: async () => {
         called = true;
-        return { ok: true, platformId: 'x', version: '1', addonPath: 'y' };
+        throw new Error('offline: upgrade must not download a never-installed addon');
       },
     });
     expect(called).toBe(false);

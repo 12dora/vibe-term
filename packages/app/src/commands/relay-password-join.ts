@@ -7,6 +7,7 @@ import {
 import { asString } from '../lib/validate';
 import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
+import { enableDirectForOnboarding } from './direct';
 import { type HubIo, maybeRestart } from './hub';
 import { withAuth } from './with-auth';
 
@@ -80,6 +81,7 @@ export async function runRelayPasswordJoin(
       process.env.VIBETERM_HUB_PUBLIC_URL = '';
     }
     if (ctx.installDir) {
+      await enableDirectForOnboarding(ctx.installDir, io, ctx.envPath || undefined);
       await maybeRestart(parsed, io, ctx.installDir);
     }
     (io.log ?? console.log)(`joined relay ${result.relayUrl} (tenant ${result.tenantId})`);

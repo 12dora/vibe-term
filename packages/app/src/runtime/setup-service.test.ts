@@ -137,7 +137,7 @@ describe('becomeHub', () => {
     expect(restarts).toEqual([1]);
   });
 
-  test('directEnable true maps enableDirect success to enabled', async () => {
+  test.each([undefined, true])('directEnable %s installs by default', async (directEnable) => {
     let enabled = 0;
     const deps = await baseDeps({
       enableDirect: async () => {
@@ -150,7 +150,7 @@ describe('becomeHub', () => {
         hubPublicUrl: 'https://hub.example.com',
         username: 'alice',
         password: 'vibeterm-test-pass',
-        directEnable: true,
+        directEnable,
       },
       deps
     );
@@ -158,6 +158,39 @@ describe('becomeHub', () => {
     expect(result.directError).toBeNull();
     expect(enabled).toBe(1);
     expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
+  });
+
+  test('插件下载超时后仍完成 Hub 初始化', async () => {
+    let aborted = false;
+    let restarted = false;
+    const deps = await baseDeps({
+      directTimeoutMs: 10,
+      enableDirect: async ({ signal }) =>
+        new Promise((_resolve, reject) => {
+          const fail = () => {
+            aborted = true;
+            reject(signal?.reason);
+          };
+          if (signal?.aborted) fail();
+          else signal?.addEventListener('abort', fail, { once: true });
+        }),
+      scheduleRestart: () => {
+        restarted = true;
+      },
+    });
+    const result = await becomeHub(
+      {
+        hubPublicUrl: 'https://hub.example.com',
+        username: 'alice',
+        password: 'vibeterm-test-pass',
+      },
+      deps
+    );
+    expect(result).toMatchObject({ ok: true, direct: 'failed', restarting: true });
+    expect(result.directError).toBeTruthy();
+    expect(aborted).toBe(true);
+    expect(restarted).toBe(true);
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('hub,node');
   });
 
   test('direct enable failure is non-fatal', async () => {
@@ -451,32 +484,35 @@ describe('joinHub', () => {
     expect(restarts).toEqual([1]);
   });
 
-  test('directEnable true installs addon and writes VIBETERM_DIRECT_ENABLED', async () => {
-    const deps = await baseDeps({
-      performHubJoin: async () => ({
-        userId: 'uid-1',
-        username: 'bob',
-        hubUrl: 'https://hub.example.com',
-      }),
-      enableDirect: async () => ({
-        ok: true as const,
-        platformId: 'darwin-arm64',
-        version: '1',
-        addonPath: '',
-      }),
-    });
-    const result = await joinHub(
-      {
-        hubUrl: 'https://hub.example.com',
-        token: 'token-value',
-        name: 'studio',
-        directEnable: true,
-      },
-      deps
-    );
-    expect(result.direct).toBe('enabled');
-    expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
-  });
+  test.each([undefined, true])(
+    'join directEnable %s installs and enables addon',
+    async (directEnable) => {
+      const deps = await baseDeps({
+        performHubJoin: async () => ({
+          userId: 'uid-1',
+          username: 'bob',
+          hubUrl: 'https://hub.example.com',
+        }),
+        enableDirect: async () => ({
+          ok: true as const,
+          platformId: 'darwin-arm64',
+          version: '1',
+          addonPath: '',
+        }),
+      });
+      const result = await joinHub(
+        {
+          hubUrl: 'https://hub.example.com',
+          token: 'token-value',
+          name: 'studio',
+          directEnable,
+        },
+        deps
+      );
+      expect(result.direct).toBe('enabled');
+      expect((await readEnvFile(deps.envPath)).VIBETERM_DIRECT_ENABLED).toBe('true');
+    }
+  );
 
   test('join env rename failure after commit returns 500 recovery and does not restart', async () => {
     const restarts: number[] = [];

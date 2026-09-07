@@ -1,7 +1,9 @@
 import { RELAY_TOKEN_HEADER, readHeaderPair } from '../../../shared/src/http/mesh-headers';
 import '../lib/test-master-key';
 import { afterEach, describe, expect, test } from 'bun:test';
-import { resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { HubTrustStore } from '../../../../apps/gateway/src/auth/hub-trust-store';
 import { MeshRelayStore } from '../../../../apps/gateway/src/auth/mesh-relay-store';
 import {
@@ -34,6 +36,7 @@ import {
   sealEnvelope,
 } from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
+import { readEnvFile } from '../lib/env-file';
 import type { FetchLike } from '../lib/fetch-like';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
@@ -366,6 +369,55 @@ describe('relayJoinRoleName', () => {
 });
 
 describe('hub join with an r3 token', () => {
+  for (const failure of [false, true]) {
+    test(`中继令牌加入在提交配置后安装直连插件，失败不影响加入（failure=${failure}）`, async () => {
+      const dir = await mkdtemp(join(tmpdir(), 'vibeterm-relay-direct-'));
+      try {
+        const tenant = await makeTenant([ENTRY_A]);
+        const token = joinTokenFor(tenant);
+        const joiner = await openAuth();
+        joiner.installDir = dir;
+        joiner.envPath = join(dir, 'app.env');
+        await writeFile(joiner.envPath, 'VIBETERM_ROLES=standalone\nOTHER=keep\n');
+        const { fetcher } = fakeRelay(tenant);
+        const logs: string[] = [];
+        let installed = false;
+        let restarted = false;
+        const result = await runRelayJoin(
+          parseArgs(['relay', 'join', '--token', token, ...(failure ? ['--no-restart'] : [])]),
+          '',
+          token,
+          {
+            auth: joiner,
+            fetcher,
+            enableDirect: async ({ installDir, signal }) => {
+              installed = true;
+              expect(installDir).toBe(dir);
+              expect(signal).toBeInstanceOf(AbortSignal);
+              expect((await readEnvFile(joiner.envPath)).VIBETERM_ROLES).toBe('node');
+              expect(restarted).toBe(false);
+              if (failure) throw new Error('registry offline');
+              return { ok: true, platformId: 'linux-x64-gnu', version: '0.33.0', addonPath: '' };
+            },
+            restart: async () => {
+              restarted = true;
+            },
+            log: (line) => logs.push(line),
+          }
+        );
+        expect(result.userId).toBe(tenant.userId);
+        expect(installed).toBe(true);
+        expect(restarted).toBe(!failure);
+        const env = await readEnvFile(joiner.envPath);
+        expect(env.OTHER).toBe('keep');
+        if (failure) expect(logs.some((line) => line.includes('registry offline'))).toBe(true);
+        else expect(env.VIBETERM_DIRECT_ENABLED).toBe('true');
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+  }
+
   test('redeems, verifies the chain and switches the node to the relay uplink', async () => {
     const tenant = await makeTenant([ENTRY_A]);
     const token = joinTokenFor(tenant);

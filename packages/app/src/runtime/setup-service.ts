@@ -9,6 +9,7 @@ import {
   probeAddressPorts,
 } from '../../../../packages/shared/src/net/port-candidates';
 import {
+  DIRECT_ENABLE_TIMEOUT_MS,
   type DirectEnableResult,
   type DisableDirectOptions,
   type EnableDirectOptions,
@@ -62,7 +63,7 @@ import {
 } from './setup-shared';
 
 export const SETUP_RESTART_DELAY_MS = 300;
-export const DIRECT_ENABLE_TIMEOUT_MS = 60_000;
+export { DIRECT_ENABLE_TIMEOUT_MS } from '../commands/direct';
 export const PRECHECK_TIMEOUT_MS = 5_000;
 /** 单个候选端口的探测超时；比 healthz 的确认短，八个候选交错跑完仍在几秒内。 */
 export const PRECHECK_PROBE_TIMEOUT_MS = 4_000;
@@ -137,7 +138,7 @@ export type BecomeHubInput = {
   hubPublicUrl: string;
   username: string;
   password: string;
-  directEnable: boolean;
+  directEnable?: boolean;
 };
 
 export type BecomeHubResult = {
@@ -154,7 +155,7 @@ export type JoinHubInput = {
   password?: string;
   method?: 'token' | 'password';
   name: string;
-  directEnable: boolean;
+  directEnable?: boolean;
   insecureLocal?: boolean;
   totpCode?: string;
 };
@@ -266,10 +267,10 @@ async function runEnableDirect(deps: SetupServiceDeps): Promise<DirectEnableResu
 }
 
 export async function maybeEnableDirect(
-  directEnable: boolean,
+  directEnable: boolean | undefined,
   deps: SetupServiceDeps
 ): Promise<{ direct: SetupDirectOutcome; directError: string | null }> {
-  if (!directEnable) return { direct: 'skipped', directError: null };
+  if (directEnable === false) return { direct: 'skipped', directError: null };
   try {
     const result = await runEnableDirect(deps);
     if (result.ok) return { direct: 'enabled', directError: null };

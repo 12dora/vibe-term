@@ -112,6 +112,6 @@ join 会改写 `/opt/vibeterm/app.env` 里的 `VIBETERM_ROLES` / `VIBETERM_HUB_U
 - **两个卷必须成对保留**。`VIBETERM_MASTER_KEY` 在 `/opt/vibeterm/app.env`（`-opt` 卷），库在 `/var/lib/vibeterm`（`-data` 卷），只删一个会导致库解不开。entrypoint 发现 `/opt/vibeterm` 非空却没有 `install-meta.json` 时会直接报错退出，不会自动重装。
 - **网页升级要能出网**。网关走 GitHub Releases 下载安装包，容器内没有出口或被墙时升级会失败；这种环境用上面第 3 条本地包路径。
 - **升级后的运行时日志不再进 `docker logs`**。升级器以 detached + `stdio: 'ignore'` 拉起新进程，stdout 不再挂在 PID 1 上；重启容器后恢复。升级过程本身写在容器内 `/opt/vibeterm/upgrade.log`。
-- **`--role standalone` 不装 WebRTC 直连原生模块**（`shouldEnableDirectForRoles` 只对含 `node` 的角色生效）。join 成为节点后由 `hub join` / `relay join` 的 `reenableDirectIfNeeded` 补装，需要能访问 npm。
+- 首次启动的 `init --role standalone` 默认安装并启用 WebRTC 直连插件，下载最多等待 60 秒；离线、平台不支持或下载失败不阻断初始化。后续 `hub join`／`relay join` 会补装缺失插件，已安装则跳过。下载需要访问 npm。
 - **多架构**：`Dockerfile` 按 `TARGETARCH` 取 Node/Bun 产物，Apple Silicon 上原生构建 arm64。跨架构构建传 `VIBETERM_DOCKER_PLATFORM=linux/amd64`。目标机访问 github 不稳时，把 `bun-linux-aarch64.zip` / `bun-linux-x64.zip` 预放到 `scripts/docker-node/build/`。
 - **默认容器名占用 29883**。历史上手工部署的 `vibeterm-node-docker` 也用这个端口，替换前先 `docker rm -f vibeterm-node-docker`，或用 `VIBETERM_DOCKER_NAME` + `VIBETERM_HTTP_PORT` 起另一个。

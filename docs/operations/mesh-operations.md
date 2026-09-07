@@ -11,11 +11,13 @@
 
 | 角色 | 典型用途 | 启动时构造 | 登录 | 直连 addon |
 |---|---|---|---|---|
-| `standalone`（默认） | 单机，未加入 mesh | 仅 `GatewayRuntime` | 无（`GET /api/auth/mode` → `{mode:'none'}`） | 不下载 |
-| `node` | 已加入 hub 或中继的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` / `upgrade` 默认尝试 |
+| `standalone`（默认） | 单机，未加入 mesh | 仅 `GatewayRuntime` | 无（`GET /api/auth/mode` → `{mode:'none'}`） | `init` 默认安装并启用 |
+| `node` | 已加入 hub 或中继的设备 | Gateway + Mesh（真实 WSS uplink） | 有，`localUiGuard` | `init` 默认安装并启用 |
 | `hub,node` | 公网入口兼本机设备 | Hub + Gateway + Mesh（进程内 uplink） | 同上 | 同上 |
-| `relay` | 只给别人转发的公共中继 | Relay + Gateway（无 mesh、无用户、无前端） | 无（管理走 `VIBETERM_RELAY_ADMIN_TOKEN`） | 不需要 |
+| `relay` | 只给别人转发的公共中继 | Relay + Gateway（无 mesh、无用户、无前端） | 无（管理走 `VIBETERM_RELAY_ADMIN_TOKEN`） | 同上 |
 | `relay,node` | 公共中继兼本机设备 | Relay + Gateway + Mesh | 有，管理面另接受本机会话 | 同 `node` |
+
+所有角色初始化都默认安装并启用直连插件，下载最多等待 60 秒；离线、不支持的平台或下载失败均不阻断初始化。CLI 加入 hub／relay 时会补装缺失插件，已安装则跳过；Web setup 省略 `directEnable` 时默认启用，显式 `false` 可跳过。存量安装从未安装插件时，升级不要求补装。
 
 中继角色详见 [公共中继（relay）角色](../architecture/relay.md)。
 

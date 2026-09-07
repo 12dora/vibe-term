@@ -96,19 +96,25 @@ describe('enableDirectAfterInit', () => {
     expect(logs.join('\n')).toContain('darwin-arm64');
   });
 
-  test('does not call enableDirect for standalone', async () => {
-    let called = false;
-    await enableDirectAfterInit(
-      { role: 'standalone', installDir: '/tmp/vibeterm-init-standalone' },
-      {
-        enableDirect: async () => {
-          called = true;
-          return { ok: true, platformId: 'x', version: '1', addonPath: 'y' };
-        },
-      }
-    );
-    expect(called).toBe(false);
-  });
+  test.each(['standalone', 'node', 'hub,node', 'relay', 'relay,node'])(
+    '角色 %s 默认安装并传入超时信号',
+    async (role) => {
+      let called = false;
+      await enableDirectAfterInit(
+        { role, installDir: '/tmp/vibeterm-init-standalone' },
+        {
+          enableDirect: async ({ signal, skipExisting }) => {
+            expect(signal).toBeInstanceOf(AbortSignal);
+            expect(signal?.aborted).toBe(false);
+            expect(skipExisting).toBe(true);
+            called = true;
+            return { ok: true, platformId: 'x', version: '1', addonPath: 'y' };
+          },
+        }
+      );
+      expect(called).toBe(true);
+    }
+  );
 
   test('swallows thrown errors from enableDirect and logs the real message', async () => {
     const logs: string[] = [];

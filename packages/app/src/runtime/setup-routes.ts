@@ -61,7 +61,7 @@ async function dispatchSetupAction(
           hubPublicUrl: readString(body, 'hubPublicUrl'),
           username: readString(body, 'username'),
           password: readString(body, 'password'),
-          directEnable: body.directEnable === true,
+          directEnable: body.directEnable !== false,
         },
         deps
       )
@@ -82,7 +82,7 @@ async function dispatchSetupAction(
                 : undefined,
           username: readString(body, 'username'),
           password: readString(body, 'password'),
-          directEnable: body.directEnable === true,
+          directEnable: body.directEnable !== false,
         },
         deps
       )
@@ -101,7 +101,7 @@ async function dispatchSetupAction(
         password: readString(body, 'password') || undefined,
         method,
         name: readString(body, 'name'),
-        directEnable: body.directEnable === true,
+        directEnable: body.directEnable !== false,
         insecureLocal: body.insecureLocal === true,
         totpCode: readOptionalTotpCode(body),
       },

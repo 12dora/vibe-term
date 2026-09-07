@@ -94,6 +94,8 @@ describe('becomeRelay', () => {
       role: 'relay',
       relayPublicUrl: 'https://relay.example',
       hasPassword: true,
+      direct: 'enabled',
+      directError: null,
       restarting: true,
     });
     expect(result).not.toHaveProperty('fingerprint');
@@ -102,6 +104,7 @@ describe('becomeRelay', () => {
     expect(await deps.auth.identityStore.load()).toBeNull();
     const env = await readEnvFile(deps.envPath);
     expect(env.VIBETERM_ROLES).toBe('relay');
+    expect(env.VIBETERM_DIRECT_ENABLED).toBe('true');
     expect(env.VIBETERM_RELAY_PUBLIC_URL).toBe('https://relay.example');
     expect(env.VIBETERM_HUB_URL).toBe('');
     expect(env.VIBETERM_HUB_PUBLIC_URL).toBe('');
@@ -145,6 +148,40 @@ describe('becomeRelay', () => {
       nodesOnline: 0,
       currentNodes: 0,
     });
+  });
+
+  test('显式关闭 directEnable 跳过安装', async () => {
+    let calls = 0;
+    const deps = await baseDeps({
+      enableDirect: async () => {
+        calls += 1;
+        throw new Error('unexpected install');
+      },
+    });
+    const result = await becomeRelay(
+      { role: 'relay', relayPublicUrl: 'https://relay.example', directEnable: false },
+      deps
+    );
+    expect(result.direct).toBe('skipped');
+    expect(result.directError).toBeNull();
+    expect(calls).toBe(0);
+  });
+
+  test.each(['download', 'unsupported'] as const)('插件 %s 失败不阻止中继初始化', async (kind) => {
+    let restarted = false;
+    const deps = await baseDeps({
+      enableDirect: async () => ({ ok: false, kind, reason: 'unavailable' }),
+      scheduleRestart: () => {
+        restarted = true;
+      },
+    });
+    const result = await becomeRelay(
+      { role: 'relay', relayPublicUrl: 'https://relay.example' },
+      deps
+    );
+    expect(result).toMatchObject({ ok: true, direct: 'failed', directError: 'unavailable' });
+    expect((await readEnvFile(deps.envPath)).VIBETERM_ROLES).toBe('relay');
+    expect(restarted).toBe(true);
   });
 
   test('preserves an existing admin token and does not return it', async () => {

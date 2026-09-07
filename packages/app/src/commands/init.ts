@@ -60,42 +60,17 @@ import { switchCurrent } from '../lib/upgrade-switch';
 import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
 import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
-import {
-  type DirectEnableResult,
-  type EnableDirectOptions,
-  enableDirect,
-  shouldEnableDirectForRoles,
-} from './direct';
+import { type DirectOnboardingDeps, enableDirectForOnboarding } from './direct';
 
 export type { InitConfig };
 
-export type EnableDirectAfterInitDeps = {
-  enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
-  log?: (message: string) => void;
-};
+export type EnableDirectAfterInitDeps = DirectOnboardingDeps;
 
 export async function enableDirectAfterInit(
   config: Pick<InitConfig, 'role' | 'installDir'>,
   deps: EnableDirectAfterInitDeps = {}
 ): Promise<void> {
-  if (!shouldEnableDirectForRoles(config.role)) {
-    return;
-  }
-  const enable = deps.enableDirect ?? enableDirect;
-  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
-  try {
-    const result = await enable({ installDir: config.installDir });
-    if (result.ok) {
-      log(
-        `direct ${result.skipped ? 'already enabled' : 'enabled'} (${result.platformId} ${result.version})`
-      );
-    } else {
-      log(`direct enable skipped: ${result.reason}`);
-    }
-  } catch (error) {
-    const reason = errorMessage(error);
-    log(`direct enable skipped: ${reason}`);
-  }
+  await enableDirectForOnboarding(config.installDir, deps);
 }
 
 function mustGetStringFlag(flags: ParsedArgs['flags'], key: string): string {

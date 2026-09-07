@@ -3,6 +3,8 @@ import { rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { defaultInstallDir } from '../constants';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import { readEnvFile, writeEnvFile } from '../lib/env-file';
+import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
 import type { FetchLike } from '../lib/fetch-like';
 import { ensureDir, pathExists } from '../lib/fs-utils';
@@ -29,6 +31,7 @@ export interface EnableDirectOptions {
   fetchImpl?: FetchLike;
   log?: (message: string) => void;
   signal?: AbortSignal;
+  skipExisting?: boolean;
 }
 
 export type DirectEnableFailureKind = 'unsupported' | 'download' | 'integrity' | 'install';
@@ -41,14 +44,47 @@ export interface DisableDirectOptions {
   installDir: string;
 }
 
-export function shouldEnableDirectForRoles(roles: string | string[]): boolean {
-  const list = Array.isArray(roles)
-    ? roles
-    : roles
-        .split(',')
-        .map((item) => item.trim())
-        .filter(Boolean);
-  return list.includes('node');
+export const DIRECT_ENABLE_TIMEOUT_MS = 60_000;
+
+export type DirectOnboardingDeps = {
+  enableDirect?: (options: EnableDirectOptions) => Promise<DirectEnableResult>;
+  log?: (message: string) => void;
+};
+
+export async function enableDirectForOnboarding(
+  installDir: string,
+  deps: DirectOnboardingDeps = {},
+  envPath?: string
+): Promise<void> {
+  const log = deps.log ?? ((message: string) => console.log(`[vibeterm] ${message}`));
+  try {
+    const result = await (deps.enableDirect ?? enableDirect)({
+      installDir,
+      skipExisting: true,
+      signal: AbortSignal.timeout(DIRECT_ENABLE_TIMEOUT_MS),
+      log: () => undefined,
+    });
+    if (!result.ok) {
+      log(
+        `direct plugin: skipped (${result.kind ? `${result.kind} failed: ` : ''}${result.reason})`
+      );
+      return;
+    }
+    if (envPath) {
+      await withEnvLock(async () => {
+        const env = await readEnvFile(envPath);
+        env.VIBETERM_DIRECT_ENABLED = 'true';
+        await writeEnvFile(envPath, env);
+      });
+    }
+    log(
+      result.skipped
+        ? 'direct plugin: skipped (already installed)'
+        : `direct plugin: installed ${result.platformId} ${result.version}`
+    );
+  } catch (error) {
+    log(`direct plugin: skipped (${errorMessage(error)})`);
+  }
 }
 
 function logLine(log: ((message: string) => void) | undefined, message: string): void {
@@ -179,6 +215,19 @@ export async function enableDirect(options: EnableDirectOptions): Promise<Direct
   const log = (message: string) => logLine(options.log, message);
   const layout = layoutForDirect(options);
   const signal = options.signal;
+  if (options.skipExisting) {
+    const installed = await readInstalledNativeManifest(layout.nativeDir);
+    if (installed) {
+      return {
+        ok: true,
+        skipped: true,
+        platformId: installed.platform,
+        version: installed.version,
+        addonPath: nativeAddonPath(layout.nativeDir),
+      };
+    }
+  }
+
   const pin =
     options.pin === undefined
       ? detectCurrentNativePin({

@@ -322,7 +322,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 - `mesh reset-root`（任意机器本地，灾难恢复，见 §2）/ `hub user reset`（hub 机本地）
 - `enroll [--ttl 10m]`（任意 node，输入密码）：生成 enroll 密钥对与授权，打印 join 串与完整 join 命令，并等待 join 完成后自动签 `admit-node`（Ctrl-C 退出则由 Nodes 页确认）。
 - `hub join <https-url> --token <join 串> [--name <n>]`（仅接受系统信任链验证的 HTTPS）/ `hub leave`
-- `direct enable|disable`：按 `platform / arch / libc` 查 pinned manifest（`packages/app/src/lib/native-manifest.ts`：包名、addon 文件名、`integrity`、N-API 版本），从 npm registry 下载单平台 tarball，校验后解出 `.node` 到 `<installDir>/native/`（`install-layout` 新增 `nativeDir`）。缺失则 `direct_capable=false`。`init --role node|hub,node` 默认执行，失败不阻断。
+- `direct enable|disable`：按 `platform / arch / libc` 查 pinned manifest（`packages/app/src/lib/native-manifest.ts`：包名、addon 文件名、`integrity`、N-API 版本），从 npm registry 下载单平台 tarball，校验后解出 `.node` 到 `<installDir>/native/`（`install-layout` 新增 `nativeDir`）。缺失则 `direct_capable=false`。`init` 对所有角色（含 `standalone`、`relay`）默认安装并启用，最多等待 60 秒，失败不阻断初始化。CLI `hub join`／`relay join` 在重启前补装缺失插件；Web setup 省略 `directEnable` 时默认启用，失败通过 `direct`／`directError` 返回且不阻断接入。
 - `init --role <roles>`；`upgrade` manifest 变化时重下。
 - `hub join` 提示放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。
 

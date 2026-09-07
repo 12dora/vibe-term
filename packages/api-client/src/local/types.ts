@@ -97,7 +97,7 @@ export interface SetupHubRequest {
   hubPublicUrl: string;
   username: string;
   password: string;
-  directEnable: boolean;
+  directEnable?: boolean;
 }
 
 export interface SetupHubResponse {
@@ -114,7 +114,7 @@ export interface SetupJoinRequest {
   password?: string;
   method?: 'token' | 'password';
   name: string;
-  directEnable: boolean;
+  directEnable?: boolean;
   insecureLocal?: boolean;
 }
 
@@ -140,6 +140,8 @@ export interface SetupRelayRequest {
 
 export interface SetupRelayResponse {
   ok: true;
+  direct: SetupDirectOutcome;
+  directError: string | null;
   role: SetupRelayRole;
   relayPublicUrl: string;
   hasPassword: boolean;
