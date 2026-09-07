@@ -24,7 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | 
 ```
 
 <p align="center">
-  <img src="./images/hero-en.png" width="880" alt="VibeTerm main view: a tmux terminal in the browser running Claude Code, with the device tree of several machines on the left" />
+  <img src="./images/hero-en.png" width="880" alt="VibeTerm main view: a tmux terminal in the browser running Claude Code, with the device tree of several machines on the left" /><br/>
+  <sub>Desktop: the cross-machine device tree on the left, Claude Code running in the terminal on the right</sub>
 </p>
 
 VibeTerm is built on tmux and Ghostty and links Macs, Linux servers, NAS boxes, and cloud VMs into one mesh. Every machine needs only outbound connections, so it works behind NAT without a public IP; nodes are end-to-end encrypted and a relaying server only sees ciphertext. It is a third way to do remote development next to SSH clients and cloud IDEs: the terminal keeps running on the user's own machine and is simply picked up from another device.
@@ -43,12 +44,15 @@ VibeTerm is built on tmux and Ghostty and links Macs, Linux servers, NAS boxes, 
 ## Platforms
 
 <table width="100%">
+  <tr><th width="25%">macOS</th><th width="25%">Linux</th><th width="25%">Windows</th><th width="25%">iOS / Android</th></tr>
+  <tr><td align="center">✅</td><td align="center">✅</td><td align="center">TBD</td><td align="center">✅ PWA</td></tr>
+</table>
+
+<table width="100%">
   <tr>
-    <td width="62%" valign="middle">
-      <p><b>Server</b><br/>macOS · Linux · Windows (planned)</p>
-      <p><b>Client</b><br/>Any modern browser; installable as a PWA on iOS / Android</p>
-    </td>
-    <td width="38%" align="center"><img src="./images/mobile.png" width="240" alt="VibeTerm mobile PWA: operating a remote tmux terminal on an iPhone" /></td>
+    <td width="33%" align="center" valign="top"><img src="./images/mobile.png" width="240" alt="VibeTerm on a phone: remote tmux terminal" /><br/><sub>Terminal: Claude Code output reflowed to the screen width, shortcut bar above the keyboard</sub></td>
+    <td width="33%" align="center" valign="top"><img src="./images/mobile-devices-en.png" width="240" alt="VibeTerm on a phone: device and window drawer" /><br/><sub>Devices: the drawer lists the windows of every machine</sub></td>
+    <td width="33%" align="center" valign="top"><img src="./images/mobile-files-en.png" width="240" alt="VibeTerm on a phone: file panel" /><br/><sub>Files: browse, upload, and download remote files</sub></td>
   </tr>
 </table>
 
@@ -69,7 +73,8 @@ VibeTerm is built on tmux and Ghostty and links Macs, Linux servers, NAS boxes, 
 | When to use | A machine with a public IP or domain is available (a cloud VM, a NAS behind a port-forwarding router) | Every machine sits behind NAT with no port to expose, or one server should forward for several users |
 
 <p align="center">
-  <img src="./images/nodes-en.png" width="880" alt="VibeTerm node management: several machines joined through a hub, with online state and connection path" />
+  <img src="./images/nodes-en.png" width="880" alt="VibeTerm node management: several machines joined through a hub, with online state and connection path" /><br/>
+  <sub>Settings → Mesh: HTTPS mode and node management, two machines online through the hub</sub>
 </p>
 
 ## Deploying

@@ -24,7 +24,8 @@ curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | 
 ```
 
 <p align="center">
-  <img src="docs/images/hero.png" width="880" alt="VibeTerm 主界面：浏览器中的 tmux 终端正在运行 Claude Code，左侧是多台机器的设备树" />
+  <img src="docs/images/hero.png" width="880" alt="VibeTerm 主界面：浏览器中的 tmux 终端正在运行 Claude Code，左侧是多台机器的设备树" /><br/>
+  <sub>桌面端：左侧是跨机器的设备树，右侧终端里运行着 Claude Code</sub>
 </p>
 
 VibeTerm 基于 tmux 与 Ghostty，把 Mac、Linux 服务器、NAS 和云主机连成一张网。所有机器只需出站连接，没有公网 IP 也能穿透 NAT；节点之间端到端加密，中转服务器只见密文。它是 SSH 客户端与云端 IDE 之外的第三种远程开发方式：终端始终运行在用户自己的机器上，换个设备即可接着用。
@@ -43,12 +44,15 @@ VibeTerm 基于 tmux 与 Ghostty，把 Mac、Linux 服务器、NAS 和云主机�
 ## 平台支持
 
 <table width="100%">
+  <tr><th width="25%">macOS</th><th width="25%">Linux</th><th width="25%">Windows</th><th width="25%">iOS / Android</th></tr>
+  <tr><td align="center">✅</td><td align="center">✅</td><td align="center">TBD</td><td align="center">✅ PWA</td></tr>
+</table>
+
+<table width="100%">
   <tr>
-    <td width="62%" valign="middle">
-      <p><b>服务端</b><br/>macOS · Linux · Windows（计划中）</p>
-      <p><b>客户端</b><br/>任意现代浏览器；iOS / Android 可安装为 PWA</p>
-    </td>
-    <td width="38%" align="center"><img src="docs/images/mobile.png" width="240" alt="VibeTerm 手机端 PWA：在 iPhone 上操作远程 tmux 终端" /></td>
+    <td width="33%" align="center" valign="top"><img src="docs/images/mobile.png" width="240" alt="VibeTerm 手机端：远程 tmux 终端" /><br/><sub>终端：Claude Code 输出按屏宽回流，底部是软键盘快捷键</sub></td>
+    <td width="33%" align="center" valign="top"><img src="docs/images/mobile-devices.png" width="240" alt="VibeTerm 手机端：设备与窗口抽屉" /><br/><sub>设备：抽屉里是全部机器的窗口列表</sub></td>
+    <td width="33%" align="center" valign="top"><img src="docs/images/mobile-files.png" width="240" alt="VibeTerm 手机端：文件面板" /><br/><sub>文件：浏览、上传与下载远端文件</sub></td>
   </tr>
 </table>
 
@@ -69,7 +73,8 @@ VibeTerm 基于 tmux 与 Ghostty，把 Mac、Linux 服务器、NAS 和云主机�
 | 适用场景 | 有一台带公网 IP 或域名的机器（云主机、能端口转发的家用 NAS） | 所有机器都在 NAT 后无法暴露端口，或需要用一台服务器为多位用户提供转发 |
 
 <p align="center">
-  <img src="docs/images/nodes.png" width="880" alt="VibeTerm 节点管理：多台机器通过 Hub 组成 mesh，显示在线状态与直连方式" />
+  <img src="docs/images/nodes.png" width="880" alt="VibeTerm 节点管理：多台机器通过 Hub 组成 mesh，显示在线状态与直连方式" /><br/>
+  <sub>设置 → 多节点互联：HTTPS 方式与节点管理，两台机器经 Hub 在线</sub>
 </p>
 
 ## 部署方式
