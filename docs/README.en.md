@@ -31,34 +31,33 @@ VibeTerm is built on tmux and Ghostty and links Macs, Linux servers, NAS boxes, 
 
 ## Features
 
-| **Multi-machine mesh** | **End-to-end encryption** | **Terminal sharing** |
-|---|---|---|
-| Sign in to any one machine and see and operate all of them. | Nodes talk over AES-256-GCM; a relaying server only ever sees ciphertext. | Share a terminal with a colleague by link, with password protection and recorded playback. |
-
-| **Feels local** | **File transfer** | **AI Agent** |
-|---|---|---|
-| Scrolling and typing feel like a native terminal, on the phone too. | Move files between the browser and a machine, or between machines. | Reads the screen, runs commands, drives interactive programs, and follows the active pane. |
-
-| **Port mapping** | **Phone and tablet** | **Passkeys** |
-|---|---|---|
-| Map a remote machine's port to the local machine and use it like a local service. | Install as a PWA; the on-screen keyboard never breaks the terminal layout. | Passkey / TOTP second factor; the password never leaves the browser. |
+<table width="100%">
+  <tr><th width="33%">Multi-machine mesh</th><th width="33%">End-to-end encryption</th><th width="33%">Terminal sharing</th></tr>
+  <tr><td valign="top">Sign in to any one machine and see and operate all of them.</td><td valign="top">Nodes talk over AES-256-GCM; a relaying server only ever sees ciphertext.</td><td valign="top">Share a terminal with a colleague by link, with password protection and recorded playback.</td></tr>
+  <tr><th width="33%">Feels local</th><th width="33%">File transfer</th><th width="33%">AI Agent</th></tr>
+  <tr><td valign="top">Scrolling and typing feel like a native terminal, on the phone too.</td><td valign="top">Move files between the browser and a machine, or between machines.</td><td valign="top">Reads the screen, runs commands, drives interactive programs, and follows the active pane.</td></tr>
+  <tr><th width="33%">Port mapping</th><th width="33%">Phone and tablet</th><th width="33%">Passkeys</th></tr>
+  <tr><td valign="top">Map a remote machine's port to the local machine and use it like a local service.</td><td valign="top">Install as a PWA; the on-screen keyboard never breaks the terminal layout.</td><td valign="top">Passkey / TOTP second factor; the password never leaves the browser.</td></tr>
+</table>
 
 ## Platforms
 
-| | Platform |
-|---|---|
-| **Server** | macOS · Linux · Windows (planned) |
-| **Client** | Any modern browser; installable as a PWA on iOS / Android |
-
-<p align="center">
-  <img src="./images/mobile.png" width="300" alt="VibeTerm mobile PWA: operating a remote tmux terminal on an iPhone" />
-</p>
+<table width="100%">
+  <tr>
+    <td width="62%" valign="middle">
+      <p><b>Server</b><br/>macOS · Linux · Windows (planned)</p>
+      <p><b>Client</b><br/>Any modern browser; installable as a PWA on iOS / Android</p>
+    </td>
+    <td width="38%" align="center"><img src="./images/mobile.png" width="240" alt="VibeTerm mobile PWA: operating a remote tmux terminal on an iPhone" /></td>
+  </tr>
+</table>
 
 ## Deployment modes
 
-| **Standalone** | **Hub** | **Relay** |
-|---|---|---|
-| Install on one machine and use it; binds to localhost by default. | One machine with a public address is the entry point; the others join as nodes and need only outbound connections. A standby hub can be added. | Without any public address, route ciphertext through a self-run or third-party relay; one relay can serve many users. |
+<table width="100%">
+  <tr><th width="33%">Standalone</th><th width="33%">Hub</th><th width="33%">Relay</th></tr>
+  <tr><td valign="top">Install on one machine and use it; binds to localhost by default.</td><td valign="top">One machine with a public address is the entry point; the others join as nodes and need only outbound connections. A standby hub can be added.</td><td valign="top">Without any public address, route ciphertext through a self-run or third-party relay; one relay can serve many users.</td></tr>
+</table>
 
 **Hub vs. relay**
 

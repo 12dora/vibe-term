@@ -31,34 +31,33 @@ VibeTerm 基于 tmux 与 Ghostty，把 Mac、Linux 服务器、NAS 和云主机�
 
 ## 特色功能
 
-| **多机互联** | **端到端加密** | **终端共享** |
-|---|---|---|
-| 登录任意一台机器，即可看到并操作全部机器。 | 节点之间用 AES-256-GCM 加密，中转服务器只见密文。 | 一条链接把终端分享给同事，支持口令保护与录制回放。 |
-
-| **本地般流畅** | **文件传输** | **AI Agent** |
-|---|---|---|
-| 滚动、输入与本地终端一样跟手，手机上也是。 | 浏览器与机器、机器与机器之间自由传文件。 | 读屏、执行命令、驱动交互程序，跟随当前窗格。 |
-
-| **端口映射** | **手机与平板** | **通行密钥** |
-|---|---|---|
-| 把远端机器的端口映射到本机，像本地服务一样访问。 | 安装为 PWA，软键盘不破坏终端布局。 | Passkey / TOTP 二次验证，密码永不离开浏览器。 |
+<table width="100%">
+  <tr><th width="33%">多机互联</th><th width="33%">端到端加密</th><th width="33%">终端共享</th></tr>
+  <tr><td valign="top">登录任意一台机器，即可看到并操作全部机器。</td><td valign="top">节点之间用 AES-256-GCM 加密，中转服务器只见密文。</td><td valign="top">一条链接把终端分享给同事，支持口令保护与录制回放。</td></tr>
+  <tr><th width="33%">本地般流畅</th><th width="33%">文件传输</th><th width="33%">AI Agent</th></tr>
+  <tr><td valign="top">滚动、输入与本地终端一样跟手，手机上也是。</td><td valign="top">浏览器与机器、机器与机器之间自由传文件。</td><td valign="top">读屏、执行命令、驱动交互程序，跟随当前窗格。</td></tr>
+  <tr><th width="33%">端口映射</th><th width="33%">手机与平板</th><th width="33%">通行密钥</th></tr>
+  <tr><td valign="top">把远端机器的端口映射到本机，像本地服务一样访问。</td><td valign="top">安装为 PWA，软键盘不破坏终端布局。</td><td valign="top">Passkey / TOTP 二次验证，密码永不离开浏览器。</td></tr>
+</table>
 
 ## 平台支持
 
-| | 平台 |
-|---|---|
-| **服务端** | macOS · Linux · Windows（计划中） |
-| **客户端** | 任意现代浏览器；iOS / Android 可安装为 PWA |
-
-<p align="center">
-  <img src="docs/images/mobile.png" width="300" alt="VibeTerm 手机端 PWA：在 iPhone 上操作远程 tmux 终端" />
-</p>
+<table width="100%">
+  <tr>
+    <td width="62%" valign="middle">
+      <p><b>服务端</b><br/>macOS · Linux · Windows（计划中）</p>
+      <p><b>客户端</b><br/>任意现代浏览器；iOS / Android 可安装为 PWA</p>
+    </td>
+    <td width="38%" align="center"><img src="docs/images/mobile.png" width="240" alt="VibeTerm 手机端 PWA：在 iPhone 上操作远程 tmux 终端" /></td>
+  </tr>
+</table>
 
 ## 部署模式
 
-| **独立** | **Hub** | **中继** |
-|---|---|---|
-| 单机安装即用，默认只监听本机。 | 一台有公网地址的机器做入口，其余机器作为节点加入，只需出站连接。可再加一台备用 Hub。 | 没有公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。 |
+<table width="100%">
+  <tr><th width="33%">独立</th><th width="33%">Hub</th><th width="33%">中继</th></tr>
+  <tr><td valign="top">单机安装即用，默认只监听本机。</td><td valign="top">一台有公网地址的机器做入口，其余机器作为节点加入，只需出站连接。可再加一台备用 Hub。</td><td valign="top">没有公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。</td></tr>
+</table>
 
 **Hub 与中继的区别**
 
