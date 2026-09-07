@@ -5,6 +5,9 @@
 //
 // 关闭域名访问要过一道确认：经配置的公开域名随即只剩 Hub / 节点互联流量，若当前这一页正是
 // 从该域名进来的（`viaDomain`），点下去就会当场失联。
+//
+// 直连插件那一段（`NodeDirectBody`）不进「保存」：装 / 删是立即生效的动作，且要重启才真的
+// 生效，与两个草稿项的时序不同。
 
 import type { NodeRow } from '@/node/mesh-nodes';
 import { isValidNodeId, nodeAppPath } from '@vibeterm/api-client';
@@ -40,6 +43,8 @@ import {
   type Translate,
   hasNodeDetailChanges,
 } from './node-detail-types';
+import { type NodeDirectIo, useNodeDirectPlugin } from './node-direct-plugin';
+import { NodeDirectBody, NodeDirectRemoveConfirm } from './node-direct-section';
 import { useNodeDetailState } from './use-node-detail-state';
 
 // ---------------------------------------------------------------------------
@@ -246,6 +251,8 @@ export interface NodeDetailDialogProps {
   onChanged: () => void;
   /** 测试注入；缺省走真实端点。 */
   io?: NodeDetailIo;
+  /** 直连插件那一段的测试注入；缺省走真实端点。 */
+  directIo?: NodeDirectIo;
 }
 
 export function NodeDetailDialog({
@@ -257,8 +264,10 @@ export function NodeDetailDialog({
   rename,
   onChanged,
   io,
+  directIo,
 }: NodeDetailDialogProps) {
   const { t } = useTranslation();
+  const direct = useNodeDirectPlugin(row, open, directIo);
   const { state, patch, plan, save, onAllowedChange } = useNodeDetailState(row, open, {
     io,
     rename,
@@ -286,6 +295,13 @@ export function NodeDetailDialog({
           errors={state.errors}
         />
 
+        <NodeDirectBody
+          row={row}
+          ui={direct.ui}
+          onAction={direct.onAction}
+          onRestart={direct.restartNow}
+        />
+
         <NodeNotifySettingsLink row={row} />
 
         <DialogFooter>
@@ -306,6 +322,13 @@ export function NodeDetailDialog({
             {t('common.save')}
           </Button>
         </DialogFooter>
+
+        <NodeDirectRemoveConfirm
+          open={direct.ui.confirmingRemove}
+          onConfirm={direct.confirmRemove}
+          onCancel={direct.cancelRemove}
+          testId={`nodes-detail-direct-remove-confirm-${row.id}`}
+        />
 
         <DomainAccessConfirm
           open={state.confirming}

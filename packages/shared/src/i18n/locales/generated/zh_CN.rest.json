@@ -1752,7 +1752,20 @@
         "renameUnavailable": "当前 Hub 不可写入，暂时无法改名。",
         "renameFailed": "重命名失败：{{error}}",
         "domainAccessSaveFailed": "域名访问设置保存失败：{{error}}",
-        "saved": "已保存"
+        "saved": "已保存",
+        "direct": "直连插件",
+        "directInstall": "安装直连插件",
+        "directRemove": "删除直连插件",
+        "directLoading": "读取中……",
+        "directUnsupportedNode": "该节点版本不支持。",
+        "directUnreachable": "节点当前不可达。",
+        "directLoginRequired": "须先登录该节点。",
+        "directRunning": "运行中",
+        "directInstalledRestart": "已安装，重启 VibeTerm 后生效。",
+        "directRemovedRestart": "已删除，重启 VibeTerm 后生效。",
+        "directRestartNow": "立即重启",
+        "directRestarting": "正在重启……",
+        "directRestartFailed": "重启失败：{{error}}"
       },
       "selection": {
         "more": "更多",

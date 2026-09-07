@@ -4,10 +4,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { NodeRow } from '@/node/mesh-nodes';
 import type { DomainAccessPolicy } from '@vibeterm/api-client';
+import type { LocalDirectResponse, LocalDirectStatus } from '@vibeterm/api-client/local/types';
 import enUS from '@vibeterm/shared/i18n/locales/en_US.json';
 import zhCN from '@vibeterm/shared/i18n/locales/zh_CN.json';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { DomainAccessState } from './node-detail-types';
+import type { DirectPluginUi } from './node-direct-plugin';
 
 installWindowStorage();
 
@@ -21,6 +23,17 @@ const {
   domainAccessSwitchDisabled,
   nodeNotifySettingsPath,
 } = await import('./node-detail-dialog');
+const { NodeDirectBody, NodeDirectRemoveConfirm } = await import('./node-direct-section');
+const {
+  applyDirectResult,
+  createNodeDirectIo,
+  directPluginButton,
+  directPluginIntent,
+  directPluginNotice,
+  directPluginStatusText,
+  initialDirectPluginUi,
+  loadDirectPluginState,
+} = await import('./node-direct-plugin');
 const { MemoryRouter } = await import('react-router');
 const {
   createNodeDetailIo,
@@ -518,5 +531,351 @@ describe('通知设置入口', () => {
     );
     expect(html).toContain('data-testid="node-detail-notify-settings"');
     expect(html).toContain(`/n/${REMOTE.id}/settings?tab=notifications`);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 直连插件
+// ---------------------------------------------------------------------------
+
+function directStatus(overrides: Partial<LocalDirectStatus> = {}): LocalDirectStatus {
+  return {
+    supported: true,
+    installed: false,
+    enabled: false,
+    capable: false,
+    version: null,
+    platform: 'darwin-arm64',
+    ...overrides,
+  };
+}
+
+function directUi(overrides: Partial<DirectPluginUi> = {}): DirectPluginUi {
+  return { ...initialDirectPluginUi(), ...overrides };
+}
+
+function ready(status: Partial<LocalDirectStatus> = {}, rest: Partial<DirectPluginUi> = {}) {
+  return directUi({ load: { kind: 'ready', status: directStatus(status) }, ...rest });
+}
+
+function directResponse(overrides: Partial<LocalDirectResponse> = {}): LocalDirectResponse {
+  return {
+    ok: true,
+    installed: true,
+    enabled: true,
+    capable: false,
+    restartRequired: true,
+    ...overrides,
+  };
+}
+
+describe('直连插件的请求通道', () => {
+  test('远端节点：状态与动作都经 `/n/<id>` 打到那台机器', async () => {
+    const calls = stubFetch((url) =>
+      url.endsWith('/api/local/status')
+        ? json({ direct: directStatus({ installed: true, version: '0.33.1' }) })
+        : json(directResponse())
+    );
+    const io = createNodeDirectIo();
+
+    expect(await io.loadDirect(REMOTE)).toEqual(
+      directStatus({ installed: true, version: '0.33.1' })
+    );
+    expect(await io.setDirect(REMOTE, 'install')).toEqual(directResponse());
+
+    expect(calls.urls).toEqual([
+      `/n/${REMOTE.id}/api/local/status`,
+      `/n/${REMOTE.id}/api/local/direct`,
+    ]);
+  });
+
+  test('安装发的是 `{action:"install"}`，删除发的是 `{action:"remove"}`', async () => {
+    const bodies: string[] = [];
+    globalThis.fetch = ((_url: string, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return Promise.resolve(json(directResponse()));
+    }) as typeof fetch;
+    const io = createNodeDirectIo();
+
+    await io.setDirect(REMOTE, 'install');
+    await io.setDirect(REMOTE, 'remove');
+
+    expect(bodies.map((body) => JSON.parse(body))).toEqual([
+      { action: 'install' },
+      { action: 'remove' },
+    ]);
+  });
+
+  test('本机：同一组端点不带前缀', async () => {
+    const calls = stubFetch(() => json({ direct: directStatus() }));
+    await createNodeDirectIo().loadDirect(SELF);
+
+    expect(calls.urls).toEqual(['/api/local/status']);
+  });
+
+  test('重启：POST `/n/<id>/api/settings/restart`', async () => {
+    const inits: (RequestInit | undefined)[] = [];
+    const calls = stubFetch((_url, init) => {
+      inits.push(init);
+      return new Response(null, { status: 202 });
+    });
+    await createNodeDirectIo().restart(REMOTE);
+
+    expect(calls.urls).toEqual([`/n/${REMOTE.id}/api/settings/restart`]);
+    expect(inits[0]?.method).toBe('POST');
+  });
+
+  test('重启被拒：抛出带状态码的错误，不当成已重启', async () => {
+    stubFetch(() => json({ error: 'restart_failed' }, 500));
+    const err = (await createNodeDirectIo()
+      .restart(REMOTE)
+      .catch((e) => e)) as { status?: number };
+
+    expect(err.status).toBe(500);
+  });
+});
+
+describe('直连插件的状态读取', () => {
+  test('读回来的是那台机器自己的 direct 字段', async () => {
+    stubFetch(() => json({ direct: directStatus({ installed: true, capable: true }) }));
+    const state = await loadDirectPluginState(REMOTE, createNodeDirectIo(), t);
+
+    expect(state).toEqual({
+      kind: 'ready',
+      status: directStatus({ installed: true, capable: true }),
+    });
+  });
+
+  test('老节点回 404 / 405：折成「该节点版本不支持」', async () => {
+    for (const status of [404, 405]) {
+      stubFetch(() => json({ error: 'not_found' }, status));
+      const state = await loadDirectPluginState(REMOTE, createNodeDirectIo(), t);
+      expect(state).toEqual({ kind: 'unsupported' });
+      expect(directPluginStatusText(state, t)).toBe('nodes.detail.directUnsupportedNode');
+    }
+  });
+
+  test('节点不可达 / 未登录：转发层的顶层信封换成人话', async () => {
+    stubFetch(() => json({ code: 'NODE_UNREACHABLE', nodeId: REMOTE.id }, 503));
+    expect(await loadDirectPluginState(REMOTE, createNodeDirectIo(), t)).toEqual({
+      kind: 'failed',
+      message: 'nodes.detail.directUnreachable',
+    });
+
+    stubFetch(() => json({ code: 'NODE_LOGIN_REQUIRED', nodeId: REMOTE.id }, 401));
+    expect(await loadDirectPluginState(REMOTE, createNodeDirectIo(), t)).toEqual({
+      kind: 'failed',
+      message: 'nodes.detail.directLoginRequired',
+    });
+  });
+
+  test('插件自身的失败沿用本机卡那份错误表', async () => {
+    stubFetch(() => json({ error: { code: 'direct_download_failed', message: 'ETIMEDOUT' } }, 502));
+    const state = await loadDirectPluginState(REMOTE, createNodeDirectIo(), t);
+
+    expect(state.kind).toBe('failed');
+    expect(state.kind === 'failed' && state.message).toContain(
+      'nodes.machine.directErrorDownloadFailed'
+    );
+  });
+
+  test('状态行：平台 · 装没装 · 运行中', () => {
+    expect(directPluginStatusText({ kind: 'loading' }, t)).toBe('nodes.detail.directLoading');
+    expect(directPluginStatusText({ kind: 'ready', status: directStatus() }, t)).toBe(
+      'darwin-arm64 · nodes.machine.directNotInstalled'
+    );
+    expect(
+      directPluginStatusText(
+        { kind: 'ready', status: directStatus({ installed: true, version: '0.33.1' }) },
+        t
+      )
+    ).toBe('darwin-arm64 · nodes.machine.directInstalledVersion:{"version":"0.33.1"}');
+    expect(
+      directPluginStatusText(
+        { kind: 'ready', status: directStatus({ installed: true, capable: true }) },
+        t
+      )
+    ).toBe('darwin-arm64 · nodes.machine.directInstalled · nodes.detail.directRunning');
+    expect(
+      directPluginStatusText({ kind: 'ready', status: directStatus({ supported: false }) }, t)
+    ).toBe('darwin-arm64 · nodes.machine.directUnsupported');
+  });
+});
+
+describe('一枚按钮的两态', () => {
+  test('未安装 → 安装；已安装 → 删除（破坏性）', () => {
+    expect(directPluginButton(ready())).toEqual({
+      action: 'install',
+      labelKey: 'nodes.detail.directInstall',
+      destructive: false,
+      disabled: false,
+    });
+    expect(directPluginButton(ready({ installed: true }))).toEqual({
+      action: 'remove',
+      labelKey: 'nodes.detail.directRemove',
+      destructive: true,
+      disabled: false,
+    });
+  });
+
+  test('平台不支持 / 还没读到 / 读失败：按钮锁住', () => {
+    expect(directPluginButton(ready({ supported: false })).disabled).toBe(true);
+    expect(directPluginButton(directUi()).disabled).toBe(true);
+    expect(directPluginButton(directUi({ load: { kind: 'unsupported' } })).disabled).toBe(true);
+    expect(
+      directPluginButton(directUi({ load: { kind: 'failed', message: 'boom' } })).disabled
+    ).toBe(true);
+  });
+
+  test('下载中与重启中都不受理第二次点击', () => {
+    expect(directPluginButton(ready({}, { pending: 'install' })).disabled).toBe(true);
+    expect(directPluginButton(ready({ installed: true }, { restarting: true })).disabled).toBe(
+      true
+    );
+  });
+});
+
+describe('装 / 删的点击语义', () => {
+  test('安装直接发，删除先过二次确认', () => {
+    expect(directPluginIntent(ready(), 'install')).toEqual({ kind: 'run', action: 'install' });
+    expect(directPluginIntent(ready({ installed: true }), 'remove')).toEqual({ kind: 'confirm' });
+  });
+
+  test('有在途动作 / 正在确认 / 正在重启：这一次点击不作数', () => {
+    expect(directPluginIntent(ready({}, { pending: 'install' }), 'install')).toEqual({
+      kind: 'ignore',
+    });
+    expect(
+      directPluginIntent(ready({ installed: true }, { confirmingRemove: true }), 'remove')
+    ).toEqual({ kind: 'ignore' });
+    expect(directPluginIntent(ready({}, { restarting: true }), 'install')).toEqual({
+      kind: 'ignore',
+    });
+  });
+
+  test('动作回执就是新状态：装完按钮当场变成「删除」', () => {
+    const next = applyDirectResult(
+      { kind: 'ready', status: directStatus() },
+      { ok: true, installed: true, enabled: true, capable: false, restartRequired: true }
+    );
+
+    expect(next).toEqual({
+      kind: 'ready',
+      status: directStatus({ installed: true, enabled: true }),
+    });
+    expect(directPluginButton(directUi({ load: next })).action).toBe('remove');
+  });
+
+  test('没读到状态时的回执不硬凑一个 ready', () => {
+    expect(
+      applyDirectResult(
+        { kind: 'unsupported' },
+        { ok: true, installed: true, enabled: true, capable: false, restartRequired: true }
+      )
+    ).toEqual({ kind: 'unsupported' });
+  });
+});
+
+describe('重启提醒', () => {
+  test('没动过：不摆提醒', () => {
+    expect(directPluginNotice(ready(), t)).toBeNull();
+  });
+
+  test('装完 / 删完：各自的提醒 + 「立即重启」', () => {
+    expect(directPluginNotice(ready({ installed: true }, { applied: 'install' }), t)).toEqual({
+      text: 'nodes.detail.directInstalledRestart',
+      restartable: true,
+    });
+    expect(directPluginNotice(ready({}, { applied: 'remove' }), t)).toEqual({
+      text: 'nodes.detail.directRemovedRestart',
+      restartable: true,
+    });
+  });
+
+  test('已经在重启：只剩「重启中」，不再给按钮', () => {
+    expect(directPluginNotice(ready({}, { applied: 'install', restarting: true }), t)).toEqual({
+      text: 'nodes.detail.directRestarting',
+      restartable: false,
+    });
+  });
+
+  test('三语都补齐了这一段的键', () => {
+    expect(zhCN.translation.nodes.detail.directInstall).toBe('安装直连插件');
+    expect(zhCN.translation.nodes.detail.directRemove).toBe('删除直连插件');
+    expect(enUS.translation.nodes.detail.directInstall).toBe('Install direct plugin');
+    expect(enUS.translation.nodes.detail.directRemove).toBe('Remove direct plugin');
+  });
+});
+
+describe('直连插件正文', () => {
+  function directBody(ui: DirectPluginUi): string {
+    return renderToStaticMarkup(
+      <NodeDirectBody row={REMOTE} ui={ui} onAction={() => undefined} onRestart={() => undefined} />
+    );
+  }
+
+  test('未安装：一枚可点的「安装直连插件」', () => {
+    const html = directBody(ready());
+    expect(html).toContain(`data-testid="nodes-detail-direct-${REMOTE.id}"`);
+    expect(html).toContain('nodes.detail.directInstall');
+    expect(html).toContain('data-direct-action="install"');
+    const at = html.indexOf(`data-testid="nodes-detail-direct-action-${REMOTE.id}"`);
+    expect(html.slice(html.lastIndexOf('<button', at), at)).not.toContain('disabled=""');
+  });
+
+  test('已安装：按钮变成「删除直连插件」', () => {
+    const html = directBody(ready({ installed: true, version: '0.33.1' }));
+    expect(html).toContain('nodes.detail.directRemove');
+    expect(html).toContain('data-direct-action="remove"');
+    expect(html).toContain('nodes.machine.directInstalledVersion');
+  });
+
+  test('平台不支持：按钮锁住，原因写在状态行上', () => {
+    const html = directBody(ready({ supported: false }));
+    expect(html).toContain('nodes.machine.directUnsupported');
+    const at = html.indexOf(`data-testid="nodes-detail-direct-action-${REMOTE.id}"`);
+    expect(html.slice(html.lastIndexOf('<button', at), at)).toContain('disabled=""');
+  });
+
+  test('节点不可达：给出原因并锁住按钮', () => {
+    const html = directBody(
+      directUi({ load: { kind: 'failed', message: 'nodes.detail.directUnreachable' } })
+    );
+    expect(html).toContain('nodes.detail.directUnreachable');
+    const at = html.indexOf(`data-testid="nodes-detail-direct-action-${REMOTE.id}"`);
+    expect(html.slice(html.lastIndexOf('<button', at), at)).toContain('disabled=""');
+  });
+
+  test('装完：提醒里带「立即重启」', () => {
+    const html = directBody(ready({ installed: true }, { applied: 'install' }));
+    expect(html).toContain(`data-testid="nodes-detail-direct-notice-${REMOTE.id}"`);
+    expect(html).toContain('nodes.detail.directInstalledRestart');
+    expect(html).toContain(`data-testid="nodes-detail-direct-restart-${REMOTE.id}"`);
+    expect(html).toContain('nodes.detail.directRestartNow');
+  });
+
+  test('重启中：提醒只剩状态，重启按钮撤掉', () => {
+    const html = directBody(ready({}, { applied: 'install', restarting: true }));
+    expect(html).toContain('nodes.detail.directRestarting');
+    expect(html).not.toContain(`data-testid="nodes-detail-direct-restart-${REMOTE.id}"`);
+  });
+
+  test('失败原因单独一行', () => {
+    const html = directBody(ready({}, { error: 'nodes.machine.directErrorDownloadFailed' }));
+    expect(html).toContain(`data-testid="nodes-detail-direct-error-${REMOTE.id}"`);
+    expect(html).toContain('nodes.machine.directErrorDownloadFailed');
+  });
+
+  test('未请求删除时不渲染确认框', () => {
+    expect(
+      renderToStaticMarkup(
+        <NodeDirectRemoveConfirm
+          open={false}
+          onConfirm={() => undefined}
+          onCancel={() => undefined}
+          testId="c"
+        />
+      )
+    ).toBe('');
   });
 });
