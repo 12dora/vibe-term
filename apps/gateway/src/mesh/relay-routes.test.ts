@@ -223,6 +223,25 @@ describe('RelayRoutes', () => {
     }
   });
 
+  test('status 被改密踢出且离线时同时标记等待令牌与重新认证', async () => {
+    const b = await boot();
+    try {
+      await configureRelay(b);
+      b.secrets.store.markKicked(canonicalHubUrl(RELAY_URL), true, 'password_rotated');
+      const response = await b.call('/api/mesh/relay/status');
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        awaitingToken: true,
+        reauthRequired: true,
+        relays: [
+          { online: false, attached: false, kicked: true, kickedReason: 'password_rotated' },
+        ],
+      });
+    } finally {
+      b.close();
+    }
+  });
+
   test('status 未挂上的中继行暴露 candidate lastError', async () => {
     const url = canonicalHubUrl(RELAY_URL);
     const url2 = canonicalHubUrl(RELAY_URL_2);

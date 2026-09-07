@@ -239,6 +239,7 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
     'autostart',
     'service-name',
     'force',
+    'replace-shim',
     'no-interactive',
     'install-deps',
     'skip-dep-check',

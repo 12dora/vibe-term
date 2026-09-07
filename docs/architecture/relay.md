@@ -766,6 +766,8 @@ CLI 用的两条中继路由、改密 kick / keep、吊销 + `meta-key` 轮换�
 
 单元测试在 `apps/gateway/src/relay/relay-{units,routes,uplink,admin,hardening}.test.ts`
 与 `apps/gateway/src/mesh/relay-*.test.ts`。
+`relay-uplink-client.test.ts` 验证在线应用新令牌时先排空流再重认证，`relay-routes.test.ts` 固定被踢离线的状态字段组合。
+CLI 的 `packages/app/src/lib/relay-pack-recovery.test.ts` 使用内存中继验证 kick 后 reauth、显式上传的日志补发、并发发布确认及失败恢复命令；运行时须在 `packages/app` 下执行 `bun test`，以加载 HOME 沙箱。
 
 ### 临时实例
 
@@ -823,12 +825,20 @@ bun packages/app/src/runtime/server.ts
 
 哈希分类区分当前令牌、仍在宽限内的历史令牌（`password_rotated`）与未知、过期令牌（`kicked`）。
 `auth.ok`、`ping`、`pong` 均支持可选字段 `token_rotated?: boolean`。中继在有效历史令牌认证及存续连接心跳时发送 `true`，当前令牌为 `false`；旧消息缺失该字段仍兼容。已在线成员无需重连就能得知令牌换代。
-成员据此设置 `awaitingToken`，`GET /api/mesh/relay/status` 在链路在线时返回 `awaitingToken: true`，同时保留 `reauthRequired: false`、行级 `kicked: false` 和 `kickedReason: null`，避免把宽限内成员误判为已踢出。使用当前令牌重新认证后清除等待状态；旧节点按原有解码规则忽略可选字段。
+成员据此设置 `awaitingToken`。`GET /api/mesh/relay/status` 区分以下状态；表中行级字段指受影响的中继，顶层 `reauthRequired` 在任一中继行被踢出时为真。
+
+| 状态 | `online` / `attached` | `awaitingToken` | `reauthRequired` | 行级 `kicked` / `kickedReason` | 含义 |
+|---|---|---|---|---|---|
+| 宽限内在线（grace-online） | `true` / `true` | `true` | `false` | `false` / `null` | 旧令牌仍可用，可以同步日志取得新令牌 |
+| 收到改密踢出后离线（kicked-offline） | `false` / `false` | `true` | `true` | `true` / `password_rotated` | 旧令牌已撤销；等待令牌与需要重新接入同时成立 |
+| 第四次换发淘汰后重新连接（evicted-after-4th-rotation） | `false` / `false` | `false` | `false` | `false` / `null` | 未收到踢出帧的新连接以 `bad-token` / `auth-rejected` 失败 |
+
+最后一行描述无既存踢出状态的节点；离线节点在 kick 后首次认证被 `token-epoch` 拒绝时也不会凭认证失败推断已收到 `relay.kicked`。
+宽限内成员应用带新令牌的 `set-relays` 后，按连接重配置流程排空在途流并重新认证；当前令牌的 `auth.ok` 会清除等待状态，即使其中没有 `token_rotated` 字段。旧节点按原有解码规则忽略可选字段。
 宽限期内链路保持可用以追平日志，不能为了发送换代提示而主动断链；心跳与开流仍执行相同准入复查。
 
-`mesh_relays` 加了 `kicked_reason`。`relay.kicked` 的 `password_rotated` 只表示令牌换代——成员既没有中继接入口令、
-也签不出 enroll proof，唯一出路是等持账户密码的一方把新令牌发下来，所以
-`GET /api/mesh/relay/status` 多了 `awaitingToken`，界面据此改出「等待新令牌」而不是「重新输入接入密码」。
+`mesh_relays` 加了 `kicked_reason`。`relay.kicked` 的 `password_rotated` 表示改密使旧令牌失效并断链，与在线心跳的宽限提示不同。成员没有中继接入口令、也签不出 enroll proof，需要持账户密码的一方完成恢复。
+`GET /api/mesh/relay/status` 的 `awaitingToken` 是补充提示，不会清除持久化的踢出状态，也不会替代 `reauthRequired` 对应的重新接入入口。
 链路错误分类里 `revoked` 也从 `kicked` 桶拆了出来：被吊销是本节点身份的终态，换新 node id 才能再加入。
 
 ### 恢复手段
@@ -865,8 +875,9 @@ kick 模式改密之后主节点必须先用**新接入口令**重新接入（�
 
 ### 密封包与 30 天恢复期限
 
-CLI `enroll` / `reauth` 必须成功刷新密封包才报告完成。上传失败时退出码为 1，并给出原因与
-`vibeterm relay pack upload` 重试命令；该命令使用与 enroll 相同的本机账户鉴权，从当前令牌和日志头重新生成密封包。
+CLI `enroll` / `reauth` 必须成功刷新密封包才报告完成。上传前逐台核对中继日志，复用日志发布路径补齐本地待发布记录，并确认密封包绑定的日志头已到达中继；连接显示在线不代表日志已经追平。并发发布遇到 `SEQ_MISMATCH` 时，只有查回的记录 `bytes`、`sig` 均与本地相同才视为已发布。上传仍遇到 `RELAY_PACK_HEAD_AHEAD` 时再次同步并重试一次。
+同步或上传最终失败时退出码为 1，并给出原因与带原 `--install-dir`／`--service-name` 的
+`vibeterm relay pack upload` 重试命令；该命令使用与 enroll 相同的本机账户鉴权，从当前令牌和日志头重新生成密封包，并执行相同的上传前同步。
 多中继配置必须确认全部目标上传成功，不能用一台成功掩盖另一台失败。若上传被 `RELAY_TOKEN_NOT_CURRENT` 拒绝，先由持当前令牌的节点执行 `vibeterm relay resend-token` 使本机追平；无法读取日志时在本机执行密码加入，然后再上传。
 
 **成员离线超过 30 天、旧令牌宽限已过后，只能通过密码加入恢复，而且前提是密封包已刷新。**

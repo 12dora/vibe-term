@@ -167,6 +167,10 @@ export const zhCN: Record<string, string> = {
   'cli.shim.pathHint':
     '{{binDir}} 不在 PATH 中。加入后即可使用 vibeterm 命令：export PATH="{{binDir}}:$PATH"',
   'cli.shim.ready': 'CLI 命令：vibeterm（{{shimPath}}）',
+  'cli.shim.skipOwned':
+    '已跳过 PATH shim：现有安装 {{installDir}} 仍在使用；如需替换，请使用 init --replace-shim。',
+  'cli.shim.skipUnknown':
+    '已跳过 PATH shim：{{path}} 的安装归属未知；如需替换，请使用 init --replace-shim。',
   'cli.shim.skipForeign': '已跳过替换 {{path}}（现有文件不是 vibeterm 托管的 shim）。',
 
   'uninstall.prompt.removeService': '是否卸载系统服务',

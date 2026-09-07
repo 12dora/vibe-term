@@ -11,9 +11,10 @@ import {
 } from '../../../shared/src/auth';
 import { RELAY_TOKEN_HEADER, assignHeaderPair } from '../../../shared/src/http/mesh-headers';
 import { kdfParamsToWire, sealRelayPack } from '../../../shared/src/relay';
-import { joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
+import { RelayApiError, joinRelayUrl, requestRelayJson } from '../commands/relay-shared';
 import type { FetchLike } from './fetch-like';
 import type { LocalAuthContext } from './local-auth';
+import { syncRelayPackHead } from './relay-pack-sync';
 import { type RelayTenantSession, fetchKeyLogHead, relayGatewayRequest } from './relay-session';
 
 type SealedRelayPack = {
@@ -107,6 +108,9 @@ async function postPacksToRelays(input: {
   kdfParams: KdfParams;
   rootEpoch: number;
   headSeq: bigint;
+  ctx: LocalAuthContext;
+  userId: string;
+  logKey: Uint8Array;
   fetcher?: FetchLike;
 }): Promise<void> {
   const headSeq =
@@ -116,19 +120,30 @@ async function postPacksToRelays(input: {
   const errors: unknown[] = [];
   for (const pack of input.packs) {
     try {
-      await requestRelayJson({
-        fetcher: input.fetcher,
-        url: joinRelayUrl(pack.url, `/api/relay/tenants/${pack.tenantId}/pack`),
-        method: 'POST',
-        headers: assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(pack.token)),
-        body: {
-          sealed_pack: encodeBase64url(pack.sealed),
-          kdf_params: kdfParamsToWire(input.kdfParams),
-          root_epoch: input.rootEpoch,
-          head_seq: headSeq,
-        },
-        label: 'relay pack upload',
-      });
+      const sync = () => syncRelayPackHead({ ...input, ...pack, relayUrl: pack.url });
+      const upload = () =>
+        requestRelayJson({
+          fetcher: input.fetcher,
+          url: joinRelayUrl(pack.url, `/api/relay/tenants/${pack.tenantId}/pack`),
+          method: 'POST',
+          headers: assignHeaderPair({}, RELAY_TOKEN_HEADER, encodeBase64url(pack.token)),
+          body: {
+            sealed_pack: encodeBase64url(pack.sealed),
+            kdf_params: kdfParamsToWire(input.kdfParams),
+            root_epoch: input.rootEpoch,
+            head_seq: headSeq,
+          },
+          label: 'relay pack upload',
+        });
+      await sync();
+      try {
+        await upload();
+      } catch (error) {
+        if (!(error instanceof RelayApiError) || error.code !== 'RELAY_PACK_HEAD_AHEAD')
+          throw error;
+        await sync();
+        await upload();
+      }
     } catch (error) {
       errors.push(error);
     }
@@ -145,10 +160,13 @@ export async function uploadRelayPackFromLocal(input: {
 }): Promise<boolean> {
   const sealed = await sealPacksFromLocal(input.ctx, input.rootKey, input.userId);
   if (!sealed) return false;
+  const logKey = await new MeshRelayStore(input.ctx.db).getSecret('log', RELAY_LOG_KEY_EPOCH);
   try {
-    await postPacksToRelays({ ...sealed, fetcher: input.fetcher });
+    if (!logKey) return false;
+    await postPacksToRelays({ ...input, ...sealed, logKey });
     return true;
   } finally {
+    logKey?.fill(0);
     for (const pack of sealed.packs) pack.sealed.fill(0);
   }
 }

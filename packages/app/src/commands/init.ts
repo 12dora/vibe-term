@@ -424,7 +424,7 @@ function printInitSummary(
   config: InitConfig,
   bun: { path: string; version?: string },
   serviceHintText: string,
-  shim: { shimPath: string; pathHint: string | null }
+  shim: { shimDeployed: boolean; shimPath: string; pathHint: string | null }
 ): void {
   console.log(`[vibeterm] ${t('init.done')}`);
   console.log(`- ${t('init.summary.installDir')}: ${config.installDir}`);
@@ -434,7 +434,7 @@ function printInitSummary(
     `- ${t('init.summary.autostart')}: ${config.autostart ? t('init.summary.autostart.on') : t('init.summary.autostart.off')}`
   );
   console.log(`- ${t('init.summary.serviceHint')}: ${serviceHintText}`);
-  console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
+  if (shim.shimDeployed) console.log(`- ${t('cli.shim.ready', { shimPath: shim.shimPath })}`);
   if (shim.pathHint) {
     console.log(`- ${shim.pathHint}`);
   }
@@ -494,7 +494,7 @@ export async function runInit(parsed: ParsedArgs): Promise<void> {
   const shim = await deployCliAndShim(packageLayout, installLayout, bun.path, {
     localBinDir,
     bunBinDir,
-    force: true,
+    force: asBoolean(parsed.flags['replace-shim']) ?? false,
   });
   await enableDirectAfterInit(config);
 

@@ -300,3 +300,15 @@ describe('requireFlagValue', () => {
     expect(() => requireFlagValue(blank.flags, 'max-tenants')).toThrow('--max-tenants');
   });
 });
+
+describe('init shim override', () => {
+  test.each(['--replace-shim', '--replace-shim=true', '--replace-shim=false'])(
+    'accepts %s and documents the explicit takeover flag',
+    (flag) => {
+      expect(() => assertKnownFlags(parseArgs(['init', flag]))).not.toThrow();
+      for (const lang of ['en', 'zh-CN'] as const) {
+        expect(cliHelpText(lang)).toContain('[--replace-shim]');
+      }
+    }
+  );
+});

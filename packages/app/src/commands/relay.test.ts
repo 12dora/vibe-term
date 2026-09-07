@@ -20,6 +20,7 @@ import {
 import {
   decodeRelayEnrollProof,
   openRelayPack,
+  sealRelayKeyLogRecord,
   verifyRelayEnrollProof,
 } from '../../../shared/src/relay';
 import { parseArgs } from '../lib/args';
@@ -120,6 +121,17 @@ function fakeGateway(auth: LocalAuthContext, options: FakeOptions = {}) {
     calls.push({ path, method: init?.method ?? 'GET', body });
     if (url.origin === RELAY_URL || url.origin.startsWith(`${RELAY_URL}:`)) {
       if (url.pathname.endsWith('/pack')) return options.pack?.() ?? json({ ok: true });
+      if (url.pathname.endsWith('/keylog')) {
+        const record = auth.keyLogStore.getAtSeq(user.id, Number(url.searchParams.get('from_seq')));
+        const key = await new MeshRelayStore(auth.db).getSecret('log', RELAY_LOG_KEY_EPOCH);
+        return json({
+          key_log:
+            record && key
+              ? [{ seq: record.seq, blob: await sealRelayKeyLogRecord(key, record) }]
+              : [],
+          has_more: false,
+        });
+      }
       return json(options.health ?? { ok: true, version: '1.1.23', hasPassword: true });
     }
     switch (path) {

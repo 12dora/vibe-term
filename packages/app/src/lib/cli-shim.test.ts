@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readlink, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
@@ -315,6 +315,17 @@ describe('installVibeTermShim', () => {
     const secondLayout = createInstallLayout(join(root, 'install-b'));
     await deployCliPackage(packageLayout, firstLayout);
     await deployCliPackage(packageLayout, secondLayout);
+    await writeFile(
+      firstLayout.metaPath,
+      JSON.stringify({
+        installDir: firstLayout.installDir,
+        cliVersion: '2.0.3',
+        serviceName: 'vibeterm',
+        platform: process.platform,
+        autostart: false,
+        updatedAt: new Date().toISOString(),
+      })
+    );
 
     await installVibeTermShim({
       installLayout: firstLayout,
@@ -323,6 +334,7 @@ describe('installVibeTermShim', () => {
       bunBinDir,
       pathEnv: localBinDir,
     });
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
     const result = await installVibeTermShim({
       installLayout: secondLayout,
       bunPath: '/usr/bin/bun',
@@ -338,7 +350,12 @@ describe('installVibeTermShim', () => {
       `# vibeterm-install-dir: ${firstLayout.installDir}`
     );
     expect(result.bunLinkPath).toBeNull();
-    expect(result.skipWarning).toContain(join(localBinDir, 'vibeterm'));
+    expect(warn.mock.calls).toHaveLength(1);
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain('\n');
+    warn.mockRestore();
+    expect(result.shimDeployed).toBe(false);
+    expect(result.skipWarning).toContain(firstLayout.installDir);
+    expect(result.skipWarning).toContain('--replace-shim');
   });
 
   test('takes over a shim whose recorded install dir is gone', async () => {
@@ -372,6 +389,88 @@ describe('installVibeTermShim', () => {
     );
     expect(result.skipWarning).toBeNull();
   });
+
+  test('refreshes its own shim without an override', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-shim-same-'));
+    tempDirs.push(root);
+    const options = {
+      installLayout: createInstallLayout(join(root, 'install')),
+      bunPath: '/first/bun',
+      localBinDir: join(root, 'local-bin'),
+      bunBinDir: join(root, 'missing-bun-bin'),
+    };
+    await installVibeTermShim(options);
+    const result = await installVibeTermShim({ ...options, bunPath: '/second/bun' });
+    expect(result.shimDeployed).toBe(true);
+    expect(result.skipWarning).toBeNull();
+    expect(await readFile(result.shimPath, 'utf8')).toContain('/second/bun');
+  });
+
+  test.each([false, true])('unknown managed shim ownership requires override=%s', async (force) => {
+    const root = await mkdtemp(join(tmpdir(), 'vibeterm-shim-unknown-'));
+    tempDirs.push(root);
+    const localBinDir = join(root, 'local-bin');
+    await mkdir(localBinDir);
+    const shimPath = join(localBinDir, 'vibeterm');
+    const original = `#!/bin/sh\n${LEGACY_SHIM_MARKER}\n`;
+    await writeFile(shimPath, original);
+    const result = await installVibeTermShim({
+      installLayout: createInstallLayout(join(root, 'install')),
+      bunPath: '/usr/bin/bun',
+      localBinDir,
+      bunBinDir: join(root, 'missing-bun-bin'),
+      force,
+    });
+    expect(result.shimDeployed).toBe(force);
+    if (force) {
+      expect(result.skipWarning).toBeNull();
+      expect(await readFile(shimPath, 'utf8')).toContain(VIBETERM_SHIM_MARKER);
+    } else {
+      expect(result.skipWarning).toContain('--replace-shim');
+      expect(await readFile(shimPath, 'utf8')).toBe(original);
+      expect(await pathExists(result.aliasShimPath)).toBe(false);
+    }
+  });
+
+  test.each([false, true])(
+    'recognizes migrated legacy ownership, same install=%s',
+    async (same) => {
+      const root = await mkdtemp(join(tmpdir(), 'vibeterm-shim-migrated-'));
+      tempDirs.push(root);
+      const localBinDir = join(root, 'local-bin');
+      const migratedDir = join(root, 'vibeterm');
+      const legacyDir = join(root, 'tmex');
+      await mkdir(localBinDir);
+      await mkdir(migratedDir);
+      await writeFile(
+        join(migratedDir, 'install-meta.json'),
+        JSON.stringify({
+          installDir: migratedDir,
+          cliVersion: '2.0.3',
+        })
+      );
+      const original = `#!/bin/sh\n${LEGACY_SHIM_MARKER}\n${LEGACY_INSTALL_DIR_PREFIX} ${legacyDir}\n`;
+      await writeFile(join(localBinDir, 'tmex'), original);
+      const result = await installVibeTermShim({
+        installLayout: createInstallLayout(same ? migratedDir : join(root, 'other')),
+        bunPath: '/usr/bin/bun',
+        localBinDir,
+        bunBinDir: join(root, 'missing-bun-bin'),
+      });
+      expect(result.shimDeployed).toBe(same);
+      if (same) {
+        expect(result.skipWarning).toBeNull();
+        expect(await readFile(result.aliasShimPath, 'utf8')).toContain(
+          `# vibeterm-install-dir: ${migratedDir}`
+        );
+      } else {
+        expect(result.skipWarning).toContain(migratedDir);
+        expect(result.skipWarning).toContain('--replace-shim');
+        expect(await readFile(result.aliasShimPath, 'utf8')).toBe(original);
+        expect(await pathExists(result.shimPath)).toBe(false);
+      }
+    }
+  );
 
   test('does not replace a foreign ~/.bun/bin/vibeterm symlink', async () => {
     const packageLayout = await makePackageRoot();

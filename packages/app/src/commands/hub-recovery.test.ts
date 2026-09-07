@@ -25,6 +25,16 @@ async function auth() {
 const quiet = { log: () => undefined };
 
 describe('hub recovery commands', () => {
+  test('missing CA is a successful empty query like an empty hub URL list', async () => {
+    const ctx = await auth();
+    const lines: string[] = [];
+    const io = { auth: ctx, log: (line: string) => lines.push(line) };
+    expect(await runHubCaFingerprint(parseArgs([]), io)).toBe('');
+    expect(lines.splice(0)).toEqual(['no CA configured']);
+    expect(await runHubUrls(parseArgs([]), 'list', '', io)).toEqual([]);
+    expect(lines).toEqual(['VIBETERM_HUB_URLS=']);
+  });
+
   test('seed URLs are canonical, deduplicated and preserve unrelated env keys', async () => {
     const ctx = await auth();
     const dir = await mkdtemp(join(tmpdir(), 'hub-urls-'));

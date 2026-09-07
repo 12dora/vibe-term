@@ -24,6 +24,7 @@ import {
   openEnvelope,
   sealEnvelope,
 } from '@vibeterm/shared/relay';
+import { HubTrustStore } from '../auth/hub-trust-store';
 import { KeyLogStore } from '../auth/key-log-store';
 import { type NodeIdentityKeys, ensureNodeIdentity } from '../auth/node-identity-service';
 import { selfSignedNodeCertificate } from '../auth/node-identity-service';
@@ -33,11 +34,12 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserKeyService } from '../auth/user-key-service';
 import { UserStore } from '../auth/user-store';
 import { buildSetRelaysPayload, listRelayNodeKeys } from './relay-payloads';
-import { RelaySecrets } from './relay-secrets';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { relayUplinkWsUrl } from './relay-uplink-http';
+import { bindRelayReconcile, createRelayWiring, relayUplinkOverrides } from './relay-wiring';
 import { fakeSocketPair, waitUntil } from './test-support';
 import type { KeyLogApplier, UplinkStatus } from './types';
+import { UplinkPool } from './uplink-pool';
 
 const RELAY_URL = 'https://relay.example';
 const TENANT_ID = 'cd'.repeat(16);
@@ -94,11 +96,12 @@ async function bootRelayNode() {
     payload: encodeAdmitNodePayload(admit),
   });
   if (!admitted.ok) throw new Error('admit-node failed');
-  const secrets = new RelaySecrets({
+  const wiring = createRelayWiring({
     db,
     identity: { nodeIdHex: identity.nodeIdHex, x25519PrivateKey: identity.x25519PrivateKey },
     userIdOf: () => user.userId,
   });
+  const { secrets } = wiring;
   const metaKey = generateTenantKey();
   const logKey = generateTenantKey();
   const applied = await service.signAndApply(user.userId, user.rootKey, {
@@ -113,7 +116,7 @@ async function bootRelayNode() {
   });
   if (!applied.ok) throw new Error('set-relays failed');
   await secrets.reconcile();
-  return { db, close, userStore, service, identity, peer, user, secrets, metaKey, logKey };
+  return { db, close, userStore, service, identity, peer, user, secrets, metaKey, logKey, wiring };
 }
 
 type Harness = {
@@ -143,6 +146,57 @@ function fakeRelayServer(link: WebSocketLink, headSeq: number, tokenRotated?: bo
   return { received, send, streams };
 }
 
+function pooledRelayNode(b: Awaited<ReturnType<typeof bootRelayNode>>) {
+  const servers: Harness[] = [];
+  const overrides = relayUplinkOverrides(b.wiring, { nameProvider: () => '' });
+  const pool = new UplinkPool({
+    identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+    userId: b.user.userId,
+    keyLogApplier: noopApplier(2n),
+    userStore: b.userStore,
+    statusProvider: status,
+    hubTrust: new HubTrustStore(b.db),
+    candidates: overrides.candidates,
+    createClient: overrides.createClient,
+    enablePeriodicRttProbe: false,
+    relayDrainRecheckMs: 5,
+    relayDrainTimeoutMs: 2_000,
+    isLocalCandidate: () => true,
+    async connectLocal(client, signal) {
+      const [clientWs, serverWs] = fakeSocketPair();
+      const server = fakeRelayServer(
+        new WebSocketLink(serverWs, { role: 'acceptor' }),
+        2,
+        servers.length === 0 ? true : undefined
+      );
+      servers.push(server);
+      const connecting = client.connectWithLink(
+        new WebSocketLink(clientWs, { role: 'initiator' }),
+        signal
+      );
+      server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+      await connecting;
+    },
+  });
+  bindRelayReconcile(b.wiring, pool, { replaceAll() {} });
+  b.service.onApplied = (_userId, step) => b.wiring.notifyIfRelayRecord(step.record.type);
+  return { pool, servers };
+}
+
+async function updateRelayToken(b: Awaited<ReturnType<typeof bootRelayNode>>, token: Uint8Array) {
+  const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
+    type: 'set-relays',
+    payload: await buildSetRelaysPayload({
+      relays: [{ url: RELAY_URL, tenantId: TENANT_ID, token, priority: 0 }],
+      logKey: b.logKey,
+      metaKey: b.metaKey,
+      metaEpoch: 1,
+      nodes: listRelayNodeKeys(b.userStore, b.user.userId),
+    }),
+  });
+  expect(applied.ok).toBe(true);
+}
+
 describe('RelayUplinkClient', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
 
@@ -152,6 +206,43 @@ describe('RelayUplinkClient', () => {
       await item?.stop?.();
       item?.close();
     }
+  });
+
+  test('在线 set-relays 换令牌排空在途流并重连，auth.ok 缺省字段清除等待状态', async () => {
+    const b = await bootRelayNode();
+    const { pool, servers } = pooledRelayNode(b);
+    fixtures.push({ close: b.close, stop: () => pool.stop() });
+    pool.start();
+    await waitUntil(() => pool.liveClient()?.state === 'online');
+    const original = pool.liveClient() as RelayUplinkClient;
+    expect(original.awaitingToken).toBe(true);
+    const stream = await pool.openRelay(b.peer.nodeIdHex);
+    await waitUntil(() => servers[0]?.streams.length === 1);
+
+    await updateRelayToken(b, TOKEN);
+    await b.wiring.reconcileQuietly();
+    expect(await original.needsReauthentication()).toBe(false);
+    expect(servers).toHaveLength(1);
+
+    const token = new Uint8Array(32).fill(9);
+    await updateRelayToken(b, token);
+    await b.wiring.reconcileQuietly();
+    expect(await original.needsReauthentication()).toBe(true);
+    await Bun.sleep(20);
+    expect(pool.liveClient()).toBe(original);
+    expect(original.state).toBe('online');
+    expect(original.inFlightRelayStreams).toBe(1);
+    expect(servers).toHaveLength(1);
+
+    await Promise.all([stream.end(), servers[0]?.streams[0]?.end()]);
+    await stream.closed;
+    await waitUntil(() => pool.liveClient() !== original && pool.liveClient()?.state === 'online');
+    const refreshed = pool.liveClient() as RelayUplinkClient;
+    expect(refreshed.awaitingToken).toBe(false);
+    expect(await refreshed.needsReauthentication()).toBe(false);
+    const auth = servers[1]?.received.find((msg) => msg.t === 'relay.auth');
+    expect(auth?.t === 'relay.auth' && auth.token).toBe(encodeBase64url(token));
+    expect(servers).toHaveLength(2);
   });
 
   test('relay.auth 带租户令牌、主机绑定签名与成员证明，auth.ok 后上报状态块', async () => {

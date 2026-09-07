@@ -3,7 +3,7 @@ import type { CliLang } from '../i18n';
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -56,6 +56,9 @@ Password prompting (add / passwd / totp / reset-root / enroll / hub join --passw
   Destructive recovery confirmation: TTY requires typing yes; non-TTY requires --yes.
   --full-reset (passwd): also remove all passkeys and two-step verification and sign out everywhere
 
+Init shim ownership:
+  --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
+
 Global flags:
   --lang <en|zh-CN>
   --help`;
@@ -63,7 +66,7 @@ Global flags:
 const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service]
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -115,6 +118,9 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   非 TTY：VIBETERM_PASSWORD（passwd 的旧密码用 VIBETERM_PASSWORD_OLD；hub join 的 TOTP 用 VIBETERM_TOTP）。NFKC 由 deriveSeed 处理。
   破坏性恢复确认：TTY 必须输入完整 yes；非 TTY 必须传 --yes。
   --full-reset（passwd）：同时移除所有通行密钥、两步验证并注销全部会话
+
+初始化命令入口：
+  --replace-shim：替换属于其他安装或归属未知的托管 PATH shim。
 
 全局参数：
   --lang <en|zh-CN>

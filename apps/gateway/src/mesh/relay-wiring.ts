@@ -63,7 +63,7 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
     const result = await wiring.secrets.reconcile();
     // 切到中继后不再保留 hub 集合，`/api/mesh/hubs` 自然返回空表
     if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
-    if (allowRestart && result.targetsChanged && bound) {
+    if (allowRestart && bound && (result.targetsChanged || (await relayTokenChanged(bound)))) {
       bound.metaEpoch = result.metaEpoch;
       await reconfigureUplinkPool(bound.uplink);
       return;
@@ -75,6 +75,11 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
   } catch (err) {
     console.error(stamp('[relay] reconcile failed'), err);
   }
+}
+
+async function relayTokenChanged(bound: RelayBinding): Promise<boolean> {
+  const client = bound.uplink.liveClient();
+  return client instanceof RelayUplinkClient && client.needsReauthentication();
 }
 
 /** 等中继隧道排空后按新的 `candidates()` / `createClient()` 重开；池对象本身不换。 */
@@ -168,11 +173,7 @@ export function relayUplinkOverrides(
   };
 }
 
-/**
- * 记下踢出原因。`password_rotated` 只表示租户令牌换了代——成员手上没有中继接入口令，
- * 也签不出 enroll proof，能做的只有等主节点把新令牌经 `set-relays` 发下来；
- * 池子照旧退避重拨，`auth.ok` 一到 `markUnkicked` 就把标记清掉。
- */
+/** 记录离线踢出状态；恢复有效令牌后重新认证成功时由 `markUnkicked` 清除。 */
 function markRelayKicked(wiring: RelayWiring, url: string, reason: RelayKickReason): void {
   try {
     wiring.secrets.store.markKicked(url, true, reason);

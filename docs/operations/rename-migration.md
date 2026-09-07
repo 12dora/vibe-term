@@ -52,6 +52,10 @@
 
 `INSTALL_MARKER` 新旧都认；pid 文件读 `vibeterm.pid` 回退 `tmex.pid`；`locatePackageRoot` 接受 `vibeterm-cli|vibeterm|tmex-cli|tmex` 四种包名与 bin 名；shim 标记新旧都认（`LEGACY_SHIM_MARKER`），安装 `vibeterm` 与 `tmex` 两个 shim，内容一致。
 
+`init` 在写入前检查两个 PATH shim 的归属：发现仍存在的其他安装或无法解析归属的托管 shim 时，整组跳过，仅输出一行包含现有安装位置和 `--replace-shim` 的警告，安装继续完成。需要主动接管时使用 `vibeterm init --install-dir <path> --replace-shim`；`--force` 只控制安装目录，不再隐含接管 PATH 入口。非托管文件始终保留。
+
+同一安装的升级可继续重写自己的 shim，原安装目录已消失时允许接管。若记录仍指向旧 `tmex` 目录，而同级 `vibeterm` 目录含有效安装元数据，则按迁移后的目录判定归属，避免把已迁移的生产安装误判成遗留入口。跳过时不会在安装摘要中显示 CLI 入口已部署。
+
 ### 4. 线上标识双发双读
 
 - **HTTP 头**：正式名 `x-vibeterm-*`，旧名 `x-tmex-*` 同时发送；读取新名优先、回退旧名；转发规则与 uplink 帧白名单两种前缀都认。唯一定义处是 `packages/shared/src/http/mesh-headers.ts` 的 `HeaderNamePair`。

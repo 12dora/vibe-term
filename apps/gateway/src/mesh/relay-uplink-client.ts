@@ -1,4 +1,4 @@
-import { hubHostFromUrl } from '@vibeterm/shared/auth';
+import { encodeBase64url, hubHostFromUrl } from '@vibeterm/shared/auth';
 import {
   type LinkSession,
   type LinkStream,
@@ -118,6 +118,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   private relayHandler: InboundRelayHandler | null = null;
   private readonly relayStreams = new Set<LinkStream>();
   private acceptingRelayStreams = true;
+  private connectionToken: string | null = null;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
   connectGeneration = 0;
@@ -406,9 +407,21 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     );
   }
 
+  async needsReauthentication(): Promise<boolean> {
+    if (!this.isAuthenticated() || !this.connectionToken) return false;
+    const generation = this.connectGeneration;
+    const relay = await this.opts.secrets.store.getRelay(this.hubUrl);
+    return (
+      generation === this.connectGeneration &&
+      relay !== null &&
+      (relay.tenantId !== this.tenantId || encodeBase64url(relay.token) !== this.connectionToken)
+    );
+  }
+
   rawSend(msg: RelayCtlMessage): void {
     const link = this.link;
     if (!link) throw new Error('uplink-offline');
+    if (msg.t === 'relay.auth') this.connectionToken = msg.token;
     link.ctl.send(encodeRelayCtl(msg));
   }
 
@@ -532,6 +545,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.heartbeat.reset();
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
+    this.connectionToken = null;
     this.awaitingToken = false;
     this.lastStatusJson = '';
     this.enroll.reset('RELAY_OFFLINE');

@@ -57,7 +57,10 @@ export async function runHubCaFingerprint(parsed: ParsedArgs, io: HubIo = {}): P
   return await withAuth(parsed, io, async (ctx) => {
     const { TlsConfigStore } = await import('../../../../apps/gateway/src/tls/tls-config-store');
     const config = await new TlsConfigStore(ctx.db).get();
-    if (!config.caCertPem) throw new Error('no local self-signed CA configured');
+    if (!config.caCertPem) {
+      log(io, 'no CA configured');
+      return '';
+    }
     const { fingerprint } = await parseAndValidateCaPem(config.caCertPem);
     log(io, `SHA256 SPKI ${fingerprint}`);
     return fingerprint;

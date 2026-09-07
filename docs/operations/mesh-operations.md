@@ -141,6 +141,7 @@ join 串有两个版本：
 ### CA 指纹与信任恢复
 
 在 Hub 的本机终端执行 `vibeterm hub ca fingerprint`，输出 `SHA256 SPKI <64 位小写 hex>`。这是 CA 公钥指纹，与 v2 join 串一致，不是整张证书的 SHA-256。
+未配置 CA 时只输出一行 `no CA configured`，退出码为 0，与 `hub urls list` 的空列表查询一致。
 
 计划轮换前须确保每台成员都保留本机终端或独立 SSH 入口。执行：
 

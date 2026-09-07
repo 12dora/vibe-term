@@ -180,6 +180,10 @@ export const en: Record<string, string> = {
   'cli.shim.pathHint':
     '{{binDir}} is not on PATH. Add it so the vibeterm command is available: export PATH="{{binDir}}:$PATH"',
   'cli.shim.ready': 'CLI command: vibeterm ({{shimPath}})',
+  'cli.shim.skipOwned':
+    'Skipped PATH shims: existing install {{installDir}} owns them; use init --replace-shim to replace them.',
+  'cli.shim.skipUnknown':
+    'Skipped PATH shims: {{path}} has unknown install ownership; use init --replace-shim to replace it.',
   'cli.shim.skipForeign':
     'Skipped replacing {{path}} (existing file is not a vibeterm-managed shim).',
 
