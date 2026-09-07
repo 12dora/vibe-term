@@ -1245,7 +1245,7 @@ describe('assembleVibeTerm standalone auth surface', () => {
     );
     expect(logged?.status).toBe(200);
     const cookie = logged?.headers.get('set-cookie') ?? '';
-    const sid = cookie.match(/tmex_s_self=([^;]*)/)?.[1];
+    const sid = cookie.match(/vibeterm_s_self=([^;]*)/)?.[1];
     if (!sid) throw new Error('login did not set cookie');
     return sid;
   }

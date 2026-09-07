@@ -1,5 +1,10 @@
 import { afterEach, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
+import {
+  CLEAR_SHARE_HEADER,
+  MESH_PEER_HEADER,
+  SESSION_RENEWED_HEADER,
+} from '@vibeterm/shared/http/mesh-headers';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { handleApiRequest } from '../api';
 import { dispatchRoutes } from '../api/route';
@@ -451,7 +456,7 @@ describe('http/ws stream targets', () => {
     expect(openHeaders[CLIENT_SOURCE_HEADER.name]).toBe(CLIENT_SOURCE_LOCAL);
   });
 
-  test('stripForwardedRequestHeaders 保留 x-tmex-client-source', () => {
+  test('stripForwardedRequestHeaders 保留 x-vibeterm-client-source', () => {
     const out = stripForwardedRequestHeaders({
       cookie: 'secret=1',
       authorization: 'Bearer x',
@@ -466,7 +471,7 @@ describe('http/ws stream targets', () => {
     expect(out['x-forwarded-for']).toBeUndefined();
   });
 
-  test('acceptHttpStream 对公开登录路径允许 auth:null，并带上 x-tmex-client-source', async () => {
+  test('acceptHttpStream 对公开登录路径允许 auth:null，并带上 x-vibeterm-client-source', async () => {
     for (const path of ['/api/auth/mode', '/api/auth/passkey/login/options']) {
       const [a, b] = createInMemoryLinkPair();
       const dispatched = { path: null as string | null, source: null as string | null };
@@ -564,38 +569,41 @@ describe('http/ws stream targets', () => {
     expect(dispatchedPath).toBeNull();
   });
 
-  test('acceptHttpStream 把 x-tmex-client-source 带到 inbound peer Request', async () => {
-    const [a, b] = createInMemoryLinkPair();
-    const seen = { header: null as string | null, waived: false, via: '' };
-    b.onStream((stream) => {
-      void acceptHttpStream(stream, {
-        peerNodeId: 'entry-1',
-        sessionStore: {
-          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
-        } as unknown as NodeSessionStore,
-        async dispatchHttp(req, ctx) {
-          setMeshRequestContext(req, {
-            via: ctx.viaNodeId,
-            clientIp: `peer:${ctx.viaNodeId}`,
-          });
-          seen.header = req.headers.get(CLIENT_SOURCE_HEADER.name);
-          seen.via = ctx.viaNodeId;
-          seen.waived = waivesPasskeySecondFactor(req);
-          return new Response('ok');
-        },
+  test.each([CLIENT_SOURCE_HEADER.name, CLIENT_SOURCE_HEADER.legacy])(
+    'acceptHttpStream 把 %s 带到 inbound peer Request',
+    async (headerName) => {
+      const [a, b] = createInMemoryLinkPair();
+      const seen = { header: null as string | null, waived: false, via: '' };
+      b.onStream((stream) => {
+        void acceptHttpStream(stream, {
+          peerNodeId: 'entry-1',
+          sessionStore: {
+            verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+          } as unknown as NodeSessionStore,
+          async dispatchHttp(req, ctx) {
+            setMeshRequestContext(req, {
+              via: ctx.viaNodeId,
+              clientIp: `peer:${ctx.viaNodeId}`,
+            });
+            seen.header = req.headers.get(headerName);
+            seen.via = ctx.viaNodeId;
+            seen.waived = waivesPasskeySecondFactor(req);
+            return new Response('ok');
+          },
+        });
       });
-    });
-    await openHttpStream(a, {
-      method: 'GET',
-      path: '/api/auth/mode',
-      origin: 'http://localhost',
-      auth: 'sid',
-      headers: { [CLIENT_SOURCE_HEADER.name]: CLIENT_SOURCE_LOCAL },
-    });
-    expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
-    expect(seen.via).toBe('entry-1');
-    expect(seen.waived).toBe(true);
-  });
+      await openHttpStream(a, {
+        method: 'GET',
+        path: '/api/auth/mode',
+        origin: 'http://localhost',
+        auth: 'sid',
+        headers: { [headerName]: CLIENT_SOURCE_LOCAL },
+      });
+      expect(seen.header).toBe(CLIENT_SOURCE_LOCAL);
+      expect(seen.via).toBe('entry-1');
+      expect(seen.waived).toBe(true);
+    }
+  );
 
   test('acceptHttpStream never forwards set-cookie and injects session renewal', async () => {
     const [a, b] = createInMemoryLinkPair();
@@ -625,7 +633,8 @@ describe('http/ws stream targets', () => {
     expect(await res.text()).toBe('ok');
     expect(res.headers.get('set-cookie')).toBeNull();
     expect(res.headers.get('content-type')).toBe('text/plain');
-    expect(res.headers.get('x-tmex-session-renewed')).toBe('1700000000000');
+    expect(res.headers.get(SESSION_RENEWED_HEADER.name)).toBe('1700000000000');
+    expect(res.headers.get(SESSION_RENEWED_HEADER.legacy)).toBe('1700000000000');
   });
 
   test('dispatchHttp ctx.viaNodeId comes from the authenticated link, not OPEN', async () => {
@@ -655,7 +664,7 @@ describe('http/ws stream targets', () => {
     expect(seen.viaNodeId).toBe('entry-1');
   });
 
-  test('acceptHttpStream 写入 x-tmex-mesh-peer 并覆盖 OPEN 里的伪造值', async () => {
+  test('acceptHttpStream 写入 x-vibeterm-mesh-peer 并覆盖 OPEN 里的伪造值', async () => {
     const [a, b] = createInMemoryLinkPair();
     const seen = { peer: null as string | null };
     b.onStream((stream) => {
@@ -668,7 +677,7 @@ describe('http/ws stream targets', () => {
           }),
         } as unknown as NodeSessionStore,
         async dispatchHttp(req) {
-          seen.peer = req.headers.get('x-tmex-mesh-peer');
+          seen.peer = req.headers.get(MESH_PEER_HEADER.name);
           return new Response('ok');
         },
       });
@@ -1276,7 +1285,7 @@ describe('分享凭证的 mesh 流', () => {
     opened.close();
   });
 
-  test('失效分享凭证落在分享公开面时降级匿名，并回 x-tmex-clear-share', async () => {
+  test('失效分享凭证落在分享公开面时降级匿名，并回 x-vibeterm-clear-share', async () => {
     setShareAccessVerifier(() => null);
     const [a, b] = createInMemoryLinkPair();
     const seen: Array<string | null> = [];
@@ -1298,7 +1307,8 @@ describe('分享凭证的 mesh 流', () => {
     });
     expect(res.status).toBe(200);
     expect(seen[0]).toBeNull();
-    expect(res.headers.get('x-tmex-clear-share')).toBe('1');
+    expect(res.headers.get(CLEAR_SHARE_HEADER.name)).toBe('1');
+    expect(res.headers.get(CLEAR_SHARE_HEADER.legacy)).toBe('1');
   });
 
   test('分享公开面外的同前缀路径不再匿名开放', async () => {

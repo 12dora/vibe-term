@@ -13,6 +13,7 @@ import {
   rootKeyFromSeed,
   wrapEntryFromBytes,
 } from '@vibeterm/shared/auth';
+import { RELAY_TOKEN_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { generateTenantKey, signRelayEnrollProof, unwrapKeyForNode } from '@vibeterm/shared/relay';
 import { nodeSessionCookieName } from '../auth/cookies';
 import { KeyLogStore } from '../auth/key-log-store';
@@ -804,7 +805,7 @@ describe('RelayRoutes', () => {
       calls.push({
         url: String(input),
         body: JSON.parse(String(init?.body ?? '{}')) as Record<string, unknown>,
-        token: headers.get('x-tmex-relay-token'),
+        token: headers.get(RELAY_TOKEN_HEADER.name),
       });
       return new Response(JSON.stringify({ ok: true }), {
         status: 201,

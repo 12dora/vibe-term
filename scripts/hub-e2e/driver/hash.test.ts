@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { VIA_HEADER } from '../../../packages/shared/src/http/mesh-headers.ts';
 import { collectVibeTermHeaders, sha256Hex } from './hash.ts';
 
 describe('sha256Hex', () => {
@@ -13,18 +14,25 @@ describe('sha256Hex', () => {
 });
 
 describe('collectVibeTermHeaders', () => {
-  // 头名是协议常量，沿用 tmex 时期的值以保持跨版本兼容
-  test('keeps x-tmex-* plus length/type', () => {
+  test('keeps headers from an old-only peer', () => {
+    expect(collectVibeTermHeaders(new Headers({ 'X-Tmex-Via': 'relay' }))).toEqual({
+      [VIA_HEADER.legacy]: 'relay',
+    });
+  });
+
+  test('keeps x-vibeterm-* and legacy x-tmex-* plus length/type', () => {
     const headers = new Headers({
       'Content-Type': 'application/octet-stream',
       'Content-Length': '8',
-      'X-Tmex-Via': 'relay',
+      [VIA_HEADER.name]: 'relay',
+      [VIA_HEADER.legacy]: 'relay',
       Date: 'Wed, 01 Jan 2020 00:00:00 GMT',
     });
     expect(collectVibeTermHeaders(headers)).toEqual({
       'content-type': 'application/octet-stream',
       'content-length': '8',
-      'x-tmex-via': 'relay',
+      [VIA_HEADER.name]: 'relay',
+      [VIA_HEADER.legacy]: 'relay',
     });
   });
 });

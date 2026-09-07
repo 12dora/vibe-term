@@ -101,7 +101,7 @@ describe('filterRequestHeaders', () => {
     expect(out['x-forwarded-for']).toBeUndefined();
   });
 
-  test('受信本机入口盖上 x-tmex-client-source: local，浏览器伪造会被丢掉再盖回', () => {
+  test('受信本机入口盖上 x-vibeterm-client-source: local，浏览器伪造会被丢掉再盖回', () => {
     const out = filterRequestHeaders(
       reqWith({ accept: '*/*', [CLIENT_SOURCE_HEADER.name]: 'forged' }, '127.0.0.1')
     );

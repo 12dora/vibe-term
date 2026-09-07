@@ -146,7 +146,7 @@ describe('applyAuthPolicy', () => {
     ]);
   });
 
-  test('x-tmex-set-session 变成 Set-Cookie，且 200 返回 null', async () => {
+  test('x-vibeterm-set-session 变成 Set-Cookie，且 200 返回 null', async () => {
     const upstream = new Response(JSON.stringify({ ok: true }), {
       status: 200,
       headers: {
@@ -168,7 +168,7 @@ describe('applyAuthPolicy', () => {
     expect(cookie).toContain('Max-Age=64800');
   });
 
-  test('x-tmex-session-renewed 续期已有 cookie', async () => {
+  test('x-vibeterm-session-renewed 续期已有 cookie', async () => {
     const expiresAt = Date.now() + 30_000;
     const upstream = new Response('{}', {
       status: 200,
@@ -247,7 +247,7 @@ describe('peekJsonCode', () => {
 });
 
 describe('applyAuthPolicy 分享凭证', () => {
-  test('x-tmex-set-share 翻成 vibeterm_sh_<node> cookie 并抹掉内部头', async () => {
+  test('x-vibeterm-set-share 翻成 vibeterm_sh_<node> cookie 并抹掉内部头', async () => {
     const upstream = new Response(JSON.stringify({ ok: true }), {
       headers: {
         'content-type': 'application/json',
@@ -274,7 +274,7 @@ describe('applyAuthPolicy 分享凭证', () => {
     expect(headers.get(SET_SHARE_MAX_AGE_HEADER.name)).toBeNull();
   });
 
-  test('x-tmex-clear-share 写过期 cookie', async () => {
+  test('x-vibeterm-clear-share 写过期 cookie', async () => {
     const upstream = new Response('{}', {
       headers: { 'content-type': 'application/json', [CLEAR_SHARE_HEADER.name]: '1' },
     });

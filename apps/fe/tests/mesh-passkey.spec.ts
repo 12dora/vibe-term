@@ -118,7 +118,7 @@ test('mesh: after a passkey is registered, password login requires the passkey',
  *
  * 只登 entry 证不了多少事：entry 就是 hub，`/n/<hubNodeId>` 会在本机自重写，走的还是本地那条路。
  * 因此还要按需登录**远端 node**——这条链路是 entry → forwarder → 已认证 peer link →
- * 远端的 `/api/auth/login`，豁免完全依赖入口给转发请求盖上 `x-tmex-client-source: local`
+ * 远端的 `/api/auth/login`，豁免完全依赖入口给转发请求盖上 `x-vibeterm-client-source: local`（兼容旧名 `x-tmex-client-source`）
  * （`forwarder.ts` 的 `filterRequestHeaders`）且目标认这枚章
  * （`client-source.ts` 的 `waivesPasskeySecondFactor`）。任一端回退，远端就会回 `PASSKEY_REQUIRED`，
  * 而这个 context 手上一把凭证都没有，按需登录必然失败。
@@ -361,7 +361,7 @@ async function authModeFlag(target: Page, field: string): Promise<boolean | unde
  *
  * 探测刻意另起一个**公网来源**的 context，而不是复用 loopback 那个：远端 `/api/auth/mode` 的
  * `passkeySecondFactor` 是 `hasPasskeys && !waived`，从 loopback 探时入口会盖上
- * `x-tmex-client-source: local`，字段恒为 false，「还没复制过来」与「已经豁免」分不开。
+ * `x-vibeterm-client-source: local`（兼容旧名 `x-tmex-client-source`），字段恒为 false，「还没复制过来」与「已经豁免」分不开。
  * 带上 XFF 入口就不盖章，读到的是远端 key log 的真实状态——这一步于是只证明「复制完成」，
  * 盖章有没有坏留给后面那条按需登录去暴露，两个信号不互相掩盖。
  *

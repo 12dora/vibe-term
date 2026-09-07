@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { type NodeUnreachableReason, wsBorsh } from '@vibeterm/shared';
+import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { LinkError, type LinkSession } from '@vibeterm/shared/link';
 import {
   FakePeers,
@@ -269,7 +270,8 @@ describe('forwarder', () => {
       expect(streams.lastOpen?.headers['cf-access-jwt-assertion']).toBeUndefined();
       expect(streams.lastOpen?.headers['cf-access-authenticated-user-email']).toBeUndefined();
       expect(streams.lastOpen?.headers['cf-ray']).toBeUndefined();
-      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBeUndefined();
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
 
       streams.nextResponse = new Response('<html></html>', {
         headers: { 'content-type': 'text/html; charset=utf-8' },
@@ -299,7 +301,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('stamps x-tmex-client-source: local for trusted entry clients and drops browser forgeries', async () => {
+  test('stamps x-vibeterm-client-source: local for trusted entry clients and drops browser forgeries', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
@@ -311,7 +313,8 @@ describe('forwarder', () => {
         headers: { 'x-tmex-client-source': 'forged' },
       });
       expect(local.status).toBe(200);
-      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBe('local');
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBe('local');
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBe('local');
       expect(streams.lastOpen?.path).toBe('/api/auth/mode');
 
       streams.nextResponse = new Response('{}', {
@@ -324,7 +327,8 @@ describe('forwarder', () => {
         body: '{}',
       });
       expect(lan.status).toBe(200);
-      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBe('local');
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBe('local');
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBe('local');
       expect(streams.lastOpen?.path).toBe('/api/auth/login');
 
       streams.nextResponse = new Response('{}', {
@@ -335,7 +339,8 @@ describe('forwarder', () => {
         headers: { 'x-tmex-client-source': 'local' },
       });
       expect(publicSrc.status).toBe(200);
-      expect(streams.lastOpen?.headers['x-tmex-client-source']).toBeUndefined();
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.name]).toBeUndefined();
+      expect(streams.lastOpen?.headers[CLIENT_SOURCE_HEADER.legacy]).toBeUndefined();
     } finally {
       mesh.close();
     }
@@ -434,7 +439,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('x-tmex-set-session becomes Set-Cookie vibeterm_s_<id> on entry', async () => {
+  test('x-vibeterm-set-session becomes Set-Cookie vibeterm_s_<id> on entry', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
@@ -1046,7 +1051,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('logout x-tmex-set-session ;0 clears the target cookie', async () => {
+  test('logout x-vibeterm-set-session ;0 clears the target cookie', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();
@@ -2544,7 +2549,7 @@ describe('forwarder 分享凭证', () => {
     }
   });
 
-  test('节点端的 x-tmex-set-share 在 Hub 翻成 cookie，不回给浏览器', async () => {
+  test('节点端的 x-vibeterm-set-share 在 Hub 翻成 cookie，不回给浏览器', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);
     const streams = new FakeStreams();

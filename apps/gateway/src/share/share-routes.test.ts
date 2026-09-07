@@ -233,7 +233,7 @@ describe('被分享人 HTTP', () => {
     expect((await call('GET', '/api/share-access/nope')).status).toBe(404);
   });
 
-  test('login 成功走 x-tmex-set-share 头而不是 Set-Cookie', async () => {
+  test('login 成功走 x-vibeterm-set-share 头而不是 Set-Cookie', async () => {
     const created = await createShare();
     const share = created.body.share as ShareRecord;
     const login = await call('POST', `/api/share-access/${share.id}/login`, {
@@ -244,7 +244,8 @@ describe('被分享人 HTTP', () => {
     expect(login.headers.get('set-cookie')).toBeNull();
     const token = login.headers.get(SET_SHARE_HEADER.name);
     expect(token).toBeTruthy();
-    expect(Number(login.headers.get('x-tmex-set-share-max-age'))).toBe(3_600);
+    expect(Number(login.headers.get(SET_SHARE_MAX_AGE_HEADER.name))).toBe(3_600);
+    expect(Number(login.headers.get(SET_SHARE_MAX_AGE_HEADER.legacy))).toBe(3_600);
 
     const authed = await call('GET', `/api/share-access/${share.id}`, {
       headers: { cookie: `${SHARE_COOKIE_PREFIX}self=${token}` },
@@ -323,7 +324,7 @@ describe('被分享人 HTTP', () => {
     expect(missing.status).toBe(404);
   });
 
-  test('logout 清除凭证并带 x-tmex-clear-share', async () => {
+  test('logout 清除凭证并带 x-vibeterm-clear-share', async () => {
     const created = await createShare();
     const share = created.body.share as ShareRecord;
     const login = await call('POST', `/api/share-access/${share.id}/login`, {

@@ -106,7 +106,7 @@ VibeTerm 在页面右边栏提供一个 AI Agent 对话面板。Agent 运行在 
 
 agent 操作终端不是「屏幕抓取」而是**服务端 headless ghostty 渲染 + 实时字节流**驱动：
 
-1. **OSC 133 解析**：`PaneStreamParser`（`apps/gateway/src/tmux-client/pane-stream-parser.ts`）从 control-mode `%output` 解析 `133 A/B/C/D;<exit>`（含注入的 `tmex=<nonce>` 参数），经 `onPromptMarker` 沿 `control-mode-subscription → connection → DeviceSessionRuntime` listener 透传。tmux 不支持 OSC 133 且 `capture-pane` 吃掉这些标记，所以只能从字节流拿。
+1. **OSC 133 解析**：`PaneStreamParser`（`apps/gateway/src/tmux-client/pane-stream-parser.ts`）从 control-mode `%output` 解析 `133 A/B/C/D;<exit>`（含注入的 `vibeterm=<nonce>` 参数），经 `onPromptMarker` 沿 `control-mode-subscription → connection → DeviceSessionRuntime` listener 透传。tmux 不支持 OSC 133 且 `capture-pane` 吃掉这些标记，所以只能从字节流拿。
 2. **Headless ghostty**：`packages/ghostty-terminal/src/headless.ts` 的 `HeadlessTerminal`（子路径导出 `ghostty-terminal/headless`）：`create/write/render(渲染态纯文本)/isAlternateScreen(DEC 1049)/size/resize/free`，在 Bun 里 headless 运行。wasm 资源用 `new URL('./assets/ghostty-vt.wasm', import.meta.url)`（Vite 与 Bun 通用）；生产打包由 `packages/app/scripts/copy-runtime-assets.sh` 把 wasm 拷进 `dist/runtime/assets/`。
 3. **Per-pane 模拟器**：`apps/gateway/src/tmux-client/pane-emulator.ts` 的 `PaneEmulator` 把某 pane 的实时流喂进 headless ghostty 维护渲染网格，并提供 `render/isAlternateScreen/size` 和字节/标记 `tap`。`PaneEmulatorRegistry` 镜像 `runtime-registry` 的引用计数：wasm bindings 全局单例；每 pane 一个句柄，按 `deviceId:paneId` 复用；引用归零 / `destroy` / `shutdownAll` → `free` + 解绑订阅；bounded scrollback（默认 5000）+ 输出硬上限 + 池上限（LRU 驱逐空闲实例）。`run.ts` 在 run 期间尽力 acquire、finally release；stub runtime 无订阅则退回 capture-pane。
 4. **工具**（`apps/gateway/src/agent/tools/terminal.ts`）：

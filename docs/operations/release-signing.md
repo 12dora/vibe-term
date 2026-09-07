@@ -26,7 +26,7 @@
   ];
   ```
 
-- 私钥（raw 32 字节种子的标准 base64）只存在两处：GitHub Actions secret `VIBETERM_RELEASE_SIGNING_KEY`，
+- 私钥（raw 32 字节种子的标准 base64）只存在两处：GitHub Actions secret `TMEX_RELEASE_SIGNING_KEY`（工作流导出为环境变量 `VIBETERM_RELEASE_SIGNING_KEY`），
   以及维护者自己保管的离线备份 `~/code/key/tmex-release-signing-ed25519-r1.json`（文件名沿用改名前的写法，未改；
   `{"seedB64":"<base64>","pubB64":"<base64>"}`，权限 0600）。除此之外任何地方都不该出现，包括日志、CI 输出、仓库。
 

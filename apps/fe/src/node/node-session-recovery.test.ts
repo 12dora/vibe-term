@@ -1,4 +1,4 @@
-// 陈旧会话（入口换过 node id，`tmex_s_<target>` 还留着旧入口签发的那只）的自愈：
+// 陈旧会话（入口换过 node id，`vibeterm_s_<target>` 或兼容旧名 `tmex_s_<target>` 还留着旧入口签发的那只）的自愈：
 // 列表把该 node 报成 loggedIn:true，设备请求却回 401 NODE_LOGIN_REQUIRED
 // → 补一次静默重登 → 成功就回源；失败才把它标未登录，让界面退回登录入口。
 

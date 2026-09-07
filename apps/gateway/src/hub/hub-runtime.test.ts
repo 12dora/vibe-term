@@ -18,6 +18,7 @@ import {
   sha256,
   signEd25519,
 } from '@vibeterm/shared/auth';
+import { FORCE_KEYLOG_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { HUB_NOT_WRITER } from '@vibeterm/shared/uplink';
 import { MeshHubStore } from '../auth/mesh-hub-store';
@@ -1615,51 +1616,54 @@ describe('HubRuntime HTTP', () => {
     }
   });
 
-  test('forwarded rotate-root-keep is blocked by old nodes even with x-tmex-force-keylog', async () => {
-    const { db, close } = createMigratedAuthDb();
-    try {
-      const { userStore, keyLogSource, service } = createHubTestStack(db);
-      const user = seedUser(userStore);
-      seedAdmittedNode(userStore, user.id, { name: 'old-node' });
-      const hub = new HubRuntime({
-        db,
-        userStore,
-        keyLogSource,
-        config: { publicUrl: 'https://hub.example', stun: [] },
-        authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
-      });
-      const rec = signUserRecord(
-        service,
-        user.id,
-        user.root,
-        'rotate-root-keep',
-        encodeRotateRootKeepPayload({
-          root_public_key: new Uint8Array(32).fill(9),
-          kdf_params: generateKdfParams(),
-          totp: null,
-        })
-      );
-      const ack = await hub.executeForwardedWrite('aa'.repeat(16), {
-        t: 'hub.write-forward',
-        id: 'keep-1',
-        method: 'POST',
-        path: '/api/auth/keylog',
-        uid: user.id,
-        headers: { 'content-type': 'application/json', 'x-tmex-force-keylog': '1' },
-        body: JSON.stringify({
-          bytes: encodeBase64url(rec.bytes),
-          sig: encodeBase64url(rec.sig),
-        }),
-      });
-      expect(ack.status).toBe(409);
-      expect(JSON.parse(ack.body ?? '{}')).toMatchObject({
-        code: 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES',
-      });
-      hub.stop();
-    } finally {
-      close();
+  test.each([FORCE_KEYLOG_HEADER.name, FORCE_KEYLOG_HEADER.legacy])(
+    'forwarded rotate-root-keep is blocked by old nodes even with %s',
+    async (headerName) => {
+      const { db, close } = createMigratedAuthDb();
+      try {
+        const { userStore, keyLogSource, service } = createHubTestStack(db);
+        const user = seedUser(userStore);
+        seedAdmittedNode(userStore, user.id, { name: 'old-node' });
+        const hub = new HubRuntime({
+          db,
+          userStore,
+          keyLogSource,
+          config: { publicUrl: 'https://hub.example', stun: [] },
+          authenticate: () => ({ userId: user.id, entryNodeId: 'entry' }),
+        });
+        const rec = signUserRecord(
+          service,
+          user.id,
+          user.root,
+          'rotate-root-keep',
+          encodeRotateRootKeepPayload({
+            root_public_key: new Uint8Array(32).fill(9),
+            kdf_params: generateKdfParams(),
+            totp: null,
+          })
+        );
+        const ack = await hub.executeForwardedWrite('aa'.repeat(16), {
+          t: 'hub.write-forward',
+          id: 'keep-1',
+          method: 'POST',
+          path: '/api/auth/keylog',
+          uid: user.id,
+          headers: { 'content-type': 'application/json', [headerName]: '1' },
+          body: JSON.stringify({
+            bytes: encodeBase64url(rec.bytes),
+            sig: encodeBase64url(rec.sig),
+          }),
+        });
+        expect(ack.status).toBe(409);
+        expect(JSON.parse(ack.body ?? '{}')).toMatchObject({
+          code: 'KEYLOG_TYPE_UNSUPPORTED_BY_NODES',
+        });
+        hub.stop();
+      } finally {
+        close();
+      }
     }
-  });
+  );
 
   test('forwarded rotate-root-keep is blocked by a cert without a nodes row; revoked cert does not block', async () => {
     const { db, close } = createMigratedAuthDb();

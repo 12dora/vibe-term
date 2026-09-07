@@ -7,6 +7,7 @@ import {
   encodeCertificate,
   hexToBytes,
 } from '@vibeterm/shared/auth';
+import { CONNECTION_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession } from '@vibeterm/shared/link';
 import { runMigrations } from '../db/migrate';
 import { resetReleaseDownloadForTests } from '../system/release-download';
@@ -1069,7 +1070,7 @@ describe('mesh-routes', () => {
       const headered = asResponse(
         await runtime.handleRequest(
           new Request('http://localhost/api/mesh/connection', {
-            headers: { cookie, 'x-tmex-connection': 'tab-a' },
+            headers: { cookie, [CONNECTION_HEADER.name]: 'tab-a' },
           }),
           dummyServer
         )

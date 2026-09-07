@@ -1003,7 +1003,7 @@ describe('isValidHostname', () => {
   });
 
   test('拒绝大写、单级、空标签、首尾连字符与超长标签', () => {
-    expect(isValidHostname('TMEX.example.com')).toBe(false);
+    expect(isValidHostname('FOO.example.com')).toBe(false);
     expect(isValidHostname('example')).toBe(false);
     expect(isValidHostname('')).toBe(false);
     expect(isValidHostname('a..com')).toBe(false);

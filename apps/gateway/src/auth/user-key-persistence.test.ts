@@ -78,7 +78,7 @@ function makeStep(
   return {
     input: { bytes: new Uint8Array([1, 2, 3]), sig: new Uint8Array(64).fill(4) },
     record: {
-      domain: 'tmex.keylog.v1',
+      domain: 'test/keylog',
       uid: userId,
       seq,
       prev_hash: new Uint8Array(32),

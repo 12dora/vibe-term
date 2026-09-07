@@ -12,6 +12,7 @@ import {
   randomBytes,
   rootKeyFromSeed,
 } from '../../../shared/src/auth';
+import { SET_SESSION_HEADER } from '../../../shared/src/http/mesh-headers';
 import { parseArgs } from '../lib/args';
 import { type LocalAuthContext, openLocalAuth } from '../lib/local-auth';
 import { createCa, spkiFingerprint } from '../tls/cert-authority';
@@ -440,71 +441,74 @@ describe('enroll', () => {
     expect(removed).toBe(added);
   });
 
-  test('non-hub enroll reads x-tmex-set-session when Set-Cookie is absent', async () => {
-    const auth = await openLocalAuth({
-      memory: true,
-      migrationsFolder: MIGRATIONS,
-      env: {
-        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
-        VIBETERM_ROLES: 'node',
-        VIBETERM_HUB_URL: '',
-      },
+  for (const headerName of [SET_SESSION_HEADER.name, SET_SESSION_HEADER.legacy]) {
+    test(`non-hub enroll reads ${headerName} when Set-Cookie is absent`, async () => {
+      const auth = await openLocalAuth({
+        memory: true,
+        migrationsFolder: MIGRATIONS,
+        env: {
+          VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+          VIBETERM_ROLES: 'node',
+          VIBETERM_HUB_URL: '',
+        },
+      });
+      handles.push(auth);
+      await runHubUserAdd(parsed, 'jade', {
+        auth,
+        password: 'enroll-pass-word',
+        log: () => undefined,
+      });
+      const seen: { enrollmentCookie: string | null } = { enrollmentCookie: null };
+      const nonce = encodeBase64url(randomBytes(32));
+      const nodePk = encodeBase64url(randomBytes(32));
+      const server = Bun.serve({
+        hostname: '127.0.0.1',
+        port: 0,
+        async fetch(req) {
+          const url = new URL(req.url);
+          if (url.pathname === '/api/auth/mode') {
+            return Response.json({
+              mode: 'mesh',
+              nodeId: 'self',
+              uid: auth.userStore.getByUsername('jade')?.id,
+              totpEnabled: false,
+            });
+          }
+          if (url.pathname === '/api/auth/challenge') {
+            return Response.json({ challenge_id: 'c1', nonce, nodePk });
+          }
+          if (url.pathname === '/api/auth/login') {
+            return new Response(JSON.stringify({ expires_at: Date.now() + 60_000 }), {
+              status: 200,
+              headers: {
+                'content-type': 'application/json',
+                [headerName]: 'header-sid;60',
+              },
+            });
+          }
+          if (url.pathname === '/api/hub/enrollments' && req.method === 'POST') {
+            seen.enrollmentCookie = req.headers.get('cookie');
+            return Response.json({ ok: true, id: 'enroll-2' }, { status: 201 });
+          }
+          return new Response('nope', { status: 404 });
+        },
+      });
+      const hubUrl = `http://127.0.0.1:${server.port}`;
+      auth.env.VIBETERM_HUB_URL = hubUrl;
+      const result = await runEnroll(parsed, {
+        auth,
+        password: 'enroll-pass-word',
+        wait: false,
+        log: () => undefined,
+        fetcher: (input, init) => fetch(input, init),
+        joinUrl: hubUrl,
+      });
+      server.stop();
+      expect(result.admitted).toBe(false);
+      expect(seen.enrollmentCookie).toContain('vibeterm_s_self=header-sid');
+      expect(seen.enrollmentCookie).toContain('tmex_s_self=header-sid');
     });
-    handles.push(auth);
-    await runHubUserAdd(parsed, 'jade', {
-      auth,
-      password: 'enroll-pass-word',
-      log: () => undefined,
-    });
-    const seen: { enrollmentCookie: string | null } = { enrollmentCookie: null };
-    const nonce = encodeBase64url(randomBytes(32));
-    const nodePk = encodeBase64url(randomBytes(32));
-    const server = Bun.serve({
-      hostname: '127.0.0.1',
-      port: 0,
-      async fetch(req) {
-        const url = new URL(req.url);
-        if (url.pathname === '/api/auth/mode') {
-          return Response.json({
-            mode: 'mesh',
-            nodeId: 'self',
-            uid: auth.userStore.getByUsername('jade')?.id,
-            totpEnabled: false,
-          });
-        }
-        if (url.pathname === '/api/auth/challenge') {
-          return Response.json({ challenge_id: 'c1', nonce, nodePk });
-        }
-        if (url.pathname === '/api/auth/login') {
-          return new Response(JSON.stringify({ expires_at: Date.now() + 60_000 }), {
-            status: 200,
-            headers: {
-              'content-type': 'application/json',
-              'x-tmex-set-session': 'header-sid;60',
-            },
-          });
-        }
-        if (url.pathname === '/api/hub/enrollments' && req.method === 'POST') {
-          seen.enrollmentCookie = req.headers.get('cookie');
-          return Response.json({ ok: true, id: 'enroll-2' }, { status: 201 });
-        }
-        return new Response('nope', { status: 404 });
-      },
-    });
-    const hubUrl = `http://127.0.0.1:${server.port}`;
-    auth.env.VIBETERM_HUB_URL = hubUrl;
-    const result = await runEnroll(parsed, {
-      auth,
-      password: 'enroll-pass-word',
-      wait: false,
-      log: () => undefined,
-      fetcher: (input, init) => fetch(input, init),
-      joinUrl: hubUrl,
-    });
-    server.stop();
-    expect(result.admitted).toBe(false);
-    expect(seen.enrollmentCookie).toContain('tmex_s_self=header-sid');
-  });
+  }
 
   test('pollHubNodesForCertificate matches enroll_pk on hub node list', async () => {
     const enrollSk = randomBytes(32);

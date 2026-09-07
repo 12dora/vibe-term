@@ -21,6 +21,7 @@ import {
   signLogin,
   totpCode,
 } from '@vibeterm/shared/auth';
+import { CLIENT_SOURCE_HEADER } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession } from '@vibeterm/shared/link';
 import type { HubMode } from '@vibeterm/shared/uplink';
 import { ChallengeStore } from '../auth/challenge-store';
@@ -1494,7 +1495,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('login happy path sets cookie + x-tmex-set-session', async () => {
+  test('login happy path sets cookie without x-vibeterm-set-session', async () => {
     const mesh = await bootMesh();
     try {
       const { res, sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
@@ -1502,7 +1503,8 @@ describe('auth-routes', () => {
       const body = (await res.json()) as { sid?: string; expires_at: number };
       expect(body.sid).toBeUndefined();
       expect(body.expires_at).toBeGreaterThan(Date.now());
-      expect(res.headers.get('x-tmex-set-session')).toBeNull();
+      expect(res.headers.get(SET_SESSION_HEADER.name)).toBeNull();
+      expect(res.headers.get(SET_SESSION_HEADER.legacy)).toBeNull();
       const cookie = res.headers.get('set-cookie') ?? '';
       expect(cookie).toContain(`vibeterm_s_self=${sid}`);
       expect(cookie).toContain('HttpOnly');
@@ -1514,7 +1516,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('login via remote entry does not Set-Cookie, only x-tmex-set-session', async () => {
+  test('login via remote entry does not Set-Cookie, only x-vibeterm-set-session', async () => {
     const mesh = await bootMesh();
     try {
       const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
@@ -1523,7 +1525,10 @@ describe('auth-routes', () => {
       });
       expect(res.status).toBe(200);
       expect(res.headers.get('set-cookie')).toBeNull();
-      expect(res.headers.get('x-tmex-set-session')).toBeTruthy();
+      expect(res.headers.get(SET_SESSION_HEADER.name)).toBeTruthy();
+      expect(res.headers.get(SET_SESSION_HEADER.legacy)).toBe(
+        res.headers.get(SET_SESSION_HEADER.name)
+      );
     } finally {
       mesh.close();
     }
@@ -2488,7 +2493,8 @@ describe('auth-routes', () => {
       });
       expect(out.status).toBe(200);
       expect(out.headers.get('set-cookie') ?? '').toContain('Max-Age=0');
-      expect(out.headers.get('x-tmex-set-session')).toBeNull();
+      expect(out.headers.get(SET_SESSION_HEADER.name)).toBeNull();
+      expect(out.headers.get(SET_SESSION_HEADER.legacy)).toBeNull();
       expect(mesh.nodeSessionStore.verify(sid, { viaNodeId: 'self', now: Date.now() }).ok).toBe(
         false
       );
@@ -3284,7 +3290,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('peer x-tmex-client-source: local waives passkey; header on a public direct request does not', async () => {
+  test('peer x-vibeterm-client-source: local waives passkey; header on a public direct request does not', async () => {
     const mesh = await bootMesh();
     try {
       insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
@@ -3296,9 +3302,15 @@ describe('auth-routes', () => {
       const waived = await challengeAndLogin(mesh.runtime, mesh.boot, {
         via: entry,
         clientIp: `peer:${entry}`,
-        headers: { 'x-tmex-client-source': 'local', origin: 'http://localhost:19663' },
+        headers: { [CLIENT_SOURCE_HEADER.name]: 'local', origin: 'http://localhost:19663' },
       });
       expect(waived.res.status).toBe(200);
+      const legacyWaived = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        via: entry,
+        clientIp: `peer:${entry}`,
+        headers: { [CLIENT_SOURCE_HEADER.legacy]: 'local', origin: 'http://localhost:19663' },
+      });
+      expect(legacyWaived.res.status).toBe(200);
 
       const peerNoHeader = await challengeAndLogin(mesh.runtime, mesh.boot, {
         via: entry,
@@ -3310,7 +3322,7 @@ describe('auth-routes', () => {
 
       const forgedDirect = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
-        headers: { 'x-tmex-client-source': 'local', origin: 'http://localhost:19663' },
+        headers: { [CLIENT_SOURCE_HEADER.name]: 'local', origin: 'http://localhost:19663' },
       });
       expect(forgedDirect.res.status).toBe(401);
       expect((await forgedDirect.res.json()).code).toBe('PASSKEY_REQUIRED');

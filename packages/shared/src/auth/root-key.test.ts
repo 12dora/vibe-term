@@ -138,7 +138,7 @@ describe('Ed25519 / X25519 wrappers', () => {
 
   it('sign/verify is RFC 8032 strict (zip215: false)', () => {
     const kp = generateEd25519KeyPair();
-    const msg = new TextEncoder().encode('tmex');
+    const msg = new TextEncoder().encode('msg');
     const sig = signEd25519(kp.secretKey, msg);
     expect(verifyEd25519(sig, msg, kp.publicKey)).toBe(true);
     expect(verifyEd25519(sig, new TextEncoder().encode('other'), kp.publicKey)).toBe(false);
@@ -148,7 +148,7 @@ describe('Ed25519 / X25519 wrappers', () => {
   it('rejects a ZIP-215-valid small-order public key that RFC 8032 strict must refuse', () => {
     const identity = hexToBytes(`01${'00'.repeat(31)}`);
     const zip215Sig = hexToBytes(`01${'00'.repeat(63)}`);
-    const msg = new TextEncoder().encode('tmex');
+    const msg = new TextEncoder().encode('msg');
     expect(ed25519.verify(zip215Sig, msg, identity, { zip215: true })).toBe(true);
     expect(ed25519.verify(zip215Sig, msg, identity, { zip215: false })).toBe(false);
     expect(verifyEd25519(zip215Sig, msg, identity)).toBe(false);

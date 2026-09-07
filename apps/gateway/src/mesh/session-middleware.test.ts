@@ -160,7 +160,7 @@ describe('session-middleware', () => {
     }
   });
 
-  test('local renewal attaches x-tmex-session-renewed to later authed responses', async () => {
+  test('local renewal attaches x-vibeterm-session-renewed to later authed responses', async () => {
     let now = Date.now();
     const mesh = await bootMesh({ now: () => now });
     try {
@@ -219,7 +219,7 @@ describe('session-middleware', () => {
       }
     });
   });
-  test('本机路径把 x-tmex-set-share 翻成 vibeterm_sh_self cookie 并抹掉内部头', () => {
+  test('本机路径把 x-vibeterm-set-share 翻成 vibeterm_sh_self cookie 并抹掉内部头', () => {
     const req = new Request('http://localhost/api/share-access/abc/login', { method: 'POST' });
     const upstream = new Response('{}', {
       headers: {
