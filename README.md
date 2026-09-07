@@ -1,128 +1,108 @@
 <div align="right">
-  <a href="./docs/README.zh-CN.md">简体中文</a>
+  <a href="./docs/README.en.md">English</a>
 </div>
 
 <div align="center">
-  <img src="apps/fe/public/logo.png" width="128" height="128" alt="VibeTerm" />
+  <img src="apps/fe/public/logo.png" width="112" height="112" alt="VibeTerm" />
 </div>
 
-<h1 align="center">VibeTerm</h1>
+<h1 align="center">VibeTerm - 做最好用的远程 Vibe Coding 终端</h1>
 
 <p align="center">
-  A terminal workspace for tmux, rebuilt for the agent era.<br/>
-  Run agents, watch panes, and manage remote machines from any device.
+  <a href="https://github.com/12dora/vibe-term/releases"><img src="https://img.shields.io/github/v/release/12dora/vibe-term?label=release" alt="Release" /></a>
+  <a href="./LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue" alt="MIT" /></a>
+  <img src="https://img.shields.io/badge/runtime-Bun-000" alt="Bun" />
 </p>
 
 <p align="center">
-  <img src="docs/images/screenshot.png" width="640" alt="VibeTerm screenshot" />
+  开源、自托管的 Web 终端：在手机、平板或任意浏览器里接管所有机器的 tmux 会话。<br/>
+  让 Claude Code、Codex 这类 AI 编码助手长时间运行，随时随地看结果、发指令。
 </p>
-
-<p align="center">
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="#highlights">Highlights</a> ·
-  <a href="#install--upgrade">Install & Upgrade</a> ·
-  <a href="#security">Security</a> ·
-  <a href="#faq">FAQ</a>
-</p>
-
----
-
-## Quick Start
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
 ```
 
-The installer generates keys, deploys runtime files, registers a user service (launchd on macOS, systemd on Linux), and starts VibeTerm. Open the URL it prints, add your devices, and you are done.
+<p align="center">
+  <img src="docs/images/hero.png" width="880" alt="VibeTerm 主界面：浏览器中的 tmux 终端正在运行 Claude Code，左侧是多台机器的设备树" />
+</p>
 
-## Highlights
+VibeTerm 基于 tmux 与 Ghostty，把 Mac、Linux 服务器、NAS 和云主机连成一张网。所有机器只需出站连接，没有公网 IP 也能穿透 NAT；节点之间端到端加密，中转服务器只见密文。它是 SSH 客户端与云端 IDE 之外的第三种远程开发方式：终端始终运行在用户自己的机器上，换个设备即可接着用。
 
-| **Open source, with history preserved** | **One-command install, self-updating** | **One sidebar for panes, agents, and files** |
+## 特色功能
+
+| **多机互联** | **端到端加密** | **终端共享** |
 |---|---|---|
-| VibeTerm is built in public with AI agents. Design decisions and trade-offs are documented in `docs/`, so the engineering process is inspectable. | The one-line install script installs the service, generates keys, and starts serving. Upgrade in one click from the settings page, or run `vibeterm upgrade`. Rollback is automatic if anything fails. | The left sidebar unites the device tree, AI Agent, and file manager. The Agent is tied to the active tmux pane: switch panes and the Agent context switches with you. |
+| 登录任意一台机器，即可看到并操作全部机器。 | 节点之间用 AES-256-GCM 加密，中转服务器只见密文。 | 一条链接把终端分享给同事，支持口令保护与录制回放。 |
 
-| **Agent for coding and ops** | **Watch: a sentry for long jobs** | **Access your terminals from anywhere** |
+| **本地般流畅** | **文件传输** | **AI Agent** |
 |---|---|---|
-| The server-side AI Agent reads the screen, runs commands, sends keystrokes to interactive programs, searches the web, and fetches pages. Use it for coding, log inspection, service restarts, network gear config, or any step-by-step maintenance task. | Watch monitors any pane on a schedule. Catch a download stuck at 73%, a build that errors out, or a log line that should not appear. Alerts go out through Telegram, webhook, or browser push. | VibeTerm works on laptop, tablet, and phone. Install it as a standalone app and pick up where you left off. Mobile input is deliberately polished: the on-screen keyboard does not break your terminal layout, and editor mode lets you compose long commands comfortably. |
+| 滚动、输入与本地终端一样跟手，手机上也是。 | 浏览器与机器、机器与机器之间自由传文件。 | 读屏、执行命令、驱动交互程序，跟随当前窗格。 |
 
-| **Ghostty WASM terminal** | **Local and SSH devices** | **Native tmux Control Mode** |
+| **端口映射** | **手机与平板** | **通行密钥** |
 |---|---|---|
-| The browser-side terminal uses Ghostty’s official VT kernel compiled to WebAssembly. You get native-grade terminal semantics without a hand-rolled ANSI parser. | Manage local machines and remote SSH hosts side by side. Authenticate with password, private key, SSH Agent, or SSH Config. Drag to reorder the device tree. | VibeTerm is built on tmux Control Mode, so pane output, window lifecycle events, and bell notifications arrive in real time. Use the web UI alongside iTerm2 or any native tmux client. |
+| 把远端机器的端口映射到本机，像本地服务一样访问。 | 安装为 PWA，软键盘不破坏终端布局。 | Passkey / TOTP 二次验证，密码永不离开浏览器。 |
 
-**Multi-machine mesh.** Any VibeTerm install can join a mesh: one machine with a public HTTPS address acts as the hub, and the rest join it with a join code, needing only outbound connections. Every node is a full entry point — open any one of them and you see and operate every machine in the mesh. Nodes connect to each other directly over WebRTC where possible and fall back to hub relay, and every link is encrypted end to end. Set it up in **Settings → Multi-node Mesh**, or from the CLI with `vibeterm init --role hub,node` and `vibeterm hub join <https-url> --token <t>`.
+## 平台支持
 
-## Install & Upgrade
+| | 平台 |
+|---|---|
+| **服务端** | macOS · Linux · Windows（计划中） |
+| **客户端** | 任意现代浏览器；iOS / Android 可安装为 PWA |
 
-```bash
-# Interactive install (recommended)
-curl -fsSL https://raw.githubusercontent.com/12dora/vibe-term/main/install.sh | bash
+<p align="center">
+  <img src="docs/images/mobile.png" width="300" alt="VibeTerm 手机端 PWA：在 iPhone 上操作远程 tmux 终端" />
+</p>
 
-# Silent install for CI or automation
-bash install.sh --no-interactive \
-  --install-dir ~/.local/share/vibeterm \
-  --host 127.0.0.1 \
-  --port 9883 \
-  --db-path ~/.local/share/vibeterm/data/vibeterm.db \
-  --autostart true
+## 部署模式
 
-# Environment diagnosis
-vibeterm doctor
+| **独立** | **Hub** | **中继** |
+|---|---|---|
+| 单机安装即用，默认只监听本机。 | 一台有公网地址的机器做入口，其余机器作为节点加入，只需出站连接。可再加一台备用 Hub。 | 没有公网地址时，借用他人或自建的中继转发密文，多人可共用一台中继。 |
 
-# Upgrade to the latest version
-vibeterm upgrade
+**Hub 与中继的区别**
 
-# Uninstall
-vibeterm uninstall
-```
+| | Hub | 中继 |
+|---|---|---|
+| 归属 | 用户自己的一台机器，同时也是一个完整节点 | 专门转发流量的公共服务器，可由第三方运营 |
+| 可见信息 | 节点清单、在线状态、连接信令；终端内容仍是节点间端到端加密 | 只知道节点编号与流量字节；节点名、设备清单、终端内容全部是密文 |
+| 登录入口 | 用它的公网地址打开网页登录 | 没有网页；从租户自己的任意一台节点登录 |
+| 适用场景 | 有一台带公网 IP 或域名的机器（云主机、能端口转发的家用 NAS） | 所有机器都在 NAT 后无法暴露端口，或需要用一台服务器为多位用户提供转发 |
 
-Installation requires [Bun](https://bun.sh) (the installer will install it if missing). The `doctor` command will check your environment and report any issues. If `vibeterm` is not found after install, add `~/.local/bin` to PATH.
+<p align="center">
+  <img src="docs/images/nodes.png" width="880" alt="VibeTerm 节点管理：多台机器通过 Hub 组成 mesh，显示在线状态与直连方式" />
+</p>
 
-The install directory is `~/Library/Application Support/vibeterm` on macOS and `~/.local/share/vibeterm` on Linux, with the database at `data/vibeterm.db` and configuration in `app.env` (`VIBETERM_*` keys). Mesh, hub, and relay operations live under `vibeterm hub …` and `vibeterm relay …`.
+## 部署方式
 
-### Upgrading from tmex
+### AI 部署
 
-VibeTerm was previously released as `tmex`. Running `tmex upgrade` on an existing 1.x install moves it to the new directory, renames the database and service, and rewrites `app.env` to the `VIBETERM_*` keys. The `tmex` command stays available as an alias for `vibeterm`. Downgrading below 2.0 after the move is not supported.
+将下面的提示词发给 Claude Code、Codex 等 AI 编码助手，助手会读取 [AI 部署指南](./docs/operations/ai-deploy.md) 并在目标机器上完成部署。尖括号里的内容按实际情况替换。
 
-## Security
+| 场景 | 提示词 |
+|---|---|
+| 独立部署 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「独立部署」一节在这台机器上部署 VibeTerm。` |
+| 建立 Hub · 有公网域名 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：公网域名」一节部署 Hub。域名是 <域名>，80/443 端口 <可用/不可用>。` |
+| 建立 Hub · 无公网 IP，路由器端口转发 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：端口转发」一节部署 Hub。路由器会把公网端口 <端口> 转发到这台机器，公网地址是 <IP 或 DDNS 域名>。` |
+| 建立 Hub · 无公网 IP，Cloudflare Tunnel | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「Hub：Cloudflare Tunnel」一节部署 Hub。隧道域名是 <域名>。` |
+| 加入 Hub | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「加入 Hub」一节把这台机器加入 Hub。加入码是 <加入码>。` |
+| 建立中继 · 有公网域名 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：公网域名」一节部署中继。域名是 <域名>，80/443 端口 <可用/不可用>。` |
+| 建立中继 · 无公网 IP，路由器端口转发 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：端口转发」一节部署中继。路由器会把公网端口 <端口> 转发到这台机器，公网地址是 <IP 或 DDNS 域名>。` |
+| 建立中继 · 无公网 IP，Cloudflare Tunnel | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「中继：Cloudflare Tunnel」一节部署中继。隧道域名是 <域名>。` |
+| 加入中继 | `请读取 https://raw.githubusercontent.com/12dora/vibe-term/main/docs/operations/ai-deploy.md，按「加入中继」一节把这台机器接入中继。中继地址是 <地址>，租户编号是 <编号>。` |
 
-VibeTerm ships a full authentication stack, but on a standalone install it is **off by default**: a fresh install binds to `127.0.0.1:9883` and serves no login page. Turn on login protection in **Settings → Remote access** before the UI is reachable from anywhere but the machine itself. A machine that joins a mesh always requires login — there the switch does not exist.
+### 人工部署
 
-**Accounts.** The password never leaves the browser. Argon2id (64 MiB, 3 passes) derives an Ed25519 root key client-side; the server stores only the root public key and the KDF parameters. A login signs a delegation valid for 18 hours to a per-browser session key, and node sessions renew on a sliding 18-hour window with a 7-day hard cap. Failed logins are rate limited per source IP and per account, and every credential failure returns the same error.
+一行命令安装后，用 `vibeterm --help` 查看全部子命令；`vibeterm doctor` 诊断环境，`vibeterm upgrade` 升级。完整手册见 [部署指南](./docs/operations/production-install.md) 与 [mesh 运维](./docs/operations/mesh-operations.md)。
 
-**Second factors, both optional.** Register a passkey (WebAuthn) and password logins additionally require a passkey assertion; a passkey can also be used to sign in on its own. Requests whose source address is loopback, private, link-local, or CGNAT skip that step — WebAuthn cannot be used on IP-literal origins such as `http://192.168.1.5:9883`. TOTP is independent and can be enabled alongside it; its secret is encrypted under a key derived from the root key and decrypted only during login.
+## 致谢
 
-**Credential rotation.** Passkeys, TOTP, node certificates, and hub authorizations live in a hash-chained log signed by the root key and replicated to every node. A normal password change rotates the root key and keeps passkeys, TOTP, and open sessions; `vibeterm hub user passwd <user> --full-reset` also removes every passkey and TOTP and signs out everywhere.
+VibeTerm 源自 [krhougs/tmex](https://github.com/krhougs/tmex)，感谢原作者奠定的 tmux Control Mode 与 Ghostty WASM 终端底座。
 
-**Mesh.** Membership is proved by Ed25519 node certificates issued by your root key — the hub issues no credentials of its own. Node-to-node links are mutually authenticated and encrypted end to end with AES-256-GCM, so a relaying hub only ever moves ciphertext.
+## 文档
 
-**Transport.** The built-in TLS listener serves a self-signed CA or a Let's Encrypt certificate obtained over ACME (`http-01`, or `dns-01` via Cloudflare or DNSPod). You can also terminate TLS at your own reverse proxy and set `VIBETERM_TRUST_PROXY=true` so VibeTerm reads the real client address and scheme. Without a public IP, VibeTerm downloads and supervises `cloudflared` itself — on your own hostname or as a quick tunnel — and can enforce [Cloudflare Access](https://www.cloudflare.com/zero-trust/products/access/) JWTs in front of it.
+架构、运维、安全与开发文档见 [docs/](./docs/README.md)。
 
-- Passwords and private keys are encrypted at rest with AES-256-GCM.
-- Webhook notifications are signed with HMAC-SHA256.
-- Agent terminal writes are bound to a single pane and require explicit approval by default.
-- `fetch_url` denies loopback, link-local, and private addresses by default to prevent SSRF.
-- Every node has an "Allow Domain Access" switch: turn it off and only local and private-network clients reach it, while mesh traffic keeps flowing.
+## 开源协议
 
-**Still on you.** Pick a strong password, serve VibeTerm over HTTPS (passkeys and `Secure` cookies need it), and keep every node upgraded — during a rolling upgrade a node on an older version still accepts password-only logins.
-
-## FAQ
-
-**Q: How do notifications work with coding agents?**
-
-VibeTerm listens for both BEL (`\a`) and common OSC notification sequences such as OSC 9, OSC 99, OSC 777 `notify`, and iTerm2 OSC 1337 `RequestAttention`. Claude Code, Codex, and OpenCode already emit one of these, so notifications usually work out of the box. You only need to add an explicit `\a` instruction if your agent does not.
-
-**Q: How do Telegram notifications work?**
-
-Add one or more Telegram bots in Settings, then approve the chats that are allowed to receive alerts. VibeTerm sends notifications for bell events, Agent confirmation requests, Watch triggers, and errors. Each bot can serve multiple chats, and you can revoke access at any time.
-
-**Q: Does an SSH host with many panes exhaust `MaxSessions`?**
-
-No. VibeTerm used to open one remote reader channel per pane; it now multiplexes every pane of a device over a **single shared tmux control-mode channel**, plus a long-lived command channel and short-lived channels for one-off commands and file transfers. Channel usage no longer grows with pane count, so OpenSSH's default `MaxSessions` of 10 is normally enough. Raise it only if you also run rsync transfers and your own SSH sessions against the same host at the same time.
-
-**Q: Why is OSC passthrough disabled by default?**
-
-Disabled passthrough prevents pane processes from forwarding private terminal control sequences to the host terminal, reducing the terminal-escape attack surface. If you need host terminals such as iTerm2 to receive OSC sequences, set `VIBETERM_TMUX_ALLOW_PASSTHROUGH=true`.
-
-## License
-
-MIT
+[MIT](./LICENSE)

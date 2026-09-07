@@ -1,6 +1,6 @@
 # VibeTerm 文档
 
-本目录是 VibeTerm 的技术文档，面向开发者与运维。产品介绍与安装入门看仓库根 [README.md](../README.md)（中文版 [README.zh-CN.md](./README.zh-CN.md)），仓库工作约定看根 [AGENTS.md](../AGENTS.md)。
+本目录是 VibeTerm 的技术文档，面向开发者与运维。产品介绍与安装入门看仓库根 [README.md](../README.md)（英文版 [README.en.md](./README.en.md)），仓库工作约定看根 [AGENTS.md](../AGENTS.md)。
 
 每篇文档开头一句话说明内容与读者；描述的都是**当前已落地的行为**，过程性记录不进这里。改代码影响到文档时同步改文档；新文档按主题放进下面四个目录之一，文件名用描述性 kebab-case 英文，并在该目录的 `README.md` 与本页补一行。
 
@@ -58,6 +58,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查 |
 | [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
 | [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |

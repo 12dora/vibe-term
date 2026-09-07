@@ -6,6 +6,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [ai-deploy.md](./ai-deploy.md) | 按场景给出可直接执行的部署步骤（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel），面向 AI 助手与运维 |
 | [production-install.md](./production-install.md) | 单机生产部署（安装、服务、日志、反代、SSH 设备、备份、排障） |
 | [mesh-operations.md](./mesh-operations.md) | mesh 运维手册（角色、环境变量、搭 hub、加入 / 吊销、账号安全、直连、灾难恢复、排障表） |
 | [multi-hub-standby.md](./multi-hub-standby.md) | 多 hub 主 / 备 |
