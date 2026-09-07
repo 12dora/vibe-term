@@ -19,6 +19,8 @@
 
 所有角色初始化都默认安装并启用直连插件，下载最多等待 60 秒；离线、不支持的平台或下载失败均不阻断初始化。CLI 加入 hub／relay 时会补装缺失插件，已安装则跳过；Web setup 省略 `directEnable` 时默认启用，显式 `false` 可跳过。存量安装从未安装插件时，升级不要求补装。
 
+事后管理：设置 → 节点管理 → 某节点「更多」的详情框里有一枚两态按钮——未安装时「安装直连插件」（安装即启用），已安装时「删除直连插件」（需确认）。状态取自 `GET /api/local/status`，动作走 `POST /api/local/direct`，远端节点经入口的 `/n/<id>/api/local/*` 转发到目标节点（需已登录该节点；peer 入站不享受 standalone 免密）。两种动作都要重启目标网关才生效，详情框提供「立即重启」（`POST /api/settings/restart`）并轮询 `/api/local/status` 直到目标恢复。本机卡片上的安装 / 启用 / 停用 / 删除四个控件不变。
+
 中继角色详见 [公共中继（relay）角色](../architecture/relay.md)。
 
 请求顺序（mesh 角色）：`HubRuntime`（`/api/hub/*`、`/hub/uplink`）→ mesh 本地守卫 → mesh（`/api/auth/*`、`/api/mesh/*`、`/mesh/ws`、`/n/:id/*`）→ gateway → 前端 SPA（覆盖 `/login`、`/nodes`、`/n/:id/...`）。standalone 不构造 mesh，只挂轻量 `GET /api/auth/mode`。
