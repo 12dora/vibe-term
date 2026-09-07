@@ -4,6 +4,7 @@
 import { type HubApi, defaultHubApi } from '@/node/hub-api';
 import { getMeshHubsState, refreshMeshHubs } from '@/node/mesh-hubs';
 import type { NodeRow } from '@/node/mesh-nodes';
+import { warnRelayAckGlobal } from '@/node/relay-ack';
 import { defaultApiClient } from '@vibeterm/api-client';
 import type { HubAuthorizationKind, MeshHubEndpoint } from '@vibeterm/api-client/auth/index';
 import { errorMessage, sleepOrAbort } from '@vibeterm/shared';
@@ -271,6 +272,11 @@ export async function submitAdmitHubRecord(
       const hubError = typeof body?.hubError === 'string' ? body.hubError : '';
       return { kind: 'failed', code: hubError || 'HUB_UNCONFIRMED' };
     }
+    // 这条路自己发裸 fetch，`relayAck` 得从响应体里读（形状与 `KeyLogAppendResult` 一致）。
+    warnRelayAckGlobal({
+      relayAck: typeof body?.relayAck === 'boolean' ? body.relayAck : undefined,
+      relayError: typeof body?.relayError === 'string' ? body.relayError : undefined,
+    });
     return { kind: 'ok' };
   }
   const code =

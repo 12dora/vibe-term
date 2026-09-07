@@ -10,6 +10,7 @@ import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { buildNotificationSinkPayload, encodeBase64url, hexToBytes } from '@vibeterm/shared/auth';
 import { withKeyLogLock } from './enrollment-engine';
+import { warnRelayAckGlobal } from './relay-ack';
 
 /** 记录送出去了，但上级没确认（服务端未落库，可原样重来）。 */
 export const NOTIFY_SINK_UNCONFIRMED = 'NOTIFY_SINK_UNCONFIRMED';
@@ -80,6 +81,7 @@ export async function setNotificationSinkViaKeyLog(
       if (appended.hubAck === false) {
         return { ok: false as const, code: appended.hubError || NOTIFY_SINK_UNCONFIRMED };
       }
+      warnRelayAckGlobal(appended);
       return { ok: true as const };
     });
   } catch (err) {

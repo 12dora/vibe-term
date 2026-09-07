@@ -43,6 +43,12 @@
         "custom": "自定义"
       }
     },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "主密钥无法解密节点身份，多节点功能已停用。",
+        "commandLabel": "恢复：从 backups/app.env.* 找回 VIBETERM_MASTER_KEY，或执行："
+      }
+    },
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
@@ -756,6 +762,12 @@
           "totp": "关闭验证码",
           "notifySink": "设置多节点通知"
         }
+      }
+    },
+    "nodes": {
+      "actions": {
+        "copy": "复制",
+        "copied": "已复制"
       }
     }
   }

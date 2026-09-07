@@ -64,6 +64,7 @@ const IDLE_ACTIONS: RelayActionsController = {
   retryMetaKey: () => Promise.resolve(),
   packPending: false,
   retryPack: () => Promise.resolve(),
+  resendToken: () => Promise.resolve(),
 };
 
 function render(props: Partial<Parameters<typeof RelayUplinkPanel>[0]> = {}): string {
@@ -184,9 +185,30 @@ describe('提醒堆', () => {
     });
     expect(html).toContain('data-testid="nodes-relay-awaiting-token"');
     expect(html).toContain('relay.tenant.awaitingToken.notice');
+    // 30 天悬崖必须和状态摆在一起：过了就只剩账号密码重新加入
+    expect(html).toContain('relay.tenant.awaitingToken.hint');
     // 被踢的租户只能靠重新接入恢复（单节点租户更是只有本机能做），动作不能被藏起来
     expect(html).toContain('data-testid="nodes-relay-reauth"');
     expect(html).toContain('data-testid="nodes-relay-reauth-action"');
+  });
+
+  test('令牌换代：带一个「重发中继令牌」按钮，给错过换发的成员补一条 set-relays', () => {
+    const html = render({ relay: { ...RELAY_MODE, awaitingToken: true } });
+    expect(html).toContain('data-testid="nodes-relay-resend-token"');
+    expect(html).toContain('relay.tenant.resendToken.action');
+    expect(html).not.toContain('data-testid="nodes-relay-resend-token" disabled');
+  });
+
+  test('没有换代时不摆重发按钮：它会往密钥日志里塞一条无谓的记录', () => {
+    expect(render()).not.toContain('data-testid="nodes-relay-resend-token"');
+  });
+
+  test('正在写别的记录时重发按钮禁用：key log 一次只允许一个写入者', () => {
+    const html = render({
+      relay: { ...RELAY_MODE, awaitingToken: true },
+      actions: { ...IDLE_ACTIONS, busy: true },
+    });
+    expect(html).toMatch(/data-testid="nodes-relay-resend-token"[^>]*disabled/);
   });
 
   test('有旧根签的成员：告警 + 重新确认成员', () => {

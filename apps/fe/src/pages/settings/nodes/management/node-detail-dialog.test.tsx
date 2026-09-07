@@ -32,7 +32,9 @@ const {
   directPluginNotice,
   directPluginStatusText,
   initialDirectPluginUi,
+  isRestartPendingError,
   loadDirectPluginState,
+  waitForDirectRestart,
 } = await import('./node-direct-plugin');
 const { MemoryRouter } = await import('react-router');
 const {
@@ -877,5 +879,125 @@ describe('直连插件正文', () => {
         />
       )
     ).toBe('');
+  });
+});
+
+// 重启等待：注入假时钟与假 sleep，不挂真实定时器。
+describe('等节点重启回来', () => {
+  /** 记录 sleep 的时长并把假时钟推进同样多，让超时判定按脚本走。 */
+  function clock() {
+    const slept: number[] = [];
+    let now = 0;
+    return {
+      slept,
+      now: () => now,
+      sleep: (ms: number) => {
+        slept.push(ms);
+        now += ms;
+        return Promise.resolve();
+      },
+    };
+  }
+
+  function unreachable(): Error & { status: number; code: string } {
+    return Object.assign(new Error('peer'), { status: 503, code: 'NODE_UNREACHABLE' });
+  }
+
+  test('重启窗口里的「问不到」不算失败', () => {
+    expect(isRestartPendingError(unreachable())).toBe(true);
+    expect(isRestartPendingError(new TypeError('connection refused'))).toBe(true);
+    for (const status of [502, 503, 504]) {
+      expect(isRestartPendingError(Object.assign(new Error('gw'), { status }))).toBe(true);
+    }
+    expect(isRestartPendingError(Object.assign(new Error('old'), { status: 404 }))).toBe(false);
+    expect(isRestartPendingError(Object.assign(new Error('login'), { status: 401 }))).toBe(false);
+  });
+
+  test('回来了：先静默 2 s，再每 2 s 问一次，第一次答话即结束', async () => {
+    const { slept, now, sleep } = clock();
+    let calls = 0;
+    const load = await waitForDirectRestart(
+      REMOTE,
+      {
+        loadDirect: async () => {
+          calls += 1;
+          if (calls < 3) throw unreachable();
+          return directStatus({ installed: true, capable: true });
+        },
+      },
+      t,
+      { now, sleep }
+    );
+
+    expect(load).toEqual({
+      kind: 'ready',
+      status: directStatus({ installed: true, capable: true }),
+    });
+    expect(calls).toBe(3);
+    expect(slept).toEqual([2000, 2000, 2000]);
+  });
+
+  test('一直问不到：到 60 s 返回 null（超时），不宣告失败', async () => {
+    const { slept, now, sleep } = clock();
+    let calls = 0;
+    const load = await waitForDirectRestart(
+      REMOTE,
+      {
+        loadDirect: async () => {
+          calls += 1;
+          throw unreachable();
+        },
+      },
+      t,
+      { now, sleep }
+    );
+
+    expect(load).toBeNull();
+    // 2 s 静默 + 每 2 s 一次，最后一次探测发生在正好到点的那一刻。
+    expect(calls).toBe(30);
+    expect(slept[0]).toBe(2000);
+    expect(now()).toBe(60_000);
+  });
+
+  test('目标答话但报错（老节点 404）：当场有结论，不再空等', async () => {
+    const { now, sleep } = clock();
+    let calls = 0;
+    const load = await waitForDirectRestart(
+      REMOTE,
+      {
+        loadDirect: async () => {
+          calls += 1;
+          throw Object.assign(new Error('not found'), { status: 404 });
+        },
+      },
+      t,
+      { now, sleep }
+    );
+
+    expect(load).toEqual({ kind: 'unsupported' });
+    expect(calls).toBe(1);
+  });
+
+  test('超时后「立即重启」放回去，按钮解锁', () => {
+    const timedOut = ready(
+      { installed: true },
+      { applied: 'install', restarting: false, error: 'nodes.detail.directRestartFailed' }
+    );
+    expect(directPluginNotice(timedOut, t)).toEqual({
+      text: 'nodes.detail.directInstalledRestart',
+      restartable: true,
+    });
+    expect(directPluginButton(timedOut).disabled).toBe(false);
+  });
+
+  test('回来之后提醒撤掉，按钮回到可用', () => {
+    const back = ready({ installed: true, capable: true }, { applied: null, restarting: false });
+    expect(directPluginNotice(back, t)).toBeNull();
+    expect(directPluginButton(back)).toMatchObject({ action: 'remove', disabled: false });
+  });
+
+  test('三语都有超时那句短原因', () => {
+    expect(zhCN.translation.nodes.detail.directRestartTimeout).toBe('等待超时');
+    expect(enUS.translation.nodes.detail.directRestartTimeout).toBe('Timed out');
   });
 });

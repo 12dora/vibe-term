@@ -20,7 +20,11 @@ import { RelayLimitsDialog } from './relay-limits-dialog';
 import { RelayAdminMenu } from './relay-menus';
 import { RelayMetricsPanel } from './relay-metrics-panel';
 import { useRelayMetrics } from './relay-metrics-store';
-import { DeleteTenantConfirm, KickTenantConfirm } from './tenant-confirms';
+import {
+  DeleteTenantConfirm,
+  KickTenantConfirm,
+  RelayOfflineForceConfirm,
+} from './tenant-confirms';
 import { TenantEditorDialog } from './tenant-editor-dialog';
 import { TenantsCard } from './tenants-card';
 import { type RelayController, useRelayController } from './use-relay-controller';
@@ -237,6 +241,13 @@ function RelayTabDialogs({
         busy={tenant.busy}
         onCancel={controller.closeKick}
         onConfirm={controller.confirmKick}
+      />
+
+      <RelayOfflineForceConfirm
+        request={controller.offlineGuard}
+        busy={password.busy || tenant.busy}
+        onCancel={controller.dismissOfflineGuard}
+        onConfirm={controller.confirmOfflineGuard}
       />
 
       <DeleteTenantConfirm

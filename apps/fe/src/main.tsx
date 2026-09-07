@@ -15,6 +15,7 @@ import { isAuthTransitionActive } from '@/auth/auth-transition';
 import { createLoginRedirect } from '@/auth/login-redirect';
 import { RouteErrorElement } from '@/components/app-error-boundary';
 import { FlowBridges } from '@/components/flow-bridges';
+import { MasterKeyNotice } from '@/components/master-key-notice';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { StandaloneLanding } from '@/components/standalone-landing';
@@ -289,6 +290,7 @@ function MainInset() {
 
   return (
     <SidebarInset className="h-dvh overflow-hidden md:h-[calc(100dvh-1rem)]" style={style}>
+      <MasterKeyNotice className="mx-2 mt-2 md:mx-4" />
       {/* 页面区才按路由 node 换运行时：换 runtime 实例会重挂整棵子树，外壳必须留在外面 */}
       <NodeRuntimeBoundary>
         <NodeRouteGate>

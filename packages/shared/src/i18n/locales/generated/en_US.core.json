@@ -43,6 +43,12 @@
         "custom": "Custom"
       }
     },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled.",
+        "commandLabel": "Recovery: restore VIBETERM_MASTER_KEY from backups/app.env.*, or run:"
+      }
+    },
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect More Devices",
@@ -756,6 +762,12 @@
           "totp": "Turn off the authenticator",
           "notifySink": "Change mesh notifications"
         }
+      }
+    },
+    "nodes": {
+      "actions": {
+        "copy": "Copy",
+        "copied": "Copied"
       }
     }
   }

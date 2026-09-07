@@ -62,6 +62,11 @@ export async function selfRevokeNode(input: SelfRevokeInput): Promise<SelfRevoke
     if (result.hubAck !== true) {
       return { kind: 'failed', reason: result.hubError || 'hub_unconfirmed' };
     }
+    // 中继模式下本地先落库、再发布：`relayAck:false` 表示这条吊销没上中继，
+    // 其余成员看到的仍是一台在线节点，与 hub 没确认是同一档后果。
+    if (result.relayAck === false) {
+      return { kind: 'failed', reason: result.relayError || 'relay_unconfirmed' };
+    }
     return { kind: 'revoked' };
   } catch (error) {
     const code = (error as { code?: unknown })?.code;

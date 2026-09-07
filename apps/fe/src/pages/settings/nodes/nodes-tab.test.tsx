@@ -52,6 +52,7 @@ mock.module('./https/use-tls-status', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { MemoryRouter } = await import('react-router');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
+const { resetMeshHubsStateForTest, setMeshHubsStateForTest } = await import('@/node/mesh-hubs');
 const { setPendingStorage, clearPendingEnrollments, addPendingEnrollment } = await import(
   '@/node/enrollment'
 );
@@ -118,6 +119,7 @@ beforeEach(() => {
     removeItem: () => undefined,
   });
   clearPendingEnrollments();
+  resetMeshHubsStateForTest();
 });
 
 describe('NodesTab standalone', () => {
@@ -183,6 +185,72 @@ describe('NodesTab mesh', () => {
     const html = render(MESH_MODE);
     expect(html).toContain('data-testid="local-machine-login-required"');
     expect(html).not.toContain('data-testid="local-machine-direct-switch"');
+  });
+});
+
+describe('NodesTab 控制面告警', () => {
+  /** 双主横幅只认 hub 集合，与本机角色无关；这里只验证它挂在了页顶。 */
+  function hub(nodeId: string, writerEpoch: number) {
+    return {
+      nodeId,
+      publicUrl: `https://${nodeId}.example`,
+      name: nodeId,
+      mode: 'active' as const,
+      priority: 0,
+      writerEpoch,
+      online: true,
+    };
+  }
+
+  test('两台同纪元 active：节点页顶部出双主横幅', () => {
+    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 3)], loadedAt: 1 });
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="nodes-hub-split-brain"');
+    expect(html).toContain('vibeterm hub demote');
+  });
+
+  test('纪元不同（正常主备切换）不出横幅', () => {
+    localStatus = status({ role: 'hub,node', hubPublicUrl: 'https://hub.example' });
+    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 4)], loadedAt: 1 });
+    expect(render(MESH_MODE)).not.toContain('data-testid="nodes-hub-split-brain"');
+  });
+
+  test('standalone 不读 hub 集合，横幅不出现', () => {
+    localStatus = status();
+    setMeshHubsStateForTest({ hubs: [hub('h1', 3), hub('h2', 3)], loadedAt: 1 });
+    expect(render({ ...MESH_MODE, mode: 'none' })).not.toContain(
+      'data-testid="nodes-hub-split-brain"'
+    );
+  });
+
+  test('CA 变更的候选：本机卡里出恢复提示与已代入指纹的命令', () => {
+    localStatus = status({ role: 'node', hubUrl: 'https://hub.example' });
+    const fingerprint = 'a'.repeat(64);
+    setMeshHubsStateForTest({
+      hubs: [hub('h1', 3)],
+      candidates: [
+        {
+          publicUrl: 'https://h1.example',
+          lastError: 'hub_ca_changed',
+          lastAttemptAt: null,
+          caMismatch: { advertised: fingerprint, pinned: 'b'.repeat(64) },
+        },
+      ],
+      attached: {
+        hubNodeId: 'h1',
+        publicUrl: 'https://h1.example',
+        mode: 'active',
+        writerEpoch: 3,
+        since: 1,
+      },
+      loadedAt: 1,
+    });
+    const html = render(MESH_MODE);
+    expect(html).toContain('data-testid="nodes-hub-ca-changed"');
+    expect(html).toContain(
+      `vibeterm hub trust refresh https://h1.example --fingerprint ${fingerprint}`
+    );
   });
 });
 

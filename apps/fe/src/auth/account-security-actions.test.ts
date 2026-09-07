@@ -133,6 +133,8 @@ function mockApi(
     keylogStatus?: number;
     /** 第 n 次 `POST /api/auth/keylog` 的状态码；缺省沿用 `keylogStatus`。 */
     keylogStatuses?: number[];
+    /** 第 n 次 `POST /api/auth/keylog` 的 200 响应体；缺省是空体（等价于只有 `ok`）。 */
+    keylogBodies?: (Record<string, unknown> | undefined)[];
     totpRecord?: TotpRecordFixture;
     totpRecordError?: { status: number; code: string };
   } = {}
@@ -162,6 +164,8 @@ function mockApi(
       const body = JSON.parse(String(init?.body)) as { bytes: string; sig: string };
       posted.push({ bytes: decodeBase64url(body.bytes), sig: decodeBase64url(body.sig) });
       const status = options.keylogStatuses?.[posted.length - 1] ?? options.keylogStatus ?? 200;
+      const payload = options.keylogBodies?.[posted.length - 1];
+      if (status === 200 && payload) return Promise.resolve(Response.json(payload));
       return Promise.resolve(new Response('', { status }));
     }
     return Promise.resolve(new Response('not found', { status: 404 }));
@@ -283,6 +287,33 @@ describe('changePassword', () => {
     expect(pending).toHaveLength(1);
     expect(pending[0]?.reason).toBe('rotateRoot');
     // 字节留着：head 没动，重新登录后原样重发即可落账。
+    expect(pending[0]?.record?.type).toBe('meta-key');
+    clearPendingMetaKeysForTest();
+  }, 20000);
+
+  test('中继模式：meta-key 落了本机但中继没确认，同样留欠账', async () => {
+    clearPendingMetaKeysForTest();
+    // 入口在中继模式下先本地落库再发布：HTTP 仍是 200，送没送到只看 `relayAck`。
+    const { api, posted } = mockApi({
+      keylogBodies: [
+        { ok: true, hubAck: true, relayAck: true },
+        { ok: true, hubAck: true, relayAck: false, relayError: 'timeout' },
+      ],
+    });
+    const relay = mockRelayApi();
+    const result = await changePassword({
+      api,
+      relayApi: relay.relayApi,
+      uid: UID,
+      oldPassword: 'old-secret',
+      newPassword: 'new-secret',
+      currentKdfParams: KDF_JSON,
+    });
+    expect(result).toMatchObject({ ok: true, metaKey: { ok: false, code: 'timeout' } });
+    expect(posted).toHaveLength(2);
+    const pending = listPendingMetaKeys();
+    expect(pending).toHaveLength(1);
+    // 字节留着：重发同一条会让入口重新尝试发布到中继。
     expect(pending[0]?.record?.type).toBe('meta-key');
     clearPendingMetaKeysForTest();
   }, 20000);

@@ -11,6 +11,7 @@ import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment'
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { fetchRelayMode } from '@/node/mesh-relay';
+import { warnRelayAckGlobal } from '@/node/relay-ack';
 import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
 import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import { renameNodeViaKeyLog } from '@/node/rename-node';
@@ -102,6 +103,8 @@ export async function revokeNodeRecord(
       };
     }
     if (result.hubAck !== true) return { kind: 'unconfirmed', error: result.hubError ?? '' };
+    // 吊销没上中继：被吊销的节点在其余成员眼里还是在线的，不能只报一句「已移除」。
+    warnRelayAckGlobal(result);
     if (metaPending) return { kind: 'meta-pending', code: metaPending };
     return { kind: 'done' };
   } catch (err) {

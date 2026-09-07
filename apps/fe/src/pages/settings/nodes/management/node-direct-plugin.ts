@@ -10,6 +10,7 @@
 import type { NodeRow } from '@/node/mesh-nodes';
 import { LocalApi, LocalApiError } from '@vibeterm/api-client/local/local-api';
 import type { LocalDirectResponse, LocalDirectStatus } from '@vibeterm/api-client/local/types';
+import { sleepOrAbort } from '@vibeterm/shared';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { describeDirectError } from '../direct-section';
@@ -63,6 +64,12 @@ export function directPluginErrorText(t: Translate, error: unknown): string {
   return key ? t(key) : describeDirectError(t, error);
 }
 
+export function directStateFromError(err: unknown, t: Translate): DirectPluginState {
+  const status = (err as { status?: number }).status;
+  if (status !== undefined && UNSUPPORTED_STATUS.has(status)) return { kind: 'unsupported' };
+  return { kind: 'failed', message: directPluginErrorText(t, err) };
+}
+
 export async function loadDirectPluginState(
   row: NodeRow,
   io: Pick<NodeDirectIo, 'loadDirect'>,
@@ -71,9 +78,62 @@ export async function loadDirectPluginState(
   try {
     return { kind: 'ready', status: await io.loadDirect(row) };
   } catch (err) {
-    const status = (err as { status?: number }).status;
-    if (status !== undefined && UNSUPPORTED_STATUS.has(status)) return { kind: 'unsupported' };
-    return { kind: 'failed', message: directPluginErrorText(t, err) };
+    return directStateFromError(err, t);
+  }
+}
+
+export const DIRECT_RESTART_DELAY_MS = 2000;
+export const DIRECT_RESTART_INTERVAL_MS = 2000;
+export const DIRECT_RESTART_TIMEOUT_MS = 60_000;
+
+/**
+ * 重启窗口里「问不到」是正常态，不是失败：目标进程正在退出 / 还没监听，转发层回 503
+ * `NODE_UNREACHABLE`，本机则是 fetch 直接抛（无 status），反代还可能回 502 / 504。
+ * 只有目标真的答话了（含 404 老节点、401 要登录），这一轮等待才算有结论。
+ */
+export function isRestartPendingError(err: unknown): boolean {
+  if (directErrorCode(err) === 'NODE_UNREACHABLE') return true;
+  const status = (err as { status?: number }).status;
+  if (status === undefined) return true;
+  return status === 502 || status === 503 || status === 504;
+}
+
+export interface RestartWaitOptions {
+  /** 首次探测前的静默期：POST 回来时进程往往还没开始退出，立刻问会读到旧进程。 */
+  delayMs?: number;
+  intervalMs?: number;
+  timeoutMs?: number;
+  now?: () => number;
+  sleep?: (ms: number) => Promise<unknown>;
+}
+
+/**
+ * 等目标节点重启回来：拿同一个 `GET …/api/local/status` 当探针，第一次答话即结束。
+ * 返回 `null` 表示超时——重启可能仍在进行，调用方据此把「立即重启」放回去而不是宣告失败。
+ */
+export async function waitForDirectRestart(
+  row: NodeRow,
+  io: Pick<NodeDirectIo, 'loadDirect'>,
+  t: Translate,
+  options: RestartWaitOptions = {}
+): Promise<DirectPluginState | null> {
+  const {
+    delayMs = DIRECT_RESTART_DELAY_MS,
+    intervalMs = DIRECT_RESTART_INTERVAL_MS,
+    timeoutMs = DIRECT_RESTART_TIMEOUT_MS,
+    now = Date.now,
+    sleep = sleepOrAbort,
+  } = options;
+  const deadline = now() + timeoutMs;
+  await sleep(delayMs);
+  for (;;) {
+    try {
+      return { kind: 'ready', status: await io.loadDirect(row) };
+    } catch (err) {
+      if (!isRestartPendingError(err)) return directStateFromError(err, t);
+    }
+    if (now() >= deadline) return null;
+    await sleep(intervalMs);
   }
 }
 
@@ -218,19 +278,22 @@ export function useNodeDirectPlugin(
   latest.current = { row, io, t };
   const uiRef = useRef(ui);
   uiRef.current = ui;
+  // 换行 / 关闭 / 卸载都递增：最长要等 60 s 的重启轮询据此判断自己还算不算数。
+  const runRef = useRef(0);
   const rowId = row.id;
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: rowId 是「换了一行」的显式触发器，行对象本身走 ref
   useEffect(() => {
     if (!open) return;
-    let alive = true;
+    runRef.current += 1;
+    const run = runRef.current;
     const { row: target, io: injected, t: translate } = latest.current;
     setUi(initialDirectPluginUi());
     void loadDirectPluginState(target, injected ?? createNodeDirectIo(), translate).then((load) => {
-      if (alive) setUi((prev) => ({ ...prev, load }));
+      if (runRef.current === run) setUi((prev) => ({ ...prev, load }));
     });
     return () => {
-      alive = false;
+      runRef.current += 1;
     };
   }, [open, rowId]);
 
@@ -278,19 +341,39 @@ export function useNodeDirectPlugin(
     setUi((prev) => (prev.confirmingRemove ? { ...prev, confirmingRemove: false } : prev));
   }, []);
 
+  /**
+   * 「立即重启」。POST 回来只代表**已排程**，进程还没退；不接着等的话这一段会永远停在
+   * 「正在重启……」。等回来就把状态重读一遍并撤掉提醒，超时则把「立即重启」放回去——
+   * 重启可能仍在进行，宣告失败是错的。
+   */
   const restartNow = useCallback(() => {
     const { row: target, io: injected, t: translate } = latest.current;
     const effective = injected ?? createNodeDirectIo();
-    setUi((prev) => ({ ...prev, restarting: true, error: null }));
-    void effective.restart(target).catch((err) => {
+    const run = runRef.current;
+    const alive = () => runRef.current === run;
+    const fail = (reason: string) =>
       setUi((prev) => ({
         ...prev,
         restarting: false,
-        error: translate('nodes.detail.directRestartFailed', {
-          error: directPluginErrorText(translate, err),
-        }),
+        error: translate('nodes.detail.directRestartFailed', { error: reason }),
       }));
-    });
+
+    setUi((prev) => ({ ...prev, restarting: true, error: null }));
+    void (async () => {
+      try {
+        await effective.restart(target);
+      } catch (err) {
+        if (alive()) fail(directPluginErrorText(translate, err));
+        return;
+      }
+      const load = await waitForDirectRestart(target, effective, translate);
+      if (!alive()) return;
+      if (load === null) {
+        fail(translate('nodes.detail.directRestartTimeout'));
+        return;
+      }
+      setUi((prev) => ({ ...prev, load, restarting: false, applied: null, error: null }));
+    })();
   }, []);
 
   return { ui, onAction, confirmRemove, cancelRemove, restartNow };

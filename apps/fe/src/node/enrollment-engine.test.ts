@@ -25,13 +25,11 @@ const {
   addPendingEnrollment,
   buildRevokeNodeRecord,
   clearPendingEnrollments,
-  clearUnconfirmedRecords,
   listPendingEnrollments,
-  listUnconfirmedRecordIds,
   setPendingStorage,
-  submitAdmitRecord,
-  unconfirmedRecord,
 } = await import('./enrollment');
+const { clearUnconfirmedRecords, listUnconfirmedRecordIds, submitAdmitRecord, unconfirmedRecord } =
+  await import('./admit-record');
 const {
   cancelPending,
   configureEnrollmentEngineForTest,

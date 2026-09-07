@@ -28,6 +28,7 @@ export {
   finishPasswordChange,
   passwordChangeFollowUp,
   securityActionErrorText,
+  withRelayAckNotice,
 } from './account-security-password';
 export { PasswordSection };
 export type { SecurityActionFeedback };

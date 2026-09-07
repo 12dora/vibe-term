@@ -11,6 +11,7 @@ import { errorMessage } from '@vibeterm/shared';
 import { buildRenameNodePayload, encodeBase64url, hexToBytes } from '@vibeterm/shared/auth';
 import { classifyKeyLogFailure } from './enrollment';
 import { withKeyLogLock } from './enrollment-engine';
+import { warnRelayAckGlobal } from './relay-ack';
 
 /** 记录送出去了，但上级没确认（服务端未落库，可原样重来）。 */
 export const RENAME_UNCONFIRMED = 'RENAME_UNCONFIRMED';
@@ -78,6 +79,7 @@ export async function renameNodeViaKeyLog(
       if (appended.hubAck === false) {
         return { ok: false as const, code: appended.hubError || RENAME_UNCONFIRMED };
       }
+      warnRelayAckGlobal(appended);
       return { ok: true as const };
     });
   } catch (err) {

@@ -3,6 +3,7 @@
 // sk_sess 一概不参与——所以每个动作都会重新要一次密码或一次 passkey 交互。
 
 import { fetchRelayMode } from '@/node/mesh-relay';
+import { relayAckError } from '@/node/relay-ack';
 import {
   forgetRelayPackDebt,
   rememberPendingMetaKey,
@@ -216,8 +217,12 @@ async function submitMetaKeyAfterRotate(
     return { ok: false, code: 'RELAY_META_KEY_PREPARE_FAILED' };
   }
   const result = await append(api, record).catch(() => ({ ok: false, code: 'NETWORK' }) as const);
-  if (result.ok && result.hubAck !== false) return { ok: true };
-  const code = result.ok ? (result.hubError ?? 'RELAY_UNCONFIRMED') : result.code;
+  // 中继没确认与 hub 没确认同一档：成员拿不到新的 `K_meta`，被吊销的节点还解得开元数据。
+  // 记录已在本地生效，重发同一份字节会让入口重新尝试发布，所以照样留欠账。
+  if (result.ok && result.hubAck !== false && result.relayAck !== false) return { ok: true };
+  const code = result.ok
+    ? (result.hubError ?? relayAckError(result) ?? 'RELAY_UNCONFIRMED')
+    : result.code;
   rememberPendingMetaKey({
     id: META_KEY_AFTER_ROTATE_ID,
     reason: 'rotateRoot',

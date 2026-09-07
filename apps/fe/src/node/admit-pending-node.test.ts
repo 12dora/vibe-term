@@ -10,7 +10,7 @@ import {
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
 import { admitPendingNode } from './admit-pending-node';
-import { clearUnconfirmedRecords, listUnconfirmedRecordIds } from './enrollment';
+import { clearUnconfirmedRecords, listUnconfirmedRecordIds } from './admit-record';
 import type { PendingAdmitMaterial } from './merge-nodes';
 
 const rootKey = rootKeyFromSeed(new Uint8Array(32).fill(7));

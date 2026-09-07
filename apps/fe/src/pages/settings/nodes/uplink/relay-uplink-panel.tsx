@@ -127,10 +127,25 @@ function RelayNoticeList({
           {t(notice.key, notice.params)}
         </Notice>
       ))}
-      {/* 令牌换代：重新输入接入密码那条仍然摆着（本机也可能就是要去接入的那台），这条补足另一条出路 */}
+      {/*
+        令牌换代：重新输入接入密码那条仍然摆着（本机也可能就是要去接入的那台），这条补足另一条出路。
+        「重发中继令牌」是替**别人**做的——错过换发的成员节点手里没有接入密码，只能等这条
+        `set-relays` 下来；hint 里那句 30 天是硬边界，过了就只剩用账号密码重新加入。
+      */}
       {relay.awaitingToken && (
-        <Notice tone="warning" testId="nodes-relay-awaiting-token">
-          {t('relay.tenant.awaitingToken.notice')}
+        <Notice
+          tone="warning"
+          testId="nodes-relay-awaiting-token"
+          action={
+            <NoticeAction
+              label={t('relay.tenant.resendToken.action')}
+              testId="nodes-relay-resend-token"
+              disabled={actions.busy}
+              onClick={() => void actions.resendToken()}
+            />
+          }
+        >
+          {t('relay.tenant.awaitingToken.notice')} {t('relay.tenant.awaitingToken.hint')}
         </Notice>
       )}
     </>

@@ -17,6 +17,7 @@ import {
 } from '@/node/relay-meta-key-pending';
 import type { RelayPackRefreshOutcome } from '@/node/relay-pack';
 import { refreshRelayPackForSigner } from '@/node/relay-pack';
+import { useRelayResendToken } from '@/node/relay-resend-token';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
 import type { RelayTenantApi } from '@vibeterm/api-client/relay/tenant-api';
 import { useCallback, useSyncExternalStore } from 'react';
@@ -35,6 +36,11 @@ export interface RelayPendingController {
   retryPack: () => Promise<void>;
   /** 用当前根重新确认旧根签的成员记录（`readmit-node`）。 */
   readmitMembers: () => Promise<void>;
+  /**
+   * 把当前租户令牌重新封给全体成员：换发那一刻正好离线的节点错过了上一条 `set-relays`，
+   * 在中继侧的历史令牌宽限内补一条，它们一上线就追得上。
+   */
+  resendToken: () => Promise<void>;
 }
 
 export interface RelayPendingDeps {
@@ -114,6 +120,7 @@ export function useRelayPending(deps: RelayPendingDeps): RelayPendingController 
   }, [api, onChanged, packDebt, prompt, relayApi, setBusy, t]);
 
   const readmitMembers = useRelayReadmit({ flowDeps, prompt, onChanged, setBusy });
+  const resendToken = useRelayResendToken({ flowDeps, prompt, onChanged, setBusy });
 
-  return { metaPending, retryMetaKey, packPending, retryPack, readmitMembers };
+  return { metaPending, retryMetaKey, packPending, retryPack, readmitMembers, resendToken };
 }

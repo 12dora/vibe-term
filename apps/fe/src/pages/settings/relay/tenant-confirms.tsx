@@ -19,6 +19,7 @@ import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { DangerConfirmDialog } from '../components/danger-confirm-dialog';
 import { Notice } from '../components/form-primitives';
+import type { RelayOfflineGuard } from './use-relay-controller';
 
 export function KickTenantConfirm({
   tenantId,
@@ -48,6 +49,51 @@ export function KickTenantConfirm({
     >
       <span className="block">{t('relay.admin.tenants.kickText')}</span>
       <span className="mt-2 block font-mono break-all">{tenantId}</span>
+    </DangerConfirmDialog>
+  );
+}
+
+/**
+ * 「还有成员离线」的二次确认（服务端 409 `relay_members_offline` 之后）。
+ *
+ * 作废旧令牌**没有宽限**：此刻离线的成员回来时手里那把令牌已经作废，中继连认证都不给过，
+ * 追不上后面任何一条记录。因此这里必须同时给出人数与恢复链，而不是笼统一句「确定吗」。
+ */
+export function RelayOfflineForceConfirm({
+  request,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  request: RelayOfflineGuard | null;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const { t } = useTranslation();
+  if (request === null) return null;
+  return (
+    <DangerConfirmDialog
+      open
+      title={t(`relay.admin.offlineGuard.${request.kind}Title`)}
+      cancelLabel={t('common.cancel')}
+      confirmLabel={t('relay.admin.offlineGuard.confirm')}
+      confirmDisabled={busy}
+      onCancel={() => {
+        if (!busy) onCancel();
+      }}
+      onConfirm={onConfirm}
+      testId="relay-offline-guard-dialog"
+      confirmTestId="relay-offline-guard-confirm"
+    >
+      <span className="block" data-testid="relay-offline-guard-counts">
+        {t('relay.admin.offlineGuard.counts', {
+          online: request.online,
+          admitted: request.admitted,
+        })}
+      </span>
+      <span className="mt-2 block">{t('relay.admin.offlineGuard.consequence')}</span>
+      <span className="mt-2 block">{t('relay.admin.offlineGuard.recovery')}</span>
     </DangerConfirmDialog>
   );
 }

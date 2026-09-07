@@ -43,6 +43,12 @@
         "custom": "自定义"
       }
     },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "主密钥无法解密节点身份，多节点功能已停用。",
+        "commandLabel": "恢复：从 backups/app.env.* 找回 VIBETERM_MASTER_KEY，或执行："
+      }
+    },
     "nav": {
       "manageDevices": "管理设备",
       "connectDevices": "接入更多设备",
@@ -2123,7 +2129,25 @@
           }
         },
         "priority": "优先级",
-        "epoch": "写入纪元"
+        "epoch": "写入纪元",
+        "caChanged": {
+          "title": "Hub 证书已变更",
+          "description": "「{{hub}}」广播的 CA 指纹与本机固定的指纹不一致，连接已停止。",
+          "advertised": "对方广播",
+          "pinned": "本机固定",
+          "verify": "先在该 Hub 上执行下面这条命令核对指纹：",
+          "commandLabel": "指纹无误后，在本节点执行："
+        },
+        "notAdmitted": {
+          "title": "Hub 未准入本节点（Hub 身份可能已重建）",
+          "description": "「{{hub}}」拒绝了本节点的证书。Hub 重装或换过身份后，旧证书不再有效。",
+          "commandLabel": "在本节点执行，用新的加入码或密码重新加入："
+        },
+        "splitBrain": {
+          "title": "检测到两个活动 Hub（epoch 相同），写入可能分叉",
+          "description": "{{hubs}} 同为主 Hub，写入纪元都是 {{epoch}}，管理写入可能落在不同的 Hub 上。",
+          "commandLabel": "在其中一台 Hub 上执行，让它退为备 Hub："
+        }
       },
       "machine": {
         "title": "本机",
@@ -2519,7 +2543,8 @@
         "directRemovedRestart": "已删除，重启 VibeTerm 后生效。",
         "directRestartNow": "立即重启",
         "directRestarting": "正在重启……",
-        "directRestartFailed": "重启失败：{{error}}"
+        "directRestartFailed": "重启失败：{{error}}",
+        "directRestartTimeout": "等待超时"
       },
       "selection": {
         "more": "更多",
@@ -3323,7 +3348,8 @@
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
           "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
           "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
-          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。"
+          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。",
+          "readmit_required": "还有成员的记录是旧根签的，请先执行「重新确认成员」再接入中继。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -3332,7 +3358,25 @@
           "done": "已移除该中继。"
         },
         "awaitingToken": {
-          "notice": "中继令牌已换代。持账户密码的节点重新输入接入密码即可恢复，其余节点等待新令牌下发。"
+          "notice": "中继令牌已换代。本机仍在线，待新令牌下发后自动生效。",
+          "hint": "超过 30 天未更新令牌的离线节点，只能用账号密码重新加入中继。"
+        },
+        "relayAck": {
+          "warning": "中继未确认这次变更，其余节点暂时收不到：{{error}}",
+          "errors": {
+            "offline": "中继连接已断开",
+            "timeout": "等待中继确认超时",
+            "unavailable": "本机没有可用的中继链路",
+            "not_published": "记录尚未推送到中继",
+            "SEQ_MISMATCH": "中继的密钥日志与本机不同步",
+            "unknown": "原因不明"
+          }
+        },
+        "resendToken": {
+          "action": "重发中继令牌",
+          "done": "已重发中继令牌（{{nodes}} 个节点）。",
+          "notAcked": "中继未确认，成员无法收到新令牌：{{error}}",
+          "failed": "重发中继令牌失败：{{error}}"
         }
       },
       "admin": {
@@ -3382,11 +3426,19 @@
           "modeKeep": "保留现有租户",
           "modeKeepHint": "已接入租户及其节点不受影响，仅新接入需使用新密码。",
           "modeKick": "作废旧令牌",
-          "modeKickHint": "所有租户须重新输入密码。",
+          "modeKickHint": "所有租户的旧令牌立即失效，没有 30 天宽限；此刻离线的成员回来后须重新加入。",
           "tooShort": "密码至少 8 个字符。",
           "saved": "接入密码已更新。",
           "failed": "密码更新失败：{{message}}",
           "dialogDescription": "设置新密码，或清除密码改为任何人可接入。"
+        },
+        "offlineGuard": {
+          "passwordTitle": "仍有成员离线，继续作废旧令牌？",
+          "kickTitle": "仍有成员离线，继续踢出该租户？",
+          "counts": "在线 {{online}} / 已准入 {{admitted}}",
+          "consequence": "旧令牌立即失效，没有 30 天宽限；离线成员回来后连认证都过不了。",
+          "recovery": "恢复办法：在仍能连上中继的节点重新输入接入密码，离线成员再用账号密码重新加入中继。",
+          "confirm": "仍然继续"
         },
         "quota": {
           "title": "默认配额",

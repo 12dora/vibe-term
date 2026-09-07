@@ -30,6 +30,7 @@ import { signRelayEnrollProof } from '@vibeterm/shared/relay';
 import { classifyKeyLogFailure, requireRootPublicKey } from './enrollment';
 import type { ReadmitResult } from './readmit-members';
 import { READMIT_PENDING, readmitStaleMembers } from './readmit-members';
+import { warnRelayAckGlobal } from './relay-ack';
 
 /** 根密码派生出的根公钥与服务端下发的不一致：密码打错了。 */
 export const ROOT_PASSWORD_INVALID = 'ROOT_PASSWORD_INVALID';
@@ -46,7 +47,16 @@ export interface SignedRelayRecord {
 
 /** 一次中继流程的结论；`code` 直接用于查表（`relay.tenant.errors.*` → `auth.errors.*`）。 */
 export type RelayFlowResult =
-  | { ok: true }
+  | {
+      ok: true;
+      /**
+       * 中继模式下上级是否确认收到这条记录。`false` 表示只落了本机，成员节点收不到——
+       * 调用方必须挂 `warnRelayAck()` 的告警，不能只报成功（见 `relay-ack.ts`）。
+       * 非中继模式与旧节点不下发，保持 `undefined`。
+       */
+      relayAck?: boolean;
+      relayError?: string;
+    }
   | {
       ok: false;
       code: string;
@@ -58,6 +68,15 @@ export type RelayFlowResult =
       /** 卡在「重新确认成员」这一步：`set-relays` 一条都没签。 */
       readmit?: Pick<ReadmitResult, 'signed' | 'failed'>;
     };
+
+/** 提交时的旁路开关。 */
+export interface SubmitOptions {
+  /**
+   * 中继没确认时不发全局告警：调用方自己要给出更具体的错误（重发令牌那条路径即如此），
+   * 两条 toast 叠在一起只会互相盖住。
+   */
+  quietRelayAck?: boolean;
+}
 
 /** key log 写锁的注入口（`enrollment-engine.ts` 的 `withKeyLogLock` 即是这个形状）。 */
 export type KeyLogLock = <T>(run: () => Promise<T>) => Promise<T>;
@@ -80,7 +99,8 @@ export interface RelayFlowDeps {
   lock: KeyLogLock;
 }
 
-function failure(err: unknown): RelayFlowResult {
+/** 异常 → 结论；中继自己的错误码原样透出，其余退回消息文本。供中继流程各模块复用。 */
+export function relayFlowFailure(err: unknown): RelayFlowResult {
   const code = relayErrorCode(err);
   if (code) return { ok: false, code };
   return { ok: false, code: errorMessage(err) };
@@ -96,13 +116,13 @@ export function appendRelayRecord(
   deps: RelayFlowDeps,
   input: { type: 'set-relays' | 'meta-key'; payload: string; signer: RecordSigner }
 ): Promise<RelayFlowResult> {
-  return deps.lock(() => signAndSubmit(deps, input));
+  return deps.lock(() => signAndSubmitRelayRecord(deps, input));
 }
 
 /** 锁**内**的那一段：取 head → 签名 → 提交。调用方负责持锁。 */
-async function signAndSubmit(
+export async function signAndSubmitRelayRecord(
   deps: RelayFlowDeps,
-  input: { type: 'set-relays' | 'meta-key'; payload: string; signer: RecordSigner }
+  input: { type: 'set-relays' | 'meta-key'; payload: string; signer: RecordSigner } & SubmitOptions
 ): Promise<RelayFlowResult> {
   try {
     const rootEpoch = requireRootEpoch(deps.mode);
@@ -120,9 +140,9 @@ async function signAndSubmit(
       bytes: encodeBase64url(record.bytes),
       sig: encodeBase64url(record.sig),
     };
-    return await submitSignedRecord(deps, signed);
+    return await submitSignedRecord(deps, signed, input);
   } catch (err) {
-    return failure(err);
+    return relayFlowFailure(err);
   }
 }
 
@@ -132,7 +152,8 @@ async function signAndSubmit(
  */
 export async function submitSignedRecord(
   deps: RelayFlowDeps,
-  signed: SignedRelayRecord
+  signed: SignedRelayRecord,
+  options: SubmitOptions = {}
 ): Promise<RelayFlowResult> {
   try {
     const result = await deps.api.appendKeyLog(
@@ -146,10 +167,13 @@ export async function submitSignedRecord(
     if (result.hubAck === false) {
       return { ok: false, code: result.hubError || RELAY_UNCONFIRMED, record: signed };
     }
-    return { ok: true };
+    // 本地已落库即算成功；中继有没有收到由 `relayAck` 另说。所有中继写入都过这里，
+    // 告警统一在此发出，调用点不必各记一次（自己要报错的路径传 `quietRelayAck`）。
+    if (!options.quietRelayAck) warnRelayAckGlobal(result);
+    return { ok: true, relayAck: result.relayAck, relayError: result.relayError };
   } catch (err) {
     // 请求根本没发出去 / 连接断了：本地 head 一样没动，字节可以重发。
-    const beaten = failure(err);
+    const beaten = relayFlowFailure(err);
     return beaten.ok ? beaten : { ...beaten, record: signed };
   }
 }
@@ -180,9 +204,9 @@ export function appendMetaKey(
     try {
       payload = (await deps.relayApi.metaKeyPrepare(op)).payload;
     } catch (err) {
-      return failure(err);
+      return relayFlowFailure(err);
     }
-    return signAndSubmit(deps, { type: 'meta-key', payload, signer });
+    return signAndSubmitRelayRecord(deps, { type: 'meta-key', payload, signer });
   });
 }
 
@@ -223,7 +247,7 @@ export async function enrollRelay(
     }
     return await enrollWithRootKey(deps, input, rootKey);
   } catch (err) {
-    return failure(err);
+    return relayFlowFailure(err);
   } finally {
     rootKey?.seed.fill(0);
   }
@@ -249,7 +273,17 @@ async function enrollWithRootKey(
     signer,
   });
   if (readmit.code) return readmitFailure(readmit.code, readmit.signed, readmit.failed);
-  const enrolled = await enrollRemote(deps, input, rootKey);
+  let enrolled: Awaited<ReturnType<typeof enrollRemote>>;
+  try {
+    enrolled = await enrollRemote(deps, input, rootKey);
+  } catch (err) {
+    // 节点侧在转调中继**之前**拦下的 409：还有成员是旧根签的，此刻换发令牌会把它们全踢下线。
+    // 原样透出 code，让界面指向同一张卡片上的「重新确认成员」，而不是笼统一句接入失败。
+    const pending = readmitRequiredCount(err);
+    // 不带 `readmit`：那个字段会把文案包进「重新确认成员失败：…」，这一步根本还没开始补签。
+    if (pending !== null) return { ok: false, code: READMIT_REQUIRED };
+    throw err;
+  }
   // 远端的 `readmitRequired` 只当事后复核：本机刚补签完还剩，说明两边看到的成员不一致，
   // 这时候切链路会把那些节点直接踢下线。
   const pending = enrolled.readmitRequired ?? 0;
@@ -273,6 +307,16 @@ async function enrollRemote(deps: RelayFlowDeps, input: RelayEnrollInput, rootKe
     password: input.password ?? null,
     proof: { bytes: encodeBase64url(proof.bytes), sig: encodeBase64url(proof.sig) },
   });
+}
+
+/** 节点侧的预检码：远端换发令牌之前就发现还有旧根签的成员。 */
+export const READMIT_REQUIRED = 'readmit_required';
+
+/** `POST /enroll` 的 409 `readmit_required`：返回待补签的成员数，其余错误返回 `null`。 */
+function readmitRequiredCount(err: unknown): number | null {
+  if (relayErrorCode(err) !== 'readmit_required') return null;
+  const count = (err as { details?: { count?: unknown } }).details?.count;
+  return typeof count === 'number' && Number.isFinite(count) ? count : 0;
 }
 
 function readmitFailure(code: string, signed: number, failed: number): RelayFlowResult {
@@ -309,8 +353,8 @@ function prepareAndSign(
     try {
       payload = (await prepare()).payload;
     } catch (err) {
-      return failure(err);
+      return relayFlowFailure(err);
     }
-    return signAndSubmit(deps, { type: 'set-relays', payload, signer });
+    return signAndSubmitRelayRecord(deps, { type: 'set-relays', payload, signer });
   });
 }

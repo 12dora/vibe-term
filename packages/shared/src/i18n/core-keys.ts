@@ -7,6 +7,8 @@
 
 export const I18N_CORE_KEY_PREFIXES: readonly string[] = [
   'agent',
+  // 主密钥失配的常驻提示挂在外壳上（登录页也要看得到），整块进 core。
+  'app.masterKeyMismatch',
   'appError',
   'auth',
   'common',
@@ -14,6 +16,9 @@ export const I18N_CORE_KEY_PREFIXES: readonly string[] = [
   'deviceStatus',
   'files',
   'nav',
+  // 上面那条提示复用了节点设置里的复制按钮，只把它用到的两个 key 提上来。
+  'nodes.actions.copied',
+  'nodes.actions.copy',
   'notification',
   'settings.terminal.loadFailed',
   'settings.terminal.loadFailedHint',

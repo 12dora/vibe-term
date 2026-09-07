@@ -43,6 +43,12 @@
         "custom": "カスタム"
       }
     },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。",
+        "commandLabel": "復旧：backups/app.env.* から VIBETERM_MASTER_KEY を復元するか、次を実行します："
+      }
+    },
     "nav": {
       "manageDevices": "デバイス管理",
       "connectDevices": "デバイスを追加",
@@ -756,6 +762,12 @@
           "totp": "認証アプリをオフにする",
           "notifySink": "マルチノード通知の設定"
         }
+      }
+    },
+    "nodes": {
+      "actions": {
+        "copy": "コピー",
+        "copied": "コピーしました"
       }
     }
   }

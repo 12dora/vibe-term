@@ -14,12 +14,8 @@ import type { AuthApi, AuthModeResponse } from '@vibeterm/api-client/auth/index'
 import { requireRootEpoch } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { decodeBase64url, encodeBase64url } from '@vibeterm/shared/auth';
-import {
-  type AdmitDisposition,
-  buildAdmitNodeRecord,
-  submitAdmitRecord,
-  unconfirmedRecord,
-} from './enrollment';
+import { type AdmitDisposition, submitAdmitRecord, unconfirmedRecord } from './admit-record';
+import { buildAdmitNodeRecord } from './enrollment';
 import { withKeyLogLock } from './enrollment-engine';
 import type { NodeRow, PendingAdmitMaterial } from './merge-nodes';
 

@@ -37,36 +37,38 @@ import {
   verifyEd25519,
   verifyKeyLogRecord,
 } from '@vibeterm/shared/auth';
+import {
+  admitDisposition,
+  admitPlan,
+  clearUnconfirmedRecords,
+  forgetUnconfirmedRecord,
+  listUnconfirmedRecordIds,
+  submitAdmitRecord,
+  subscribeUnconfirmedRecords,
+  unconfirmedRecord,
+} from './admit-record';
 import type { PendingStorage } from './enrollment';
 import {
   PENDING_STORAGE_KEY,
   type PendingEnrollment,
   addPendingEnrollment,
-  admitDisposition,
-  admitPlan,
   buildAdmitNodeRecord,
   buildRevokeNodeRecord,
   classifyKeyLogFailure,
   clearPendingEnrollments,
-  clearUnconfirmedRecords,
   createEnrollmentOnHub,
   encodeJoinTokenZeroing,
   findPendingForCertificate,
-  forgetUnconfirmedRecord,
   isTrustedHubUrl,
   joinCommand,
   listPendingEnrollments,
-  listUnconfirmedRecordIds,
   matchPendingCertificate,
   nextPendingExpiry,
   prunePendingEnrollments,
   removePendingEnrollment,
   requireRootPublicKey,
   setPendingStorage,
-  submitAdmitRecord,
   subscribePendingEnrollments,
-  subscribeUnconfirmedRecords,
-  unconfirmedRecord,
 } from './enrollment';
 import { offerCertificate } from './enrollment-watch';
 import type { HubApi } from './hub-api';

@@ -49,6 +49,12 @@ export const I18N_RESOURCES = {
         "custom": "Custom"
       }
     },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "The master key cannot decrypt the node identity, so multi-node features are disabled.",
+        "commandLabel": "Recovery: restore VIBETERM_MASTER_KEY from backups/app.env.*, or run:"
+      }
+    },
     "nav": {
       "manageDevices": "Manage Devices",
       "connectDevices": "Connect More Devices",
@@ -2129,7 +2135,25 @@ export const I18N_RESOURCES = {
           }
         },
         "priority": "Priority",
-        "epoch": "Writer epoch"
+        "epoch": "Writer epoch",
+        "caChanged": {
+          "title": "Hub certificate changed",
+          "description": "The CA fingerprint advertised by \"{{hub}}\" does not match the one pinned on this node, so the connection was stopped.",
+          "advertised": "Advertised",
+          "pinned": "Pinned",
+          "verify": "First run this on that hub and compare the fingerprint:",
+          "commandLabel": "Once the fingerprint checks out, run this on this node:"
+        },
+        "notAdmitted": {
+          "title": "The hub has not admitted this node (its identity may have been rebuilt)",
+          "description": "\"{{hub}}\" rejected this node’s certificate. After a hub is reinstalled or given a new identity, the old certificate no longer works.",
+          "commandLabel": "Run this on this node and rejoin with a fresh join code or password:"
+        },
+        "splitBrain": {
+          "title": "Two active hubs detected (same epoch), writes may diverge",
+          "description": "{{hubs}} are both active hubs at writer epoch {{epoch}}, so management writes may land on different hubs.",
+          "commandLabel": "Run this on one of them to demote it to standby:"
+        }
       },
       "machine": {
         "title": "This machine",
@@ -2525,7 +2549,8 @@ export const I18N_RESOURCES = {
         "directRemovedRestart": "Removed. Restart VibeTerm to apply.",
         "directRestartNow": "Restart now",
         "directRestarting": "Restarting…",
-        "directRestartFailed": "Restart failed: {{error}}"
+        "directRestartFailed": "Restart failed: {{error}}",
+        "directRestartTimeout": "Timed out"
       },
       "selection": {
         "more": "More",
@@ -3335,7 +3360,8 @@ export const I18N_RESOURCES = {
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
           "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
           "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
-          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit."
+          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit.",
+          "readmit_required": "Some member records are still signed by an old root key. Run \"Re-affirm Members\" before connecting to the relay."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -3344,7 +3370,25 @@ export const I18N_RESOURCES = {
           "done": "Relay removed."
         },
         "awaitingToken": {
-          "notice": "The relay token was rotated. Re-enter the access password on a node that holds the account password; other nodes wait for the new token."
+          "notice": "The relay token was rotated. This machine stays connected and applies the new token once it arrives.",
+          "hint": "A node that stays offline for more than 30 days without the new token can only rejoin with the account password."
+        },
+        "relayAck": {
+          "warning": "The relay did not confirm this change, so the other nodes have not received it yet: {{error}}",
+          "errors": {
+            "offline": "the relay connection is down",
+            "timeout": "timed out waiting for the relay",
+            "unavailable": "no relay link is available on this machine",
+            "not_published": "the record was not pushed to the relay",
+            "SEQ_MISMATCH": "the relay key log is out of sync with this machine",
+            "unknown": "reason unknown"
+          }
+        },
+        "resendToken": {
+          "action": "Resend Relay Token",
+          "done": "Relay token resent to {{nodes}} node(s).",
+          "notAcked": "The relay did not confirm, so members cannot receive the new token: {{error}}",
+          "failed": "Could not resend the relay token: {{error}}"
         }
       },
       "admin": {
@@ -3394,11 +3438,19 @@ export const I18N_RESOURCES = {
           "modeKeep": "Keep existing tenants",
           "modeKeepHint": "Existing tenants and their nodes are unaffected; only new enrollments need the new password.",
           "modeKick": "Revoke old tokens",
-          "modeKickHint": "Every tenant has to enter the password again.",
+          "modeKickHint": "All existing tokens are revoked immediately with no 30-day grace; members that are offline now must rejoin when they return.",
           "tooShort": "The password needs at least 8 characters.",
           "saved": "Access password updated.",
           "failed": "Could not update the password: {{message}}",
           "dialogDescription": "Set a new password, or clear it so anyone can join."
+        },
+        "offlineGuard": {
+          "passwordTitle": "Members are offline. Revoke old tokens anyway?",
+          "kickTitle": "Members are offline. Kick this tenant anyway?",
+          "counts": "Online {{online}} / admitted {{admitted}}",
+          "consequence": "Old tokens are revoked immediately with no 30-day grace; offline members will not pass authentication when they return.",
+          "recovery": "Recovery: re-enter the access password on a node that can still reach the relay, then have the offline members rejoin with the account password.",
+          "confirm": "Continue Anyway"
         },
         "quota": {
           "title": "Default Quota",
@@ -3596,6 +3648,12 @@ export const I18N_RESOURCES = {
         "tunnel": "隧道",
         "ip": "公网 IP",
         "custom": "自定义"
+      }
+    },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "主密钥无法解密节点身份，多节点功能已停用。",
+        "commandLabel": "恢复：从 backups/app.env.* 找回 VIBETERM_MASTER_KEY，或执行："
       }
     },
     "nav": {
@@ -5678,7 +5736,25 @@ export const I18N_RESOURCES = {
           }
         },
         "priority": "优先级",
-        "epoch": "写入纪元"
+        "epoch": "写入纪元",
+        "caChanged": {
+          "title": "Hub 证书已变更",
+          "description": "「{{hub}}」广播的 CA 指纹与本机固定的指纹不一致，连接已停止。",
+          "advertised": "对方广播",
+          "pinned": "本机固定",
+          "verify": "先在该 Hub 上执行下面这条命令核对指纹：",
+          "commandLabel": "指纹无误后，在本节点执行："
+        },
+        "notAdmitted": {
+          "title": "Hub 未准入本节点（Hub 身份可能已重建）",
+          "description": "「{{hub}}」拒绝了本节点的证书。Hub 重装或换过身份后，旧证书不再有效。",
+          "commandLabel": "在本节点执行，用新的加入码或密码重新加入："
+        },
+        "splitBrain": {
+          "title": "检测到两个活动 Hub（epoch 相同），写入可能分叉",
+          "description": "{{hubs}} 同为主 Hub，写入纪元都是 {{epoch}}，管理写入可能落在不同的 Hub 上。",
+          "commandLabel": "在其中一台 Hub 上执行，让它退为备 Hub："
+        }
       },
       "machine": {
         "title": "本机",
@@ -6074,7 +6150,8 @@ export const I18N_RESOURCES = {
         "directRemovedRestart": "已删除，重启 VibeTerm 后生效。",
         "directRestartNow": "立即重启",
         "directRestarting": "正在重启……",
-        "directRestartFailed": "重启失败：{{error}}"
+        "directRestartFailed": "重启失败：{{error}}",
+        "directRestartTimeout": "等待超时"
       },
       "selection": {
         "more": "更多",
@@ -6878,7 +6955,8 @@ export const I18N_RESOURCES = {
           "RELAY_ALREADY_ATTACHED": "本机已经挂在这条中继上。",
           "RELAY_SWITCH_FAILED": "切换中继失败，请稍后重试。",
           "RELAY_QUOTA_TENANTS": "中继的租户数已达上限。",
-          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。"
+          "RELAY_QUOTA_FILE_SIZE": "文件超过中继设定的单文件上限。",
+          "readmit_required": "还有成员的记录是旧根签的，请先执行「重新确认成员」再接入中继。"
         },
         "remove": {
           "title": "移除这条中继？",
@@ -6887,7 +6965,25 @@ export const I18N_RESOURCES = {
           "done": "已移除该中继。"
         },
         "awaitingToken": {
-          "notice": "中继令牌已换代。持账户密码的节点重新输入接入密码即可恢复，其余节点等待新令牌下发。"
+          "notice": "中继令牌已换代。本机仍在线，待新令牌下发后自动生效。",
+          "hint": "超过 30 天未更新令牌的离线节点，只能用账号密码重新加入中继。"
+        },
+        "relayAck": {
+          "warning": "中继未确认这次变更，其余节点暂时收不到：{{error}}",
+          "errors": {
+            "offline": "中继连接已断开",
+            "timeout": "等待中继确认超时",
+            "unavailable": "本机没有可用的中继链路",
+            "not_published": "记录尚未推送到中继",
+            "SEQ_MISMATCH": "中继的密钥日志与本机不同步",
+            "unknown": "原因不明"
+          }
+        },
+        "resendToken": {
+          "action": "重发中继令牌",
+          "done": "已重发中继令牌（{{nodes}} 个节点）。",
+          "notAcked": "中继未确认，成员无法收到新令牌：{{error}}",
+          "failed": "重发中继令牌失败：{{error}}"
         }
       },
       "admin": {
@@ -6937,11 +7033,19 @@ export const I18N_RESOURCES = {
           "modeKeep": "保留现有租户",
           "modeKeepHint": "已接入租户及其节点不受影响，仅新接入需使用新密码。",
           "modeKick": "作废旧令牌",
-          "modeKickHint": "所有租户须重新输入密码。",
+          "modeKickHint": "所有租户的旧令牌立即失效，没有 30 天宽限；此刻离线的成员回来后须重新加入。",
           "tooShort": "密码至少 8 个字符。",
           "saved": "接入密码已更新。",
           "failed": "密码更新失败：{{message}}",
           "dialogDescription": "设置新密码，或清除密码改为任何人可接入。"
+        },
+        "offlineGuard": {
+          "passwordTitle": "仍有成员离线，继续作废旧令牌？",
+          "kickTitle": "仍有成员离线，继续踢出该租户？",
+          "counts": "在线 {{online}} / 已准入 {{admitted}}",
+          "consequence": "旧令牌立即失效，没有 30 天宽限；离线成员回来后连认证都过不了。",
+          "recovery": "恢复办法：在仍能连上中继的节点重新输入接入密码，离线成员再用账号密码重新加入中继。",
+          "confirm": "仍然继续"
         },
         "quota": {
           "title": "默认配额",
@@ -7139,6 +7243,12 @@ export const I18N_RESOURCES = {
         "tunnel": "トンネル",
         "ip": "パブリック IP",
         "custom": "カスタム"
+      }
+    },
+    "app": {
+      "masterKeyMismatch": {
+        "title": "マスターキーでノード識別情報を復号できないため、マルチノード機能を停止しました。",
+        "commandLabel": "復旧：backups/app.env.* から VIBETERM_MASTER_KEY を復元するか、次を実行します："
       }
     },
     "nav": {
@@ -9221,7 +9331,25 @@ export const I18N_RESOURCES = {
           }
         },
         "priority": "優先度",
-        "epoch": "書き込みエポック"
+        "epoch": "書き込みエポック",
+        "caChanged": {
+          "title": "ハブの証明書が変更されました",
+          "description": "「{{hub}}」が広告する CA フィンガープリントが、このマシンに固定された値と一致しないため接続を停止しました。",
+          "advertised": "広告値",
+          "pinned": "固定値",
+          "verify": "まず該当ハブで次を実行し、フィンガープリントを照合してください：",
+          "commandLabel": "フィンガープリントを確認したら、このノードで次を実行します："
+        },
+        "notAdmitted": {
+          "title": "ハブがこのノードを受け入れていません（ハブの識別情報が再作成された可能性があります）",
+          "description": "「{{hub}}」がこのノードの証明書を拒否しました。ハブを再インストールしたり識別情報を作り直したりすると、旧証明書は使えなくなります。",
+          "commandLabel": "このノードで次を実行し、新しい参加コードまたはパスワードで参加し直します："
+        },
+        "splitBrain": {
+          "title": "アクティブなハブが 2 台検出されました（epoch が同一）。書き込みが分岐する可能性があります",
+          "description": "{{hubs}} はいずれもアクティブなハブで、書き込みエポックはどちらも {{epoch}} です。管理操作の書き込みが別々のハブに届くおそれがあります。",
+          "commandLabel": "いずれか一方のハブで次を実行し、予備ハブに降格させます："
+        }
       },
       "machine": {
         "title": "このマシン",
@@ -9617,7 +9745,8 @@ export const I18N_RESOURCES = {
         "directRemovedRestart": "削除しました。VibeTerm を再起動すると反映されます。",
         "directRestartNow": "今すぐ再起動",
         "directRestarting": "再起動しています…",
-        "directRestartFailed": "再起動に失敗しました：{{error}}"
+        "directRestartFailed": "再起動に失敗しました：{{error}}",
+        "directRestartTimeout": "タイムアウト"
       },
       "selection": {
         "more": "その他",
@@ -10421,7 +10550,8 @@ export const I18N_RESOURCES = {
           "RELAY_ALREADY_ATTACHED": "本機は既にその中継に接続しています。",
           "RELAY_SWITCH_FAILED": "中継を切り替えられませんでした。しばらくしてから再試行してください。",
           "RELAY_QUOTA_TENANTS": "中継のテナント数が上限に達しています。",
-          "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。"
+          "RELAY_QUOTA_FILE_SIZE": "ファイルが中継の 1 ファイル上限を超えています。",
+          "readmit_required": "古いルート鍵で署名されたメンバー記録が残っています。「メンバーを再確認」を実行してから中継に接続してください。"
         },
         "remove": {
           "title": "この中継を削除しますか？",
@@ -10430,7 +10560,25 @@ export const I18N_RESOURCES = {
           "done": "中継を削除しました。"
         },
         "awaitingToken": {
-          "notice": "中継トークンが更新されました。アカウントパスワードを持つノードで接続パスワードを再入力すると復旧します。他のノードは新しいトークンの配布を待ちます。"
+          "notice": "中継トークンが更新されました。本機は接続を維持し、新しいトークンが届き次第適用します。",
+          "hint": "30 日以上オフラインでトークンを更新できなかったノードは、アカウントのパスワードで参加し直すしかありません。"
+        },
+        "relayAck": {
+          "warning": "中継がこの変更を確認していないため、他のノードにはまだ届いていません：{{error}}",
+          "errors": {
+            "offline": "中継との接続が切れています",
+            "timeout": "中継の確認待ちがタイムアウトしました",
+            "unavailable": "本機に利用できる中継リンクがありません",
+            "not_published": "記録が中継に送信されていません",
+            "SEQ_MISMATCH": "中継の鍵ログが本機と同期していません",
+            "unknown": "原因不明"
+          }
+        },
+        "resendToken": {
+          "action": "中継トークンを再送",
+          "done": "中継トークンを {{nodes}} 台のノードに再送しました。",
+          "notAcked": "中継が確認しなかったため、メンバーは新しいトークンを受け取れません：{{error}}",
+          "failed": "中継トークンの再送に失敗しました：{{error}}"
         }
       },
       "admin": {
@@ -10480,11 +10628,19 @@ export const I18N_RESOURCES = {
           "modeKeep": "既存テナントを維持",
           "modeKeepHint": "既存テナントとそのノードは影響を受けません。新規接続のみ新しいパスワードが必要です。",
           "modeKick": "既存トークンを失効",
-          "modeKickHint": "全テナントがパスワードを再入力する必要があります。",
+          "modeKickHint": "既存トークンは 30 日の猶予なく即時失効します。現在オフラインのメンバーは復帰後に参加し直す必要があります。",
           "tooShort": "パスワードは 8 文字以上で入力してください。",
           "saved": "接続パスワードを更新しました。",
           "failed": "パスワードを更新できませんでした：{{message}}",
           "dialogDescription": "新しいパスワードを設定するか、削除して誰でも参加できるようにします。"
+        },
+        "offlineGuard": {
+          "passwordTitle": "オフラインのメンバーがいます。既存トークンを失効しますか？",
+          "kickTitle": "オフラインのメンバーがいます。このテナントを切断しますか？",
+          "counts": "オンライン {{online}} / 参加済み {{admitted}}",
+          "consequence": "既存トークンは 30 日の猶予なく即時失効し、オフラインのメンバーは復帰しても認証を通過できません。",
+          "recovery": "復旧方法：中継に接続できるノードで接続パスワードを再入力し、オフラインのメンバーはアカウントのパスワードで参加し直します。",
+          "confirm": "続行"
         },
         "quota": {
           "title": "既定クォータ",

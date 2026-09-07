@@ -26,6 +26,11 @@ import {
 } from '@/auth/session-login';
 import { useAuthMode } from '@/auth/use-session-key';
 import { Brand } from '@/components/brand';
+import {
+  MASTER_KEY_MISMATCH,
+  MasterKeyMismatchNotice,
+  useGatewayDegraded,
+} from '@/components/master-key-notice';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import {
   defaultAuthApi,
@@ -36,7 +41,7 @@ import { Button } from '@vibeterm/ui/button';
 import { Input } from '@vibeterm/ui/input';
 import { OtpInput } from '@vibeterm/ui/otp-input';
 import { AlertTriangle, Fingerprint, Loader2 } from 'lucide-react';
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, type ReactNode, useCallback, useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router';
 
@@ -49,26 +54,39 @@ export interface LoginPageProps {
 export default function LoginPage({ mode: modeOverride, api = defaultAuthApi }: LoginPageProps) {
   const fetched = useAuthMode(api, { enabled: !modeOverride });
   const mode = modeOverride ?? fetched.mode;
+  // `/healthz` 不需要会话：主密钥失配时 mesh 整段停用，登录页往往是用户第一个、
+  // 也可能是唯一一个看得到解释的地方，所以三种渲染分支都要带上它。
+  const degraded = useGatewayDegraded();
+  const notice =
+    degraded === MASTER_KEY_MISMATCH ? (
+      <MasterKeyMismatchNotice className="w-full max-w-sm" />
+    ) : null;
 
   if (!modeOverride && fetched.loading) {
     return (
-      <div className="flex h-full items-center justify-center p-8 text-muted-foreground">
+      <div className="flex h-full flex-col items-center justify-center gap-3 p-8 text-muted-foreground">
+        {notice}
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
       </div>
     );
   }
 
-  // standalone 或 mode 拉取失败：不渲染任何登录 UI。
+  // standalone 或 mode 拉取失败：不渲染任何登录 UI，降级提示仍然要给。
   if (!mode || mode.mode === 'none') {
-    return null;
+    if (!notice) return null;
+    return <div className="flex min-h-full items-center justify-center p-4">{notice}</div>;
   }
 
-  return <LoginForm mode={mode} api={api} />;
+  return <LoginForm mode={mode} api={api} notice={notice} />;
 }
+
+const LOGIN_PAGE_CLASS = 'flex min-h-full flex-col items-center justify-center gap-3 p-4';
 
 interface LoginFormProps {
   mode: AuthModeResponse;
   api: AuthApi;
+  /** 主密钥失配提示；正常时为 `null`。 */
+  notice: ReactNode;
 }
 
 export type Phase = 'idle' | 'deriving' | 'passkeyCheck' | 'signingIn' | 'done';
@@ -241,9 +259,17 @@ export function loginPreflight(
   return { ok: true, kdfParams: mode.kdfParams };
 }
 
-function LoginForm({ mode, api }: LoginFormProps) {
-  const { t } = useTranslation();
+function useNavigateWhenDone(phase: Phase, nextPath: string): void {
   const navigate = useNavigate();
+  useEffect(() => {
+    if (phase === 'done') {
+      navigate(nextPath, { replace: true });
+    }
+  }, [phase, navigate, nextPath]);
+}
+
+function LoginForm({ mode, api, notice }: LoginFormProps) {
+  const { t } = useTranslation();
   const [params] = useSearchParams();
 
   const nextPath = params.get('next') || '/';
@@ -263,11 +289,7 @@ function LoginForm({ mode, api }: LoginFormProps) {
 
   const resolveUid = useCallback(() => resolveLoginUid(mode, username), [mode, username]);
 
-  useEffect(() => {
-    if (phase === 'done') {
-      navigate(nextPath, { replace: true });
-    }
-  }, [phase, navigate, nextPath]);
+  useNavigateWhenDone(phase, nextPath);
 
   /**
    * 会话钥已经建好之后的最后一步。
@@ -363,7 +385,8 @@ function LoginForm({ mode, api }: LoginFormProps) {
   }, [api, busy, finishLogin, mode, resolveUid, t]);
 
   return (
-    <div className="flex min-h-full items-center justify-center p-4" data-testid="login-page">
+    <div className={LOGIN_PAGE_CLASS} data-testid="login-page">
+      {notice}
       <form
         className="vibeterm-reveal flex w-full max-w-sm flex-col gap-4 rounded-xl border border-border bg-background p-6"
         onSubmit={(event) => void onSubmit(event)}

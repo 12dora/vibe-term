@@ -11,6 +11,7 @@ import {
 import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
 import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { withKeyLogLock } from '@/node/enrollment-engine';
+import { type RelayAckFields, relayAckError, relayAckErrorText } from '@/node/relay-ack';
 import type { AuthApi, AuthKdfParamsJson, AuthModeResponse } from '@vibeterm/api-client/auth/index';
 import { HUB_NOT_WRITER } from '@vibeterm/api-client/auth/index';
 import { KEYLOG_TYPE_UNSUPPORTED_BY_NODES } from '@vibeterm/shared/auth';
@@ -189,7 +190,23 @@ export async function submitPasswordChange(
     follow: passwordChangeFollowUp(input),
     t: input.t,
   });
-  return withMetaKeyNotice(feedback, result.metaKey, input.t);
+  // 两条补充说明各自独立：元数据密钥没换代、以及这条改密记录没上中继。
+  return withRelayAckNotice(withMetaKeyNotice(feedback, result.metaKey, input.t), result, input.t);
+}
+
+/**
+ * 中继模式下改密记录只落了本机：成员节点仍认旧根公钥，接不上，也解不开后续记录。
+ * 与元数据密钥那条一样必须说出来——只报「已修改密码」会让人以为整套都跟上了。
+ */
+export function withRelayAckNotice(
+  feedback: PasswordChangeFeedback,
+  result: RelayAckFields,
+  t: Translate
+): PasswordChangeFeedback {
+  const code = relayAckError(result);
+  if (code === null) return feedback;
+  const warning = t('relay.tenant.relayAck.warning', { error: relayAckErrorText(t, code) });
+  return { tone: 'notice', text: `${feedback.text} ${warning}` };
 }
 
 /**

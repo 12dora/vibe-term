@@ -29,6 +29,7 @@ import {
   encodeAdmitNodePayload,
   encodeBase64url,
 } from '@vibeterm/shared/auth';
+import { warnRelayAckGlobal } from './relay-ack';
 
 /** 用户在凭据对话框里取消。 */
 export const READMIT_CANCELLED = 'READMIT_CANCELLED';
@@ -143,6 +144,8 @@ async function signOne(
     );
     if (!result.ok) return result.code;
     if (result.hubAck === false) return result.hubError || READMIT_UNCONFIRMED;
+    // 中继模式下本地落库不等于成员收得到：没送上中继就挂告警，别报成一次干净的补签。
+    warnRelayAckGlobal(result);
     return null;
   } catch (err) {
     return failureCode(err);

@@ -18,6 +18,7 @@ import {
 import { decodeRelayEnrollProof } from '@vibeterm/shared/relay';
 import { READMIT_PENDING } from './readmit-members';
 import {
+  READMIT_REQUIRED,
   ROOT_PASSWORD_INVALID,
   alreadyLocked,
   appendMetaKey,
@@ -118,6 +119,29 @@ describe('appendRelayRecord', () => {
     expect(result).toMatchObject({ ok: false, code: 'RELAY_OFFLINE' });
     // 上级没确认时本地 head 没动：签好的字节要原样带出来供重发。
     expect(result.ok === false && result.record?.type).toBe('meta-key');
+  });
+
+  test('中继确认位原样带出（成员是否收得到由调用方判定）', async () => {
+    const deps = {
+      relayApi: {} as RelayTenantApi,
+      mode: await modeOf(),
+      lock: alreadyLocked,
+    };
+    const acked = await appendRelayRecord(
+      { ...deps, api: authApi([], { ok: true, hubAck: true, relayAck: true }) },
+      { type: 'set-relays', payload: PAYLOAD, signer: await rootSigner() }
+    );
+    expect(acked).toEqual({ ok: true, relayAck: true });
+
+    const unacked = await appendRelayRecord(
+      {
+        ...deps,
+        api: authApi([], { ok: true, hubAck: true, relayAck: false, relayError: 'offline' }),
+      },
+      { type: 'set-relays', payload: PAYLOAD, signer: await rootSigner() }
+    );
+    // 本地已生效所以仍是成功；成员收不到这件事由 `relayAck` 单独说。
+    expect(unacked).toEqual({ ok: true, relayAck: false, relayError: 'offline' });
   });
 
   test('append 被拒时原样带出 code', async () => {
@@ -605,6 +629,33 @@ describe('接入时补签成员', () => {
     expect(appended.map((row) => decodeKeyLogRecord(decodeBase64url(row.bytes)).type)).toEqual([
       'readmit-node',
     ]);
+  });
+
+  test('节点侧 409 readmit_required：原样透出 code，远端一步都不走完', async () => {
+    const appended: Appended[] = [];
+    const trace: string[] = [];
+    const mode = await modeOf();
+    const base = enrollApi(mode, {
+      trace,
+      readmitPrepare: () => Promise.resolve({ rootEpoch: 3, entries: [] }),
+    });
+    const relayApi = {
+      ...base,
+      enroll: () => {
+        trace.push('enroll');
+        return Promise.reject(
+          new RelayApiError('readmit_required', 'readmit_required', 409, { count: 3 })
+        );
+      },
+    } as unknown as RelayTenantApi;
+    const result = await enrollRelay(
+      { api: authApi(appended), relayApi, mode, lock: alreadyLocked },
+      { url: 'https://r.example', rootPassword: 'pw' }
+    );
+    // 原样透出 code：界面据此指向同一张卡片上的「重新确认成员」，而不是笼统的接入失败。
+    expect(result).toEqual({ ok: false, code: READMIT_REQUIRED });
+    // 令牌一条都没换发：`set-relays` 没提交，旧链路照旧可用。
+    expect(appended).toHaveLength(0);
   });
 
   test('afterEnroll 不跑：卡在补签这一步时密封包也不刷新', async () => {

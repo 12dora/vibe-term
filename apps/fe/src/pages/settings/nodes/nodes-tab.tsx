@@ -4,6 +4,7 @@
 // mesh 下是当前 Hub / 中继链路与对应的操作。standalone 另加 HTTPS 区块，mesh 再加节点管理。
 // 与站点设置表单完全无关：角色 / 直连 / TLS 都是运行态与安装态，不走 `/api/settings/site`。
 
+import { MasterKeyNotice } from '@/components/master-key-notice';
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import type { SetupRelayRole } from '@vibeterm/api-client/local/types';
 import { Reveal } from '@vibeterm/ui/motion';
@@ -16,6 +17,7 @@ import { NodesManagement } from './management/nodes-management';
 import { type SetupIntent, type SetupIntentRecord, takeSetupIntent } from './membership/intent';
 import { takeSelfRelayFollowUp } from './setup/self-relay-followup';
 import { SetupTransitionProvider } from './setup/setup-transition';
+import { HubSplitBrainBanner } from './uplink/hub-recovery';
 import { useLocalUplinkController } from './uplink/local-uplink-controller';
 import { useLocalStatus } from './use-local-status';
 
@@ -67,6 +69,10 @@ export function NodesTab() {
     // 设置路径与角色菜单共享一份「已提交」状态：后端只放行一条，界面必须同步锁上。
     <SetupTransitionProvider>
       <div className="flex w-full flex-col gap-4" data-testid="settings-nodes-tab">
+        {/* 控制面级别的告警排在所有卡片之前，且都不可关闭：它们说的是「现在做的管理操作可能没落地」。
+            主密钥失配连 mesh 都没起来，standalone 分支同样要看得到。 */}
+        <MasterKeyNotice />
+        {!standalone && <HubSplitBrainBanner hubs={uplink.hubs.hubs} />}
         {/* 三块区域按阅读顺序错开入场；延迟档位手写在这里，列表短到不需要 <Stagger>。 */}
         <Reveal>
           <LocalMachineCard

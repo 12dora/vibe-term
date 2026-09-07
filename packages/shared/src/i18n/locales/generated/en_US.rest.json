@@ -1369,7 +1369,25 @@
           }
         },
         "priority": "Priority",
-        "epoch": "Writer epoch"
+        "epoch": "Writer epoch",
+        "caChanged": {
+          "title": "Hub certificate changed",
+          "description": "The CA fingerprint advertised by \"{{hub}}\" does not match the one pinned on this node, so the connection was stopped.",
+          "advertised": "Advertised",
+          "pinned": "Pinned",
+          "verify": "First run this on that hub and compare the fingerprint:",
+          "commandLabel": "Once the fingerprint checks out, run this on this node:"
+        },
+        "notAdmitted": {
+          "title": "The hub has not admitted this node (its identity may have been rebuilt)",
+          "description": "\"{{hub}}\" rejected this node’s certificate. After a hub is reinstalled or given a new identity, the old certificate no longer works.",
+          "commandLabel": "Run this on this node and rejoin with a fresh join code or password:"
+        },
+        "splitBrain": {
+          "title": "Two active hubs detected (same epoch), writes may diverge",
+          "description": "{{hubs}} are both active hubs at writer epoch {{epoch}}, so management writes may land on different hubs.",
+          "commandLabel": "Run this on one of them to demote it to standby:"
+        }
       },
       "machine": {
         "title": "This machine",
@@ -1723,8 +1741,6 @@
         "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
-        "copy": "Copy",
-        "copied": "Copied",
         "admit": "Admit"
       },
       "admit": {
@@ -1765,7 +1781,8 @@
         "directRemovedRestart": "Removed. Restart VibeTerm to apply.",
         "directRestartNow": "Restart now",
         "directRestarting": "Restarting…",
-        "directRestartFailed": "Restart failed: {{error}}"
+        "directRestartFailed": "Restart failed: {{error}}",
+        "directRestartTimeout": "Timed out"
       },
       "selection": {
         "more": "More",
@@ -2575,7 +2592,8 @@
           "RELAY_ALREADY_ATTACHED": "This machine is already attached to that relay.",
           "RELAY_SWITCH_FAILED": "Could not switch relays. Try again later.",
           "RELAY_QUOTA_TENANTS": "The relay has reached its tenant limit.",
-          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit."
+          "RELAY_QUOTA_FILE_SIZE": "The file exceeds the relay’s per-file size limit.",
+          "readmit_required": "Some member records are still signed by an old root key. Run \"Re-affirm Members\" before connecting to the relay."
         },
         "remove": {
           "title": "Remove this relay?",
@@ -2584,7 +2602,25 @@
           "done": "Relay removed."
         },
         "awaitingToken": {
-          "notice": "The relay token was rotated. Re-enter the access password on a node that holds the account password; other nodes wait for the new token."
+          "notice": "The relay token was rotated. This machine stays connected and applies the new token once it arrives.",
+          "hint": "A node that stays offline for more than 30 days without the new token can only rejoin with the account password."
+        },
+        "relayAck": {
+          "warning": "The relay did not confirm this change, so the other nodes have not received it yet: {{error}}",
+          "errors": {
+            "offline": "the relay connection is down",
+            "timeout": "timed out waiting for the relay",
+            "unavailable": "no relay link is available on this machine",
+            "not_published": "the record was not pushed to the relay",
+            "SEQ_MISMATCH": "the relay key log is out of sync with this machine",
+            "unknown": "reason unknown"
+          }
+        },
+        "resendToken": {
+          "action": "Resend Relay Token",
+          "done": "Relay token resent to {{nodes}} node(s).",
+          "notAcked": "The relay did not confirm, so members cannot receive the new token: {{error}}",
+          "failed": "Could not resend the relay token: {{error}}"
         }
       },
       "admin": {
@@ -2634,11 +2670,19 @@
           "modeKeep": "Keep existing tenants",
           "modeKeepHint": "Existing tenants and their nodes are unaffected; only new enrollments need the new password.",
           "modeKick": "Revoke old tokens",
-          "modeKickHint": "Every tenant has to enter the password again.",
+          "modeKickHint": "All existing tokens are revoked immediately with no 30-day grace; members that are offline now must rejoin when they return.",
           "tooShort": "The password needs at least 8 characters.",
           "saved": "Access password updated.",
           "failed": "Could not update the password: {{message}}",
           "dialogDescription": "Set a new password, or clear it so anyone can join."
+        },
+        "offlineGuard": {
+          "passwordTitle": "Members are offline. Revoke old tokens anyway?",
+          "kickTitle": "Members are offline. Kick this tenant anyway?",
+          "counts": "Online {{online}} / admitted {{admitted}}",
+          "consequence": "Old tokens are revoked immediately with no 30-day grace; offline members will not pass authentication when they return.",
+          "recovery": "Recovery: re-enter the access password on a node that can still reach the relay, then have the offline members rejoin with the account password.",
+          "confirm": "Continue Anyway"
         },
         "quota": {
           "title": "Default Quota",

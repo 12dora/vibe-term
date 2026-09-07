@@ -26,6 +26,7 @@ const {
   passwordChangeFollowUp,
   securityActionErrorText,
   securityPanelView,
+  withRelayAckNotice,
 } = panelModule;
 type SecurityActionFeedback = import('./account-security-panel').SecurityActionFeedback;
 
@@ -378,5 +379,23 @@ describe('finishPasswordChange', () => {
     const feedback = await finish({ totpEnabled: true, totpCode: '000000' });
     expect(cleared).not.toHaveBeenCalled();
     expect(feedback).toEqual({ tone: 'notice', text: 'auth.security.sessionResumeFailed' });
+  });
+});
+
+describe('withRelayAckNotice', () => {
+  const t = (key: string, options?: Record<string, unknown>) =>
+    options ? `${key}:${JSON.stringify(options)}` : key;
+  const done = { tone: 'ok', text: '已修改密码。' } as const;
+
+  test('中继确认过（或不在中继模式）时原样返回', () => {
+    expect(withRelayAckNotice(done, { relayAck: true }, t)).toEqual(done);
+    expect(withRelayAckNotice(done, {}, t)).toEqual(done);
+  });
+
+  test('中继没确认时降级成提示并补一句告警', () => {
+    const feedback = withRelayAckNotice(done, { relayAck: false, relayError: 'offline' }, t);
+    expect(feedback.tone).toBe('notice');
+    expect(feedback.text).toStartWith('已修改密码。 relay.tenant.relayAck.warning:');
+    expect(feedback.text).toContain('relay.tenant.relayAck.errors.offline');
   });
 });

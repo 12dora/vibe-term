@@ -14,6 +14,7 @@ import { Repeat, TriangleAlert } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Notice } from '../card-parts';
 import { CopyableValue, Row } from '../copy-feedback';
+import { HubRecoveryNotices } from './hub-recovery';
 import {
   HubModeTag,
   candidateFailure,
@@ -145,6 +146,8 @@ export function HubUplinkPanel({
           hubFailure={hubFailure}
         />
       )}
+      {/* CA 变更 / 未准入要摆在通用提示之后：它们是「连不上」的**具体**原因，且各自带一条命令。 */}
+      {meshRole && <HubRecoveryNotices candidates={hubs.candidates} />}
     </div>
   );
 }

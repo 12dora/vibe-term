@@ -84,6 +84,32 @@ describe('selfRevokeNode', () => {
     ).toEqual({ kind: 'failed', reason: 'hub_unreachable' });
   });
 
+  test('中继没确认等于其余成员看不到这条吊销', async () => {
+    const h = api(() => ({ ok: true, hubAck: true, relayAck: false, relayError: 'offline' }));
+    expect(
+      await selfRevokeNode({
+        api: h.api,
+        uid: UID,
+        rootEpoch: ROOT_EPOCH,
+        nodeIdHex: NODE_ID,
+        withSigner,
+      })
+    ).toEqual({ kind: 'failed', reason: 'offline' });
+  });
+
+  test('中继确认过就是吊销成功', async () => {
+    const h = api(() => ({ ok: true, hubAck: true, relayAck: true }));
+    expect(
+      await selfRevokeNode({
+        api: h.api,
+        uid: UID,
+        rootEpoch: ROOT_EPOCH,
+        nodeIdHex: NODE_ID,
+        withSigner,
+      })
+    ).toEqual({ kind: 'revoked' });
+  });
+
   test('记录被拒：带上错误码', async () => {
     const h = api(() => ({ ok: false, code: 'KEY_LOG_FORK' }));
     expect(
