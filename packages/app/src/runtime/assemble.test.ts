@@ -4,6 +4,7 @@ import {
   resetDomainAccessForTests,
   setDomainAccessGuardForTests,
 } from '../../../../apps/gateway/src/api/domain-access-routes';
+import { NodeSessionStore, UserStore } from '../../../../apps/gateway/src/auth';
 import { ensureNodeIdentity } from '../../../../apps/gateway/src/auth/node-identity-service';
 import { NodeIdentityStore } from '../../../../apps/gateway/src/auth/node-identity-store';
 import { createMigratedAuthDb } from '../../../../apps/gateway/src/auth/test-db';
@@ -15,8 +16,12 @@ import {
   MESH_REJECT_4401_KIND,
   setMeshRequestContext,
 } from '../../../../apps/gateway/src/mesh/mesh-deps';
+import { createMeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { MeshRuntime } from '../../../../apps/gateway/src/mesh/mesh-runtime';
 import type { LoadNative } from '../../../../apps/gateway/src/mesh/rtc';
+import { acceptHttpStream, openHttpStream } from '../../../../apps/gateway/src/mesh/stream-targets';
+import { seedUser } from '../../../../apps/gateway/src/mesh/test-support';
+import type { DispatchHttp } from '../../../../apps/gateway/src/mesh/types';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { type ShareService, setShareServiceForTests } from '../../../../apps/gateway/src/share';
 import { TlsConfigStore } from '../../../../apps/gateway/src/tls/tls-config-store';
@@ -39,6 +44,7 @@ import {
   generateEd25519KeyPair,
   signLogin,
 } from '../../../shared/src/auth';
+import { createInMemoryLinkPair } from '../../../shared/src/link';
 import { createAuthContextFromDb } from '../lib/local-auth';
 import { deriveRootKey } from '../lib/password';
 import { createCa, issueLeaf, parseCertificate } from '../tls/cert-authority';
@@ -831,6 +837,96 @@ describe('assembleVibeTerm role matrix', () => {
     server.stop();
   });
 
+  test('peer inbound local routes require target sessions and preserve self behavior', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const sessionStore = new NodeSessionStore(db);
+    const { sid } = sessionStore.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-node',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const assembled = await assembleVibeTerm({
+      roles: { hub: false, node: true, relay: false },
+      localAuthEffective: () => false,
+      createGatewayRuntime: async () => fakeGateway({ db }),
+      createMeshRuntime: (opts) =>
+        createMeshRuntime({
+          ...opts,
+          startPeerServer: false,
+          loadNative: async () => null,
+          config: { ...opts.config, hubUrl: 'http://127.0.0.1:9', hubUrls: [], peerPort: 0 },
+        }),
+    });
+    const dispatchHttp = (assembled.mesh?.peers as unknown as { dispatchHttp: DispatchHttp })
+      .dispatchHttp;
+    const [entry, target] = createInMemoryLinkPair();
+    target.onStream((stream) => {
+      void acceptHttpStream(stream, { peerNodeId: 'entry-node', sessionStore, dispatchHttp });
+    });
+    try {
+      for (const auth of [null, 'invalid-session', sid]) {
+        const response = await openHttpStream(entry, {
+          method: 'GET',
+          path: '/api/local/status',
+          origin: 'http://127.0.0.1',
+          auth,
+          headers: { 'x-forwarded-for': '127.0.0.1', 'x-vibeterm-client-source': 'loopback' },
+        });
+        expect(response.status).toBe(auth === sid ? 200 : 401);
+        if (auth === sid)
+          expect(await response.json()).toMatchObject({
+            role: 'node',
+            direct: { capable: false },
+          });
+      }
+      const unauthenticated = await dispatchHttp(new Request('http://localhost/api/local/status'), {
+        uid: null,
+        viaNodeId: 'entry-node',
+      });
+      expect(unauthenticated.status).toBe(401);
+      for (const auth of [null, sid]) {
+        const response = await openHttpStream(entry, {
+          method: 'POST',
+          path: '/api/local/direct',
+          origin: 'http://localhost',
+          auth,
+        });
+        expect(response.status).toBe(auth === sid ? 400 : 401);
+      }
+      const leave = await openHttpStream(entry, {
+        method: 'POST',
+        path: '/api/local/leave',
+        origin: 'http://localhost',
+        auth: sid,
+      });
+      expect(leave.status).toBe(404);
+      const selfSession = sessionStore.issue({
+        userId: 'user-1',
+        viaNodeId: 'self',
+        sessPublicKey: new Uint8Array(32),
+        delegationMethod: 'root',
+        now: Date.now(),
+      });
+      for (const cookie of ['', `vibeterm_s_self=${selfSession.sid}`]) {
+        const response = await assembled.fetch(
+          new Request('http://localhost/api/local/status', {
+            headers: { cookie },
+          }),
+          dummyServer
+        );
+        expect(response?.status).toBe(cookie ? 200 : 401);
+      }
+    } finally {
+      entry.close();
+      target.close();
+      await assembled.stop();
+      close();
+    }
+  });
+
   test('standalone /api/local/status is served before gateway dispatch', async () => {
     process.env.VIBETERM_ROLES = 'standalone';
     const assembled = await assembleVibeTerm({
@@ -850,6 +946,9 @@ describe('assembleVibeTerm role matrix', () => {
       tls: { mode: string; listenerRunning: boolean; tlsPort: number };
     };
     expect(body.role).toBe('standalone');
+    const peerRequest = new Request('http://127.0.0.1/api/local/status');
+    setMeshRequestContext(peerRequest, { via: 'entry-node', clientIp: '127.0.0.1' });
+    expect((await assembled.fetch(peerRequest, serverWithClientIp('127.0.0.1')))?.status).toBe(401);
     expect(body.tls).toEqual({ mode: 'none', listenerRunning: false, tlsPort: 9443 });
   });
 

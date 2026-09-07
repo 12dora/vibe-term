@@ -147,6 +147,7 @@ export type CreateMeshRuntimeOptions = {
   db: AuthDb;
   gateway: GatewayRuntime;
   config: MeshRuntimeConfig;
+  inboundHttpExtensions?: Array<(req: Request, ctx: DispatchContext) => Promise<Response | null>>;
   hub?: HubRuntime;
   /** Same-process hub to attach an in-memory uplink to (remote node in hub+A+B tests). */
   uplinkHub?: HubRuntime | null;
@@ -958,7 +959,12 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
       const hubRes = await hub.handleRequest(request, noopUpgrade);
       if (hubRes instanceof Response) return hubRes;
     }
-    return d.gateway.dispatchHttp(request, { uid, viaNodeId: via, ...extra });
+    const dispatchContext = { uid, viaNodeId: via, ...extra };
+    for (const extension of opts.inboundHttpExtensions ?? []) {
+      const response = await extension(request, dispatchContext);
+      if (response) return response;
+    }
+    return d.gateway.dispatchHttp(request, dispatchContext);
   };
   const peerManager = new PeerManager({
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },

@@ -59,6 +59,7 @@ import {
   wireTlsLifecycle,
 } from './assemble-routes';
 import { createVibeTermGatewayRuntime } from './gateway';
+import { handleLocalRequest } from './local-routes';
 import { type RuntimeMode, handlePreflightHttp, readRuntimeMode } from './mode';
 import { serveFrontend as defaultServeFrontend } from './serve-frontend';
 import { SETUP_RESTART_DELAY_MS, resolveSetupEnvPath } from './setup-service';
@@ -473,7 +474,9 @@ export async function assembleVibeTerm(
   const createGateway =
     opts.createGatewayRuntime ??
     (() => createVibeTermGatewayRuntime(undefined, { mode: runtimeMode }));
-  const createMesh = opts.createMeshRuntime ?? createMeshRuntime;
+  const inboundHttpExtensions: NonNullable<CreateMeshRuntimeOptions['inboundHttpExtensions']> = [];
+  const createMesh = (meshOpts: CreateMeshRuntimeOptions) =>
+    (opts.createMeshRuntime ?? createMeshRuntime)({ ...meshOpts, inboundHttpExtensions });
   const serveFrontend =
     opts.serveFrontend ?? (isRelayOnly(roles) ? relayOnlyFrontend : defaultServeFrontend);
   const gateway = await createGateway();
@@ -519,6 +522,12 @@ export async function assembleVibeTerm(
     tlsSlot,
     scheduleRestart,
     localAuthEffective,
+  });
+  inboundHttpExtensions.push(async (req) => {
+    const path = new URL(req.url).pathname;
+    return path === '/api/local/status' || path === '/api/local/direct'
+      ? handleLocalRequest(req, routeDeps)
+      : null;
   });
   const relay = await createAssembledRelay({ roles, gateway, routeDeps });
   const http = buildHttpAndWs({

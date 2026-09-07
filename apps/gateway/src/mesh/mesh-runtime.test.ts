@@ -7,7 +7,8 @@ import {
   hexToBytes,
   randomBytes,
 } from '@vibeterm/shared/auth';
-import { WebSocketLink } from '@vibeterm/shared/link';
+import { WebSocketLink, createInMemoryLinkPair } from '@vibeterm/shared/link';
+import { handleApiRequest } from '../api';
 import {
   KeyLogStore,
   NodeIdentityStore,
@@ -21,10 +22,12 @@ import { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
+import { runtimeController } from '../control/runtime';
 import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
 import { GatewaySession } from '../ws/gateway-session';
 import { createFakeCarrier } from '../ws/test-helpers';
+import { getMeshRequestContext, requestDispatchContext } from './mesh-deps';
 import {
   SessionRegistry,
   attachKeyLogHeadNotify,
@@ -35,6 +38,8 @@ import {
   isAdvertisablePeerAddress,
   setHubPresenceStaleMs,
 } from './mesh-runtime';
+import { authenticateRequest } from './session-middleware';
+import { acceptHttpStream, openHttpStream } from './stream-targets';
 import {
   ImmediateScheduler,
   fakeSocketPair,
@@ -42,6 +47,7 @@ import {
   seedUser,
   waitUntil,
 } from './test-support';
+import type { DispatchHttp } from './types';
 import { decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -280,6 +286,109 @@ describe('createMeshRuntime', () => {
 
     await mesh.stop();
     expect(order).toEqual(['peer', 'uplink', 'rtc']);
+  });
+
+  test('peer inbound extensions preserve context, enforce auth and fall through to restart', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const gateway = fakeGateway(db);
+    seedUser(new UserStore(db));
+    const sessionStore = new NodeSessionStore(db);
+    const { sid } = sessionStore.issue({
+      userId: 'user-1',
+      viaNodeId: 'entry-node',
+      sessPublicKey: new Uint8Array(32),
+      delegationMethod: 'root',
+      now: Date.now(),
+    });
+    const seen: string[] = [];
+    gateway.dispatchHttp = async (req, ctx) => {
+      expect(requestDispatchContext.get(req)).toEqual(ctx);
+      seen.push(new URL(req.url).pathname);
+      return handleApiRequest(req);
+    };
+    const mesh = await createMeshRuntime({
+      db,
+      gateway,
+      config: {
+        roles: { hub: false, node: true, relay: false },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      startPeerServer: false,
+      loadNative: async () => null,
+      inboundHttpExtensions: [
+        async () => null,
+        async (req, ctx) => {
+          if (new URL(req.url).pathname !== '/api/local/status') return null;
+          expect(getMeshRequestContext(req)).toMatchObject({
+            via: 'entry-node',
+            clientIp: 'peer:entry-node',
+          });
+          expect(requestDispatchContext.get(req)).toEqual(ctx);
+          expect(req.headers.get('x-forwarded-host')).toBe('entry.example');
+          const auth = authenticateRequest(req, {
+            roles: { hub: false, node: true, relay: false },
+            nodeSessionStore: sessionStore,
+            localAuthEffective: () => false,
+          });
+          return Response.json(
+            { uid: auth.ok ? auth.userId : null },
+            { status: auth.ok ? 200 : 401 }
+          );
+        },
+      ],
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    const dispatch = (mesh.peers as unknown as { dispatchHttp: DispatchHttp }).dispatchHttp;
+    for (const uid of [null, 'user-1']) {
+      const response = await dispatch(
+        new Request('http://127.0.0.1/api/local/status', {
+          headers: { 'x-forwarded-host': 'entry.example', 'x-forwarded-for': '127.0.0.1' },
+        }),
+        { uid, viaNodeId: 'entry-node', renewedExpiresAt: 12345 }
+      );
+      expect(response.status).toBe(uid ? 200 : 401);
+      expect(await response.json()).toEqual({ uid });
+    }
+    expect(seen).toEqual([]);
+    runtimeController.reset();
+    let restarted = false;
+    runtimeController.onRestart(() => {
+      restarted = true;
+    });
+    const [entry, target] = createInMemoryLinkPair();
+    target.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-node',
+        sessionStore,
+        dispatchHttp: dispatch,
+      });
+    });
+    try {
+      const denied = await openHttpStream(entry, {
+        method: 'POST',
+        path: '/api/settings/restart',
+        origin: 'http://localhost',
+        auth: null,
+      });
+      expect(denied.status).toBe(401);
+      expect(restarted).toBe(false);
+      const response = await openHttpStream(entry, {
+        method: 'POST',
+        path: '/api/settings/restart',
+        origin: 'http://localhost',
+        auth: sid,
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ success: true });
+      await waitUntil(() => restarted);
+      expect(seen).toEqual(['/api/settings/restart']);
+    } finally {
+      entry.close();
+      target.close();
+      runtimeController.reset();
+    }
   });
 
   test('exposes gateway WS guard and inbound mesh handleRequest for peer via', async () => {

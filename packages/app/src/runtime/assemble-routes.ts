@@ -92,7 +92,12 @@ function createRouteAuthenticate(
 ): LocalRouteDeps['authenticate'] {
   return (req) => {
     try {
-      return authenticateRequest(req, { roles, nodeSessionStore, localAuthEffective });
+      return authenticateRequest(req, {
+        roles,
+        nodeSessionStore,
+        localAuthEffective: () =>
+          getMeshRequestContext(req).via !== MESH_VIA_SELF || localAuthEffective(),
+      });
     } catch {
       return { ok: false };
     }
