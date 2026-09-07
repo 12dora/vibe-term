@@ -29,6 +29,7 @@ export type NestedCommandName =
   | 'hub.urls.add'
   | 'hub.urls.remove'
   | 'mesh.reset-identity'
+  | 'tls.reset'
   | 'mesh.keylog.status'
   | 'mesh.reset-root'
   | 'mesh.passkey.remove-all'
@@ -206,6 +207,7 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
     relay: RELAY_SUBCOMMANDS,
     'relay-admin': { passwd: 'relay.passwd', kick: 'relay.kick' },
     mesh: MESH_SUBCOMMANDS,
+    tls: { reset: 'tls.reset' },
   };
   const commandGroup = groups[command];
   if (commandGroup) return group(commandGroup, parsed, command, 1);
@@ -318,7 +320,8 @@ const COMMAND_FLAGS: Record<NestedCommandName, ReadonlySet<string>> = {
   'hub.urls.list': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'hub.urls.add': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'hub.urls.remove': new Set([...GLOBAL_FLAGS, 'install-dir']),
-  'mesh.reset-identity': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
+  'mesh.reset-identity': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes', 'reset-tls']),
+  'tls.reset': new Set([...GLOBAL_FLAGS, 'install-dir', 'yes']),
   'mesh.keylog.status': new Set([...GLOBAL_FLAGS, 'install-dir']),
   'mesh.passkey.remove-all': new Set([
     ...GLOBAL_FLAGS,

@@ -318,7 +318,7 @@ vibeterm mesh reset-root
 
 ### 节点私钥丢失
 
-`node_identity` 解密失败时保留 HTTP 与本地登录，`/healthz` 返回 `degraded: "master_key_mismatch"`，mesh 和 Hub 控制面停用。优先从 `backups/app.env.*` 恢复与数据库配套的 `VIBETERM_MASTER_KEY`。无法恢复时，先停止该安装的服务，在本机执行 `vibeterm mesh reset-identity`（非 TTY 加 `--yes`），更换节点身份、撤销本机会话并清除中继连接密钥及节点缓存；账户凭据与日志保留。然后重新加入可信 Hub 或中继并启动服务。TLS 私钥须单独恢复或重新配置；该命令不悄悄轮换 CA。详见 [主密钥排障](./troubleshooting-db-master-key.md)。
+`node_identity` 解密失败时保留 HTTP 与本地登录，`/healthz` 返回 `degraded: "master_key_mismatch"`，mesh 和 Hub 控制面停用。优先从 `backups/app.env.*` 恢复与数据库配套的 `VIBETERM_MASTER_KEY`。无法恢复时，先停止该安装的服务，在本机执行 `vibeterm mesh reset-identity`（非 TTY 加 `--yes`），更换节点身份、撤销本机会话并清除中继连接密钥及节点缓存；账户凭据与日志保留。然后重新加入可信 Hub 或中继并启动服务。TLS 私钥也丢失时，停止服务后执行 `vibeterm tls reset`，或在身份重置时显式加 `--reset-tls`，直接清除不可解密的 TLS 材料，再通过本地 HTTP 登录重新配置 HTTPS。TTY 必须输入完整 `yes`，非 TTY 必须加 `--yes`；身份重置默认保留 TLS 配置。详见 [主密钥排障](./troubleshooting-db-master-key.md)。
 
 ### 日志分叉诊断
 

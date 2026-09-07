@@ -505,7 +505,8 @@ export class RelayUplinkServer implements RelayUplinkHost {
       return;
     }
     // 只跑数据流的链路从不进 dispatchAuthenticated，宽限到期只能靠这一拍收掉
-    if (!this.revalidate(live)) return;
+    const tenant = this.revalidate(live);
+    if (!tenant) return;
     if (live.awaitingPong) {
       if (live.byteFlowSeq !== live.pingByteFlowSeq) {
         live.misses = 0;
@@ -520,7 +521,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     }
     live.awaitingPong = true;
     noteRelayPing(live, this.now());
-    this.send(live.link, { t: 'ping' });
+    this.send(live.link, { t: 'ping', token_rotated: live.tokenHash !== tenant.tokenHash });
   }
 
   private clearHeartbeat(live: RelayLiveNode): void {

@@ -18,7 +18,7 @@ function apply(sqlite: Database, name: string) {
 }
 
 describe('0055 relay token ring migration', () => {
-  test('迁移保留单槽原始时间，读取兼容空新列，空环或损坏环不复活旧令牌', () => {
+  test('迁移保留单槽原始时间，空新列或旧版修改后的空环回退单槽，损坏环不复活令牌', () => {
     const sqlite = new Database(':memory:');
     try {
       for (const name of readdirSync(folder)
@@ -39,7 +39,9 @@ describe('0055 relay token ring migration', () => {
       );
       sqlite.run('UPDATE relay_tenants SET previous_tokens_json = NULL');
       expect(store.get('tenant')?.previousTokens).toEqual([{ hash: 'previous', issued_at: 10 }]);
-      for (const value of ['[]', '{broken', '{}']) {
+      sqlite.run("UPDATE relay_tenants SET previous_tokens_json = '[]'");
+      expect(store.get('tenant')?.previousTokens).toEqual([{ hash: 'previous', issued_at: 10 }]);
+      for (const value of ['{broken', '{}']) {
         sqlite.run('UPDATE relay_tenants SET previous_tokens_json = ?', [value]);
         expect(store.get('tenant')?.previousTokens).toEqual([]);
       }
@@ -50,4 +52,71 @@ describe('0055 relay token ring migration', () => {
       sqlite.close();
     }
   });
+});
+
+describe('relay token ring downgrade compatibility', () => {
+  test.each(['kick/recover', 'reissue', 'timestamp'] as const)(
+    '新版 → 旧版 %s → 新版以旧单槽为准',
+    (operation) => {
+      const sqlite = new Database(':memory:');
+      try {
+        for (const name of readdirSync(folder)
+          .filter((name) => name.endsWith('.sql') && name <= migration)
+          .sort()) {
+          apply(sqlite, name);
+        }
+        const store = new RelayTenantStore(drizzle(sqlite, { schema }));
+        store.create({
+          id: 'tenant',
+          rootPublicKey: new Uint8Array(32),
+          rootEpoch: 0,
+          tokenHash: 'T0',
+          tokenEpoch: 0,
+          now: 1,
+        });
+        store.reissueToken({
+          tenantId: 'tenant',
+          tokenHash: 'T1',
+          tokenEpoch: 0,
+          keepPrevious: true,
+          now: 10,
+        });
+        if (operation === 'kick/recover') {
+          sqlite.run(`UPDATE relay_tenants SET token_hash = 'T2', kicked = 0,
+            prev_token_hash = NULL, prev_token_issued_at = NULL`);
+        } else if (operation === 'reissue') {
+          sqlite.run(`UPDATE relay_tenants SET token_hash = 'T2',
+            prev_token_hash = 'T1', prev_token_issued_at = 20`);
+        } else {
+          sqlite.run('UPDATE relay_tenants SET prev_token_issued_at = 5');
+        }
+        const tenant = store.get('tenant');
+        if (!tenant) throw new Error('missing tenant');
+        expect(tenant.previousTokens).toEqual(
+          operation === 'kick/recover'
+            ? []
+            : [
+                {
+                  hash: operation === 'reissue' ? 'T1' : 'T0',
+                  issued_at: operation === 'reissue' ? 20 : 5,
+                },
+              ]
+        );
+        expect(relayTokenHashAccepted(tenant, 'T0', RELAY_PREV_TOKEN_GRACE_MS + 6)).toBe(false);
+        if (operation === 'reissue') expect(relayTokenHashAccepted(tenant, 'T1', 30)).toBe(true);
+        store.reissueToken({
+          tenantId: 'tenant',
+          tokenHash: 'T3',
+          tokenEpoch: 0,
+          keepPrevious: true,
+          now: RELAY_PREV_TOKEN_GRACE_MS + 6,
+        });
+        const latest = store.get('tenant');
+        if (!latest) throw new Error('missing tenant');
+        expect(relayTokenHashAccepted(latest, 'T0', RELAY_PREV_TOKEN_GRACE_MS + 6)).toBe(false);
+      } finally {
+        sqlite.close();
+      }
+    }
+  );
 });

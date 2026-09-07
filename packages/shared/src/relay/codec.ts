@@ -113,8 +113,8 @@ export type RelayCtlMessage =
       rtc: RelayRtcConfig;
       token_rotated?: boolean;
     }
-  | { t: 'ping' }
-  | { t: 'pong' }
+  | { t: 'ping'; token_rotated?: boolean }
+  | { t: 'pong'; token_rotated?: boolean }
   | { t: 'relay.status'; blob: RelayEnvelope; epoch: number }
   | {
       t: 'relay.list';
@@ -433,6 +433,11 @@ function parsePage(obj: Record<string, unknown>, t: 'relay.keylog.res' | 'relay.
   } as RelayCtlMessage;
 }
 
+function parseHeartbeat(t: 'ping' | 'pong', obj: Record<string, unknown>): RelayCtlMessage {
+  const tokenRotated = optBool(obj, 'token_rotated');
+  return { t, ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}) };
+}
+
 type RelayCtlParser = (obj: Record<string, unknown>) => RelayCtlMessage;
 
 const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
@@ -448,8 +453,8 @@ const PARSERS: Record<RelayCtlType, RelayCtlParser> = {
       ...(tokenRotated !== undefined ? { token_rotated: tokenRotated } : {}),
     };
   },
-  ping: () => ({ t: 'ping' }),
-  pong: () => ({ t: 'pong' }),
+  ping: (obj) => parseHeartbeat('ping', obj),
+  pong: (obj) => parseHeartbeat('pong', obj),
   'relay.status': (obj) => ({
     t: 'relay.status',
     blob: envelope(obj, 'blob'),

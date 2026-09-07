@@ -160,11 +160,19 @@ function parsePackUploadBody(
 }
 
 function packStoreResponse(
-  stored: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized'
+  stored:
+    | 'ok'
+    | 'not_found'
+    | 'epoch'
+    | 'head_ahead'
+    | 'kicked'
+    | 'unauthorized'
+    | 'token_not_current'
 ): Response {
   if (stored === 'not_found') return relayError(RelayErrorCode.tenantNotFound, 404);
   if (stored === 'kicked') return relayError(RelayErrorCode.tenantKicked, 401);
   if (stored === 'unauthorized') return relayError(RelayErrorCode.tokenInvalid, 401);
+  if (stored === 'token_not_current') return relayError(RelayErrorCode.tokenNotCurrent, 409);
   if (stored === 'epoch') return relayError(RelayErrorCode.packEpoch, 409);
   if (stored === 'head_ahead') return relayError(RelayErrorCode.packHeadAhead, 409);
   return relayJson({ ok: true });

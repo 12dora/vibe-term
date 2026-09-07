@@ -14,7 +14,7 @@
 |---|---|---|
 | `node_identity.private_key`、`x25519_private_key` | 节点身份无法装载，mesh 停用 | 本机执行 `vibeterm mesh reset-identity`，然后重新加入 Hub／中继 |
 | `mesh_relays.token_enc`、`mesh_secrets.key_enc` | 中继令牌及加密日志密钥不可用 | 用账户密码与有效密封包重新加入中继；密封包过期时先在可操作节点完成中继 reauth／重新封装 |
-| TLS CA、叶子证书、ACME 账户与 DNS 凭据 | HTTPS 监听或续签不可用 | 恢复私钥或从本地 HTTP 重新配置 HTTPS；重建 CA 会影响全部 pin，先安排逐节点恢复 |
+| TLS CA、叶子证书、ACME 账户与 DNS 凭据 | HTTPS 监听或续签不可用 | 本机执行 `vibeterm tls reset` 清除旧材料，再通过本地 HTTP 重新配置 HTTPS；重建 CA 会影响全部 pin，先安排逐节点恢复 |
 | Telegram Bot Token | 对应机器人不启动 | 在设置中重新填写 token |
 | SSH 密码／私钥等设备认证 | 对应设备连接失败 | 重新填写凭据 |
 
@@ -36,7 +36,23 @@ vibeterm mesh reset-identity
 
 命令在变更前显示影响并要求输入完整 `yes`；脚本执行须显式加 `--yes`。它保留账户根钥、通行密钥、TOTP 与日志，生成新节点身份，清除本地中继连接密钥与节点缓存，撤销本机会话。须重新加入可信 Hub／中继，随后启动服务；在可信入口吊销原节点身份。命令不会自动删除 TLS 配置或轮换 CA。
 
-如果 `VIBETERM_MASTER_KEY` 自身缺失或格式非法，先在本机配置有效的新密钥，再重建身份；新密钥无法解密旧密文。TLS 密钥同样丢失时，使用保留的本地 HTTP 登录重新配置 HTTPS。自签名 CA 变更前务必保留各节点的 OS 访问路径，并按 [mesh 运维](./mesh-operations.md) 执行 `hub ca fingerprint`／`hub trust refresh`。
+如果 `VIBETERM_MASTER_KEY` 自身缺失或格式非法，先在本机配置有效的新密钥，再重建身份；新密钥无法解密旧密文。
+
+### TLS 密钥同时丢失
+
+普通 HTTPS 配置更新会先解密旧私密材料，因此不能直接用它替换不可解密的配置。停止该安装的服务后，在有权读取该安装 `app.env` 和数据库的本机终端执行：
+
+```bash
+vibeterm tls reset
+# 若节点身份也需重建，可用一条命令完成同一事务中的两项重置：
+vibeterm mesh reset-identity --reset-tls
+```
+
+以上为两种选择，无需重复执行。TTY 下必须输入完整 `yes`，即使传入 `--yes` 也不会跳过；非交互脚本必须显式加 `--yes`。TLS 重置直接原子删除 TLS 单例，不解密旧字段，清除 CA、叶子证书、ACME 账户及 DNS 凭据。随后启动服务，通过本地 HTTP 登录，在 HTTPS 设置中重新生成自签名证书、导入外部证书或配置 ACME；ACME 账户及 DNS 凭据须重新填写。
+
+若当前模式为自签名且需要保留端口与 SAN，可在服务停止时执行 `vibeterm hub ca rotate`（非交互加 `--yes`）。此命令先生成并加密新材料，再原子替换 CA 和叶子字段，同时清除停用的 ACME 账户、账户地址及 DNS 凭据，无需解密任何旧 TLS 私密材料，避免坏 ACME 密文继续阻断自签名监听。以后切换 ACME 时须重新填写凭据。
+
+自签名 CA 变更前务必保留各节点的 OS 访问路径，并按 [mesh 运维](./mesh-operations.md) 执行 `hub ca fingerprint`／`hub trust refresh`。
 
 `mesh reset-root` 会重建账户根钥，而且仍需读取节点身份，不能代替失钥时的 `mesh reset-identity`。仅在账户本身必须重建或日志已分叉时使用前者。
 

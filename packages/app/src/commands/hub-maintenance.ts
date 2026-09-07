@@ -68,9 +68,8 @@ export async function runHubCaRotate(parsed: ParsedArgs, io: HubIo = {}): Promis
   const { confirmDestructiveReset } = await import('../lib/hub-user-passwd');
   await confirmDestructiveReset(parsed, io, t('hub.ca.rotateWarning'));
   return await withAuth(parsed, io, async (ctx) => {
-    const { TlsConfigStore } = await import('../../../../apps/gateway/src/tls/tls-config-store');
-    const { rotateSelfSignedCa } = await import('../tls/tls-service');
-    await rotateSelfSignedCa(new TlsConfigStore(ctx.db), { now: nowMs(io) });
+    const { rotateStoredSelfSignedCa } = await import('../tls/tls-recovery');
+    await rotateStoredSelfSignedCa(ctx.db, nowMs(io));
     const fingerprint = await runHubCaFingerprint(parsed, { ...io, auth: ctx });
     log(io, t('hub.ca.rotateDone', { fingerprint }));
     return fingerprint;

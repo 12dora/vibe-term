@@ -1,4 +1,7 @@
 export const zhCN: Record<string, string> = {
+  'tls.reset.warning':
+    '此操作将直接删除全部本机 TLS 证书、私钥、ACME 账户及 DNS 凭据，无需解密旧材料。请先停止服务；之后须重新配置 HTTPS，新 CA 需要逐台更新成员的信任固定值。',
+  'tls.reset.done': 'TLS 配置已清除。请启动服务，通过本地 HTTP 登录并重新配置 HTTPS。',
   'mesh.reset.warning': '此操作将清除所有通行密钥和 TOTP、撤销全部会话，并清空中继密封包。',
   'mesh.reset.confirm': '输入 yes 以继续',
   'mesh.reset.requiresYes': '非交互模式必须显式传入 --yes。',
@@ -15,7 +18,7 @@ export const zhCN: Record<string, string> = {
     '重启 VibeTerm 后种子地址生效。VIBETERM_HUB_URL 保持不变；全部成员迁移前应保留旧地址可访问。',
   'hub.trust.restartHint': '重启 VibeTerm，以新 CA 固定值重新连接。',
   'hub.ca.rotateWarning':
-    '警告：CA 轮换将断开所有固定旧 CA 的节点。继续前须确保可以在各成员上操作本机终端；轮换后须逐台执行 vibeterm hub trust refresh 并核对新指纹。',
+    '警告：CA 轮换将断开所有固定旧 CA 的节点，并清除停用的 ACME 账户及 DNS 凭据。继续前须确保可以在各成员上操作本机终端；轮换后须逐台执行 vibeterm hub trust refresh 并核对新指纹。',
   'hub.ca.rotateDone':
     'CA 已轮换。重启 Hub 后，在各成员上执行：vibeterm hub trust refresh <hubUrl> --fingerprint {{fingerprint}}，随后重启该成员。',
 
@@ -275,6 +278,8 @@ export const zhCN: Record<string, string> = {
   'relay.enroll.readmitPending': '接入后仍有 {{count}} 个成员待重新确认，已中止 set-relays',
   'relay.enroll.done': '已接入中继 {{url}}（租户 {{tenantId}}）',
   'relay.enroll.pending': 'set-relays 已提交，但中继尚未挂上：{{url}} {{error}}',
+  'relay.pack.tokenNotCurrent':
+    '中继密封包上传需要当前令牌。请先在持有当前令牌的节点运行 vibeterm relay resend-token，或在本节点通过密码加入，再重试 vibeterm relay pack upload。',
   'relay.pack.materialMissing': '当前中继令牌或加密密钥不可用。',
   'relay.pack.failed': '中继密封包上传失败：{{reason}} 重试：{{command}}',
   'relay.pack.done': '已上传当前中继密封包。',

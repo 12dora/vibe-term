@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildKeyLogRecord,
+  computeRecordHash,
+  decodeKeyLogRecord,
   encodeBase64url,
   encodeKeyLogRecord,
   signKeyLogRecordWithRoot,
@@ -98,6 +100,67 @@ async function boot(publisher: AuthKeyLogPublisher) {
 }
 
 describe('relay append acknowledgement', () => {
+  for (const error of ['timeout', 'SEQ_MISMATCH']) {
+    test(`lost ACK ${error} is confirmed only by identical remote bytes and signature`, async () => {
+      let remote: { bytes: Uint8Array; sig: Uint8Array } | null = null;
+      let readable = false;
+      const b = await boot({
+        publish: () => {},
+        publishAndAck: async (record) => {
+          remote ??= record;
+          return { ok: false, error };
+        },
+        queryKeyLogAt: async (seq) => {
+          expect(seq).toBe(decodeKeyLogRecord(remote!.bytes).seq);
+          return readable ? remote : null;
+        },
+      });
+      try {
+        await b.post();
+        const record = b.sign();
+        expect(await (await b.post(record)).json()).toMatchObject({ relayAck: false });
+        const head = b.head();
+        readable = true;
+        expect(await (await b.post(record)).json()).toMatchObject({ relayAck: true });
+        expect(b.head()).toBe(head);
+      } finally {
+        b.close();
+      }
+    });
+  }
+
+  for (const changed of ['bytes', 'sig', 'unavailable'] as const) {
+    test(`relay retry rejects ${changed} remote record even if head hash matches`, async () => {
+      let sent: { bytes: Uint8Array; sig: Uint8Array };
+      const b = await boot({
+        publish: () => {},
+        publishAndAck: async (record) => {
+          sent = record;
+          return { ok: false, error: 'SEQ_MISMATCH' };
+        },
+        queryKeyLogAt: async () => {
+          if (changed === 'unavailable') throw new Error('timeout');
+          const remote = { bytes: sent.bytes.slice(), sig: sent.sig.slice() };
+          remote[changed][0] ^= 1;
+          return remote;
+        },
+        queryHubHead: async () => ({
+          seq: decodeKeyLogRecord(sent.bytes).seq,
+          hash: computeRecordHash(sent.bytes, sent.sig),
+        }),
+      });
+      try {
+        await b.post();
+        expect(await (await b.post()).json()).toMatchObject({
+          relayAck: false,
+          relayError: 'SEQ_MISMATCH',
+        });
+      } finally {
+        b.close();
+      }
+    });
+  }
+
   test('first enrollment reports no relay publication and does not publish to the old hub', async () => {
     let calls = 0;
     const b = await boot({

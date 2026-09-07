@@ -1,4 +1,8 @@
 export const en: Record<string, string> = {
+  'tls.reset.warning':
+    'This deletes all local TLS certificates, private keys, ACME account and DNS credentials without decrypting them. Stop the service first; HTTPS must be configured again and a new CA requires refreshing member trust pins.',
+  'tls.reset.done':
+    'TLS configuration cleared. Start the service, log in through local HTTP and configure HTTPS again.',
   'mesh.reset.warning':
     'This clears all passkeys and TOTP, revokes all sessions, and clears the relay pack.',
   'mesh.reset.confirm': 'Type yes to continue',
@@ -17,7 +21,7 @@ export const en: Record<string, string> = {
     'Restart VibeTerm to apply the seed URLs. VIBETERM_HUB_URL is unchanged; keep the old URL reachable until all members migrate.',
   'hub.trust.restartHint': 'Restart VibeTerm to reconnect with the new CA pin.',
   'hub.ca.rotateWarning':
-    'WARNING: CA rotation disconnects every node pinned to the old CA. Arrange local OS access to all members before continuing; each must run vibeterm hub trust refresh with the new fingerprint.',
+    'WARNING: CA rotation disconnects every node pinned to the old CA and clears inactive ACME account and DNS credentials. Arrange local OS access to all members before continuing; each must run vibeterm hub trust refresh with the new fingerprint.',
   'hub.ca.rotateDone':
     'CA rotated. Restart the hub, then on each member run: vibeterm hub trust refresh <hubUrl> --fingerprint {{fingerprint}}. Restart each member afterwards.',
 
@@ -303,6 +307,8 @@ export const en: Record<string, string> = {
   'relay.enroll.done': 'attached to relay {{url}} (tenant {{tenantId}})',
   'relay.enroll.pending':
     'set-relays was accepted but the relay is not attached yet: {{url}} {{error}}',
+  'relay.pack.tokenNotCurrent':
+    'Relay pack upload requires the current token. First run vibeterm relay resend-token on a node with the current token, or join with your password on this node; then retry vibeterm relay pack upload.',
   'relay.pack.materialMissing': 'Current relay token or encryption keys are unavailable.',
   'relay.pack.failed': 'Relay pack upload failed: {{reason}} Retry: {{command}}',
   'relay.pack.done': 'Current sealed relay packs uploaded.',

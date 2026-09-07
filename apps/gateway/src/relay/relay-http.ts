@@ -8,6 +8,7 @@ export const RelayErrorCode = {
   rateLimited: 'RELAY_RATE_LIMITED',
   badProof: 'RELAY_BAD_PROOF',
   tokenInvalid: 'RELAY_TOKEN_INVALID',
+  tokenNotCurrent: 'RELAY_TOKEN_NOT_CURRENT',
   tenantKicked: 'RELAY_TENANT_KICKED',
   membersOffline: 'relay_members_offline',
   tenantNotFound: 'RELAY_TENANT_NOT_FOUND',

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   buildKeyLogRecord,
+  computeRecordHash,
   encodeAdmitNodePayload,
   encodeBase64url,
   encodeKeyLogRecord,
@@ -195,6 +196,37 @@ describe('relay key log blob', () => {
 });
 
 describe('RelayKeyLogSync', () => {
+  test('head query decrypts the announced relay sequence and hashes bytes plus signature', async () => {
+    const h = harness(3n);
+    h.sync.noteRemoteHead(3n);
+    const pending = h.sync.queryHead();
+    await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+    const record = { bytes: totpRecordBytes(3n), sig: randomBytes(64) };
+    h.sync.handleRes({
+      t: 'relay.keylog.res',
+      records: [{ seq: 3, blob: await sealRelayKeyLogRecord(LOG_KEY, record) }],
+    });
+    expect(await pending).toEqual({ seq: 3n, hash: computeRecordHash(record.bytes, record.sig) });
+  });
+
+  for (const invalid of ['wrong-key', 'wrong-sequence', 'missing'] as const) {
+    test(`head query refuses ${invalid} relay record`, async () => {
+      const h = harness(3n);
+      h.sync.noteRemoteHead(3n);
+      const pending = h.sync.queryHead();
+      await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+      const blob = await sealRelayKeyLogRecord(
+        invalid === 'wrong-key' ? generateTenantKey() : LOG_KEY,
+        { bytes: totpRecordBytes(invalid === 'wrong-sequence' ? 2n : 3n), sig: randomBytes(64) }
+      );
+      h.sync.handleRes({
+        t: 'relay.keylog.res',
+        records: invalid === 'missing' ? [] : [{ seq: 3, blob }],
+      });
+      expect(await pending).toBeNull();
+    });
+  }
+
   test('本地落后时按页拉取、解密并应用', async () => {
     const h = harness(1n);
     h.sync.noteRemoteHead(3n);

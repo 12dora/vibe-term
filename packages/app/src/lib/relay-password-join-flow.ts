@@ -367,7 +367,7 @@ export async function joinSelfAdmitAndPersist(input: {
     records: log.records,
     expectedRootPublicKey: input.pack.rootKey.publicKey,
     anchorHash: input.pack.pack.head_hash,
-    username: log.genesisUid,
+    username: input.auth.userStore.getById(log.genesisUid)?.username ?? log.genesisUid,
     expectedUserId: log.genesisUid,
     identity: {
       nodeId: identity.nodeIdHex,

@@ -683,7 +683,7 @@ export class TlsService {
 }
 
 export async function rotateSelfSignedCa(
-  store: TlsConfigStore,
+  store: Pick<TlsConfigStore, 'get' | 'upsert'>,
   options: { now?: number } = {}
 ): Promise<{ fingerprint: string }> {
   const row = await store.get();

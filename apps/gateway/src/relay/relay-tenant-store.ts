@@ -8,6 +8,7 @@ import {
   RELAY_PREV_TOKEN_LIMIT,
   relayPreviousTokens,
   relayTokenHashAccepted,
+  relayTokenHashState,
 } from './relay-token-grace';
 import type {
   RelayEnrollmentRecord,
@@ -25,7 +26,7 @@ function readPreviousTokens(row: TenantRow) {
   try {
     const parsed: unknown = JSON.parse(row.previousTokensJson);
     if (!Array.isArray(parsed)) return [];
-    return parsed
+    const ring = parsed
       .filter(
         (entry) =>
           entry &&
@@ -35,6 +36,11 @@ function readPreviousTokens(row: TenantRow) {
       )
       .slice(0, RELAY_PREV_TOKEN_LIMIT)
       .map((entry) => ({ hash: entry.hash as string, issued_at: entry.issued_at as number }));
+    const newest = ring[0];
+    if (newest?.hash !== row.prevTokenHash || newest?.issued_at !== row.prevTokenIssuedAt) {
+      return relayPreviousTokens(row);
+    }
+    return ring;
   } catch {
     return [];
   }
@@ -242,9 +248,22 @@ export class RelayTenantStore {
     tokenHash: string;
     minTokenEpoch: number;
     now: number;
-  }): 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' {
-    let result: 'ok' | 'not_found' | 'epoch' | 'head_ahead' | 'kicked' | 'unauthorized' =
-      'not_found';
+  }):
+    | 'ok'
+    | 'not_found'
+    | 'epoch'
+    | 'head_ahead'
+    | 'kicked'
+    | 'unauthorized'
+    | 'token_not_current' {
+    let result:
+      | 'ok'
+      | 'not_found'
+      | 'epoch'
+      | 'head_ahead'
+      | 'kicked'
+      | 'unauthorized'
+      | 'token_not_current' = 'not_found';
     this.db.transaction(() => {
       const row = this.db
         .select()
@@ -264,6 +283,10 @@ export class RelayTenantStore {
         row.tokenEpoch < input.minTokenEpoch
       ) {
         result = 'unauthorized';
+        return;
+      }
+      if (relayTokenHashState(toTenant(row), input.tokenHash, input.now) !== 'current') {
+        result = 'token_not_current';
         return;
       }
       if (row.rootEpoch !== input.expectedRootEpoch) {

@@ -106,6 +106,19 @@ describe('relay ctl 编解码', () => {
     );
   });
 
+  it('ping/pong 的 token_rotated 可选，保留布尔值并拒绝错误类型', () => {
+    for (const t of ['ping', 'pong'] as const) {
+      expect(decodeRelayCtl(encodeRelayCtl({ t }))).toEqual({ t });
+      for (const token_rotated of [false, true]) {
+        const msg = { t, token_rotated };
+        expect(decodeRelayCtl(encodeRelayCtl(msg))).toEqual(msg);
+      }
+      expect(() => decodeRelayCtl(JSON.stringify({ t, token_rotated: 'true' }))).toThrow(
+        RelayCtlError
+      );
+    }
+  });
+
   it('接受字符串输入并丢弃未知字段', () => {
     const wire = JSON.stringify({ t: 'ping', extra: 'x' });
     expect(decodeRelayCtl(wire)).toEqual({ t: 'ping' });

@@ -244,6 +244,37 @@ describe('RelayUplinkClient', () => {
     });
   }
 
+  test.each(['ping', 'pong'] as const)('%s 通知在线成员等待令牌，缺省字段兼容旧中继', async (t) => {
+    const b = await bootRelayNode();
+    fixtures.push({ close: b.close });
+    const [clientWs, serverWs] = fakeSocketPair();
+    const server = fakeRelayServer(new WebSocketLink(serverWs, { role: 'acceptor' }), 2);
+    const client = new RelayUplinkClient({
+      hubUrl: RELAY_URL,
+      identity: { nodeId: b.identity.nodeIdHex, edSecretKey: b.identity.edPrivateKey },
+      userId: () => b.user.userId,
+      keyLogApplier: noopApplier(2n),
+      userStore: b.userStore,
+      secrets: b.secrets,
+      statusProvider: status,
+      wsFactory: () => clientWs,
+    });
+    fixtures.push({ close: () => {}, stop: () => client.stop() });
+    const connecting = client.attemptConnect();
+    await waitUntil(() => client.link !== null);
+    server.send({ t: 'auth.challenge', nonce: encodeBase64url(randomBytes(32)) });
+    await connecting;
+    expect(client.awaitingToken).toBe(false);
+    server.send({ t, token_rotated: true });
+    await waitUntil(() => client.awaitingToken);
+    server.send({ t });
+    server.send({ t, token_rotated: false });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(client.awaitingToken).toBe(true);
+    expect(client.state).toBe('online');
+    expect(client.isAuthenticated()).toBe(true);
+  });
+
   test('relay.list 解密对端状态块写 peer_cache，并产出 node.list 形状', async () => {
     const b = await bootRelayNode();
     fixtures.push({ close: b.close });

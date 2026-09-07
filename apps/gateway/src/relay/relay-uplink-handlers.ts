@@ -35,7 +35,7 @@ export function dispatchRelayAuthedCtl(
 ): void {
   switch (msg.t) {
     case 'ping':
-      host.send(live.link, { t: 'pong' });
+      host.send(live.link, { t: 'pong', token_rotated: live.tokenHash !== tenant.tokenHash });
       return;
     case 'pong':
       noteRelayPong(live, host.now());

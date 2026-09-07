@@ -18,6 +18,7 @@ const relay = async () => await import('./commands/relay');
 const relayAdmin = async () => await import('./commands/relay-admin');
 
 const HANDLERS: Partial<Record<NestedCommandName, AuthHandler>> = {
+  'tls.reset': async (p) => await (await import('./commands/tls')).runTlsReset(p),
   'hub.user.add': async (p, n) => await (await hub()).runHubUserAdd(p, n.rest[0] ?? ''),
   'hub.user.passwd': async (p, n) => await (await hub()).runHubUserPasswd(p, n.rest[0] ?? ''),
   'hub.user.totp': async (p, n) => await (await hub()).runHubUserTotp(p, n.rest[0] ?? ''),

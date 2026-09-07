@@ -7,6 +7,7 @@ import { confirmDestructiveReset } from '../lib/hub-user-passwd';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/password';
 import { isStandaloneRoles, parseVibeTermRoles } from '../lib/roles';
 import { fingerprintPublicKey } from '../lib/totp-uri';
+import { resetTlsConfig } from '../tls/tls-recovery';
 import type { ParsedArgs } from '../types';
 import type { HubIo } from './hub';
 import { withAuth } from './with-auth';
@@ -103,7 +104,9 @@ export async function runMeshResetIdentity(
   parsed: ParsedArgs,
   io: HubIo = {}
 ): Promise<{ nodeId: string }> {
-  await confirmDestructiveReset(parsed, io, t('mesh.identity.warning'));
+  const resetTls = parsed.flags['reset-tls'] === true;
+  const warning = [t('mesh.identity.warning'), ...(resetTls ? [t('tls.reset.warning')] : [])];
+  await confirmDestructiveReset(parsed, io, warning.join('\n'));
   return await withAuth(parsed, io, async (ctx) => {
     const { nodeIdentity, meshRelays, meshSecrets, peerCache, meshHubs, nodeSessions } =
       await import('../../../../apps/gateway/src/db/schema');
@@ -136,7 +139,9 @@ export async function runMeshResetIdentity(
         tx.delete(peerCache).run();
         tx.delete(meshHubs).run();
         tx.delete(nodeSessions).run();
+        if (resetTls) resetTlsConfig(tx);
       });
+      if (resetTls) log(io, t('tls.reset.done'));
       log(io, t('mesh.identity.done', { nodeId }));
       return { nodeId };
     } finally {

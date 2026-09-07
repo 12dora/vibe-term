@@ -640,6 +640,23 @@ describe('relay pack upload', () => {
     }
   );
 
+  test('stale token pack rejection tells the operator to catch up before retrying', async () => {
+    const auth = await openAuth();
+    const logs: string[] = [];
+    const { fetcher } = fakeGateway(auth, {
+      pack: () =>
+        new Response(JSON.stringify({ error: { code: 'RELAY_TOKEN_NOT_CURRENT' } }), {
+          status: 409,
+        }),
+    });
+    await expect(
+      runRelayPackUpload(parseArgs(['relay', 'pack', 'upload']), io(auth, fetcher, logs))
+    ).rejects.toThrow(
+      'First run vibeterm relay resend-token on a node with the current token, or join with your password on this node'
+    );
+    expect(logs).toEqual([]);
+  });
+
   test('pack-only retry also fails when upload fails', async () => {
     const auth = await openAuth();
     const { fetcher } = fakeGateway(auth, { pack: () => new Response('{}', { status: 503 }) });

@@ -261,6 +261,9 @@ async function uploadRequiredRelayPack(
     });
     if (!uploaded) throw new Error(t('relay.pack.materialMissing'));
   } catch (error) {
+    if (error instanceof RelayApiError && error.code === 'RELAY_TOKEN_NOT_CURRENT') {
+      throw new Error(t('relay.pack.tokenNotCurrent'));
+    }
     throw new Error(
       t('relay.pack.failed', {
         reason: (error instanceof RelayApiError

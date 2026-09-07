@@ -46,7 +46,18 @@ describe('relay token reissue', () => {
 
     // 新令牌还在密钥日志里没送到成员手上，旧链路必须继续活着
     client.send({ t: 'ping' });
-    expect((await client.inbox.takeOf('pong')).t).toBe('pong');
+    expect(await client.inbox.takeOf('pong')).toEqual({ t: 'pong', token_rotated: true });
+  });
+
+  test('在线成员通过服务端心跳获知令牌换代，无需重连', async () => {
+    const relay = await boot({ heartbeatIntervalMs: 5, heartbeatMissLimit: 1_000 });
+    const tenant = await relay.createTenant();
+    const client = await tenant.connect(tenant.addNode());
+    await client.inbox.takeOf('auth.ok');
+    expect(await client.inbox.takeOf('ping')).toEqual({ t: 'ping', token_rotated: false });
+    await enrollRelayRoot(relay, tenant.root);
+    client.send({ t: 'pong' });
+    expect(await client.inbox.takeOf('ping')).toEqual({ t: 'ping', token_rotated: true });
   });
 
   test('三次换发仍允许最初令牌重新连接与开流，第四次淘汰最老代', async () => {

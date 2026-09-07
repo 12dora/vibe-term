@@ -6,13 +6,14 @@ import type { LocalAuthContext } from './local-auth';
 import { probeAddressForCli, probeNotFoundMessage } from './probe-address';
 import { RelayCaError, fetchPinnedRelayCa, pinRelayCa } from './relay-ca';
 import {
+  type JoinLogPhase,
   RelayPasswordJoinError,
   joinDownloadVerifyReplay,
   joinKdfProofAndPack,
   joinSelfAdmitAndPersist,
   joinUploadAndEnv,
 } from './relay-password-join-flow';
-import { rekeyRelayToken } from './relay-token-rekey';
+import { assertRekeyAccount, rekeyRelayToken } from './relay-token-rekey';
 
 export { RelayPasswordJoinError } from './relay-password-join-flow';
 
@@ -142,10 +143,10 @@ function wrapJoinError(error: unknown): RelayPasswordJoinError {
   return wrapRelayPasswordJoinError(error);
 }
 
-async function resolveJoinMode(ctx: LocalAuthContext): Promise<JoinMode> {
+async function localJoinUser(ctx: LocalAuthContext): Promise<string | null> {
   const users = ctx.userStore.listUsers();
   const identity = await ctx.identityStore.load();
-  if (users.length === 0 && !identity?.userId) return { kind: 'join' };
+  if (users.length === 0 && !identity?.userId) return null;
   const only = users.length === 1 ? users[0] : undefined;
   if (!only || (identity?.userId && identity.userId !== only.id)) {
     throw new RelayPasswordJoinError(
@@ -153,7 +154,19 @@ async function resolveJoinMode(ctx: LocalAuthContext): Promise<JoinMode> {
       'this machine already has a mesh user; password join refuses to overwrite it'
     );
   }
-  return { kind: 'rekey', userId: only.id };
+  return only.id;
+}
+
+async function resolveJoinMode(
+  ctx: LocalAuthContext,
+  userId: string | null,
+  log: JoinLogPhase
+): Promise<JoinMode> {
+  if (!userId) return { kind: 'join' };
+  assertRekeyAccount(ctx, userId, log);
+  const identity = await ctx.identityStore.load();
+  const member = identity ? log.state.nodeCerts.get(identity.nodeId) : undefined;
+  return member && !member.revoked ? { kind: 'rekey', userId } : { kind: 'join' };
 }
 
 async function pinnedFetcher(input: {
@@ -182,7 +195,7 @@ export async function performRelayPasswordJoin(
   input: RelayPasswordJoinInput,
   deps: RelayPasswordJoinDeps
 ): Promise<RelayPasswordJoinResult> {
-  const mode = await resolveJoinMode(deps.auth);
+  const localUserId = await localJoinUser(deps.auth);
   const relayUrl = await resolveJoinRelayPort(input.relayUrl, deps);
   const tenantId = input.tenantId.trim().toLowerCase();
   const { fetcher, pin } = await pinnedFetcher({
@@ -202,6 +215,7 @@ export async function performRelayPasswordJoin(
     });
     await deps.afterUnpack?.(pack);
     const log = await joinDownloadVerifyReplay(transport, pack);
+    const mode = await resolveJoinMode(deps.auth, localUserId, log);
     if (mode.kind === 'rekey') {
       const done = await rekeyRelayToken({
         auth: deps.auth,

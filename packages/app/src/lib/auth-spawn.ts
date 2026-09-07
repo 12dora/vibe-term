@@ -34,6 +34,7 @@ export const AUTH_COMMANDS = new Set([
   'hub.urls.add',
   'hub.urls.remove',
   'mesh.reset-identity',
+  'tls.reset',
   'mesh.keylog.status',
   'mesh.reset-root',
   'mesh.passkey.remove-all',

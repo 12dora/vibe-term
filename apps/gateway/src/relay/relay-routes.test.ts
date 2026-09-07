@@ -7,7 +7,12 @@ import {
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
 import { sealRelayPack, signRelayEnrollProof } from '@vibeterm/shared/relay';
-import { RELAY_TEST_PUBLIC_URL, type RelayHarness, bootRelayHarness } from './relay-test-harness';
+import {
+  RELAY_TEST_PUBLIC_URL,
+  type RelayHarness,
+  bootRelayHarness,
+  enrollRelayRoot,
+} from './relay-test-harness';
 
 const RELAY_HOST = new URL(RELAY_TEST_PUBLIC_URL).host;
 
@@ -562,6 +567,24 @@ describe('relay password pack', () => {
     expect(((await res.json()) as { error: { code: string } }).error.code).toBe(
       'RELAY_TENANT_KICKED'
     );
+  });
+
+  test('宽限令牌不能覆盖当前密封包，但仍可读取日志', async () => {
+    const relay = await boot();
+    const tenant = await relay.createTenant();
+    const rotated = await enrollRelayRoot(relay, tenant.root);
+    if (!rotated.token) throw new Error('missing current token');
+    expect((await uploadPack(relay, { ...tenant, token: rotated.token })).status).toBe(200);
+    const currentPack = relay.runtime.tenants.get(tenant.id)?.sealedPack;
+    const stale = await uploadPack(relay, tenant);
+    expect(stale.status).toBe(409);
+    expect(((await stale.json()) as { error: { code: string } }).error.code).toBe(
+      'RELAY_TOKEN_NOT_CURRENT'
+    );
+    expect(relay.runtime.tenants.get(tenant.id)?.sealedPack).toEqual(currentPack);
+    expect(
+      (await relay.tenantFetch(`/api/relay/tenants/${tenant.id}/keylog`, tenant.token)).status
+    ).toBe(200);
   });
 
   test('pack upload rejects a head the relay does not have and a stale root_epoch', async () => {

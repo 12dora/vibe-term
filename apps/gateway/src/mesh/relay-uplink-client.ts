@@ -361,8 +361,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
-    // 中继只记 seq，没有链哈希；调用方用 queryKeyLogAt 判定重复。
-    return null;
+    return this.keyLog.queryHead();
   }
 
   async queryKeyLogAt(seq: bigint): Promise<{ bytes: Uint8Array; sig: Uint8Array } | null> {
@@ -505,10 +504,16 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       return;
     }
     if (msg.t === 'pong') {
+      if (this.authenticatedGeneration === generation && msg.token_rotated === true) {
+        this.awaitingToken = true;
+      }
       this.heartbeat.onPong();
       return;
     }
     if (msg.t === 'ping') {
+      if (this.authenticatedGeneration === generation && msg.token_rotated === true) {
+        this.awaitingToken = true;
+      }
       this.rawSend({ t: 'pong' });
       return;
     }

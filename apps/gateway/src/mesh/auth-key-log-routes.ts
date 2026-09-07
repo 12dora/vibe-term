@@ -254,7 +254,7 @@ export class AuthKeyLogRoutes {
       }
       if (relayMode) {
         const ack = opts.plan.publish
-          ? await this.safePublishAndAck(record)
+          ? await this.publishToRelay(record)
           : { ok: false as const, error: 'not_published' };
         relayDelivery = ack.ok ? { relayAck: true } : { relayAck: false, relayError: ack.error };
       }
@@ -446,6 +446,24 @@ export class AuthKeyLogRoutes {
       const message = err instanceof Error ? err.message : 'hub_error';
       return { ok: false, error: message === 'timeout' ? 'timeout' : message };
     }
+  }
+
+  private async publishToRelay(record: {
+    bytes: Uint8Array;
+    sig: Uint8Array;
+  }): Promise<KeyLogHubAck> {
+    const ack = await this.safePublishAndAck(record);
+    if (ack.ok || (ack.error !== 'timeout' && ack.error !== 'SEQ_MISMATCH')) return ack;
+    try {
+      const seq = decodeKeyLogRecord(record.bytes).seq;
+      const remote = await this.deps.publisher.queryKeyLogAt?.(seq);
+      if (remote && bytesEqual(remote.bytes, record.bytes) && bytesEqual(remote.sig, record.sig)) {
+        return { ok: true, seq };
+      }
+    } catch {
+      return ack;
+    }
+    return ack;
   }
 
   private async hubAlreadyHasRecord(record: {

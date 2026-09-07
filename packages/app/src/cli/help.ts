@@ -25,7 +25,8 @@ Usage:
   vibeterm hub urls list
   vibeterm hub urls add <url>
   vibeterm hub urls remove <url>
-  vibeterm mesh reset-identity [--yes]
+  vibeterm mesh reset-identity [--reset-tls] [--yes]
+  vibeterm tls reset [--yes]
   vibeterm mesh keylog status
   vibeterm mesh reset-root [--yes]
   vibeterm mesh passkey remove-all [<username>]
@@ -84,7 +85,8 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm hub urls list
   vibeterm hub urls add <url>
   vibeterm hub urls remove <url>
-  vibeterm mesh reset-identity [--yes]
+  vibeterm mesh reset-identity [--reset-tls] [--yes]
+  vibeterm tls reset [--yes]
   vibeterm mesh keylog status
   vibeterm mesh reset-root [--yes]
   vibeterm mesh passkey remove-all [<username>]

@@ -1,4 +1,9 @@
-import { decodeKeyLogRecord, encodeBase64url } from '@vibeterm/shared/auth';
+import {
+  computeRecordHash,
+  decodeKeyLogRecord,
+  encodeBase64url,
+  genesisHead,
+} from '@vibeterm/shared/auth';
 import {
   RELAY_KEYLOG_PAGE_DEFAULT_LIMIT,
   RELAY_KEYLOG_PAGE_MAX_LIMIT,
@@ -209,6 +214,31 @@ export class RelayKeyLogSync {
   }
 
   async queryKeyLogAt(seq: bigint): Promise<RelayKeyLogRecord | null> {
+    const generation = this.host.generation();
+    const query = this.chain.then(() =>
+      generation === this.host.generation() ? this.readKeyLogAt(seq) : null
+    );
+    this.chain = query.then(
+      () => {},
+      () => {}
+    );
+    return query;
+  }
+
+  async queryHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
+    if (!this.host.isOnline() || !this.host.isAuthenticated()) return null;
+    const generation = this.host.generation();
+    await this.chain;
+    if (generation !== this.host.generation()) return null;
+    const seq = this.remoteHead;
+    if (seq === null) return null;
+    if (seq === 0n) return genesisHead();
+    const record = await this.queryKeyLogAt(seq);
+    if (!record || generation !== this.host.generation()) return null;
+    return { seq, hash: computeRecordHash(record.bytes, record.sig) };
+  }
+
+  private async readKeyLogAt(seq: bigint): Promise<RelayKeyLogRecord | null> {
     if (!this.host.isOnline() || !this.host.isAuthenticated() || this.pendingReq) return null;
     let rows: RelayKeyLogRecordWire[];
     try {
@@ -221,7 +251,8 @@ export class RelayKeyLogSync {
     const key = await this.host.logKey();
     if (!key) return null;
     try {
-      return await openRelayKeyLogRecord(key, found.blob);
+      const record = await openRelayKeyLogRecord(key, found.blob);
+      return decodeKeyLogRecord(record.bytes).seq === seq ? record : null;
     } catch {
       return null;
     }

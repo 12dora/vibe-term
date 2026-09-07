@@ -803,10 +803,10 @@ bun packages/app/src/runtime/server.ts
 ### 三代历史令牌的宽限
 
 迁移 `0055_relay_token_ring.sql` 给 `relay_tenants` 加了 `previous_tokens_json`，按新到旧保存最多三条 `{ hash, issued_at }`。
-迁移会将 0054 的单槽内容及原始时间转入历史环；新列为空时读侧仍兼容旧单槽。新写入同步保留最新单槽，显式空环不会回退复活旧令牌。
+迁移会将 0054 的单槽内容及原始时间转入历史环；新列为空时读侧仍兼容旧单槽。新写入同步保留最新单槽。读取有效历史环时，首项哈希和签发时间必须与旧单槽一致；不一致表示旧版修改过令牌状态，以旧单槽重建或清空历史环，防止降级期间 kick／recover 撤销的令牌在再次升级后复活。损坏的历史环不放行历史令牌。
 **30 天内最多三次换发仍可恢复最初那一代；第四次换发会淘汰最老的一代。** 每条记录独立计算 30 天期限，后续换发不会延长它。
 `rotate` 换发时旧哈希在 `RELAY_PREV_TOKEN_GRACE_MS`（30 天）内仍可认证——`relay.auth`、租户令牌 REST 鉴权、
-`putPack`、`relay.keylog.append` 的写鉴权都走 `relayTokenHashAccepted()`。链路存续期的复查
+`relay.keylog.append` 的写鉴权都走 `relayTokenHashAccepted()`。密封包写入只接受当前令牌，历史令牌上传返回 HTTP 409 `RELAY_TOKEN_NOT_CURRENT`，防止旧节点覆盖有效恢复包。链路存续期的复查
 （`liveAuthStillValid`）记的是**实际出示的那一代哈希**，因此宽限期内的老链路不会被当成「哈希不符」踢掉。
 
 复查点有三个（`revalidateRelayLive`）：每条 ctl、**心跳那一拍**、每次开流。只跑数据流的链路不产生 ctl，
@@ -822,7 +822,7 @@ bun packages/app/src/runtime/server.ts
 ### 成员侧
 
 哈希分类区分当前令牌、仍在宽限内的历史令牌（`password_rotated`）与未知、过期令牌（`kicked`）。
-`auth.ok` 可选字段 `token_rotated` 在有效历史令牌认证时为 `true`，当前令牌为 `false`；旧消息缺失该字段仍兼容。
+`auth.ok`、`ping`、`pong` 均支持可选字段 `token_rotated?: boolean`。中继在有效历史令牌认证及存续连接心跳时发送 `true`，当前令牌为 `false`；旧消息缺失该字段仍兼容。已在线成员无需重连就能得知令牌换代。
 成员据此设置 `awaitingToken`，`GET /api/mesh/relay/status` 在链路在线时返回 `awaitingToken: true`，同时保留 `reauthRequired: false`、行级 `kicked: false` 和 `kickedReason: null`，避免把宽限内成员误判为已踢出。使用当前令牌重新认证后清除等待状态；旧节点按原有解码规则忽略可选字段。
 宽限期内链路保持可用以追平日志，不能为了发送换代提示而主动断链；心跳与开流仍执行相同准入复查。
 
@@ -840,7 +840,7 @@ bun packages/app/src/runtime/server.ts
 
 #### rekey（只换令牌）分支
 
-本机已经是同一账户的成员时，`performRelayPasswordJoin` 不重建用户、不改 env、不重启，只做这几件事：
+本机当前 nodeId 在已验签的远端日志中有成员证书且未被吊销时，`performRelayPasswordJoin` 才走 rekey，不重建用户、不改 env、不重启。仅存在本地账户不算有效成员；`mesh reset-identity` 后的新 nodeId 在验证账户与本地日志前缀一致后，走完整自我承认、密钥封装及身份绑定流程，并保留原用户名。rekey 做以下操作：
 
 1. **同账户判定走密钥日志**，不比根公钥：链的 genesis uid 必须等于本机用户 id，且本地 head 必须是这条链的前缀。
    漏掉一次 `rotate-root-keep` 的成员本地根公钥会与密封包对不上，但它仍是同一个账户，照样能自救；
@@ -867,9 +867,11 @@ kick 模式改密之后主节点必须先用**新接入口令**重新接入（�
 
 CLI `enroll` / `reauth` 必须成功刷新密封包才报告完成。上传失败时退出码为 1，并给出原因与
 `vibeterm relay pack upload` 重试命令；该命令使用与 enroll 相同的本机账户鉴权，从当前令牌和日志头重新生成密封包。
-多中继配置必须确认全部目标上传成功，不能用一台成功掩盖另一台失败。
+多中继配置必须确认全部目标上传成功，不能用一台成功掩盖另一台失败。若上传被 `RELAY_TOKEN_NOT_CURRENT` 拒绝，先由持当前令牌的节点执行 `vibeterm relay resend-token` 使本机追平；无法读取日志时在本机执行密码加入，然后再上传。
 
 **成员离线超过 30 天、旧令牌宽限已过后，只能通过密码加入恢复，而且前提是密封包已刷新。**
 若密封包仍旧或因根轮换被清空，先在可达节点执行 `vibeterm relay reauth <url>` 并完成密封包上传，
 再在离线成员执行 `vibeterm relay join <url> --tenant <id> --password`。第四次换发淘汰或显式 kick 会提前触发同样的恢复要求。
-`resend-token` 只在 `relayAck: true` 时报告成功；未确认则退出 1，本地已追加的记录保留。它无法救回已经不能认证读取日志的成员。
+`resend-token` 只在 `relayAck: true` 时报告成功；未确认则退出 1，本地已追加的记录保留。超时或 `SEQ_MISMATCH` 时，节点按 seq 查询中继、解密记录，并逐字节核对 `bytes` 和 `sig`；完全一致才确认成功，远端 head 本身不能证明已收到该记录。这使 ACK 丢失后的重试可恢复。它无法救回已经不能认证读取日志的成员。
+
+`vibeterm mesh keylog status` 在中继模式使用中继公布的日志头 seq，读取并解密该条记录后计算真实链哈希，经现有诊断接口比较公共日志位置。同步时输出 `IN_SYNC`；密文不可解、记录缺失或连接不可用仍返回 `UNKNOWN`，不会用零哈希代替远端记录。查询与日志同步串行，避免抢占同一条无请求 ID 的分页响应。
