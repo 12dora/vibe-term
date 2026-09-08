@@ -23,6 +23,8 @@ export interface TmuxConnectionOptions {
   onPromptMarker?: (paneId: string, marker: PromptMarker) => void;
   onClipboardWrite?: (paneId: string, text: string) => void;
   onSourceReady?: (serverEpoch: Uint8Array) => void;
+  onInputTransportInvalidated?: () => void;
+  onInputTransportReady?: () => void;
   onSourceMetadata?: (event: TmuxSourceMetadataEvent) => void;
   beginMetadataReconcile?: () => bigint;
   onSnapshot: (payload: StateSnapshotPayload, baseRevision?: bigint) => void;

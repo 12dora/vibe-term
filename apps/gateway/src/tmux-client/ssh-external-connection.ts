@@ -9,6 +9,7 @@ import { joinShellArgs, quoteShellArg } from './command-builder';
 import type { TmuxConnectionOptions } from './connection-types';
 import { ControlModeCommandQueue } from './control-mode-capture';
 import { createControlModeSubscription } from './control-mode-subscription';
+import { sendExternalInput } from './external-input';
 import {
   CONTROL_STDERR_TAIL_LIMIT,
   type CommandResult,
@@ -16,7 +17,6 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { buildSendKeysCommands, pipelineSendKeys } from './input-encoder';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -97,37 +97,32 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   disconnect(): void {
     this.invalidateConnectGeneration();
-    if (this.manualDisconnect) {
-      return;
-    }
+    if (this.manualDisconnect) return;
     this.manualDisconnect = true;
     void this.shutdownInternal(false);
   }
 
-  sendInput(paneId: string, data: string): Promise<void> {
-    return this.sendInputBytes(paneId, new TextEncoder().encode(data));
+  sendInput(paneId: string, data: string, onAck?: () => void): Promise<void> {
+    return this.sendInputBytes(paneId, new TextEncoder().encode(data), onAck);
   }
 
-  sendInputBytes(paneId: string, data: Uint8Array): Promise<void> {
-    if (!this.connected) {
-      return Promise.resolve();
-    }
-
-    const commands = buildSendKeysCommands(paneId, data);
+  sendInputBytes(paneId: string, data: Uint8Array, onAck?: () => void): Promise<void> {
+    if (!this.connected) return Promise.reject(new Error('tmux input disconnected'));
     const control = this.controlChannel;
-    if (!control) {
-      return Promise.all(commands.map((argv) => this.runTmux(argv))).then(() => undefined);
-    }
-    return pipelineSendKeys(commands, (command) =>
-      this.controlCommands
-        .execute((value) => control.write(value), command, {
-          transform: () => undefined,
-          timeoutMs: this.getControlCommandTimeoutMs(),
-        })
-        .catch((error) => {
-          this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
-          throw error;
-        })
+    const queue = this.controlCommands;
+    return sendExternalInput(
+      {
+        queue,
+        write: control ? (value) => control.write(value) : undefined,
+        isCurrent: () =>
+          this.connected && this.controlChannel === control && this.controlCommands === queue,
+        run: (argv) => this.runTmux(argv),
+        onError: (error) => this.callbacks.onError(error),
+        timeoutMs: this.getControlCommandTimeoutMs(),
+      },
+      paneId,
+      Uint8Array.from(data),
+      onAck
     );
   }
 
@@ -388,9 +383,13 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private async openControlChannel(onAttachReady: () => void): Promise<ControlChannelHandle> {
+    this.callbacks.onInputTransportInvalidated?.();
     this.controlCommands.dispose('tmux control connection replaced');
     const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
-    const controlCommands = new ControlModeCommandQueue(() => handle.stop());
+    const controlCommands = new ControlModeCommandQueue(() => {
+      this.callbacks.onInputTransportInvalidated?.();
+      handle.stop();
+    });
     this.controlCommands = controlCommands;
     const subscription = createControlModeSubscription(
       this.buildControlModeCallbacks(
@@ -432,9 +431,9 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private handleControlChannelClose(handle: ControlChannelHandle): void {
-    if (this.controlChannel !== handle) {
-      return;
-    }
+    if (this.controlChannel !== handle) return;
+    this.callbacks.onInputTransportInvalidated?.();
+    this.controlCommands.dispose('tmux control channel exited');
     this.controlChannel = null;
     this.controlSubscription?.dispose();
     this.controlSubscription = null;

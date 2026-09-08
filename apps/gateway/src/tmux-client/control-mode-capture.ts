@@ -22,6 +22,7 @@ export interface AtomicPaneCapture {
 
 interface PendingControlCommand<T = unknown> {
   literal: boolean;
+  onAck?: () => void;
   transform: (block: ControlModeBlock) => T;
   resolve: (value: T) => void;
   reject: (error: Error) => void;
@@ -40,6 +41,7 @@ export class ControlModeCommandQueue {
     options: {
       literal?: boolean;
       timeoutMs?: number;
+      onAck?: () => void;
       transform: (block: ControlModeBlock) => T;
     }
   ): Promise<T> {
@@ -47,6 +49,7 @@ export class ControlModeCommandQueue {
     return new Promise<T>((resolve, reject) => {
       const pending: PendingControlCommand<T> = {
         literal: options.literal ?? false,
+        onAck: options.onAck,
         transform: options.transform,
         resolve,
         reject,
@@ -76,7 +79,9 @@ export class ControlModeCommandQueue {
       return true;
     }
     try {
-      pending.resolve(pending.transform(block));
+      const value = pending.transform(block);
+      pending.onAck?.();
+      pending.resolve(value);
     } catch (error) {
       pending.reject(error instanceof Error ? error : new Error(String(error)));
     }

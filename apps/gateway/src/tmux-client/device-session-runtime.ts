@@ -42,8 +42,8 @@ export interface DeviceSessionRuntimeConnection {
   disconnect(): void;
   isSessionClosedEmitted?(): boolean;
   requestSnapshot(): void;
-  sendInput(paneId: string, data: string): void | Promise<void>;
-  sendInputBytes?(paneId: string, data: Uint8Array): void | Promise<void>;
+  sendInput(paneId: string, data: string, onAck?: () => void): void | Promise<void>;
+  sendInputBytes?(paneId: string, data: Uint8Array, onAck?: () => void): void | Promise<void>;
   resizePane(paneId: string, cols: number, rows: number): void;
   selectPane(windowId: string, paneId: string): void;
   selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number): void;
@@ -128,9 +128,9 @@ export class DeviceSessionRuntime {
   private readonly metadataProjection: MetadataProjection;
   private readonly paneRetention = new PaneRetention();
   private readonly paneHistoryReader: PaneHistoryReader;
-  private readonly inputLane = new PaneInputPacer((paneId, bytes) => {
-    if (this.connection.sendInputBytes) return this.connection.sendInputBytes(paneId, bytes);
-    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes));
+  private readonly inputLane = new PaneInputPacer((paneId, bytes, onAck) => {
+    if (this.connection.sendInputBytes) return this.connection.sendInputBytes(paneId, bytes, onAck);
+    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes), onAck);
   });
   private readonly inputLifecycle = new PaneInputLifecycle(this.inputLane);
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
@@ -332,20 +332,18 @@ export class DeviceSessionRuntime {
   }
 
   sendInput(paneId: string, data: string): void {
-    this.inputLane.drain(paneId);
-    void this.connection.sendInput(paneId, data);
+    void this.inputLane.sendInputBytes(paneId, new TextEncoder().encode(data));
   }
 
   async sendInputAndWait(paneId: string, data: string): Promise<void> {
     if (!this.isConnected()) {
       throw new Error('Device session runtime not connected');
     }
-    this.inputLane.drain(paneId);
-    await this.connection.sendInput(paneId, data);
+    await this.inputLane.sendInputBytes(paneId, new TextEncoder().encode(data));
   }
 
   sendInputBytes(paneId: string, data: Uint8Array): void {
-    this.inputLane.sendInputBytes(paneId, data);
+    void this.inputLane.sendInputBytes(paneId, data);
   }
 
   resizePane(paneId: string, cols: number, rows: number): void {

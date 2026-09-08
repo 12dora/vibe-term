@@ -145,6 +145,10 @@ function handleBlockClose(
   }
   const args = decodeRange(line, argsStart, line.length);
   if (args !== state.currentBlock.args) {
+    if (state.literalBlock) {
+      pushBlockLine(state, decoder.decode(line));
+      return;
+    }
     const kind = isError ? 'error' : 'end';
     console.warn(
       `[vibeterm] control mode block guard mismatch: begin "${state.currentBlock.args}" vs ${kind} "${args}"`

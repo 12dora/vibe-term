@@ -105,28 +105,60 @@ function setup(binary = true) {
 
 describe('runtime mouse lane wiring', () => {
   test.each([true, false])(
-    'binary=%j writes one mouse at a time and drains before ordinary input',
-    (binary) => {
+    'binary=%j writes one mouse at a time before ordinary input',
+    async (binary) => {
       const { runtime, send, writes } = setup(binary);
       try {
         send(mouse.repeat(3));
         expect(writes).toEqual([mouse]);
         send('key');
+        expect(writes).toEqual([mouse]);
+        await Bun.sleep(140);
         expect(writes).toEqual([mouse, mouse, mouse, 'key']);
       } finally {
         runtime.disconnect();
       }
     }
   );
-  test('string and awaited string input also drain the mouse lane', async () => {
+  test('string and awaited string input also wait behind the mouse lane', async () => {
     const { runtime, send, writes } = setup();
     try {
       await runtime.connect();
       send(mouse.repeat(2));
       runtime.sendInput('%1', 'string');
+      expect(writes).toEqual([mouse]);
       send(mouse.repeat(2));
       await runtime.sendInputAndWait('%1', 'awaited');
       expect(writes).toEqual([mouse, mouse, 'string', mouse, mouse, 'awaited']);
+    } finally {
+      runtime.disconnect();
+    }
+  });
+  test('transport invalidation clears lanes even when the server epoch stays unchanged', async () => {
+    const { runtime, options, send, writes } = setup();
+    try {
+      send(mouse.repeat(21));
+      options.onInputTransportInvalidated?.();
+      send('disconnected');
+      options.onSourceReady?.(new Uint8Array(16).fill(1));
+      expect(writes).toEqual([mouse]);
+      options.onInputTransportReady?.();
+      send('new connection');
+      await Bun.sleep(140);
+      expect(writes).toEqual([mouse, 'new connection']);
+    } finally {
+      runtime.disconnect();
+    }
+  });
+  test('awaited ordinary input rejects when its pending transport is invalidated', async () => {
+    const { runtime, options, send, writes } = setup();
+    try {
+      await runtime.connect();
+      send(mouse.repeat(3));
+      const pending = runtime.sendInputAndWait('%1', 'key');
+      options.onInputTransportInvalidated?.();
+      await expect(pending).rejects.toThrow('cancelled');
+      expect(writes).toEqual([mouse]);
     } finally {
       runtime.disconnect();
     }
@@ -175,13 +207,15 @@ describe('runtime mouse lane wiring', () => {
       }
     }
   );
-  test('unchanged snapshots and epochs preserve queued input', () => {
+  test('unchanged snapshots and epochs preserve queued input', async () => {
     const { runtime, options, send, writes } = setup();
     try {
       send(mouse.repeat(3));
       options.onSnapshot(snapshot());
       options.onSourceReady?.(new Uint8Array(16).fill(1));
       send('key');
+      expect(writes).toEqual([mouse]);
+      await Bun.sleep(140);
       expect(writes).toEqual([mouse, mouse, mouse, 'key']);
     } finally {
       runtime.disconnect();
@@ -201,12 +235,12 @@ describe('runtime mouse lane wiring', () => {
         send(mouse.repeat(3));
         first.close();
         send('first');
-        expect(writes).toEqual([mouse, mouse, mouse, 'first']);
+        expect(writes).toEqual([mouse]);
         send(mouse.repeat(2));
         if (reason === 'close') second.close();
         else second.applySubscriptions(2n, [], [request]);
         send('last');
-        expect(writes).toEqual([mouse, mouse, mouse, 'first', 'last']);
+        expect(writes).toEqual([mouse, 'last']);
       } finally {
         first.close();
         second.close();

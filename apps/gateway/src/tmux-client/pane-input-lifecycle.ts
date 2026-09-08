@@ -16,6 +16,14 @@ export class PaneInputLifecycle {
   ): TmuxConnectionOptions {
     return {
       ...options,
+      onInputTransportInvalidated: () => {
+        this.lane.invalidateTransport();
+        options.onInputTransportInvalidated?.();
+      },
+      onInputTransportReady: () => {
+        this.lane.readyTransport();
+        options.onInputTransportReady?.();
+      },
       onTerminalOutput: (paneId, bytes) => {
         this.lane.onOutput(paneId, bytes);
         options.onTerminalOutput(paneId, bytes);

@@ -50,6 +50,7 @@ export class ControlModeLifecycle {
   constructor(private readonly host: ControlModeHost) {}
 
   async startControlClient(): Promise<void> {
+    this.host.callbacks.onInputTransportInvalidated?.();
     this.stopHeartbeat();
 
     let attachReadyResolve: (() => void) | null = null;
@@ -92,6 +93,7 @@ export class ControlModeLifecycle {
       throw new Error(message);
     }
 
+    this.host.callbacks.onInputTransportReady?.();
     for (const command of SOURCE_METADATA_SUBSCRIPTION_COMMANDS) {
       void this.host.controlCommands
         .execute((value) => transport.write(value), command, { transform: () => undefined })
@@ -102,6 +104,7 @@ export class ControlModeLifecycle {
   }
 
   stopControlClient(): void {
+    this.host.callbacks.onInputTransportInvalidated?.();
     this.stopHeartbeat();
     const killDetached = this.host.detachControlTransport();
     this.host.controlSubscription?.dispose();
@@ -156,6 +159,7 @@ export class ControlModeLifecycle {
       console.warn(
         `${host.logPrefix} tmux control client heartbeat timeout on ${host.deviceId}, killing stalled ${host.stalledControlLabel}`
       );
+      host.callbacks.onInputTransportInvalidated?.();
       host.killControlTransport();
     }, HEARTBEAT_TIMEOUT_MS);
   }
@@ -211,7 +215,11 @@ export class ControlModeLifecycle {
       onStructureChanged: () => {
         host.requestSnapshot();
       },
-      onExit: () => {},
+      onExit: () => {
+        if (!isCurrent()) return;
+        host.callbacks.onInputTransportInvalidated?.();
+        controlCommands.dispose('tmux control parser exited');
+      },
       onPause: (paneId) => {
         if (!isCurrent()) {
           return;

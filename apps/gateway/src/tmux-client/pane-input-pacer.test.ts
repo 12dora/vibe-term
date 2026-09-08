@@ -1,32 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { splitMouseSequences } from './mouse-sequence';
-import { type InputLaneClock, PaneInputPacer } from './pane-input-pacer';
-
-class TestClock implements InputLaneClock {
-  time = 0;
-  nextId = 0;
-  timers = new Map<number, { at: number; callback: () => void }>();
-  now = () => this.time;
-  setTimeout(callback: () => void, delayMs: number): number {
-    const id = ++this.nextId;
-    this.timers.set(id, { at: this.time + delayMs, callback });
-    return id;
-  }
-  clearTimeout(timer: unknown): void {
-    this.timers.delete(timer as number);
-  }
-  tick(ms: number): void {
-    const target = this.time + ms;
-    while (true) {
-      const next = [...this.timers].sort((a, b) => a[1].at - b[1].at)[0];
-      if (!next || next[1].at > target) break;
-      this.time = next[1].at;
-      this.timers.delete(next[0]);
-      next[1].callback();
-    }
-    this.time = target;
-  }
-}
+import { PaneInputPacer } from './pane-input-pacer';
+import { TestClock } from './pane-input-test-helpers';
 
 const encode = (text: string) => new TextEncoder().encode(text);
 const mouse = (button = 64, col = 1, end = 'M') => `\x1b[<${button};${col};1${end}`;
@@ -207,6 +182,7 @@ describe('per-pane input pacing', () => {
     send(protectedEvents.join(''));
     send(mouse(66, 999));
     send('key');
+    clock.tick(3000);
     expect(writes.slice(1).map((item) => item.text)).toEqual([
       ...Array.from({ length: 4 }, (_, index) => mouse(65, index + 1)),
       ...protectedEvents,
@@ -223,15 +199,22 @@ describe('per-pane input pacing', () => {
     const before = writes.length;
     send(mouse().repeat(100));
     send('key');
+    clock.tick(3000);
     expect(writes.length - before).toBe(66);
   });
-  test('regular input drains pending sequences first and preserves arrival order', () => {
+  test('regular input waits behind paced sequences and preserves arrival order', () => {
     const { send, writes, clock, output } = setup();
     const events = [mouse(64, 1), mouse(64, 2), mouse(65, 3)];
     send(events.join(''));
     send('paste\n');
     send(mouse(64, 4));
-    expect(writes.map((item) => item.text)).toEqual([...events, 'paste\n']);
+    expect(writes.map((item) => item.text)).toEqual([events[0]]);
+    clock.tick(8);
+    output();
+    expect(writes.map((item) => item.text)).toEqual(events.slice(0, 2));
+    clock.tick(8);
+    output();
+    expect(writes.at(-1)?.text).toBe('paste\n');
     clock.tick(8);
     output();
     expect(writes.at(-1)?.text).toBe(mouse(64, 4));
@@ -239,10 +222,12 @@ describe('per-pane input pacing', () => {
     expect(writes.length).toBe(5);
   });
   test('mixed mouse and text is one regular input payload', () => {
-    const { send, writes } = setup();
+    const { send, writes, clock } = setup();
     send(mouse().repeat(2));
     const mixed = `${mouse()}abc${mouse(65)}`;
     send(mixed);
+    expect(writes.map((item) => item.text)).toEqual([mouse()]);
+    clock.tick(60);
     expect(writes.map((item) => item.text)).toEqual([mouse(), mouse(), mixed]);
   });
   test('dispose cancels fallback and spacing timers and prevents future writes', () => {
@@ -317,7 +302,7 @@ describe('per-pane input pacing', () => {
     await Promise.resolve();
     clock.tick(60);
     await Promise.resolve();
-    expect(errors).toEqual([error, error]);
+    expect(errors).toEqual([error]);
     expect(clock.timers.size).toBe(0);
   });
 });

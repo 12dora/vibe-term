@@ -1,6 +1,7 @@
 export interface MouseSequence {
   bytes: Uint8Array;
   droppable: boolean;
+  motionKey: string | null;
 }
 
 const decoder = new TextDecoder('utf-8', { ignoreBOM: true });
@@ -20,6 +21,10 @@ export function splitMouseSequences(data: Uint8Array): MouseSequence[] | null {
     const end = mousePattern.lastIndex;
     sequences.push({
       bytes: data.slice(offset, end),
+      motionKey:
+        match[2] === 'M' && button <= 255 && (button & 32) !== 0 && (button & 64) === 0
+          ? `${button}:${match[2]}`
+          : null,
       droppable: match[2] === 'M' && button >= 64 && button <= 95 && (button & ~28) <= 67,
     });
     offset = end;

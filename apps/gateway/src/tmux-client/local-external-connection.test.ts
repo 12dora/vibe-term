@@ -2497,11 +2497,11 @@ describe('控制模式下的输入流水线', () => {
     }
   });
 
-  test('pacer 在普通输入前排空的鼠标命令全部保持领先', async () => {
+  test('pacer 在普通输入前逐条等待鼠标确认和输出', async () => {
     const h = await connectControlMode('vibeterm-window-pacer');
     const completions: Promise<void>[] = [];
-    const pacer = new PaneInputPacer((pane, bytes) => {
-      const completion = h.connection.sendInputBytes(pane, bytes);
+    const pacer = new PaneInputPacer((pane, bytes, onAck) => {
+      const completion = h.connection.sendInputBytes(pane, bytes, onAck);
       completions.push(completion);
       return completion;
     });
@@ -2509,10 +2509,12 @@ describe('控制模式下的输入流水线', () => {
       const mouse = '\x1b[<64;1;1M';
       pacer.sendInputBytes('%1', new TextEncoder().encode(mouse.repeat(7)));
       pacer.sendInputBytes('%1', new TextEncoder().encode('Z'));
-      expect(h.sendKeys()).toHaveLength(4);
+      expect(h.sendKeys()).toHaveLength(1);
       for (let i = 0; i < 8; i += 1) {
+        expect(h.sendKeys()).toHaveLength(i + 1);
         h.answer(1);
-        await Bun.sleep(0);
+        await Bun.sleep(10);
+        pacer.onOutput('%1', new TextEncoder().encode('redraw'));
       }
       await Promise.all(completions);
       const bytes = h
