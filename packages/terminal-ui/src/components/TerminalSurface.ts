@@ -41,17 +41,32 @@ export interface TerminalSurfaceDiagnosticState {
   historyPagesLimit: number;
 }
 
+export interface SnapshotWriteOptions {
+  /** 本次重排由 history 分页触发：写完后把视口滚回重排前的「离底部行数」 */
+  preserveViewport?: boolean;
+}
+
+export interface SnapshotCommitInfo {
+  /** 本次重排是否真的改变了终端网格尺寸；未变时无须再跑一遍尺寸收敛 */
+  gridResized: boolean;
+}
+
 export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
   createTarget(): Promise<Target>;
   writeSnapshot(
     target: Target,
     snapshot: GatewayPaneScreenSnapshot,
-    historyPages: readonly GatewayPaneHistoryPage[]
-  ): void;
+    historyPages: readonly GatewayPaneHistoryPage[],
+    options: SnapshotWriteOptions
+  ): SnapshotCommitInfo;
   writeLive(target: Target, data: Uint8Array): void;
   activate(target: Target): void;
   onRecoveryRequired(reason: GatewayRebaseReason): void;
-  onSnapshotApplied?(target: Target, snapshot: GatewayPaneScreenSnapshot | null): void;
+  onSnapshotApplied?(
+    target: Target,
+    snapshot: GatewayPaneScreenSnapshot | null,
+    commit: SnapshotCommitInfo
+  ): void;
   maxHistoryBytes?: number;
   maxHistoryPages?: number;
   scheduleHistoryFlush?(flush: () => void): void;
@@ -138,7 +153,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     }
     this.target = target;
     this.options.activate(target);
-    this.options.onSnapshotApplied?.(target, null);
+    this.options.onSnapshotApplied?.(target, null, { gridResized: false });
     return target;
   }
 
@@ -189,8 +204,10 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     this.historyFlushPending = false;
     this.recoveryRequested = false;
     this.recoveryReason = null;
-    this.options.writeSnapshot(this.target, owned, []);
-    this.options.onSnapshotApplied?.(this.target, owned);
+    const commit = this.options.writeSnapshot(this.target, owned, [], {
+      preserveViewport: false,
+    });
+    this.options.onSnapshotApplied?.(this.target, owned, commit);
   }
 
   applyHistoryPage(page: GatewayPaneHistoryPage): boolean {
@@ -279,8 +296,10 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     const target = this.target;
     const snapshot = this.latestSnapshot;
     if (!target || !snapshot) return;
-    this.options.writeSnapshot(target, snapshot, this.historyPages);
-    this.options.onSnapshotApplied?.(target, snapshot);
+    const commit = this.options.writeSnapshot(target, snapshot, this.historyPages, {
+      preserveViewport: true,
+    });
+    this.options.onSnapshotApplied?.(target, snapshot, commit);
   }
 
   private requestRecovery(reason: GatewayRebaseReason): void {

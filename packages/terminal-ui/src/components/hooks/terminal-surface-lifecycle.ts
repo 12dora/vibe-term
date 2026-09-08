@@ -1,5 +1,5 @@
 import type { GatewayPaneScreenSnapshot, GatewayRebaseReason } from '@vibeterm/ws-client';
-import type { TerminalSurfaceTarget } from '../TerminalSurface';
+import type { SnapshotCommitInfo, TerminalSurfaceTarget } from '../TerminalSurface';
 import type { TerminalDiagnosticStage } from '../terminal-diagnostics';
 
 export const TERMINAL_RESOURCE_ERROR_MESSAGE = 'Terminal resources failed to load.';
@@ -20,7 +20,11 @@ export type TerminalLifecycleStage = Extract<
 export interface TerminalSurfaceCreationContext<Target> {
   isCancelled(): boolean;
   onRecoveryRequired(reason: GatewayRebaseReason): void;
-  onSnapshotApplied(target: Target, snapshot: GatewayPaneScreenSnapshot | null): void;
+  onSnapshotApplied(
+    target: Target,
+    snapshot: GatewayPaneScreenSnapshot | null,
+    commit: SnapshotCommitInfo
+  ): void;
 }
 
 export interface TerminalSurfaceHandle<Target> {
@@ -49,6 +53,11 @@ export interface TerminalSurfaceLifecycleDeps<
   onSnapshotCommitted(target: Target): void;
 }
 
+// 启动态在 React 里是 useState 的值：每次都新建对象的话，history 每到一页都会让整棵
+// 终端子树重渲染一次。无参数的两个终态用常量单例，setState 靠 Object.is 直接短路。
+export const LOADING_BOOT_STATE: TerminalBootState = { status: 'loading' };
+export const READY_BOOT_STATE: TerminalBootState = { status: 'ready' };
+
 export function bootErrorState(error: unknown, fallback: string): TerminalBootState {
   return { status: 'error', message: error instanceof Error ? error.message : fallback };
 }
@@ -65,14 +74,14 @@ export function recoveryBootState(input: {
   if (input.hasCommittedSnapshot || !input.atomicScreen) return null;
   return input.reason === 'resource_exhausted'
     ? { status: 'error', message: TERMINAL_RECOVERY_ERROR_MESSAGE }
-    : { status: 'loading' };
+    : LOADING_BOOT_STATE;
 }
 
 export function snapshotBootState(input: {
   hasSnapshot: boolean;
   atomicScreen: boolean;
 }): TerminalBootState {
-  return input.atomicScreen && !input.hasSnapshot ? { status: 'loading' } : { status: 'ready' };
+  return input.atomicScreen && !input.hasSnapshot ? LOADING_BOOT_STATE : READY_BOOT_STATE;
 }
 
 /**
@@ -96,7 +105,7 @@ export class TerminalSurfaceLifecycle<
   async boot(): Promise<void> {
     this.deps.setSurface(null);
     this.deps.bindTarget(null);
-    this.deps.setBootState({ status: 'loading' });
+    this.deps.setBootState(LOADING_BOOT_STATE);
     this.deps.reportStage('mount', null);
 
     const resources = this.loadResources();
@@ -107,7 +116,8 @@ export class TerminalSurfaceLifecycle<
     const surface = this.deps.createSurface({
       isCancelled: () => this.cancelled,
       onRecoveryRequired: (reason) => this.handleRecoveryRequired(reason),
-      onSnapshotApplied: (target, snapshot) => this.handleSnapshotApplied(target, snapshot),
+      onSnapshotApplied: (target, snapshot, commit) =>
+        this.handleSnapshotApplied(target, snapshot, commit),
     });
     this.deps.setSurface(surface);
     try {
@@ -161,12 +171,19 @@ export class TerminalSurfaceLifecycle<
     this.deps.requestPaneScreen();
   }
 
-  private handleSnapshotApplied(target: Target, snapshot: GatewayPaneScreenSnapshot | null): void {
+  private handleSnapshotApplied(
+    target: Target,
+    snapshot: GatewayPaneScreenSnapshot | null,
+    commit: SnapshotCommitInfo
+  ): void {
     if (this.cancelled) return;
     this.deps.bindTarget(target);
+    const firstSnapshot = snapshot !== null && !this.hasCommittedSnapshot;
     if (snapshot) {
       this.hasCommittedSnapshot = true;
-      this.deps.onSnapshotCommitted(target);
+      // 尺寸收敛只在快照真的改了网格时才需要：history 每页重排都写回同一尺寸，
+      // 无差异时再跑一遍就是每页多发一条强制 terminal-sync-size。
+      if (firstSnapshot || commit.gridResized) this.deps.onSnapshotCommitted(target);
       this.deps.reportStage('generation_activated', target);
     }
     this.deps.setBootState(
@@ -175,7 +192,10 @@ export class TerminalSurfaceLifecycle<
         atomicScreen: this.deps.supportsAtomicScreen(),
       })
     );
-    this.stopDiagnosticSamples();
-    this.stopDiagnosticSamples = this.deps.startDiagnosticSamples(target);
+    // 采样窗口只在建面与首屏落地时重开；每页重排都重挂三个定时器的话采样点永远打不出去
+    if (snapshot === null || firstSnapshot) {
+      this.stopDiagnosticSamples();
+      this.stopDiagnosticSamples = this.deps.startDiagnosticSamples(target);
+    }
   }
 }

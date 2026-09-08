@@ -25,31 +25,59 @@ interface RecordingTarget extends CanonicalSnapshotTarget {
   repaints: number;
   sizes: Array<{ cols: number; rows: number }>;
   modes: GhosttyTerminalModeSnapshot[];
+  /** 记录调用顺序，用于断言「还原视口发生在整屏重绘之前」 */
+  calls: string[];
+  scrolls: number[];
 }
 
-function createTarget(): RecordingTarget {
+interface TargetOptions {
+  cols?: number;
+  rows?: number;
+  /** 视口顶行绝对行号与活动屏起始行号；缺省即停在底部 */
+  viewportY?: number;
+  baseY?: number;
+}
+
+function createTarget(options: TargetOptions = {}): RecordingTarget {
+  const active = { viewportY: options.viewportY ?? 0, baseY: options.baseY ?? 0 };
   const target: RecordingTarget = {
     writes: [],
     resets: 0,
     repaints: 0,
     sizes: [],
     modes: [],
+    calls: [],
+    scrolls: [],
     liveOutputEndedWithCR: true,
     terminal: {
+      cols: options.cols ?? 80,
+      rows: options.rows ?? 24,
+      buffer: { active },
       reset: () => {
         target.resets += 1;
+        target.calls.push('reset');
+        // 真实终端 reset 后视口回到底部
+        active.viewportY = 0;
+        active.baseY = 0;
       },
       resize: (cols, rows) => {
         target.sizes.push({ cols, rows });
       },
       write: (data) => {
         target.writes.push(typeof data === 'string' ? data : decoder.decode(data));
+        target.calls.push('write');
       },
       restoreModeSnapshot: (snapshot) => {
         target.modes.push(snapshot);
       },
       forceFullRepaint: () => {
         target.repaints += 1;
+        target.calls.push('repaint');
+      },
+      scrollLines: (amount) => {
+        target.scrolls.push(amount);
+        target.calls.push('scrollLines');
+        return true;
       },
     },
   };
@@ -193,6 +221,51 @@ describe('writeCanonicalSnapshot', () => {
     writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), []);
 
     expect(target.writes).toEqual(['\x1b[2J\x1b[Hlive']);
+  });
+});
+
+describe('writeCanonicalSnapshot viewport preservation', () => {
+  test('history 分页重排后把视口滚回原来的「离底部行数」，且只绘一次', () => {
+    const target = createTarget({ viewportY: 900, baseY: 1000 });
+    writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [pageOf('old\n')], {
+      preserveViewport: true,
+    });
+
+    expect(target.scrolls).toEqual([-100]);
+    expect(target.calls).toEqual(['reset', 'write', 'scrollLines', 'repaint']);
+    expect(target.repaints).toBe(1);
+  });
+
+  test('视口本来就停在底部时不滚动', () => {
+    const target = createTarget({ viewportY: 1000, baseY: 1000 });
+    writeCanonicalSnapshot(target, snapshotOf('live'), [], { preserveViewport: true });
+
+    expect(target.scrolls).toEqual([]);
+    expect(target.calls).toEqual(['reset', 'write', 'repaint']);
+  });
+
+  test('首屏 / rebase 重排不还原视口：跳回实时屏才是对的', () => {
+    const target = createTarget({ viewportY: 900, baseY: 1000 });
+    writeCanonicalSnapshot(target, snapshotOf('live'), []);
+
+    expect(target.scrolls).toEqual([]);
+  });
+
+  test('读不到视口状态的终端按停在底部处理', () => {
+    const target = createTarget({ viewportY: 900, baseY: 1000 });
+    (target.terminal as { buffer?: unknown }).buffer = undefined;
+    writeCanonicalSnapshot(target, snapshotOf('live'), [], { preserveViewport: true });
+
+    expect(target.scrolls).toEqual([]);
+  });
+
+  test('返回本次重排是否改变了网格尺寸', () => {
+    expect(
+      writeCanonicalSnapshot(createTarget({ cols: 80, rows: 24 }), snapshotOf('x'), [])
+    ).toEqual({ gridResized: false });
+    expect(
+      writeCanonicalSnapshot(createTarget({ cols: 120, rows: 40 }), snapshotOf('x'), [])
+    ).toEqual({ gridResized: true });
   });
 });
 

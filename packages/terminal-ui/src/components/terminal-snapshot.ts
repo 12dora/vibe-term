@@ -1,7 +1,11 @@
 import { PANE_MODE_ALT_SCREEN, PANE_MODE_FLAGS_PRESENT, decodePaneModes } from '@vibeterm/shared';
 import type { GatewayPaneHistoryPage, GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import type { GhosttyTerminalModeSnapshot, createTerminalController } from 'ghostty-terminal';
-import type { TerminalSurfaceTarget } from './TerminalSurface';
+import type {
+  SnapshotCommitInfo,
+  SnapshotWriteOptions,
+  TerminalSurfaceTarget,
+} from './TerminalSurface';
 import { normalizeHistoryForTerminal, normalizeLiveOutputForTerminal } from './normalization';
 
 export const NORMAL_SCREEN_PREFIX = new TextEncoder().encode('\x1b[2J\x1b[H');
@@ -9,11 +13,16 @@ export const NORMAL_SCREEN_PREFIX = new TextEncoder().encode('\x1b[2J\x1b[H');
 export type TerminalController = Awaited<ReturnType<typeof createTerminalController>>;
 
 export interface CanonicalSnapshotTerminal {
+  readonly cols?: number;
+  readonly rows?: number;
+  readonly buffer?: { active: { baseY: number; viewportY: number } };
   reset(): void;
   resize(cols: number, rows: number): void;
   write(data: string | Uint8Array): void;
   restoreModeSnapshot?(snapshot: GhosttyTerminalModeSnapshot): void;
   forceFullRepaint?(): void;
+  // biome-ignore lint/suspicious/noConfusingVoidType: 兼容返回 void 的旧实现
+  scrollLines?(amount: number): boolean | void;
 }
 
 export interface CanonicalSnapshotTarget {
@@ -108,11 +117,27 @@ export function buildCanonicalSnapshotPayload(
   return concatChunks(chunks);
 }
 
+/** 视口离活动屏底部的行数；读不到视口状态的终端按「停在底部」处理 */
+function viewportDistanceFromBottom(terminal: CanonicalSnapshotTerminal): number {
+  const active = terminal.buffer?.active;
+  if (!active) return 0;
+  return Math.max(0, active.baseY - active.viewportY);
+}
+
 export function writeCanonicalSnapshot(
   target: CanonicalSnapshotTarget,
   snapshot: GatewayPaneScreenSnapshot,
-  historyPages: readonly GatewayPaneHistoryPage[]
-): void {
+  historyPages: readonly GatewayPaneHistoryPage[],
+  options: SnapshotWriteOptions = {}
+): SnapshotCommitInfo {
+  // 整屏重排会把视口拉回实时屏底部。history 分页是「在顶部前置更旧的内容」，
+  // 重排前后同一「离底部行数」对应同一段内容，据此把用户正在看的位置还原回去；
+  // 首屏 / rebase 属于换了一屏内容，跳回实时屏才是对的，故只在分页路径还原。
+  const restoreDistance = options.preserveViewport
+    ? viewportDistanceFromBottom(target.terminal)
+    : 0;
+  const gridResized =
+    target.terminal.cols !== snapshot.cols || target.terminal.rows !== snapshot.rows;
   target.terminal.reset();
   target.liveOutputEndedWithCR = false;
   target.terminal.resize(snapshot.cols, snapshot.rows);
@@ -126,7 +151,10 @@ export function writeCanonicalSnapshot(
     );
   }
   target.terminal.write(buildCanonicalSnapshotPayload(snapshot, historyPages));
+  // 还原放在 forceFullRepaint 之前：整次重排只绘一帧，用户看不到「跳到底再跳回去」
+  if (restoreDistance > 0) target.terminal.scrollLines?.(-restoreDistance);
   target.terminal.forceFullRepaint?.();
+  return { gridResized };
 }
 
 export function writeLiveOutput(target: CanonicalSnapshotTarget, data: Uint8Array): void {

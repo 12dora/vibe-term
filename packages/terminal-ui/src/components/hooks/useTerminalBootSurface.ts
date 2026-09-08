@@ -16,6 +16,7 @@ import {
   scheduleTerminalDiagnosticSamples,
   useTerminalDiagnosticsReporter,
 } from '../terminal-diagnostics';
+import { measureElementRect, resolveInitialTerminalGrid } from '../terminal-initial-grid';
 import type { TerminalSizingMode } from '../terminal-resize-reporter';
 import {
   type TerminalController,
@@ -192,15 +193,24 @@ function buildRenderTarget(
     resolveHost: () => ctx.refs.generationHost.current,
     reportStage: report,
     onDisposed: clearE2eTerminalProbe,
-    createController: () =>
-      createTerminalController({
+    createController: () => {
+      // 回滚字节预算按创建时的列数定档且此后不可调整，必须在这里给出接近实际宽度的列数
+      const grid = resolveInitialTerminalGrid({
+        rect: measureElementRect(ctx.refs.generationHost.current),
+        fontSize: ctx.fontSize,
+        lineHeight: ctx.lineHeight,
+      });
+      return createTerminalController({
         fontFamily: ctx.fontFamily,
         fontSize: ctx.fontSize,
         lineHeight: ctx.lineHeight,
         scrollback: TERMINAL_SCROLLBACK,
+        cols: grid.cols,
+        rows: grid.rows,
         theme: ctx.refs.terminalTheme.current,
         disableStdin: ctx.refs.inputMode.current === 'editor',
-      }),
+      });
+    },
   });
 }
 

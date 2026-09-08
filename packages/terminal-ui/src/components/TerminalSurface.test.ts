@@ -6,7 +6,11 @@ import type {
   GatewayPaneScreenSnapshot,
   GatewayRebaseReason,
 } from '@vibeterm/ws-client';
-import { TerminalSurface, type TerminalSurfaceTarget } from './TerminalSurface';
+import {
+  type SnapshotWriteOptions,
+  TerminalSurface,
+  type TerminalSurfaceTarget,
+} from './TerminalSurface';
 import {
   type CanonicalSnapshotTarget,
   writeCanonicalSnapshot,
@@ -159,6 +163,8 @@ const SNAPSHOT_BODY = `${PREFIX}current\n`;
 const PAGE_NEWEST = pageOf(4, 6, 'l5\nl6\n');
 const PAGE_MIDDLE = pageOf(2, 4, 'l3\nl4\n');
 const PAGE_OLDEST = pageOf(0, 2, 'l1\nl2\n');
+/** 末页（nextCursor 为空）跳过批处理窗口立即落地，选项断言用它省掉手动驱动调度器 */
+const PAGE_ONLY = pageOf(0, 6, 'l1\n');
 
 describe('TerminalSurface history paging', () => {
   test('replace writes the snapshot body verbatim and seeds the history cursor', async () => {
@@ -321,6 +327,51 @@ describe('TerminalSurface history paging', () => {
     expect(harness.target.writes).toEqual([]);
     expect(harness.target.disposed).toBe(true);
     expect(harness.surface.getDiagnosticState().recoveryState).toBe('disposed');
+  });
+
+  test('重排选项：首屏不还原视口，history 分页还原', async () => {
+    const target = createTarget();
+    const seen: SnapshotWriteOptions[] = [];
+    const surface = new TerminalSurface<RecordingTarget>({
+      createTarget: async () => target,
+      writeSnapshot: (writeTarget, snapshot, pages, options) => {
+        seen.push(options);
+        return writeCanonicalSnapshot(writeTarget, snapshot, pages, options);
+      },
+      writeLive: writeLiveOutput,
+      activate: () => {},
+      onRecoveryRequired: () => {},
+    });
+    await surface.initialize();
+
+    surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    expect(surface.applyHistoryPage(PAGE_ONLY)).toBe(true);
+
+    expect(seen).toEqual([{ preserveViewport: false }, { preserveViewport: true }]);
+  });
+
+  test('16ms 窗口内到达的两页只重排一次（默认调度器）', async () => {
+    const target = createTarget();
+    const surface = new TerminalSurface<RecordingTarget>({
+      createTarget: async () => target,
+      writeSnapshot: writeCanonicalSnapshot,
+      writeLive: writeLiveOutput,
+      activate: () => {},
+      onRecoveryRequired: () => {},
+    });
+    await surface.initialize();
+    surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    target.resets = 0;
+    target.writes.length = 0;
+
+    // 「到页即续」把第二页的请求在第一页落地时就发出去，两页因此落在同一个批处理窗口里
+    expect(surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    expect(surface.applyHistoryPage(PAGE_MIDDLE)).toBe(true);
+    expect(target.resets).toBe(0);
+
+    await Bun.sleep(40);
+    expect(target.resets).toBe(1);
+    expect(target.writes).toEqual([`${PREFIX}l3\r\nl4\r\nl5\r\nl6\r\ncurrent\r\n`]);
   });
 
   test('64 页累积后终端内容按行号升序排列', async () => {

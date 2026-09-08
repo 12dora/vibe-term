@@ -1,9 +1,10 @@
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
+import type { GatewayHistoryCursor } from '@vibeterm/ws-client';
 import type { PaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
 import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import type { TerminalSurface } from '../TerminalSurface';
-import { historyRequestDeadlineMs, shouldRequestOlderHistory } from '../paneHistoryRequest';
+import { HistoryPrefetchController, historyRequestDeadlineMs } from '../paneHistoryRequest';
 import type { TerminalRenderTarget } from '../terminal-snapshot';
 
 export interface UsePaneSinkRegistrationOptions {
@@ -35,8 +36,7 @@ export function usePaneSinkRegistration({
   // 首屏只按终端实例请求一次：实例换代（重试、字体变更）才重新请求，
   // deviceId/paneId 变动不触发第二次。
   const screenRequestedForRef = useRef<CompatibleTerminalLike | null>(null);
-  const historyRequestInFlightRef = useRef(false);
-  const historyRequestTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const prefetchRef = useRef<HistoryPrefetchController<GatewayHistoryCursor> | null>(null);
 
   const paneSink: PaneSink | null = useMemo(() => {
     if (!instance) {
@@ -49,10 +49,9 @@ export function usePaneSinkRegistration({
       },
       onScreenSnapshot: (snapshot) => surfaceRef.current?.replace(snapshot),
       onHistoryPage: (page) => {
-        historyRequestInFlightRef.current = false;
-        if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
-        historyRequestTimerRef.current = null;
+        // 先落地再续发：游标要等 applyHistoryPage 推进后才指向更旧的一页
         surfaceRef.current?.applyHistoryPage(page);
+        prefetchRef.current?.handlePageArrived();
       },
       onRebase: (reason) => surfaceRef.current?.rebase(reason),
     };
@@ -89,33 +88,20 @@ export function usePaneSinkRegistration({
     const container = containerRef.current;
     if (!container) return;
 
-    const requestOlderHistory = (event: WheelEvent): void => {
-      if (
-        !shouldRequestOlderHistory({
-          deltaY: event.deltaY,
-          requestInFlight: historyRequestInFlightRef.current,
-          viewportY: instance.buffer.active.viewportY,
-        })
-      ) {
-        return;
-      }
-      const cursor = surfaceRef.current?.getNextHistoryCursor();
-      if (!cursor) return;
+    const controller = new HistoryPrefetchController<GatewayHistoryCursor>({
+      getCursor: () => surfaceRef.current?.getNextHistoryCursor() ?? null,
+      getViewport: () => ({ viewportY: instance.buffer.active.viewportY, rows: instance.rows }),
+      request: (cursor) => fetchPaneHistory(deviceId, paneId, cursor),
+      deadlineMs: () => historyRequestDeadlineMs(runtime.transport.latencyMs),
+    });
+    prefetchRef.current = controller;
 
-      historyRequestInFlightRef.current = true;
-      fetchPaneHistory(deviceId, paneId, cursor);
-      if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
-      historyRequestTimerRef.current = setTimeout(() => {
-        historyRequestInFlightRef.current = false;
-        historyRequestTimerRef.current = null;
-      }, historyRequestDeadlineMs(runtime.transport.latencyMs));
-    };
-    container.addEventListener('wheel', requestOlderHistory, { passive: true });
+    const handleWheel = (event: WheelEvent): void => controller.handleWheel(event.deltaY);
+    container.addEventListener('wheel', handleWheel, { passive: true });
     return () => {
-      container.removeEventListener('wheel', requestOlderHistory);
-      historyRequestInFlightRef.current = false;
-      if (historyRequestTimerRef.current) clearTimeout(historyRequestTimerRef.current);
-      historyRequestTimerRef.current = null;
+      container.removeEventListener('wheel', handleWheel);
+      controller.dispose();
+      if (prefetchRef.current === controller) prefetchRef.current = null;
     };
   }, [containerRef, deviceId, fetchPaneHistory, instance, paneId, runtime, surfaceRef]);
 }

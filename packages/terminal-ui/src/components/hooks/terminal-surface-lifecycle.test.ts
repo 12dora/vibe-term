@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import type { GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
+import type { SnapshotCommitInfo } from '../TerminalSurface';
 import {
   TERMINAL_INIT_ERROR_MESSAGE,
   TERMINAL_RECOVERY_ERROR_MESSAGE,
@@ -44,7 +45,10 @@ interface Harness {
   resources: Deferred<void>;
   initialization: Deferred<FakeTarget>;
   states: TerminalBootState[];
-  emitSnapshotApplied(snapshot: GatewayPaneScreenSnapshot | null): void;
+  emitSnapshotApplied(
+    snapshot: GatewayPaneScreenSnapshot | null,
+    commit?: SnapshotCommitInfo
+  ): void;
   emitRecoveryRequired(reason: 'cache_evicted' | 'resource_exhausted'): void;
   surfaceCreated(): boolean;
 }
@@ -121,8 +125,8 @@ function createHarness(options: { atomicScreen?: boolean } = {}): Harness {
     resources,
     initialization,
     states,
-    emitSnapshotApplied(snapshot) {
-      handlers?.onSnapshotApplied(target, snapshot);
+    emitSnapshotApplied(snapshot, commit = { gridResized: true }) {
+      handlers?.onSnapshotApplied(target, snapshot, commit);
     },
     emitRecoveryRequired(reason) {
       handlers?.onRecoveryRequired(reason);
@@ -227,6 +231,56 @@ describe('TerminalSurfaceLifecycle boot', () => {
       'samples:start:target-0',
     ]);
     expect(harness.states.at(-1)).toEqual({ status: 'ready' });
+  });
+
+  test('history 分页重排不重开采样窗口、不重复做尺寸收敛', async () => {
+    const harness = createHarness();
+    void harness.lifecycle.boot();
+    harness.resources.resolve();
+    await flush();
+    harness.emitSnapshotApplied(SNAPSHOT);
+
+    harness.events.length = 0;
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false });
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false });
+
+    expect(harness.events).toEqual([
+      'bind:target-0',
+      'stage:generation_activated:target-0',
+      'state:ready',
+      'bind:target-0',
+      'stage:generation_activated:target-0',
+      'state:ready',
+    ]);
+  });
+
+  test('重排真的改了网格尺寸时仍然收敛一次尺寸', async () => {
+    const harness = createHarness();
+    void harness.lifecycle.boot();
+    harness.resources.resolve();
+    await flush();
+    harness.emitSnapshotApplied(SNAPSHOT);
+
+    harness.events.length = 0;
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: true });
+
+    expect(harness.events).toContain('commit:target-0');
+    expect(harness.events).not.toContain('samples:start:target-0');
+  });
+
+  test('ready / loading 启动态是稳定引用，React 据此跳过重渲染', () => {
+    const first = snapshotBootState({ hasSnapshot: true, atomicScreen: true });
+    const second = snapshotBootState({ hasSnapshot: true, atomicScreen: true });
+    expect(first).toBe(second);
+
+    const loading = snapshotBootState({ hasSnapshot: false, atomicScreen: true });
+    expect(loading).toBe(snapshotBootState({ hasSnapshot: false, atomicScreen: true }));
+    const recovering = recoveryBootState({
+      reason: 'cache_evicted',
+      hasCommittedSnapshot: false,
+      atomicScreen: true,
+    });
+    expect(recovering).toBe(loading);
   });
 
   test('non-atomic transports report ready without waiting for a snapshot', async () => {
