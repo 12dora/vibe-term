@@ -6,6 +6,12 @@ export class MouseReportingScanner {
   private readonly enabled = new Set<number>();
   /** 自上次 takeFrameEnd() 起是否见过 DEC 2026 同步输出结束（应用完成一帧、回到读循环） */
   private frameEnd = false;
+  private insideFrame = false;
+
+  /** 应用正处于 DEC 2026 同步帧之中（见过 h 尚未见到 l）：此时的输出只是半帧，不能当作已消费上一条 */
+  get inFrame(): boolean {
+    return this.insideFrame;
+  }
 
   takeFrameEnd(): boolean {
     const seen = this.frameEnd;
@@ -39,7 +45,12 @@ export class MouseReportingScanner {
     for (const value of match[1].split(';')) {
       const mode = Number(value);
       if (mode === SYNCHRONIZED_OUTPUT_MODE) {
-        if (match[2] === 'l') this.frameEnd = true;
+        if (match[2] === 'l') {
+          this.frameEnd = true;
+          this.insideFrame = false;
+        } else {
+          this.insideFrame = true;
+        }
         continue;
       }
       if (!reportingModes.has(mode)) continue;

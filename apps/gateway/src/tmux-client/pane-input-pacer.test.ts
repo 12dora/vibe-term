@@ -94,15 +94,61 @@ describe('per-pane input pacing', () => {
     expect(clock.timers.size).toBe(0);
   });
 
-  test('output without a frame end still waits for the 3 ms quiet gate', () => {
+  test('an unfinished synchronized frame never releases through the quiet gate', () => {
     const { send, writes, clock, pacer } = setup();
-    send(mouse(64, 1) + mouse(64, 2));
+    send(mouse(64, 1) + mouse(64, 2) + mouse(64, 3));
     clock.tick(20);
     pacer.onOutput('%1', encode('\x1b[?2026h partial frame'));
-    clock.tick(2);
+    clock.tick(10);
     expect(writes).toHaveLength(1);
-    clock.tick(1);
+    pacer.onOutput('%1', encode(' rest of frame \x1b[?2026l'));
     expect(writes).toHaveLength(2);
+    // 第二条写入后帧标记已重置：只有它自己的帧结束才能放行第三条
+    clock.tick(5);
+    pacer.onOutput('%1', encode('\x1b[?2026h'));
+    clock.tick(30);
+    expect(writes).toHaveLength(2);
+    pacer.onOutput('%1', encode('\x1b[?2026l'));
+    expect(writes).toHaveLength(3);
+  });
+
+  test('a frame end combined with a reporting reset is consumed and cannot leak into the next batch', () => {
+    const { send, writes, clock, pacer } = setup();
+    send(mouse(64, 1) + mouse(64, 2));
+    clock.tick(5);
+    pacer.onOutput('%1', encode('\x1b[?2026;1000l'));
+    expect(writes).toHaveLength(1);
+    pacer.onOutput('%1', encode('\x1b[?1000h'));
+    send(mouse(64, 3) + mouse(64, 4));
+    expect(writes).toHaveLength(2);
+    clock.tick(5);
+    pacer.onOutput('%1', encode('\x1b[?2026h partial'));
+    clock.tick(10);
+    expect(writes).toHaveLength(2);
+  });
+
+  test('cadence samples only intervals where the next event was already waiting', () => {
+    const { send, writes, clock, pacer, logs } = setup();
+    const frame = () => pacer.onOutput('%1', encode('\x1b[?2026h f \x1b[?2026l'));
+    // 空闲间隔：每条都在上一条放行之后才到，不采样
+    for (let index = 0; index < 6; index += 1) {
+      send(mouse());
+      clock.tick(1);
+      frame();
+      clock.tick(200);
+    }
+    expect(writes).toHaveLength(6);
+    // 持续保持一条积压、应用每 30 ms 才画完一帧：节拍 ≈ 30 ms，预算缩到 4 条
+    send(mouse().repeat(2));
+    for (let index = 0; index < 8; index += 1) {
+      clock.tick(30);
+      frame();
+      send(mouse());
+    }
+    send(mouse().repeat(20));
+    const kept = Number(/pending=(\d+)/.exec(logs.at(-1) ?? '')?.[1]);
+    expect(kept).toBeLessThanOrEqual(5);
+    expect(kept).toBeGreaterThanOrEqual(2);
   });
 
   test('no output uses the initial 60 ms fallback repeatedly', () => {

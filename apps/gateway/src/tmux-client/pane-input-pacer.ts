@@ -16,6 +16,7 @@ const systemClock: InputLaneClock = {
 
 interface InputEntry {
   bytes: Uint8Array;
+  enqueuedAt: number;
   mouse: MouseSequence | null;
   generation: number;
   submission: InputSubmission;
@@ -93,6 +94,7 @@ export class PaneInputPacer {
         new Promise<void>((resolve, reject) => {
           const entry = {
             bytes: mouse?.bytes ?? bytes.slice(),
+            enqueuedAt: this.clock.now(),
             mouse,
             generation: this.generation,
             submission: new InputSubmission(() => this.isCurrent(paneId, lane)),
@@ -110,12 +112,14 @@ export class PaneInputPacer {
   onOutput(paneId: string, bytes: Uint8Array): void {
     if (this.disposed || !this.transportReady || bytes.byteLength === 0) return;
     const lane = this.getLane(paneId);
-    if (lane.reporting.push(bytes)) {
+    const reportingReset = lane.reporting.push(bytes);
+    // 无论走哪条分支都要消费帧结束标记，否则会留到下一批输入误放行
+    const frameEnd = lane.reporting.takeFrameEnd();
+    if (reportingReset) {
       this.discardMouse(lane);
       this.pump(paneId, lane);
       return;
     }
-    const frameEnd = lane.reporting.takeFrameEnd();
     if (lane.active?.mouse || lane.writtenAt === null) return;
     // 一帧输出可能拆成多段 %output 到达：把「静默 OUTPUT_QUIET_MS」当作应用已消费上一条的
     // 依据，否则上一帧的尾段会被当成本条的响应，下一条提前落进 pty 与本条合并读取。
@@ -260,7 +264,8 @@ export class PaneInputPacer {
     if (!entry || entry.generation !== this.generation) return false;
     lane.inFlight.add(entry);
     if (entry.mouse) {
-      if (lane.lastMouseWriteAt !== null && lane.pending.length > 0) {
+      // 只有「上一条写入时本条已在排队」的间隔才是应用的消化节拍，空闲间隔不算
+      if (lane.lastMouseWriteAt !== null && entry.enqueuedAt <= lane.lastMouseWriteAt) {
         const sample = clamp(now - lane.lastMouseWriteAt, 1, 250);
         lane.cadenceMs += 0.25 * (sample - lane.cadenceMs);
       }
@@ -277,6 +282,8 @@ export class PaneInputPacer {
     const writtenAt = lane.writtenAt ?? 0;
     if (!lane.outputSeen) return writtenAt + lane.fallbackMs;
     if (lane.frameComplete) return writtenAt + FRAME_END_SPACING_MS;
+    // 同步帧还没画完：半帧输出不能当作已消费，只留超时兜底
+    if (lane.reporting.inFrame) return writtenAt + lane.fallbackMs;
     return Math.min(
       writtenAt + lane.fallbackMs,
       Math.max(writtenAt + MIN_SPACING_MS, lane.lastOutputAt + OUTPUT_QUIET_MS)

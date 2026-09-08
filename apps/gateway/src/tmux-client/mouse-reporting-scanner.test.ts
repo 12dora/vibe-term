@@ -22,4 +22,13 @@ describe('MouseReportingScanner', () => {
     scanner.push(encode('\x1b[?2026;1000l'));
     expect(scanner.takeFrameEnd()).toBe(true);
   });
+
+  test('inFrame follows synchronized-output begin/end', () => {
+    const scanner = new MouseReportingScanner();
+    expect(scanner.inFrame).toBe(false);
+    scanner.push(encode('\x1b[?2026h partial'));
+    expect(scanner.inFrame).toBe(true);
+    scanner.push(encode('\x1b[?2026l'));
+    expect(scanner.inFrame).toBe(false);
+  });
 });
