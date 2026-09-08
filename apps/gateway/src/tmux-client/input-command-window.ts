@@ -1,4 +1,7 @@
+import type { InputSubmission } from './input-submission';
+
 interface InputCommandJob {
+  submission?: InputSubmission;
   run(): Promise<unknown>;
   resolve(): void;
   reject(error: unknown): void;
@@ -18,17 +21,20 @@ export class InputCommandWindow {
 
   enqueue(
     commands: readonly string[][],
-    execute: (argv: string[]) => Promise<unknown>
+    execute: (argv: string[]) => Promise<unknown>,
+    submission?: InputSubmission
   ): Promise<void> {
     if (this.closed) return Promise.reject(this.closed);
     // 整段先入队再写出，确保跨输入、跨 pane 的分块顺序。
     const completions = commands.map(
       (argv) =>
         new Promise<void>((resolve, reject) => {
-          this.pending.push({ run: () => execute(argv), resolve, reject });
+          this.pending.push({ run: () => execute(argv), resolve, reject, submission });
         })
     );
     const result = Promise.all(completions).then(() => undefined);
+    const unsubscribe = submission?.onCancel(() => this.cancelPending(submission));
+    if (unsubscribe) void result.then(unsubscribe, unsubscribe);
     this.pump();
     return result;
   }
@@ -37,6 +43,13 @@ export class InputCommandWindow {
     if (this.closed) return;
     this.closed = new Error(reason);
     for (const job of this.pending.splice(0)) job.reject(this.closed);
+  }
+
+  private cancelPending(submission: InputSubmission): void {
+    for (let index = this.pending.length - 1; index >= 0; index -= 1) {
+      if (this.pending[index].submission !== submission) continue;
+      this.pending.splice(index, 1)[0].resolve();
+    }
   }
 
   private pump(): void {
@@ -53,6 +66,10 @@ export class InputCommandWindow {
     while (!this.closed && this.inFlight < this.capacity()) {
       const job = this.pending.shift();
       if (!job) return;
+      if (job.submission && !job.submission.isValid()) {
+        job.resolve();
+        continue;
+      }
       this.inFlight += 1;
       let result: Promise<unknown>;
       try {

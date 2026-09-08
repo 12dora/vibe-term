@@ -1,7 +1,6 @@
 import { errorMessage } from '@vibeterm/shared';
 import type { Device } from '@vibeterm/shared';
 import { Client, type ClientChannel } from 'ssh2';
-
 import { config } from '../config';
 import { decryptWithContext } from '../crypto';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
@@ -17,6 +16,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
+import type { InputCompletion } from './input-submission';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -102,11 +102,11 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     void this.shutdownInternal(false);
   }
 
-  sendInput(paneId: string, data: string, onAck?: () => void): Promise<void> {
-    return this.sendInputBytes(paneId, new TextEncoder().encode(data), onAck);
+  sendInput(paneId: string, data: string, ...completion: InputCompletion): Promise<void> {
+    return this.sendInputBytes(paneId, new TextEncoder().encode(data), ...completion);
   }
 
-  sendInputBytes(paneId: string, data: Uint8Array, onAck?: () => void): Promise<void> {
+  sendInputBytes(paneId: string, data: Uint8Array, ...completion: InputCompletion): Promise<void> {
     if (!this.connected) return Promise.reject(new Error('tmux input disconnected'));
     const control = this.controlChannel;
     const queue = this.controlCommands;
@@ -122,7 +122,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       },
       paneId,
       Uint8Array.from(data),
-      onAck
+      ...completion
     );
   }
 

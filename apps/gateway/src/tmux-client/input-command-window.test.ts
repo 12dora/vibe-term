@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { InputCommandWindow } from './input-command-window';
+import { InputSubmission } from './input-submission';
 
 function deferredExecutor() {
   const started: string[] = [];
@@ -22,6 +23,35 @@ async function flush() {
 }
 
 describe('InputCommandWindow', () => {
+  test('cancellation settles pending jobs before a slot frees and preserves ordinary jobs', async () => {
+    const window = new InputCommandWindow(() => 1);
+    const h = deferredExecutor();
+    const active = window.enqueue([['active']], h.execute);
+    const submission = new InputSubmission(() => true);
+    const mouse = window.enqueue([['mouse']], h.execute, submission);
+    const key = window.enqueue([['key']], h.execute);
+    expect(submission.cancel()).toBe(true);
+    await mouse;
+    expect(h.started).toEqual(['active']);
+    h.replies[0].resolve();
+    await active;
+    expect(h.started).toEqual(['active', 'key']);
+    h.replies[1].resolve();
+    await key;
+  });
+
+  test('checks submission validity again immediately before running a queued job', async () => {
+    const window = new InputCommandWindow(() => 1);
+    const h = deferredExecutor();
+    let current = true;
+    const active = window.enqueue([['active']], h.execute);
+    const stale = window.enqueue([['stale']], h.execute, new InputSubmission(() => current));
+    current = false;
+    h.replies[0].resolve();
+    await Promise.all([active, stale]);
+    expect(h.started).toEqual(['active']);
+  });
+
   test('six payloads share four slots and each completion starts exactly the next command', async () => {
     const window = new InputCommandWindow(() => 4);
     const h = deferredExecutor();

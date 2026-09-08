@@ -1,4 +1,5 @@
 import type { StateSnapshotPayload } from '@vibeterm/shared';
+import type { InputCompletion } from './input-submission';
 
 import { getDeviceById } from '../db';
 import type { PaneInfo } from './capture-history';
@@ -42,8 +43,12 @@ export interface DeviceSessionRuntimeConnection {
   disconnect(): void;
   isSessionClosedEmitted?(): boolean;
   requestSnapshot(): void;
-  sendInput(paneId: string, data: string, onAck?: () => void): void | Promise<void>;
-  sendInputBytes?(paneId: string, data: Uint8Array, onAck?: () => void): void | Promise<void>;
+  sendInput(paneId: string, data: string, ...completion: InputCompletion): void | Promise<void>;
+  sendInputBytes?(
+    paneId: string,
+    data: Uint8Array,
+    ...completion: InputCompletion
+  ): void | Promise<void>;
   resizePane(paneId: string, cols: number, rows: number): void;
   selectPane(windowId: string, paneId: string): void;
   selectPaneWithSize(windowId: string, paneId: string, cols: number, rows: number): void;
@@ -128,9 +133,10 @@ export class DeviceSessionRuntime {
   private readonly metadataProjection: MetadataProjection;
   private readonly paneRetention = new PaneRetention();
   private readonly paneHistoryReader: PaneHistoryReader;
-  private readonly inputLane = new PaneInputPacer((paneId, bytes, onAck) => {
-    if (this.connection.sendInputBytes) return this.connection.sendInputBytes(paneId, bytes, onAck);
-    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes), onAck);
+  private readonly inputLane = new PaneInputPacer((paneId, bytes, ...completion) => {
+    if (this.connection.sendInputBytes)
+      return this.connection.sendInputBytes(paneId, bytes, ...completion);
+    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes), ...completion);
   });
   private readonly inputLifecycle = new PaneInputLifecycle(this.inputLane);
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();

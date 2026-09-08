@@ -17,6 +17,7 @@ import {
   shouldIgnoreReaderAbortError,
 } from './local-external-connection';
 import { PaneInputPacer } from './pane-input-pacer';
+import { TestClock } from './pane-input-test-helpers';
 import { TmuxTargetMissingError } from './target-missing';
 
 const now = '2026-04-14T00:00:00.000Z';
@@ -2500,11 +2501,12 @@ describe('控制模式下的输入流水线', () => {
   test('pacer 在普通输入前逐条等待鼠标确认和输出', async () => {
     const h = await connectControlMode('vibeterm-window-pacer');
     const completions: Promise<void>[] = [];
-    const pacer = new PaneInputPacer((pane, bytes, onAck) => {
-      const completion = h.connection.sendInputBytes(pane, bytes, onAck);
+    const clock = new TestClock();
+    const pacer = new PaneInputPacer((pane, bytes, ...completionArgs) => {
+      const completion = h.connection.sendInputBytes(pane, bytes, ...completionArgs);
       completions.push(completion);
       return completion;
-    });
+    }, clock);
     try {
       const mouse = '\x1b[<64;1;1M';
       pacer.sendInputBytes('%1', new TextEncoder().encode(mouse.repeat(7)));
@@ -2513,8 +2515,10 @@ describe('控制模式下的输入流水线', () => {
       for (let i = 0; i < 8; i += 1) {
         expect(h.sendKeys()).toHaveLength(i + 1);
         h.answer(1);
-        await Bun.sleep(10);
+        await Bun.sleep(0);
+        clock.tick(10);
         pacer.onOutput('%1', new TextEncoder().encode('redraw'));
+        clock.tick(3);
       }
       await Promise.all(completions);
       const bytes = h

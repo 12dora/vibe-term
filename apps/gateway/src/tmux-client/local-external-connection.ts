@@ -17,6 +17,7 @@ import {
   createControlModeSubscription,
 } from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
+import type { InputCompletion } from './input-submission';
 import type { HistoryRangeRequest, PaneHistoryCaptureInfo } from './pane-history-page';
 import { formatTmuxMetricsLine } from './tmux-metrics-line';
 export { formatTmuxMetricsLine };
@@ -312,12 +313,28 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.stopControlClient();
   }
 
-  sendInput(paneId: string, data: string, onAck?: () => void): Promise<void> {
-    return this.enqueueInputBytes(paneId, new TextEncoder().encode(data), onAck);
+  sendInput(paneId: string, data: string, ...completion: InputCompletion): Promise<void> {
+    return this.sendInputBytes(paneId, new TextEncoder().encode(data), ...completion);
   }
 
-  sendInputBytes(paneId: string, data: Uint8Array, onAck?: () => void): Promise<void> {
-    return this.enqueueInputBytes(paneId, Uint8Array.from(data), onAck);
+  sendInputBytes(paneId: string, data: Uint8Array, ...completion: InputCompletion): Promise<void> {
+    if (!this.connected) return Promise.reject(new Error('tmux input disconnected'));
+    const control = this.controlProcess;
+    const queue = this.controlCommands;
+    return sendExternalInput(
+      {
+        queue,
+        window: this.inputCommands,
+        write: control ? (value) => control.write(value) : undefined,
+        isCurrent: () =>
+          this.connected && this.controlProcess === control && this.controlCommands === queue,
+        run: (argv) => this.runTmux(argv),
+        onError: (error) => this.callbacks.onError(error),
+      },
+      paneId,
+      Uint8Array.from(data),
+      ...completion
+    );
   }
 
   protected resolveDefaultWorkingDir(): string {
@@ -442,26 +459,6 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
       return;
     }
     this.callbacks.onError(error instanceof Error ? error : new Error(String(error)));
-  }
-
-  private enqueueInputBytes(paneId: string, data: Uint8Array, onAck?: () => void): Promise<void> {
-    if (!this.connected) return Promise.reject(new Error('tmux input disconnected'));
-    const control = this.controlProcess;
-    const queue = this.controlCommands;
-    return sendExternalInput(
-      {
-        queue,
-        window: this.inputCommands,
-        write: control ? (value) => control.write(value) : undefined,
-        isCurrent: () =>
-          this.connected && this.controlProcess === control && this.controlCommands === queue,
-        run: (argv) => this.runTmux(argv),
-        onError: (error) => this.callbacks.onError(error),
-      },
-      paneId,
-      data,
-      onAck
-    );
   }
 
   private async assertTmuxCompatibility(): Promise<void> {

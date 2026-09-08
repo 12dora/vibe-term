@@ -16,7 +16,8 @@ function harness() {
   const failures: Array<(error: Error) => void> = [];
   const errors: unknown[] = [];
   const pacer = new PaneInputPacer(
-    (pane, bytes, onAck) => {
+    (pane, bytes, onAck, submission) => {
+      submission.submitted = true;
       writes.push({ text: new TextDecoder().decode(bytes), at: clock.now(), pane });
       return new Promise<void>((resolve, reject) => {
         acknowledgments.push(() => {

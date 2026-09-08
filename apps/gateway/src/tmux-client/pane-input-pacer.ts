@@ -1,3 +1,4 @@
+import { InputSubmission } from './input-submission';
 import { MouseReportingScanner } from './mouse-reporting-scanner';
 import { type MouseSequence, splitMouseSequences } from './mouse-sequence';
 
@@ -17,6 +18,7 @@ interface InputEntry {
   bytes: Uint8Array;
   mouse: MouseSequence | null;
   generation: number;
+  submission: InputSubmission;
   resolve(): void;
   reject(error: unknown): void;
 }
@@ -24,6 +26,7 @@ interface InputEntry {
 interface PaneLane {
   pending: InputEntry[];
   active: InputEntry | null;
+  inFlight: Set<InputEntry>;
   lastMotion: InputEntry | null;
   generation: number;
   reporting: MouseReportingScanner;
@@ -57,7 +60,8 @@ export class PaneInputPacer {
     private readonly write: (
       paneId: string,
       bytes: Uint8Array,
-      onAck: () => void
+      onAck: () => void,
+      submission: InputSubmission
     ) => void | Promise<void>,
     private readonly clock: InputLaneClock = systemClock,
     private readonly warn: (message: string) => void = console.warn,
@@ -80,6 +84,7 @@ export class PaneInputPacer {
             bytes: mouse?.bytes ?? bytes.slice(),
             mouse,
             generation: this.generation,
+            submission: new InputSubmission(() => this.isCurrent(paneId, lane)),
             resolve,
             reject,
           };
@@ -128,7 +133,10 @@ export class PaneInputPacer {
     this.clearTimer(lane);
     this.panes.delete(paneId);
     const error = new Error('tmux input lane cancelled');
-    lane.active?.reject(error);
+    for (const entry of lane.inFlight) {
+      entry.submission.cancel();
+      entry.reject(error);
+    }
     for (const entry of lane.pending) entry.reject(error);
   }
 
@@ -153,6 +161,7 @@ export class PaneInputPacer {
       lane = {
         pending: [],
         active: null,
+        inFlight: new Set(),
         lastMotion: null,
         generation: this.generation,
         reporting: new MouseReportingScanner(),
@@ -199,6 +208,12 @@ export class PaneInputPacer {
   private discardMouse(lane: PaneLane): void {
     this.clearTimer(lane);
     lane.lastMotion = null;
+    const active = lane.active;
+    if (active?.submission.cancel()) {
+      lane.active = null;
+      lane.inFlight.delete(active);
+      active.resolve();
+    }
     lane.pending = lane.pending.filter((entry) => {
       if (!entry.mouse) return true;
       entry.resolve();
@@ -209,20 +224,29 @@ export class PaneInputPacer {
   }
 
   private pump(paneId: string, lane: PaneLane): void {
-    if (lane.pending.length === 0 || lane.active || !this.isCurrent(paneId, lane)) return;
+    while (lane.pending.length > 0 && !lane.active && this.isCurrent(paneId, lane)) {
+      if (!this.startEntry(paneId, lane)) return;
+    }
+  }
+
+  private startEntry(paneId: string, lane: PaneLane): boolean {
     const now = this.clock.now();
     const readyAt =
       !lane.pending[0].mouse || lane.writtenAt === null ? now : this.mouseReadyAt(lane);
     if (now < readyAt) {
       this.schedule(paneId, lane, readyAt);
-      return;
+      return false;
     }
     this.clearTimer(lane);
     const entry = lane.pending.shift();
-    if (!entry || entry.generation !== this.generation) return;
-    lane.active = entry;
-    if (entry.mouse) lane.outputSeen = false;
+    if (!entry || entry.generation !== this.generation) return false;
+    lane.inFlight.add(entry);
+    if (entry.mouse) {
+      lane.active = entry;
+      lane.outputSeen = false;
+    }
     this.writeEntry(paneId, lane, entry);
+    return true;
   }
 
   private mouseReadyAt(lane: PaneLane): number {
@@ -237,9 +261,9 @@ export class PaneInputPacer {
   private writeEntry(paneId: string, lane: PaneLane, entry: InputEntry): void {
     let acknowledged = false;
     const ack = () => {
-      if (acknowledged || !this.isCurrent(paneId, lane) || lane.active !== entry) return;
+      if (acknowledged || !this.isCurrent(paneId, lane) || !lane.inFlight.delete(entry)) return;
       acknowledged = true;
-      lane.active = null;
+      if (lane.active === entry) lane.active = null;
       // 同一 stdout chunk 中 %end 后的输出必须同步看到 ack；间隔也从此刻起算。
       if (entry.mouse) {
         lane.writtenAt = this.clock.now();
@@ -255,7 +279,7 @@ export class PaneInputPacer {
       this.onError(error);
     };
     try {
-      const result = this.write(paneId, entry.bytes, ack);
+      const result = this.write(paneId, entry.bytes, ack, entry.submission);
       if (result) void result.then(ack, fail);
       else ack();
     } catch (error) {
