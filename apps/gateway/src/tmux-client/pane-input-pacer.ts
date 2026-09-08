@@ -62,8 +62,18 @@ function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
 }
 
+export interface PaneInputPacerOptions {
+  /**
+   * 输出门控：下一条鼠标序列要等应用对上一条产生输出（或 2026 帧结束 / 回退超时），并按
+   * 应用消化节拍限制待写预算。默认关闭——只按 tmux 回执串行（与 2.0.3 一致），实测应用
+   * 能一次消化小块多事件，逐帧等待反而让快速滚动慢一拍。
+   */
+  outputGate?: boolean;
+}
+
 export class PaneInputPacer {
   private readonly panes = new Map<string, PaneLane>();
+  private readonly outputGate: boolean;
   private disposed = false;
   private transportReady = true;
   private generation = 0;
@@ -78,8 +88,11 @@ export class PaneInputPacer {
     private readonly clock: InputLaneClock = systemClock,
     private readonly warn: (message: string) => void = console.warn,
     private readonly onError: (error: unknown) => void = (error) =>
-      console.error('[tmux][input-lane] write failed:', error)
-  ) {}
+      console.error('[tmux][input-lane] write failed:', error),
+    options: PaneInputPacerOptions = {}
+  ) {
+    this.outputGate = options.outputGate ?? false;
+  }
 
   sendInputBytes(paneId: string, bytes: Uint8Array): Promise<void> {
     if (this.disposed || !this.transportReady) {
@@ -215,7 +228,8 @@ export class PaneInputPacer {
     const kind = motion ? 'motionKey' : 'droppable';
     const count = lane.pending.filter((pending) => pending.mouse?.[kind]).length;
     const maxPending = clamp(Math.round(PENDING_BUDGET_MS / lane.cadenceMs), 2, 64);
-    if ((motion || entry.mouse?.droppable) && count >= maxPending) {
+    // 不开输出门控时滚轮从不丢（与 2.0.3 一致），移动事件仍按预算封顶
+    if ((motion || (this.outputGate && entry.mouse?.droppable)) && count >= maxPending) {
       lane.lastMotion = null;
       this.noteDrop(paneId, lane);
       entry.resolve();
@@ -280,6 +294,7 @@ export class PaneInputPacer {
 
   private mouseReadyAt(lane: PaneLane): number {
     const writtenAt = lane.writtenAt ?? 0;
+    if (!this.outputGate) return writtenAt;
     if (!lane.outputSeen) return writtenAt + lane.fallbackMs;
     if (lane.frameComplete) return writtenAt + FRAME_END_SPACING_MS;
     // 同步帧还没画完：半帧输出不能当作已消费，只留超时兜底

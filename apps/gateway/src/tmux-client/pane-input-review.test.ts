@@ -29,7 +29,8 @@ function harness() {
     },
     clock,
     () => {},
-    (error) => errors.push(error)
+    (error) => errors.push(error),
+    { outputGate: true }
   );
   return {
     pacer,
@@ -169,7 +170,10 @@ describe('input lane review regressions', () => {
             onAck,
           })
         ),
-      clock
+      clock,
+      undefined,
+      undefined,
+      { outputGate: true }
     );
     const parser = createControlModeParser({
       onOutput: (pane, bytes) => pacer.onOutput(pane, bytes),
@@ -285,7 +289,8 @@ describe('input lane review regressions', () => {
       },
       new TestClock(),
       () => {},
-      () => {}
+      () => {},
+      { outputGate: true }
     );
     await expect(pacer.sendInputBytes('%1', encode(mouse().repeat(21)))).rejects.toThrow('closed');
     pacer.dispose();

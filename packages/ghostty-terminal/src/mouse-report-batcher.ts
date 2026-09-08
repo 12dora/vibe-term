@@ -8,7 +8,11 @@
 // 再落进一个尾随窗口——首条立即发（不给单次滚动引入延迟），窗口内后到的累积，窗口
 // 关闭时一次发出。字节内容不变、顺序不变，网关侧按序列拆分后仍按 pane 节奏逐条落盘。
 
-export const MOUSE_REPORT_COALESCE_MS = 16;
+/**
+ * 跨手势的尾随合批窗口。默认 0：一次手势的多行仍合成一条，但不再把后续手势压到 16 ms 后才发——
+ * 实测那一拍延迟在快速滚动时能被感知（2.0.4/2.0.5 反馈「慢一拍」）。
+ */
+export const MOUSE_REPORT_COALESCE_MS = 0;
 
 export type MouseReportBatcherOptions = {
   emit: (payload: string) => void;

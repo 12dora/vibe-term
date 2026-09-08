@@ -2502,11 +2502,17 @@ describe('控制模式下的输入流水线', () => {
     const h = await connectControlMode('vibeterm-window-pacer');
     const completions: Promise<void>[] = [];
     const clock = new TestClock();
-    const pacer = new PaneInputPacer((pane, bytes, ...completionArgs) => {
-      const completion = h.connection.sendInputBytes(pane, bytes, ...completionArgs);
-      completions.push(completion);
-      return completion;
-    }, clock);
+    const pacer = new PaneInputPacer(
+      (pane, bytes, ...completionArgs) => {
+        const completion = h.connection.sendInputBytes(pane, bytes, ...completionArgs);
+        completions.push(completion);
+        return completion;
+      },
+      clock,
+      undefined,
+      undefined,
+      { outputGate: true }
+    );
     try {
       const mouse = '\x1b[<64;1;1M';
       pacer.sendInputBytes('%1', new TextEncoder().encode(mouse.repeat(7)));

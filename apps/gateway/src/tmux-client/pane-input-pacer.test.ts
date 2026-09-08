@@ -15,7 +15,9 @@ function setup() {
       writes.push({ pane, text: new TextDecoder().decode(bytes), at: clock.now() });
     },
     clock,
-    (line) => logs.push(line)
+    (line) => logs.push(line),
+    undefined,
+    { outputGate: true }
   );
   const send = (text: string, pane = '%1') => pacer.sendInputBytes(pane, encode(text));
   const output = (pane = '%1') => pacer.onOutput(pane, encode('redraw'));
@@ -53,6 +55,45 @@ describe('SGR mouse classification', () => {
     for (const button of [0, 1, 2, 3, 4, 8, 16, 32, 35, 96, 128, 4294967360]) {
       expect(splitMouseSequences(encode(mouse(button)))?.[0]?.droppable).toBe(false);
     }
+  });
+});
+
+describe('default lane (no output gate)', () => {
+  function setupDefault() {
+    const clock = new TestClock();
+    const writes: Array<{ text: string; at: number }> = [];
+    const acks: Array<() => void> = [];
+    const pacer = new PaneInputPacer((_pane, bytes, onAck, submission) => {
+      submission.submitted = true;
+      writes.push({ text: new TextDecoder().decode(bytes), at: clock.now() });
+      return new Promise<void>((resolve) => {
+        acks.push(() => {
+          onAck();
+          resolve();
+        });
+      });
+    }, clock);
+    return { clock, writes, acks, pacer };
+  }
+
+  test('mouse sequences are serialized on the tmux ack only, never wait for output', () => {
+    const { writes, acks, pacer, clock } = setupDefault();
+    pacer.sendInputBytes('%1', encode(mouse(64, 1) + mouse(64, 2) + mouse(64, 3)));
+    expect(writes).toHaveLength(1);
+    clock.tick(500);
+    expect(writes).toHaveLength(1);
+    acks[0]?.();
+    expect(writes).toHaveLength(2);
+    acks[1]?.();
+    expect(writes).toHaveLength(3);
+    expect(clock.timers.size).toBe(0);
+  });
+
+  test('wheel events are never dropped by a budget', () => {
+    const { writes, acks, pacer } = setupDefault();
+    pacer.sendInputBytes('%1', encode(mouse().repeat(200)));
+    for (let index = 0; index < 199; index += 1) acks[index]?.();
+    expect(writes).toHaveLength(200);
   });
 });
 
@@ -410,7 +451,8 @@ describe('per-pane input pacing', () => {
       () => Promise.reject(error),
       clock,
       () => {},
-      (failure) => errors.push(failure)
+      (failure) => errors.push(failure),
+      { outputGate: true }
     );
     pacer.sendInputBytes('%1', encode(mouse().repeat(2)));
     await Promise.resolve();

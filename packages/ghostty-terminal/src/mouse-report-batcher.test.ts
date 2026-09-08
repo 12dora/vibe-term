@@ -47,7 +47,7 @@ function createClock() {
   };
 }
 
-function createBatcher(windowMs = MOUSE_REPORT_COALESCE_MS) {
+function createBatcher(windowMs = 16) {
   const clock = createClock();
   const emitted: string[] = [];
   const batcher = new MouseReportBatcher({
@@ -137,4 +137,13 @@ describe('MouseReportBatcher', () => {
     expect(emitted).toEqual([]);
     expect(batcher.hasPending).toBeFalse();
   });
+});
+
+test('default window is 0: every gesture is emitted immediately', () => {
+  expect(MOUSE_REPORT_COALESCE_MS).toBe(0);
+  const { batcher, emitted, clock } = createBatcher(MOUSE_REPORT_COALESCE_MS);
+  batcher.push('a');
+  clock.advance(1);
+  batcher.push('b');
+  expect(emitted).toEqual(['a', 'b']);
 });

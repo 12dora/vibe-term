@@ -92,6 +92,7 @@ function setup(binary = true) {
   };
   const runtime = createDeviceSessionRuntime({
     deviceId: 'test',
+    inputOutputGate: true,
     createConnection: (callbacks) => {
       options = callbacks;
       return connection;

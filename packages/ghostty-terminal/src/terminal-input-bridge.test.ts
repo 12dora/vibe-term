@@ -29,6 +29,7 @@ function createClock() {
       return timers.size;
     },
     timing: {
+      windowMs: 16,
       now: () => now,
       setTimer: (callback: () => void, delayMs: number): unknown => {
         const id = nextId++;

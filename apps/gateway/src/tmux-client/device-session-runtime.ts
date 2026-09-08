@@ -116,6 +116,8 @@ export interface DeviceSessionRuntimeOptions {
   deviceName?: string;
   notifyEvent?: LifecycleEventEmitter;
   createConnection?: (options: TmuxConnectionOptions) => DeviceSessionRuntimeConnection;
+  /** 鼠标输入通道是否等待应用输出（见 PaneInputPacerOptions.outputGate），默认关 */
+  inputOutputGate?: boolean;
 }
 
 function createDefaultConnection(options: TmuxConnectionOptions): DeviceSessionRuntimeConnection {
@@ -133,12 +135,8 @@ export class DeviceSessionRuntime {
   private readonly metadataProjection: MetadataProjection;
   private readonly paneRetention = new PaneRetention();
   private readonly paneHistoryReader: PaneHistoryReader;
-  private readonly inputLane = new PaneInputPacer((paneId, bytes, ...completion) => {
-    if (this.connection.sendInputBytes)
-      return this.connection.sendInputBytes(paneId, bytes, ...completion);
-    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes), ...completion);
-  });
-  private readonly inputLifecycle = new PaneInputLifecycle(this.inputLane);
+  private readonly inputLane: PaneInputPacer;
+  private readonly inputLifecycle: PaneInputLifecycle;
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
   private readonly eventBridge: RuntimeEventBridge;
   private readonly screenCapture: CanonicalScreenCapture;
@@ -154,6 +152,18 @@ export class DeviceSessionRuntime {
 
   constructor(options: DeviceSessionRuntimeOptions) {
     this.deviceId = options.deviceId;
+    this.inputLane = new PaneInputPacer(
+      (paneId, bytes, ...completion) => {
+        if (this.connection.sendInputBytes)
+          return this.connection.sendInputBytes(paneId, bytes, ...completion);
+        return this.connection.sendInput(paneId, new TextDecoder().decode(bytes), ...completion);
+      },
+      undefined,
+      undefined,
+      undefined,
+      { outputGate: options.inputOutputGate ?? false }
+    );
+    this.inputLifecycle = new PaneInputLifecycle(this.inputLane);
     const createConnection = options.createConnection ?? createDefaultConnection;
     const runtime = this;
 

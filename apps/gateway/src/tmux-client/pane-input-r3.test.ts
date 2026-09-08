@@ -34,7 +34,8 @@ function harness(kind: 'local' | 'ssh', ackDelay?: number) {
     (pane, bytes, ...completion) => connection.sendInputBytes(pane, bytes, ...completion),
     clock,
     () => {},
-    (error) => errors.push(error as Error)
+    (error) => errors.push(error as Error),
+    { outputGate: true }
   );
   const parser = createControlModeParser({
     onOutput: (pane, bytes) => pacer.onOutput(pane, bytes),
