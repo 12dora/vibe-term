@@ -98,6 +98,9 @@ type LayoutMap = Record<string, LayoutType>;
 
 type GhosttyMouseEncodeOptions = {
   action: 'press' | 'release' | 'motion';
+  // 模式查询走调用方的按代缓存（TerminalInputBridge），一次手势的 N 行上报只查一轮；
+  // 不传则逐次问 WASM，保持 headless 等无缓存调用方的原行为。
+  modes?: (mode: number) => boolean;
   button?: number | null;
   mods: number;
   x: number;
@@ -1293,11 +1296,12 @@ export class GhosttyBindings {
     options: GhosttyMouseEncodeOptions
   ): string | null {
     void encoder;
-
-    const trackingAny = this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_ANY_MOUSE);
-    const trackingButton = this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_BUTTON_MOUSE);
-    const trackingNormal = this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_NORMAL_MOUSE);
-    const trackingX10 = this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_X10_MOUSE);
+    const modeEnabled =
+      options.modes ?? ((mode: number) => this.isTerminalModeEnabled(terminal, mode));
+    const trackingAny = modeEnabled(GHOSTTY_MODE_ANY_MOUSE);
+    const trackingButton = modeEnabled(GHOSTTY_MODE_BUTTON_MOUSE);
+    const trackingNormal = modeEnabled(GHOSTTY_MODE_NORMAL_MOUSE);
+    const trackingX10 = modeEnabled(GHOSTTY_MODE_X10_MOUSE);
 
     if (!trackingAny && !trackingButton && !trackingNormal && !trackingX10) {
       return null;
@@ -1314,10 +1318,6 @@ export class GhosttyBindings {
       return null;
     }
 
-    if (!trackingAny && !trackingButton && !trackingX10 && options.action === 'motion') {
-      return null;
-    }
-
     const baseCode = mouseButtonCode(options.button);
     if (baseCode === null) {
       return null;
@@ -1330,8 +1330,8 @@ export class GhosttyBindings {
 
     let code =
       options.action === 'release' &&
-      !this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_SGR_MOUSE) &&
-      !this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_SGR_PIXELS_MOUSE)
+      !modeEnabled(GHOSTTY_MODE_SGR_MOUSE) &&
+      !modeEnabled(GHOSTTY_MODE_SGR_PIXELS_MOUSE)
         ? 3
         : baseCode;
 
@@ -1341,22 +1341,22 @@ export class GhosttyBindings {
 
     code += encodeMouseModifierBits(options.mods);
 
-    if (this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_SGR_PIXELS_MOUSE)) {
+    if (modeEnabled(GHOSTTY_MODE_SGR_PIXELS_MOUSE)) {
       const suffix = options.action === 'release' ? 'm' : 'M';
       return `\u001b[<${code};${pixelX};${pixelY}${suffix}`;
     }
 
-    if (this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_SGR_MOUSE)) {
+    if (modeEnabled(GHOSTTY_MODE_SGR_MOUSE)) {
       const suffix = options.action === 'release' ? 'm' : 'M';
       return `\u001b[<${code};${column};${row}${suffix}`;
     }
 
-    if (this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_URXVT_MOUSE)) {
+    if (modeEnabled(GHOSTTY_MODE_URXVT_MOUSE)) {
       return `\u001b[${code};${column};${row}M`;
     }
 
     if (
-      this.isTerminalModeEnabled(terminal, GHOSTTY_MODE_UTF8_MOUSE) ||
+      modeEnabled(GHOSTTY_MODE_UTF8_MOUSE) ||
       trackingNormal ||
       trackingButton ||
       trackingAny ||

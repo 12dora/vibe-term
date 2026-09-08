@@ -1,4 +1,12 @@
+import { ScreenRectCache, type TerminalScreenRect } from './screen-rect-cache';
 import { DEFAULT_CELL_HEIGHT, DEFAULT_CELL_WIDTH, LINE_HEIGHT } from './terminal-constants';
+import {
+  createRootElement,
+  createScreenElement,
+  createScrollbarElements,
+  createTextareaElement,
+  createViewportElement,
+} from './terminal-dom-elements';
 import type {
   GhosttyCellDimensions,
   GhosttyPanDelta,
@@ -27,109 +35,6 @@ export type TerminalScrollbarState = {
   offset: number;
   len: number;
 };
-
-function createRootElement(options: GhosttyTerminalInitOptions): HTMLDivElement {
-  const root = document.createElement('div');
-  root.className = 'xterm';
-  root.style.position = 'absolute';
-  root.style.inset = '0';
-  root.style.overflow = 'hidden';
-  // 终端子树自成布局/绘制/样式隔离单元：滚动条与 canvas 层的样式写入不再让整份文档的
-  // 布局树失效，残余的强制同步布局也被限制在这棵子树内。root 本身已是 overflow:hidden
-  // 的绝对定位块，paint 隔离不改变任何可见裁剪与包含块语义。
-  root.style.contain = 'layout paint style';
-  root.style.width = '100%';
-  root.style.height = '100%';
-  root.style.backgroundColor = options.theme.background;
-  root.style.color = options.theme.foreground;
-  root.style.fontFamily = options.fontFamily;
-  root.style.fontSize = `${options.fontSize}px`;
-  root.style.lineHeight = String(options.lineHeight ?? LINE_HEIGHT);
-  return root;
-}
-
-function createViewportElement(): HTMLDivElement {
-  const viewport = document.createElement('div');
-  viewport.className = 'xterm-viewport';
-  viewport.style.width = '100%';
-  viewport.style.height = '100%';
-  viewport.style.overflow = 'hidden';
-  viewport.style.position = 'relative';
-  return viewport;
-}
-
-function createScreenElement(options: GhosttyTerminalInitOptions): HTMLDivElement {
-  const screen = document.createElement('div');
-  screen.className = 'xterm-screen';
-  screen.style.width = '100%';
-  screen.style.height = '100%';
-  screen.style.position = 'relative';
-  screen.style.userSelect = 'none';
-  screen.style.webkitUserSelect = 'none';
-  screen.style.backgroundColor = options.theme.background;
-  return screen;
-}
-
-function createTextareaElement(options: GhosttyTerminalInitOptions): HTMLDivElement {
-  const textarea = document.createElement('div');
-  textarea.className = 'xterm-helper-textarea';
-  textarea.setAttribute('aria-label', 'Terminal Input');
-  textarea.setAttribute('role', 'textbox');
-  textarea.setAttribute('contenteditable', 'true');
-  textarea.setAttribute('autocorrect', 'off');
-  textarea.setAttribute('autocapitalize', 'off');
-  textarea.setAttribute('spellcheck', 'false');
-  textarea.style.position = 'absolute';
-  textarea.style.opacity = '1';
-  textarea.style.pointerEvents = 'none';
-  textarea.style.left = '0';
-  textarea.style.top = '0';
-  textarea.style.minWidth = '1px';
-  textarea.style.minHeight = '1px';
-  textarea.style.whiteSpace = 'pre';
-  textarea.style.border = '0';
-  textarea.style.padding = '0';
-  textarea.style.margin = '0';
-  textarea.style.color = options.theme.foreground;
-  textarea.style.backgroundColor = 'transparent';
-  textarea.style.caretColor = 'transparent';
-  textarea.style.overflow = 'visible';
-  textarea.style.outline = 'none';
-  textarea.style.boxShadow = 'none';
-  textarea.style.fontFamily = options.fontFamily;
-  textarea.style.fontSize = `${options.fontSize}px`;
-  textarea.style.userSelect = 'text';
-  textarea.style.webkitUserSelect = 'text';
-  return textarea;
-}
-
-function createScrollbarElements(): { track: HTMLDivElement; thumb: HTMLDivElement } {
-  const track = document.createElement('div');
-  track.className = 'xterm-scrollbar-track';
-  track.style.position = 'absolute';
-  track.style.top = '0';
-  track.style.right = '0';
-  track.style.width = '8px';
-  track.style.height = '100%';
-  track.style.backgroundColor = 'transparent';
-  track.style.pointerEvents = 'none';
-
-  const thumb = document.createElement('div');
-  thumb.className = 'xterm-scrollbar-thumb';
-  thumb.style.position = 'absolute';
-  thumb.style.top = '0';
-  thumb.style.right = '0';
-  thumb.style.width = '6px';
-  thumb.style.marginRight = '1px';
-  thumb.style.borderRadius = '3px';
-  thumb.style.backgroundColor = 'rgba(128, 128, 128, 0.5)';
-  thumb.style.pointerEvents = 'none';
-  thumb.style.transition = 'opacity 0.15s ease';
-  thumb.style.opacity = '0';
-
-  track.appendChild(thumb);
-  return { track, thumb };
-}
 
 // 终端的 DOM 外壳：元素树、几何测量（cell 尺寸 / 视口尺寸 / 命中坐标基准）、
 // helper textarea 定位与滚动条显隐。不含任何 WASM 或渲染内容逻辑。
@@ -162,6 +67,7 @@ export class TerminalDomSurface {
   // 却曾经被每个 wheel / touchmove 事件读一次，与紧邻的样式写构成强制同步布局。
   private trackHeight: number | null = null;
   private panOverflow: { x: number; y: number } | null = null;
+  private readonly screenRect = new ScreenRectCache();
   private layoutObserver: ResizeObserver | null = null;
   // 最近一次真正写进 thumb 的样式值：thumb.style.height 影响布局，无条件重写会让
   // 布局树每帧失效，于是下一次读 clientHeight 必须先跑一次同步布局。
@@ -206,6 +112,7 @@ export class TerminalDomSurface {
     this.screen = screen;
     this.helperTextarea = textarea;
     this.scrollbarThumb = scrollbar.thumb;
+    this.screenRect.invalidate();
     viewport.addEventListener('scroll', this.handlePanScroll, { passive: true });
     this.observeViewportLayout(viewport);
     return screen;
@@ -227,6 +134,7 @@ export class TerminalDomSurface {
   invalidateLayoutMetrics(): void {
     this.trackHeight = null;
     this.panOverflow = null;
+    this.screenRect.invalidate();
   }
 
   // 0 不入缓存：首帧布局未落地时读到的 0 会永久粘住（无 ResizeObserver 的环境尤甚）。
@@ -357,6 +265,8 @@ export class TerminalDomSurface {
 
   // 平移时 helper textarea（IME 候选框锚点）挂在 root 上不会跟着动，按滚动偏移重贴。
   private readonly handlePanScroll = (): void => {
+    // 内容表面随平移位移，rect 的 left/top 随之改变。
+    this.screenRect.invalidate();
     if (!this.panEnabled || !this.cursorCell) {
       return;
     }
@@ -403,6 +313,7 @@ export class TerminalDomSurface {
     const rawHeight = this.options.fontSize * (this.options.lineHeight ?? LINE_HEIGHT);
     this.cell.width = Math.max(1, Math.round(rawWidth * dpr)) / dpr;
     this.cell.height = Math.max(1, Math.round(rawHeight * dpr)) / dpr;
+    this.invalidateLayoutMetrics();
   }
 
   measureSize(): GhosttyTerminalSize | null {
@@ -422,8 +333,10 @@ export class TerminalDomSurface {
     };
   }
 
-  screenBounds(): DOMRect | null {
-    return this.screen?.getBoundingClientRect() ?? null;
+  // 一次滚轮手势要按行编码 N 次鼠标上报，每次都要 rect：走缓存，只在布局失效或
+  // TTL 到期后重新量一次，避免与同帧的样式写构成强制同步布局。
+  screenBounds(): TerminalScreenRect | null {
+    return this.screenRect.read(this.screen);
   }
 
   syncInputState(disableStdin: boolean): void {

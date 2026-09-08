@@ -1,5 +1,6 @@
 import { getGhosttyKeyCode, getUnshiftedCodepoint } from './ghostty-keycodes';
 import { type GhosttyBindings, keyboardEventToGhosttyMods } from './ghostty-wasm';
+import { MouseReportBatcher, type MouseReportBatcherOptions } from './mouse-report-batcher';
 import {
   DEFAULT_CELL_HEIGHT,
   DEFAULT_CELL_WIDTH,
@@ -35,6 +36,9 @@ import type {
 import { consumeWheelDelta, createWheelAccumulator, roundAwayFromZero } from './wheel-delta';
 
 export type KeyEncodeAction = 'press' | 'repeat' | 'release';
+
+// 合并窗口的计时注入口，只为单测可控；生产走默认的 performance.now + setTimeout。
+export type MouseReportTiming = Omit<MouseReportBatcherOptions, 'emit'>;
 
 export type TerminalHandles = {
   terminal: number;
@@ -96,12 +100,31 @@ export class TerminalInputBridge {
   // reset、resize、快照恢复、清鼠标上报）都必须 bump 代号，缓存整体作废后按需重查。
   private readonly modeCache = new Map<number, boolean>();
   private modeGeneration = 0;
+  // 传给 encodeMouseEvent 的模式查询入口：一次手势内命中同一代缓存，N 行上报只查一轮。
+  private readonly modeLookup = (mode: number): boolean => this.isModeEnabled(mode);
+  private readonly mouseReports: MouseReportBatcher;
 
   constructor(
     private readonly bindings: GhosttyBindings,
     private readonly handles: TerminalHandles,
-    private readonly host: InputBridgeHost
-  ) {}
+    private readonly host: InputBridgeHost,
+    timing: MouseReportTiming = {}
+  ) {
+    this.mouseReports = new MouseReportBatcher({
+      ...timing,
+      emit: (payload) => this.host.emitData(payload),
+    });
+  }
+
+  // 挂起的滚轮上报字节必须在任何其他输入之前落地，否则顺序与用户操作相反。
+  flushMouseReports(): void {
+    this.mouseReports.flush();
+  }
+
+  // 退出上报模式 / 禁用输入 / 销毁：窗口里的字节送过去会被应用当普通输入解释，直接丢。
+  discardMouseReports(): void {
+    this.mouseReports.discard();
+  }
 
   get modeCacheGeneration(): number {
     return this.modeGeneration;
@@ -110,6 +133,10 @@ export class TerminalInputBridge {
   invalidateModeCache(): void {
     this.modeGeneration += 1;
     this.modeCache.clear();
+    // 刚写入的字节可能关掉了上报模式（新一代缓存下重查一次即可判定）。
+    if (this.mouseReports.hasPending && !this.routingState().mouseReporting) {
+      this.mouseReports.discard();
+    }
   }
 
   isModeEnabled(mode: number): boolean {
@@ -168,6 +195,7 @@ export class TerminalInputBridge {
   }
 
   restoreModeSnapshot(snapshot: GhosttyTerminalModeSnapshot): void {
+    this.mouseReports.discard();
     for (const [field, mode] of MODE_SNAPSHOT_FIELDS) {
       this.bindings.setTerminalMode(this.handles.terminal, mode, snapshot[field]);
     }
@@ -237,14 +265,26 @@ export class TerminalInputBridge {
     return this.bindings.encodePaste(this.handles.terminal, data);
   }
 
+  // 非滚轮上报（按下 / 移动 / 抬起）与滚轮共用一条输入流：先把窗口里的滚轮字节发掉再发自己。
   emitMouseInput(request: MouseInputRequest): boolean {
-    if (this.host.isInputDisabled()) {
+    this.mouseReports.flush();
+    const payload = this.encodeMouseInput(request);
+    if (payload === null) {
       return false;
+    }
+
+    this.host.emitData(payload);
+    return true;
+  }
+
+  private encodeMouseInput(request: MouseInputRequest): string | null {
+    if (this.host.isInputDisabled()) {
+      return null;
     }
 
     const rect = this.host.screenBounds();
     if (!rect) {
-      return false;
+      return null;
     }
 
     const cell = this.host.cellDimensions();
@@ -258,7 +298,7 @@ export class TerminalInputBridge {
     const motionCol = Math.floor(x / cellWidth);
     const motionRow = Math.floor(y / cellHeight);
     if (request.action === 'motion' && this.isDuplicateMotion(motionCol, motionRow)) {
-      return false;
+      return null;
     }
 
     const payload = this.bindings.encodeMouseEvent(
@@ -271,6 +311,7 @@ export class TerminalInputBridge {
         x,
         y,
         anyButtonPressed: request.anyButtonPressed,
+        modes: this.modeLookup,
         screenWidth: Math.max(1, Math.round(rect.width)),
         screenHeight: Math.max(1, Math.round(rect.height)),
         // cell 尺寸不得取整：cssCell 按物理像素网格对齐可为非整数（如 dpr=2 下 15.5），
@@ -280,13 +321,12 @@ export class TerminalInputBridge {
       }
     );
     if (!payload) {
-      return false;
+      return null;
     }
 
     this.mouse.lastMotionCell =
       request.action === 'release' ? null : { col: motionCol, row: motionRow };
-    this.host.emitData(payload);
-    return true;
+    return payload;
   }
 
   handleViewportGesture(gesture: GhosttyViewportGesture): boolean {
@@ -336,24 +376,33 @@ export class TerminalInputBridge {
       [columns, columns < 0 ? GHOSTTY_MOUSE_BUTTON_SIX : GHOSTTY_MOUSE_BUTTON_SEVEN],
     ];
 
-    let consumed = false;
+    const payloads: string[] = [];
     for (const [amount, button] of wheelSteps) {
       for (let index = 0; index < Math.abs(amount); index += 1) {
-        consumed =
-          this.emitMouseInput({
-            action: 'press',
-            button,
-            clientX: gesture.clientX,
-            clientY: gesture.clientY,
-            mods,
-            anyButtonPressed: this.mouse.pressedButtons.size > 0,
-          }) || consumed;
+        const payload = this.encodeMouseInput({
+          action: 'press',
+          button,
+          clientX: gesture.clientX,
+          clientY: gesture.clientY,
+          mods,
+          anyButtonPressed: this.mouse.pressedButtons.size > 0,
+        });
+        if (payload !== null) {
+          payloads.push(payload);
+        }
       }
     }
-    return consumed;
+    if (payloads.length === 0) {
+      return false;
+    }
+
+    // 一次手势的 N 条序列先拼成一条，再交给尾随窗口与相邻手势合并。
+    this.mouseReports.push(payloads.join(''));
+    return true;
   }
 
   private emitAltScrollInput(lines: number): boolean {
+    this.mouseReports.flush();
     const keyCode = getGhosttyKeyCode(lines < 0 ? 'ArrowUp' : 'ArrowDown');
     if (keyCode === 0) {
       return false;

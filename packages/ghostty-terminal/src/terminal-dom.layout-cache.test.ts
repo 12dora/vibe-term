@@ -29,6 +29,17 @@ function countStyleWrites(element: FakeElement): StyleWrites {
   return writes;
 }
 
+// rect 读取计数：缓存生效时 N 次 screenBounds 只该落到一次 getBoundingClientRect。
+function countRectReads(element: FakeElement): { count: number } {
+  const probe = { count: 0 };
+  const original = element.getBoundingClientRect.bind(element);
+  element.getBoundingClientRect = () => {
+    probe.count += 1;
+    return original();
+  };
+  return probe;
+}
+
 type TrackHeightProbe = { reads: number; height: number };
 
 function trackClientHeight(element: FakeElement, initial: number): TrackHeightProbe {
@@ -88,10 +99,11 @@ describe('终端 DOM 外壳的布局读写缓存', () => {
 
     const root = surface.element as unknown as FakeElement;
     const viewport = findElementByClass(root, 'xterm-viewport') as FakeElement;
+    const screen = findElementByClass(root, 'xterm-screen') as FakeElement;
     const thumb = findElementByClass(root, 'xterm-scrollbar-thumb') as FakeElement;
     const track = trackClientHeight(viewport, trackPixels);
     const writes = countStyleWrites(thumb);
-    return { surface, root, viewport, thumb, track, writes };
+    return { surface, root, viewport, screen, thumb, track, writes };
   }
 
   test('终端根节点自成布局 / 绘制隔离单元', () => {
@@ -156,6 +168,53 @@ describe('终端 DOM 外壳的布局读写缓存', () => {
     surface.updateScrollbar({ total: 200, offset: 0, len: 24 });
     expect(track.reads).toBe(2);
     expect(thumb.style.height).not.toBe(firstHeight);
+    surface.cancelScrollbarFade();
+  });
+
+  test('一次手势里 N 次 screenBounds 只量一次 rect', () => {
+    const { surface, screen } = setup(480);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 12, top: 8 });
+    const rectReads = countRectReads(screen);
+
+    // 一次滚轮通知产生 6 行鼠标上报，原本每行一次 getBoundingClientRect
+    for (let index = 0; index < 6; index += 1) {
+      expect(surface.screenBounds()?.left).toBe(12);
+    }
+
+    expect(rectReads.count).toBe(1);
+    surface.cancelScrollbarFade();
+  });
+
+  test('容器尺寸变化后 rect 重新量', () => {
+    const { surface, screen } = setup(480);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 12, top: 8 });
+    const rectReads = countRectReads(screen);
+
+    expect(surface.screenBounds()?.width).toBe(960);
+    screen.setBoundingClientRect({ width: 640, height: 480, left: 12, top: 8 });
+    // 还没收到 resize 通知：仍用缓存值
+    expect(surface.screenBounds()?.width).toBe(960);
+
+    FakeResizeObserver.instances.at(-1)?.callback();
+
+    expect(surface.screenBounds()?.width).toBe(640);
+    expect(rectReads.count).toBe(2);
+    surface.cancelScrollbarFade();
+  });
+
+  test('内容表面尺寸变化与平移滚动同样让 rect 失效', () => {
+    const { surface, viewport, screen } = setup(480);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 0 });
+    const rectReads = countRectReads(screen);
+
+    surface.screenBounds();
+    surface.setContentSurfaceSize(1920, 960);
+    surface.screenBounds();
+    expect(rectReads.count).toBe(2);
+
+    viewport.dispatchEvent({ type: 'scroll' });
+    surface.screenBounds();
+    expect(rectReads.count).toBe(3);
     surface.cancelScrollbarFade();
   });
 
