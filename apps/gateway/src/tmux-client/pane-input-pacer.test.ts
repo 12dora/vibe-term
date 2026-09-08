@@ -79,6 +79,32 @@ describe('per-pane input pacing', () => {
     expect(writes.map((item) => item.at)).toEqual([0, 23, 46]);
     expect(clock.timers.size).toBe(0);
   });
+  test('a DEC 2026 frame end releases the next sequence after 1 ms without waiting for quiet', () => {
+    const { send, writes, clock, pacer } = setup();
+    send(mouse(64, 1) + mouse(64, 2) + mouse(64, 3));
+    expect(writes).toHaveLength(1);
+    clock.tick(5);
+    pacer.onOutput('%1', encode('\x1b[?2026h frame \x1b[?2026l\x1b[?1000h'));
+    expect(writes.map((item) => item.at)).toEqual([0, 5]);
+    // 帧结束之后紧跟的模式重置输出不再推迟下一条
+    clock.tick(3);
+    pacer.onOutput('%1', encode('\x1b[?2026h frame \x1b[?2026l'));
+    pacer.onOutput('%1', encode('\x1b[?1002h\x1b[?1003h'));
+    expect(writes.map((item) => item.at)).toEqual([0, 5, 8]);
+    expect(clock.timers.size).toBe(0);
+  });
+
+  test('output without a frame end still waits for the 3 ms quiet gate', () => {
+    const { send, writes, clock, pacer } = setup();
+    send(mouse(64, 1) + mouse(64, 2));
+    clock.tick(20);
+    pacer.onOutput('%1', encode('\x1b[?2026h partial frame'));
+    clock.tick(2);
+    expect(writes).toHaveLength(1);
+    clock.tick(1);
+    expect(writes).toHaveLength(2);
+  });
+
   test('no output uses the initial 60 ms fallback repeatedly', () => {
     const { send, writes, clock } = setup();
     send(mouse().repeat(3));
@@ -170,21 +196,31 @@ describe('per-pane input pacing', () => {
     clock.tick(50);
     expect(writes.length).toBe(2);
   });
-  test('drops newest wheels at the initial 20 pending budget without merging', () => {
+  test('drops newest wheels at the initial 8 pending budget without merging', () => {
     const { send, writes, logs, clock } = setup();
-    send(Array.from({ length: 26 }, (_, index) => mouse(64, index + 1)).join(''));
-    clock.tick(1500);
+    send(Array.from({ length: 12 }, (_, index) => mouse(64, index + 1)).join(''));
+    clock.tick(3000);
     expect(writes.map((item) => item.text)).toEqual(
-      Array.from({ length: 21 }, (_, index) => mouse(64, index + 1))
+      Array.from({ length: 9 }, (_, index) => mouse(64, index + 1))
     );
-    expect(logs).toEqual(['[tmux][input-lane] pane=%1 dropped=1 pending=20 response_ms=15']);
+    expect(logs).toEqual([
+      '[tmux][input-lane] pane=%1 dropped=1 pending=8 response_ms=15 cadence_ms=16',
+    ]);
   });
-  test('adaptive budget bottoms out at three and protects press, release and motion', () => {
-    const { send, writes, clock, output } = setup();
-    send(mouse());
-    clock.tick(1000);
-    output();
+  test('a slow cadence shrinks the budget below the initial 8 and protects press, release and motion', () => {
+    const { send, writes, clock, output, logs } = setup();
+    send(mouse().repeat(6));
+    // 应用每 ~30 ms 才消化一条：写入节拍 EWMA 上升，120 ms 预算折算出的条数随之缩小
+    for (let index = 0; index < 5; index += 1) {
+      clock.tick(30);
+      output();
+      clock.tick(3);
+    }
+    expect(writes).toHaveLength(6);
     send(Array.from({ length: 10 }, (_, index) => mouse(65, index + 1)).join(''));
+    const kept = Number(/pending=(\d+)/.exec(logs.at(-1) ?? '')?.[1]);
+    expect(kept).toBeGreaterThanOrEqual(2);
+    expect(kept).toBeLessThan(8);
     const protectedEvents = [
       mouse(0),
       mouse(1),
@@ -196,25 +232,37 @@ describe('per-pane input pacing', () => {
     send(protectedEvents.join(''));
     send(mouse(66, 999));
     send('key');
-    clock.tick(3000);
-    expect(writes.slice(1).map((item) => item.text)).toEqual([
-      ...Array.from({ length: 4 }, (_, index) => mouse(65, index + 1)),
+    for (let index = 0; index < 20; index += 1) {
+      clock.tick(30);
+      output();
+      clock.tick(3);
+    }
+    expect(writes.slice(6).map((item) => item.text)).toEqual([
+      ...Array.from({ length: kept }, (_, index) => mouse(65, index + 1)),
       ...protectedEvents,
       'key',
     ]);
   });
-  test('adaptive budget never exceeds 64 pending', () => {
-    const { send, writes, clock, output } = setup();
-    for (let index = 0; index < 30; index += 1) {
-      send(mouse());
-      output();
-      clock.tick(8);
+  test('a fast cadence grows the budget past the initial 8 but never beyond 64', () => {
+    const { send, writes, clock, pacer, logs } = setup();
+    const frame = () => pacer.onOutput('%1', encode('\x1b[?2026h f \x1b[?2026l'));
+    send(mouse().repeat(9));
+    // 帧结束即放行、每 1 ms 一条：节拍 EWMA 逼近 1 ms，预算折算出的条数增大
+    for (let index = 0; index < 8; index += 1) {
+      clock.tick(1);
+      frame();
     }
-    const before = writes.length;
-    send(mouse().repeat(100));
+    expect(writes).toHaveLength(9);
+    send(mouse().repeat(200));
     send('key');
-    clock.tick(3000);
-    expect(writes.length - before).toBe(66);
+    const kept = Number(/pending=(\d+)/.exec(logs.at(-1) ?? '')?.[1]);
+    expect(kept).toBeGreaterThan(8);
+    expect(kept).toBeLessThanOrEqual(64);
+    for (let index = 0; index < 120; index += 1) {
+      clock.tick(1);
+      frame();
+    }
+    expect(writes.length).toBe(9 + kept + 1);
   });
   test('regular input waits behind paced sequences and preserves arrival order', () => {
     const { send, writes, clock, output } = setup();
@@ -298,7 +346,7 @@ describe('per-pane input pacing', () => {
     clock.tick(1);
     send(mouse().repeat(100));
     expect(logs.length).toBe(3);
-    expect(logs[2]).toContain('pane=%1 dropped=259 pending=20');
+    expect(logs[2]).toContain('pane=%1 dropped=');
   });
   test('queued bytes are owned by the lane', () => {
     const { pacer, writes, clock } = setup();

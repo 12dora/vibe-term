@@ -31,8 +31,12 @@ interface PaneLane {
   generation: number;
   reporting: MouseReportingScanner;
   responseMs: number;
+  /** 队列有积压时相邻两条鼠标写入的间隔（应用每行的真实消化周期），决定待写预算 */
+  cadenceMs: number;
+  lastMouseWriteAt: number | null;
   writtenAt: number | null;
   outputSeen: boolean;
+  frameComplete: boolean;
   lastOutputAt: number;
   fallbackMs: number;
   timer: unknown;
@@ -41,10 +45,17 @@ interface PaneLane {
   lastDropLogAt: number;
 }
 
-/** 回执后至少隔这么久才写下一条鼠标序列 */
+/** 回执后至少隔这么久才写下一条鼠标序列（应用不用 DEC 2026 时） */
 const MIN_SPACING_MS = 8;
-/** 输出静默这么久才认为应用已消费上一条 */
+/** 输出静默这么久才认为应用已消费上一条（应用不用 DEC 2026 时） */
 const OUTPUT_QUIET_MS = 3;
+/** 应用用 DEC 2026 包住每帧时，看到帧结束就是「已回到读循环」的确定信号，只留最小间隔 */
+const FRAME_END_SPACING_MS = 1;
+/**
+ * 待写队列的时间预算：按应用消化节拍折算，超过这么多毫秒才能排完的滚轮事件丢掉最新的。
+ * 原生终端 + 只认单序列的 TUI 等价于「几乎不排队」：画面跟手、手指停即停；预算取小才有同样手感。
+ */
+const PENDING_BUDGET_MS = 120;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -104,11 +115,14 @@ export class PaneInputPacer {
       this.pump(paneId, lane);
       return;
     }
+    const frameEnd = lane.reporting.takeFrameEnd();
     if (lane.active?.mouse || lane.writtenAt === null) return;
     // 一帧输出可能拆成多段 %output 到达：把「静默 OUTPUT_QUIET_MS」当作应用已消费上一条的
     // 依据，否则上一帧的尾段会被当成本条的响应，下一条提前落进 pty 与本条合并读取。
+    // 应用以 DEC 2026 包帧时，帧结束序列本身就是确定信号，不必再等静默。
     const now = this.clock.now();
     lane.lastOutputAt = now;
+    if (frameEnd) lane.frameComplete = true;
     if (!lane.outputSeen) {
       lane.outputSeen = true;
       const sample = Math.max(1, now - lane.writtenAt);
@@ -166,8 +180,11 @@ export class PaneInputPacer {
         generation: this.generation,
         reporting: new MouseReportingScanner(),
         responseMs: 15,
+        cadenceMs: 16,
+        lastMouseWriteAt: null,
         writtenAt: null,
         outputSeen: false,
+        frameComplete: false,
         lastOutputAt: 0,
         fallbackMs: 60,
         timer: null,
@@ -193,7 +210,7 @@ export class PaneInputPacer {
     }
     const kind = motion ? 'motionKey' : 'droppable';
     const count = lane.pending.filter((pending) => pending.mouse?.[kind]).length;
-    const maxPending = clamp(Math.round(300 / lane.responseMs), 3, 64);
+    const maxPending = clamp(Math.round(PENDING_BUDGET_MS / lane.cadenceMs), 2, 64);
     if ((motion || entry.mouse?.droppable) && count >= maxPending) {
       lane.lastMotion = null;
       this.noteDrop(paneId, lane);
@@ -221,6 +238,7 @@ export class PaneInputPacer {
     });
     lane.writtenAt = null;
     lane.outputSeen = false;
+    lane.frameComplete = false;
   }
 
   private pump(paneId: string, lane: PaneLane): void {
@@ -242,8 +260,14 @@ export class PaneInputPacer {
     if (!entry || entry.generation !== this.generation) return false;
     lane.inFlight.add(entry);
     if (entry.mouse) {
+      if (lane.lastMouseWriteAt !== null && lane.pending.length > 0) {
+        const sample = clamp(now - lane.lastMouseWriteAt, 1, 250);
+        lane.cadenceMs += 0.25 * (sample - lane.cadenceMs);
+      }
+      lane.lastMouseWriteAt = now;
       lane.active = entry;
       lane.outputSeen = false;
+      lane.frameComplete = false;
     }
     this.writeEntry(paneId, lane, entry);
     return true;
@@ -252,6 +276,7 @@ export class PaneInputPacer {
   private mouseReadyAt(lane: PaneLane): number {
     const writtenAt = lane.writtenAt ?? 0;
     if (!lane.outputSeen) return writtenAt + lane.fallbackMs;
+    if (lane.frameComplete) return writtenAt + FRAME_END_SPACING_MS;
     return Math.min(
       writtenAt + lane.fallbackMs,
       Math.max(writtenAt + MIN_SPACING_MS, lane.lastOutputAt + OUTPUT_QUIET_MS)
@@ -320,7 +345,7 @@ export class PaneInputPacer {
     if (now - lane.lastDropLogAt < 5_000) return;
     lane.lastDropLogAt = now;
     this.warn(
-      `[tmux][input-lane] pane=${paneId} dropped=${lane.dropped} pending=${lane.pending.length} response_ms=${Math.round(lane.responseMs)}`
+      `[tmux][input-lane] pane=${paneId} dropped=${lane.dropped} pending=${lane.pending.length} response_ms=${Math.round(lane.responseMs)} cadence_ms=${Math.round(lane.cadenceMs)}`
     );
   }
 }

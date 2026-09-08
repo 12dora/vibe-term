@@ -1,8 +1,17 @@
 const reportingModes = new Set([1000, 1002, 1003]);
+const SYNCHRONIZED_OUTPUT_MODE = 2026;
 
 export class MouseReportingScanner {
   private sequence = '';
   private readonly enabled = new Set<number>();
+  /** 自上次 takeFrameEnd() 起是否见过 DEC 2026 同步输出结束（应用完成一帧、回到读循环） */
+  private frameEnd = false;
+
+  takeFrameEnd(): boolean {
+    const seen = this.frameEnd;
+    this.frameEnd = false;
+    return seen;
+  }
 
   push(bytes: Uint8Array): boolean {
     let disabled = false;
@@ -29,6 +38,10 @@ export class MouseReportingScanner {
     let reset = false;
     for (const value of match[1].split(';')) {
       const mode = Number(value);
+      if (mode === SYNCHRONIZED_OUTPUT_MODE) {
+        if (match[2] === 'l') this.frameEnd = true;
+        continue;
+      }
       if (!reportingModes.has(mode)) continue;
       if (match[2] === 'h') this.enabled.add(mode);
       else {

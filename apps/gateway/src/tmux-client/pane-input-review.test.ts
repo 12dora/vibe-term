@@ -327,14 +327,14 @@ describe('input lane review regressions', () => {
     h.send(motions.join(''));
     const boundary = [mouse(0), mouse(0, 1, 'm'), mouse(64, 8), mouse(64, 9)];
     h.send(boundary.join(''));
-    for (let index = 0; index < 25; index += 1) {
+    for (let index = 0; index < 13; index += 1) {
       h.ack(index);
       h.output();
       h.clock.tick(8);
     }
     expect(h.writes.map((write) => write.text)).toEqual([
       mouse(35),
-      ...motions.slice(0, 20),
+      ...motions.slice(0, 8),
       ...boundary,
     ]);
     h.pacer.dispose();
