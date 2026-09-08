@@ -1,11 +1,11 @@
 import { wsBorsh } from '@vibeterm/shared';
 
+import { endsSynchronizedFrame } from '@vibeterm/shared';
 import {
   DEFAULT_MAX_REPLAY_BYTES_PER_PANE,
   type PaneDataSegment,
   type PaneReplayGap,
 } from '../../tmux-client/pane-retention';
-import { endsSynchronizedFrame } from '../synchronized-frame';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,

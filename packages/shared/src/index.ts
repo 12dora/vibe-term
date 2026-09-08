@@ -186,3 +186,4 @@ export {
 } from './roles';
 export * from './release/release-signing';
 export * from './release/source';
+export * from './terminal-synchronized-frame';

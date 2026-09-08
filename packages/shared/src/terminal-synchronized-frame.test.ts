@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { endsSynchronizedFrame } from './synchronized-frame';
+import { endsSynchronizedFrame } from './terminal-synchronized-frame';
 
 const bytes = (text: string) => new TextEncoder().encode(text);
 

@@ -278,3 +278,22 @@ describe('PaneOutputCoalescer leading-edge', () => {
     expect(harness.texts()).toEqual(['ab', 'cd']);
   });
 });
+
+test('a frame that ends with the DEC 2026 end sequence is flushed synchronously', () => {
+  const emitted: string[] = [];
+  const coalescer = new PaneOutputCoalescer(
+    (_key, frame) => emitted.push(new TextDecoder().decode(frame.data)),
+    { schedule: () => undefined, now: () => 0 }
+  );
+  const frame = (text: string) => ({
+    deviceId: 'd',
+    paneId: '%1',
+    data: new TextEncoder().encode(text),
+  });
+  coalescer.push('d:%1', frame('\x1b[?2026h one \x1b[?20'));
+  expect(emitted).toEqual([]);
+  coalescer.push('d:%1', frame('26l'));
+  expect(emitted).toEqual(['\x1b[?2026h one \x1b[?2026l']);
+  coalescer.push('d:%1', frame('plain'));
+  expect(emitted).toHaveLength(1);
+});

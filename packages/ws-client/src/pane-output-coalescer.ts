@@ -7,6 +7,7 @@
 // 顺序保证：同一 pane 的字节严格按到达顺序拼接；任何会改变画面基线的事件
 //（reset / history / snapshot / rebase / sink 换绑与注销）都要先 flush 再执行。
 // 帧字节按引用暂存不复制：每帧的字节来自各自的解码结果，没有跨帧复用的缓冲。
+import { endsSynchronizedFrame } from '@vibeterm/shared';
 import type { GatewayTerminalData } from './transport';
 
 export const DEFAULT_PANE_OUTPUT_FLUSH_BYTES = 32 * 1024;
@@ -94,11 +95,13 @@ export class PaneOutputCoalescer {
     }
 
     const buffer = this.buffers.get(key) ?? this.createBuffer(key, frame);
+    // TUI 一帧以 DEC 2026 结束序列收尾：帧完整就立即交给终端，不再吃 trailing 延迟
+    const frameEnd = endsSynchronizedFrame(buffer.chunks.at(-1), frame.data);
     buffer.chunks.push(frame.data);
     buffer.bytes += frame.data.byteLength;
     if (frame.seqEnd !== undefined) buffer.seqEnd = frame.seqEnd;
 
-    if (buffer.bytes >= this.flushBytes) {
+    if (frameEnd || buffer.bytes >= this.flushBytes) {
       this.flush(key);
       return;
     }
