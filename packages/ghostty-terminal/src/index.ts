@@ -1,9 +1,5 @@
-export {
-  createTerminalController,
-  FitAddon,
-  GhosttyTerminalController,
-  TERMINAL_ENGINE,
-} from './terminal';
+export { createTerminalController, GhosttyTerminalController, TERMINAL_ENGINE } from './terminal';
+export { FitAddon } from './terminal-fit-addon';
 export { isMacPlatform, writeTextToClipboard } from './selection-clipboard';
 export {
   detectLinksInLine,

@@ -218,6 +218,61 @@ describe('终端 DOM 外壳的布局读写缓存', () => {
     surface.cancelScrollbarFade();
   });
 
+  test('measureScreenBounds 绕过缓存实测：无事件的布局变化（键盘避让写 transform）也拿到新值', () => {
+    const { surface, screen } = setup(480);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 100 });
+    const rectReads = countRectReads(screen);
+
+    expect(surface.screenBounds()?.top).toBe(100);
+    // <main> 被写了 transform：不发 resize / scroll / 任何事件
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 40 });
+    expect(surface.screenBounds()?.top).toBe(100);
+
+    expect(surface.measureScreenBounds()?.top).toBe(40);
+    // 实测同时刷新缓存，后续读走新值
+    expect(surface.screenBounds()?.top).toBe(40);
+    expect(rectReads.count).toBe(2);
+    surface.cancelScrollbarFade();
+  });
+
+  test('window 的 resize / scroll 让 rect 失效（ResizeObserver 看不到的位移）', () => {
+    const { surface, screen } = setup(480);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 100 });
+    const rectReads = countRectReads(screen);
+
+    expect(surface.screenBounds()?.top).toBe(100);
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 40 });
+
+    (dom as FakeDom).window.dispatchEvent({ type: 'resize' });
+    expect(surface.screenBounds()?.top).toBe(40);
+
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 10 });
+    (dom as FakeDom).window.dispatchEvent({ type: 'scroll' });
+    expect(surface.screenBounds()?.top).toBe(10);
+
+    expect(rectReads.count).toBe(3);
+    surface.cancelScrollbarFade();
+  });
+
+  test('dispose 摘掉 window 监听', () => {
+    const { surface, screen } = setup(480);
+    const activeDom = dom as FakeDom;
+    const removed: string[] = [];
+    const originalRemove = activeDom.window.removeEventListener.bind(activeDom.window);
+    activeDom.window.removeEventListener = (type, listener) => {
+      removed.push(type);
+      originalRemove(type, listener);
+    };
+
+    screen.setBoundingClientRect({ width: 960, height: 480, left: 0, top: 100 });
+    surface.screenBounds();
+    surface.cancelScrollbarFade();
+    surface.dispose();
+
+    expect(removed.sort()).toEqual(['resize', 'scroll']);
+    expect(surface.screenBounds()).toBeNull();
+  });
+
   test('未布局（clientHeight 为 0）不写进缓存，量到真实高度后立刻生效', () => {
     const { surface, thumb, track } = setup(0);
 

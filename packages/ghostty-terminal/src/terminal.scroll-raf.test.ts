@@ -6,8 +6,10 @@ import { afterAll, afterEach, describe, expect, mock, test } from 'bun:test';
 import {
   type FakeBindings,
   type FakeDom,
+  type FakeElement,
   TEST_THEME,
   createFakeBindings,
+  findHelperTextarea,
   installFakeDom,
   mockGhosttyWasm,
   restoreRealTerminalModules,
@@ -243,6 +245,135 @@ describe('GhosttyTerminalController scroll render scheduling', () => {
     expect(terminal.scrollToBottom()).toBeTrue();
     expect(terminal.buffer.active.viewportY).toBe(SCROLLBACK_TOTAL - VIEWPORT_ROWS);
     expect(renderSpy.count).toBe(1);
+    terminal.dispose();
+  });
+});
+
+// viewportDistanceFromBottom 直接读内核 scrollbar，供 terminal-ui 在快照重写前捕获
+// 当前滚动位置；语义必须与渲染后的 buffer.active.baseY - viewportY 完全一致。
+describe('GhosttyTerminalController.viewportDistanceFromBottom', () => {
+  let dom: FakeDom | null = null;
+  let importVersion = 1000;
+
+  afterEach(() => {
+    dom?.restore();
+    dom = null;
+    mock.restore();
+  });
+
+  afterAll(restoreRealTerminalModules);
+
+  async function openTerminal(bindings: FakeBindings) {
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+    const terminal = await createTerminalController({
+      theme: TEST_THEME,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      scrollback: 1000,
+    });
+    const activeDom = dom as FakeDom;
+    const container = activeDom.document.createElement('div');
+    container.setBoundingClientRect({ width: 800, height: 480 });
+    activeDom.document.body.appendChild(container);
+    terminal.open(container as unknown as HTMLElement);
+    await activeDom.flushAnimationFrames();
+    return terminal;
+  }
+
+  test('等于 baseY - viewportY，且不必等下一帧渲染', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    installScrollableViewport(bindings, 100);
+    const terminal = await openTerminal(bindings);
+
+    expect(terminal.viewportDistanceFromBottom()).toBe(76);
+    // 已渲染过一帧，xterm 兼容 buffer 的换算应完全一致
+    expect(terminal.buffer.active.baseY - terminal.buffer.active.viewportY).toBe(76);
+
+    // 再滚 10 行：内核已落地，这一帧还没画，读到的必须是新值
+    expect(terminal.scrollLines(10)).toBeTrue();
+    expect(terminal.viewportDistanceFromBottom()).toBe(66);
+    expect(terminal.buffer.active.baseY - terminal.buffer.active.viewportY).toBe(76);
+
+    await (dom as FakeDom).flushAnimationFrames();
+    expect(terminal.buffer.active.baseY - terminal.buffer.active.viewportY).toBe(66);
+    terminal.dispose();
+  });
+
+  test('贴底为 0，销毁后为 0', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    installScrollableViewport(bindings, 176);
+    const terminal = await openTerminal(bindings);
+
+    expect(terminal.viewportDistanceFromBottom()).toBe(0);
+
+    terminal.dispose();
+    expect(terminal.viewportDistanceFromBottom()).toBe(0);
+  });
+});
+
+// P2：宿主的自定义按键处理器可能自己把输入发出去（Shift+Enter 走 store 直发 ESC[13;2u），
+// 完全不经过 emitData。挂起的滚轮批次必须在它之前落地，否则观察到的顺序是 滚轮→按键→滚轮。
+describe('GhosttyTerminalController custom key handler ordering', () => {
+  let dom: FakeDom | null = null;
+  let importVersion = 2000;
+
+  afterEach(() => {
+    dom?.restore();
+    dom = null;
+    mock.restore();
+  });
+
+  afterAll(restoreRealTerminalModules);
+
+  test('自定义按键处理器执行前先把挂起的滚轮上报发出去', async () => {
+    dom = installFakeDom();
+    const bindings = createFakeBindings();
+    installScrollableViewport(bindings, 100);
+    importVersion += 1;
+    const { createTerminalController } = await loadControllerModule(bindings, importVersion);
+    const terminal = await createTerminalController({
+      theme: TEST_THEME,
+      fontFamily: 'monospace',
+      fontSize: 13,
+      scrollback: 1000,
+    });
+    const container = dom.document.createElement('div');
+    container.setBoundingClientRect({ width: 800, height: 480 });
+    dom.document.body.appendChild(container);
+    terminal.open(container as unknown as HTMLElement);
+    await dom.flushAnimationFrames();
+
+    bindings.setTerminalMode(1, 1000, true);
+    bindings.setTerminalMode(1, 1006, true);
+
+    const emitted: string[] = [];
+    terminal.onData((data: string) => {
+      emitted.push(data);
+    });
+    terminal.attachCustomKeyEventHandler(() => {
+      emitted.push('host:shift-enter');
+      return false;
+    });
+
+    const notch = {
+      source: 'wheel' as const,
+      deltaX: 0,
+      deltaY: 1,
+      deltaMode: 1,
+      clientX: 10,
+      clientY: 10,
+    };
+    expect(terminal.handleViewportGesture(notch)).toBeTrue();
+    expect(terminal.handleViewportGesture(notch)).toBeTrue();
+
+    const textarea = findHelperTextarea(terminal.element as unknown as FakeElement);
+    textarea?.dispatchEvent({ type: 'keydown', key: 'Enter', code: 'Enter', shiftKey: true });
+
+    // 第二次滚轮仍在合并窗口里；handler 之前必须已被冲出去
+    expect(emitted).toEqual(['mouse:press:5', 'mouse:press:5', 'host:shift-enter']);
     terminal.dispose();
   });
 });

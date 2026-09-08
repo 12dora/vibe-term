@@ -112,7 +112,7 @@ export class TerminalDomSurface {
     this.screen = screen;
     this.helperTextarea = textarea;
     this.scrollbarThumb = scrollbar.thumb;
-    this.screenRect.invalidate();
+    this.screenRect.observeGlobalLayout();
     viewport.addEventListener('scroll', this.handlePanScroll, { passive: true });
     this.observeViewportLayout(viewport);
     return screen;
@@ -339,6 +339,13 @@ export class TerminalDomSurface {
     return this.screenRect.read(this.screen);
   }
 
+  // 绕过缓存实测一次并刷新缓存：调用方紧跟在一次不发任何事件的布局变化之后（键盘
+  // 避让给 <main> 写 transform），正确性优先于那一次强制布局。
+  measureScreenBounds(): TerminalScreenRect | null {
+    this.screenRect.invalidate();
+    return this.screenRect.read(this.screen);
+  }
+
   syncInputState(disableStdin: boolean): void {
     const textarea = this.helperTextarea;
     if (!textarea) {
@@ -500,6 +507,7 @@ export class TerminalDomSurface {
   }
 
   dispose(): void {
+    this.screenRect.releaseGlobalLayout();
     this.viewport?.removeEventListener('scroll', this.handlePanScroll);
     this.layoutObserver?.disconnect();
     this.layoutObserver = null;

@@ -17,6 +17,24 @@ export type TerminalScreenRect = {
 
 export const SCREEN_RECT_TTL_MS = 16;
 
+// 会挪动 .xterm-screen 却不改变 .xterm-viewport 内容盒尺寸的信号：ResizeObserver 看不到
+// 它们。scroll 用 capture 挂在 window 上，任意祖先容器的滚动都能收到（scroll 不冒泡，
+// 但捕获阶段必经 window）；visualViewport 是手机虚拟键盘唯一的信号源。
+const GLOBAL_LAYOUT_EVENTS = ['resize', 'scroll'] as const;
+
+type LayoutEventTarget = {
+  addEventListener(type: string, listener: () => void, options?: unknown): void;
+  removeEventListener(type: string, listener: () => void, options?: unknown): void;
+};
+
+function globalLayoutTargets(): LayoutEventTarget[] {
+  const view = typeof window === 'undefined' ? null : window;
+  const candidates = [view, view?.visualViewport ?? null] as Array<LayoutEventTarget | null>;
+  return candidates.filter(
+    (target): target is LayoutEventTarget => typeof target?.addEventListener === 'function'
+  );
+}
+
 function defaultNow(): number {
   return typeof performance?.now === 'function' ? performance.now() : Date.now();
 }
@@ -24,6 +42,10 @@ function defaultNow(): number {
 export class ScreenRectCache {
   private rect: TerminalScreenRect | null = null;
   private measuredAt = 0;
+  private detachers: Array<() => void> = [];
+  private readonly onGlobalLayoutChange = (): void => {
+    this.rect = null;
+  };
 
   constructor(
     private readonly ttlMs: number = SCREEN_RECT_TTL_MS,
@@ -56,5 +78,25 @@ export class ScreenRectCache {
 
   invalidate(): void {
     this.rect = null;
+  }
+
+  observeGlobalLayout(): void {
+    this.releaseGlobalLayout();
+    for (const target of globalLayoutTargets()) {
+      for (const type of GLOBAL_LAYOUT_EVENTS) {
+        target.addEventListener(type, this.onGlobalLayoutChange, { passive: true, capture: true });
+        this.detachers.push(() => {
+          target.removeEventListener(type, this.onGlobalLayoutChange, true);
+        });
+      }
+    }
+  }
+
+  releaseGlobalLayout(): void {
+    this.rect = null;
+    for (const detach of this.detachers) {
+      detach();
+    }
+    this.detachers = [];
   }
 }

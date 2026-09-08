@@ -53,31 +53,6 @@ const TERMINAL_ENGINE = 'ghostty-official';
 // 最迟此间隔后仍强制渲染一次，与主流终端对 2026 的安全阀行为一致。
 const SYNCHRONIZED_OUTPUT_FALLBACK_MS = 150;
 
-export class FitAddon {
-  private terminal: GhosttyTerminalController | null = null;
-
-  activate(terminal: CompatibleTerminalLike): void {
-    this.terminal = terminal instanceof GhosttyTerminalController ? terminal : null;
-  }
-
-  fit(): void {
-    const proposed = this.proposeDimensions();
-    if (!this.terminal || !proposed) {
-      return;
-    }
-
-    this.terminal.resize(proposed.cols, proposed.rows);
-  }
-
-  proposeDimensions(): GhosttyTerminalSize | null {
-    return this.terminal?.measureSizeFromElement() ?? null;
-  }
-
-  dispose(): void {
-    this.terminal = null;
-  }
-}
-
 // 终端控制器：持有 WASM handle 的生命周期，并把 DOM 外壳（TerminalDomSurface）、
 // 输入编码（TerminalInputBridge）、渲染编排（TerminalRenderCoordinator）与选择状态机
 // 串起来，对外暴露 xterm 兼容 API。
@@ -271,7 +246,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
   }
 
   attachCustomKeyEventHandler(callback: (event: KeyboardEvent) => boolean): void {
-    this.customKeyEventHandler = callback;
+    // 宿主的 handler 可能自己把输入发出去（如 Shift+Enter 直接走 store 发 ESC[13;2u），
+    // 不经过 emitData：先把合并窗口里挂起的滚轮上报字节发掉，否则顺序会被这条插队。
+    this.customKeyEventHandler = (event) => {
+      this.input.flushMouseReports();
+      return callback(event);
+    };
   }
 
   // 宿主注入文件链接上下文（pane cwd + 该设备已启用授权根）。null 关闭文件链接识别。
@@ -472,6 +452,17 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     return this.bindings.readScrollbar(this.handles.terminal).offset !== before;
   }
 
+  // 视口距底部的行数，等价于渲染后的 buffer.active.baseY - viewportY，但直接读内核
+  // scrollbar，不必等下一帧渲染落地——快照重写前捕获滚动位置需要即时值。
+  viewportDistanceFromBottom(): number {
+    if (this.disposed) {
+      return 0;
+    }
+
+    const { total, offset, len } = this.bindings.readScrollbar(this.handles.terminal);
+    return Math.max(0, Math.max(0, total - len) - offset);
+  }
+
   exportModeSnapshot(): GhosttyTerminalModeSnapshot {
     return this.input.exportModeSnapshot();
   }
@@ -609,7 +600,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     if (!cursor || !cursor.visible || cursor.y === null || !this.dom.isTextareaFocused()) {
       return null;
     }
-    const bounds = this.dom.screenBounds();
+    // 键盘避让的 follow 循环每帧读一次，且紧跟在 <main> 的 transform 之后：
+    // transform 不发任何事件，吃缓存会用上一帧的位置算出错位的避让量。
+    const bounds = this.dom.measureScreenBounds();
     const { height } = this.dom.cell;
     if (!bounds || height <= 0) {
       return null;

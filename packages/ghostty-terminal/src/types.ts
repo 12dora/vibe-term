@@ -225,6 +225,8 @@ export interface CompatibleTerminalLike {
   /** 最近一帧渲染快照的光标（y 是视口内行号）；触屏「点输入行唤起键盘」据此判定 */
   readonly lastCursor?: GhosttyRenderCursor | null;
   getCursorViewportRect?: () => GhosttyCursorViewportRect | null;
+  /** 视口距底部的行数（= buffer.active.baseY - viewportY），直接读内核、不等下一帧渲染 */
+  viewportDistanceFromBottom?: () => number;
   /** 实时 cell 尺寸（与 _core._renderService.dimensions.css.cell 同一对象） */
   cellDimensions?: () => GhosttyCellDimensions;
   getSelection?: () => string;
