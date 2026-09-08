@@ -30,12 +30,18 @@ interface PaneLane {
   responseMs: number;
   writtenAt: number | null;
   outputSeen: boolean;
+  lastOutputAt: number;
   fallbackMs: number;
   timer: unknown;
   timerAt: number | null;
   dropped: number;
   lastDropLogAt: number;
 }
+
+/** 回执后至少隔这么久才写下一条鼠标序列 */
+const MIN_SPACING_MS = 8;
+/** 输出静默这么久才认为应用已消费上一条 */
+const OUTPUT_QUIET_MS = 3;
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -93,10 +99,16 @@ export class PaneInputPacer {
       this.pump(paneId, lane);
       return;
     }
-    if (lane.active?.mouse || lane.writtenAt === null || lane.outputSeen) return;
-    lane.outputSeen = true;
-    const sample = Math.max(1, this.clock.now() - lane.writtenAt);
-    lane.responseMs += 0.25 * (sample - lane.responseMs);
+    if (lane.active?.mouse || lane.writtenAt === null) return;
+    // 一帧输出可能拆成多段 %output 到达：把「静默 OUTPUT_QUIET_MS」当作应用已消费上一条的
+    // 依据，否则上一帧的尾段会被当成本条的响应，下一条提前落进 pty 与本条合并读取。
+    const now = this.clock.now();
+    lane.lastOutputAt = now;
+    if (!lane.outputSeen) {
+      lane.outputSeen = true;
+      const sample = Math.max(1, now - lane.writtenAt);
+      lane.responseMs += 0.25 * (sample - lane.responseMs);
+    }
     this.pump(paneId, lane);
   }
 
@@ -147,6 +159,7 @@ export class PaneInputPacer {
         responseMs: 15,
         writtenAt: null,
         outputSeen: false,
+        lastOutputAt: 0,
         fallbackMs: 60,
         timer: null,
         timerAt: null,
@@ -199,9 +212,7 @@ export class PaneInputPacer {
     if (lane.pending.length === 0 || lane.active || !this.isCurrent(paneId, lane)) return;
     const now = this.clock.now();
     const readyAt =
-      !lane.pending[0].mouse || lane.writtenAt === null
-        ? now
-        : lane.writtenAt + (lane.outputSeen ? 8 : lane.fallbackMs);
+      !lane.pending[0].mouse || lane.writtenAt === null ? now : this.mouseReadyAt(lane);
     if (now < readyAt) {
       this.schedule(paneId, lane, readyAt);
       return;
@@ -212,6 +223,15 @@ export class PaneInputPacer {
     lane.active = entry;
     if (entry.mouse) lane.outputSeen = false;
     this.writeEntry(paneId, lane, entry);
+  }
+
+  private mouseReadyAt(lane: PaneLane): number {
+    const writtenAt = lane.writtenAt ?? 0;
+    if (!lane.outputSeen) return writtenAt + lane.fallbackMs;
+    return Math.min(
+      writtenAt + lane.fallbackMs,
+      Math.max(writtenAt + MIN_SPACING_MS, lane.lastOutputAt + OUTPUT_QUIET_MS)
+    );
   }
 
   private writeEntry(paneId: string, lane: PaneLane, entry: InputEntry): void {

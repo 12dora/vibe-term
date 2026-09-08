@@ -63,16 +63,20 @@ describe('per-pane input pacing', () => {
     expect(writes).toEqual([{ pane: '%1', text: mouse(), at: 0 }]);
     expect(clock.timers.size).toBe(0);
   });
-  test('batched sequences are individually gated by each first output', () => {
+  test('batched sequences are individually gated by output quiet', () => {
     const { send, writes, clock, output } = setup();
     send(mouse(64, 1) + mouse(64, 2) + mouse(65, 3));
     expect(writes.length).toBe(1);
     clock.tick(20);
     output();
+    clock.tick(2);
+    expect(writes).toHaveLength(1);
+    clock.tick(1);
     expect(writes.map((item) => item.text)).toEqual([mouse(64, 1), mouse(64, 2)]);
     clock.tick(20);
     output();
-    expect(writes.map((item) => item.at)).toEqual([0, 20, 40]);
+    clock.tick(3);
+    expect(writes.map((item) => item.at)).toEqual([0, 23, 46]);
     expect(clock.timers.size).toBe(0);
   });
   test('no output uses the initial 60 ms fallback repeatedly', () => {
@@ -93,10 +97,14 @@ describe('per-pane input pacing', () => {
     clock.tick(5);
     output();
     send(mouse().repeat(2));
+    clock.tick(2);
+    expect(writes).toHaveLength(1);
+    clock.tick(1);
+    expect(writes.map((item) => item.at)).toEqual([0, 43]);
     clock.tick(79);
     expect(writes.length).toBe(2);
     clock.tick(1);
-    expect(writes.map((item) => item.at)).toEqual([0, 40, 120]);
+    expect(writes.map((item) => item.at)).toEqual([0, 43, 123]);
   });
   test('fallback is clamped to 40 ms for fast output', () => {
     const { send, writes, clock, output } = setup();
@@ -133,8 +141,14 @@ describe('per-pane input pacing', () => {
     expect(writes.length).toBe(1);
     clock.tick(1);
     output();
-    clock.tick(8);
-    expect(writes.map((item) => item.at)).toEqual([0, 8, 16]);
+    clock.tick(2);
+    expect(writes).toHaveLength(1);
+    clock.tick(1);
+    output();
+    clock.tick(7);
+    expect(writes).toHaveLength(2);
+    clock.tick(1);
+    expect(writes.map((item) => item.at)).toEqual([0, 11, 19]);
   });
   test('minimum spacing also applies across separately arriving messages', () => {
     const { send, writes, clock, output } = setup();
@@ -211,12 +225,15 @@ describe('per-pane input pacing', () => {
     expect(writes.map((item) => item.text)).toEqual([events[0]]);
     clock.tick(8);
     output();
+    clock.tick(3);
     expect(writes.map((item) => item.text)).toEqual(events.slice(0, 2));
     clock.tick(8);
     output();
+    clock.tick(3);
     expect(writes.at(-1)?.text).toBe('paste\n');
     clock.tick(8);
     output();
+    clock.tick(3);
     expect(writes.at(-1)?.text).toBe(mouse(64, 4));
     clock.tick(1000);
     expect(writes.length).toBe(5);
@@ -261,9 +278,12 @@ describe('per-pane input pacing', () => {
     send(mouse(65).repeat(2), '%2');
     clock.tick(10);
     output('%2');
+    clock.tick(2);
+    expect(writes).toHaveLength(2);
+    clock.tick(1);
     expect(writes.map((item) => item.pane)).toEqual(['%1', '%2', '%2']);
     pacer.dropPane('%2');
-    clock.tick(50);
+    clock.tick(47);
     expect(writes.at(-1)?.pane).toBe('%1');
   });
   test('drop logs are rate limited independently per pane for five seconds', () => {

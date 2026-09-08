@@ -84,7 +84,74 @@ describe('input lane review regressions', () => {
     expect(h.writes).toHaveLength(2);
     h.output();
     h.clock.tick(1);
-    expect(h.writes.map((write) => write.at)).toEqual([0, 0, 8]);
+    expect(h.writes).toHaveLength(2);
+    h.clock.tick(2);
+    expect(h.writes.map((write) => write.at)).toEqual([0, 0, 10]);
+    h.pacer.dispose();
+  });
+
+  test.each([
+    { segments: [9, 10, 11], readyAt: 17 },
+    { segments: [9, 10, 11, 12, 13, 14, 15, 16], readyAt: 19 },
+  ])('previous frame tail waits for quiet and minimum spacing: %j', ({ segments, readyAt }) => {
+    const h = harness();
+    h.send(mouse().repeat(3));
+    h.ack(0);
+    h.clock.tick(1);
+    h.output();
+    h.clock.tick(6);
+    expect(h.writes).toHaveLength(1);
+    h.clock.tick(1);
+    expect(h.writes.map((write) => write.at)).toEqual([0, 8]);
+    h.clock.tick(1);
+    h.ack(1);
+    for (const at of segments) {
+      h.clock.tick(at - h.clock.now());
+      h.output();
+      expect(h.writes).toHaveLength(2);
+    }
+    while (h.clock.now() < readyAt - 1) {
+      h.clock.tick(1);
+      expect(h.writes).toHaveLength(2);
+    }
+    h.clock.tick(1);
+    expect(h.writes.map((write) => write.at)).toEqual([0, 8, readyAt]);
+    h.pacer.dispose();
+  });
+
+  test('continuous previous frame tail releases at the fallback captured by ack', () => {
+    const h = harness();
+    h.send(mouse().repeat(3));
+    h.ack(0);
+    h.clock.tick(1);
+    h.output();
+    h.clock.tick(7);
+    h.clock.tick(1);
+    h.ack(1);
+    // 首次响应耗时 1 ms：EWMA = 15 × 0.75 + 1 × 0.25 = 11.5，回退为 46 ms。
+    const fallbackMs = 46;
+    for (let elapsed = 0; elapsed < fallbackMs; elapsed += 1) {
+      h.output();
+      expect(h.writes).toHaveLength(2);
+      h.clock.tick(1);
+    }
+    expect(h.writes.map((write) => write.at)).toEqual([0, 8, 9 + fallbackMs]);
+    h.pacer.dispose();
+  });
+
+  test('single segment frames retain eight ms spacing from each acknowledgment', () => {
+    const h = harness();
+    h.send(mouse().repeat(3));
+    for (let index = 0; index < 2; index += 1) {
+      h.ack(index);
+      h.clock.tick(1);
+      h.output();
+      h.clock.tick(6);
+      expect(h.writes).toHaveLength(index + 1);
+      h.clock.tick(1);
+      expect(h.writes).toHaveLength(index + 2);
+    }
+    expect(h.writes.map((write) => write.at)).toEqual([0, 8, 16]);
     h.pacer.dispose();
   });
 
