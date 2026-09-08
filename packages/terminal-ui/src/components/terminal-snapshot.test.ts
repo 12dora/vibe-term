@@ -10,6 +10,7 @@ import type { GhosttyTerminalModeSnapshot } from 'ghostty-terminal';
 import {
   type CanonicalSnapshotTarget,
   NORMAL_SCREEN_PREFIX,
+  restoreCanonicalViewport,
   startsWithBytes,
   terminalModesFromHistory,
   writeCanonicalSnapshot,
@@ -36,6 +37,8 @@ interface TargetOptions {
   /** 视口顶行绝对行号与活动屏起始行号；缺省即停在底部 */
   viewportY?: number;
   baseY?: number;
+  /** 终端提供的同步读（wasm 滚动条），存在时优先于 buffer.active */
+  liveDistance?: number;
 }
 
 function createTarget(options: TargetOptions = {}): RecordingTarget {
@@ -81,6 +84,9 @@ function createTarget(options: TargetOptions = {}): RecordingTarget {
       },
     },
   };
+  if (options.liveDistance !== undefined) {
+    target.terminal.viewportDistanceFromBottom = () => options.liveDistance ?? 0;
+  }
   return target;
 }
 
@@ -225,47 +231,81 @@ describe('writeCanonicalSnapshot', () => {
 });
 
 describe('writeCanonicalSnapshot viewport preservation', () => {
-  test('history 分页重排后把视口滚回原来的「离底部行数」，且只绘一次', () => {
+  test('history 分页重排交出锚点、把重绘留给还原那一步', () => {
     const target = createTarget({ viewportY: 900, baseY: 1000 });
-    writeCanonicalSnapshot(target, snapshotOf('\x1b[2J\x1b[Hlive'), [pageOf('old\n')], {
-      preserveViewport: true,
-    });
+    const commit = writeCanonicalSnapshot(
+      target,
+      snapshotOf('\x1b[2J\x1b[Hlive'),
+      [pageOf('old\n')],
+      { preserveViewport: true }
+    );
 
+    expect(commit.viewportAnchor).toBe(100);
+    expect(target.calls).toEqual(['reset', 'write']);
+    expect(target.repaints).toBe(0);
+
+    restoreCanonicalViewport(target, commit.viewportAnchor ?? 0);
     expect(target.scrolls).toEqual([-100]);
     expect(target.calls).toEqual(['reset', 'write', 'scrollLines', 'repaint']);
     expect(target.repaints).toBe(1);
   });
 
-  test('视口本来就停在底部时不滚动', () => {
+  test('视口本来就停在底部时不滚动，重绘照旧同步发生', () => {
     const target = createTarget({ viewportY: 1000, baseY: 1000 });
-    writeCanonicalSnapshot(target, snapshotOf('live'), [], { preserveViewport: true });
+    const commit = writeCanonicalSnapshot(target, snapshotOf('live'), [], {
+      preserveViewport: true,
+    });
 
+    expect(commit.viewportAnchor).toBeNull();
     expect(target.scrolls).toEqual([]);
     expect(target.calls).toEqual(['reset', 'write', 'repaint']);
   });
 
   test('首屏 / rebase 重排不还原视口：跳回实时屏才是对的', () => {
     const target = createTarget({ viewportY: 900, baseY: 1000 });
-    writeCanonicalSnapshot(target, snapshotOf('live'), []);
+    const commit = writeCanonicalSnapshot(target, snapshotOf('live'), []);
 
+    expect(commit.viewportAnchor).toBeNull();
     expect(target.scrolls).toEqual([]);
+    expect(target.repaints).toBe(1);
+  });
+
+  test('终端提供同步读时优先用它：buffer.active 只在渲染帧后更新，滚轮后同帧会读到旧位置', () => {
+    const target = createTarget({ viewportY: 995, baseY: 1000, liveDistance: 40 });
+    const commit = writeCanonicalSnapshot(target, snapshotOf('live'), [], {
+      preserveViewport: true,
+    });
+
+    expect(commit.viewportAnchor).toBe(40);
+  });
+
+  test('同步读不可用（NaN）时回落到 buffer.active', () => {
+    const target = createTarget({ viewportY: 900, baseY: 1000, liveDistance: Number.NaN });
+    const commit = writeCanonicalSnapshot(target, snapshotOf('live'), [], {
+      preserveViewport: true,
+    });
+
+    expect(commit.viewportAnchor).toBe(100);
   });
 
   test('读不到视口状态的终端按停在底部处理', () => {
     const target = createTarget({ viewportY: 900, baseY: 1000 });
     (target.terminal as { buffer?: unknown }).buffer = undefined;
-    writeCanonicalSnapshot(target, snapshotOf('live'), [], { preserveViewport: true });
+    const commit = writeCanonicalSnapshot(target, snapshotOf('live'), [], {
+      preserveViewport: true,
+    });
 
+    expect(commit.viewportAnchor).toBeNull();
     expect(target.scrolls).toEqual([]);
   });
 
   test('返回本次重排是否改变了网格尺寸', () => {
     expect(
       writeCanonicalSnapshot(createTarget({ cols: 80, rows: 24 }), snapshotOf('x'), [])
-    ).toEqual({ gridResized: false });
+    ).toEqual({ gridResized: false, viewportAnchor: null });
     expect(
       writeCanonicalSnapshot(createTarget({ cols: 120, rows: 40 }), snapshotOf('x'), [])
-    ).toEqual({ gridResized: true });
+    ).toEqual({ gridResized: true, viewportAnchor: null });
   });
 });
 

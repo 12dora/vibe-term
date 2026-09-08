@@ -125,7 +125,7 @@ function createHarness(options: { atomicScreen?: boolean } = {}): Harness {
     resources,
     initialization,
     states,
-    emitSnapshotApplied(snapshot, commit = { gridResized: true }) {
+    emitSnapshotApplied(snapshot, commit = { gridResized: true, viewportAnchor: null }) {
       handlers?.onSnapshotApplied(target, snapshot, commit);
     },
     emitRecoveryRequired(reason) {
@@ -241,8 +241,8 @@ describe('TerminalSurfaceLifecycle boot', () => {
     harness.emitSnapshotApplied(SNAPSHOT);
 
     harness.events.length = 0;
-    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false });
-    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false });
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false, viewportAnchor: null });
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: false, viewportAnchor: null });
 
     expect(harness.events).toEqual([
       'bind:target-0',
@@ -262,7 +262,7 @@ describe('TerminalSurfaceLifecycle boot', () => {
     harness.emitSnapshotApplied(SNAPSHOT);
 
     harness.events.length = 0;
-    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: true });
+    harness.emitSnapshotApplied(SNAPSHOT, { gridResized: true, viewportAnchor: null });
 
     expect(harness.events).toContain('commit:target-0');
     expect(harness.events).not.toContain('samples:start:target-0');

@@ -13,6 +13,7 @@ import {
 } from './TerminalSurface';
 import {
   type CanonicalSnapshotTarget,
+  restoreCanonicalViewport,
   writeCanonicalSnapshot,
   writeLiveOutput,
 } from './terminal-snapshot';
@@ -30,24 +31,43 @@ interface RecordingTarget extends CanonicalSnapshotTarget, TerminalSurfaceTarget
   repaints: number;
   sizes: Array<{ cols: number; rows: number }>;
   disposed: boolean;
+  scrolls: number[];
+  /** 记录 write / scrollLines 的先后，用于断言还原发生在 live 回放之后 */
+  calls: string[];
+  /** 可写的视口模型：测试用它模拟「用户已经滚上去」 */
+  active: { viewportY: number; baseY: number };
+  setViewport(distanceFromBottom: number): void;
 }
 
 function createTarget(): RecordingTarget {
+  const active = { viewportY: 0, baseY: 0 };
   const target: RecordingTarget = {
+    active,
+    setViewport: (distanceFromBottom) => {
+      active.baseY = 1000;
+      active.viewportY = 1000 - distanceFromBottom;
+    },
     writes: [],
     writeCallsPerFlush: [],
     resets: 0,
     repaints: 0,
     sizes: [],
     disposed: false,
+    scrolls: [],
+    calls: [],
     liveOutputEndedWithCR: false,
     dispose: () => {
       target.disposed = true;
     },
     terminal: {
+      buffer: { active },
       reset: () => {
         target.resets += 1;
         target.writeCallsPerFlush.push(0);
+        target.calls.push('reset');
+        // 真实终端 reset 之后视口回到底部
+        active.viewportY = 0;
+        active.baseY = 0;
       },
       resize: (cols, rows) => {
         target.sizes.push({ cols, rows });
@@ -56,10 +76,17 @@ function createTarget(): RecordingTarget {
         target.writes.push(typeof data === 'string' ? data : decoder.decode(data));
         const index = target.writeCallsPerFlush.length - 1;
         if (index >= 0) target.writeCallsPerFlush[index] += 1;
+        target.calls.push('write');
       },
       restoreModeSnapshot: () => {},
       forceFullRepaint: () => {
         target.repaints += 1;
+        target.calls.push('repaint');
+      },
+      scrollLines: (amount) => {
+        target.scrolls.push(amount);
+        target.calls.push('scrollLines');
+        return true;
       },
     },
   };
@@ -75,6 +102,8 @@ interface Harness {
   // history 批处理窗口由测试显式驱动
   runScheduled(): void;
   scheduledCount(): number;
+  // 视口还原的微任务同样由测试显式驱动
+  runViewportRestores(): void;
 }
 
 async function createHarness(options?: {
@@ -85,9 +114,12 @@ async function createHarness(options?: {
   const recoveries: GatewayRebaseReason[] = [];
   const applied: Array<GatewayPaneScreenSnapshot | null> = [];
   let pending: Array<() => void> = [];
+  let restores: Array<() => void> = [];
   const surface = new TerminalSurface<RecordingTarget>({
     createTarget: async () => target,
     writeSnapshot: writeCanonicalSnapshot,
+    restoreViewport: restoreCanonicalViewport,
+    scheduleViewportRestore: (restore) => restores.push(restore),
     writeLive: writeLiveOutput,
     activate: () => {},
     onRecoveryRequired: (reason) => {
@@ -112,6 +144,11 @@ async function createHarness(options?: {
       for (const callback of callbacks) callback();
     },
     scheduledCount: () => pending.length,
+    runViewportRestores: () => {
+      const callbacks = restores;
+      restores = [];
+      for (const callback of callbacks) callback();
+    },
   };
 }
 
@@ -338,6 +375,7 @@ describe('TerminalSurface history paging', () => {
         seen.push(options);
         return writeCanonicalSnapshot(writeTarget, snapshot, pages, options);
       },
+      restoreViewport: restoreCanonicalViewport,
       writeLive: writeLiveOutput,
       activate: () => {},
       onRecoveryRequired: () => {},
@@ -355,6 +393,7 @@ describe('TerminalSurface history paging', () => {
     const surface = new TerminalSurface<RecordingTarget>({
       createTarget: async () => target,
       writeSnapshot: writeCanonicalSnapshot,
+      restoreViewport: restoreCanonicalViewport,
       writeLive: writeLiveOutput,
       activate: () => {},
       onRecoveryRequired: () => {},
@@ -372,6 +411,72 @@ describe('TerminalSurface history paging', () => {
     await Bun.sleep(40);
     expect(target.resets).toBe(1);
     expect(target.writes).toEqual([`${PREFIX}l3\r\nl4\r\nl5\r\nl6\r\ncurrent\r\n`]);
+  });
+
+  test('视口还原发生在快照后 live 回放写完之后，且整次重排只绘一次', async () => {
+    const harness = await createHarness();
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    // 用户已经滚到离底部 100 行；期间 gateway 又攒了几行 live（重排后由注册表回放）
+    harness.target.setViewport(100);
+    harness.target.calls.length = 0;
+    harness.target.repaints = 0;
+
+    expect(harness.surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    // 注册表的顺序：onHistoryPage → 回放 live 帧（后者经 write 触发攒着的重排）
+    harness.surface.write({ deviceId: 'device-1', paneId: '%1', data: encoder.encode('live\n') });
+
+    expect(harness.target.calls).toEqual(['reset', 'write', 'write']);
+    expect(harness.target.scrolls).toEqual([]);
+
+    harness.runViewportRestores();
+    expect(harness.target.calls).toEqual(['reset', 'write', 'write', 'scrollLines', 'repaint']);
+    expect(harness.target.scrolls).toEqual([-100]);
+    expect(harness.target.repaints).toBe(1);
+  });
+
+  test('还原未落地前再重排一次，保留最先测到的锚点', async () => {
+    const harness = await createHarness();
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    harness.target.setViewport(100);
+
+    expect(harness.surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    harness.runScheduled();
+    // 第一次重排后终端停在底部；此时读到的任何位置都不是用户真正在看的那一行
+    harness.target.setViewport(7);
+    expect(harness.surface.applyHistoryPage(PAGE_MIDDLE)).toBe(true);
+    harness.runScheduled();
+
+    harness.target.scrolls.length = 0;
+    harness.runViewportRestores();
+    expect(harness.target.scrolls).toEqual([-100]);
+  });
+
+  test('还原前 dispose 则不再碰终端', async () => {
+    const harness = await createHarness();
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    harness.target.setViewport(100);
+
+    expect(harness.surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    harness.runScheduled();
+    harness.surface.dispose();
+
+    harness.target.scrolls.length = 0;
+    harness.runViewportRestores();
+    expect(harness.target.scrolls).toEqual([]);
+  });
+
+  test('replace 作废攒着的锚点：换了一屏内容就该停在实时屏', async () => {
+    const harness = await createHarness();
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+    harness.target.setViewport(100);
+
+    expect(harness.surface.applyHistoryPage(PAGE_NEWEST)).toBe(true);
+    harness.runScheduled();
+    harness.surface.replace(snapshotOf(SNAPSHOT_BODY, cursorOf(6)));
+
+    harness.target.scrolls.length = 0;
+    harness.runViewportRestores();
+    expect(harness.target.scrolls).toEqual([]);
   });
 
   test('64 页累积后终端内容按行号升序排列', async () => {

@@ -21,6 +21,7 @@ import type { TerminalSizingMode } from '../terminal-resize-reporter';
 import {
   type TerminalController,
   type TerminalRenderTarget,
+  restoreCanonicalViewport,
   writeCanonicalSnapshot,
   writeLiveOutput,
 } from '../terminal-snapshot';
@@ -222,6 +223,7 @@ function buildSurface(
   return new TerminalSurface<TerminalRenderTarget>({
     createTarget: () => buildRenderTarget(ctx, report, context.isCancelled),
     writeSnapshot: writeCanonicalSnapshot,
+    restoreViewport: restoreCanonicalViewport,
     writeLive: writeLiveOutput,
     activate: activateRenderTarget,
     onRecoveryRequired: context.onRecoveryRequired,

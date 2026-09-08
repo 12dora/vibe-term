@@ -41,6 +41,12 @@ export const browserHistoryPrefetchTimers: HistoryPrefetchTimers = {
 };
 
 export interface HistoryPrefetchDeps<Cursor> {
+  /**
+   * pane 当前是否可见（渲染未挂起）。保活池里的隐藏 pane 视口位置是冻结的，
+   * 不拦住的话每到一页都满足带内条件、一直续拉到历史或预算耗尽，
+   * 在用户看不见的地方反复重建越来越大的 history。
+   */
+  isVisible(): boolean;
   /** 下一页的游标；null 表示没有更旧的历史，或分页已被预算叫停 */
   getCursor(): Cursor | null;
   /** 当前视口；null 表示终端还没就绪 */
@@ -85,7 +91,7 @@ export class HistoryPrefetchController<Cursor> {
   }
 
   private tryRequest(): void {
-    if (this.inFlight) return;
+    if (this.inFlight || !this.deps.isVisible()) return;
     const viewport = this.deps.getViewport();
     if (!viewport || !withinHistoryPrefetchBand(viewport)) return;
     const cursor = this.deps.getCursor();

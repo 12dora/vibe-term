@@ -189,6 +189,10 @@ test('mobile: tap sends press+release on the same cell when reporting is on', as
     await expect
       .poll(() => [...readLog(logPath).matchAll(SGR_PRESS_RE)].length, { timeout: 10_000 })
       .toBe(1);
+    // 网关按 pane 节奏写入鼠标序列：release 要等 press 的输出/回退超时后才落到 pane，需单独轮询
+    await expect
+      .poll(() => [...readLog(logPath).matchAll(SGR_RELEASE_RE)].length, { timeout: 10_000 })
+      .toBe(1);
     const raw = readLog(logPath);
     const press = [...raw.matchAll(SGR_PRESS_RE)][0];
     const release = [...raw.matchAll(SGR_RELEASE_RE)][0];

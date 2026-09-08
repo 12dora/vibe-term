@@ -121,6 +121,7 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
       surfaceRef,
       containerRef,
       subscribe,
+      renderSuspended,
     });
 
     useEffect(() => {

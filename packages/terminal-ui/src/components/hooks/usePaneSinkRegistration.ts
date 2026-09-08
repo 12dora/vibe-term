@@ -6,6 +6,7 @@ import { type RefObject, useEffect, useMemo, useRef } from 'react';
 import type { TerminalSurface } from '../TerminalSurface';
 import { HistoryPrefetchController, historyRequestDeadlineMs } from '../paneHistoryRequest';
 import type { TerminalRenderTarget } from '../terminal-snapshot';
+import { useLatestRef } from './useLatestRef';
 
 export interface UsePaneSinkRegistrationOptions {
   deviceId: string;
@@ -15,6 +16,8 @@ export interface UsePaneSinkRegistrationOptions {
   containerRef: RefObject<HTMLDivElement | null>;
   /** 是否把本 pane 计入 wire 订阅集合（默认 true）；sink 注册与之无关，恒生效 */
   subscribe?: boolean;
+  /** 保活池里的隐藏实例：渲染挂起期间不自动续拉 history */
+  renderSuspended?: boolean;
 }
 
 /**
@@ -28,6 +31,7 @@ export function usePaneSinkRegistration({
   surfaceRef,
   containerRef,
   subscribe = true,
+  renderSuspended = false,
 }: UsePaneSinkRegistrationOptions): void {
   const runtime = useRuntime();
   const mountPane = useTmuxStore((state) => state.mountPane);
@@ -37,6 +41,9 @@ export function usePaneSinkRegistration({
   // deviceId/paneId 变动不触发第二次。
   const screenRequestedForRef = useRef<CompatibleTerminalLike | null>(null);
   const prefetchRef = useRef<HistoryPrefetchController<GatewayHistoryCursor> | null>(null);
+  // 经 ref 读：挂起状态翻转不能重建控制器，否则在途标记丢失后会用同一游标再请求一次，
+  // 拿回重复页反而触发整屏重取。
+  const renderSuspendedRef = useLatestRef(renderSuspended);
 
   const paneSink: PaneSink | null = useMemo(() => {
     if (!instance) {
@@ -89,6 +96,7 @@ export function usePaneSinkRegistration({
     if (!container) return;
 
     const controller = new HistoryPrefetchController<GatewayHistoryCursor>({
+      isVisible: () => !renderSuspendedRef.current,
       getCursor: () => surfaceRef.current?.getNextHistoryCursor() ?? null,
       getViewport: () => ({ viewportY: instance.buffer.active.viewportY, rows: instance.rows }),
       request: (cursor) => fetchPaneHistory(deviceId, paneId, cursor),
@@ -103,5 +111,14 @@ export function usePaneSinkRegistration({
       controller.dispose();
       if (prefetchRef.current === controller) prefetchRef.current = null;
     };
-  }, [containerRef, deviceId, fetchPaneHistory, instance, paneId, runtime, surfaceRef]);
+  }, [
+    containerRef,
+    deviceId,
+    fetchPaneHistory,
+    instance,
+    paneId,
+    renderSuspendedRef,
+    runtime,
+    surfaceRef,
+  ]);
 }

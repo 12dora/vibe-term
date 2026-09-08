@@ -45,12 +45,15 @@ interface PrefetchHarness {
   requests: Cursor[];
   viewport: HistoryPrefetchViewport | null;
   cursor: Cursor | null;
+  visible: boolean;
   armedDeadlines: number[];
   fireDeadline(): void;
   pendingDeadlines(): number;
 }
 
-function createHarness(options: { viewportY?: number; rows?: number } = {}): PrefetchHarness {
+function createHarness(
+  options: { viewportY?: number; rows?: number; visible?: boolean } = {}
+): PrefetchHarness {
   const timers = new Map<number, () => void>();
   let nextId = 1;
   const fakeTimers: HistoryPrefetchTimers = {
@@ -71,6 +74,7 @@ function createHarness(options: { viewportY?: number; rows?: number } = {}): Pre
     requests: [],
     viewport: { viewportY: options.viewportY ?? 0, rows: options.rows ?? 24 },
     cursor: { beforeLine: 1000 },
+    visible: options.visible ?? true,
     armedDeadlines: [],
     fireDeadline: () => {
       const entries = [...timers.entries()];
@@ -81,6 +85,7 @@ function createHarness(options: { viewportY?: number; rows?: number } = {}): Pre
   };
 
   harness.controller = new HistoryPrefetchController<Cursor>({
+    isVisible: () => harness.visible,
     getCursor: () => harness.cursor,
     getViewport: () => harness.viewport,
     request: (cursor) => {
@@ -167,6 +172,34 @@ describe('HistoryPrefetchController', () => {
     harness.viewport = null;
     harness.controller.handleWheel(-1);
     expect(harness.requests).toHaveLength(0);
+  });
+
+  test('渲染挂起（保活池里的隐藏 pane）时不自动请求', () => {
+    const harness = createHarness({ visible: false });
+    harness.controller.handleWheel(-1);
+    expect(harness.requests).toHaveLength(0);
+  });
+
+  test('隐藏 pane 收到页也不续拉：视口是冻结的，否则会一路拉到预算耗尽', () => {
+    const harness = createHarness();
+    harness.controller.handleWheel(-1);
+    expect(harness.requests).toHaveLength(1);
+
+    harness.visible = false;
+    for (let index = 0; index < 5; index += 1) {
+      harness.cursor = { beforeLine: 500 - index };
+      harness.controller.handlePageArrived();
+    }
+    expect(harness.requests).toHaveLength(1);
+  });
+
+  test('重新可见后恢复正常请求', () => {
+    const harness = createHarness({ visible: false });
+    harness.controller.handleWheel(-1);
+    harness.visible = true;
+    harness.controller.handleWheel(-1);
+
+    expect(harness.requests).toEqual([{ beforeLine: 1000 }]);
   });
 
   test('dispose 清掉在途标记与放弃计时器', () => {

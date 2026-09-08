@@ -49,6 +49,8 @@ export interface SnapshotWriteOptions {
 export interface SnapshotCommitInfo {
   /** 本次重排是否真的改变了终端网格尺寸；未变时无须再跑一遍尺寸收敛 */
   gridResized: boolean;
+  /** 待还原的「视口离底部行数」；null 表示无需还原，writeSnapshot 已经重绘过了 */
+  viewportAnchor: number | null;
 }
 
 export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
@@ -67,6 +69,10 @@ export interface TerminalSurfaceOptions<Target extends TerminalSurfaceTarget> {
     snapshot: GatewayPaneScreenSnapshot | null,
     commit: SnapshotCommitInfo
   ): void;
+  /** 还原视口锚点并完成这次重排唯一的一次重绘 */
+  restoreViewport(target: Target, distance: number): void;
+  /** 缺省用微任务：分发内的 live 回放写完之后、下一帧渲染之前 */
+  scheduleViewportRestore?(restore: () => void): void;
   maxHistoryBytes?: number;
   maxHistoryPages?: number;
   scheduleHistoryFlush?(flush: () => void): void;
@@ -134,6 +140,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
   private nextHistoryCursor: GatewayHistoryCursor | null = null;
   private historyFlushPending = false;
   private historyFlushScheduled = false;
+  private pendingViewportAnchor: number | null = null;
   private recoveryRequested = false;
   private recoveryReason: GatewayRebaseReason | null = null;
   private disposed = false;
@@ -153,7 +160,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     }
     this.target = target;
     this.options.activate(target);
-    this.options.onSnapshotApplied?.(target, null, { gridResized: false });
+    this.options.onSnapshotApplied?.(target, null, { gridResized: false, viewportAnchor: null });
     return target;
   }
 
@@ -202,6 +209,8 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     this.historyBytes = 0;
     this.nextHistoryCursor = copyHistoryCursor(owned.historyCursor);
     this.historyFlushPending = false;
+    // 换了一屏内容，攒着的锚点作废
+    this.pendingViewportAnchor = null;
     this.recoveryRequested = false;
     this.recoveryReason = null;
     const commit = this.options.writeSnapshot(this.target, owned, [], {
@@ -231,6 +240,7 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     if (this.disposed) return;
     this.disposed = true;
     this.historyFlushPending = false;
+    this.pendingViewportAnchor = null;
     this.target?.dispose();
     this.target = null;
     this.latestSnapshot = null;
@@ -299,7 +309,30 @@ export class TerminalSurface<Target extends TerminalSurfaceTarget> {
     const commit = this.options.writeSnapshot(target, snapshot, this.historyPages, {
       preserveViewport: true,
     });
+    this.scheduleViewportRestore(target, commit.viewportAnchor);
     this.options.onSnapshotApplied?.(target, snapshot, commit);
+  }
+
+  /**
+   * 视口锚点的还原要等本轮分发结束：注册表拿到 history 页后先调 onHistoryPage（触发重排），
+   * 紧接着才把快照之后攒下的 live 帧回放进来；在回放之前还原，视口会整整偏高这些 live 行。
+   * 微任务落在整轮同步分发之后、下一帧渲染之前，因此仍然只绘一次。
+   * 同一轮里若又发生一次重排，那次重排的起点已经在底部（锚点为 0），保留最先测到的锚点。
+   */
+  private scheduleViewportRestore(target: Target, anchor: number | null): void {
+    if (anchor === null || this.pendingViewportAnchor !== null) return;
+    this.pendingViewportAnchor = anchor;
+    const run = () => {
+      const distance = this.pendingViewportAnchor;
+      this.pendingViewportAnchor = null;
+      if (distance === null || this.disposed || this.target !== target) return;
+      this.options.restoreViewport(target, distance);
+    };
+    if (this.options.scheduleViewportRestore) {
+      this.options.scheduleViewportRestore(run);
+      return;
+    }
+    queueMicrotask(run);
   }
 
   private requestRecovery(reason: GatewayRebaseReason): void {

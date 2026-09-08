@@ -23,6 +23,8 @@ export interface CanonicalSnapshotTerminal {
   forceFullRepaint?(): void;
   // biome-ignore lint/suspicious/noConfusingVoidType: 兼容返回 void 的旧实现
   scrollLines?(amount: number): boolean | void;
+  /** 同步读「视口离活动屏底部的行数」（直接问 wasm 滚动条），缺席时回落到 buffer.active */
+  viewportDistanceFromBottom?(): number;
 }
 
 export interface CanonicalSnapshotTarget {
@@ -117,8 +119,14 @@ export function buildCanonicalSnapshotPayload(
   return concatChunks(chunks);
 }
 
-/** 视口离活动屏底部的行数；读不到视口状态的终端按「停在底部」处理 */
-function viewportDistanceFromBottom(terminal: CanonicalSnapshotTerminal): number {
+/**
+ * 视口离活动屏底部的行数；读不到视口状态的终端按「停在底部」处理。
+ * 优先走终端的同步读：buffer.active 只在渲染帧里刷新，而滚轮滚动走 rAF 合并，
+ * 「滚一下、同帧内 history 页到达」会读到上一帧的位置，把刚滚出去的距离又吃回来。
+ */
+function readViewportAnchor(terminal: CanonicalSnapshotTerminal): number {
+  const live = terminal.viewportDistanceFromBottom?.();
+  if (typeof live === 'number' && Number.isFinite(live)) return Math.max(0, live);
   const active = terminal.buffer?.active;
   if (!active) return 0;
   return Math.max(0, active.baseY - active.viewportY);
@@ -133,9 +141,7 @@ export function writeCanonicalSnapshot(
   // 整屏重排会把视口拉回实时屏底部。history 分页是「在顶部前置更旧的内容」，
   // 重排前后同一「离底部行数」对应同一段内容，据此把用户正在看的位置还原回去；
   // 首屏 / rebase 属于换了一屏内容，跳回实时屏才是对的，故只在分页路径还原。
-  const restoreDistance = options.preserveViewport
-    ? viewportDistanceFromBottom(target.terminal)
-    : 0;
+  const anchor = options.preserveViewport ? readViewportAnchor(target.terminal) : 0;
   const gridResized =
     target.terminal.cols !== snapshot.cols || target.terminal.rows !== snapshot.rows;
   target.terminal.reset();
@@ -151,10 +157,18 @@ export function writeCanonicalSnapshot(
     );
   }
   target.terminal.write(buildCanonicalSnapshotPayload(snapshot, historyPages));
-  // 还原放在 forceFullRepaint 之前：整次重排只绘一帧，用户看不到「跳到底再跳回去」
-  if (restoreDistance > 0) target.terminal.scrollLines?.(-restoreDistance);
+  // 有锚点要还原时不在这里重绘：gateway 在同一次分发里先给 history 页、再回放快照之后
+  // 攒下的 live 帧，锚点必须等那些行也写进去才还原（见 TerminalSurface 的延迟还原），
+  // 否则视口会整整偏高这些 live 行。还原那一步负责唯一的一次重绘。
+  if (anchor > 0) return { gridResized, viewportAnchor: anchor };
   target.terminal.forceFullRepaint?.();
-  return { gridResized };
+  return { gridResized, viewportAnchor: null };
+}
+
+/** 延迟还原视口锚点并收口这次重排的唯一一次重绘 */
+export function restoreCanonicalViewport(target: CanonicalSnapshotTarget, distance: number): void {
+  if (distance > 0) target.terminal.scrollLines?.(-distance);
+  target.terminal.forceFullRepaint?.();
 }
 
 export function writeLiveOutput(target: CanonicalSnapshotTarget, data: Uint8Array): void {
