@@ -179,7 +179,11 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
 
   static async create(options: GhosttyTerminalInitOptions): Promise<GhosttyTerminalController> {
     const bindings = await getGhosttyBindings();
-    const terminalHandle = bindings.createTerminal(DEFAULT_COLS, DEFAULT_ROWS, options.scrollback);
+    const terminalHandle = bindings.createTerminal(
+      options.cols ?? DEFAULT_COLS,
+      options.rows ?? DEFAULT_ROWS,
+      options.scrollback
+    );
     let keyEncoderHandle = 0;
     let mouseEncoderHandle = 0;
     let renderState: GhosttyRenderStateResources | null = null;
@@ -190,7 +194,7 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
       mouseEncoderHandle = bindings.createMouseEncoder();
       renderState = createRenderState(bindings);
 
-      return new GhosttyTerminalController(
+      const controller = new GhosttyTerminalController(
         bindings,
         {
           terminal: terminalHandle,
@@ -200,6 +204,9 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
         renderState,
         options
       );
+      controller.cols = options.cols ?? DEFAULT_COLS;
+      controller.rows = options.rows ?? DEFAULT_ROWS;
+      return controller;
     } catch (error) {
       if (renderState) {
         disposeRenderStateResources(renderState);
