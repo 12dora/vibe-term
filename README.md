@@ -50,9 +50,9 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 
 <table width="100%">
   <tr>
-    <td width="33%" align="center" valign="top"><img src="docs/images/mobile.png" width="240" alt="VibeTerm 手机端：远程 tmux 终端" /><br/><sub>终端：Claude Code 界面，底部为快捷键</sub></td>
-    <td width="33%" align="center" valign="top"><img src="docs/images/mobile-devices.png" width="240" alt="VibeTerm 手机端：设备与窗口抽屉" /><br/><sub>设备：显示全部节点窗口列表</sub></td>
-    <td width="33%" align="center" valign="top"><img src="docs/images/mobile-files.png" width="240" alt="VibeTerm 手机端：文件面板" /><br/><sub>文件：浏览、上传与下载远端文件</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="docs/images/mobile.png" width="240" alt="VibeTerm 手机端：远程 tmux 终端" /><br/><sub>终端：Claude Code 界面，底部为快捷键</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="docs/images/mobile-devices.png" width="240" alt="VibeTerm 手机端：设备与窗口抽屉" /><br/><sub>设备：显示全部节点窗口列表</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="docs/images/mobile-files.png" width="240" alt="VibeTerm 手机端：文件面板" /><br/><sub>文件：浏览、上传与下载远端文件</sub></td>
   </tr>
 </table>
 

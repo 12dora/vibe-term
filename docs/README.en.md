@@ -50,9 +50,9 @@ VibeTerm links Macs, Linux servers, NAS boxes, and cloud VMs into one network. E
 
 <table width="100%">
   <tr>
-    <td width="33%" align="center" valign="top"><img src="./images/mobile.png" width="240" alt="VibeTerm on a phone: remote tmux terminal" /><br/><sub>Terminal: the Claude Code UI with the shortcut bar at the bottom</sub></td>
-    <td width="33%" align="center" valign="top"><img src="./images/mobile-devices-en.png" width="240" alt="VibeTerm on a phone: device and window drawer" /><br/><sub>Devices: the window list of every node</sub></td>
-    <td width="33%" align="center" valign="top"><img src="./images/mobile-files-en.png" width="240" alt="VibeTerm on a phone: file panel" /><br/><sub>Files: browse, upload, and download remote files</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="./images/mobile.png" width="240" alt="VibeTerm on a phone: remote tmux terminal" /><br/><sub>Terminal: the Claude Code UI with the shortcut bar at the bottom</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="./images/mobile-devices-en.png" width="240" alt="VibeTerm on a phone: device and window drawer" /><br/><sub>Devices: the window list of every node</sub></td>
+    <td width="33%" align="center" valign="top"><img width="330" height="0" align="left" /><img src="./images/mobile-files-en.png" width="240" alt="VibeTerm on a phone: file panel" /><br/><sub>Files: browse, upload, and download remote files</sub></td>
   </tr>
 </table>
 
