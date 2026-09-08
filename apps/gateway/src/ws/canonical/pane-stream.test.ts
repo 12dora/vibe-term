@@ -84,6 +84,46 @@ function paneSegment(
 }
 
 describe('canonical pane stream', () => {
+  test('a completed DEC 2026 frame flushes immediately inside the cooldown window', () => {
+    const events: wsBorsh.CanonicalEvent[] = [];
+    let now = 0;
+    const { stream } = createStream(
+      (event) => {
+        events.push(event);
+        return true;
+      },
+      wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      { now: () => now, timer: new ManualTimer() }
+    );
+    let seq = 0n;
+    const send = (text: string) => {
+      const data = encoder.encode(text);
+      stream.handlePaneData('device-a', {
+        paneId: '%1',
+        paneEpoch: PANE_EPOCH,
+        seqStart: seq,
+        seqEnd: seq + BigInt(data.byteLength),
+        data,
+      });
+      seq += BigInt(data.byteLength);
+    };
+    send('\x1b[?2026h frame one \x1b[?2026l');
+    expect(events).toHaveLength(1);
+    now += 5;
+    send('\x1b[?2026h frame two \x1b[?20');
+    expect(events).toHaveLength(1);
+    send('26l');
+    expect(events).toHaveLength(2);
+    const second = events[1];
+    if (!second || !('PaneData' in second)) throw new Error('expected PaneData');
+    expect(new TextDecoder().decode(second.PaneData.data)).toBe(
+      '\x1b[?2026h frame two \x1b[?2026l'
+    );
+    now += 5;
+    send('plain output');
+    expect(events).toHaveLength(2);
+  });
+
   test('coalesces contiguous seq and flushes before a pane gap', async () => {
     const events: wsBorsh.CanonicalEvent[] = [];
     const { stream } = createStream((event) => {

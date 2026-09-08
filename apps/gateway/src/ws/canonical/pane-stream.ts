@@ -5,6 +5,7 @@ import {
   type PaneDataSegment,
   type PaneReplayGap,
 } from '../../tmux-client/pane-retention';
+import { endsSynchronizedFrame } from '../synchronized-frame';
 import {
   GATEWAY_TERM_OUTPUT_BATCH_DELAY_MS,
   GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES,
@@ -122,17 +123,22 @@ export class CanonicalPaneStream {
     if (held && this.dropHeldPaneDataOnOverflow(key, pending, segment)) return;
     if (pending) {
       if (bytesEqual(pending.paneEpoch, segment.paneEpoch) && pending.seqEnd === segment.seqStart) {
+        const frameEnd = endsSynchronizedFrame(pending.chunks.at(-1), segment.data);
         pending.chunks.push(segment.data);
         pending.length += segment.data.byteLength;
         pending.seqEnd = segment.seqEnd;
-        if (!held && pending.length >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
+        if (!held && (frameEnd || pending.length >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES)) {
           this.flushPaneDataBatch(key);
         }
         return;
       }
       this.flushPaneDataBatch(key, held);
     }
-    if (!held && segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES) {
+    if (
+      !held &&
+      (segment.data.byteLength >= GATEWAY_TERM_OUTPUT_BATCH_MAX_BYTES ||
+        endsSynchronizedFrame(undefined, segment.data))
+    ) {
       this.sendPaneData(deviceId, segment);
       this.markFlushed(key);
       return;
