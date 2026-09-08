@@ -650,7 +650,7 @@
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "packages/ghostty-terminal/src/canvas-renderer.ts": {
-    "fileLines": 740,
+    "fileLines": 674,
     "reason": "round22 文件门禁 900→600 时的存量，只降不升；拆分时机见 EX4/EX5 报告"
   },
   "packages/ghostty-terminal/src/terminal.ts": {

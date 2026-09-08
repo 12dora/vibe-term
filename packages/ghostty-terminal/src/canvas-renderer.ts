@@ -19,6 +19,7 @@ import {
   sameSelectionRects,
   toDeviceCell,
 } from './canvas-renderer-metrics';
+import { ScratchSurfacePool, ensureCanvasContext } from './canvas-scratch-pool';
 import { CursorLayer } from './cursor-layer';
 import type {
   GhosttyCellDimensions,
@@ -69,56 +70,6 @@ type LinkUnderlineSegment = {
   endCol: number;
 };
 
-function ensureContext(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
-  const context = canvas.getContext('2d');
-  if (!context) {
-    throw new Error('2d canvas context unavailable');
-  }
-
-  return context;
-}
-
-type ScratchSurface = { canvas: HTMLCanvasElement; context: CanvasRenderingContext2D };
-
-// blitRows 的 ping-pong 中转画布：全尺寸位图（iPhone DPR3 下每张 ~10 MB），而 blit 在
-// 一帧内同步完成、不会重入，所以整个模块共用一张即可 —— 保活多个终端时省下 N−1 张。
-// 交换后「让位」的旧主画布随即成为新的共享中转，池里始终至多一张。
-let sharedScratch: ScratchSurface | null = null;
-let liveRenderers = 0;
-
-function parkScratchSurface(surface: ScratchSurface): void {
-  sharedScratch = surface;
-}
-
-// owner 是本实例主画布所属的 document：跨 document 的位图不能共用。
-function acquireScratchSurface(owner: Document): ScratchSurface {
-  if (sharedScratch && sharedScratch.canvas.ownerDocument === owner) {
-    return sharedScratch;
-  }
-
-  dropSharedScratch();
-  const canvas = document.createElement('canvas');
-  canvas.dataset.layer = 'scratch';
-  canvas.style.position = 'absolute';
-  canvas.style.inset = '0';
-  canvas.style.width = '100%';
-  canvas.style.height = '100%';
-  canvas.style.pointerEvents = 'none';
-  canvas.style.opacity = '0';
-  const surface = { canvas, context: ensureContext(canvas) };
-  parkScratchSurface(surface);
-  return surface;
-}
-
-function dropSharedScratch(): void {
-  if (sharedScratch) {
-    sharedScratch.canvas.remove();
-    sharedScratch.canvas.width = 0;
-    sharedScratch.canvas.height = 0;
-  }
-  sharedScratch = null;
-}
-
 export class CanvasRenderer {
   readonly kind = 'canvas';
 
@@ -161,14 +112,14 @@ export class CanvasRenderer {
   private drawnSelectionColor = '';
   private readonly cursorLayer: CursorLayer;
   private readonly onSurfaceSize: ((width: number, height: number) => void) | null;
-  private disposed = false;
+  // 每个渲染器独占的 blit 中转画布池（见 canvas-scratch-pool.ts）。
+  private readonly scratchPool = new ScratchSurfacePool();
 
   constructor(options: CanvasRendererOptions) {
     this.onSurfaceSize = options.onSurfaceSize ?? null;
     this.theme = options.theme;
     this.fontSize = options.fontSize;
     this.cellStyle = new CellStyleResolver(options.fontFamily);
-    liveRenderers += 1;
 
     options.screenElement.style.position = 'relative';
     options.screenElement.style.overflow = 'hidden';
@@ -193,10 +144,10 @@ export class CanvasRenderer {
       options.screenElement.appendChild(canvas);
     }
 
-    this.mainContext = ensureContext(this.mainCanvas);
-    this.linkContext = ensureContext(this.linkCanvas);
-    this.selectionContext = ensureContext(this.selectionCanvas);
-    this.cursorContext = ensureContext(this.cursorCanvas);
+    this.mainContext = ensureCanvasContext(this.mainCanvas);
+    this.linkContext = ensureCanvasContext(this.linkCanvas);
+    this.selectionContext = ensureCanvasContext(this.selectionCanvas);
+    this.cursorContext = ensureCanvasContext(this.cursorCanvas);
     this.cursorLayer = new CursorLayer(this.cursorCanvas, this.cursorContext);
   }
 
@@ -269,7 +220,9 @@ export class CanvasRenderer {
   }
 
   dispose(): void {
-    this.releaseScratch();
+    // 停放的中转画布此刻是本实例交换出来的旧主画布，随本实例一起释放；下面四张里的
+    // mainCanvas 则可能是当初分配的那张 scratch（ping-pong 后二者身份互换）。
+    this.scratchPool.release();
     this.mainCanvas.remove();
     this.linkCanvas.remove();
     this.selectionCanvas.remove();
@@ -280,25 +233,6 @@ export class CanvasRenderer {
     this.drawnSelectionRects = [];
     this.lastFrame = null;
     this.cursorLayer.dispose();
-  }
-
-  // 共享中转画布可能正停在本实例的层栈里：先摘出来；本实例是最后一个时整张释放。
-  private releaseScratch(): void {
-    if (this.disposed) {
-      return;
-    }
-    this.disposed = true;
-
-    const parent = this.mainCanvas.parentElement;
-    if (sharedScratch && parent && sharedScratch.canvas.parentElement === parent) {
-      // 共享 scratch 此刻是本实例交换出来的旧主画布：位图尺寸随本实例走，不能留给别人
-      // 长期占着（大终端关掉后仍挂一张 ~10 MB 位图），直接释放，其余实例下次 blit 再懒分配。
-      dropSharedScratch();
-    }
-    liveRenderers = Math.max(0, liveRenderers - 1);
-    if (liveRenderers === 0) {
-      dropSharedScratch();
-    }
   }
 
   // 返回 true 表示触发了 canvas.width/height 赋值（HTML5 标准会 wipe 已绘位图），
@@ -667,7 +601,7 @@ export class CanvasRenderer {
       return false;
     }
 
-    const scratch = acquireScratchSurface(this.mainCanvas.ownerDocument);
+    const scratch = this.scratchPool.acquire(this.mainCanvas.ownerDocument);
     const width = this.mainCanvas.width;
     if (scratch.canvas.width !== width || scratch.canvas.height !== this.mainCanvas.height) {
       scratch.canvas.width = width;
@@ -707,8 +641,8 @@ export class CanvasRenderer {
     scratch.canvas.style.opacity = '1';
     this.mainCanvas = scratch.canvas;
     this.mainContext = scratch.context;
-    // 让位的旧主画布成为新的共享中转，池里始终只有一张全尺寸位图。
-    parkScratchSurface({ canvas: previousCanvas, context: previousContext });
+    // 让位的旧主画布成为本实例新的中转画布，池里始终只有一张全尺寸位图。
+    this.scratchPool.park({ canvas: previousCanvas, context: previousContext });
     this.assignedMainFillStyle = null;
     this.assignedMainFont = null;
     return true;

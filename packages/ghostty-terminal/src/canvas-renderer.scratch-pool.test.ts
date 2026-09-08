@@ -99,7 +99,46 @@ function operationsOfType(canvas: FakeCanvasElement, type: string): Array<Record
   return canvas.context.operations.filter((operation) => operation.type === type);
 }
 
-describe('CanvasRenderer shared scratch canvas', () => {
+type SizeProbe = { assignments: number };
+
+// canvas.width/height 赋值 = 整张位图重分配，稳态 blit 里必须为 0。FakeCanvasElement 上
+// 两者是普通字段，改成访问器即可计数。
+function probeBitmapSize(canvas: FakeCanvasElement): SizeProbe {
+  const probe: SizeProbe = { assignments: 0 };
+  for (const key of ['width', 'height'] as const) {
+    let value = canvas[key];
+    Object.defineProperty(canvas, key, {
+      configurable: true,
+      get: () => value,
+      set: (next: number) => {
+        value = next;
+        probe.assignments += 1;
+      },
+    });
+  }
+  return probe;
+}
+
+function expectSameElements(actual: FakeElement[], expected: FakeElement[]): void {
+  expect(actual).toHaveLength(expected.length);
+  for (const [index, element] of expected.entries()) {
+    expect(actual[index] === element).toBe(true);
+  }
+}
+
+type InsertProbe = { calls: number };
+
+function probeInsertBefore(screen: FakeElement): InsertProbe {
+  const probe: InsertProbe = { calls: 0 };
+  const original = screen.insertBefore.bind(screen);
+  screen.insertBefore = (child: FakeElement, reference: FakeElement | null): FakeElement => {
+    probe.calls += 1;
+    return original(child, reference);
+  };
+  return probe;
+}
+
+describe('CanvasRenderer per-renderer scratch canvas', () => {
   let dom: FakeDom;
   let createdCanvases: FakeCanvasElement[];
 
@@ -170,7 +209,31 @@ describe('CanvasRenderer shared scratch canvas', () => {
     renderer.dispose();
   });
 
-  test('two renderers alternate blits through a single shared scratch canvas', () => {
+  test('a single renderer keeps ping-ponging without re-parenting or reallocating', () => {
+    const { screen, renderer } = mount();
+    renderer.render(fullFrame(['AAAA', 'BBBB', 'CCCC', 'DDDD']));
+    renderer.render(scrollFrame(['BBBB', 'CCCC', 'DDDD', 'ZZZZ'], 1, 3));
+    // 4 张图层 + 首帧 blit 懒分配的中转画布。
+    expect(createdCanvases).toHaveLength(5);
+
+    const probes = createdCanvases.map(probeBitmapSize);
+    const inserts = probeInsertBefore(screen);
+    const [layerMain, , , , scratch] = createdCanvases;
+
+    renderer.render(scrollFrame(['CCCC', 'DDDD', 'ZZZZ', 'YYYY'], 1, 3));
+    expect(layerCanvas(screen, 'main')).toBe(layerMain);
+    renderer.render(scrollFrame(['DDDD', 'ZZZZ', 'YYYY', 'XXXX'], 1, 3));
+    expect(layerCanvas(screen, 'main')).toBe(scratch);
+
+    expect(createdCanvases).toHaveLength(5);
+    expect(inserts.calls).toBe(0);
+    expect(probes.map((probe) => probe.assignments)).toEqual([0, 0, 0, 0, 0]);
+    expect(renderer.getDebugState().lastDrawnRows).toEqual([3]);
+
+    renderer.dispose();
+  });
+
+  test('two renderers blitting in the same frame each keep their own scratch canvas', () => {
     const first = mount();
     const second = mount();
     expect(createdCanvases).toHaveLength(8);
@@ -180,27 +243,68 @@ describe('CanvasRenderer shared scratch canvas', () => {
     expect(createdCanvases).toHaveLength(8);
 
     const firstMainBefore = layerCanvas(first.screen, 'main');
-    first.renderer.render(scrollFrame(['BBBB', 'CCCC', 'DDDD', 'ZZZZ'], 1, 3));
-    // 第一次 blit 才分配共享中转画布。
-    expect(createdCanvases).toHaveLength(9);
-    const shared = layerCanvas(first.screen, 'main');
-    expect(shared).not.toBe(firstMainBefore);
-
     const secondMainBefore = layerCanvas(second.screen, 'main');
+    first.renderer.render(scrollFrame(['BBBB', 'CCCC', 'DDDD', 'ZZZZ'], 1, 3));
     second.renderer.render(scrollFrame(['2222', '3333', '4444', '9999'], 1, 3));
-    // 第二个实例复用第一个实例让出的旧主画布，总量不增。
-    expect(createdCanvases).toHaveLength(9);
-    expect(layerCanvas(second.screen, 'main')).toBe(firstMainBefore);
+    // 每个实例首帧 blit 各自懒分配一张中转画布，谁也不抢谁的。
+    expect(createdCanvases).toHaveLength(10);
+    const firstScratch = createdCanvases[8];
+    const secondScratch = createdCanvases[9];
+    expect(layerCanvas(first.screen, 'main')).toBe(firstScratch);
+    expect(layerCanvas(second.screen, 'main')).toBe(secondScratch);
+    expect(firstMainBefore.dataset.layer).toBe('scratch');
     expect(secondMainBefore.dataset.layer).toBe('scratch');
 
-    first.renderer.render(scrollFrame(['CCCC', 'DDDD', 'ZZZZ', 'YYYY'], 1, 3));
-    expect(createdCanvases).toHaveLength(9);
-    expect(layerCanvas(first.screen, 'main')).toBe(secondMainBefore);
+    const probes = createdCanvases.map(probeBitmapSize);
+    const firstInserts = probeInsertBefore(first.screen);
+    const secondInserts = probeInsertBefore(second.screen);
+
+    for (const frame of [0, 1]) {
+      first.renderer.render(scrollFrame(['CCCC', 'DDDD', 'ZZZZ', `Y${frame}YY`], 1, 3));
+      second.renderer.render(scrollFrame(['3333', '4444', '9999', `8${frame}88`], 1, 3));
+    }
+
+    // 稳态：不再新建画布、不跨父节点搬迁、不重分配位图，只有 drawImage + 属性互换。
+    expect(createdCanvases).toHaveLength(10);
+    expect(firstInserts.calls).toBe(0);
+    expect(secondInserts.calls).toBe(0);
+    expect(probes.every((probe) => probe.assignments === 0)).toBe(true);
+
+    // 中转画布始终留在自己实例的层栈里（deep equal 会展开 DOM 环，按身份逐个比）。
+    expectSameElements(first.screen.children, [
+      firstScratch,
+      createdCanvases[0],
+      createdCanvases[1],
+      createdCanvases[2],
+      createdCanvases[3],
+    ]);
+    expectSameElements(second.screen.children, [
+      secondScratch,
+      createdCanvases[4],
+      createdCanvases[5],
+      createdCanvases[6],
+      createdCanvases[7],
+    ]);
     expect(first.renderer.getDebugState().lastDrawnRows).toEqual([3]);
     expect(second.renderer.getDebugState().lastDrawnRows).toEqual([3]);
 
     first.renderer.dispose();
     second.renderer.dispose();
+  });
+
+  test('dispose releases the parked scratch canvas', () => {
+    const { screen, renderer } = mount();
+    renderer.render(fullFrame(['AAAA', 'BBBB', 'CCCC', 'DDDD']));
+    renderer.render(scrollFrame(['BBBB', 'CCCC', 'DDDD', 'ZZZZ'], 1, 3));
+
+    const parked = layerCanvas(screen, 'scratch');
+    expect(parked.width).toBeGreaterThan(0);
+
+    renderer.dispose();
+    expect(screen.children).toHaveLength(0);
+    expect(parked.parentElement).toBeNull();
+    expect(parked.width).toBe(0);
+    expect(parked.height).toBe(0);
   });
 
   test('disposing one renderer leaves the other able to blit', () => {
