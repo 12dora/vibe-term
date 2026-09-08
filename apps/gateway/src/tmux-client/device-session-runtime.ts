@@ -18,6 +18,8 @@ import {
   type PaneHistoryPage,
   PaneHistoryReader,
 } from './pane-history-reader';
+import { PaneInputLifecycle } from './pane-input-lifecycle';
+import { PaneInputPacer } from './pane-input-pacer';
 import {
   type PaneIdentity,
   type PaneReplayPlan,
@@ -126,6 +128,11 @@ export class DeviceSessionRuntime {
   private readonly metadataProjection: MetadataProjection;
   private readonly paneRetention = new PaneRetention();
   private readonly paneHistoryReader: PaneHistoryReader;
+  private readonly inputLane = new PaneInputPacer((paneId, bytes) => {
+    if (this.connection.sendInputBytes) return this.connection.sendInputBytes(paneId, bytes);
+    return this.connection.sendInput(paneId, new TextDecoder().decode(bytes));
+  });
+  private readonly inputLifecycle = new PaneInputLifecycle(this.inputLane);
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
   private readonly eventBridge: RuntimeEventBridge;
   private readonly screenCapture: CanonicalScreenCapture;
@@ -166,10 +173,13 @@ export class DeviceSessionRuntime {
     });
 
     this.connection = createConnection(
-      this.eventBridge.connectionOptions({
-        deviceId: this.deviceId,
-        notifyEvent: options.notifyEvent,
-      })
+      this.inputLifecycle.connectionOptions(
+        this.eventBridge.connectionOptions({
+          deviceId: this.deviceId,
+          notifyEvent: options.notifyEvent,
+        }),
+        (paneId) => this.metadataProjection.hasPane(paneId)
+      )
     );
     this.paneHistoryReader = new PaneHistoryReader(this.connection);
     this.screenCapture = new CanonicalScreenCapture({
@@ -273,7 +283,7 @@ export class DeviceSessionRuntime {
   }
 
   attachPaneConsumer(callbacks: PaneRetentionConsumerCallbacks): PaneRetentionConsumerLease {
-    return this.paneRetention.attachConsumer(callbacks);
+    return this.inputLifecycle.trackConsumer(this.paneRetention.attachConsumer(callbacks));
   }
 
   getPaneRetentionStats(): PaneRetentionStats {
@@ -322,6 +332,7 @@ export class DeviceSessionRuntime {
   }
 
   sendInput(paneId: string, data: string): void {
+    this.inputLane.drain(paneId);
     void this.connection.sendInput(paneId, data);
   }
 
@@ -329,15 +340,12 @@ export class DeviceSessionRuntime {
     if (!this.isConnected()) {
       throw new Error('Device session runtime not connected');
     }
+    this.inputLane.drain(paneId);
     await this.connection.sendInput(paneId, data);
   }
 
   sendInputBytes(paneId: string, data: Uint8Array): void {
-    if (this.connection.sendInputBytes) {
-      this.connection.sendInputBytes(paneId, data);
-      return;
-    }
-    this.connection.sendInput(paneId, new TextDecoder().decode(data));
+    this.inputLane.sendInputBytes(paneId, data);
   }
 
   resizePane(paneId: string, cols: number, rows: number): void {
@@ -365,10 +373,15 @@ export class DeviceSessionRuntime {
   }
 
   closeWindow(windowId: string): void {
+    for (const pane of this.lastSnapshot?.session?.windows.find((window) => window.id === windowId)
+      ?.panes ?? []) {
+      this.inputLane.dropPane(pane.id);
+    }
     this.connection.closeWindow(windowId);
   }
 
   closePane(paneId: string): void {
+    this.inputLane.dropPane(paneId);
     this.connection.closePane(paneId);
   }
 
@@ -486,6 +499,7 @@ export class DeviceSessionRuntime {
       return;
     }
     this.resourcesDisposed = true;
+    this.inputLifecycle.dispose();
     this.metadataProjection.dispose();
     this.paneRetention.dispose();
     this.paneHistoryReader.dispose();
@@ -498,6 +512,7 @@ export class DeviceSessionRuntime {
     this.closeEmitted = true;
     this.terminated = true;
     this.connectPromise = null;
+    this.inputLifecycle.dispose();
     this.broadcast((listener) => listener.onClose?.());
   }
 
