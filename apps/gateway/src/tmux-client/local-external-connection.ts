@@ -11,11 +11,13 @@ import {
 } from '../tmux/local-shell-path';
 import type { TmuxConnectionOptions } from './connection-types';
 import { ControlModeCommandQueue } from './control-mode-capture';
+import * as history from './control-mode-history';
 import {
   type ControlModeSubscription,
   createControlModeSubscription,
 } from './control-mode-subscription';
 import type { ControlStreamMetricsSnapshot } from './control-stream-metrics';
+import type { HistoryRangeRequest, PaneHistoryCaptureInfo } from './pane-history-page';
 import { formatTmuxMetricsLine } from './tmux-metrics-line';
 export { formatTmuxMetricsLine };
 import {
@@ -395,38 +397,33 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   protected async runHistoryQuery(argv: string[]): Promise<CommandResult> {
-    return this.runTmux(argv, 'silent');
+    const write = this.getControlWriter();
+    return write
+      ? history.queryControlHistory(this.controlCommands, write, argv)
+      : this.runTmux(argv, 'silent');
   }
 
   protected async runHistoryCapture(argv: string[], maxOutputBytes: number): Promise<string> {
-    let result: CommandResult;
-    try {
-      result = await this.deps.run(buildLocalTmuxArgv(argv), maxOutputBytes);
-    } catch (error) {
-      if (
-        error instanceof Error &&
-        error.message === 'tmux history capture exceeded bounded output'
-      ) {
-        throw error;
-      }
-      if (isTransientSpawnError(error)) {
-        result = {
-          exitCode: TMUX_SPAWN_UNAVAILABLE_EXIT,
-          stdout: '',
-          stderr: errorMessage(error),
-        };
-      } else {
-        throw error;
-      }
-    }
-    if (result.exitCode === 0) return result.stdout;
-    const message = (
-      result.stderr.trim() ||
-      result.stdout.trim() ||
-      `tmux command failed: ${argv.join(' ')}`
-    ).trim();
-    if (isTargetMissingMessage(message)) throw new TmuxTargetMissingError(message);
-    throw new Error(message);
+    const write = this.getControlWriter();
+    return write
+      ? history.captureControlHistory(this.controlCommands, write, argv, maxOutputBytes)
+      : history.captureSpawnHistory(this.deps, buildLocalTmuxArgv(argv), maxOutputBytes);
+  }
+
+  async capturePaneHistoryRangeAtBarrier(
+    paneId: string,
+    range: HistoryRangeRequest,
+    expectedInfo: PaneHistoryCaptureInfo
+  ): Promise<string> {
+    const write = this.getControlWriter();
+    return write
+      ? history.captureAtBarrier(this.controlCommands, write, paneId, range, expectedInfo)
+      : this.capturePaneHistoryRange(
+          paneId,
+          range.startCoordinate,
+          range.endCoordinate,
+          range.captureLimit
+        );
   }
 
   protected shouldAbortSnapshot(results: CommandResult[]): boolean {

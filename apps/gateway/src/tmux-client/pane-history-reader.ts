@@ -1,6 +1,7 @@
 import { concatBytes, copyBytes } from '../bytes';
 import {
   DEFAULT_MAX_HISTORY_PAGE_BYTES,
+  type HistoryRangeRequest,
   type PaneHistoryCaptureInfo,
   type PaneHistoryPage,
   buildHistoryRangeRequest,
@@ -31,6 +32,11 @@ export {
 };
 
 export interface PaneHistorySource {
+  capturePaneHistoryRangeAtBarrier?(
+    paneId: string,
+    range: HistoryRangeRequest,
+    expectedInfo: PaneHistoryCaptureInfo
+  ): Promise<string>;
   getPaneHistoryCaptureInfo(paneId: string): Promise<PaneHistoryCaptureInfo>;
   capturePaneHistoryRange(
     paneId: string,
@@ -91,12 +97,14 @@ export class PaneHistoryReader {
       maxPageBytes: this.maxPageBytes,
       hasAnchor: session.anchorHash !== null,
     });
-    const captured = await this.source.capturePaneHistoryRange(
-      paneId,
-      range.startCoordinate,
-      range.endCoordinate,
-      range.captureLimit
-    );
+    const captured = await (this.source.capturePaneHistoryRangeAtBarrier
+      ? this.source.capturePaneHistoryRangeAtBarrier(paneId, range, info)
+      : this.source.capturePaneHistoryRange(
+          paneId,
+          range.startCoordinate,
+          range.endCoordinate,
+          range.captureLimit
+        ));
     const rows = splitCapturedRows(captured);
     this.sessions.rejectIfCaptureLengthMismatch(rows.length, range.expectedRows);
     const content = await validateHistoryAnchor(rows, range.includesAnchor, session.anchorHash);

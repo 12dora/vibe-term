@@ -136,6 +136,11 @@ function parsePaneFrameInfo(
   };
 }
 
+// capture-pane 未加 -C 时返回原始文本，不能按 %output 的八进制规则解码。
+export function capturedBlockText(block: ControlModeBlock): string {
+  return block.lines.join('\n');
+}
+
 export const MAX_PANE_HISTORY_LINES = 4096;
 export const MAX_PANE_HISTORY_CAPTURE_BYTES = 4 * 1024 * 1024;
 
@@ -168,7 +173,7 @@ export async function capturePaneFrameAtControlBarrier(
       onBarrier();
       // 不补行尾换行：整屏快照写进终端时，末行多一个换行会把首行顶出屏幕，
       // 随后按绝对坐标恢复的光标就会落在错位一行的内容上。
-      return block.lines.join('\n');
+      return capturedBlockText(block);
     },
   });
   const historyPromise =
@@ -179,7 +184,7 @@ export async function capturePaneFrameAtControlBarrier(
           {
             literal: true,
             timeoutMs,
-            transform: (block) => block.lines.join('\n'),
+            transform: capturedBlockText,
           }
         )
       : Promise.resolve(null);
