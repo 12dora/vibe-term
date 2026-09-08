@@ -16,6 +16,7 @@ interface PaneLane {
   pending: Uint8Array[];
   responseMs: number;
   writtenAt: number | null;
+  inFlight: boolean;
   outputSeen: boolean;
   fallbackMs: number;
   timer: unknown;
@@ -62,7 +63,8 @@ export class PaneInputPacer {
 
   onOutput(paneId: string, bytes: Uint8Array): void {
     const lane = this.panes.get(paneId);
-    if (!lane || bytes.byteLength === 0 || lane.writtenAt === null || lane.outputSeen) return;
+    if (!lane || bytes.byteLength === 0 || lane.inFlight || lane.writtenAt === null) return;
+    if (lane.outputSeen) return;
     lane.outputSeen = true;
     const sample = Math.max(1, this.clock.now() - lane.writtenAt);
     lane.responseMs += 0.25 * (sample - lane.responseMs);
@@ -76,6 +78,7 @@ export class PaneInputPacer {
     // 普通输入是顺序屏障：逐条提交鼠标字节，再交给连接原有的输入队列。
     const pending = lane.pending.splice(0);
     for (const bytes of pending) this.writeBytes(paneId, bytes);
+    lane.inFlight = false;
     lane.writtenAt = this.clock.now();
     lane.outputSeen = false;
     lane.fallbackMs = clamp(4 * lane.responseMs, 40, 250);
@@ -110,6 +113,7 @@ export class PaneInputPacer {
         pending: [],
         responseMs: 15,
         writtenAt: null,
+        inFlight: false,
         outputSeen: false,
         fallbackMs: 60,
         timer: null,
@@ -123,7 +127,7 @@ export class PaneInputPacer {
   }
 
   private pump(paneId: string, lane: PaneLane): void {
-    if (lane.pending.length === 0) return;
+    if (lane.pending.length === 0 || lane.inFlight) return;
     const now = this.clock.now();
     const readyAt =
       lane.writtenAt === null ? now : lane.writtenAt + (lane.outputSeen ? 8 : lane.fallbackMs);
@@ -134,11 +138,17 @@ export class PaneInputPacer {
     this.clearTimer(lane);
     const bytes = lane.pending.shift();
     if (!bytes) return;
-    lane.writtenAt = now;
+    // 连接层的 send-keys 走自己的串行队列，真正写进 pty 是 tmux 回 %end 的时刻；
+    // 输出观测与最小间隔都必须从那一刻起算，否则两条命令会背靠背落进 pty 被应用整块丢弃。
+    lane.inFlight = true;
     lane.outputSeen = false;
-    lane.fallbackMs = clamp(4 * lane.responseMs, 40, 250);
-    this.writeBytes(paneId, bytes);
-    if (this.panes.get(paneId) === lane) this.schedulePending(paneId, lane);
+    this.writeBytes(paneId, bytes, () => {
+      if (this.panes.get(paneId) !== lane) return;
+      lane.inFlight = false;
+      lane.writtenAt = this.clock.now();
+      lane.fallbackMs = clamp(4 * lane.responseMs, 40, 250);
+      this.schedulePending(paneId, lane);
+    });
   }
 
   private schedulePending(paneId: string, lane: PaneLane): void {
@@ -168,13 +178,20 @@ export class PaneInputPacer {
     lane.timerAt = null;
   }
 
-  private writeBytes(paneId: string, bytes: Uint8Array): void {
+  private writeBytes(paneId: string, bytes: Uint8Array, onSettled?: () => void): void {
     try {
       const result = this.write(paneId, bytes);
-      if (result) void result.catch(this.onError);
+      if (result) {
+        void result.then(onSettled, (error) => {
+          this.onError(error);
+          onSettled?.();
+        });
+        return;
+      }
     } catch (error) {
       this.onError(error);
     }
+    onSettled?.();
   }
 
   private noteDrop(paneId: string, lane: PaneLane): void {
