@@ -1,17 +1,17 @@
-# 2.0.6
+# 2.0.7
 
 _2026-09-08_
 
 ## English
 
-### Fixes
+### Improvements
 
-- Mouse-wheel and trackpad scrolling in TUI apps (Claude Code and others) is back to the direct, immediate delivery of 2.0.3 — the extra pacing introduced in 2.0.4/2.0.5 made fast scrolling lag a beat and feel sticky. Scroll events are now written to the app as soon as tmux confirms the previous one, and the browser no longer holds follow-up scroll gestures for 16 ms.
+- Smoother terminal output for TUI apps such as Claude Code: every frame the app draws is now delivered and painted as soon as it is complete, instead of two frames being merged into one. Scrolling and animations show roughly twice as many frames as before, closer to a native terminal.
 
 ---
 
 ## 中文
 
-### 修复
+### 改进
 
-- Claude Code 等 TUI 应用里的滚轮 / 触控板滚动恢复为 2.0.3 那样的即时直送——2.0.4/2.0.5 引入的节奏控制让快速滚动慢一拍、手感发粘。现在 tmux 一确认上一条滚动就立即送入下一条，浏览器也不再把后续滚动手势压 16 ms 再发。
+- Claude Code 等 TUI 应用的输出更顺滑：应用画完的每一帧现在一完整就下发并绘制，不再把两帧并成一帧。滚动和动画能看到的帧数大约翻倍，更接近原生终端。
