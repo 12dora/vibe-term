@@ -27,13 +27,13 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
-import { buildSendKeysCommands, pipelineSendKeys } from './input-encoder';
+import { InputCommandWindow } from './input-command-window';
+import { PIPELINED_INPUT_TIMEOUT_MS, buildSendKeysCommands } from './input-encoder';
 import {
   CONTROL_RECONNECT_POLICY,
   type ControlReconnectHost,
   reconnectControlChannel,
 } from './reconnect-control-channel';
-import { TmuxTargetMissingError, isTargetMissingMessage } from './target-missing';
 import {
   isControlModeSupported,
   parseTmuxVersion,
@@ -236,11 +236,7 @@ export function defaultSpawnControlClient(argv: string[]): ControlClientProcess 
       }
       subprocess.kill();
     },
-    write: (data) => {
-      try {
-        stdin?.write(data);
-      } catch {}
-    },
+    write: (data) => void stdin?.write(data),
   };
 }
 
@@ -257,7 +253,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   protected readonly stalledControlLabel = 'process';
 
   private readonly deps: LocalExternalTmuxConnectionDeps;
-  private inputTransition: Promise<void> = Promise.resolve();
+  private inputCommands = new InputCommandWindow(() => 1);
   private controlProcess: ControlClientProcess | null = null;
   private spawnUnavailableNotified = false;
 
@@ -289,6 +285,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   async connect(): Promise<void> {
     await this.runConnectAttempt(async (generation) => {
+      if (this.inputCommands.disposed) this.inputCommands = new InputCommandWindow(() => 1);
       this.device = this.deps.getDevice(this.deviceId);
       if (!this.device) {
         throw new Error(`Device not found: ${this.deviceId}`);
@@ -307,12 +304,11 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
 
   disconnect(): void {
     this.invalidateConnectGeneration();
-    if (!this.connected && this.manualDisconnect) {
-      return;
-    }
+    if (!this.connected && this.manualDisconnect) return;
 
     this.manualDisconnect = true;
     this.connected = false;
+    this.inputCommands.dispose('tmux input disconnected');
     this.stopControlClient();
   }
 
@@ -367,6 +363,7 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   protected detachControlTransport(): () => void {
+    this.inputCommands.dispose('tmux input transport detached');
     const proc = this.controlProcess;
     this.controlProcess = null;
     return () => proc?.kill();
@@ -448,30 +445,26 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private enqueueInputBytes(paneId: string, data: Uint8Array): Promise<void> {
-    if (!this.connected) {
-      return Promise.resolve();
-    }
-
+    if (!this.connected) return Promise.resolve();
     const commands = buildSendKeysCommands(paneId, data);
-    const task = async () => {
-      const control = this.controlProcess;
-      if (!control) {
-        for (const argv of commands) await this.runTmux(argv);
-        return;
+    const control = this.controlProcess;
+    const controlQueue = this.controlCommands;
+    const timeoutMs = commands.length > 1 ? PIPELINED_INPUT_TIMEOUT_MS : undefined;
+    const next = this.inputCommands.enqueue(commands, (argv) => {
+      if (
+        !this.connected ||
+        this.controlProcess !== control ||
+        this.controlCommands !== controlQueue
+      ) {
+        return Promise.reject(new Error('tmux input transport changed'));
       }
-      await pipelineSendKeys(commands, (command, timeoutMs) =>
-        this.controlCommands.execute((value) => control.write(value), command, {
-          transform: () => undefined,
-          ...(timeoutMs === undefined ? {} : { timeoutMs }),
-        })
-      );
-    };
-
-    const next = this.inputTransition.catch(() => undefined).then(task);
-    this.inputTransition = next;
-    void next.catch((error) => {
-      this.callbacks.onError(error);
+      if (!control) return this.runTmux(argv);
+      return controlQueue.execute((value) => control.write(value), argv.join(' '), {
+        transform: () => undefined,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+      });
     });
+    void next.catch((error) => this.callbacks.onError(error));
     return next;
   }
 
@@ -508,9 +501,15 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private spawnControlClientProcess(onAttachReady: () => void): ControlClientProcess {
+    this.inputCommands.dispose('tmux input connection replaced');
     this.controlCommands.dispose('tmux control connection replaced');
+    const inputCommands = new InputCommandWindow(() => (this.controlProcess ? 4 : 1));
+    this.inputCommands = inputCommands;
     let proc: ControlClientProcess | null = null;
-    const controlCommands = new ControlModeCommandQueue(() => proc?.kill());
+    const controlCommands = new ControlModeCommandQueue(() => {
+      inputCommands.dispose('tmux input control queue poisoned');
+      proc?.kill();
+    });
     this.controlCommands = controlCommands;
     const metricsOptions = shouldLog('debug')
       ? {
@@ -599,9 +598,9 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
   }
 
   private handleControlClientExit(proc: ControlClientProcess, exitCode: number): void {
-    if (this.controlProcess !== proc) {
-      return;
-    }
+    if (this.controlProcess !== proc) return;
+    this.inputCommands.dispose('tmux input control client exited');
+    this.controlCommands.dispose('tmux control client exited');
     this.controlProcess = null;
     this.controlSubscription?.dispose();
     this.controlSubscription = null;

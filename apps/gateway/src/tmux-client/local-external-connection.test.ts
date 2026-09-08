@@ -3,7 +3,10 @@ import type { Device, StateSnapshotPayload } from '@vibeterm/shared';
 
 import { createDevice as createDeviceRow, getDeviceById, getDeviceRuntimeStatus } from '../db';
 import { runMigrations } from '../db/migrate';
+import type { ControlModeCommandQueue } from './control-mode-capture';
 import type { TmuxEvent } from './events';
+import type { InputCommandWindow } from './input-command-window';
+import { PIPELINED_INPUT_TIMEOUT_MS } from './input-encoder';
 import {
   type ControlClientProcess,
   LocalExternalTmuxConnection,
@@ -13,6 +16,7 @@ import {
   readTextWithByteLimit,
   shouldIgnoreReaderAbortError,
 } from './local-external-connection';
+import { PaneInputPacer } from './pane-input-pacer';
 import { TmuxTargetMissingError } from './target-missing';
 
 const now = '2026-04-14T00:00:00.000Z';
@@ -2134,6 +2138,7 @@ describe('控制模式下的输入流水线', () => {
   async function connectControlMode(session: string) {
     const fake = createFakeControlProcess();
     const errors: Error[] = [];
+    const fakes: FakeControlProcess[] = [];
     const connection = new LocalExternalTmuxConnection(
       {
         deviceId: 'device-local',
@@ -2152,8 +2157,10 @@ describe('控制模式下的输入流水线', () => {
         getDevice: () => createDevice(session),
         run: createRunStub(session),
         spawnControlClient: () => {
-          fake.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
-          return fake.proc;
+          const current = fakes.length === 0 ? fake : createFakeControlProcess();
+          fakes.push(current);
+          current.pushStdout(`%begin 1 1 0\n%end 1 1 0\n%session-changed $1 ${session}\n`);
+          return current.proc;
         },
       }
     );
@@ -2172,24 +2179,28 @@ describe('控制模式下的输入流水线', () => {
         );
       }
     };
-    return { connection, fake, errors, sendKeys, answer };
+    const internals = connection as unknown as {
+      controlCommands: ControlModeCommandQueue;
+      inputCommands: InputCommandWindow;
+      controlProcess: ControlClientProcess | null;
+      spawnControlClientProcess(onReady: () => void): ControlClientProcess;
+      handleControlClientExit(proc: ControlClientProcess, exitCode: number): void;
+    };
+    return { connection, fake, fakes, internals, errors, sendKeys, answer };
   }
 
-  test('32 KiB 粘贴一次写完全部 send-keys，只等一次回执', async () => {
+  test('32 KiB 粘贴最多四条 send-keys 在途，每个回执释放一个槽位', async () => {
     const harness = await connectControlMode('vibeterm-paste');
     const before = harness.sendKeys().length;
 
     const paste = harness.connection.sendInput('%1', 'x'.repeat(32 * 1024));
     const expected = (32 * 1024) / 256;
-    const written = await waitFor(() => {
-      const count = harness.sendKeys().length - before;
-      return count >= expected ? count : null;
-    });
-
-    // 一条回执都还没回，整段命令已经全部写出（逐块串行时这里只会有 1 条）
-    expect(written).toBe(expected);
-
-    harness.answer(expected);
+    expect(harness.sendKeys().length - before).toBe(4);
+    for (let replied = 1; replied <= expected; replied += 1) {
+      harness.answer(1);
+      await Bun.sleep(0);
+      expect(harness.sendKeys().length - before).toBe(Math.min(expected, replied + 4));
+    }
     await paste;
     expect(harness.errors).toEqual([]);
     harness.connection.disconnect();
@@ -2204,18 +2215,12 @@ describe('控制模式下的输入流水线', () => {
     const paste = harness.connection.sendInput('%1', 'BC'.repeat(300));
     const last = harness.connection.sendInput('%1', 'Z');
 
-    await waitFor(() => (harness.sendKeys().length - before === 1 ? true : null));
+    expect(harness.sendKeys().length - before).toBe(4);
     harness.answer(1);
     await first;
-
-    const pasteChunks = Math.ceil(600 / 256);
-    await waitFor(() => (harness.sendKeys().length - before === 1 + pasteChunks ? true : null));
-    harness.answer(pasteChunks);
-    await paste;
-
-    await waitFor(() => (harness.sendKeys().length - before === 2 + pasteChunks ? true : null));
-    harness.answer(1);
-    await last;
+    expect(harness.sendKeys().length - before).toBe(5);
+    harness.answer(4);
+    await Promise.all([paste, last]);
 
     const written = hexOf().slice(before);
     const bytes = Buffer.from(written.join(''), 'hex').toString();
@@ -2238,5 +2243,375 @@ describe('控制模式下的输入流水线', () => {
     await expect(paste).rejects.toThrow(/no such pane/);
     expect(harness.errors.map((error) => error.message)).toContain('no such pane');
     harness.connection.disconnect();
+  });
+  test('六个按键只写四条，每个回执按 FIFO 补一条', async () => {
+    const h = await connectControlMode('vibeterm-window-six');
+    try {
+      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      expect(h.sendKeys().map((line) => line.trim().split(' ').at(-1))).toEqual([
+        '41',
+        '42',
+        '43',
+        '44',
+      ]);
+      for (let i = 1; i <= 6; i += 1) {
+        h.answer(1);
+        await Bun.sleep(0);
+        expect(h.sendKeys()).toHaveLength(Math.min(6, i + 4));
+        expect(h.sendKeys().length - i).toBeLessThanOrEqual(4);
+      }
+      await Promise.all(inputs);
+      expect(h.sendKeys().map((line) => line.trim().split(' ').at(-1))).toEqual([
+        '41',
+        '42',
+        '43',
+        '44',
+        '45',
+        '46',
+      ]);
+    } finally {
+      h.connection.disconnect();
+    }
+  });
+
+  test('超过四块的粘贴、另一 pane 的按键及粘贴保持完整字节顺序和超时', async () => {
+    const h = await connectControlMode('vibeterm-window-panes');
+    const execute = spyOn(h.internals.controlCommands, 'execute');
+    try {
+      const a = Uint8Array.from({ length: 1300 }, (_, i) => i % 256);
+      const c = Uint8Array.from({ length: 600 }, (_, i) => 255 - (i % 256));
+      const inputs = [
+        h.connection.sendInputBytes('%1', a),
+        h.connection.sendInput('%2', '中'),
+        h.connection.sendInputBytes('%3', c),
+      ];
+      const expected: string[] = [];
+      for (const [pane, bytes] of [
+        ['%1', a],
+        ['%2', new TextEncoder().encode('中')],
+        ['%3', c],
+      ] as const) {
+        for (let offset = 0; offset < bytes.length; offset += 256) {
+          const hex = [...bytes.slice(offset, offset + 256)]
+            .map((byte) => byte.toString(16).padStart(2, '0'))
+            .join(' ');
+          expected.push(`send-keys -H -t ${pane} ${hex}\n`);
+        }
+      }
+      a.fill(0);
+      c.fill(0);
+      expect(h.sendKeys()).toEqual(expected.slice(0, 4));
+      for (let replied = 1; replied <= expected.length; replied += 1) {
+        h.answer(1);
+        await Bun.sleep(0);
+        expect(h.sendKeys()).toEqual(expected.slice(0, replied + 4));
+      }
+      await Promise.all(inputs);
+      expect(execute.mock.calls.map((call) => call[2].timeoutMs)).toEqual([
+        ...Array(6).fill(PIPELINED_INPUT_TIMEOUT_MS),
+        undefined,
+        ...Array(3).fill(PIPELINED_INPUT_TIMEOUT_MS),
+      ]);
+    } finally {
+      execute.mockRestore();
+      h.connection.disconnect();
+    }
+  });
+
+  test('普通 error 释放槽位，后续输入继续发送并分别完成', async () => {
+    const h = await connectControlMode('vibeterm-window-error');
+    try {
+      const failed = h.connection.sendInput('%1', 'A');
+      const later = [...'BCDEF'].map((key) => h.connection.sendInput('%2', key));
+      h.answer(1, 'error');
+      await expect(failed).rejects.toThrow('no such pane');
+      expect(h.sendKeys()).toHaveLength(5);
+      h.answer(1);
+      await Bun.sleep(0);
+      expect(h.sendKeys()).toHaveLength(6);
+      h.answer(4);
+      await Promise.all(later);
+      expect(h.errors.map((error) => error.message)).toEqual(['no such pane']);
+    } finally {
+      h.connection.disconnect();
+    }
+  });
+
+  test('disconnect 拒绝在途和待发输入、清除定时器，connect 后不重放', async () => {
+    const h = await connectControlMode('vibeterm-window-disconnect');
+    const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+    const timers = (
+      h.internals.controlCommands as unknown as {
+        pending: { timer: ReturnType<typeof setTimeout> }[];
+      }
+    ).pending.map((pending) => pending.timer);
+    const cleared = spyOn(globalThis, 'clearTimeout');
+    try {
+      h.connection.disconnect();
+      const results = await Promise.allSettled(inputs);
+      expect(results.map((result) => result.status)).toEqual(Array(6).fill('rejected'));
+      expect(timers).toHaveLength(4);
+      for (const timer of timers) expect(cleared).toHaveBeenCalledWith(timer);
+      expect(h.fake.killed()).toBe(true);
+      await h.connection.connect();
+      const current = h.fakes[1];
+      expect(current.writtenData.filter((line) => line.startsWith('send-keys'))).toEqual([]);
+      const fresh = h.connection.sendInput('%1', 'Z');
+      current.pushStdout('%begin 1 1000 0\n%end 1 1000 0\n');
+      await fresh;
+      expect(h.sendKeys()).toHaveLength(4);
+    } finally {
+      cleared.mockRestore();
+      h.connection.disconnect();
+    }
+  });
+
+  test('控制进程退出立即取消输入，重连期间拒绝输入，重挂后启用新窗口', async () => {
+    const h = await connectControlMode('vibeterm-window-exit');
+    try {
+      const oldQueue = h.internals.controlCommands;
+      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      h.fake.exit(1);
+      const results = await Promise.allSettled(inputs);
+      expect(results.map((result) => result.status)).toEqual(Array(6).fill('rejected'));
+      expect(h.internals.controlProcess).toBeNull();
+      await expect(h.connection.sendInput('%1', 'G')).rejects.toThrow('exited');
+      const unexpectedWrites: string[] = [];
+      await expect(
+        oldQueue.execute(
+          (line) => {
+            unexpectedWrites.push(line);
+          },
+          'stale',
+          {
+            transform: () => {},
+          }
+        )
+      ).rejects.toThrow('closed');
+      expect(unexpectedWrites).toEqual([]);
+      await waitFor(() => h.fakes[1] ?? null);
+      await Bun.sleep(0);
+      const fresh = h.connection.sendInput('%2', 'Z');
+      h.fakes[1].pushStdout('%begin 1 1000 0\n%end 1 1000 0\n');
+      await fresh;
+      expect(h.fakes[1].writtenData.filter((line) => line.startsWith('send-keys'))).toEqual([
+        'send-keys -H -t %2 5a\n',
+      ]);
+      expect(h.sendKeys()).toHaveLength(4);
+    } finally {
+      h.connection.disconnect();
+    }
+  });
+
+  test('替换控制进程取消整代输入，旧完成和 poison 回调不影响新窗口', async () => {
+    const h = await connectControlMode('vibeterm-window-replace');
+    try {
+      const oldQueue = h.internals.controlCommands;
+      const oldWindow = h.internals.inputCommands;
+      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      h.answer(1);
+      h.internals.spawnControlClientProcess(() => {});
+      const results = await Promise.allSettled(inputs);
+      expect(results.map((result) => result.status)).toEqual(Array(6).fill('rejected'));
+      expect(oldWindow.disposed).toBe(true);
+      await Bun.sleep(0);
+      const current = h.fakes[1];
+      const fresh = [...'GHIJK'].map((key) => h.connection.sendInput('%2', key));
+      const currentWrites = () =>
+        current.writtenData.filter((line) => line.startsWith('send-keys'));
+      expect(currentWrites()).toHaveLength(4);
+      (oldQueue as unknown as { onPoison(): void }).onPoison();
+      h.internals.handleControlClientExit(h.fake.proc, 1);
+      await Bun.sleep(0);
+      expect(h.internals.inputCommands.disposed).toBe(false);
+      expect(current.killed()).toBe(false);
+      expect(currentWrites()).toHaveLength(4);
+      for (let id = 1000; id < 1005; id += 1) {
+        current.pushStdout(`%begin 1 ${id} 0\n%end 1 ${id} 0\n`);
+        await Bun.sleep(0);
+      }
+      await Promise.all(fresh);
+      expect(currentWrites().at(-1)).toBe('send-keys -H -t %2 4b\n');
+      expect(h.sendKeys()).toHaveLength(4);
+    } finally {
+      h.connection.disconnect();
+      h.fake.proc.kill();
+    }
+  });
+
+  test('stdin 写失败关闭该代队列和窗口，不再写出待发分块', async () => {
+    const h = await connectControlMode('vibeterm-window-write-fail');
+    const write = spyOn(h.fake.proc, 'write');
+    try {
+      const first = h.connection.sendInput('%1', 'A');
+      write.mockImplementation(() => {
+        throw new Error('stdin failed');
+      });
+      const paste = h.connection.sendInput('%1', 'B'.repeat(1536));
+      const results = await Promise.allSettled([first, paste]);
+      expect(results.map((result) => result.status)).toEqual(['rejected', 'rejected']);
+      expect(h.fake.killed()).toBe(true);
+      expect(h.internals.inputCommands.disposed).toBe(true);
+      expect(write).toHaveBeenCalledTimes(2);
+      expect(h.sendKeys()).toEqual(['send-keys -H -t %1 41\n']);
+    } finally {
+      write.mockRestore();
+      h.connection.disconnect();
+    }
+  });
+
+  test('控制客户端创建失败后的 spawn 回退仍然只有一个槽位', async () => {
+    const h = await connectControlMode('vibeterm-window-spawn-retry');
+    const deps = (
+      h.connection as unknown as {
+        deps: {
+          spawnControlClient(argv: string[]): ControlClientProcess;
+          run(argv: string[]): Promise<CommandResult>;
+        };
+      }
+    ).deps;
+    const spawn = spyOn(deps, 'spawnControlClient').mockImplementation(() => {
+      throw new Error('control spawn failed');
+    });
+    const replies: ReturnType<typeof Promise.withResolvers<CommandResult>>[] = [];
+    const run = spyOn(deps, 'run').mockImplementation(() => {
+      const reply = Promise.withResolvers<CommandResult>();
+      replies.push(reply);
+      return reply.promise;
+    });
+    try {
+      h.internals.handleControlClientExit(h.fake.proc, 1);
+      expect(() => h.internals.spawnControlClientProcess(() => {})).toThrow('control spawn failed');
+      const inputs = [...'ABCDEF'].map((key) => h.connection.sendInput('%1', key));
+      expect(run).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < inputs.length; i += 1) {
+        replies[i].resolve(ok());
+        await inputs[i];
+        expect(run).toHaveBeenCalledTimes(Math.min(6, i + 2));
+      }
+    } finally {
+      spawn.mockRestore();
+      run.mockRestore();
+      h.connection.disconnect();
+      h.fake.proc.kill();
+    }
+  });
+
+  test('pacer 在普通输入前排空的鼠标命令全部保持领先', async () => {
+    const h = await connectControlMode('vibeterm-window-pacer');
+    const completions: Promise<void>[] = [];
+    const pacer = new PaneInputPacer((pane, bytes) => {
+      const completion = h.connection.sendInputBytes(pane, bytes);
+      completions.push(completion);
+      return completion;
+    });
+    try {
+      const mouse = '\x1b[<64;1;1M';
+      pacer.sendInputBytes('%1', new TextEncoder().encode(mouse.repeat(7)));
+      pacer.sendInputBytes('%1', new TextEncoder().encode('Z'));
+      expect(h.sendKeys()).toHaveLength(4);
+      for (let i = 0; i < 8; i += 1) {
+        h.answer(1);
+        await Bun.sleep(0);
+      }
+      await Promise.all(completions);
+      const bytes = h
+        .sendKeys()
+        .map((line) => line.trim().split(' ').slice(4).join(''))
+        .join('');
+      expect(Buffer.from(bytes, 'hex').toString()).toBe(`${mouse.repeat(7)}Z`);
+    } finally {
+      pacer.dispose();
+      h.connection.disconnect();
+    }
+  });
+});
+
+describe('无控制进程时的输入窗口', () => {
+  async function connectSpawnOnly() {
+    const commands: string[][] = [];
+    const replies: ReturnType<typeof Promise.withResolvers<CommandResult>>[] = [];
+    const errors: Error[] = [];
+    const run = createRunStub('vibeterm-window-spawn');
+    const connection = new LocalExternalTmuxConnection(
+      {
+        deviceId: 'device-local',
+        onEvent: () => {},
+        onTerminalOutput: () => {},
+        onTerminalHistory: () => {},
+        onSnapshot: () => {},
+        onError: (error) => {
+          errors.push(error);
+        },
+        onClose: () => {},
+      },
+      {
+        enableSubscription: false,
+        ensureGhosttyTerminfo: async () => false,
+        getDevice: () => createDevice('vibeterm-window-spawn'),
+        run: (argv) => {
+          if (argv[1] !== 'send-keys') return run(argv);
+          commands.push(argv.slice(1));
+          const reply = Promise.withResolvers<CommandResult>();
+          replies.push(reply);
+          return reply.promise;
+        },
+      }
+    );
+    await connection.connect();
+    return { connection, commands, replies, errors };
+  }
+
+  test('多分块和跨 payload 的 spawn 始终逐条串行，错误向调用方传播', async () => {
+    const h = await connectSpawnOnly();
+    try {
+      const paste = h.connection.sendInput('%1', 'A'.repeat(600));
+      const key = h.connection.sendInput('%2', 'B');
+      const last = h.connection.sendInput('%3', 'C'.repeat(300));
+      expect(h.commands).toHaveLength(1);
+      h.replies[0].reject(new Error('spawn failed'));
+      await expect(paste).rejects.toThrow('spawn failed');
+      expect(h.commands).toHaveLength(2);
+      for (let i = 1; i < 6; i += 1) {
+        expect(h.commands).toHaveLength(i + 1);
+        h.replies[i].resolve(ok());
+        await Bun.sleep(0);
+        expect(h.commands).toHaveLength(Math.min(6, i + 2));
+      }
+      await Promise.all([key, last]);
+      expect(h.commands.map((argv) => argv[3])).toEqual(['%1', '%1', '%1', '%2', '%3', '%3']);
+      const hex = h.commands.map((argv) => argv.slice(4).join('')).join('');
+      expect(Buffer.from(hex, 'hex').toString()).toBe(`${'A'.repeat(600)}B${'C'.repeat(300)}`);
+      expect(h.errors.map((error) => error.message)).toEqual(['spawn failed']);
+    } finally {
+      h.connection.disconnect();
+    }
+  });
+
+  test('断开时取消未启动的 spawn，旧进程迟到完成不能驱动新窗口', async () => {
+    const h = await connectSpawnOnly();
+    try {
+      const old = h.connection.sendInput('%1', 'A');
+      const pending = h.connection.sendInput('%1', 'B');
+      h.connection.disconnect();
+      await expect(pending).rejects.toThrow('disconnected');
+      await h.connection.connect();
+      const fresh = h.connection.sendInput('%2', 'C');
+      const bytes = new Uint8Array([0, 0x80, 0xff]);
+      const next = h.connection.sendInputBytes('%2', bytes);
+      bytes.fill(0x41);
+      expect(h.commands).toHaveLength(2);
+      h.replies[0].resolve(ok());
+      await old;
+      expect(h.commands).toHaveLength(2);
+      h.replies[1].resolve(ok());
+      await fresh;
+      expect(h.commands).toHaveLength(3);
+      expect(h.commands[2]).toEqual(['send-keys', '-H', '-t', '%2', '00', '80', 'ff']);
+      h.replies[2].resolve(ok());
+      await next;
+    } finally {
+      h.connection.disconnect();
+    }
   });
 });
