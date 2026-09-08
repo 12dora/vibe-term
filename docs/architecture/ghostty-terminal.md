@@ -130,6 +130,8 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 
 粘贴文本则通过 `ghostty_paste_encode(...)` 处理。若终端启用了 bracketed paste mode，则 Ghostty 会自动输出带包裹序列的内容。
 
+鼠标上报模式下的滚轮 / 触控板滚动走同一条 `onData` 路径，但不是逐行发送：`mouse-report-batcher.ts` 把一次手势的所有 SGR 序列合成一条数据、16 ms 内的后续手势并入同一条，节点网关再按序列拆开、一次只写一个进 pty（原因与取舍见 [热路径性能](../development/performance-hot-paths.md) 第 10 节：Claude Code 会整块丢弃含多个鼠标序列的读取）。键盘 / 粘贴 / 非滚轮鼠标事件会先冲刷待发批次，保证顺序。
+
 ## IME 与移动端输入
 
 当前实现保留了一个最小、可测的 IME 处理策略：

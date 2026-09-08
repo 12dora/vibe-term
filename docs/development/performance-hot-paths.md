@@ -24,6 +24,7 @@
 | `apps/gateway/bench/envelope-view.bench.ts` | mesh 中继只读 kind/seq 的 view 解码 |
 | `packages/shared/bench/ws-wire-path.bench.ts` | 浏览器侧 canonical 帧解码 |
 | `packages/panels/src/files/files-tree-render.bench.tsx` | 文件树 500 行 SSR |
+| `apps/fe/bench/scroll-bench.ts` + `scripts/slow-mouse-tui.py` | 浏览器滚轮→远端 TUI 端到端：收发消息数、收敛时间、帧间隔，以及慢速 TUI 探针的实际滚动 / 丢弃行数（见第 10 节） |
 
 bench 文件不是测试，`bun test` 不会发现它们，需手动跑。
 
@@ -157,6 +158,23 @@ metadata diff 用「目标 window 直查 + 懒建全局索引」而非「全量 
 - react-query 缓存失效：网关的 `KIND_SETTINGS_UPDATE` 此前只有 `site` 命名空间被消费，其余（llm / webhooks / telegram / weixin / devices / file-roots / terminal-shortcuts）跨端不失效。新增 `SettingsEventsInit` 把 10 个网关命名空间全量映射到对应 query key。
 - Watch 规则列表去掉了逐行拉状态的 N+1（用 `getQueryCache()` 的 key 列表断言：列表渲染 3 条规则 → 新增 cache 条目 0）。
 
+### 10. 终端滚动：鼠标上报的节奏写入与 history 预取
+
+**症状**：Claude Code 等开启鼠标上报的 TUI 在会话很长时，浏览器里滚轮/触控板滚动粘滞、滚不到位，远端节点尤甚。
+
+**真因（实测）**：Claude Code 每个 SGR 滚轮事件只滚一行并整屏重绘（DEC 2026 块，3.5–7 KB）；更关键的是它**一次 `read()` 里若含多于一个鼠标序列就整块丢弃**（同坐标 2 个、不同列 10 个、不同行 10 个、移动+滚轮混合，全部零输出）。浏览器原本每行发一条 `TerminalInput`，节点侧每条一个 `send-keys -H`；应用一忙，事件就在 pty 里堆成一个 read → 整批丢失。快机器上应用跟得上所以看不出来；用「30 ms 渲染 + 只认单序列」的慢速探针（`scripts/slow-mouse-tui.py`）以 120 Hz 发 100 行，改前只滚 35 行、丢 63。
+
+**落地**：
+
+- 节点网关 `pane-input-pacer.ts`（挂在 `DeviceSessionRuntime`，本地与 SSH 连接共用）：纯鼠标序列的输入按序列拆开，**一次只写一个**，下一个要等 tmux 回 `%end`（字节真正进 pty）之后该 pane 出现输出，或自适应回退超时 `clamp(4×EWMA(回执→首输出), 40, 250 ms)`，且相邻写入至少间隔 8 ms（防止无关的流式输出把间隔压到零）。待写队列按 **300 ms 时间预算**封顶（`clamp(round(300/EWMA), 3, 64)`），超出丢最新的滚轮事件，按下/松开/移动一律不丢；键盘、粘贴等常规输入先排空通道再写，顺序不变。丢弃按 pane 每 5 s 记一行 `[tmux][input-lane]`。
+- 浏览器 `mouse-report-batcher.ts`：一次滚轮手势的 N 行合成一条 `emitData`，16 ms 内的后续手势并入同一条（领先沿立即发），网关再拆开；键盘/粘贴/非滚轮鼠标事件先冲刷批次，鼠标模式关闭、`disableStdin`、dispose 时丢弃。每行的 `getBoundingClientRect` 改为带失效的缓存矩形；`encodeMouseEvent` 复用桥接层的模式缓存。
+- history 分页（非上报模式的普通 shell）：页到达触发的整体重写前后保持「距底部行数」不变（原先每页都跳回底部）；预取带从距顶 3 行放宽到一屏，页面落地时仍在带内立即续拉下一页（真正的双在途不可行：下一页游标只在上一页里），两页通常落进同一 16 ms 批次合并成一次重写；boot state 改为单例、只有网格真变才发强制 sync-size；wasm 终端按宿主实测尺寸（列数下限 200）创建，宽终端不再只剩 ~4000 行回滚。节点侧 history 捕获改走已有的控制通道（先读元数据算范围，再连发校验+捕获两条命令），不再每页 spawn 两次 `tmux`。
+- 分屏：滚动 blit 的 scratch canvas 改为每个渲染器自持，空闲 5 s 释放。
+
+**取舍**：滚动速度上限就是应用自己的渲染速率（它每渲染一次只滚一行），无法绕过；预算封顶意味着快速甩动时超出应用能力的那部分行被丢掉，换来「手指停下 ≤300 ms 内画面停下」。慢速探针（30 ms/帧）120 Hz 发 100 行：改前 35 行 / 丢 63 / 收敛与派发同步结束；改后 48 行 / 应用侧 0 丢弃 / 派发结束后 0.3 s 收敛。真实 Claude Code 本机 100 行：消息 100 → 64 条，帧间隔无一超过 33 ms。
+
+**复现 / 验收**：`bun run dev`（隔离 socket）→ `tmux -L vibeterm-r37 new-session -d -s slow "python3 scripts/slow-mouse-tui.py 30"` → 建设备 → `cd apps/fe && bun run bench/scroll-bench.ts --device <id> --events 100 --gap 8 --headed --synthetic`，看输出里 `line0` 的 `APPLIED/DROPPED` 前后差。远端拓扑用 `apps/fe/tests/helpers/mesh-boot.ts` 起 hub+node，`--mesh <state.json> --session <名>`。
+
 ## Rust / WASM 移植评估
 
 **结论：现在不做。** 依据是实测，不是偏好。
@@ -175,6 +193,6 @@ metadata diff 用「目标 window 直查 + 懒建全局索引」而非「全量 
 
 ## 已知边界
 
-- **ghostty scrollback 容量**：探针显示 `createTerminal(80, 24, max_scrollback)` 传 `10000 / 100000 / 1000000` 三个值，写入 20000 行后 `readScrollbar()` 结果完全相同（实际保留约 1129 行），与 `TERMINAL_SCROLLBACK = 10000` 无关。客户端 history 预算为 `MAX_SURFACE_HISTORY_BYTES = 10_000 × 200`（约 1.9 MiB）/ `MAX_SURFACE_HISTORY_PAGES = 22`，对齐声明的 10000 行；若 wasm 实际保留量确实远低于声明值，预算仍偏大，多缓存的分页写进去即被挤掉。`max_scrollback` 的单位与该构建是否忽略此字段尚未在 ghostty 源码层确认。
+- **ghostty scrollback 容量**：`max_scrollback` 的单位是字节，`ghostty-wasm.ts` 的 `scrollbackLinesToBytes` 按**创建时列数**把行数折成页预算（`ghostty-wasm.scrollback.test.ts` 锁定 10000 行不再被截到 1129）；预算在创建后固定，所以宽终端必须用实测列数创建（round 37 起 `useTerminalBootSurface` 传入，列数下限 200）。客户端 history 预算 `MAX_SURFACE_HISTORY_BYTES = 10_000 × 200` / `MAX_SURFACE_HISTORY_PAGES = 22` 与之对齐。
 - 出站仍会 Borsh 编码一次 envelope：要做到「编一次、sizing 与 send 共用 payload」，需在 `packages/shared` 暴露「只算长度」或「接受已编码 payload」的 helper。
 - `DeviceConnectionAdapter` 的 `useMemo` 依赖整张连接态表，任一设备连接态变化会击穿所有 `DeviceRow` 的 memo——**故意保留**（连接态必须实时反映到每行，且变更频率远低于终端输出）。
