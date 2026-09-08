@@ -1,4 +1,4 @@
-# 2.0.5
+# 2.0.6
 
 _2026-09-08_
 
@@ -6,7 +6,7 @@ _2026-09-08_
 
 ### Fixes
 
-- Mouse-wheel and trackpad scrolling in TUI apps such as Claude Code felt sticky after 2.0.4, even on fast local machines: the view lagged the finger and kept scrolling after you stopped. Scroll input is now released the moment the app finishes drawing a frame, and the backlog is kept tiny, so the view follows your finger and stops when you stop — without the dropped scroll events that 2.0.4 was fixing.
+- Mouse-wheel and trackpad scrolling in TUI apps (Claude Code and others) is back to the direct, immediate delivery of 2.0.3 — the extra pacing introduced in 2.0.4/2.0.5 made fast scrolling lag a beat and feel sticky. Scroll events are now written to the app as soon as tmux confirms the previous one, and the browser no longer holds follow-up scroll gestures for 16 ms.
 
 ---
 
@@ -14,4 +14,4 @@ _2026-09-08_
 
 ### 修复
 
-- 2.0.4 之后在 Claude Code 等 TUI 应用里用滚轮 / 触控板滚动显得粘滞，即使在本机也画面滞后手指、停手后还在滚。现在应用一画完一帧就立刻送入下一条滚动，积压保持极小，画面跟手、停手即停，同时保留 2.0.4 修掉的「滚动事件被整批丢弃」问题的修复。
+- Claude Code 等 TUI 应用里的滚轮 / 触控板滚动恢复为 2.0.3 那样的即时直送——2.0.4/2.0.5 引入的节奏控制让快速滚动慢一拍、手感发粘。现在 tmux 一确认上一条滚动就立即送入下一条，浏览器也不再把后续滚动手势压 16 ms 再发。
