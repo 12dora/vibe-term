@@ -6,6 +6,11 @@ import type { PaneInfo } from './capture-history';
 import type { LifecycleEventEmitter, TmuxConnectionOptions } from './connection-types';
 import type { AtomicPaneCapture } from './control-mode-capture';
 import type { TmuxEvent } from './events';
+import {
+  type HostLatencyListener,
+  type HostLatencySample,
+  HostLatencyTracker,
+} from './host-latency-tracker';
 import { LocalExternalTmuxConnection } from './local-external-connection';
 import {
   type DeviceTreeOrderInput,
@@ -91,6 +96,7 @@ export interface DeviceSessionRuntimeConnection {
     endLine: number,
     maxOutputBytes: number
   ): Promise<string>;
+  probeHostLatency?(): Promise<void>;
 }
 
 export interface DeviceSessionRuntimeListener {
@@ -140,6 +146,9 @@ export class DeviceSessionRuntime {
   private readonly listeners = new Set<DeviceSessionRuntimeListener>();
   private readonly eventBridge: RuntimeEventBridge;
   private readonly screenCapture: CanonicalScreenCapture;
+  private readonly hostLatency = new HostLatencyTracker({
+    probe: () => this.connection.probeHostLatency?.(),
+  });
   private lastSnapshot: StateSnapshotPayload | null = null;
   private connectPromise: Promise<void> | null = null;
   private connectGeneration = 0;
@@ -188,15 +197,16 @@ export class DeviceSessionRuntime {
       ...this.eventBridge.metadataCallbacks(),
     });
 
-    this.connection = createConnection(
-      this.inputLifecycle.connectionOptions(
+    this.connection = createConnection({
+      ...this.inputLifecycle.connectionOptions(
         this.eventBridge.connectionOptions({
           deviceId: this.deviceId,
           notifyEvent: options.notifyEvent,
         }),
         (paneId) => this.metadataProjection.hasPane(paneId)
-      )
-    );
+      ),
+      onHostLatencySample: (rttMs, hop) => this.hostLatency.record(rttMs, hop),
+    });
     this.paneHistoryReader = new PaneHistoryReader(this.connection);
     this.screenCapture = new CanonicalScreenCapture({
       getPaneIdentity: (paneId) => this.getPaneIdentity(paneId),
@@ -286,6 +296,23 @@ export class DeviceSessionRuntime {
 
   getMetadataSnapshot(): MetadataProjectionSnapshot {
     return this.metadataProjection.currentSnapshot();
+  }
+
+  /** 当前宿主一跳延迟估计（尚无样本时为 null）。 */
+  getHostLatency(): HostLatencySample | null {
+    return this.hostLatency.current();
+  }
+
+  onHostLatency(listener: HostLatencyListener): () => void {
+    return this.hostLatency.subscribe(listener);
+  }
+
+  /**
+   * 空闲补样探针的闸门：gate 为 null 时不发探针，否则每次发之前再问一次
+   * （用户全部断开后即刻停探，不必等运行时释放）。
+   */
+  setHostLatencyProbeGate(gate: (() => boolean) | null): void {
+    this.hostLatency.setProbeGate(gate);
   }
 
   getServerEpoch(): Uint8Array | null {
@@ -513,6 +540,7 @@ export class DeviceSessionRuntime {
       return;
     }
     this.resourcesDisposed = true;
+    this.hostLatency.dispose();
     this.inputLifecycle.dispose();
     this.metadataProjection.dispose();
     this.paneRetention.dispose();

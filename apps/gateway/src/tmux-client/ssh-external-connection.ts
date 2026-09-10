@@ -1,4 +1,4 @@
-import { errorMessage } from '@vibeterm/shared';
+import { errorMessage, wsBorsh } from '@vibeterm/shared';
 import type { Device } from '@vibeterm/shared';
 import { Client, type ClientChannel } from 'ssh2';
 import { config } from '../config';
@@ -16,6 +16,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
+import { hostLatencySampler, probeHostLatency } from './host-latency-tracker';
 import type { InputCompletion } from './input-submission';
 import { appendRollingTail, decodeRollingTail } from './local-external-connection';
 import {
@@ -124,6 +125,10 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
       Uint8Array.from(data),
       ...completion
     );
+  }
+
+  probeHostLatency(): Promise<void> {
+    return probeHostLatency(this.controlCommands, this.connected ? this.getControlWriter() : null);
   }
 
   protected resolveDefaultWorkingDir(): string {
@@ -386,10 +391,13 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     this.callbacks.onInputTransportInvalidated?.();
     this.controlCommands.dispose('tmux control connection replaced');
     const handle: ControlChannelHandle = { stop: () => {}, write: () => {} };
-    const controlCommands = new ControlModeCommandQueue(() => {
-      this.callbacks.onInputTransportInvalidated?.();
-      handle.stop();
-    });
+    const controlCommands = new ControlModeCommandQueue(
+      () => {
+        this.callbacks.onInputTransportInvalidated?.();
+        handle.stop();
+      },
+      hostLatencySampler(this.callbacks, wsBorsh.DEVICE_LATENCY_HOP_SSH)
+    );
     this.controlCommands = controlCommands;
     const subscription = createControlModeSubscription(
       this.buildControlModeCallbacks(

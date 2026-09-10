@@ -88,3 +88,67 @@ describe('control-mode atomic capture', () => {
     queue.dispose();
   });
 });
+
+describe('control command latency sampling', () => {
+  function createQueue() {
+    const samples: number[] = [];
+    let clock = 0;
+    const queue = new ControlModeCommandQueue(undefined, {
+      onSample: (rttMs) => samples.push(rttMs),
+      now: () => clock,
+    });
+    const block = (lines: string[] = [], isError = false) => ({ args: '', isError, lines });
+    return {
+      samples,
+      queue,
+      block,
+      advance: (ms: number) => {
+        clock += ms;
+      },
+    };
+  }
+
+  test('times write→%end for sampled commands only', () => {
+    const { samples, queue, block, advance } = createQueue();
+    void queue.execute(() => {}, 'send-keys -t %1 a', { sample: true, transform: () => undefined });
+    advance(7);
+    queue.handleBlock(block());
+    void queue.execute(() => {}, 'capture-pane -p', { transform: () => undefined });
+    advance(500);
+    queue.handleBlock(block());
+    expect(samples).toEqual([7]);
+  });
+
+  test('skips commands written while another is still pending', () => {
+    const { samples, queue, block, advance } = createQueue();
+    void queue.execute(() => {}, 'send-keys -t %1 a', { sample: true, transform: () => undefined });
+    void queue.execute(() => {}, 'send-keys -t %1 b', { sample: true, transform: () => undefined });
+    advance(4);
+    queue.handleBlock(block());
+    advance(100);
+    queue.handleBlock(block());
+    expect(samples).toEqual([4]);
+  });
+
+  test('drops samples for error blocks, timeouts and disposed commands', () => {
+    const { samples, queue, block, advance } = createQueue();
+    void queue
+      .execute(() => {}, 'send-keys -t %1 a', { sample: true, transform: () => undefined })
+      .catch(() => {});
+    advance(3);
+    queue.handleBlock(block(['no current client'], true));
+    void queue
+      .execute(() => {}, 'send-keys -t %1 b', { sample: true, transform: () => undefined })
+      .catch(() => {});
+    queue.dispose('closed');
+    expect(samples).toEqual([]);
+  });
+
+  test('records nothing when no sampler is wired', () => {
+    const queue = new ControlModeCommandQueue();
+    void queue.execute(() => {}, 'send-keys -t %1 a', { sample: true, transform: () => undefined });
+    expect(queue.busy).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
+    expect(queue.busy).toBe(false);
+  });
+});

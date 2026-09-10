@@ -27,13 +27,36 @@ interface PendingControlCommand<T = unknown> {
   resolve: (value: T) => void;
   reject: (error: Error) => void;
   timer: ReturnType<typeof setTimeout>;
+  // 单调时钟起点；null 表示这条命令不参与宿主一跳延迟采样。
+  sampleStartedAt: number | null;
+}
+
+export interface ControlCommandLatencyOptions {
+  /** 上报一次 write→%end 往返毫秒数（仅限队列空闲时写出、正常收到 %end 的命令）。 */
+  onSample: (rttMs: number) => void;
+  now?: () => number;
+}
+
+function monotonicNow(): number {
+  return performance.now();
 }
 
 export class ControlModeCommandQueue {
   private readonly pending: PendingControlCommand[] = [];
   private poisoned = false;
+  private readonly clockNow: () => number;
 
-  constructor(private readonly onPoison?: () => void) {}
+  constructor(
+    private readonly onPoison?: () => void,
+    private readonly latency?: ControlCommandLatencyOptions
+  ) {
+    this.clockNow = latency?.now ?? monotonicNow;
+  }
+
+  /** 队列里还有未回执的命令：此时新命令的 %end 含前序命令的处理时间。 */
+  get busy(): boolean {
+    return this.pending.length > 0;
+  }
 
   execute<T>(
     write: (command: string) => void,
@@ -42,6 +65,8 @@ export class ControlModeCommandQueue {
       literal?: boolean;
       timeoutMs?: number;
       onAck?: () => void;
+      /** 参与宿主一跳延迟采样：只有廉价命令才应打开。 */
+      sample?: boolean;
       transform: (block: ControlModeBlock) => T;
     }
   ): Promise<T> {
@@ -53,12 +78,15 @@ export class ControlModeCommandQueue {
         transform: options.transform,
         resolve,
         reject,
+        sampleStartedAt: null,
         timer: setTimeout(() => {
           this.poison(new Error(`tmux control command timed out: ${command.slice(0, 80)}`));
         }, options.timeoutMs ?? 10_000),
       };
+      const sampled = options.sample === true && this.latency !== undefined && !this.busy;
       this.pending.push(pending as PendingControlCommand);
       try {
+        if (sampled) pending.sampleStartedAt = this.clockNow();
         write(command.endsWith('\n') ? command : `${command}\n`);
       } catch (error) {
         this.poison(error instanceof Error ? error : new Error(String(error)));
@@ -74,6 +102,7 @@ export class ControlModeCommandQueue {
     const pending = this.pending.shift();
     if (!pending) return false;
     clearTimeout(pending.timer);
+    if (!block.isError) this.reportLatency(pending);
     if (block.isError) {
       pending.reject(new Error(block.lines.join('\n') || 'tmux control command failed'));
       return true;
@@ -96,6 +125,11 @@ export class ControlModeCommandQueue {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
+  }
+
+  private reportLatency(pending: PendingControlCommand): void {
+    if (pending.sampleStartedAt === null) return;
+    this.latency?.onSample(this.clockNow() - pending.sampleStartedAt);
   }
 
   private poison(error: Error): void {

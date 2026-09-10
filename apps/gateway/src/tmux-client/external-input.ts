@@ -36,6 +36,7 @@ export function sendExternalInput(
     return transport.queue.execute(transport.write, argv.join(' '), {
       transform: () => undefined,
       onAck: acknowledge,
+      sample: true,
       ...(timeoutMs === undefined ? {} : { timeoutMs }),
     });
   };

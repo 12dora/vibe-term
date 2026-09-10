@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { type Device, errorMessage } from '@vibeterm/shared';
+import { type Device, errorMessage, wsBorsh } from '@vibeterm/shared';
 import { config } from '../config';
 import { getDeviceById, updateDeviceRuntimeStatus } from '../db';
 import { logAt, shouldLog } from '../log/level';
@@ -29,6 +29,7 @@ import {
   ExternalTmuxConnectionCore,
 } from './external-tmux-core';
 import { buildEnsureGhosttyTerminfoScript } from './ghostty-terminfo';
+import { hostLatencySampler, probeHostLatency } from './host-latency-tracker';
 import { InputCommandWindow } from './input-command-window';
 import {
   CONTROL_RECONNECT_POLICY,
@@ -337,6 +338,10 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     );
   }
 
+  probeHostLatency(): Promise<void> {
+    return probeHostLatency(this.controlCommands, this.connected ? this.getControlWriter() : null);
+  }
+
   protected resolveDefaultWorkingDir(): string {
     return this.device?.defaultWorkingDir?.trim() || homedir();
   }
@@ -500,11 +505,14 @@ export class LocalExternalTmuxConnection extends ExternalTmuxConnectionCore {
     const inputCommands = new InputCommandWindow(() => (this.controlProcess ? 4 : 1));
     this.inputCommands = inputCommands;
     let proc: ControlClientProcess | null = null;
-    const controlCommands = new ControlModeCommandQueue(() => {
-      this.callbacks.onInputTransportInvalidated?.();
-      inputCommands.dispose('tmux input control queue poisoned');
-      proc?.kill();
-    });
+    const controlCommands = new ControlModeCommandQueue(
+      () => {
+        this.callbacks.onInputTransportInvalidated?.();
+        inputCommands.dispose('tmux input control queue poisoned');
+        proc?.kill();
+      },
+      hostLatencySampler(this.callbacks, wsBorsh.DEVICE_LATENCY_HOP_LOCAL)
+    );
     this.controlCommands = controlCommands;
     const metricsOptions = shouldLog('debug')
       ? {

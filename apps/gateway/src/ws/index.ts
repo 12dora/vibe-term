@@ -33,6 +33,7 @@ import {
   type DeviceConnectionRegistryHost,
 } from './device-connection-registry';
 import { DeviceFeedBroadcaster, type DeviceFeedHost } from './device-feed-broadcaster';
+import { DeviceLatencyBroadcast } from './device-latency-broadcast';
 import { GatewayActivityMetrics } from './gateway-activity-metrics';
 import {
   type GatewayMetricsHost,
@@ -92,6 +93,7 @@ export class WebSocketServer
   private readonly theme: ThemeSettingsBroadcaster;
   private readonly overlays: SnapshotOverlayStore;
   private readonly feed: DeviceFeedBroadcaster;
+  private readonly deviceLatency: DeviceLatencyBroadcast;
   private readonly borshHandlers: BorshKindHandlerMap;
 
   get connections() {
@@ -141,6 +143,7 @@ export class WebSocketServer
     this.theme = new ThemeSettingsBroadcaster(this);
     this.overlays = new SnapshotOverlayStore(this);
     this.feed = new DeviceFeedBroadcaster(this);
+    this.deviceLatency = new DeviceLatencyBroadcast(this);
     this.borshHandlers = createBorshKindHandlers(this);
     this.shareIndex.bind(this);
   }
@@ -756,7 +759,12 @@ export class WebSocketServer
       },
     };
 
-    return runtime.subscribe(listener);
+    const detachLatency = this.deviceLatency.attach(deviceId, runtime);
+    const unsubscribe = runtime.subscribe(listener);
+    return () => {
+      detachLatency();
+      unsubscribe();
+    };
   }
 
   /** 设备树顺序与自定义名是网关侧持久状态，运行时新建后要立刻灌进 canonical metadata 投影。 */
@@ -778,6 +786,7 @@ export class WebSocketServer
 
   async handleDeviceConnect(ws: GatewaySession, deviceId: string): Promise<void> {
     await this.registry.handleDeviceConnect(ws, deviceId);
+    this.deviceLatency.handleDeviceConnected(ws, deviceId);
   }
 
   handleDeviceDisconnect(ws: GatewaySession, deviceId: string): void {
