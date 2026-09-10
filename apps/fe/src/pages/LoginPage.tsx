@@ -239,11 +239,12 @@ function TotpField({
         value={value}
         onChange={onChange}
         aria-labelledby="login-totp-label"
+        aria-describedby={hintKey ? 'login-totp-hint' : undefined}
         digitLabel={(index, length) => t('auth.totpDigit', { index: index + 1, total: length })}
         data-testid="login-totp"
       />
       {hintKey ? (
-        <p className="text-xs text-muted-foreground" data-testid="login-totp-hint">
+        <p className="text-xs text-muted-foreground" id="login-totp-hint" data-testid="login-totp-hint">
           {t(hintKey)}
         </p>
       ) : null}
