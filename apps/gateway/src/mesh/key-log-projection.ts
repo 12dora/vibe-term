@@ -1,4 +1,5 @@
 import {
+  type KeyLogEffect,
   decodeRenameNodePayload,
   decodeRevokeNodePayload,
   nodeIdToHex,
@@ -26,12 +27,19 @@ export type KeyLogProjectionDeps = {
   userIdOf: () => string;
   /** 吊销落库后就地断链并广播；key log 同步（含中继模式）走的也是这条路径。 */
   onNodeRevoked: (nodeId: string) => void;
+  /**
+   * 本条记录的会话效果（撤销全部会话 / 按凭证撤销 / 按入口撤销 / 清 peer 缓存）。
+   * 本地追加路由、uplink 同步、中继同步、peer 追赶全都汇到 `onApplied`，
+   * 撤销的即时性只能从这个唯一收敛点升上去，不能只挂在本地路由上。
+   */
+  onKeyLogEffects?: (userId: string, effects: KeyLogEffect[]) => void;
 };
 
 export function bindKeyLogProjection(
   d: KeyLogProjectionDeps
 ): NonNullable<UserKeyService['onApplied']> {
-  return (_userId, step) => {
+  return (userId, step) => {
+    d.onKeyLogEffects?.(userId, step.effects);
     applyKeyLogHubRuntime(d.hubStore, step.record, {
       selfId: d.selfId,
       now: Date.now(),

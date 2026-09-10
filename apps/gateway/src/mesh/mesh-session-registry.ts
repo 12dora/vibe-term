@@ -16,6 +16,8 @@ export type RegisteredGatewaySession = {
   via: string;
   session: GatewaySession;
   lastVerifyAt: number;
+  /** 下一次允许压库复验的时刻，由 `sessionVerifyDeadline` 按会话过期时间算出。 */
+  nextVerifyAt: number;
   pc?: { close(): void };
 };
 
@@ -37,8 +39,22 @@ function cidIndexKey(sid: string, via: string, cid: string): string {
   return `${sid}\0${via}\0${cid}`;
 }
 
+export const CID_MAX_LENGTH = 64;
+
+/**
+ * cid 由浏览器自由指定，既进日志又当注册表键：只留安全字符并限长。
+ * 客户端生成的 nonce 是 base64url，本来就落在这个字符集里，正常连接不受影响。
+ */
+export function sanitizeCid(value: string | undefined | null): string {
+  if (typeof value !== 'string') return '';
+  return value
+    .trim()
+    .replace(/[^\w.:-]/g, '')
+    .slice(0, CID_MAX_LENGTH);
+}
+
 function normalizeCid(value: string | undefined | null): string {
-  return typeof value === 'string' ? value.trim() : '';
+  return sanitizeCid(value);
 }
 
 export class SessionRegistry {
@@ -73,6 +89,7 @@ export class SessionRegistry {
       via: entry.via,
       session: entry.session,
       lastVerifyAt: 0,
+      nextVerifyAt: 0,
       ...(cid ? { cid } : {}),
       ...(entry.pc ? { pc: entry.pc } : {}),
     };
@@ -136,6 +153,18 @@ export class SessionRegistry {
       if (entry.uid === uid && !entry.session.closed) out.push(entry);
     }
     return out;
+  }
+
+  /**
+   * 撤销通知（登出 / key log 会话效果）影响到的登记项逐个复核。一次 `remove-passkey`
+   * 只吊销该凭证签发的会话，不能连坐无关会话，所以这里是复验而不是一律拆。
+   */
+  reverifyRevoked(
+    target: { uid?: string; sid?: string },
+    verify: (entry: RegisteredGatewaySession, force: boolean) => unknown
+  ): void {
+    const rows = target.sid ? this.listBySid(target.sid) : this.listByUid(target.uid ?? '');
+    for (const entry of rows) verify(entry, true);
   }
 
   lookup(

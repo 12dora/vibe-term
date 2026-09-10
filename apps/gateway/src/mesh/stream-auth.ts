@@ -8,7 +8,8 @@ import {
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
 import type { NodeSessionStore } from '../auth/node-session-store';
 import { isAuthLoginPublicPath, isShareAccessPath } from './auth-public-paths';
-import { SHARE_WS_VERIFY_MS, WS_SESSION_VERIFY_MS } from './mesh-deps';
+import { SHARE_WS_VERIFY_MS } from './mesh-deps';
+import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import {
   type ShareAccessVerification,
   legacyShareCookieName,
@@ -119,9 +120,10 @@ export function authorizeHttpStream(
 }
 
 /**
- * ws 流的凭证复验：常规会话按 WS_SESSION_VERIFY_MS 复验（与浏览器直连的 `touchSocket`
- * 同一个节奏），分享凭证按 SHARE_WS_VERIFY_MS。逐帧走一次 SQLite 事务（还可能带续期
- * UPDATE）会让每一次击键都压一次库，终端输入越密开销越大。挂上后的第一帧仍然必校验。
+ * ws 流的凭证复验：常规会话最长按 WS_SESSION_VERIFY_MS 复验（与浏览器直连的 `touchSocket`
+ * 同一个节奏），但窗口不越过会话自身的过期时刻，TTL / 硬过期不会被节流拖软；分享凭证按
+ * SHARE_WS_VERIFY_MS。逐帧走一次 SQLite 事务（还可能带续期 UPDATE）会让每一次击键都压一次库，
+ * 终端输入越密开销越大。挂上后的第一帧仍然必校验。
  * 返回非空即 RST reason（分享用终止性关闭码编码，Hub 透传给浏览器）。
  */
 export function createStreamRecheck(
@@ -130,13 +132,15 @@ export function createStreamRecheck(
   ctx: StreamAuthContext
 ): () => string | null {
   if (!share) {
-    let lastVerifyAt: number | null = null;
+    const verifyWindow = { lastVerifyAt: 0, nextVerifyAt: 0 };
     return () => {
       const now = ctx.now?.() ?? Date.now();
-      if (lastVerifyAt !== null && now - lastVerifyAt < WS_SESSION_VERIFY_MS) return null;
-      lastVerifyAt = now;
+      if (!sessionVerifyDue(verifyWindow, now)) return null;
       const check = ctx.sessionStore.verify(sid, { viaNodeId: ctx.peerNodeId, now });
-      return check.ok ? null : check.reason;
+      if (!check.ok) return check.reason;
+      verifyWindow.lastVerifyAt = now;
+      verifyWindow.nextVerifyAt = sessionVerifyDeadline(check.session, now);
+      return null;
     };
   }
   let lastVerifyAt = ctx.now?.() ?? Date.now();

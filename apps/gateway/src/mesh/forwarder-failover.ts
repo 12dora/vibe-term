@@ -59,6 +59,25 @@ export type StreamFailoverHost = {
 /** 与前端 `STALE_INPUT_TTL_MS` 同值：failover 期间排队超过它的终端输入不再补发。 */
 export const STREAM_STALE_INPUT_TTL_MS = 10_000;
 
+/** 首次续流等 HELLO 的上限；对端只是慢，值给得宽一点。 */
+export const STREAM_FAILOVER_HELLO_WAIT_MS = 2_000;
+/** 已经有一轮一个字节都没答上来：后续每轮只等这么久，别把浏览器晾在那里。 */
+export const STREAM_FAILOVER_HELLO_RETRY_WAIT_MS = 500;
+/** 连续这么多轮拿不到 HELLO 就不再静默重试，直接把这条转发流收掉让浏览器重连。 */
+export const STREAM_FAILOVER_NO_HELLO_LIMIT = 3;
+
+/** 一轮续流的结果：done = 不再重试；retry = 换一条再来；retry-no-hello = 对端一声没吭。 */
+type FailoverAttemptOutcome = 'done' | 'retry' | 'retry-no-hello';
+
+type FailoverAttemptContext = {
+  from: string;
+  cause: ReturnType<typeof failoverCauseOf>;
+  closeReason: string | undefined;
+  startedAt: number;
+  signal: AbortSignal;
+  helloWaitMs: number;
+};
+
 /** 队列里是不透明的 mux 帧，只能解信封判定；解不出的一律当结构帧保留。 */
 function isOrderedInputFrame(bytes: Uint8Array): boolean {
   let env: wsBorsh.Envelope;
@@ -161,26 +180,18 @@ export async function runStreamFailover(
         queuedInputBytes: pump.queueBytes,
       })
     );
-    for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
-      const opened = await openFailoverStream(host, pump, abort.signal, attempt);
-      if (opened === 'aborted') return;
-      if (!opened) continue;
-      if (
-        await completeFailover(
-          host,
-          pump,
-          opened,
-          from,
-          cause,
-          info.reason,
-          startedAt,
-          abort.signal
-        )
-      ) {
-        return;
-      }
-    }
-    host.closePump(pump, { code: 1011, reason: 'failover-exhausted' });
+    const result = await runFailoverAttempts(host, pump, {
+      from,
+      cause,
+      closeReason: info.reason,
+      startedAt,
+      signal: abort.signal,
+    });
+    if (result === 'settled') return;
+    host.closePump(pump, {
+      code: 1011,
+      reason: result === 'no-hello' ? 'failover-no-hello' : 'failover-exhausted',
+    });
   } catch {
     if (!pump.browserClosed) host.closePump(pump, { code: 1011, reason: 'failover-error' });
   } finally {
@@ -189,6 +200,35 @@ export async function runStreamFailover(
       pump.failoverAbort = null;
     }
   }
+}
+
+/**
+ * 逐轮续流。连续 `STREAM_FAILOVER_NO_HELLO_LIMIT` 轮拿不到 HELLO 就收手：对端一声不吭时
+ * 把 9 轮退避加上每轮 HELLO 等待全走完要 30 s 上下，浏览器白等还不如早点断开重连。
+ * 答过 HELLO 的那一轮把计数清零，正常的链路切换仍然享有完整重试预算。
+ */
+async function runFailoverAttempts(
+  host: StreamFailoverHost,
+  pump: ForwardPump,
+  base: Omit<FailoverAttemptContext, 'helloWaitMs'>
+): Promise<'settled' | 'exhausted' | 'no-hello'> {
+  let noHelloStreak = 0;
+  for (let attempt = 0; attempt < STREAM_FAILOVER_MAX_ATTEMPTS; attempt += 1) {
+    const opened = await openFailoverStream(host, pump, base.signal, attempt);
+    if (opened === 'aborted') return 'settled';
+    if (!opened) continue;
+    const helloWaitMs =
+      noHelloStreak === 0 ? STREAM_FAILOVER_HELLO_WAIT_MS : STREAM_FAILOVER_HELLO_RETRY_WAIT_MS;
+    const outcome = await completeFailover(host, pump, opened, { ...base, helloWaitMs });
+    if (outcome === 'done') return 'settled';
+    if (outcome !== 'retry-no-hello') {
+      noHelloStreak = 0;
+      continue;
+    }
+    noHelloStreak += 1;
+    if (noHelloStreak >= STREAM_FAILOVER_NO_HELLO_LIMIT) return 'no-hello';
+  }
+  return 'exhausted';
 }
 
 async function openFailoverStream(
@@ -262,13 +302,10 @@ async function completeFailover(
   host: StreamFailoverHost,
   pump: ForwardPump,
   stream: OpenedWsStream,
-  from: string,
-  cause: ReturnType<typeof failoverCauseOf>,
-  closeReason: string | undefined,
-  startedAt: number,
-  signal: AbortSignal
-): Promise<boolean> {
-  const waits = await replaySubscription(host, pump, stream, signal);
+  ctx: FailoverAttemptContext
+): Promise<FailoverAttemptOutcome> {
+  const { from, cause, closeReason, startedAt, signal } = ctx;
+  const waits = await replaySubscription(host, pump, stream, signal, ctx.helloWaitMs);
   safeLog(
     host,
     formatFailoverAttempt({
@@ -282,14 +319,14 @@ async function completeFailover(
   );
   if (pumpDead(pump, signal)) {
     host.discardStream(pump, stream);
-    return true;
+    return 'done';
   }
   if (!waits.helloOk) {
     // HELLO 压根没回来（新流在握手前就被拆了，如链路又抖、或撞上目标那边还没退场的同 cid 连接）：
     // 这是链路问题，换一条继续重试；当成「节点版本太旧」把浏览器关掉是误判。
     if (!waits.helloReplied) {
       host.discardStream(pump, stream);
-      return false;
+      return 'retry-no-hello';
     }
     // 对端确实答了 HELLO 但版本不达标：不能盲续（订阅、队列都会打到一条身份未知的流上）。
     rejectStaleNodeStream(true, pump, {
@@ -297,12 +334,12 @@ async function completeFailover(
       sendToBrowser: (target, bytes) => host.sendToBrowser(target, bytes),
       closePump: (target, closeInfo) => host.closePump(target, closeInfo),
     });
-    return true;
+    return 'done';
   }
   // 这条流不再是要续的那条（已断 / 已被新流顶掉）：放弃它之前先关掉，别留给下一轮。
   if (!pump.streamAlive || pump.stream !== stream) {
     host.discardStream(pump, stream);
-    return false;
+    return 'retry';
   }
   const resumed = pump.replay.resumedPaneCount();
   const desc = pump.replay.describeReplay();
@@ -354,14 +391,15 @@ async function completeFailover(
   for (const frame of pump.replay.browserSignalFrames()) {
     host.sendToBrowser(pump, frame);
   }
-  return true;
+  return 'done';
 }
 
 async function replaySubscription(
   host: StreamFailoverHost,
   pump: ForwardPump,
   stream: OpenedWsStream,
-  signal: AbortSignal
+  signal: AbortSignal,
+  helloWaitBudgetMs: number
 ): Promise<{
   helloWaitMs: number;
   resumeWaitMs: number;
@@ -384,7 +422,9 @@ async function replaySubscription(
   let resumeWaitMs = 0;
   const hello = pump.replay.hello;
   if (hello) {
-    helloWaitMs = await wait('helloWait', 2_000, () => host.sendToStream(pump, stream, hello));
+    helloWaitMs = await wait('helloWait', helloWaitBudgetMs, () =>
+      host.sendToStream(pump, stream, hello)
+    );
     // beginResume 已把 peerVersion 清空：这里为真只可能是本条流刚播报了达标版本。
     if (!pump.replay.peerSupportsCanonical()) {
       return {

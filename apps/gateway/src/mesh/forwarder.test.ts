@@ -22,6 +22,7 @@ import {
   setForwardLinkDeadlineMs,
   setPendingForwardStreamTtlMs,
 } from './forwarder';
+import { STREAM_FAILOVER_NO_HELLO_LIMIT } from './forwarder-failover';
 import {
   CHALLENGE_RATE_LIMIT,
   MESH_FORWARD_CSP,
@@ -29,7 +30,6 @@ import {
   MESH_REJECT_4401_KIND,
   type MeshServerWebSocket,
   SET_SESSION_HEADER,
-  STREAM_FAILOVER_MAX_ATTEMPTS,
   STREAM_QUEUE_MAX_BYTES,
   STREAM_QUEUE_MAX_FRAMES,
   STREAM_QUEUE_OVERFLOW_REASON,
@@ -841,7 +841,7 @@ describe('forwarder', () => {
     }
   });
 
-  test('切换后的新流一直不答 HELLO：继续换链路重试，退避用尽才断（不判成版本太旧）', async () => {
+  test('切换后的新流一直不答 HELLO：换链路重试有上限，收手时不判成版本太旧', async () => {
     const dcLink = { id: 'dc' } as unknown as LinkSession;
     const relayLink = { id: 'relay' } as unknown as LinkSession;
     const peers = new FakePeers();
@@ -888,9 +888,9 @@ describe('forwarder', () => {
       await waitUntil(() => closed() !== undefined, 5_000);
 
       // 一个字节都没答上来是链路问题，不是对端版本太旧：不发 UNSUPPORTED_PROTOCOL。
-      expect(closed()).toEqual({ code: 1011, reason: 'failover-exhausted' });
+      expect(closed()).toEqual({ code: 1011, reason: 'failover-no-hello' });
       expect(decodeErrorFrames(sent)).toHaveLength(0);
-      expect(streams.wsOpens.length).toBe(1 + STREAM_FAILOVER_MAX_ATTEMPTS);
+      expect(streams.wsOpens.length).toBe(1 + STREAM_FAILOVER_NO_HELLO_LIMIT);
       for (const opened of streams.wsOpens.slice(1)) {
         expect(opened.ws.closedOnce).toBe(true);
         // 只补发了 HELLO：订阅没重放，排队的浏览器帧也没冲进去。

@@ -6,6 +6,7 @@ import { encodeJsonBytes } from './ctl';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { WS_CLOSE_LOGIN_REQUIRED } from './mesh-deps';
 import { debugLine, warnLine } from './mesh-log';
+import { sanitizeCid } from './mesh-session-registry';
 import { parseOpenPayload } from './peer-protocol';
 import { type StreamAuthContext, createStreamRecheck, verifyStreamAuth } from './stream-auth';
 import { decodeTerminalStreamClose, encodeTerminalStreamClose } from './stream-close-code';
@@ -73,7 +74,8 @@ export async function acceptWsStream(
   const open = parseOpenPayload(stream.openPayload) ?? {};
   const auth = str(open.auth);
   const boundShareId = str(open.share).trim() || null;
-  const cid = (str(open.cid) || str(open.connectionId)).trim();
+  // cid 是浏览器给的：进日志与注册表键之前先净化，避免注入日志行或撑爆键空间。
+  const cid = sanitizeCid(str(open.cid) || str(open.connectionId));
   const verified = verifyStreamAuth(auth, '/ws', opts, boundShareId);
   if (!verified.ok) {
     logAuthRejected(opts.peerNodeId, cid, verified.reason);

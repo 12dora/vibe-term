@@ -2,7 +2,7 @@
 // 光靠「节点事件」是等不到的。
 
 import { describe, expect, test } from 'bun:test';
-import type { KeyLogRecord } from '@vibeterm/shared/auth';
+import type { KeyLogEffect, KeyLogRecord } from '@vibeterm/shared/auth';
 import {
   encodeRenameNodePayload,
   encodeRevokeNodePayload,
@@ -14,7 +14,11 @@ import { type KeyLogProjectionDeps, bindKeyLogProjection } from './key-log-proje
 const SELF = 'a'.repeat(32);
 const PEER = 'b'.repeat(32);
 
-function step(type: KeyLogRecord['type'], payload: Uint8Array): AppliedKeyLogStep {
+function step(
+  type: KeyLogRecord['type'],
+  payload: Uint8Array,
+  effects: KeyLogEffect[] = []
+): AppliedKeyLogStep {
   return {
     input: { bytes: new Uint8Array(), sig: new Uint8Array() },
     record: {
@@ -29,7 +33,7 @@ function step(type: KeyLogRecord['type'], payload: Uint8Array): AppliedKeyLogSte
     } as unknown as KeyLogRecord,
     hash: new Uint8Array(32),
     next: {} as AppliedKeyLogStep['next'],
-    effects: [],
+    effects,
   };
 }
 
@@ -62,6 +66,31 @@ describe('key log 投影：吊销', () => {
       step('revoke-node', encodeRevokeNodePayload({ node_id: hexToBytes(PEER), reason: 'test' }))
     );
     expect(revoked).toEqual([PEER]);
+  });
+
+  test('会话效果先升给 onKeyLogEffects：同步过来的撤销也能即时断连接', () => {
+    const seen: Array<{ userId: string; effects: KeyLogEffect[] }> = [];
+    const apply = bindKeyLogProjection({
+      ...deps([]),
+      onKeyLogEffects: (userId, effects) => seen.push({ userId, effects }),
+    });
+    apply('u1', step('rotate-root', new Uint8Array(), [{ type: 'revokeAllSessions' }]));
+    expect(seen).toEqual([{ userId: 'u1', effects: [{ type: 'revokeAllSessions' }] }]);
+  });
+
+  test('提前 return 的记录类型（notification-sink）同样把效果升上去', () => {
+    const seen: KeyLogEffect[][] = [];
+    const apply = bindKeyLogProjection({
+      ...deps([]),
+      onKeyLogEffects: (_userId, effects) => seen.push(effects),
+    });
+    apply(
+      'u1',
+      step('notification-sink', new Uint8Array(), [
+        { type: 'revokeSessionsByCredential', credentialId: 'cred' },
+      ])
+    );
+    expect(seen).toEqual([[{ type: 'revokeSessionsByCredential', credentialId: 'cred' }]]);
   });
 
   test('吊销的是自己不触发断链；别的记录类型也不触发', () => {

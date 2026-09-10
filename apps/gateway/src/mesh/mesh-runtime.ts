@@ -100,6 +100,7 @@ import {
 } from './rtc';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
 import { authenticateRequest } from './session-middleware';
+import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import { openHttpStream } from './stream-targets';
 import type {
   DispatchContext,
@@ -712,23 +713,29 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
     });
   }
   const tearingDown = new WeakSet<GatewaySession>();
-  function verifyBoundSession(entry: RegisteredGatewaySession): boolean {
+  /**
+   * 直连入站帧的会话校验：逐帧压库太贵，按复验窗口节流（`session.closed` 的判定不节流）；
+   * 撤销的即时性由 key log 效果回调兜底。`force` 供那条回调复核用，绕过节流真查一次库。
+   */
+  function verifyBoundSession(entry: RegisteredGatewaySession, force = false): boolean {
     if (entry.session.closed) {
       teardownBinding(entry);
       return false;
     }
     const now = Date.now();
+    if (!force && !sessionVerifyDue(entry, now)) return true;
     const verified = s.nodeSessionStore.verify(entry.sid, { viaNodeId: entry.via, now });
     if (!verified.ok) {
       teardownBinding(entry);
       return false;
     }
     entry.lastVerifyAt = now;
+    entry.nextVerifyAt = sessionVerifyDeadline(verified.session, now);
     return true;
   }
   /**
-   * `close` 缺省即「会话真的失效了」，关成 4401；链路侧拆流由调用方给非终止码，
-   * 否则入口会把每次链路抖动都当成需要重新登录透给浏览器。注册表清理对两条路径一致。
+   * `close` 缺省即「会话真的失效了」关成 4401；链路侧拆流由调用方给非终止码，
+   * 否则入口会把链路抖动当成需要重新登录透给浏览器。注册表清理对两条路径一致。
    */
   function teardownBinding(entry: RegisteredGatewaySession, close?: GatewaySessionClose): void {
     if (tearingDown.has(entry.session)) return;
@@ -739,13 +746,11 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
       entry.pc?.close();
     } catch {}
     bulk.abortByOwner(entry.connectionId);
+    const code = close?.code ?? WS_CLOSE_LOGIN_REQUIRED;
+    const reason = close?.reason ?? 'NODE_LOGIN_REQUIRED';
     if (!entry.session.closed && typeof wsServer.closeSession === 'function') {
       try {
-        wsServer.closeSession(
-          entry.session,
-          close?.code ?? WS_CLOSE_LOGIN_REQUIRED,
-          close?.reason ?? 'NODE_LOGIN_REQUIRED'
-        );
+        wsServer.closeSession(entry.session, code, reason);
       } catch {}
     }
   }
@@ -768,6 +773,11 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
     onNodeRevoked: (nodeId) => {
       stores.peerHolder.manager?.onRevoked(nodeId);
       stores.emitRevoked(nodeId);
+    },
+    // 所有应用路径（本地追加、uplink / 中继同步、peer 追赶）都汇到 onApplied：撤销效果
+    // 只有从这里升上去，别处做的改密 / 删通行密钥同步过来才会即时断开已挂载的连接。
+    onKeyLogEffects: (uid, effects) => {
+      stores.httpHolder.runtime?.applyKeyLogEffects(uid, effects);
     },
   });
   const bindings = createSessionBindings(stores);
@@ -945,14 +955,6 @@ function startTlsFingerprintPoll(
   return scheduler.interval(() => {
     void refresh();
   }, intervalMs);
-}
-
-/** 会话被撤销时连带拆掉挂在 mesh 流上的网关会话（本地浏览器 socket 由 MeshHttp 自己关）。 */
-function revokeBoundSessions(d: MeshDeps, target: { uid?: string; sid?: string }): void {
-  const entries = target.sid
-    ? d.sessions.listBySid(target.sid)
-    : d.sessions.listByUid(target.uid ?? '');
-  for (const entry of entries) d.teardownBinding(entry);
 }
 
 function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn) {
@@ -1337,7 +1339,8 @@ function wireMeshHttp(
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
-    onSessionsRevoked: (target) => revokeBoundSessions(d, target),
+    // 本地浏览器 socket 由 MeshHttp 自己关，挂在 mesh 流上的这批只复验、失效的才拆。
+    onSessionsRevoked: (target) => d.sessions.reverifyRevoked(target, d.verifyBoundSession),
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
   http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));
@@ -1434,14 +1437,9 @@ function assembleMeshRuntime(
     localUiGuard: http.localUiGuard.bind(http),
     guardGatewayWebSocket: http.guardGatewayWebSocket.bind(http),
     rewriteSelf: http.rewriteSelf.bind(http),
-    closeSocketsForUser: (uid) => {
-      http.closeSocketsForUser(uid);
-      for (const entry of sessions.listByUid(uid)) d.teardownBinding(entry);
-    },
-    closeSocketsForSid: (sid) => {
-      http.closeSocketsForSid(sid);
-      for (const entry of sessions.listBySid(sid)) d.teardownBinding(entry);
-    },
+    // 挂在 mesh 流上的会话由 MeshHttp 的 onSessionsRevoked 复核后处理，这里不再无条件拆。
+    closeSocketsForUser: (uid) => http.closeSocketsForUser(uid),
+    closeSocketsForSid: (sid) => http.closeSocketsForSid(sid),
     touchSocket: http.touchSocket.bind(http),
     websocket: {
       open: (ws) => http.handleWebSocket.open(ws),

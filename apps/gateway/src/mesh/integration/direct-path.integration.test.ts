@@ -457,6 +457,8 @@ describe('direct path integration', () => {
     await waitUntil(() => wrongReplies.length > 0, 2_000);
     expect(wrongReplies.some((row) => row.includes('permission_denied'))).toBe(true);
 
+    // 直连的逐帧校验按 WS_SESSION_VERIFY_MS 节流，撤销的即时性由撤销通知（登出 / key log
+    // 效果）走 onSessionsRevoked 复核保证：复核发现真失效才断，这里正是那条路。
     sessionStore.revoke(sid);
     const ping = wsBorsh.encodeEnvelope(
       wsBorsh.KIND_PING,
@@ -466,6 +468,8 @@ describe('direct path integration', () => {
     for (const part of fragmentFrame(1, ping, 16_384)) {
       dc.sendMessageBinary(Buffer.from(part));
     }
+    expect(session.closed).toBe(false);
+    mesh.closeSocketsForSid(sid);
     await waitUntil(() => session.closed, 3_000);
     expect(session.closed).toBe(true);
     expect(dc.closed).toBe(true);

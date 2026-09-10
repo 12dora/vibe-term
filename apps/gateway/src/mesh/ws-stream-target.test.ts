@@ -5,6 +5,7 @@ import type { NodeSessionStore, NodeSessionVerifyReason } from '../auth/node-ses
 import type { WebSocketServer } from '../ws';
 import type { GatewaySession } from '../ws/gateway-session';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS } from './mesh-deps';
+import { CID_MAX_LENGTH } from './mesh-session-registry';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import {
   type GatewaySessionClose,
@@ -34,7 +35,10 @@ function fakeWsServer(onDecoded?: () => void): {
   return { server, sessionCloses };
 }
 
-function countingStore(plan: () => NodeSessionVerifyReason | null): {
+function countingStore(
+  plan: () => NodeSessionVerifyReason | null,
+  expiry?: (now: number) => { expiresAt: number; hardExpiresAt: number }
+): {
   store: NodeSessionStore;
   calls: number[];
 } {
@@ -45,7 +49,10 @@ function countingStore(plan: () => NodeSessionVerifyReason | null): {
       const reason = plan();
       return reason
         ? { ok: false as const, reason }
-        : { ok: true as const, session: { userId: 'user-1' } };
+        : {
+            ok: true as const,
+            session: { userId: 'user-1', ...(expiry ? expiry(input.now) : {}) },
+          };
     },
   } as unknown as NodeSessionStore;
   return { store, calls };
@@ -174,6 +181,59 @@ describe('mesh ws 流的拆解语义', () => {
     await opened.send(HELLO);
     await Bun.sleep(20);
     expect(calls.length).toBe(3);
+  });
+
+  test('复验窗口不越过会话过期时刻：TTL 不会被节流拖软', async () => {
+    let now = 1_000;
+    const expiresAt = now + 30_000;
+    const { server } = fakeWsServer();
+    const { store, calls } = countingStore(
+      () => (now >= expiresAt ? 'expired' : null),
+      () => ({ expiresAt, hardExpiresAt: expiresAt + 1e9 })
+    );
+    const { opened } = await attachStream({ store, server, now: () => now });
+    await opened.send(HELLO);
+    await Bun.sleep(20);
+    // 握手 + 第一帧；下一次复验被会话过期时刻拉到 30 s 后，而不是 5 分钟后。
+    expect(calls.length).toBe(2);
+    now += 29_000;
+    await opened.send(HELLO);
+    await Bun.sleep(20);
+    expect(calls.length).toBe(2);
+    now += 2_000;
+    await opened.send(HELLO);
+    const closed = await opened.stream.closed;
+    expect(decodeTerminalStreamClose(closed.message)).toEqual({
+      code: WS_CLOSE_LOGIN_REQUIRED,
+      reason: 'NODE_LOGIN_REQUIRED:expired',
+    });
+  });
+
+  test('cid 里的控制字符与超长内容被净化后才进日志与注册表', async () => {
+    const { server } = fakeWsServer();
+    const { store } = countingStore(() => null);
+    const [a, b] = createInMemoryLinkPair();
+    const seen: Array<string | undefined> = [];
+    b.onStream((stream) => {
+      void acceptWsStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: store,
+        wsServer: server,
+        onGatewaySession: (_session, auth) => {
+          seen.push(auth.cid);
+          return true;
+        },
+        onGatewaySessionClose: () => {},
+      });
+    });
+    const opened = await openWsStream(a, 'sid-1', `tab\n[mesh] forged log line ${'x'.repeat(200)}`);
+    await opened.send(HELLO);
+    await Bun.sleep(20);
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toBe(`tabmeshforgedlogline${'x'.repeat(44)}`);
+    expect(seen[0]).not.toContain('\n');
+    expect((seen[0] as string).length).toBe(CID_MAX_LENGTH);
+    opened.close();
   });
 
   test('握手就鉴权失败时用 4401 终止码 RST，入口不再空转 failover', async () => {

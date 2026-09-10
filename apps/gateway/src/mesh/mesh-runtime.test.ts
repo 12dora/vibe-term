@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import {
   DOMAIN_CERTIFICATE,
+  type KeyLogEffect,
   encodeAdmitNodePayload,
   encodeBase64url,
   encodeCertificate,
@@ -22,6 +23,7 @@ import { HubTrustStore } from '../auth/hub-trust-store';
 import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
+import type { AppliedKeyLogStep } from '../auth/user-key-persistence';
 import { runtimeController } from '../control/runtime';
 import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
@@ -49,6 +51,26 @@ import {
 } from './test-support';
 import type { DispatchHttp } from './types';
 import { decodeUplinkCtl, encodeUplinkCtl } from './uplink-protocol';
+
+/** 只带会话效果的最小 AppliedKeyLogStep：投影只读 `record.type` 与 `effects`。 */
+function appliedStep(effects: KeyLogEffect[]): AppliedKeyLogStep {
+  return {
+    input: { bytes: new Uint8Array(), sig: new Uint8Array() },
+    record: {
+      seq: 1n,
+      prev_hash: new Uint8Array(32),
+      root_epoch: 1,
+      uid: 'user-1',
+      type: 'remove-passkey',
+      payload: new Uint8Array(),
+      signer: 'root',
+      credential_id: null,
+    } as unknown as AppliedKeyLogStep['record'],
+    hash: new Uint8Array(32),
+    next: {} as AppliedKeyLogStep['next'],
+    effects,
+  };
+}
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
   return {
@@ -286,6 +308,65 @@ describe('createMeshRuntime', () => {
 
     await mesh.stop();
     expect(order).toEqual(['peer', 'uplink', 'rtc']);
+  });
+
+  test('同步来的会话撤销效果即时拆掉 mesh 会话，且只拆真失效的那条', async () => {
+    const { db, close } = createMigratedAuthDb();
+    seedUser(new UserStore(db));
+    const sessionStore = new NodeSessionStore(db);
+    const closes: Array<{ code: number; reason: string }> = [];
+    const gateway = fakeGateway(db);
+    (gateway as { wsServer: unknown }).wsServer = {
+      closeSession(_session: GatewaySession, code: number, reason: string) {
+        closes.push({ code, reason });
+      },
+    };
+    const mesh = await createMeshRuntime({
+      db,
+      gateway,
+      config: {
+        roles: { hub: false, node: true, relay: false },
+        hubUrl: 'http://127.0.0.1:9',
+        peerPort: 0,
+        stunServers: [],
+      },
+      startPeerServer: false,
+      loadNative: async () => null,
+    });
+    fixtures.push({ close, stop: () => mesh.stop() });
+    const now = Date.now();
+    const issue = () =>
+      sessionStore.issue({
+        userId: 'user-1',
+        viaNodeId: 'entry-1',
+        sessPublicKey: new Uint8Array(32),
+        delegationMethod: 'root',
+        now,
+      });
+    const kept = issue();
+    const doomed = issue();
+    const keptSession = new GatewaySession({ primary: createFakeCarrier() });
+    const doomedSession = new GatewaySession({ primary: createFakeCarrier() });
+    for (const [sid, session] of [
+      [kept.sid, keptSession],
+      [doomed.sid, doomedSession],
+    ] as const) {
+      expect(mesh.registerGatewaySession({ sid, uid: 'user-1', via: 'entry-1', session }).ok).toBe(
+        true
+      );
+    }
+
+    // 一次 remove-passkey 只吊销该凭证签发的会话：另一条照样有效，不该被连坐。
+    sessionStore.revoke(doomed.sid);
+    // uplink / 中继同步、peer 追赶、本地追加全都汇到 onApplied：撤销效果从这里升上去。
+    mesh.userKeyService.onApplied?.(
+      'user-1',
+      appliedStep([{ type: 'revokeSessionsByCredential', credentialId: 'cred' }])
+    );
+
+    expect(mesh.sessions.getBySession(doomedSession)).toBeNull();
+    expect(mesh.sessions.getBySession(keptSession)).not.toBeNull();
+    expect(closes).toEqual([{ code: 4401, reason: 'NODE_LOGIN_REQUIRED' }]);
   });
 
   test('peer inbound extensions preserve context, enforce auth and fall through to restart', async () => {

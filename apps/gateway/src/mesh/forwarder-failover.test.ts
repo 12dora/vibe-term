@@ -3,6 +3,9 @@ import { wsBorsh } from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import {
   type ForwardPump,
+  STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
+  STREAM_FAILOVER_HELLO_WAIT_MS,
+  STREAM_FAILOVER_NO_HELLO_LIMIT,
   STREAM_STALE_INPUT_TTL_MS,
   type StreamFailoverHost,
   dropStaleQueuedInput,
@@ -343,11 +346,12 @@ describe('续流握手失败的归因', () => {
     );
   }
 
-  test('新流在 HELLO 回来前就被拆掉：继续换链路重试，不判成节点版本太旧', async () => {
+  test('新流在 HELLO 回来前就被拆掉：换链路重试，但连续没回音就收手（不判成节点版本太旧）', async () => {
     const pump = makePump();
     pump.stream = null;
     pump.streamAlive = false;
     pump.replay.hello = helloC2S;
+    const waits: number[] = [];
     const fixture = trackingHost({
       // 每一轮刚绑上就断：对端一个字节都没答
       bindStream(target, stream, transport) {
@@ -355,10 +359,51 @@ describe('续流握手失败的归因', () => {
         target.streamAlive = false;
         target.boundTransport = transport;
       },
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
     });
     await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
-    expect(fixture.opened.length).toBe(STREAM_FAILOVER_MAX_ATTEMPTS);
-    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-exhausted' }]);
+    // 静默重试有上限：不再把浏览器晾满 9 轮退避。
+    expect(fixture.opened.length).toBe(STREAM_FAILOVER_NO_HELLO_LIMIT);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
+    // 第一轮给足 2 s，之后每轮只等 500 ms。
+    const helloWaits = waits.filter((ms) =>
+      [STREAM_FAILOVER_HELLO_WAIT_MS, STREAM_FAILOVER_HELLO_RETRY_WAIT_MS].includes(ms)
+    );
+    expect(helloWaits).toEqual([
+      STREAM_FAILOVER_HELLO_WAIT_MS,
+      STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
+      STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
+    ]);
+  });
+
+  test('中间有一轮答上了 HELLO：没回音的计数清零，重试预算不被前面几轮吃掉', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    pump.replay.hello = helloC2S;
+    let round = 0;
+    const fixture = trackingHost({
+      // 每一轮刚绑上就断
+      bindStream(target, stream, transport) {
+        round += 1;
+        target.stream = stream;
+        target.streamAlive = false;
+        target.boundTransport = transport;
+      },
+      // 第 2 轮对端答了一个达标 HELLO（流已经断了，续不成，但不是「没回音」）
+      sendToStream(target, _stream, bytes) {
+        if (bytes !== target.replay.hello || round !== 2) return;
+        target.replay.noteInbound(helloS2C('2.0.0'));
+        target.helloWait?.();
+        target.helloWait = null;
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    // 第 2 轮清零，之后再攒满 3 轮才收手：1 + 1 + 3 = 5 轮。
+    expect(fixture.opened.length).toBe(5);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
   });
 
   test('对端答了 HELLO 但版本不达标：才关成 node-too-old', async () => {

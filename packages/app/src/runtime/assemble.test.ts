@@ -334,6 +334,7 @@ describe('assembleVibeTerm role matrix', () => {
             via: entry.via,
             session: entry.session,
             lastVerifyAt: 0,
+            nextVerifyAt: 0,
           },
         };
       },

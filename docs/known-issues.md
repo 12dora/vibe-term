@@ -67,3 +67,11 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 
 另一侧的限制：远程发起的升级（入口 / hub 转发过来的 `POST /api/system/upgrade`）一律要求目标版本
 ≥ 1.1.39。想让某个节点装回更早的版本，只能在那台机器上本机执行 `vibeterm upgrade --version <ver>`；且**升到 2.0.0 完成安装目录迁移之后不支持降回 1.x**（旧 CLI 只认旧目录、旧 label 与 `TMEX_*` 键），见 [改名迁移](./operations/rename-migration.md)。
+
+## KI-12：混合版本网内旧目标节点仍把所有转发流收尾报成 4401
+
+2.0.8 之前的节点在拆掉任何转发来的浏览器终端流时（链路抖动、入口迁移流、读失败）都会回
+`vibeterm-close:4401:NODE_LOGIN_REQUIRED`，入口据此把「需要登录」透给浏览器。修复在**目标节点侧**
+（见 [mesh 架构](./architecture/mesh-architecture.md) §3），只升级入口不解决：新版入口连旧目标仍会收到
+误报的 4401。2.0.8 起前端收到 4401 会先用带会话的 HTTP 探测再下结论，能把症状压成一次退避重连，
+但根治要把全网节点升到 ≥ 2.0.8。
