@@ -5,6 +5,11 @@ import { describe, expect, test } from 'bun:test';
 import type { AuthApi, AuthRequiredDetail, MeshNode } from '@vibeterm/api-client/auth/index';
 import { wsBorsh } from '@vibeterm/shared';
 import { bytesToHex, encodeBase64url, sha256 } from '@vibeterm/shared/auth';
+import {
+  clearDirectLinkAvailability,
+  isDirectLinkUnavailable,
+  markDirectLinkUnavailable,
+} from './direct-link-availability';
 import { HubApiError, type HubNodeRow } from './hub-api';
 import { HUB_STALE_MS, startHubPolling } from './hub-polling';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
@@ -18,6 +23,7 @@ import {
   getMeshNodesState,
   hubCandidateIds,
   loadHubNodes,
+  markLoggedIn,
   mergeNodes,
   noteHubLoadFailure,
   patchNodesWithEvent,
@@ -1007,23 +1013,49 @@ function hubPollingHarness() {
   return { state, options };
 }
 
+describe('markLoggedIn 与直连负缓存', () => {
+  const ENTRY = 'e'.repeat(32);
+  const NODE = 'f'.repeat(32);
+
+  test('该 node 重新登录成功即清掉「这条入口给不出直连」的负结论', () => {
+    // 负结论有可能是误判：中转 / hub 会把自己的 nodeId 盖在真正的会话过期 401 上。
+    markDirectLinkUnavailable(NODE, ENTRY);
+    expect(isDirectLinkUnavailable(NODE, ENTRY)).toBe(true);
+
+    markLoggedIn(NODE);
+    expect(isDirectLinkUnavailable(NODE, ENTRY)).toBe(false);
+    clearDirectLinkAvailability();
+  });
+});
+
 describe('hub 打不通时的退避', () => {
   const CAND_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
   const CAND_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
 
-  test('全部候选打不通时给每台各记一次', () => {
+  test('传输层异常时给每台候选各记一次', () => {
     const noted: string[] = [];
-    noteHubLoadFailure([CAND_A, CAND_B], new HubApiError('hub_nodes_failed', 502), (id) =>
-      noted.push(id)
-    );
+    noteHubLoadFailure([CAND_A, CAND_B], new TypeError('Failed to fetch'), (id) => noted.push(id));
     expect(noted).toEqual([CAND_A, CAND_B]);
   });
 
-  test('hub 的拒登结论不记退避', () => {
+  test('转发器的 NODE_UNREACHABLE 同样记', () => {
     const noted: string[] = [];
-    noteHubLoadFailure([CAND_A], new HubApiError('NODE_LOGIN_REQUIRED', 401), (id) =>
-      noted.push(id)
-    );
+    noteHubLoadFailure([CAND_A], new HubApiError('NODE_UNREACHABLE', 503), (id) => noted.push(id));
+    expect(noted).toEqual([CAND_A]);
+  });
+
+  test('服务端答过话的失败一律不记（拒登、500、被取消）', () => {
+    const noted: string[] = [];
+    const aborted = new Error('aborted');
+    aborted.name = 'AbortError';
+    for (const error of [
+      new HubApiError('NODE_LOGIN_REQUIRED', 401),
+      new HubApiError('hub_nodes_failed', 500),
+      new HubApiError('hub_nodes_failed', 404),
+      aborted,
+    ]) {
+      noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
+    }
     expect(noted).toEqual([]);
   });
 

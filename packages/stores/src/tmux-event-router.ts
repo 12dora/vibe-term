@@ -27,6 +27,8 @@ export interface TmuxEventRouterContext extends TmuxDomainEventContext {
   /** 连接进入 READY：重连设备并重放 pane 订阅 */
   onReady(): void;
   sendWindowStyleForCurrentTheme(deviceId: string): void;
+  /** 本地时钟；只有测试会注入。 */
+  now?: () => number;
 }
 
 type EventOfType<T extends GatewayTransportEvent['type']> = Extract<
@@ -123,11 +125,19 @@ function handleTransportStateChange(ctx: TmuxEventRouterContext, state: Connecti
 
 type DeviceLatencyMap = Record<string, DeviceLatencySample | undefined>;
 
-function sameReading(
-  prev: DeviceLatencySample,
-  event: { rttMs: number; rawMs: number; hop: DeviceLatencySample['hop'] }
-): boolean {
+type DeviceLatencyEvent = EventOfType<'device-latency'>;
+
+function sameReading(prev: DeviceLatencySample, event: DeviceLatencyEvent): boolean {
   return prev.rttMs === event.rttMs && prev.rawMs === event.rawMs && prev.hop === event.hop;
+}
+
+/**
+ * 乱序旧帧一律丢（否则 `sampledAt` 会被倒回去）；同一采样时刻只有读数变了才算新消息，
+ * 完全相同的重复帧不写 store。
+ */
+function acceptsDeviceLatency(prev: DeviceLatencySample, event: DeviceLatencyEvent): boolean {
+  if (event.sampledAt !== prev.sampledAt) return event.sampledAt > prev.sampledAt;
+  return !sameReading(prev, event);
 }
 
 /** 设备断开后那条宿主一跳的读数就过期了，留着会让徽标继续加一个不存在的跳。 */
@@ -197,16 +207,18 @@ const handlers: TmuxEventHandlers = {
     }));
   },
 
-  // 读数不变也要把 `sampledAt` 推进：UI 靠它判断这一跳是不是还在被上报（网关停播、
-  // 设备静默掉线都不会有 device-disconnected）。只有重复帧与乱序旧帧才丢掉。
+  // 读数不变的帧也要落地：`receivedAt` 是 UI 判断「这一跳还在不在上报」的唯一依据
+  // （网关停播、设备静默掉线都不会有 device-disconnected），而它只能在收到时本地盖章——
+  // 网关时钟与浏览器时钟未必对齐，拿 `sampledAt` 判新鲜会把时钟慢的节点一直判死。
   'device-latency': (event, ctx) => {
     const prev = ctx.getState().deviceLatency[event.deviceId];
-    if (prev && sameReading(prev, event) && event.sampledAt <= prev.sampledAt) return;
+    if (prev && !acceptsDeviceLatency(prev, event)) return;
     const sample: DeviceLatencySample = {
       rttMs: event.rttMs,
       rawMs: event.rawMs,
       hop: event.hop,
       sampledAt: event.sampledAt,
+      receivedAt: (ctx.now ?? Date.now)(),
     };
     ctx.setState((state) => ({
       deviceLatency: { ...state.deviceLatency, [event.deviceId]: sample },

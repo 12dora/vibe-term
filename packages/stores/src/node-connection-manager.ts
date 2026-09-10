@@ -29,7 +29,11 @@ import {
 } from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
-import { NodeSessionGuard, type NodeSessionProbe } from './node-session-guard';
+import {
+  type NodeReloginResult,
+  NodeSessionGuard,
+  type NodeSessionProbe,
+} from './node-session-guard';
 import { type AppRuntimeOptions, createBrowserHostServices } from './runtime';
 import { type UIStore, createUIStore } from './ui';
 
@@ -95,7 +99,14 @@ export interface NodeConnectionManagerOptions {
    * 探测确认「该 node 要重新登录」后的静默重登（宿主注入，fe 用会话钥重登一次）。
    * 不接实现时退回原有行为：直接派发「登录此节点」。
    */
-  reloginNode?: (nodeId: string) => Promise<boolean>;
+  reloginNode?: (nodeId: string) => Promise<NodeReloginResult>;
+  /**
+   * 判定该 node 确实要重新登录时，把它在列表里标未登录（宿主注入）。
+   * 没有它，界面只收到一个事件却不会出现「登录此节点」按钮——用户没有任何可点的东西。
+   */
+  markNodeLoggedOut?: (nodeId: string) => void;
+  /** 4401 重连间隔的下限（宿主按该 node 的不可达退避给出）。 */
+  reconnectDelayFloorMs?: (nodeId: string) => number;
   /**
    * 宿主自建连接（如 fe 的直连包装）。
    *
@@ -175,6 +186,12 @@ export class NodeConnectionManager {
       this.guard = new NodeSessionGuard({
         ...(this.options.probeNodeSession ? { probe: this.options.probeNodeSession } : {}),
         ...(this.options.reloginNode ? { relogin: this.options.reloginNode } : {}),
+        ...(this.options.markNodeLoggedOut
+          ? { markLoggedOut: this.options.markNodeLoggedOut }
+          : {}),
+        ...(this.options.reconnectDelayFloorMs
+          ? { reconnectDelayFloorMs: this.options.reconnectDelayFloorMs }
+          : {}),
         reconnect: (nodeId) => this.records.get(nodeId)?.entry.connection.client.connect(),
         onLoginRequired: (nodeId) => handleNodeLoginRequired(nodeId, nodeWsUrl(nodeId)),
         schedule: (fn, ms) => this.schedule(fn, ms),
@@ -182,6 +199,14 @@ export class NodeConnectionManager {
       });
     }
     return this.guard;
+  }
+
+  /**
+   * 页面重新可见 / 网络恢复：把 4401 恢复里待发的重连提到现在。
+   * 判定过「这台 node 要重新登录」的那些也一并再试一次，用户不必干等下一个慢速拍。
+   */
+  resumeSessionRecovery(): void {
+    this.guard?.resume();
   }
 
   private create(nodeId: string): EntryRecord {

@@ -20,6 +20,7 @@ const { DeviceNodeBadges, NodeLinkDiagnostics, directFailureRows, formatLinkSinc
 const {
   formatLinkBadgeLabel,
   freshHostHop,
+  hostHopExpiryDelayMs,
   linkDetailKind,
   reachLabelKey,
   resolveLinkBadge,
@@ -51,16 +52,18 @@ function latency(overrides: Partial<NodeLatency> = {}): NodeLatency {
 
 /**
  * 宿主一跳的读数片段，和 `latency()` 一起用：`latency({ browserToNodeMs: 8, ...hostHop(2) })`。
- * 采样时刻默认取 `NOW`，判过期的用例自己给一个更早的时刻。
+ * 到达时刻默认取 `NOW`（判过期只看它），判过期的用例自己给一个更早的时刻；
+ * 网关采样时刻默认与到达时刻相同，验证时钟偏移的用例单独给。
  */
 function hostHop(
   rttMs: number,
   hop: 'local' | 'ssh' = 'local',
   rawMs = rttMs,
-  sampledAt = NOW
+  receivedAt = NOW,
+  sampledAt = receivedAt
 ): Pick<NodeLatency, 'hostHop' | 'hostHopSupported'> {
   return {
-    hostHop: { rttMs, rawMs, hop, sampledAt },
+    hostHop: { rttMs, rawMs, hop, sampledAt, receivedAt },
     hostHopSupported: true,
   };
 }
@@ -117,16 +120,44 @@ describe('totalLatencyMs', () => {
     expect(freshHostHop(stale, NOW)).toBeNull();
   });
 
-  test('采样时刻不可信（0 / 非有限 / 网关时钟超前）时不判过期', () => {
+  test('到达时刻不可信（0 / 非有限）时不判过期', () => {
     expect(
       totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, 0) }), NOW)
     ).toBe(22);
     expect(
       totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, Number.NaN) }), NOW)
     ).toBe(22);
-    expect(
-      totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, NOW + 60_000) }), NOW)
-    ).toBe(22);
+  });
+
+  // 网关与浏览器的时钟不对齐是常态：新鲜度只看本地盖章的到达时刻，不看网关的采样时刻
+  test('网关时钟慢一天 / 快一天都不影响新鲜度', () => {
+    const behind = latency({
+      browserToNodeMs: 18,
+      ...hostHop(4, 'local', 4, NOW, NOW - 86_400_000),
+    });
+    expect(totalLatencyMs(behind, NOW)).toBe(22);
+    const ahead = latency({
+      browserToNodeMs: 18,
+      ...hostHop(4, 'local', 4, NOW, NOW + 86_400_000),
+    });
+    expect(totalLatencyMs(ahead, NOW)).toBe(22);
+    // 反过来：网关时刻很新但帧其实是 60 s 前收到的，照样判过期
+    const stale = latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, NOW - 60_000, NOW) });
+    expect(totalLatencyMs(stale, NOW)).toBe(18);
+  });
+});
+
+describe('hostHopExpiryDelayMs', () => {
+  test('给出距离过期还有多久（按本地到达时刻）：徽标据此只在那一刻醒一次，不做周期 tick', () => {
+    expect(hostHopExpiryDelayMs(NOW, NOW)).toBe(45_000);
+    expect(hostHopExpiryDelayMs(NOW - 30_000, NOW)).toBe(15_000);
+  });
+
+  test('已经过期给 0（立即重判），无从判断给 null（不安排定时器）', () => {
+    expect(hostHopExpiryDelayMs(NOW - 60_000, NOW)).toBe(0);
+    expect(hostHopExpiryDelayMs(null, NOW)).toBeNull();
+    expect(hostHopExpiryDelayMs(0, NOW)).toBeNull();
+    expect(hostHopExpiryDelayMs(Number.NaN, NOW)).toBeNull();
   });
 });
 
@@ -744,7 +775,13 @@ describe('DeviceNodeBadges', () => {
       wsLatencyRawMs?: number | null;
       deviceLatency?: Record<
         string,
-        { rttMs: number; rawMs: number; hop: 'local' | 'ssh'; sampledAt: number }
+        {
+          rttMs: number;
+          rawMs: number;
+          hop: 'local' | 'ssh';
+          sampledAt: number;
+          receivedAt: number;
+        }
       >;
       deviceLatencySupported?: boolean;
     }
@@ -764,9 +801,9 @@ describe('DeviceNodeBadges', () => {
       wsLatencyMs: 4,
       wsLatencyRawMs: 4,
       deviceLatencySupported: true,
-      // 组件按真实时钟判过期：种子样本要用当下时刻，否则 45 s 之外的读数不会计入
+      // 组件按真实时钟判过期：种子样本的到达时刻要用当下时刻，否则 45 s 之外的读数不会计入
       deviceLatency: {
-        'dev-1': { rttMs: 3, rawMs: 3, hop: 'local', sampledAt: Date.now() },
+        'dev-1': { rttMs: 3, rawMs: 3, hop: 'local', sampledAt: NOW, receivedAt: Date.now() },
       },
     });
     const html = renderToStaticMarkup(<DeviceNodeBadges nodeId="self" deviceId="dev-1" />);
@@ -784,7 +821,7 @@ describe('DeviceNodeBadges', () => {
       wsLatencyRawMs: 41,
       deviceLatencySupported: true,
       deviceLatency: {
-        'dev-1': { rttMs: 12, rawMs: 14, hop: 'ssh', sampledAt: Date.now() },
+        'dev-1': { rttMs: 12, rawMs: 14, hop: 'ssh', sampledAt: NOW, receivedAt: Date.now() },
       },
     });
     const html = renderToStaticMarkup(
@@ -820,7 +857,13 @@ describe('DeviceNodeBadges', () => {
       wsLatencyRawMs: 9,
       deviceLatencySupported: true,
       deviceLatency: {
-        'dev-1': { rttMs: 30, rawMs: 30, hop: 'local', sampledAt: Date.now() - 60_000 },
+        'dev-1': {
+          rttMs: 30,
+          rawMs: 30,
+          hop: 'local',
+          sampledAt: NOW,
+          receivedAt: Date.now() - 60_000,
+        },
       },
     });
     const html = renderToStaticMarkup(

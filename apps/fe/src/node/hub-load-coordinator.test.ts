@@ -60,6 +60,8 @@ interface Recorder {
   rows: HubNodeRow[] | null;
   loading: boolean;
   failure: HubFailureReason | null;
+  /** `failed` 收到的原始异常：按失败性质记账的调用方（不可达退避）要用它。 */
+  errors: unknown[];
 }
 
 function recorder(): Recorder {
@@ -68,6 +70,7 @@ function recorder(): Recorder {
     rows: null,
     loading: false,
     failure: null,
+    errors: [] as unknown[],
     sink: {
       // 与 `useHubLoadCoordinator` 的接线保持一致：换目标开跑与 reset 都清掉失败态。
       loading: (value, switched) => {
@@ -86,10 +89,11 @@ function recorder(): Recorder {
         state.rows = rows;
         state.failure = null;
       },
-      failed: (reason) => {
+      failed: (reason, error) => {
         state.events.push(`failed:${reason.kind}:${reason.message}`);
         state.rows = null;
         state.failure = reason;
+        state.errors.push(error);
       },
     },
   };
@@ -432,6 +436,48 @@ describe('HubLoadCoordinator', () => {
 
     expect(sink.rows).toBeNull();
     expect(sink.events).toEqual(['loading:true', 'reset']);
+  });
+});
+
+describe('failed 回调带上原始异常', () => {
+  test('原始异常原样交给 sink（记账方按它判失败性质）', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const boom = new TypeError('Failed to fetch');
+    await coordinator.load(() => Promise.reject(boom));
+    await flush();
+
+    expect(sink.errors).toEqual([boom]);
+  });
+
+  test('被更新的一代取代的过期失败根本不会回调（记账方不会为它记一笔）', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const slow = deferred();
+    const fast = deferred();
+
+    const first = coordinator.load(slow.request);
+    const second = coordinator.load(fast.request);
+    fast.resolve([]);
+    await second;
+    slow.reject(new TypeError('Failed to fetch'));
+    await first;
+    await flush();
+
+    expect(sink.errors).toEqual([]);
+  });
+
+  test('卸载之后到达的失败同样不回调', async () => {
+    const sink = recorder();
+    const coordinator = new HubLoadCoordinator(sink.sink);
+    const slow = deferred();
+    const pending = coordinator.load(slow.request);
+    coordinator.dispose();
+    slow.reject(new TypeError('Failed to fetch'));
+    await pending;
+    await flush();
+
+    expect(sink.errors).toEqual([]);
   });
 });
 

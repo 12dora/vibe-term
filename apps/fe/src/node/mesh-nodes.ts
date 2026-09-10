@@ -18,7 +18,6 @@ import {
   type HubFailureReason,
   HubLoadCoordinator,
   type HubRequest,
-  classifyHubFailure,
   isHubAuthCode,
 } from './hub-load-coordinator';
 import { HUB_POLL_MS, startHubPolling } from './hub-polling';
@@ -36,6 +35,7 @@ import {
 import type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
 import {
   isNodeRequestBlocked,
+  isUnreachableFailure,
   noteNodeReachable,
   noteNodeUnreachable,
 } from './node-unreachable-backoff';
@@ -182,14 +182,17 @@ export async function loadHubNodes(
 
 /**
  * 一台候选都没答上话：给每台记一次退避，轮询不再每 30 秒白撞一次转发超时（各 5 秒）。
- * 只认「打不通」，hub 的拒登结论要用户去处理，退避挡着只会让重试更难。
+ *
+ * 判据是 `isUnreachableFailure`（传输层异常 / 超时 / 转发器的 `NODE_UNREACHABLE`）而不是
+ * `classifyHubFailure`：后者是给**界面文案**用的粗分类，会把 404、500、被取消的请求
+ * 一并算成「不可达」，拿来加倍退避只会把能修的问题拖成打不通。
  */
 export function noteHubLoadFailure(
   candidates: readonly string[],
   error: unknown,
   note: (nodeId: string) => void = noteNodeUnreachable
 ): void {
-  if (classifyHubFailure(error).kind !== 'unreachable') return;
+  if (!isUnreachableFailure(error)) return;
   for (const id of candidates) note(id);
 }
 
@@ -420,7 +423,11 @@ interface HubStateSetters {
 }
 
 /** 协调器只建一次（`useState` 的 setter 恒等），挂载/卸载切它的写状态开关。 */
-function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
+function useHubLoadCoordinator(
+  setters: HubStateSetters,
+  /** 当前候选集；失败记账要按它逐台记（现读，协调器只建一次）。 */
+  candidatesRef: { current: readonly string[] }
+): HubLoadCoordinator {
   const { setHubNodes, setLoading, setFailure } = setters;
   const ref = useRef<HubLoadCoordinator | null>(null);
   if (ref.current === null) {
@@ -439,9 +446,12 @@ function useHubLoadCoordinator(setters: HubStateSetters): HubLoadCoordinator {
         setHubNodes(rows);
         setFailure(null);
       },
-      failed: (reason) => {
+      failed: (reason, error) => {
         setHubNodes(null);
         setFailure(reason);
+        // 记账挂在 sink 上而不是请求闭包里：被更新的一代取代的过期响应根本走不到这里，
+        // 换 hub / 卸载之后的迟到失败不该再给谁记一笔退避。
+        noteHubLoadFailure(candidatesRef.current, error);
       },
     });
   }
@@ -491,9 +501,6 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
       const result = await loadHubNodes(candidates, {
         list: (id) => (probe ? probe(id) : new HubApi(id).listNodes()),
         login,
-      }).catch((error: unknown) => {
-        noteHubLoadFailure(candidates, error);
-        throw error;
       });
       noteNodeReachable(result.hubNodeId);
       setActiveHubId(result.hubNodeId);
@@ -501,7 +508,9 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     };
   }, [enabled, probe, login, candidates]);
 
-  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setFailure });
+  const candidatesRef = useRef<readonly string[]>(candidates);
+  candidatesRef.current = candidates;
+  const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setFailure }, candidatesRef);
 
   useEffect(() => {
     void coordinator.load(request);

@@ -160,6 +160,33 @@ function useTmuxSlice<T>(store: TmuxStateReader, select: (state: TmuxState) => T
   return useSyncExternalStore(store.subscribe, read, read);
 }
 
+/**
+ * 宿主一跳按**字段**读，不整对象读：网关每 15 s 重发一帧，读数一模一样，store 里换的却是一个
+ * 新对象——整对象读会让 `useSyncExternalStore` 每次都判定为变更，徽标跟着空转。
+ */
+export function selectDeviceLatencyField<K extends keyof DeviceLatencySample>(
+  state: TmuxState,
+  deviceId: string | undefined,
+  field: K
+): DeviceLatencySample[K] | null {
+  if (!deviceId) return null;
+  return state.deviceLatency[deviceId]?.[field] ?? null;
+}
+
+/** 逐字段装配回样本；任一字段缺席即视作「这台设备还没有宿主一跳读数」。 */
+export function composeHostHop(fields: {
+  rttMs: number | null;
+  rawMs: number | null;
+  hop: DeviceLatencySample['hop'] | null;
+  sampledAt: number | null;
+  receivedAt: number | null;
+}): DeviceLatencySample | null {
+  const { rttMs, rawMs, hop, sampledAt, receivedAt } = fields;
+  if (rttMs === null || rawMs === null || hop === null) return null;
+  if (sampledAt === null || receivedAt === null) return null;
+  return { rttMs, rawMs, hop, sampledAt, receivedAt };
+}
+
 export function useNodeLatency(nodeId: string, deviceId?: string): NodeLatency {
   const store = useMemo<TmuxStateReader>(
     () => appNodeRuntimes.get(nodeId).runtime.stores.tmux,
@@ -168,8 +195,21 @@ export function useNodeLatency(nodeId: string, deviceId?: string): NodeLatency {
   const browserToNodeMs = useTmuxSlice(store, (state) => state.wsLatencyMs);
   const browserToNodeRawMs = useTmuxSlice(store, (state) => state.wsLatencyRawMs ?? null);
   const hostHopSupported = useTmuxSlice(store, (state) => state.deviceLatencySupported === true);
-  const hostHop = useTmuxSlice(store, (state) =>
-    deviceId ? (state.deviceLatency[deviceId] ?? null) : null
+  const rttMs = useTmuxSlice(store, (state) => selectDeviceLatencyField(state, deviceId, 'rttMs'));
+  const rawMs = useTmuxSlice(store, (state) => selectDeviceLatencyField(state, deviceId, 'rawMs'));
+  const hop = useTmuxSlice(store, (state) => selectDeviceLatencyField(state, deviceId, 'hop'));
+  const sampledAt = useTmuxSlice(store, (state) =>
+    selectDeviceLatencyField(state, deviceId, 'sampledAt')
   );
-  return { browserToNodeMs, browserToNodeRawMs, hostHop, hostHopSupported };
+  const receivedAt = useTmuxSlice(store, (state) =>
+    selectDeviceLatencyField(state, deviceId, 'receivedAt')
+  );
+  const hostHop = useMemo(
+    () => composeHostHop({ rttMs, rawMs, hop, sampledAt, receivedAt }),
+    [rttMs, rawMs, hop, sampledAt, receivedAt]
+  );
+  return useMemo(
+    () => ({ browserToNodeMs, browserToNodeRawMs, hostHop, hostHopSupported }),
+    [browserToNodeMs, browserToNodeRawMs, hostHop, hostHopSupported]
+  );
 }

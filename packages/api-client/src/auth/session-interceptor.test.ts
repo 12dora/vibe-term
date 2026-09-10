@@ -143,16 +143,13 @@ describe('session interceptor', () => {
   });
 
   // 直连协商（`/api/mesh/connection`、`/api/rtc/authorize`）必须由目标 node 自己作答：
-  // 中转入口代答的 401 说的是「这条入口给不出直连」，与目标 node 的会话无关，
-  // 派事件出去会让该行显示「登录此节点」（每次 WS 重连撞一次）。
+  // 别人代答的 401 说的是「这条入口给不出直连」，与目标 node 的会话无关，
+  // 派事件出去只是每次 WS 重连白扰动一次。
   for (const negotiation of ['/api/rtc/authorize', '/api/mesh/connection']) {
     test(`直连协商 ${negotiation} 被入口代答的 401 不派任何事件`, async () => {
       const { events, navigated } = setup();
       const client = clientReturning(
-        () =>
-          new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: HUB_NODE }), {
-            status: 401,
-          })
+        () => new Response(JSON.stringify({ nodeId: HUB_NODE }), { status: 401 })
       );
       await client.fetch(`/n/${NODE_D}${negotiation}`);
       await flush();
@@ -161,6 +158,27 @@ describe('session interceptor', () => {
       expect(navigated).toEqual([]);
     });
   }
+
+  // 中转 / hub 会把自己的 nodeId 盖在真正的「会话过期」401 上，光看 nodeId 分不出来。
+  // 带 `NODE_LOGIN_REQUIRED` 的那种一律不咽，免得真过期的会话晚一步被发现。
+  test('直连协商 401 带 NODE_LOGIN_REQUIRED 时照旧按路径 node 派事件', async () => {
+    const { events, navigated } = setup();
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    const client = clientReturning(
+      () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: HUB_NODE }), {
+          status: 401,
+        })
+    );
+    await client.fetch(`/n/${NODE_D}/api/rtc/authorize`);
+    await flush();
+
+    expect(events).toEqual([
+      { nodeId: NODE_D, scope: 'node', path: `/n/${NODE_D}/api/rtc/authorize` },
+    ]);
+    expect(navigated).toEqual([]);
+    warn.mockRestore();
+  });
 
   test('直连协商 401 的 body 就是目标 node 自己时照旧派事件', async () => {
     const { events } = setup();

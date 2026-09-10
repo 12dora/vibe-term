@@ -25,6 +25,7 @@ import {
   createNodeConnection,
   directLinkSettled,
   disposeNodeQueryClient,
+  hasLoginRecovery,
   nodeQueryClient,
 } from './node-runtimes';
 
@@ -372,7 +373,9 @@ describe('createNodeConnection', () => {
   });
 
   test('这条入口最近答过「给不出直连」：负缓存命中就不再建控制器', async () => {
-    markDirectLinkUnavailable('node-b', null);
+    // 负缓存按 entry+node 记账，入口身份未知时既不记也不查，所以得先有入口 id。
+    setMeshNodesStateForTest({ entryNodeId: 'entry-node', nodes: [] });
+    markDirectLinkUnavailable('node-b', 'entry-node');
     let created = 0;
     const connection = createNodeConnection('node-b', {
       createConnection: () => fakeConnection(),
@@ -386,6 +389,25 @@ describe('createNodeConnection', () => {
 
     expect(created).toBe(0);
     expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+    clearDirectLinkAvailability();
+    resetMeshNodesStateForTest();
+  });
+
+  test('入口身份还没落地时不查负缓存，直连照常协商一次', async () => {
+    resetMeshNodesStateForTest();
+    markDirectLinkUnavailable('node-b', null);
+    let created = 0;
+    const connection = createNodeConnection('node-b', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+    });
+    await directLinkSettled(connection);
+
+    expect(created).toBe(1);
     clearDirectLinkAvailability();
   });
 });
@@ -781,5 +803,21 @@ describe('createAppNodeRuntimes：把 mesh 节点目录的查名函数接进 run
 
     resetMeshNodesStateForTest();
     manager.disposeAll();
+  });
+});
+
+// 4401 判定终局之后，用户点「登录此节点」（或门闸静默登录成功）就该立刻把连接拉起来。
+describe('hasLoginRecovery', () => {
+  const NODE = 'a'.repeat(32);
+
+  test('未登录 → 已登录才算恢复', () => {
+    const seen = new Map([[NODE, false]]);
+    expect(hasLoginRecovery(seen, [{ id: NODE, loggedIn: true }])).toBe(true);
+    expect(hasLoginRecovery(seen, [{ id: NODE, loggedIn: false }])).toBe(false);
+  });
+
+  test('一直是已登录、或第一次见到这台 node，都不算恢复', () => {
+    expect(hasLoginRecovery(new Map([[NODE, true]]), [{ id: NODE, loggedIn: true }])).toBe(false);
+    expect(hasLoginRecovery(new Map(), [{ id: NODE, loggedIn: true }])).toBe(false);
   });
 });

@@ -34,6 +34,7 @@ import {
   type NodeConnectionManagerOptions,
   normalizeNodeId,
 } from '@vibeterm/stores';
+import type { NodeReloginResult } from '@vibeterm/stores/node-session-guard';
 import {
   type GatewayConnection,
   type SocketFactory,
@@ -48,13 +49,21 @@ import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/type
 import i18n from 'i18next';
 import {
   type DirectLinkClientLike,
-  currentEntryNodeId,
   isDirectLinkUnavailable,
   watchDirectNegotiation,
 } from './direct-link-availability';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
+import { getMeshNodesState, markLoggedOut, subscribeMeshNodes } from './mesh-nodes';
+import { onPageRecovery } from './mesh-recovery';
 import { resolveMeshNodeName } from './node-names';
-import { recoverNodeSession } from './node-session-recovery';
+import { createGatedNodeApiClient, probeNodeSession } from './node-session-probe';
+import { type NodeSessionRecoveryOutcome, recoverNodeSession } from './node-session-recovery';
+import { nodeBackoffRemainingMs } from './node-unreachable-backoff';
+
+/** 当前入口自身的 nodeId（`/api/auth/mode` 还没落地时为 null）。 */
+function entryNodeIdNow(): string | null {
+  return getMeshNodesState().entryNodeId;
+}
 
 /**
  * `/mesh/ws` 的 `RTC_SIGNAL` 只有**一个** handler 槽（见 `mesh-events.ts` 的注释），
@@ -282,7 +291,7 @@ function attachDirectLink(
   const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
     if (!loaded || disposed) return;
     // 这条入口最近已经答过「给不出直连」：30 分钟内不再白协商一次（见 direct-link-availability）。
-    if (isDirectLinkUnavailable(nodeId, currentEntryNodeId())) return;
+    if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) return;
     const created = wiring.createController
       ? wiring.createController(nodeId, connection, cid)
       : defaultController(
@@ -290,7 +299,7 @@ function attachDirectLink(
           nodeId,
           connection,
           cid,
-          watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect)
+          watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect, entryNodeIdNow)
         );
     if (!created) return;
     direct = loaded;
@@ -334,6 +343,15 @@ export function createNodeConnection(
 }
 
 /**
+ * 静默重登的结局翻译。`skipped` 是「这一轮已经重登过一次」——会话理应还在，
+ * 调用方该继续重连而不是当场判定「需要登录」；`ignored`（self / 不该管的错误）按失败处理。
+ */
+function toReloginResult(outcome: NodeSessionRecoveryOutcome): NodeReloginResult {
+  if (outcome === 'recovered') return 'recovered';
+  return outcome === 'skipped' ? 'skipped' : 'failed';
+}
+
+/**
  * 宿主的 manager 接线。**生产与测试走同一份**：4401 的关闭码从真 socket → `createNodeConnection`
  * → manager 这条链上任何一环断了，测试就会红（不允许再用手动 `notifyClose()` 假装接通）。
  *
@@ -351,9 +369,20 @@ export function createAppNodeRuntimes(
     runtimeOptions: () => ({ resolveNodeName: resolveMeshNodeName }),
     // manager 把关闭码回调递进来，直接转给底层连接：4401 由 manager 统一处理。
     createConnection: (nodeId, onClose) => createNodeConnection(nodeId, { ...wiring, onClose }),
-    // 4401 的探测确认「这台 node 真的要重新登录」之后，用会话钥静默重登一次；
+    // 每 node 的 REST 都走带退避门的客户端：设备列表在包内有多个观察者，
+    // react-query 的 `enabled` 拦不住它们，只有客户端这一层收得住。
+    createApiClient: (nodeId) => createGatedNodeApiClient(nodeId),
+    // 4401 之后的会话探测：退避窗口里不发、自带 8 秒超时、成败回喂退避记账。
+    probeNodeSession,
+    // 探测确认「这台 node 真的要重新登录」之后，用会话钥静默重登一次；
     // 与设备列表 401 的自愈共用同一份记账，一轮失效不会重登两次。
-    reloginNode: (nodeId) => recoverNodeSession(nodeId).then((outcome) => outcome === 'recovered'),
+    // 三种结局如实传出去：`skipped`（这一轮已经登过）不等于失败，判成失败会让一次 4401
+    // 就走到「需要登录」的终局。
+    reloginNode: (nodeId) => recoverNodeSession(nodeId).then(toReloginResult),
+    // 判定终局时把该 node 标未登录：界面这才会出现「登录此节点」按钮。
+    markNodeLoggedOut: (nodeId) => void markLoggedOut(nodeId),
+    // 打不通的 node 正在退避里：4401 的重连不早于退避窗口结束，别去撞注定不通的链路。
+    reconnectDelayFloorMs: nodeBackoffRemainingMs,
     // 引用计数归零、runtime 真正回收时一并释放该 node 的查询缓存。
     onDispose: (nodeId) => disposeNodeQueryClient(nodeId),
     ...overrides,
@@ -414,3 +443,29 @@ export function disposeNodeQueryClient(nodeId: string | undefined): void {
   queryClients.delete(id);
   client.clear();
 }
+
+// 页面重新可见 / 网络恢复：把 4401 恢复里待发的重连提到现在（判定过终局的那些也再试一次）。
+onPageRecovery(() => appNodeRuntimes.resumeSessionRecovery());
+
+/**
+ * 有 node 从「未登录」翻成「已登录」：用户点了「登录此节点」，或门闸的静默登录成功了。
+ * 4401 判定终局时停掉的那条连接这时候就该拉起来，不必干等下一个 10 分钟的慢速拍。
+ */
+export function hasLoginRecovery(
+  previous: ReadonlyMap<string, boolean>,
+  next: readonly { id: string; loggedIn?: boolean }[]
+): boolean {
+  return next.some((node) => previous.get(node.id) === false && node.loggedIn === true);
+}
+
+function watchLoginRecovery(): void {
+  let seen = new Map<string, boolean>();
+  subscribeMeshNodes(() => {
+    const { nodes } = getMeshNodesState();
+    const recovered = hasLoginRecovery(seen, nodes);
+    seen = new Map(nodes.map((node) => [node.id, node.loggedIn === true]));
+    if (recovered) appNodeRuntimes.resumeSessionRecovery();
+  });
+}
+
+watchLoginRecovery();

@@ -37,20 +37,27 @@ export interface LinkBadgeDescriptor {
 
 /**
  * 宿主一跳的过期线：网关每 15 s 至少播一次，连丢三次就当它不再上报——网关停播与设备静默
- * 掉线都不会有 `device-disconnected`，只能靠采样时刻自己判。
+ * 掉线都不会有 `device-disconnected`，只能靠「上一帧是什么时候到的」自己判。
+ *
+ * 判的是 `receivedAt`（收到帧时本地盖的章）而不是 `sampledAt`（网关时钟）：两端时钟未必对齐，
+ * 拿网关时刻减浏览器时刻，会把时钟慢几分钟的节点永远判成「已停止上报」。
  */
 export const HOST_HOP_STALE_MS = 45_000;
 
-/**
- * 仍在上报的宿主一跳；过期或没有则为 `null`。采样时刻不可信（缺省 0、非有限、网关时钟超前）
- * 时不判过期——宁可多显示一跳，也不因对端时钟不准把真实读数抹掉。
- */
+/** 仍在上报的宿主一跳；过期或没有则为 `null`。 */
 export function freshHostHop(latency: NodeLatency, now: number): NodeLatency['hostHop'] {
   const sample = latency.hostHop;
   if (!sample) return null;
-  const at = sample.sampledAt;
-  if (!Number.isFinite(at) || at <= 0) return sample;
-  return now - at > HOST_HOP_STALE_MS ? null : sample;
+  return hostHopExpiryDelayMs(sample.receivedAt, now) === 0 ? null : sample;
+}
+
+/**
+ * 距离这一跳被判过期还有多久；已经过期为 `0`。返回 `null` 表示这个时刻永远不会到来
+ * （没有到达时刻、或它不可信），调用方据此不必安排任何定时器。
+ */
+export function hostHopExpiryDelayMs(receivedAt: number | null, now: number): number | null {
+  if (receivedAt === null || !Number.isFinite(receivedAt) || receivedAt <= 0) return null;
+  return Math.max(0, receivedAt + HOST_HOP_STALE_MS - now);
 }
 
 /** 合计 = 浏览器 → node + node → tmux；宿主一跳测不到（旧节点、没采到、已过期）就只算前半段。 */

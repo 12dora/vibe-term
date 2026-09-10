@@ -26,6 +26,7 @@ import {
   finiteRtt,
   formatLinkBadgeLabel,
   freshHostHop,
+  hostHopExpiryDelayMs,
   linkDetailKind,
   reachLabelKey,
   resolveLinkBadge,
@@ -352,22 +353,33 @@ export interface DeviceNodeBadgesProps {
   deviceId?: string;
 }
 
-/** 与网关的下发节奏同频：过期判定与「已连接」时长都按这个节拍重算。 */
-const LATENCY_TICK_MS = 15_000;
+/** 浮层展开期间「已连接」时长的刷新节拍；收起时不留常驻定时器。 */
+const SINCE_TICK_MS = 15_000;
 
 /**
- * 宿主一跳的新鲜度按 `sampledAt` 判定，而读数不变时 store 也只有 15 s 一次的写入：
- * 组件自己按同样的节奏 tick，网关停播后那一跳才会及时从徽标上消失。
- * 只在真有宿主读数或浮层展开时才走定时器，其余时候不留常驻 tick。
+ * 徽标读时间的唯一入口。收起状态下**不做周期性 tick**：宿主一跳的过期时刻可以由这一帧的
+ * 到达时刻（`receivedAt`，本地盖章）算出来，只在那一刻醒一次，改的正是那一次真正会变的渲染
+ * 结果；新样本到来会带来新的 `receivedAt`，定时器随之重排。浮层展开时才按秒级需求跟一个
+ * 节拍——「已连接」时长在那期间确实每刻都在变，而开着的浮层只有一个。
  */
-function useLatencyClock(active: boolean): number {
+function useLatencyClock(sample: NodeLatency['hostHop'], open: boolean): number {
   const [now, setNow] = useState(() => Date.now());
+  const receivedAt = sample?.receivedAt ?? null;
+
   useEffect(() => {
-    if (!active) return;
+    const delay = hostHopExpiryDelayMs(receivedAt, Date.now());
+    if (delay === null) return;
+    const timer = setTimeout(() => setNow(Date.now()), delay);
+    return () => clearTimeout(timer);
+  }, [receivedAt]);
+
+  useEffect(() => {
+    if (!open) return;
     setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), LATENCY_TICK_MS);
+    const timer = setInterval(() => setNow(Date.now()), SINCE_TICK_MS);
     return () => clearInterval(timer);
-  }, [active]);
+  }, [open]);
+
   return now;
 }
 
@@ -378,7 +390,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const latency = useNodeLatency(nodeId, deviceId);
   const isSelf = nodeId === SELF_NODE_ID;
   const [open, setOpen] = useState(false);
-  const now = useLatencyClock(latency.hostHop !== null || open);
+  const now = useLatencyClock(latency.hostHop, open);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {

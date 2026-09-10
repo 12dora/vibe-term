@@ -67,6 +67,8 @@ interface HarnessOptions {
   resolveNodeName?: (nodeId: string) => string | null;
   /** 网关 HELLO 播报的能力集；缺省为空（老节点） */
   serverCapabilities?: readonly string[];
+  /** 本地时钟：宿主一跳的 `receivedAt` 按它盖章 */
+  now?: () => number;
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -174,6 +176,7 @@ function createHarness(options: HarnessOptions = {}) {
       paneSubscriptions,
       onReady: () => record('ready'),
       sendWindowStyleForCurrentTheme: (deviceId: string) => record('windowStyle', deviceId),
+      ...(options.now ? { now: options.now } : {}),
     },
     disposers
   );
@@ -248,69 +251,71 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('ready')).toHaveLength(1);
   });
 
-  test('device-latency 落到 deviceLatency，读数不变时不写 store', () => {
-    const harness = createHarness();
+  test('device-latency 落地时本地盖章 receivedAt；读数不变但采样时刻前进也要写', () => {
+    let clock = 5_000;
+    const harness = createHarness({ now: () => clock });
+    const frame = (rttMs: number, rawMs: number, sampledAt: number, hop: 'local' | 'ssh') =>
+      ({ type: 'device-latency', deviceId: 'device-a', rttMs, rawMs, hop, sampledAt }) as const;
 
-    harness.route({
-      type: 'device-latency',
-      deviceId: 'device-a',
-      rttMs: 3,
-      rawMs: 5,
-      hop: 'local',
-      sampledAt: 1_700_000_000_000,
-    });
+    // 网关时钟比浏览器快一天也不影响：新鲜度只看本地盖的 receivedAt
+    harness.route(frame(3, 5, 1_700_000_000_000, 'local'));
     expect(harness.getState().deviceLatency['device-a']).toEqual({
       rttMs: 3,
       rawMs: 5,
       hop: 'local',
       sampledAt: 1_700_000_000_000,
+      receivedAt: 5_000,
     });
 
-    // 读数不变但采样时刻前进：仍要写，UI 靠 sampledAt 判断这一跳还在不在被上报
-    harness.route({
-      type: 'device-latency',
-      deviceId: 'device-a',
-      rttMs: 3,
-      rawMs: 5,
-      hop: 'local',
+    clock = 20_000;
+    harness.route(frame(3, 5, 1_700_000_015_000, 'local'));
+    expect(harness.getState().deviceLatency['device-a']).toMatchObject({
       sampledAt: 1_700_000_015_000,
+      receivedAt: 20_000,
     });
-    expect(harness.getState().deviceLatency['device-a']?.sampledAt).toBe(1_700_000_015_000);
 
-    // 重复帧与乱序旧帧丢掉
-    const unchanged = harness.getState();
-    harness.route({
-      type: 'device-latency',
-      deviceId: 'device-a',
-      rttMs: 3,
-      rawMs: 5,
-      hop: 'local',
-      sampledAt: 1_700_000_015_000,
-    });
-    expect(harness.getState()).toBe(unchanged);
-    harness.route({
-      type: 'device-latency',
-      deviceId: 'device-a',
-      rttMs: 3,
-      rawMs: 5,
-      hop: 'local',
-      sampledAt: 1_700_000_005_000,
-    });
-    expect(harness.getState()).toBe(unchanged);
-
-    harness.route({
-      type: 'device-latency',
-      deviceId: 'device-a',
-      rttMs: 41,
-      rawMs: 44,
-      hop: 'ssh',
-      sampledAt: 1_700_000_030_000,
-    });
+    clock = 35_000;
+    harness.route(frame(41, 44, 1_700_000_030_000, 'ssh'));
     expect(harness.getState().deviceLatency['device-a']).toEqual({
       rttMs: 41,
       rawMs: 44,
       hop: 'ssh',
       sampledAt: 1_700_000_030_000,
+      receivedAt: 35_000,
+    });
+  });
+
+  test('乱序旧帧一律丢（哪怕读数不同），完全重复的帧也不写', () => {
+    let clock = 5_000;
+    const harness = createHarness({ now: () => clock });
+    const frame = (rttMs: number, rawMs: number, sampledAt: number) =>
+      ({
+        type: 'device-latency',
+        deviceId: 'device-a',
+        rttMs,
+        rawMs,
+        hop: 'local',
+        sampledAt,
+      }) as const;
+
+    harness.route(frame(3, 5, 1_700_000_015_000));
+    const written = harness.getState();
+
+    clock = 20_000;
+    // 读数不同但采样时刻更早：倒回去只会让 sampledAt 乱序
+    harness.route(frame(99, 99, 1_700_000_005_000));
+    expect(harness.getState()).toBe(written);
+    // 完全相同的重复帧
+    harness.route(frame(3, 5, 1_700_000_015_000));
+    expect(harness.getState()).toBe(written);
+    // 同一采样时刻但读数变了：算新消息
+    harness.route(frame(7, 9, 1_700_000_015_000));
+    expect(harness.getState().deviceLatency['device-a']).toEqual({
+      rttMs: 7,
+      rawMs: 9,
+      hop: 'local',
+      sampledAt: 1_700_000_015_000,
+      receivedAt: 20_000,
     });
   });
 

@@ -412,11 +412,18 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
     data: devicesData,
     error: devicesError,
     dataUpdatedAt: devicesUpdatedAt,
+    errorUpdatedAt: devicesErrorUpdatedAt,
     isSuccess,
     isPlaceholderData,
   } = useQuery(queryOptions);
   useNodeSessionRecovery(runtime.nodeId, devicesError, devicesUpdatedAt);
-  useNodeReachabilityFromQuery(runtime.nodeId, devicesError, devicesUpdatedAt);
+  // 失败侧也要按水位记账：本 provider 每个 node 会挂两份（外壳与路由边界），
+  // 缓存里同一个 error 对象会被两份各看见一次，只认身份就把一次失败记成两次。
+  useNodeReachabilityFromQuery(runtime.nodeId, {
+    error: devicesError,
+    dataUpdatedAt: devicesUpdatedAt,
+    errorUpdatedAt: devicesErrorUpdatedAt,
+  });
 
   // 占位数据只用来渲染，绝不驱动连接 / 订阅：本地快照里的设备可能早就删了，照它去
   // `connectDevice` 会连一台不存在的设备，还会把持久化的连接意图按过期列表清掉。

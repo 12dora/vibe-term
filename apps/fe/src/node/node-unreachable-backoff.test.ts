@@ -1,12 +1,16 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { ApiError } from '@vibeterm/api-client';
+import { HubApiError } from './hub-api';
 import {
   BACKOFF_FIRST_MS,
   BACKOFF_MAX_MS,
+  NodeBackoffSkippedError,
   clearAllNodeBackoff,
   isNodeRequestBlocked,
   isUnreachableFailure,
+  nodeBackoffRemainingMs,
   noteMeshNodesOnline,
+  noteNodeQueryErrorAt,
   noteNodeQuerySuccessAt,
   noteNodeRequestOutcome,
   noteNodeUnreachable,
@@ -37,6 +41,7 @@ function installClock(): FakeClock {
     cancel: (handle) => {
       timers.delete(handle as number);
     },
+    now: () => now,
   });
   return {
     delays,
@@ -74,15 +79,32 @@ describe('isUnreachableFailure', () => {
       false
     );
     expect(isUnreachableFailure(new ApiError(500, 'boom'))).toBe(false);
+    expect(isUnreachableFailure(new ApiError(404, 'nope'))).toBe(false);
   });
 
-  test('传输层异常算，主动取消不算，空值不算', () => {
+  test('带 status 的自定义错误（HubApiError 那类）同样不算', () => {
+    expect(isUnreachableFailure(new HubApiError('hub_nodes_failed', 500))).toBe(false);
+    expect(isUnreachableFailure(new HubApiError('NODE_LOGIN_REQUIRED', 401))).toBe(false);
+    // 除非它明确说了「打不通」
+    expect(isUnreachableFailure(new HubApiError('NODE_UNREACHABLE', 503))).toBe(true);
+  });
+
+  test('传输层异常与超时算，主动取消不算，空值不算', () => {
     expect(isUnreachableFailure(new TypeError('Failed to fetch'))).toBe(true);
+    const timedOut = new Error('timeout');
+    timedOut.name = 'TimeoutError';
+    expect(isUnreachableFailure(timedOut)).toBe(true);
     const aborted = new Error('aborted');
     aborted.name = 'AbortError';
     expect(isUnreachableFailure(aborted)).toBe(false);
     expect(isUnreachableFailure(null)).toBe(false);
     expect(isUnreachableFailure(undefined)).toBe(false);
+  });
+
+  test('退避门自己短路出来的错误不构成新的失败', () => {
+    expect(isUnreachableFailure(new NodeBackoffSkippedError(NODE_A))).toBe(false);
+    noteNodeRequestOutcome(NODE_A, new NodeBackoffSkippedError(NODE_A));
+    expect(isNodeRequestBlocked(NODE_A)).toBe(false);
   });
 });
 
@@ -166,5 +188,44 @@ describe('每 node 退避', () => {
     clearAllNodeBackoff();
     expect(isNodeRequestBlocked(NODE_A)).toBe(false);
     expect(isNodeRequestBlocked(NODE_B)).toBe(false);
+  });
+});
+
+describe('self 豁免', () => {
+  test('entry 自身永远不进退避（网关重启不该挡住本机设备列表）', () => {
+    noteNodeUnreachable('self');
+    expect(isNodeRequestBlocked('self')).toBe(false);
+    noteNodeRequestOutcome('self', new TypeError('Failed to fetch'));
+    expect(isNodeRequestBlocked('self')).toBe(false);
+    // 空 nodeId 同样按 self 处理
+    noteNodeUnreachable('');
+    expect(isNodeRequestBlocked('')).toBe(false);
+  });
+});
+
+describe('失败水位', () => {
+  test('同一次失败（errorUpdatedAt 不变）只记一次，重挂不会把退避翻倍', () => {
+    const error = new TypeError('Failed to fetch');
+    noteNodeQueryErrorAt(NODE_A, error, 100);
+    const first = nodeBackoffRemainingMs(NODE_A);
+    noteNodeQueryErrorAt(NODE_A, error, 100);
+    expect(nodeBackoffRemainingMs(NODE_A)).toBe(first);
+    expect(first).toBe(BACKOFF_FIRST_MS);
+  });
+
+  test('水位前进才算新的一次失败', () => {
+    const error = new TypeError('Failed to fetch');
+    noteNodeQueryErrorAt(NODE_A, error, 100);
+    noteNodeQueryErrorAt(NODE_A, error, 200);
+    expect(nodeBackoffRemainingMs(NODE_A)).toBe(BACKOFF_FIRST_MS * 2);
+  });
+
+  test('nodeBackoffRemainingMs 随时间递减，退避解除后归零', () => {
+    noteNodeUnreachable(NODE_A);
+    expect(nodeBackoffRemainingMs(NODE_A)).toBe(BACKOFF_FIRST_MS);
+    clock.advance(BACKOFF_FIRST_MS / 2);
+    expect(nodeBackoffRemainingMs(NODE_A)).toBe(BACKOFF_FIRST_MS / 2);
+    clock.advance(BACKOFF_FIRST_MS / 2);
+    expect(nodeBackoffRemainingMs(NODE_A)).toBe(0);
   });
 });

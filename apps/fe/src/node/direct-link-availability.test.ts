@@ -2,6 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import {
   DIRECT_LINK_NEGATIVE_TTL_MS,
   clearDirectLinkAvailability,
+  clearDirectLinkUnavailableFor,
   isDirectLinkUnavailable,
   markDirectLinkUnavailable,
   watchDirectNegotiation,
@@ -40,41 +41,62 @@ describe('负缓存', () => {
       false
     );
   });
+
+  test('入口身份未知时既不记也不查（免得记一条永远命中不了的账）', () => {
+    const now = 1_000_000;
+    markDirectLinkUnavailable(NODE_A, null, now);
+    expect(isDirectLinkUnavailable(NODE_A, null, now + 1)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B, now + 1)).toBe(false);
+  });
+
+  test('该 node 重新登录成功即清掉它在所有入口上的负结论', () => {
+    const now = 1_000_000;
+    markDirectLinkUnavailable(NODE_A, ENTRY_B, now);
+    markDirectLinkUnavailable(NODE_A, ENTRY_C, now);
+    clearDirectLinkUnavailableFor(NODE_A);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B, now + 1)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_C, now + 1)).toBe(false);
+  });
+
+  test('清理只针对那一台 node', () => {
+    const now = 1_000_000;
+    markDirectLinkUnavailable(NODE_A, ENTRY_B, now);
+    markDirectLinkUnavailable(ENTRY_C, ENTRY_B, now);
+    clearDirectLinkUnavailableFor(NODE_A);
+    expect(isDirectLinkUnavailable(ENTRY_C, ENTRY_B, now + 1)).toBe(true);
+  });
 });
 
 describe('watchDirectNegotiation', () => {
-  test('协商端点被入口代答的 401：记负缓存并回调宿主', async () => {
+  test('协商端点被别人代答的 401：记负缓存并回调宿主', async () => {
     let stopped = 0;
     const client = watchDirectNegotiation(
       NODE_A,
-      clientReturning(
-        () =>
-          new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: ENTRY_B }), {
-            status: 401,
-          })
-      ),
+      clientReturning(() => new Response(JSON.stringify({ nodeId: ENTRY_B }), { status: 401 })),
       () => {
         stopped += 1;
-      }
+      },
+      () => ENTRY_B
     );
     const res = await client.fetch('/api/rtc/authorize');
     await flush();
 
     expect(res.status).toBe(401);
     expect(stopped).toBe(1);
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(true);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(true);
   });
 
   test('`/api/mesh/connection?cid=` 同样算协商端点', async () => {
     const client = watchDirectNegotiation(
       NODE_A,
       clientReturning(() => new Response(JSON.stringify({ nodeId: ENTRY_B }), { status: 401 })),
-      () => undefined
+      () => undefined,
+      () => ENTRY_B
     );
     await client.fetch('/api/mesh/connection?cid=abc');
     await flush();
 
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(true);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(true);
   });
 
   test('401 出自目标 node 自己：不记负缓存（那是真的要重新登录）', async () => {
@@ -89,47 +111,64 @@ describe('watchDirectNegotiation', () => {
       ),
       () => {
         stopped += 1;
-      }
+      },
+      () => ENTRY_B
     );
     await client.fetch('/api/rtc/authorize');
     await flush();
 
     expect(stopped).toBe(0);
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 
   test('非协商端点的 401 不进负缓存', async () => {
     const client = watchDirectNegotiation(
       NODE_A,
       clientReturning(() => new Response(JSON.stringify({ nodeId: ENTRY_B }), { status: 401 })),
-      () => undefined
+      () => undefined,
+      () => ENTRY_B
     );
     await client.fetch('/api/devices');
     await flush();
 
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 
   test('body 读不出结论时不封锁（宁可下次再试）', async () => {
     const client = watchDirectNegotiation(
       NODE_A,
       clientReturning(() => new Response('nope', { status: 401 })),
-      () => undefined
+      () => undefined,
+      () => ENTRY_B
     );
     await client.fetch('/api/rtc/authorize');
     await flush();
 
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
+  });
+
+  test('入口身份还不知道时不记账', async () => {
+    const client = watchDirectNegotiation(
+      NODE_A,
+      clientReturning(() => new Response(JSON.stringify({ nodeId: ENTRY_B }), { status: 401 })),
+      () => undefined,
+      () => null
+    );
+    await client.fetch('/api/rtc/authorize');
+    await flush();
+
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 
   test('成功的协商照常透传，body 不被消费', async () => {
     const client = watchDirectNegotiation(
       NODE_A,
       clientReturning(() => new Response(JSON.stringify({ connectionId: 'c1' }), { status: 200 })),
-      () => undefined
+      () => undefined,
+      () => ENTRY_B
     );
     const res = await client.fetch('/api/mesh/connection?cid=abc');
     expect(await res.json()).toEqual({ connectionId: 'c1' });
-    expect(isDirectLinkUnavailable(NODE_A, null)).toBe(false);
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 });

@@ -16,6 +16,7 @@ import type {
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { createStateStore } from './create-polling-store';
+import { clearDirectLinkUnavailableFor } from './direct-link-availability';
 import type { NodeEventPayload } from './mesh-events';
 import { clearMeshNodesCache, readMeshNodesCache, writeMeshNodesCache } from './mesh-nodes-cache';
 import { type RetrySchedulerOptions, createRetryScheduler, onPageRecovery } from './mesh-recovery';
@@ -379,6 +380,9 @@ function setLoggedIn(nodeId: string, loggedIn: boolean): boolean {
  * `self` 按 entry 自身的 nodeId 解析；列表里没有这一行时什么都不做。
  */
 export function markLoggedIn(nodeId: string): boolean {
+  // 会话换新了：直连协商上一次的 401 有可能只是「会话过期」被中转盖了自己的 nodeId，
+  // 那条负结论的成因已经不复存在，别再拿它把直连按住半小时。
+  clearDirectLinkUnavailableFor(nodeId);
   return setLoggedIn(nodeId, true);
 }
 

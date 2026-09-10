@@ -12,7 +12,11 @@ import {
   createDefaultNodeConnection,
   nodeStoragePrefix,
 } from './node-connection-manager';
-import type { NodeSessionProbe } from './node-session-guard';
+import {
+  GIVE_UP_RECONNECT_MS,
+  type NodeReloginResult,
+  type NodeSessionProbe,
+} from './node-session-guard';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
@@ -386,17 +390,19 @@ describe('WS 4401 的会话探测（非 self）', () => {
     connects: string[];
     disconnects: string[];
     loginRequired: string[];
+    loggedOut: string[];
     socketClose: (nodeId: string, code: number) => void;
     stop: () => void;
   }
 
   function probeHarness(options: {
     probe: (nodeId: string) => Promise<NodeSessionProbe>;
-    relogin?: (nodeId: string) => Promise<boolean>;
+    relogin?: (nodeId: string) => Promise<NodeReloginResult>;
   }): ProbeHarness {
     const connects: string[] = [];
     const disconnects: string[] = [];
     const loginRequired: string[] = [];
+    const loggedOut: string[] = [];
     const onCloseByNode = new Map<string, (code: number) => void>();
     const stop = onAuthRequired((detail) => {
       if (detail.scope === 'node') loginRequired.push(detail.nodeId);
@@ -406,6 +412,7 @@ describe('WS 4401 的会话探测（非 self）', () => {
       setTimeoutFn: clock.schedule,
       clearTimeoutFn: clock.cancel,
       probeNodeSession: options.probe,
+      markNodeLoggedOut: (nodeId) => loggedOut.push(nodeId),
       ...(options.relogin ? { reloginNode: options.relogin } : {}),
       createConnection: (nodeId, onClose) => {
         onCloseByNode.set(nodeId, onClose);
@@ -425,6 +432,7 @@ describe('WS 4401 的会话探测（非 self）', () => {
       connects,
       disconnects,
       loginRequired,
+      loggedOut,
       socketClose: (nodeId, code) => onCloseByNode.get(nodeId)?.(code),
       stop,
     };
@@ -446,17 +454,37 @@ describe('WS 4401 的会话探测（非 self）', () => {
     h.stop();
   });
 
-  test('探测判定要重新登录且重登失败：退回「登录此节点」', async () => {
+  test('探测判定要重新登录且重登失败：标未登录 + 派事件 + 慢速重连', async () => {
     const h = probeHarness({
       probe: () => Promise.resolve('login-required'),
-      relogin: () => Promise.resolve(false),
+      relogin: () => Promise.resolve('failed'),
     });
     h.manager.acquire(NODE_A);
     h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
     await settle();
     expect(h.loginRequired).toEqual([NODE_A]);
+    // 界面要有可点的「登录此节点」：登录态必须真的翻过去。
+    expect(h.loggedOut).toEqual([NODE_A]);
     clock.advance(60_000);
     expect(h.connects).toEqual([]);
+    // 判定之后仍留一条 10 分钟一次的慢速重连，不是死胡同。
+    clock.advance(GIVE_UP_RECONNECT_MS);
+    expect(h.connects).toEqual([NODE_A]);
+    h.manager.disposeAll();
+    h.stop();
+  });
+
+  test('resumeSessionRecovery（页面恢复）立刻重试判定过的 node', async () => {
+    const h = probeHarness({
+      probe: () => Promise.resolve('login-required'),
+      relogin: () => Promise.resolve('failed'),
+    });
+    h.manager.acquire(NODE_A);
+    h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    await settle();
+    expect(h.connects).toEqual([]);
+    h.manager.resumeSessionRecovery();
+    expect(h.connects).toEqual([NODE_A]);
     h.manager.disposeAll();
     h.stop();
   });
@@ -464,7 +492,7 @@ describe('WS 4401 的会话探测（非 self）', () => {
   test('重登成功：重连而不是把该 node 判成未登录', async () => {
     const h = probeHarness({
       probe: () => Promise.resolve('login-required'),
-      relogin: () => Promise.resolve(true),
+      relogin: () => Promise.resolve('recovered'),
     });
     h.manager.acquire(NODE_A);
     h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);

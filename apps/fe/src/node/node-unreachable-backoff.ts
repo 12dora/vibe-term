@@ -5,12 +5,17 @@
 // 一台离线的 node 于是被稳定地按原速轰下去：请求全额付出，答案永远是同一句。
 //
 // 这里给「打不通」记一份每 node 的退避：1 分钟起步，逐次翻倍，封顶 10 分钟；退避窗口内
-// 该 node 的重复请求整条跳过。解除只认两件事——**又成功了一次**，或 `/api/mesh/nodes` 报出
-// 这台 node 从离线转成在线（页面重新可见 / 网络恢复同样解除，那多半正是链路刚回来）。
+// 该 node 的重复 GET 由 `node-runtimes` 的门（`createGatedNodeApiClient`）就地短路，不进网络。
+// 解除只认三件事——**又成功了一次**、`/api/mesh/nodes` 报出这台 node 从离线转成在线、
+// 页面重新可见 / 网络恢复。
 //
-// 只针对「根本没问到」的失败：服务端明确应答过的 401 / 5xx 业务错误不算，它们各有各的处置。
+// 只针对「根本没问到」的失败：服务端应答过的 401 / 4xx / 5xx 业务错误各有各的处置，
+// 主动取消（切路由、组件卸载）更不是故障。
+//
+// `self` 永远豁免：entry 就是浏览器直连的那台，网关重启期间挡住它自己的设备列表，
+// 换来的只是一个连本地都刷不出来的界面。
 
-import { ApiError, isNodeUnreachableError } from '@vibeterm/api-client';
+import { isSelfNode } from '@vibeterm/api-client';
 import { useEffect, useSyncExternalStore } from 'react';
 import { onPageRecovery } from './mesh-recovery';
 
@@ -20,62 +25,99 @@ export const BACKOFF_FIRST_MS = 60_000;
 /** 退避上限。 */
 export const BACKOFF_MAX_MS = 600_000;
 
+/** 转发器打不通目标 node 时的契约错误码。 */
+const NODE_UNREACHABLE_CODE = 'NODE_UNREACHABLE';
+
 interface BackoffEntry {
   failures: number;
   blocked: boolean;
+  /** 退避窗口的到期时刻（用于算「还要等多久」）。 */
+  until: number;
   timer: unknown;
 }
 
 export interface BackoffTimers {
   schedule: (fn: () => void, ms: number) => unknown;
   cancel: (handle: unknown) => void;
+  now: () => number;
 }
 
 const realTimers: BackoffTimers = {
   schedule: (fn, ms) => setTimeout(fn, ms),
   cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  now: () => Date.now(),
 };
 
 let timers: BackoffTimers = realTimers;
 const entries = new Map<string, BackoffEntry>();
-/** 每 node 最近一次成功的 `dataUpdatedAt` 水位。 */
+/** 每 node 最近一次成功 / 失败的 react-query 水位（同一份缓存有多个观察者）。 */
 const lastSuccessAt = new Map<string, number>();
+const lastErrorAt = new Map<string, number>();
 const listeners = new Set<() => void>();
 
 function notify(): void {
   for (const listener of [...listeners]) listener();
 }
 
-/** 这次失败属于「根本没问到」吗：转发器的 503 与传输层异常算，服务端的业务错误不算。 */
+/**
+ * 退避窗口里被就地短路的请求：它连网络都没碰，绝不能再算一次失败去加倍退避。
+ * 携带 `NODE_UNREACHABLE` 码是给调用方看的——语义上它就是「这台 node 现在打不通」。
+ */
+export class NodeBackoffSkippedError extends Error {
+  readonly code = NODE_UNREACHABLE_CODE;
+  readonly skippedByBackoff = true;
+
+  constructor(readonly nodeId: string) {
+    super(NODE_UNREACHABLE_CODE);
+    this.name = 'NodeBackoffSkippedError';
+  }
+}
+
+function errorCode(error: Error): string | null {
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' ? code : null;
+}
+
+/**
+ * 这次失败属于「根本没问到」吗。
+ *
+ * 判定用**白名单**：转发器的 `NODE_UNREACHABLE`、超时，以及连 `status` 都没有的传输层异常。
+ * 带 `status` 的一律不算——`ApiError`、`HubApiError` 那些是服务端答过话的结论（401 要登录、
+ * 500 是对端出错），拿来加倍退避只会把能修的问题拖成打不通。
+ */
 export function isUnreachableFailure(error: unknown): boolean {
-  if (error === null || error === undefined) return false;
-  if (isNodeUnreachableError(error)) return true;
-  // 应答过就说明链路是通的（401、404、5xx 业务错误各有各的处置）。
-  if (error instanceof ApiError) return false;
-  // 调用方主动取消（切路由、组件卸载）不是故障。
-  if (error instanceof Error && error.name === 'AbortError') return false;
-  return error instanceof Error;
+  if (!(error instanceof Error)) return false;
+  // 门自己短路出来的错误：没发过请求，不构成新的证据。
+  if (error instanceof NodeBackoffSkippedError) return false;
+  if (errorCode(error) === NODE_UNREACHABLE_CODE) return true;
+  // 调用方主动取消（切路由、组件卸载）不是故障；超时则是实打实的打不通。
+  if (error.name === 'AbortError') return false;
+  if (error.name === 'TimeoutError') return true;
+  return !('status' in error);
 }
 
 function entryOf(nodeId: string): BackoffEntry {
   let entry = entries.get(nodeId);
   if (!entry) {
-    entry = { failures: 0, blocked: false, timer: null };
+    entry = { failures: 0, blocked: false, until: 0, timer: null };
     entries.set(nodeId, entry);
   }
   return entry;
 }
 
-/** 记一次「打不通」并进入退避；同一 node 连续失败逐次翻倍。 */
+/** 记一次「打不通」并进入退避；同一 node 连续失败逐次翻倍。`self` 不参与。 */
 export function noteNodeUnreachable(nodeId: string): void {
+  if (isSelfNode(nodeId)) return;
   const entry = entryOf(nodeId);
   if (entry.timer !== null) timers.cancel(entry.timer);
   entry.failures += 1;
   entry.blocked = true;
   const delay = Math.min(BACKOFF_FIRST_MS * 2 ** (entry.failures - 1), BACKOFF_MAX_MS);
+  entry.until = timers.now() + delay;
   entry.timer = timers.schedule(() => {
     entry.timer = null;
     entry.blocked = false;
+    entry.until = 0;
     notify();
   }, delay);
   notify();
@@ -96,6 +138,7 @@ export function clearNodeBackoff(nodeId: string): void {
 
 /** 按一次请求的结果记账：`error` 为空即成功。 */
 export function noteNodeRequestOutcome(nodeId: string, error: unknown): void {
+  if (isSelfNode(nodeId)) return;
   if (error === null || error === undefined) {
     noteNodeReachable(nodeId);
     return;
@@ -103,9 +146,17 @@ export function noteNodeRequestOutcome(nodeId: string, error: unknown): void {
   if (isUnreachableFailure(error)) noteNodeUnreachable(nodeId);
 }
 
-/** 该 node 此刻在退避窗口里（重复请求应当跳过）。 */
+/** 该 node 此刻在退避窗口里（重复请求应当跳过）。`self` 永远为 false。 */
 export function isNodeRequestBlocked(nodeId: string): boolean {
+  if (isSelfNode(nodeId)) return false;
   return entries.get(nodeId)?.blocked === true;
+}
+
+/** 退避窗口还剩多久（毫秒）；没在退避里为 0。 */
+export function nodeBackoffRemainingMs(nodeId: string): number {
+  const entry = entries.get(nodeId);
+  if (!entry?.blocked) return 0;
+  return Math.max(0, entry.until - timers.now());
 }
 
 export function subscribeNodeBackoff(listener: () => void): () => void {
@@ -127,18 +178,32 @@ export function noteNodeQuerySuccessAt(nodeId: string, dataUpdatedAt: number): v
   noteNodeReachable(nodeId);
 }
 
+/**
+ * 该 node 的查询**又失败了一次**。水位与成功侧对称：react-query 会把失败的 error 对象连同
+ * `errorUpdatedAt` 一起留在缓存里，同一个 node 的第二份 provider 挂上来（或任何一次重挂）
+ * 都会拿到同一个 error。只看 error 身份就会把一次失败记成两次，退避直接翻倍。
+ */
+export function noteNodeQueryErrorAt(nodeId: string, error: unknown, errorUpdatedAt: number): void {
+  if (!error || errorUpdatedAt <= 0) return;
+  if (errorUpdatedAt <= (lastErrorAt.get(nodeId) ?? 0)) return;
+  lastErrorAt.set(nodeId, errorUpdatedAt);
+  noteNodeRequestOutcome(nodeId, error);
+}
+
 /** 把一条每 node 查询的成败接到退避上（设备列表用）。 */
 export function useNodeReachabilityFromQuery(
   nodeId: string,
-  error: unknown,
-  dataUpdatedAt: number
+  query: { error: unknown; dataUpdatedAt: number; errorUpdatedAt: number }
 ): void {
+  const { error, dataUpdatedAt, errorUpdatedAt } = query;
   useEffect(() => {
+    if (isSelfNode(nodeId)) return;
     noteNodeQuerySuccessAt(nodeId, dataUpdatedAt);
   }, [nodeId, dataUpdatedAt]);
   useEffect(() => {
-    if (error) noteNodeRequestOutcome(nodeId, error);
-  }, [nodeId, error]);
+    if (isSelfNode(nodeId)) return;
+    noteNodeQueryErrorAt(nodeId, error, errorUpdatedAt);
+  }, [nodeId, error, errorUpdatedAt]);
 }
 
 /** 退避态的 React 绑定：窗口一到期查询自动放行。 */
@@ -178,6 +243,7 @@ export function setNodeBackoffTimersForTest(next: BackoffTimers | null): void {
   clearAllNodeBackoff();
   entries.clear();
   lastSuccessAt.clear();
+  lastErrorAt.clear();
   timers = next ?? realTimers;
 }
 

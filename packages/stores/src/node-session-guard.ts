@@ -6,22 +6,35 @@
 //
 // 因此 4401 之后先用一次**带会话**的 HTTP 探测问一句「会话还在吗」，再决定怎么处置：
 //   * 探测成功：会话有效，这次 4401 是瞬时故障 → 退避重连，登录态一动不动；
-//     同一窗口内连续 N 次「探测成功但 WS 又 4401」才退回原来的「需要登录」结论，
-//     真坏掉的 node 不会无限重连下去。
-//   * 探测回 401 `NODE_LOGIN_REQUIRED`：静默重登一次，成功即重连；
-//     重登失败（或宿主没接重登实现）才退回「需要登录」。
-//   * 探测本身打不通（node 不可达）：与瞬时同类——不可达不是鉴权结论，退避重连。
+//     同一窗口内连续 N 次「探测成功但 WS 又被 4401 踢」才判定这台 node 真的有问题。
+//   * 探测回 401 `NODE_LOGIN_REQUIRED`：静默重登一次。重登成功 → 重连；这一轮已经重登过
+//     （`skipped`）→ 照样重连，但计入上面那个次数；重登失败 → 判定这台 node 真的有问题。
+//   * 探测本身打不通（node 不可达）：不可达不是鉴权结论 → 只重连，不计次数；重连间隔另有
+//     下限（宿主把「这台 node 的不可达退避还剩多久」喂进来），不去反复撞注定打不通的链路。
+//
+// **判定之后不是死胡同**：把该 node 标未登录（界面这才会出现「登录此节点」按钮，用户点得动），
+// 同时留一条 10 分钟一次的慢速重连；页面重新可见 / 网络恢复时宿主调 `resume()` 立刻重试。
+// 只派一个事件而不动登录态，界面会落到「既没有按钮、也没有连接、更没有下一次」的死角。
 
 import { createNodeApiClient, fetchDevices, isNodeLoginRequiredError } from '@vibeterm/api-client';
 
 /** 探测结论：会话有效 / 该 node 要重新登录 / 根本没问到（不可达、网络错误）。 */
 export type NodeSessionProbe = 'ok' | 'login-required' | 'unreachable';
 
-/** 同一窗口内允许「探测成功但 WS 又 4401」的次数，超过即退回「需要登录」。 */
+/** 静默重登的三种结局：成功 / 这一轮已经登过一次 / 失败。 */
+export type NodeReloginResult = 'recovered' | 'skipped' | 'failed';
+
+/** 同一窗口内允许「探测说会话没问题、WS 却仍被踢」的次数，超过即判定该 node 有问题。 */
 export const DEFAULT_MAX_TRANSIENT_4401 = 3;
 
 /** 上面那个计数的滑动窗口。 */
 export const DEFAULT_TRANSIENT_WINDOW_MS = 5 * 60_000;
+
+/** 判定之后的慢速重连间隔。 */
+export const GIVE_UP_RECONNECT_MS = 10 * 60_000;
+
+/** 探测自备的超时：转发器的链路截止是 5 秒，留一点余量就该收手。 */
+export const PROBE_TIMEOUT_MS = 8_000;
 
 const RECONNECT_BASE_MS = 1_000;
 const RECONNECT_MAX_MS = 30_000;
@@ -29,7 +42,9 @@ const RECONNECT_MAX_MS = 30_000;
 /** 缺省探测：拉一次该 node 的设备列表，最便宜的「带会话」端点。 */
 export async function probeNodeSessionByDevices(nodeId: string): Promise<NodeSessionProbe> {
   try {
-    await fetchDevices(createNodeApiClient(nodeId));
+    await fetchDevices(createNodeApiClient(nodeId), {
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
     return 'ok';
   } catch (error) {
     return isNodeLoginRequiredError(error) ? 'login-required' : 'unreachable';
@@ -37,14 +52,18 @@ export async function probeNodeSessionByDevices(nodeId: string): Promise<NodeSes
 }
 
 export interface NodeSessionGuardOptions {
-  /** 会话探测（测试注入）；缺省拉一次该 node 的设备列表。 */
+  /** 会话探测（宿主 / 测试注入）；缺省拉一次该 node 的设备列表。 */
   probe?: (nodeId: string) => Promise<NodeSessionProbe>;
-  /** 静默重登；宿主不接时探测回 `login-required` 即直接退回「需要登录」。 */
-  relogin?: (nodeId: string) => Promise<boolean>;
+  /** 静默重登；宿主不接时探测回 `login-required` 即直接判定有问题。 */
+  relogin?: (nodeId: string) => Promise<NodeReloginResult>;
   /** 判定为瞬时故障后的重连动作。 */
   reconnect: (nodeId: string) => void;
-  /** 退回原有行为：该 node 显示「登录此节点」。 */
+  /** 判定该 node 确实要重新登录：派事件，界面据此提示。 */
   onLoginRequired: (nodeId: string) => void;
+  /** 同上，但改的是列表里的登录态——没有它，界面上连「登录此节点」按钮都不会出现。 */
+  markLoggedOut?: (nodeId: string) => void;
+  /** 重连间隔的下限（宿主按该 node 的不可达退避给出），缺省 0。 */
+  reconnectDelayFloorMs?: (nodeId: string) => number;
   schedule?: (fn: () => void, ms: number) => unknown;
   cancel?: (handle: unknown) => void;
   now?: () => number;
@@ -53,17 +72,19 @@ export interface NodeSessionGuardOptions {
 }
 
 interface GuardRecord {
-  /** 窗口内「探测成功但 WS 又 4401」的时间点。 */
+  /** 窗口内「探测说会话没问题、WS 却仍被踢」的时间点。 */
   transientAt: number[];
   /** 连续 4401 的次数，只用来算重连退避。 */
   streak: number;
   lastAt: number;
   running: boolean;
+  /** 已判定这台 node 有问题：只留慢速重连。 */
+  gaveUp: boolean;
   timer: unknown;
 }
 
 function emptyRecord(): GuardRecord {
-  return { transientAt: [], streak: 0, lastAt: 0, running: false, timer: null };
+  return { transientAt: [], streak: 0, lastAt: 0, running: false, gaveUp: false, timer: null };
 }
 
 export class NodeSessionGuard {
@@ -83,7 +104,7 @@ export class NodeSessionGuard {
     return (this.options.now ?? Date.now)();
   }
 
-  /** 收到一次非 self 的 4401：探测后再决定重连还是退回「需要登录」。 */
+  /** 收到一次非 self 的 4401：探测后再决定重连还是判定该 node 要重新登录。 */
   handle(nodeId: string): Promise<void> {
     const record = this.record(nodeId);
     // 上一轮恢复还在跑：那一轮的结论会覆盖这一次，重复探测只是白发请求。
@@ -106,6 +127,18 @@ export class NodeSessionGuard {
     for (const nodeId of [...this.records.keys()]) this.forget(nodeId);
   }
 
+  /**
+   * 页面重新可见 / 网络恢复：把待发的重连提到现在，计数与判定一并倒回起点。
+   * 判定过「有问题」的那些尤其要走这一条——否则用户只能干等下一个 10 分钟。
+   */
+  resume(): void {
+    for (const [nodeId, record] of [...this.records.entries()]) {
+      const pending = record.timer !== null || record.gaveUp;
+      this.reset(record);
+      if (pending) this.options.reconnect(nodeId);
+    }
+  }
+
   private record(nodeId: string): GuardRecord {
     let record = this.records.get(nodeId);
     if (!record) {
@@ -113,10 +146,11 @@ export class NodeSessionGuard {
       this.records.set(nodeId, record);
     }
     const at = this.now();
-    // 距上一次 4401 已经超过一个窗口：这是新的一轮，退避与计数都从头来。
+    // 距上一次 4401 已经超过一个窗口：这是新的一轮，退避、计数与判定都从头来。
     if (record.lastAt !== 0 && at - record.lastAt > this.windowMs) {
       record.transientAt = [];
       record.streak = 0;
+      record.gaveUp = false;
     }
     record.lastAt = at;
     return record;
@@ -129,10 +163,13 @@ export class NodeSessionGuard {
       await this.afterLoginRequired(nodeId, record);
       return;
     }
-    if (result === 'ok' && !this.noteTransient(record)) {
-      // 会话查着是好的，WS 却一直被踢：这台 node 已经不是「抖了一下」，交回原有结论。
-      this.reset(record);
-      this.options.onLoginRequired(nodeId);
+    // 不可达不是鉴权结论：不计次数，只按退避重连。
+    if (result === 'unreachable') {
+      this.scheduleReconnect(nodeId, record);
+      return;
+    }
+    if (!this.noteTransient(record)) {
+      this.giveUp(nodeId, record);
       return;
     }
     this.scheduleReconnect(nodeId, record);
@@ -140,18 +177,44 @@ export class NodeSessionGuard {
 
   private async afterLoginRequired(nodeId: string, record: GuardRecord): Promise<void> {
     const relogin = this.options.relogin;
-    const ok = relogin ? await relogin(nodeId).catch(() => false) : false;
-    if (!ok) {
-      this.reset(record);
-      this.options.onLoginRequired(nodeId);
+    const result = relogin
+      ? await relogin(nodeId).catch((): NodeReloginResult => 'failed')
+      : 'failed';
+    if (result === 'failed') {
+      this.giveUp(nodeId, record);
       return;
     }
-    // 重登成功：这一轮的瞬时计数作废，重连按第一次的退避走。
-    record.transientAt = [];
+    if (result === 'recovered') {
+      // 重登成功：这一轮的计数作废，重连按第一次的退避走。
+      record.transientAt = [];
+      record.streak = 0;
+      this.scheduleReconnect(nodeId, record);
+      return;
+    }
+    // `skipped` = 这一轮已经重登过一次（会话理应是好的），照样重连；但必须计次数，
+    // 否则「401 → 已登过 → 重连 → 401」就是一个不收敛的活锁。
+    if (!this.noteTransient(record)) {
+      this.giveUp(nodeId, record);
+      return;
+    }
     this.scheduleReconnect(nodeId, record);
   }
 
-  /** 记一次「探测成功但 WS 4401」；仍在允许次数内返回 true。 */
+  /**
+   * 判定这台 node 确实要重新登录：标登录态（界面这才有按钮）+ 派事件，
+   * 并留一条慢速重连——链路自己恢复时用户不必手动点任何东西。
+   */
+  private giveUp(nodeId: string, record: GuardRecord): void {
+    this.clearTimer(record);
+    record.transientAt = [];
+    record.streak = 0;
+    record.gaveUp = true;
+    this.options.markLoggedOut?.(nodeId);
+    this.options.onLoginRequired(nodeId);
+    this.arm(nodeId, record, GIVE_UP_RECONNECT_MS);
+  }
+
+  /** 记一次「探测说会话没问题、WS 却仍被踢」；仍在允许次数内返回 true。 */
   private noteTransient(record: GuardRecord): boolean {
     const at = this.now();
     record.transientAt = record.transientAt.filter((stamp) => at - stamp <= this.windowMs);
@@ -160,12 +223,24 @@ export class NodeSessionGuard {
   }
 
   private scheduleReconnect(nodeId: string, record: GuardRecord): void {
-    this.clearTimer(record);
-    const delay = Math.min(RECONNECT_BASE_MS * 2 ** record.streak, RECONNECT_MAX_MS);
+    const backoff = Math.min(RECONNECT_BASE_MS * 2 ** record.streak, RECONNECT_MAX_MS);
     record.streak += 1;
+    const floor = this.options.reconnectDelayFloorMs?.(nodeId) ?? 0;
+    this.arm(nodeId, record, Math.max(backoff, floor));
+  }
+
+  /**
+   * 排一次重连。`forget()` 与这次恢复是并发的（探测是异步的），所以排之前、以及定时器真的
+   * 烧起来时，都要确认这条记录还在册：运行时都回收了还去 connect，等于把已经 dispose 的
+   * 连接又拉起来。
+   */
+  private arm(nodeId: string, record: GuardRecord, delay: number): void {
+    if (this.records.get(nodeId) !== record) return;
+    this.clearTimer(record);
     const schedule = this.options.schedule ?? ((fn, ms) => setTimeout(fn, ms));
     record.timer = schedule(() => {
       record.timer = null;
+      if (this.records.get(nodeId) !== record) return;
       this.options.reconnect(nodeId);
     }, delay);
   }
@@ -183,5 +258,6 @@ export class NodeSessionGuard {
     this.clearTimer(record);
     record.transientAt = [];
     record.streak = 0;
+    record.gaveUp = false;
   }
 }

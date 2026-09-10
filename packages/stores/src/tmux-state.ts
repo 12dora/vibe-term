@@ -27,8 +27,10 @@ export interface DeviceLatencySample {
   rttMs: number;
   rawMs: number;
   hop: DeviceLatencyHop;
-  /** 网关采样时刻（Unix 毫秒）。 */
+  /** 网关采样时刻（Unix 毫秒）：用于排序与展示，不用来判新鲜——两端时钟未必对齐。 */
   sampledAt: number;
+  /** 本地收到这一帧的时刻（浏览器时钟）；新鲜度只按它判。 */
+  receivedAt: number;
 }
 
 export interface DeviceInitialErrorInput {

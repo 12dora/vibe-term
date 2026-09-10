@@ -161,14 +161,20 @@ function warnForeignNodeId(claimed: string, urlNodeId: string, path: string): vo
 const DIRECT_NEGOTIATION_PATHS = new Set(['/api/mesh/connection', '/api/rtc/authorize']);
 
 /**
- * 「入口代答的直连协商 401」——目标 node 的会话没有任何问题，只是这条入口给不出直连。
- * 派事件出去会让该 node 行显示「登录此节点」（现网每次 WS 重连都撞一次），必须原地咽掉；
- * 该不该停止再协商由宿主的负缓存决定（见 fe 的 `direct-link-availability`）。
+ * 「别人代答的直连协商 401」——多半是这条入口给不出直连，而不是目标 node 的会话没了。
+ * 每次 WS 重连都会撞一次，派事件出去只是白扰动。
+ *
+ * 但**带 `NODE_LOGIN_REQUIRED` 的那种不咽**：中转 / hub 会把自己的 nodeId 盖在一条如假包换
+ * 的「会话过期」401 上，只看 nodeId 分不出两者。咽掉它会让真正过期的会话晚一步被发现，
+ * 所以这一档照旧按路径 node 派事件（事件本身只触发一次列表回源，不会翻登录态）；
+ * 「这条入口给不出直连」则由宿主的负缓存记账（见 fe 的 `direct-link-availability`）。
  */
-function isForeignDirectNegotiation(bodyNodeId: unknown, path: string): boolean {
+function isForeignDirectNegotiation(body: ErrorBody, path: string): boolean {
+  if (body.code === NODE_LOGIN_REQUIRED) return false;
   const urlNodeId = nodeIdFromPath(path);
   if (urlNodeId === SELF_NODE_ID) return false;
-  if (typeof bodyNodeId !== 'string' || bodyNodeId === urlNodeId) return false;
+  const claimed = body.nodeId;
+  if (typeof claimed !== 'string' || claimed === urlNodeId) return false;
   return DIRECT_NEGOTIATION_PATHS.has(urlPathname(path).replace(/^\/n\/[^/]+/, ''));
 }
 
@@ -184,7 +190,7 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
   } catch {
     body = {};
   }
-  if (isForeignDirectNegotiation(body.nodeId, path)) return;
+  if (isForeignDirectNegotiation(body, path)) return;
   if (body.code === NODE_LOGIN_REQUIRED) {
     emit({ nodeId: resolveNodeLoginTarget(body.nodeId, path), scope: 'node', path });
     return;

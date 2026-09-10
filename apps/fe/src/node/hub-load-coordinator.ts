@@ -32,7 +32,11 @@ export interface HubLoadSink {
   /** 没有可用 hub（未启用或定位不到）：清空列表、失败态并结束 loading。 */
   reset: () => void;
   rows: (rows: HubNodeRow[]) => void;
-  failed: (reason: HubFailureReason) => void;
+  /**
+   * `error` 是原始异常，只给需要按**失败性质**（打不通 / 服务端答过话）记账的调用方；
+   * 界面文案一律用折好的 `reason`。过期的响应压根不会走到这里（见 `canApply`）。
+   */
+  failed: (reason: HubFailureReason, error: unknown) => void;
 }
 
 /**
@@ -159,7 +163,7 @@ export class HubLoadCoordinator {
       const rows = await request();
       if (this.canApply(generation)) this.sink.rows(rows);
     } catch (err) {
-      if (this.canApply(generation)) this.sink.failed(classifyHubFailure(err));
+      if (this.canApply(generation)) this.sink.failed(classifyHubFailure(err), err);
     } finally {
       // loading 只由最新一代收尾：过期响应结束时新请求还在飞，不该让转圈提前停。
       if (this.canApply(generation)) this.sink.loading(false);
