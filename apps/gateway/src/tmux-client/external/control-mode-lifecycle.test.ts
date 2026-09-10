@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import type { TmuxConnectionOptions } from '../connection-types';
-import type { ControlModeCommandQueue } from '../control-mode-capture';
+import { ControlModeCommandQueue } from '../control-mode-capture';
 import { SOURCE_METADATA_SUBSCRIPTION_COMMANDS } from '../control-mode-subscription';
 import { type ControlModeHost, ControlModeLifecycle } from './control-mode-lifecycle';
 import type { ExternalControlHandle } from './types';
@@ -152,6 +152,60 @@ describe('ControlModeLifecycle', () => {
     stale.onPause?.('%1');
     await Bun.sleep(0);
     expect(executed).toEqual(['refresh-client -A %1:continue']);
+  });
+
+  test('onBlockBegin forwards %begin args to the command queue', () => {
+    const { host } = createHost();
+    const lifecycle = new ControlModeLifecycle(host);
+    const seen: Array<string | undefined> = [];
+    const queue = {
+      nextBlockIsLiteral: (args?: string) => {
+        seen.push(args);
+        return args?.includes(' 3 ') ?? false;
+      },
+      handleBlock: () => false,
+    } as unknown as ControlModeCommandQueue;
+    const callbacks = lifecycle.buildControlModeCallbacks(
+      () => {},
+      queue,
+      () => {},
+      () => true
+    );
+    expect(callbacks.onBlockBegin?.('1710000000 2 0')).toBe(false);
+    expect(callbacks.onBlockBegin?.('1710000000 3 0')).toBe(true);
+    expect(seen).toEqual(['1710000000 2 0', '1710000000 3 0']);
+  });
+
+  test('onBlockBegin args stamp seq so a non-literal orphan does not steal a literal capture begin', async () => {
+    const { host } = createHost();
+    const lifecycle = new ControlModeLifecycle(host);
+    const queue = new ControlModeCommandQueue();
+    const callbacks = lifecycle.buildControlModeCallbacks(
+      () => {},
+      queue,
+      () => {},
+      () => true
+    );
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    expect(callbacks.onBlockBegin?.('1 10 0')).toBe(false);
+    await expect(probe).rejects.toThrow(/timed out/);
+    const capture = queue.execute(() => {}, 'capture-pane -p', {
+      literal: true,
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(callbacks.onBlockBegin?.('1 11 0')).toBe(true);
+    expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['%output pane'] })).toBe(
+      true
+    );
+    await expect(capture).resolves.toBe('%output pane');
+    expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['vibeterm-lat'] })).toBe(
+      true
+    );
+    queue.dispose();
   });
 
   test('sendHeartbeat skips when control traffic is recent and sends after silence', async () => {

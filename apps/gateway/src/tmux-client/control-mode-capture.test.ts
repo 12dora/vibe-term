@@ -382,4 +382,85 @@ describe('control command latency sampling', () => {
     expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['late-probe'] })).toBe(true);
     queue.dispose();
   });
+
+  test('nextBlockIsLiteral skips a known-seq orphan that does not match the incoming begin', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    expect(queue.nextBlockIsLiteral('1 10 0')).toBe(false);
+    await expect(probe).rejects.toThrow(/timed out/);
+    const capture = queue.execute(() => {}, 'capture-pane -p', {
+      literal: true,
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral('1 11 0')).toBe(true);
+    expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['%output pane'] })).toBe(
+      true
+    );
+    await expect(capture).resolves.toBe('%output pane');
+    expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['vibeterm-lat'] })).toBe(
+      true
+    );
+    queue.dispose();
+  });
+
+  test('expired orphan with a known seq is swallowed instead of delivered to the next command', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral('1 10 0')).toBe(false);
+    await expect(probe).rejects.toThrow(/timed out/);
+    await Bun.sleep(40);
+    const user = queue.execute(
+      () => {},
+      'display-message -p -t %1 "#{pane_width}|#{pane_height}"',
+      {
+        transform: (block) => {
+          const info = block.lines[0]?.split('|');
+          if (!info?.[0] || !info[1]) throw new Error('invalid tmux pane frame info');
+          return block.lines[0];
+        },
+      }
+    );
+    expect(queue.nextBlockIsLiteral('1 11 0')).toBe(false);
+    expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['vibeterm-lat'] })).toBe(
+      true
+    );
+    expect(queue.handleBlock({ args: '1 99 0', isError: false, lines: ['unrelated'] })).toBe(true);
+    expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['80|24'] })).toBe(true);
+    await expect(user).resolves.toBe('80|24');
+    queue.dispose();
+  });
+
+  test('expired-then-late begin does not stamp its seq onto the next pending command', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    expect(queue.nextBlockIsLiteral('1 10 0')).toBe(false);
+    await expect(probe).rejects.toThrow(/timed out/);
+    await Bun.sleep(40);
+    const user = queue.execute(() => {}, 'display-message -p -t %1 frame', {
+      transform: (block) => {
+        if (block.lines[0] === 'vibeterm-lat') throw new Error('invalid tmux pane frame info');
+        return block.lines[0];
+      },
+    });
+    expect(queue.nextBlockIsLiteral('1 10 0')).toBe(false);
+    expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['vibeterm-lat'] })).toBe(
+      true
+    );
+    expect(queue.nextBlockIsLiteral('1 11 0')).toBe(false);
+    expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['80|24'] })).toBe(true);
+    await expect(user).resolves.toBe('80|24');
+    queue.dispose();
+  });
 });

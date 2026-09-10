@@ -133,4 +133,35 @@ describe('input control transport lifecycle', () => {
       h.cleanup();
     }
   });
+
+  test('expired late %end is swallowed and does not hit the next display-message command', async () => {
+    const h = harness();
+    const encoder = new TextEncoder();
+    try {
+      const probe = h.queue.execute(() => {}, 'display-message -p "vibeterm-lat"', {
+        timeoutMs: 20,
+        poisonOnTimeout: false,
+        transform: (block) => block.lines.join('\n'),
+      });
+      h.subscription.push(encoder.encode('%begin 1 10 0\n'));
+      await expect(probe).rejects.toThrow(/timed out/);
+      await Bun.sleep(40);
+      const user = h.queue.execute(
+        () => {},
+        'display-message -p -t %1 "#{pane_width}|#{pane_height}"',
+        {
+          transform: (block) => {
+            if (!block.lines[0]?.includes('|')) throw new Error('invalid tmux pane frame info');
+            return block.lines[0];
+          },
+        }
+      );
+      h.subscription.push(
+        encoder.encode('vibeterm-lat\n%end 1 10 0\n%begin 1 11 0\n80|24\n%end 1 11 0\n')
+      );
+      await expect(user).resolves.toBe('80|24');
+    } finally {
+      h.cleanup();
+    }
+  });
 });

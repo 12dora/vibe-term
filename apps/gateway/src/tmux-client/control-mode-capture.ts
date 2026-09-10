@@ -36,12 +36,15 @@ interface PendingControlCommand<T = unknown> {
   seq?: number;
 }
 
-/** 非毒化超时拆掉的队头：tmux 仍可能晚到 `%end`，带截止时间，超时未到则丢弃以免永久吞块。 */
+/** 非毒化超时拆掉的队头：tmux 仍可能晚到 `%end`，带截止时间；过期后只按 seq 丢弃，避免 FIFO 吞掉后续用户命令。 */
 interface OrphanControlBlock {
   literal: boolean;
   deadline: number;
   seq?: number;
 }
+
+/** 过期 orphan 的 command-number 暂留，用来识别迟到块，避免把它 stamp 到下一条命令上。 */
+const MAX_DISCARDED_ORPHAN_SEQS = 16;
 
 export interface ControlCommandLatencyOptions {
   /** 上报一次 write→%end 往返毫秒数（仅限队列空闲时写出、正常收到 %end 的命令）。 */
@@ -57,6 +60,7 @@ export class ControlModeCommandQueue {
   private readonly pending: PendingControlCommand[] = [];
   private poisoned = false;
   private readonly orphans: OrphanControlBlock[] = [];
+  private readonly discardedSeqs: number[] = [];
   private readonly clockNow: () => number;
 
   constructor(
@@ -119,7 +123,8 @@ export class ControlModeCommandQueue {
   nextBlockIsLiteral(args?: string): boolean {
     this.pruneExpiredOrphans();
     const seq = args === undefined ? undefined : parseCommandNumber(args);
-    const orphan = this.orphans[0];
+    if (seq !== undefined && this.discardedSeqs.includes(seq)) return false;
+    const orphan = this.orphanForBegin(seq);
     if (orphan) {
       stampSeq(orphan, seq);
       return orphan.literal;
@@ -131,6 +136,7 @@ export class ControlModeCommandQueue {
 
   handleBlock(block: ControlModeBlock): boolean {
     if (this.consumeOrphan(block)) return true;
+    if (this.swallowUnmatched(block)) return true;
     const pending = this.pending.shift();
     if (!pending) return false;
     clearTimeout(pending.timer);
@@ -154,6 +160,7 @@ export class ControlModeCommandQueue {
     if (this.poisoned) return;
     this.poisoned = true;
     this.orphans.length = 0;
+    this.discardedSeqs.length = 0;
     const error = new Error(reason);
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
@@ -193,6 +200,7 @@ export class ControlModeCommandQueue {
     if (this.poisoned) return;
     this.poisoned = true;
     this.orphans.length = 0;
+    this.discardedSeqs.length = 0;
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
       pending.reject(error);
@@ -206,7 +214,42 @@ export class ControlModeCommandQueue {
       const head = this.orphans[0];
       if (!head || head.deadline > now) break;
       this.orphans.shift();
+      if (head.seq !== undefined) this.rememberDiscardedSeq(head.seq);
     }
+  }
+
+  /** 与 consumeOrphan 对齐：已知 seq 且对不上的 orphan 跳过，把 %begin 交给 pending。 */
+  private orphanForBegin(seq: number | undefined): OrphanControlBlock | undefined {
+    if (seq !== undefined) {
+      const matched = this.orphans.find((orphan) => orphan.seq === seq);
+      if (matched) return matched;
+    }
+    const head = this.orphans[0];
+    if (!head) return undefined;
+    if (seq !== undefined && head.seq !== undefined) return undefined;
+    return head;
+  }
+
+  private rememberDiscardedSeq(seq: number): void {
+    if (this.discardedSeqs.includes(seq)) return;
+    this.discardedSeqs.push(seq);
+    if (this.discardedSeqs.length > MAX_DISCARDED_ORPHAN_SEQS) this.discardedSeqs.shift();
+  }
+
+  private takeDiscardedSeq(seq: number): boolean {
+    const index = this.discardedSeqs.indexOf(seq);
+    if (index < 0) return false;
+    this.discardedSeqs.splice(index, 1);
+    return true;
+  }
+
+  /** 过期后迟到、对不上 pending 的块直接丢弃，避免落到下一条用户命令上。 */
+  private swallowUnmatched(block: ControlModeBlock): boolean {
+    const seq = parseCommandNumber(block.args);
+    if (seq === undefined) return false;
+    if (this.takeDiscardedSeq(seq)) return true;
+    const pending = this.pending[0];
+    return pending !== undefined && pending.seq !== undefined && pending.seq !== seq;
   }
 
   private consumeOrphan(block: ControlModeBlock): boolean {

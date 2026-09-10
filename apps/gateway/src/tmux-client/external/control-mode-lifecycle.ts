@@ -230,7 +230,7 @@ export class ControlModeLifecycle {
           })
           .catch((error) => host.callbacks.onError(error));
       },
-      onBlockBegin: () => controlCommands.nextBlockIsLiteral(),
+      onBlockBegin: (args) => controlCommands.nextBlockIsLiteral(args),
       onBlockEnd: (block) => {
         if (controlCommands.handleBlock(block)) return;
         onAttachReady();
