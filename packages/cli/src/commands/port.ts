@@ -3,6 +3,7 @@
 import { flagBool, flagString, parseArgv } from '../core/args';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
+import { resolveMeshId } from '../core/files-api';
 import {
   createPortMapping,
   deletePortExport,
@@ -76,6 +77,7 @@ async function runMap(
   const target = parseTargetSpec(spec);
   const listenNodeId = await listenNode(ctx, flags);
   const targetNodeId = (await ctx.resolver.resolveNode(target.node)).id;
+  await rejectSameNodeMap(ctx, listenNodeId, targetNodeId);
   const map = await createPortMapping(ctx, {
     listenNodeId,
     targetNodeId,
@@ -151,6 +153,22 @@ async function runPause(
   else ctx.out.line(`${map.id}  ${map.state}`);
 }
 
+/** 网关没有同节点短路：self→self 的映射会 listening 但每条连接都 bad_signature。 */
+async function rejectSameNodeMap(
+  ctx: CliContext,
+  listenNodeId: string,
+  targetNodeId: string
+): Promise<void> {
+  const listenMesh = await resolveMeshId(ctx, listenNodeId);
+  const targetMesh = await resolveMeshId(ctx, targetNodeId);
+  if (listenNodeId === targetNodeId || listenMesh === targetMesh) {
+    throw new UsageError(
+      'port map cannot listen and target the same node',
+      'the gateway has no same-node short-circuit; pick a different --on or target'
+    );
+  }
+}
+
 async function runProbe(ctx: CliContext, positionals: string[]): Promise<undefined> {
   if (positionals.length !== 1) {
     throw new UsageError('usage: vibeterm port probe <node>:<host>:<port>');
@@ -182,6 +200,7 @@ export const command: Command = {
     '      If A returns 4xx, the export is deleted. 5xx/network keeps it; clean up with',
     '      `vibeterm port rm --export <mapId> --on <B>`.',
     '      --on selects the listening node A (default: entry self / --node).',
+    '      Listening node == target node is rejected (no same-node short-circuit).',
     '  ls [--on <node>]            GET /api/portmap (live counters)',
     '  rm <id> [--on <node>]       DELETE map; if exportRemoved is false, DELETE export on B',
     '  rm --export <id> --on <B>   DELETE /api/portmap/exports/:id on B (indeterminate-create cleanup)',

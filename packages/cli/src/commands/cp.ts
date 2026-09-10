@@ -61,7 +61,7 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
   if (positionals.length !== 2) {
     throw new UsageError(
       'usage: vibeterm cp <src> <dst>',
-      'each side is [<node>:]<root>/<path> or a local path (./file, /abs, ~)'
+      'each side is [<node>:]<root>/<path> (path is root-relative) or a local path (./file, /abs, ~)'
     );
   }
   const progress = new CopyProgress(ctx.out, progressMode(ctx, flags));
@@ -137,8 +137,9 @@ export const command: Command = {
     'Usage: vibeterm cp <src> <dst> [options]',
     '       vibeterm cp jobs ls|cancel <id>',
     '',
-    'Each side is [<node>:]<rootId-or-name>/<path>, or a local path starting with',
-    '/, ./, ../ or ~. Local-to-local is rejected (use system cp).',
+    'Each side is [<node>:]<rootId-or-name>/<path>, or a local path (./file, ../, ~, or an',
+    'OS-absolute path). On a node, <path> is a root-relative path (a leading `/` means an',
+    'absolute filesystem path and is rejected). Local-to-local is rejected (use system cp).',
     '',
     'Local→node: POST /api/files/mkdir {recursive:true} (once per dir, memoised),',
     '            then upload/init, 8 MiB PUT chunks with resume + jittered backoff, commit.',

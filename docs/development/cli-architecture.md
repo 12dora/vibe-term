@@ -215,13 +215,13 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm cp`
 
-`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
+`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`./`、`../`、`~`、操作系统绝对路径）。节点侧的 `<path>` 是相对该根的路径；**前导 `/` 表示文件系统绝对路径，会被 `outside_roots` 拒绝**。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
 
 `--json` 时 stdout 仅为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`，`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
 
 ## `vibeterm port`
 
-`map <listenPort> <targetNode>:<host>:<port> [--listen-host] [--name] [--on]`：先在 B 建 export，再用同一 `mapId` 在 A 建监听。A 返回 4xx 时撤掉 B 的 export；5xx / 网络错误则保留 export，并提示 `vibeterm port rm --export <mapId> --on <B>`（直接 `DELETE /api/portmap/exports/:mapId`）。`ls` 含实时计数。`rm <id>` 看 `exportRemoved`，未清则再删 B。`pause|resume` 走 PATCH。`probe <node>:<host>:<port>` 同时打 `/api/portmap/probe` 与 `/target-probe`。
+`map <listenPort> <targetNode>:<host>:<port> [--listen-host] [--name] [--on]`：先在 B 建 export，再用同一 `mapId` 在 A 建监听。A 返回 4xx 时撤掉 B 的 export；5xx / 网络错误则保留 export，并提示 `vibeterm port rm --export <mapId> --on <B>`（直接 `DELETE /api/portmap/exports/:mapId`）。监听节点与目标节点相同（含 `self` 与它的 mesh id）时客户端直接报用法错误：网关没有同节点短路，映射会显示 `listening` 但每条连接都 `bad_signature`。`ls` 含实时计数。`rm <id>` 看 `exportRemoved`，未清则再删 B。`pause|resume` 走 PATCH。`probe <node>:<host>:<port>` 同时打 `/api/portmap/probe` 与 `/target-probe`。
 
 `--json` 形状：`{ "map" }` / `{ "maps" }` / `{ "removed", "exportRemoved" }` / `{ "listen", "target" }`。
 
@@ -239,7 +239,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm share`
 
-子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）或名字；也可用 `--window-id @N`。口令来自 `--password-stdin` / `--password-file` / `@file` / `VIBETERM_SHARE_PASSWORD` / TTY；`--password` 仍可用但会打 stderr 警告。分享口令 API 不能清空，只有改口令；`password --end-sessions` 在 POST 新口令的同时踢掉在线观众。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
+子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）、序号或名字；也可用 `--window-id @N`。网关只按窗口 `@id` 匹配且需要热 snapshot，所以 `create` 会先 `openDeviceSession`（连设备、等会话树），再用 `@vibeterm/ws-client/canonical-tree` 的 `resolveWindow` 收成 `@id`，socket 一直开到 `POST /api/share` 返回。未给 `--origin` 时打 `GET /api/share/origins`，按 GUI 规则取 `recommended`（须在候选里）否则第一个候选，并在 stderr 打印所用地址。口令可选：省略则与 GUI 一样 `generateSharePassword()`；也可 `--password-stdin` / `--password-file` / `@file` / `VIBETERM_SHARE_PASSWORD` / TTY；`--password` 仍可用但会打 stderr 警告。`rm` 非 TTY 必须 `--yes`。分享口令 API 不能清空，只有改口令；`password --end-sessions` 在 POST 新口令的同时踢掉在线观众。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
 
 `--json` 形状：`{ share, password }` / `{ active, history }` / `ShareRecord` / `ShareLogPage` / `ShareSettings` / `ShareOriginsResponse`。
 

@@ -213,6 +213,19 @@ describe('vibeterm port', () => {
     await expect(port.run(ctx, ['map', '80'])).rejects.toThrow(UsageError);
   });
 
+  test('rejects mapping a node to itself', async () => {
+    const { ctx } = await testContext(portFetch().fetch);
+    await expect(port.run(ctx, ['map', '15432', 'self:127.0.0.1:5432'])).rejects.toThrow(
+      UsageError
+    );
+    await expect(port.run(ctx, ['map', '15432', 'office:127.0.0.1:5432'])).rejects.toThrow(
+      UsageError
+    );
+    await expect(
+      port.run(ctx, ['map', '15432', 'lab:127.0.0.1:5432', '--on', 'lab'])
+    ).rejects.toThrow(UsageError);
+  });
+
   test('keeps the export on 5xx listen failure', async () => {
     const fake = portFetch({ failMap: true, failMapStatus: 500 });
     const { ctx } = await testContext(fake.fetch);

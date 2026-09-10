@@ -1,5 +1,6 @@
 // `vibeterm share`：终端分享。
 
+import { generateSharePassword } from '@vibeterm/shared/share';
 import { flagBool, flagNumber, flagString } from '../core/args';
 import {
   type SubHandler,
@@ -18,7 +19,7 @@ import {
 } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { NotFoundError, UsageError } from '../core/errors';
-import { resolveShareTarget, sharePath } from '../core/share-target';
+import { resolveShareOrigin, resolveShareTarget, sharePath } from '../core/share-target';
 import type { Command } from './types';
 
 const FLAGS = {
@@ -45,48 +46,58 @@ const USAGE = [
   '  show <id>',
   '  password <id> [--password] [--end-sessions]   GET; POST sets password (API cannot clear it)',
   '  revoke <id>                            POST /api/share/:id/revoke',
-  '  rm <id>                                DELETE (ended shares only)',
+  '  rm <id> [--yes]                        DELETE (ended shares only; non-TTY requires --yes)',
   '  log <id> [--after N] [--limit N]',
   '  settings get|set                       GET/PUT /api/share/settings; set needs --body',
   '  origins                                GET /api/share/origins',
   '',
-  'create target: [<node>/]<device>:<window>  window is a tmux id (@1) or name.',
-  'Secrets: --password-stdin / --password-file / @file / VIBETERM_SHARE_PASSWORD (argv warns).',
+  'create target: [<node>/]<device>:<window>  window is a tmux id (@1), index, or name.',
+  'The device is connected first so the session tree is warm; names resolve to @id.',
+  '--window-id @N overrides the window token. --origin defaults to GET /api/share/origins',
+  '(recommended if it is a candidate, else the first candidate) and is printed on stderr.',
+  'Password is optional (generated like the GUI). Or --password-stdin / --password-file /',
+  '@file / VIBETERM_SHARE_PASSWORD (--password on argv warns).',
   '--json: { share, password } / { active, history } / ShareRecord / ShareLogPage / ShareSettings',
 ].join('\n');
 
 async function readSharePassword(
   ctx: CliContext,
-  flags: Parameters<SubHandler>[1]
-): Promise<string> {
-  const value = await readSecretField(ctx, flags, {
+  flags: Parameters<SubHandler>[1],
+  required: boolean
+): Promise<string | undefined> {
+  return readSecretField(ctx, flags, {
     flag: 'password',
     envName: 'VIBETERM_SHARE_PASSWORD',
-    required: true,
+    required,
     prompt: 'Share password: ',
   });
-  return value as string;
 }
 
 const create: SubHandler = async (ctx, flags, positionals) => {
   const targetRaw = requireArg(positionals, 0, 'target');
   rejectExtra(positionals, 1);
   const target = await resolveShareTarget(ctx, targetRaw, flags);
-  const extra = await resolveJsonBody(flagString(flags, 'body'));
-  const expires = flagString(flags, 'expires');
-  const body = mergeBody(
-    {
-      deviceId: target.deviceId,
-      windowId: target.windowId,
-      name: flagString(flags, 'name') ?? '',
-      password: await readSharePassword(ctx, flags),
-      expiresInMs: expires ? parseDurationMs(expires) : null,
-      origin: flagString(flags, 'origin') ?? null,
-    },
-    extra
-  );
-  const result = await ctx.http.json(target.nodeId, 'POST', '/api/share', body);
-  emit(ctx, result, () => ctx.out.data(result));
+  try {
+    const extra = await resolveJsonBody(flagString(flags, 'body'));
+    const expires = flagString(flags, 'expires');
+    const origin = await resolveShareOrigin(ctx, target.nodeId, flags);
+    const password = (await readSharePassword(ctx, flags, false)) ?? generateSharePassword();
+    const body = mergeBody(
+      {
+        deviceId: target.deviceId,
+        windowId: target.windowId,
+        name: flagString(flags, 'name') ?? '',
+        password,
+        expiresInMs: expires ? parseDurationMs(expires) : null,
+        origin,
+      },
+      extra
+    );
+    const result = await ctx.http.json(target.nodeId, 'POST', '/api/share', body);
+    emit(ctx, result, () => ctx.out.data(result));
+  } finally {
+    target.close();
+  }
 };
 
 const ls: SubHandler = async (ctx, _flags, positionals) => {
@@ -141,7 +152,8 @@ const password: SubHandler = async (ctx, flags, positionals) => {
     flagBool(flags, 'password-stdin') ||
     Boolean(flagString(flags, 'password-file'));
   if (endSessions || hasSecret) {
-    const value = await readSharePassword(ctx, flags);
+    const value = await readSharePassword(ctx, flags, true);
+    if (!value) throw new UsageError('missing password');
     const result = await ctx.http.json(nodeId, 'POST', path, { password: value, endSessions });
     emit(ctx, result, () => ctx.out.data(result));
     return;

@@ -108,7 +108,7 @@ vibeterm term run office/dev-box "systemctl status vibeterm" --idle 1500 --json
 ```
 
 - 把命令打进窗格并回车，然后收集输出，直到**静默** `--idle` 毫秒（默认 800）或到 `--timeout`。命令必须是**一行**（多行请用 `term send --stdin`）。
-- `--marker`：等输出安静下来之后，再单独打一行 `(echo __VT_DONE_<随机串>_$?)`，据此确认「真跑完了」并拿到退出码（`--json` 的 `exitCode`）。命令还在跑（比如 `sleep 30`）时会一直等到它结束或 `--timeout`。只对 POSIX shell（bash/zsh/sh）成立，fish 用的是 `$status`；主动读 stdin 的命令（`cat`、交互式安装器）会把这一行吃掉，那类命令别用 `run`。
+- `--marker`：等输出安静下来之后，再单独打一行 `(echo __VT_DONE_<随机串>_$?)`，据此确认「真跑完了」并拿到退出码（`--json` 的 `exitCode`）。命令还在跑（比如 `sleep 30`）时会一直等到它结束或 `--timeout`。只对 POSIX shell（bash/zsh/sh）成立，fish 用的是 `$status`；主动读 stdin 的命令（`cat`、交互式安装器）会把这一行吃掉，那类命令别用 `run`。裸的 `exit N` 会结束窗格里的 shell，哨兵就没机会跑——请写成 `(exit N)` 或 `sh -c 'exit N'`。
 - 输出上限 8 MiB，收满即停并把 `reason` 标成 `truncated`。
 - `--json` 形状：`{"pane","command","reason":"idle|timeout|done|truncated","exitCode":0|null,"output":"…","raw":"<base64 原始字节>"}`。
 - **退出码**：远端命令自己的成败看 `exitCode`，不影响 CLI 的退出码；但**输出没收全**（`reason` 是 `timeout` 或 `truncated`）时 CLI 退出 **1**，除非显式加 `--allow-timeout`。别把半截输出当成全部。
@@ -153,6 +153,33 @@ vibeterm term send prod-1/app:logs C-c
 ```
 
 第 2 行用了 `--marker`：它会在输出安静之后单独补一行哨兵，因此既能确认命令真的跑完，也能拿到退出码；第 3 行是长跑的流式命令，只能 `send` + `capture`，不能 `run`。
+
+## 文件拷贝
+
+```bash
+vibeterm cp ./patch.diff office:home/tmp/patch.diff
+vibeterm cp office:home/app/dist ./dist -r
+```
+
+节点侧路径是**相对该文件根**的：`[<node>:]<root>/<path>`。前导 `/` 会被当成文件系统绝对路径并被 `outside_roots` 拒绝，不要写成 `office:/home/u/file`。本地路径才用 `./`、`../`、`~` 或操作系统绝对路径。
+
+## 端口映射
+
+```bash
+vibeterm port map 8080 office:127.0.0.1:8080     # 把 office 上的 8080 映到本机
+```
+
+监听节点和目标节点必须是两台不同的机器（含 `self` 与它自己的 mesh id）。网关没有同节点短路，self→self 的映射会显示 `listening`，但连上去每条都 `bad_signature`。
+
+## 终端分享
+
+```bash
+vibeterm share create laptop:build                 # 窗口名；也可 laptop:@1 或 --window-id @1
+vibeterm share create self/laptop:smoke --origin https://vt.example.com
+vibeterm share rm <id> --yes
+```
+
+`create` 会先连上设备、等会话树变热，再把窗口名/序号收成 `@id`（冷启动直接 POST 会 404）。未给 `--origin` 时用 `GET /api/share/origins` 的推荐地址（须在候选里）或第一个候选，并在 stderr 打印实际使用的 origin。口令可省略（与网页端一样自动生成），也可 `--password-stdin` / `VIBETERM_SHARE_PASSWORD`。非 TTY 下 `rm` 必须 `--yes`。
 
 ## 安全说明
 

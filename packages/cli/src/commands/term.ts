@@ -495,6 +495,7 @@ export const command: Command = {
     '',
     'run <target> "<command>"        type a command, wait for the output to go idle, print it',
     '  the command must be a single line; output is capped at 8 MiB',
+    '  a bare `exit N` terminates the pane shell so the marker cannot run — use `(exit N)` or `sh -c`',
     '  --idle <ms>                   silence that counts as "done" (default 800)',
     '  --timeout <ms>                hard cap on the whole wait (default 30000)',
     '  --marker                      type "(echo __VT_DONE_<nonce>_$?)" on its own line afterwards',
