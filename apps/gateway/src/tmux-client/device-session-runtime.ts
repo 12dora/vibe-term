@@ -96,7 +96,7 @@ export interface DeviceSessionRuntimeConnection {
     endLine: number,
     maxOutputBytes: number
   ): Promise<string>;
-  probeHostLatency?(): Promise<void>;
+  probeHostLatency?(): Promise<undefined | 'busy'>;
 }
 
 export interface DeviceSessionRuntimeListener {

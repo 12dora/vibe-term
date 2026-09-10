@@ -127,7 +127,7 @@ export class SshExternalTmuxConnection extends ExternalTmuxConnectionCore {
     );
   }
 
-  probeHostLatency(): Promise<void> {
+  probeHostLatency(): Promise<undefined | 'busy'> {
     return probeHostLatency(this.controlCommands, this.connected ? this.getControlWriter() : null);
   }
 

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
-import { RelayEntryProbe, type RelayProbeFetch } from './relay-entry-probe';
+import {
+  RELAY_PROBE_BAD_TTL_CAP_MS,
+  RELAY_PROBE_BAD_TTL_MS,
+  RelayEntryProbe,
+  type RelayProbeFetch,
+  relayProbeBadTtlMs,
+} from './relay-entry-probe';
 
 const NODE = 'ab'.repeat(16);
 const RELAY = 'https://relay.example.com';
@@ -162,5 +168,139 @@ describe('RelayEntryProbe', () => {
     await probe.settle();
     expect(calls).toEqual([]);
     expect(probe.state(RELAY)).toBe('unknown');
+  });
+
+  test('连续失败按 2→4→8→16 分钟升级，封顶 30 分钟', async () => {
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    const ttls = [2, 4, 8, 16, 30, 30].map((minutes) => minutes * 60_000);
+    for (const ttl of ttls) {
+      probe.ensure(RELAY);
+      await probe.settle();
+      expect(probe.state(RELAY)).toBe('bad');
+      const n = calls.length;
+      advance(ttl - 1_000);
+      probe.ensure(RELAY);
+      await probe.settle();
+      expect(calls).toHaveLength(n);
+      advance(2_000);
+      expect(probe.state(RELAY)).toBe('unknown');
+    }
+    expect(calls).toHaveLength(ttls.length);
+  });
+
+  test('成功后失败次数归零，下一次失败重新从 2 分钟计', async () => {
+    let nodeId = 'ef'.repeat(16);
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ nodeId }), {
+      okTtlMs: 600_000,
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    advance(RELAY_PROBE_BAD_TTL_MS + 1);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+
+    nodeId = NODE;
+    advance(4 * 60_000 + 1);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(probe.state(RELAY)).toBe('ok');
+    expect(calls).toHaveLength(3);
+
+    nodeId = 'ef'.repeat(16);
+    advance(600_000 + 1);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(probe.state(RELAY)).toBe('bad');
+    expect(calls).toHaveLength(4);
+    advance(RELAY_PROBE_BAD_TTL_MS - 1_000);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(4);
+    advance(2_000);
+    expect(probe.state(RELAY)).toBe('unknown');
+  });
+
+  test('force 可在 bad TTL 内绕过退避立刻重探，失败则继续升级', async () => {
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(1);
+
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(1);
+
+    probe.ensure(RELAY, { force: true });
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+    expect(probe.state(RELAY)).toBe('bad');
+
+    advance(4 * 60_000 - 1_000);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+    advance(2_000);
+    expect(probe.state(RELAY)).toBe('unknown');
+  });
+
+  test('invalidate 绕过当前等待但保留失败次数', async () => {
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    probe.invalidate(RELAY);
+    expect(probe.state(RELAY)).toBe('unknown');
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+
+    advance(4 * 60_000 - 1_000);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+    advance(2_000);
+    expect(probe.state(RELAY)).toBe('unknown');
+  });
+
+  test('失败次数按目标隔离', async () => {
+    const other = 'https://relay-b.example.com';
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    advance(RELAY_PROBE_BAD_TTL_MS + 1);
+    probe.ensure(RELAY);
+    await probe.settle();
+
+    probe.ensure(other);
+    await probe.settle();
+    expect(calls).toHaveLength(3);
+    advance(RELAY_PROBE_BAD_TTL_MS - 1_000);
+    probe.ensure(other);
+    await probe.settle();
+    expect(calls).toHaveLength(3);
+    advance(2_000);
+    expect(probe.state(other)).toBe('unknown');
+    expect(probe.state(RELAY)).toBe('bad');
+  });
+});
+
+describe('relayProbeBadTtlMs', () => {
+  test('首次 2 分钟，之后翻倍，封顶 30 分钟', () => {
+    expect(relayProbeBadTtlMs(1)).toBe(RELAY_PROBE_BAD_TTL_MS);
+    expect(relayProbeBadTtlMs(2)).toBe(4 * 60_000);
+    expect(relayProbeBadTtlMs(3)).toBe(8 * 60_000);
+    expect(relayProbeBadTtlMs(4)).toBe(16 * 60_000);
+    expect(relayProbeBadTtlMs(5)).toBe(RELAY_PROBE_BAD_TTL_CAP_MS);
+    expect(relayProbeBadTtlMs(20)).toBe(RELAY_PROBE_BAD_TTL_CAP_MS);
+    expect(relayProbeBadTtlMs(0)).toBe(RELAY_PROBE_BAD_TTL_MS);
   });
 });

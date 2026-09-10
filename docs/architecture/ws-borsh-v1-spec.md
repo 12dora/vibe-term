@@ -324,7 +324,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 ### DEVICE_LATENCY（0x0106）
 
 拥有设备的网关按 tmux 控制模式命令回执（写入 → `%end`）测得网关 ↔ tmux server 这一跳的往返延迟（本地 tmux 或经 SSH），
-EWMA 平滑后下发给已连接该设备的会话：材料性变化（≥10 ms 或 ≥20%）或定时刷新时各发一次；会话连上设备且已有样本时立即补发一次。
+EWMA 平滑后下发给已连接该设备的非分享会话：实质变化（|Δ|≥2 ms 且达到 ≥10 ms 或相对 ≥20%）须间隔至少 5 s 才再发，满 15 s 无条件刷新；会话连上设备且已有样本时立即补发一次。
 网关在 HELLO_S2C `capabilities` 里播报 `device-latency-v1`；未播报的老节点不会发送此帧，客户端只能展示浏览器 ↔ 节点这一段。
 
 字段：

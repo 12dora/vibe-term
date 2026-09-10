@@ -130,7 +130,7 @@ describe('control command latency sampling', () => {
     expect(samples).toEqual([4]);
   });
 
-  test('drops samples for error blocks, timeouts and disposed commands', () => {
+  test('drops samples for error blocks, timeouts and disposed commands', async () => {
     const { samples, queue, block, advance } = createQueue();
     void queue
       .execute(() => {}, 'send-keys -t %1 a', { sample: true, transform: () => undefined })
@@ -138,10 +138,96 @@ describe('control command latency sampling', () => {
     advance(3);
     queue.handleBlock(block(['no current client'], true));
     void queue
+      .execute(() => {}, 'send-keys -t %1 timeout', {
+        sample: true,
+        timeoutMs: 20,
+        poisonOnTimeout: false,
+        transform: () => undefined,
+      })
+      .catch(() => {});
+    await Bun.sleep(50);
+    void queue
       .execute(() => {}, 'send-keys -t %1 b', { sample: true, transform: () => undefined })
       .catch(() => {});
     queue.dispose('closed');
     expect(samples).toEqual([]);
+  });
+
+  test('timeout poisons the queue by default', async () => {
+    let poisoned = 0;
+    const queue = new ControlModeCommandQueue(() => {
+      poisoned += 1;
+    });
+    const first = queue
+      .execute(() => {}, 'cmd-a', { timeoutMs: 20, transform: () => 'a' })
+      .then(
+        () => {
+          throw new Error('cmd-a should time out');
+        },
+        (error: Error) => error
+      );
+    const second = queue
+      .execute(() => {}, 'cmd-b', { timeoutMs: 5_000, transform: () => 'b' })
+      .then(
+        () => {
+          throw new Error('cmd-b should time out');
+        },
+        (error: Error) => error
+      );
+    const [firstError, secondError] = await Promise.all([first, second]);
+    expect(firstError.message).toMatch(/timed out/);
+    expect(secondError.message).toMatch(/timed out/);
+    expect(poisoned).toBe(1);
+    await expect(queue.execute(() => {}, 'cmd-c', { transform: () => 'c' })).rejects.toThrow(
+      /closed/
+    );
+  });
+
+  test('poisonOnTimeout false rejects only that command and leaves the queue intact', async () => {
+    let poisoned = 0;
+    const queue = new ControlModeCommandQueue(() => {
+      poisoned += 1;
+    });
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      sample: true,
+      transform: () => 'probe',
+    });
+    const user = queue.execute(() => {}, 'send-keys', {
+      timeoutMs: 5_000,
+      transform: () => 'user',
+    });
+    await expect(probe).rejects.toThrow(/timed out/);
+    expect(poisoned).toBe(0);
+    expect(queue.busy).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['probe-out'] })).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
+    await expect(user).resolves.toBe('user');
+    const next = queue.execute(() => {}, 'send-keys 2', { transform: () => 'ok' });
+    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
+    await expect(next).resolves.toBe('ok');
+    expect(poisoned).toBe(0);
+    queue.dispose();
+  });
+
+  test('poisonOnTimeout false drops a solo timed-out command so the queue is idle again', async () => {
+    let poisoned = 0;
+    const queue = new ControlModeCommandQueue(() => {
+      poisoned += 1;
+    });
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => undefined,
+    });
+    await expect(probe).rejects.toThrow(/timed out/);
+    expect(queue.busy).toBe(false);
+    expect(poisoned).toBe(0);
+    const user = queue.execute(() => {}, 'send-keys', { transform: () => 'ok' });
+    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
+    await expect(user).resolves.toBe('ok');
+    queue.dispose();
   });
 
   test('records nothing when no sampler is wired', () => {

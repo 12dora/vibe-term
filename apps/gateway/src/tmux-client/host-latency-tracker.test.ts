@@ -1,10 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 
+import { ControlModeCommandQueue } from './control-mode-capture';
 import {
   HOST_LATENCY_IDLE_PROBE_MS,
   HOST_LATENCY_MAX_SAMPLE_MS,
+  HOST_LATENCY_PROBE_TIMEOUT_MS,
   type HostLatencySample,
   HostLatencyTracker,
+  probeHostLatency,
 } from './host-latency-tracker';
 import { TestClock } from './pane-input-test-helpers';
 
@@ -14,13 +17,16 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function setup(options: { probe?: () => Promise<unknown> } = {}) {
+function setup(
+  options: { probe?: () => Promise<unknown> | unknown; canProbe?: () => boolean } = {}
+) {
   const clock = new TestClock();
   const wall = 1_700_000_000_000;
   const probes: number[] = [];
   const tracker = new HostLatencyTracker({
     clock,
     wallClock: () => wall,
+    canProbe: options.canProbe,
     probe: () => {
       probes.push(clock.now());
       return options.probe?.();
@@ -179,5 +185,71 @@ describe('HostLatencyTracker idle probe', () => {
     clock.tick(HOST_LATENCY_IDLE_PROBE_MS * 3);
     await flush();
     expect(probes).toEqual([]);
+  });
+
+  test('canProbe false is treated as activity and does not start a probe', async () => {
+    let busy = true;
+    const { clock, tracker, probes } = setup({ canProbe: () => !busy });
+    tracker.setProbeGate(() => true);
+    clock.tick(HOST_LATENCY_IDLE_PROBE_MS);
+    await flush();
+    expect(probes).toEqual([]);
+    clock.tick(HOST_LATENCY_IDLE_PROBE_MS - 1);
+    await flush();
+    expect(probes).toEqual([]);
+    busy = false;
+    clock.tick(1);
+    await flush();
+    expect(probes).toEqual([HOST_LATENCY_IDLE_PROBE_MS * 2]);
+  });
+
+  test('a busy probe result is treated as activity and does not spin', async () => {
+    let busy = true;
+    const { clock, tracker, probes } = setup({
+      probe: () => (busy ? 'busy' : undefined),
+    });
+    tracker.setProbeGate(() => true);
+    clock.tick(HOST_LATENCY_IDLE_PROBE_MS);
+    await flush();
+    expect(probes).toEqual([HOST_LATENCY_IDLE_PROBE_MS]);
+    clock.tick(HOST_LATENCY_IDLE_PROBE_MS - 1);
+    await flush();
+    expect(probes).toHaveLength(1);
+    busy = false;
+    clock.tick(1);
+    await flush();
+    expect(probes).toHaveLength(2);
+  });
+});
+
+describe('probeHostLatency', () => {
+  test('does not submit when the control queue is already busy', async () => {
+    const writes: string[] = [];
+    const queue = new ControlModeCommandQueue();
+    const pending = queue.execute((command) => writes.push(command), 'send-keys', {
+      transform: () => undefined,
+    });
+    const result = await probeHostLatency(queue, (command) => writes.push(command));
+    expect(result).toBe('busy');
+    expect(writes).toEqual(['send-keys\n']);
+    queue.dispose();
+    await expect(pending).rejects.toThrow(/closed/);
+  });
+
+  test('submits a non-poisoning sampled probe when the queue is idle', async () => {
+    const queue = new ControlModeCommandQueue();
+    const spy = spyOn(queue, 'execute').mockResolvedValue(undefined);
+    try {
+      await probeHostLatency(queue, () => {});
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy.mock.calls[0]?.[2]).toMatchObject({
+        sample: true,
+        poisonOnTimeout: false,
+        timeoutMs: HOST_LATENCY_PROBE_TIMEOUT_MS,
+      });
+    } finally {
+      spy.mockRestore();
+      queue.dispose();
+    }
   });
 });

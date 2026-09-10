@@ -22,7 +22,7 @@ export const HOST_LATENCY_EWMA_ALPHA = 0.25;
 export const HOST_LATENCY_IDLE_PROBE_MS = 15_000;
 /** 超过控制命令最长超时的样本一律视为异常丢弃。 */
 export const HOST_LATENCY_MAX_SAMPLE_MS = 30_000;
-/** 探针超时取控制通道上限，避免探针抢在真实命令之前毒化队列。 */
+/** 探针超时取控制通道上限；配合 poisonOnTimeout:false，超时只丢这一条。 */
 export const HOST_LATENCY_PROBE_TIMEOUT_MS = 30_000;
 /** display-message -p 只写 stdout，不碰状态栏、不产生 %output、不改 pane 状态。 */
 export const HOST_LATENCY_PROBE_COMMAND = 'display-message -p "vibeterm-lat"';
@@ -34,8 +34,10 @@ const systemClock: InputLaneClock = {
 };
 
 export interface HostLatencyTrackerOptions {
-  /** 补样探针；返回的 Promise 结算前不会再发第二条。 */
+  /** 补样探针；返回的 Promise 结算前不会再发第二条。返回 `'busy'` 视为队列仍有活动。 */
   probe?: () => Promise<unknown> | unknown;
+  /** 队列忙时不要发探针，并把这次空闲时钟推后一个窗口。 */
+  canProbe?: () => boolean;
   clock?: InputLaneClock;
   wallClock?: () => number;
   idleProbeIntervalMs?: number;
@@ -154,10 +156,18 @@ export class HostLatencyTracker {
       this.scheduleIn(this.idleProbeIntervalMs);
       return;
     }
+    if (this.options.canProbe && !this.options.canProbe()) {
+      this.lastSampleAt = this.clock.now();
+      this.scheduleIn(this.idleProbeIntervalMs);
+      return;
+    }
     this.lastProbeAt = this.clock.now();
     this.probeInFlight = true;
     void Promise.resolve()
       .then(() => this.options.probe?.())
+      .then((result) => {
+        if (result === 'busy') this.lastSampleAt = this.clock.now();
+      })
       .catch(() => undefined)
       .then(() => {
         this.probeInFlight = false;
@@ -179,16 +189,20 @@ export function hostLatencySampler(
   return sink ? { onSample: (rttMs) => sink(rttMs, hop) } : undefined;
 }
 
+export type HostLatencyProbeResult = undefined | 'busy';
+
 /** 通过与 send-keys 相同的控制命令路径发一条廉价探针，失败静默（连接层自有告警）。 */
 export function probeHostLatency(
   queue: ControlModeCommandQueue,
   write: ((data: string) => void) | null
-): Promise<void> {
-  if (!write) return Promise.resolve();
+): Promise<HostLatencyProbeResult> {
+  if (!write) return Promise.resolve(undefined);
+  if (queue.busy) return Promise.resolve('busy');
   return queue
     .execute(write, HOST_LATENCY_PROBE_COMMAND, {
       sample: true,
       timeoutMs: HOST_LATENCY_PROBE_TIMEOUT_MS,
+      poisonOnTimeout: false,
       transform: () => undefined,
     })
     .catch(() => undefined);

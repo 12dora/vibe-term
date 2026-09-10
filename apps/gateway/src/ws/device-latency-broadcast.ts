@@ -4,14 +4,20 @@ import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime
 import type { HostLatencySample } from '../tmux-client/host-latency-tracker';
 import { encodePayloadFrames } from './borsh/codec-borsh';
 import type { GatewaySession } from './gateway-session';
+import type { ShareSessionIndex } from './share-session-index';
 import type { DeviceConnectionEntry } from './types';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 /** 估计没有实质变化时的最低重发间隔，兜住「一直在变但都不显著」的情况。 */
 export const DEVICE_LATENCY_REFRESH_MS = 15_000;
+/** 实质变化后的最短下发间隔，避免本机 0–3 ms 抖动按键就推一帧。 */
+export const DEVICE_LATENCY_MIN_INTERVAL_MS = 5_000;
+/** 本机一跳抖动低于此值一律视为噪声，不走材料性变化。 */
+const DEVICE_LATENCY_MATERIAL_FLOOR_MS = 2;
 
 export interface DeviceLatencyBroadcastHost {
   readonly connections: Map<string, DeviceConnectionEntry>;
+  readonly shareIndex: Pick<ShareSessionIndex, 'visibleClients'>;
 }
 
 interface LastSent {
@@ -20,8 +26,8 @@ interface LastSent {
 }
 
 /**
- * 把每个设备的宿主一跳延迟推给「连了这台设备」的会话：估计有实质变化，或距上次下发满
- * 15 s 才发一帧，走与 PONG 相同的优先通道，不排在终端输出后面。
+ * 把每个设备的宿主一跳延迟推给「连了这台设备」的非分享会话：实质变化且间隔够，或距上次下发满
+ * 15 s 才发一帧，走与 PONG 相同的优先通道，但背压中的会话跳过。
  */
 export class DeviceLatencyBroadcast {
   private readonly lastSent = new Map<string, LastSent>();
@@ -47,9 +53,13 @@ export class DeviceLatencyBroadcast {
   /** 会话刚连上设备：已有估计就立刻单发一帧，不等下一次变化。 */
   handleDeviceConnected(session: GatewaySession, deviceId: string): void {
     const entry = this.host.connections.get(deviceId);
-    const sample = entry?.runtime.getHostLatency?.();
+    if (!entry) return;
+    if (!entry.clients.has(session) && !entry.canonicalClients?.has(session)) return;
+    const sample = entry.runtime.getHostLatency?.();
     if (!sample) return;
-    this.sendTo(session, deviceId, sample);
+    for (const target of this.host.shareIndex.visibleClients([session], deviceId, null)) {
+      this.sendEncoded(target, encodeDeviceLatencyPayload(deviceId, sample));
+    }
   }
 
   private publish(
@@ -61,27 +71,21 @@ export class DeviceLatencyBroadcast {
     if (!entry || entry.runtime !== runtime) return;
     const last = this.lastSent.get(deviceId);
     const now = this.now();
-    const due =
-      !last ||
-      rttChangedMaterially(last.rttMs, sample.rttMs) ||
-      now - last.at >= DEVICE_LATENCY_REFRESH_MS;
-    if (!due) return;
+    if (!shouldPublish(last, sample.rttMs, now)) return;
+    const sessions = [...this.host.shareIndex.visibleClients(sessionsOf(entry), deviceId, null)];
+    if (sessions.length === 0) return;
+    const payload = encodeDeviceLatencyPayload(deviceId, sample);
     let sent = false;
-    for (const session of sessionsOf(entry)) {
-      if (this.sendTo(session, deviceId, sample)) sent = true;
+    for (const session of sessions) {
+      if (this.sendEncoded(session, payload)) sent = true;
     }
     if (sent) this.lastSent.set(deviceId, { rttMs: sample.rttMs, at: now });
   }
 
-  private sendTo(session: GatewaySession, deviceId: string, sample: HostLatencySample): boolean {
+  private sendEncoded(session: GatewaySession, payload: Uint8Array): boolean {
     if (session.closed || !session.borshState.negotiated) return false;
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.DeviceLatencySchema, {
-      deviceId,
-      rttMs: sample.rttMs,
-      rawMs: sample.rawMs,
-      hop: sample.hop,
-      sampledAt: BigInt(sample.sampledAt),
-    });
+    const carrier = session.activeCarrier;
+    if (gatewayWebSocketSendGuard.isBackpressured(carrier)) return false;
     const state = session.borshState;
     const frames = encodePayloadFrames(
       wsBorsh.KIND_DEVICE_LATENCY,
@@ -90,7 +94,7 @@ export class DeviceLatencyBroadcast {
       state.maxFrameBytes
     );
     const status = gatewayWebSocketSendGuard.sendPriorityFrames(
-      session.activeCarrier,
+      carrier,
       frames as readonly BufferSource[]
     );
     return status === 'sent';
@@ -101,6 +105,28 @@ export class DeviceLatencyBroadcast {
     if (!entry || entry.runtime !== runtime) return false;
     return entry.clients.size > 0 || Boolean(entry.canonicalClients?.size);
   }
+}
+
+function encodeDeviceLatencyPayload(deviceId: string, sample: HostLatencySample): Uint8Array {
+  return wsBorsh.encodePayload(wsBorsh.schema.DeviceLatencySchema, {
+    deviceId,
+    rttMs: sample.rttMs,
+    rawMs: sample.rawMs,
+    hop: sample.hop,
+    sampledAt: BigInt(sample.sampledAt),
+  });
+}
+
+function shouldPublish(last: LastSent | undefined, rttMs: number, now: number): boolean {
+  if (!last) return true;
+  if (now - last.at >= DEVICE_LATENCY_REFRESH_MS) return true;
+  if (now - last.at < DEVICE_LATENCY_MIN_INTERVAL_MS) return false;
+  return hostRttChangedMaterially(last.rttMs, rttMs);
+}
+
+function hostRttChangedMaterially(prev: number, next: number): boolean {
+  if (Math.abs(next - prev) < DEVICE_LATENCY_MATERIAL_FLOOR_MS) return false;
+  return rttChangedMaterially(prev, next);
 }
 
 function sessionsOf(entry: DeviceConnectionEntry): Set<GatewaySession> {

@@ -2,13 +2,20 @@ import { describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
 import type { DeviceSessionRuntime } from '../tmux-client/device-session-runtime';
 import type { HostLatencyListener, HostLatencySample } from '../tmux-client/host-latency-tracker';
-import { DEVICE_LATENCY_REFRESH_MS, DeviceLatencyBroadcast } from './device-latency-broadcast';
+import {
+  DEVICE_LATENCY_MIN_INTERVAL_MS,
+  DEVICE_LATENCY_REFRESH_MS,
+  DeviceLatencyBroadcast,
+} from './device-latency-broadcast';
 import type { GatewaySession } from './gateway-session';
+import { shareVisibleClients } from './share-gate';
+import type { ShareScope } from './share-scope';
 import { type BorshTestWs, createGatewaySession } from './test-helpers';
 import type { DeviceConnectionEntry } from './types';
 import { gatewayWebSocketSendGuard } from './websocket-send-guard';
 
 const DEVICE_ID = 'device-a';
+const SHARE_SCOPE: ShareScope = { shareId: 'sh1', deviceId: DEVICE_ID, windowId: '@1' };
 
 function createFakeRuntime() {
   const listeners = new Set<HostLatencyListener>();
@@ -44,8 +51,17 @@ function sample(rttMs: number, overrides: Partial<HostLatencySample> = {}): Host
 
 function setup() {
   const connections = new Map<string, DeviceConnectionEntry>();
+  const shareIndex = {
+    visibleClients(
+      clients: Iterable<GatewaySession>,
+      deviceId: string,
+      paneId: string | null
+    ): Iterable<GatewaySession> {
+      return shareVisibleClients(clients, deviceId, paneId, () => false);
+    },
+  };
   let now = 0;
-  const broadcast = new DeviceLatencyBroadcast({ connections }, () => now);
+  const broadcast = new DeviceLatencyBroadcast({ connections, shareIndex }, () => now);
   const fake = createFakeRuntime();
   const clients = new Set<GatewaySession>();
   const canonicalClients = new Set<GatewaySession>();
@@ -116,6 +132,34 @@ describe('DeviceLatencyBroadcast fan-out', () => {
     }
   });
 
+  test('never sends DEVICE_LATENCY to a share-scoped session', () => {
+    const { fake, addSession, broadcast } = setup();
+    const owner = addSession();
+    const shared = addSession();
+    shared.shareScope = SHARE_SCOPE;
+
+    fake.emit(sample(42));
+    expect(owner.sent).toHaveLength(1);
+    expect(shared.sent).toHaveLength(0);
+
+    fake.setCurrent(sample(77));
+    broadcast.handleDeviceConnected(shared, DEVICE_ID);
+    expect(shared.sent).toHaveLength(0);
+  });
+
+  test('encodes the payload once per publish even with several sessions', () => {
+    const { fake, addSession } = setup();
+    addSession();
+    addSession();
+    const spy = spyOn(wsBorsh, 'encodePayload');
+    try {
+      fake.emit(sample(42));
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('ignores samples from a runtime the entry no longer points at', () => {
     const { fake, entry, addSession } = setup();
     const session = addSession();
@@ -136,10 +180,26 @@ describe('DeviceLatencyBroadcast fan-out', () => {
       spy.mockRestore();
     }
   });
+
+  test('skips a session whose carrier is already backpressured', () => {
+    const { fake, addSession } = setup();
+    const healthy = addSession();
+    const stalled = addSession();
+    const spy = spyOn(gatewayWebSocketSendGuard, 'isBackpressured').mockImplementation(
+      (carrier) => carrier === stalled.activeCarrier
+    );
+    try {
+      fake.emit(sample(11));
+      expect(healthy.sent).toHaveLength(1);
+      expect(stalled.sent).toHaveLength(0);
+    } finally {
+      spy.mockRestore();
+    }
+  });
 });
 
 describe('DeviceLatencyBroadcast throttling', () => {
-  test('resends only on material change or after the refresh window', () => {
+  test('resends only on material change after the min interval, or after the refresh window', () => {
     const { fake, addSession, advance } = setup();
     const session = addSession();
 
@@ -150,7 +210,7 @@ describe('DeviceLatencyBroadcast throttling', () => {
     fake.emit(sample(105));
     expect(session.sent).toHaveLength(1);
 
-    advance(1000);
+    advance(DEVICE_LATENCY_MIN_INTERVAL_MS);
     fake.emit(sample(130));
     expect(session.sent).toHaveLength(2);
 
@@ -161,6 +221,60 @@ describe('DeviceLatencyBroadcast throttling', () => {
     advance(DEVICE_LATENCY_REFRESH_MS);
     fake.emit(sample(131));
     expect(session.sent).toHaveLength(3);
+  });
+
+  test('0→1 ms and 1→2 ms do not publish before the min interval', () => {
+    const { fake, addSession, advance } = setup();
+    const session = addSession();
+
+    fake.emit(sample(0));
+    expect(session.sent).toHaveLength(1);
+
+    advance(DEVICE_LATENCY_MIN_INTERVAL_MS - 1);
+    fake.emit(sample(1));
+    expect(session.sent).toHaveLength(1);
+    fake.emit(sample(2));
+    expect(session.sent).toHaveLength(1);
+  });
+
+  test('1→2 ms stays below the material floor even after the min interval', () => {
+    const { fake, addSession, advance } = setup();
+    const session = addSession();
+
+    fake.emit(sample(1));
+    advance(DEVICE_LATENCY_MIN_INTERVAL_MS);
+    fake.emit(sample(2));
+    expect(session.sent).toHaveLength(1);
+  });
+
+  test('1→20 ms publishes only after the min interval', () => {
+    const { fake, addSession, advance } = setup();
+    const session = addSession();
+
+    fake.emit(sample(1));
+    expect(session.sent).toHaveLength(1);
+
+    advance(DEVICE_LATENCY_MIN_INTERVAL_MS - 1);
+    fake.emit(sample(20));
+    expect(session.sent).toHaveLength(1);
+
+    advance(1);
+    fake.emit(sample(20));
+    expect(session.sent).toHaveLength(2);
+  });
+
+  test('sub-floor local hops still refresh after 15 s', () => {
+    const { fake, addSession, advance } = setup();
+    const session = addSession();
+
+    fake.emit(sample(0));
+    advance(DEVICE_LATENCY_MIN_INTERVAL_MS);
+    fake.emit(sample(1));
+    expect(session.sent).toHaveLength(1);
+
+    advance(DEVICE_LATENCY_REFRESH_MS - DEVICE_LATENCY_MIN_INTERVAL_MS);
+    fake.emit(sample(2));
+    expect(session.sent).toHaveLength(2);
   });
 
   test('does not remember a send when nobody received it', () => {
@@ -187,6 +301,15 @@ describe('DeviceLatencyBroadcast session connect', () => {
     const session = addSession();
     broadcast.handleDeviceConnected(session, DEVICE_ID);
     connections.delete(DEVICE_ID);
+    broadcast.handleDeviceConnected(session, DEVICE_ID);
+    expect(session.sent).toHaveLength(0);
+  });
+
+  test('does not push when the session never made it into the device entry', () => {
+    const { fake, broadcast } = setup();
+    const session = createGatewaySession();
+    session.borshState.negotiated = true;
+    fake.setCurrent(sample(77));
     broadcast.handleDeviceConnected(session, DEVICE_ID);
     expect(session.sent).toHaveLength(0);
   });
@@ -225,7 +348,12 @@ describe('DeviceLatencyBroadcast probe gate', () => {
 
   test('tolerates runtimes without the latency API', () => {
     const connections = new Map<string, DeviceConnectionEntry>();
-    const broadcast = new DeviceLatencyBroadcast({ connections });
+    const shareIndex = {
+      visibleClients(clients: Iterable<GatewaySession>) {
+        return clients;
+      },
+    };
+    const broadcast = new DeviceLatencyBroadcast({ connections, shareIndex });
     const runtime = {} as DeviceSessionRuntime;
     const detach = broadcast.attach(DEVICE_ID, runtime);
     expect(() => detach()).not.toThrow();

@@ -29,6 +29,8 @@ interface PendingControlCommand<T = unknown> {
   timer: ReturnType<typeof setTimeout>;
   // 单调时钟起点；null 表示这条命令不参与宿主一跳延迟采样。
   sampleStartedAt: number | null;
+  /** 已结算（非毒化超时）时留在队列里只为对齐后续 %end，不再 resolve/reject。 */
+  settled: boolean;
 }
 
 export interface ControlCommandLatencyOptions {
@@ -67,6 +69,8 @@ export class ControlModeCommandQueue {
       onAck?: () => void;
       /** 参与宿主一跳延迟采样：只有廉价命令才应打开。 */
       sample?: boolean;
+      /** 为 false 时只拒绝本命令，不毒化整条队列（空闲探针用）。默认 true。 */
+      poisonOnTimeout?: boolean;
       transform: (block: ControlModeBlock) => T;
     }
   ): Promise<T> {
@@ -79,8 +83,13 @@ export class ControlModeCommandQueue {
         resolve,
         reject,
         sampleStartedAt: null,
+        settled: false,
         timer: setTimeout(() => {
-          this.poison(new Error(`tmux control command timed out: ${command.slice(0, 80)}`));
+          this.timeoutPending(
+            pending as PendingControlCommand,
+            new Error(`tmux control command timed out: ${command.slice(0, 80)}`),
+            options.poisonOnTimeout !== false
+          );
         }, options.timeoutMs ?? 10_000),
       };
       const sampled = options.sample === true && this.latency !== undefined && !this.busy;
@@ -102,6 +111,7 @@ export class ControlModeCommandQueue {
     const pending = this.pending.shift();
     if (!pending) return false;
     clearTimeout(pending.timer);
+    if (pending.settled) return true;
     if (!block.isError) this.reportLatency(pending);
     if (block.isError) {
       pending.reject(new Error(block.lines.join('\n') || 'tmux control command failed'));
@@ -130,6 +140,24 @@ export class ControlModeCommandQueue {
   private reportLatency(pending: PendingControlCommand): void {
     if (pending.sampleStartedAt === null) return;
     this.latency?.onSample(this.clockNow() - pending.sampleStartedAt);
+  }
+
+  private timeoutPending(pending: PendingControlCommand, error: Error, poisonQueue: boolean): void {
+    if (this.poisoned) return;
+    if (poisonQueue) {
+      this.poison(error);
+      return;
+    }
+    const index = this.pending.indexOf(pending);
+    if (index < 0) return;
+    clearTimeout(pending.timer);
+    pending.sampleStartedAt = null;
+    pending.reject(error);
+    if (this.pending.length === 1) {
+      this.pending.splice(index, 1);
+      return;
+    }
+    pending.settled = true;
   }
 
   private poison(error: Error): void {
