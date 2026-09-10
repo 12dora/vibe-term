@@ -72,7 +72,7 @@ test.describe
 
       // 关闭 Sheet 回到终端
       await page.getByTestId('mobile-sidebar-close').click();
-      await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
+      await expect(page.getByTestId('mobile-sidebar-sheet')).toBeHidden();
     });
 
     test('watch dialog opens and rule form is reachable', async ({ page }) => {

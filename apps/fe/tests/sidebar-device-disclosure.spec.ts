@@ -68,11 +68,13 @@ test('sidebar: device disclosure persists and tabs stay mutually exclusive', asy
     await expect(page.getByTestId('files-tab')).toBeVisible();
     await expect(page.getByTestId(`device-item-${deviceId}`)).toHaveCount(0);
 
-    // Tab 选择不持久化：刷新后回到默认的 Panes
+    // 2.0.8 起 Tab 选择持久化：刷新后停在上次的 Files；切回 Panes 再继续
     await page.reload();
-    await expect(panesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(filesTab).toHaveAttribute('aria-selected', 'true');
+    await expect(panesTab).toHaveAttribute('aria-selected', 'false');
     await expect(agentTab).toHaveAttribute('aria-selected', 'false');
-    await expect(filesTab).toHaveAttribute('aria-selected', 'false');
+    await panesTab.click();
+    await expect(panesTab).toHaveAttribute('aria-selected', 'true');
 
     const deviceToggle = page.getByTestId(`device-expand-${deviceId}`);
     await expect(deviceToggle).toHaveAttribute('aria-expanded', 'true');

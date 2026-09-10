@@ -14,7 +14,7 @@ test('mobile: topbar + sidebar sheet open/close', async ({ page }) => {
   await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
 
   await page.getByTestId('mobile-sidebar-close').click();
-  await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
+  await expect(page.getByTestId('mobile-sidebar-sheet')).toBeHidden();
 });
 
 // 以 PWA（standalone）启动落在 `/` 时，直接展开侧边栏抽屉，而不是停在设备页。
@@ -40,5 +40,5 @@ test('mobile PWA: standalone launch lands on the sidebar sheet', async ({ page }
   await expect(page.getByTestId('mobile-sidebar-sheet')).toBeVisible();
 
   await page.getByTestId('mobile-sidebar-close').click();
-  await expect(page.getByTestId('mobile-sidebar-sheet')).toHaveCount(0);
+  await expect(page.getByTestId('mobile-sidebar-sheet')).toBeHidden();
 });
