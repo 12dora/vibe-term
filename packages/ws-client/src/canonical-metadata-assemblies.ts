@@ -94,6 +94,12 @@ export class CanonicalMetadataAssemblies {
     this.assemblies.clear();
   }
 
+  /** 丢掉含该设备记录的半截分片：设备被重置后，旧分片收齐会把它凭空复活 */
+  discardDevice(deviceId: string): void {
+    discardSupersededMetadataAssemblies(this.assemblies, new Set([deviceId]));
+    this.scheduleTimeout();
+  }
+
   private createAssembly(event: MetadataSnapshotEvent): MetadataSnapshotAssembly {
     return {
       metadataEpoch: copyBytes(event.metadataEpoch),

@@ -3,14 +3,24 @@
 
 import { describe, expect, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
-import type { MetadataPatchEvent, MetadataSnapshotEvent } from './canonical-state-helpers';
 import {
+  type MetadataLiveCaches,
+  ingestMetadataPatch,
+  ingestMetadataSnapshot,
+} from './canonical-metadata-identity';
+import type {
+  DeviceMetadataState,
+  MetadataPatchEvent,
+  MetadataSnapshotEvent,
+} from './canonical-state-helpers';
+import {
+  type CanonicalResolution,
   activePane,
   activeWindow,
   createCanonicalTree,
   findPaneById,
   findWindowByIndex,
-  findWindowByName,
+  findWindowsByName,
   resolvePane,
   resolveWindow,
 } from './canonical-tree';
@@ -332,7 +342,9 @@ describe('createCanonicalTree 身份与顺序', () => {
         ]),
       ])
     );
-    expect(findWindowByName(tree.session(DEVICE), 'editor')?.id).toBe('@1');
+    expect(findWindowsByName(tree.session(DEVICE), 'editor').map((item) => item.id)).toEqual([
+      '@1',
+    ]);
     expect(findPaneById(tree.session(DEVICE), '%1')?.customName).toBe('server');
     tree.applyPatch(
       patchEvent(1n, 2n, [
@@ -344,7 +356,7 @@ describe('createCanonicalTree 身份与顺序', () => {
       ])
     );
     expect(tree.session(DEVICE)?.windows[0]?.customName).toBeUndefined();
-    expect(findWindowByName(tree.session(DEVICE), 'win0')?.id).toBe('@1');
+    expect(findWindowsByName(tree.session(DEVICE), 'win0').map((item) => item.id)).toEqual(['@1']);
     tree.dispose();
   });
 
@@ -365,19 +377,278 @@ describe('createCanonicalTree 身份与顺序', () => {
   });
 });
 
+function identityHarness(): {
+  caches: MetadataLiveCaches;
+  metadata: Map<string, DeviceMetadataState>;
+} {
+  const metadata = new Map<string, DeviceMetadataState>();
+  const noop = () => {};
+  return {
+    metadata,
+    caches: {
+      metadata,
+      awaitingMetadataDevices: new Set(),
+      epochRecoveryDevices: new Set(),
+      terminalCursors: new Map(),
+      blockedPanes: new Set(),
+      clearPaneStateForDevice: noop,
+      cancelPane: noop,
+      dropPendingPane: noop,
+      dropSizeEpoch: noop,
+      resolvedRecovery: noop,
+      resolvedSubscriptionRetry: noop,
+      emitSnapshot: noop,
+      emitPatch: noop,
+      emitMetadataGap: noop,
+    },
+  };
+}
+
+function expectSameFold(
+  tree: ReturnType<typeof createCanonicalTree>,
+  metadata: Map<string, DeviceMetadataState>
+): void {
+  const ingested = metadata.get(DEVICE);
+  const device = tree.device(DEVICE);
+  expect(ingested).toBeDefined();
+  expect(device).not.toBeNull();
+  expect(tree.snapshot(DEVICE)).toEqual(ingested?.snapshot ?? null);
+  expect(device?.revision).toBe(ingested?.revision as bigint);
+  expect([...(device?.paneEpochs ?? [])]).toEqual([...(ingested?.paneEpochs ?? [])]);
+}
+
+describe('createCanonicalTree 与 ingest 路径等价', () => {
+  test('同一串快照 + 增量喂两边，snapshot / paneEpochs / revision 逐帧一致', () => {
+    const tree = createCanonicalTree();
+    const { caches, metadata } = identityHarness();
+    const records = baseRecords();
+    tree.applySnapshot(snapshotEvent(records));
+    ingestMetadataSnapshot(caches, METADATA_EPOCH, 1n, records);
+    expectSameFold(tree, metadata);
+
+    const patches: MetadataPatchEvent[] = [
+      patchEvent(1n, 2n, [windowRecord('@3', 2), paneRecord('%4', '@3', 0)]),
+      patchEvent(2n, 3n, [
+        {
+          key: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@2'),
+          parent: null,
+          fields: [
+            { field: wsBorsh.SOURCE_FIELD_NAME, value: { String: 'renamed' } },
+            { field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: 0 } },
+          ],
+        },
+      ]),
+      patchEvent(3n, 4n, [
+        {
+          key: key(wsBorsh.SOURCE_ENTITY_PANE, '%1'),
+          parent: key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1'),
+          fields: [{ field: wsBorsh.SOURCE_FIELD_PANE_EPOCH, value: { Bytes16: NEXT_PANE_EPOCH } }],
+        },
+      ]),
+      patchEvent(4n, 5n, [], [key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1')]),
+      patchEvent(5n, 6n, [windowRecord('@4', 3, [], NEXT_SERVER_EPOCH)]),
+    ];
+    for (const patch of patches) {
+      tree.applyPatch(patch);
+      ingestMetadataPatch(caches, patch);
+      expectSameFold(tree, metadata);
+    }
+    tree.dispose();
+  });
+});
+
+describe('createCanonicalTree 级联删除', () => {
+  test('删窗口连带摘掉子 pane 的 epoch', () => {
+    const tree = seeded();
+    expect(tree.device(DEVICE)?.paneEpochs.has('%1')).toBe(true);
+    tree.applyPatch(patchEvent(1n, 2n, [], [key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1')]));
+    const paneEpochs = tree.device(DEVICE)?.paneEpochs;
+    expect(paneEpochs?.has('%1')).toBe(false);
+    expect(paneEpochs?.has('%2')).toBe(false);
+    expect(paneEpochs?.has('%3')).toBe(true);
+    tree.dispose();
+  });
+
+  test('删 session 摘掉全部 pane epoch', () => {
+    const tree = seeded();
+    tree.applyPatch(patchEvent(1n, 2n, [], [key(wsBorsh.SOURCE_ENTITY_SESSION, '$1')]));
+    expect(tree.device(DEVICE)?.paneEpochs.size).toBe(0);
+    expect(tree.session(DEVICE)).toBeNull();
+    tree.dispose();
+  });
+
+  test('删窗口同时摘掉子 pane 的自定义顺序，重建后回到 tmux index 顺序', () => {
+    const tree = createCanonicalTree();
+    const order = (value: number): Field[] => [
+      { field: wsBorsh.SOURCE_FIELD_TREE_ORDER, value: { U32: value } },
+    ];
+    tree.applySnapshot(
+      snapshotEvent([
+        sessionRecord(),
+        windowRecord('@1', 0),
+        paneRecord('%1', '@1', 0, order(1)),
+        paneRecord('%2', '@1', 1, order(0)),
+      ])
+    );
+    expect(tree.session(DEVICE)?.windows[0]?.panes.map((pane) => pane.id)).toEqual(['%2', '%1']);
+    tree.applyPatch(patchEvent(1n, 2n, [], [key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1')]));
+    tree.applyPatch(
+      patchEvent(2n, 3n, [
+        windowRecord('@1', 0),
+        paneRecord('%1', '@1', 0),
+        paneRecord('%2', '@1', 1),
+      ])
+    );
+    expect(tree.session(DEVICE)?.windows[0]?.panes.map((pane) => pane.id)).toEqual(['%1', '%2']);
+    tree.dispose();
+  });
+});
+
+describe('createCanonicalTree 生命周期', () => {
+  test('分片超时报断链，dispose 后定时器不再回调', async () => {
+    const timedOut: Array<string | undefined> = [];
+    const timing = createCanonicalTree({
+      assemblyTimeoutMs: 5,
+      onGap: (deviceId) => timedOut.push(deviceId),
+    });
+    timing.applySnapshot(
+      snapshotEvent(baseRecords().slice(0, 3), { chunkIndex: 0, totalChunks: 2 })
+    );
+    await Bun.sleep(60);
+    expect(timedOut).toEqual([undefined]);
+    timing.dispose();
+
+    const disposed: Array<string | undefined> = [];
+    const tree = createCanonicalTree({
+      assemblyTimeoutMs: 5,
+      onGap: (deviceId) => disposed.push(deviceId),
+    });
+    tree.applySnapshot(snapshotEvent(baseRecords().slice(0, 3), { chunkIndex: 0, totalChunks: 2 }));
+    tree.dispose();
+    await Bun.sleep(60);
+    expect(disposed).toEqual([]);
+  });
+
+  test('maxBufferedBytes 越限即丢分片并报断链', () => {
+    const gaps: Array<string | undefined> = [];
+    const tree = createCanonicalTree({
+      maxBufferedBytes: 1,
+      onGap: (deviceId) => gaps.push(deviceId),
+    });
+    expect(
+      tree.applySnapshot(
+        snapshotEvent(baseRecords().slice(0, 3), { chunkIndex: 0, totalChunks: 2 })
+      )
+    ).toEqual([]);
+    expect(gaps).toEqual([undefined]);
+    tree.dispose();
+  });
+
+  test('reset(deviceId) 连半截分片一起丢，后到的分片不会复活该设备', () => {
+    const tree = createCanonicalTree();
+    const records = baseRecords();
+    tree.applySnapshot(snapshotEvent(records.slice(0, 3), { chunkIndex: 0, totalChunks: 2 }));
+    tree.reset(DEVICE);
+    expect(
+      tree.applySnapshot(snapshotEvent(records.slice(3), { chunkIndex: 1, totalChunks: 2 }))
+    ).toEqual([]);
+    expect(tree.deviceIds()).toEqual([]);
+    tree.dispose();
+  });
+
+  test('dispose 清空设备', () => {
+    const tree = seeded();
+    tree.dispose();
+    expect(tree.deviceIds()).toEqual([]);
+    expect(tree.get()).toEqual([]);
+  });
+});
+
+function resolvedId<T extends { id: string }>(resolution: CanonicalResolution<T>): string | null {
+  return resolution.ok ? resolution.value.id : null;
+}
+
 describe('纯定位辅助', () => {
-  test('按 id / index / 名字定位窗口与 pane', () => {
+  test('优先级：id > index > 名字', () => {
     const tree = seeded();
     const session = tree.session(DEVICE);
-    expect(resolveWindow(session, '@2')?.id).toBe('@2');
-    expect(resolveWindow(session, '1')?.id).toBe('@2');
-    expect(resolveWindow(session, 'win1')?.id).toBe('@2');
-    expect(resolveWindow(session, 'missing')).toBeNull();
-    expect(resolvePane(session, '%3')?.id).toBe('%3');
-    expect(resolvePane(session, '1.0')?.id).toBe('%3');
-    expect(resolvePane(session, '1')?.id).toBe('%2');
-    expect(resolvePane(session, '@2.0')?.id).toBe('%3');
-    expect(resolvePane(session, '9.0')).toBeNull();
+    expect(resolvedId(resolveWindow(session, '@2'))).toBe('@2');
+    expect(resolvedId(resolveWindow(session, '1'))).toBe('@2');
+    expect(resolvedId(resolveWindow(session, 'win1'))).toBe('@2');
+    expect(resolveWindow(session, 'missing')).toEqual({
+      ok: false,
+      reason: 'not-found',
+      candidates: [],
+    });
+    expect(resolvedId(resolvePane(session, '%3'))).toBe('%3');
+    expect(resolvedId(resolvePane(session, '1.0'))).toBe('%3');
+    expect(resolvedId(resolvePane(session, '1'))).toBe('%2');
+    expect(resolvedId(resolvePane(session, '@2.0'))).toBe('%3');
+    expect(resolvePane(session, '9.0').ok).toBe(false);
+    tree.dispose();
+  });
+
+  test('index 没命中即回落到名字：真的叫「2」的窗口仍可达', () => {
+    const tree = createCanonicalTree();
+    tree.applySnapshot(
+      snapshotEvent([
+        sessionRecord(),
+        windowRecord('@1', 0, [
+          { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: '2' } },
+        ]),
+      ])
+    );
+    const session = tree.session(DEVICE);
+    expect(resolvedId(resolveWindow(session, '0'))).toBe('@1');
+    expect(resolvedId(resolveWindow(session, '2'))).toBe('@1');
+    tree.dispose();
+  });
+
+  test('含点的名字不会被误当成「窗口.pane index」', () => {
+    const tree = createCanonicalTree();
+    tree.applySnapshot(
+      snapshotEvent([
+        sessionRecord(),
+        windowRecord('@1', 0),
+        paneRecord('%1', '@1', 0, [
+          { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'api.v2' } },
+        ]),
+        paneRecord('%2', '@1', 1, [
+          { field: wsBorsh.SOURCE_FIELD_TITLE, value: { String: 'src/app.ts' } },
+        ]),
+      ])
+    );
+    const session = tree.session(DEVICE);
+    expect(resolvedId(resolvePane(session, 'api.v2'))).toBe('%1');
+    expect(resolvedId(resolvePane(session, 'src/app.ts'))).toBe('%2');
+    // `0.1` 仍按「窗口 0 的 pane 1」解释
+    expect(resolvedId(resolvePane(session, '0.1'))).toBe('%2');
+    tree.dispose();
+  });
+
+  test('重名报歧义并给出候选，id 引用不受影响', () => {
+    const tree = createCanonicalTree();
+    const custom = (name: string) => [
+      { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: name } } as Field,
+    ];
+    tree.applySnapshot(
+      snapshotEvent([
+        sessionRecord(),
+        windowRecord('@1', 0, custom('editor')),
+        windowRecord('@2', 1, custom('editor')),
+        paneRecord('%1', '@1', 0, custom('shell')),
+        paneRecord('%2', '@2', 0, custom('shell')),
+      ])
+    );
+    const session = tree.session(DEVICE);
+    const windows = resolveWindow(session, 'editor');
+    expect(windows.ok).toBe(false);
+    expect(windows.ok === false && windows.reason).toBe('ambiguous');
+    expect(windows.ok === false && windows.candidates.map((item) => item.id)).toEqual(['@1', '@2']);
+    const panes = resolvePane(session, 'shell');
+    expect(panes.ok === false && panes.reason).toBe('ambiguous');
+    expect(resolvedId(resolvePane(session, '%2'))).toBe('%2');
+    expect(resolvedId(resolveWindow(session, '@2'))).toBe('@2');
     tree.dispose();
   });
 
@@ -388,31 +659,6 @@ describe('纯定位辅助', () => {
     expect(activePane(activeWindow(session))?.id).toBe('%1');
     expect(activeWindow(null)).toBeNull();
     expect(activePane(null)).toBeNull();
-    tree.dispose();
-  });
-
-  test('pane 名定位优先活动窗口，再扫其余窗口', () => {
-    const tree = createCanonicalTree();
-    tree.applySnapshot(
-      snapshotEvent([
-        sessionRecord(),
-        windowRecord('@1', 0),
-        windowRecord('@2', 1),
-        paneRecord('%1', '@1', 0, [
-          { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'shared' } },
-        ]),
-        paneRecord('%2', '@2', 0, [
-          { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'shared' } },
-        ]),
-        paneRecord('%3', '@2', 1, [
-          { field: wsBorsh.SOURCE_FIELD_CUSTOM_NAME, value: { String: 'only-here' } },
-        ]),
-      ])
-    );
-    const session = tree.session(DEVICE);
-    expect(resolvePane(session, 'shared')?.id).toBe('%1');
-    expect(resolvePane(session, 'only-here')?.id).toBe('%3');
-    expect(resolvePane(session, 'nope')).toBeNull();
     tree.dispose();
   });
 });
