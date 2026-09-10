@@ -24,14 +24,15 @@ function probeKey(url: string): string {
   return url.trim().replace(/\/+$/, '');
 }
 
-/** 连续失败 TTL：首次 `baseMs`，之后翻倍，封顶 `capMs`。 */
+/** 连续失败 TTL：首次 `baseMs`，之后翻倍，封顶 `max(capMs, baseMs)`，避免调用方把 base 调过 30 分钟仍被夹掉。 */
 export function relayProbeBadTtlMs(
   failures: number,
   baseMs = RELAY_PROBE_BAD_TTL_MS,
   capMs = RELAY_PROBE_BAD_TTL_CAP_MS
 ): number {
+  const cap = Math.max(capMs, baseMs);
   const shift = Math.min(Math.max(failures, 1) - 1, 30);
-  return Math.min(capMs, baseMs * 2 ** shift);
+  return Math.min(cap, baseMs * 2 ** shift);
 }
 
 /**
@@ -42,7 +43,7 @@ export function relayProbeBadTtlMs(
 export class RelayEntryProbe {
   private readonly cache = new Map<string, CacheEntry>();
   private readonly inflight = new Map<string, Promise<void>>();
-  /** 按目标累计的连续失败次数；成功清零。缓存过期或 invalidate 都不清，以便退避升级。 */
+  /** 按目标累计的连续失败次数；成功清零。缓存过期或默认 invalidate 都不清；`resetStreak` 除外。 */
   private readonly failStreak = new Map<string, number>();
   private readonly fetchImpl: RelayProbeFetch;
   private readonly now: () => number;
@@ -71,10 +72,12 @@ export class RelayEntryProbe {
 
   /**
    * 丢弃某地址的缓存结论：上联刚接上中继时，接上之前的 `bad` 不该继续挡住候选。
-   * 只绕过这一次等待，连续失败次数保留，下次失败继续升级。
+   * 默认只绕过这一次等待，连续失败次数保留；`resetStreak` 在中继角色 / 公网地址变化时清零退避。
    */
-  invalidate(url: string): void {
-    this.cache.delete(probeKey(url));
+  invalidate(url: string, options?: { resetStreak?: boolean }): void {
+    const key = probeKey(url);
+    this.cache.delete(key);
+    if (options?.resetStreak) this.failStreak.delete(key);
   }
 
   /** 发即忘：缓存有效或已有在途探测时不重复发起，结果落在下一次 `state()`。`force` 绕过当前 TTL 立刻重探一次。 */

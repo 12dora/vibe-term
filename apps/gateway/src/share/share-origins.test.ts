@@ -317,6 +317,49 @@ describe('在用中继变化时作废探测缓存', () => {
       'https://relay-b.example.com',
     ]);
   });
+
+  test('同一条在用中继的 node 角色变化时作废探测（含 ok）', () => {
+    const probe = fakeProbe({ 'https://relay.example.com': 'ok' });
+    const src = (node: boolean) =>
+      sources({
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay.example.com', priority: 0, attached: true, node }],
+        relayProbe: () => probe,
+      });
+    buildShareOriginContext(src(false));
+    expect(probe.invalidated).toEqual([]);
+
+    buildShareOriginContext(src(true));
+    expect(probe.invalidated).toEqual(['https://relay.example.com']);
+    expect(probe.state('https://relay.example.com')).toBe('unknown');
+
+    buildShareOriginContext(src(true));
+    expect(probe.invalidated).toEqual(['https://relay.example.com']);
+  });
+
+  test('同一条在用中继公网 URL 变化时作废新地址上的 bad', () => {
+    const probe = fakeProbe({
+      'https://relay-old.example.com': 'ok',
+      'https://relay-new.example.com': 'bad',
+    });
+    buildShareOriginContext(
+      sources({
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay-old.example.com', priority: 0, attached: true }],
+        relayProbe: () => probe,
+      })
+    );
+    expect(probe.invalidated).toEqual([]);
+
+    buildShareOriginContext(
+      sources({
+        uplinkKind: () => 'relay',
+        relays: () => [{ url: 'https://relay-new.example.com', priority: 0, attached: true }],
+        relayProbe: () => probe,
+      })
+    );
+    expect(probe.invalidated).toEqual(['https://relay-new.example.com']);
+  });
 });
 
 describe('startShareRelayPriming', () => {

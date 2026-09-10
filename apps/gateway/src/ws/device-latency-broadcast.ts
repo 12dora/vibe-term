@@ -20,10 +20,22 @@ export interface DeviceLatencyBroadcastHost {
   readonly shareIndex: Pick<ShareSessionIndex, 'visibleClients'>;
 }
 
+export type DeviceLatencySchedule = {
+  setTimeout: (callback: () => void, delayMs: number) => unknown;
+  clearTimeout: (timer: unknown) => void;
+};
+
 interface LastSent {
   rttMs: number;
   at: number;
 }
+
+const defaultSchedule: DeviceLatencySchedule = {
+  setTimeout: (callback, delayMs) => setTimeout(callback, delayMs),
+  clearTimeout: (timer) => {
+    clearTimeout(timer as ReturnType<typeof setTimeout>);
+  },
+};
 
 /**
  * 把每个设备的宿主一跳延迟推给「连了这台设备」的非分享会话：实质变化且间隔够，或距上次下发满
@@ -31,10 +43,12 @@ interface LastSent {
  */
 export class DeviceLatencyBroadcast {
   private readonly lastSent = new Map<string, LastSent>();
+  private readonly refreshTimers = new Map<string, unknown>();
 
   constructor(
     private readonly host: DeviceLatencyBroadcastHost,
-    private readonly now: () => number = () => Date.now()
+    private readonly now: () => number = () => Date.now(),
+    private readonly schedule: DeviceLatencySchedule = defaultSchedule
   ) {}
 
   /** 运行时挂载时接上监听与探针闸门，返回值在运行时分离时调用。 */
@@ -44,6 +58,7 @@ export class DeviceLatencyBroadcast {
       this.publish(deviceId, runtime, sample)
     );
     return () => {
+      this.clearRefresh(deviceId);
       runtime.setHostLatencyProbeGate?.(null);
       unsubscribe?.();
       this.lastSent.delete(deviceId);
@@ -60,6 +75,7 @@ export class DeviceLatencyBroadcast {
     for (const target of this.host.shareIndex.visibleClients([session], deviceId, null)) {
       this.sendEncoded(target, encodeDeviceLatencyPayload(deviceId, sample));
     }
+    this.armRefresh(deviceId, entry.runtime);
   }
 
   private publish(
@@ -80,6 +96,7 @@ export class DeviceLatencyBroadcast {
       if (this.sendEncoded(session, payload)) sent = true;
     }
     if (sent) this.lastSent.set(deviceId, { rttMs: sample.rttMs, at: now });
+    this.armRefresh(deviceId, runtime);
   }
 
   private sendEncoded(session: GatewaySession, payload: Uint8Array): boolean {
@@ -104,6 +121,37 @@ export class DeviceLatencyBroadcast {
     const entry = this.host.connections.get(deviceId);
     if (!entry || entry.runtime !== runtime) return false;
     return entry.clients.size > 0 || Boolean(entry.canonicalClients?.size);
+  }
+
+  private armRefresh(deviceId: string, runtime: DeviceSessionRuntime): void {
+    this.clearRefresh(deviceId);
+    if (!this.hasSessions(deviceId, runtime)) return;
+    if (!runtime.getHostLatency?.()) return;
+    const last = this.lastSent.get(deviceId);
+    const elapsed = last ? this.now() - last.at : Number.POSITIVE_INFINITY;
+    const delay =
+      elapsed >= DEVICE_LATENCY_REFRESH_MS
+        ? DEVICE_LATENCY_REFRESH_MS
+        : DEVICE_LATENCY_REFRESH_MS - elapsed;
+    const timer = this.schedule.setTimeout(() => {
+      this.refreshTimers.delete(deviceId);
+      this.refresh(deviceId, runtime);
+    }, delay);
+    this.refreshTimers.set(deviceId, timer);
+  }
+
+  private clearRefresh(deviceId: string): void {
+    const timer = this.refreshTimers.get(deviceId);
+    if (timer === undefined) return;
+    this.schedule.clearTimeout(timer);
+    this.refreshTimers.delete(deviceId);
+  }
+
+  private refresh(deviceId: string, runtime: DeviceSessionRuntime): void {
+    if (!this.hasSessions(deviceId, runtime)) return;
+    const sample = runtime.getHostLatency?.();
+    if (!sample) return;
+    this.publish(deviceId, runtime, sample);
   }
 }
 

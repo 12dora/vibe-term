@@ -17,16 +17,13 @@ function flush(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-function setup(
-  options: { probe?: () => Promise<unknown> | unknown; canProbe?: () => boolean } = {}
-) {
+function setup(options: { probe?: () => Promise<unknown> | unknown } = {}) {
   const clock = new TestClock();
   const wall = 1_700_000_000_000;
   const probes: number[] = [];
   const tracker = new HostLatencyTracker({
     clock,
     wallClock: () => wall,
-    canProbe: options.canProbe,
     probe: () => {
       probes.push(clock.now());
       return options.probe?.();
@@ -185,22 +182,6 @@ describe('HostLatencyTracker idle probe', () => {
     clock.tick(HOST_LATENCY_IDLE_PROBE_MS * 3);
     await flush();
     expect(probes).toEqual([]);
-  });
-
-  test('canProbe false is treated as activity and does not start a probe', async () => {
-    let busy = true;
-    const { clock, tracker, probes } = setup({ canProbe: () => !busy });
-    tracker.setProbeGate(() => true);
-    clock.tick(HOST_LATENCY_IDLE_PROBE_MS);
-    await flush();
-    expect(probes).toEqual([]);
-    clock.tick(HOST_LATENCY_IDLE_PROBE_MS - 1);
-    await flush();
-    expect(probes).toEqual([]);
-    busy = false;
-    clock.tick(1);
-    await flush();
-    expect(probes).toEqual([HOST_LATENCY_IDLE_PROBE_MS * 2]);
   });
 
   test('a busy probe result is treated as activity and does not spin', async () => {

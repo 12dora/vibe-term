@@ -249,6 +249,46 @@ describe('RelayEntryProbe', () => {
     expect(probe.state(RELAY)).toBe('unknown');
   });
 
+  test('invalidate({ resetStreak: true }) 清零失败次数，下次失败从 2 分钟重新计', async () => {
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: RELAY_PROBE_BAD_TTL_MS,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    advance(RELAY_PROBE_BAD_TTL_MS + 1);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(2);
+
+    probe.invalidate(RELAY, { resetStreak: true });
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(3);
+
+    advance(RELAY_PROBE_BAD_TTL_MS - 1_000);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(3);
+    advance(2_000);
+    expect(probe.state(RELAY)).toBe('unknown');
+  });
+
+  test('badTtlMs 大于 30 分钟时按该值封顶，不被 30 分钟夹掉', async () => {
+    const hour = 60 * 60_000;
+    const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
+      badTtlMs: hour,
+    });
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(probe.state(RELAY)).toBe('bad');
+    advance(hour - 1_000);
+    probe.ensure(RELAY);
+    await probe.settle();
+    expect(calls).toHaveLength(1);
+    advance(2_000);
+    expect(probe.state(RELAY)).toBe('unknown');
+  });
+
   test('invalidate 绕过当前等待但保留失败次数', async () => {
     const { probe, calls, advance } = makeProbe(async () => jsonResponse({ error: 'nope' }, 503), {
       badTtlMs: RELAY_PROBE_BAD_TTL_MS,
@@ -302,5 +342,12 @@ describe('relayProbeBadTtlMs', () => {
     expect(relayProbeBadTtlMs(5)).toBe(RELAY_PROBE_BAD_TTL_CAP_MS);
     expect(relayProbeBadTtlMs(20)).toBe(RELAY_PROBE_BAD_TTL_CAP_MS);
     expect(relayProbeBadTtlMs(0)).toBe(RELAY_PROBE_BAD_TTL_MS);
+  });
+
+  test('caller-supplied base larger than 30 min raises the cap', () => {
+    const hour = 60 * 60_000;
+    expect(relayProbeBadTtlMs(1, hour)).toBe(hour);
+    expect(relayProbeBadTtlMs(5, hour)).toBe(hour);
+    expect(relayProbeBadTtlMs(5, hour, RELAY_PROBE_BAD_TTL_CAP_MS)).toBe(hour);
   });
 });

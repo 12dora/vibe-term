@@ -36,8 +36,6 @@ const systemClock: InputLaneClock = {
 export interface HostLatencyTrackerOptions {
   /** 补样探针；返回的 Promise 结算前不会再发第二条。返回 `'busy'` 视为队列仍有活动。 */
   probe?: () => Promise<unknown> | unknown;
-  /** 队列忙时不要发探针，并把这次空闲时钟推后一个窗口。 */
-  canProbe?: () => boolean;
   clock?: InputLaneClock;
   wallClock?: () => number;
   idleProbeIntervalMs?: number;
@@ -153,11 +151,6 @@ export class HostLatencyTracker {
       return;
     }
     if (this.probeInFlight || !gate()) {
-      this.scheduleIn(this.idleProbeIntervalMs);
-      return;
-    }
-    if (this.options.canProbe && !this.options.canProbe()) {
-      this.lastSampleAt = this.clock.now();
       this.scheduleIn(this.idleProbeIntervalMs);
       return;
     }

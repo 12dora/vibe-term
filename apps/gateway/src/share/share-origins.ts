@@ -22,12 +22,18 @@ export type ShareOriginContext = {
   nodePrefix: string | null;
 };
 
-export type ShareOriginRelayRow = { url: string; priority: number; attached: boolean };
+export type ShareOriginRelayRow = {
+  url: string;
+  priority: number;
+  attached: boolean;
+  /** 中继主机是否同时担任 node（转发 `/n/<id>/*`）。变化时作废探测含失败次数。 */
+  node?: boolean;
+};
 
 export type ShareOriginProbe = {
   state(url: string): RelayProbeState;
   ensure(url: string): void;
-  invalidate(url: string): void;
+  invalidate(url: string, options?: { resetStreak?: boolean }): void;
 };
 
 export type ShareOriginSources = {
@@ -120,12 +126,12 @@ function readUplinkKind(): 'hub' | 'relay' | null {
 }
 
 let attachedUplinkUrl: (() => string | null) | null = null;
-let lastAttachedRelayKey: string | null = null;
+let lastAttachedRelay: { url: string; node: boolean } | null = null;
 
 /** 由装配层注入：当前 uplink 实际连上的中继 / hub 公网地址（用于把在用中继排到候选前面）。 */
 export function setShareOriginAttachedUplink(resolver: (() => string | null) | null): void {
   attachedUplinkUrl = resolver;
-  lastAttachedRelayKey = null;
+  lastAttachedRelay = null;
   relayAccessCache = null;
 }
 
@@ -234,16 +240,29 @@ export function startShareRelayPriming(
   };
 }
 
+function attachedRelayWatch(relays: ShareOriginRelayRow[]): { url: string; node: boolean } | null {
+  const attached = relays.find((row) => row.attached) ?? null;
+  if (!attached) return null;
+  const url = normalizeShareOrigin(attached.url);
+  if (!url) return null;
+  return { url, node: attached.node === true };
+}
+
 /**
- * 上联刚接上中继时，接上之前探到的 `bad` 必须立刻作废并重探，否则要干等 2 min 才会出现中继候选。
+ * 上联刚接上中继时，接上之前探到的 `bad` 必须立刻作废并重探，否则要干等退避才会出现中继候选。
  * 只丢 `bad`：`ok` 结论仍然成立，丢了反而让候选在切换瞬间凭空消失。
+ * 同一条中继的 node 角色或公网 URL 变了则连 streak 一起清：退避是旧配置下的结论。
  */
 function invalidateOnAttachedChange(probe: ShareOriginProbe, relays: ShareOriginRelayRow[]): void {
-  const attached = relays.find((row) => row.attached) ?? null;
-  const key = attached ? normalizeShareOrigin(attached.url) : null;
-  if (key === lastAttachedRelayKey) return;
-  lastAttachedRelayKey = key;
-  if (attached && probe.state(attached.url) === 'bad') probe.invalidate(attached.url);
+  const next = attachedRelayWatch(relays);
+  const prev = lastAttachedRelay;
+  if (prev?.url === next?.url && prev?.node === next?.node) return;
+  lastAttachedRelay = next;
+  if (!next) return;
+  const nodeChanged = prev !== null && prev.url === next.url && prev.node !== next.node;
+  if (nodeChanged || probe.state(next.url) === 'bad') {
+    probe.invalidate(next.url, { resetStreak: true });
+  }
 }
 
 function isIpHost(url: string): boolean {

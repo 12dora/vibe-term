@@ -46,6 +46,8 @@ function monotonicNow(): number {
 export class ControlModeCommandQueue {
   private readonly pending: PendingControlCommand[] = [];
   private poisoned = false;
+  /** 非毒化超时拆掉的队头：tmux 仍会晚到 %end，先吃掉以免错配下一条命令。 */
+  private orphanBlocks = 0;
   private readonly clockNow: () => number;
 
   constructor(
@@ -104,10 +106,15 @@ export class ControlModeCommandQueue {
   }
 
   nextBlockIsLiteral(): boolean {
+    if (this.orphanBlocks > 0) return false;
     return this.pending[0]?.literal ?? false;
   }
 
   handleBlock(block: ControlModeBlock): boolean {
+    if (this.orphanBlocks > 0) {
+      this.orphanBlocks -= 1;
+      return true;
+    }
     const pending = this.pending.shift();
     if (!pending) return false;
     clearTimeout(pending.timer);
@@ -130,6 +137,7 @@ export class ControlModeCommandQueue {
   dispose(reason = 'tmux control command queue closed'): void {
     if (this.poisoned) return;
     this.poisoned = true;
+    this.orphanBlocks = 0;
     const error = new Error(reason);
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
@@ -153,8 +161,9 @@ export class ControlModeCommandQueue {
     clearTimeout(pending.timer);
     pending.sampleStartedAt = null;
     pending.reject(error);
-    if (this.pending.length === 1) {
+    if (index === 0) {
       this.pending.splice(index, 1);
+      this.orphanBlocks += 1;
       return;
     }
     pending.settled = true;
@@ -163,6 +172,7 @@ export class ControlModeCommandQueue {
   private poison(error: Error): void {
     if (this.poisoned) return;
     this.poisoned = true;
+    this.orphanBlocks = 0;
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
       pending.reject(error);

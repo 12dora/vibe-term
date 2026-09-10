@@ -219,15 +219,68 @@ describe('control command latency sampling', () => {
     const probe = queue.execute(() => {}, 'display-message -p', {
       timeoutMs: 20,
       poisonOnTimeout: false,
-      transform: () => undefined,
+      transform: () => 'probe',
     });
     await expect(probe).rejects.toThrow(/timed out/);
     expect(queue.busy).toBe(false);
     expect(poisoned).toBe(0);
-    const user = queue.execute(() => {}, 'send-keys', { transform: () => 'ok' });
-    expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
-    await expect(user).resolves.toBe('ok');
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['vibeterm-lat'] })).toBe(true);
+    expect(queue.busy).toBe(false);
+    const user = queue.execute(() => {}, 'send-keys', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['user-out'] })).toBe(true);
+    await expect(user).resolves.toBe('user-out');
+    expect(poisoned).toBe(0);
     queue.dispose();
+  });
+
+  test('orphan late block does not leak the next command literal flag', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    await expect(probe).rejects.toThrow(/timed out/);
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    const capture = queue.execute(() => {}, 'capture-pane -p', {
+      literal: true,
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['vibeterm-lat'] })).toBe(true);
+    expect(queue.nextBlockIsLiteral()).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['pane text'] })).toBe(true);
+    await expect(capture).resolves.toBe('pane text');
+    queue.dispose();
+  });
+
+  test('dispose and poison drop the orphan counter so a late block is not swallowed after reconnect', async () => {
+    const disposed = new ControlModeCommandQueue();
+    const probe = disposed.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => undefined,
+    });
+    await expect(probe).rejects.toThrow(/timed out/);
+    disposed.dispose();
+    expect(disposed.handleBlock({ args: '', isError: false, lines: ['vibeterm-lat'] })).toBe(false);
+
+    let poisoned = 0;
+    const live = new ControlModeCommandQueue(() => {
+      poisoned += 1;
+    });
+    const first = live.execute(() => {}, 'cmd-a', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'a',
+    });
+    await expect(first).rejects.toThrow(/timed out/);
+    const boom = live.execute(() => {}, 'cmd-b', { timeoutMs: 20, transform: () => 'b' });
+    await expect(boom).rejects.toThrow(/timed out/);
+    expect(poisoned).toBe(1);
+    expect(live.handleBlock({ args: '', isError: false, lines: ['late'] })).toBe(false);
   });
 
   test('records nothing when no sampler is wired', () => {

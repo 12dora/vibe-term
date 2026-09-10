@@ -6,6 +6,7 @@ import {
   DEVICE_LATENCY_MIN_INTERVAL_MS,
   DEVICE_LATENCY_REFRESH_MS,
   DeviceLatencyBroadcast,
+  type DeviceLatencySchedule,
 } from './device-latency-broadcast';
 import type { GatewaySession } from './gateway-session';
 import { shareVisibleClients } from './share-gate';
@@ -49,6 +50,37 @@ function sample(rttMs: number, overrides: Partial<HostLatencySample> = {}): Host
   return { rttMs, rawMs: rttMs, hop: 0, sampledAt: 1_700_000_000_000, ...overrides };
 }
 
+function createScheduleClock() {
+  let now = 0;
+  let nextId = 0;
+  const timers = new Map<number, { at: number; callback: () => void }>();
+  const schedule: DeviceLatencySchedule = {
+    setTimeout: (callback, delayMs) => {
+      const id = ++nextId;
+      timers.set(id, { at: now + delayMs, callback });
+      return id;
+    },
+    clearTimeout: (timer) => {
+      timers.delete(timer as number);
+    },
+  };
+  return {
+    now: () => now,
+    schedule,
+    advance: (ms: number) => {
+      const target = now + ms;
+      while (true) {
+        const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next || next[1].at > target) break;
+        now = next[1].at;
+        timers.delete(next[0]);
+        next[1].callback();
+      }
+      now = target;
+    },
+  };
+}
+
 function setup() {
   const connections = new Map<string, DeviceConnectionEntry>();
   const shareIndex = {
@@ -60,8 +92,12 @@ function setup() {
       return shareVisibleClients(clients, deviceId, paneId, () => false);
     },
   };
-  let now = 0;
-  const broadcast = new DeviceLatencyBroadcast({ connections, shareIndex }, () => now);
+  const clock = createScheduleClock();
+  const broadcast = new DeviceLatencyBroadcast(
+    { connections, shareIndex },
+    clock.now,
+    clock.schedule
+  );
   const fake = createFakeRuntime();
   const clients = new Set<GatewaySession>();
   const canonicalClients = new Set<GatewaySession>();
@@ -84,9 +120,7 @@ function setup() {
     entry,
     fake,
     detach,
-    advance: (ms: number) => {
-      now += ms;
-    },
+    advance: clock.advance,
     addSession: (target: Set<GatewaySession> = clients): BorshTestWs => {
       const session = createGatewaySession();
       session.borshState.negotiated = true;
@@ -284,6 +318,26 @@ describe('DeviceLatencyBroadcast throttling', () => {
     advance(100);
     fake.emit(sample(101));
     expect(session.sent).toHaveLength(1);
+  });
+
+  test('re-emits the last sample every 15 s while a session is attached, and stops after detach', () => {
+    const { fake, addSession, advance, detach } = setup();
+    const session = addSession();
+
+    fake.emit(sample(42, { sampledAt: 1_700_000_000_000 }));
+    expect(session.sent).toHaveLength(1);
+
+    advance(DEVICE_LATENCY_REFRESH_MS);
+    expect(session.sent).toHaveLength(2);
+    advance(DEVICE_LATENCY_REFRESH_MS);
+    expect(session.sent).toHaveLength(3);
+    advance(DEVICE_LATENCY_REFRESH_MS);
+    expect(session.sent).toHaveLength(4);
+    expect(decode(session.sent[3]).payload.rttMs).toBe(42);
+
+    detach();
+    advance(DEVICE_LATENCY_REFRESH_MS * 2);
+    expect(session.sent).toHaveLength(4);
   });
 });
 
