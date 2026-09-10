@@ -35,13 +35,13 @@ export function PageTitle(params: DeviceRouteParams) {
   return <DeviceConsolePageTitle {...params} />;
 }
 
-// 头部动作区：先放两枚可见性徽标（浏览器↔node、entry↔node），再放控制台动作。
-// `self` 时 DeviceNodeBadges 自行返回 null，旧单 node 形态的头部逐像素不变。
+// 头部动作区：先放链路徽标（浏览器 → node → tmux 的合计延迟），再放控制台动作。
+// 徽标要按设备取宿主那一跳的读数，因此把路由里的 deviceId 递下去。
 export function PageActions(params: DeviceRouteParams) {
   const nodeId = useRouteNodeId();
   return (
     <>
-      <DeviceNodeBadges nodeId={nodeId} />
+      <DeviceNodeBadges nodeId={nodeId} deviceId={params.deviceId} />
       <DeviceConsoleActions {...params} />
     </>
   );

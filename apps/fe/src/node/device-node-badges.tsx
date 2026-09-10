@@ -1,100 +1,37 @@
-// 设备页头部的链路徽标（设计 §4「可见性」）：一枚徽标说清「现在这条链路怎么走、多快」。
-// 浏览器直连（WebRTC）活着时以直连为准，否则用 entry ↔ node 的到达路径（局域网 / 公网 /
-// 中转 / 不可达）。`self` 不显示——浏览器直接连的就是 entry 自己，没有第二跳。
-// 点击展开诊断浮层：明细按链路种类给，走中转就说清中转地址与未直连的原因，
-// ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
+// 设备页头部的链路徽标（设计 §4「可见性」）：一枚徽标说清「源主机到终端有多远」。
+// 数字是整条链路的往返：浏览器 ↔ 拥有该设备的 node（那条 Gateway WS 的心跳中位数，已含
+// entry 转发 / peer link / 中继每一跳）加上 node ↔ tmux 的宿主一跳（网关按 DEVICE_LATENCY
+// 下发，旧节点测不到）。标签仍写这条链路怎么走：直连 / 局域网 / 公网 / 中转 / 本机。
+// 点击展开诊断浮层：先按跳拆开数字，再给这条链路的现场——走中转就说清中转地址与未直连的
+// 原因，ICE 明细只在真的有 WebRTC 候选对时才列，避免一整屏「未知」。
 
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import { DIRECT_FAILURE_CODES } from '@vibeterm/api-client/auth/index';
-import type {
-  DirectFailureCode,
-  MeshNodeDirectFailure,
-  MeshNodeReach,
-  MeshNodeTransport,
-} from '@vibeterm/api-client/auth/index';
+import type { DirectFailureCode, MeshNodeDirectFailure } from '@vibeterm/api-client/auth/index';
 import { cn } from '@vibeterm/ui';
-import type {
-  DirectCarrierPath,
-  DirectDiagnostics,
-  DirectIceDiagnostics,
-} from '@vibeterm/ws-client/direct/types';
+import type { DirectDiagnostics, DirectIceDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { Activity } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { type NodeLink, useDirectDiagnostics, useNodeLink } from './direct-diagnostics';
+import {
+  type NodeLatency,
+  type NodeLink,
+  useDirectDiagnostics,
+  useNodeLatency,
+  useNodeLink,
+} from './direct-diagnostics';
+import {
+  type LinkBadgeDescriptor,
+  type LinkDetailKind,
+  finiteRtt,
+  formatLinkBadgeLabel,
+  linkDetailKind,
+  reachLabelKey,
+  resolveLinkBadge,
+  totalLatencyMs,
+  transportLabelKey,
+} from './link-badge';
 import { refreshMeshNodes } from './mesh-nodes';
-
-const REACH_LABEL_KEYS = {
-  lan: 'nodes.reach.lan',
-  wan: 'nodes.reach.wan',
-  relay: 'nodes.reach.relay',
-} as const;
-
-const TRANSPORT_LABEL_KEYS = {
-  'ws-secure': 'nodes.badge.transportWs',
-  dc: 'nodes.badge.transportDc',
-  relay: 'nodes.badge.transportRelay',
-} as const;
-
-export function reachLabelKey(reach: MeshNodeReach): string {
-  return reach ? REACH_LABEL_KEYS[reach] : 'nodes.reach.none';
-}
-
-export function transportLabelKey(transport: MeshNodeTransport): string | null {
-  return transport ? TRANSPORT_LABEL_KEYS[transport] : null;
-}
-
-export interface LinkBadgeDescriptor {
-  labelKey: string;
-  /** 展示用的往返毫秒数；未测得为 `null`，此时徽标不带延迟后缀。 */
-  rttMs: number | null;
-  tone: 'ok' | 'muted';
-}
-
-/**
- * 徽标取值。直连活着时 RTT 取 WebRTC `getStats()` 的候选对；否则取 entry ↔ node 的 peer
- * ping RTT。测不到就不带后缀——写「延迟未知」只会让人以为链路出了问题。
- */
-export function resolveLinkBadge(input: {
-  path: DirectCarrierPath;
-  directRttMs: number | null;
-  link: NodeLink;
-}): LinkBadgeDescriptor {
-  if (input.path === 'direct') {
-    return { labelKey: 'nodes.badge.direct', rttMs: finiteRtt(input.directRttMs), tone: 'ok' };
-  }
-  const { reach, rttMs } = input.link;
-  return {
-    labelKey: reachLabelKey(reach),
-    rttMs: finiteRtt(rttMs),
-    tone: reach === 'lan' || reach === 'wan' ? 'ok' : 'muted',
-  };
-}
-
-export function formatLinkBadgeLabel(label: string, rttMs: number | null): string {
-  return rttMs == null ? label : `${label} · ${Math.round(rttMs)}ms`;
-}
-
-function finiteRtt(rttMs: number | null): number | null {
-  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
-}
-
-/**
- * 明细要按哪种链路来列。`browser-direct` 是浏览器 ↔ node 的 WebRTC，其余取 entry ↔ node
- * 的承载——两者是不同的两跳，只有前者手上有 ICE 明细。
- */
-export type LinkDetailKind = 'browser-direct' | 'dc' | 'ws-secure' | 'relay' | 'none';
-
-export function linkDetailKind(
-  path: DirectCarrierPath,
-  transport: MeshNodeTransport
-): LinkDetailKind {
-  if (path === 'direct') return 'browser-direct';
-  if (transport === 'relay') return 'relay';
-  if (transport === 'ws-secure') return 'ws-secure';
-  if (transport === 'dc') return 'dc';
-  return 'none';
-}
 
 export interface DiagnosticRowSpec {
   labelKey: string;
@@ -137,11 +74,53 @@ export function formatLinkSince(elapsedMs: number): { key: string; value: number
   return { key: 'nodes.badge.durationDays', value: Math.floor(hours / 24) };
 }
 
-function rttRow(rttMs: number | null): DiagnosticRowSpec {
+function msRow(labelKey: string, rttMs: number | null): DiagnosticRowSpec {
   const rtt = finiteRtt(rttMs);
   return rtt == null
-    ? { labelKey: 'nodes.badge.rttRow', valueKey: 'nodes.badge.rttPending', mono: false }
-    : { labelKey: 'nodes.badge.rttRow', value: `${Math.round(rtt)}ms` };
+    ? { labelKey, valueKey: 'nodes.badge.rttPending', mono: false }
+    : { labelKey, value: `${Math.round(rtt)}ms` };
+}
+
+/** 浏览器 → node 这一跳：那条 Gateway WS 心跳最近几次的中位数。 */
+function browserHopRow(latency: NodeLatency): DiagnosticRowSpec {
+  const ms = finiteRtt(latency.browserToNodeMs);
+  if (ms == null) {
+    return { labelKey: 'nodes.badge.browserHop', valueKey: 'nodes.badge.rttPending', mono: false };
+  }
+  return {
+    labelKey: 'nodes.badge.browserHop',
+    valueKey: 'nodes.badge.hopMedian',
+    valueParams: { ms: Math.round(ms) },
+    mono: false,
+  };
+}
+
+/** node → tmux 这一跳：网关自己测的，没播报能力的旧节点直接说「未测量」。 */
+function hostHopRow(latency: NodeLatency): DiagnosticRowSpec {
+  const labelKey = 'nodes.badge.hostHop';
+  if (!latency.hostHopSupported) {
+    return { labelKey, valueKey: 'nodes.badge.hopUnsupported', mono: false };
+  }
+  const sample = latency.hostHop;
+  const ms = finiteRtt(sample?.rttMs ?? null);
+  if (!sample || ms == null) {
+    return { labelKey, valueKey: 'nodes.badge.rttPending', mono: false };
+  }
+  return {
+    labelKey,
+    valueKey: sample.hop === 'ssh' ? 'nodes.badge.hopSsh' : 'nodes.badge.hopLocal',
+    valueParams: { ms: Math.round(ms) },
+    mono: false,
+  };
+}
+
+/** 最近一次样本：两段各自的最新原始样本相加；与合计一致时不重复出这一行。 */
+function lastSampleRow(latency: NodeLatency, total: number | null): DiagnosticRowSpec | null {
+  const browserRaw = finiteRtt(latency.browserToNodeRawMs);
+  if (browserRaw == null) return null;
+  const raw = Math.round(browserRaw + (finiteRtt(latency.hostHop?.rawMs ?? null) ?? 0));
+  if (total !== null && raw === Math.round(total)) return null;
+  return { labelKey: 'nodes.badge.lastSample', value: `${raw}ms` };
 }
 
 function sinceRow(linkSinceAt: number | null, now: number): DiagnosticRowSpec | null {
@@ -220,7 +199,11 @@ function detailRows(
   diagnostics: DirectDiagnostics,
   link: NodeLink
 ): DiagnosticRowSpec[] {
-  if (kind === 'browser-direct') return diagnostics.ice ? iceRows(diagnostics.ice) : [];
+  // 直连那一跳另有自己的读数：WebRTC 候选对的 RTT，与心跳测出来的是同一条路的两把尺子。
+  if (kind === 'browser-direct') {
+    if (!diagnostics.ice) return [];
+    return [msRow('nodes.badge.rttRow', diagnostics.rtt), ...iceRows(diagnostics.ice)];
+  }
   if (kind === 'dc' || kind === 'ws-secure') {
     return addressRow('nodes.badge.peerAddress', link.peerAddress);
   }
@@ -277,31 +260,47 @@ function formatUntil(until: number): string {
   return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
 }
 
+/**
+ * 浮层的行。先按跳拆开徽标上的那个数字（浏览器 → node、node → tmux），再列这条链路的现场。
+ * entry ↔ node 的 peer ping 不再是头条，但排查「慢在哪一跳」时仍要看，留作一行明细。
+ */
 export function buildLinkDiagnosticRows(input: {
   diagnostics: DirectDiagnostics;
   link: NodeLink;
+  latency: NodeLatency;
   now: number;
+  /** 本机：没有 entry ↔ node 那一跳，到达路径 / 承载 / peer ping 都不成立。 */
+  isSelf?: boolean;
 }): DiagnosticRowSpec[] {
-  const { diagnostics, link, now } = input;
+  const { diagnostics, link, latency, now } = input;
+  const rows: DiagnosticRowSpec[] = [browserHopRow(latency), hostHopRow(latency)];
+  const lastSample = lastSampleRow(latency, totalLatencyMs(latency));
+  if (lastSample) rows.push(lastSample);
+  if (input.isSelf === true) return rows;
+
   const kind = linkDetailKind(diagnostics.path, link.transport);
-  const browserDirect = kind === 'browser-direct';
-  const transportKey = transportLabelKey(link.transport);
-  const rows: DiagnosticRowSpec[] = [
+  rows.unshift(
     { labelKey: 'nodes.badge.reachRow', valueKey: reachLabelKey(link.reach), mono: false },
     {
       labelKey: 'nodes.badge.transportRow',
-      valueKey: transportKey ?? undefined,
+      valueKey: transportLabelKey(link.transport) ?? undefined,
       mono: false,
-    },
-    rttRow(browserDirect ? diagnostics.rtt : link.rttMs),
-  ];
+    }
+  );
+  rows.push(msRow('nodes.badge.peerLink', link.rttMs));
   // `linkSinceAt` 是 entry ↔ node 那条链路的建立时刻；浏览器直连另算一跳，手上没有它的时长，
   // 借用只会给出一个说不通的数字，索性不出这一行。
-  const since = browserDirect ? null : sinceRow(link.linkSinceAt, now);
+  const since = kind === 'browser-direct' ? null : sinceRow(link.linkSinceAt, now);
   if (since) rows.push(since);
   rows.push(...detailRows(kind, diagnostics, link));
   return rows;
 }
+
+const TONE_CLASS: Record<LinkBadgeDescriptor['tone'], string> = {
+  ok: 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400',
+  warn: 'border-orange-400/40 text-orange-500 dark:text-orange-400',
+  muted: 'border-border text-muted-foreground',
+};
 
 function Badge({
   icon: Icon,
@@ -312,15 +311,13 @@ function Badge({
 }: {
   icon: typeof Activity;
   label: string;
-  tone: 'ok' | 'muted';
+  tone: LinkBadgeDescriptor['tone'];
   onClick?: () => void;
   testId: string;
 }) {
   const className = cn(
     'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none transition-colors duration-(--vibeterm-motion-fast) ease-out motion-reduce:transition-none',
-    tone === 'ok'
-      ? 'border-emerald-500/40 text-emerald-600 dark:text-emerald-400'
-      : 'border-border text-muted-foreground'
+    TONE_CLASS[tone]
   );
   if (!onClick) {
     return (
@@ -340,12 +337,16 @@ function Badge({
 
 export interface DeviceNodeBadgesProps {
   nodeId: string;
+  /** 当前设备；路由还没给出时宿主一跳按未测量展示。 */
+  deviceId?: string;
 }
 
-export function DeviceNodeBadges({ nodeId }: DeviceNodeBadgesProps) {
+export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const { t } = useTranslation();
   const diagnostics = useDirectDiagnostics(nodeId);
   const link = useNodeLink(nodeId);
+  const latency = useNodeLatency(nodeId, deviceId);
+  const isSelf = nodeId === SELF_NODE_ID;
   const [open, setOpen] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
@@ -364,9 +365,7 @@ export function DeviceNodeBadges({ nodeId }: DeviceNodeBadgesProps) {
     if (open) void refreshMeshNodes();
   }, [open]);
 
-  if (nodeId === SELF_NODE_ID) return null;
-
-  const badge = resolveLinkBadge({ path: diagnostics.path, directRttMs: diagnostics.rtt, link });
+  const badge = resolveLinkBadge({ path: diagnostics.path, link, latency, isSelf });
 
   return (
     <div
@@ -381,7 +380,14 @@ export function DeviceNodeBadges({ nodeId }: DeviceNodeBadgesProps) {
         onClick={() => setOpen((value) => !value)}
         testId="badge-node-link"
       />
-      {open && <NodeLinkDiagnostics diagnostics={diagnostics} link={link} />}
+      {open && (
+        <NodeLinkDiagnostics
+          diagnostics={diagnostics}
+          link={link}
+          latency={latency}
+          isSelf={isSelf}
+        />
+      )}
     </div>
   );
 }
@@ -389,16 +395,20 @@ export function DeviceNodeBadges({ nodeId }: DeviceNodeBadgesProps) {
 export function NodeLinkDiagnostics({
   diagnostics,
   link,
+  latency,
+  isSelf = false,
   now = Date.now(),
 }: {
   diagnostics: DirectDiagnostics;
   link: NodeLink;
+  latency: NodeLatency;
+  isSelf?: boolean;
   /** 计算「已连接」时长的基准时刻；浮层每次展开时现算，不自己走定时器。 */
   now?: number;
 }) {
   const { t } = useTranslation();
-  const rows = buildLinkDiagnosticRows({ diagnostics, link, now });
-  const kind = linkDetailKind(diagnostics.path, link.transport);
+  const rows = buildLinkDiagnosticRows({ diagnostics, link, latency, now, isSelf });
+  const kind = isSelf ? 'none' : linkDetailKind(diagnostics.path, link.transport);
   const failures = kind === 'relay' ? directFailureRows(link.directFailure) : [];
   return (
     <div

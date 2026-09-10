@@ -62,7 +62,7 @@
       "switchToDirect": "切换到直接输入",
       "refreshPage": "刷新页面",
       "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。",
-      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。不包含入口到目标节点的链路。",
+      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。到设备 tmux 宿主的整条链路见终端页右上角的徽标。",
       "latencyTooltipRaw": "最新样本：{{ms}} ms"
     },
     "appError": {
@@ -1577,6 +1577,7 @@
       "manageDevices": "管理设备",
       "settings": "设置",
       "addDevice": "添加设备",
+      "topologyStale": "上次会话的窗口列表，连接后刷新",
       "tab": {
         "panes": "终端",
         "agent": "智能体",
@@ -2699,6 +2700,15 @@
         "selectedPair": "当前路径",
         "rttRow": "延迟",
         "rttPending": "测量中",
+        "local": "本机",
+        "browserHop": "浏览器 → 节点",
+        "hostHop": "节点 → tmux",
+        "hopMedian": "{{ms}}ms（心跳中位数）",
+        "hopLocal": "{{ms}}ms（本地 tmux）",
+        "hopSsh": "{{ms}}ms（SSH）",
+        "hopUnsupported": "未测量（节点版本过旧）",
+        "lastSample": "最近一次样本",
+        "peerLink": "入口 → 节点",
         "since": "已连接",
         "durationSeconds": "{{value}} 秒",
         "durationMinutes": "{{value}} 分钟",

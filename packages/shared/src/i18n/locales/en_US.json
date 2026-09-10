@@ -62,7 +62,7 @@
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
       "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost.",
-      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). It does not include the hop from the entry node to the target node.",
+      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). The badge in the terminal header covers the whole path to the device tmux host.",
       "latencyTooltipRaw": "Latest sample: {{ms}} ms"
     },
     "appError": {
@@ -1577,6 +1577,7 @@
       "manageDevices": "Manage Devices",
       "settings": "Settings",
       "addDevice": "Add Device",
+      "topologyStale": "Windows from the last session; refreshes once connected",
       "tab": {
         "panes": "Terminals",
         "agent": "Agent",
@@ -2704,6 +2705,15 @@
         "selectedPair": "Route in use",
         "rttRow": "Latency",
         "rttPending": "Measuring",
+        "local": "This machine",
+        "browserHop": "Browser → node",
+        "hostHop": "Node → tmux",
+        "hopMedian": "{{ms}}ms (heartbeat median)",
+        "hopLocal": "{{ms}}ms (local tmux)",
+        "hopSsh": "{{ms}}ms (SSH)",
+        "hopUnsupported": "Not measured (node too old)",
+        "lastSample": "Latest sample",
+        "peerLink": "Entry → node",
         "since": "Connected for",
         "durationSeconds": "{{value}}s",
         "durationMinutes": "{{value}}m",

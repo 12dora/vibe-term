@@ -62,7 +62,7 @@
       "switchToDirect": "直接入力に切り替え",
       "refreshPage": "ページを更新",
       "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。",
-      "latencyTooltip": "遅延：ブラウザーと現在の入口ノードとの間の WebSocket ハートビートの往復時間です（直近数回の中央値）。入口ノードから対象ノードまでの区間は含みません。",
+      "latencyTooltip": "遅延：ブラウザーと現在の入口ノードとの間の WebSocket ハートビートの往復時間です（直近数回の中央値）。デバイスの tmux ホストまでの全区間は端末画面右上のバッジに表示されます。",
       "latencyTooltipRaw": "最新サンプル：{{ms}} ms"
     },
     "appError": {
@@ -1577,6 +1577,7 @@
       "manageDevices": "デバイス管理",
       "settings": "設定",
       "addDevice": "デバイスを追加",
+      "topologyStale": "前回のセッションのウィンドウ一覧です。接続すると更新されます",
       "tab": {
         "panes": "ターミナル",
         "agent": "エージェント",
@@ -2699,6 +2700,15 @@
         "selectedPair": "使用中の経路",
         "rttRow": "遅延",
         "rttPending": "測定中",
+        "local": "このマシン",
+        "browserHop": "ブラウザー → ノード",
+        "hostHop": "ノード → tmux",
+        "hopMedian": "{{ms}}ms（ハートビート中央値）",
+        "hopLocal": "{{ms}}ms（ローカル tmux）",
+        "hopSsh": "{{ms}}ms（SSH）",
+        "hopUnsupported": "未測定（ノードのバージョンが古い）",
+        "lastSample": "最新サンプル",
+        "peerLink": "入口 → ノード",
         "since": "接続時間",
         "durationSeconds": "{{value}} 秒",
         "durationMinutes": "{{value}} 分",

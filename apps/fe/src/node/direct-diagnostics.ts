@@ -1,4 +1,5 @@
-// 设备页头部徽标的数据源：浏览器↔node 的承载与 RTT，以及 entry↔node 的到达路径。
+// 设备页头部徽标的数据源：浏览器↔node 的承载与 RTT、entry↔node 的到达路径，
+// 以及组成「源主机 → 终端」这条链路的两段延迟。
 //
 // 数据来自 `DirectCarrierController.diagnosticsSource`——`node-runtimes.ts` 在给非 self 的
 // node 建连时把它挂到 `connection.directDiagnostics`。connection 上没有（`self`、或直连
@@ -15,6 +16,7 @@ import type {
   MeshNodeReach,
   MeshNodeTransport,
 } from '@vibeterm/api-client/auth/index';
+import type { DeviceLatencySample, TmuxState } from '@vibeterm/stores/tmux-state';
 import type { DirectDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { resolveDirectDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { useMemo, useSyncExternalStore } from 'react';
@@ -126,4 +128,48 @@ function normalizeTransport(transport: string | null | undefined): MeshNodeTrans
   return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
     ? transport
     : null;
+}
+
+/**
+ * 「源主机 → 终端」这条链路的两段延迟。
+ *
+ * - 浏览器 ↔ node：该 node 自己那条 Gateway WS 的心跳往返（直连活着时心跳走 DataChannel），
+ *   已经含了 entry 转发、peer link 与中继在内的每一跳。
+ * - node ↔ tmux：拥有该设备的网关按 DEVICE_LATENCY 帧下发；旧节点不播报能力，这一段测不到。
+ */
+export interface NodeLatency {
+  browserToNodeMs: number | null;
+  browserToNodeRawMs: number | null;
+  hostHop: DeviceLatencySample | null;
+  /** 该 node 的网关是否播报 `device-latency-v1`。 */
+  hostHopSupported: boolean;
+}
+
+interface TmuxStateReader {
+  subscribe: (listener: () => void) => () => void;
+  getState: () => TmuxState;
+}
+
+/**
+ * 按 nodeId 读该 node 运行时的 tmux store，不依赖 `RuntimeProvider`：徽标与
+ * `useDirectDiagnostics` 一样以 nodeId 为准，页面区之外（以及服务端渲染）也能取到同一份值。
+ * 选择器只取标量或 store 内稳定的对象引用，`useSyncExternalStore` 才不会每帧判定为变更。
+ */
+function useTmuxSlice<T>(store: TmuxStateReader, select: (state: TmuxState) => T): T {
+  const read = () => select(store.getState());
+  return useSyncExternalStore(store.subscribe, read, read);
+}
+
+export function useNodeLatency(nodeId: string, deviceId?: string): NodeLatency {
+  const store = useMemo<TmuxStateReader>(
+    () => appNodeRuntimes.get(nodeId).runtime.stores.tmux,
+    [nodeId]
+  );
+  const browserToNodeMs = useTmuxSlice(store, (state) => state.wsLatencyMs);
+  const browserToNodeRawMs = useTmuxSlice(store, (state) => state.wsLatencyRawMs ?? null);
+  const hostHopSupported = useTmuxSlice(store, (state) => state.deviceLatencySupported === true);
+  const hostHop = useTmuxSlice(store, (state) =>
+    deviceId ? (state.deviceLatency[deviceId] ?? null) : null
+  );
+  return { browserToNodeMs, browserToNodeRawMs, hostHop, hostHopSupported };
 }
