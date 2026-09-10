@@ -9,6 +9,61 @@ import { useSidebar, useSidebarWidth } from './context';
 import { createSidebarResizeController, domResizeFrames } from './resize-controller';
 import type { SidebarSide } from './width';
 
+/**
+ * 移动端抽屉形态的侧栏。抽屉收起时**不卸载**里面的树：卸载重挂等于把设备取数、
+ * 节点运行时协商与骨架屏全部重来一遍，正是「一点终端列表整个侧栏都在转」的来源；
+ * 桌面端侧栏本来就常驻，这里只是把移动端拉齐。
+ */
+function MobileSidebar({
+  side,
+  dir,
+  children,
+  ...props
+}: React.ComponentProps<'div'> & { side: SidebarSide }) {
+  const { openMobile, setOpenMobile, mobileInitialFocus } = useSidebar();
+
+  return (
+    <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
+      <SheetContent
+        dir={dir}
+        data-sidebar="sidebar"
+        data-slot="sidebar"
+        data-mobile="true"
+        data-testid="mobile-sidebar-sheet"
+        className="bg-sidebar text-sidebar-foreground p-0 [&>button]:hidden border-none"
+        style={
+          {
+            '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
+            width: SIDEBAR_WIDTH_MOBILE,
+            maxWidth: SIDEBAR_WIDTH_MOBILE,
+          } as React.CSSProperties
+        }
+        side={side}
+        animation="top-down"
+        // base-ui 闭合态给 Popup 加 `hidden`（preflight 的 display:none !important 压得住
+        // 它自己的 flex）：不占布局、不重放动画，遮罩与焦点陷阱也只在打开时才生效。
+        keepMounted
+        // `hidden` 已经让闭合态既不可聚焦也不进无障碍树；退场动画那几百毫秒里元素仍可见，
+        // 这一位挡住期间的误触，也保证终端始终拿得到键盘焦点。
+        inert={!openMobile}
+        initialFocus={mobileInitialFocus}
+      >
+        <SheetHeader className="sr-only">
+          <SheetTitle>Sidebar</SheetTitle>
+          <SheetDescription>Displays the mobile sidebar.</SheetDescription>
+        </SheetHeader>
+        <div
+          className="flex h-full w-full flex-col"
+          data-testid="sidebar"
+          style={{ paddingBottom: 'var(--vibeterm-safe-area-bottom)' }}
+        >
+          {children}
+        </div>
+      </SheetContent>
+    </Sheet>
+  );
+}
+
 export function Sidebar({
   side = 'left',
   variant = 'sidebar',
@@ -22,8 +77,7 @@ export function Sidebar({
   variant?: 'sidebar' | 'floating' | 'inset';
   collapsible?: 'offcanvas' | 'icon' | 'none';
 }) {
-  const { isMobile, state, openMobile, setOpenMobile, mobileInitialFocus, isResizing } =
-    useSidebar();
+  const { isMobile, state, isResizing } = useSidebar();
 
   if (collapsible === 'none') {
     return (
@@ -42,38 +96,9 @@ export function Sidebar({
 
   if (isMobile) {
     return (
-      <Sheet open={openMobile} onOpenChange={setOpenMobile} {...props}>
-        <SheetContent
-          dir={dir}
-          data-sidebar="sidebar"
-          data-slot="sidebar"
-          data-mobile="true"
-          data-testid="mobile-sidebar-sheet"
-          className="bg-sidebar text-sidebar-foreground p-0 [&>button]:hidden border-none"
-          style={
-            {
-              '--sidebar-width': SIDEBAR_WIDTH_MOBILE,
-              width: SIDEBAR_WIDTH_MOBILE,
-              maxWidth: SIDEBAR_WIDTH_MOBILE,
-            } as React.CSSProperties
-          }
-          side={side}
-          animation="top-down"
-          initialFocus={mobileInitialFocus}
-        >
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-            <SheetDescription>Displays the mobile sidebar.</SheetDescription>
-          </SheetHeader>
-          <div
-            className="flex h-full w-full flex-col"
-            data-testid="sidebar"
-            style={{ paddingBottom: 'var(--vibeterm-safe-area-bottom)' }}
-          >
-            {children}
-          </div>
-        </SheetContent>
-      </Sheet>
+      <MobileSidebar side={side} dir={dir} {...props}>
+        {children}
+      </MobileSidebar>
     );
   }
 

@@ -49,14 +49,23 @@ function SheetContent({
   side = 'right',
   showCloseButton = true,
   animation = 'slide',
+  keepMounted = false,
   ...props
 }: SheetPrimitive.Popup.Props & {
   side?: 'top' | 'right' | 'bottom' | 'left';
   showCloseButton?: boolean;
   animation?: 'slide' | 'fade' | 'bottom-up' | 'top-down';
+  /**
+   * 闭合时把内容留在 DOM 里，只是不显示。base-ui 会给 Popup 与 Backdrop 加 `hidden`
+   * （preflight 的 `[hidden]{display:none!important}` 压得住 Popup 自己的 `flex`），
+   * 模态遮罩 `InternalBackdrop` 与焦点陷阱本来就只在 `mounted` 时才生效，
+   * 所以闭合态既不占布局也进不了 Tab / 无障碍树。
+   * 只给移动端侧边栏用：那棵树一卸载，重开就要重新取设备、重新协商节点运行时。
+   */
+  keepMounted?: boolean;
 }) {
   return (
-    <SheetPortal>
+    <SheetPortal keepMounted={keepMounted}>
       <SheetOverlay />
       <SheetPrimitive.Popup
         data-slot="sheet-content"

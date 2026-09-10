@@ -20,7 +20,7 @@ import { restoreSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { useSidebarSectionExpanded } from '@/node/sidebar-node-expansion';
-import { offlineDevices, writeDeviceSnapshot } from '@/pages/devices/device-snapshot-store';
+import { offlineDevices } from '@/pages/devices/device-snapshot-store';
 import { SELF_NODE_ID, nodeAppPath, parseNodeIdFromPath } from '@vibeterm/api-client';
 import {
   NodeBadge,
@@ -28,7 +28,6 @@ import {
   type SortableRow,
   shouldHideSidebarNodeSection,
 } from '@vibeterm/panels/device-tree';
-import type { Device } from '@vibeterm/shared';
 import { isSidebarDeviceVisible } from '@vibeterm/stores';
 import { useUIStore } from '@vibeterm/stores/react';
 import { cn } from '@vibeterm/ui';
@@ -439,11 +438,6 @@ const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
     () => offlineDevices(runtimeNodeId, node.inventory),
     [runtimeNodeId, node.inventory]
   );
-  // 侧边栏也负责维护快照：此前只有设备页写，从没进过设备页的用户永远没有首帧占位数据。
-  const handleDevicesLoaded = useCallback(
-    (devices: Device[]) => writeDeviceSnapshot(runtimeNodeId, devices),
-    [runtimeNodeId]
-  );
   // 恒等的 key 映射：panels 侧的设备树把它带进 `handleDeviceExpandedChange` 的依赖与两条
   // effect 的依赖，每渲染换一个新函数会让每台 DeviceRow 的 memo 全部失效，并对每台可见设备
   // 空跑一次 ensureDeviceSubscribed。
@@ -462,7 +456,6 @@ const SidebarNodeRuntimeSection = memo(function SidebarNodeRuntimeSection({
           containerStyle: drag?.sortable.style,
           containerClassName: drag?.sortable.isDragging ? 'opacity-60' : undefined,
           placeholderDevices,
-          onDevicesLoaded: handleDevicesLoaded,
         }}
         expansionKeyFor={runtimeNodeId === SELF_NODE_ID ? undefined : expansionKeyFor}
         emptyLabel={t('sidebar.node.noDevices')}
