@@ -141,7 +141,7 @@ describe('NodeSessionGuard', () => {
 });
 
 describe('判定该 node 要重新登录（给用户留出口）', () => {
-  test('连续 N 次「探测说没问题、WS 仍被踢」：标未登录 + 派事件 + 慢速重连', async () => {
+  test('连续 N 次「探测说没问题、WS 仍被踢」：只派事件 + 慢速重连，不动登录态', async () => {
     const g = harness({ maxTransient: 2 });
     await g.guard.handle(NODE_A);
     g.advance(1_000);
@@ -151,8 +151,8 @@ describe('判定该 node 要重新登录（给用户留出口）', () => {
 
     await g.guard.handle(NODE_A);
     expect(g.loginRequired).toEqual([NODE_A]);
-    // 界面上要有「登录此节点」可点：登录态必须真的翻过去。
-    expect(g.loggedOut).toEqual([NODE_A]);
+    // HTTP 已经证明会话有效：把它标成未登录属于拿不出证据的结论。
+    expect(g.loggedOut).toEqual([]);
 
     const before = g.reconnected.length;
     g.advance(GIVE_UP_RECONNECT_MS - 1_000);
@@ -167,7 +167,7 @@ describe('判定该 node 要重新登录（给用户留出口）', () => {
     await g.guard.handle(NODE_A);
     g.advance(1_000);
     await g.guard.handle(NODE_A);
-    expect(g.loggedOut).toEqual([NODE_A]);
+    expect(g.loginRequired).toEqual([NODE_A]);
 
     const before = g.reconnected.length;
     g.guard.resume();
@@ -175,7 +175,6 @@ describe('判定该 node 要重新登录（给用户留出口）', () => {
 
     // 计数倒回起点：下一次 4401 又从「按瞬时处理」开始。
     await g.guard.handle(NODE_A);
-    expect(g.loggedOut).toEqual([NODE_A]);
     g.advance(1_000);
     expect(g.reconnected).toHaveLength(before + 2);
   });
@@ -227,13 +226,14 @@ describe('探测判定要重新登录之后的静默重登', () => {
     g.advance(2_000);
     expect(g.reconnected).toHaveLength(2);
 
-    // 第三次越过上限：这才判定并给出口，不再活锁。
+    // 第三次越过上限：停掉快速重试并派事件；但这一轮**登过一次**，没有证据说会话不能用，
+    // 所以不翻登录态。
     await g.guard.handle(NODE_A);
-    expect(g.loggedOut).toEqual([NODE_A]);
+    expect(g.loggedOut).toEqual([]);
     expect(g.loginRequired).toEqual([NODE_A]);
   });
 
-  test('重登失败：标未登录并派事件', async () => {
+  test('重登失败：这一档才标未登录（界面给出登录入口）并派事件', async () => {
     const g = harness({
       probe: () => Promise.resolve('login-required'),
       relogin: () => Promise.resolve('failed'),

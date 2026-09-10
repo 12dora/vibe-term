@@ -22,16 +22,21 @@ const GATE_CODES: readonly string[] = [ACCESS_DENIED_CODE, DOMAIN_ACCESS_DISABLE
 export const GATE_PROBE_PATH = '/api/auth/mode';
 
 /**
- * 403 响应体是否来自服务端的访问门（而不是业务自己的权限不足）。
- * 优先按错误信封精确比对 `error.code`；只有 body 压根不是 JSON（域名访问关闭时的纯文本页）
- * 才退回子串匹配，免得业务响应里恰好带上这些词就被误判成访问门。
+ * 403 响应体是否来自服务端的访问门（而不是业务自己的权限不足）。只按错误信封精确比对
+ * `error.code`，不做子串兜底：业务响应里恰好带上这些词就被误判成访问门的代价是整个注销 SW。
+ *
+ * 本函数只用在 `/api/**` 的响应钩子上，而这条路径必定拿到 JSON——
+ * `decideDomainAccess` 对 `/api/` 前缀恒返回 `deny-json`（apps/gateway/src/mesh/
+ * domain-access-policy.ts 的 `isJsonDeniedPath`），域名访问关闭时的纯文本页
+ * （`DOMAIN_ACCESS_DISABLED_TEXT`）只会出现在导航请求上，那一档由 SW 的导航预算直接放行网络。
+ * 因此解析不出信封的 403 一律不当访问门。
  */
 export function isAccessGateBody(body: string): boolean {
   try {
     const code = (JSON.parse(body) as { error?: { code?: unknown } } | null)?.error?.code;
     return typeof code === 'string' && GATE_CODES.includes(code);
   } catch {
-    return GATE_CODES.some((gateCode) => body.includes(gateCode));
+    return false;
   }
 }
 
@@ -39,6 +44,11 @@ export function isAccessGateBody(body: string): boolean {
  * Cloudflare Access 的 302 跳到自己的登录域：跨源重定向根本到不了响应钩子
  * （默认 redirect:'follow' 直接 reject）。所以启动时单独探一次，用 redirect:'manual'
  * 把跳转变成可观察的 opaqueredirect。
+ *
+ * 注意 opaqueredirect 是不透明的：拿不到 Location，也就分不出「跳去 Access 登录域」和
+ * 「同源的某个 302」。这里一律按被门挡住处理——`/api/auth/mode` 正常返回 200 JSON，
+ * 任何重定向都说明请求没走到网关自己手里；误判的代价被 sessionStorage 的每会话一次守卫兜住
+ * （最多多注销一次 SW、多刷一次页，下次冷启动照常重装）。
  *
  * 只认「解析出来的响应」：fetch 直接 reject 更可能是离线，而离线恰恰是缓存壳该发挥作用的时候，
  * 绝不能因此把 SW 注销掉。

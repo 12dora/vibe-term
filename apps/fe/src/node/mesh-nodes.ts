@@ -15,9 +15,12 @@ import {
 } from './create-polling-store';
 import { HubApi, HubApiError, type HubNodeRow } from './hub-api';
 import {
+  type HubCandidateFailure,
   type HubFailureReason,
   HubLoadCoordinator,
   type HubRequest,
+  attachHubCandidateFailures,
+  hubCandidateFailures,
   isHubAuthCode,
 } from './hub-load-coordinator';
 import { HUB_POLL_MS, startHubPolling } from './hub-polling';
@@ -34,6 +37,8 @@ import {
 
 import type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
 import {
+  clearAllNodeBackoff,
+  clearNodeBackoff,
   isNodeRequestBlocked,
   isUnreachableFailure,
   noteNodeReachable,
@@ -153,11 +158,15 @@ export async function loadHubNodes(
 ): Promise<HubLoadResult> {
   let lastError: unknown = new Error('hub_unreachable');
   let authError: HubApiError | null = null;
+  // 逐台记下**它自己**是怎么失败的：抛出去的只有最可操作的那一个，而退避记账不能按它
+  // 把无辜的候选一起罚了（A 答 500、B 传输层挂掉时只有 B 该退避）。
+  const failures: HubCandidateFailure[] = [];
   for (const hubNodeId of candidates) {
     try {
       return { hubNodeId, rows: await deps.list(hubNodeId) };
     } catch (error) {
       lastError = error;
+      failures.push({ nodeId: hubNodeId, error });
       if (!isNodeLoginRequired(error)) continue;
       const login = await deps
         .login(hubNodeId)
@@ -167,6 +176,7 @@ export async function loadHubNodes(
           const rejected = new HubApiError(login.code, 401);
           lastError = rejected;
           authError ??= rejected;
+          failures[failures.length - 1] = { nodeId: hubNodeId, error: rejected };
         }
         continue;
       }
@@ -174,14 +184,21 @@ export async function loadHubNodes(
         return { hubNodeId, rows: await deps.list(hubNodeId) };
       } catch (retryError) {
         lastError = retryError;
+        failures[failures.length - 1] = { nodeId: hubNodeId, error: retryError };
       }
     }
   }
-  throw authError ?? lastError;
+  const thrown = authError ?? lastError;
+  attachHubCandidateFailures(thrown, failures);
+  throw thrown;
 }
 
 /**
- * 一台候选都没答上话：给每台记一次退避，轮询不再每 30 秒白撞一次转发超时（各 5 秒）。
+ * 给**自己那次失败确实是打不通**的候选各记一次退避，轮询不再每 30 秒白撞一次转发超时。
+ *
+ * 逐台判定（`hubCandidateFailures`）：抛出去的那个错误是「最可操作的那一个」，按它一刀切
+ * 会把答了 500 的候选也一起罚进退避。逐台信息拿不到时（非对象错误）退回按抛出的错误判，
+ * 至少不会记错方向。
  *
  * 判据是 `isUnreachableFailure`（传输层异常 / 超时 / 转发器的 `NODE_UNREACHABLE`）而不是
  * `classifyHubFailure`：后者是给**界面文案**用的粗分类，会把 404、500、被取消的请求
@@ -192,6 +209,13 @@ export function noteHubLoadFailure(
   error: unknown,
   note: (nodeId: string) => void = noteNodeUnreachable
 ): void {
+  const failures = hubCandidateFailures(error);
+  if (failures.length > 0) {
+    for (const failure of failures) {
+      if (isUnreachableFailure(failure.error)) note(failure.nodeId);
+    }
+    return;
+  }
   if (!isUnreachableFailure(error)) return;
   for (const id of candidates) note(id);
 }
@@ -369,6 +393,9 @@ export function useMeshNodes(options: UseMeshNodesOptions = {}): UseMeshNodesRes
 
   const refresh = useCallback(() => {
     if (!enabled) return;
+    // 只有界面会调它（节点管理页进入 / 刷新）：用户此刻正盯着这些 node 的状态，
+    // 打不通的那几台该重新试一次，而不是继续躺在退避窗口里。
+    clearAllNodeBackoff();
     void refreshMeshNodes(api);
   }, [api, enabled]);
 
@@ -528,7 +555,11 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
   }, [coordinator, request, pollIntervalMs, candidates]);
 
   // 变更之后的刷新必须比当前在飞的那一次更新，否则批准 / 吊销的结果会被旧响应盖回去。
-  const refresh = useCallback(() => void coordinator.refresh(request), [coordinator, request]);
+  // hub 管理面的手动刷新（含批准 / 吊销 / 切换之后的回源）：同样是明确的「现在就要新数据」。
+  const refresh = useCallback(() => {
+    for (const id of candidates) clearNodeBackoff(id);
+    void coordinator.refresh(request);
+  }, [coordinator, request, candidates]);
   const effectiveHubId = activeHubId ?? resolved;
   const hubApi = useMemo(
     () => (effectiveHubId ? new HubApi(effectiveHubId) : null),

@@ -390,9 +390,13 @@ export function markLoggedIn(nodeId: string): boolean {
  * 该 node 的会话确认作废（401 `NODE_LOGIN_REQUIRED` 之后连静默重登都没成功）时标未登录，
  * 让「用到才登录」的门闸退回登录入口。
  *
- * **只允许 `node-session-recovery` 在重登失败后调用**：光有一次 401 不足以判会话没了
- * （转发路径本身会产生会话仍有效的 401），就地登出会抽掉整棵 node 子树再静默登回来，
- * 表现为设备卡片闪断。
+ * **只允许「静默重登失败」这一个结论调用**，目前两个调用方：
+ *   * `node-session-recovery`：每 node REST 撞 401 之后重登失败；
+ *   * `NodeSessionGuard`（经宿主的 `markNodeLoggedOut` 接线）：WS 4401 之后探测确认
+ *     「该 node 要重新登录」、静默重登又失败。两者共用同一份重登记账，结论同源。
+ *
+ * 光有一次 401（或一次 4401）不足以判会话没了：转发路径本身会产生会话仍有效的 401，
+ * 就地登出会抽掉整棵 node 子树再静默登回来，表现为设备卡片闪断。
  */
 export function markLoggedOut(nodeId: string): boolean {
   return setLoggedIn(nodeId, false);

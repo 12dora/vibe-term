@@ -1032,16 +1032,62 @@ describe('hub 打不通时的退避', () => {
   const CAND_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
   const CAND_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
 
-  test('传输层异常时给每台候选各记一次', () => {
+  test('拿不到逐台信息时按抛出的错误一刀切', () => {
     const noted: string[] = [];
     noteHubLoadFailure([CAND_A, CAND_B], new TypeError('Failed to fetch'), (id) => noted.push(id));
     expect(noted).toEqual([CAND_A, CAND_B]);
+  });
+
+  test('逐台判定：只罚自己那次失败确实打不通的候选', async () => {
+    const noted: string[] = [];
+    // A 答了 500（服务端在），B 传输层挂掉：只有 B 该进退避。
+    const error = await loadHubNodes([CAND_A, CAND_B], {
+      list: (id) => {
+        if (id === CAND_A) return Promise.reject(new HubApiError('hub_nodes_failed', 500));
+        return Promise.reject(new TypeError('Failed to fetch'));
+      },
+      login: () => Promise.resolve({ ok: false }),
+    }).catch((err: unknown) => err);
+
+    noteHubLoadFailure([CAND_A, CAND_B], error, (id) => noted.push(id));
+    expect(noted).toEqual([CAND_B]);
+  });
+
+  test('逐台判定认的是重登之后那一次的结果', async () => {
+    const noted: string[] = [];
+    // A 先 401、重登成功后再打就是传输层失败：这才是它自己的最终失败。
+    const error = await loadHubNodes([CAND_A], {
+      list: (() => {
+        let calls = 0;
+        return () => {
+          calls += 1;
+          return calls === 1
+            ? Promise.reject(new HubApiError('NODE_LOGIN_REQUIRED', 401))
+            : Promise.reject(new TypeError('Failed to fetch'));
+        };
+      })(),
+      login: () => Promise.resolve({ ok: true }),
+    }).catch((err: unknown) => err);
+
+    noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
+    expect(noted).toEqual([CAND_A]);
   });
 
   test('转发器的 NODE_UNREACHABLE 同样记', () => {
     const noted: string[] = [];
     noteHubLoadFailure([CAND_A], new HubApiError('NODE_UNREACHABLE', 503), (id) => noted.push(id));
     expect(noted).toEqual([CAND_A]);
+  });
+
+  test('hub 拒登（登录失败）时一台都不记：那是要用户去补验证，不是打不通', async () => {
+    const noted: string[] = [];
+    const error = await loadHubNodes([CAND_A], {
+      list: () => Promise.reject(new HubApiError('NODE_LOGIN_REQUIRED', 401)),
+      login: () => Promise.resolve({ ok: false, code: 'PASSKEY_REQUIRED' }),
+    }).catch((err: unknown) => err);
+
+    noteHubLoadFailure([CAND_A], error, (id) => noted.push(id));
+    expect(noted).toEqual([]);
   });
 
   test('服务端答过话的失败一律不记（拒登、500、被取消）', () => {

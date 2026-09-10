@@ -74,13 +74,19 @@ describe('isAccessGateBody', () => {
     expect(isAccessGateBody(JSON.stringify({ error: { code: 123 } }))).toBe(false);
   });
 
-  test('body 不是 JSON 时（域名访问关闭的纯文本页）退回子串匹配', () => {
-    expect(isAccessGateBody('DOMAIN_ACCESS_DISABLED：本机已关闭域名访问')).toBe(true);
+  test('解析不出信封的 403 一律不当访问门（不能因为一张 HTML 错误页就注销 SW）', () => {
+    // 域名访问关闭时的纯文本页（apps/gateway/src/api/domain-access-routes.ts 的
+    // DOMAIN_ACCESS_DISABLED_TEXT）本身并不含错误码，而且 /api/** 恒走 deny-json 分支
+    // （domain-access-policy.ts 的 isJsonDeniedPath），根本到不了这里。
+    expect(isAccessGateBody('Domain access is disabled for this host.')).toBe(false);
+    expect(isAccessGateBody('<html><body>403 Forbidden</body></html>')).toBe(false);
     expect(isAccessGateBody('plain forbidden page')).toBe(false);
   });
 });
 
 describe('isAccessGateProbeResponse', () => {
+  // opaqueredirect 拿不到 Location，同源 302 与 Access 登录域跳转无从区分；
+  // 一律按被门挡住处理，误判由 sessionStorage 的每会话一次守卫兜住。
   test('opaqueredirect / error / 状态 0 都视为被门挡住', () => {
     expect(isAccessGateProbeResponse('opaqueredirect', 0)).toBe(true);
     expect(isAccessGateProbeResponse('error', 0)).toBe(true);

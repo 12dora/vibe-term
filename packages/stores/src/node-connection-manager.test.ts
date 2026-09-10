@@ -463,7 +463,7 @@ describe('WS 4401 的会话探测（非 self）', () => {
     h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
     await settle();
     expect(h.loginRequired).toEqual([NODE_A]);
-    // 界面要有可点的「登录此节点」：登录态必须真的翻过去。
+    // 重登失败才有「会话确实不能用了」的证据：界面这时才该给出登录入口。
     expect(h.loggedOut).toEqual([NODE_A]);
     clock.advance(60_000);
     expect(h.connects).toEqual([]);

@@ -92,6 +92,35 @@ export function classifyHubFailure(err: unknown): HubFailureReason {
   return { kind: 'unreachable', code: null, message };
 }
 
+/** 某台候选 hub 机自己那次失败。 */
+export interface HubCandidateFailure {
+  nodeId: string;
+  error: unknown;
+}
+
+/**
+ * 一次 hub 列表加载里**逐台候选**的失败，挂在最终抛出的那个错误上。
+ *
+ * 抛出去的只有「最可操作的那一个」（拒登优先于打不通），可退避记账要的是「**这一台**自己
+ * 是怎么失败的」：A 答了 500、B 传输层失败时，只有 B 该进退避。用 WeakMap 侧挂而不是包一层
+ * 新错误，是因为界面的失败分类（`classifyHubFailure`）认的是原始错误的类型与 status。
+ */
+const candidateFailures = new WeakMap<object, HubCandidateFailure[]>();
+
+export function attachHubCandidateFailures(
+  error: unknown,
+  failures: readonly HubCandidateFailure[]
+): void {
+  if (typeof error !== 'object' || error === null) return;
+  candidateFailures.set(error, [...failures]);
+}
+
+/** 取逐台失败；没挂过（老调用方 / 非对象错误）返回空数组。 */
+export function hubCandidateFailures(error: unknown): readonly HubCandidateFailure[] {
+  if (typeof error !== 'object' || error === null) return [];
+  return candidateFailures.get(error) ?? [];
+}
+
 export class HubLoadCoordinator {
   private generation = 0;
   private active = true;

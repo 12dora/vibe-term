@@ -28,6 +28,11 @@ import {
   hasLoginRecovery,
   nodeQueryClient,
 } from './node-runtimes';
+import {
+  isNodeRequestBlocked,
+  noteNodeUnreachable,
+  setNodeBackoffTimersForTest,
+} from './node-unreachable-backoff';
 
 /** 直连断开提示的 i18n key：locale 里已有正式条目，测试里的假 `t` 原样返回 key。 */
 const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
@@ -819,5 +824,39 @@ describe('hasLoginRecovery', () => {
   test('一直是已登录、或第一次见到这台 node，都不算恢复', () => {
     expect(hasLoginRecovery(new Map([[NODE, true]]), [{ id: NODE, loggedIn: true }])).toBe(false);
     expect(hasLoginRecovery(new Map(), [{ id: NODE, loggedIn: true }])).toBe(false);
+  });
+});
+
+// 用户点重试 / 变更之后回源都会让这个 node 的查询失效：那是「现在就要新数据」的明确意图，
+// 不可达退避不该再挡着（自动刷新不会走 invalidate，这个信号是干净的）。
+describe('查询失效解除不可达退避', () => {
+  const NODE = 'b'.repeat(32);
+
+  test('invalidateQueries 之后该 node 立刻脱离退避窗口', () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const client = nodeQueryClient(NODE);
+    // 缓存里得先有这条查询，`invalidateQueries` 才会派事件。
+    client.setQueryData(devicesQueryKey, { devices: [] });
+    noteNodeUnreachable(NODE);
+    expect(isNodeRequestBlocked(NODE)).toBe(true);
+
+    void client.invalidateQueries({ queryKey: devicesQueryKey });
+    expect(isNodeRequestBlocked(NODE)).toBe(false);
+
+    disposeNodeQueryClient(NODE);
+    setNodeBackoffTimersForTest(null);
+  });
+
+  test('回收 QueryClient 时退订，缓存事件不再牵动退避', () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const client = nodeQueryClient(NODE);
+    client.setQueryData(devicesQueryKey, { devices: [] });
+    disposeNodeQueryClient(NODE);
+    noteNodeUnreachable(NODE);
+
+    void client.invalidateQueries({ queryKey: devicesQueryKey });
+    expect(isNodeRequestBlocked(NODE)).toBe(true);
+
+    setNodeBackoffTimersForTest(null);
   });
 });

@@ -83,7 +83,7 @@ export function useDeviceManagementState({
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
-  const { data, isError, error, refetch, isSuccess, isPlaceholderData } = useQuery({
+  const { data, isError, error, isSuccess, isPlaceholderData } = useQuery({
     queryKey: devicesQueryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
@@ -156,9 +156,10 @@ export function useDeviceManagementState({
 
   // 错误对象要留给面板：`NODE_LOGIN_REQUIRED` / `NODE_UNREACHABLE` 各有各的提示，
   // 一律显示成「加载设备列表失败」等于把真正的原因藏起来。
+  // 用户点的重试走 invalidate：宿主监听缓存事件据此解除该 node 的不可达退避，裸 refetch 会被门拦住
   const retry = useCallback(() => {
-    void refetch();
-  }, [refetch]);
+    void queryClient.invalidateQueries({ queryKey: devicesQueryKey });
+  }, [queryClient, devicesQueryKey]);
 
   return {
     status,

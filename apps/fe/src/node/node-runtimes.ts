@@ -58,7 +58,7 @@ import { onPageRecovery } from './mesh-recovery';
 import { resolveMeshNodeName } from './node-names';
 import { createGatedNodeApiClient, probeNodeSession } from './node-session-probe';
 import { type NodeSessionRecoveryOutcome, recoverNodeSession } from './node-session-recovery';
-import { nodeBackoffRemainingMs } from './node-unreachable-backoff';
+import { clearNodeBackoff, nodeBackoffRemainingMs } from './node-unreachable-backoff';
 
 /** 当前入口自身的 nodeId（`/api/auth/mode` 还没落地时为 null）。 */
 function entryNodeIdNow(): string | null {
@@ -419,10 +419,20 @@ function createNodeQueryClient(nodeId: string): QueryClient {
     staleTime: DEVICES_STALE_MS,
     placeholderData: () => deviceSnapshotPlaceholder(nodeId),
   });
+  // 有人显式让这个 node 的查询失效（重试按钮、变更之后的回源）：那是「现在就要新数据」的
+  // 明确意图，不该再被不可达退避挡着。自动刷新不会走 invalidate，所以这个信号是干净的。
+  queryCacheWatchers.set(
+    nodeId,
+    client.getQueryCache().subscribe((event) => {
+      if (event.type === 'updated' && event.action.type === 'invalidate') clearNodeBackoff(nodeId);
+    })
+  );
   return client;
 }
 
 const queryClients = new Map<string, QueryClient>();
+/** 每 node 查询缓存的订阅（回收时要退订，否则闭包连同 client 一起漏）。 */
+const queryCacheWatchers = new Map<string, () => void>();
 
 /** 取该 node 的 QueryClient（懒建）。 */
 export function nodeQueryClient(nodeId: string | undefined): QueryClient {
@@ -441,6 +451,8 @@ export function disposeNodeQueryClient(nodeId: string | undefined): void {
   const client = queryClients.get(id);
   if (!client) return;
   queryClients.delete(id);
+  queryCacheWatchers.get(id)?.();
+  queryCacheWatchers.delete(id);
   client.clear();
 }
 

@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   devicesQueryKey as defaultDevicesQueryKey,
   fetchDevices,
@@ -154,6 +154,7 @@ export function SideBarDeviceList({
 
   const expansionKey = expansionKeyFor ?? identityExpansionKey;
   const queryKey = devicesQueryKey ?? defaultDevicesQueryKey;
+  const queryClient = useQueryClient();
   const agentAdapter = runtime.features.agentUi ? agent : undefined;
 
   const sidebarDeviceExpanded = useUIStore((state) => state.sidebarDeviceExpanded);
@@ -322,7 +323,7 @@ export function SideBarDeviceList({
                   variant="outline"
                   data-testid="sidebar-devices-retry"
                   disabled={devicesQuery.isFetching}
-                  onClick={() => void devicesQuery.refetch()}
+                  onClick={() => void queryClient.invalidateQueries({ queryKey })}
                 >
                   {t('common.retry')}
                 </Button>

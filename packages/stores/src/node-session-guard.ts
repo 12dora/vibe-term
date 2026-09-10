@@ -12,9 +12,10 @@
 //   * 探测本身打不通（node 不可达）：不可达不是鉴权结论 → 只重连，不计次数；重连间隔另有
 //     下限（宿主把「这台 node 的不可达退避还剩多久」喂进来），不去反复撞注定打不通的链路。
 //
-// **判定之后不是死胡同**：把该 node 标未登录（界面这才会出现「登录此节点」按钮，用户点得动），
-// 同时留一条 10 分钟一次的慢速重连；页面重新可见 / 网络恢复时宿主调 `resume()` 立刻重试。
-// 只派一个事件而不动登录态，界面会落到「既没有按钮、也没有连接、更没有下一次」的死角。
+// **判定之后不是死胡同**：留一条 10 分钟一次的慢速重连；页面重新可见 / 网络恢复时宿主调
+// `resume()` 立刻重试。只有**重登真的失败**那一档才顺带把该 node 标未登录（界面这才会出现
+// 「登录此节点」按钮，用户点得动）——探测明明说会话有效的那档不动登录态：HTTP 已经证明
+// 会话在，翻它只会让界面撒谎，而重连仍在按 10 分钟的节奏自己试。
 
 import { createNodeApiClient, fetchDevices, isNodeLoginRequiredError } from '@vibeterm/api-client';
 
@@ -60,7 +61,10 @@ export interface NodeSessionGuardOptions {
   reconnect: (nodeId: string) => void;
   /** 判定该 node 确实要重新登录：派事件，界面据此提示。 */
   onLoginRequired: (nodeId: string) => void;
-  /** 同上，但改的是列表里的登录态——没有它，界面上连「登录此节点」按钮都不会出现。 */
+  /**
+   * 把该 node 在列表里标未登录——界面上的「登录此节点」按钮只由它驱动。
+   * **只在静默重登真的失败时调**：那一刻才有「这台 node 的会话确实不能用了」的证据。
+   */
   markLoggedOut?: (nodeId: string) => void;
   /** 重连间隔的下限（宿主按该 node 的不可达退避给出），缺省 0。 */
   reconnectDelayFloorMs?: (nodeId: string) => number;
@@ -181,7 +185,8 @@ export class NodeSessionGuard {
       ? await relogin(nodeId).catch((): NodeReloginResult => 'failed')
       : 'failed';
     if (result === 'failed') {
-      this.giveUp(nodeId, record);
+      // 只有这一档动登录态：重登失败 = 会话确实不能用了，界面必须给出登录入口。
+      this.giveUp(nodeId, record, { markLoggedOut: true });
       return;
     }
     if (result === 'recovered') {
@@ -201,15 +206,22 @@ export class NodeSessionGuard {
   }
 
   /**
-   * 判定这台 node 确实要重新登录：标登录态（界面这才有按钮）+ 派事件，
-   * 并留一条慢速重连——链路自己恢复时用户不必手动点任何东西。
+   * 这一轮不再快速重试：派事件（界面据此提示），并留一条慢速重连——链路自己恢复时
+   * 用户不必手动点任何东西。
+   *
+   * `markLoggedOut` 只在重登失败那一档给：探测说会话有效却仍被踢，把它标成未登录属于
+   * 拿不出证据的结论，界面会显示一个其实并不需要的登录入口（点下去也只是原地登一次）。
    */
-  private giveUp(nodeId: string, record: GuardRecord): void {
+  private giveUp(
+    nodeId: string,
+    record: GuardRecord,
+    options: { markLoggedOut?: boolean } = {}
+  ): void {
     this.clearTimer(record);
     record.transientAt = [];
     record.streak = 0;
     record.gaveUp = true;
-    this.options.markLoggedOut?.(nodeId);
+    if (options.markLoggedOut) this.options.markLoggedOut?.(nodeId);
     this.options.onLoginRequired(nodeId);
     this.arm(nodeId, record, GIVE_UP_RECONNECT_MS);
   }
