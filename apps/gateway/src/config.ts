@@ -283,6 +283,22 @@ export function parseUplinkPreferNearest(raw: string | undefined): boolean | nul
   );
 }
 
+/** 转发终端会话（mesh ws 流）单会话在途上限：载体队列 + mux 未回信用字节。 */
+export const LINK_STREAM_INFLIGHT_DEFAULT_BYTES = 256 * 1024;
+const LINK_STREAM_INFLIGHT_MIN_BYTES = 32 * 1024;
+
+export function parseLinkStreamInflightBytes(raw: string | undefined): number {
+  if (raw === undefined || raw.trim() === '') return LINK_STREAM_INFLIGHT_DEFAULT_BYTES;
+  const value = raw.trim();
+  const invalid = new Error(
+    `VIBETERM_LINK_STREAM_INFLIGHT_BYTES must be an integer >= ${LINK_STREAM_INFLIGHT_MIN_BYTES}`
+  );
+  if (!/^\d+$/.test(value)) throw invalid;
+  const n = Number(value);
+  if (!Number.isSafeInteger(n) || n < LINK_STREAM_INFLIGHT_MIN_BYTES) throw invalid;
+  return n;
+}
+
 /** cloudflared 数据目录：显式 `VIBETERM_TUNNEL_DIR`，否则 sqlite 旁的 `tunnel/`。 */
 export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
   const explicit = env.VIBETERM_TUNNEL_DIR?.trim();
@@ -316,6 +332,12 @@ export const config = {
 
   // 文件传输（上传/下载）单文件字节上限，默认 2GB；后端校验 + 前端上传前预校验共用
   transferMaxBytes: Number.parseInt(getEnv('VIBETERM_TRANSFER_MAX_BYTES', '2147483648'), 10),
+
+  // 转发终端会话的在途上限（载体队列 + mux 未回信用字节）。压到 256 KiB 是拿输出完整性
+  // 换交互延迟：超限即进 guard 的丢帧 → stream gap → canonical 回放这条既有降级路径。
+  linkStreamInflightBytes: parseLinkStreamInflightBytes(
+    process.env.VIBETERM_LINK_STREAM_INFLIGHT_BYTES
+  ),
 
   // 设置默认值（可被数据库中的实际设置覆盖）
   bellThrottleSecondsDefault: Number.parseInt(getEnv('VIBETERM_BELL_THROTTLE_SECONDS', '6'), 10),

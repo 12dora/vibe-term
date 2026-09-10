@@ -18,6 +18,7 @@ export {
   type LinkMuxOptions,
 } from './mux';
 export { createBytePipe, createInMemoryLinkPair } from './in-memory-link';
+export { StreamWriter, priorityReserveFor, type StreamWriterHost } from './stream-writer';
 export {
   WebSocketLink,
   websocketTransport,
@@ -58,6 +59,7 @@ export {
   MAX_FRAME_PAYLOAD,
   MAX_DATA_SEND_PAYLOAD,
   INITIAL_STREAM_WINDOW,
+  PRIORITY_SEND_RESERVE,
   MAX_LINK_UNACKED,
   CTL_STREAM_ID,
   FLAG_HEAD,

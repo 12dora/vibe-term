@@ -1,41 +1,118 @@
 import { describe, expect, test } from 'bun:test';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import type { LinkStream, StreamCloseInfo } from '@vibeterm/shared/link';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
-import { LINK_STREAM_BACKPRESSURE_BYTES, LinkStreamCarrier } from './link-stream-carrier';
+import {
+  LINK_STREAM_BACKPRESSURE_BYTES,
+  LINK_STREAM_PRIORITY_QUEUE_BYTES,
+  LINK_STREAM_PRIORITY_QUEUE_CAP,
+  LinkStreamCarrier,
+} from './link-stream-carrier';
 import {
   decodeTerminalStreamClose,
   encodeTerminalStreamClose,
   isTerminalStreamClose,
 } from './stream-close-code';
 
+const HIGH = 64 * 1024;
+
+/** write 永不 resolve 的假流，用来观察载体队列本身的上限。 */
+function blockedStream(): LinkStream {
+  return {
+    id: 1,
+    openPayload: new Uint8Array(0),
+    readable: new ReadableStream(),
+    write: () => new Promise<void>(() => undefined),
+    end: () => Promise.resolve(),
+    reset: () => undefined,
+    closed: new Promise<StreamCloseInfo>(() => undefined),
+    onAbort: () => undefined,
+  };
+}
+
 describe('LinkStreamCarrier', () => {
-  test('maps send queue above 1 MiB to backpressure and fires onDrain', async () => {
+  test('在途 = 队列 + mux 未回信用，超上限即背压，跌回一半才 onDrain', async () => {
     const [a, b] = createInMemoryLinkPair();
-    const incomingP = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
-      b.onStream(resolve)
-    );
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
     const out = await a.openStream(new Uint8Array([1]));
     const incoming = await incomingP;
-    const carrier = new LinkStreamCarrier(incoming);
+    const carrier = new LinkStreamCarrier(incoming, { highWaterMark: HIGH });
     let drained = 0;
     carrier.onDrain(() => {
       drained += 1;
     });
 
-    const meg = new Uint8Array(LINK_STREAM_BACKPRESSURE_BYTES);
-    expect(carrier.send(meg)).toBe('sent');
-    await new Promise((resolve) => setTimeout(resolve, 10));
-    expect(carrier.send(meg)).toBe('sent');
+    const chunk = new Uint8Array(HIGH / 2);
+    expect(carrier.send(chunk)).toBe('sent');
+    expect(carrier.send(chunk)).toBe('sent');
     expect(carrier.send(new Uint8Array(1))).toBe('backpressure');
 
+    // 队列早就交给 mux 了，但对端一个字节都没读：在途仍然满，不许 drain。
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(carrier.bufferedAmount()).toBeGreaterThan(HIGH);
+    expect(drained).toBe(0);
+    expect(carrier.hasPendingWrites()).toBe(true);
+
     const reader = out.readable.getReader();
-    while (carrier.bufferedAmount() > LINK_STREAM_BACKPRESSURE_BYTES) {
-      await reader.read();
+    while (carrier.bufferedAmount() > HIGH / 2) {
+      const chunkRead = await reader.read();
+      if (chunkRead.done) break;
     }
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(drained).toBeGreaterThan(0);
     out.end();
     incoming.end();
+  });
+
+  test('默认在途上限来自 config，且默认 256 KiB', () => {
+    expect(LINK_STREAM_BACKPRESSURE_BYTES).toBe(256 * 1024);
+  });
+
+  test('优先帧走独立队列，普通队列积压时仍先到达', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const carrier = new LinkStreamCarrier(incoming, { highWaterMark: HIGH });
+
+    // 1 MiB 窗口、预留 16 KiB：普通写吃到 1008 KiB 就停，后面的排队等信用。
+    const bulk = new Uint8Array(200 * 1024).fill(1);
+    for (let i = 0; i < 8; i++) carrier.send(bulk);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(carrier.sendPriority(new Uint8Array([0xfe, 0xed]))).toBe('sent');
+    await new Promise((resolve) => setTimeout(resolve, 10));
+
+    const reader = out.readable.getReader();
+    let priorityAt = -1;
+    for (let i = 0; i < 8 && priorityAt < 0; i++) {
+      const { value } = await reader.read();
+      if (!value) break;
+      if (value.bytes.byteLength === 2) priorityAt = i;
+    }
+    // 8 块 200 KiB 一共 1600 KiB，优先帧必须挤在还没发完的普通块之前。
+    expect(priorityAt).toBeGreaterThanOrEqual(0);
+    expect(priorityAt).toBeLessThan(8);
+    out.end();
+    incoming.end();
+  });
+
+  test('优先队列有界：超过帧数或字节上限返回 rejected', () => {
+    const carrier = new LinkStreamCarrier(blockedStream());
+    // 第一帧被泵立刻取走，所以队列还能再收 CAP 帧。
+    for (let i = 0; i < LINK_STREAM_PRIORITY_QUEUE_CAP + 1; i++) {
+      expect(carrier.sendPriority(new Uint8Array([i]))).toBe('sent');
+    }
+    expect(carrier.sendPriority(new Uint8Array([0]))).toBe('rejected');
+
+    const other = new LinkStreamCarrier(blockedStream());
+    expect(other.sendPriority(new Uint8Array(LINK_STREAM_PRIORITY_QUEUE_BYTES))).toBe('sent');
+    expect(other.sendPriority(new Uint8Array(1))).toBe('rejected');
+  });
+
+  test('关闭后的优先发送返回 closed', () => {
+    const carrier = new LinkStreamCarrier(blockedStream());
+    carrier.terminate();
+    expect(carrier.sendPriority(new Uint8Array([1]))).toBe('closed');
   });
 
   test('close ends the stream and terminate RSTs', async () => {

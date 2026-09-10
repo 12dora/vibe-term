@@ -213,7 +213,7 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
 
 ### 帧格式（uplink、peer link、relay 共用）
 
-`[streamId u32][op u8][flags u8][len u32][payload]`，op ∈ `OPEN=1 / DATA=2 / END=3 / RST=4 / WINDOW=5`。stream 0 固定 `ctl`；链路发起方奇数 id，接收方偶数 id。每流初始窗口 1 MiB，接收方消费后回 `WINDOW{delta}`；单帧上限 1 MiB；单条链路未确认缓冲上限 32 MiB，超出即断开重连。编解码器位于 `packages/shared/src/link/`；`LinkSession` 接口 `openStream / onStream / close`，实现：`WebSocketLink`（uplink、peer 信令）、`DataChannelLink`（peer 数据面）、`SecureChannelLink`（relay：在 hub `relay` 流之上以 §2 握手派生的每连接方向密钥 AES-256-GCM 逐帧加密，AAD = 帧头，nonce = 32 位方向常量 ‖ 64 位计数器，计数器溢出前重新握手）、`InMemoryLink`（双角色）。
+`[streamId u32][op u8][flags u8][len u32][payload]`，op ∈ `OPEN=1 / DATA=2 / END=3 / RST=4 / WINDOW=5`。stream 0 固定 `ctl`；链路发起方奇数 id，接收方偶数 id。每流初始窗口 1 MiB，接收方消费后回 `WINDOW{delta}`；单帧上限 1 MiB；单条链路未确认缓冲上限 32 MiB，超出即断开重连。发送侧按整片发（要么整条消息，要么满 256 KiB），不会因为窗口只剩零头就把一条消息切碎——接收方按 DATA 边界还原消息。编解码器位于 `packages/shared/src/link/`；`LinkSession` 接口 `openStream / onStream / close`，实现：`WebSocketLink`（uplink、peer 信令）、`DataChannelLink`（peer 数据面）、`SecureChannelLink`（relay：在 hub `relay` 流之上以 §2 握手派生的每连接方向密钥 AES-256-GCM 逐帧加密，AAD = 帧头，nonce = 32 位方向常量 ‖ 64 位计数器，计数器溢出前重新握手）、`InMemoryLink`（双角色）。
 
 流的关闭语义：`END` 只关闭**发送方向**（half-close），每个方向各自 `END`；`http` 流请求体 `END` 后仍等待响应，响应 `END` 后流结束；`RST` 立即终止双向并传播为对端 `Request.signal` abort / 响应流 cancel；目标提前响应（未读完请求体）时目标发响应后对请求方向发 `RST`，entry 停止转发请求体。
 
@@ -241,7 +241,9 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
 
 ### 载体抽象（node 侧唯一的结构性改动）
 
-拆 `GatewaySession`（会话身份与状态，替代所有以 socket 为键的 Map）与 `Carrier` 接口（`send(bytes): 'sent'|'backpressure'|'closed'`、`bufferedAmount()`、`onDrain(cb)`、`close(code, reason)`、`terminate()`）；实现 `BunSocketCarrier`（现状）、`LinkStreamCarrier`（`ws` 流）、`DataChannelCarrier`。一个会话持有 `primary` 与可选 `direct` 载体，任一时刻只有一条活跃；`websocket-send-guard` 改为面向 `Carrier`。
+拆 `GatewaySession`（会话身份与状态，替代所有以 socket 为键的 Map）与 `Carrier` 接口（`send(bytes): 'sent'|'backpressure'|'closed'`、可选 `sendPriority(bytes)`、`bufferedAmount()`、`onDrain(cb)`、`close(code, reason)`、`terminate()`）；实现 `BunSocketCarrier`（现状）、`LinkStreamCarrier`（`ws` 流）、`DataChannelCarrier`。一个会话持有 `primary` 与可选 `direct` 载体，任一时刻只有一条活跃；`websocket-send-guard` 改为面向 `Carrier`。
+
+`LinkStreamCarrier` 的在途上限（`LINK_STREAM_BACKPRESSURE_BYTES`）算的是「载体队列 + mux 未回信用字节」，默认 256 KiB，由 `VIBETERM_LINK_STREAM_INFLIGHT_BYTES` 调整（最低 32 KiB），跌回一半才 `onDrain`；PONG / `DEVICE_LATENCY` 走 `sendPriority()` 的有界优先队列 + mux 优先写链与每流 16 KiB 预留信用。口径与理由见 [延迟徽标](./ws-latency-badge.md#转发会话的优先通道与在途上限)。
 
 ### 载体切换屏障
 

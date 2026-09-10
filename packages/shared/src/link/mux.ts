@@ -1,4 +1,5 @@
 import { FrameDecoder, decodeWindowPayload, encodeFrame, encodeWindowPayload } from './codec';
+import { StreamWriter } from './stream-writer';
 import {
   type ByteTransport,
   CTL_STREAM_ID,
@@ -12,7 +13,6 @@ import {
   type LinkRole,
   type LinkSession,
   type LinkStream,
-  MAX_DATA_SEND_PAYLOAD,
   MAX_FRAME_PAYLOAD,
   MAX_LINK_UNACKED,
   type StreamChunk,
@@ -36,11 +36,6 @@ export type LinkMuxOptions = {
   maxLinkUnacked?: number;
   logContext?: LinkMuxLogContext;
   now?: () => number;
-};
-
-type Waiter = {
-  resolve: () => void;
-  reject: (err: Error) => void;
 };
 
 function copyBytes(bytes: Uint8Array): Uint8Array {
@@ -76,7 +71,6 @@ class MuxStream implements LinkStream {
   readonly readable: ReadableStream<StreamChunk>;
   readonly closed: Promise<StreamCloseInfo>;
 
-  sendWindow: number;
   recvAdvertised: number;
   outstanding = 0;
   sendClosed = false;
@@ -84,13 +78,13 @@ class MuxStream implements LinkStream {
   dead = false;
 
   private readonly mux: LinkMux;
+  private readonly writer: StreamWriter;
   private readonly abortCbs: Array<() => void> = [];
+  private readonly creditCbs: Array<() => void> = [];
   private aborted = false;
   private resolveClosed!: (info: StreamCloseInfo) => void;
   private closedSettled = false;
-  private writeChain: Promise<void> = Promise.resolve();
   private endPromise: Promise<void> | null = null;
-  private waiters: Waiter[] = [];
   private recvBuf: StreamChunk[] = [];
   private pullWaiter: (() => void) | null = null;
   private outController: ReadableStreamDefaultController<StreamChunk> | null = null;
@@ -102,7 +96,20 @@ class MuxStream implements LinkStream {
     this.id = id;
     this.openPayload = openPayload;
     this.isCtl = id === CTL_STREAM_ID;
-    this.sendWindow = mux.streamWindow;
+    this.writer = new StreamWriter(
+      {
+        isDead: () => this.dead,
+        deadError: () => this.deadError(),
+        sendFrame: (flags, payload) =>
+          this.mux.sendFrame({ streamId: this.id, op: FrameOp.DATA, flags, payload }),
+        takeCredit: (n) => {
+          this.outstanding += n;
+          this.mux.addUnacked(n);
+        },
+      },
+      mux.streamWindow,
+      mux.maxFramePayload
+    );
     this.recvAdvertised = mux.streamWindow;
     this.closed = new Promise((resolve) => {
       this.resolveClosed = resolve;
@@ -136,16 +143,19 @@ class MuxStream implements LinkStream {
     );
   }
 
+  get sendWindow(): number {
+    return this.writer.sendWindow;
+  }
+
+  get outstandingBytes(): number {
+    return this.outstanding;
+  }
+
   write(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
     if (this.dead) return Promise.reject(this.deadError());
     if (this.sendClosed)
       return Promise.reject(new LinkError('closed', 'stream send direction is closed'));
-    const run = this.writeChain.then(() => this.writeInternal(bytes, opts));
-    this.writeChain = run.then(
-      () => undefined,
-      () => undefined
-    );
-    return run;
+    return this.writer.write(bytes, opts);
   }
 
   end(): Promise<void> {
@@ -153,11 +163,7 @@ class MuxStream implements LinkStream {
     if (this.dead) return Promise.resolve();
     if (this.sendClosed) return this.endPromise ?? Promise.resolve();
     this.sendClosed = true;
-    const run = this.writeChain.then(() => this.sendEnd());
-    this.writeChain = run.then(
-      () => undefined,
-      () => undefined
-    );
+    const run = this.writer.drained().then(() => this.sendEnd());
     this.endPromise = run;
     return run;
   }
@@ -177,17 +183,22 @@ class MuxStream implements LinkStream {
   }
 
   creditSendWindow(delta: number): void {
-    this.sendWindow += delta;
-    this.flushWaiters();
+    this.writer.credit(delta);
+    for (const cb of this.creditCbs) {
+      try {
+        cb();
+      } catch {
+        // listener errors must not break the mux
+      }
+    }
   }
 
-  async waitForSendCredit(): Promise<void> {
-    if (this.dead) throw this.deadError();
-    if (this.sendWindow > 0) return;
-    await new Promise<void>((resolve, reject) => {
-      this.waiters.push({ resolve, reject });
-    });
-    if (this.dead) throw this.deadError();
+  onSendWindowCredit(cb: () => void): void {
+    this.creditCbs.push(cb);
+  }
+
+  reservePriorityCredit(): void {
+    this.writer.armPriorityReserve();
   }
 
   onIncomingData(bytes: Uint8Array, head: boolean): void {
@@ -229,8 +240,7 @@ class MuxStream implements LinkStream {
     this.recvClosed = true;
     const err = new LinkError(info.reason, info.message ?? info.reason);
     this.abortError = err;
-    for (const waiter of this.waiters) waiter.reject(err);
-    this.waiters = [];
+    this.writer.fail(err);
     this.recvBuf = [];
     this.wakePull();
     if (info.reason !== 'end') this.fireAbort();
@@ -254,67 +264,10 @@ class MuxStream implements LinkStream {
     this.mux.sendWindowCredit(this, byteLength);
   }
 
-  private async writeInternal(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {
-    if (this.dead) throw this.deadError();
-    if (bytes.byteLength === 0 && !opts?.head) return;
-
-    let offset = 0;
-    let first = true;
-    if (bytes.byteLength === 0 && opts?.head) {
-      await this.waitForSendCredit();
-      if (this.dead) throw this.deadError();
-      this.takeSendCredit(0);
-      await this.mux.sendFrame({
-        streamId: this.id,
-        op: FrameOp.DATA,
-        flags: FLAG_HEAD,
-        payload: new Uint8Array(0),
-      });
-      return;
-    }
-
-    while (offset < bytes.byteLength) {
-      if (this.dead) throw this.deadError();
-      await this.waitForSendCredit();
-      if (this.dead) throw this.deadError();
-      const n = Math.min(
-        bytes.byteLength - offset,
-        this.sendWindow,
-        this.mux.maxFramePayload,
-        MAX_DATA_SEND_PAYLOAD
-      );
-      if (n <= 0) continue;
-      const slice = bytes.subarray(offset, offset + n);
-      this.takeSendCredit(n);
-      const flags = first && opts?.head ? FLAG_HEAD : 0;
-      first = false;
-      await this.mux.sendFrame({
-        streamId: this.id,
-        op: FrameOp.DATA,
-        flags,
-        payload: slice,
-      });
-      offset += n;
-    }
-  }
-
   private async sendEnd(): Promise<void> {
     if (this.dead) return;
     await this.mux.sendFrame({ streamId: this.id, op: FrameOp.END });
     this.maybeFinishEnd();
-  }
-
-  private takeSendCredit(n: number): void {
-    this.sendWindow -= n;
-    this.outstanding += n;
-    this.mux.addUnacked(n);
-  }
-
-  private flushWaiters(): void {
-    while (this.waiters.length > 0 && this.sendWindow > 0 && !this.dead) {
-      const waiter = this.waiters.shift();
-      waiter?.resolve();
-    }
   }
 
   private flushReadable(): void {

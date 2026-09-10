@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import { validateRoles } from '@vibeterm/shared';
 import {
   HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
+  LINK_STREAM_INFLIGHT_DEFAULT_BYTES,
   originUrlFromBindHost,
   parseHubAutoPromote,
   parseHubAutoPromoteTimeoutMs,
+  parseLinkStreamInflightBytes,
   parsePeerBindHost,
   parsePeerPort,
   parseRtcPortRange,
@@ -489,6 +491,19 @@ describe('hub auto-promote and nearest-uplink env', () => {
     );
     expect(() => parseHubAutoPromoteTimeoutMs('1.5')).toThrow(
       'VIBETERM_HUB_AUTO_PROMOTE_TIMEOUT_MS'
+    );
+  });
+
+  test('转发会话在途上限缺省 256 KiB，只收整数且不低于 32 KiB', () => {
+    expect(parseLinkStreamInflightBytes(undefined)).toBe(LINK_STREAM_INFLIGHT_DEFAULT_BYTES);
+    expect(parseLinkStreamInflightBytes('')).toBe(LINK_STREAM_INFLIGHT_DEFAULT_BYTES);
+    expect(parseLinkStreamInflightBytes(' 131072 ')).toBe(131072);
+    expect(() => parseLinkStreamInflightBytes('1024')).toThrow(
+      'VIBETERM_LINK_STREAM_INFLIGHT_BYTES'
+    );
+    expect(() => parseLinkStreamInflightBytes('-1')).toThrow('VIBETERM_LINK_STREAM_INFLIGHT_BYTES');
+    expect(() => parseLinkStreamInflightBytes('1e6')).toThrow(
+      'VIBETERM_LINK_STREAM_INFLIGHT_BYTES'
     );
   });
 

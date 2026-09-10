@@ -3,6 +3,11 @@ export const MAX_FRAME_PAYLOAD = 1024 * 1024;
 /** Sender-side DATA payload cap. Receivers still accept frames up to MAX_FRAME_PAYLOAD. */
 export const MAX_DATA_SEND_PAYLOAD = 256 * 1024;
 export const INITIAL_STREAM_WINDOW = 1024 * 1024;
+/**
+ * 优先写（PONG / DEVICE_LATENCY 等控制帧）保留的发送信用：普通写永远不占用窗口的这一段。
+ * 纯发送侧策略——线格式与接收侧窗口记账都不变，与旧版本互通。
+ */
+export const PRIORITY_SEND_RESERVE = 16 * 1024;
 // Cover 64 default relay streams plus the control stream at a full window each.
 export const MAX_LINK_UNACKED = 65 * INITIAL_STREAM_WINDOW;
 export const CTL_STREAM_ID = 0;
@@ -45,6 +50,11 @@ export type StreamChunk = {
 
 export type WriteOptions = {
   head?: boolean;
+  /**
+   * 控制面优先写：排在已排队但尚未开始的普通写之前，并可动用 `PRIORITY_SEND_RESERVE`
+   * 预留信用。只能插在消息与消息之间，不会挤进一条多片消息的分片中间。
+   */
+  priority?: boolean;
 };
 
 export interface LinkStream {
@@ -64,6 +74,15 @@ export interface LinkStream {
   readonly closed: Promise<StreamCloseInfo>;
   /** Fired once on peer RST or link close (not on a clean bilateral END). */
   onAbort(cb: () => void): void;
+  /** 已计入发送窗口、对端尚未回信用的字节数（发送侧在途）。 */
+  readonly outstandingBytes?: number;
+  /** 对端回窗口信用时触发，即发送侧在途下降。 */
+  onSendWindowCredit?(cb: () => void): void;
+  /**
+   * 给优先写预留 `PRIORITY_SEND_RESERVE` 的发送信用（普通写不再占用这一段）。
+   * 只有需要控制面低延迟的流（ws 转发）才调用，且必须在开始写之前调用。
+   */
+  reservePriorityCredit?(): void;
 }
 
 export type LinkCtl = {

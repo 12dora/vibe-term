@@ -32,8 +32,10 @@ export interface Carrier {
    */
   sendMany?(frames: readonly Uint8Array[], options?: CarrierSendManyOptions): CarrierSendManyResult;
   /**
-   * 控制面优先发送（PONG 等）。缺省等价于 `send()`。
-   * DataChannel 实现会把帧送进有界优先队列，在 drain 时先于 remainder 刷出。
+   * 控制面优先发送（PONG / DEVICE_LATENCY）。缺省等价于 `send()`。
+   * DataChannel 实现把帧送进有界优先队列，在 drain 时先于 remainder 刷出；
+   * mesh 转发流（`LinkStreamCarrier`）走独立的有界队列与 mux 优先写链，在消息边界插队。
+   * 队列满返回 `rejected`，调用方按背压处理，不得当成已发出。
    */
   sendPriority?(bytes: Uint8Array): CarrierSendResult;
   bufferedAmount(): number;

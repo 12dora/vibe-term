@@ -223,6 +223,26 @@ describe('DeviceLatencyBroadcast fan-out', () => {
     }
   });
 
+  test('载体有优先通道时，背压中的会话照发', () => {
+    const { fake, addSession } = setup();
+    const session = addSession();
+    const carrier = session.activeCarrier as typeof session.activeCarrier & {
+      sendPriority?: (bytes: Uint8Array) => 'sent';
+    };
+    carrier.sendPriority = (bytes) => {
+      session.sent.push(bytes);
+      return 'sent';
+    };
+    const spy = spyOn(gatewayWebSocketSendGuard, 'isBackpressured').mockImplementation(() => true);
+    try {
+      fake.emit(sample(11));
+      expect(session.sent).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+      carrier.sendPriority = undefined;
+    }
+  });
+
   test('skips a session whose carrier is already backpressured', () => {
     const { fake, addSession } = setup();
     const healthy = addSession();

@@ -39,7 +39,8 @@ const defaultSchedule: DeviceLatencySchedule = {
 
 /**
  * 把每个设备的宿主一跳延迟推给「连了这台设备」的非分享会话：实质变化且间隔够，或距上次下发满
- * 15 s 才发一帧，走与 PONG 相同的优先通道，但背压中的会话跳过。
+ * 15 s 才发一帧，走与 PONG 相同的优先通道。载体有优先通道时背压中也照发——这帧不到 64 字节，
+ * 而且正是队列积压时必须挤出去的那一帧；没有优先通道的载体（浏览器直连 socket）仍然跳过。
  */
 export class DeviceLatencyBroadcast {
   private readonly lastSent = new Map<string, LastSent>();
@@ -105,7 +106,8 @@ export class DeviceLatencyBroadcast {
   private sendEncoded(session: GatewaySession, payload: Uint8Array): boolean {
     if (session.closed || !session.borshState.negotiated) return false;
     const carrier = session.activeCarrier;
-    if (gatewayWebSocketSendGuard.isBackpressured(carrier)) return false;
+    const hasPriorityLane = typeof carrier.sendPriority === 'function';
+    if (!hasPriorityLane && gatewayWebSocketSendGuard.isBackpressured(carrier)) return false;
     const state = session.borshState;
     const frames = encodePayloadFrames(
       wsBorsh.KIND_DEVICE_LATENCY,

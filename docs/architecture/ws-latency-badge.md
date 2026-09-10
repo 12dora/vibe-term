@@ -75,9 +75,9 @@ transport 事件为 `{ type: 'latency', latencyMs, rawMs }`，`GatewayTransport.
 
 ## 网关（`apps/gateway/src/ws`）
 
-`handlePing` 编好 `PONG` 后走 `WebSocketSendGuard.sendPriorityFrames()`：直接 `carrier.send()`，**不**
-经过终端输出的 `canSend` / 丢帧 / stream gap 标记。否则 PONG 和终端输出挤同一条队列，背压时会被延后
-甚至丢掉，测出来的是队列深度而不是链路延迟。
+`handlePing` 编好 `PONG` 后走 `WebSocketSendGuard.sendPriorityFrames()`：载体实现了 `sendPriority`
+就走优先通道，否则退回 `carrier.send()`；两条路都**不**经过终端输出的 `canSend` / 丢帧 / stream gap
+标记。否则 PONG 和终端输出挤同一条队列，背压时会被延后甚至丢掉，测出来的是队列深度而不是链路延迟。
 
 发送路径按 socket 缓冲分类记账：`bufferedAmount() < 64 KiB`（`GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES`）
 且 guard 不处于背压 → 记 `bypassed`；否则仍然发送，但记 `queued`。
@@ -91,6 +91,27 @@ transport 事件为 `{ type: 'latency', latencyMs, rawMs }`，`GatewayTransport.
 
 `server_handle_ms` 是「收到 PING 到把 PONG 交给 socket」的服务端耗时，`event_loop_lag_ms` 取自已有的
 事件循环滞后采样。
+
+### 转发会话的优先通道与在途上限
+
+远端 node 的浏览器 socket 终结在**拥有设备的 node**，回程走 mesh 流（`LinkStreamCarrier`）。这条路上
+PONG / `DEVICE_LATENCY` 同样要插队，否则徽标量的是转发队列深度：
+
+- **优先通道**：`LinkStreamCarrier.sendPriority()` 走独立的有界队列（16 帧 / 64 KiB，满了返回
+  `rejected`），并以 `write(bytes, { priority: true })` 交给 mux——优先写有自己的写链，不排在普通写
+  后面，还能动用每流 16 KiB 的预留发送信用（`PRIORITY_SEND_RESERVE`，普通写永不占用）。预留纯粹是
+  发送侧策略，线格式与对端窗口记账都不变，和旧版本节点互通。插队只发生在**消息与消息之间**：一条
+  被切成多片的大消息在片与片之间持有分片闸门，优先帧不会挤进分片中间。
+- **在途上限**：`bufferedAmount()` 返回「载体队列 + 已交给 mux 但对端尚未回信用的字节」，高水位默认
+  **256 KiB**（`VIBETERM_LINK_STREAM_INFLIGHT_BYTES`，最低 32 KiB），跌回一半才触发 `onDrain`。此前
+  只看载体队列、上限 1 MiB，叠上 mux 的 1 MiB 窗口后每条转发会话能囤 2 MiB，慢上行时等于给每个 PONG
+  前面排上几百毫秒。压到 256 KiB 是拿输出完整性换交互延迟：超限走 guard 既有的丢帧 → stream gap →
+  canonical 回放这条降级路径。`INITIAL_STREAM_WINDOW` / `MAX_DATA_SEND_PAYLOAD` 保持不变，文件传输与
+  端口映射仍要高 BDP 下的吞吐；预留信用也只在 ws 转发流上按需 arm（`reservePriorityCredit()`）。
+- **`DEVICE_LATENCY`**：载体有优先通道时，背压中的会话也照发（这帧不到 64 字节，正是队列积压时必须
+  挤出去的那一帧）；没有优先通道的浏览器直连 socket 仍然跳过。
+- 基准见 `apps/gateway/src/mesh/link-stream-priority-latency.test.ts`：限速 4096 B/ms、单向 15 ms 的
+  假链路上灌满终端输出后插一帧 PONG，改前约 150–180 ms，改后约 20 ms。
 
 ## 排查毛刺
 
