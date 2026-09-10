@@ -39,7 +39,7 @@ Files Tab 的上传 / 下载入口（右键菜单、长按菜单、拖拽）要�
 
 - `sanitizeUploadName(raw)`：只取路径最后一段，拒绝空串、`.`、`..`，以及含 `/`、`\`、NUL 的名字，防目录穿越。
 - **目标文件不存在时不能对目标文件跑 `checkAndNormalize`**：local 分支的 `realpathSync` 会因路径不存在直接报 `not_found`。正确顺序是——校验**已存在的** `destDir` 落在 root 内，再 `statViaRsync` 确认它确实是目录（否则 `not_a_directory`），最后 `posixJoin(destDir, sanitizeUploadName(name))` 拼出远端路径。
-- 上传**不创建**远端父目录，`destDir` 必须已存在。CLI `cp -r` 本地→节点前应先调 `POST /api/files/mkdir`：请求体 `{ rootId, path, recursive? }`，`path` 与 `statFile` / `upload/init` 相同（root 内绝对路径，经同一套词法规范化；`..` 越界、绝对路径逃逸、禁用根、root 外走 `file-http.ts` 既有 403 码）。成功 200 `{ path, created }`（已存在且为目录则 `created: false`）；目标是文件 409 `not_a_directory`；非 recursive 且父目录缺失 404 `not_found`；权限不足 403 `permission_denied`。
+- 上传**不创建**远端父目录，`destDir` 必须已存在。CLI `cp -r` 本地→节点前应先调 `POST /api/files/mkdir`：请求体 `{ rootId, path, recursive? }`，`path` 与 `statFile` / `upload/init` 相同（root 内绝对路径，经同一套词法规范化；`..` 越界、绝对路径逃逸、禁用根、root 外走 `file-http.ts` 既有 403 码）。成功 200 `{ path, created }`（已存在且为目录则 `created: false`）；目标是文件 400 `not_a_directory`（与 `upload/init` 共用 `CODE_STATUS`）；路径上的符号链接（含指向 root 外的目标）403 `outside_roots`；非 recursive 且父目录缺失 404 `not_found`；权限不足 403 `permission_denied`。`recursive` 超过 64 段或路径超过 4096 字节返回 400 `invalid`。本机创建后 `chmod 0755`（绕开 umask）；远端走 `mkdir -m 0755 --`。
 - 所有 rsync 推送经 `enqueueDeviceJob`（`apps/gateway/src/files/queue.ts`）单设备串行，避免同设备并发 rsync 互相踩。
 - `rsyncUploadArgs` 与 `rsyncCopyArgs` 对称地调换源/目标，且上传**不加** `-L`（不跟随符号链接）。
 

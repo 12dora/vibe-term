@@ -56,5 +56,5 @@ export function handleApiRequest(
   const ctx: ApiRouteContext = { server: _server, path, systemApiHandler };
   const matched = dispatchRoutes(req, path, apiRoutes, ctx);
   if (matched) return matched;
-  return json({ error: t('apiError.notFound') }, 404);
+  return json({ error: t('apiError.notFound'), code: 'route_not_found' }, 404);
 }

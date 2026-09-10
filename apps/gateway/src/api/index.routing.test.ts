@@ -5,6 +5,7 @@ import * as devicesDb from '../db/devices';
 import { runMigrations } from '../db/migrate';
 import * as telegramDb from '../db/telegram';
 import * as weixinDb from '../db/weixin';
+import { t } from '../i18n';
 import { telegramService } from '../telegram/service';
 import { weixinService } from '../weixin/service';
 import { handleApiRequest } from './index';
@@ -164,5 +165,14 @@ describe('handleApiRequest production route table', () => {
 
     expect(res.status).toBe(200);
     expect(approve).toHaveBeenCalledWith('acc1', 'user:2');
+  });
+
+  test('unmatched API path returns 404 with stable route_not_found code', async () => {
+    const res = await handleApiRequest(req('GET', '/api/definitely-not-a-route'), fakeServer);
+    expect(res.status).toBe(404);
+    expect(await res.json()).toEqual({
+      error: t('apiError.notFound'),
+      code: 'route_not_found',
+    });
   });
 });

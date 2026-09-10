@@ -13,6 +13,9 @@ import { json, readJsonObjectBody } from './http';
 
 export type MkdirResult = FileOpResult<{ path: string; created: boolean }>;
 
+const MAX_MKDIR_SEGMENTS = 64;
+const MAX_MKDIR_PATH_BYTES = 4096;
+
 /** 与 `checkAndNormalize` 相同的词法规范化，但不做 local realpath（目标尚未存在）。 */
 function posixNormalize(p: string): string {
   const isAbs = p.startsWith('/');
@@ -52,6 +55,13 @@ function segmentsUnder(rootPath: string, absPath: string): string[] {
   return absPath.slice(prefix.length).split('/').filter(Boolean);
 }
 
+function exceedsMkdirCap(absPath: string, recursive: boolean, segs: readonly string[]): boolean {
+  return (
+    Buffer.byteLength(absPath, 'utf8') > MAX_MKDIR_PATH_BYTES ||
+    (recursive && segs.length > MAX_MKDIR_SEGMENTS)
+  );
+}
+
 function mkdirLocal(rootPath: string, absPath: string, recursive: boolean): MkdirResult {
   let realRoot: string;
   try {
@@ -66,17 +76,28 @@ function mkdirLocal(rootPath: string, absPath: string, recursive: boolean): Mkdi
   if (existing.ok) return ok({ path: absPath, created: false });
   if (existing.code !== 'not_found') return fail(existing.code);
 
-  if (!recursive) {
-    const parent = resolveAuthorizedDir(realRoot, segs.slice(0, -1), false);
-    if (!parent.ok) return fail(parent.code);
+  if (recursive) {
+    const made = resolveAuthorizedDir(realRoot, segs, true);
+    if (!made.ok) return fail(made.code);
+    return ok({ path: absPath, created: true });
   }
-  const made = resolveAuthorizedDir(realRoot, segs, true);
+
+  const parent = resolveAuthorizedDir(realRoot, segs.slice(0, -1), false);
+  if (!parent.ok) return fail(parent.code);
+  const leaf = segs[segs.length - 1];
+  if (!leaf) return ok({ path: absPath, created: false });
+  const made = resolveAuthorizedDir(parent.data, [leaf], true);
   if (!made.ok) return fail(made.code);
   return ok({ path: absPath, created: true });
 }
 
+function isSymlinkStat(st: FileStatResponse): boolean {
+  return st.type === 'symlink' || st.isSymlink;
+}
+
 function alreadyThere(st: FileOpResult<FileStatResponse>, absPath: string): MkdirResult | null {
   if (st.ok) {
+    if (isSymlinkStat(st.data)) return fail('outside_roots');
     if (st.data.type === 'dir') return ok({ path: absPath, created: false });
     return fail('not_a_directory');
   }
@@ -97,8 +118,10 @@ async function createRemoteDir(
   if (parentSegs.length > 0) {
     const parentSt = await statFile(rootId, parentAbs);
     if (!parentSt.ok) return fail(parentSt.code, parentSt.detail);
+    if (isSymlinkStat(parentSt.data)) return fail('outside_roots');
     if (parentSt.data.type !== 'dir') return fail('not_a_directory');
   }
+  if (!rel) return ok({ path: absPath, created: false });
   const ctx = resolveDestContext(rootId, parentAbs);
   if (!ctx.ok) return fail(ctx.code);
   const made = await ensureRemoteDir(ctx.data, rel);
@@ -131,16 +154,11 @@ export async function mkdirUnderRoot(
 
   const lexical = lexicalNormalize(resolved.root.path, inputPath);
   if (!lexical.ok) return fail(lexical.code);
+  const segs = segmentsUnder(posixNormalize(resolved.root.path), lexical.path);
+  if (exceedsMkdirCap(lexical.path, recursive, segs)) return fail('invalid');
 
   if (device.type === 'local') return mkdirLocal(resolved.root.path, lexical.path, recursive);
   return mkdirRemote(rootId, resolved.root.path, lexical.path, recursive);
-}
-
-function mkdirError(code: FileErrorCode, detail?: string): Response {
-  if (code === 'not_a_directory') {
-    return json({ error: 'not_a_directory', code: 'not_a_directory' }, 409);
-  }
-  return codeError(code, detail);
 }
 
 export async function handleMkdir(req: Request): Promise<Response> {
@@ -151,6 +169,6 @@ export async function handleMkdir(req: Request): Promise<Response> {
   if (!rootId || !path) return json({ error: t('apiError.invalidRequest') }, 400);
 
   const result = await mkdirUnderRoot(rootId, path, body.recursive === true);
-  if (!result.ok) return mkdirError(result.code, result.detail);
+  if (!result.ok) return codeError(result.code, result.detail);
   return json({ path: result.data.path, created: result.data.created });
 }

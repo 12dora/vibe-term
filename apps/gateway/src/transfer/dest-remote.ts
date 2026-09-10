@@ -32,7 +32,7 @@ const EXIT_CODES: Readonly<Record<number, FileErrorCode>> = {
  * 远端一次性核对：root → destDir 的真实路径包含关系、relPath 每一段不是符号链接、
  * 缺失的段就地建出来，最后回报目标目录真实路径与同名文件是否已存在。
  */
-function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: string): string {
+export function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: string): string {
   const lines = [
     `cd -- ${quoteShellArg(ctx.root.path)} || exit 60`,
     'r=$(pwd -P)',
@@ -44,12 +44,12 @@ function buildWalkCommand(ctx: DestContext, dirs: readonly string[], name: strin
     lines.push(
       `for s in ${dirs.map(quoteShellArg).join(' ')}; do`,
       'if [ -L "$s" ]; then exit 62; fi',
-      'if [ ! -e "$s" ]; then mkdir -- "$s" || exit 63; fi',
+      'if [ ! -e "$s" ]; then mkdir -m 0755 -- "$s" || exit 63; fi',
       'if [ ! -d "$s" ]; then exit 64; fi',
       'cd -- "$s" || exit 65',
       'done',
       'd=$(pwd -P)',
-      'case "$d" in "$b"|"$b"/*) ;; *) exit 66;; esac'
+      'case "$d" in "$b"|"$b"/*) ;; *) cd ..; rmdir -- "$s" 2>/dev/null; exit 66;; esac'
     );
   } else {
     lines.push('d="$b"');
