@@ -31,6 +31,16 @@ interface PendingControlCommand<T = unknown> {
   sampleStartedAt: number | null;
   /** 已结算（非毒化超时）时留在队列里只为对齐后续 %end，不再 resolve/reject。 */
   settled: boolean;
+  timeoutMs: number;
+  /** `%begin` 已到时记下 command-number，超时拆成 orphan 后用来对块。 */
+  seq?: number;
+}
+
+/** 非毒化超时拆掉的队头：tmux 仍可能晚到 `%end`，带截止时间，超时未到则丢弃以免永久吞块。 */
+interface OrphanControlBlock {
+  literal: boolean;
+  deadline: number;
+  seq?: number;
 }
 
 export interface ControlCommandLatencyOptions {
@@ -46,8 +56,7 @@ function monotonicNow(): number {
 export class ControlModeCommandQueue {
   private readonly pending: PendingControlCommand[] = [];
   private poisoned = false;
-  /** 非毒化超时拆掉的队头：tmux 仍会晚到 %end，先吃掉以免错配下一条命令。 */
-  private orphanBlocks = 0;
+  private readonly orphans: OrphanControlBlock[] = [];
   private readonly clockNow: () => number;
 
   constructor(
@@ -78,6 +87,7 @@ export class ControlModeCommandQueue {
   ): Promise<T> {
     if (this.poisoned) return Promise.reject(new Error('tmux control command queue is closed'));
     return new Promise<T>((resolve, reject) => {
+      const timeoutMs = options.timeoutMs ?? 10_000;
       const pending: PendingControlCommand<T> = {
         literal: options.literal ?? false,
         onAck: options.onAck,
@@ -86,13 +96,14 @@ export class ControlModeCommandQueue {
         reject,
         sampleStartedAt: null,
         settled: false,
+        timeoutMs,
         timer: setTimeout(() => {
           this.timeoutPending(
             pending as PendingControlCommand,
             new Error(`tmux control command timed out: ${command.slice(0, 80)}`),
             options.poisonOnTimeout !== false
           );
-        }, options.timeoutMs ?? 10_000),
+        }, timeoutMs),
       };
       const sampled = options.sample === true && this.latency !== undefined && !this.busy;
       this.pending.push(pending as PendingControlCommand);
@@ -105,16 +116,21 @@ export class ControlModeCommandQueue {
     });
   }
 
-  nextBlockIsLiteral(): boolean {
-    if (this.orphanBlocks > 0) return false;
-    return this.pending[0]?.literal ?? false;
+  nextBlockIsLiteral(args?: string): boolean {
+    this.pruneExpiredOrphans();
+    const seq = args === undefined ? undefined : parseCommandNumber(args);
+    const orphan = this.orphans[0];
+    if (orphan) {
+      stampSeq(orphan, seq);
+      return orphan.literal;
+    }
+    const pending = this.pending[0];
+    if (pending) stampSeq(pending, seq);
+    return pending?.literal ?? false;
   }
 
   handleBlock(block: ControlModeBlock): boolean {
-    if (this.orphanBlocks > 0) {
-      this.orphanBlocks -= 1;
-      return true;
-    }
+    if (this.consumeOrphan(block)) return true;
     const pending = this.pending.shift();
     if (!pending) return false;
     clearTimeout(pending.timer);
@@ -137,7 +153,7 @@ export class ControlModeCommandQueue {
   dispose(reason = 'tmux control command queue closed'): void {
     if (this.poisoned) return;
     this.poisoned = true;
-    this.orphanBlocks = 0;
+    this.orphans.length = 0;
     const error = new Error(reason);
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
@@ -163,7 +179,11 @@ export class ControlModeCommandQueue {
     pending.reject(error);
     if (index === 0) {
       this.pending.splice(index, 1);
-      this.orphanBlocks += 1;
+      this.orphans.push({
+        literal: pending.literal,
+        deadline: monotonicNow() + pending.timeoutMs,
+        seq: pending.seq,
+      });
       return;
     }
     pending.settled = true;
@@ -172,12 +192,36 @@ export class ControlModeCommandQueue {
   private poison(error: Error): void {
     if (this.poisoned) return;
     this.poisoned = true;
-    this.orphanBlocks = 0;
+    this.orphans.length = 0;
     for (const pending of this.pending.splice(0)) {
       clearTimeout(pending.timer);
       pending.reject(error);
     }
     this.onPoison?.();
+  }
+
+  private pruneExpiredOrphans(): void {
+    const now = monotonicNow();
+    while (this.orphans.length > 0) {
+      const head = this.orphans[0];
+      if (!head || head.deadline > now) break;
+      this.orphans.shift();
+    }
+  }
+
+  private consumeOrphan(block: ControlModeBlock): boolean {
+    this.pruneExpiredOrphans();
+    if (this.orphans.length === 0) return false;
+    const seq = parseCommandNumber(block.args);
+    const matched = seq === undefined ? -1 : this.orphans.findIndex((orphan) => orphan.seq === seq);
+    if (matched >= 0) {
+      this.orphans.splice(matched, 1);
+      return true;
+    }
+    const head = this.orphans[0];
+    if (seq !== undefined && head?.seq !== undefined) return false;
+    this.orphans.shift();
+    return true;
   }
 }
 
@@ -185,6 +229,21 @@ function parseNonNegativeInteger(value: string | undefined): number | null {
   if (value === undefined || value === '') return null;
   const parsed = Number.parseInt(value, 10);
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+/** `%begin/%end` 参数为 `time command-number flags`；缺字段时无法对号。 */
+function parseCommandNumber(args: string): number | undefined {
+  const firstSpace = args.indexOf(' ');
+  if (firstSpace < 0) return undefined;
+  const rest = args.slice(firstSpace + 1);
+  const secondSpace = rest.indexOf(' ');
+  const field = secondSpace < 0 ? rest : rest.slice(0, secondSpace);
+  const parsed = parseNonNegativeInteger(field);
+  return parsed === null ? undefined : parsed;
+}
+
+function stampSeq(target: { seq?: number }, seq: number | undefined): void {
+  if (target.seq === undefined && seq !== undefined) target.seq = seq;
 }
 
 function parsePaneFrameInfo(

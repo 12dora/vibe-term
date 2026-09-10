@@ -78,6 +78,13 @@ function createScheduleClock() {
       }
       now = target;
     },
+    fireNext: () => {
+      const next = [...timers].sort((a, b) => a[1].at - b[1].at)[0];
+      if (!next) return false;
+      timers.delete(next[0]);
+      next[1].callback();
+      return true;
+    },
   };
 }
 
@@ -121,6 +128,7 @@ function setup() {
     fake,
     detach,
     advance: clock.advance,
+    fireNext: clock.fireNext,
     addSession: (target: Set<GatewaySession> = clients): BorshTestWs => {
       const session = createGatewaySession();
       session.borshState.negotiated = true;
@@ -338,6 +346,25 @@ describe('DeviceLatencyBroadcast throttling', () => {
     detach();
     advance(DEVICE_LATENCY_REFRESH_MS * 2);
     expect(session.sent).toHaveLength(4);
+  });
+
+  test('a refresh timer firing 1 ms early still keeps the heartbeat alive', () => {
+    const { fake, addSession, advance, fireNext } = setup();
+    const session = addSession();
+
+    fake.emit(sample(42));
+    expect(session.sent).toHaveLength(1);
+
+    advance(DEVICE_LATENCY_REFRESH_MS - 1);
+    expect(session.sent).toHaveLength(1);
+    expect(fireNext()).toBe(true);
+    expect(session.sent).toHaveLength(1);
+
+    advance(1);
+    expect(session.sent).toHaveLength(2);
+    advance(DEVICE_LATENCY_REFRESH_MS);
+    expect(session.sent).toHaveLength(3);
+    expect(decode(session.sent[2]).payload.rttMs).toBe(42);
   });
 });
 

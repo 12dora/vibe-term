@@ -87,15 +87,18 @@ export class DeviceLatencyBroadcast {
     if (!entry || entry.runtime !== runtime) return;
     const last = this.lastSent.get(deviceId);
     const now = this.now();
-    if (!shouldPublish(last, sample.rttMs, now)) return;
-    const sessions = [...this.host.shareIndex.visibleClients(sessionsOf(entry), deviceId, null)];
-    if (sessions.length === 0) return;
-    const payload = encodeDeviceLatencyPayload(deviceId, sample);
-    let sent = false;
-    for (const session of sessions) {
-      if (this.sendEncoded(session, payload)) sent = true;
+    if (shouldPublish(last, sample.rttMs, now)) {
+      const sessions = [...this.host.shareIndex.visibleClients(sessionsOf(entry), deviceId, null)];
+      if (sessions.length > 0) {
+        const payload = encodeDeviceLatencyPayload(deviceId, sample);
+        let sent = false;
+        for (const session of sessions) {
+          if (this.sendEncoded(session, payload)) sent = true;
+        }
+        if (sent) this.lastSent.set(deviceId, { rttMs: sample.rttMs, at: now });
+      }
     }
-    if (sent) this.lastSent.set(deviceId, { rttMs: sample.rttMs, at: now });
+    // refresh 触发时定时器已从 map 摘掉；早退也要续心跳，否则 1 ms 提前开火会把链掐断。
     this.armRefresh(deviceId, runtime);
   }
 

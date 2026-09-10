@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { encodeBase64url } from '@vibeterm/shared/auth';
 import { SHARE_WS_CLOSE_ENDED } from '@vibeterm/shared/share';
+import { eq } from 'drizzle-orm';
+import { fromBase64Url } from '../auth/binary';
 import { MemoryLocalAuthStore } from '../db/local-auth-settings';
+import { nodeSessions } from '../db/schema';
 import { asResponse, bootMesh, challengeAndLogin, dummyServer } from './auth-routes.test';
 import {
   MESH_GATEWAY_WS_KIND,
@@ -519,6 +523,108 @@ describe('mesh-http', () => {
       now += WS_SESSION_VERIFY_MS + 1;
       expect(mesh.runtime.touchSocket(ws)).toBe(false);
       expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('本机 socket 的复验窗口不越过会话过期时刻：TTL 到点即断', async () => {
+    let now = Date.now();
+    const mesh = await bootMesh({ now: () => now });
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      // 把这条会话改成 30 s 后过期：登记时读到的过期时刻要把复验窗口从 5 分钟收到 30 s。
+      mesh.db
+        .update(nodeSessions)
+        .set({ expiresAt: now + 30_000, hardExpiresAt: now + 30_000 })
+        .where(eq(nodeSessions.sid, fromBase64Url(sid)))
+        .run();
+      let closed: number | undefined;
+      const ws = {
+        data: { kind: MESH_GATEWAY_WS_KIND, sid, uid: mesh.boot.userId, via: 'self' },
+        send() {},
+        close(code?: number) {
+          closed = code;
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      now += 29_000;
+      expect(mesh.runtime.touchSocket(ws)).toBe(true);
+      expect(closed).toBeUndefined();
+      now += 2_000;
+      expect(mesh.runtime.touchSocket(ws)).toBe(false);
+      expect(closed).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('remove-passkey 的效果只关掉该凭证签发的 socket，不连坐同一用户的其它标签页', async () => {
+    const now = Date.now();
+    const mesh = await bootMesh();
+    try {
+      const credentialId = new Uint8Array([1, 2, 3, 4]);
+      const issue = (delegation: 'root' | 'passkey') =>
+        mesh.nodeSessionStore.issue(
+          delegation === 'passkey'
+            ? {
+                userId: mesh.boot.userId,
+                viaNodeId: MESH_VIA_SELF,
+                sessPublicKey: new Uint8Array(32),
+                delegationMethod: 'passkey',
+                credentialId,
+                now,
+              }
+            : {
+                userId: mesh.boot.userId,
+                viaNodeId: MESH_VIA_SELF,
+                sessPublicKey: new Uint8Array(32),
+                delegationMethod: 'root',
+                now,
+              }
+        ).sid;
+      const closed = new Map<string, number>();
+      const socketFor = (sid: string) =>
+        ({
+          data: { kind: MESH_GATEWAY_WS_KIND, sid, uid: mesh.boot.userId, via: 'self' },
+          send() {},
+          close(code?: number) {
+            if (code !== undefined) closed.set(sid, code);
+          },
+        }) as MeshServerWebSocket;
+      const rootSid = issue('root');
+      const passkeySid = issue('passkey');
+      mesh.runtime.handleWebSocket.open(socketFor(rootSid));
+      mesh.runtime.handleWebSocket.open(socketFor(passkeySid));
+
+      // key log 效果落库时只吊销该凭证签发的会话，复核也必须只断这一条。
+      mesh.nodeSessionStore.revokeByCredential(credentialId, now);
+      mesh.runtime.applyKeyLogEffects(mesh.boot.userId, [
+        { type: 'revokeSessionsByCredential', credentialId: encodeBase64url(credentialId) },
+      ]);
+      expect(closed.get(passkeySid)).toBe(WS_CLOSE_LOGIN_REQUIRED);
+      expect(closed.has(rootSid)).toBe(false);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('没有会话类效果的记录不去扫 socket', async () => {
+    const mesh = await bootMesh();
+    try {
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      let closed: number | undefined;
+      const ws = {
+        data: { kind: MESH_GATEWAY_WS_KIND, sid, uid: mesh.boot.userId, via: 'self' },
+        send() {},
+        close(code?: number) {
+          closed = code;
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      mesh.nodeSessionStore.revoke(sid);
+      mesh.runtime.applyKeyLogEffects(mesh.boot.userId, [{ type: 'clearPeerCache' }]);
+      expect(closed).toBeUndefined();
     } finally {
       mesh.close();
     }

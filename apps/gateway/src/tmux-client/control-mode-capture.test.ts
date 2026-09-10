@@ -13,7 +13,7 @@ function createHarness() {
     onOutput: () => events.push('output'),
     onNotification: () => events.push('notification'),
     onExit: () => {},
-    onBlockBegin: () => queue.nextBlockIsLiteral(),
+    onBlockBegin: (args) => queue.nextBlockIsLiteral(args),
     onBlockEnd: (block) => {
       queue.handleBlock(block);
       events.push('block-end');
@@ -289,5 +289,97 @@ describe('control command latency sampling', () => {
     expect(queue.busy).toBe(true);
     expect(queue.handleBlock({ args: '', isError: false, lines: [] })).toBe(true);
     expect(queue.busy).toBe(false);
+  });
+
+  test('expired orphan does not swallow the next command block', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    await expect(probe).rejects.toThrow(/timed out/);
+    await Bun.sleep(40);
+    const user = queue.execute(() => {}, 'send-keys', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['user-out'] })).toBe(true);
+    await expect(user).resolves.toBe('user-out');
+    queue.dispose();
+  });
+
+  test('literal orphan is parsed literally until its late block arrives', async () => {
+    const { events, queue, parser } = createHarness();
+    const capture = queue.execute(() => {}, 'capture-pane -p', {
+      literal: true,
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: (block) => block.lines.join('\n'),
+    });
+    await expect(capture).rejects.toThrow(/timed out/);
+    expect(queue.nextBlockIsLiteral('1 2 0')).toBe(true);
+    parser.push(
+      encoder.encode(
+        '%begin 1 2 0\n%output this is terminal text\n%window-add also terminal text\n%end 1 2 0\n'
+      )
+    );
+    expect(events).toEqual(['block-end']);
+    const user = queue.execute(() => {}, 'send-keys', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral('1 3 0')).toBe(false);
+    parser.push(encoder.encode('%begin 1 3 0\nuser-out\n%end 1 3 0\n%output %1 live\n'));
+    await expect(user).resolves.toBe('user-out');
+    expect(events).toEqual(['block-end', 'block-end', 'output']);
+    queue.dispose();
+  });
+
+  test('two consecutive non-poison timeouts keep late blocks aligned in order', async () => {
+    const queue = new ControlModeCommandQueue();
+    const first = queue.execute(() => {}, 'display-message -p a', {
+      timeoutMs: 80,
+      poisonOnTimeout: false,
+      transform: () => 'a',
+    });
+    await expect(first).rejects.toThrow(/timed out/);
+    const second = queue.execute(() => {}, 'capture-pane -p', {
+      literal: true,
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'b',
+    });
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    await expect(second).rejects.toThrow(/timed out/);
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['late-a'] })).toBe(true);
+    expect(queue.nextBlockIsLiteral()).toBe(true);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['late-b'] })).toBe(true);
+    const user = queue.execute(() => {}, 'send-keys', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral()).toBe(false);
+    expect(queue.handleBlock({ args: '', isError: false, lines: ['user-out'] })).toBe(true);
+    await expect(user).resolves.toBe('user-out');
+    queue.dispose();
+  });
+
+  test('orphan with a command-number only consumes its own block', async () => {
+    const queue = new ControlModeCommandQueue();
+    const probe = queue.execute(() => {}, 'display-message -p', {
+      timeoutMs: 20,
+      poisonOnTimeout: false,
+      transform: () => 'probe',
+    });
+    expect(queue.nextBlockIsLiteral('1 10 0')).toBe(false);
+    await expect(probe).rejects.toThrow(/timed out/);
+    const user = queue.execute(() => {}, 'send-keys', {
+      transform: (block) => block.lines.join('\n'),
+    });
+    expect(queue.nextBlockIsLiteral('1 11 0')).toBe(false);
+    expect(queue.handleBlock({ args: '1 11 0', isError: false, lines: ['user-out'] })).toBe(true);
+    await expect(user).resolves.toBe('user-out');
+    expect(queue.handleBlock({ args: '1 10 0', isError: false, lines: ['late-probe'] })).toBe(true);
+    queue.dispose();
   });
 });

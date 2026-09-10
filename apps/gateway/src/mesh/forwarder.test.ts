@@ -1082,6 +1082,59 @@ describe('forwarder', () => {
     }
   });
 
+  test('浏览器给的 cid 先净化：OPEN 载荷、ws.data 与 failover 日志用的是同一个安全值', async () => {
+    const dcLink = { id: 'dc' } as unknown as LinkSession;
+    const relayLink = { id: 'relay' } as unknown as LinkSession;
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dcLink);
+    peers.transport.set(OTHER, 'dc');
+    const streams = new FakeStreams();
+    const logs: string[] = [];
+    const mesh = await bootMesh({
+      peers,
+      streams,
+      sleep: async () => {},
+      streamLog: (line) => logs.push(line),
+    });
+    try {
+      const dirty = 'tab-a\n[mesh][stream] forged line';
+      let data: { kind?: string; cid?: string } | undefined;
+      const server = {
+        upgrade(_req: Request, opts?: { data?: unknown }) {
+          data = opts?.data as typeof data;
+          return true;
+        },
+      };
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws?cid=${encodeURIComponent(dirty)}`, {
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        server
+      );
+      expect(upgrade).toBeUndefined();
+      expect(data?.cid).toBe('tab-ameshstreamforgedline');
+      expect(streams.wsOpens[0]?.cid).toBe('tab-ameshstreamforgedline');
+
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send(frame: Uint8Array) {
+          return frame.byteLength;
+        },
+        close() {},
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      answerHelloOnNewStreams(streams);
+      streams.lastWs?.close(1011, 'reset');
+      await waitUntil(() => logs.some((line) => line.includes('failover_start')), 2_000);
+      const start = logs.find((line) => line.includes('failover_start')) ?? '';
+      expect(start).toContain('cid=tab-ameshstreamforgedline');
+      // 换行没了，日志行不会被伪造成第二行
+      expect(logs.every((line) => !line.includes('\n'))).toBe(true);
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('upstream WS abort fails over to another link, replays canonical subscription, keeps browser open', async () => {
     const dcLink = { id: 'dc' } as unknown as LinkSession;
     const relayLink = { id: 'relay' } as unknown as LinkSession;

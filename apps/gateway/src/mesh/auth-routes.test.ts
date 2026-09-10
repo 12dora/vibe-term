@@ -277,6 +277,7 @@ export async function bootMesh(options?: {
   });
   return {
     close,
+    db,
     runtime,
     userStore,
     hubStore,

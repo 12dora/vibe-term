@@ -38,6 +38,7 @@ import {
   setMeshRequestContext,
 } from './mesh-deps';
 import { stamp } from './mesh-log';
+import { sanitizeCid } from './mesh-session-registry';
 import { jsonError } from './session-middleware';
 import { readShareCookie, shareAuthValue, shareWsParam } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
@@ -780,7 +781,8 @@ export class Forwarder {
     if (!link || req.signal.aborted) {
       return nodeUnreachableResponse(nodeId, req.signal.aborted, linkError);
     }
-    const cid = url.searchParams.get('cid')?.trim() || undefined;
+    // cid 由浏览器给：净化后再进 OPEN 载荷、pump、ws.data 与日志，四处必须是同一个值。
+    const cid = sanitizeCid(url.searchParams.get('cid')) || undefined;
     let streamError: unknown;
     const share = boundShareId ?? undefined;
     const stream = await this.deps.streams.openWsStream(link, auth, cid, share).catch((err) => {

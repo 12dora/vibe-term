@@ -7,6 +7,7 @@ import {
   MESH_VIA_SELF,
   type MeshUpgradeServer,
 } from './mesh-deps';
+import { sanitizeCid } from './mesh-session-registry';
 import { jsonError } from './session-middleware';
 import { type ShareWsClose, resolveShareWsAuth } from './share-credential';
 
@@ -14,10 +15,11 @@ export function isGatewayWsPath(path: string, nodeId: string): boolean {
   return path === '/ws' || path === '/n/self/ws' || path === `/n/${nodeId}/ws`;
 }
 
+/** 同样是浏览器给的值，和转发侧、注册表键用同一套净化规则。 */
 export function connectionIdOf(req: Request): string {
   return (
-    new URL(req.url).searchParams.get('cid')?.trim() ||
-    readHeaderPair(req.headers, CONNECTION_HEADER)?.trim() ||
+    sanitizeCid(new URL(req.url).searchParams.get('cid')) ||
+    sanitizeCid(readHeaderPair(req.headers, CONNECTION_HEADER)) ||
     ''
   );
 }

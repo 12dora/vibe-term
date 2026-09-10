@@ -34,7 +34,6 @@ import {
   SHARE_WS_VERIFY_MS,
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
-  WS_SESSION_VERIFY_MS,
   isStandaloneRoles,
 } from './mesh-deps';
 import { handleMeshInternalTmuxRequest, isMeshInternalPath } from './mesh-internal-tmux-routes';
@@ -49,6 +48,7 @@ import {
   jsonBody,
   jsonError,
 } from './session-middleware';
+import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import {
   readShareCookie,
   shareIdOfToken,
@@ -121,7 +121,16 @@ type RegisteredSocket = {
   sid: string;
   uid: string;
   lastVerifyAt: number;
+  /** 下一次允许压库复验的时刻；由 `sessionVerifyDeadline` 按会话过期时间收窄。 */
+  nextVerifyAt: number;
 };
+
+/** 会带来会话失效的 key log 效果；其余记录类型不必触发 socket 复核。 */
+const SESSION_REVOKE_EFFECTS: ReadonlySet<KeyLogEffect['type']> = new Set([
+  'revokeAllSessions',
+  'revokeSessionsByCredential',
+  'revokeSessionsVia',
+]);
 
 function safeLocalAuthEffective(read: () => boolean): () => boolean {
   return () => {
@@ -293,21 +302,16 @@ export class MeshHttpRuntime {
     this.onSessionsRevoked?.({ sid });
   }
 
+  /**
+   * 会话效果落库后按**会话真实状态**复核，而不是「有撤销效果就把这个用户全踢下线」：
+   * 一次 `remove-passkey` 只吊销该凭证签发的会话，别的标签页照样有效。挂在 mesh 流上的
+   * 会话由 `onSessionsRevoked` 那侧自己复验。没有会话类效果的记录（改名、汇聚声明等）
+   * 不必扫——`onApplied` 每条记录都会走到这里。
+   */
   applyKeyLogEffects(userId: string, effects: KeyLogEffect[]): void {
-    let closeAll = false;
-    for (const effect of effects) {
-      if (effect.type === 'revokeAllSessions') {
-        closeAll = true;
-      } else if (effect.type === 'revokeSessionsByCredential') {
-        closeAll = true;
-      } else if (effect.type === 'revokeSessionsVia') {
-        closeAll = true;
-      }
-    }
-    if (closeAll) {
-      this.closeSocketsForUser(userId);
-    }
+    if (!effects.some((effect) => SESSION_REVOKE_EFFECTS.has(effect.type))) return;
     this.sweepInvalidSockets();
+    this.onSessionsRevoked?.({ uid: userId });
   }
 
   touchSocket(ws: MeshServerWebSocket): boolean {
@@ -322,7 +326,7 @@ export class MeshHttpRuntime {
       return true;
     }
     const now = this.now();
-    if (now - entry.lastVerifyAt < WS_SESSION_VERIFY_MS) {
+    if (!sessionVerifyDue(entry, now)) {
       return true;
     }
     entry.lastVerifyAt = now;
@@ -338,6 +342,8 @@ export class MeshHttpRuntime {
       this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
       return false;
     }
+    // 复验窗口不越过会话自身的过期时刻，TTL / 硬过期不会被节流拖软。
+    entry.nextVerifyAt = sessionVerifyDeadline(verified.session, now);
     return true;
   }
 
@@ -503,11 +509,18 @@ export class MeshHttpRuntime {
 
   private registerSocket(ws: MeshServerWebSocket, auth: { sid: string; uid: string }): void {
     this.unregisterSocket(ws);
+    // 升级时刚验过，这里再读一次只为拿到过期时刻把复验窗口收窄；读不到就下一帧立刻复验。
+    const now = this.now();
+    const verified = this.sessionDeps.nodeSessionStore.verify(auth.sid, {
+      viaNodeId: MESH_VIA_SELF,
+      now,
+    });
     this.sockets.add({
       ws,
       sid: auth.sid,
       uid: auth.uid,
-      lastVerifyAt: this.now(),
+      lastVerifyAt: now,
+      nextVerifyAt: verified.ok ? sessionVerifyDeadline(verified.session, now) : now,
     });
   }
 
