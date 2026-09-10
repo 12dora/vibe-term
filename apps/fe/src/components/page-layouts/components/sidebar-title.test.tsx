@@ -22,7 +22,7 @@ const { SidebarProvider } = await import('@vibeterm/ui/sidebar');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const { appNodeRuntimes } = await import('../../../node/node-runtimes');
 const { BRAND_LOGO_SRC, PRODUCT_NAME } = await import('../../brand');
-const { LatencyBadge, SidebarTitle, latencyTooltipLines } = await import('./sidebar-title');
+const { SidebarTitle } = await import('./sidebar-title');
 
 const MESH_MODE: AuthModeResponse = {
   mode: 'mesh',
@@ -110,31 +110,5 @@ describe('图标入口的焦点环', () => {
     const tag = tagOf(renderMobile(MESH_MODE), 'mobile-sidebar-close');
     expect(tag).not.toBe('');
     for (const cls of focusRing) expect(tag).toContain(cls);
-  });
-});
-
-describe('WsLatency', () => {
-  // store 的读数在服务端渲染下取的是初始快照（zustand 的 getServerSnapshot），
-  // 所以顶栏那份永远是「没有读数」；有读数的形态直接渲染徽标组件。
-  test('没有延迟读数时整块不渲染', () => {
-    const html = render(MESH_MODE);
-    expect(html).not.toContain('data-testid="ws-latency"');
-  });
-
-  test('有读数时给出可聚焦的徽标与说明气泡', () => {
-    const html = renderToStaticMarkup(<LatencyBadge latency={240} rawLatency={null} />);
-    expect(html).toContain('data-testid="ws-latency"');
-    expect(html).toContain('240ms');
-    expect(html).toContain('tabindex="0"');
-    expect(html).toContain('data-slot="tooltip-trigger"');
-  });
-
-  test('气泡文案：原始样本与平滑读数一致时不重复第二行', () => {
-    expect(latencyTooltipLines(240, null)).toEqual([{ key: 'nav.latencyTooltip' }]);
-    expect(latencyTooltipLines(240, 240)).toEqual([{ key: 'nav.latencyTooltip' }]);
-    expect(latencyTooltipLines(240, 310)).toEqual([
-      { key: 'nav.latencyTooltip' },
-      { key: 'nav.latencyTooltipRaw', ms: 310 },
-    ]);
   });
 });

@@ -11,7 +11,7 @@ import type { DirectFailureCode, MeshNodeDirectFailure } from '@vibeterm/api-cli
 import { cn } from '@vibeterm/ui';
 import type { DirectDiagnostics, DirectIceDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { Activity } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   type NodeLatency,
@@ -34,6 +34,7 @@ import {
   transportLabelKey,
 } from './link-badge';
 import { refreshMeshNodes } from './mesh-nodes';
+import { clampPopoverOffset, popoverWidth } from './popover-clamp';
 
 export interface DiagnosticRowSpec {
   labelKey: string;
@@ -383,6 +384,54 @@ function useLatencyClock(sample: NodeLatency['hostHop'], open: boolean): number 
   return now;
 }
 
+export interface PopoverPlacement {
+  /** 相对徽标容器右边缘的偏移（正=左移），直接写进 `right`。 */
+  offsetRight: number;
+  width: number;
+}
+
+// 无 DOM（SSR / bun test）时降级成 useEffect，避免 React 的 useLayoutEffect 警告。
+const useMeasureEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect;
+
+/**
+ * 浮层默认贴着徽标右对齐，而徽标在页头动作区里的横坐标随标签长短与同排按钮个数漂移，
+ * 手机上照着右对齐会整块滑出屏幕。展开时（以及视口变化时）量一次徽标容器的 rect，
+ * 把浮层夹回视口内；不用 fixed，就不必跟踪滚动。
+ */
+function usePopoverPlacement(
+  containerRef: { current: HTMLElement | null },
+  open: boolean
+): PopoverPlacement | null {
+  const [placement, setPlacement] = useState<PopoverPlacement | null>(null);
+
+  useMeasureEffect(() => {
+    if (!open) {
+      setPlacement(null);
+      return;
+    }
+    const measure = () => {
+      const anchor = containerRef.current?.getBoundingClientRect();
+      if (!anchor) return;
+      // 用 clientWidth：与 getBoundingClientRect 同一套坐标，且不含滚动条。
+      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
+      const width = popoverWidth(viewportWidth);
+      setPlacement({
+        width,
+        offsetRight: clampPopoverOffset({ anchorRight: anchor.right, viewportWidth, width }),
+      });
+    };
+    measure();
+    window.addEventListener('resize', measure);
+    window.visualViewport?.addEventListener('resize', measure);
+    return () => {
+      window.removeEventListener('resize', measure);
+      window.visualViewport?.removeEventListener('resize', measure);
+    };
+  }, [open, containerRef]);
+
+  return placement;
+}
+
 export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const { t } = useTranslation();
   const diagnostics = useDirectDiagnostics(nodeId);
@@ -392,6 +441,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const [open, setOpen] = useState(false);
   const now = useLatencyClock(latency.hostHop, open);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const placement = usePopoverPlacement(containerRef, open);
 
   useEffect(() => {
     if (!open) return;
@@ -430,6 +480,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
           latency={latency}
           isSelf={isSelf}
           now={now}
+          placement={placement}
         />
       )}
     </div>
@@ -442,6 +493,7 @@ export function NodeLinkDiagnostics({
   latency,
   isSelf = false,
   now = Date.now(),
+  placement = null,
 }: {
   diagnostics: DirectDiagnostics;
   link: NodeLink;
@@ -449,6 +501,8 @@ export function NodeLinkDiagnostics({
   isSelf?: boolean;
   /** 计算「已连接」时长的基准时刻；浮层每次展开时现算，不自己走定时器。 */
   now?: number;
+  /** 量过视口后的横向定位；缺席时退回「贴徽标右对齐、固定 288px」。 */
+  placement?: PopoverPlacement | null;
 }) {
   const { t } = useTranslation();
   const rows = buildLinkDiagnosticRows({ diagnostics, link, latency, now, isSelf });
@@ -457,6 +511,11 @@ export function NodeLinkDiagnostics({
   return (
     <div
       className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--vibeterm-motion-fast) ease-out motion-reduce:animate-none"
+      style={
+        placement
+          ? { right: `${placement.offsetRight}px`, width: `${placement.width}px` }
+          : undefined
+      }
       data-testid="ice-diagnostics"
     >
       <div className="mb-1 font-semibold">{t('nodes.badge.iceTitle')}</div>

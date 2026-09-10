@@ -71,8 +71,6 @@ export type TranslationKey =
   | 'nav.switchToDirect'
   | 'nav.refreshPage'
   | 'nav.refreshPageConfirm'
-  | 'nav.latencyTooltip'
-  | 'nav.latencyTooltipRaw'
   | 'appError'
   | 'appError.title'
   | 'appError.description'

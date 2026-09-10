@@ -25,7 +25,7 @@ export function transportLabelKey(transport: MeshNodeTransport): string | null {
   return transport ? TRANSPORT_LABEL_KEYS[transport] : null;
 }
 
-/** 与侧栏延迟徽标同一条线：到这个数就变色。 */
+/** 到这个数就变色。 */
 const HIGH_LATENCY_MS = 200;
 
 export interface LinkBadgeDescriptor {

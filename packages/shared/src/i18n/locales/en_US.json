@@ -61,9 +61,7 @@
       "switchToEditor": "Switch to Editor Input",
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
-      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost.",
-      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). The badge in the terminal header covers the whole path to the device tmux host.",
-      "latencyTooltipRaw": "Latest sample: {{ms}} ms"
+      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
     },
     "appError": {
       "title": "Something went wrong",

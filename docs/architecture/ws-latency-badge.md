@@ -1,17 +1,14 @@
 # 延迟徽标的测量口径
 
-本文说明两枚延迟徽标各自测的是哪一段链路、客户端与网关如何测量与平滑，以及如何用
+本文说明终端页那枚延迟徽标测的是哪一段链路、客户端与网关如何测量与平滑，以及如何用
 `[ws-metrics] ping` 日志区分毛刺来源；面向排查「延迟高」的运维与开发者。
 
-## 两枚徽标
+## 唯一一枚徽标
 
-| 位置 | 测的是什么 | 组件 |
-| --- | --- | --- |
-| 侧边栏顶部 | 浏览器 ↔ **当前入口网关**的 WebSocket 心跳往返 | `apps/fe/src/components/page-layouts/components/sidebar-title.tsx` |
-| 终端页头部右上角 | **浏览器 → 该设备 tmux 宿主**的整条链路往返 | `apps/fe/src/node/device-node-badges.tsx` |
-
-侧边栏那枚挂在外壳上，读的永远是 entry 运行时，只覆盖第一段；终端页那枚在
-`NodeRuntimeBoundary` 之内，按路由的 node 与 deviceId 取值。两枚都在 `≥ 200ms` 变色。
+全站只有终端页头部右上角这一枚延迟徽标（`apps/fe/src/node/device-node-badges.tsx`），量的是
+**浏览器 → 该设备 tmux 宿主**的整条链路往返，`≥ 200ms` 变色。它在 `NodeRuntimeBoundary` 之内，
+按路由的 node 与 deviceId 取值。侧边栏顶部那枚只覆盖「浏览器 ↔ 入口网关」一段的徽标已下线：
+它与终端页徽标的第一段是同一个数，两枚并排只会让人误以为在量两条不同的链路。
 
 ## 终端页徽标：两段相加
 
@@ -67,7 +64,7 @@
 
 | 字段 | 含义 |
 | --- | --- |
-| `wsLatencyMs` | 最近 ≤5 个样本的中位数（两枚徽标的第一段都用它） |
+| `wsLatencyMs` | 最近 ≤5 个样本的中位数（徽标第一段用它） |
 | `wsLatencyRawMs` | 最新一次匹配成功的样本（浮层 / 气泡显示这个） |
 | `deviceLatency[deviceId]` | 宿主一跳：`{ rttMs, rawMs, hop, sampledAt }` |
 | `deviceLatencySupported` | 该 node 是否播报 `device-latency-v1` |

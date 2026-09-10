@@ -67,9 +67,7 @@ export const I18N_RESOURCES = {
       "switchToEditor": "Switch to Editor Input",
       "switchToDirect": "Switch to Direct Input",
       "refreshPage": "Refresh Page",
-      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost.",
-      "latencyTooltip": "Latency: round-trip time of the WebSocket heartbeat between this browser and the entry node (median of recent samples). The badge in the terminal header covers the whole path to the device tmux host.",
-      "latencyTooltipRaw": "Latest sample: {{ms}} ms"
+      "refreshPageConfirm": "Are you sure you want to refresh the page? Unsaved content will be lost."
     },
     "appError": {
       "title": "Something went wrong",
@@ -3679,9 +3677,7 @@ export const I18N_RESOURCES = {
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
       "refreshPage": "刷新页面",
-      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。",
-      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。到设备 tmux 宿主的整条链路见终端页右上角的徽标。",
-      "latencyTooltipRaw": "最新样本：{{ms}} ms"
+      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
     },
     "appError": {
       "title": "出了点问题",
@@ -7285,9 +7281,7 @@ export const I18N_RESOURCES = {
       "switchToEditor": "エディタ入力に切り替え",
       "switchToDirect": "直接入力に切り替え",
       "refreshPage": "ページを更新",
-      "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。",
-      "latencyTooltip": "遅延：ブラウザーと現在の入口ノードとの間の WebSocket ハートビートの往復時間です（直近数回の中央値）。デバイスの tmux ホストまでの全区間は端末画面右上のバッジに表示されます。",
-      "latencyTooltipRaw": "最新サンプル：{{ms}} ms"
+      "refreshPageConfirm": "ページを更新してもよろしいですか？保存されていない内容は失われます。"
     },
     "appError": {
       "title": "問題が発生しました",

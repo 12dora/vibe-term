@@ -61,9 +61,7 @@
       "switchToEditor": "切换到编辑器输入",
       "switchToDirect": "切换到直接输入",
       "refreshPage": "刷新页面",
-      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。",
-      "latencyTooltip": "延迟：浏览器与当前入口节点之间 WebSocket 心跳的往返时间（最近几次的中位数）。到设备 tmux 宿主的整条链路见终端页右上角的徽标。",
-      "latencyTooltipRaw": "最新样本：{{ms}} ms"
+      "refreshPageConfirm": "确定要刷新页面吗？未保存的内容将会丢失。"
     },
     "appError": {
       "title": "出了点问题",
