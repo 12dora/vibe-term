@@ -87,7 +87,6 @@ export type StunProbeLoopDeps = {
 };
 
 export type StunProbeHandle = { stop(after?: () => void): void };
-
 type StunTarget = { hostname: string; port: number };
 type ProbeAddr = { address: string; family: number };
 type ResolveOk = { ok: true; targets: ProbeAddr[]; via: StunResolveVia; fakeIp: boolean };
@@ -234,6 +233,7 @@ class MeshStunProbe {
   private waitH: { clear: () => void } | null = null;
   private readonly ac = new AbortController();
   private stopped = false;
+  private armed = false;
 
   constructor(
     private readonly rtc: StunProbeRtc,
@@ -268,17 +268,17 @@ class MeshStunProbe {
   }
 
   private armTick(): void {
+    if (this.stopped || this.armed) return;
+    this.armed = true;
     const rand = this.opts.random ?? Math.random;
     const ms = Math.round(STUN_PROBE_INTERVAL_MS * (1 + (rand() * 2 - 1) * 0.1));
     this.tick = this.scheduler.interval(() => {
-      this.tick?.clear();
-      this.tick = null;
-      this.armTick();
-      void this.runCycle(this.rtc.currentIceConfig().stun);
+      if (!this.stopped) void this.runCycle(this.rtc.currentIceConfig().stun);
     }, ms);
   }
 
   private armWait(urls: string[], ms: number): void {
+    if (this.stopped) return;
     this.pending = urls;
     this.waitH?.clear();
     this.waitH = this.scheduler.interval(() => {
@@ -286,8 +286,7 @@ class MeshStunProbe {
       this.waitH = null;
       const next = this.pending ?? this.rtc.currentIceConfig().stun;
       this.pending = null;
-      if (next.join('\0') === this.lastKey) return;
-      void this.runCycle(next);
+      if (!this.stopped && next.join('\0') !== this.lastKey) void this.runCycle(next);
     }, ms);
   }
 
@@ -315,6 +314,7 @@ class MeshStunProbe {
       if (this.stopped || this.ac.signal.aborted) return;
       this.lastKey = current.join('\0');
       this.lastCycleAt = clock();
+      if (process.env.NODE_ENV === 'test' && !this.opts.probeAll) return;
       let results: StunProbeResult[];
       try {
         results = await probeAll(current);

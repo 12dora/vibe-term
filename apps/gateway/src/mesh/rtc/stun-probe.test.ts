@@ -876,4 +876,54 @@ describe('mesh STUN probe loop', () => {
       console.log = origLog;
     }
   });
+
+  test('synchronous-firing scheduler does not runaway', async () => {
+    setStunProbeLoopForTest({
+      now: () => 1,
+      random: () => 0.5,
+      probeAll: async () => [],
+    });
+    let intervalCalls = 0;
+    const handles: Array<{ fn: () => void; cleared: boolean }> = [];
+    startMeshStunProbe(
+      { currentIceConfig: () => ({ stun: ['stun:a:1'] }) },
+      {
+        interval(fn) {
+          intervalCalls += 1;
+          if (intervalCalls > 4) throw new Error('runaway scheduler.interval');
+          const rec = { fn, cleared: false };
+          handles.push(rec);
+          fn();
+          return {
+            clear() {
+              rec.cleared = true;
+            },
+          };
+        },
+      }
+    );
+    expect(intervalCalls).toBe(1);
+    for (const handle of handles) {
+      if (!handle.cleared) handle.fn();
+    }
+    expect(intervalCalls).toBe(1);
+    await flush();
+    expect(intervalCalls).toBe(1);
+    stopMeshStunProbe();
+    expect(handles[0]?.cleared).toBe(true);
+  });
+
+  test('test env without probeAll skips the network', async () => {
+    startMeshStunProbe(
+      { currentIceConfig: () => ({ stun: ['stun:example:3478'] }) },
+      {
+        interval(fn) {
+          fn();
+          return { clear() {} };
+        },
+      }
+    );
+    await flush();
+    expect(stunProbeSnapshot()).toEqual([]);
+  });
 });
