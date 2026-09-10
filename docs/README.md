@@ -65,7 +65,7 @@
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
 | [nonstandard-ports.md](./operations/nonstandard-ports.md) | 80/443 不可用时的非标端口部署与端口探测 |
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
-| [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘 fake-IP 绕行与排查 |
+| [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行与排查 |
 | [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy |
 | [troubleshooting-db-master-key.md](./operations/troubleshooting-db-master-key.md) | 数据库与 `VIBETERM_MASTER_KEY` 不匹配的启动失败 |
 | [release-process.md](./operations/release-process.md) | 发版手册：发行源、版本注入、changelog 改写规范、构建、校验、打 tag |

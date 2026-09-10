@@ -12,7 +12,7 @@ export type { VibeTermRoleName, VibeTermRoles };
 export { isStandaloneRoles, roleNameFromFlags, rolesFromName, validateRoles };
 
 export const DEFAULT_PEER_PORT = 39001;
-export const DEFAULT_STUN_SERVERS = 'stun:stun.l.google.com:19302';
+export const DEFAULT_STUN_SERVERS = 'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478';
 
 export function parseVibeTermRoleName(raw: string | undefined): VibeTermRoleName {
   const value = (raw ?? 'standalone').trim();

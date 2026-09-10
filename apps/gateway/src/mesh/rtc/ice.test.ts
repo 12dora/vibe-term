@@ -9,6 +9,7 @@ import {
   RTC_WAKE_DOMAIN,
   RTC_WAKE_MAX_SKEW_MS,
   buildRtcIceConfig,
+  buildRtcIceConfigResolved,
   collectIceServers,
   decodeCandidateSignal,
   decodeSdpSignal,
@@ -26,6 +27,7 @@ import {
   rtcWakeCanonicalBytes,
   verifyRtcWakeSignature,
 } from './ice';
+import { resetStunResolverForTest } from './stun-resolver';
 
 describe('ice helpers', () => {
   test('collects stun urls and structured TURN IceServer entries', () => {
@@ -131,6 +133,34 @@ describe('ice helpers', () => {
         { peerBindHost: ['127.0.0.1', '::1'], rtcPortRange: null }
       ).bindAddress
     ).toBeUndefined();
+  });
+
+  test('resolves STUN/TURN hostnames before building the ICE config', async () => {
+    resetStunResolverForTest();
+    const resolved = await buildRtcIceConfigResolved(
+      {
+        stun: ['stun:stun.example:19302'],
+        turn: { url: 'turn:turn.example:3478?transport=udp', username: 'u', credential: 'p' },
+      },
+      { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null },
+      {
+        lookup: async (hostname) =>
+          hostname === 'stun.example' ? ['198.18.0.9'] : ['203.0.113.40'],
+        doh: async () => ['8.8.4.4'],
+      }
+    );
+    expect(resolved.iceServers).toEqual([
+      'stun:8.8.4.4:19302',
+      {
+        hostname: '203.0.113.40',
+        port: 3478,
+        username: 'u',
+        password: 'p',
+        relayType: 'TurnUdp',
+      },
+    ]);
+    expect(resolved.enableIceTcp).toBe(true);
+    resetStunResolverForTest();
   });
 
   test('encodes and decodes sdp / candidate signals', () => {

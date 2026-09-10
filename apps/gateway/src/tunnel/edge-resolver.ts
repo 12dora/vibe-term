@@ -229,6 +229,32 @@ async function dohQueryAny(ctx: DohQueryCtx, name: string, type: number): Promis
   throw new Error(`${name}/${type}: ${shortError(lastError)}`);
 }
 
+export type DohResolveOptions = {
+  fetchImpl?: EdgeFetch;
+  signal?: AbortSignal;
+  now?: () => number;
+  budgetMs?: number;
+  requestTimeoutMs?: number;
+};
+
+/** 用 DoH JSON 查单个主机名的 A 记录；隧道边缘解析与 STUN 解析共用。失败抛错。 */
+export async function resolveHostnameViaDoh(
+  hostname: string,
+  opts: DohResolveOptions = {}
+): Promise<string[]> {
+  const now = opts.now ?? Date.now;
+  const ctx: DohQueryCtx = {
+    fetchImpl: opts.fetchImpl ?? fetch,
+    signal: opts.signal,
+    deadline: now() + (opts.budgetMs ?? DOH_TOTAL_BUDGET_MS),
+    now,
+    state: newDohRunState(),
+    requestTimeoutMs: opts.requestTimeoutMs ?? DOH_REQUEST_TIMEOUT_MS,
+  };
+  const answers = await dohQueryAny(ctx, hostname, DNS_TYPE_A);
+  return answers.map((ip) => ip.trim()).filter(Boolean);
+}
+
 export type EdgeTarget = { target: string; port: number };
 
 export function parseSrvData(data: string): EdgeTarget | null {

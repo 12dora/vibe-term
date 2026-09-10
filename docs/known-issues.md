@@ -13,15 +13,21 @@
 
 ## KI-3：直连 ICE 候选无法按网卡过滤
 
-`node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` 之类的候选仍会进入 ICE。
-可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住多余候选。广播端的地址过滤见
-[节点直连](./architecture/peer-direct-connect.md)。
+`node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` / Tailscale `100.x` / 代理 TUN
+`198.18.0.1` 之类的 host 候选仍会进入 ICE。可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住
+多余候选。广播端的地址过滤见 [节点直连](./architecture/peer-direct-connect.md)。本地 gathering
+完成时会打 info `[mesh][rtc] gather summary … host= srflx= relay=`，用来确认实际进 ICE 的候选类型。
+
+STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在节点侧 ICE 配置路径绕开
+（见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)）；本条只剩
+「多余 host 候选无法按网卡丢掉」。
 
 ## KI-4：TURN 仍需手工配置三个环境变量
 
 `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
 libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
-`[mesh][rtc] summary` 的现网数据再定。
+`[mesh][rtc] summary` / `gather summary` 的现网数据再定。Hub `node.list` 下发空 STUN 列表时
+不再覆盖节点自己的 `VIBETERM_STUN_SERVERS`；超时失败会标 `stun_unconfigured` 或 `no_srflx`。
 
 ## KI-5：中继在途流保护的代价
 

@@ -1,10 +1,20 @@
 import { describe, expect, test } from 'bun:test';
 import { parseVibeTermRoles as parseGatewayVibeTermRoles } from '../../../../apps/gateway/src/config';
-import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
+import { DEFAULT_STUN_SERVERS, parseVibeTermRoleName, parseVibeTermRoles } from './roles';
 
 const STANDALONE = { hub: false, node: false, relay: false };
 const NODE = { hub: false, node: true, relay: false };
 const HUB_NODE = { hub: true, node: true, relay: false };
+
+describe('DEFAULT_STUN_SERVERS', () => {
+  test('lists Google and Cloudflare STUN as a comma-separated pair', () => {
+    expect(DEFAULT_STUN_SERVERS).toBe('stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478');
+    expect(DEFAULT_STUN_SERVERS.split(',').map((item) => item.trim())).toEqual([
+      'stun:stun.l.google.com:19302',
+      'stun:stun.cloudflare.com:3478',
+    ]);
+  });
+});
 
 describe('app parseVibeTermRoles wrapper', () => {
   test('undefined / empty / whitespace normalize to standalone', () => {

@@ -41,7 +41,9 @@ describe('buildAppEnvValues', () => {
     expect(values.VIBETERM_HUB_URL).toBe('');
     expect(values.VIBETERM_PEER_PORT).toBe('39001');
     expect(values.VIBETERM_HUB_PUBLIC_URL).toBe('https://hub.example');
-    expect(values.VIBETERM_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
+    expect(values.VIBETERM_STUN_SERVERS).toBe(
+      'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'
+    );
     expect(values.VIBETERM_DIRECT_ENABLED).toBe('true');
   });
 });

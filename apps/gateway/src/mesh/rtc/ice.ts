@@ -9,6 +9,7 @@ import {
 import { type RtcPortRange, config } from '../../config';
 import type { RtcSignalMessage } from '../mesh-deps';
 import type { IceRelayType, IceServer, IceServerConfig, RtcIceConfig } from './native';
+import { type StunResolveOptions, resolveIceServers } from './stun-resolver';
 
 export type SdpSignal = { type: string; sdp: string; epoch?: number };
 export type CandidateSignal = { candidate: string; mid: string; epoch?: number };
@@ -181,6 +182,19 @@ export function buildRtcIceConfig(
     ...(bindAddress ? { bindAddress } : {}),
     ...(portRange ? { portRangeBegin: portRange.begin, portRangeEnd: portRange.end } : {}),
   };
+}
+
+/** 在交给 libdatachannel 之前解析 STUN/TURN 主机名，绕开本机代理 fake-IP。 */
+export async function buildRtcIceConfigResolved(
+  cfg: IceServerConfig,
+  runtime: RtcIceRuntimeConfig = {
+    peerBindHost: config.peerBindHost,
+    rtcPortRange: config.rtcPortRange,
+  },
+  resolveOpts?: StunResolveOptions
+): Promise<BuiltRtcIceConfig> {
+  const built = buildRtcIceConfig(cfg, runtime);
+  return { ...built, iceServers: await resolveIceServers(built.iceServers, resolveOpts) };
 }
 
 export function encodeSdpSignal(desc: SdpSignal): string {

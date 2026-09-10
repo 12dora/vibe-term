@@ -15,6 +15,7 @@ import {
   parseSrvData,
   resolveEdge,
   resolveEdgeViaDoh,
+  resolveHostnameViaDoh,
 } from './edge-resolver';
 import { FakeSpawner } from './fake-spawn';
 import { CloudflaredProvider, edgeArgs } from './provider';
@@ -122,6 +123,25 @@ describe('parseEdgeAddrsEnv', () => {
     expect(parseEdgeAddrsEnv('nope, 1.2.3.4')).toEqual([]);
     expect(parseEdgeAddrsEnv(undefined)).toEqual([]);
     expect(parseEdgeAddrsEnv('1.1.1.1:1,1.1.1.1:1')).toEqual(['1.1.1.1:1']);
+  });
+});
+
+describe('resolveHostnameViaDoh', () => {
+  test('queries A records and fails over to the second endpoint', async () => {
+    const hosts: string[] = [];
+    const fetchImpl: EdgeFetch = async (input) => {
+      const url = new URL(String(input));
+      hosts.push(url.host);
+      if (url.host === 'cloudflare-dns.com') throw new Error('blocked');
+      return Response.json({
+        Status: 0,
+        Answer: [aAnswer(url.searchParams.get('name') ?? '', '8.8.8.8')],
+      });
+    };
+    await expect(resolveHostnameViaDoh('stun.l.google.com', { fetchImpl })).resolves.toEqual([
+      '8.8.8.8',
+    ]);
+    expect(hosts).toEqual(['cloudflare-dns.com', 'dns.google']);
   });
 });
 
