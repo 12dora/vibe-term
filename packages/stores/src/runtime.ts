@@ -130,6 +130,28 @@ export interface AppRuntimeOptions {
    * 查不到（或宿主没接）返回 null，由调用方退回编号前缀。
    */
   resolveNodeName?: (nodeId: string) => string | null;
+  /**
+   * 「用户就是要现在重试这台 node」：宿主据此解除自己给该 node 记的请求退避
+   * （fe 的不可达退避会把重复的读挡在网络之前，重试按钮必须能掀开它）。
+   * 宿主没接就什么都不做——包内只管在重试动作里调一次。
+   */
+  releaseRequestBackoff?: () => void;
+}
+
+/**
+ * 重试一条每 node 的查询：**先**请宿主解除它给这台 node 记的请求退避，**再**回源。
+ *
+ * 顺序不能反：退避是挡在网络之前的，先 refetch 只会被就地驳回。
+ * 也不要拿 `invalidateQueries` 代替——已经出错的查询 `isInvalidated` 本来就是 true，
+ * react-query 的 `Query.invalidate()` 这时是空操作，连缓存事件都不派（重试按钮出现的
+ * 正是这一刻）。宿主没接钩子时退化成一次普通回源。
+ */
+export function retryNodeQuery(
+  runtime: Pick<RuntimeCore, 'releaseRequestBackoff'>,
+  refetch: () => unknown
+): void {
+  runtime.releaseRequestBackoff?.();
+  void refetch();
 }
 
 /** 已解析的 UI 能力开关 */
@@ -163,6 +185,8 @@ export interface RuntimeCore {
   features: RuntimeFeatures;
   terminalFileLinks?: TerminalFileLinksProvider;
   resolveNodeName?: (nodeId: string) => string | null;
+  /** 见 `AppRuntimeOptions.releaseRequestBackoff`：重试按钮按下时调一次。 */
+  releaseRequestBackoff?: () => void;
 }
 
 async function browserReadClipboard(): Promise<string> {
@@ -306,6 +330,7 @@ export function resolveRuntimeCore(options: AppRuntimeOptions = {}): RuntimeCore
     features: resolveFeatures(options.features),
     terminalFileLinks: options.terminalFileLinks,
     resolveNodeName: options.resolveNodeName,
+    releaseRequestBackoff: options.releaseRequestBackoff,
   };
 }
 

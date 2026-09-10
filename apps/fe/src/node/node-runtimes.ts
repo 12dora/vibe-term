@@ -366,7 +366,11 @@ export function createAppNodeRuntimes(
     notifications: sonnerNotificationSink,
     // 包内提示语只有 nodeId，点名哪台机器要查宿主的节点目录；每次调用现查 store，
     // 建 runtime 那一刻列表可能还没拉到。
-    runtimeOptions: () => ({ resolveNodeName: resolveMeshNodeName }),
+    runtimeOptions: (nodeId) => ({
+      resolveNodeName: resolveMeshNodeName,
+      // 包内的重试按钮按下时调它：用户明确要现在再试一次，退避门必须让路。
+      releaseRequestBackoff: () => clearNodeBackoff(nodeId),
+    }),
     // manager 把关闭码回调递进来，直接转给底层连接：4401 由 manager 统一处理。
     createConnection: (nodeId, onClose) => createNodeConnection(nodeId, { ...wiring, onClose }),
     // 每 node 的 REST 都走带退避门的客户端：设备列表在包内有多个观察者，
@@ -419,20 +423,10 @@ function createNodeQueryClient(nodeId: string): QueryClient {
     staleTime: DEVICES_STALE_MS,
     placeholderData: () => deviceSnapshotPlaceholder(nodeId),
   });
-  // 有人显式让这个 node 的查询失效（重试按钮、变更之后的回源）：那是「现在就要新数据」的
-  // 明确意图，不该再被不可达退避挡着。自动刷新不会走 invalidate，所以这个信号是干净的。
-  queryCacheWatchers.set(
-    nodeId,
-    client.getQueryCache().subscribe((event) => {
-      if (event.type === 'updated' && event.action.type === 'invalidate') clearNodeBackoff(nodeId);
-    })
-  );
   return client;
 }
 
 const queryClients = new Map<string, QueryClient>();
-/** 每 node 查询缓存的订阅（回收时要退订，否则闭包连同 client 一起漏）。 */
-const queryCacheWatchers = new Map<string, () => void>();
 
 /** 取该 node 的 QueryClient（懒建）。 */
 export function nodeQueryClient(nodeId: string | undefined): QueryClient {
@@ -451,8 +445,6 @@ export function disposeNodeQueryClient(nodeId: string | undefined): void {
   const client = queryClients.get(id);
   if (!client) return;
   queryClients.delete(id);
-  queryCacheWatchers.get(id)?.();
-  queryCacheWatchers.delete(id);
   client.clear();
 }
 

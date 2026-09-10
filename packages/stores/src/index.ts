@@ -17,6 +17,7 @@ export {
 export {
   createBrowserHostServices,
   hostAppPath,
+  retryNodeQuery,
   type AppRuntimeOptions,
   type BrowserHostOptions,
   type HostServices,

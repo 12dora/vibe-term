@@ -12,13 +12,13 @@
 //
 // 门必须留出口，否则一台被判打不通的 node 会有整整 10 分钟**任何**读都发不出去，
 // 而用户点「重试」走的是 react-query 的 `refetch()`——它绕得过 `enabled`，绕不过门。
-// 三条出口：
-//   1. **显式标记**：`manualRead(init)` 给这一发请求打上标记（一个只在浏览器内部存在、
-//      发出前就被摘掉的请求头），门直接放行。调用方明确知道这是用户点出来的读。
-//   2. **探路名额**：退避窗口里每 `GATE_CANARY_INTERVAL_MS` 放行一发 GET。没打标记的
-//      重试（包内面板的 `refetch()`）因此最多等这一档，而不是干等到退避结束。
-//   3. **就地解除**：`clearNodeBackoff(nodeId)`（`node-unreachable-backoff`）——登录成功、
-//      节点管理页刷新、hub 手动刷新、页面恢复都会调它。
+// 出口只有一条，也只需要一条：**就地解除**（`clearNodeBackoff(nodeId)`）。调用它的地方是
+// 明确的用户意图——包内重试按钮（经 `runtime.releaseRequestBackoff` 钩子）、节点管理页刷新、
+// hub 手动刷新、登录成功、页面重新可见 / 网络恢复、以及该 node 被报成重新上线。
+//
+// 刻意**不留**「退避窗口里每隔 N 秒放一发探路请求」那种自动出口：探路失败会再记一次退避，
+// 指数退避当场被拉平成固定周期（20 秒一发，每发还占着转发器 5 秒链路），
+// 与「打不通的节点最多 10 分钟碰一次」的目标正好相反。
 
 import {
   ApiClient,
@@ -40,55 +40,10 @@ import {
 /** 探测的自备超时：转发器的链路截止是 5 秒，留一点余量就该收手。 */
 export const SESSION_PROBE_TIMEOUT_MS = 8_000;
 
-/** 退避窗口里放行一发「探路」GET 的最小间隔。 */
-export const GATE_CANARY_INTERVAL_MS = 20_000;
-
-/**
- * 「这一发是用户点出来的读」的标记。它是一个请求头，但**永远不会被发出去**：
- * 门在放行前就把它摘掉。用请求头而不是 init 上的自定义字段，是因为 `RequestInit` 会被
- * `fetch` 原样透传，多带一个非标准字段在某些运行时里会被丢掉或报错。
- */
-export const MANUAL_READ_HEADER = 'x-vibeterm-manual';
-
-/** 给一发读请求打上「用户点的」标记：退避门直接放行。 */
-export function manualRead(init: RequestInit = {}): RequestInit {
-  const headers = new Headers(init.headers);
-  headers.set(MANUAL_READ_HEADER, '1');
-  return { ...init, headers };
-}
-
-/** 取出标记并把它从请求头里摘掉（返回的 init 可以直接发出去）。 */
-function takeManualMark(init?: RequestInit): { manual: boolean; init?: RequestInit } {
-  if (!init?.headers) return { ...(init ? { init } : {}), manual: false };
-  const headers = new Headers(init.headers);
-  if (!headers.has(MANUAL_READ_HEADER)) return { init, manual: false };
-  headers.delete(MANUAL_READ_HEADER);
-  return { init: { ...init, headers }, manual: true };
-}
-
 /** 只有幂等读请求才受退避门约束。 */
 function isIdempotentRead(init?: RequestInit): boolean {
   const method = (init?.method ?? 'GET').toUpperCase();
   return method === 'GET' || method === 'HEAD';
-}
-
-let gateNow: () => number = () => Date.now();
-const lastCanaryAt = new Map<string, number>();
-
-/** 领一次探路名额；同一 node 每 `GATE_CANARY_INTERVAL_MS` 只有一发。 */
-function claimCanary(nodeId: string): boolean {
-  const at = gateNow();
-  if (at - (lastCanaryAt.get(nodeId) ?? Number.NEGATIVE_INFINITY) < GATE_CANARY_INTERVAL_MS) {
-    return false;
-  }
-  lastCanaryAt.set(nodeId, at);
-  return true;
-}
-
-/** 仅测试使用：替换门的时钟并清掉探路名额。 */
-export function setGateClockForTest(now: (() => number) | null): void {
-  lastCanaryAt.clear();
-  gateNow = now ?? (() => Date.now());
 }
 
 /**
@@ -97,10 +52,8 @@ export function setGateClockForTest(now: (() => number) | null): void {
  */
 export function createGatedNodeApiClient(nodeId: string): ApiClient {
   if (isSelfNode(nodeId)) return createNodeApiClient(nodeId);
-  const transport: FetchLike = (url, rawInit) => {
-    const { manual, init } = takeManualMark(rawInit);
-    // 用户点出来的读永远放行；其余读在退避窗口里只有探路名额放得过去。
-    if (!manual && isIdempotentRead(init) && isNodeRequestBlocked(nodeId) && !claimCanary(nodeId)) {
+  const transport: FetchLike = (url, init) => {
+    if (isIdempotentRead(init) && isNodeRequestBlocked(nodeId)) {
       return Promise.reject(new NodeBackoffSkippedError(nodeId));
     }
     return fetch(url, init).then(

@@ -23,7 +23,7 @@ mock.module('@vibeterm/notifications', () => ({
   playBellSound: mock(() => {}),
 }));
 
-const { resolveRuntimeCore } = await import('./runtime');
+const { resolveRuntimeCore, retryNodeQuery } = await import('./runtime');
 
 const connections: GatewayConnection[] = [];
 
@@ -226,5 +226,35 @@ describe('features 解析', () => {
     const core = resolveRuntimeCore({ features: { hostManagedNotifications: true } });
     expect(core.features.hostManagedNotifications).toBe(true);
     expect(core.features.agentUi).toBe(true);
+  });
+});
+
+// 重试按钮的两步：先请宿主解除该 node 的请求退避，再回源。顺序反了这一发会被退避门驳回。
+describe('retryNodeQuery', () => {
+  test('先解除退避再回源', () => {
+    const order: string[] = [];
+    retryNodeQuery({ releaseRequestBackoff: () => order.push('release') }, () =>
+      order.push('refetch')
+    );
+    expect(order).toEqual(['release', 'refetch']);
+  });
+
+  test('宿主没接钩子时退化成一次普通回源', () => {
+    let refetched = 0;
+    retryNodeQuery({}, () => {
+      refetched += 1;
+    });
+    expect(refetched).toBe(1);
+  });
+
+  test('注入的 releaseRequestBackoff 会落到 RuntimeCore 上（包内拿得到）', () => {
+    let released = 0;
+    const core = resolveRuntimeCore({
+      releaseRequestBackoff: () => {
+        released += 1;
+      },
+    });
+    core.releaseRequestBackoff?.();
+    expect(released).toBe(1);
   });
 });

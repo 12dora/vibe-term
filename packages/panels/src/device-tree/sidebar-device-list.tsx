@@ -1,10 +1,10 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   devicesQueryKey as defaultDevicesQueryKey,
   fetchDevices,
   isAuthoritativeDeviceQuery,
 } from '@vibeterm/api-client';
-import { hostAppPath } from '@vibeterm/stores';
+import { hostAppPath, retryNodeQuery } from '@vibeterm/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@vibeterm/stores/react';
 import { Button } from '@vibeterm/ui/button';
 import { ScrollArea } from '@vibeterm/ui/scroll-area';
@@ -154,7 +154,6 @@ export function SideBarDeviceList({
 
   const expansionKey = expansionKeyFor ?? identityExpansionKey;
   const queryKey = devicesQueryKey ?? defaultDevicesQueryKey;
-  const queryClient = useQueryClient();
   const agentAdapter = runtime.features.agentUi ? agent : undefined;
 
   const sidebarDeviceExpanded = useUIStore((state) => state.sidebarDeviceExpanded);
@@ -323,7 +322,8 @@ export function SideBarDeviceList({
                   variant="outline"
                   data-testid="sidebar-devices-retry"
                   disabled={devicesQuery.isFetching}
-                  onClick={() => void queryClient.invalidateQueries({ queryKey })}
+                  // 宿主可能给这台 node 记了「打不通」的请求退避：先掀开它再回源。
+                  onClick={() => retryNodeQuery(runtime, devicesQuery.refetch)}
                 >
                   {t('common.retry')}
                 </Button>

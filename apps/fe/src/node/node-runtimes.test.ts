@@ -7,6 +7,7 @@ import { devicesQueryKey } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import type { Device } from '@vibeterm/shared';
 import type { AppRuntime, AppRuntimeOptions } from '@vibeterm/stores';
+import { retryNodeQuery } from '@vibeterm/stores';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { GatewayConnection, WebSocketLike } from '@vibeterm/ws-client';
 import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
@@ -827,36 +828,98 @@ describe('hasLoginRecovery', () => {
   });
 });
 
-// 用户点重试 / 变更之后回源都会让这个 node 的查询失效：那是「现在就要新数据」的明确意图，
-// 不可达退避不该再挡着（自动刷新不会走 invalidate，这个信号是干净的）。
-describe('查询失效解除不可达退避', () => {
+// 包内的重试按钮按下时调 `runtime.releaseRequestBackoff()`：宿主据此解除这台 node 的
+// 不可达退避，那一发 refetch 才出得去（`invalidateQueries` 靠不住——已经出错的查询
+// `isInvalidated` 本来就是 true，再 invalidate 一次连事件都不派）。
+describe('runtime.releaseRequestBackoff', () => {
   const NODE = 'b'.repeat(32);
 
-  test('invalidateQueries 之后该 node 立刻脱离退避窗口', () => {
+  test('宿主接线把它接到该 node 的退避解除上', () => {
     setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
-    const client = nodeQueryClient(NODE);
-    // 缓存里得先有这条查询，`invalidateQueries` 才会派事件。
-    client.setQueryData(devicesQueryKey, { devices: [] });
+    let injected: AppRuntimeOptions | null = null;
+    const manager = createAppNodeRuntimes({
+      createConnection: () => fakeConnection(),
+      createApiClient: () => ({}) as never,
+      createRuntime: (options) => {
+        injected = options;
+        return { dispose: () => {} } as unknown as AppRuntime;
+      },
+    });
+    manager.get(NODE);
+
     noteNodeUnreachable(NODE);
     expect(isNodeRequestBlocked(NODE)).toBe(true);
-
-    void client.invalidateQueries({ queryKey: devicesQueryKey });
+    (injected as AppRuntimeOptions | null)?.releaseRequestBackoff?.();
     expect(isNodeRequestBlocked(NODE)).toBe(false);
 
-    disposeNodeQueryClient(NODE);
+    manager.disposeAll();
     setNodeBackoffTimersForTest(null);
   });
 
-  test('回收 QueryClient 时退订，缓存事件不再牵动退避', () => {
+  test('解除的只是它自己那一台', () => {
     setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
-    const client = nodeQueryClient(NODE);
-    client.setQueryData(devicesQueryKey, { devices: [] });
-    disposeNodeQueryClient(NODE);
+    const other = 'c'.repeat(32);
+    let injected: AppRuntimeOptions | null = null;
+    const manager = createAppNodeRuntimes({
+      createConnection: () => fakeConnection(),
+      createApiClient: () => ({}) as never,
+      createRuntime: (options) => {
+        injected = options;
+        return { dispose: () => {} } as unknown as AppRuntime;
+      },
+    });
+    manager.get(NODE);
+
     noteNodeUnreachable(NODE);
+    noteNodeUnreachable(other);
+    (injected as AppRuntimeOptions | null)?.releaseRequestBackoff?.();
+    expect(isNodeRequestBlocked(other)).toBe(true);
 
-    void client.invalidateQueries({ queryKey: devicesQueryKey });
-    expect(isNodeRequestBlocked(NODE)).toBe(true);
+    manager.disposeAll();
+    setNodeBackoffTimersForTest(null);
+  });
+});
 
+// 端到端：查询已经出错（退避记上了）→ 面板的重试按钮走 `retryNodeQuery` → 门让路，请求出得去。
+describe('重试按钮掀开退避门（端到端）', () => {
+  const NODE = 'd'.repeat(32);
+  const originalFetch = globalThis.fetch;
+
+  test('出错后的自动回源被门驳回，重试则真的发出去', async () => {
+    setNodeBackoffTimersForTest({ schedule: () => 1, cancel: () => undefined, now: () => 0 });
+    const urls: string[] = [];
+    globalThis.fetch = ((input: string | URL | Request) => {
+      urls.push(String(input));
+      return Promise.resolve(new Response(JSON.stringify({ devices: [] }), { status: 200 }));
+    }) as unknown as typeof fetch;
+
+    let injected: AppRuntimeOptions | null = null;
+    const manager = createAppNodeRuntimes({
+      createConnection: () => fakeConnection(),
+      createRuntime: (options) => {
+        injected = options;
+        return { dispose: () => {} } as unknown as AppRuntime;
+      },
+    });
+    const entry = manager.get(NODE);
+
+    // 这台 node 刚被判打不通（设备列表那条查询记的账）。
+    noteNodeUnreachable(NODE);
+    await expect(entry.apiClient.fetch('/api/devices')).rejects.toBeInstanceOf(Error);
+    expect(urls).toHaveLength(0);
+
+    // 用户点重试：先解除退避，再回源。
+    let refetched = 0;
+    retryNodeQuery(injected as unknown as AppRuntimeOptions, () => {
+      refetched += 1;
+      return entry.apiClient.fetch('/api/devices');
+    });
+    expect(refetched).toBe(1);
+    expect(urls).toEqual([`/n/${NODE}/api/devices`]);
+    expect(isNodeRequestBlocked(NODE)).toBe(false);
+
+    manager.disposeAll();
+    globalThis.fetch = originalFetch;
     setNodeBackoffTimersForTest(null);
   });
 });

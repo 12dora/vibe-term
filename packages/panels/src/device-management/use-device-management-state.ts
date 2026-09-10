@@ -11,6 +11,7 @@ import {
   reorderDevices,
 } from '@vibeterm/api-client';
 import type { Device } from '@vibeterm/shared';
+import { retryNodeQuery } from '@vibeterm/stores';
 import { useRuntime, useSiteStore, useTmuxStore } from '@vibeterm/stores/react';
 import { staggerItemStyle } from '@vibeterm/ui/motion';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -83,7 +84,7 @@ export function useDeviceManagementState({
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
-  const { data, isError, error, isSuccess, isPlaceholderData } = useQuery({
+  const { data, isError, error, isSuccess, isPlaceholderData, refetch } = useQuery({
     queryKey: devicesQueryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
@@ -156,10 +157,9 @@ export function useDeviceManagementState({
 
   // 错误对象要留给面板：`NODE_LOGIN_REQUIRED` / `NODE_UNREACHABLE` 各有各的提示，
   // 一律显示成「加载设备列表失败」等于把真正的原因藏起来。
-  // 用户点的重试走 invalidate：宿主监听缓存事件据此解除该 node 的不可达退避，裸 refetch 会被门拦住
-  const retry = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: devicesQueryKey });
-  }, [queryClient, devicesQueryKey]);
+  // 宿主可能给这台 node 记了「打不通」的请求退避，重试按下要先掀开它再回源
+  // （见 `retryNodeQuery`：顺序反了这一发就会在网络之前被驳回）。
+  const retry = useCallback(() => retryNodeQuery(runtime, refetch), [runtime, refetch]);
 
   return {
     status,

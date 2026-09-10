@@ -5,14 +5,7 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
-const {
-  GATE_CANARY_INTERVAL_MS,
-  MANUAL_READ_HEADER,
-  createGatedNodeApiClient,
-  manualRead,
-  probeNodeSession,
-  setGateClockForTest,
-} = await import('./node-session-probe');
+const { createGatedNodeApiClient, probeNodeSession } = await import('./node-session-probe');
 const {
   clearNodeBackoff,
   isNodeRequestBlocked,
@@ -59,7 +52,6 @@ let now = 0;
 beforeEach(() => {
   calls = [];
   now = 1_000_000;
-  setGateClockForTest(() => now);
   setNodeBackoffTimersForTest({
     schedule: () => 1,
     cancel: () => undefined,
@@ -70,56 +62,36 @@ beforeEach(() => {
 afterEach(() => {
   globalThis.fetch = originalFetch;
   setNodeBackoffTimersForTest(null);
-  setGateClockForTest(null);
 });
 
 describe('createGatedNodeApiClient', () => {
-  test('退避窗口里的 GET 就地短路，一个字节都不发（探路名额已用掉）', async () => {
-    stubFetch(() => jsonResponse({ code: 'NODE_UNREACHABLE' }, 503));
-    const client = createGatedNodeApiClient(NODE_A);
-    noteNodeUnreachable(NODE_A);
-
-    // 第一发是探路名额，会真的出去；第二发才被短路。
-    await client.fetch('/api/devices');
-    expect(calls).toHaveLength(1);
-    await expect(client.fetch('/api/devices')).rejects.toBeInstanceOf(NodeBackoffSkippedError);
-    expect(calls).toHaveLength(1);
-  });
-
-  test('打了「用户点的」标记的读一律放行，且标记不会被发出去', async () => {
+  test('退避窗口里的 GET 就地短路，一个字节都不发', async () => {
     stubFetch(() => jsonResponse({ devices: [] }));
     const client = createGatedNodeApiClient(NODE_A);
     noteNodeUnreachable(NODE_A);
-    // 先把探路名额用掉，确认放行是标记的功劳。
-    await client.fetch('/api/devices').catch(() => undefined);
-    calls = [];
 
-    const res = await client.fetch('/api/devices', manualRead());
-    expect(res.status).toBe(200);
-    expect(calls).toHaveLength(1);
-    expect(new Headers(calls[0]?.init?.headers).has(MANUAL_READ_HEADER)).toBe(false);
-    // 成功即解除退避，之后一切照常。
-    expect(isNodeRequestBlocked(NODE_A)).toBe(false);
+    await expect(client.fetch('/api/devices')).rejects.toBeInstanceOf(NodeBackoffSkippedError);
+    expect(calls).toHaveLength(0);
   });
 
-  test('探路名额每 20 秒回一发：没打标记的重试最多等这一档', async () => {
-    stubFetch(() => jsonResponse({ code: 'NODE_UNREACHABLE' }, 503));
+  test('退避窗口里没有任何「隔一会儿自己放一发」的出口（那会把指数退避拉平成固定周期）', async () => {
+    stubFetch(() => jsonResponse({ devices: [] }));
     const client = createGatedNodeApiClient(NODE_A);
     noteNodeUnreachable(NODE_A);
 
-    await client.fetch('/api/devices');
-    await expect(client.fetch('/api/devices')).rejects.toBeInstanceOf(NodeBackoffSkippedError);
-    now += GATE_CANARY_INTERVAL_MS;
-    await client.fetch('/api/devices');
-    expect(calls).toHaveLength(2);
+    for (let i = 0; i < 5; i++) {
+      now += 60_000;
+      await client.fetch('/api/devices').catch(() => undefined);
+    }
+    expect(calls).toHaveLength(0);
   });
 
-  test('clearNodeBackoff 之后立刻恢复正常', async () => {
+  test('clearNodeBackoff（重试按钮的钩子最终调的就是它）之后立刻放行', async () => {
     stubFetch(() => jsonResponse({ devices: [] }));
     const client = createGatedNodeApiClient(NODE_A);
     noteNodeUnreachable(NODE_A);
     await client.fetch('/api/devices').catch(() => undefined);
-    calls = [];
+    expect(calls).toHaveLength(0);
 
     clearNodeBackoff(NODE_A);
     await client.fetch('/api/devices');
@@ -130,7 +102,6 @@ describe('createGatedNodeApiClient', () => {
     stubFetch(() => jsonResponse({ ok: true }));
     const client = createGatedNodeApiClient(NODE_A);
     noteNodeUnreachable(NODE_A);
-    // 探路名额只管读，写请求不领也不消耗它。
 
     const res = await client.fetch('/api/devices', { method: 'POST' });
     expect(res.status).toBe(200);
