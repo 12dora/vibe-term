@@ -1925,6 +1925,7 @@
         "usePasskey": "Use a passkey",
         "credentialsRequired": "Enter your username and password.",
         "totpRequired": "Enter your authenticator code.",
+        "totpInsteadOfPasskey": "Entering this code completes the second step; no passkey needed.",
         "nodeListFailed": "Could not load the node list. Try again.",
         "passkeyNotRegistered": "No passkey is registered for this address. Sign in, then add one in Settings → Account security.",
         "passkeyUnavailable": "Passkeys require HTTPS or localhost.",

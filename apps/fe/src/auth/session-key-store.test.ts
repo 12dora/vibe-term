@@ -1199,6 +1199,32 @@ describe('密码登录的通行密钥二次验证', () => {
     expect((captured.login as { passkey?: unknown }).passkey).toBeUndefined();
   });
 
+  // policy=either 时登录页不做仪式，只交验证码；但 mesh 里可能还有未升级的节点仍按
+  // 「两者皆需」判定。那台回 PASSKEY_REQUIRED 时必须当场补一次仪式再重试，验证码照带。
+  test('未升级的节点仍要断言：补一次仪式重试，两次都带同一个验证码', async () => {
+    await establishRoot({ hasTotp: true, totpCode: '123456' });
+    const backend = secondFactorApi({
+      loginCode: (call) => (call === 1 ? 'PASSKEY_REQUIRED' : undefined),
+    });
+    setPasskeyCeremonyForTest(async () => fakeAssertion(CRED_A));
+
+    const result = await loginToNode(SELF_NODE_ID, {
+      api: backend.api,
+      selfBootstrap: true,
+      allowPasskeyPrompt: true,
+    });
+
+    expect(result).toEqual({ ok: true });
+    expect(backend.loginBodies).toHaveLength(2);
+    const bodies = backend.loginBodies as {
+      totp?: { code: string };
+      passkey?: { credential_id: string };
+    }[];
+    expect(bodies[0].passkey).toBeUndefined();
+    expect(bodies[1].passkey?.credential_id).toBe(CRED_A);
+    expect(bodies.map((body) => body.totp?.code)).toEqual(['123456', '123456']);
+  });
+
   // 服务端的二次验证同样按 origin 判定：本地址一把凭证都没有时它不会要求断言，
   // 前端也必须跳过这一步，否则 mode 快照一旦过期用户就永远登不进这个地址。
   test('本地址没注册通行密钥（404）：跳过二次验证，密码登录照常建立会话', async () => {

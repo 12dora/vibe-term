@@ -14,6 +14,7 @@ import {
   loginErrorKeyFromException,
 } from '@/auth/login-errors';
 import { clearLocalDeviceCaches } from '@/auth/logout-local-caches';
+import { shouldRunPasskeySecondFactor, totpSecondFactorHintKey } from '@/auth/second-factor';
 import {
   clearSessionKey,
   clearTotpCode,
@@ -217,6 +218,39 @@ function PasskeyRow({
   );
 }
 
+/** 验证码这一栏；`hintKey` 非空时补一行说明（两种因子都配齐，验证码可以代替通行密钥仪式）。 */
+function TotpField({
+  value,
+  onChange,
+  hintKey,
+}: {
+  value: string;
+  onChange: (next: string) => void;
+  hintKey: string | null;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="flex flex-col gap-1 text-sm">
+      {/* 六个单字符格子没有单一的可关联控件，标题走 aria-labelledby 而不是 <label for>。 */}
+      <span className="text-muted-foreground" id="login-totp-label">
+        {t('auth.login.totp')}
+      </span>
+      <OtpInput
+        value={value}
+        onChange={onChange}
+        aria-labelledby="login-totp-label"
+        digitLabel={(index, length) => t('auth.totpDigit', { index: index + 1, total: length })}
+        data-testid="login-totp"
+      />
+      {hintKey ? (
+        <p className="text-xs text-muted-foreground" data-testid="login-totp-hint">
+          {t(hintKey)}
+        </p>
+      ) : null}
+    </div>
+  );
+}
+
 // `login.uid` / `delegation.uid` / k_totp 的 HKDF info 用的都是 **user id**，输入框里的是用户名。
 // 用户名框没有默认值（`vibeterm relay join` 建出来的账号，用户名就是那串 uid，填进去只会吓人），
 // 所以留空是常态：此时按 mode 给的 uid 走。只有确实输了一个**别的**名字才按名字走。
@@ -287,6 +321,7 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
 
   const affordance = passkeyAffordance(mode);
   const otherOriginHint = passkeyOtherOriginHint(mode);
+  const totpHint = totpSecondFactorHintKey(mode);
 
   const resolveUid = useCallback(() => resolveLoginUid(mode, username), [mode, username]);
 
@@ -345,8 +380,11 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
           rootEpoch,
           hasTotp: Boolean(mode.totpEnabled),
           totpCode: totp || undefined,
-          // 名下有通行密钥就必须再过一次断言，否则服务端回 PASSKEY_REQUIRED。
-          passkeySecondFactor: Boolean(mode.passkeySecondFactor),
+          // 本 origin 有通行密钥就要再过一次断言；服务端策略为 `either` 且已输验证码时不弹仪式。
+          passkeySecondFactor: shouldRunPasskeySecondFactor(
+            mode,
+            Boolean(mode.totpEnabled && totp)
+          ),
           api,
           onPasskeyPrompt: () => setPhase('passkeyCheck'),
         });
@@ -425,23 +463,7 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
           />
         </div>
 
-        {mode.totpEnabled ? (
-          <div className="flex flex-col gap-1 text-sm">
-            {/* 六个单字符格子没有单一的可关联控件，标题走 aria-labelledby 而不是 <label for>。 */}
-            <span className="text-muted-foreground" id="login-totp-label">
-              {t('auth.login.totp')}
-            </span>
-            <OtpInput
-              value={totp}
-              onChange={setTotp}
-              aria-labelledby="login-totp-label"
-              digitLabel={(index, length) =>
-                t('auth.totpDigit', { index: index + 1, total: length })
-              }
-              data-testid="login-totp"
-            />
-          </div>
-        ) : null}
+        {mode.totpEnabled ? <TotpField value={totp} onChange={setTotp} hintKey={totpHint} /> : null}
 
         {/* 播报节点必须**一直挂着**：`empty:hidden` 会把它从可访问性树里摘掉，
             读屏拿不到「内容变了」这件事，播报就时灵时不灵。所以这里拆成两半——

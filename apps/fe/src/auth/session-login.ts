@@ -136,8 +136,9 @@ interface EstablishFromSeedOptions {
   /** k_totp 派生（测试注入）：用来构造 HKDF 抛错这条失败路径。 */
   deriveKTotp?: (seed: Uint8Array, uid: string, rootEpoch: number) => Uint8Array;
   /**
-   * 用户名下已注册通行密钥（`/api/auth/mode` 的 `passkeySecondFactor`）：密码登录必须再做一次
-   * 通行密钥断言，服务端否则回 `PASSKEY_REQUIRED`。
+   * 这次密码登录要不要先做一次通行密钥断言。由 `shouldRunPasskeySecondFactor()` 决定：
+   * 本 origin 有通行密钥就要做，但服务端策略为 `either` 且本次已带验证码时不做（验证码单独
+   * 就能过第二步）。判错也不致命——服务端回 `PASSKEY_REQUIRED` 时 `loginToNode()` 会补做。
    */
   passkeySecondFactor?: boolean;
   api?: AuthApi;

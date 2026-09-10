@@ -1925,6 +1925,7 @@
         "usePasskey": "パスキーを使う",
         "credentialsRequired": "ユーザー名とパスワードを入力してください。",
         "totpRequired": "認証アプリのコードを入力してください。",
+        "totpInsteadOfPasskey": "コードを入力すれば二段階の確認は完了します。パスキーは不要です。",
         "nodeListFailed": "ノード一覧を読み込めませんでした。もう一度お試しください。",
         "passkeyNotRegistered": "このアドレスにはパスキーが登録されていません。サインイン後、「設定 → アカウントセキュリティ」で追加できます。",
         "passkeyUnavailable": "パスキーは HTTPS または localhost でのみ利用できます。",

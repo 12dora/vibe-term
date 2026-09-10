@@ -127,6 +127,29 @@ describe('LoginPage', () => {
     expect(html).toContain('autoComplete="one-time-code"');
   });
 
+  test('两种因子都配齐时，验证码下面说明它可以代替通行密钥', () => {
+    const html = render({
+      ...BASE,
+      totpEnabled: true,
+      passkeySecondFactor: true,
+      secondFactorPolicy: 'either',
+    });
+    expect(html).toContain('data-testid="login-totp-hint"');
+    expect(html).toContain('auth.login.totpInsteadOfPasskey');
+  });
+
+  test('只有一种因子（含旧节点不下发 policy）时不给这行说明', () => {
+    const modes: AuthModeResponse[] = [
+      { ...BASE, totpEnabled: true },
+      { ...BASE, totpEnabled: true, passkeySecondFactor: true },
+      { ...BASE, totpEnabled: true, secondFactorPolicy: 'totp' },
+      { ...BASE, totpEnabled: true, passkeySecondFactor: true, secondFactorPolicy: 'passkey' },
+    ];
+    for (const mode of modes) {
+      expect(render(mode)).not.toContain('data-testid="login-totp-hint"');
+    }
+  });
+
   test('本 origin 还没注册过 passkey 也照样给按钮（否则没人发现得了这个功能）', () => {
     const html = render({ ...BASE, passkeyAvailable: true, passkeysForThisOrigin: false });
     expect(html).toContain('data-testid="login-passkey"');

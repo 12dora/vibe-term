@@ -652,6 +652,7 @@
         "usePasskey": "使用通行密钥",
         "credentialsRequired": "请输入用户名和密码。",
         "totpRequired": "请输入验证码。",
+        "totpInsteadOfPasskey": "输入验证码即可完成两步验证，无需通行密钥。",
         "nodeListFailed": "节点列表加载失败，请重试。",
         "passkeyNotRegistered": "此地址尚未注册通行密钥，登录后可在「设置 → 账号安全」添加。",
         "passkeyUnavailable": "通行密钥需通过 HTTPS 或 localhost 访问。",

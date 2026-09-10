@@ -1718,6 +1718,7 @@ export type TranslationKey =
   | 'auth.login.usePasskey'
   | 'auth.login.credentialsRequired'
   | 'auth.login.totpRequired'
+  | 'auth.login.totpInsteadOfPasskey'
   | 'auth.login.nodeListFailed'
   | 'auth.login.passkeyNotRegistered'
   | 'auth.login.passkeyUnavailable'
