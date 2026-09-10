@@ -24,6 +24,10 @@ export class LinkStreamCarrier implements Carrier {
   private readonly priorityQueue: Uint8Array[] = [];
   private pending = 0;
   private priorityPending = 0;
+  /** 正在 write() 的那一块的总字节；出队即从 pending 挪到这里，保证一段字节只算一次。 */
+  private writing = 0;
+  private writingBase = 0;
+  private priorityHandedDuringWrite = 0;
   private pumping = false;
   private priorityPumping = false;
   private closing = false;
@@ -141,8 +145,27 @@ export class LinkStreamCarrier implements Carrier {
     }
   }
 
+  private sentBytes(): number {
+    return Math.max(0, this.stream.sentBytes ?? 0);
+  }
+
+  /**
+   * 正在 write() 的那一块还没占到信用的部分。已占信用的部分由 `outstandingBytes` 记账，
+   * 两边加起来每段字节只算一次。期间的优先帧也会推高 `sentBytes`，从增量里扣掉——扣多了
+   * 只会让在途算大一点（偏向背压），不会把上限撑破。
+   */
+  private writingRemaining(): number {
+    if (this.writing === 0) return 0;
+    const credited = Math.max(
+      0,
+      this.sentBytes() - this.writingBase - this.priorityHandedDuringWrite
+    );
+    return Math.max(0, this.writing - credited);
+  }
+
   private inflight(): number {
-    return this.pending + Math.max(0, this.stream.outstandingBytes ?? 0);
+    const outstanding = Math.max(0, this.stream.outstandingBytes ?? 0);
+    return this.pending + this.writingRemaining() + outstanding;
   }
 
   private discardQueues(): void {
@@ -150,6 +173,7 @@ export class LinkStreamCarrier implements Carrier {
     this.priorityQueue.length = 0;
     this.pending = 0;
     this.priorityPending = 0;
+    this.writing = 0;
   }
 
   private emitClose(): void {
@@ -188,6 +212,17 @@ export class LinkStreamCarrier implements Carrier {
     }
   }
 
+  /** 半关闭只能排在两条队列都空、两个泵都闲之后，否则 END 会把已收下的优先帧作废。 */
+  private canFinishClose(): boolean {
+    return (
+      this.closing &&
+      !this.closed &&
+      this.queue.length === 0 &&
+      this.priorityQueue.length === 0 &&
+      !this.priorityPumping
+    );
+  }
+
   private async pump(): Promise<void> {
     if (this.pumping) return;
     this.pumping = true;
@@ -195,11 +230,16 @@ export class LinkStreamCarrier implements Carrier {
       while (this.queue.length > 0 && !this.closed) {
         const chunk = this.queue.shift();
         if (!chunk) break;
-        if (!(await this.writeChunk(chunk, false))) return;
         this.pending = Math.max(0, this.pending - chunk.byteLength);
+        this.writing = chunk.byteLength;
+        this.writingBase = this.sentBytes();
+        this.priorityHandedDuringWrite = 0;
+        const ok = await this.writeChunk(chunk, false);
+        this.writing = 0;
+        if (!ok) return;
         this.maybeDrain();
       }
-      if (this.closing && !this.closed && this.queue.length === 0) {
+      if (this.canFinishClose()) {
         try {
           await this.stream.end();
         } catch {
@@ -222,13 +262,16 @@ export class LinkStreamCarrier implements Carrier {
       while (this.priorityQueue.length > 0 && !this.closed) {
         const chunk = this.priorityQueue.shift();
         if (!chunk) break;
+        this.priorityHandedDuringWrite += chunk.byteLength;
         if (!(await this.writeChunk(chunk, true))) return;
         this.priorityPending = Math.max(0, this.priorityPending - chunk.byteLength);
       }
     } finally {
       this.priorityPumping = false;
-      if (!this.closed && this.priorityQueue.length > 0) {
-        void this.pumpPriority();
+      if (!this.closed) {
+        if (this.priorityQueue.length > 0) void this.pumpPriority();
+        // 最后一帧优先写落地了才轮到 END：普通泵已经跑完时由这里把它重新叫起来。
+        else if (this.closing) void this.pump();
       }
     }
   }

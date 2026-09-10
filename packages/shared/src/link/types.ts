@@ -76,6 +76,11 @@ export interface LinkStream {
   onAbort(cb: () => void): void;
   /** 已计入发送窗口、对端尚未回信用的字节数（发送侧在途）。 */
   readonly outstandingBytes?: number;
+  /**
+   * 已占用发送信用的累计字节，单调递增。调用方据此算出「已经交给 write() 但还没占到
+   * 信用」的那部分，避免把同一段字节既算进自己的队列又算进 `outstandingBytes`。
+   */
+  readonly sentBytes?: number;
   /** 对端回窗口信用时触发，即发送侧在途下降。 */
   onSendWindowCredit?(cb: () => void): void;
   /**

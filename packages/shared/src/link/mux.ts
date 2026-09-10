@@ -81,6 +81,7 @@ class MuxStream implements LinkStream {
   private readonly writer: StreamWriter;
   private readonly abortCbs: Array<() => void> = [];
   private readonly creditCbs: Array<() => void> = [];
+  private sentTotal = 0;
   private aborted = false;
   private resolveClosed!: (info: StreamCloseInfo) => void;
   private closedSettled = false;
@@ -104,6 +105,7 @@ class MuxStream implements LinkStream {
           this.mux.sendFrame({ streamId: this.id, op: FrameOp.DATA, flags, payload }),
         takeCredit: (n) => {
           this.outstanding += n;
+          this.sentTotal += n;
           this.mux.addUnacked(n);
         },
       },
@@ -149,6 +151,10 @@ class MuxStream implements LinkStream {
 
   get outstandingBytes(): number {
     return this.outstanding;
+  }
+
+  get sentBytes(): number {
+    return this.sentTotal;
   }
 
   write(bytes: Uint8Array, opts?: WriteOptions): Promise<void> {

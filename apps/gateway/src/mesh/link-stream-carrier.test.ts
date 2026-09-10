@@ -16,6 +16,37 @@ import {
 
 const HIGH = 64 * 1024;
 
+/** write 由测试逐笔放行的假流，用来把两条泵的交错固定下来。 */
+function gatedStream(): {
+  stream: LinkStream;
+  writes: Array<{ bytes: Uint8Array; priority: boolean; release: () => void }>;
+  ended: () => boolean;
+} {
+  const writes: Array<{ bytes: Uint8Array; priority: boolean; release: () => void }> = [];
+  let ended = false;
+  const stream: LinkStream = {
+    id: 1,
+    openPayload: new Uint8Array(0),
+    readable: new ReadableStream(),
+    write: (bytes, opts) =>
+      new Promise<void>((resolve) => {
+        writes.push({
+          bytes: bytes.slice(),
+          priority: opts?.priority === true,
+          release: resolve,
+        });
+      }),
+    end: () => {
+      ended = true;
+      return Promise.resolve();
+    },
+    reset: () => undefined,
+    closed: new Promise<StreamCloseInfo>(() => undefined),
+    onAbort: () => undefined,
+  };
+  return { stream, writes, ended: () => ended };
+}
+
 /** write 永不 resolve 的假流，用来观察载体队列本身的上限。 */
 function blockedStream(): LinkStream {
   return {
@@ -94,6 +125,56 @@ describe('LinkStreamCarrier', () => {
     expect(priorityAt).toBeLessThan(8);
     out.end();
     incoming.end();
+  });
+
+  test('在途只算一次：正在 write 的块不会同时计进队列和未回信用', async () => {
+    const [a, b] = createInMemoryLinkPair();
+    const incomingP = new Promise<LinkStream>((resolve) => b.onStream(resolve));
+    const out = await a.openStream(new Uint8Array([1]));
+    const incoming = await incomingP;
+    const bound = 256 * 1024;
+    const carrier = new LinkStreamCarrier(incoming, { highWaterMark: bound });
+
+    // 出队后仍在 write() 里：只该算一份。
+    expect(carrier.send(new Uint8Array(bound - 32 * 1024))).toBe('sent');
+    expect(carrier.bufferedAmount()).toBe(bound - 32 * 1024);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(carrier.bufferedAmount()).toBe(bound - 32 * 1024);
+
+    // 真实在途 240 KiB < 256 KiB，仍应放行（改前会因为重复计数报背压）。
+    expect(carrier.send(new Uint8Array(16 * 1024))).toBe('sent');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(carrier.bufferedAmount()).toBe(bound - 16 * 1024);
+    // 越过上限才背压。
+    expect(carrier.send(new Uint8Array(32 * 1024))).toBe('backpressure');
+
+    carrier.terminate();
+    out.reset('done');
+  });
+
+  test('半关闭排在最后一帧优先写之后，已收下的优先帧不会被 END 作废', async () => {
+    const gate = gatedStream();
+    const carrier = new LinkStreamCarrier(gate.stream);
+    expect(carrier.send(new Uint8Array(4096))).toBe('sent');
+    expect(carrier.sendPriority(new Uint8Array([1]))).toBe('sent');
+    expect(carrier.sendPriority(new Uint8Array([2]))).toBe('sent');
+    carrier.close(1000, 'bye');
+
+    // 普通写先落地：此时优先泵还没跑完，不许 END。
+    gate.writes[0]?.release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(gate.ended()).toBe(false);
+
+    gate.writes[1]?.release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(gate.ended()).toBe(false);
+
+    gate.writes[2]?.release();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(gate.ended()).toBe(true);
+    expect(gate.writes.map((w) => w.priority)).toEqual([false, true, true]);
+    expect(gate.writes[1]?.bytes[0]).toBe(1);
+    expect(gate.writes[2]?.bytes[0]).toBe(2);
   });
 
   test('优先队列有界：超过帧数或字节上限返回 rejected', () => {
