@@ -96,6 +96,39 @@ describe('DataChannelLink', () => {
     await expect(pending).rejects.toBeInstanceOf(Error);
   });
 
+  test('underlying channel-closed resolves queued sends without unhandled rejection', async () => {
+    const [a] = pairDataChannels('peer');
+    const left = new DataChannelLink(a);
+    a.blockSend = true;
+    const pending = left.send(new Uint8Array([1, 2, 3]));
+    const unhandled = await collectUnhandled(async () => {
+      a.close();
+      await expect(pending).resolves.toBeUndefined();
+    });
+    expect(unhandled).toEqual([]);
+  });
+
+  test('unawaited LinkMux end then channel close is not an unhandled rejection', async () => {
+    const [a, b] = pairDataChannels('peer');
+    const left = new LinkMux(new DataChannelLink(a), { role: 'initiator' });
+    const right = new LinkMux(new DataChannelLink(b), { role: 'acceptor' });
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      right.onStream(resolve)
+    );
+    const out = await left.openStream(new Uint8Array([1]));
+    const inn = await incoming;
+    const read = inn.readable.getReader();
+    await out.write(new Uint8Array([1, 2, 3]));
+    expect((await read.read()).value?.bytes).toEqual(new Uint8Array([1, 2, 3]));
+    out.end();
+    inn.end();
+    const unhandled = await collectUnhandled(async () => {
+      a.close();
+      b.close();
+    });
+    expect(unhandled).toEqual([]);
+  });
+
   test('frames that arrive before onData are delivered in order', async () => {
     const [a, b] = pairDataChannels('peer');
     const fanB = fanoutDataChannel(b);
@@ -501,3 +534,22 @@ describe('DataChannelLink', () => {
     right.close();
   });
 });
+
+async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  const events = process as unknown as {
+    on(event: string, listener: (reason: unknown) => void): void;
+    off(event: string, listener: (reason: unknown) => void): void;
+  };
+  events.on('unhandledRejection', onUnhandled);
+  try {
+    await run();
+    await Bun.sleep(20);
+  } finally {
+    events.off('unhandledRejection', onUnhandled);
+  }
+  return unhandled;
+}

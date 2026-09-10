@@ -295,6 +295,32 @@ describeRtc('RtcPeerManager', () => {
     inn.end();
   });
 
+  test('closing managers after LinkMux end does not unhandle channel-closed', async () => {
+    const { left, right, a, b } = setup();
+    const [sigA, sigB] = loopbackSignaling();
+    const [la, lb] = await Promise.all([
+      left.connectToPeer(b.nodeId, sigA),
+      right.connectToPeer(a.nodeId, sigB),
+    ]);
+    const muxA = new LinkMux(la.link, { role: la.role });
+    const muxB = new LinkMux(lb.link, { role: lb.role });
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      muxB.onStream(resolve)
+    );
+    const out = await muxA.openStream(new TextEncoder().encode('{"type":"ping"}'));
+    const inn = await incoming;
+    const reader = inn.readable.getReader();
+    await out.write(new Uint8Array([9, 9]));
+    expect((await reader.read()).value?.bytes).toEqual(new Uint8Array([9, 9]));
+    out.end();
+    inn.end();
+    const unhandled = await collectUnhandled(async () => {
+      left.close();
+      right.close();
+    });
+    expect(unhandled).toEqual([]);
+  });
+
   test('late hello after both links are up does not fragment-protocol the DC', async () => {
     const { left, right, a, b } = setup();
     const [sigA, sigB] = loopbackSignaling();
@@ -1018,3 +1044,22 @@ describeRtc('RtcPeerManager', () => {
     expect(fake.connections.at(-1)?.closed).toBe(true);
   });
 });
+
+async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
+  const unhandled: unknown[] = [];
+  const onUnhandled = (reason: unknown) => {
+    unhandled.push(reason);
+  };
+  const events = process as unknown as {
+    on(event: string, listener: (reason: unknown) => void): void;
+    off(event: string, listener: (reason: unknown) => void): void;
+  };
+  events.on('unhandledRejection', onUnhandled);
+  try {
+    await run();
+    await Bun.sleep(20);
+  } finally {
+    events.off('unhandledRejection', onUnhandled);
+  }
+  return unhandled;
+}

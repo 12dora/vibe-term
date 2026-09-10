@@ -386,11 +386,7 @@ export class DataChannelLink implements ByteTransport {
     this.liveness?.stop();
     this.liveness = null;
     this.reassembler.dispose();
-    const pending = this.controlQueue.splice(0).concat(this.dataQueue.splice(0));
-    const err = new Error(reason);
-    for (const item of pending) {
-      item.reject(err);
-    }
+    this.settleQueuedSends(reason);
     for (const cb of this.closeCbs) {
       try {
         cb(reason);
@@ -398,5 +394,18 @@ export class DataChannelLink implements ByteTransport {
         // close listener
       }
     }
+  }
+
+  private settleQueuedSends(reason: string): void {
+    const pending = this.controlQueue.splice(0).concat(this.dataQueue.splice(0));
+    if (pending.length === 0) return;
+    // 底层 DC 被 PC/对端拆掉时，排队中的 send 调用方往往已经不再 await（LinkMux 的 WINDOW/END）。
+    // resolve 而不是 reject，避免 channel-closed 变成 unhandledRejection；主动 close(reason) 仍 reject。
+    if (reason === 'channel-closed') {
+      for (const item of pending) item.resolve();
+      return;
+    }
+    const err = new Error(reason);
+    for (const item of pending) item.reject(err);
   }
 }
