@@ -27,6 +27,12 @@ export const en: Record<string, string> = {
 
   'cli.error.unknownCommand': 'Unknown command: {{command}}',
   'cli.error.unknownFlag': 'Unknown flag: --{{flag}}',
+  'cli.passkey.loginUnavailable':
+    'This account requires a passkey for password sign-in (two-step verification is not enabled); CLI password login is unavailable. Use the web UI to sign in.',
+  'cli.passkey.enrollUnavailable':
+    'This account requires a passkey for password sign-in (two-step verification is not enabled), so CLI password enrollment is unavailable. Use the web UI (Settings → Nodes → Node management → Add → generate a join code) and run the join command instead.',
+  'cli.passkey.relayUnavailable':
+    'This account requires a passkey for password sign-in (two-step verification is not enabled), so relay commands are unavailable from the CLI. Use the web UI (Settings → Nodes → relay) instead.',
 
   'common.cancelled': 'Cancelled by user.',
   'common.done': 'Done.',

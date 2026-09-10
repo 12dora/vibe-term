@@ -6,6 +6,7 @@ import { runUpgrade } from './commands/upgrade';
 import { type CliLang, normalizeLang, setLang, t } from './i18n';
 import { assertKnownFlags, parseArgs, resolveNestedCommand } from './lib/args';
 import { AUTH_COMMANDS, resolveAuthSpawnPlan, spawnAuthCli } from './lib/auth-spawn';
+import { isClientCliCommand, runClientCli } from './lib/client-cli';
 import { errorMessage } from './lib/error-message';
 import type { ParsedArgs } from './types';
 
@@ -37,6 +38,13 @@ export async function dispatchCli(
   options?: { argv?: string[] }
 ): Promise<void> {
   setLang(lang);
+  // 客户端命令（login / api / term / …）整组交给 @vibeterm/cli 的 bundle，
+  // 它自己解析旗标与 --help，本包的旗标白名单不适用。
+  if (isClientCliCommand(parsed.command)) {
+    const code = await runClientCli(options?.argv ?? reconstructArgv(parsed));
+    if (code !== 0) process.exitCode = code;
+    return;
+  }
   const nested = resolveNestedCommand(parsed);
   if (AUTH_COMMANDS.has(nested.name)) {
     const argv = options?.argv ?? reconstructArgv(parsed);
@@ -98,10 +106,13 @@ export async function main(): Promise<void> {
     process.env.VIBETERM_CLI_LANG;
   const lang = normalizeLang(requestedLang);
   setLang(lang);
-  if (parsed.flags.help === true) {
-    printHelp();
-    return;
+  // 客户端命令的 `--help` 由它自己打印（每组有各自的用法），旗标校验同理。
+  if (!isClientCliCommand(parsed.command)) {
+    if (parsed.flags.help === true) {
+      printHelp();
+      return;
+    }
+    assertKnownFlags(parsed);
   }
-  assertKnownFlags(parsed);
   await dispatchCli(parsed, lang, { argv });
 }

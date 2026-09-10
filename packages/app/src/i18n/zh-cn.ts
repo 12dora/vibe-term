@@ -24,6 +24,12 @@ export const zhCN: Record<string, string> = {
 
   'cli.error.unknownCommand': '未知命令：{{command}}',
   'cli.error.unknownFlag': '未知参数：--{{flag}}',
+  'cli.passkey.loginUnavailable':
+    '该账户密码登录需要通行密钥（未启用两步验证），命令行无法完成口令登录。请改用网页登录。',
+  'cli.passkey.enrollUnavailable':
+    '该账户密码登录需要通行密钥（未启用两步验证），命令行无法完成口令注册。请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用加入命令。',
+  'cli.passkey.relayUnavailable':
+    '该账户密码登录需要通行密钥（未启用两步验证），命令行无法执行中继相关操作。请改用网页「设置 → 多节点互联 → 中继」。',
 
   'common.cancelled': '已取消。',
   'common.done': '完成。',

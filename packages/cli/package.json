@@ -1,0 +1,28 @@
+{
+  "name": "@vibeterm/cli",
+  "version": "0.1.0",
+  "type": "module",
+  "private": true,
+  "files": ["src", "dist"],
+  "engines": {
+    "node": ">=20"
+  },
+  "exports": {
+    ".": "./src/main.ts"
+  },
+  "scripts": {
+    "build": "bun build src/main.ts --target node --format esm --outfile dist/cli.js",
+    "test": "bun test"
+  },
+  "dependencies": {
+    "@vibeterm/api-client": "workspace:*",
+    "@vibeterm/shared": "workspace:*",
+    "@vibeterm/transfer": "workspace:*",
+    "@vibeterm/ws-client": "workspace:*",
+    "ws": "8.18.3"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1",
+    "typescript": "^5.7.3"
+  }
+}

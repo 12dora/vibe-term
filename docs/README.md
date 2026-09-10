@@ -21,6 +21,7 @@
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
 - 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)。
+- 给 `vibeterm` 加客户端命令：[客户端 CLI 架构](./development/cli-architecture.md)。
 
 ## 全部文档
 
@@ -88,6 +89,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [environments.md](./development/environments.md) | development / test / production 三套环境与 `loadEnv()` |
+| [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI 的模块契约：命令组、ctx、退出码、会话文件、打包接线 |
 | [workspace-packages.md](./development/workspace-packages.md) | 前端 workspace 包结构、两层工厂与嵌入用法 |
 | [app-error-boundary.md](./development/app-error-boundary.md) | 路由 / 面板级错误边界与 chunk 重试 |
 | [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存、重试、前台拨号竞速 |

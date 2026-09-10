@@ -7,6 +7,8 @@ import { pathExists, readText } from './fs-utils';
 export interface PackageLayout {
   packageRoot: string;
   cliDistPath: string;
+  /** 客户端命令组（@vibeterm/cli）的 bundle；≤2.0.8 的包里没有这个文件。 */
+  cliClientBundlePath: string;
   runtimeDirPath: string;
   resourceFePath: string;
   resourceDrizzlePath: string;
@@ -146,6 +148,7 @@ export async function resolvePackageLayout(fromModuleUrl: string): Promise<Packa
   const layout: PackageLayout = {
     packageRoot,
     cliDistPath: join(packageRoot, 'dist', 'cli-node.js'),
+    cliClientBundlePath: join(packageRoot, 'dist', 'cli.js'),
     runtimeDirPath: join(packageRoot, 'dist', 'runtime'),
     resourceFePath: join(packageRoot, 'resources', 'fe-dist'),
     resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),
@@ -172,6 +175,7 @@ export async function packageLayoutFromRoot(packageRoot: string): Promise<Packag
   const layout: PackageLayout = {
     packageRoot,
     cliDistPath: join(packageRoot, 'dist', 'cli-node.js'),
+    cliClientBundlePath: join(packageRoot, 'dist', 'cli.js'),
     runtimeDirPath: join(packageRoot, 'dist', 'runtime'),
     resourceFePath: join(packageRoot, 'resources', 'fe-dist'),
     resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),

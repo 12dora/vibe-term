@@ -16,6 +16,7 @@ const TARGETS: Array<{ dir: string; args: string[]; retry?: boolean }> = [
   { dir: 'packages/theme', args: ['test'] },
   { dir: 'packages/api-client', args: ['test'] },
   { dir: 'packages/notifications', args: ['test'] },
+  { dir: 'packages/cli', args: ['test'] },
   { dir: 'packages/app', args: ['test', 'src'] },
   { dir: 'apps/fe', args: ['test', 'src/'] },
 ];

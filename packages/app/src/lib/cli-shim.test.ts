@@ -55,6 +55,7 @@ async function makePackageRoot(): Promise<PackageLayout> {
   return {
     packageRoot,
     cliDistPath: join(packageRoot, 'dist', 'cli-node.js'),
+    cliClientBundlePath: join(packageRoot, 'dist', 'cli.js'),
     runtimeDirPath: join(packageRoot, 'dist', 'runtime'),
     resourceFePath: join(packageRoot, 'resources', 'fe-dist'),
     resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),
@@ -696,6 +697,7 @@ describe('shim compatibility with the pre-rename layout', () => {
       {
         packageRoot,
         cliDistPath: join(packageRoot, 'dist', 'cli-node.js'),
+        cliClientBundlePath: join(packageRoot, 'dist', 'cli.js'),
         runtimeDirPath: join(packageRoot, 'dist', 'runtime'),
         resourceFePath: join(packageRoot, 'resources', 'fe-dist'),
         resourceDrizzlePath: join(packageRoot, 'resources', 'gateway-drizzle'),

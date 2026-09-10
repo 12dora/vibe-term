@@ -5,6 +5,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [environments.md](./environments.md) | development / test / production 三套环境与 `loadEnv()`——起 dev server、写测试前必读 |
+| [cli-architecture.md](./cli-architecture.md) | 客户端 CLI（`packages/cli`）的模块契约：命令组怎么加、ctx 形状、退出码、会话文件、与 packages/app 的接线 |
 | [workspace-packages.md](./workspace-packages.md) | 前端 workspace 包结构、Connection / Runtime 两层工厂、嵌入用法 |
 | [app-error-boundary.md](./app-error-boundary.md) | 路由 / 面板级错误边界、懒加载 chunk 重试 |
 | [sidebar-node-first-paint.md](./sidebar-node-first-paint.md) | 冷启动侧栏节点首屏策略与前台拨号竞速 |

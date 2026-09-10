@@ -50,6 +50,10 @@ Usage:
   vibeterm relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   vibeterm relay label <tenantId> <text>
 
+Client commands (talk to a gateway over HTTP/WS, same security boundary as the web UI):
+  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings
+  Run vibeterm <group> --help for the options of one group.
+
 Password prompting (add / passwd / totp / reset-root / enroll / hub join --password / relay join):
   TTY: hidden input with confirmation where required; empty rejected.
   Non-TTY: VIBETERM_PASSWORD (VIBETERM_PASSWORD_OLD for passwd; VIBETERM_TOTP for hub join TOTP). NFKC is applied by deriveSeed.
@@ -112,6 +116,10 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
   vibeterm relay quota <tenantId|default> [--max-nodes <n>] [--max-streams <n>] [--bandwidth <KBps>|unlimited] [--max-file-mb <MB>|none] [--inherit]
   vibeterm relay limits [--max-tenants <n>|none] [--total-bandwidth-kb <KBps>|none] [--fair-share on|off]
   vibeterm relay label <tenantId> <text>
+
+客户端命令（经 HTTP/WS 访问网关，安全边界与网页端完全一致）：
+  vibeterm login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings
+  用 vibeterm <组名> --help 查看某一组的用法。
 
 密码输入（add / passwd / totp / reset-root / enroll / hub join --password / relay join）：
   TTY：隐藏输入，需要时二次确认；拒绝空密码。

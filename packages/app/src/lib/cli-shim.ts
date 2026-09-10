@@ -70,6 +70,11 @@ export async function deployCliPackage(
   }
 
   await copyFile(packageLayout.cliDistPath, join(installLayout.cliDir, 'dist', 'cli-node.js'));
+  // 客户端命令组的 bundle 与 cli-node.js 同级：`client-cli.ts` 按同级路径找它。
+  // ≤2.0.8 的包里没有这个文件（从旧资产驱动 apply 时），缺了只是这些命令不可用，不该让部署失败。
+  if (await pathExists(packageLayout.cliClientBundlePath)) {
+    await copyFile(packageLayout.cliClientBundlePath, join(installLayout.cliDir, 'dist', 'cli.js'));
+  }
 }
 
 export interface InstallVibeTermShimOptions {

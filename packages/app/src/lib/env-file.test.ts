@@ -47,6 +47,8 @@ describe('env-file', () => {
     expect(next.VIBETERM_ROLES).toBe('node');
     expect(next.VIBETERM_HUB_URL).toBe('');
     expect(next.VIBETERM_PEER_PORT).toBe('39001');
+    expect(next.VIBETERM_STUN_SERVERS).toContain('stun:stun.miwifi.com:3478');
+    expect(next.VIBETERM_STUN_SERVERS).toContain('stun:stun.chat.bilibili.com:3478');
     expect(next.VIBETERM_STUN_SERVERS).toContain('stun:stun.l.google.com:19302');
     expect(next.VIBETERM_STUN_SERVERS).toContain('stun:stun.cloudflare.com:3478');
     expect(added).toContain('VIBETERM_HUB_URL');

@@ -50,6 +50,7 @@ async function writePackage(root: string, version: string): Promise<PackageLayou
   return {
     packageRoot: root,
     cliDistPath: join(root, 'dist', 'cli-node.js'),
+    cliClientBundlePath: join(root, 'dist', 'cli.js'),
     runtimeDirPath: join(root, 'dist', 'runtime'),
     resourceFePath: join(root, 'resources', 'fe-dist'),
     resourceDrizzlePath: join(root, 'resources', 'gateway-drizzle'),
