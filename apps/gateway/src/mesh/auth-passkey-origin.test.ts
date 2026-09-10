@@ -1,6 +1,6 @@
 // 通行密钥二次验证按 origin 生效的 HTTP 契约（背景见 docs/security/login-security.md）。
-// 断言只能在注册它的 origin 完成，所以「另一个入口域名」必须能只凭密码（+ TOTP）登录，
-// 而注册过通行密钥的那个 origin 一如既往要过断言。
+// 断言只能在注册它的 origin 完成，所以「另一个入口域名」必须能只凭密码（+ TOTP）登录。
+// 本 origin 有钥匙时，有效 TOTP 或断言满足其一即可（CLI 做不了 WebAuthn）。
 
 import { describe, expect, test } from 'bun:test';
 import { resolve } from 'node:path';
@@ -26,7 +26,9 @@ import {
   gatePasskeySecondFactor,
   isKnownEntryOrigin,
   passkeyOriginScope,
+  resolveSecondFactors,
   sameCanonicalOrigin,
+  verifySecondFactors,
 } from './auth-passkey-origin';
 import { PASSWORD, bootMesh, call, challengeAndLogin } from './auth-routes.test';
 
@@ -135,6 +137,8 @@ async function modeAt(mesh: Mesh, origin: string) {
     passkeysForThisOrigin: boolean;
     passkeySecondFactor?: boolean;
     passkeysRegisteredElsewhere?: boolean;
+    secondFactorPolicy?: string;
+    totpEnabled?: boolean;
   };
 }
 
@@ -149,6 +153,7 @@ describe('passkey second factor is scoped to the request origin', () => {
       expect(modeB.passkeysForThisOrigin).toBe(false);
       expect(modeB.passkeySecondFactor).toBe(false);
       expect(modeB.passkeysRegisteredElsewhere).toBe(true);
+      expect(modeB.secondFactorPolicy).toBe('none');
 
       const loginB = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
@@ -259,6 +264,7 @@ describe('passkey second factor is scoped to the request origin', () => {
       expect(modeA.passkeysForThisOrigin).toBe(true);
       expect(modeA.passkeySecondFactor).toBe(true);
       expect(modeA.passkeysRegisteredElsewhere).toBe(false);
+      expect(modeA.secondFactorPolicy).toBe('passkey');
 
       const missing = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
@@ -273,6 +279,43 @@ describe('passkey second factor is scoped to the request origin', () => {
         passkey: assertionFor(enrolled, 1),
       });
       expect(ok.res.status).toBe(200);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('the registered origin accepts a verified TOTP instead of the assertion', async () => {
+    const mesh = await bootMesh();
+    try {
+      await enrollPasskeyAt(mesh.userStore, mesh.boot.userId, ORIGIN_A);
+      const totp = await enableTotp(mesh);
+      const modeA = await modeAt(mesh, ORIGIN_A);
+      expect(modeA.totpEnabled).toBe(true);
+      expect(modeA.secondFactorPolicy).toBe('either');
+
+      const totpOnly = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: ORIGIN_A },
+        totp,
+      });
+      expect(totpOnly.res.status).toBe(200);
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('a non-canonical Origin is still rejected after TOTP', async () => {
+    const mesh = await bootMesh();
+    try {
+      await enrollPasskeyAt(mesh.userStore, mesh.boot.userId, ORIGIN_A);
+      const totp = await enableTotp(mesh);
+      const res = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: `${ORIGIN_A}/` },
+        totp,
+      });
+      expect(res.res.status).toBe(401);
+      expect((await res.res.json()).code).toBe('PASSKEY_REQUIRED');
     } finally {
       mesh.close();
     }
@@ -371,7 +414,7 @@ describe('gatePasskeySecondFactor', () => {
           origin: variant,
           body: null,
         })
-      ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED' });
+      ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: false });
     }
     // 规范形态照旧放行。
     expect(
@@ -396,7 +439,7 @@ describe('gatePasskeySecondFactor', () => {
       origin: ORIGIN_B,
       body: { credential_id: encodeBase64url(new Uint8Array(4).fill(1)), sig: 'x' },
     });
-    expect(foreign).toEqual({ kind: 'reject', code: 'PASSKEY_INVALID' });
+    expect(foreign).toEqual({ kind: 'reject', code: 'PASSKEY_INVALID', usableHere: true });
 
     const missing = gatePasskeySecondFactor({
       ...base,
@@ -404,7 +447,7 @@ describe('gatePasskeySecondFactor', () => {
       origin: ORIGIN_B,
       body: null,
     });
-    expect(missing).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED' });
+    expect(missing).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: true });
 
     const good = gatePasskeySecondFactor({
       ...base,
@@ -433,9 +476,9 @@ describe('gatePasskeySecondFactor', () => {
         origin: ORIGIN_FORGED,
         body: null,
       })
-    ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED' });
+    ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: false });
 
-    // 已过 TOTP：2FA 仍然成立。
+    // 已过 TOTP：2FA 仍然成立（含本 origin 有钥匙、以及缺 Origin）。
     expect(
       gatePasskeySecondFactor({
         ...base,
@@ -445,6 +488,33 @@ describe('gatePasskeySecondFactor', () => {
         body: null,
       }).kind
     ).toBe('skip');
+    expect(
+      gatePasskeySecondFactor({
+        ...base,
+        totpVerified: true,
+        keys: [key(ORIGIN_B, 2)],
+        origin: ORIGIN_B,
+        body: null,
+      }).kind
+    ).toBe('skip');
+    expect(
+      gatePasskeySecondFactor({
+        ...base,
+        totpVerified: true,
+        keys: [key(ORIGIN_A, 1)],
+        origin: '',
+        body: null,
+      }).kind
+    ).toBe('skip');
+    expect(
+      gatePasskeySecondFactor({
+        ...base,
+        totpVerified: true,
+        keys: [key(ORIGIN_A, 1)],
+        origin: `${ORIGIN_B}/`,
+        body: null,
+      })
+    ).toEqual({ kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: false });
 
     // 服务端自己配置的入口地址。
     expect(
@@ -456,5 +526,73 @@ describe('gatePasskeySecondFactor', () => {
         body: null,
       }).kind
     ).toBe('skip');
+  });
+});
+
+describe('resolveSecondFactors / verifySecondFactors', () => {
+  const totpOff = { ok: true as const, verified: false, enrolled: false };
+  const totpOn = { ok: true as const, verified: false, enrolled: true };
+  const totpOk = { ok: true as const, verified: true, enrolled: true };
+  const totpBad = { ok: false as const, code: 'TOTP_INVALID' };
+  const pkSkip = { ok: true as const, assertionVerified: false };
+  const pkOk = { ok: true as const, assertionVerified: true };
+  const pkNeedHere = { ok: false as const, code: 'PASSKEY_REQUIRED', usableHere: true };
+  const pkNeedElse = { ok: false as const, code: 'PASSKEY_REQUIRED', usableHere: false };
+  const pkBad = { ok: false as const, code: 'PASSKEY_INVALID' };
+
+  test('decision table: either factor, no fallthrough on a wrong TOTP', () => {
+    expect(resolveSecondFactors(totpOk, pkSkip)).toEqual({ ok: true });
+    expect(resolveSecondFactors(totpOk, pkNeedHere)).toEqual({
+      ok: false,
+      code: 'PASSKEY_REQUIRED',
+    });
+    expect(resolveSecondFactors(totpOn, pkOk)).toEqual({ ok: true });
+    expect(resolveSecondFactors(totpOn, pkNeedHere)).toEqual({
+      ok: false,
+      code: 'PASSKEY_REQUIRED',
+    });
+    expect(resolveSecondFactors(totpOn, pkNeedElse)).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
+    expect(resolveSecondFactors(totpOn, pkSkip)).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
+    expect(resolveSecondFactors(totpOn, pkBad)).toEqual({ ok: false, code: 'PASSKEY_INVALID' });
+    expect(resolveSecondFactors(totpBad, pkOk)).toEqual({ ok: false, code: 'TOTP_INVALID' });
+    expect(resolveSecondFactors(totpOff, pkSkip)).toEqual({ ok: true });
+    expect(resolveSecondFactors(totpOff, pkNeedHere)).toEqual({
+      ok: false,
+      code: 'PASSKEY_REQUIRED',
+    });
+  });
+
+  test('verifySecondFactors does not call the passkey gate after TOTP_INVALID', async () => {
+    let passkeyCalls = 0;
+    const result = await verifySecondFactors({
+      checkTotp: async () => totpBad,
+      checkPasskeySecondFactor: async () => {
+        passkeyCalls += 1;
+        return pkOk;
+      },
+      req: new Request('http://localhost/api/auth/login'),
+      user: { id: 'u' } as never,
+      delegation: { method: 'root' } as never,
+      body: { totp: { code: '000000' } },
+    });
+    expect(result).toEqual({ ok: false, code: 'TOTP_INVALID' });
+    expect(passkeyCalls).toBe(0);
+  });
+
+  test('verifySecondFactors forwards totpVerified into the passkey gate', async () => {
+    let seen: boolean | undefined;
+    const result = await verifySecondFactors({
+      checkTotp: async () => totpOk,
+      checkPasskeySecondFactor: async (_r, _u, _d, _p, totpVerified) => {
+        seen = totpVerified;
+        return pkSkip;
+      },
+      req: new Request('http://localhost/api/auth/login'),
+      user: { id: 'u' } as never,
+      delegation: { method: 'root' } as never,
+      body: {},
+    });
+    expect(seen).toBe(true);
+    expect(result).toEqual({ ok: true });
   });
 });

@@ -44,6 +44,8 @@ export interface AuthModeResponse {
    * 这个地址要求一个永远做不完的仪式（见 `passkeysRegisteredElsewhere`）。
    */
   passkeySecondFactor?: boolean;
+  /** 二次验证策略：'either' = 有效 TOTP 或本 origin 通行密钥断言其一即可；旧节点不下发。 */
+  secondFactorPolicy?: 'either' | 'totp' | 'passkey' | 'none';
   /**
    * 名下有通行密钥，但没有一把注册在当前 origin：登录页据此提示「登录后为此地址添加」。
    * 旧版本节点不返回该字段。

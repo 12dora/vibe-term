@@ -1,4 +1,4 @@
-// 通行密钥二次验证的 origin 归属判定。
+// 通行密钥二次验证的 origin 归属判定，以及 TOTP / 通行密钥二次验证的 OR 编排。
 //
 // WebAuthn 断言只能在注册它的 origin 上完成，因此「本 origin 要不要断言」必须与
 // 「本 origin 拿得出哪些凭证」用同一份口径（`handlePasskeyLoginOptions` 按精确 origin 过滤）。
@@ -9,9 +9,12 @@
 // 密钥、本次登录已过 TOTP、或该 origin 就是服务端自己配置的入口地址（站点 URL / 隧道域名 /
 // hub 公网地址 / 中继访问地址，见 auth-passkey-origin-entry.ts）。都不成立就回
 // `PASSKEY_REQUIRED`，由登录页指路（本机登录，或 CLI 移除通行密钥）。
+//
+// 账户同时启用 TOTP 与通行密钥时，二次验证是 OR：有效 TOTP 或本 origin 断言满足其一即可
+// （CLI / agent 做不了 WebAuthn）。非规范 Origin 硬拒绝仍在 TOTP 通过之后执行。
 
-import { encodeBase64url } from '@vibeterm/shared/auth';
-import type { UserKeyRecord } from '../auth/user-store';
+import { type Delegation, encodeBase64url } from '@vibeterm/shared/auth';
+import type { UserKeyRecord, UserRecord } from '../auth/user-store';
 import { stamp } from './mesh-log';
 
 export type PasskeyOriginScope = {
@@ -79,7 +82,7 @@ function parsePasskeySecondFactor(value: unknown): { credentialId: string; sig: 
 
 export type PasskeySecondFactorGate =
   | { kind: 'skip' }
-  | { kind: 'reject'; code: string }
+  | { kind: 'reject'; code: string; usableHere: boolean }
   | { kind: 'verify'; credentialId: string; sig: string };
 
 export type PasskeySecondFactorInput = {
@@ -88,37 +91,111 @@ export type PasskeySecondFactorInput = {
   uid: string;
   body: unknown;
   /**
-   * 本次登录已经过了 TOTP（账户开了两步验证）。`verifySecondFactors` 先跑 TOTP、失败即返回，
-   * 所以能走到这一关就等于 TOTP 已验证。
+   * 本次登录已经用登录体里的 TOTP 校验通过。通过则整道 gate 放行（含本 origin 有钥匙），
+   * 但非规范 Origin 硬拒绝仍在这之前执行。
    */
   totpVerified: boolean;
   /** 服务端配置里的入口地址；伪造的 Origin 不在其中。 */
   entryOrigins: readonly (string | null | undefined)[];
 };
 
+function rejectNonCanonicalOrigin(input: PasskeySecondFactorInput): PasskeySecondFactorGate | null {
+  // 非规范形态只可能是手工构造：名下有通行密钥时拒绝，不给「变体绕开归属再撞入口」留缝。
+  // 缺 Origin（CLI 常见）不算非规范，交给后面的 totpVerified / 入口规则。
+  if (input.keys.length === 0 || !input.origin) return null;
+  if (canonicalOrigin(input.origin) === input.origin) return null;
+  return { kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: false };
+}
+
 /** 密码（root delegation）登录该怎么过通行密钥这一关。 */
 export function gatePasskeySecondFactor(input: PasskeySecondFactorInput): PasskeySecondFactorGate {
-  // 非规范形态的 Origin 只可能是手工构造的：名下有通行密钥时一律拒绝，
-  // 不给「变体绕开凭证归属、又命中已知入口」留缝。
-  if (input.keys.length > 0 && canonicalOrigin(input.origin) !== input.origin) {
-    return { kind: 'reject', code: 'PASSKEY_REQUIRED' };
-  }
+  const malformed = rejectNonCanonicalOrigin(input);
+  if (malformed) return malformed;
   const scope = passkeyOriginScope(input.keys, input.origin);
+  if (input.totpVerified) {
+    return scope.here.length > 0 || scope.registeredElsewhere
+      ? skipWithAudit(input, 'totp')
+      : { kind: 'skip' };
+  }
   if (scope.here.length > 0) return verifyAgainstScope(scope, input.body);
-  // 名下一把通行密钥都没有：这一关本来就不存在。
   if (!scope.registeredElsewhere) return { kind: 'skip' };
-  if (input.totpVerified) return skipWithAudit(input, 'totp');
   if (isKnownEntryOrigin(input.origin, input.entryOrigins)) return skipWithAudit(input, 'entry');
-  return { kind: 'reject', code: 'PASSKEY_REQUIRED' };
+  return { kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: false };
 }
 
 function verifyAgainstScope(scope: PasskeyOriginScope, body: unknown): PasskeySecondFactorGate {
   const parsed = parsePasskeySecondFactor(body);
-  if (!parsed) return { kind: 'reject', code: 'PASSKEY_REQUIRED' };
+  if (!parsed) return { kind: 'reject', code: 'PASSKEY_REQUIRED', usableHere: true };
   if (!credentialInScope(scope, parsed.credentialId)) {
-    return { kind: 'reject', code: 'PASSKEY_INVALID' };
+    return { kind: 'reject', code: 'PASSKEY_INVALID', usableHere: true };
   }
   return { kind: 'verify', credentialId: parsed.credentialId, sig: parsed.sig };
+}
+
+export type SecondFactorResult = { ok: true } | { ok: false; code: string };
+
+export type TotpFactorResult =
+  | { ok: true; verified: boolean; enrolled: boolean }
+  | { ok: false; code: string };
+
+export type PasskeyFactorResult =
+  | { ok: true; assertionVerified: boolean }
+  | { ok: false; code: string; usableHere?: boolean };
+
+function totpCoversMissingPasskey(totp: TotpFactorResult, passkey: PasskeyFactorResult): boolean {
+  return (
+    totp.ok &&
+    !totp.verified &&
+    totp.enrolled &&
+    !passkey.ok &&
+    passkey.code === 'PASSKEY_REQUIRED' &&
+    !passkey.usableHere
+  );
+}
+
+/** TOTP 与通行密钥二次验证的 OR：错码不回落；缺因子时按「这里能不能做断言」选错误码。 */
+export function resolveSecondFactors(
+  totp: TotpFactorResult,
+  passkey: PasskeyFactorResult
+): SecondFactorResult {
+  if (!totp.ok) return totp;
+  if (!passkey.ok) {
+    if (totpCoversMissingPasskey(totp, passkey)) return { ok: false, code: 'TOTP_REQUIRED' };
+    return { ok: false, code: passkey.code };
+  }
+  if (totp.verified || passkey.assertionVerified) return { ok: true };
+  if (totp.enrolled) return { ok: false, code: 'TOTP_REQUIRED' };
+  return { ok: true };
+}
+
+export async function verifySecondFactors(args: {
+  checkTotp: (
+    user: UserRecord,
+    method: Delegation['method'],
+    totpBody: unknown
+  ) => Promise<TotpFactorResult>;
+  checkPasskeySecondFactor: (
+    req: Request,
+    user: UserRecord,
+    delegation: Delegation,
+    passkeyBody: unknown,
+    totpVerified: boolean
+  ) => Promise<PasskeyFactorResult>;
+  req: Request;
+  user: UserRecord;
+  delegation: Delegation;
+  body: Record<string, unknown>;
+}): Promise<SecondFactorResult> {
+  const totp = await args.checkTotp(args.user, args.delegation.method, args.body.totp);
+  if (!totp.ok) return totp;
+  const passkey = await args.checkPasskeySecondFactor(
+    args.req,
+    args.user,
+    args.delegation,
+    args.body.passkey,
+    totp.verified
+  );
+  return resolveSecondFactors(totp, passkey);
 }
 
 function skipWithAudit(

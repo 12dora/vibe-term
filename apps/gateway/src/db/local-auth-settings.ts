@@ -78,6 +78,7 @@ export function standaloneClosedModeFields() {
     kdfParams: null,
     passkeysForThisOrigin: false,
     totpEnabled: false,
+    secondFactorPolicy: 'none' as const,
     rootEpoch: null,
     rootPublicKey: null,
     hubNodeId: null,

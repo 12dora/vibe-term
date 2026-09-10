@@ -499,6 +499,7 @@ describe('auth-routes', () => {
         passkeyAvailable: boolean;
         passkeySecondFactor?: boolean;
         totpEnabled: boolean;
+        secondFactorPolicy?: string;
         rootEpoch: number | null;
         rootPublicKey: string | null;
         hubNodeId: string | null;
@@ -513,6 +514,7 @@ describe('auth-routes', () => {
       expect(body.passkeyAvailable).toBe(true);
       expect(body.passkeySecondFactor).toBe(false);
       expect(body.totpEnabled).toBe(false);
+      expect(body.secondFactorPolicy).toBe('none');
       expect(body.rootEpoch).toBe(mesh.boot.rootEpoch);
       expect(body.rootPublicKey).toBeNull();
       expect(body.hubNodeId).toBeNull();
@@ -2058,11 +2060,9 @@ describe('auth-routes', () => {
         rpId: 'localhost',
         fill: 31,
       });
-      const code = totpCode(secret, Math.floor(Date.now() / 1000));
       for (let i = 0; i < 11; i++) {
         const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
           clientIp: '203.0.113.22',
-          totp: { code, k_totp: encodeBase64url(kTotp) },
           headers: { origin: 'http://localhost:19663' },
         });
         expect(res.status).toBe(401);
@@ -3176,7 +3176,7 @@ describe('auth-routes', () => {
     }
   });
 
-  test('TOTP then passkey: both enrolled means both required', async () => {
+  test('TOTP then passkey: both enrolled means either factor suffices', async () => {
     const mesh = await bootMesh();
     try {
       const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
@@ -3206,39 +3206,47 @@ describe('auth-routes', () => {
         code: totpCode(secret, Math.floor(Date.now() / 1000)),
         k_totp: encodeBase64url(kTotp),
       };
+      const origin = { headers: { origin: 'http://localhost:19663' } };
+      const passkey = async (
+        del: { bytes: Uint8Array },
+        counter: number
+      ): Promise<{ credential_id: string; sig: string }> => {
+        const assertion = await enrolled.authenticator.assert({
+          challenge: sha256(del.bytes),
+          rpId: enrolled.rpId,
+          origin: enrolled.origin,
+          counter,
+        });
+        return {
+          credential_id: enrolled.payload.credential_id,
+          sig: encodeBase64url(encodePasskeyAssertionSig(assertion)),
+        };
+      };
 
-      const missingTotp = await challengeAndLogin(mesh.runtime, mesh.boot);
-      expect((await missingTotp.res.json()).code).toBe('TOTP_REQUIRED');
+      const missingBoth = await challengeAndLogin(mesh.runtime, mesh.boot, origin);
+      expect((await missingBoth.res.json()).code).toBe('PASSKEY_REQUIRED');
 
-      const missingPasskey = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        totp,
-        headers: { origin: 'http://localhost:19663' },
-      });
-      expect((await missingPasskey.res.json()).code).toBe('PASSKEY_REQUIRED');
-
-      const both = await challengeAndLogin(mesh.runtime, mesh.boot, {
-        totp,
-        headers: { origin: 'http://localhost:19663' },
-        passkey: async (del) => {
-          const assertion = await enrolled.authenticator.assert({
-            challenge: sha256(del.bytes),
-            rpId: enrolled.rpId,
-            origin: enrolled.origin,
-            counter: 1,
-          });
-          return {
-            credential_id: enrolled.payload.credential_id,
-            sig: encodeBase64url(encodePasskeyAssertionSig(assertion)),
-          };
-        },
-      });
-      expect(both.res.status).toBe(200);
-      const verified = mesh.nodeSessionStore.verify(both.sid, {
+      const totpOnly = await challengeAndLogin(mesh.runtime, mesh.boot, { totp, ...origin });
+      expect(totpOnly.res.status).toBe(200);
+      const totpSession = mesh.nodeSessionStore.verify(totpOnly.sid, {
         viaNodeId: 'self',
         now: Date.now(),
       });
-      expect(verified.ok).toBe(true);
-      if (verified.ok) expect(verified.session.delegationMethod).toBe('root');
+      expect(totpSession.ok).toBe(true);
+      if (totpSession.ok) expect(totpSession.session.delegationMethod).toBe('root');
+
+      const passkeyOnly = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        ...origin,
+        passkey: (del) => passkey(del, 1),
+      });
+      expect(passkeyOnly.res.status).toBe(200);
+
+      const wrongTotp = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        totp: { code: '000000', k_totp: totp.k_totp },
+        ...origin,
+        passkey: (del) => passkey(del, 2),
+      });
+      expect((await wrongTotp.res.json()).code).toBe('TOTP_INVALID');
     } finally {
       mesh.close();
     }

@@ -42,6 +42,19 @@ export function isLocalAuthEffective(ctx: LocalAuthHttpCtx): boolean {
   return localAuthPayload(ctx).effective;
 }
 
+/** 登录页 / CLI 用来决定二次验证要交哪一种因子。旧客户端忽略即可。 */
+export type SecondFactorPolicy = 'either' | 'totp' | 'passkey' | 'none';
+
+export function secondFactorPolicyForMode(input: {
+  totpEnabled: boolean;
+  passkeySecondFactor: boolean;
+}): SecondFactorPolicy {
+  if (input.totpEnabled && input.passkeySecondFactor) return 'either';
+  if (input.totpEnabled) return 'totp';
+  if (input.passkeySecondFactor) return 'passkey';
+  return 'none';
+}
+
 export function meshAuthModeUserFields(
   user: UserRecord | null,
   origin: string,
@@ -53,6 +66,8 @@ export function meshAuthModeUserFields(
   const scope = passkeyOriginScope(keys, origin);
   const hasKeysHere = scope.here.length > 0;
   const waived = Boolean(opts?.waivePasskeySecondFactor) && hasKeysHere;
+  const totpEnabled = user?.totpRecordSeq != null;
+  const passkeySecondFactor = hasKeysHere && !waived;
   return {
     mode: 'mesh' as const,
     uid: user?.id ?? null,
@@ -61,10 +76,11 @@ export function meshAuthModeUserFields(
     passkeysForThisOrigin: hasKeysHere,
     // 断言只能在注册它的 origin 上完成：本 origin 没有凭证就不能要求二次验证，
     // 否则换入口域名后密码正确也永远登不进来（见 auth-passkey-origin.ts）。
-    passkeySecondFactor: hasKeysHere && !waived,
+    passkeySecondFactor,
     passkeySecondFactorWaived: waived,
     passkeysRegisteredElsewhere: scope.registeredElsewhere,
-    totpEnabled: user?.totpRecordSeq != null,
+    totpEnabled,
+    secondFactorPolicy: secondFactorPolicyForMode({ totpEnabled, passkeySecondFactor }),
     rootEpoch: user?.rootEpoch ?? null,
     rootPublicKey: user ? encodeBase64url(user.rootPublicKey) : null,
     hubNodeId: hub.nodeId,

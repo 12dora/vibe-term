@@ -1,5 +1,4 @@
 import {
-  type Delegation,
   RELAY_RECORD_TYPES,
   applyKeyLogRecord,
   bytesEqual,
@@ -15,7 +14,6 @@ import { readJsonObjectBody } from '../api/http';
 import { requiredStrings } from '../api/route-input';
 import { pickWriterHub } from '../auth/mesh-hub-store';
 import { makeDeferredVerifyPasskeyAssertion } from '../auth/passkey';
-import type { UserRecord } from '../auth/user-store';
 import {
   applyForcedKeyLogCompat,
   filterNotRetiredHubRecords,
@@ -95,36 +93,7 @@ export function createLoginFailureSink(
   return { noteUidHint, fail, precheck, rejectUid };
 }
 
-type SecondFactorResult = { ok: true } | { ok: false; code: string };
-
-export async function verifySecondFactors(args: {
-  checkTotp: (
-    user: UserRecord,
-    method: Delegation['method'],
-    totpBody: unknown
-  ) => Promise<SecondFactorResult>;
-  checkPasskeySecondFactor: (
-    req: Request,
-    user: UserRecord,
-    delegation: Delegation,
-    passkeyBody: unknown
-  ) => Promise<SecondFactorResult>;
-  req: Request;
-  user: UserRecord;
-  delegation: Delegation;
-  body: Record<string, unknown>;
-}): Promise<SecondFactorResult> {
-  const totpCheck = await args.checkTotp(args.user, args.delegation.method, args.body.totp);
-  if (!totpCheck.ok) return totpCheck;
-  const passkeyCheck = await args.checkPasskeySecondFactor(
-    args.req,
-    args.user,
-    args.delegation,
-    args.body.passkey
-  );
-  if (!passkeyCheck.ok) return passkeyCheck;
-  return { ok: true };
-}
+export { verifySecondFactors } from './auth-passkey-origin';
 
 export type AuthKeyLogHost = {
   invalidateAuthModeCache: () => void;

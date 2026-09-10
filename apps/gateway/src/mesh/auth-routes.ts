@@ -46,7 +46,6 @@ import {
   AuthKeyLogRoutes,
   createLoginFailureSink,
   loginRequestContext,
-  verifySecondFactors,
 } from './auth-key-log-routes';
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
@@ -56,7 +55,13 @@ import {
   loadAuthModeTls,
   withAuthModeInvalidation,
 } from './auth-mode-cache';
-import { gatePasskeySecondFactor, sameCanonicalOrigin } from './auth-passkey-origin';
+import {
+  type PasskeyFactorResult,
+  type TotpFactorResult,
+  gatePasskeySecondFactor,
+  sameCanonicalOrigin,
+  verifySecondFactors,
+} from './auth-passkey-origin';
 import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
 import { handleTotpRecordRequest, parseTotpBody } from './auth-totp-record';
@@ -381,8 +386,8 @@ export class AuthRoutes {
       if (!loginOk.ok) return fail(loginErrorCode(loginOk.error));
       const second = await verifySecondFactors({
         checkTotp: (user, method, totp) => this.checkTotp(user, method, totp),
-        checkPasskeySecondFactor: (r, u, delegation, passkey) =>
-          this.checkPasskeySecondFactor(r, u, delegation, passkey),
+        checkPasskeySecondFactor: (r, u, delegation, passkey, totpVerified) =>
+          this.checkPasskeySecondFactor(r, u, delegation, passkey, totpVerified),
         req,
         user,
         delegation: envelope.delegation,
@@ -568,12 +573,13 @@ export class AuthRoutes {
     user: UserRecord,
     method: Delegation['method'],
     totpBody: unknown
-  ): Promise<{ ok: true } | { ok: false; code: string }> {
-    if (method !== 'root') return { ok: true };
+  ): Promise<TotpFactorResult> {
+    if (method !== 'root') return { ok: true, verified: false, enrolled: false };
     const state = this.deps.keyLogService.currentState(user.id);
-    if (!state.totp || user.totpRecordSeq == null) return { ok: true };
+    if (!state.totp || user.totpRecordSeq == null)
+      return { ok: true, verified: false, enrolled: false };
     const parsed = parseTotpBody(totpBody);
-    if (!parsed) return { ok: false, code: 'TOTP_REQUIRED' };
+    if (!parsed) return { ok: true, verified: false, enrolled: true };
     try {
       const secret = await decryptTotpSecret(parsed.kTotp, state.totp, {
         uid: user.id,
@@ -584,7 +590,7 @@ export class AuthRoutes {
       if (!verifyTotpCode(secret, parsed.code, timeSec)) {
         return { ok: false, code: 'TOTP_INVALID' };
       }
-      return { ok: true };
+      return { ok: true, verified: true, enrolled: true };
     } catch {
       return { ok: false, code: 'TOTP_INVALID' };
     }
@@ -594,23 +600,21 @@ export class AuthRoutes {
     req: Request,
     user: UserRecord,
     delegation: Delegation,
-    passkeyBody: unknown
-  ): Promise<{ ok: true } | { ok: false; code: string }> {
-    if (delegation.method !== 'root') return { ok: true };
-    if (waivesPasskeySecondFactor(req)) return { ok: true };
-    const state = this.deps.keyLogService.currentState(user.id);
+    passkeyBody: unknown,
+    totpVerified: boolean
+  ): Promise<PasskeyFactorResult> {
+    if (delegation.method !== 'root') return { ok: true, assertionVerified: false };
+    if (waivesPasskeySecondFactor(req)) return { ok: true, assertionVerified: false };
     const gate = gatePasskeySecondFactor({
       keys: this.deps.userStore.listKeysByUser(user.id),
       origin: requestOrigin(req),
       uid: user.id,
       body: passkeyBody,
-      // 与 checkTotp 同一个条件：它先跑且失败即返回，所以这两项同时成立就等于本次已验过 TOTP。
-      totpVerified: Boolean(state.totp) && user.totpRecordSeq != null,
+      totpVerified,
       entryOrigins: defaultEntryOrigins(this.deps),
     });
-    if (gate.kind !== 'verify') {
-      return gate.kind === 'skip' ? { ok: true } : { ok: false, code: gate.code };
-    }
+    if (gate.kind === 'skip') return { ok: true, assertionVerified: false };
+    if (gate.kind === 'reject') return { ok: false, code: gate.code, usableHere: gate.usableHere };
     try {
       const assertion = decodePasskeyAssertionSig(decodeBase64url(gate.sig));
       const ok = await this.verifyPasskey({
@@ -619,7 +623,7 @@ export class AuthRoutes {
         assertion,
         credentialId: gate.credentialId,
       });
-      return ok ? { ok: true } : { ok: false, code: 'PASSKEY_INVALID' };
+      return ok ? { ok: true, assertionVerified: true } : { ok: false, code: 'PASSKEY_INVALID' };
     } catch {
       return { ok: false, code: 'PASSKEY_INVALID' };
     }
