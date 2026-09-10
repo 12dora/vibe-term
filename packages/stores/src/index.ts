@@ -103,6 +103,7 @@ export {
   pruneTmuxTopologyCache,
   readTmuxTopologyCache,
   tmuxTopologyCacheKey,
+  writeTmuxTopology,
   type CachedTopology,
   type CachedTopologyPane,
   type CachedTopologyWindow,

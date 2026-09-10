@@ -5,19 +5,15 @@ import {
   type CachedTopology,
   MAX_CACHED_DEVICES,
   MAX_CACHED_PANES,
+  MAX_CACHED_TEXT_CHARS,
   MAX_CACHED_WINDOWS,
+  MAX_CACHE_CHARS,
   TMUX_TOPOLOGY_CACHE_VERSION,
   TMUX_TOPOLOGY_TTL_MS,
-  TOPOLOGY_WRITE_INTERVAL_MS,
-  type TmuxTopologyPlaceholders,
-  type TopologySyncState,
-  type TopologySyncStore,
-  type TopologySyncTimers,
   clearTmuxTopologyCache,
   pruneTmuxTopologyCache,
   readTmuxTopologyCache,
   removeTmuxTopology,
-  syncTmuxTopologyCache,
   tmuxTopologyCacheKey,
   toCachedTopology,
   writeTmuxTopology,
@@ -54,6 +50,30 @@ let storage = createMemoryStorage();
 beforeEach(() => {
   storage = createMemoryStorage();
 });
+
+/** 记账用 Storage：句柄按存储实例缓存，每个用例换一份即天然隔离 */
+function countingStorage() {
+  const inner = createMemoryStorage();
+  let writes = 0;
+  let removes = 0;
+  return {
+    getItem: (key: string) => inner.getItem(key),
+    setItem: (key: string, value: string) => {
+      writes += 1;
+      inner.setItem(key, value);
+    },
+    removeItem: (key: string) => {
+      removes += 1;
+      inner.removeItem(key);
+    },
+    get writes() {
+      return writes;
+    },
+    get removes() {
+      return removes;
+    },
+  };
+}
 
 describe('toCachedTopology', () => {
   test('只保留结构字段，不落尺寸与布局', () => {
@@ -104,7 +124,7 @@ describe('toCachedTopology', () => {
 describe('拓扑缓存读写', () => {
   test('写入后可原样读回', () => {
     const topology = toCachedTopology(session([tmuxWindow('@1', [pane('%1')])]), 5_000);
-    writeTmuxTopology(PREFIX, 'dev-1', topology as CachedTopology, storage, 5_000);
+    writeTmuxTopology(PREFIX, 'dev-1', topology as CachedTopology, storage);
 
     expect(readTmuxTopologyCache(PREFIX, storage, 5_000)['dev-1']).toEqual(
       topology as CachedTopology
@@ -116,8 +136,8 @@ describe('拓扑缓存读写', () => {
       session([tmuxWindow('@1', [pane('%1')])]),
       1
     ) as CachedTopology;
-    writeTmuxTopology(PREFIX, 'dev-1', topology, storage, 1);
-    writeTmuxTopology('', 'dev-2', topology, storage, 1);
+    writeTmuxTopology(PREFIX, 'dev-1', topology, storage);
+    writeTmuxTopology('', 'dev-2', topology, storage);
 
     expect(storage.getItem(tmuxTopologyCacheKey(PREFIX))).not.toBeNull();
     expect(Object.keys(readTmuxTopologyCache(PREFIX, storage, 1))).toEqual(['dev-1']);
@@ -129,7 +149,7 @@ describe('拓扑缓存读写', () => {
       session([tmuxWindow('@1', [pane('%1')])]),
       0
     ) as CachedTopology;
-    writeTmuxTopology(PREFIX, 'dev-1', topology, storage, 0);
+    writeTmuxTopology(PREFIX, 'dev-1', topology, storage);
 
     expect(readTmuxTopologyCache(PREFIX, storage, TMUX_TOPOLOGY_TTL_MS)['dev-1']).toBeDefined();
     expect(
@@ -142,7 +162,7 @@ describe('拓扑缓存读写', () => {
       session([tmuxWindow('@1', [pane('%1')])]),
       1
     ) as CachedTopology;
-    writeTmuxTopology(PREFIX, 'dev-1', topology, storage, 1);
+    writeTmuxTopology(PREFIX, 'dev-1', topology, storage);
     const raw = JSON.parse(storage.getItem(tmuxTopologyCacheKey(PREFIX)) as string);
     expect(raw.version).toBe(TMUX_TOPOLOGY_CACHE_VERSION);
     storage.setItem(
@@ -188,7 +208,7 @@ describe('拓扑缓存读写', () => {
         session([tmuxWindow('@1', [pane('%1')])]),
         1_000 + i
       ) as CachedTopology;
-      writeTmuxTopology(PREFIX, `dev-${i}`, topology, storage, 1_000 + i);
+      writeTmuxTopology(PREFIX, `dev-${i}`, topology, storage);
     }
     const parsed = readTmuxTopologyCache(PREFIX, storage, 2_000);
     expect(Object.keys(parsed)).toHaveLength(MAX_CACHED_DEVICES);
@@ -201,8 +221,8 @@ describe('拓扑缓存读写', () => {
       session([tmuxWindow('@1', [pane('%1')])]),
       1
     ) as CachedTopology;
-    writeTmuxTopology(PREFIX, 'dev-1', topology, storage, 1);
-    writeTmuxTopology(PREFIX, 'dev-2', topology, storage, 1);
+    writeTmuxTopology(PREFIX, 'dev-1', topology, storage);
+    writeTmuxTopology(PREFIX, 'dev-2', topology, storage);
 
     removeTmuxTopology(PREFIX, 'dev-1', storage, 1);
     expect(Object.keys(readTmuxTopologyCache(PREFIX, storage, 1))).toEqual(['dev-2']);
@@ -216,9 +236,9 @@ describe('拓扑缓存读写', () => {
       session([tmuxWindow('@1', [pane('%1')])]),
       1
     ) as CachedTopology;
-    writeTmuxTopology(PREFIX, 'dev-1', topology, storage, 1);
-    writeTmuxTopology(PREFIX, 'dev-2', topology, storage, 1);
-    writeTmuxTopology(PREFIX, 'dev-3', topology, storage, 1);
+    writeTmuxTopology(PREFIX, 'dev-1', topology, storage);
+    writeTmuxTopology(PREFIX, 'dev-2', topology, storage);
+    writeTmuxTopology(PREFIX, 'dev-3', topology, storage);
 
     pruneTmuxTopologyCache(PREFIX, ['dev-2'], storage, 1);
 
@@ -242,217 +262,153 @@ describe('拓扑缓存读写', () => {
       1
     ) as CachedTopology;
     expect(readTmuxTopologyCache(PREFIX, broken, 1)).toEqual({});
-    expect(() => writeTmuxTopology(PREFIX, 'dev-1', topology, broken, 1)).not.toThrow();
+    expect(() => writeTmuxTopology(PREFIX, 'dev-1', topology, broken)).not.toThrow();
     expect(() => clearTmuxTopologyCache(PREFIX, broken)).not.toThrow();
     expect(() => pruneTmuxTopologyCache(PREFIX, ['dev-1'], broken, 1)).not.toThrow();
     expect(readTmuxTopologyCache(PREFIX, null, 1)).toEqual({});
   });
 });
 
-// ---------- 写通 / 占位对账 ----------
+describe('文本截断与体积预算', () => {
+  const long = 'x'.repeat(MAX_CACHED_TEXT_CHARS + 80);
 
-class FakeTimers implements TopologySyncTimers {
-  private seq = 0;
-  private readonly jobs = new Map<number, () => void>();
+  test('落盘时截断窗口名 / pane 标题 / 自定义名 / 进程名', () => {
+    const topology = toCachedTopology(
+      session([
+        tmuxWindow('@1', [pane('%1', { title: long, customName: long, currentCommand: long })], {
+          name: long,
+          customName: long,
+        }),
+      ]),
+      1
+    ) as CachedTopology;
 
-  setTimer(fn: () => void): unknown {
-    this.seq += 1;
-    this.jobs.set(this.seq, fn);
-    return this.seq;
-  }
-
-  clearTimer(handle: unknown): void {
-    this.jobs.delete(handle as number);
-  }
-
-  runAll(): void {
-    const pending = [...this.jobs.entries()];
-    this.jobs.clear();
-    for (const [, fn] of pending) fn();
-  }
-
-  get pendingCount(): number {
-    return this.jobs.size;
-  }
-}
-
-function createFakeStore(initial: Partial<TopologySyncState> = {}) {
-  const listeners = new Set<() => void>();
-  let state: TopologySyncState = {
-    snapshots: {},
-    connectedDevices: new Set<string>(),
-    topologyPlaceholders: {},
-    ...initial,
-  };
-  const store: TopologySyncStore = {
-    getState: () => state,
-    setState: (partial) => {
-      state = { ...state, ...partial };
-      for (const listener of [...listeners]) listener();
-    },
-    subscribe: (listener) => {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-  };
-  return {
-    store,
-    patch(partial: Partial<TopologySyncState>) {
-      state = { ...state, ...partial };
-      for (const listener of [...listeners]) listener();
-    },
-    get current() {
-      return state;
-    },
-  };
-}
-
-describe('syncTmuxTopologyCache', () => {
-  test('快照变化写通到缓存，并按每设备 1 次/秒节流', () => {
-    const timers = new FakeTimers();
-    let now = 10_000;
-    const fake = createFakeStore();
-    const dispose = syncTmuxTopologyCache(fake.store, {
-      storagePrefix: PREFIX,
-      storage,
-      now: () => now,
-      timers,
-    });
-
-    fake.patch({
-      snapshots: { 'dev-1': { session: session([tmuxWindow('@1', [pane('%1')])]) } },
-    });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']?.windows).toHaveLength(1);
-
-    // 同一秒内的第二次变化只排队，不再落盘
-    now += 100;
-    fake.patch({
-      snapshots: {
-        'dev-1': {
-          session: session([tmuxWindow('@1', [pane('%1')]), tmuxWindow('@2', [pane('%2')])]),
-        },
-      },
-    });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']?.windows).toHaveLength(1);
-    expect(timers.pendingCount).toBe(1);
-
-    now += TOPOLOGY_WRITE_INTERVAL_MS;
-    timers.runAll();
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']?.windows).toHaveLength(2);
-
-    dispose();
+    const win = topology.windows[0] as NonNullable<(typeof topology.windows)[number]>;
+    expect(win.name).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(win.customName).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    const cachedPane = win.panes[0] as NonNullable<(typeof win.panes)[number]>;
+    expect(cachedPane.title).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(cachedPane.customName).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(cachedPane.currentCommand).toHaveLength(MAX_CACHED_TEXT_CHARS);
   });
 
-  test('设备退出 connectedDevices 即删掉它的缓存与占位', () => {
-    const timers = new FakeTimers();
-    let now = 0;
-    const placeholders: TmuxTopologyPlaceholders = {
-      'dev-2': {
-        savedAt: 0,
-        windows: [{ id: '@9', index: 0, name: 'zsh', active: true, panes: [] }],
-      },
-    };
-    const fake = createFakeStore({
-      connectedDevices: new Set(['dev-1', 'dev-2']),
-      topologyPlaceholders: placeholders,
-    });
-    const dispose = syncTmuxTopologyCache(fake.store, {
-      storagePrefix: PREFIX,
-      storage,
-      now: () => now,
-      timers,
-    });
+  test('读侧同样截断：旧版本写下的长文本读回来也是截断的', () => {
+    storage.setItem(
+      tmuxTopologyCacheKey(PREFIX),
+      JSON.stringify({
+        version: TMUX_TOPOLOGY_CACHE_VERSION,
+        devices: {
+          'dev-1': {
+            savedAt: 1,
+            windows: [
+              {
+                id: '@1',
+                index: 0,
+                name: long,
+                active: true,
+                customName: long,
+                panes: [{ id: '%1', index: 0, active: true, title: long, currentCommand: long }],
+              },
+            ],
+          },
+        },
+      })
+    );
 
-    fake.patch({ snapshots: { 'dev-1': { session: session([tmuxWindow('@1', [pane('%1')])]) } } });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']).toBeDefined();
-
-    now += TOPOLOGY_WRITE_INTERVAL_MS;
-    fake.patch({ connectedDevices: new Set(['dev-1']) });
-    expect(fake.current.topologyPlaceholders['dev-2']).toBeUndefined();
-
-    fake.patch({ connectedDevices: new Set<string>() });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']).toBeUndefined();
-
-    dispose();
+    const win = readTmuxTopologyCache(PREFIX, storage, 1)['dev-1']?.windows[0];
+    expect(win?.name).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(win?.customName).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(win?.panes[0]?.title).toHaveLength(MAX_CACHED_TEXT_CHARS);
+    expect(win?.panes[0]?.currentCommand).toHaveLength(MAX_CACHED_TEXT_CHARS);
   });
 
-  test('实时快照到货即摘掉该设备的占位，其余占位保留', () => {
-    const timers = new FakeTimers();
-    const fake = createFakeStore({
-      topologyPlaceholders: {
-        'dev-1': {
-          savedAt: 0,
-          windows: [{ id: '@1', index: 0, name: 'zsh', active: true, panes: [] }],
-        },
-        'dev-2': {
-          savedAt: 0,
-          windows: [{ id: '@2', index: 0, name: 'zsh', active: true, panes: [] }],
-        },
-      },
-    });
-    const dispose = syncTmuxTopologyCache(fake.store, {
-      storagePrefix: PREFIX,
-      storage,
-      now: () => 0,
-      timers,
-    });
+  test('超出体积预算时淘汰最旧的，落盘的键永远不超预算', () => {
+    // 每台设备塞满窗口 / pane，几台就能顶到 128 KiB
+    const fatWindows = Array.from({ length: MAX_CACHED_WINDOWS }, (_, w) =>
+      tmuxWindow(
+        `@${w}`,
+        Array.from({ length: MAX_CACHED_PANES }, (_, i) =>
+          pane(`%${w}-${i}`, { title: 'y'.repeat(MAX_CACHED_TEXT_CHARS) })
+        ),
+        { name: 'z'.repeat(MAX_CACHED_TEXT_CHARS) }
+      )
+    );
+    for (let i = 0; i < 12; i += 1) {
+      const topology = toCachedTopology(session(fatWindows), 1_000 + i) as CachedTopology;
+      writeTmuxTopology(PREFIX, `dev-${i}`, topology, storage);
+    }
 
-    fake.patch({ snapshots: { 'dev-1': { session: session([tmuxWindow('@1', [pane('%1')])]) } } });
+    const raw = storage.getItem(tmuxTopologyCacheKey(PREFIX)) as string;
+    expect(raw.length).toBeLessThanOrEqual(MAX_CACHE_CHARS);
+    const kept = Object.keys(readTmuxTopologyCache(PREFIX, storage, 1_100));
+    expect(kept.length).toBeGreaterThan(0);
+    expect(kept.length).toBeLessThan(12);
+    // 保留的是最近写入的那几台
+    expect(kept).toContain('dev-11');
+    expect(kept).not.toContain('dev-0');
+  });
+});
 
-    expect(fake.current.topologyPlaceholders['dev-1']).toBeUndefined();
-    expect(fake.current.topologyPlaceholders['dev-2']).toBeDefined();
+describe('写入指纹去重', () => {
+  function topologyAt(savedAt: number, title = 'vim'): CachedTopology {
+    return toCachedTopology(
+      session([tmuxWindow('@1', [pane('%1', { title })])]),
+      savedAt
+    ) as CachedTopology;
+  }
 
-    dispose();
+  test('内容不变时只有 savedAt 在漂：一个字节都不写', () => {
+    const counting = countingStorage();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(1), counting);
+    expect(counting.writes).toBe(1);
+
+    for (let i = 0; i < 20; i += 1) {
+      writeTmuxTopology(PREFIX, 'dev-1', topologyAt(2 + i), counting);
+    }
+    expect(counting.writes).toBe(1);
+    expect(readTmuxTopologyCache(PREFIX, counting, 100)['dev-1']?.savedAt).toBe(1);
   });
 
-  test('dispose 会把在途的节流写入落盘，并停止订阅', () => {
-    const timers = new FakeTimers();
-    let now = 0;
-    const fake = createFakeStore();
-    const dispose = syncTmuxTopologyCache(fake.store, {
-      storagePrefix: PREFIX,
-      storage,
-      now: () => now,
-      timers,
-    });
+  test('拓扑真变了才写', () => {
+    const counting = countingStorage();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(1), counting);
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(2, 'nvim'), counting);
 
-    fake.patch({ snapshots: { 'dev-1': { session: session([tmuxWindow('@1', [pane('%1')])]) } } });
-    now += 10;
-    fake.patch({
-      snapshots: {
-        'dev-1': {
-          session: session([tmuxWindow('@1', [pane('%1')]), tmuxWindow('@2', [pane('%2')])]),
-        },
-      },
-    });
-    expect(timers.pendingCount).toBe(1);
-
-    dispose();
-    expect(timers.pendingCount).toBe(0);
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']?.windows).toHaveLength(2);
-
-    fake.patch({ snapshots: {} });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']).toBeDefined();
+    expect(counting.writes).toBe(2);
+    expect(readTmuxTopologyCache(PREFIX, counting, 3)['dev-1']?.windows[0]?.panes[0]?.title).toBe(
+      'nvim'
+    );
   });
 
-  test('会话被清空（null session）时删掉缓存条目', () => {
-    const timers = new FakeTimers();
-    let now = 0;
-    const fake = createFakeStore();
-    const dispose = syncTmuxTopologyCache(fake.store, {
-      storagePrefix: PREFIX,
-      storage,
-      now: () => now,
-      timers,
-    });
+  test('删掉条目后指纹一并作废：同样的拓扑要重新落盘', () => {
+    const counting = countingStorage();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(1), counting);
+    removeTmuxTopology(PREFIX, 'dev-1', counting, 2);
+    const writesAfterRemove = counting.writes;
 
-    fake.patch({ snapshots: { 'dev-1': { session: session([tmuxWindow('@1', [pane('%1')])]) } } });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']).toBeDefined();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(3), counting);
+    expect(counting.writes).toBe(writesAfterRemove + 1);
+    expect(readTmuxTopologyCache(PREFIX, counting, 4)['dev-1']).toBeDefined();
+  });
 
-    now += TOPOLOGY_WRITE_INTERVAL_MS;
-    fake.patch({ snapshots: { 'dev-1': { session: null } } });
-    expect(readTmuxTopologyCache(PREFIX, storage, now)['dev-1']).toBeUndefined();
+  test('别的写入方（另一个标签页 / 登出清理）动过键时重新解析，不用陈旧内存副本覆盖', () => {
+    const counting = countingStorage();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(1), counting);
+    clearTmuxTopologyCache(PREFIX, counting);
 
-    dispose();
+    expect(readTmuxTopologyCache(PREFIX, counting, 2)).toEqual({});
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(3), counting);
+    expect(readTmuxTopologyCache(PREFIX, counting, 4)['dev-1']).toBeDefined();
+  });
+
+  test('内存副本同样受 TTL 约束：过期即清掉，下一次保存重新落盘', () => {
+    const counting = countingStorage();
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(0), counting);
+
+    expect(readTmuxTopologyCache(PREFIX, counting, TMUX_TOPOLOGY_TTL_MS + 1)).toEqual({});
+    writeTmuxTopology(PREFIX, 'dev-1', topologyAt(TMUX_TOPOLOGY_TTL_MS + 2), counting);
+    expect(
+      readTmuxTopologyCache(PREFIX, counting, TMUX_TOPOLOGY_TTL_MS + 3)['dev-1']
+    ).toBeDefined();
   });
 });

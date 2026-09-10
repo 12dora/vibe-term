@@ -10,7 +10,8 @@ import { createTmuxDeviceActions } from './tmux-device-actions';
 import { createTmuxEventRouter } from './tmux-event-router';
 import { createTmuxSelectionActions } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
-import { readTmuxTopologyCache, syncTmuxTopologyCache } from './tmux-topology-cache';
+import { readTmuxTopologyCache } from './tmux-topology-cache';
+import { syncTmuxTopologyCache } from './tmux-topology-sync';
 import { createTmuxViewportActions } from './tmux-viewport-actions';
 import { createTmuxWindowActions } from './tmux-window-actions';
 import type { UIStore } from './ui';
@@ -48,6 +49,10 @@ export function createTmuxStore(
     const style = getTmuxWindowStyle(deps.getUI().getState().theme);
     core.transport.send({ type: 'set-window-style', deviceId, style });
   }
+
+  // 被分享人视角只看得到一台设备的一个 window，且每访问一个分享链接就是一个新 storagePrefix：
+  // 缓存下来既没有「下次冷启动」可言，还会在浏览器里堆一堆永不回收的键。
+  const cacheTopology = !core.features.shareViewer;
 
   const store = create<TmuxState>((set, get) => {
     const selection = createTmuxSelectionActions(core, { getState: get, setState: set });
@@ -139,7 +144,7 @@ export function createTmuxStore(
       deviceLatency: {},
       deviceLatencySupported: false,
       snapshots: {},
-      topologyPlaceholders: readTmuxTopologyCache(core.storagePrefix),
+      topologyPlaceholders: cacheTopology ? readTmuxTopologyCache(core.storagePrefix) : {},
       connectedDevices: new Set(),
       deviceConnected: {},
       deviceErrors: {},
@@ -200,7 +205,9 @@ export function createTmuxStore(
   });
 
   // 拓扑写通 + 占位对账：订阅整份 state 才能覆盖事件路由与乐观重排两条改写快照的路径
-  disposers.push(syncTmuxTopologyCache(store, { storagePrefix: core.storagePrefix }));
+  if (cacheTopology) {
+    disposers.push(syncTmuxTopologyCache(store, { storagePrefix: core.storagePrefix }));
+  }
 
   return store;
 }

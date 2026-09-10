@@ -5,7 +5,12 @@
 // 也不存任何带凭据语义的字段——这份数据落在 localStorage，等同于公开。
 //
 // 键按 runtime 的 storagePrefix 分（与 `device-intent-store` 同一套分区口径），
-// 一个前缀一份设备表：条目数、窗口数、pane 数三层封顶，超期（TTL）与超量（LRU）都在读写时清掉。
+// 一个前缀一份设备表：条目数、窗口数、pane 数、单条文本长度、整份序列化长度五层封顶，
+// 超期（TTL）与超量都在读写时清掉。
+//
+// 写入走**每前缀一份内存副本 + 每设备一份拓扑指纹**：metadata-patch 会因 pane 标题 /
+// 活动位 / 进程名的抖动持续到来，若每次都 read → parse → stringify → setItem，
+// 光是「savedAt 变了」就能把整张表反复写一遍。指纹不变即一个字节都不写。
 
 import type { TmuxSession } from '@vibeterm/shared';
 
@@ -15,6 +20,10 @@ export const TMUX_TOPOLOGY_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const MAX_CACHED_DEVICES = 32;
 export const MAX_CACHED_WINDOWS = 32;
 export const MAX_CACHED_PANES = 16;
+/** 单条文本字段（窗口名 / pane 标题 / 进程名）落盘前的截断长度 */
+export const MAX_CACHED_TEXT_CHARS = 120;
+/** 整份缓存序列化后的长度预算（UTF-16 码元，约 128 KiB） */
+export const MAX_CACHE_CHARS = 128 * 1024;
 /** 每台设备的写入节流窗口：终端刷屏期间快照会连续变，落盘至多 1 次/秒 */
 export const TOPOLOGY_WRITE_INTERVAL_MS = 1000;
 
@@ -69,13 +78,22 @@ function defaultStorage(): TopologyCacheStorage | null {
   }
 }
 
+/** 落盘用文本：空串当没有，超长截断（tmux 标题可以是整行命令，不设上限就是无底洞） */
+function cachedText(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0) return undefined;
+  return value.length > MAX_CACHED_TEXT_CHARS ? value.slice(0, MAX_CACHED_TEXT_CHARS) : value;
+}
+
 // ---------- 快照 → 缓存 ----------
 
 function toCachedPane(pane: TmuxSession['windows'][number]['panes'][number]): CachedTopologyPane {
   const cached: CachedTopologyPane = { id: pane.id, index: pane.index, active: pane.active };
-  if (pane.title) cached.title = pane.title;
-  if (pane.customName) cached.customName = pane.customName;
-  if (pane.currentCommand) cached.currentCommand = pane.currentCommand;
+  const title = cachedText(pane.title);
+  if (title) cached.title = title;
+  const customName = cachedText(pane.customName);
+  if (customName) cached.customName = customName;
+  const currentCommand = cachedText(pane.currentCommand);
+  if (currentCommand) cached.currentCommand = currentCommand;
   return cached;
 }
 
@@ -83,12 +101,22 @@ function toCachedWindow(tmuxWindow: TmuxSession['windows'][number]): CachedTopol
   const cached: CachedTopologyWindow = {
     id: tmuxWindow.id,
     index: tmuxWindow.index,
-    name: tmuxWindow.name,
+    name: cachedText(tmuxWindow.name) ?? '',
     active: tmuxWindow.active,
     panes: tmuxWindow.panes.slice(0, MAX_CACHED_PANES).map(toCachedPane),
   };
-  if (tmuxWindow.customName) cached.customName = tmuxWindow.customName;
+  const customName = cachedText(tmuxWindow.customName);
+  if (customName) cached.customName = customName;
   return cached;
+}
+
+/** 快照里的会话 → 可落盘的窗口列表；没有窗口即 null（调用方据此删条目） */
+export function toCachedWindows(
+  session: TmuxSession | null | undefined
+): CachedTopologyWindow[] | null {
+  const windows = session?.windows;
+  if (!windows || windows.length === 0) return null;
+  return windows.slice(0, MAX_CACHED_WINDOWS).map(toCachedWindow);
 }
 
 /** 实时快照里的会话 → 可落盘的拓扑；没有窗口的会话不值得缓存（返回 null 即删除该条） */
@@ -96,16 +124,11 @@ export function toCachedTopology(
   session: TmuxSession | null | undefined,
   now = Date.now()
 ): CachedTopology | null {
-  const windows = session?.windows;
-  if (!windows || windows.length === 0) return null;
-  return { savedAt: now, windows: windows.slice(0, MAX_CACHED_WINDOWS).map(toCachedWindow) };
+  const windows = toCachedWindows(session);
+  return windows ? { savedAt: now, windows } : null;
 }
 
 // ---------- 反序列化 ----------
-
-function optionalText(value: unknown): string | undefined {
-  return typeof value === 'string' && value.length > 0 ? value : undefined;
-}
 
 function parsePane(value: unknown): CachedTopologyPane | null {
   if (!value || typeof value !== 'object') return null;
@@ -116,11 +139,12 @@ function parsePane(value: unknown): CachedTopologyPane | null {
     index: typeof row.index === 'number' ? row.index : 0,
     active: row.active === true,
   };
-  const title = optionalText(row.title);
+  // 读侧同样截断：早期版本写下的长文本不该在升级后继续吃内存与渲染宽度
+  const title = cachedText(row.title);
   if (title) pane.title = title;
-  const customName = optionalText(row.customName);
+  const customName = cachedText(row.customName);
   if (customName) pane.customName = customName;
-  const currentCommand = optionalText(row.currentCommand);
+  const currentCommand = cachedText(row.currentCommand);
   if (currentCommand) pane.currentCommand = currentCommand;
   return pane;
 }
@@ -138,11 +162,11 @@ function parseWindow(value: unknown): CachedTopologyWindow | null {
   const cached: CachedTopologyWindow = {
     id: row.id,
     index: typeof row.index === 'number' ? row.index : 0,
-    name: typeof row.name === 'string' ? row.name : '',
+    name: cachedText(row.name) ?? '',
     active: row.active === true,
     panes,
   };
-  const customName = optionalText(row.customName);
+  const customName = cachedText(row.customName);
   if (customName) cached.customName = customName;
   return cached;
 }
@@ -181,23 +205,55 @@ function parseCache(raw: string | null, now: number): Record<string, CachedTopol
   }
 }
 
-/** 超出条目上限时淘汰 savedAt 最小的几条（keepDeviceId 永不淘汰） */
-function evictOverflow(
+// ---------- 容量控制 ----------
+
+function serializeCache(devices: Record<string, CachedTopology>): string {
+  const payload: PersistedCache = { version: TMUX_TOPOLOGY_CACHE_VERSION, devices };
+  return JSON.stringify(payload);
+}
+
+/** savedAt 最小的一条（不含 keepDeviceId） */
+function oldestDeviceId(
   devices: Record<string, CachedTopology>,
   keepDeviceId: string | null
-): Record<string, CachedTopology> {
-  const ids = Object.keys(devices);
-  if (ids.length <= MAX_CACHED_DEVICES) return devices;
-  const ordered = ids
-    .filter((id) => id !== keepDeviceId)
-    .sort((a, b) => (devices[b]?.savedAt ?? 0) - (devices[a]?.savedAt ?? 0));
-  const kept = new Set(
-    ordered.slice(0, keepDeviceId ? MAX_CACHED_DEVICES - 1 : MAX_CACHED_DEVICES)
-  );
-  if (keepDeviceId) kept.add(keepDeviceId);
-  const next: Record<string, CachedTopology> = {};
-  for (const id of ids) if (kept.has(id)) next[id] = devices[id] as CachedTopology;
-  return next;
+): string | null {
+  let oldest: string | null = null;
+  let oldestAt = Number.POSITIVE_INFINITY;
+  for (const [deviceId, topology] of Object.entries(devices)) {
+    if (deviceId === keepDeviceId) continue;
+    if (topology.savedAt < oldestAt) {
+      oldest = deviceId;
+      oldestAt = topology.savedAt;
+    }
+  }
+  return oldest;
+}
+
+/**
+ * 先按条目数、再按序列化长度封顶，都从 savedAt 最旧的开始淘汰（keepDeviceId 优先保留）。
+ *
+ * 长度预算是硬要求：撑爆配额的键会连累同源下**所有** localStorage 写入方，而这份缓存
+ * 只是首屏占位，没资格占那么多。`serialized` 为 null 表示这份表装不下（连最后一台设备
+ * 都超预算），调用方据此直接删键，绝不留下一个超标的键。
+ */
+function fitCacheBudget(
+  devices: Record<string, CachedTopology>,
+  keepDeviceId: string | null
+): { devices: Record<string, CachedTopology>; serialized: string | null } {
+  const next = { ...devices };
+  while (Object.keys(next).length > MAX_CACHED_DEVICES) {
+    const oldest = oldestDeviceId(next, keepDeviceId);
+    if (oldest === null) break;
+    delete next[oldest];
+  }
+  while (Object.keys(next).length > 0) {
+    const serialized = serializeCache(next);
+    if (serialized.length <= MAX_CACHE_CHARS) return { devices: next, serialized };
+    const oldest = oldestDeviceId(next, keepDeviceId);
+    if (oldest === null) break;
+    delete next[oldest];
+  }
+  return { devices: {}, serialized: null };
 }
 
 function readRaw(storage: TopologyCacheStorage, key: string): string | null {
@@ -208,21 +264,135 @@ function readRaw(storage: TopologyCacheStorage, key: string): string | null {
   }
 }
 
-function writeCache(
-  storage: TopologyCacheStorage,
-  key: string,
-  devices: Record<string, CachedTopology>
-): void {
-  try {
-    if (Object.keys(devices).length === 0) {
-      storage.removeItem(key);
-      return;
+// ---------- 每前缀的缓存句柄 ----------
+
+interface TopologyCacheHandle {
+  read(now: number): Record<string, CachedTopology>;
+  /** 返回是否真的写了盘（指纹未变即跳过） */
+  put(deviceId: string, topology: CachedTopology): boolean;
+  remove(deviceId: string, now: number): void;
+  prune(keep: ReadonlySet<string>, now: number): void;
+  /** 丢掉指纹（不动盘上数据）：runtime 卸载后下一次变化要重新落盘 */
+  forgetFingerprints(): void;
+  reset(): void;
+}
+
+function createTopologyCacheHandle(
+  storagePrefix: string,
+  storage: TopologyCacheStorage
+): TopologyCacheHandle {
+  const key = tmuxTopologyCacheKey(storagePrefix);
+  const fingerprints = new Map<string, string>();
+  let devices: Record<string, CachedTopology> | null = null;
+  let lastWritten: string | null = null;
+
+  const commit = (keepDeviceId: string | null): void => {
+    const budget = fitCacheBudget(devices ?? {}, keepDeviceId);
+    devices = budget.devices;
+    for (const deviceId of [...fingerprints.keys()]) {
+      if (!(deviceId in budget.devices)) fingerprints.delete(deviceId);
     }
-    const payload: PersistedCache = { version: TMUX_TOPOLOGY_CACHE_VERSION, devices };
-    storage.setItem(key, JSON.stringify(payload));
-  } catch {
-    // 配额 / 隐私模式：缓存只是首屏占位，写不进去就当没有
+    try {
+      if (budget.serialized === null) {
+        storage.removeItem(key);
+        lastWritten = null;
+        return;
+      }
+      storage.setItem(key, budget.serialized);
+      lastWritten = budget.serialized;
+    } catch {
+      // 配额 / 隐私模式：缓存只是首屏占位，写不进去就当没有；指纹一并作废，下次变化再试
+      fingerprints.clear();
+      lastWritten = null;
+    }
+  };
+
+  /** TTL 到期的条目就地清掉：内存副本同样受 TTL 约束，不能因为没重新解析就一直留着 */
+  const dropExpired = (map: Record<string, CachedTopology>, now: number): void => {
+    const expired = Object.keys(map).filter(
+      (deviceId) => now - (map[deviceId] as CachedTopology).savedAt > TMUX_TOPOLOGY_TTL_MS
+    );
+    if (expired.length === 0) return;
+    for (const deviceId of expired) {
+      delete map[deviceId];
+      fingerprints.delete(deviceId);
+    }
+    commit(null);
+  };
+
+  /** 内存副本只在盘上那份被别人（另一个标签页、登出清理）动过时才重新解析 */
+  const sync = (now: number): Record<string, CachedTopology> => {
+    const raw = readRaw(storage, key);
+    if (devices === null || raw !== lastWritten) {
+      devices = parseCache(raw, now);
+      lastWritten = raw;
+      fingerprints.clear();
+    }
+    dropExpired(devices, now);
+    return devices ?? {};
+  };
+
+  return {
+    read: (now) => sync(now),
+
+    put(deviceId, topology) {
+      const map = sync(topology.savedAt);
+      const fingerprint = JSON.stringify(topology.windows);
+      // 只有 savedAt 在漂：内容一模一样，不值得把整张表重写一遍
+      if (map[deviceId] !== undefined && fingerprints.get(deviceId) === fingerprint) return false;
+      map[deviceId] = topology;
+      fingerprints.set(deviceId, fingerprint);
+      commit(deviceId);
+      return true;
+    },
+
+    remove(deviceId, now) {
+      const map = sync(now);
+      fingerprints.delete(deviceId);
+      if (!(deviceId in map)) return;
+      delete map[deviceId];
+      commit(null);
+    },
+
+    prune(keep, now) {
+      const map = sync(now);
+      const stale = Object.keys(map).filter((deviceId) => !keep.has(deviceId));
+      if (stale.length === 0) return;
+      for (const deviceId of stale) {
+        delete map[deviceId];
+        fingerprints.delete(deviceId);
+      }
+      commit(null);
+    },
+
+    forgetFingerprints() {
+      fingerprints.clear();
+    },
+
+    reset() {
+      fingerprints.clear();
+      devices = null;
+      lastWritten = null;
+    },
+  };
+}
+
+// 句柄按「存储实例 + 前缀」缓存：生产里 localStorage 是单例，同前缀的读写方共用一份内存副本；
+// 测试给每个用例换一份内存 Storage，天然互不干扰。
+const handlesByStorage = new WeakMap<TopologyCacheStorage, Map<string, TopologyCacheHandle>>();
+
+function handleFor(storagePrefix: string, storage: TopologyCacheStorage): TopologyCacheHandle {
+  let byPrefix = handlesByStorage.get(storage);
+  if (!byPrefix) {
+    byPrefix = new Map();
+    handlesByStorage.set(storage, byPrefix);
   }
+  let handle = byPrefix.get(storagePrefix);
+  if (!handle) {
+    handle = createTopologyCacheHandle(storagePrefix, storage);
+    byPrefix.set(storagePrefix, handle);
+  }
+  return handle;
 }
 
 // ---------- 对外读写 ----------
@@ -233,21 +403,18 @@ export function readTmuxTopologyCache(
   now = Date.now()
 ): TmuxTopologyPlaceholders {
   if (!storage) return {};
-  return parseCache(readRaw(storage, tmuxTopologyCacheKey(storagePrefix)), now);
+  // 拷一层：内部那份是可变的内存副本，不能与调用方（store state）共用同一个引用
+  return { ...handleFor(storagePrefix, storage).read(now) };
 }
 
 export function writeTmuxTopology(
   storagePrefix: string,
   deviceId: string,
   topology: CachedTopology,
-  storage: TopologyCacheStorage | null = defaultStorage(),
-  now = Date.now()
+  storage: TopologyCacheStorage | null = defaultStorage()
 ): void {
   if (!storage || !deviceId) return;
-  const key = tmuxTopologyCacheKey(storagePrefix);
-  const devices = parseCache(readRaw(storage, key), now);
-  devices[deviceId] = topology;
-  writeCache(storage, key, evictOverflow(devices, deviceId));
+  handleFor(storagePrefix, storage).put(deviceId, topology);
 }
 
 export function removeTmuxTopology(
@@ -257,11 +424,7 @@ export function removeTmuxTopology(
   now = Date.now()
 ): void {
   if (!storage || !deviceId) return;
-  const key = tmuxTopologyCacheKey(storagePrefix);
-  const devices = parseCache(readRaw(storage, key), now);
-  if (!(deviceId in devices)) return;
-  delete devices[deviceId];
-  writeCache(storage, key, devices);
+  handleFor(storagePrefix, storage).remove(deviceId, now);
 }
 
 /**
@@ -275,13 +438,7 @@ export function pruneTmuxTopologyCache(
   now = Date.now()
 ): void {
   if (!storage) return;
-  const keep = new Set(keepDeviceIds);
-  const key = tmuxTopologyCacheKey(storagePrefix);
-  const devices = parseCache(readRaw(storage, key), now);
-  const stale = Object.keys(devices).filter((deviceId) => !keep.has(deviceId));
-  if (stale.length === 0) return;
-  for (const deviceId of stale) delete devices[deviceId];
-  writeCache(storage, key, devices);
+  handleFor(storagePrefix, storage).prune(new Set(keepDeviceIds), now);
 }
 
 /** 登出 / 换账号：整份丢掉，别把上一位用户的窗口名留给下一位 */
@@ -290,6 +447,7 @@ export function clearTmuxTopologyCache(
   storage: TopologyCacheStorage | null = defaultStorage()
 ): void {
   if (!storage) return;
+  handleFor(storagePrefix, storage).reset();
   try {
     storage.removeItem(tmuxTopologyCacheKey(storagePrefix));
   } catch {
@@ -297,159 +455,14 @@ export function clearTmuxTopologyCache(
   }
 }
 
-// ---------- 与 tmux store 的写通 / 占位对账 ----------
-
-export interface TopologySyncState {
-  snapshots: Record<string, { session: TmuxSession | null } | undefined>;
-  connectedDevices: ReadonlySet<string>;
-  topologyPlaceholders: TmuxTopologyPlaceholders;
-}
-
-export interface TopologySyncStore {
-  getState(): TopologySyncState;
-  setState(partial: { topologyPlaceholders: TmuxTopologyPlaceholders }): void;
-  subscribe(listener: () => void): () => void;
-}
-
-export interface TopologySyncTimers {
-  setTimer(fn: () => void, ms: number): unknown;
-  clearTimer(handle: unknown): void;
-}
-
-export interface TopologySyncOptions {
-  storagePrefix: string;
-  storage?: TopologyCacheStorage | null;
-  now?: () => number;
-  timers?: TopologySyncTimers;
-}
-
-const defaultTimers: TopologySyncTimers = {
-  setTimer: (fn, ms) => setTimeout(fn, ms),
-  clearTimer: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
-};
-
-interface PendingWrite {
-  session: TmuxSession | null;
-  handle: unknown;
-}
-
-/** 每设备至多 1 次/秒的落盘节流器：窗口内的后续变更只更新待写内容，不额外排定时器 */
-function createTopologyWriter(options: TopologySyncOptions) {
-  const storage = options.storage === undefined ? defaultStorage() : options.storage;
-  const now = options.now ?? Date.now;
-  const timers = options.timers ?? defaultTimers;
-  const lastWriteAt = new Map<string, number>();
-  const pending = new Map<string, PendingWrite>();
-
-  const flush = (deviceId: string, session: TmuxSession | null): void => {
-    lastWriteAt.set(deviceId, now());
-    const topology = toCachedTopology(session, now());
-    if (topology) writeTmuxTopology(options.storagePrefix, deviceId, topology, storage, now());
-    else removeTmuxTopology(options.storagePrefix, deviceId, storage, now());
-  };
-
-  return {
-    save(deviceId: string, session: TmuxSession | null): void {
-      const existing = pending.get(deviceId);
-      if (existing) {
-        existing.session = session;
-        return;
-      }
-      const wait =
-        TOPOLOGY_WRITE_INTERVAL_MS -
-        (now() - (lastWriteAt.get(deviceId) ?? Number.NEGATIVE_INFINITY));
-      if (wait <= 0) {
-        flush(deviceId, session);
-        return;
-      }
-      const handle = timers.setTimer(() => {
-        const entry = pending.get(deviceId);
-        pending.delete(deviceId);
-        if (entry) flush(deviceId, entry.session);
-      }, wait);
-      pending.set(deviceId, { session, handle });
-    },
-
-    drop(deviceId: string): void {
-      const entry = pending.get(deviceId);
-      if (entry) {
-        timers.clearTimer(entry.handle);
-        pending.delete(deviceId);
-      }
-      lastWriteAt.delete(deviceId);
-      removeTmuxTopology(options.storagePrefix, deviceId, storage, now());
-    },
-
-    dispose(): void {
-      for (const [deviceId, entry] of pending) {
-        timers.clearTimer(entry.handle);
-        flush(deviceId, entry.session);
-      }
-      pending.clear();
-      lastWriteAt.clear();
-    },
-  };
-}
-
-/** 占位表对账：实时快照到货即摘掉该设备的占位（占位与实时数据不得同时出现） */
-function dropSettledPlaceholders(store: TopologySyncStore, dropped: readonly string[]): void {
-  const state = store.getState();
-  const placeholders = state.topologyPlaceholders;
-  const stale = Object.keys(placeholders).filter(
-    (deviceId) => placeholders[deviceId] !== undefined && state.snapshots[deviceId] !== undefined
-  );
-  const removals = [...new Set([...stale, ...dropped])].filter(
-    (deviceId) => placeholders[deviceId] !== undefined
-  );
-  if (removals.length === 0) return;
-  const next = { ...placeholders };
-  for (const deviceId of removals) delete next[deviceId];
-  store.setState({ topologyPlaceholders: next });
-}
-
 /**
- * 把 tmux store 的快照变化写通到本地缓存，并维护占位表。
- *
- * - `snapshots[deviceId]` 换引用即排一次落盘（节流后）；
- * - 设备退出 `connectedDevices`（用户主动断开 / 设备被删）即删掉它的缓存与占位；
- * - 实时快照到货即摘掉占位。
+ * 内部使用（写通模块）：取该前缀的缓存句柄。`storage` 缺省即浏览器 localStorage，
+ * 存储不可用时返回 null，调用方据此整条跳过。
  */
-export function syncTmuxTopologyCache(
-  store: TopologySyncStore,
-  options: TopologySyncOptions
-): () => void {
-  const writer = createTopologyWriter(options);
-  let lastSnapshots = store.getState().snapshots;
-  let lastConnected = store.getState().connectedDevices;
-
-  const handleChange = (): void => {
-    const state = store.getState();
-    const { snapshots, connectedDevices } = state;
-
-    if (snapshots !== lastSnapshots) {
-      for (const [deviceId, snapshot] of Object.entries(snapshots)) {
-        if (snapshot === undefined || snapshot === lastSnapshots[deviceId]) continue;
-        writer.save(deviceId, snapshot.session);
-      }
-    }
-
-    const dropped: string[] = [];
-    if (connectedDevices !== lastConnected) {
-      for (const deviceId of lastConnected) {
-        if (connectedDevices.has(deviceId)) continue;
-        writer.drop(deviceId);
-        dropped.push(deviceId);
-      }
-    }
-
-    lastSnapshots = snapshots;
-    lastConnected = connectedDevices;
-    dropSettledPlaceholders(store, dropped);
-  };
-
-  const unsubscribe = store.subscribe(handleChange);
-  return () => {
-    unsubscribe();
-    writer.dispose();
-  };
+export function topologyCacheHandle(
+  storagePrefix: string,
+  storage: TopologyCacheStorage | null | undefined
+): TopologyCacheHandle | null {
+  const resolved = storage === undefined ? defaultStorage() : storage;
+  return resolved ? handleFor(storagePrefix, resolved) : null;
 }
