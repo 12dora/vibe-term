@@ -40,7 +40,11 @@ async function bootJoiner(opts?: { selfAdmit?: boolean }) {
 
 function modeBody(
   uid: string,
-  extras?: { totpEnabled?: boolean; passkeySecondFactor?: boolean }
+  extras?: {
+    totpEnabled?: boolean;
+    passkeySecondFactor?: boolean;
+    secondFactorPolicy?: string;
+  }
 ): Record<string, unknown> {
   return {
     mode: 'mesh',
@@ -48,6 +52,7 @@ function modeBody(
     uid,
     totpEnabled: extras?.totpEnabled === true,
     passkeySecondFactor: extras?.passkeySecondFactor === true,
+    ...(extras?.secondFactorPolicy ? { secondFactorPolicy: extras.secondFactorPolicy } : {}),
   };
 }
 
@@ -59,6 +64,7 @@ function hubAdmitFetcher(opts: {
   onLogin?: (body: Record<string, unknown>) => void;
   totpEnabled?: boolean;
   passkeySecondFactor?: boolean;
+  secondFactorPolicy?: string;
   loginStatus?: number;
   loginBody?: Record<string, unknown>;
 }): FetchLike {
@@ -74,6 +80,7 @@ function hubAdmitFetcher(opts: {
         modeBody(opts.uid, {
           totpEnabled: opts.totpEnabled,
           passkeySecondFactor: opts.passkeySecondFactor,
+          secondFactorPolicy: opts.secondFactorPolicy,
         })
       );
     }
@@ -310,11 +317,11 @@ describe('publishHubJoinSelfAdmit', () => {
     }
   });
 
-  test('TOTP+passkey combined accounts stay on the pending path', async () => {
+  test('TOTP+passkey either policy logs in with TOTP and appends admit-node', async () => {
     const ctx = await bootJoiner();
     try {
       const state = ctx.auth.userKeys.currentState(ctx.boot.userId);
-      let logins = 0;
+      const logins: Record<string, unknown>[] = [];
       const result = await publishHubJoinSelfAdmit({
         auth: ctx.auth,
         hubUrl: HUB,
@@ -326,13 +333,13 @@ describe('publishHubJoinSelfAdmit', () => {
           head: { seq: state.head.seq, hash: state.head.hash, rootEpoch: state.rootEpoch },
           totpEnabled: true,
           passkeySecondFactor: true,
-          onLogin: () => {
-            logins += 1;
-          },
+          secondFactorPolicy: 'either',
+          onLogin: (body) => logins.push(body),
         }),
       });
-      expect(result).toEqual({ appended: false, admitPending: true });
-      expect(logins).toBe(0);
+      expect(result).toEqual({ appended: true, admitPending: false });
+      expect(logins).toHaveLength(1);
+      expect((logins[0]?.totp as { code?: string } | undefined)?.code).toBe('123456');
     } finally {
       ctx.close();
     }

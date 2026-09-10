@@ -16,6 +16,13 @@ export {
 
 export const LOGIN_RATE_LIMIT = 10;
 export const LOGIN_RATE_WINDOW_MS = 60_000;
+/** TOTP 错码专用桶：比登录失败总预算更紧，按 uid 计。 */
+export const TOTP_FAIL_LIMIT = 5;
+export const TOTP_FAIL_WINDOW_MS = 15 * 60 * 1000;
+/** 连续窗口锁定期的 2^n 指数上限：15 min × 2^5 = 8 h。 */
+export const TOTP_LOCK_MAX_SHIFT = 5;
+/** 与 `verifyTotpCode` 的 ±1 step（共 3 步、每步 30 s）对齐。 */
+export const TOTP_REPLAY_TTL_MS = 90_000;
 export const LOGIN_CHALLENGE_TTL_MS = 60_000;
 export const PASSKEY_REGISTER_TTL_MS = 60_000;
 export const RTC_AUTHORIZE_TTL_MS = 120_000;

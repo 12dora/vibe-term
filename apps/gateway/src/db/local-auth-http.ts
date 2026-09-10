@@ -55,18 +55,26 @@ export function secondFactorPolicyForMode(input: {
   return 'none';
 }
 
+/** 与 `checkTotp` 同一口径：投影序号和密钥日志里的密文都在才算已启用。 */
+export function accountHasTotp(
+  user: { totpRecordSeq: bigint | number | null } | null,
+  totpSecretPresent: boolean
+): boolean {
+  return user != null && user.totpRecordSeq != null && totpSecretPresent;
+}
+
 export function meshAuthModeUserFields(
   user: UserRecord | null,
   origin: string,
   userStore: UserStore,
   hub: { nodeId: string | null; publicUrl: string | null },
-  opts?: { waivePasskeySecondFactor?: boolean }
+  opts?: { waivePasskeySecondFactor?: boolean; totpSecretPresent?: boolean }
 ) {
   const keys = user ? userStore.listKeysByUser(user.id) : [];
   const scope = passkeyOriginScope(keys, origin);
   const hasKeysHere = scope.here.length > 0;
   const waived = Boolean(opts?.waivePasskeySecondFactor) && hasKeysHere;
-  const totpEnabled = user?.totpRecordSeq != null;
+  const totpEnabled = accountHasTotp(user, opts?.totpSecretPresent === true);
   const passkeySecondFactor = hasKeysHere && !waived;
   return {
     mode: 'mesh' as const,

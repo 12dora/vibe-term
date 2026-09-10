@@ -293,6 +293,12 @@ describe('passkey second factor is scoped to the request origin', () => {
       expect(modeA.totpEnabled).toBe(true);
       expect(modeA.secondFactorPolicy).toBe('either');
 
+      const missingBoth = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '203.0.113.10',
+        headers: { origin: ORIGIN_A },
+      });
+      expect((await missingBoth.res.json()).code).toBe('TOTP_REQUIRED');
+
       const totpOnly = await challengeAndLogin(mesh.runtime, mesh.boot, {
         clientIp: '203.0.113.10',
         headers: { origin: ORIGIN_A },
@@ -542,15 +548,9 @@ describe('resolveSecondFactors / verifySecondFactors', () => {
 
   test('decision table: either factor, no fallthrough on a wrong TOTP', () => {
     expect(resolveSecondFactors(totpOk, pkSkip)).toEqual({ ok: true });
-    expect(resolveSecondFactors(totpOk, pkNeedHere)).toEqual({
-      ok: false,
-      code: 'PASSKEY_REQUIRED',
-    });
+    // totpOk + pkNeedHere / pkBad 在 HTTP 路径不可达：TOTP 通过后 gate 会 skip。
     expect(resolveSecondFactors(totpOn, pkOk)).toEqual({ ok: true });
-    expect(resolveSecondFactors(totpOn, pkNeedHere)).toEqual({
-      ok: false,
-      code: 'PASSKEY_REQUIRED',
-    });
+    expect(resolveSecondFactors(totpOn, pkNeedHere)).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
     expect(resolveSecondFactors(totpOn, pkNeedElse)).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
     expect(resolveSecondFactors(totpOn, pkSkip)).toEqual({ ok: false, code: 'TOTP_REQUIRED' });
     expect(resolveSecondFactors(totpOn, pkBad)).toEqual({ ok: false, code: 'PASSKEY_INVALID' });

@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import type { UserRecord, UserStore } from '../auth/user-store';
-import { meshAuthModeUserFields, secondFactorPolicyForMode } from './local-auth-http';
+import {
+  accountHasTotp,
+  meshAuthModeUserFields,
+  secondFactorPolicyForMode,
+} from './local-auth-http';
 
 function fakeUser(overrides?: Partial<UserRecord>): UserRecord {
   return {
@@ -92,7 +96,8 @@ describe('meshAuthModeUserFields', () => {
       fakeUser({ totpRecordSeq: 1 }),
       'http://localhost:19663',
       store,
-      hub
+      hub,
+      { totpSecretPresent: true }
     );
     expect(both.totpEnabled).toBe(true);
     expect(both.passkeySecondFactor).toBe(true);
@@ -101,7 +106,8 @@ describe('meshAuthModeUserFields', () => {
       fakeUser({ totpRecordSeq: 1 }),
       'http://localhost:19663',
       fakeStore([]),
-      hub
+      hub,
+      { totpSecretPresent: true }
     );
     expect(totpOnly.secondFactorPolicy).toBe('totp');
     const waivedBoth = meshAuthModeUserFields(
@@ -109,10 +115,26 @@ describe('meshAuthModeUserFields', () => {
       'http://localhost:19663',
       store,
       hub,
-      { waivePasskeySecondFactor: true }
+      { waivePasskeySecondFactor: true, totpSecretPresent: true }
     );
     expect(waivedBoth.passkeySecondFactor).toBe(false);
     expect(waivedBoth.secondFactorPolicy).toBe('totp');
+  });
+
+  test('totpEnabled requires both totpRecordSeq and the key-log secret', () => {
+    const store = fakeStore([]);
+    const user = fakeUser({ totpRecordSeq: 1 });
+    const seqOnly = meshAuthModeUserFields(user, 'http://localhost', store, hub);
+    expect(seqOnly.totpEnabled).toBe(false);
+    expect(seqOnly.secondFactorPolicy).toBe('none');
+    const both = meshAuthModeUserFields(user, 'http://localhost', store, hub, {
+      totpSecretPresent: true,
+    });
+    expect(both.totpEnabled).toBe(true);
+    expect(both.secondFactorPolicy).toBe('totp');
+    expect(accountHasTotp(user, true)).toBe(true);
+    expect(accountHasTotp(user, false)).toBe(false);
+    expect(accountHasTotp(fakeUser(), true)).toBe(false);
   });
 
   test('secondFactorPolicyForMode covers the four published values', () => {

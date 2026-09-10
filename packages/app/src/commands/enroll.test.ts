@@ -312,7 +312,7 @@ describe('enroll', () => {
     expect(decodeJoinToken(result.token).caFingerprint).toBe('ab'.repeat(32));
   });
 
-  test('non-hub enroll fails before password/TOTP when hub requires passkey second-factor', async () => {
+  test('non-hub enroll fails before password/TOTP when hub requires passkey-only second-factor', async () => {
     const auth = await openLocalAuth({
       memory: true,
       migrationsFolder: MIGRATIONS,
@@ -343,13 +343,65 @@ describe('enroll', () => {
             mode: 'mesh',
             nodeId: 'self',
             uid: auth.userStore.getByUsername('ivy')?.id,
-            totpEnabled: true,
+            totpEnabled: false,
             passkeySecondFactor: true,
+            secondFactorPolicy: 'passkey',
           });
         },
       })
-    ).rejects.toThrow(/passkey second-factor/);
+    ).rejects.toThrow(/passkey/);
     expect(loginCalls).toBe(0);
+  });
+
+  test('non-hub enroll proceeds with TOTP when secondFactorPolicy is either', async () => {
+    const auth = await openLocalAuth({
+      memory: true,
+      migrationsFolder: MIGRATIONS,
+      env: {
+        VIBETERM_MASTER_KEY: process.env.VIBETERM_MASTER_KEY || '',
+        VIBETERM_ROLES: 'node',
+        VIBETERM_HUB_URL: 'http://127.0.0.1:9',
+      },
+    });
+    handles.push(auth);
+    await runHubUserAdd(parsed, 'ivy', {
+      auth,
+      password: 'enroll-pass-word',
+      log: () => undefined,
+    });
+    let loginCalls = 0;
+    await expect(
+      runEnroll(parsed, {
+        auth,
+        password: 'enroll-pass-word',
+        wait: false,
+        log: () => undefined,
+        totpCode: '123456',
+        fetcher: async (input) => {
+          const url = String(input);
+          if (url.includes('/api/auth/login')) {
+            loginCalls += 1;
+            return Response.json({ expires_at: Date.now() + 60_000 }, { status: 200 });
+          }
+          if (url.includes('/api/auth/challenge')) {
+            return Response.json({
+              challenge_id: 'c1',
+              nonce: encodeBase64url(randomBytes(32)),
+              nodePk: encodeBase64url(randomBytes(32)),
+            });
+          }
+          return Response.json({
+            mode: 'mesh',
+            nodeId: 'self',
+            uid: auth.userStore.getByUsername('ivy')?.id,
+            totpEnabled: true,
+            passkeySecondFactor: true,
+            secondFactorPolicy: 'either',
+          });
+        },
+      })
+    ).rejects.toThrow(/did not return sid/);
+    expect(loginCalls).toBe(1);
   });
 
   test('explicitly empty totpCode is rejected instead of prompting', async () => {

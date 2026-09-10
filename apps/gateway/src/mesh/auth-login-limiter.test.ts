@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { loginRequestContext } from './auth-key-log-routes';
 import { LoginFailureLimiter } from './auth-login-limiter';
-import { CHALLENGE_RATE_LIMIT, LOGIN_RATE_LIMIT, LOGIN_RATE_WINDOW_MS } from './mesh-deps';
+import {
+  CHALLENGE_RATE_LIMIT,
+  LOGIN_RATE_LIMIT,
+  LOGIN_RATE_WINDOW_MS,
+  setMeshRequestContext,
+} from './mesh-deps';
 
 describe('LoginFailureLimiter', () => {
   test('drops keys whose timestamp list becomes empty', () => {
@@ -61,5 +67,25 @@ describe('LoginFailureLimiter', () => {
     expect(limiter.count('ip:203.0.113.10')).toBe(0);
     limiter.record('ip:203.0.113.10');
     expect(limiter.count('ip:203.0.113.10')).toBe(1);
+  });
+});
+
+describe('loginRequestContext', () => {
+  test('peer logins ignore X-Forwarded-For and leave the IP bucket empty', () => {
+    const req = new Request('http://localhost/api/auth/login', {
+      headers: { 'x-forwarded-for': '203.0.113.9' },
+    });
+    setMeshRequestContext(req, {
+      via: 'ab'.repeat(16),
+      clientIp: 'peer:entry',
+      trustProxy: true,
+    });
+    expect(loginRequestContext(req)).toEqual({ peer: true, ip: '' });
+  });
+
+  test('direct logins key the IP bucket on the resolved client address', () => {
+    const req = new Request('http://localhost/api/auth/login');
+    setMeshRequestContext(req, { via: 'self', clientIp: '198.51.100.8' });
+    expect(loginRequestContext(req)).toEqual({ peer: false, ip: '198.51.100.8' });
   });
 });

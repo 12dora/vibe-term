@@ -13,6 +13,7 @@ import { errorMessage } from './error-message';
 import {
   type HubFetch,
   type HubLoginResult,
+  cliPasswordLoginBlockedByPasskey,
   fetchAuthMode,
   isNetworkFetchError,
   loginWithRootKey,
@@ -92,7 +93,12 @@ function asJoinError(error: unknown, fallback: string): JoinError {
 
 function isPasskeyRequiredError(error: unknown): boolean {
   const message = errorMessage(error);
-  return message.includes('PASSKEY_REQUIRED') || /requires passkey second-factor/i.test(message);
+  return (
+    message.includes('PASSKEY_REQUIRED') ||
+    /requires a passkey for password sign-in/i.test(message) ||
+    /requires passkey second-factor/i.test(message) ||
+    message.includes('需要通行密钥')
+  );
 }
 
 function stubHeadService(state: UserKeyState, head: UserKeyState['head'], rootEpoch: number) {
@@ -196,7 +202,7 @@ async function openJoinAdmitSession(
   } catch (error) {
     throw asJoinError(error, 'unable to resolve hub auth mode');
   }
-  if (mode.passkeySecondFactor) {
+  if (cliPasswordLoginBlockedByPasskey(mode)) {
     return { kind: 'pending' };
   }
   const totp = mode.totpEnabled ? totpForJoinLogin(input, state) : undefined;
@@ -231,7 +237,7 @@ async function applyPostedAdmitLocally(
  * 口令加入后本机已 commit 密钥日志，但 Hub 的 `node_certs` 还没有这台机器：
  * 用根钥登录 Hub，在其链头上签 `admit-node` 并 POST `/api/auth/keylog`（CAS 冲突则重读重试）。
  * 记录必须在进程重启前到达 Hub——uplink 认证读 `node_certs`，先于任何 key-log catch-up。
- * passkey / TOTP+passkey 账号无法在 CLI 完成登录，跳过自承认并返回 `admitPending`。
+ * 仅通行密钥二次验证（无 TOTP）的账号无法在 CLI 完成登录，跳过自承认并返回 `admitPending`。
  */
 export async function publishHubJoinSelfAdmit(
   input: PublishHubJoinSelfAdmitInput

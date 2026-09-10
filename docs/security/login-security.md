@@ -6,7 +6,7 @@
 
 - **密码不出浏览器**：浏览器用 argon2id（64 MiB / 3 轮 / 1 lane）把密码派生成 Ed25519 根钥，签 challenge 登录；网关只存根公钥与 KDF 参数，没有密码哈希（`apps/fe/src/auth/session-login.ts`、`packages/shared/src/auth/root-key.ts`、`apps/gateway/src/mesh/auth-routes.ts`）。
 - **会话**：256-bit 随机不透明 SID，DB 记录，18 h 滑动 / 7 d 硬上限，可撤销，按节点绑定 `viaNodeId`；cookie `HttpOnly` + `SameSite=Lax`，HTTPS 下 `Secure`；WS 复用 cookie，URL 不带 token；改密/登出即失效全部会话。
-- **限流**：登录失败每 IP、每 UID 各 10 次 / 60 s（内存）。
+- **限流**：登录失败每 IP、每 UID 各 10 次 / 60 s（内存）。TOTP 错码另有按 uid 的 5 次 / 15 min 桶，连续窗口指数锁定（最长 8 h）；已消费验证码按 `(uid, code, sess_pk)` 缓存 90 s，防止同一码换会话钥重放。
 - **passkey**：严格 origin/RP 绑定；**mesh peer 端口（39001）**用节点证书 + 握手签名鉴权，与用户密码无关。
 - **文件 API**：目录根限定、路径穿越与符号链接逃逸有检查；Telegram/微信为轮询，无入站 webhook。
 - 跨节点静默登录使用持久化的会话钥（[架构 §2「会话钥的跨文档持久化」](../architecture/mesh-architecture.md)），不改变节点侧校验：节点 B 仍要求根钥签的 delegation + 一次性 challenge + `target/target_pk` 绑定，A 的 SID / login 不能重放到 B。持久化的私钥为 WebCrypto 不可导出 CryptoKey，风险等级与既有 HttpOnly cookie 相同，上限为 delegation 18 h。
@@ -46,6 +46,14 @@
 
 登录限流的 IP 桶使用该结果；UID 桶与阈值不变。Cloudflare Tunnel / 反代后面**必须**打开 `VIBETERM_TRUST_PROXY`；不要在不可信跳数前开启。
 
+**转发登录**：入口 `forwarder` 会丢掉 `x-forwarded-*` / `CF-Connecting-IP`，目标节点看到的是 `peer:<入口>`。对端即使自带转发头也不可信（成员节点可伪造），因此目标节点的登录失败限流**只按 uid**，不按 IP；真实客户端 IP 的限速仍在入口执行。TOTP 错码桶同样只按 uid（每节点一份内存表）。
+
+**TOTP 错码与重放**（`apps/gateway/src/mesh/auth-totp-guard.ts`）：
+
+- 校验之前先看 uid 是否已锁；`TOTP_INVALID`（含换 `sess_pk` 重放）同时记入该桶和上面的登录失败总预算。`TOTP_REQUIRED` / `PASSKEY_REQUIRED` 不计。
+- 同一节点上已通过的验证码按 `(uid, code, delegation.sess_pk)` 缓存，TTL = 接受窗口（3 step × 30 s = 90 s）。同一 delegation 重试放行；换一把会话钥再用同一码 → `TOTP_INVALID`。
+- 多节点登录 fan-out 时，各节点有自己的缓存：同一验证码在窗口内被不同节点各自接受，这是有意为之。
+
 **Bootstrap loopback**：未 bootstrap 的实例若经隧道连到 `127.0.0.1`，socket IP 会被当成 loopback，远端可调用 `/api/auth/local/bootstrap` 创建首个账户。判定规则：
 
 - 请求带 `CF-Connecting-IP`（Cloudflare 才会加；本机直连不会带）即视为非本机，与是否信任代理无关——信任模式下也不解析其值。
@@ -65,15 +73,19 @@
 
 ### 协议
 
+这是一次有意的 **AND → OR** 收口。旧规则是「开了 TOTP 且本 origin 有通行密钥时，密码登录必须两个都交」。CLI 和驱动它的 AI agent 做不了 WebAuthn，那条 AND 会把命令行路径锁死。用户明确决定：账户即使已登记通行密钥，**单独一次有效 TOTP 断言也足够**（反之，单独一次本 origin 通行密钥断言也足够）。passkey 直接登录（`method = passkey`）行为不变。
+
 用户名下注册了通行密钥时，密码登录的二次验证可以是本 origin 的通行密钥断言（与 passkey 直接登录同构，不新增端点、不新增表）；若账户同时启用了 TOTP，有效验证码也可以单独满足二次验证：
 
 - `GET /api/auth/mode` 带 `passkeySecondFactor: boolean`、`passkeySecondFactorWaived: boolean`、`passkeysRegisteredElsewhere: boolean`，以及加性字段 `secondFactorPolicy: 'either' | 'totp' | 'passkey' | 'none'`（旧客户端忽略即可）。`either` 表示本 origin 有通行密钥且 TOTP 已启用，交任一因子即可；`totp` / `passkey` 表示只启用了那一种；`none` 表示这一步不存在（含本机豁免把通行密钥免掉、且未开 TOTP）。
 - 登录体可选 `passkey: { credential_id, sig }`，`sig = base64url(borsh(PasskeyAssertion))`，WebAuthn challenge 固定为 `sha256(borsh(Delegation))`（root delegation）。前端在 root 签完 delegation 后调用 `POST /api/auth/passkey/login/options {uid, delegation}` 拿本 origin 的 `allowCredentials` 做一次仪式。
-- 服务端 `checkPasskeySecondFactor`：缺 `passkey` 且 TOTP 未通过 → `401 PASSKEY_REQUIRED`；断言经 `makeVerifyDelegationPasskey` 校验（凭证属于该 uid 且属于本 origin、delegation 时间、注册 origin/rpId、签名、counter 单调）失败 → `401 PASSKEY_INVALID`。会话仍记为 `delegationMethod = root`。
-- **OR 策略**（`verifySecondFactors`）：命令行客户端和驱动它的 AI agent 做不了 WebAuthn。因此当账户同时启用 TOTP 与通行密钥时，有效 TOTP **或** 本 origin 断言满足其一即可。passkey 直接登录（`method = passkey`，UV 必需）本身就是强认证，不叠加二次验证，行为不变。未提供任一因子时不放宽：本 origin 拿得出凭证 → `PASSKEY_REQUIRED`；本 origin 做不出断言但开了 TOTP → `TOTP_REQUIRED`。登录体带了 TOTP 但校验失败 → 一律 `TOTP_INVALID` 并计入限流，**不**回落到通行密钥路径（错码必须记一次失败）。两者都带且 TOTP 通过则不再验断言；两者都失败时返回更具体的错误码（`TOTP_INVALID` 优先于通行密钥错误，因为错码路径根本不会进 gate）。
+- 服务端 `checkPasskeySecondFactor`：缺 `passkey` 且 TOTP 未通过 → 由外层选错误码（见下）；断言经 `makeVerifyDelegationPasskey` 校验（凭证属于该 uid 且属于本 origin、delegation 时间、注册 origin/rpId、签名、counter 单调）失败 → `401 PASSKEY_INVALID`。会话仍记为 `delegationMethod = root`。
+- **OR 策略**（`verifySecondFactors`）：当账户同时启用 TOTP 与通行密钥时，有效 TOTP **或** 本 origin 断言满足其一即可。未提供任一因子时：已开 TOTP → `TOTP_REQUIRED`（含本 origin 拿得出凭证；非 WebAuthn 客户端据此提示交验证码，GUI 在该码下仍保留通行密钥按钮）；未开 TOTP 且本 origin 拿得出凭证 → `PASSKEY_REQUIRED`。登录体带了 TOTP 但校验失败 → 一律 `TOTP_INVALID` 并计入限流（专用桶 + 登录失败总预算），**不**回落到通行密钥路径。两者都带且 TOTP 通过则不再验断言；两者都失败时 `TOTP_INVALID` 优先于通行密钥错误。`GET /api/auth/mode` 的 `totpEnabled` / `secondFactorPolicy` 与 `checkTotp` 同一口径：用户行的 `totpRecordSeq` 与密钥日志 `currentState(uid).totp` 都在才算已启用。
 - 可信本地来源豁免的仍只是通行密钥断言，**不**豁免 TOTP：开了 TOTP 的账户从 loopback 登录仍要交验证码。不新增其它豁免。
 
 断言绑定到 delegation（含 `sess_pk` 与有效期），一份断言可随 delegation 在 18 小时内复用于所有节点的静默登录（每节点各自维护 counter），只需一次 Face ID / 指纹；前端把 `passkeyCredentialId` / `passkeySig` 与 delegation 一起持久化（它们是签名不是秘密）。「断言随信封」而非「两段式新端点」的原因：后者会让每个节点的登录都弹一次仪式，而 `ensureNodeLogin` 的静默 fan-out 无法弹窗。
+
+**转发登录的 Origin**：入口 `apps/gateway/src/mesh/forwarder.ts` 把浏览器的 `Origin` 原样转给目标节点（缺省则用入口自己收到的请求 URL origin）。目标节点 `requestOrigin()` 取请求 `Origin`，没有则用该节点自己的公开 URL origin。因此：浏览器经 `/n/<id>/api/auth/login` 登录时，二次验证按**浏览器 Origin** 判凭证归属；CLI 不带 Origin 直连某节点时，按**该节点公开 URL origin** 分类。伪造的陌生 Origin 仍走 §4 判定顺序，不能靠「这里没有凭证」跳过二次验证。
 
 ### 判定顺序（按 origin 生效）
 
@@ -132,7 +144,7 @@ vibeterm mesh passkey remove-all [<username>]
 ### 滚动升级注意
 
 - 二次验证按**节点**各自执行：未升级的节点仍只验密码，知道密码的人经 `/n/<旧节点>/api/auth/login` 可以拿到该旧节点的会话；旧入口也会把新节点的 `PASSKEY_REQUIRED` 改写成 `NODE_LOGIN_REQUIRED`。注册通行密钥前把全部节点升到最新（节点管理里可批量升级）。
-- CLI `vibeterm enroll` 用密码登录 hub 后再创建 enrollment。账号只启用通行密钥、未开 TOTP 时该路径仍不可用（CLI 做不了 WebAuthn），会在提示输入密码前直接给出说明。同时开了 TOTP 时，CLI 用密码 + TOTP 即可过二次验证。加入节点请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用加入命令。
+- CLI `vibeterm enroll` 用密码登录 hub 后再创建 enrollment。`GET /api/auth/mode` 的 `secondFactorPolicy === 'passkey'`（旧节点没有该字段时回退到 `passkeySecondFactor && !totpEnabled`）时该路径仍不可用（CLI 做不了 WebAuthn），会在提示输入密码前直接给出说明。`'either'` / `'totp'` 走密码 + TOTP。加入节点请在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」后使用加入命令。
 - `passkeysRegisteredElsewhere` / `secondFactorPolicy` 都是加性字段，旧前端忽略即可；新节点在旧前端下 `passkeySecondFactor` 变 false，登录流程更短，不会出错。旧前端若仍按 AND 同时交 TOTP 与断言，服务端照收。
 
 ## 5. 公网暴露的安全评估

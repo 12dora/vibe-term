@@ -52,6 +52,9 @@ function usableHubUrl(url: string | null | undefined): string | null {
 
 export function loginRequestContext(req: Request): { peer: boolean; ip: string } {
   const peer = isPeerRequest(req);
+  // 入口 forwarder 会丢掉 x-forwarded-* / CF-Connecting-IP，目标节点看到的是
+  // `peer:<入口>`。对端自带的转发头也不可信（成员节点可伪造），因此转发登录的
+  // IP 桶留空，只按 uid 计；真实客户端 IP 的限速在入口执行。
   const ip = peer ? '' : (clientIpFromRequest(req) ?? 'local');
   return { peer, ip };
 }
@@ -70,12 +73,13 @@ export function createLoginFailureSink(
   const noteUidHint = (uid: string) => {
     uidHint = uid;
   };
-  const fail = (code: string, status = 401): Response => {
+  const fail = (code: string, status?: number): Response => {
+    if (code === 'RATE_LIMITED') return jsonError(code, status ?? 429);
     if (code !== 'TOTP_REQUIRED' && code !== 'PASSKEY_REQUIRED') {
       if (ip) deps.recordFailure(`ip:${ip}`);
       if (uidHint) deps.recordFailure(`uid:${uidHint}`);
     }
-    return jsonError(code, status);
+    return jsonError(code, status ?? 401);
   };
   const rejectUid = (): Response | null => {
     if (uidHint && deps.uidTooLong(uidHint)) return jsonError('MALFORMED', 400);

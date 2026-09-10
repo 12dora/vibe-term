@@ -21,10 +21,11 @@ import {
   joinRelayUrl,
   requestRelayJson,
 } from '../commands/relay-shared';
+import { t } from '../i18n';
 import type { ParsedArgs } from '../types';
 import { errorMessage } from './error-message';
 import type { FetchLike } from './fetch-like';
-import { fetchAuthMode, loginWithRootKey } from './hub-client';
+import { cliPasswordLoginBlockedByPasskey, fetchAuthMode, loginWithRootKey } from './hub-client';
 import type { LocalAuthContext } from './local-auth';
 import { assertRootKeyMatches, deriveRootKey, resolvePassword } from './password';
 import { promptPassword, promptText } from './prompt';
@@ -62,8 +63,9 @@ export type RelayTenantSession = {
   fetcher?: FetchLike;
 };
 
-const PASSKEY_CLI_UNAVAILABLE =
-  'This account requires passkey second-factor for password sign-in, so relay commands are unavailable from the CLI. Use the web UI (Settings → Nodes → relay) instead.';
+function passkeyRelayUnavailable(): string {
+  return t('cli.passkey.relayUnavailable');
+}
 
 async function resolveNewUsername(parsed: ParsedArgs): Promise<string> {
   const flag = asString(parsed.flags.username);
@@ -140,8 +142,8 @@ export async function openRelayTenantSession(
     : await createLocalUser(parsed, ctx, io);
   const fetcher = io.fetcher;
   const mode = await fetchAuthMode(baseUrl, fetcher ?? fetch);
-  if (mode.passkeySecondFactor) {
-    throw new Error(PASSKEY_CLI_UNAVAILABLE);
+  if (cliPasswordLoginBlockedByPasskey(mode)) {
+    throw new Error(passkeyRelayUnavailable());
   }
   const totp = await resolveTotp(ctx, io, {
     userId: opened.userId,

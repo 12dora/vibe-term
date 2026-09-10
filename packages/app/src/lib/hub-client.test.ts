@@ -5,9 +5,11 @@ import type { FetchLike } from './fetch-like';
 import {
   REDEEM_NETWORK_RETRY_LIMIT,
   assertHubJoinUrl,
+  cliPasswordLoginBlockedByPasskey,
   createHubFetcher,
   fetchAuthMode,
   loginWithRootKey,
+  parseSecondFactorPolicy,
   postEnrollment,
   redeemEnrollment,
 } from './hub-client';
@@ -99,6 +101,65 @@ describe('fetchAuthMode', () => {
       Response.json({ mode: 'mesh', nodeId: 'self', uid: 'u1', totpEnabled: false })
     );
     expect(off.passkeySecondFactor).toBe(false);
+    expect(off.secondFactorPolicy).toBeNull();
+  });
+
+  test('parses secondFactorPolicy and ignores unknown values', async () => {
+    const either = await fetchAuthMode('https://hub.example', async () =>
+      Response.json({
+        mode: 'mesh',
+        totpEnabled: true,
+        passkeySecondFactor: true,
+        secondFactorPolicy: 'either',
+      })
+    );
+    expect(either.secondFactorPolicy).toBe('either');
+    const junk = await fetchAuthMode('https://hub.example', async () =>
+      Response.json({ secondFactorPolicy: 'and' })
+    );
+    expect(junk.secondFactorPolicy).toBeNull();
+  });
+});
+
+describe('cliPasswordLoginBlockedByPasskey', () => {
+  test('aborts only for passkey policy; old nodes fall back to passkey && !totp', () => {
+    expect(parseSecondFactorPolicy('either')).toBe('either');
+    expect(parseSecondFactorPolicy('nope')).toBeNull();
+    expect(
+      cliPasswordLoginBlockedByPasskey({
+        secondFactorPolicy: 'passkey',
+        passkeySecondFactor: true,
+        totpEnabled: true,
+      })
+    ).toBe(true);
+    expect(
+      cliPasswordLoginBlockedByPasskey({
+        secondFactorPolicy: 'either',
+        passkeySecondFactor: true,
+        totpEnabled: true,
+      })
+    ).toBe(false);
+    expect(
+      cliPasswordLoginBlockedByPasskey({
+        secondFactorPolicy: 'totp',
+        passkeySecondFactor: false,
+        totpEnabled: true,
+      })
+    ).toBe(false);
+    expect(
+      cliPasswordLoginBlockedByPasskey({
+        secondFactorPolicy: null,
+        passkeySecondFactor: true,
+        totpEnabled: false,
+      })
+    ).toBe(true);
+    expect(
+      cliPasswordLoginBlockedByPasskey({
+        secondFactorPolicy: null,
+        passkeySecondFactor: true,
+        totpEnabled: true,
+      })
+    ).toBe(false);
   });
 });
 
@@ -403,7 +464,7 @@ describe('loginWithRootKey session extraction', () => {
           loginBody: { code: 'PASSKEY_REQUIRED' },
         }),
       })
-    ).rejects.toThrow(/passkey second-factor/i);
+    ).rejects.toThrow(/passkey/i);
     await expect(
       loginWithRootKey({
         baseUrl: 'https://hub.example',

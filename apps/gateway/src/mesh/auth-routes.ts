@@ -5,13 +5,11 @@ import {
   decodeBase64url,
   decodeDelegation,
   decodeLogin,
-  decryptTotpSecret,
   delegationChallenge,
   encodeBase64url,
   verifyDelegation,
   verifyDelegationTimes,
   verifyLogin,
-  verifyTotpCode,
 } from '@vibeterm/shared/auth';
 import type { KeyLogEffect, VerifyDelegationPasskey } from '@vibeterm/shared/auth';
 import { SET_SESSION_HEADER, setHeaderPair } from '@vibeterm/shared/http/mesh-headers';
@@ -64,7 +62,8 @@ import {
 } from './auth-passkey-origin';
 import { defaultEntryOrigins } from './auth-passkey-origin-entry';
 import { AUTH_LOGIN_PUBLIC_PATHS, isAuthLoginPublicPath } from './auth-public-paths';
-import { handleTotpRecordRequest, parseTotpBody } from './auth-totp-record';
+import { TotpLoginGuard, verifyLoginTotp } from './auth-totp-guard';
+import { handleTotpRecordRequest } from './auth-totp-record';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest, waivesPasskeySecondFactor } from './client-source';
 import {
@@ -166,6 +165,7 @@ export function isAuthPublicPath(
 export class AuthRoutes {
   private readonly limiter = new LoginFailureLimiter(() => this.now());
   private readonly challengeLimiter = new LoginFailureLimiter(() => this.now());
+  private readonly totpGuard = new TotpLoginGuard(() => this.now());
   private readonly sessionDeps: SessionMiddlewareDeps;
   private readonly verifyPasskey: VerifyDelegationPasskey;
   private tlsInfoProvider: HubTlsInfoProvider | undefined;
@@ -285,7 +285,12 @@ export class AuthRoutes {
       origin,
       this.deps.userStore,
       snapshot.hub,
-      { waivePasskeySecondFactor: waivesPasskeySecondFactor(req) }
+      {
+        waivePasskeySecondFactor: waivesPasskeySecondFactor(req),
+        totpSecretPresent: Boolean(
+          snapshot.user && this.deps.keyLogService.currentState(snapshot.user.id).totp
+        ),
+      }
     );
     const auth = authenticateRequest(req, this.sessionDeps);
     return jsonBody({
@@ -385,7 +390,7 @@ export class AuthRoutes {
       });
       if (!loginOk.ok) return fail(loginErrorCode(loginOk.error));
       const second = await verifySecondFactors({
-        checkTotp: (user, method, totp) => this.checkTotp(user, method, totp),
+        checkTotp: (user, method, totp, sessPk) => this.checkTotp(user, method, totp, sessPk),
         checkPasskeySecondFactor: (r, u, delegation, passkey, totpVerified) =>
           this.checkPasskeySecondFactor(r, u, delegation, passkey, totpVerified),
         req,
@@ -569,31 +574,21 @@ export class AuthRoutes {
     return ok ? { ok: true } : bad;
   }
 
-  private async checkTotp(
+  private checkTotp(
     user: UserRecord,
     method: Delegation['method'],
-    totpBody: unknown
+    totpBody: unknown,
+    sessPk: Uint8Array
   ): Promise<TotpFactorResult> {
-    if (method !== 'root') return { ok: true, verified: false, enrolled: false };
-    const state = this.deps.keyLogService.currentState(user.id);
-    if (!state.totp || user.totpRecordSeq == null)
-      return { ok: true, verified: false, enrolled: false };
-    const parsed = parseTotpBody(totpBody);
-    if (!parsed) return { ok: true, verified: false, enrolled: true };
-    try {
-      const secret = await decryptTotpSecret(parsed.kTotp, state.totp, {
-        uid: user.id,
-        root_epoch: state.rootEpoch,
-        seq: BigInt(user.totpRecordSeq),
-      });
-      const timeSec = Math.floor(this.now() / 1000);
-      if (!verifyTotpCode(secret, parsed.code, timeSec)) {
-        return { ok: false, code: 'TOTP_INVALID' };
-      }
-      return { ok: true, verified: true, enrolled: true };
-    } catch {
-      return { ok: false, code: 'TOTP_INVALID' };
-    }
+    return verifyLoginTotp({
+      user,
+      method,
+      totpBody,
+      sessPk,
+      nowMs: this.now(),
+      state: this.deps.keyLogService.currentState(user.id),
+      guard: this.totpGuard,
+    });
   }
 
   private async checkPasskeySecondFactor(

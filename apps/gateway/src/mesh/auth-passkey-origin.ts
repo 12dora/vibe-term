@@ -11,7 +11,9 @@
 // `PASSKEY_REQUIRED`，由登录页指路（本机登录，或 CLI 移除通行密钥）。
 //
 // 账户同时启用 TOTP 与通行密钥时，二次验证是 OR：有效 TOTP 或本 origin 断言满足其一即可
-// （CLI / agent 做不了 WebAuthn）。非规范 Origin 硬拒绝仍在 TOTP 通过之后执行。
+// （CLI / agent 做不了 WebAuthn）。两者都没交时回 TOTP_REQUIRED（含本 origin 有钥匙），
+// 让非 WebAuthn 客户端知道可操作的因子；未开 TOTP 时仍是 PASSKEY_REQUIRED。
+// 非规范 Origin 硬拒绝仍在 TOTP 通过之后执行。
 
 import { type Delegation, encodeBase64url } from '@vibeterm/shared/auth';
 import type { UserKeyRecord, UserRecord } from '../auth/user-store';
@@ -144,16 +146,11 @@ export type PasskeyFactorResult =
 
 function totpCoversMissingPasskey(totp: TotpFactorResult, passkey: PasskeyFactorResult): boolean {
   return (
-    totp.ok &&
-    !totp.verified &&
-    totp.enrolled &&
-    !passkey.ok &&
-    passkey.code === 'PASSKEY_REQUIRED' &&
-    !passkey.usableHere
+    totp.ok && !totp.verified && totp.enrolled && !passkey.ok && passkey.code === 'PASSKEY_REQUIRED'
   );
 }
 
-/** TOTP 与通行密钥二次验证的 OR：错码不回落；缺因子时按「这里能不能做断言」选错误码。 */
+/** TOTP 与通行密钥二次验证的 OR：错码不回落；缺因子且已开 TOTP 时回 TOTP_REQUIRED（含本 origin 有钥匙）。 */
 export function resolveSecondFactors(
   totp: TotpFactorResult,
   passkey: PasskeyFactorResult
@@ -172,7 +169,8 @@ export async function verifySecondFactors(args: {
   checkTotp: (
     user: UserRecord,
     method: Delegation['method'],
-    totpBody: unknown
+    totpBody: unknown,
+    sessPk: Uint8Array
   ) => Promise<TotpFactorResult>;
   checkPasskeySecondFactor: (
     req: Request,
@@ -186,7 +184,12 @@ export async function verifySecondFactors(args: {
   delegation: Delegation;
   body: Record<string, unknown>;
 }): Promise<SecondFactorResult> {
-  const totp = await args.checkTotp(args.user, args.delegation.method, args.body.totp);
+  const totp = await args.checkTotp(
+    args.user,
+    args.delegation.method,
+    args.body.totp,
+    args.delegation.sess_pk
+  );
   if (!totp.ok) return totp;
   const passkey = await args.checkPasskeySecondFactor(
     args.req,

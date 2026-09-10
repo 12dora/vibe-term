@@ -369,9 +369,10 @@ export async function challengeAndLogin(
           | Promise<{ credential_id: string; sig: string }>);
     headers?: Record<string, string>;
     trustProxy?: boolean;
+    sess?: ReturnType<typeof generateEd25519KeyPair>;
   }
 ) {
-  const sess = generateEd25519KeyPair();
+  const sess = tweak?.sess ?? generateEd25519KeyPair();
   const issuedAt = tweak?.issuedAt ?? Date.now();
   const uid = tweak?.uid ?? boot.userId;
   const del = createDelegation(tweak?.rootKey ?? boot.rootKey, {
@@ -427,6 +428,34 @@ export async function challengeAndLogin(
     trustProxy: tweak?.trustProxy,
   });
   return { res, sid: res.ok ? sidFromLogin(res) : '', challengeId, nonce, del };
+}
+
+async function enrollLoginTotp(mesh: Awaited<ReturnType<typeof bootMesh>>): Promise<{
+  code: string;
+  k_totp: string;
+}> {
+  const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
+  const { kdfParamsFromJson } = await import('../auth/user-key-service');
+  const state = mesh.keyLogService.currentState(mesh.boot.userId);
+  const secret = new Uint8Array(20).fill(7);
+  const user = mesh.userStore.getById(mesh.boot.userId);
+  if (!user) throw new Error('missing user');
+  const kTotp = deriveTotpKey(
+    await deriveSeed(PASSWORD, kdfParamsFromJson(user.kdfParamsJson)),
+    mesh.boot.userId,
+    state.rootEpoch
+  );
+  const payload = await encryptTotpSecret(kTotp, secret, {
+    uid: mesh.boot.userId,
+    root_epoch: state.rootEpoch,
+    seq: state.head.seq + 1n,
+  });
+  const applied = await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
+    type: 'set-totp',
+    payload: encodeSetTotpPayload(payload),
+  });
+  if (!applied.ok) throw new Error('set-totp failed');
+  return { code: totpCode(secret, Math.floor(Date.now() / 1000)), k_totp: encodeBase64url(kTotp) };
 }
 
 function insertPasskeyRow(
@@ -1667,6 +1696,73 @@ describe('auth-routes', () => {
     }
   });
 
+  test('TOTP_INVALID is counted by the TOTP limiter and the login failure limiter', async () => {
+    const totpMesh = await bootMesh();
+    try {
+      const totp = await enrollLoginTotp(totpMesh);
+      for (let i = 0; i < 5; i++) {
+        const { res } = await challengeAndLogin(totpMesh.runtime, totpMesh.boot, {
+          totp: { code: '000000', k_totp: totp.k_totp },
+          clientIp: '198.51.100.9',
+        });
+        expect(res.status).toBe(401);
+        expect((await res.json()).code).toBe('TOTP_INVALID');
+      }
+      const locked = await challengeAndLogin(totpMesh.runtime, totpMesh.boot, {
+        totp: { code: '000000', k_totp: totp.k_totp },
+        clientIp: '198.51.100.9',
+      });
+      expect(locked.res.status).toBe(429);
+      expect((await locked.res.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      totpMesh.close();
+    }
+
+    const mixed = await bootMesh();
+    try {
+      const totp = await enrollLoginTotp(mixed);
+      for (let i = 0; i < 3; i++) {
+        const { res } = await challengeAndLogin(mixed.runtime, mixed.boot, {
+          totp: { code: '000000', k_totp: totp.k_totp },
+          clientIp: '198.51.100.10',
+        });
+        expect((await res.json()).code).toBe('TOTP_INVALID');
+      }
+      for (let i = 0; i < 7; i++) {
+        const { res } = await challengeAndLogin(mixed.runtime, mixed.boot, {
+          badSig: true,
+          clientIp: '198.51.100.10',
+        });
+        expect(res.status).toBe(401);
+      }
+      const limited = await challengeAndLogin(mixed.runtime, mixed.boot, {
+        badSig: true,
+        clientIp: '198.51.100.10',
+      });
+      expect(limited.res.status).toBe(429);
+      expect((await limited.res.json()).code).toBe('RATE_LIMITED');
+    } finally {
+      mixed.close();
+    }
+  });
+
+  test('the same TOTP code may retry on one delegation and is rejected on another', async () => {
+    const mesh = await bootMesh();
+    try {
+      const totp = await enrollLoginTotp(mesh);
+      const sess = generateEd25519KeyPair();
+      const first = await challengeAndLogin(mesh.runtime, mesh.boot, { totp, sess });
+      expect(first.res.status).toBe(200);
+      const retry = await challengeAndLogin(mesh.runtime, mesh.boot, { totp, sess });
+      expect(retry.res.status).toBe(200);
+      const replay = await challengeAndLogin(mesh.runtime, mesh.boot, { totp });
+      expect(replay.res.status).toBe(401);
+      expect((await replay.res.json()).code).toBe('TOTP_INVALID');
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/auth/totp-record requires session and 404s when TOTP is off', async () => {
     const mesh = await bootMesh({ roles: { hub: true, node: true, relay: false } });
     try {
@@ -1792,7 +1888,8 @@ describe('auth-routes', () => {
       expect(decodeBase64url(body.payload)).toEqual(encodeSetTotpPayload(wrapped));
 
       const after = mesh.keyLogService.currentState(mesh.boot.userId);
-      const code = totpCode(secret, Math.floor(Date.now() / 1000));
+      // 换一把 sess_pk 再用同一 30s 码会被重放缓存拒绝；±1 step 仍在接受窗口内。
+      const code = totpCode(secret, Math.floor(Date.now() / 1000) + 30);
       const login = await challengeAndLogin(
         mesh.runtime,
         { userId: mesh.boot.userId, rootKey: newRoot },
@@ -2022,25 +2119,25 @@ describe('auth-routes', () => {
   });
 
   test('TOTP_REQUIRED and PASSKEY_REQUIRED are not counted as login failures', async () => {
-    const mesh = await bootMesh();
+    const totpMesh = await bootMesh();
     try {
       const { deriveSeed, deriveTotpKey } = await import('@vibeterm/shared/auth');
       const { kdfParamsFromJson } = await import('../auth/user-key-service');
-      const state = mesh.keyLogService.currentState(mesh.boot.userId);
+      const state = totpMesh.keyLogService.currentState(totpMesh.boot.userId);
       const secret = new Uint8Array(20).fill(7);
-      const user = mesh.userStore.getById(mesh.boot.userId);
+      const user = totpMesh.userStore.getById(totpMesh.boot.userId);
       if (!user) throw new Error('missing user');
       const params = kdfParamsFromJson(user.kdfParamsJson);
       const seed = await deriveSeed(PASSWORD, params);
-      const kTotp = deriveTotpKey(seed, mesh.boot.userId, state.rootEpoch);
+      const kTotp = deriveTotpKey(seed, totpMesh.boot.userId, state.rootEpoch);
       const payload = await encryptTotpSecret(kTotp, secret, {
-        uid: mesh.boot.userId,
+        uid: totpMesh.boot.userId,
         root_epoch: state.rootEpoch,
         seq: state.head.seq + 1n,
       });
       expect(
         (
-          await mesh.keyLogService.signAndApply(mesh.boot.userId, mesh.boot.rootKey, {
+          await totpMesh.keyLogService.signAndApply(totpMesh.boot.userId, totpMesh.boot.rootKey, {
             type: 'set-totp',
             payload: encodeSetTotpPayload(payload),
           })
@@ -2048,20 +2145,25 @@ describe('auth-routes', () => {
       ).toBe(true);
 
       for (let i = 0; i < 11; i++) {
-        const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        const { res } = await challengeAndLogin(totpMesh.runtime, totpMesh.boot, {
           clientIp: '10.0.0.21',
         });
         expect(res.status).toBe(401);
         expect((await res.json()).code).toBe('TOTP_REQUIRED');
       }
+    } finally {
+      totpMesh.close();
+    }
 
-      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+    const passkeyMesh = await bootMesh();
+    try {
+      insertPasskeyRow(passkeyMesh.userStore, passkeyMesh.boot.userId, {
         origin: 'http://localhost:19663',
         rpId: 'localhost',
         fill: 31,
       });
       for (let i = 0; i < 11; i++) {
-        const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        const { res } = await challengeAndLogin(passkeyMesh.runtime, passkeyMesh.boot, {
           clientIp: '203.0.113.22',
           headers: { origin: 'http://localhost:19663' },
         });
@@ -2069,7 +2171,7 @@ describe('auth-routes', () => {
         expect((await res.json()).code).toBe('PASSKEY_REQUIRED');
       }
     } finally {
-      mesh.close();
+      passkeyMesh.close();
     }
   });
 
@@ -3224,7 +3326,7 @@ describe('auth-routes', () => {
       };
 
       const missingBoth = await challengeAndLogin(mesh.runtime, mesh.boot, origin);
-      expect((await missingBoth.res.json()).code).toBe('PASSKEY_REQUIRED');
+      expect((await missingBoth.res.json()).code).toBe('TOTP_REQUIRED');
 
       const totpOnly = await challengeAndLogin(mesh.runtime, mesh.boot, { totp, ...origin });
       expect(totpOnly.res.status).toBe(200);
@@ -3294,6 +3396,26 @@ describe('auth-routes', () => {
       });
       expect(publicLogin.res.status).toBe(401);
       expect((await publicLogin.res.json()).code).toBe('PASSKEY_REQUIRED');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('trusted local waiver still requires TOTP when it is enrolled', async () => {
+    const mesh = await bootMesh();
+    try {
+      insertPasskeyRow(mesh.userStore, mesh.boot.userId, {
+        origin: 'http://localhost:19663',
+        rpId: 'localhost',
+        fill: 43,
+      });
+      await enrollLoginTotp(mesh);
+      const waived = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        clientIp: '127.0.0.1',
+        headers: { origin: 'http://localhost:19663' },
+      });
+      expect(waived.res.status).toBe(401);
+      expect((await waived.res.json()).code).toBe('TOTP_REQUIRED');
     } finally {
       mesh.close();
     }

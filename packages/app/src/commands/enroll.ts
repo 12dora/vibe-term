@@ -13,9 +13,11 @@ import {
   encodeJoinToken,
   nodeIdToHex,
 } from '../../../shared/src/auth';
+import { t } from '../i18n';
 import { parseDurationMs } from '../lib/duration';
 import type { FetchLike } from '../lib/fetch-like';
 import {
+  cliPasswordLoginBlockedByPasskey,
   createHubFetcher,
   fetchAuthMode,
   listHubNodes,
@@ -52,8 +54,9 @@ function log(io: EnrollIo | undefined, message: string): void {
   (io?.log ?? console.log)(message);
 }
 
-const PASSKEY_ENROLL_UNAVAILABLE =
-  'This account requires passkey second-factor for password sign-in, so CLI password enrollment is unavailable. Use the web UI (Settings → Nodes → Node management → Add → generate a join code) and run the join command instead.';
+function passkeyEnrollUnavailable(): string {
+  return t('cli.passkey.enrollUnavailable');
+}
 
 function existingAdmission(
   ctx: LocalAuthContext,
@@ -304,8 +307,8 @@ async function assertCliPasswordEnrollAllowed(ctx: LocalAuthContext, io: EnrollI
   }
   const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
   const mode = await fetchAuthMode(hubUrl, fetcher);
-  if (mode.passkeySecondFactor) {
-    throw new Error(PASSKEY_ENROLL_UNAVAILABLE);
+  if (cliPasswordLoginBlockedByPasskey(mode)) {
+    throw new Error(passkeyEnrollUnavailable());
   }
 }
 
@@ -324,8 +327,8 @@ async function enrollOnRemoteHub(
   }
   const fetcher = io.fetcher ?? createHubFetcher(new HubTrustStore(ctx.db), hubUrl);
   const mode = await fetchAuthMode(hubUrl, fetcher);
-  if (mode.passkeySecondFactor) {
-    throw new Error(PASSKEY_ENROLL_UNAVAILABLE);
+  if (cliPasswordLoginBlockedByPasskey(mode)) {
+    throw new Error(passkeyEnrollUnavailable());
   }
   const caFingerprint =
     typeof mode.caFingerprint === 'string' && /^[0-9a-f]{64}$/.test(mode.caFingerprint)

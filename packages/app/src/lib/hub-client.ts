@@ -15,7 +15,10 @@ import {
   signLogin,
 } from '../../../shared/src/auth';
 import { SET_SESSION_HEADER, readHeaderPair } from '../../../shared/src/http/mesh-headers';
+import { t } from '../i18n';
 import type { FetchLike } from './fetch-like';
+
+export type SecondFactorPolicy = 'either' | 'totp' | 'passkey' | 'none';
 
 export type HubAuthMode = {
   mode: string;
@@ -24,6 +27,7 @@ export type HubAuthMode = {
   username: string | null;
   totpEnabled: boolean;
   passkeySecondFactor: boolean;
+  secondFactorPolicy: SecondFactorPolicy | null;
   kdfParams: {
     salt: string;
     memory_kib: number;
@@ -32,6 +36,30 @@ export type HubAuthMode = {
   } | null;
   caFingerprint: string | null;
 };
+
+export function parseSecondFactorPolicy(value: unknown): SecondFactorPolicy | null {
+  if (value === 'either' || value === 'totp' || value === 'passkey' || value === 'none') {
+    return value;
+  }
+  return null;
+}
+
+/** CLI 做不了 WebAuthn：只在策略是 passkey（旧节点则回退到有钥匙且未开 TOTP）时拒绝口令登录。 */
+export function cliPasswordLoginBlockedByPasskey(mode: {
+  secondFactorPolicy?: string | null;
+  passkeySecondFactor: boolean;
+  totpEnabled: boolean;
+}): boolean {
+  if (mode.secondFactorPolicy === 'passkey') return true;
+  if (
+    mode.secondFactorPolicy === 'either' ||
+    mode.secondFactorPolicy === 'totp' ||
+    mode.secondFactorPolicy === 'none'
+  ) {
+    return false;
+  }
+  return mode.passkeySecondFactor && !mode.totpEnabled;
+}
 
 export type HubLoginResult = {
   sid: string;
@@ -164,6 +192,7 @@ export async function fetchAuthMode(
     username: typeof body.username === 'string' ? body.username : null,
     totpEnabled: body.totpEnabled === true,
     passkeySecondFactor: body.passkeySecondFactor === true,
+    secondFactorPolicy: parseSecondFactorPolicy(body.secondFactorPolicy),
     kdfParams:
       body.kdfParams && typeof body.kdfParams === 'object'
         ? (body.kdfParams as HubAuthMode['kdfParams'])
@@ -254,8 +283,7 @@ export async function loginWithRootKey(options: {
 }
 
 const AUTH_LOGIN_ERROR_BY_CODE: Record<string, string> = {
-  PASSKEY_REQUIRED:
-    'This account requires passkey second-factor for password sign-in; CLI password login is unavailable. Use the web UI to sign in.',
+  PASSKEY_REQUIRED: 'cli.passkey.loginUnavailable',
   PASSKEY_INVALID: 'Passkey second-factor verification failed.',
   INVALID_CREDENTIALS: 'Invalid credentials.',
   TOTP_REQUIRED: 'TOTP code is required.',
@@ -265,8 +293,8 @@ const AUTH_LOGIN_ERROR_BY_CODE: Record<string, string> = {
 function authLoginError(status: number, body: Record<string, unknown>): Error {
   const code = String(body.error ?? body.code ?? '');
   const mapped = AUTH_LOGIN_ERROR_BY_CODE[code];
-  if (mapped) return new Error(mapped);
-  return new Error(`auth login failed: HTTP ${status} ${code}`);
+  if (!mapped) return new Error(`auth login failed: HTTP ${status} ${code}`);
+  return new Error(mapped.startsWith('cli.') ? t(mapped) : mapped);
 }
 
 /** 会话 cookie 前缀：新名在前，旧名供混合版本期的老 hub 使用。 */
