@@ -113,6 +113,7 @@ export const EnvelopeSchema = b.struct({
 | 0x0103 | DEVICE_DISCONNECT | C2S | 断开设备 |
 | 0x0104 | DEVICE_DISCONNECTED | S2C | 设备已断开 |
 | 0x0105 | DEVICE_EVENT | S2C | 设备事件（错误/重连等） |
+| 0x0106 | DEVICE_LATENCY | S2C | 设备宿主一跳（网关 ↔ tmux）往返延迟 |
 
 ### tmux 控制（0x0200-0x02FF）
 
@@ -319,6 +320,20 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 - `errorType: option(string)`（用于 FE 展示：如 reconnecting/reconnect_failed 等）
 - `message: option(string)`
 - `rawMessage: option(string)`
+
+### DEVICE_LATENCY（0x0106）
+
+拥有设备的网关按 tmux 控制模式命令回执（写入 → `%end`）测得网关 ↔ tmux server 这一跳的往返延迟（本地 tmux 或经 SSH），
+EWMA 平滑后下发给已连接该设备的会话：材料性变化（≥10 ms 或 ≥20%）或定时刷新时各发一次；会话连上设备且已有样本时立即补发一次。
+网关在 HELLO_S2C `capabilities` 里播报 `device-latency-v1`；未播报的老节点不会发送此帧，客户端只能展示浏览器 ↔ 节点这一段。
+
+字段：
+
+- `deviceId: string`
+- `rttMs: u32`（平滑值）
+- `rawMs: u32`（最近一次原始样本）
+- `hop: u8`：0 `local`、1 `ssh`
+- `sampledAt: u64`（Unix ms）
 
 ### TMUX_SELECT（0x0201）
 

@@ -76,6 +76,25 @@ export const DeviceEventSchema = b.struct({
   rawMessage: OptionStringSchema,
 });
 
+// 设备宿主一跳（网关 ↔ tmux server，本地或经 SSH）的命令往返延迟。
+// 由拥有该设备的网关按 tmux 控制模式回执测得并平滑，材料性变化或定时刷新时下发给已连接该设备的会话。
+export const DEVICE_LATENCY_HOP_LOCAL = 0;
+export const DEVICE_LATENCY_HOP_SSH = 1;
+
+export const DeviceLatencySchema = b.struct({
+  deviceId: b.string(),
+  /** 平滑后的往返毫秒数（EWMA）。 */
+  rttMs: b.u32(),
+  /** 最近一次原始样本。 */
+  rawMs: b.u32(),
+  /** 0 = 本地 tmux，1 = SSH。 */
+  hop: b.u8(),
+  /** 网关采样时刻（Unix ms）。 */
+  sampledAt: b.u64(),
+});
+
+export type DeviceLatencyWire = b.infer<typeof DeviceLatencySchema>;
+
 // ========== tmux 控制 ==========
 
 export const TmuxSelectSchema = b.struct({

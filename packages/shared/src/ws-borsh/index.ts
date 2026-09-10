@@ -16,6 +16,7 @@ export {
   KIND_DEVICE_DISCONNECT,
   KIND_DEVICE_DISCONNECTED,
   KIND_DEVICE_EVENT,
+  KIND_DEVICE_LATENCY,
   KIND_TMUX_SELECT,
   KIND_TMUX_SELECT_WINDOW,
   KIND_TMUX_CREATE_WINDOW,
@@ -157,6 +158,14 @@ export {
 export {
   SITE_THEME_DARK,
   SITE_THEME_LIGHT,
+} from './schema';
+
+// ========== 设备宿主一跳延迟 ==========
+export {
+  DEVICE_LATENCY_HOP_LOCAL,
+  DEVICE_LATENCY_HOP_SSH,
+  DeviceLatencySchema,
+  type DeviceLatencyWire,
 } from './schema';
 
 // ========== mesh 事件枚举值 ==========
