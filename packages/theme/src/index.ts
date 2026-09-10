@@ -2,6 +2,7 @@
 export {
   DEFAULT_FONT_ID,
   FONT_MANIFEST,
+  ensureFontFaceInjected,
   getFontEntry,
   loadTerminalFonts,
   resolveFontStack,

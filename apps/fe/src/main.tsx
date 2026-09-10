@@ -38,6 +38,7 @@ import {
 import { PageWrapper } from '@/page-wrapper';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
+import { setupServiceWorker } from '@/sw/register';
 import { installSessionInterceptor } from '@vibeterm/api-client/auth/index';
 import { ConnectionIndicator } from '@vibeterm/panels';
 import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
@@ -425,4 +426,7 @@ void i18nReady
     else setTimeout(prefetchRest, 0);
     // 侧栏两个顶层入口的 chunk 也趁空闲逐个拉下来：点过去时只剩数据请求那一段。
     startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
+    // 应用壳 SW 放在首帧之后注册：安装期的预缓存下载不和首屏抢带宽；
+    // 非 production 反过来注销同源已有的 SW，免得旧壳把 vite dev 页面拦成过期版本。
+    setupServiceWorker();
   });

@@ -1,9 +1,11 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
-import { type Plugin, type PluginOption, defineConfig } from 'vite';
+import { type Plugin, type PluginOption, defineConfig, build as viteBuild } from 'vite';
+import { buildPrecacheManifest } from './src/sw/precache-manifest';
 
 // monorepo 版本真相源：发布的 vibeterm-cli（packages/app）版本。读取失败退回 0.0.0。
 function readMonorepoVersion(): string {
@@ -27,6 +29,72 @@ function katexWoff2Only(): Plugin {
         code: code.replace(/,\s*url\([^)]*\.(?:woff|ttf)\)\s*format\("(?:woff|truetype)"\)/g, ''),
         map: null,
       };
+    },
+  };
+}
+
+// 应用壳 Service Worker（src/sw/sw.ts）：把「一代构建」的 index.html + 全部哈希资源
+// （外加三个默认字体，尽力而为）整体预缓存，iOS 主屏 PWA 的冷启动不再逐个走网络。
+// 产物必须是根作用域下不带哈希的 dist/sw.js，因此不进主 bundle：等主构建落盘、拿到真实
+// 资源清单之后，再跑一次独立的 lib 构建把它单独打出来。清单口径见 src/sw/precache-manifest.ts。
+function serviceWorkerPlugin(version: string): Plugin {
+  let root = __dirname;
+  let outDir = path.resolve(__dirname, 'dist');
+  let bundleNames: string[] | null = null;
+
+  return {
+    name: 'vibeterm-service-worker',
+    apply: 'build',
+    configResolved(config) {
+      root = config.root;
+      outDir = path.resolve(config.root, config.build.outDir);
+    },
+    writeBundle(_options, bundle) {
+      // worker 等子构建不产出 index.html，只有主构建才该触发 SW 打包
+      if (!bundle['index.html']) return;
+      bundleNames = Object.keys(bundle);
+    },
+    async closeBundle() {
+      if (!bundleNames) return;
+      const names = bundleNames;
+      bundleNames = null;
+      const precache = buildPrecacheManifest({
+        html: readFileSync(path.join(outDir, 'index.html'), 'utf8'),
+        bundleNames: names,
+        css: readFileSync(path.resolve(__dirname, 'src/index.css'), 'utf8'),
+      });
+      const digest = createHash('sha256')
+        .update(JSON.stringify(precache))
+        .digest('hex')
+        .slice(0, 12);
+      const buildId = `${version}-${digest}`;
+      await viteBuild({
+        configFile: false,
+        root,
+        logLevel: 'warn',
+        define: {
+          __SW_BUILD_ID__: JSON.stringify(buildId),
+          __SW_PRECACHE__: JSON.stringify(precache),
+        },
+        build: {
+          outDir,
+          emptyOutDir: false,
+          copyPublicDir: false,
+          sourcemap: false,
+          target: 'es2020',
+          minify: 'esbuild',
+          lib: {
+            entry: path.resolve(__dirname, 'src/sw/sw.ts'),
+            formats: ['iife'],
+            name: 'vibetermServiceWorker',
+            fileName: () => 'sw.js',
+          },
+        },
+      });
+      console.log(
+        `[vite] service worker: dist/sw.js build=${buildId} precache core=${precache.core.length} ` +
+          `lazy=${precache.lazy.length} fonts=${precache.fonts.length}`
+      );
     },
   };
 }
@@ -88,7 +156,13 @@ export default defineConfig(({ mode }) => {
     : [];
 
   return {
-    plugins: [katexWoff2Only(), tailwindcss(), react(), ...analyzePlugins],
+    plugins: [
+      katexWoff2Only(),
+      tailwindcss(),
+      react(),
+      serviceWorkerPlugin(monorepoVersion),
+      ...analyzePlugins,
+    ],
     resolve: {
       alias: {
         '@': path.resolve(__dirname, './src'),

@@ -18,8 +18,10 @@ async function makeStaticRoot(): Promise<string> {
   await mkdir(join(root, 'assets'), { recursive: true });
   await writeFile(join(root, 'assets', HASHED_JS), 'console.log(1)');
   await writeFile(join(root, 'assets', 'vendor.min-a_b2-3d4E.js'), 'console.log(2)');
+  await writeFile(join(root, 'assets', 'ghostty-vt-a1b2c3d4.wasm'), 'wasm');
   await mkdir(join(root, 'fonts'), { recursive: true });
   await writeFile(join(root, 'fonts', 'GeistMonoNerdFontMono-Regular.woff2'), 'woff2');
+  await writeFile(join(root, 'sw.js'), 'self.addEventListener("fetch", () => {});');
   return root;
 }
 
@@ -109,6 +111,45 @@ describe('serveFrontend', () => {
       root
     );
     expect(again.status).toBe(304);
+  });
+});
+
+describe('service worker 与 wasm 的下发口径', () => {
+  test('/sw.js 走根作用域、no-cache、JS MIME（作用域外或缓存住都会让更新卡死）', async () => {
+    const root = await makeStaticRoot();
+    const response = await serveFrontend(new Request('http://127.0.0.1/sw.js'), root);
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Cache-Control')).toBe('no-cache');
+    expect(response.headers.get('Content-Type')).toContain('text/javascript');
+    expect(response.headers.get('ETag')).toMatch(/^W\/"\d+-\d+"$/);
+    expect(await response.text()).toContain('addEventListener');
+  });
+
+  test('缺 sw.js 时 404 而不是 SPA fallback 成 index.html', async () => {
+    const root = await makeStaticRoot();
+    await rm(join(root, 'sw.js'));
+    const response = await serveFrontend(new Request('http://127.0.0.1/sw.js'), root);
+    expect(response.status).toBe(404);
+  });
+
+  test('.wasm 下发 application/wasm，instantiateStreaming 才认', async () => {
+    const root = await makeStaticRoot();
+    const response = await serveFrontend(
+      new Request('http://127.0.0.1/assets/ghostty-vt-a1b2c3d4.wasm'),
+      root
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get('Content-Type')).toBe('application/wasm');
+    expect(response.headers.get('Cache-Control')).toBe('public, max-age=31536000, immutable');
+  });
+
+  test('woff2 下发 font/woff2', async () => {
+    const root = await makeStaticRoot();
+    const response = await serveFrontend(
+      new Request('http://127.0.0.1/fonts/GeistMonoNerdFontMono-Regular.woff2'),
+      root
+    );
+    expect(response.headers.get('Content-Type')).toBe('font/woff2');
   });
 });
 

@@ -36,8 +36,46 @@ mesh 事件 WS（`/mesh/ws`）的可见时退避与页面恢复唤醒见 [侧栏
 
 ## 4. 打包前端静态资源的缓存策略
 
-iOS PWA 冷启动时 Safari 会反复校验 / 重下 `public/fonts`（约 2.48 MB）与未带哈希的静态文件。`packages/app` 运行时 `serve-frontend.ts` 是唯一的 `fe-dist` 静态处理器（gateway 不直接 serve SPA）：
+iOS 主屏 PWA 在后台会被系统回收，每次回到前台都是一次冷启动：壳、chunk、字体全部重新走网络（`index.html` 是 `no-cache`，`public/fonts` 约 2.48 MB 至少一次条件请求）。这一层由「服务端下发口径 + 应用壳 Service Worker」共同解决。
+
+### 4.1 服务端下发口径
+
+`packages/app` 运行时 `serve-frontend.ts` 是唯一的 `fe-dist` 静态处理器（gateway 不直接 serve SPA）：
 
 - Vite 默认 `assets/[name]-[hash].ext`（`vite.config.ts` 未覆盖 `rollupOptions.output`）：`Cache-Control: public, max-age=31536000, immutable`。
-- 其余文件（`index.html`、图标、`/fonts/*.woff2` 等）：`Cache-Control: no-cache`，附 `ETag`（`W/"<size>-<mtimeMs>"`）与 `Last-Modified`，命中 `If-None-Match` / `If-Modified-Since` 返回 304。
-- 不协商 `Accept-Encoding`，故不下发 `Vary`。`/manifest` 仍由 gateway `manifestJson` 设为 `no-store`。
+- 其余文件（`index.html`、`/sw.js`、图标、`/fonts/*.woff2` 等）：`Cache-Control: no-cache`，附 `ETag`（`W/"<size>-<mtimeMs>"`）与 `Last-Modified`，命中 `If-None-Match` / `If-Modified-Since` 返回 304。`/sw.js` 必须保持 `no-cache` 且位于站点根，否则 SW 更新检查会被缓存卡死、作用域也覆盖不到全站。
+- MIME：`.wasm` → `application/wasm`（`WebAssembly.instantiateStreaming` 只认这个 MIME，不对就静默退回整包编译）、`.woff2` → `font/woff2`。
+- 不协商 `Accept-Encoding`，故不下发 `Vary`。`/api/manifest.webmanifest` 仍由 gateway `manifestJson` 设为 `no-store`。
+
+### 4.2 应用壳 Service Worker
+
+源码 `apps/fe/src/sw/`（`sw.ts` 主体、`sw-routes.ts` 路由分类、`precache-manifest.ts` 清单口径、`register.ts` 注册策略），手写、不依赖 workbox。产物由 `vite.config.ts` 的 `serviceWorkerPlugin` 在主构建落盘后单独打一遍 lib 构建，输出**不带哈希**的 `dist/sw.js`（约 9.7 KB），并把预缓存清单与构建 id（`<monorepo 版本>-<清单 sha256 前 12 位>`）`define` 进去。
+
+预缓存分三档，一次构建一代：
+
+| 档位 | 内容 | 安装策略 |
+| --- | --- | --- |
+| core | `index.html` + `index.html` 直接引用的入口 js/css 与 modulepreload 依赖（当前 4 项） | `cache.addAll`，缺一即放弃本代安装 |
+| lazy | 其余 `assets/**` 的 js/css/wasm（当前 214 项，约 7.5 MB） | 逐个 `cache.add`，并发 6，失败只回落按需下载 |
+| fonts | `index.css` 静态声明的三个默认 woff2（约 2.48 MB） | 同 lazy；`/fonts/generated/**` 那 16 MB 可选家族**不**预缓存，选用时按 font 运行时缓存 |
+
+运行时策略（`sw-routes.ts` 的分类结果）：
+
+- `/assets/**`、`/fonts/**`、`/vibeterm.png`、`/vibeterm-maskable.png`、`/logo.png`：cache-first，未命中则取网络并写回本代缓存。
+- 同源导航（`request.mode === 'navigate'`）：回放本代缓存的 `index.html`，后台只触发 `registration.update()`。**刻意不把新 `index.html` 写回本代缓存**——新壳配旧 chunk 哈希正是要避免的组合（旧版 `import()` 404 会触发 `lazy-chunk.tsx` 的整页刷新）。
+- **一律不拦截**：非 GET、带 `Range` 的请求、跨源请求，以及同源的 `/api/`、`/ws`、`/mesh/`、`/n/`、`/healthz`、`/sw.js`（前缀匹配，含 `/n/<id>/ws`、`/n/<id>/api/...`）。这些请求连 `respondWith` 都不调用，由浏览器原样发出。其余未知同源 GET（非导航）同样直通，不做兜底缓存。
+
+更新生命周期：**没有 `skipWaiting`，也没有 `clients.claim`**。新版本发布后，浏览器在下次导航时发现 `/sw.js` 变了 → 新 SW 安装自己那一代缓存 → 等旧客户端全部退出（iOS PWA 下次冷启动）才激活 → 激活时删掉其它 `vibeterm-shell-*` 代并向客户端 `postMessage({ type: 'vibeterm:sw-updated', buildId })`（当前无 UI 消费）。正在运行的页面始终拿到同一代的壳与 chunk。
+
+注册在首帧之后（`main.tsx` 的空闲预热旁），仅 `import.meta.env.PROD`；非生产反过来 `getRegistrations()` → `unregister()`，避免旧 SW 把同源的 `vite dev` 页面拦成过期打包壳。
+
+### 4.3 字体不再进冷启动关键路径
+
+`useAppMonoFont` 过去在应用根对默认字体强制 `document.fonts.load()`，设备列表 / 设置页也要为 2.3 MB 的 woff2 等一轮网络。现在它只注入 `@font-face`（`ensureFontFaceInjected`）并写 `--font-mono`，下载交给 `font-display: swap`。真正需要精确字形度量的终端各自在挂载前强制加载：`terminal-ui` 的 `ensureTerminalFonts`（`loadTerminalResources` 内，带进程内缓存）、`TerminalPreview`、分享回放 `use-replay-terminal`。
+
+### 4.4 怎么验证
+
+- Safari（iOS 需连 Mac）Web Inspector → Storage → Service Workers / Cache Storage：应看到一个 `vibeterm-shell-<版本>-<hash>` 缓存，条目数 = core + 成功的 lazy + fonts。
+- 控制台 `navigator.serviceWorker.getRegistrations()` 看注册与 `active`/`waiting` 状态；`caches.keys()` 看是否残留旧代（激活后应只剩一代）。
+- Network 面板确认导航请求标记为 “Service Worker”，而 `/api/**`、`/ws` 仍是普通网络请求。
+- 构建期看 vite 日志的 `[vite] service worker: dist/sw.js build=... precache core=N lazy=N fonts=N`；清单口径的回归由 `apps/fe/src/sw/precache-manifest.test.ts` 覆盖。

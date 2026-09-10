@@ -16,6 +16,11 @@ const MIME_MAP: Record<string, string> = {
   '.ico': 'image/x-icon',
   '.txt': 'text/plain; charset=utf-8',
   '.map': 'application/json; charset=utf-8',
+  // WebAssembly.instantiateStreaming 只认 application/wasm，MIME 不对会静默退回整包编译
+  '.wasm': 'application/wasm',
+  '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.webmanifest': 'application/manifest+json; charset=utf-8',
 };
 
 const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';

@@ -42,6 +42,18 @@ function injectFontFace(entry: FontManifestEntry): void {
   injectedFamilies.add(entry.cssFamily);
 }
 
+/**
+ * 只注入 @font-face、不触发下载：让 --font-mono 的 family 立刻可解析，woff2 由浏览器
+ * 在真正有文字用到该字体时才拉（font-display:swap 负责替换）。应用外壳走这条路径，
+ * 真正需要字形度量的终端才调 loadTerminalFonts 强制加载。默认字体已静态声明，空操作。
+ */
+export function ensureFontFaceInjected(fontId: string): void {
+  const entry = getFontEntry(fontId);
+  if (!entry.isDefault) {
+    injectFontFace(entry);
+  }
+}
+
 // 确保指定字体（主字体 + 符号兜底）的 Regular/Bold 已加载，再交给 canvas 测宽渲染。
 // 非默认字体先注入 @font-face；幂等（注入有 Set 去重，fonts.load 自带缓存）。
 export async function loadTerminalFonts(fontId: string, fontSize: number): Promise<void> {
