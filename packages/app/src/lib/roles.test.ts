@@ -7,9 +7,13 @@ const NODE = { hub: false, node: true, relay: false };
 const HUB_NODE = { hub: true, node: true, relay: false };
 
 describe('DEFAULT_STUN_SERVERS', () => {
-  test('lists Google and Cloudflare STUN as a comma-separated pair', () => {
-    expect(DEFAULT_STUN_SERVERS).toBe('stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478');
+  test('lists China-reachable STUN first, then Google and Cloudflare', () => {
+    expect(DEFAULT_STUN_SERVERS).toBe(
+      'stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'
+    );
     expect(DEFAULT_STUN_SERVERS.split(',').map((item) => item.trim())).toEqual([
+      'stun:stun.miwifi.com:3478',
+      'stun:stun.chat.bilibili.com:3478',
       'stun:stun.l.google.com:19302',
       'stun:stun.cloudflare.com:3478',
     ]);

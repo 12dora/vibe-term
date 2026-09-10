@@ -43,7 +43,7 @@
 | `VIBETERM_HUB_URL` | 空 | node 连 hub 的基址（`hub join` 成功后写入）。`hub,node` 用进程内 uplink，可不填 |
 | `VIBETERM_HUB_PUBLIC_URL` | 空 | hub 对外 HTTPS 地址，写入 join 命令与 `/api/auth/mode.hubPublicUrl`。非交互 `init --role hub,node` **必填** `--hub-public-url` |
 | `VIBETERM_PEER_PORT` | `39001` | node↔node 信令监听口，只承载签名信令 |
-| `VIBETERM_STUN_SERVERS` | `stun:stun.l.google.com:19302` | 逗号分隔，经 `node.list` 下发给各 node 与浏览器 ICE |
+| `VIBETERM_STUN_SERVERS` | `stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478` | 逗号分隔，经 `node.list` 下发给各 node 与浏览器 ICE |
 | `VIBETERM_RELAY_PUBLIC_URL` | 空 | **仅 relay 角色写入**，且必填。中继对外地址，uplink 认证签名绑定其 host |
 | `VIBETERM_RELAY_ADMIN_TOKEN` | 首启生成 | **仅 relay 角色写入**。管理令牌；缺失时首启生成一枚并写回 `app.env`，库里只存 sha256 |
 
