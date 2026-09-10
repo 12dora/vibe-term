@@ -21,6 +21,7 @@
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
 - 起开发环境 / 写测试：[三套环境](./development/environments.md)、[实测约定](./development/live-integration-tests.md)。
+- 在终端里用 `vibeterm`（登录、接进别的机器、让 AI agent 跑命令）：[命令行使用手册](./operations/cli-usage.md)。
 - 给 `vibeterm` 加客户端命令：[客户端 CLI 架构](./development/cli-architecture.md)。
 
 ## 全部文档
@@ -75,6 +76,7 @@
 | [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
 | [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：推包续传协议与进度 |
 | [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
+| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 命令行使用手册：登录、像 ssh 一样接进任意节点的终端、AI agent 的 run / capture / send 流程、安全说明 |
 | [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
 ### security/

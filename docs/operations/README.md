@@ -27,6 +27,12 @@
 | [tmux-process-survival.md](./tmux-process-survival.md) | 服务 kill 策略、linger、systemd OOMPolicy |
 | [troubleshooting-db-master-key.md](./troubleshooting-db-master-key.md) | 库与主密钥不匹配 |
 
+## 日常使用
+
+| 文档 | 内容 |
+| --- | --- |
+| [cli-usage.md](./cli-usage.md) | `vibeterm` 命令行使用手册：登录、接进任意节点的终端、给 AI agent 用的 run / capture / send、安全说明 |
+
 ## 发版与升级
 
 | 文档 | 内容 |
