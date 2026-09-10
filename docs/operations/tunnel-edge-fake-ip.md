@@ -56,15 +56,17 @@ DoH 也失败时同格式一条 warn（`ip=-`）。`stunResolveSnapshot()` 返�
 
 ## STUN 自检
 
-gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟，以及列表变化时立刻重测）。有效列表 = hub 经 `node.list` 下发的 `VIBETERM_STUN_SERVERS`（非空才覆盖），否则本机配置。
+gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟 ±10% 抖动，以及列表变化时重测，变化触发最短间隔 30 秒）。有效列表 = hub 经 `node.list` 下发的 `VIBETERM_STUN_SERVERS`（非空才覆盖），否则本机配置。探测走与 libdatachannel 相同的 `resolveIceServers`（系统 DNS → fake-IP 时 DoH），双栈时先 A 再在 `ENETUNREACH` 上回落 AAAA。`stuns:` / `turn:` / `turns:` 记 `skipped: unsupported-scheme`，不计入 `all=N`。
+
+同一 txid 在 2 s 预算内最多发 3 次 Binding（RTO 500 ms / 1000 ms）。对端 `0x0111` Binding error response 视为可达（`ok=true, errorResponse=true`）。日志里的 `mapped` 经 `maskIceAddress` 脱敏；`GET /api/mesh/rtc-config` 需 session，响应里保留完整 mapped address。
 
 每台服务器一条 info：
 
 ```
-[mesh][rtc] stun probe url=stun:stun.miwifi.com:3478 ok=true rtt_ms=86 mapped=203.0.113.10:54321
+[mesh][rtc] stun probe url=stun:stun.miwifi.com:3478 ok=true rtt_ms=86 mapped=203.0.113.0:54321 via=system fake_ip=false
 [mesh][rtc] stun probe url=stun:stun.l.google.com:19302 ok=false error=timeout
 ```
 
-全部失败时再打 warn：`[mesh][rtc] stun unreachable all=N`。`GET /api/mesh/rtc-config` 带最近一次结果 `probes: [{ url, ok, rttMs, mappedAddress, error, resolvedIp, probedAt }]`，运维可 `curl`。
+全部失败时再打 warn：`[mesh][rtc] stun unreachable all=N`。`GET /api/mesh/rtc-config` 带最近一次结果 `probes: [{ url, ok, rttMs, mappedAddress, error, resolvedIp, via, fakeIp, errorResponse, skipped, probedAt }]`。
 
 Surge / Clash TUN 把境外 UDP 丢进无 UDP 中继的节点时，Google `:19302` / Cloudflare `:3478` 常无应答；给 UDP 3478/19302 加 DIRECT，或依赖默认可达的小米 / Bilibili STUN。

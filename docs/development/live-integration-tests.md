@@ -1,4 +1,4 @@
-# 实测（live integration）：LLM 与搜索打真实 endpoint
+# 实测（live integration）：LLM、搜索与 STUN 打真实 endpoint
 
 本文说明打真实 endpoint 的 `*.integration.ts` 实测约定：凭证只放 `env/test.env.local`、缺凭证时守卫报错退出、`test:live:*` 脚本；面向写或跑实测的开发者。
 
@@ -20,6 +20,7 @@ LLM Provider 与 Web 搜索（Tavily / Brave）的单元测试用打桩 upstream
 | `TEST_LLM_PROTOCOL` | `openai-chat`（默认）/ `openai-responses` | 可选 |
 | `TEST_TAVILY_API_KEY` | Tavily API Key | 搜索实测：与 Brave 任选其一 |
 | `TEST_BRAVE_API_KEY` | Brave Subscription Token | 搜索实测：与 Tavily 任选其一 |
+| `VIBETERM_LIVE_STUN` | 设为 `1` 即打真实 STUN Binding | STUN 实测必需 |
 
 ### 缺凭证：报错退出，而非测试 fail
 
@@ -40,7 +41,8 @@ LLM Provider 与 Web 搜索（Tavily / Brave）的单元测试用打桩 upstream
 # 先把 test.env 注释里的实测键复制到 test.env.local 填真实值
 bun run --filter @vibeterm/gateway test:live:llm      # LLM：模型列表 + 真实 chat
 bun run --filter @vibeterm/gateway test:live:search   # 搜索：Tavily / Brave 任选其一
-bun run --filter @vibeterm/gateway test:live          # 全部
+bun run --filter @vibeterm/gateway test:live:stun     # STUN：对 stun.miwifi.com 发 Binding
+bun run --filter @vibeterm/gateway test:live          # LLM + 搜索
 ```
 
 未填对应凭证时脚本以退出码 1 报错退出，并打印需要补哪个键。
@@ -52,6 +54,7 @@ bun run --filter @vibeterm/gateway test:live          # 全部
 | `test:live:llm` | `src/llm/provider-live.integration.ts` | `fetchProviderModels` 拉到非空列表且含 `TEST_LLM_MODEL`；`resolveLanguageModel` + `generateText` 真实对话 |
 | `test:live:llm-api` | `src/api/llm-api-live.integration.ts` | 走真实 `handleLlmApiRequest`（非 mock）打真实 endpoint：创建（自动拉模型，UI 实际路径）/ 列表 / 刷新 / 设默认 / 真实对话 / provider 内置搜索工具 / 删除 |
 | `test:live:search` | `src/agent/tools/web-search-live.integration.ts` | `createWebSearchTool` 注入真实 key，Tavily / Brave 各跑一次真实搜索并校验返回 |
+| `test:live:stun` | `src/mesh/rtc/stun-probe.integration.ts` | 对 `stun:stun.miwifi.com:3478` 发 RFC 5389 Binding，校验 mapped address |
 
 ## 注意
 

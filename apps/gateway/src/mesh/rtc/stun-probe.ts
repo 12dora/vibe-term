@@ -3,21 +3,38 @@ import dgram from 'node:dgram';
 import { promises as dnsPromises } from 'node:dns';
 import { isIP } from 'node:net';
 import { logAt } from '../../log/level';
+import { isUnusableEdgeIp } from '../../tunnel/edge-resolver';
 import { stamp } from '../mesh-log';
-import { parseTurnUri } from './ice';
+import { maskIceAddress, parseTurnUri } from './ice';
 import { formatRtcLog, rtcLog } from './rtc-log';
+import {
+  type StunDoh,
+  type StunLookup,
+  type StunResolveVia,
+  resolveIceServers,
+  splitIceServerUrl,
+  stripHostBrackets,
+  stunResolveSnapshot,
+} from './stun-resolver';
 
 export const STUN_PROBE_TIMEOUT_MS = 2_000;
 export const STUN_PROBE_INTERVAL_MS = 10 * 60 * 1_000;
+export const STUN_PROBE_MIN_INTERVAL_MS = 30_000;
+export const STUN_PROBE_CONCURRENCY = 4;
+export const STUN_PROBE_RTO_MS = 500;
+export const STUN_PROBE_MIN_BIND_MS = 100;
 export const STUN_MAGIC_COOKIE = 0x2112a442;
 const BINDING_REQUEST = 0x0001;
 const BINDING_SUCCESS = 0x0101;
+const BINDING_ERROR = 0x0111;
 const ATTR_MAPPED_ADDRESS = 0x0001;
 const ATTR_XOR_MAPPED_ADDRESS = 0x0020;
 const FAMILY_IPV4 = 0x01;
 const FAMILY_IPV6 = 0x02;
 const HEADER_SIZE = 20;
 const TXID_SIZE = 12;
+const ICE_SCHEME_RE = /^(stuns?|turns?):/i;
+const MAGIC_BYTES = Uint8Array.of(0x21, 0x12, 0xa4, 0x42);
 
 export type StunProbeResult = {
   url: string;
@@ -26,9 +43,15 @@ export type StunProbeResult = {
   mappedAddress?: string;
   error?: string;
   resolvedIp?: string;
+  via?: StunResolveVia;
+  fakeIp?: boolean;
+  errorResponse?: boolean;
+  skipped?: 'unsupported-scheme';
 };
 
 export type StunProbeRecord = StunProbeResult & { probedAt: number };
+
+export type StunRinfo = { address: string; port: number };
 
 export type StunUdpSocket = {
   send(
@@ -37,58 +60,49 @@ export type StunUdpSocket = {
     address: string,
     callback?: (error: Error | null) => void
   ): void;
-  on(event: 'message', listener: (msg: Uint8Array) => void): void;
+  on(event: 'message', listener: (msg: Uint8Array, rinfo: StunRinfo) => void): void;
   on(event: 'error', listener: (err: Error) => void): void;
   close(): void;
   unref?(): void;
 };
 
-export type StunProbeLookup = (hostname: string) => Promise<{ address: string; family: number }>;
-export type StunSocketFactory = (family: number) => StunUdpSocket;
-
 export type StunProbeDeps = {
-  lookup?: StunProbeLookup;
-  createSocket?: StunSocketFactory;
+  lookup?: StunLookup;
+  doh?: StunDoh;
+  createSocket?: (family: number) => StunUdpSocket;
   now?: () => number;
   timeoutMs?: number;
   randomTxid?: () => Uint8Array;
+  rtoMs?: number;
+  signal?: AbortSignal;
 };
 
-export type StunProbeRtc = {
-  currentIceConfig(): { stun: string[] };
-};
-
-export type StunProbeScheduler = {
-  interval(fn: () => void, ms: number): { clear: () => void };
-};
-
+export type StunProbeRtc = { currentIceConfig(): { stun: string[] } };
+export type StunProbeScheduler = { interval(fn: () => void, ms: number): { clear: () => void } };
 export type StunProbeLoopDeps = {
   probeAll?: (urls: readonly string[]) => Promise<StunProbeResult[]>;
   now?: () => number;
+  random?: () => number;
+  minIntervalMs?: number;
 };
 
+export type StunProbeHandle = { stop(after?: () => void): void };
+
 type StunTarget = { hostname: string; port: number };
+type ProbeAddr = { address: string; family: number };
+type ResolveOk = { ok: true; targets: ProbeAddr[]; via: StunResolveVia; fakeIp: boolean };
+type ResolveFail = { ok: false; error: string; via?: StunResolveVia; fakeIp?: boolean };
 
-const MAGIC_BYTES = Uint8Array.of(0x21, 0x12, 0xa4, 0x42);
-
-let lastResults: StunProbeRecord[] = [];
-let lastKey: string | null = null;
-let inflight: Promise<void> | null = null;
-let queued: string[] | null = null;
-let intervalHandle: { clear: () => void } | null = null;
+let session: MeshStunProbe | null = null;
 let loopDeps: StunProbeLoopDeps = {};
 
 export function stunProbeSnapshot(): readonly StunProbeRecord[] {
-  return lastResults;
+  return session?.lastResults ?? [];
 }
 
 export function resetStunProbeForTest(): void {
-  lastResults = [];
-  lastKey = null;
-  inflight = null;
-  queued = null;
-  intervalHandle?.clear();
-  intervalHandle = null;
+  session?.stop();
+  session = null;
   loopDeps = {};
 }
 
@@ -97,9 +111,8 @@ export function setStunProbeLoopForTest(deps: StunProbeLoopDeps): void {
 }
 
 export function parseStunTarget(url: string): StunTarget | null {
-  const trimmed = url.trim();
-  if (!/^stun:/i.test(trimmed) || /^stuns:/i.test(trimmed)) return null;
-  const parsed = parseTurnUri(trimmed);
+  if (ICE_SCHEME_RE.exec(url.trim())?.[0]?.toLowerCase() !== 'stun:') return null;
+  const parsed = parseTurnUri(url);
   if (!parsed?.hostname || !Number.isFinite(parsed.port) || parsed.port <= 0) return null;
   return { hostname: parsed.hostname, port: parsed.port };
 }
@@ -115,10 +128,9 @@ export function encodeBindingRequest(txid: Uint8Array): Uint8Array {
 }
 
 export function parseStunMappedAddress(msg: Uint8Array, txid: Uint8Array): string | null {
-  if (!isBindingSuccess(msg, txid)) return null;
+  if (stunMessageType(msg, txid) !== BINDING_SUCCESS) return null;
   const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
-  const length = view.getUint16(2);
-  const end = Math.min(msg.length, HEADER_SIZE + length);
+  const end = Math.min(msg.length, HEADER_SIZE + view.getUint16(2));
   let xorMapped: string | null = null;
   let mapped: string | null = null;
   let offset = HEADER_SIZE;
@@ -140,201 +152,393 @@ export async function probeStunServer(
   url: string,
   deps: StunProbeDeps = {}
 ): Promise<StunProbeResult> {
-  const now = deps.now ?? Date.now;
+  const now = or(deps.now, Date.now);
   const started = now();
-  const timeoutMs = deps.timeoutMs ?? STUN_PROBE_TIMEOUT_MS;
+  const timeoutMs = or(deps.timeoutMs, STUN_PROBE_TIMEOUT_MS);
+  const scheme = ICE_SCHEME_RE.exec(url.trim())?.[0]?.toLowerCase();
+  if (scheme && scheme !== 'stun:') {
+    return { url, ok: false, rttMs: 0, skipped: 'unsupported-scheme' };
+  }
   const target = parseStunTarget(url);
   if (!target) return failResult(url, now() - started, 'url');
-  const resolved = await resolveStunHost(target.hostname, deps, timeoutMs);
-  if (!resolved.ok) return failResult(url, now() - started, resolved.error);
-  return await exchangeBinding(url, target.port, resolved, deps, started, timeoutMs);
+  const resolved = await resolveStunHost(url, target.hostname, deps, started, timeoutMs);
+  if (!resolved.ok) {
+    return failResult(url, now() - started, resolved.error, {
+      via: resolved.via,
+      fakeIp: resolved.fakeIp,
+    });
+  }
+  let last: StunProbeResult | null = null;
+  for (const addr of resolved.targets) {
+    if (deps.signal?.aborted) {
+      return failResult(url, now() - started, 'aborted', metaOf(resolved, addr.address));
+    }
+    const elapsed = now() - started;
+    const remaining = timeoutMs - elapsed;
+    const dnsAte = remaining <= STUN_PROBE_MIN_BIND_MS && elapsed >= STUN_PROBE_MIN_BIND_MS;
+    if (remaining <= 0 || dnsAte) {
+      return or(last, failResult(url, elapsed, 'dns-slow', metaOf(resolved, addr.address)));
+    }
+    last = await exchangeBinding(url, target.port, addr, resolved, deps, started, remaining);
+    if (last.ok || last.error !== 'ENETUNREACH') return last;
+  }
+  return or(last, failResult(url, now() - started, 'dns', metaOf(resolved)));
 }
 
-export function probeStunServers(
+export async function probeStunServers(
   urls: readonly string[],
   deps: StunProbeDeps = {}
 ): Promise<StunProbeResult[]> {
-  return Promise.all(urls.map((url) => probeStunServer(url, deps)));
+  const out: StunProbeResult[] = [];
+  for (let i = 0; i < urls.length; i += STUN_PROBE_CONCURRENCY) {
+    const chunk = urls.slice(i, i + STUN_PROBE_CONCURRENCY);
+    out.push(...(await Promise.all(chunk.map((url) => probeStunServer(url, deps)))));
+  }
+  return out;
 }
 
 export function withStunProbes<T extends { stun: string[]; turn: unknown } | null>(
   cfg: T
 ): { stun: string[]; turn: unknown; probes: StunProbeRecord[] } {
   const base = cfg ?? { stun: [], turn: null };
-  return { stun: base.stun, turn: base.turn, probes: lastResults.slice() };
+  return { stun: base.stun, turn: base.turn, probes: stunProbeSnapshot().slice() };
 }
 
-export function startMeshStunProbe(rtc: StunProbeRtc, scheduler: StunProbeScheduler): void {
-  stopMeshStunProbe();
-  const getUrls = () => rtc.currentIceConfig().stun;
-  void runProbeCycle(getUrls());
-  intervalHandle = scheduler.interval(() => {
-    void runProbeCycle(getUrls());
-  }, STUN_PROBE_INTERVAL_MS);
+export function startMeshStunProbe(
+  rtc: StunProbeRtc,
+  scheduler: StunProbeScheduler
+): StunProbeHandle {
+  session?.stop();
+  session = new MeshStunProbe(rtc, scheduler, loopDeps);
+  session.start();
+  return { stop: (after) => stopMeshStunProbe(after) };
 }
 
 export function stopMeshStunProbe(after?: () => void): void {
-  intervalHandle?.clear();
-  intervalHandle = null;
+  session?.stop();
   after?.();
 }
 
 export function syncStunProbe(rtc: StunProbeRtc): void {
-  const urls = rtc.currentIceConfig().stun;
-  if (stunListKey(urls) === lastKey) return;
-  void runProbeCycle(urls);
+  session?.sync(rtc);
 }
 
-function stunListKey(urls: readonly string[]): string {
-  return urls.join('\0');
-}
+class MeshStunProbe {
+  lastResults: StunProbeRecord[] = [];
+  private lastKey: string | null = null;
+  private lastCycleAt = 0;
+  private inflight: Promise<void> | null = null;
+  private queued: string[] | null = null;
+  private pending: string[] | null = null;
+  private tick: { clear: () => void } | null = null;
+  private waitH: { clear: () => void } | null = null;
+  private readonly ac = new AbortController();
+  private stopped = false;
 
-function runProbeCycle(urls: string[]): Promise<void> {
-  if (inflight) {
-    queued = urls;
-    return inflight;
+  constructor(
+    private readonly rtc: StunProbeRtc,
+    private readonly scheduler: StunProbeScheduler,
+    private readonly opts: StunProbeLoopDeps
+  ) {}
+
+  start(): void {
+    void this.runCycle(this.rtc.currentIceConfig().stun);
+    this.armTick();
   }
-  inflight = (async () => {
+
+  stop(): void {
+    this.stopped = true;
+    this.ac.abort();
+    this.tick?.clear();
+    this.waitH?.clear();
+    this.tick = this.waitH = null;
+    this.queued = this.pending = null;
+  }
+
+  sync(rtc: StunProbeRtc): void {
+    const urls = rtc.currentIceConfig().stun;
+    if (urls.join('\0') === this.lastKey) return;
+    const min = this.opts.minIntervalMs ?? STUN_PROBE_MIN_INTERVAL_MS;
+    const elapsed = (this.opts.now ?? Date.now)() - this.lastCycleAt;
+    if (this.lastCycleAt > 0 && elapsed < min) {
+      this.armWait(urls, min - elapsed);
+      return;
+    }
+    void this.runCycle(urls);
+  }
+
+  private armTick(): void {
+    const rand = this.opts.random ?? Math.random;
+    const ms = Math.round(STUN_PROBE_INTERVAL_MS * (1 + (rand() * 2 - 1) * 0.1));
+    this.tick = this.scheduler.interval(() => {
+      this.tick?.clear();
+      this.tick = null;
+      this.armTick();
+      void this.runCycle(this.rtc.currentIceConfig().stun);
+    }, ms);
+  }
+
+  private armWait(urls: string[], ms: number): void {
+    this.pending = urls;
+    this.waitH?.clear();
+    this.waitH = this.scheduler.interval(() => {
+      this.waitH?.clear();
+      this.waitH = null;
+      const next = this.pending ?? this.rtc.currentIceConfig().stun;
+      this.pending = null;
+      if (next.join('\0') === this.lastKey) return;
+      void this.runCycle(next);
+    }, ms);
+  }
+
+  private runCycle(urls: string[]): Promise<void> {
+    if (this.inflight) {
+      this.queued = urls;
+      return this.inflight;
+    }
+    this.inflight = this.loop(urls)
+      .catch(() => {})
+      .finally(() => {
+        this.inflight = null;
+      });
+    return this.inflight;
+  }
+
+  private async loop(urls: string[]): Promise<void> {
     let current = urls;
+    const clock = this.opts.now ?? Date.now;
+    const probeAll =
+      this.opts.probeAll ??
+      ((list: readonly string[]) =>
+        probeStunServers([...list], { signal: this.ac.signal, now: this.opts.now }));
     for (;;) {
-      lastKey = stunListKey(current);
+      if (this.stopped || this.ac.signal.aborted) return;
+      this.lastKey = current.join('\0');
+      this.lastCycleAt = clock();
       let results: StunProbeResult[];
       try {
-        results = await (loopDeps.probeAll ?? probeStunServers)(current);
+        results = await probeAll(current);
       } catch {
         results = current.map((url) => failResult(url, 0, 'error'));
       }
-      const probedAt = (loopDeps.now ?? Date.now)();
-      lastResults = results.map((row) => ({ ...row, probedAt }));
-      logProbeBatch(lastResults);
-      if (!queued) break;
-      current = queued;
-      queued = null;
-      if (stunListKey(current) === lastKey) break;
+      if (this.stopped) return;
+      this.lastResults = results.map((row) => ({ ...row, probedAt: clock() }));
+      try {
+        logProbeBatch(this.lastResults);
+      } catch {}
+      if (!this.queued) break;
+      current = this.queued;
+      this.queued = null;
+      if (current.join('\0') === this.lastKey) break;
+      const min = this.opts.minIntervalMs ?? STUN_PROBE_MIN_INTERVAL_MS;
+      const wait = min - (clock() - this.lastCycleAt);
+      if (wait > 0) {
+        this.armWait(current, wait);
+        break;
+      }
     }
-  })().finally(() => {
-    inflight = null;
-  });
-  return inflight;
+  }
 }
 
 function logProbeBatch(results: readonly StunProbeRecord[]): void {
-  for (const row of results) logProbeRow(row);
-  if (results.length > 0 && results.every((row) => !row.ok)) {
-    logAt('warn', stamp(formatRtcLog('stun unreachable', { all: results.length })));
-  }
-}
-
-function logProbeRow(row: StunProbeRecord): void {
-  if (row.ok) {
+  for (const row of results) {
     rtcLog('stun probe', {
       url: row.url,
-      ok: true,
-      rtt_ms: row.rttMs,
-      mapped: row.mappedAddress,
+      skipped: row.skipped,
+      ok: row.skipped ? undefined : row.ok,
+      rtt_ms: row.ok ? row.rttMs : undefined,
+      mapped: row.mappedAddress ? maskIceAddress(row.mappedAddress) : undefined,
+      error_response: row.errorResponse || undefined,
+      error: row.ok || row.skipped ? undefined : (row.error ?? 'error'),
+      via: row.skipped ? undefined : row.via,
+      fake_ip: row.skipped ? undefined : row.fakeIp,
     });
-    return;
   }
-  rtcLog('stun probe', { url: row.url, ok: false, error: row.error ?? 'error' });
+  const attempted = results.filter((row) => !row.skipped);
+  if (attempted.length > 0 && attempted.every((row) => !row.ok)) {
+    logAt('warn', stamp(formatRtcLog('stun unreachable', { all: attempted.length })));
+  }
 }
 
 function failResult(
   url: string,
   rttMs: number,
   error: string,
-  resolvedIp?: string
+  extra: Partial<StunProbeResult> = {}
 ): StunProbeResult {
+  return { url, ok: false, rttMs: Math.max(0, rttMs), error, ...extra };
+}
+
+function okBind(url: string, rttMs: number, extra: Partial<StunProbeResult>): StunProbeResult {
+  return { url, ok: true, rttMs: Math.max(0, rttMs), ...extra };
+}
+
+function metaOf(resolved: ResolveOk, address?: string): Partial<StunProbeResult> {
   return {
-    url,
-    ok: false,
-    rttMs: Math.max(0, rttMs),
-    error,
-    ...(resolvedIp ? { resolvedIp } : {}),
+    via: resolved.via,
+    fakeIp: resolved.fakeIp,
+    ...(address ? { resolvedIp: address } : {}),
   };
 }
 
 async function resolveStunHost(
+  url: string,
   hostname: string,
   deps: StunProbeDeps,
+  started: number,
   timeoutMs: number
-): Promise<{ ok: true; address: string; family: number } | { ok: false; error: string }> {
+): Promise<ResolveOk | ResolveFail> {
   const family = isIP(hostname);
-  if (family === 4 || family === 6) return { ok: true, address: hostname, family };
-  const lookup = deps.lookup ?? defaultLookup;
-  try {
-    const resolved = await raceTimeout(lookup(hostname), timeoutMs);
-    if (!resolved.address) return { ok: false, error: 'dns' };
-    return { ok: true, address: resolved.address, family: resolved.family };
-  } catch {
-    return { ok: false, error: 'dns' };
+  if (family === 4 || family === 6) {
+    return { ok: true, targets: [{ address: hostname, family }], via: 'system', fakeIp: false };
   }
+  const now = or(deps.now, Date.now);
+  const lookup = or(deps.lookup, defaultLookup);
+  let captured: string[] = [];
+  let lookupErr: unknown;
+  const capturing: StunLookup = async (host) => {
+    try {
+      captured = await lookup(host);
+      return captured;
+    } catch (err) {
+      lookupErr = err;
+      throw err;
+    }
+  };
+  const dnsBudget = Math.max(1, timeoutMs - (now() - started) - STUN_PROBE_MIN_BIND_MS);
+  const servers = await resolveIceServers([url], {
+    lookup: capturing,
+    doh: deps.doh,
+    now: deps.now,
+    signal: deps.signal,
+    budgetMs: dnsBudget,
+  });
+  const key = stripHostBrackets(hostname).trim().toLowerCase();
+  const record = [...stunResolveSnapshot()].reverse().find((row) => row.host === key);
+  const parsed = typeof servers[0] === 'string' ? splitIceServerUrl(servers[0]) : null;
+  const rewritten = parsed ? stripHostBrackets(parsed.host) : hostname;
+  const rewrittenFamily = isIP(rewritten);
+  if (rewrittenFamily) {
+    return {
+      ok: true,
+      targets: [{ address: rewritten, family: rewrittenFamily }],
+      via: or(record?.via, 'doh'),
+      fakeIp: or(record?.fakeIp, false),
+    };
+  }
+  const via = or(record?.via, 'system');
+  const fakeIp = or(record?.fakeIp, false);
+  let targets = orderedTargets(captured);
+  if (targets.length === 0) {
+    try {
+      targets = orderedTargets(await lookup(hostname));
+    } catch (err) {
+      return { ok: false, error: errorCode(err, 'dns'), via, fakeIp };
+    }
+  }
+  if (targets.length > 0) return { ok: true, targets, via, fakeIp };
+  const fallbackFamily = record?.ip ? isIP(record.ip) : 0;
+  if (record?.ip && fallbackFamily) {
+    return { ok: true, targets: [{ address: record.ip, family: fallbackFamily }], via, fakeIp };
+  }
+  return { ok: false, error: errorCode(lookupErr, 'dns'), via, fakeIp };
+}
+
+function orderedTargets(ips: readonly string[]): ProbeAddr[] {
+  const usable = ips.filter((ip) => {
+    const family = isIP(ip);
+    return family === 6 || (family === 4 && !isUnusableEdgeIp(ip));
+  });
+  return ([4, 6] as const).flatMap((family) =>
+    usable.filter((ip) => isIP(ip) === family).map((address) => ({ address, family }))
+  );
 }
 
 function exchangeBinding(
   url: string,
   port: number,
-  resolved: { address: string; family: number },
+  addr: ProbeAddr,
+  resolved: ResolveOk,
   deps: StunProbeDeps,
   started: number,
-  timeoutMs: number
+  bindTimeoutMs: number
 ): Promise<StunProbeResult> {
   const now = deps.now ?? Date.now;
-  const txid = takeTxid(deps);
+  const extra = metaOf(resolved, addr.address);
+  const raw = deps.randomTxid?.() ?? randomBytes(TXID_SIZE);
+  const txid = raw.length >= TXID_SIZE ? raw.subarray(0, TXID_SIZE) : randomBytes(TXID_SIZE);
   const request = encodeBindingRequest(txid);
   return new Promise((resolve) => {
     let settled = false;
-    let socket: StunUdpSocket;
-    try {
-      socket = (deps.createSocket ?? defaultCreateSocket)(resolved.family);
-    } catch {
-      resolve(failResult(url, now() - started, 'send', resolved.address));
+    if (deps.signal?.aborted) {
+      resolve(failResult(url, now() - started, 'aborted', extra));
       return;
     }
-    const timer = setTimeout(
-      () => {
-        finish(failResult(url, now() - started, 'timeout', resolved.address));
-      },
-      Math.max(0, timeoutMs - (now() - started))
-    );
+    let socket: StunUdpSocket;
+    try {
+      socket = (deps.createSocket ?? defaultCreateSocket)(addr.family);
+    } catch (err) {
+      resolve(failResult(url, now() - started, errorCode(err, 'send'), extra));
+      return;
+    }
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    const abortFn = () => finish(failResult(url, now() - started, 'aborted', extra));
     const finish = (result: StunProbeResult) => {
       if (settled) return;
       settled = true;
-      clearTimeout(timer);
+      for (const timer of timers) clearTimeout(timer);
+      deps.signal?.removeEventListener('abort', abortFn);
       try {
         socket.close();
       } catch {}
       resolve(result);
     };
-    socket.on('error', () => finish(failResult(url, now() - started, 'send', resolved.address)));
-    socket.on('message', (msg) => {
-      const mapped = parseStunMappedAddress(msg, txid);
+    deps.signal?.addEventListener('abort', abortFn, { once: true });
+    if (settled) return;
+    timers.push(
+      setTimeout(
+        () => finish(failResult(url, now() - started, 'timeout', extra)),
+        Math.max(0, bindTimeoutMs)
+      )
+    );
+    socket.on('error', (err) =>
+      finish(failResult(url, now() - started, errorCode(err, 'send'), extra))
+    );
+    socket.on('message', (msg, rinfo) => {
+      if (rinfo.address !== addr.address || rinfo.port !== port) return;
+      const type = stunMessageType(msg, txid);
+      if (type === BINDING_ERROR) {
+        finish(okBind(url, now() - started, { ...extra, errorResponse: true }));
+        return;
+      }
+      const mapped = type === BINDING_SUCCESS ? parseStunMappedAddress(msg, txid) : null;
       if (!mapped) return;
-      finish({
-        url,
-        ok: true,
-        rttMs: Math.max(0, now() - started),
-        mappedAddress: mapped,
-        resolvedIp: resolved.address,
-      });
+      finish(okBind(url, now() - started, { ...extra, mappedAddress: mapped }));
     });
     socket.unref?.();
-    try {
-      socket.send(request, port, resolved.address, (error) => {
-        if (error) finish(failResult(url, now() - started, 'send', resolved.address));
-      });
-    } catch {
-      finish(failResult(url, now() - started, 'send', resolved.address));
+    const sendOnce = () => {
+      if (settled) return;
+      try {
+        socket.send(request, port, addr.address, (error) => {
+          if (error) finish(failResult(url, now() - started, errorCode(error, 'send'), extra));
+        });
+      } catch (err) {
+        finish(failResult(url, now() - started, errorCode(err, 'send'), extra));
+      }
+    };
+    let at = 0;
+    const rto = deps.rtoMs ?? STUN_PROBE_RTO_MS;
+    for (const gap of [rto, rto * 2]) {
+      at += gap;
+      if (at >= bindTimeoutMs) break;
+      timers.push(setTimeout(sendOnce, at));
     }
+    sendOnce();
   });
 }
 
-function takeTxid(deps: StunProbeDeps): Uint8Array {
-  const txid = deps.randomTxid?.() ?? randomBytes(TXID_SIZE);
-  return txid.length >= TXID_SIZE ? txid.subarray(0, TXID_SIZE) : randomBytes(TXID_SIZE);
-}
-
-function defaultLookup(hostname: string): Promise<{ address: string; family: number }> {
-  return dnsPromises.lookup(hostname);
+function defaultLookup(hostname: string): Promise<string[]> {
+  return dnsPromises.lookup(hostname, { all: true }).then((rows) => rows.map((row) => row.address));
 }
 
 function defaultCreateSocket(family: number): StunUdpSocket {
@@ -343,71 +547,53 @@ function defaultCreateSocket(family: number): StunUdpSocket {
   return socket as unknown as StunUdpSocket;
 }
 
-function isBindingSuccess(msg: Uint8Array, txid: Uint8Array): boolean {
-  if (msg.length < HEADER_SIZE) return false;
+function stunMessageType(msg: Uint8Array, txid: Uint8Array): number | null {
+  if (msg.length < HEADER_SIZE) return null;
   const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
-  if (view.getUint16(0) !== BINDING_SUCCESS) return false;
-  if (view.getUint32(4) !== STUN_MAGIC_COOKIE) return false;
+  if (view.getUint32(4) !== STUN_MAGIC_COOKIE) return null;
   for (let i = 0; i < TXID_SIZE; i++) {
-    if (msg[8 + i] !== txid[i]) return false;
+    if (msg[8 + i] !== txid[i]) return null;
   }
-  return true;
+  return view.getUint16(0);
 }
 
 function decodeMapped(value: Uint8Array, txid: Uint8Array, xor: boolean): string | null {
   if (value.length < 4) return null;
   const family = value[1];
-  const rawPort = ((value[2] ?? 0) << 8) | (value[3] ?? 0);
+  const rawPort = (or(value[2], 0) << 8) | or(value[3], 0);
   const port = xor ? rawPort ^ (STUN_MAGIC_COOKIE >>> 16) : rawPort;
-  if (family === FAMILY_IPV4) return decodeIpv4(value, xor, port);
-  if (family === FAMILY_IPV6) return decodeIpv6(value, txid, xor, port);
-  return null;
-}
-
-function decodeIpv4(value: Uint8Array, xor: boolean, port: number): string | null {
-  if (value.length < 8) return null;
-  const parts = [0, 1, 2, 3].map((i) => {
-    const raw = value[4 + i] ?? 0;
-    return xor ? raw ^ (MAGIC_BYTES[i] ?? 0) : raw;
-  });
-  return `${parts.join('.')}:${port}`;
-}
-
-function decodeIpv6(
-  value: Uint8Array,
-  txid: Uint8Array,
-  xor: boolean,
-  port: number
-): string | null {
-  if (value.length < 20) return null;
+  if (family === FAMILY_IPV4) {
+    if (value.length < 8) return null;
+    const parts = [0, 1, 2, 3].map((i) => {
+      const raw = or(value[4 + i], 0);
+      return xor ? raw ^ or(MAGIC_BYTES[i], 0) : raw;
+    });
+    return `${parts.join('.')}:${port}`;
+  }
+  if (family !== FAMILY_IPV6 || value.length < 20) return null;
   const mask = xor ? Uint8Array.of(...MAGIC_BYTES, ...txid.subarray(0, TXID_SIZE)) : null;
   const groups: string[] = [];
   for (let i = 0; i < 8; i++) {
-    const hi = value[4 + i * 2] ?? 0;
-    const lo = value[5 + i * 2] ?? 0;
+    const hi = or(value[4 + i * 2], 0);
+    const lo = or(value[5 + i * 2], 0);
     const raw = (hi << 8) | lo;
-    const xored = mask ? raw ^ ((mask[i * 2] ?? 0) << 8) ^ (mask[i * 2 + 1] ?? 0) : raw;
+    const xored = mask ? raw ^ (or(mask[i * 2], 0) << 8) ^ or(mask[i * 2 + 1], 0) : raw;
     groups.push(xored.toString(16));
   }
-  return `[${compressIpv6(groups)}]:${port}`;
+  const text = groups.map((part) => part.replace(/^0+(?=\w)/, '') || '0').join(':');
+  let host = text;
+  try {
+    host = new URL(`http://[${text}]`).hostname.slice(1, -1);
+  } catch {}
+  return `[${host}]:${port}`;
 }
 
-function compressIpv6(groups: string[]): string {
-  return groups.map((g) => g.replace(/^0+(?=\w)/, '') || '0').join(':');
+function or<T>(value: T | null | undefined, fallback: T): T {
+  return value == null ? fallback : value;
 }
 
-function raceTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('dns')), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        clearTimeout(timer);
-        reject(error);
-      }
-    );
-  });
+function errorCode(err: unknown, fallback: string): string {
+  const code =
+    typeof err === 'object' && err && 'code' in err ? (err as { code?: unknown }).code : null;
+  return typeof code === 'string' && code.length > 0 ? code : fallback;
 }
