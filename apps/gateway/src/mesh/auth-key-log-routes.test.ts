@@ -1,10 +1,13 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   buildKeyLogRecord,
   computeRecordHash,
   decodeKeyLogRecord,
   encodeBase64url,
   encodeKeyLogRecord,
+  encodeRotateRootPayload,
+  generateKdfParams,
+  rootKeyFromSeed,
   signKeyLogRecordWithRoot,
 } from '@vibeterm/shared/auth';
 import { generateTenantKey } from '@vibeterm/shared/relay';
@@ -96,7 +99,16 @@ async function boot(publisher: AuthKeyLogPublisher) {
       user.userId
     );
   const head = () => service.currentState(user.userId).head.seq;
-  return { close, sign, post, head };
+  return {
+    close,
+    sign,
+    post,
+    head,
+    userId: user.userId,
+    rootKey: user.rootKey,
+    service,
+    routes,
+  };
 }
 
 describe('relay append acknowledgement', () => {
@@ -280,6 +292,55 @@ describe('relay append acknowledgement', () => {
       });
       expect(published).toBe(1);
     } finally {
+      b.close();
+    }
+  });
+});
+
+describe('auth audit session revoked', () => {
+  test('rotate-root emits one session-revoked line without credential or key material', async () => {
+    const b = await boot({
+      publish: () => {},
+      publishAndAck: async () => ({ ok: true, seq: 0n }),
+    });
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    try {
+      const state = b.service.currentState(b.userId);
+      const newRoot = rootKeyFromSeed(new Uint8Array(32).fill(3));
+      const bytes = encodeKeyLogRecord(
+        buildKeyLogRecord(state.head, state.rootEpoch, {
+          uid: b.userId,
+          type: 'rotate-root',
+          payload: encodeRotateRootPayload({
+            root_public_key: newRoot.publicKey,
+            kdf_params: generateKdfParams(),
+          }),
+          signer: 'root',
+          credential_id: null,
+        })
+      );
+      const res = await b.routes.handleKeyLog(
+        new Request('http://localhost/api/auth/keylog', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            bytes: encodeBase64url(bytes),
+            sig: encodeBase64url(signKeyLogRecordWithRoot(b.rootKey, bytes)),
+          }),
+        }),
+        b.userId
+      );
+      expect(res.status).toBe(200);
+      const revoked = lines.filter((line) => line.includes('[auth] session revoked'));
+      expect(revoked).toHaveLength(1);
+      expect(revoked[0]).toContain(`uid=${b.userId}`);
+      expect(revoked[0]).toContain('reason=revokeAllSessions');
+      expect(revoked[0]).not.toContain('credential');
+    } finally {
+      spy.mockRestore();
       b.close();
     }
   });

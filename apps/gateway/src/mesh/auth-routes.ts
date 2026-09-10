@@ -1,7 +1,5 @@
 import {
   type Delegation,
-  type Login,
-  bytesEqual,
   decodeBase64url,
   decodeDelegation,
   decodeLogin,
@@ -40,6 +38,15 @@ import {
   type LocalAuthStoreLike,
   standaloneClosedModeFields,
 } from '../db/local-auth-settings';
+import {
+  DELEGATION_BAD_SIGNATURE_FAIL,
+  countActiveNodeSessions,
+  delegationFailResult,
+  logAuthLoginSuccessIfOk,
+  logAuthLogout,
+  loginBindingError,
+  loginFailCodes,
+} from './auth-audit-log';
 import {
   AuthKeyLogRoutes,
   createLoginFailureSink,
@@ -367,11 +374,12 @@ export class AuthRoutes {
         challenge,
         this.deps.nodeId,
         this.deps.nodePk,
-        envelope.delegation.uid
+        envelope.delegation.uid,
+        MESH_VIA_SELF
       );
       if (bound) return fail(bound);
       const user = resolveUser(this.deps.userStore, envelope.login.uid);
-      if (!user) return fail('INVALID_CREDENTIALS');
+      if (!user) return fail('INVALID_CREDENTIALS', 401, 'UNKNOWN_USER');
       const now = this.now();
       const delOk = await this.verifyDelegationForLogin(
         envelope.delegation,
@@ -379,7 +387,7 @@ export class AuthRoutes {
         user,
         now
       );
-      if (!delOk.ok) return fail(delOk.code);
+      if (!delOk.ok) return fail(delOk.code, 401, delOk.log);
       const loginOk = verifyLogin(envelope.login, envelope.sig, envelope.delegation.sess_pk, {
         challengeId: challenge.challengeId,
         nonce: challenge.nonce,
@@ -388,7 +396,11 @@ export class AuthRoutes {
         uid: challenge.uid,
         entry: envelope.login.entry,
       });
-      if (!loginOk.ok) return fail(loginErrorCode(loginOk.error));
+      if (!loginOk.ok) {
+        const { client, log } = loginFailCodes(loginOk.error);
+        return fail(client, 401, log);
+      }
+      const rec = body as Record<string, unknown>;
       const second = await verifySecondFactors({
         checkTotp: (user, method, totp, sessPk) => this.checkTotp(user, method, totp, sessPk),
         checkPasskeySecondFactor: (r, u, delegation, passkey, totpVerified) =>
@@ -396,10 +408,27 @@ export class AuthRoutes {
         req,
         user,
         delegation: envelope.delegation,
-        body: body as Record<string, unknown>,
+        body: rec,
       });
       if (!second.ok) return fail(second.code);
-      return this.issueLoginSession(user.id, challenge.entryNodeId, envelope.delegation, now, fail);
+      const issued = this.issueLoginSession(
+        user.id,
+        challenge.entryNodeId,
+        envelope.delegation,
+        now,
+        fail
+      );
+      logAuthLoginSuccessIfOk(issued, {
+        uid: user.id,
+        via: challenge.entryNodeId,
+        method: envelope.delegation.method,
+        totpBody: rec.totp,
+        passkeyBody: rec.passkey,
+        waived: waivesPasskeySecondFactor(req),
+        ip: ctx.ip,
+        origin: requestOrigin(req),
+      });
+      return issued;
     } catch {
       return fail('MALFORMED', 400);
     }
@@ -407,8 +436,10 @@ export class AuthRoutes {
 
   private handleLogout(_req: Request, userId: string | null): Response {
     if (userId) {
+      const sessions = countActiveNodeSessions(this.deps.nodeSessionStore, userId);
       this.deps.nodeSessionStore.revokeAllForUser(userId, this.now());
       this.deps.onLogout?.(userId);
+      logAuthLogout({ uid: userId, sessions });
     }
     const headers = new Headers({ 'content-type': 'application/json' });
     setHeaderPair(headers, SET_SESSION_HEADER, ';0');
@@ -540,17 +571,17 @@ export class AuthRoutes {
     delegationSig: Uint8Array,
     user: UserRecord,
     now: number
-  ): Promise<{ ok: true } | { ok: false; code: string }> {
+  ): Promise<{ ok: true } | { ok: false; code: string; log: string }> {
     if (delegation.method === 'root') {
       const verified = verifyDelegation(delegation, delegationSig, {
         rootPublicKey: user.rootPublicKey,
         now,
       });
-      return verified.ok ? { ok: true } : { ok: false, code: delegationErrorCode(verified.error) };
+      return verified.ok ? { ok: true } : delegationFailResult(verified.error);
     }
     const times = verifyDelegationTimes(delegation, now);
-    if (!times.ok) return { ok: false, code: delegationErrorCode(times.error) };
-    const bad = { ok: false as const, code: 'DELEGATION_BAD_SIGNATURE' };
+    if (!times.ok) return delegationFailResult(times.error);
+    const bad = DELEGATION_BAD_SIGNATURE_FAIL;
     if (!delegation.credential_id || delegation.uid !== user.id) return bad;
     let stored: UserKeyRecord | null;
     try {
@@ -717,44 +748,4 @@ function parseLoginEnvelope(body: Record<string, unknown>) {
     delegation: decodeDelegation(decodeBase64url(fields.delegation)),
     delegationSig: decodeBase64url(fields.delegation_sig),
   };
-}
-
-function loginBindingError(
-  login: Login,
-  challenge: { entryNodeId: string; uid: string },
-  nodeId: string,
-  nodePk: Uint8Array,
-  delegationUid: string
-): string | null {
-  // 本机入口的 challenge 记录哨兵 'self'；浏览器按 /api/auth/mode.nodeId 填真实 id，CLI 填 'self'，两者都算本机
-  const selfEntry = challenge.entryNodeId === MESH_VIA_SELF && login.entry === nodeId;
-  if (login.entry !== challenge.entryNodeId && !selfEntry) return 'ENTRY_MISMATCH';
-  if (login.target !== nodeId && login.target !== MESH_VIA_SELF) return 'TARGET_MISMATCH';
-  if (!bytesEqual(login.target_pk, nodePk)) return 'TARGET_MISMATCH';
-  if (login.uid !== delegationUid || login.uid !== challenge.uid) return 'UID_MISMATCH';
-  return null;
-}
-
-function loginErrorCode(error: string): string {
-  return (
-    {
-      challenge_mismatch: 'CHALLENGE_MISMATCH',
-      target_mismatch: 'TARGET_MISMATCH',
-      uid_mismatch: 'UID_MISMATCH',
-      entry_mismatch: 'ENTRY_MISMATCH',
-      bad_signature: 'INVALID_CREDENTIALS',
-    }[error] ?? 'INVALID_CREDENTIALS'
-  );
-}
-
-function delegationErrorCode(error: string): string {
-  return (
-    {
-      expired: 'DELEGATION_EXPIRED',
-      bad_signature: 'INVALID_CREDENTIALS',
-      method_mismatch: 'INVALID_CREDENTIALS',
-      invalid_ttl: 'DELEGATION_INVALID_TTL',
-      issued_in_future: 'DELEGATION_ISSUED_IN_FUTURE',
-    }[error] ?? 'INVALID_CREDENTIALS'
-  );
 }

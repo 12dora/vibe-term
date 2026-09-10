@@ -6,6 +6,7 @@ import {
 } from '@vibeterm/shared/auth';
 import type { UserRecord } from '../auth/user-store';
 import { accountHasTotp } from '../db/local-auth-http';
+import { logAuthLoginLocked } from './auth-audit-log';
 import type { TotpFactorResult } from './auth-passkey-origin';
 import { parseTotpBody } from './auth-totp-record';
 import {
@@ -66,6 +67,7 @@ export class TotpFailureLimiter {
       const shift = Math.min(entry.lockouts - 1, TOTP_LOCK_MAX_SHIFT);
       entry.lockedUntil = now + TOTP_FAIL_WINDOW_MS * 2 ** shift;
       entry.hits = [];
+      logAuthLoginLocked({ uid, until: entry.lockedUntil, reason: 'totp_failures' });
     }
     this.entries.set(uid, entry);
     this.pruneIfNeeded();

@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
+import { maskAuthClientIp } from './auth-audit-log';
 import { loginRequestContext } from './auth-key-log-routes';
 import { LoginFailureLimiter } from './auth-login-limiter';
 import {
@@ -51,6 +52,20 @@ describe('LoginFailureLimiter', () => {
     expect(limiter.isRateLimited('user', '203.0.113.9')).toBe(false);
   });
 
+  test('does not emit lockout lines; TOTP limiter owns that event', () => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    try {
+      const limiter = new LoginFailureLimiter(() => 1_000);
+      for (let n = 0; n < LOGIN_RATE_LIMIT + 2; n += 1) limiter.recordFailure('uid:user');
+      expect(lines.some((line) => line.includes('[auth] login locked'))).toBe(false);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   test('record/count is a sliding window per key', () => {
     let now = 1_000;
     const limiter = new LoginFailureLimiter(() => now);
@@ -67,6 +82,20 @@ describe('LoginFailureLimiter', () => {
     expect(limiter.count('ip:203.0.113.10')).toBe(0);
     limiter.record('ip:203.0.113.10');
     expect(limiter.count('ip:203.0.113.10')).toBe(1);
+  });
+});
+
+describe('maskAuthClientIp', () => {
+  test('masks v4 /24, v6 /48, and collapses peer/local', () => {
+    expect(maskAuthClientIp('10.0.1.55')).toBe('10.0.1.0');
+    expect(maskAuthClientIp('203.0.113.44')).toBe('203.0.113.0');
+    expect(maskAuthClientIp('2001:db8:abcd:0012:0000:0000:0000:00ff')).toBe('2001:db8:abcd::');
+    expect(maskAuthClientIp('2001:db8::1')).toBe('2001:db8::');
+    expect(maskAuthClientIp('::1')).toBe('::');
+    expect(maskAuthClientIp('::ffff:192.168.1.42')).toBe('::ffff:192.168.1.0');
+    expect(maskAuthClientIp('peer:entry')).toBe('peer');
+    expect(maskAuthClientIp('local')).toBe('local');
+    expect(maskAuthClientIp('')).toBe('-');
   });
 });
 

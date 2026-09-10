@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { TotpFailureLimiter, TotpLoginGuard, TotpReplayCache } from './auth-totp-guard';
 import {
   TOTP_FAIL_LIMIT,
@@ -38,6 +38,28 @@ describe('TotpFailureLimiter', () => {
     }
     const lockedFor = limiter.lockedUntil('u') - now;
     expect(lockedFor).toBe(TOTP_FAIL_WINDOW_MS * 2 ** TOTP_LOCK_MAX_SHIFT);
+  });
+
+  test('emits one lockout audit line when the budget is exhausted, not per later hit', () => {
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    try {
+      const now = 1_000;
+      const limiter = new TotpFailureLimiter(() => now);
+      for (let n = 0; n < TOTP_FAIL_LIMIT; n += 1) limiter.recordFailure('user-1');
+      const locked = lines.filter((line) => line.includes('[auth] login locked'));
+      expect(locked).toHaveLength(1);
+      expect(locked[0]).toContain('uid=user-1');
+      expect(locked[0]).toContain(`until=${new Date(now + TOTP_FAIL_WINDOW_MS).toISOString()}`);
+      expect(locked[0]).toContain('reason=totp_failures');
+      limiter.recordFailure('user-1');
+      limiter.recordFailure('user-1');
+      expect(lines.filter((line) => line.includes('[auth] login locked'))).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   test('success clears lockout history', () => {

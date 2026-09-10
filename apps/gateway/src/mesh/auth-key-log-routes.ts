@@ -1,4 +1,5 @@
 import {
+  type KeyLogEffect,
   RELAY_RECORD_TYPES,
   applyKeyLogRecord,
   bytesEqual,
@@ -20,6 +21,7 @@ import {
   inspectHubAuthRecordCompat,
 } from '../hub/hub-authorization';
 import { isLoopbackHostLiteral } from './address-class';
+import { logAuthLoginFailed, logAuthSessionRevokes } from './auth-audit-log';
 import { findPrimaryUser } from './auth-mode-cache';
 import type { AuthRoutesDeps } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
@@ -30,7 +32,7 @@ import { sameHubUrl } from './uplink-pool';
 
 export type LoginFailureSink = {
   noteUidHint: (uid: string) => void;
-  fail: (code: string, status?: number) => Response;
+  fail: (code: string, status?: number, logCode?: string) => Response;
   precheck: (body: Record<string, unknown> | null) => Response | null;
   rejectUid: () => Response | null;
 };
@@ -73,7 +75,8 @@ export function createLoginFailureSink(
   const noteUidHint = (uid: string) => {
     uidHint = uid;
   };
-  const fail = (code: string, status?: number): Response => {
+  const fail = (code: string, status?: number, logCode?: string): Response => {
+    logAuthLoginFailed({ uid: uidHint, code: logCode ?? code, ip });
     if (code === 'RATE_LIMITED') return jsonError(code, status ?? 429);
     if (code !== 'TOTP_REQUIRED' && code !== 'PASSKEY_REQUIRED') {
       if (ip) deps.recordFailure(`ip:${ip}`);
@@ -82,13 +85,20 @@ export function createLoginFailureSink(
     return jsonError(code, status ?? 401);
   };
   const rejectUid = (): Response | null => {
-    if (uidHint && deps.uidTooLong(uidHint)) return jsonError('MALFORMED', 400);
-    if (deps.loginLimited(uidHint, ip)) return jsonError('RATE_LIMITED', 429);
+    if (uidHint && deps.uidTooLong(uidHint)) {
+      logAuthLoginFailed({ uid: uidHint, code: 'MALFORMED', ip });
+      return jsonError('MALFORMED', 400);
+    }
+    if (deps.loginLimited(uidHint, ip)) {
+      logAuthLoginFailed({ uid: uidHint, code: 'RATE_LIMITED', ip });
+      return jsonError('RATE_LIMITED', 429);
+    }
     return null;
   };
   const precheck = (body: Record<string, unknown> | null): Response | null => {
     if (!body) {
       if (ip) deps.recordFailure(`ip:${ip}`);
+      logAuthLoginFailed({ uid: uidHint, code: 'MALFORMED', ip });
       return jsonError('MALFORMED', 400);
     }
     noteUidHint(deps.peekUid(body));
@@ -250,7 +260,7 @@ export class AuthKeyLogRoutes {
       }
       return jsonError(applied.error, 400);
     }
-    this.deps.onKeyLogEffects?.(userId, applied.effects);
+    this.emitKeyLogEffects(userId, applied.effects);
     return done(applied.seq, applied.hash);
   }
 
@@ -337,7 +347,7 @@ export class AuthKeyLogRoutes {
       }
       return jsonError(applied.error, 400);
     }
-    this.deps.onKeyLogEffects?.(userId, applied.effects);
+    this.emitKeyLogEffects(userId, applied.effects);
     return this.keyLogSuccess(applied.seq, applied.hash, { hubSync: true, hubAck: true });
   }
 
@@ -550,6 +560,11 @@ export class AuthKeyLogRoutes {
       Boolean(writer && sameHubUrl(attached.publicUrl, writer.publicUrl));
     if (attachedIsWriter) return null;
     return this.hubNotWriterResponse();
+  }
+
+  private emitKeyLogEffects(userId: string, effects: KeyLogEffect[]): void {
+    logAuthSessionRevokes(userId, effects);
+    this.deps.onKeyLogEffects?.(userId, effects);
   }
 
   private hubNotWriterResponse(): Response {

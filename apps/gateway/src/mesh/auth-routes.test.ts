@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   DELEGATION_TTL_MS,
   KEYLOG_TYPE_UNSUPPORTED_BY_NODES,
@@ -2602,6 +2602,97 @@ describe('auth-routes', () => {
         false
       );
     } finally {
+      mesh.close();
+    }
+  });
+
+  test('emits structured auth audit logs for ok/failed/locked/logout', async () => {
+    const mesh = await bootMesh();
+    const lines: string[] = [];
+    const spy = spyOn(console, 'log').mockImplementation((msg: unknown) => {
+      lines.push(String(msg));
+    });
+    const authLines = () => lines.filter((line) => line.includes('[auth] '));
+    const ip = '198.51.100.44';
+    try {
+      const ok = await challengeAndLogin(mesh.runtime, mesh.boot, { clientIp: ip });
+      expect(ok.res.status).toBe(200);
+      expect(
+        authLines().some(
+          (line) =>
+            line.includes(`login ok uid=${mesh.boot.userId}`) &&
+            line.includes('via=self') &&
+            line.includes('method=root') &&
+            line.includes('second=none') &&
+            line.includes('ip=198.51.100.0') &&
+            line.includes('origin=http://localhost')
+        )
+      ).toBe(true);
+
+      const out = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
+        method: 'POST',
+        headers: { cookie: `vibeterm_s_self=${ok.sid}` },
+      });
+      expect(out.status).toBe(200);
+      expect(
+        authLines().some((line) => line.includes(`logout uid=${mesh.boot.userId} sessions=1`))
+      ).toBe(true);
+
+      const ghost = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        uid: 'ghost-user',
+        rootKey: rootKeyFromSeed(new Uint8Array(32).fill(4)),
+        clientIp: ip,
+      });
+      expect(ghost.res.status).toBe(401);
+      expect(
+        authLines().some((line) =>
+          line.includes('login failed uid=ghost-user code=UNKNOWN_USER ip=198.51.100.0')
+        )
+      ).toBe(true);
+
+      const totp = await enrollLoginTotp(mesh);
+      const totpOk = await challengeAndLogin(mesh.runtime, mesh.boot, { totp, clientIp: ip });
+      expect(totpOk.res.status).toBe(200);
+      expect(
+        authLines().some(
+          (line) =>
+            line.includes(`login ok uid=${mesh.boot.userId}`) && line.includes('second=totp')
+        )
+      ).toBe(true);
+
+      for (let i = 0; i < 5; i++) {
+        const { res } = await challengeAndLogin(mesh.runtime, mesh.boot, {
+          totp: { code: '000000', k_totp: totp.k_totp },
+          clientIp: ip,
+        });
+        expect((await res.json()).code).toBe('TOTP_INVALID');
+      }
+      expect(
+        authLines().filter((line) => line.includes('code=TOTP_INVALID')).length
+      ).toBeGreaterThanOrEqual(5);
+      expect(
+        authLines().filter(
+          (line) =>
+            line.includes(`login locked uid=${mesh.boot.userId}`) &&
+            line.includes('reason=totp_failures')
+        )
+      ).toHaveLength(1);
+
+      const limited = await challengeAndLogin(mesh.runtime, mesh.boot, {
+        totp: { code: '000000', k_totp: totp.k_totp },
+        clientIp: ip,
+      });
+      expect((await limited.res.json()).code).toBe('RATE_LIMITED');
+      expect(
+        authLines().filter((line) => line.includes(`login locked uid=${mesh.boot.userId}`))
+      ).toHaveLength(1);
+      expect(
+        authLines().some(
+          (line) => line.includes('login failed') && line.includes('code=RATE_LIMITED')
+        )
+      ).toBe(true);
+    } finally {
+      spy.mockRestore();
       mesh.close();
     }
   });

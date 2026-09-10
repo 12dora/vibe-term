@@ -1,6 +1,6 @@
 # 登录面安全：失败模糊化、客户端 IP、通行密钥二次验证与公网评估
 
-本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
+本文汇总 VibeTerm 账号密码登录暴露到公网时的安全机制：登录失败模糊化、客户端 IP 解析与 bootstrap 限制、未登录面的资源上限、通行密钥二次验证（按 origin 生效 + 可信本地来源豁免 + TOTP/通行密钥 OR）、认证审计日志、以及公网暴露的安全评估结论；面向运维与改动 `apps/gateway/src/mesh/auth-*.ts` 的开发者。身份与密钥模型（根钥、delegation、node-session、密钥日志）见 [多节点架构 §2](../architecture/mesh-architecture.md)。
 
 ## 1. 现有机制（比常规密码登录强）
 
@@ -157,10 +157,23 @@ vibeterm mesh passkey remove-all [<username>]
 | 中 | 限流 IP 桶在隧道后全员共桶 | 已修（§3） |
 | 中 | 密码最短 8 位、无复杂度要求；拿到 DB 可离线撞根公钥 | 不改：argon2id 已足够贵；建议用密码管理器生成 16+ 位或改用 passkey。**不加复杂度规则** |
 | 中 | agent 会话 / 文件传输 API 无按用户归属检查 | 不改：VibeTerm 每节点单用户（`findPrimaryUser`），不承诺多用户隔离 |
-| 低 | 登录可枚举用户名；无持久审计日志 | 用户名枚举已由失败模糊化收口（§2）；用户名不是安全边界 |
+| 低 | 登录可枚举用户名 | 用户名枚举已由失败模糊化收口（§2）；用户名不是安全边界 |
 | 低 | 无通用 Origin 校验，CSRF 依赖 `SameSite=Lax` + 无 CORS 放行 | 不改：当前威胁模型足够 |
 | 低 | TOTP 由同一密码派生，不是独立第二因子 | 不改；不宣传为 MFA，需要第二因子用 passkey |
 
 **明确不做的事（避免过度防御）**：服务端 bcrypt/argon2 密码哈希（现有 challenge 签名设计更优）；全局锁定、指数退避、密码复杂度规则；JWT / localStorage token / WS `?token=`；全站 HSTS（localhost 与自签场景会被打坏，有需要在公网边缘配）；给 peer 握手再加口令层；收紧 passkey 域名绑定。
 
 **暴力破解的现实评估**：在线每 IP、每 UID 各 ≈ 0.17 次/秒（限流决定，argon2 在浏览器侧不构成服务端成本）；分布式源 IP 也受 UID 桶约束。离线需先拿到 DB（根公钥 + KDF 参数），argon2id 64 MiB 单次派生成本高，随机 16+ 位密码即可忽略。
+
+## 6. 审计日志
+
+网关对每次认证尝试打一条 info 日志（不限流；不含密码、TOTP 码、会话 id、密钥或完整 cookie；客户端 IP 按 IPv4 `/24` 或 IPv6 `/48` 脱敏，peer 记为 `peer`）。失败码在日志里保留内部精确值，对客户端的模糊化不变。TOTP 锁定只在进入锁定时打一行，锁定期间的拒绝仍走 `login failed`。密钥日志若产生撤销会话效果，额外打 `session revoked`。
+
+```
+[auth] login ok uid=<uid> via=self|<nodeId> method=root|passkey second=totp|passkey|waived|none ip=<masked> origin=<origin>
+[auth] login failed uid=<uid> code=<CODE> ip=<masked>
+[auth] login locked uid=<uid> until=<ISO-8601> reason=totp_failures
+[auth] logout uid=<uid> sessions=<N>
+[auth] session revoked uid=<uid> reason=revokeAllSessions|revokeSessionsByCredential|revokeSessionsVia
+```
+
