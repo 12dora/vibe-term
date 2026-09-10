@@ -9,6 +9,7 @@ export {
   fetchFileList,
   fetchFileRoots,
   fetchFileStat,
+  mkdirPath,
   reorderFileRoots,
   updateFileRoot,
 } from './file-resources';

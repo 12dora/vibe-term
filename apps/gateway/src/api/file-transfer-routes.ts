@@ -27,6 +27,7 @@ import {
   streamFileRange,
   streamTempFile,
 } from './file-http';
+import { handleMkdir } from './file-mkdir';
 import { cleanupDownload, cleanupUpload, rememberTransferUid } from './file-transfer-sessions';
 import { json, readJsonObjectBody } from './http';
 import { type ApiRoute, route } from './route';
@@ -285,6 +286,11 @@ export const fileTransferRoutes: ApiRoute[] = [
     method: 'GET',
     path: '/api/files/upload/:id',
     handler: (_req, params) => handleUploadStatus(decodeURIComponent(params.id)),
+  }),
+  route({
+    method: 'POST',
+    path: '/api/files/mkdir',
+    handler: (req) => handleMkdir(req),
   }),
   route({
     method: 'POST',

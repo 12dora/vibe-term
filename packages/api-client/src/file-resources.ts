@@ -103,3 +103,22 @@ export async function browseDirectory(
   if (params.hidden) search.set('hidden', '1');
   return fileJson<BrowseDirectoryResponse>(client, `/api/files/browse?${search.toString()}`);
 }
+
+export interface MkdirPathRequest {
+  rootId: string;
+  path: string;
+  recursive?: boolean;
+}
+
+export interface MkdirPathResponse {
+  path: string;
+  created: boolean;
+}
+
+/** 在文件根下创建目录；已存在且为目录时 `created: false`（幂等）。 */
+export async function mkdirPath(
+  body: MkdirPathRequest,
+  client: ApiClient = defaultApiClient
+): Promise<MkdirPathResponse> {
+  return fileJson<MkdirPathResponse>(client, '/api/files/mkdir', { method: 'POST', body });
+}
