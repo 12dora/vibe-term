@@ -6,7 +6,11 @@ import {
   type EventDevicePayload,
   createDeferredClipboardWriter,
 } from '@vibeterm/shared';
-import type { ConnectionState, GatewayTransportEvent } from '@vibeterm/ws-client';
+import {
+  type ConnectionState,
+  type GatewayTransportEvent,
+  serverSupportsDeviceLatency,
+} from '@vibeterm/ws-client';
 import type { PaneSubscriptionManager } from './pane-subscriptions';
 import {
   type TmuxDomainEventContext,
@@ -14,6 +18,7 @@ import {
   handleTmuxEvent,
 } from './tmux-device-events';
 import type { TmuxSelectionActions } from './tmux-selection-actions';
+import type { DeviceLatencySample } from './tmux-state';
 import { applyViewportPolicy, clearViewportPolicyForDevice } from './viewport-policy';
 
 export interface TmuxEventRouterContext extends TmuxDomainEventContext {
@@ -116,16 +121,33 @@ function handleTransportStateChange(ctx: TmuxEventRouterContext, state: Connecti
   }
 }
 
+type DeviceLatencyMap = Record<string, DeviceLatencySample | undefined>;
+
+/** 设备断开后那条宿主一跳的读数就过期了，留着会让徽标继续加一个不存在的跳。 */
+function dropDeviceLatency(map: DeviceLatencyMap, deviceId: string): DeviceLatencyMap {
+  if (!map[deviceId]) return map;
+  const next = { ...map };
+  delete next[deviceId];
+  return next;
+}
+
 const handlers: TmuxEventHandlers = {
   'connection-state': (event, ctx) => {
     handleTransportStateChange(ctx, event.state);
+    const ready = event.state === 'READY';
     ctx.setState((prev) => ({
       connectionState: event.state,
-      hasConnectedOnce: event.state === 'READY' ? true : prev.hasConnectedOnce,
-      wsLatencyMs: event.state === 'READY' ? prev.wsLatencyMs : null,
-      wsLatencyRawMs: event.state === 'READY' ? prev.wsLatencyRawMs : null,
+      hasConnectedOnce: ready ? true : prev.hasConnectedOnce,
+      wsLatencyMs: ready ? prev.wsLatencyMs : null,
+      wsLatencyRawMs: ready ? prev.wsLatencyRawMs : null,
+      // 宿主一跳的读数由网关推送，离开 READY 即作废；能力按每次 HELLO 的协商结果重判，
+      // 重连到旧版本的节点后不能继续按「有这一跳」展示。
+      deviceLatency: ready ? prev.deviceLatency : {},
+      deviceLatencySupported: ready
+        ? serverSupportsDeviceLatency(ctx.core.transport.serverCapabilities)
+        : prev.deviceLatencySupported,
     }));
-    if (event.state === 'READY') ctx.onReady();
+    if (ready) ctx.onReady();
   },
 
   'state-feed-mode': (event, ctx) => {
@@ -163,7 +185,30 @@ const handlers: TmuxEventHandlers = {
     ctx.core.paneSinks.cleanupDevicePaneState(event.deviceId);
     ctx.setState((prev) => ({
       deviceConnected: { ...prev.deviceConnected, [event.deviceId]: false },
+      deviceLatency: dropDeviceLatency(prev.deviceLatency, event.deviceId),
       viewportPolicy: clearViewportPolicyForDevice(prev.viewportPolicy, event.deviceId),
+    }));
+  },
+
+  // 采样时刻每次都变，读数不变时不写：徽标 15 秒重渲一次没有意义。
+  'device-latency': (event, ctx) => {
+    const prev = ctx.getState().deviceLatency[event.deviceId];
+    if (
+      prev &&
+      prev.rttMs === event.rttMs &&
+      prev.rawMs === event.rawMs &&
+      prev.hop === event.hop
+    ) {
+      return;
+    }
+    const sample: DeviceLatencySample = {
+      rttMs: event.rttMs,
+      rawMs: event.rawMs,
+      hop: event.hop,
+      sampledAt: event.sampledAt,
+    };
+    ctx.setState((state) => ({
+      deviceLatency: { ...state.deviceLatency, [event.deviceId]: sample },
     }));
   },
 

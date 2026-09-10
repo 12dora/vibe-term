@@ -1,5 +1,11 @@
 import type { StateSnapshotPayload } from '@vibeterm/shared';
-import type { ConnectionState, GatewayHistoryCursor, StateFeedMode } from '@vibeterm/ws-client';
+import type {
+  ConnectionState,
+  DeviceLatencyHop,
+  GatewayHistoryCursor,
+  StateFeedMode,
+} from '@vibeterm/ws-client';
+import type { TmuxTopologyPlaceholders } from './tmux-topology-cache';
 import type { ViewportPolicyMap } from './viewport-policy';
 
 export type SnapshotMap = Record<string, StateSnapshotPayload | undefined>;
@@ -16,6 +22,15 @@ export interface DeviceReconnecting {
   at: number;
 }
 
+/** 网关测得的「网关 ↔ tmux server」一跳；`hop` 说明这一跳是本地还是经 SSH。 */
+export interface DeviceLatencySample {
+  rttMs: number;
+  rawMs: number;
+  hop: DeviceLatencyHop;
+  /** 网关采样时刻（Unix 毫秒）。 */
+  sampledAt: number;
+}
+
 export interface DeviceInitialErrorInput {
   deviceId: string;
   lastError: string | null;
@@ -28,7 +43,16 @@ export interface TmuxState {
   hasConnectedOnce: boolean;
   wsLatencyMs: number | null;
   wsLatencyRawMs: number | null;
+  /** 各设备宿主一跳的延迟，键为 deviceId；旧节点不下发，永远为空。 */
+  deviceLatency: Record<string, DeviceLatencySample | undefined>;
+  /** 当前网关是否播报 device-latency-v1；为 false 时宿主一跳是「未测量」而非 0。 */
+  deviceLatencySupported: boolean;
   snapshots: SnapshotMap;
+  /**
+   * 上一次会话缓存下来的窗口 / pane 拓扑，仅供冷启动时渲染灰显占位。
+   * **绝不并入 `snapshots`**：选择恢复与路由对账只认实时数据，实时快照一到货这里就摘掉。
+   */
+  topologyPlaceholders: TmuxTopologyPlaceholders;
   connectedDevices: Set<string>;
   deviceConnected: Record<string, boolean | undefined>;
   deviceErrors: Record<string, DeviceError | undefined>;

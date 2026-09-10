@@ -1,6 +1,7 @@
 // Gateway transport 门面：保持既有 import 路径，实现拆分在同目录的四个模块中。
 
 export type {
+  DeviceLatencyHop,
   EncodedGatewayCommand,
   GatewayHistoryCursor,
   GatewayPaneHistoryPage,

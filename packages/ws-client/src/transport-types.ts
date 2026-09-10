@@ -8,6 +8,9 @@ import type { PendingDropReason } from './pending-send-queue';
 
 export type ServerTooOldSide = 'gateway' | 'node' | 'client';
 
+/** 设备宿主一跳的形态：本地 tmux 还是经 SSH 到远端主机。 */
+export type DeviceLatencyHop = 'local' | 'ssh';
+
 export interface GatewayTerminalCursor {
   paneEpoch: Uint8Array;
   terminalSeq: bigint;
@@ -91,6 +94,16 @@ export type GatewayTransportEvent =
   | { type: 'device-connected'; deviceId: string }
   | { type: 'device-disconnected'; deviceId: string }
   | { type: 'device-event'; event: EventDevicePayload }
+  // 拥有该设备的网关测得的「网关 ↔ tmux server」这一跳；只有播报 device-latency-v1
+  // 的网关会发，旧节点上这条事件永远不来。
+  | {
+      type: 'device-latency';
+      deviceId: string;
+      rttMs: number;
+      rawMs: number;
+      hop: DeviceLatencyHop;
+      sampledAt: number;
+    }
   | { type: 'metadata-snapshot'; snapshot: StateSnapshotPayload }
   // canonical metadata patch 已在客户端合并并按设备树顺序排好，消费方直接替换整棵快照
   | { type: 'metadata-patch'; deviceId: string; snapshot: StateSnapshotPayload }

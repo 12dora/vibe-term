@@ -69,6 +69,51 @@ describe('decodeGatewayTransportMessage', () => {
     ]);
   });
 
+  test('device-latency 按 hop 枚举翻成 local / ssh，采样时刻降为 number', () => {
+    const local = collect(
+      wsBorsh.KIND_DEVICE_LATENCY,
+      wsBorsh.encodePayload(wsBorsh.schema.DeviceLatencySchema, {
+        deviceId: 'dev-1',
+        rttMs: 3,
+        rawMs: 5,
+        hop: wsBorsh.DEVICE_LATENCY_HOP_LOCAL,
+        sampledAt: BigInt(1_700_000_000_000),
+      })
+    );
+    expect(local.handled).toBe(true);
+    expect(local.events).toEqual([
+      {
+        type: 'device-latency',
+        deviceId: 'dev-1',
+        rttMs: 3,
+        rawMs: 5,
+        hop: 'local',
+        sampledAt: 1_700_000_000_000,
+      },
+    ]);
+
+    const ssh = collect(
+      wsBorsh.KIND_DEVICE_LATENCY,
+      wsBorsh.encodePayload(wsBorsh.schema.DeviceLatencySchema, {
+        deviceId: 'dev-2',
+        rttMs: 42,
+        rawMs: 61,
+        hop: wsBorsh.DEVICE_LATENCY_HOP_SSH,
+        sampledAt: BigInt(0),
+      })
+    );
+    expect(ssh.events).toEqual([
+      {
+        type: 'device-latency',
+        deviceId: 'dev-2',
+        rttMs: 42,
+        rawMs: 61,
+        hop: 'ssh',
+        sampledAt: 0,
+      },
+    ]);
+  });
+
   test('clipboard-write', () => {
     const { events } = collect(
       wsBorsh.KIND_CLIPBOARD_WRITE,

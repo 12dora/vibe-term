@@ -1,7 +1,7 @@
 // tmux store 组装根：状态字段 + 命令下发，事件路由/pane 订阅/选择面拆到同目录模块。
 
 import { getTmuxWindowStyle } from '@vibeterm/shared';
-import type { ConnectionState } from '@vibeterm/ws-client';
+import { type ConnectionState, serverSupportsDeviceLatency } from '@vibeterm/ws-client';
 import { create } from 'zustand';
 import { createPaneSubscriptionManager } from './pane-subscriptions';
 import type { RuntimeCore } from './runtime';
@@ -10,6 +10,7 @@ import { createTmuxDeviceActions } from './tmux-device-actions';
 import { createTmuxEventRouter } from './tmux-event-router';
 import { createTmuxSelectionActions } from './tmux-selection-actions';
 import type { DeviceError, TmuxState } from './tmux-state';
+import { readTmuxTopologyCache, syncTmuxTopologyCache } from './tmux-topology-cache';
 import { createTmuxViewportActions } from './tmux-viewport-actions';
 import { createTmuxWindowActions } from './tmux-window-actions';
 import type { UIStore } from './ui';
@@ -48,7 +49,7 @@ export function createTmuxStore(
     core.transport.send({ type: 'set-window-style', deviceId, style });
   }
 
-  return create<TmuxState>((set, get) => {
+  const store = create<TmuxState>((set, get) => {
     const selection = createTmuxSelectionActions(core, { getState: get, setState: set });
     const device = createTmuxDeviceActions(core, {
       getState: get,
@@ -106,6 +107,7 @@ export function createTmuxStore(
         hasConnectedOnce: core.transport.hasConnectedOnce,
         wsLatencyMs: core.transport.latencyMs,
         wsLatencyRawMs: core.transport.latencyRawMs ?? null,
+        deviceLatencySupported: serverSupportsDeviceLatency(core.transport.serverCapabilities),
       });
       if (initialState === 'READY') handleReady();
 
@@ -134,7 +136,10 @@ export function createTmuxStore(
       hasConnectedOnce: false,
       wsLatencyMs: null,
       wsLatencyRawMs: null,
+      deviceLatency: {},
+      deviceLatencySupported: false,
       snapshots: {},
+      topologyPlaceholders: readTmuxTopologyCache(core.storagePrefix),
       connectedDevices: new Set(),
       deviceConnected: {},
       deviceErrors: {},
@@ -193,6 +198,11 @@ export function createTmuxStore(
       },
     };
   });
+
+  // 拓扑写通 + 占位对账：订阅整份 state 才能覆盖事件路由与乐观重排两条改写快照的路径
+  disposers.push(syncTmuxTopologyCache(store, { storagePrefix: core.storagePrefix }));
+
+  return store;
 }
 
 export type TmuxStore = ReturnType<typeof createTmuxStore>;

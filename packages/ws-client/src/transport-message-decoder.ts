@@ -70,6 +70,20 @@ const MESSAGE_DECODERS = new Map<number, MessageDecoder>([
     },
   ],
   [
+    wsBorsh.KIND_DEVICE_LATENCY,
+    (payload, emit) => {
+      const decoded = wsBorsh.decodePayload(wsBorsh.schema.DeviceLatencySchema, payload);
+      emit({
+        type: 'device-latency',
+        deviceId: decoded.deviceId,
+        rttMs: decoded.rttMs,
+        rawMs: decoded.rawMs,
+        hop: decoded.hop === wsBorsh.DEVICE_LATENCY_HOP_SSH ? 'ssh' : 'local',
+        sampledAt: Number(decoded.sampledAt),
+      });
+    },
+  ],
+  [
     wsBorsh.KIND_TMUX_EVENT,
     (payload, emit) => {
       emit({ type: 'tmux-event', event: wsBorsh.decodeTmuxEventPayload(payload) });

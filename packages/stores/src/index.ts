@@ -98,5 +98,15 @@ export {
   type ViewportPolicyEvent,
   type ViewportPolicyMap,
 } from './viewport-policy';
+export {
+  clearTmuxTopologyCache,
+  pruneTmuxTopologyCache,
+  readTmuxTopologyCache,
+  tmuxTopologyCacheKey,
+  type CachedTopology,
+  type CachedTopologyPane,
+  type CachedTopologyWindow,
+  type TmuxTopologyPlaceholders,
+} from './tmux-topology-cache';
 
 export type { AgentSessionDto, AgentSessionStatus } from '@vibeterm/shared';

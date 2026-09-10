@@ -30,6 +30,7 @@ export type { PendingDropReason } from './pending-send-queue';
 
 export {
   TERM_VIEWPORT_MIN_SERVER_VERSION,
+  serverSupportsDeviceLatency,
   serverSupportsTermViewport,
 } from './server-features';
 
@@ -66,6 +67,7 @@ export {
   type GatewaySubscriptionRejectionReason,
   type GatewayTerminalCursor,
   type GatewayTerminalData,
+  type DeviceLatencyHop,
   type GatewayTransport,
   type GatewayTransportCapabilities,
   type GatewayTransportCommand,

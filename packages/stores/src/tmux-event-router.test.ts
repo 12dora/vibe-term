@@ -65,6 +65,8 @@ interface HarnessOptions {
   clipboardAttempt?: (attempt: number) => Promise<void>;
   /** 宿主注入的 nodeId → 展示名解析；缺省不接（等价于旧行为） */
   resolveNodeName?: (nodeId: string) => string | null;
+  /** 网关 HELLO 播报的能力集；缺省为空（老节点） */
+  serverCapabilities?: readonly string[];
 }
 
 function createHarness(options: HarnessOptions = {}) {
@@ -82,6 +84,8 @@ function createHarness(options: HarnessOptions = {}) {
     activePaneFromEvent: {},
     pendingCreateWindowAt: {},
     viewportPolicy: {},
+    deviceLatency: {},
+    deviceLatencySupported: false,
   } as unknown as TmuxState;
 
   const setState: TmuxSetState = (partial) => {
@@ -108,6 +112,7 @@ function createHarness(options: HarnessOptions = {}) {
     nodeId: options.nodeId ?? SELF_NODE_ID,
     transport: {
       capabilities: { atomicScreen: true },
+      serverCapabilities: options.serverCapabilities ?? [],
       send: (command: unknown) => {
         record('send', command);
         return true;
@@ -243,6 +248,75 @@ describe('tmux transport event router', () => {
     expect(harness.namesOf('ready')).toHaveLength(1);
   });
 
+  test('device-latency 落到 deviceLatency，读数不变时不写 store', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_000_000,
+    });
+    expect(harness.getState().deviceLatency['device-a']).toEqual({
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_000_000,
+    });
+
+    const unchanged = harness.getState();
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_015_000,
+    });
+    expect(harness.getState()).toBe(unchanged);
+
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 41,
+      rawMs: 44,
+      hop: 'ssh',
+      sampledAt: 1_700_000_030_000,
+    });
+    expect(harness.getState().deviceLatency['device-a']).toEqual({
+      rttMs: 41,
+      rawMs: 44,
+      hop: 'ssh',
+      sampledAt: 1_700_000_030_000,
+    });
+  });
+
+  test('READY 时按 HELLO 能力集判定宿主一跳可测；离开 READY 作废已有读数', () => {
+    const harness = createHarness({ serverCapabilities: ['device-latency-v1'] });
+
+    harness.route({ type: 'connection-state', state: 'READY' });
+    expect(harness.getState().deviceLatencySupported).toBe(true);
+
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_000_000,
+    });
+    harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
+    expect(harness.getState().deviceLatency).toEqual({});
+  });
+
+  test('老节点没播报能力时宿主一跳按未测量处理', () => {
+    const harness = createHarness();
+    harness.route({ type: 'connection-state', state: 'READY' });
+    expect(harness.getState().deviceLatencySupported).toBe(false);
+  });
+
   test('device-connected resets error state and syncs window style', () => {
     const harness = createHarness();
 
@@ -262,6 +336,22 @@ describe('tmux transport event router', () => {
       'device-a',
     ]);
     expect(harness.getState().deviceConnected['device-a']).toBe(false);
+  });
+
+  test('device-disconnected 一并丢掉该设备的宿主一跳读数', () => {
+    const harness = createHarness();
+
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_000_000,
+    });
+    harness.route({ type: 'device-disconnected', deviceId: 'device-a' });
+
+    expect(harness.getState().deviceLatency['device-a']).toBeUndefined();
   });
 
   test('terminal-viewport-policy is stored per device:pane', () => {
