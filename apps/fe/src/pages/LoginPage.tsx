@@ -13,6 +13,7 @@ import {
   loginErrorKey,
   loginErrorKeyFromException,
 } from '@/auth/login-errors';
+import { clearLocalDeviceCaches } from '@/auth/logout-local-caches';
 import {
   clearSessionKey,
   clearTotpCode,
@@ -310,7 +311,11 @@ function LoginForm({ mode, api, notice }: LoginFormProps) {
       }
       // 凭证本身不可用才丢钥；网络错误 / 验证码错留着钥，用户重试即可。
       // 等盘上那份删干净再放用户重试：中途刷新不该把作废的会话钥恢复回来。
-      if (isCredentialFailure(result.code)) await clearSessionKey();
+      // 顺带清掉按 node 落盘的拓扑与设备快照：换账号后不该还画着上一个账号的设备名。
+      if (isCredentialFailure(result.code)) {
+        await clearSessionKey();
+        clearLocalDeviceCaches();
+      }
       setError(t(loginErrorKey(result.code, method)));
       setPhase('idle');
     },

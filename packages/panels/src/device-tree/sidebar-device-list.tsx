@@ -1,5 +1,9 @@
 import { useQuery } from '@tanstack/react-query';
-import { devicesQueryKey as defaultDevicesQueryKey, fetchDevices } from '@vibeterm/api-client';
+import {
+  devicesQueryKey as defaultDevicesQueryKey,
+  fetchDevices,
+  isAuthoritativeDeviceQuery,
+} from '@vibeterm/api-client';
 import { hostAppPath } from '@vibeterm/stores';
 import { useRuntime, useSiteStore, useTmuxStore, useUIStore } from '@vibeterm/stores/react';
 import { Button } from '@vibeterm/ui/button';
@@ -39,6 +43,83 @@ export function deviceRowSelection(
     selectedWindowId: selection.selectedWindowId,
     selectedPaneId: selection.selectedPaneId,
   };
+}
+
+type DeviceListRow = { id: string; lastError?: string | null; lastErrorType?: string | null };
+
+/** 列表带回来的「上次失败原因」水合进 tmux store；只接权威列表（占位行永远是空错误）。 */
+function useHydratedDeviceErrors(devices: readonly DeviceListRow[] | undefined): void {
+  const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
+  useEffect(() => {
+    if (!devices) return;
+    hydrateDeviceErrors(
+      devices.map((d) => ({
+        deviceId: d.id,
+        lastError: d.lastError ?? null,
+        lastErrorType: d.lastErrorType ?? null,
+      }))
+    );
+  }, [devices, hydrateDeviceErrors]);
+}
+
+interface DeviceTreeSubscriptionsOptions {
+  /** 列表是权威的（非占位）。冷启动首帧的本地快照绝不能驱动订阅：设备可能早就删了。 */
+  authoritative: boolean;
+  devices: readonly { id: string }[];
+  visibleDevices: readonly { id: string }[];
+  selectedDeviceId?: string;
+  sidebarDeviceExpanded: Record<string, boolean>;
+  setSidebarDeviceExpanded: (key: string, expanded: boolean) => void;
+  expansionKey: (deviceId: string) => string;
+  ensureDeviceSubscribed: (deviceId: string) => void;
+}
+
+/**
+ * 设备树的两条自动订阅：路由选中的那台（顺带首次自动展开），以及所有展开着的可见设备。
+ * 两条都以「列表是权威的」为前提。
+ */
+function useDeviceTreeSubscriptions({
+  authoritative,
+  devices,
+  visibleDevices,
+  selectedDeviceId,
+  sidebarDeviceExpanded,
+  setSidebarDeviceExpanded,
+  expansionKey,
+  ensureDeviceSubscribed,
+}: DeviceTreeSubscriptionsOptions): void {
+  const autoExpandedDeviceIdsRef = useRef(new Set<string>());
+
+  useEffect(() => {
+    if (!authoritative) return;
+    if (!selectedDeviceId || !devices.some((device) => device.id === selectedDeviceId)) return;
+    if (autoExpandedDeviceIdsRef.current.has(selectedDeviceId)) return;
+
+    autoExpandedDeviceIdsRef.current.add(selectedDeviceId);
+    if (
+      !Object.prototype.hasOwnProperty.call(sidebarDeviceExpanded, expansionKey(selectedDeviceId))
+    ) {
+      setSidebarDeviceExpanded(expansionKey(selectedDeviceId), true);
+    }
+    ensureDeviceSubscribed(selectedDeviceId);
+  }, [
+    authoritative,
+    devices,
+    ensureDeviceSubscribed,
+    selectedDeviceId,
+    setSidebarDeviceExpanded,
+    sidebarDeviceExpanded,
+    expansionKey,
+  ]);
+
+  useEffect(() => {
+    if (!authoritative) return;
+    for (const device of visibleDevices) {
+      if (sidebarDeviceExpanded[expansionKey(device.id)] !== false) {
+        ensureDeviceSubscribed(device.id);
+      }
+    }
+  }, [authoritative, visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
 }
 
 export interface SideBarDeviceListProps {
@@ -91,19 +172,11 @@ export function SideBarDeviceList({
     throwOnError: false,
   });
   const devicesData = devicesQuery.data;
+  // 冷启动首帧可能是本地快照（占位，见 api-client 的 isAuthoritativeDeviceQuery）：照常画树，
+  // 但订阅 / 自动展开 / 重排这些副作用一律等真列表——快照里的设备可能早就删了。
+  const authoritative = isAuthoritativeDeviceQuery(devicesQuery);
 
-  const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
-
-  useEffect(() => {
-    if (!devicesData?.devices) return;
-    hydrateDeviceErrors(
-      devicesData.devices.map((d) => ({
-        deviceId: d.id,
-        lastError: d.lastError ?? null,
-        lastErrorType: d.lastErrorType ?? null,
-      }))
-    );
-  }, [devicesData, hydrateDeviceErrors]);
+  useHydratedDeviceErrors(authoritative ? devicesData?.devices : undefined);
 
   const { handleNavigate, navigateToPane, navigateToWindow, nav } = useDeviceTreeNavigationApi();
 
@@ -154,8 +227,6 @@ export function SideBarDeviceList({
     );
   }, [devices, selectedDeviceId, pinnedDeviceIds, sidebarDeviceVisibility, runtime.nodeId]);
 
-  const autoExpandedDeviceIdsRef = useRef(new Set<string>());
-
   const handleDeviceExpandedChange = useCallback(
     (deviceId: string, expanded: boolean) => {
       setSidebarDeviceExpanded(expansionKey(deviceId), expanded);
@@ -173,33 +244,16 @@ export function SideBarDeviceList({
     [connection, ensureDeviceSubscribed, setSidebarDeviceExpanded, expansionKey]
   );
 
-  useEffect(() => {
-    if (!selectedDeviceId || !devices.some((device) => device.id === selectedDeviceId)) return;
-    if (autoExpandedDeviceIdsRef.current.has(selectedDeviceId)) return;
-
-    autoExpandedDeviceIdsRef.current.add(selectedDeviceId);
-    if (
-      !Object.prototype.hasOwnProperty.call(sidebarDeviceExpanded, expansionKey(selectedDeviceId))
-    ) {
-      setSidebarDeviceExpanded(expansionKey(selectedDeviceId), true);
-    }
-    ensureDeviceSubscribed(selectedDeviceId);
-  }, [
+  useDeviceTreeSubscriptions({
+    authoritative,
     devices,
-    ensureDeviceSubscribed,
+    visibleDevices,
     selectedDeviceId,
-    setSidebarDeviceExpanded,
     sidebarDeviceExpanded,
+    setSidebarDeviceExpanded,
     expansionKey,
-  ]);
-
-  useEffect(() => {
-    for (const device of visibleDevices) {
-      if (sidebarDeviceExpanded[expansionKey(device.id)] !== false) {
-        ensureDeviceSubscribed(device.id);
-      }
-    }
-  }, [visibleDevices, ensureDeviceSubscribed, sidebarDeviceExpanded, expansionKey]);
+    ensureDeviceSubscribed,
+  });
 
   // 隐藏设备也要参与排序：重排提交的是完整顺序，隐藏设备必须留在自己的槽位上
   const allSortedDevices = useMemo(() => sortDevices(devices, language), [devices, language]);
@@ -231,7 +285,7 @@ export function SideBarDeviceList({
         <div className="min-w-0 space-y-1.5 pb-1 pt-0.5 select-none [-webkit-user-select:none] [-webkit-touch-callout:none]">
           <SortableVerticalList
             ids={sortedDeviceIds}
-            disabled={deviceReorder.isPending}
+            disabled={deviceReorder.isPending || !authoritative}
             onReorder={deviceReorder.reorder}
           >
             {sortedDevices.map((device) => (

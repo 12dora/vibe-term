@@ -8,6 +8,7 @@ import {
   type SignedPasswordChange,
   changePassword,
 } from '@/auth/account-security-actions';
+import { clearLocalDeviceCaches } from '@/auth/logout-local-caches';
 import { clearSessionKey, getSessionKey } from '@/auth/session-key-store';
 import { resumeSessionAfterPasswordChange } from '@/auth/session-login';
 import { withKeyLogLock } from '@/node/enrollment-engine';
@@ -135,6 +136,8 @@ export async function finishPasswordChange(
     // rotate-root 撤销所有会话：等盘上那份也删掉再往下走，否则用户随手刷新一下，
     // IndexedDB 里那份已被服务端撤销的会话钥又会被恢复出来。
     await clearSessionKey();
+    // 全量重置后必须重新登录，按 node 落盘的拓扑与设备快照一并清掉。
+    clearLocalDeviceCaches();
     return { tone: 'ok', text: input.t('auth.security.changePasswordDone') };
   }
   if (input.follow === 'keep-session') {

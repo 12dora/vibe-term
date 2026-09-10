@@ -36,6 +36,7 @@ import {
 } from '@vibeterm/shared/auth';
 
 import { markLoggedIn } from '@/node/mesh-nodes';
+import { clearLocalDeviceCaches } from './logout-local-caches';
 import { selectPasskeyCredential } from './passkey-credential-select';
 import type { LoginNodeResult, SessionKeyInfo, SessionKeySecrets } from './session-key-store';
 import {
@@ -656,6 +657,8 @@ export async function loginSelf(opts: LoginSelfOptions = {}): Promise<LoginNodeR
   if (pinnedPk && !pinnedPkOk(pinnedPk, selfRow)) {
     // 调用方据此退回登录页：等盘上那份真的删掉再返回，否则刷新一下会话钥又回来了。
     await clearSessionKey();
+    // 公钥对不上＝对面换了身份，本地按 node 落盘的拓扑与设备快照全部不再可信。
+    clearLocalDeviceCaches();
     return { ok: false, code: 'NODE_PK_MISMATCH' };
   }
 

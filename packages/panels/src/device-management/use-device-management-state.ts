@@ -4,7 +4,12 @@
 import type { DragEndEvent } from '@dnd-kit/core';
 import { arrayMove } from '@dnd-kit/sortable';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { type DevicesResponse, fetchDevices, reorderDevices } from '@vibeterm/api-client';
+import {
+  type DevicesResponse,
+  authoritativeDeviceList,
+  fetchDevices,
+  reorderDevices,
+} from '@vibeterm/api-client';
 import type { Device } from '@vibeterm/shared';
 import { useRuntime, useSiteStore, useTmuxStore } from '@vibeterm/stores/react';
 import { staggerItemStyle } from '@vibeterm/ui/motion';
@@ -78,24 +83,27 @@ export function useDeviceManagementState({
   const language = useSiteStore((state) => state.settings?.language ?? 'en_US');
   const hydrateDeviceErrors = useTmuxStore((state) => state.hydrateDeviceErrors);
 
-  const { data, isError, error, refetch } = useQuery({
+  const { data, isError, error, refetch, isSuccess, isPlaceholderData } = useQuery({
     queryKey: devicesQueryKey,
     queryFn: () => fetchDevices(runtime.apiClient),
     throwOnError: false,
     enabled: !offline,
   });
 
+  // 冷启动首帧拿到的可能是本地快照（占位）：它照常渲染，但错误水合与回写快照都要等真列表。
+  const authoritative = authoritativeDeviceList({ data, isSuccess, isPlaceholderData });
+
   useEffect(() => {
-    if (!data?.devices) return;
+    if (!authoritative?.devices) return;
     hydrateDeviceErrors(
-      data.devices.map((d) => ({
+      authoritative.devices.map((d) => ({
         deviceId: d.id,
         lastError: d.lastError ?? null,
         lastErrorType: d.lastErrorType ?? null,
       }))
     );
-    onDevicesLoaded?.(data.devices);
-  }, [data, hydrateDeviceErrors, onDevicesLoaded]);
+    onDevicesLoaded?.(authoritative.devices);
+  }, [authoritative, hydrateDeviceErrors, onDevicesLoaded]);
 
   const loaded = useMemo(() => {
     const list = data?.devices ?? (offline ? fallbackDevices : undefined);
@@ -131,7 +139,10 @@ export function useDeviceManagementState({
 
   const deviceIds = useMemo(() => (loaded ?? NO_DEVICES).map((device) => device.id), [loaded]);
   const reorderMutate = reorderMutation.mutate;
-  const reorderDisabled = offline || reorderMutation.isPending || deviceIds.length < 2;
+  // 占位期间禁止拖拽重排：缓存里没有可回滚的基线（`getQueryData` 对占位数据返回 undefined），
+  // 提交的还是一份可能过期的顺序。
+  const reorderDisabled =
+    offline || isPlaceholderData || reorderMutation.isPending || deviceIds.length < 2;
   const onDragEnd = useCallback(
     ({ active, over }: DragEndEvent) => {
       if (reorderDisabled || !over || active.id === over.id) return;

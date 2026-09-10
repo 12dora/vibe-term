@@ -2,9 +2,11 @@ import { describe, expect, test } from 'bun:test';
 import type { CreateDeviceRequest, UpdateDeviceRequest } from '@vibeterm/shared';
 import { ApiClient } from './client';
 import {
+  authoritativeDeviceList,
   createDevice,
   deleteDevice,
   fetchDevices,
+  isAuthoritativeDeviceQuery,
   reorderDevices,
   testDeviceConnection,
   updateDevice,
@@ -175,5 +177,33 @@ describe('testDeviceConnection', () => {
     await expect(testDeviceConnection('dev-1', '测试失败', withoutError)).rejects.toThrow(
       '测试失败'
     );
+  });
+});
+
+describe('authoritativeDeviceList', () => {
+  const data = { devices: [{ id: 'd1' }] };
+
+  test('占位数据不算数：连接 / 订阅 / 乐观重排 / 回写快照都不能按它来', () => {
+    expect(
+      authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: true })
+    ).toBeUndefined();
+    expect(isAuthoritativeDeviceQuery({ isSuccess: true, isPlaceholderData: true })).toBe(false);
+  });
+
+  test('真成功的列表才算数（成功返回的空列表也算）', () => {
+    expect(authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: false })).toBe(data);
+    const empty = { devices: [] };
+    expect(
+      authoritativeDeviceList({ data: empty, isSuccess: true, isPlaceholderData: false })
+    ).toBe(empty);
+  });
+
+  test('加载中 / 失败一律不算数', () => {
+    expect(
+      authoritativeDeviceList({ data: undefined, isSuccess: false, isPlaceholderData: false })
+    ).toBeUndefined();
+    expect(
+      authoritativeDeviceList({ data, isSuccess: false, isPlaceholderData: false })
+    ).toBeUndefined();
   });
 });

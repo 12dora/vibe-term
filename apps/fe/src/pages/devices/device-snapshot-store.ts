@@ -221,6 +221,20 @@ export function pruneDeviceSnapshots(
   writeIndex(storage, index);
 }
 
+/**
+ * 这个 localStorage 键是不是设备快照（含索引与改名前的旧键）。
+ * 登出 / 换账号 / 凭证失效时由宿主按前缀整片清掉（见 `auth/logout-local-caches.ts`）：
+ * 快照现在是首帧占位数据，留着会让上一个账号的设备名一直画到 `/api/devices` 回来。
+ */
+export function isDeviceSnapshotKey(key: string): boolean {
+  return (
+    key.startsWith(KEY_PREFIX) ||
+    key === INDEX_KEY ||
+    key.startsWith(LEGACY_KEY_PREFIX) ||
+    key === LEGACY_INDEX_KEY
+  );
+}
+
 /** 快照里没有运行时状态字段（最近在线、错误、tmux 可用性），补成「未知」即可参与渲染。 */
 function toRuntimeDevice(device: Device): DeviceWithRuntime {
   return {

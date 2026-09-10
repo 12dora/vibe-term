@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, test } from 'bun:test';
-import { ApiClient, type DevicesResponse, nodeAppPath } from '@vibeterm/api-client';
+import { ApiClient, nodeAppPath } from '@vibeterm/api-client';
 import type { Device } from '@vibeterm/shared';
+import {
+  clearTmuxTopologyCache,
+  nodeStoragePrefix,
+  pruneTmuxTopologyCache,
+  readTmuxTopologyCache,
+  writeTmuxTopology,
+} from '@vibeterm/stores';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
 const { writeDeviceSnapshot } = await import('@/pages/devices/device-snapshot-store');
-const { authoritativeDeviceList, devicesQueryOptions, routeDeviceId } = await import(
-  './global-device-provider'
-);
+const { devicesQueryOptions, routeDeviceId } = await import('./global-device-provider');
 
 const selfAppPath = (path: string) => nodeAppPath('self', path);
 const nodeAAppPath = (path: string) => nodeAppPath('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', path);
@@ -70,29 +75,6 @@ describe('devicesQueryOptions 的首帧占位', () => {
   });
 });
 
-describe('authoritativeDeviceList', () => {
-  const data: DevicesResponse = { devices: [] };
-
-  test('占位数据不算数：连接 / 订阅 / 回写快照都不能按它来', () => {
-    expect(
-      authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: true })
-    ).toBeUndefined();
-  });
-
-  test('真成功的列表才算数（成功返回的空列表也算）', () => {
-    expect(authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: false })).toBe(data);
-  });
-
-  test('加载中 / 失败一律不算数', () => {
-    expect(
-      authoritativeDeviceList({ data: undefined, isSuccess: false, isPlaceholderData: false })
-    ).toBeUndefined();
-    expect(
-      authoritativeDeviceList({ data, isSuccess: false, isPlaceholderData: false })
-    ).toBeUndefined();
-  });
-});
-
 describe('routeDeviceId', () => {
   test('self runtime 匹配旧路由', () => {
     expect(routeDeviceId('/devices/device-a', selfAppPath)).toBe('device-a');
@@ -114,5 +96,33 @@ describe('routeDeviceId', () => {
       routeDeviceId('/n/0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b/devices/device-a', nodeAAppPath)
     ).toBeUndefined();
     expect(routeDeviceId('/devices/device-a', nodeAAppPath)).toBeUndefined();
+  });
+});
+
+// 设备列表落地后顺带清掉已删设备的拓扑缓存（`useReconcileWithDeviceList`）。
+// hook 本身在无 DOM 的 bun test 里跑不起来，这里锁住它依赖的两条契约：
+// 缓存按 runtime.storagePrefix 分区，且 prune 只留下仍在列表里的设备。
+describe('拓扑缓存随设备列表对账', () => {
+  test('按 runtime.storagePrefix 分区：self 与远端 node 互不影响', () => {
+    const topology = {
+      savedAt: Date.now(),
+      windows: [{ id: '@1', index: 0, name: 'zsh', active: true, panes: [] }],
+    };
+    const selfPrefix = nodeStoragePrefix('self');
+    const nodePrefix = nodeStoragePrefix('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a');
+    expect(selfPrefix).not.toBe(nodePrefix);
+
+    writeTmuxTopology(selfPrefix, 'kept', topology);
+    writeTmuxTopology(selfPrefix, 'deleted', topology);
+    writeTmuxTopology(nodePrefix, 'deleted', topology);
+
+    pruneTmuxTopologyCache(selfPrefix, new Set(['kept']));
+
+    expect(Object.keys(readTmuxTopologyCache(selfPrefix))).toEqual(['kept']);
+    // 另一个 node 的同名设备不受影响
+    expect(readTmuxTopologyCache(nodePrefix).deleted).toBeDefined();
+
+    clearTmuxTopologyCache(selfPrefix);
+    clearTmuxTopologyCache(nodePrefix);
   });
 });

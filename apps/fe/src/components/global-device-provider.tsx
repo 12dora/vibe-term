@@ -2,11 +2,17 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   type ApiClient,
   type DevicesResponse,
+  authoritativeDeviceList,
   devicesQueryKey,
   fetchDevices,
 } from '@vibeterm/api-client';
 import type { DeviceConnectionAdapter } from '@vibeterm/panels';
-import { type AppRuntime, type HostServices, hostAppPath } from '@vibeterm/stores';
+import {
+  type AppRuntime,
+  type HostServices,
+  hostAppPath,
+  pruneTmuxTopologyCache,
+} from '@vibeterm/stores';
 import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import {
   createContext,
@@ -39,6 +45,10 @@ import {
 import { DeviceStatusStore } from './device-status-store';
 
 import { handleNodeApiError, noteNodeQuerySuccess } from '@/node/node-session-recovery';
+import {
+  useNodeReachabilityFromQuery,
+  useNodeRequestBlocked,
+} from '@/node/node-unreachable-backoff';
 import {
   deviceSnapshotPlaceholder,
   writeDeviceSnapshot,
@@ -171,15 +181,18 @@ interface ReconcileParams {
   devicesData: DevicesResponse | undefined;
   connectedDevices: ReadonlySet<string>;
   intentStore: DeviceIntentStore;
+  /** 本 runtime 的存储前缀；拓扑缓存与连接意图按同一口径分区 */
+  storagePrefix: string;
   connectTmuxDevice: (deviceId: string) => void;
   disconnectTmuxDevice: (deviceId: string) => void;
 }
 
-/** 设备列表就绪后：清理已删除设备的连接意图与订阅，并恢复持久化的连接意图 */
+/** 设备列表就绪后：清理已删除设备的连接意图、订阅与拓扑缓存，并恢复持久化的连接意图 */
 function useReconcileWithDeviceList({
   devicesData,
   connectedDevices,
   intentStore,
+  storagePrefix,
   connectTmuxDevice,
   disconnectTmuxDevice,
 }: ReconcileParams): void {
@@ -190,7 +203,16 @@ function useReconcileWithDeviceList({
       connectDevice: connectTmuxDevice,
       disconnectDevice: disconnectTmuxDevice,
     });
-  }, [devicesData, connectedDevices, intentStore, connectTmuxDevice, disconnectTmuxDevice]);
+    // 从未连接过的设备被删掉时走不到「退出 connectedDevices」那条清理路径，靠这里兜底
+    pruneTmuxTopologyCache(storagePrefix, knownDeviceIds);
+  }, [
+    devicesData,
+    connectedDevices,
+    intentStore,
+    storagePrefix,
+    connectTmuxDevice,
+    disconnectTmuxDevice,
+  ]);
 }
 
 /**
@@ -328,19 +350,6 @@ export function devicesQueryOptions(
 }
 
 /**
- * 「这份列表算不算数」。占位数据（本地快照）只用来渲染：它可能已经过期，拿去驱动连接 /
- * 订阅会连一台早就删掉的设备，还会按过期列表清掉持久化的连接意图。回写快照同理——
- * 失败态的空数组不是事实，占位数据写回去只是把自己抄一遍。
- */
-export function authoritativeDeviceList(query: {
-  data: DevicesResponse | undefined;
-  isSuccess: boolean;
-  isPlaceholderData: boolean;
-}): DevicesResponse | undefined {
-  return query.isSuccess && !query.isPlaceholderData ? query.data : undefined;
-}
-
-/**
  * 快照的**唯一**写入点：本 provider 挂在每个 node 运行时子树的根上（`NodeRuntimeScope` 与
  * `NodeRuntimeBoundary` 都有），列表一成功就落盘，从没进过侧边栏 / 设备页的用户也有首帧数据。
  * 只接权威列表（见 `authoritativeDeviceList`）。
@@ -393,9 +402,11 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
+  // 这台 node 打不通：退避窗口内连设备列表都不发（转发器要等满 5 秒才回 503）。
+  const backoff = useNodeRequestBlocked(runtime.nodeId);
   const queryOptions = useMemo(
-    () => devicesQueryOptions(runtime.apiClient, offline, runtime.nodeId),
-    [runtime.apiClient, runtime.nodeId, offline]
+    () => devicesQueryOptions(runtime.apiClient, offline || backoff, runtime.nodeId),
+    [runtime.apiClient, runtime.nodeId, offline, backoff]
   );
   const {
     data: devicesData,
@@ -405,6 +416,7 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
     isPlaceholderData,
   } = useQuery(queryOptions);
   useNodeSessionRecovery(runtime.nodeId, devicesError, devicesUpdatedAt);
+  useNodeReachabilityFromQuery(runtime.nodeId, devicesError, devicesUpdatedAt);
 
   // 占位数据只用来渲染，绝不驱动连接 / 订阅：本地快照里的设备可能早就删了，照它去
   // `connectDevice` 会连一台不存在的设备，还会把持久化的连接意图按过期列表清掉。
@@ -428,6 +440,7 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
     devicesData: authoritativeDevices,
     connectedDevices,
     intentStore,
+    storagePrefix: runtime.storagePrefix,
     connectTmuxDevice,
     disconnectTmuxDevice,
   });

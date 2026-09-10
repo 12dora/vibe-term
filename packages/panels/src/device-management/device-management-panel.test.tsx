@@ -51,9 +51,20 @@ const DEVICE_ROOT: FileRootDto = {
 let storageSeq = 0;
 
 function renderPanel(
-  options: { devices?: Device[]; offline?: boolean; roots?: FileRootDto[] } = {}
+  options: {
+    devices?: Device[];
+    offline?: boolean;
+    roots?: FileRootDto[];
+    /** 冷启动首帧的占位（宿主把本地设备快照挂在每 node 的 QueryClient 缺省上） */
+    placeholderDevices?: Device[];
+  } = {}
 ): string {
   const queryClient = new QueryClient();
+  if (options.placeholderDevices) {
+    queryClient.setQueryDefaults(devicesQueryKey, {
+      placeholderData: { devices: options.placeholderDevices },
+    });
+  }
   if (options.devices) queryClient.setQueryData(devicesQueryKey, { devices: options.devices });
   if (options.roots) queryClient.setQueryData(['files', 'roots'], { roots: options.roots });
   const runtime = createAppRuntime({
@@ -111,6 +122,22 @@ describe('DeviceManagementPanel 的渲染分支', () => {
     );
     expect(html).toContain('data-testid="device-card-handle-dev-1"');
     expect(html).not.toContain('data-testid="devices-offline-hint"');
+  });
+
+  test('冷启动首帧的占位快照照常画网格（这就是不再转菊花的那一帧）', () => {
+    const html = renderPanel({ placeholderDevices: [DEVICE, OTHER_DEVICE] });
+    expect(html).toContain('data-testid="devices-grid"');
+    expect(html).not.toContain('data-testid="devices-loading"');
+    expect(html).toContain('data-testid="device-card-slot-dev-1"');
+  });
+
+  test('占位期间不给拖动把手：缓存里没有可回滚的基线，提交的还是一份可能过期的顺序', () => {
+    const html = renderPanel({ placeholderDevices: [DEVICE, OTHER_DEVICE] });
+    expect(html).not.toContain('data-testid="device-card-handle-dev-1"');
+    // 真列表到了才恢复
+    expect(renderPanel({ devices: [DEVICE, OTHER_DEVICE] })).toContain(
+      'data-testid="device-card-handle-dev-1"'
+    );
   });
 
   test('离线时用缓存里的列表渲染，带离线提示且没有拖动把手', () => {

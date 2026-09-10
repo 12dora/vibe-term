@@ -14,7 +14,6 @@
 import { markLoggedIn } from '@/node/mesh-nodes';
 import type { AuthApi, MeshNode } from '@vibeterm/api-client/auth/index';
 import type { Delegation } from '@vibeterm/shared/auth';
-import { clearLocalTopologyCaches } from './logout-local-caches';
 import {
   PERSISTED_SESSION_VERSION,
   clearPersistedSession,
@@ -157,7 +156,6 @@ export function clearSessionKey(): Promise<boolean> {
   generation += 1;
   restorePromise = Promise.resolve(null);
   const cleared = clearPersistedSession();
-  clearLocalTopologyCaches();
   if (current) {
     current.sessSk?.fill(0);
     current.delegationSig.fill(0);

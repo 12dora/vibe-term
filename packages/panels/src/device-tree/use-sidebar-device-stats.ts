@@ -7,6 +7,7 @@ import {
   type DevicesResponse,
   devicesQueryKey as defaultDevicesQueryKey,
   fetchDevices,
+  isAuthoritativeDeviceQuery,
 } from '@vibeterm/api-client';
 import type { Device } from '@vibeterm/shared';
 import { useRuntime, useUIStore } from '@vibeterm/stores/react';
@@ -64,7 +65,7 @@ export function deviceQueryFlags(query: DeviceQueryStatus): DeviceQueryFlags {
   return {
     pending: query.isPending || query.isPlaceholderData,
     failed: query.isError,
-    succeeded: query.isSuccess && !query.isPlaceholderData,
+    succeeded: isAuthoritativeDeviceQuery(query),
   };
 }
 

@@ -23,6 +23,38 @@ export interface DevicesResponse {
   devices: DeviceWithRuntime[];
 }
 
+export interface DeviceQueryOutcome<TData> {
+  data: TData | undefined;
+  isSuccess: boolean;
+  isPlaceholderData: boolean;
+}
+
+/**
+ * 「这一份 `['devices']` 查询结果算不算数」。
+ *
+ * 冷启动首帧的占位数据（宿主的本地设备快照）挂在每个 node 的 QueryClient 缺省上，同一个 key
+ * 的每个观察者——设备管理面板、侧边栏设备树、控制台、宿主的 GlobalDeviceProvider——都会先
+ * 拿到它。占位数据**只能用来渲染**：它可能已经过期，拿去驱动连接 / 订阅会连一台早就删掉的
+ * 设备；拿去做乐观重排会用过期顺序覆盖服务端，且缓存里没有可回滚的基线；回写本地快照更是把
+ * 自己抄一遍。所以每一条写路径与副作用都要先过这里。
+ *
+ * 判据放在这里（而不是各包各写一遍）：`apps/fe` 与 `packages/panels` 用的是同一条规则，
+ * 各写一份迟早会漏掉某个观察者。真成功且非占位才算数——成功返回的空列表是事实，算数；
+ * 失败态的空数组不是。
+ */
+export function isAuthoritativeDeviceQuery(
+  query: Pick<DeviceQueryOutcome<unknown>, 'isSuccess' | 'isPlaceholderData'>
+): boolean {
+  return query.isSuccess && !query.isPlaceholderData;
+}
+
+/** 权威列表；占位 / 加载中 / 失败一律为 undefined。 */
+export function authoritativeDeviceList<TData>(
+  query: DeviceQueryOutcome<TData>
+): TData | undefined {
+  return isAuthoritativeDeviceQuery(query) ? query.data : undefined;
+}
+
 // 多个包共享 ['devices'] 查询缓存且约定形态为 { devices }，故列表端点保留信封返回；
 // 该端点还需透传调用方的 RequestInit（如 signal），不走 requestJson
 export async function fetchDevices(
