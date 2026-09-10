@@ -38,9 +38,17 @@ export function htmlReferencedAssets(html: string): string[] {
   return [...refs].sort();
 }
 
-/** 从产物 CSS 的静态 @font-face 里取默认字体 URL（不含 /fonts/generated/** 的可选家族） */
+/** 可选字体家族的存放前缀：那是 16 MB 的按需资源，只在用户选中时运行时缓存，绝不预缓存 */
+export const OPTIONAL_FONT_PREFIX = '/fonts/generated/';
+
+/**
+ * 从产物 CSS 的静态 @font-face 里取默认字体 URL。显式剔掉 /fonts/generated/**：
+ * 它们目前只由运行时注入的 @font-face 引用，但一旦哪天进了 CSS，这里会悄悄把 16 MB
+ * 塞进每一代预缓存。
+ */
 export function declaredFontUrls(css: string): string[] {
-  return [...new Set(css.match(/\/fonts\/[^"')]+\.woff2/g) ?? [])].sort();
+  const found = css.match(/\/fonts\/[^"')]+\.woff2/g) ?? [];
+  return [...new Set(found.filter((url) => !url.startsWith(OPTIONAL_FONT_PREFIX)))].sort();
 }
 
 /** 打包产物名（相对 outDir）→ 预缓存 URL；非 assets/ 哈希产物一律忽略 */

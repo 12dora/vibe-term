@@ -7,14 +7,23 @@
 // 正在跑的页面始终拿到同一代的壳与 chunk，杜绝「壳更新了但 chunk 哈希已不存在」的整页刷新。
 //
 // 「等旧客户端退出」本身需要逃生通道，否则节点升级换掉 fe-dist 之后会卡死在旧代：
-//   1) 页面发现 chunk 404 时给 waiting 的 SW 发 vibeterm:sw-skip-waiting，让它立刻接管；
-//   2) SW 自己发现某个 /assets/** 在服务端已 404，就地拆掉本代缓存并注销自己；
-//   3) 本代预缓存有缺口时（lazy/字体是尽力而为），导航一律网络优先，缓存只作离线兜底。
+//   1) 页面发现 chunk 404 时给 waiting 的 SW 发 skipWaiting 让它立刻接管（见 ./sw-reload.ts）；
+//   2) SW 自己发现**本代预缓存过的** /assets/** 在服务端已 404，就地拆掉本代并注销自己；
+//   3) 本代预缓存有实质缺口时，导航放宽网络预算，缓存壳只作兜底。
 //
-// 路由分类见 ./sw-routes（纯函数，单测覆盖）。分类为 bypass 的请求连 respondWith 都不调，
-// 由浏览器原样发出。
+// 路由分类见 ./sw-routes，各项取舍的纯函数见 ./sw-policy（都有单测）。
+// 分类为 bypass 的请求连 respondWith 都不调，由浏览器原样发出。
 
-import { SW_SKIP_WAITING_MESSAGE } from './sw-messages';
+import { SW_SKIP_WAITING_MESSAGE } from '@vibeterm/ui/sw-activation';
+import {
+  acceptsNetworkShell,
+  isMeaningfulGap,
+  planGenerationPrune,
+  planGenerationSweep,
+  precachePathSet,
+  requestPathname,
+  withGapFilled,
+} from './sw-policy';
 import { SHELL_URL, type SwRouteKind, classifyRequest } from './sw-routes';
 
 // 由 vite 插件在打包 sw.js 时 define 注入
@@ -24,7 +33,7 @@ declare const __SW_PRECACHE__: {
   core: readonly string[];
   /** 其余哈希 chunk（懒路由、面板、wasm）：装不上只是回落到按需下载 */
   lazy: readonly string[];
-  /** index.css 静态声明的默认等宽字体（约 2.48 MB） */
+  /** 产物 CSS 静态声明的默认等宽字体（约 2.48 MB） */
   fonts: readonly string[];
 };
 
@@ -65,11 +74,19 @@ const CACHE_NAME = `${CACHE_PREFIX}${__SW_BUILD_ID__}`;
  */
 const SHELL_NETWORK_BUDGET_MS = 600;
 
+/** 本代预缓存有实质缺口时的预算：放宽但仍然有限，弱网离线不能因此一直白屏 */
+const PARTIAL_SHELL_BUDGET_MS = 4000;
+
 /** 尽力而为的预缓存并发上限：一次性发出两百多个请求会和首屏自己的数据请求抢连接 */
 const OPTIONAL_PRECACHE_CONCURRENCY = 6;
 
-/** 本代预缓存是否有缺口的标记。只能存缓存里：SW 随时会被杀，模块变量活不过一次休眠。 */
-const PARTIAL_MARKER_URL = '/__vibeterm-sw__/partial-generation';
+/** 本代预缓存缺口清单的存放位置。只能存缓存里：SW 随时会被杀，模块变量活不过一次休眠。 */
+const GAP_MARKER_URL = '/__vibeterm-sw__/partial-generation';
+
+const PRECACHED_PATHS = precachePathSet(__SW_PRECACHE__.core, __SW_PRECACHE__.lazy);
+
+/** 自毁之后本代缓存不该再被 caches.open 重建，剩下的请求一律直通网络 */
+let destructed = false;
 
 /** respondWith 的 promise 落定后再调 waitUntil 会抛 InvalidStateError，这里统一吞掉 */
 function keepAlive(event: SwExtendableEvent, promise: Promise<unknown>): void {
@@ -80,16 +97,16 @@ function keepAlive(event: SwExtendableEvent, promise: Promise<unknown>): void {
   }
 }
 
-/** 返回失败条数，调用方据此判断本代是否完整 */
-async function addBestEffort(cache: Cache, urls: readonly string[]): Promise<number> {
+/** 返回失败的 URL 列表，调用方据此重试与判定缺口 */
+async function addBestEffort(cache: Cache, urls: readonly string[]): Promise<string[]> {
   const queue = [...urls];
   const lanes = Math.min(OPTIONAL_PRECACHE_CONCURRENCY, queue.length);
-  let failed = 0;
+  const failed: string[] = [];
   await Promise.all(
     Array.from({ length: lanes }, async () => {
       for (let url = queue.shift(); url !== undefined; url = queue.shift()) {
         await cache.add(url).catch(() => {
-          failed += 1;
+          failed.push(url);
         });
       }
     })
@@ -97,97 +114,116 @@ async function addBestEffort(cache: Cache, urls: readonly string[]): Promise<num
   return failed;
 }
 
-let partialGeneration: Promise<boolean> | null = null;
+let gapPaths: Promise<Set<string>> | null = null;
 
-function isPartialGeneration(cache: Cache): Promise<boolean> {
-  partialGeneration ??= cache.match(PARTIAL_MARKER_URL).then(
-    (hit) => Boolean(hit),
-    () => false
-  );
-  return partialGeneration;
+function readGapPaths(cache: Cache): Promise<Set<string>> {
+  gapPaths ??= cache
+    .match(GAP_MARKER_URL)
+    .then((hit) => (hit ? (hit.json() as Promise<string[]>) : []))
+    .then((paths) => new Set(paths))
+    .catch(() => new Set<string>());
+  return gapPaths;
 }
 
-async function markPartialGeneration(cache: Cache): Promise<void> {
-  partialGeneration = Promise.resolve(true);
-  await cache.put(PARTIAL_MARKER_URL, new Response('1'));
+async function writeGapPaths(cache: Cache, paths: Set<string>): Promise<void> {
+  gapPaths = Promise.resolve(paths);
+  if (paths.size === 0) {
+    await cache.delete(GAP_MARKER_URL);
+    return;
+  }
+  await cache.put(GAP_MARKER_URL, new Response(JSON.stringify([...paths])));
 }
 
-/**
- * 安装期顺手清理：被顶掉的安装（装完还没激活就来了新版本）会各留一代约 10 MB 缓存，
- * 只在 activate 里清等于永远清不到。caches.keys() 按创建顺序返回，最后一代视为当前活动代，
- * 保留它与本代，更早的一律删掉。
- */
 async function pruneDiscardedGenerations(): Promise<void> {
-  const others = (await caches.keys()).filter(
-    (name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME
-  );
-  await Promise.all(others.slice(0, -1).map((name) => caches.delete(name)));
+  const stale = planGenerationPrune(await caches.keys(), CACHE_PREFIX, CACHE_NAME);
+  await Promise.all(stale.map((name) => caches.delete(name)));
 }
 
 async function precacheGeneration(): Promise<void> {
   const cache = await caches.open(CACHE_NAME);
   // 首屏那一批缺一不可：任一失败即放弃本代安装，宁可继续用旧代也不留半套壳
   await cache.addAll([...__SW_PRECACHE__.core]);
-  // 懒 chunk 与字体是渐进增强，逐个补、失败只回落到按需下载
-  const failed = await addBestEffort(cache, [...__SW_PRECACHE__.lazy, ...__SW_PRECACHE__.fonts]);
-  if (failed > 0) await markPartialGeneration(cache);
+  // 懒 chunk 与字体是渐进增强：先逐个补，失败的整体重试一轮再判定
+  const optional = [...__SW_PRECACHE__.lazy, ...__SW_PRECACHE__.fonts];
+  const retried = await addBestEffort(cache, await addBestEffort(cache, optional));
+  if (isMeaningfulGap(retried, __SW_PRECACHE__.fonts)) {
+    await writeGapPaths(cache, new Set(retried));
+  }
   await pruneDiscardedGenerations();
 }
 
 async function dropOtherGenerations(): Promise<void> {
-  const names = await caches.keys();
-  const stale = names.filter((name) => name.startsWith(CACHE_PREFIX) && name !== CACHE_NAME);
+  const stale = planGenerationSweep(await caches.keys(), CACHE_PREFIX, CACHE_NAME);
   await Promise.all(stale.map((name) => caches.delete(name)));
 }
 
 /**
- * 本代缓存指着的 chunk 在服务端已经不存在（节点升级换了 fe-dist）：这一代整体作废，
- * 拆掉缓存并注销自己，下一次导航直接吃服务端的新壳，由它再装一代新的。
+ * 本代缓存里确实收录过、而服务端已经 404 的产物（节点升级换了 fe-dist）：这一代整体作废，
+ * 拆掉缓存并注销自己，下一次导航直接吃服务端的新壳。之后本实例不再碰缓存，
+ * 否则 caches.open 会把刚删掉的那一代又建回来。
  */
 async function selfDestruct(): Promise<void> {
+  destructed = true;
+  gapPaths = null;
   await caches.delete(CACHE_NAME);
   await self.registration.unregister();
 }
 
+/** 命中缺口清单的运行时补齐：补上一条就从清单里划掉，清空即恢复正常预算 */
+async function fillGap(cache: Cache, path: string): Promise<void> {
+  const next = withGapFilled(await readGapPaths(cache), path);
+  if (next) await writeGapPaths(cache, next);
+}
+
 async function cacheFirst(event: SwFetchEvent, kind: SwRouteKind): Promise<Response> {
+  if (destructed) return fetch(event.request);
   const cache = await caches.open(CACHE_NAME);
   const hit = await cache.match(event.request);
   if (hit) return hit;
   const response = await fetch(event.request);
-  if (kind === 'asset' && response.status === 404) {
+  const path = requestPathname(event.request.url);
+  if (kind === 'asset' && response.status === 404 && path && PRECACHED_PATHS.has(path)) {
     keepAlive(event, selfDestruct());
     return response;
   }
   if (response.status === 200 && response.type === 'basic') {
-    keepAlive(event, cache.put(event.request, response.clone()));
+    const stored = cache.put(event.request, response.clone());
+    keepAlive(event, path ? stored.then(() => fillGap(cache, path)) : stored);
   }
   return response;
 }
 
-/** 网络优先但带预算：任何状态码（含 302 的 opaqueredirect）都算网络接管；超时/失败返回 null */
+/** 网络优先但带预算；超时连同在途请求一起 abort，别把连接挂在那儿 */
 function raceShellNetwork(request: Request, budgetMs: number): Promise<Response | null> {
   return new Promise((resolve) => {
-    const timer = Number.isFinite(budgetMs) ? setTimeout(() => resolve(null), budgetMs) : undefined;
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort();
+      resolve(null);
+    }, budgetMs);
     const settle = (response: Response | null) => {
-      if (timer !== undefined) clearTimeout(timer);
+      clearTimeout(timer);
       resolve(response);
     };
-    fetch(request).then(settle, () => settle(null));
+    fetch(request, { signal: controller.signal }).then(
+      (response) => settle(acceptsNetworkShell(response.status, response.type) ? response : null),
+      () => settle(null)
+    );
   });
 }
 
 /**
- * 导航：先给服务端一个短预算接管（访问门、302），超时才回放本代缓存的壳，同时触发一次
- * SW 更新检查。**不**把新 index.html 写回本代缓存——新壳配旧 chunk 哈希正是要避免的组合，
- * 换代由新 SW 装好新一代缓存后完成。
+ * 导航：先给服务端一个预算接管（访问门、302），超时或拿到 5xx 才回放本代缓存的壳，
+ * 同时触发一次 SW 更新检查。**不**把新 index.html 写回本代缓存——新壳配旧 chunk 哈希
+ * 正是要避免的组合，换代由新 SW 装好新一代缓存后完成。
  */
 async function shellFirst(event: SwFetchEvent): Promise<Response> {
+  if (destructed) return fetch(event.request);
   const cache = await caches.open(CACHE_NAME);
   const cached = await cache.match(SHELL_URL);
   if (!cached) return fetch(event.request);
-  const budget = (await isPartialGeneration(cache))
-    ? Number.POSITIVE_INFINITY
-    : SHELL_NETWORK_BUDGET_MS;
+  const gaps = await readGapPaths(cache);
+  const budget = gaps.size > 0 ? PARTIAL_SHELL_BUDGET_MS : SHELL_NETWORK_BUDGET_MS;
   const network = await raceShellNetwork(event.request, budget);
   if (network) return network;
   keepAlive(event, self.registration.update());

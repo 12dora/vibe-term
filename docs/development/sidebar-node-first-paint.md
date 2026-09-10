@@ -5,7 +5,7 @@
 ## 背景
 
 渲染一个远端节点分节要串起四个条件：`meshEnabled`（`/api/auth/mode` 返回 mesh）→ `/api/mesh/nodes`
-已返回 → 节点 online 且已登录 → `/n/<id>/api/devices` 已返回。任何一环没落地，分节就整体消失（不是「显示为离线」，而是连节点名一起没有）。`apps/fe` 没有 service worker，每次重开都是冷启动。会拖慢这四环的因素：
+已返回 → 节点 online 且已登录 → `/n/<id>/api/devices` 已返回。任何一环没落地，分节就整体消失（不是「显示为离线」，而是连节点名一起没有）。2.0.8 起 `apps/fe` 有应用壳 service worker（见 [前端流畅度](./performance-frontend.md) §4），静态壳可离线秒开，但数据仍要重新拉取。会拖慢这四环的因素：
 
 | 编号 | 因素 |
 |---|---|

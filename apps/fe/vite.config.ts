@@ -66,6 +66,14 @@ function serviceWorkerPlugin(version: string): Plugin {
           .map((name) => readFileSync(path.join(outDir, name), 'utf8'))
           .join('\n'),
       });
+      // 字体桶空掉多半是 CSS 管线变了（@font-face 被挪走 / 产物名变了），
+      // 静默通过的后果是每一代都缺 2.48 MB 字体，只能等线上冷启动才发现
+      if (precache.fonts.length === 0) {
+        throw new Error(
+          '[vibeterm-service-worker] 产物 CSS 里没找到任何默认字体，预缓存清单不可用；' +
+            '检查 src/index.css 的 @font-face 与 declaredFontUrls'
+        );
+      }
       const digest = createHash('sha256')
         .update(JSON.stringify(precache))
         .digest('hex')

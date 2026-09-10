@@ -4,7 +4,10 @@
 import { describe, expect, test } from 'bun:test';
 import {
   type AccessGateWatchDeps,
+  installAccessGateGuards,
   isAccessGateBody,
+  isAccessGateProbeResponse,
+  probeAccessGate,
   recoverFromAccessGate,
   watchAccessGate,
 } from './access-gate-recovery';
@@ -16,9 +19,13 @@ const DOMAIN_DISABLED = JSON.stringify({
 
 function harness(overrides: Partial<AccessGateWatchDeps> = {}) {
   let hook: ((res: Response, ctx: { pathname: string }) => void) | null = null;
-  const state = { reloads: 0, unregistered: 0, guard: null as string | null };
+  const state = { reloads: 0, unregistered: 0, guard: null as string | null, probes: 0 };
   const deps: AccessGateWatchDeps = {
     controlled: true,
+    probe: async () => {
+      state.probes += 1;
+      return { type: 'basic', status: 200 };
+    },
     addResponseHook: (next) => {
       hook = next;
       return () => {
@@ -55,6 +62,83 @@ describe('isAccessGateBody', () => {
   test('业务自己的 403 不算访问门', () => {
     expect(isAccessGateBody(JSON.stringify({ error: { code: 'FORBIDDEN' } }))).toBe(false);
     expect(isAccessGateBody('')).toBe(false);
+  });
+
+  test('按 error.code 精确比对，业务字段里恰好出现同名串不算', () => {
+    expect(
+      isAccessGateBody(
+        JSON.stringify({ error: { code: 'FORBIDDEN', message: 'reason: access_denied' } })
+      )
+    ).toBe(false);
+    expect(isAccessGateBody(JSON.stringify({ code: 'access_denied' }))).toBe(false);
+    expect(isAccessGateBody(JSON.stringify({ error: { code: 123 } }))).toBe(false);
+  });
+
+  test('body 不是 JSON 时（域名访问关闭的纯文本页）退回子串匹配', () => {
+    expect(isAccessGateBody('DOMAIN_ACCESS_DISABLED：本机已关闭域名访问')).toBe(true);
+    expect(isAccessGateBody('plain forbidden page')).toBe(false);
+  });
+});
+
+describe('isAccessGateProbeResponse', () => {
+  test('opaqueredirect / error / 状态 0 都视为被门挡住', () => {
+    expect(isAccessGateProbeResponse('opaqueredirect', 0)).toBe(true);
+    expect(isAccessGateProbeResponse('error', 0)).toBe(true);
+    expect(isAccessGateProbeResponse('basic', 0)).toBe(true);
+  });
+
+  test('正常响应（含业务 403/401）不算', () => {
+    for (const status of [200, 401, 403, 500]) {
+      expect(isAccessGateProbeResponse('basic', status)).toBe(false);
+    }
+  });
+});
+
+describe('probeAccessGate', () => {
+  test('探到 302 跳转（Access 登录）→ 注销 + 刷新', async () => {
+    const h = harness({ probe: async () => ({ type: 'opaqueredirect', status: 0 }) });
+    expect(await probeAccessGate(h.deps)).toBe(true);
+    expect(h.state.unregistered).toBe(1);
+    expect(h.state.reloads).toBe(1);
+  });
+
+  test('正常响应不做任何处置', async () => {
+    const h = harness();
+    expect(await probeAccessGate(h.deps)).toBe(false);
+    expect(h.state.reloads).toBe(0);
+  });
+
+  test('fetch 直接 reject（多半是离线）绝不注销 SW', async () => {
+    const h = harness({ probe: () => Promise.reject(new TypeError('Failed to fetch')) });
+    expect(await probeAccessGate(h.deps)).toBe(false);
+    expect(h.state.unregistered).toBe(0);
+    expect(h.state.reloads).toBe(0);
+  });
+
+  test('未被 SW 控制时根本不探', async () => {
+    const h = harness({ controlled: false });
+    expect(await probeAccessGate(h.deps)).toBe(false);
+    expect(h.state.probes).toBe(0);
+  });
+
+  test('与响应钩子共用 once 守卫，两条路径同时命中只刷一次', async () => {
+    const h = harness({ probe: async () => ({ type: 'opaqueredirect', status: 0 }) });
+    expect(await probeAccessGate(h.deps)).toBe(true);
+    expect(await recoverFromAccessGate(h.deps)).toBe(false);
+    expect(h.state.reloads).toBe(1);
+  });
+});
+
+describe('installAccessGateGuards', () => {
+  test('同时装上探测与观察者，返回的函数摘掉观察者', async () => {
+    const h = harness();
+    const remove = installAccessGateGuards(h.deps);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(h.state.probes).toBe(1);
+    expect(h.hooked()).toBe(true);
+    remove();
+    expect(h.hooked()).toBe(false);
   });
 });
 

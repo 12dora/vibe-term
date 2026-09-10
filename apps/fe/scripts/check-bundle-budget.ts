@@ -6,7 +6,8 @@ import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
 const DIST = join(import.meta.dir, '..', 'dist');
-const BUDGET_GZIP_BYTES = { entryJs: 300_000, entryCss: 30_000 };
+// 2.0.8 起首屏多了 SW 逃生通道 + 门禁探测（~1 KB gzip），上调 10 KB；再涨先拆 chunk。
+const BUDGET_GZIP_BYTES = { entryJs: 310_000, entryCss: 30_000 };
 
 const ASSET = /\/?(assets\/[A-Za-z0-9._-]+\.(?:js|css))/;
 

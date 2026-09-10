@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import {
+  OPTIONAL_FONT_PREFIX,
   SHELL_PRECACHE_URL,
   buildPrecacheManifest,
   declaredFontUrls,
@@ -60,6 +61,12 @@ describe('declaredFontUrls', () => {
 
   test('多份产物 CSS 拼在一起时去重（同一个 @font-face 只算一次）', () => {
     expect(declaredFontUrls(`${CSS}\n${CSS}`)).toEqual(declaredFontUrls(CSS));
+  });
+
+  test('显式剔掉 /fonts/generated/**（16 MB 可选家族只按需运行时缓存）', () => {
+    const withOptional = `${CSS}
+@font-face{font-family:FiraCodeVibeTerm;src:url("${OPTIONAL_FONT_PREFIX}fira-code/fira-code-regular.woff2") format("woff2")}`;
+    expect(declaredFontUrls(withOptional)).toEqual(declaredFontUrls(CSS));
   });
 
   test('真实 src/index.css 恰好声明这三个默认字体', () => {

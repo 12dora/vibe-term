@@ -6,7 +6,8 @@
 // 这里在 api-client 的响应钩子上盯住启动期的 403：认出访问门的错误码就注销 SW 并整页刷新一次
 // （sessionStorage 守卫，杜绝刷新循环），让服务端的页面自己出来。
 //
-// 只在被 SW 控制时安装；看到第一个非 403 的 /api 响应就自行卸载，正常启动几乎零开销。
+// Cloudflare Access 的 302 跳到别的源，根本到不了响应钩子，另有一次性的 redirect:'manual' 探测。
+// 两条路径都只在被 SW 控制时启用；观察者看到第一个非 403 的 /api 响应就自卸，正常启动几乎零开销。
 
 /** 隧道访问门（apps/gateway/src/tunnel/access-guard.ts） */
 const ACCESS_DENIED_CODE = 'access_denied';
@@ -15,9 +16,35 @@ const DOMAIN_ACCESS_DISABLED_CODE = 'DOMAIN_ACCESS_DISABLED';
 
 const RELOAD_GUARD_KEY = 'vibeterm.access-gate-reloaded';
 
-/** 403 响应体是否来自服务端的访问门（而不是业务自己的权限不足） */
+const GATE_CODES: readonly string[] = [ACCESS_DENIED_CODE, DOMAIN_ACCESS_DISABLED_CODE];
+
+/** 探测用的启动期接口：随便哪个都行，选它是因为登录前后都会被调用 */
+export const GATE_PROBE_PATH = '/api/auth/mode';
+
+/**
+ * 403 响应体是否来自服务端的访问门（而不是业务自己的权限不足）。
+ * 优先按错误信封精确比对 `error.code`；只有 body 压根不是 JSON（域名访问关闭时的纯文本页）
+ * 才退回子串匹配，免得业务响应里恰好带上这些词就被误判成访问门。
+ */
 export function isAccessGateBody(body: string): boolean {
-  return body.includes(ACCESS_DENIED_CODE) || body.includes(DOMAIN_ACCESS_DISABLED_CODE);
+  try {
+    const code = (JSON.parse(body) as { error?: { code?: unknown } } | null)?.error?.code;
+    return typeof code === 'string' && GATE_CODES.includes(code);
+  } catch {
+    return GATE_CODES.some((gateCode) => body.includes(gateCode));
+  }
+}
+
+/**
+ * Cloudflare Access 的 302 跳到自己的登录域：跨源重定向根本到不了响应钩子
+ * （默认 redirect:'follow' 直接 reject）。所以启动时单独探一次，用 redirect:'manual'
+ * 把跳转变成可观察的 opaqueredirect。
+ *
+ * 只认「解析出来的响应」：fetch 直接 reject 更可能是离线，而离线恰恰是缓存壳该发挥作用的时候，
+ * 绝不能因此把 SW 注销掉。
+ */
+export function isAccessGateProbeResponse(type: string, status: number): boolean {
+  return type === 'opaqueredirect' || type === 'error' || status === 0;
 }
 
 export interface AccessGateRecoveryDeps {
@@ -41,6 +68,31 @@ export interface AccessGateWatchDeps extends AccessGateRecoveryDeps {
   addResponseHook: (hook: (res: Response, ctx: { pathname: string }) => void) => () => void;
   /** 页面当前是否被 SW 控制；未被控制时没有缓存壳可言，不必观察 */
   controlled: boolean;
+  /** 探测用的 fetch（redirect:'manual'），只在被 SW 控制时发一次 */
+  probe: () => Promise<{ type: string; status: number }>;
+}
+
+/**
+ * 启动时探一次访问门。命中就注销 SW 并刷新（与响应钩子共用同一个 once 守卫，
+ * 两条路径同时命中也只刷一次）。
+ */
+export async function probeAccessGate(deps: AccessGateWatchDeps): Promise<boolean> {
+  if (!deps.controlled) return false;
+  let result: { type: string; status: number };
+  try {
+    result = await deps.probe();
+  } catch {
+    // reject 多半是离线：离线正是缓存壳该顶上的场景，不做任何处置
+    return false;
+  }
+  if (!isAccessGateProbeResponse(result.type, result.status)) return false;
+  return recoverFromAccessGate(deps);
+}
+
+/** 页面启动时装上两条兜底：一次性的 302 探测 + 响应钩子上的 403 观察 */
+export function installAccessGateGuards(deps: AccessGateWatchDeps): () => void {
+  void probeAccessGate(deps);
+  return watchAccessGate(deps);
 }
 
 /**
@@ -93,6 +145,11 @@ export function browserAccessGateDeps(
   return {
     addResponseHook,
     controlled: Boolean(nav?.serviceWorker?.controller),
+    probe: () =>
+      fetch(GATE_PROBE_PATH, { redirect: 'manual', credentials: 'include' }).then((res) => ({
+        type: res.type,
+        status: res.status,
+      })),
     unregisterAll: unregisterAllServiceWorkers,
     reload: () => window.location.reload(),
     readGuard: () => {

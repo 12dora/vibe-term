@@ -41,37 +41,46 @@ function ChunkRetry<P extends object>({
   const [loaded, setLoaded] = useState<ComponentType<P> | null>(
     () => (RECOVERED.get(key) as ComponentType<P> | undefined) ?? null
   );
+  const [pending, setPending] = useState(false);
 
   if (loaded) {
     const Loaded = loaded;
     return <Loaded {...componentProps} />;
   }
 
-  const retry = () => retryChunkLoad(load, (component) => setLoaded(() => component));
+  const retry = () => {
+    if (pending) return;
+    setPending(true);
+    void retryChunkLoad(load, (component) => setLoaded(() => component)).finally(() =>
+      setPending(false)
+    );
+  };
 
-  return <PageLoadFallback onRetry={retry} />;
+  // 刷新路径要先跟 waiting 的 SW 握手（最长 2 s），这段时间按钮必须禁用，
+  // 否则用户连点会把「每会话一次」的守卫白白耗掉、看起来还像没反应。
+  return <PageLoadFallback onRetry={retry} busy={pending} />;
 }
 
 /**
  * 重试一次 import()：只有真正失败才计数，进行中的重试不重复发起，
- * 失败达到上限后改成整页刷新（reload 可注入以便测试）。
+ * 失败达到上限后改成整页刷新（reload 可注入以便测试）。返回的 promise 在这一轮落定时 resolve，
+ * 调用方据此禁用按钮。
  *
  * 刷新前先把 waiting 的 SW 顶上去：节点升级换了 fe-dist 时，旧 SW 还控制着页面，
- * 光刷新只会再拿到它那代的壳、再撞一次同样的 404（见 @/sw/sw-reload）。
+ * 光刷新只会再拿到它那代的壳、再撞一次同样的 404；且每会话至多刷一次（见 @/sw/sw-reload）。
  */
 export function retryChunkLoad<P>(
   load: ChunkLoader<P>,
   onLoaded: (component: ComponentType<P>) => void,
-  reload: () => void = reloadAfterServiceWorkerUpdate
-): void {
+  reload: () => unknown = reloadAfterServiceWorkerUpdate
+): Promise<void> {
   const key = load as ChunkLoader<never>;
   if ((FAILURES.get(key) ?? 0) >= MAX_CHUNK_RETRIES) {
-    reload();
-    return;
+    return Promise.resolve(reload()).then(() => undefined);
   }
-  if (INFLIGHT.has(key)) return;
+  if (INFLIGHT.has(key)) return Promise.resolve();
   INFLIGHT.add(key);
-  void load().then(
+  return load().then(
     (component) => {
       INFLIGHT.delete(key);
       RECOVERED.set(key, component as ComponentType<never>);

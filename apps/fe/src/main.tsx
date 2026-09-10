@@ -39,7 +39,7 @@ import {
 import { PageWrapper } from '@/page-wrapper';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
-import { browserAccessGateDeps, watchAccessGate } from '@/sw/access-gate-recovery';
+import { browserAccessGateDeps, installAccessGateGuards } from '@/sw/access-gate-recovery';
 import { setupServiceWorker } from '@/sw/register';
 import { installSessionInterceptor } from '@vibeterm/api-client/auth/index';
 import { addResponseHook } from '@vibeterm/api-client/client';
@@ -380,7 +380,7 @@ const router = createBrowserRouter([
 // 把他踢去登录页只会给出一个他永远登不进去的表单，还会拆掉正在看的终端。
 // 缓存壳可能挡住服务端的导航门（Access 302 / 403 拒绝页）：盯住启动期第一个 /api 403，
 // 认出访问门就注销 SW 并刷新一次，让服务端自己的页面出来。未被 SW 控制时是空操作。
-watchAccessGate(browserAccessGateDeps(addResponseHook));
+installAccessGateGuards(browserAccessGateDeps(addResponseHook));
 
 installSessionInterceptor({
   navigate: createLoginRedirect({

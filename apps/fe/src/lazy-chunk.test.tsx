@@ -50,7 +50,9 @@ describe('lazyChunk', () => {
       retryChunkLoad(
         load,
         (c) => loaded.push(c),
-        () => reloads++
+        () => {
+          reloads++;
+        }
       );
 
     retry();
@@ -75,10 +77,45 @@ describe('lazyChunk', () => {
     retryChunkLoad(
       ok,
       (c) => loaded.push(c),
-      () => reloads++
+      () => {
+        reloads++;
+      }
     );
     pending[0].resolve(() => null);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(loaded).toHaveLength(1);
+  });
+
+  test('返回的 promise 覆盖异步刷新路径（调用方据此禁用按钮）', async () => {
+    const load = () => Promise.reject(new Error('chunk 404'));
+    for (let i = 0; i < MAX_CHUNK_RETRIES; i++) {
+      await retryChunkLoad(
+        load,
+        () => undefined,
+        () => undefined
+      );
+    }
+    let released: (() => void) | null = null;
+    let reloaded = false;
+    const settled = retryChunkLoad(
+      load,
+      () => undefined,
+      () =>
+        new Promise<void>((resolve) => {
+          released = () => {
+            reloaded = true;
+            resolve();
+          };
+        })
+    );
+    let done = false;
+    void settled.then(() => {
+      done = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(done).toBe(false);
+    (released as unknown as () => void)();
+    await settled;
+    expect(reloaded).toBe(true);
   });
 });

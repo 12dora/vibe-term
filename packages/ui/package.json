@@ -6,6 +6,7 @@
   "files": ["src"],
   "exports": {
     ".": "./src/index.ts",
+    "./sw-activation": "./src/sw-activation.ts",
     "./*": "./src/components/*.tsx"
   },
   "scripts": {

@@ -26,6 +26,7 @@ import {
 } from 'react';
 
 import { Button } from './components/button';
+import { activateWaitingWorkerFromBrowser } from './sw-activation';
 
 /** 就地重试上限，超过后（且用户确实在等这个弹层）才走整页刷新 */
 export const MAX_OVERLAY_LOAD_RETRIES = 2;
@@ -83,42 +84,9 @@ export function warmOverlay<M>(loader: OverlayLoader<M>): void {
 let reloadRequested = false;
 
 // 刷新前先让 waiting 的 SW 接管：发版换掉 fe-dist 后旧 SW 还控制着页面，光刷新只会再拿到
-// 它那代的壳、再撞一次同样的 404。等不到 controllerchange（2 s）也必须照常刷新。
-// 消息名与 apps/fe/src/sw/sw-messages.ts 的 SW_SKIP_WAITING_MESSAGE 必须一致（packages/ui
-// 不能依赖 apps/fe，只能抄一份；两侧各有单测钉住这个字面量）。
-const SW_SKIP_WAITING_MESSAGE = 'vibeterm:sw-skip-waiting';
-
-interface SwContainerLike {
-  getRegistration(): Promise<{ waiting?: { postMessage(message: unknown): void } | null } | null>;
-  addEventListener(type: 'controllerchange', listener: () => void): void;
-  removeEventListener(type: 'controllerchange', listener: () => void): void;
-}
-
-export async function activateWaitingWorker(
-  container: SwContainerLike | undefined,
-  timeoutMs = 2000
-): Promise<void> {
-  try {
-    const waiting = (await container?.getRegistration())?.waiting;
-    if (!container || !waiting) return;
-    await new Promise<void>((resolve) => {
-      const done = () => {
-        clearTimeout(timer);
-        container.removeEventListener('controllerchange', done);
-        resolve();
-      };
-      const timer = setTimeout(done, timeoutMs);
-      container.addEventListener('controllerchange', done);
-      waiting.postMessage({ type: SW_SKIP_WAITING_MESSAGE });
-    });
-  } catch {
-    // 拿不到注册信息就直接刷新，别把逃生通道自己堵死
-  }
-}
-
+// 它那代的壳、再撞一次同样的 404。握手实现与消息名见 ./sw-activation（apps/fe 共用同一份）。
 function reloadThroughServiceWorker(): void {
-  const nav = (globalThis as { navigator?: { serviceWorker?: SwContainerLike } }).navigator;
-  void activateWaitingWorker(nav?.serviceWorker).then(() => window.location.reload());
+  void activateWaitingWorkerFromBrowser().then(() => window.location.reload());
 }
 
 /** 仅供测试：清掉「本会话已刷新过」的标记 */

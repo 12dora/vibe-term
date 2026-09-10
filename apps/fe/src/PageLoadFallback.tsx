@@ -2,7 +2,7 @@ import { Button } from '@vibeterm/ui/button';
 import { RotateCw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-export function PageLoadFallback({ onRetry }: { onRetry: () => void }) {
+export function PageLoadFallback({ onRetry, busy }: { onRetry: () => void; busy?: boolean }) {
   const { t } = useTranslation();
 
   return (
@@ -13,7 +13,13 @@ export function PageLoadFallback({ onRetry }: { onRetry: () => void }) {
     >
       <p className="text-sm font-medium">{t('common.pageLoadFailed')}</p>
       <p className="text-muted-foreground text-xs">{t('common.pageLoadFailedHint')}</p>
-      <Button variant="outline" size="sm" onClick={onRetry} data-testid="page-load-retry">
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={onRetry}
+        disabled={busy}
+        data-testid="page-load-retry"
+      >
         <RotateCw className="h-4 w-4" />
         {t('common.retry')}
       </Button>

@@ -11,7 +11,6 @@ import {
   type TriggerActivity,
   type TriggerHandoff,
   type TriggerHandoffEffects,
-  activateWaitingWorker,
   applyTriggerHandoff,
   createOverlayLoader,
   overlayClosedChildren,
@@ -122,61 +121,6 @@ describe('recoverFromOverlayLoadFailure', () => {
     expect(recoverFromOverlayLoadFailure(reload)).toBe(false);
     expect(reloads).toBe(1);
     resetOverlayReloadGuardForTests();
-  });
-});
-
-describe('activateWaitingWorker', () => {
-  // 与 apps/fe/src/sw/sw-messages.ts 抄写同一个字面量，改一边忘另一边就静默失效
-  const SKIP_WAITING = 'vibeterm:sw-skip-waiting';
-
-  function container(waiting: { postMessage(message: unknown): void } | null) {
-    const listeners = new Set<() => void>();
-    return {
-      listeners,
-      fire: () => {
-        for (const listener of [...listeners]) listener();
-      },
-      impl: {
-        getRegistration: async () => ({ waiting }),
-        addEventListener: (_type: 'controllerchange', listener: () => void) => {
-          listeners.add(listener);
-        },
-        removeEventListener: (_type: 'controllerchange', listener: () => void) => {
-          listeners.delete(listener);
-        },
-      },
-    };
-  }
-
-  test('有 waiting：发 skipWaiting 并等 controllerchange，之后摘掉监听', async () => {
-    const posted: unknown[] = [];
-    const harness = container({ postMessage: (message) => posted.push(message) });
-    const done = activateWaitingWorker(harness.impl, 5000);
-    await Promise.resolve();
-    await Promise.resolve();
-    expect(posted).toEqual([{ type: SKIP_WAITING }]);
-    harness.fire();
-    await done;
-    expect(harness.listeners.size).toBe(0);
-  });
-
-  test('等不到 controllerchange 也在超时后放行', async () => {
-    const harness = container({ postMessage: () => undefined });
-    await activateWaitingWorker(harness.impl, 1);
-    expect(harness.listeners.size).toBe(0);
-  });
-
-  test('没有 waiting / 不支持 SW / 取注册抛错时立即放行', async () => {
-    await activateWaitingWorker(container(null).impl, 5000);
-    await activateWaitingWorker(undefined, 5000);
-    await activateWaitingWorker(
-      {
-        getRegistration: () => Promise.reject(new Error('nope')),
-        addEventListener: () => undefined,
-        removeEventListener: () => undefined,
-      },
-      5000
-    );
   });
 });
 
