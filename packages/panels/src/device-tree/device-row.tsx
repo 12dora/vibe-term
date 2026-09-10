@@ -8,7 +8,11 @@ import {
 import { DeviceRowHeader } from './device-row-header';
 import { useSortableRow } from './device-tree-dnd';
 import type { DeviceRowProps } from './device-tree-row-props';
-import { useDeviceOnline, useDeviceWindows } from './device-tree-selectors';
+import {
+  useDeviceOnline,
+  useDeviceTopologyPlaceholder,
+  useDeviceWindows,
+} from './device-tree-selectors';
 import { DeviceWindowList } from './device-window-list';
 
 export type { DeviceRowProps };
@@ -20,6 +24,8 @@ export const DeviceRow = memo(function DeviceRow(props: DeviceRowProps) {
 
   // 只订阅本设备的切片：别的设备推快照/改连接态时这一行不会重渲染
   const windows = useDeviceWindows(deviceId);
+  // 实时快照还没到货时用上一次会话的拓扑占位；快照一到货这里就恒为 null
+  const topologyPlaceholder = useDeviceTopologyPlaceholder(deviceId);
   const isOnline = useDeviceOnline(deviceId);
   const connectionStatus = useDeviceConnectionStatus(connection, deviceId);
   const isIntentionallyDisconnected = useDeviceIntentionallyDisconnected(connection, deviceId);
@@ -43,7 +49,11 @@ export const DeviceRow = memo(function DeviceRow(props: DeviceRowProps) {
           自己取消入场过渡（不会从 0 高度弹一下），收起时面板走完过渡才卸载 */}
       <Collapsible open={showTree}>
         <CollapsibleContent>
-          <DeviceWindowList {...props} windows={windows} />
+          <DeviceWindowList
+            {...props}
+            windows={windows}
+            topologyPlaceholder={topologyPlaceholder}
+          />
         </CollapsibleContent>
       </Collapsible>
     </div>

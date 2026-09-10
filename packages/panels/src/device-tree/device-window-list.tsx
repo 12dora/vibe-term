@@ -1,14 +1,18 @@
 import type { TmuxWindow } from '@vibeterm/shared';
+import type { CachedTopology } from '@vibeterm/stores';
 import { useRuntime } from '@vibeterm/stores/react';
 import { Plus } from 'lucide-react';
 import { useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SortableVerticalList } from './device-tree-dnd';
 import type { DeviceRowProps } from './device-tree-row-props';
+import { StaleTopologyList } from './stale-topology-list';
 import { WindowRow } from './window-row';
 
 export interface DeviceWindowListProps extends DeviceRowProps {
   windows: TmuxWindow[] | null;
+  /** 无实时快照时可用的上次会话拓扑；有快照时恒为 null */
+  topologyPlaceholder?: CachedTopology | null;
 }
 
 const stopPropagation = (event: { stopPropagation: () => void }) => event.stopPropagation();
@@ -18,7 +22,7 @@ const stopPropagation = (event: { stopPropagation: () => void }) => event.stopPr
  * 出入场动画由外层 `DeviceRow` 的 Collapsible 统一负责，这里不再叠一层入场动画。
  */
 export function DeviceWindowList(props: DeviceWindowListProps) {
-  const { device, windows, onCreateWindow } = props;
+  const { device, windows, topologyPlaceholder, onCreateWindow, onPaneClick, connection } = props;
   const { t } = useTranslation();
   const deviceId = device.id;
 
@@ -32,7 +36,16 @@ export function DeviceWindowList(props: DeviceWindowListProps) {
       data-testid={`device-tree-${deviceId}`}
       className="space-y-1.5 py-1.5 pr-1.5 pl-6 [@media(any-pointer:coarse)]:space-y-2"
     >
-      {!windows && <DeviceTreeHint text={t('common.loading')} />}
+      {/* 快照未到货：有缓存拓扑就先灰显上次的窗口列表，否则才是纯粹的加载态 */}
+      {!windows && topologyPlaceholder && (
+        <StaleTopologyList
+          deviceId={deviceId}
+          topology={topologyPlaceholder}
+          onPaneClick={onPaneClick}
+          connection={connection}
+        />
+      )}
+      {!windows && !topologyPlaceholder && <DeviceTreeHint text={t('common.loading')} />}
       {windows?.length === 0 && <DeviceTreeHint text={t('window.noWindows')} />}
       {windows && windows.length > 0 && <DeviceWindowRows {...props} windows={windows} />}
 

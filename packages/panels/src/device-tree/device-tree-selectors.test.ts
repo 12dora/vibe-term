@@ -3,8 +3,10 @@ import type { StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 import {
   type DeviceConnectivitySlice,
   type DeviceSnapshotSlice,
+  type DeviceTopologySlice,
   mergeReorderedVisibleIds,
   selectDeviceOnline,
+  selectDeviceTopologyPlaceholder,
   selectDeviceWindows,
   selectSidebarVisibleDevices,
   shouldHideSidebarNodeSection,
@@ -241,5 +243,48 @@ describe('mergeReorderedVisibleIds', () => {
     const merged = mergeReorderedVisibleIds(['h1', 'a'], ['a', 'fresh'], ['fresh', 'a']);
 
     expect(merged).toEqual(['h1', 'fresh', 'a']);
+  });
+});
+
+describe('selectDeviceTopologyPlaceholder', () => {
+  const placeholder = {
+    savedAt: 0,
+    windows: [{ id: '@1', index: 0, name: 'zsh', active: true, panes: [] }],
+  };
+  const slice = (overrides: Partial<DeviceTopologySlice> = {}): DeviceTopologySlice => ({
+    snapshots: {},
+    topologyPlaceholders: {},
+    ...overrides,
+  });
+
+  test('没有实时快照时给出缓存拓扑', () => {
+    const state = slice({ topologyPlaceholders: { 'dev-1': placeholder } });
+
+    expect(selectDeviceTopologyPlaceholder(state, 'dev-1')).toBe(placeholder);
+  });
+
+  test('实时快照到货后恒为 null（占位与实时数据不共存）', () => {
+    const state = slice({
+      snapshots: { 'dev-1': makeSnapshot('dev-1', [makeWindow('@live')]) },
+      topologyPlaceholders: { 'dev-1': placeholder },
+    });
+
+    expect(selectDeviceTopologyPlaceholder(state, 'dev-1')).toBeNull();
+    expect(selectDeviceWindows(state, 'dev-1')).toHaveLength(1);
+  });
+
+  test('会话为 null 的快照同样算「已到货」，不再退回占位', () => {
+    const state = slice({
+      snapshots: { 'dev-1': { deviceId: 'dev-1', session: null } },
+      topologyPlaceholders: { 'dev-1': placeholder },
+    });
+
+    expect(selectDeviceTopologyPlaceholder(state, 'dev-1')).toBeNull();
+  });
+
+  test('别台设备的占位不会串行', () => {
+    const state = slice({ topologyPlaceholders: { 'dev-2': placeholder } });
+
+    expect(selectDeviceTopologyPlaceholder(state, 'dev-1')).toBeNull();
   });
 });

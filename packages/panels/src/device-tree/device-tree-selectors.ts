@@ -4,12 +4,17 @@
 
 import type { Device, LocaleCode, StateSnapshotPayload, TmuxWindow } from '@vibeterm/shared';
 import { toBCP47 } from '@vibeterm/shared';
+import type { CachedTopology, TmuxTopologyPlaceholders } from '@vibeterm/stores';
 import { isSidebarDeviceVisible } from '@vibeterm/stores';
 import { useTmuxStore } from '@vibeterm/stores/react';
 import { useCallback } from 'react';
 
 export interface DeviceSnapshotSlice {
   snapshots: Record<string, StateSnapshotPayload | undefined>;
+}
+
+export interface DeviceTopologySlice extends DeviceSnapshotSlice {
+  topologyPlaceholders: TmuxTopologyPlaceholders;
 }
 
 export interface DeviceConnectivitySlice {
@@ -42,6 +47,27 @@ export function selectDeviceOnline(state: DeviceConnectivitySlice, deviceId: str
 export function useDeviceWindows(deviceId: string): TmuxWindow[] | null {
   return useTmuxStore(
     useCallback((state: DeviceSnapshotSlice) => selectDeviceWindows(state, deviceId), [deviceId])
+  );
+}
+
+/**
+ * 冷启动占位：该设备还没有实时快照时，给出上一次会话缓存下来的拓扑。
+ * 实时快照一旦到货就恒返回 null——占位与实时数据绝不同时出现在树上。
+ */
+export function selectDeviceTopologyPlaceholder(
+  state: DeviceTopologySlice,
+  deviceId: string
+): CachedTopology | null {
+  if (ownValue(state.snapshots, deviceId)) return null;
+  return ownValue(state.topologyPlaceholders, deviceId) ?? null;
+}
+
+export function useDeviceTopologyPlaceholder(deviceId: string): CachedTopology | null {
+  return useTmuxStore(
+    useCallback(
+      (state: DeviceTopologySlice) => selectDeviceTopologyPlaceholder(state, deviceId),
+      [deviceId]
+    )
   );
 }
 
