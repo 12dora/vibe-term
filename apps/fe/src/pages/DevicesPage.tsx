@@ -107,12 +107,27 @@ function DevicesBody({
   );
 }
 
+/**
+ * `/api/auth/mode` 还没落地时能不能直接画主体。
+ *
+ * `meshEnabled` 在 mode 未知时读的是本地缓存（见 `meshEnabledOf`）：它为真就等于「上次是
+ * mesh，且缓存里还留着 entry 与节点列表」，照它画即可，冷启动不必先摆一圈转菊花。
+ * 没有缓存的浏览器（真·首次访问，或退回过 standalone 把缓存清了）才保留加载态——那时
+ * 连 entry 是谁都不知道，画出来的只会是一个错的形态。
+ *
+ * mode 落地后一律以真实值为准：mesh→standalone 或 entry 换人时 `meshEnabled` / `entryNodeId`
+ * 跟着变，主体按新的 props 重画（缓存本身由 `applyAuthMode` 清理）。
+ */
+export function devicesBodyReady(mode: { loaded: boolean; meshEnabled: boolean }): boolean {
+  return mode.loaded || mode.meshEnabled;
+}
+
 export default function DevicesPage() {
   const { loaded, meshEnabled, entryNodeId } = useSharedAuthMode();
 
   return (
     <DevicesPageContainer>
-      {loaded ? (
+      {devicesBodyReady({ loaded, meshEnabled }) ? (
         <DevicesBody meshEnabled={meshEnabled} entryNodeId={entryNodeId} />
       ) : (
         <div className="flex items-center justify-center py-16 text-muted-foreground">

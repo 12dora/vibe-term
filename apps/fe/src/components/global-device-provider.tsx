@@ -39,6 +39,10 @@ import {
 import { DeviceStatusStore } from './device-status-store';
 
 import { handleNodeApiError, noteNodeQuerySuccess } from '@/node/node-session-recovery';
+import {
+  deviceSnapshotPlaceholder,
+  writeDeviceSnapshot,
+} from '@/pages/devices/device-snapshot-store';
 
 export type { DeviceIdStorage } from './device-connection-persistence';
 export {
@@ -307,13 +311,48 @@ function useEnsureDeviceSubscribed(
  * `/api/devices`（外加各自一次重试）。重新上线时 `enabled` 翻回 true，react-query 按
  * staleTime 自动补拉，缓存里的旧列表在离线期间照常给面板兜底。
  */
-export function devicesQueryOptions(apiClient: ApiClient, offline: boolean) {
+export function devicesQueryOptions(
+  apiClient: ApiClient,
+  offline: boolean,
+  runtimeNodeId?: string
+) {
   return {
     queryKey: devicesQueryKey,
     queryFn: ({ signal }: { signal?: AbortSignal }) => fetchDevices(apiClient, { signal }),
     enabled: !offline,
     throwOnError: false as const,
+    // 冷启动首帧：本地快照当占位（不进缓存、`isPlaceholderData` 为真），请求照常发出。
+    // 结果按调用点 memo 住——每渲染换一份新对象会让 react-query 每帧重读一次 localStorage。
+    placeholderData: runtimeNodeId ? deviceSnapshotPlaceholder(runtimeNodeId) : undefined,
   };
+}
+
+/**
+ * 「这份列表算不算数」。占位数据（本地快照）只用来渲染：它可能已经过期，拿去驱动连接 /
+ * 订阅会连一台早就删掉的设备，还会按过期列表清掉持久化的连接意图。回写快照同理——
+ * 失败态的空数组不是事实，占位数据写回去只是把自己抄一遍。
+ */
+export function authoritativeDeviceList(query: {
+  data: DevicesResponse | undefined;
+  isSuccess: boolean;
+  isPlaceholderData: boolean;
+}): DevicesResponse | undefined {
+  return query.isSuccess && !query.isPlaceholderData ? query.data : undefined;
+}
+
+/**
+ * 快照的**唯一**写入点：本 provider 挂在每个 node 运行时子树的根上（`NodeRuntimeScope` 与
+ * `NodeRuntimeBoundary` 都有），列表一成功就落盘，从没进过侧边栏 / 设备页的用户也有首帧数据。
+ * 只接权威列表（见 `authoritativeDeviceList`）。
+ */
+function useDeviceSnapshotWriter(
+  runtimeNodeId: string,
+  devices: DevicesResponse | undefined
+): void {
+  useEffect(() => {
+    if (!devices) return;
+    writeDeviceSnapshot(runtimeNodeId, devices.devices);
+  }, [runtimeNodeId, devices]);
 }
 
 /**
@@ -354,24 +393,39 @@ export function GlobalDeviceProvider({ children, offline = false }: GlobalDevice
   const { connectedDevices } = slices;
   const { connectTmuxDevice, disconnectTmuxDevice } = actions;
 
+  const queryOptions = useMemo(
+    () => devicesQueryOptions(runtime.apiClient, offline, runtime.nodeId),
+    [runtime.apiClient, runtime.nodeId, offline]
+  );
   const {
     data: devicesData,
     error: devicesError,
     dataUpdatedAt: devicesUpdatedAt,
-  } = useQuery(devicesQueryOptions(runtime.apiClient, offline));
+    isSuccess,
+    isPlaceholderData,
+  } = useQuery(queryOptions);
   useNodeSessionRecovery(runtime.nodeId, devicesError, devicesUpdatedAt);
+
+  // 占位数据只用来渲染，绝不驱动连接 / 订阅：本地快照里的设备可能早就删了，照它去
+  // `connectDevice` 会连一台不存在的设备，还会把持久化的连接意图按过期列表清掉。
+  const authoritativeDevices = authoritativeDeviceList({
+    data: devicesData,
+    isSuccess,
+    isPlaceholderData,
+  });
+  useDeviceSnapshotWriter(runtime.nodeId, authoritativeDevices);
 
   const ensureDeviceSubscribed = useEnsureDeviceSubscribed(runtime, intentStore);
 
   useRouteDeviceSubscription(
     runtime.host,
-    devicesData,
+    authoritativeDevices,
     connectedDevices,
     intentStore,
     connectTmuxDevice
   );
   useReconcileWithDeviceList({
-    devicesData,
+    devicesData: authoritativeDevices,
     connectedDevices,
     intentStore,
     connectTmuxDevice,

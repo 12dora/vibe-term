@@ -1,7 +1,7 @@
 // UI store 的持久化存储适配器：把「只改了草稿」的写入攒起来，其余字段照旧同步落盘。
 //
 // zustand persist 每次 set 都会走一遍 partialize → JSON.stringify → localStorage.setItem，
-// 而 editor 模式每敲一个键就是一次 set：整份 17 键快照（含 50 条历史与全部草稿）被重新序列化
+// 而 editor 模式每敲一个键就是一次 set：整份 18 键快照（含 50 条历史与全部草稿）被重新序列化
 // 并同步写盘，全发生在输入的关键路径上。这里接管 PersistStorage（不走 createJSONStorage），
 // 于是拿到的是 partialize 后的**对象**，可以在序列化之前先判断这次变化值不值得落盘：
 //

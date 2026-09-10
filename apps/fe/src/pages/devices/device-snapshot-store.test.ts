@@ -7,6 +7,7 @@ import {
   MAX_SNAPSHOTS,
   clearDeviceSnapshot,
   deviceSnapshotKey,
+  deviceSnapshotPlaceholder,
   inventoryFallbackDevices,
   listDeviceSnapshotNodeIds,
   offlineDevices,
@@ -175,6 +176,31 @@ describe('device-snapshot-store', () => {
     writeDeviceSnapshot('new', [DEVICE], storage, 3);
     expect(readDeviceSnapshot('new', storage)).toBeNull();
     expect(listDeviceSnapshotNodeIds(storage)).toEqual(['b']);
+  });
+
+  test('deviceSnapshotPlaceholder：没有快照时为 undefined（照常走加载态）', () => {
+    const storage = memoryStorage();
+    expect(deviceSnapshotPlaceholder(NODE_ID, storage)).toBeUndefined();
+    writeDeviceSnapshot(NODE_ID, [], storage);
+    // 空列表同样不当占位：一份「零设备」的首帧和加载态没有区别，却会让面板提前判空
+    expect(deviceSnapshotPlaceholder(NODE_ID, storage)).toBeUndefined();
+  });
+
+  test('deviceSnapshotPlaceholder：快照补齐运行时字段，形状与 /api/devices 一致', () => {
+    const storage = memoryStorage();
+    writeDeviceSnapshot(NODE_ID, [DEVICE], storage);
+    const placeholder = deviceSnapshotPlaceholder(NODE_ID, storage);
+    expect(placeholder?.devices).toEqual([
+      {
+        ...toSnapshotDevice(DEVICE),
+        lastSeenAt: null,
+        lastError: null,
+        lastErrorType: null,
+        tmuxAvailable: false,
+      },
+    ]);
+    // 凭证仍然不在其中（占位数据来自快照，快照本身就不落这些字段）
+    expect(placeholder?.devices[0]).not.toHaveProperty('passwordEnc');
   });
 
   test('offlineDevices：没有快照时退回 inventory', () => {

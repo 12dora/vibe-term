@@ -1,6 +1,14 @@
-import { describe, expect, test } from 'bun:test';
-import { ApiClient, nodeAppPath } from '@vibeterm/api-client';
-import { devicesQueryOptions, routeDeviceId } from './global-device-provider';
+import { beforeEach, describe, expect, test } from 'bun:test';
+import { ApiClient, type DevicesResponse, nodeAppPath } from '@vibeterm/api-client';
+import type { Device } from '@vibeterm/shared';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
+
+installWindowStorage();
+
+const { writeDeviceSnapshot } = await import('@/pages/devices/device-snapshot-store');
+const { authoritativeDeviceList, devicesQueryOptions, routeDeviceId } = await import(
+  './global-device-provider'
+);
 
 const selfAppPath = (path: string) => nodeAppPath('self', path);
 const nodeAAppPath = (path: string) => nodeAppPath('0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a', path);
@@ -23,6 +31,65 @@ describe('devicesQueryOptions', () => {
     const online = devicesQueryOptions(apiClient, false);
     expect(offline.queryKey).toEqual(online.queryKey);
     expect([offline.enabled, online.enabled]).toEqual([false, true]);
+  });
+});
+
+describe('devicesQueryOptions 的首帧占位', () => {
+  const apiClient = new ApiClient('http://devices-placeholder.test');
+  const NODE_ID = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const DEVICE: Device = {
+    id: 'd1',
+    name: '书房',
+    type: 'local',
+    authMode: 'auto',
+    sortOrder: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  test('没有快照（或没给 nodeId）时不带占位', () => {
+    expect(devicesQueryOptions(apiClient, false, NODE_ID).placeholderData).toBeUndefined();
+    writeDeviceSnapshot(NODE_ID, [DEVICE]);
+    expect(devicesQueryOptions(apiClient, false).placeholderData).toBeUndefined();
+  });
+
+  test('有快照时首帧直接给出设备列表，请求照常发出', () => {
+    writeDeviceSnapshot(NODE_ID, [DEVICE]);
+    const options = devicesQueryOptions(apiClient, false, NODE_ID);
+    expect(options.placeholderData?.devices.map((device) => device.id)).toEqual(['d1']);
+    expect(options.enabled).toBe(true);
+  });
+
+  test('快照按 node 分键，不会串到别的 node', () => {
+    writeDeviceSnapshot(NODE_ID, [DEVICE]);
+    expect(devicesQueryOptions(apiClient, false, 'self').placeholderData).toBeUndefined();
+  });
+});
+
+describe('authoritativeDeviceList', () => {
+  const data: DevicesResponse = { devices: [] };
+
+  test('占位数据不算数：连接 / 订阅 / 回写快照都不能按它来', () => {
+    expect(
+      authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: true })
+    ).toBeUndefined();
+  });
+
+  test('真成功的列表才算数（成功返回的空列表也算）', () => {
+    expect(authoritativeDeviceList({ data, isSuccess: true, isPlaceholderData: false })).toBe(data);
+  });
+
+  test('加载中 / 失败一律不算数', () => {
+    expect(
+      authoritativeDeviceList({ data: undefined, isSuccess: false, isPlaceholderData: false })
+    ).toBeUndefined();
+    expect(
+      authoritativeDeviceList({ data, isSuccess: false, isPlaceholderData: false })
+    ).toBeUndefined();
   });
 });
 

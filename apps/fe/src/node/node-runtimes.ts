@@ -17,10 +17,13 @@
 //   订阅面：重发订阅 + 对挂载中的 pane 重新拉一次画面，并提示用户最近输入可能未送达。
 
 import { sonnerNotificationSink } from '@/lib/sonner-notification-sink';
+import { deviceSnapshotPlaceholder } from '@/pages/devices/device-snapshot-store';
 import { QueryClient } from '@tanstack/react-query';
 import {
+  type DevicesResponse,
   createNodeApiClient,
   createNodeWsUrlSource,
+  devicesQueryKey,
   isSelfNode,
   nodeWsUrl,
 } from '@vibeterm/api-client';
@@ -336,8 +339,20 @@ export function createAppNodeRuntimes(
 
 export const appNodeRuntimes: NodeConnectionManager = createAppNodeRuntimes();
 
-function createNodeQueryClient(): QueryClient {
-  return new QueryClient({
+/**
+ * `['devices']` 的过期时间。设备列表**没有推送通道**：DEVICE_EVENT 说的是某台设备的连接
+ * 状态，增删改只有本页的乐观更新会就地改缓存，别处（另一个浏览器、node 上的 CLI）的变更
+ * 只能靠回源。5 秒意味着每次切回前台都要给每个挂载中的 node 各发一条 `/api/devices`——
+ * PWA 恢复时最贵的一串请求就是它。
+ *
+ * 拉到 60 秒。`refetchOnWindowFocus` 保持开启：它只补拉**已过期**的查询，所以一分钟内的
+ * 来回切换不再回源，超过一分钟的恢复照旧立刻拿到新列表——「页面恢复时补一次」这件事
+ * 由它天然覆盖，不需要再往 `onPageRecovery` 上挂一条重复的失效。
+ */
+export const DEVICES_STALE_MS = 60_000;
+
+function createNodeQueryClient(nodeId: string): QueryClient {
+  const client = new QueryClient({
     defaultOptions: {
       queries: {
         staleTime: 5000,
@@ -345,6 +360,14 @@ function createNodeQueryClient(): QueryClient {
       },
     },
   });
+  // 首帧占位挂在**客户端缺省**上而不是各调用点：设备页的卡片网格、控制台的当前设备、
+  // 侧边栏都是同一个 key 的观察者，挂在这里它们一次都不用改就都拿到冷启动首帧。
+  // 显式传了 `placeholderData` 的调用点（侧边栏自带快照 + inventory 兜底）照常覆盖它。
+  client.setQueryDefaults<DevicesResponse>(devicesQueryKey, {
+    staleTime: DEVICES_STALE_MS,
+    placeholderData: () => deviceSnapshotPlaceholder(nodeId),
+  });
+  return client;
 }
 
 const queryClients = new Map<string, QueryClient>();
@@ -354,7 +377,7 @@ export function nodeQueryClient(nodeId: string | undefined): QueryClient {
   const id = normalizeNodeId(nodeId);
   let client = queryClients.get(id);
   if (!client) {
-    client = createNodeQueryClient();
+    client = createNodeQueryClient(id);
     queryClients.set(id, client);
   }
   return client;

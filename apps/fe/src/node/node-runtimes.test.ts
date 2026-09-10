@@ -2,8 +2,12 @@
 // 切回 primary 时补齐已订阅 pane，dispose 时一并停掉。
 
 import { describe, expect, test } from 'bun:test';
+import { writeDeviceSnapshot } from '@/pages/devices/device-snapshot-store';
+import { devicesQueryKey } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
+import type { Device } from '@vibeterm/shared';
 import type { AppRuntime, AppRuntimeOptions } from '@vibeterm/stores';
+import { installWindowStorage } from '@vibeterm/stores/test-utils';
 import type { GatewayConnection, WebSocketLike } from '@vibeterm/ws-client';
 import type { DirectCarrierController } from '@vibeterm/ws-client/direct';
 import { getBulkClient } from '@vibeterm/ws-client/direct/bulk-client';
@@ -14,10 +18,12 @@ import {
 } from '@vibeterm/ws-client/direct/types';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
+  DEVICES_STALE_MS,
   type DirectLinkModule,
   createAppNodeRuntimes,
   createNodeConnection,
   directLinkSettled,
+  disposeNodeQueryClient,
   nodeQueryClient,
 } from './node-runtimes';
 
@@ -663,6 +669,49 @@ describe('QueryClient 随 runtime 一起回收', () => {
     manager.disposeAll();
   });
 });
+
+describe('每 node 的 QueryClient：设备列表的过期时间与首帧占位', () => {
+  const DEVICE: Device = {
+    id: 'd1',
+    name: '书房',
+    type: 'local',
+    authMode: 'auto',
+    sortOrder: 0,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-01T00:00:00.000Z',
+  };
+
+  test("['devices'] 过期时间放宽到 60 秒：切回前台不再给每个挂载中的 node 各来一条 /api/devices", () => {
+    expect(DEVICES_STALE_MS).toBe(60_000);
+    const defaults = nodeQueryClient(NODE_HEX_C).getQueryDefaults(devicesQueryKey);
+    expect(defaults.staleTime).toBe(DEVICES_STALE_MS);
+    // 其余查询不受影响，仍是 5 秒
+    expect(nodeQueryClient(NODE_HEX_C).getDefaultOptions().queries?.staleTime).toBe(5000);
+    disposeNodeQueryClient(NODE_HEX_C);
+  });
+
+  test('首帧占位挂在客户端缺省上：没显式传 placeholderData 的观察者也拿得到本 node 的快照', () => {
+    const restore = installWindowStorage();
+    try {
+      localStorage.clear();
+      writeDeviceSnapshot(NODE_HEX_C, [DEVICE]);
+      const resolve = nodeQueryClient(NODE_HEX_C).getQueryDefaults(devicesQueryKey)
+        .placeholderData as () => { devices: { id: string }[] } | undefined;
+      expect(resolve()?.devices.map((device) => device.id)).toEqual(['d1']);
+
+      // 快照按 node 分键：别的 node 的客户端拿不到这一份
+      const other = nodeQueryClient(NODE_HEX_D_PLACEHOLDER).getQueryDefaults(devicesQueryKey)
+        .placeholderData as () => unknown;
+      expect(other()).toBeUndefined();
+      disposeNodeQueryClient(NODE_HEX_D_PLACEHOLDER);
+    } finally {
+      disposeNodeQueryClient(NODE_HEX_C);
+      restore();
+    }
+  });
+});
+
+const NODE_HEX_D_PLACEHOLDER = 'e'.repeat(32);
 
 // ---------------------------------------------------------------------------
 // nodeId → 展示名：包内提示语（如「终端连接失败：节点 xxx 版本过低」）只有编号，

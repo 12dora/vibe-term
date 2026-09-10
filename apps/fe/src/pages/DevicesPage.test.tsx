@@ -59,7 +59,7 @@ const { RuntimeProvider } = await import('@vibeterm/stores/react');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('@/node/mesh-nodes');
 const DevicesPageModule = await import('./DevicesPage');
 const DevicesPage = DevicesPageModule.default;
-const { PageActions } = DevicesPageModule;
+const { PageActions, devicesBodyReady } = DevicesPageModule;
 const { nodeDeviceGroupState, toNodeDeviceGroups } = await import('./devices/node-device-group');
 const { missingPendingCount } = await import('./devices/pending-node-groups');
 const { registerDevicesPageCommands, resetDevicesPageCommandsForTest } = await import(
@@ -271,6 +271,23 @@ describe('DevicesPage', () => {
     expect(containerOf(ready)).toContain('xl:max-w-7xl');
   });
 
+  test('mode 还没落地但本地有 mesh 缓存：直接照缓存画主体，不再转菊花', () => {
+    // 冷启动第一帧（`hydrateMeshNodesFromCache` 的形态）：mode 未知，缓存说上次是 mesh
+    setMeshNodesStateForTest({
+      mode: null,
+      modeLoaded: false,
+      cachedMesh: true,
+      stale: true,
+      entryNodeId: ENTRY_ID,
+      nodes: [meshNode({ id: ENTRY_ID, name: 'entry', loggedIn: true })],
+      loadedAt: null,
+    });
+    const html = render();
+    expect(html).not.toContain('animate-spin');
+    expect(html).toContain('data-testid="devices-folders-view"');
+    expect(html).toContain('data-testid="devices-node-group-self"');
+  });
+
   test('standalone（mode:none）根层直接是本机的卡片网格：有面板但没有分组头', () => {
     setMeshNodesStateForTest({ mode: { ...MODE, mode: 'none' }, modeLoaded: true });
     const html = render();
@@ -401,6 +418,21 @@ describe('DevicesPage', () => {
     // inventory 为空且没有快照：面板拿到空的兜底列表，由面板渲染离线空态
     const offlinePanel = html.slice(html.indexOf(`data-testid="devices-node-panel-${OFFLINE_ID}"`));
     expect(offlinePanel).toContain('data-fallback=""');
+  });
+});
+
+describe('devicesBodyReady', () => {
+  test('mode 已落地：一律照真实值画（standalone 也不再等）', () => {
+    expect(devicesBodyReady({ loaded: true, meshEnabled: false })).toBe(true);
+    expect(devicesBodyReady({ loaded: true, meshEnabled: true })).toBe(true);
+  });
+
+  test('mode 未落地但缓存说上次是 mesh：直接画（entry 与节点列表都在缓存里）', () => {
+    expect(devicesBodyReady({ loaded: false, meshEnabled: true })).toBe(true);
+  });
+
+  test('真·冷启动（没有任何缓存）才保留加载态：连 entry 是谁都不知道', () => {
+    expect(devicesBodyReady({ loaded: false, meshEnabled: false })).toBe(false);
   });
 });
 

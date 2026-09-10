@@ -5,6 +5,7 @@
 // 一个小索引键记录每个节点快照的 updatedAt：条目上限 MAX_SNAPSHOTS（LRU 淘汰最旧的），
 // 写入撞上配额时先淘汰最旧的再重试一次；节点从 mesh 列表消失后由页面调用 prune 清掉。
 
+import type { DeviceWithRuntime, DevicesResponse } from '@vibeterm/api-client';
 import type { Device } from '@vibeterm/shared';
 
 const KEY_PREFIX = 'vibeterm:device-snapshot:';
@@ -218,6 +219,33 @@ export function pruneDeviceSnapshots(
     if (!keep.has(nodeId)) removeEntry(storage, index, nodeId);
   }
   writeIndex(storage, index);
+}
+
+/** 快照里没有运行时状态字段（最近在线、错误、tmux 可用性），补成「未知」即可参与渲染。 */
+function toRuntimeDevice(device: Device): DeviceWithRuntime {
+  return {
+    ...device,
+    lastSeenAt: null,
+    lastError: null,
+    lastErrorType: null,
+    tmuxAvailable: false,
+  };
+}
+
+/**
+ * `['devices']` 查询的首帧占位。
+ *
+ * 用 `placeholderData` 而不是 `initialData`：占位数据不进缓存、`isPlaceholderData` 为真，
+ * 请求照常立刻发出，且调用方能据此把连接 / 订阅这类副作用挡在真实列表到达之前
+ * （与侧边栏的 `deviceQueryFlags` 同一套语义）。快照为空时返回 undefined，照常走加载态。
+ */
+export function deviceSnapshotPlaceholder(
+  runtimeNodeId: string,
+  storage: DeviceSnapshotStorage | null = defaultStorage()
+): DevicesResponse | undefined {
+  const devices = readDeviceSnapshot(runtimeNodeId, storage);
+  if (!devices || devices.length === 0) return undefined;
+  return { devices: devices.map(toRuntimeDevice) };
 }
 
 /** 索引里的节点 id（测试与调试用） */

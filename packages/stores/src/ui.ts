@@ -11,6 +11,13 @@ import {
 
 export type SidebarTab = 'panes' | 'agent' | 'files';
 
+const SIDEBAR_TABS: readonly SidebarTab[] = ['panes', 'agent', 'files'];
+
+/** 落盘的分栏可能被手工改坏或来自已下线的版本，非法值一律退回默认栏 */
+function normalizeSidebarTab(value: unknown): SidebarTab {
+  return SIDEBAR_TABS.includes(value as SidebarTab) ? (value as SidebarTab) : 'panes';
+}
+
 /** 持久化的 `key -> boolean` 偏好表可能被手工改坏，只保留合法的布尔项 */
 function normalizeBooleanMap(value: unknown): Record<string, boolean> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -156,13 +163,13 @@ export interface UIState {
 /**
  * 落盘状态 → 内存状态。
  *
- * 两件事：丢弃旧版本 localStorage 里残留的 sidebarTab / sidebarSections（否则默认 merge 会
- * 把它们带回来），以及把手工改坏的偏好表归一化（非法项直接丢掉，不让它进内存）。
+ * 两件事：丢弃旧版本 localStorage 里残留的 sidebarSections（否则默认 merge 会把它带回来），
+ * 以及把手工改坏的偏好表归一化（非法项直接丢掉，不让它进内存）。
  */
 function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
   const {
-    sidebarTab: _legacyTab,
     sidebarSections: _legacySections,
+    sidebarTab,
     sidebarDeviceExpanded,
     sidebarDeviceVisibility,
     sidebarFilesVisibility,
@@ -175,6 +182,7 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
   return {
     ...current,
     ...rest,
+    sidebarTab: normalizeSidebarTab(sidebarTab),
     sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
     sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
     sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
@@ -189,6 +197,7 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
 type UIPersistedState = Pick<
   UIState,
   | 'sidebarCollapsed'
+  | 'sidebarTab'
   | 'sidebarDeviceExpanded'
   | 'sidebarDeviceVisibility'
   | 'sidebarFilesVisibility'
@@ -207,10 +216,11 @@ type UIPersistedState = Pick<
   | 'terminalFontId'
 >;
 
-// sidebarTab 不持久化：每次加载都回到默认 'panes'。
+// sidebarTab 也落盘：PWA 冷启动回到用户上次待的那一栏（非法值在 merge 时退回 'panes'）。
 function partializeUIState(state: UIState): UIPersistedState {
   return {
     sidebarCollapsed: state.sidebarCollapsed,
+    sidebarTab: state.sidebarTab,
     sidebarDeviceExpanded: state.sidebarDeviceExpanded,
     sidebarDeviceVisibility: state.sidebarDeviceVisibility,
     sidebarFilesVisibility: state.sidebarFilesVisibility,

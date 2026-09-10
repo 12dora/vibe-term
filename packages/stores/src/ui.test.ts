@@ -39,26 +39,36 @@ describe('sidebar tab state', () => {
     expect(store.getState().sidebarTab).toBe('panes');
   });
 
-  test('does not persist the active tab', () => {
-    const prefix = `ui-sidebar-no-persist-${Date.now()}-`;
+  test('persists the active tab across store instances', () => {
+    const prefix = `ui-sidebar-persist-${Date.now()}-`;
     const store = createUIStore({ storagePrefix: prefix });
     store.getState().setSidebarTab('files');
 
     const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
       state?: Record<string, unknown>;
     };
-    expect(persisted.state && 'sidebarTab' in persisted.state).toBe(false);
+    expect(persisted.state?.sidebarTab).toBe('files');
+
+    expect(createUIStore({ storagePrefix: prefix }).getState().sidebarTab).toBe('files');
+  });
+
+  test('falls back to the panes tab when the persisted value is not a known tab', () => {
+    const prefix = `ui-sidebar-bad-tab-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}vibeterm-ui`,
+      JSON.stringify({ state: { sidebarTab: 'terminal' }, version: 0 })
+    );
 
     expect(createUIStore({ storagePrefix: prefix }).getState().sidebarTab).toBe('panes');
   });
 
-  test('ignores legacy persisted sidebarTab and sidebarSections', () => {
+  test('ignores legacy persisted sidebarSections', () => {
     const prefix = `ui-sidebar-legacy-${Date.now()}-`;
     storage.setItem(
       `${prefix}vibeterm-ui`,
       JSON.stringify({
         state: {
-          sidebarTab: 'files',
+          sidebarTab: 'agent',
           sidebarSections: { panes: true, agent: true, files: true },
           sidebarDeviceExpanded: { 'device-a': true },
         },
@@ -67,7 +77,7 @@ describe('sidebar tab state', () => {
     );
 
     const store = createUIStore({ storagePrefix: prefix });
-    expect(store.getState().sidebarTab).toBe('panes');
+    expect(store.getState().sidebarTab).toBe('agent');
     expect(
       (store.getState() as unknown as Record<string, unknown>).sidebarSections
     ).toBeUndefined();
