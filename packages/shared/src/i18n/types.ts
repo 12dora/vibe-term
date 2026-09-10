@@ -2437,6 +2437,7 @@ export type TranslationKey =
   | 'nodes.badge.hopLocal'
   | 'nodes.badge.hopSsh'
   | 'nodes.badge.hopUnsupported'
+  | 'nodes.badge.hopStale'
   | 'nodes.badge.lastSample'
   | 'nodes.badge.peerLink'
   | 'nodes.badge.since'

@@ -123,6 +123,13 @@ function handleTransportStateChange(ctx: TmuxEventRouterContext, state: Connecti
 
 type DeviceLatencyMap = Record<string, DeviceLatencySample | undefined>;
 
+function sameReading(
+  prev: DeviceLatencySample,
+  event: { rttMs: number; rawMs: number; hop: DeviceLatencySample['hop'] }
+): boolean {
+  return prev.rttMs === event.rttMs && prev.rawMs === event.rawMs && prev.hop === event.hop;
+}
+
 /** 设备断开后那条宿主一跳的读数就过期了，留着会让徽标继续加一个不存在的跳。 */
 function dropDeviceLatency(map: DeviceLatencyMap, deviceId: string): DeviceLatencyMap {
   if (!map[deviceId]) return map;
@@ -140,12 +147,12 @@ const handlers: TmuxEventHandlers = {
       hasConnectedOnce: ready ? true : prev.hasConnectedOnce,
       wsLatencyMs: ready ? prev.wsLatencyMs : null,
       wsLatencyRawMs: ready ? prev.wsLatencyRawMs : null,
-      // 宿主一跳的读数由网关推送，离开 READY 即作废；能力按每次 HELLO 的协商结果重判，
-      // 重连到旧版本的节点后不能继续按「有这一跳」展示。
+      // 宿主一跳的读数与能力都由本次会话的 HELLO 决定：离开 READY 一并作废，READY 再按新一轮
+      // 协商重判。留着旧能力位的话，重连到旧版本的节点会一直写「测量中」等一个永远不来的帧。
       deviceLatency: ready ? prev.deviceLatency : {},
       deviceLatencySupported: ready
         ? serverSupportsDeviceLatency(ctx.core.transport.serverCapabilities)
-        : prev.deviceLatencySupported,
+        : false,
     }));
     if (ready) ctx.onReady();
   },
@@ -190,17 +197,11 @@ const handlers: TmuxEventHandlers = {
     }));
   },
 
-  // 采样时刻每次都变，读数不变时不写：徽标 15 秒重渲一次没有意义。
+  // 读数不变也要把 `sampledAt` 推进：UI 靠它判断这一跳是不是还在被上报（网关停播、
+  // 设备静默掉线都不会有 device-disconnected）。只有重复帧与乱序旧帧才丢掉。
   'device-latency': (event, ctx) => {
     const prev = ctx.getState().deviceLatency[event.deviceId];
-    if (
-      prev &&
-      prev.rttMs === event.rttMs &&
-      prev.rawMs === event.rawMs &&
-      prev.hop === event.hop
-    ) {
-      return;
-    }
+    if (prev && sameReading(prev, event) && event.sampledAt <= prev.sampledAt) return;
     const sample: DeviceLatencySample = {
       rttMs: event.rttMs,
       rawMs: event.rawMs,

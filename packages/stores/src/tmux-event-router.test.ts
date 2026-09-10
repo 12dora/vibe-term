@@ -266,6 +266,18 @@ describe('tmux transport event router', () => {
       sampledAt: 1_700_000_000_000,
     });
 
+    // 读数不变但采样时刻前进：仍要写，UI 靠 sampledAt 判断这一跳还在不在被上报
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_015_000,
+    });
+    expect(harness.getState().deviceLatency['device-a']?.sampledAt).toBe(1_700_000_015_000);
+
+    // 重复帧与乱序旧帧丢掉
     const unchanged = harness.getState();
     harness.route({
       type: 'device-latency',
@@ -274,6 +286,15 @@ describe('tmux transport event router', () => {
       rawMs: 5,
       hop: 'local',
       sampledAt: 1_700_000_015_000,
+    });
+    expect(harness.getState()).toBe(unchanged);
+    harness.route({
+      type: 'device-latency',
+      deviceId: 'device-a',
+      rttMs: 3,
+      rawMs: 5,
+      hop: 'local',
+      sampledAt: 1_700_000_005_000,
     });
     expect(harness.getState()).toBe(unchanged);
 
@@ -309,6 +330,8 @@ describe('tmux transport event router', () => {
     });
     harness.route({ type: 'connection-state', state: 'RECONNECT_BACKOFF' });
     expect(harness.getState().deviceLatency).toEqual({});
+    // 能力位一并作废：重连到旧节点时不能继续等一个永远不来的帧
+    expect(harness.getState().deviceLatencySupported).toBe(false);
   });
 
   test('老节点没播报能力时宿主一跳按未测量处理', () => {

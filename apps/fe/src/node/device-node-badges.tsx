@@ -25,6 +25,7 @@ import {
   type LinkDetailKind,
   finiteRtt,
   formatLinkBadgeLabel,
+  freshHostHop,
   linkDetailKind,
   reachLabelKey,
   resolveLinkBadge,
@@ -96,14 +97,19 @@ function browserHopRow(latency: NodeLatency): DiagnosticRowSpec {
 }
 
 /** node → tmux 这一跳：网关自己测的，没播报能力的旧节点直接说「未测量」。 */
-function hostHopRow(latency: NodeLatency): DiagnosticRowSpec {
+function hostHopRow(latency: NodeLatency, now: number): DiagnosticRowSpec {
   const labelKey = 'nodes.badge.hostHop';
   if (!latency.hostHopSupported) {
     return { labelKey, valueKey: 'nodes.badge.hopUnsupported', mono: false };
   }
-  const sample = latency.hostHop;
-  const ms = finiteRtt(sample?.rttMs ?? null);
-  if (!sample || ms == null) {
+  const sample = freshHostHop(latency, now);
+  if (!sample) {
+    // 播报过、但 45 s 没有新样本：说清是停了，继续写「测量中」等于骗人
+    const key = latency.hostHop ? 'nodes.badge.hopStale' : 'nodes.badge.rttPending';
+    return { labelKey, valueKey: key, mono: false };
+  }
+  const ms = finiteRtt(sample.rttMs);
+  if (ms == null) {
     return { labelKey, valueKey: 'nodes.badge.rttPending', mono: false };
   }
   return {
@@ -115,10 +121,14 @@ function hostHopRow(latency: NodeLatency): DiagnosticRowSpec {
 }
 
 /** 最近一次样本：两段各自的最新原始样本相加；与合计一致时不重复出这一行。 */
-function lastSampleRow(latency: NodeLatency, total: number | null): DiagnosticRowSpec | null {
+function lastSampleRow(
+  latency: NodeLatency,
+  total: number | null,
+  now: number
+): DiagnosticRowSpec | null {
   const browserRaw = finiteRtt(latency.browserToNodeRawMs);
   if (browserRaw == null) return null;
-  const raw = Math.round(browserRaw + (finiteRtt(latency.hostHop?.rawMs ?? null) ?? 0));
+  const raw = Math.round(browserRaw + (finiteRtt(freshHostHop(latency, now)?.rawMs ?? null) ?? 0));
   if (total !== null && raw === Math.round(total)) return null;
   return { labelKey: 'nodes.badge.lastSample', value: `${raw}ms` };
 }
@@ -200,9 +210,10 @@ function detailRows(
   link: NodeLink
 ): DiagnosticRowSpec[] {
   // 直连那一跳另有自己的读数：WebRTC 候选对的 RTT，与心跳测出来的是同一条路的两把尺子。
+  // 候选对明细还没到（`getStats()` 首轮之前）不影响这行——RTT 有值就先给出来。
   if (kind === 'browser-direct') {
-    if (!diagnostics.ice) return [];
-    return [msRow('nodes.badge.rttRow', diagnostics.rtt), ...iceRows(diagnostics.ice)];
+    const rtt = msRow('nodes.badge.rttRow', diagnostics.rtt);
+    return diagnostics.ice ? [rtt, ...iceRows(diagnostics.ice)] : [rtt];
   }
   if (kind === 'dc' || kind === 'ws-secure') {
     return addressRow('nodes.badge.peerAddress', link.peerAddress);
@@ -273,8 +284,8 @@ export function buildLinkDiagnosticRows(input: {
   isSelf?: boolean;
 }): DiagnosticRowSpec[] {
   const { diagnostics, link, latency, now } = input;
-  const rows: DiagnosticRowSpec[] = [browserHopRow(latency), hostHopRow(latency)];
-  const lastSample = lastSampleRow(latency, totalLatencyMs(latency));
+  const rows: DiagnosticRowSpec[] = [browserHopRow(latency), hostHopRow(latency, now)];
+  const lastSample = lastSampleRow(latency, totalLatencyMs(latency, now), now);
   if (lastSample) rows.push(lastSample);
   if (input.isSelf === true) return rows;
 
@@ -341,6 +352,25 @@ export interface DeviceNodeBadgesProps {
   deviceId?: string;
 }
 
+/** 与网关的下发节奏同频：过期判定与「已连接」时长都按这个节拍重算。 */
+const LATENCY_TICK_MS = 15_000;
+
+/**
+ * 宿主一跳的新鲜度按 `sampledAt` 判定，而读数不变时 store 也只有 15 s 一次的写入：
+ * 组件自己按同样的节奏 tick，网关停播后那一跳才会及时从徽标上消失。
+ * 只在真有宿主读数或浮层展开时才走定时器，其余时候不留常驻 tick。
+ */
+function useLatencyClock(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNow(Date.now());
+    const timer = setInterval(() => setNow(Date.now()), LATENCY_TICK_MS);
+    return () => clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
 export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const { t } = useTranslation();
   const diagnostics = useDirectDiagnostics(nodeId);
@@ -348,6 +378,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const latency = useNodeLatency(nodeId, deviceId);
   const isSelf = nodeId === SELF_NODE_ID;
   const [open, setOpen] = useState(false);
+  const now = useLatencyClock(latency.hostHop !== null || open);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -365,7 +396,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
     if (open) void refreshMeshNodes();
   }, [open]);
 
-  const badge = resolveLinkBadge({ path: diagnostics.path, link, latency, isSelf });
+  const badge = resolveLinkBadge({ path: diagnostics.path, link, latency, isSelf, now });
 
   return (
     <div
@@ -386,6 +417,7 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
           link={link}
           latency={latency}
           isSelf={isSelf}
+          now={now}
         />
       )}
     </div>

@@ -9,6 +9,8 @@ import type { NodeLatency, NodeLink } from './direct-diagnostics';
 
 installWindowStorage();
 
+const NOW = 1_700_000_000_000;
+
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('./mesh-nodes');
 const { appNodeRuntimes } = await import('./node-runtimes');
@@ -17,6 +19,7 @@ const { DeviceNodeBadges, NodeLinkDiagnostics, directFailureRows, formatLinkSinc
 );
 const {
   formatLinkBadgeLabel,
+  freshHostHop,
   linkDetailKind,
   reachLabelKey,
   resolveLinkBadge,
@@ -46,14 +49,18 @@ function latency(overrides: Partial<NodeLatency> = {}): NodeLatency {
   };
 }
 
-/** 宿主一跳的读数片段，和 `latency()` 一起用：`latency({ browserToNodeMs: 8, ...hostHop(2) })`。 */
+/**
+ * 宿主一跳的读数片段，和 `latency()` 一起用：`latency({ browserToNodeMs: 8, ...hostHop(2) })`。
+ * 采样时刻默认取 `NOW`，判过期的用例自己给一个更早的时刻。
+ */
 function hostHop(
   rttMs: number,
   hop: 'local' | 'ssh' = 'local',
-  rawMs = rttMs
+  rawMs = rttMs,
+  sampledAt = NOW
 ): Pick<NodeLatency, 'hostHop' | 'hostHopSupported'> {
   return {
-    hostHop: { rttMs, rawMs, hop, sampledAt: 1_700_000_000_000 },
+    hostHop: { rttMs, rawMs, hop, sampledAt },
     hostHopSupported: true,
   };
 }
@@ -64,7 +71,7 @@ function diagnostics(overrides: Partial<DirectDiagnostics> = {}): DirectDiagnost
 
 /** 徽标最终展示的那串文本（未初始化 i18n 时 key 即译文）。 */
 function badgeLabel(input: Parameters<typeof resolveLinkBadge>[0]): string {
-  const badge = resolveLinkBadge(input);
+  const badge = resolveLinkBadge({ now: NOW, ...input });
   return formatLinkBadgeLabel(badge.labelKey, badge.rttMs);
 }
 
@@ -87,25 +94,46 @@ afterEach(() => {
 
 describe('totalLatencyMs', () => {
   test('两段相加；宿主一跳缺席时只算浏览器到 node 那一段', () => {
-    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4) }))).toBe(22);
-    expect(totalLatencyMs(latency({ browserToNodeMs: 18 }))).toBe(18);
-    expect(totalLatencyMs(latency({ browserToNodeMs: 18, hostHopSupported: true }))).toBe(18);
+    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4) }), NOW)).toBe(22);
+    expect(totalLatencyMs(latency({ browserToNodeMs: 18 }), NOW)).toBe(18);
+    expect(totalLatencyMs(latency({ browserToNodeMs: 18, hostHopSupported: true }), NOW)).toBe(18);
   });
 
   test('浏览器那一段还没测出来时整体未知', () => {
-    expect(totalLatencyMs(latency({ ...hostHop(4) }))).toBeNull();
-    expect(totalLatencyMs(latency({ browserToNodeMs: Number.NaN, ...hostHop(4) }))).toBeNull();
+    expect(totalLatencyMs(latency({ ...hostHop(4) }), NOW)).toBeNull();
+    expect(totalLatencyMs(latency({ browserToNodeMs: Number.NaN, ...hostHop(4) }), NOW)).toBeNull();
   });
 
   test('宿主一跳的负数 / NaN 当作未测得，不污染合计', () => {
-    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(-1) }))).toBe(18);
-    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(Number.NaN) }))).toBe(18);
+    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(-1) }), NOW)).toBe(18);
+    expect(totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(Number.NaN) }), NOW)).toBe(18);
+  });
+
+  test('宿主一跳超过 45s 没有新样本就不再计入', () => {
+    const fresh = latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, NOW - 44_000) });
+    expect(totalLatencyMs(fresh, NOW)).toBe(22);
+    const stale = latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, NOW - 46_000) });
+    expect(totalLatencyMs(stale, NOW)).toBe(18);
+    expect(freshHostHop(stale, NOW)).toBeNull();
+  });
+
+  test('采样时刻不可信（0 / 非有限 / 网关时钟超前）时不判过期', () => {
+    expect(
+      totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, 0) }), NOW)
+    ).toBe(22);
+    expect(
+      totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, Number.NaN) }), NOW)
+    ).toBe(22);
+    expect(
+      totalLatencyMs(latency({ browserToNodeMs: 18, ...hostHop(4, 'local', 4, NOW + 60_000) }), NOW)
+    ).toBe(22);
   });
 });
 
 describe('resolveLinkBadge', () => {
   test('数字是整条链路：浏览器 → node 的心跳中位数加上 node → tmux 的宿主一跳', () => {
     const badge = resolveLinkBadge({
+      now: NOW,
       path: 'direct',
       link: link({ reach: 'wan', transport: 'dc', rttMs: 180 }),
       latency: latency({ browserToNodeMs: 12, ...hostHop(6) }),
@@ -118,6 +146,7 @@ describe('resolveLinkBadge', () => {
     const measured = latency({ browserToNodeMs: 10 });
     expect(
       resolveLinkBadge({
+        now: NOW,
         path: 'primary',
         link: link({ reach: 'relay' }),
         latency: measured,
@@ -125,23 +154,39 @@ describe('resolveLinkBadge', () => {
       }).labelKey
     ).toBe('nodes.badge.local');
     expect(
-      resolveLinkBadge({ path: 'direct', link: link({ reach: 'relay' }), latency: measured })
-        .labelKey
+      resolveLinkBadge({
+        path: 'direct',
+        link: link({ reach: 'relay' }),
+        latency: measured,
+        now: NOW,
+      }).labelKey
     ).toBe('nodes.badge.direct');
     expect(
-      resolveLinkBadge({ path: 'primary', link: link({ reach: 'wan' }), latency: measured })
-        .labelKey
+      resolveLinkBadge({
+        path: 'primary',
+        link: link({ reach: 'wan' }),
+        latency: measured,
+        now: NOW,
+      }).labelKey
     ).toBe('nodes.reach.wan');
     expect(
-      resolveLinkBadge({ path: 'primary', link: link({ reach: null }), latency: measured }).labelKey
+      resolveLinkBadge({
+        path: 'primary',
+        link: link({ reach: null }),
+        latency: measured,
+        now: NOW,
+      }).labelKey
     ).toBe('nodes.reach.none');
   });
 
   test('色调：不可达 / 中转灰，其余绿，合计到 200ms 一律告警色', () => {
     const measured = latency({ browserToNodeMs: 10 });
-    expect(resolveLinkBadge({ path: 'primary', link: link(), latency: measured }).tone).toBe('ok');
+    expect(
+      resolveLinkBadge({ path: 'primary', link: link(), latency: measured, now: NOW }).tone
+    ).toBe('ok');
     expect(
       resolveLinkBadge({
+        now: NOW,
         path: 'primary',
         link: link({ reach: 'relay', transport: 'relay' }),
         latency: measured,
@@ -149,6 +194,7 @@ describe('resolveLinkBadge', () => {
     ).toBe('muted');
     expect(
       resolveLinkBadge({
+        now: NOW,
         path: 'primary',
         link: link(),
         latency: latency({ browserToNodeMs: 150, ...hostHop(50) }),
@@ -156,6 +202,7 @@ describe('resolveLinkBadge', () => {
     ).toBe('warn');
     expect(
       resolveLinkBadge({
+        now: NOW,
         path: 'primary',
         link: link({ reach: 'relay', transport: 'relay' }),
         latency: latency({ browserToNodeMs: 260 }),
@@ -172,9 +219,50 @@ describe('resolveLinkBadge', () => {
     ).toBe('nodes.reach.lan · 37ms');
   });
 
+  test('到达路径还没拿到时只留标签，不显示「不可达 · 12ms」', () => {
+    const measured = latency({ browserToNodeMs: 12, ...hostHop(3) });
+    const badge = resolveLinkBadge({
+      now: NOW,
+      path: 'primary',
+      link: link({ reach: null, transport: null }),
+      latency: measured,
+    });
+    expect(badge).toEqual({ labelKey: 'nodes.reach.none', rttMs: null, tone: 'muted' });
+    expect(formatLinkBadgeLabel(badge.labelKey, badge.rttMs)).toBe('nodes.reach.none');
+    // 本机与直连不受影响：这两种标签本身就说明链路是通的
+    expect(
+      resolveLinkBadge({
+        now: NOW,
+        path: 'primary',
+        link: link({ reach: null, transport: null }),
+        latency: measured,
+        isSelf: true,
+      }).rttMs
+    ).toBe(15);
+    expect(
+      resolveLinkBadge({
+        now: NOW,
+        path: 'direct',
+        link: link({ reach: null, transport: null }),
+        latency: measured,
+      }).rttMs
+    ).toBe(15);
+  });
+
+  test('宿主一跳过期后徽标只剩浏览器那一段', () => {
+    const badge = resolveLinkBadge({
+      now: NOW,
+      path: 'primary',
+      link: link({ reach: 'lan' }),
+      latency: latency({ browserToNodeMs: 12, ...hostHop(30, 'local', 30, NOW - 60_000) }),
+    });
+    expect(badge.rttMs).toBe(12);
+  });
+
   test('entry ↔ node 的 peer ping 不再进徽标', () => {
     expect(
       resolveLinkBadge({
+        now: NOW,
         path: 'primary',
         link: link({ reach: 'relay', transport: 'relay', rttMs: 210 }),
         latency: latency({ browserToNodeMs: 30 }),
@@ -222,8 +310,6 @@ describe('formatLinkSince', () => {
     expect(formatLinkSince(Number.NaN)).toBeNull();
   });
 });
-
-const NOW = 1_700_000_000_000;
 
 describe('NodeLinkDiagnostics', () => {
   test('中转链路给出中转地址与未直连原因，且不出现任何「未知」行', () => {
@@ -449,6 +535,39 @@ describe('NodeLinkDiagnostics', () => {
     expect(pending).not.toContain('nodes.badge.hopUnsupported');
   });
 
+  test('宿主一跳过期后写「已停止上报」，最近一次样本也不再带它', () => {
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics
+        diagnostics={diagnostics()}
+        link={link()}
+        latency={latency({
+          browserToNodeMs: 8,
+          browserToNodeRawMs: 9,
+          ...hostHop(30, 'local', 30, NOW - 60_000),
+        })}
+        now={NOW}
+      />
+    );
+    expect(html).toContain('nodes.badge.hopStale');
+    expect(html).not.toContain('nodes.badge.hopLocal');
+    expect(html).toContain('9ms');
+    expect(html).not.toContain('39ms');
+  });
+
+  test('浏览器直连还没拿到候选对明细时也给出候选对 RTT', () => {
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics
+        diagnostics={diagnostics({ path: 'direct', rtt: 9 })}
+        link={link({ reach: 'wan', transport: 'dc' })}
+        latency={latency({ browserToNodeMs: 12, browserToNodeRawMs: 12 })}
+        now={NOW}
+      />
+    );
+    expect(html).toContain('nodes.badge.rttRow');
+    expect(html).toContain('9ms');
+    expect(html).toContain('nodes.badge.icePlaceholder');
+  });
+
   test('本机只列两跳：没有到达路径 / 承载 / peer ping 这些说不通的行', () => {
     const html = renderToStaticMarkup(
       <NodeLinkDiagnostics
@@ -645,8 +764,9 @@ describe('DeviceNodeBadges', () => {
       wsLatencyMs: 4,
       wsLatencyRawMs: 4,
       deviceLatencySupported: true,
+      // 组件按真实时钟判过期：种子样本要用当下时刻，否则 45 s 之外的读数不会计入
       deviceLatency: {
-        'dev-1': { rttMs: 3, rawMs: 3, hop: 'local', sampledAt: NOW },
+        'dev-1': { rttMs: 3, rawMs: 3, hop: 'local', sampledAt: Date.now() },
       },
     });
     const html = renderToStaticMarkup(<DeviceNodeBadges nodeId="self" deviceId="dev-1" />);
@@ -664,7 +784,7 @@ describe('DeviceNodeBadges', () => {
       wsLatencyRawMs: 41,
       deviceLatencySupported: true,
       deviceLatency: {
-        'dev-1': { rttMs: 12, rawMs: 14, hop: 'ssh', sampledAt: NOW },
+        'dev-1': { rttMs: 12, rawMs: 14, hop: 'ssh', sampledAt: Date.now() },
       },
     });
     const html = renderToStaticMarkup(
@@ -684,6 +804,25 @@ describe('DeviceNodeBadges', () => {
       nodes: [meshNode({ id: REMOTE_NODE_ID, reach: 'lan', transport: 'ws-secure', rttMs: 3 })],
     });
     seedLatency(REMOTE_NODE_ID, { wsLatencyMs: 9, wsLatencyRawMs: 9 });
+    const html = renderToStaticMarkup(
+      <DeviceNodeBadges nodeId={REMOTE_NODE_ID} deviceId="dev-1" />
+    );
+    expect(html).toContain('nodes.reach.lan · 9ms');
+  });
+
+  test('网关停播 45s 后徽标不再加那一跳', () => {
+    setMeshNodesStateForTest({
+      entryNodeId: 'entry',
+      nodes: [meshNode({ id: REMOTE_NODE_ID, reach: 'lan', transport: 'ws-secure', rttMs: 3 })],
+    });
+    seedLatency(REMOTE_NODE_ID, {
+      wsLatencyMs: 9,
+      wsLatencyRawMs: 9,
+      deviceLatencySupported: true,
+      deviceLatency: {
+        'dev-1': { rttMs: 30, rawMs: 30, hop: 'local', sampledAt: Date.now() - 60_000 },
+      },
+    });
     const html = renderToStaticMarkup(
       <DeviceNodeBadges nodeId={REMOTE_NODE_ID} deviceId="dev-1" />
     );

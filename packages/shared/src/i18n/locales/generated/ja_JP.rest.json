@@ -1944,6 +1944,7 @@
         "hopLocal": "{{ms}}ms（ローカル tmux）",
         "hopSsh": "{{ms}}ms（SSH）",
         "hopUnsupported": "未測定（ノードのバージョンが古い）",
+        "hopStale": "報告が停止",
         "lastSample": "最新サンプル",
         "peerLink": "入口 → ノード",
         "since": "接続時間",

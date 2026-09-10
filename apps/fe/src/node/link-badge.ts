@@ -35,11 +35,29 @@ export interface LinkBadgeDescriptor {
   tone: 'ok' | 'muted' | 'warn';
 }
 
-/** 合计 = 浏览器 → node + node → tmux；宿主一跳测不到（旧节点、还没采到）就只算前半段。 */
-export function totalLatencyMs(latency: NodeLatency): number | null {
+/**
+ * 宿主一跳的过期线：网关每 15 s 至少播一次，连丢三次就当它不再上报——网关停播与设备静默
+ * 掉线都不会有 `device-disconnected`，只能靠采样时刻自己判。
+ */
+export const HOST_HOP_STALE_MS = 45_000;
+
+/**
+ * 仍在上报的宿主一跳；过期或没有则为 `null`。采样时刻不可信（缺省 0、非有限、网关时钟超前）
+ * 时不判过期——宁可多显示一跳，也不因对端时钟不准把真实读数抹掉。
+ */
+export function freshHostHop(latency: NodeLatency, now: number): NodeLatency['hostHop'] {
+  const sample = latency.hostHop;
+  if (!sample) return null;
+  const at = sample.sampledAt;
+  if (!Number.isFinite(at) || at <= 0) return sample;
+  return now - at > HOST_HOP_STALE_MS ? null : sample;
+}
+
+/** 合计 = 浏览器 → node + node → tmux；宿主一跳测不到（旧节点、没采到、已过期）就只算前半段。 */
+export function totalLatencyMs(latency: NodeLatency, now: number = Date.now()): number | null {
   const browser = finiteRtt(latency.browserToNodeMs);
   if (browser == null) return null;
-  return browser + (finiteRtt(latency.hostHop?.rttMs ?? null) ?? 0);
+  return browser + (finiteRtt(freshHostHop(latency, now)?.rttMs ?? null) ?? 0);
 }
 
 /**
@@ -52,10 +70,15 @@ export function resolveLinkBadge(input: {
   latency: NodeLatency;
   /** 本机（entry 自身）：浏览器直接连的就是它，没有第二跳。 */
   isSelf?: boolean;
+  /** 判断宿主一跳是否过期的基准时刻；缺省取当前时间。 */
+  now?: number;
 }): LinkBadgeDescriptor {
   const isSelf = input.isSelf === true;
   const reach = input.link.reach;
-  const rttMs = totalLatencyMs(input.latency);
+  const total = totalLatencyMs(input.latency, input.now ?? Date.now());
+  // 到达路径还没拿到（节点列表未加载、或该节点已不在列表里）时不带数字：标签写着「不可达」
+  // 却挂个毫秒数自相矛盾，宁可只留标签。
+  const rttMs = !isSelf && input.path !== 'direct' && reach === null ? null : total;
   return {
     labelKey: badgeLabelKey(isSelf, input.path, reach),
     rttMs,

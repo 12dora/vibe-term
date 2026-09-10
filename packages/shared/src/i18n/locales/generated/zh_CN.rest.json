@@ -1944,6 +1944,7 @@
         "hopLocal": "{{ms}}ms（本地 tmux）",
         "hopSsh": "{{ms}}ms（SSH）",
         "hopUnsupported": "未测量（节点版本过旧）",
+        "hopStale": "已停止上报",
         "lastSample": "最近一次样本",
         "peerLink": "入口 → 节点",
         "since": "已连接",

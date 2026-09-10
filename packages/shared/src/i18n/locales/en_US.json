@@ -2712,6 +2712,7 @@
         "hopLocal": "{{ms}}ms (local tmux)",
         "hopSsh": "{{ms}}ms (SSH)",
         "hopUnsupported": "Not measured (node too old)",
+        "hopStale": "Reporting stopped",
         "lastSample": "Latest sample",
         "peerLink": "Entry → node",
         "since": "Connected for",

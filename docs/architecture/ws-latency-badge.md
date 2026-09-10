@@ -34,15 +34,19 @@
 
 - wire：`KIND_DEVICE_LATENCY = 0x0106`，载荷 `DeviceLatencySchema { deviceId, rttMs, rawMs,
   hop, sampledAt }`（`packages/shared/src/ws-borsh/schema.ts`）。`hop` 为 `0` 本地 / `1` SSH。
-- 谁发：拥有该设备的网关按 tmux 控制模式回执测得并平滑，材料性变化或每 15 s 下发给已连接该设备的
+- 谁发：拥有该设备的网关按 tmux 控制模式回执测得并平滑，材料性变化（≥10 ms 或 ≥20%，且 |Δ| ≥ 2 ms，两次下发间隔 ≥5 s）或每 15 s 刷新一次下发给已连接该设备的
   会话。
 - 谁认：网关在 HELLO_S2C 里播报能力 `device-latency-v1`（`GATEWAY_CAPABILITY_DEVICE_LATENCY_V1`）。
   没播报的旧节点永远不发这条帧，UI 把这一段显示成「未测量（节点版本过旧）」，而不是当成 0。
 - 客户端：`packages/ws-client/src/transport-message-decoder.ts` 解出
   `{ type: 'device-latency', deviceId, rttMs, rawMs, hop: 'local' | 'ssh', sampledAt }`；
   `packages/stores/src/tmux-event-router.ts` 落到 store 的 `deviceLatency[deviceId]`，能力落到
-  `deviceLatencySupported`。读数不变时不写 store（采样时刻每 15 s 变一次，重渲没有意义）；离开
-  READY 与设备断开时清掉，能力在每次 READY 按新一轮 HELLO 重判。
+  `deviceLatencySupported`。读数不变也要把 `sampledAt` 推进（UI 靠它判断这一跳还在不在上报），
+  只丢重复帧与乱序旧帧；离开 READY 与设备断开时把读数和能力位一并清掉，READY 时按新一轮 HELLO
+  重判——否则重连到旧节点会一直等一个永远不来的帧。
+- 过期：`HOST_HOP_STALE_MS = 45 s`（3 倍下发间隔）。网关停播、设备静默掉线都不会有
+  `device-disconnected`，超过这条线徽标就不再加这一跳，浮层写「已停止上报」。采样时刻不可信
+  （0 / 非有限 / 网关时钟超前）时不判过期。徽标组件自带 15 s tick 重算新鲜度。
 
 ## 客户端心跳（`packages/ws-client`）
 
