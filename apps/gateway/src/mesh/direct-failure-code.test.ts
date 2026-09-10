@@ -102,6 +102,8 @@ describe('dcFailureCode', () => {
     ['transport lost', 'dc_closed'],
     ['unexpected remote offer in signaling state stable', 'signaling_state'],
     ['no ice candidates gathered', 'no_candidates'],
+    ['no srflx candidates', 'no_srflx'],
+    ['stun unconfigured', 'stun_unconfigured'],
     ['something nobody classified', 'other'],
   ];
   for (const [reason, code] of cases) {

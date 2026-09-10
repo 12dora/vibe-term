@@ -21,6 +21,7 @@ import {
   dcDialAborted,
   raceForegroundDial,
   raceWsSecureDial,
+  runBackgroundDirect,
   settleAbandonedDcDial,
 } from './peer-dial-race';
 import {
@@ -111,6 +112,7 @@ export class PeerDialer {
     | (() => Record<string, RankableIfaceAddr[] | undefined>)
     | null;
   private localFingerprint = '';
+  private readonly dcInflight = new Map<string, Promise<LinkSession | null>>();
 
   constructor(state: PeerManagerState, opts: PeerDialerOptions) {
     this.state = state;
@@ -146,6 +148,10 @@ export class PeerDialer {
     const live = this.state.live.get(nodeId);
     if (live) this.deps.maybeUpgrade(nodeId, { cooldown: false });
     else void this.deps.getLink(nodeId).catch(() => undefined);
+  }
+
+  hasDcInflight(nodeId: string): boolean {
+    return this.dcInflight.has(nodeId);
   }
 
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
@@ -204,12 +210,39 @@ export class PeerDialer {
   private async dialDc(
     nodeId: string,
     gen: number,
+    signal: AbortSignal,
+    mode: 'foreground' | 'upgrade'
+  ): Promise<LinkSession | null> {
+    const existing = this.dcInflight.get(nodeId);
+    if (existing) return mode === 'foreground' ? existing : null;
+    let settle!: (value: LinkSession | null) => void;
+    const held = new Promise<LinkSession | null>((resolve) => {
+      settle = resolve;
+    });
+    this.dcInflight.set(nodeId, held);
+    try {
+      const result = await this.runDialDc(nodeId, gen, signal);
+      settle(result);
+      return result;
+    } catch (err) {
+      settle(null);
+      throw err;
+    } finally {
+      this.dcInflight.delete(nodeId);
+      this.deps.releaseRtcWakeAttempt(nodeId);
+    }
+  }
+
+  private async runDialDc(
+    nodeId: string,
+    gen: number,
     signal: AbortSignal
   ): Promise<LinkSession | null> {
     const rtc = this.rtc;
     if (!rtc) return null;
     const attemptId = this.deps.nextDcAttemptId();
     this.deps.dcBreaker.beginAttempt(nodeId, attemptId);
+    const ice = rtc.currentIceConfig?.() ?? { stun: [] as string[], turn: null };
     const signaling = this.deps.signalingFor(nodeId);
     let unsub: (() => void) | null = null;
     const wrapped: RtcSignaling = {
@@ -223,7 +256,7 @@ export class PeerDialer {
     try {
       await ensureRtcReady(rtc);
       throwIfPeerStopped(this.state, nodeId, gen);
-      connectP = rtc.connectToPeer(nodeId, wrapped);
+      connectP = rtc.connectToPeer(nodeId, wrapped, { attemptId });
       this.deps.dispatchRtcWake(nodeId);
       const result = await abortable(connectP, signal);
       if (peerStale(this.state, gen)) {
@@ -261,16 +294,22 @@ export class PeerDialer {
       unsub = null;
       return kept;
     } catch (err) {
-      const noteDcFailure = (reason: string) => {
-        if (this.state.stopped || isIntentionalDcLoss(reason)) return;
-        this.deps.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(reason), attemptId);
+      const reason = err instanceof Error ? err.message : String(err);
+      const noteDcFailure = (failure: string) => {
+        if (this.state.stopped || isIntentionalDcLoss(failure)) return;
+        this.deps.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(failure), attemptId);
       };
-      if (dcDialAborted(err)) settleAbandonedDcDial(connectP, noteDcFailure);
-      else noteDcFailure(err instanceof Error ? err.message : String(err));
+      if (dcDialAborted(err)) await settleAbandonedDcDial(connectP, noteDcFailure);
+      else noteDcFailure(reason);
       this.releaseRtcAttempt(nodeId, unsub);
+      rtcLog('dial failed', {
+        peer: nodeId,
+        reason,
+        stun_count: ice.stun.length,
+        turn: Boolean(ice.turn),
+        attempt: attemptId,
+      });
       throw err;
-    } finally {
-      this.deps.releaseRtcWakeAttempt(nodeId);
     }
   }
 
@@ -298,13 +337,14 @@ export class PeerDialer {
         return null;
       }
       try {
-        return await this.dialDc(nodeId, gen, dcSignal);
+        return await this.dialDc(
+          nodeId,
+          gen,
+          dcSignal,
+          opts?.foreground ? 'foreground' : 'upgrade'
+        );
       } catch (err) {
         dcError = err;
-        rtcLog('dial failed', {
-          peer: nodeId,
-          reason: err instanceof Error ? err.message : String(err),
-        });
         throwIfPeerStopped(this.state, nodeId, gen, err);
         return null;
       }
@@ -357,7 +397,7 @@ export class PeerDialer {
     }
   }
 
-  /** 直连阶段：前台走 DC/ws-secure 竞速，后台升级仍是原来的顺序拨号（DC 拿满 15 s）。 */
+  /** 直连阶段：前台走 DC/ws-secure 竞速；后台升级两条腿并行，ws-secure 不等 DC 超时。 */
   private async dialDirect(
     nodeId: string,
     gen: number,
@@ -386,15 +426,14 @@ export class PeerDialer {
       throwIfPeerStopped(this.state, nodeId, gen);
       return { session: await liveOf(), pending: raced.pending };
     }
-    const steps = legs.skipDcFirst
-      ? [legs.tryWs, liveOf, legs.tryDc, liveOf]
-      : [legs.tryDc, legs.tryWs, liveOf];
-    for (const step of steps) {
-      const got = await step(signal);
-      if (got) return { session: got, pending: null };
-      throwIfPeerStopped(this.state, nodeId, gen);
-    }
-    return { session: null, pending: null };
+    return runBackgroundDirect({
+      dc: legs.tryDc,
+      ws: legs.tryWs,
+      skipDcFirst: legs.skipDcFirst,
+      signal,
+      liveOf,
+      throwIfStopped: () => throwIfPeerStopped(this.state, nodeId, gen),
+    });
   }
 
   private async dialWsSecure(

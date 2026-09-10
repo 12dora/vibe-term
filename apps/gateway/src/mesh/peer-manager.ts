@@ -136,6 +136,7 @@ export class PeerManager extends PeerCollaboratorHost {
       isTrusted: (nodeId) => this.isTrusted(nodeId),
       pending: () => this.state.pending,
       upgrading: () => this.state.upgrading,
+      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
       probeQuiesce: (live) => this.drain.probeQuiesce(live as LivePeer),
       hasWsSecureCandidate: (nodeId) => this.dialer.hasWsSecureCandidate(nodeId),
       lostDirect: () => this.state.lostDirect,
@@ -396,12 +397,13 @@ export class PeerManager extends PeerCollaboratorHost {
     if (deliverRtcSignal(this.rtcListeners.get(fromNodeId), msg)) return;
     const pending = this.state.pending.has(fromNodeId);
     const upgrading = this.state.upgrading.has(fromNodeId);
+    const inflight = this.dialer.hasDcInflight(fromNodeId);
     if (
       shouldDropUnboundRtcSignal({
         selfNodeId: this.identity.nodeId,
         fromNodeId,
         message: msg,
-        attemptExists: pending || upgrading,
+        attemptExists: pending || upgrading || inflight,
       })
     ) {
       return;
@@ -416,6 +418,7 @@ export class PeerManager extends PeerCollaboratorHost {
         allow: this.dialer.shouldTryDc(fromNodeId),
         pending,
         upgrading,
+        inflight,
         live: Boolean(live),
         wantsUpgrade: live ? this.wantsUpgrade(live) : false,
       })
@@ -443,9 +446,10 @@ export class PeerManager extends PeerCollaboratorHost {
       });
     try {
       const session = await this.waiters.awaitEstablishedOrDial(nodeId, attempt);
-      // 竞速的败者还在收尾，但链路已经建好：pending 不该再挡住 forceDcProbe / 后台升级。
-      const live = this.state.live.has(nodeId);
-      if (live && this.state.pending.get(nodeId) === attempt) this.state.pending.delete(nodeId);
+      // 链路已建好：pending 不该再挡住 forceDcProbe / 后台升级。DC 去重交给 dcInflight。
+      if (this.state.live.has(nodeId) && this.state.pending.get(nodeId) === attempt) {
+        this.state.pending.delete(nodeId);
+      }
       return session;
     } catch (err) {
       const live = this.state.live.get(nodeId);

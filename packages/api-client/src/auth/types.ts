@@ -242,6 +242,8 @@ export const DIRECT_FAILURE_CODES = [
   /** 熔断生效但没有解除时刻（永久禁拨）：`breaker_cooling` 的模板要 `{{until}}`，不能复用。 */
   'breaker_paused',
   'aborted',
+  'no_srflx',
+  'stun_unconfigured',
   'other',
 ] as const;
 

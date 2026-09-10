@@ -5,6 +5,7 @@ import {
   type RtcSignalInboxEntry,
   RtcWakeGate,
   type RtcWakePorts,
+  deliverRtcSignal,
 } from './peer-rtc-wake';
 
 function setupReplay(entries: RtcSignalInboxEntry[]) {
@@ -59,5 +60,23 @@ describe('RtcWakeGate signaling inbox', () => {
     await Promise.resolve();
     expect(deliveries).toBe(0);
     expect(listeners.has(peer)).toBe(false);
+  });
+});
+
+describe('deliverRtcSignal', () => {
+  test('returns false when the listener unsubscribes while handling a superseded offer', () => {
+    const listeners = new Set<(message: RtcSignalMessage) => void>();
+    const listener = () => {
+      listeners.delete(listener);
+    };
+    listeners.add(listener);
+    const delivered = deliverRtcSignal(listeners, {
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: '{"type":"offer","sdp":"v=0","epoch":2}',
+    });
+    expect(delivered).toBe(false);
+    expect(listeners.size).toBe(0);
   });
 });

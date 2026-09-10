@@ -256,7 +256,9 @@ export function applyUplinkNodeList(
   state.lastNodeList = list;
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
-  state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
+  if (list.rtc.stun.length > 0) {
+    state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
+  }
   reconcileHubStoreFromNodeList(d, list);
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   const hubIds = new Set([

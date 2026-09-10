@@ -2752,6 +2752,8 @@ export const I18N_RESOURCES = {
           "breaker_cooling": "Paused until {{until}}",
           "breaker_paused": "Direct link paused",
           "aborted": "Attempt cancelled",
+          "no_srflx": "No reflexive candidate (STUN blocked or proxied)",
+          "stun_unconfigured": "STUN servers not configured",
           "other": "Connection failed"
         },
         "ice": {
@@ -6357,6 +6359,8 @@ export const I18N_RESOURCES = {
           "breaker_cooling": "暂停至 {{until}}",
           "breaker_paused": "直连已暂停",
           "aborted": "尝试已取消",
+          "no_srflx": "未取得反射候选（STUN 不通或被代理拦截）",
+          "stun_unconfigured": "未配置 STUN 服务器",
           "other": "连接失败"
         },
         "ice": {
@@ -9961,6 +9965,8 @@ export const I18N_RESOURCES = {
           "breaker_cooling": "{{until}} まで停止中",
           "breaker_paused": "直接接続は停止中",
           "aborted": "試行を中止",
+          "no_srflx": "反射候補を取得できません（STUN 不通またはプロキシ遮断）",
+          "stun_unconfigured": "STUN サーバ未設定",
           "other": "接続失敗"
         },
         "ice": {

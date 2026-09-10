@@ -2746,6 +2746,8 @@
           "breaker_cooling": "Paused until {{until}}",
           "breaker_paused": "Direct link paused",
           "aborted": "Attempt cancelled",
+          "no_srflx": "No reflexive candidate (STUN blocked or proxied)",
+          "stun_unconfigured": "STUN servers not configured",
           "other": "Connection failed"
         },
         "ice": {

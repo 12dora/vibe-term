@@ -4,26 +4,23 @@ import {
   normalizeFingerprint,
   parseSdpFingerprint,
 } from '@vibeterm/shared/auth';
-import type { RtcSignalMessage } from '../mesh-deps';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
 import { PeerHandshakeError } from '../types';
 import type { FanoutDataChannel } from './channel-fanout';
-import {
-  decodeCandidateSignal,
-  decodeSdpSignal,
-  isEmptyCandidate,
-  maskIceAddress,
-  parseIceCandidateType,
-} from './ice';
+import { maskIceAddress, parseIceCandidateType } from './ice';
 import type { DataChannelLike, IceServerConfig, PeerConnectionLike, RtcIceConfig } from './native';
 import { toUint8Array } from './native';
+import { type RtcDialProgress, rtcFailureStage, rtcGatherFailureHint } from './rtc-dial-progress';
 import {
   type IceCandidateTrace,
-  createIceCandidateTrace,
+  type RtcLogContext,
+  iceTypesOf,
   rtcLog,
-  rtcLogCandidate,
   rtcLogIceFailed,
 } from './rtc-log';
+
+export type { SignalingAttemptState } from './rtc-signal-apply';
+export { createRtcSignalApplier, createSignalingAttemptState } from './rtc-signal-apply';
 
 export type LocalDescriptionEvent = { sdp: string; type: string };
 
@@ -41,11 +38,6 @@ export type RtcDialAggregate = {
   attempts: number;
   durationTotalMs: number;
   durationMaxMs: number;
-};
-
-export type SignalingAttemptState = {
-  epoch?: number;
-  answerApplied: boolean;
 };
 
 export function fingerprintsEqual(a: DtlsFingerprint, b: DtlsFingerprint): boolean {
@@ -71,110 +63,6 @@ export function parseNonceMessage(msg: string | Buffer | ArrayBuffer): string | 
     if (bytes.byteLength === 32) return encodeBase64url(bytes);
   }
   return null;
-}
-
-export function createRtcSignalApplier(
-  pc: PeerConnectionLike,
-  peer: string,
-  expect: 'offer' | 'answer',
-  state: SignalingAttemptState,
-  trace: IceCandidateTrace
-): (message: RtcSignalMessage) => void {
-  return (message) => {
-    if (message.sdp) applyRemoteSdp(pc, peer, expect, state, message.sdp);
-    if (message.candidate) applyRemoteCandidate(pc, peer, state, trace, message.candidate);
-  };
-}
-
-function applyRemoteSdp(
-  pc: PeerConnectionLike,
-  peer: string,
-  expect: 'offer' | 'answer',
-  state: SignalingAttemptState,
-  raw: string
-): void {
-  const decoded = decodeSdpSignal(raw);
-  if (!decoded) return;
-  if (decoded.type !== expect) {
-    rtcLog('signal dropped', {
-      peer,
-      kind: 'sdp',
-      cause: 'unexpected-type',
-      expected: expect,
-      received: decoded.type,
-    });
-    return;
-  }
-  if (epochMismatch(decoded.epoch, state.epoch, false)) {
-    logEpochMismatch(peer, 'sdp', state.epoch, decoded.epoch);
-    return;
-  }
-  if (expect === 'answer' && state.answerApplied) {
-    rtcLog('signal dropped', { peer, kind: 'sdp', cause: 'duplicate-answer' });
-    return;
-  }
-  if (expect === 'offer' && state.epoch === undefined) state.epoch = decoded.epoch;
-  try {
-    rtcLog('signal recv', { peer, kind: 'sdp', sdp_type: decoded.type });
-    pc.setRemoteDescription(decoded.sdp, decoded.type);
-    if (expect === 'answer') state.answerApplied = true;
-  } catch (err) {
-    logSignalApplyError(peer, 'sdp', err);
-  }
-}
-
-function applyRemoteCandidate(
-  pc: PeerConnectionLike,
-  peer: string,
-  state: SignalingAttemptState,
-  trace: IceCandidateTrace,
-  raw: string
-): void {
-  const decoded = decodeCandidateSignal(raw);
-  if (!decoded || isEmptyCandidate(decoded.candidate)) return;
-  if (epochMismatch(decoded.epoch, state.epoch, true)) {
-    logEpochMismatch(peer, 'candidate', state.epoch, decoded.epoch);
-    return;
-  }
-  try {
-    rtcLogCandidate('recv', peer, decoded.candidate, trace);
-    pc.addRemoteCandidate(decoded.candidate, decoded.mid);
-  } catch (err) {
-    logSignalApplyError(peer, 'candidate', err);
-  }
-}
-
-function epochMismatch(
-  received: number | undefined,
-  expected: number | undefined,
-  rejectBeforeEpoch: boolean
-): boolean {
-  if (received === undefined) return false;
-  if (expected === undefined) return rejectBeforeEpoch;
-  return received !== expected;
-}
-
-function logEpochMismatch(
-  peer: string,
-  kind: 'sdp' | 'candidate',
-  expected: number | undefined,
-  received: number | undefined
-): void {
-  rtcLog('signal dropped', {
-    peer,
-    kind,
-    cause: 'epoch-mismatch',
-    expected_epoch: expected,
-    received_epoch: received,
-  });
-}
-
-function logSignalApplyError(peer: string, kind: 'sdp' | 'candidate', err: unknown): void {
-  rtcLog('signal dropped', {
-    peer,
-    kind,
-    cause: err instanceof Error ? err.message : String(err),
-  });
 }
 
 export function logRtcDialStart(
@@ -272,29 +160,80 @@ export function logCreatedChannel(dc: DataChannelLike, peer: string): DataChanne
 export function attachPcDiagnostics(
   pc: PeerConnectionLike,
   peer: string,
-  trace: IceCandidateTrace
+  trace: IceCandidateTrace,
+  opts?: { ice?: IceServerConfig; progress?: RtcDialProgress; ctx?: RtcLogContext }
 ): () => void {
   let iceFailedLogged = false;
+  let gatherSummaryLogged = false;
+  const progress = opts?.progress;
+  const ice = opts?.ice;
+  const ctx = opts?.ctx ?? {};
   const logIceFailed = () => {
     if (iceFailedLogged) return;
     iceFailedLogged = true;
     rtcLogIceFailed(peer, trace);
   };
+  const noteSelected = () => {
+    if (progress) progress.selectedPair = Boolean(pc.getSelectedCandidatePair?.());
+    logSelectedPair(pc, peer);
+  };
   pc.onGatheringStateChange?.((state) => {
-    rtcLog('gathering', { peer, state });
+    rtcLog('gathering', { ...ctx, peer, state });
+    if (state !== 'complete') return;
+    if (progress) progress.gatheringComplete = true;
+    if (gatherSummaryLogged) return;
+    gatherSummaryLogged = true;
+    rtcLog('gather summary', {
+      ...ctx,
+      peer,
+      host: trace.localCounts.host,
+      srflx: trace.localCounts.srflx,
+      relay: trace.localCounts.relay,
+      stun_count: ice?.stun.length ?? 0,
+      turn: Boolean(ice?.turn),
+    });
   });
   pc.onIceStateChange?.((state) => {
-    rtcLog('ice', { peer, state });
+    rtcLog('ice', { ...ctx, peer, state });
     if (state === 'failed') logIceFailed();
-    if (state === 'connected' || state === 'completed') logSelectedPair(pc, peer);
+    if (state === 'connected' || state === 'completed') noteSelected();
   });
   pc.onStateChange?.((state) => {
-    rtcLog('peer state', { peer, state });
+    rtcLog('peer state', { ...ctx, peer, state });
     if (state === 'failed') logIceFailed();
   });
   return () => {
     iceFailedLogged = true;
   };
+}
+
+export function logRtcDialTimeout(
+  peer: string,
+  pc: PeerConnectionLike,
+  trace: IceCandidateTrace,
+  progress: RtcDialProgress,
+  ice: IceServerConfig,
+  reason: string
+): void {
+  if (pc.getSelectedCandidatePair?.()) progress.selectedPair = true;
+  rtcLog('dial timeout', {
+    peer,
+    stage: rtcFailureStage(progress),
+    local_types: iceTypesOf(trace, 'local'),
+    remote_types: iceTypesOf(trace, 'remote'),
+    stun_count: ice.stun.length,
+    turn: Boolean(ice.turn),
+    reason,
+  });
+}
+
+export function timeoutFailureMessage(
+  progress: RtcDialProgress,
+  ice: IceServerConfig,
+  localCounts: { srflx: number; relay: number },
+  fallback: string
+): string {
+  return rtcGatherFailureHint(progress, ice, localCounts) ?? fallback;
 }
 
 function logSelectedPair(pc: PeerConnectionLike, peer: string): void {

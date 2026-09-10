@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   FOREGROUND_DC_BUDGET_MS,
   FOREGROUND_DIRECT_DEADLINE_MS,
+  runBackgroundDirect,
   runDirectDialRace,
 } from './peer-dial-race';
 
@@ -216,5 +217,38 @@ describe('runDirectDialRace', () => {
     const outcome = await race;
     expect(outcome.winner).toBeNull();
     expect(dcLeg.signal?.aborted).toBe(true);
+  });
+});
+
+describe('runBackgroundDirect', () => {
+  test('ws-secure wins without waiting for a hanging DC leg', async () => {
+    let dcStarted = false;
+    const outcome = await runBackgroundDirect<FakeSession>({
+      dc: async () => {
+        dcStarted = true;
+        return new Promise(() => {});
+      },
+      ws: async () => ({ id: 'ws', closed: null }),
+      skipDcFirst: false,
+      signal: new AbortController().signal,
+      liveOf: async () => null,
+      throwIfStopped: () => undefined,
+    });
+    expect(dcStarted).toBe(true);
+    expect(outcome.session?.id).toBe('ws');
+    expect(outcome.pending).not.toBeNull();
+  });
+
+  test('awaits DC when ws-secure has no candidate', async () => {
+    const outcome = await runBackgroundDirect<FakeSession>({
+      dc: async () => ({ id: 'dc', closed: null }),
+      ws: async () => null,
+      skipDcFirst: false,
+      signal: new AbortController().signal,
+      liveOf: async () => null,
+      throwIfStopped: () => undefined,
+    });
+    expect(outcome.session?.id).toBe('dc');
+    expect(outcome.pending).toBeNull();
   });
 });

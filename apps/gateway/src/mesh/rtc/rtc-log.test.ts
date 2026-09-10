@@ -10,6 +10,7 @@ import {
   resetRtcLogStateForTest,
   rtcLog,
   rtcLogRateLimited,
+  runWithRtcLogContext,
 } from './rtc-log';
 
 describe('rtc-log', () => {
@@ -28,6 +29,28 @@ describe('rtc-log', () => {
     noteCandidate(trace, 'remote', 'candidate:3 1 UDP 1 198.51.100.2 9 typ relay');
     expect(iceTypesOf(trace, 'local')).toEqual(['host', 'srflx']);
     expect(iceTypesOf(trace, 'remote')).toEqual(['relay']);
+    expect(trace.localCounts).toEqual({ host: 1, srflx: 1, prflx: 0, relay: 0 });
+    expect(trace.remoteCounts).toEqual({ host: 0, srflx: 0, prflx: 0, relay: 1 });
+  });
+
+  test('merges attempt and epoch from the PC log context', () => {
+    resetRtcLogStateForTest();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      runWithRtcLogContext({ peer: 'aa', attempt: 'dc:1', epoch: 4 }, () => {
+        rtcLog('ice', { state: 'checking' });
+      });
+    } finally {
+      console.log = orig;
+    }
+    expect(lines[0]).toContain('peer=aa');
+    expect(lines[0]).toContain('attempt=dc:1');
+    expect(lines[0]).toContain('epoch=4');
+    expect(lines[0]).toContain('state=checking');
   });
 
   test('rate-limits repeated candidate lines with the same key', () => {

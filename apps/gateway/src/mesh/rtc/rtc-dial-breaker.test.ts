@@ -103,6 +103,16 @@ describe('RtcDialBreaker', () => {
     expect(breaker.snapshot(peer).failures).toBe(RTC_DIAL_BREAKER_FAILS + 1);
   });
 
+  test('beginAttempt and noteFailure are idempotent per peer+attemptId', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0 });
+    const peer = 'p';
+    breaker.beginAttempt(peer, 'dc:1');
+    breaker.beginAttempt(peer, 'dc:1');
+    expect(breaker.noteFailure(peer, 'timeout', 'dc:1').counted).toBe(true);
+    expect(breaker.noteFailure(peer, 'timeout', 'dc:1').counted).toBe(false);
+    expect(breaker.snapshot(peer).failures).toBe(1);
+  });
+
   test('short-lived channel is a failure; healthy ≥ 60s resets level once', () => {
     const resets: number[] = [];
     let now = 10;
@@ -172,6 +182,7 @@ describe('RtcDialBreaker', () => {
     expect(isIntentionalDcLoss('revoked')).toBe(true);
     expect(isIntentionalDcLoss('idle')).toBe(true);
     expect(isIntentionalDcLoss('replaced')).toBe(true);
+    expect(isIntentionalDcLoss('superseded')).toBe(true);
     expect(isIntentionalDcLoss('liveness-timeout')).toBe(false);
     expect(RTC_DIAL_BREAKER_BASE_MS_DEFAULT).toBe(30_000);
     expect(RTC_DIAL_DISABLE_AFTER_DEFAULT).toBe(10);
@@ -408,6 +419,7 @@ describe('PeerManager DataChannel breaker', () => {
     const afterTrip = dcCalls();
     await manager.getLink(peer.nodeId);
     expect(dcCalls()).toBe(afterTrip);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
     const [dcLocal, dcRemote] = createInMemoryLinkPair();
     echoQuiesceCaps(dcRemote);
     expect(manager.adoptLink(peer.nodeId, dcLocal, 'dc', peer.nodeId)).toBe(dcLocal);
@@ -505,5 +517,63 @@ describe('PeerManager DataChannel breaker', () => {
     expect(manager.linkDetailOf(peer.nodeId).dcBreaker.disabled).toBe(false);
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
     expect(link).toBeTruthy();
+  });
+
+  test('a second DC dial joins or skips the in-flight attempt instead of opening another PC', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcCalls = 0;
+    const rejectors: Array<(err: Error) => void> = [];
+    const rtc = {
+      available: true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      connectToPeer: () => {
+        dcCalls += 1;
+        return new Promise((_resolve, reject) => {
+          rejectors.push((err) => reject(err));
+        });
+      },
+    } as unknown as RtcPeerManager;
+    const remotes: Array<import('@vibeterm/shared/link').LinkSession> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, undefined, {
+        wsFactory: () => {
+          throw new Error('no-ws');
+        },
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      linkFactory: async () => {
+        const [local, remote] = createInMemoryLinkPair();
+        echoQuiesceCaps(remote);
+        remotes.push(remote);
+        return local;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const first = manager.getLink(peer.nodeId);
+    await waitUntil(() => dcCalls === 1);
+    manager.forceDcProbe(peer.nodeId);
+    await Bun.sleep(20);
+    expect(dcCalls).toBe(1);
+    rejectors[0]?.(new Error('dc-fail'));
+    await first;
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
   });
 });

@@ -2741,6 +2741,8 @@
           "breaker_cooling": "暂停至 {{until}}",
           "breaker_paused": "直连已暂停",
           "aborted": "尝试已取消",
+          "no_srflx": "未取得反射候选（STUN 不通或被代理拦截）",
+          "stun_unconfigured": "未配置 STUN 服务器",
           "other": "连接失败"
         },
         "ice": {

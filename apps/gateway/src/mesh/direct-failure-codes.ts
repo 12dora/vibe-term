@@ -43,6 +43,8 @@ const NO_CANDIDATE_RE = /no (ice )?candidates?|candidates? exhausted/;
 
 export function dcFailureCode(reason: string): DirectFailureCode {
   const lower = reason.toLowerCase();
+  if (/stun unconfigured/.test(lower)) return 'stun_unconfigured';
+  if (/no srflx/.test(lower)) return 'no_srflx';
   if (NO_CANDIDATE_RE.test(lower)) return 'no_candidates';
   return DC_FAILURE_CODES[classifyRtcDialFailure(reason)] ?? 'other';
 }

@@ -33,14 +33,14 @@ export function deliverRtcSignal(
   message: RtcSignalMessage
 ): boolean {
   if (!listeners || listeners.size === 0) return false;
-  for (const listener of listeners) {
+  for (const listener of [...listeners]) {
     try {
       listener(message);
     } catch {
       // listener errors must not break signaling
     }
   }
-  return true;
+  return listeners.size > 0;
 }
 
 export function shouldDropUnboundRtcSignal(input: {
@@ -59,10 +59,17 @@ export function shouldStartRtcAttempt(input: {
   allow: boolean;
   pending: boolean;
   upgrading: boolean;
+  inflight?: boolean;
   live: boolean;
   wantsUpgrade: boolean;
 }): boolean {
-  return input.allow && !input.pending && !input.upgrading && (!input.live || input.wantsUpgrade);
+  return (
+    input.allow &&
+    !input.pending &&
+    !input.upgrading &&
+    !input.inflight &&
+    (!input.live || input.wantsUpgrade)
+  );
 }
 
 export type WakeGate = {

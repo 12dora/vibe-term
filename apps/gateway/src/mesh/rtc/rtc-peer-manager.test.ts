@@ -853,4 +853,94 @@ describeRtc('RtcPeerManager', () => {
     expect(summaries[1]).toContain('attempts=3');
     expect(listeners.size).toBe(0);
   });
+
+  test('gather summary at info counts local candidate types', async () => {
+    const { left, a, b, fake } = setup({ handshakeTimeoutMs: 80 });
+    await left.ready();
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const signaling: RtcSignaling = {
+        send() {},
+        onMessage() {
+          return () => {};
+        },
+      };
+      const connect = left.connectToPeer(b.nodeId, signaling, { attemptId: 'dc:9' });
+      await Bun.sleep(10);
+      const pc = fake.connections.find((row) => row.name.includes(b.nodeId.toLowerCase()));
+      pc?.emitLocalCandidate('candidate:1 1 UDP 1 10.0.1.55 9 typ host', '0');
+      pc?.emitLocalCandidate('candidate:2 1 UDP 1 203.0.113.44 9 typ srflx', '0');
+      pc?.emitGatheringState('complete');
+      await expect(connect).rejects.toBeTruthy();
+    } finally {
+      console.log = orig;
+    }
+    const summary = lines.find((line) => line.includes('gather summary'));
+    expect(summary).toBeTruthy();
+    expect(summary).toContain(`peer=${b.nodeId}`);
+    expect(summary).toContain('attempt=dc:9');
+    expect(summary).toMatch(/host=\d+/);
+    expect(summary).toContain('srflx=1');
+    expect(summary).toContain('stun_count=0');
+    expect(summary).toContain('turn=false');
+  });
+
+  test('answerer restarts on a superseding offer instead of dropping it', async () => {
+    const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 400 });
+    const answerer = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? right : left;
+    const offererId = answerer === left ? b.nodeId : a.nodeId;
+    const selfId = answerer === left ? a.nodeId : b.nodeId;
+    const listeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    let offers = 0;
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage(cb) {
+        listeners.add(cb);
+        offers += 1;
+        queueMicrotask(() => {
+          cb({
+            rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+            from: 'node',
+            to: selfId,
+            sdp: encodeSdpSignal({
+              type: 'offer',
+              sdp: `v=0\r\na=ice-ufrag:offer-${offers}`,
+              epoch: offers,
+            }),
+          });
+          if (offers === 1) {
+            cb({
+              rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+              from: 'node',
+              to: selfId,
+              sdp: encodeSdpSignal({
+                type: 'offer',
+                sdp: 'v=0\r\na=ice-ufrag:offer-2',
+                epoch: 2,
+              }),
+            });
+          }
+        });
+        return () => listeners.delete(cb);
+      },
+    };
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      await expect(answerer.connectToPeer(offererId, signaling)).rejects.toBeTruthy();
+    } finally {
+      console.log = orig;
+    }
+    expect(lines.some((line) => line.includes('cause=superseded'))).toBe(true);
+    expect(
+      fake.connections.filter((row) => row.name.includes(offererId.toLowerCase())).length
+    ).toBeGreaterThan(1);
+  });
 });

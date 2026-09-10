@@ -1075,7 +1075,7 @@ describe('PeerManager', () => {
     seedUser(store);
     const self = seedNodeIdentity(store, 'user-1');
     const peer = seedNodeIdentity(store, 'user-1');
-    const hang = () => new Promise<Response>(() => {});
+    const pendingHttp: { resolve: ((value: Response) => void) | null } = { resolve: null };
     const managerA = new PeerManager({
       identity: self,
       userStore: store,
@@ -1087,7 +1087,10 @@ describe('PeerManager', () => {
       sessionStore: {
         verify: () => ({ ok: true, session: { userId: 'user-1' } }),
       } as unknown as import('../auth/node-session-store').NodeSessionStore,
-      dispatchHttp: hang,
+      dispatchHttp: () =>
+        new Promise<Response>((resolve) => {
+          pendingHttp.resolve = resolve;
+        }),
     });
     fixtures.push({ close, stop: () => managerA.stop() });
     await managerA.start();
@@ -1110,7 +1113,7 @@ describe('PeerManager', () => {
       sessionStore: {
         verify: () => ({ ok: true, session: { userId: 'user-1' } }),
       } as unknown as import('../auth/node-session-store').NodeSessionStore,
-      dispatchHttp: hang,
+      dispatchHttp: async () => new Response('ok'),
     });
     fixtures.push({ close, stop: () => managerB.stop() });
     const link = await managerB.getLink(self.nodeId);
@@ -1120,7 +1123,9 @@ describe('PeerManager', () => {
     await expect(
       link.openStream(new TextEncoder().encode('{"type":"http","method":"GET","path":"/"}'))
     ).rejects.toThrow('too-many-streams');
+    pendingHttp.resolve?.(new Response('ok'));
     first.end();
+    await first.closed.catch(() => undefined);
   });
 
   test('upgrades a live relay to ws-secure when peer endpoints appear without getLink', async () => {
@@ -1182,6 +1187,75 @@ describe('PeerManager', () => {
     const upgraded = managerA.getLive(peer.nodeId);
     expect(upgraded).not.toBe(relayA);
     expect(managerA.listReach().get(peer.nodeId)).toBe('lan');
+  });
+
+  test('ws-secure upgrade does not wait for an in-flight DC attempt', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcAttempts = 0;
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      connectToPeer: () => {
+        dcAttempts += 1;
+        return new Promise(() => {});
+      },
+    } as unknown as RtcPeerManager;
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      wsFactory: () => {
+        const [client, server] = fakeSocketPair();
+        void handshakeWsDirect({
+          socket: server,
+          role: 'acceptor',
+          identity: peer,
+          userStore: store,
+        });
+        return client;
+      },
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => dcAttempts >= 1, 2_000);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+    expect(dcAttempts).toBe(1);
+
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 2,
+    });
+    const started = performance.now();
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 1_000);
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(dcAttempts).toBe(1);
   });
 
   test('rate-limits background upgrade dials for unchanged endpoints', async () => {

@@ -104,6 +104,8 @@ export type DirectFailureCode =
   | 'breaker_cooling'
   | 'breaker_paused'
   | 'aborted'
+  | 'no_srflx'
+  | 'stun_unconfigured'
   | 'other';
 
 export type DirectFailureWsParams = { url?: string; seconds?: number };

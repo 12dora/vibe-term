@@ -55,6 +55,7 @@ export type DcUpgradePorts = {
   isTrusted: (nodeId: string) => boolean;
   pending: () => Map<string, Promise<LinkSession>>;
   upgrading: () => Map<string, Promise<LinkSession>>;
+  hasDcInflight: (nodeId: string) => boolean;
   probeQuiesce: (live: DcUpgradeLivePeer) => void;
   hasWsSecureCandidate: (nodeId: string) => boolean;
   lostDirect: () => Set<string>;
@@ -69,6 +70,7 @@ export class DcUpgradeCoordinator {
   upgradeInflight = 0;
   readonly upgradeWaiters: Array<() => void> = [];
   upgradeScan: { clear: () => void } | null = null;
+  private readonly wsUpgradeInflight = new Set<string>();
   private readonly ports: DcUpgradePorts;
 
   constructor(ports: DcUpgradePorts) {
@@ -221,8 +223,13 @@ export class DcUpgradeCoordinator {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
-    // 有在途拨号就先合并；但必须自己排一次重试，否则合并标记会一直等不到下一个触发点。
-    if (this.ports.pending().has(nodeId) || this.ports.upgrading().has(nodeId)) {
+    const wsSecure = live.transport === 'relay' && this.ports.hasWsSecureCandidate(nodeId);
+    if (
+      !(wsSecure && !this.wsUpgradeInflight.has(nodeId)) &&
+      (this.ports.pending().has(nodeId) ||
+        this.ports.upgrading().has(nodeId) ||
+        this.ports.hasDcInflight(nodeId))
+    ) {
       this.ensureGate(nodeId).coalesced = true;
       this.scheduleCoalescedUpgrade(nodeId);
       return;
@@ -236,19 +243,22 @@ export class DcUpgradeCoordinator {
     gate.coalesced = false;
     this.queueUpgrade(nodeId);
   }
-
   queueUpgrade(nodeId: string): void {
     const upgrading = this.ports.upgrading();
-    if (upgrading.has(nodeId)) {
+    const live = this.ports.live().get(nodeId);
+    const wsSecure = live?.transport === 'relay' && this.ports.hasWsSecureCandidate(nodeId);
+    if (upgrading.has(nodeId) && (!wsSecure || this.wsUpgradeInflight.has(nodeId))) {
       this.ensureGate(nodeId).coalesced = true;
       return;
     }
-    const before = this.ports.live().get(nodeId)?.session ?? null;
+    const before = live?.session ?? null;
     const upgrade = this.runUpgradeDial(nodeId, before);
+    if (wsSecure) this.wsUpgradeInflight.add(nodeId);
     upgrading.set(nodeId, upgrade);
     void upgrade
       .catch(() => undefined)
       .finally(() => {
+        this.wsUpgradeInflight.delete(nodeId);
         if (upgrading.get(nodeId) === upgrade) upgrading.delete(nodeId);
         if (this.upgradeGate.get(nodeId)?.coalesced && !this.ports.stopped()) {
           this.scheduleCoalescedUpgrade(nodeId);

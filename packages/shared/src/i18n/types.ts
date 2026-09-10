@@ -2471,6 +2471,8 @@ export type TranslationKey =
   | 'nodes.badge.failure.breaker_cooling'
   | 'nodes.badge.failure.breaker_paused'
   | 'nodes.badge.failure.aborted'
+  | 'nodes.badge.failure.no_srflx'
+  | 'nodes.badge.failure.stun_unconfigured'
   | 'nodes.badge.failure.other'
   | 'nodes.badge.ice'
   | 'nodes.badge.ice.new'

@@ -83,7 +83,14 @@ function livePeer(nodeId: string, transport: PeerTransportKind = 'ws-secure'): D
   };
 }
 
-function makeCoordinator(opts: { scheduler?: MeshScheduler; recordDialFailure?: boolean } = {}) {
+function makeCoordinator(
+  opts: {
+    scheduler?: MeshScheduler;
+    recordDialFailure?: boolean;
+    dcInflight?: () => boolean;
+    hasWsSecure?: () => boolean;
+  } = {}
+) {
   const scheduler = opts.scheduler ?? new ManualScheduler();
   const live = new Map<string, DcUpgradeLivePeer>();
   const pending = new Map<string, Promise<LinkSession>>();
@@ -113,8 +120,9 @@ function makeCoordinator(opts: { scheduler?: MeshScheduler; recordDialFailure?: 
     isTrusted: () => true,
     pending: () => pending,
     upgrading: () => upgrading,
+    hasDcInflight: opts.dcInflight ?? (() => false),
     probeQuiesce: () => {},
-    hasWsSecureCandidate: () => true,
+    hasWsSecureCandidate: opts.hasWsSecure ?? (() => true),
     lostDirect: () => lostDirect,
   };
   const coordinator = new DcUpgradeCoordinator(ports);
@@ -231,5 +239,30 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(unavailable.dials).toEqual([]);
     expect(unavailable.coordinator.dcUpgradeRetry.size).toBe(0);
     expect(unavailable.lostDirect.has('unavailable')).toBe(false);
+  });
+});
+
+describe('DcUpgradeCoordinator ws-secure vs DC inflight', () => {
+  test('dc inflight does not suppress a ws-secure upgrade on live relay', async () => {
+    const { coordinator, live, dials } = makeCoordinator({ dcInflight: () => true });
+    const peer = 'peer-ws';
+    live.set(peer, livePeer(peer, 'relay'));
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    coordinator.dispose();
+  });
+
+  test('dc inflight still coalesces a dc-only upgrade', async () => {
+    const { coordinator, live, dials } = makeCoordinator({
+      dcInflight: () => true,
+      hasWsSecure: () => false,
+    });
+    const peer = 'peer-dc';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    coordinator.dispose();
   });
 });

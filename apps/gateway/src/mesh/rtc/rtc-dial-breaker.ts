@@ -78,6 +78,7 @@ const INTENTIONAL_DC_LOSS = new Set([
   'not-trusted',
   'lower-priority',
   'simultaneous-dial',
+  'superseded',
 ]);
 
 const RTC_DIAL_FAILURE_RULES: ReadonlyArray<KeywordRule<string>> = [
@@ -98,6 +99,8 @@ export function isIntentionalDcLoss(reason: string | null | undefined): boolean 
   return INTENTIONAL_DC_LOSS.has(reason);
 }
 
+export { isSupersededDcLoss } from './rtc-dial-progress';
+
 export function classifyRtcDialFailure(reason: string | null | undefined): string {
   if (!reason) return 'unknown';
   const lower = reason.toLowerCase();
@@ -109,6 +112,7 @@ export function classifyRtcDialFailure(reason: string | null | undefined): strin
   );
 }
 
+/** 进程内状态，不落盘；gateway 重启即清零（不必 source=startup rearm）。 */
 export class RtcDialBreaker {
   private readonly inner: DialBreaker;
   private readonly now: () => number;
@@ -120,6 +124,7 @@ export class RtcDialBreaker {
     string,
     { lastProbeAt: number; probeArmedAt: number | null }
   >();
+  private readonly activeAttempts = new Map<string, string>();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
@@ -178,11 +183,13 @@ export class RtcDialBreaker {
   }
 
   beginAttempt(peer: string, attemptId: string): void {
+    if (this.activeAttempts.get(peer) === attemptId) return;
     const disabled = this.disabled.get(peer);
     if (disabled) {
       disabled.lastProbeAt = disabled.probeArmedAt ?? this.now();
       disabled.probeArmedAt = null;
     }
+    this.activeAttempts.set(peer, attemptId);
     this.inner.beginAttempt(peer, attemptId);
   }
 
@@ -221,6 +228,7 @@ export class RtcDialBreaker {
   rearmDisabled(peer: string, source: DcRearmSource): boolean {
     if (!this.disabled.has(peer)) return false;
     this.disabled.delete(peer);
+    this.activeAttempts.delete(peer);
     this.inner.reset(peer);
     this.onRearm?.({ peer, source });
     return true;
@@ -236,8 +244,13 @@ export class RtcDialBreaker {
   }
 
   reset(peer?: string): void {
-    if (peer) this.disabled.delete(peer);
-    else this.disabled.clear();
+    if (peer) {
+      this.disabled.delete(peer);
+      this.activeAttempts.delete(peer);
+    } else {
+      this.disabled.clear();
+      this.activeAttempts.clear();
+    }
     this.inner.reset(peer);
   }
 

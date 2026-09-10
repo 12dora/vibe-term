@@ -168,15 +168,17 @@ export async function runDirectDialRace<T>(
 export function settleAbandonedDcDial(
   connectP: Promise<{ pc: { close(): void } }> | null,
   noteFailure: (reason: string) => void
-): void {
-  if (!connectP) return;
-  void connectP.then(
+): Promise<void> {
+  if (!connectP) return Promise.resolve();
+  return connectP.then(
     (late) => {
       try {
         late.pc.close();
       } catch {}
     },
-    (err) => noteFailure(err instanceof Error ? err.message : String(err))
+    (err) => {
+      noteFailure(err instanceof Error ? err.message : String(err));
+    }
   );
 }
 
@@ -270,4 +272,45 @@ export function raceForegroundDial<T>(
       ports.close(session, 'dial-race-lost');
     },
   });
+}
+
+export type BackgroundDirectPorts<T> = {
+  dc: DialRaceLeg<T>;
+  ws: DialRaceLeg<T>;
+  skipDcFirst: boolean;
+  signal: AbortSignal;
+  liveOf: DialRaceLeg<T>;
+  throwIfStopped: () => void;
+};
+
+/**
+ * 后台升级：DC 与 ws-secure 并行。DC 可以继续跑（晚到由 track / pending 收），
+ * 但 ws-secure 不再等 DC 的 15 s 超时。
+ */
+export async function runBackgroundDirect<T>(
+  opts: BackgroundDirectPorts<T>
+): Promise<{ session: T | null; pending: Promise<T | null> | null }> {
+  const step = async (run: DialRaceLeg<T>): Promise<T | null> => {
+    const got = await run(opts.signal);
+    if (got) return got;
+    opts.throwIfStopped();
+    return null;
+  };
+  if (opts.skipDcFirst) {
+    for (const run of [opts.ws, opts.liveOf, opts.dc, opts.liveOf]) {
+      const got = await step(run);
+      if (got) return { session: got, pending: null };
+    }
+    return { session: null, pending: null };
+  }
+  const dcP = opts.dc(opts.signal).then(
+    (session) => session,
+    () => null
+  );
+  const ws = await step(opts.ws);
+  if (ws) return { session: ws, pending: dcP };
+  const dc = await dcP;
+  if (dc) return { session: dc, pending: null };
+  opts.throwIfStopped();
+  return { session: await opts.liveOf(opts.signal), pending: null };
 }

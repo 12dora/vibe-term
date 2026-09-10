@@ -67,7 +67,7 @@ endpoint recovered node=<id> addr=<host:port>
 
 **算失败**：拨号失败，以及通道打开后的异常关闭——`liveness-timeout`、`missed-pong`、`timeout`、`ice`、`channel-error`、`channel-closed`、`protocol`、`transport-lost`。
 
-**不算失败**（有意的关闭）：`stopped`、`revoked`、`idle`、`replaced`、`stale`、`not-trusted`、`lower-priority`、`simultaneous-dial`。`dialDc` 对 `AbortError` 及消息里含 `abort` 的错误也不计，避免 `stop()` 与竞态 abort 误触发。注意被取消的拨号若晚到失败仍照记进熔断器——否则「取消」会把 DC 坏掉这件事从账上抹掉。
+**不算失败**（有意的关闭）：`stopped`、`revoked`、`idle`、`replaced`、`stale`、`not-trusted`、`lower-priority`、`simultaneous-dial`、`superseded`。`dialDc` 对 `AbortError` 及消息里含 `abort` 的错误也不计，避免 `stop()` 与竞态 abort 误触发。注意被取消的拨号若晚到失败仍照记进熔断器——否则「取消」会把 DC 坏掉这件事从账上抹掉。同一 `peer+attemptId` 的 `beginAttempt` / `noteFailure` 幂等，竞速 abort 后 `settleAbandonedDcDial` 不会再记一笔。熔断器只活在进程内存里，gateway 重启即清零。
 
 ### 冷却期间
 
@@ -89,9 +89,12 @@ endpoint recovered node=<id> addr=<host:port>
 ```
 [mesh][rtc] breaker trip peer=<id> fails=<n> level=<n> cooldown_ms=<ms> until=<iso>
 [mesh][rtc] breaker reset peer=<id> healthy_ms=<ms>
+[mesh][rtc] gather summary peer=<id> attempt=<id> host=<n> srflx=<n> relay=<n> stun_count=<n> turn=<bool>
+[mesh][rtc] dial timeout peer=<id> stage=<gathering|no-remote-sdp|checking|dtls|handshake> local_types=[…] remote_types=[…] stun_count=<n> turn=<bool>
+[mesh][rtc] dial failed peer=<id> reason=… stun_count=<n> turn=<bool> attempt=<id>
 ```
 
-每次状态迁移各一条。冷却期内跳过的拨号打在既有的 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60s 聚合并带 `count=`。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。
+每次状态迁移各一条。冷却期内跳过的拨号打在既有的 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60s 聚合并带 `count=`。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。同一 PeerConnection 的 `[mesh][rtc]` 行带 `attempt=` 与 `epoch=`，用来区分重叠拨号。`gather summary` 在本地 ICE gathering 完成时打一条 info，用来判断有没有 srflx。
 
 ### 对外字段
 
@@ -118,13 +121,16 @@ MeshNode.dcBreaker?: {
 陈旧信令重放曾是直连建不起来的主因：`rtcSession = dc:<lo>:<hi>` 对同一对节点恒定，offerer 拨号失败后注销监听，answerer 仍按重试产生新 answer 进入 `rtcInbox`；冷却结束后新 PeerConnection 在 `bindSignaling` 时同步重放 inbox，把 answer 打在 `stable` 状态的 PC 上抛错，或同一次尝试收到两个 answer 导致 PC 绑错 ufrag → `datachannel open timeout`。现在：
 
 - SDP / candidate 的 JSON 信封带可选 `epoch`（offerer 每次拨号生成，answerer 从 offer 回显）；`rtcSession` 字符串不变（hub 路由按 `dc:<a>:<b>` 解析）。收到 `epoch` 已定义且不匹配的消息直接丢弃；`epoch` 未定义视为旧节点，退回按类型过滤。
-- `bindSignaling` 带 `expect: 'offer' | 'answer'`，错类型丢弃，offerer 每次尝试只应用一个 answer；`setRemoteDescription` / `addRemoteCandidate` 各自 try/catch 记 `signal dropped`。
+- Answerer 已绑定 epoch N 时，若再收到 offer N+1：打 `signal dropped cause=superseded`，关掉当前 PC（计为有意关闭，不记熔断），inbox 这条 offer 并立刻开一台新的 answerer PC。更旧的 epoch、`duplicate-answer`、以及 epoch 尚未确定时提前到达的 candidate 仍直接丢弃。
+- `bindSignaling` 带 `expect: 'offer' | 'answer'`，错类型丢弃，offerer 每次尝试只应用一个 answer；`setRemoteDescription` 失败打 info 且不再把 candidate 喂给 libdatachannel（先排队，等远端描述应用成功再 flush）。
 - `bindSignaling` 与 `trackPc` 纳入 `connectToPeer` 统一清理区；inbox 重放走 microtask 且先返回 unsubscribe；inbox 条目带 `receivedAt`，30 s 过期；offerer 无监听时不缓存 answer，无尝试时不缓存 candidate。
+- `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过。前台 4 s 竞速截止**不** abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 DC 仍在飞时也不提前清掉 `pending`。
 - 测试假件 `FakePeerConnection` 实现 `stable / have-local-offer / have-remote-offer` 状态机并复现 libdatachannel 的异常。
 
 ### ICE / 拨号
 
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
+
 - `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算，见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
 - node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
 
@@ -146,7 +152,7 @@ MeshNode.dcBreaker?: {
 
 服务端把两类原因收敛成**稳定错误码**（`DirectFailureCode`）连同插值参数一起下发，原文保留给旧前端兜底；前端按码翻 `nodes.badge.failure.<code>`，码缺失或不认识就显示原文。码表是对外契约：`packages/api-client/src/auth/types.ts` 的 `DIRECT_FAILURE_CODES`；网关不依赖 `@vibeterm/api-client`，在 `apps/gateway/src/mesh/peer-manager-types.ts` 镜像一份——**改码表要两边一起改，并同步三语文案**。
 
-23 个码：`timeout`、`refused`、`unreachable`、`reset`、`tls`、`handshake`、`revoked`、`untrusted`、`backoff`、`no_endpoints`、`ice_failed`、`no_candidates`、`dc_open_timeout`、`dc_closed`、`liveness_timeout`、`signal_dropped`、`signaling_state`、`rtc_unavailable`、`not_direct_capable`、`breaker_cooling`、`breaker_paused`、`aborted`、`other`。
+25 个码：`timeout`、`refused`、`unreachable`、`reset`、`tls`、`handshake`、`revoked`、`untrusted`、`backoff`、`no_endpoints`、`ice_failed`、`no_candidates`、`dc_open_timeout`、`dc_closed`、`liveness_timeout`、`signal_dropped`、`signaling_state`、`rtc_unavailable`、`not_direct_capable`、`breaker_cooling`、`breaker_paused`、`aborted`、`no_srflx`、`stun_unconfigured`、`other`。
 
 DTO（`MeshNodeDirectFailure`）：
 
@@ -191,6 +197,8 @@ DataChannel 侧：`dcFailureReason` 返回 `{ text, code, params? }`，分类复
 | `protocol` | `handshake` |
 | `channel-error` / `channel-closed` / `transport-lost` | `dc_closed` |
 | `signaling-state` | `signaling_state` |
+| `no srflx candidates` | `no_srflx` |
+| `stun unconfigured` | `stun_unconfigured` |
 | 其余 | `other` |
 
 前置判定（不进分类器）：`directCapable === false` → `not_direct_capable`；WebRTC 不可用 → `rtc_unavailable`；熔断未放行 → `breaker_cooling` / `breaker_paused`。
@@ -212,7 +220,7 @@ DataChannel 侧：`dcFailureReason` 返回 `{ text, code, params? }`，分类复
 
 ICE 明细同样按枚举翻译：`connectionState` / `iceConnectionState` → `nodes.badge.ice.<state>`（W3C 枚举 8 个），候选类型 → `nodes.badge.candidate.<host|srflx|prflx|relay>`，浏览器方言原样展示。`selectedPair` 保持 `本端 → 对端` 形状、两端各自翻译，两端都取不到时退回整串原文。RTT 单位仍是 `ms`，`peerAddress` 保留原文。
 
-文案：`nodes.badge.failure.*`（23）、`nodes.badge.ice.*`（8）、`nodes.badge.candidate.*`（4），三语同步。
+文案：`nodes.badge.failure.*`（25）、`nodes.badge.ice.*`（8）、`nodes.badge.candidate.*`（4），三语同步。
 
 ## 测试
 

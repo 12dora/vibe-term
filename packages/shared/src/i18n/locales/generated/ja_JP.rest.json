@@ -1980,6 +1980,8 @@
           "breaker_cooling": "{{until}} まで停止中",
           "breaker_paused": "直接接続は停止中",
           "aborted": "試行を中止",
+          "no_srflx": "反射候補を取得できません（STUN 不通またはプロキシ遮断）",
+          "stun_unconfigured": "STUN サーバ未設定",
           "other": "接続失敗"
         },
         "ice": {

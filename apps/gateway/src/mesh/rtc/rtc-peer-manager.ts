@@ -19,14 +19,11 @@ import {
 } from './carrier-switch';
 import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelCarrier } from './data-channel-carrier';
-import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
-import { handshakeDataChannel } from './dc-handshake';
+import type { DataChannelLink, DataChannelLinkOptions } from './data-channel-link';
 import {
   type RtcSignaling,
   buildRtcIceConfig,
-  encodeCandidateSignal,
-  encodeSdpSignal,
-  isEmptyCandidate,
+  buildRtcIceConfigResolved,
   peerRtcSession,
 } from './ice';
 import type {
@@ -37,28 +34,31 @@ import type {
   PeerConnectionLike,
 } from './native';
 import {
-  type IceCandidateTrace,
+  createRtcDialProgress,
+  isRtcTimeoutFailure,
+  isSupersededDcLoss,
+} from './rtc-dial-progress';
+import {
+  type RtcLogContext,
   createIceCandidateTrace,
   rtcLog,
-  rtcLogCandidate,
+  runWithRtcLogContext,
 } from './rtc-log';
+import { bindPeerSignaling, runPeerHandshake } from './rtc-peer-connect';
 import {
   type LocalDescriptionEvent,
   type LocalDescriptionHub,
   type RtcDialAggregate,
-  type SignalingAttemptState,
   attachPcDiagnostics,
-  bindChannelDiagnostics,
   createRtcDialAggregate,
-  createRtcSignalApplier,
   emptyPairCounts,
   fingerprintsEqual,
   formatPairCounts,
-  logCreatedChannel,
   logRtcDialStart,
+  logRtcDialTimeout,
   parseNonceMessage,
-  remainingDeadlineMs,
   selectedCandidatePairType,
+  timeoutFailureMessage,
   waitChannelOpen,
   waitDataChannel,
   waitFirstMessage,
@@ -74,6 +74,10 @@ export const CONNECT_TIMEOUT_MS = 15_000;
 export const RTC_SUMMARY_INTERVAL_MS = 60_000;
 
 export type IceConfigProvider = () => IceServerConfig;
+
+export type ConnectToPeerOptions = {
+  attemptId?: string;
+};
 
 export type RtcLivenessOptions = Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'>;
 
@@ -161,6 +165,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly localDescriptionHubs = new WeakMap<PeerConnectionLike, LocalDescriptionHub>();
   private readonly dialAggregates = new Map<string, RtcDialAggregate>();
   private rtcAttemptEpoch = 0;
+  private logSeq = 0;
   private probePc: PeerConnectionLike | null = null;
   private probeFp: DtlsFingerprint | null = null;
   private sweepTimer: ReturnType<typeof setInterval> | null = null;
@@ -195,6 +200,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   get available(): boolean {
     if (this.nativeMissing) return false;
     return this.nativeLoadAllowed();
+  }
+
+  currentIceConfig(): IceServerConfig {
+    return this.iceConfigProvider();
   }
 
   async ready(): Promise<boolean> {
@@ -236,12 +245,51 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     return { pc, fingerprint, channel };
   }
 
-  async connectToPeer(peerNodeId: string, signaling: RtcSignaling): Promise<DcPeerConnectResult> {
+  async connectToPeer(
+    peerNodeId: string,
+    signaling: RtcSignaling,
+    opts?: ConnectToPeerOptions
+  ): Promise<DcPeerConnectResult> {
     if (!this.nativeLoadAllowed()) {
       throw new PeerHandshakeError('protocol', 'node-datachannel is not available');
     }
     await this.ensureNative();
     const deadline = performance.now() + this.handshakeTimeoutMs;
+    const ctx: RtcLogContext = {
+      peer: peerNodeId,
+      attempt: opts?.attemptId ?? `pc:${this.nextLogSeq()}`,
+    };
+    return runWithRtcLogContext(ctx, () =>
+      this.connectToPeerUntilDeadline(peerNodeId, signaling, deadline, ctx)
+    );
+  }
+
+  private nextLogSeq(): number {
+    this.logSeq = (this.logSeq % Number.MAX_SAFE_INTEGER) + 1;
+    return this.logSeq;
+  }
+
+  private async connectToPeerUntilDeadline(
+    peerNodeId: string,
+    signaling: RtcSignaling,
+    deadline: number,
+    ctx: RtcLogContext
+  ): Promise<DcPeerConnectResult> {
+    for (;;) {
+      try {
+        return await this.connectToPeerOnce(peerNodeId, signaling, deadline, ctx);
+      } catch (err) {
+        if (!isSupersededDcLoss(err) || performance.now() >= deadline) throw err;
+      }
+    }
+  }
+
+  private async connectToPeerOnce(
+    peerNodeId: string,
+    signaling: RtcSignaling,
+    deadline: number,
+    ctx: RtcLogContext
+  ): Promise<DcPeerConnectResult> {
     const dialStartedAt = performance.now();
     const native = this.requireNative();
     const self = this.identity.nodeId.toLowerCase();
@@ -249,81 +297,86 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     const offerer = self < peer;
     const rtcSession = peerRtcSession(self, peer);
     const ice = this.iceConfigProvider();
-    const rtcConfig = buildRtcIceConfig(ice);
+    const rtcConfig = await buildRtcIceConfigResolved(ice);
     const role = offerer ? 'offerer' : 'answerer';
     const epoch = offerer ? this.nextRtcAttemptEpoch() : undefined;
+    ctx.epoch = epoch;
     logRtcDialStart(peerNodeId, role, ice, rtcConfig);
     const pc = new native.PeerConnection(`${self}->${peer}`, rtcConfig);
     const trace = createIceCandidateTrace();
+    const progress = createRtcDialProgress();
     let unsubDiag = () => {};
     let unsubSignaling = () => {};
     let summaryNoted = false;
+    let rejectSuperseded: ((err: Error) => void) | null = null;
+    const superseded = new Promise<never>((_, reject) => {
+      rejectSuperseded = reject;
+    });
     try {
       this.trackPc(pc);
       this.prepareLocalDescriptions(pc);
-      unsubDiag = attachPcDiagnostics(pc, peerNodeId, trace);
-      unsubSignaling = this.bindSignaling(
+      unsubDiag = attachPcDiagnostics(pc, peerNodeId, trace, { ice, progress, ctx });
+      unsubSignaling = bindPeerSignaling(
         pc,
         signaling,
         rtcSession,
         peer,
         offerer ? 'answer' : 'offer',
+        (target, listener) => this.onLocalDescription(target, listener),
         epoch,
-        trace
+        trace,
+        {
+          ctx,
+          onSuperseded: () => {
+            unsubSignaling();
+            rejectSuperseded?.(new Error('superseded'));
+          },
+          onEpoch: (next) => {
+            ctx.epoch = next;
+          },
+          onRemoteDescriptionApplied: () => {
+            progress.remoteDescriptionApplied = true;
+          },
+        }
       );
-      const channelP = offerer
-        ? Promise.resolve(logCreatedChannel(pc.createDataChannel(PEER_CHANNEL_LABEL), peerNodeId))
-        : waitDataChannel(
-            pc,
-            remainingDeadlineMs(deadline, 'datachannel open timeout'),
-            undefined,
-            peerNodeId
-          );
-      const channel = fanoutDataChannel(await channelP, { peer: peerNodeId });
-      bindChannelDiagnostics(channel, peerNodeId);
-      await waitChannelOpen(channel, remainingDeadlineMs(deadline, 'datachannel open timeout'));
-      const localFp = await this.waitLocalFingerprint(
+      const work = runPeerHandshake({
         pc,
-        remainingDeadlineMs(deadline, 'local DTLS fingerprint unavailable')
-      );
-      const hs = await handshakeDataChannel({
-        channel,
-        pc,
+        peerNodeId,
+        offerer,
+        deadline,
+        progress,
         identity: this.identity,
         userStore: this.userStore,
-        localFingerprint: localFp,
-        timeoutMs: remainingDeadlineMs(deadline, 'peer handshake timeout'),
+        liveness: this.liveness,
+        waitLocalFingerprint: (target, timeoutMs) => this.waitLocalFingerprint(target, timeoutMs),
       });
-      if (!channel.isOpen()) {
-        throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
-      }
-      const link = new DataChannelLink(channel, {
-        peer: peerNodeId,
-        ...(this.liveness === false ? { liveness: false as const } : this.liveness),
-      });
-      if (hs.peerNodeId !== peer) {
-        throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
-      }
+      void work.catch(() => undefined);
+      const result = await Promise.race([work, superseded]);
       this.noteDialSummary(peerNodeId, pc, 'success', performance.now() - dialStartedAt);
       summaryNoted = true;
-      link.onClose(() => {
+      result.link.onClose(() => {
         unsubSignaling();
         unsubDiag();
         this.untrackAndClose(pc);
       });
-      return {
-        link,
-        pc,
-        peerNodeId: hs.peerNodeId,
-        role: offerer ? 'initiator' : 'acceptor',
-      };
+      return result;
     } catch (err) {
       if (!summaryNoted) {
         this.noteDialSummary(peerNodeId, pc, 'failure', performance.now() - dialStartedAt);
       }
+      const reason = err instanceof Error ? err.message : String(err);
+      if (isRtcTimeoutFailure(reason)) {
+        logRtcDialTimeout(peerNodeId, pc, trace, progress, ice, reason);
+      }
       unsubSignaling();
       unsubDiag();
       this.untrackAndClose(pc);
+      if (isRtcTimeoutFailure(reason)) {
+        throw new PeerHandshakeError(
+          'timeout',
+          timeoutFailureMessage(progress, ice, trace.localCounts, reason)
+        );
+      }
       throw err;
     }
   }
@@ -356,12 +409,13 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     if (!rec || !rec.nonce || !rec.fpBrowser || rec.exp <= this.now()) {
       throw new PeerHandshakeError('protocol', 'rtc session is not authorized');
     }
-    const unsubSignaling = this.bindSignaling(
+    const unsubSignaling = bindPeerSignaling(
       rec.pc,
       signaling,
       rtcSession,
       this.identity.nodeId.toLowerCase(),
-      'offer'
+      'offer',
+      (target, listener) => this.onLocalDescription(target, listener)
     );
     let keepSignaling = false;
     try {
@@ -619,52 +673,5 @@ export class RtcPeerManager implements RtcFingerprintProvider {
       (listener) => this.onLocalDescription(pc, listener),
       timeoutMs
     );
-  }
-
-  private bindSignaling(
-    pc: PeerConnectionLike,
-    signaling: RtcSignaling,
-    rtcSession: string,
-    to: string,
-    expect: 'offer' | 'answer',
-    epoch?: number,
-    trace?: IceCandidateTrace
-  ): () => void {
-    const iceTrace = trace ?? createIceCandidateTrace();
-    const state: SignalingAttemptState = { epoch, answerApplied: false };
-    const unsubLocalDescription = this.onLocalDescription(pc, ({ sdp, type }) => {
-      rtcLog('signal send', { peer: to, kind: 'sdp', sdp_type: type });
-      signaling.send({
-        rtcSession,
-        from: 'node',
-        to,
-        sdp: encodeSdpSignal({
-          type,
-          sdp,
-          ...(state.epoch !== undefined ? { epoch: state.epoch } : {}),
-        }),
-      });
-    });
-    pc.onLocalCandidate((candidate, mid) => {
-      if (isEmptyCandidate(candidate)) return;
-      rtcLogCandidate('send', to, candidate, iceTrace);
-      signaling.send({
-        rtcSession,
-        from: 'node',
-        to,
-        candidate: encodeCandidateSignal(candidate, mid, state.epoch),
-      });
-    });
-    const apply = createRtcSignalApplier(pc, to, expect, state, iceTrace);
-    try {
-      const unsubSignaling = signaling.onMessage(apply);
-      return () => {
-        unsubSignaling();
-        unsubLocalDescription();
-      };
-    } catch (err) {
-      unsubLocalDescription();
-      throw err;
-    }
   }
 }

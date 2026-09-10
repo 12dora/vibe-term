@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { type LogLevel, logAt } from '../../log/level';
 import { stamp } from '../mesh-log';
 import { maskIceAddress, maskIceCandidate, parseIceCandidateType } from './ice';
@@ -9,15 +10,41 @@ export const RTC_DIAL_FAILED_LOG_INTERVAL_MS = 60_000;
 const lastLogAt = new Map<string, number>();
 const dialFailedAt = new Map<string, { at: number; suppressed: number }>();
 
+export type IceTypeCountKey = 'host' | 'srflx' | 'prflx' | 'relay';
+export type IceTypeCounts = Record<IceTypeCountKey, number>;
+
 export type IceCandidateTrace = {
   local: Set<string>;
   remote: Set<string>;
+  localCounts: IceTypeCounts;
+  remoteCounts: IceTypeCounts;
 };
+
+export type RtcLogContext = {
+  peer?: string;
+  attempt?: string;
+  epoch?: number;
+};
+
+const rtcLogContext = new AsyncLocalStorage<RtcLogContext>();
 
 const TYPE_ORDER = ['host', 'srflx', 'prflx', 'relay'] as const;
 
+export function emptyIceTypeCounts(): IceTypeCounts {
+  return { host: 0, srflx: 0, prflx: 0, relay: 0 };
+}
+
 export function createIceCandidateTrace(): IceCandidateTrace {
-  return { local: new Set(), remote: new Set() };
+  return {
+    local: new Set(),
+    remote: new Set(),
+    localCounts: emptyIceTypeCounts(),
+    remoteCounts: emptyIceTypeCounts(),
+  };
+}
+
+export function runWithRtcLogContext<T>(ctx: RtcLogContext, fn: () => T): T {
+  return rtcLogContext.run(ctx, fn);
 }
 
 export function noteCandidate(
@@ -26,7 +53,12 @@ export function noteCandidate(
   candidate: string
 ): string | null {
   const type = parseIceCandidateType(candidate);
-  if (type) trace[side].add(type);
+  if (!type) return null;
+  trace[side].add(type);
+  if (type === 'host' || type === 'srflx' || type === 'prflx' || type === 'relay') {
+    const counts = side === 'local' ? trace.localCounts : trace.remoteCounts;
+    counts[type] += 1;
+  }
   return type;
 }
 
@@ -66,12 +98,19 @@ function emitRtc(line: string, level: LogLevel): void {
   logAt(level, stamp(line));
 }
 
+function mergeRtcLogFields(fields: Record<string, unknown>): Record<string, unknown> {
+  const ctx = rtcLogContext.getStore();
+  if (!ctx) return fields;
+  return { ...ctx, ...fields };
+}
+
 export function rtcLog(event: string, fields: Record<string, unknown> = {}): void {
-  if (event === 'dial failed' && typeof fields.peer === 'string') {
-    logDialFailed(fields.peer, fields);
+  const merged = mergeRtcLogFields(fields);
+  if (event === 'dial failed' && typeof merged.peer === 'string') {
+    logDialFailed(merged.peer, merged);
     return;
   }
-  emitRtc(formatRtcLog(event, fields), rtcLogLevel(event));
+  emitRtc(formatRtcLog(event, merged), rtcLogLevel(event));
 }
 
 export function resetRtcLogStateForTest(): void {

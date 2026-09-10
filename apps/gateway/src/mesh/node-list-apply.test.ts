@@ -5,6 +5,7 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import {
   type NodeListApplyDeps,
+  applyUplinkNodeList,
   emitRenameNodeEvent,
   reconcileHubStoreFromNodeList,
 } from './node-list-apply';
@@ -165,6 +166,28 @@ describe('emitRenameNodeEvent', () => {
       emitRenameNodeEvent(d, PEER, 'peer');
       expect(events[1]).toEqual({ nodeId: PEER, name: 'peer', status: 'offline' });
       expect(names).toEqual(['studio']);
+    } finally {
+      close();
+    }
+  });
+});
+
+describe('applyUplinkNodeList STUN guard', () => {
+  test('empty hub STUN list does not blank a local lastRtc', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const d = applyDeps(hubStore, userStore);
+      d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
+      applyUplinkNodeList(d, listOf([]), () => false);
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:local:3478'], turn: null });
+      applyUplinkNodeList(
+        d,
+        { ...listOf([]), rtc: { stun: ['stun:hub:3478'], turn: null } },
+        () => false
+      );
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:hub:3478'], turn: null });
     } finally {
       close();
     }
