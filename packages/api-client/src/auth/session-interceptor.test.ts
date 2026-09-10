@@ -133,15 +133,49 @@ describe('session interceptor', () => {
           status: 401,
         })
     );
-    await client.fetch(`/n/${NODE_D}/api/rtc/authorize`);
+    await client.fetch(`/n/${NODE_D}/api/devices`);
+    await flush();
+
+    expect(events).toEqual([{ nodeId: NODE_D, scope: 'node', path: `/n/${NODE_D}/api/devices` }]);
+    expect(navigated).toEqual([]);
+    expect(warn).toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  // 直连协商（`/api/mesh/connection`、`/api/rtc/authorize`）必须由目标 node 自己作答：
+  // 中转入口代答的 401 说的是「这条入口给不出直连」，与目标 node 的会话无关，
+  // 派事件出去会让该行显示「登录此节点」（每次 WS 重连撞一次）。
+  for (const negotiation of ['/api/rtc/authorize', '/api/mesh/connection']) {
+    test(`直连协商 ${negotiation} 被入口代答的 401 不派任何事件`, async () => {
+      const { events, navigated } = setup();
+      const client = clientReturning(
+        () =>
+          new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: HUB_NODE }), {
+            status: 401,
+          })
+      );
+      await client.fetch(`/n/${NODE_D}${negotiation}`);
+      await flush();
+
+      expect(events).toEqual([]);
+      expect(navigated).toEqual([]);
+    });
+  }
+
+  test('直连协商 401 的 body 就是目标 node 自己时照旧派事件', async () => {
+    const { events } = setup();
+    const client = clientReturning(
+      () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE_D }), {
+          status: 401,
+        })
+    );
+    await client.fetch(`/n/${NODE_D}/api/rtc/authorize?cid=abc`);
     await flush();
 
     expect(events).toEqual([
       { nodeId: NODE_D, scope: 'node', path: `/n/${NODE_D}/api/rtc/authorize` },
     ]);
-    expect(navigated).toEqual([]);
-    expect(warn).toHaveBeenCalled();
-    warn.mockRestore();
   });
 
   test('node runtime 的 baseUrl 路径同样以路径 node 为准', async () => {
@@ -154,12 +188,10 @@ describe('session interceptor', () => {
         }),
       `/n/${NODE_C}`
     );
-    await client.fetch('/api/rtc/authorize');
+    await client.fetch('/api/devices');
     await flush();
 
-    expect(events).toEqual([
-      { nodeId: NODE_C, scope: 'node', path: `/n/${NODE_C}/api/rtc/authorize` },
-    ]);
+    expect(events).toEqual([{ nodeId: NODE_C, scope: 'node', path: `/n/${NODE_C}/api/devices` }]);
     warn.mockRestore();
   });
 

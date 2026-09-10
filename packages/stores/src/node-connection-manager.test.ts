@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { nodeWsUrl } from '@vibeterm/api-client';
+import { onAuthRequired } from '@vibeterm/api-client/auth/session-interceptor';
 import {
   type GatewayConnection,
   type WebSocketLike,
@@ -11,6 +12,7 @@ import {
   createDefaultNodeConnection,
   nodeStoragePrefix,
 } from './node-connection-manager';
+import type { NodeSessionProbe } from './node-session-guard';
 import { installWindowStorage } from './test-utils';
 
 installWindowStorage();
@@ -375,6 +377,115 @@ describe('WS 4401（会话失效）', () => {
     expect(closed).toEqual([]);
     expect(unauthorized).toEqual([]);
     manager.disposeAll();
+  });
+});
+
+describe('WS 4401 的会话探测（非 self）', () => {
+  interface ProbeHarness {
+    manager: NodeConnectionManager;
+    connects: string[];
+    disconnects: string[];
+    loginRequired: string[];
+    socketClose: (nodeId: string, code: number) => void;
+    stop: () => void;
+  }
+
+  function probeHarness(options: {
+    probe: (nodeId: string) => Promise<NodeSessionProbe>;
+    relogin?: (nodeId: string) => Promise<boolean>;
+  }): ProbeHarness {
+    const connects: string[] = [];
+    const disconnects: string[] = [];
+    const loginRequired: string[] = [];
+    const onCloseByNode = new Map<string, (code: number) => void>();
+    const stop = onAuthRequired((detail) => {
+      if (detail.scope === 'node') loginRequired.push(detail.nodeId);
+    });
+    const manager = new NodeConnectionManager({
+      graceMs: 30_000,
+      setTimeoutFn: clock.schedule,
+      clearTimeoutFn: clock.cancel,
+      probeNodeSession: options.probe,
+      ...(options.relogin ? { reloginNode: options.relogin } : {}),
+      createConnection: (nodeId, onClose) => {
+        onCloseByNode.set(nodeId, onClose);
+        const connection = makeConnection();
+        return {
+          ...connection,
+          client: {
+            disconnect: () => disconnects.push(nodeId),
+            connect: () => connects.push(nodeId),
+          } as never,
+          dispose: () => undefined,
+        };
+      },
+    });
+    return {
+      manager,
+      connects,
+      disconnects,
+      loginRequired,
+      socketClose: (nodeId, code) => onCloseByNode.get(nodeId)?.(code),
+      stop,
+    };
+  }
+
+  /** 探测是异步的：让微任务队列跑干净再看结论。 */
+  const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  test('探测成功：停连接后按退避重连，不派发「登录此节点」', async () => {
+    const h = probeHarness({ probe: () => Promise.resolve('ok') });
+    h.manager.acquire(NODE_A);
+    h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    await settle();
+    expect(h.disconnects).toEqual([NODE_A]);
+    expect(h.loginRequired).toEqual([]);
+    clock.advance(1_000);
+    expect(h.connects).toEqual([NODE_A]);
+    h.manager.disposeAll();
+    h.stop();
+  });
+
+  test('探测判定要重新登录且重登失败：退回「登录此节点」', async () => {
+    const h = probeHarness({
+      probe: () => Promise.resolve('login-required'),
+      relogin: () => Promise.resolve(false),
+    });
+    h.manager.acquire(NODE_A);
+    h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    await settle();
+    expect(h.loginRequired).toEqual([NODE_A]);
+    clock.advance(60_000);
+    expect(h.connects).toEqual([]);
+    h.manager.disposeAll();
+    h.stop();
+  });
+
+  test('重登成功：重连而不是把该 node 判成未登录', async () => {
+    const h = probeHarness({
+      probe: () => Promise.resolve('login-required'),
+      relogin: () => Promise.resolve(true),
+    });
+    h.manager.acquire(NODE_A);
+    h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    await settle();
+    expect(h.loginRequired).toEqual([]);
+    clock.advance(1_000);
+    expect(h.connects).toEqual([NODE_A]);
+    h.manager.disposeAll();
+    h.stop();
+  });
+
+  test('运行时被回收后不再重连', async () => {
+    const h = probeHarness({ probe: () => Promise.resolve('ok') });
+    h.manager.acquire(NODE_A);
+    h.socketClose(NODE_A, WS_UNAUTHORIZED_CLOSE_CODE);
+    await settle();
+    h.manager.release(NODE_A);
+    h.manager.dispose(NODE_A);
+    clock.advance(60_000);
+    expect(h.connects).toEqual([]);
+    h.stop();
   });
 });
 

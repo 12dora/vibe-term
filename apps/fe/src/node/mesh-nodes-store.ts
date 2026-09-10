@@ -19,6 +19,7 @@ import { createStateStore } from './create-polling-store';
 import type { NodeEventPayload } from './mesh-events';
 import { clearMeshNodesCache, readMeshNodesCache, writeMeshNodesCache } from './mesh-nodes-cache';
 import { type RetrySchedulerOptions, createRetryScheduler, onPageRecovery } from './mesh-recovery';
+import { noteMeshNodesOnline } from './node-unreachable-backoff';
 
 /** NODE_EVENT 投影到列表：只改已知 node 的在线态 / 到达路径 / inventory，不新增行。 */
 export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload): MeshNode[] {
@@ -286,7 +287,10 @@ export function shouldRefreshPendingMembers(
 export function applyMeshNodeEvent(event: NodeEventPayload, api: AuthApi = defaultAuthApi): void {
   const snapshot = store.get();
   const next = patchNodesWithEvent(snapshot.nodes, event);
-  if (next !== snapshot.nodes) setState({ nodes: next });
+  if (next !== snapshot.nodes) {
+    setState({ nodes: next });
+    noteMeshNodesOnline(snapshot.nodes, next);
+  }
   if (shouldRefreshPendingMembers(snapshot, event, inFlight !== null)) ensureFreshMeshNodes(api);
 }
 
@@ -307,8 +311,11 @@ export async function refreshMeshNodes(api: AuthApi = defaultAuthApi): Promise<v
   setState({ loading: true });
   inFlight = (async () => {
     try {
+      const previousNodes = store.get().nodes;
       const list = await listNodesDetailed(api);
       nodesRetry.reset();
+      // 某台 node 从离线转成在线：链路刚回来，它的请求退避到此为止。
+      noteMeshNodesOnline(previousNodes, list.nodes);
       setState({
         nodes: list.nodes,
         pendingMembers: list.pendingMembers ?? null,

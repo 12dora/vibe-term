@@ -19,11 +19,13 @@ import {
   hubCandidateIds,
   loadHubNodes,
   mergeNodes,
+  noteHubLoadFailure,
   patchNodesWithEvent,
   publicKeyFingerprint,
   refreshMeshNodes,
   resetMeshNodesStateForTest,
   setMeshNodesStateForTest,
+  shouldSkipHubPoll,
   sortNodes,
   toRuntimeNodeId,
 } from './mesh-nodes';
@@ -1004,6 +1006,33 @@ function hubPollingHarness() {
   };
   return { state, options };
 }
+
+describe('hub 打不通时的退避', () => {
+  const CAND_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
+  const CAND_B = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+
+  test('全部候选打不通时给每台各记一次', () => {
+    const noted: string[] = [];
+    noteHubLoadFailure([CAND_A, CAND_B], new HubApiError('hub_nodes_failed', 502), (id) =>
+      noted.push(id)
+    );
+    expect(noted).toEqual([CAND_A, CAND_B]);
+  });
+
+  test('hub 的拒登结论不记退避', () => {
+    const noted: string[] = [];
+    noteHubLoadFailure([CAND_A], new HubApiError('NODE_LOGIN_REQUIRED', 401), (id) =>
+      noted.push(id)
+    );
+    expect(noted).toEqual([]);
+  });
+
+  test('候选全在退避窗口里才跳过这一拍', () => {
+    expect(shouldSkipHubPoll([CAND_A, CAND_B], () => true)).toBe(true);
+    expect(shouldSkipHubPoll([CAND_A, CAND_B], (id) => id === CAND_A)).toBe(false);
+    expect(shouldSkipHubPoll([], () => true)).toBe(false);
+  });
+});
 
 describe('startHubPolling', () => {
   test('可见时按间隔拉取', () => {

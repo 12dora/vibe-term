@@ -16,6 +16,7 @@ import {
   PRIMARY_ONLY_DIAGNOSTICS,
   resolveDirectDiagnostics,
 } from '@vibeterm/ws-client/direct/types';
+import { clearDirectLinkAvailability, markDirectLinkUnavailable } from './direct-link-availability';
 import { resetMeshNodesStateForTest, setMeshNodesStateForTest } from './mesh-nodes';
 import {
   DEVICES_STALE_MS,
@@ -368,6 +369,24 @@ describe('createNodeConnection', () => {
     });
     await directLinkSettled(connection);
     expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+  });
+
+  test('这条入口最近答过「给不出直连」：负缓存命中就不再建控制器', async () => {
+    markDirectLinkUnavailable('node-b', null);
+    let created = 0;
+    const connection = createNodeConnection('node-b', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => {
+        created += 1;
+        return fakeController();
+      },
+    });
+    await directLinkSettled(connection);
+
+    expect(created).toBe(0);
+    expect(resolveDirectDiagnostics(connection).get()).toBe(PRIMARY_ONLY_DIAGNOSTICS);
+    clearDirectLinkAvailability();
   });
 });
 

@@ -46,8 +46,15 @@ import type {
 } from '@vibeterm/ws-client/direct';
 import { createDeferredDiagnosticsSource } from '@vibeterm/ws-client/direct/types';
 import i18n from 'i18next';
+import {
+  type DirectLinkClientLike,
+  currentEntryNodeId,
+  isDirectLinkUnavailable,
+  watchDirectNegotiation,
+} from './direct-link-availability';
 import { type MeshEventSource, sharedMeshEvents } from './mesh-events';
 import { resolveMeshNodeName } from './node-names';
+import { recoverNodeSession } from './node-session-recovery';
 
 /**
  * `/mesh/ws` 的 `RTC_SIGNAL` 只有**一个** handler 槽（见 `mesh-events.ts` 的注释），
@@ -153,11 +160,12 @@ function defaultController(
   direct: DirectLinkModule,
   nodeId: string,
   connection: GatewayConnection,
-  cid: () => string | null
+  cid: () => string | null,
+  apiClient: DirectLinkClientLike
 ): DirectCarrierController {
   return new direct.DirectCarrierController({
     nodeId,
-    apiClient: createNodeApiClient(nodeId),
+    apiClient,
     signaling: meshRtcSignals.transport(),
     connection,
     cid,
@@ -254,24 +262,36 @@ function attachDirectLink(
   let disposed = false;
   let controller: DirectCarrierController | null = null;
   let direct: DirectLinkModule | null = null;
+  /** 停掉这次直连（协商被入口代答、或连接被回收）：控制器、bulk 通道、诊断源一并摘掉。 */
+  const stopDirect = () => {
+    if (!controller) return;
+    direct?.registerBulkClient(nodeId, null);
+    controller.stop();
+    controller = null;
+    diagnostics.attach(null);
+  };
   const baseDispose = connection.dispose.bind(connection);
   connection.dispose = () => {
     disposed = true;
     connection.setResumeSubscribedPanes(null);
+    stopDirect();
     diagnostics.attach(null);
-    if (controller) {
-      direct?.registerBulkClient(nodeId, null);
-      controller.stop();
-      controller = null;
-    }
     baseDispose();
   };
 
   const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
     if (!loaded || disposed) return;
+    // 这条入口最近已经答过「给不出直连」：30 分钟内不再白协商一次（见 direct-link-availability）。
+    if (isDirectLinkUnavailable(nodeId, currentEntryNodeId())) return;
     const created = wiring.createController
       ? wiring.createController(nodeId, connection, cid)
-      : defaultController(loaded, nodeId, connection, cid);
+      : defaultController(
+          loaded,
+          nodeId,
+          connection,
+          cid,
+          watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect)
+        );
     if (!created) return;
     direct = loaded;
     controller = created;
@@ -331,6 +351,9 @@ export function createAppNodeRuntimes(
     runtimeOptions: () => ({ resolveNodeName: resolveMeshNodeName }),
     // manager 把关闭码回调递进来，直接转给底层连接：4401 由 manager 统一处理。
     createConnection: (nodeId, onClose) => createNodeConnection(nodeId, { ...wiring, onClose }),
+    // 4401 的探测确认「这台 node 真的要重新登录」之后，用会话钥静默重登一次；
+    // 与设备列表 401 的自愈共用同一份记账，一轮失效不会重登两次。
+    reloginNode: (nodeId) => recoverNodeSession(nodeId).then((outcome) => outcome === 'recovered'),
     // 引用计数归零、runtime 真正回收时一并释放该 node 的查询缓存。
     onDispose: (nodeId) => disposeNodeQueryClient(nodeId),
     ...overrides,

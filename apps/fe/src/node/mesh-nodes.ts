@@ -18,6 +18,7 @@ import {
   type HubFailureReason,
   HubLoadCoordinator,
   type HubRequest,
+  classifyHubFailure,
   isHubAuthCode,
 } from './hub-load-coordinator';
 import { HUB_POLL_MS, startHubPolling } from './hub-polling';
@@ -33,6 +34,11 @@ import {
 } from './mesh-nodes-store';
 
 import type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
+import {
+  isNodeRequestBlocked,
+  noteNodeReachable,
+  noteNodeUnreachable,
+} from './node-unreachable-backoff';
 
 export type { MeshNodesState, SharedAuthMode } from './mesh-nodes-store';
 export {
@@ -172,6 +178,27 @@ export async function loadHubNodes(
     }
   }
   throw authError ?? lastError;
+}
+
+/**
+ * 一台候选都没答上话：给每台记一次退避，轮询不再每 30 秒白撞一次转发超时（各 5 秒）。
+ * 只认「打不通」，hub 的拒登结论要用户去处理，退避挡着只会让重试更难。
+ */
+export function noteHubLoadFailure(
+  candidates: readonly string[],
+  error: unknown,
+  note: (nodeId: string) => void = noteNodeUnreachable
+): void {
+  if (classifyHubFailure(error).kind !== 'unreachable') return;
+  for (const id of candidates) note(id);
+}
+
+/** 这一拍要不要跳过：候选全在退避窗口里就跳过（首次加载与手动刷新不受影响）。 */
+export function shouldSkipHubPoll(
+  candidates: readonly string[],
+  blocked: (nodeId: string) => boolean = isNodeRequestBlocked
+): boolean {
+  return candidates.length > 0 && candidates.every(blocked);
 }
 
 function silentNodeLogin(hubNodeId: string): Promise<{ ok: boolean }> {
@@ -454,18 +481,25 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
   const [activeHubId, setActiveHubId] = useState<string | null>(null);
 
   // 请求闭包同时充当单飞的身份：目标（enabled / 候选集 / probe）一变就是新的一次加载。
+  const candidates = useMemo(
+    () => (candidatesKey ? candidatesKey.split(',') : []),
+    [candidatesKey]
+  );
   const request = useMemo<HubRequest | null>(() => {
-    const candidates = candidatesKey ? candidatesKey.split(',') : [];
     if (!enabled || candidates.length === 0) return null;
     return async () => {
       const result = await loadHubNodes(candidates, {
         list: (id) => (probe ? probe(id) : new HubApi(id).listNodes()),
         login,
+      }).catch((error: unknown) => {
+        noteHubLoadFailure(candidates, error);
+        throw error;
       });
+      noteNodeReachable(result.hubNodeId);
       setActiveHubId(result.hubNodeId);
       return result.rows;
     };
-  }, [enabled, probe, login, candidatesKey]);
+  }, [enabled, probe, login, candidates]);
 
   const coordinator = useHubLoadCoordinator({ setHubNodes, setLoading, setFailure });
 
@@ -477,9 +511,12 @@ export function useHubNode(nodes: MeshNode[], options: UseHubNodeOptions = {}): 
     if (!request || pollIntervalMs <= 0) return;
     return startHubPolling({
       intervalMs: pollIntervalMs,
-      load: () => void coordinator.load(request),
+      load: () => {
+        if (shouldSkipHubPoll(candidates)) return;
+        void coordinator.load(request);
+      },
     });
-  }, [coordinator, request, pollIntervalMs]);
+  }, [coordinator, request, pollIntervalMs, candidates]);
 
   // 变更之后的刷新必须比当前在飞的那一次更新，否则批准 / 吊销的结果会被旧响应盖回去。
   const refresh = useCallback(() => void coordinator.refresh(request), [coordinator, request]);

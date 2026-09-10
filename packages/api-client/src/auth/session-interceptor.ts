@@ -154,6 +154,25 @@ function warnForeignNodeId(claimed: string, urlNodeId: string, path: string): vo
 }
 
 /**
+ * 直连协商的两条端点（相对目标 node 的路径）。只有目标 node 自己手上有这条 Gateway WS 的
+ * `connectionId`，所以这两条**必须**由它作答；经中转角色的入口访问时入口会自己答成 401，
+ * body 里的 `nodeId` 于是不是目标 node。
+ */
+const DIRECT_NEGOTIATION_PATHS = new Set(['/api/mesh/connection', '/api/rtc/authorize']);
+
+/**
+ * 「入口代答的直连协商 401」——目标 node 的会话没有任何问题，只是这条入口给不出直连。
+ * 派事件出去会让该 node 行显示「登录此节点」（现网每次 WS 重连都撞一次），必须原地咽掉；
+ * 该不该停止再协商由宿主的负缓存决定（见 fe 的 `direct-link-availability`）。
+ */
+function isForeignDirectNegotiation(bodyNodeId: unknown, path: string): boolean {
+  const urlNodeId = nodeIdFromPath(path);
+  if (urlNodeId === SELF_NODE_ID) return false;
+  if (typeof bodyNodeId !== 'string' || bodyNodeId === urlNodeId) return false;
+  return DIRECT_NEGOTIATION_PATHS.has(urlPathname(path).replace(/^\/n\/[^/]+/, ''));
+}
+
+/**
  * 处理一次 401 响应。导出以便测试与 WS 4401 关闭码复用（WS 侧没有 Response，
  * 直接调 `handleNodeLoginRequired` / `handleGlobalUnauthorized`）。
  */
@@ -165,6 +184,7 @@ export async function handleUnauthorized(res: Response, path: string): Promise<v
   } catch {
     body = {};
   }
+  if (isForeignDirectNegotiation(body.nodeId, path)) return;
   if (body.code === NODE_LOGIN_REQUIRED) {
     emit({ nodeId: resolveNodeLoginTarget(body.nodeId, path), scope: 'node', path });
     return;

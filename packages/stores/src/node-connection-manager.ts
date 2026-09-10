@@ -29,6 +29,7 @@ import {
 } from '@vibeterm/ws-client';
 import { useEffect } from 'react';
 import { type AppRuntime, createAppRuntime } from './app-runtime';
+import { NodeSessionGuard, type NodeSessionProbe } from './node-session-guard';
 import { type AppRuntimeOptions, createBrowserHostServices } from './runtime';
 import { type UIStore, createUIStore } from './ui';
 
@@ -86,6 +87,16 @@ export interface NodeConnectionManagerOptions {
   /** WS 4401 的处理（测试注入）；缺省派发全局 / 单 node 的鉴权事件。 */
   onUnauthorized?: (nodeId: string) => void;
   /**
+   * 非 self 的 4401 之后的会话探测（测试注入）；缺省拉一次该 node 的设备列表。
+   * 探测成功即认定这次 4401 是瞬时故障，连接按退避重连而不是把该 node 判成未登录。
+   */
+  probeNodeSession?: (nodeId: string) => Promise<NodeSessionProbe>;
+  /**
+   * 探测确认「该 node 要重新登录」后的静默重登（宿主注入，fe 用会话钥重登一次）。
+   * 不接实现时退回原有行为：直接派发「登录此节点」。
+   */
+  reloginNode?: (nodeId: string) => Promise<boolean>;
+  /**
    * 宿主自建连接（如 fe 的直连包装）。
    *
    * `onClose` 是**必传给底层连接**的关闭码回调：自建工厂绕过了下面的默认工厂，不把它接到
@@ -108,6 +119,7 @@ interface EntryRecord {
 export class NodeConnectionManager {
   private readonly records = new Map<string, EntryRecord>();
   private sharedUiStore: UIStore | null = null;
+  private guard: NodeSessionGuard | null = null;
 
   constructor(private readonly options: NodeConnectionManagerOptions = {}) {}
 
@@ -132,8 +144,12 @@ export class NodeConnectionManager {
   }
 
   /**
-   * WS 以 4401 关闭 = 该 node 的会话已失效。继续重连只会被反复关掉，所以先停连接，
-   * 再按 self / 目标 node 派发一次鉴权事件：self → 全局跳登录页；其余 → 该行显示「登录此节点」。
+   * WS 以 4401 关闭：先停连接（继续重连只会被反复关掉），再分两条路处置。
+   *
+   * - self：entry 自身的会话没了，照旧跳登录页。
+   * - 其余 node：**4401 只是假设**。目标网关对任何一次流拆除都回这个码，就地判未登录会把
+   *   整棵子树退回「登录此节点」，而连接已经停掉，设备就永远停在「连接中…」。交给
+   *   `NodeSessionGuard` 先探一次会话，再决定重连还是退回「需要登录」。
    */
   /** 宿主自建连接（如 fe 的直连包装）时把关闭码转回来，走同一条 4401 处理路径。 */
   notifyClose(nodeId: string, code: number): void {
@@ -147,8 +163,25 @@ export class NodeConnectionManager {
       this.options.onUnauthorized(nodeId);
       return;
     }
-    if (nodeId === SELF_NODE_ID) handleGlobalUnauthorized('/ws');
-    else handleNodeLoginRequired(nodeId, nodeWsUrl(nodeId));
+    if (nodeId === SELF_NODE_ID) {
+      handleGlobalUnauthorized('/ws');
+      return;
+    }
+    void this.sessionGuard().handle(nodeId);
+  }
+
+  private sessionGuard(): NodeSessionGuard {
+    if (!this.guard) {
+      this.guard = new NodeSessionGuard({
+        ...(this.options.probeNodeSession ? { probe: this.options.probeNodeSession } : {}),
+        ...(this.options.reloginNode ? { relogin: this.options.reloginNode } : {}),
+        reconnect: (nodeId) => this.records.get(nodeId)?.entry.connection.client.connect(),
+        onLoginRequired: (nodeId) => handleNodeLoginRequired(nodeId, nodeWsUrl(nodeId)),
+        schedule: (fn, ms) => this.schedule(fn, ms),
+        cancel: (handle) => this.cancel(handle),
+      });
+    }
+    return this.guard;
   }
 
   private create(nodeId: string): EntryRecord {
@@ -243,6 +276,8 @@ export class NodeConnectionManager {
     }
     if (record.refs > 0) return;
     this.records.delete(id);
+    // 运行时都回收了，待发的重连与 4401 计数一并作废。
+    this.guard?.forget(id);
     record.entry.runtime.dispose();
     record.entry.connection.dispose();
     this.options.onDispose?.(id);

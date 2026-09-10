@@ -105,6 +105,20 @@ export function handleNodeApiError(
   if (nodeId === SELF_NODE_ID || !isNodeLoginRequiredError(error)) {
     return Promise.resolve('ignored');
   }
+  return recoverNodeSession(nodeId, deps);
+}
+
+/**
+ * 「已经确认这台 node 要重新登录」之后的那一次静默重登，与上面共用同一份记账。
+ *
+ * 调用方自己拿到结论（如 WS 4401 之后的探测回了 401 `NODE_LOGIN_REQUIRED`），
+ * 手上没有 `ApiError` 可传，走这条入口，不必伪造一个错误对象。
+ */
+export function recoverNodeSession(
+  nodeId: string,
+  deps: NodeSessionRecoveryDeps = {}
+): Promise<NodeSessionRecoveryOutcome> {
+  if (nodeId === SELF_NODE_ID) return Promise.resolve('ignored');
   const running = inFlight.get(nodeId);
   if (running) return running;
   if (attempted.has(nodeId)) return Promise.resolve('skipped');

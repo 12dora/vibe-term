@@ -16,6 +16,7 @@ const {
   handleNodeApiError,
   needsUserSignIn,
   noteNodeQuerySuccess,
+  recoverNodeSession,
   resetNodeSessionRecoveryForTest,
 } = await import('./node-session-recovery');
 
@@ -262,5 +263,37 @@ describe('handleNodeApiError', () => {
     expect(await handleNodeApiError('self', loginRequired(), { login })).toBe('ignored');
     expect(logins).toBe(0);
     expect(loggedInOf(NODE_A)).toBe(true);
+  });
+});
+
+// WS 4401 的探测确认「要重新登录」之后走这条入口：手上没有 ApiError 可传。
+describe('recoverNodeSession', () => {
+  test('直接重登一次，与设备列表 401 的自愈共用同一份记账', async () => {
+    seedLoggedInNode();
+    let logins = 0;
+    const login = () => {
+      logins += 1;
+      return Promise.resolve({ ok: true });
+    };
+
+    expect(await recoverNodeSession(NODE_A, { login })).toBe('recovered');
+    expect(await handleNodeApiError(NODE_A, loginRequired(), { login })).toBe('skipped');
+    expect(logins).toBe(1);
+  });
+
+  test('需要用户介入的失败仍然把该 node 标未登录', async () => {
+    seedLoggedInNode();
+    const outcome = await recoverNodeSession(NODE_A, {
+      login: () => Promise.resolve({ ok: false, code: 'NO_SESSION_KEY' }),
+    });
+
+    expect(outcome).toBe('failed');
+    expect(loggedInOf(NODE_A)).toBe(false);
+  });
+
+  test('entry 自身不归它管', async () => {
+    expect(await recoverNodeSession('self', { login: () => Promise.resolve({ ok: true }) })).toBe(
+      'ignored'
+    );
   });
 });
