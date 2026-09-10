@@ -21,6 +21,9 @@
 2. **CLI 从不使用本机节点的 mesh 身份、数据库、主密钥或 `app.env` 里的密钥**去访问别的 node。访问别的 node 一律经 entry 的 `/n/<nodeId>/…` 转发，并携带**那个 node 自己的**会话 cookie（`vibeterm_s_<nodeId>`），该 cookie 由 `/n/<id>/api/auth/login` 换来——与网页端的 `loginToNode` 完全相同。
 3. 根种子与根钥私钥只在内存里活到 delegation 签完，随即清零（`core/auth.ts` 的 `buildSessionMaterial`）。**落盘的只有会话 sid 与到期时刻**，密码、种子、会话私钥一概不写盘。
 4. 两步验证由 TOTP 满足（`--totp` / `VIBETERM_TOTP` / TTY 提示）。服务端 `/api/auth/mode.secondFactorPolicy` 为 `either` 时，一个有效 TOTP 码即可通过通行密钥这一关；为 `passkey`（账号没开 TOTP、但本 origin 注册了通行密钥）时 CLI 做不了断言，退出码 3 并说明补救办法。CLI 不实现 WebAuthn。
+   `k_totp`（TOTP 密文的解密钥）在签完 delegation、清零种子**之前无条件派生**：旧版本入口的 `/api/auth/mode` 不下发 `totpEnabled` / `secondFactorPolicy`，要等它回 `TOTP_REQUIRED` 才知道要交码，那时种子已经没了。所以只要用户给了码就一定带得上，不会出现「反复重试直到撞限流」。
+5. 登录 entry 之后照浏览器的 `verifySelfPublicKey` 再核一道：challenge 里 entry 当场出示的 `nodePk`，必须与 `/api/mesh/nodes` 里它自己那行的 `publicKey` 逐字节一致。对不上就地删掉刚拿到的会话并以 `NODE_PK_MISMATCH`（退出码 3）中止——入口可能被掉包或配置错乱。名册里没有自己那行（standalone / 旧网关 / 成员表未同步）时跳过。
+6. fan-out 里某台 node 失败，会像 entry 一样给出完整解释（`PASSKEY_REQUIRED` 也不例外），并且**绝不重发**——重发只会再被拒一次、多记一次失败。失败全是鉴权类时退出码 3，混了别的原因才退 1。
 
 ## 目录与模块
 
@@ -94,6 +97,7 @@ interface CliContext {
 - `ctx.resolver.resolveNode(ref)`：接受 node id、node 名字、`self`/`local`/`entry`；重名报用法错误，找不到报 4。
 - `ctx.resolver.resolveDevice(nodeId, ref)`：device id 或名字。
 - `parseTarget(input)`：纯函数，拆 `[<node>/]<device>[:<window>[.<pane>]]`。node 与 device 以**第一个** `/` 分界，device 与位置以**第一个** `:` 分界，window 与 pane 以**最后一个** `.` 分界；同时保留 `location` 原文，窗口名本身含 `.` 时可整段回退。window/pane 到会话树的定位由 term 命令组自己做。
+- `ctx.globals.tls`：`--ca` / `--insecure` 的解析结果，`http` 与 `openSocket` 都已经带上，命令组不用自己管。
 - `ctx.out`：`data(value)`（`--json` 时紧凑一行，否则缩进两格）、`table(rows, columns)`、`line()`、`raw(bytes)`；`info()` / `warn()` 走 stderr，`--quiet` 或 `--json` 时静默。**stdout 只放命令结果**，`main.ts` 已经把库里的 `console.log`（`@vibeterm/ws-client` 的连接状态日志）改道到 stderr。
 
 ### WebSocket
@@ -105,6 +109,24 @@ interface CliContext {
 - 网关按 `clientVersion` 做 canonical v1.1 版本门且 fail-closed，所以 `main.ts` 启动时先 `setDefaultClientVersion(cliVersion())`。`version.ts` 依次尝试构建期注入、`VIBETERM_CLI_VERSION`、同级 / 上级 `package.json`；报不出版本会被网关用 1002 关掉。
 - 会话失效时网关用 **4401** 关闭，适配层把它翻成退出码 3 并指路 `vibeterm login`。
 - 首连不自动重连（`maxReconnectAttempts: 0`），要不要重连由各命令自己决定。
+
+## TLS 信任
+
+| 旗标 | 作用 |
+| --- | --- |
+| `--ca <pem-file>` | 追加一个信任锚（自签 CA），https 与 wss 都生效 |
+| `--insecure` | 不校验服务端证书；每次都往 stderr 打一行醒目警告，**永远不是缺省** |
+
+**绝不设置 `NODE_TLS_REJECT_UNAUTHORIZED`**：那是整个进程的全局开关，还会被子进程继承。两个运行时各走一条显式通道（`core/tls.ts`）：
+
+| | fetch | ws |
+| --- | --- | --- |
+| Bun | 每个请求的 `init.tls`（`{ca, rejectUnauthorized}`） | `tls.connect` 选项 |
+| Node | 进程内 `tls.setDefaultCACertificates()`（Node ≥ 22.15） | `tls.connect` 选项 |
+
+Node 上的 `--insecure` 落地方式是 TOFU：先用 `rejectUnauthorized:false` 连一次入口，把它出示的整条证书链装成本进程的信任锚。因此**主机名仍然校验** —— 证书 SAN 与访问地址不符时依旧失败，那种情况请用 `--ca` 指定正确的 CA。Node < 22.15 装不了运行时信任锚，会直接报错并指路 `NODE_EXTRA_CA_CERTS=<pem>`。
+
+`mode.caFingerprint`（自签 CA 的 SPKI sha256）**没有做钉扎**：Node 的 fetch 不把证书链交给调用方，只有 ws 那条路径拿得到；只钉一半会给人「全都钉住了」的错觉，所以宁可不做。要严格限定信任范围就用 `--ca <该 CA 的 pem>`，验证由 TLS 栈本身完成。
 
 ## 退出码
 
@@ -146,6 +168,10 @@ interface CliContext {
 
 文件里**只有** sid 与到期时刻。会话被服务端续期时（`X-Vibeterm-Session-Renewed`）就地更新到期时刻；`X-Vibeterm-Set-Session` 与 `Set-Cookie` 两种下发形态都认（前者是转发链路内部头，后者是浏览器看到的形态），`;0` / `Max-Age=0` 视为登出并清掉本地记录。手工改坏文件不会让 CLI 起不来：认不出的字段一律丢弃。
 
+回收 Set-Cookie 时**只收 `self` 与本次请求的目标 node** 这两把：浏览器靠 cookie 作用域挡住越权写入，CLI 只有一个进程内的罐子，得自己挡——一次重定向或一个被塞了第三台 node cookie 的响应，不该把我们手上那台的会话换成对面给的值。
+
+另外，`--node` 给的规范 id 若正好是 entry 自己（`/api/auth/mode.nodeId`），一律落回 `self`：走 `/n/<自己的 id>/` 会被入口当成一次转发，cookie 名与 via 都不对。
+
 `vibeterm logout` 会对持有会话的每个 node 各发一次 `/api/auth/logout`（各 node 撤销自己签发的全部会话），再删掉本地这条 entry。
 
 ## 与 packages/app 的接线
@@ -176,3 +202,116 @@ bun scripts/complexity/gate.ts
 - 单测不打真实 endpoint。登录流程用 `core/test-fakes.ts` 的假网关（用 `@vibeterm/shared/auth` 真造一个用户，服务端侧真验签名与 TOTP），HTTP 层用假 `fetch`。要打真实网关的用例按 `live-integration-tests.md` 的约定单独放。
 - `--json` 的调用方直接管道 stdout，所以往 stdout 写任何非结果内容都是 bug。
 - 新增全局旗标要同时改 `core/args.ts` 的 `GLOBAL_FLAGS`、`main.ts` 的帮助文本与 `core/context.ts` 的 `CliGlobals`。
+
+## `vibeterm files`
+
+子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。
+
+`--json` 形状：
+
+- `roots`：`{ "roots": [{ id, name, path, deviceId, deviceName, enabled, sortOrder }] }`
+- `ls`：`{ node, root, path, truncated, entries }`
+- `stat`：`{ node, rootId, path, name, type, size, modifiedAt, mime, isSymlink }`
+
+## `vibeterm cp`
+
+`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：8 MiB 分块 `upload/init` → `PUT`（失败按区间续传 + 退避）→ `commit`。节点→本地：`download/prepare` → `GET content`（`Range` 续传）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON。`-r` 递归；`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node）。`cp jobs ls|cancel <id>` 管传输任务。
+
+`--json` 时 stdout 为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
+
+## `vibeterm port`
+
+`map <listenPort> <targetNode>:<host>:<port> [--listen-host] [--name] [--on]`：先在 B 建 export，再用同一 `mapId` 在 A 建监听；A 失败则删 B 的 export。`ls` 含实时计数。`rm <id>` 看 `exportRemoved`，未清则再删 B。`pause|resume` 走 PATCH。`probe <node>:<host>:<port>` 同时打 `/api/portmap/probe` 与 `/target-probe`。
+
+`--json` 形状：`{ "map" }` / `{ "maps" }` / `{ "removed", "exportRemoved" }` / `{ "listen", "target" }`。
+
+## `vibeterm nodes`
+
+子命令：`ls`、`show`、`hubs`、`rename`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`、`uninstall`、`rtc-config`。名单走 `GET /api/mesh/nodes`；`rename` 转发到 writer hub 的 `POST /n/<hub>/api/hub/nodes/:id/rename`。`allow`：hub 上 `admission_status=pending` 时签 `admit-node` 写入 key log，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`，`--all` 按普通节点 → hub → 本机串行。`uninstall` 非 TTY 必须 `--yes`。
+
+`--json` 形状：`{ nodes }` / `MeshNode` / `MeshHubsResponse` / `{ latest, outcomes }` / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
+
+## `vibeterm devices`
+
+子命令：`ls|show|add|edit|rm|test|order` 与 `folders ls|add|rm|layout`。`add`/`edit` 旗标镜像 GUI 表单（`--name --type local|ssh --host --port --user --auth-mode --password --private-key --passphrase --session --cwd --ssh-config`），复杂体也可 `--body`。`rm` 非 TTY 必须 `--yes`。`order` 走 `PUT /api/devices/order`。分组走 `/api/device-folders`；`layout` 需要 `--body {folders,placements}`。
+
+`--json` 形状：`{ devices }` / `Device` / `TestConnectionResult` / `DeviceFolderLayout`。
+
+## `vibeterm share`
+
+子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）或名字；也可用 `--window-id @N`。口令来自 `--password` / `VIBETERM_SHARE_PASSWORD` / TTY。`password --clear` 用当前口令重设并 `endSessions`。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
+
+`--json` 形状：`{ share, password }` / `{ active, history }` / `ShareRecord` / `ShareLogPage` / `ShareSettings` / `ShareOriginsResponse`。
+
+## `vibeterm watch`
+
+`rules ls|show|add|edit|rm|state` 对齐 `packages/api-client/src/watch.ts`。`ls` 必须 `--device` 与 `--pane`。`state <id> on|off` 是 `PATCH {enabled}`；不带 on/off 则 `GET …/state`。`assist-regex "<description>"` 走 `POST /api/watch/assist-regex`。
+
+`--json` 形状：`{ rules }` / `{ rule, state }` / `WatchRuleStateResponse` / `AssistRegexResponse`。
+
+## `vibeterm settings`
+
+`site get|set <key> <value>`、`shortcuts get|set`、`restart`、`notifications mesh get|set`、`webhooks ls|add|rm|edit`（无 PATCH，edit = 删后重建）、`llm providers …`、`llm get|set`、`domain-access get|set`、`tls get|set|renew|ca`、`tunnel status|<action>`、`system info|addresses|upgrade status|start`、`local status|leave|direct`。TLS / tunnel / local 只打 entry 自身。复杂体一律 `--body <json>|@file`。
+
+`--json` 打印网关响应原样。
+
+## `vibeterm tmux`
+
+子命令：`ls|windows|panes|new-window|kill-window|rename-window|split|kill-pane|select|focus|resize|rename-pane`，第一个位置参数一律是目标 `[<node>/]<device>[:<window>[.<pane>]]`。
+
+每条子命令的骨架都一样（`core/tmux-ops.ts` 的 `openDeviceSession` + `applyTmuxChange`）：
+
+1. `ctx.resolver` 解析 node 与 device（REST）；
+2. `ctx.openSocket(nodeId)` 建 WS，HELLO 完成后由 `core/pane-session.ts` 的 `DeviceSession` 发 `DEVICE_CONNECT`，等 `device-connected` 与第一份 `metadata-snapshot`；
+3. 在会话树上定位窗口 / pane（`core/term-target.ts`，见下）；
+4. 发一条 tmux 控制命令（`@vibeterm/ws-client` 的 `GatewayTransportCommand`，wire kind 0x0201–0x0215）；
+5. 等 `metadata-patch` 把这次改动折进树里（谓词由子命令给，如「新窗口 id 出现」「pane id 消失」「`active` 翻到目标上」），超时按 `--timeout` 报网络错误（退出码 5）；
+6. 打印结果并关 socket。
+
+`resize` 是唯一例外：tmux 会按窗口布局夹取尺寸，请求值拿不到属正常现象——等不到尺寸变化时只在 stderr 警告并打印当前尺寸，退出码仍是 0。
+
+元数据折叠**不在 CLI 里重做**：`CanonicalStateClient` 已经把 `SourceMetadataSnapshot` / `SourceMetadataPatch` 折成 `StateSnapshotPayload`，`DeviceSession` 只留最新一份。定位窗口 / pane 一律用 `@vibeterm/ws-client/canonical-tree` 的纯函数 `resolveWindow` / `resolvePane` / `activeWindow` / `activePane`，优先级与 tmux 一致：`@id`/`%id` > `窗口.pane 序号` > 序号 > 名字。`core/term-target.ts` 只决定「先按窗口解释还是先按 pane 解释」——目标里 `:` 之后没有 `.` 的写的是窗口，有 `.` 的写的是 pane，两条路都走不通时互相回落（窗口名本身含 `.` 的情况因此仍可达）。名字撞车报用法错误并列出候选。
+
+`--json`：`ls` 给 `TmuxSession[]`（本设备一条），`windows` 给 `TmuxWindow[]`，`panes` 给 `TmuxPane[]`，其余给 `{ok:true, action, window|pane|id}`。
+
+## `vibeterm term`
+
+四条子命令共用同一条数据面（`commands/term.ts` 的 `PaneStream`）：订阅 pane（`SetPaneSubscriptions`）→ `RequestScreen` 建基线 → 收 `PaneData`。
+
+**订阅之后必须取一次画面**：网关在 `SubscriptionApplied` 之后会把还没有终端游标的 pane 标成 blocked 并发一次 `rebase-required`，`ScreenCommit` 建立游标后 `PaneData` 才开始放行。少了这一步，`send` / `capture` / `run` 都会一个字节也收不到。
+
+### `attach`
+
+`core/term-attach.ts`。要求 stdin 与 stdout 都是 TTY，否则退出码 2 并指向 `term run|send|capture`。流程：raw 模式 → 订阅 pane → `RequestScreen` → 清屏后写截屏字节 → `PaneData` 直接写 TTY（网关已经摘掉 BEL 与它自己处理的那几类 OSC）→ 键盘字节按 UTF-8 发 `TerminalInput` → `SIGWINCH` 与首次挂接各发一次 `ResizePaneV11`（用本地 `process.stdout.columns/rows`）。`rebase-required`（pane epoch 变化、`SourceGap`）就重取一次画面。socket 断一次会自动重连一次：新 socket 上的 canonical 客户端没有旧游标，因此是重新拉一整屏，不是断点续传；再断即退出码 5。退出时一定复位本地终端（退备用屏、关鼠标上报与 bracketed paste、显示光标、清 SGR）。
+
+转义键是 ssh 那一套，**行首**的 `~` 起头（`core/term-escape.ts`，纯状态机 + 单测）：
+
+| 键 | 动作 |
+| --- | --- |
+| `~.` | detach（pane 继续跑），退出码 0 |
+| `~w` | 列出本会话的窗口 |
+| `~<n>` | 把 CLI 显示的窗口切到序号 n（**不动** tmux 自己的活动窗口，那是 `vibeterm tmux select`） |
+| `~?` | 帮助 |
+| `~~` | 发一个字面 `~` |
+
+`--detach-key` 收两个字符（`none` 关掉整套转义）。raw 模式下 Ctrl-C 是字节 0x03 会原样发给 pane；额外挂的 `SIGINT` 处理也只是再发一次 0x03，不会退出。
+
+### `send` / `capture` / `run`（面向脚本与 AI agent）
+
+- `send`：按键名表在 `core/term-keys.ts`（`Enter`、`C-c`、`M-x`、`S-Up`、`F5`…，认不出的词按字面发；`--literal` 全按字面）。发完等最多 1.5 s 的回显作为「确实进了 pane」的信号，等不到也照样退出 0（很多程序不回显）。
+- `capture`：默认把截屏原始字节写 stdout（颜色保留），`--strip-ansi` 洗成纯文本，`--history <bytes>` 另取一页回滚，`--wait-idle <ms>` 先等 pane 静默再取一次画面。
+- `run`：把命令 + Enter 打进 pane，收字节直到静默 `--idle`（默认 800 ms）或 `--timeout`。
+
+`run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵：命令后追加 `; echo __VT_DONE_<nonce>_$?`，在洗白后的文本里找 `__VT_DONE_<nonce>_<数字>`——命令行回显里的那份写的是字面 `$?`，正则只认数字，不会误命中。命中即提前结束并给出退出码。这条路只在 POSIX shell 上成立（fish 用 `$status`）。
+
+无论有没有 `--marker`，`run` 的输出剥离都是 best-effort（`core/term-collect.ts` 的 `formatRunOutput`）：raw 里第一个 LF 之前是 shell 回显的命令行，一律丢掉；有哨兵就切到哨兵行为止；没有哨兵则在结尾丢掉一行「看着像提示符」的未换行残留。pane 是共享终端，别人同时在里面敲字会混进来——这一点必须让调用方知道。
+
+CLI 自己的退出码与 pane 里命令的退出码是两回事：`run` 只要跑通就退出 0，命令的退出码在 `--json` 的 `exitCode` 字段（没有 `--marker` 时为 `null`）。
+
+### VT 洗白的边界（`core/vt-text.ts`）
+
+不是终端仿真器，只维护一张「当前行 + 列」的行画布：CR、退格、EL（`ESC[K`）、ED（`ESC[2J`）、CUF/CUB 会真的作用在行上——这样 zsh / fish 的行编辑重画才能还原成一行。**不实现**绝对光标定位（CUP）、滚动区与备用屏，所以整屏重绘型 TUI（vim、top）洗出来仍然是一堆片段；读它们请用 `term capture`（网关截屏本来就是 `capture-pane` 的逐行文本）。SGR / OSC / DCS 一律丢弃，裸 LF 当 CRLF（截屏载荷用裸 LF 分行）。
+
+### 一条硬约束：输入只能是 UTF-8
+
+wire 上的 `TerminalInput.data` 是 UTF-8 字节，`GatewayTransportCommand` 的输入命令也只收字符串。stdin 的字节用流式 `TextDecoder` 解码（多字节字符被读取边界切开不会坏），但**非 UTF-8 的任意字节序列发不出去**——`--hex` 因此要求解码结果是合法 UTF-8。浏览器端同样如此（xterm 给的也是字符串），不是 CLI 的额外限制。

@@ -84,6 +84,19 @@ export class Output {
     this.stderr.write(`${this.style(text, 'red')}\n`);
   }
 
+  /** 人读进度：TTY 上回车覆盖一行，否则逐行。`--json` / `--quiet` 静默。 */
+  progress(text: string): void {
+    if (this.json || this.quiet) return;
+    const tty = Boolean((this.stderr as NodeJS.WriteStream).isTTY);
+    this.stderr.write(tty ? `\r${text}\x1b[K` : `${text}\n`);
+  }
+
+  /** TTY 进度结束后换行，把后续 stderr 从覆盖行里拆出来。 */
+  endProgress(): void {
+    if (this.json || this.quiet) return;
+    if ((this.stderr as NodeJS.WriteStream).isTTY) this.stderr.write('\n');
+  }
+
   table<T>(rows: readonly T[], columns: readonly Column<T>[]): void {
     if (rows.length === 0) {
       this.info('(empty)');

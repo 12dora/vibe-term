@@ -1,76 +1,39 @@
 // 命令注册表。新增命令组只需要在这里加一行；packages/app 的分发表读的也是这份名单。
 
 import { command as api } from './commands/api';
+import { command as cp } from './commands/cp';
+import { command as devices } from './commands/devices';
+import { command as files } from './commands/files';
 import { command as login } from './commands/login';
 import { command as logout } from './commands/logout';
+import { command as nodes } from './commands/nodes';
+import { command as port } from './commands/port';
+import { command as settings } from './commands/settings';
+import { command as share } from './commands/share';
+import { command as term } from './commands/term';
+import { command as tmux } from './commands/tmux';
 import type { Command } from './commands/types';
+import { command as watch } from './commands/watch';
 import { command as whoami } from './commands/whoami';
-import { CliError, EXIT_USAGE } from './core/errors';
 
-/**
- * 已占位但还没实现的命令组：名字先在这里登记，`vibeterm <group>` 才会给出一句人话
- * （而不是「未知命令」），也让 packages/app 的分发表一次到位、以后不用再改。
- */
-interface ReservedSpec {
-  name: string;
-  summary: string;
-  /** 该组落地前的 REST 替代路径。 */
-  escape: string;
-}
-
-const RESERVED_SPECS: readonly ReservedSpec[] = [
-  {
-    name: 'nodes',
-    summary: 'inspect and manage mesh nodes',
-    escape: 'vibeterm api GET /api/mesh/nodes',
-  },
-  { name: 'devices', summary: 'manage devices on a node', escape: 'vibeterm api GET /api/devices' },
-  {
-    name: 'tmux',
-    summary: 'inspect and drive tmux windows and panes',
-    escape: 'vibeterm api GET /api/devices',
-  },
-  {
-    name: 'term',
-    summary: 'attach to, send keys to and capture a pane',
-    escape: 'vibeterm api GET /api/devices',
-  },
-  { name: 'files', summary: 'browse files on a node', escape: 'vibeterm api GET /api/files/roots' },
-  {
-    name: 'cp',
-    summary: 'copy files between this machine and nodes',
-    escape: 'vibeterm api GET /api/transfer/sessions',
-  },
-  { name: 'port', summary: 'manage port maps', escape: 'vibeterm api GET /api/portmap' },
-  { name: 'share', summary: 'manage terminal shares', escape: 'vibeterm api GET /api/share' },
-  { name: 'watch', summary: 'manage watch rules', escape: 'vibeterm api GET /api/watch/rules' },
-  {
-    name: 'settings',
-    summary: 'read and write site settings',
-    escape: 'vibeterm api GET /api/settings',
-  },
+export const IMPLEMENTED_COMMANDS: readonly Command[] = [
+  login,
+  logout,
+  whoami,
+  api,
+  files,
+  cp,
+  port,
+  nodes,
+  devices,
+  share,
+  watch,
+  settings,
+  tmux,
+  term,
 ];
-
-function reservedCommand(spec: ReservedSpec): Command {
-  const message = `"vibeterm ${spec.name}" is reserved but not implemented in this build`;
-  return {
-    name: spec.name,
-    summary: `${spec.summary} (reserved, not implemented yet)`,
-    usage: [
-      `Usage: vibeterm ${spec.name} …`,
-      '',
-      message,
-      '',
-      `Until it ships: ${spec.escape}`,
-    ].join('\n'),
-    async run() {
-      throw new CliError(message, EXIT_USAGE, `until it ships: ${spec.escape}`);
-    },
-  };
-}
-
-export const IMPLEMENTED_COMMANDS: readonly Command[] = [login, logout, whoami, api];
-export const RESERVED_COMMANDS: readonly Command[] = RESERVED_SPECS.map(reservedCommand);
+/** 十四个组已全部落地；名单留着是为了 packages/app 的分发表与本表逐字对齐。 */
+export const RESERVED_COMMANDS: readonly Command[] = [];
 export const COMMANDS: readonly Command[] = [...IMPLEMENTED_COMMANDS, ...RESERVED_COMMANDS];
 
 const BY_NAME = new Map(COMMANDS.map((command) => [command.name, command]));

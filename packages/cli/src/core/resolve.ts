@@ -85,9 +85,35 @@ const SELF_ALIASES: ReadonlySet<string> = new Set(['self', 'local', 'entry', '.'
 
 export class Resolver {
   private nodesCache: MeshNode[] | null = null;
+  private entryNodeIdCache: string | null | undefined;
   private readonly devicesCache = new Map<string, DeviceWithRuntime[]>();
 
   constructor(private readonly http: HttpClient) {}
+
+  /**
+   * entry 自身的 node id（`/api/auth/mode`）。standalone 与旧网关没有这个路由，返回 null。
+   * 只在需要判断「这个 id 是不是 entry 自己」时才拉，一个进程内只拉一次。
+   */
+  async entryNodeId(): Promise<string | null> {
+    if (this.entryNodeIdCache !== undefined) return this.entryNodeIdCache;
+    const response = await this.http.fetch(SELF_NODE_ID, '/api/auth/mode').catch(() => null);
+    if (!response?.ok) {
+      this.entryNodeIdCache = null;
+      return null;
+    }
+    const body = (await response.json().catch(() => null)) as { nodeId?: unknown } | null;
+    this.entryNodeIdCache = typeof body?.nodeId === 'string' ? body.nodeId : null;
+    return this.entryNodeIdCache;
+  }
+
+  /**
+   * entry 自己那台必须落回 `self`：走 `/n/<自己的 id>/` 会被入口当成一次转发（cookie 名、
+   * via 都不对），而它本来就是本地路由。
+   */
+  private async asSelfIfEntry(id: string, row: MeshNode | null): Promise<ResolvedNode | null> {
+    if ((await this.entryNodeId()) !== id) return null;
+    return { id: SELF_NODE_ID, name: row?.name ?? 'self', isSelf: true, row };
+  }
 
   /** `GET /api/mesh/nodes`；standalone 入口没有这个路由（404），返回空表。 */
   async listNodes(): Promise<MeshNode[]> {
@@ -114,11 +140,13 @@ export class Resolver {
       const id = normalizeNodeId(raw);
       const roster = await this.listNodes().catch(() => [] as MeshNode[]);
       const row = roster.find((node) => node.id === id) ?? null;
-      return { id, name: row?.name ?? id, isSelf: false, row };
+      return (
+        (await this.asSelfIfEntry(id, row)) ?? { id, name: row?.name ?? id, isSelf: false, row }
+      );
     }
     const nodes = await this.listNodes();
     const matches = nodes.filter((node) => node.name === raw);
-    if (matches.length === 1) return nodeResult(matches[0]);
+    if (matches.length === 1) return await this.rowResult(matches[0]);
     if (matches.length > 1) {
       throw new UsageError(
         `node name "${raw}" is ambiguous: ${matches.map((node) => node.id).join(', ')}`,
@@ -126,8 +154,12 @@ export class Resolver {
       );
     }
     const insensitive = nodes.filter((node) => node.name.toLowerCase() === raw.toLowerCase());
-    if (insensitive.length === 1) return nodeResult(insensitive[0]);
+    if (insensitive.length === 1) return await this.rowResult(insensitive[0]);
     throw new NotFoundError(`unknown node: ${raw}`, 'run: vibeterm nodes ls');
+  }
+
+  private async rowResult(row: MeshNode): Promise<ResolvedNode> {
+    return (await this.asSelfIfEntry(row.id, row)) ?? nodeResult(row);
   }
 
   async listDevices(nodeId: string): Promise<DeviceWithRuntime[]> {

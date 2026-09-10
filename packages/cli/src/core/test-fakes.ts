@@ -68,6 +68,12 @@ export interface FakeGatewayOptions {
   secondFactorPolicy?: 'either' | 'totp' | 'passkey' | 'none';
   /** 强制让 login 回这个码（模拟 PASSKEY_REQUIRED 等）。 */
   forceLoginError?: string;
+  /** 只让某些 node 的 login 失败（键为 nodeId，`self` 表示 entry 自身）。 */
+  forceLoginErrorFor?: Record<string, string>;
+  /** 旧版本入口：`/api/auth/mode` 不下发 `totpEnabled` / `secondFactorPolicy`。 */
+  omitTotpFields?: boolean;
+  /** 名册里 entry 自己那行的公钥（base64url）；用来构造掉包公钥的场景。 */
+  selfPublicKeyOverride?: string;
   /** 会话下发方式：内部头（entry 转发前）或 Set-Cookie（浏览器看到的形态）。 */
   sessionVia?: 'header' | 'cookie';
 }
@@ -76,6 +82,8 @@ export interface FakeGateway {
   fetch: FetchLike;
   /** 收到的请求，按顺序。 */
   requests: Array<{ method: string; path: string; origin: string | null; cookie: string | null }>;
+  /** 收到的每个登录体（按顺序），用来断言 `totp` / `k_totp` 真的发了。 */
+  loginBodies: Array<{ nodeId: string; body: Record<string, unknown> }>;
   /** 已签发的会话：nodeId → sid。 */
   issued: Map<string, string>;
   /** 当前有效的 TOTP 码（没开两步验证时为 null）。 */
@@ -111,6 +119,7 @@ interface GatewayState {
   challenges: Map<string, Challenge>;
   issued: Map<string, string>;
   requests: FakeGateway['requests'];
+  loginBodies: FakeGateway['loginBodies'];
   counter: number;
 }
 
@@ -138,8 +147,13 @@ function modeBody(state: GatewayState) {
     passkeysForThisOrigin: false,
     passkeyAvailable: true,
     passkeySecondFactor: secondFactorPolicy === 'passkey',
-    secondFactorPolicy: secondFactorPolicy ?? (user.totpSecret ? 'totp' : 'none'),
-    totpEnabled: user.totpSecret !== null,
+    // 旧版本入口两个字段都不下发：客户端只能等服务端回 TOTP_REQUIRED 才知道要交码。
+    ...(state.options.omitTotpFields
+      ? {}
+      : {
+          secondFactorPolicy: secondFactorPolicy ?? (user.totpSecret ? 'totp' : 'none'),
+          totpEnabled: user.totpSecret !== null,
+        }),
     rootEpoch: user.rootEpoch,
     rootPublicKey: encodeBase64url(user.rootPublicKey),
   };
@@ -159,14 +173,21 @@ function meshNodeRow(state: GatewayState, id: string, name: string, keyId: strin
 }
 
 function meshNodes(state: GatewayState) {
+  const self = meshNodeRow(state, state.nodeId, 'entry', SELF);
   return {
     nodes: [
-      meshNodeRow(state, state.nodeId, 'entry', SELF),
+      state.options.selfPublicKeyOverride
+        ? { ...self, publicKey: state.options.selfPublicKeyOverride }
+        : self,
       ...Object.entries(state.options.nodes ?? {}).map(([id, name]) =>
         meshNodeRow(state, id, name, id)
       ),
     ],
   };
+}
+
+function forcedLoginError(state: GatewayState, target: string): string | null {
+  return state.options.forceLoginErrorFor?.[target] ?? state.options.forceLoginError ?? null;
 }
 
 function issueSession(state: GatewayState, target: string): Response {
@@ -243,8 +264,11 @@ async function handleLogin(
   target: string,
   request: Request
 ): Promise<Response> {
-  if (state.options.forceLoginError) return json({ code: state.options.forceLoginError }, 401);
-  const failure = verifyLoginEnvelope(state, target, (await request.json()) as LoginBody);
+  const body = (await request.json()) as LoginBody;
+  state.loginBodies.push({ nodeId: target, body });
+  const forced = forcedLoginError(state, target);
+  if (forced) return json({ code: forced }, 401);
+  const failure = verifyLoginEnvelope(state, target, body);
   return failure ? json({ code: failure }, 401) : issueSession(state, target);
 }
 
@@ -279,6 +303,7 @@ export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {
     challenges: new Map(),
     issued: new Map(),
     requests: [],
+    loginBodies: [],
     counter: 0,
   };
 
@@ -298,6 +323,7 @@ export function createFakeGateway(options: FakeGatewayOptions): FakeGateway {
   return {
     fetch: fetchImpl,
     requests: state.requests,
+    loginBodies: state.loginBodies,
     issued: state.issued,
     currentTotp: () =>
       options.user.totpSecret

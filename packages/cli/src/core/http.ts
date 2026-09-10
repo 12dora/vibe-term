@@ -11,6 +11,7 @@ import {
 } from '@vibeterm/shared/http/mesh-headers';
 import { AuthError, CliError, EXIT_GENERIC, NetworkError, NotFoundError } from './errors';
 import type { NodeSession, SessionStore } from './session-store';
+import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
 
 /** 与 apps/gateway/src/auth/cookies.ts 保持一致；混合版本期两个名字都发。 */
 export const NODE_SESSION_COOKIE_PREFIX = 'vibeterm_s_';
@@ -124,6 +125,8 @@ export interface HttpClientOptions {
   timeoutMs: number;
   jar: CookieJar;
   fetchImpl?: FetchLike;
+  /** `--ca` / `--insecure`；缺省为「按系统信任库校验」。 */
+  tls?: TlsSettings;
 }
 
 export interface RequestOptions extends Omit<RequestInit, 'signal'> {
@@ -143,11 +146,13 @@ function combineSignals(signals: AbortSignal[]): AbortSignal | undefined {
 export class HttpClient {
   readonly entry: string;
   readonly origin: string;
+  readonly tls: TlsSettings;
   private readonly fetchImpl: FetchLike;
 
   constructor(private readonly options: HttpClientOptions) {
     this.entry = options.entry;
     this.origin = new URL(options.entry).origin;
+    this.tls = options.tls ?? DEFAULT_TLS;
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
   }
 
@@ -196,6 +201,8 @@ export class HttpClient {
         ...rest,
         headers: requestHeaders,
         ...(combined ? { signal: combined } : {}),
+        // Bun 认 per-request TLS 选项；Node 上是多余字段（由进程信任库那条路径生效）。
+        ...fetchTlsInit(this.tls),
         redirect: 'manual',
       });
     } catch (error) {
@@ -205,11 +212,18 @@ export class HttpClient {
     return response;
   }
 
-  /** 从响应里回收会话：Set-Cookie（经 entry 的常规路径）与内部 set-session 头都认。 */
+  /**
+   * 从响应里回收会话：Set-Cookie（经 entry 的常规路径）与内部 set-session 头都认。
+   *
+   * 只收 `self` 与**本次请求目标**这两把：一次重定向或一个被塞了别的 node cookie 的响应，
+   * 不该让我们把另一台 node 的会话换成对面给的值（真实浏览器由 cookie 作用域挡住，
+   * 我们只有一个进程内的罐子，得自己挡）。
+   */
   private captureSession(nodeId: string, response: Response): void {
+    const acceptable: ReadonlySet<string> = new Set([SELF_NODE_ID, nodeId]);
     for (const header of setCookieHeaders(response)) {
       const parsed = parseSessionSetCookie(header);
-      if (!parsed) continue;
+      if (!parsed || !acceptable.has(parsed.nodeId)) continue;
       if (!parsed.sid || parsed.maxAgeSec === 0) {
         this.options.jar.clear(parsed.nodeId);
         continue;

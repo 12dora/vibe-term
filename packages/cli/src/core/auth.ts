@@ -62,7 +62,7 @@ export interface SessionMaterial {
   delegationBytes: Uint8Array;
   delegationSig: Uint8Array;
   delegation: Delegation;
-  /** 开了两步验证时的 TOTP 解密钥；否则 null。 */
+  /** TOTP 密文的解密钥；由根种子派生，永远备着（服务端要码时才随登录体一起发）。 */
   kTotp: Uint8Array | null;
   /** 用完即清零：会话私钥、k_totp。 */
   destroy(): void;
@@ -107,7 +107,10 @@ export async function buildSessionMaterial(options: BuildSessionOptions): Promis
   try {
     const rootKey = rootKeyFromSeed(seed);
     const signed = createDelegation(rootKey, { uid, sessPk: pair.publicKey, now });
-    kTotp = mode.totpEnabled ? deriveTotpKey(seed, uid, rootEpoch) : null;
+    // **无条件**派生 k_totp：种子马上就要清零，而旧版本入口的 `/api/auth/mode` 既不下发
+    // `totpEnabled` 也不下发 `secondFactorPolicy`，只有等它回 `TOTP_REQUIRED` 才知道要交码。
+    // 那时再想派生已经来不及（种子没了），用户只会一遍遍重试直到把限流撞死。
+    kTotp = deriveTotpKey(seed, uid, rootEpoch);
     rootKey.seed.fill(0);
     const material: SessionMaterial = {
       uid,
@@ -139,7 +142,12 @@ export interface LoginNodeResult {
   ok: boolean;
   code?: string;
   expiresAt?: number;
+  /** challenge 里目标 node 出示的公钥（base64url）；调用方据此与 mesh 名册核对。 */
+  nodePk?: string;
 }
+
+/** 本地就能判定的失败：会话材料里没有 k_totp，交了码也没用。 */
+export const TOTP_KEY_UNAVAILABLE = 'TOTP_KEY_UNAVAILABLE';
 
 interface ChallengeResponse {
   challenge_id: string;
@@ -181,7 +189,9 @@ export async function loginToNode(args: {
     delegation: encodeBase64url(material.delegationBytes),
     delegation_sig: encodeBase64url(material.delegationSig),
   };
-  if (args.totpCode && material.kTotp) {
+  if (args.totpCode) {
+    // 手上没有 k_totp 就别发了：服务端解不开 TOTP 密文，只会回 TOTP_INVALID 并计一次失败。
+    if (!material.kTotp) return { nodeId, ok: false, code: TOTP_KEY_UNAVAILABLE };
     body.totp = { code: args.totpCode, k_totp: encodeBase64url(material.kTotp) };
   }
 
@@ -192,9 +202,9 @@ export async function loginToNode(args: {
   });
   if (response.ok) {
     const payload = (await response.json()) as { expires_at?: number };
-    return { nodeId, ok: true, expiresAt: payload.expires_at };
+    return { nodeId, ok: true, expiresAt: payload.expires_at, nodePk: challenge.nodePk };
   }
-  return { nodeId, ok: false, code: await readLoginErrorCode(response) };
+  return { nodeId, ok: false, code: await readLoginErrorCode(response), nodePk: challenge.nodePk };
 }
 
 async function readLoginErrorCode(response: Response): Promise<string> {
@@ -229,6 +239,13 @@ export function loginFailure(nodeId: string, code: string, policy?: SecondFactor
       code
     );
   }
+  if (code === TOTP_KEY_UNAVAILABLE) {
+    return new AuthError(
+      `cannot send a TOTP code to node ${nodeId}: the session material has no k_totp`,
+      'run vibeterm login again so the code is derived together with the root seed',
+      code
+    );
+  }
   if (code === 'TOTP_INVALID') {
     return new AuthError(
       `the TOTP code was rejected by node ${nodeId}`,
@@ -257,8 +274,10 @@ export function loginFailure(nodeId: string, code: string, policy?: SecondFactor
     );
   }
   if (code === 'NODE_PK_MISMATCH') {
-    return new CliError(
-      `node ${nodeId} presented a public key that does not match the mesh roster; aborting`
+    return new AuthError(
+      `node ${nodeId} presented a public key that does not match the mesh roster; aborting`,
+      'the entry may be compromised or misconfigured; verify it before logging in again',
+      code
     );
   }
   return new AuthError(`login to node ${nodeId} failed: ${code}`, undefined, code);

@@ -1,5 +1,4 @@
 import { describe, expect, test } from 'bun:test';
-import type { UsageError } from './core/errors';
 import { findCommandToken } from './main';
 import {
   COMMANDS,
@@ -39,20 +38,10 @@ describe('registry', () => {
     }
   });
 
-  test('implemented commands are the four T0 ones', () => {
-    expect(IMPLEMENTED_COMMANDS.map((command) => command.name)).toEqual([
-      'login',
-      'logout',
-      'whoami',
-      'api',
-    ]);
-  });
-
-  test('a reserved group fails as a usage error pointing at vibeterm api', async () => {
-    const reserved = RESERVED_COMMANDS[0];
-    const error = (await reserved.run({} as never, []).catch((err) => err)) as UsageError;
-    expect(error.exitCode).toBe(2);
-    expect(error.hint).toContain('vibeterm api');
+  test('every dispatched group is implemented, nothing is left reserved', () => {
+    const names = IMPLEMENTED_COMMANDS.map((command) => command.name);
+    expect(names.sort()).toEqual([...DISPATCHED_GROUPS].sort());
+    expect(RESERVED_COMMANDS).toHaveLength(0);
   });
 
   test('findCommand only knows registered names', () => {

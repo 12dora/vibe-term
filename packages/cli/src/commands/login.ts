@@ -2,20 +2,21 @@
 
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import { bytesEqual, decodeBase64url } from '@vibeterm/shared/auth';
 import { flagBool, flagString, parseArgv } from '../core/args';
 import {
   type AuthMode,
   type SessionMaterial,
+  TOTP_KEY_UNAVAILABLE,
   buildSessionMaterial,
   fetchAuthMode,
-  listMeshNodes,
   loginFailure,
   loginToNode,
   needsTotp,
   requiresLogin,
 } from '../core/auth';
 import type { CliContext } from '../core/context';
-import { AuthError, UsageError } from '../core/errors';
+import { AuthError, EXIT_AUTH, UsageError, exitCodeOf } from '../core/errors';
 import { isInteractive, promptHidden, promptLine, readAllStdin } from '../core/prompt';
 import type { Command } from './types';
 
@@ -37,6 +38,7 @@ interface TargetOutcome {
   name: string;
   ok: boolean;
   code?: string;
+  nodePk?: string;
 }
 
 async function readPassword(ctx: CliContext, fromStdin: boolean): Promise<string> {
@@ -91,17 +93,37 @@ function pkOf(row: MeshNode | null): string | null {
 async function otherTargets(
   ctx: CliContext,
   mode: AuthMode,
-  nodeRef: string | null
+  nodeRef: string | null,
+  roster: readonly MeshNode[]
 ): Promise<LoginTarget[]> {
   if (nodeRef) {
     const resolved = await ctx.resolver.resolveNode(nodeRef);
     if (resolved.isSelf || resolved.id === mode.nodeId) return [];
     return [{ nodeId: resolved.id, name: resolved.name, publicKey: pkOf(resolved.row) }];
   }
-  const nodes = await listMeshNodes(ctx.http);
-  return nodes
+  return roster
     .filter((node) => node.id !== mode.nodeId)
     .map((node) => ({ nodeId: node.id, name: node.name, publicKey: node.publicKey }));
+}
+
+/**
+ * 与浏览器的 `loginSelf` / `verifySelfPublicKey` 同一道检查：challenge 里 entry 当场出示的
+ * 公钥，必须与 hub 签发、记在 `/api/mesh/nodes` 里的那把逐字节一致。对不上说明入口被掉包或
+ * 配置错乱——立刻丢掉刚拿到的会话，不让用户带着一个不可信的会话继续。
+ */
+function verifySelfPublicKey(
+  ctx: CliContext,
+  mode: AuthMode,
+  roster: readonly MeshNode[],
+  presented: string | undefined
+): void {
+  const row = roster.find((node) => node.id === mode.nodeId);
+  // 名册里没有自己那行（standalone / 旧网关 / 成员表还没同步）时无从比对，跳过。
+  if (!row || !presented) return;
+  if (bytesEqual(decodeBase64url(presented), decodeBase64url(row.publicKey))) return;
+  ctx.sessions.clearEntry(ctx.globals.entry);
+  ctx.sessions.save();
+  throw loginFailure(mode.nodeId, 'NODE_PK_MISMATCH', mode.secondFactorPolicy);
 }
 
 async function loginOne(
@@ -120,14 +142,24 @@ async function loginOne(
     });
   let result = await attempt();
   // mode 快照说没开两步验证，服务端却要码：TTY 下当场补一次，非 TTY 交回调用方。
+  // 只有 TOTP_REQUIRED 会重来一次——PASSKEY_REQUIRED 重发只会再被拒一次并多记一次失败。
   if (!result.ok && result.code === 'TOTP_REQUIRED' && !totp.code && isInteractive()) {
+    if (!material.kTotp) {
+      return { node: target.nodeId, name: target.name, ok: false, code: TOTP_KEY_UNAVAILABLE };
+    }
     const code = (await promptLine('Two-step verification code: ')).trim();
     if (code) {
       totp.code = code;
       result = await attempt();
     }
   }
-  return { node: target.nodeId, name: target.name, ok: result.ok, code: result.code };
+  return {
+    node: target.nodeId,
+    name: target.name,
+    ok: result.ok,
+    code: result.code,
+    nodePk: result.nodePk,
+  };
 }
 
 function report(ctx: CliContext, outcomes: TargetOutcome[]): void {
@@ -140,6 +172,23 @@ function report(ctx: CliContext, outcomes: TargetOutcome[]): void {
     { header: 'NAME', value: (row) => row.name },
     { header: 'STATUS', value: (row) => (row.ok ? 'ok' : (row.code ?? 'failed')) },
   ]);
+}
+
+/**
+ * fan-out 里失败的 node 逐条给出与 entry 同一套解释（`PASSKEY_REQUIRED` 尤其要说清怎么办）。
+ * 失败全是「要登录 / 要二次验证」时按鉴权失败退出（3），混了别的原因才退 1。
+ */
+function reportFailures(ctx: CliContext, mode: AuthMode, outcomes: TargetOutcome[]): number {
+  const failed = outcomes.filter((outcome) => !outcome.ok);
+  if (failed.length === 0) return 0;
+  let authOnly = true;
+  for (const outcome of failed) {
+    const error = loginFailure(outcome.node, outcome.code ?? 'UNKNOWN', mode.secondFactorPolicy);
+    ctx.out.warn(`node ${outcome.node} (${outcome.name}): ${error.message}`);
+    if (error.hint) ctx.out.warn(`  ${error.hint}`);
+    if (exitCodeOf(error) !== EXIT_AUTH) authOnly = false;
+  }
+  return authOnly ? EXIT_AUTH : 1;
 }
 
 async function run(ctx: CliContext, argv: string[]): Promise<number | undefined> {
@@ -168,16 +217,15 @@ async function run(ctx: CliContext, argv: string[]): Promise<number | undefined>
     ctx.sessions.setIdentity(ctx.globals.entry, { uid: mode.uid, username: mode.username });
     ctx.sessions.save();
 
+    const roster = await ctx.resolver.listNodes();
+    verifySelfPublicKey(ctx, mode, roster, selfOutcome.nodePk);
+
     const outcomes: TargetOutcome[] = [selfOutcome];
-    for (const target of await otherTargets(ctx, mode, nodeRef)) {
+    for (const target of await otherTargets(ctx, mode, nodeRef, roster)) {
       outcomes.push(await loginOne(ctx, target, material, totp));
     }
     report(ctx, outcomes);
-    const failed = outcomes.filter((outcome) => !outcome.ok);
-    for (const outcome of failed) {
-      ctx.out.warn(`node ${outcome.node} (${outcome.name}): ${outcome.code ?? 'failed'}`);
-    }
-    return failed.length === 0 ? 0 : 1;
+    return reportFailures(ctx, mode, outcomes);
   } finally {
     material.destroy();
   }
@@ -199,6 +247,7 @@ export const command: Command = {
     '  --password-stdin    read the password from stdin instead of prompting',
     '  --all-nodes         log into every mesh node (default when --node is absent)',
     '  --node <id|name>    log into this node only (plus the entry itself)',
+    '  --ca <pem-file>     trust this extra CA; --insecure skips verification entirely',
     '',
     'Password sources: --password-stdin > VIBETERM_PASSWORD > hidden TTY prompt.',
   ].join('\n'),

@@ -1,0 +1,248 @@
+// `vibeterm share`：终端分享。
+
+import { flagBool, flagNumber, flagString } from '../core/args';
+import {
+  type SubHandler,
+  confirmOrYes,
+  dash,
+  emit,
+  mergeBody,
+  parseDurationMs,
+  rejectExtra,
+  requireArg,
+  requireObjectBody,
+  resolveJsonBody,
+  runSubs,
+  shortId,
+} from '../core/cmd';
+import type { CliContext } from '../core/context';
+import { NotFoundError, UsageError } from '../core/errors';
+import { isInteractive, promptHidden } from '../core/prompt';
+import { resolveShareTarget, sharePath } from '../core/share-target';
+import type { Command } from './types';
+
+const FLAGS = {
+  password: 'string',
+  name: 'string',
+  'window-id': 'string',
+  origin: 'string',
+  expires: 'string',
+  yes: 'boolean',
+  clear: 'boolean',
+  body: 'string',
+  after: 'number',
+  limit: 'number',
+  'end-sessions': 'boolean',
+} as const;
+
+const USAGE = [
+  'Usage: vibeterm share <subcommand>',
+  '',
+  'Subcommands:',
+  '  create <target-window> [--password] [--name] [--expires 1h] [--origin] [--window-id @N]',
+  '  ls [--node]',
+  '  show <id>',
+  '  password <id> [--password] [--clear]   GET password; --clear ends viewer sessions',
+  '  revoke <id>                            POST /api/share/:id/revoke',
+  '  rm <id>                                DELETE (ended shares only)',
+  '  log <id> [--after N] [--limit N]',
+  '  settings get|set                       GET/PUT /api/share/settings; set needs --body',
+  '  origins                                GET /api/share/origins',
+  '',
+  'create target: [<node>/]<device>:<window>  window is a tmux id (@1) or name.',
+  '--json: { share, password } / { active, history } / ShareRecord / ShareLogPage / ShareSettings',
+].join('\n');
+
+async function readSharePassword(
+  flags: { password?: string },
+  interactiveLabel: string
+): Promise<string> {
+  if (flags.password) return flags.password;
+  const env = process.env.VIBETERM_SHARE_PASSWORD;
+  if (env) return env;
+  if (!isInteractive()) {
+    throw new UsageError(
+      'a share password is required and stdin is not a terminal',
+      'pass --password or set VIBETERM_SHARE_PASSWORD'
+    );
+  }
+  const value = await promptHidden(interactiveLabel);
+  if (!value) throw new UsageError('password is empty');
+  return value;
+}
+
+const create: SubHandler = async (ctx, flags, positionals) => {
+  const targetRaw = requireArg(positionals, 0, 'target');
+  rejectExtra(positionals, 1);
+  const target = await resolveShareTarget(ctx, targetRaw, flags);
+  const extra = await resolveJsonBody(flagString(flags, 'body'));
+  const expires = flagString(flags, 'expires');
+  const body = mergeBody(
+    {
+      deviceId: target.deviceId,
+      windowId: target.windowId,
+      name: flagString(flags, 'name') ?? '',
+      password: await readSharePassword(
+        { password: flagString(flags, 'password') },
+        'Share password: '
+      ),
+      expiresInMs: expires ? parseDurationMs(expires) : null,
+      origin: flagString(flags, 'origin') ?? null,
+    },
+    extra
+  );
+  const result = await ctx.http.json(target.nodeId, 'POST', '/api/share', body);
+  emit(ctx, result, () => ctx.out.data(result));
+};
+
+const ls: SubHandler = async (ctx, _flags, positionals) => {
+  rejectExtra(positionals, 0);
+  const nodeId = await ctx.targetNodeId();
+  const payload = await ctx.http.json<{
+    active?: Array<{ id: string; name: string; state: string; url: string; viewers: number }>;
+    history?: Array<{ id: string; name: string; state: string }>;
+  }>(nodeId, 'GET', '/api/share');
+  emit(ctx, payload, () => {
+    const rows = [...(payload.active ?? []), ...(payload.history ?? [])];
+    ctx.out.table(rows, [
+      { header: 'ID', value: (row) => shortId(row.id) },
+      { header: 'NAME', value: (row) => row.name },
+      { header: 'STATE', value: (row) => row.state },
+      { header: 'URL', value: (row) => ('url' in row ? dash((row as { url?: string }).url) : '-') },
+    ]);
+  });
+};
+
+async function loadShare(
+  ctx: CliContext,
+  id: string
+): Promise<{ nodeId: string; share: Record<string, unknown> }> {
+  const nodeId = await ctx.targetNodeId();
+  const list = await ctx.http.json<{
+    active?: Array<Record<string, unknown> & { id: string }>;
+    history?: Array<Record<string, unknown> & { id: string }>;
+  }>(nodeId, 'GET', '/api/share');
+  const share = [...(list.active ?? []), ...(list.history ?? [])].find((row) => row.id === id);
+  if (!share) {
+    throw new NotFoundError(`unknown share: ${id}`, 'run: vibeterm share ls');
+  }
+  return { nodeId, share };
+}
+
+const show: SubHandler = async (ctx, _flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  const { share } = await loadShare(ctx, id);
+  emit(ctx, share, () => ctx.out.data(share));
+};
+
+const password: SubHandler = async (ctx, flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  const nodeId = await ctx.targetNodeId();
+  const path = sharePath(id, '/password');
+  const next = flagString(flags, 'password');
+  if (flagBool(flags, 'clear') && !next) {
+    const current = await ctx.http.json<{ password: string }>(nodeId, 'GET', path);
+    const result = await ctx.http.json(nodeId, 'POST', path, {
+      password: current.password,
+      endSessions: true,
+    });
+    emit(ctx, result, () => ctx.out.line(`ended viewer sessions for ${id}`));
+    return;
+  }
+  if (next || flagBool(flags, 'end-sessions')) {
+    const value = await readSharePassword({ password: next }, 'New share password: ');
+    const result = await ctx.http.json(nodeId, 'POST', path, {
+      password: value,
+      endSessions: flagBool(flags, 'end-sessions') || flagBool(flags, 'clear'),
+    });
+    emit(ctx, result, () => ctx.out.data(result));
+    return;
+  }
+  const result = await ctx.http.json(nodeId, 'GET', path);
+  emit(ctx, result, () => ctx.out.data(result));
+};
+
+const revoke: SubHandler = async (ctx, _flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  const nodeId = await ctx.targetNodeId();
+  const result = await ctx.http.json(nodeId, 'POST', sharePath(id, '/revoke'));
+  emit(ctx, result, () => ctx.out.data(result));
+};
+
+const rm: SubHandler = async (ctx, flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  await confirmOrYes(flags, `delete share ${id}`);
+  const nodeId = await ctx.targetNodeId();
+  const result = await ctx.http.json(nodeId, 'DELETE', sharePath(id));
+  emit(ctx, result, () => ctx.out.line(`deleted ${id}`));
+};
+
+const log: SubHandler = async (ctx, flags, positionals) => {
+  const id = requireArg(positionals, 0, 'id');
+  rejectExtra(positionals, 1);
+  const params = new URLSearchParams();
+  const after = flagNumber(flags, 'after');
+  const limit = flagNumber(flags, 'limit');
+  if (after !== undefined) params.set('after', String(after));
+  if (limit !== undefined) params.set('limit', String(limit));
+  const query = params.toString();
+  const nodeId = await ctx.targetNodeId();
+  const payload = await ctx.http.json(
+    nodeId,
+    'GET',
+    `${sharePath(id, '/log')}${query ? `?${query}` : ''}`
+  );
+  emit(ctx, payload, () => ctx.out.data(payload));
+};
+
+const settings: SubHandler = async (ctx, flags, positionals) => {
+  const action = requireArg(positionals, 0, 'get|set');
+  rejectExtra(positionals, 1);
+  const nodeId = await ctx.targetNodeId();
+  if (action === 'get') {
+    const payload = await ctx.http.json(nodeId, 'GET', '/api/share/settings');
+    emit(ctx, payload, () => ctx.out.data(payload));
+    return;
+  }
+  if (action === 'set') {
+    const body = requireObjectBody(
+      await resolveJsonBody(flagString(flags, 'body')),
+      'pass --body \'{"recordLogs":false}\''
+    );
+    const payload = await ctx.http.json(nodeId, 'PUT', '/api/share/settings', body);
+    emit(ctx, payload, () => ctx.out.data(payload));
+    return;
+  }
+  throw new UsageError(`unknown settings action: ${action}`, 'use get|set');
+};
+
+const origins: SubHandler = async (ctx, _flags, positionals) => {
+  rejectExtra(positionals, 0);
+  const nodeId = await ctx.targetNodeId();
+  const payload = await ctx.http.json(nodeId, 'GET', '/api/share/origins');
+  emit(ctx, payload, () => ctx.out.data(payload));
+};
+
+const HANDLERS: Record<string, SubHandler> = {
+  create,
+  ls,
+  show,
+  password,
+  revoke,
+  rm,
+  log,
+  settings,
+  origins,
+};
+
+export const command: Command = {
+  name: 'share',
+  summary: 'manage terminal shares',
+  usage: USAGE,
+  flags: FLAGS,
+  run: (ctx, argv) => runSubs(ctx, argv, FLAGS, HANDLERS, 'run: vibeterm share --help'),
+};

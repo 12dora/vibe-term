@@ -15,6 +15,7 @@ import WebSocket from 'ws';
 import { cliVersion } from '../version';
 import { AuthError, NetworkError } from './errors';
 import type { HttpClient } from './http';
+import { type TlsConnectOptions, wsTlsOptions } from './tls';
 
 /** entry 的 http(s) 基址 → 该 node 的 ws(s) 端点（带一次性 cid）。 */
 export function nodeGatewayWsUrl(entry: string, nodeId: string, cid: string): string {
@@ -27,6 +28,8 @@ export function nodeGatewayWsUrl(entry: string, nodeId: string, cid: string): st
 export interface WsSocketOptions {
   headers: Record<string, string>;
   handshakeTimeoutMs: number;
+  /** `--ca` / `--insecure`；`ws` 直接把它们透给 `tls.connect`。 */
+  tls?: TlsConnectOptions;
 }
 
 function toMessageData(data: unknown, isBinary: boolean): ArrayBuffer | string {
@@ -42,6 +45,7 @@ export function createWsSocket(url: string, options: WsSocketOptions): WebSocket
   const socket = new WebSocket(url, {
     headers: options.headers,
     handshakeTimeout: options.handshakeTimeoutMs,
+    ...(options.tls ?? {}),
   });
   socket.binaryType = 'arraybuffer';
 
@@ -106,8 +110,12 @@ export async function openGatewaySocket(
   const timeoutMs = options.timeoutMs ?? 15_000;
   let currentCid: string | null = null;
   const socketFactory = createWsSocketFactory({
-    headers: buildHandshakeHeaders(http, nodeId),
+    // 握手头每次建 socket 重算：会话可能在重连之间被续期换了新 sid。
+    get headers() {
+      return buildHandshakeHeaders(http, nodeId);
+    },
     handshakeTimeoutMs: timeoutMs,
+    tls: wsTlsOptions(http.tls),
   });
 
   let closeCode: number | null = null;

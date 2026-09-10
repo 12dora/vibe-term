@@ -3,6 +3,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
+import { encodeBase64url, generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { buildContext } from '../core/context';
 import { AuthError } from '../core/errors';
 import { type FakeGateway, createFakeGateway, createFakeUser } from '../core/test-fakes';
@@ -256,5 +257,111 @@ describe('vibeterm whoami / logout', () => {
 
     expect(gateway.issued.size).toBe(0);
     expect(ctx.sessions.entry(ENTRY)).toBeNull();
+  });
+});
+
+describe('login against an older entry (mode fields absent)', () => {
+  test('sends k_totp with --totp even when totpEnabled is not advertised', async () => {
+    const user = await createFakeUser({ password: 'pw', totp: true });
+    const gateway = createFakeGateway({ user, omitTotpFields: true });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const code = await login.run(ctx, ['--totp', gateway.currentTotp() as string]);
+
+    expect(code).toBe(0);
+    const totp = gateway.loginBodies[0].body.totp as { code: string; k_totp: string };
+    expect(totp.k_totp).toBe(user.expectedKTotp);
+    expect(gateway.issued.has('self')).toBe(true);
+  });
+
+  test('a non-TOTP account still logs in with no totp field', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user, omitTotpFields: true });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    expect(gateway.loginBodies[0].body.totp).toBeUndefined();
+  });
+
+  test('TOTP_REQUIRED from an old entry is reported with the --totp hint', async () => {
+    const user = await createFakeUser({ password: 'pw', totp: true });
+    const gateway = createFakeGateway({ user, omitTotpFields: true });
+    const { ctx } = await testContext(gateway);
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const error = (await login.run(ctx, []).catch((err) => err)) as AuthError;
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('TOTP_REQUIRED');
+    expect(error.hint).toContain('--totp');
+  });
+});
+
+describe('entry public key verification', () => {
+  test('a roster key that does not match the challenge aborts and drops the session', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const impostor = encodeBase64url(generateEd25519KeyPair().publicKey);
+    const gateway = createFakeGateway({ user, selfPublicKeyOverride: impostor });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const error = (await login.run(ctx, []).catch((err) => err)) as AuthError;
+
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('NODE_PK_MISMATCH');
+    expect(error.message).toContain('does not match the mesh roster');
+    expect(ctx.sessions.entry(ENTRY)).toBeNull();
+  });
+
+  test('a matching roster key logs in normally', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({ user });
+    const { ctx } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(0);
+    expect(ctx.sessions.entry(ENTRY)?.nodes.self.sid).toBe(gateway.issued.get('self') as string);
+  });
+});
+
+describe('fan-out failures', () => {
+  test('PASSKEY_REQUIRED on a remote node exits 3, explains itself and never re-POSTs', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office' },
+      secondFactorPolicy: 'either',
+      forceLoginErrorFor: { [NODE_A]: 'PASSKEY_REQUIRED' },
+    });
+    const { ctx, stderr } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    const code = await login.run(ctx, []);
+
+    expect(code).toBe(3);
+    expect(gateway.issued.has('self')).toBe(true);
+    expect(gateway.loginBodies.filter((entry) => entry.nodeId === NODE_A)).toHaveLength(1);
+    expect(stderr.text()).toContain('passkey assertion');
+    expect(stderr.text()).toContain('--totp');
+  });
+
+  test('every failed node gets its own explanation, the entry still keeps its session', async () => {
+    const user = await createFakeUser({ password: 'pw' });
+    const other = 'b'.repeat(32);
+    const gateway = createFakeGateway({
+      user,
+      nodes: { [NODE_A]: 'office', [other]: 'home' },
+      forceLoginErrorFor: { [NODE_A]: 'PASSKEY_REQUIRED', [other]: 'RATE_LIMITED' },
+    });
+    const { ctx, stderr } = await testContext(gateway, { json: true });
+    process.env.VIBETERM_PASSWORD = 'pw';
+
+    expect(await login.run(ctx, [])).toBe(3);
+    expect(stderr.text()).toContain(`node ${NODE_A}`);
+    expect(stderr.text()).toContain(`node ${other}`);
+    expect(stderr.text()).toContain('rate limiting');
+    expect(ctx.sessions.entry(ENTRY)?.nodes.self.sid).toBeTruthy();
   });
 });

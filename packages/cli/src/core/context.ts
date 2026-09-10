@@ -12,6 +12,7 @@ import { type FetchLike, HttpClient, createSessionCookieJar } from './http';
 import { Output, shouldUseColor } from './output';
 import { Resolver } from './resolve';
 import { SessionStore } from './session-store';
+import { DEFAULT_TLS, type TlsSettings } from './tls';
 import { type GatewaySocket, type OpenGatewaySocketOptions, openGatewaySocket } from './ws';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -24,6 +25,8 @@ export interface CliGlobals {
   quiet: boolean;
   color: boolean;
   timeoutMs: number;
+  /** `--ca` / `--insecure`。 */
+  tls: TlsSettings;
 }
 
 export interface CliContext {
@@ -45,6 +48,7 @@ export interface BuildContextOptions {
   quiet: boolean;
   noColor: boolean;
   timeoutMs?: number;
+  tls?: TlsSettings;
   env?: NodeJS.ProcessEnv;
   /** 测试注入：跳过真实的 `~/.config` 与安装目录探测。 */
   configDir?: string;
@@ -67,6 +71,7 @@ export function buildContext(options: BuildContextOptions): CliContext {
       (options.installEntry === undefined ? installBaseUrl() : options.installEntry) ?? undefined,
   });
   const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const tls = options.tls ?? DEFAULT_TLS;
   const globals: CliGlobals = {
     entry,
     node: options.node ?? null,
@@ -74,10 +79,12 @@ export function buildContext(options: BuildContextOptions): CliContext {
     quiet: options.quiet,
     color: shouldUseColor(options.noColor, env),
     timeoutMs,
+    tls,
   };
   const http = new HttpClient({
     entry,
     timeoutMs,
+    tls,
     jar: createSessionCookieJar(sessions, entry),
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });

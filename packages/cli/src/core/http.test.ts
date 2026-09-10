@@ -166,6 +166,24 @@ describe('HttpClient', () => {
     expect((error as NetworkError).exitCode).toBe(5);
   });
 
+  test('ignores Set-Cookie sessions for any node other than self or the target', async () => {
+    const jar = createMemoryCookieJar();
+    const foreign = 'b'.repeat(32);
+    jar.set(foreign, 'sid-foreign', 0);
+    const headers = new Headers({ location: '/elsewhere' });
+    // 一次重定向响应里塞进第三台 node 的会话 cookie：绝不能覆盖我们手上那把。
+    headers.append('set-cookie', `vibeterm_s_${foreign}=stolen; Path=/; Max-Age=60`);
+    headers.append('set-cookie', `vibeterm_s_${NODE}=sid-node; Path=/; Max-Age=60`);
+    headers.append('set-cookie', 'vibeterm_s_self=sid-self; Path=/; Max-Age=60');
+    const http = client(async () => new Response(null, { status: 302, headers }), jar);
+
+    await http.fetch(NODE, '/api/devices');
+
+    expect(jar.get(foreign)?.sid).toBe('sid-foreign');
+    expect(jar.get(NODE)?.sid).toBe('sid-node');
+    expect(jar.get('self')?.sid).toBe('sid-self');
+  });
+
   test('ndjson yields one parsed object per line', async () => {
     const http = client(
       async () =>

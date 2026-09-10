@@ -15,17 +15,25 @@ import {
 import { buildContext } from './core/context';
 import { EXIT_OK, UsageError, errorText, exitCodeOf, hintOf } from './core/errors';
 import { Output, captureDiagnostics, shouldUseColor } from './core/output';
+import { loadTlsSettings, prepareProcessTls } from './core/tls';
 import { COMMANDS, IMPLEMENTED_COMMANDS, RESERVED_COMMANDS, findCommand } from './registry';
 import { cliVersion } from './version';
+
+const RESERVED_HELP =
+  RESERVED_COMMANDS.length === 0
+    ? []
+    : [
+        '',
+        'Reserved (not implemented yet):',
+        `  ${RESERVED_COMMANDS.map((c) => c.name).join(', ')}`,
+      ];
 
 const GLOBAL_HELP = [
   'Usage: vibeterm <command> [options]',
   '',
   'Commands:',
   ...IMPLEMENTED_COMMANDS.map((command) => `  ${command.name.padEnd(10)}${command.summary}`),
-  '',
-  'Reserved (not implemented yet):',
-  `  ${RESERVED_COMMANDS.map((command) => command.name).join(', ')}`,
+  ...RESERVED_HELP,
   '',
   'Global options:',
   '  --entry <url>     gateway entry (default: $VIBETERM_ENTRY, last used, local install, 127.0.0.1:9883)',
@@ -34,6 +42,8 @@ const GLOBAL_HELP = [
   '  --quiet           suppress human-facing chatter on stderr',
   '  --no-color        disable ANSI colors',
   '  --timeout <ms>    per-request timeout (default 30000)',
+  '  --ca <pem-file>   trust this extra CA for https and wss',
+  '  --insecure        do not verify the server certificate (prints a warning; never the default)',
   '  --help, -h        show help for a command',
   '',
   'Exit codes: 0 ok, 1 error, 2 usage, 3 auth required, 4 not found, 5 network.',
@@ -110,7 +120,14 @@ async function dispatch(argv: string[], out: Output): Promise<number> {
   // 库里的 console.log 不能污染 stdout：命令结果（尤其 --json）独占那条通道。
   captureDiagnostics(flagBool(globals, 'quiet'));
 
+  const tls = loadTlsSettings(flagString(globals, 'ca'), flagBool(globals, 'insecure'));
+  if (tls.insecure) {
+    // 关掉证书校验必须显眼：中间人此时完全不可见。
+    out.error('WARNING: --insecure disables TLS certificate verification for this command');
+  }
+
   const ctx = buildContext({
+    tls,
     entryFlag: flagString(globals, 'entry'),
     node: flagString(globals, 'node') ?? null,
     json: flagBool(globals, 'json'),
@@ -118,6 +135,7 @@ async function dispatch(argv: string[], out: Output): Promise<number> {
     noColor: flagBool(globals, 'no-color'),
     ...(timeout === undefined ? {} : { timeoutMs: timeout }),
   });
+  await prepareProcessTls(ctx.globals.entry, tls);
   const code = await command.run(ctx, commandArgv);
   return typeof code === 'number' ? code : EXIT_OK;
 }

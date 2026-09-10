@@ -19,6 +19,8 @@ export const GLOBAL_FLAGS: FlagSpec = {
   quiet: 'boolean',
   'no-color': 'boolean',
   timeout: 'number',
+  ca: 'string',
+  insecure: 'boolean',
   help: 'boolean',
 };
 

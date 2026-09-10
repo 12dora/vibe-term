@@ -1,0 +1,197 @@
+// 节点升级：POST 启动、轮询 GET，语义对齐 GUI 的 use-node-upgrade（简化为串行）。
+
+import type { MeshNode } from '@vibeterm/api-client/auth/types';
+import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import type { UpgradeStatus } from '@vibeterm/shared';
+import { dash, sleep } from './cmd';
+import type { CliContext } from './context';
+import { CliError } from './errors';
+import { listMeshNodesFull } from './nodes-hub';
+
+export interface UpgradeLatest {
+  latestVersion: string;
+  changelog: string | null;
+  publishedAt: string | null;
+}
+
+export interface UpgradeOutcome {
+  node: string;
+  name: string;
+  outcome: 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled';
+  version?: string | null;
+  error?: string;
+}
+
+const POLL_MS = 2000;
+const BUDGET_MS = 6 * 60_000;
+const START_GRACE_MS = 30_000;
+
+export async function fetchUpgradeLatest(ctx: CliContext): Promise<UpgradeLatest> {
+  return ctx.http.json<UpgradeLatest>(SELF_NODE_ID, 'GET', '/api/mesh/upgrade/latest');
+}
+
+async function readCode(response: Response): Promise<string> {
+  try {
+    const payload = (await response.json()) as { code?: unknown; error?: unknown };
+    if (typeof payload.code === 'string') return payload.code;
+    if (typeof payload.error === 'string') return payload.error;
+  } catch {
+    // 落到通用码
+  }
+  return 'UPGRADE_FAILED';
+}
+
+export async function startNodeUpgrade(
+  ctx: CliContext,
+  nodeId: string,
+  version?: string
+): Promise<{ kind: 'started' | 'alreadyLatest' | 'unconfirmed' | 'failed'; code?: string }> {
+  const response = await ctx.http.fetch(SELF_NODE_ID, `/api/mesh/nodes/${nodeId}/upgrade`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(version ? { version } : {}),
+  });
+  if (response.ok) return { kind: 'started' };
+  const code = await readCode(response);
+  if (code === 'UPGRADE_ALREADY_LATEST') return { kind: 'alreadyLatest', code };
+  if (code === 'NODE_UNREACHABLE') return { kind: 'unconfirmed', code };
+  return { kind: 'failed', code };
+}
+
+export async function pollNodeUpgrade(
+  ctx: CliContext,
+  nodeId: string
+): Promise<{ kind: 'status' | 'unreachable' | 'failed'; status?: UpgradeStatus; code?: string }> {
+  const response = await ctx.http.fetch(SELF_NODE_ID, `/api/mesh/nodes/${nodeId}/upgrade`);
+  if (response.ok) {
+    return { kind: 'status', status: (await response.json()) as UpgradeStatus };
+  }
+  if (response.status >= 500) return { kind: 'unreachable' };
+  return { kind: 'failed', code: await readCode(response) };
+}
+
+function versionOf(nodes: MeshNode[], nodeId: string): string | null | undefined {
+  const row = nodes.find((node) => node.id === nodeId);
+  return row ? row.version : undefined;
+}
+
+function outcome(
+  node: MeshNode,
+  kind: UpgradeOutcome['outcome'],
+  extra: { version?: string | null; error?: string } = {}
+): UpgradeOutcome {
+  return { node: node.id, name: node.name, outcome: kind, ...extra };
+}
+
+function pollTerminal(
+  node: MeshNode,
+  poll: Awaited<ReturnType<typeof pollNodeUpgrade>>
+): UpgradeOutcome | 'busy' | null {
+  if (poll.kind === 'failed') return outcome(node, 'failed', { error: poll.code });
+  if (poll.kind !== 'status' || !poll.status) return null;
+  if (poll.status.error === 'UPGRADE_CANCELLED') return outcome(node, 'cancelled');
+  if (poll.status.state === 'downloading' || poll.status.state === 'executing') return 'busy';
+  if (poll.status.state === 'idle' && poll.status.error) {
+    return outcome(node, 'failed', { error: poll.status.error });
+  }
+  return null;
+}
+
+async function versionOutcome(
+  ctx: CliContext,
+  node: MeshNode,
+  latestVersion: string | null,
+  sawBusy: boolean
+): Promise<UpgradeOutcome | null> {
+  const roster = await listMeshNodesFull(ctx).catch(() => [] as MeshNode[]);
+  const current = versionOf(roster, node.id);
+  if (latestVersion && current === latestVersion)
+    return outcome(node, 'done', { version: current });
+  if (sawBusy && current && current !== node.version)
+    return outcome(node, 'done', { version: current });
+  return null;
+}
+
+export async function waitNodeUpgrade(
+  ctx: CliContext,
+  node: MeshNode,
+  latestVersion: string | null,
+  versionFlag?: string
+): Promise<UpgradeOutcome> {
+  const started = Date.now();
+  const start = await startNodeUpgrade(ctx, node.id, versionFlag);
+  if (start.kind === 'alreadyLatest')
+    return outcome(node, 'alreadyLatest', { version: node.version });
+  if (start.kind === 'failed') return outcome(node, 'failed', { error: start.code });
+  let sawBusy = false;
+  while (Date.now() - started < BUDGET_MS) {
+    const poll = await pollNodeUpgrade(ctx, node.id);
+    const terminal = pollTerminal(node, poll);
+    if (terminal === 'busy') {
+      sawBusy = true;
+      ctx.out.info(`${node.name}: ${poll.status?.state} ${dash(poll.status?.targetVersion)}`);
+      await sleep(POLL_MS);
+      continue;
+    }
+    if (terminal) return terminal;
+    const done = await versionOutcome(ctx, node, latestVersion, sawBusy);
+    if (done) return done;
+    if (!sawBusy && Date.now() - started > START_GRACE_MS) return outcome(node, 'timeout');
+    await sleep(POLL_MS);
+  }
+  return outcome(node, 'timeout');
+}
+
+export function orderUpgradeTargets(rows: MeshNode[], selfId?: string): MeshNode[] {
+  const others: MeshNode[] = [];
+  const hubs: MeshNode[] = [];
+  const self: MeshNode[] = [];
+  for (const row of rows) {
+    if (selfId && row.id === selfId) self.push(row);
+    else if (row.isHub) hubs.push(row);
+    else others.push(row);
+  }
+  return [...others, ...hubs, ...self];
+}
+
+export async function runUpgradeBatch(
+  ctx: CliContext,
+  targets: MeshNode[],
+  latestVersion: string | null,
+  versionFlag?: string,
+  wait = false,
+  selfId?: string
+): Promise<UpgradeOutcome[]> {
+  const outcomes: UpgradeOutcome[] = [];
+  for (const node of orderUpgradeTargets(targets, selfId)) {
+    if (!wait) {
+      const start = await startNodeUpgrade(ctx, node.id, versionFlag);
+      outcomes.push({
+        node: node.id,
+        name: node.name,
+        outcome:
+          start.kind === 'alreadyLatest'
+            ? 'alreadyLatest'
+            : start.kind === 'failed'
+              ? 'failed'
+              : 'done',
+        error: start.code,
+      });
+      continue;
+    }
+    outcomes.push(await waitNodeUpgrade(ctx, node, latestVersion, versionFlag));
+  }
+  return outcomes;
+}
+
+export function upgradePath(nodeId: string): string {
+  return `/api/mesh/nodes/${nodeId}/upgrade`;
+}
+
+export function uninstallPath(nodeId: string): string {
+  return `/api/mesh/nodes/${nodeId}/uninstall`;
+}
+
+export function operationPath(nodeId: string): string {
+  return `/api/mesh/nodes/${nodeId}/operation`;
+}
