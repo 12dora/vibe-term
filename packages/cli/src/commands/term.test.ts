@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough, Writable } from 'node:stream';
 import type { GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
+import type { CliError } from '../core/errors';
 import { UsageError } from '../core/errors';
 import { runAttach } from '../core/term-attach';
 import { parseDetachKey } from '../core/term-escape';
@@ -117,15 +118,114 @@ describe('vibeterm term capture', () => {
     await term.run(h.ctx, ['capture', 'laptop', '--strip-ansi']);
     expect(h.stdout.text()).toBe('red\n');
   });
+  test('--history fetches one scrollback page alongside the screen', async () => {
+    const h = await harness({ json: true });
+    h.transport.onCommand = (command) => {
+      if (command.type === 'request-pane-screen') {
+        h.transport.emit({
+          type: 'screen-snapshot',
+          snapshot: {
+            ...screenFor(command.paneId, 'now'),
+            historyCursor: {
+              paneEpoch: new Uint8Array(16).fill(7),
+              historyEpoch: new Uint8Array(16).fill(9),
+              beforeLine: 40,
+            },
+          },
+        });
+        return;
+      }
+      if (command.type !== 'request-pane-history') return;
+      h.transport.emit({
+        type: 'history-page',
+        page: {
+          deviceId: 'device-1',
+          paneId: command.paneId,
+          paneEpoch: new Uint8Array(16).fill(7),
+          historyEpoch: new Uint8Array(16).fill(9),
+          lineStart: 20,
+          lineEnd: 40,
+          truncated: false,
+          data: encoder.encode('older\n'),
+          nextCursor: null,
+        },
+      });
+    };
+    await term.run(h.ctx, ['capture', 'laptop', '--history', '4096']);
+    const payload = JSON.parse(h.stdout.text()) as { history?: { text: string } };
+    expect(payload.history?.text).toBe('older');
+    expect(h.transport.commandsOfType('request-pane-history')[0]).toMatchObject({
+      byteLimit: 4096,
+    });
+  });
+
+  test('--wait-idle takes a second screen after the pane goes quiet', async () => {
+    const h = await harness();
+    autoScreen(h, 'settled');
+    await term.run(h.ctx, ['capture', 'laptop', '--wait-idle', '30', '--strip-ansi']);
+    expect(h.transport.commandsOfType('request-pane-screen').length).toBe(2);
+    expect(h.stdout.text()).toBe('settled\n');
+  });
+});
+
+describe('vibeterm term stream recovery', () => {
+  test('a rebase re-requests the screen so PaneData starts flowing again', async () => {
+    const h = await harness();
+    autoScreen(h, 'S');
+    const stream = { done: false };
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'request-pane-screen') return;
+      h.transport.emit({ type: 'screen-snapshot', snapshot: screenFor(command.paneId, 'S') });
+      if (stream.done) return;
+      stream.done = true;
+      // 订阅落地后网关会先把 pane 拦住并要求重取一次画面。
+      queueMicrotask(() =>
+        h.transport.emit({
+          type: 'rebase-required',
+          deviceId: 'device-1',
+          paneId: '%0',
+          reason: 'cache_evicted',
+        })
+      );
+    };
+    await term.run(h.ctx, ['capture', 'laptop']);
+    expect(h.transport.commandsOfType('request-pane-screen').length).toBeGreaterThan(1);
+  });
+
+  test('a screen that never arrives is a network failure, not empty output', async () => {
+    const h = await harness();
+    const failed = await term.run(h.ctx, ['capture', 'laptop']).then(
+      () => null,
+      (error) => error as CliError
+    );
+    expect(failed?.exitCode).toBe(5);
+    expect(h.closed()).toBe(1);
+  });
+
+  test('losing the socket mid-run fails instead of looking like silence', async () => {
+    const h = await harness();
+    autoScreen(h, 'S', () => {
+      queueMicrotask(() => h.transport.emit({ type: 'connection-state', state: 'CLOSED' }));
+    });
+    const failed = await term.run(h.ctx, ['run', 'laptop', 'sleep 9']).then(
+      () => null,
+      (error) => error as CliError
+    );
+    expect(failed?.exitCode).toBe(5);
+  });
 });
 
 describe('vibeterm term run', () => {
   test('--marker detects completion and the exit code', async () => {
     const h = await harness({ json: true });
+    // 哨兵是第二行输入：先回显命令与它的输出，收到哨兵行再回显它与结果。
     autoScreen(h, 'prompt$ ', (data, emit) => {
       const nonce = /__VT_DONE_([0-9a-f]+)_/.exec(data)?.[1];
-      emit(`${data.trimEnd()}\r\n`);
-      emit(`hello\r\n__VT_DONE_${nonce}_0\r\nprompt$ `);
+      if (!nonce) {
+        emit(`${data.trimEnd()}\r\nhello\r\n`);
+        return;
+      }
+      emit(`${data.trimEnd()}\r\n__VT_DONE_${nonce}_0\r\nprompt$ `);
     });
     await term.run(h.ctx, ['run', 'laptop', 'echo hello', '--marker']);
     const payload = JSON.parse(h.stdout.text()) as Record<string, unknown>;
@@ -214,6 +314,43 @@ describe('vibeterm term attach on a fake TTY', () => {
       rows: 30,
       paneId: '%0',
     });
+    expect(h.closed()).toBe(1);
+  });
+});
+
+describe('vibeterm term attach failure handling', () => {
+  test('an exception while writing pane data ends the attach and restores the TTY', async () => {
+    const h = await harness();
+    autoScreen(h, 'S');
+    const tty = ttyStreams();
+    let raw = true;
+    Object.assign(tty.stdin, {
+      setRawMode: (value: boolean) => {
+        raw = value;
+        return tty.stdin;
+      },
+    });
+    let boom = true;
+    const stdout = tty.stdout as unknown as { write: (chunk: unknown) => boolean };
+    const original = stdout.write.bind(stdout);
+    stdout.write = (chunk: unknown) => {
+      if (boom) {
+        boom = false;
+        throw new Error('tty exploded');
+      }
+      return original(chunk);
+    };
+    const failed = await runAttach(
+      h.ctx,
+      'laptop',
+      { detachKey: parseDetachKey('~.'), historyBytes: 0 },
+      { stdin: tty.stdin, stdout: tty.stdout }
+    ).then(
+      () => null,
+      (error) => error as Error
+    );
+    expect(failed?.message).toContain('tty exploded');
+    expect(raw).toBe(false);
     expect(h.closed()).toBe(1);
   });
 });

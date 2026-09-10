@@ -138,6 +138,56 @@ describe('vibeterm tmux control commands', () => {
   });
 });
 
+describe('vibeterm tmux rename normalisation', () => {
+  test('the predicate uses the gateway normalisation (trim + 64 chars)', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'rename-window') return;
+      const next = fakeSession();
+      // 网关侧 renameWindow 存的是 trim + slice(0,64) 之后的值。
+      next.windows[1].customName = command.name.trim().slice(0, 64);
+      queueMicrotask(() => h.transport.emitTree(next));
+    };
+    await tmux.run(h.ctx, ['rename-window', 'laptop:build', '  deploy  ']);
+    expect(h.transport.commandsOfType('rename-window')[0].name).toBe('deploy');
+    expect(h.stdout.text()).toContain('deploy');
+  });
+
+  test('an empty name clears the custom name', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'rename-pane') return;
+      queueMicrotask(() => h.transport.emitTree(fakeSession()));
+    };
+    await tmux.run(h.ctx, ['rename-pane', 'laptop:build.1', '--name', '   ']);
+    expect(h.transport.commandsOfType('rename-pane')[0].name).toBe('');
+    expect(h.stdout.text()).toContain('renamed: %2');
+  });
+});
+
+describe('vibeterm tmux when the session disappears', () => {
+  test('kill-window succeeds when closing the last window destroys the session', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'close-window') return;
+      queueMicrotask(() => h.transport.emitTree(null));
+    };
+    await tmux.run(h.ctx, ['kill-window', 'laptop:build']);
+    expect(h.stdout.text()).toContain('closed window: @1');
+  });
+
+  test('a rename against a destroyed session is a not-found error, not a timeout', async () => {
+    const h = await harness();
+    h.transport.onCommand = (command) => {
+      if (command.type !== 'rename-window') return;
+      queueMicrotask(() => h.transport.emitTree(null));
+    };
+    await expect(tmux.run(h.ctx, ['rename-window', 'laptop:build', 'x'])).rejects.toThrow(
+      NotFoundError
+    );
+  });
+});
+
 describe('vibeterm tmux argument handling', () => {
   test('an unknown subcommand and a missing target are usage errors', async () => {
     const h = await harness();

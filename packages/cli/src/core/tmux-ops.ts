@@ -57,6 +57,19 @@ export async function applyTmuxChange(
   return opened.session.awaitTreeChange(predicate, timeoutMs, what);
 }
 
+/**
+ * 自定义名的归一化，与网关 `apps/gateway/src/ws/tmux-command-handlers.ts` 的
+ * `renameWindow` / `renamePane` 完全一致：`trim()` + 截到 64 字符，空串表示清除自定义名。
+ * 落地谓词必须用同一套归一，否则用户带空格或超长的名字会永远等不到「改好了」。
+ */
+export function normalizeCustomName(raw: string): string {
+  return raw.trim().slice(0, 64);
+}
+
+export function customNameMatches(entity: { customName?: string } | null, wanted: string): boolean {
+  return entity !== null && (entity.customName ?? '') === wanted;
+}
+
 export function windowLabel(window: TmuxWindow): string {
   return window.customName ?? window.name;
 }

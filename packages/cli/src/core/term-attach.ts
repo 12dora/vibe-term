@@ -9,6 +9,7 @@ import type { GatewayPaneScreenSnapshot } from '@vibeterm/ws-client';
 import { activePane } from '@vibeterm/ws-client/canonical-tree';
 import type { CliContext } from './context';
 import { EXIT_OK, NetworkError } from './errors';
+import type { DeviceSessionEvents } from './pane-session';
 import {
   DetachEscapeMatcher,
   type DetachKey,
@@ -19,6 +20,7 @@ import { locatePane } from './term-target';
 import {
   CLEAR_SCREEN,
   LocalTerminal,
+  type LocalTerminalOptions,
   type TtyStreams,
   createStdinDecoder,
   requireTty,
@@ -31,7 +33,7 @@ export interface AttachOptions {
   historyBytes: number;
 }
 
-type AttachOutcome = 'detached' | 'closed';
+type AttachOutcome = 'detached' | 'closed' | 'failed';
 
 const HISTORY_WAIT_MS = 3_000;
 const RECONNECT_DELAY_MS = 500;
@@ -44,10 +46,16 @@ export async function runAttach(
   ctx: CliContext,
   targetRaw: string,
   options: AttachOptions,
-  streams: TtyStreams = { stdin: process.stdin, stdout: process.stdout }
+  streams: TtyStreams = { stdin: process.stdin, stdout: process.stdout },
+  terminalOptions: LocalTerminalOptions = {}
 ): Promise<number> {
   requireTty(streams);
-  const runner = new AttachRunner(ctx, targetRaw, options, new LocalTerminal(streams));
+  const runner = new AttachRunner(
+    ctx,
+    targetRaw,
+    options,
+    new LocalTerminal(streams, terminalOptions)
+  );
   return runner.run();
 }
 
@@ -62,6 +70,10 @@ class AttachRunner {
   private pendingScreen: GatewayPaneScreenSnapshot | null = null;
   private historyTimer: ReturnType<typeof setTimeout> | null = null;
   private historyDone = false;
+  /** `finish()` 早于 `attachOnce()` 挂上等待时（连接中就按了 `~.`）先记着。 */
+  private pendingOutcome: AttachOutcome | null = null;
+  private failure: Error | null = null;
+  private sigintHandler: (() => void) | null = null;
 
   constructor(
     private readonly ctx: CliContext,
@@ -73,38 +85,60 @@ class AttachRunner {
   }
 
   async run(): Promise<number> {
-    const onSigint = (): void => this.sendKeys('\u0003');
-    this.terminal.start(
-      (chunk) => this.onInput(chunk),
-      () => this.syncSize()
-    );
-    process.on('SIGINT', onSigint);
     try {
-      if ((await this.attachOnce()) === 'detached') return EXIT_OK;
+      if (this.settled(await this.attachOnce())) return EXIT_OK;
       this.notice('connection lost, reconnecting once…');
       await new Promise((resolve) => setTimeout(resolve, RECONNECT_DELAY_MS));
-      if ((await this.attachOnce()) === 'detached') return EXIT_OK;
+      if (this.pendingOutcome === 'detached') return EXIT_OK;
+      if (this.settled(await this.attachOnce())) return EXIT_OK;
       throw new NetworkError('attach: the gateway connection closed');
     } finally {
-      process.off('SIGINT', onSigint);
-      this.clearHistoryTimer();
-      this.terminal.stop();
+      this.stopInput();
     }
   }
 
+  /** 'detached' 即正常收尾；'failed' 把回调里的异常原样抛出去。 */
+  private settled(outcome: AttachOutcome): boolean {
+    if (outcome === 'failed') throw this.failure ?? new Error('attach failed');
+    return outcome === 'detached';
+  }
+
+  /**
+   * raw 模式只在**会话建好之后**才进：连接阶段留在 cooked 模式，Ctrl-C 仍然是真的 SIGINT
+   * （连接被中止，终端也没被动过），不会被我们吞掉。重连时终端已经是 raw，不再重复进。
+   */
+  private startInput(): void {
+    if (this.sigintHandler) return;
+    this.sigintHandler = () => this.sendKeys('\u0003');
+    this.terminal.start(
+      this.guard((chunk: Buffer) => this.onInput(chunk)),
+      this.guard(() => this.syncSize())
+    );
+    process.on('SIGINT', this.sigintHandler);
+  }
+
+  private stopInput(): void {
+    if (this.sigintHandler) process.off('SIGINT', this.sigintHandler);
+    this.sigintHandler = null;
+    this.clearHistoryTimer();
+    this.pendingScreen = null;
+    this.terminal.stop();
+  }
+
+  /** 回调里抛出的异常不能静悄悄丢掉：会话就此收尾，本地终端才有机会复位。 */
+  private guard<T extends unknown[]>(fn: (...args: T) => void): (...args: T) => void {
+    return (...args: T) => {
+      try {
+        fn(...args);
+      } catch (error) {
+        this.failure ??= error instanceof Error ? error : new Error(String(error));
+        this.finish('failed');
+      }
+    };
+  }
+
   private async attachOnce(): Promise<AttachOutcome> {
-    const opened = await openDeviceSession(this.ctx, this.targetRaw, {
-      onPaneData: (frame) => {
-        if (frame.paneId === this.pane?.id) this.terminal.write(frame.data);
-      },
-      onScreen: (snapshot) => this.onScreen(snapshot),
-      onHistory: (page) => this.onHistory(page.data),
-      onRebase: (_device, paneId, _reason) => {
-        if (!paneId || paneId === this.pane?.id) this.requestScreen();
-      },
-      onTree: (tree) => this.onTree(tree),
-      onDetached: () => this.finish('closed'),
-    });
+    const opened = await openDeviceSession(this.ctx, this.targetRaw, this.sessionEvents());
     this.opened = opened;
     this.tree = opened.tree;
     try {
@@ -112,24 +146,57 @@ class AttachRunner {
       this.window = located.window;
       this.pane = located.pane;
       this.historyDone = false;
+      this.startInput();
       this.subscribeCurrentPane();
       this.notice(
         `attached to ${opened.nodeName}/${opened.device.name}:${located.window.index}.${located.pane.index} — press ${this.options.detachKey.escapeChar || '(escape disabled)'}${this.options.detachKey.detachChar} to detach`
       );
-      return await new Promise<AttachOutcome>((resolve) => {
-        this.end = resolve;
-      });
+      return await this.awaitOutcome();
     } finally {
       this.end = null;
+      this.clearHistoryTimer();
+      this.pendingScreen = null;
       opened.close();
       this.opened = null;
     }
   }
 
+  private sessionEvents(): DeviceSessionEvents {
+    return {
+      onPaneData: this.guard((frame) => {
+        if (frame.paneId === this.pane?.id) this.terminal.write(frame.data);
+      }),
+      onScreen: this.guard((snapshot) => this.onScreen(snapshot)),
+      onHistory: this.guard((page) => this.onHistory(page.data)),
+      onRebase: this.guard((_device: string, paneId: string | undefined) => {
+        if (!paneId || paneId === this.pane?.id) this.requestScreen();
+      }),
+      onTree: this.guard((tree) => this.onTree(tree)),
+      onDetached: () => this.finish('closed'),
+    };
+  }
+
+  /** 连接阶段就按过 `~.` 的话这里立刻兑现，不用再等一次事件。 */
+  private awaitOutcome(): Promise<AttachOutcome> {
+    const pending = this.pendingOutcome;
+    if (pending) {
+      this.pendingOutcome = null;
+      return Promise.resolve(pending);
+    }
+    return new Promise<AttachOutcome>((resolve) => {
+      this.end = resolve;
+    });
+  }
+
   private finish(outcome: AttachOutcome): void {
     const end = this.end;
     this.end = null;
-    end?.(outcome);
+    if (end) {
+      end(outcome);
+      return;
+    }
+    // 还没挂上等待（连接中 / 重连间隙）：记下来，attachOnce 一挂上就兑现。
+    this.pendingOutcome ??= outcome;
   }
 
   // ------------------------------------------------------------ 画面
@@ -175,6 +242,8 @@ class AttachRunner {
 
   /** 先写历史（它会把本地终端的回滚缓冲喂满），再写截屏（自带一次清屏与光标定位）。 */
   private paint(history: Uint8Array | null, snapshot: GatewayPaneScreenSnapshot): void {
+    // 会话已经收尾（detach / 断线 / 重连间隙）时不能再画：那会把陈旧画面泼进复位后的 shell。
+    if (!this.opened) return;
     this.terminal.write(CLEAR_SCREEN);
     if (history && history.byteLength > 0) this.terminal.write(history);
     this.terminal.write(snapshot.data);
@@ -250,8 +319,13 @@ class AttachRunner {
 
   private onTree(tree: TmuxSession | null): void {
     this.tree = tree;
+    if (!tree) {
+      this.notice('the tmux session is gone');
+      this.finish('detached');
+      return;
+    }
     const paneId = this.pane?.id;
-    if (!tree || !paneId) return;
+    if (!paneId) return;
     for (const window of tree.windows) {
       const pane = window.panes.find((item) => item.id === paneId);
       if (!pane) continue;

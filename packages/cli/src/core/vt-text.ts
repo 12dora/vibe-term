@@ -11,6 +11,44 @@
 
 const ESC = '\u001b';
 const BEL = '\u0007';
+const TAB_WIDTH = 8;
+
+/** 零宽（组合记号、变体选择符、零宽空格）。 */
+const ZERO_WIDTH: ReadonlyArray<readonly [number, number]> = [
+  [0x0300, 0x036f],
+  [0x200b, 0x200f],
+  [0xfe00, 0xfe0f],
+  [0xe0100, 0xe01ef],
+];
+
+/** 东亚宽字符与 emoji：占两列。表按常用区段取，不追求 UAX #11 全覆盖。 */
+const DOUBLE_WIDTH: ReadonlyArray<readonly [number, number]> = [
+  [0x1100, 0x115f],
+  [0x2e80, 0x303e],
+  [0x3041, 0x33ff],
+  [0x3400, 0x4dbf],
+  [0x4e00, 0x9fff],
+  [0xa000, 0xa4cf],
+  [0xac00, 0xd7a3],
+  [0xf900, 0xfaff],
+  [0xfe10, 0xfe19],
+  [0xfe30, 0xfe6f],
+  [0xff00, 0xff60],
+  [0xffe0, 0xffe6],
+  [0x1f300, 0x1f64f],
+  [0x1f900, 0x1f9ff],
+  [0x20000, 0x3fffd],
+];
+
+function inRanges(code: number, ranges: ReadonlyArray<readonly [number, number]>): boolean {
+  return ranges.some(([low, high]) => code >= low && code <= high);
+}
+
+/** 0 / 1 / 2 列。宽度判定只影响洗白后的对齐，不影响是否保留字符。 */
+export function charWidth(code: number): 0 | 1 | 2 {
+  if (inRanges(code, ZERO_WIDTH)) return 0;
+  return inRanges(code, DOUBLE_WIDTH) ? 2 : 1;
+}
 
 /** 行画布：只有「当前行 + 列」这一点状态，够覆盖 shell 的行编辑。 */
 class LineCanvas {
@@ -29,9 +67,18 @@ class LineCanvas {
 
   put(char: string): void {
     const line = this.current();
+    const width = charWidth(char.codePointAt(0) ?? 0);
+    if (width === 0) {
+      // 组合记号挂在前一格上，不占列。
+      const previous = this.col - 1;
+      if (previous >= 0 && line[previous] !== undefined) line[previous] += char;
+      return;
+    }
     while (line.length < this.col) line.push(' ');
     line[this.col] = char;
-    this.col += 1;
+    // 宽字符占两列：续格写空串，join 后不多出字符，列算术仍然对。
+    if (width === 2) line[this.col + 1] = '';
+    this.col += width;
   }
 
   /** LF 当 CRLF：网关截屏载荷用裸 LF 分行（`capture-pane` 的输出形态），列必须回 0。 */
@@ -49,8 +96,16 @@ class LineCanvas {
     this.col = Math.max(0, this.col - 1);
   }
 
+  /** 制表位每 8 列一个，与终端默认一致。 */
   tab(): void {
-    this.put('\t');
+    const line = this.current();
+    const stop = this.col + TAB_WIDTH - (this.col % TAB_WIDTH);
+    while (line.length < stop) line.push(' ');
+    this.col = stop;
+  }
+
+  setColumn(col: number): void {
+    this.col = Math.max(0, col);
   }
 
   moveColumn(delta: number): void {
@@ -131,7 +186,7 @@ function applyCsi(canvas: LineCanvas, frame: CsiFrame): void {
   else if (frame.final === 'J') canvas.eraseDisplay(first);
   else if (frame.final === 'C') canvas.moveColumn(Math.max(1, first));
   else if (frame.final === 'D') canvas.moveColumn(-Math.max(1, first));
-  else if (frame.final === 'G') canvas.carriageReturn();
+  else if (frame.final === 'G') canvas.setColumn(Math.max(1, first) - 1);
 }
 
 /** ESC 之后：`[` 是 CSI，字符串型序列整段跳过，其余按「ESC + 一个字节」丢掉。 */

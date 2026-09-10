@@ -88,7 +88,7 @@ vibeterm term attach office/dev-box:build.1 --history 65536
 | --- | --- |
 | `~.` | 断开（远端进程继续跑） |
 | `~w` | 列出本会话的窗口 |
-| `~<n>` | 把显示切到 n 号窗口（只影响本次 attach，不动 tmux 的活动窗口） |
+| `~<n>~` | 把显示切到 n 号窗口（只影响本次 attach，不动 tmux 的活动窗口）。序号可以多位（`~12~`），结尾的 `~` 或回车都算终止符 |
 | `~?` | 帮助 |
 | `~~` | 输入一个字面 `~` |
 
@@ -107,10 +107,11 @@ vibeterm term run office/dev-box "bun test" --marker --timeout 120000
 vibeterm term run office/dev-box "systemctl status vibeterm" --idle 1500 --json
 ```
 
-- 把命令打进窗格并回车，然后收集输出，直到**静默** `--idle` 毫秒（默认 800）或到 `--timeout`。
-- `--marker` 会在命令后追加 `; echo __VT_DONE_<随机串>_$?`，据此判断「跑完了」并拿到退出码（`--json` 的 `exitCode`）。只对 POSIX shell（bash/zsh/sh）成立，fish 用的是 `$status`。
-- `--json` 形状：`{"pane","command","reason":"idle|timeout|done","exitCode":0|null,"output":"…","raw":"<base64 原始字节>"}`。
-- CLI 自己的退出码只表示「这条 CLI 命令有没有跑通」，远端命令的成败看 `exitCode`。
+- 把命令打进窗格并回车，然后收集输出，直到**静默** `--idle` 毫秒（默认 800）或到 `--timeout`。命令必须是**一行**（多行请用 `term send --stdin`）。
+- `--marker`：等输出安静下来之后，再单独打一行 `(echo __VT_DONE_<随机串>_$?)`，据此确认「真跑完了」并拿到退出码（`--json` 的 `exitCode`）。命令还在跑（比如 `sleep 30`）时会一直等到它结束或 `--timeout`。只对 POSIX shell（bash/zsh/sh）成立，fish 用的是 `$status`；主动读 stdin 的命令（`cat`、交互式安装器）会把这一行吃掉，那类命令别用 `run`。
+- 输出上限 8 MiB，收满即停并把 `reason` 标成 `truncated`。
+- `--json` 形状：`{"pane","command","reason":"idle|timeout|done|truncated","exitCode":0|null,"output":"…","raw":"<base64 原始字节>"}`。
+- **退出码**：远端命令自己的成败看 `exitCode`，不影响 CLI 的退出码；但**输出没收全**（`reason` 是 `timeout` 或 `truncated`）时 CLI 退出 **1**，除非显式加 `--allow-timeout`。别把半截输出当成全部。
 
 **这是尽力而为的**：窗格是一个共享的交互终端，不是一个干净的 `ssh host cmd`。输出里可能混进提示符、别人同时敲进去的字、或者被终端宽度折行打断的回显。要可靠的完成判定就加 `--marker`；长跑的流式命令（`tail -f`、`npm run dev`）不要用 `run`，它会一直等到超时——改用 `send` + `capture`。
 
@@ -125,7 +126,7 @@ vibeterm term capture office/dev-box --wait-idle 500 --history 32768 --json
 - `--wait-idle <ms>`：先等窗格安静下来再取，适合「刚发了个按键，等界面画完」。
 - `--history <字节>`：额外取一页回滚。
 - `--json` 形状：`{"pane","paneEpoch","seq","screen":"<base64>","text":"…"}`，给了 `--history` 再多一个 `"history":{"screen","text"}`。
-- 洗白只是个简化实现（会执行 CR / 退格 / 清行，不执行绝对光标定位），全屏 TUI（vim、top）的纯文本结果会有出入；这种情况直接看 `screen` 的原始字节更可靠。
+- 洗白只是个简化实现（会执行 CR / 退格 / 制表位 / 清行 / 绝对列，不执行绝对**行**定位），全屏 TUI（vim、top）的纯文本结果会有出入；这种情况直接看 `screen` 的原始字节更可靠。
 
 ### 发按键
 
@@ -151,6 +152,8 @@ vibeterm term capture prod-1/app:logs --strip-ansi
 vibeterm term send prod-1/app:logs C-c
 ```
 
+第 2 行用了 `--marker`：它会在输出安静之后单独补一行哨兵，因此既能确认命令真的跑完，也能拿到退出码；第 3 行是长跑的流式命令，只能 `send` + `capture`，不能 `run`。
+
 ## 安全说明
 
 - **边界与网页端完全一致**。CLI 没有任何「本机特权」：它拿的是和浏览器一样的会话 cookie，能做的事一条不多。访问别的节点走 entry 的 `/n/<nodeId>/…` 转发并带**那个节点自己的**会话，和网页端一模一样；CLI 从不使用本机节点的 mesh 身份、数据库或主密钥去碰别的机器。
@@ -168,6 +171,7 @@ vibeterm term send prod-1/app:logs C-c
 | 退出码 5 | 连不上、握手超时，或改动没在 `--timeout` 内落地 |
 | `attach` 退出码 2 | 当前不是交互终端：脚本里请用 `term run|send|capture` |
 | `run` 的输出里混着提示符 | 见上面的「尽力而为」说明，加 `--marker` |
+| `run` 退出码 1、`reason` 是 timeout / truncated | 输出没收全：加大 `--timeout`、缩小输出，或明确接受半截结果时加 `--allow-timeout` |
 | 版本太旧被 1002 关掉 | CLI 与网关都要 ≥ 1.1.23（canonical v1.1 版本门），升级两端 |
 
 每条命令都有 `--help`，`--json` 的形状写在各自的用法里。没被包成命令组的接口一律可以用 `vibeterm api <METHOD> <path>` 直接打。

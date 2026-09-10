@@ -42,7 +42,7 @@ export function escapeHelpLines(key: DetachKey): string[] {
     'supported escape sequences (type at the start of a line):',
     `  ${e}${key.detachChar}  detach (leave the pane running)`,
     `  ${e}w  list the windows of this session`,
-    `  ${e}<n>  switch to window <n>`,
+    `  ${e}<n>${e}  switch to window <n> (a bare ${e}<n> switches on the next key)`,
     `  ${e}?  this message`,
     `  ${e}${e}  send a literal ${e}`,
   ];
@@ -52,13 +52,22 @@ function isLineBreak(char: string): boolean {
   return char === '\r' || char === '\n';
 }
 
+const MAX_WINDOW_DIGITS = 4;
+
+type Emit = (data: string) => void;
+type Act = (action: EscapeAction) => void;
+
 /**
  * 逐字符喂输入，吐出动作。`send` 会把相邻字符合并成一条，避免每个按键一帧。
  * 行首判定与 ssh 一致：刚开始、或上一个字符是 CR / LF 时算行首。
+ *
+ * 窗口序号收多位：`~12~` / `~12` + 回车都切到 12 号窗口；`~1` 后面跟别的字符时，
+ * 先切 1 号窗口，那个字符再照常发下去。
  */
 export class DetachEscapeMatcher {
   private atLineStart = true;
   private pending = false;
+  private digits: string | null = null;
 
   constructor(private readonly key: DetachKey) {}
 
@@ -70,49 +79,76 @@ export class DetachEscapeMatcher {
       actions.push({ type: 'send', data: buffer });
       buffer = '';
     };
-    for (const char of input) {
-      const action = this.step(char, (data) => {
-        buffer += data;
-      });
-      if (!action) continue;
+    const emit: Emit = (data) => {
+      buffer += data;
+    };
+    const act: Act = (action) => {
       flush();
       actions.push(action);
-    }
+    };
+    for (const char of input) this.step(char, emit, act);
     flush();
     return actions;
   }
 
-  /** 单个字符：要么把字节交给 `emit`，要么返回一个动作。 */
-  private step(char: string, emit: (data: string) => void): EscapeAction | null {
+  private step(char: string, emit: Emit, act: Act): void {
     if (!this.key.escapeChar) {
       emit(char);
-      return null;
+      return;
+    }
+    if (this.digits !== null) {
+      this.resolveDigits(char, emit, act);
+      return;
     }
     if (this.pending) {
       this.pending = false;
-      return this.resolveEscape(char, emit);
+      this.resolveEscape(char, emit, act);
+      return;
     }
     if (this.atLineStart && char === this.key.escapeChar) {
       this.pending = true;
-      return null;
+      return;
     }
     this.atLineStart = isLineBreak(char);
     emit(char);
-    return null;
   }
 
-  private resolveEscape(char: string, emit: (data: string) => void): EscapeAction | null {
-    if (char === this.key.detachChar) return { type: 'detach' };
+  private resolveEscape(char: string, emit: Emit, act: Act): void {
+    if (char === this.key.detachChar) {
+      act({ type: 'detach' });
+      return;
+    }
     if (char === this.key.escapeChar) {
       this.atLineStart = false;
       emit(this.key.escapeChar);
-      return null;
+      return;
     }
-    if (char === '?') return { type: 'help' };
-    if (char === 'w') return { type: 'windows' };
-    if (/^[0-9]$/.test(char)) return { type: 'select-window', index: Number(char) };
+    if (char === '?') {
+      act({ type: 'help' });
+      return;
+    }
+    if (char === 'w') {
+      act({ type: 'windows' });
+      return;
+    }
+    if (/^[0-9]$/.test(char)) {
+      this.digits = char;
+      return;
+    }
     this.atLineStart = isLineBreak(char);
     emit(this.key.escapeChar + char);
-    return null;
+  }
+
+  /** 数字继续攒；`~` 或回车是终止符（吃掉），其余字符先落地切窗口再照常处理。 */
+  private resolveDigits(char: string, emit: Emit, act: Act): void {
+    const digits = this.digits ?? '';
+    if (/^[0-9]$/.test(char) && digits.length < MAX_WINDOW_DIGITS) {
+      this.digits = digits + char;
+      return;
+    }
+    this.digits = null;
+    act({ type: 'select-window', index: Number(digits) });
+    if (char === this.key.escapeChar || isLineBreak(char)) return;
+    this.step(char, emit, act);
   }
 }

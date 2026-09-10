@@ -3,8 +3,8 @@ import {
   ByteCollector,
   IdleWatcher,
   createRunSentinel,
-  dropEchoedCommandLine,
   formatRunOutput,
+  looksEchoed,
 } from './term-collect';
 
 const encoder = new TextEncoder();
@@ -18,6 +18,19 @@ describe('ByteCollector', () => {
     expect(collector.text()).toBe('abcd');
     collector.reset();
     expect(collector.byteLength).toBe(0);
+  });
+
+  test('stops collecting at the cap and reports the truncation', () => {
+    const collector = new ByteCollector(4);
+    expect(collector.append(encoder.encode('ab'))).toBe(true);
+    expect(collector.append(encoder.encode('cdef'))).toBe(false);
+    expect(collector.truncated).toBe(true);
+    expect(collector.byteLength).toBe(4);
+    expect(collector.text()).toBe('abcd');
+    expect(collector.append(encoder.encode('gh'))).toBe(false);
+    expect(collector.byteLength).toBe(4);
+    collector.reset();
+    expect(collector.truncated).toBe(false);
   });
 
   test('copies the frame so a reused gateway buffer cannot mutate it', () => {
@@ -51,10 +64,11 @@ describe('IdleWatcher', () => {
 });
 
 describe('run sentinel', () => {
-  test('matches the echoed result but not the typed $? form', () => {
+  test('is typed as its own line and matches only the numeric result', () => {
     const sentinel = createRunSentinel('abc123');
-    expect(sentinel.suffix).toBe('; echo __VT_DONE_abc123_$?');
-    expect(sentinel.find('ls; echo __VT_DONE_abc123_$?')).toBeNull();
+    expect(sentinel.line).toBe('(echo __VT_DONE_abc123_$?)');
+    expect(sentinel.find('(echo __VT_DONE_abc123_$?)')).toBeNull();
+    expect(sentinel.mentions('(echo __VT_DONE_abc123_$?)')).toBe(true);
     expect(sentinel.find('__VT_DONE_abc123_7')).toEqual({
       exitCode: 7,
       line: '__VT_DONE_abc123_7',
@@ -63,29 +77,49 @@ describe('run sentinel', () => {
 
   test('a different nonce never matches', () => {
     expect(createRunSentinel('aaa').find('__VT_DONE_bbb_0')).toBeNull();
+    expect(createRunSentinel('aaa').mentions('__VT_DONE_bbb_0')).toBe(false);
   });
 });
 
 describe('formatRunOutput', () => {
   test('drops the echoed command line up to the first newline', () => {
     const raw = encoder.encode('e\becho hi\r\r\nhi\r\n');
-    expect(dropEchoedCommandLine(raw)).toEqual(encoder.encode('hi\r\n'));
-    expect(formatRunOutput(raw)).toBe('hi');
+    expect(formatRunOutput(raw, { command: 'echo hi' })).toBe('hi');
   });
 
-  test('cuts at the sentinel line', () => {
+  test('keeps the first line when the pane did not echo it', () => {
+    const raw = encoder.encode('Darwin\r\nuser@host ~ % ');
+    expect(formatRunOutput(raw, { command: 'uname -s' })).toBe('Darwin');
+  });
+
+  test('cuts at the echoed sentinel line, not only at its result', () => {
     const sentinel = createRunSentinel('n1');
-    const raw = encoder.encode('cmd\r\nout\r\n__VT_DONE_n1_0\r\nuser@host $ ');
-    expect(formatRunOutput(raw, { sentinel })).toBe('out');
+    const raw = encoder.encode(
+      `echo hi\r\nout\r\n(echo ${sentinel.token}$?)\r\n${sentinel.token}0\r\nuser@host $ `
+    );
+    expect(formatRunOutput(raw, { command: 'echo hi', sentinel })).toBe('out');
   });
 
   test('drops a trailing prompt when there is no sentinel', () => {
     const raw = encoder.encode('cmd\r\nout\r\nuser@host ~ % ');
-    expect(formatRunOutput(raw)).toBe('out');
+    expect(formatRunOutput(raw, { command: 'cmd' })).toBe('out');
   });
 
   test('keeps a trailing line that does not look like a prompt', () => {
     const raw = encoder.encode('cmd\r\nout\r\nno newline here');
-    expect(formatRunOutput(raw)).toBe('out\nno newline here');
+    expect(formatRunOutput(raw, { command: 'cmd' })).toBe('out\nno newline here');
+  });
+});
+
+describe('looksEchoed', () => {
+  test('recognises a mangled echo as a subsequence of the command', () => {
+    expect(looksEchoed('li', 'echo hello-cli')).toBe(true);
+    expect(looksEchoed('echo hello-cli', 'echo hello-cli')).toBe(true);
+    expect(looksEchoed('', 'echo hi')).toBe(true);
+  });
+
+  test('does not mistake real output for an echo', () => {
+    expect(looksEchoed('Darwin', 'uname -s')).toBe(false);
+    expect(looksEchoed('total 128', 'ls -l')).toBe(false);
   });
 });

@@ -11,7 +11,9 @@ import { locatePane, locateWindow } from '../core/term-target';
 import {
   type OpenedDeviceSession,
   applyTmuxChange,
+  customNameMatches,
   firstNew,
+  normalizeCustomName,
   openDeviceSession,
   paneById,
   paneIds,
@@ -170,14 +172,13 @@ async function killWindowCommand({ ctx, opened }: TmuxInput): Promise<void> {
 
 async function renameWindowCommand({ ctx, opened, flags, rest }: TmuxInput): Promise<void> {
   const window = locateWindow(opened.tree, opened.target);
-  const name = flagString(flags, 'name') ?? requireArg(rest, 'new window name');
+  const name = normalizeCustomName(
+    flagString(flags, 'name') ?? requireArg(rest, 'new window name')
+  );
   const tree = await applyTmuxChange(
     opened,
     { type: 'rename-window', deviceId: opened.device.id, windowId: window.id, name },
-    (next) => {
-      const updated = windowById(next, window.id);
-      return updated !== null && windowLabel(updated) === name;
-    },
+    (next) => customNameMatches(windowById(next, window.id), name),
     `window ${window.id} to be renamed`,
     timeoutOf(ctx)
   );
@@ -290,11 +291,11 @@ async function resizeCommand({ ctx, opened, rest }: TmuxInput): Promise<void> {
 
 async function renamePaneCommand({ ctx, opened, flags, rest }: TmuxInput): Promise<void> {
   const { pane } = locatePane(opened.tree, opened.target);
-  const name = flagString(flags, 'name') ?? requireArg(rest, 'new pane name');
+  const name = normalizeCustomName(flagString(flags, 'name') ?? requireArg(rest, 'new pane name'));
   const tree = await applyTmuxChange(
     opened,
     { type: 'rename-pane', deviceId: opened.device.id, paneId: pane.id, name },
-    (next) => paneById(next, pane.id)?.customName === name,
+    (next) => customNameMatches(paneById(next, pane.id), name),
     `pane ${pane.id} to be renamed`,
     timeoutOf(ctx)
   );
@@ -352,13 +353,13 @@ export const command: Command = {
     '  panes <target> [--all]          list the panes of the located window',
     '  new-window <target> [name]      create a window (--name, --cwd)',
     '  kill-window <target>            close the located window',
-    '  rename-window <target> <name>   rename the located window',
+    "  rename-window <target> <name>   rename the located window (--name '' clears it)",
     '  split <target>                  split the located pane (--horizontal | --vertical)',
     '  kill-pane <target>              close the located pane',
     '  select <target>                 make the located window active',
     '  focus <target>                  make the located pane active',
     '  resize <target> <cols>x<rows>   resize the located pane',
-    '  rename-pane <target> <name>     rename the located pane',
+    "  rename-pane <target> <name>     rename the located pane (--name '' clears it)",
     '',
     'Options:',
     '  --name <name>      name for new-window / rename-window / rename-pane',

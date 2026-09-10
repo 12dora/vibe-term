@@ -47,10 +47,25 @@ describe('DetachEscapeMatcher', () => {
     expect(feed('~~.')).toEqual([{ type: 'send', data: '~.' }]);
   });
 
-  test('~w lists windows, ~<n> switches, ~? helps', () => {
+  test('~w lists windows and ~? helps', () => {
     expect(feed('~w')).toEqual([{ type: 'windows' }]);
-    expect(feed('~3')).toEqual([{ type: 'select-window', index: 3 }]);
     expect(feed('~?')).toEqual([{ type: 'help' }]);
+  });
+
+  test('~<n>~ and ~<n><Enter> switch window, multi-digit included', () => {
+    expect(feed('~3~')).toEqual([{ type: 'select-window', index: 3 }]);
+    expect(feed('~12~')).toEqual([{ type: 'select-window', index: 12 }]);
+    expect(feed('~7\r')).toEqual([{ type: 'select-window', index: 7 }]);
+  });
+
+  test('a bare ~<n> lands on the next key, which is still sent', () => {
+    expect(feed('~1x')).toEqual([
+      { type: 'select-window', index: 1 },
+      { type: 'send', data: 'x' },
+    ]);
+    const matcher = new DetachEscapeMatcher(parseDetachKey('~.'));
+    expect(matcher.push('~2')).toEqual([]);
+    expect(matcher.push('~')).toEqual([{ type: 'select-window', index: 2 }]);
   });
 
   test('an unknown escape sends the tilde and the character', () => {

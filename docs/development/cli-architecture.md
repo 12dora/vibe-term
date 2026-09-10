@@ -205,7 +205,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm files`
 
-子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录。
+子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录。旧节点探测（mkdir 路由不存在）必须匹配响应 JSON 的 `code === 'route_not_found'`，无该字段时再回退英文 `Not found` 以兼容更旧节点。
 
 `--json` 形状：
 
@@ -215,7 +215,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm cp`
 
-`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 body 为 `Not found`，区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
+`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 `code: route_not_found`，无该字段时回退英文 `Not found`；区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
 
 `--json` 时 stdout 仅为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`，`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
 
@@ -270,6 +270,11 @@ bun scripts/complexity/gate.ts
 
 `resize` 是唯一例外：tmux 会按窗口布局夹取尺寸，请求值拿不到属正常现象——等不到尺寸变化时只在 stderr 警告并打印当前尺寸，退出码仍是 0。
 
+两处容易写错的落地谓词：
+
+- **改名**必须用与网关同一套归一（`core/tmux-ops.ts` 的 `normalizeCustomName`：`trim()` + 截 64，空串即清除），否则用户带空格或超长的名字会永远等不到「改好了」。参见 `apps/gateway/src/ws/tmux-command-handlers.ts` 的 `renameWindow` / `renamePane`。
+- **整个 tmux 会话被销毁**（关掉最后一个窗口）时元数据补丁里的 session 是 `null`，树等待会被 `DeviceSession` 用 `NotFoundError` 唤醒。`awaitTreeChange` 拿到它之后会再用一棵空树跑一次谓词：`kill-window` / `kill-pane` 这类「东西消失了」的谓词因此照样成立并正常返回，其余情况原样抛出（退出码 4），不会一路等到 `--timeout`。
+
 元数据折叠**不在 CLI 里重做**：`CanonicalStateClient` 已经把 `SourceMetadataSnapshot` / `SourceMetadataPatch` 折成 `StateSnapshotPayload`，`DeviceSession` 只留最新一份。定位窗口 / pane 一律用 `@vibeterm/ws-client/canonical-tree` 的纯函数 `resolveWindow` / `resolvePane` / `activeWindow` / `activePane`，优先级与 tmux 一致：`@id`/`%id` > `窗口.pane 序号` > 序号 > 名字。`core/term-target.ts` 只决定「先按窗口解释还是先按 pane 解释」——目标里 `:` 之后没有 `.` 的写的是窗口，有 `.` 的写的是 pane，两条路都走不通时互相回落（窗口名本身含 `.` 的情况因此仍可达）。名字撞车报用法错误并列出候选。
 
 `--json`：`ls` 给 `TmuxSession[]`（本设备一条），`windows` 给 `TmuxWindow[]`，`panes` 给 `TmuxPane[]`，其余给 `{ok:true, action, window|pane|id}`。
@@ -280,9 +285,22 @@ bun scripts/complexity/gate.ts
 
 **订阅之后必须取一次画面**：网关在 `SubscriptionApplied` 之后会把还没有终端游标的 pane 标成 blocked 并发一次 `rebase-required`，`ScreenCommit` 建立游标后 `PaneData` 才开始放行。少了这一步，`send` / `capture` / `run` 都会一个字节也收不到。
 
+同一条链路上还有三件事不能省（否则「收不到字节」会被误判成「pane 很安静」）：
+
+- `onRebase` → 重发一次 `RequestScreen`。`SubscriptionApplied` 的拒绝、`SourceGap`、pane epoch 变化都会重新拦住这个 pane，不重取画面就再也收不到 `PaneData`。
+- `onDetached` / 会话树变成 null → 让所有在等的东西**立刻失败**（退出码 5 / 4），并结束采集。socket 断了不是静默。
+- 画面等不到就抛 `NetworkError`（退出码 5），不能吞成 `null` 继续跑——那样 `run` 会打印空输出并退出 0。所有等待都用 `--timeout`，没有第二套写死的时限。
+
 ### `attach`
 
-`core/term-attach.ts`。要求 stdin 与 stdout 都是 TTY，否则退出码 2 并指向 `term run|send|capture`。流程：raw 模式 → 订阅 pane → `RequestScreen` → 清屏后写截屏字节 → `PaneData` 直接写 TTY（网关已经摘掉 BEL 与它自己处理的那几类 OSC）→ 键盘字节按 UTF-8 发 `TerminalInput` → `SIGWINCH` 与首次挂接各发一次 `ResizePaneV11`（用本地 `process.stdout.columns/rows`）。`rebase-required`（pane epoch 变化、`SourceGap`）就重取一次画面。socket 断一次会自动重连一次：新 socket 上的 canonical 客户端没有旧游标，因此是重新拉一整屏，不是断点续传；再断即退出码 5。退出时一定复位本地终端（退备用屏、关鼠标上报与 bracketed paste、显示光标、清 SGR）。
+`core/term-attach.ts`。要求 stdin 与 stdout 都是 TTY，否则退出码 2 并指向 `term run|send|capture`。流程：连设备 → 定位 pane → **这时才进 raw 模式** → 订阅 pane → `RequestScreen` → 清屏后写截屏字节 → `PaneData` 直接写 TTY（网关已经摘掉 BEL 与它自己处理的那几类 OSC）→ 键盘字节按 UTF-8 发 `TerminalInput` → `SIGWINCH` 与首次挂接各发一次 `ResizePaneV11`（用本地 `process.stdout.columns/rows`）。`rebase-required`（pane epoch 变化、`SourceGap`）就重取一次画面。socket 断一次会自动重连一次：新 socket 上的 canonical 客户端没有旧游标，因此是重新拉一整屏，不是断点续传；再断即退出码 5。
+
+终端复位这条路必须万无一失，为此有三条约束：
+
+- **raw 模式只在会话建好之后进**。连接阶段留在 cooked 模式，Ctrl-C 仍然是真的 SIGINT（连接被中止，终端根本没被动过），不会被我们的 `SIGINT` 处理器吞掉。
+- `LocalTerminal.start()` 同时挂 `process.on('exit')` 与 SIGTERM / SIGHUP；`stop()` 幂等（复位串只写一次）并摘掉自己装的每一个监听器。少了这三条，被 `kill` 或异常退出的进程会把用户的 shell 留在 raw 模式里。
+- 所有事件回调都过 `guard()`：回调里抛出的异常会把会话按 `failed` 收尾并原样抛给 `run()`，而不是静悄悄丢掉、让 attach 一直挂着。`finish()` 在等待还没挂上时（连接中、重连间隙）把结果记进 `pendingOutcome`，下一次 `attachOnce` 立刻兑现——否则连接期间按的 `~.` 会石沉大海。
+- `attachOnce` 的 finally 会清掉历史定时器与 `pendingScreen`，`paint()` 在会话已收尾时直接返回：`--history` 的 3 s 兜底定时器不能在 detach 之后往复位好的 shell 里泼一屏陈旧画面。
 
 转义键是 ssh 那一套，**行首**的 `~` 起头（`core/term-escape.ts`，纯状态机 + 单测）：
 
@@ -290,7 +308,7 @@ bun scripts/complexity/gate.ts
 | --- | --- |
 | `~.` | detach（pane 继续跑），退出码 0 |
 | `~w` | 列出本会话的窗口 |
-| `~<n>` | 把 CLI 显示的窗口切到序号 n（**不动** tmux 自己的活动窗口，那是 `vibeterm tmux select`） |
+| `~<n>~` | 把 CLI 显示的窗口切到序号 n（**不动** tmux 自己的活动窗口，那是 `vibeterm tmux select`）。数字可以多位；`~` 或回车是终止符，跟别的字符时先切窗口再把那个字符照常发下去 |
 | `~?` | 帮助 |
 | `~~` | 发一个字面 `~` |
 
@@ -302,15 +320,28 @@ bun scripts/complexity/gate.ts
 - `capture`：默认把截屏原始字节写 stdout（颜色保留），`--strip-ansi` 洗成纯文本，`--history <bytes>` 另取一页回滚，`--wait-idle <ms>` 先等 pane 静默再取一次画面。
 - `run`：把命令 + Enter 打进 pane，收字节直到静默 `--idle`（默认 800 ms）或 `--timeout`。
 
-`run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵：命令后追加 `; echo __VT_DONE_<nonce>_$?`，在洗白后的文本里找 `__VT_DONE_<nonce>_<数字>`——命令行回显里的那份写的是字面 `$?`，正则只认数字，不会误命中。命中即提前结束并给出退出码。这条路只在 POSIX shell 上成立（fish 用 `$status`）。
+`run` 的完成判定：**网关会吞掉 OSC 133**（`apps/gateway/src/tmux-client/pane-stream/osc-handlers.ts` 的 `HANDLED_OSC_KINDS` 命中即整段不转发），不可见的 shell 集成标记根本到不了客户端。所以 `--marker` 用的是一个**肉眼可见**的哨兵 `(echo __VT_DONE_<nonce>_$?)`，并且分两阶段：
 
-无论有没有 `--marker`，`run` 的输出剥离都是 best-effort（`core/term-collect.ts` 的 `formatRunOutput`）：raw 里第一个 LF 之前是 shell 回显的命令行，一律丢掉；有哨兵就切到哨兵行为止；没有哨兵则在结尾丢掉一行「看着像提示符」的未换行残留。pane 是共享终端，别人同时在里面敲字会混进来——这一点必须让调用方知道。
+1. 打进命令，等输出静默 `--idle`（或撞上 `--timeout`）；
+2. 静默之后**才**把哨兵作为**独立的一行**打进去，然后只等它的结果行 `__VT_DONE_<nonce>_<数字>`（不再按静默收尾，`sleep 30` 这种要等到 shell 真读到那一行）。
 
-CLI 自己的退出码与 pane 里命令的退出码是两回事：`run` 只要跑通就退出 0，命令的退出码在 `--json` 的 `exitCode` 字段（没有 `--marker` 时为 `null`）。
+两条都是踩出来的：拼成 `cmd; echo …` 会被命令里的 `#`、未闭合的 heredoc 或结尾的 `&` 破坏；在命令还占着 tty 时提前打，那一行会被 tty 驱动当预输入**即时回显**，糊进输出中间（1.5 MiB 的输出因此只剩 500 字节）。`find()` 只认数字形态，回显里的字面 `$?` 不会误命中。这条路只在 POSIX shell 上成立（fish 用 `$status`），而且哨兵行躺在 tty 缓冲里，会被主动读 stdin 的命令吃掉——那类命令别用 `run`。
+
+`run` 的输出剥离是 best-effort（`core/term-collect.ts` 的 `formatRunOutput`）：
+
+- 第一个 LF 之前那段**只在确实是回显时**才丢。`looksEchoed()` 按「压掉空白后是命令的子序列」判定，既能认出被窄 pane 折行重画打散的回显（`li` ⊂ `echohello-cli`），又不会把 `stty -echo` 下命令自己的第一行输出吃掉。
+- 有哨兵就切到**结果行**为止，并把之前那些回显的哨兵命令用 `scrub()` 从行内抹掉（它可能糊在某个输出行中间）。
+- 结尾再丢一行「看着像提示符」的未换行残留。
+
+pane 是共享终端，别人同时在里面敲字会混进来——这一点必须让调用方知道。
+
+采集有 8 MiB 上限（`DEFAULT_COLLECT_MAX_BYTES`）：`yes` 这类命令一秒就能刷爆内存，收满即停并把 `reason` 标成 `truncated`。
+
+退出码：pane 里命令的退出码只在 `--json` 的 `exitCode`（没有 `--marker` 时为 `null`），**不**决定 CLI 的退出码；但**输出没收全**（`reason` 为 `timeout` 或 `truncated`）时 CLI 退出 1，除非显式给 `--allow-timeout`——半截输出被当成全部是最危险的失败模式。
 
 ### VT 洗白的边界（`core/vt-text.ts`）
 
-不是终端仿真器，只维护一张「当前行 + 列」的行画布：CR、退格、EL（`ESC[K`）、ED（`ESC[2J`）、CUF/CUB 会真的作用在行上——这样 zsh / fish 的行编辑重画才能还原成一行。**不实现**绝对光标定位（CUP）、滚动区与备用屏，所以整屏重绘型 TUI（vim、top）洗出来仍然是一堆片段；读它们请用 `term capture`（网关截屏本来就是 `capture-pane` 的逐行文本）。SGR / OSC / DCS 一律丢弃，裸 LF 当 CRLF（截屏载荷用裸 LF 分行）。
+不是终端仿真器，只维护一张「当前行 + 列」的行画布：CR、退格、TAB（每 8 列一个制表位）、EL（`ESC[K`）、ED（`ESC[2J`）、CUF/CUB、CHA（`ESC[nG` 移到绝对列）会真的作用在行上——这样 zsh / fish 的行编辑重画才能还原成一行。列宽按一张小表算：东亚宽字符与常见 emoji 占两列（续格写空串，join 后不多字符），组合记号占零列挂在前一格上。**不实现**绝对行定位（CUP）、滚动区与备用屏，所以整屏重绘型 TUI（vim、top）洗出来仍然是一堆片段；读它们请用 `term capture`（网关截屏本来就是 `capture-pane` 的逐行文本）。SGR / OSC / DCS 一律丢弃，裸 LF 当 CRLF（截屏载荷用裸 LF 分行）。
 
 ### 一条硬约束：输入只能是 UTF-8
 

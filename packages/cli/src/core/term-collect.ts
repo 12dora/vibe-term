@@ -4,14 +4,36 @@
 
 import { stripAnsi, trimScreenText } from './vt-text';
 
+/** 采集上限：`yes` 这类命令一秒就能刷爆内存，超过就停收并标记截断。 */
+export const DEFAULT_COLLECT_MAX_BYTES = 8 * 1024 * 1024;
+
 export class ByteCollector {
   private readonly chunks: Uint8Array[] = [];
   private total = 0;
+  private cut = false;
 
-  append(bytes: Uint8Array): void {
-    if (bytes.byteLength === 0) return;
+  constructor(private readonly maxBytes: number = DEFAULT_COLLECT_MAX_BYTES) {}
+
+  /** 收满之后返回 false：调用方据此提前收尾。 */
+  append(bytes: Uint8Array): boolean {
+    if (this.cut) return false;
+    if (bytes.byteLength === 0) return true;
+    const room = this.maxBytes - this.total;
+    if (bytes.byteLength >= room) {
+      this.cut = true;
+      if (room > 0) {
+        this.chunks.push(bytes.slice(0, room));
+        this.total += room;
+      }
+      return false;
+    }
     this.chunks.push(bytes.slice());
     this.total += bytes.byteLength;
+    return true;
+  }
+
+  get truncated(): boolean {
+    return this.cut;
   }
 
   get byteLength(): number {
@@ -35,6 +57,7 @@ export class ByteCollector {
   reset(): void {
     this.chunks.length = 0;
     this.total = 0;
+    this.cut = false;
   }
 }
 
@@ -118,28 +141,42 @@ export class IdleWatcher {
 
 export interface RunSentinel {
   nonce: string;
-  /** 追加在命令后面的 shell 片段。 */
-  suffix: string;
-  /** 在洗白后的文本里找完成标记。 */
+  /** 唯一串本体；命令行回显与结果行都含它。 */
+  token: string;
+  /** 命令之后**单独一行**打进去的 shell 片段。 */
+  line: string;
+  /** 在洗白后的文本里找完成标记（只认数字形态）。 */
   find(text: string): { exitCode: number; line: string } | null;
+  /** 这一行是不是哨兵相关（回显的 `$?` 形态也算）。 */
+  mentions(text: string): boolean;
+  /** 抹掉行内回显的哨兵命令，保留同一行上的真实输出。 */
+  scrub(text: string): string;
 }
 
 /**
  * 完成哨兵：网关会吞掉 OSC 133（见 apps/gateway/.../pane-stream/osc-handlers.ts 的
- * `HANDLED_OSC_KINDS`），不可见标记根本到不了客户端，所以只能回显一个肉眼可见的唯一串。
- * 命令行回显里的那份写的是字面 `$?`，正则只认数字，因此不会误命中。
+ * `HANDLED_OSC_KINDS`），不可见标记根本到不了客户端，只能回显一个肉眼可见的唯一串。
+ *
+ * 它作为**独立的一行**打进去，不拼在命令后面：`cmd; echo …` 会被命令里的 `#` 注释掉、
+ * 被未闭合的 heredoc 吞掉、被结尾的 `&` 挪进后台。单独一行的 `$?` 仍然是上一条命令的退出码。
+ * 代价是它作为「预输入」躺在 tty 缓冲里，会被主动读 stdin 的命令吃掉——这类命令别用 `run`。
  */
 export function createRunSentinel(nonce = randomNonce()): RunSentinel {
   const token = `__VT_DONE_${nonce}_`;
   const pattern = new RegExp(`${token}(\\d{1,3})\\b`);
+  // 命令还在跑时哨兵行是「预输入」，由 tty 驱动即时回显，可能糊在输出行中间。
+  const echoed = new RegExp(`\\(?echo\\s*${token}\\$\\?\\)?`, 'g');
   return {
     nonce,
-    suffix: `; echo ${token}$?`,
+    token,
+    line: `(echo ${token}$?)`,
     find(text) {
       const match = pattern.exec(text);
       if (!match) return null;
       return { exitCode: Number(match[1]), line: match[0] };
     },
+    mentions: (text) => text.includes(token),
+    scrub: (text) => text.replace(echoed, ''),
   };
 }
 
@@ -150,13 +187,35 @@ function randomNonce(): string {
 }
 
 export interface RunOutputOptions {
+  /** 我们打进去的那条命令（不含哨兵行），用来判断第一行到底是不是回显。 */
+  command?: string;
   sentinel?: RunSentinel | null;
 }
 
-/** 命令行回显以 shell 回显的换行结束：第一个 LF 之前的一切都是「我们刚打进去的那一行」。 */
-export function dropEchoedCommandLine(raw: Uint8Array): Uint8Array {
-  const newline = raw.indexOf(0x0a);
-  return newline < 0 ? raw : raw.subarray(newline + 1);
+function compact(text: string): string {
+  return text.replace(/\s+/g, '').toLowerCase();
+}
+
+function isSubsequence(needle: string, haystack: string): boolean {
+  let index = 0;
+  for (const char of haystack) {
+    if (char === needle[index]) index += 1;
+    if (index === needle.length) return true;
+  }
+  return needle.length === 0;
+}
+
+/**
+ * 第一行到底是 shell 回显的命令，还是命令自己的第一行输出（`stty -echo` 时没有回显）？
+ * 回显可能被窄 pane 的折行重画打散，所以按「压掉空白后是命令的子序列」判定——
+ * 判不准时宁可留着，少剥一行不致命，多剥一行会丢输出。
+ */
+export function looksEchoed(head: string, command: string): boolean {
+  const left = compact(head);
+  const right = compact(command);
+  if (!left) return true;
+  if (left.length > right.length + 8) return false;
+  return isSubsequence(left, right) || right.includes(left) || left.includes(right);
 }
 
 /** 结尾那一行没有换行收尾、又长得像提示符时，它是在等下一条命令，不是输出。 */
@@ -169,18 +228,41 @@ function dropTrailingPrompt(lines: string[]): string[] {
 
 /**
  * 尽力从「一条命令跑完后 pane 吐出的字节」里切出命令自己的输出：
- * 去掉 shell 回显的命令行、哨兵行及其之后的内容、以及结尾等待输入的提示符。
+ * 去掉 shell 回显的命令行、哨兵相关的行及其之后的内容、以及结尾等待输入的提示符。
  *
  * best-effort：提示符样式千奇百怪，pane 又是共享终端（别人可能同时在里面敲），
  * 剥不干净时宁可多留也不少留。要可靠的完成判定与退出码就用 `--marker`。
  */
+/**
+ * 切到「哨兵结果行」为止，并把之前那些回显的哨兵命令抹掉：命令还在跑时哨兵是预输入，
+ * tty 会把它即时回显到输出中间，按整行丢会连带丢掉同一行的真实输出。
+ */
+function cutAtSentinel(lines: readonly string[], sentinel: RunSentinel): string[] {
+  const hit = lines.findIndex((line) => sentinel.find(line) !== null);
+  const source = hit >= 0 ? lines.slice(0, hit) : lines;
+  const kept: string[] = [];
+  for (const line of source) {
+    if (!sentinel.mentions(line)) {
+      kept.push(line);
+      continue;
+    }
+    const scrubbed = sentinel.scrub(line);
+    if (scrubbed.trim() !== '') kept.push(scrubbed);
+  }
+  return kept;
+}
+
 export function formatRunOutput(raw: Uint8Array, options: RunOutputOptions = {}): string {
-  const text = stripAnsi(dropEchoedCommandLine(raw));
-  let lines = text.split('\n');
+  const newline = raw.indexOf(0x0a);
+  const command = options.command;
+  const echoed =
+    newline >= 0 &&
+    (command === undefined || looksEchoed(stripAnsi(raw.subarray(0, newline)), command));
+  const body = echoed ? raw.subarray(newline + 1) : raw;
+  let lines = stripAnsi(body).split('\n');
   const sentinel = options.sentinel;
   if (sentinel) {
-    const hit = lines.findIndex((line) => sentinel.find(line) !== null);
-    if (hit >= 0) return trimScreenText(lines.slice(0, hit).join('\n'));
+    return trimScreenText(dropTrailingPrompt(cutAtSentinel(lines, sentinel)).join('\n'));
   }
   lines = dropTrailingPrompt(lines);
   return trimScreenText(lines.join('\n'));

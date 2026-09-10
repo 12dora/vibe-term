@@ -42,6 +42,29 @@ describe('stripAnsiText', () => {
   });
 });
 
+describe('column arithmetic', () => {
+  test('TAB advances to the next 8-column stop', () => {
+    expect(stripAnsiText('ab\tc')).toBe('ab      c');
+    expect(stripAnsiText('abcdefgh\tx')).toBe('abcdefgh        x');
+  });
+
+  test('CHA moves to an absolute column instead of acting as CR', () => {
+    expect(stripAnsiText('abcdef\u001b[3GX')).toBe('abXdef');
+    expect(stripAnsiText('abcdef\u001b[GX')).toBe('Xbcdef');
+  });
+
+  test('wide characters occupy two columns', () => {
+    // 覆盖掉「你」的两列后第二个宽字符仍在原处（列 2-3），与真终端一致。
+    expect(stripAnsiText('\u4f60\u597d\rxy')).toBe('xy\u597d');
+    expect(stripAnsiText('\u4f60\u597d\rx')).toBe('x\u597d');
+    expect(stripAnsiText('\u4f60\u597d\u001b[5GX')).toBe('\u4f60\u597dX');
+  });
+
+  test('combining marks stay on the previous cell', () => {
+    expect(stripAnsiText('e\u0301\rx')).toBe('x');
+  });
+});
+
 describe('trimScreenText', () => {
   test('keeps inner blank lines but drops the trailing ones', () => {
     expect(trimScreenText('a\n\nb  \n\n')).toBe('a\n\nb');

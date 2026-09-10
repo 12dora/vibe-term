@@ -29,12 +29,23 @@ export function requireTty(streams: TtyStreams): void {
   );
 }
 
+export interface LocalTerminalOptions {
+  /** 进程收到 SIGTERM / SIGHUP 时怎么退；测试注入用。 */
+  exit?: (code: number) => void;
+}
+
 export class LocalTerminal {
   private dataHandler: ((chunk: Buffer) => void) | null = null;
   private resizeHandler: (() => void) | null = null;
+  private exitHandler: (() => void) | null = null;
+  private signalHandler: ((signal: NodeJS.Signals) => void) | null = null;
   private rawEnabled = false;
+  private started = false;
 
-  constructor(private readonly streams: TtyStreams) {}
+  constructor(
+    private readonly streams: TtyStreams,
+    private readonly options: LocalTerminalOptions = {}
+  ) {}
 
   size(): TerminalSize {
     return {
@@ -43,17 +54,32 @@ export class LocalTerminal {
     };
   }
 
-  /** 进 raw 模式并开始收键盘字节。 */
+  /**
+   * 进 raw 模式并开始收键盘字节。
+   * 同时挂上 `exit` / SIGTERM / SIGHUP：这三条路径不复位就会把用户的 shell 留在 raw 模式里。
+   */
   start(onData: (chunk: Buffer) => void, onResize: () => void): void {
+    if (this.started) return;
+    this.started = true;
     if (this.streams.stdin.isTTY) {
       this.streams.stdin.setRawMode(true);
       this.rawEnabled = true;
     }
     this.dataHandler = onData;
     this.resizeHandler = onResize;
+    this.exitHandler = () => this.stop();
+    this.signalHandler = (signal) => {
+      this.stop();
+      (this.options.exit ?? ((code: number) => process.exit(code)))(
+        signal === 'SIGHUP' ? 129 : 143
+      );
+    };
     this.streams.stdin.on('data', onData);
     this.streams.stdin.resume();
     process.on('SIGWINCH', onResize);
+    process.on('exit', this.exitHandler);
+    process.on('SIGTERM', this.signalHandler);
+    process.on('SIGHUP', this.signalHandler);
   }
 
   write(data: string | Uint8Array): void {
@@ -62,12 +88,21 @@ export class LocalTerminal {
     );
   }
 
-  /** 复位终端并停止收键盘字节；重复调用无害。 */
+  /** 复位终端并停止收键盘字节；重复调用是空操作（复位串只写一次）。 */
   stop(): void {
+    if (!this.started) return;
+    this.started = false;
     if (this.dataHandler) this.streams.stdin.off('data', this.dataHandler);
     if (this.resizeHandler) process.off('SIGWINCH', this.resizeHandler);
+    if (this.exitHandler) process.off('exit', this.exitHandler);
+    if (this.signalHandler) {
+      process.off('SIGTERM', this.signalHandler);
+      process.off('SIGHUP', this.signalHandler);
+    }
     this.dataHandler = null;
     this.resizeHandler = null;
+    this.exitHandler = null;
+    this.signalHandler = null;
     if (this.rawEnabled && this.streams.stdin.isTTY) {
       this.streams.stdin.setRawMode(false);
       this.rawEnabled = false;

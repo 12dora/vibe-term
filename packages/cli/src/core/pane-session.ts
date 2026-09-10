@@ -15,9 +15,17 @@ import type {
   GatewayTransport,
   GatewayTransportEvent,
 } from '@vibeterm/ws-client';
-import { NetworkError } from './errors';
+import { NetworkError, NotFoundError } from './errors';
 
 export const SCREEN_BYTE_LIMIT = 512 * 1024;
+
+interface Waiter<T> {
+  resolve(value: T): void;
+  reject(error: Error): void;
+}
+
+/** 会话被销毁后用来判定「消失类」谓词的空树。 */
+const EMPTY_SESSION: TmuxSession = { id: '', name: '', windows: [] };
 export const HISTORY_PAGE_BYTE_LIMIT = 256 * 1024;
 
 export interface DeviceSessionEvents {
@@ -45,8 +53,8 @@ export class DeviceSession {
   private connected = false;
   private generation = 0n;
   private subscribed: string[] = [];
-  private readonly treeWaiters: Array<(session: TmuxSession) => void> = [];
-  private readonly connectWaiters: Array<(value: undefined) => void> = [];
+  private readonly treeWaiters: Array<Waiter<TmuxSession>> = [];
+  private readonly connectWaiters: Array<Waiter<undefined>> = [];
   private disposed = false;
 
   constructor(
@@ -89,8 +97,25 @@ export class DeviceSession {
     for (;;) {
       const remaining = deadline - Date.now();
       if (remaining <= 0) throw new NetworkError(`timed out waiting for ${what}`);
-      const next = await this.await_(this.treeWaiters, remaining, `timed out waiting for ${what}`);
+      const next = await this.nextTree(remaining, what, predicate);
       if (predicate(next)) return next;
+    }
+  }
+
+  /**
+   * 等下一份树。整个 tmux 会话被销毁（最后一个窗口关掉）时树会变成 null——
+   * 「东西消失了」类的谓词在空树上成立，就按空树收敛，否则把「会话没了」原样抛出去。
+   */
+  private async nextTree(
+    timeoutMs: number,
+    what: string,
+    predicate: (session: TmuxSession) => boolean
+  ): Promise<TmuxSession> {
+    try {
+      return await this.await_(this.treeWaiters, timeoutMs, `timed out waiting for ${what}`);
+    } catch (error) {
+      if (error instanceof NotFoundError && predicate(EMPTY_SESSION)) return EMPTY_SESSION;
+      throw error;
     }
   }
 
@@ -163,7 +188,7 @@ export class DeviceSession {
   private handle(event: GatewayTransportEvent): void {
     if (event.type === 'device-connected' && event.deviceId === this.deviceId) {
       this.connected = true;
-      for (const resolve of this.connectWaiters.splice(0)) resolve(undefined);
+      for (const waiter of this.connectWaiters.splice(0)) waiter.resolve(undefined);
       return;
     }
     if (event.type === 'metadata-snapshot' && event.snapshot.deviceId === this.deviceId) {
@@ -211,22 +236,37 @@ export class DeviceSession {
   private applyTree(session: TmuxSession | null): void {
     this.tree = session;
     this.events.onTree?.(session);
-    if (!session) return;
-    for (const resolve of this.treeWaiters.splice(0)) resolve(session);
+    if (session) {
+      for (const waiter of this.treeWaiters.splice(0)) waiter.resolve(session);
+      return;
+    }
+    // 会话没了：再等下去也只会等到超时，直接把「目标不存在」交回调用方。
+    const gone = new NotFoundError(`the tmux session on device ${this.deviceId} is gone`);
+    for (const waiter of this.treeWaiters.splice(0)) waiter.reject(gone);
   }
 
-  private await_<T>(waiters: Array<(value: T) => void>, timeoutMs: number, message: string) {
+  private await_<T>(waiters: Array<Waiter<T>>, timeoutMs: number, message: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-      const timer = setTimeout(() => {
-        const index = waiters.indexOf(settle);
+      const drop = (): void => {
+        const index = waiters.indexOf(waiter);
         if (index >= 0) waiters.splice(index, 1);
+        clearTimeout(timer);
+      };
+      const waiter: Waiter<T> = {
+        resolve: (value) => {
+          drop();
+          resolve(value);
+        },
+        reject: (error) => {
+          drop();
+          reject(error);
+        },
+      };
+      const timer = setTimeout(() => {
+        drop();
         reject(new NetworkError(message));
       }, timeoutMs);
-      const settle = (value: T): void => {
-        clearTimeout(timer);
-        resolve(value);
-      };
-      waiters.push(settle);
+      waiters.push(waiter);
     });
   }
 }
