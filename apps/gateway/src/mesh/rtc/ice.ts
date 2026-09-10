@@ -184,7 +184,7 @@ export function buildRtcIceConfig(
   };
 }
 
-/** 在交给 libdatachannel 之前解析 STUN/TURN 主机名，绕开本机代理 fake-IP。 */
+/** 在交给 libdatachannel 之前解析 STUN/TURN 主机名，绕开本机代理 fake-IP。冷缓存最多等 300ms。 */
 export async function buildRtcIceConfigResolved(
   cfg: IceServerConfig,
   runtime: RtcIceRuntimeConfig = {

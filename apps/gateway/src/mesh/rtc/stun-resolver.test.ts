@@ -2,6 +2,9 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import {
   STUN_RESOLVE_CACHE_MAX,
   STUN_RESOLVE_CACHE_TTL_MS,
+  STUN_RESOLVE_NEGATIVE_TTL_MAX_MS,
+  STUN_RESOLVE_NEGATIVE_TTL_MID_MS,
+  STUN_RESOLVE_NEGATIVE_TTL_MS,
   formatHostForIceUrl,
   resetStunResolverForTest,
   resolveIceServers,
@@ -69,7 +72,7 @@ describe('resolveIceServers', () => {
     expect(servers).toEqual(['stun:1.2.3.4:3478', 'stun:[2001:db8::1]:3478']);
   });
 
-  test('substitutes a system A record and brackets IPv6', async () => {
+  test('leaves healthy system-DNS URLs untouched', async () => {
     const servers = await resolveIceServers(['stun:stun.example:19302', 'stun:v6.example:3478'], {
       lookup: lookupOf({
         'stun.example': ['74.125.200.1'],
@@ -79,7 +82,8 @@ describe('resolveIceServers', () => {
         throw new Error('doh should not run');
       },
     });
-    expect(servers).toEqual(['stun:74.125.200.1:19302', 'stun:[2001:db8::53]:3478']);
+    expect(servers).toEqual(['stun:stun.example:19302', 'stun:v6.example:3478']);
+    expect(stunResolveSnapshot().map((row) => row.via)).toEqual(['system', 'system']);
   });
 
   test('falls over to DoH when system returns fake-IP or fails', async () => {
@@ -124,6 +128,22 @@ describe('resolveIceServers', () => {
     expect(snap.every((row) => row.fakeIp || row.host === 'down.example')).toBe(true);
   });
 
+  test('treats unusable-only system answers as absent and uses DoH', async () => {
+    const servers = await resolveIceServers(['stun:blocked.example:3478'], {
+      lookup: async () => [
+        '0.0.0.0',
+        '127.0.0.1',
+        '10.1.2.3',
+        '192.168.0.1',
+        '100.64.0.1',
+        '172.16.0.1',
+      ],
+      doh: async () => ['1.1.1.1'],
+    });
+    expect(servers).toEqual(['stun:1.1.1.1:3478']);
+    expect(stunResolveSnapshot()[0]?.via).toBe('doh');
+  });
+
   test('keeps the original URL when DoH also fails', async () => {
     const original = 'stun:stun.example:19302';
     const servers = await resolveIceServers([original], {
@@ -135,12 +155,78 @@ describe('resolveIceServers', () => {
     expect(servers).toEqual([original]);
   });
 
-  test('prefers IPv4 when system returns both families', async () => {
+  test('does not rewrite a healthy dual-stack system answer', async () => {
     const servers = await resolveIceServers(['stun:dual.example:3478'], {
       lookup: async () => ['2001:db8::1', '203.0.113.8'],
-      doh: async () => [],
+      doh: async () => {
+        throw new Error('doh should not run');
+      },
     });
-    expect(servers).toEqual(['stun:203.0.113.8:3478']);
+    expect(servers).toEqual(['stun:dual.example:3478']);
+  });
+
+  test('preserves family order when substituting a DoH answer', async () => {
+    const servers = await resolveIceServers(['stun:dual.example:3478'], {
+      lookup: async () => ['198.18.0.1'],
+      doh: async () => ['2001:db8::1', '203.0.113.8'],
+    });
+    expect(servers).toEqual(['stun:[2001:db8::1]:3478']);
+  });
+
+  test('passes mixed fake+usable system answers through with fake_ip=true', async () => {
+    const servers = await resolveIceServers(['stun:mix.example:3478'], {
+      lookup: async () => ['198.18.0.9', '203.0.113.7'],
+      doh: async () => {
+        throw new Error('doh should not run');
+      },
+    });
+    expect(servers).toEqual(['stun:mix.example:3478']);
+    expect(stunResolveSnapshot()).toEqual([
+      expect.objectContaining({
+        host: 'mix.example',
+        ip: '203.0.113.7',
+        via: 'system',
+        fakeIp: true,
+      }),
+    ]);
+  });
+
+  test('does not substitute turns/stuns URLs or TurnTls entries', async () => {
+    const seen: string[] = [];
+    const servers = await resolveIceServers(
+      [
+        'stuns:secure.example:5349',
+        'turns:relay.example:5349?transport=tcp',
+        { hostname: 'tls.example', port: 5349, relayType: 'TurnTls', username: 'u', password: 'p' },
+        'stun:plain.example:3478',
+      ],
+      {
+        lookup: async (hostname) => {
+          seen.push(hostname);
+          return ['198.18.0.1'];
+        },
+        doh: async () => ['2.2.2.2'],
+      }
+    );
+    expect(seen).toEqual(['plain.example']);
+    expect(servers).toEqual([
+      'stuns:secure.example:5349',
+      'turns:relay.example:5349?transport=tcp',
+      { hostname: 'tls.example', port: 5349, relayType: 'TurnTls', username: 'u', password: 'p' },
+      'stun:2.2.2.2:3478',
+    ]);
+  });
+
+  test('lower-cases cache and inflight keys', async () => {
+    let lookups = 0;
+    const lookup = async () => {
+      lookups += 1;
+      return ['203.0.113.1'];
+    };
+    const opts = { lookup, doh: async () => [] };
+    await resolveIceServers(['stun:STUN.Example:3478'], opts);
+    await resolveIceServers(['stun:stun.example:3478'], opts);
+    expect(lookups).toBe(1);
   });
 
   test('caches a successful answer for the TTL', async () => {
@@ -152,17 +238,118 @@ describe('resolveIceServers', () => {
     };
     const opts = { lookup, doh: async () => [], now: () => now };
     expect(await resolveIceServers(['stun:cached.example:3478'], opts)).toEqual([
-      'stun:203.0.113.1:3478',
+      'stun:cached.example:3478',
     ]);
     expect(await resolveIceServers(['stun:cached.example:3478'], opts)).toEqual([
-      'stun:203.0.113.1:3478',
+      'stun:cached.example:3478',
     ]);
     expect(lookups).toBe(1);
     now += STUN_RESOLVE_CACHE_TTL_MS + 1;
     expect(await resolveIceServers(['stun:cached.example:3478'], opts)).toEqual([
-      'stun:203.0.113.1:3478',
+      'stun:cached.example:3478',
     ]);
     expect(lookups).toBe(2);
+  });
+
+  test('returns last-known immediately while a refresh runs in the background', async () => {
+    let now = 1_000;
+    expect(
+      await resolveIceServers(['stun:stale.example:3478'], {
+        lookup: async () => ['198.18.0.1'],
+        doh: async () => ['9.9.9.9'],
+        now: () => now,
+      })
+    ).toEqual(['stun:9.9.9.9:3478']);
+
+    now += STUN_RESOLVE_CACHE_TTL_MS + 1;
+    let release!: (ips: string[]) => void;
+    const blocked = new Promise<string[]>((resolve) => {
+      release = resolve;
+    });
+    const started = Date.now();
+    const staleHit = await resolveIceServers(['stun:stale.example:3478'], {
+      lookup: async () => ['198.18.0.2'],
+      doh: async () => blocked,
+      now: () => now,
+      budgetMs: 200,
+    });
+    expect(Date.now() - started).toBeLessThan(80);
+    expect(staleHit).toEqual(['stun:9.9.9.9:3478']);
+
+    release(['8.8.8.8']);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(
+      await resolveIceServers(['stun:stale.example:3478'], {
+        lookup: async () => ['198.18.0.3'],
+        doh: async () => ['8.8.8.8'],
+        now: () => now,
+      })
+    ).toEqual(['stun:8.8.8.8:3478']);
+  });
+
+  test('in-flight joiners use their own deadline', async () => {
+    let resolveLookup!: (ips: string[]) => void;
+    const lookupPromise = new Promise<string[]>((resolve) => {
+      resolveLookup = resolve;
+    });
+    const lookup = () => lookupPromise;
+    const original = 'stun:join.example:3478';
+    const first = resolveIceServers([original], {
+      lookup,
+      doh: async () => [],
+      budgetMs: 250,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const started = Date.now();
+    const second = await resolveIceServers([original], {
+      lookup,
+      doh: async () => [],
+      budgetMs: 30,
+    });
+    expect(Date.now() - started).toBeLessThan(120);
+    expect(second).toEqual([original]);
+    resolveLookup(['203.0.113.5']);
+    expect(await first).toEqual([original]);
+  });
+
+  test('backs off negative TTL exponentially after repeated failures', async () => {
+    let lookups = 0;
+    let now = 1_000;
+    const opts = {
+      lookup: async () => {
+        lookups += 1;
+        return ['198.18.0.1'];
+      },
+      doh: async () => [],
+      now: () => now,
+    };
+    const url = 'stun:down.example:3478';
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(1);
+
+    now += STUN_RESOLVE_NEGATIVE_TTL_MS - 1;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(1);
+
+    now += 2;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(2);
+
+    now += STUN_RESOLVE_NEGATIVE_TTL_MID_MS - 1;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(2);
+
+    now += 2;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(3);
+
+    now += STUN_RESOLVE_NEGATIVE_TTL_MAX_MS - 1;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(3);
+
+    now += 2;
+    await resolveIceServers([url], opts);
+    expect(lookups).toBe(4);
   });
 
   test('evicts the oldest cache entry past the LRU cap', async () => {
@@ -205,6 +392,18 @@ describe('resolveIceServers', () => {
     expect(servers).toEqual([original]);
   });
 
+  test('stunResolveSnapshot returns a copy', async () => {
+    await resolveIceServers(['stun:snap.example:3478'], {
+      lookup: async () => ['203.0.113.1'],
+      doh: async () => [],
+    });
+    const first = stunResolveSnapshot();
+    const second = stunResolveSnapshot();
+    expect(first).toEqual(second);
+    expect(first).not.toBe(second);
+    expect(first).toHaveLength(1);
+  });
+
   test('rate-limits the info line and warns when DoH fails', async () => {
     const logs: string[] = [];
     const warns: string[] = [];
@@ -225,10 +424,11 @@ describe('resolveIceServers', () => {
         doh: async () => [],
         now: () => now,
       });
+      resetStunResolverForTest({ retainLogTimes: true });
       await resolveIceServers(['stun:ok.example:3478'], {
         lookup: async () => ['203.0.113.9'],
         doh: async () => [],
-        now: () => now,
+        now: () => now + 1_000,
       });
       expect(logs.filter((line) => line.includes('stun resolve host=ok.example')).length).toBe(1);
       expect(

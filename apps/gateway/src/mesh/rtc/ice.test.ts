@@ -152,7 +152,7 @@ describe('ice helpers', () => {
     expect(resolved.iceServers).toEqual([
       'stun:8.8.4.4:19302',
       {
-        hostname: '203.0.113.40',
+        hostname: 'turn.example',
         port: 3478,
         username: 'u',
         password: 'p',
@@ -160,6 +160,49 @@ describe('ice helpers', () => {
       },
     ]);
     expect(resolved.enableIceTcp).toBe(true);
+    resetStunResolverForTest();
+  });
+
+  test('does not substitute TurnTls hostnames used for SNI', async () => {
+    resetStunResolverForTest();
+    const resolved = await buildRtcIceConfigResolved(
+      {
+        stun: ['stuns:secure.example:5349'],
+        turn: { url: 'turns:relay.example:5349', username: 'u', credential: 'p' },
+      },
+      { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null },
+      {
+        lookup: async () => ['198.18.0.9'],
+        doh: async () => ['8.8.4.4'],
+      }
+    );
+    expect(resolved.iceServers).toEqual([
+      'stuns:secure.example:5349',
+      {
+        hostname: 'relay.example',
+        port: 5349,
+        username: 'u',
+        password: 'p',
+        relayType: 'TurnTls',
+      },
+    ]);
+    resetStunResolverForTest();
+  });
+
+  test('does not block ICE config on a slow STUN resolve', async () => {
+    resetStunResolverForTest();
+    const started = Date.now();
+    const resolved = await buildRtcIceConfigResolved(
+      { stun: ['stun:slow.example:3478'], turn: null },
+      { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null },
+      {
+        budgetMs: 40,
+        lookup: () => new Promise(() => {}),
+        doh: () => new Promise(() => {}),
+      }
+    );
+    expect(Date.now() - started).toBeLessThan(200);
+    expect(resolved.iceServers).toEqual(['stun:slow.example:3478']);
     resetStunResolverForTest();
   });
 

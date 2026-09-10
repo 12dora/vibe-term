@@ -1,10 +1,10 @@
 import { promises as dnsPromises } from 'node:dns';
 import { isIP } from 'node:net';
-import { errorMessage } from '@vibeterm/shared';
 import { logAt } from '../../log/level';
 import {
   type DohResolveOptions,
   isFakeIp,
+  isUnusableEdgeIp,
   resolveHostnameViaDoh,
 } from '../../tunnel/edge-resolver';
 import { stamp } from '../mesh-log';
@@ -12,8 +12,13 @@ import type { IceServer } from './native';
 
 export const STUN_RESOLVE_CACHE_TTL_MS = 10 * 60 * 1_000;
 export const STUN_RESOLVE_NEGATIVE_TTL_MS = 60 * 1_000;
+export const STUN_RESOLVE_NEGATIVE_TTL_MID_MS = 5 * 60 * 1_000;
+export const STUN_RESOLVE_NEGATIVE_TTL_MAX_MS = 10 * 60 * 1_000;
 export const STUN_RESOLVE_CACHE_MAX = 32;
+/** 后台 lookup + DoH 的总预算。 */
 export const STUN_RESOLVE_BUDGET_MS = 2_000;
+/** 冷缓存时 dial 最多等待；超时返回上次/原始 URL，解析在后台继续。 */
+export const STUN_RESOLVE_WAIT_MS = 300;
 export const STUN_RESOLVE_LOG_INTERVAL_MS = 10 * 60 * 1_000;
 export const STUN_RESOLVE_SNAPSHOT_MAX = 8;
 
@@ -47,23 +52,26 @@ type CacheEntry = {
   via: StunResolveVia;
   fakeIp: boolean;
   expiresAt: number;
+  failCount: number;
 };
 
 const cache = new Map<string, CacheEntry>();
 const inflight = new Map<string, Promise<StunResolveRecord>>();
 const lastLogAt = new Map<string, number>();
 const snapshot: StunResolveRecord[] = [];
+let generation = 0;
 
-export function resetStunResolverForTest(): void {
+export function resetStunResolverForTest(opts?: { retainLogTimes?: boolean }): void {
+  generation += 1;
   cache.clear();
   inflight.clear();
-  lastLogAt.clear();
   snapshot.length = 0;
+  if (!opts?.retainLogTimes) lastLogAt.clear();
 }
 
-/** gather 侧诊断钩子：最近几次 STUN/TURN 主机名解析结果。 */
+/** 最近几次 STUN/TURN 主机名解析结果的拷贝；目前无调用方。 */
 export function stunResolveSnapshot(): readonly StunResolveRecord[] {
-  return snapshot;
+  return snapshot.slice();
 }
 
 export function formatHostForIceUrl(ip: string): string {
@@ -72,6 +80,19 @@ export function formatHostForIceUrl(ip: string): string {
 
 export function stripHostBrackets(host: string): string {
   return host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host;
+}
+
+function hostKey(host: string): string {
+  return stripHostBrackets(host).trim().toLowerCase();
+}
+
+function isTlsScheme(scheme: string): boolean {
+  const lower = scheme.toLowerCase();
+  return lower === 'turns:' || lower === 'stuns:';
+}
+
+function isTlsIceServer(server: IceServer): boolean {
+  return server.relayType === 'TurnTls';
 }
 
 function defaultLookup(hostname: string): Promise<string[]> {
@@ -118,11 +139,29 @@ function isIpLiteral(host: string): boolean {
   return isIP(stripHostBrackets(host)) !== 0;
 }
 
+/** isUnusableEdgeIp 把所有非 IPv4（含 AAAA）都判不可用；STUN 仍接受公网 IPv6。 */
+function isUsableStunIp(ip: string): boolean {
+  const family = isIP(ip);
+  if (family === 6) return true;
+  if (family !== 4) return false;
+  return !isUnusableEdgeIp(ip);
+}
+
 function pickUsableIp(ips: readonly string[]): { ip: string | null; sawFake: boolean } {
   const trimmed = ips.map((ip) => ip.trim()).filter((ip) => ip.length > 0);
-  const usable = trimmed.filter((ip) => isIP(ip) !== 0 && !isFakeIp(ip));
-  const chosen = usable.find((ip) => isIP(ip) === 4) ?? usable[0] ?? null;
-  return { ip: chosen, sawFake: trimmed.some((ip) => isFakeIp(ip)) };
+  const usable = trimmed.filter((ip) => isUsableStunIp(ip));
+  return { ip: usable[0] ?? null, sawFake: trimmed.some((ip) => isFakeIp(ip)) };
+}
+
+function negativeTtlMs(failCount: number): number {
+  if (failCount <= 1) return STUN_RESOLVE_NEGATIVE_TTL_MS;
+  if (failCount === 2) return STUN_RESOLVE_NEGATIVE_TTL_MID_MS;
+  return STUN_RESOLVE_NEGATIVE_TTL_MAX_MS;
+}
+
+function toRecord(host: string, entry: CacheEntry | null, ms: number): StunResolveRecord {
+  if (!entry) return { host, ip: null, via: 'system', fakeIp: false, ms };
+  return { host, ip: entry.ip, via: entry.via, fakeIp: entry.fakeIp, ms };
 }
 
 function raceDeadline<T>(
@@ -151,10 +190,7 @@ function raceDeadline<T>(
 function cacheGet(host: string, nowMs: number): CacheEntry | null {
   const hit = cache.get(host);
   if (!hit) return null;
-  if (hit.expiresAt <= nowMs) {
-    cache.delete(host);
-    return null;
-  }
+  if (hit.expiresAt <= nowMs) return null;
   cache.delete(host);
   cache.set(host, hit);
   return hit;
@@ -167,7 +203,29 @@ function cacheSet(host: string, entry: CacheEntry): void {
     const oldest = cache.keys().next().value;
     if (oldest === undefined) break;
     cache.delete(oldest);
+    lastLogAt.delete(oldest);
   }
+}
+
+function remember(host: string, record: StunResolveRecord, nowMs: number): void {
+  if (record.ip) {
+    cacheSet(host, {
+      ip: record.ip,
+      via: record.via,
+      fakeIp: record.fakeIp,
+      expiresAt: nowMs + STUN_RESOLVE_CACHE_TTL_MS,
+      failCount: 0,
+    });
+    return;
+  }
+  const failCount = (cache.get(host)?.failCount ?? 0) + 1;
+  cacheSet(host, {
+    ip: null,
+    via: record.via,
+    fakeIp: record.fakeIp,
+    expiresAt: nowMs + negativeTtlMs(failCount),
+    failCount,
+  });
 }
 
 function rememberSnapshot(record: StunResolveRecord): void {
@@ -175,11 +233,16 @@ function rememberSnapshot(record: StunResolveRecord): void {
   if (snapshot.length > STUN_RESOLVE_SNAPSHOT_MAX) snapshot.shift();
 }
 
-function logResolve(record: StunResolveRecord, failed: boolean, error?: string): void {
-  const wall = Date.now();
-  const prev = lastLogAt.get(record.host) ?? 0;
-  if (prev > 0 && wall - prev < STUN_RESOLVE_LOG_INTERVAL_MS) return;
-  lastLogAt.set(record.host, wall);
+function logResolve(
+  record: StunResolveRecord,
+  failed: boolean,
+  nowMs: number,
+  error?: string
+): void {
+  const key = hostKey(record.host);
+  const prev = lastLogAt.get(key) ?? 0;
+  if (prev > 0 && nowMs - prev < STUN_RESOLVE_LOG_INTERVAL_MS) return;
+  lastLogAt.set(key, nowMs);
   const bits = [
     `host=${record.host}`,
     `ip=${record.ip ?? '-'}`,
@@ -247,7 +310,7 @@ async function resolveHostnameUncached(
       host: hostname,
       ip: systemPick.ip,
       via: 'system',
-      fakeIp: false,
+      fakeIp: systemPick.sawFake,
       ms: now() - startedAt,
     };
   }
@@ -270,45 +333,56 @@ async function resolveHostnameUncached(
   return { host: hostname, ip: dohPick.ip, via: 'doh', fakeIp, ms: now() - startedAt };
 }
 
+function commitResolve(
+  host: string,
+  record: StunResolveRecord,
+  gen: number,
+  now: () => number
+): void {
+  if (gen !== generation) return;
+  const nowMs = now();
+  remember(host, record, nowMs);
+  rememberSnapshot(record);
+  if (record.ip) logResolve(record, false, nowMs);
+  else if (record.via === 'doh') logResolve(record, true, nowMs, 'doh failed');
+}
+
+function startResolve(
+  hostname: string,
+  opts: StunResolveOptions,
+  startedAt: number
+): Promise<StunResolveRecord> {
+  const gen = generation;
+  const workDeadline = startedAt + STUN_RESOLVE_BUDGET_MS;
+  const work = resolveHostnameUncached(hostname, opts, startedAt, workDeadline).then((record) => {
+    commitResolve(hostname, record, gen, opts.now ?? Date.now);
+    return record;
+  });
+  inflight.set(hostname, work);
+  void work.finally(() => {
+    if (inflight.get(hostname) === work) inflight.delete(hostname);
+  });
+  return work;
+}
+
 async function resolveHostname(
   hostname: string,
   opts: StunResolveOptions,
-  deadline: number
+  waitDeadline: number
 ): Promise<StunResolveRecord> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
   const cached = cacheGet(hostname, startedAt);
-  if (cached) {
-    return {
-      host: hostname,
-      ip: cached.ip,
-      via: cached.via,
-      fakeIp: cached.fakeIp,
-      ms: 0,
-    };
-  }
-  const pending = inflight.get(hostname);
-  if (pending) return pending;
+  if (cached) return toRecord(hostname, cached, 0);
 
-  const work = resolveHostnameUncached(hostname, opts, startedAt, deadline).then((record) => {
-    const ttl = record.ip ? STUN_RESOLVE_CACHE_TTL_MS : STUN_RESOLVE_NEGATIVE_TTL_MS;
-    cacheSet(hostname, {
-      ip: record.ip,
-      via: record.via,
-      fakeIp: record.fakeIp,
-      expiresAt: (opts.now ?? Date.now)() + ttl,
-    });
-    rememberSnapshot(record);
-    if (record.ip) logResolve(record, false);
-    else if (record.via === 'doh') logResolve(record, true, 'doh failed');
-    return record;
-  });
-  inflight.set(hostname, work);
-  try {
-    return await work;
-  } finally {
-    inflight.delete(hostname);
+  const stale = cache.get(hostname) ?? null;
+  const pending = inflight.get(hostname);
+  if (!pending) {
+    const work = startResolve(hostname, opts, startedAt);
+    if (stale?.ip) return toRecord(hostname, stale, now() - startedAt);
+    return raceDeadline(work, waitDeadline, now, toRecord(hostname, stale, now() - startedAt));
   }
+  return raceDeadline(pending, waitDeadline, now, toRecord(hostname, stale, now() - startedAt));
 }
 
 function rewriteUrl(parsed: SplitIceServerUrl, ip: string): string {
@@ -320,7 +394,7 @@ function collectHostnames(servers: ReadonlyArray<string | IceServer>): string[] 
   const hosts: string[] = [];
   for (const server of servers) {
     const host = hostnameOf(server);
-    if (!host || isIpLiteral(host) || seen.has(host)) continue;
+    if (!host || seen.has(host)) continue;
     seen.add(host);
     hosts.push(host);
   }
@@ -329,10 +403,19 @@ function collectHostnames(servers: ReadonlyArray<string | IceServer>): string[] 
 
 function hostnameOf(server: string | IceServer): string | null {
   if (typeof server !== 'string') {
-    const host = server.hostname.trim();
-    return host.length > 0 ? stripHostBrackets(host) : null;
+    if (isTlsIceServer(server)) return null;
+    const host = hostKey(server.hostname);
+    return host.length > 0 && !isIpLiteral(host) ? host : null;
   }
-  return splitIceServerUrl(server)?.host ?? null;
+  const parsed = splitIceServerUrl(server);
+  if (!parsed || isTlsScheme(parsed.scheme) || isIpLiteral(parsed.host)) return null;
+  const host = hostKey(parsed.host);
+  return host.length > 0 ? host : null;
+}
+
+function shouldSubstitute(record: StunResolveRecord | undefined): string | null {
+  if (!record?.ip || record.via !== 'doh') return null;
+  return record.ip;
 }
 
 function applyResolved(
@@ -341,13 +424,14 @@ function applyResolved(
 ): string | IceServer {
   if (typeof server === 'string') {
     const parsed = splitIceServerUrl(server);
-    if (!parsed || isIpLiteral(parsed.host)) return server;
-    const ip = byHost.get(parsed.host)?.ip;
+    if (!parsed || isTlsScheme(parsed.scheme) || isIpLiteral(parsed.host)) return server;
+    const ip = shouldSubstitute(byHost.get(hostKey(parsed.host)));
     return ip ? rewriteUrl(parsed, ip) : server;
   }
-  const host = stripHostBrackets(server.hostname.trim());
+  if (isTlsIceServer(server)) return server;
+  const host = hostKey(server.hostname);
   if (!host || isIpLiteral(host)) return server;
-  const ip = byHost.get(host)?.ip;
+  const ip = shouldSubstitute(byHost.get(host));
   if (!ip) return server;
   return { ...server, hostname: ip };
 }
@@ -369,17 +453,7 @@ export async function resolveIceServers(
   const hosts = collectHostnames(servers);
   if (hosts.length === 0) return [...servers];
   const now = opts.now ?? Date.now;
-  const deadline = now() + (opts.budgetMs ?? STUN_RESOLVE_BUDGET_MS);
-  try {
-    const byHost = await resolveAllHosts(hosts, opts, deadline);
-    return servers.map((server) => applyResolved(server, byHost));
-  } catch (error) {
-    logAt(
-      'warn',
-      stamp(
-        `${RTC_STUN_PREFIX} stun resolve host=* ip=- via=doh fake_ip=false ms=0 error=${errorMessage(error)}`
-      )
-    );
-    return [...servers];
-  }
+  const deadline = now() + (opts.budgetMs ?? STUN_RESOLVE_WAIT_MS);
+  const byHost = await resolveAllHosts(hosts, opts, deadline);
+  return servers.map((server) => applyResolved(server, byHost));
 }
