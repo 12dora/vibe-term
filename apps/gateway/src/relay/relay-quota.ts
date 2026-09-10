@@ -170,6 +170,16 @@ export class RelayTokenBucket {
     return this.rate;
   }
 
+  /**
+   * 旁路快路径的反面：已有排队，或当前令牌不够这一帧。
+   * 中继总闸只在拥塞时才扣小帧预算，避免空闲交互把突发花光。
+   */
+  isCongested(bytes: number): boolean {
+    if (this.rate === null) return false;
+    this.refill(this.rate);
+    return this.ready.length > 0 || this.bypassReady.length > 0 || this.tokens < bytes;
+  }
+
   /** 还没发放完的请求笔数；泄漏回归测试靠它断言「关掉的把手不留队列」。 */
   get pendingCount(): number {
     let total = 0;

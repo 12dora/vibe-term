@@ -248,6 +248,91 @@ describe('relay quota', () => {
     expect(bucket.pendingCount).toBe(0);
   });
 
+  test('isCongested is false on the uncontended path and true with a backlog', async () => {
+    let clock = 0;
+    const sleepers: Array<() => void> = [];
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          sleepers.push(resolve);
+        })
+    );
+    expect(bucket.isCongested(RELAY_TOKEN_BUCKET_BYPASS_BYTES)).toBe(false);
+    const bulk = bucket.createStream().take(8_192);
+    expect(bucket.isCongested(1)).toBe(true);
+    clock += 1_000;
+    sleepers[0]?.();
+    await bulk;
+  });
+
+  test('closing one pending takeBypass leaves the other and drops pendingCount by one', async () => {
+    let clock = 0;
+    const sleepers: Array<() => void> = [];
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          sleepers.push(resolve);
+        }),
+      { bypassSmallFrames: false }
+    );
+    const bulk = bucket.createStream();
+    const bulkTake = bulk.take(8_192);
+    const stream = bucket.createStream();
+    const first = stream.createHandle();
+    const second = stream.createHandle();
+    const doomed = first.takeBypass(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    const kept = second.takeBypass(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    expect(bucket.pendingCount).toBe(3);
+    first.close();
+    expect(bucket.pendingCount).toBe(2);
+    await expect(doomed).rejects.toThrow('relay token stream closed');
+    clock += 1_000;
+    sleepers[0]?.();
+    await kept;
+    expect(bucket.pendingCount).toBe(1);
+    second.close();
+    bulk.close();
+    await expect(bulkTake).rejects.toThrow('relay token stream closed');
+    expect(bucket.pendingCount).toBe(0);
+  });
+
+  test('closing both pending takeBypass handles clears the bypass lane', async () => {
+    let clock = 0;
+    const sleepers: Array<() => void> = [];
+    const bucket = new RelayTokenBucket(
+      4_096,
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          sleepers.push(resolve);
+        }),
+      { bypassSmallFrames: false }
+    );
+    const bulk = bucket.createStream();
+    const bulkTake = bulk.take(8_192);
+    const stream = bucket.createStream();
+    const first = stream.createHandle();
+    const second = stream.createHandle();
+    const a = first.takeBypass(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    const b = second.takeBypass(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+    expect(bucket.pendingCount).toBe(3);
+    first.close();
+    second.close();
+    expect(bucket.pendingCount).toBe(1);
+    await expect(a).rejects.toThrow('relay token stream closed');
+    await expect(b).rejects.toThrow('relay token stream closed');
+    bulk.close();
+    await expect(bulkTake).rejects.toThrow('relay token stream closed');
+    expect(bucket.pendingCount).toBe(0);
+    clock += 1_000;
+    sleepers[0]?.();
+    await Promise.resolve();
+  });
+
   test('bypassSmallFrames off sends small frames through the rotation', async () => {
     let clock = 0;
     const bucket = new RelayTokenBucket(
@@ -504,7 +589,7 @@ describe('relay bandwidth limiter', () => {
     ]);
     const drive = async (tenantId: string): Promise<void> => {
       const handle = limiter.acquire(tenantId);
-      while (clock() < 40_000) {
+      while (clock() < 20_000) {
         await handle.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
         admitted.set(tenantId, (admitted.get(tenantId) ?? 0) + RELAY_TOKEN_BUCKET_BYPASS_BYTES);
       }
@@ -517,7 +602,7 @@ describe('relay bandwidth limiter', () => {
     const a = admitted.get('tenant-a') ?? 0;
     const b = admitted.get('tenant-b') ?? 0;
     expect(b).toBeGreaterThan(0);
-    // 修复前 8 条小帧流能把比例拉到 8:1。
+    // 视界 20 s。无竞争不扣预算后，多流租户同时占旁路+bulk 的瞬时优势仍 ≥ 0.85；不要把窗口拉长来过关。
     expect(Math.min(a, b) / Math.max(a, b)).toBeGreaterThan(0.85);
   });
 
@@ -567,15 +652,16 @@ describe('relay bandwidth limiter', () => {
         })
     );
     const tenant = limiter.acquire('tenant-a');
-    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
-    for (let i = 0; i < frames; i++) {
-      await tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
-    }
     let bulkDone = false;
     const bulk = tenant.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).then(() => {
       bulkDone = true;
     });
     expect(sleepers).toHaveLength(1);
+    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
+    const bypassed: Array<Promise<void>> = [];
+    for (let i = 0; i < frames; i++) {
+      bypassed.push(tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES));
+    }
     let smallDone = false;
     const extraSmall = tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).then(() => {
       smallDone = true;
@@ -595,6 +681,7 @@ describe('relay bandwidth limiter', () => {
     );
     await bulk;
     await extraSmall;
+    await Promise.all(bypassed);
     tenant.close();
   });
 
@@ -615,15 +702,16 @@ describe('relay bandwidth limiter', () => {
     );
     const tenantA = limiter.acquire('a');
     const tenantB = limiter.acquire('b');
-    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
-    for (let i = 0; i < frames; i++) {
-      await tenantA.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
-    }
     let aBulkDone = false;
     const aBulk = tenantA.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).then(() => {
       aBulkDone = true;
     });
     expect(sleepers).toHaveLength(1);
+    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
+    const bypassed: Array<Promise<void>> = [];
+    for (let i = 0; i < frames; i++) {
+      bypassed.push(tenantA.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES));
+    }
     let aSmallDone = false;
     const aSmall = tenantA.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).then(() => {
       aSmallDone = true;
@@ -643,8 +731,144 @@ describe('relay bandwidth limiter', () => {
     );
     await aBulk;
     await aSmall;
+    await Promise.all(bypassed);
     tenantA.close();
     tenantB.close();
+  });
+
+  test('uncontended small frames leave the bypass budget untouched; a bulk backlog charges it', async () => {
+    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
+    {
+      let clock = 0;
+      const sleepers: Array<() => void> = [];
+      const limiter = new RelayBandwidthLimiter(
+        {
+          maxTenants: null,
+          totalBandwidthBytesPerSec: SMALL_FRAME_BYPASS_BURST_BYTES,
+          fairShare: true,
+        },
+        () => clock,
+        () =>
+          new Promise<void>((resolve) => {
+            sleepers.push(resolve);
+          })
+      );
+      const tenant = limiter.acquire('interactive');
+      for (let i = 0; i < frames; i++) {
+        await tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+      }
+      let bulkDone = false;
+      const bulk = tenant.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).then(() => {
+        bulkDone = true;
+      });
+      expect(sleepers).toHaveLength(1);
+      const probe = tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES);
+      clock += 1_000;
+      sleepers[0]?.();
+      await probe;
+      expect(bulkDone).toBe(false);
+      tenant.close();
+      await expect(bulk).rejects.toThrow('closed');
+    }
+    {
+      let clock = 0;
+      const sleepers: Array<() => void> = [];
+      const limiter = new RelayBandwidthLimiter(
+        {
+          maxTenants: null,
+          totalBandwidthBytesPerSec: SMALL_FRAME_BYPASS_BURST_BYTES,
+          fairShare: true,
+        },
+        () => clock,
+        () =>
+          new Promise<void>((resolve) => {
+            sleepers.push(resolve);
+          })
+      );
+      const tenant = limiter.acquire('interactive');
+      let bulkDone = false;
+      const bulk = tenant.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).then(() => {
+        bulkDone = true;
+      });
+      expect(sleepers).toHaveLength(1);
+      const bypassed: Array<Promise<void>> = [];
+      for (let i = 0; i < frames; i++) {
+        bypassed.push(tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES));
+      }
+      let smallDone = false;
+      const extraSmall = tenant.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).then(() => {
+        smallDone = true;
+      });
+      clock += 1_000;
+      sleepers[0]?.();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(bulkDone).toBe(false);
+      expect(smallDone).toBe(false);
+      await drainSleepers(
+        sleepers,
+        (ms) => {
+          clock += ms;
+        },
+        () => bulkDone && smallDone
+      );
+      await bulk;
+      await extraSmall;
+      await Promise.all(bypassed);
+      tenant.close();
+    }
+  });
+
+  test('closing and immediately reopening a tenant inherits the drained bypass budget', async () => {
+    let clock = 0;
+    const sleepers: Array<() => void> = [];
+    const limiter = new RelayBandwidthLimiter(
+      {
+        maxTenants: null,
+        totalBandwidthBytesPerSec: SMALL_FRAME_BYPASS_BURST_BYTES,
+        fairShare: true,
+      },
+      () => clock,
+      () =>
+        new Promise<void>((resolve) => {
+          sleepers.push(resolve);
+        })
+    );
+    const first = limiter.acquire('tenant-a');
+    first.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).catch(() => {});
+    expect(sleepers).toHaveLength(1);
+    const frames = SMALL_FRAME_BYPASS_BURST_BYTES / RELAY_TOKEN_BUCKET_BYPASS_BYTES;
+    for (let i = 0; i < frames; i++) {
+      first.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).catch(() => {});
+    }
+    first.close();
+    expect(limiter.tenantCount).toBe(0);
+
+    const second = limiter.acquire('tenant-a');
+    let bulkDone = false;
+    const bulk = second.take(SMALL_FRAME_BYPASS_BURST_BYTES * 2).then(() => {
+      bulkDone = true;
+    });
+    let smallDone = false;
+    const extraSmall = second.take(RELAY_TOKEN_BUCKET_BYPASS_BYTES).then(() => {
+      smallDone = true;
+    });
+    clock += 1_000;
+    sleepers[0]?.();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(bulkDone).toBe(false);
+    expect(smallDone).toBe(false);
+    await drainSleepers(
+      sleepers,
+      (ms) => {
+        clock += ms;
+      },
+      () => bulkDone && smallDone
+    );
+    await bulk;
+    await extraSmall;
+    second.close();
   });
 });
 

@@ -23,6 +23,7 @@ type OutboundFrame = {
 };
 
 export class DataChannelCarrier implements Carrier {
+  readonly logContext = { kind: 'webrtc_dc' as const };
   readonly channel: DataChannelLike;
   private readonly reassembler: FrameReassembler;
   private readonly sizing: FragmentSizing;

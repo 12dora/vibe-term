@@ -3,7 +3,7 @@ import type { ServerWebSocket } from 'bun';
 /** `backpressure` = 已入队；`rejected` = 未接受。 */
 export type CarrierSendResult = 'sent' | 'backpressure' | 'rejected' | 'closed';
 
-export type CarrierKind = 'physical_browser_ws' | 'mesh_link_stream';
+export type CarrierKind = 'physical_browser_ws' | 'mesh_link_stream' | 'webrtc_dc';
 
 export type CarrierLogContext = {
   kind?: CarrierKind;

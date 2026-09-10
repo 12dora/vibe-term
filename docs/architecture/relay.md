@@ -677,7 +677,7 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 |---|---|---|---|
 | `maxTenants` | `null`（不限） | 65536 | `POST /api/relay/enroll` 建新租户前，409 `RELAY_QUOTA_TENANTS` |
 | `totalBandwidthBytesPerSec` | `null`（不限） | 10 GiB/s | `pumpMetered` 里租户桶之后的第二道令牌桶，只延迟不丢帧 |
-| `fairShare` | 开 | — | 开：每租户在中继桶里占一个逻辑流，按轮转分配；≤4 KiB 帧在每租户 32 KiB/s（突发 64 KiB）预算内走旁路，超出仍进轮转。关：所有租户共用一条 FCFS 流，先到先得（小帧旁路预算同样生效） |
+| `fairShare` | 开 | — | 开：每租户在中继桶里占一个逻辑流，按轮转分配；≤4 KiB 帧在每租户 32 KiB/s（突发 64 KiB）预算内走旁路，超出仍进轮转。旁路道与 bulk 道按 `shouldServeBypass` 1:1 交替，有 bulk 排队时旁路最多占整管 50%，与租户数无关。关：bulk 共用一条 FCFS 流、先到先得；旁路道仍按租户轮转，不是 FCFS（小帧旁路预算同样生效） |
 
 读写口：`GET /api/relay/status` 的 `config.limits`、`PATCH /api/relay/config` 的 `{ limits }`
 （非法值 400 `RELAY_BAD_LIMITS`）。`GET /api/relay/health` 无鉴权，**不暴露限额**。

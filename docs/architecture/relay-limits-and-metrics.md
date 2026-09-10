@@ -27,8 +27,8 @@
 
 - `RelayBandwidthLimiter` 持有**一只**中继级 `RelayTokenBucket(totalBandwidthBytesPerSec)`。
 - 公平分配开时，每个租户在这只桶里占**一个逻辑流**（`RelayTokenStream`，引用计数，租户没有活跃中继流时释放）。桶的 `drain()` 在就绪的逻辑流之间轮转、每轮最多发 4 KiB，于是「一个租户一个流」直接得到租户间轮转公平。空闲租户的逻辑流没有待处理请求，不进就绪队列，不占轮转位。
-- 公平分配关时，所有租户共用一条 FCFS 流：先到先得。一个租户排队的大帧会挡住其他租户，这正是 FCFS 的定义；除非运营者明确要「先到先得」，否则保持默认开启。
-- 中继级这只桶**关掉无上限的 ≤4 KiB 旁路**（`RelayTokenBucketOptions.bypassSmallFrames: false`）。旁路按逻辑流轮转、不进 bulk 队列；若按桶级 FIFO 发放，开小帧流多的租户能靠并发占满旁路（8 条小帧流对 1 条能拉到 8:1）。配了 `totalBandwidthBytesPerSec` 时，PONG / 按键 / `DEVICE_LATENCY` / peer ping 这类 ≤4 KiB 帧若也进 bulk 轮转，会和 256 KiB bulk 按 4 KiB 粒度排队，被拖上百毫秒。因此每租户另有一只旁路预算桶（`SMALL_FRAME_BYPASS_BYTES_PER_SEC = 32 KiB/s`，突发 64 KiB）：≤4 KiB 且预算够的帧走 `takeBypass` 跳过 bulk 轮转（仍按租户流轮转），预算用尽则仍进公平队列。同一租户的多条流共用一份预算与一个轮转位，原先的公平性问题被封顶。交互优先在**租户自己**那只桶里仍是无上限旁路（`relay-uplink-server.ts` 的 `bucketFor`）：那里的旁路只在租户自己的额度内排序。
+- 公平分配关时，**bulk** 共用一条 FCFS 流：先到先得。一个租户排队的大帧会挡住其他租户，这正是 FCFS 的定义；除非运营者明确要「先到先得」，否则保持默认开启。旁路道即使在 `fairShare` 关掉时仍按租户轮转，不是 FCFS。
+- 中继级这只桶**关掉无上限的 ≤4 KiB 旁路**（`RelayTokenBucketOptions.bypassSmallFrames: false`）。旁路按逻辑流轮转、不进 bulk 队列，并与 bulk 道按 `shouldServeBypass` **1:1 交替**：有 bulk 排队时旁路最多占整管 50%，与租户数无关。若按桶级 FIFO 发放，开小帧流多的租户能靠并发占满旁路（8 条小帧流对 1 条能拉到 8:1）。配了 `totalBandwidthBytesPerSec` 时，PONG / 按键 / `DEVICE_LATENCY` / peer ping 这类 ≤4 KiB 帧若也进 bulk 轮转，会和 256 KiB bulk 按 4 KiB 粒度排队，被拖上百毫秒。因此每租户另有一只旁路预算桶（`SMALL_FRAME_BYPASS_BYTES_PER_SEC = 32 KiB/s`，突发 64 KiB）：≤4 KiB 且预算够的帧走 `takeBypass` 跳过 bulk 轮转（仍按租户流轮转），预算用尽则仍进公平队列。同一租户的多条流共用一份预算与一个轮转位，原先的公平性问题被封顶。交互优先在**租户自己**那只桶里仍是无上限旁路（`relay-uplink-server.ts` 的 `bucketFor`）：那里的旁路只在租户自己的额度内排序。
 - 每条中继流从租户逻辑流上派生一个**独立可关闭的把手**（`RelayTokenStream.createHandle()`）。中止一条流只撤这条流自己排队的请求，同租户其他流不受影响；`RelayBandwidthLimiter.clear()`（`stop()` 调用）撤掉所有队列。已关闭的把手上再 `take()` 直接 reject。没有这层身份，反复「开流—发帧—中止」会把待发放请求和 payload 一直留在桶里。
 - `drain()` 一轮只发放**整块**（`min(rate, 剩余, 4 KiB)`），攒不够就先睡。发放零头会毁掉轮转：分到零头的一方要等下一次补给才凑得齐一块，而下一次补给又整块给了对手——帧长正好等于轮转粒度（4 KiB）时会锁成一边倒（67:1）。
 
