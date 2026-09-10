@@ -99,6 +99,26 @@ Paste one of the prompts below into Claude Code, Codex, or a similar coding agen
 
 After the one-line install, run `vibeterm --help` for every subcommand; `vibeterm doctor` checks the environment and `vibeterm upgrade` updates. The full manuals are the [installation guide](./operations/production-install.md) and [mesh operations](./operations/mesh-operations.md) (Chinese).
 
+## Command line
+
+Every install ships the `vibeterm` client commands, which do from a terminal what the web UI does: attach to a terminal pane on any node the way ssh would, move files, map ports, and manage nodes and site settings. They reach the entry over plain HTTP / WebSocket, so they also run on a machine with no VibeTerm service installed — and an AI coding agent running on one machine can use them to debug every other device in the mesh.
+
+```bash
+vibeterm login --entry https://vt.example.com --user admin      # one login covers every node behind the entry
+vibeterm nodes ls                                               # nodes and their online state
+vibeterm term attach work-mac/dev                             # attach to a device's terminal pane
+vibeterm term run work-mac/dev "make test" --marker --json    # run one command, get output and exit code
+vibeterm term capture work-mac/dev --strip-ansi               # grab the current screen
+vibeterm cp ./dist air:home/dist -r                             # copy files between this machine and a node
+vibeterm port map 8080 air:127.0.0.1:8080                       # expose a remote port at localhost:8080
+vibeterm api GET /api/mesh/nodes --json                         # call any endpoint that has no command wrapper
+vibeterm logout                                                 # revoke the sessions
+```
+
+**The security boundary is exactly the web UI's.** The CLI has no local privilege: it holds the same session cookies a browser would, and reaching another node goes through the entry's `/n/<node>/` forwarding carrying that node's own session — never the local mesh identity or master key. Sessions are revocable at any time; `vibeterm logout` is the same as signing out in the browser. With two-step verification enabled, one valid TOTP code is enough (a passkey satisfies it too, but only in a browser). For non-interactive use put the password in `VIBETERM_PASSWORD` and the code in `VIBETERM_TOTP` rather than on the command line.
+
+The full manual is the [CLI usage guide](./operations/cli-usage.md) (Chinese).
+
 ## Acknowledgements
 
 VibeTerm is a derivative of [krhougs/tmex](https://github.com/krhougs/tmex). Without the original author's groundwork this project would not exist.

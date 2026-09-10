@@ -36,7 +36,7 @@
 | [mobile-keyboard.md](./mobile-keyboard.md) | 移动端软键盘避让与唤起 |
 | [terminal-share.md](./terminal-share.md) | 终端分享 |
 | [device-tree-reorder.md](./device-tree-reorder.md) | 设备树拖拽排序 |
-| [file-transfer.md](./file-transfer.md) | 浏览器文件传输 |
+| [file-transfer.md](./file-transfer.md) | 浏览器文件传输：分块上传、流式下载、`POST /api/files/mkdir` 与上传路径安全 |
 
 ## Agent、Watch、通知与消息
 

@@ -46,7 +46,7 @@
 | [ws-latency-badge.md](./architecture/ws-latency-badge.md) | 延迟徽标的测量口径与毛刺排查 |
 | [mobile-keyboard.md](./architecture/mobile-keyboard.md) | 移动端软键盘：避让三模式与唤起入口 |
 | [device-tree-reorder.md](./architecture/device-tree-reorder.md) | 设备 / 窗口 / pane 拖拽排序与顺序持久化 |
-| [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、路径安全 |
+| [file-transfer.md](./architecture/file-transfer.md) | 浏览器文件传输：分块上传、流式下载、进度、取消、`POST /api/files/mkdir` 建目录与路径安全 |
 | [node-to-node-transfer.md](./architecture/node-to-node-transfer.md) | 节点间文件传输：一次性授权、协议、限制与清理 |
 | [terminal-share.md](./architecture/terminal-share.md) | 终端分享：数据模型、接口、凭证与 ws 隔离、录制回放、安全边界 |
 | [terminal-agent.md](./architecture/terminal-agent.md) | 终端 AI Agent：数据模型、接口、生命周期、系统提示词、终端工具与 `run_command`、凭证处理 |
@@ -60,7 +60,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查 |
+| [ai-deploy.md](./operations/ai-deploy.md) | AI 助手部署指南：按场景（独立 / Hub / 中继 × 公网域名 / 端口转发 / Cloudflare Tunnel）给出可直接执行的步骤、验收与排障速查，以及 agent 用 CLI 调试别的节点 |
 | [production-install.md](./operations/production-install.md) | 生产部署：安装、服务与日志、HTTPS 反代、升级、SSH 设备、备份、排障 |
 | [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |
@@ -76,14 +76,14 @@
 | [self-update.md](./operations/self-update.md) | 程序内自更新：版本注入、`canSelfUpdate`、状态机、发行包缓存与租约 |
 | [remote-upgrade.md](./operations/remote-upgrade.md) | 远程升级：推包续传协议与进度 |
 | [bun-path-resolution.md](./operations/bun-path-resolution.md) | CLI 的 bun 路径解析与 `run.sh` 约束 |
-| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 命令行使用手册：登录、像 ssh 一样接进任意节点的终端、AI agent 的 run / capture / send 流程、安全说明 |
+| [cli-usage.md](./operations/cli-usage.md) | `vibeterm` 客户端命令行使用手册：登录与登出、目标语法、tmux 结构、像 ssh 一样接进任意节点的终端、AI agent 的 run / capture / send 流程、安全边界与退出码 |
 | [rename-migration.md](./operations/rename-migration.md) | tmex → VibeTerm 改名迁移：命名表、冻结值、兼容桥、目录迁移、升级手册 |
 
 ### security/
 
 | 文档 | 内容 |
 | --- | --- |
-| [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP 与 bootstrap、通行密钥二次验证（按 origin + 本地豁免）、公网安全评估 |
+| [login-security.md](./security/login-security.md) | 登录失败模糊化、客户端 IP 与 bootstrap、二次验证「TOTP 或本 origin 通行密钥」二选一（按 origin + 本地豁免）、TOTP 限流与防重放、公网安全评估 |
 | [domain-access-policy.md](./security/domain-access-policy.md) | 按节点的「允许域名访问」开关 |
 
 ### development/
@@ -91,7 +91,7 @@
 | 文档 | 内容 |
 | --- | --- |
 | [environments.md](./development/environments.md) | development / test / production 三套环境与 `loadEnv()` |
-| [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI 的模块契约：命令组、ctx、退出码、会话文件、打包接线 |
+| [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI（`packages/cli`）的模块契约：命令组怎么加、ctx 形状、退出码、会话文件、与安装版二进制的接线 |
 | [workspace-packages.md](./development/workspace-packages.md) | 前端 workspace 包结构、两层工厂与嵌入用法 |
 | [app-error-boundary.md](./development/app-error-boundary.md) | 路由 / 面板级错误边界与 chunk 重试 |
 | [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存、重试、前台拨号竞速 |

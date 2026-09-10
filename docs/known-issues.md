@@ -15,19 +15,22 @@
 
 `node-datachannel@0.33.1` 没有网卡过滤 API，`docker0` / `utun*` / Tailscale `100.x` / 代理 TUN
 `198.18.0.1` 之类的 host 候选仍会进入 ICE。可用 `VIBETERM_RTC_PORT_RANGE` 收窄端口，但挡不住
-多余候选。广播端的地址过滤见 [节点直连](./architecture/peer-direct-connect.md)。本地 gathering
-完成时会打 info `[mesh][rtc] gather summary … host= srflx= relay=`，用来确认实际进 ICE 的候选类型。
+多余候选——代价是多余的候选对拖长 ICE 检查、日志变吵，不影响正确性。广播端的地址过滤见
+[节点直连](./architecture/peer-direct-connect.md)。本地 gathering 完成时会打 info
+`[mesh][rtc] gather summary … host= srflx= relay= stun_count= turn=`，用来确认实际进 ICE 的候选类型。
 
 STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在节点侧 ICE 配置路径绕开
-（见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)）；本条只剩
-「多余 host 候选无法按网卡丢掉」。
+（见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)）；代理 TUN 吞掉境外 UDP
+的情形见 KI-13。本条只剩「多余 host 候选无法按网卡丢掉」。
 
 ## KI-4：TURN 仍需手工配置三个环境变量
 
 `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
 libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
-`[mesh][rtc] summary` / `gather summary` 的现网数据再定。Hub `node.list` 下发空 STUN 列表时
-不再覆盖节点自己的 `VIBETERM_STUN_SERVERS`；超时失败会标 `stun_unconfigured` 或 `no_srflx`。
+`[mesh][rtc] summary` / `gather summary` 与 STUN 自检（`[mesh][rtc] stun probe`，结果挂在
+`GET /api/mesh/rtc-config` 的 `probes`）的现网数据再定。默认 STUN 已改成国内可达的小米 / Bilibili 打头 +
+Google / Cloudflare 冗余；Hub `node.list` 下发空 STUN 列表时不再覆盖节点自己的
+`VIBETERM_STUN_SERVERS`（TURN 则始终采用 hub 下发的）；超时失败会标 `stun_unconfigured` 或 `no_srflx`。
 
 ## KI-5：中继在途流保护的代价
 
@@ -81,3 +84,13 @@ libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。
 （见 [mesh 架构](./architecture/mesh-architecture.md) §3），只升级入口不解决：新版入口连旧目标仍会收到
 误报的 4401。2.0.8 起前端收到 4401 会先用带会话的 HTTP 探测再下结论，能把症状压成一次退避重连，
 但根治要把全网节点升到 ≥ 2.0.8。
+
+## KI-13：本机代理 TUN 不转发境外 UDP 时拿不到 srflx
+
+Surge / Clash 等增强模式把 UDP 收进 TUN 后，若代理链路本身不中继境外 UDP，Google `:19302` /
+Cloudflare `:3478` 的 STUN Binding 常年无应答，节点只剩 host 候选，跨 NAT 一律回落中继。节点侧的
+fake-IP 解析器只解决「主机名被解析成 `198.18.x`」，解决不了「UDP 出不去」。处置二选一：用安装默认里
+国内可达的 `stun.miwifi.com` / `stun.chat.bilibili.com`（自定义 `VIBETERM_STUN_SERVERS` 时至少留一条
+可达的），或者在代理里给 UDP 3478 / 19302 加 DIRECT 规则。判定看 `[mesh][rtc] stun probe … ok=false
+error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走浏览器自己的网络栈，同样要求
+本机 UDP 出得去。详见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)。

@@ -1,6 +1,6 @@
 # AI 助手部署指南
 
-本文面向 AI 助手与运维，按场景给出可直接执行的部署步骤。每节结构固定：适用场景 → 需要向用户确认的信息 → 步骤 → 验收 → 常见问题。命令里的 `<...>` 是占位符，执行前必须替换成用户给的真实值。
+本文面向 AI 助手与运维，按场景给出可直接执行的部署步骤。部署各节结构固定：适用场景 → 需要向用户确认的信息 → 步骤 → 验收 → 常见问题；末尾另有「用 CLI 调试别的节点」与排障速查。命令里的 `<...>` 是占位符，执行前必须替换成用户给的真实值。
 
 ## 通用须知
 
@@ -210,7 +210,7 @@ curl -sS http://127.0.0.1:9883/healthz
    ```
 
    输入账户密码（账户开了两步验证再给 `VIBETERM_TOTP`）。命令会打印加入串与拼好的 `vibeterm hub join` 命令，然后**留在前台等对端 redeem**，对端加入成功后自动签准入；`Ctrl-C` 可以中止等待。加入码默认 10 分钟有效，`--ttl` 支持 `30s` / `5m` / `1h` 这类写法。
-   账户启用了通行密钥二次验证时 CLI 这条路径不可用，改在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」里出码。
+   账户开了两步验证时给一次有效 TOTP 验证码即可（`VIBETERM_TOTP`）；只在本 origin 注册了通行密钥、又没开 TOTP 的账户（`GET /api/auth/mode` 的 `secondFactorPolicy` 为 `passkey`）CLI 这条路径不可用，改在网页「设置 → 多节点互联 → 节点管理 → 添加 → 生成加入码」里出码。
 
 #### 情况 B：80/443 不可用，用内置 HTTPS 监听器 + Let's Encrypt dns-01
 
@@ -776,6 +776,75 @@ vibeterm doctor
 - **退出中继**：`vibeterm relay leave`（要账户密码，它签一条空的中继列表记录）。
 - **令牌换发**：`vibeterm relay resend-token` 让中继重发当前令牌；`vibeterm relay pack upload` 单独刷新密封包。
 
+## 用 CLI 调试别的节点
+
+面向「AI 助手跑在 A 机器上，要去看 B、C 机器上的终端」的场景。这一节用的是**客户端命令**（`login|logout|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings`），只经 HTTP / WebSocket 访问入口，权限与一个浏览器会话完全等价，因此也能装在没有部署服务的机器上；和上面各节的本机运维命令（`init` / `doctor` / `hub` / `relay` 等）边界完全不同。完整手册见[命令行使用手册](./cli-usage.md)。
+
+### 先登录一次
+
+```bash
+VIBETERM_PASSWORD='<密码>' VIBETERM_TOTP='<6 位码>' \
+  vibeterm login --entry https://<入口地址> --user <用户名>
+```
+
+- 默认把入口后面**每个节点**都登一遍，之后访问任意节点都不用再登。落盘的只有会话 sid 与到期时刻（`~/.config/vibeterm/session.json`，`0600`）；密码、根种子、会话私钥都不落盘。
+- 账户开了两步验证时，**一次有效 TOTP 验证码就够**（通行密钥同样满足二次验证，但 CLI 做不了 WebAuthn）。只在本 origin 注册了通行密钥、又没开 TOTP 的账户，CLI 登不上，退出码 3 并提示去网页端开 TOTP。
+- 之后**每条命令都带 `--json`**：stdout 只有结构化结果，提示与进度走 stderr，便于解析。
+- 收工或换机器时 `vibeterm logout`：撤销的是**服务端**会话，等同于网页端退出登录。
+
+### 定位目标
+
+```bash
+vibeterm nodes ls --json                    # 有哪些节点、是否在线
+vibeterm devices ls --node <节点> --json    # 那个节点上的设备
+vibeterm tmux ls <节点>/<设备> --json       # session → window → pane 三层
+```
+
+目标语法统一是 `[<节点>/]<设备>[:<窗口>[.<窗格>]]`，不写节点就是入口自己。
+
+### 跑命令、看画面、发按键
+
+```bash
+vibeterm term run prod-1/app "systemctl --user status vibeterm" --marker --json
+vibeterm term capture prod-1/app --strip-ansi
+vibeterm term send prod-1/app "tail -f /var/log/app.log" Enter
+vibeterm term send prod-1/app C-c
+```
+
+这三条是给非交互场景用的（`term attach` 需要 TTY，脚本里跑会以退出码 2 退出）。必须知道的限制，否则容易把半截输出当结论：
+
+- `run` 把命令打进窗格后按**静默**判定结束：`--idle` 毫秒（默认 800）内没有新输出就收尾，最长等到 `--timeout`。命令必须是**一行**。
+- `--marker` 会在静默之后另起一行打哨兵 `(echo __VT_DONE_<随机串>_$?)`，据此确认命令真跑完并拿到 `exitCode`。只对 POSIX shell（bash / zsh / sh）成立，fish 用的是 `$status`；`cat`、交互式安装器这类主动读 stdin 的命令会把哨兵吃掉，那类命令别用 `run`。
+- 输出上限 **8 MiB**，收满即停并把 `reason` 标成 `truncated`。
+- **退出码分两层**：远端命令自己的成败看 JSON 里的 `exitCode`；输出没收全（`reason` 是 `timeout` 或 `truncated`）时 CLI 自己退出 **1**，除非显式加 `--allow-timeout`。
+- 窗格是**共享的交互终端**，不是干净的 `ssh host cmd`：输出里可能混进提示符、别人同时敲进去的字，或者被终端宽度折行打断的回显。
+- 长跑的流式命令（`tail -f`、`npm run dev`）不要用 `run`，它只会一直等到超时；改用 `send` + `capture`，收尾记得再 `send C-c`。
+- `capture --strip-ansi` 的洗白是简化实现（不执行绝对行定位），全屏 TUI（vim、top）的纯文本结果会有出入；这种时候直接看 `--json` 里 `screen` 的原始字节。
+
+### 搬运产物与打开远端端口
+
+```bash
+vibeterm cp ./patch.diff prod-1:home/tmp/patch.diff          # 本机 → 节点
+vibeterm cp prod-1:home/app/dist ./dist -r                   # 节点 → 本机（目录加 -r）
+vibeterm cp prod-1:home/build.log air:home/tmp/build.log     # 节点 → 节点
+vibeterm port map 8080 prod-1:127.0.0.1:8080                 # 远端服务映射到本机 localhost:8080
+vibeterm port ls --json
+vibeterm port rm <映射 id>
+```
+
+- `cp` 的每一侧是 `[<节点>:]<根 id 或根名>/<路径>` 或本机路径；本机 → 节点会按需先 `POST /api/files/mkdir` 建目录，旧版本节点没有这个接口，递归复制会在开头直接失败。
+- `--on-conflict overwrite|skip|rename` 决定同名处理，默认 `skip`；有任何一项出错就以非零退出，想让「跳过」也算失败加 `--fail-on-skip`。
+- 要给远端送密钥、配置、补丁一律走 `cp`，**不要当按键发**。
+- 端口映射是常驻监听，用完记得 `port rm`。
+
+### 不要做的事
+
+- **不要把口令 / 令牌放进 argv**：命令行会进 shell 历史与进程列表。密码走 `VIBETERM_PASSWORD`、验证码走 `VIBETERM_TOTP`、分享口令走 `--password-stdin` / `--password-file` / `VIBETERM_SHARE_PASSWORD`。
+- **不要把密码当按键发**：`term send` / `term run` 打进去的字符和真人敲的没有区别，会被同一窗格的其他观看者看到，也会进远端 shell 历史。
+- **不要默认加 `--insecure`**：它整个关掉 TLS 证书校验（命令会打警告）。自签场景用 `--ca <pem 文件>` 显式信任那张证书。
+- **不要替用户跑破坏性命令**：`nodes revoke`、`nodes uninstall`、`share revoke`、`devices rm` 之类都要用户先确认，`--yes` 由用户给。
+- **权限就是那个账号的权限**：CLI 能碰到的节点 = 登录账号能碰到的节点。要收紧就给 agent 单独建账号，不要共用管理员会话。
+
 ## 排障速查
 
 | 症状 | 检查命令 | 处理 |
@@ -811,5 +880,6 @@ vibeterm doctor
 - [非标端口部署](./nonstandard-ports.md)
 - [HTTPS 与 ACME](./https-and-acme.md)
 - [隧道边缘 fake-IP 绕行](./tunnel-edge-fake-ip.md)
+- [命令行使用手册](./cli-usage.md)
 - [登录面安全](../security/login-security.md)
 - [多 hub 主 / 备](./multi-hub-standby.md)

@@ -99,6 +99,26 @@ VibeTerm 将 Mac、Linux 服务器、NAS 和云主机组网。所有接入节点
 
 一行命令安装后，用 `vibeterm --help` 查看全部子命令；`vibeterm doctor` 诊断环境，`vibeterm upgrade` 升级。完整手册见 [部署指南](./docs/operations/production-install.md) 与 [mesh 运维](./docs/operations/mesh-operations.md)。
 
+## 命令行
+
+安装包自带 `vibeterm` 客户端命令：在终端里做网页端能做的事——像 ssh 一样接进任意节点的终端窗格、传文件、映射端口、管理节点与站点设置。它只经 HTTP / WebSocket 访问入口，因此也可以装在没有部署 VibeTerm 服务的机器上；跑在一台机器上的 AI 编码助手用它就能调试 mesh 里的其它设备。
+
+```bash
+vibeterm login --entry https://vt.example.com --user admin      # 一次登录，覆盖入口后面的全部节点
+vibeterm nodes ls                                               # 节点清单与在线状态
+vibeterm term attach work-mac/dev                             # 接进某台设备的终端窗格
+vibeterm term run work-mac/dev "make test" --marker --json    # 非交互跑一条命令，拿输出与退出码
+vibeterm term capture work-mac/dev --strip-ansi               # 抓当前画面
+vibeterm cp ./dist air:home/dist -r                             # 本机与节点之间传文件
+vibeterm port map 8080 air:127.0.0.1:8080                       # 把远端端口映射到 localhost:8080
+vibeterm api GET /api/mesh/nodes --json                         # 没包成命令的接口直接打
+vibeterm logout                                                 # 撤销会话
+```
+
+**安全边界与网页端完全一致。** CLI 没有任何「本机特权」：它拿的是和浏览器一样的会话 cookie，访问别的节点同样走入口的 `/n/<节点>/` 转发并带那个节点自己的会话，从不使用本机的 mesh 身份或主密钥。会话随时可撤销，`vibeterm logout` 等同于网页端退出登录。开了两步验证时，交一次有效的 TOTP 验证码即可（通行密钥同样满足，但只能在浏览器里做）；非交互场景把密码放 `VIBETERM_PASSWORD`、验证码放 `VIBETERM_TOTP`，不要写进命令行参数。
+
+完整用法见[命令行使用手册](./docs/operations/cli-usage.md)。
+
 ## 致谢
 
 VibeTerm 基于 [krhougs/tmex](https://github.com/krhougs/tmex) 二次开发，没有原作者的基础，本项目便无从谈起。
