@@ -1,24 +1,21 @@
-import { wsBorsh } from '@vibeterm/shared';
 import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
-import type { WebSocketServer } from '../ws';
-import type { GatewaySession } from '../ws/gateway-session';
 import { encodeJsonBytes, isRecord } from './ctl';
-import { LinkStreamCarrier } from './link-stream-carrier';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
 import {
   type StreamAuthContext,
+  type StreamAuthOk,
   authResponseHeaders,
   authorizeHttpStream,
-  createStreamRecheck,
-  verifyStreamAuth,
 } from './stream-auth';
 import { pumpToLink } from './stream-pump';
-import type { DispatchHttp, HttpStreamOpenPayload, WsStreamOpenPayload } from './types';
+import type { DispatchContext, DispatchHttp, HttpStreamOpenPayload } from './types';
 
 export type { StreamAuthContext };
 export { isAuthSkippedPath } from './stream-auth';
+export type { AcceptWsStreamOptions, GatewaySessionClose } from './ws-stream-target';
+export { WS_CLOSE_STREAM_TEARDOWN, acceptWsStream, openWsStream } from './ws-stream-target';
 
 const HTTP_FORWARD_ABORT_LOG_INTERVAL_MS = 1_000;
 let lastHttpForwardAbortLogAt = 0;
@@ -142,6 +139,25 @@ function requestBodyFromLink(
   });
 }
 
+/**
+ * 会话 id 必须随请求进到目标节点：`/api/mesh/connection`、`/api/rtc/authorize` 要拿它
+ * 在会话注册表里定位这条浏览器连接，丢了就只能回 401。分享凭证不产生会话 id。
+ */
+function httpDispatchContext(
+  verified: StreamAuthOk,
+  peerNodeId: string,
+  auth: string | null
+): DispatchContext {
+  return {
+    uid: verified.uid,
+    viaNodeId: peerNodeId,
+    ...(verified.uid && auth ? { sid: auth } : {}),
+    ...(verified.renewedExpiresAt !== undefined
+      ? { renewedExpiresAt: verified.renewedExpiresAt }
+      : {}),
+  };
+}
+
 export async function acceptHttpStream(
   stream: LinkStream,
   opts: StreamAuthContext & { dispatchHttp: DispatchHttp }
@@ -206,13 +222,10 @@ export async function acceptHttpStream(
 
   let response: Response;
   try {
-    response = await opts.dispatchHttp(request, {
-      uid: verified.uid,
-      viaNodeId: opts.peerNodeId,
-      ...(verified.renewedExpiresAt !== undefined
-        ? { renewedExpiresAt: verified.renewedExpiresAt }
-        : {}),
-    });
+    response = await opts.dispatchHttp(
+      request,
+      httpDispatchContext(verified, opts.peerNodeId, auth)
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : 'dispatch failed';
     await writeHttpResponse(stream, 500, { 'content-type': 'text/plain' }, message);
@@ -432,149 +445,6 @@ async function readHttpHead(stream: LinkStream): Promise<{
       // already released
     }
   }
-}
-
-export type AcceptWsStreamOptions = StreamAuthContext & {
-  wsServer: WebSocketServer;
-  onGatewaySession?: (
-    session: GatewaySession,
-    auth: { sid: string; uid: string; via: string; cid?: string }
-  ) => boolean | undefined;
-  onGatewaySessionClose?: (session: GatewaySession) => void;
-};
-
-export async function acceptWsStream(
-  stream: LinkStream,
-  opts: AcceptWsStreamOptions
-): Promise<void> {
-  const open = parseOpenPayload(stream.openPayload) ?? {};
-  const auth = str(open.auth);
-  const boundShareId = str(open.share).trim() || null;
-  const verified = verifyStreamAuth(auth, '/ws', opts, boundShareId);
-  if (!verified.ok) {
-    stream.reset(verified.wsClose ?? verified.reason);
-    return;
-  }
-  const cid = (str(open.cid) || str(open.connectionId)).trim();
-  const share = verified.share;
-  const carrier = new LinkStreamCarrier(stream, {
-    logContext: { kind: 'mesh_link_stream', nodeId: opts.peerNodeId, ...(cid ? { cid } : {}) },
-  });
-  const attached = opts.wsServer.attachStreamSession(carrier, { shareScope: share?.scope });
-  const teardown = wsStreamTeardown(stream, attached, share ? undefined : opts);
-  if (!share && opts.onGatewaySession) {
-    const accepted = opts.onGatewaySession(attached.session, {
-      sid: auth,
-      uid: verified.uid ?? '',
-      via: opts.peerNodeId,
-      ...(cid ? { cid } : {}),
-    });
-    if (accepted === false) {
-      teardown('rst', 'duplicate-connection');
-      return;
-    }
-  }
-  stream.onAbort(() => teardown('rst', 'peer-rst'));
-  await pumpWsStreamFrames(stream, attached, teardown, createStreamRecheck(auth, share, opts));
-}
-
-type AttachedStreamSession = ReturnType<WebSocketServer['attachStreamSession']>;
-type WsStreamTeardown = (mode: 'end' | 'rst', reason?: string) => void;
-
-function wsStreamTeardown(
-  stream: LinkStream,
-  attached: AttachedStreamSession,
-  registry: Pick<AcceptWsStreamOptions, 'onGatewaySessionClose'> | undefined
-): WsStreamTeardown {
-  let tornDown = false;
-  return (mode, reason) => {
-    if (tornDown) return;
-    tornDown = true;
-    try {
-      registry?.onGatewaySessionClose?.(attached.session);
-    } catch {
-      // registry
-    }
-    try {
-      attached.onClose();
-    } catch {
-      // session already gone
-    }
-    try {
-      if (mode === 'rst') stream.reset(reason ?? 'session-invalid');
-      else void stream.end().catch(() => {});
-    } catch {
-      // already closed
-    }
-  };
-}
-
-async function pumpWsStreamFrames(
-  stream: LinkStream,
-  attached: AttachedStreamSession,
-  teardown: WsStreamTeardown,
-  recheck: () => string | null
-): Promise<void> {
-  const reader = stream.readable.getReader();
-  try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done) {
-        teardown('end');
-        return;
-      }
-      if (!value) continue;
-      let envelope: wsBorsh.Envelope;
-      try {
-        envelope = wsBorsh.decodeEnvelopeView(value.bytes);
-      } catch {
-        teardown('rst', 'invalid-ws-frame');
-        return;
-      }
-      const invalid = recheck();
-      if (invalid) {
-        teardown('rst', invalid);
-        return;
-      }
-      attached.onDecodedEnvelope(envelope);
-    }
-  } catch {
-    teardown('rst', 'ws-read-failed');
-  }
-}
-
-export async function openWsStream(
-  link: LinkSession,
-  auth: string,
-  cid?: string,
-  share?: string
-): Promise<{
-  stream: LinkStream;
-  send: (bytes: Uint8Array) => Promise<void>;
-  readable: ReadableStream<Uint8Array>;
-  close: () => void;
-}> {
-  const payload: WsStreamOpenPayload = {
-    type: 'ws',
-    auth,
-    ...(cid ? { cid } : {}),
-    ...(share ? { share } : {}),
-  };
-  const stream = await link.openStream(encodeJsonBytes(payload));
-  return {
-    stream,
-    send: (bytes) => stream.write(bytes),
-    readable: stream.readable.pipeThrough(
-      new TransformStream<{ bytes: Uint8Array; head: boolean }, Uint8Array>({
-        transform(chunk, controller) {
-          controller.enqueue(chunk.bytes);
-        },
-      })
-    ),
-    close: () => {
-      void stream.end().catch(() => {});
-    },
-  };
 }
 
 export function classifyOpenPayload(

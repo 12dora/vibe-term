@@ -20,7 +20,7 @@ import {
   waivesPasskeySecondFactor,
 } from './client-source';
 import { LinkStreamCarrier } from './link-stream-carrier';
-import { setMeshRequestContext } from './mesh-deps';
+import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
 import { decodeTerminalStreamClose } from './stream-close-code';
 import {
@@ -790,19 +790,27 @@ describe('http/ws stream targets', () => {
     expect(await res.text()).toBe('payload too large');
   });
 
-  test('WS verifies the session on each frame and RST on revoke', async () => {
+  test('WS 按 WS_SESSION_VERIFY_MS 复验会话，撤销后到期即 4401 终止码 RST', async () => {
     const server = new WebSocketServer();
     const { db, close } = createMigratedAuthDb();
     fixtures.push({ close });
     const store = new NodeSessionStore(db);
     const userStore = new UserStore(db);
     seedUser(userStore);
+    let now = Date.now();
+    const verifies: number[] = [];
+    const counting = {
+      verify: (sid: string, input: { viaNodeId: string; now: number }) => {
+        verifies.push(input.now);
+        return store.verify(sid, input);
+      },
+    } as unknown as NodeSessionStore;
     const issued = store.issue({
       userId: 'user-1',
       viaNodeId: 'entry-1',
       sessPublicKey: new Uint8Array(32),
       delegationMethod: 'root',
-      now: Date.now(),
+      now,
     });
     const [a, b] = createInMemoryLinkPair();
     const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) => {
@@ -810,8 +818,9 @@ describe('http/ws stream targets', () => {
         resolve(stream);
         void acceptWsStream(stream, {
           peerNodeId: 'entry-1',
-          sessionStore: store,
+          sessionStore: counting,
           wsServer: server,
+          now: () => now,
         });
       });
     });
@@ -828,11 +837,21 @@ describe('http/ws stream targets', () => {
     const first = await reader.read();
     expect(first.value).toBeDefined();
     const peer = await incoming;
+    // 握手一次 + 第一帧一次；之后同一窗口内的帧不再压库。
+    const afterFirstFrame = verifies.length;
     store.revoke(issued.sid);
-    const aborted = new Promise<void>((resolve) => peer.onAbort(resolve));
     await opened.send(wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, new Uint8Array(0), 2));
+    await Bun.sleep(20);
+    expect(verifies.length).toBe(afterFirstFrame);
+    expect(peer.closed).toBeInstanceOf(Promise);
+    now += WS_SESSION_VERIFY_MS + 1;
+    const aborted = new Promise<void>((resolve) => peer.onAbort(resolve));
+    await opened.send(wsBorsh.encodeEnvelope(wsBorsh.KIND_PING, new Uint8Array(0), 3));
     await aborted;
-    expect((await opened.stream.closed).reason).toBe('rst');
+    const closed = await opened.stream.closed;
+    expect(closed.reason).toBe('rst');
+    expect(decodeTerminalStreamClose(closed.message)?.code).toBe(WS_CLOSE_LOGIN_REQUIRED);
+    expect(decodeTerminalStreamClose(closed.message)?.reason).toBe('NODE_LOGIN_REQUIRED:revoked');
   });
 
   test('graceful WS end tears down both directions once', async () => {

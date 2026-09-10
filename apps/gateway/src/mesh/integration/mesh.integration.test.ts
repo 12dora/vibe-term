@@ -828,6 +828,64 @@ describe('mesh phase-2 integration', () => {
     expect(b.connectedDevices).toContain('dev-b');
   });
 
+  test('/n/B/api/mesh/connection 用入口转发的会话 id 定位这条 WS，不再回 401', async () => {
+    const a = await bootHubA();
+    const b = await enrollNodeB(a);
+    const remote = await loginRemote(a.mesh, b.mesh, a.boot, b.cookie);
+    const bSid = sidFromResponse(remote, b.mesh.nodeId);
+    const jar = `${b.cookie}; ${nodeSessionCookieName(b.mesh.nodeId)}=${bSid}`;
+
+    const upgraded: { data?: Record<string, unknown> } = {};
+    const sent: Uint8Array[] = [];
+    const server = {
+      upgrade(_req: Request, opts?: { data?: unknown }) {
+        upgraded.data = (opts?.data ?? {}) as Record<string, unknown>;
+        return true;
+      },
+    };
+    const wsReq = new Request(`http://entry/n/${b.mesh.nodeId}/ws?cid=tab-conn`, {
+      headers: { cookie: jar, upgrade: 'websocket', connection: 'Upgrade' },
+    });
+    setMeshRequestContext(wsReq, { via: MESH_VIA_SELF, clientIp: '127.0.0.1' });
+    expect(await a.mesh.handleRequest(wsReq, server)).toBeUndefined();
+    const ws = {
+      data: upgraded.data,
+      send(bytes: Uint8Array | string) {
+        if (typeof bytes !== 'string') sent.push(bytes);
+        return typeof bytes === 'string' ? bytes.length : bytes.byteLength;
+      },
+      close() {},
+    };
+    a.mesh.websocket.open(ws as never);
+    a.mesh.websocket.message(
+      ws as never,
+      Buffer.from(
+        wsBorsh.encodeEnvelope(
+          wsBorsh.KIND_HELLO_C2S,
+          wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+            clientImpl: 'test',
+            clientVersion: '1.1.23',
+            maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+            supportsCompression: false,
+            supportsDiffSnapshot: false,
+          }),
+          1
+        )
+      )
+    );
+    await waitUntil(() => sent.length > 0, 3_000);
+
+    const conn = await callMesh(
+      a.mesh,
+      `http://entry/n/${b.mesh.nodeId}/api/mesh/connection?cid=tab-conn`,
+      { cookie: jar }
+    );
+    expect(conn.status).toBe(200);
+    const body = (await conn.json()) as { connectionId: string };
+    expect(typeof body.connectionId).toBe('string');
+    expect(body.connectionId.length).toBeGreaterThan(10);
+  });
+
   test('relay path carries SecureChannel ciphertext (no Borsh magic, no JSON body)', async () => {
     const a = await bootHubA({ linkFactory: false });
     const b = await enrollNodeB(a, { linkFactory: false });

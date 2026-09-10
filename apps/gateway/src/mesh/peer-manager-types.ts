@@ -20,6 +20,7 @@ import type {
 } from './types';
 import type { UplinkClient } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
+import type { GatewaySessionClose } from './ws-stream-target';
 
 export type PeerManagerOptions = {
   identity: MeshIdentity;
@@ -50,7 +51,7 @@ export type PeerManagerOptions = {
     session: GatewaySession,
     auth: { sid: string; uid: string; via: string; cid?: string }
   ) => boolean | undefined;
-  onGatewaySessionClose?: (session: GatewaySession) => void;
+  onGatewaySessionClose?: (session: GatewaySession, close?: GatewaySessionClose) => void;
   onBrowserSignal?: (msg: RtcSignalMessage, fromNodeId?: string) => void;
   ensureDcSession?: (peerNodeId: string, rtcSession: string) => void;
   onLinkInfo?: (info: {

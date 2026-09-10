@@ -62,10 +62,9 @@ import {
   type StreamOpener,
   WS_CLOSE_LOGIN_REQUIRED,
   getMeshRequestContext,
-  requestDispatchContext,
-  setMeshRequestContext,
 } from './mesh-deps';
 import { MeshHttpRuntime } from './mesh-http';
+import { applyInboundDispatchContext } from './mesh-inbound-dispatch';
 import { stamp } from './mesh-log';
 import {
   type RegisterGatewaySessionInput,
@@ -122,6 +121,7 @@ import {
 } from './uplink-pool';
 import { bindHubUplinkHooks, kickHubPeerDiscovery } from './uplink-pool-hooks';
 import type { UplinkNodeList, UplinkRtcSignal } from './uplink-protocol';
+import type { GatewaySessionClose } from './ws-stream-target';
 
 export type MeshRuntimeConfig = {
   roles: VibeTermRoles;
@@ -726,7 +726,11 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
     entry.lastVerifyAt = now;
     return true;
   }
-  function teardownBinding(entry: RegisteredGatewaySession): void {
+  /**
+   * `close` 缺省即「会话真的失效了」，关成 4401；链路侧拆流由调用方给非终止码，
+   * 否则入口会把每次链路抖动都当成需要重新登录透给浏览器。注册表清理对两条路径一致。
+   */
+  function teardownBinding(entry: RegisteredGatewaySession, close?: GatewaySessionClose): void {
     if (tearingDown.has(entry.session)) return;
     tearingDown.add(entry.session);
     sessions.unregisterSession(entry.session);
@@ -737,7 +741,11 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
     bulk.abortByOwner(entry.connectionId);
     if (!entry.session.closed && typeof wsServer.closeSession === 'function') {
       try {
-        wsServer.closeSession(entry.session, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
+        wsServer.closeSession(
+          entry.session,
+          close?.code ?? WS_CLOSE_LOGIN_REQUIRED,
+          close?.reason ?? 'NODE_LOGIN_REQUIRED'
+        );
       } catch {}
     }
   }
@@ -939,17 +947,19 @@ function startTlsFingerprintPoll(
   }, intervalMs);
 }
 
+/** 会话被撤销时连带拆掉挂在 mesh 流上的网关会话（本地浏览器 socket 由 MeshHttp 自己关）。 */
+function revokeBoundSessions(d: MeshDeps, target: { uid?: string; sid?: string }): void {
+  const entries = target.sid
+    ? d.sessions.listBySid(target.sid)
+    : d.sessions.listByUid(target.uid ?? '');
+  for (const entry of entries) d.teardownBinding(entry);
+}
+
 function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn) {
   const { opts, config, identity, userStore, state, rtc, sessions, hub } = d;
   const noopUpgrade: MeshUpgradeServer = { upgrade: () => false };
   const dispatchInboundHttp = async (request: Request, ctx: DispatchContext): Promise<Response> => {
-    const trusted = requestDispatchContext.get(request);
-    const via = trusted?.viaNodeId ?? ctx.viaNodeId;
-    const uid = trusted?.uid ?? ctx.uid;
-    const renewedExpiresAt = trusted?.renewedExpiresAt ?? ctx.renewedExpiresAt;
-    const extra = renewedExpiresAt !== undefined ? { renewedExpiresAt } : {};
-    setMeshRequestContext(request, { via, uid, clientIp: `peer:${via}`, ...extra });
-    requestDispatchContext.set(request, { uid, viaNodeId: via, ...extra });
+    const dispatchContext = applyInboundDispatchContext(request, ctx);
     const meshHttp = d.httpHolder.runtime;
     if (meshHttp) {
       const meshRes = await meshHttp.handleRequest(request, noopUpgrade);
@@ -959,7 +969,6 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
       const hubRes = await hub.handleRequest(request, noopUpgrade);
       if (hubRes instanceof Response) return hubRes;
     }
-    const dispatchContext = { uid, viaNodeId: via, ...extra };
     for (const extension of opts.inboundHttpExtensions ?? []) {
       const response = await extension(request, dispatchContext);
       if (response) return response;
@@ -985,9 +994,9 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     refreshLocalInterfaces: d.refreshLocalInterfaces,
     hubHost: () => attachedHubHost(uplink.attachedHub(), hubEndpointUrl(config)),
     onGatewaySession: (session, auth) => sessions.register({ ...auth, session }).ok,
-    onGatewaySessionClose: (session) => {
+    onGatewaySessionClose: (session, close) => {
       const entry = sessions.getBySession(session);
-      if (entry) d.teardownBinding(entry);
+      if (entry) d.teardownBinding(entry, close);
       else sessions.unregisterSession(session);
     },
     onBrowserSignal: (signal, fromNodeId) => {
@@ -1328,6 +1337,7 @@ function wireMeshHttp(
     trustProxy: gatewayConfig.trustProxy,
     connectionLookup: (input) =>
       d.sessions.lookup(input.sid, input.via, input.connectionId, input.cid),
+    onSessionsRevoked: (target) => revokeBoundSessions(d, target),
   });
   http.auth.setTlsInfo(d.opts.tlsInfo);
   http.auth.setWriterForward((req, uid) => d.hub?.forwardWrite(req, uid) ?? Promise.resolve(null));

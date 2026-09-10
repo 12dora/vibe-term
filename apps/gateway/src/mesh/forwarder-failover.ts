@@ -284,8 +284,14 @@ async function completeFailover(
     host.discardStream(pump, stream);
     return true;
   }
-  // 新流没答 HELLO / 答的 HELLO 解不出版本：不能盲续（订阅、队列都会打到一条身份未知的流上）。
   if (!waits.helloOk) {
+    // HELLO 压根没回来（新流在握手前就被拆了，如链路又抖、或撞上目标那边还没退场的同 cid 连接）：
+    // 这是链路问题，换一条继续重试；当成「节点版本太旧」把浏览器关掉是误判。
+    if (!waits.helloReplied) {
+      host.discardStream(pump, stream);
+      return false;
+    }
+    // 对端确实答了 HELLO 但版本不达标：不能盲续（订阅、队列都会打到一条身份未知的流上）。
     rejectStaleNodeStream(true, pump, {
       log: (line) => safeLog(host, line),
       sendToBrowser: (target, bytes) => host.sendToBrowser(target, bytes),
@@ -356,7 +362,13 @@ async function replaySubscription(
   pump: ForwardPump,
   stream: OpenedWsStream,
   signal: AbortSignal
-): Promise<{ helloWaitMs: number; resumeWaitMs: number; resumed: number; helloOk: boolean }> {
+): Promise<{
+  helloWaitMs: number;
+  resumeWaitMs: number;
+  resumed: number;
+  helloOk: boolean;
+  helloReplied: boolean;
+}> {
   pump.replay.beginResume();
   const wait = async (key: 'helloWait' | 'resumeWait', ms: number, before?: () => void) => {
     const t0 = Date.now();
@@ -375,7 +387,13 @@ async function replaySubscription(
     helloWaitMs = await wait('helloWait', 2_000, () => host.sendToStream(pump, stream, hello));
     // beginResume 已把 peerVersion 清空：这里为真只可能是本条流刚播报了达标版本。
     if (!pump.replay.peerSupportsCanonical()) {
-      return { helloWaitMs, resumeWaitMs, resumed: 0, helloOk: false };
+      return {
+        helloWaitMs,
+        resumeWaitMs,
+        resumed: 0,
+        helloOk: false,
+        helloReplied: pump.replay.resumeHelloSeen,
+      };
     }
   }
   const sendAll = (frames: Uint8Array[]): void => {
@@ -390,5 +408,11 @@ async function replaySubscription(
   }
   sendAll(pump.replay.buildPostConnectFrames());
   if (!pumpDead(pump, signal)) pump.replay.markCanonicalResumeSent();
-  return { helloWaitMs, resumeWaitMs, resumed: pump.replay.resumedPaneCount(), helloOk: true };
+  return {
+    helloWaitMs,
+    resumeWaitMs,
+    resumed: pump.replay.resumedPaneCount(),
+    helloOk: true,
+    helloReplied: pump.replay.resumeHelloSeen,
+  };
 }

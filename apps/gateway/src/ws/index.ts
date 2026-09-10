@@ -227,7 +227,8 @@ export class WebSocketServer
     session: GatewaySession;
     onMessage: (bytes: Uint8Array) => void;
     onDecodedEnvelope: (envelope: wsBorsh.Envelope) => void;
-    onClose: () => void;
+    /** 关闭码与原因由调用方给出：mesh 流据此区分「会话失效」和「链路拆了」。 */
+    onClose: (code?: number, reason?: string) => void;
   } {
     const session = new GatewaySession({ primary: carrier });
     const ctx = carrier.logContext ?? { kind: 'physical_browser_ws' as const };
@@ -249,8 +250,8 @@ export class WebSocketServer
         const owned = p.byteOffset === 0 && p.byteLength === p.buffer.byteLength;
         this.handleDecodedEnvelope(session, owned ? envelope : { ...envelope, payload: p.slice() });
       },
-      onClose: () => {
-        this.handleCarrierClose(session, carrier);
+      onClose: (code, reason) => {
+        this.handleCarrierClose(session, carrier, code, reason);
       },
     };
   }

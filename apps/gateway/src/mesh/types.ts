@@ -63,6 +63,8 @@ export type PeerReach = 'lan' | 'wan' | 'relay' | null;
 export type DispatchContext = {
   uid: string | null;
   viaNodeId: string;
+  /** 入口转发过来的节点会话 id（已在流入口验过）。目标节点按它查这条浏览器连接。 */
+  sid?: string | null;
   renewedExpiresAt?: number;
 };
 

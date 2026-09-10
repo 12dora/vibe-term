@@ -237,9 +237,11 @@ const requestContext = new WeakMap<Request, MeshRequestContext>();
 export function setMeshRequestContext(req: Request, ctx: MeshRequestContext): void {
   requestContext.set(req, ctx);
   const existing = requestDispatchContext.get(req);
+  const sid = ctx.auth ?? ctx.sid ?? existing?.sid ?? null;
   requestDispatchContext.set(req, {
     uid: ctx.uid ?? existing?.uid ?? null,
     viaNodeId: ctx.via,
+    ...(sid ? { sid } : {}),
     ...(ctx.renewedExpiresAt !== undefined
       ? { renewedExpiresAt: ctx.renewedExpiresAt }
       : existing?.renewedExpiresAt !== undefined

@@ -314,3 +314,68 @@ describe('runStreamFailover 丢弃过期排队输入', () => {
     expect(tracked.flushed).toBe(1);
   });
 });
+
+describe('续流握手失败的归因', () => {
+  const helloC2S = wsBorsh.encodeEnvelope(
+    wsBorsh.KIND_HELLO_C2S,
+    wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'browser',
+      clientVersion: '2.0.0',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    }),
+    1
+  );
+
+  function helloS2C(serverVersion: string): Uint8Array {
+    return wsBorsh.encodeEnvelope(
+      wsBorsh.KIND_HELLO_S2C,
+      wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
+        serverImpl: 'vibeterm-gateway',
+        serverVersion,
+        selectedVersion: wsBorsh.CURRENT_VERSION,
+        maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+        heartbeatIntervalMs: 15_000,
+        capabilities: [],
+      }),
+      1
+    );
+  }
+
+  test('新流在 HELLO 回来前就被拆掉：继续换链路重试，不判成节点版本太旧', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    pump.replay.hello = helloC2S;
+    const fixture = trackingHost({
+      // 每一轮刚绑上就断：对端一个字节都没答
+      bindStream(target, stream, transport) {
+        target.stream = stream;
+        target.streamAlive = false;
+        target.boundTransport = transport;
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    expect(fixture.opened.length).toBe(STREAM_FAILOVER_MAX_ATTEMPTS);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-exhausted' }]);
+  });
+
+  test('对端答了 HELLO 但版本不达标：才关成 node-too-old', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    pump.replay.hello = helloC2S;
+    const fixture = trackingHost({
+      sendToStream(target, _stream, bytes) {
+        if (bytes !== pump.replay.hello) return;
+        target.replay.noteInbound(helloS2C('1.0.0'));
+        target.helloWait?.();
+        target.helloWait = null;
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    expect(fixture.opened.length).toBe(1);
+    expect(fixture.closed).toEqual([{ code: 1002, reason: 'node-too-old' }]);
+  });
+});

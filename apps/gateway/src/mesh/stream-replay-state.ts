@@ -66,6 +66,8 @@ export class StreamReplayState {
   readonly agents = new Map<string, Uint8Array>();
   /** 对端节点在 HELLO_S2C 里播报的版本；低于 canonical v1.1 门槛时整条流不可用。 */
   peerVersion: string | null = null;
+  /** 本轮续流里对端是否真的答过 HELLO：区分「没答上来」和「答了但版本不达标」。 */
+  resumeHelloSeen = false;
   canonicalSub: {
     generation: bigint;
     activePanes: wsBorsh.CanonicalPaneSubscription[];
@@ -164,6 +166,7 @@ export class StreamReplayState {
     const env = this.tryDecodeEnvelope(bytes);
     if (!env) return { kind: null };
     if (env.kind === wsBorsh.KIND_HELLO_S2C) {
+      this.resumeHelloSeen = true;
       try {
         const payload = wsBorsh.decodePayload(wsBorsh.schema.HelloS2CSchema, env.payload);
         this.serverMaxFrameBytes = payload.maxFrameBytes;
@@ -198,6 +201,7 @@ export class StreamReplayState {
   beginResume(): void {
     // 新流要重新握手：版本判定不能沿用上一条流的结果。
     this.peerVersion = null;
+    this.resumeHelloSeen = false;
     this.resumeDevices.clear();
     this.resumeGeneration = null;
     this.lastBrowserSignals = [];

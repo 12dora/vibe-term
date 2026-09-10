@@ -91,6 +91,12 @@ export type MeshHttpRuntimeOptions = {
   authSurfaceOnly?: boolean;
   localAuth?: LocalAuthStoreLike;
   localAuthEffective?: () => boolean;
+  /**
+   * 会话被撤销（登出 / key log 撤销 / 改密）时，一并拆掉挂在 mesh 流上的网关会话。
+   * 本地浏览器 socket 在 `sockets` 里，转发来的连接不在，只能靠这个回调即时断开——
+   * 否则要等 `WS_SESSION_VERIFY_MS` 那轮复验才会掉。
+   */
+  onSessionsRevoked?: (target: { uid?: string; sid?: string }) => void;
 };
 
 const STATIC_PREFIXES = ['/assets/', '/static/', '/favicon', '/manifest'];
@@ -137,6 +143,7 @@ export class MeshHttpRuntime {
   private readonly sockets = new Set<RegisteredSocket>();
   private readonly now: () => number;
   private readonly authSurfaceOnly: boolean;
+  private readonly onSessionsRevoked: MeshHttpRuntimeOptions['onSessionsRevoked'];
   private relayRoutes: RelayRoutes | null = null;
 
   constructor(opts: MeshHttpRuntimeOptions) {
@@ -144,6 +151,7 @@ export class MeshHttpRuntime {
     this.nodeId = opts.nodeId;
     this.now = opts.now ?? (() => Date.now());
     this.authSurfaceOnly = opts.authSurfaceOnly === true || opts.peers == null;
+    this.onSessionsRevoked = opts.onSessionsRevoked;
     const peers = opts.peers ?? INERT_PEERS;
     const streams = opts.streams ?? INERT_STREAMS;
     this.sessionDeps = {
@@ -273,6 +281,7 @@ export class MeshHttpRuntime {
         this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
       }
     }
+    this.onSessionsRevoked?.({ uid });
   }
 
   closeSocketsForSid(sid: string): void {
@@ -281,6 +290,7 @@ export class MeshHttpRuntime {
         this.closeRegistered(entry, WS_CLOSE_LOGIN_REQUIRED, 'NODE_LOGIN_REQUIRED');
       }
     }
+    this.onSessionsRevoked?.({ sid });
   }
 
   applyKeyLogEffects(userId: string, effects: KeyLogEffect[]): void {

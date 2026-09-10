@@ -29,6 +29,7 @@ import {
 import { flushDialFailed } from './rtc/rtc-log';
 import { acceptHttpStream, acceptWsStream, classifyOpenPayload } from './stream-targets';
 import type { DispatchHttp, PeerReach, PeerTransportKind } from './types';
+import type { GatewaySessionClose } from './ws-stream-target';
 
 export type PeerLiveRegistryDeps = {
   dcBreaker: RtcDialBreaker;
@@ -77,7 +78,12 @@ export type PeerLiveRegistryOptions = {
         auth: { sid: string; uid: string; via: string; cid?: string }
       ) => boolean | undefined)
     | null;
-  onGatewaySessionClose: ((session: import('../ws/gateway-session').GatewaySession) => void) | null;
+  onGatewaySessionClose:
+    | ((
+        session: import('../ws/gateway-session').GatewaySession,
+        close?: GatewaySessionClose
+      ) => void)
+    | null;
   onLinkInfo:
     | ((info: {
         nodeId: string;
