@@ -715,6 +715,16 @@ v1 小节冻结，本节只描述 v1.1 的增量。v1.1 不改 `protocolVersion`
 
 自此 canonical 客户端不再需要 legacy `STATE_SNAPSHOT` overlay：设备树顺序与自定义名都从 metadata 通路获得。
 
+#### 折叠实现的位置
+
+metadata 记录折叠成 tmux 会话树的实现只有一份：`packages/ws-client/src/canonical-tree.ts`。
+它无 DOM 依赖（不碰 `window` / `document` / `localStorage`，不依赖 React / zustand / i18next），
+浏览器与 Node 侧共用：`canonical-metadata-identity.ts` 在折叠之上叠加订阅、cursor 等缓存副作用供
+`CanonicalStateClient` 使用（浏览器 store 再消费它下发的 `StateSnapshotPayload`）；Node CLI 直接
+`import { createCanonicalTree } from '@vibeterm/ws-client/canonical-tree'`，用
+`applySnapshot()` / `applyPatch()` 喂事件、`get()` 取树，并用同文件的纯函数
+（`resolveWindow` / `resolvePane` 等）按 id、index 或名字定位窗口与 pane。
+
 ### AGENT_SUBSCRIBE（0x0601）/ AGENT_UNSUBSCRIBE（0x0602）
 
 字段：

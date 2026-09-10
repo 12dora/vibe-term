@@ -1,5 +1,5 @@
 import type { StateSnapshotPayload } from '@vibeterm/shared';
-import { wsBorsh } from '@vibeterm/shared';
+import type { wsBorsh } from '@vibeterm/shared';
 import {
   type DesiredSubscriptions,
   type DeviceMetadataState,
@@ -11,13 +11,29 @@ import {
   copyBytes,
   paneKey,
 } from './canonical-state-helpers';
+import {
+  applyDeviceTreePatch,
+  applyMetadataIdentity,
+  assembleDeviceMetadata,
+  deviceIdsFromMetadataPatch,
+  groupRecordsByDevice,
+  metadataPatchMatchesState,
+  patchRecordsForDevice,
+} from './canonical-tree';
+import type { MetadataIdentityAction } from './canonical-tree';
 import type { GatewayRebaseReason, GatewaySubscriptionRejection } from './transport-types';
 
-export type MetadataIdentityAction =
-  | { kind: 'server-epoch-changed'; deviceId: string }
-  | { kind: 'pane-removed'; deviceId: string; paneId: string }
-  | { kind: 'pane-epoch-changed'; deviceId: string; paneId: string }
-  | { kind: 'pane-epoch-unset'; deviceId: string; paneId: string };
+// 树折叠本体在 `canonical-tree.ts`（无 DOM 依赖，Node CLI 直接复用），这里只做缓存侧的副作用。
+export {
+  applyMetadataIdentity,
+  assembleDeviceMetadata,
+  deviceIdsFromMetadataPatch,
+  groupRecordsByDevice,
+  metadataPatchMatchesState,
+  paneEpochsFromRecords,
+  patchRecordsForDevice,
+} from './canonical-tree';
+export type { MetadataIdentityAction } from './canonical-tree';
 
 export type PaneDataDecision =
   | { kind: 'ignore' }
@@ -45,110 +61,6 @@ export interface MetadataLiveCaches {
 
 export function sameStringList(left: readonly string[], right: readonly string[]): boolean {
   return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-
-export function paneEpochsFromRecords(
-  records: readonly wsBorsh.SourceMetadataRecord[]
-): Map<string, Uint8Array> {
-  const epochs = new Map<string, Uint8Array>();
-  for (const record of records) {
-    if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) continue;
-    const field = record.fields.find((item) => item.field === wsBorsh.SOURCE_FIELD_PANE_EPOCH);
-    if (field && 'Bytes16' in field.value) {
-      epochs.set(record.key.nativeId, copyBytes(field.value.Bytes16));
-    }
-  }
-  return epochs;
-}
-
-export function groupRecordsByDevice(
-  records: readonly wsBorsh.SourceMetadataRecord[]
-): Map<string, wsBorsh.SourceMetadataRecord[]> {
-  const byDevice = new Map<string, wsBorsh.SourceMetadataRecord[]>();
-  for (const record of records) {
-    const group = byDevice.get(record.key.deviceId) ?? [];
-    group.push(record);
-    byDevice.set(record.key.deviceId, group);
-  }
-  return byDevice;
-}
-
-export function assembleDeviceMetadata(
-  deviceId: string,
-  metadataEpoch: Uint8Array,
-  revision: bigint,
-  deviceRecords: readonly wsBorsh.SourceMetadataRecord[]
-): DeviceMetadataState | null {
-  const serverEpoch = deviceRecords[0]?.key.serverEpoch;
-  if (!serverEpoch) return null;
-  const projection = wsBorsh.sourceMetadataPatchToLegacyDiff({
-    metadataEpoch,
-    fromRevision: 0n,
-    throughRevision: revision,
-    upserts: [...deviceRecords],
-    removals: [],
-  });
-  const treeOrder = wsBorsh.createCanonicalTreeOrder(deviceRecords);
-  const projected = wsBorsh.applyLegacyStateSnapshotDiff({ deviceId, session: null }, projection);
-  return {
-    metadataEpoch: copyBytes(metadataEpoch),
-    revision,
-    serverEpoch: copyBytes(serverEpoch),
-    paneEpochs: paneEpochsFromRecords(deviceRecords),
-    treeOrder,
-    baseSnapshot: projected,
-    snapshot: wsBorsh.sortSnapshotByCanonicalTreeOrder(projected, treeOrder),
-  };
-}
-
-export function applyMetadataIdentity(
-  state: DeviceMetadataState,
-  upserts: readonly wsBorsh.SourceMetadataRecord[],
-  removals: readonly wsBorsh.SourceEntityKey[]
-): MetadataIdentityAction[] {
-  const actions: MetadataIdentityAction[] = [];
-  const epochChanged = applyServerEpochChange(state, upserts, removals);
-  if (epochChanged) actions.push(epochChanged);
-  for (const key of removals) {
-    const action = applyPaneRemoval(state, key);
-    if (action) actions.push(action);
-  }
-  for (const record of upserts) {
-    const action = applyPaneUpsert(state, record);
-    if (action) actions.push(action);
-  }
-  return actions;
-}
-
-export function deviceIdsFromMetadataPatch(event: MetadataPatchEvent): Set<string> {
-  const deviceIds = new Set<string>();
-  for (const record of event.upserts) deviceIds.add(record.key.deviceId);
-  for (const key of event.removals) deviceIds.add(key.deviceId);
-  return deviceIds;
-}
-
-export function metadataPatchMatchesState(
-  state: DeviceMetadataState | undefined,
-  event: MetadataPatchEvent
-): state is DeviceMetadataState {
-  return Boolean(
-    state &&
-      bytesEqual(state.metadataEpoch, event.metadataEpoch) &&
-      state.revision === event.fromRevision
-  );
-}
-
-export function patchRecordsForDevice(
-  event: MetadataPatchEvent,
-  deviceId: string
-): {
-  upserts: wsBorsh.SourceMetadataRecord[];
-  removals: wsBorsh.SourceEntityKey[];
-} {
-  return {
-    upserts: event.upserts.filter((record) => record.key.deviceId === deviceId),
-    removals: event.removals.filter((key) => key.deviceId === deviceId),
-  };
 }
 
 export function ingestMetadataSnapshot(
@@ -188,16 +100,11 @@ export function ingestMetadataPatch(
       continue;
     }
     const { upserts, removals } = patchRecordsForDevice(event, deviceId);
-    const projection = wsBorsh.sourceMetadataPatchToLegacyDiff({ ...event, upserts, removals });
     for (const action of applyMetadataIdentity(state, upserts, removals)) {
       realizeIdentityAction(caches, action);
     }
-    wsBorsh.applyCanonicalTreeOrderPatch(state.treeOrder, upserts, removals);
-    state.revision = event.throughRevision;
-    // diff 落在未排序底稿上，展示顺序每次由底稿重算：顺序被 Unset 时才能退回 tmux index 顺序。
     // 顺序在客户端算完再下发整棵快照：消费方若自己再 apply 一次 diff，会掉回 tmux index 顺序
-    state.baseSnapshot = wsBorsh.applyLegacyStateSnapshotDiff(state.baseSnapshot, projection);
-    state.snapshot = wsBorsh.sortSnapshotByCanonicalTreeOrder(state.baseSnapshot, state.treeOrder);
+    applyDeviceTreePatch(state, { ...event, upserts, removals });
     caches.emitPatch(deviceId, state.snapshot);
   }
   return 'applied';
@@ -326,52 +233,6 @@ export function applySubscriptionRejections(
     else if (hasDevice(rejection.deviceId)) epochChangedDevices.add(rejection.deviceId);
   }
   return [epochChangedDevices, resourceExhausted];
-}
-
-function applyServerEpochChange(
-  state: DeviceMetadataState,
-  upserts: readonly wsBorsh.SourceMetadataRecord[],
-  removals: readonly wsBorsh.SourceEntityKey[]
-): MetadataIdentityAction | null {
-  const nextServerEpoch = upserts[0]?.key.serverEpoch ?? removals[0]?.serverEpoch;
-  if (!nextServerEpoch || bytesEqual(state.serverEpoch, nextServerEpoch)) return null;
-  state.serverEpoch = copyBytes(nextServerEpoch);
-  state.paneEpochs.clear();
-  return {
-    kind: 'server-epoch-changed',
-    deviceId: upserts[0]?.key.deviceId ?? removals[0]?.deviceId ?? '',
-  };
-}
-
-function applyPaneRemoval(
-  state: DeviceMetadataState,
-  key: wsBorsh.SourceEntityKey
-): MetadataIdentityAction | null {
-  if (key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) return null;
-  state.paneEpochs.delete(key.nativeId);
-  return { kind: 'pane-removed', deviceId: key.deviceId, paneId: key.nativeId };
-}
-
-function applyPaneUpsert(
-  state: DeviceMetadataState,
-  record: wsBorsh.SourceMetadataRecord
-): MetadataIdentityAction | null {
-  if (record.key.entityKind !== wsBorsh.SOURCE_ENTITY_PANE) return null;
-  const field = record.fields.find((item) => item.field === wsBorsh.SOURCE_FIELD_PANE_EPOCH);
-  if (!field) return null;
-  const deviceId = record.key.deviceId;
-  const paneId = record.key.nativeId;
-  if ('Bytes16' in field.value) {
-    const previous = state.paneEpochs.get(paneId);
-    const changed = Boolean(previous && !bytesEqual(previous, field.value.Bytes16));
-    state.paneEpochs.set(paneId, copyBytes(field.value.Bytes16));
-    return changed ? { kind: 'pane-epoch-changed', deviceId, paneId } : null;
-  }
-  if ('Unset' in field.value) {
-    state.paneEpochs.delete(paneId);
-    return { kind: 'pane-epoch-unset', deviceId, paneId };
-  }
-  return null;
 }
 
 function realizeIdentityAction(caches: MetadataLiveCaches, action: MetadataIdentityAction): void {

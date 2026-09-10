@@ -6,6 +6,7 @@
   "files": ["src"],
   "exports": {
     ".": "./src/index.ts",
+    "./canonical-tree": "./src/canonical-tree.ts",
     "./direct": "./src/direct/index.ts",
     "./*": "./src/*.ts"
   },
