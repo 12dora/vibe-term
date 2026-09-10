@@ -72,6 +72,38 @@ export function shouldStartRtcAttempt(input: {
   );
 }
 
+export function restoreRtcInbox(
+  inbox: Map<string, RtcSignalInboxEntry[]>,
+  peerNodeId: string,
+  remainder: RtcSignalInboxEntry[]
+): void {
+  if (remainder.length === 0) return;
+  const existing = inbox.get(peerNodeId) ?? [];
+  inbox.set(peerNodeId, remainder.concat(existing));
+}
+
+export function replayRtcInbox(
+  set: Set<(message: RtcSignalMessage) => void>,
+  cb: (message: RtcSignalMessage) => void,
+  inbox: Map<string, RtcSignalInboxEntry[]>,
+  peerNodeId: string,
+  queued: RtcSignalInboxEntry[]
+): void {
+  queueMicrotask(() => {
+    if (!set.has(cb)) {
+      restoreRtcInbox(inbox, peerNodeId, queued);
+      return;
+    }
+    for (let i = 0; i < queued.length; i += 1) {
+      cb(queued[i].message);
+      if (!set.has(cb)) {
+        restoreRtcInbox(inbox, peerNodeId, queued.slice(i));
+        return;
+      }
+    }
+  });
+}
+
 export type WakeGate = {
   inflight: boolean;
   nextEligibleAt: number;
@@ -106,6 +138,7 @@ export type RtcWakePorts = {
   getLink: (nodeId: string) => Promise<unknown>;
   rtcListeners: () => Map<string, Set<(msg: RtcSignalMessage) => void>>;
   rtcInbox: () => Map<string, RtcSignalInboxEntry[]>;
+  hasDcInflight?: (nodeId: string) => boolean;
   sendPeerCtl: (live: RtcWakeLivePeer, payload: Record<string, unknown>) => void;
   ensureDcSession: ((peerNodeId: string, rtcSession: string) => void) | null;
   uplinkSendCtl: (payload: UplinkRtcSignal) => void;
@@ -152,10 +185,7 @@ export class RtcWakeGate {
           inbox.delete(peerNodeId);
           const cutoff = this.ports.scheduler.now() - RTC_SIGNAL_INBOX_TTL_MS;
           const fresh = queued.filter((entry) => entry.receivedAt >= cutoff);
-          queueMicrotask(() => {
-            if (!set?.has(cb)) return;
-            for (const entry of fresh) cb(entry.message);
-          });
+          replayRtcInbox(set, cb, inbox, peerNodeId, fresh);
         }
         return () => {
           set?.delete(cb);
@@ -217,9 +247,18 @@ export class RtcWakeGate {
     }
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
     const live = this.ports.live().get(fromNodeId);
-    if (live?.transport === 'dc' || !this.ports.shouldTryDc(fromNodeId)) return;
-    if (this.ports.pending().has(fromNodeId) || this.ports.upgrading().has(fromNodeId)) return;
-    if (live && !this.ports.wantsUpgrade(live)) return;
+    if (
+      !shouldStartRtcAttempt({
+        allow: this.ports.shouldTryDc(fromNodeId),
+        pending: this.ports.pending().has(fromNodeId),
+        upgrading: this.ports.upgrading().has(fromNodeId),
+        inflight: this.ports.hasDcInflight?.(fromNodeId) === true,
+        live: Boolean(live),
+        wantsUpgrade: live ? this.ports.wantsUpgrade(live) : false,
+      })
+    ) {
+      return;
+    }
     void this.ports.getLink(fromNodeId).catch(() => undefined);
   }
 

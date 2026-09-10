@@ -177,6 +177,7 @@ export function settleAbandonedDcDial(
       } catch {}
     },
     (err) => {
+      if (dcDialAborted(err)) return;
       noteFailure(err instanceof Error ? err.message : String(err));
     }
   );

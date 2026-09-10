@@ -4,6 +4,7 @@ import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { defaultScheduler, encodeJsonBytes } from './ctl';
+import { FOREGROUND_DIRECT_DEADLINE_MS } from './peer-dial-race';
 import {
   KEY_LOG_STATUS_DEBOUNCE_MS,
   PEER_CONNECT_TIMEOUT_MS,
@@ -1255,6 +1256,101 @@ describe('PeerManager', () => {
     managerA.notifyPeerEndpointsChanged(peer.nodeId);
     await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 1_000);
     expect(performance.now() - started).toBeLessThan(500);
+    expect(dcAttempts).toBe(1);
+  });
+
+  test('foreground 4s race then relay does not open a second PC while DC is in flight; ws-secure still upgrades', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcAttempts = 0;
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      connectToPeer: (_id: string, _signaling: unknown, opts?: { signal?: AbortSignal }) => {
+        dcAttempts += 1;
+        return new Promise((_resolve, reject) => {
+          const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          if (opts?.signal?.aborted) fail();
+          else opts?.signal?.addEventListener('abort', fail, { once: true });
+        });
+      },
+    } as unknown as RtcPeerManager;
+    const [outerA, outerB] = createInMemoryLinkPair();
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      outerB.onStream(resolve)
+    );
+    const uplink = dummyUplink(self, store, async () => {
+      return outerA.openStream(
+        new TextEncoder().encode(JSON.stringify({ to: peer.nodeId, from: self.nodeId }))
+      );
+    });
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink,
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      connectTimeoutMs: 200,
+      wsFactory: () => {
+        const [client, server] = fakeSocketPair();
+        void handshakeWsDirect({
+          socket: server,
+          role: 'acceptor',
+          identity: peer,
+          userStore: store,
+        });
+        return client;
+      },
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    const acceptP = incoming.then((stream) =>
+      handshakeRelay({
+        stream,
+        role: 'acceptor',
+        identity: peer,
+        userStore: store,
+      }).then((result) => {
+        echoQuiesceCaps(result.session);
+        return result;
+      })
+    );
+    const started = performance.now();
+    const [link] = await Promise.all([managerA.getLink(peer.nodeId), acceptP]);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(FOREGROUND_DIRECT_DEADLINE_MS - 200);
+    expect(managerA.transportOf(peer.nodeId)).toBe('relay');
+    expect(dcAttempts).toBe(1);
+    expect(link).toBeTruthy();
+
+    await waitUntil(() => managerA.quiesceCapableOf(peer.nodeId));
+    void managerA.getLink(peer.nodeId);
+    await Bun.sleep(50);
+    expect(dcAttempts).toBe(1);
+
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: JSON.stringify(['ws://127.0.0.1:1/peer']),
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 2,
+    });
+    managerA.notifyPeerEndpointsChanged(peer.nodeId);
+    await waitUntil(() => managerA.transportOf(peer.nodeId) === 'ws-secure', 2_000);
     expect(dcAttempts).toBe(1);
   });
 

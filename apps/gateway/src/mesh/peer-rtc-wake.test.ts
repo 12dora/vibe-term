@@ -6,6 +6,7 @@ import {
   RtcWakeGate,
   type RtcWakePorts,
   deliverRtcSignal,
+  shouldStartRtcAttempt,
 } from './peer-rtc-wake';
 
 function setupReplay(entries: RtcSignalInboxEntry[]) {
@@ -44,6 +45,27 @@ describe('RtcWakeGate signaling inbox', () => {
     expect(listeners.has(peer)).toBe(false);
   });
 
+  test('unsubscribing mid-replay restores the remaining inbox in order', async () => {
+    const queued = ['first', 'second', 'third'].map((to) => ({
+      message: {
+        rtcSession: 'dc:a:b',
+        from: 'node' as const,
+        to,
+        sdp: '{"type":"offer","sdp":"v=0"}',
+      },
+      receivedAt: 100_000,
+    }));
+    const { gate, inbox, peer } = setupReplay(queued);
+    const seen: string[] = [];
+    const unsubscribe = gate.signalingFor(peer).onMessage((signal) => {
+      seen.push(signal.to);
+      if (signal.to === 'second') unsubscribe();
+    });
+    await Promise.resolve();
+    expect(seen).toEqual(['first', 'second']);
+    expect((inbox.get(peer) ?? []).map((entry) => entry.message.to)).toEqual(['second', 'third']);
+  });
+
   test('unsubscribe before the replay microtask prevents delivery', async () => {
     const queued: RtcSignalMessage = {
       rtcSession: 'dc:a:b',
@@ -51,7 +73,9 @@ describe('RtcWakeGate signaling inbox', () => {
       to: 'self',
       candidate: '{"candidate":"candidate:1","mid":"0"}',
     };
-    const { gate, listeners, peer } = setupReplay([{ message: queued, receivedAt: 100_000 }]);
+    const { gate, inbox, listeners, peer } = setupReplay([
+      { message: queued, receivedAt: 100_000 },
+    ]);
     let deliveries = 0;
     const unsubscribe = gate.signalingFor(peer).onMessage(() => {
       deliveries += 1;
@@ -60,6 +84,26 @@ describe('RtcWakeGate signaling inbox', () => {
     await Promise.resolve();
     expect(deliveries).toBe(0);
     expect(listeners.has(peer)).toBe(false);
+    expect((inbox.get(peer) ?? []).map((entry) => entry.message)).toEqual([queued]);
+  });
+});
+
+describe('shouldStartRtcAttempt', () => {
+  const base = {
+    allow: true,
+    pending: false,
+    upgrading: false,
+    inflight: false,
+    live: false,
+    wantsUpgrade: false,
+  };
+
+  test('blocks a new attempt while a DC dial is in flight', () => {
+    expect(shouldStartRtcAttempt(base)).toBe(true);
+    expect(shouldStartRtcAttempt({ ...base, inflight: true })).toBe(false);
+    expect(shouldStartRtcAttempt({ ...base, pending: true })).toBe(false);
+    expect(shouldStartRtcAttempt({ ...base, live: true, wantsUpgrade: false })).toBe(false);
+    expect(shouldStartRtcAttempt({ ...base, live: true, wantsUpgrade: true })).toBe(true);
   });
 });
 

@@ -7,11 +7,12 @@ export type QueuedRemoteCandidate = { candidate: string; mid: string };
 
 export type SignalingAttemptState = {
   epoch?: number;
+  lastOfferEpoch?: number;
   answerApplied: boolean;
   remoteDescriptionApplied: boolean;
   pendingCandidates: QueuedRemoteCandidate[];
   logFields?: RtcLogContext;
-  onSuperseded?: () => void;
+  onSuperseded?: (epoch?: number) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
 };
@@ -24,13 +25,23 @@ function logSignal(
   rtcLog(event, { ...state.logFields, ...fields });
 }
 
-export function createSignalingAttemptState(epoch?: number): SignalingAttemptState {
+export function createSignalingAttemptState(
+  epoch?: number,
+  lastOfferEpoch?: number
+): SignalingAttemptState {
   return {
     epoch,
+    lastOfferEpoch: lastOfferEpoch ?? epoch,
     answerApplied: false,
     remoteDescriptionApplied: false,
     pendingCandidates: [],
   };
+}
+
+function rememberOfferEpoch(state: SignalingAttemptState, epoch: number | undefined): void {
+  if (epoch === undefined) return;
+  if (state.lastOfferEpoch !== undefined && epoch <= state.lastOfferEpoch) return;
+  state.lastOfferEpoch = epoch;
 }
 
 export function createRtcSignalApplier(
@@ -71,7 +82,13 @@ export function applyRemoteSdp(
     );
     return 'dropped';
   }
-  const epoch = classifyEpoch(decoded.epoch, state.epoch, false, expect === 'offer');
+  const epoch = classifyEpoch(
+    decoded.epoch,
+    state.epoch,
+    false,
+    expect === 'offer',
+    state.lastOfferEpoch
+  );
   if (epoch === 'superseded') {
     logSignal(
       'signal dropped',
@@ -84,7 +101,8 @@ export function applyRemoteSdp(
       },
       state
     );
-    state.onSuperseded?.();
+    rememberOfferEpoch(state, decoded.epoch);
+    state.onSuperseded?.(decoded.epoch);
     return 'superseded';
   }
   if (epoch === 'mismatch') {
@@ -95,9 +113,12 @@ export function applyRemoteSdp(
     logSignal('signal dropped', { peer, kind: 'sdp', cause: 'duplicate-answer' }, state);
     return 'dropped';
   }
-  if (expect === 'offer' && state.epoch === undefined && decoded.epoch !== undefined) {
-    state.epoch = decoded.epoch;
-    state.onEpoch?.(decoded.epoch);
+  if (expect === 'offer' && decoded.epoch !== undefined) {
+    rememberOfferEpoch(state, decoded.epoch);
+    if (state.epoch === undefined) {
+      state.epoch = decoded.epoch;
+      state.onEpoch?.(decoded.epoch);
+    }
   }
   try {
     logSignal('signal recv', { peer, kind: 'sdp', sdp_type: decoded.type }, state);
@@ -129,7 +150,7 @@ export function applyRemoteCandidate(
 ): void {
   const decoded = decodeCandidateSignal(raw);
   if (!decoded || isEmptyCandidate(decoded.candidate)) return;
-  if (classifyEpoch(decoded.epoch, state.epoch, true, false) === 'mismatch') {
+  if (classifyEpoch(decoded.epoch, state.epoch, true, false, state.lastOfferEpoch) === 'mismatch') {
     logEpochMismatch(peer, 'candidate', state.epoch, decoded.epoch, state);
     return;
   }
@@ -178,9 +199,11 @@ function classifyEpoch(
   received: number | undefined,
   expected: number | undefined,
   rejectBeforeEpoch: boolean,
-  allowSupersede: boolean
+  allowSupersede: boolean,
+  lastOfferEpoch?: number
 ): 'ok' | 'mismatch' | 'superseded' {
   if (received === undefined) return 'ok';
+  if (lastOfferEpoch !== undefined && received < lastOfferEpoch) return 'mismatch';
   if (expected === undefined) return rejectBeforeEpoch ? 'mismatch' : 'ok';
   if (received === expected) return 'ok';
   if (allowSupersede && received > expected) return 'superseded';

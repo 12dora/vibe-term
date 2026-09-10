@@ -124,7 +124,6 @@ export class RtcDialBreaker {
     string,
     { lastProbeAt: number; probeArmedAt: number | null }
   >();
-  private readonly activeAttempts = new Map<string, string>();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
@@ -183,13 +182,11 @@ export class RtcDialBreaker {
   }
 
   beginAttempt(peer: string, attemptId: string): void {
-    if (this.activeAttempts.get(peer) === attemptId) return;
     const disabled = this.disabled.get(peer);
     if (disabled) {
       disabled.lastProbeAt = disabled.probeArmedAt ?? this.now();
       disabled.probeArmedAt = null;
     }
-    this.activeAttempts.set(peer, attemptId);
     this.inner.beginAttempt(peer, attemptId);
   }
 
@@ -228,7 +225,6 @@ export class RtcDialBreaker {
   rearmDisabled(peer: string, source: DcRearmSource): boolean {
     if (!this.disabled.has(peer)) return false;
     this.disabled.delete(peer);
-    this.activeAttempts.delete(peer);
     this.inner.reset(peer);
     this.onRearm?.({ peer, source });
     return true;
@@ -246,10 +242,8 @@ export class RtcDialBreaker {
   reset(peer?: string): void {
     if (peer) {
       this.disabled.delete(peer);
-      this.activeAttempts.delete(peer);
     } else {
       this.disabled.clear();
-      this.activeAttempts.clear();
     }
     this.inner.reset(peer);
   }

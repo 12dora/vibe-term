@@ -22,11 +22,11 @@ export function createRtcDialProgress(): RtcDialProgress {
 }
 
 export function rtcFailureStage(progress: RtcDialProgress): RtcFailureStage {
-  if (!progress.gatheringComplete) return 'gathering';
-  if (!progress.remoteDescriptionApplied) return 'no-remote-sdp';
-  if (!progress.selectedPair) return 'checking';
-  if (!progress.channelOpen) return 'dtls';
-  return 'handshake';
+  if (progress.handshakeStarted || progress.channelOpen) return 'handshake';
+  if (progress.selectedPair) return 'dtls';
+  if (progress.remoteDescriptionApplied) return 'checking';
+  if (progress.gatheringComplete) return 'no-remote-sdp';
+  return 'gathering';
 }
 
 export function rtcGatherFailureHint(
@@ -34,6 +34,7 @@ export function rtcGatherFailureHint(
   ice: IceServerConfig,
   localCounts: Pick<IceTypeCounts, 'srflx' | 'relay'>
 ): 'stun unconfigured' | 'no srflx candidates' | null {
+  if (progress.channelOpen || progress.selectedPair) return null;
   if (ice.stun.length === 0) return 'stun unconfigured';
   if (progress.gatheringComplete && localCounts.srflx === 0 && localCounts.relay === 0) {
     return 'no srflx candidates';

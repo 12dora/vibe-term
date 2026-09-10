@@ -159,6 +159,7 @@ export class PeerManager extends PeerCollaboratorHost {
       getLink: (nodeId) => this.getLink(nodeId),
       rtcListeners: () => this.rtcListeners,
       rtcInbox: () => this.state.rtcInbox,
+      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
       sendPeerCtl: (live, payload) => this.sendPeerCtl(live as LivePeer, payload),
       ensureDcSession: this.ensureDcSession,
       uplinkSendCtl: (payload) => this.state.uplink.sendCtl(payload),

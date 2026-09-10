@@ -256,7 +256,7 @@ export class PeerDialer {
     try {
       await ensureRtcReady(rtc);
       throwIfPeerStopped(this.state, nodeId, gen);
-      connectP = rtc.connectToPeer(nodeId, wrapped, { attemptId });
+      connectP = rtc.connectToPeer(nodeId, wrapped, { attemptId, signal });
       this.deps.dispatchRtcWake(nodeId);
       const result = await abortable(connectP, signal);
       if (peerStale(this.state, gen)) {
@@ -299,7 +299,7 @@ export class PeerDialer {
         if (this.state.stopped || isIntentionalDcLoss(failure)) return;
         this.deps.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(failure), attemptId);
       };
-      if (dcDialAborted(err)) await settleAbandonedDcDial(connectP, noteDcFailure);
+      if (dcDialAborted(err)) void settleAbandonedDcDial(connectP, noteDcFailure);
       else noteDcFailure(reason);
       this.releaseRtcAttempt(nodeId, unsub);
       rtcLog('dial failed', {

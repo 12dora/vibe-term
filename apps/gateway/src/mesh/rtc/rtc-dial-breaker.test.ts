@@ -3,6 +3,7 @@ import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../../auth/test-db';
 import { UserStore } from '../../auth/user-store';
 import { encodeJsonBytes } from '../ctl';
+import { settleAbandonedDcDial } from '../peer-dial-race';
 import { PeerManager } from '../peer-manager';
 import { dummyUplink, echoQuiesceCaps } from '../peer-test-fixtures';
 import { seedNodeIdentity, seedUser, waitUntil } from '../test-support';
@@ -110,6 +111,30 @@ describe('RtcDialBreaker', () => {
     breaker.beginAttempt(peer, 'dc:1');
     expect(breaker.noteFailure(peer, 'timeout', 'dc:1').counted).toBe(true);
     expect(breaker.noteFailure(peer, 'timeout', 'dc:1').counted).toBe(false);
+    expect(breaker.snapshot(peer).failures).toBe(1);
+  });
+
+  test('settleAbandonedDcDial cannot double-charge the same attempt', async () => {
+    const breaker = new RtcDialBreaker({ now: () => 0 });
+    const peer = 'p';
+    breaker.beginAttempt(peer, 'dc:1');
+    const note = (reason: string) => {
+      breaker.noteFailure(peer, classifyRtcDialFailure(reason), 'dc:1');
+    };
+    const failed = Promise.reject(new Error('timeout'));
+    failed.catch(() => undefined);
+    await settleAbandonedDcDial(failed, note);
+    await settleAbandonedDcDial(failed, note);
+    expect(breaker.noteFailure(peer, 'timeout', 'dc:1').counted).toBe(false);
+    expect(breaker.snapshot(peer).failures).toBe(1);
+
+    breaker.beginAttempt(peer, 'dc:2');
+    const abort = Object.assign(new Error('aborted'), { name: 'AbortError' });
+    const aborted = Promise.reject(abort);
+    aborted.catch(() => undefined);
+    await settleAbandonedDcDial(aborted, (reason) => {
+      breaker.noteFailure(peer, classifyRtcDialFailure(reason), 'dc:2');
+    });
     expect(breaker.snapshot(peer).failures).toBe(1);
   });
 
@@ -575,5 +600,65 @@ describe('PeerManager DataChannel breaker', () => {
     rejectors[0]?.(new Error('dc-fail'));
     await first;
     expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+  });
+
+  test('an aborted DC dial releases the single-flight slot so forceDcProbe can start another', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcCalls = 0;
+    const rtc = {
+      available: true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      ready: async () => true,
+      connectToPeer: (_id: string, _signaling: unknown, opts?: { signal?: AbortSignal }) => {
+        dcCalls += 1;
+        return new Promise((_resolve, reject) => {
+          const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }));
+          if (opts?.signal?.aborted) fail();
+          else opts?.signal?.addEventListener('abort', fail, { once: true });
+        });
+      },
+    } as unknown as RtcPeerManager;
+    const remotes: Array<import('@vibeterm/shared/link').LinkSession> = [];
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, undefined, {
+        wsFactory: () => {
+          throw new Error('no-ws');
+        },
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      linkFactory: async () => {
+        const [local, remote] = createInMemoryLinkPair();
+        echoQuiesceCaps(remote);
+        remotes.push(remote);
+        return local;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const first = manager.getLink(peer.nodeId);
+    await waitUntil(() => dcCalls === 1);
+    await first;
+    expect(manager.transportOf(peer.nodeId)).toBe('ws-secure');
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    manager.forceDcProbe(peer.nodeId);
+    await waitUntil(() => dcCalls === 2, 1_000);
+    expect(dcCalls).toBe(2);
   });
 });

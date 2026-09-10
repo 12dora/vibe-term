@@ -49,6 +49,19 @@ export function attachKeyLogHeadNotify(
   };
 }
 
+export type ListedRtcConfig = { stun: string[]; turn: unknown };
+
+/** STUN 空列表不能冲掉本机/上次的 stun；TURN 始终采用 hub 下发值。 */
+export function mergeListedRtc(
+  prev: ListedRtcConfig | null,
+  listed: { stun: string[]; turn?: unknown }
+): ListedRtcConfig {
+  return {
+    stun: listed.stun.length > 0 ? listed.stun : (prev?.stun ?? []),
+    turn: listed.turn ?? null,
+  };
+}
+
 export type NodeListRejectPeerFn = (nodeId: string, alwaysDelete: boolean) => boolean;
 
 export type NodeListApplyDeps = {
@@ -256,9 +269,7 @@ export function applyUplinkNodeList(
   state.lastNodeList = list;
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
-  if (list.rtc.stun.length > 0) {
-    state.lastRtc = { stun: list.rtc.stun, turn: list.rtc.turn ?? null };
-  }
+  state.lastRtc = mergeListedRtc(state.lastRtc, list.rtc);
   reconcileHubStoreFromNodeList(d, list);
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   const hubIds = new Set([

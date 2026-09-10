@@ -124,7 +124,7 @@ MeshNode.dcBreaker?: {
 - Answerer 已绑定 epoch N 时，若再收到 offer N+1：打 `signal dropped cause=superseded`，关掉当前 PC（计为有意关闭，不记熔断），inbox 这条 offer 并立刻开一台新的 answerer PC。更旧的 epoch、`duplicate-answer`、以及 epoch 尚未确定时提前到达的 candidate 仍直接丢弃。
 - `bindSignaling` 带 `expect: 'offer' | 'answer'`，错类型丢弃，offerer 每次尝试只应用一个 answer；`setRemoteDescription` 失败打 info 且不再把 candidate 喂给 libdatachannel（先排队，等远端描述应用成功再 flush）。
 - `bindSignaling` 与 `trackPc` 纳入 `connectToPeer` 统一清理区；inbox 重放走 microtask 且先返回 unsubscribe；inbox 条目带 `receivedAt`，30 s 过期；offerer 无监听时不缓存 answer，无尝试时不缓存 candidate。
-- `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过。前台 4 s 竞速截止**不** abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 DC 仍在飞时也不提前清掉 `pending`。
+- `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过 DC、不另开 PC。single-flight 只去重 DC，不挡住 ws-secure；后台升级 DC 与 ws-secure 并行。前台 4 s 竞速截止不 abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 live 已建立时清掉 `pending`（DC 去重交给 `dcInflight`）。
 - 测试假件 `FakePeerConnection` 实现 `stable / have-local-offer / have-remote-offer` 状态机并复现 libdatachannel 的异常。
 
 ### ICE / 拨号

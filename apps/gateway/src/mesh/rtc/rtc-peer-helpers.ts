@@ -22,6 +22,9 @@ import {
 export type { SignalingAttemptState } from './rtc-signal-apply';
 export { createRtcSignalApplier, createSignalingAttemptState } from './rtc-signal-apply';
 
+export const PEER_CHANNEL_LABEL = 'peer';
+export const SESS_CHANNEL_LABEL = 'sess';
+
 export type LocalDescriptionEvent = { sdp: string; type: string };
 
 export type LocalDescriptionHub = {
@@ -129,6 +132,36 @@ export function remainingDeadlineMs(deadline: number, message: string): number {
   return remaining;
 }
 
+export function abortErrorFromSignal(signal: AbortSignal): Error {
+  const reason = signal.reason;
+  if (reason instanceof Error) return reason;
+  const err = new Error(typeof reason === 'string' ? reason : 'aborted');
+  err.name = 'AbortError';
+  return err;
+}
+
+export function raceWithAbort<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return work;
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(abortErrorFromSignal(signal));
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+    signal.addEventListener('abort', onAbort, { once: true });
+    work.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
 export function waitForLocalFingerprint(
   pc: PeerConnectionLike,
   latest: LocalDescriptionEvent | null,
@@ -153,7 +186,7 @@ export function waitForLocalFingerprint(
 }
 
 export function logCreatedChannel(dc: DataChannelLike, peer: string): DataChannelLike {
-  rtcLog('datachannel created', { peer, label: dc.getLabel?.() ?? 'peer' });
+  rtcLog('datachannel created', { peer, label: dc.getLabel?.() ?? PEER_CHANNEL_LABEL });
   return dc;
 }
 
@@ -174,7 +207,7 @@ export function attachPcDiagnostics(
     rtcLogIceFailed(peer, trace);
   };
   const noteSelected = () => {
-    if (progress) progress.selectedPair = Boolean(pc.getSelectedCandidatePair?.());
+    if (progress) progress.selectedPair ||= Boolean(pc.getSelectedCandidatePair?.());
     logSelectedPair(pc, peer);
   };
   pc.onGatheringStateChange?.((state) => {
@@ -250,7 +283,7 @@ function logSelectedPair(pc: PeerConnectionLike, peer: string): void {
 }
 
 export function bindChannelDiagnostics(dc: DataChannelLike, peer: string): void {
-  const label = dc.getLabel?.() ?? 'peer';
+  const label = dc.getLabel?.() ?? PEER_CHANNEL_LABEL;
   dc.onOpen(() => {
     rtcLog('datachannel open', { peer, label });
   });

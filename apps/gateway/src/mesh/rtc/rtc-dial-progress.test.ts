@@ -14,6 +14,14 @@ describe('rtcFailureStage', () => {
     progress.channelOpen = true;
     expect(rtcFailureStage(progress)).toBe('handshake');
   });
+
+  test('most-advanced progress wins when gathering is still incomplete', () => {
+    const progress = createRtcDialProgress();
+    progress.selectedPair = true;
+    expect(rtcFailureStage(progress)).toBe('dtls');
+    progress.channelOpen = true;
+    expect(rtcFailureStage(progress)).toBe('handshake');
+  });
 });
 
 describe('rtcGatherFailureHint', () => {
@@ -36,6 +44,18 @@ describe('rtcGatherFailureHint', () => {
         { stun: ['stun:example:3478'], turn: null },
         { srflx: 1, relay: 0 }
       )
+    ).toBeNull();
+  });
+
+  test('does not rewrite a dtls/handshake timeout as stun unconfigured', () => {
+    const progress = createRtcDialProgress();
+    progress.selectedPair = true;
+    expect(
+      rtcGatherFailureHint(progress, { stun: [], turn: null }, { srflx: 0, relay: 0 })
+    ).toBeNull();
+    progress.channelOpen = true;
+    expect(
+      rtcGatherFailureHint(progress, { stun: [], turn: null }, { srflx: 0, relay: 0 })
     ).toBeNull();
   });
 });

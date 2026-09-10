@@ -882,7 +882,7 @@ describeRtc('RtcPeerManager', () => {
     const summary = lines.find((line) => line.includes('gather summary'));
     expect(summary).toBeTruthy();
     expect(summary).toContain(`peer=${b.nodeId}`);
-    expect(summary).toContain('attempt=dc:9');
+    expect(summary).toContain('attempt=dc:9/1');
     expect(summary).toMatch(/host=\d+/);
     expect(summary).toContain('srflx=1');
     expect(summary).toContain('stun_count=0');
@@ -942,5 +942,79 @@ describeRtc('RtcPeerManager', () => {
     expect(
       fake.connections.filter((row) => row.name.includes(offererId.toLowerCase())).length
     ).toBeGreaterThan(1);
+  });
+
+  test('answerer retry rejects a stale offer below lastOfferEpoch', async () => {
+    const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 250 });
+    const answerer = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? right : left;
+    const offererId = answerer === left ? b.nodeId : a.nodeId;
+    const selfId = answerer === left ? a.nodeId : b.nodeId;
+    const listeners = new Set<(msg: import('../mesh-deps').RtcSignalMessage) => void>();
+    let offers = 0;
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage(cb) {
+        listeners.add(cb);
+        offers += 1;
+        queueMicrotask(() => {
+          if (offers === 1) {
+            cb({
+              rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+              from: 'node',
+              to: selfId,
+              sdp: encodeSdpSignal({
+                type: 'offer',
+                sdp: 'v=0\r\na=ice-ufrag:offer-2',
+                epoch: 2,
+              }),
+            });
+            cb({
+              rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+              from: 'node',
+              to: selfId,
+              sdp: encodeSdpSignal({
+                type: 'offer',
+                sdp: 'v=0\r\na=ice-ufrag:offer-3',
+                epoch: 3,
+              }),
+            });
+            return;
+          }
+          cb({
+            rtcSession: `dc:${a.nodeId}:${b.nodeId}`,
+            from: 'node',
+            to: selfId,
+            sdp: encodeSdpSignal({
+              type: 'offer',
+              sdp: 'v=0\r\na=ice-ufrag:stale-2',
+              epoch: 2,
+            }),
+          });
+        });
+        return () => listeners.delete(cb);
+      },
+    };
+    await expect(answerer.connectToPeer(offererId, signaling)).rejects.toBeTruthy();
+    const pcs = fake.connections.filter((row) => row.name.includes(offererId.toLowerCase()));
+    expect(pcs.length).toBeGreaterThan(1);
+    expect(pcs.at(-1)?.signaling).toBe('stable');
+  });
+
+  test('an aborted connect closes the PC without waiting out the handshake timeout', async () => {
+    const { left, b, fake } = setup({ handshakeTimeoutMs: 2_000 });
+    const abort = new AbortController();
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage() {
+        return () => {};
+      },
+    };
+    const connect = left.connectToPeer(b.nodeId, signaling, { signal: abort.signal });
+    await Bun.sleep(20);
+    abort.abort();
+    const started = performance.now();
+    await expect(connect).rejects.toBeTruthy();
+    expect(performance.now() - started).toBeLessThan(300);
+    expect(fake.connections.at(-1)?.closed).toBe(true);
   });
 });

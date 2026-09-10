@@ -5,8 +5,13 @@ import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
 import { handshakeDataChannel } from './dc-handshake';
 import { type RtcSignaling, encodeCandidateSignal, encodeSdpSignal, isEmptyCandidate } from './ice';
-import type { DtlsFingerprint, PeerConnectionLike } from './native';
-import type { RtcDialProgress } from './rtc-dial-progress';
+import type { DtlsFingerprint, IceServerConfig, PeerConnectionLike } from './native';
+import {
+  type RtcDialProgress,
+  createRtcDialProgress,
+  isRtcTimeoutFailure,
+  isSupersededDcLoss,
+} from './rtc-dial-progress';
 import {
   type IceCandidateTrace,
   type RtcLogContext,
@@ -15,18 +20,24 @@ import {
   rtcLogCandidate,
 } from './rtc-log';
 import {
+  PEER_CHANNEL_LABEL,
+  attachPcDiagnostics,
   bindChannelDiagnostics,
   createRtcSignalApplier,
   createSignalingAttemptState,
   logCreatedChannel,
+  logRtcDialTimeout,
+  raceWithAbort,
   remainingDeadlineMs,
+  timeoutFailureMessage,
   waitChannelOpen,
   waitDataChannel,
 } from './rtc-peer-helpers';
 
 export type BindPeerSignalingHooks = {
   ctx?: RtcLogContext;
-  onSuperseded?: () => void;
+  lastOfferEpoch?: number;
+  onSuperseded?: (epoch?: number) => void;
   onEpoch?: (epoch: number) => void;
   onRemoteDescriptionApplied?: () => void;
 };
@@ -46,7 +57,7 @@ export function bindPeerSignaling(
   hooks?: BindPeerSignalingHooks
 ): () => void {
   const iceTrace = trace ?? createIceCandidateTrace();
-  const state = createSignalingAttemptState(epoch);
+  const state = createSignalingAttemptState(epoch, hooks?.lastOfferEpoch);
   state.logFields = { ...hooks?.ctx, peer: to, epoch };
   state.onSuperseded = hooks?.onSuperseded;
   state.onEpoch = (next) => {
@@ -108,7 +119,7 @@ export async function runPeerHandshake(opts: {
 }> {
   const { pc, peerNodeId, offerer, deadline, progress } = opts;
   const channelP = offerer
-    ? Promise.resolve(logCreatedChannel(pc.createDataChannel('peer'), peerNodeId))
+    ? Promise.resolve(logCreatedChannel(pc.createDataChannel(PEER_CHANNEL_LABEL), peerNodeId))
     : waitDataChannel(
         pc,
         remainingDeadlineMs(deadline, 'datachannel open timeout'),
@@ -148,4 +159,122 @@ export async function runPeerHandshake(opts: {
     peerNodeId: hs.peerNodeId,
     role: offerer ? 'initiator' : 'acceptor',
   };
+}
+
+export type PeerConnectAttemptHooks = {
+  onLocalDescription: (
+    pc: PeerConnectionLike,
+    listener: (description: { sdp: string; type: string }) => void
+  ) => () => void;
+  waitLocalFingerprint: (pc: PeerConnectionLike, timeoutMs: number) => Promise<DtlsFingerprint>;
+  rememberOfferEpoch: (epoch?: number) => void;
+  noteSummary: (outcome: 'success' | 'failure', durationMs: number) => void;
+  untrackAndClose: (pc: PeerConnectionLike) => void;
+};
+
+export async function runPeerConnectAttempt(opts: {
+  pc: PeerConnectionLike;
+  peerNodeId: string;
+  signaling: RtcSignaling;
+  rtcSession: string;
+  peer: string;
+  offerer: boolean;
+  deadline: number;
+  ctx: RtcLogContext;
+  ice: IceServerConfig;
+  epoch?: number;
+  lastOfferEpoch?: number;
+  signal?: AbortSignal;
+  identity: MeshIdentity;
+  userStore: UserStore;
+  liveness: Omit<DataChannelLinkOptions, 'reassembler' | 'peer' | 'liveness'> | false;
+  dialStartedAt: number;
+  hooks: PeerConnectAttemptHooks;
+}): Promise<{
+  link: DataChannelLink;
+  pc: PeerConnectionLike;
+  peerNodeId: string;
+  role: 'initiator' | 'acceptor';
+}> {
+  const { pc, peerNodeId, offerer, deadline, ctx, ice, hooks } = opts;
+  const trace = createIceCandidateTrace();
+  const progress = createRtcDialProgress();
+  let unsubDiag = () => {};
+  let unsubSignaling = () => {};
+  let summaryNoted = false;
+  let supersededSync = false;
+  let rejectSuperseded: ((err: Error) => void) | null = null;
+  const superseded = new Promise<never>((_, reject) => {
+    rejectSuperseded = reject;
+  });
+  try {
+    unsubDiag = attachPcDiagnostics(pc, peerNodeId, trace, { ice, progress, ctx });
+    unsubSignaling = bindPeerSignaling(
+      pc,
+      opts.signaling,
+      opts.rtcSession,
+      opts.peer,
+      offerer ? 'answer' : 'offer',
+      hooks.onLocalDescription,
+      opts.epoch,
+      trace,
+      {
+        ctx,
+        lastOfferEpoch: opts.lastOfferEpoch,
+        onSuperseded: (nextEpoch) => {
+          hooks.rememberOfferEpoch(nextEpoch);
+          supersededSync = true;
+          unsubSignaling();
+          rejectSuperseded?.(new Error('superseded'));
+        },
+        onEpoch: (next) => {
+          ctx.epoch = next;
+          hooks.rememberOfferEpoch(next);
+        },
+        onRemoteDescriptionApplied: () => {
+          progress.remoteDescriptionApplied = true;
+        },
+      }
+    );
+    if (supersededSync) unsubSignaling();
+    const work = runPeerHandshake({
+      pc,
+      peerNodeId,
+      offerer,
+      deadline,
+      progress,
+      identity: opts.identity,
+      userStore: opts.userStore,
+      liveness: opts.liveness,
+      waitLocalFingerprint: hooks.waitLocalFingerprint,
+    });
+    void work.catch(() => undefined);
+    const result = await raceWithAbort(Promise.race([work, superseded]), opts.signal);
+    hooks.noteSummary('success', performance.now() - opts.dialStartedAt);
+    summaryNoted = true;
+    result.link.onClose(() => {
+      unsubSignaling();
+      unsubDiag();
+      hooks.untrackAndClose(pc);
+    });
+    return result;
+  } catch (err) {
+    if (!summaryNoted && !isSupersededDcLoss(err)) {
+      hooks.noteSummary('failure', performance.now() - opts.dialStartedAt);
+    }
+    const reason = err instanceof Error ? err.message : String(err);
+    if (isRtcTimeoutFailure(reason)) {
+      logRtcDialTimeout(peerNodeId, pc, trace, progress, ice, reason);
+    }
+    unsubSignaling();
+    unsubDiag();
+    hooks.untrackAndClose(pc);
+    if (isRtcTimeoutFailure(reason)) {
+      throw new PeerHandshakeError(
+        'timeout',
+        timeoutFailureMessage(progress, ice, trace.localCounts, reason)
+      );
+    }
+    throw err;
+  }
 }

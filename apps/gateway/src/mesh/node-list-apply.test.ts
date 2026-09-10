@@ -192,4 +192,23 @@ describe('applyUplinkNodeList STUN guard', () => {
       close();
     }
   });
+
+  test('empty hub STUN with TURN still adopts TURN and keeps local STUN', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const d = applyDeps(hubStore, userStore);
+      d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
+      const turn = { urls: ['turn:hub:3478'], username: 'u', credential: 'p' };
+      applyUplinkNodeList(d, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:local:3478'], turn });
+
+      const fresh = applyDeps(hubStore, userStore);
+      applyUplinkNodeList(fresh, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
+      expect(fresh.state.lastRtc).toEqual({ stun: [], turn });
+    } finally {
+      close();
+    }
+  });
 });

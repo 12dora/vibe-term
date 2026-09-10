@@ -44,6 +44,29 @@ describe('createRtcSignalApplier', () => {
     expect(remote).toHaveLength(1);
   });
 
+  test('rejects offers older than lastOfferEpoch even when expected is unset', () => {
+    const { pc, remote } = fakePc();
+    const state = createSignalingAttemptState(undefined, 4);
+    const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0-stale', epoch: 3 }),
+    });
+    expect(remote).toHaveLength(0);
+    expect(state.epoch).toBeUndefined();
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 4 }),
+    });
+    expect(remote).toHaveLength(1);
+    expect(state.epoch).toBe(4);
+    expect(state.lastOfferEpoch).toBe(4);
+  });
+
   test('a newer offer supersedes the in-flight answerer PC', () => {
     const { pc, remote } = fakePc();
     const state = createSignalingAttemptState(3);
