@@ -39,6 +39,21 @@ export class AuthError extends CliError {
   }
 }
 
+/**
+ * 服务端明确拒绝（403 且不是会话问题，如 `outside_roots` / `FORBIDDEN`）：退出码 1，
+ * `code` 保留服务端给的业务码，message 里必须带上它。重登录救不了这类错误。
+ */
+export class PermissionError extends CliError {
+  constructor(
+    message: string,
+    readonly code?: string,
+    hint?: string
+  ) {
+    super(message, EXIT_GENERIC, hint);
+    this.name = 'PermissionError';
+  }
+}
+
 export class NotFoundError extends CliError {
   constructor(message: string, hint?: string) {
     super(message, EXIT_NOT_FOUND, hint);

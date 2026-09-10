@@ -9,7 +9,14 @@ import {
   SET_SESSION_HEADER,
   readHeaderPair,
 } from '@vibeterm/shared/http/mesh-headers';
-import { AuthError, CliError, EXIT_GENERIC, NetworkError, NotFoundError } from './errors';
+import {
+  AuthError,
+  CliError,
+  EXIT_GENERIC,
+  NetworkError,
+  NotFoundError,
+  PermissionError,
+} from './errors';
 import type { NodeSession, SessionStore } from './session-store';
 import { DEFAULT_TLS, type TlsSettings, fetchTlsInit } from './tls';
 
@@ -251,17 +258,10 @@ export class HttpClient {
     }
   }
 
-  /** 非 2xx 一律抛：401 / 会话失效 → 退出码 3 并指路 `vibeterm login`。 */
+  /** 非 2xx 一律抛；状态码 → 退出码的映射见 `httpStatusError`。 */
   async assertOk(nodeId: string, response: Response, path: string): Promise<Response> {
     if (response.ok) return response;
-    const body = await peekBody(response);
-    if (response.status === 401 || response.status === 403) {
-      throw loginRequiredError(nodeId, body);
-    }
-    if (response.status === 404) {
-      throw new NotFoundError(`${path} → 404 ${body || 'not found'}`);
-    }
-    throw new CliError(`${path} → HTTP ${response.status} ${body}`.trim(), EXIT_GENERIC);
+    throw httpStatusError(nodeId, path, response.status, await peekBody(response));
   }
 
   async json<T>(
@@ -344,6 +344,43 @@ function reasonFromBody(body: string): string | null {
     // 非 JSON 体：没有业务码
   }
   return null;
+}
+
+/**
+ * 403 里仍属于「会话 / 需要登录」的判词。其余 403（`outside_roots`、`FORBIDDEN`、
+ * `UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，重新登录也没用。
+ */
+function isAuthErrorCode(code: string | null): boolean {
+  if (!code) return false;
+  return (
+    REJECTED_SESSION_REASONS.has(code) ||
+    code.startsWith('SESSION_') ||
+    code.endsWith('LOGIN_REQUIRED')
+  );
+}
+
+function forbiddenError(path: string, code: string | null, body: string): PermissionError {
+  const detail = body && body !== code ? `: ${body}` : '';
+  return new PermissionError(`${path} → ${code ?? 'forbidden'}${detail}`.trim(), code ?? undefined);
+}
+
+/**
+ * 非 2xx 响应 → CliError：401 与会话类 403 提示重新登录（退出码 3），其余 403 是权限
+ * 不足（退出码 1，message 带服务端的业务码），404 → 4，其它 → 1。
+ */
+export function httpStatusError(
+  nodeId: string,
+  path: string,
+  status: number,
+  body: string
+): CliError {
+  const code = reasonFromBody(body);
+  if (status === 401 || (status === 403 && isAuthErrorCode(code))) {
+    return loginRequiredError(nodeId, body);
+  }
+  if (status === 403) return forbiddenError(path, code, body);
+  if (status === 404) return new NotFoundError(`${path} → 404 ${body || 'not found'}`);
+  return new CliError(`${path} → HTTP ${status} ${body}`.trim(), EXIT_GENERIC);
 }
 
 export function loginRequiredError(nodeId: string, body: string): AuthError {

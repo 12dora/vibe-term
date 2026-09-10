@@ -4,7 +4,7 @@
 import { sleepOrAbort } from '@vibeterm/shared/async';
 import type { CliContext } from './context';
 import { CliError, InterruptError, UsageError, throwIfAborted } from './errors';
-import { assertFilesOk, filesJson, resolveMeshId } from './files-api';
+import { filesJson, resolveMeshId } from './files-api';
 import { consumeNdjson } from './transfer-ndjson';
 import { type CopyProgress, pctOf } from './transfer-progress';
 
@@ -124,7 +124,7 @@ async function followJob(
     `/api/transfer/jobs/${encodeURIComponent(initial.jobId)}/events`,
     { timeoutMs: null, signal }
   );
-  await assertFilesOk(sourceNodeId, `/api/transfer/jobs/${initial.jobId}/events`, response);
+  await ctx.http.assertOk(sourceNodeId, response, `/api/transfer/jobs/${initial.jobId}/events`);
   await consumeNdjson<TransferJobEvent>(response, (event) => {
     snapshot = applyEvent(snapshot, event);
     if (event.type === 'progress') {

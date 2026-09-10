@@ -1,12 +1,20 @@
-// 文件 REST：根列表、解析、list/stat/raw。403 的 outside_roots 不当成未登录。
+// 文件 REST：根列表、解析、list/stat/raw。错误映射统一交给 `http.assertOk`
+// （403 的 outside_roots 等业务码是权限错误，不当成未登录）。
 
+import { ApiClient } from '@vibeterm/api-client/client';
+import { FileApiError } from '@vibeterm/api-client/file-errors';
+import {
+  type MkdirPathRequest,
+  type MkdirPathResponse,
+  mkdirPath,
+} from '@vibeterm/api-client/file-resources';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError, UsageError } from './errors';
 import { VIRTUAL_FS_ROOT_ID, joinRootPath } from './files-path';
 import type { HttpClient, RequestOptions } from './http';
-import { loginRequiredError } from './http';
+import { httpStatusError } from './http';
 
 export interface FileRootDto {
   id: string;
@@ -64,7 +72,10 @@ function errorCode(body: string): string | null {
 }
 
 const NOT_FOUND_CODES = new Set(['not_found', 'root_not_found', 'device_not_found']);
-const DENIED_CODES = new Set(['outside_roots', 'root_disabled', 'permission_denied']);
+/** 网关全局 404 的稳定业务码（apps/gateway/src/api/index.ts）。 */
+const ROUTE_NOT_FOUND_CODE = 'route_not_found';
+/** 更旧的节点只回本地化文案；英文站点是 `Not found`，只保留这一层兜底。 */
+const LEGACY_ROUTE_NOT_FOUND_TEXT = /^not\s?found$/i;
 
 export async function filesJson<T>(
   http: HttpClient,
@@ -85,42 +96,14 @@ export async function filesJson<T>(
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
-  if (response.ok) return readOkBody<T>(response);
-  throw translateFilesError(nodeId, path, response.status, (await response.text()).trim());
-}
-
-/**
- * `http.assertOk` 把所有 403 当成未登录（exit 3）。文件路由的
- * `outside_roots` / `root_disabled` / `permission_denied` 应走 exit 1。
- * 不要改 core/http.ts（别的 agent 在维护）；所有 files/transfer 的 fetch+assert
- * 都走这里。
- */
-export async function assertFilesOk(
-  nodeId: string,
-  path: string,
-  response: Response
-): Promise<Response> {
-  if (response.ok) return response;
-  throw translateFilesError(nodeId, path, response.status, (await response.text()).trim());
+  await http.assertOk(nodeId, response, path);
+  return readOkBody<T>(response);
 }
 
 async function readOkBody<T>(response: Response): Promise<T> {
   if (response.status === 204) return undefined as T;
   const text = await response.text();
   return text ? (JSON.parse(text) as T) : (undefined as T);
-}
-
-function translateFilesError(nodeId: string, path: string, status: number, text: string): never {
-  const code = errorCode(text);
-  if (status === 401) throw loginRequiredError(nodeId, text);
-  if (status === 403 && code && DENIED_CODES.has(code)) {
-    throw new CliError(`${path} → ${code}${text ? `: ${text}` : ''}`.trim());
-  }
-  if (status === 404 || (code !== null && NOT_FOUND_CODES.has(code))) {
-    throw new NotFoundError(`${path} → ${code ?? 'not found'}`);
-  }
-  if (status === 403) throw loginRequiredError(nodeId, text);
-  throw new CliError(`${path} → HTTP ${status} ${text}`.trim());
 }
 
 export class MkdirUnsupportedError extends CliError {
@@ -134,32 +117,63 @@ export class MkdirUnsupportedError extends CliError {
   }
 }
 
-/** 路由不存在（旧节点）与业务 `not_found`（父目录缺失）都是 404，靠 body 区分。 */
+/**
+ * 路由不存在（旧节点）与业务 `not_found`（父目录缺失）都是 404，靠 body 区分：
+ * 优先认网关的稳定码 `route_not_found`，没有该字段时才回退英文文案 / 无码兜底。
+ */
 export function isMissingRoute(status: number, text: string): boolean {
   if (status !== 404) return false;
   const code = errorCode(text);
-  if (code !== null && NOT_FOUND_CODES.has(code)) return false;
-  if (code === 'Not found' || code === 'Not Found') return true;
-  if (code === null && /^not found$/i.test(text)) return true;
-  return code === null;
+  if (code === ROUTE_NOT_FOUND_CODE) return true;
+  if (code === null) return true;
+  if (NOT_FOUND_CODES.has(code)) return false;
+  return LEGACY_ROUTE_NOT_FOUND_TEXT.test(code);
 }
 
+/**
+ * 把 CLI 的 `HttpClient` 包成 api-client 的 `ApiClient`：node 前缀、cookie 罐、Origin、
+ * TLS、超时全留在 `HttpClient` 里，端点函数只负责 URL 与请求体。
+ */
+function nodeApiClient(
+  http: HttpClient,
+  nodeId: string,
+  hooks: { signal?: AbortSignal; onErrorBody?: (text: string) => void } = {}
+): ApiClient {
+  return new ApiClient('', async (url, init) => {
+    const { signal, ...rest } = init ?? {};
+    const effective = signal ?? hooks.signal;
+    const response = await http.fetch(nodeId, url, {
+      ...rest,
+      ...(effective ? { signal: effective } : {}),
+    });
+    if (!response.ok && hooks.onErrorBody) {
+      hooks.onErrorBody((await response.clone().text()).trim());
+    }
+    return response;
+  });
+}
+
+/** 复用 api-client 的 `mkdirPath`（URL / 请求体唯一来源），错误按 CLI 的退出码语义翻译。 */
 export async function mkdirRemote(
   http: HttpClient,
   nodeId: string,
-  body: { rootId: string; path: string; recursive?: boolean },
+  body: MkdirPathRequest,
   signal?: AbortSignal
-): Promise<{ path: string; created: boolean }> {
-  const response = await http.fetch(nodeId, '/api/files/mkdir', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-    ...(signal ? { signal } : {}),
+): Promise<MkdirPathResponse> {
+  let errorBody = '';
+  const client = nodeApiClient(http, nodeId, {
+    signal,
+    onErrorBody: (text) => {
+      errorBody = text;
+    },
   });
-  if (response.ok) return readOkBody(response);
-  const text = (await response.text()).trim();
-  if (isMissingRoute(response.status, text)) throw new MkdirUnsupportedError(nodeId);
-  throw translateFilesError(nodeId, '/api/files/mkdir', response.status, text);
+  try {
+    return await mkdirPath(body, client);
+  } catch (error) {
+    if (!(error instanceof FileApiError)) throw error;
+    if (isMissingRoute(error.status, errorBody)) throw new MkdirUnsupportedError(nodeId);
+    throw httpStatusError(nodeId, '/api/files/mkdir', error.status, errorBody);
+  }
 }
 
 export async function listFileRoots(http: HttpClient, nodeId: string): Promise<FileRootDto[]> {

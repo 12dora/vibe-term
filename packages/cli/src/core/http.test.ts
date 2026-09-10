@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { SESSION_RENEWED_HEADER, SET_SESSION_HEADER } from '@vibeterm/shared/http/mesh-headers';
-import { AuthError, NetworkError, NotFoundError } from './errors';
+import { AuthError, NetworkError, NotFoundError, PermissionError } from './errors';
 import {
   type FetchLike,
   HttpClient,
@@ -148,6 +148,61 @@ describe('HttpClient', () => {
     const error = (await http.json('self', 'GET', '/api/devices').catch((err) => err)) as AuthError;
     expect(error.code).toBe('via_mismatch');
     expect(error.hint).toBe('run: vibeterm login');
+  });
+
+  test('403 with an auth code still asks for a fresh login (exit 3)', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http.json(NODE, 'GET', '/api/devices').catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('NODE_LOGIN_REQUIRED');
+  });
+
+  test('403 with a plain permission code is exit 1 and keeps the server code', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ error: 'FORBIDDEN', code: 'FORBIDDEN' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http
+      .json(NODE, 'GET', '/api/mesh-internal/x')
+      .catch((err) => err)) as PermissionError;
+    expect(error).toBeInstanceOf(PermissionError);
+    expect(error).not.toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(1);
+    expect(error.code).toBe('FORBIDDEN');
+    expect(error.message).toContain('FORBIDDEN');
+  });
+
+  test('403 outside_roots is a permission error, not a login prompt', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ error: 'outside_roots', code: 'outside_roots' }), {
+          status: 403,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http
+      .json('self', 'GET', '/api/files/list')
+      .catch((err) => err)) as PermissionError;
+    expect(error.exitCode).toBe(1);
+    expect(error.code).toBe('outside_roots');
+  });
+
+  test('403 without a body is still a permission error', async () => {
+    const http = client(async () => new Response('', { status: 403 }));
+    const error = (await http.json('self', 'GET', '/api/x').catch((err) => err)) as PermissionError;
+    expect(error).toBeInstanceOf(PermissionError);
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('forbidden');
   });
 
   test('404 becomes a not-found error (exit 4)', async () => {

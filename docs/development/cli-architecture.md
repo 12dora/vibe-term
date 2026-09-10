@@ -90,7 +90,7 @@ interface CliContext {
 }
 ```
 
-- `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛（401/403 → 退出码 3 并带 `vibeterm login --node <id>` 提示，404 → 4，其余 → 1，传输失败 → 5）。
+- `ctx.http.json(nodeId, method, path, body?)`：非 2xx 直接抛。401、以及 body 里 `error`/`code` 是会话判词的 403（`UNAUTHORIZED`、`via_mismatch`、`expired`、`revoked`、`SESSION_*`、`*LOGIN_REQUIRED`）→ 退出码 3 并带 `vibeterm login --node <id>` 提示；其余 403（`outside_roots`、`FORBIDDEN`、`UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，抛 `PermissionError` → 退出码 1 且 message 带上服务端的业务码；404 → 4，其余 → 1，传输失败 → 5。这套映射只有 `httpStatusError()` 一份，文件族不再有自己的翻译层。
 - `ctx.http.fetch(nodeId, path, init)`：不对状态码做判断，自己处理时用它；`ctx.http.assertOk()` 补上统一翻译。
 - `ctx.http.ndjson(nodeId, path)`：逐行 yield 已解析对象，默认不设超时（长流用）。
 - `ctx.http.bytes(nodeId, path)`：二进制。`RequestOptions.timeoutMs` 可按请求覆盖 `--timeout`，`null` 表示不设。
@@ -205,7 +205,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm files`
 
-子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录。旧节点探测（mkdir 路由不存在）必须匹配响应 JSON 的 `code === 'route_not_found'`，无该字段时再回退英文 `Not found` 以兼容更旧节点。
+子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录——由 `core/http.ts` 的 `httpStatusError()` 统一判定，`files-api.ts` 只调 `http.assertOk()`。旧节点探测（mkdir 路由不存在）必须匹配响应 JSON 的 `code === 'route_not_found'`（网关全局 404 的稳定码，`apps/gateway/src/api/index.ts`），无该字段时再回退英文 `Not found` / 无业务码的裸 404 以兼容更旧节点；`error`/`code` 为业务 `not_found|root_not_found|device_not_found` 时不是缺路由。`mkdirRemote()` 直接复用 `@vibeterm/api-client` 的 `mkdirPath()`（URL 与请求体唯一来源，CLI 侧只把 `ctx.http` 包成 `ApiClient` 注入，再把 `FileApiError` 翻成 CLI 的退出码语义），避免两个客户端各写一份。
 
 `--json` 形状：
 

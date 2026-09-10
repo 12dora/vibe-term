@@ -5,7 +5,7 @@ import { open } from 'node:fs/promises';
 import { sleepOrAbort } from '@vibeterm/shared/async';
 import { ProgressTracker, type PushTransport, runPush } from '@vibeterm/transfer';
 import { CliError, InterruptError, rethrowIfAborted, throwIfAborted } from './errors';
-import { assertFilesOk, filesJson, filesQuery } from './files-api';
+import { filesJson, filesQuery } from './files-api';
 import type { HttpClient } from './http';
 import { consumeNdjson } from './transfer-ndjson';
 import { type CopyProgress, pctOf } from './transfer-progress';
@@ -224,7 +224,7 @@ async function commitUpload(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, `/api/files/upload/${uploadId}/commit`, response);
+  await http.assertOk(nodeId, response, `/api/files/upload/${uploadId}/commit`);
   let done = false;
   await consumeNdjson<CommitEvent>(response, (event) => {
     if (event.type === 'progress') {
@@ -307,7 +307,7 @@ async function prepareDownload(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, '/api/files/download/prepare', response);
+  await http.assertOk(nodeId, response, '/api/files/download/prepare');
   let downloadId = '';
   let size = 0;
   let fileName = name;
@@ -398,7 +398,7 @@ async function readContentOnce(input: {
     signal,
     timeoutMs: null,
   });
-  await assertFilesOk(nodeId, `/api/files/download/${downloadId}/content`, response);
+  await http.assertOk(nodeId, response, `/api/files/download/${downloadId}/content`);
   if (received > 0 && response.status !== 206) {
     received = 0;
     await handle.truncate(0);

@@ -6,7 +6,6 @@ import { UsageError } from '../core/errors';
 import {
   type FileEntryDto,
   type FileRootDto,
-  assertFilesOk,
   createFileRoot,
   deleteFileRoot,
   isHiddenName,
@@ -183,7 +182,7 @@ async function runCat(ctx: CliContext, positionals: string[]): Promise<undefined
     rawQuery(resolved.root.id, resolved.absPath),
     { timeoutMs: null }
   );
-  await assertFilesOk(resolved.nodeId, '/api/files/raw', response);
+  await ctx.http.assertOk(resolved.nodeId, response, '/api/files/raw');
   const body = response.body;
   if (!body) {
     ctx.out.raw(new Uint8Array(await response.arrayBuffer()));
