@@ -71,6 +71,30 @@ describe('parseRemoteFileRef', () => {
     expect(() => parseRemoteFileRef('')).toThrow(UsageError);
     expect(() => parseRemoteFileRef('/tmp/a')).toThrow(UsageError);
   });
+
+  test('rejects .. segments', () => {
+    expect(() => parseRemoteFileRef('home/../etc')).toThrow(UsageError);
+    expect(() => parseRemoteFileRef(`${UUID}:a/../../b`)).toThrow(UsageError);
+  });
+
+  test('trailing colon is the root itself', () => {
+    expect(parseRemoteFileRef('home:')).toEqual({ node: null, root: 'home', relpath: '' });
+    expect(parseRemoteFileRef(`${UUID}:`)).toEqual({ node: null, root: UUID, relpath: '' });
+    expect(parseRemoteFileRef(`${VIRTUAL_FS_ROOT_ID}:`)).toEqual({
+      node: null,
+      root: VIRTUAL_FS_ROOT_ID,
+      relpath: '',
+    });
+  });
+
+  test('a root named / is addressed by id', () => {
+    expect(parseRemoteFileRef(`${UUID}:/etc`)).toEqual({
+      node: null,
+      root: UUID,
+      relpath: '/etc',
+    });
+    expect(parseRemoteFileRef(`${UUID}:etc`)).toEqual({ node: null, root: UUID, relpath: 'etc' });
+  });
 });
 
 describe('joinRootPath', () => {
@@ -79,6 +103,7 @@ describe('joinRootPath', () => {
     expect(joinRootPath('/home/me', '/home/me/docs')).toBe('/home/me/docs');
     expect(joinRootPath('/home/me', '')).toBe('/home/me');
     expect(joinRootPath('/', 'etc')).toBe('/etc');
+    expect(() => joinRootPath('/home/me', '../etc')).toThrow(UsageError);
   });
 
   test('basename and dirname', () => {

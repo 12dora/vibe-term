@@ -5,7 +5,7 @@ import { fetchAuthMode } from './auth';
 import type { CliContext } from './context';
 import { CliError, NotFoundError, UsageError } from './errors';
 import { VIRTUAL_FS_ROOT_ID, joinRootPath } from './files-path';
-import type { HttpClient } from './http';
+import type { HttpClient, RequestOptions } from './http';
 import { loginRequiredError } from './http';
 
 export interface FileRootDto {
@@ -71,16 +71,36 @@ export async function filesJson<T>(
   nodeId: string,
   method: string,
   path: string,
-  body?: unknown
+  body?: unknown,
+  options: RequestOptions = {}
 ): Promise<T> {
-  const headers = new Headers();
-  if (body !== undefined) headers.set('content-type', 'application/json');
+  const { headers: extraHeaders, ...rest } = options;
+  const headers = new Headers(extraHeaders);
+  if (body !== undefined && !headers.has('content-type')) {
+    headers.set('content-type', 'application/json');
+  }
   const response = await http.fetch(nodeId, path, {
+    ...rest,
     method,
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (response.ok) return readOkBody<T>(response);
+  throw translateFilesError(nodeId, path, response.status, (await response.text()).trim());
+}
+
+/**
+ * `http.assertOk` 把所有 403 当成未登录（exit 3）。文件路由的
+ * `outside_roots` / `root_disabled` / `permission_denied` 应走 exit 1。
+ * 不要改 core/http.ts（别的 agent 在维护）；所有 files/transfer 的 fetch+assert
+ * 都走这里。
+ */
+export async function assertFilesOk(
+  nodeId: string,
+  path: string,
+  response: Response
+): Promise<Response> {
+  if (response.ok) return response;
   throw translateFilesError(nodeId, path, response.status, (await response.text()).trim());
 }
 
@@ -101,6 +121,45 @@ function translateFilesError(nodeId: string, path: string, status: number, text:
   }
   if (status === 403) throw loginRequiredError(nodeId, text);
   throw new CliError(`${path} → HTTP ${status} ${text}`.trim());
+}
+
+export class MkdirUnsupportedError extends CliError {
+  constructor(nodeId: string) {
+    super(
+      `node ${nodeId} does not support POST /api/files/mkdir`,
+      1,
+      'upgrade the node, or copy files into an existing directory (cp -r needs mkdir)'
+    );
+    this.name = 'MkdirUnsupportedError';
+  }
+}
+
+/** 路由不存在（旧节点）与业务 `not_found`（父目录缺失）都是 404，靠 body 区分。 */
+export function isMissingRoute(status: number, text: string): boolean {
+  if (status !== 404) return false;
+  const code = errorCode(text);
+  if (code !== null && NOT_FOUND_CODES.has(code)) return false;
+  if (code === 'Not found' || code === 'Not Found') return true;
+  if (code === null && /^not found$/i.test(text)) return true;
+  return code === null;
+}
+
+export async function mkdirRemote(
+  http: HttpClient,
+  nodeId: string,
+  body: { rootId: string; path: string; recursive?: boolean },
+  signal?: AbortSignal
+): Promise<{ path: string; created: boolean }> {
+  const response = await http.fetch(nodeId, '/api/files/mkdir', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+    ...(signal ? { signal } : {}),
+  });
+  if (response.ok) return readOkBody(response);
+  const text = (await response.text()).trim();
+  if (isMissingRoute(response.status, text)) throw new MkdirUnsupportedError(nodeId);
+  throw translateFilesError(nodeId, '/api/files/mkdir', response.status, text);
 }
 
 export async function listFileRoots(http: HttpClient, nodeId: string): Promise<FileRootDto[]> {

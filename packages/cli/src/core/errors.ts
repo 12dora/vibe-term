@@ -6,6 +6,8 @@ export const EXIT_USAGE = 2;
 export const EXIT_AUTH = 3;
 export const EXIT_NOT_FOUND = 4;
 export const EXIT_NETWORK = 5;
+/** SIGINT / SIGTERM 清理完后的约定退出码（128 + 2）。 */
+export const EXIT_INTERRUPTED = 130;
 
 export class CliError extends Error {
   constructor(
@@ -50,6 +52,23 @@ export class NetworkError extends CliError {
     super(message, EXIT_NETWORK, hint);
     this.name = 'NetworkError';
   }
+}
+
+/** 用户中断（SIGINT/SIGTERM）：清理完后退出 130。 */
+export class InterruptError extends CliError {
+  constructor(message = 'interrupted') {
+    super(message, EXIT_INTERRUPTED);
+    this.name = 'InterruptError';
+  }
+}
+
+export function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new InterruptError();
+}
+
+export function rethrowIfAborted(error: unknown, signal?: AbortSignal): never {
+  if (signal?.aborted || error instanceof InterruptError) throw new InterruptError();
+  throw error;
 }
 
 export function errorText(error: unknown): string {

@@ -55,7 +55,13 @@ const MAP = {
   updatedAt: 2,
 };
 
-function portFetch(options: { failMap?: boolean; exportRemoved?: boolean } = {}): {
+function portFetch(
+  options: {
+    failMap?: boolean;
+    failMapStatus?: number;
+    exportRemoved?: boolean;
+  } = {}
+): {
   fetch: FetchLike;
   calls: string[];
 } {
@@ -89,7 +95,9 @@ function portFetch(options: { failMap?: boolean; exportRemoved?: boolean } = {})
       });
     }
     if (path === '/api/portmap' && request.method === 'POST') {
-      if (options.failMap) return json({ error: { code: 'port_in_use' } }, 409);
+      if (options.failMap) {
+        return json({ error: { code: 'port_in_use' } }, options.failMapStatus ?? 409);
+      }
       return json({ map: MAP });
     }
     if (path === '/api/portmap' && request.method === 'GET') {
@@ -202,6 +210,29 @@ describe('vibeterm port', () => {
 
   test('rejects a bad map spec', async () => {
     const { ctx } = await testContext(portFetch().fetch);
-    expect(port.run(ctx, ['map', '80'])).rejects.toThrow(UsageError);
+    await expect(port.run(ctx, ['map', '80'])).rejects.toThrow(UsageError);
+  });
+
+  test('keeps the export on 5xx listen failure', async () => {
+    const fake = portFetch({ failMap: true, failMapStatus: 500 });
+    const { ctx } = await testContext(fake.fetch);
+    const error = (await port
+      .run(ctx, ['map', '15432', 'lab:127.0.0.1:5432'])
+      .catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.hint).toContain('port rm --export m1 --on');
+    expect(
+      fake.calls.some((row) => row.includes('DELETE') && row.includes('/api/portmap/exports/m1'))
+    ).toBe(false);
+  });
+
+  test('rm --export deletes the export on the target node', async () => {
+    const fake = portFetch();
+    const { ctx, stdout } = await testContext(fake.fetch, { json: true });
+    await port.run(ctx, ['rm', '--export', 'm1', '--on', 'lab']);
+    expect(
+      fake.calls.some((row) => row.includes('DELETE') && row.includes('/api/portmap/exports/m1'))
+    ).toBe(true);
+    expect(JSON.parse(stdout.text()).exportRemoved).toBe(true);
   });
 });

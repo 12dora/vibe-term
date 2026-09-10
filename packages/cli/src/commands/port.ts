@@ -1,10 +1,11 @@
 // `vibeterm port`：监听方 A 的映射 + 目标方 B 的放行，语义对齐 GUI 的 createPortMapping。
 
-import { flagString, parseArgv } from '../core/args';
+import { flagBool, flagString, parseArgv } from '../core/args';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
 import {
   createPortMapping,
+  deletePortExport,
   deletePortMapping,
   listPortMaps,
   patchPortMap,
@@ -17,6 +18,7 @@ const FLAGS = {
   on: 'string',
   name: 'string',
   'listen-host': 'string',
+  export: 'boolean',
 } as const;
 
 async function listenNode(
@@ -120,8 +122,15 @@ async function runRm(
   positionals: string[]
 ): Promise<undefined> {
   const id = positionals[0];
-  if (!id) throw new UsageError('usage: vibeterm port rm <id> [--on <node>]');
-  const result = await deletePortMapping(ctx, await listenNode(ctx, flags), id);
+  if (!id) throw new UsageError('usage: vibeterm port rm <id> [--on <node>] [--export]');
+  const nodeId = await listenNode(ctx, flags);
+  if (flagBool(flags, 'export')) {
+    await deletePortExport(ctx, nodeId, id);
+    if (ctx.globals.json) ctx.out.data({ removed: id, exportRemoved: true });
+    else ctx.out.line(`removed export ${id} on ${nodeId}`);
+    return;
+  }
+  const result = await deletePortMapping(ctx, nodeId, id);
   if (ctx.globals.json) ctx.out.data({ removed: id, exportRemoved: result.exportRemoved });
   else
     ctx.out.line(`removed ${id}${result.exportRemoved ? '' : ' (export still present on target)'}`);
@@ -170,10 +179,12 @@ export const command: Command = {
     '',
     '  map <listenPort> <targetNode>:<host>:<port> [--listen-host 127.0.0.1] [--name] [--on <node>]',
     '      POST export on B, then POST /api/portmap on A with the same mapId.',
-    '      If the listen map fails, the export is deleted (GUI pending-cleanup semantics).',
+    '      If A returns 4xx, the export is deleted. 5xx/network keeps it; clean up with',
+    '      `vibeterm port rm --export <mapId> --on <B>`.',
     '      --on selects the listening node A (default: entry self / --node).',
     '  ls [--on <node>]            GET /api/portmap (live counters)',
     '  rm <id> [--on <node>]       DELETE map; if exportRemoved is false, DELETE export on B',
+    '  rm --export <id> --on <B>   DELETE /api/portmap/exports/:id on B (indeterminate-create cleanup)',
     '  pause|resume <id> [--on]    PATCH { paused }',
     '  probe <node>:<host>:<port>  GET /api/portmap/probe and /target-probe on that node',
     '',

@@ -6,6 +6,7 @@ import { UsageError } from '../core/errors';
 import {
   type FileEntryDto,
   type FileRootDto,
+  assertFilesOk,
   createFileRoot,
   deleteFileRoot,
   isHiddenName,
@@ -182,7 +183,7 @@ async function runCat(ctx: CliContext, positionals: string[]): Promise<undefined
     rawQuery(resolved.root.id, resolved.absPath),
     { timeoutMs: null }
   );
-  await ctx.http.assertOk(resolved.nodeId, response, '/api/files/raw');
+  await assertFilesOk(resolved.nodeId, '/api/files/raw', response);
   const body = response.body;
   if (!body) {
     ctx.out.raw(new Uint8Array(await response.arrayBuffer()));
@@ -206,7 +207,10 @@ export const command: Command = {
     '  <node>:<rootId>:<relpath>     root id (UUID) + relative or /absolute path',
     '  <node>:<rootName>/<relpath>   root display name + relative path',
     '  <rootName>/<relpath>          uses --node or the entry itself',
+    '  <rootId>:  or  <rootName>:    trailing colon = the root itself',
     '  fs-root:/abs/path             virtual root when the node has no enabled roots',
+    'A root whose display name is "/" must be addressed by id: <rootId>:<relpath>.',
+    '".." path segments are rejected client-side.',
     '',
     'Subcommands:',
     '  roots [--node]                         list file roots',

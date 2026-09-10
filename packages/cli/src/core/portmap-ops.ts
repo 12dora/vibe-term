@@ -1,7 +1,9 @@
-// 端口映射：先在 B 建放行，再拿 mapId 去 A 建监听；第二步失败则撤掉第一步。
+// 端口映射：先在 B 建放行，再拿 mapId 去 A 建监听。
+// 回滚对齐 GUI：监听侧 4xx 明确没建成才撤放行；5xx/网络不确定则保留并提示
+// `vibeterm port rm --export <mapId> --on <B>`。
 
 import type { CliContext } from './context';
-import { CliError, NotFoundError } from './errors';
+import { AuthError, CliError, NetworkError, NotFoundError, UsageError, errorText } from './errors';
 import { filesJson, resolveMeshId } from './files-api';
 import { loginRequiredError } from './http';
 
@@ -96,16 +98,38 @@ export async function createPortMapping(
   } catch (error) {
     const existing = await findPortMap(ctx, input.listenNodeId, mapId);
     if (existing) return existing;
-    const removed = await deleteExport(ctx, input.targetNodeId, mapId);
-    if (!removed) {
-      throw new CliError(
-        `created export ${mapId} on ${input.targetNodeId} but the listen map failed; export was not removed`,
-        1,
-        `run: vibeterm port rm ${mapId} --on ${input.targetNodeId}`
-      );
+    if (!isDefiniteRejection(error)) {
+      throw keepExportError(mapId, input.targetNodeId, error);
     }
+    const removed = await deleteExport(ctx, input.targetNodeId, mapId);
+    if (!removed) throw keepExportError(mapId, input.targetNodeId, error);
     throw error;
   }
+}
+
+/** 4xx（含鉴权 / 找不到）= 监听肯定没落库；5xx 与网络错误算不确定。 */
+function isDefiniteRejection(error: unknown): boolean {
+  if (error instanceof NetworkError) return false;
+  if (error instanceof AuthError || error instanceof NotFoundError || error instanceof UsageError) {
+    return true;
+  }
+  if (error instanceof CliError) {
+    const match = /HTTP (\d{3})/.exec(error.message);
+    if (match) {
+      const status = Number(match[1]);
+      return status >= 400 && status < 500;
+    }
+    return false;
+  }
+  return false;
+}
+
+function keepExportError(mapId: string, targetNodeId: string, error: unknown): CliError {
+  return new CliError(
+    `created export ${mapId} on ${targetNodeId} but the listen map failed; export was kept (${errorText(error)})`,
+    1,
+    `run: vibeterm port rm --export ${mapId} --on ${targetNodeId}`
+  );
 }
 
 export async function deletePortMapping(
@@ -190,6 +214,17 @@ async function findPortMap(
     return maps.find((row) => row.id === mapId) ?? null;
   } catch {
     return null;
+  }
+}
+
+export async function deletePortExport(
+  ctx: CliContext,
+  nodeId: string,
+  mapId: string
+): Promise<void> {
+  const removed = await deleteExport(ctx, nodeId, mapId);
+  if (!removed) {
+    throw new CliError(`could not delete port export ${mapId} on ${nodeId}`);
   }
 }
 

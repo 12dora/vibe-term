@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Writable } from 'node:stream';
 import { buildContext } from '../core/context';
-import { NotFoundError, UsageError } from '../core/errors';
+import { CliError, NotFoundError, UsageError } from '../core/errors';
 import type { FetchLike } from '../core/http';
 import { command as files } from './files';
 
@@ -222,6 +222,23 @@ describe('vibeterm files', () => {
 
   test('rejects a missing subcommand', async () => {
     const { ctx } = await testContext(filesFetch());
-    expect(files.run(ctx, [])).rejects.toThrow(UsageError);
+    await expect(files.run(ctx, [])).rejects.toThrow(UsageError);
+  });
+
+  test('403 outside_roots is a permission error not login', async () => {
+    const { ctx } = await testContext(
+      filesFetch({
+        'GET /api/files/raw': () => json({ error: 'outside_roots', code: 'outside_roots' }, 403),
+      })
+    );
+    const error = (await files.run(ctx, ['cat', 'home/a.txt']).catch((err) => err)) as CliError;
+    expect(error).toBeInstanceOf(CliError);
+    expect(error.exitCode).toBe(1);
+    expect(error.message).toContain('outside_roots');
+  });
+
+  test('rejects .. in the path', async () => {
+    const { ctx } = await testContext(filesFetch());
+    await expect(files.run(ctx, ['ls', 'home/../etc'])).rejects.toThrow(UsageError);
   });
 });

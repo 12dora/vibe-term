@@ -4,8 +4,14 @@ import { mkdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { CliContext } from './context';
-import { CliError, UsageError } from './errors';
-import { type FileStatDto, resolveRemotePath, statRemote } from './files-api';
+import { CliError, InterruptError, UsageError, errorText, throwIfAborted } from './errors';
+import {
+  type FileStatDto,
+  MkdirUnsupportedError,
+  mkdirRemote,
+  resolveRemotePath,
+  statRemote,
+} from './files-api';
 import {
   isLocalPath,
   parseRemoteFileRef,
@@ -13,14 +19,17 @@ import {
   posixDirname,
   posixJoin,
 } from './files-path';
+import type { HttpClient } from './http';
 import { downloadRemoteFile, uploadLocalFile } from './transfer-local';
 import { type OnConflict, copyPeer } from './transfer-peer';
 import type { CopyProgress } from './transfer-progress';
-import { walkLocal, walkRemote } from './transfer-walk';
+import { emptyDirRels, walkLocal, walkRemote } from './transfer-walk';
 
 export interface CopyFlags {
   recursive: boolean;
   onConflict: OnConflict;
+  failOnSkip: boolean;
+  signal?: AbortSignal;
 }
 
 export interface CopyResult {
@@ -29,6 +38,29 @@ export interface CopyResult {
   kind: 'local-node' | 'node-local' | 'node-node';
   files: number;
   skipped: number;
+  errors: number;
+  truncated: boolean;
+}
+
+class RemoteDirCache {
+  private readonly seen = new Set<string>();
+
+  constructor(
+    private readonly http: HttpClient,
+    private readonly nodeId: string,
+    private readonly rootId: string
+  ) {}
+
+  async ensure(path: string, signal?: AbortSignal): Promise<void> {
+    if (this.seen.has(path)) return;
+    await mkdirRemote(
+      this.http,
+      this.nodeId,
+      { rootId: this.rootId, path, recursive: true },
+      signal
+    );
+    this.seen.add(path);
+  }
 }
 
 export function expandLocalPath(input: string): string {
@@ -100,6 +132,14 @@ async function copyLocalToNode(
     flags
   );
   if (!name) return emptyResult(localPath, destRefDisplay(dest), 'local-node', 1);
+  const dirs = new RemoteDirCache(ctx.http, dest.nodeId, dest.root.id);
+  try {
+    await dirs.ensure(destDir, flags.signal);
+  } catch (error) {
+    if (!(error instanceof MkdirUnsupportedError)) throw error;
+    const existingDir = await statRemoteSafe(ctx, dest.nodeId, dest.root.id, destDir);
+    if (existingDir?.type !== 'dir') throw error;
+  }
   await uploadLocalFile({
     http: ctx.http,
     nodeId: dest.nodeId,
@@ -109,6 +149,7 @@ async function copyLocalToNode(
     name,
     size: source.size,
     progress,
+    signal: flags.signal,
   });
   return {
     src: localPath,
@@ -116,6 +157,8 @@ async function copyLocalToNode(
     kind: 'local-node',
     files: 1,
     skipped: 0,
+    errors: 0,
+    truncated: false,
   };
 }
 
@@ -130,10 +173,43 @@ async function uploadTree(
   const destBase =
     destStat?.type === 'dir' ? posixJoin(dest.absPath, posixBasename(localRoot)) : dest.absPath;
   const walked = await walkLocal(localRoot);
-  const files = walked.filter((entry) => !entry.dir);
+  let skipped = walked.skipped.length;
+  for (const skip of walked.skipped) {
+    progress.emit({ type: 'item', path: skip.rel, reason: skip.reason });
+  }
+  const dirs = new RemoteDirCache(ctx.http, dest.nodeId, dest.root.id);
+  try {
+    await dirs.ensure(destBase, flags.signal);
+  } catch (error) {
+    if (!(error instanceof MkdirUnsupportedError)) throw error;
+    for (const rel of emptyDirRels(walked.entries)) {
+      skipped += 1;
+      progress.emit({ type: 'item', path: rel, reason: 'empty-dir' });
+    }
+    throw error;
+  }
+  for (const entry of walked.entries) {
+    if (entry.dir) await dirs.ensure(posixJoin(destBase, entry.rel), flags.signal);
+  }
+  return uploadTreeFiles(ctx, localRoot, dest, destBase, walked.entries, flags, progress, skipped);
+}
+
+async function uploadTreeFiles(
+  ctx: CliContext,
+  localRoot: string,
+  dest: Awaited<ReturnType<typeof resolveRemotePath>>,
+  destBase: string,
+  entries: Array<{ abs: string; rel: string; size: number; dir: boolean }>,
+  flags: CopyFlags,
+  progress: CopyProgress,
+  skippedStart: number
+): Promise<CopyResult> {
+  const files = entries.filter((entry) => !entry.dir);
   let uploaded = 0;
-  let skipped = 0;
+  let skipped = skippedStart;
+  let errors = 0;
   for (const file of files) {
+    throwIfAborted(flags.signal);
     const destDir = file.rel.includes('/') ? posixJoin(destBase, posixDirname(file.rel)) : destBase;
     const name = posixBasename(file.rel);
     const existing = await statRemoteSafe(ctx, dest.nodeId, dest.root.id, posixJoin(destDir, name));
@@ -146,19 +222,27 @@ async function uploadTree(
     );
     if (!picked.name) {
       skipped += 1;
+      progress.emit({ type: 'item', path: file.rel, reason: 'conflict' });
       continue;
     }
-    await uploadLocalFile({
-      http: ctx.http,
-      nodeId: dest.nodeId,
-      rootId: dest.root.id,
-      destDir: picked.destDir,
-      localPath: file.abs,
-      name: picked.name,
-      size: file.size,
-      progress,
-    });
-    uploaded += 1;
+    try {
+      await uploadLocalFile({
+        http: ctx.http,
+        nodeId: dest.nodeId,
+        rootId: dest.root.id,
+        destDir: picked.destDir,
+        localPath: file.abs,
+        name: picked.name,
+        size: file.size,
+        progress,
+        signal: flags.signal,
+      });
+      uploaded += 1;
+    } catch (error) {
+      if (error instanceof InterruptError || error instanceof MkdirUnsupportedError) throw error;
+      errors += 1;
+      progress.emit({ type: 'error', message: errorText(error), path: file.rel });
+    }
   }
   return {
     src: localRoot,
@@ -166,6 +250,8 @@ async function uploadTree(
     kind: 'local-node',
     files: uploaded,
     skipped,
+    errors,
+    truncated: false,
   };
 }
 
@@ -193,8 +279,17 @@ async function copyNodeToLocal(
     destPath,
     name: remote.name,
     progress,
+    signal: flags.signal,
   });
-  return { src: src.absPath, dst: destPath, kind: 'node-local', files: 1, skipped: 0 };
+  return {
+    src: src.absPath,
+    dst: destPath,
+    kind: 'node-local',
+    files: 1,
+    skipped: 0,
+    errors: 0,
+    truncated: false,
+  };
 }
 
 async function downloadTree(
@@ -208,14 +303,20 @@ async function downloadTree(
   const destRoot = await pickLocalDir(localPath, remote.name);
   await mkdir(destRoot, { recursive: true });
   const walked = await walkRemote(ctx.http, src.nodeId, src.root.id, src.absPath);
-  if (walked.truncated)
+  if (walked.truncated) {
     progress.emit({
       type: 'error',
       message: 'directory listing was truncated at 2000 entries per folder',
     });
+  }
   let files = 0;
-  let skipped = 0;
+  let skipped = walked.skipped.length;
+  let errors = 0;
+  for (const skip of walked.skipped) {
+    progress.emit({ type: 'item', path: skip.rel, reason: skip.reason });
+  }
   for (const entry of walked.entries) {
+    throwIfAborted(flags.signal);
     if (entry.dir) {
       await mkdir(join(destRoot, entry.rel), { recursive: true });
       continue;
@@ -228,21 +329,37 @@ async function downloadTree(
     );
     if (!destPath) {
       skipped += 1;
+      progress.emit({ type: 'item', path: entry.rel, reason: 'conflict' });
       continue;
     }
-    await mkdir(dirname(destPath), { recursive: true });
-    await downloadRemoteFile({
-      http: ctx.http,
-      nodeId: src.nodeId,
-      rootId: src.root.id,
-      absPath: entry.abs,
-      destPath,
-      name: posixBasename(entry.rel),
-      progress,
-    });
-    files += 1;
+    try {
+      await mkdir(dirname(destPath), { recursive: true });
+      await downloadRemoteFile({
+        http: ctx.http,
+        nodeId: src.nodeId,
+        rootId: src.root.id,
+        absPath: entry.abs,
+        destPath,
+        name: posixBasename(entry.rel),
+        progress,
+        signal: flags.signal,
+      });
+      files += 1;
+    } catch (error) {
+      if (error instanceof InterruptError) throw error;
+      errors += 1;
+      progress.emit({ type: 'error', message: errorText(error), path: entry.rel });
+    }
   }
-  return { src: src.absPath, dst: destRoot, kind: 'node-local', files, skipped };
+  return {
+    src: src.absPath,
+    dst: destRoot,
+    kind: 'node-local',
+    files,
+    skipped,
+    errors,
+    truncated: walked.truncated,
+  };
 }
 
 async function copyNodeToNode(
@@ -259,6 +376,7 @@ async function copyNodeToNode(
     throw new UsageError(`source is a directory: ${src.absPath}`, 'pass -r');
   }
   const destStat = await statRemoteSafe(ctx, dest.nodeId, dest.root.id, dest.absPath);
+  rejectPeerRename(remote, destStat, dest.absPath);
   const destPath =
     destStat?.type === 'dir' || remote.type === 'dir' ? dest.absPath : posixDirname(dest.absPath);
   const job = await copyPeer(ctx, {
@@ -270,6 +388,7 @@ async function copyNodeToNode(
     destPath,
     onConflict: flags.onConflict,
     progress,
+    signal: flags.signal,
   });
   return {
     src: src.absPath,
@@ -277,7 +396,24 @@ async function copyNodeToNode(
     kind: 'node-node',
     files: job.items.filter((item) => item.state === 'done').length,
     skipped: job.items.filter((item) => item.state === 'skipped').length,
+    errors: job.items.filter((item) => item.state === 'failed').length,
+    truncated: false,
   };
+}
+
+function rejectPeerRename(
+  remote: FileStatDto,
+  destStat: FileStatDto | null,
+  destAbs: string
+): void {
+  if (remote.type === 'dir' || destStat?.type === 'dir') return;
+  const destName = posixBasename(destAbs);
+  if (destName && destName !== remote.name) {
+    throw new UsageError(
+      'node-to-node copy cannot rename a file',
+      'pass an existing directory as the destination'
+    );
+  }
 }
 
 async function statRemoteSafe(
@@ -396,7 +532,7 @@ function emptyResult(
   kind: CopyResult['kind'],
   skipped: number
 ): CopyResult {
-  return { src, dst, kind, files: 0, skipped };
+  return { src, dst, kind, files: 0, skipped, errors: 0, truncated: false };
 }
 
 function destRefDisplay(dest: Awaited<ReturnType<typeof resolveRemotePath>>): string {

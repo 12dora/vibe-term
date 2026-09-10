@@ -2,9 +2,10 @@
 // 不走 `@vibeterm/transfer/node`：那条入口会把 Node 专用 sink 打进浏览器包；读盘用 node:fs。
 
 import { open } from 'node:fs/promises';
+import { sleepOrAbort } from '@vibeterm/shared/async';
 import { ProgressTracker, type PushTransport, runPush } from '@vibeterm/transfer';
-import { CliError } from './errors';
-import { filesJson, filesQuery } from './files-api';
+import { CliError, InterruptError, rethrowIfAborted, throwIfAborted } from './errors';
+import { assertFilesOk, filesJson, filesQuery } from './files-api';
 import type { HttpClient } from './http';
 import { consumeNdjson } from './transfer-ndjson';
 import { type CopyProgress, pctOf } from './transfer-progress';
@@ -13,6 +14,7 @@ const CHUNK_FALLBACK = 8 * 1024 * 1024;
 const UPLOAD_ATTEMPTS = 4;
 const UPLOAD_DEADLINE_MS = 6 * 60 * 60 * 1000;
 const DOWNLOAD_ATTEMPTS = 3;
+const DOWNLOAD_BACKOFF_MS = [200, 500, 1000] as const;
 
 interface UploadInit {
   uploadId: string;
@@ -47,6 +49,12 @@ interface PrepareEvent {
   detail?: string;
 }
 
+export async function jitteredSleep(ms: number, signal: AbortSignal): Promise<void> {
+  const wait = Math.max(0, Math.round(ms * (0.5 + Math.random())));
+  const completed = await sleepOrAbort(wait, signal);
+  if (!completed) throw new InterruptError();
+}
+
 export async function uploadLocalFile(input: {
   http: HttpClient;
   nodeId: string;
@@ -59,12 +67,15 @@ export async function uploadLocalFile(input: {
   signal?: AbortSignal;
 }): Promise<void> {
   const { http, nodeId, rootId, destDir, localPath, name, size, progress, signal } = input;
-  const init = await filesJson<UploadInit>(http, nodeId, 'POST', '/api/files/upload/init', {
-    rootId,
-    path: destDir,
-    name,
-    size,
-  });
+  throwIfAborted(signal);
+  const init = await filesJson<UploadInit>(
+    http,
+    nodeId,
+    'POST',
+    '/api/files/upload/init',
+    { rootId, path: destDir, name, size },
+    signal ? { signal } : {}
+  );
   const uploadId = init.uploadId;
   const step = init.chunkSize > 0 ? init.chunkSize : CHUNK_FALLBACK;
   try {
@@ -84,7 +95,7 @@ export async function uploadLocalFile(input: {
     await http
       .fetch(nodeId, `/api/files/upload/${uploadId}`, { method: 'DELETE' })
       .catch(() => undefined);
-    throw error;
+    rethrowIfAborted(error, signal);
   }
 }
 
@@ -103,15 +114,17 @@ async function pushFile(input: {
   const handle = await open(localPath, 'r');
   try {
     const tracker = new ProgressTracker({ totalBytes: size });
+    const abort = signal ?? new AbortController().signal;
     const result = await runPush(
       uploadTransport({ http, nodeId, uploadId, handle, ranged, signal }),
       {
         totalBytes: size,
-        streams: ranged ? 1 : 1,
+        streams: 1,
         maxRangeBytes: step,
         maxAttempts: UPLOAD_ATTEMPTS,
         deadlineMs: Date.now() + UPLOAD_DEADLINE_MS,
-        signal: signal ?? new AbortController().signal,
+        signal: abort,
+        sleep: jitteredSleep,
         onProgress: (transferred) => {
           tracker.set(transferred);
           progress.emit({
@@ -125,7 +138,7 @@ async function pushFile(input: {
         },
       }
     );
-    if (result.kind === 'cancelled') throw new CliError('upload cancelled');
+    if (result.kind === 'cancelled') throw new InterruptError('upload cancelled');
     if (result.kind === 'failed') throw new CliError(`upload failed: ${result.error}`);
   } finally {
     await handle.close();
@@ -153,7 +166,9 @@ function uploadTransport(input: {
           http,
           nodeId,
           'GET',
-          `/api/files/upload/${uploadId}`
+          `/api/files/upload/${uploadId}`,
+          undefined,
+          { signal: attemptSignal, timeoutMs: null }
         );
         return {
           receivedBytes: body.received ?? 0,
@@ -167,7 +182,7 @@ function uploadTransport(input: {
     },
     async put(range, opts) {
       if (signal?.aborted || opts.signal.aborted) return { kind: 'cancelled' };
-      const buf = Buffer.alloc(range.length);
+      const buf = Buffer.allocUnsafe(range.length);
       const { bytesRead } = await handle.read(buf, 0, range.length, range.offset);
       const chunk = buf.subarray(0, bytesRead);
       const query = `?offset=${range.offset}&length=${range.length}`;
@@ -209,7 +224,7 @@ async function commitUpload(input: {
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, `/api/files/upload/${uploadId}/commit`);
+  await assertFilesOk(nodeId, `/api/files/upload/${uploadId}/commit`, response);
   let done = false;
   await consumeNdjson<CommitEvent>(response, (event) => {
     if (event.type === 'progress') {
@@ -271,7 +286,7 @@ export async function downloadRemoteFile(input: {
         .fetch(nodeId, `/api/files/download/${downloadId}`, { method: 'DELETE' })
         .catch(() => undefined);
     }
-    throw error;
+    rethrowIfAborted(error, signal);
   }
 }
 
@@ -292,7 +307,7 @@ async function prepareDownload(input: {
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, '/api/files/download/prepare');
+  await assertFilesOk(nodeId, '/api/files/download/prepare', response);
   let downloadId = '';
   let size = 0;
   let fileName = name;
@@ -335,7 +350,7 @@ async function drainContent(input: {
   let lastError: unknown = null;
   try {
     for (let attempt = 1; attempt <= DOWNLOAD_ATTEMPTS; attempt += 1) {
-      if (signal?.aborted) throw new CliError('download cancelled');
+      throwIfAborted(signal);
       try {
         received = await readContentOnce({
           http,
@@ -350,8 +365,12 @@ async function drainContent(input: {
         if (size <= 0 || received >= size) return;
         lastError = new CliError(`download truncated: ${received}/${size}`);
       } catch (error) {
-        if (signal?.aborted) throw new CliError('download cancelled');
+        throwIfAborted(signal);
         lastError = error;
+      }
+      if (attempt < DOWNLOAD_ATTEMPTS) {
+        const abort = signal ?? new AbortController().signal;
+        await jitteredSleep(DOWNLOAD_BACKOFF_MS[attempt - 1] ?? 1000, abort);
       }
     }
   } finally {
@@ -379,7 +398,7 @@ async function readContentOnce(input: {
     signal,
     timeoutMs: null,
   });
-  await http.assertOk(nodeId, response, `/api/files/download/${downloadId}/content`);
+  await assertFilesOk(nodeId, `/api/files/download/${downloadId}/content`, response);
   if (received > 0 && response.status !== 206) {
     received = 0;
     await handle.truncate(0);

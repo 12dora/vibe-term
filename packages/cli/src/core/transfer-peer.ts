@@ -1,12 +1,17 @@
 // 节点 ↔ 节点：B 上换 grant，A 上建任务，跟 NDJSON events 直到 end。
+// events 流可能在非终态结束（队列溢出只发 `{type:'end'}`，或连接断开）——之后轮询 GET job。
 
+import { sleepOrAbort } from '@vibeterm/shared/async';
 import type { CliContext } from './context';
-import { CliError, UsageError } from './errors';
-import { filesJson, resolveMeshId } from './files-api';
+import { CliError, InterruptError, UsageError, throwIfAborted } from './errors';
+import { assertFilesOk, filesJson, resolveMeshId } from './files-api';
 import { consumeNdjson } from './transfer-ndjson';
 import { type CopyProgress, pctOf } from './transfer-progress';
 
 export type OnConflict = 'skip' | 'overwrite' | 'rename';
+
+const TERMINAL_STATES = new Set(['done', 'failed', 'cancelled']);
+const POLL_MS = 200;
 
 export interface TransferGrant {
   grantId: string;
@@ -43,6 +48,7 @@ export interface TransferJobSnapshot {
   progress: TransferProgressDto;
   error?: string;
   errorDetail?: string;
+  finishedAt?: number | null;
 }
 
 export type TransferJobEvent =
@@ -61,6 +67,7 @@ export interface PeerCopyInput {
   destPath: string;
   onConflict: OnConflict;
   progress: CopyProgress;
+  signal?: AbortSignal;
 }
 
 export async function copyPeer(
@@ -96,23 +103,28 @@ export async function copyPeer(
       onConflict: input.onConflict,
     }
   );
-  return followJob(ctx, input.sourceNodeId, created.job, input.progress);
+  return followJob(ctx, input.sourceNodeId, created.job, input.progress, input.signal);
+}
+
+function isTerminal(snapshot: TransferJobSnapshot): boolean {
+  return snapshot.finishedAt != null || TERMINAL_STATES.has(snapshot.state);
 }
 
 async function followJob(
   ctx: CliContext,
   sourceNodeId: string,
   initial: TransferJobSnapshot,
-  progress: CopyProgress
+  progress: CopyProgress,
+  signal?: AbortSignal
 ): Promise<TransferJobSnapshot> {
   let snapshot = initial;
   reportSnapshot(progress, snapshot);
   const response = await ctx.http.fetch(
     sourceNodeId,
     `/api/transfer/jobs/${encodeURIComponent(initial.jobId)}/events`,
-    { timeoutMs: null }
+    { timeoutMs: null, signal }
   );
-  await ctx.http.assertOk(sourceNodeId, response, `/api/transfer/jobs/${initial.jobId}/events`);
+  await assertFilesOk(sourceNodeId, `/api/transfer/jobs/${initial.jobId}/events`, response);
   await consumeNdjson<TransferJobEvent>(response, (event) => {
     snapshot = applyEvent(snapshot, event);
     if (event.type === 'progress') {
@@ -129,10 +141,50 @@ async function followJob(
       reportSnapshot(progress, event.job);
     }
   });
+  if (!isTerminal(snapshot)) {
+    snapshot = await pollJobUntilTerminal(ctx, sourceNodeId, initial.jobId, progress, signal);
+  }
+  return finishJob(snapshot);
+}
+
+async function pollJobUntilTerminal(
+  ctx: CliContext,
+  sourceNodeId: string,
+  jobId: string,
+  progress: CopyProgress,
+  signal?: AbortSignal
+): Promise<TransferJobSnapshot> {
+  const deadline = Date.now() + Math.max(1, ctx.globals.timeoutMs);
+  for (;;) {
+    throwIfAborted(signal);
+    const payload = await filesJson<{ job: TransferJobSnapshot }>(
+      ctx.http,
+      sourceNodeId,
+      'GET',
+      `/api/transfer/jobs/${encodeURIComponent(jobId)}`,
+      undefined,
+      signal ? { signal } : {}
+    );
+    const snapshot = payload.job;
+    reportSnapshot(progress, snapshot);
+    if (isTerminal(snapshot)) return snapshot;
+    if (Date.now() >= deadline) {
+      throw new CliError(`transfer job ${jobId} ended without a terminal state`);
+    }
+    const abort = signal ?? new AbortController().signal;
+    const completed = await sleepOrAbort(POLL_MS, abort);
+    if (!completed) throw new InterruptError();
+  }
+}
+
+function finishJob(snapshot: TransferJobSnapshot): TransferJobSnapshot {
   if (snapshot.state === 'failed') {
     throw new CliError(snapshot.errorDetail ?? snapshot.error ?? 'transfer job failed');
   }
   if (snapshot.state === 'cancelled') throw new CliError('transfer job cancelled');
+  if (snapshot.state !== 'done') {
+    throw new CliError('transfer job ended without a terminal state');
+  }
   return snapshot;
 }
 

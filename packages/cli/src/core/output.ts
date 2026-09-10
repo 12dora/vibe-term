@@ -25,6 +25,10 @@ const ANSI = {
 
 export type AnsiStyle = keyof Omit<typeof ANSI, 'reset'>;
 
+export function streamIsTty(stream: NodeJS.WritableStream): boolean {
+  return Boolean((stream as NodeJS.WriteStream).isTTY);
+}
+
 /** `--no-color` > `NO_COLOR` > `FORCE_COLOR` > stdout 是否 TTY。 */
 export function shouldUseColor(
   noColorFlag: boolean,
@@ -84,10 +88,15 @@ export class Output {
     this.stderr.write(`${this.style(text, 'red')}\n`);
   }
 
+  /** 绑定的 stderr 是否是 TTY（进度条默认只在这上面开）。 */
+  isStderrTty(): boolean {
+    return streamIsTty(this.stderr);
+  }
+
   /** 人读进度：TTY 上回车覆盖一行，否则逐行。`--json` / `--quiet` 静默。 */
   progress(text: string): void {
     if (this.json || this.quiet) return;
-    const tty = Boolean((this.stderr as NodeJS.WriteStream).isTTY);
+    const tty = this.isStderrTty();
     this.stderr.write(tty ? `\r${text}\x1b[K` : `${text}\n`);
   }
 
