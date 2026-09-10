@@ -5,6 +5,7 @@
 // 只有重新拿 index.html 才能指到新版 chunk。
 
 import { PageLoadFallback } from '@/PageLoadFallback';
+import { reloadAfterServiceWorkerUpdate } from '@/sw/sw-reload';
 import { type ComponentType, type LazyExoticComponent, lazy, useState } from 'react';
 
 export type ChunkLoader<P> = () => Promise<ComponentType<P>>;
@@ -54,11 +55,14 @@ function ChunkRetry<P extends object>({
 /**
  * 重试一次 import()：只有真正失败才计数，进行中的重试不重复发起，
  * 失败达到上限后改成整页刷新（reload 可注入以便测试）。
+ *
+ * 刷新前先把 waiting 的 SW 顶上去：节点升级换了 fe-dist 时，旧 SW 还控制着页面，
+ * 光刷新只会再拿到它那代的壳、再撞一次同样的 404（见 @/sw/sw-reload）。
  */
 export function retryChunkLoad<P>(
   load: ChunkLoader<P>,
   onLoaded: (component: ComponentType<P>) => void,
-  reload: () => void = () => window.location.reload()
+  reload: () => void = reloadAfterServiceWorkerUpdate
 ): void {
   const key = load as ChunkLoader<never>;
   if ((FAILURES.get(key) ?? 0) >= MAX_CHUNK_RETRIES) {

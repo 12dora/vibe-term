@@ -19,8 +19,9 @@ import { MasterKeyNotice } from '@/components/master-key-notice';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { StandaloneLanding } from '@/components/standalone-landing';
-import { startIdleChunkPreload } from '@/lib/chunk-preload';
+import { scheduleIdle, startIdleChunkPreload } from '@/lib/chunk-preload';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
+import { warmTerminalFonts } from '@/lib/fonts/warm-terminal-fonts';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
@@ -38,8 +39,10 @@ import {
 import { PageWrapper } from '@/page-wrapper';
 import { NODE_SHARE_ROUTE_PATH, SHARE_ROUTE_PATH, isSharePathname } from '@/share/share-route';
 import { ShareRouteElement } from '@/share/share-route-element';
+import { browserAccessGateDeps, watchAccessGate } from '@/sw/access-gate-recovery';
 import { setupServiceWorker } from '@/sw/register';
 import { installSessionInterceptor } from '@vibeterm/api-client/auth/index';
+import { addResponseHook } from '@vibeterm/api-client/client';
 import { ConnectionIndicator } from '@vibeterm/panels';
 import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
 import { WatchEventsInit } from '@vibeterm/panels/watch';
@@ -375,6 +378,10 @@ const router = createBrowserRouter([
 //
 // 被分享页更进一步：访客手上只有分享凭证，任何常规 `/api/*` 的 401 都是**预期内**的，
 // 把他踢去登录页只会给出一个他永远登不进去的表单，还会拆掉正在看的终端。
+// 缓存壳可能挡住服务端的导航门（Access 302 / 403 拒绝页）：盯住启动期第一个 /api 403，
+// 认出访问门就注销 SW 并刷新一次，让服务端自己的页面出来。未被 SW 控制时是空操作。
+watchAccessGate(browserAccessGateDeps(addResponseHook));
+
 installSessionInterceptor({
   navigate: createLoginRedirect({
     navigate: (to) => {
@@ -426,7 +433,11 @@ void i18nReady
     else setTimeout(prefetchRest, 0);
     // 侧栏两个顶层入口的 chunk 也趁空闲逐个拉下来：点过去时只剩数据请求那一段。
     startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
-    // 应用壳 SW 放在首帧之后注册：安装期的预缓存下载不和首屏抢带宽；
+    // 应用壳 SW 也排进空闲：安装期要下约 10 MB，绝不能和首屏抢带宽；
     // 非 production 反过来注销同源已有的 SW，免得旧壳把 vite dev 页面拦成过期版本。
-    setupServiceWorker();
+    scheduleIdle(() => setupServiceWorker());
+    // 终端字体（2.3 MB）不再由外壳强制加载，改成空闲预热：进终端页时多半已经就绪。
+    scheduleIdle(() =>
+      warmTerminalFonts(appNodeRuntimes.get(SELF_NODE_ID).runtime.stores.ui.getState())
+    );
   });

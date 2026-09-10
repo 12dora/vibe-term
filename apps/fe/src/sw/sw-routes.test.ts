@@ -4,12 +4,14 @@
 import { describe, expect, test } from 'bun:test';
 import {
   BYPASS_PREFIXES,
+  NODE_BYPASS_SEGMENTS,
   PRECACHED_ICONS,
   SHELL_URL,
   type SwRequestInfo,
   type SwRouteKind,
   classifyRequest,
   isBypassPath,
+  isNodeBypassPath,
 } from './sw-routes';
 
 const ORIGIN = 'https://vibeterm.example';
@@ -54,7 +56,7 @@ describe('classifyRequest 不拦截的请求', () => {
     expect(classifyRequest({ ...info('/'), url: 'not a url' })).toBe('bypass');
   });
 
-  test('API / WS / mesh / 子节点 / healthz / sw.js 直通', () => {
+  test('API / WS / mesh / healthz / sw.js 直通', () => {
     const paths = [
       '/api/devices',
       '/api/manifest.webmanifest',
@@ -63,9 +65,6 @@ describe('classifyRequest 不拦截的请求', () => {
       '/ws?token=x',
       '/mesh/ws',
       '/mesh/nodes',
-      '/n/abc123/ws',
-      '/n/abc123/api/devices',
-      '/n/abc123/assets/index-abc12345.js',
       '/healthz',
       '/sw.js',
     ];
@@ -73,6 +72,30 @@ describe('classifyRequest 不拦截的请求', () => {
       expect(classify(path)).toBe('bypass');
       expect(classify(path, { mode: 'navigate' })).toBe('bypass');
     }
+  });
+
+  test('/n/<id>/ 下只有 ws / api / mesh 直通', () => {
+    for (const path of [
+      '/n/abc123/ws',
+      '/n/abc123/ws/pane',
+      '/n/abc123/api',
+      '/n/abc123/api/devices',
+      '/n/abc123/mesh/ws',
+    ]) {
+      expect(classify(path)).toBe('bypass');
+      expect(classify(path, { mode: 'navigate' })).toBe('bypass');
+    }
+  });
+
+  test('/n/<id>/assets 之类非导航请求仍直通（那是别的 node 的构建产物）', () => {
+    expect(classify('/n/abc123/assets/index-abc12345.js')).toBe('bypass');
+    expect(classify('/n/abc123/fonts/GeistMonoNerdFontMono-Bold.woff2')).toBe('bypass');
+  });
+
+  test('前缀相近但不同段的路径不被误判成传输层', () => {
+    expect(classify('/n/abc123/website', { mode: 'navigate' })).toBe('shell');
+    expect(classify('/n/abc123/apidocs', { mode: 'navigate' })).toBe('shell');
+    expect(classify('/n/abc123/meshing', { mode: 'navigate' })).toBe('shell');
   });
 
   test('未知同源 GET 且非导航时直通（不做兜底缓存）', () => {
@@ -100,7 +123,7 @@ describe('classifyRequest 缓存分类', () => {
     }
   });
 
-  test('同源导航归 shell（含分享路由与深层应用路由）', () => {
+  test('同源导航归 shell（含分享路由、深层应用路由与 node 作用域路由）', () => {
     const navigations = [
       '/',
       '/login',
@@ -108,6 +131,10 @@ describe('classifyRequest 缓存分类', () => {
       '/device/mac/0/%251',
       '/s/abcdef123456',
       '/settings/nodes',
+      '/n/abc123',
+      '/n/abc123/devices',
+      '/n/abc123/device/mac/0/%251',
+      '/n/abc123/s/AbCd1234',
     ];
     for (const path of navigations) {
       expect(classify(path, { mode: 'navigate' })).toBe('shell');
@@ -131,5 +158,26 @@ describe('isBypassPath', () => {
     expect(isBypassPath(SHELL_URL)).toBe(false);
     expect(isBypassPath('/')).toBe(false);
     expect(isBypassPath('/assets/index-abc12345.js')).toBe(false);
+  });
+
+  test('/n/ 不再整段直通', () => {
+    expect(isBypassPath('/n/abc123/devices')).toBe(false);
+  });
+});
+
+describe('isNodeBypassPath', () => {
+  test('每个传输层段本身与其子路径都命中', () => {
+    for (const name of NODE_BYPASS_SEGMENTS) {
+      expect(isNodeBypassPath(`/n/abc123/${name}`)).toBe(true);
+      expect(isNodeBypassPath(`/n/abc123/${name}/x`)).toBe(true);
+    }
+  });
+
+  test('node 根、应用路由与非 /n/ 路径都不命中', () => {
+    expect(isNodeBypassPath('/n/abc123')).toBe(false);
+    expect(isNodeBypassPath('/n/abc123/')).toBe(false);
+    expect(isNodeBypassPath('/n/abc123/devices')).toBe(false);
+    expect(isNodeBypassPath('/api/devices')).toBe(false);
+    expect(isNodeBypassPath('/')).toBe(false);
   });
 });

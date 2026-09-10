@@ -49,7 +49,7 @@ iOS 主屏 PWA 在后台会被系统回收，每次回到前台都是一次冷�
 
 ### 4.2 应用壳 Service Worker
 
-源码 `apps/fe/src/sw/`（`sw.ts` 主体、`sw-routes.ts` 路由分类、`precache-manifest.ts` 清单口径、`register.ts` 注册策略），手写、不依赖 workbox。产物由 `vite.config.ts` 的 `serviceWorkerPlugin` 在主构建落盘后单独打一遍 lib 构建，输出**不带哈希**的 `dist/sw.js`（约 9.7 KB），并把预缓存清单与构建 id（`<monorepo 版本>-<清单 sha256 前 12 位>`）`define` 进去。
+源码 `apps/fe/src/sw/`：`sw.ts` 主体、`sw-routes.ts` 路由分类、`precache-manifest.ts` 清单口径、`register.ts` 注册策略、`sw-reload.ts` 逃生通道、`access-gate-recovery.ts` 访问门兜底、`sw-messages.ts` 消息协议常量。手写，不依赖 workbox。产物由 `vite.config.ts` 的 `serviceWorkerPlugin` 在主构建落盘后单独打一遍 lib 构建，输出**不带哈希**的 `dist/sw.js`（约 10.6 KB），并把预缓存清单与构建 id（`<monorepo 版本>-<清单 sha256 前 12 位>`）`define` 进去。
 
 预缓存分三档，一次构建一代：
 
@@ -57,25 +57,41 @@ iOS 主屏 PWA 在后台会被系统回收，每次回到前台都是一次冷�
 | --- | --- | --- |
 | core | `index.html` + `index.html` 直接引用的入口 js/css 与 modulepreload 依赖（当前 4 项） | `cache.addAll`，缺一即放弃本代安装 |
 | lazy | 其余 `assets/**` 的 js/css/wasm（当前 214 项，约 7.5 MB） | 逐个 `cache.add`，并发 6，失败只回落按需下载 |
-| fonts | `index.css` 静态声明的三个默认 woff2（约 2.48 MB） | 同 lazy；`/fonts/generated/**` 那 16 MB 可选家族**不**预缓存，选用时按 font 运行时缓存 |
+| fonts | 产物 CSS 里静态声明的默认 woff2（当前 3 个，约 2.48 MB） | 同 lazy；`/fonts/generated/**` 那 16 MB 可选家族**不**预缓存，选用时按 font 类运行时缓存 |
+
+字体 URL 从**产物** `assets/*.css` 里扫（`src/index.css` 还 `@import` 了主题 CSS，只读源文件会漏）。
 
 运行时策略（`sw-routes.ts` 的分类结果）：
 
 - `/assets/**`、`/fonts/**`、`/vibeterm.png`、`/vibeterm-maskable.png`、`/logo.png`：cache-first，未命中则取网络并写回本代缓存。
-- 同源导航（`request.mode === 'navigate'`）：回放本代缓存的 `index.html`，后台只触发 `registration.update()`。**刻意不把新 `index.html` 写回本代缓存**——新壳配旧 chunk 哈希正是要避免的组合（旧版 `import()` 404 会触发 `lazy-chunk.tsx` 的整页刷新）。
-- **一律不拦截**：非 GET、带 `Range` 的请求、跨源请求，以及同源的 `/api/`、`/ws`、`/mesh/`、`/n/`、`/healthz`、`/sw.js`（前缀匹配，含 `/n/<id>/ws`、`/n/<id>/api/...`）。这些请求连 `respondWith` 都不调用，由浏览器原样发出。其余未知同源 GET（非导航）同样直通，不做兜底缓存。
+- 同源导航（`request.mode === 'navigate'`）：**网络优先但只给 600 ms 预算**。网络在预算内返回任何状态（含 Cloudflare Access 的 302 opaqueredirect、`guardEntryAccess` 的 403、域名访问关闭的 403 文本页）就直接用它——否则服务端自己的导航门会被缓存壳整个遮住；超时或离线才回放本代缓存的 `index.html`，并顺带触发一次 `registration.update()`。**不**把新 `index.html` 写回本代缓存：新壳配旧 chunk 哈希正是要避免的组合。
+- **一律不拦截**：非 GET、带 `Range` 的请求、跨源请求，同源的 `/api/`、`/ws`、`/mesh/`、`/healthz`、`/sw.js`，以及 `/n/<id>/` 下的传输层三段 `ws`、`api`、`mesh`（`/n/<id>/ws`、`/n/<id>/api/**`、`/n/<id>/mesh/**`）。`/n/<id>/devices` 这类是本应用的路由，导航时照常拿应用壳。这些请求连 `respondWith` 都不调用，由浏览器原样发出。其余未知同源 GET（非导航）同样直通，不做兜底缓存。
 
-更新生命周期：**没有 `skipWaiting`，也没有 `clients.claim`**。新版本发布后，浏览器在下次导航时发现 `/sw.js` 变了 → 新 SW 安装自己那一代缓存 → 等旧客户端全部退出（iOS PWA 下次冷启动）才激活 → 激活时删掉其它 `vibeterm-shell-*` 代并向客户端 `postMessage({ type: 'vibeterm:sw-updated', buildId })`（当前无 UI 消费）。正在运行的页面始终拿到同一代的壳与 chunk。
+### 4.3 更新与逃生通道
 
-注册在首帧之后（`main.tsx` 的空闲预热旁），仅 `import.meta.env.PROD`；非生产反过来 `getRegistrations()` → `unregister()`，避免旧 SW 把同源的 `vite dev` 页面拦成过期打包壳。
+默认**没有 `skipWaiting`，也没有 `clients.claim`**：新版本发布后，浏览器在下次导航时发现 `/sw.js` 变了 → 新 SW 安装自己那一代缓存 → 等旧客户端全部退出（iOS PWA 下次冷启动）才激活 → 激活时删掉其它 `vibeterm-shell-*` 代。正在运行的页面始终拿到同一代的壳与 chunk。
 
-### 4.3 字体不再进冷启动关键路径
+「等旧客户端退出」本身必须有逃生通道，否则节点升级换掉 `resources/fe-dist` 之后会卡死在旧代（旧壳指向的 chunk 已 404，而新 SW 一直停在 `waiting`）。三条同时生效：
+
+1. **页面侧握手**：`lazy-chunk.tsx` 的 `retryChunkLoad` 与 `packages/ui/src/lazy-overlay.tsx` 的 `recoverFromOverlayLoadFailure` 在整页刷新前，先给 `registration.waiting` 发 `{type:'vibeterm:sw-skip-waiting'}`，等一次 `controllerchange`（上限 2 s，等不到照常刷新）。消息名在 `apps/fe/src/sw/sw-messages.ts`，`packages/ui` 因为不能依赖 `apps/fe` 抄了一份，两侧各有单测钉住字面量。
+2. **SW 自毁**：`cacheFirst` 里某个 `/assets/**` 缓存未命中且网络回 404，说明本代缓存指向的产物在服务端已经没了 → `caches.delete(CACHE_NAME)` + `registration.unregister()`，下一次导航直接吃服务端的新壳。
+3. **不完整代降级**：lazy/fonts 是尽力而为，有失败就往缓存里写一个 `/__vibeterm-sw__/partial-generation` 标记；该代的导航改成**无预算网络优先**，缓存壳只作离线兜底。
+
+另外，安装期（`precacheGeneration` 末尾）就按 `caches.keys()` 的创建顺序修剪旧代，只保留最近一代与正在装的这一代——被顶掉的安装（装完还没激活就来了新版本）否则会各留一代约 10 MB，只在 `activate` 里清等于永远清不到。
+
+**访问门兜底**：网络慢到超过 600 ms 预算时用户会先拿到缓存壳，随后应用第一批 API 才撞上 403。`access-gate-recovery.ts` 通过 api-client 的 `addResponseHook` 盯住启动期第一个 `/api/**` 403，认出 `access_denied` / `DOMAIN_ACCESS_DISABLED` 就注销 SW 并整页刷新一次（sessionStorage 守卫，杜绝刷新循环），让服务端自己的页面出来；看到第一个非 403 的 `/api` 响应就自卸，正常启动零开销。页面未被 SW 控制时根本不装钩子。
+
+**注册**：首帧之后经 `scheduleIdle`（`requestIdleCallback`，3 s 兜底）排进空闲，仅 `import.meta.env.PROD`；分享页（`isSharePathname`）不注册——匿名一次性入口没有复访收益，不该往陌生访客的配额里塞 10 MB。非生产反过来 `getRegistrations()` → `unregister()`，避免旧 SW 把同源的 `vite dev` 页面拦成过期打包壳（这一分支在分享页也照常执行）。
+
+### 4.4 字体不再进冷启动关键路径
 
 `useAppMonoFont` 过去在应用根对默认字体强制 `document.fonts.load()`，设备列表 / 设置页也要为 2.3 MB 的 woff2 等一轮网络。现在它只注入 `@font-face`（`ensureFontFaceInjected`）并写 `--font-mono`，下载交给 `font-display: swap`。真正需要精确字形度量的终端各自在挂载前强制加载：`terminal-ui` 的 `ensureTerminalFonts`（`loadTerminalResources` 内，带进程内缓存）、`TerminalPreview`、分享回放 `use-replay-terminal`。
 
-### 4.4 怎么验证
+为了不把这份等待原样搬到「首次进终端页」，`main.tsx` 在首帧后的空闲里调一次 `warmTerminalFonts`（`lib/fonts/warm-terminal-fonts.ts` → `ensureTerminalFonts`，幂等）：预热走的就是终端启动时那个缓存，进终端页时多半已经就绪，且任何非终端路由都不会因此阻塞渲染。
 
-- Safari（iOS 需连 Mac）Web Inspector → Storage → Service Workers / Cache Storage：应看到一个 `vibeterm-shell-<版本>-<hash>` 缓存，条目数 = core + 成功的 lazy + fonts。
-- 控制台 `navigator.serviceWorker.getRegistrations()` 看注册与 `active`/`waiting` 状态；`caches.keys()` 看是否残留旧代（激活后应只剩一代）。
-- Network 面板确认导航请求标记为 “Service Worker”，而 `/api/**`、`/ws` 仍是普通网络请求。
-- 构建期看 vite 日志的 `[vite] service worker: dist/sw.js build=... precache core=N lazy=N fonts=N`；清单口径的回归由 `apps/fe/src/sw/precache-manifest.test.ts` 覆盖。
+### 4.5 怎么验证
+
+- Safari（iOS 需连 Mac）Web Inspector → Storage → Service Workers / Cache Storage：应看到一个 `vibeterm-shell-<版本>-<hash>` 缓存，条目数 = core + 成功的 lazy + fonts（外加不完整时的 partial 标记）。
+- 控制台 `navigator.serviceWorker.getRegistrations()` 看注册与 `active`/`waiting` 状态；`caches.keys()` 看是否残留旧代（激活后应只剩一代，安装期最多两代）。
+- Network 面板确认导航请求标记为 “Service Worker”，而 `/api/**`、`/ws`、`/n/<id>/ws` 仍是普通网络请求。
+- 构建期看 vite 日志的 `[vite] service worker: dist/sw.js build=... precache core=N lazy=N fonts=N`；清单口径与路由分类的回归分别由 `apps/fe/src/sw/precache-manifest.test.ts`、`sw-routes.test.ts` 覆盖。

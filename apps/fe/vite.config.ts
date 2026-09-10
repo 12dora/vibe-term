@@ -5,7 +5,7 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { type Plugin, type PluginOption, defineConfig, build as viteBuild } from 'vite';
-import { buildPrecacheManifest } from './src/sw/precache-manifest';
+import { buildPrecacheManifest, emittedCssNames } from './src/sw/precache-manifest';
 
 // monorepo 版本真相源：发布的 vibeterm-cli（packages/app）版本。读取失败退回 0.0.0。
 function readMonorepoVersion(): string {
@@ -61,7 +61,10 @@ function serviceWorkerPlugin(version: string): Plugin {
       const precache = buildPrecacheManifest({
         html: readFileSync(path.join(outDir, 'index.html'), 'utf8'),
         bundleNames: names,
-        css: readFileSync(path.resolve(__dirname, 'src/index.css'), 'utf8'),
+        // 读产物 CSS 而不是 src/index.css：@font-face 可能来自它 @import 的任意一层
+        css: emittedCssNames(names)
+          .map((name) => readFileSync(path.join(outDir, name), 'utf8'))
+          .join('\n'),
       });
       const digest = createHash('sha256')
         .update(JSON.stringify(precache))

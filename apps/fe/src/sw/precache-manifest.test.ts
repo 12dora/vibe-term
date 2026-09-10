@@ -2,10 +2,13 @@
 // 字体只取 index.css 静态声明的三个默认文件——generated 家族有 16 MB，绝不能混进来。
 
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import {
   SHELL_PRECACHE_URL,
   buildPrecacheManifest,
   declaredFontUrls,
+  emittedCssNames,
   htmlReferencedAssets,
   precacheAssetUrls,
 } from './precache-manifest';
@@ -53,6 +56,33 @@ describe('declaredFontUrls', () => {
 
   test('不含 generated 家族时结果不受影响', () => {
     expect(declaredFontUrls('body{}')).toEqual([]);
+  });
+
+  test('多份产物 CSS 拼在一起时去重（同一个 @font-face 只算一次）', () => {
+    expect(declaredFontUrls(`${CSS}\n${CSS}`)).toEqual(declaredFontUrls(CSS));
+  });
+
+  test('真实 src/index.css 恰好声明这三个默认字体', () => {
+    const css = readFileSync(join(import.meta.dir, '..', 'index.css'), 'utf8');
+    expect(declaredFontUrls(css)).toEqual([
+      '/fonts/GeistMonoNerdFontMono-Bold.woff2',
+      '/fonts/GeistMonoNerdFontMono-Regular.woff2',
+      '/fonts/NotoSansSymbols2-Regular.woff2',
+    ]);
+  });
+});
+
+describe('emittedCssNames', () => {
+  test('只收 assets/ 下的样式表并排序', () => {
+    expect(
+      emittedCssNames([
+        'index.html',
+        'assets/z-11111111.css',
+        'assets/a-22222222.css',
+        'assets/index-33333333.js',
+        'sw.js',
+      ])
+    ).toEqual(['assets/a-22222222.css', 'assets/z-11111111.css']);
   });
 });
 

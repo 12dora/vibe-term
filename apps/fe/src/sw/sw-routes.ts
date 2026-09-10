@@ -16,17 +16,28 @@ export interface SwRequestInfo {
 }
 
 /**
- * 一律不拦截的同源路径前缀：网关 API、WS 升级、mesh 事件流、子节点代理、健康检查，
+ * 一律不拦截的同源路径前缀：网关 API、WS 升级、mesh 事件流、健康检查，
  * 以及 SW 脚本自身（更新检查必须走网络）。前缀匹配刻意从宽，宁可漏缓存不可错拦。
  */
-export const BYPASS_PREFIXES: readonly string[] = [
-  '/api/',
-  '/ws',
-  '/mesh/',
-  '/n/',
-  '/healthz',
-  '/sw.js',
-];
+export const BYPASS_PREFIXES: readonly string[] = ['/api/', '/ws', '/mesh/', '/healthz', '/sw.js'];
+
+/**
+ * `/n/<id>/` 下只有转发给该 node 的传输层要直通；其余 `/n/<id>/devices` 之类是本应用的路由，
+ * 导航时同样该拿本地应用壳——整段 `/n/` 直通会让多节点用户的每次冷启动都退回纯网络。
+ */
+export const NODE_BYPASS_SEGMENTS: readonly string[] = ['ws', 'api', 'mesh'];
+
+const NODE_PREFIX = '/n/';
+
+/** `/n/<id>/<segment>` 或 `/n/<id>/<segment>/...` 命中传输层前缀 */
+export function isNodeBypassPath(pathname: string): boolean {
+  if (!pathname.startsWith(NODE_PREFIX)) return false;
+  const rest = pathname.slice(NODE_PREFIX.length);
+  const slash = rest.indexOf('/');
+  if (slash < 0) return false;
+  const sub = rest.slice(slash + 1);
+  return NODE_BYPASS_SEGMENTS.some((name) => sub === name || sub.startsWith(`${name}/`));
+}
 
 /** 预缓存的应用图标（PWA 图标与 apple-touch-icon） */
 export const PRECACHED_ICONS: readonly string[] = [
@@ -56,7 +67,7 @@ export function classifyRequest(info: SwRequestInfo): SwRouteKind {
   if (info.hasRange) return 'bypass';
   const pathname = parsePathname(info.url, info.scopeOrigin);
   if (pathname === null) return 'bypass';
-  if (isBypassPath(pathname)) return 'bypass';
+  if (isBypassPath(pathname) || isNodeBypassPath(pathname)) return 'bypass';
   if (pathname.startsWith('/assets/')) return 'asset';
   if (pathname.startsWith('/fonts/')) return 'font';
   if (PRECACHED_ICONS.includes(pathname)) return 'icon';
