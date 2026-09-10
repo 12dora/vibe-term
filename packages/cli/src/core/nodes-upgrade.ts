@@ -2,10 +2,9 @@
 
 import type { MeshNode } from '@vibeterm/api-client/auth/types';
 import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
-import type { UpgradeStatus } from '@vibeterm/shared';
+import { type UpgradeStatus, compareSemver } from '@vibeterm/shared';
 import { dash, sleep } from './cmd';
 import type { CliContext } from './context';
-import { CliError } from './errors';
 import { listMeshNodesFull } from './nodes-hub';
 
 export interface UpgradeLatest {
@@ -17,10 +16,13 @@ export interface UpgradeLatest {
 export interface UpgradeOutcome {
   node: string;
   name: string;
-  outcome: 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled';
+  outcome: 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled' | 'unconfirmed';
   version?: string | null;
   error?: string;
 }
+
+/** 首个网关暴露远程升级的版本；更早的版本只能在本机手动升级。 */
+export const MIN_REMOTE_UPGRADE_VERSION = '1.1.0';
 
 const POLL_MS = 2000;
 const BUDGET_MS = 6 * 60_000;
@@ -123,6 +125,7 @@ export async function waitNodeUpgrade(
   if (start.kind === 'alreadyLatest')
     return outcome(node, 'alreadyLatest', { version: node.version });
   if (start.kind === 'failed') return outcome(node, 'failed', { error: start.code });
+  if (start.kind === 'unconfirmed') return outcome(node, 'unconfirmed', { error: start.code });
   let sawBusy = false;
   while (Date.now() - started < BUDGET_MS) {
     const poll = await pollNodeUpgrade(ctx, node.id);
@@ -142,7 +145,7 @@ export async function waitNodeUpgrade(
   return outcome(node, 'timeout');
 }
 
-export function orderUpgradeTargets(rows: MeshNode[], selfId?: string): MeshNode[] {
+export function orderUpgradeGroups(rows: MeshNode[], selfId?: string): MeshNode[][] {
   const others: MeshNode[] = [];
   const hubs: MeshNode[] = [];
   const self: MeshNode[] = [];
@@ -151,7 +154,42 @@ export function orderUpgradeTargets(rows: MeshNode[], selfId?: string): MeshNode
     else if (row.isHub) hubs.push(row);
     else others.push(row);
   }
-  return [...others, ...hubs, ...self];
+  return [others, hubs, self].filter((group) => group.length > 0);
+}
+
+export function orderUpgradeTargets(rows: MeshNode[], selfId?: string): MeshNode[] {
+  return orderUpgradeGroups(rows, selfId).flat();
+}
+
+function isTooOldForRemoteUpgrade(version: string | null): boolean {
+  if (!version) return false;
+  return compareSemver(version, MIN_REMOTE_UPGRADE_VERSION) === -1;
+}
+
+/** 批量升级候选：在线、已登录（本机除外）、版本可解析且严格低于 latest。 */
+export function isBatchEligible(
+  node: MeshNode,
+  latestVersion: string | null,
+  selfId?: string
+): boolean {
+  if (!latestVersion || !node.version) return false;
+  if (!node.online) return false;
+  const isSelf = Boolean(selfId && node.id === selfId);
+  if (!isSelf && !node.loggedIn) return false;
+  if (isTooOldForRemoteUpgrade(node.version)) return false;
+  return compareSemver(node.version, latestVersion) === -1;
+}
+
+function startOutcome(
+  node: MeshNode,
+  start: Awaited<ReturnType<typeof startNodeUpgrade>>
+): UpgradeOutcome {
+  if (start.kind === 'alreadyLatest') {
+    return outcome(node, 'alreadyLatest', { version: node.version, error: start.code });
+  }
+  if (start.kind === 'failed') return outcome(node, 'failed', { error: start.code });
+  if (start.kind === 'unconfirmed') return outcome(node, 'unconfirmed', { error: start.code });
+  return outcome(node, 'done', { error: start.code });
 }
 
 export async function runUpgradeBatch(
@@ -163,35 +201,23 @@ export async function runUpgradeBatch(
   selfId?: string
 ): Promise<UpgradeOutcome[]> {
   const outcomes: UpgradeOutcome[] = [];
-  for (const node of orderUpgradeTargets(targets, selfId)) {
-    if (!wait) {
-      const start = await startNodeUpgrade(ctx, node.id, versionFlag);
-      outcomes.push({
-        node: node.id,
-        name: node.name,
-        outcome:
-          start.kind === 'alreadyLatest'
-            ? 'alreadyLatest'
-            : start.kind === 'failed'
-              ? 'failed'
-              : 'done',
-        error: start.code,
-      });
-      continue;
+  for (const group of orderUpgradeGroups(targets, selfId)) {
+    for (const node of group) {
+      if (wait) {
+        outcomes.push(await waitNodeUpgrade(ctx, node, latestVersion, versionFlag));
+      } else {
+        outcomes.push(startOutcome(node, await startNodeUpgrade(ctx, node.id, versionFlag)));
+      }
     }
-    outcomes.push(await waitNodeUpgrade(ctx, node, latestVersion, versionFlag));
   }
   return outcomes;
 }
 
-export function upgradePath(nodeId: string): string {
-  return `/api/mesh/nodes/${nodeId}/upgrade`;
+export function upgradeExitCode(outcomes: UpgradeOutcome[]): number {
+  const bad = new Set(['failed', 'timeout', 'unconfirmed']);
+  return outcomes.some((row) => bad.has(row.outcome)) ? 1 : 0;
 }
 
 export function uninstallPath(nodeId: string): string {
   return `/api/mesh/nodes/${nodeId}/uninstall`;
-}
-
-export function operationPath(nodeId: string): string {
-  return `/api/mesh/nodes/${nodeId}/operation`;
 }

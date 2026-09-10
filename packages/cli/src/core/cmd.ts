@@ -2,10 +2,10 @@
 
 import { readFile } from 'node:fs/promises';
 import type { FlagSpec, FlagValues } from './args';
-import { flagBool, parseArgv } from './args';
+import { flagBool, flagString, parseArgv } from './args';
 import type { CliContext } from './context';
 import { UsageError } from './errors';
-import { isInteractive, promptLine } from './prompt';
+import { isInteractive, promptHidden, promptLine, readAllStdin } from './prompt';
 
 export type SubHandler = (
   ctx: CliContext,
@@ -151,4 +151,56 @@ export function coerceScalar(raw: string): unknown {
   }
   if (/^-?\d+(\.\d+)?$/.test(trimmed)) return Number(trimmed);
   return raw;
+}
+
+function requireNonEmpty(value: string, label: string): string {
+  if (!value) throw new UsageError(`${label} is empty`);
+  return value;
+}
+
+async function readTrimmedFile(path: string): Promise<string> {
+  return (await readFile(path, 'utf8')).replace(/\r?\n$/, '');
+}
+
+export interface SecretFieldSpec {
+  flag: string;
+  envName?: string;
+  required?: boolean;
+  prompt?: string;
+}
+
+/** `--flag-stdin` > `--flag-file` > env > `--flag`（`@file` 或 argv，argv 会打 stderr 警告）> TTY。 */
+export async function readSecretField(
+  ctx: CliContext,
+  flags: FlagValues,
+  spec: SecretFieldSpec
+): Promise<string | undefined> {
+  if (flagBool(flags, `${spec.flag}-stdin`)) {
+    return requireNonEmpty(await readAllStdin(), `--${spec.flag}-stdin`);
+  }
+  const file = flagString(flags, `${spec.flag}-file`);
+  if (file) return requireNonEmpty(await readTrimmedFile(file), `--${spec.flag}-file`);
+  const fromEnv = spec.envName ? process.env[spec.envName] : undefined;
+  if (fromEnv) return fromEnv;
+  const argv = flagString(flags, spec.flag);
+  if (argv) {
+    if (argv.startsWith('@')) {
+      return requireNonEmpty(await readTrimmedFile(argv.slice(1)), `--${spec.flag} @file`);
+    }
+    const envHint = spec.envName ? `, or ${spec.envName}` : '';
+    ctx.out.warn(
+      `--${spec.flag} on the command line is visible to other processes; prefer --${spec.flag}-stdin, --${spec.flag}-file${envHint}`
+    );
+    return argv;
+  }
+  if (!spec.required) return undefined;
+  if (!isInteractive()) {
+    const envHint = spec.envName ? `, or ${spec.envName}` : '';
+    throw new UsageError(
+      `--${spec.flag} is required and stdin is not a terminal`,
+      `pass --${spec.flag}-stdin, --${spec.flag}-file${envHint}`
+    );
+  }
+  const value = await promptHidden(spec.prompt ?? `${spec.flag}: `);
+  return requireNonEmpty(value, spec.flag);
 }

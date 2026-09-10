@@ -107,6 +107,7 @@ const rules: SubHandler = async (ctx, flags, positionals) => {
   }
   if (action === 'edit') {
     const id = requireArg(rest, 0, 'rule id');
+    rejectExtra(rest, 1);
     const body = await watchRuleBody(flags, {});
     const payload = await ctx.http.json(nodeId, 'PATCH', rulePath(id), body);
     emit(ctx, payload, () => ctx.out.data(payload));

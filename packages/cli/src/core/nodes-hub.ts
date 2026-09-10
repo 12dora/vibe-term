@@ -30,12 +30,82 @@ export async function listMeshNodesFull(ctx: CliContext): Promise<MeshNode[]> {
   return payload.nodes ?? [];
 }
 
+export type ListedNode = MeshNode & { status: 'pending' | 'admitted' };
+
+export function hubRowAsPending(row: HubNodeRow): ListedNode {
+  return {
+    id: row.id,
+    name: row.name?.trim() || row.id.slice(0, 8),
+    publicKey: '',
+    online: row.online,
+    reach: null,
+    version: row.version,
+    direct_capable: row.direct_capable,
+    loggedIn: false,
+    status: 'pending',
+  };
+}
+
+export async function listListedNodes(ctx: CliContext): Promise<ListedNode[]> {
+  const mesh = await listMeshNodesFull(ctx);
+  const hubRows = await listHubNodes(ctx).catch(() => [] as HubNodeRow[]);
+  const meshIds = new Set(mesh.map((node) => node.id));
+  const admitted: ListedNode[] = mesh.map((node) => ({ ...node, status: 'admitted' as const }));
+  const pending: ListedNode[] = [];
+  const seen = new Set<string>();
+  for (const row of hubRows) {
+    if (row.admission_status !== 'pending' || meshIds.has(row.id) || seen.has(row.id)) continue;
+    seen.add(row.id);
+    pending.push(hubRowAsPending(row));
+  }
+  pending.sort((a, b) => a.name.localeCompare(b.name));
+  return [...admitted, ...pending];
+}
+
+function matchHubRow(rows: HubNodeRow[], ref: string): HubNodeRow | null {
+  const trimmed = ref.trim();
+  if (/^[0-9a-f]{32}$/.test(trimmed)) {
+    return rows.find((row) => row.id === trimmed) ?? null;
+  }
+  const matches = rows.filter((row) => row.name === trimmed);
+  if (matches.length > 1) {
+    throw new UsageError(
+      `node name "${trimmed}" is ambiguous: ${matches.map((row) => row.id).join(', ')}`,
+      'use the node id instead'
+    );
+  }
+  return matches[0] ?? null;
+}
+
+export async function findHubNode(ctx: CliContext, ref: string): Promise<HubNodeRow | null> {
+  const rows = await listHubNodes(ctx).catch(() => [] as HubNodeRow[]);
+  return matchHubRow(rows, ref);
+}
+
 export async function findMeshNode(ctx: CliContext, ref: string): Promise<MeshNode> {
   const resolved = await ctx.resolver.resolveNode(ref);
   if (resolved.row) return resolved.row;
   const nodes = await listMeshNodesFull(ctx);
   const row = nodes.find((node) => node.id === resolved.id);
   if (row) return row;
+  throw new NotFoundError(`unknown node: ${ref}`, 'run: vibeterm nodes ls');
+}
+
+export interface AdminNode {
+  id: string;
+  name: string;
+  mesh: MeshNode | null;
+  hub: HubNodeRow | null;
+}
+
+export async function findAdminNode(ctx: CliContext, ref: string): Promise<AdminNode> {
+  const hub = await findHubNode(ctx, ref);
+  const mesh = await findMeshNode(ctx, ref).catch((error) => {
+    if (error instanceof NotFoundError) return null;
+    throw error;
+  });
+  if (mesh) return { id: mesh.id, name: mesh.name, mesh, hub };
+  if (hub) return { id: hub.id, name: hub.name, mesh: null, hub };
   throw new NotFoundError(`unknown node: ${ref}`, 'run: vibeterm nodes ls');
 }
 

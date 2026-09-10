@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { rm } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { UsageError } from '../core/errors';
 import { NODE, routeFetch, testContext } from './cli-test-harness';
 import { command as devices } from './devices';
@@ -49,6 +51,36 @@ describe('vibeterm devices', () => {
     });
     await devices.run(cli, ['add', '--name', 'laptop', '--type', 'local']);
     expect(JSON.parse(body)).toMatchObject({ name: 'laptop', type: 'local', authMode: 'auto' });
+  });
+
+  test('add --password on argv warns and still sends the secret', async () => {
+    let body = '';
+    const { ctx: cli, stderr } = await ctx({
+      'POST /api/devices': (_url, init) => {
+        body = String(init?.body);
+        return { device: laptop };
+      },
+    });
+    await devices.run(cli, ['add', '--name', 'laptop', '--type', 'ssh', '--password', 's3cret']);
+    expect(JSON.parse(body)).toMatchObject({ password: 's3cret' });
+    expect(stderr.text()).toContain('visible to other processes');
+  });
+
+  test('add --password-file reads the secret without argv warning', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'vt-secret-'));
+    dirs.push(dir);
+    const file = join(dir, 'pw');
+    await writeFile(file, 'from-file\n');
+    let body = '';
+    const { ctx: cli, stderr } = await ctx({
+      'POST /api/devices': (_url, init) => {
+        body = String(init?.body);
+        return { device: laptop };
+      },
+    });
+    await devices.run(cli, ['add', '--name', 'laptop', '--type', 'ssh', '--password-file', file]);
+    expect(JSON.parse(body)).toMatchObject({ password: 'from-file' });
+    expect(stderr.text()).not.toContain('visible to other processes');
   });
 
   test('edit patches by name', async () => {

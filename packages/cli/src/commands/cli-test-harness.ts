@@ -46,7 +46,12 @@ export function routeFetch(
 export async function testContext(
   fetchImpl: FetchLike,
   options: { json?: boolean; node?: string } = {}
-): Promise<{ ctx: CliContext; stdout: ReturnType<typeof collector>; dir: string }> {
+): Promise<{
+  ctx: CliContext;
+  stdout: ReturnType<typeof collector>;
+  stderr: ReturnType<typeof collector>;
+  dir: string;
+}> {
   const dir = await mkdtemp(join(tmpdir(), 'vibeterm-cli-t3-'));
   const stdout = collector();
   const stderr = collector();
@@ -63,7 +68,7 @@ export async function testContext(
     stdout: stdout.stream,
     stderr: stderr.stream,
   });
-  return { ctx, stdout, dir };
+  return { ctx, stdout, stderr, dir };
 }
 
 export function meshNode(

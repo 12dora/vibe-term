@@ -2,7 +2,15 @@
 
 import type { FlagValues } from './args';
 import { flagBool, flagString } from './args';
-import { coerceScalar, mergeBody, parseOnOff, requireObjectBody, resolveJsonBody } from './cmd';
+import {
+  coerceScalar,
+  mergeBody,
+  parseOnOff,
+  readSecretField,
+  requireObjectBody,
+  resolveJsonBody,
+} from './cmd';
+import type { CliContext } from './context';
 import { UsageError } from './errors';
 
 const SITE_KEYS = new Set([
@@ -42,15 +50,20 @@ export async function requiredObjectBody(
   return requireObjectBody(await resolveJsonBody(flagString(flags, 'body')), hint);
 }
 
-export async function webhookCreateBody(flags: FlagValues): Promise<Record<string, unknown>> {
+export async function webhookCreateBody(
+  ctx: CliContext,
+  flags: FlagValues
+): Promise<Record<string, unknown>> {
   const extra = await optionalObjectBody(flags);
   const url = flagString(flags, 'url');
-  const secret = flagString(flags, 'secret');
+  const secret = await readSecretField(ctx, flags, {
+    flag: 'secret',
+    envName: 'VIBETERM_WEBHOOK_SECRET',
+  });
   const events = flagString(flags, 'events');
   const body = mergeBody(
     {
       ...(url ? { url } : {}),
-      ...(secret ? { secret } : {}),
       ...(events
         ? {
             eventMask: events
@@ -62,29 +75,37 @@ export async function webhookCreateBody(flags: FlagValues): Promise<Record<strin
     },
     extra
   );
+  if (secret) body.secret = secret;
   if (typeof body.url !== 'string' || typeof body.secret !== 'string') {
-    throw new UsageError('webhooks add requires --url and --secret (or --body)');
+    throw new UsageError(
+      'webhooks add requires --url and --secret (or --secret-stdin/--secret-file/VIBETERM_WEBHOOK_SECRET/--body)'
+    );
   }
   return body;
 }
 
 export async function llmProviderBody(
+  ctx: CliContext,
   flags: FlagValues,
   required: boolean
 ): Promise<Record<string, unknown>> {
   const extra = await optionalObjectBody(flags);
+  const apiKey = await readSecretField(ctx, flags, {
+    flag: 'api-key',
+    envName: 'VIBETERM_LLM_API_KEY',
+  });
   const body = mergeBody(
     {
       ...(flagString(flags, 'name') ? { name: flagString(flags, 'name') } : {}),
       ...(flagString(flags, 'protocol') ? { protocol: flagString(flags, 'protocol') } : {}),
       ...(flagString(flags, 'base-url') ? { baseUrl: flagString(flags, 'base-url') } : {}),
-      ...(flagString(flags, 'api-key') ? { apiKey: flagString(flags, 'api-key') } : {}),
     },
     extra
   );
+  if (apiKey) body.apiKey = apiKey;
   if (required && (!body.name || !body.protocol || !body.baseUrl || !body.apiKey)) {
     throw new UsageError(
-      'llm providers add requires --name --protocol --base-url --api-key (or --body)'
+      'llm providers add requires --name --protocol --base-url --api-key (or --api-key-stdin/--api-key-file/VIBETERM_LLM_API_KEY/--body)'
     );
   }
   return body;
@@ -142,3 +163,11 @@ export async function tunnelActionBody(
 }
 
 export const LOCAL_DIRECT_ACTIONS = new Set(['install', 'remove', 'enable', 'disable']);
+
+/** TLS mode none / trustProxy 会让局域网客户端伪造 X-Forwarded-* 绕过地址判断。 */
+export const LAN_SPOOF_CONFIRM =
+  'this setting disables TLS or trusts X-Forwarded-* headers; a LAN client can spoof those headers and bypass address checks';
+
+export function tlsSetNeedsConfirm(body: Record<string, unknown>): boolean {
+  return body.mode === 'none' || body.trustProxy === true;
+}

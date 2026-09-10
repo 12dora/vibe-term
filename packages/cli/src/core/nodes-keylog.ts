@@ -1,9 +1,13 @@
 // 用根钥签 enrollment / admit / revoke。根种子只在回调里活着，用完清零。
 
-import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import { NODE_ID_PATTERN, SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import {
+  ARGON2ID_ITERATIONS,
+  ARGON2ID_MEMORY_KIB,
+  ARGON2ID_PARALLELISM,
   type RootKey,
   buildKeyLogRecord,
+  bytesEqual,
   createEnrollment,
   decodeBase64url,
   deriveSeed,
@@ -36,10 +40,49 @@ export async function readAccountPassword(): Promise<string> {
   return value;
 }
 
+export function assertKdfParamsFloor(params: {
+  memory_kib: number;
+  iterations: number;
+  parallelism: number;
+}): void {
+  if (
+    params.memory_kib < ARGON2ID_MEMORY_KIB ||
+    params.iterations < ARGON2ID_ITERATIONS ||
+    params.parallelism < ARGON2ID_PARALLELISM
+  ) {
+    throw new AuthError(
+      'auth mode advertised weaker argon2id parameters than this client accepts',
+      'the entry may be malicious; refuse to derive'
+    );
+  }
+}
+
+export function assertRootMatchesMode(root: RootKey, mode: AuthMode): void {
+  if (!mode.rootPublicKey) {
+    root.seed.fill(0);
+    throw new AuthError(
+      'auth mode is missing rootPublicKey; cannot verify the password',
+      'upgrade the entry or sign from the GUI'
+    );
+  }
+  const expected = decodeBase64url(mode.rootPublicKey);
+  if (!bytesEqual(root.publicKey, expected)) {
+    root.seed.fill(0);
+    throw new AuthError('wrong password', 'check VIBETERM_PASSWORD');
+  }
+}
+
+export function assertNodeHexId(nodeId: string): void {
+  if (!NODE_ID_PATTERN.test(nodeId)) {
+    throw new UsageError(`node id must be 32 lowercase hex chars: ${nodeId}`);
+  }
+}
+
 async function deriveRoot(mode: AuthMode, password: string): Promise<RootKey> {
   if (!mode.uid || !mode.kdfParams || mode.rootEpoch === null || mode.rootEpoch === undefined) {
     throw new CliError('auth mode is missing uid/kdf/rootEpoch; cannot sign');
   }
+  assertKdfParamsFloor(mode.kdfParams);
   const seed = await deriveSeed(password, {
     salt: decodeBase64url(mode.kdfParams.salt),
     memory_kib: mode.kdfParams.memory_kib,
@@ -47,7 +90,9 @@ async function deriveRoot(mode: AuthMode, password: string): Promise<RootKey> {
     parallelism: mode.kdfParams.parallelism,
   });
   try {
-    return rootKeyFromSeed(seed);
+    const root = rootKeyFromSeed(seed);
+    assertRootMatchesMode(root, mode);
+    return root;
   } finally {
     seed.fill(0);
   }
@@ -209,10 +254,10 @@ export async function revokeNode(
   nodeId: string,
   reason: string
 ): Promise<unknown> {
+  assertNodeHexId(nodeId);
   return withRootKey(ctx, async (root, mode) => {
     const head = await keyLogHead(ctx);
     const nodeBytes = hexToBytes(nodeId);
-    if (nodeBytes.length !== 16) throw new UsageError(`node id must be 32 hex chars: ${nodeId}`);
     const signed = signRecord(
       root,
       head,

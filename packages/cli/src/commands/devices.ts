@@ -28,8 +28,14 @@ const FLAGS = {
   user: 'string',
   'auth-mode': 'string',
   password: 'string',
+  'password-stdin': 'boolean',
+  'password-file': 'string',
   'private-key': 'string',
+  'private-key-stdin': 'boolean',
+  'private-key-file': 'string',
   passphrase: 'string',
+  'passphrase-stdin': 'boolean',
+  'passphrase-file': 'string',
   session: 'string',
   cwd: 'string',
   'ssh-config': 'string',
@@ -53,6 +59,8 @@ const USAGE = [
   '',
   'add/edit flags: --name --type --host --port --user --auth-mode',
   '  --password --private-key --passphrase --session --cwd --ssh-config --body',
+  'Secrets: prefer --password-stdin / --password-file / @file / VIBETERM_DEVICE_PASSWORD',
+  '  (same for --private-key and --passphrase; argv values warn on stderr).',
   '',
   '--json shapes: { devices } / Device / { device } / TestConnectionResult / DeviceFolderLayout',
 ].join('\n');
@@ -88,7 +96,7 @@ const show: SubHandler = async (ctx, _flags, positionals) => {
 const add: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 0);
   const nodeId = await ctx.targetNodeId();
-  const body = await deviceMutationBody(flags, { name: true, type: true });
+  const body = await deviceMutationBody(ctx, flags, { name: true, type: true });
   const result = await ctx.http.json(nodeId, 'POST', '/api/devices', body);
   emit(ctx, result, () => ctx.out.data(result));
 };
@@ -97,7 +105,7 @@ const edit: SubHandler = async (ctx, flags, positionals) => {
   const ref = requireArg(positionals, 0, 'device');
   rejectExtra(positionals, 1);
   const device = await resolveDevice(ctx, ref);
-  const body = await deviceMutationBody(flags, {});
+  const body = await deviceMutationBody(ctx, flags, {});
   const result = await ctx.http.json(
     await ctx.targetNodeId(),
     'PATCH',

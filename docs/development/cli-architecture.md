@@ -205,7 +205,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm files`
 
-子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。
+子命令：`roots [ls|add|rm|order]`、`ls`、`stat`、`cat`。路径与 GUI 相同：底层是 `rootId` + 绝对路径；CLI 接受 `[<node>:]<rootId>:<relpath>` 或 `[<node>:]<rootName>/<relpath>`，以及两段式 `<node> <spec>`。末尾单独一个冒号（`<root>:`）表示根本身。展示名为 `/` 的根必须用 `<rootId>:<relpath>`，斜杠形式会和本地绝对路径撞车。`..` 段在客户端直接报用法错误。`fs-root` 仅在节点没有启用根时有效。`ls` 走 `GET /api/files/list`（服务端每层最多 2000 条，`truncated: true` 时无法再翻页）。`cat` 走 `GET /api/files/raw`，二进制直写 stdout，忽略 `--json`。文件路由的 `403 outside_roots|root_disabled|permission_denied` 是权限错误（退出码 1），不要当成未登录。
 
 `--json` 形状：
 
@@ -215,31 +215,31 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm cp`
 
-`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：8 MiB 分块 `upload/init` → `PUT`（失败按区间续传 + 退避）→ `commit`。节点→本地：`download/prepare` → `GET content`（`Range` 续传）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON。`-r` 递归；`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node）。`cp jobs ls|cancel <id>` 管传输任务。
+`cp <src> <dst>`：任一侧为 `[<node>:]<root>/<path>` 或本地路径（`/`、`./`、`../`、`~`）。本地→节点：先 `POST /api/files/mkdir {recursive:true}`（每个目录一次、带缓存；空目录也会建）保证目标目录存在，再 `upload/init` → 8 MiB PUT（失败按已收区间续传；`runPush` 必须注入 `sleep`，否则重试会连发；阶梯退避带抖动）→ `commit`。节点过旧、mkdir 路由不存在（404 body 为 `Not found`，区别于业务 `not_found`）时在上传前失败。节点→本地：`download/prepare` → `GET content`（`Range` / 206 续传，截断后抖动退避再试）。节点→节点：先 `POST /n/<B>/api/transfer/grants`，再 `POST /n/<A>/api/transfer/jobs`，跟 `GET .../jobs/:id/events` NDJSON；流在非终态结束则轮询 `GET .../jobs/:id` 直到 `finishedAt !== null`（受 `--timeout` 约束）。`-r` 递归目录，**local→node 依赖目标节点支持 mkdir**。`--on-conflict overwrite|skip|rename`（默认 skip；`rename` 只用于 local↔node；node↔node 不能把文件改名到不存在的目标，必须传已有目录）。`--fail-on-skip` 在冲突/符号链接跳过时也退出 1。listing 截断或任何错误退出 1。SIGINT/SIGTERM 会 `DELETE` 进行中的 upload/download 会话并以 130 退出。人读进度默认只在 TTY 开，`--progress` / `--no-progress` 覆盖，节流 ≥500 ms 或 ≥1%。`cp jobs ls|cancel <id>` 管传输任务。
 
-`--json` 时 stdout 为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
+`--json` 时 stdout 仅为 NDJSON 进度：`{"type":"progress"|"item"|"done", ...}`，`done` 带 `files` / `skipped` / `errors` / `truncated`。`cp jobs ls --json`：`{ "jobs": [ { jobId, state, fromNodeId, toNodeId, progress, items } ] }`。
 
 ## `vibeterm port`
 
-`map <listenPort> <targetNode>:<host>:<port> [--listen-host] [--name] [--on]`：先在 B 建 export，再用同一 `mapId` 在 A 建监听；A 失败则删 B 的 export。`ls` 含实时计数。`rm <id>` 看 `exportRemoved`，未清则再删 B。`pause|resume` 走 PATCH。`probe <node>:<host>:<port>` 同时打 `/api/portmap/probe` 与 `/target-probe`。
+`map <listenPort> <targetNode>:<host>:<port> [--listen-host] [--name] [--on]`：先在 B 建 export，再用同一 `mapId` 在 A 建监听。A 返回 4xx 时撤掉 B 的 export；5xx / 网络错误则保留 export，并提示 `vibeterm port rm --export <mapId> --on <B>`（直接 `DELETE /api/portmap/exports/:mapId`）。`ls` 含实时计数。`rm <id>` 看 `exportRemoved`，未清则再删 B。`pause|resume` 走 PATCH。`probe <node>:<host>:<port>` 同时打 `/api/portmap/probe` 与 `/target-probe`。
 
 `--json` 形状：`{ "map" }` / `{ "maps" }` / `{ "removed", "exportRemoved" }` / `{ "listen", "target" }`。
 
 ## `vibeterm nodes`
 
-子命令：`ls`、`show`、`hubs`、`rename`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`、`uninstall`、`rtc-config`。名单走 `GET /api/mesh/nodes`；`rename` 转发到 writer hub 的 `POST /n/<hub>/api/hub/nodes/:id/rename`。`allow`：hub 上 `admission_status=pending` 时签 `admit-node` 写入 key log，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`，`--all` 按普通节点 → hub → 本机串行。`uninstall` 非 TTY 必须 `--yes`。
+子命令：`ls`、`show`、`hubs`、`rename`、`allow`、`disallow`、`revoke`、`enroll`、`upgrade`、`uninstall`、`rtc-config`。`ls` 合并 `GET /api/mesh/nodes` 与 hub 待批准行（`status=pending`）。`rename` 转发到 writer hub 的 `POST /n/<hub>/api/hub/nodes/:id/rename`。`allow` 先查 hub 列表：`admission_status=pending` 时签 `admit-node`，否则 `PATCH /api/system/domain-access {allowed:true}`。`disallow` 关域名访问。`revoke` 签 `revoke-node`（需 `VIBETERM_PASSWORD`）；非 TTY 必须 `--yes`；mesh 里没有的节点可回退到 hub 列表。`enroll --password` 只打印 `vibeterm hub join <url> --password`；默认路径签 enrollment 并打印 join 命令。`upgrade --wait` 轮询 `GET /api/mesh/nodes/:id/upgrade`。`--all` **强制** `--wait`：按组（普通节点 → hub → 本机）等上一组全部收尾再开下一组；只升 online、已登录、版本严格低于 latest 的节点；任一 `failed` / `timeout` / `unconfirmed` 退出码 1。`uninstall`：`POST /api/mesh/nodes/:id/uninstall` 后签 `revoke-node`（吊销失败即失败）；非 TTY 必须 `--yes`。
 
-`--json` 形状：`{ nodes }` / `MeshNode` / `MeshHubsResponse` / `{ latest, outcomes }` / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
+`--json` 形状：`{ nodes }`（含 `status`） / `MeshNode` / `MeshHubsResponse` / `{ node, action, result }`（allow） / `{ node, result }`（revoke） / `{ latest, outcomes }`（`outcome` 含 `unconfirmed`） / `{ node, scheduled, revoked }`（uninstall） / `{ stun, turn, probes? }` / `{ id, expiresAt, joinToken, joinCommand, publicUrl }`。
 
 ## `vibeterm devices`
 
-子命令：`ls|show|add|edit|rm|test|order` 与 `folders ls|add|rm|layout`。`add`/`edit` 旗标镜像 GUI 表单（`--name --type local|ssh --host --port --user --auth-mode --password --private-key --passphrase --session --cwd --ssh-config`），复杂体也可 `--body`。`rm` 非 TTY 必须 `--yes`。`order` 走 `PUT /api/devices/order`。分组走 `/api/device-folders`；`layout` 需要 `--body {folders,placements}`。
+子命令：`ls|show|add|edit|rm|test|order` 与 `folders ls|add|rm|layout`。`add`/`edit` 旗标镜像 GUI 表单（`--name --type local|ssh --host --port --user --auth-mode --password --private-key --passphrase --session --cwd --ssh-config`），复杂体也可 `--body`。口令 / 密钥不要写在 argv 上（会进进程列表，CLI 会往 stderr 警告）：优先 `--password-stdin`、`--password-file` / `@file`，或 `VIBETERM_DEVICE_PASSWORD`（`--private-key` / `--passphrase` 同理，`VIBETERM_DEVICE_PRIVATE_KEY` / `VIBETERM_DEVICE_PASSPHRASE`）。`rm` 非 TTY 必须 `--yes`。`order` 走 `PUT /api/devices/order`。分组走 `/api/device-folders`；`layout` 需要 `--body {folders,placements}`。
 
 `--json` 形状：`{ devices }` / `Device` / `TestConnectionResult` / `DeviceFolderLayout`。
 
 ## `vibeterm share`
 
-子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）或名字；也可用 `--window-id @N`。口令来自 `--password` / `VIBETERM_SHARE_PASSWORD` / TTY。`password --clear` 用当前口令重设并 `endSessions`。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
+子命令：`create|ls|show|password|revoke|rm|log|settings|origins`。`create` 目标为 `[<node>/]<device>:<window>`，窗口用 tmux id（`@1`）或名字；也可用 `--window-id @N`。口令来自 `--password-stdin` / `--password-file` / `@file` / `VIBETERM_SHARE_PASSWORD` / TTY；`--password` 仍可用但会打 stderr 警告。分享口令 API 不能清空，只有改口令；`password --end-sessions` 在 POST 新口令的同时踢掉在线观众。日志 `--json` 原样给出网关分页（`data` 已是 base64）。
 
 `--json` 形状：`{ share, password }` / `{ active, history }` / `ShareRecord` / `ShareLogPage` / `ShareSettings` / `ShareOriginsResponse`。
 
@@ -251,7 +251,7 @@ bun scripts/complexity/gate.ts
 
 ## `vibeterm settings`
 
-`site get|set <key> <value>`、`shortcuts get|set`、`restart`、`notifications mesh get|set`、`webhooks ls|add|rm|edit`（无 PATCH，edit = 删后重建）、`llm providers …`、`llm get|set`、`domain-access get|set`、`tls get|set|renew|ca`、`tunnel status|<action>`、`system info|addresses|upgrade status|start`、`local status|leave|direct`。TLS / tunnel / local 只打 entry 自身。复杂体一律 `--body <json>|@file`。
+`site get|set <key> <value>`、`shortcuts get|set`、`restart`、`notifications mesh get|set`、`webhooks ls|add|rm|edit`（无 PATCH，edit 先拼并校验新 body 再 DELETE+POST）、`llm providers …`、`llm get|set`、`domain-access get|set`、`tls get|set|renew|ca`、`tunnel status|<action>`、`system info|addresses|upgrade status|start`、`local status|leave|direct`。webhook `--secret` 与 LLM `--api-key` 优先 `--*-stdin` / `--*-file` / `@file` / `VIBETERM_WEBHOOK_SECRET` / `VIBETERM_LLM_API_KEY`；写在 argv 上会打 stderr 警告。`tls set` 在 `mode: none` 或 `trustProxy: true`、以及 `tunnel … --trust-proxy on` 时必须 `--yes`（局域网可伪造 `X-Forwarded-*`）。`local leave` 先尽力自吊销（`revoke-node`，需 `VIBETERM_PASSWORD`）；没有密码时必须 `--skip-self-revoke`。TLS / tunnel / local 只打 entry 自身。复杂体一律 `--body <json>|@file`。
 
 `--json` 打印网关响应原样。
 

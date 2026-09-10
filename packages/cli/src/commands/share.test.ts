@@ -83,7 +83,7 @@ describe('vibeterm share', () => {
     expect(JSON.parse(stdout.text()).active[0].id).toBe('s-1');
   });
 
-  test('password GET and --clear ends sessions', async () => {
+  test('password GET and --end-sessions posts a new password', async () => {
     const posts: unknown[] = [];
     const { ctx: cli } = await ctx({
       'GET /api/share/s-1/password': () => ({ password: 'secret1' }),
@@ -92,8 +92,9 @@ describe('vibeterm share', () => {
         return { share: record, endedSessions: 2 };
       },
     });
-    await share.run(cli, ['password', 's-1', '--clear']);
-    expect(posts[0]).toEqual({ password: 'secret1', endSessions: true });
+    await share.run(cli, ['password', 's-1']);
+    await share.run(cli, ['password', 's-1', '--password', 'next-pass-1', '--end-sessions']);
+    expect(posts[0]).toEqual({ password: 'next-pass-1', endSessions: true });
   });
 
   test('settings set requires --body', async () => {

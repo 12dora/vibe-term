@@ -8,6 +8,7 @@ import {
   emit,
   mergeBody,
   parseDurationMs,
+  readSecretField,
   rejectExtra,
   requireArg,
   requireObjectBody,
@@ -17,18 +18,18 @@ import {
 } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { NotFoundError, UsageError } from '../core/errors';
-import { isInteractive, promptHidden } from '../core/prompt';
 import { resolveShareTarget, sharePath } from '../core/share-target';
 import type { Command } from './types';
 
 const FLAGS = {
   password: 'string',
+  'password-stdin': 'boolean',
+  'password-file': 'string',
   name: 'string',
   'window-id': 'string',
   origin: 'string',
   expires: 'string',
   yes: 'boolean',
-  clear: 'boolean',
   body: 'string',
   after: 'number',
   limit: 'number',
@@ -42,7 +43,7 @@ const USAGE = [
   '  create <target-window> [--password] [--name] [--expires 1h] [--origin] [--window-id @N]',
   '  ls [--node]',
   '  show <id>',
-  '  password <id> [--password] [--clear]   GET password; --clear ends viewer sessions',
+  '  password <id> [--password] [--end-sessions]   GET; POST sets password (API cannot clear it)',
   '  revoke <id>                            POST /api/share/:id/revoke',
   '  rm <id>                                DELETE (ended shares only)',
   '  log <id> [--after N] [--limit N]',
@@ -50,25 +51,21 @@ const USAGE = [
   '  origins                                GET /api/share/origins',
   '',
   'create target: [<node>/]<device>:<window>  window is a tmux id (@1) or name.',
+  'Secrets: --password-stdin / --password-file / @file / VIBETERM_SHARE_PASSWORD (argv warns).',
   '--json: { share, password } / { active, history } / ShareRecord / ShareLogPage / ShareSettings',
 ].join('\n');
 
 async function readSharePassword(
-  flags: { password?: string },
-  interactiveLabel: string
+  ctx: CliContext,
+  flags: Parameters<SubHandler>[1]
 ): Promise<string> {
-  if (flags.password) return flags.password;
-  const env = process.env.VIBETERM_SHARE_PASSWORD;
-  if (env) return env;
-  if (!isInteractive()) {
-    throw new UsageError(
-      'a share password is required and stdin is not a terminal',
-      'pass --password or set VIBETERM_SHARE_PASSWORD'
-    );
-  }
-  const value = await promptHidden(interactiveLabel);
-  if (!value) throw new UsageError('password is empty');
-  return value;
+  const value = await readSecretField(ctx, flags, {
+    flag: 'password',
+    envName: 'VIBETERM_SHARE_PASSWORD',
+    required: true,
+    prompt: 'Share password: ',
+  });
+  return value as string;
 }
 
 const create: SubHandler = async (ctx, flags, positionals) => {
@@ -82,10 +79,7 @@ const create: SubHandler = async (ctx, flags, positionals) => {
       deviceId: target.deviceId,
       windowId: target.windowId,
       name: flagString(flags, 'name') ?? '',
-      password: await readSharePassword(
-        { password: flagString(flags, 'password') },
-        'Share password: '
-      ),
+      password: await readSharePassword(ctx, flags),
       expiresInMs: expires ? parseDurationMs(expires) : null,
       origin: flagString(flags, 'origin') ?? null,
     },
@@ -141,22 +135,14 @@ const password: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 1);
   const nodeId = await ctx.targetNodeId();
   const path = sharePath(id, '/password');
-  const next = flagString(flags, 'password');
-  if (flagBool(flags, 'clear') && !next) {
-    const current = await ctx.http.json<{ password: string }>(nodeId, 'GET', path);
-    const result = await ctx.http.json(nodeId, 'POST', path, {
-      password: current.password,
-      endSessions: true,
-    });
-    emit(ctx, result, () => ctx.out.line(`ended viewer sessions for ${id}`));
-    return;
-  }
-  if (next || flagBool(flags, 'end-sessions')) {
-    const value = await readSharePassword({ password: next }, 'New share password: ');
-    const result = await ctx.http.json(nodeId, 'POST', path, {
-      password: value,
-      endSessions: flagBool(flags, 'end-sessions') || flagBool(flags, 'clear'),
-    });
+  const endSessions = flagBool(flags, 'end-sessions');
+  const hasSecret =
+    Boolean(flagString(flags, 'password')) ||
+    flagBool(flags, 'password-stdin') ||
+    Boolean(flagString(flags, 'password-file'));
+  if (endSessions || hasSecret) {
+    const value = await readSharePassword(ctx, flags);
+    const result = await ctx.http.json(nodeId, 'POST', path, { password: value, endSessions });
     emit(ctx, result, () => ctx.out.data(result));
     return;
   }

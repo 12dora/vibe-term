@@ -87,6 +87,13 @@ describe('vibeterm watch', () => {
     expect(JSON.parse(body)).toEqual({ enabled: false });
   });
 
+  test('rules edit rejects extra arguments', async () => {
+    const { ctx: cli } = await ctx({});
+    await expect(watch.run(cli, ['rules', 'edit', 'r-1', 'extra'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+  });
+
   test('assist-regex posts the description', async () => {
     let body = '';
     const { ctx: cli, stdout } = await ctx({

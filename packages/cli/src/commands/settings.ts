@@ -1,11 +1,14 @@
 // `vibeterm settings`：站点、快捷键、通知、webhook、LLM、TLS、隧道、本机。
 
-import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
-import { flagString } from '../core/args';
+import { NODE_ID_PATTERN, SELF_NODE_ID } from '@vibeterm/api-client/node-url';
+import { flagBool, flagString } from '../core/args';
+import { fetchAuthMode } from '../core/auth';
 import { type SubHandler, confirmOrYes, emit, rejectExtra, requireArg, runSubs } from '../core/cmd';
 import type { CliContext } from '../core/context';
 import { UsageError } from '../core/errors';
+import { revokeNode } from '../core/nodes-keylog';
 import {
+  LAN_SPOOF_CONFIRM,
   LOCAL_DIRECT_ACTIONS,
   TUNNEL_ACTIONS,
   enabledFromFlags,
@@ -13,6 +16,7 @@ import {
   optionalObjectBody,
   requiredObjectBody,
   sitePatch,
+  tlsSetNeedsConfirm,
   tunnelActionBody,
   webhookCreateBody,
 } from '../core/settings-body';
@@ -26,11 +30,16 @@ const FLAGS = {
   off: 'boolean',
   url: 'string',
   secret: 'string',
+  'secret-stdin': 'boolean',
+  'secret-file': 'string',
   events: 'string',
   name: 'string',
   protocol: 'string',
   'base-url': 'string',
   'api-key': 'string',
+  'api-key-stdin': 'boolean',
+  'api-key-file': 'string',
+  'skip-self-revoke': 'boolean',
   hostname: 'string',
   version: 'string',
   'expected-role': 'string',
@@ -58,6 +67,8 @@ const USAGE = [
   '  local status|leave|direct      GET /api/local/status; POST /api/local/leave|direct',
   '',
   'Complex bodies accept --body <json>|@file like `vibeterm api`.',
+  'Secrets: --secret-stdin/--secret-file/VIBETERM_WEBHOOK_SECRET, --api-key-stdin/--api-key-file/VIBETERM_LLM_API_KEY.',
+  'argv --secret/--api-key warn on stderr. local leave self-revokes (VIBETERM_PASSWORD) unless --skip-self-revoke.',
   '--json prints the gateway payload unchanged.',
 ].join('\n');
 
@@ -163,7 +174,7 @@ const webhooks: SubHandler = async (ctx, flags, positionals) => {
     return;
   }
   if (action === 'add') {
-    print(ctx, await jsonSelf(ctx, 'POST', '/api/webhooks', await webhookCreateBody(flags)));
+    print(ctx, await jsonSelf(ctx, 'POST', '/api/webhooks', await webhookCreateBody(ctx, flags)));
     return;
   }
   if (action === 'rm') {
@@ -174,9 +185,10 @@ const webhooks: SubHandler = async (ctx, flags, positionals) => {
   }
   if (action === 'edit') {
     const id = requireArg(positionals, 1, 'id');
+    const body = await webhookCreateBody(ctx, flags);
     await confirmOrYes(flags, `replace webhook ${id}`);
     await jsonSelf(ctx, 'DELETE', `/api/webhooks/${id}`);
-    print(ctx, await jsonSelf(ctx, 'POST', '/api/webhooks', await webhookCreateBody(flags)));
+    print(ctx, await jsonSelf(ctx, 'POST', '/api/webhooks', body));
     return;
   }
   throw new UsageError(`unknown webhooks action: ${action}`, 'use ls|add|rm|edit');
@@ -211,7 +223,7 @@ const llm: SubHandler = async (ctx, flags, positionals) => {
   if (action === 'add') {
     print(
       ctx,
-      await jsonSelf(ctx, 'POST', '/api/llm/providers', await llmProviderBody(flags, true))
+      await jsonSelf(ctx, 'POST', '/api/llm/providers', await llmProviderBody(ctx, flags, true))
     );
     return;
   }
@@ -219,7 +231,12 @@ const llm: SubHandler = async (ctx, flags, positionals) => {
   if (action === 'edit') {
     print(
       ctx,
-      await jsonSelf(ctx, 'PATCH', `/api/llm/providers/${id}`, await llmProviderBody(flags, false))
+      await jsonSelf(
+        ctx,
+        'PATCH',
+        `/api/llm/providers/${id}`,
+        await llmProviderBody(ctx, flags, false)
+      )
     );
     return;
   }
@@ -262,10 +279,9 @@ const tls: SubHandler = async (ctx, flags, positionals) => {
     return;
   }
   if (action === 'set') {
-    print(
-      ctx,
-      await jsonEntry(ctx, 'PUT', '/api/tls', await requiredObjectBody(flags, 'pass --body'))
-    );
+    const body = await requiredObjectBody(flags, 'pass --body');
+    if (tlsSetNeedsConfirm(body)) await confirmOrYes(flags, LAN_SPOOF_CONFIRM);
+    print(ctx, await jsonEntry(ctx, 'PUT', '/api/tls', body));
     return;
   }
   if (action === 'renew') {
@@ -294,10 +310,9 @@ const tunnel: SubHandler = async (ctx, flags, positionals) => {
       `use status or ${TUNNEL_ACTIONS.join('|')}`
     );
   }
-  print(
-    ctx,
-    await jsonEntry(ctx, 'POST', '/api/tunnel/actions', await tunnelActionBody(action, flags))
-  );
+  const body = await tunnelActionBody(action, flags);
+  if (body.trustProxy === true) await confirmOrYes(flags, LAN_SPOOF_CONFIRM);
+  print(ctx, await jsonEntry(ctx, 'POST', '/api/tunnel/actions', body));
 };
 
 const system: SubHandler = async (ctx, flags, positionals) => {
@@ -351,6 +366,7 @@ const local: SubHandler = async (ctx, flags, positionals) => {
     if (!body.expectedRole) {
       throw new UsageError('local leave requires --expected-role (or --body)');
     }
+    await maybeSelfRevokeBeforeLeave(ctx, flags);
     print(ctx, await jsonEntry(ctx, 'POST', '/api/local/leave', body));
     return;
   }
@@ -364,6 +380,36 @@ const local: SubHandler = async (ctx, flags, positionals) => {
   }
   throw new UsageError(`unknown local action: ${action}`, 'use status|leave|direct');
 };
+
+async function maybeSelfRevokeBeforeLeave(
+  ctx: CliContext,
+  flags: Parameters<SubHandler>[1]
+): Promise<void> {
+  if (flagBool(flags, 'skip-self-revoke')) {
+    ctx.out.warn(
+      'leaving the mesh without a self-revoke; this node stays enrolled on the hub until an admin revokes it'
+    );
+    return;
+  }
+  if (!process.env.VIBETERM_PASSWORD) {
+    throw new UsageError(
+      'local leave signs a self-revoke first and VIBETERM_PASSWORD is not set',
+      "set VIBETERM_PASSWORD, or pass --skip-self-revoke (the hub will keep this node's cert)"
+    );
+  }
+  const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
+  const nodeId = mode?.nodeId;
+  if (!nodeId || !NODE_ID_PATTERN.test(nodeId)) {
+    ctx.out.warn('could not determine this node id; skipping self-revoke');
+    return;
+  }
+  try {
+    await revokeNode(ctx, nodeId, 'leave-hub');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    ctx.out.warn(`self-revoke failed (${message}); continuing with leave`);
+  }
+}
 
 const HANDLERS: Record<string, SubHandler> = {
   site,

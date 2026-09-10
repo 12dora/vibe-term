@@ -2,7 +2,8 @@
 
 import type { FlagValues } from './args';
 import { flagNumber, flagString } from './args';
-import { mergeBody, resolveJsonBody } from './cmd';
+import { mergeBody, readSecretField, resolveJsonBody } from './cmd';
+import type { CliContext } from './context';
 import { UsageError } from './errors';
 
 const DEVICE_TYPES = new Set(['local', 'ssh']);
@@ -46,9 +47,6 @@ function applyDeviceFlags(flags: FlagValues): Record<string, unknown> {
     '--auth-mode must be password|key|agent|configRef|auto'
   );
   if (authMode) body.authMode = authMode;
-  setString(body, flags, 'password', 'password');
-  setString(body, flags, 'private-key', 'privateKey');
-  setString(body, flags, 'passphrase', 'privateKeyPassphrase');
   setString(body, flags, 'session', 'session');
   setString(body, flags, 'cwd', 'defaultWorkingDir');
   setString(body, flags, 'ssh-config', 'sshConfigRef');
@@ -66,12 +64,36 @@ function requireDeviceFields(
   if (required.type && !merged.authMode) merged.authMode = 'auto';
 }
 
+async function applyDeviceSecrets(
+  ctx: CliContext,
+  flags: FlagValues,
+  body: Record<string, unknown>
+): Promise<void> {
+  const password = await readSecretField(ctx, flags, {
+    flag: 'password',
+    envName: 'VIBETERM_DEVICE_PASSWORD',
+  });
+  if (password) body.password = password;
+  const privateKey = await readSecretField(ctx, flags, {
+    flag: 'private-key',
+    envName: 'VIBETERM_DEVICE_PRIVATE_KEY',
+  });
+  if (privateKey) body.privateKey = privateKey;
+  const passphrase = await readSecretField(ctx, flags, {
+    flag: 'passphrase',
+    envName: 'VIBETERM_DEVICE_PASSPHRASE',
+  });
+  if (passphrase) body.privateKeyPassphrase = passphrase;
+}
+
 export async function deviceMutationBody(
+  ctx: CliContext,
   flags: FlagValues,
   required: { name?: boolean; type?: boolean }
 ): Promise<Record<string, unknown>> {
   const extra = await resolveJsonBody(flagString(flags, 'body'));
   const merged = mergeBody(applyDeviceFlags(flags), extra);
+  await applyDeviceSecrets(ctx, flags, merged);
   requireDeviceFields(merged, required);
   return merged;
 }

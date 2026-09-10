@@ -63,6 +63,66 @@ describe('vibeterm settings', () => {
     expect(JSON.parse(body)).toMatchObject({ url: 'https://example/hook', secret: 's' });
   });
 
+  test('webhooks edit validates the new body before DELETE', async () => {
+    const methods: string[] = [];
+    const { ctx: cli } = await ctx({
+      'DELETE /api/webhooks/w-1': () => {
+        methods.push('DELETE');
+        return { ok: true };
+      },
+      'POST /api/webhooks': () => {
+        methods.push('POST');
+        return { webhook: { id: 'w-2' } };
+      },
+    });
+    await expect(settings.run(cli, ['webhooks', 'edit', 'w-1', '--yes'])).rejects.toBeInstanceOf(
+      UsageError
+    );
+    expect(methods).toEqual([]);
+  });
+
+  test('tls set mode none requires --yes off-tty', async () => {
+    const { ctx: cli } = await ctx({});
+    await expect(
+      settings.run(cli, ['tls', 'set', '--body', '{"mode":"none"}'])
+    ).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test('tunnel --trust-proxy on requires --yes off-tty', async () => {
+    const { ctx: cli } = await ctx({});
+    await expect(
+      settings.run(cli, ['tunnel', 'set_trust_proxy', '--trust-proxy', 'on'])
+    ).rejects.toBeInstanceOf(UsageError);
+  });
+
+  test('local leave without password requires --skip-self-revoke', async () => {
+    const { ctx: cli } = await ctx({});
+    const error = (await settings
+      .run(cli, ['local', 'leave', '--yes', '--expected-role', 'node'])
+      .catch((err) => err)) as UsageError;
+    expect(error).toBeInstanceOf(UsageError);
+    expect(error.hint).toContain('--skip-self-revoke');
+  });
+
+  test('local leave --skip-self-revoke posts leave', async () => {
+    let body = '';
+    const { ctx: cli } = await ctx({
+      'POST /api/local/leave': (_url, init) => {
+        body = String(init?.body);
+        return { ok: true };
+      },
+    });
+    await settings.run(cli, [
+      'local',
+      'leave',
+      '--yes',
+      '--skip-self-revoke',
+      '--expected-role',
+      'node',
+    ]);
+    expect(JSON.parse(body)).toEqual({ expectedRole: 'node' });
+  });
+
   test('llm providers ls and get', async () => {
     const { ctx: cli, stdout } = await ctx({
       'GET /api/llm/providers': () => ({ providers: [] }),
