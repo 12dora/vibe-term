@@ -677,11 +677,12 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 |---|---|---|---|
 | `maxTenants` | `null`（不限） | 65536 | `POST /api/relay/enroll` 建新租户前，409 `RELAY_QUOTA_TENANTS` |
 | `totalBandwidthBytesPerSec` | `null`（不限） | 10 GiB/s | `pumpMetered` 里租户桶之后的第二道令牌桶，只延迟不丢帧 |
-| `fairShare` | 开 | — | 开：每租户在中继桶里占一个逻辑流，全部字节（含小帧）按轮转分配；关：所有租户共用一条 FCFS 流，先到先得 |
+| `fairShare` | 开 | — | 开：每租户在中继桶里占一个逻辑流，按轮转分配；≤4 KiB 帧在每租户 32 KiB/s（突发 64 KiB）预算内走旁路，超出仍进轮转。关：所有租户共用一条 FCFS 流，先到先得（小帧旁路预算同样生效） |
 
 读写口：`GET /api/relay/status` 的 `config.limits`、`PATCH /api/relay/config` 的 `{ limits }`
 （非法值 400 `RELAY_BAD_LIMITS`）。`GET /api/relay/health` 无鉴权，**不暴露限额**。
 `PATCH` 落库后立刻热更新令牌桶速率与公平分配开关，无需重启。
+配了 `totalBandwidthBytesPerSec` 时，中继级桶不会无上限旁路小帧（那会破坏租户间公平），而是每租户 32 KiB/s（突发 64 KiB）的有界预算；见 [中继运营限额与性能指标](./relay-limits-and-metrics.md) §3。
 
 `maxFileBytes` 是策略而非强制：中继看不到流里传什么（§2、§13），改过软件的租户可以无视它；
 真正保护运营者的是 `totalBandwidthBytesPerSec` 这道硬闸。端口映射没有可声明的大小，

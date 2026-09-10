@@ -28,7 +28,7 @@
 - `RelayBandwidthLimiter` 持有**一只**中继级 `RelayTokenBucket(totalBandwidthBytesPerSec)`。
 - 公平分配开时，每个租户在这只桶里占**一个逻辑流**（`RelayTokenStream`，引用计数，租户没有活跃中继流时释放）。桶的 `drain()` 在就绪的逻辑流之间轮转、每轮最多发 4 KiB，于是「一个租户一个流」直接得到租户间轮转公平。空闲租户的逻辑流没有待处理请求，不进就绪队列，不占轮转位。
 - 公平分配关时，所有租户共用一条 FCFS 流：先到先得。一个租户排队的大帧会挡住其他租户，这正是 FCFS 的定义；除非运营者明确要「先到先得」，否则保持默认开启。
-- 中继级这只桶**关掉 ≤4 KiB 的旁路道**（`RelayTokenBucketOptions.bypassSmallFrames: false`）。旁路是桶级 FIFO、不进轮转，租户只要把流量切成小帧、多开几条流就能绕开租户轮转多吃带宽（8 条小帧流对 1 条能拉到 8:1）。交互优先只保留在**租户自己**那只桶里（`relay-uplink-server.ts` 的 `bucketFor`）：那里的旁路只在租户自己的额度内排序。
+- 中继级这只桶**关掉无上限的 ≤4 KiB 旁路**（`RelayTokenBucketOptions.bypassSmallFrames: false`）。旁路按逻辑流轮转、不进 bulk 队列；若按桶级 FIFO 发放，开小帧流多的租户能靠并发占满旁路（8 条小帧流对 1 条能拉到 8:1）。配了 `totalBandwidthBytesPerSec` 时，PONG / 按键 / `DEVICE_LATENCY` / peer ping 这类 ≤4 KiB 帧若也进 bulk 轮转，会和 256 KiB bulk 按 4 KiB 粒度排队，被拖上百毫秒。因此每租户另有一只旁路预算桶（`SMALL_FRAME_BYPASS_BYTES_PER_SEC = 32 KiB/s`，突发 64 KiB）：≤4 KiB 且预算够的帧走 `takeBypass` 跳过 bulk 轮转（仍按租户流轮转），预算用尽则仍进公平队列。同一租户的多条流共用一份预算与一个轮转位，原先的公平性问题被封顶。交互优先在**租户自己**那只桶里仍是无上限旁路（`relay-uplink-server.ts` 的 `bucketFor`）：那里的旁路只在租户自己的额度内排序。
 - 每条中继流从租户逻辑流上派生一个**独立可关闭的把手**（`RelayTokenStream.createHandle()`）。中止一条流只撤这条流自己排队的请求，同租户其他流不受影响；`RelayBandwidthLimiter.clear()`（`stop()` 调用）撤掉所有队列。已关闭的把手上再 `take()` 直接 reject。没有这层身份，反复「开流—发帧—中止」会把待发放请求和 payload 一直留在桶里。
 - `drain()` 一轮只发放**整块**（`min(rate, 剩余, 4 KiB)`），攒不够就先睡。发放零头会毁掉轮转：分到零头的一方要等下一次补给才凑得齐一块，而下一次补给又整块给了对手——帧长正好等于轮转粒度（4 KiB）时会锁成一边倒（67:1）。
 
@@ -103,4 +103,4 @@ vibeterm relay limits [--max-tenants N|none] [--total-bandwidth-kb <KBps>|none] 
 
 ## 测试
 
-`cd apps/gateway && bun test src/relay src/db src/files`：迁移列断言、`normalizeRelayLimits` 边界、令牌桶两租户约 50/50、空闲中继不限速、关掉公平分配退回 FCFS、满员 409 且重发令牌放行、上限在口令校验期间被调小仍然生效、limits PATCH 与 metrics 投影、`effectiveTransferMaxBytes`；100 次「开流—发帧—中止」后两种模式下队列都清零、被取消的租户不再吃令牌、8 条小帧流的租户对 1 条流的租户放行字节接近 1:1；采集器（速率、环形缓冲、CPU 占比、链路移除/替换、计数复位）、心跳 RTT、记账清理、路由鉴权。`packages/shared`：`relay.quota` 带 `maxFileBytes` 的编解码与向下兼容。
+`cd apps/gateway && bun test src/relay src/db src/files`：迁移列断言、`normalizeRelayLimits` 边界、令牌桶两租户约 50/50、空闲中继不限速、关掉公平分配退回 FCFS、满员 409 且重发令牌放行、上限在口令校验期间被调小仍然生效、limits PATCH 与 metrics 投影、`effectiveTransferMaxBytes`；100 次「开流—发帧—中止」后两种模式下队列都清零、被取消的租户不再吃令牌、8 条小帧流的租户对 1 条流的租户放行字节接近 1:1；小帧在 bulk 排队时走每租户旁路预算、预算用尽回退公平队列、租户之间预算隔离；采集器（速率、环形缓冲、CPU 占比、链路移除/替换、计数复位）、心跳 RTT、记账清理、路由鉴权。`packages/shared`：`relay.quota` 带 `maxFileBytes` 的编解码与向下兼容。

@@ -27,8 +27,8 @@ export const PING_METRICS_INTERVAL_MS = 30_000;
 
 export type PingSendPath = 'bypassed' | 'queued';
 
-export interface GatewayPingMetricsSnapshot {
-  intervalMs: number;
+export interface GatewayPingKindSnapshot {
+  kind: string;
   probes: number;
   serverHandleMsP50: number;
   serverHandleMsMax: number;
@@ -37,12 +37,49 @@ export interface GatewayPingMetricsSnapshot {
   bufferedMaxBytes: number;
 }
 
+export interface GatewayPingMetricsSnapshot extends Omit<GatewayPingKindSnapshot, 'kind'> {
+  intervalMs: number;
+  byKind: readonly GatewayPingKindSnapshot[];
+}
+
+type PingAccumulator = {
+  probes: number;
+  bypassed: number;
+  queued: number;
+  bufferedMaxBytes: number;
+  handleSamples: number[];
+};
+
+function emptyPingAccumulator(): PingAccumulator {
+  return { probes: 0, bypassed: 0, queued: 0, bufferedMaxBytes: 0, handleSamples: [] };
+}
+
+function recordPingSample(
+  acc: PingAccumulator,
+  input: { serverHandleMs: number; path: PingSendPath; bufferedBytes: number }
+): void {
+  const handleMs = Math.max(0, Math.round(input.serverHandleMs));
+  acc.probes += 1;
+  if (input.path === 'bypassed') acc.bypassed += 1;
+  else acc.queued += 1;
+  acc.bufferedMaxBytes = Math.max(acc.bufferedMaxBytes, Math.max(0, input.bufferedBytes));
+  acc.handleSamples.push(handleMs);
+}
+
+function pingStatsOf(acc: PingAccumulator): Omit<GatewayPingKindSnapshot, 'kind'> {
+  return {
+    probes: acc.probes,
+    serverHandleMsP50: percentile50(acc.handleSamples),
+    serverHandleMsMax: acc.handleSamples.reduce((max, value) => Math.max(max, value), 0),
+    bypassed: acc.bypassed,
+    queued: acc.queued,
+    bufferedMaxBytes: acc.bufferedMaxBytes,
+  };
+}
+
 export class GatewayPingMetrics {
-  private probes = 0;
-  private bypassed = 0;
-  private queued = 0;
-  private bufferedMaxBytes = 0;
-  private handleSamples: number[] = [];
+  private total = emptyPingAccumulator();
+  private readonly byKind = new Map<string, PingAccumulator>();
 
   constructor(
     private readonly intervalMs = PING_METRICS_INTERVAL_MS,
@@ -57,13 +94,16 @@ export class GatewayPingMetrics {
     serverHandleMs: number;
     path: PingSendPath;
     bufferedBytes: number;
+    kind?: string;
   }): void {
-    const handleMs = Math.max(0, Math.round(input.serverHandleMs));
-    this.probes += 1;
-    if (input.path === 'bypassed') this.bypassed += 1;
-    else this.queued += 1;
-    this.bufferedMaxBytes = Math.max(this.bufferedMaxBytes, Math.max(0, input.bufferedBytes));
-    this.handleSamples.push(handleMs);
+    recordPingSample(this.total, input);
+    const kind = input.kind ?? 'unknown';
+    let acc = this.byKind.get(kind);
+    if (!acc) {
+      acc = emptyPingAccumulator();
+      this.byKind.set(kind, acc);
+    }
+    recordPingSample(acc, input);
   }
 
   takeIfDue(nowMs: number): GatewayPingMetricsSnapshot | null {
@@ -73,21 +113,21 @@ export class GatewayPingMetrics {
     }
     const snapshot: GatewayPingMetricsSnapshot = {
       intervalMs: elapsedMs,
-      probes: this.probes,
-      serverHandleMsP50: percentile50(this.handleSamples),
-      serverHandleMsMax: this.handleSamples.reduce((max, value) => Math.max(max, value), 0),
-      bypassed: this.bypassed,
-      queued: this.queued,
-      bufferedMaxBytes: this.bufferedMaxBytes,
+      ...pingStatsOf(this.total),
+      byKind: snapshotByKind(this.byKind),
     };
     this.windowStartedAtMs = nowMs;
-    this.probes = 0;
-    this.bypassed = 0;
-    this.queued = 0;
-    this.bufferedMaxBytes = 0;
-    this.handleSamples = [];
+    this.total = emptyPingAccumulator();
+    this.byKind.clear();
     return snapshot;
   }
+}
+
+function snapshotByKind(byKind: Map<string, PingAccumulator>): GatewayPingKindSnapshot[] {
+  return [...byKind.entries()]
+    .filter(([, acc]) => acc.probes > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([kind, acc]) => ({ kind, ...pingStatsOf(acc) }));
 }
 
 export function isQuietPingSnapshot(metrics: GatewayPingMetricsSnapshot): boolean {
@@ -169,6 +209,7 @@ export function recordPingProbe(input: {
   serverHandleMs: number;
   path: PingSendPath;
   bufferedBytes: number;
+  kind?: string;
 }): void {
   pingMetrics.record(input);
   logPingMetricsIfDue();
@@ -179,16 +220,31 @@ export function logPingMetricsIfDue(nowMs = Date.now()): void {
   if (!metrics) return;
   if (isQuietPingSnapshot(metrics)) return;
   const lag = gatewayEventLoopLag().snapshot();
-  console.log(
-    stamp(
-      `[ws-metrics] ping probes=${metrics.probes} ` +
-        `server_handle_ms_p50=${metrics.serverHandleMsP50} ` +
-        `server_handle_ms_max=${metrics.serverHandleMsMax} ` +
-        `bypassed=${metrics.bypassed} queued=${metrics.queued} ` +
-        `buffered_max_bytes=${metrics.bufferedMaxBytes} ` +
-        `event_loop_lag_ms=${lag.lagMs}`
-    )
+  console.log(stamp(formatPingAggregateLine(metrics, lag.lagMs)));
+  for (const kind of metrics.byKind) {
+    console.log(stamp(formatPingKindLine(kind)));
+  }
+}
+
+function formatPingFields(metrics: Omit<GatewayPingKindSnapshot, 'kind'>): string {
+  return (
+    `probes=${metrics.probes} ` +
+    `server_handle_ms_p50=${metrics.serverHandleMsP50} ` +
+    `server_handle_ms_max=${metrics.serverHandleMsMax} ` +
+    `bypassed=${metrics.bypassed} queued=${metrics.queued} ` +
+    `buffered_max_bytes=${metrics.bufferedMaxBytes}`
   );
+}
+
+function formatPingAggregateLine(
+  metrics: GatewayPingMetricsSnapshot,
+  eventLoopLagMs: number
+): string {
+  return `[ws-metrics] ping ${formatPingFields(metrics)} event_loop_lag_ms=${eventLoopLagMs}`;
+}
+
+function formatPingKindLine(metrics: GatewayPingKindSnapshot): string {
+  return `[ws-metrics] ping kind=${metrics.kind} ${formatPingFields(metrics)}`;
 }
 
 export function setPingMetricsForTest(metrics: GatewayPingMetrics): void {

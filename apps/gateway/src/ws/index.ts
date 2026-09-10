@@ -60,6 +60,7 @@ import {
   GATEWAY_WS_PONG_BYPASS_BUFFERED_BYTES,
   gatewayWebSocketSendGuard,
 } from './websocket-send-guard';
+import { carrierKindOf } from './ws-backpressure-log';
 
 export { RUNTIME_IDLE_GRACE_MS } from './types';
 export { parseWindowLayoutSize, payloadNeedsChunking } from './frame-utils';
@@ -644,6 +645,7 @@ export class WebSocketServer
       serverHandleMs: monotonicMs() - startedAt,
       path: bypassed ? 'bypassed' : 'queued',
       bufferedBytes: buffered,
+      kind: carrierKindOf(carrier),
     });
   }
 

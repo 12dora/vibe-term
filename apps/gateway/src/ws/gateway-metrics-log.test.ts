@@ -33,8 +33,67 @@ describe('GatewayPingMetrics', () => {
       bypassed: 2,
       queued: 1,
       bufferedMaxBytes: 70_000,
+      byKind: [
+        {
+          kind: 'unknown',
+          probes: 3,
+          serverHandleMsP50: 3,
+          serverHandleMsMax: 5,
+          bypassed: 2,
+          queued: 1,
+          bufferedMaxBytes: 70_000,
+        },
+      ],
     });
     expect(metrics.takeIfDue(10)).toBeNull();
+  });
+
+  test('splits probes by carrier kind', () => {
+    const metrics = new GatewayPingMetrics(1, 0);
+    metrics.record({
+      serverHandleMs: 2,
+      path: 'bypassed',
+      bufferedBytes: 10,
+      kind: 'physical_browser_ws',
+    });
+    metrics.record({
+      serverHandleMs: 8,
+      path: 'queued',
+      bufferedBytes: 4_096,
+      kind: 'mesh_link_stream',
+    });
+    metrics.record({
+      serverHandleMs: 4,
+      path: 'bypassed',
+      bufferedBytes: 20,
+      kind: 'mesh_link_stream',
+    });
+
+    const snapshot = metrics.takeIfDue(10);
+    expect(snapshot?.probes).toBe(3);
+    expect(snapshot?.bypassed).toBe(2);
+    expect(snapshot?.queued).toBe(1);
+    expect(snapshot?.bufferedMaxBytes).toBe(4_096);
+    expect(snapshot?.byKind).toEqual([
+      {
+        kind: 'mesh_link_stream',
+        probes: 2,
+        serverHandleMsP50: 6,
+        serverHandleMsMax: 8,
+        bypassed: 1,
+        queued: 1,
+        bufferedMaxBytes: 4_096,
+      },
+      {
+        kind: 'physical_browser_ws',
+        probes: 1,
+        serverHandleMsP50: 2,
+        serverHandleMsMax: 2,
+        bypassed: 1,
+        queued: 0,
+        bufferedMaxBytes: 10,
+      },
+    ]);
   });
 
   test('even sample count uses rounded median', () => {
@@ -54,9 +113,14 @@ describe('GatewayPingMetrics', () => {
       bypassed: 0,
       queued: 0,
       bufferedMaxBytes: 0,
+      byKind: [],
     });
   });
 });
+
+function pingAggregateLine(logs: string[]): string | undefined {
+  return logs.find((entry) => entry.includes('[ws-metrics] ping probes='));
+}
 
 describe('logPingMetricsIfDue', () => {
   test('emits a single [ws-metrics] ping line for a due window', () => {
@@ -75,7 +139,7 @@ describe('logPingMetricsIfDue', () => {
       logSpy.mockRestore();
     }
 
-    const line = logs.find((entry) => entry.includes('[ws-metrics] ping '));
+    const line = pingAggregateLine(logs);
     expect(line).toBeDefined();
     expect(line).toContain('probes=2');
     expect(line).toContain('server_handle_ms_p50=5');
@@ -84,6 +148,53 @@ describe('logPingMetricsIfDue', () => {
     expect(line).toContain('queued=1');
     expect(line).toContain('buffered_max_bytes=4096');
     expect(line).toContain('event_loop_lag_ms=');
+    expect(line).not.toContain('kind=');
+  });
+
+  test('emits one per-kind line after the aggregate for kinds that had probes', () => {
+    const started = Date.now();
+    setPingMetricsForTest(new GatewayPingMetrics(60_000, started));
+    recordPingProbe({
+      serverHandleMs: 2,
+      path: 'bypassed',
+      bufferedBytes: 128,
+      kind: 'physical_browser_ws',
+    });
+    recordPingProbe({
+      serverHandleMs: 8,
+      path: 'queued',
+      bufferedBytes: 4096,
+      kind: 'mesh_link_stream',
+    });
+
+    const logs: string[] = [];
+    const logSpy = spyOn(console, 'log').mockImplementation((message: unknown) => {
+      if (typeof message === 'string') logs.push(message);
+    });
+    try {
+      logPingMetricsIfDue(started + 60_000);
+    } finally {
+      logSpy.mockRestore();
+    }
+
+    const pingLogs = logs.filter((entry) => entry.includes('[ws-metrics] ping '));
+    expect(pingLogs).toHaveLength(3);
+    const aggregate = pingLogs[0];
+    expect(aggregate).toContain('probes=2');
+    expect(aggregate).toContain('event_loop_lag_ms=');
+    expect(aggregate).not.toContain(' kind=');
+
+    const mesh = pingLogs.find((entry) => entry.includes('kind=mesh_link_stream'));
+    const phys = pingLogs.find((entry) => entry.includes('kind=physical_browser_ws'));
+    expect(mesh).toBeDefined();
+    expect(phys).toBeDefined();
+    expect(mesh).toContain('probes=1');
+    expect(mesh).toContain('queued=1');
+    expect(mesh).toContain('buffered_max_bytes=4096');
+    expect(mesh).not.toContain('event_loop_lag_ms=');
+    expect(phys).toContain('probes=1');
+    expect(phys).toContain('bypassed=1');
+    expect(phys).not.toContain('event_loop_lag_ms=');
   });
 
   test('suppresses a due all-zero ping window but still resets counters', () => {
@@ -101,7 +212,7 @@ describe('logPingMetricsIfDue', () => {
     } finally {
       logSpy.mockRestore();
     }
-    const line = logs.find((entry) => entry.includes('[ws-metrics] ping '));
+    const line = pingAggregateLine(logs);
     expect(line).toBeDefined();
     expect(line).toContain('probes=1');
     expect(line).toContain('bypassed=1');

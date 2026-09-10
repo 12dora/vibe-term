@@ -109,3 +109,5 @@ transport 事件为 `{ type: 'latency', latencyMs, rawMs }`，`GatewayTransport.
 | `server_handle_ms_p50/max` 高 | 网关事件循环被占住（对照 `event_loop_lag_ms` 与 `[ws-metrics]` 的终端输出行）；不是网络问题 |
 | `queued` 占比高、`buffered_max_bytes` 大 | 该连接正在背压，终端输出把 socket 塞满；徽标数字里含排队时间 |
 | 服务端两项都低、徽标仍高 | 真在网络或浏览器侧；对比最近一次样本与中位数，抖动大说明链路不稳而非整体变慢 |
+
+同一窗口还会按 `carrier.logContext.kind` 各打一行 `[ws-metrics] ping kind=…`（`physical_browser_ws` / `mesh_link_stream` / DataChannel 等），字段与聚合行相同但不带 `event_loop_lag_ms`。入口同时服务浏览器套接字与转发 mesh 会话时，用 kind 行判断是哪一种被 queued。
