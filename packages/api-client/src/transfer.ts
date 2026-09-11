@@ -104,6 +104,7 @@ export async function streamTransferJobEvents(
 ): Promise<void> {
   const res = await requestOk(client, transferJobEventsPath(jobId), {
     signal,
+    timeout: false,
     toError: transferError('Failed to subscribe transfer job'),
   });
   if (!res.body) throw new Error('transfer events stream has no body');

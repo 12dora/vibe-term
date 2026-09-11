@@ -421,6 +421,7 @@ export class PeerDialer {
         live: () => this.state.live.get(nodeId)?.session ?? null,
         close: (session, reason) => quiet(() => session.close(reason)),
         log: (event, fields) => rtcLog(event, { peer: nodeId, ...fields }),
+        connectTimeoutMs: this.connectTimeoutMs,
       });
       if (raced.session) return { session: raced.session, pending: null };
       throwIfPeerStopped(this.state, nodeId, gen);

@@ -120,7 +120,11 @@ async function fetchContentOnce(input: {
   const headers = state.received > 0 ? { Range: `bytes=${state.received}-` } : undefined;
   let res: Response;
   try {
-    res = await client.fetch(`/api/files/download/${downloadId}/content`, { headers, signal });
+    res = await client.fetch(`/api/files/download/${downloadId}/content`, {
+      headers,
+      signal,
+      timeout: false,
+    });
   } catch (err) {
     if (signal?.aborted) throw abortError();
     return { ok: false, error: err };
@@ -203,6 +207,7 @@ export async function prepareDownload(
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ rootId, path }),
     signal,
+    timeout: false,
   });
   if (!prep.ok || !prep.body) throw await parseError(prep);
 

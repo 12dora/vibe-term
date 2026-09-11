@@ -102,6 +102,21 @@ describe('ApiClient timeout + EWMA', () => {
     expect(calls[1]?.signal).toBe(ac.signal);
   });
 
+  test('timeout: false skips the default deadline so long streams are not aborted', async () => {
+    const calls: Array<RequestInit | undefined> = [];
+    const ac = new AbortController();
+    const transport = mock((_input: string, init?: RequestInit) => {
+      calls.push(init);
+      return Promise.resolve(new Response('ok', { status: 200 }));
+    });
+    const client = new ApiClient('', transport);
+    await client.fetch('/api/jobs/j1/events', { timeout: false });
+    expect(calls[0]?.signal).toBeUndefined();
+
+    await client.fetch('/api/jobs/j1/events', { timeout: false, signal: ac.signal });
+    expect(calls[1]?.signal).toBe(ac.signal);
+  });
+
   test('forwarded /n/<id>/ paths get 1.5× the budget; EWMA tracks latency', async () => {
     expect(requestTimeoutMs(null)).toBe(8_000);
     expect(requestTimeoutMs(null, true)).toBe(12_000);

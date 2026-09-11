@@ -3,7 +3,7 @@
 // 各端点族抛出的异常类型不同（`Error`、`FileApiError`、`TlsApiError`/`LocalApiError`），
 // 由 `toError` 承载，所以收敛模板不改变任何调用方看到的错误形状。
 
-import { type ApiClient, parseApiError } from './client';
+import { type ApiClient, type ApiFetchInit, parseApiError } from './client';
 
 export const JSON_HEADERS = { 'Content-Type': 'application/json' } as const;
 
@@ -15,6 +15,8 @@ export interface JsonRequestOptions {
   /** 非 undefined 时自动附 JSON 头并序列化。 */
   body?: unknown;
   signal?: AbortSignal;
+  /** `false` 跳过 ApiClient 默认期限，留给 NDJSON 等长响应体。 */
+  timeout?: false;
   /** 缺省用 `new Error(await parseApiError(res, errorFallback))`。 */
   toError?: ResponseErrorFactory;
   errorFallback?: string;
@@ -22,16 +24,19 @@ export interface JsonRequestOptions {
   allowStatus?: readonly number[];
 }
 
-function buildInit(options: JsonRequestOptions): RequestInit | undefined {
-  const { method, body, signal } = options;
-  if (method === undefined && body === undefined && signal === undefined) return undefined;
-  const init: RequestInit = {};
+function buildInit(options: JsonRequestOptions): ApiFetchInit | undefined {
+  const { method, body, signal, timeout } = options;
+  if (method === undefined && body === undefined && signal === undefined && timeout === undefined) {
+    return undefined;
+  }
+  const init: ApiFetchInit = {};
   if (method !== undefined) init.method = method;
   if (body !== undefined) {
     init.headers = JSON_HEADERS;
     init.body = JSON.stringify(body);
   }
   if (signal !== undefined) init.signal = signal;
+  if (timeout === false) init.timeout = false;
   return init;
 }
 

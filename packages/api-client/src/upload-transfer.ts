@@ -73,6 +73,7 @@ function uploadTransport(
           method: 'PUT',
           body: file.slice(range.offset, range.offset + range.length),
           signal: opts.signal,
+          timeout: false,
         });
       } catch (err) {
         if (signal?.aborted) return { kind: 'cancelled' };
@@ -180,6 +181,7 @@ async function commitUpload(input: {
   const commitRes = await client.fetch(`/api/files/upload/${uploadId}/commit`, {
     method: 'POST',
     signal,
+    timeout: false,
   });
   if (!commitRes.ok || !commitRes.body) throw await parseError(commitRes);
 

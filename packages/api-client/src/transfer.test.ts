@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { ApiClient, ApiError } from './client';
+import { ApiClient, ApiError, type ApiFetchInit } from './client';
 import {
   cancelTransferJob,
   createTransferGrant,
@@ -12,7 +12,7 @@ import {
 } from './transfer';
 
 class StubApiClient extends ApiClient {
-  calls: Array<{ path: string; init?: RequestInit }> = [];
+  calls: Array<{ path: string; init?: ApiFetchInit }> = [];
 
   constructor(
     private responses: Response[],
@@ -21,7 +21,7 @@ class StubApiClient extends ApiClient {
     super(baseUrl);
   }
 
-  override fetch(path: string, init?: RequestInit): Promise<Response> {
+  override fetch(path: string, init?: ApiFetchInit): Promise<Response> {
     this.calls.push({ path, init });
     const next = this.responses.shift();
     if (!next) return Promise.reject(new Error('unexpected request'));
@@ -149,7 +149,23 @@ describe('streamTransferJobEvents', () => {
     });
 
     expect(client.calls[0].path).toBe('/api/transfer/jobs/j1/events');
+    expect(client.calls[0].init).toMatchObject({ timeout: false });
     expect(seen).toEqual(['snapshot', 'state', 'end']);
+  });
+
+  test('不套默认请求期限，长 NDJSON 流不会被 45s abort', async () => {
+    const calls: Array<RequestInit | undefined> = [];
+    const client = new ApiClient('', (_url, init) => {
+      calls.push(init);
+      return Promise.resolve(
+        ndjsonResponse([
+          JSON.stringify({ type: 'snapshot', job: { jobId: 'j1' } }),
+          JSON.stringify({ type: 'end' }),
+        ])
+      );
+    });
+    await streamTransferJobEvents(client, 'j1', () => {});
+    expect(calls[0]?.signal).toBeUndefined();
   });
 
   test('无响应体时抛错', async () => {

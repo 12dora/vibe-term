@@ -47,4 +47,20 @@ describe('nestedDialBudgetsMs', () => {
     expect(forwardMs).toBeGreaterThanOrEqual(directMs + 1_000);
     expect(forwardMs).toBeLessThanOrEqual(20_000);
   });
+
+  test('custom connect 20 s at RTT 0 lifts direct/forward so connect < direct < forward', () => {
+    const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(0, 20_000);
+    expect(connectMs).toBe(20_000);
+    expect(directMs).toBe(20_500);
+    expect(forwardMs).toBeGreaterThan(directMs);
+    expect(connectMs).toBeLessThan(directMs);
+    expect(directMs).toBeLessThan(forwardMs);
+  });
+
+  test('short custom connect stays below adaptive direct', () => {
+    const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(0, 20);
+    expect(connectMs).toBe(20);
+    expect(directMs).toBe(4_000);
+    expect(forwardMs).toBe(5_000);
+  });
 });

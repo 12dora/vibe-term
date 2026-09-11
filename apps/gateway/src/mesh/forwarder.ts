@@ -6,6 +6,11 @@ import { isShareAccessPath } from './auth-public-paths';
 import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
 import {
+  ForwardDeadlineError,
+  armAttemptDeadline,
+  waitLinkOrAbort,
+} from './forwarder-attempt-deadline';
+import {
   AUTH_CHALLENGE_PATHS,
   AUTH_LOGIN_PATH,
   AUTH_SKIP,
@@ -95,14 +100,6 @@ function authorizedHttpDeadlineMs(nodeId: string, rttMs?: number | null): number
     minMs: 10_000,
     maxMs: 30_000,
   });
-}
-
-/** 消息用 `timeout`：`classifyUnreachableReason` 据此把 503 的 reason 判成 timeout 而不是 no_link。 */
-class ForwardDeadlineError extends Error {
-  constructor() {
-    super('timeout');
-    this.name = 'ForwardDeadlineError';
-  }
 }
 
 /** GET/HEAD 默认可重试；其余方法只有调用方明确要求才重试，且不超过失败切换的上限。 */
@@ -358,8 +355,9 @@ export class Forwarder {
       return countedRaw ?? buildJsonStreamBody(input.body, headers);
     };
     let lastError: unknown;
-    const deadlineAt =
-      Date.now() + authorizedHttpDeadlineMs(input.nodeId, this.deps.peers.rttOf?.(input.nodeId));
+    const rttMs = this.deps.peers.rttOf?.(input.nodeId);
+    const deadlineAt = Date.now() + authorizedHttpDeadlineMs(input.nodeId, rttMs);
+    const attemptBudgetMs = forwardLinkDeadlineFor(input.nodeId, rttMs);
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
@@ -369,13 +367,14 @@ export class Forwarder {
           break;
         }
       }
+      const armed = armAttemptDeadline(abort, Math.min(deadlineAt - Date.now(), attemptBudgetMs));
       try {
         return await this.openAuthorizedAttempt(req, input, {
           method,
           headers,
           auth,
           body: nextBody(),
-          abort,
+          abort: armed.signal,
         });
       } catch (err) {
         lastError = err;
@@ -386,6 +385,8 @@ export class Forwarder {
           );
         }
         if (!retryable) break;
+      } finally {
+        armed.dispose();
       }
     }
     // 一次也没有被传输层接手：同上，包出来的计数流必须自己收掉
@@ -412,7 +413,7 @@ export class Forwarder {
     }
   ): Promise<Response> {
     const origin = req.headers.get('origin') ?? new URL(req.url).origin;
-    const link = await this.deps.peers.getLink(input.nodeId);
+    const link = await waitLinkOrAbort(this.deps.peers.getLink(input.nodeId), opts.abort);
     return await this.adaptResponse(
       req,
       await this.deps.streams.openHttpStream(

@@ -36,6 +36,12 @@ function isForwardedUrl(baseUrl: string, path: string): boolean {
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
 /**
+ * `timeout: false` 跳过默认 `AbortSignal.timeout`：该 signal 会在期限到点后中止响应体，
+ * NDJSON / 下载等长流必须显式关掉。调用方自带 `signal` 时同样不套默认期限。
+ */
+export type ApiFetchInit = RequestInit & { timeout?: false };
+
+/**
  * 响应钩子上下文。
  *
  * `path` 是调用方传入的相对路径（**不含** `ApiClient.baseUrl`），`url` 是拼上 baseUrl 后的
@@ -101,13 +107,15 @@ export class ApiClient {
     return this.ewmaMs;
   }
 
-  fetch(path: string, init?: RequestInit): Promise<Response> {
+  fetch(path: string, init?: ApiFetchInit): Promise<Response> {
     const url = this.url(path);
     const started = performance.now();
-    const nextInit = init?.signal
-      ? init
+    const { timeout, ...request } = init ?? {};
+    const skipDefault = timeout === false || request.signal != null;
+    const nextInit: RequestInit = skipDefault
+      ? request
       : {
-          ...init,
+          ...request,
           signal: AbortSignal.timeout(
             requestTimeoutMs(this.ewmaMs, isForwardedUrl(this.baseUrl, path))
           ),

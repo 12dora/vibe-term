@@ -16,6 +16,16 @@ export {
 } from './direct-carrier-controller';
 
 export {
+  AUTHORIZE_BREAKER_BASE_MS,
+  AUTHORIZE_BREAKER_MAX_MS,
+  authorizeBreakerShouldTry,
+  forceAuthorizeProbe,
+  noteAuthorizeFailure,
+  noteAuthorizeSuccess,
+  resetDirectAuthorizeBreakers,
+} from './direct-authorize-breaker';
+
+export {
   DIRECT_DIAL_BREAKER_BASE_MS,
   DIRECT_DIAL_BREAKER_FAILS,
   DIRECT_DIAL_BREAKER_HEALTHY_MS,

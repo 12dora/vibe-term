@@ -7,6 +7,7 @@ import {
   noteAuthorizeFailure,
   noteAuthorizeSuccess,
   resetAuthorizeBreakerForTest,
+  resetDirectAuthorizeBreakers,
 } from './direct-authorize-breaker';
 
 describe('direct authorize breaker', () => {
@@ -45,6 +46,18 @@ describe('direct authorize breaker', () => {
     forceAuthorizeProbe(node);
     expect(authorizeBreakerShouldTry(node, now).allow).toBe(true);
     noteAuthorizeSuccess(node);
+    expect(authorizeBreakerShouldTry(node, now).allow).toBe(true);
+  });
+
+  test('breaker open → login generation changes → authorize allowed', () => {
+    resetAuthorizeBreakerForTest();
+    const node = 'node-c';
+    const now = 9_000;
+    noteAuthorizeFailure(node, now);
+    noteAuthorizeFailure(node, now);
+    noteAuthorizeFailure(node, now);
+    expect(authorizeBreakerShouldTry(node, now).allow).toBe(false);
+    resetDirectAuthorizeBreakers();
     expect(authorizeBreakerShouldTry(node, now).allow).toBe(true);
   });
 });

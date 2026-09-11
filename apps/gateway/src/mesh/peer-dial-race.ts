@@ -219,11 +219,10 @@ export function raceWsSecureDial(ports: WsSecureDialPorts): Promise<WsSecureRace
     sleep: ports.sleep,
     staggerMs: ports.staggerMs,
     dial: async (url, combined) => {
-      const adaptiveConnect = nestedDialBudgetsMs(ports.backoff.rttMs(ports.nodeId)).connectMs;
-      const connectTimeoutMs =
-        ports.connectTimeoutMs === PEER_CONNECT_TIMEOUT_MS
-          ? adaptiveConnect
-          : ports.connectTimeoutMs;
+      const connectTimeoutMs = nestedBudgetsForConnect(
+        ports.backoff.rttMs(ports.nodeId),
+        ports.connectTimeoutMs
+      ).connectMs;
       try {
         const candidate = await dialWsSecureCandidate({
           url,
@@ -259,7 +258,20 @@ export type ForegroundDialPorts<T> = {
   live: () => T | null;
   close: (session: T, reason: string) => void;
   log: (event: string, fields: Record<string, unknown>) => void;
+  /** 调用方自定义 socket 超时；缺省或等于 `PEER_CONNECT_TIMEOUT_MS` 时走 RTT 自适应。 */
+  connectTimeoutMs?: number;
 };
+
+function nestedBudgetsForConnect(
+  rttMs: number | null | undefined,
+  connectTimeoutMs?: number
+): ReturnType<typeof nestedDialBudgetsMs> {
+  const custom =
+    connectTimeoutMs != null && connectTimeoutMs !== PEER_CONNECT_TIMEOUT_MS
+      ? connectTimeoutMs
+      : undefined;
+  return nestedDialBudgetsMs(rttMs, custom);
+}
 
 /** 用户路径的默认预算/截止时间；输掉的一方晚到就地关掉，除非它已经成了活链路。 */
 export function raceForegroundDial<T>(
@@ -271,7 +283,10 @@ export function raceForegroundDial<T>(
     wsFirst: ports.wsFirst,
     signal: ports.signal,
     budgetMs: FOREGROUND_DC_BUDGET_MS,
-    deadlineMs: nestedDialBudgetsMs(lookupPeerRttMs(undefined, ports.scheduler)).directMs,
+    deadlineMs: nestedBudgetsForConnect(
+      lookupPeerRttMs(undefined, ports.scheduler),
+      ports.connectTimeoutMs
+    ).directMs,
     now: () => ports.scheduler.now(),
     sleep: (ms, signal) => ports.scheduler.sleep(ms, signal),
     log: ports.log,

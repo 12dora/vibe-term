@@ -59,6 +59,14 @@ describe('nested dial budgets', () => {
       expect(directMs).toBeLessThan(forwardMs);
     }
   });
+
+  test('custom connectTimeoutMs 20 s at RTT 0 still nests connect < direct < forward', () => {
+    const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(0, 20_000);
+    expect(connectMs).toBe(20_000);
+    expect(directMs).toBe(20_500);
+    expect(connectMs).toBeLessThan(directMs);
+    expect(directMs).toBeLessThan(forwardMs);
+  });
 });
 
 describe('runDirectDialRace', () => {

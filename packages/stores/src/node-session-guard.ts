@@ -23,6 +23,7 @@ import {
   isNodeLoginRequiredError,
   sessionProbeTimeoutMs,
 } from '@vibeterm/api-client';
+import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
 
 /** 探测结论：会话有效 / 该 node 要重新登录 / 根本没问到（不可达、网络错误）。 */
 export type NodeSessionProbe = 'ok' | 'login-required' | 'unreachable';
@@ -197,6 +198,7 @@ export class NodeSessionGuard {
     }
     if (result === 'recovered') {
       // 重登成功：这一轮的计数作废，重连按第一次的退避走。
+      resetDirectAuthorizeBreakers();
       record.transientAt = [];
       record.streak = 0;
       this.scheduleReconnect(nodeId, record);

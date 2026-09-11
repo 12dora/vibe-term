@@ -33,19 +33,34 @@ export type NestedDialBudgets = {
   forwardMs: number;
 };
 
+function nestFromConnect(
+  connectMs: number,
+  directMs: number,
+  handshakeMs: number
+): NestedDialBudgets {
+  const nestedDirect = Math.max(directMs, connectMs + NEST_SLACK_MS);
+  let forwardMs = Math.max(FORWARD_MIN_MS, nestedDirect + handshakeMs);
+  if (forwardMs <= nestedDirect) forwardMs = nestedDirect + NEST_SLACK_MS;
+  return { connectMs, directMs: nestedDirect, forwardMs };
+}
+
 /**
  * 嵌套拨号预算：socket ⊂ 直连竞速 ⊂ 转发取链。
  * 各档先按因子独立 clamp，再抬外层 / 压内层，使对任意 RTT 都有 connect < direct < forward。
+ * `connectTimeoutMs` 为调用方显式 socket 超时（可大于自适应值）；此时不再压 connect，只抬外层。
  */
-export function nestedDialBudgetsMs(rttMs: number | null | undefined): NestedDialBudgets {
+export function nestedDialBudgetsMs(
+  rttMs: number | null | undefined,
+  connectTimeoutMs?: number | null
+): NestedDialBudgets {
   const rtt = typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0;
-  let connectMs = adaptiveDeadlineMs({
+  const adaptiveConnect = adaptiveDeadlineMs({
     rttMs: rtt,
     factor: 6,
     minMs: CONNECT_MIN_MS,
     maxMs: CONNECT_MAX_MS,
   });
-  let directMs = adaptiveDeadlineMs({
+  const adaptiveDirect = adaptiveDeadlineMs({
     rttMs: rtt,
     factor: 5,
     minMs: DIRECT_MIN_MS,
@@ -57,6 +72,15 @@ export function nestedDialBudgetsMs(rttMs: number | null | undefined): NestedDia
     minMs: RELAY_HANDSHAKE_MIN_MS,
     maxMs: RELAY_HANDSHAKE_MAX_MS,
   });
+  if (
+    typeof connectTimeoutMs === 'number' &&
+    Number.isFinite(connectTimeoutMs) &&
+    connectTimeoutMs > 0
+  ) {
+    return nestFromConnect(connectTimeoutMs, adaptiveDirect, handshakeMs);
+  }
+  let connectMs = adaptiveConnect;
+  let directMs = adaptiveDirect;
   if (directMs < connectMs + NEST_SLACK_MS) {
     directMs = Math.min(DIRECT_MAX_MS, connectMs + NEST_SLACK_MS);
   }

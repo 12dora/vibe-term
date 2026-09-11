@@ -10,22 +10,36 @@ const authorizeBreaker = new DialBreaker({
   failLimit: 3,
 });
 
+/** 登录世代：登出 / 重新登录后 +1，旧 nodeId 冷却不得带到新会话。 */
+let authGeneration = 0;
+
+function breakerPeer(nodeId: string): string {
+  return `${authGeneration}:${nodeId}`;
+}
+
 export function authorizeBreakerShouldTry(nodeId: string, now?: number) {
-  return authorizeBreaker.shouldTry(nodeId, now);
+  return authorizeBreaker.shouldTry(breakerPeer(nodeId), now);
 }
 
 export function noteAuthorizeFailure(nodeId: string, now?: number) {
-  return authorizeBreaker.noteFailure(nodeId, 'authorize-unavailable', undefined, now);
+  return authorizeBreaker.noteFailure(breakerPeer(nodeId), 'authorize-unavailable', undefined, now);
 }
 
 export function noteAuthorizeSuccess(nodeId: string): void {
-  authorizeBreaker.reset(nodeId);
+  authorizeBreaker.reset(breakerPeer(nodeId));
 }
 
 export function forceAuthorizeProbe(nodeId: string): void {
-  authorizeBreaker.forceProbe(nodeId);
+  authorizeBreaker.forceProbe(breakerPeer(nodeId));
+}
+
+/** 登出 / 登录世代变化时清掉全部冷却。 */
+export function resetDirectAuthorizeBreakers(): void {
+  authGeneration += 1;
+  authorizeBreaker.reset();
 }
 
 export function resetAuthorizeBreakerForTest(nodeId?: string): void {
-  authorizeBreaker.reset(nodeId);
+  if (nodeId) authorizeBreaker.reset(breakerPeer(nodeId));
+  else resetDirectAuthorizeBreakers();
 }

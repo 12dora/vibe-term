@@ -1913,6 +1913,39 @@ describe('forwardAuthorizedHttp', () => {
     expect(opens).toBe(1);
   });
 
+  test('an attempt hanging in getLink is aborted at the deadline', async () => {
+    const peers = new FakePeers();
+    peers.getLink = () => new Promise<LinkSession>(() => {});
+    const streams = new FakeStreams();
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const started = Date.now();
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'POST',
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        { nodeId: OTHER, method: 'POST', path: '/api/system/upgrade', body: { version: '9.9.9' } }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toEqual({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(streams.lastOpen).toBeNull();
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
+
   test('abort during openHttpStream is classified as timeout, not lastError', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

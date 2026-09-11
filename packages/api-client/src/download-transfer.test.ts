@@ -56,6 +56,7 @@ describe('prepareDownload', () => {
     expect(calls[0].url).toBe('/api/files/download/prepare');
     expect(calls[0].init?.method).toBe('POST');
     expect(calls[0].init?.body).toBe(JSON.stringify({ rootId: 'root-1', path: '/a/b.txt' }));
+    expect(calls[0].init?.signal).toBeUndefined();
     expect(prepared).toEqual({ downloadId: 'dl-1', size: 13, name: 'server-name.txt' });
     expect(onDownloadId).toHaveBeenCalledWith('dl-1');
     expect(legs.map(([leg]) => leg)).toEqual([1, 1]);

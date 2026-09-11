@@ -14,6 +14,7 @@
 import { markLoggedIn } from '@/node/mesh-nodes';
 import type { AuthApi, MeshNode } from '@vibeterm/api-client/auth/index';
 import type { Delegation } from '@vibeterm/shared/auth';
+import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
 import {
   PERSISTED_SESSION_VERSION,
   clearPersistedSession,
@@ -154,6 +155,7 @@ export function whenSessionReplacementSettled(): Promise<void> {
 export function clearSessionKey(): Promise<boolean> {
   if (pendingReplacement) pendingReplacement.cancelled = true;
   generation += 1;
+  resetDirectAuthorizeBreakers();
   restorePromise = Promise.resolve(null);
   const cleared = clearPersistedSession();
   if (current) {
@@ -294,6 +296,7 @@ function persistSession(secrets: SessionKeySecrets): Promise<boolean> {
  */
 export function adoptSessionSecrets(secrets: SessionKeySecrets): SessionKeyInfo {
   generation += 1;
+  resetDirectAuthorizeBreakers();
   if (current) wipeSecrets(current);
   current = secrets;
   restorePromise = Promise.resolve(secrets.info);
