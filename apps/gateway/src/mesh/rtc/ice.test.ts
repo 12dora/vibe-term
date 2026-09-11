@@ -16,6 +16,7 @@ import {
   encodeCandidateSignal,
   encodeRtcWakeSdp,
   encodeSdpSignal,
+  hasTurnServer,
   isCanonicalRtcWakeNonce,
   isEmptyCandidate,
   isRtcWakeSdp,
@@ -387,5 +388,26 @@ describe('ice helpers', () => {
     expect(
       maskIceCandidate('candidate:2 1 UDP 1 203.0.113.44 3478 typ srflx raddr 10.0.1.55 rport 9')
     ).not.toContain('10.0.1.55');
+  });
+});
+
+describe('buildRtcIceConfig UDP mux vs TURN', () => {
+  const runtime = { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null };
+
+  test('keeps UDP mux when only STUN is configured', () => {
+    const built = buildRtcIceConfig({ stun: ['stun:stun.example:3478'], turn: null }, runtime);
+    expect(built.enableIceUdpMux).toBe(true);
+  });
+
+  test('disables UDP mux when a TURN server is configured (libjuice limitation)', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:stun.example:3478'],
+        turn: { url: 'turn:203.0.113.9:40250?transport=udp', username: 'u', credential: 'p' },
+      },
+      runtime
+    );
+    expect(built.enableIceUdpMux).toBe(false);
+    expect(hasTurnServer(built.iceServers)).toBe(true);
   });
 });

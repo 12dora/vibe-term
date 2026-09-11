@@ -21,7 +21,7 @@ export type RtcIceRuntimeConfig = {
 
 export type BuiltRtcIceConfig = RtcIceConfig & {
   enableIceTcp: true;
-  enableIceUdpMux: true;
+  enableIceUdpMux: boolean;
   mtu: 1200;
   portRangeBegin?: number;
   portRangeEnd?: number;
@@ -165,6 +165,12 @@ function concreteBindAddress(hosts: readonly string[]): string | undefined {
   return host;
 }
 
+export function hasTurnServer(servers: ReadonlyArray<string | IceServer>): boolean {
+  return servers.some((server) =>
+    typeof server === 'string' ? /^turns?:/i.test(server.trim()) : Boolean(server.relayType)
+  );
+}
+
 export function buildRtcIceConfig(
   cfg: IceServerConfig,
   runtime: RtcIceRuntimeConfig = {
@@ -174,10 +180,14 @@ export function buildRtcIceConfig(
 ): BuiltRtcIceConfig {
   const bindAddress = concreteBindAddress(runtime.peerBindHost);
   const portRange = runtime.rtcPortRange;
+  const iceServers = collectIceServers(cfg);
   return {
-    iceServers: collectIceServers(cfg),
+    iceServers,
     enableIceTcp: true,
-    enableIceUdpMux: true,
+    // libjuice 在 UDP mux 模式下不支持 TURN（只出 host 候选并告警
+    // "TURN servers are not supported in mux mode"）：有 TURN 就关掉 mux，让每个
+    // PeerConnection 各占一个端口（可用 VIBETERM_RTC_PORT_RANGE 圈定范围）。
+    enableIceUdpMux: !hasTurnServer(iceServers),
     mtu: 1200,
     ...(bindAddress ? { bindAddress } : {}),
     ...(portRange ? { portRangeBegin: portRange.begin, portRangeEnd: portRange.end } : {}),
