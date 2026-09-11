@@ -31,6 +31,7 @@ const TOKEN_REASONS = new Map<string, NodeUnreachableReason>([
   ['timeout', 'timeout'],
   ['connect-timeout', 'timeout'],
   ['handshake-timeout', 'timeout'],
+  ['upload-stall', 'timeout'],
   ['handshake_failed', 'handshake_failed'],
   ['handshake-failed', 'handshake_failed'],
   ...[...LINK_LOST_REASONS].map((token): [string, NodeUnreachableReason] => [token, 'link_lost']),

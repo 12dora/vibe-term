@@ -9,6 +9,7 @@ import {
   ForwardDeadlineError,
   authorizedAttemptBudgetsMs,
   runLinkThenTransfer,
+  withHttpStreamUploadDeadline,
 } from './forwarder-attempt-deadline';
 import {
   AUTH_CHALLENGE_PATHS,
@@ -287,20 +288,28 @@ export class Forwarder {
         },
       });
     }
+    const floorMs = forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
     try {
       const link = await this.deps.peers.getLink(nodeId);
-      return await this.deps.streams.openHttpStream(
-        link,
-        {
-          method: input?.method ?? 'POST',
-          path,
-          query: input?.query ?? '',
-          headers,
-          origin: 'http://localhost',
-          auth: null,
-        },
-        streamBody,
-        abort
+      return await withHttpStreamUploadDeadline(
+        abort,
+        floorMs,
+        headers,
+        Boolean(input?.rawBody),
+        (s) =>
+          this.deps.streams.openHttpStream(
+            link,
+            {
+              method: input?.method ?? 'POST',
+              path,
+              query: input?.query ?? '',
+              headers,
+              origin: 'http://localhost',
+              auth: null,
+            },
+            streamBody,
+            s
+          )
       );
     } catch (err) {
       // 传输层还没接手这个 body：不主动掐掉的话，源端的读取管道与文件句柄就没人再关了
@@ -663,7 +672,8 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
-    const deadlineAt = Date.now() + forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
+    const floorMs = forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
+    const deadlineAt = Date.now() + floorMs;
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (signal.aborted || Date.now() >= deadlineAt) break;
@@ -678,11 +688,13 @@ export class Forwarder {
         const link = await this.linkBefore(nodeId, deadlineAt);
         const upstream = await this.adaptResponse(
           req,
-          await this.deps.streams.openHttpStream(
-            link,
-            { method: req.method, path: rest, query: search, headers, origin, auth },
-            body,
-            signal
+          await withHttpStreamUploadDeadline(signal, floorMs, headers, Boolean(body), (s) =>
+            this.deps.streams.openHttpStream(
+              link,
+              { method: req.method, path: rest, query: search, headers, origin, auth },
+              body,
+              s
+            )
           ),
           nodeId
         );

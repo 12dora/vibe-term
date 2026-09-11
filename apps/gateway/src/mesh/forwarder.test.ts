@@ -1860,6 +1860,155 @@ describe('forwarder', () => {
       mesh.close();
     }
   });
+
+  test('POST upload hanging in openHttpStream is aborted at the upload budget', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const started = Date.now();
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/ping`, {
+            method: 'POST',
+            headers: { 'content-length': '1' },
+            body: 'x',
+          }),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+      mesh.close();
+    }
+  });
+
+  test('GET hanging in openHttpStream still uses the short floor, not the upload cap', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const mesh = await bootMesh({ peers, streams, sleep: async () => {} });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const started = Date.now();
+      const res = asResponse(
+        await mesh.runtime.handleRequest(
+          new Request(`http://localhost/n/${OTHER}/api/ping`),
+          dummyServer
+        )
+      );
+      expect(res.status).toBe(503);
+      expect((await res.json()).code).toBe('NODE_UNREACHABLE');
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+      mesh.close();
+    }
+  });
+});
+
+describe('forwardInternalHttp', () => {
+  test('hanging openHttpStream is aborted at the short floor', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const started = Date.now();
+      const res = await forwarder.forwardInternalHttp(OTHER, '/api/mesh-internal/x', { ok: true });
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
+
+  test('rawBody without content-length is still bounded (not infinite)', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let opened = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      opened = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const ac = new AbortController();
+      const pending = forwarder.forwardInternalHttp(
+        OTHER,
+        '/api/mesh-internal/x',
+        null,
+        ac.signal,
+        {
+          rawBody: new ReadableStream({ start() {} }),
+        }
+      );
+      await waitUntil(() => opened);
+      await Bun.sleep(80);
+      expect(opened).toBe(true);
+      ac.abort();
+      const res = await pending;
+      expect(res.status).toBe(503);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
 });
 
 describe('forwardAuthorizedHttp', () => {

@@ -19,7 +19,7 @@ import {
   CLIENT_SOURCE_LOCAL,
   waivesPasskeySecondFactor,
 } from './client-source';
-import { setHttpHeadDeadlineMs } from './forwarder-attempt-deadline';
+import { setHttpHeadDeadlineMs, setUploadStallMs } from './forwarder-attempt-deadline';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
@@ -42,6 +42,7 @@ describe('http/ws stream targets', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
   afterEach(async () => {
     setHttpHeadDeadlineMs(0);
+    setUploadStallMs(0);
     while (fixtures.length) {
       const item = fixtures.pop();
       await item?.stop?.();
@@ -1247,6 +1248,96 @@ describe('http/ws stream targets', () => {
     });
     expect(unhandled).toEqual([]);
   });
+
+  test('stalled write aborts at the stall timeout with upload-stall', async () => {
+    setUploadStallMs(50);
+    setHttpHeadDeadlineMs(30_000);
+    const [a, b] = createInMemoryLinkPair();
+    hangOpenStreamWrites(a);
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const started = Date.now();
+    const pending = openHttpStream(
+      a,
+      {
+        method: 'PUT',
+        path: '/api/upload',
+        origin: 'http://localhost',
+        auth: 'sid',
+        headers: { 'content-length': String(1024 * 1024) },
+      },
+      repeatingBody(1024 * 1024)
+    );
+    const peer = await incoming;
+    await expect(pending).rejects.toThrow('upload-stall');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect((await peer.closed).message).toBe('upload-stall');
+  });
+
+  test('slow upload that still makes write progress within the stall window succeeds', async () => {
+    setUploadStallMs(80);
+    const [a, b] = createInMemoryLinkPair();
+    delayOpenStreamWrites(a, 20);
+    let received = 0;
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req) {
+          const buf = await req.arrayBuffer();
+          received = buf.byteLength;
+          return new Response(JSON.stringify({ received }), {
+            status: 200,
+            headers: { 'content-type': 'application/json' },
+          });
+        },
+      });
+    });
+    const bodyBytes = 8 * 1024;
+    const res = await openHttpStream(
+      a,
+      {
+        method: 'PUT',
+        path: '/api/upload',
+        origin: 'http://localhost',
+        auth: 'sid',
+        headers: { 'content-length': String(bodyBytes) },
+      },
+      repeatingBody(bodyBytes, 7, 1024)
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ received: bodyBytes });
+    expect(received).toBe(bodyBytes);
+  });
+
+  test('lying content-length (small header, large body) is bounded by the stall timeout', async () => {
+    setUploadStallMs(50);
+    setHttpHeadDeadlineMs(30_000);
+    const [a, b] = createInMemoryLinkPair();
+    hangOpenStreamWrites(a);
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    const started = Date.now();
+    const pending = openHttpStream(
+      a,
+      {
+        method: 'PUT',
+        path: '/api/upload',
+        origin: 'http://localhost',
+        auth: 'sid',
+        headers: { 'content-length': '10' },
+      },
+      repeatingBody(1024 * 1024)
+    );
+    const peer = await incoming;
+    await expect(pending).rejects.toThrow('upload-stall');
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect((await peer.closed).message).toBe('upload-stall');
+  });
 });
 
 function repeatingBody(total: number, fill = 7, chunk = 64 * 1024): ReadableStream<Uint8Array> {
@@ -1263,6 +1354,40 @@ function repeatingBody(total: number, fill = 7, chunk = 64 * 1024): ReadableStre
       remaining -= n;
     },
   });
+}
+
+function hangOpenStreamWrites(
+  link: import('@vibeterm/shared/link').LinkSession,
+  afterBytes = 0
+): void {
+  const orig = link.openStream.bind(link);
+  link.openStream = async (payload) => {
+    const stream = await orig(payload);
+    const write = stream.write.bind(stream);
+    let sent = 0;
+    stream.write = async (bytes, opts) => {
+      if (sent >= afterBytes && bytes.byteLength > 0) await new Promise(() => {});
+      sent += bytes.byteLength;
+      return write(bytes, opts);
+    };
+    return stream;
+  };
+}
+
+function delayOpenStreamWrites(
+  link: import('@vibeterm/shared/link').LinkSession,
+  delayMs: number
+): void {
+  const orig = link.openStream.bind(link);
+  link.openStream = async (payload) => {
+    const stream = await orig(payload);
+    const write = stream.write.bind(stream);
+    stream.write = async (bytes, opts) => {
+      if (bytes.byteLength > 0) await Bun.sleep(delayMs);
+      return write(bytes, opts);
+    };
+    return stream;
+  };
 }
 
 function throttleOpenStreamWrites(

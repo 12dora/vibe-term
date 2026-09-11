@@ -3,19 +3,25 @@ import {
   ForwardDeadlineError,
   UPLOAD_BUDGET_CAP_MS,
   UPLOAD_MIN_THROUGHPUT_BPS,
+  UploadStallError,
   armAttemptDeadline,
   armDeferredTimeout,
   authorizedAttemptBudgetsMs,
   httpHeadTimeoutMs,
+  httpStreamTransferBudgetMs,
   requestBodyUploadBudgetMs,
   runLinkThenTransfer,
   setHttpHeadDeadlineMs,
+  setUploadStallMs,
   uploadBudgetMs,
   waitLinkOrAbort,
+  withHttpStreamUploadDeadline,
+  wrapUploadDestination,
 } from './forwarder-attempt-deadline';
 
 afterEach(() => {
   setHttpHeadDeadlineMs(0);
+  setUploadStallMs(0);
 });
 
 describe('armAttemptDeadline', () => {
@@ -88,6 +94,137 @@ describe('requestBodyUploadBudgetMs', () => {
     expect(requestBodyUploadBudgetMs({ hasRawBody: true })).toBe(UPLOAD_BUDGET_CAP_MS);
     expect(requestBodyUploadBudgetMs({ hasRawBody: false })).toBe(0);
     expect(requestBodyUploadBudgetMs({ contentLength: 0, hasRawBody: false })).toBe(0);
+  });
+});
+
+describe('httpStreamTransferBudgetMs', () => {
+  test('GET-like (no body) is just the short floor', () => {
+    expect(httpStreamTransferBudgetMs({ floorMs: 5_000, hasBody: false })).toBe(5_000);
+  });
+
+  test('content-length / 128 KiB/s sits on top of the floor, capped at 10 min', () => {
+    expect(
+      httpStreamTransferBudgetMs({
+        floorMs: 5_000,
+        headers: { 'content-length': String(30 * 1024 * 1024) },
+        hasBody: true,
+      })
+    ).toBe(5_000 + 240_000);
+    expect(
+      httpStreamTransferBudgetMs({
+        floorMs: 5_000,
+        hasBody: true,
+      })
+    ).toBe(5_000 + UPLOAD_BUDGET_CAP_MS);
+  });
+});
+
+describe('withHttpStreamUploadDeadline', () => {
+  test('aborts a hanging open at floor + upload budget; caller abort still wins', async () => {
+    const hanging = (signal: AbortSignal) =>
+      new Promise<string>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) fail();
+        else signal.addEventListener('abort', fail, { once: true });
+      });
+    const started = Date.now();
+    await expect(
+      withHttpStreamUploadDeadline(
+        new AbortController().signal,
+        40,
+        { 'content-length': '1' },
+        true,
+        hanging
+      )
+    ).rejects.toBeInstanceOf(ForwardDeadlineError);
+    expect(Date.now() - started).toBeLessThan(1_000);
+
+    const parent = new AbortController();
+    const pending = withHttpStreamUploadDeadline(
+      parent.signal,
+      60_000,
+      { 'content-length': String(30 * 1024 * 1024) },
+      true,
+      hanging
+    );
+    parent.abort(new Error('caller'));
+    await expect(pending).rejects.toThrow('caller');
+  });
+});
+
+describe('wrapUploadDestination', () => {
+  test('stalled write rejects at the stall timeout', async () => {
+    setUploadStallMs(30);
+    const wrapped = wrapUploadDestination(
+      {
+        write: () => new Promise(() => {}),
+        end: async () => {},
+      },
+      {}
+    );
+    const started = Date.now();
+    await expect(wrapped.write(new Uint8Array([1]))).rejects.toBeInstanceOf(UploadStallError);
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test('caller abort wins over a hung write', async () => {
+    setUploadStallMs(200);
+    const abort = new AbortController();
+    const wrapped = wrapUploadDestination(
+      {
+        write: () => new Promise(() => {}),
+        end: async () => {},
+      },
+      { abort: abort.signal }
+    );
+    const pending = wrapped.write(new Uint8Array([1]));
+    abort.abort(new Error('caller'));
+    await expect(pending).rejects.toThrow('caller');
+  });
+
+  test('already-aborted wrap does not leak a rejected write', async () => {
+    const abort = new AbortController();
+    abort.abort(new Error('caller'));
+    let rejectWrite: (err: unknown) => void = () => {};
+    const wrapped = wrapUploadDestination(
+      {
+        write: () =>
+          new Promise<void>((_, reject) => {
+            rejectWrite = reject;
+          }),
+        end: async () => {},
+      },
+      { abort: abort.signal }
+    );
+    const pending = wrapped.write(new Uint8Array([1]));
+    await expect(pending).rejects.toThrow('caller');
+    const leaked: unknown[] = [];
+    const onUnhandled = (reason: unknown) => {
+      leaked.push(reason);
+    };
+    process.on('unhandledRejection', onUnhandled);
+    try {
+      rejectWrite(new Error('stream is closed'));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(leaked).toEqual([]);
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+    }
+  });
+
+  test('slow write that still completes within the stall window succeeds', async () => {
+    setUploadStallMs(80);
+    const wrapped = wrapUploadDestination(
+      {
+        write: async () => {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        },
+        end: async () => {},
+      },
+      {}
+    );
+    await wrapped.write(new Uint8Array([1]));
+    await wrapped.end();
   });
 });
 

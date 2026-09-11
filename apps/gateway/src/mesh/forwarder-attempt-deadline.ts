@@ -12,12 +12,31 @@ export class ForwardDeadlineError extends Error {
 export const UPLOAD_MIN_THROUGHPUT_BPS = 128 * 1024;
 /** 单次上传额外预算上限（10 min），与远程升级 push 墙钟同量级。 */
 export const UPLOAD_BUDGET_CAP_MS = 10 * 60 * 1000;
+/** 上传写进度停滞：单次 write/end 超过此时长仍未返回即 RST，避免假 content-length / 死对端占满 cap。 */
+export const UPLOAD_STALL_MS = 60_000;
+
+export class UploadStallError extends Error {
+  constructor() {
+    super('upload-stall');
+    this.name = 'UploadStallError';
+  }
+}
 
 let httpHeadDeadlineOverride = 0;
+let uploadStallOverride = 0;
 
 /** 测试用：缩短 HTTP 响应头等待。`ms <= 0` 恢复自适应缺省。 */
 export function setHttpHeadDeadlineMs(ms: number): void {
   httpHeadDeadlineOverride = ms > 0 ? ms : 0;
+}
+
+/** 测试用：缩短上传写停滞超时。`ms <= 0` 恢复 60 s 缺省。 */
+export function setUploadStallMs(ms: number): void {
+  uploadStallOverride = ms > 0 ? ms : 0;
+}
+
+export function uploadStallTimeoutMs(): number {
+  return uploadStallOverride > 0 ? uploadStallOverride : UPLOAD_STALL_MS;
 }
 
 /** 无请求体时的 head 等待：与转发取链同一档 `forwardMs`（5–20 s）。 */
@@ -57,21 +76,55 @@ export function requestBodyUploadBudgetMs(opts: {
   return opts.hasRawBody ? UPLOAD_BUDGET_CAP_MS : 0;
 }
 
+export function httpStreamTransferBudgetMs(opts: {
+  floorMs: number;
+  headers?: Record<string, string> | null;
+  hasBody: boolean;
+}): number {
+  return (
+    opts.floorMs +
+    requestBodyUploadBudgetMs({
+      contentLength: parseContentLengthHeader(opts.headers),
+      hasRawBody: opts.hasBody,
+    })
+  );
+}
+
 export function authorizedAttemptBudgetsMs(input: {
   linkMs: number;
   overallMs: number;
   headers?: Record<string, string> | null;
   hasRawBody: boolean;
 }): { linkMs: number; transferMs: number; overallMs: number } {
-  const uploadMs = requestBodyUploadBudgetMs({
-    contentLength: parseContentLengthHeader(input.headers),
-    hasRawBody: input.hasRawBody,
+  const transferMs = httpStreamTransferBudgetMs({
+    floorMs: input.linkMs,
+    headers: input.headers,
+    hasBody: input.hasRawBody,
   });
   return {
     linkMs: input.linkMs,
-    transferMs: input.linkMs + uploadMs,
-    overallMs: input.overallMs + uploadMs,
+    transferMs,
+    overallMs: input.overallMs + (transferMs - input.linkMs),
   };
+}
+
+/** 给 `openHttpStream` 套上传墙钟：有 body 按 content-length / 128 KiB/s（无 length 则 cap），下限为短转发档。 */
+export async function withHttpStreamUploadDeadline<T>(
+  parent: AbortSignal,
+  floorMs: number,
+  headers: Record<string, string> | null | undefined,
+  hasBody: boolean,
+  run: (signal: AbortSignal) => Promise<T>
+): Promise<T> {
+  const armed = armAttemptDeadline(
+    parent,
+    httpStreamTransferBudgetMs({ floorMs, headers, hasBody })
+  );
+  try {
+    return await run(armed.signal);
+  } finally {
+    armed.dispose();
+  }
 }
 
 /** 单次转发尝试：到点 abort，并转发调用方的 abort；settled 后必须 dispose 清 timer。 */
@@ -173,4 +226,73 @@ export async function runLinkThenTransfer<L, R>(opts: {
   } finally {
     linkArmed.dispose();
   }
+}
+
+type UploadWriteDest = {
+  write: (bytes: Uint8Array, opts?: { head?: boolean }) => Promise<void>;
+  end: () => Promise<void>;
+};
+
+function raceWriteOrStall<T>(
+  write: Promise<T>,
+  opts: { stallMs: number; abort?: AbortSignal }
+): Promise<T> {
+  const abort = opts.abort;
+  return new Promise<T>((resolve, reject) => {
+    let settled = false;
+    const done = (fn: () => void): void => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      abort?.removeEventListener('abort', onAbort);
+      fn();
+    };
+    const onAbort = (): void => {
+      done(() =>
+        reject(abort?.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+      );
+    };
+    const timer = setTimeout(
+      () => {
+        done(() => {
+          reject(
+            abort?.aborted
+              ? (abort.reason ?? new DOMException('The operation was aborted.', 'AbortError'))
+              : new UploadStallError()
+          );
+        });
+      },
+      Math.max(1, opts.stallMs)
+    );
+    write.then(
+      (value) => done(() => resolve(value)),
+      (err) => done(() => reject(err))
+    );
+    if (abort?.aborted) {
+      onAbort();
+      return;
+    }
+    abort?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+/** 单次 write/end 在 stallMs 内未返回视为对端不读。调用方 abort 优先于 stall。 */
+export function wrapUploadDestination(
+  dst: UploadWriteDest,
+  opts: { stallMs?: number; abort?: AbortSignal; onStall?: () => void }
+): UploadWriteDest {
+  const stallMs = opts.stallMs ?? uploadStallTimeoutMs();
+  let stalled = false;
+  const run = <T>(op: Promise<T>): Promise<T> =>
+    raceWriteOrStall(op, { stallMs, abort: opts.abort }).catch((err: unknown) => {
+      if (err instanceof UploadStallError && !stalled) {
+        stalled = true;
+        opts.onStall?.();
+      }
+      throw err;
+    });
+  return {
+    write: (bytes, writeOpts) => run(dst.write(bytes, writeOpts)),
+    end: () => run(dst.end()),
+  };
 }

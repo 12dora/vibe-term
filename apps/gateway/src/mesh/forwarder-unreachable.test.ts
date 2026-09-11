@@ -24,6 +24,7 @@ const REASON_CASES: Array<{ err: unknown; reason: NodeUnreachableReason }> = [
   { err: new LinkError('rst', 'offline'), reason: 'relay_reset:offline' },
   { err: new LinkError('rst', 'open-failed'), reason: 'relay_reset:open-failed' },
   { err: new DOMException('The operation was aborted.', 'AbortError'), reason: 'timeout' },
+  { err: new Error('upload-stall'), reason: 'timeout' },
   { err: new Error('https://evil.example/token=secret'), reason: 'no_link' },
   // 链路建起来又断了：中继复位 / 顶号 / 上行切换，重试通常能成，与 no_link 分开。
   { err: new LinkError('rst', 'stream-aborted'), reason: 'link_lost' },

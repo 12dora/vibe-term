@@ -1,7 +1,12 @@
 import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream, StreamChunk } from '@vibeterm/shared/link';
 import { encodeJsonBytes, isRecord } from './ctl';
-import { armDeferredTimeout, httpHeadTimeoutMs } from './forwarder-attempt-deadline';
+import {
+  UploadStallError,
+  armDeferredTimeout,
+  httpHeadTimeoutMs,
+  wrapUploadDestination,
+} from './forwarder-attempt-deadline';
 import { lookupPeerRttMs } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
@@ -279,26 +284,47 @@ async function writeHttpResponse(
   }
 }
 
+function uploadDestination(
+  stream: LinkStream,
+  stopUpload: AbortController,
+  stall: { err?: Error }
+): Pick<LinkStream, 'write' | 'end'> {
+  return wrapUploadDestination(stream, {
+    abort: stopUpload.signal,
+    onStall: () => {
+      stall.err = new UploadStallError();
+      if (!stopUpload.signal.aborted) stopUpload.abort(stall.err);
+      try {
+        stream.reset('upload-stall');
+      } catch {
+        // already reset
+      }
+    },
+  });
+}
+
 function pumpHttpRequestBody(
   body: ReadableStream<Uint8Array> | Uint8Array | null | undefined,
   stream: LinkStream,
   stopUpload: AbortController,
   shouldReset: () => boolean,
-  rst: () => void
+  rst: () => void,
+  stall: { err?: Error }
 ): {
   reader: ReadableStreamDefaultReader<Uint8Array> | null;
   armAfter: Promise<unknown> | undefined;
 } {
-  const reader = body && !(body instanceof Uint8Array) ? body.getReader() : null;
+  const isBytes = body instanceof Uint8Array;
+  const reader = body && !isBytes ? body.getReader() : null;
+  const hasBody = Boolean(body && !(isBytes && body.byteLength === 0));
   const pumpDone = pumpToLink(
-    reader ?? (body instanceof Uint8Array ? body : null),
-    stream,
+    reader ?? (isBytes ? body : null),
+    hasBody ? uploadDestination(stream, stopUpload, stall) : stream,
     () => {
       if (shouldReset() && !stopUpload.signal.aborted) rst();
     },
     () => stopUpload.signal.aborted
   );
-  const hasBody = Boolean(body && !(body instanceof Uint8Array && body.byteLength === 0));
   return {
     reader,
     armAfter: hasBody
@@ -343,7 +369,8 @@ export async function openHttpStream(
     if (!stopUpload.signal.aborted) stopUpload.abort();
   });
 
-  const upload = pumpHttpRequestBody(body, stream, stopUpload, () => !gotHead, rst);
+  const stall: { err?: Error } = {};
+  const upload = pumpHttpRequestBody(body, stream, stopUpload, () => !gotHead, rst, stall);
 
   try {
     const head = await readHttpHead(stream, {
@@ -431,6 +458,10 @@ export async function openHttpStream(
       },
     });
     return new Response(responseBody, { status: head.status, headers: head.headers });
+  } catch (err) {
+    if (signal?.aborted) throw signal.reason ?? err;
+    if (stall.err) throw stall.err;
+    throw err;
   } finally {
     signal?.removeEventListener('abort', onOuterAbort);
     if (!stopUpload.signal.aborted) stopUpload.abort();
