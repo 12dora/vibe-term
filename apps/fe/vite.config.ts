@@ -6,6 +6,8 @@ import react from '@vitejs/plugin-react-swc';
 import { visualizer } from 'rollup-plugin-visualizer';
 import { type Plugin, type PluginOption, defineConfig, build as viteBuild } from 'vite';
 import { buildPrecacheManifest, emittedCssNames } from './src/sw/precache-manifest';
+import { compressStaticPlugin } from './vite-plugins/compress-static';
+import { localeCorePreloadPlugin } from './vite-plugins/locale-core-preload';
 
 // monorepo 版本真相源：发布的 vibeterm-cli（packages/app）版本。读取失败退回 0.0.0。
 function readMonorepoVersion(): string {
@@ -15,6 +17,19 @@ function readMonorepoVersion(): string {
   } catch {
     return '0.0.0';
   }
+}
+
+/** 与 `@vibeterm/shared` 的 DEFAULT_LOCALE 同源：packages/shared/src/i18n/locales/manifest.json。 */
+function readDefaultLocale(): string {
+  const manifestPath = path.resolve(
+    __dirname,
+    '../../packages/shared/src/i18n/locales/manifest.json'
+  );
+  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { defaultLocale?: string };
+  if (!manifest.defaultLocale) {
+    throw new Error('[vite] i18n manifest.json 缺少 defaultLocale');
+  }
+  return manifest.defaultLocale;
 }
 
 // KaTeX 的 @font-face 按 woff2 → woff → ttf 三格式声明，本应用要求的浏览器都支持 woff2，
@@ -171,7 +186,9 @@ export default defineConfig(({ mode }) => {
       katexWoff2Only(),
       tailwindcss(),
       react(),
+      localeCorePreloadPlugin(readDefaultLocale()),
       serviceWorkerPlugin(monorepoVersion),
+      compressStaticPlugin(),
       ...analyzePlugins,
     ],
     resolve: {

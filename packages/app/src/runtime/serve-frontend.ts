@@ -1,6 +1,13 @@
 import { existsSync, statSync } from 'node:fs';
 import { extname, join, normalize, relative, resolve, sep } from 'node:path';
 import { t } from '../i18n';
+import {
+  type ContentEncoding,
+  isCompressiblePath,
+  negotiateEncoding,
+  resolveEncodedBody,
+  variantEtag,
+} from './static-compression';
 
 const MIME_MAP: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -42,10 +49,6 @@ function isHashedViteAsset(staticRoot: string, targetPath: string): boolean {
   return HASHED_ASSET_NAME.test(name);
 }
 
-function makeEtag(size: number, mtimeMs: number): string {
-  return `W/"${size}-${mtimeMs}"`;
-}
-
 function etagMatches(header: string | null, etag: string): boolean {
   if (!header) return false;
   const strong = etag.startsWith('W/') ? etag.slice(2) : etag;
@@ -69,26 +72,101 @@ function applyCachePolicy(
   headers: Headers,
   req: Request,
   staticRoot: string,
-  targetPath: string
+  targetPath: string,
+  encoding: ContentEncoding | null
 ): boolean {
-  if (isHashedViteAsset(staticRoot, targetPath)) {
-    headers.set('Cache-Control', IMMUTABLE_CACHE);
+  const hashed = isHashedViteAsset(staticRoot, targetPath);
+  headers.set('Cache-Control', hashed ? IMMUTABLE_CACHE : REVALIDATE_CACHE);
+
+  if (hashed && !isCompressiblePath(targetPath)) {
     return false;
   }
 
   const st = statSync(targetPath);
   const mtimeMs = Math.trunc(st.mtimeMs);
-  const etag = makeEtag(st.size, mtimeMs);
-  headers.set('Cache-Control', REVALIDATE_CACHE);
+  const etag = variantEtag(st.size, mtimeMs, encoding);
   headers.set('ETag', etag);
-  headers.set('Last-Modified', new Date(mtimeMs).toUTCString());
+  if (!hashed) {
+    headers.set('Last-Modified', new Date(mtimeMs).toUTCString());
+  }
 
   const ifNoneMatch = req.headers.get('If-None-Match');
   if (etagMatches(ifNoneMatch, etag)) return true;
-  if (!ifNoneMatch && isUnmodifiedSince(req.headers.get('If-Modified-Since'), mtimeMs)) {
-    return true;
+  if (!hashed && !ifNoneMatch && encoding === null) {
+    return isUnmodifiedSince(req.headers.get('If-Modified-Since'), mtimeMs);
   }
   return false;
+}
+
+function hasRangeRequest(req: Request): boolean {
+  const range = req.headers.get('Range');
+  return range !== null && range.trim() !== '';
+}
+
+function pickEncoding(req: Request, compressible: boolean): ContentEncoding | null {
+  if (!compressible || hasRangeRequest(req)) return null;
+  return negotiateEncoding(req.headers.get('Accept-Encoding'));
+}
+
+function lookupStaticFile(req: Request, staticRoot: string): Response | string {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    return new Response(t('runtime.methodNotAllowed'), { status: 405 });
+  }
+
+  const url = new URL(req.url);
+  const requestedPath = resolveRequestedFile(staticRoot, url.pathname);
+  if (!requestedPath) {
+    try {
+      decodeURIComponent(url.pathname);
+    } catch {
+      return new Response('Bad Request', { status: 400 });
+    }
+    return new Response(t('runtime.forbidden'), { status: 403 });
+  }
+
+  // 带扩展名的请求视为静态资源，未命中直接 404，避免 SPA fallback
+  // 把缺失资源（如 manifest 引用的图标）伪装成 200 + index.html
+  if (!existsSync(requestedPath) && extname(url.pathname) !== '') {
+    return new Response(t('runtime.notFound'), { status: 404 });
+  }
+
+  const indexPath = join(staticRoot, 'index.html');
+  const targetPath = existsSync(requestedPath) ? requestedPath : indexPath;
+  if (!existsSync(targetPath)) {
+    return new Response(t('runtime.frontendMissing'), { status: 500 });
+  }
+  return targetPath;
+}
+
+function encodedStaticResponse(
+  req: Request,
+  headers: Headers,
+  staticRoot: string,
+  targetPath: string,
+  encoding: ContentEncoding | null
+): Response {
+  const body = resolveEncodedBody(targetPath, encoding);
+  if (body.encoding) {
+    headers.set('Content-Encoding', body.encoding);
+  }
+
+  const notModified = applyCachePolicy(headers, req, staticRoot, targetPath, body.encoding);
+  if (notModified) {
+    return new Response(null, { status: 304, headers });
+  }
+
+  if (body.bytes) {
+    headers.set('Content-Length', String(body.bytes.byteLength));
+    const payload = req.method === 'HEAD' ? null : new Uint8Array(body.bytes);
+    return new Response(payload, { headers });
+  }
+
+  const filePath = body.filePath ?? targetPath;
+  headers.set('Content-Length', String(statSync(filePath).size));
+  if (req.method === 'HEAD') {
+    return new Response(null, { headers });
+  }
+  return new Response(Bun.file(filePath), { headers });
 }
 
 export function resolveRequestedFile(staticRoot: string, pathname: string): string | null {
@@ -111,45 +189,19 @@ export function resolveRequestedFile(staticRoot: string, pathname: string): stri
 }
 
 export async function serveFrontend(req: Request, staticRoot: string): Promise<Response> {
-  const url = new URL(req.url);
-
-  if (req.method !== 'GET' && req.method !== 'HEAD') {
-    return new Response(t('runtime.methodNotAllowed'), { status: 405 });
-  }
-
-  const requestedPath = resolveRequestedFile(staticRoot, url.pathname);
-  if (!requestedPath) {
-    try {
-      decodeURIComponent(url.pathname);
-    } catch {
-      return new Response('Bad Request', { status: 400 });
-    }
-    return new Response(t('runtime.forbidden'), { status: 403 });
-  }
-
-  // 带扩展名的请求视为静态资源，未命中直接 404，避免 SPA fallback
-  // 把缺失资源（如 manifest 引用的图标）伪装成 200 + index.html
-  if (!existsSync(requestedPath) && extname(url.pathname) !== '') {
-    return new Response(t('runtime.notFound'), { status: 404 });
-  }
-
-  const indexPath = join(staticRoot, 'index.html');
-  const targetPath = existsSync(requestedPath) ? requestedPath : indexPath;
-
-  if (!existsSync(targetPath)) {
-    return new Response(t('runtime.frontendMissing'), { status: 500 });
-  }
+  const target = lookupStaticFile(req, staticRoot);
+  if (target instanceof Response) return target;
 
   const headers = new Headers();
-  const type = contentTypeByPath(targetPath);
+  const type = contentTypeByPath(target);
   if (type) {
     headers.set('Content-Type', type);
   }
 
-  const notModified = applyCachePolicy(headers, req, staticRoot, targetPath);
-  if (notModified) {
-    return new Response(null, { status: 304, headers });
+  const compressible = isCompressiblePath(target);
+  if (compressible) {
+    headers.set('Vary', 'Accept-Encoding');
   }
 
-  return new Response(Bun.file(targetPath), { headers });
+  return encodedStaticResponse(req, headers, staticRoot, target, pickEncoding(req, compressible));
 }
