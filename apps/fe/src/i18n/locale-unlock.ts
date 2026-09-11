@@ -51,12 +51,41 @@ export function createActiveCompleteWaiter(options: ActiveCompleteOptions): () =
   };
 }
 
+export interface LanguageActivatorOptions {
+  isUnlocked: (lng: string) => boolean;
+  unlock: (lng: string) => void;
+  /** 强制重新向 backend 取该语言的资源（i18n.reloadResources） */
+  reload: (lng: string) => Promise<unknown>;
+}
+
+/**
+ * 解锁一门语言并把它的资源真的取回来。
+ *
+ * 为什么必须 reload 而不是 loadLanguages：被锁期间 backend 对该语言返回的是空包，
+ * i18next 的 backendConnector 会把 `<lng>|translation` 记成「已加载」，此后
+ * `loadLanguages` 直接短路 —— 语言包永远补不回来，裸 key 也就一直裸着；
+ * 运行时切到这门语言同样是空的。reloadResources 会清掉那个状态重新走一遍 backend。
+ */
+export function createLanguageActivator(
+  options: LanguageActivatorOptions
+): (lng: string) => Promise<void> {
+  return async (lng) => {
+    if (options.isUnlocked(lng)) return;
+    options.unlock(lng);
+    await options.reload(lng).catch(() => undefined);
+  };
+}
+
 export interface LocaleUnlockOptions {
   /** 首屏语言，立即解锁 */
   initial: string;
   /** fallback 语言（DEFAULT_LOCALE），确实缺 key 时才解锁 */
   fallback: string;
-  /** 让 i18next 去拉该语言的 core（通常是 i18n.loadLanguages） */
+  /**
+   * 解锁后把该语言的 core 真的取回来。
+   * 必须是 `i18n.reloadResources` 一类会清掉 backendConnector 状态的调用，
+   * 不能是 `loadLanguages`——锁着的时候 backend 已经回过空包并被记成已加载。
+   */
   loadLanguage: (lng: string) => Promise<unknown>;
   /** 补该语言的 rest 包 */
   loadRest: (lng: string) => Promise<unknown>;

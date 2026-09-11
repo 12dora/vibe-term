@@ -4,7 +4,11 @@ import i18n from 'i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';
 import { resolveInitialLanguage } from './initial-language';
-import { createActiveCompleteWaiter, createLocaleUnlock } from './locale-unlock';
+import {
+  createActiveCompleteWaiter,
+  createLanguageActivator,
+  createLocaleUnlock,
+} from './locale-unlock';
 import { changeLanguageAfterRest, createRestBundleCache } from './rest-bundle';
 import { setI18nRestPrerequisite } from './rest-prerequisite';
 
@@ -49,7 +53,7 @@ let restRequested = false;
 const localeUnlock = createLocaleUnlock({
   initial: initialLanguage,
   fallback: DEFAULT_LOCALE,
-  loadLanguage: (lng) => i18n.loadLanguages(lng),
+  loadLanguage: (lng) => i18n.reloadResources(lng, 'translation'),
   loadRest: (lng) => loadRest(lng),
   isRestRequested: () => restRequested,
   whenActiveComplete: createActiveCompleteWaiter({
@@ -62,6 +66,13 @@ const localeUnlock = createLocaleUnlock({
 function currentLanguage(): string {
   return i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
 }
+
+// 切语言 / 事后兜底的统一入口：解锁 + 强制重载（见 createLanguageActivator 的注释）
+const activateLanguage = createLanguageActivator({
+  isUnlocked: (lng) => localeUnlock.isUnlocked(lng),
+  unlock: (lng) => localeUnlock.unlock(lng),
+  reload: (lng) => i18n.reloadResources(lng, 'translation'),
+});
 
 // init 是异步的（要拉取当前语言 chunk）；main.tsx 在首次渲染前 await 此 promise 以避免未翻译闪烁。
 export const i18nReady = i18n
@@ -131,12 +142,13 @@ i18n.changeLanguage = ((lng, ...rest) => {
   if (typeof lng !== 'string') {
     return changeLanguageDirect(lng, ...rest);
   }
-  // 先解锁再切：不解锁的话 backend 对新语言只会回空包，页面全是裸 key。
-  localeUnlock.unlock(lng);
+  // 先解锁并把资源真的取回来再切：只解锁不重载的话 backend 早先回的空包还记在
+  // backendConnector 里，切过去整页都是裸 key。
+  const change = () => activateLanguage(lng).then(() => changeLanguageDirect(lng, ...rest));
   if (!restRequested) {
-    return changeLanguageDirect(lng, ...rest);
+    return change();
   }
-  return changeLanguageAfterRest(lng, loadRest, () => changeLanguageDirect(lng, ...rest));
+  return changeLanguageAfterRest(lng, loadRest, change);
 }) as ChangeLanguage;
 
 // <html lang> 跟随当前语言（index.html 静态写死 en；只影响无障碍与浏览器翻译提示）
@@ -144,8 +156,8 @@ i18n.on('languageChanged', (lng: string) => {
   if (typeof document !== 'undefined') {
     document.documentElement.lang = lng.replace('_', '-');
   }
-  // 绕过上面那层包装的切换（i18next 内部改语言）兜底：解锁 + rest 该补还是要补。
-  localeUnlock.unlock(lng);
+  // 绕过上面那层包装的切换（i18next 内部改语言）兜底：解锁 + 重载 + rest 该补还是要补。
+  void activateLanguage(lng);
   if (restRequested) void loadRest(lng).catch(() => undefined);
 });
 
