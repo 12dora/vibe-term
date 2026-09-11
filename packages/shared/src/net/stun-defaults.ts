@@ -12,7 +12,8 @@ export const BUILTIN_STUN_SERVERS: readonly string[] = [
 export const LEGACY_DEFAULT_STUN_LISTS: readonly string[] = [
   'stun:stun.l.google.com:19302',
   'stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478',
-  BUILTIN_STUN_SERVERS.join(','),
+  // 每次修改 BUILTIN_STUN_SERVERS 都要把旧字面量追加到这里
+  'stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478',
 ];
 
 export type StunEnvSource = 'builtin' | 'custom' | 'disabled';

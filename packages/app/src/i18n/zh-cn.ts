@@ -106,7 +106,7 @@ export const zhCN: Record<string, string> = {
   'doctor.env.exists': '发现配置文件：{{envPath}}',
   'doctor.env.missing': '未发现配置文件：{{envPath}}',
   'doctor.env.keyMissing': '配置缺失：{{key}}',
-  'doctor.stun.builtin': 'STUN 服务器：发行版内置',
+  'doctor.stun.builtin': 'app.env 未设置：使用发行版内置列表（hub/中继下发自定义列表时以其为准）',
   'doctor.stun.custom': 'STUN 服务器：自定义（app.env）',
   'doctor.stun.disabled': 'STUN 服务器：已禁用',
   'doctor.db.missing': '数据库文件不存在（首次启动前可能正常）：{{path}}',

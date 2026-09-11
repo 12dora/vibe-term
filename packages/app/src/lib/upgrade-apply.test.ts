@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, readdir, readlink, rm, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { readEnvFile } from './env-file';
 import { pathExists } from './fs-utils';
 import type { PackageLayout } from './install-layout';
 import { type UpgradeServiceControl, applyUpgrade, repairUpgrade } from './upgrade-apply';
@@ -666,6 +667,72 @@ describe('applyUpgrade', () => {
     });
     expect(await pathExists(join(installDir, 'backups', journal?.txnId ?? ''))).toBe(true);
   });
+
+  test('removes a frozen STUN default from app.env after a successful upgrade', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    await writeFile(
+      join(installDir, 'app.env'),
+      `${await readFile(join(installDir, 'app.env'), 'utf8')}VIBETERM_STUN_SERVERS=stun:stun.l.google.com:19302\n`
+    );
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    await applyUpgrade(
+      {
+        installDir,
+        toVersion: '2.0.0',
+        packageLayout: pkg,
+        bunPath: '/usr/bin/bun',
+        noService: true,
+        skipShims: true,
+      },
+      {
+        shimDirs: shimDirs(installDir),
+        service: fakeService(),
+        runCandidate: async () => ({ stop: async () => undefined }),
+        healthCheck: async () => undefined,
+      }
+    );
+    const env = await readEnvFile(join(installDir, 'app.env'));
+    expect(env.VIBETERM_STUN_SERVERS).toBeUndefined();
+    expect(env.GATEWAY_PORT).toBe('19883');
+    expect(await readCurrentVersion(installDir)).toBe('2.0.0');
+  });
+
+  test('restores the frozen STUN default in app.env when health check rolls back', async () => {
+    const installDir = await scratch();
+    await seedInstall(installDir, '1.0.0');
+    const stunLine = 'VIBETERM_STUN_SERVERS=stun:stun.l.google.com:19302';
+    await writeFile(
+      join(installDir, 'app.env'),
+      `${await readFile(join(installDir, 'app.env'), 'utf8')}${stunLine}\n`
+    );
+    const pkg = await writePackage(join(installDir, '_pkg2'), '2.0.0');
+    await expect(
+      applyUpgrade(
+        {
+          installDir,
+          toVersion: '2.0.0',
+          packageLayout: pkg,
+          bunPath: '/usr/bin/bun',
+          noService: true,
+          skipShims: true,
+        },
+        {
+          shimDirs: shimDirs(installDir),
+          service: fakeService(),
+          runCandidate: async () => ({ stop: async () => undefined }),
+          healthCheck: async ({ expectedVersion, requireTlsListener }) => {
+            if (requireTlsListener && expectedVersion === '2.0.0') throw new Error('unhealthy');
+          },
+        }
+      )
+    ).rejects.toThrow(/unhealthy/i);
+    expect((await readEnvFile(join(installDir, 'app.env'))).VIBETERM_STUN_SERVERS).toBe(
+      'stun:stun.l.google.com:19302'
+    );
+    expect(await readCurrentVersion(installDir)).toBe('1.0.0');
+    expect((await readJournal(installDir))?.phase).toBe('rolled_back');
+  });
 });
 
 describe('repairUpgrade release gates', () => {
@@ -1014,7 +1081,8 @@ describe('repairUpgrade stopping and old health', () => {
     ).rejects.toThrow(/stop-failed/);
     const journal = await readJournal(installDir);
     expect(journal?.phase).toBe('stopping');
-    expect(await pathExists(join(installDir, 'backups', journal?.txnId ?? 'missing'))).toBe(false);
+    const txnBackup = join(installDir, 'backups', journal?.txnId ?? 'missing');
+    expect(await pathExists(join(txnBackup, 'tmex.db'))).toBe(false);
     expect(await readFile(join(installDir, 'data', 'tmex.db'), 'utf8')).toBe('db-bytes');
   });
 

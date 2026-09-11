@@ -171,6 +171,7 @@ describe('resolveNestedCommand', () => {
     expect(cliHelpText('en')).toContain('--stun-servers <list>');
     expect(cliHelpText('en')).toContain(STUN_SERVERS_FLAG_HELP);
     expect(cliHelpText('zh-CN')).toContain('--stun-servers <list>');
+    expect(cliHelpText('zh-CN')).toMatch(/默认.*内置/);
     expect(cliHelpText('zh-CN')).toContain('none');
   });
 

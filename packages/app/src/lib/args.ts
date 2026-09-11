@@ -217,9 +217,7 @@ export function resolveNestedCommand(parsed: ParsedArgs): NestedCommand {
 
 const GLOBAL_FLAGS = new Set(['lang', 'help', 'h', 'bun-path']);
 
-/** `--stun-servers` 的帮助说明：默认随发行版内置列表，`none` 禁用。 */
-export const STUN_SERVERS_FLAG_HELP =
-  'default: built-in list shipped with each release; `none` disables';
+export { STUN_SERVERS_FLAG_HELP } from '../cli/help';
 
 const RELAY_ADMIN_FLAGS = new Set([...GLOBAL_FLAGS, 'install-dir', 'service-name', 'json']);
 

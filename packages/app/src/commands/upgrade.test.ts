@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { releaseTarballName, releaseTarballUrl } from '../../../shared/src/release/source';
 import { parseArgs } from '../lib/args';
 import { sha256Hex } from '../lib/artifacts-manifest';
+import { readEnvFile } from '../lib/env-file';
 import { pathExists } from '../lib/fs-utils';
 import { packNpmTarball } from '../lib/native-tarball';
 import { runCommand } from '../lib/process';
@@ -630,6 +631,7 @@ describe('upgrade flag unification', () => {
         `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
         'VIBETERM_MASTER_KEY=test',
         'VIBETERM_ROLES=standalone',
+        'VIBETERM_STUN_SERVERS=stun:stun.l.google.com:19302',
         '',
       ].join('\n')
     );
@@ -709,7 +711,64 @@ await applyUpgrade(
     );
     expect(await readCurrentVersion(installDir)).toBe('2.0.0');
     expect((await readJournal(installDir))?.phase).toBe('committed');
+    expect((await readEnvFile(join(installDir, 'app.env'))).VIBETERM_STUN_SERVERS).toBeUndefined();
     const journal = await readJournal(installDir);
     expect(await pathExists(join(installDir, 'staging', journal?.txnId ?? 'missing'))).toBe(false);
   }, 30_000);
+
+  test('health-check rollback restores a frozen STUN default in app.env', async () => {
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-upg-stun-rb-'));
+    tempDirs.push(installDir);
+    await mkdir(join(installDir, 'versions', '1.0.0', 'runtime'), { recursive: true });
+    await mkdir(join(installDir, 'data'), { recursive: true });
+    await writeFile(join(installDir, 'versions', '1.0.0', 'runtime', 'server.js'), 'export {}\n');
+    await switchCurrent(installDir, '1.0.0');
+    await writeInstallMetaFixture(installDir, {
+      serviceName: 'tmex',
+      cliVersion: '1.0.0',
+      serviceMode: 'none',
+    });
+    await writeFile(
+      join(installDir, 'app.env'),
+      [
+        'NODE_ENV=production',
+        'VIBETERM_BIND_HOST=127.0.0.1',
+        'GATEWAY_PORT=19883',
+        `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+        'VIBETERM_MASTER_KEY=test',
+        'VIBETERM_ROLES=standalone',
+        'VIBETERM_STUN_SERVERS=stun:stun.l.google.com:19302',
+        '',
+      ].join('\n')
+    );
+    await writeFile(join(installDir, 'data', 'tmex.db'), 'db-bytes');
+    await stagePackage(installDir, 'live-txn', '2.0.0');
+    const shimDirs: [string, string] = [join(installDir, '_shims'), join(installDir, '_bun-bin')];
+
+    await expect(
+      runUpgrade(upgradeArgs(installDir, ['--no-service']), {
+        repair: (dir, bunPath, opts) => repairUpgrade(dir, bunPath, { ...opts, shimDirs }),
+        apply: (options) =>
+          applyUpgrade(
+            { ...options, skipShims: true },
+            {
+              service: fakeService(),
+              runCandidate: async () => ({ stop: async () => undefined }),
+              healthCheck: async ({ expectedVersion, requireTlsListener }) => {
+                if (requireTlsListener && expectedVersion === '2.0.0') {
+                  throw new Error('unhealthy');
+                }
+              },
+              shimDirs,
+            }
+          ),
+      })
+    ).rejects.toThrow(/unhealthy/i);
+
+    expect((await readEnvFile(join(installDir, 'app.env'))).VIBETERM_STUN_SERVERS).toBe(
+      'stun:stun.l.google.com:19302'
+    );
+    expect(await readCurrentVersion(installDir)).toBe('1.0.0');
+    expect((await readJournal(installDir))?.phase).toBe('rolled_back');
+  }, 20_000);
 });

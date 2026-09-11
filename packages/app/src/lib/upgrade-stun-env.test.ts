@@ -5,7 +5,12 @@ import { join } from 'node:path';
 import { LEGACY_DEFAULT_STUN_LISTS } from '../../../shared/src/net/stun-defaults';
 import { readEnvFile } from './env-file';
 import { pathExists } from './fs-utils';
-import { migrateStunEnv } from './upgrade-stun-env';
+import {
+  backupEnvFile,
+  envFileBackupPath,
+  migrateStunEnv,
+  restoreEnvFile,
+} from './upgrade-stun-env';
 
 const tempDirs: string[] = [];
 
@@ -38,11 +43,11 @@ describe('migrateStunEnv', () => {
       );
       const result = await migrateStunEnv(envPath);
       expect(result.migrated).toBe(true);
-      expect(result.backupPath).toBeTruthy();
-      expect(await pathExists(result.backupPath as string)).toBe(true);
-      expect(await readFile(result.backupPath as string, 'utf8')).toContain(
-        `VIBETERM_STUN_SERVERS=${legacy}`
-      );
+      expect(result.backupPath).toMatch(/^backups\/app\.env\..+\.stun$/);
+      expect(result.backupPath).not.toContain(dir);
+      const backupAbs = join(dir, result.backupPath as string);
+      expect(await pathExists(backupAbs)).toBe(true);
+      expect(await readFile(backupAbs, 'utf8')).toContain(`VIBETERM_STUN_SERVERS=${legacy}`);
       const env = await readEnvFile(envPath);
       expect(env.VIBETERM_STUN_SERVERS).toBeUndefined();
       expect(env.TMEX_STUN_SERVERS).toBeUndefined();
@@ -90,7 +95,9 @@ describe('migrateStunEnv', () => {
     const text = await readFile(envPath, 'utf8');
     expect(text).not.toContain('STUN_SERVERS');
     expect(text).toContain('GATEWAY_PORT=9883');
-    expect(await readFile(result.backupPath as string, 'utf8')).toContain('TMEX_STUN_SERVERS=');
+    expect(await readFile(join(dir, result.backupPath as string), 'utf8')).toContain(
+      'TMEX_STUN_SERVERS='
+    );
     expect(await stunBackups(dir)).toHaveLength(1);
   });
 
@@ -105,5 +112,28 @@ describe('migrateStunEnv', () => {
     expect(second).toEqual({ migrated: false });
     expect(await readFile(envPath, 'utf8')).toBe(afterFirst);
     expect(await stunBackups(dir)).toHaveLength(1);
+  });
+});
+
+describe('txn app.env backup', () => {
+  test('backupEnvFile copies into backups/<txnId>/app.env and restoreEnvFile puts it back', async () => {
+    const { dir, envPath } = await tempEnv(
+      'GATEWAY_PORT=9883\nVIBETERM_STUN_SERVERS=stun:stun.l.google.com:19302\n'
+    );
+    expect(await backupEnvFile(dir, 'txn-env')).toBe(true);
+    const backup = envFileBackupPath(dir, 'txn-env');
+    expect(await readFile(backup, 'utf8')).toContain('VIBETERM_STUN_SERVERS=');
+
+    await migrateStunEnv(envPath);
+    expect((await readEnvFile(envPath)).VIBETERM_STUN_SERVERS).toBeUndefined();
+
+    expect(await restoreEnvFile(dir, 'txn-env')).toBe(true);
+    expect((await readEnvFile(envPath)).VIBETERM_STUN_SERVERS).toBe('stun:stun.l.google.com:19302');
+  });
+
+  test('restoreEnvFile is a no-op when the txn backup is missing', async () => {
+    const { dir, envPath } = await tempEnv('GATEWAY_PORT=9883\n');
+    expect(await restoreEnvFile(dir, 'missing-txn')).toBe(false);
+    expect((await readEnvFile(envPath)).GATEWAY_PORT).toBe('9883');
   });
 });

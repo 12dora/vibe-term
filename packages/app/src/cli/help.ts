@@ -1,5 +1,9 @@
 import type { CliLang } from '../i18n';
 
+/** `--stun-servers` 的帮助说明：默认随发行版内置列表，`none` 禁用。 */
+export const STUN_SERVERS_FLAG_HELP =
+  'default: built-in list shipped with each release; `none` disables';
+
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
@@ -62,7 +66,7 @@ Password prompting (add / passwd / totp / reset-root / enroll / hub join --passw
 
 Init shim ownership:
   --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
-  --stun-servers <list>: default: built-in list shipped with each release; \`none\` disables.
+  --stun-servers <list>: ${STUN_SERVERS_FLAG_HELP}.
 
 Global flags:
   --lang <en|zh-CN>

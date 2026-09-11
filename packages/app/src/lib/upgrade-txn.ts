@@ -51,6 +51,7 @@ import {
   readJournal,
   writeJournal,
 } from './upgrade-state';
+import { applyStunEnvMigration, backupEnvFile, restoreEnvFile } from './upgrade-stun-env';
 import { readCurrentVersion, switchCurrent, versionDirPath } from './upgrade-switch';
 import {
   revertMigrationAfterFailure,
@@ -255,6 +256,7 @@ export async function rollbackToOld(
     );
   }
   await restoreRunScript(installDir, journal.txnId, bunPath);
+  await restoreEnvFile(installDir, journal.txnId);
   if (isLegacyLabelVersion(journal.fromVersion)) await cleanNewRuntimeFiles(installDir);
   const restartAt = new Date().toISOString();
   await service.start();
@@ -494,6 +496,7 @@ async function handleTxnFailure(
       }) ?? state.service;
     state.migration = null;
   }
+  await restoreEnvFile(state.installDir, ctx.txnId).catch(() => null);
   if (!needsRollback) return;
   // 迁移分支已经重建成旧 label 的控制器（还带着要拆掉的新服务名），别再覆盖它。
   const service = migration ? state.service : restoreServiceControl(state, latest, deps, ctx);
@@ -537,6 +540,7 @@ export async function executeUpgradeTxn(
       keepBackup: ctx.keepBackup,
     });
     await backupRunScript(state.installDir, ctx.txnId);
+    await backupEnvFile(state.installDir, ctx.txnId);
     await ctx.service.stop();
     await assertStopped(ctx.service);
 
@@ -565,6 +569,8 @@ export async function executeUpgradeTxn(
     journal = await advanceJournal(state.installDir, journal, 'backup', {
       keepBackup: ctx.keepBackup,
     });
+    // 目录迁移备份之后、切 current 之前：revert 拿回原 STUN 键，新 runtime 启动时键已去掉。
+    await applyStunEnvMigration(state.installDir, ctx.log);
     journal = await backupAndSwitch(
       state.installDir,
       journal,

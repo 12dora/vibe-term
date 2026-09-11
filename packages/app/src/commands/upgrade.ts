@@ -37,7 +37,6 @@ import {
   withUpgradeLock,
 } from '../lib/upgrade-apply';
 import { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from '../lib/upgrade-flags';
-import { migrateStunEnv } from '../lib/upgrade-stun-env';
 import { assertReleaseIntegrity, assertReleaseSignature } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
@@ -349,14 +348,6 @@ async function runLockedUpgrade(opts: {
 
   if (await pathExists(installLayout.envPath)) {
     await mergeMissingEnvFileKeys(installLayout.envPath, hubEnvDefaults());
-    // 交互升级与 --apply-current-package 都经过这里，且在 applyUpgrade 事务之前。
-    // 迁移前的 app.env 备份在 backups/app.env.<ISO>.stun，不随事务回滚自动还原。
-    const stunMigration = await migrateStunEnv(installLayout.envPath);
-    if (stunMigration.migrated && stunMigration.backupPath) {
-      console.log(
-        `[vibeterm] ${t('upgrade.stunEnvMigrated', { backup: stunMigration.backupPath })}`
-      );
-    }
   }
 
   await apply(

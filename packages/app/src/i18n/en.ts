@@ -113,7 +113,8 @@ export const en: Record<string, string> = {
   'doctor.env.exists': 'Config file found: {{envPath}}',
   'doctor.env.missing': 'Config file not found: {{envPath}}',
   'doctor.env.keyMissing': 'Missing config key: {{key}}',
-  'doctor.stun.builtin': 'STUN servers: built-in (release)',
+  'doctor.stun.builtin':
+    'app.env not set: using the release built-in list (a custom list from hub/relay takes precedence)',
   'doctor.stun.custom': 'STUN servers: custom (app.env)',
   'doctor.stun.disabled': 'STUN servers: disabled',
   'doctor.db.missing': 'Database file not found (may be normal before first start): {{path}}',

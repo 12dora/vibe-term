@@ -7,6 +7,17 @@ import {
   resolveEffectiveStun,
 } from './stun-defaults';
 
+describe('BUILTIN_STUN_SERVERS', () => {
+  test('pins the four built-in entries and their order', () => {
+    expect([...BUILTIN_STUN_SERVERS]).toEqual([
+      'stun:stun.miwifi.com:3478',
+      'stun:stun.chat.bilibili.com:3478',
+      'stun:stun.l.google.com:19302',
+      'stun:stun.cloudflare.com:3478',
+    ]);
+  });
+});
+
 describe('parseStunServersEnv', () => {
   test('unset or blank uses the builtin list', () => {
     expect(parseStunServersEnv(undefined)).toEqual({
@@ -54,6 +65,9 @@ describe('isLegacyDefaultStunList', () => {
     ).toBe(true);
     expect(isLegacyDefaultStunList(BUILTIN_STUN_SERVERS.join(','))).toBe(true);
     expect(isLegacyDefaultStunList(` ${BUILTIN_STUN_SERVERS.join(' , ')} `)).toBe(true);
+    expect(LEGACY_DEFAULT_STUN_LISTS[2]).toBe(
+      'stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'
+    );
   });
 
   test('rejects a customised order or extra server', () => {

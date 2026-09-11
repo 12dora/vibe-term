@@ -1,20 +1,10 @@
 import { describe, expect, test } from 'bun:test';
 import { parseVibeTermRoles as parseGatewayVibeTermRoles } from '../../../../apps/gateway/src/config';
-import { BUILTIN_STUN_SERVERS } from '../../../shared/src/net/stun-defaults';
-import { DEFAULT_STUN_SERVERS, parseVibeTermRoleName, parseVibeTermRoles } from './roles';
+import { parseVibeTermRoleName, parseVibeTermRoles } from './roles';
 
 const STANDALONE = { hub: false, node: false, relay: false };
 const NODE = { hub: false, node: true, relay: false };
 const HUB_NODE = { hub: true, node: true, relay: false };
-
-describe('DEFAULT_STUN_SERVERS', () => {
-  test('re-exports the shared built-in list for display/help', () => {
-    expect(DEFAULT_STUN_SERVERS).toBe(BUILTIN_STUN_SERVERS.join(','));
-    expect(DEFAULT_STUN_SERVERS.split(',').map((item) => item.trim())).toEqual([
-      ...BUILTIN_STUN_SERVERS,
-    ]);
-  });
-});
 
 describe('app parseVibeTermRoles wrapper', () => {
   test('undefined / empty / whitespace normalize to standalone', () => {

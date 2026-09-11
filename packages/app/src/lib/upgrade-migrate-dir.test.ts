@@ -26,6 +26,7 @@ import {
   revertInstallDirMigration,
   rewriteEnvValues,
 } from './upgrade-migrate-dir';
+import { migrateStunEnv } from './upgrade-stun-env';
 
 const tempDirs: string[] = [];
 
@@ -51,6 +52,7 @@ async function seedLegacyInstall(installDir: string): Promise<void> {
       'TMEX_MASTER_KEY=secret',
       `TMEX_TLS_DIR=${join(installDir, 'tls')}`,
       `DATABASE_URL=${join(installDir, 'data', 'tmex.db')}`,
+      'TMEX_STUN_SERVERS=stun:stun.l.google.com:19302',
       '',
     ].join('\n')
   );
@@ -433,6 +435,32 @@ describe('revertInstallDirMigration', () => {
     }
     expect(await readFile(join(fromDir, 'tmex.log'), 'utf8')).toBe('log');
     expect(await pathExists(join(fromDir, 'vibeterm.log.legacy'))).toBe(false);
+  });
+
+  test('revert after a later STUN migration still restores the original STUN key', async () => {
+    const root = await scratch();
+    const fromDir = join(root, 'tmex');
+    const toDir = join(root, 'vibeterm');
+    await seedLegacyInstall(fromDir);
+    const before = await readFile(join(fromDir, 'app.env'), 'utf8');
+    expect(before).toContain('TMEX_STUN_SERVERS=stun:stun.l.google.com:19302');
+
+    const record = (await migrateInstallDir(movePlan(fromDir, toDir), {
+      txnId: 'txn-stun',
+    })) as DirMigrationRecord;
+    expect((await readEnvFile(join(toDir, 'app.env'))).VIBETERM_STUN_SERVERS).toBe(
+      'stun:stun.l.google.com:19302'
+    );
+    expect((await readEnvFile(join(toDir, 'app.env'))).TMEX_STUN_SERVERS).toBeUndefined();
+
+    await migrateStunEnv(join(toDir, 'app.env'));
+    expect((await readEnvFile(join(toDir, 'app.env'))).VIBETERM_STUN_SERVERS).toBeUndefined();
+
+    await revertInstallDirMigration(record);
+    expect(await readFile(join(fromDir, 'app.env'), 'utf8')).toBe(before);
+    expect((await readEnvFile(join(fromDir, 'app.env'))).TMEX_STUN_SERVERS).toBe(
+      'stun:stun.l.google.com:19302'
+    );
   });
 
   test('restores the database names when the env rewrite never happened', async () => {

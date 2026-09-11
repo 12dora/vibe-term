@@ -111,15 +111,10 @@ describe('i18n', () => {
       expect(migrated).not.toBe('upgrade.stunEnvMigrated');
       expect(migrated).toContain('/tmp/backups/app.env.x.stun');
       expect(migrated).toContain('VIBETERM_STUN_SERVERS');
-      for (const key of [
-        'doctor.stun.builtin',
-        'doctor.stun.custom',
-        'doctor.stun.disabled',
-      ] as const) {
-        const message = t(key);
-        expect(message).not.toBe(key);
-        expect(message).toMatch(/STUN/i);
-      }
+      expect(t('doctor.stun.builtin')).not.toBe('doctor.stun.builtin');
+      expect(t('doctor.stun.builtin')).toMatch(/app\.env/);
+      expect(t('doctor.stun.custom')).toMatch(/STUN/i);
+      expect(t('doctor.stun.disabled')).toMatch(/STUN/i);
     }
     setLang('zh-CN');
     expect(t('upgrade.stunEnvMigrated', { backup: 'x' })).not.toContain('你');

@@ -71,6 +71,7 @@ describe('stunServersDoctorCheck', () => {
   test('classifies missing, custom, and disabled STUN env', () => {
     setLang('en');
     expect(stunServersDoctorCheck({}).message).toBe(t('doctor.stun.builtin'));
+    expect(stunServersDoctorCheck({}).message).toContain('app.env not set');
     expect(stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: '' }).message).toBe(
       t('doctor.stun.builtin')
     );
