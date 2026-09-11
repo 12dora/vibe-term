@@ -112,7 +112,9 @@ export function createSwUpdateController(deps: SwUpdateDeps): SwUpdateController
     },
     async start() {
       deps.registration.addEventListener('updatefound', watchInstalling);
-      if (!deps.registration.waiting) {
+      // 没有 controller 就没有「旧代」可换：这一页本来就是直接吃服务端的新壳，
+      // 此时哪怕 waiting 里躺着一版（首次安装、SW 被杀后重装）也不值得刷一次
+      if (!deps.registration.waiting || !deps.hasController()) {
         deps.writeGuard(null);
         return false;
       }

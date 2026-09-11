@@ -129,6 +129,14 @@ describe('createSwUpdateController.start', () => {
     expect(await h.controller.start()).toBe(true);
   });
 
+  test('页面还没被任何一代控制（首次安装 / SW 重装）时不刷新，也不留守卫', async () => {
+    const h = harness({ waiting: true, controlled: false, guard: '900' });
+    expect(await h.controller.start()).toBe(false);
+    expect(h.state.activated).toBe(0);
+    expect(h.state.reloads).toBe(0);
+    expect(h.state.guard).toBeNull();
+  });
+
   test('握手抛错也照常刷新', async () => {
     const h = harness({ waiting: true });
     const controller = createSwUpdateController({
