@@ -48,96 +48,18 @@ import {
   unpublishKeepAlivePool,
 } from './terminal-keep-alive';
 import { TerminalShortcutsSlot } from './terminal-shortcuts-slot';
+import {
+  CenteredNotice,
+  ConnectingOverlay,
+  DisconnectedPlaceholder,
+  IdlePlaceholder,
+  InvalidSelectionNotice,
+  ResolvingOverlay,
+} from './terminal-stage-overlays';
 import type { DevicePaneSelection } from './use-device-pane-selection';
 import { useViewportClaims } from './use-viewport-claims';
 
 const noopResize = (): void => {};
-
-function CenteredNotice({ children }: { children: ReactNode }) {
-  return (
-    <div className="vibeterm-fade absolute inset-0 flex flex-col items-center justify-center p-8 text-center">
-      <div className="max-w-sm space-y-4">{children}</div>
-    </div>
-  );
-}
-
-function LoadingPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <>
-      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-        <Loader2 className="h-6 w-6 text-muted-foreground animate-spin motion-reduce:animate-none" />
-      </div>
-      <h3 className="text-lg font-medium">{t('terminal.connecting')}</h3>
-    </>
-  );
-}
-
-function DisconnectedPlaceholder() {
-  const { t } = useTranslation();
-  return (
-    <div className="space-y-4" data-testid="device-disconnected-placeholder">
-      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-        <span className="text-2xl text-muted-foreground">🔌</span>
-      </div>
-      <h3 className="text-lg font-medium">{t('device.disconnected')}</h3>
-      <p className="text-sm text-muted-foreground">{t('device.connectToStart')}</p>
-    </div>
-  );
-}
-
-function IdlePlaceholder({ needsWindow }: { needsWindow: boolean }) {
-  const { t } = useTranslation();
-  if (!needsWindow) {
-    return <LoadingPlaceholder />;
-  }
-  return (
-    <>
-      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-        <span className="text-2xl text-muted-foreground">📋</span>
-      </div>
-      <h3 className="text-lg font-medium">{t('window.noWindowSelected')}</h3>
-      <p className="text-sm text-muted-foreground">{t('window.selectWindowToStart')}</p>
-    </>
-  );
-}
-
-function InvalidSelectionNotice({ isWindowMissing, isPaneMissing }: DevicePaneSelection) {
-  const { t } = useTranslation();
-  const message = isWindowMissing
-    ? t('terminal.windowClosed')
-    : isPaneMissing
-      ? t('terminal.paneClosed')
-      : null;
-  return (
-    <CenteredNotice>
-      <div className="h-12 w-12 rounded-full bg-muted flex items-center justify-center mx-auto">
-        <SearchX className="h-6 w-6 text-muted-foreground" />
-      </div>
-      <p className="text-sm text-muted-foreground" data-testid="terminal-selection-invalid">
-        {message}
-      </p>
-    </CenteredNotice>
-  );
-}
-
-/** 已连接但快照尚未解析出该 pane：内容本就空白，用遮罩 spinner 表达 loading。 */
-function ResolvingOverlay() {
-  const { t } = useTranslation();
-  return (
-    <div
-      className="vibeterm-fade absolute inset-0 flex items-center justify-center bg-background/85 backdrop-blur-sm"
-      data-testid="terminal-status-overlay"
-    >
-      <div className="flex flex-col items-center gap-2 rounded-lg border border-border bg-card/90 px-4 py-3 shadow-sm">
-        <div className="h-7 w-7 rounded-full border-2 border-primary border-t-transparent animate-spin motion-reduce:animate-none" />
-        <span className="text-xs text-muted-foreground" data-testid="terminal-status-text">
-          {t('terminal.connecting')}
-        </span>
-      </div>
-    </div>
-  );
-}
 
 /**
  * 可见实例的 TerminalRef 转接到控制台共用的 terminalRef。
@@ -447,10 +369,13 @@ function renderTerminalBody(
   } = props;
   const { isSplitView, isPaneConfirmedClosed } = selection;
   if (!resolvedPaneId) return null;
+  // 重连期间已有内容仍在，蒙层只在「首次连接还没建立」时出现
+  const showConnecting = !deviceConnected && !isReconnecting;
   if (isSplitView && selectedWindow) {
     return (
       <div className="flex h-full min-h-0 w-full flex-1 flex-col" data-virtual-keyboard-avoid>
         <div ref={terminalContainerRef} className="relative min-h-0 flex-1">
+          {showConnecting ? <ConnectingOverlay /> : null}
           <SplitTerminalArea
             key={`${deviceId}:${selectedWindow.id}`}
             deviceId={deviceId}
@@ -486,11 +411,7 @@ function renderTerminalBody(
         resolvedPaneId={resolvedPaneId}
         shortcutsSlot={shortcutsSlot}
       />
-      {!deviceConnected && !isReconnecting ? (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/60 text-sm text-muted-foreground">
-          连接中…
-        </div>
-      ) : null}
+      {showConnecting ? <ConnectingOverlay /> : null}
     </div>
   );
 }
@@ -540,10 +461,9 @@ function StageContent(props: TerminalStageProps) {
     return <InvalidSelectionNotice {...selection} />;
   }
 
-  // 重连期间保持 Terminal 挂载，避免 xterm 卸载导致已有内容消失（issue: 重连要看得清已有内容）。
-  const showTerminal =
-    Boolean(resolvedPaneId) && (deviceConnected || isReconnecting || !isIntentionallyDisconnected);
-  if (!showTerminal || !resolvedPaneId) {
+  // pane id 一旦能解析出来就挂终端（wasm / mountPane / 订阅 / 首屏请求都得以提前排队），
+  // 设备未连上时由 ConnectingOverlay 盖住空白；重连期间同样保持挂载，避免已有内容消失。
+  if (!resolvedPaneId) {
     return (
       <CenteredNotice>
         <IdlePlaceholder needsWindow={deviceConnected && !isReconnecting && !windowId} />

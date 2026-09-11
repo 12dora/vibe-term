@@ -2,7 +2,14 @@ import { useRuntime, useTmuxStore } from '@vibeterm/stores/react';
 import type { GatewayHistoryCursor } from '@vibeterm/ws-client';
 import type { PaneSink } from '@vibeterm/ws-client/pane-sink-registry';
 import type { CompatibleTerminalLike } from 'ghostty-terminal';
-import { type RefObject, useEffect, useMemo, useRef } from 'react';
+import {
+  type RefObject,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useSyncExternalStore,
+} from 'react';
 import type { TerminalSurface } from '../TerminalSurface';
 import { HistoryPrefetchController, historyRequestDeadlineMs } from '../paneHistoryRequest';
 import type { TerminalRenderTarget } from '../terminal-snapshot';
@@ -78,17 +85,28 @@ export function usePaneSinkRegistration({
     return mountPane(deviceId, paneId);
   }, [deviceId, mountPane, paneId, subscribe]);
 
+  // canonical 能力是连接协商出来的，翻转时不会自己触发重渲染：终端现在可能先于 WS READY
+  // 挂载（本地拓扑给得出 pane id 即挂），订阅这条信号才能在协商完成的那一刻发出首屏请求。
+  const subscribeFeedMode = useCallback(
+    (onChange: () => void) =>
+      runtime.transport.onEvent((event) => {
+        if (event.type === 'state-feed-mode') onChange();
+      }),
+    [runtime]
+  );
+  const atomicScreen = useSyncExternalStore(
+    subscribeFeedMode,
+    () => runtime.transport.capabilities.atomicScreen,
+    () => runtime.transport.capabilities.atomicScreen
+  );
+
   useEffect(() => {
-    if (
-      !instance ||
-      !runtime.transport.capabilities.atomicScreen ||
-      screenRequestedForRef.current === instance
-    ) {
+    if (!instance || !atomicScreen || screenRequestedForRef.current === instance) {
       return;
     }
     screenRequestedForRef.current = instance;
     requestPaneScreen(deviceId, paneId);
-  }, [deviceId, instance, paneId, requestPaneScreen, runtime]);
+  }, [atomicScreen, deviceId, instance, paneId, requestPaneScreen]);
 
   useEffect(() => {
     if (!instance || !runtime.transport.capabilities.cursorHistory) return;

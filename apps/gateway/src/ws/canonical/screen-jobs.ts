@@ -1,7 +1,7 @@
 import { wsBorsh } from '@vibeterm/shared';
 
 import type { PaneDataSegment, PaneScreenCheckpoint } from '../../tmux-client/pane-retention';
-import { copyBytes, paneKey } from './bytes';
+import { bytesEqual, copyBytes, paneKey } from './bytes';
 import type { CanonicalPaneStream } from './pane-stream';
 import type { CanonicalTransactionSender } from './transaction-sender';
 import type { AttachedDevice, PaneIdentity, ScreenJob } from './types';
@@ -56,6 +56,14 @@ export class CanonicalScreenJobs {
     this.jobs.set(key, job);
     this.started += 1;
     void this.run(job, device, pane, byteLimit);
+  }
+
+  /** 这一 requestId 的抓屏是否还在途；用于挡住同一请求的重复投递（意图 + 迟到的旧式请求）。 */
+  hasInFlightRequest(requestId: Uint8Array): boolean {
+    for (const job of this.jobs.values()) {
+      if (!job.cancelled && bytesEqual(job.requestId, requestId)) return true;
+    }
+    return false;
   }
 
   cancelDevice(deviceId: string): void {

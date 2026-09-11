@@ -74,6 +74,8 @@ function renderStage(options: {
   resolvedPaneId?: string;
   selectedWindow?: TmuxWindow;
   structureUi?: boolean;
+  deviceConnected?: boolean;
+  isReconnecting?: boolean;
 }): string {
   const runtime = createAppRuntime({
     nodeId: 'self',
@@ -92,8 +94,8 @@ function renderStage(options: {
               selectedWindow={options.selectedWindow ?? window1}
               selectedPane={options.selectedPane}
               selection={options.selection}
-              deviceConnected
-              isReconnecting={false}
+              deviceConnected={options.deviceConnected ?? true}
+              isReconnecting={options.isReconnecting ?? false}
               isIntentionallyDisconnected={false}
               isMobile={false}
               inputMode="direct"
@@ -116,6 +118,47 @@ describe('TerminalStage', () => {
     const html = renderStage({ selectedPane: undefined, selection: selection() });
     expect(html).toContain('terminal-status-overlay');
     expect(html).toContain('data-terminal-engine');
+  });
+
+  // P5/P6：pane id 一旦由本地拓扑解析出来就挂终端，wasm / 订阅 / 首屏请求不再等 device-connected
+  test('mounts the terminal before the device is connected and covers it with the connecting overlay', () => {
+    const html = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection(),
+      deviceConnected: false,
+    });
+    expect(html).toContain('data-terminal-engine');
+    expect(html).toContain('terminal-connecting-overlay');
+  });
+
+  test('drops the connecting overlay once the device is connected, keeping the terminal mounted', () => {
+    const html = renderStage({ selectedPane: pane('%1'), selection: selection() });
+    expect(html).toContain('data-terminal-engine');
+    expect(html).not.toContain('terminal-connecting-overlay');
+  });
+
+  // 重连期间已有内容还在屏幕上，盖一层「连接中」只会挡住它
+  test('shows no connecting overlay while reconnecting', () => {
+    const html = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection(),
+      deviceConnected: false,
+      isReconnecting: true,
+    });
+    expect(html).toContain('data-terminal-engine');
+    expect(html).not.toContain('terminal-connecting-overlay');
+    expect(html).toContain('terminal-reconnecting-indicator');
+  });
+
+  test('covers the split view with the same connecting overlay', () => {
+    const html = renderStage({
+      selectedPane: pane('%1'),
+      selection: selection({ isSplitView: true }),
+      selectedWindow: splitWindow,
+      deviceConnected: false,
+    });
+    expect(html).toContain('split-terminal-area');
+    expect(html).toContain('terminal-connecting-overlay');
   });
 
   test('mounts no terminal and no overlay once the snapshot confirms the pane was closed', () => {

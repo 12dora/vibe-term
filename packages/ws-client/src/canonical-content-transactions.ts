@@ -21,6 +21,8 @@ export interface PendingContentRequest {
   deviceId: string;
   paneId: string;
   serverEpoch: Uint8Array;
+  /** 意图式首屏：发请求时 serverEpoch 未知，认领回包里网关解析出来的那一个 */
+  serverEpochPending?: boolean;
   command: Extract<
     GatewayTransportCommand,
     { type: 'request-pane-screen' | 'request-pane-history' }
@@ -327,10 +329,14 @@ export class CanonicalContentTransactions {
     if (
       request.kind === kind &&
       request.deviceId === pane.deviceId &&
-      request.paneId === pane.paneId &&
-      bytesEqual(request.serverEpoch, pane.serverEpoch)
+      request.paneId === pane.paneId
     ) {
-      return true;
+      // 认领一次网关解析出的 serverEpoch；它是否与本地 metadata 一致仍由 acceptPane 把关
+      if (request.serverEpochPending) {
+        request.serverEpoch = copyBytes(pane.serverEpoch);
+        request.serverEpochPending = false;
+      }
+      if (bytesEqual(request.serverEpoch, pane.serverEpoch)) return true;
     }
     this.options.onRebase(request.deviceId, request.paneId, 'pane_gap');
     return false;

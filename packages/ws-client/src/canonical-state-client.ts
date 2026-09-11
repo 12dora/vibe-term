@@ -1,4 +1,9 @@
 import { wsBorsh } from '@vibeterm/shared';
+import {
+  type ContentRequestContext,
+  sendHistoryRequest,
+  sendScreenRequest,
+} from './canonical-content-requests';
 import { CanonicalContentRetry } from './canonical-content-retry';
 import {
   CanonicalContentTransactions,
@@ -38,7 +43,6 @@ import {
   subscriptionAppliedEvents,
 } from './canonical-state-helpers';
 import { CanonicalSubscriptionRetry } from './canonical-subscription-retry';
-import { buildScreenIntentCommand } from './canonical-screen-intent';
 import type { ClientSendResult } from './client';
 import { encodeCanonicalGatewayCommand } from './transport-command-encoder';
 import type {
@@ -48,6 +52,7 @@ import type {
   GatewayTransportCommand,
   GatewayTransportEventHandler,
 } from './transport-types';
+
 export interface CanonicalStateClientOptions {
   emit: GatewayTransportEventHandler;
   send: (message: EncodedGatewayCommand) => ClientSendResult;
@@ -62,9 +67,11 @@ export interface CanonicalStateClientOptions {
   maxMetadataBufferedBytes?: number;
   metadataAssemblyTimeoutMs?: number;
 }
+
 function newId(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
 }
+
 export class CanonicalStateClient {
   private readonly desired = new Map<string, DesiredSubscriptions>();
   private readonly metadata = new Map<string, DeviceMetadataState>();
@@ -90,7 +97,7 @@ export class CanonicalStateClient {
   private readonly maxPendingBytes: number;
   private readonly maxPendingFrames: number;
   private serverCapabilities: readonly string[] = [];
-  setServerCapabilities(capabilities: readonly string[]): void { this.serverCapabilities = capabilities; }
+
   constructor(private readonly options: CanonicalStateClientOptions) {
     this.createId = options.createId ?? newId;
     this.maxPendingBytes = options.maxPendingBytes ?? 2 * 1024 * 1024;
@@ -144,6 +151,12 @@ export class CanonicalStateClient {
       },
     });
   }
+
+  /** HELLO 协商结果；能力集合决定首屏是否可以用意图式请求。 */
+  setServerCapabilities(capabilities: readonly string[]): void {
+    this.serverCapabilities = capabilities;
+  }
+
   activate(): ClientSendResult {
     this.active = true;
     this.blockedPanes.clear();
@@ -157,6 +170,7 @@ export class CanonicalStateClient {
     for (const deviceId of this.metadata.keys()) this.awaitingMetadataDevices.add(deviceId);
     return this.sendSubscriptions(true);
   }
+
   suspend(): void {
     this.active = false;
     const retry = [...this.content.pendingRequests(), ...this.contentRetry.takeScheduled()];
@@ -164,6 +178,7 @@ export class CanonicalStateClient {
     this.resetConnectionAssemblies();
     for (const request of retry) this.deferTargetCommand(request.command, true);
   }
+
   dispose(): void {
     this.suspend();
     this.desired.clear();
@@ -175,6 +190,7 @@ export class CanonicalStateClient {
     this.pending.clear();
     this.contentRetry.dispose();
   }
+
   handles(command: GatewayTransportCommand): boolean {
     return (
       command.type === 'set-pane-subscriptions' ||
@@ -186,10 +202,12 @@ export class CanonicalStateClient {
       command.type === 'request-pane-history'
     );
   }
+
   sendCommand(command: GatewayTransportCommand): ClientSendResult | null {
     if (!this.active || !this.handles(command)) return null;
     return this.sendCanonicalCommand(command, true);
   }
+
   stageCommand(command: GatewayTransportCommand): void {
     if (command.type === 'set-pane-subscriptions') {
       this.updateDesiredSubscriptions(command.deviceId, command.paneIds);
@@ -204,6 +222,7 @@ export class CanonicalStateClient {
       this.pending.dropDevice(command.deviceId);
     }
   }
+
   removeDevice(deviceId: string): ClientSendResult {
     this.desired.delete(deviceId);
     this.subscriptionRetry.resolved();
@@ -280,8 +299,12 @@ export class CanonicalStateClient {
     if (command.type === 'terminal-resize' || command.type === 'terminal-sync-size') {
       return this.sendResize(command, allowQueue);
     }
-    if (command.type === 'request-pane-screen') return this.sendScreen(command, allowQueue);
-    if (command.type === 'request-pane-history') return this.sendHistory(command, allowQueue);
+    if (command.type === 'request-pane-screen') {
+      return sendScreenRequest(this.contentRequestContext(), command, allowQueue);
+    }
+    if (command.type === 'request-pane-history') {
+      return sendHistoryRequest(this.contentRequestContext(), command, allowQueue);
+    }
     return null;
   }
 
@@ -383,62 +406,16 @@ export class CanonicalStateClient {
     });
   }
 
-  private sendScreen(
-    command: Extract<GatewayTransportCommand, { type: 'request-pane-screen' }>,
-    allowQueue: boolean
-  ): ClientSendResult {
-    const pane = this.resolveTarget(command.deviceId, command.paneId);
-    if (!pane) {
-      const intent = buildScreenIntentCommand(command, this.serverCapabilities);
-      if (intent && 'RequestScreenIntent' in intent) {
-        const requestId = copyBytes(command.requestId);
-        this.content.rememberRequest(requestId, { kind: 'screen', deviceId: command.deviceId, paneId: command.paneId, serverEpoch: new Uint8Array(16), command: clonePendingCommand(command) as typeof command });
-        this.contentRetry.cancelScheduled('screen', command.deviceId, command.paneId);
-        return this.send(intent);
-      }
-      return this.deferTargetCommand(command, allowQueue);
-    }
-    this.contentRetry.cancelScheduled('screen', command.deviceId, command.paneId);
-    const requestId = copyBytes(command.requestId);
-    this.content.rememberRequest(requestId, {
-      kind: 'screen',
-      deviceId: command.deviceId,
-      paneId: command.paneId,
-      serverEpoch: copyBytes(pane.serverEpoch),
-      command: clonePendingCommand(command) as typeof command,
-    });
-    return this.send({ RequestScreen: { requestId, pane, byteLimit: command.byteLimit } });
-  }
-
-  private sendHistory(
-    command: Extract<GatewayTransportCommand, { type: 'request-pane-history' }>,
-    allowQueue: boolean
-  ): ClientSendResult {
-    const pane = this.resolveTarget(command.deviceId, command.paneId);
-    if (!pane) return this.deferTargetCommand(command, allowQueue);
-    this.contentRetry.cancelScheduled('history', command.deviceId, command.paneId);
-    const requestId = copyBytes(command.requestId);
-    this.content.rememberRequest(requestId, {
-      kind: 'history',
-      deviceId: command.deviceId,
-      paneId: command.paneId,
-      serverEpoch: copyBytes(pane.serverEpoch),
-      command: clonePendingCommand(command) as typeof command,
-    });
-    return this.send({
-      RequestHistory: {
-        requestId,
-        pane,
-        beforeCursor: command.cursor
-          ? {
-              paneEpoch: copyBytes(command.cursor.paneEpoch),
-              historyEpoch: copyBytes(command.cursor.historyEpoch),
-              beforeLine: command.cursor.beforeLine,
-            }
-          : null,
-        byteLimit: command.byteLimit,
-      },
-    });
+  private contentRequestContext(): ContentRequestContext {
+    return {
+      capabilities: () => this.serverCapabilities,
+      resolveTarget: (deviceId, paneId) => this.resolveTarget(deviceId, paneId),
+      rememberRequest: (requestId, request) => this.content.rememberRequest(requestId, request),
+      cancelRetry: (kind, deviceId, paneId) =>
+        this.contentRetry.cancelScheduled(kind, deviceId, paneId),
+      send: (command) => this.send(command),
+      defer: (command, allowQueue) => this.deferTargetCommand(command, allowQueue),
+    };
   }
 
   private deferTargetCommand(

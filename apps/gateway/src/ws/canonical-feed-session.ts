@@ -18,6 +18,7 @@ import {
 import { CanonicalFrameSizer } from './canonical/frame-sizer';
 import { CanonicalPaneStream } from './canonical/pane-stream';
 import { applyCanonicalResize, normalizeResizeCommand } from './canonical/resize';
+import { type CanonicalScreenIntentCommand, resolveIntentPaneId } from './canonical/screen-intent';
 import { CanonicalScreenJobs } from './canonical/screen-jobs';
 import { CanonicalShareGuard } from './canonical/share-guard';
 import { CanonicalSubscriptionCoordinator } from './canonical/subscription-coordinator';
@@ -56,7 +57,6 @@ export class CanonicalFeedSession {
   private readonly devices = new Map<string, AttachedDevice>();
   private readonly attaching = new Map<string, Promise<boolean>>();
   private readonly historyRequestIds = new Set<string>();
-  private readonly screenRequestIds = new Set<string>();
   private readonly inputIds = new Set<string>();
   private readonly inputIdOrder: string[] = [];
   private readonly gatewayEpoch: Uint8Array;
@@ -330,7 +330,6 @@ export class CanonicalFeedSession {
     this.stream.discardPaneDataBatches();
     this.screenJobs.clear();
     this.historyRequestIds.clear();
-    this.screenRequestIds.clear();
     this.stream.clearPending();
     this.awaitingSocketDrain = false;
     if (this.pendingSweepTimer !== null) {
@@ -475,9 +474,9 @@ export class CanonicalFeedSession {
     pane: CanonicalPaneTarget;
     byteLimit: number;
   }): Promise<void> {
-    const requestKey = bytesHex(command.requestId);
-    if (this.screenRequestIds.has(requestKey)) return;
-    this.screenRequestIds.add(requestKey);
+    // 同一 requestId 只做一笔：意图与迟到的旧式 RequestScreen 撞在一起时不重复抓屏。
+    // 只挡在途的那一笔——出错/被 gap 作废后客户端会拿同一个 requestId 重试，那次必须放行。
+    if (this.screenJobs.hasInFlightRequest(command.requestId)) return;
     const target = await this.resolveTarget(command.pane, command.requestId);
     if (!target) return;
     if (command.byteLimit < 64) {
@@ -497,22 +496,24 @@ export class CanonicalFeedSession {
     );
   }
 
-  private async handleRequestScreenIntent(command: {
-    requestId: Uint8Array;
-    deviceId: string;
-    windowId: string | null;
-    paneId: string | null;
-    byteLimit: number;
-  }): Promise<void> {
+  private async handleRequestScreenIntent(command: CanonicalScreenIntentCommand): Promise<void> {
     const device = await this.ensureDevice(command.deviceId);
-    if (!device) return;
-    const paneId = command.paneId;
-    if (!paneId) return;
-    const epoch = device.runtime.getServerEpoch();
-    if (!epoch) return;
+    const serverEpoch = device?.runtime.getServerEpoch();
+    const paneId = device
+      ? (command.paneId ?? resolveIntentPaneId(device.runtime, command.windowId))
+      : null;
+    if (!device || !serverEpoch || !paneId) {
+      this.sender.sendError(
+        command.requestId,
+        wsBorsh.ERROR_TMUX_TARGET_NOT_FOUND,
+        'pane not found',
+        false
+      );
+      return;
+    }
     await this.handleRequestScreen({
       requestId: command.requestId,
-      pane: { deviceId: command.deviceId, serverEpoch: epoch, paneId },
+      pane: { deviceId: command.deviceId, serverEpoch, paneId },
       byteLimit: command.byteLimit,
     });
   }
