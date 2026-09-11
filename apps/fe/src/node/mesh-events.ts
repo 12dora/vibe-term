@@ -73,6 +73,8 @@ export interface MeshEventSourceOptions {
   recovery?: RecoverySubscribe;
   /** 页面此刻是否可见（测试注入）。 */
   visible?: () => boolean;
+  /** 可见性**每一次**变化的订阅（测试注入）；缺省订阅 document。用来记「真的离开过多久」。 */
+  visibilityChange?: (listener: () => void) => () => void;
   /** 首次打开前的最长等待；0 表示不延迟（测试注入）。 */
   startDelayMs?: number;
   /** 「首个终端内容绘制」信号（测试注入）；缺省订阅模块级注册表。 */
@@ -138,6 +140,17 @@ export function resetFirstTerminalPaintForTest(): void {
   firstPaintListeners.clear();
 }
 
+/**
+ * 可见性变化的缺省订阅源。`onPageRecovery` 只在「重新可见」时回调，拿不到**转入后台**那一下，
+ * 而判断「这次回来之前真的离开过多久」正需要它。非浏览器宿主取不到 document，订阅即空操作。
+ */
+function onVisibilityChanged(listener: () => void): () => void {
+  const doc = (globalThis as { document?: Document }).document;
+  if (!doc || typeof doc.addEventListener !== 'function') return () => undefined;
+  doc.addEventListener('visibilitychange', listener);
+  return () => doc.removeEventListener('visibilitychange', listener);
+}
+
 function closeCodeOf(event: unknown): number | null {
   const code = (event as { code?: unknown } | null | undefined)?.code;
   return typeof code === 'number' ? code : null;
@@ -177,13 +190,17 @@ export class MeshEventSource {
   private readonly visibleMaxDelayMs: number;
   private readonly recovery: RecoverySubscribe;
   private readonly visible: () => boolean;
+  private readonly visibilityChange: (listener: () => void) => () => void;
   private readonly startDelayMs: number;
   private readonly firstPaint: (listener: () => void) => () => void;
   private readonly silenceReconnectMs: number;
   private stopRecovery: (() => void) | null = null;
   private stopFirstPaint: (() => void) | null = null;
+  private stopVisibility: (() => void) | null = null;
   private startTimer: unknown = null;
   private lastActivityAt = 0;
+  /** 页面转入后台的时刻；一直在前台为 null。 */
+  private hiddenSince: number | null = null;
 
   private socket: MeshSocketLike | null = null;
   private timer: unknown = null;
@@ -216,6 +233,7 @@ export class MeshEventSource {
     this.visibleMaxDelayMs = options.visibleMaxDelayMs ?? DEFAULT_VISIBLE_MAX_DELAY_MS;
     this.recovery = options.recovery ?? onPageRecovery;
     this.visible = options.visible ?? isPageVisible;
+    this.visibilityChange = options.visibilityChange ?? onVisibilityChanged;
     this.startDelayMs = options.startDelayMs ?? MESH_WS_START_DELAY_MS;
     this.firstPaint = options.firstPaint ?? onFirstTerminalPaint;
     this.silenceReconnectMs = options.silenceReconnectMs ?? MESH_WS_SILENCE_RECONNECT_MS;
@@ -254,6 +272,8 @@ export class MeshEventSource {
     this.attempt = 0;
     this.unauthorizedFlag = false;
     this.stopRecovery ??= this.recovery(() => this.onRecovery());
+    this.stopVisibility ??= this.visibilityChange(() => this.noteVisibility());
+    this.hiddenSince = this.visible() ? null : this.now();
     if (this.startDelayMs <= 0) {
       this.open();
       return;
@@ -281,18 +301,31 @@ export class MeshEventSource {
     this.startTimer = null;
   }
 
+  /** 转入后台就记下时刻；回到前台由 `onRecovery` 结算并清零。 */
+  private noteVisibility(): void {
+    if (this.visible()) return;
+    this.hiddenSince ??= this.now();
+  }
+
   /**
    * 页面重新可见 / 网络恢复。
    *
    * 没连上：退避计数清零并立刻重连——锁屏几分钟后退避早就爬到分钟级，用户切回来第一眼
    * 看到的却是「事件流未连接」，节点上下线全靠 5 分钟的兜底轮询。
    *
-   * 连着但长时间没收过帧：这条流可能已经是僵尸（`/mesh/ws` 没有应用层心跳，见
-   * `MESH_WS_SILENCE_RECONNECT_MS`），直接换一条。
+   * 连着的那条要不要换，两个条件**都**满足才换：
+   *  - 这次回来之前页面**真的离开过** ≥ `silenceReconnectMs`（iOS 挂起足够久，socket 多半已死）；
+   *  - 且这条流静默了同样久（`/mesh/ws` 没有应用层心跳，见 `MESH_WS_SILENCE_RECONNECT_MS`）。
+   *
+   * 只看静默是不够的：桌面上切个标签页回来、或者服务端本来就没有节点上下线可报，
+   * 都会是「静默 30 s 的活连接」，换掉它纯属白付一次握手。
    */
   private onRecovery(): void {
     if (!this.started || this.startTimer != null) return;
+    const hiddenFor = this.hiddenSince === null ? 0 : this.now() - this.hiddenSince;
+    this.hiddenSince = null;
     if (this.connectedFlag && this.socket) {
+      if (hiddenFor < this.silenceReconnectMs) return;
       if (this.now() - this.lastActivityAt < this.silenceReconnectMs) return;
       this.cycleSocket();
       return;
@@ -334,6 +367,9 @@ export class MeshEventSource {
     this.started = false;
     this.stopRecovery?.();
     this.stopRecovery = null;
+    this.stopVisibility?.();
+    this.stopVisibility = null;
+    this.hiddenSince = null;
     this.clearStartTimer();
     if (this.timer != null) {
       this.cancel(this.timer);

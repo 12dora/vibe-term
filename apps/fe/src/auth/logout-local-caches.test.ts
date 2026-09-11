@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'bun:test';
+import { createGatedNodeApiClient } from '@/node/node-session-probe';
 import { tmuxTopologyCacheKey } from '@vibeterm/stores';
 import { clearLocalDeviceCaches } from './logout-local-caches';
 
@@ -17,6 +18,13 @@ function fakeStorage(entries: Record<string, string>): Storage {
 }
 
 describe('clearLocalDeviceCaches', () => {
+  it('内存里按 node 缓存的带门 ApiClient 也一并丢掉（含它的延迟 EWMA）', () => {
+    const nodeId = '0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b';
+    const before = createGatedNodeApiClient(nodeId);
+    clearLocalDeviceCaches(fakeStorage({}));
+    expect(createGatedNodeApiClient(nodeId)).not.toBe(before);
+  });
+
   it('清掉 self 与各 node 前缀的拓扑缓存，不动其它键', () => {
     const storage = fakeStorage({
       [tmuxTopologyCacheKey('')]: '{}',

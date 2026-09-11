@@ -806,7 +806,9 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
     const sockets: FakeSocket[] = [];
     const timers: { fn: () => void; ms: number }[] = [];
     const clock = { now: 1_000_000 };
+    const visibility = { value: true };
     const recoveryListeners = new Set<() => void>();
+    const visibilityListeners = new Set<() => void>();
     const source = new MeshEventSource({
       url: 'ws://x/mesh/ws',
       socketFactory: () => {
@@ -817,6 +819,7 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
       baseDelayMs: 100,
       startDelayMs: 0,
       nowFn: () => clock.now,
+      visible: () => visibility.value,
       ...(options.silenceReconnectMs === undefined
         ? {}
         : { silenceReconnectMs: options.silenceReconnectMs }),
@@ -824,26 +827,42 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
         recoveryListeners.add(listener);
         return () => recoveryListeners.delete(listener);
       },
+      visibilityChange: (listener) => {
+        visibilityListeners.add(listener);
+        return () => visibilityListeners.delete(listener);
+      },
       setTimeoutFn: (fn, ms) => {
         timers.push({ fn, ms });
         return timers.length;
       },
       clearTimeoutFn: () => undefined,
     });
+    const fireVisibility = () => {
+      for (const listener of [...visibilityListeners]) listener();
+    };
+    /** 转入后台并停留 `ms`，然后回到前台（浏览器的两次 visibilitychange + 恢复信号）。 */
+    const hideFor = (ms: number) => {
+      visibility.value = false;
+      fireVisibility();
+      clock.now += ms;
+      visibility.value = true;
+      fireVisibility();
+      for (const listener of [...recoveryListeners]) listener();
+    };
+    /** 页面一直可见的恢复信号（桌面切标签页、online 事件）。 */
     const recover = () => {
       for (const listener of [...recoveryListeners]) listener();
     };
-    return { source, sockets, clock, recover };
+    return { source, sockets, clock, recover, hideFor };
   }
 
-  test('回前台时静默已超阈值：摘掉旧 socket 换一条新的', () => {
-    const { source, sockets, clock, recover } = harness();
+  test('后台待够久且这条流也静默够久：摘掉旧 socket 换一条新的', () => {
+    const { source, sockets, hideFor } = harness();
     source.start();
     sockets[0].open();
     expect(source.connected).toBe(true);
 
-    clock.now += MESH_WS_SILENCE_RECONNECT_MS;
-    recover();
+    hideFor(MESH_WS_SILENCE_RECONNECT_MS);
 
     expect(sockets[0].closed).toBe(true);
     expect(sockets).toHaveLength(2);
@@ -853,7 +872,31 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
     source.stop();
   });
 
-  test('刚收过帧就回前台：连接留着不动', () => {
+  test('页面一直可见、只是服务端没事可报：静默再久也不换连', () => {
+    const { source, sockets, clock, recover } = harness();
+    source.start();
+    sockets[0].open();
+
+    clock.now += MESH_WS_SILENCE_RECONNECT_MS * 10;
+    recover();
+
+    expect(sockets[0].closed).toBe(false);
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('只离开了一小会儿：不换连', () => {
+    const { source, sockets, hideFor } = harness();
+    source.start();
+    sockets[0].open();
+
+    hideFor(MESH_WS_SILENCE_RECONNECT_MS - 1);
+
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('后台待够久但期间收过帧：连接留着不动', () => {
     const { source, sockets, clock, recover } = harness();
     source.start();
     sockets[0].open();
@@ -869,14 +912,17 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
     source.stop();
   });
 
-  test('阈值之内不换连', () => {
-    const { source, sockets, clock, recover } = harness();
+  test('离开的时长不累计到下一次：回来过一次就清零', () => {
+    const { source, sockets, hideFor, recover, clock } = harness();
     source.start();
     sockets[0].open();
 
-    clock.now += MESH_WS_SILENCE_RECONNECT_MS - 1;
-    recover();
+    hideFor(MESH_WS_SILENCE_RECONNECT_MS - 1);
+    expect(sockets).toHaveLength(1);
 
+    // 再来一次恢复信号（比如 online），这一次并没有离开过
+    clock.now += MESH_WS_SILENCE_RECONNECT_MS;
+    recover();
     expect(sockets).toHaveLength(1);
     source.stop();
   });

@@ -63,7 +63,12 @@ export function createGatedNodeApiClient(nodeId: string): ApiClient {
   return client;
 }
 
-export function resetGatedNodeApiClientsForTest(): void {
+/**
+ * 丢掉全部缓存的带门客户端。**只在会话被明确作废时调用**（登出 / 换账号 / 凭证重置）：
+ * 缓存实例身上挂着上一个会话的延迟 EWMA，换账号后继续用它去推探测超时是拿错账本；
+ * 实例本身也不该跨账号活着。会话到期后的静默重登不走这条路（那不是换账号）。
+ */
+export function resetGatedNodeApiClients(): void {
   gatedClients.clear();
 }
 

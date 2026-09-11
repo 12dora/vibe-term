@@ -6,9 +6,12 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
-const { createGatedNodeApiClient, probeNodeSession, SESSION_PROBE_TIMEOUT_MS } = await import(
-  './node-session-probe'
-);
+const {
+  createGatedNodeApiClient,
+  probeNodeSession,
+  resetGatedNodeApiClients,
+  SESSION_PROBE_TIMEOUT_MS,
+} = await import('./node-session-probe');
 const {
   clearNodeBackoff,
   isNodeRequestBlocked,
@@ -145,6 +148,23 @@ describe('createGatedNodeApiClient', () => {
     expect(client.baseUrl).toBe('');
     await client.fetch('/api/devices');
     expect(calls[0]?.url).toBe('/api/devices');
+  });
+
+  test('同一 node 复用同一个实例（运行时与会话探测共享延迟 EWMA）', () => {
+    expect(createGatedNodeApiClient(NODE_A)).toBe(createGatedNodeApiClient(NODE_A));
+  });
+
+  test('resetGatedNodeApiClients 之后换成新实例：上一个账号的 EWMA 不跟过来', async () => {
+    stubFetch(() => jsonResponse({ devices: [] }));
+    const before = createGatedNodeApiClient(NODE_A);
+    await before.fetch('/api/devices');
+    expect(before.lastLatencyMs()).not.toBeNull();
+
+    resetGatedNodeApiClients();
+
+    const after = createGatedNodeApiClient(NODE_A);
+    expect(after).not.toBe(before);
+    expect(after.lastLatencyMs()).toBeNull();
   });
 });
 
