@@ -6,6 +6,7 @@ import {
   type WebSocketLike,
   createGatewayConnection,
 } from '@vibeterm/ws-client';
+import type { AppRuntime } from './app-runtime';
 import {
   NodeConnectionManager,
   WS_UNAUTHORIZED_CLOSE_CODE,
@@ -235,6 +236,31 @@ describe('createDefaultNodeConnection 的 client nonce（F3-5）', () => {
     expect(cidOf(a.urls[0] as string)).not.toBe(cidOf(b.urls[0] as string));
     a.connection.dispose();
     b.connection.dispose();
+  });
+
+  // 侧栏的文件分节缺省展开，每台在线的远端 node 都会挂一份运行时；如果建 runtime 就等于
+  // 建 socket，手机上挂几台 node 就是几次 TCP+TLS+Upgrade。socket 必须等到真的用它
+  // （路由进去 → WatchEventsInit 的 ensureSocketConnected，或订阅它的某台设备）才开。
+  test('建 runtime 不建 socket：没人 connect() 就不该有 WS 握手', () => {
+    const urls: string[] = [];
+    const manager = new NodeConnectionManager({
+      createConnection: (nodeId, onClose) =>
+        createDefaultNodeConnection(nodeId, onClose, (url) => {
+          urls.push(url);
+          return fakeSocket();
+        }),
+      createApiClient: () => ({}) as never,
+      createRuntime: () => ({ dispose: () => {} }) as unknown as AppRuntime,
+      setTimeoutFn: () => 0,
+      clearTimeoutFn: () => {},
+    });
+
+    manager.acquire(NODE_A);
+    expect(urls).toEqual([]);
+
+    manager.get(NODE_A).connection.client.connect();
+    expect(urls.length).toBe(1);
+    manager.disposeAll();
   });
 });
 

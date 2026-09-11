@@ -254,9 +254,37 @@ export function directLinkSettled(connection: GatewayConnection): Promise<void> 
 }
 
 /**
+ * 直连协商延到这条连接**第一次 READY**：建 runtime 不等于真的在用这台 node。
+ *
+ * 侧边栏的文件分节缺省展开，每台在线的远端 node 都会挂一份运行时，但它的 Gateway WS 要等
+ * 到真的浏览它（路由进去、订阅它的某台设备）才开。在此之前起直连毫无意义还很贵：
+ * `/api/mesh/connection?cid=` 要的 `?cid=` 是**某条 socket** 的 nonce，一条都还没建时它是
+ * null——协商必然先吃一发 404 再重试（P0 审计 §3.4），高延迟下每台 node 白烧 3~4 次转发请求。
+ *
+ * 返回注销函数；连接被 dispose 时必须调用，否则等不到 READY 的连接会留下一条订阅。
+ */
+function whenConnectionReady(connection: GatewayConnection, run: () => void): () => void {
+  if (connection.client.isReady()) {
+    run();
+    return () => undefined;
+  }
+  let off: (() => void) | null = null;
+  off = connection.client.onStateChange((state) => {
+    if (state !== 'READY') return;
+    off?.();
+    off = null;
+    run();
+  });
+  return () => {
+    off?.();
+    off = null;
+  };
+}
+
+/**
  * 给一条已建好的远端 node 连接接上直连：诊断占位源与 resume 钩子同步挂好（UI 在同一帧就会
- * 订阅），控制器等直连栈 chunk 到位后再建。dispose 与加载是并发的，靠 `disposed` 标志裁决：
- * 先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
+ * 订阅），控制器等 WS 就绪 + 直连栈 chunk 到位后再建。dispose 与加载是并发的，靠 `disposed`
+ * 标志裁决：先 dispose 的话加载完成后什么都不做，不会留下没人 stop 的 `RTCPeerConnection`。
  */
 function attachDirectLink(
   nodeId: string,
@@ -279,37 +307,43 @@ function attachDirectLink(
     controller = null;
     diagnostics.attach(null);
   };
+
+  const startDirect = () => {
+    const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
+      if (!loaded || disposed) return;
+      // 这条入口最近已经答过「给不出直连」：30 分钟内不再白协商一次（见 direct-link-availability）。
+      if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) return;
+      const created = wiring.createController
+        ? wiring.createController(nodeId, connection, cid)
+        : defaultController(
+            loaded,
+            nodeId,
+            connection,
+            cid,
+            watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect, entryNodeIdNow)
+          );
+      if (!created) return;
+      direct = loaded;
+      controller = created;
+      diagnostics.attach(created.diagnosticsSource);
+      // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
+      loaded.registerBulkClient(nodeId, new loaded.BulkClient(created));
+      created.start();
+    });
+    directLinkPending.set(connection, pending);
+  };
+
+  const cancelReadyWatch = whenConnectionReady(connection, startDirect);
+
   const baseDispose = connection.dispose.bind(connection);
   connection.dispose = () => {
     disposed = true;
+    cancelReadyWatch();
     connection.setResumeSubscribedPanes(null);
     stopDirect();
     diagnostics.attach(null);
     baseDispose();
   };
-
-  const pending = (wiring.loadDirect ?? loadDirectModule)().then((loaded) => {
-    if (!loaded || disposed) return;
-    // 这条入口最近已经答过「给不出直连」：30 分钟内不再白协商一次（见 direct-link-availability）。
-    if (isDirectLinkUnavailable(nodeId, entryNodeIdNow())) return;
-    const created = wiring.createController
-      ? wiring.createController(nodeId, connection, cid)
-      : defaultController(
-          loaded,
-          nodeId,
-          connection,
-          cid,
-          watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect, entryNodeIdNow)
-        );
-    if (!created) return;
-    direct = loaded;
-    controller = created;
-    diagnostics.attach(created.diagnosticsSource);
-    // 文件面板只拿得到 nodeId，bulk 通道按 nodeId 登记（F3-2）。
-    loaded.registerBulkClient(nodeId, new loaded.BulkClient(created));
-    created.start();
-  });
-  directLinkPending.set(connection, pending);
 }
 
 /**
@@ -401,9 +435,9 @@ export const appNodeRuntimes: NodeConnectionManager = createAppNodeRuntimes();
  * 只能靠回源。5 秒意味着每次切回前台都要给每个挂载中的 node 各发一条 `/api/devices`——
  * PWA 恢复时最贵的一串请求就是它。
  *
- * 拉到 60 秒。`refetchOnWindowFocus` 保持开启：它只补拉**已过期**的查询，所以一分钟内的
- * 来回切换不再回源，超过一分钟的恢复照旧立刻拿到新列表——「页面恢复时补一次」这件事
- * 由它天然覆盖，不需要再往 `onPageRecovery` 上挂一条重复的失效。
+ * 拉到 60 秒。设备列表是**唯一**保留 `refetchOnWindowFocus` 的查询（见下），它只补拉
+ * 已过期的那一份，所以一分钟内的来回切换不再回源，超过一分钟的恢复照旧立刻拿到新列表——
+ * 「页面恢复时补一次」这件事由它天然覆盖，不需要再往 `onPageRecovery` 上挂一条重复的失效。
  */
 export const DEVICES_STALE_MS = 60_000;
 
@@ -413,14 +447,26 @@ function createNodeQueryClient(nodeId: string): QueryClient {
       queries: {
         staleTime: 5000,
         retry: 1,
+        // 回前台不再整片回源。缺省 staleTime 只有 5 秒，意味着每次恢复都要给每个挂载中的
+        // node 打一批 REST（watch/rules、share、files/roots…），移动端恢复时这一串正好压在
+        // 首屏那一个 RTT 的并发窗口里。这些数据本来就有推送通道（SETTINGS_UPDATE /
+        // WATCH_EVENT）或自己的轮询，恢复时不需要额外补拉。
+        refetchOnWindowFocus: false,
       },
     },
   });
   // 首帧占位挂在**客户端缺省**上而不是各调用点：设备页的卡片网格、控制台的当前设备、
   // 侧边栏都是同一个 key 的观察者，挂在这里它们一次都不用改就都拿到冷启动首帧。
   // 显式传了 `placeholderData` 的调用点（侧边栏自带快照 + inventory 兜底）照常覆盖它。
+  //
+  // 设备列表单独把 `refetchOnWindowFocus` 打开：它没有推送通道（见 DEVICES_STALE_MS），
+  // 恢复时必须补一次。走 react-query 自己的 focus 而不是手挂一条 `onPageRecovery` 失效，
+  // 是为了保住 staleTime 语义（60 秒内的来回切换不回源），也不会和重连各拉一次。
+  // mesh 节点列表不在 react-query 里（模块级 store，见 mesh-nodes.ts），它自带
+  // 「重新可见且已过期就补一拍」的逻辑，这里无需也不该重复。
   client.setQueryDefaults<DevicesResponse>(devicesQueryKey, {
     staleTime: DEVICES_STALE_MS,
+    refetchOnWindowFocus: true,
     placeholderData: () => deviceSnapshotPlaceholder(nodeId),
   });
   return client;

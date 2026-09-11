@@ -3,188 +3,30 @@
 //
 // 该连接**只属于 entry（self）**：mesh 事件是入口对整张 mesh 的视图，不按 node 分身。
 
+import { handleGlobalUnauthorized } from '@vibeterm/api-client/auth/index';
 import {
-  type MeshNodeReach,
-  type MeshNodeTransport,
-  handleGlobalUnauthorized,
-} from '@vibeterm/api-client/auth/index';
-import { wsBorsh } from '@vibeterm/shared';
-import { encodeBase64url } from '@vibeterm/shared/auth';
+  type EnrollRedeemedPayload,
+  type NodeEventPayload,
+  type RtcSignalPayload,
+  decodeMeshFrame,
+  encodeRtcSignal,
+} from './mesh-events-codec';
 import { type RecoverySubscribe, isPageVisible, onPageRecovery } from './mesh-recovery';
+
+// 帧编解码与页面侧类型都在 `mesh-events-codec.ts`；这里原样转出去，调用方不必改 import。
+export type {
+  EnrollRedeemedPayload,
+  MeshFrame,
+  NodeEventPayload,
+  NodeEventStatus,
+  NodeReach,
+  NodeTransport,
+  RtcSignalPayload,
+} from './mesh-events-codec';
+export { KIND_ENROLL_REDEEMED, decodeMeshFrame, encodeRtcSignal } from './mesh-events-codec';
 
 /** 会话在连接期间失效时服务端的关闭码（B2-2b 契约）。 */
 export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
-
-export type NodeEventStatus = 'online' | 'offline' | 'revoked';
-export type NodeReach = MeshNodeReach;
-export type NodeTransport = MeshNodeTransport;
-
-export interface NodeEventPayload {
-  nodeId: string;
-  status: NodeEventStatus;
-  reach: NodeReach;
-  /** peer link 的实际承载；老 node 的帧里没有这一段，解出为 `undefined`。 */
-  transport?: NodeTransport;
-  /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 `null`，帧里没有为 `undefined`。 */
-  rttMs?: number | null;
-  /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
-  inventory: unknown;
-  version?: string | null;
-  direct_capable?: boolean | null;
-  name?: string | null;
-}
-
-export interface RtcSignalPayload {
-  rtcSession: string;
-  from: 'browser' | 'node';
-  to: string;
-  sdp: string | null;
-  candidate: string | null;
-}
-
-/** hub 收到 redeem 后经 entry 转发给发起页面的证书（设计 §2 步骤 3）。 */
-export interface EnrollRedeemedPayload {
-  /** base64url，32 字节：本次 enrollment 的公钥，页面据此匹配 pending。 */
-  enrollPk: string;
-  /** base64url(borsh(Certificate)) */
-  certificate: string;
-  /** base64url，64 字节 */
-  certSig: string;
-  /** 32 位小写 hex */
-  nodeId: string;
-}
-
-export type MeshFrame =
-  | { kind: 'node-event'; payload: NodeEventPayload }
-  | { kind: 'rtc-signal'; payload: RtcSignalPayload }
-  | { kind: 'enroll-redeemed'; payload: EnrollRedeemedPayload };
-
-/** `ENROLL_REDEEMED`（B2-5）：线上是原始字节，页面侧一律转成 base64url 再走证书匹配。 */
-export const KIND_ENROLL_REDEEMED = wsBorsh.KIND_ENROLL_REDEEMED;
-
-/**
- * 枚举严格 allowlist：未知值一律让整帧作废。
- * 滚动升级时把未知 status 当成 `online`、把未知来源当成 `browser` 会把离线节点标成在线、
- * 把不明信令交给直连控制器（见 F4-3 评审 Minor）。
- */
-function statusFromWire(status: number): NodeEventStatus | null {
-  if (status === wsBorsh.NODE_EVENT_STATUS_ONLINE) return 'online';
-  if (status === wsBorsh.NODE_EVENT_STATUS_OFFLINE) return 'offline';
-  if (status === wsBorsh.NODE_EVENT_STATUS_REVOKED) return 'revoked';
-  return null;
-}
-
-function fromFromWire(from: number): 'browser' | 'node' | null {
-  if (from === wsBorsh.RTC_SIGNAL_FROM_BROWSER) return 'browser';
-  if (from === wsBorsh.RTC_SIGNAL_FROM_NODE) return 'node';
-  return null;
-}
-
-function reachFromWire(reach: string | null): NodeReach {
-  return reach === 'lan' || reach === 'wan' || reach === 'relay' ? reach : null;
-}
-
-// 老 node 的帧里没有这两段，解出 `undefined`——与「新帧明确报告没有」（null）区分开，
-// 投影时才知道该保留上一次轮询到的值还是清掉。
-function transportFromWire(transport: unknown): NodeTransport | undefined {
-  if (transport === undefined) return undefined;
-  return transport === 'ws-secure' || transport === 'relay' || transport === 'dc'
-    ? transport
-    : null;
-}
-
-function rttFromWire(rttMs: unknown): number | null | undefined {
-  if (rttMs === undefined) return undefined;
-  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
-}
-
-function parseInventory(raw: string | null): unknown {
-  if (raw == null) return null;
-  try {
-    return JSON.parse(raw) as unknown;
-  } catch {
-    return raw;
-  }
-}
-
-/**
- * 解一帧 mesh WS 二进制；协议版本不符、未知枚举值、非 mesh kind 或畸形帧一律返回 `null`
- * （不抛，避免打断收流）。
- */
-export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
-  try {
-    const envelope = wsBorsh.decodeEnvelope(data);
-    if (envelope.version !== wsBorsh.CURRENT_VERSION) return null;
-    if (envelope.kind === wsBorsh.KIND_NODE_EVENT) {
-      // `transport` / `rttMs` 是后加的线上字段：老 node 发来的帧里没有，解出为 undefined。
-      const payload = wsBorsh.decodeNodeEvent(envelope.payload) as ReturnType<
-        typeof wsBorsh.decodeNodeEvent
-      > & { transport?: unknown; rttMs?: unknown };
-      const status = statusFromWire(payload.status);
-      if (!status) return null;
-      return {
-        kind: 'node-event',
-        payload: {
-          nodeId: payload.nodeId,
-          status,
-          reach: reachFromWire(payload.reach),
-          transport: transportFromWire(payload.transport),
-          rttMs: rttFromWire(payload.rttMs),
-          inventory: parseInventory(payload.inventory),
-          version: payload.version,
-          direct_capable: payload.directCapable,
-          name: payload.name,
-        },
-      };
-    }
-    if (envelope.kind === wsBorsh.KIND_RTC_SIGNAL) {
-      const payload = wsBorsh.decodePayload(wsBorsh.schema.RtcSignalSchema, envelope.payload);
-      const from = fromFromWire(payload.from);
-      if (!from) return null;
-      return {
-        kind: 'rtc-signal',
-        payload: {
-          rtcSession: payload.rtcSession,
-          from,
-          to: payload.to,
-          sdp: payload.sdp,
-          candidate: payload.candidate,
-        },
-      };
-    }
-    if (envelope.kind === KIND_ENROLL_REDEEMED) {
-      const payload = wsBorsh.decodePayload(wsBorsh.schema.EnrollRedeemedSchema, envelope.payload);
-      // 字段边界（`enroll_pk` 32 / `cert_sig` 64 / 证书上限 / `node_id` 32-hex）与 node、hub
-      // 两侧共用同一份判定；不合规一律抛，由外层 catch 变成 `null`（帧作废）。
-      wsBorsh.schema.assertEnrollRedeemedFields(payload);
-      if (payload.certificate.length === 0) return null;
-      return {
-        kind: 'enroll-redeemed',
-        payload: {
-          enrollPk: encodeBase64url(payload.enrollPk),
-          certificate: encodeBase64url(payload.certificate),
-          certSig: encodeBase64url(payload.certSig),
-          nodeId: payload.nodeId,
-        },
-      };
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** 编一帧 RTC_SIGNAL（Phase 3 的 `DirectCarrierController` 用它上行）。 */
-export function encodeRtcSignal(payload: RtcSignalPayload, seq = 0): Uint8Array {
-  const body = wsBorsh.encodePayload(wsBorsh.schema.RtcSignalSchema, {
-    rtcSession: payload.rtcSession,
-    from: payload.from === 'node' ? wsBorsh.RTC_SIGNAL_FROM_NODE : wsBorsh.RTC_SIGNAL_FROM_BROWSER,
-    to: payload.to,
-    sdp: payload.sdp,
-    candidate: payload.candidate,
-  });
-  return wsBorsh.encodeEnvelope(wsBorsh.KIND_RTC_SIGNAL, body, seq);
-}
 
 /** `/mesh/ws` 的绝对地址（始终指向 entry 自身，不带 `/n/:id` 前缀）。 */
 export function meshWsUrl(location?: { protocol: string; host: string }): string {
@@ -231,12 +73,70 @@ export interface MeshEventSourceOptions {
   recovery?: RecoverySubscribe;
   /** 页面此刻是否可见（测试注入）。 */
   visible?: () => boolean;
+  /** 首次打开前的最长等待；0 表示不延迟（测试注入）。 */
+  startDelayMs?: number;
+  /** 「首个终端内容绘制」信号（测试注入）；缺省订阅模块级注册表。 */
+  firstPaint?: (listener: () => void) => () => void;
+  /** 回前台时认定这条流已不可信的静默时长（测试注入）。 */
+  silenceReconnectMs?: number;
 }
 
 const DEFAULT_BASE_DELAY_MS = 1000;
 const DEFAULT_MAX_DELAY_MS = 60_000;
 const DEFAULT_STABLE_AFTER_MS = 10_000;
 const DEFAULT_VISIBLE_MAX_DELAY_MS = 5_000;
+
+/**
+ * `/mesh/ws` 首次打开的最长等待。
+ *
+ * 开屏时页面要同时建 `/ws`、`/mesh/ws`（远端 node 还要再加 `/n/<id>/ws`），每条都是一次独立的
+ * TCP+TLS+Upgrade。高延迟链路上这几次握手互相抢并发窗口，而 mesh 事件流对首屏没有任何贡献：
+ * 节点在线态来自 `/api/mesh/nodes` 的投影，事件流只是让它更快。所以让它排在终端首帧之后，
+ * 首帧信号迟迟不来（没有终端的页面）就按这个上限兜底。
+ */
+export const MESH_WS_START_DELAY_MS = 3_000;
+
+/**
+ * 回前台时认定「这条 mesh 流已经不可信」的静默时长。
+ *
+ * `/mesh/ws` 上没有任何应用层心跳——服务端只在节点状态变化 / 信令时发帧，浏览器因此无法
+ * 判断一条静默的连接是「没事发生」还是「对端早没了」（P0 审计 §3.3）。iOS 回前台后这两种
+ * 情况的代价完全不对称：白换一条连接只花一次握手，而错信一条僵尸流会漏掉所有节点上下线。
+ * 所以恢复时只要静默超过这个值就直接换一条。
+ */
+export const MESH_WS_SILENCE_RECONNECT_MS = 30_000;
+
+// 「首个终端内容绘制」的模块级注册表：信号只会发生一次，之后注册的订阅者立即回调。
+let firstTerminalPainted = false;
+const firstPaintListeners = new Set<() => void>();
+
+/**
+ * 宣告首个终端内容已经画出来了。由终端挂载侧调用（幂等）；没人调用时
+ * `MESH_WS_START_DELAY_MS` 是唯一的开闸条件。
+ */
+export function notifyFirstTerminalPaint(): void {
+  if (firstTerminalPainted) return;
+  firstTerminalPainted = true;
+  for (const listener of [...firstPaintListeners]) listener();
+  firstPaintListeners.clear();
+}
+
+export function onFirstTerminalPaint(listener: () => void): () => void {
+  if (firstTerminalPainted) {
+    listener();
+    return () => undefined;
+  }
+  firstPaintListeners.add(listener);
+  return () => {
+    firstPaintListeners.delete(listener);
+  };
+}
+
+/** 仅供测试：把首帧信号倒回未发生。 */
+export function resetFirstTerminalPaintForTest(): void {
+  firstTerminalPainted = false;
+  firstPaintListeners.clear();
+}
 
 function closeCodeOf(event: unknown): number | null {
   const code = (event as { code?: unknown } | null | undefined)?.code;
@@ -277,7 +177,13 @@ export class MeshEventSource {
   private readonly visibleMaxDelayMs: number;
   private readonly recovery: RecoverySubscribe;
   private readonly visible: () => boolean;
+  private readonly startDelayMs: number;
+  private readonly firstPaint: (listener: () => void) => () => void;
+  private readonly silenceReconnectMs: number;
   private stopRecovery: (() => void) | null = null;
+  private stopFirstPaint: (() => void) | null = null;
+  private startTimer: unknown = null;
+  private lastActivityAt = 0;
 
   private socket: MeshSocketLike | null = null;
   private timer: unknown = null;
@@ -310,6 +216,9 @@ export class MeshEventSource {
     this.visibleMaxDelayMs = options.visibleMaxDelayMs ?? DEFAULT_VISIBLE_MAX_DELAY_MS;
     this.recovery = options.recovery ?? onPageRecovery;
     this.visible = options.visible ?? isPageVisible;
+    this.startDelayMs = options.startDelayMs ?? MESH_WS_START_DELAY_MS;
+    this.firstPaint = options.firstPaint ?? onFirstTerminalPaint;
+    this.silenceReconnectMs = options.silenceReconnectMs ?? MESH_WS_SILENCE_RECONNECT_MS;
   }
 
   get connected(): boolean {
@@ -335,21 +244,84 @@ export class MeshEventSource {
     return Math.round(capped * (0.5 + this.random() * 0.5));
   }
 
+  /**
+   * 起订阅。首次打开**不在本次调用里发生**：排到「首个终端内容绘制」或
+   * `startDelayMs` 兜底，两者谁先到算谁（见 `MESH_WS_START_DELAY_MS`）。
+   */
   start(): void {
     if (this.started) return;
     this.started = true;
     this.attempt = 0;
     this.unauthorizedFlag = false;
-    this.stopRecovery ??= this.recovery(() => this.reconnectNow());
+    this.stopRecovery ??= this.recovery(() => this.onRecovery());
+    if (this.startDelayMs <= 0) {
+      this.open();
+      return;
+    }
+    this.stopFirstPaint ??= this.firstPaint(() => this.openNow());
+    if (this.socket || this.startTimer != null) return;
+    this.startTimer = this.schedule(() => {
+      this.startTimer = null;
+      this.openNow();
+    }, this.startDelayMs);
+  }
+
+  /** 开闸：取消首帧等待并立刻建连（已经连上 / 正在退避重连时什么都不做）。 */
+  private openNow(): void {
+    this.clearStartTimer();
+    if (!this.started || this.socket || this.timer != null) return;
     this.open();
   }
 
+  private clearStartTimer(): void {
+    this.stopFirstPaint?.();
+    this.stopFirstPaint = null;
+    if (this.startTimer == null) return;
+    this.cancel(this.startTimer);
+    this.startTimer = null;
+  }
+
   /**
-   * 页面重新可见 / 网络恢复：退避计数清零并立刻重连。锁屏几分钟后退避早就爬到分钟级，
-   * 用户切回来第一眼看到的却是「事件流未连接」，节点上下线全靠 5 分钟的兜底轮询。
+   * 页面重新可见 / 网络恢复。
+   *
+   * 没连上：退避计数清零并立刻重连——锁屏几分钟后退避早就爬到分钟级，用户切回来第一眼
+   * 看到的却是「事件流未连接」，节点上下线全靠 5 分钟的兜底轮询。
+   *
+   * 连着但长时间没收过帧：这条流可能已经是僵尸（`/mesh/ws` 没有应用层心跳，见
+   * `MESH_WS_SILENCE_RECONNECT_MS`），直接换一条。
    */
+  private onRecovery(): void {
+    if (!this.started || this.startTimer != null) return;
+    if (this.connectedFlag && this.socket) {
+      if (this.now() - this.lastActivityAt < this.silenceReconnectMs) return;
+      this.cycleSocket();
+      return;
+    }
+    this.reconnectNow();
+  }
+
   private reconnectNow(): void {
     if (!this.started || this.connectedFlag || this.socket) return;
+    this.attempt = 0;
+    if (this.timer != null) {
+      this.cancel(this.timer);
+      this.timer = null;
+    }
+    this.open();
+  }
+
+  /** 摘掉当前 socket 并立刻建一条新的（不经退避、不派发 4401 判定）。 */
+  private cycleSocket(): void {
+    const socket = this.socket;
+    this.socket = null;
+    this.setConnected(false);
+    if (socket) {
+      socket.onopen = null;
+      socket.onclose = null;
+      socket.onerror = null;
+      socket.onmessage = null;
+      socket.close();
+    }
     this.attempt = 0;
     if (this.timer != null) {
       this.cancel(this.timer);
@@ -362,6 +334,7 @@ export class MeshEventSource {
     this.started = false;
     this.stopRecovery?.();
     this.stopRecovery = null;
+    this.clearStartTimer();
     if (this.timer != null) {
       this.cancel(this.timer);
       this.timer = null;
@@ -435,11 +408,14 @@ export class MeshEventSource {
     socket.onopen = () => {
       if (this.socket !== socket) return;
       this.openedAt = this.now();
+      this.lastActivityAt = this.openedAt;
       this.sawValidFrame = false;
       this.setConnected(true);
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
+      // 任何一帧（哪怕解不出来）都证明这条流此刻还通，足以刷新静默计时。
+      this.lastActivityAt = this.now();
       const bytes = toBytes(event.data);
       if (!bytes) return;
       const frame = decodeMeshFrame(bytes);

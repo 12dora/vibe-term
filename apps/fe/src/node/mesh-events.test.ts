@@ -6,6 +6,8 @@ import { encodeBase64url } from '@vibeterm/shared/auth';
 import {
   type EnrollRedeemedPayload,
   KIND_ENROLL_REDEEMED,
+  MESH_WS_SILENCE_RECONNECT_MS,
+  MESH_WS_START_DELAY_MS,
   MeshEventSource,
   type MeshSocketLike,
   type NodeEventPayload,
@@ -13,6 +15,9 @@ import {
   decodeMeshFrame,
   encodeRtcSignal,
   meshWsUrl,
+  notifyFirstTerminalPaint,
+  onFirstTerminalPaint,
+  resetFirstTerminalPaintForTest,
 } from './mesh-events';
 
 function nodeEventFrame(payload: {
@@ -355,6 +360,10 @@ describe('MeshEventSource', () => {
       visible?: () => boolean;
       visibleMaxDelayMs?: number;
       maxDelayMs?: number;
+      /** 缺省 0：多数用例关心的是连上之后的行为，不必每次都推首帧闸门。 */
+      startDelayMs?: number;
+      firstPaint?: (listener: () => void) => () => void;
+      silenceReconnectMs?: number;
     } = {}
   ) {
     const sockets: FakeSocket[] = [];
@@ -376,6 +385,11 @@ describe('MeshEventSource', () => {
       baseDelayMs: 100,
       maxDelayMs: options.maxDelayMs ?? 1000,
       stableAfterMs: 10_000,
+      startDelayMs: options.startDelayMs ?? 0,
+      ...(options.firstPaint ? { firstPaint: options.firstPaint } : {}),
+      ...(options.silenceReconnectMs === undefined
+        ? {}
+        : { silenceReconnectMs: options.silenceReconnectMs }),
       visible: options.visible,
       visibleMaxDelayMs: options.visibleMaxDelayMs,
       recovery: (listener) => {
@@ -567,7 +581,14 @@ describe('MeshEventSource', () => {
 });
 
 describe('MeshEventSource 恢复重连', () => {
-  function harness(options: { visible?: () => boolean; maxDelayMs?: number } = {}) {
+  function harness(
+    options: {
+      visible?: () => boolean;
+      maxDelayMs?: number;
+      startDelayMs?: number;
+      silenceReconnectMs?: number;
+    } = {}
+  ) {
     const sockets: FakeSocket[] = [];
     const timers: { fn: () => void; ms: number }[] = [];
     const cleared: unknown[] = [];
@@ -584,6 +605,10 @@ describe('MeshEventSource 恢复重连', () => {
       maxDelayMs: options.maxDelayMs ?? 60_000,
       visibleMaxDelayMs: 5_000,
       stableAfterMs: 10_000,
+      startDelayMs: options.startDelayMs ?? 0,
+      ...(options.silenceReconnectMs === undefined
+        ? {}
+        : { silenceReconnectMs: options.silenceReconnectMs }),
       random: () => 1,
       nowFn: () => clock.now,
       onUnauthorized: () => undefined,
@@ -667,5 +692,192 @@ describe('MeshEventSource 恢复重连', () => {
       source.start();
       source.stop();
     }).not.toThrow();
+  });
+});
+
+describe('MeshEventSource 首次打开的闸门（P8）', () => {
+  function harness(options: { startDelayMs?: number } = {}) {
+    const sockets: FakeSocket[] = [];
+    const timers: { fn: () => void; ms: number }[] = [];
+    const cleared: unknown[] = [];
+    const paintListeners = new Set<() => void>();
+    const source = new MeshEventSource({
+      url: 'ws://x/mesh/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      baseDelayMs: 100,
+      startDelayMs: options.startDelayMs ?? MESH_WS_START_DELAY_MS,
+      firstPaint: (listener) => {
+        paintListeners.add(listener);
+        return () => paintListeners.delete(listener);
+      },
+      recovery: () => () => undefined,
+      setTimeoutFn: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimeoutFn: (handle) => cleared.push(handle),
+    });
+    const paint = () => {
+      for (const listener of [...paintListeners]) listener();
+    };
+    return { source, sockets, timers, cleared, paint, paintListeners };
+  }
+
+  test('start() 不再当场建连，而是排一个 3 s 的兜底闸门', () => {
+    const { source, sockets, timers } = harness();
+    source.start();
+
+    expect(sockets).toHaveLength(0);
+    expect(timers.at(-1)?.ms).toBe(MESH_WS_START_DELAY_MS);
+
+    timers.at(-1)?.fn();
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('首个终端内容绘制先到就提前开闸，兜底定时器被撤掉', () => {
+    const { source, sockets, cleared, paint } = harness();
+    source.start();
+    expect(sockets).toHaveLength(0);
+
+    paint();
+    expect(sockets).toHaveLength(1);
+    expect(cleared).toHaveLength(1);
+    source.stop();
+  });
+
+  test('闸门开过之后再来首帧信号也不会开第二条', () => {
+    const { source, sockets, paint } = harness();
+    source.start();
+    paint();
+    paint();
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('stop() 撤掉在途闸门与首帧订阅', () => {
+    const { source, sockets, timers, paintListeners } = harness();
+    source.start();
+    expect(paintListeners.size).toBe(1);
+
+    source.stop();
+    expect(paintListeners.size).toBe(0);
+
+    timers.at(-1)?.fn();
+    expect(sockets).toHaveLength(0);
+  });
+
+  test('startDelayMs=0 时保持原来的同步建连', () => {
+    const { source, sockets } = harness({ startDelayMs: 0 });
+    source.start();
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('notifyFirstTerminalPaint 幂等，且晚到的订阅者立即回调', () => {
+    resetFirstTerminalPaintForTest();
+    try {
+      let early = 0;
+      const off = onFirstTerminalPaint(() => {
+        early += 1;
+      });
+      notifyFirstTerminalPaint();
+      notifyFirstTerminalPaint();
+      expect(early).toBe(1);
+      off();
+
+      let late = 0;
+      onFirstTerminalPaint(() => {
+        late += 1;
+      });
+      expect(late).toBe(1);
+    } finally {
+      resetFirstTerminalPaintForTest();
+    }
+  });
+});
+
+describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）', () => {
+  function harness(options: { silenceReconnectMs?: number } = {}) {
+    const sockets: FakeSocket[] = [];
+    const timers: { fn: () => void; ms: number }[] = [];
+    const clock = { now: 1_000_000 };
+    const recoveryListeners = new Set<() => void>();
+    const source = new MeshEventSource({
+      url: 'ws://x/mesh/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      baseDelayMs: 100,
+      startDelayMs: 0,
+      nowFn: () => clock.now,
+      ...(options.silenceReconnectMs === undefined
+        ? {}
+        : { silenceReconnectMs: options.silenceReconnectMs }),
+      recovery: (listener) => {
+        recoveryListeners.add(listener);
+        return () => recoveryListeners.delete(listener);
+      },
+      setTimeoutFn: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimeoutFn: () => undefined,
+    });
+    const recover = () => {
+      for (const listener of [...recoveryListeners]) listener();
+    };
+    return { source, sockets, clock, recover };
+  }
+
+  test('回前台时静默已超阈值：摘掉旧 socket 换一条新的', () => {
+    const { source, sockets, clock, recover } = harness();
+    source.start();
+    sockets[0].open();
+    expect(source.connected).toBe(true);
+
+    clock.now += MESH_WS_SILENCE_RECONNECT_MS;
+    recover();
+
+    expect(sockets[0].closed).toBe(true);
+    expect(sockets).toHaveLength(2);
+    // 旧 socket 迟到的 onclose 不该再排一次重连
+    sockets[0].drop();
+    expect(sockets).toHaveLength(2);
+    source.stop();
+  });
+
+  test('刚收过帧就回前台：连接留着不动', () => {
+    const { source, sockets, clock, recover } = harness();
+    source.start();
+    sockets[0].open();
+
+    clock.now += MESH_WS_SILENCE_RECONNECT_MS;
+    sockets[0].emit(
+      nodeEventFrame({ nodeId: 'a', status: 0, reach: 'lan', inventory: null }).buffer
+    );
+    recover();
+
+    expect(sockets[0].closed).toBe(false);
+    expect(sockets).toHaveLength(1);
+    source.stop();
+  });
+
+  test('阈值之内不换连', () => {
+    const { source, sockets, clock, recover } = harness();
+    source.start();
+    sockets[0].open();
+
+    clock.now += MESH_WS_SILENCE_RECONNECT_MS - 1;
+    recover();
+
+    expect(sockets).toHaveLength(1);
+    source.stop();
   });
 });

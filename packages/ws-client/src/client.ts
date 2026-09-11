@@ -8,9 +8,23 @@ import {
   CarrierSwitchBarrier,
   type DirectCarrierLike,
 } from './carrier-switch';
+import { ResumeProbeGate, ResumeSignalListeners } from './client-resume';
+import {
+  type SocketFactory,
+  WS_CONNECTING,
+  WS_OPEN,
+  type WebSocketLike,
+  defaultSocketFactory,
+  defaultWsUrl,
+  toArrayBuffer,
+} from './client-socket';
 import { getDefaultClientVersion, setDefaultClientVersion } from './client-version';
 import { notifyHandlers } from './handler-fanout';
-import { resolveHeartbeatCadence } from './heartbeat-cadence';
+import {
+  normalizeNegotiatedHeartbeatIntervalMs,
+  resolveHeartbeatCadence,
+  resolveResumeProbeTimeoutMs,
+} from './heartbeat-cadence';
 import { type HeartbeatCadence, HeartbeatController } from './heartbeat-controller';
 import { NetworkWakeListeners } from './network-wake';
 import {
@@ -31,64 +45,21 @@ import { serverSupportsTermViewport } from './server-features';
 
 // ========== 配置 ==========
 
-// 惰性求值：允许在非浏览器环境 import 本模块，也允许宿主在构造时注入自定义端点
-export function defaultWsUrl(): string {
-  return `${typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${typeof window !== 'undefined' ? window.location.host : ''}/ws`;
-}
-
-// WHATWG 规定的 readyState 取值。用本地常量而非全局 WebSocket 的静态属性：
-// 注入的 transport 不必是 WebSocket 的实例，非浏览器环境下全局 WebSocket 也未必存在。
-const WS_CONNECTING = 0;
-const WS_OPEN = 1;
-
-/**
- * 浏览器 WebSocket 的最小结构子集。宿主可据此把 ws-borsh 帧承载在自定义通道上，
- * 只要实现遵循 WHATWG 的 readyState 取值约定。
- */
-export interface WebSocketLike {
-  readonly readyState: number;
-  binaryType: 'blob' | 'arraybuffer';
-  onopen: ((event?: unknown) => void) | null;
-  onmessage: ((event: { data: ArrayBuffer | string }) => void) | null;
-  onclose: ((event?: unknown) => void) | null;
-  onerror: ((event?: unknown) => void) | null;
-  send(data: ArrayBufferLike | ArrayBufferView | string): void;
-  close(code?: number, reason?: string): void;
-}
-
-export type SocketFactory = (url: string) => WebSocketLike;
-
-// DOM 的 onmessage 事件参数是 MessageEvent，在 strictFunctionTypes 下与 WebSocketLike 的
-// 结构化参数互不可赋值（参数逆变）。把这层不兼容收敛在此一处断言，不向接口撒 any。
-const defaultSocketFactory: SocketFactory = (url) => new WebSocket(url) as unknown as WebSocketLike;
-
-/** 屏障内部一律用 Uint8Array；交回 dispatcher 时零拷贝还原成 ArrayBuffer。 */
-function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  if (bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength) {
-    return bytes.buffer as ArrayBuffer;
-  }
-  return bytes.slice().buffer as ArrayBuffer;
-}
+export { defaultWsUrl } from './client-socket';
+export type { SocketFactory, WebSocketLike } from './client-socket';
 
 export const DEFAULT_HEARTBEAT_INTERVAL_MS = 5000;
 export const DEFAULT_PONG_TIMEOUT_MS = 10000;
-// 网关在 HELLO_S2C 里播报 heartbeatIntervalMs（当前 15s）。采纳它能把空闲会话的
-// PING/PONG 从 24 次/min 降到 8 次/min；钳位区间保证既不比缺省更吵，也不会因为
-// 服务端播报一个离谱值而把死连接检出拖到分钟级。
-export const MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS = 5000;
-export const MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS = 30000;
 // 页面在后台时的慢节奏：30s/60s。网关自身不设 socket 空闲超时，上界由外部代理决定
 // （Cloudflare Tunnel 约 100s），30s 仍有充足余量，同时把后台唤醒次数降到 1/6。
 export const DEFAULT_HIDDEN_HEARTBEAT_INTERVAL_MS = 30000;
 export const DEFAULT_HIDDEN_HEARTBEAT_TIMEOUT_MS = 60000;
 
-/** 服务端播报值归一化：0 / 非有限值视为「未协商」，其余钳到 [5s, 30s]。 */
-export function normalizeNegotiatedHeartbeatIntervalMs(value: number | undefined): number | null {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) return null;
-  if (value < MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS) return MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS;
-  if (value > MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS) return MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS;
-  return Math.round(value);
-}
+export {
+  MAX_NEGOTIATED_HEARTBEAT_INTERVAL_MS,
+  MIN_NEGOTIATED_HEARTBEAT_INTERVAL_MS,
+  normalizeNegotiatedHeartbeatIntervalMs,
+} from './heartbeat-cadence';
 
 const DEFAULT_OPTIONS: BorshClientOptions = {
   clientImpl: 'vibeterm-fe',
@@ -187,12 +158,17 @@ export class BorshWebSocketClient {
   private chunkProgressHandlers: Set<ChunkProgressHandler> = new Set();
   private pendingOverflowHandlers: Set<PendingOverflowHandler> = new Set();
 
-  // visibilitychange
-  private visibilityHandler: (() => void) | null = null;
+  // 恢复信号（visibilitychange / pageshow）
+  private readonly resumeSignals = new ResumeSignalListeners({
+    // 转入后台只换节奏、不补发 PING；在途 PONG 沿用原截止时间。
+    onVisibilityChange: () => this.applyHeartbeatCadence(),
+    onResume: () => this.handleResumeSignal(),
+  });
   private lastVisibilityReconnectAt = 0;
+  private readonly resumeProbeGate = new ResumeProbeGate();
 
   // online / navigator.connection change
-  private readonly networkWake = new NetworkWakeListeners(() => this.wakeReconnect());
+  private readonly networkWake = new NetworkWakeListeners(() => this.handleResumeSignal());
 
   // 协议级不可重试错误（对端版本低于 canonical v1.1 门槛）：重连只会原样再被拒一次，
   // 只有宿主升级或调用方显式 connect()/reconnect() 才有意义，故就地熄火。
@@ -338,7 +314,7 @@ export class BorshWebSocketClient {
 
   connect(): void {
     this.protocolFatal = false;
-    this.setupVisibilityListener();
+    this.resumeSignals.install();
     this.networkWake.install();
 
     if (this.ws?.readyState === WS_OPEN || this.ws?.readyState === WS_CONNECTING) {
@@ -405,11 +381,7 @@ export class BorshWebSocketClient {
       this.ws = null;
     }
 
-    if (this.visibilityHandler) {
-      document.removeEventListener('visibilitychange', this.visibilityHandler);
-      this.visibilityHandler = null;
-    }
-
+    this.resumeSignals.dispose();
     this.networkWake.dispose();
   }
 
@@ -447,6 +419,10 @@ export class BorshWebSocketClient {
     this.heartbeat.start();
     this.heartbeat.ping();
     this.reconnector.reset();
+  }
+
+  get negotiatedCapabilities(): readonly string[] {
+    return this.serverCapabilities;
   }
 
   private handlePong(payload: Uint8Array): void {
@@ -732,28 +708,29 @@ export class BorshWebSocketClient {
     this.heartbeat.stop();
   }
 
-  // ========== visibilitychange ==========
+  // ========== 恢复信号（visibilitychange / pageshow / online） ==========
 
-  private setupVisibilityListener(): void {
-    if (this.visibilityHandler) return;
-    if (typeof document === 'undefined') return;
-
-    const handler = () => {
-      // 转入后台只换节奏、不补发 PING；在途 PONG 沿用原截止时间。
-      this.applyHeartbeatCadence();
-      if (document.visibilityState !== 'visible') return;
-
-      this.heartbeat.clearPongTimeout();
-
-      if (this.state === 'READY') {
-        this.heartbeat.ping();
-        return;
-      }
+  /**
+   * 回前台 / 网络恢复的统一处置。READY 时补一次 PING，但这一次用 **RTT 推出来的短期限**
+   * 武装 PONG 超时（`resolveResumeProbeTimeoutMs`）：链路是僵尸的话秒级就能发现，而不是
+   * 干等常规的 30 s；期限内收到 PONG 就什么都不做，下一拍自动回到常规节奏。其余状态照旧立刻重连。
+   */
+  private handleResumeSignal(): void {
+    if (this.state !== 'READY') {
       this.wakeReconnect();
-    };
-
-    document.addEventListener('visibilitychange', handler);
-    this.visibilityHandler = handler;
+      return;
+    }
+    if (!this.resumeProbeGate.allow()) return;
+    // 探测没等到 PONG：这条 socket 是僵尸。只 `close()` 不够——对端已经不在，关闭握手可能
+    // 迟迟等不到回应，`onclose` 也就迟迟不来。直接强制重连（摘回调、关旧 socket、立刻建连）。
+    const deadlineMs = resolveResumeProbeTimeoutMs({
+      medianLatencyMs: this.heartbeat.medianLatencyMs,
+      pongTimeoutMs: this.heartbeat.cadence.pongTimeoutMs,
+    });
+    this.heartbeat.pingWithDeadline(deadlineMs, () => {
+      console.warn('[borsh-client] resume probe timed out, forcing reconnect');
+      this.reconnect();
+    });
   }
 
   /** 立即重连：清空退避计数后直接建连；CLOSED 态按节流放行。 */

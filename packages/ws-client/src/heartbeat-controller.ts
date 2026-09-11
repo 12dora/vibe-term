@@ -49,6 +49,8 @@ export class HeartbeatController {
   private pongTimer: ReturnType<typeof setTimeout> | null = null;
   private lastPingSentAt = 0;
   private pendingNonce: number | null = null;
+  /** 本次探测的专属超时处置（`pingWithDeadline` 设；落地或作废后清掉）。 */
+  private probeExpiry: (() => void) | null = null;
   private readonly samples: number[] = [];
   private intervalMs: number;
   private pongTimeoutMs: number;
@@ -62,6 +64,11 @@ export class HeartbeatController {
 
   get cadence(): HeartbeatCadence {
     return { intervalMs: this.intervalMs, pongTimeoutMs: this.pongTimeoutMs };
+  }
+
+  /** 本连接心跳 RTT 的中位数；还没有样本为 null（窗口 5 个，与 `notePong` 同源）。 */
+  get medianLatencyMs(): number | null {
+    return this.samples.length === 0 ? null : medianRounded(this.samples);
   }
 
   /**
@@ -103,17 +110,36 @@ export class HeartbeatController {
    */
   ping(): number | null {
     if (this.hasPendingPong()) return null;
+    return this.probe(this.pongTimeoutMs, null);
+  }
+
+  /**
+   * 用一次性期限发探测（回前台的僵尸链路探测）。与 `ping()` 的两点不同：
+   * - 在途探测一律作废重发：僵尸链路上那条在途 PING 武装的还是常规 30 s 期限，留着等于白等；
+   * - 只有**本次**用短期限，收到 PONG 后下一拍自动回到常规节奏。
+   *
+   * `onExpire` 覆盖本次的超时处置（缺省仍走 `onPongTimeout`）。
+   */
+  pingWithDeadline(deadlineMs: number, onExpire?: () => void): number | null {
+    this.clearPendingProbe();
+    return this.probe(deadlineMs, onExpire ?? null);
+  }
+
+  private probe(timeoutMs: number, onExpire: (() => void) | null): number | null {
     const nonce = randomNonce();
     if (!this.options.sendPing(nonce)) return null;
     this.pendingNonce = nonce;
     this.lastPingSentAt = this.now();
+    this.probeExpiry = onExpire;
     this.clearPongTimeout();
     this.pongTimer = setTimeout(() => {
       this.pongTimer = null;
       this.pendingNonce = null;
       this.lastPingSentAt = 0;
-      this.options.onPongTimeout();
-    }, this.pongTimeoutMs);
+      const expire = this.probeExpiry;
+      this.probeExpiry = null;
+      (expire ?? this.options.onPongTimeout)();
+    }, timeoutMs);
     return nonce;
   }
 
@@ -127,6 +153,7 @@ export class HeartbeatController {
     const sentAt = this.lastPingSentAt;
     this.pendingNonce = null;
     this.lastPingSentAt = 0;
+    this.probeExpiry = null;
     if (sentAt <= 0) return null;
     const rawMs = Math.max(0, Math.round(this.now() - sentAt));
     this.samples.push(rawMs);
@@ -149,5 +176,6 @@ export class HeartbeatController {
     this.clearPongTimeout();
     this.pendingNonce = null;
     this.lastPingSentAt = 0;
+    this.probeExpiry = null;
   }
 }

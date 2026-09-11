@@ -6,6 +6,7 @@ import { writeDeviceSnapshot } from '@/pages/devices/device-snapshot-store';
 import { devicesQueryKey } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import type { Device } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { AppRuntime, AppRuntimeOptions } from '@vibeterm/stores';
 import { retryNodeQuery } from '@vibeterm/stores';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
@@ -41,12 +42,32 @@ const DIRECT_FALLBACK_KEY = 'device.directFallbackToast';
 interface FakeConnection extends GatewayConnection {
   resumeHook: (() => void) | null;
   mountedPanes: Set<string>;
+  /** 把这条假连接推到 READY（直连接线等的就是这一下）。 */
+  becomeReady: () => void;
 }
 
-function fakeConnection(mountedPanes: string[] = []): FakeConnection {
+/**
+ * `ready: false` 的假连接模拟「运行时挂上了但 WS 还没开」——侧栏文件分节展开时就是这个状态。
+ * 直连接线必须等到 `becomeReady()` 之后才动。
+ */
+function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnection {
   const mounted = new Set(mountedPanes);
+  const stateListeners = new Set<(state: string) => void>();
+  let isReady = ready;
   const connection = {
-    client: {} as GatewayConnection['client'],
+    client: {
+      isReady: () => isReady,
+      onStateChange: (handler: (state: string) => void) => {
+        stateListeners.add(handler);
+        return () => {
+          stateListeners.delete(handler);
+        };
+      },
+    } as unknown as GatewayConnection['client'],
+    becomeReady: () => {
+      isReady = true;
+      for (const listener of [...stateListeners]) listener('READY');
+    },
     transport: { stateFeedMode: 'canonical' } as GatewayConnection['transport'],
     paneSinks: {
       hasPaneSink: (_deviceId: string, paneId: string) => mounted.has(paneId),
@@ -247,6 +268,53 @@ describe('createNodeConnection', () => {
     expect(nodeIds).toEqual(['node-b']);
     expect(controller.starts).toBe(1);
     expect(resolveDirectDiagnostics(connection).get()).toBe(controller.diagSnapshot);
+  });
+
+  test('WS 还没就绪时不拉直连栈、不起控制器；READY 之后才接线', async () => {
+    const controller = fakeController();
+    const connection = fakeConnection([], false);
+    let loads = 0;
+    createNodeConnection('node-lazy', {
+      createConnection: () => connection,
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
+      createController: () => controller,
+    });
+
+    await directLinkSettled(connection);
+    expect(loads).toBe(0);
+    expect(controller.starts).toBe(0);
+    // 诊断源与 resume 钩子仍然在建连同帧挂好，UI 不会错过订阅
+    expect(connection.directDiagnostics).not.toBeNull();
+    expect(connection.resumeHook).not.toBeNull();
+
+    connection.becomeReady();
+    await directLinkSettled(connection);
+    expect(loads).toBe(1);
+    expect(controller.starts).toBe(1);
+  });
+
+  test('等 READY 期间被 dispose：订阅摘掉，之后再 READY 也不起控制器', async () => {
+    const controller = fakeController();
+    const connection = fakeConnection([], false);
+    let loads = 0;
+    createNodeConnection('node-lazy-disposed', {
+      createConnection: () => connection,
+      loadDirect: async () => {
+        loads += 1;
+        return fakeDirectModule();
+      },
+      createController: () => controller,
+    });
+
+    connection.dispose();
+    connection.becomeReady();
+    await directLinkSettled(connection);
+
+    expect(loads).toBe(0);
+    expect(controller.starts).toBe(0);
   });
 
   test('加载前挂上的订阅者在控制器就位后收到通知', async () => {
@@ -505,6 +573,26 @@ class FakeSocket implements WebSocketLike {
     this.readyState = 3;
     this.onclose?.({ code });
   }
+
+  /** 走完 open + HELLO_S2C，把 ws-client 推到 READY。 */
+  negotiate(): void {
+    this.onopen?.();
+    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, {
+      serverImpl: 'vibeterm-gateway',
+      serverVersion: '2.1.0',
+      selectedVersion: 1,
+      maxFrameBytes: 1048576,
+      heartbeatIntervalMs: 15000,
+      capabilities: [],
+    });
+    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_S2C, payload, 1);
+    this.onmessage?.({
+      data: frame.buffer.slice(
+        frame.byteOffset,
+        frame.byteOffset + frame.byteLength
+      ) as ArrayBuffer,
+    });
+  }
 }
 
 function hostManager(options: {
@@ -621,14 +709,16 @@ describe('Gateway WS 的 client nonce（F3-5）', () => {
         return fakeController();
       },
     });
+    // 直连接线等 WS 就绪：还没连上时控制器根本不该被建出来（否则 `?cid=` 必然是 null）。
+    await directLinkSettled(connection);
+    expect(captured).toEqual([]);
+
+    connection.client.connect();
+    sockets[0].negotiate();
     await directLinkSettled(connection);
     const cid = captured[0];
     expect(cid).toBeDefined();
 
-    // 还没建 socket：没有 nonce，控制器只能退化成不带 cid 的查询
-    expect(cid?.()).toBeNull();
-
-    connection.client.connect();
     const first = cid?.();
     expect(first).toBe(cidOf(sockets[0].url));
 
@@ -734,6 +824,13 @@ describe('每 node 的 QueryClient：设备列表的过期时间与首帧占位'
     expect(defaults.staleTime).toBe(DEVICES_STALE_MS);
     // 其余查询不受影响，仍是 5 秒
     expect(nodeQueryClient(NODE_HEX_C).getDefaultOptions().queries?.staleTime).toBe(5000);
+    disposeNodeQueryClient(NODE_HEX_C);
+  });
+
+  test('回前台只补设备列表：其余查询的 refetchOnWindowFocus 一律关掉', () => {
+    const client = nodeQueryClient(NODE_HEX_C);
+    expect(client.getDefaultOptions().queries?.refetchOnWindowFocus).toBe(false);
+    expect(client.getQueryDefaults(devicesQueryKey).refetchOnWindowFocus).toBe(true);
     disposeNodeQueryClient(NODE_HEX_C);
   });
 
