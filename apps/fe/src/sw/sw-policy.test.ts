@@ -7,11 +7,11 @@ import {
   linkHintsFrom,
   linkHintsMessage,
   parseLinkHints,
-  shouldPrecacheLazy,
   planGenerationPrune,
   planGenerationSweep,
   precachePathSet,
   requestPathname,
+  shouldPrecacheLazy,
   withGapFilled,
 } from './sw-policy';
 
@@ -133,7 +133,6 @@ describe('precachePathSet / requestPathname / withGapFilled', () => {
     expect(missing.size).toBe(2);
   });
 });
-
 
 describe('链路提示与 lazy 档分级', () => {
   test('拿不到提示时照装：桌面浏览器普遍不给 effectiveType，行为必须与分级之前一致', () => {

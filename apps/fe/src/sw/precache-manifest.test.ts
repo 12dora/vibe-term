@@ -1,5 +1,6 @@
 // 预缓存清单：首屏那批必须落进 core（缺一不可的 addAll），其余 chunk 落 lazy，
-// 字体只取 index.css 静态声明的三个默认文件——generated 家族有 16 MB，绝不能混进来。
+// 字体只取产物 CSS 静态声明的默认文件——generated 家族有 16 MB，绝不能混进来；
+// 其中有 latin 子集垫底的完整面（每个 1.16 MB）再降一档到 lazy，弱网时随整档跳过。
 
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
@@ -12,6 +13,7 @@ import {
   emittedCssNames,
   htmlReferencedAssets,
   precacheAssetUrls,
+  splitFontTiers,
 } from './precache-manifest';
 
 const HTML = `<!doctype html><html><head>
@@ -22,7 +24,10 @@ const HTML = `<!doctype html><html><head>
 <link rel="stylesheet" crossorigin href="/assets/index-DytZTuFF.css">
 </head><body><div id="root"></div></body></html>`;
 
-const CSS = `@font-face{font-family:GeistMonoVibeTerm;src:url("/fonts/GeistMonoNerdFontMono-Regular.woff2") format("woff2")}
+// 与 default-font-face.generated.css 同形：两个字重各一对（latin 子集 + 完整面）+ 符号字体
+const CSS = `@font-face{font-family:GeistMonoVibeTerm;src:url("/fonts/GeistMonoNerdFontMono-Regular-latin.woff2") format("woff2")}
+@font-face{font-family:GeistMonoVibeTerm;src:url("/fonts/GeistMonoNerdFontMono-Regular.woff2") format("woff2")}
+@font-face{font-family:GeistMonoVibeTerm;src:url("/fonts/GeistMonoNerdFontMono-Bold-latin.woff2") format("woff2")}
 @font-face{font-family:GeistMonoVibeTerm;src:url("/fonts/GeistMonoNerdFontMono-Bold.woff2") format("woff2")}
 @font-face{font-family:NotoSansSymbols2VibeTerm;src:url("/fonts/NotoSansSymbols2-Regular.woff2") format("woff2")}`;
 
@@ -47,9 +52,11 @@ describe('htmlReferencedAssets', () => {
 });
 
 describe('declaredFontUrls', () => {
-  test('去重排序取三个默认字体', () => {
+  test('去重排序取全部默认字体（子集面与完整面都在内）', () => {
     expect(declaredFontUrls(CSS)).toEqual([
+      '/fonts/GeistMonoNerdFontMono-Bold-latin.woff2',
       '/fonts/GeistMonoNerdFontMono-Bold.woff2',
+      '/fonts/GeistMonoNerdFontMono-Regular-latin.woff2',
       '/fonts/GeistMonoNerdFontMono-Regular.woff2',
       '/fonts/NotoSansSymbols2-Regular.woff2',
     ]);
@@ -101,6 +108,27 @@ describe('emittedCssNames', () => {
   });
 });
 
+describe('splitFontTiers', () => {
+  test('有 -latin 子集垫底的完整面才延后，其余一律首屏装', () => {
+    const { eager, deferred } = splitFontTiers([
+      '/fonts/A-latin.woff2',
+      '/fonts/A.woff2',
+      '/fonts/B.woff2',
+    ]);
+    expect(eager).toEqual(['/fonts/A-latin.woff2', '/fonts/B.woff2']);
+    expect(deferred).toEqual(['/fonts/A.woff2']);
+  });
+
+  test('没有任何子集时全部首屏装（WP-B 之前的老产物）', () => {
+    const urls = ['/fonts/A.woff2', '/fonts/B.woff2'];
+    expect(splitFontTiers(urls)).toEqual({ eager: urls, deferred: [] });
+  });
+
+  test('子集自己不会被当成「完整面」延后', () => {
+    expect(splitFontTiers(['/fonts/A-latin.woff2']).deferred).toEqual([]);
+  });
+});
+
 describe('precacheAssetUrls', () => {
   test('只收 assets/ 下的 js / css / wasm', () => {
     expect(
@@ -143,16 +171,28 @@ describe('buildPrecacheManifest', () => {
     expect(manifest.core).toContain('/assets/index-DytZTuFF.css');
   });
 
-  test('lazy 是产物集合减去首屏集合，两者不重叠', () => {
+  test('lazy 是产物集合减去首屏集合（末尾接上延后的完整字体），与 core 不重叠', () => {
     expect(manifest.lazy).toEqual([
       '/assets/DevicePage-rBCXO5pj.js',
       '/assets/ghostty-vt-abc12345.wasm',
+      '/fonts/GeistMonoNerdFontMono-Bold.woff2',
+      '/fonts/GeistMonoNerdFontMono-Regular.woff2',
     ]);
     for (const url of manifest.lazy) expect(manifest.core).not.toContain(url);
   });
 
-  test('fonts 只有三个默认字体', () => {
-    expect(manifest.fonts).toHaveLength(3);
+  test('fonts 只留首屏要的那几个：latin 子集 + 没有子集的符号字体', () => {
+    expect(manifest.fonts).toEqual([
+      '/fonts/GeistMonoNerdFontMono-Bold-latin.woff2',
+      '/fonts/GeistMonoNerdFontMono-Regular-latin.woff2',
+      '/fonts/NotoSansSymbols2-Regular.woff2',
+    ]);
     expect(manifest.fonts.every((url) => !url.includes('/generated/'))).toBe(true);
+  });
+
+  test('1.16 MB 的完整面进 lazy 档（弱网可整档跳过，首个 PUA 图标时再取）', () => {
+    expect(manifest.lazy).toContain('/fonts/GeistMonoNerdFontMono-Regular.woff2');
+    expect(manifest.lazy).toContain('/fonts/GeistMonoNerdFontMono-Bold.woff2');
+    for (const url of manifest.fonts) expect(manifest.lazy).not.toContain(url);
   });
 });

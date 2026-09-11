@@ -5,9 +5,9 @@
 export interface SwPrecacheManifest {
   /** 首屏必备，进 cache.addAll（缺一不可） */
   core: string[];
-  /** 其余哈希 chunk，尽力而为 */
+  /** 其余哈希 chunk + 有子集垫底的完整字体，尽力而为；弱网 / 省流量下整档跳过 */
   lazy: string[];
-  /** 默认等宽字体，尽力而为 */
+  /** 首屏就要的字体：latin 子集与没有子集的小字体，尽力而为但从不跳过 */
   fonts: string[];
 }
 
@@ -51,6 +51,29 @@ export function declaredFontUrls(css: string): string[] {
   return [...new Set(found.filter((url) => !url.startsWith(OPTIONAL_FONT_PREFIX)))].sort();
 }
 
+/** 子集面的文件名后缀，由 `bun run build:fonts` 生成（如 `-Regular-latin.woff2`） */
+export const FONT_SUBSET_SUFFIX = '-latin';
+
+function subsetUrlOf(url: string): string {
+  return url.replace(/\.woff2$/, `${FONT_SUBSET_SUFFIX}.woff2`);
+}
+
+/**
+ * 字体分档。带 `unicode-range` 的完整面（Geist Mono Nerd 每个 1.16 MB，只覆盖 PUA 与其余区）
+ * 有 latin 子集垫底，首屏根本用不上它——放进 lazy 档，弱网时整档跳过，第一次出现 PUA 图标
+ * 时 CSS 自己会去取，运行时 cache-first 照样把它收进本代缓存。
+ * 判据是「同名的 `-latin` 子集也被声明了」：将来多切几个子集也不用改这里。
+ */
+export function splitFontTiers(urls: readonly string[]): { eager: string[]; deferred: string[] } {
+  const declared = new Set(urls);
+  const deferred = new Set(
+    urls.filter(
+      (url) => !url.endsWith(`${FONT_SUBSET_SUFFIX}.woff2`) && declared.has(subsetUrlOf(url))
+    )
+  );
+  return { eager: urls.filter((url) => !deferred.has(url)), deferred: [...deferred] };
+}
+
 /** 打包产物名（相对 outDir）→ 预缓存 URL；非 assets/ 哈希产物一律忽略 */
 export function precacheAssetUrls(bundleNames: readonly string[]): string[] {
   return bundleNames
@@ -66,9 +89,10 @@ export function buildPrecacheManifest(input: {
 }): SwPrecacheManifest {
   const emitted = precacheAssetUrls(input.bundleNames);
   const entry = new Set(htmlReferencedAssets(input.html));
+  const { eager, deferred } = splitFontTiers(declaredFontUrls(input.css));
   return {
     core: [SHELL_PRECACHE_URL, ...entry],
-    lazy: emitted.filter((url) => !entry.has(url)),
-    fonts: declaredFontUrls(input.css),
+    lazy: [...emitted.filter((url) => !entry.has(url)), ...deferred],
+    fonts: eager,
   };
 }
