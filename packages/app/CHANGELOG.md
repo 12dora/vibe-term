@@ -1,68 +1,33 @@
-# 2.2.0
+# 2.2.1
 
-_2026-09-11_
+_2026-09-12_
 
 ## English
 
-### New
-
-- **Faster first screen on slow links.** Opening a terminal used to take several round trips before anything appeared: the browser had to wait for the session metadata, then ask for the screen, then wait for it. The browser now sends "connect this device and give me this screen" in the same batch right after the handshake, and the node answers with metadata and the first screen together — two exchanges instead of three. The terminal also appears immediately with a "connecting" overlay instead of an empty box. Both sides must run 2.2.0; against an older node the client falls back to the old sequence automatically.
-- **STUN servers now ship with the release.** The list used to be frozen into `app.env` at install time, so a machine installed a year ago kept dialing a year-old list. The built-in list now travels with each release and takes effect on upgrade; upgrading removes the frozen default from `app.env` (a copy is kept under `backups/`). Set `VIBETERM_STUN_SERVERS` only to override it, or to `none` to switch STUN off. `vibeterm doctor` tells you which of the three is in effect.
-- **Zombie connections are noticed in seconds.** When a phone comes back from the background, a connection that silently died used to take up to a minute and a half to be replaced. VibeTerm now probes the link on every return to the foreground with a deadline scaled to the measured round-trip time, and reconnects immediately if the probe times out — about 2 s on a fast link, 3 s on a slow one.
-
-### Improvements
-
-- **Cold start on a slow mobile link is roughly three times faster.** Measured at 400 ms round-trip / 2 Mbps, the first terminal content appears in 7.4 s instead of 21.7 s, and the bytes needed before it drop from 4.8 MB to 0.8 MB. Three changes together: scripts, styles and WebAssembly are now served pre-compressed (brotli / gzip); the terminal's default font is split so the first frame waits for a 45 KB latin subset instead of a 1.2 MB file (the full font loads afterwards and the screen is redrawn); and only the language you actually use is downloaded.
-- **Timeouts follow the link instead of assuming a LAN.** Dial, forward and request deadlines are now derived from the measured round-trip time, so a node 800 ms away is no longer declared unreachable while it is still answering. Local-network behaviour is unchanged. An address that merely timed out backs off for at most 5 minutes (unreachable or refused addresses still back off for hours), and one successful dial clears that node's whole backoff.
-- **The phone app updates itself.** An iOS home-screen PWA used to stay on the version installed on the day it was added, because the new app shell only activates when every old tab is gone — which never happens on a phone. It now takes over at safe moments (page load, or coming back to the foreground after at least 30 s away) and reloads once. On weak or metered links the app shell no longer precaches the 7.5 MB of lazy chunks; it fills them in when the link improves.
-- Direct-connection negotiation no longer runs before the session exists (it used to burn several requests on a guaranteed 404 per remote node, on every connect), and `/api/rtc/authorize` failures now back off per node instead of retrying in a loop.
-- Returning to the foreground no longer triggers a burst of REST requests: only the device list refetches on focus, and it still honours its 60 s freshness window. The mesh event stream also yields the first screen to the terminal and reconnects when it has been silent for 30 s.
-- The connection details popover is rendered in a layer of its own and stays inside the visible viewport on phones, including with the keyboard open.
-
 ### Fixes
 
-- A hub or relay that explicitly withdraws its TURN configuration is now respected: nodes stop falling back to their own local TURN settings.
-- An empty STUN list from a hub means "I have no custom list", not "switch STUN off": the node keeps using the built-in list.
-- Service worker: a first install is no longer mistaken for a version change, so the page does not reload for no reason.
-- A language that was still locked at startup now really loads once unlocked (it used to stay as raw keys until the next full reload).
+- **Direct links between two nodes could get stuck forever.** A node that was "cooling down" after failed direct-connection attempts also refused to *answer* the other side's attempts, so the other side timed out, cooled down in turn, and the two never lined up. Answering an incoming attempt now always goes ahead, and waiting for an offer that never came no longer counts as a failure. After upgrading both sides, nodes that showed `relay` for hours should switch to `dc` within a couple of minutes.
+- **Proxy fake-IP addresses are no longer advertised as node endpoints.** Machines running Surge / Clash in TUN mode advertised `198.18.0.1`, and every other node then dialled its own proxy and failed. Such addresses are excluded from the advertised list and skipped when an older node still sends them.
+- **Relay meshes are now manageable from the CLI.** `vibeterm nodes enroll` prints an `r3.` join code on a relay mesh (it used to hit the hub API and fail), `vibeterm nodes meta-key admit <node>` / `rotate` re-issue the tenant member key (the fix for a node that was admitted but stays read-only, showing its raw id as its name), and `vibeterm nodes allow <node>` delivers that key to an already-admitted member. All three sign with your account password (`VIBETERM_PASSWORD` or a prompt).
+- **A newly admitted relay member no longer gets stuck without its member key.** Approving from the node table (or a resend) skipped the follow-up that hands the new node the tenant member key, so it stayed read-only: its name showed as a raw id, renaming failed, and the only retry lived in one browser tab's session. The relay status now reports members whose key is behind, every admission path delivers the key, and the settings page / connect panel show a banner with a one-click "deliver member key" action; clicking confirm twice no longer errors. Requires the entry node to be on 2.2.1.
+- **`vibeterm nodes upgrade` now works from the CLI.** Pushing an upgrade to a node through the entry needs that node's session; the CLI only sent the entry's, so it reported `NODE_LOGIN_REQUIRED` even after `vibeterm login --all-nodes`, and `--all` found nothing to upgrade. The CLI now sends the target node's session along and counts its own logins when choosing targets.
 
 ### Upgrade notes
 
-- **The STUN change and the faster first screen only take effect once the hub and every node run 2.2.0.** Mixed versions keep working — each link falls back to the old behaviour on its own.
-- **The phone PWA will reload itself once**, the first time you bring it back to the foreground after the upgrade. That is the takeover described above, not a crash.
-- The release package grows by about 4 MB (the pre-compressed copies of the static assets).
+- The direct-link fix needs 2.2.1 on **both** nodes of a pair; the hub / relay does not need to change for it.
 
 ---
 
 ## 中文
 
-### 新增
-
-- **慢链路上的首屏更快。** 打开终端此前要好几个来回才出画面：浏览器得先等会话元数据，再去要屏幕，再等屏幕回来。现在浏览器在握手之后的同一批里直接发出「连这台设备、给我这一屏」，节点把元数据和首屏一起回来——三次交换变两次。终端也不再是一个空框，而是立刻出现并叠一层「连接中」。需要两端都升到 2.2.0；对端是老版本时客户端自动回到旧时序。
-- **STUN 服务器改为随发行版分发。** 此前这份列表在装机时就被冻进 `app.env`，一年前装的机器就一直在用一年前的列表。现在内置列表随每次发行走，升级即生效；升级会把 `app.env` 里冻结的旧默认删掉（原文件在 `backups/` 留一份）。只有要覆盖时才设 `VIBETERM_STUN_SERVERS`，设成 `none` 表示关闭 STUN。`vibeterm doctor` 会告诉你当前生效的是哪一种。
-- **僵尸连接几秒内就能发现。** 手机从后台回来时，一条已经悄悄死掉的连接此前最长要一分半才会被换掉。现在每次回到前台都会按实测往返时延发一次带期限的探测，超时立刻重连——快链路约 2 秒，慢链路约 3 秒。
-
-### 改进
-
-- **慢速移动网络下的冷启动快了约三倍。** 在 400 ms 往返 / 2 Mbps 下实测，首个终端画面从 21.7 秒降到 7.4 秒，出画面前需要的字节从 4.8 MB 降到 0.8 MB。三件事叠加：脚本、样式与 WebAssembly 改为预压缩下发（brotli / gzip）；终端默认字体拆成两段，首帧只等 45 KB 的拉丁子集而不是 1.2 MB 的完整字体（完整字体在首屏之后加载并整屏重绘）；语言包只下当前真正用到的那一门。
-- **超时按链路自适应，不再按局域网拍脑袋。** 拨号、转发与请求的期限都由实测往返时延推出，800 ms 之外的节点不会在还在应答时就被判定不可达；局域网行为不变。仅仅是超时的地址最多退避 5 分钟（拒绝 / 不可达仍退避数小时），任一地址拨通即清空该节点的全部退避。
-- **手机上的应用会自己更新了。** iOS 主屏 PWA 此前会一直停在添加那天的版本：新的应用外壳要等所有旧页面退出才生效，而手机上这永远不会发生。现在它会在安全时刻（页面加载，或在后台待够 30 秒后回到前台）接管并刷新一次。弱网 / 省流量时不再预缓存那 7.5 MB 的懒加载分片，等链路转好再补装。
-- 直连协商不再在会话尚未建立时就开跑（此前每台远端节点、每次连接都要白打几次必然 404 的请求）；`/api/rtc/authorize` 失败改为按节点退避，不再原地重试。
-- 回到前台不再触发一批 REST 请求：只有设备列表会在获得焦点时刷新，且仍遵守 60 秒的新鲜期。多节点事件流也会把首屏让给终端，并在静默 30 秒后换一条连接。
-- 连接详情浮层改为独立图层渲染，手机上（包括键盘弹出时）始终留在可见区域内。
-
 ### 修复
 
-- hub / 中继显式撤回 TURN 配置时现在会被尊重：节点不再回落到自己本机的 TURN 设置。
-- hub 下发空 STUN 列表的含义是「我没有自定义列表」，不是「关掉 STUN」：节点继续用内置列表。
-- Service Worker：首次安装不再被误判成换版本，页面不会无缘无故刷新一次。
-- 启动时仍被锁住的语言在解锁后能真正加载（此前会一直显示裸 key，直到整页重载）。
+- **两台节点之间的直连可能永远建不起来。** 直连多次失败后进入冷却的节点，连对方发起的尝试也一并拒绝应答，于是对方超时、轮到对方冷却，两边永远对不上。现在收到对方的尝试一律应答，等一个始终没来的 offer 也不再记为失败。两侧都升级后，长期显示 `relay` 的节点应在一两分钟内切到 `dc`。
+- **代理的 fake-IP 地址不再作为节点端点广播。** 开着 Surge / Clash TUN 模式的机器会把 `198.18.0.1` 广播出去，其他节点随即去拨自己的代理并失败。这类地址已从广播列表剔除，老节点仍发来时拨号侧直接跳过。
+- **中继制 mesh 现在可以用 CLI 管理。** `vibeterm nodes enroll` 在中继 mesh 上直接出 `r3.` 加入码（以前打 Hub 接口报错），`vibeterm nodes meta-key admit <节点>` / `rotate` 补发或轮换租户成员密钥（修复「已准入却一直只读、名字显示为一串 id」的节点），`vibeterm nodes allow <节点>` 给已准入成员补发该密钥。三者都用账户密码签名（`VIBETERM_PASSWORD` 或交互输入）。
+- **新准入的中继成员不再卡在「没有成员密钥」。** 从节点表批准（或重发）时跳过了给新节点下发租户成员密钥的收尾，节点只能只读：名字显示为一串 id、改名报错，唯一的重试入口只存在于某一个浏览器标签页。现在中继状态会列出成员密钥落后的节点，所有准入入口都会下发密钥，设置页与接入面板有告警条和一键「补发成员密钥」；重复点确认也不再报错。入口节点需升到 2.2.1。
+- **`vibeterm nodes upgrade` 现在能用了。** 经入口向节点推送升级需要该节点的会话，而 CLI 只带了入口自己的，于是 `vibeterm login --all-nodes` 之后仍报 `NODE_LOGIN_REQUIRED`，`--all` 也选不出目标。CLI 现在会附带目标节点的会话，并把自己的登录计入可升级判定。
 
 ### 升级说明
 
-- **STUN 变更与首屏合并只有在 hub 与全部节点都升到 2.2.0 后才生效。** 混合版本照常工作——每条链路各自回落到旧行为。
-- **手机上的 PWA 会自己刷新一次**，就在升级后第一次把它切回前台的时候。这是上面说的换代接管，不是崩溃。
-- 发行包体增大约 4 MB（静态资源的预压缩副本）。
-
----
-
+- 直连修复需要一对节点**两侧**都升到 2.2.1；hub / 中继不需要为此改动。
