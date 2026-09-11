@@ -6,6 +6,7 @@
 
 import { isSharePathname } from '@/share/share-route';
 import { activateWaitingWorkerFromBrowser } from '@vibeterm/ui/sw-activation';
+import { type NavigatorConnectionLike, linkHintsMessage } from './sw-policy';
 import {
   type SwUpdateRegistrationLike,
   browserSwUpdateGuard,
@@ -57,8 +58,23 @@ export async function applyServiceWorkerPolicy(
 }
 
 interface SwMessageTargetLike {
-  readonly controller: unknown;
+  readonly controller: { postMessage(message: unknown): void } | null;
   addEventListener(type: 'message', listener: (event: { data?: unknown }) => void): void;
+}
+
+/**
+ * 链路提示只有页面拿得到（iOS 的 worker 作用域没有 `navigator.connection`），而 SW 要靠它
+ * 决定装不装 7.5 MB 的懒 chunk 档。注册后与每次回到前台各报一次：前者覆盖「装下一代之前」，
+ * 后者覆盖「从蜂窝切到 Wi-Fi」。首次安装时还没有 controller，发不出去也不要紧——
+ * 那一代按未知处理（照装），下一次加载就能报上。
+ */
+function postLinkHints(container: SwMessageTargetLike | undefined): void {
+  const connection = (navigator as { connection?: NavigatorConnectionLike }).connection;
+  try {
+    container?.controller?.postMessage(linkHintsMessage(connection));
+  } catch {
+    // 控制者恰好在换代之类：下一次安全时刻还会再报
+  }
 }
 
 /** 把换代接管接到浏览器事件上：SW 的 stale 消息、回到前台、bfcache 恢复 */
@@ -78,12 +94,18 @@ export function wireServiceWorkerUpdates(
     if (isShellStaleMessage(event.data)) updates.onShellStale();
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') void updates.onSafeMoment();
-    else updates.onHidden();
+    if (document.visibilityState !== 'visible') {
+      updates.onHidden();
+      return;
+    }
+    postLinkHints(container);
+    void updates.onSafeMoment();
   });
   window.addEventListener('pageshow', (event) => {
+    postLinkHints(container);
     void updates.onSafeMoment({ persisted: (event as PageTransitionEvent).persisted });
   });
+  postLinkHints(container);
   void updates.start();
 }
 

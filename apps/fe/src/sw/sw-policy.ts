@@ -69,3 +69,54 @@ export function withGapFilled(missing: ReadonlySet<string>, path: string): Set<s
   next.delete(path);
   return next;
 }
+
+/**
+ * 页面 → SW：把链路提示带过去。SW 里拿不到这些——iOS 的 worker 作用域根本没有
+ * `navigator.connection`，而「要不要在装机后立刻拖 7.5 MB 懒 chunk」只能按链路质量决定。
+ */
+export const SW_LINK_HINTS_MESSAGE = 'vibeterm:sw-link-hints';
+
+export interface SwLinkHints {
+  /** 用户开了省流量（Data Saver） */
+  saveData: boolean;
+  /** `navigator.connection.effectiveType`；浏览器不给就是 null */
+  effectiveType: string | null;
+}
+
+export interface NavigatorConnectionLike {
+  saveData?: boolean;
+  effectiveType?: string;
+}
+
+export function linkHintsFrom(connection: NavigatorConnectionLike | undefined): SwLinkHints {
+  return {
+    saveData: connection?.saveData === true,
+    effectiveType: typeof connection?.effectiveType === 'string' ? connection.effectiveType : null,
+  };
+}
+
+/** 页面发给 SW 的那条消息 */
+export function linkHintsMessage(connection: NavigatorConnectionLike | undefined): {
+  type: string;
+  hints: SwLinkHints;
+} {
+  return { type: SW_LINK_HINTS_MESSAGE, hints: linkHintsFrom(connection) };
+}
+
+/** 页面发来的链路提示；不是这条消息（或字段不成形）就返回 null */
+export function parseLinkHints(data: unknown): SwLinkHints | null {
+  const message = data as { type?: unknown; hints?: NavigatorConnectionLike } | null;
+  if (message?.type !== SW_LINK_HINTS_MESSAGE) return null;
+  return linkHintsFrom(message.hints);
+}
+
+/**
+ * 要不要装 lazy 档（214 条 ≈ 7.5 MB）。只有**明确**省流量或**明确**慢才跳过：
+ * 拿不到提示（桌面浏览器普遍不给 effectiveType、iOS 压根没有这套 API）时照装，
+ * 行为与分级之前完全一致。跳过之后懒 chunk 仍由运行时 cache-first 按需回填。
+ */
+export function shouldPrecacheLazy(hints: SwLinkHints | null): boolean {
+  if (!hints) return true;
+  if (hints.saveData) return false;
+  return hints.effectiveType === null || hints.effectiveType === '4g';
+}

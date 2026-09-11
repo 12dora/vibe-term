@@ -2,6 +2,9 @@
 // （index.html 是 no-cache，字体 2.48 MB 每次至少一次条件请求），这里把「一代构建」的
 // index.html + 全部哈希资源 + 三个默认字体整体缓存下来，冷启动只剩 API 往返。
 //
+// 分档：`core`（首屏必备）与默认字体始终装；`lazy`（≈ 214 条 7.5 MB）在页面报来「省流量 /
+// 非 4g」时整档跳过，只留标记，链路转好再后台补装一次，期间照常由运行时 cache-first 按需回填。
+//
 // 生成策略：缓存名带构建 id（版本 + 预缓存清单哈希），一次构建一代。默认不做
 // skipWaiting / clients.claim——新 SW 装好自己那代缓存后等旧客户端全部退出才激活，
 // 正在跑的页面始终拿到同一代的壳与 chunk，杜绝「壳更新了但 chunk 哈希已不存在」的整页刷新。
@@ -18,12 +21,17 @@
 
 import { SW_SHELL_STALE_MESSAGE, SW_SKIP_WAITING_MESSAGE } from '@vibeterm/ui/sw-activation';
 import {
+  type NavigatorConnectionLike,
+  type SwLinkHints,
   acceptsNetworkShell,
   isMeaningfulGap,
+  linkHintsFrom,
+  parseLinkHints,
   planGenerationPrune,
   planGenerationSweep,
   precachePathSet,
   requestPathname,
+  shouldPrecacheLazy,
   withGapFilled,
 } from './sw-policy';
 import { SHELL_URL, type SwRouteKind, classifyRequest } from './sw-routes';
@@ -58,6 +66,8 @@ interface SwWindowClient {
 
 interface SwGlobalScope {
   readonly location: { origin: string };
+  /** Chromium 的 worker 作用域给 connection，Safari 不给；首次安装还没收到页面提示时用得上 */
+  readonly navigator?: { connection?: NavigatorConnectionLike };
   readonly registration: { update(): Promise<void>; unregister(): Promise<boolean> };
   readonly clients: { matchAll(options: { type: 'window' }): Promise<readonly SwWindowClient[]> };
   skipWaiting(): Promise<void>;
@@ -89,6 +99,17 @@ const OPTIONAL_PRECACHE_CONCURRENCY = 6;
 
 /** 本代预缓存缺口清单的存放位置。只能存缓存里：SW 随时会被杀，模块变量活不过一次休眠。 */
 const GAP_MARKER_URL = '/__vibeterm-sw__/partial-generation';
+
+/** 本代「lazy 档按弱网跳过了」的标记；链路转好时据此在后台补装，每代只补一次。 */
+const DEFERRED_LAZY_URL = '/__vibeterm-sw__/deferred-lazy';
+
+/**
+ * 链路提示单独存一个**不带代号**的缓存：新一代在 install 期开的是它自己那份空缓存，
+ * 读不到上一代存下的提示，而「这次要不要装 lazy 档」恰恰要在 install 期就决定。
+ * 名字刻意不带 CACHE_PREFIX，免得被换代清扫顺手删掉。
+ */
+const LINK_HINTS_CACHE = 'vibeterm-link-hints';
+const LINK_HINTS_URL = '/__vibeterm-sw__/link-hints';
 
 const PRECACHED_PATHS = precachePathSet(__SW_PRECACHE__.core, __SW_PRECACHE__.lazy);
 
@@ -146,17 +167,71 @@ async function pruneDiscardedGenerations(): Promise<void> {
   await Promise.all(stale.map((name) => caches.delete(name)));
 }
 
+async function readStoredLinkHints(): Promise<SwLinkHints | null> {
+  try {
+    const cache = await caches.open(LINK_HINTS_CACHE);
+    const hit = await cache.match(LINK_HINTS_URL);
+    return hit ? ((await hit.json()) as SwLinkHints) : null;
+  } catch {
+    return null;
+  }
+}
+
+async function storeLinkHints(hints: SwLinkHints): Promise<void> {
+  const cache = await caches.open(LINK_HINTS_CACHE);
+  await cache.put(LINK_HINTS_URL, new Response(JSON.stringify(hints)));
+}
+
+/** 页面还没来得及报（首次安装）时退而求其次：Chromium 的 worker 里有 connection */
+async function currentLinkHints(): Promise<SwLinkHints | null> {
+  const stored = await readStoredLinkHints();
+  if (stored) return stored;
+  const connection = self.navigator?.connection;
+  return connection ? linkHintsFrom(connection) : null;
+}
+
 async function precacheGeneration(): Promise<void> {
   const cache = await caches.open(CACHE_NAME);
   // 首屏那一批缺一不可：任一失败即放弃本代安装，宁可继续用旧代也不留半套壳
   await cache.addAll([...__SW_PRECACHE__.core]);
+  // 弱网 / 省流量下跳过 lazy 档（≈ 7.5 MB），只留标记，等链路转好再补；字体照装
+  const precacheLazy = shouldPrecacheLazy(await currentLinkHints());
+  if (!precacheLazy) await cache.put(DEFERRED_LAZY_URL, new Response('1'));
   // 懒 chunk 与字体是渐进增强：先逐个补，失败的整体重试一轮再判定
-  const optional = [...__SW_PRECACHE__.lazy, ...__SW_PRECACHE__.fonts];
+  const optional = [...(precacheLazy ? __SW_PRECACHE__.lazy : []), ...__SW_PRECACHE__.fonts];
   const retried = await addBestEffort(cache, await addBestEffort(cache, optional));
+  // 判缺口只看**真的试过**的那些：主动跳过的 lazy 档不是「这一代装坏了」，
+  // 导航预算必须留在 600 ms，否则弱网用户反而每次导航都多等 4 s
   if (isMeaningfulGap(retried, __SW_PRECACHE__.fonts)) {
     await writeGapPaths(cache, new Set(retried));
   }
   await pruneDiscardedGenerations();
+}
+
+/** 同一实例内不许两个补装并行；跨实例由「先删标记再下载」兜住 */
+let resumingLazy = false;
+
+/**
+ * 链路转好后补装当初跳过的 lazy 档。先删标记再下载：每代只补一次，补到一半被杀
+ * 也不会反复重来——剩下的照样由运行时 cache-first 按需回填。
+ */
+async function resumeDeferredLazy(): Promise<void> {
+  if (destructed || resumingLazy) return;
+  const cache = await caches.open(CACHE_NAME);
+  if (!(await cache.match(DEFERRED_LAZY_URL))) return;
+  resumingLazy = true;
+  try {
+    await cache.delete(DEFERRED_LAZY_URL);
+    await addBestEffort(cache, [...__SW_PRECACHE__.lazy]);
+  } finally {
+    resumingLazy = false;
+  }
+}
+
+/** 收到页面的链路提示：存下来给下一代 install 用，链路够好就把欠的 lazy 档补上 */
+async function applyLinkHints(hints: SwLinkHints): Promise<void> {
+  await storeLinkHints(hints);
+  if (shouldPrecacheLazy(hints)) await resumeDeferredLazy();
 }
 
 async function dropOtherGenerations(): Promise<void> {
@@ -254,10 +329,15 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(dropOtherGenerations());
 });
 
-// 页面侧逃生通道：chunk 404 时让 waiting 的这一版立刻接管，再刷新（见 ./sw-reload.ts）
+// 页面侧来的两种消息：chunk 404 时让 waiting 的这一版立刻接管（见 ./sw-reload.ts）、
+// 以及链路提示（SW 自己拿不到，见 ./sw-policy 的 shouldPrecacheLazy）
 self.addEventListener('message', (event) => {
-  if ((event.data as { type?: unknown } | null)?.type !== SW_SKIP_WAITING_MESSAGE) return;
-  keepAlive(event, self.skipWaiting());
+  if ((event.data as { type?: unknown } | null)?.type === SW_SKIP_WAITING_MESSAGE) {
+    keepAlive(event, self.skipWaiting());
+    return;
+  }
+  const hints = parseLinkHints(event.data);
+  if (hints) keepAlive(event, applyLinkHints(hints));
 });
 
 self.addEventListener('fetch', (event) => {
