@@ -1,6 +1,19 @@
 /** 应答侧记住的 offer epoch 的有效期：够覆盖一次拨号窗口内的在途信令即可。 */
 export const RTC_OFFER_EPOCH_TTL_MS = 30_000;
 
+/** offerer epoch 的时间基：每秒预留这么多个序号，同时保证秒数抬升一定压过进程内计数器。 */
+export const RTC_EPOCH_PER_SECOND = 4096;
+
+/**
+ * offerer 的 epoch 以秒级时间戳为基数分配，保证**跨进程重启单调递增**：
+ * 重启后新进程的基数至少比旧进程启动时高 uptime 秒，远大于旧进程用掉的序号，
+ * 应答侧因此不会把重启后的新 offer 当成陈旧信令（也不会被重启前的迟到 offer supersede）。
+ * 结果始终是安全整数（2100 年的基数也只有 1.7e13），对 2.1.x / 2.2.x 的 `isValidOptionalEpoch` 合法。
+ */
+export function rtcAttemptEpochBase(nowMs: number): number {
+  return Math.max(0, Math.floor(nowMs / 1000)) * RTC_EPOCH_PER_SECOND;
+}
+
 type OfferEpochEntry = { epoch: number; at: number };
 
 /**

@@ -5,12 +5,16 @@ import { type IceCandidateTrace, type RtcLogContext, rtcLog, rtcLogCandidate } f
 
 export type QueuedRemoteCandidate = { candidate: string; mid: string; epoch?: number };
 
+/** offer 落地前每个 attempt 最多排队的远端候选数：正常拨号十几条，超出即对端在灌。 */
+export const RTC_PENDING_CANDIDATE_MAX = 64;
+
 export type SignalingAttemptState = {
   epoch?: number;
   lastOfferEpoch?: number;
   answerApplied: boolean;
   remoteDescriptionApplied: boolean;
   pendingCandidates: QueuedRemoteCandidate[];
+  pendingDropped: number;
   logFields?: RtcLogContext;
   onSuperseded?: (epoch?: number) => void;
   onEpoch?: (epoch: number) => void;
@@ -35,6 +39,7 @@ export function createSignalingAttemptState(
     answerApplied: false,
     remoteDescriptionApplied: false,
     pendingCandidates: [],
+    pendingDropped: 0,
   };
 }
 
@@ -159,16 +164,47 @@ export function applyRemoteCandidate(
     logEpochMismatch(peer, 'candidate', state.epoch, decoded.epoch, state);
     return;
   }
-  rtcLogCandidate('recv', peer, decoded.candidate, trace);
   if (!state.remoteDescriptionApplied) {
-    state.pendingCandidates.push({
+    const queued = queuePendingCandidate(peer, state, {
       candidate: decoded.candidate,
       mid: decoded.mid,
       ...(decoded.epoch === undefined ? {} : { epoch: decoded.epoch }),
     });
+    if (queued) rtcLogCandidate('recv', peer, decoded.candidate, trace);
     return;
   }
+  rtcLogCandidate('recv', peer, decoded.candidate, trace);
   addRemoteCandidate(pc, peer, decoded.candidate, decoded.mid, state);
+}
+
+/** 排队上限 + 去重：对端可以在 offer 到达前灌任意多条候选，不能让 attempt 无界增长。 */
+function queuePendingCandidate(
+  peer: string,
+  state: SignalingAttemptState,
+  item: QueuedRemoteCandidate
+): boolean {
+  const duplicate = state.pendingCandidates.some(
+    (row) => row.candidate === item.candidate && row.mid === item.mid && row.epoch === item.epoch
+  );
+  const full = state.pendingCandidates.length >= RTC_PENDING_CANDIDATE_MAX;
+  if (!duplicate && !full) {
+    state.pendingCandidates.push(item);
+    return true;
+  }
+  state.pendingDropped += 1;
+  if (state.pendingDropped === 1 || state.pendingDropped % RTC_PENDING_CANDIDATE_MAX === 0) {
+    logSignal(
+      'signal dropped',
+      {
+        peer,
+        kind: 'candidate',
+        cause: duplicate ? 'duplicate' : 'pending-overflow',
+        dropped: state.pendingDropped,
+      },
+      state
+    );
+  }
+  return false;
 }
 
 function markRemoteDescriptionApplied(

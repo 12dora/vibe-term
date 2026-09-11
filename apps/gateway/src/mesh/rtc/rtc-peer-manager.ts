@@ -35,7 +35,7 @@ import type {
 } from './native';
 import { isSupersededDcLoss } from './rtc-dial-progress';
 import { type RtcLogContext, rtcLog, runWithRtcLogContext } from './rtc-log';
-import { OfferEpochMemory } from './rtc-offer-epoch';
+import { OfferEpochMemory, rtcAttemptEpochBase } from './rtc-offer-epoch';
 import { bindPeerSignaling, runPeerConnectAttempt } from './rtc-peer-connect';
 import {
   type LocalDescriptionEvent,
@@ -156,6 +156,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly localDescriptionHubs = new WeakMap<PeerConnectionLike, LocalDescriptionHub>();
   private readonly dialAggregates = new Map<string, RtcDialAggregate>();
   private readonly lastOfferEpochByPeer: OfferEpochMemory;
+  private readonly rtcEpochBase: number;
   private rtcAttemptEpoch = 0;
   private logSeq = 0;
   private probePc: PeerConnectionLike | null = null;
@@ -169,6 +170,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.userStore = opts.userStore;
     this.now = opts.now ?? Date.now;
     this.lastOfferEpochByPeer = new OfferEpochMemory(() => this.now());
+    this.rtcEpochBase = rtcAttemptEpochBase(this.now());
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.authorizeTtlMs = opts.authorizeTtlMs ?? RTC_AUTHORIZE_TTL_MS;
     this.authorizeMax = opts.authorizeMax ?? RTC_AUTHORIZE_MAX;
@@ -492,8 +494,10 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   private nextRtcAttemptEpoch(): number {
-    this.rtcAttemptEpoch = (this.rtcAttemptEpoch % Number.MAX_SAFE_INTEGER) + 1;
-    return this.rtcAttemptEpoch;
+    this.rtcAttemptEpoch += 1;
+    const next = this.rtcEpochBase + this.rtcAttemptEpoch;
+    // 基数 ≤1e13、计数器是本进程拨号次数，溢出不可达；兜底退回纯计数器保证仍是合法 epoch。
+    return Number.isSafeInteger(next) ? next : this.rtcAttemptEpoch;
   }
 
   private noteDialSummary(

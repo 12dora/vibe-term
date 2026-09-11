@@ -6,7 +6,7 @@ import { dummyUplink } from './peer-test-fixtures';
 import type { RtcPeerManager } from './rtc';
 import { encodeCandidateSignal, encodeSdpSignal, peerRtcSession } from './rtc/ice';
 import { resetRtcLogStateForTest } from './rtc/rtc-log';
-import { RTC_OFFER_EPOCH_TTL_MS } from './rtc/rtc-offer-epoch';
+import { RTC_OFFER_EPOCH_TTL_MS, rtcAttemptEpochBase } from './rtc/rtc-offer-epoch';
 import { createFakeNativeModule } from './rtc/test-fakes';
 import { seedNodeIdentity, seedUser, waitUntil } from './test-support';
 
@@ -183,6 +183,28 @@ describe('answerer applies a peer-initiated offer', () => {
       2_000
     );
     expect(dropped()).toEqual([]);
+  });
+
+  test('a late pre-restart offer cannot supersede the attempt started after the restart', async () => {
+    const h = await setupAnswerer(fixtures);
+    // offerer 的 epoch 以秒级时间基分配：重启后的新 epoch 必然高于旧进程用过的值。
+    const oldEpoch = rtcAttemptEpochBase(h.clock.ms) + 49;
+    const freshEpoch = rtcAttemptEpochBase(h.clock.ms + 600_000) + 1;
+    h.offer(oldEpoch);
+    await waitUntil(() => h.answers().length > 0, 2_000);
+    await waitUntil(() => lines.some((line) => line.includes('dial timeout')), 2_000);
+    lines = [];
+    h.offer(freshEpoch);
+    await waitUntil(() => h.answers().length > 1, 2_000);
+    h.offer(oldEpoch);
+    h.candidate(oldEpoch, 3);
+    await waitUntil(() => dropped().some((line) => line.includes('cause=epoch-mismatch')), 2_000);
+    expect(dropped().some((line) => line.includes('cause=superseded'))).toBe(false);
+    await waitUntil(
+      () => lines.some((line) => line.includes('dial timeout') && line.includes('stage=checking')),
+      2_000
+    );
+    expect(h.answers()).toHaveLength(2);
   });
 
   test('a stale epoch is still rejected while the memory is fresh', async () => {
