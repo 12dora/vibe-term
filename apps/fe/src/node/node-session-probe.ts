@@ -51,8 +51,23 @@ function isIdempotentRead(init?: RequestInit): boolean {
  * 带退避门的每 node REST 客户端：退避窗口里的 GET 就地短路（不进网络），
  * 其余请求照常发出并把成败记进退避。`self` 不设门。
  */
+const gatedClients = new Map<string, ApiClient>();
+
+/** 同一 node 复用一个实例：运行时与会话探测共享延迟 EWMA，探测超时才有观测可依。 */
 export function createGatedNodeApiClient(nodeId: string): ApiClient {
   if (isSelfNode(nodeId)) return createNodeApiClient(nodeId);
+  const cached = gatedClients.get(nodeId);
+  if (cached) return cached;
+  const client = buildGatedNodeApiClient(nodeId);
+  gatedClients.set(nodeId, client);
+  return client;
+}
+
+export function resetGatedNodeApiClientsForTest(): void {
+  gatedClients.clear();
+}
+
+function buildGatedNodeApiClient(nodeId: string): ApiClient {
   const transport: FetchLike = (url, init) => {
     if (isIdempotentRead(init) && isNodeRequestBlocked(nodeId)) {
       return Promise.reject(new NodeBackoffSkippedError(nodeId));

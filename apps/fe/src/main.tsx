@@ -27,6 +27,7 @@ import {
 } from '@/lib/chunk-preload';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { warmTerminalFonts } from '@/lib/fonts/warm-terminal-fonts';
+import { notifyFirstTerminalPaint } from '@/node/mesh-events';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
 import { NodeRouteGate, NodeRuntimeBoundary, useRouteNodeId } from '@/node/node-runtime-boundary';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
@@ -438,6 +439,8 @@ void i18nReady
     // 其余后台预热（rest 语言包 + 侧栏两个顶层页的 chunk + 终端字体，合计 ≈ 1.2 MB）
     // 受冷启动预算约束：弱网 / 省流量一律不预热，终端路由推到首个终端内容绘制之后。
     // 见 @/lib/chunk-preload 的 startupPreloadGate。
+    // /mesh/ws 也排在首个终端绘制之后（mesh-events 自带 3 s 兜底）。
+    void whenFirstTerminalScreenPainted().then(notifyFirstTerminalPaint);
     const gate = startupPreloadGate({
       pathname: window.location.pathname,
       connection: readNetworkInformation(),
