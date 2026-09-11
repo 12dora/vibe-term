@@ -17,7 +17,12 @@
 // 「登录此节点」按钮，用户点得动）——探测明明说会话有效的那档不动登录态：HTTP 已经证明
 // 会话在，翻它只会让界面撒谎，而重连仍在按 10 分钟的节奏自己试。
 
-import { createNodeApiClient, fetchDevices, isNodeLoginRequiredError } from '@vibeterm/api-client';
+import {
+  createNodeApiClient,
+  fetchDevices,
+  isNodeLoginRequiredError,
+  sessionProbeTimeoutMs,
+} from '@vibeterm/api-client';
 
 /** 探测结论：会话有效 / 该 node 要重新登录 / 根本没问到（不可达、网络错误）。 */
 export type NodeSessionProbe = 'ok' | 'login-required' | 'unreachable';
@@ -34,7 +39,7 @@ export const DEFAULT_TRANSIENT_WINDOW_MS = 5 * 60_000;
 /** 判定之后的慢速重连间隔。 */
 export const GIVE_UP_RECONNECT_MS = 10 * 60_000;
 
-/** 探测自备的超时：转发器的链路截止是 5 秒，留一点余量就该收手。 */
+/** 探测超时下限：无 EWMA 时 8s，高 RTT 由 `sessionProbeTimeoutMs` 放大到 30s。 */
 export const PROBE_TIMEOUT_MS = 8_000;
 
 const RECONNECT_BASE_MS = 1_000;
@@ -42,9 +47,10 @@ const RECONNECT_MAX_MS = 30_000;
 
 /** 缺省探测：拉一次该 node 的设备列表，最便宜的「带会话」端点。 */
 export async function probeNodeSessionByDevices(nodeId: string): Promise<NodeSessionProbe> {
+  const client = createNodeApiClient(nodeId);
   try {
-    await fetchDevices(createNodeApiClient(nodeId), {
-      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    await fetchDevices(client, {
+      signal: AbortSignal.timeout(sessionProbeTimeoutMs(client.lastLatencyMs())),
     });
     return 'ok';
   } catch (error) {

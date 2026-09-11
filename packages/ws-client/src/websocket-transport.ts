@@ -17,7 +17,8 @@ import type {
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,
-  STALE_INPUT_TTL_MS,
+  DEFAULT_RECONNECT_BUDGET_MS,
+  staleInputTtlMs,
 } from './pending-send-queue';
 import { encodeGatewayTransportCommand } from './transport-command-encoder';
 import { decodeGatewayTransportMessage } from './transport-message-decoder';
@@ -52,6 +53,16 @@ function onDocumentVisible(resume: () => void): () => void {
   return () => owner.removeEventListener('visibilitychange', handler);
 }
 
+/** 显式预算优先；否则读 client 上的 `reconnectBudgetMs`（client.ts 尚未暴露时退化为 30s）。 */
+function resolveReconnectBudgetMs(client: BorshWebSocketClient, override?: number): number {
+  if (typeof override === 'number' && Number.isFinite(override) && override > 0) return override;
+  const fromClient = (client as { reconnectBudgetMs?: unknown }).reconnectBudgetMs;
+  if (typeof fromClient === 'number' && Number.isFinite(fromClient) && fromClient > 0) {
+    return fromClient;
+  }
+  return DEFAULT_RECONNECT_BUDGET_MS;
+}
+
 export class WebSocketGatewayTransport implements GatewayTransport {
   readonly kind = 'websocket' as const;
   readonly sourceRoute = 'gateway' as const;
@@ -76,11 +87,14 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   private pendingOverflowOpen = false;
   private pendingInputAborted = false;
   private lastFeedMode: StateFeedMode = 'pending';
+  private readonly reconnectBudgetMs: number;
 
   constructor(
     readonly client: BorshWebSocketClient,
-    private readonly now: () => number = Date.now
+    private readonly now: () => number = Date.now,
+    reconnectBudgetMs?: number
   ) {
+    this.reconnectBudgetMs = resolveReconnectBudgetMs(client, reconnectBudgetMs);
     const limits = client.pendingCommandLimits ?? {
       maxBytes: DEFAULT_MAX_PENDING_BYTES,
       maxFrames: DEFAULT_MAX_PENDING_FRAMES,
@@ -106,6 +120,10 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       this.syncFeedMode(client.stateFeedMode);
       if (client.stateFeedMode === 'canonical') this.canonical.activate();
     }
+  }
+
+  setCanonicalCapabilities(capabilities: readonly string[]): void {
+    this.canonical.setServerCapabilities(capabilities);
   }
 
   get hasConnectedOnce(): boolean {
@@ -174,6 +192,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
   }
 
   private handleStateChange(state: ConnectionState): void {
+    this.canonical.setServerCapabilities(this.client.negotiatedCapabilities);
     if (state === 'READY') {
       this.syncFeedMode(this.client.stateFeedMode);
       if (this.client.stateFeedMode === 'canonical') {
@@ -353,7 +372,10 @@ export class WebSocketGatewayTransport implements GatewayTransport {
     const fresh: PendingTransportCommand[] = [];
     let droppedFrames = 0;
     for (const item of pending) {
-      if (isOrderedInput(item.command) && now - item.enqueuedAt > STALE_INPUT_TTL_MS) {
+      if (
+        isOrderedInput(item.command) &&
+        now - item.enqueuedAt > staleInputTtlMs(this.reconnectBudgetMs)
+      ) {
         droppedFrames += 1;
         continue;
       }

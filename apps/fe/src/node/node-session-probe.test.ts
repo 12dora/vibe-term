@@ -1,11 +1,14 @@
 // 退避门（每 node REST 客户端）与 4401 之后那一次会话探测。
 
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { ApiClient, sessionProbeTimeoutMs } from '@vibeterm/api-client';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
 
 installWindowStorage();
 
-const { createGatedNodeApiClient, probeNodeSession } = await import('./node-session-probe');
+const { createGatedNodeApiClient, probeNodeSession, SESSION_PROBE_TIMEOUT_MS } = await import(
+  './node-session-probe'
+);
 const {
   clearNodeBackoff,
   isNodeRequestBlocked,
@@ -177,5 +180,41 @@ describe('probeNodeSession', () => {
     stubFetchRejecting(new TypeError('Failed to fetch'));
     expect(await probeNodeSession(NODE_A)).toBe('unreachable');
     expect(isNodeRequestBlocked(NODE_A)).toBe(true);
+  });
+
+  test('无 EWMA 时探测超时为 8s 下限', async () => {
+    stubFetch(() => jsonResponse({ devices: [] }));
+    const seen: number[] = [];
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    AbortSignal.timeout = ((ms: number) => {
+      seen.push(ms);
+      return originalTimeout(ms);
+    }) as typeof AbortSignal.timeout;
+    try {
+      expect(await probeNodeSession(NODE_A)).toBe('ok');
+      expect(seen).toContain(SESSION_PROBE_TIMEOUT_MS);
+      expect(sessionProbeTimeoutMs(null)).toBe(SESSION_PROBE_TIMEOUT_MS);
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  });
+
+  test('高 RTT 时探测超时跟着 lastLatencyMs 放大', async () => {
+    stubFetch(() => jsonResponse({ devices: [] }));
+    const seen: number[] = [];
+    const originalTimeout = AbortSignal.timeout.bind(AbortSignal);
+    const originalLatency = ApiClient.prototype.lastLatencyMs;
+    AbortSignal.timeout = ((ms: number) => {
+      seen.push(ms);
+      return originalTimeout(ms);
+    }) as typeof AbortSignal.timeout;
+    ApiClient.prototype.lastLatencyMs = () => 2_000;
+    try {
+      expect(await probeNodeSession(NODE_A)).toBe('ok');
+      expect(seen).toContain(16_000);
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+      ApiClient.prototype.lastLatencyMs = originalLatency;
+    }
   });
 });

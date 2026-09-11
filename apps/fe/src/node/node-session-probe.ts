@@ -28,6 +28,7 @@ import {
   isNodeLoginRequiredError,
   isSelfNode,
   nodePathPrefix,
+  sessionProbeTimeoutMs,
 } from '@vibeterm/api-client';
 import type { NodeSessionProbe } from '@vibeterm/stores/node-session-guard';
 import {
@@ -37,7 +38,7 @@ import {
   noteNodeRequestOutcome,
 } from './node-unreachable-backoff';
 
-/** 探测的自备超时：转发器的链路截止是 5 秒，留一点余量就该收手。 */
+/** 探测超时下限：无 EWMA 时 8s，高 RTT 由 `sessionProbeTimeoutMs` 放大到 30s。 */
 export const SESSION_PROBE_TIMEOUT_MS = 8_000;
 
 /** 只有幂等读请求才受退避门约束。 */
@@ -77,9 +78,11 @@ export function createGatedNodeApiClient(nodeId: string): ApiClient {
  */
 export async function probeNodeSession(nodeId: string): Promise<NodeSessionProbe> {
   if (isNodeRequestBlocked(nodeId)) return 'unreachable';
+  // 每 node 客户端（带退避门）。超时按该实例 EWMA 放大；新实例尚无观测时退化为 8s。
+  const client = createGatedNodeApiClient(nodeId);
   try {
-    await fetchDevices(createNodeApiClient(nodeId), {
-      signal: AbortSignal.timeout(SESSION_PROBE_TIMEOUT_MS),
+    await fetchDevices(client, {
+      signal: AbortSignal.timeout(sessionProbeTimeoutMs(client.lastLatencyMs())),
     });
     noteNodeReachable(nodeId);
     return 'ok';

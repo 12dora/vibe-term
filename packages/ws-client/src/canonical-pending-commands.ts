@@ -7,7 +7,7 @@ import {
   isOrderedInput,
 } from './canonical-state-helpers';
 import type { ClientSendResult } from './client';
-import { STALE_INPUT_TTL_MS } from './pending-send-queue';
+import { DEFAULT_RECONNECT_BUDGET_MS, staleInputTtlMs } from './pending-send-queue';
 import type { GatewayTransportCommand, GatewayTransportEventHandler } from './transport-types';
 
 type PendingItem = PendingTargetCommand & { enqueuedAt: number };
@@ -17,13 +17,17 @@ export class CanonicalPendingCommands {
   private bytes = 0;
   private overflowOpen = false;
   private inputAborted = false;
+  private reconnectBudgetMs: number;
 
   constructor(
     private readonly emit: GatewayTransportEventHandler,
     private readonly maxBytes: number,
     private readonly maxFrames: number,
-    private readonly now: () => number = Date.now
-  ) {}
+    private readonly now: () => number = Date.now,
+    reconnectBudgetMs: number = DEFAULT_RECONNECT_BUDGET_MS
+  ) {
+    this.reconnectBudgetMs = reconnectBudgetMs;
+  }
 
   enqueue(command: GatewayTransportCommand, allowQueue: boolean): ClientSendResult {
     if (!allowQueue) return 'queued';
@@ -92,7 +96,10 @@ export class CanonicalPendingCommands {
     const fresh: PendingItem[] = [];
     let droppedFrames = 0;
     for (const item of pending) {
-      if (isOrderedInput(item.command) && now - item.enqueuedAt > STALE_INPUT_TTL_MS) {
+      if (
+        isOrderedInput(item.command) &&
+        now - item.enqueuedAt > staleInputTtlMs(this.reconnectBudgetMs)
+      ) {
         droppedFrames += 1;
         continue;
       }
