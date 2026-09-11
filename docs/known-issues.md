@@ -26,7 +26,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 ## KI-4：TURN 仍需手工配置三个环境变量
 
 `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
-libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选），且 **UDP mux 模式下不支持 TURN**（libjuice 告警 `TURN servers are not supported in mux mode`，只出 host 候选）——2.2.2 之前网关写死 `enableIceUdpMux: true`，TURN 配置从未生效；2.2.2 起配置了 TURN 时自动关闭 mux，每个 PeerConnection 各占一个 UDP 端口，用 `VIBETERM_RTC_PORT_RANGE` 圈定范围。是否内建 TURN 待按
+libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选），且 **UDP mux 模式下不支持 TURN**（libjuice 告警 `TURN servers are not supported in mux mode`，只出 host 候选）——2.2.2 之前网关写死 `enableIceUdpMux: true`，TURN 配置从未生效；2.2.2 起配置了 TURN 就关 mux。现网随后发现：节点 UDP 到不了 TURN 时 gathering 会挂死且 **连 srflx 也不出**（`local_types=[host]`，没有 `gather summary`），全网一条不可达的 TURN 等于毁掉所有打洞。因此改为对本机 TURN 做 STUN Binding 可达探测（coturn 会应答 Binding；这只证明 UDP 通，不是带凭证的 Allocate）：探测成功才把 TURN 纳入 `iceServers` 并关 mux；失败则从 ICE 里拿掉 TURN、保持 mux；尚未探测时先纳入 TURN 但 mux 仍开。`GET /api/mesh/rtc-config` 的 `turn` 是实际在用的值，下发/本地原值在 `turnConfigured`，探测结果在 `turnProbe`（与 STUN 的 `probes` 并列）。是否内建 TURN 待按
 `[mesh][rtc] summary` / `gather summary` 与 STUN 自检（`[mesh][rtc] stun probe`，结果挂在
 `GET /api/mesh/rtc-config` 的 `probes`）的现网数据再定。STUN 列表 2.2.0 起随发行版内置分发（小米 / Bilibili 打头 + Google / Cloudflare 冗余），
 `VIBETERM_STUN_SERVERS` 未设置即用内置列表、`none` 禁用；hub / 中继只在自己设了自定义列表时才下发，
