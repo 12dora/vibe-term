@@ -1,6 +1,12 @@
 import { describe, expect, test } from 'bun:test';
 import { cliHelpText } from '../cli/help';
-import { assertKnownFlags, parseArgs, requireFlagValue, resolveNestedCommand } from './args';
+import {
+  STUN_SERVERS_FLAG_HELP,
+  assertKnownFlags,
+  parseArgs,
+  requireFlagValue,
+  resolveNestedCommand,
+} from './args';
 
 describe('parseArgs', () => {
   test('parses command, flags and positionals', () => {
@@ -154,6 +160,18 @@ describe('resolveNestedCommand', () => {
     const parsed = parseArgs(['init', '--role', 'hub,node']);
     expect(resolveNestedCommand(parsed).name).toBe('init');
     expect(parsed.flags.role).toBe('hub,node');
+  });
+
+  test('parses init --stun-servers and documents the built-in default', () => {
+    const parsed = parseArgs(['init', '--stun-servers', 'none']);
+    expect(parsed.flags['stun-servers']).toBe('none');
+    expect(() => assertKnownFlags(parsed)).not.toThrow();
+    expect(STUN_SERVERS_FLAG_HELP).toMatch(/built-in list shipped with each release/i);
+    expect(STUN_SERVERS_FLAG_HELP).toMatch(/none.*disables/i);
+    expect(cliHelpText('en')).toContain('--stun-servers <list>');
+    expect(cliHelpText('en')).toContain(STUN_SERVERS_FLAG_HELP);
+    expect(cliHelpText('zh-CN')).toContain('--stun-servers <list>');
+    expect(cliHelpText('zh-CN')).toContain('none');
   });
 
   test('keeps existing commands', () => {

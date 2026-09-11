@@ -1,11 +1,46 @@
 import { describe, expect, test } from 'bun:test';
+import { parseArgs } from '../lib/args';
+import { buildAppEnvValues } from '../lib/install';
 import type { DirectEnableResult } from './direct';
 import {
   applyPublicPort,
   enableDirectAfterInit,
   normalizeHubPublicUrl,
   normalizeRelayPublicUrl,
+  resolveInitStunServers,
 } from './init';
+
+describe('resolveInitStunServers', () => {
+  const envBase = {
+    host: '127.0.0.1',
+    port: 9883,
+    databasePath: '/tmp/vibeterm.db',
+    masterKey: 'key',
+  };
+
+  test('does not write VIBETERM_STUN_SERVERS without --stun-servers', () => {
+    const flags = parseArgs(['init', '--host', '127.0.0.1']).flags;
+    expect(resolveInitStunServers(flags)).toBeUndefined();
+    expect(
+      buildAppEnvValues({ ...envBase, stunServers: resolveInitStunServers(flags) })
+        .VIBETERM_STUN_SERVERS
+    ).toBeUndefined();
+  });
+
+  test('writes an explicit --stun-servers override including none', () => {
+    expect(resolveInitStunServers(parseArgs(['init', '--stun-servers', 'none']).flags)).toBe(
+      'none'
+    );
+    expect(
+      buildAppEnvValues({
+        ...envBase,
+        stunServers: resolveInitStunServers(
+          parseArgs(['init', '--stun-servers', 'stun:custom.example:3478']).flags
+        ),
+      }).VIBETERM_STUN_SERVERS
+    ).toBe('stun:custom.example:3478');
+  });
+});
 
 describe('normalizeRelayPublicUrl', () => {
   test('归一化 https 地址', () => {

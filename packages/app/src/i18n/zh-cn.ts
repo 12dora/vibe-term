@@ -106,6 +106,9 @@ export const zhCN: Record<string, string> = {
   'doctor.env.exists': '发现配置文件：{{envPath}}',
   'doctor.env.missing': '未发现配置文件：{{envPath}}',
   'doctor.env.keyMissing': '配置缺失：{{key}}',
+  'doctor.stun.builtin': 'STUN 服务器：发行版内置',
+  'doctor.stun.custom': 'STUN 服务器：自定义（app.env）',
+  'doctor.stun.disabled': 'STUN 服务器：已禁用',
   'doctor.db.missing': '数据库文件不存在（首次启动前可能正常）：{{path}}',
   'doctor.db.exists': '数据库文件存在：{{path}}',
   'doctor.port.invalid': '配置端口非法：{{value}}',
@@ -142,6 +145,8 @@ export const zhCN: Record<string, string> = {
   'upgrade.integrityUnverified': '发行包缺少 SHA256SUMS，未校验完整性。',
   'upgrade.integrityMismatch': '发行包 sha256 与 SHA256SUMS 不符：{{file}}。',
   'upgrade.repairDone': '升级修复完成（{{action}}）。',
+  'upgrade.stunEnvMigrated':
+    'app.env：VIBETERM_STUN_SERVERS 为旧版内置默认值，已移除以便使用本发行版内置列表（备份：{{backup}}）',
   'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
   'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
   'upgrade.serviceDidNotStop': '服务未在 {{timeout}}ms 内退出。',

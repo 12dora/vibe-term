@@ -3,7 +3,7 @@ import type { CliLang } from '../i18n';
 const HELP_EN = `VibeTerm CLI (tmex remains available as an alias)
 
 Usage:
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -62,6 +62,7 @@ Password prompting (add / passwd / totp / reset-root / enroll / hub join --passw
 
 Init shim ownership:
   --replace-shim: replace managed PATH shims owned by another install (or with unknown ownership).
+  --stun-servers <list>: default: built-in list shipped with each release; \`none\` disables.
 
 Global flags:
   --lang <en|zh-CN>
@@ -70,7 +71,7 @@ Global flags:
 const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 用法：
-  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--no-service] [--replace-shim]
+  vibeterm init [--role standalone|node|hub,node|relay|relay,node] [--no-interactive --install-dir <path> --host <host> --port <port> --db-path <path> --autostart <true|false> --bun-path <path> --install-deps --skip-dep-check] [--hub-url <url>] [--hub-public-url <url>] [--relay-public-url <url>] [--public-port <port>] [--peer-port <port>] [--stun-servers <list>] [--no-service] [--replace-shim]
   vibeterm doctor [--install-dir <path>] [--json] [--bun-path <path>] [--fix]
   vibeterm upgrade [--version <version>] [--install-dir <path>] [--bun-path <path>] [--repair] [--service-name <name>] [--keep-backup] [--no-service] [--allow-missing-native] [--allow-unverified]
   vibeterm uninstall [--install-dir <path>] [--yes] [--purge] [--delay-ms <n>]
@@ -129,6 +130,7 @@ const HELP_ZH = `VibeTerm CLI（tmex 仍可作为别名使用）
 
 初始化命令入口：
   --replace-shim：替换属于其他安装或归属未知的托管 PATH shim。
+  --stun-servers <list>：默认使用随发行版分发的内置列表；\`none\` 表示禁用。
 
 全局参数：
   --lang <en|zh-CN>

@@ -23,3 +23,4 @@ export {
   waitSocketOpen,
   type WaitableSocket,
 } from './wait-socket-open';
+export * from './stun-defaults';

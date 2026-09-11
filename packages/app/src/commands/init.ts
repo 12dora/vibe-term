@@ -47,7 +47,6 @@ import { detectServiceManager } from '../lib/platform';
 import { promptConfirm, promptText } from '../lib/prompt';
 import {
   DEFAULT_PEER_PORT,
-  DEFAULT_STUN_SERVERS,
   parseVibeTermRoleName,
   rolesFromName,
   validateRoles,
@@ -63,6 +62,12 @@ import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
 import { type DirectOnboardingDeps, enableDirectForOnboarding } from './direct';
 
 export type { InitConfig };
+
+/** `--stun-servers` 显式覆盖才写入 app.env；缺省或空白表示使用发行版内置列表。 */
+export function resolveInitStunServers(flags: ParsedArgs['flags']): string | undefined {
+  const raw = asString(flags['stun-servers'])?.trim();
+  return raw || undefined;
+}
 
 export type EnableDirectAfterInitDeps = DirectOnboardingDeps;
 
@@ -154,7 +159,7 @@ async function buildInitConfig(parsed: ParsedArgs): Promise<InitConfig> {
     installDeps: asBoolean(flags['install-deps']) ?? false,
     skipDepCheck: asBoolean(flags['skip-dep-check']) ?? false,
     ...uplink,
-    stunServers: asString(flags['stun-servers']) || DEFAULT_STUN_SERVERS,
+    stunServers: resolveInitStunServers(flags) ?? '',
     noService: asBoolean(flags['no-service']) ?? false,
   };
 }

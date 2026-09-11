@@ -1,5 +1,9 @@
-import { describe, expect, test } from 'bun:test';
-import { setLang } from '../i18n';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { setLang, t } from '../i18n';
+import { writeEnvFile } from '../lib/env-file';
 import type { DoctorCheck } from '../types';
 import {
   DOCTOR_CHECK_TABLE,
@@ -13,7 +17,12 @@ import {
   runCheckTable,
   shouldPrintFixHint,
 } from './doctor';
-import { classifyPasskeyOrigin, isDomainOrigin } from './doctor-checks';
+import {
+  checkEnvironment,
+  classifyPasskeyOrigin,
+  isDomainOrigin,
+  stunServersDoctorCheck,
+} from './doctor-checks';
 
 const failFixable = (id: string, message = 'missing'): DoctorCheck => ({
   id,
@@ -49,6 +58,53 @@ function recordingReporter(): DoctorReporter & {
     },
   };
 }
+
+const doctorTempDirs: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    doctorTempDirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true }))
+  );
+});
+
+describe('stunServersDoctorCheck', () => {
+  test('classifies missing, custom, and disabled STUN env', () => {
+    setLang('en');
+    expect(stunServersDoctorCheck({}).message).toBe(t('doctor.stun.builtin'));
+    expect(stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: '' }).message).toBe(
+      t('doctor.stun.builtin')
+    );
+    expect(
+      stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: 'stun:custom.example:3478' }).message
+    ).toBe(t('doctor.stun.custom'));
+    expect(stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: 'none' }).message).toBe(
+      t('doctor.stun.disabled')
+    );
+    expect(stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: 'off' }).id).toBe('stun');
+    expect(stunServersDoctorCheck({ VIBETERM_STUN_SERVERS: 'off' }).level).toBe('pass');
+  });
+
+  test('checkEnvironment includes a STUN row derived from app.env', async () => {
+    setLang('en');
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-stun-'));
+    doctorTempDirs.push(installDir);
+    const envPath = join(installDir, 'app.env');
+    await writeEnvFile(envPath, {
+      VIBETERM_MASTER_KEY: 'k',
+      DATABASE_URL: join(installDir, 'db'),
+      GATEWAY_PORT: '9883',
+      VIBETERM_BIND_HOST: '127.0.0.1',
+      VIBETERM_STUN_SERVERS: 'none',
+    });
+    const result = await checkEnvironment({ installDir, envPath });
+    const stun = result.installChecks.find((check) => check.id === 'stun');
+    expect(stun).toEqual({
+      id: 'stun',
+      level: 'pass',
+      message: t('doctor.stun.disabled'),
+    });
+  });
+});
 
 describe('DOCTOR_CHECK_TABLE', () => {
   test('runs platform, dependencies, install, service, legacy-layout, health, passkey-origin', () => {

@@ -7,7 +7,7 @@ import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
 import { type InstallLayout, type PackageLayout, currentRuntimePaths } from './install-layout';
 import { writeJsonFile } from './json-file';
-import { DEFAULT_PEER_PORT, DEFAULT_STUN_SERVERS, type VibeTermRoleName } from './roles';
+import { DEFAULT_PEER_PORT, type VibeTermRoleName } from './roles';
 
 export function generateMasterKey(): string {
   return randomBytes(32).toString('base64');
@@ -74,12 +74,13 @@ export function hubEnvDefaults(input?: {
   stunServers?: string;
 }): Record<string, string> {
   const role = input?.role ?? 'standalone';
+  const stun = input?.stunServers?.trim();
   return {
     VIBETERM_ROLES: role,
     VIBETERM_HUB_URL: input?.hubUrl ?? '',
     VIBETERM_PEER_PORT: String(input?.peerPort ?? DEFAULT_PEER_PORT),
     VIBETERM_HUB_PUBLIC_URL: input?.hubPublicUrl ?? '',
-    VIBETERM_STUN_SERVERS: input?.stunServers ?? DEFAULT_STUN_SERVERS,
+    ...(stun ? { VIBETERM_STUN_SERVERS: stun } : {}),
   };
 }
 

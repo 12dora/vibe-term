@@ -1,5 +1,6 @@
 import { stat } from 'node:fs/promises';
 import { resolve } from 'node:path';
+import { parseStunServersEnv } from '../../../shared/src/net/stun-defaults';
 import { formatHttpEndpoint, rewriteWildcardBindHost } from '../../../shared/src/network';
 import { t } from '../i18n';
 import { checkBunVersion } from '../lib/bun';
@@ -93,6 +94,17 @@ export async function checkDependencies(input: {
   return checks;
 }
 
+export function stunServersDoctorCheck(env: Record<string, string>): DoctorCheck {
+  const parsed = parseStunServersEnv(env.VIBETERM_STUN_SERVERS);
+  const key =
+    parsed.source === 'disabled'
+      ? 'doctor.stun.disabled'
+      : parsed.source === 'custom'
+        ? 'doctor.stun.custom'
+        : 'doctor.stun.builtin';
+  return { id: 'stun', level: 'pass', message: t(key) };
+}
+
 export async function checkEnvironment(input: {
   installDir: string;
   envPath: string;
@@ -139,6 +151,7 @@ export async function checkEnvironment(input: {
     });
 
     const env = await readEnvFile(input.envPath);
+    installChecks.push(stunServersDoctorCheck(env));
     const required = ['VIBETERM_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'VIBETERM_BIND_HOST'];
     for (const key of required) {
       if (!env[key]) {

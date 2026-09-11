@@ -3,7 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { buildAppEnvValues, quotePosixShellArg, writeRunScript } from './install';
+import { buildAppEnvValues, hubEnvDefaults, quotePosixShellArg, writeRunScript } from './install';
 import { createInstallLayout } from './install-layout';
 
 function posixQuote(value: string): string {
@@ -41,10 +41,26 @@ describe('buildAppEnvValues', () => {
     expect(values.VIBETERM_HUB_URL).toBe('');
     expect(values.VIBETERM_PEER_PORT).toBe('39001');
     expect(values.VIBETERM_HUB_PUBLIC_URL).toBe('https://hub.example');
-    expect(values.VIBETERM_STUN_SERVERS).toBe(
-      'stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478'
-    );
+    expect(values.VIBETERM_STUN_SERVERS).toBeUndefined();
     expect(values.VIBETERM_DIRECT_ENABLED).toBe('true');
+  });
+
+  test('omits VIBETERM_STUN_SERVERS unless an explicit override is passed', () => {
+    const base = {
+      host: '127.0.0.1',
+      port: 9883,
+      databasePath: '/tmp/vibeterm.db',
+      masterKey: 'key',
+    };
+    expect(buildAppEnvValues(base).VIBETERM_STUN_SERVERS).toBeUndefined();
+    expect(hubEnvDefaults().VIBETERM_STUN_SERVERS).toBeUndefined();
+    expect(
+      buildAppEnvValues({ ...base, stunServers: '   ' }).VIBETERM_STUN_SERVERS
+    ).toBeUndefined();
+    expect(buildAppEnvValues({ ...base, stunServers: 'none' }).VIBETERM_STUN_SERVERS).toBe('none');
+    expect(
+      buildAppEnvValues({ ...base, stunServers: 'stun:custom.example:3478' }).VIBETERM_STUN_SERVERS
+    ).toBe('stun:custom.example:3478');
   });
 });
 

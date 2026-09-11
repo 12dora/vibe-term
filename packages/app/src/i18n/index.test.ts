@@ -104,6 +104,28 @@ describe('i18n', () => {
     expect(zh).not.toContain('您');
   });
 
+  test('upgrade.stunEnvMigrated and doctor.stun keys exist in both languages', () => {
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      const migrated = t('upgrade.stunEnvMigrated', { backup: '/tmp/backups/app.env.x.stun' });
+      expect(migrated).not.toBe('upgrade.stunEnvMigrated');
+      expect(migrated).toContain('/tmp/backups/app.env.x.stun');
+      expect(migrated).toContain('VIBETERM_STUN_SERVERS');
+      for (const key of [
+        'doctor.stun.builtin',
+        'doctor.stun.custom',
+        'doctor.stun.disabled',
+      ] as const) {
+        const message = t(key);
+        expect(message).not.toBe(key);
+        expect(message).toMatch(/STUN/i);
+      }
+    }
+    setLang('zh-CN');
+    expect(t('upgrade.stunEnvMigrated', { backup: 'x' })).not.toContain('你');
+    expect(t('upgrade.stunEnvMigrated', { backup: 'x' })).not.toContain('您');
+  });
+
   test('doctor.passkey origin hints exist in both languages', () => {
     for (const lang of ['en', 'zh-CN'] as const) {
       setLang(lang);

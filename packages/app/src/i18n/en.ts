@@ -113,6 +113,9 @@ export const en: Record<string, string> = {
   'doctor.env.exists': 'Config file found: {{envPath}}',
   'doctor.env.missing': 'Config file not found: {{envPath}}',
   'doctor.env.keyMissing': 'Missing config key: {{key}}',
+  'doctor.stun.builtin': 'STUN servers: built-in (release)',
+  'doctor.stun.custom': 'STUN servers: custom (app.env)',
+  'doctor.stun.disabled': 'STUN servers: disabled',
   'doctor.db.missing': 'Database file not found (may be normal before first start): {{path}}',
   'doctor.db.exists': 'Database file exists: {{path}}',
   'doctor.port.invalid': 'Invalid port in config: {{value}}',
@@ -152,6 +155,8 @@ export const en: Record<string, string> = {
   'upgrade.integrityUnverified': 'Release SHA256SUMS is missing; tarball integrity is unverified.',
   'upgrade.integrityMismatch': 'Release tarball sha256 mismatch for {{file}}.',
   'upgrade.repairDone': 'Upgrade repair finished ({{action}}).',
+  'upgrade.stunEnvMigrated':
+    "app.env: VIBETERM_STUN_SERVERS was the old built-in default; removed so the release's built-in list applies (backup: {{backup}})",
   'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
   'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
   'upgrade.serviceDidNotStop': 'Service did not stop within {{timeout}}ms.',
