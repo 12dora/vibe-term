@@ -49,6 +49,22 @@ describe('mesh-runtime STUN resolution', () => {
     expect(resolved).toMatchObject({ stun: [...BUILTIN_STUN_SERVERS], source: 'builtin' });
   });
 
+  test('hub withdrew TURN (turn: null) ⇒ local TURN not re-applied', () => {
+    const local = {
+      stunServers: [...BUILTIN_STUN_SERVERS],
+      stunSource: 'builtin' as const,
+      turnUrl: 'turn:local:3478',
+      turnUsername: 'u',
+      turnCredential: 'p',
+    };
+    expect(resolveMeshRtcConfig(local, null).turn).toEqual({
+      url: 'turn:local:3478',
+      username: 'u',
+      credential: 'p',
+    });
+    expect(resolveMeshRtcConfig(local, { stun: [], turn: null }).turn).toBeNull();
+  });
+
   test('hub custom ⇒ hub list', () => {
     const resolved = resolveMeshRtcConfig(
       { stunServers: [...BUILTIN_STUN_SERVERS], stunSource: 'builtin' },

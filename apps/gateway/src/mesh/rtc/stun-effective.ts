@@ -52,7 +52,8 @@ export function resolveMeshRtcConfig(
   });
   return {
     stun: rankStunByProbes(resolved.stun, probes, now),
-    turn: lastRtc?.turn ?? turnFromMesh(config),
+    // hub/中继下发过就以它为准（含显式撤回的 null）；只有从未收到过下发才用本地 TURN
+    turn: lastRtc ? lastRtc.turn : turnFromMesh(config),
     source: resolved.source,
   };
 }
