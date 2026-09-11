@@ -1,4 +1,5 @@
 import { wsBorsh } from '@vibeterm/shared';
+import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
 
 /** 未就绪待发队列的缺省字节预算：足够一次大粘贴，仍有上限。 */
 export const DEFAULT_MAX_PENDING_BYTES = 2 * 1024 * 1024;
@@ -7,9 +8,20 @@ export const DEFAULT_MAX_PENDING_FRAMES = 2048;
 
 /**
  * 断线期间缓冲的有序输入超过该时长就不再重放：对着卡住的终端敲的键不该落到已恢复的 shell。
- * 取 10 s 是保守值——一次正常 failover 约 5 s，期间敲的内容必须照常送达。
+ * 这是下限；实际 TTL 按重连窗口放大，见 `staleInputTtlMs`。
  */
 export const STALE_INPUT_TTL_MS = 10_000;
+/** 与 `ReconnectController` 缺省 `maxDelayMs` 对齐：重连窗口内的输入不得当过期丢掉。 */
+export const DEFAULT_RECONNECT_BUDGET_MS = 30_000;
+
+export function staleInputTtlMs(reconnectBudgetMs: number): number {
+  return adaptiveDeadlineMs({
+    rttMs: reconnectBudgetMs,
+    factor: 4,
+    minMs: STALE_INPUT_TTL_MS,
+    maxMs: 45_000,
+  });
+}
 
 export type PendingFrame = { kind: number; payload: Uint8Array; enqueuedAt: number };
 
@@ -33,6 +45,8 @@ export type PendingSendQueueOptions = {
   maxBytes?: number;
   maxFrames?: number;
   now?: () => number;
+  /** 当前重连预算（毫秒）；缺省按客户端重连上限 30 s。 */
+  reconnectBudgetMs?: number;
 };
 
 /** 键盘/粘贴分片构成有序字节流：丢掉中间任何一帧都会把后续输入写进错误位置。 */
@@ -44,6 +58,7 @@ export class PendingSendQueue {
   private readonly maxBytes: number;
   private readonly maxFrames: number;
   private readonly now: () => number;
+  private reconnectBudgetMs: number;
   private frames: PendingFrame[] = [];
   private bytes = 0;
   private episodeOpen = false;
@@ -53,6 +68,12 @@ export class PendingSendQueue {
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_PENDING_BYTES;
     this.maxFrames = options.maxFrames ?? DEFAULT_MAX_PENDING_FRAMES;
     this.now = options.now ?? Date.now;
+    this.reconnectBudgetMs = options.reconnectBudgetMs ?? DEFAULT_RECONNECT_BUDGET_MS;
+  }
+
+  /** 重连控制器排期变化时更新预算，使 TTL 始终盖住当前窗口。 */
+  setReconnectBudget(ms: number): void {
+    if (Number.isFinite(ms) && ms > 0) this.reconnectBudgetMs = ms;
   }
 
   get frameCount(): number {
@@ -78,7 +99,7 @@ export class PendingSendQueue {
   /** 丢弃断线期间缓冲的过期有序输入；有丢弃时返回可直接派发的提示信息，否则 null。 */
   dropStaleOrderedInput(
     now: number = this.now(),
-    ttlMs: number = STALE_INPUT_TTL_MS
+    ttlMs: number = staleInputTtlMs(this.reconnectBudgetMs)
   ): PendingOverflowInfo | null {
     let droppedFrames = 0;
     const kept: PendingFrame[] = [];

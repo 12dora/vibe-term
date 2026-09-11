@@ -44,7 +44,8 @@ describe('LocalApi.status', () => {
     const { api, calls } = recorder([new Response(JSON.stringify(STATUS), { status: 200 })]);
     const status = await api.status();
     expect(calls[0].url).toBe('/api/local/status');
-    expect(calls[0].init).toBeUndefined();
+    expect(calls[0].init?.method).toBeUndefined();
+    expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
     expect(status).toEqual(STATUS);
     expect(status.relay).toBeNull();
   });

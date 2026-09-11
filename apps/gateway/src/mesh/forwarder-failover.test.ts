@@ -378,6 +378,37 @@ describe('续流握手失败的归因', () => {
     ]);
   });
 
+  test('HELLO retry wait scales with peer RTT and stays ≥ 500 ms', async () => {
+    const pump = makePump();
+    pump.stream = null;
+    pump.streamAlive = false;
+    pump.replay.hello = helloC2S;
+    const waits: number[] = [];
+    const fixture = trackingHost({
+      bindStream(target, stream, transport) {
+        target.stream = stream;
+        target.streamAlive = false;
+        target.boundTransport = transport;
+      },
+      sleep: async (ms) => {
+        waits.push(ms);
+      },
+      peers: {
+        getLink: async () => ({ id: 'link' }) as unknown as LinkSession,
+        listReach: () => new Map(),
+        onNodeEvent: () => () => {},
+        transportOf: () => 'relay',
+        rttOf: () => 800,
+      },
+    });
+    await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+    expect(waits.filter((ms) => ms === 1_600 || ms === STREAM_FAILOVER_HELLO_WAIT_MS)).toEqual([
+      STREAM_FAILOVER_HELLO_WAIT_MS,
+      1_600,
+      1_600,
+    ]);
+  });
+
   test('中间有一轮答上了 HELLO：没回音的计数清零，重试预算不被前面几轮吃掉', async () => {
     const pump = makePump();
     pump.stream = null;

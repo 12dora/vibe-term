@@ -1,7 +1,9 @@
 import type { WebSocketTransportInput } from '@vibeterm/shared/link';
+import { nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import type { UserStore } from '../auth/user-store';
 import { classifyRemoteAddress, hostFromWsUrl } from './address-class';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
+import { PEER_CONNECT_TIMEOUT_MS, lookupPeerRttMs } from './peer-manager-state';
 import {
   type DirectDialLimiter,
   type WsSecureRaceResult,
@@ -217,6 +219,11 @@ export function raceWsSecureDial(ports: WsSecureDialPorts): Promise<WsSecureRace
     sleep: ports.sleep,
     staggerMs: ports.staggerMs,
     dial: async (url, combined) => {
+      const adaptiveConnect = nestedDialBudgetsMs(ports.backoff.rttMs(ports.nodeId)).connectMs;
+      const connectTimeoutMs =
+        ports.connectTimeoutMs === PEER_CONNECT_TIMEOUT_MS
+          ? adaptiveConnect
+          : ports.connectTimeoutMs;
       try {
         const candidate = await dialWsSecureCandidate({
           url,
@@ -224,7 +231,7 @@ export function raceWsSecureDial(ports: WsSecureDialPorts): Promise<WsSecureRace
           gen: ports.gen,
           signal: combined,
           stale: ports.stale,
-          connectTimeoutMs: ports.connectTimeoutMs,
+          connectTimeoutMs,
           totalTimeoutMs:
             classifyRemoteAddress(hostFromWsUrl(url)) === 'lan' ? ports.lanTimeoutMs : undefined,
           factory: ports.wsFactory,
@@ -264,7 +271,7 @@ export function raceForegroundDial<T>(
     wsFirst: ports.wsFirst,
     signal: ports.signal,
     budgetMs: FOREGROUND_DC_BUDGET_MS,
-    deadlineMs: FOREGROUND_DIRECT_DEADLINE_MS,
+    deadlineMs: nestedDialBudgetsMs(lookupPeerRttMs(undefined, ports.scheduler)).directMs,
     now: () => ports.scheduler.now(),
     sleep: (ms, signal) => ports.scheduler.sleep(ms, signal),
     log: ports.log,

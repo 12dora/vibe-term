@@ -1,6 +1,8 @@
 import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
-import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
+import type { LinkSession, LinkStream, StreamChunk } from '@vibeterm/shared/link';
+import { nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { encodeJsonBytes, isRecord } from './ctl';
+import { lookupPeerRttMs } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
 import {
@@ -323,7 +325,7 @@ export async function openHttpStream(
   );
 
   try {
-    const head = await readHttpHead(stream);
+    const head = await readHttpHead(stream, nestedDialBudgetsMs(lookupPeerRttMs()).forwardMs);
     gotHead = true;
     if (!stopUpload.signal.aborted) stopUpload.abort();
     try {
@@ -415,35 +417,58 @@ export async function openHttpStream(
   }
 }
 
-async function readHttpHead(stream: LinkStream): Promise<{
+async function readHttpHead(
+  stream: LinkStream,
+  timeoutMs: number
+): Promise<{
   status: number;
   headers: Record<string, string>;
   rest: Uint8Array[];
 }> {
   const reader = stream.readable.getReader();
   const rest: Uint8Array[] = [];
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      try {
+        stream.reset('head-timeout');
+      } catch {
+        // already closed
+      }
+      reject(new Error('http head timeout'));
+    }, timeoutMs);
+  });
   try {
-    while (true) {
-      const { done, value } = await reader.read();
-      if (done || !value) {
-        throw new Error('http stream closed before response head');
-      }
-      if (value.head) {
-        const parsed = parseOpenPayload(value.bytes) ?? {};
-        return {
-          status: typeof parsed.status === 'number' ? parsed.status : 200,
-          headers: stripSetCookieHeaders(stringHeaders(parsed.headers)),
-          rest,
-        };
-      }
-      rest.push(value.bytes);
-    }
+    const head = await Promise.race([readHttpHeadLoop(reader, rest), timeout]);
+    return head;
   } finally {
+    if (timer !== undefined) clearTimeout(timer);
     try {
       reader.releaseLock();
     } catch {
       // already released
     }
+  }
+}
+
+async function readHttpHeadLoop(
+  reader: ReadableStreamDefaultReader<StreamChunk>,
+  rest: Uint8Array[]
+): Promise<{ status: number; headers: Record<string, string>; rest: Uint8Array[] }> {
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done || !value) {
+      throw new Error('http stream closed before response head');
+    }
+    if (value.head) {
+      const parsed = parseOpenPayload(value.bytes) ?? {};
+      return {
+        status: typeof parsed.status === 'number' ? parsed.status : 200,
+        headers: stripSetCookieHeaders(stringHeaders(parsed.headers)),
+        rest,
+      };
+    }
+    rest.push(value.bytes);
   }
 }
 

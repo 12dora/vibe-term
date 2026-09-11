@@ -1,4 +1,5 @@
 import { wsBorsh } from '@vibeterm/shared';
+import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import {
   failoverCauseOf,
@@ -218,7 +219,14 @@ async function runFailoverAttempts(
     if (opened === 'aborted') return 'settled';
     if (!opened) continue;
     const helloWaitMs =
-      noHelloStreak === 0 ? STREAM_FAILOVER_HELLO_WAIT_MS : STREAM_FAILOVER_HELLO_RETRY_WAIT_MS;
+      noHelloStreak === 0
+        ? STREAM_FAILOVER_HELLO_WAIT_MS
+        : adaptiveDeadlineMs({
+            rttMs: host.peers.rttOf?.(pump.nodeId) ?? 0,
+            factor: 2,
+            minMs: STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
+            maxMs: 4_000,
+          });
     const outcome = await completeFailover(host, pump, opened, { ...base, helloWaitMs });
     if (outcome === 'done') return 'settled';
     if (outcome !== 'retry-no-hello') {

@@ -3,6 +3,8 @@ import { isoNow, logLine } from './mesh-log';
 
 export const ENDPOINT_BACKOFF_MIN_MS = 60_000;
 export const ENDPOINT_BACKOFF_CAP_MS = 6 * 60 * 60 * 1000;
+/** 高 RTT 下的 socket 超时只算软失败，退避封顶 5 分钟，避免一次抖动把节点钉死 6 小时。 */
+export const ENDPOINT_BACKOFF_SOFT_CAP_MS = 5 * 60 * 1000;
 export const ENDPOINT_BACKOFF_IDLE_MS = 24 * 60 * 60 * 1000;
 
 export type ReachabilityFailureKind =
@@ -10,15 +12,12 @@ export type ReachabilityFailureKind =
   | 'open-timeout'
   | 'refused'
   | 'unreachable'
-  | 'reset';
+  | 'reset'
+  | 'untrusted';
 
-const REACHABILITY_FAILURE_KINDS = new Set<string>([
-  'timeout',
-  'open-timeout',
-  'refused',
-  'unreachable',
-  'reset',
-]);
+const SOFT_FAILURE_KINDS = new Set<string>(['timeout', 'open-timeout']);
+const HARD_FAILURE_KINDS = new Set<string>(['refused', 'unreachable', 'untrusted', 'reset']);
+const REACHABILITY_FAILURE_KINDS = new Set<string>([...SOFT_FAILURE_KINDS, ...HARD_FAILURE_KINDS]);
 
 export function isReachabilityFailureKind(kind: string): kind is ReachabilityFailureKind {
   return REACHABILITY_FAILURE_KINDS.has(kind);
@@ -36,6 +35,17 @@ export type PeerEndpointBackoffOptions = {
   now?: () => number;
   log?: (msg: string, at: Date) => void;
 };
+
+export type PeerRttSource = {
+  peerRtt: (nodeId: string) => number | null;
+  uplinkRtt: () => number | null;
+};
+
+const DEFAULT_PEER_RTT_MS = 300;
+
+function validRtt(value: number | null | undefined): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0;
+}
 
 export function parsePeerEndpoint(url: string): PeerEndpoint | null {
   try {
@@ -103,15 +113,17 @@ function shouldLogBackoff(failures: number): boolean {
   return n === failures;
 }
 
-function delayMs(failures: number): number {
+function delayMs(failures: number, kind: string): number {
   const exp = ENDPOINT_BACKOFF_MIN_MS * 2 ** Math.max(0, failures - 1);
-  return Math.min(ENDPOINT_BACKOFF_CAP_MS, exp);
+  const cap = SOFT_FAILURE_KINDS.has(kind) ? ENDPOINT_BACKOFF_SOFT_CAP_MS : ENDPOINT_BACKOFF_CAP_MS;
+  return Math.min(cap, exp);
 }
 
 export class PeerEndpointBackoff {
   private readonly now: () => number;
   private readonly log: (msg: string, at: Date) => void;
   private readonly nodes = new Map<string, Map<string, EndpointBackoffState>>();
+  private rttSource: PeerRttSource | null = null;
 
   constructor(opts: PeerEndpointBackoffOptions = {}) {
     this.now = opts.now ?? Date.now;
@@ -120,6 +132,19 @@ export class PeerEndpointBackoff {
       ((msg, at) => {
         logLine('[mesh][peer]', msg, at);
       });
+  }
+
+  bindRttSource(source: PeerRttSource): void {
+    this.rttSource = source;
+  }
+
+  /** 该节点已测 RTT；未拨过则用 uplink 代理，再没有就 300 ms。 */
+  rttMs(nodeId: string): number {
+    const peer = this.rttSource?.peerRtt(nodeId.toLowerCase()) ?? this.rttSource?.peerRtt(nodeId);
+    if (validRtt(peer)) return peer;
+    const uplink = this.rttSource?.uplinkRtt();
+    if (validRtt(uplink)) return uplink;
+    return DEFAULT_PEER_RTT_MS;
   }
 
   eligible(nodeId: string, url: string, now = this.now()): boolean {
@@ -163,7 +188,7 @@ export class PeerEndpointBackoff {
     const key = addrKey(parsed.host, parsed.port);
     const prev = addrs.get(key);
     const failures = (prev?.failures ?? 0) + 1;
-    const nextEligibleAt = now + delayMs(failures);
+    const nextEligibleAt = now + delayMs(failures, kind);
     const state: EndpointBackoffState = { failures, lastFailedAt: now, nextEligibleAt };
     addrs.set(key, state);
     if (shouldLogBackoff(failures)) {
@@ -196,13 +221,9 @@ export class PeerEndpointBackoff {
     if (!parsed) return;
     const id = nodeId.toLowerCase();
     const addrs = this.nodes.get(id);
-    if (!addrs) return;
-    const key = addrKey(parsed.host, parsed.port);
-    const prev = addrs.get(key);
-    if (!prev) return;
-    addrs.delete(key);
-    if (addrs.size === 0) this.nodes.delete(id);
+    if (!addrs || addrs.size === 0) return;
     const addr = formatPeerEndpointAddr(parsed.host, parsed.port);
+    this.nodes.delete(id);
     this.log(`endpoint recovered node=${id} addr=${addr}`, new Date(now));
   }
 

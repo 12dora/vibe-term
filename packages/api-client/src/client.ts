@@ -1,7 +1,36 @@
 // REST 客户端核心：baseUrl 注入 + 可选 fetch-like transport + 统一错误解析。
 // 端点函数一律以 `client: ApiClient = defaultApiClient` 收尾（单实例宿主零改动，多实例宿主按连接注入）。
 
+import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
 import { NODE_LOGIN_REQUIRED } from './auth/types';
+
+const LATENCY_EWMA_ALPHA = 0.2;
+const REQUEST_TIMEOUT_MIN_MS = 8_000;
+const REQUEST_TIMEOUT_MAX_MS = 45_000;
+const FORWARDED_PATH = /(?:^|\/)n\/[0-9a-f]{32}(?:\/|$|\?)/i;
+
+export function requestTimeoutMs(ewmaMs: number | null | undefined, forwarded = false): number {
+  const base = adaptiveDeadlineMs({
+    rttMs: ewmaMs,
+    factor: 8,
+    minMs: REQUEST_TIMEOUT_MIN_MS,
+    maxMs: REQUEST_TIMEOUT_MAX_MS,
+  });
+  if (!forwarded) return base;
+  return Math.min(Math.round(base * 1.5), Math.round(REQUEST_TIMEOUT_MAX_MS * 1.5));
+}
+
+export function sessionProbeTimeoutMs(latencyMs: number | null | undefined): number {
+  return adaptiveDeadlineMs({ rttMs: latencyMs, factor: 8, minMs: 8_000, maxMs: 30_000 });
+}
+
+function isForwardedUrl(baseUrl: string, path: string): boolean {
+  return (
+    FORWARDED_PATH.test(baseUrl) ||
+    FORWARDED_PATH.test(path) ||
+    FORWARDED_PATH.test(`${baseUrl}${path}`)
+  );
+}
 
 /** fetch-like：接收已拼好 baseUrl 的绝对/相对 URL 与原始 RequestInit。 */
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
@@ -57,6 +86,8 @@ function runResponseHooks(res: Response, ctx: ResponseHookContext): void {
 }
 
 export class ApiClient {
+  private ewmaMs: number | null = null;
+
   constructor(
     readonly baseUrl: string = '',
     private readonly transport?: FetchLike
@@ -66,17 +97,40 @@ export class ApiClient {
     return `${this.baseUrl}${path}`;
   }
 
+  lastLatencyMs(): number | null {
+    return this.ewmaMs;
+  }
+
   fetch(path: string, init?: RequestInit): Promise<Response> {
     const url = this.url(path);
+    const started = performance.now();
+    const nextInit = init?.signal
+      ? init
+      : {
+          ...init,
+          signal: AbortSignal.timeout(
+            requestTimeoutMs(this.ewmaMs, isForwardedUrl(this.baseUrl, path))
+          ),
+        };
     // 每次调用时读取 globalThis.fetch，禁止在模块加载或构造时捕获。
-    const pending = this.transport ? this.transport(url, init) : globalThis.fetch(url, init);
-    if (responseHooks.size === 0) {
-      return pending;
-    }
+    const pending = this.transport
+      ? this.transport(url, nextInit)
+      : globalThis.fetch(url, nextInit);
     return pending.then((res) => {
-      runResponseHooks(res, { path, url, pathname: urlPathname(url) });
+      this.noteLatency(performance.now() - started);
+      if (responseHooks.size > 0) {
+        runResponseHooks(res, { path, url, pathname: urlPathname(url) });
+      }
       return res;
     });
+  }
+
+  private noteLatency(ms: number): void {
+    if (!Number.isFinite(ms) || ms < 0) return;
+    this.ewmaMs =
+      this.ewmaMs == null
+        ? ms
+        : Math.round(LATENCY_EWMA_ALPHA * ms + (1 - LATENCY_EWMA_ALPHA) * this.ewmaMs);
   }
 }
 

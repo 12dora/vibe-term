@@ -3,6 +3,7 @@ import {
   ENDPOINT_BACKOFF_CAP_MS,
   ENDPOINT_BACKOFF_IDLE_MS,
   ENDPOINT_BACKOFF_MIN_MS,
+  ENDPOINT_BACKOFF_SOFT_CAP_MS,
   PeerEndpointBackoff,
   canonicalEndpointKey,
   canonicalEndpointSet,
@@ -150,5 +151,42 @@ describe('PeerEndpointBackoff', () => {
     expect(backoff.minWaitMs(node, ['ws://10.0.0.1:1/peer', 'ws://10.0.0.2:1/peer'], later)).toBe(
       ENDPOINT_BACKOFF_MIN_MS - 5_000
     );
+  });
+
+  test('open-timeout / timeout are soft-capped at 5 min; refused still reaches 6 h', () => {
+    const now = 1_000;
+    const backoff = new PeerEndpointBackoff({ now: () => now });
+    const node = 'ee'.repeat(16);
+    const url = 'ws://10.0.0.9:1/peer';
+    for (let i = 0; i < 20; i++) backoff.noteFailure(node, url, 'open-timeout', now);
+    expect((backoff.nextEligibleAt(node, url) ?? 0) - now).toBe(ENDPOINT_BACKOFF_SOFT_CAP_MS);
+
+    const hard = 'ff'.repeat(16);
+    for (let i = 0; i < 20; i++) backoff.noteFailure(hard, url, 'untrusted', now);
+    expect((backoff.nextEligibleAt(hard, url) ?? 0) - now).toBe(ENDPOINT_BACKOFF_CAP_MS);
+  });
+
+  test('success on any endpoint clears backoff for the whole node', () => {
+    const now = 1_000;
+    const backoff = new PeerEndpointBackoff({ now: () => now });
+    const node = 'aa'.repeat(16);
+    backoff.noteFailure(node, 'ws://10.0.0.1:1/peer', 'open-timeout', now);
+    backoff.noteFailure(node, 'ws://10.0.0.2:1/peer', 'refused', now);
+    expect(backoff.size()).toBe(2);
+    backoff.noteSuccess(node, 'ws://10.0.0.1:1/peer', now);
+    expect(backoff.size()).toBe(0);
+    expect(backoff.eligible(node, 'ws://10.0.0.2:1/peer', now)).toBe(true);
+  });
+
+  test('rttMs prefers live peer RTT, then uplink, then 300 ms', () => {
+    const backoff = new PeerEndpointBackoff();
+    const peer = '11'.repeat(16);
+    expect(backoff.rttMs(peer)).toBe(300);
+    backoff.bindRttSource({
+      peerRtt: (id) => (id === peer ? 800 : null),
+      uplinkRtt: () => 120,
+    });
+    expect(backoff.rttMs(peer)).toBe(800);
+    expect(backoff.rttMs('22'.repeat(16))).toBe(120);
   });
 });

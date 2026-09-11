@@ -1,41 +1,16 @@
-// 浏览器 ↔ 目标 node 的直连控制器（设计 §3「直连授权」/「载体切换屏障」、§4「连接层」）。
-//
-// 生命周期（浏览器恒为 offerer）；**每次尝试都是一代全新的 attempt**：新的 generation、
-// 新的 `rtcSession`、新的 `AbortController`、新的 `RTCPeerConnection`：
-//   0. `GET /api/mesh/connection?cid=<nonce>` 用本条 Gateway WS 握手时带的 client nonce
-//      换回**服务端生成**的 `connectionId`（每次尝试都重取）
-//   1. `GET /api/mesh/rtc-config` 取 ICE 配置
-//   2. 建 `RTCPeerConnection`，开 `sess` 通道（ordered + reliable）
-//   3. `createOffer()` + `setLocalDescription()`，从 `localDescription.sdp` 解出 `fp_browser`
-//   4. `POST /api/rtc/authorize {rtcSession, fp_browser, connectionId}`（同时带
-//      connection 头）→ `{nonce, fp_node}`；node 据 connectionId 把直连挂到
-//      本标签页那条 Gateway WS 上（同 sid 多标签时不带它会 409）
-//   5. 经注入的信令通道发 offer，随后才放本地 ICE 候选出去（entry 要先见到本 rtcSession
-//      的 offer 才认候选）；收到 answer 后**核对远端 SDP 指纹 == fp_node**，
-//      不一致立即放弃（这是挡失陷 hub 做 DTLS 中间人的那道绑定，绝不重试）
-//   6. 通道 open → 直接在通道上写一条**未分片**的 JSON `{"nonce":"..."}`（node 侧
-//      `RtcPeerManager.acceptBrowser` 在挂载载体前先读走这一条裸消息）
-//   7. 用该通道建 `DirectDataChannelCarrier`，交给连接的切换屏障；**此时仍是 `connecting`**，
-//      直到屏障处理完 `CARRIER_SWITCH{to:'direct'}` 并回了 ACK（`onCarrierChange('direct')`）
-//      才置 `active`、开始 stats 轮询。重试计数在 active ≥ 60 s 后清零。
-//
-// 关键的几条时序约束（都被 f3-1 评审点名过）：
-// - attempt 在**任何 await 之前**就登记好，回调 / catch / teardown 一律先比对 generation；
-//   被替换的 attempt 必定 `pc.close()`，REST 请求带 `AbortSignal`。
-// - 每次尝试换新的 `rtcSession`：node 侧按它缓存 BrowserRecord / PeerConnection，
-//   复用旧值会取回已关闭或 `used=true` 的记录，重连永远起不来。
-// - 信令严格串行：本地候选在 offer 发出前排队，远端候选在 `setRemoteDescription` 完成前排队。
-// - 信令通道（`/mesh/ws`）未就绪时不开 attempt、信令入队；恢复时重置退避并立刻重试。
-//
-// 失败重试：熔断器连续 3 次失败后进入冷却（30 s → 60 s → … 上限 30 min）；冷却期内
-// 不自动拨号，`retryDirect()` 允许恰好一次探测。通道保持 active ≥ 60 s 才复位熔断
-// 计数与 `maxAttempts` 重试预算。激活本身不复位。指纹不匹配、鉴权被拒（4xx）计入
-// 失败但不自动重试。`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 与「signaling not ready」
-// 不计入失败。`maxAttempts`（默认 5）只限制同一不健康周期内的自动重试次数。
+// 浏览器 ↔ 目标 node 的直连控制器。每次尝试都是全新 generation / rtcSession / PC。
+// 协商在 primary HELLO_S2C（READY）之后才开始；authorize 5xx 走进程内 per-node 熔断。
+// attempt 必须在任何 await 之前登记；指纹不一致立即放弃；信令 FIFO。
 
 import { CONNECTION_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
 import type { DirectCarrierLike } from '../carrier-switch';
 import { DirectDataChannelCarrier, type RTCDataChannelLike } from './data-channel-carrier';
+import {
+  authorizeBreakerShouldTry,
+  forceAuthorizeProbe,
+  noteAuthorizeFailure,
+  noteAuthorizeSuccess,
+} from './direct-authorize-breaker';
 import {
   DirectAuthorizeError,
   DirectPrimaryWaitError,
@@ -376,6 +351,7 @@ export class DirectCarrierController {
       return;
     }
     this.breaker.forceProbe(this.nodeId);
+    forceAuthorizeProbe(this.nodeId);
     this.retryHandle = this.clearHandle(this.retryHandle);
     this.coolingHandle = this.clearHandle(this.coolingHandle);
     this.clearPrimaryWait();
@@ -410,6 +386,18 @@ export class DirectCarrierController {
     // 信令没通就别浪费一次 attempt：offer 发不出去，只会走到超时再退避。
     if (!this.signalingReady()) {
       this.setState('failed', 'signaling not ready');
+      return;
+    }
+    // HELLO_S2C 之前 connection 还没登记：先等 primary READY，避免 404 空转。
+    if (!this.primaryReady()) {
+      this.failWaitingPrimary('primary not ready', 'open');
+      return;
+    }
+    const authGate = authorizeBreakerShouldTry(this.nodeId, this.now());
+    if (!authGate.allow) {
+      this.setState('failed', this.failureReason);
+      this.armCoolingRetry(authGate.until);
+      this.publish();
       return;
     }
     const decision = this.breaker.shouldTry(this.nodeId);
@@ -633,8 +621,10 @@ export class DirectCarrierController {
       // 这不是配置错误，按「等 primary」处理，别当成 4xx 永久失败卡死在 failed。
       await throwIfPrimaryWait(res, 'authorize');
       // 4xx 是配置/权限问题，重试没有意义；5xx（如 DIRECT_UNAVAILABLE）才退避重试。
+      if (res.status >= 500) noteAuthorizeFailure(this.nodeId, this.now());
       throw new DirectAuthorizeError(`authorize failed (${res.status})`, res.status < 500);
     }
+    noteAuthorizeSuccess(this.nodeId);
     const body = (await res.json()) as RtcAuthorizeResponse;
     const fp = body.fp_node as { algorithm?: unknown; value?: unknown } | undefined;
     if (
@@ -652,6 +642,12 @@ export class DirectCarrierController {
   private signalingReady(): boolean {
     const signaling = this.options.signaling;
     return signaling.isReady ? signaling.isReady() : true;
+  }
+
+  private primaryReady(): boolean {
+    const status = this.options.connection.client;
+    if (!status?.isReady) return true;
+    return status.isReady();
   }
 
   /** 逐条串行处理：answer 与紧随其后的候选并发时会丢候选。 */

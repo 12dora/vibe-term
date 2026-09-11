@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test';
+import { nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import {
   FOREGROUND_DC_BUDGET_MS,
   FOREGROUND_DIRECT_DEADLINE_MS,
   runBackgroundDirect,
   runDirectDialRace,
 } from './peer-dial-race';
+import { PEER_CONNECT_TIMEOUT_MS } from './peer-manager-state';
 
 type FakeSession = { id: string; closed: string | null };
 
@@ -44,6 +46,20 @@ function fakeClock() {
     },
   };
 }
+
+describe('nested dial budgets', () => {
+  test('connect < direct < forward and LAN defaults match historic constants', () => {
+    const lan = nestedDialBudgetsMs(0);
+    expect(lan.connectMs).toBe(PEER_CONNECT_TIMEOUT_MS);
+    expect(lan.directMs).toBe(FOREGROUND_DIRECT_DEADLINE_MS);
+    expect(lan.forwardMs).toBe(5_000);
+    for (const rtt of [0, 300, 800, 2_000]) {
+      const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(rtt);
+      expect(connectMs).toBeLessThan(directMs);
+      expect(directMs).toBeLessThan(forwardMs);
+    }
+  });
+});
 
 describe('runDirectDialRace', () => {
   test('ws starts after the DC budget and wins while the stalled DC leg is cancelled', async () => {

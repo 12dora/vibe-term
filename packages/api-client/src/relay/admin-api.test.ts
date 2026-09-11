@@ -65,7 +65,8 @@ describe('RelayAdminApi 读接口', () => {
     const { api, calls } = recorder([ok(STATUS)]);
     expect(await api.status()).toEqual(STATUS);
     expect(calls[0]?.url).toBe('/api/relay/status');
-    expect(calls[0]?.init).toBeUndefined();
+    expect(calls[0]?.init?.method).toBeUndefined();
+    expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
   });
 
   test('GET /api/relay/health', async () => {

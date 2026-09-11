@@ -1,5 +1,12 @@
 import { describe, expect, mock, test } from 'bun:test';
-import { ApiClient, type FetchLike, defaultApiClient, parseApiError } from './client';
+import {
+  ApiClient,
+  type FetchLike,
+  defaultApiClient,
+  parseApiError,
+  requestTimeoutMs,
+  sessionProbeTimeoutMs,
+} from './client';
 
 describe('ApiClient', () => {
   test('默认实例 baseUrl 为空（相对路径，同源）', () => {
@@ -24,7 +31,9 @@ describe('ApiClient', () => {
     expect(res.status).toBe(200);
     expect(calls).toHaveLength(1);
     expect(calls[0].input).toBe('http://gw.example:9/api/ping');
-    expect(calls[0].init).toBe(init);
+    expect(calls[0].init?.method).toBe('POST');
+    expect(calls[0].init?.body).toBe('x');
+    expect(calls[0].init?.signal).toBeInstanceOf(AbortSignal);
     expect(transport).toHaveBeenCalledTimes(1);
   });
 
@@ -72,6 +81,42 @@ describe('ApiClient', () => {
     } finally {
       globalThis.fetch = original;
     }
+  });
+});
+
+describe('ApiClient timeout + EWMA', () => {
+  const node = 'aa'.repeat(16);
+
+  test('default deadline is 8s; callers that pass a signal keep it', async () => {
+    const calls: Array<RequestInit | undefined> = [];
+    const ac = new AbortController();
+    const transport = mock((input: string, init?: RequestInit) => {
+      calls.push(init);
+      return Promise.resolve(new Response('ok', { status: 200 }));
+    });
+    const client = new ApiClient('', transport);
+    await client.fetch('/api/ping');
+    expect(calls[0]?.signal).toBeInstanceOf(AbortSignal);
+
+    await client.fetch('/api/ping', { signal: ac.signal });
+    expect(calls[1]?.signal).toBe(ac.signal);
+  });
+
+  test('forwarded /n/<id>/ paths get 1.5× the budget; EWMA tracks latency', async () => {
+    expect(requestTimeoutMs(null)).toBe(8_000);
+    expect(requestTimeoutMs(null, true)).toBe(12_000);
+    expect(requestTimeoutMs(2_000)).toBe(16_000);
+    expect(requestTimeoutMs(2_000, true)).toBe(24_000);
+    expect(sessionProbeTimeoutMs(null)).toBe(8_000);
+    expect(sessionProbeTimeoutMs(2_000)).toBe(16_000);
+    expect(sessionProbeTimeoutMs(10_000)).toBe(30_000);
+
+    const transport = mock(() => Promise.resolve(new Response('ok', { status: 200 })));
+    const client = new ApiClient(`/n/${node}`, transport);
+    expect(client.lastLatencyMs()).toBeNull();
+    await client.fetch('/api/devices');
+    expect(client.lastLatencyMs()).not.toBeNull();
+    expect(client.lastLatencyMs() ?? -1).toBeGreaterThanOrEqual(0);
   });
 });
 

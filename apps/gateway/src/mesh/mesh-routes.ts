@@ -463,10 +463,13 @@ export class MeshRoutes {
       cid,
       connectionId: cid ? null : readHeaderPair(req.headers, CONNECTION_HEADER)?.trim() || null,
     });
-    if (!resolved) return jsonError('NO_CONNECTION', 404);
+    if (!resolved) {
+      return jsonError('NO_CONNECTION', 404, cid ? { retryAfterMs: 500 } : undefined);
+    }
     if (!resolved.ok) {
       return jsonError(resolved.code, resolved.code === 'MULTIPLE_CONNECTIONS' ? 409 : 404, {
         hint: 'open Gateway WS with ?cid=<tab-nonce> then GET /api/mesh/connection?cid=',
+        ...(cid && resolved.code === 'NO_CONNECTION' ? { retryAfterMs: 500 } : {}),
       });
     }
     return jsonBody({ connectionId: resolved.connectionId });

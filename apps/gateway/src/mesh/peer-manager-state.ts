@@ -1,4 +1,5 @@
 import type { LinkSession } from '@vibeterm/shared/link';
+import { DEFAULT_DIAL_RTT_MS } from '@vibeterm/shared/net';
 import type { UserStore } from '../auth/user-store';
 import type { DirectAttemptRecord } from './peer-direct-attempt';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
@@ -64,6 +65,48 @@ export type PeerManagerState = {
   readonly peerReconnectWake: PeerReconnectWake;
 };
 
+const rttByScheduler = new WeakMap<object, PeerManagerState>();
+
+function finiteRtt(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
+  const pooled = uplink as UplinkPool;
+  if (typeof pooled.candidates === 'function') {
+    let best: number | null = null;
+    try {
+      for (const row of pooled.candidates()) {
+        const rtt = finiteRtt(row.rttMs);
+        if (rtt == null) continue;
+        best = best == null ? rtt : Math.min(best, rtt);
+      }
+    } catch {
+      // 池还没就绪
+    }
+    if (best != null) return best;
+  }
+  return finiteRtt((uplink as { rttMs?: number | null }).rttMs);
+}
+
+/** 已测节点 RTT → uplink 代理 → 300 ms。`scheduler` 用于前台竞速这种没有 nodeId 的调用。 */
+export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
+  const state = scheduler ? rttByScheduler.get(scheduler) : undefined;
+  if (!state) return DEFAULT_DIAL_RTT_MS;
+  if (nodeId) {
+    const peer = finiteRtt(state.live.get(nodeId)?.rttMs);
+    if (peer != null) return peer;
+  }
+  let maxLive: number | null = null;
+  for (const live of state.live.values()) {
+    const rtt = finiteRtt(live.rttMs);
+    if (rtt == null) continue;
+    maxLive = maxLive == null ? rtt : Math.max(maxLive, rtt);
+  }
+  if (maxLive != null) return maxLive;
+  return readUplinkRtt(state.uplink) ?? DEFAULT_DIAL_RTT_MS;
+}
+
 export function createPeerManagerState(opts: {
   identity: MeshIdentity;
   userStore: UserStore;
@@ -71,7 +114,12 @@ export function createPeerManagerState(opts: {
   scheduler: MeshScheduler;
   endpointBackoff: PeerEndpointBackoff;
 }): PeerManagerState {
-  return {
+  const live = new Map<string, LivePeer>();
+  opts.endpointBackoff.bindRttSource({
+    peerRtt: (nodeId) => finiteRtt(live.get(nodeId)?.rttMs),
+    uplinkRtt: () => readUplinkRtt(opts.uplink),
+  });
+  const state: PeerManagerState = {
     stopped: false,
     generation: 0,
     stopAbort: new AbortController(),
@@ -79,7 +127,7 @@ export function createPeerManagerState(opts: {
     userStore: opts.userStore,
     uplink: opts.uplink,
     scheduler: opts.scheduler,
-    live: new Map(),
+    live,
     parked: new Map(),
     retiring: new Map(),
     pending: new Map(),
@@ -94,6 +142,8 @@ export function createPeerManagerState(opts: {
     endpointBackoff: opts.endpointBackoff,
     peerReconnectWake: new PeerReconnectWake(),
   };
+  rttByScheduler.set(opts.scheduler, state);
+  return state;
 }
 
 export function peerStale(state: PeerManagerState, gen: number): boolean {

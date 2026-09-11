@@ -24,3 +24,4 @@ export {
   type WaitableSocket,
 } from './wait-socket-open';
 export * from './stun-defaults';
+export * from './adaptive-deadline';

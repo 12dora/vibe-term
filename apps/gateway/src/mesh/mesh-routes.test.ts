@@ -1133,6 +1133,23 @@ describe('mesh-routes', () => {
       expect(await byCid.json()).toEqual({ connectionId: 'server-for-tab-nonce' });
       expect(lookups.some((row) => row.cid === 'tab-nonce')).toBe(true);
 
+      mode = 'none';
+      const tooEarly = asResponse(
+        await runtime.handleRequest(
+          new Request('http://localhost/api/mesh/connection?cid=tab-nonce', {
+            headers: { cookie },
+          }),
+          dummyServer
+        )
+      );
+      expect(tooEarly.status).toBe(404);
+      expect(await tooEarly.json()).toEqual({
+        code: 'NO_CONNECTION',
+        hint: 'open Gateway WS with ?cid=<tab-nonce> then GET /api/mesh/connection?cid=',
+        retryAfterMs: 500,
+      });
+      mode = 'many';
+
       const conflict = asResponse(
         await runtime.handleRequest(
           new Request('http://localhost/api/rtc/authorize', {

@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { resetAuthorizeBreakerForTest } from './direct-authorize-breaker';
 import {
   CONNECTION_HEADER,
   DirectCarrierController,
@@ -25,6 +26,10 @@ import {
 const NODE_ID = 'node-b';
 const NONCE = 'bm9uY2UtMzJieXRlcw';
 const CONNECTION_ID = 'conn-tab-1';
+
+afterEach(() => {
+  resetAuthorizeBreakerForTest();
+});
 
 function normalized(value: string): string {
   return value.replace(/:/g, '').toUpperCase();
@@ -349,6 +354,7 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
     await flush();
 
     expect(waiting.controller.getState()).toBe('failed');
+    expect(waiting.api.calls.length).toBe(0);
     expect(waiting.clock.pendingDelays).toEqual([]);
     waiting.api.routes.set(MESH_CONNECTION_PATH, { body: { connectionId: CONNECTION_ID } });
     waiting.connection.setPrimaryState('READY');
@@ -394,6 +400,36 @@ describe('DirectCarrierController connectionId 绑定（F3-4）', () => {
     });
     expect(authorize?.headers[CONNECTION_HEADER.name]).toBeUndefined();
     expect(s.controller.getState()).toBe('connecting');
+  });
+
+  test('primary 未 READY 时不打 connection/authorize；READY 后才协商', async () => {
+    const s = setup();
+    s.connection.setPrimaryState('WS_CONNECTING');
+    s.controller.start();
+    await flush();
+    expect(s.api.calls.length).toBe(0);
+    expect(s.peers.length).toBe(0);
+    s.connection.setPrimaryState('READY');
+    await flush();
+    expect(s.api.calls.some((c) => c.path === RTC_AUTHORIZE_PATH)).toBe(true);
+  });
+
+  test('authorize 5xx 熔断打开后新控制器 start 不再打转发请求', async () => {
+    const first = setup();
+    first.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
+    first.controller.start();
+    await flush();
+    first.clock.advance(1000);
+    await flush();
+    first.clock.advance(2000);
+    await flush();
+    expect(first.controller.diagnostics().cooling).toBe(true);
+
+    const second = setup();
+    second.controller.start();
+    await flush();
+    expect(second.api.calls.length).toBe(0);
+    expect(second.peers.length).toBe(0);
   });
 
   test('lookup 5xx 走普通退避；宿主没有 primary 状态源时 409 也退回退避', async () => {

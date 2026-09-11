@@ -1,4 +1,5 @@
 import { wsBorsh } from '@vibeterm/shared';
+import { adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
 import { isShareAccessPath } from './auth-public-paths';
@@ -39,6 +40,7 @@ import {
 } from './mesh-deps';
 import { stamp } from './mesh-log';
 import { sanitizeCid } from './mesh-session-registry';
+import { lookupPeerRttMs } from './peer-manager-state';
 import { jsonError } from './session-middleware';
 import { readShareCookie, shareAuthValue, shareWsParam } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
@@ -72,13 +74,27 @@ type ForwardPump = FailoverPump & {
 
 const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
-/** 取链路的墙钟上限：拿不到就直接 503，别让浏览器陪着重试循环空转。 */
+/** 取链路的墙钟上限（LAN 缺省）；高 RTT 时按 nestedDialBudgetsMs 放大。 */
 export const FORWARD_LINK_DEADLINE_MS = 5_000;
-let forwardLinkDeadlineMs = FORWARD_LINK_DEADLINE_MS;
+let forwardLinkDeadlineOverride = 0;
 
-/** 测试用：缩短取链路的墙钟上限。 */
+/** 测试用：缩短取链路的墙钟上限。`ms <= 0` 恢复自适应缺省。 */
 export function setForwardLinkDeadlineMs(ms: number): void {
-  forwardLinkDeadlineMs = ms > 0 ? ms : FORWARD_LINK_DEADLINE_MS;
+  forwardLinkDeadlineOverride = ms > 0 ? ms : 0;
+}
+
+function forwardLinkDeadlineFor(nodeId: string, rttMs?: number | null): number {
+  if (forwardLinkDeadlineOverride > 0) return forwardLinkDeadlineOverride;
+  return nestedDialBudgetsMs(rttMs ?? lookupPeerRttMs(nodeId)).forwardMs;
+}
+
+function authorizedHttpDeadlineMs(nodeId: string, rttMs?: number | null): number {
+  return adaptiveDeadlineMs({
+    rttMs: rttMs ?? lookupPeerRttMs(nodeId),
+    factor: 8,
+    minMs: 10_000,
+    maxMs: 30_000,
+  });
 }
 
 /** 消息用 `timeout`：`classifyUnreachableReason` 据此把 503 的 reason 判成 timeout 而不是 no_link。 */
@@ -342,8 +358,10 @@ export class Forwarder {
       return countedRaw ?? buildJsonStreamBody(input.body, headers);
     };
     let lastError: unknown;
+    const deadlineAt =
+      Date.now() + authorizedHttpDeadlineMs(input.nodeId, this.deps.peers.rttOf?.(input.nodeId));
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-      if (abort.aborted) break;
+      if (abort.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
         try {
           await this.sleep(STREAM_FAILOVER_BACKOFF_MS[attempt] ?? 200, abort);
@@ -657,7 +675,7 @@ export class Forwarder {
     const retryable = IDEMPOTENT_HTTP.has(req.method);
     const body = retryable ? null : req.body;
     const attempts = retryable ? HTTP_FAILOVER_MAX_ATTEMPTS : 1;
-    const deadlineAt = Date.now() + forwardLinkDeadlineMs;
+    const deadlineAt = Date.now() + forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId));
     let lastError: unknown;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (signal.aborted || Date.now() >= deadlineAt) break;
@@ -774,7 +792,10 @@ export class Forwarder {
       return nodeUnreachableResponse(nodeId, true);
     }
     let linkError: unknown;
-    const link = await this.linkBefore(nodeId, Date.now() + forwardLinkDeadlineMs).catch((err) => {
+    const link = await this.linkBefore(
+      nodeId,
+      Date.now() + forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId))
+    ).catch((err) => {
       linkError = err;
       return null;
     });

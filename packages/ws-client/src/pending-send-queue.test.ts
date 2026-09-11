@@ -3,7 +3,10 @@ import { wsBorsh } from '@vibeterm/shared';
 import {
   DEFAULT_MAX_PENDING_BYTES,
   DEFAULT_MAX_PENDING_FRAMES,
+  DEFAULT_RECONNECT_BUDGET_MS,
   PendingSendQueue,
+  STALE_INPUT_TTL_MS,
+  staleInputTtlMs,
 } from './pending-send-queue';
 
 function payload(size: number, fill = 1): Uint8Array {
@@ -108,5 +111,24 @@ describe('PendingSendQueue', () => {
     queue.drain();
     expect(queue.enqueue(wsBorsh.KIND_TERM_INPUT, payload(4)).status).toBe('queued');
     expect(queue.frameCount).toBe(1);
+  });
+
+  test('stale TTL covers the reconnect window: clamp(4×budget, 10s, 45s)', () => {
+    expect(staleInputTtlMs(1_000)).toBe(STALE_INPUT_TTL_MS);
+    expect(staleInputTtlMs(DEFAULT_RECONNECT_BUDGET_MS)).toBe(45_000);
+    expect(staleInputTtlMs(20_000)).toBe(45_000);
+
+    let now = 1_000;
+    const queue = new PendingSendQueue({
+      maxBytes: 10_000,
+      maxFrames: 8,
+      now: () => now,
+      reconnectBudgetMs: DEFAULT_RECONNECT_BUDGET_MS,
+    });
+    queue.enqueue(wsBorsh.KIND_TERM_INPUT, payload(4, 1));
+    now += 44_000;
+    expect(queue.dropStaleOrderedInput()).toBeNull();
+    now += 2_000;
+    expect(queue.dropStaleOrderedInput()).toMatchObject({ reason: 'stale', droppedFrames: 1 });
   });
 });

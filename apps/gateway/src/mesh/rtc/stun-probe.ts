@@ -7,6 +7,7 @@ import { isUnusableEdgeIp } from '../../tunnel/edge-resolver';
 import { stamp } from '../mesh-log';
 import { maskIceAddress, parseTurnUri } from './ice';
 import { formatRtcLog, rtcLog } from './rtc-log';
+import { stunDnsBudgetMs, stunProbePhaseBudget, stunProbeTimeoutMs } from './stun-probe-budget';
 import {
   type StunDoh,
   type StunLookup,
@@ -16,13 +17,13 @@ import {
   stripHostBrackets,
   stunResolveSnapshot,
 } from './stun-resolver';
+export { STUN_PROBE_MIN_BIND_MS } from './stun-probe-budget';
 export { rankStunByProbes } from './stun-rank';
 export const STUN_PROBE_TIMEOUT_MS = 2_000;
 export const STUN_PROBE_INTERVAL_MS = 10 * 60 * 1_000;
 export const STUN_PROBE_MIN_INTERVAL_MS = 30_000;
 export const STUN_PROBE_CONCURRENCY = 4;
 export const STUN_PROBE_RTO_MS = 500;
-export const STUN_PROBE_MIN_BIND_MS = 100;
 export const STUN_MAGIC_COOKIE = 0x2112a442;
 const BINDING_REQUEST = 0x0001;
 const BINDING_SUCCESS = 0x0101;
@@ -35,7 +36,6 @@ const HEADER_SIZE = 20;
 const TXID_SIZE = 12;
 const ICE_SCHEME_RE = /^(stuns?|turns?):/i;
 const MAGIC_BYTES = Uint8Array.of(0x21, 0x12, 0xa4, 0x42);
-
 export type StunProbeResult = {
   url: string;
   ok: boolean;
@@ -91,14 +91,12 @@ type StunTarget = { hostname: string; port: number };
 type ProbeAddr = { address: string; family: number };
 type ResolveOk = { ok: true; targets: ProbeAddr[]; via: StunResolveVia; fakeIp: boolean };
 type ResolveFail = { ok: false; error: string; via?: StunResolveVia; fakeIp?: boolean };
-
 let session: MeshStunProbe | null = null;
 let loopDeps: StunProbeLoopDeps = {};
 
 export function stunProbeSnapshot(): readonly StunProbeRecord[] {
   return session?.lastResults ?? [];
 }
-
 export function resetStunProbeForTest(): void {
   session?.stop();
   session = null;
@@ -153,7 +151,7 @@ export async function probeStunServer(
 ): Promise<StunProbeResult> {
   const now = or(deps.now, Date.now);
   const started = now();
-  const timeoutMs = or(deps.timeoutMs, STUN_PROBE_TIMEOUT_MS);
+  const timeoutMs = stunProbeTimeoutMs(deps.timeoutMs);
   const scheme = ICE_SCHEME_RE.exec(url.trim())?.[0]?.toLowerCase();
   if (scheme && scheme !== 'stun:') {
     return { url, ok: false, rttMs: 0, skipped: 'unsupported-scheme' };
@@ -173,12 +171,19 @@ export async function probeStunServer(
       return failResult(url, now() - started, 'aborted', metaOf(resolved, addr.address));
     }
     const elapsed = now() - started;
-    const remaining = timeoutMs - elapsed;
-    const dnsAte = remaining <= STUN_PROBE_MIN_BIND_MS && elapsed >= STUN_PROBE_MIN_BIND_MS;
-    if (remaining <= 0 || dnsAte) {
+    const phase = stunProbePhaseBudget(elapsed, timeoutMs);
+    if (phase.skipBind) {
       return or(last, failResult(url, elapsed, 'dns-slow', metaOf(resolved, addr.address)));
     }
-    last = await exchangeBinding(url, target.port, addr, resolved, deps, started, remaining);
+    last = await exchangeBinding(
+      url,
+      target.port,
+      addr,
+      resolved,
+      deps,
+      started,
+      phase.bindBudgetMs
+    );
     if (last.ok || last.error !== 'ENETUNREACH') return last;
   }
   return or(last, failResult(url, now() - started, 'dns', metaOf(resolved)));
@@ -405,7 +410,7 @@ async function resolveStunHost(
       throw err;
     }
   };
-  const dnsBudget = Math.max(1, timeoutMs - (now() - started) - STUN_PROBE_MIN_BIND_MS);
+  const dnsBudget = Math.max(1, stunDnsBudgetMs(timeoutMs) - (now() - started));
   const servers = await resolveIceServers([url], {
     lookup: capturing,
     doh: deps.doh,
@@ -538,15 +543,13 @@ function exchangeBinding(
 }
 
 function defaultLookup(hostname: string): Promise<string[]> {
-  return dnsPromises.lookup(hostname, { all: true }).then((rows) => rows.map((row) => row.address));
+  return dnsPromises.lookup(hostname, { all: true }).then((rows) => rows.map((r) => r.address));
 }
-
 function defaultCreateSocket(family: number): StunUdpSocket {
-  const socket = dgram.createSocket(family === 6 ? 'udp6' : 'udp4');
-  socket.unref();
-  return socket as unknown as StunUdpSocket;
+  const s = dgram.createSocket(family === 6 ? 'udp6' : 'udp4');
+  s.unref();
+  return s as unknown as StunUdpSocket;
 }
-
 function stunMessageType(msg: Uint8Array, txid: Uint8Array): number | null {
   if (msg.length < HEADER_SIZE) return null;
   const view = new DataView(msg.buffer, msg.byteOffset, msg.byteLength);
@@ -556,7 +559,6 @@ function stunMessageType(msg: Uint8Array, txid: Uint8Array): number | null {
   }
   return view.getUint16(0);
 }
-
 function decodeMapped(value: Uint8Array, txid: Uint8Array, xor: boolean): string | null {
   if (value.length < 4) return null;
   const family = value[1];
@@ -587,11 +589,9 @@ function decodeMapped(value: Uint8Array, txid: Uint8Array, xor: boolean): string
   } catch {}
   return `[${host}]:${port}`;
 }
-
 function or<T>(value: T | null | undefined, fallback: T): T {
   return value == null ? fallback : value;
 }
-
 function errorCode(err: unknown, fallback: string): string {
   const code =
     typeof err === 'object' && err && 'code' in err ? (err as { code?: unknown }).code : null;
