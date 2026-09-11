@@ -49,6 +49,7 @@ const EMPTY_STATE: MeshRelayState = {
   reauthRequired: false,
   awaitingToken: false,
   readmitPending: 0,
+  metaKeyLagging: [],
   loading: false,
   error: null,
   loadedAt: null,

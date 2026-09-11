@@ -1983,7 +1983,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "invalidCredentials": "Incorrect username or password.",
-        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it."
+        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -3324,14 +3325,21 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "Member key updated.",
-          "needsRotate": "The new node did not receive the member key. Retry from the notice.",
           "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
           "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
           "retryFailed": "The member key update still has not landed. Try again later.",
           "revokePending": "The node was removed, but the member key update did not land ({{error}}). Retry on the nodes page.",
           "revokePendingBulk": "The member key update did not land for {{count}} node(s). Retry on the nodes page.",
-          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page."
+          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page.",
+          "lagging": {
+            "notice": "{{count}} node(s) have not received the member key ({{names}}): their name and version cannot be reported, and they cannot see other nodes' status.",
+            "action": "Resend member key",
+            "done": "Member key resent to {{count}} node(s).",
+            "failed": "Failed to resend the member key: {{error}}",
+            "rowTag": "Member key missing",
+            "rowHint": "This node has not received the current member key, so its name and version cannot be reported and it cannot be renamed. Use “Resend member key” on the nodes page."
+          }
         },
         "pack": {
           "pending": "The relay's password-join credential is out of date. Other machines cannot join with a password.",
@@ -5596,7 +5604,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "invalidCredentials": "用户名或密码错误。",
-        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。"
+        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -6931,14 +6940,21 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "成员密钥已更新。",
-          "needsRotate": "新节点的成员密钥未送达，请在提示条上重试。",
           "admitFailed": "新节点的成员密钥下发失败：{{error}}",
           "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
           "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
           "revokePending": "节点已移除，但成员密钥更新没送达（{{error}}），请在节点页重试。",
           "revokePendingBulk": "有 {{count}} 台节点的成员密钥更新没送达，请在节点页重试。",
-          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。"
+          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。",
+          "lagging": {
+            "notice": "{{count}} 台节点还没收到成员密钥（{{names}}）：它们的名称与版本无法上报，也收不到其它节点的状态。",
+            "action": "补发成员密钥",
+            "done": "已把成员密钥补发给 {{count}} 台节点。",
+            "failed": "补发成员密钥失败：{{error}}",
+            "rowTag": "成员密钥未送达",
+            "rowHint": "这台节点还没收到当前的成员密钥，因此名称与版本上报不了，也改不了名。请在节点管理页点「补发成员密钥」。"
+          }
         },
         "pack": {
           "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",
@@ -9203,7 +9219,8 @@ export const I18N_RESOURCES = {
         "NO_PASSKEY_FOR_ORIGIN": "このアドレスで使えるパスキーがありません。登録済みのパスキーは別のアドレスのものです。",
         "HUB_NOT_WRITER": "予備ハブは管理操作を受け付けません。メインハブから操作してください。",
         "invalidCredentials": "ユーザー名またはパスワードが正しくありません。",
-        "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。"
+        "PASSKEY_REQUIRED": "このアカウントではパスキーによる二段階の確認が有効です。もう一度サインインして確認を完了してください。",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "バージョンが古い、または不明なノードがあるため、このレコードを書き込めません。全ノードを更新してから再試行してください。"
       },
       "totpDigit": "認証コード {{total}} 桁中 {{index}} 桁目",
       "security": {
@@ -10538,14 +10555,21 @@ export const I18N_RESOURCES = {
         },
         "metaKey": {
           "done": "メンバー鍵を更新しました。",
-          "needsRotate": "新しいノードにメンバー鍵が届いていません。通知バーから再試行してください。",
           "admitFailed": "新しいノードへのメンバー鍵の配布に失敗しました：{{error}}",
           "pending": "メンバー鍵の更新が未送信です（{{count}} 件）。",
           "retry": "再試行",
           "retryFailed": "メンバー鍵の更新はまだ送信できていません。しばらくしてから再試行してください。",
           "revokePending": "ノードは削除しましたが、メンバー鍵の更新が送信できていません（{{error}}）。ノード画面で再試行してください。",
           "revokePendingBulk": "{{count}} 台分のメンバー鍵の更新が送信できていません。ノード画面で再試行してください。",
-          "afterPasswordChange": "メンバー鍵の更新は未送信です。ログインし直してノード画面で再試行してください。"
+          "afterPasswordChange": "メンバー鍵の更新は未送信です。ログインし直してノード画面で再試行してください。",
+          "lagging": {
+            "notice": "{{count}} 台のノードにメンバー鍵が届いていません（{{names}}）。名前とバージョンを報告できず、他ノードの状態も受け取れません。",
+            "action": "メンバー鍵を再送",
+            "done": "{{count}} 台にメンバー鍵を再送しました。",
+            "failed": "メンバー鍵の再送に失敗しました：{{error}}",
+            "rowTag": "メンバー鍵未着",
+            "rowHint": "このノードは現在のメンバー鍵を受け取っていないため、名前とバージョンを報告できず、名前も変更できません。ノード画面の「メンバー鍵を再送」を実行してください。"
+          }
         },
         "pack": {
           "pending": "中継のパスワード参加用資格情報が未更新です。他のマシンはパスワードで参加できません。",

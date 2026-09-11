@@ -31,6 +31,7 @@ function status(overrides: Partial<RelayTenantStatus> = {}): RelayTenantStatus {
     nodesViaRelay: 3,
     reauthRequired: false,
     readmitPending: 0,
+    metaKeyLagging: [],
     quota: null,
     ...overrides,
   };

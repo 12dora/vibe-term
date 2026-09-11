@@ -38,6 +38,7 @@ const RELAY_MODE = {
   nodesViaRelay: 2,
   reauthRequired: false,
   readmitPending: 0,
+  metaKeyLagging: [],
   writable: true,
   kicked: false,
   loading: false,

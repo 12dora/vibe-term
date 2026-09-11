@@ -181,6 +181,8 @@ function TokenAdvanced({ enrollment }: { enrollment: ReturnType<typeof useJoinEn
           )}
         >
           <JoinConfirmStatus enrollment={enrollment} />
+          {/* 刚批准的那台没拿到成员密钥就废了一半：在这一步当场给出补发按钮，别让用户走到设置页才发现。 */}
+          {enrollment.metaLagNotice}
         </GuideStep>
       </div>
     </details>

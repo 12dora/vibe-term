@@ -159,6 +159,26 @@ describe('RelayTenantApi 状态', () => {
     ).toBe(2);
   });
 
+  test('normalizeRelayStatus 归一 metaKeyLagging，旧节点缺字段为空数组', () => {
+    expect(normalizeRelayStatus({}).metaKeyLagging).toEqual([]);
+    expect(normalizeRelayStatus({ metaKeyLagging: 'nope' as never }).metaKeyLagging).toEqual([]);
+    const nodeId = '5a'.repeat(16);
+    expect(
+      normalizeRelayStatus({
+        metaKeyLagging: [
+          { nodeId, name: 'oracle-jp', since: 1700, admitSeq: 5 },
+          // node id 不合法 / 缺字段的行整条丢掉，不能把没有 id 的欠账摆上界面
+          { nodeId: 'zz', name: null, since: null, admitSeq: 1 } as never,
+          { name: 'no-id' } as never,
+          { nodeId: 'ab'.repeat(16) } as never,
+        ],
+      }).metaKeyLagging
+    ).toEqual([
+      { nodeId, name: 'oracle-jp', since: 1700, admitSeq: 5 },
+      { nodeId: 'ab'.repeat(16), name: null, since: null, admitSeq: 0 },
+    ]);
+  });
+
   test('路由不存在时抛 404，isRelayRoutesMissing 认得出来', async () => {
     const { api } = recorder([new Response('not found', { status: 404 })]);
     const error = await api.status().catch((err: unknown) => err);

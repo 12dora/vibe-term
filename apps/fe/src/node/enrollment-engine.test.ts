@@ -31,6 +31,7 @@ const {
 const { clearUnconfirmedRecords, listUnconfirmedRecordIds, submitAdmitRecord, unconfirmedRecord } =
   await import('./admit-record');
 const {
+  admittedNodeIdFor,
   cancelPending,
   configureEnrollmentEngineForTest,
   enrollmentEngineDebugForTest,
@@ -404,6 +405,43 @@ describe('全局 key log 写锁', () => {
     // 第二条看到的是第一条 append 之后的头，而不是同一个。
     expect(recordSeq(appended[1])).toBe(7n);
     expect(getEnrollmentEngineState().admittedIds.sort()).toEqual(['e-lock-1', 'e-lock-2']);
+    ctx.release();
+  });
+});
+
+describe('node_id_reused 当作已加入', () => {
+  test('这台早就被接纳过：pending 清掉、记进 admittedIds，node id 从字节里解出来', async () => {
+    const { pending, candidate } = await fixture('e-reused');
+    collectResult = [candidate];
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    // 上一次「确认」其实已经落账，只是这个标签页没看到结果；再签一条就会吃这个码。
+    const spy = apiSpy({ ok: false, code: 'node_id_reused' });
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext(context(spy.api));
+    await settle();
+
+    expect(spy.appended).toHaveLength(1);
+    expect(getEnrollmentEngineState().admittedIds).toEqual(['e-reused']);
+    // 卡片必须消失——它留在屏幕上正是用户反复点确认的原因。
+    expect(listPendingEnrollments()).toHaveLength(0);
+    // 中继模式下的成员密钥补发要按 node id 发，这里必须解得出来。
+    expect(admittedNodeIdFor('e-reused')).toMatch(/^[0-9a-f]{32}$/);
+    ctx.release();
+  });
+
+  test('其余失败码照旧不算已加入，pending 留着', async () => {
+    const { pending, candidate } = await fixture('e-badsig');
+    collectResult = [candidate];
+    rememberSigner({ kind: 'root', rootKey }, NOW);
+    const spy = apiSpy({ ok: false, code: 'BAD_SIGNATURE' });
+
+    addPendingEnrollment(pending);
+    const ctx = registerAdmitContext(context(spy.api));
+    await settle();
+
+    expect(getEnrollmentEngineState().admittedIds).toEqual([]);
+    expect(listPendingEnrollments()).toHaveLength(1);
     ctx.release();
   });
 });

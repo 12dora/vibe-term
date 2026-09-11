@@ -31,11 +31,13 @@ import { encodeBase64url } from '@vibeterm/shared/auth';
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { toast } from 'sonner';
 import {
+  NODE_ID_REUSED,
   type SignedRecord,
   admitPlan,
   clearUnconfirmedRecords,
   forgetUnconfirmedRecord,
   listUnconfirmedRecordIds,
+  nodeIdFromAdmitRecord,
   submitAdmitRecord,
   subscribeUnconfirmedRecords,
   unconfirmedRecord,
@@ -600,11 +602,14 @@ async function submitAdmit(
     toast.error(op.t('nodes.enrollment.staleRecord'));
     return;
   }
-  if (disposition.kind === 'error') {
+  // `node_id_reused` 不是失败：这台早就被接纳过（上一次确认已落账，只是本标签页没看到结果），
+  // 卡片必须消失、中继的补发也要照跑，否则用户只会一次次重点「确认」。
+  if (disposition.kind === 'error' && disposition.code !== NODE_ID_REUSED) {
     toast.error(op.t(`auth.errors.${disposition.code}`, { defaultValue: disposition.code }));
     return;
   }
-  finishPending(id, 'admitted', nodeIdHex);
+  // 重发路径手上只有字节、没有证书对象，node id 从字节里解——丢了它就补不出 `meta-key`。
+  finishPending(id, 'admitted', nodeIdHex ?? nodeIdFromAdmitRecord(record) ?? undefined);
   toast.success(op.t('nodes.enrollment.admitted'));
   fanOutDone();
 }

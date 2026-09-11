@@ -1977,7 +1977,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "invalidCredentials": "Incorrect username or password.",
-        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it."
+        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {
@@ -3318,14 +3319,21 @@
         },
         "metaKey": {
           "done": "Member key updated.",
-          "needsRotate": "The new node did not receive the member key. Retry from the notice.",
           "admitFailed": "Failed to deliver the member key to the new node: {{error}}",
           "pending": "Member key update has not landed yet ({{count}}).",
           "retry": "Retry",
           "retryFailed": "The member key update still has not landed. Try again later.",
           "revokePending": "The node was removed, but the member key update did not land ({{error}}). Retry on the nodes page.",
           "revokePendingBulk": "The member key update did not land for {{count}} node(s). Retry on the nodes page.",
-          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page."
+          "afterPasswordChange": "The member key update has not landed yet. Sign in again and retry on the nodes page.",
+          "lagging": {
+            "notice": "{{count}} node(s) have not received the member key ({{names}}): their name and version cannot be reported, and they cannot see other nodes' status.",
+            "action": "Resend member key",
+            "done": "Member key resent to {{count}} node(s).",
+            "failed": "Failed to resend the member key: {{error}}",
+            "rowTag": "Member key missing",
+            "rowHint": "This node has not received the current member key, so its name and version cannot be reported and it cannot be renamed. Use “Resend member key” on the nodes page."
+          }
         },
         "pack": {
           "pending": "The relay's password-join credential is out of date. Other machines cannot join with a password.",

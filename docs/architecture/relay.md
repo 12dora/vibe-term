@@ -164,6 +164,25 @@ admit 不能「用当前 epoch 只封装给新节点」：`meta-key` 要求 epoc
 用户用新密码重新登录、打开节点页后自动重发（本地 head 没动，字节仍然接得上）。
 `rotate-root-keep`（常规改密，默认路径）会话保留，当场就落账。
 
+#### 补发落不下去时：`metaKeyLagging`（服务端真相）
+
+admit 之后那条 `meta-key` 是**必需**的，缺了它新节点解不开元数据块：读不到别人的状态块、也封不出自己的，
+名字与版本永远上报不了（`relayListToNodeList` 回落 `peer_cache`，没有缓存行就只剩一串 node id），
+`rename-node` 还会被版本门当成「版本未知的旧节点」挡下——形成死锁。
+
+因此欠账不再只记在浏览器的 `sessionStorage` 里（换台机器、换标签页、刷新就没了）。
+`GET /api/mesh/relay/status` 增加 `metaKeyLagging: [{nodeId, name, since, admitSeq}]`：
+服务端按**当前生效的 `meta-key` / `set-relays` 记录里的逐节点封装条目**（`UserKeyState.metaKeyEntries`）
+与未吊销证书求差集算出来（`apps/gateway/src/mesh/relay-meta-lag.ts`），任何入口拉一次状态都看得到。
+
+- 前端：设置页「节点管理」卡与「接入更多设备」面板各挂一条告警条（`relay-meta-lag-notice.tsx`），
+  动作「补发成员密钥」按名单逐台 `appendMetaKey({op:'admit', nodeId})`；节点表里该行挂「成员密钥未送达」标记。
+- 版本门：中继模式下名单里的节点从 `meta-key` / `set-relays` / `rename-node` 的阻塞名单里摘掉
+  （`exemptMetaKeyLaggingNodes`）。版本未知是这条 bug 的症状而非证据，而它们是用 r3 加入码进来的，
+  天然满足 `MIN_RELAY_RECORD_VERSION`。`readmit-node` / `notification-sink` / `rotate-root-keep` 仍 fail-closed。
+- 「批准加入」的两条入口（enrollment 引擎与节点表的待批准行）都会补发；
+  引擎的重发路径从已签字节里解出 node id，`node_id_reused` 按「早就已加入」收尾（清 pending + 照常补发）。
+
 ## 5. join 串 r3
 
 ```
@@ -751,6 +770,8 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
   `inspectHubAuthRecordCompat` 在中继模式读这列（hub 模式仍读 `nodes.version`）。对端在 cache 里但
   version 缺失/无法解析时 fail-closed；空 cache 只豁免 `set-relays` / `meta-key` / `rename-node`（首台 bootstrap）。`readmit-node` 要求已有证书，不走空 cache 豁免；中继模式下也不跳过未进入 `peer_cache` 的未吊销证书（未知版本一律阻塞）。
   `rotate-root-keep` 不再因中继模式而绕过门禁，须全体未吊销对端 ≥ 1.1.16。
+  例外：`metaKeyLagging` 名单里的节点（还没拿到当前 `K_meta`，版本无从上报）不参与
+  `meta-key` / `set-relays` / `rename-node` 的阻塞判定，见 §4 的「补发落不下去时」。
 
 ## 14. 测试与实测
 

@@ -13,6 +13,7 @@ import type { AuthenticationResponseJSON } from '@vibeterm/api-client/auth/index
 import type { VerifyPasskeyAssertion } from '@vibeterm/shared/auth';
 import {
   applyKeyLogRecord,
+  bytesToHex,
   computeRecordHash,
   concatBytes,
   createEnrollment,
@@ -20,6 +21,7 @@ import {
   decodeAdmitNodePayload,
   decodeAuthorization,
   decodeBase64url,
+  decodeCertificate,
   decodeJoinToken,
   decodeKeyLogRecord,
   decodePasskeyAssertion,
@@ -43,6 +45,7 @@ import {
   clearUnconfirmedRecords,
   forgetUnconfirmedRecord,
   listUnconfirmedRecordIds,
+  nodeIdFromAdmitRecord,
   submitAdmitRecord,
   subscribeUnconfirmedRecords,
   unconfirmedRecord,
@@ -961,6 +964,36 @@ describe('hub=sync 失败分类', () => {
       kind: 'error',
       code: 'BAD_SIGNATURE',
     });
+  });
+});
+
+describe('nodeIdFromAdmitRecord', () => {
+  test('从已签好的 admit-node 字节里解出 node id（重发路径手上只有字节）', async () => {
+    const { enrollment, pending } = await makeEnrollment();
+    const cert = makeCertificate(enrollment.enrollSk, enrollment.enrollPk);
+    const record = await buildAdmitNodeRecord({
+      head: genesisHead(),
+      rootEpoch: ROOT_EPOCH,
+      uid: UID,
+      pending,
+      certificateBytes: cert.certificateBytes,
+      certSig: cert.certSig,
+      signer: { kind: 'root', rootKey },
+    });
+    const expected = bytesToHex(decodeCertificate(cert.certificateBytes).node_id);
+    expect(
+      nodeIdFromAdmitRecord({
+        bytes: encodeBase64url(record.bytes),
+        sig: encodeBase64url(record.sig),
+      })
+    ).toBe(expected);
+  });
+
+  test('不是 admit-node / 字节损坏时返回 null，不抛', () => {
+    expect(nodeIdFromAdmitRecord({ bytes: 'not-base64url!!', sig: 'x' })).toBeNull();
+    expect(
+      nodeIdFromAdmitRecord({ bytes: encodeBase64url(new Uint8Array(8)), sig: 'x' })
+    ).toBeNull();
   });
 });
 

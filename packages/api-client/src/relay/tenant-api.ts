@@ -11,10 +11,13 @@ import type { HubEnrollmentStatus } from '../auth/types';
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, requestJson } from '../json-mutation';
 import { RelayApiError } from './admin-api';
+import { type RelayMetaKeyLaggingNode, normalizeMetaKeyLagging } from './meta-key-lagging';
 import { readRelayTenantError } from './tenant-error';
 
 /** 本机 uplink 的形态：接中继 / 接 hub / 都没有。 */
 export type RelayUplinkMode = 'relay' | 'hub' | 'none';
+
+export type { RelayMetaKeyLaggingNode } from './meta-key-lagging';
 
 /** 中继列表里的一条链路（按 `priority` 升序即 failover 顺序）。 */
 export interface RelayLinkStatus {
@@ -99,6 +102,8 @@ export interface RelayTenantStatus {
   keyLog?: RelayKeyLogHealth;
   /** 成员记录还是旧根签的节点数：中继只认当前根，这些成员接不上，须重新确认。 */
   readmitPending: number;
+  /** 成员密钥（`K_meta`）还没送到的成员；旧节点不下发该字段，缺省为空。 */
+  metaKeyLagging: RelayMetaKeyLaggingNode[];
 }
 
 /**
@@ -345,6 +350,7 @@ const EMPTY_STATUS: RelayTenantStatus = {
   awaitingToken: false,
   keyLog: { skipped: 0, blockedSeq: null, caughtUp: false },
   readmitPending: 0,
+  metaKeyLagging: [],
 };
 
 /** 缺字段一律补默认值：旧节点没有这条路由，`mode` 之外的字段也可能是后加的。 */
@@ -383,6 +389,7 @@ export function normalizeRelayStatus(
       caughtUp: payload.keyLog?.caughtUp === true,
     },
     readmitPending: payload.readmitPending ?? 0,
+    metaKeyLagging: normalizeMetaKeyLagging(payload.metaKeyLagging),
   };
 }
 

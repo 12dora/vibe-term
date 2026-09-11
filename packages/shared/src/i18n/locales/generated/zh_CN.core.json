@@ -704,7 +704,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "invalidCredentials": "用户名或密码错误。",
-        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。"
+        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {

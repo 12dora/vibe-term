@@ -21,6 +21,7 @@ import { Card, CardAction, CardContent, CardHeader, CardTitle } from '@vibeterm/
 import { Plus, RefreshCw } from 'lucide-react';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { RelayMetaLagNotice } from '../relay/relay-meta-lag-notice';
 import { useRelayAdmitFollowUp } from '../relay/use-relay-admit-follow-up';
 import type { LocalUplinkController } from '../uplink/local-uplink-controller';
 import { uplinkBlockedHint } from '../uplink/relay-targets';
@@ -235,6 +236,14 @@ export function NodesManagement({
       </CardHeader>
 
       <CardContent className="flex flex-col gap-3">
+        {/* 成员密钥没送到的成员：服务端真相，与本标签页记了什么无关（见 relay-meta-lag-notice.tsx）。 */}
+        <RelayMetaLagNotice
+          lagging={relay.metaKeyLagging}
+          mode={mode}
+          api={api}
+          prompt={prompt}
+          onChanged={refreshAll}
+        />
         <EnrollmentSection
           api={api}
           mode={mode}

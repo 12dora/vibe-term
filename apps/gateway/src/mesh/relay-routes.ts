@@ -29,6 +29,7 @@ import {
   collectJoinMaterialRelays,
   fanOutEnrollmentCreate,
 } from './relay-enrollment-fanout';
+import { listMetaKeyLagging } from './relay-meta-lag';
 import { handleMeshRelayPack } from './relay-pack-routes';
 import {
   buildMetaKeyPayload,
@@ -38,7 +39,7 @@ import {
   nextRelayPriority,
   relayPayloadHash,
 } from './relay-payloads';
-import { buildReadmitPrepare } from './relay-readmit';
+import { buildReadmitPrepare, nodeDisplayName } from './relay-readmit';
 import { handleRelayResolve } from './relay-resolve-route';
 import {
   type ParsedEnrollment,
@@ -171,9 +172,25 @@ export class RelayRoutes {
         client?.awaitingToken === true ||
         rows.some((row) => row.kicked && row.kickedReason === 'password_rotated'),
       readmitPending,
+      // 成员密钥没送达的那些：新节点解不开元数据块，名字/版本一律上报不了（见 relay-meta-lag.ts）
+      metaKeyLagging: mode === 'relay' && uid ? this.metaKeyLaggingFor(uid) : [],
       quota: client?.quota ?? null,
       // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
       keyLog: client?.keyLogHealth() ?? { skipped: 0, blockedSeq: null, caughtUp: false },
+    });
+  }
+
+  /** 已接纳但没拿到当前世代 `K_meta` 的成员；非中继模式恒为空。 */
+  private metaKeyLaggingFor(userId: string) {
+    const projection = this.deps.secrets.projection();
+    const userStore = this.deps.userStore;
+    return listMetaKeyLagging({
+      certs: userStore.listCertsByUser(userId),
+      entries: projection.metaKeyEntries,
+      metaKeyEpoch: projection.metaKeyEpoch,
+      selfNodeId: this.deps.nodeId,
+      nameOf: (nodeId) => nodeDisplayName(userStore, nodeId),
+      createdAtOf: (nodeId) => userStore.getNode(nodeId)?.createdAt ?? null,
     });
   }
 

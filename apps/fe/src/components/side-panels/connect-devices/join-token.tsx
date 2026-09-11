@@ -30,6 +30,7 @@ import {
   type CreateEnrollmentState,
   useCreateEnrollment,
 } from '@/pages/settings/nodes/management/use-create-enrollment';
+import { RelayMetaLagNotice } from '@/pages/settings/nodes/relay/relay-meta-lag-notice';
 import { useRelayAdmitFollowUp } from '@/pages/settings/nodes/relay/use-relay-admit-follow-up';
 import type { AuthKdfParamsJson, MeshNode } from '@vibeterm/api-client/auth/index';
 import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
@@ -156,6 +157,8 @@ export interface JoinEnrollment {
   confirmManually: (enrollmentId: string) => void;
   /** 凭据对话框，必须由调用方挂进 DOM。 */
   dialog: ReactElement | null;
+  /** 「成员密钥未送达」告警条（服务端真相）；没有欠账时为 `null`。 */
+  metaLagNotice: ReactElement | null;
 }
 
 /** 当前这套身份：会话必须与它对得上才作数。 */
@@ -354,6 +357,18 @@ export function useJoinEnrollment(): JoinEnrollment {
     engine,
     confirmManually: (enrollmentId: string) => void confirmManually(enrollmentId),
     dialog: prompt.dialog,
+    // 这条面板正是「加一台机器」的入口：刚批准的那台没拿到成员密钥，必须在这里就说清楚，
+    // 而不是等用户下次翻到设置页（见 relay-meta-lag-notice.tsx）。
+    metaLagNotice:
+      relay.relayMode && relay.metaKeyLagging.length > 0 ? (
+        <RelayMetaLagNotice
+          lagging={relay.metaKeyLagging}
+          mode={mode}
+          api={api}
+          prompt={prompt}
+          onChanged={refreshAfterAdmit}
+        />
+      ) : null,
   };
 }
 

@@ -187,6 +187,37 @@ describe('RelayRoutes', () => {
     }
   });
 
+  test('status 列出没被当前世代 K_meta 封到的成员（成员密钥未送达）', async () => {
+    const b = await boot();
+    try {
+      await configureRelay(b);
+      const clean = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        metaKeyLagging: unknown[];
+      };
+      expect(clean.metaKeyLagging).toEqual([]);
+
+      // 只签了 admit-node、没跟上 meta-key 的那台：证书在成员表里，却不在封装条目里。
+      const newNodeId = '5a'.repeat(16);
+      b.userStore.upsertCert({
+        nodeId: newNodeId,
+        userId: b.user.userId,
+        admitRecordSeq: 5,
+        certificateBytes: new Uint8Array(0),
+        certSig: new Uint8Array(0),
+        authorizationBytes: new Uint8Array(0),
+        authorizationSig: new Uint8Array(0),
+      });
+      const lagging = (await (await b.call('/api/mesh/relay/status')).json()) as {
+        metaKeyLagging: Array<{ nodeId: string; name: string | null; admitSeq: number }>;
+      };
+      expect(lagging.metaKeyLagging).toEqual([
+        { nodeId: newNodeId, name: null, since: null, admitSeq: 5 },
+      ] as never);
+    } finally {
+      b.close();
+    }
+  });
+
   test('status 在线旧令牌成员等待换代，不标记重新认证', async () => {
     const client = Object.assign(Object.create(RelayUplinkClient.prototype), {
       state: 'online',

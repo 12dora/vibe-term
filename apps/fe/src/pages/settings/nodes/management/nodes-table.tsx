@@ -26,7 +26,7 @@ import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { PendingNodeRow } from './pending-node-row';
 import { RevokeDialog } from './revoke-dialog';
-import { Tag, Td, Th, rowBlockedHint } from './row-cells';
+import { MetaKeyLagTag, Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
@@ -157,6 +157,7 @@ function NodeRowView({
         <span className="flex items-center gap-1.5">
           <span className="truncate font-medium">{row.name}</span>
           {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
+          <MetaKeyLagTag nodeId={row.id} />
           {row.isHub && (
             <>
               <HubTag row={row} hubDetails={deps.hubDetails} />

@@ -20,6 +20,7 @@ const NO_RELAY = {
   nodesViaRelay: 0,
   reauthRequired: false,
   readmitPending: 0,
+  metaKeyLagging: [],
   writable: true,
   kicked: false,
   loading: false,

@@ -7,12 +7,14 @@ import type { CredentialPromptHandle } from '@/auth/credential-prompt';
 import { headFromResponse } from '@/auth/key-log-actions';
 import type { RecordSigner } from '@/auth/key-log-actions';
 import { type AdmitPendingResult, admitPendingNode } from '@/node/admit-pending-node';
+import { NODE_ID_REUSED } from '@/node/admit-record';
 import { buildRevokeNodeRecord, classifyKeyLogFailure } from '@/node/enrollment';
 import { withKeyLogLock } from '@/node/enrollment-engine';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { fetchRelayMode } from '@/node/mesh-relay';
 import { warnRelayAckGlobal } from '@/node/relay-ack';
 import { alreadyLocked, appendMetaKey } from '@/node/relay-enroll';
+import { distributeMetaKey } from '@/node/relay-meta-key-admit';
 import { rememberPendingMetaKey } from '@/node/relay-meta-key-pending';
 import { renameNodeViaKeyLog } from '@/node/rename-node';
 import type { AuthApi } from '@vibeterm/api-client/auth/index';
@@ -316,6 +318,12 @@ export function reportAdmitResult(
       toast.error(t('nodes.enrollment.staleRecord'));
       return false;
     case 'error':
+      // `node_id_reused` = 这台机器早就被接纳过了（多半是上一次点确认已经落账，本页没看到
+      // 结果）。按已加入收尾：刷新列表把待批准行清掉，后续的成员密钥补发照跑。
+      if (result.code === NODE_ID_REUSED) {
+        toast.success(t('nodes.enrollment.admitted'));
+        return true;
+      }
       toast.error(
         t('nodes.admit.failed', {
           error: actionErrorText(t, { code: result.code }, { writerPublicUrl }),
@@ -361,14 +369,44 @@ export function useAdmitNode(
   const admit = useCallback(async () => {
     setBusy(true);
     try {
+      const nodeIdHex = rowRef.current.id;
       const result = await admitPendingNode(rowRef.current, { api, mode, prompt, stillValid });
-      if (reportAdmitResult(t, result, writerPublicUrl)) onChanged();
+      if (!reportAdmitResult(t, result, writerPublicUrl)) return;
+      // 这条路不经 enrollment 引擎，中继模式下的成员密钥补发必须在这里显式跟上：
+      // 少了它，新节点解不开元数据块，名字与版本永远上报不了（见 relay-meta-key-admit.ts）。
+      await followUpRelayMetaKey({ api, mode, nodeIdHex, t });
+      onChanged();
     } finally {
       setBusy(false);
     }
   }, [api, mode, onChanged, prompt, stillValid, t, writerPublicUrl]);
 
   return { busy, admit };
+}
+
+/**
+ * 「批准加入」之后的中继收尾：把当前世代的 `K_meta` 封给这台新节点。
+ *
+ * 签名者取自 admit 刚用过的那把（5 分钟复用窗口），窗口里没有就只落欠账——告警条会带着
+ * 「补发成员密钥」一直挂着，绝不会静默消失。非中继模式什么都不做。
+ */
+async function followUpRelayMetaKey(input: {
+  api: AuthApi;
+  mode: ResolvedMode;
+  nodeIdHex: string;
+  t: Translate;
+}): Promise<void> {
+  if (!(await fetchRelayMode())) return;
+  const result = await distributeMetaKey(
+    { api: input.api, relayApi: defaultRelayTenantApi, mode: input.mode, lock: withKeyLogLock },
+    input.nodeIdHex
+  );
+  if (result.ok) return;
+  toast.warning(
+    input.t('relay.tenant.metaKey.admitFailed', {
+      error: actionErrorText(input.t, { code: result.code }, { writerPublicUrl: null }),
+    })
+  );
 }
 
 export interface BulkRevokeDeps {

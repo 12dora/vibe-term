@@ -6,6 +6,13 @@
 // 这块的性质决定了它不能被简化：`submitAdmitRecord` **先暂存再发送**，任何「等响应回来再存」
 // 的写法都会在超时 / 断网时丢掉字节，下一次轮询按新 head 重签一条，hub 就永久 `seq_gap`。
 
+import {
+  decodeAdmitNodePayload,
+  decodeBase64url,
+  decodeCertificate,
+  decodeKeyLogRecord,
+  nodeIdToHex,
+} from '@vibeterm/shared/auth';
 import { classifyKeyLogFailure } from './enrollment';
 import { warnRelayAckGlobal } from './relay-ack';
 import type { RelayAckFields } from './relay-ack';
@@ -15,6 +22,9 @@ export interface SignedRecord {
   bytes: string;
   sig: string;
 }
+
+/** 密钥日志拒绝 `admit-node` 的理由：这个 node id 已经有证书了（即：早就被接纳过）。 */
+export const NODE_ID_REUSED = 'node_id_reused';
 
 export type AdmitDisposition =
   | { kind: 'admitted' }
@@ -88,6 +98,24 @@ export function clearUnconfirmedRecords(): void {
   if (unconfirmedRecords.size === 0) return;
   unconfirmedRecords.clear();
   notifyUnconfirmed();
+}
+
+/**
+ * 从一条已签好的 `admit-node` 记录里取出新节点的 node id。
+ *
+ * 重发路径手上只有字节、没有证书对象，但字节里就带着证书——中继模式下 admit 之后还要补一条
+ * `meta-key {op:'admit'}`，没有 node id 那条就发不出去，新节点永远解不开元数据块。
+ * 解不出来（记录不是 admit-node / 证书损坏）返回 `null`。
+ */
+export function nodeIdFromAdmitRecord(record: SignedRecord): string | null {
+  try {
+    const decoded = decodeKeyLogRecord(decodeBase64url(record.bytes));
+    if (decoded.type !== 'admit-node') return null;
+    const payload = decodeAdmitNodePayload(decoded.payload);
+    return nodeIdToHex(decodeCertificate(payload.certificate_bytes).node_id);
+  } catch {
+    return null;
+  }
 }
 
 /**

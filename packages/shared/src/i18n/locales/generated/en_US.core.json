@@ -704,7 +704,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "No passkey works on this address. Your passkeys were created on a different one.",
         "HUB_NOT_WRITER": "A standby hub does not accept management changes. Use the primary hub.",
         "invalidCredentials": "Incorrect username or password.",
-        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it."
+        "PASSKEY_REQUIRED": "This account requires a passkey check. Sign in again to complete it.",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "Some nodes are too old or their version is unknown, so this record cannot be written. Upgrade all nodes and try again."
       },
       "totpDigit": "Code digit {{index}} of {{total}}",
       "security": {

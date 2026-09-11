@@ -2550,14 +2550,21 @@
         },
         "metaKey": {
           "done": "成员密钥已更新。",
-          "needsRotate": "新节点的成员密钥未送达，请在提示条上重试。",
           "admitFailed": "新节点的成员密钥下发失败：{{error}}",
           "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
           "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
           "revokePending": "节点已移除，但成员密钥更新没送达（{{error}}），请在节点页重试。",
           "revokePendingBulk": "有 {{count}} 台节点的成员密钥更新没送达，请在节点页重试。",
-          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。"
+          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。",
+          "lagging": {
+            "notice": "{{count}} 台节点还没收到成员密钥（{{names}}）：它们的名称与版本无法上报，也收不到其它节点的状态。",
+            "action": "补发成员密钥",
+            "done": "已把成员密钥补发给 {{count}} 台节点。",
+            "failed": "补发成员密钥失败：{{error}}",
+            "rowTag": "成员密钥未送达",
+            "rowHint": "这台节点还没收到当前的成员密钥，因此名称与版本上报不了，也改不了名。请在节点管理页点「补发成员密钥」。"
+          }
         },
         "pack": {
           "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",

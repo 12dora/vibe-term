@@ -233,6 +233,23 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 | 重命名 | hub 在线时可改 `nodes.name` |
 | 吊销 | 每次都要当场确认凭据（不进复用窗口），只走 `keylog?hub=sync` 写 `revoke-node`。hub 未确认则告警、不刷新列表 |
 
+### 中继模式：「成员密钥未送达」
+
+新节点加入中继 mesh 要两条记录：`admit-node`（成员资格）与紧随其后的 `meta-key {op:'admit'}`（把当前世代的
+`K_meta` 封给它）。第二条没落账时的症状很好认：
+
+- 节点在名单里是「已加入」，但**名称显示成 32 位 hex 的 node id**，版本恒为 `—`；
+- 它自己的日志里反复打 `[relay] meta key epoch=N not addressed to this node; staying read-only`；
+- 从网页给它改名会失败（版本门把「版本未知」当成旧节点）。
+
+处理：设置 → 多节点互联 → 节点管理（或「接入更多设备」面板）会挂一条黄色告警条列出欠账节点，
+点「补发成员密钥」，按提示输一次密码或用通行密钥即可；节点表里对应行带「成员密钥未送达」标记。
+名单来自 `GET /api/mesh/relay/status` 的 `metaKeyLagging`，是服务端按当前 `meta-key` 记录的封装条目算的，
+**换浏览器 / 换机器 / 手机 PWA 看到的都一样**，不依赖某个标签页的本地记账。
+
+排查时在已登录的浏览器里打开 `/api/mesh/relay/status`，看 `metaKeyLagging` 数组。
+补发之后它应变空，节点的名称与版本在下一拍 `relay.list` 里就会上报。
+
 hub 不可达（`mode.hubNodeId` / `isHub` 学不到）：顶栏提示，新增 / 重命名 / 吊销禁用。非 hub 机在 `peer_cache` 学到 hub 元数据之前也是这种降级。
 
 侧边栏：在线已登录懒建该 node 运行时；在线未登录只显示「登录此节点」，不建连接；离线灰显缓存的设备名。

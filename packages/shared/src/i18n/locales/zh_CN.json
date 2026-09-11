@@ -1977,7 +1977,8 @@
         "NO_PASSKEY_FOR_ORIGIN": "当前地址没有可用的通行密钥，已注册的通行密钥属于其他地址。",
         "HUB_NOT_WRITER": "备用 Hub 不接受管理操作，请通过主 Hub 操作。",
         "invalidCredentials": "用户名或密码错误。",
-        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。"
+        "PASSKEY_REQUIRED": "此账号已启用通行密钥二次验证，请重新登录以完成验证。",
+        "KEYLOG_TYPE_UNSUPPORTED_BY_NODES": "有节点版本过低或版本未知，这条记录写不下去；请先升级全部节点后重试。"
       },
       "totpDigit": "验证码第 {{index}} 位，共 {{total}} 位",
       "security": {
@@ -3312,14 +3313,21 @@
         },
         "metaKey": {
           "done": "成员密钥已更新。",
-          "needsRotate": "新节点的成员密钥未送达，请在提示条上重试。",
           "admitFailed": "新节点的成员密钥下发失败：{{error}}",
           "pending": "成员密钥更新尚未送达（{{count}} 条）。",
           "retry": "重试",
           "retryFailed": "成员密钥更新仍未送达，请稍后重试。",
           "revokePending": "节点已移除，但成员密钥更新没送达（{{error}}），请在节点页重试。",
           "revokePendingBulk": "有 {{count}} 台节点的成员密钥更新没送达，请在节点页重试。",
-          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。"
+          "afterPasswordChange": "成员密钥更新尚未送达，重新登录后在节点页重试。",
+          "lagging": {
+            "notice": "{{count}} 台节点还没收到成员密钥（{{names}}）：它们的名称与版本无法上报，也收不到其它节点的状态。",
+            "action": "补发成员密钥",
+            "done": "已把成员密钥补发给 {{count}} 台节点。",
+            "failed": "补发成员密钥失败：{{error}}",
+            "rowTag": "成员密钥未送达",
+            "rowHint": "这台节点还没收到当前的成员密钥，因此名称与版本上报不了，也改不了名。请在节点管理页点「补发成员密钥」。"
+          }
         },
         "pack": {
           "pending": "中继上的密码加入凭据未更新，其它机器暂时无法用密码加入。",

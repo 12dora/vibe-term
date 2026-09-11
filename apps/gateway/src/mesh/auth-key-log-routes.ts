@@ -27,6 +27,7 @@ import type { AuthRoutesDeps } from './auth-routes';
 import { clientIpFromRequest } from './client-ip';
 import { isPeerRequest } from './client-source';
 import type { KeyLogHubAck } from './mesh-deps';
+import { exemptMetaKeyLaggingNodes, metaKeyLaggingIdsFor } from './relay-meta-lag';
 import { jsonBody, jsonError } from './session-middleware';
 import { sameHubUrl } from './uplink-pool';
 
@@ -524,17 +525,30 @@ export class AuthKeyLogRoutes {
     if (this.identicalAppliedRecord(userId, bytes, sig)) {
       return null;
     }
-    const compat = applyForcedKeyLogCompat(
-      inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId, {
-        relayMode: this.inRelayMode(userId),
-        localNodeId: this.deps.nodeId,
-      }),
-      readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1'
+    const relayMode = this.inRelayMode(userId);
+    const compat = exemptMetaKeyLaggingNodes(
+      applyForcedKeyLogCompat(
+        inspectHubAuthRecordCompat(this.deps.userStore, bytes, userId, {
+          relayMode,
+          localNodeId: this.deps.nodeId,
+        }),
+        readHeaderPair(req.headers, FORCE_KEYLOG_HEADER) === '1'
+      ),
+      bytes,
+      relayMode ? () => this.metaKeyLaggingIds(userId) : null
     );
     if (compat.ok) return null;
     return jsonError(compat.code, 409, {
       minVersion: compat.minVersion,
       nodes: compat.nodes,
+    });
+  }
+
+  private metaKeyLaggingIds(userId: string): ReadonlySet<string> {
+    return metaKeyLaggingIdsFor({
+      stateOf: () => this.deps.keyLogService.currentState(userId),
+      certs: () => this.deps.userStore.listCertsByUser(userId),
+      selfNodeId: this.deps.nodeId,
     });
   }
 
