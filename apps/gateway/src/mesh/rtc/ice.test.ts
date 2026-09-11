@@ -393,18 +393,26 @@ describe('ice helpers', () => {
 
 describe('buildRtcIceConfig UDP mux vs TURN', () => {
   const runtime = { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null };
+  const turn = {
+    url: 'turn:203.0.113.9:40250?transport=udp',
+    username: 'u',
+    credential: 'p',
+  };
 
   test('keeps UDP mux when only STUN is configured', () => {
     const built = buildRtcIceConfig({ stun: ['stun:stun.example:3478'], turn: null }, runtime);
     expect(built.enableIceUdpMux).toBe(true);
   });
 
-  test('disables UDP mux when a TURN server is configured (libjuice limitation)', () => {
+  test('keeps UDP mux when TURN is present but not yet probed', () => {
+    const built = buildRtcIceConfig({ stun: ['stun:stun.example:3478'], turn }, runtime);
+    expect(built.enableIceUdpMux).toBe(true);
+    expect(hasTurnServer(built.iceServers)).toBe(true);
+  });
+
+  test('disables UDP mux only when TURN probe succeeded', () => {
     const built = buildRtcIceConfig(
-      {
-        stun: ['stun:stun.example:3478'],
-        turn: { url: 'turn:203.0.113.9:40250?transport=udp', username: 'u', credential: 'p' },
-      },
+      { stun: ['stun:stun.example:3478'], turn, turnProbeOk: true },
       runtime
     );
     expect(built.enableIceUdpMux).toBe(false);

@@ -129,7 +129,10 @@ MeshNode.dcBreaker?: {
 陈旧信令重放曾是直连建不起来的主因：`rtcSession = dc:<lo>:<hi>` 对同一对节点恒定，offerer 拨号失败后注销监听，answerer 仍按重试产生新 answer 进入 `rtcInbox`；冷却结束后新 PeerConnection 在 `bindSignaling` 时同步重放 inbox，把 answer 打在 `stable` 状态的 PC 上抛错，或同一次尝试收到两个 answer 导致 PC 绑错 ufrag → `datachannel open timeout`。现在：
 
 - SDP / candidate 的 JSON 信封带可选 `epoch`（offerer 每次拨号生成，answerer 从 offer 回显）；`rtcSession` 字符串不变（hub 路由按 `dc:<a>:<b>` 解析）。收到 `epoch` 已定义且不匹配的消息直接丢弃；`epoch` 未定义视为旧节点，退回按类型过滤。
-- Answerer 已绑定 epoch N 时，若再收到 offer N+1：打 `signal dropped cause=superseded`，关掉当前 PC（计为有意关闭，不记熔断），inbox 这条 offer 并立刻开一台新的 answerer PC。更旧的 epoch、`duplicate-answer`、以及 epoch 尚未确定时提前到达的 candidate 仍直接丢弃。
+- Answerer 已绑定 epoch N 时，若再收到 offer N+1：打 `signal dropped cause=superseded`，关掉当前 PC（计为有意关闭，不记熔断），inbox 这条 offer 并立刻开一台新的 answerer PC。更旧的 epoch、`duplicate-answer` 仍直接丢弃。
+- Answerer 记住每个 peer 见过的最高 offer epoch（`OfferEpochMemory`），用来丢弃被取代的旧 attempt 留下的在途信令。**这份记忆有 30 s 有效期**（`RTC_OFFER_EPOCH_TTL_MS`），且只有不低于已记住值的 epoch 才续期：offerer 的 epoch 是进程内计数器，重启后从 0 重来，若永久记住旧高位，重启后对端的每个 offer 都会被判成 `epoch-mismatch` 永久拒收——现象是应答侧 `dial timeout … stage=gathering local_types=[] remote_types=[]`，offerer 侧同时 `stage=no-remote-sdp`，该 peer 再也建不起 DC（round40 现网实测）。
+- Answerer 在 offer 到达前收到的 candidate 按其 `epoch` 入队（不再直接丢弃），offer 落地后只 flush 与最终 epoch 一致的那些，其余打 `signal dropped cause=epoch-mismatch`；低于已记住 epoch 的 candidate 仍在入队前就丢弃。
+- 未绑定信令进 `rtcInbox` 时：该 peer 的 inbox 非空即视为「尝试正在建立」，紧随 offer 之后到达的 candidate 不会被当成无主信令丢掉。
 - `bindSignaling` 带 `expect: 'offer' | 'answer'`，错类型丢弃，offerer 每次尝试只应用一个 answer；`setRemoteDescription` 失败打 info 且不再把 candidate 喂给 libdatachannel（先排队，等远端描述应用成功再 flush）。
 - `bindSignaling` 与 `trackPc` 纳入 `connectToPeer` 统一清理区；inbox 重放走 microtask 且先返回 unsubscribe；inbox 条目带 `receivedAt`，30 s 过期；offerer 无监听时不缓存 answer，无尝试时不缓存 candidate。
 - `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过 DC、不另开 PC。single-flight 只去重 DC，不挡住 ws-secure；后台升级 DC 与 ws-secure 并行。前台 4 s 竞速截止不 abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 live 已建立时清掉 `pending`（DC 去重交给 `dcInflight`）。
@@ -138,7 +141,7 @@ MeshNode.dcBreaker?: {
 ### ICE / 拨号
 
 - ICE 服务器列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**配置了 TURN 时为 false**：libjuice 的 mux 模式不支持 TURN，否则拿不到 relay 候选）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当 TURN 可达探测成功时为 false**：libjuice mux 不支持 TURN；探测失败或尚未探测则保持 mux，并把不可达 TURN 从 `iceServers` 拿掉，避免 gathering 挂死、srflx 一起消失。探测是对 TURN 端口的 STUN Binding，不能代替 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。`GET /api/mesh/rtc-config` 的 `turn` 是实际纳入 ICE 的值，`turnConfigured` 保留下发/本地原值，`turnProbe` 是最近一次 Binding 探测。
 
 - `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
 - node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。

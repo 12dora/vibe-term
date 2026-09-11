@@ -406,7 +406,7 @@ export class PeerManager extends PeerCollaboratorHost {
         selfNodeId: this.identity.nodeId,
         fromNodeId,
         message: msg,
-        attemptExists: pending || upgrading || inflight,
+        attemptExists: pending || upgrading || inflight || this.state.rtcInbox.has(fromNodeId),
       })
     ) {
       return;

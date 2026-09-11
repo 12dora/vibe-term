@@ -100,7 +100,29 @@ describe('createRtcSignalApplier', () => {
     expect(state.answerApplied).toBe(true);
   });
 
-  test('candidates before a known epoch are rejected', () => {
+  test('candidates arriving before the offer are queued and flushed with it', () => {
+    const { pc, remote, candidates } = fakePc();
+    const state = createSignalingAttemptState();
+    const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.1 9 typ host', '0', 7),
+    });
+    expect(candidates).toHaveLength(0);
+    expect(state.pendingCandidates).toHaveLength(1);
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 7 }),
+    });
+    expect(remote).toHaveLength(1);
+    expect(candidates).toHaveLength(1);
+  });
+
+  test('queued candidates from another epoch are discarded when the offer lands', () => {
     const { pc, candidates } = fakePc();
     const state = createSignalingAttemptState();
     const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
@@ -108,7 +130,26 @@ describe('createRtcSignalApplier', () => {
       rtcSession: 'dc:a:b',
       from: 'node',
       to: 'peer',
-      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.1 9 typ host', '0', 1),
+      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.1 9 typ host', '0', 5),
+    });
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 7 }),
+    });
+    expect(candidates).toHaveLength(0);
+  });
+
+  test('candidates older than lastOfferEpoch are still rejected before the offer', () => {
+    const { pc, candidates } = fakePc();
+    const state = createSignalingAttemptState(undefined, 9);
+    const apply = createRtcSignalApplier(pc, 'peer', 'offer', state, createIceCandidateTrace());
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.1 9 typ host', '0', 3),
     });
     expect(candidates).toHaveLength(0);
     expect(state.pendingCandidates).toHaveLength(0);

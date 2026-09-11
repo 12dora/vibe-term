@@ -101,13 +101,11 @@ import {
   RtcPeerManager,
 } from './rtc';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
+// biome-ignore format: mesh-runtime fileLines allowlist
 import {
-  meshRtcConfigResponse,
-  noteMeshStunConfig,
-  resolveMeshRtcConfig,
-  turnFromMesh,
+  meshRtcConfigResponse, noteMeshStunConfig, resolveMeshRtcConfig,
+  startMeshRtcProbes, stopMeshRtcProbes, syncMeshRtcProbes, turnFromMesh,
 } from './rtc/stun-effective';
-import * as stunProbe from './rtc/stun-probe';
 import { authenticateRequest } from './session-middleware';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
 import { openHttpStream } from './stream-targets';
@@ -823,7 +821,7 @@ type EnsureDcFn = (peerNodeId: string, rtcSession: string) => void;
 function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: RejectPeerFn): void {
   applyUplinkNodeList(d, list, rejectPeer);
   noteMeshStunConfig(d.state, d.config);
-  stunProbe.syncStunProbe(d.rtc);
+  syncMeshRtcProbes(d.rtc);
 }
 
 function createUplinkWiring(d: MeshDeps) {
@@ -1484,7 +1482,7 @@ function assembleMeshRuntime(
       await peerManager.start();
       uplink.start();
       kickHubPeerDiscovery(hub, uplink);
-      stunProbe.startMeshStunProbe(rtc, d.scheduler);
+      startMeshRtcProbes(rtc, d.scheduler);
       noteMeshStunConfig(d.state, d.config);
       tlsPoll = startTlsFingerprintPoll(opts, d.scheduler, refreshTlsAndAdvertise);
     },
@@ -1507,7 +1505,7 @@ function assembleMeshRuntime(
           // 自己造的 HubRuntime 自己收（幂等）：不收的话 attachment keepalive 会一直打已关闭的库
           ['hub', () => d.hub?.stop() ?? Promise.resolve()],
           ['mesh http', () => http.stop()],
-          ['rtc', () => stunProbe.stopMeshStunProbe(rtc.close.bind(rtc))],
+          ['rtc', () => stopMeshRtcProbes(rtc.close.bind(rtc))],
           ['bulk', () => bulk.close()],
           ['portmap', () => unbindPortMap()],
         ]);

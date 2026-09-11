@@ -165,14 +165,20 @@ function concreteBindAddress(hosts: readonly string[]): string | undefined {
   return host;
 }
 
+export type IceConfigBuildInput = IceServerConfig & { turnProbeOk?: boolean };
+
 export function hasTurnServer(servers: ReadonlyArray<string | IceServer>): boolean {
   return servers.some((server) =>
     typeof server === 'string' ? /^turns?:/i.test(server.trim()) : Boolean(server.relayType)
   );
 }
 
+export function turnProbeOkOf(cfg: IceConfigBuildInput): boolean {
+  return cfg.turnProbeOk === true;
+}
+
 export function buildRtcIceConfig(
-  cfg: IceServerConfig,
+  cfg: IceConfigBuildInput,
   runtime: RtcIceRuntimeConfig = {
     peerBindHost: config.peerBindHost,
     rtcPortRange: config.rtcPortRange,
@@ -181,13 +187,14 @@ export function buildRtcIceConfig(
   const bindAddress = concreteBindAddress(runtime.peerBindHost);
   const portRange = runtime.rtcPortRange;
   const iceServers = collectIceServers(cfg);
+  const turnIncluded = hasTurnServer(iceServers);
+  const turnProbeOk = turnProbeOkOf(cfg);
   return {
     iceServers,
     enableIceTcp: true,
-    // libjuice 在 UDP mux 模式下不支持 TURN（只出 host 候选并告警
-    // "TURN servers are not supported in mux mode"）：有 TURN 就关掉 mux，让每个
-    // PeerConnection 各占一个端口（可用 VIBETERM_RTC_PORT_RANGE 圈定范围）。
-    enableIceUdpMux: !hasTurnServer(iceServers),
+    // libjuice mux 不支持 TURN。仅当 TURN 已纳入且可达探测成功时关 mux；
+    // 未探测或探测失败保持 mux，避免不可达 TURN 拖死 gathering / 丢掉 srflx。
+    enableIceUdpMux: !(turnIncluded && turnProbeOk),
     mtu: 1200,
     ...(bindAddress ? { bindAddress } : {}),
     ...(portRange ? { portRangeBegin: portRange.begin, portRangeEnd: portRange.end } : {}),
@@ -196,7 +203,7 @@ export function buildRtcIceConfig(
 
 /** 在交给 libdatachannel 之前解析 STUN/TURN 主机名，绕开本机代理 fake-IP。冷缓存最多等 300ms。 */
 export async function buildRtcIceConfigResolved(
-  cfg: IceServerConfig,
+  cfg: IceConfigBuildInput,
   runtime: RtcIceRuntimeConfig = {
     peerBindHost: config.peerBindHost,
     rtcPortRange: config.rtcPortRange,

@@ -29,6 +29,7 @@ import {
   dummyServer,
 } from './auth-routes.test';
 import {
+  type CachedRtcConfig,
   MESH_REJECT_4401_KIND,
   MESH_WS_BACKPRESSURE_LIMIT_BYTES,
   MESH_WS_KIND,
@@ -974,6 +975,56 @@ describe('mesh-routes', () => {
       expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null, source: 'builtin' });
     } finally {
       withSource.close();
+    }
+
+    const withTurnProbe = await bootMesh({
+      rtc: {
+        config: {
+          getRtcConfig: () =>
+            ({
+              stun: ['stun:ex'],
+              turn: null,
+              turnConfigured: {
+                url: 'turn:relay.example:3478',
+                username: 'u',
+                credential: 'p',
+              },
+              turnProbe: {
+                url: 'turn:relay.example:3478',
+                ok: false,
+                rttMs: 2000,
+                error: 'timeout',
+                probedAt: 1,
+              },
+              probes: [],
+            }) as CachedRtcConfig,
+        },
+      },
+    });
+    try {
+      const { sid } = await challengeAndLogin(withTurnProbe.runtime, withTurnProbe.boot);
+      const cfg = await call(withTurnProbe.runtime, 'http://localhost/api/mesh/rtc-config', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
+      });
+      expect(await cfg.json()).toEqual({
+        stun: ['stun:ex'],
+        turn: null,
+        turnConfigured: {
+          url: 'turn:relay.example:3478',
+          username: 'u',
+          credential: 'p',
+        },
+        turnProbe: {
+          url: 'turn:relay.example:3478',
+          ok: false,
+          rttMs: 2000,
+          error: 'timeout',
+          probedAt: 1,
+        },
+        probes: [],
+      });
+    } finally {
+      withTurnProbe.close();
     }
 
     const noRtc = await bootMesh();

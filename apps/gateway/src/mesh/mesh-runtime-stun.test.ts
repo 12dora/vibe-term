@@ -7,6 +7,7 @@ import type { GatewayRuntime } from '../runtime';
 import type { WebSocketServer } from '../ws';
 import { createMeshRuntime } from './mesh-runtime';
 import { resolveMeshRtcConfig } from './rtc/stun-effective';
+import { resetTurnProbeForTest } from './rtc/turn-probe';
 import { fakeSocketPair, seedUser } from './test-support';
 
 function fakeGateway(db: AuthDb): GatewayRuntime {
@@ -39,6 +40,7 @@ describe('mesh-runtime STUN resolution', () => {
       await item?.stop?.();
       item?.close();
     }
+    resetTurnProbeForTest();
   });
 
   test('no env + hub sends [] ⇒ builtin list', () => {

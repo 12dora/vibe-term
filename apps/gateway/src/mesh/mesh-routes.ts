@@ -18,6 +18,7 @@ import {
 } from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
 import {
+  type CachedRtcConfig,
   type ConnectionLookup,
   MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
@@ -443,13 +444,20 @@ export class MeshRoutes {
   }
 
   private handleRtcConfig(): Response {
-    const cfg = this.deps.rtcConfig?.getRtcConfig() ?? { stun: [], turn: null };
-    const probes = cfg.probes;
+    const cfg = (this.deps.rtcConfig?.getRtcConfig() ?? {
+      stun: [],
+      turn: null,
+    }) as CachedRtcConfig & {
+      turnConfigured?: unknown;
+      turnProbe?: unknown;
+    };
     return jsonBody({
       stun: cfg.stun,
       turn: cfg.turn ?? null,
+      ...(cfg.turnConfigured !== undefined ? { turnConfigured: cfg.turnConfigured } : {}),
       ...(cfg.source ? { source: cfg.source } : {}),
-      ...(Array.isArray(probes) ? { probes } : {}),
+      ...(Array.isArray(cfg.probes) ? { probes: cfg.probes } : {}),
+      ...(cfg.turnProbe !== undefined ? { turnProbe: cfg.turnProbe } : {}),
     });
   }
 

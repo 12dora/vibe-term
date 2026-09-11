@@ -35,6 +35,7 @@ import type {
 } from './native';
 import { isSupersededDcLoss } from './rtc-dial-progress';
 import { type RtcLogContext, rtcLog, runWithRtcLogContext } from './rtc-log';
+import { OfferEpochMemory } from './rtc-offer-epoch';
 import { bindPeerSignaling, runPeerConnectAttempt } from './rtc-peer-connect';
 import {
   type LocalDescriptionEvent,
@@ -154,7 +155,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   private readonly livePcs = new Set<PeerConnectionLike>();
   private readonly localDescriptionHubs = new WeakMap<PeerConnectionLike, LocalDescriptionHub>();
   private readonly dialAggregates = new Map<string, RtcDialAggregate>();
-  private readonly lastOfferEpochByPeer = new Map<string, number>();
+  private readonly lastOfferEpochByPeer: OfferEpochMemory;
   private rtcAttemptEpoch = 0;
   private logSeq = 0;
   private probePc: PeerConnectionLike | null = null;
@@ -167,6 +168,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
     this.iceConfigProvider = opts.iceConfigProvider;
     this.userStore = opts.userStore;
     this.now = opts.now ?? Date.now;
+    this.lastOfferEpochByPeer = new OfferEpochMemory(() => this.now());
     this.handshakeTimeoutMs = opts.handshakeTimeoutMs ?? CONNECT_TIMEOUT_MS;
     this.authorizeTtlMs = opts.authorizeTtlMs ?? RTC_AUTHORIZE_TTL_MS;
     this.authorizeMax = opts.authorizeMax ?? RTC_AUTHORIZE_MAX;
@@ -285,10 +287,7 @@ export class RtcPeerManager implements RtcFingerprintProvider {
   }
 
   private rememberOfferEpoch(peerNodeId: string, epoch: number | undefined): void {
-    if (epoch === undefined) return;
-    const prev = this.lastOfferEpochByPeer.get(peerNodeId);
-    if (prev !== undefined && epoch <= prev) return;
-    this.lastOfferEpochByPeer.set(peerNodeId, epoch);
+    this.lastOfferEpochByPeer.remember(peerNodeId, epoch);
   }
 
   private async connectToPeerOnce(

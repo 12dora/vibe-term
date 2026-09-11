@@ -3,7 +3,7 @@ import { decodeCandidateSignal, decodeSdpSignal, isEmptyCandidate } from './ice'
 import type { PeerConnectionLike } from './native';
 import { type IceCandidateTrace, type RtcLogContext, rtcLog, rtcLogCandidate } from './rtc-log';
 
-export type QueuedRemoteCandidate = { candidate: string; mid: string };
+export type QueuedRemoteCandidate = { candidate: string; mid: string; epoch?: number };
 
 export type SignalingAttemptState = {
   epoch?: number;
@@ -150,13 +150,22 @@ export function applyRemoteCandidate(
 ): void {
   const decoded = decodeCandidateSignal(raw);
   if (!decoded || isEmptyCandidate(decoded.candidate)) return;
-  if (classifyEpoch(decoded.epoch, state.epoch, true, false, state.lastOfferEpoch) === 'mismatch') {
+  // offer 未到之前应答侧还不知道 epoch：先入队，等 offer 定下 epoch 再筛，别当成陈旧信令丢掉。
+  const beforeOffer = state.epoch === undefined && !state.remoteDescriptionApplied;
+  if (
+    classifyEpoch(decoded.epoch, state.epoch, !beforeOffer, false, state.lastOfferEpoch) ===
+    'mismatch'
+  ) {
     logEpochMismatch(peer, 'candidate', state.epoch, decoded.epoch, state);
     return;
   }
   rtcLogCandidate('recv', peer, decoded.candidate, trace);
   if (!state.remoteDescriptionApplied) {
-    state.pendingCandidates.push({ candidate: decoded.candidate, mid: decoded.mid });
+    state.pendingCandidates.push({
+      candidate: decoded.candidate,
+      mid: decoded.mid,
+      ...(decoded.epoch === undefined ? {} : { epoch: decoded.epoch }),
+    });
     return;
   }
   addRemoteCandidate(pc, peer, decoded.candidate, decoded.mid, state);
@@ -170,7 +179,13 @@ function markRemoteDescriptionApplied(
   state.remoteDescriptionApplied = true;
   state.onRemoteDescriptionApplied?.();
   const queued = state.pendingCandidates.splice(0);
-  for (const item of queued) addRemoteCandidate(pc, peer, item.candidate, item.mid, state);
+  for (const item of queued) {
+    if (item.epoch !== undefined && state.epoch !== undefined && item.epoch !== state.epoch) {
+      logEpochMismatch(peer, 'candidate', state.epoch, item.epoch, state);
+      continue;
+    }
+    addRemoteCandidate(pc, peer, item.candidate, item.mid, state);
+  }
 }
 
 function addRemoteCandidate(
