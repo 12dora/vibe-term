@@ -154,6 +154,25 @@ vibeterm term send prod-1/app:logs C-c
 
 第 2 行用了 `--marker`：它会在输出安静之后单独补一行哨兵，因此既能确认命令真的跑完，也能拿到退出码；第 3 行是长跑的流式命令，只能 `send` + `capture`，不能 `run`。
 
+## 节点管理
+
+```bash
+vibeterm nodes ls
+vibeterm nodes enroll --name studio
+vibeterm nodes allow <node>
+vibeterm nodes meta-key admit <node-id>
+vibeterm nodes meta-key rotate [--exclude <node>...]
+vibeterm nodes revoke <node> --yes
+```
+
+签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
+
+CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
+
+- **hub**：`enroll` 打 `/api/hub/enrollments`，打印 `vibeterm hub join <hubUrl> --token …`。`allow <node>` 在 hub 待批准行上签 `admit-node`，否则打开该节点的公网域名访问。
+- **中继**（`mode: 'relay'`）：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm hub join <relayUrl> --token r3.… --name <name>`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
+- 中继上 `allow <node>`：若 hub 仍下发了待批准行，先签 `admit-node` 再立刻补一条 `meta-key admit`（同一把根钥，不二次要密码）；若节点已在 `pendingMemberIds`（已接纳但解不开状态块），只补 `meta-key`。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
+
 ## 文件拷贝
 
 ```bash

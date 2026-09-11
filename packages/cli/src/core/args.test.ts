@@ -35,6 +35,12 @@ describe('parseArgv', () => {
   test('-- passes the rest through as positionals', () => {
     expect(parseArgv(['send', '--', '--literal'], SPEC).positionals).toEqual(['send', '--literal']);
   });
+
+  test('strings flags accumulate repeats', () => {
+    const spec = { ...SPEC, exclude: 'strings' as const };
+    const parsed = parseArgv(['--exclude', 'a', '--exclude=b,c'], spec);
+    expect(parsed.flags.exclude).toEqual(['a', 'b,c']);
+  });
 });
 
 describe('splitGlobalFlags', () => {

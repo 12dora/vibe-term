@@ -22,12 +22,24 @@ export interface HubNodeRow {
   cert_sig?: string;
 }
 
-export async function listMeshNodesFull(ctx: CliContext): Promise<MeshNode[]> {
+export interface MeshNodesList {
+  nodes: MeshNode[];
+  pendingMemberIds: string[];
+}
+
+export async function listMeshNodesDetailed(ctx: CliContext): Promise<MeshNodesList> {
   const response = await ctx.http.fetch(SELF_NODE_ID, '/api/mesh/nodes');
-  if (response.status === 404) return [];
+  if (response.status === 404) return { nodes: [], pendingMemberIds: [] };
   await ctx.http.assertOk(SELF_NODE_ID, response, '/api/mesh/nodes');
-  const payload = (await response.json()) as { nodes?: MeshNode[] };
-  return payload.nodes ?? [];
+  const payload = (await response.json()) as { nodes?: MeshNode[]; pendingMemberIds?: unknown };
+  const pending = Array.isArray(payload.pendingMemberIds)
+    ? payload.pendingMemberIds.filter((id): id is string => typeof id === 'string')
+    : [];
+  return { nodes: payload.nodes ?? [], pendingMemberIds: pending };
+}
+
+export async function listMeshNodesFull(ctx: CliContext): Promise<MeshNode[]> {
+  return (await listMeshNodesDetailed(ctx)).nodes;
 }
 
 export type ListedNode = MeshNode & { status: 'pending' | 'admitted' };

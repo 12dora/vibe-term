@@ -5,6 +5,7 @@ import {
   ARGON2ID_ITERATIONS,
   ARGON2ID_MEMORY_KIB,
   ARGON2ID_PARALLELISM,
+  type KeyLogType,
   type RootKey,
   buildKeyLogRecord,
   bytesEqual,
@@ -98,7 +99,7 @@ async function deriveRoot(mode: AuthMode, password: string): Promise<RootKey> {
   }
 }
 
-async function withRootKey<T>(
+export async function withRootKey<T>(
   ctx: CliContext,
   run: (root: RootKey, mode: AuthMode) => Promise<T>
 ): Promise<T> {
@@ -121,27 +122,46 @@ interface KeyLogHeadJson {
   rootEpoch?: number;
 }
 
-async function keyLogHead(ctx: CliContext): Promise<{ seq: bigint; hash: Uint8Array }> {
+export async function keyLogHead(ctx: CliContext): Promise<{ seq: bigint; hash: Uint8Array }> {
   const payload = await ctx.http.json<KeyLogHeadJson>(SELF_NODE_ID, 'GET', '/api/auth/keylog/head');
   return { seq: BigInt(payload.seq), hash: decodeBase64url(payload.hash) };
 }
 
-async function appendKeyLog(
+export interface KeyLogAppendResult {
+  ok: boolean;
+  seq?: number | string;
+  hubAck?: boolean;
+  relayAck?: boolean;
+  code?: string;
+  hubError?: string;
+  relayError?: string;
+}
+
+export async function appendKeyLog(
   ctx: CliContext,
   bytes: Uint8Array,
   sig: Uint8Array
-): Promise<{ ok: boolean; hubAck?: boolean; code?: string; hubError?: string }> {
+): Promise<KeyLogAppendResult> {
   return ctx.http.json(SELF_NODE_ID, 'POST', '/api/auth/keylog?hub=sync', {
     bytes: encodeBase64url(bytes),
     sig: encodeBase64url(sig),
   });
 }
 
-function signRecord(
+export function assertKeyLogAppended(result: KeyLogAppendResult, action: string): void {
+  if (!result.ok) {
+    throw new CliError(`${action} failed: ${result.code ?? 'rejected'}`);
+  }
+  if (result.hubAck !== true) {
+    throw new CliError(`${action} was not confirmed by hub (${result.hubError ?? 'no ack'})`);
+  }
+}
+
+export function signRecord(
   root: RootKey,
   head: { seq: bigint; hash: Uint8Array },
   mode: AuthMode,
-  type: 'admit-node' | 'revoke-node',
+  type: KeyLogType,
   payload: Uint8Array
 ): { bytes: Uint8Array; sig: Uint8Array } {
   const record = buildKeyLogRecord(head, mode.rootEpoch as number, {
@@ -216,7 +236,11 @@ export async function createSignedEnrollment(
   });
 }
 
-export async function admitPendingNode(ctx: CliContext, row: HubNodeRow): Promise<unknown> {
+export async function admitPendingNode(
+  ctx: CliContext,
+  row: HubNodeRow,
+  options?: { after?: (root: RootKey, mode: AuthMode) => Promise<void> }
+): Promise<unknown> {
   if (!row.authorization || !row.authorization_sig || !row.certificate || !row.cert_sig) {
     throw new CliError(
       `node ${row.id} is pending but hub did not send admit material`,
@@ -239,12 +263,8 @@ export async function admitPendingNode(ctx: CliContext, row: HubNodeRow): Promis
       })
     );
     const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
-    if (!result.ok) {
-      throw new CliError(`admit failed: ${result.code ?? 'rejected'}`);
-    }
-    if (result.hubAck !== true) {
-      throw new CliError(`admit was not confirmed by hub (${result.hubError ?? 'no ack'})`);
-    }
+    assertKeyLogAppended(result, 'admit');
+    if (options?.after) await options.after(root, mode);
     return result;
   });
 }
@@ -266,12 +286,7 @@ export async function revokeNode(
       encodeRevokeNodePayload({ node_id: nodeBytes, reason })
     );
     const result = await appendKeyLog(ctx, signed.bytes, signed.sig);
-    if (!result.ok) {
-      throw new CliError(`revoke failed: ${result.code ?? 'rejected'}`);
-    }
-    if (result.hubAck !== true) {
-      throw new CliError(`revoke was not confirmed by hub (${result.hubError ?? 'no ack'})`);
-    }
+    assertKeyLogAppended(result, 'revoke');
     return result;
   });
 }

@@ -22,7 +22,9 @@ import {
   fetchHubs,
   findAdminNode,
   findMeshNode,
+  isTrustedHubUrl,
   listListedNodes,
+  listMeshNodesDetailed,
   listMeshNodesFull,
   passwordJoinCommand,
   reachOf,
@@ -30,6 +32,18 @@ import {
   roleOf,
 } from '../core/nodes-hub';
 import { admitPendingNode, createSignedEnrollment, revokeNode } from '../core/nodes-keylog';
+import {
+  type MetaKeyResult,
+  appendRelayMetaKey,
+  appendRelayMetaKeyWithRoot,
+  attachedRelayUrl,
+  createRelayEnrollment,
+  detectRelayUplink,
+  fetchRelayStatus,
+  findRelayAllowTarget,
+  resolveExcludeNodeIds,
+  resolveNodeHexId,
+} from '../core/nodes-relay';
 import {
   fetchUpgradeLatest,
   hasCliNodeSession,
@@ -49,6 +63,7 @@ const FLAGS = {
   yes: 'boolean',
   reason: 'string',
   name: 'string',
+  exclude: 'strings',
 } as const;
 
 const USAGE = [
@@ -60,9 +75,14 @@ const USAGE = [
   '  hubs                       GET /api/mesh/hubs',
   '  rename <node> <name>       POST /n/<hub>/api/hub/nodes/:id/rename',
   '  allow <node>               admit a pending hub node, else enable public-domain access',
+  '                             relay: admit-node + meta-key, or wrap K_meta for a pending member',
   '  disallow <node>            disable public-domain access on the node',
   '  revoke <node> [--reason] [--yes]   signed key-log revoke-node (needs VIBETERM_PASSWORD)',
   '  enroll [--ttl 10m] [--password] [--name]',
+  '                             hub: /api/hub/enrollments; relay: r3. join token via /api/mesh/relay/*',
+  '  meta-key admit <node>      wrap current K_meta for a node (relay; VIBETERM_PASSWORD or TTY)',
+  '  meta-key rotate [--exclude <node>...]',
+  '                             rotate K_meta, excluding nodes (relay)',
   '  upgrade <node>|--all [--version] [--wait]',
   '  uninstall <node> [--yes]   POST …/uninstall then signed revoke-node',
   '  rtc-config                 GET /api/mesh/rtc-config (includes probes)',
@@ -72,9 +92,10 @@ const USAGE = [
   '  show        MeshNode',
   '  hubs        MeshHubsResponse',
   '  rename      { ok, id, name }',
-  '  allow       { node, action: "admit"|"domain-access", result }',
+  '  allow       { node, action: "admit"|"domain-access"|"meta-key", result }',
   '  revoke      { node, result }',
   '  enroll      { id, expiresAt, joinToken, joinCommand, publicUrl }',
+  '  meta-key    { op: "admit"|"rotate", epoch, seq }',
   '  upgrade     { latest, outcomes: UpgradeOutcome[] }  outcome: done|failed|timeout|alreadyLatest|cancelled|unconfirmed',
   '  uninstall   { node, scheduled: true, revoked: true }',
   '  rtc-config  { stun, turn, probes? }',
@@ -161,16 +182,41 @@ async function setDomainAccess(
   return ctx.http.json(nodeId, 'PATCH', '/api/system/domain-access', { allowed });
 }
 
+async function allowRelayMetaKey(ctx: CliContext, targetId: string, name: string): Promise<void> {
+  const result = await appendRelayMetaKey(ctx, { op: 'admit', node_id: targetId });
+  emit(ctx, { node: targetId, action: 'meta-key', result }, () =>
+    ctx.out.line(`wrapped K_meta for ${name} (${targetId}) epoch ${result.epoch}`)
+  );
+}
+
 const allow: SubHandler = async (ctx, _flags, positionals) => {
   const ref = requireArg(positionals, 0, 'node');
   rejectExtra(positionals, 1);
-  const target = await findAdminNode(ctx, ref);
+  const relay = await detectRelayUplink(ctx);
+  const target = await findRelayAllowTarget(ctx, ref, relay);
   if (target.hub?.admission_status === 'pending') {
-    const result = await admitPendingNode(ctx, target.hub);
-    emit(ctx, { node: target.id, action: 'admit', result }, () =>
+    let metaKey: MetaKeyResult | undefined;
+    const result = await admitPendingNode(ctx, target.hub, {
+      after: relay
+        ? async (root, mode) => {
+            metaKey = await appendRelayMetaKeyWithRoot(ctx, root, mode, {
+              op: 'admit',
+              node_id: target.id,
+            });
+          }
+        : undefined,
+    });
+    emit(ctx, { node: target.id, action: 'admit', result, ...(metaKey ? { metaKey } : {}) }, () =>
       ctx.out.line(`admitted pending node ${target.name} (${target.id})`)
     );
     return;
+  }
+  if (relay) {
+    const pending = new Set((await listMeshNodesDetailed(ctx)).pendingMemberIds);
+    if (pending.has(target.id) || !target.mesh) {
+      await allowRelayMetaKey(ctx, target.id, target.name);
+      return;
+    }
   }
   if (!target.mesh) {
     throw new NotFoundError(`unknown node: ${ref}`, 'run: vibeterm nodes ls');
@@ -203,11 +249,33 @@ const revoke: SubHandler = async (ctx, flags, positionals) => {
   );
 };
 
+function printEnrollment(
+  ctx: CliContext,
+  created: {
+    id: string;
+    expiresAt: number;
+    joinToken: string;
+    joinCommand: string | null;
+  }
+): void {
+  emit(ctx, created, () => {
+    ctx.out.line(`enrollment ${created.id}`);
+    ctx.out.line(`expires    ${new Date(created.expiresAt).toISOString()}`);
+    if (created.joinCommand) ctx.out.line(created.joinCommand);
+    else ctx.out.line(`token      ${created.joinToken}`);
+  });
+}
+
 const enroll: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 0);
   const ttl = parseDurationMs(flagString(flags, 'ttl') ?? '10m');
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
-  const publicUrl = mode?.hubPublicUrl ?? null;
+  const status = await fetchRelayStatus(ctx);
+  const relayUrl = attachedRelayUrl(status);
+  const publicUrl =
+    (status?.mode === 'relay' && relayUrl && isTrustedHubUrl(relayUrl) ? relayUrl : null) ??
+    mode?.hubPublicUrl ??
+    null;
   if (flagBool(flags, 'password')) {
     if (!publicUrl)
       throw new CliError('hub public url is unknown; cannot print a password join command');
@@ -215,17 +283,54 @@ const enroll: SubHandler = async (ctx, flags, positionals) => {
     emit(ctx, { mode: 'password', joinCommand: command, publicUrl }, () => ctx.out.line(command));
     return;
   }
-  const created = await createSignedEnrollment(ctx, {
-    ttlMs: ttl,
-    name: flagString(flags, 'name'),
-    hubPublicUrl: publicUrl,
-  });
-  emit(ctx, created, () => {
-    ctx.out.line(`enrollment ${created.id}`);
-    ctx.out.line(`expires    ${new Date(created.expiresAt).toISOString()}`);
-    if (created.joinCommand) ctx.out.line(created.joinCommand);
-    else ctx.out.line(`token      ${created.joinToken}`);
-  });
+  if (status?.mode === 'relay') {
+    printEnrollment(
+      ctx,
+      await createRelayEnrollment(ctx, { ttlMs: ttl, name: flagString(flags, 'name') })
+    );
+    return;
+  }
+  printEnrollment(
+    ctx,
+    await createSignedEnrollment(ctx, {
+      ttlMs: ttl,
+      name: flagString(flags, 'name'),
+      hubPublicUrl: publicUrl,
+    })
+  );
+};
+
+function printMetaKey(
+  ctx: CliContext,
+  result: { op: 'admit' | 'rotate'; epoch: number; seq: number | string }
+): void {
+  emit(ctx, result, () =>
+    ctx.out.line(`meta-key ${result.op} epoch ${result.epoch} seq ${result.seq}`)
+  );
+}
+
+const metaKey: SubHandler = async (ctx, flags, positionals) => {
+  const op = requireArg(positionals, 0, 'op (rotate|admit)');
+  if (op === 'rotate') {
+    rejectExtra(positionals, 1);
+    const exclude = await resolveExcludeNodeIds(ctx, flags);
+    printMetaKey(
+      ctx,
+      await appendRelayMetaKey(
+        ctx,
+        exclude.length > 0 ? { op: 'rotate', exclude } : { op: 'rotate' }
+      )
+    );
+    return;
+  }
+  if (op === 'admit') {
+    const ref = requireArg(positionals, 1, 'node');
+    rejectExtra(positionals, 2);
+    const nodeId = await resolveNodeHexId(ctx, ref);
+    printMetaKey(ctx, await appendRelayMetaKey(ctx, { op: 'admit', node_id: nodeId }));
+    return;
+  }
+  throw new UsageError(`unknown meta-key op: ${op}`, 'use admit|rotate');
 };
 
 const upgrade: SubHandler = async (ctx, flags, positionals) => {
@@ -297,6 +402,7 @@ const HANDLERS: Record<string, SubHandler> = {
   disallow,
   revoke,
   enroll,
+  'meta-key': metaKey,
   upgrade,
   uninstall,
   'rtc-config': rtcConfig,

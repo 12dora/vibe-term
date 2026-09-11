@@ -3,9 +3,9 @@
 
 import { UsageError } from './errors';
 
-export type FlagKind = 'boolean' | 'string' | 'number';
+export type FlagKind = 'boolean' | 'string' | 'number' | 'strings';
 export type FlagSpec = Readonly<Record<string, FlagKind>>;
-export type FlagValues = Record<string, string | number | boolean | undefined>;
+export type FlagValues = Record<string, string | number | boolean | string[] | undefined>;
 
 export interface ParsedArgv {
   flags: FlagValues;
@@ -36,10 +36,25 @@ function coerce(key: string, kind: FlagKind, raw: string | undefined): string | 
     throw new UsageError(`--${key} does not take a value`);
   }
   const value = requireValue(key, raw);
-  if (kind === 'string') return value;
+  if (kind === 'string' || kind === 'strings') return value;
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new UsageError(`--${key} expects a number, got "${value}"`);
   return parsed;
+}
+
+function assignFlag(
+  flags: FlagValues,
+  key: string,
+  kind: FlagKind,
+  value: string | number | boolean
+): void {
+  if (kind === 'strings') {
+    const item = String(value);
+    const prev = flags[key];
+    flags[key] = Array.isArray(prev) ? [...prev, item] : [item];
+    return;
+  }
+  flags[key] = value;
 }
 
 /** 下一个 token 能不能当作本旗标的值：以 `-` 开头的都不能，否则 `--node --json` 会吞掉后一个旗标。 */
@@ -87,7 +102,7 @@ export function parseArgv(argv: readonly string[], spec: FlagSpec): ParsedArgv {
       continue;
     }
     const flag = readFlagToken(argv, index, spec);
-    flags[flag.key] = coerce(flag.key, flag.kind, flag.value);
+    assignFlag(flags, flag.key, flag.kind, coerce(flag.key, flag.kind, flag.value));
     if (flag.consumedNext) index += 1;
   }
 
@@ -121,7 +136,7 @@ export function splitGlobalFlags(
     }
     const flag = readFlagToken(argv, index, spec);
     if (flag.key in GLOBAL_FLAGS) {
-      globals[flag.key] = coerce(flag.key, flag.kind, flag.value);
+      assignFlag(globals, flag.key, flag.kind, coerce(flag.key, flag.kind, flag.value));
     } else {
       rest.push(token);
       if (flag.consumedNext) rest.push(argv[index + 1]);
@@ -135,6 +150,12 @@ export function splitGlobalFlags(
 export function flagString(flags: FlagValues, key: string): string | undefined {
   const value = flags[key];
   return typeof value === 'string' ? value : undefined;
+}
+
+export function flagStrings(flags: FlagValues, key: string): string[] {
+  const value = flags[key];
+  if (Array.isArray(value)) return value;
+  return typeof value === 'string' ? [value] : [];
 }
 
 export function flagBool(flags: FlagValues, key: string): boolean {
