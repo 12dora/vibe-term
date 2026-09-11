@@ -31,7 +31,9 @@ CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在
 
 配置文件是安装目录下的 `app.env`。`init` 写入这些键，`upgrade` **只追加缺失键、不覆盖已有值**：
 
-`NODE_ENV`、`VIBETERM_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL`、`VIBETERM_MASTER_KEY`、`VIBETERM_BASE_URL`、`VIBETERM_SITE_NAME`、`VIBETERM_DIRECT_ENABLED`、`VIBETERM_ROLES`、`VIBETERM_HUB_URL`、`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_PEER_PORT`、`VIBETERM_STUN_SERVERS`；`relay` / `relay,node` 角色另加 `VIBETERM_RELAY_PUBLIC_URL` 与 `VIBETERM_RELAY_ADMIN_TOKEN`。
+`NODE_ENV`、`VIBETERM_BIND_HOST`、`GATEWAY_PORT`、`DATABASE_URL`、`VIBETERM_MASTER_KEY`、`VIBETERM_BASE_URL`、`VIBETERM_SITE_NAME`、`VIBETERM_DIRECT_ENABLED`、`VIBETERM_ROLES`、`VIBETERM_HUB_URL`、`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_PEER_PORT`；`relay` / `relay,node` 角色另加 `VIBETERM_RELAY_PUBLIC_URL` 与 `VIBETERM_RELAY_ADMIN_TOKEN`。
+
+`VIBETERM_STUN_SERVERS` 自 2.2.0 起 **`init` 不再写入**：未设置即使用随发行版分发的内置列表，升级自动换新；只有 `init --stun-servers <list>`（或 `none` 禁用）才写进 `app.env`。`upgrade` 还会把历史装机时冻结的默认串删掉。语义见 [mesh 运维](./mesh-operations.md)。
 
 `VIBETERM_TRUST_PROXY` **不会**被 `init` 写入，需要时手改 `app.env`（或在设置页的远程访问向导里拨开关，它会写回 `app.env`）。改完任何键都要重启服务才生效。
 

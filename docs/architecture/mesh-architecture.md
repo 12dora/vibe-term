@@ -231,6 +231,32 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
   - peer link：`ping | pong | node.status | key.log | rtc.signal`（对端直接交换地址、清单与密钥日志，hub 离线时保持新鲜；peer link 存活期间地址变化即刻互相更新）。
   - `rtc.signal` 载荷 `{rtcSession, from:'browser'|'node', to: nodeId, sdp?|candidate?}`；hub / entry 转发时校验 `rtcSession` 登记的 `(浏览器会话, 目标 nodeId)`，`from:'node'` 的信令只接受来自登记目标 node 的链路。
 
+### 自适应预算（转发与拨号）
+
+跨区链路上 300–800 ms 的 RTT 会把「按局域网拍脑袋定的固定超时」全部打穿：socket 还没握完手，外层的竞速已经判失败并回落中继。2.2.0 起三级预算改为按观测 RTT 放大，公式集中在 `packages/shared/src/net/adaptive-deadline.ts`：`adaptiveDeadlineMs({rttMs, factor, minMs, maxMs}) = clamp(rtt × factor, min, max)`。
+
+`nestedDialBudgetsMs(rtt)` 保证**嵌套不变式 connect < direct < forward**（socket 拨号 ⊂ 直连竞速 ⊂ 转发取链）：
+
+| 观测 RTT | connect（单个 socket） | direct（前台竞速） | forward（取链路总期限） |
+|---|---|---|---|
+| 0 / 300 ms | 3000 ms | 4000 ms | 5000 ms |
+| 800 ms | 4800 ms | 5300 ms | 6900 ms |
+| 2000 ms | 11 500 ms | 12 000 ms | 16 000 ms |
+
+因子分别是 6× / 5× / （direct + 2×RTT 中继握手），各档独立 clamp 后再抬外层或压内层，使任意 RTT 都满足不变式。0 / 300 ms 一列与改动前的 LAN 常量完全一致，即局域网行为不变。
+
+RTT 取值顺序（网关侧 `lookupPeerRttMs`）：peer live 链路的 ping/pong RTT → uplink pong / 连接池最近候选 → 缺省 300 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
+
+同一套自适应还接到：
+
+- `readHttpHead` 的响应头等待 = 当前 forward 预算；超时 `stream.reset('head-timeout')`。
+- `forwardAuthorizedHttp` 的总期限 `clamp(8×RTT, 10 s, 30 s)`：每次尝试用 `armAttemptDeadline` 单独武装一个 `AbortController`（`min(剩余总期限, 单次预算)`），到点就 abort 掉取链路与开流，不会出现「单次尝试无限等，总期限形同虚设」。
+- failover 重开流后等 HELLO 的时间：首次仍是固定值，后续重试 `clamp(2×RTT, 500 ms, 4 s)`。
+- STUN 探针：DNS ≤ 1.5 s、Binding 至少 1 s、合计 ≤ 3.5 s。
+- 浏览器侧 `ApiClient`：调用方没给 `signal` 时挂 `AbortSignal.timeout`，期限 `clamp(8×EWMA, 8 s, 45 s)`，转发路径（`/n/<id>/`）再 ×1.5；EWMA 按每次请求的实测耗时更新（α = 0.2）。该 signal 会连响应体一起中止，所以 NDJSON 事件流、文件上传 / 下载这类长流必须显式传 `timeout: false` 或自己的 `signal`。会话探测 `clamp(8×EWMA, 8 s, 30 s)`，WS 待发有序输入 TTL `clamp(4×重连预算, 10 s, 45 s)`（缺省预算 30 s ⇒ 45 s）——重连窗口内不丢用户按键。
+
+端点退避也按失败性质分软 / 硬两档（软失败封顶 5 min），见 [节点直连](./peer-direct-connect.md)。
+
 ### 响应头策略（entry 转发 `/n/:id/*` 响应）
 
 目标 node 的响应体在 **entry origin** 下呈现，失陷 node 可返回 HTML/SVG 造成同源 XSS。entry 对所有 `/n/:id/*` 响应采用**响应头 allowlist**（只透传 `content-type / content-length / content-range / accept-ranges / cache-control / etag / last-modified / content-disposition / x-vibeterm-*`，其余一律丢弃），并强制：`Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-action 'none'`（导航打开时在 opaque origin 渲染，脚本无法触及 entry origin 的 cookie 与 API）、`X-Content-Type-Options: nosniff`；`Content-Type` 采用精确 allowlist：`image/png image/jpeg image/gif image/webp image/avif video/mp4 video/webm audio/mpeg audio/ogg audio/wav text/plain application/json application/x-ndjson application/pdf application/octet-stream`，不在其中（含 `image/svg+xml`、任何 `*/xml`、`text/html`）的一律**覆盖**为 `application/octet-stream` + `Content-Disposition: attachment`。PDF 预览在 sandbox 下仍可 iframe 内联。
@@ -257,7 +283,7 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
 - `/api/auth/*`、`/api/mesh/*`、`/mesh/ws` **先于** gateway 路由；hub 角色再加 `/api/hub/*`、`/hub/uplink`。
 - `/n/self/*` 或旧路由 → 本地 gateway（`auth` 为 `vibeterm_s_self`，`via = self`）；`/n/:id/api/*`、`/n/:id/ws` → `PeerManager.getLink(id)`（已有 peer link → 复用；否则按 §1 顺序建链，失败回 hub `relay`；全部失败 503 `NODE_UNREACHABLE`）→ 开流。目标返回 401 时 entry 原样透传并附 `{code:'NODE_LOGIN_REQUIRED', nodeId}`。
 - `/api/mesh/nodes`：合并 `node_certs`（公钥）、`peer_cache`（元数据）与实时链路状态：`id, name, publicKey, online, reach, version, direct_capable, inventory, loggedIn`；未 admit 的节点不出现。
-- `/api/mesh/rtc-config`：从 `peer_cache` 最近的 `node.list` 读 STUN/TURN，离线可用。
+- `/api/mesh/rtc-config`：把本机 env、`peer_cache` 里最近一次 `node.list` / `relay.list` 下发的配置与发行版内置列表合成**有效 ICE 配置**（`resolveEffectiveStun`），离线可用；回包带 `source`（`node-custom` / `node-disabled` / `hub-custom` / `builtin`）与最近一次 STUN 探针结果 `probes`。
 - `/mesh/ws`（需 `vibeterm_s_self`）：Borsh 新 kind `NODE_EVENT{nodeId, status, reach, inventory?}`、`RTC_SIGNAL`。
 
 ### node 侧
@@ -318,9 +344,12 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 
 ### 配置
 
-- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
+- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔；未设置 = 发行版内置列表，`none` 禁用）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
 - node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
-- STUN/TURN：hub 配置 → `node.list` 下发 → 浏览器 `GET /api/mesh/rtc-config`。
+- STUN/TURN：hub / 中继配置 → `node.list` / `relay.list` 下发 → 节点求有效列表 → 浏览器 `GET /api/mesh/rtc-config`。
+  - **STUN**：内置列表随发行版分发（`packages/shared/src/net/stun-defaults.ts`），hub / 中继**只在自己设了自定义列表时**才下发，否则下发空数组。节点按「节点自定义 > 节点禁用 > hub 下发的自定义列表 > 内置列表」求有效列表，再按 STUN 探针 RTT 排序。空下发**不会**清掉节点自己的列表。
+  - **TURN**：一旦收到过下发就以下发为准，`turn: null` 表示**显式撤回**，此后不再回落本机 `VIBETERM_TURN_*`；从未收到过下发才用本机配置。
+  - 运维语义、env 取值与升级迁移见 [mesh 运维](../operations/mesh-operations.md)。
 
 ### CLI 新命令（`packages/app/src/commands/`）
 

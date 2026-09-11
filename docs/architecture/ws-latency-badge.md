@@ -27,6 +27,12 @@
 现场：到达路径、承载、entry ↔ node 的 peer ping（不再是头条，但排查「慢在哪一跳」要看）、已连接
 时长、对端 / 中转地址、ICE 明细与未直连原因。
 
+浮层用 `createPortal` 挂到 `document.body` 并按 `position: fixed` 定位（`device-node-badges-placement.tsx`）：
+手机上量的必须是**视觉**视口（`window.visualViewport`）——地址栏收起、键盘弹出、双指缩放之后
+布局视口和看得见的那块不是一回事。测量完才渲染（先渲染会在 body 左上角闪一帧），双向夹回视口，
+内容过高时卡片自己滚动（`maxHeight` + `overscroll-contain`），下方放不下就翻到徽标上方。
+拿不到测量结果时退回「贴徽标右对齐、固定 288px」的 absolute 老样子。
+
 ## 宿主一跳：`DEVICE_LATENCY`
 
 - wire：`KIND_DEVICE_LATENCY = 0x0106`，载荷 `DeviceLatencySchema { deviceId, rttMs, rawMs,
@@ -112,6 +118,13 @@ PONG / `DEVICE_LATENCY` 同样要插队，否则徽标量的是转发队列深�
   挤出去的那一帧）；没有优先通道的浏览器直连 socket 仍然跳过。
 - 基准见 `apps/gateway/src/mesh/link-stream-priority-latency.test.ts`：限速 4096 B/ms、单向 15 ms 的
   假链路上灌满终端输出后插一帧 PONG，改前约 150–180 ms，改后约 20 ms。
+
+## REST 期限与 EWMA
+
+同一个连接上的 REST 客户端（`packages/api-client` 的 `ApiClient`）也在观测延迟：每次请求按实测耗时
+更新一条 EWMA（α = 0.2），调用方没给 `signal` 时挂 `AbortSignal.timeout(clamp(8×EWMA, 8 s, 45 s))`，
+转发路径（`/n/<id>/`）再 ×1.5；长流（NDJSON、上传下载）用 `timeout: false` 或自带 signal 跳过这层期限。它与徽标的 WS 样本各测各的（一个是应用层 PING/PONG，一个是 HTTP
+往返），但都能用来判断「这条链路整体有多慢」；会话探测的期限 `clamp(8×EWMA, 8 s, 30 s)` 用的就是这条 EWMA。
 
 ## 排查毛刺
 

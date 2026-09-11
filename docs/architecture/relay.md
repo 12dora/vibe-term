@@ -47,7 +47,9 @@ WS 升级也先判 `relay.isUplinkSocket`，停机时先 `relay.stop()`。
 
 两个键只有 `relay` / `relay,node` 角色才会被 `init` 写进 `app.env`（`relayEnvDefaults()`）；其它角色的 `app.env` 不含它们。
 STUN/TURN 复用既有 `VIBETERM_STUN_SERVERS` / `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL`，
-随 `auth.ok` 与 `relay.list` 下发给租户节点。
+随 `auth.ok` 与 `relay.list` 下发给租户节点。**STUN 只在中继自己设了自定义列表时才下发**，否则下发空数组
+（表示「我没有自定义」，租户节点用自己的 env 或发行版内置列表）；TURN 一旦下发过就以下发为准，
+`turn: null` 即显式撤回。语义见 [mesh 运维](../operations/mesh-operations.md)。
 
 中继自己**不需要**链路身份密钥、不写 `users` / `node_certs` / `nodes` / `peer_cache` 任何 hub 表。
 

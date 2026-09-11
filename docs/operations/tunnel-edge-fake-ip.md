@@ -26,7 +26,7 @@
 
 ## STUN / TURN 与 fake-IP
 
-同一套 fake-IP 也会打掉 WebRTC 直连。安装默认 STUN 按顺序是 `stun:stun.miwifi.com:3478`、`stun:stun.chat.bilibili.com:3478`、`stun:stun.l.google.com:19302`、`stun:stun.cloudflare.com:3478`（`VIBETERM_STUN_SERVERS` 逗号分隔，`parseStunServers` 按逗号切开）。境内运营的小米 / Bilibili 从海外也能应答，作为跨大陆舰队的主 STUN；Google / Cloudflare 作冗余。libdatachannel 对列表并发 gathering，先应答的产生 srflx。`node-datachannel` 0.33.1（libdatachannel）自己对主机名做 `getaddrinfo`，解析到 `198.18.x.x` 后 STUN Binding 进 TUN 被丢掉 → 只有 host 候选（局域网 `10.x` / `192.168.x`、TUN `198.18.0.1`、`utun`、Tailscale `100.x`；0.33.1 没有网卡过滤 API，见 [KI-3](../known-issues.md)）→ 跨 NAT 没有候选对 → 每条 peer 链路回落 mesh 中继。
+同一套 fake-IP 也会打掉 WebRTC 直连。**随发行版分发的内置 STUN 列表**按顺序是 `stun:stun.miwifi.com:3478`、`stun:stun.chat.bilibili.com:3478`、`stun:stun.l.google.com:19302`、`stun:stun.cloudflare.com:3478`（`VIBETERM_STUN_SERVERS` 未设置即用它；设为逗号串则覆盖，`none` / `off` 禁用，解析见 `parseStunServersEnv`，语义见 [mesh 运维](./mesh-operations.md)）。境内运营的小米 / Bilibili 从海外也能应答，作为跨大陆舰队的主 STUN；Google / Cloudflare 作冗余。libdatachannel 对列表并发 gathering，先应答的产生 srflx。`node-datachannel` 0.33.1（libdatachannel）自己对主机名做 `getaddrinfo`，解析到 `198.18.x.x` 后 STUN Binding 进 TUN 被丢掉 → 只有 host 候选（局域网 `10.x` / `192.168.x`、TUN `198.18.0.1`、`utun`、Tailscale `100.x`；0.33.1 没有网卡过滤 API，见 [KI-3](../known-issues.md)）→ 跨 NAT 没有候选对 → 每条 peer 链路回落 mesh 中继。
 
 ### 解析器
 
@@ -49,16 +49,16 @@ DoH 也失败时同格式一条 warn（`ip=-`）。`stunResolveSnapshot()` 返�
 
 ### 如何确认
 
-- `GET /api/mesh/rtc-config`：应看到默认四条 STUN（或你配置的列表）。这是下发给浏览器的原始 URL，**不是**节点侧替换后的 IP。
+- `GET /api/mesh/rtc-config`：应看到内置四条 STUN（或你配置的列表），`source` 字段说明来源（`builtin` / `node-custom` / `node-disabled` / `hub-custom`）。这是下发给浏览器的原始 URL，**不是**节点侧替换后的 IP。
 - 节点日志：上面的 `stun resolve` 行，`via=doh fake_ip=true` 表示本机 DNS 落到了 fake-IP 并已绕开。
 - 另一条 gather 诊断（`[mesh][rtc] gather summary` / ICE 失败时的 `local_types`）：跨 NAT 时应出现 `srflx`（或 TURN 的 `relay`）。只有 `[host]` 且对端不在同一局域网，仍是 STUN 不可达。
 - 代理侧替代方案：让 UDP 3478 / 19302 走 DIRECT（Surge 示例：`AND, (DST-PORT, 3478), (PROTOCOL, UDP)` → DIRECT，19302 同理），并把 `always-real-ip` 加上 `stun.miwifi.com`、`stun.chat.bilibili.com`、`stun.l.google.com`、`stun.cloudflare.com`。节点侧解析器不依赖这条规则，但浏览器 ICE 仍需要本机 UDP 出得去。
 
 ## STUN 自检
 
-gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟 ±10% 抖动，以及列表变化时重测，变化触发最短间隔 30 秒）。有效列表 = hub 经 `node.list` 下发的 `VIBETERM_STUN_SERVERS`（非空才覆盖），否则本机配置。探测走与 libdatachannel 相同的 `resolveIceServers`（系统 DNS → fake-IP 时 DoH），双栈时先 A 再在 `ENETUNREACH` 上回落 AAAA。`stuns:` / `turn:` / `turns:` 记 `skipped: unsupported-scheme`，不计入 `all=N`。
+gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding 探测（之后每 10 分钟 ±10% 抖动，以及列表变化时重测，变化触发最短间隔 30 秒）。有效列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 内置列表」求解（`resolveEffectiveStun`），探测结果反过来决定生效列表的顺序：新鲜可达的按 RTT 提前，失败只降权。探测走与 libdatachannel 相同的 `resolveIceServers`（系统 DNS → fake-IP 时 DoH），双栈时先 A 再在 `ENETUNREACH` 上回落 AAAA。`stuns:` / `turn:` / `turns:` 记 `skipped: unsupported-scheme`，不计入 `all=N`。
 
-同一 txid 在 2 s 预算内最多发 3 次 Binding（RTO 500 ms / 1000 ms）。对端 `0x0111` Binding error response 视为可达（`ok=true, errorResponse=true`）。日志里的 `mapped` 经 `maskIceAddress` 脱敏；`GET /api/mesh/rtc-config` 需 session，响应里保留完整 mapped address。
+单次探测拆成 DNS / Binding 两段：DNS ≤ 1.5 s，Binding 至少留 1 s，合计 ≤ 3.5 s（`stun-probe-budget.ts`）。同一 txid 在 Binding 预算内最多发 3 次（RTO 500 ms / 1000 ms）。对端 `0x0111` Binding error response 视为可达（`ok=true, errorResponse=true`）。日志里的 `mapped` 经 `maskIceAddress` 脱敏；`GET /api/mesh/rtc-config` 需 session，响应里保留完整 mapped address。
 
 每台服务器一条 info：
 
@@ -69,4 +69,4 @@ gateway 在 mesh 启动后对**有效** STUN 列表做一次 RFC 5389 Binding �
 
 全部失败时再打 warn：`[mesh][rtc] stun unreachable all=N`。`GET /api/mesh/rtc-config` 带最近一次结果 `probes: [{ url, ok, rttMs, mappedAddress, error, resolvedIp, via, fakeIp, errorResponse, skipped, probedAt }]`。
 
-Surge / Clash TUN 把境外 UDP 丢进无 UDP 中继的节点时，Google `:19302` / Cloudflare `:3478` 常无应答；给 UDP 3478/19302 加 DIRECT，或依赖默认可达的小米 / Bilibili STUN。
+Surge / Clash TUN 把境外 UDP 丢进无 UDP 中继的节点时，Google `:19302` / Cloudflare `:3478` 常无应答；给 UDP 3478/19302 加 DIRECT，或依赖内置列表里可达的小米 / Bilibili STUN。

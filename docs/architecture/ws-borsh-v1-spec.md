@@ -262,7 +262,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 - `selectedVersion: u16`（当前 1）
 - `maxFrameBytes: u32`（服务端可接收最大帧）
 - `heartbeatIntervalMs: u32`（默认 15000）
-- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `canonical-state-v1`、`canonical-state-v1.1`。
+- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `canonical-state-v1`、`canonical-state-v1.1`、`canonical-screen-intent-v1`。
 
 ### PING/PONG（0x0003/0x0004）
 
@@ -633,6 +633,8 @@ EWMA 平滑后下发给已连接该设备的非分享会话：实质变化（|Δ
 | 2 | `ResizePane` |
 | 3 | `RequestScreen` |
 | 4 | `RequestHistory` |
+| 5 | `ResizePaneV11`（能力 `canonical-state-v1.1`，见下） |
+| 6 | `RequestScreenIntent`（能力 `canonical-screen-intent-v1`，见下） |
 
 事件 discriminator（只能尾部追加）：
 
@@ -724,6 +726,45 @@ metadata 记录折叠成 tmux 会话树的实现只有一份：`packages/ws-clie
 `import { createCanonicalTree } from '@vibeterm/ws-client/canonical-tree'`，用
 `applySnapshot()` / `applyPatch()` 喂事件、`get()` 取树，并用同文件的纯函数
 （`resolveWindow` / `resolvePane` 等）按 id、index 或名字定位窗口与 pane。
+
+### 首屏意图（能力 `canonical-screen-intent-v1`）
+
+首屏过去要两次往返：客户端必须先等 `SourceMetadataSnapshot` 才解析得出 `serverEpoch`，才能发
+`RequestScreen`。手机到公网 hub 的 RTT 300–800 ms 时，这一跳是首屏最贵的一段。意图命令把
+「要哪一屏」这件事交给网关解析，于是首屏请求可以和 `connect-device` 一起进第一批。
+
+#### RequestScreenIntent（命令 discriminator = 6）
+
+字段（顺序固定，只能尾部追加）：
+
+- `requestId: bytes(16)`
+- `deviceId: string`
+- `windowId: option(string)`
+- `paneId: option(string)`
+- `byteLimit: u32`
+
+网关 attach 之后解析：`paneId` 给了且在自己的 metadata 投影里认得出来就用它；认不出来（客户端给的是
+本地拓扑里的占位 pane，attach 之前可能已经没了）或压根没给，就回落到**指定 window 的活动 pane**，
+未指定 window 则取**设备活动窗口的活动 pane**；活动标记缺失（老 tmux 快照）时退到记录顺序里的第一个。
+device / `serverEpoch` / pane 任一解析不出来，一律回 `Error(ERROR_TMUX_TARGET_NOT_FOUND, retryable=false)`
+**并带上 `requestId`**——绝不静默丢弃，否则客户端会挂着一个永远等不到回包的请求。解析成功后走的就是
+`RequestScreen` 的同一条事务路径（`ScreenBegin/Chunk/Commit`）。
+
+#### 能力与兼容
+
+- 网关在 `HELLO_S2C.capabilities` 播报 `canonical-screen-intent-v1`，客户端**只有看到它才允许发送**该命令。
+  判定是**按节点**的：远端设备的 HELLO 由该节点自己答，hub 只转发，所以混版本 mesh 下每条连接各自判定。
+- 未播报时客户端回退旧时序（等 metadata → `RequestScreen`），一个新命令都不发。
+- 新变体追加在枚举尾部（0..5 的编号冻结）。2.1.0 对端即使收到也只会解码失败回一帧
+  `ERROR_PAYLOAD_DECODE_FAILED`（不会断连），而能力门保证它根本不会被发出去。
+- golden 用例：`packages/shared/src/ws-borsh/canonical-screen-intent.test.ts`（0..5 逐个断言未变、
+  新变体字段字节序列钉死、未知变体解码抛 `WsBorshError`）。
+
+#### requestId 幂等
+
+网关对首屏只在**在途**期间按 `requestId` 去重（`CanonicalScreenJobs.hasInFlightRequest`）。
+不能用「见过就永远拒绝」的集合：客户端在 `SourceGap`（中继 failover、epoch 变化）或可重试错误之后
+会**用同一个 requestId 重试**，永久去重会把那次重试吞掉，终端永久空白；永不清理的集合还会随长会话泄漏。
 
 ### AGENT_SUBSCRIBE（0x0601）/ AGENT_UNSUBSCRIBE（0x0602）
 

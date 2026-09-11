@@ -21,7 +21,7 @@
 
 - `packages/app/dist/cli-node.js`：Node 侧 CLI 入口。
 - `packages/app/dist/runtime/server.js`：Bun 运行时入口，内部会打包 gateway 运行时代码。
-- `packages/app/resources/fe-dist`：前端静态资源。
+- `packages/app/resources/fe-dist`：前端静态资源，**含构建期写出的 `.br` / `.gz` sidecar**（运行时按 `Accept-Encoding` 直接下发，见 [前端性能](../development/performance-frontend.md)）。sidecar 约 4 MB，发行包体随之 +4 MB；`bundle-resources.sh` 是 `cp -R` 后只删 `*.map`，不会漏掉它们。
 - `packages/app/resources/gateway-drizzle`：gateway 数据库迁移文件。
 - `packages/app/CHANGELOG.md`：**仅含当前版本**的更新日志，随 GitHub Release 发布；程序内自更新会读取目标版本的 release body / changelog 展示（见下文「版本注入与自更新」）。
 
@@ -98,7 +98,7 @@ npm pack --dry-run --workspace vibeterm-cli
 校验重点：
 
 - `npm pack --dry-run` 输出中必须包含 `dist`、`resources` 与 `CHANGELOG.md`。
-- `resources/fe-dist` 中应包含最新前端静态资源。
+- `resources/fe-dist` 中应包含最新前端静态资源，且 `assets/*.js` 旁有同名 `.br` / `.gz`（缺了只是回落到运行时即时压，但首屏会慢）。
 - `resources/gateway-drizzle` 中应包含迁移文件。
 - **CHANGELOG 已完成 agent 改写**：`grep -c DRAFT packages/app/CHANGELOG.md` 应为 `0`（仍有 DRAFT 标记说明漏了第 1.5 步），且内容无 commit hash / `feat:` 等黑话。
 - **CHANGELOG 为双语**：`grep -c '^## English' packages/app/CHANGELOG.md` 与 `grep -c '^## 中文' packages/app/CHANGELOG.md` 均应为 `1`（英中两段齐全，见 issue #20）。

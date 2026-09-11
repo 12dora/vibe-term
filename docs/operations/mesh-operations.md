@@ -43,11 +43,34 @@
 | `VIBETERM_HUB_URL` | 空 | node 连 hub 的基址（`hub join` 成功后写入）。`hub,node` 用进程内 uplink，可不填 |
 | `VIBETERM_HUB_PUBLIC_URL` | 空 | hub 对外 HTTPS 地址，写入 join 命令与 `/api/auth/mode.hubPublicUrl`。非交互 `init --role hub,node` **必填** `--hub-public-url` |
 | `VIBETERM_PEER_PORT` | `39001` | node↔node 信令监听口，只承载签名信令 |
-| `VIBETERM_STUN_SERVERS` | `stun:stun.miwifi.com:3478,stun:stun.chat.bilibili.com:3478,stun:stun.l.google.com:19302,stun:stun.cloudflare.com:3478` | 逗号分隔，经 `node.list` 下发给各 node 与浏览器 ICE |
+| `VIBETERM_STUN_SERVERS` | **不写入** | 只有 `init --stun-servers <list>` 显式给出才写入。未设置 = 用随发行版分发的内置列表，见下节 |
 | `VIBETERM_RELAY_PUBLIC_URL` | 空 | **仅 relay 角色写入**，且必填。中继对外地址，uplink 认证签名绑定其 host |
 | `VIBETERM_RELAY_ADMIN_TOKEN` | 首启生成 | **仅 relay 角色写入**。管理令牌；缺失时首启生成一枚并写回 `app.env`，库里只存 sha256 |
 
 `init` 另支持 `--hub-url`、`--hub-public-url`、`--peer-port`、`--stun-servers`、`--relay-public-url`。
+
+### STUN 列表：内置随版分发
+
+2.2.0 起 STUN 列表**不再冻进 `app.env`**。内置列表写在发行版代码里（`packages/shared/src/net/stun-defaults.ts` 的 `BUILTIN_STUN_SERVERS`：`stun:stun.miwifi.com:3478`、`stun:stun.chat.bilibili.com:3478`、`stun:stun.l.google.com:19302`、`stun:stun.cloudflare.com:3478`），升级即换新列表，不需要人工改 env。
+
+单机 env 语义（`parseStunServersEnv`）：
+
+| `VIBETERM_STUN_SERVERS` | 来源 | 生效列表 |
+|---|---|---|
+| 未设置 / 空白 | `builtin` | 内置列表 |
+| `none` 或 `off`（忽略大小写） | `disabled` | 空（本节点不用 STUN） |
+| 其它逗号串 | `custom` | 按逗号切开、去空白去重 |
+
+整个 mesh 的有效列表按优先级求解（`resolveEffectiveStun`）：**节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 内置列表**。hub / 中继**只在自己是 `custom` 时**才经 `node.list` / `relay.list` 下发列表，否则下发空数组；空数组表示「我没有自定义」，节点回到自己的内置列表，不会被清空。TURN 与之相反：hub / 中继一旦下发过配置就以它为准，显式 `turn: null` 表示撤回，节点不再回落到本机 `VIBETERM_TURN_*`。
+
+生效列表还会按 STUN 探针结果排序：新鲜且可达的按 RTT 提前，失败只降权不删除（探针口径见 [隧道边缘与 STUN 的 fake-IP 绕行](./tunnel-edge-fake-ip.md#stun-自检)）。
+
+排查用：
+
+- `GET /api/mesh/rtc-config` 回包带 `source`（`node-custom` / `node-disabled` / `hub-custom` / `builtin`），`stun` 是排序后的生效列表。
+- 启动与 `node.list` 变化时打日志 `[mesh][rtc] stun config source=… count=… list=…`。
+- 安装版 `vibeterm doctor` 会报「使用发行版内置列表 / 自定义（app.env）/ 已禁用」。
+- 升级：`vibeterm upgrade` 在升级事务内识别 `VIBETERM_STUN_SERVERS`（含遗留 `TMEX_STUN_SERVERS`）是否等于**历史内置默认串**，是则删除该键让新内置列表生效；自定义值原样保留。详见 [升级事务](./upgrade-transaction.md)。
 
 ### 需手写进 `app.env` 的键
 
@@ -269,7 +292,7 @@ vibeterm direct disable
 
 **v1 支持的平台：** macOS arm64 / x64，Linux glibc x64 / arm64。**musl、Windows、其它 arch 不支持**（`lookupNativePin` 返回 `null`，enable 失败且不阻断）。缺失或装载失败 → `direct_capable=false`，authorize 返回 503 `DIRECT_UNAVAILABLE`，浏览器退避最多 5 次后停在 failed。
 
-ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN → hub relay。未实现 UPnP / NAT-PMP。空 ICE 服务器列表在 PoC 中会长时间超时，因此默认带 STUN；可按网络换成可达的 STUN/TURN。
+ICE 顺序（自动）：同内网 host → IPv6 → IPv4 STUN → TURN → hub relay。未实现 UPnP / NAT-PMP。空 ICE 服务器列表在 PoC 中会长时间超时，因此缺省带内置 STUN；可用 `VIBETERM_STUN_SERVERS` 换成本网可达的列表，或 `none` 显式禁用（仅局域网/全中继场景）。
 
 设备页（非 `self`）两枚徽标：浏览器↔node 路径（`lan` / `v6` / `v4-p2p` / `turn` / `relay` 与 RTT）和 entry↔node 的 `reach`。直连断开时切回 primary，并对已订阅 pane 做一次 resume；浏览器→node 方向在断开瞬间可能丢最近输入，界面提示「直连已断开，最近输入可能未送达」。
 

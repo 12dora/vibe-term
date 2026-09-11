@@ -77,10 +77,22 @@
 - 心跳 PONG 超时（`HeartbeatController`，缺省 10s，页面隐藏时 60s）直接 `ws.close()`，随后按 `handleClose()` 进入退避。
 - 退避为指数退避（基数 `reconnectDelayMs` 1s，上限 30s）；尝试次数超过 `maxReconnectAttempts`（缺省 5）后置 `CLOSED`。
 
+### 恢复探测（回前台 / 联网 / bfcache）
+
+`visibilitychange → visible`、`pageshow{persisted:true}`、`online`、`navigator.connection.change`
+四条信号统一走 `handleResumeSignal()`，1 s 内的多条合并成一次：
+
+- 状态为 `READY`：发一次**短期限 PING**，期限 `min(常规 PONG 超时, clamp(4 × 中位 RTT, 2 s, 6 s))`，
+  在途探测一律作废重发。收到 PONG 就什么都不做（不误杀活链路），下一拍回到常规节奏；
+  **超时直接 `reconnect()`**（摘旧 socket 回调 → close → 立刻建连），不进退避、不等关闭握手——
+  僵尸链路上 `close()` 的 `onclose` 可能永远不来。
+- 其余状态：沿用 `wakeReconnect()`。
+
 ### 关键实现点
 
 - `seq` 在单条 ws 连接内单调递增；重连后从 1 重置。
 - READY 前的业务消息进入队列缓存，READY 后 flush。
+- 待发有序输入的 TTL 随重连预算自适应（`clamp(4 × 重连预算, 10 s, 45 s)`；缺省预算 30 s ⇒ TTL 45 s），重连窗口内不丢用户按键。
 
 ---
 
@@ -113,10 +125,29 @@
 > legacy 的「选择事务状态机」（`SELECTING/ACKED/HISTORY_APPLIED/LIVE/SELECT_FAILED` + selectToken 对账）
 > 已于 1.1.23 删除。切 pane 不再有屏障帧，画面重建完全由 canonical 首屏事务承担。
 
-### 流程
+### 流程（能力 `canonical-screen-intent-v1`：首屏合并为一次往返）
+
+网关播报该能力时，客户端在 **HELLO 之后的同一批次**里一起发出：
+`SetPaneSubscriptions(generation, 零 epoch 占位)` → `connect-device` → `RequestScreenIntent`。
+网关 attach 之后在**同一个回复 burst** 里返回 `SourceMetadataSnapshot` + `SubscriptionApplied` +
+首屏事务（`ScreenBegin/Chunk/Commit`）。首个 `ScreenCommit` 落地前的交换次数：**意图路径 2 次
+（HELLO + 合并批次），旧时序 3 次**。
+
+首屏请求的触发条件是 **canonical 能力协商完成**（transport 的 `state-feed-mode` 翻到 canonical），
+不再是 `device-connected`——终端现在先于 WS READY 挂载，用 `device-connected` 做条件会永远等不到。
+
+占位订阅的收敛：零 `serverEpoch` 的订阅会被网关按 `epoch_changed` 拒绝。客户端看不到这次拒绝——
+它在 metadata 落地时立刻以**更大的 generation** 重发带真 epoch 的订阅，随后到达的旧代次
+`SubscriptionApplied` 按代次丢弃。**首屏不因此多花往返**，但实时输出仍要等第二批订阅被 apply
+（与改动前一致，不是回归）。
+
+`requestId` 幂等：网关只对**在途**的同 `requestId` 去重。错误或 `SourceGap` 之后客户端会用同一个 id
+重试，网关必须放行（详见 [ws-borsh v1 规范](./ws-borsh-v1-spec.md)）。
+
+网关未播报该能力时（2.1.0 及更早，或混版本 mesh 里的旧节点）走旧时序：
 
 1. pane 挂载 → `mountPane()` 把它加进订阅集合 → 发 `SetPaneSubscriptions(generation, active, hot)`。
-2. 发 `RequestScreen(requestId, pane, byteLimit)`。
+2. 等 `SourceMetadataSnapshot` 解析出 `serverEpoch`，再发 `RequestScreen(requestId, pane, byteLimit)`。
 3. 收 `ScreenBegin(requestId, paneEpoch, baseSeq, rows, cols, modes, totalBytes)`
    → `ScreenChunk(requestId, offset, data)*` → `ScreenCommit(requestId, totalBytes, historyCursor)`。
    Commit 才整屏重写终端（`writeCanonicalSnapshot`：reset → resize → 恢复 tmux 模式位图 → 一次 write）。

@@ -13,7 +13,7 @@
   versions/<version>/{cli,runtime,resources,native}
   current -> versions/<version>          # 原子 rename 切换（current.tmp 后改名）
   staging/<txnId>/                       # 与 versions 同一文件系统
-  backups/<txnId>/{vibeterm.db,vibeterm.db-wal,vibeterm.db-shm}
+  backups/<txnId>/{vibeterm.db,vibeterm.db-wal,vibeterm.db-shm,run.sh,app.env}
   upgrade-state.json                     # journal：txnId / phase / fromVersion / toVersion / dbBackup / error
   upgrade.lock                           # O_EXCL；内容为 pid + startedAt + 进程启动身份；pid 已死或身份不符则回收
   data/  app.env  run.sh  install-meta.json
@@ -38,8 +38,8 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 | `lock` | 取 `upgrade.lock` | 旧服务仍在跑 | 删 staging/候选（若有），标 `aborted` |
 | `staging` | 下载到 `staging/<txn>`，校验 HTTP / tar / package.json 版本 / 布局；**目标版本 ≥ 1.1.4 必须拿到 SHA256SUMS HTTP 200、精确条目且 digest 匹配，404 一律中止**。更旧的目标版本仅在显式 `--allow-unverified` 时允许 404（CLI 默认拒绝；Web 永远不允许）。网络错误或其他非 2xx 必须中止。校验发生在解压/执行前（CLI、`install.sh`、gateway Web 升级同一语义）。解压后 rename 进 `versions/<to>`；若旧版本有 native 插件，在预启动前把当前 pin 装进候选目录 | 旧服务仍在跑；候选可能半成品 | 删 staging + 候选（永不删 `current` 指向的目录），标 `aborted` |
 | `preflight` | 优先用候选 bun 的 `bun:sqlite` 做 `VACUUM INTO` 在线备份；失败则 `wal_checkpoint(TRUNCATE)` 后逐文件复制（运行中 WAL 仍可能不一致）。临时端口 + `VIBETERM_ROLES=standalone` + `VIBETERM_RUNTIME_MODE=preflight` 拉起候选（跳过 seed/refresh/push/agent/watch/tunnel/通知/TLS/mesh，仍跑 migrations），把 `{candidatePid, candidateStartedAt}` 写入 journal，轮询 `/healthz` 至 `status==ok && version==toVersion`（60s） | 旧服务未停；候选进程可能仍在 | 按 journal 中的 pid 校验 cmdline 含候选 `server.js` 后杀掉并等待退出，再删候选 |
-| `stopping` | 停服务并确认进程退出 | 服务可能仍在跑或已停，`current` 仍指向旧版 | 若旧服务已在跑则不得再次 `start()`；否则拉起旧服务并做健康/运行验证后才清场 |
-| `backup` | 复制 `vibeterm.db{,-wal,-shm}` 到 `backups/<txn>` | 服务已停，`current` 仍指向旧版 | 同 stopping：验证旧服务健康后才清场；失败则保留 journal+backup，非零退出 |
+| `stopping` | 先把 `run.sh` 与 `app.env` 拷进 `backups/<txn>/`（已有不覆盖），再停服务并确认进程退出 | 服务可能仍在跑或已停，`current` 仍指向旧版 | 若旧服务已在跑则不得再次 `start()`；否则拉起旧服务并做健康/运行验证后才清场 |
+| `backup` | 先跑 STUN env 迁移（见下节），再复制 `vibeterm.db{,-wal,-shm}` 到 `backups/<txn>` 并切 `current` | 服务已停，`current` 仍指向旧版 | 同 stopping：验证旧服务健康后才清场；失败则保留 journal+backup，非零退出 |
 | `switching` | 原子切换 `current`；按需重写 `run.sh` | 可能仍指向旧版（rename 前）或已指向新版（rename 后） | 同 backup：验证旧服务健康后才清场 |
 | `started` | 正式端口健康检查（新版本要求 `version===toVersion`） | `current` 已是新版，journal 未 committed | 立即再做健康检查：通过则 `committed` 并 GC；失败则停服务（失败则中止恢复）、按备份集合精确恢复 DB 三件套（先删目标 wal/shm）、`current` 切回。回滚旧版 `/healthz` **允许缺少 `version`**（1.1.3），但要求 `status===ok`、`current` 指向 `fromVersion`、`startedAt` 新于本次重启 |
 | `committed` | 写 `install-meta.json`，GC | 新版在跑 | 只清残留 staging/backups |
@@ -52,6 +52,18 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 预启动失败不会停旧服务。切换后健康失败会回滚 DB 与 `current`。stop 失败或进程仍存活时不得覆盖 DB。
 
 相同版本升级是健康 no-op（不写 aborted journal）。`--allow-missing-native` 才允许在旧版有 native 插件时跳过候选安装。
+
+## app.env 与 STUN 迁移
+
+`upgrade` 对 `app.env` 只做两件事：`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值），以及 2.2.0 引入的 STUN 键迁移。
+
+STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operations.md)），装机时冻进 `app.env` 的旧默认串会一直压住新列表。迁移逻辑（`packages/app/src/lib/upgrade-stun-env.ts`）：
+
+- 读 `VIBETERM_STUN_SERVERS`（含遗留 `TMEX_STUN_SERVERS`），值等于**历史内置默认串**之一（`LEGACY_DEFAULT_STUN_LISTS`）时删掉这两个键；自定义值原样保留。幂等。
+- 删除前把整份 `app.env` 另存一份可读副本 `backups/app.env.<ISO>.stun`（0600），日志只打相对名。
+- 执行点在**目录迁移之后、切 `current`（与 DB 备份）之前**，即进入 `backup` 阶段的第一件事：这样新 runtime 一启动就没有该键；目录迁移自己的 env 备份仍是带原键的文件，`revertInstallDirMigration` 还原后键还在。
+- 事务级回滚走 `backups/<txnId>/app.env`：`rollbackToOld` 与失败处理（包括还没到切 `current` 就失败的情形）都会把它拷回，冻结的旧默认不会因为一次失败的升级被悄悄丢掉。
+- 相同版本的 `upgrade` 是 no-op，不走事务，因而**不做**这次迁移；真正跨版本升级才会拆。
 
 ## 旧布局迁移
 

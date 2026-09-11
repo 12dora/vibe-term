@@ -22,9 +22,11 @@
 
 key 是 `(nodeId, canonical host, port)`——canonical 会把 IPv4-mapped 形式归一，同一地址的不同写法算同一条。
 
-- 退避 `1min → 2min → 4min …`，上限 **6h**（`ENDPOINT_BACKOFF_MIN_MS` / `ENDPOINT_BACKOFF_CAP_MS`）。
-- **只有传输可达性失败计数**：`timeout`、`open-timeout`、`refused`、`unreachable`、`reset`。协议 / 信任类失败（peer-id 不符、签名失败、证书问题、`not-trusted`）**不缓存**——那是配置问题，重试地址没意义，但也不该把地址标成不可达。
-- 成功即清除该地址；此前有过失败时打一条 `endpoint recovered`。
+- 退避 `1min → 2min → 4min …`（`ENDPOINT_BACKOFF_MIN_MS` 起跳），上限按失败性质分两档：
+  - **软失败** `timeout` / `open-timeout`：封顶 **5 min**（`ENDPOINT_BACKOFF_SOFT_CAP_MS`）。高延迟移动链路上「这次没拨通」多半是网络慢，不该被判成半天不可达。
+  - **硬失败** `refused` / `unreachable` / `untrusted` / `reset`：仍是 1min 翻倍到 **6h**（`ENDPOINT_BACKOFF_CAP_MS`）。
+- **只有传输可达性失败计数**：上面两档。协议 / 信任类失败（peer-id 不符、签名失败、证书问题）**不缓存**——那是配置问题，重试地址没意义，但也不该把地址标成不可达。
+- 任一地址**拨通**即清空该节点的全部退避记录（不只是成功的那一条），并打一条 `endpoint recovered`。
 - 清空时机：对端广播的 endpoint 集合（canonical host+port 排序集）**实际发生变化**时清该节点；节点被吊销时清该节点；15s 扫描发现本机非 internal 地址指纹变化时 `resetAll()`（同时重置 uplink 退避）。
 - 空闲超过 24h 的条目被修剪。
 
@@ -40,8 +42,8 @@ endpoint recovered node=<id> addr=<host:port>
 ### LAN 预算与并发
 
 - LAN 候选（`classifyRemoteAddress === 'lan'`）总预算 `PEER_LAN_DIAL_TIMEOUT_MS = 4000`，**open + 握手合计**；超时 abort 并关闭 socket。
-- 公网候选：open 3s（`PEER_CONNECT_TIMEOUT_MS`）+ 握手 10s。
-- 显式传入更短的 `connectTimeoutMs` 仍然生效（取 `min(connect, total)`）。
+- 公网候选：open 预算按观测 RTT 自适应（缺省 `PEER_CONNECT_TIMEOUT_MS = 3000` 时换成 `nestedDialBudgetsMs(rtt).connectMs`，见 [多节点架构](./mesh-architecture.md)「自适应预算」）+ 握手 10s。
+- 调用方显式传入的 `connectTimeoutMs` 原样生效（单测注入短值不会被拖长），但会作为 `nestedDialBudgetsMs(rtt, connectTimeoutMs)` 的内层基准把 direct / forward 一并抬上去，嵌套不变式不会因为一个大的自定义值而倒挂。
 - `DirectDialLimiter` 是进程单例，默认 4 个并发 endpoint dial（`VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY`，整数 ≥ 1），在**打开 socket 之前**获取名额、`finally` 释放；ranked stagger（250ms 错开）顺序不变。单测里进程级 limiter 在并行文件之间共享，需要隔离时给 `PeerManager` 注入独立 limiter。
 
 ### 强制探测
@@ -75,6 +77,12 @@ endpoint recovered node=<id> addr=<host:port>
 
 - gateway：`PeerManager.forceDcProbe(nodeId)`（无 HTTP 接口 / UI 按钮）。
 - 浏览器：`GatewayConnection.retryDirect()` → `DirectCarrierController.retryDirect()`，冷却中恰好放行一次。`retry()` 走同一条路径，不清零失败计数；连接 ACTIVE 本身也不清零，仍要满 60s 才 reset。
+
+### 浏览器侧：协商起点与 authorize 熔断
+
+- **协商在 primary `READY`（收到 `HELLO_S2C`）之后才开始**。此前 `?cid=` 还没登记，`GET /api/mesh/connection` 必然 404，controller 只会白打几次转发请求——高延迟链路上每台挂着的远端 node 都要烧掉几个 RTT。`open` 分支等 primary 进入 READY；`reconnect` 分支必须先看到 primary 掉出 READY 再回到 READY（同一 sid 的新旧连接分布在不同 socket 上）。
+- 服务端配合：`/api/mesh/connection` 带 `cid` 但尚未登记时返回 404 `NO_CONNECTION` **加 `retryAfterMs: 500`**，客户端据此退避而不是立刻重打。
+- `/api/rtc/authorize` 返回 5xx 时进 per-node **authorize 熔断**（`direct-authorize-breaker.ts`）：连续 3 次失败后冷却 30 s 起跳、封顶 5 min，冷却中不再发起协商。熔断器是**模块级、按 nodeId 共享**的，切路由重建 controller 不会把计数清零；`retryDirect()` 仍放行一次探测。熔断 key 带**登录世代**：登出 / 重新登录（`NodeSessionGuard` 重登成功）时 `resetDirectAuthorizeBreakers()` 让世代 +1 并清空全部冷却，上一个会话留下的冷却不会压住新会话。
 
 ### 环境变量
 
@@ -129,9 +137,10 @@ MeshNode.dcBreaker?: {
 
 ### ICE / 拨号
 
+- ICE 服务器列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
 - `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
 
-- `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算，见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
+- `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
 - node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
 
 ### 活性与在途流

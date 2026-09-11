@@ -16,6 +16,21 @@
 
 会话关闭、设备断开、重连失败清理时丢弃该会话相关 claim，并（除重连失败、runtime 已释放外）重算 winner。
 
+## 终端的挂载时机与「连接中」蒙层
+
+2.2.0 起终端**不再等 `device-connected`**：只要本地拓扑 / 路由能解析出 pane id（`resolvedPaneId`），
+就立刻挂 `Terminal` 并开始几何测量与首屏请求（首屏由 canonical 能力协商完成触发，见
+[ws 状态机](./ws-state-machines.md)）。高延迟链路上这把「等连接 → 再挂载 → 再测量 → 再要屏」的串行
+压成并行。
+
+- 设备尚未连上（`!deviceConnected && !isReconnecting`）时在终端上叠一层 `ConnectingOverlay`
+  （`data-testid="terminal-connecting-overlay"`，`pointer-events-none`、`z-10`，文案走 i18n `terminal.connecting`），
+  单屏与分屏两条分支都盖。
+- **重连期间不叠**：已有内容仍在画面上，重连状态由重连徽标表达，盖一层灰会让人以为内容没了。
+- 快照已确认该 pane 被关闭时不挂终端、也不显示蒙层——路由对账会立刻回落到幸存 pane。
+- 首个 `ScreenCommit` 走 `TerminalSurface.replace()`（清 history 页、`preserveViewport: false`）整屏重写，
+  占位期间的任何本地内容都会被这一次重写覆盖；`SourceGap` 走 rebase 重取。
+
 ## 协议
 
 - C2S `TERM_VIEWPORT`（0x0308）：`{ deviceId, paneId, cols, rows, visible }`

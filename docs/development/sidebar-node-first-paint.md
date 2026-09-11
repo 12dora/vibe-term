@@ -73,9 +73,9 @@ DC 照拿满 `CONNECT_TIMEOUT_MS = 15 s`。前台预算：
 | 常量 | 值 | 含义 |
 |---|---|---|
 | `FOREGROUND_DC_BUDGET_MS` | 2500 | DC 先独跑 2.5 s，到点并行开 ws-secure；DC 提前失败也立刻开，不空等 |
-| `FOREGROUND_DIRECT_DEADLINE_MS` | 4000 | 整段直连的墙钟上限，到点去中继 |
+| `FOREGROUND_DIRECT_DEADLINE_MS` | 4000 | 整段直连的墙钟上限（LAN 值），到点去中继。2.2.0 起实际取 `nestedDialBudgetsMs(rtt).directMs`：RTT ≤ 300 ms 仍是 4 s，800 ms 抬到 5.3 s，见 [多节点架构](../architecture/mesh-architecture.md)「自适应预算」 |
 | `RECENT_DC_FAILURE_MS` | 10 min | `lostDirect` 命中或此窗口内 DC 失败过 → `wsFirst`，两条腿同时起跑 |
-| `FORWARD_LINK_DEADLINE_MS` | 5000 | forwarder 取链路的总 deadline |
+| `FORWARD_LINK_DEADLINE_MS` | 5000 | forwarder 取链路的总 deadline（LAN 值，同样按 RTT 自适应到 `forwardMs`） |
 
 赢家采纳、输家 abort（`DOMException('dial-race-lost','AbortError')`）；晚到的会话走 discard。
 命中 4 s 总截止时**不砍腿**：还在跑的直连腿交回 `dial()`，中继成功就让它稍后自己升级，中继也不通才回头
@@ -120,8 +120,9 @@ false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil
 
 - 折叠着的远端在线分节与未登录分节仍以「至少开过一台设备」为门槛，是「节点不出现」的另一类原因。
 - 全新浏览器（或清过站点数据）的第一次冷启动仍没有兜底数据，只能靠并发化省掉一次串行往返。
-- `FORWARD_LINK_DEADLINE_MS = 5 s` 与前台直连 4 s 上限贴得较近：极端情况下 forwarder 会在 5 s 处判死而中继
-  刚要接上。两个常量在同一层，按现网数据可调。
+- `FORWARD_LINK_DEADLINE_MS` 与前台直连上限贴得较近：极端情况下 forwarder 会在取链路期限处判死而中继
+  刚要接上。2.2.0 把两者一起接到 `nestedDialBudgetsMs`，嵌套不变式（connect < direct < forward）保证了
+  高 RTT 下不会倒挂，但 LAN 档的 4 s / 5 s 仍然贴得近。
 
 ## 相关
 

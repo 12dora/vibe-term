@@ -28,9 +28,10 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
 libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选）。是否内建 TURN 待按
 `[mesh][rtc] summary` / `gather summary` 与 STUN 自检（`[mesh][rtc] stun probe`，结果挂在
-`GET /api/mesh/rtc-config` 的 `probes`）的现网数据再定。默认 STUN 已改成国内可达的小米 / Bilibili 打头 +
-Google / Cloudflare 冗余；Hub `node.list` 下发空 STUN 列表时不再覆盖节点自己的
-`VIBETERM_STUN_SERVERS`（TURN 则始终采用 hub 下发的）；超时失败会标 `stun_unconfigured` 或 `no_srflx`。
+`GET /api/mesh/rtc-config` 的 `probes`）的现网数据再定。STUN 列表 2.2.0 起随发行版内置分发（小米 / Bilibili 打头 + Google / Cloudflare 冗余），
+`VIBETERM_STUN_SERVERS` 未设置即用内置列表、`none` 禁用；hub / 中继只在自己设了自定义列表时才下发，
+下发空列表表示「没有自定义」，节点回到自己的内置列表。TURN 相反：hub / 中继下发过就以它为准，
+显式 `turn: null` 即撤回，节点不再回落本机 `VIBETERM_TURN_*`。超时失败会标 `stun_unconfigured` 或 `no_srflx`。
 
 ## KI-5：中继在途流保护的代价
 
@@ -89,7 +90,7 @@ Google / Cloudflare 冗余；Hub `node.list` 下发空 STUN 列表时不再覆�
 
 Surge / Clash 等增强模式把 UDP 收进 TUN 后，若代理链路本身不中继境外 UDP，Google `:19302` /
 Cloudflare `:3478` 的 STUN Binding 常年无应答，节点只剩 host 候选，跨 NAT 一律回落中继。节点侧的
-fake-IP 解析器只解决「主机名被解析成 `198.18.x`」，解决不了「UDP 出不去」。处置二选一：用安装默认里
+fake-IP 解析器只解决「主机名被解析成 `198.18.x`」，解决不了「UDP 出不去」。处置二选一：用内置列表里
 国内可达的 `stun.miwifi.com` / `stun.chat.bilibili.com`（自定义 `VIBETERM_STUN_SERVERS` 时至少留一条
 可达的），或者在代理里给 UDP 3478 / 19302 加 DIRECT 规则。判定看 `[mesh][rtc] stun probe … ok=false
 error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走浏览器自己的网络栈，同样要求
