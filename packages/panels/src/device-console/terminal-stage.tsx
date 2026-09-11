@@ -427,6 +427,74 @@ export interface TerminalStageProps {
   onActivateShortcut: (item: TerminalShortcutItem) => void;
 }
 
+function renderTerminalBody(
+  props: TerminalStageProps,
+  shortcutsSlot: React.ReactNode,
+  structureActions: boolean
+): React.ReactNode {
+  const {
+    deviceId,
+    selectedWindow,
+    resolvedPaneId,
+    terminalContainerRef,
+    terminalTheme,
+    inputMode,
+    deviceConnected,
+    isReconnecting,
+    bindFocusedTerminalRef,
+    prepareResources,
+    selection,
+  } = props;
+  const { isSplitView, isPaneConfirmedClosed } = selection;
+  if (!resolvedPaneId) return null;
+  if (isSplitView && selectedWindow) {
+    return (
+      <div className="flex h-full min-h-0 w-full flex-1 flex-col" data-virtual-keyboard-avoid>
+        <div ref={terminalContainerRef} className="relative min-h-0 flex-1">
+          <SplitTerminalArea
+            key={`${deviceId}:${selectedWindow.id}`}
+            deviceId={deviceId}
+            window={selectedWindow}
+            focusedPaneId={resolvedPaneId}
+            theme={terminalTheme}
+            inputMode={inputMode}
+            deviceConnected={deviceConnected}
+            focusedTerminalRef={bindFocusedTerminalRef}
+            onUserSelectPane={selection.handleUserSelectPane}
+            onClosePane={selection.handleClosePane}
+            onWindowResize={selection.handleResize}
+            onWindowResizeSettled={selection.handleResizeSettled}
+            prepareResources={prepareResources}
+            structureActions={structureActions}
+          />
+        </div>
+        {shortcutsSlot}
+      </div>
+    );
+  }
+
+  // 快照已确认这个 pane 被关闭：不挂 Terminal（挂上只会对死 pane 订阅/select），
+  // 也不显示「连接中」——路由对账会立刻回落到幸存 pane
+  if (isPaneConfirmedClosed) {
+    return null;
+  }
+
+  return (
+    <div className="relative flex h-full min-h-0 w-full flex-1">
+      <KeepAliveTerminalStack
+        {...props}
+        resolvedPaneId={resolvedPaneId}
+        shortcutsSlot={shortcutsSlot}
+      />
+      {!deviceConnected && !isReconnecting ? (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/60 text-sm text-muted-foreground">
+          连接中…
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function StageContent(props: TerminalStageProps) {
   const {
     deviceId,
@@ -473,7 +541,8 @@ function StageContent(props: TerminalStageProps) {
   }
 
   // 重连期间保持 Terminal 挂载，避免 xterm 卸载导致已有内容消失（issue: 重连要看得清已有内容）。
-  const showTerminal = Boolean(resolvedPaneId) && (deviceConnected || isReconnecting);
+  const showTerminal =
+    Boolean(resolvedPaneId) && (deviceConnected || isReconnecting || !isIntentionallyDisconnected);
   if (!showTerminal || !resolvedPaneId) {
     return (
       <CenteredNotice>
@@ -482,45 +551,7 @@ function StageContent(props: TerminalStageProps) {
     );
   }
 
-  if (isSplitView && selectedWindow) {
-    return (
-      <div className="flex h-full min-h-0 w-full flex-1 flex-col" data-virtual-keyboard-avoid>
-        <div ref={terminalContainerRef} className="relative min-h-0 flex-1">
-          <SplitTerminalArea
-            key={`${deviceId}:${selectedWindow.id}`}
-            deviceId={deviceId}
-            window={selectedWindow}
-            focusedPaneId={resolvedPaneId}
-            theme={terminalTheme}
-            inputMode={inputMode}
-            deviceConnected={deviceConnected}
-            focusedTerminalRef={bindFocusedTerminalRef}
-            onUserSelectPane={selection.handleUserSelectPane}
-            onClosePane={selection.handleClosePane}
-            onWindowResize={selection.handleResize}
-            onWindowResizeSettled={selection.handleResizeSettled}
-            prepareResources={prepareResources}
-            structureActions={structureActions}
-          />
-        </div>
-        {shortcutsSlot}
-      </div>
-    );
-  }
-
-  // 快照已确认这个 pane 被关闭：不挂 Terminal（挂上只会对死 pane 订阅/select），
-  // 也不显示「连接中」——路由对账会立刻回落到幸存 pane
-  if (isPaneConfirmedClosed) {
-    return null;
-  }
-
-  return (
-    <KeepAliveTerminalStack
-      {...props}
-      resolvedPaneId={resolvedPaneId}
-      shortcutsSlot={shortcutsSlot}
-    />
-  );
+  return renderTerminalBody(props, shortcutsSlot, structureActions);
 }
 
 export function TerminalStage(props: TerminalStageProps) {

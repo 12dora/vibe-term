@@ -56,6 +56,7 @@ export class CanonicalFeedSession {
   private readonly devices = new Map<string, AttachedDevice>();
   private readonly attaching = new Map<string, Promise<boolean>>();
   private readonly historyRequestIds = new Set<string>();
+  private readonly screenRequestIds = new Set<string>();
   private readonly inputIds = new Set<string>();
   private readonly inputIdOrder: string[] = [];
   private readonly gatewayEpoch: Uint8Array;
@@ -144,6 +145,8 @@ export class CanonicalFeedSession {
         await this.handleResizePane(command);
       } else if ('RequestScreen' in command) {
         await this.handleRequestScreen(command.RequestScreen);
+      } else if ('RequestScreenIntent' in command) {
+        await this.handleRequestScreenIntent(command.RequestScreenIntent);
       } else if ('RequestHistory' in command) {
         await this.handleRequestHistory(command.RequestHistory);
       }
@@ -327,6 +330,7 @@ export class CanonicalFeedSession {
     this.stream.discardPaneDataBatches();
     this.screenJobs.clear();
     this.historyRequestIds.clear();
+    this.screenRequestIds.clear();
     this.stream.clearPending();
     this.awaitingSocketDrain = false;
     if (this.pendingSweepTimer !== null) {
@@ -471,6 +475,9 @@ export class CanonicalFeedSession {
     pane: CanonicalPaneTarget;
     byteLimit: number;
   }): Promise<void> {
+    const requestKey = bytesHex(command.requestId);
+    if (this.screenRequestIds.has(requestKey)) return;
+    this.screenRequestIds.add(requestKey);
     const target = await this.resolveTarget(command.pane, command.requestId);
     if (!target) return;
     if (command.byteLimit < 64) {
@@ -488,6 +495,26 @@ export class CanonicalFeedSession {
       command.requestId,
       Math.min(command.byteLimit, CANONICAL_MAX_SCREEN_BYTES)
     );
+  }
+
+  private async handleRequestScreenIntent(command: {
+    requestId: Uint8Array;
+    deviceId: string;
+    windowId: string | null;
+    paneId: string | null;
+    byteLimit: number;
+  }): Promise<void> {
+    const device = await this.ensureDevice(command.deviceId);
+    if (!device) return;
+    const paneId = command.paneId;
+    if (!paneId) return;
+    const epoch = device.runtime.getServerEpoch();
+    if (!epoch) return;
+    await this.handleRequestScreen({
+      requestId: command.requestId,
+      pane: { deviceId: command.deviceId, serverEpoch: epoch, paneId },
+      byteLimit: command.byteLimit,
+    });
   }
 
   private async handleRequestHistory(command: {

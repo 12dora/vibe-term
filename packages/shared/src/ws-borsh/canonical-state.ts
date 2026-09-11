@@ -140,6 +140,15 @@ const CanonicalRequestScreenSchema = b.struct({
   byteLimit: b.u32(),
 });
 
+// canonical-screen-intent-v1：允许在 metadata 尚未到达时表达首屏意图，由网关在 attach 后解析。
+const CanonicalRequestScreenIntentSchema = b.struct({
+  requestId: b.bytes(16),
+  deviceId: b.string(),
+  windowId: b.option(b.string()),
+  paneId: b.option(b.string()),
+  byteLimit: b.u32(),
+});
+
 const CanonicalRequestHistorySchema = b.struct({
   requestId: b.bytes(16),
   pane: CanonicalPaneTargetSchema,
@@ -154,6 +163,7 @@ const CanonicalCommandSchema = b.enum({
   RequestScreen: CanonicalRequestScreenSchema,
   RequestHistory: CanonicalRequestHistorySchema,
   ResizePaneV11: CanonicalResizePaneV11Schema,
+  RequestScreenIntent: CanonicalRequestScreenIntentSchema,
 });
 
 export const CanonicalCommandEnvelopeSchema = b.struct({

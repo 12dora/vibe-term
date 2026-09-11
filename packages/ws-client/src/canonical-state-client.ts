@@ -38,6 +38,7 @@ import {
   subscriptionAppliedEvents,
 } from './canonical-state-helpers';
 import { CanonicalSubscriptionRetry } from './canonical-subscription-retry';
+import { buildScreenIntentCommand } from './canonical-screen-intent';
 import type { ClientSendResult } from './client';
 import { encodeCanonicalGatewayCommand } from './transport-command-encoder';
 import type {
@@ -47,7 +48,6 @@ import type {
   GatewayTransportCommand,
   GatewayTransportEventHandler,
 } from './transport-types';
-
 export interface CanonicalStateClientOptions {
   emit: GatewayTransportEventHandler;
   send: (message: EncodedGatewayCommand) => ClientSendResult;
@@ -62,11 +62,9 @@ export interface CanonicalStateClientOptions {
   maxMetadataBufferedBytes?: number;
   metadataAssemblyTimeoutMs?: number;
 }
-
 function newId(): Uint8Array {
   return crypto.getRandomValues(new Uint8Array(16));
 }
-
 export class CanonicalStateClient {
   private readonly desired = new Map<string, DesiredSubscriptions>();
   private readonly metadata = new Map<string, DeviceMetadataState>();
@@ -91,7 +89,8 @@ export class CanonicalStateClient {
   private readonly createId: () => Uint8Array;
   private readonly maxPendingBytes: number;
   private readonly maxPendingFrames: number;
-
+  private serverCapabilities: readonly string[] = [];
+  setServerCapabilities(capabilities: readonly string[]): void { this.serverCapabilities = capabilities; }
   constructor(private readonly options: CanonicalStateClientOptions) {
     this.createId = options.createId ?? newId;
     this.maxPendingBytes = options.maxPendingBytes ?? 2 * 1024 * 1024;
@@ -145,7 +144,6 @@ export class CanonicalStateClient {
       },
     });
   }
-
   activate(): ClientSendResult {
     this.active = true;
     this.blockedPanes.clear();
@@ -159,7 +157,6 @@ export class CanonicalStateClient {
     for (const deviceId of this.metadata.keys()) this.awaitingMetadataDevices.add(deviceId);
     return this.sendSubscriptions(true);
   }
-
   suspend(): void {
     this.active = false;
     const retry = [...this.content.pendingRequests(), ...this.contentRetry.takeScheduled()];
@@ -167,7 +164,6 @@ export class CanonicalStateClient {
     this.resetConnectionAssemblies();
     for (const request of retry) this.deferTargetCommand(request.command, true);
   }
-
   dispose(): void {
     this.suspend();
     this.desired.clear();
@@ -179,7 +175,6 @@ export class CanonicalStateClient {
     this.pending.clear();
     this.contentRetry.dispose();
   }
-
   handles(command: GatewayTransportCommand): boolean {
     return (
       command.type === 'set-pane-subscriptions' ||
@@ -191,12 +186,10 @@ export class CanonicalStateClient {
       command.type === 'request-pane-history'
     );
   }
-
   sendCommand(command: GatewayTransportCommand): ClientSendResult | null {
     if (!this.active || !this.handles(command)) return null;
     return this.sendCanonicalCommand(command, true);
   }
-
   stageCommand(command: GatewayTransportCommand): void {
     if (command.type === 'set-pane-subscriptions') {
       this.updateDesiredSubscriptions(command.deviceId, command.paneIds);
@@ -211,7 +204,6 @@ export class CanonicalStateClient {
       this.pending.dropDevice(command.deviceId);
     }
   }
-
   removeDevice(deviceId: string): ClientSendResult {
     this.desired.delete(deviceId);
     this.subscriptionRetry.resolved();
@@ -223,7 +215,6 @@ export class CanonicalStateClient {
     this.pending.dropDevice(deviceId);
     return this.active ? this.sendSubscriptions(true) : 'sent';
   }
-
   takePendingCommands(): GatewayTransportCommand[] {
     return this.pending.takeAll();
   }
@@ -397,7 +388,16 @@ export class CanonicalStateClient {
     allowQueue: boolean
   ): ClientSendResult {
     const pane = this.resolveTarget(command.deviceId, command.paneId);
-    if (!pane) return this.deferTargetCommand(command, allowQueue);
+    if (!pane) {
+      const intent = buildScreenIntentCommand(command, this.serverCapabilities);
+      if (intent && 'RequestScreenIntent' in intent) {
+        const requestId = copyBytes(command.requestId);
+        this.content.rememberRequest(requestId, { kind: 'screen', deviceId: command.deviceId, paneId: command.paneId, serverEpoch: new Uint8Array(16), command: clonePendingCommand(command) as typeof command });
+        this.contentRetry.cancelScheduled('screen', command.deviceId, command.paneId);
+        return this.send(intent);
+      }
+      return this.deferTargetCommand(command, allowQueue);
+    }
     this.contentRetry.cancelScheduled('screen', command.deviceId, command.paneId);
     const requestId = copyBytes(command.requestId);
     this.content.rememberRequest(requestId, {
