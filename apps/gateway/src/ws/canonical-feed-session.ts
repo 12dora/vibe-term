@@ -499,8 +499,12 @@ export class CanonicalFeedSession {
   private async handleRequestScreenIntent(command: CanonicalScreenIntentCommand): Promise<void> {
     const device = await this.ensureDevice(command.deviceId);
     const serverEpoch = device?.runtime.getServerEpoch();
+    // 客户端给的是本地拓扑里的占位 pane，attach 之前就可能已经没了：
+    // 认不出来就回落到（指定 window 或设备活动 window 的）活动 pane，别让首屏空手而归
     const paneId = device
-      ? (command.paneId ?? resolveIntentPaneId(device.runtime, command.windowId))
+      ? ((command.paneId && device.runtime.getPaneIdentity(command.paneId)
+          ? command.paneId
+          : null) ?? resolveIntentPaneId(device.runtime, command.windowId))
       : null;
     if (!device || !serverEpoch || !paneId) {
       this.sender.sendError(

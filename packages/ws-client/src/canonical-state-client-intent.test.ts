@@ -262,7 +262,9 @@ describe('首屏意图 ↔ 网关', () => {
     harness.client.dispose();
   });
 
-  test('意图失败（pane 已经不在）时按不可重试错误收口，不悬挂请求', async () => {
+  // 网关会为「占位 pane 已不在」的意图回落到活动 pane；客户端按 pane 身份守卫丢掉这一屏，
+  // 并对请求的那个 pane 发 pane_gap（恢复信号），不会把别的 pane 的内容画到它上面
+  test('占位 pane 已不在：网关回落的那一屏不会被错画，改成 pane_gap 触发恢复', async () => {
     const harness = createHarness([GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1]);
     harness.client.sendCommand({
       type: 'request-pane-screen',
@@ -272,9 +274,11 @@ describe('首屏意图 ↔ 网关', () => {
       byteLimit: 4096,
     });
     await harness.pump();
-    const error = harness.events.find((event) => event.type === 'transport-error');
-    expect(error?.type).toBe('transport-error');
     expect(screenText(harness.events)).toBeNull();
+    const rebase = harness.events.find(
+      (event) => event.type === 'rebase-required' && event.paneId === '%404'
+    );
+    expect(rebase?.type === 'rebase-required' && rebase.reason).toBe('pane_gap');
     harness.server.close();
     harness.client.dispose();
   });

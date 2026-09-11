@@ -29,6 +29,8 @@ class IntentRuntime implements CanonicalFeedRuntime {
   /** 非 null 时抓屏挂起，由测试手工放行，用来制造「在途」窗口 */
   pendingCapture: (() => void) | null = null;
   captureFails = false;
+  /** 置位后 metadata 里没有任何 window / pane，用来构造「什么都解析不出来」 */
+  barren = false;
 
   constructor() {
     this.retention.reconcilePanes([
@@ -49,6 +51,9 @@ class IntentRuntime implements CanonicalFeedRuntime {
       value: { Bool: value },
     });
     const session = key(wsBorsh.SOURCE_ENTITY_SESSION, '$1');
+    if (this.barren) {
+      return { metadataEpoch: new Uint8Array(16).fill(0x44), revision: 1n, records: [] };
+    }
     const idle = key(wsBorsh.SOURCE_ENTITY_WINDOW, '@0');
     const window = key(wsBorsh.SOURCE_ENTITY_WINDOW, '@1');
     return {
@@ -205,8 +210,25 @@ describe('canonical RequestScreenIntent', () => {
     session.close();
   });
 
-  test('解析不出 pane 时回 Error，不静默丢弃（客户端才不会一直等）', async () => {
+  // 本地拓扑给的占位 pane 在 attach 之前就关掉了：回落到当前活动 pane，仍然一轮回完
+  test('占位 pane 已经不在时回落到设备活动 pane，照样一轮给出首屏', async () => {
     const runtime = new IntentRuntime();
+    const { session, events } = createSession(runtime);
+    await session.handleCommand(intent({ paneId: '%404' }));
+    expect(names(events)).toEqual([
+      'FeedReady',
+      'SourceMetadataSnapshot',
+      'ScreenBegin',
+      'ScreenChunk',
+      'ScreenCommit',
+    ]);
+    expect(screenBegin(events)?.pane.paneId).toBe('%1');
+    session.close();
+  });
+
+  test('一个 pane 都解析不出来时回 Error，不静默丢弃（客户端才不会一直等）', async () => {
+    const runtime = new IntentRuntime();
+    runtime.barren = true;
     const { session, events } = createSession(runtime);
     await session.handleCommand(intent({ paneId: '%404' }));
     const error = events.find((event) => 'Error' in event);

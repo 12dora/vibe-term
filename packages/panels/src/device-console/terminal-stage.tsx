@@ -18,7 +18,6 @@ import {
   Terminal as TerminalComponent,
   type TerminalRef,
 } from '@vibeterm/terminal-ui';
-import { Loader2, SearchX } from 'lucide-react';
 import {
   type ReactNode,
   type RefObject,
@@ -29,7 +28,6 @@ import {
   useReducer,
   useRef,
 } from 'react';
-import { useTranslation } from 'react-i18next';
 import { DeviceStatusBadge } from '../device-status-badge';
 import {
   type KeepAlivePool,
@@ -417,11 +415,10 @@ function renderTerminalBody(
 }
 
 function StageContent(props: TerminalStageProps) {
+  // 终端主体（含分屏 / 保活池）整体交给 renderTerminalBody，这里只挑分支要用的字段
   const {
-    deviceId,
     windowId,
     resolvedPaneId,
-    selectedWindow,
     selection,
     deviceConnected,
     isReconnecting,
@@ -429,13 +426,10 @@ function StageContent(props: TerminalStageProps) {
     isMobile,
     inputMode,
     terminalTheme,
-    terminalContainerRef,
     terminalRef,
-    bindFocusedTerminalRef,
-    prepareResources,
     onActivateShortcut,
   } = props;
-  const { isSelectionInvalid, isPaneConfirmedClosed, isSplitView, canInteractWithPane } = selection;
+  const { isSelectionInvalid, canInteractWithPane } = selection;
   // 被分享人只有输入 / 滚动 / 尺寸仲裁的权限：关窗格与标题栏拖动重排一律不给入口
   const structureActions = !useRuntime().features.shareViewer;
 

@@ -33,7 +33,6 @@ import {
   type PaneDataEvent,
   type SubscriptionAppliedEvent,
   bytesEqual,
-  clonePendingCommand,
   copyBytes,
   inputByteGroups,
   mergeSendResult,
