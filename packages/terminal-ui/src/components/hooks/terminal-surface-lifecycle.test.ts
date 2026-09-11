@@ -43,6 +43,8 @@ interface Harness {
   lifecycle: TerminalSurfaceLifecycle<FakeTarget>;
   target: FakeTarget;
   resources: Deferred<void>;
+  /** 二段资源（Nerd 图标等后到字形）；options.resourceUpgrade 打开时才接上 */
+  resourceUpgrade: Deferred<void>;
   initialization: Deferred<FakeTarget>;
   states: TerminalBootState[];
   emitSnapshotApplied(
@@ -53,10 +55,13 @@ interface Harness {
   surfaceCreated(): boolean;
 }
 
-function createHarness(options: { atomicScreen?: boolean } = {}): Harness {
+function createHarness(
+  options: { atomicScreen?: boolean; resourceUpgrade?: boolean } = {}
+): Harness {
   const events: string[] = [];
   const states: TerminalBootState[] = [];
   const resources = deferred<void>();
+  const resourceUpgrade = deferred<void>();
   const initialization = deferred<FakeTarget>();
   const atomicScreen = options.atomicScreen ?? true;
   let stored: TerminalSurfaceHandle<FakeTarget> | null = null;
@@ -116,6 +121,14 @@ function createHarness(options: { atomicScreen?: boolean } = {}): Harness {
     onSnapshotCommitted(committed) {
       events.push(`commit:${committed.id}`);
     },
+    startResourceUpgrade: () => {
+      if (!options.resourceUpgrade) return null;
+      events.push('resources:upgrade:start');
+      return resourceUpgrade.promise;
+    },
+    onResourcesUpgraded(upgraded) {
+      events.push(`resources:upgraded:${upgraded.id}`);
+    },
   };
 
   return {
@@ -123,6 +136,7 @@ function createHarness(options: { atomicScreen?: boolean } = {}): Harness {
     lifecycle: new TerminalSurfaceLifecycle(deps),
     target,
     resources,
+    resourceUpgrade,
     initialization,
     states,
     emitSnapshotApplied(snapshot, commit = { gridResized: true, viewportAnchor: null }) {
@@ -542,5 +556,75 @@ describe('TerminalSurfaceLifecycle recovery', () => {
     void lifecycle.boot();
 
     expect(states.at(-1)).toEqual({ status: 'error', message: 'boom' });
+  });
+});
+
+describe('TerminalSurfaceLifecycle 二段资源', () => {
+  async function bootToSurface(harness: Harness): Promise<void> {
+    void harness.lifecycle.boot();
+    harness.resources.resolve();
+    await flush();
+    harness.initialization.resolve(harness.target);
+    await flush();
+  }
+
+  test('首屏落地之前不启动二段（否则跟首帧必需的字节抢带宽）', async () => {
+    const harness = createHarness({ resourceUpgrade: true });
+    await bootToSurface(harness);
+    expect(harness.events).not.toContain('resources:upgrade:start');
+
+    harness.emitSnapshotApplied(null);
+    expect(harness.events).not.toContain('resources:upgrade:start');
+  });
+
+  test('首屏落地后启动二段，到达时重测/重绘一次可见代', async () => {
+    const harness = createHarness({ resourceUpgrade: true });
+    await bootToSurface(harness);
+    harness.emitSnapshotApplied(SNAPSHOT);
+    expect(harness.events).toContain('resources:upgrade:start');
+    expect(harness.events).not.toContain('resources:upgraded:target-0');
+
+    harness.resourceUpgrade.resolve();
+    await flush();
+    expect(harness.events).toContain('resources:upgraded:target-0');
+  });
+
+  test('后续快照不再重复启动二段', async () => {
+    const harness = createHarness({ resourceUpgrade: true });
+    await bootToSurface(harness);
+    harness.emitSnapshotApplied(SNAPSHOT);
+    harness.emitSnapshotApplied(SNAPSHOT);
+    expect(harness.events.filter((e) => e === 'resources:upgrade:start')).toHaveLength(1);
+  });
+
+  test('没有二段时不会报 upgraded', async () => {
+    const harness = createHarness();
+    await bootToSurface(harness);
+    harness.emitSnapshotApplied(SNAPSHOT);
+    expect(harness.events).not.toContain('resources:upgrade:start');
+    expect(harness.events).not.toContain('resources:upgraded:target-0');
+  });
+
+  test('已取消时二段到达不再重绘（pane 已切走）', async () => {
+    const harness = createHarness({ resourceUpgrade: true });
+    await bootToSurface(harness);
+    harness.emitSnapshotApplied(SNAPSHOT);
+
+    harness.lifecycle.cancel();
+    harness.events.length = 0;
+    harness.resourceUpgrade.resolve();
+    await flush();
+    expect(harness.events).not.toContain('resources:upgraded:target-0');
+  });
+
+  test('建面失败时不启动二段（启动态已落到 error）', async () => {
+    const harness = createHarness({ resourceUpgrade: true });
+    void harness.lifecycle.boot();
+    harness.resources.resolve();
+    await flush();
+    harness.initialization.reject(new Error('boom'));
+    await flush();
+    expect(harness.states.at(-1)).toEqual({ status: 'error', message: 'boom' });
+    expect(harness.events).not.toContain('resources:upgrade:start');
   });
 });

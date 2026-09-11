@@ -16,25 +16,11 @@
 
 /* 终端内嵌等宽符号字体：Geist Mono Nerd Font Mono 自带 Powerline/制表/Nerd 图标，
    补齐部分系统缺失的字形；CJK 仍交由字体栈后段的 monospace 走系统字体
-   （见 components/terminal/theme.ts）。字体随应用打包（public/fonts/），不依赖设备已装字体。 */
-/* 打底等宽字体：Geist Mono Nerd Font Mono，含拉丁、制表(─│┌)、块、箭头，
-   外加 Nerd Font 图标（Powerline/Devicons/Font Awesome/MDI 等 PUA 字形）。
-   已子集化裁掉 Cyrillic/Greek/CJK 标点等非拉丁文字，CJK 仍走系统 monospace。
-   正常/粗体各挂一个 face，Canvas 请求 400/700 时各取各的，不靠浏览器合成加粗。 */
-@font-face {
-  font-family: GeistMonoVibeTerm;
-  src: url("/fonts/GeistMonoNerdFontMono-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: GeistMonoVibeTerm;
-  src: url("/fonts/GeistMonoNerdFontMono-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
+   （见 components/terminal/theme.ts）。字体随应用打包（public/fonts/），不依赖设备已装字体。
+   四条 @font-face（子集面 / 完整面 × 正常 / 粗体）由 `bun run build:fonts` 生成，
+   unicode-range 必须与产物 cmap 一致，所以不在这里手写。Canvas 请求 400/700 时各取各的，
+   不靠浏览器合成加粗。 */
+@import "../../../packages/theme/src/fonts/default-font-face.generated.css";
 /* 符号兜底：媒体控制(⏵⏸⏺)、Braille(⣿)、勾选(✔✓)、几何/装饰符号 */
 @font-face {
   font-family: NotoSansSymbols2VibeTerm;

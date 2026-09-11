@@ -27,6 +27,9 @@ describe('@vibeterm/theme package exports', () => {
     expect(exports['./fonts']).toBe('./src/fonts/index.ts');
     expect(exports['./fonts/manifest']).toBe('./src/fonts/manifest.generated.ts');
     expect(exports['./fonts/types']).toBe('./src/fonts/types.ts');
+    expect(exports['./fonts/default-font-face.generated.css']).toBe(
+      './src/fonts/default-font-face.generated.css'
+    );
     expect(exports['./themes.css']).toBe('./src/themes.css');
     expect(exports['./tokens.css']).toBe('./src/tokens.css');
     expect(exports['./tokens.generated.css']).toBe('./src/tokens.generated.css');
@@ -53,10 +56,11 @@ describe('@vibeterm/theme package exports', () => {
 });
 
 describe('font binary ownership', () => {
-  test('15 个 woff2 仅存在于 packages/theme/resources/fonts', () => {
+  test('17 个 woff2 仅存在于 packages/theme/resources/fonts', () => {
     const resourceFonts = path.join(themeRoot, 'resources/fonts');
     const files = listFontFiles(resourceFonts);
-    expect(files).toHaveLength(15);
+    // 15 份整字体 + 默认字体的 2 份 latin 子集分片
+    expect(files).toHaveLength(17);
 
     // apps/fe/public/fonts 必须是指向 package resources 的相对 symlink，不是第二套二进制
     const feFonts = path.join(repoRoot, 'apps/fe/public/fonts');
@@ -67,5 +71,8 @@ describe('font binary ownership', () => {
     expect(
       existsSync(path.join(feFonts, 'generated/jetbrains-mono/jetbrains-mono-regular.woff2'))
     ).toBe(true);
+    // 子集分片也必须经同一个 symlink 挂到 /fonts 下，否则线上 404、终端首帧退回系统等宽
+    expect(existsSync(path.join(feFonts, 'GeistMonoNerdFontMono-Regular-latin.woff2'))).toBe(true);
+    expect(existsSync(path.join(feFonts, 'GeistMonoNerdFontMono-Bold-latin.woff2'))).toBe(true);
   });
 });

@@ -1,13 +1,16 @@
 // 主题模块：终端字体清单与加载、主题预设注册表与元数据
 export {
   DEFAULT_FONT_ID,
+  FIRST_PAINT_SAMPLE_TEXT,
   FONT_MANIFEST,
   ensureFontFaceInjected,
   getFontEntry,
+  loadTerminalFontStages,
   loadTerminalFonts,
   resolveFontStack,
+  type TerminalFontStages,
 } from './fonts/index';
-export type { FontManifestEntry } from './fonts/types';
+export type { FontManifestEntry, FontSubsetFiles } from './fonts/types';
 export {
   applyThemePreset,
   isThemePreset,

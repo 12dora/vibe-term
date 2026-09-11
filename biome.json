@@ -15,6 +15,7 @@
       "**/test-results/**",
       "**/playwright-report/**",
       "**/manifest.generated.ts",
+      "**/default-font-face.generated.css",
       "apps/gateway/drizzle/**",
       "packages/shared/src/i18n/resources.ts",
       "packages/shared/src/i18n/types.ts",

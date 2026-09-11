@@ -28,7 +28,7 @@ import {
 import { terminalStreamDiagnostic } from '../terminalBootDiagnostics';
 import { applyTerminalTheme } from '../theme';
 import type { TerminalProps } from '../types';
-import { loadTerminalResources } from './terminal-fonts-cache';
+import { loadTerminalResources, startTerminalFontsUpgrade } from './terminal-fonts-cache';
 import { activateRenderTarget, createTerminalRenderTarget } from './terminal-render-target';
 import {
   type TerminalBootState,
@@ -262,6 +262,12 @@ function createLifecycleDeps(
   const report = createStageReporter(ctx, stream);
   return {
     loadResources: () => loadTerminalResources(ctx.prepareResources, ctx.fontId, ctx.fontSize),
+    startResourceUpgrade: () => startTerminalFontsUpgrade(ctx.fontId, ctx.fontSize),
+    // Nerd 图标 / 符号字形后到：canvas 已画下去的那一屏不会自己更新，重绘 + 补测一次
+    onResourcesUpgraded: (target) => {
+      target.terminal.forceFullRepaint?.();
+      ctx.refs.runPostSelectResize.current();
+    },
     createSurface: (context) => buildSurface(ctx, report, context),
     getSurface: () => ctx.refs.surface.current,
     setSurface: (surface) => {

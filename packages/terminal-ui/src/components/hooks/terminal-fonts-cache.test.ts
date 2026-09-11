@@ -5,8 +5,11 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import {
   areTerminalFontsLoaded,
   ensureTerminalFonts,
+  isTerminalEnginePrewarmed,
   loadTerminalResources,
+  prewarmTerminalEngine,
   resetTerminalFontsCacheForTest,
+  startTerminalFontsUpgrade,
 } from './terminal-fonts-cache';
 
 interface FontsStub {
@@ -124,5 +127,77 @@ describe('loadTerminalResources', () => {
 
   test('an uncached font set gates the boot even without a host hook', () => {
     expect(loadTerminalResources(undefined, 'geist-mono', 18)).toBeInstanceOf(Promise);
+  });
+});
+
+// wasm 与字体并行：boot() 先 await 资源再 createSurface，wasm 的下载/编译因此曾经排在
+// 字体之后串行。loadTerminalResources 必须在返回字体 promise **之前**就把 wasm 发起。
+describe('ghostty wasm 预热', () => {
+  let fonts: FontsStub;
+
+  beforeEach(() => {
+    resetTerminalFontsCacheForTest();
+    fonts = installFontsStub();
+  });
+
+  afterEach(() => {
+    fonts.release();
+    resetTerminalFontsCacheForTest();
+  });
+
+  test('字体还没落地时 wasm 已经发起', () => {
+    expect(isTerminalEnginePrewarmed()).toBe(false);
+    const pending = loadTerminalResources(undefined, 'geist-mono', 14);
+    expect(pending).toBeInstanceOf(Promise);
+    expect(isTerminalEnginePrewarmed()).toBe(true);
+    fonts.release();
+  });
+
+  test('重复启动不重复发起（bindings 本身也是单例）', () => {
+    prewarmTerminalEngine();
+    prewarmTerminalEngine();
+    expect(isTerminalEnginePrewarmed()).toBe(true);
+  });
+});
+
+// 二段字形：默认字体的 Nerd 图标只在首帧之后才开拉，终端据此重绘一次。
+describe('startTerminalFontsUpgrade', () => {
+  let fonts: FontsStub;
+
+  beforeEach(() => {
+    resetTerminalFontsCacheForTest();
+    fonts = installFontsStub();
+  });
+
+  afterEach(() => {
+    fonts.release();
+    resetTerminalFontsCacheForTest();
+  });
+
+  test('字体集还没开始加载时没有二段可启动', () => {
+    expect(startTerminalFontsUpgrade('geist-mono', 14)).toBeNull();
+  });
+
+  test('首帧那一段不发二段请求，startUpgrade 之后才发', async () => {
+    const ready = ensureTerminalFonts('geist-mono', 14);
+    const beforeUpgrade = fonts.loads.length;
+    expect(beforeUpgrade).toBe(2);
+
+    const upgrade = startTerminalFontsUpgrade('geist-mono', 14);
+    expect(upgrade).not.toBeNull();
+    expect(fonts.loads.length).toBeGreaterThan(beforeUpgrade);
+
+    fonts.release();
+    await ready;
+    await upgrade;
+  });
+
+  test('重复启动返回同一个 promise（不会再发一轮请求）', () => {
+    ensureTerminalFonts('geist-mono', 14);
+    const first = startTerminalFontsUpgrade('geist-mono', 14);
+    const loads = fonts.loads.length;
+    expect(startTerminalFontsUpgrade('geist-mono', 14)).toBe(first);
+    expect(fonts.loads).toHaveLength(loads);
+    fonts.release();
   });
 });

@@ -8,7 +8,8 @@
   "files": ["src"],
   "exports": {
     ".": "./src/index.ts",
-    "./headless": "./src/headless.ts"
+    "./headless": "./src/headless.ts",
+    "./wasm": "./src/ghostty-wasm.ts"
   },
   "scripts": {
     "update:wasm": "bash ./scripts/build-wasm.sh",

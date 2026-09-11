@@ -87,3 +87,78 @@ export function startIdleChunkPreload(
     cancelPending?.();
   };
 }
+
+// ---------------------------------------------------------------------------
+// 冷启动预算
+//
+// 首帧之后立刻预热的那 1.2 MB（设备页/设置页 chunk + rest 语言包）在桌面上几乎无感，
+// 在 2 Mbps 的移动网络上却是实打实地排在终端字体与 wasm 前面抢带宽。
+// 两道闸：① 弱网 / 省流量模式一律不预热，等用户真的点过去再按需拉；
+//        ② 终端路由下推到「首个终端内容绘制」之后。
+// 没有 navigator.connection 的浏览器（桌面 Safari / Firefox）保持原行为，不做任何降级。
+// ---------------------------------------------------------------------------
+
+/** navigator.connection 的最小契约（NetworkInformation 未进 lib.dom 稳定类型） */
+export interface NetworkInformationLike {
+  saveData?: boolean;
+  effectiveType?: string;
+}
+
+export function readNetworkInformation(
+  nav: { connection?: NetworkInformationLike } = navigator as {
+    connection?: NetworkInformationLike;
+  }
+): NetworkInformationLike | null {
+  return nav.connection ?? null;
+}
+
+/**
+ * 是否允许首帧后的后台预热。
+ * `saveData` 是用户的明示意愿，一票否决；`effectiveType` 只放行 `4g`
+ * （以及取不到该字段的情形——信息不足时不该擅自降级）。
+ */
+export function allowsStartupPreload(connection: NetworkInformationLike | null): boolean {
+  if (!connection) return true;
+  if (connection.saveData === true) return false;
+  const effectiveType = connection.effectiveType;
+  return effectiveType === undefined || effectiveType === '4g';
+}
+
+/** 终端路由：`/devices/<id>…`，可带 `/n/<nodeId>` 前缀 */
+const DEVICE_CONSOLE_PATH = /^(?:\/n\/[^/]+)?\/devices\/[^/]+/;
+
+export function isDeviceConsolePath(pathname: string): boolean {
+  return DEVICE_CONSOLE_PATH.test(pathname);
+}
+
+/**
+ * 终端始终不出内容时的兜底期限：预热晚一点无所谓，但不能永远不发生
+ * （设备离线 / 启动失败时首帧信号永远不会来）。
+ */
+export const FIRST_PAINT_FALLBACK_MS = 15000;
+
+export interface StartupPreloadGateOptions {
+  pathname: string;
+  connection: NetworkInformationLike | null;
+  whenFirstTerminalPaint: () => Promise<void>;
+  fallbackMs?: number;
+  setTimeout?: (callback: () => void, ms: number) => unknown;
+}
+
+/**
+ * 决定「什么时候（或到底要不要）」跑首帧后的后台预热。
+ * 返回 null 表示本次启动不预热。
+ */
+export function startupPreloadGate(options: StartupPreloadGateOptions): Promise<void> | null {
+  if (!allowsStartupPreload(options.connection)) return null;
+  if (!isDeviceConsolePath(options.pathname)) return Promise.resolve();
+
+  const delay = options.fallbackMs ?? FIRST_PAINT_FALLBACK_MS;
+  const timer = options.setTimeout ?? ((cb, ms) => globalThis.setTimeout(cb, ms));
+  return Promise.race([
+    options.whenFirstTerminalPaint(),
+    new Promise<void>((resolve) => {
+      timer(resolve, delay);
+    }),
+  ]);
+}

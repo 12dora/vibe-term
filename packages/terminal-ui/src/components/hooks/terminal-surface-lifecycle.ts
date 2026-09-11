@@ -1,6 +1,7 @@
 import type { GatewayPaneScreenSnapshot, GatewayRebaseReason } from '@vibeterm/ws-client';
 import type { SnapshotCommitInfo, TerminalSurfaceTarget } from '../TerminalSurface';
 import type { TerminalDiagnosticStage } from '../terminal-diagnostics';
+import { markFirstTerminalScreenPainted } from './terminal-surface-lifecycle-signal';
 
 export const TERMINAL_RESOURCE_ERROR_MESSAGE = 'Terminal resources failed to load.';
 export const TERMINAL_INIT_ERROR_MESSAGE = 'Terminal failed to initialize.';
@@ -39,6 +40,13 @@ export interface TerminalSurfaceLifecycleDeps<
 > {
   /** 返回 void 表示资源已就绪（同步路径），调用方据此免去一次 await */
   loadResources(): Promise<void> | void;
+  /**
+   * 启动二段资源（Nerd 图标等后到的字形）并返回到达信号，null 表示本次没有二段。
+   * 只在首屏落地之后调用：提前开拉会跟首帧必需的字节抢带宽。
+   */
+  startResourceUpgrade?(): Promise<void> | null;
+  /** 二段资源到达后的一次重测/重绘；没有可见代时不调用 */
+  onResourcesUpgraded?(target: Target): void;
   createSurface(context: TerminalSurfaceCreationContext<Target>): Surface;
   getSurface(): Surface | null;
   setSurface(surface: Surface | null): void;
@@ -87,6 +95,11 @@ export function snapshotBootState(input: {
 /**
  * 终端启动/恢复状态机：资源加载 → 渲染面建立 → 首屏落地，以及被取消后的静默收尾。
  * 全部副作用经 deps 注入，本身不碰 React、DOM 与 ghostty。
+ *
+ * 时序上有两处刻意的并行（冷启动 2 Mbps 下就是十几秒的差别）：
+ * 1. `loadResources()` 在发起字体那一段的同时把 ghostty wasm 也预热了（见 terminal-fonts-cache），
+ *    wasm 不再排在字体之后串行下载；
+ * 2. 首帧只等「能精确测宽」的那一段字形，Nerd 图标经 `awaitResourceUpgrade()` 后到再重绘。
  */
 export class TerminalSurfaceLifecycle<
   Target extends TerminalSurfaceTarget,
@@ -94,6 +107,7 @@ export class TerminalSurfaceLifecycle<
 > {
   private cancelled = false;
   private hasCommittedSnapshot = false;
+  private resourceUpgradeWatched = false;
   private stopDiagnosticSamples: () => void = () => {};
 
   constructor(private readonly deps: TerminalSurfaceLifecycleDeps<Target, Surface>) {}
@@ -151,6 +165,25 @@ export class TerminalSurfaceLifecycle<
     );
   }
 
+  /**
+   * 首屏落地之后才启动二段字形（Nerd 图标 / 符号兜底），到达后重绘一次：
+   * 首帧时它们还是系统兜底字形，canvas 已经画下去的那一屏不会自己更新。
+   * 失败静默——降级只是图标不好看。
+   */
+  private watchResourceUpgrade(): void {
+    if (this.resourceUpgradeWatched) return;
+    this.resourceUpgradeWatched = true;
+    const upgrade = this.deps.startResourceUpgrade?.();
+    if (!upgrade) return;
+    void upgrade
+      .then(() => {
+        if (this.cancelled) return;
+        const target = this.deps.getSurface()?.getVisibleTarget() ?? null;
+        if (target) this.deps.onResourcesUpgraded?.(target);
+      })
+      .catch(() => undefined);
+  }
+
   private failResources(error: unknown): false {
     this.deps.reportStage('font_load_failed', null);
     if (!this.cancelled) {
@@ -185,6 +218,10 @@ export class TerminalSurfaceLifecycle<
       // 无差异时再跑一遍就是每页多发一条强制 terminal-sync-size。
       if (firstSnapshot || commit.gridResized) this.deps.onSnapshotCommitted(target);
       this.deps.reportStage('generation_activated', target);
+      // 外壳的空闲预热要等这一刻（见 ./terminal-surface-lifecycle-signal）
+      markFirstTerminalScreenPainted();
+      // 二段字形同理：首屏出来之前不跟它抢带宽
+      if (firstSnapshot) this.watchResourceUpgrade();
     }
     this.deps.setBootState(
       snapshotBootState({

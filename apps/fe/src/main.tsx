@@ -19,7 +19,12 @@ import { MasterKeyNotice } from '@/components/master-key-notice';
 import { AppSidebar } from '@/components/page-layouts/components/app-sidebar';
 import { SidePanelHost } from '@/components/side-panels/side-panel-host';
 import { StandaloneLanding } from '@/components/standalone-landing';
-import { scheduleIdle, startIdleChunkPreload } from '@/lib/chunk-preload';
+import {
+  readNetworkInformation,
+  scheduleIdle,
+  startIdleChunkPreload,
+  startupPreloadGate,
+} from '@/lib/chunk-preload';
 import { useAppMonoFont } from '@/lib/fonts/useAppMonoFont';
 import { warmTerminalFonts } from '@/lib/fonts/warm-terminal-fonts';
 import { MeshNodesResident } from '@/node/mesh-nodes-resident';
@@ -48,6 +53,7 @@ import { SettingsEventsInit } from '@vibeterm/panels/settings/events';
 import { WatchEventsInit } from '@vibeterm/panels/watch';
 import { SELF_NODE_ID, migrateLocalStorageKey, useNodeRuntime } from '@vibeterm/stores';
 import { RuntimeProvider, useUIStore } from '@vibeterm/stores/react';
+import { whenFirstTerminalScreenPainted } from '@vibeterm/terminal-ui/components/hooks/terminal-surface-lifecycle-signal';
 import { useKeyboardAvoidance } from '@vibeterm/terminal-ui/hooks/use-keyboard-avoidance';
 import { applyThemePreset, isThemePreset } from '@vibeterm/theme';
 import { SidebarInset, SidebarProvider, useSidebar } from '@vibeterm/ui/sidebar';
@@ -425,19 +431,27 @@ void i18nReady
         <AppRoot />
       </StrictMode>
     );
-    // 首帧之后立刻补 rest 语言包：懒面板（连接设备、安全面板、终端设置、watch 对话框）
-    // 不经路由 loader，只能靠这次预取；懒路由自己会在 loader 里 await 同一个 promise。
-    const prefetchRest = () => void ensureI18nRest();
-    if (typeof requestIdleCallback === 'function')
-      requestIdleCallback(prefetchRest, { timeout: 1000 });
-    else setTimeout(prefetchRest, 0);
-    // 侧栏两个顶层入口的 chunk 也趁空闲逐个拉下来：点过去时只剩数据请求那一段。
-    startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
-    // 应用壳 SW 也排进空闲：安装期要下约 10 MB，绝不能和首屏抢带宽；
+    // 应用壳 SW 排进空闲：安装期要下约 10 MB，绝不能和首屏抢带宽；
     // 非 production 反过来注销同源已有的 SW，免得旧壳把 vite dev 页面拦成过期版本。
     scheduleIdle(() => setupServiceWorker());
-    // 终端字体（2.3 MB）不再由外壳强制加载，改成空闲预热：进终端页时多半已经就绪。
-    scheduleIdle(() =>
-      warmTerminalFonts(appNodeRuntimes.get(SELF_NODE_ID).runtime.stores.ui.getState())
-    );
+
+    // 其余后台预热（rest 语言包 + 侧栏两个顶层页的 chunk + 终端字体，合计 ≈ 1.2 MB）
+    // 受冷启动预算约束：弱网 / 省流量一律不预热，终端路由推到首个终端内容绘制之后。
+    // 见 @/lib/chunk-preload 的 startupPreloadGate。
+    const gate = startupPreloadGate({
+      pathname: window.location.pathname,
+      connection: readNetworkInformation(),
+      whenFirstTerminalPaint: whenFirstTerminalScreenPainted,
+    });
+    void gate?.then(() => {
+      // 懒面板（连接设备、安全面板、终端设置、watch 对话框）不经路由 loader，
+      // 只能靠这次预取；懒路由自己会在 loader 里 await 同一个 promise。
+      scheduleIdle(() => void ensureI18nRest());
+      // 侧栏两个顶层入口的 chunk 逐个拉下来：点过去时只剩数据请求那一段。
+      startIdleChunkPreload(IDLE_PRELOAD_PAGE_MODULES);
+      // 终端字体的首屏子集很小，但完整 Nerd 图标仍有 2.3 MB，同样归预算管。
+      scheduleIdle(() =>
+        warmTerminalFonts(appNodeRuntimes.get(SELF_NODE_ID).runtime.stores.ui.getState())
+      );
+    });
   });

@@ -69,10 +69,18 @@ describe('declaredFontUrls', () => {
     expect(declaredFontUrls(withOptional)).toEqual(declaredFontUrls(CSS));
   });
 
-  test('真实 src/index.css 恰好声明这三个默认字体', () => {
-    const css = readFileSync(join(import.meta.dir, '..', 'index.css'), 'utf8');
-    expect(declaredFontUrls(css)).toEqual([
+  // 默认字体的四条 @font-face（子集面 / 完整面 × 两字重）由 `bun run build:fonts` 生成到
+  // packages/theme，src/index.css 只 @import 它；这里跟着读生成物，口径与产物 CSS 一致。
+  test('真实 index.css + 生成的 @font-face 恰好声明这五个默认字体文件', () => {
+    const indexCss = readFileSync(join(import.meta.dir, '..', 'index.css'), 'utf8');
+    const generated = readFileSync(
+      join(import.meta.dir, '../../../../packages/theme/src/fonts/default-font-face.generated.css'),
+      'utf8'
+    );
+    expect(declaredFontUrls(`${indexCss}\n${generated}`)).toEqual([
+      '/fonts/GeistMonoNerdFontMono-Bold-latin.woff2',
       '/fonts/GeistMonoNerdFontMono-Bold.woff2',
+      '/fonts/GeistMonoNerdFontMono-Regular-latin.woff2',
       '/fonts/GeistMonoNerdFontMono-Regular.woff2',
       '/fonts/NotoSansSymbols2-Regular.woff2',
     ]);

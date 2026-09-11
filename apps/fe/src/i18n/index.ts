@@ -4,6 +4,7 @@ import i18n from 'i18next';
 import resourcesToBackend from 'i18next-resources-to-backend';
 import { initReactI18next } from 'react-i18next';
 import { resolveInitialLanguage } from './initial-language';
+import { createActiveCompleteWaiter, createLocaleUnlock } from './locale-unlock';
 import { changeLanguageAfterRest, createRestBundleCache } from './rest-bundle';
 import { setI18nRestPrerequisite } from './rest-prerequisite';
 
@@ -40,12 +41,35 @@ async function translationOf(load: () => Promise<LocaleModule>): Promise<Record<
 // 登录页也不例外——不存在「先英文、进设置页才变中文」的中间态。
 const initialLanguage = resolveInitialLanguage();
 
+let restRequested = false;
+
+// fallbackLng 会让 i18next 把 DEFAULT_LOCALE 的 core/rest 也排进加载队列，
+// 而首屏根本用不到它（core 覆盖有守卫）。这里只放行「已解锁」的语言，
+// fallback 推迟到真的缺 key 时才补（见 ./locale-unlock）。
+const localeUnlock = createLocaleUnlock({
+  initial: initialLanguage,
+  fallback: DEFAULT_LOCALE,
+  loadLanguage: (lng) => i18n.loadLanguages(lng),
+  loadRest: (lng) => loadRest(lng),
+  isRestRequested: () => restRequested,
+  whenActiveComplete: createActiveCompleteWaiter({
+    isRestRequested: () => restRequested,
+    loadRest: () => loadRest(currentLanguage()),
+  }),
+  hasMissingKeys: (keys) => keys.some((key) => !i18n.exists(key)),
+});
+
+function currentLanguage(): string {
+  return i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
+}
+
 // init 是异步的（要拉取当前语言 chunk）；main.tsx 在首次渲染前 await 此 promise 以避免未翻译闪烁。
 export const i18nReady = i18n
   .use(
     resourcesToBackend(async (lng: string, ns: string) => {
+      if (ns !== 'translation' || !localeUnlock.isUnlocked(lng)) return {};
       const load = loaderFor(coreModules, lng, 'core');
-      if (!load || ns !== 'translation') return {};
+      if (!load) return {};
       return translationOf(load);
     })
   )
@@ -53,6 +77,12 @@ export const i18nReady = i18n
   .init({
     lng: initialLanguage,
     fallbackLng: DEFAULT_LOCALE,
+    // 缺 key 先记下、等当前语言的 rest 落地后复核，确实缺才去拉 fallback 语言；
+    // 返回值就是 i18next 原本的兜底渲染（裸 key）。
+    parseMissingKeyHandler: (key: string) => {
+      localeUnlock.recordMissingKey(key);
+      return key;
+    },
     ns: ['translation'],
     defaultNS: 'translation',
     interpolation: {
@@ -77,8 +107,6 @@ const restCache = createRestBundleCache({
     i18n.addResourceBundle(lng, 'translation', translation, true, true);
   },
 });
-let restRequested = false;
-
 const loadRest = (lng: string): Promise<void> => restCache.load(lng);
 
 /**
@@ -87,9 +115,8 @@ const loadRest = (lng: string): Promise<void> => restCache.load(lng);
  */
 export function ensureI18nRest(): Promise<void> {
   restRequested = true;
-  const current = i18n.resolvedLanguage ?? i18n.language ?? DEFAULT_LOCALE;
-  const targets = current === DEFAULT_LOCALE ? [current] : [current, DEFAULT_LOCALE];
-  return Promise.all(targets.map(loadRest)).then(() => undefined);
+  // 只拉当前语言：fallback 语言的 rest 同样推迟到确实缺 key 时才补（见 localeUnlock）。
+  return loadRest(currentLanguage());
 }
 
 setPageModulePrerequisite(ensureI18nRest);
@@ -101,7 +128,12 @@ setI18nRestPrerequisite(ensureI18nRest);
 type ChangeLanguage = typeof i18n.changeLanguage;
 const changeLanguageDirect = i18n.changeLanguage.bind(i18n) as ChangeLanguage;
 i18n.changeLanguage = ((lng, ...rest) => {
-  if (!restRequested || typeof lng !== 'string') {
+  if (typeof lng !== 'string') {
+    return changeLanguageDirect(lng, ...rest);
+  }
+  // 先解锁再切：不解锁的话 backend 对新语言只会回空包，页面全是裸 key。
+  localeUnlock.unlock(lng);
+  if (!restRequested) {
     return changeLanguageDirect(lng, ...rest);
   }
   return changeLanguageAfterRest(lng, loadRest, () => changeLanguageDirect(lng, ...rest));
@@ -112,7 +144,8 @@ i18n.on('languageChanged', (lng: string) => {
   if (typeof document !== 'undefined') {
     document.documentElement.lang = lng.replace('_', '-');
   }
-  // 绕过上面那层包装的切换（i18next 内部改语言）兜底：rest 该补还是要补。
+  // 绕过上面那层包装的切换（i18next 内部改语言）兜底：解锁 + rest 该补还是要补。
+  localeUnlock.unlock(lng);
   if (restRequested) void loadRest(lng).catch(() => undefined);
 });
 
