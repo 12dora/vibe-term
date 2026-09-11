@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { rm } from 'node:fs/promises';
 import { parseDurationMs } from '../core/cmd';
-import { CliError, UsageError } from '../core/errors';
+import { AuthError, CliError, UsageError } from '../core/errors';
 import { NODE, meshNode, routeFetch, testContext } from './cli-test-harness';
 import { command as nodes } from './nodes';
 
@@ -130,6 +130,28 @@ describe('vibeterm nodes', () => {
     delete process.env.VIBETERM_PASSWORD;
   });
 
+  test('uninstall on the entry attaches the target node cookie', async () => {
+    const peer = 'b'.repeat(32);
+    let cookie = '';
+    process.env.VIBETERM_PASSWORD = 'x';
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/nodes': () => ({
+        nodes: [meshNode({ id: peer, name: 'hub-sh' })],
+      }),
+      [`POST /api/mesh/nodes/${peer}/uninstall`]: (_url, init) => {
+        cookie = new Headers(init?.headers).get('cookie') ?? '';
+        return { ok: true };
+      },
+      'GET /api/auth/mode': () => ({ mode: 'mesh' }),
+    });
+    cli.http.jar.set('self', 'sid-self', 0);
+    cli.http.jar.set(peer, 'sid-peer', 0);
+    await expect(nodes.run(cli, ['uninstall', 'hub-sh', '--yes'])).rejects.toBeInstanceOf(CliError);
+    expect(cookie).toContain('vibeterm_s_self=sid-self');
+    expect(cookie).toContain(`vibeterm_s_${peer}=sid-peer`);
+    delete process.env.VIBETERM_PASSWORD;
+  });
+
   test('revoke requires --yes off-tty', async () => {
     const { ctx: cli } = await ctx({
       'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
@@ -249,6 +271,69 @@ describe('vibeterm nodes', () => {
     expect(payload.outcomes.find((row) => row.node === NODE)?.outcome).toBe('unconfirmed');
     expect(payload.outcomes.find((row) => row.node === hubId)?.outcome).toBe('alreadyLatest');
     expect(code).toBe(1);
+  });
+
+  test('upgrade --all includes jar-only logins even when roster.loggedIn is false', async () => {
+    const peer = 'b'.repeat(32);
+    let upgradeCookie = '';
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/upgrade/latest': () => ({
+        latestVersion: '2.0.9',
+        changelog: null,
+        publishedAt: null,
+      }),
+      'GET /api/mesh/nodes': () => ({
+        nodes: [
+          meshNode({
+            id: peer,
+            name: 'hub-sh',
+            version: '2.0.8',
+            online: true,
+            loggedIn: false,
+          }),
+        ],
+      }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
+      [`POST /api/mesh/nodes/${peer}/upgrade`]: (_url, init) => {
+        upgradeCookie = new Headers(init?.headers).get('cookie') ?? '';
+        return new Response(JSON.stringify({ code: 'UPGRADE_ALREADY_LATEST' }), { status: 409 });
+      },
+    });
+    cli.http.jar.set('self', 'sid-self', 0);
+    cli.http.jar.set(peer, 'sid-peer', 0);
+    const code = await nodes.run(cli, ['upgrade', '--all']);
+    const payload = JSON.parse(stdout.text()) as {
+      outcomes: Array<{ node: string; outcome: string }>;
+    };
+    expect(payload.outcomes).toEqual([
+      expect.objectContaining({ node: peer, outcome: 'alreadyLatest' }),
+    ]);
+    expect(upgradeCookie).toContain('vibeterm_s_self=sid-self');
+    expect(upgradeCookie).toContain(`vibeterm_s_${peer}=sid-peer`);
+    expect(code).toBe(0);
+  });
+
+  test('upgrade NODE_LOGIN_REQUIRED prints login --node', async () => {
+    const peer = 'b'.repeat(32);
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/upgrade/latest': () => ({
+        latestVersion: '2.0.9',
+        changelog: null,
+        publishedAt: null,
+      }),
+      'GET /api/mesh/nodes': () => ({
+        nodes: [meshNode({ id: peer, name: 'hub-sh', version: '2.0.8' })],
+      }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
+      [`POST /api/mesh/nodes/${peer}/upgrade`]: () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: peer }), {
+          status: 401,
+        }),
+    });
+    const error = (await nodes.run(cli, ['upgrade', 'hub-sh']).catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.hint).toBe(`run: vibeterm login --node ${peer}`);
   });
 
   test('upgrade without --wait POSTs once', async () => {

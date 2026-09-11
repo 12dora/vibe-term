@@ -2,7 +2,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { SessionStore, parseSessionFile } from './session-store';
+import { SessionStore, isLiveNodeSession, parseSessionFile } from './session-store';
 
 const dirs: string[] = [];
 
@@ -15,6 +15,20 @@ async function tempDir(): Promise<string> {
   dirs.push(dir);
   return dir;
 }
+
+describe('isLiveNodeSession', () => {
+  test('missing or empty sid is not live', () => {
+    expect(isLiveNodeSession(null)).toBe(false);
+    expect(isLiveNodeSession({ nodeId: 'self', sid: '', expiresAt: 0 })).toBe(false);
+  });
+
+  test('expiresAt 0 is live; past is not; future is', () => {
+    const now = 1_700_000_000_000;
+    expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: 0 }, now)).toBe(true);
+    expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: now - 1 }, now)).toBe(false);
+    expect(isLiveNodeSession({ nodeId: 'self', sid: 'sid', expiresAt: now + 1 }, now)).toBe(true);
+  });
+});
 
 describe('SessionStore', () => {
   test('round-trips identity and node sessions', async () => {

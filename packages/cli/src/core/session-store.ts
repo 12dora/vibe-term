@@ -17,6 +17,16 @@ export interface NodeSession {
   expiresAt: number;
 }
 
+/** jar / session.json 里有非空 sid，且未过期（`expiresAt === 0` 视为服务端没给到期）。 */
+export function isLiveNodeSession(
+  session: NodeSession | null | undefined,
+  now = Date.now()
+): boolean {
+  if (!session?.sid) return false;
+  if (!session.expiresAt) return true;
+  return session.expiresAt > now;
+}
+
 export interface EntrySession {
   entry: string;
   uid: string | null;

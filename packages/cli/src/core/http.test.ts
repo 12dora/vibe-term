@@ -221,6 +221,45 @@ describe('HttpClient', () => {
     expect((error as NetworkError).exitCode).toBe(5);
   });
 
+  test('withNodeCookies attaches extra jar sessions on top of self and the target', async () => {
+    const jar = createMemoryCookieJar();
+    jar.set('self', 'sid-self', 0);
+    jar.set(NODE, 'sid-node', 0);
+    const extra = 'c'.repeat(32);
+    jar.set(extra, 'sid-extra', 0);
+    let cookie = '';
+    const http = client(async (_url, init) => {
+      cookie = new Headers(init?.headers).get('cookie') ?? '';
+      return new Response('{}', { headers: { 'content-type': 'application/json' } });
+    }, jar);
+    await http.fetch('self', `/api/mesh/nodes/${NODE}/upgrade`, {
+      method: 'POST',
+      withNodeCookies: [NODE, extra],
+    });
+    expect(cookie).toContain('vibeterm_s_self=sid-self');
+    expect(cookie).toContain(`vibeterm_s_${NODE}=sid-node`);
+    expect(cookie).toContain(`vibeterm_s_${extra}=sid-extra`);
+    expect(cookie).toContain(`tmex_s_${NODE}=sid-node`);
+  });
+
+  test('401 on the entry with a body.nodeId still points at login --node', async () => {
+    const http = client(
+      async () =>
+        new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: NODE }), {
+          status: 401,
+          headers: { 'content-type': 'application/json' },
+        })
+    );
+    const error = (await http
+      .json('self', 'POST', `/api/mesh/nodes/${NODE}/upgrade`, {})
+      .catch((err) => err)) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.code).toBe('NODE_LOGIN_REQUIRED');
+    expect(error.hint).toBe(`run: vibeterm login --node ${NODE}`);
+    expect(error.message).toContain(NODE);
+  });
+
   test('ignores Set-Cookie sessions for any node other than self or the target', async () => {
     const jar = createMemoryCookieJar();
     const foreign = 'b'.repeat(32);
@@ -236,6 +275,21 @@ describe('HttpClient', () => {
 
     expect(jar.get(foreign)?.sid).toBe('sid-foreign');
     expect(jar.get(NODE)?.sid).toBe('sid-node');
+    expect(jar.get('self')?.sid).toBe('sid-self');
+  });
+
+  test('withNodeCookies does not widen Set-Cookie capture beyond self and the request target', async () => {
+    const jar = createMemoryCookieJar();
+    const extra = 'c'.repeat(32);
+    jar.set(extra, 'sid-extra', 0);
+    const headers = new Headers();
+    headers.append('set-cookie', `vibeterm_s_${extra}=stolen; Path=/; Max-Age=60`);
+    headers.append('set-cookie', 'vibeterm_s_self=sid-self; Path=/; Max-Age=60');
+    const http = client(async () => new Response('{}', { status: 200, headers }), jar);
+
+    await http.fetch('self', `/api/mesh/nodes/${extra}/upgrade`, { withNodeCookies: [extra] });
+
+    expect(jar.get(extra)?.sid).toBe('sid-extra');
     expect(jar.get('self')?.sid).toBe('sid-self');
   });
 

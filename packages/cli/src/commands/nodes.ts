@@ -32,6 +32,7 @@ import {
 import { admitPendingNode, createSignedEnrollment, revokeNode } from '../core/nodes-keylog';
 import {
   fetchUpgradeLatest,
+  hasCliNodeSession,
   isBatchEligible,
   runUpgradeBatch,
   uninstallPath,
@@ -239,7 +240,11 @@ const upgrade: SubHandler = async (ctx, flags, positionals) => {
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   const latestVersion = latest?.latestVersion ?? null;
   const targets = all
-    ? roster.filter((node) => isBatchEligible(node, latestVersion, mode?.nodeId))
+    ? roster.filter((node) =>
+        isBatchEligible(node, latestVersion, mode?.nodeId, (id) =>
+          hasCliNodeSession(ctx.http.jar, id)
+        )
+      )
     : [await findMeshNode(ctx, positionals[0])];
   if (all && targets.length === 0) {
     ctx.out.info('no eligible nodes (online, logged in, version < latest)');
@@ -261,7 +266,15 @@ const uninstall: SubHandler = async (ctx, flags, positionals) => {
   rejectExtra(positionals, 1);
   const node = await findMeshNode(ctx, ref);
   await confirmOrYes(flags, `uninstall VibeTerm on ${node.name} (${node.id})`);
-  await ctx.http.json(SELF_NODE_ID, 'POST', uninstallPath(node.id), {});
+  await ctx.http.json(
+    SELF_NODE_ID,
+    'POST',
+    uninstallPath(node.id),
+    {},
+    {
+      withNodeCookies: [node.id],
+    }
+  );
   const result = await revokeNode(ctx, node.id, flagString(flags, 'reason') ?? 'uninstall');
   emit(ctx, { node: node.id, scheduled: true, revoked: true, result }, () =>
     ctx.out.line(`uninstall scheduled and revoked ${node.name}`)

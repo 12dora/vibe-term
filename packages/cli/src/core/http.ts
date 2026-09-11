@@ -140,6 +140,12 @@ export interface RequestOptions extends Omit<RequestInit, 'signal'> {
   /** 覆盖全局 `--timeout`；null 表示不设超时（长连 NDJSON 流用）。 */
   timeoutMs?: number | null;
   signal?: AbortSignal;
+  /**
+   * 额外附上这些 node 的 jar cookie。entry 侧代操作（`/api/mesh/nodes/<id>/upgrade`
+   * 等）要把目标 node 的会话一起带上：浏览器同源下所有 node cookie 都会自动带，
+   * CLI 默认只带 self + 请求目标。
+   */
+  withNodeCookies?: readonly string[];
 }
 
 function combineSignals(signals: AbortSignal[]): AbortSignal | undefined {
@@ -171,11 +177,11 @@ export class HttpClient {
     return `${this.entry}${resolveNodeUrl(nodeId, path)}`;
   }
 
-  /** entry 自身的会话 + 目标 node 的会话；转发链路两者都要看。 */
-  cookieHeader(nodeId: string): string {
+  /** entry 自身的会话 + 目标 node 的会话（及 `extraNodeIds`）；转发链路至少前两者都要看。 */
+  cookieHeader(nodeId: string, extraNodeIds: readonly string[] = []): string {
     const parts: string[] = [];
     const seen = new Set<string>();
-    for (const id of [SELF_NODE_ID, nodeId]) {
+    for (const id of [SELF_NODE_ID, nodeId, ...extraNodeIds]) {
       if (seen.has(id)) continue;
       seen.add(id);
       const session = this.options.jar.get(id);
@@ -188,11 +194,11 @@ export class HttpClient {
 
   /** 发一次请求；非 2xx 不抛（交给 `assertOk` 或调用方），网络层失败抛 NetworkError。 */
   async fetch(nodeId: string, path: string, options: RequestOptions = {}): Promise<Response> {
-    const { timeoutMs, signal, headers, ...rest } = options;
+    const { timeoutMs, signal, headers, withNodeCookies, ...rest } = options;
     const requestHeaders = new Headers(headers);
     requestHeaders.set('origin', this.origin);
     requestHeaders.set('accept', requestHeaders.get('accept') ?? 'application/json, */*');
-    const cookie = this.cookieHeader(nodeId);
+    const cookie = this.cookieHeader(nodeId, withNodeCookies ?? []);
     if (cookie) requestHeaders.set('cookie', cookie);
 
     const effectiveTimeout = timeoutMs === undefined ? this.options.timeoutMs : timeoutMs;
@@ -346,6 +352,17 @@ function reasonFromBody(body: string): string | null {
   return null;
 }
 
+/** 入口代操作的 401 体会带目标 `nodeId`；比请求自身的 `self` 更准。 */
+function nodeIdFromBody(body: string): string | null {
+  try {
+    const parsed = JSON.parse(body) as { nodeId?: unknown };
+    if (typeof parsed.nodeId === 'string' && parsed.nodeId) return parsed.nodeId;
+  } catch {
+    // 非 JSON 体
+  }
+  return null;
+}
+
 /**
  * 403 里仍属于「会话 / 需要登录」的判词。其余 403（`outside_roots`、`FORBIDDEN`、
  * `UPGRADE_NOT_ALLOWED`、`peer_mismatch` 等）是权限不足，重新登录也没用。
@@ -385,11 +402,12 @@ export function httpStatusError(
 
 export function loginRequiredError(nodeId: string, body: string): AuthError {
   const reason = reasonFromBody(body);
-  const target = nodeId === SELF_NODE_ID ? '' : ` --node ${nodeId}`;
+  const hintNode = nodeIdFromBody(body) ?? nodeId;
+  const target = hintNode === SELF_NODE_ID ? '' : ` --node ${hintNode}`;
   const known = reason && REJECTED_SESSION_REASONS.has(reason);
   const detail = reason ? ` (${reason})` : '';
   return new AuthError(
-    `not authenticated for node ${nodeId}${detail}`,
+    `not authenticated for node ${hintNode}${detail}`,
     `run: vibeterm login${target}`,
     known ? reason : undefined
   );

@@ -5,7 +5,9 @@ import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type UpgradeStatus, compareSemver } from '@vibeterm/shared';
 import { dash, sleep } from './cmd';
 import type { CliContext } from './context';
+import { type CookieJar, loginRequiredError } from './http';
 import { listMeshNodesFull } from './nodes-hub';
+import { isLiveNodeSession } from './session-store';
 
 export interface UpgradeLatest {
   latestVersion: string;
@@ -32,9 +34,24 @@ export async function fetchUpgradeLatest(ctx: CliContext): Promise<UpgradeLatest
   return ctx.http.json<UpgradeLatest>(SELF_NODE_ID, 'GET', '/api/mesh/upgrade/latest');
 }
 
-async function readCode(response: Response): Promise<string> {
+function upgradePath(nodeId: string): string {
+  return `/api/mesh/nodes/${nodeId}/upgrade`;
+}
+
+function nodeCookieOpts(nodeId: string) {
+  return { withNodeCookies: [nodeId] as const };
+}
+
+async function readUpgradeFailure(nodeId: string, response: Response): Promise<string> {
+  let body = '';
   try {
-    const payload = (await response.json()) as { code?: unknown; error?: unknown };
+    body = (await response.text()).trim();
+  } catch {
+    body = '';
+  }
+  if (response.status === 401) throw loginRequiredError(nodeId, body);
+  try {
+    const payload = JSON.parse(body) as { code?: unknown; error?: unknown };
     if (typeof payload.code === 'string') return payload.code;
     if (typeof payload.error === 'string') return payload.error;
   } catch {
@@ -48,13 +65,14 @@ export async function startNodeUpgrade(
   nodeId: string,
   version?: string
 ): Promise<{ kind: 'started' | 'alreadyLatest' | 'unconfirmed' | 'failed'; code?: string }> {
-  const response = await ctx.http.fetch(SELF_NODE_ID, `/api/mesh/nodes/${nodeId}/upgrade`, {
+  const response = await ctx.http.fetch(SELF_NODE_ID, upgradePath(nodeId), {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(version ? { version } : {}),
+    ...nodeCookieOpts(nodeId),
   });
   if (response.ok) return { kind: 'started' };
-  const code = await readCode(response);
+  const code = await readUpgradeFailure(nodeId, response);
   if (code === 'UPGRADE_ALREADY_LATEST') return { kind: 'alreadyLatest', code };
   if (code === 'NODE_UNREACHABLE') return { kind: 'unconfirmed', code };
   return { kind: 'failed', code };
@@ -64,12 +82,24 @@ export async function pollNodeUpgrade(
   ctx: CliContext,
   nodeId: string
 ): Promise<{ kind: 'status' | 'unreachable' | 'failed'; status?: UpgradeStatus; code?: string }> {
-  const response = await ctx.http.fetch(SELF_NODE_ID, `/api/mesh/nodes/${nodeId}/upgrade`);
+  const response = await ctx.http.fetch(SELF_NODE_ID, upgradePath(nodeId), nodeCookieOpts(nodeId));
   if (response.ok) {
     return { kind: 'status', status: (await response.json()) as UpgradeStatus };
   }
   if (response.status >= 500) return { kind: 'unreachable' };
-  return { kind: 'failed', code: await readCode(response) };
+  return { kind: 'failed', code: await readUpgradeFailure(nodeId, response) };
+}
+
+export async function cancelNodeUpgrade(
+  ctx: CliContext,
+  nodeId: string
+): Promise<{ kind: 'cancelled' | 'failed'; code?: string }> {
+  const response = await ctx.http.fetch(SELF_NODE_ID, upgradePath(nodeId), {
+    method: 'DELETE',
+    ...nodeCookieOpts(nodeId),
+  });
+  if (response.ok) return { kind: 'cancelled' };
+  return { kind: 'failed', code: await readUpgradeFailure(nodeId, response) };
 }
 
 function versionOf(nodes: MeshNode[], nodeId: string): string | null | undefined {
@@ -166,16 +196,22 @@ function isTooOldForRemoteUpgrade(version: string | null): boolean {
   return compareSemver(version, MIN_REMOTE_UPGRADE_VERSION) === -1;
 }
 
-/** 批量升级候选：在线、已登录（本机除外）、版本可解析且严格低于 latest。 */
+/** roster 的 `loggedIn` 是入口看到的**本次请求** cookie；CLI 还要看本地 jar。 */
+export function hasCliNodeSession(jar: CookieJar, nodeId: string, now = Date.now()): boolean {
+  return isLiveNodeSession(jar.get(nodeId), now);
+}
+
+/** 批量升级候选：在线、已登录（CLI jar 或 roster；本机除外）、版本可解析且严格低于 latest。 */
 export function isBatchEligible(
   node: MeshNode,
   latestVersion: string | null,
-  selfId?: string
+  selfId?: string,
+  hasCliSession?: (nodeId: string) => boolean
 ): boolean {
   if (!latestVersion || !node.version) return false;
   if (!node.online) return false;
   const isSelf = Boolean(selfId && node.id === selfId);
-  if (!isSelf && !node.loggedIn) return false;
+  if (!isSelf && !node.loggedIn && !hasCliSession?.(node.id)) return false;
   if (isTooOldForRemoteUpgrade(node.version)) return false;
   return compareSemver(node.version, latestVersion) === -1;
 }
