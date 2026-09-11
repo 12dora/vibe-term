@@ -5,6 +5,13 @@
 /** 页面 → waiting SW：立刻接管。sw.ts 的 message 监听只认这一个 type。 */
 export const SW_SKIP_WAITING_MESSAGE = 'vibeterm:sw-skip-waiting';
 
+/**
+ * SW → 页面：这次导航回放的是**上一代**缓存壳（网络预算超时走了兜底）。页面据此把「下一个
+ * 安全时刻换代」的旗子立起来——新一代可能是上一次会话里装好的，这一代页面压根收不到
+ * `updatefound`，没有这条消息就只能一直看旧 UI。
+ */
+export const SW_SHELL_STALE_MESSAGE = 'vibeterm:sw-shell-stale';
+
 /** 等 controllerchange 的上限：等不到也必须放行，逃生通道不能自己变成新的卡点 */
 export const SW_ACTIVATION_TIMEOUT_MS = 2000;
 

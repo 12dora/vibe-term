@@ -11,8 +11,10 @@ import type { DirectFailureCode, MeshNodeDirectFailure } from '@vibeterm/api-cli
 import { cn } from '@vibeterm/ui';
 import type { DirectDiagnostics, DirectIceDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { Activity } from 'lucide-react';
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { type CSSProperties, type RefObject, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
+import { usePopoverPlacement } from './device-node-badges-placement';
 import {
   type NodeLatency,
   type NodeLink,
@@ -34,7 +36,7 @@ import {
   transportLabelKey,
 } from './link-badge';
 import { refreshMeshNodes } from './mesh-nodes';
-import { clampPopoverOffset, popoverWidth } from './popover-clamp';
+import type { PopoverBox } from './popover-clamp';
 
 export interface DiagnosticRowSpec {
   labelKey: string;
@@ -384,54 +386,6 @@ function useLatencyClock(sample: NodeLatency['hostHop'], open: boolean): number 
   return now;
 }
 
-export interface PopoverPlacement {
-  /** 相对徽标容器右边缘的偏移（正=左移），直接写进 `right`。 */
-  offsetRight: number;
-  width: number;
-}
-
-// 无 DOM（SSR / bun test）时降级成 useEffect，避免 React 的 useLayoutEffect 警告。
-const useMeasureEffect = typeof document === 'undefined' ? useEffect : useLayoutEffect;
-
-/**
- * 浮层默认贴着徽标右对齐，而徽标在页头动作区里的横坐标随标签长短与同排按钮个数漂移，
- * 手机上照着右对齐会整块滑出屏幕。展开时（以及视口变化时）量一次徽标容器的 rect，
- * 把浮层夹回视口内；不用 fixed，就不必跟踪滚动。
- */
-function usePopoverPlacement(
-  containerRef: { current: HTMLElement | null },
-  open: boolean
-): PopoverPlacement | null {
-  const [placement, setPlacement] = useState<PopoverPlacement | null>(null);
-
-  useMeasureEffect(() => {
-    if (!open) {
-      setPlacement(null);
-      return;
-    }
-    const measure = () => {
-      const anchor = containerRef.current?.getBoundingClientRect();
-      if (!anchor) return;
-      // 用 clientWidth：与 getBoundingClientRect 同一套坐标，且不含滚动条。
-      const viewportWidth = document.documentElement.clientWidth || window.innerWidth;
-      const width = popoverWidth(viewportWidth);
-      setPlacement({
-        width,
-        offsetRight: clampPopoverOffset({ anchorRight: anchor.right, viewportWidth, width }),
-      });
-    };
-    measure();
-    window.addEventListener('resize', measure);
-    window.visualViewport?.addEventListener('resize', measure);
-    return () => {
-      window.removeEventListener('resize', measure);
-      window.visualViewport?.removeEventListener('resize', measure);
-    };
-  }, [open, containerRef]);
-
-  return placement;
-}
-
 export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const { t } = useTranslation();
   const diagnostics = useDirectDiagnostics(nodeId);
@@ -441,12 +395,16 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
   const [open, setOpen] = useState(false);
   const now = useLatencyClock(latency.hostHop, open);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const placement = usePopoverPlacement(containerRef, open);
 
   useEffect(() => {
     if (!open) return;
+    // 浮层 portal 到 body，不再是徽标的后代：判「点在外面」必须把卡片本身也算进来
     const onPointerDown = (event: Event) => {
-      if (!containerRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (containerRef.current?.contains(target) || cardRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener('pointerdown', onPointerDown);
     return () => document.removeEventListener('pointerdown', onPointerDown);
@@ -473,18 +431,34 @@ export function DeviceNodeBadges({ nodeId, deviceId }: DeviceNodeBadgesProps) {
         onClick={() => setOpen((value) => !value)}
         testId="badge-node-link"
       />
-      {open && (
-        <NodeLinkDiagnostics
-          diagnostics={diagnostics}
-          link={link}
-          latency={latency}
-          isSelf={isSelf}
-          now={now}
-          placement={placement}
-        />
-      )}
+      {/* 量完才渲染：placement 决定 fixed 的坐标，先渲染会在 body 左上角闪一帧 */}
+      {open &&
+        placement &&
+        createPortal(
+          <NodeLinkDiagnostics
+            diagnostics={diagnostics}
+            link={link}
+            latency={latency}
+            isSelf={isSelf}
+            now={now}
+            placement={placement}
+            cardRef={cardRef}
+          />,
+          document.body
+        )}
     </div>
   );
+}
+
+/** 量过之后的 fixed 定位；`maxHeight` 配合卡片自己的滚动，保证整块留在可见视口里。 */
+function popoverStyle(placement: PopoverBox): CSSProperties {
+  return {
+    left: `${placement.left}px`,
+    ...(placement.top === null ? {} : { top: `${placement.top}px` }),
+    ...(placement.bottom === null ? {} : { bottom: `${placement.bottom}px` }),
+    width: `${placement.width}px`,
+    maxHeight: `${placement.maxHeight}px`,
+  };
 }
 
 export function NodeLinkDiagnostics({
@@ -494,6 +468,7 @@ export function NodeLinkDiagnostics({
   isSelf = false,
   now = Date.now(),
   placement = null,
+  cardRef,
 }: {
   diagnostics: DirectDiagnostics;
   link: NodeLink;
@@ -501,8 +476,10 @@ export function NodeLinkDiagnostics({
   isSelf?: boolean;
   /** 计算「已连接」时长的基准时刻；浮层每次展开时现算，不自己走定时器。 */
   now?: number;
-  /** 量过视口后的横向定位；缺席时退回「贴徽标右对齐、固定 288px」。 */
-  placement?: PopoverPlacement | null;
+  /** 量过视口后的 fixed 定位；缺席时退回「贴徽标右对齐、固定 288px」的 absolute 老样子。 */
+  placement?: PopoverBox | null;
+  /** portal 之后判「点在外面」用得着卡片本身。 */
+  cardRef?: RefObject<HTMLDivElement | null>;
 }) {
   const { t } = useTranslation();
   const rows = buildLinkDiagnosticRows({ diagnostics, link, latency, now, isSelf });
@@ -510,12 +487,14 @@ export function NodeLinkDiagnostics({
   const failures = kind === 'relay' ? directFailureRows(link.directFailure) : [];
   return (
     <div
-      className="absolute right-0 top-full z-20 mt-1 w-72 rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--vibeterm-motion-fast) ease-out motion-reduce:animate-none"
-      style={
+      ref={cardRef}
+      className={cn(
+        'rounded-md border border-border bg-popover p-2 text-xs shadow-md animate-in fade-in-0 zoom-in-95 duration-(--vibeterm-motion-fast) ease-out motion-reduce:animate-none',
         placement
-          ? { right: `${placement.offsetRight}px`, width: `${placement.width}px` }
-          : undefined
-      }
+          ? 'fixed z-50 overflow-y-auto overscroll-contain [-webkit-overflow-scrolling:touch]'
+          : 'absolute right-0 top-full z-20 mt-1 w-72'
+      )}
+      style={placement ? popoverStyle(placement) : undefined}
       data-testid="ice-diagnostics"
     >
       <div className="mb-1 font-semibold">{t('nodes.badge.iceTitle')}</div>

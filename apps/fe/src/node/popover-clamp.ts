@@ -37,3 +37,103 @@ export function clampPopoverOffset({
   if (max <= min) return max;
   return Math.min(Math.max(0, min), max);
 }
+
+/** 浮层与徽标之间的缝（原来的 `mt-1`）。 */
+export const POPOVER_GAP = 4;
+
+/** 徽标下方至少要有这么高才值得往下展开，否则翻到上方。 */
+export const POPOVER_MIN_BELOW = 200;
+
+export interface PopoverAnchorRect {
+  left: number;
+  right: number;
+  top: number;
+  bottom: number;
+}
+
+/**
+ * 可见视口。手机上要用**视觉**视口（`window.visualViewport`）：地址栏收起、键盘弹出、双指缩放
+ * 之后它才是用户真正看得见的那块，`innerHeight` 不是。
+ */
+export interface PopoverViewportRect {
+  width: number;
+  height: number;
+  /** 视觉视口相对布局视口的偏移；`fixed` 与 `getBoundingClientRect` 都用布局视口坐标。 */
+  offsetLeft?: number;
+  offsetTop?: number;
+  /** 布局视口高度（`documentElement.clientHeight`）；翻到上方时用 `bottom` 定位要靠它换算。 */
+  layoutHeight?: number;
+}
+
+export interface PopoverBox {
+  left: number;
+  /** 向下展开时写 `top`，翻到上方时为 null。 */
+  top: number | null;
+  /** 翻到上方时写 `bottom`（贴着徽标上沿），向下展开时为 null。 */
+  bottom: number | null;
+  width: number;
+  /** 卡片自身滚动的上限：可见视口在这个方向上还剩多少。 */
+  maxHeight: number;
+  above: boolean;
+}
+
+/**
+ * `position: fixed` 的浮层盒子：横向沿用「贴徽标右对齐、越界推回」，纵向夹进可见视口并在
+ * 下方明显不够时翻到徽标上方。页头本身在安全区之下，但翻上去的卡片会顶到状态栏，
+ * 所以上界另收 `safeTop`（`--vibeterm-safe-area-top` 的解析值）。
+ */
+export function placePopover({
+  anchor,
+  viewport,
+  maxWidth = POPOVER_MAX_WIDTH,
+  margin = POPOVER_VIEWPORT_MARGIN,
+  gap = POPOVER_GAP,
+  minBelow = POPOVER_MIN_BELOW,
+  safeTop = 0,
+}: {
+  anchor: PopoverAnchorRect;
+  viewport: PopoverViewportRect;
+  maxWidth?: number;
+  margin?: number;
+  gap?: number;
+  minBelow?: number;
+  safeTop?: number;
+}): PopoverBox {
+  const viewLeft = viewport.offsetLeft ?? 0;
+  const viewTop = viewport.offsetTop ?? 0;
+  const width = popoverWidth(viewport.width, maxWidth, margin);
+  // clampPopoverOffset 按「视口自 0 起」算，视觉视口有偏移时先换算过去，再把偏移加回来
+  const offset = clampPopoverOffset({
+    anchorRight: anchor.right - viewLeft,
+    viewportWidth: viewport.width,
+    width,
+    margin,
+  });
+  const left = anchor.right - offset - width;
+
+  const topLimit = Math.max(viewTop + margin, safeTop + margin);
+  const bottomLimit = viewTop + viewport.height - margin;
+  const belowTop = Math.max(anchor.bottom + gap, topLimit);
+  const belowSpace = bottomLimit - belowTop;
+  const aboveBottom = Math.min(anchor.top - gap, bottomLimit);
+  const aboveSpace = aboveBottom - topLimit;
+  if (belowSpace >= minBelow || aboveSpace <= belowSpace) {
+    return {
+      left,
+      top: belowTop,
+      bottom: null,
+      width,
+      maxHeight: Math.max(0, belowSpace),
+      above: false,
+    };
+  }
+  const layoutHeight = viewport.layoutHeight ?? viewTop + viewport.height;
+  return {
+    left,
+    top: null,
+    bottom: layoutHeight - aboveBottom,
+    width,
+    maxHeight: Math.max(0, aboveSpace),
+    above: true,
+  };
+}

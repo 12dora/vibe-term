@@ -12,6 +12,7 @@ installWindowStorage();
 const NOW = 1_700_000_000_000;
 
 const { renderToStaticMarkup } = await import('react-dom/server');
+const { placePopover } = await import('./popover-clamp');
 const { resetMeshNodesStateForTest, setMeshNodesStateForTest } = await import('./mesh-nodes');
 const { appNodeRuntimes } = await import('./node-runtimes');
 const { DeviceNodeBadges, NodeLinkDiagnostics, directFailureRows, formatLinkSince } = await import(
@@ -761,6 +762,56 @@ describe('ICE 明细的翻译', () => {
   test('两端候选都拿不到时退回原来的候选对串', () => {
     const html = iceHtml({ selectedPair: 'host → srflx' });
     expect(html).toContain('host → srflx');
+  });
+});
+
+describe('诊断浮层的定位', () => {
+  const diagnosticsProps = {
+    diagnostics: diagnostics(),
+    link: link({ reach: 'lan', transport: 'ws-secure', rttMs: 4 }),
+    latency: latency({ browserToNodeMs: 12, browserToNodeRawMs: 12 }),
+    now: NOW,
+  };
+
+  test('量过视口后走 fixed：写死 left/top/width，并把高度收进可见视口自己滚', () => {
+    const placement = placePopover({
+      anchor: { left: 330, right: 382, top: 60, bottom: 76 },
+      viewport: { width: 390, height: 844 },
+    });
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics {...diagnosticsProps} placement={placement} />
+    );
+    expect(html).toContain('data-testid="ice-diagnostics"');
+    expect(html).toContain('fixed');
+    expect(html).toContain('overflow-y-auto');
+    expect(html).not.toContain('absolute');
+    expect(html).toContain(`left:${placement.left}px`);
+    expect(html).toContain(`top:${placement.top}px`);
+    expect(html).toContain(`width:${placement.width}px`);
+    expect(html).toContain(`max-height:${placement.maxHeight}px`);
+    // 夹过之后左右两侧都还在屏内
+    expect(placement.left).toBeGreaterThanOrEqual(8);
+    expect(placement.left + placement.width).toBeLessThanOrEqual(390 - 8);
+  });
+
+  test('翻到徽标上方时用 bottom 贴住，不写 top', () => {
+    const placement = placePopover({
+      anchor: { left: 330, right: 382, top: 700, bottom: 716 },
+      viewport: { width: 390, height: 800, layoutHeight: 800 },
+    });
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics {...diagnosticsProps} placement={placement} />
+    );
+    expect(placement.above).toBe(true);
+    expect(html).toContain(`bottom:${placement.bottom}px`);
+    expect(html).not.toContain('top:');
+  });
+
+  test('还没量到（SSR / 首帧之前）时退回原来的 absolute 右对齐', () => {
+    const html = renderToStaticMarkup(<NodeLinkDiagnostics {...diagnosticsProps} />);
+    expect(html).toContain('absolute');
+    expect(html).toContain('w-72');
+    expect(html).not.toContain('style=');
   });
 });
 

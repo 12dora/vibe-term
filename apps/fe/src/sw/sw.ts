@@ -9,12 +9,14 @@
 // 「等旧客户端退出」本身需要逃生通道，否则节点升级换掉 fe-dist 之后会卡死在旧代：
 //   1) 页面发现 chunk 404 时给 waiting 的 SW 发 skipWaiting 让它立刻接管（见 ./sw-reload.ts）；
 //   2) SW 自己发现**本代预缓存过的** /assets/** 在服务端已 404，就地拆掉本代并注销自己；
-//   3) 本代预缓存有实质缺口时，导航放宽网络预算，缓存壳只作兜底。
+//   3) 本代预缓存有实质缺口时，导航放宽网络预算，缓存壳只作兜底；
+//   4) 导航回放了上一代壳就告诉页面（SW_SHELL_STALE_MESSAGE），页面在下一个安全时刻换代
+//      （见 ./sw-update.ts）——iOS 主屏 PWA 挂起着不退出，等「客户端全部退出」等不到头。
 //
 // 路由分类见 ./sw-routes，各项取舍的纯函数见 ./sw-policy（都有单测）。
 // 分类为 bypass 的请求连 respondWith 都不调，由浏览器原样发出。
 
-import { SW_SKIP_WAITING_MESSAGE } from '@vibeterm/ui/sw-activation';
+import { SW_SHELL_STALE_MESSAGE, SW_SKIP_WAITING_MESSAGE } from '@vibeterm/ui/sw-activation';
 import {
   acceptsNetworkShell,
   isMeaningfulGap,
@@ -50,9 +52,14 @@ interface SwMessageEvent extends SwExtendableEvent {
   readonly data: unknown;
 }
 
+interface SwWindowClient {
+  postMessage(message: unknown): void;
+}
+
 interface SwGlobalScope {
   readonly location: { origin: string };
   readonly registration: { update(): Promise<void>; unregister(): Promise<boolean> };
+  readonly clients: { matchAll(options: { type: 'window' }): Promise<readonly SwWindowClient[]> };
   skipWaiting(): Promise<void>;
   addEventListener(
     type: 'install' | 'activate',
@@ -226,8 +233,17 @@ async function shellFirst(event: SwFetchEvent): Promise<Response> {
   const budget = gaps.size > 0 ? PARTIAL_SHELL_BUDGET_MS : SHELL_NETWORK_BUDGET_MS;
   const network = await raceShellNetwork(event.request, budget);
   if (network) return network;
-  keepAlive(event, self.registration.update());
+  keepAlive(event, Promise.all([self.registration.update(), announceShellStale()]));
   return cached;
+}
+
+/**
+ * 告诉页面「你手上这张壳是上一代的」。页面据此在下一个安全时刻换代——新一代可能是上一次
+ * 会话里就装好的，那一代 `updatefound` 早就发过了，只靠事件的页面永远等不到。
+ */
+async function announceShellStale(): Promise<void> {
+  const windows = await self.clients.matchAll({ type: 'window' });
+  for (const client of windows) client.postMessage({ type: SW_SHELL_STALE_MESSAGE });
 }
 
 self.addEventListener('install', (event) => {

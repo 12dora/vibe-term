@@ -7,6 +7,15 @@ import {
   applyServiceWorkerPolicy,
   shouldRegisterServiceWorker,
 } from './register';
+import type { SwUpdateRegistrationLike } from './sw-update';
+
+/** 注册成功后交给换代接管的那个对象；这里只要求能被原样带回来 */
+const REGISTRATION: SwUpdateRegistrationLike = {
+  waiting: null,
+  installing: null,
+  update: async () => undefined,
+  addEventListener: () => undefined,
+};
 
 function container(overrides: Partial<ServiceWorkerContainerLike> = {}) {
   const registered: { url: string; scope?: string }[] = [];
@@ -14,7 +23,7 @@ function container(overrides: Partial<ServiceWorkerContainerLike> = {}) {
   const base: ServiceWorkerContainerLike = {
     register: async (url, options) => {
       registered.push({ url, scope: options?.scope });
-      return {};
+      return REGISTRATION;
     },
     getRegistrations: async () =>
       ['a', 'b'].map((id) => ({
@@ -44,16 +53,16 @@ describe('shouldRegisterServiceWorker', () => {
 });
 
 describe('applyServiceWorkerPolicy', () => {
-  test('生产注册根作用域的 /sw.js', async () => {
+  test('生产注册根作用域的 /sw.js，并把 registration 交出去接线', async () => {
     const { base, registered, unregistered } = container();
-    await applyServiceWorkerPolicy(base, true, '/devices');
+    expect(await applyServiceWorkerPolicy(base, true, '/devices')).toBe(REGISTRATION);
     expect(registered).toEqual([{ url: SERVICE_WORKER_URL, scope: '/' }]);
     expect(unregistered).toEqual([]);
   });
 
   test('分享页不注册，也不去动已有注册', async () => {
     const { base, registered, unregistered } = container();
-    await applyServiceWorkerPolicy(base, true, '/s/AbCd1234');
+    expect(await applyServiceWorkerPolicy(base, true, '/s/AbCd1234')).toBeNull();
     expect(registered).toEqual([]);
     expect(unregistered).toEqual([]);
   });
@@ -66,20 +75,20 @@ describe('applyServiceWorkerPolicy', () => {
 
   test('非生产注销全部已有注册且不再注册', async () => {
     const { base, registered, unregistered } = container();
-    await applyServiceWorkerPolicy(base, false);
+    expect(await applyServiceWorkerPolicy(base, false)).toBeNull();
     expect(registered).toEqual([]);
     expect(unregistered).toEqual(['a', 'b']);
   });
 
   test('浏览器不支持 serviceWorker 时静默返回', async () => {
-    await applyServiceWorkerPolicy(undefined, true);
+    expect(await applyServiceWorkerPolicy(undefined, true)).toBeNull();
   });
 
-  test('注册失败不抛出', async () => {
+  test('注册失败不抛出，也不交出 registration', async () => {
     const { base } = container({
       register: () => Promise.reject(new Error('SecurityError')),
     });
-    await applyServiceWorkerPolicy(base, true);
+    expect(await applyServiceWorkerPolicy(base, true)).toBeNull();
   });
 
   test('注销失败不抛出', async () => {
