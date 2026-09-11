@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
+import { type Stats, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { extname } from 'node:path';
 import { brotliCompressSync, gzipSync, constants as zlibConstants } from 'node:zlib';
 
@@ -204,9 +204,20 @@ export function resolveEncodedBody(
     return { encoding: null, filePath };
   }
   const dest = sidecarPath(filePath, encoding);
-  if (tryWriteSidecar(dest, compressed)) {
+  // 压缩期间源文件可能被换掉（升级切 fe-dist）：只有源仍与读取前一致才把结果落盘为 sidecar，
+  // 否则本次结果只在内存里用一次，避免旧内容顶着新 mtime 被当成新源的缓存。
+  if (sourceUnchanged(filePath, st) && tryWriteSidecar(dest, compressed)) {
     return { encoding, filePath: dest };
   }
   cache.set(cacheKey, compressed);
   return { encoding, bytes: compressed };
+}
+
+function sourceUnchanged(filePath: string, before: Stats): boolean {
+  try {
+    const now = statSync(filePath);
+    return now.size === before.size && now.mtimeMs === before.mtimeMs && now.ino === before.ino;
+  } catch {
+    return false;
+  }
 }
