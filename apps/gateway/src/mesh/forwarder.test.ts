@@ -1946,6 +1946,101 @@ describe('forwardAuthorizedHttp', () => {
     }
   });
 
+  test('getLink hang with a 30 MB content-length still uses the short link budget', async () => {
+    const peers = new FakePeers();
+    peers.getLink = () => new Promise<LinkSession>(() => {});
+    const streams = new FakeStreams();
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const started = Date.now();
+      const res = await forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          rawBody: new ReadableStream({ start() {} }),
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-length': String(30 * 1024 * 1024),
+          },
+        }
+      );
+      expect(res.status).toBe(503);
+      expect(await res.json()).toMatchObject({
+        code: 'NODE_UNREACHABLE',
+        nodeId: OTHER,
+        reason: 'timeout',
+      });
+      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(streams.lastOpen).toBeNull();
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
+
+  test('raw-body transfer is not aborted at the short link deadline', async () => {
+    const peers = new FakePeers();
+    peers.links.set(OTHER, dummyLink);
+    const streams = new FakeStreams();
+    let opened = false;
+    streams.openHttpStream = async (_link, _open, _body, signal) => {
+      opened = true;
+      await new Promise<void>((_, reject) => {
+        const fail = () => reject(signal.reason ?? new Error('aborted'));
+        if (signal.aborted) {
+          fail();
+          return;
+        }
+        signal.addEventListener('abort', fail, { once: true });
+      });
+      throw new Error('unreachable');
+    };
+    const forwarder = new Forwarder({
+      nodeId: NODE_ID,
+      peers,
+      streams,
+      sleep: async () => {},
+    });
+    setForwardLinkDeadlineMs(50);
+    try {
+      const ac = new AbortController();
+      const pending = forwarder.forwardAuthorizedHttp(
+        new Request('http://localhost/api/mesh/nodes/x/upgrade', {
+          method: 'PUT',
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        {
+          nodeId: OTHER,
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          rawBody: new ReadableStream({ start() {} }),
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-length': String(30 * 1024 * 1024),
+          },
+          signal: ac.signal,
+        }
+      );
+      await Bun.sleep(200);
+      expect(opened).toBe(true);
+      ac.abort();
+      const res = await pending;
+      expect(res.status).toBe(503);
+    } finally {
+      setForwardLinkDeadlineMs(0);
+    }
+  });
+
   test('abort during openHttpStream is classified as timeout, not lastError', async () => {
     const peers = new FakePeers();
     peers.links.set(OTHER, dummyLink);

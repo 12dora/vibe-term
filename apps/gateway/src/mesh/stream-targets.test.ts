@@ -19,6 +19,7 @@ import {
   CLIENT_SOURCE_LOCAL,
   waivesPasskeySecondFactor,
 } from './client-source';
+import { setHttpHeadDeadlineMs } from './forwarder-attempt-deadline';
 import { LinkStreamCarrier } from './link-stream-carrier';
 import { WS_CLOSE_LOGIN_REQUIRED, WS_SESSION_VERIFY_MS, setMeshRequestContext } from './mesh-deps';
 import { setShareAccessVerifier, setShareEndedReader } from './share-credential';
@@ -40,6 +41,7 @@ beforeAll(() => {
 describe('http/ws stream targets', () => {
   const fixtures: Array<{ close: () => void; stop?: () => Promise<void> }> = [];
   afterEach(async () => {
+    setHttpHeadDeadlineMs(0);
     while (fixtures.length) {
       const item = fixtures.pop();
       await item?.stop?.();
@@ -1123,7 +1125,168 @@ describe('http/ws stream targets', () => {
     });
     expect(unhandled).toEqual([]);
   });
+
+  test(
+    '30 MB body at simulated 500 KiB/s does not hit head-timeout',
+    async () => {
+      const bodyBytes = 30 * 1024 * 1024;
+      const simRate = 500 * 1024;
+      const shortHeadMs = 80;
+      setHttpHeadDeadlineMs(shortHeadMs);
+      const [a, b] = createInMemoryLinkPair();
+      throttleOpenStreamWrites(a, simRate, Math.ceil(simRate * ((shortHeadMs * 2) / 1000)));
+      let received = 0;
+      b.onStream((stream) => {
+        void acceptHttpStream(stream, {
+          peerNodeId: 'entry-1',
+          sessionStore: {
+            verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+          } as unknown as NodeSessionStore,
+          async dispatchHttp(req) {
+            const reader = req.body?.getReader();
+            if (!reader) return new Response('no-body', { status: 500 });
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              received += value?.byteLength ?? 0;
+            }
+            return new Response(JSON.stringify({ received }), {
+              status: 200,
+              headers: { 'content-type': 'application/json' },
+            });
+          },
+        });
+      });
+      const started = Date.now();
+      const res = await openHttpStream(
+        a,
+        {
+          method: 'PUT',
+          path: '/api/system/upgrade/package',
+          origin: 'http://localhost',
+          auth: 'sid',
+          headers: {
+            'content-type': 'application/octet-stream',
+            'content-length': String(bodyBytes),
+          },
+        },
+        repeatingBody(bodyBytes)
+      );
+      expect(Date.now() - started).toBeGreaterThan(shortHeadMs);
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ received: bodyBytes });
+      expect(received).toBe(bodyBytes);
+    },
+    { timeout: 20_000 }
+  );
+
+  test('GET without a body still times out at the short head deadline', async () => {
+    setHttpHeadDeadlineMs(50);
+    const [a, b] = createInMemoryLinkPair();
+    b.onStream(() => {
+      // never write a response head
+    });
+    const started = Date.now();
+    await expect(
+      openHttpStream(a, {
+        type: 'http',
+        method: 'GET',
+        path: '/api/system/info',
+        origin: 'http://localhost',
+        auth: 'sid',
+      })
+    ).rejects.toThrow('http head timeout');
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(40);
+    expect(elapsed).toBeLessThan(1_000);
+  });
+
+  test('abort mid-upload RSTs the stream and cancels the body', async () => {
+    setHttpHeadDeadlineMs(30_000);
+    const [a, b] = createInMemoryLinkPair();
+    let cancelled = false;
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      b.onStream(resolve)
+    );
+    b.onStream((stream) => {
+      void acceptHttpStream(stream, {
+        peerNodeId: 'entry-1',
+        sessionStore: {
+          verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+        } as unknown as NodeSessionStore,
+        async dispatchHttp(req) {
+          await req.arrayBuffer().catch(() => new ArrayBuffer(0));
+          return new Response('late', { status: 200 });
+        },
+      });
+    });
+    const ac = new AbortController();
+    const pending = openHttpStream(
+      a,
+      { method: 'PUT', path: '/api/upload', origin: 'http://localhost', auth: 'sid' },
+      new ReadableStream<Uint8Array>({
+        async pull(controller) {
+          await Bun.sleep(20);
+          controller.enqueue(new Uint8Array(64 * 1024));
+        },
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      ac.signal
+    );
+    const peer = await incoming;
+    const aborted = new Promise<void>((resolve) => peer.onAbort(resolve));
+    await Bun.sleep(40);
+    ac.abort();
+    await Promise.allSettled([pending, aborted]);
+    expect((await peer.closed).reason).toBe('rst');
+    expect(cancelled).toBe(true);
+    const unhandled = await collectUnhandled(async () => {
+      await Bun.sleep(20);
+    });
+    expect(unhandled).toEqual([]);
+  });
 });
+
+function repeatingBody(total: number, fill = 7, chunk = 64 * 1024): ReadableStream<Uint8Array> {
+  const buf = new Uint8Array(chunk).fill(fill);
+  let remaining = total;
+  return new ReadableStream({
+    pull(controller) {
+      if (remaining <= 0) {
+        controller.close();
+        return;
+      }
+      const n = Math.min(buf.byteLength, remaining);
+      controller.enqueue(n === buf.byteLength ? buf : buf.subarray(0, n));
+      remaining -= n;
+    },
+  });
+}
+
+function throttleOpenStreamWrites(
+  link: import('@vibeterm/shared/link').LinkSession,
+  bytesPerSec: number,
+  throttleBytes: number
+): void {
+  const orig = link.openStream.bind(link);
+  link.openStream = async (payload) => {
+    const stream = await orig(payload);
+    const write = stream.write.bind(stream);
+    let sent = 0;
+    stream.write = async (bytes, opts) => {
+      if (sent < throttleBytes && bytes.byteLength > 0) {
+        const n = Math.min(bytes.byteLength, throttleBytes - sent);
+        const waitMs = (n / bytesPerSec) * 1000;
+        if (waitMs > 0) await Bun.sleep(waitMs);
+        sent += n;
+      }
+      return write(bytes, opts);
+    };
+    return stream;
+  };
+}
 
 async function collectUnhandled(run: () => Promise<void>): Promise<unknown[]> {
   const unhandled: unknown[] = [];

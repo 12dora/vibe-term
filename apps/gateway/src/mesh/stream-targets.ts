@@ -1,7 +1,7 @@
 import { VIA_HEADER, addHeaderNames } from '@vibeterm/shared/http/mesh-headers';
 import type { LinkSession, LinkStream, StreamChunk } from '@vibeterm/shared/link';
-import { nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { encodeJsonBytes, isRecord } from './ctl';
+import { armDeferredTimeout, httpHeadTimeoutMs } from './forwarder-attempt-deadline';
 import { lookupPeerRttMs } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
 import { MESH_PEER_HEADER, attachMeshPeerMarker } from './peer-request-marker';
@@ -279,6 +279,36 @@ async function writeHttpResponse(
   }
 }
 
+function pumpHttpRequestBody(
+  body: ReadableStream<Uint8Array> | Uint8Array | null | undefined,
+  stream: LinkStream,
+  stopUpload: AbortController,
+  shouldReset: () => boolean,
+  rst: () => void
+): {
+  reader: ReadableStreamDefaultReader<Uint8Array> | null;
+  armAfter: Promise<unknown> | undefined;
+} {
+  const reader = body && !(body instanceof Uint8Array) ? body.getReader() : null;
+  const pumpDone = pumpToLink(
+    reader ?? (body instanceof Uint8Array ? body : null),
+    stream,
+    () => {
+      if (shouldReset() && !stopUpload.signal.aborted) rst();
+    },
+    () => stopUpload.signal.aborted
+  );
+  const hasBody = Boolean(body && !(body instanceof Uint8Array && body.byteLength === 0));
+  return {
+    reader,
+    armAfter: hasBody
+      ? pumpDone.then((ok) => {
+          if (!ok) throw new Error('upload failed');
+        })
+      : undefined,
+  };
+}
+
 export async function openHttpStream(
   link: LinkSession,
   openPayload: HttpStreamOpenPayload,
@@ -313,19 +343,14 @@ export async function openHttpStream(
     if (!stopUpload.signal.aborted) stopUpload.abort();
   });
 
-  const upload = { reader: null as ReadableStreamDefaultReader<Uint8Array> | null };
-  if (body && !(body instanceof Uint8Array)) upload.reader = body.getReader();
-  void pumpToLink(
-    upload.reader ?? (body instanceof Uint8Array ? body : null),
-    stream,
-    () => {
-      if (!gotHead && !stopUpload.signal.aborted) rst();
-    },
-    () => stopUpload.signal.aborted
-  );
+  const upload = pumpHttpRequestBody(body, stream, stopUpload, () => !gotHead, rst);
 
   try {
-    const head = await readHttpHead(stream, nestedDialBudgetsMs(lookupPeerRttMs()).forwardMs);
+    const head = await readHttpHead(stream, {
+      timeoutMs: httpHeadTimeoutMs(lookupPeerRttMs()),
+      armAfter: upload.armAfter,
+      abort: signal,
+    });
     gotHead = true;
     if (!stopUpload.signal.aborted) stopUpload.abort();
     try {
@@ -419,7 +444,7 @@ export async function openHttpStream(
 
 async function readHttpHead(
   stream: LinkStream,
-  timeoutMs: number
+  opts: { timeoutMs: number; armAfter?: Promise<unknown>; abort?: AbortSignal }
 ): Promise<{
   status: number;
   headers: Record<string, string>;
@@ -427,22 +452,27 @@ async function readHttpHead(
 }> {
   const reader = stream.readable.getReader();
   const rest: Uint8Array[] = [];
-  let timer: ReturnType<typeof setTimeout> | undefined;
+  let rejectTimeout: ((err: Error) => void) | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
+    rejectTimeout = reject;
+  });
+  const armed = armDeferredTimeout({
+    timeoutMs: opts.timeoutMs,
+    armAfter: opts.armAfter,
+    abort: opts.abort,
+    onTimeout: () => {
       try {
         stream.reset('head-timeout');
       } catch {
         // already closed
       }
-      reject(new Error('http head timeout'));
-    }, timeoutMs);
+      rejectTimeout?.(new Error('http head timeout'));
+    },
   });
   try {
-    const head = await Promise.race([readHttpHeadLoop(reader, rest), timeout]);
-    return head;
+    return await Promise.race([readHttpHeadLoop(reader, rest), timeout]);
   } finally {
-    if (timer !== undefined) clearTimeout(timer);
+    armed.dispose();
     try {
       reader.releaseLock();
     } catch {

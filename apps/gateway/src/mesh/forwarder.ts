@@ -7,8 +7,8 @@ import { type AuthRateLimits, authUidTooLong, peekLoginUid } from './auth-routes
 import { clientIpFromRequest } from './client-ip';
 import {
   ForwardDeadlineError,
-  armAttemptDeadline,
-  waitLinkOrAbort,
+  authorizedAttemptBudgetsMs,
+  runLinkThenTransfer,
 } from './forwarder-attempt-deadline';
 import {
   AUTH_CHALLENGE_PATHS,
@@ -356,8 +356,13 @@ export class Forwarder {
     };
     let lastError: unknown;
     const rttMs = this.deps.peers.rttOf?.(input.nodeId);
-    const deadlineAt = Date.now() + authorizedHttpDeadlineMs(input.nodeId, rttMs);
-    const attemptBudgetMs = forwardLinkDeadlineFor(input.nodeId, rttMs);
+    const budgets = authorizedAttemptBudgetsMs({
+      linkMs: forwardLinkDeadlineFor(input.nodeId, rttMs),
+      overallMs: authorizedHttpDeadlineMs(input.nodeId, rttMs),
+      headers,
+      hasRawBody: Boolean(rawBody),
+    });
+    const deadlineAt = Date.now() + budgets.overallMs;
     for (let attempt = 0; attempt < attempts; attempt += 1) {
       if (abort.aborted || Date.now() >= deadlineAt) break;
       if (attempt > 0) {
@@ -367,14 +372,31 @@ export class Forwarder {
           break;
         }
       }
-      const armed = armAttemptDeadline(abort, Math.min(deadlineAt - Date.now(), attemptBudgetMs));
+      const remaining = deadlineAt - Date.now();
       try {
-        return await this.openAuthorizedAttempt(req, input, {
-          method,
-          headers,
-          auth,
-          body: nextBody(),
-          abort: armed.signal,
+        return await runLinkThenTransfer({
+          parent: abort,
+          linkBudgetMs: Math.min(remaining, budgets.linkMs),
+          transferBudgetMs: Math.min(remaining, budgets.transferMs),
+          getLink: this.deps.peers.getLink(input.nodeId),
+          transfer: (link, signal) => {
+            const origin = req.headers.get('origin') ?? new URL(req.url).origin;
+            return this.deps.streams
+              .openHttpStream(
+                link,
+                {
+                  method,
+                  path: input.path,
+                  query: input.query ?? '',
+                  headers,
+                  origin,
+                  auth,
+                },
+                nextBody(),
+                signal
+              )
+              .then((res) => this.adaptResponse(req, res, input.nodeId));
+          },
         });
       } catch (err) {
         lastError = err;
@@ -385,11 +407,8 @@ export class Forwarder {
           );
         }
         if (!retryable) break;
-      } finally {
-        armed.dispose();
       }
     }
-    // 一次也没有被传输层接手：同上，包出来的计数流必须自己收掉
     await cancelForwardBody(countedRaw);
     return nodeUnreachableResponse(
       input.nodeId,
@@ -398,38 +417,6 @@ export class Forwarder {
       rawBody && lastError !== undefined
         ? { error: lastError instanceof Error ? lastError.message : String(lastError) }
         : undefined
-    );
-  }
-
-  private async openAuthorizedAttempt(
-    req: Request,
-    input: { nodeId: string; path: string; query?: string },
-    opts: {
-      method: string;
-      headers: Record<string, string>;
-      auth: string;
-      body: ReadableStream<Uint8Array> | null;
-      abort: AbortSignal;
-    }
-  ): Promise<Response> {
-    const origin = req.headers.get('origin') ?? new URL(req.url).origin;
-    const link = await waitLinkOrAbort(this.deps.peers.getLink(input.nodeId), opts.abort);
-    return await this.adaptResponse(
-      req,
-      await this.deps.streams.openHttpStream(
-        link,
-        {
-          method: opts.method,
-          path: input.path,
-          query: input.query ?? '',
-          headers: opts.headers,
-          origin,
-          auth: opts.auth,
-        },
-        opts.body,
-        opts.abort
-      ),
-      input.nodeId
     );
   }
 

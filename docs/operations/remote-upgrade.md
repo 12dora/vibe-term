@@ -40,3 +40,5 @@
   退化成「下载中 3.20 MB」。看门狗的进度指纹把下载字节与推包字节同等看待，慢但在动的下载不再被判停摆。
 
 本机自升级（`UpgradeController`）没有进度上报面，仍只有阶段名：`UpgradeStatus` 的 `progress` 面按合约只服务远程升级，`stageGithubRelease` 没有上报出口（见 [已知问题](../known-issues.md) KI-9）。推包途中重启中继 / 节点顶号的现网验证仍待做（KI-6）。
+
+> 推包经转发链路上传时，转发层的「等待响应头」计时只在请求体全部写完后才开始，且授权转发的总期限按 `content-length / 128 KiB/s`（上限 10 分钟）追加上传预算；此前远端节点（如跨境 160 ms+ RTT）推 30 MB 包会在 20 s 内报 `NODE_UNREACHABLE http head timeout`。
