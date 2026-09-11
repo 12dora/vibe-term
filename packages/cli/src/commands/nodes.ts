@@ -94,7 +94,7 @@ const USAGE = [
   '  rename      { ok, id, name }',
   '  allow       { node, action: "admit"|"domain-access"|"meta-key", result }',
   '  revoke      { node, result }',
-  '  enroll      { id, expiresAt, joinToken, joinCommand, publicUrl }',
+  '  enroll      { id, expiresAt, joinToken, joinCommand, publicUrl, caFingerprint }',
   '  meta-key    { op: "admit"|"rotate", epoch, seq }',
   '  upgrade     { latest, outcomes: UpgradeOutcome[] }  outcome: done|failed|timeout|alreadyLatest|cancelled|unconfirmed',
   '  uninstall   { node, scheduled: true, revoked: true }',

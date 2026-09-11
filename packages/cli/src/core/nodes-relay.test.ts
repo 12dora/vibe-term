@@ -8,6 +8,7 @@ import {
   generateKdfParams,
   rootKeyFromSeed,
 } from '@vibeterm/shared/auth';
+import { decodeRelayJoinToken } from '@vibeterm/shared/relay';
 import { NODE, meshNode, routeFetch, testContext } from '../commands/cli-test-harness';
 import { command as nodes } from '../commands/nodes';
 import type { AuthMode } from './auth';
@@ -26,6 +27,18 @@ const HASH = encodeBase64url(new Uint8Array(32).fill(1));
 const PAYLOAD = encodeBase64url(new Uint8Array([7, 8, 9]));
 const KEY32 = encodeBase64url(new Uint8Array(32).fill(3));
 const TOKEN32 = encodeBase64url(new Uint8Array(32).fill(4));
+const SELF_SIGNED_CA_PEM = `-----BEGIN CERTIFICATE-----
+MIIBiTCCAS+gAwIBAgIUfcjUcjvqps+j66WfMK5nTB66IH0wCgYIKoZIzj0EAwIw
+EjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNjA5MDExMjQyMjVaFw0yNzA5MDExMjQy
+MjVaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwWTATBgcqhkjOPQIBBggqhkjOPQMBBwNC
+AARW79kGjEFW4+Ueb2FviAO2IBOJdD2lWN6VopKfvyneN4Lut5OF/fMlSx5kKT9f
+95QVrN1GPSkKnj52IdkENXPmo2MwYTAdBgNVHQ4EFgQU2KZVtCMikJHT2kNkteml
+Z5MJzTAwHwYDVR0jBBgwFoAU2KZVtCMikJHT2kNktemlZ5MJzTAwDwYDVR0TAQH/
+BAUwAwEB/zAOBgNVHQ8BAf8EBAMCAQYwCgYIKoZIzj0EAwIDSAAwRQIhAJD13Sun
+1WG27lzbwfxd5b6+xw+yDPORYStFfSEmgr6gAiAdpUqdYmGGVAEZXKxNP7FnGg6J
+2fAjmnqZT1C+bcCDYg==
+-----END CERTIFICATE-----`;
+const SELF_SIGNED_CA_FP = '0f47afc79f7ccd374c52146fc47c9e30896b899a119966fcefc3c912014c76bd';
 
 function rootAndMode(): { root: ReturnType<typeof rootKeyFromSeed>; mode: AuthMode } {
   const root = rootKeyFromSeed(new Uint8Array(32).fill(9));
@@ -373,13 +386,222 @@ describe('signed relay commands', () => {
       joinToken: string;
       joinCommand: string;
       publicUrl: string;
+      caFingerprint: string | null;
     };
     expect(payload.id).toBe('enroll-1');
     expect(payload.joinToken.startsWith('r3.')).toBe(true);
+    expect(payload.joinToken.split('.')).toHaveLength(2);
+    expect(payload.caFingerprint).toBeNull();
+    expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBeUndefined();
     expect(payload.joinCommand).toBe(
       `vibeterm hub join 'https://relay.example' --token ${payload.joinToken} --name studio`
     );
     expect(payload.publicUrl).toBe('https://relay.example');
     expect(hits).toEqual(['relay-enroll']);
+  });
+
+  test('enroll on a self-signed relay appends the CA fingerprint suffix', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => signed.json,
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        relays: [{ url: 'https://relay.example', attached: true }],
+      }),
+      'GET /api/mesh/relay/join-material': () => ({
+        logKey: KEY32,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32 }],
+      }),
+      'GET /api/auth/keylog/head': () => ({ seq: 4, hash: HASH }),
+      'POST /api/mesh/relay/enrollments': () => ({
+        id: 'enroll-1',
+        expiresAt: 1_700_000_000_000,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32, accepted: true }],
+      }),
+      'GET /api/tls/ca.crt': () =>
+        new Response(SELF_SIGNED_CA_PEM, {
+          status: 200,
+          headers: { 'content-type': 'application/x-x509-ca-cert' },
+        }),
+    });
+    await nodes.run(cli, ['enroll']);
+    const payload = JSON.parse(stdout.text()) as {
+      joinToken: string;
+      caFingerprint: string | null;
+    };
+    expect(payload.caFingerprint).toBe(SELF_SIGNED_CA_FP);
+    expect(payload.joinToken.endsWith(`.${SELF_SIGNED_CA_FP}`)).toBe(true);
+    expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBe(SELF_SIGNED_CA_FP);
+  });
+
+  test('enroll on a Lets Encrypt relay omits the fingerprint suffix', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => signed.json,
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        relays: [{ url: 'https://relay.example', attached: true }],
+      }),
+      'GET /api/mesh/relay/join-material': () => ({
+        logKey: KEY32,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32 }],
+      }),
+      'GET /api/auth/keylog/head': () => ({ seq: 4, hash: HASH }),
+      'POST /api/mesh/relay/enrollments': () => ({
+        id: 'enroll-1',
+        expiresAt: 1_700_000_000_000,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32, accepted: true }],
+      }),
+      'GET /api/tls/ca.crt': () => new Response('no_ca', { status: 404 }),
+    });
+    await nodes.run(cli, ['enroll']);
+    const payload = JSON.parse(stdout.text()) as {
+      joinToken: string;
+      caFingerprint: string | null;
+    };
+    expect(payload.caFingerprint).toBeNull();
+    expect(payload.joinToken.split('.')).toHaveLength(2);
+    expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBeUndefined();
+  });
+
+  test('enroll uses relay status caFingerprint when join-material has none', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    const fromStatus = 'cd'.repeat(32);
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => signed.json,
+      'GET /api/mesh/relay/status': () => ({
+        mode: 'relay',
+        relays: [{ url: 'https://relay.example', attached: true, caFingerprint: fromStatus }],
+      }),
+      'GET /api/mesh/relay/join-material': () => ({
+        logKey: KEY32,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32 }],
+      }),
+      'GET /api/auth/keylog/head': () => ({ seq: 4, hash: HASH }),
+      'POST /api/mesh/relay/enrollments': () => ({
+        id: 'enroll-1',
+        expiresAt: 1,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32, accepted: true }],
+      }),
+      'GET /api/tls/ca.crt': () =>
+        new Response(SELF_SIGNED_CA_PEM, {
+          status: 200,
+          headers: { 'content-type': 'application/x-x509-ca-cert' },
+        }),
+    });
+    await nodes.run(cli, ['enroll']);
+    const payload = JSON.parse(stdout.text()) as {
+      joinToken: string;
+      caFingerprint: string | null;
+    };
+    expect(payload.caFingerprint).toBe(fromStatus);
+    expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBe(fromStatus);
+  });
+
+  test('enroll prefers join-material caFingerprint over GET /api/tls/ca.crt', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    const fromMaterial = 'ab'.repeat(32);
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => signed.json,
+      'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
+      'GET /api/mesh/relay/join-material': () => ({
+        logKey: KEY32,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32 }],
+        caFingerprint: fromMaterial,
+      }),
+      'GET /api/auth/keylog/head': () => ({ seq: 4, hash: HASH }),
+      'POST /api/mesh/relay/enrollments': () => ({
+        id: 'enroll-1',
+        expiresAt: 1,
+        relays: [{ url: 'https://relay.example', tenantId: PEER, token: TOKEN32, accepted: true }],
+      }),
+      'GET /api/tls/ca.crt': () =>
+        new Response(SELF_SIGNED_CA_PEM, {
+          status: 200,
+          headers: { 'content-type': 'application/x-x509-ca-cert' },
+        }),
+    });
+    await nodes.run(cli, ['enroll']);
+    const payload = JSON.parse(stdout.text()) as {
+      joinToken: string;
+      caFingerprint: string | null;
+    };
+    expect(payload.caFingerprint).toBe(fromMaterial);
+    expect(decodeRelayJoinToken(payload.joinToken).caFingerprint).toBe(fromMaterial);
+  });
+
+  test('meta-key rotate --exclude rejects a name that maps to different hub and mesh ids', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    const { ctx: cli } = await ctx({
+      'GET /api/auth/mode': () => ({ ...signed.json, hubNodeId: 'self' }),
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
+      'GET /api/hub/nodes': () => ({
+        nodes: [{ id: PEER, name: 'office', admission_status: 'pending' }],
+      }),
+    });
+    const error = await nodes
+      .run(cli, ['meta-key', 'rotate', '--exclude', 'office'])
+      .catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).hint).toContain('32-hex');
+  });
+
+  test('meta-key rotate --exclude accepts a name present in both rosters with the same id', async () => {
+    const signed = await signingMode();
+    process.env.VIBETERM_PASSWORD = signed.password;
+    let prepare: unknown;
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/auth/mode': () => ({ ...signed.json, hubNodeId: 'self' }),
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: PEER, name: 'wait-box' })] }),
+      'GET /api/hub/nodes': () => ({
+        nodes: [{ id: PEER, name: 'wait-box', admission_status: 'admitted' }],
+      }),
+      'POST /api/mesh/relay/meta-key/prepare': (_url, init) => {
+        prepare = JSON.parse(String(init?.body));
+        return { payload: PAYLOAD, epoch: 8 };
+      },
+      'GET /api/auth/keylog/head': () => ({ seq: 1, hash: HASH }),
+      'POST /api/auth/keylog': () => ({ ok: true, hubAck: true, seq: 2 }),
+    });
+    await nodes.run(cli, ['meta-key', 'rotate', '--exclude', 'wait-box']);
+    expect(prepare).toEqual({ op: 'rotate', exclude: [PEER] });
+    expect(JSON.parse(stdout.text())).toEqual({ op: 'rotate', epoch: 8, seq: 2 });
+  });
+
+  test('relay allow rejects a name that maps to different hub and mesh ids', async () => {
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
+      'GET /api/hub/nodes': () => ({
+        nodes: [{ id: PEER, name: 'office', admission_status: 'pending' }],
+      }),
+    });
+    const error = await nodes.run(cli, ['allow', 'office']).catch((err) => err);
+    expect(error).toBeInstanceOf(UsageError);
+    expect((error as UsageError).hint).toContain('32-hex');
+  });
+
+  test('relay allow accepts a name present in both rosters with the same id', async () => {
+    let body = '';
+    const { ctx: cli } = await ctx({
+      'GET /api/mesh/relay/status': () => ({ mode: 'relay' }),
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ id: NODE, name: 'office' })] }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE, hubNodeId: 'self' }),
+      'GET /api/hub/nodes': () => ({
+        nodes: [{ id: NODE, name: 'office', admission_status: 'admitted' }],
+      }),
+      [`PATCH /n/${NODE}/api/system/domain-access`]: (_url, init) => {
+        body = String(init?.body);
+        return { allowed: true };
+      },
+    });
+    await nodes.run(cli, ['allow', 'office']);
+    expect(JSON.parse(body)).toEqual({ allowed: true });
   });
 });

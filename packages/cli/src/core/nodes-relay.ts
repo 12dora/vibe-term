@@ -1,5 +1,6 @@
 // 中继租户侧：探测 uplink 形态、签 `meta-key`、用 r3. 加入码建 enrollment。
 
+import { X509Certificate, createHash } from 'node:crypto';
 import { NODE_ID_PATTERN, SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import {
   type RootKey,
@@ -29,12 +30,14 @@ export type RelayUplinkMode = 'relay' | 'hub' | 'none';
 export interface RelayStatusRow {
   url: string;
   attached?: boolean;
+  caFingerprint?: string | null;
 }
 
 export interface RelayStatusJson {
   mode?: RelayUplinkMode | string;
   relays?: RelayStatusRow[];
   metaEpoch?: number;
+  caFingerprint?: string | null;
 }
 
 export async function fetchRelayStatus(ctx: CliContext): Promise<RelayStatusJson | null> {
@@ -143,6 +146,7 @@ export async function resolveExcludeNodeIds(ctx: CliContext, flags: FlagValues):
 }
 
 const JOIN_KEY_B64URL = /^[A-Za-z0-9_-]{43}$/;
+const CA_FINGERPRINT_HEX = /^[0-9a-f]{64}$/;
 
 interface JoinMaterialRelay {
   url: string;
@@ -153,6 +157,56 @@ interface JoinMaterialRelay {
 interface JoinMaterial {
   logKey: string;
   relays: JoinMaterialRelay[];
+  caFingerprint: string | null;
+}
+
+function readCaFingerprint(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const fingerprint = value.trim().toLowerCase();
+  return CA_FINGERPRINT_HEX.test(fingerprint) ? fingerprint : null;
+}
+
+function spkiSha256FromPem(pem: string): string | null {
+  const match = pem.match(/-----BEGIN CERTIFICATE-----[\s\S]*?-----END CERTIFICATE-----/);
+  if (!match) return null;
+  try {
+    const cert = new X509Certificate(match[0]);
+    const spki = cert.publicKey.export({ type: 'spki', format: 'der' }) as Buffer;
+    return createHash('sha256').update(spki).digest('hex');
+  } catch {
+    return null;
+  }
+}
+
+function fingerprintFromStatus(status: RelayStatusJson | null): string | null {
+  const direct = readCaFingerprint(status?.caFingerprint);
+  if (direct) return direct;
+  const rows = status?.relays ?? [];
+  const attached = rows.find((row) => row.attached);
+  const ordered = attached ? [attached, ...rows.filter((row) => row !== attached)] : rows;
+  for (const row of ordered) {
+    const found = readCaFingerprint(row.caFingerprint);
+    if (found) return found;
+  }
+  return null;
+}
+
+async function fingerprintFromTlsCaCrt(ctx: CliContext): Promise<string | null> {
+  const response = await ctx.http.fetch(SELF_NODE_ID, '/api/tls/ca.crt');
+  if (!response.ok) return null;
+  return spkiSha256FromPem(await response.text());
+}
+
+/** 自签中继的 SPKI sha256：join-material → relay status → GET /api/tls/ca.crt。LE / 无 CA 为 null。 */
+export async function resolveRelayJoinCaFingerprint(
+  ctx: CliContext,
+  material: Pick<JoinMaterial, 'caFingerprint'>
+): Promise<string | null> {
+  return (
+    readCaFingerprint(material.caFingerprint) ??
+    fingerprintFromStatus(await fetchRelayStatus(ctx)) ??
+    (await fingerprintFromTlsCaCrt(ctx))
+  );
 }
 
 interface EnrollmentRelayRow {
@@ -182,7 +236,11 @@ async function fetchJoinMaterial(ctx: CliContext): Promise<JoinMaterial> {
   if (!usable) {
     throw new CliError('relay join-material is incomplete; cannot mint an r3. join token');
   }
-  return { logKey: wire.logKey as string, relays };
+  return {
+    logKey: wire.logKey as string,
+    relays,
+    caFingerprint: readCaFingerprint(wire.caFingerprint),
+  };
 }
 
 function tokenOf(material: JoinMaterial, url: string): string {
@@ -230,6 +288,7 @@ export async function createRelayEnrollment(
   options: { ttlMs: number; name?: string }
 ): Promise<CreatedEnrollmentResult> {
   const material = await fetchJoinMaterial(ctx);
+  const caFingerprint = await resolveRelayJoinCaFingerprint(ctx, material);
   return withRootKey(ctx, async (root, mode) => {
     const now = Date.now();
     const enrollment = await createEnrollment(root, {
@@ -267,6 +326,7 @@ export async function createRelayEnrollment(
         keyLogHeadHash: head.hash,
         logKey,
         relays: joinRelays,
+        caFingerprint,
       });
       const publicUrl = joinRelays[0]?.url ?? null;
       return {
@@ -278,7 +338,7 @@ export async function createRelayEnrollment(
             ? joinCommand(publicUrl, token, options.name)
             : null,
         publicUrl,
-        caFingerprint: null,
+        caFingerprint,
       };
     } finally {
       enrollment.enrollSk.fill(0);

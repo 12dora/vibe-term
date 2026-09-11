@@ -116,6 +116,12 @@ export async function findAdminNode(ctx: CliContext, ref: string): Promise<Admin
     if (error instanceof NotFoundError) return null;
     throw error;
   });
+  if (hub && mesh && hub.id !== mesh.id) {
+    throw new UsageError(
+      `node name "${ref.trim()}" is ambiguous: ${hub.id}, ${mesh.id}`,
+      'use the 32-hex node id instead'
+    );
+  }
   if (mesh) return { id: mesh.id, name: mesh.name, mesh, hub };
   if (hub) return { id: hub.id, name: hub.name, mesh: null, hub };
   throw new NotFoundError(`unknown node: ${ref}`, 'run: vibeterm nodes ls');
