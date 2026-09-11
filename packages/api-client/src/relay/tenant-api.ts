@@ -166,6 +166,11 @@ export interface RelayPreparedPayload {
   epoch?: number;
   /** `set-relays` 里那一份 `meta_key` 的世代。 */
   metaEpoch?: number;
+  /**
+   * `meta-key {op:'admit'}` 的幂等应答：这台已经被当前世代封到了，服务端**没有**准备新记录，
+   * `payload` 为空串。调用方按「已完成」处理，绝不能拿空 payload 去签。
+   */
+  alreadyCovered?: boolean;
 }
 
 /** `POST /api/mesh/relay/enroll` 的 200：租户身份 + 待签的 `set-relays` payload。 */

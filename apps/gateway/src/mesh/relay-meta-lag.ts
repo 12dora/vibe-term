@@ -122,3 +122,25 @@ export function exemptMetaKeyLaggingNodes<T extends { ok: boolean }>(
   if (nodes.length === 0) return { ok: true } as unknown as T;
   return { ...compat, nodes } as T;
 }
+
+/**
+ * admit 补发的幂等闸门：这台已经被**当前世代**的 `meta-key` 封到了就不再换代。
+ *
+ * 补发入口不止一个（admit 收尾钩子、设置页与接入面板的告警条、多个标签页 / PWA），
+ * 它们各自读同一份欠账名单并各签一条记录，会给同一台节点白换好几代密钥——每一代都要
+ * 全员重新封装、全网重新解密，而中间那些世代谁也不需要。
+ *
+ * `rotate` 不做这件事：吊销后换代的意义就在于换出一把被吊销方解不开的新密钥，必须每次都换。
+ *
+ * `payload` 回空串而不是省略：调用方的类型里它是必填，省掉只会把空洞推到运行时。
+ */
+export function metaKeyAdmitCoverage(
+  projection: { metaKeyEntries: readonly WrapEntry[]; metaKeyEpoch: number },
+  nodeId: string
+): { alreadyCovered: true; epoch: number; payload: string; payloadHash: string } | null {
+  if (projection.metaKeyEpoch <= 0) return null;
+  const target = nodeId.toLowerCase();
+  const covered = projection.metaKeyEntries.some((entry) => entry.node_id.toLowerCase() === target);
+  if (!covered) return null;
+  return { alreadyCovered: true, epoch: projection.metaKeyEpoch, payload: '', payloadHash: '' };
+}

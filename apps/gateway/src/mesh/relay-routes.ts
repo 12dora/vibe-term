@@ -29,7 +29,7 @@ import {
   collectJoinMaterialRelays,
   fanOutEnrollmentCreate,
 } from './relay-enrollment-fanout';
-import { listMetaKeyLagging } from './relay-meta-lag';
+import { listMetaKeyLagging, metaKeyAdmitCoverage } from './relay-meta-lag';
 import { handleMeshRelayPack } from './relay-pack-routes';
 import {
   buildMetaKeyPayload,
@@ -397,6 +397,8 @@ export class RelayRoutes {
       if (typeof nodeId !== 'string' || !nodes.some((node) => node.nodeId === nodeId)) {
         return jsonError('UNKNOWN_NODE', 404);
       }
+      const covered = metaKeyAdmitCoverage(this.deps.secrets.projection(), nodeId);
+      if (covered) return jsonBody(covered);
     }
     const current = await this.deps.secrets.currentMetaKey();
     // `meta-key` 记录要求 epoch 严格递增：admit 复用当前密钥换新世代，rotate 换新密钥。

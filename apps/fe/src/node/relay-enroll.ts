@@ -202,7 +202,11 @@ export function appendMetaKey(
   return deps.lock(async () => {
     let payload: string;
     try {
-      payload = (await deps.relayApi.metaKeyPrepare(op)).payload;
+      const prepared = await deps.relayApi.metaKeyPrepare(op);
+      // 幂等应答：这台已经被当前世代封到了（多个补发入口 / 多个标签页同时补的常态）。
+      // 服务端没准备记录，这里也不能拿空 payload 去签——直接按已完成收尾。
+      if (prepared.alreadyCovered === true) return { ok: true as const };
+      payload = prepared.payload;
     } catch (err) {
       return relayFlowFailure(err);
     }

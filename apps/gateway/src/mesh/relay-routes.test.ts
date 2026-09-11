@@ -3,18 +3,27 @@ import {
   bytesToHex,
   canonicalHubUrl,
   createEnrollment,
+  createNodeCertificate,
   decodeBase64url,
+  decodeCertificate,
   decodeMetaKeyPayload,
   decodeSetRelaysPayload,
   encodeBase64url,
   encodeRotateRootKeepPayload,
+  generateEd25519KeyPair,
   generateKdfParams,
+  generateX25519KeyPair,
   hubHostFromUrl,
   rootKeyFromSeed,
   wrapEntryFromBytes,
 } from '@vibeterm/shared/auth';
 import { RELAY_TOKEN_HEADER } from '@vibeterm/shared/http/mesh-headers';
-import { generateTenantKey, signRelayEnrollProof, unwrapKeyForNode } from '@vibeterm/shared/relay';
+import {
+  findWrapEntry,
+  generateTenantKey,
+  signRelayEnrollProof,
+  unwrapKeyForNode,
+} from '@vibeterm/shared/relay';
 import { nodeSessionCookieName } from '../auth/cookies';
 import { KeyLogStore } from '../auth/key-log-store';
 import { ensureNodeIdentity } from '../auth/node-identity-service';
@@ -135,6 +144,37 @@ async function configureRelays(b: Awaited<ReturnType<typeof boot>>, urls: string
   expect(applied.ok).toBe(true);
   await b.secrets.reconcile();
   return { logKey, metaKey };
+}
+
+/** 造一台真成员：证书能被 `listRelayNodeKeys` 解开，但当前世代的 `meta-key` 没封给它。 */
+async function addUncoveredMember(b: Awaited<ReturnType<typeof boot>>, seed: number) {
+  const enrollment = await createEnrollment(b.user.rootKey, {
+    uid: b.user.userId,
+    rootEpoch: b.user.rootEpoch,
+    now: Date.now(),
+    ttlMs: 600_000,
+  });
+  const ed = generateEd25519KeyPair();
+  const x = generateX25519KeyPair();
+  const cert = createNodeCertificate(enrollment.enrollSk, {
+    uid: b.user.userId,
+    edPk: ed.publicKey,
+    x25519Pk: x.publicKey,
+    enrollPk: enrollment.enrollPk,
+    now: Date.now(),
+    nodeId: new Uint8Array(16).fill(seed),
+  });
+  const nodeId = bytesToHex(decodeCertificate(cert.certificateBytes).node_id);
+  b.userStore.upsertCert({
+    nodeId,
+    userId: b.user.userId,
+    admitRecordSeq: 5,
+    certificateBytes: cert.certificateBytes,
+    certSig: cert.certSig,
+    authorizationBytes: enrollment.authorizationBytes,
+    authorizationSig: enrollment.authorizationSig,
+  });
+  return nodeId;
 }
 
 async function configureRelay(b: Awaited<ReturnType<typeof boot>>) {
@@ -803,17 +843,24 @@ describe('RelayRoutes', () => {
     const b = await boot();
     try {
       const { metaKey } = await configureRelay(b);
+      // 用一台**当前世代没封到**的成员：已封到的那台会走幂等应答（见下一条用例）。
+      const fresh = await addUncoveredMember(b, 0x71);
       const admit = (await (
         await b.call('/api/mesh/relay/meta-key/prepare', {
           method: 'POST',
-          body: JSON.stringify({ op: 'admit', node_id: b.identity.nodeIdHex }),
+          body: JSON.stringify({ op: 'admit', node_id: fresh }),
         })
       ).json()) as { epoch: number; payload: string };
       expect(admit.epoch).toBe(2);
       const admitPayload = decodeMetaKeyPayload(decodeBase64url(admit.payload));
       expect(admitPayload.epoch).toBe(2);
+      // 覆盖范围是全体未吊销成员：本机与新成员都要在里面。
+      const admitEntries = admitPayload.entries.map(wrapEntryFromBytes);
+      expect(admitEntries.map((entry) => entry.node_id).sort()).toEqual(
+        [b.identity.nodeIdHex, fresh].sort()
+      );
       const admitKey = await unwrapKeyForNode({
-        entry: wrapEntryFromBytes(admitPayload.entries[0]!),
+        entry: findWrapEntry(admitEntries, b.identity.nodeIdHex)!,
         nodeX25519Sk: b.identity.x25519PrivateKey,
       });
       expect(admitKey).toEqual(metaKey);
@@ -826,7 +873,7 @@ describe('RelayRoutes', () => {
       ).json()) as { epoch: number; payload: string };
       const rotatePayload = decodeMetaKeyPayload(decodeBase64url(rotate.payload));
       const rotateKey = await unwrapKeyForNode({
-        entry: wrapEntryFromBytes(rotatePayload.entries[0]!),
+        entry: findWrapEntry(rotatePayload.entries.map(wrapEntryFromBytes), b.identity.nodeIdHex)!,
         nodeX25519Sk: b.identity.x25519PrivateKey,
       });
       expect(rotateKey).not.toEqual(metaKey);
@@ -839,6 +886,48 @@ describe('RelayRoutes', () => {
       const result = await b.secrets.reconcile();
       expect(result.metaEpoch).toBe(2);
       expect(await b.secrets.metaKey(2)).toEqual(rotateKey);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('meta-key/prepare admit 对已被当前世代封到的成员是幂等空操作，rotate 照旧换代', async () => {
+    const b = await boot();
+    try {
+      await configureRelay(b);
+      const fresh = await addUncoveredMember(b, 0x72);
+      const ask = async (body: Record<string, unknown>) =>
+        (await (
+          await b.call('/api/mesh/relay/meta-key/prepare', {
+            method: 'POST',
+            body: JSON.stringify(body),
+          })
+        ).json()) as { epoch: number; payload: string; alreadyCovered?: boolean };
+
+      // 第一次：真的要换代，并把记录落账（多入口并发补发的第一条）。
+      const first = await ask({ op: 'admit', node_id: fresh });
+      expect(first.alreadyCovered).toBeUndefined();
+      expect(first.epoch).toBe(2);
+      const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
+        type: 'meta-key',
+        payload: decodeBase64url(first.payload),
+      });
+      expect(applied.ok).toBe(true);
+      await b.secrets.reconcile();
+
+      // 第二次（另一个标签页 / 另一条入口）：不再换代，白换的世代会让全网重新封装一遍。
+      const second = await ask({ op: 'admit', node_id: fresh });
+      expect(second).toMatchObject({ alreadyCovered: true, epoch: 2, payload: '' });
+
+      // 本机自己同样已被封到。
+      expect(await ask({ op: 'admit', node_id: b.identity.nodeIdHex })).toMatchObject({
+        alreadyCovered: true,
+      });
+
+      // rotate 不做幂等：吊销后换代的意义就是换出被吊销方解不开的新密钥。
+      const rotate = await ask({ op: 'rotate' });
+      expect(rotate.alreadyCovered).toBeUndefined();
+      expect(rotate.epoch).toBe(3);
     } finally {
       b.close();
     }

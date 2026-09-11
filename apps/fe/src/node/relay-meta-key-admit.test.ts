@@ -17,7 +17,7 @@ function signer(): RecordSigner {
   return { kind: 'root', rootKey: rootKeyFromSeed(new Uint8Array(32).fill(3)) };
 }
 
-function depsOf(options: { append?: unknown; packFails?: boolean } = {}): {
+function depsOf(options: { append?: unknown; alreadyCovered?: boolean } = {}): {
   deps: RelayFlowDeps;
   appended: { bytes: string; sig: string }[];
 } {
@@ -31,7 +31,12 @@ function depsOf(options: { append?: unknown; packFails?: boolean } = {}): {
     },
   } as unknown as AuthApi;
   const relayApi = {
-    metaKeyPrepare: () => Promise.resolve({ payload: 'AQID', payloadHash: 'h' }),
+    metaKeyPrepare: () =>
+      Promise.resolve(
+        options.alreadyCovered
+          ? { alreadyCovered: true, epoch: 6, payload: '', payloadHash: '' }
+          : { payload: 'AQID', payloadHash: 'h' }
+      ),
     // 密封包重封失败不该影响 meta-key 的结论
     status: () => Promise.resolve({ mode: 'relay', relays: [] }),
   } as unknown as RelayTenantApi;
@@ -88,6 +93,16 @@ describe('distributeMetaKey', () => {
     const [pending] = listPendingMetaKeys();
     expect(pending?.id).toBe(`admit:${NODE_A}`);
     expect(pending?.record).not.toBeNull();
+  });
+
+  test('服务端答「已被当前世代封到」：按成功收尾，不签记录、不白换一代密钥', async () => {
+    // 多个补发入口（收尾钩子、两处告警条、多个标签页 / PWA）会各读一次欠账名单并各签一条，
+    // 同一台节点因此白换好几代 K_meta——服务端给幂等应答，这里必须当成已完成。
+    const { deps, appended } = depsOf({ alreadyCovered: true });
+    const result = await distributeMetaKey(deps, NODE_A, signer());
+    expect(result.ok).toBe(true);
+    expect(appended).toHaveLength(0);
+    expect(listPendingMetaKeys()).toEqual([]);
   });
 
   test('复用窗口里的签名者会被自动取用（admit 之后不再问一次凭据）', async () => {

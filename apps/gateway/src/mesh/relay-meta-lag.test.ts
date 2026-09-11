@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import type { WrapEntry } from '@vibeterm/shared/relay';
 import type { NodeCertRecord } from '../auth/user-store';
-import { listMetaKeyLagging, metaKeyLaggingIds } from './relay-meta-lag';
+import { listMetaKeyLagging, metaKeyAdmitCoverage, metaKeyLaggingIds } from './relay-meta-lag';
 
 const EMPTY = new Uint8Array(0);
 
@@ -87,5 +87,24 @@ describe('listMetaKeyLagging', () => {
     expect(rows.map((row) => row.nodeId)).toEqual([OTHER, NEW]);
     expect(rows[0]?.since).toBe(1700);
     expect([...metaKeyLaggingIds(rows)]).toEqual([OTHER, NEW]);
+  });
+});
+
+describe('metaKeyAdmitCoverage', () => {
+  const projection = { metaKeyEntries: [entry(OTHER)], metaKeyEpoch: 6 };
+
+  test('已被当前世代封到：给幂等空应答，不准备新记录', () => {
+    expect(metaKeyAdmitCoverage(projection, OTHER)).toEqual({
+      alreadyCovered: true,
+      epoch: 6,
+      payload: '',
+      payloadHash: '',
+    });
+    expect(metaKeyAdmitCoverage(projection, OTHER.toUpperCase())).not.toBeNull();
+  });
+
+  test('没被封到 / 还没有租户密钥：照常换代', () => {
+    expect(metaKeyAdmitCoverage(projection, NEW)).toBeNull();
+    expect(metaKeyAdmitCoverage({ metaKeyEntries: [], metaKeyEpoch: 0 }, OTHER)).toBeNull();
   });
 });
