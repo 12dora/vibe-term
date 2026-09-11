@@ -322,7 +322,7 @@ cloudflared 进程存活不等于边缘连通。本机代理 / TUN 抖动时进�
 
 登录不经过 hub，流程与在线相同。`node.list` 里的 hub 元数据会落入 `peer_cache` 哨兵行，重启后 `/api/auth/mode` 与节点列表在 uplink 断开时仍可回答。
 
-同内网互操作依赖 `peer_cache` 里上次上报的地址（本机非 internal、非容器网卡上的可路由 IPv4/IPv6 + `VIBETERM_PEER_PORT`；默认不广播 IPv6 ULA 与 CGNAT `100.64/10`，本机自身有非 internal 的 `100.64/10` 时除外，以兼容 Tailscale）。**v1 不做局域网发现**：hub 不可达期间若对端 IP 变了，缓存失效，须等 hub 恢复。对端仍广播不可达地址（例如旧版本的 docker 网桥）时，拨号侧按地址退避，避免反复空打。peer link 仍然活着时，地址变化会立刻互相更新。
+同内网互操作依赖 `peer_cache` 里上次上报的地址（本机非 internal、非容器网卡上的可路由 IPv4/IPv6 + `VIBETERM_PEER_PORT`；不广播代理 TUN 的 fake-IP 段 `198.18.0.0/15`（拨号侧也会丢弃旧节点广播的这类地址），默认不广播 IPv6 ULA 与 CGNAT `100.64/10`，本机自身有非 internal 的 `100.64/10` 时除外，以兼容 Tailscale）。**v1 不做局域网发现**：hub 不可达期间若对端 IP 变了，缓存失效，须等 hub 恢复。对端仍广播不可达地址（例如旧版本的 docker 网桥）时，拨号侧按地址退避，避免反复空打。peer link 仍然活着时，地址变化会立刻互相更新。
 
 Nodes 页的管理动作（enroll / 改名 / 吊销）在 hub 离线时禁用。普通终端 / 文件走已有 peer link 或缓存 LAN 信令，不依赖 hub。
 

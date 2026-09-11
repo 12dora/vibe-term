@@ -102,7 +102,7 @@ endpoint recovered node=<id> addr=<host:port>
 [mesh][rtc] dial failed peer=<id> reason=… stun_count=<n> turn=<bool> attempt=<id>
 ```
 
-每次状态迁移各一条。冷却期内跳过的拨号打在既有的 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60s 聚合并带 `count=`。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。同一 PeerConnection 的 `[mesh][rtc]` 行带 `attempt=` 与 `epoch=`，用来区分重叠拨号。`gather summary` 在本地 ICE gathering 完成时打一条 info，用来判断有没有 srflx。
+每次状态迁移各一条。熔断只拦**本侧自发**的拨号：对端发起的尝试（收到签名 `wake` 或未绑定的 offer）带 `peerInitiated` 绕过 cooling / disabled 直接应答（本会被拦时打一条 `answer while cooling peer=… level=…`），否则应答方冷却时 offerer 只能等到 `no-remote-sdp`、两侧熔断错峰互锁永不收敛；应答侧的超时 / `no-remote-sdp`（从未收到 offer）不计入熔断。冷却期内跳过的自发拨号打在既有的 `dial failed` 上，带 `cause=breaker_cooling`，同一 peer 仍按 60s 聚合并带 `count=`。另有 `[mesh][rtc] summary`（每 peer 最多 60 s 一条）按 peer 聚合候选对类型的成功 / 失败与拨号耗时。同一 PeerConnection 的 `[mesh][rtc]` 行带 `attempt=` 与 `epoch=`，用来区分重叠拨号。`gather summary` 在本地 ICE gathering 完成时打一条 info，用来判断有没有 srflx。
 
 ### 对外字段
 
