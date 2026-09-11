@@ -23,9 +23,11 @@ import type { PeerLinkDetail, PeerManagerOptions, TransportWaiter } from './peer
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import {
+  type PeerUpgradeOpts,
   type RtcSignalInboxEntry,
   RtcWakeGate,
   deliverRtcSignal,
+  peerInitiatedRtcAttemptInput,
   shouldDropUnboundRtcSignal,
   shouldStartRtcAttempt,
 } from './peer-rtc-wake';
@@ -413,19 +415,22 @@ export class PeerManager extends PeerCollaboratorHost {
     if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return;
     inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
     this.state.rtcInbox.set(fromNodeId, inbox);
-    const live = this.state.live.get(fromNodeId);
     if (
-      shouldStartRtcAttempt({
-        allow: this.dialer.shouldTryDc(fromNodeId),
-        pending,
-        upgrading,
-        inflight,
-        live: Boolean(live),
-        wantsUpgrade: live ? this.wantsUpgrade(live) : false,
-      })
+      shouldStartRtcAttempt(
+        peerInitiatedRtcAttemptInput({
+          dcCapable: this.dialer.dcCapable(fromNodeId),
+          dcInflight: inflight,
+          upgrading,
+          live: this.state.live.get(fromNodeId),
+        })
+      )
     ) {
-      void this.getLink(fromNodeId).catch(() => undefined);
+      this.maybeUpgrade(fromNodeId, { cooldown: false, userPath: true, peerInitiated: true });
     }
+  }
+  protected maybeUpgrade(nodeId: string, opts: PeerUpgradeOpts): void {
+    if (!opts.peerInitiated) super.maybeUpgrade(nodeId, opts);
+    else void this.dialer.dial(nodeId, { peerInitiated: true }).catch(() => undefined);
   }
 
   async getLink(nodeId: string): Promise<LinkSession> {

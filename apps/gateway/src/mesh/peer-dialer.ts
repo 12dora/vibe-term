@@ -14,7 +14,6 @@ import {
   localNetworkFingerprint,
   rankPeerEndpoints,
 } from './address-class';
-import { dcFailureReason as describeDcFailure } from './direct-failure-codes';
 import { stamp } from './mesh-log';
 import { parseEndpoints } from './peer-dc-upgrade';
 import {
@@ -26,13 +25,17 @@ import {
   settleAbandonedDcDial,
 } from './peer-dial-race';
 import {
+  classifyDialFailureKind,
+  ensureRtcReady,
+  finishDirectAttemptRecord,
+  gateDcDial,
+} from './peer-dialer-dc-gate';
+import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
   dcRecentlyFailed,
   eligiblePeerEndpoints,
   emptyDirectAttempt,
-  hasDirectFailure,
-  noteDcOutcome,
   noteNoEndpoints,
   noteWsRaceFailure,
 } from './peer-direct-attempt';
@@ -50,11 +53,7 @@ import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
 import { type DirectDialLimiter, abortable, quiet } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import type { RtcSignaling } from './rtc/ice';
-import {
-  type RtcDialBreaker,
-  classifyRtcDialFailure,
-  isIntentionalDcLoss,
-} from './rtc/rtc-dial-breaker';
+import { type RtcDialBreaker, isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
 import { NodeUnreachableError, type PeerTransportKind } from './types';
 
@@ -92,10 +91,6 @@ export type PeerDialerOptions = {
   refreshLocalInterfaces: (() => Record<string, RankableIfaceAddr[] | undefined>) | null;
   deps: PeerDialerDeps;
 };
-
-async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
-  if ((await rtc.ready?.()) === false) throw new Error('node-datachannel is not available');
-}
 
 export class PeerDialer {
   private readonly state: PeerManagerState;
@@ -159,15 +154,18 @@ export class PeerDialer {
     if (this.state.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
     const gen = this.state.generation;
     const attempt = emptyDirectAttempt(this.state.scheduler.now());
+    const rtcOn = this.rtc?.available === true;
+    const done = (session: LinkSession | null) =>
+      finishDirectAttemptRecord(this.state, nodeId, attempt, session, null, undefined, rtcOn);
     try {
       const session = await this.dialWsSecure(nodeId, gen, this.state.stopAbort.signal, attempt, {
         bypassBackoff: true,
         endpoints,
       });
-      this.finishDirectAttempt(nodeId, attempt, session, null);
+      done(session);
       return session;
     } catch (err) {
-      this.finishDirectAttempt(nodeId, attempt, null, null);
+      done(null);
       if (err instanceof NodeUnreachableError) throw err;
       throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
     }
@@ -211,7 +209,8 @@ export class PeerDialer {
     nodeId: string,
     gen: number,
     signal: AbortSignal,
-    mode: 'foreground' | 'upgrade'
+    mode: 'foreground' | 'upgrade',
+    peerInitiated: boolean
   ): Promise<LinkSession | null> {
     const existing = this.dcInflight.get(nodeId);
     if (existing) return mode === 'foreground' ? existing : null;
@@ -221,7 +220,7 @@ export class PeerDialer {
     });
     this.dcInflight.set(nodeId, held);
     try {
-      const result = await this.runDialDc(nodeId, gen, signal);
+      const result = await this.runDialDc(nodeId, gen, signal, peerInitiated);
       settle(result);
       return result;
     } catch (err) {
@@ -236,7 +235,8 @@ export class PeerDialer {
   private async runDialDc(
     nodeId: string,
     gen: number,
-    signal: AbortSignal
+    signal: AbortSignal,
+    peerInitiated: boolean
   ): Promise<LinkSession | null> {
     const rtc = this.rtc;
     if (!rtc) return null;
@@ -297,7 +297,15 @@ export class PeerDialer {
       const reason = err instanceof Error ? err.message : String(err);
       const noteDcFailure = (failure: string) => {
         if (this.state.stopped || isIntentionalDcLoss(failure)) return;
-        this.deps.dcBreaker.noteFailure(nodeId, classifyRtcDialFailure(failure), attemptId);
+        this.deps.dcBreaker.noteFailure(
+          nodeId,
+          classifyDialFailureKind(failure),
+          attemptId,
+          undefined,
+          {
+            peerInitiated,
+          }
+        );
       };
       if (dcDialAborted(err)) void settleAbandonedDcDial(connectP, noteDcFailure);
       else noteDcFailure(reason);
@@ -313,7 +321,10 @@ export class PeerDialer {
     }
   }
 
-  async dial(nodeId: string, opts?: { foreground?: boolean }): Promise<LinkSession> {
+  async dial(
+    nodeId: string,
+    opts?: { foreground?: boolean; peerInitiated?: boolean }
+  ): Promise<LinkSession> {
     await Promise.resolve();
     const gen = this.state.generation;
     const signal = this.state.stopAbort.signal;
@@ -324,16 +335,17 @@ export class PeerDialer {
     let dcCoolingUntil: number | null | undefined;
     const attempt = emptyDirectAttempt(this.state.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
+    const peerInitiated = opts?.peerInitiated === true;
     const tryDc = async (dcSignal: AbortSignal): Promise<LinkSession | null> => {
-      if (!above('dc') || !this.dcCapable(nodeId)) return null;
-      const decision = this.deps.dcBreaker.shouldTry(nodeId);
-      if (!decision.allow) {
-        dcCoolingUntil = decision.until;
-        rtcLog('dial failed', {
-          peer: nodeId,
-          cause: 'breaker_cooling',
-          until: decision.until,
-        });
+      const gate = gateDcDial({
+        peer: nodeId,
+        capable: this.dcCapable(nodeId),
+        aboveDc: above('dc'),
+        peerInitiated,
+        decision: this.deps.dcBreaker.shouldTry(nodeId),
+      });
+      if (!gate.allow) {
+        dcCoolingUntil = gate.coolingUntil;
         return null;
       }
       try {
@@ -341,7 +353,8 @@ export class PeerDialer {
           nodeId,
           gen,
           dcSignal,
-          opts?.foreground ? 'foreground' : 'upgrade'
+          opts?.foreground ? 'foreground' : 'upgrade',
+          peerInitiated
         );
       } catch (err) {
         dcError = err;
@@ -364,7 +377,15 @@ export class PeerDialer {
       skipDcFirst,
       foreground: opts?.foreground === true,
     });
-    this.finishDirectAttempt(nodeId, attempt, direct.session, dcError, dcCoolingUntil);
+    finishDirectAttemptRecord(
+      this.state,
+      nodeId,
+      attempt,
+      direct.session,
+      dcError,
+      dcCoolingUntil,
+      this.rtc?.available === true
+    );
     if (direct.session) return direct.session;
     try {
       const stream = await this.state.uplink.openRelay(nodeId);
@@ -569,27 +590,6 @@ export class PeerDialer {
       console.warn(stamp(`[mesh][relay] accept failed node=${from} ${formatSafeErrorLog(err)}`));
       quiet(() => stream.reset('handshake-failed'));
     }
-  }
-
-  private finishDirectAttempt(
-    nodeId: string,
-    attempt: DirectAttemptRecord,
-    session: LinkSession | null,
-    dcError: unknown,
-    dcCoolingUntil?: number | null
-  ): void {
-    const live = this.state.live.get(nodeId);
-    if (session && live && live.transport !== 'relay') return;
-    if (attempt.dc == null) {
-      const failure = describeDcFailure(nodeId, dcError, {
-        coolingUntil: dcCoolingUntil,
-        directCapable: this.state.userStore.getPeer(nodeId)?.directCapable,
-        rtcAvailable: this.rtc?.available === true,
-      });
-      noteDcOutcome(attempt, failure?.text ?? null, failure?.code ?? null, failure?.params ?? null);
-    }
-    if (hasDirectFailure(attempt))
-      this.state.lastDirectAttempt.set(nodeId, { ...attempt, at: this.state.scheduler.now() });
   }
 
   clearDirectFailure(nodeId: string): void {

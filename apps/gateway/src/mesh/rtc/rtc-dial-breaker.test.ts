@@ -214,6 +214,57 @@ describe('RtcDialBreaker', () => {
     expect(RTC_DIAL_FORCE_PROBE_MS).toBe(600_000);
   });
 
+  test('peer-initiated no-remote-sdp timeout does not trip or escalate', () => {
+    const trips: Array<{ level: number }> = [];
+    const breaker = new RtcDialBreaker({
+      now: () => 1_000,
+      breakerMs: 30_000,
+      onTrip: (event) => trips.push({ level: event.level }),
+    });
+    const peer = 'answerer';
+    for (let i = 0; i < 10; i += 1) {
+      const result = breaker.noteFailure(peer, 'timeout', `p${i}`, undefined, {
+        peerInitiated: true,
+      });
+      expect(result.counted).toBe(false);
+      expect(result.opened).toBe(false);
+    }
+    expect(breaker.shouldTry(peer)).toMatchObject({
+      allow: true,
+      cooling: false,
+      failures: 0,
+      level: 0,
+    });
+    expect(breaker.snapshot(peer).lastFailureKind).toBe('timeout');
+    expect(trips).toEqual([]);
+
+    breaker.noteFailure(peer, 'timeout', 'self-1');
+    breaker.noteFailure(peer, 'timeout', 'self-2');
+    const tripped = breaker.noteFailure(peer, 'timeout', 'self-3');
+    expect(tripped.opened).toBe(true);
+    const levelAfterTrip = breaker.shouldTry(peer).level;
+    expect(levelAfterTrip).toBe(1);
+    breaker.noteFailure(peer, 'no-remote-sdp', 'ans-1', undefined, { peerInitiated: true });
+    expect(breaker.shouldTry(peer).level).toBe(levelAfterTrip);
+    expect(breaker.shouldTry(peer).failures).toBe(3);
+    expect(breaker.snapshot(peer).lastFailureKind).toBe('no-remote-sdp');
+  });
+
+  test('peer-initiated ice failures still count toward the trip', () => {
+    const breaker = new RtcDialBreaker({ now: () => 0, breakerMs: 30_000 });
+    const peer = 'p';
+    expect(
+      breaker.noteFailure(peer, 'ice failed', 'a1', undefined, { peerInitiated: true }).counted
+    ).toBe(true);
+    expect(
+      breaker.noteFailure(peer, 'ice failed', 'a2', undefined, { peerInitiated: true }).counted
+    ).toBe(true);
+    const third = breaker.noteFailure(peer, 'ice failed', 'a3', undefined, { peerInitiated: true });
+    expect(third.counted).toBe(true);
+    expect(third.opened).toBe(true);
+    expect(breaker.shouldTry(peer).cooling).toBe(true);
+  });
+
   test('does not count local signaling-state failures', () => {
     const breaker = new RtcDialBreaker({ now: () => 0, disableAfter: 1 });
     const peer = 'p';

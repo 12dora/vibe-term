@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import type { RtcSignalMessage } from './mesh-deps';
 import {
   RTC_SIGNAL_INBOX_TTL_MS,
@@ -6,8 +7,10 @@ import {
   RtcWakeGate,
   type RtcWakePorts,
   deliverRtcSignal,
+  peerInitiatedRtcAttemptInput,
   shouldStartRtcAttempt,
 } from './peer-rtc-wake';
+import { encodeRtcWakeSdp, peerRtcSession } from './rtc/ice';
 
 function setupReplay(entries: RtcSignalInboxEntry[]) {
   const peer = 'peer';
@@ -105,6 +108,45 @@ describe('shouldStartRtcAttempt', () => {
     expect(shouldStartRtcAttempt({ ...base, live: true, wantsUpgrade: false })).toBe(false);
     expect(shouldStartRtcAttempt({ ...base, live: true, wantsUpgrade: true })).toBe(true);
   });
+
+  test('peer-initiated input ignores a cooling self-dial and still wants DC', () => {
+    expect(
+      shouldStartRtcAttempt(
+        peerInitiatedRtcAttemptInput({
+          dcCapable: true,
+          dcInflight: false,
+          upgrading: false,
+          live: undefined,
+        })
+      )
+    ).toBe(true);
+    expect(
+      shouldStartRtcAttempt(
+        peerInitiatedRtcAttemptInput({
+          dcCapable: true,
+          dcInflight: true,
+          upgrading: false,
+          live: undefined,
+        })
+      )
+    ).toBe(false);
+    expect(
+      peerInitiatedRtcAttemptInput({
+        dcCapable: true,
+        dcInflight: false,
+        upgrading: false,
+        live: { transport: 'relay' },
+      })
+    ).toMatchObject({ allow: true, wantsUpgrade: true, pending: false });
+    expect(
+      peerInitiatedRtcAttemptInput({
+        dcCapable: true,
+        dcInflight: false,
+        upgrading: false,
+        live: { transport: 'dc' },
+      }).wantsUpgrade
+    ).toBe(false);
+  });
 });
 
 describe('deliverRtcSignal', () => {
@@ -122,5 +164,57 @@ describe('deliverRtcSignal', () => {
     });
     expect(delivered).toBe(false);
     expect(listeners.size).toBe(0);
+  });
+});
+
+describe('RtcWakeGate peerInitiated flag', () => {
+  test('incoming wake calls maybeUpgrade with peerInitiated even while cooling', () => {
+    const self = 'aa'.repeat(16);
+    const from = 'bb'.repeat(16);
+    const upgrades: Array<{ nodeId: string; peerInitiated?: boolean }> = [];
+    const ports = {
+      identity: { nodeId: self, edSecretKey: new Uint8Array(64) },
+      userStore: {},
+      scheduler: {
+        now: () => 1_000,
+        sleep: async () => undefined,
+        interval: () => ({ clear() {} }),
+      },
+      sendRtcSignal: () => undefined,
+      dcCapable: () => true,
+      maybeUpgrade: (nodeId: string, opts: { peerInitiated?: boolean }) => {
+        upgrades.push({ nodeId, peerInitiated: opts.peerInitiated });
+      },
+      stopSignal: () => new AbortController().signal,
+      stopped: () => false,
+      isTrusted: () => true,
+      live: () => new Map(),
+      shouldTryDc: () => false,
+      pending: () => new Map(),
+      upgrading: () => new Map(),
+      wantsUpgrade: () => false,
+      getLink: async () => undefined,
+      rtcListeners: () => new Map(),
+      rtcInbox: () => new Map(),
+      hasDcInflight: () => false,
+      sendPeerCtl: () => undefined,
+      ensureDcSession: null,
+      uplinkSendCtl: () => undefined,
+    } as unknown as RtcWakePorts;
+    const gate = new RtcWakeGate(ports);
+    gate.acceptSignedRtcWake = () => true;
+    gate.handleIncomingRtcWake(from, {
+      rtcSession: peerRtcSession(from, self),
+      from: 'node',
+      to: self,
+      sdp: encodeRtcWakeSdp({
+        from,
+        to: self,
+        rtcSession: peerRtcSession(from, self),
+        issuedAt: 1_000,
+        secretKey: generateEd25519KeyPair().secretKey,
+      }),
+    });
+    expect(upgrades).toEqual([{ nodeId: from, peerInitiated: true }]);
   });
 });

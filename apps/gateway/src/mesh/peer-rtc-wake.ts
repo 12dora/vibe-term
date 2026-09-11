@@ -72,6 +72,37 @@ export function shouldStartRtcAttempt(input: {
   );
 }
 
+export type PeerUpgradeOpts = {
+  cooldown: boolean;
+  userPath?: boolean;
+  peerInitiated?: boolean;
+};
+
+/** 对端发起的 DC（wake / 未绑定 offer）：冷却中也要建 PC，已是 dc 则不再拨。 */
+export function peerInitiatedRtcAttemptInput(input: {
+  dcCapable: boolean;
+  dcInflight: boolean;
+  upgrading: boolean;
+  live: RtcWakeLivePeer | undefined;
+}): {
+  allow: boolean;
+  pending: boolean;
+  upgrading: boolean;
+  inflight: boolean;
+  live: boolean;
+  wantsUpgrade: boolean;
+} {
+  const live = input.live;
+  return {
+    allow: input.dcCapable,
+    pending: input.dcInflight,
+    upgrading: input.upgrading,
+    inflight: input.dcInflight,
+    live: Boolean(live),
+    wantsUpgrade: live ? live.transport !== 'dc' : false,
+  };
+}
+
 export function restoreRtcInbox(
   inbox: Map<string, RtcSignalInboxEntry[]>,
   peerNodeId: string,
@@ -126,7 +157,7 @@ export type RtcWakePorts = {
   scheduler: MeshScheduler;
   sendRtcSignal: (peerNodeId: string, msg: RtcSignalMessage) => void;
   dcCapable: (nodeId: string) => boolean;
-  maybeUpgrade: (nodeId: string, opts: { cooldown: boolean; userPath?: boolean }) => void;
+  maybeUpgrade: (nodeId: string, opts: PeerUpgradeOpts) => void;
   stopSignal: () => AbortSignal;
   stopped: () => boolean;
   isTrusted: (nodeId: string) => boolean;
@@ -248,18 +279,18 @@ export class RtcWakeGate {
     rtcLog('signal recv', { peer: fromNodeId, kind: 'wake' });
     const live = this.ports.live().get(fromNodeId);
     if (
-      !shouldStartRtcAttempt({
-        allow: this.ports.shouldTryDc(fromNodeId),
-        pending: this.ports.pending().has(fromNodeId),
-        upgrading: this.ports.upgrading().has(fromNodeId),
-        inflight: this.ports.hasDcInflight?.(fromNodeId) === true,
-        live: Boolean(live),
-        wantsUpgrade: live ? this.ports.wantsUpgrade(live) : false,
-      })
+      !shouldStartRtcAttempt(
+        peerInitiatedRtcAttemptInput({
+          dcCapable: this.ports.dcCapable(fromNodeId),
+          dcInflight: this.ports.hasDcInflight?.(fromNodeId) === true,
+          upgrading: this.ports.upgrading().has(fromNodeId),
+          live,
+        })
+      )
     ) {
       return;
     }
-    void this.ports.getLink(fromNodeId).catch(() => undefined);
+    this.ports.maybeUpgrade(fromNodeId, { cooldown: false, userPath: true, peerInitiated: true });
   }
 
   acceptSignedRtcWake(fromNodeId: string, msg: RtcSignalMessage, wake: RtcWakeFields): boolean {

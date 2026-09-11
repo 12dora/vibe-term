@@ -124,6 +124,8 @@ export class RtcDialBreaker {
     string,
     { lastProbeAt: number; probeArmedAt: number | null }
   >();
+  /** 应答侧 timeout 不抬档，但仍让 snapshot.lastFailureKind 看到本次 kind。 */
+  private readonly lastUncountedKind = new Map<string, string>();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
     this.now = opts.now ?? Date.now;
@@ -170,7 +172,11 @@ export class RtcDialBreaker {
 
   snapshot(peer: string, now?: number): RtcDialBreakerSnapshot {
     const inner = this.inner.snapshot(peer, now);
-    return { ...inner, disabled: this.disabled.has(peer) };
+    return {
+      ...inner,
+      disabled: this.disabled.has(peer),
+      lastFailureKind: this.lastUncountedKind.get(peer) ?? inner.lastFailureKind,
+    };
   }
 
   isDisabled(peer: string): boolean {
@@ -199,10 +205,27 @@ export class RtcDialBreaker {
     peer: string,
     kind = 'unknown',
     attemptId?: string,
-    now?: number
+    now?: number,
+    opts?: { peerInitiated?: boolean }
   ): RtcDialFailureResult {
     const classified = classifyRtcDialFailure(kind);
     const breakerKind = RTC_DIAL_BREAKER_SKIP_KINDS.has(classified) ? classified : kind;
+    // 应答侧没等到远端 SDP：kind 仍按今天的分类走 skipKinds 通道（记 lastFailureKind），
+    // 但不计入 consecutiveFailures / 不抬 cooldownLevel。
+    if (
+      opts?.peerInitiated === true &&
+      (classified === 'timeout' || kind.toLowerCase().includes('no-remote-sdp'))
+    ) {
+      this.lastUncountedKind.set(peer, breakerKind);
+      const decision = this.inner.shouldTry(peer, now);
+      return {
+        counted: false,
+        opened: false,
+        open: decision.cooling,
+        until: decision.until ?? undefined,
+      };
+    }
+    this.lastUncountedKind.delete(peer);
     const result = this.inner.noteFailure(peer, breakerKind, attemptId, now);
     if (result.counted) this.maybeDisable(peer, now);
     return result;
@@ -210,11 +233,13 @@ export class RtcDialBreaker {
 
   noteChannelEstablished(peer: string, attemptId?: string, now?: number): void {
     this.disabled.delete(peer);
+    this.lastUncountedKind.delete(peer);
     this.inner.noteChannelEstablished(peer, attemptId, now);
   }
 
   noteHealthy(peer: string, now?: number): boolean {
     this.disabled.delete(peer);
+    this.lastUncountedKind.delete(peer);
     return this.inner.noteHealthy(peer, now);
   }
 
@@ -242,8 +267,10 @@ export class RtcDialBreaker {
   reset(peer?: string): void {
     if (peer) {
       this.disabled.delete(peer);
+      this.lastUncountedKind.delete(peer);
     } else {
       this.disabled.clear();
+      this.lastUncountedKind.clear();
     }
     this.inner.reset(peer);
   }

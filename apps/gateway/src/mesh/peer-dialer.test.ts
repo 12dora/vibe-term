@@ -1,10 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { PeerDialer } from './peer-dialer';
+import { gateDcDial } from './peer-dialer-dc-gate';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PeerManager } from './peer-manager';
+import { createPeerManagerState } from './peer-manager-state';
 import { dummyUplink } from './peer-test-fixtures';
 import { DirectDialLimiter } from './peer-ws-race';
+import type { RtcPeerManager } from './rtc';
+import type { RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { ImmediateScheduler, seedNodeIdentity, seedUser } from './test-support';
 
 describe('PeerDialer skips fake-IP endpoints', () => {
@@ -83,5 +88,136 @@ describe('PeerDialer skips fake-IP endpoints', () => {
     ]);
     expect(session).toBeNull();
     expect(dialed).toEqual([]);
+  });
+});
+
+describe('PeerDialer peer-initiated DC while breaker cooling', () => {
+  const cooling = {
+    allow: false,
+    cooling: true,
+    until: 99_000,
+    failures: 3,
+    level: 4,
+    disabled: false,
+  };
+  const fixtures: Array<{ close: () => void }> = [];
+  afterEach(() => {
+    while (fixtures.length) fixtures.pop()?.close();
+  });
+
+  test('gateDcDial skips the breaker only when peerInitiated', () => {
+    const blocked = gateDcDial({
+      peer: 'aa',
+      capable: true,
+      aboveDc: true,
+      peerInitiated: false,
+      decision: cooling,
+    });
+    expect(blocked).toEqual({ allow: false, coolingUntil: 99_000 });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const allowed = gateDcDial({
+        peer: 'aa',
+        capable: true,
+        aboveDc: true,
+        peerInitiated: true,
+        decision: cooling,
+      });
+      expect(allowed).toEqual({ allow: true });
+    } finally {
+      console.log = orig;
+    }
+    expect(
+      lines.some((line) => line.includes('[mesh][rtc] answer while cooling peer=aa level=4'))
+    ).toBe(true);
+  });
+
+  test('dial attempts DC while cooling only if peerInitiated', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcCalls = 0;
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      connectToPeer: async () => {
+        dcCalls += 1;
+        throw new Error('dc-fail');
+      },
+    } as unknown as RtcPeerManager;
+    const breaker = {
+      shouldTry: () => cooling,
+      snapshot: () => ({
+        cooling: true,
+        until: cooling.until,
+        failures: cooling.failures,
+        level: cooling.level,
+        lastFailureKind: 'timeout',
+        disabled: false,
+      }),
+      beginAttempt: () => undefined,
+      noteFailure: () => ({ counted: false, opened: false, open: true }),
+    } as unknown as RtcDialBreaker;
+    const scheduler = new ImmediateScheduler();
+    const dialer = new PeerDialer(
+      createPeerManagerState({
+        identity: self,
+        userStore: store,
+        uplink: dummyUplink(self, store, async () => {
+          throw new Error('no-relay');
+        }),
+        scheduler,
+        endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+      }),
+      {
+        rtc,
+        linkFactory: null,
+        wsFactory: () => {
+          throw new Error('no-ws');
+        },
+        connectTimeoutMs: 20,
+        dialLimiter: new DirectDialLimiter(4),
+        interfacesFn: () => ({}),
+        refreshLocalInterfaces: null,
+        deps: {
+          dcBreaker: breaker,
+          track: (session) => session,
+          requireTrusted: () => undefined,
+          getLink: async () => {
+            throw new Error('unused');
+          },
+          maybeUpgrade: () => undefined,
+          nextDcAttemptId: () => 'dc:1',
+          signalingFor: () => ({ send: () => undefined, onMessage: () => () => undefined }),
+          dispatchRtcWake: () => undefined,
+          releaseRtcWakeAttempt: () => undefined,
+          onLocalFingerprintChanged: () => undefined,
+          onPeerEndpointChanged: () => undefined,
+          listenPort: () => undefined,
+        },
+      }
+    );
+
+    await expect(dialer.dial(peer.nodeId)).rejects.toBeTruthy();
+    expect(dcCalls).toBe(0);
+    await expect(dialer.dial(peer.nodeId, { peerInitiated: true })).rejects.toBeTruthy();
+    expect(dcCalls).toBe(1);
   });
 });
