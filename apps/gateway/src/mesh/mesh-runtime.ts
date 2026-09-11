@@ -43,6 +43,7 @@ import { openAdaptedWsStream } from './adapted-ws-stream';
 import {
   hasLocalCgnatAddress,
   isCgnatIpv4,
+  isFakeIpv4,
   isPeerReachable,
   parseIpv6Words,
 } from './address-class';
@@ -308,7 +309,7 @@ export function isAdvertisablePeerAddress(
   if (opts?.iface && isContainerOrientedIface(opts.iface)) return false;
   const family = addr.family as string | number;
   if (family === 'IPv4' || family === 4) {
-    if (!opts?.allowCgnat && isCgnatIpv4(addr.address)) return false;
+    if (isFakeIpv4(addr.address) || (!opts?.allowCgnat && isCgnatIpv4(addr.address))) return false;
     return isAdvertisableIpv4(addr.address);
   }
   if (family === 'IPv6' || family === 6) return isAdvertisableIpv6(addr.address);

@@ -1,3 +1,4 @@
+import { debugLine } from './mesh-log';
 import type { PeerReach, PeerTransportKind } from './types';
 
 export const RTT_MATERIAL_ABS_MS = 10;
@@ -105,9 +106,41 @@ export function isCgnatIpv4(host: string): boolean {
 
 /** 198.18.0.0/15：RFC 2544 基准测试段，本机代理（Surge / Clash 等）常用作 fake-IP。 */
 export function isFakeIpv4(host: string): boolean {
-  const o = parseIpv4(host.trim());
+  const n = canonicalPeerHost(host);
+  if (!n) return false;
+  const o = parseIpv4(n);
   if (!o) return false;
   return o[0] === 198 && (o[1] === 18 || o[1] === 19);
+}
+
+export function isFakeIpv4PeerEndpoint(url: string): boolean {
+  const host = hostFromWsUrl(url);
+  return host != null && isFakeIpv4(host);
+}
+
+const fakeIpv4DialSkipLogged = new Set<string>();
+
+/**
+ * 旧节点仍会把 TUN fake-IP 写进 peer endpoints；拨号前丢掉，避免打到本机代理。
+ * `logged` 缺省为进程级集合，每个 nodeId 只打一条 debug。
+ */
+export function dropFakeIpv4PeerEndpoints(
+  endpoints: string[],
+  nodeId: string,
+  logged: Set<string> = fakeIpv4DialSkipLogged
+): string[] {
+  const kept: string[] = [];
+  const skipped: string[] = [];
+  for (const url of endpoints) {
+    if (isFakeIpv4PeerEndpoint(url)) skipped.push(url);
+    else kept.push(url);
+  }
+  if (skipped.length === 0) return kept;
+  if (!logged.has(nodeId)) {
+    logged.add(nodeId);
+    debugLine('[mesh][dial]', `skip fake-IP endpoints node=${nodeId} urls=${skipped.join(',')}`);
+  }
+  return kept;
 }
 
 /** IPv6 unique local `fc00::/7`. */

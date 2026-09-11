@@ -5,9 +5,12 @@ import {
   canonicalPeerHost,
   classifyPeerReach,
   classifyRemoteAddress,
+  dropFakeIpv4PeerEndpoints,
   hasLocalCgnatAddress,
   hostFromWsUrl,
   isCgnatIpv4,
+  isFakeIpv4,
+  isFakeIpv4PeerEndpoint,
   isIpAddressLiteral,
   isIpv4DottedLiteral,
   isIpv6Literal,
@@ -159,6 +162,14 @@ describe('CGNAT / ULA helpers and local fingerprint', () => {
     expect(isCgnatIpv4('100.63.255.255')).toBe(false);
     expect(isCgnatIpv4('100.128.0.1')).toBe(false);
     expect(isCgnatIpv4('::ffff:100.64.1.2')).toBe(true);
+    expect(isFakeIpv4('198.18.0.0')).toBe(true);
+    expect(isFakeIpv4('198.18.0.1')).toBe(true);
+    expect(isFakeIpv4('198.19.255.255')).toBe(true);
+    expect(isFakeIpv4('198.17.255.255')).toBe(false);
+    expect(isFakeIpv4('198.20.0.1')).toBe(false);
+    expect(isFakeIpv4('::ffff:198.18.0.1')).toBe(true);
+    expect(isFakeIpv4('::ffff:c612:1')).toBe(true);
+    expect(isFakeIpv4('10.0.0.1')).toBe(false);
     expect(isIpv6Ula('fc00::1')).toBe(true);
     expect(isIpv6Ula('fd12:3456:789a::1')).toBe(true);
     expect(isIpv6Ula('fe80::1')).toBe(false);
@@ -514,5 +525,52 @@ describe('unified IP classifier (per-caller semantics)', () => {
     expect(isLoopbackClientIp('::ffff:7f00:1')).toBe(false);
     expect(isLoopbackHostLiteral('::ffff:7f00:1')).toBe(false);
     expect(parseIpLiteral('::ffff:7f00:1')).toBe('::ffff:7f00:1');
+  });
+});
+
+describe('dropFakeIpv4PeerEndpoints', () => {
+  test('keeps real and hostname endpoints, drops dotted and mapped fake-IP', () => {
+    const logged = new Set<string>();
+    expect(
+      dropFakeIpv4PeerEndpoints(
+        [
+          'ws://198.18.0.1:39001/peer',
+          'ws://10.0.0.9:39001/peer',
+          'ws://[::ffff:198.19.1.2]:39001/peer',
+          'ws://hub.example:39001/peer',
+        ],
+        'node-a',
+        logged
+      )
+    ).toEqual(['ws://10.0.0.9:39001/peer', 'ws://hub.example:39001/peer']);
+    expect(isFakeIpv4PeerEndpoint('ws://198.18.0.1:39001/peer')).toBe(true);
+    expect(isFakeIpv4PeerEndpoint('ws://[::ffff:c612:1]:39001/peer')).toBe(true);
+    expect(isFakeIpv4PeerEndpoint('ws://10.0.0.9:39001/peer')).toBe(false);
+    expect(logged.has('node-a')).toBe(true);
+  });
+
+  test('logs once per node at debug when fake-IP endpoints are skipped', () => {
+    const prev = process.env.VIBETERM_LOG_LEVEL;
+    process.env.VIBETERM_LOG_LEVEL = 'debug';
+    const lines: string[] = [];
+    const origLog = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const logged = new Set<string>();
+      const fake = ['ws://198.18.0.1:39001/peer'];
+      dropFakeIpv4PeerEndpoints(fake, 'node-a', logged);
+      dropFakeIpv4PeerEndpoints(fake, 'node-a', logged);
+      dropFakeIpv4PeerEndpoints(fake, 'node-b', logged);
+      const hits = lines.filter((line) => line.includes('skip fake-IP endpoints'));
+      expect(hits).toHaveLength(2);
+      expect(hits[0]).toContain('node=node-a');
+      expect(hits[1]).toContain('node=node-b');
+    } finally {
+      console.log = origLog;
+      if (prev === undefined) delete process.env.VIBETERM_LOG_LEVEL;
+      else process.env.VIBETERM_LOG_LEVEL = prev;
+    }
   });
 });

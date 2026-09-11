@@ -9,6 +9,7 @@ import { formatSafeErrorLog } from '../auth/cookies';
 import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
+  dropFakeIpv4PeerEndpoints,
   hostFromWsUrl,
   localNetworkFingerprint,
   rankPeerEndpoints,
@@ -96,7 +97,6 @@ async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
   if ((await rtc.ready?.()) === false) throw new Error('node-datachannel is not available');
 }
 
-/** 出站拨号：DC / ws-secure 竞速、中继回退、入站握手接纳，以及直连失败的记账。 */
 export class PeerDialer {
   private readonly state: PeerManagerState;
   private readonly deps: PeerDialerDeps;
@@ -468,9 +468,11 @@ export class PeerDialer {
       }
     }
     const cached = this.state.userStore.getPeer(nodeId);
-    const parsed =
+    const parsed = dropFakeIpv4PeerEndpoints(
       opts?.endpoints ??
-      (cached ? parseEndpoints(cached.endpointsJson, this.deps.listenPort()) : []);
+        (cached ? parseEndpoints(cached.endpointsJson, this.deps.listenPort()) : []),
+      nodeId
+    );
     const endpoints = dedupeRankedPeerEndpoints(rankPeerEndpoints(parsed, this.interfacesFn()));
     if (endpoints.length === 0) {
       noteNoEndpoints(attempt);

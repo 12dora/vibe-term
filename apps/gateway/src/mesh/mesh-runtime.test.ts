@@ -36,6 +36,7 @@ import {
   createKeyLogPublisher,
   createMeshRuntime,
   createTtlCache,
+  enumeratePeerEndpoints,
   hubRoleAdvertisement,
   isAdvertisablePeerAddress,
   setHubPresenceStaleMs,
@@ -2065,6 +2066,8 @@ describe('isAdvertisablePeerAddress', () => {
       ['2600::1', 'IPv6'],
       ['fe7f::1', 'IPv6'],
       ['::2', 'IPv6'],
+      ['198.17.255.255', 'IPv4'],
+      ['198.20.0.1', 'IPv4'],
     ];
     const reject: Array<[string, string | number, boolean?]> = [
       ['10.0.0.12', 'IPv4', true],
@@ -2094,6 +2097,9 @@ describe('isAdvertisablePeerAddress', () => {
       ['fd12:3456:789a::1', 'IPv6'],
       ['100.64.0.1', 'IPv4'],
       ['100.127.255.255', 'IPv4'],
+      ['198.18.0.0', 'IPv4'],
+      ['198.18.0.1', 'IPv4'],
+      ['198.19.255.255', 'IPv4'],
     ];
     for (const [address, family] of accept) {
       expect(isAdvertisablePeerAddress(ni(address, family)), `${family} ${address}`).toBe(true);
@@ -2120,6 +2126,17 @@ describe('isAdvertisablePeerAddress', () => {
     expect(
       isAdvertisablePeerAddress(ni('100.64.1.1', 'IPv4'), { iface: 'utun0', allowCgnat: true })
     ).toBe(true);
+  });
+
+  test('rejects RFC 2544 fake-IP even on utun or with allowCgnat', () => {
+    expect(isAdvertisablePeerAddress(ni('198.18.0.1', 'IPv4'))).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('198.19.1.2', 'IPv4'), { iface: 'utun4' })).toBe(false);
+    expect(isAdvertisablePeerAddress(ni('198.18.0.1', 'IPv4'), { allowCgnat: true })).toBe(false);
+    const urls = enumeratePeerEndpoints(39001, {
+      en0: [ni('10.0.0.12', 'IPv4')],
+      utun4: [ni('198.18.0.1', 'IPv4')],
+    });
+    expect(urls).toEqual(['ws://10.0.0.12:39001/peer']);
   });
 });
 
