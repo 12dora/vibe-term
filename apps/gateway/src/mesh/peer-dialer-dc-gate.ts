@@ -1,9 +1,16 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { dcFailureReason as describeDcFailure } from './direct-failure-codes';
+import { dcDialAborted, settleAbandonedDcDial } from './peer-dial-race';
 import { type DirectAttemptRecord, hasDirectFailure, noteDcOutcome } from './peer-direct-attempt';
 import type { PeerManagerState } from './peer-manager-state';
 import type { RtcPeerManager } from './rtc';
-import { type RtcDialBreakerDecision, classifyRtcDialFailure } from './rtc/rtc-dial-breaker';
+import {
+  type RtcDialBreaker,
+  type RtcDialBreakerDecision,
+  classifyRtcDialFailure,
+  isIntentionalDcLoss,
+  rtcDialFailureMetaOf,
+} from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
 
 export async function ensureRtcReady(rtc: RtcPeerManager): Promise<void> {
@@ -63,4 +70,37 @@ export function finishDirectAttemptRecord(
 
 export function classifyDialFailureKind(reason: string): string {
   return classifyRtcDialFailure(reason);
+}
+
+export function noteDialDcFailure(input: {
+  stopped: boolean;
+  nodeId: string;
+  err: unknown;
+  connectP: Promise<{ pc: { close(): void } }> | null;
+  attemptId: string;
+  peerInitiated: boolean;
+  dcBreaker: Pick<RtcDialBreaker, 'noteFailure'>;
+}): string {
+  const reason = input.err instanceof Error ? input.err.message : String(input.err);
+  const note = (failure: unknown) => {
+    const meta = rtcDialFailureMetaOf(failure);
+    if (input.stopped || isIntentionalDcLoss(meta.reason)) return;
+    input.dcBreaker.noteFailure(
+      input.nodeId,
+      classifyRtcDialFailure(meta.reason),
+      input.attemptId,
+      undefined,
+      {
+        peerInitiated: input.peerInitiated,
+        stage: meta.stage,
+        remoteSdpApplied: meta.remoteSdpApplied,
+      }
+    );
+  };
+  if (dcDialAborted(input.err)) {
+    void settleAbandonedDcDial(input.connectP, (failure) => note(failure));
+  } else {
+    note(input.err);
+  }
+  return reason;
 }

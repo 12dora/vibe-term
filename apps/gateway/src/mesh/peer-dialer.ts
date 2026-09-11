@@ -18,17 +18,15 @@ import { stamp } from './mesh-log';
 import { parseEndpoints } from './peer-dc-upgrade';
 import {
   type DialRaceLeg,
-  dcDialAborted,
   raceForegroundDial,
   raceWsSecureDial,
   runBackgroundDirect,
-  settleAbandonedDcDial,
 } from './peer-dial-race';
 import {
-  classifyDialFailureKind,
   ensureRtcReady,
   finishDirectAttemptRecord,
   gateDcDial,
+  noteDialDcFailure,
 } from './peer-dialer-dc-gate';
 import {
   type DirectAttemptRecord,
@@ -53,7 +51,7 @@ import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
 import { type DirectDialLimiter, abortable, quiet } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import type { RtcSignaling } from './rtc/ice';
-import { type RtcDialBreaker, isIntentionalDcLoss } from './rtc/rtc-dial-breaker';
+import type { RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { rtcLog } from './rtc/rtc-log';
 import { NodeUnreachableError, type PeerTransportKind } from './types';
 
@@ -294,21 +292,15 @@ export class PeerDialer {
       unsub = null;
       return kept;
     } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err);
-      const noteDcFailure = (failure: string) => {
-        if (this.state.stopped || isIntentionalDcLoss(failure)) return;
-        this.deps.dcBreaker.noteFailure(
-          nodeId,
-          classifyDialFailureKind(failure),
-          attemptId,
-          undefined,
-          {
-            peerInitiated,
-          }
-        );
-      };
-      if (dcDialAborted(err)) void settleAbandonedDcDial(connectP, noteDcFailure);
-      else noteDcFailure(reason);
+      const reason = noteDialDcFailure({
+        stopped: this.state.stopped,
+        nodeId,
+        err,
+        connectP,
+        attemptId,
+        peerInitiated,
+        dcBreaker: this.deps.dcBreaker,
+      });
       this.releaseRtcAttempt(nodeId, unsub);
       rtcLog('dial failed', {
         peer: nodeId,
@@ -330,12 +322,12 @@ export class PeerDialer {
     const signal = this.state.stopAbort.signal;
     const existingLive = this.state.live.get(nodeId);
     const floor = existingLive ? PEER_TRANSPORT_RANK[existingLive.transport] : 0;
-    const skipDcFirst = !existingLive && this.state.lostDirect.has(nodeId);
+    const peerInitiated = opts?.peerInitiated === true;
+    const skipDcFirst = !peerInitiated && !existingLive && this.state.lostDirect.has(nodeId);
     let dcError: unknown = null;
     let dcCoolingUntil: number | null | undefined;
     const attempt = emptyDirectAttempt(this.state.scheduler.now());
     const above = (kind: PeerTransportKind) => PEER_TRANSPORT_RANK[kind] > floor;
-    const peerInitiated = opts?.peerInitiated === true;
     const tryDc = async (dcSignal: AbortSignal): Promise<LinkSession | null> => {
       const gate = gateDcDial({
         peer: nodeId,

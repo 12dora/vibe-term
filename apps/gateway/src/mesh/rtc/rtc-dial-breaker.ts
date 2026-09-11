@@ -16,6 +16,7 @@ import {
   type DialBreakerTripEvent,
 } from '../../../../../packages/shared/src/net/dial-breaker';
 import { envInt } from '../mesh-log';
+import type { RtcFailureStage } from './rtc-dial-progress';
 import { flushDialFailed, rtcLog } from './rtc-log';
 
 export const RTC_DIAL_BREAKER_FAILS = DIAL_BREAKER_FAILS;
@@ -54,6 +55,51 @@ export type RtcDialBreakerRearmEvent = {
   peer: string;
   source: DcRearmSource;
 };
+
+export type RtcDialFailureOpts = {
+  peerInitiated?: boolean;
+  stage?: RtcFailureStage;
+  remoteSdpApplied?: boolean;
+};
+
+const RTC_FAILURE_STAGES: ReadonlySet<RtcFailureStage> = new Set([
+  'gathering',
+  'no-remote-sdp',
+  'checking',
+  'dtls',
+  'handshake',
+]);
+
+function isRtcFailureStage(value: unknown): value is RtcFailureStage {
+  return typeof value === 'string' && RTC_FAILURE_STAGES.has(value as RtcFailureStage);
+}
+
+export function rtcDialFailureMetaOf(err: unknown): {
+  reason: string;
+  stage?: RtcFailureStage;
+  remoteSdpApplied?: boolean;
+} {
+  const reason = err instanceof Error ? err.message : String(err);
+  if (!err || typeof err !== 'object') return { reason };
+  const rec = err as { stage?: unknown; remoteSdpApplied?: unknown };
+  return {
+    reason,
+    stage: isRtcFailureStage(rec.stage) ? rec.stage : undefined,
+    remoteSdpApplied: typeof rec.remoteSdpApplied === 'boolean' ? rec.remoteSdpApplied : undefined,
+  };
+}
+
+/** 应答侧没等到远端 SDP 的 timeout 不算本端故障；SDP 已应用后的 dtls/handshake 超时照常计数。 */
+export function isUncountedPeerInitiatedTimeout(
+  classified: string,
+  opts?: RtcDialFailureOpts
+): boolean {
+  if (opts?.peerInitiated !== true || classified !== 'timeout') return false;
+  if (opts.remoteSdpApplied === true) return false;
+  return (
+    opts.remoteSdpApplied === false || opts.stage === 'gathering' || opts.stage === 'no-remote-sdp'
+  );
+}
 
 export type RtcDialBreakerOptions = {
   now?: () => number;
@@ -124,7 +170,7 @@ export class RtcDialBreaker {
     string,
     { lastProbeAt: number; probeArmedAt: number | null }
   >();
-  /** 应答侧 timeout 不抬档，但仍让 snapshot.lastFailureKind 看到本次 kind。 */
+  /** 应答侧未收到远端 SDP 的 timeout 不抬档，但仍让 snapshot.lastFailureKind 看到本次 kind。 */
   private readonly lastUncountedKind = new Map<string, string>();
 
   constructor(opts: RtcDialBreakerOptions = {}) {
@@ -206,16 +252,11 @@ export class RtcDialBreaker {
     kind = 'unknown',
     attemptId?: string,
     now?: number,
-    opts?: { peerInitiated?: boolean }
+    opts?: RtcDialFailureOpts
   ): RtcDialFailureResult {
     const classified = classifyRtcDialFailure(kind);
     const breakerKind = RTC_DIAL_BREAKER_SKIP_KINDS.has(classified) ? classified : kind;
-    // 应答侧没等到远端 SDP：kind 仍按今天的分类走 skipKinds 通道（记 lastFailureKind），
-    // 但不计入 consecutiveFailures / 不抬 cooldownLevel。
-    if (
-      opts?.peerInitiated === true &&
-      (classified === 'timeout' || kind.toLowerCase().includes('no-remote-sdp'))
-    ) {
+    if (isUncountedPeerInitiatedTimeout(classified, opts)) {
       this.lastUncountedKind.set(peer, breakerKind);
       const decision = this.inner.shouldTry(peer, now);
       return {

@@ -214,7 +214,7 @@ describe('RtcDialBreaker', () => {
     expect(RTC_DIAL_FORCE_PROBE_MS).toBe(600_000);
   });
 
-  test('peer-initiated no-remote-sdp timeout does not trip or escalate', () => {
+  test('peer-initiated timeout is uncounted only when no remote SDP was applied', () => {
     const trips: Array<{ level: number }> = [];
     const breaker = new RtcDialBreaker({
       now: () => 1_000,
@@ -222,13 +222,13 @@ describe('RtcDialBreaker', () => {
       onTrip: (event) => trips.push({ level: event.level }),
     });
     const peer = 'answerer';
-    for (let i = 0; i < 10; i += 1) {
-      const result = breaker.noteFailure(peer, 'timeout', `p${i}`, undefined, {
-        peerInitiated: true,
-      });
-      expect(result.counted).toBe(false);
-      expect(result.opened).toBe(false);
-    }
+    const noRemote = breaker.noteFailure(peer, 'timeout', 'no-sdp', undefined, {
+      peerInitiated: true,
+      stage: 'no-remote-sdp',
+      remoteSdpApplied: false,
+    });
+    expect(noRemote.counted).toBe(false);
+    expect(noRemote.opened).toBe(false);
     expect(breaker.shouldTry(peer)).toMatchObject({
       allow: true,
       cooling: false,
@@ -238,16 +238,30 @@ describe('RtcDialBreaker', () => {
     expect(breaker.snapshot(peer).lastFailureKind).toBe('timeout');
     expect(trips).toEqual([]);
 
-    breaker.noteFailure(peer, 'timeout', 'self-1');
-    breaker.noteFailure(peer, 'timeout', 'self-2');
-    const tripped = breaker.noteFailure(peer, 'timeout', 'self-3');
-    expect(tripped.opened).toBe(true);
-    const levelAfterTrip = breaker.shouldTry(peer).level;
-    expect(levelAfterTrip).toBe(1);
-    breaker.noteFailure(peer, 'no-remote-sdp', 'ans-1', undefined, { peerInitiated: true });
-    expect(breaker.shouldTry(peer).level).toBe(levelAfterTrip);
-    expect(breaker.shouldTry(peer).failures).toBe(3);
-    expect(breaker.snapshot(peer).lastFailureKind).toBe('no-remote-sdp');
+    const dtls = breaker.noteFailure(peer, 'timeout', 'dtls', undefined, {
+      peerInitiated: true,
+      stage: 'dtls',
+      remoteSdpApplied: true,
+    });
+    expect(dtls.counted).toBe(true);
+    const handshake = breaker.noteFailure(peer, 'timeout', 'handshake', undefined, {
+      peerInitiated: true,
+      stage: 'handshake',
+      remoteSdpApplied: true,
+    });
+    expect(handshake.counted).toBe(true);
+    expect(breaker.shouldTry(peer).failures).toBe(2);
+    expect(breaker.shouldTry(peer).cooling).toBe(false);
+
+    const third = breaker.noteFailure(peer, 'timeout', 'handshake-2', undefined, {
+      peerInitiated: true,
+      stage: 'handshake',
+      remoteSdpApplied: true,
+    });
+    expect(third.counted).toBe(true);
+    expect(third.opened).toBe(true);
+    expect(breaker.shouldTry(peer).cooling).toBe(true);
+    expect(trips).toHaveLength(1);
   });
 
   test('peer-initiated ice failures still count toward the trip', () => {

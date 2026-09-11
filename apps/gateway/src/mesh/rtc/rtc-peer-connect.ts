@@ -11,6 +11,7 @@ import {
   createRtcDialProgress,
   isRtcTimeoutFailure,
   isSupersededDcLoss,
+  rtcFailureStage,
 } from './rtc-dial-progress';
 import {
   type IceCandidateTrace,
@@ -270,11 +271,23 @@ export async function runPeerConnectAttempt(opts: {
     unsubDiag();
     hooks.untrackAndClose(pc);
     if (isRtcTimeoutFailure(reason)) {
-      throw new PeerHandshakeError(
-        'timeout',
-        timeoutFailureMessage(progress, ice, trace.localCounts, reason)
+      throw withRtcDialFailureMeta(
+        new PeerHandshakeError(
+          'timeout',
+          timeoutFailureMessage(progress, ice, trace.localCounts, reason)
+        ),
+        progress
       );
     }
-    throw err;
+    throw withRtcDialFailureMeta(err, progress);
   }
+}
+
+export function withRtcDialFailureMeta<T>(err: T, progress: RtcDialProgress): T {
+  const meta = {
+    stage: rtcFailureStage(progress),
+    remoteSdpApplied: progress.remoteDescriptionApplied,
+  };
+  if (err && typeof err === 'object') return Object.assign(err, meta);
+  return Object.assign(new Error(String(err)), meta) as T;
 }

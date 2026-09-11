@@ -256,6 +256,7 @@ const upgrade: SubHandler = async (ctx, flags, positionals) => {
       { header: 'NAME', value: (row) => row.name },
       { header: 'OUTCOME', value: (row) => row.outcome },
       { header: 'ERROR', value: (row) => dash(row.error) },
+      { header: 'HINT', value: (row) => dash(row.hint) },
     ]);
   });
   return upgradeExitCode(outcomes);

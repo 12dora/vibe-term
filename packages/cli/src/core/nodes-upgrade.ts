@@ -5,6 +5,7 @@ import { SELF_NODE_ID } from '@vibeterm/api-client/node-url';
 import { type UpgradeStatus, compareSemver } from '@vibeterm/shared';
 import { dash, sleep } from './cmd';
 import type { CliContext } from './context';
+import { AuthError } from './errors';
 import { type CookieJar, loginRequiredError } from './http';
 import { listMeshNodesFull } from './nodes-hub';
 import { isLiveNodeSession } from './session-store';
@@ -21,6 +22,7 @@ export interface UpgradeOutcome {
   outcome: 'done' | 'failed' | 'timeout' | 'alreadyLatest' | 'cancelled' | 'unconfirmed';
   version?: string | null;
   error?: string;
+  hint?: string;
 }
 
 /** 首个网关暴露远程升级的版本；更早的版本只能在本机手动升级。 */
@@ -110,9 +112,16 @@ function versionOf(nodes: MeshNode[], nodeId: string): string | null | undefined
 function outcome(
   node: MeshNode,
   kind: UpgradeOutcome['outcome'],
-  extra: { version?: string | null; error?: string } = {}
+  extra: { version?: string | null; error?: string; hint?: string } = {}
 ): UpgradeOutcome {
   return { node: node.id, name: node.name, outcome: kind, ...extra };
+}
+
+function authFailureOutcome(node: MeshNode, error: AuthError): UpgradeOutcome {
+  return outcome(node, 'failed', {
+    error: error.code ?? 'NODE_LOGIN_REQUIRED',
+    hint: error.hint,
+  });
 }
 
 function pollTerminal(
@@ -228,6 +237,17 @@ function startOutcome(
   return outcome(node, 'done', { error: start.code });
 }
 
+async function upgradeOneNode(
+  ctx: CliContext,
+  node: MeshNode,
+  latestVersion: string | null,
+  versionFlag: string | undefined,
+  wait: boolean
+): Promise<UpgradeOutcome> {
+  if (wait) return waitNodeUpgrade(ctx, node, latestVersion, versionFlag);
+  return startOutcome(node, await startNodeUpgrade(ctx, node.id, versionFlag));
+}
+
 export async function runUpgradeBatch(
   ctx: CliContext,
   targets: MeshNode[],
@@ -237,12 +257,18 @@ export async function runUpgradeBatch(
   selfId?: string
 ): Promise<UpgradeOutcome[]> {
   const outcomes: UpgradeOutcome[] = [];
+  // 多节点时单台 401 记进该行结果，不丢掉已收集的 outcome、也不跳过后面的节点。
+  const isolateAuth = targets.length > 1;
   for (const group of orderUpgradeGroups(targets, selfId)) {
     for (const node of group) {
-      if (wait) {
-        outcomes.push(await waitNodeUpgrade(ctx, node, latestVersion, versionFlag));
-      } else {
-        outcomes.push(startOutcome(node, await startNodeUpgrade(ctx, node.id, versionFlag)));
+      try {
+        outcomes.push(await upgradeOneNode(ctx, node, latestVersion, versionFlag, wait));
+      } catch (error) {
+        if (isolateAuth && error instanceof AuthError) {
+          outcomes.push(authFailureOutcome(node, error));
+          continue;
+        }
+        throw error;
       }
     }
   }

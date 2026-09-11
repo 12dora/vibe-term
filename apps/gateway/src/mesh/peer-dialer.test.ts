@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { PeerDialer } from './peer-dialer';
-import { gateDcDial } from './peer-dialer-dc-gate';
+import { gateDcDial, noteDialDcFailure } from './peer-dialer-dc-gate';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PeerManager } from './peer-manager';
 import { createPeerManagerState } from './peer-manager-state';
@@ -103,6 +104,33 @@ describe('PeerDialer peer-initiated DC while breaker cooling', () => {
   const fixtures: Array<{ close: () => void }> = [];
   afterEach(() => {
     while (fixtures.length) fixtures.pop()?.close();
+  });
+
+  test('noteDialDcFailure forwards stage and remoteSdpApplied', () => {
+    let opts: unknown;
+    const err = Object.assign(new Error('datachannel open timeout'), {
+      stage: 'dtls' as const,
+      remoteSdpApplied: true,
+    });
+    noteDialDcFailure({
+      stopped: false,
+      nodeId: 'aa',
+      err,
+      connectP: null,
+      attemptId: 'dc:1',
+      peerInitiated: true,
+      dcBreaker: {
+        noteFailure: (_peer, _kind, _id, _now, next) => {
+          opts = next;
+          return { counted: true, opened: false, open: false };
+        },
+      },
+    });
+    expect(opts).toEqual({
+      peerInitiated: true,
+      stage: 'dtls',
+      remoteSdpApplied: true,
+    });
   });
 
   test('gateDcDial skips the breaker only when peerInitiated', () => {
@@ -219,5 +247,104 @@ describe('PeerDialer peer-initiated DC while breaker cooling', () => {
     expect(dcCalls).toBe(0);
     await expect(dialer.dial(peer.nodeId, { peerInitiated: true })).rejects.toBeTruthy();
     expect(dcCalls).toBe(1);
+  });
+
+  test('peerInitiated dial starts DC even when lostDirect would skip it', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcCalls = 0;
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      connectToPeer: async () => {
+        dcCalls += 1;
+        throw new Error('dc-fail');
+      },
+    } as unknown as RtcPeerManager;
+    const breaker = {
+      shouldTry: () => ({
+        allow: true,
+        cooling: false,
+        until: null,
+        failures: 0,
+        level: 0,
+        disabled: false,
+      }),
+      snapshot: () => ({
+        cooling: false,
+        until: null,
+        failures: 0,
+        level: 0,
+        lastFailureKind: null,
+        disabled: false,
+      }),
+      beginAttempt: () => undefined,
+      noteFailure: () => ({ counted: false, opened: false, open: false }),
+    } as unknown as RtcDialBreaker;
+    const scheduler = new ImmediateScheduler();
+    const state = createPeerManagerState({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      scheduler,
+      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+    });
+    state.lostDirect.add(peer.nodeId);
+    const remotes: Array<{ close: (reason?: string) => void }> = [];
+    const dialer = new PeerDialer(state, {
+      rtc,
+      linkFactory: async () => {
+        const [local, remote] = createInMemoryLinkPair();
+        remotes.push(remote);
+        return local;
+      },
+      wsFactory: () => {
+        throw new Error('no-ws');
+      },
+      connectTimeoutMs: 20,
+      dialLimiter: new DirectDialLimiter(4),
+      interfacesFn: () => ({}),
+      refreshLocalInterfaces: null,
+      deps: {
+        dcBreaker: breaker,
+        track: (session) => session,
+        requireTrusted: () => undefined,
+        getLink: async () => {
+          throw new Error('unused');
+        },
+        maybeUpgrade: () => undefined,
+        nextDcAttemptId: () => 'dc:1',
+        signalingFor: () => ({ send: () => undefined, onMessage: () => () => undefined }),
+        dispatchRtcWake: () => undefined,
+        releaseRtcWakeAttempt: () => undefined,
+        onLocalFingerprintChanged: () => undefined,
+        onPeerEndpointChanged: () => undefined,
+        listenPort: () => undefined,
+      },
+    });
+
+    const spontaneous = await dialer.dial(peer.nodeId);
+    expect(spontaneous).toBeTruthy();
+    expect(dcCalls).toBe(0);
+    const answered = await dialer.dial(peer.nodeId, { peerInitiated: true });
+    expect(answered).toBeTruthy();
+    expect(dcCalls).toBe(1);
+    for (const remote of remotes) remote.close('test');
   });
 });

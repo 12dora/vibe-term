@@ -1636,6 +1636,62 @@ describe('PeerManager', () => {
     expect(inbox.get(large.nodeId)).toBeUndefined();
   });
 
+  test('incoming offer still starts DC when lostDirect would skip it', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    let dcCalls = 0;
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      connectToPeer: async () => {
+        dcCalls += 1;
+        throw new Error('dc-fail');
+      },
+    } as unknown as RtcPeerManager;
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () => {
+        throw new Error('no-relay');
+      }),
+      peerPort: 0,
+      startServer: false,
+      rtc,
+      linkFactory: async () => {
+        const [local, remote] = createInMemoryLinkPair();
+        fixtures.push({ close: () => remote.close('test') });
+        return local;
+      },
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    (manager as unknown as { state: { lostDirect: Set<string> } }).state.lostDirect.add(
+      peer.nodeId
+    );
+    manager.receiveRtcSignal(peer.nodeId, {
+      rtcSession: peerRtcSession(self.nodeId, peer.nodeId),
+      from: 'node',
+      to: self.nodeId,
+      sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0' }),
+    });
+    await waitUntil(() => dcCalls > 0);
+    expect(dcCalls).toBeGreaterThanOrEqual(1);
+    await waitUntil(() => manager.transportOf(peer.nodeId) === 'ws-secure');
+  });
+
   test('a forged wake does not commit cooldown so a legitimate wake can still dial', async () => {
     const clock = { ms: Date.now() };
     const { small, large, managerSmall, fake } = await setupDirectRtcPair(fixtures, {

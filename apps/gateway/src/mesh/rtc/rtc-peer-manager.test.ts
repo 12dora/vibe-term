@@ -173,6 +173,21 @@ describeRtc('RtcPeerManager', () => {
     expect(fake.connections.at(-1)?.closed).toBe(true);
   });
 
+  test('timeout errors carry failure stage and remoteSdpApplied', async () => {
+    const { left, b } = setup({ handshakeTimeoutMs: 40 });
+    const signaling: RtcSignaling = {
+      send() {},
+      onMessage() {
+        return () => {};
+      },
+    };
+    const err = await left.connectToPeer(b.nodeId, signaling).catch((caught) => caught);
+    expect(err).toBeInstanceOf(PeerHandshakeError);
+    const meta = err as { stage?: string; remoteSdpApplied?: boolean };
+    expect(meta.remoteSdpApplied).toBe(false);
+    expect(meta.stage === 'gathering' || meta.stage === 'no-remote-sdp').toBe(true);
+  });
+
   test('duplicate answers during one attempt are dropped without PC or listener leaks', async () => {
     const { left, right, a, b, fake } = setup({ handshakeTimeoutMs: 30 });
     const manager = a.nodeId.toLowerCase() < b.nodeId.toLowerCase() ? left : right;

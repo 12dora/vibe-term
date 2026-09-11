@@ -336,6 +336,74 @@ describe('vibeterm nodes', () => {
     expect(error.hint).toBe(`run: vibeterm login --node ${peer}`);
   });
 
+  test('upgrade --all 401 on first node still upgrades the rest (json + table)', async () => {
+    const first = 'b'.repeat(32);
+    const second = 'c'.repeat(32);
+    const hint = `run: vibeterm login --node ${first}`;
+    const posted: string[] = [];
+    const routes: Parameters<typeof routeFetch>[0] = {
+      'GET /api/mesh/upgrade/latest': () => ({
+        latestVersion: '2.0.9',
+        changelog: null,
+        publishedAt: null,
+      }),
+      'GET /api/mesh/nodes': () => ({
+        nodes: [
+          meshNode({ id: first, name: 'peer-a', version: '2.0.8', online: true, loggedIn: true }),
+          meshNode({ id: second, name: 'peer-b', version: '2.0.8', online: true, loggedIn: true }),
+        ],
+      }),
+      'GET /api/auth/mode': () => ({ mode: 'mesh', nodeId: NODE }),
+      [`POST /api/mesh/nodes/${first}/upgrade`]: () => {
+        posted.push(first);
+        return new Response(JSON.stringify({ code: 'NODE_LOGIN_REQUIRED', nodeId: first }), {
+          status: 401,
+        });
+      },
+      [`POST /api/mesh/nodes/${second}/upgrade`]: () => {
+        posted.push(second);
+        return new Response(JSON.stringify({ code: 'UPGRADE_ALREADY_LATEST' }), { status: 409 });
+      },
+    };
+
+    const { ctx: jsonCli, stdout: jsonOut } = await ctx(routes);
+    const jsonCode = await nodes.run(jsonCli, ['upgrade', '--all']);
+    expect(posted).toEqual([first, second]);
+    const payload = JSON.parse(jsonOut.text()) as {
+      outcomes: Array<{
+        node: string;
+        name: string;
+        outcome: string;
+        error?: string;
+        hint?: string;
+      }>;
+    };
+    expect(payload.outcomes).toEqual([
+      {
+        node: first,
+        name: 'peer-a',
+        outcome: 'failed',
+        error: 'NODE_LOGIN_REQUIRED',
+        hint,
+      },
+      expect.objectContaining({ node: second, name: 'peer-b', outcome: 'alreadyLatest' }),
+    ]);
+    expect(jsonCode).toBe(1);
+
+    posted.length = 0;
+    const { ctx: tableCli, stdout: tableOut } = await ctx(routes, false);
+    const tableCode = await nodes.run(tableCli, ['upgrade', '--all']);
+    expect(posted).toEqual([first, second]);
+    const table = tableOut.text();
+    expect(table).toContain('peer-a');
+    expect(table).toContain('peer-b');
+    expect(table).toContain('failed');
+    expect(table).toContain('alreadyLatest');
+    expect(table).toContain('NODE_LOGIN_REQUIRED');
+    expect(table).toContain(hint);
+    expect(tableCode).toBe(1);
+  });
+
   test('upgrade without --wait POSTs once', async () => {
     const { ctx: cli, stdout } = await ctx({
       'GET /api/mesh/upgrade/latest': () => ({

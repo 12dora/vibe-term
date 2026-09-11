@@ -8,6 +8,7 @@ import {
   isBatchEligible,
   orderUpgradeGroups,
   pollNodeUpgrade,
+  runUpgradeBatch,
   startNodeUpgrade,
   upgradeExitCode,
 } from './nodes-upgrade';
@@ -132,5 +133,102 @@ describe('nodes-upgrade entry cookies', () => {
     expect(error).toBeInstanceOf(AuthError);
     expect(error.exitCode).toBe(3);
     expect(error.hint).toBe(`run: vibeterm login --node ${peer}`);
+  });
+});
+
+describe('nodes-upgrade batch auth isolation', () => {
+  const dirs: string[] = [];
+  const first = 'b'.repeat(32);
+  const second = 'c'.repeat(32);
+  const targets = [row({ id: first, name: 'peer-a' }), row({ id: second, name: 'peer-b' })];
+
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  async function built(fetchImpl: Parameters<typeof testContext>[0]) {
+    const result = await testContext(fetchImpl, { json: true });
+    dirs.push(result.dir);
+    return result;
+  }
+
+  test('first-node 401 still upgrades the second and keeps both outcomes', async () => {
+    const posted: string[] = [];
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      if ((init?.method ?? 'GET').toUpperCase() !== 'POST') {
+        return jsonResponse({ error: 'Not found' }, 404);
+      }
+      posted.push(parsed.pathname);
+      if (parsed.pathname.includes(first)) {
+        return jsonResponse({ code: 'NODE_LOGIN_REQUIRED', nodeId: first }, 401);
+      }
+      return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9');
+    expect(posted).toEqual([
+      `/api/mesh/nodes/${first}/upgrade`,
+      `/api/mesh/nodes/${second}/upgrade`,
+    ]);
+    expect(outcomes).toEqual([
+      {
+        node: first,
+        name: 'peer-a',
+        outcome: 'failed',
+        error: 'NODE_LOGIN_REQUIRED',
+        hint: `run: vibeterm login --node ${first}`,
+      },
+      {
+        node: second,
+        name: 'peer-b',
+        outcome: 'alreadyLatest',
+        version: '2.0.8',
+        error: 'UPGRADE_ALREADY_LATEST',
+      },
+    ]);
+    expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('first-node 401 during poll still upgrades the second', async () => {
+    const posted: string[] = [];
+    const { ctx } = await built(async (url, init) => {
+      const parsed = new URL(url);
+      const method = (init?.method ?? 'GET').toUpperCase();
+      if (!parsed.pathname.endsWith('/upgrade')) return jsonResponse({ error: 'Not found' }, 404);
+      if (parsed.pathname.includes(first)) {
+        if (method === 'POST') return jsonResponse({ state: 'downloading' });
+        return jsonResponse({ code: 'NODE_LOGIN_REQUIRED', nodeId: first }, 401);
+      }
+      if (method === 'POST') {
+        posted.push(parsed.pathname);
+        return jsonResponse({ code: 'UPGRADE_ALREADY_LATEST' }, 409);
+      }
+      return jsonResponse({ state: 'idle' });
+    });
+
+    const outcomes = await runUpgradeBatch(ctx, targets, '2.0.9', undefined, true);
+    expect(posted).toEqual([`/api/mesh/nodes/${second}/upgrade`]);
+    expect(outcomes[0]).toEqual({
+      node: first,
+      name: 'peer-a',
+      outcome: 'failed',
+      error: 'NODE_LOGIN_REQUIRED',
+      hint: `run: vibeterm login --node ${first}`,
+    });
+    expect(outcomes[1]).toMatchObject({ node: second, name: 'peer-b', outcome: 'alreadyLatest' });
+    expect(upgradeExitCode(outcomes)).toBe(1);
+  });
+
+  test('single-target 401 still throws AuthError', async () => {
+    const { ctx } = await built(async () =>
+      jsonResponse({ code: 'NODE_LOGIN_REQUIRED', nodeId: first }, 401)
+    );
+    const error = (await runUpgradeBatch(ctx, [targets[0]], '2.0.9').catch(
+      (err) => err
+    )) as AuthError;
+    expect(error).toBeInstanceOf(AuthError);
+    expect(error.exitCode).toBe(3);
+    expect(error.hint).toBe(`run: vibeterm login --node ${first}`);
   });
 });
