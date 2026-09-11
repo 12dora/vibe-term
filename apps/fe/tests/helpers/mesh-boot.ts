@@ -107,7 +107,7 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     `VIBETERM_HUB_PUBLIC_URL=${spec.hubPublicUrl}`,
     `VIBETERM_PEER_PORT=${spec.peerPort}`,
     'VIBETERM_PEER_BIND_HOST=127.0.0.1',
-    'VIBETERM_STUN_SERVERS=',
+    'VIBETERM_STUN_SERVERS=none',
     // Playwright 的浏览器从 loopback 连过来，客户端来源会被判成 trusted-local，
     // 通行密钥二次验证等按来源收紧的策略会被整体豁免。打开信任代理之后用例可以用
     // `x-forwarded-for` 显式声明来源是公网，强路径与豁免路径都能在同一套实例上验。

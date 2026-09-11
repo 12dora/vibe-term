@@ -201,6 +201,8 @@ export type RtcSignalRouter = {
 export type CachedRtcConfig = {
   stun: string[];
   turn: unknown;
+  source?: 'node-custom' | 'node-disabled' | 'hub-custom' | 'builtin';
+  probes?: unknown;
 };
 
 export type RtcConfigProvider = {

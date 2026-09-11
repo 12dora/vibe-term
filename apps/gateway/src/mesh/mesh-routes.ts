@@ -444,10 +444,11 @@ export class MeshRoutes {
 
   private handleRtcConfig(): Response {
     const cfg = this.deps.rtcConfig?.getRtcConfig() ?? { stun: [], turn: null };
-    const probes = (cfg as { probes?: unknown }).probes;
+    const probes = cfg.probes;
     return jsonBody({
       stun: cfg.stun,
       turn: cfg.turn ?? null,
+      ...(cfg.source ? { source: cfg.source } : {}),
       ...(Array.isArray(probes) ? { probes } : {}),
     });
   }

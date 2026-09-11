@@ -213,6 +213,7 @@ async function createNodeMesh(input: {
       hubNodeId: identity?.nodeId,
       peerPort: gatewayConfig.peerPort,
       stunServers: gatewayConfig.stunServers,
+      stunSource: gatewayConfig.stunSource,
       turnUrl: gatewayConfig.turnUrl,
       turnUsername: gatewayConfig.turnUsername,
       turnCredential: gatewayConfig.turnCredential,

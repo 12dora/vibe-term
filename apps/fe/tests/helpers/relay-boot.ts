@@ -119,7 +119,7 @@ function renderAppEnv(spec: InstanceSpec, masterKey: string): string {
     'VIBETERM_HUB_PUBLIC_URL=',
     `VIBETERM_PEER_PORT=${spec.peerPort}`,
     'VIBETERM_PEER_BIND_HOST=127.0.0.1',
-    'VIBETERM_STUN_SERVERS=',
+    'VIBETERM_STUN_SERVERS=none',
     'VIBETERM_TRUST_PROXY=true',
     `VIBETERM_TMUX_SOCKET=${spec.tmuxSocket}`,
     'VIBETERM_SITE_NAME=VibeTerm',

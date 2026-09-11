@@ -6,6 +6,7 @@ import {
   rolesFromName,
   validateRoles,
 } from '@vibeterm/shared';
+import { parseStunServersEnv } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
 
 export type { VibeTermRoles };
@@ -118,16 +119,6 @@ export function parsePeerPort(raw: string | undefined): number {
     throw new Error('VIBETERM_PEER_PORT must be an integer in 1..65535');
   }
   return port;
-}
-
-export function parseStunServers(raw: string | undefined): string[] {
-  if (!raw) {
-    return [];
-  }
-  return raw
-    .split(',')
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
 }
 
 export const DEFAULT_PEER_BIND_HOSTS = ['::', '0.0.0.0'] as const;
@@ -313,6 +304,7 @@ export function resolveTunnelDir(env: NodeJS.ProcessEnv = process.env): string {
 
 const hubMode = parseHubMode(process.env.VIBETERM_HUB_MODE);
 const hubUrl = getOptionalEnv('VIBETERM_HUB_URL');
+const stunEnv = parseStunServersEnv(process.env.VIBETERM_STUN_SERVERS);
 
 export const config = {
   // 核心安全配置（生产环境建议配置，用于加密敏感字段）
@@ -388,7 +380,8 @@ export const config = {
   ),
   uplinkPreferNearest: parseUplinkPreferNearest(process.env.VIBETERM_UPLINK_PREFER_NEAREST),
   peerPort: parsePeerPort(process.env.VIBETERM_PEER_PORT),
-  stunServers: parseStunServers(process.env.VIBETERM_STUN_SERVERS),
+  stunServers: stunEnv.servers,
+  stunSource: stunEnv.source,
   peerBindHost: parsePeerBindHost(process.env.VIBETERM_PEER_BIND_HOST),
   rtcPortRange: parseRtcPortRange(process.env.VIBETERM_RTC_PORT_RANGE),
   turnUrl: getOptionalEnv('VIBETERM_TURN_URL'),

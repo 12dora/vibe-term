@@ -172,8 +172,8 @@ describe('emitRenameNodeEvent', () => {
   });
 });
 
-describe('applyUplinkNodeList STUN guard', () => {
-  test('empty hub STUN list does not blank a local lastRtc', () => {
+describe('applyUplinkNodeList STUN distribution', () => {
+  test('empty hub STUN list stores empty distributed stun (no fallback to previous)', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const hubStore = new MeshHubStore(db);
@@ -181,7 +181,7 @@ describe('applyUplinkNodeList STUN guard', () => {
       const d = applyDeps(hubStore, userStore);
       d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
       applyUplinkNodeList(d, listOf([]), () => false);
-      expect(d.state.lastRtc).toEqual({ stun: ['stun:local:3478'], turn: null });
+      expect(d.state.lastRtc).toEqual({ stun: [], turn: null });
       applyUplinkNodeList(
         d,
         { ...listOf([]), rtc: { stun: ['stun:hub:3478'], turn: null } },
@@ -193,7 +193,7 @@ describe('applyUplinkNodeList STUN guard', () => {
     }
   });
 
-  test('empty hub STUN with TURN still adopts TURN and keeps local STUN', () => {
+  test('empty hub STUN with TURN adopts TURN and empty distributed STUN', () => {
     const { db, close } = createMigratedAuthDb();
     try {
       const hubStore = new MeshHubStore(db);
@@ -202,7 +202,7 @@ describe('applyUplinkNodeList STUN guard', () => {
       d.state.lastRtc = { stun: ['stun:local:3478'], turn: null };
       const turn = { urls: ['turn:hub:3478'], username: 'u', credential: 'p' };
       applyUplinkNodeList(d, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
-      expect(d.state.lastRtc).toEqual({ stun: ['stun:local:3478'], turn });
+      expect(d.state.lastRtc).toEqual({ stun: [], turn });
 
       const fresh = applyDeps(hubStore, userStore);
       applyUplinkNodeList(fresh, { ...listOf([]), rtc: { stun: [], turn } }, () => false);

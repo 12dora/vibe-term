@@ -12,6 +12,7 @@ import {
   encodeRelayCtl,
 } from '@vibeterm/shared/relay';
 import type { AuthDb } from '../auth/types';
+import { listedStun } from '../mesh/rtc/stun-effective';
 import {
   type RelayBandwidthHandle,
   type RelayBandwidthLimiter,
@@ -166,7 +167,10 @@ export class RelayUplinkServer implements RelayUplinkHost {
   }
 
   rtcConfig(): RelayRtcConfig {
-    return { stun: [...this.config.stun], turn: this.config.turn ?? null };
+    return {
+      stun: listedStun(this.config.stun, this.config.stunSource),
+      turn: this.config.turn ?? null,
+    };
   }
 
   bindTenantRates(

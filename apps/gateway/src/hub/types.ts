@@ -1,4 +1,5 @@
 import type { KeyLogEffect, KeyLogType } from '@vibeterm/shared/auth';
+import type { StunEnvSource } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
 
 export type HubKeyLogAppendSuccess = {
@@ -38,6 +39,7 @@ export type HubTurnConfig = {
 export type HubRuntimeConfig = {
   publicUrl: string;
   stun: string[];
+  stunSource?: StunEnvSource;
   turn?: HubTurnConfig;
   nodeId?: string;
   siteName?: string;

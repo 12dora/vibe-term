@@ -1,3 +1,4 @@
+import type { StunEnvSource } from '@vibeterm/shared/net';
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
 import type { RelayPreviousToken } from './relay-token-grace';
 
@@ -50,6 +51,7 @@ export type RelayRuntimeConfig = {
   /** 中继对外地址；uplink 签名绑定其 host，redeem 时作为 `relays` 下发。 */
   publicUrl: string;
   stun: string[];
+  stunSource?: StunEnvSource;
   turn?: RelayRtcConfig['turn'];
   /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */
   adminToken?: string | null;

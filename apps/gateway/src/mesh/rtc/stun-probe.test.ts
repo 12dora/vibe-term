@@ -11,6 +11,7 @@ import {
   parseStunTarget,
   probeStunServer,
   probeStunServers,
+  rankStunByProbes,
   resetStunProbeForTest,
   setStunProbeLoopForTest,
   startMeshStunProbe,
@@ -925,5 +926,63 @@ describe('mesh STUN probe loop', () => {
     );
     await flush();
     expect(stunProbeSnapshot()).toEqual([]);
+  });
+
+  test('reordering the same STUN set does not re-probe', async () => {
+    const calls: string[][] = [];
+    loopOpts(async (urls) => {
+      calls.push([...urls]);
+      return urls.map((url) => ({ url, ok: true, rttMs: 1 }));
+    });
+    const ice = { stun: ['stun:a:1', 'stun:b:1'] };
+    const rtc = { currentIceConfig: () => ice };
+    startMeshStunProbe(rtc, { interval: () => ({ clear() {} }) });
+    await flush();
+    expect(calls).toHaveLength(1);
+    ice.stun = ['stun:b:1', 'stun:a:1'];
+    syncStunProbe(rtc);
+    await flush();
+    expect(calls).toHaveLength(1);
+  });
+});
+
+describe('rankStunByProbes', () => {
+  const now = 1_000_000;
+  const fresh = now - STUN_PROBE_INTERVAL_MS;
+  const stale = now - 2 * STUN_PROBE_INTERVAL_MS - 1;
+
+  test('fresh ok probes come first by rtt, then never-probed, then failed', () => {
+    const list = ['stun:slow:1', 'stun:never:1', 'stun:fast:1', 'stun:down:1', 'stun:stale:1'];
+    const ranked = rankStunByProbes(
+      list,
+      [
+        { url: 'stun:slow:1', ok: true, rttMs: 80, probedAt: fresh },
+        { url: 'stun:fast:1', ok: true, rttMs: 12, probedAt: fresh },
+        { url: 'stun:down:1', ok: false, rttMs: 2000, probedAt: fresh },
+        { url: 'stun:stale:1', ok: true, rttMs: 5, probedAt: stale },
+      ],
+      now
+    );
+    expect(ranked).toEqual([
+      'stun:fast:1',
+      'stun:slow:1',
+      'stun:never:1',
+      'stun:stale:1',
+      'stun:down:1',
+    ]);
+  });
+
+  test('keeps failed servers and uses the latest probe per url', () => {
+    const ranked = rankStunByProbes(
+      ['stun:a:1', 'stun:b:1'],
+      [
+        { url: 'stun:a:1', ok: false, rttMs: 10, probedAt: fresh - 10 },
+        { url: 'stun:a:1', ok: true, rttMs: 40, probedAt: fresh },
+        { url: 'stun:b:1', ok: true, rttMs: 5, probedAt: fresh - 10 },
+        { url: 'stun:b:1', ok: false, rttMs: 9, probedAt: fresh },
+      ],
+      now
+    );
+    expect(ranked).toEqual(['stun:a:1', 'stun:b:1']);
   });
 });

@@ -51,13 +51,13 @@ export function attachKeyLogHeadNotify(
 
 export type ListedRtcConfig = { stun: string[]; turn: unknown };
 
-/** STUN 空列表不能冲掉本机/上次的 stun；TURN 始终采用 hub 下发值。 */
+/** 记下 hub/中继下发的 STUN（空列表表示没有自定义列表）；TURN 始终采用下发值。 */
 export function mergeListedRtc(
-  prev: ListedRtcConfig | null,
+  _prev: ListedRtcConfig | null,
   listed: { stun: string[]; turn?: unknown }
 ): ListedRtcConfig {
   return {
-    stun: listed.stun.length > 0 ? listed.stun : (prev?.stun ?? []),
+    stun: [...listed.stun],
     turn: listed.turn ?? null,
   };
 }

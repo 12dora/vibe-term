@@ -16,7 +16,7 @@ import {
   stripHostBrackets,
   stunResolveSnapshot,
 } from './stun-resolver';
-
+export { rankStunByProbes } from './stun-rank';
 export const STUN_PROBE_TIMEOUT_MS = 2_000;
 export const STUN_PROBE_INTERVAL_MS = 10 * 60 * 1_000;
 export const STUN_PROBE_MIN_INTERVAL_MS = 30_000;
@@ -257,7 +257,7 @@ class MeshStunProbe {
 
   sync(rtc: StunProbeRtc): void {
     const urls = rtc.currentIceConfig().stun;
-    if (urls.join('\0') === this.lastKey) return;
+    if ([...urls].sort().join('\0') === this.lastKey) return;
     const min = this.opts.minIntervalMs ?? STUN_PROBE_MIN_INTERVAL_MS;
     const elapsed = (this.opts.now ?? Date.now)() - this.lastCycleAt;
     if (this.lastCycleAt > 0 && elapsed < min) {
@@ -286,7 +286,7 @@ class MeshStunProbe {
       this.waitH = null;
       const next = this.pending ?? this.rtc.currentIceConfig().stun;
       this.pending = null;
-      if (!this.stopped && next.join('\0') !== this.lastKey) void this.runCycle(next);
+      if (!this.stopped && [...next].sort().join('\0') !== this.lastKey) void this.runCycle(next);
     }, ms);
   }
 
@@ -312,7 +312,7 @@ class MeshStunProbe {
         probeStunServers([...list], { signal: this.ac.signal, now: this.opts.now }));
     for (;;) {
       if (this.stopped || this.ac.signal.aborted) return;
-      this.lastKey = current.join('\0');
+      this.lastKey = [...current].sort().join('\0');
       this.lastCycleAt = clock();
       if (process.env.NODE_ENV === 'test' && !this.opts.probeAll) return;
       let results: StunProbeResult[];
@@ -329,7 +329,7 @@ class MeshStunProbe {
       if (!this.queued) break;
       current = this.queued;
       this.queued = null;
-      if (current.join('\0') === this.lastKey) break;
+      if ([...current].sort().join('\0') === this.lastKey) break;
       const min = this.opts.minIntervalMs ?? STUN_PROBE_MIN_INTERVAL_MS;
       const wait = min - (clock() - this.lastCycleAt);
       if (wait > 0) {

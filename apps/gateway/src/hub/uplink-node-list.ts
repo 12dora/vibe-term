@@ -10,6 +10,7 @@ import { type MeshHubRecord, type MeshHubStore, pickWriterHub } from '../auth/me
 import type { AuthDb } from '../auth/types';
 import type { UserStore } from '../auth/user-store';
 import { parseJson, projectNode, upsertById } from '../mesh/node-list-projection';
+import { listedStun } from '../mesh/rtc/stun-effective';
 import { patchNode } from './node-persistence';
 import type { NodeRegistry } from './node-registry';
 import type { HubKeyLogSource, HubRuntimeConfig } from './types';
@@ -230,7 +231,10 @@ export class UplinkNodeList {
       t: 'node.list',
       version,
       key_log_head: { seq: seqToWire(head.seq), hash: bytesToB64url(head.hash) },
-      rtc: { stun: this.config.stun, turn: this.config.turn ?? null },
+      rtc: {
+        stun: listedStun(this.config.stun, this.config.stunSource),
+        turn: this.config.turn ?? null,
+      },
       nodes,
       ...(legacyHub ? { hub: legacyHub } : {}),
       ...(hubs.length > 0 ? { hubs } : {}),

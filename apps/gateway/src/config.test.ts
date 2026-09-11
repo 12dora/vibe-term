@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { validateRoles } from '@vibeterm/shared';
+import { BUILTIN_STUN_SERVERS } from '@vibeterm/shared/net';
 import {
   HUB_AUTO_PROMOTE_TIMEOUT_DEFAULT_MS,
   LINK_STREAM_INFLIGHT_DEFAULT_BYTES,
@@ -10,7 +11,6 @@ import {
   parsePeerBindHost,
   parsePeerPort,
   parseRtcPortRange,
-  parseStunServers,
   parseUplinkPreferNearest,
   parseVibeTermRoles,
   resolveTmuxBin,
@@ -35,6 +35,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   hubPeers: string[];
   peerPort: number;
   stunServers: string[];
+  stunSource: 'builtin' | 'custom' | 'disabled';
   peerBindHost: string[];
   rtcPortRange: { begin: number; end: number } | null;
   turnUrl: string | null;
@@ -70,6 +71,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         hubPeers: string[];
         peerPort: number;
         stunServers: string[];
+        stunSource: 'builtin' | 'custom' | 'disabled';
         peerBindHost: string[];
         rtcPortRange: { begin: number; end: number } | null;
         turnUrl: string | null;
@@ -261,7 +263,7 @@ describe('parsePeerBindHost', () => {
   });
 });
 
-describe('parsePeerPort / parseStunServers', () => {
+describe('parsePeerPort', () => {
   test('peer port defaults to 39001 and rejects out-of-range values', () => {
     expect(parsePeerPort(undefined)).toBe(39001);
     expect(parsePeerPort('')).toBe(39001);
@@ -269,11 +271,6 @@ describe('parsePeerPort / parseStunServers', () => {
     expect(() => parsePeerPort('0')).toThrow('VIBETERM_PEER_PORT');
     expect(() => parsePeerPort('65536')).toThrow('VIBETERM_PEER_PORT');
     expect(() => parsePeerPort('abc')).toThrow('VIBETERM_PEER_PORT');
-  });
-
-  test('stun servers split on commas and drop empty items', () => {
-    expect(parseStunServers(undefined)).toEqual([]);
-    expect(parseStunServers('stun:a, stun:b,,stun:c')).toEqual(['stun:a', 'stun:b', 'stun:c']);
   });
 });
 
@@ -304,7 +301,8 @@ describe('config hub/node env', () => {
     expect(config.roles).toEqual({ hub: false, node: false, relay: false });
     expect(config.peerPort).toBe(39001);
     expect(config.hubUrl).toBeNull();
-    expect(config.stunServers).toEqual([]);
+    expect(config.stunServers).toEqual([...BUILTIN_STUN_SERVERS]);
+    expect(config.stunSource).toBe('builtin');
     expect(config.peerBindHost).toEqual(['::', '0.0.0.0']);
     expect(config.rtcPortRange).toBeNull();
   });
@@ -334,9 +332,16 @@ describe('config hub/node env', () => {
     expect(config.hubUrl).toBe('https://hub.example');
     expect(config.hubPublicUrl).toBe('https://hub.example');
     expect(config.stunServers).toEqual(['stun:stun.l.google.com:19302']);
+    expect(config.stunSource).toBe('custom');
     expect(config.turnUrl).toBe('turn:turn.example:3478');
     expect(config.turnUsername).toBe('u');
     expect(config.turnCredential).toBe('p');
+  });
+
+  test('VIBETERM_STUN_SERVERS=none disables the local STUN list', async () => {
+    const config = await loadConfigWith({ VIBETERM_STUN_SERVERS: 'none' });
+    expect(config.stunServers).toEqual([]);
+    expect(config.stunSource).toBe('disabled');
   });
 
   test('rejects invalid VIBETERM_ROLES at config load', async () => {

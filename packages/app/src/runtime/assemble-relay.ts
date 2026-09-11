@@ -48,6 +48,7 @@ export function createAssembledRelay(input: {
     config: {
       publicUrl,
       stun: gatewayConfig.stunServers,
+      stunSource: gatewayConfig.stunSource,
       turn: relayTurnConfig(),
       adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
     },

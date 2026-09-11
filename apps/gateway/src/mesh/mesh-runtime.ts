@@ -1,6 +1,7 @@
 import os from 'node:os';
 import { canonicalHubUrl, encodeBase64url } from '@vibeterm/shared/auth';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
+import type { StunEnvSource } from '@vibeterm/shared/net';
 import type { HubAdvertisement, HubMode } from '@vibeterm/shared/uplink';
 import { notifyNodeOffline } from '../agent/node-offline-bus';
 import { dropPaneGrantsOfNode } from '../agent/pane-grant/revoke';
@@ -99,6 +100,12 @@ import {
   RtcPeerManager,
 } from './rtc';
 import { BulkTransferService, parseBulkChannelLabel } from './rtc/bulk';
+import {
+  meshRtcConfigResponse,
+  noteMeshStunConfig,
+  resolveMeshRtcConfig,
+  turnFromMesh,
+} from './rtc/stun-effective';
 import * as stunProbe from './rtc/stun-probe';
 import { authenticateRequest } from './session-middleware';
 import { sessionVerifyDeadline, sessionVerifyDue } from './session-verify-window';
@@ -139,6 +146,7 @@ export type MeshRuntimeConfig = {
   uplinkPreferNearest?: boolean | null;
   peerPort: number;
   stunServers: string[];
+  stunSource?: StunEnvSource;
   turnUrl?: string | null;
   turnUsername?: string | null;
   turnCredential?: string | null;
@@ -353,14 +361,7 @@ function resolvePeerBindHost(
 }
 
 function turnConfig(config: MeshRuntimeConfig): CachedRtcConfig['turn'] {
-  if (config.turnUrl && config.turnUsername && config.turnCredential) {
-    return {
-      url: config.turnUrl,
-      username: config.turnUsername,
-      credential: config.turnCredential,
-    };
-  }
-  return null;
+  return turnFromMesh(config);
 }
 
 function createKeyLogApplier(keys: UserKeyService, onHeadChanged?: () => void): KeyLogApplier {
@@ -565,9 +566,8 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
   const nodeEvents = new Set<(event: NodeEventPayload) => void>();
   const nodeEventDedupe = new NodeEventDedupe();
   const state = {
-    lastRtc: (config.stunServers.length
-      ? { stun: config.stunServers, turn: turnConfig(config) }
-      : null) as CachedRtcConfig | null,
+    lastRtc: { stun: [] as string[], turn: turnConfig(config) } as CachedRtcConfig | null,
+    lastStunLogKey: null as string | null,
     lastNodeList: null as UplinkNodeList | null,
     hubPresenceLive: false,
     hubPresenceStaleUntil: 0,
@@ -607,6 +607,7 @@ async function createMeshStoresAndServices(opts: CreateMeshRuntimeOptions) {
         config: {
           publicUrl: hubEndpointUrl(config),
           stun: config.stunServers,
+          stunSource: config.stunSource,
           turn: (turnConfig(config) as HubTurnConfig) ?? null,
           nodeId: identity.nodeIdHex,
           hubNodeId: identity.nodeIdHex,
@@ -679,11 +680,7 @@ function createSessionBindings(s: Awaited<ReturnType<typeof createMeshStoresAndS
   const rtc = new RtcPeerManager({
     loadNative,
     canLoadNative: opts.canLoadNative ?? (() => opts.loadNative !== undefined),
-    iceConfigProvider: () => {
-      const cached = state.lastRtc;
-      if (cached && cached.stun.length > 0) return { stun: cached.stun, turn: cached.turn };
-      return { stun: config.stunServers, turn: cached?.turn ?? turnConfig(config) };
-    },
+    iceConfigProvider: () => resolveMeshRtcConfig(config, state.lastRtc),
     identity: { nodeId: identity.nodeIdHex, edSecretKey: identity.edPrivateKey },
     userStore: s.userStore,
     handshakeTimeoutMs: opts.rtcHandshakeTimeoutMs,
@@ -824,6 +821,7 @@ type EnsureDcFn = (peerNodeId: string, rtcSession: string) => void;
 
 function handleUplinkNodeList(d: MeshDeps, list: UplinkNodeList, rejectPeer: RejectPeerFn): void {
   applyUplinkNodeList(d, list, rejectPeer);
+  noteMeshStunConfig(d.state, d.config);
   stunProbe.syncStunProbe(d.rtc);
 }
 
@@ -1309,7 +1307,7 @@ function wireMeshHttp(
     rtc: {
       fingerprint,
       signals,
-      config: { getRtcConfig: () => stunProbe.withStunProbes(state.lastRtc) },
+      config: { getRtcConfig: () => meshRtcConfigResponse(config, state.lastRtc) },
     },
     selfStatus: d.statusProvider,
     listedNames: () => {
@@ -1486,6 +1484,7 @@ function assembleMeshRuntime(
       uplink.start();
       kickHubPeerDiscovery(hub, uplink);
       stunProbe.startMeshStunProbe(rtc, d.scheduler);
+      noteMeshStunConfig(d.state, d.config);
       tlsPoll = startTlsFingerprintPoll(opts, d.scheduler, refreshTlsAndAdvertise);
     },
     async stop() {

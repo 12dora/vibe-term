@@ -61,6 +61,37 @@ describe('relay uplink auth', () => {
     expect(relay.runtime.tenants.getNode(tenant.id, node.nodeId)?.status).toBe('admitted');
   });
 
+  test('auth.ok and relay.list send empty stun when stunSource is not custom', async () => {
+    const relay = await boot({
+      config: {
+        stun: ['stun:stun.miwifi.com:3478'],
+        stunSource: 'builtin',
+      },
+    });
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    const ok = await client.inbox.takeOf('auth.ok');
+    expect(ok.t === 'auth.ok' && ok.rtc.stun).toEqual([]);
+    await client.inbox.takeOf('relay.quota');
+    const list = await client.inbox.takeOf('relay.list');
+    expect(list.t === 'relay.list' && list.rtc.stun).toEqual([]);
+  });
+
+  test('auth.ok and relay.list send stun when stunSource is custom', async () => {
+    const relay = await boot({
+      config: { stun: ['stun:custom:3478'], stunSource: 'custom' },
+    });
+    const tenant = await relay.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    const ok = await client.inbox.takeOf('auth.ok');
+    expect(ok.t === 'auth.ok' && ok.rtc.stun).toEqual(['stun:custom:3478']);
+    await client.inbox.takeOf('relay.quota');
+    const list = await client.inbox.takeOf('relay.list');
+    expect(list.t === 'relay.list' && list.rtc.stun).toEqual(['stun:custom:3478']);
+  });
+
   test('metrics 采样后向在线成员推变化后的用量', async () => {
     const relay = await boot();
     const tenant = await relay.createTenant();

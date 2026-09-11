@@ -260,6 +260,41 @@ describe('UplinkServer', () => {
     }
   });
 
+  test('node.list sends empty stun when hub stunSource is not custom', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: {
+          stun: ['stun:stun.miwifi.com:3478', 'stun:stun.l.google.com:19302'],
+          stunSource: 'builtin',
+        },
+      });
+      const node = await authNode(server, userStore, user.id);
+      expect(node.list.t === 'node.list' && node.list.rtc.stun).toEqual([]);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
+  test('node.list sends stun only when hub stunSource is custom', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server } = makeServer(db, userStore, keyLogSource, {
+        config: { stun: ['stun:custom:3478'], stunSource: 'custom' },
+      });
+      const node = await authNode(server, userStore, user.id);
+      expect(node.list.t === 'node.list' && node.list.rtc.stun).toEqual(['stun:custom:3478']);
+      server.stop();
+    } finally {
+      close();
+    }
+  });
+
   test('node.list advertises hub display name from siteName in hub_meta and nodes[]', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

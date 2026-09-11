@@ -955,6 +955,27 @@ describe('mesh-routes', () => {
       mesh.close();
     }
 
+    const withSource = await bootMesh({
+      rtc: {
+        config: {
+          getRtcConfig: () => ({
+            stun: ['stun:ex'],
+            turn: null,
+            source: 'builtin',
+          }),
+        },
+      },
+    });
+    try {
+      const { sid } = await challengeAndLogin(withSource.runtime, withSource.boot);
+      const cfg = await call(withSource.runtime, 'http://localhost/api/mesh/rtc-config', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
+      });
+      expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null, source: 'builtin' });
+    } finally {
+      withSource.close();
+    }
+
     const noRtc = await bootMesh();
     try {
       const { sid } = await challengeAndLogin(noRtc.runtime, noRtc.boot);

@@ -83,6 +83,7 @@ export interface DirectApiClientLike {
 export interface RtcConfigResponse {
   stun?: unknown;
   turn?: unknown;
+  source?: 'node-custom' | 'node-disabled' | 'hub-custom' | 'builtin';
 }
 
 /** `POST /api/rtc/authorize` 的响应。 */
