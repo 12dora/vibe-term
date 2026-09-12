@@ -49,6 +49,11 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
       peerAddress: sameLink ? (node.peerAddress ?? null) : null,
       linkSinceAt: sameLink ? (node.linkSinceAt ?? null) : null,
       directFailure: sameLink ? (node.directFailure ?? null) : null,
+      // 走哪台中继：事件带了就以事件为准（换链路时它本来就该跟着换），没带才看是不是同一条
+      // 链路——不是就清掉，否则界面会一直指着上一条链路的中继。
+      viaRelay: online ? carry(event.viaRelay, node.viaRelay, sameLink) : null,
+      // 在哪几台中继上在线是对端自己的属性，与本机挑了哪条链路无关，换链路不必清。
+      relayPresence: online ? (pick(event.relayPresence, node.relayPresence) ?? []) : [],
       inventory: event.inventory ?? node.inventory,
       version: event.version ?? versionOf(event.inventory) ?? node.version,
       direct_capable: event.direct_capable ?? node.direct_capable,
@@ -62,6 +67,12 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
 function pick<T>(fromEvent: T | undefined, previous: T | undefined): T | null {
   if (fromEvent !== undefined) return fromEvent;
   return previous ?? null;
+}
+
+/** 同 `pick`，但只在还是同一条链路时才留用上一份：换了链路，旧值就是错的。 */
+function carry<T>(fromEvent: T | undefined, previous: T | undefined, sameLink: boolean): T | null {
+  if (fromEvent !== undefined) return fromEvent;
+  return sameLink ? (previous ?? null) : null;
 }
 
 function versionOf(inventory: unknown): string | null {

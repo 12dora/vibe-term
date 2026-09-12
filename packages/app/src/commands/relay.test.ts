@@ -263,9 +263,21 @@ function pathIndex(paths: string[], path: string): number {
 const ATTACHED_STATUS = {
   mode: 'relay',
   tenantId: 'd'.repeat(32),
-  relays: [{ url: RELAY_URL, priority: 0, online: true, attached: true, rttMs: 12 }],
+  relays: [
+    {
+      url: RELAY_URL,
+      priority: 0,
+      online: true,
+      attached: true,
+      role: 'primary',
+      rttMs: 12,
+      peersOnline: 3,
+      turn: { url: 'turn:relay.example:3478?transport=udp', probeOk: true },
+    },
+  ],
   metaEpoch: 1,
   nodesViaRelay: 2,
+  multiAttach: false,
   reauthRequired: false,
 };
 
@@ -811,8 +823,9 @@ describe('relay list', () => {
     expect(logs[0]).toBe('mode: relay');
     expect(logs[1]).toBe(`tenant: ${'d'.repeat(32)}`);
     expect(logs).toContain('meta epoch: 1');
-    expect(logs.some((line) => line.includes('PRI'))).toBe(true);
-    expect(logs.some((line) => line.includes('online') && line.includes('attached'))).toBe(true);
+    expect(logs.some((line) => line.includes('PRI') && line.includes('ROLE'))).toBe(true);
+    expect(logs.some((line) => line.includes('primary') && line.includes('online'))).toBe(true);
+    expect(logs.some((line) => line.includes('PEERS') && line.includes('TURN'))).toBe(true);
   });
 
   test('--json prints the raw status body', async () => {
@@ -853,6 +866,7 @@ describe('formatting helpers', () => {
       relays: [],
       metaEpoch: 0,
       nodesViaRelay: 0,
+      multiAttach: false,
       reauthRequired: true,
       readmitPending: 0,
       raw: {},
@@ -864,5 +878,71 @@ describe('formatting helpers', () => {
   test('parseRelayHealth keeps hasPassword unknown when the relay omits it', () => {
     expect(parseRelayHealth({ ok: true, version: '1.1.23' }).hasPassword).toBeNull();
     expect(parseRelayHealth({ ok: true, hasPassword: false }).hasPassword).toBe(false);
+  });
+
+  test('formatRelayStatusLines prints ROLE / PEERS / TURN for multi-attach rows', () => {
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: 'd'.repeat(32),
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 18,
+          peersOnline: 4,
+          turn: { url: 'turn:sh.example:3478?transport=udp', probeOk: true },
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://ty.example',
+          priority: 1,
+          online: true,
+          attached: false,
+          role: 'secondary',
+          rttMs: 42,
+          peersOnline: 2,
+          turn: { url: 'turn:ty.example:3478?transport=udp', probeOk: false },
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+        {
+          url: 'https://off.example',
+          priority: 2,
+          online: false,
+          attached: false,
+          role: null,
+          rttMs: null,
+          peersOnline: null,
+          turn: null,
+          lastError: 'connect-failed',
+          lastErrorCode: 'connect-failed',
+          lastErrorAt: 1,
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 5,
+      multiAttach: true,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: {},
+    });
+    expect(lines).toContain('multi-attach: yes');
+    const header = lines.find((line) => line.includes('PRI') && line.includes('ROLE'));
+    expect(header).toContain('PEERS');
+    expect(header).toContain('TURN');
+    expect(lines.some((line) => line.includes('primary') && line.includes('18 ms'))).toBe(true);
+    expect(lines.some((line) => line.includes('secondary') && line.includes('(down)'))).toBe(true);
+    expect(lines.some((line) => line.includes('offline') && line.includes('connect-failed'))).toBe(
+      true
+    );
   });
 });

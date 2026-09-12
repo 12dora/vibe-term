@@ -13,6 +13,7 @@ import type {
 import type { MeshNodeOperation } from '@vibeterm/shared';
 import { bytesToHex, decodeBase64url, sha256 } from '@vibeterm/shared/auth';
 import { type HubAdmissionStatus, type HubNodeRow, hubAdmissionStatus } from './hub-api';
+import { relayPresenceOf, viaRelayOf } from './relay-extras';
 
 /** 公钥指纹：sha256(pk) 的前 16 个十六进制字符（8 字节）。畸形 base64url 返回空串。 */
 export function publicKeyFingerprint(publicKeyB64url: string): string {
@@ -72,6 +73,10 @@ export interface NodeRow {
   transport: MeshNodeTransport;
   /** entry ↔ node 的 ping/pong 往返毫秒数；未测得为 `null`。 */
   rttMs: number | null;
+  /** `transport === 'relay'` 时这条链路走的那台中继；其余情况（含旧网关）为 `null`。 */
+  viaRelay?: string | null;
+  /** 该对端当前在线的全部中继；旧网关或 hub 模式为空数组。 */
+  relayPresence?: string[];
   version: string | null;
   directCapable: boolean;
   loggedIn: boolean;
@@ -149,6 +154,8 @@ function toAdmittedRow(node: MeshNode, hub: HubNodeRow | null, context: MergeCon
     reach: reachOf(node.reach),
     transport: transportOf(node.transport),
     rttMs: rttOf(node.rttMs),
+    viaRelay: viaRelayOf(node.viaRelay),
+    relayPresence: relayPresenceOf(node.relayPresence),
     version: node.version ?? hub?.version ?? null,
     directCapable: node.direct_capable || (hub?.direct_capable ?? false),
     loggedIn: node.loggedIn,
@@ -212,6 +219,8 @@ function toPendingRow(row: HubNodeRow): NodeRow {
     reach: null,
     transport: null,
     rttMs: null,
+    viaRelay: null,
+    relayPresence: [],
     version: null,
     directCapable: false,
     loggedIn: false,

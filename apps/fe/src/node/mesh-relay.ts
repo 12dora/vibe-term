@@ -24,6 +24,7 @@ import {
 } from './create-polling-store';
 import { sharedMeshEvents } from './mesh-events';
 import type { MeshEventSubscriber } from './mesh-nodes';
+import { isPrimaryRelay } from './relay-extras';
 
 /** 与 hub 集合同一档：中继链路没有专属事件流，30 秒一拍。 */
 export const MESH_RELAY_POLL_MS = 30_000;
@@ -46,6 +47,7 @@ const EMPTY_STATE: MeshRelayState = {
   relays: [],
   metaEpoch: 0,
   nodesViaRelay: 0,
+  multiAttach: false,
   reauthRequired: false,
   awaitingToken: false,
   readmitPending: 0,
@@ -93,9 +95,12 @@ export async function fetchRelayMode(
   }
 }
 
-/** 本机 uplink 当前挂着的那条中继；没挂上时为 `null`。 */
+/**
+ * 本机的**主中继**：新记录的写入方、成员名册来源，也是 `POST /switch` 的目标。
+ * 多挂载下副中继照样连着，但「管理写入能不能提交」只看这一条。
+ */
 export function attachedRelay(snapshot: MeshRelayState): RelayLinkStatus | null {
-  return snapshot.relays.find((row) => row.attached) ?? null;
+  return snapshot.relays.find((row) => row.attached || isPrimaryRelay(row)) ?? null;
 }
 
 /**
@@ -130,6 +135,14 @@ export function orderedRelays(snapshot: MeshRelayState): RelayLinkStatus[] {
   return [...snapshot.relays].sort((a, b) => a.priority - b.priority || a.url.localeCompare(b.url));
 }
 
+/**
+ * 状态里有没有明说「多条同时挂载」。store 是就地合并的，这一位必须每次显式落回：
+ * 否则网关退回单挂载（或换了台旧网关）之后，界面还会按多挂载的版式画下去。
+ */
+function multiAttachOf(status: RelayTenantStatus): boolean {
+  return status.multiAttach === true;
+}
+
 // ---------------------------------------------------------------------------
 // 拉取
 // ---------------------------------------------------------------------------
@@ -155,6 +168,7 @@ export async function refreshMeshRelay(api: RelayTenantApi = defaultRelayTenantA
       if (started !== generation) return;
       store.set({
         ...status,
+        multiAttach: multiAttachOf(status),
         loading: false,
         error: null,
         unsupported: false,
@@ -189,7 +203,14 @@ export async function switchMeshRelay(
 ): Promise<void> {
   const status = await api.switchRelay(url);
   generation += 1;
-  store.set({ ...status, loading: false, error: null, unsupported: false, loadedAt: Date.now() });
+  store.set({
+    ...status,
+    multiAttach: multiAttachOf(status),
+    loading: false,
+    error: null,
+    unsupported: false,
+    loadedAt: Date.now(),
+  });
 }
 
 // ---------------------------------------------------------------------------

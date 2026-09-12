@@ -2763,7 +2763,9 @@
           "prflx": "対向検出",
           "relay": "TURN 中継"
         },
-        "unknown": "不明"
+        "unknown": "不明",
+        "transportRelayVia": "中継（{{host}} 経由）",
+        "relayPresence": "オンラインの中継"
       },
       "setup": {
         "title": "このマシンのセットアップ",
@@ -3251,7 +3253,15 @@
           "error": "エラー：{{message}}",
           "empty": "中継に接続していません。",
           "tenantId": "テナント ID",
-          "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。"
+          "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
+          "rolePrimary": "主中継",
+          "roleSecondary": "副中継",
+          "roleDetached": "未接続",
+          "peersOnline": "{{n}} 台オンライン",
+          "turn": "TURN",
+          "turnReachable": "到達可能",
+          "turnUnreachable": "到達不可",
+          "turnUnprobed": "未検査"
         },
         "linkErrors": {
           "connect-failed": "中継に接続できません",
@@ -3271,7 +3281,11 @@
           "title": "{{host}} に切り替えますか？",
           "description": "本機はこの中継経由で接続します。他のノードには影響しません。",
           "confirm": "切り替え",
-          "done": "{{host}} に切り替えました。"
+          "done": "{{host}} に切り替えました。",
+          "setPrimary": "主中継に設定",
+          "primaryTitle": "{{host}} を主中継にしますか？",
+          "primaryDescription": "本機はこの中継で新しい記録を書き込み、メンバー名簿を読み取ります。他の中継は接続を維持します。",
+          "primaryDone": "{{host}} を主中継に設定しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {
@@ -3543,6 +3557,20 @@
           "invalidBandwidth": "合計帯域の上限は 1〜{{max}} の整数（KB/s）です。空欄で無制限になります。",
           "saved": "中継の上限を更新しました。",
           "failed": "上限の更新に失敗しました：{{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "直接接続できない場合、ブラウザとノードはこの中継の TURN 経由でメディアを転送します。",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "内蔵",
+          "sourceExternal": "外部",
+          "sourceOff": "無効",
+          "stateListening": "待ち受け中",
+          "stateStopped": "待ち受けなし",
+          "stateOff": "無効",
+          "externalIp": "外部アドレス {{ip}}",
+          "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
+          "failed": "TURN を起動できません：{{message}}"
         }
       }
     },

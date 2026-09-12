@@ -368,11 +368,21 @@ export async function runRelayLeave(
   });
 }
 
+function formatRelayRole(role: RelayStatusResponse['relays'][number]['role']): string {
+  return role === 'primary' || role === 'secondary' ? role : '-';
+}
+
+function formatRelayTurn(turn: RelayStatusResponse['relays'][number]['turn']): string {
+  if (!turn?.url) return '-';
+  return turn.probeOk === false ? `${turn.url} (down)` : turn.url;
+}
+
 export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   const lines = [`mode: ${status.mode}`];
   if (status.tenantId) lines.push(`tenant: ${status.tenantId}`);
   lines.push(`meta epoch: ${status.metaEpoch}`);
   lines.push(`peers via relay: ${status.nodesViaRelay}`);
+  if (status.multiAttach) lines.push('multi-attach: yes');
   if (status.reauthRequired) lines.push('reauth required: run vibeterm relay reauth <url>');
   if (status.relays.length === 0) {
     lines.push('no relays configured');
@@ -381,12 +391,14 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   const rows = status.relays.map((relay) => [
     String(relay.priority),
     relay.url,
+    formatRelayRole(relay.role),
     relay.online ? 'online' : 'offline',
-    relay.attached ? 'attached' : '-',
     relay.rttMs == null ? '-' : `${relay.rttMs} ms`,
+    relay.peersOnline == null ? '-' : String(relay.peersOnline),
+    formatRelayTurn(relay.turn),
     relay.kicked ? 'kicked' : (relay.lastError ?? '-'),
   ]);
-  lines.push(...formatTable(['PRI', 'URL', 'STATE', 'ATTACHED', 'RTT', 'NOTE'], rows));
+  lines.push(...formatTable(['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'PEERS', 'TURN', 'NOTE'], rows));
   return lines;
 }
 

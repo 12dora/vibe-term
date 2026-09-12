@@ -69,6 +69,7 @@ import {
   NodeEventLegacySchema,
   NodeEventSchema,
   NodeEventV2Schema,
+  NodeEventV3Schema,
   PingPongSchema,
   RTC_SIGNAL_FROM_BROWSER,
   RTC_SIGNAL_FROM_NODE,
@@ -762,6 +763,8 @@ describe('mesh / hub 协议消息', () => {
       name: null,
       transport: null,
       rttMs: null,
+      viaRelay: null,
+      relayPresence: null,
     };
     const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
     expect(decoded).toEqual(data);
@@ -778,6 +781,8 @@ describe('mesh / hub 协议消息', () => {
         name: null,
         transport: null,
         rttMs: null,
+        viaRelay: null,
+        relayPresence: null,
       })
     );
     expect(offline.status).toBe(NODE_EVENT_STATUS_OFFLINE);
@@ -797,6 +802,8 @@ describe('mesh / hub 协议消息', () => {
       name: 'studio',
       transport: 'dc',
       rttMs: 7,
+      viaRelay: null,
+      relayPresence: null,
     };
     const decoded = decodePayload(NodeEventSchema, encodePayload(NodeEventSchema, data));
     expect(decoded).toEqual(data);
@@ -813,6 +820,8 @@ describe('mesh / hub 协议消息', () => {
         name: null,
         transport: null,
         rttMs: null,
+        viaRelay: null,
+        relayPresence: null,
       })
     );
     expect(omitted.version).toBeNull();
@@ -837,6 +846,8 @@ describe('mesh / hub 协议消息', () => {
       name: null,
       transport: null,
       rttMs: null,
+      viaRelay: null,
+      relayPresence: null,
     });
 
     const v2 = decodeNodeEvent(
@@ -852,19 +863,52 @@ describe('mesh / hub 协议消息', () => {
     );
     expect(v2.transport).toBeNull();
     expect(v2.rttMs).toBeNull();
+    expect(v2.viaRelay).toBeNull();
+    expect(v2.relayPresence).toBeNull();
     expect(v2.version).toBe('1.0.0');
 
     const v3 = decodeNodeEvent(
-      encodeNodeEvent({
+      encodePayload(NodeEventV3Schema, {
         nodeId: 'n4',
         status: NODE_EVENT_STATUS_ONLINE,
         reach: 'wan',
+        inventory: null,
+        version: null,
+        directCapable: null,
+        name: null,
         transport: 'ws-secure',
-        rttMs: 12.6,
+        rttMs: 13,
       })
     );
     expect(v3.transport).toBe('ws-secure');
     expect(v3.rttMs).toBe(13);
+    expect(v3.viaRelay).toBeNull();
+    expect(v3.relayPresence).toBeNull();
+
+    const v4 = decodeNodeEvent(
+      encodeNodeEvent({
+        nodeId: 'n5',
+        status: NODE_EVENT_STATUS_ONLINE,
+        reach: 'relay',
+        transport: 'relay',
+        rttMs: 40,
+        viaRelay: 'https://sh.example',
+        relayPresence: ['https://sh.example', 'https://ty.example'],
+      })
+    );
+    expect(v4.viaRelay).toBe('https://sh.example');
+    expect(v4.relayPresence).toEqual(['https://sh.example', 'https://ty.example']);
+
+    const v3Decoder = NodeEventV3Schema.deserialize(
+      encodeNodeEvent({
+        nodeId: 'n6',
+        status: NODE_EVENT_STATUS_ONLINE,
+        viaRelay: 'https://ty.example',
+        relayPresence: ['https://ty.example'],
+      })
+    );
+    expect(v3Decoder.nodeId).toBe('n6');
+    expect(v3Decoder.transport).toBeNull();
   });
 
   it('RTC_SIGNAL payload roundtrip', () => {

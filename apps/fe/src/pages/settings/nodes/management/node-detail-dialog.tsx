@@ -10,6 +10,7 @@
 // 生效，与两个草稿项的时序不同。
 
 import type { NodeRow } from '@/node/mesh-nodes';
+import { relayHostLabel, relayHostList } from '@/node/relay-extras';
 import { isValidNodeId, nodeAppPath } from '@vibeterm/api-client';
 import {
   AlertDialog,
@@ -57,6 +58,28 @@ const TRANSPORT_KEYS: Record<string, string> = {
   relay: 'nodes.badge.transportRelay',
 };
 
+export interface NodeTransportText {
+  key: string;
+  params?: { host: string };
+}
+
+/**
+ * 承载那半句。走中继且知道是哪台时写明中继主机名——多中继之后「中转」两个字已经分不清
+ * 这条链路究竟经了谁。旧网关不下发 `viaRelay`，退回原来的「中转」。
+ */
+export function nodeTransportText(row: NodeRow): NodeTransportText | null {
+  const key = row.transport ? TRANSPORT_KEYS[row.transport] : undefined;
+  if (!key) return null;
+  if (row.transport !== 'relay' || !row.viaRelay) return { key };
+  return { key: 'nodes.badge.transportRelayVia', params: { host: relayHostLabel(row.viaRelay) } };
+}
+
+/** 「在线于」那一行的值；该对端一条中继都没在线（或旧网关）时为 `null`。 */
+export function nodeRelayPresenceText(row: NodeRow): string | null {
+  const urls = row.relayPresence ?? [];
+  return urls.length > 0 ? relayHostList(urls) : null;
+}
+
 function InfoRow({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -69,7 +92,8 @@ function InfoRow({ label, children }: { label: string; children: React.ReactNode
 /** 只读信息区。单独导出：Dialog 走 portal，静态渲染只看得到这一块。 */
 export function NodeDetailInfo({ row }: { row: NodeRow }) {
   const { t } = useTranslation();
-  const transportKey = row.transport ? TRANSPORT_KEYS[row.transport] : undefined;
+  const transport = nodeTransportText(row);
+  const presence = nodeRelayPresenceText(row);
   return (
     <div className="flex flex-col gap-1.5" data-testid={`nodes-detail-info-${row.id}`}>
       <InfoRow label={t('nodes.detail.nodeId')}>
@@ -86,8 +110,13 @@ export function NodeDetailInfo({ row }: { row: NodeRow }) {
       <InfoRow label={t('nodes.columns.version')}>{row.version ?? '—'}</InfoRow>
       <InfoRow label={t('nodes.columns.reach')}>
         {row.reach ? t(`nodes.reach.${row.reach}`) : '—'}
-        {transportKey ? `｜${t(transportKey)}` : ''}
+        {transport ? `｜${t(transport.key, transport.params)}` : ''}
       </InfoRow>
+      {presence && (
+        <InfoRow label={t('nodes.badge.relayPresence')}>
+          <span data-testid={`nodes-detail-relay-presence-${row.id}`}>{presence}</span>
+        </InfoRow>
+      )}
       <InfoRow label={t('nodes.columns.lastSeen')}>
         {row.lastSeenAt ? new Date(row.lastSeenAt).toLocaleString() : '—'}
       </InfoRow>

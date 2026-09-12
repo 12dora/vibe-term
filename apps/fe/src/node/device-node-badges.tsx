@@ -31,9 +31,10 @@ import {
   hostHopExpiryDelayMs,
   linkDetailKind,
   reachLabelKey,
+  relayPresenceLabel,
   resolveLinkBadge,
   totalLatencyMs,
-  transportLabelKey,
+  transportLabel,
 } from './link-badge';
 import { refreshMeshNodes } from './mesh-nodes';
 import type { PopoverBox } from './popover-clamp';
@@ -222,7 +223,15 @@ function detailRows(
   if (kind === 'dc' || kind === 'ws-secure') {
     return addressRow('nodes.badge.peerAddress', link.peerAddress);
   }
-  if (kind === 'relay') return addressRow('nodes.badge.relayVia', link.peerAddress);
+  if (kind === 'relay') {
+    // 「中转地址」是 hub / 中继那一跳的对端地址；「在线于」说的是这台机器还能从哪几条中继摸到，
+    // 两者不是一回事：前者解释当前这条路，后者解释还剩几条退路。
+    const presence = relayPresenceLabel(link);
+    return [
+      ...addressRow('nodes.badge.relayVia', link.peerAddress),
+      ...(presence ? [{ labelKey: 'nodes.badge.relayPresence', value: presence }] : []),
+    ];
+  }
   return [];
 }
 
@@ -294,11 +303,13 @@ export function buildLinkDiagnosticRows(input: {
   if (input.isSelf === true) return rows;
 
   const kind = linkDetailKind(diagnostics.path, link.transport);
+  const transport = transportLabel(link);
   rows.unshift(
     { labelKey: 'nodes.badge.reachRow', valueKey: reachLabelKey(link.reach), mono: false },
     {
       labelKey: 'nodes.badge.transportRow',
-      valueKey: transportLabelKey(link.transport) ?? undefined,
+      valueKey: transport?.key,
+      valueParams: transport?.params,
       mono: false,
     }
   );

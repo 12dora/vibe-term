@@ -420,6 +420,18 @@ export const NodeEventV2Schema = b.struct({
   name: OptionStringSchema,
 });
 
+export const NodeEventV3Schema = b.struct({
+  nodeId: b.string(),
+  status: b.u8(),
+  reach: OptionStringSchema,
+  inventory: OptionStringSchema,
+  version: OptionStringSchema,
+  directCapable: OptionBoolSchema,
+  name: OptionStringSchema,
+  transport: OptionStringSchema,
+  rttMs: OptionU32Schema,
+});
+
 export const NodeEventSchema = b.struct({
   nodeId: b.string(),
   status: b.u8(),
@@ -430,6 +442,8 @@ export const NodeEventSchema = b.struct({
   name: OptionStringSchema,
   transport: OptionStringSchema,
   rttMs: OptionU32Schema,
+  viaRelay: OptionStringSchema,
+  relayPresence: b.option(b.vec(b.string())),
 });
 
 export type NodeEventWire = {
@@ -442,7 +456,13 @@ export type NodeEventWire = {
   name: string | null;
   transport: string | null;
   rttMs: number | null;
+  viaRelay: string | null;
+  relayPresence: string[] | null;
 };
+
+function emptyRelayFields(): { viaRelay: null; relayPresence: null } {
+  return { viaRelay: null, relayPresence: null };
+}
 
 export function encodeNodeEvent(data: {
   nodeId: string;
@@ -454,6 +474,8 @@ export function encodeNodeEvent(data: {
   name?: string | null;
   transport?: string | null;
   rttMs?: number | null;
+  viaRelay?: string | null;
+  relayPresence?: string[] | null;
 }): Uint8Array {
   const rtt = data.rttMs;
   return NodeEventSchema.serialize({
@@ -466,16 +488,26 @@ export function encodeNodeEvent(data: {
     name: data.name ?? null,
     transport: data.transport ?? null,
     rttMs: typeof rtt === 'number' && Number.isFinite(rtt) && rtt >= 0 ? Math.round(rtt) : null,
+    viaRelay: data.viaRelay ?? null,
+    relayPresence: data.relayPresence ?? null,
   });
 }
 
-// 三代帧按新→旧依次尝试；老 node 发来的帧缺后加字段时补 null。
+// 四代帧按新→旧依次尝试；老 node 发来的帧缺后加字段时补 null。zorsh 忽略尾部多余字节，2.2.x 解码器仍能解出旧字段。
 export function decodeNodeEvent(bytes: Uint8Array): NodeEventWire {
   try {
     return NodeEventSchema.deserialize(bytes);
   } catch {}
   try {
-    return { ...NodeEventV2Schema.deserialize(bytes), transport: null, rttMs: null };
+    return { ...NodeEventV3Schema.deserialize(bytes), ...emptyRelayFields() };
+  } catch {}
+  try {
+    return {
+      ...NodeEventV2Schema.deserialize(bytes),
+      transport: null,
+      rttMs: null,
+      ...emptyRelayFields(),
+    };
   } catch {}
   const legacy = NodeEventLegacySchema.deserialize(bytes);
   return {
@@ -488,6 +520,7 @@ export function decodeNodeEvent(bytes: Uint8Array): NodeEventWire {
     name: null,
     transport: null,
     rttMs: null,
+    ...emptyRelayFields(),
   };
 }
 

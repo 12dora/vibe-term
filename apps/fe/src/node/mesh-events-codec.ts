@@ -4,6 +4,7 @@
 import type { MeshNodeReach, MeshNodeTransport } from '@vibeterm/api-client/auth/index';
 import { wsBorsh } from '@vibeterm/shared';
 import { encodeBase64url } from '@vibeterm/shared/auth';
+import { relayPresenceOf, viaRelayOf } from './relay-extras';
 
 export type NodeEventStatus = 'online' | 'offline' | 'revoked';
 export type NodeReach = MeshNodeReach;
@@ -17,6 +18,14 @@ export interface NodeEventPayload {
   transport?: NodeTransport;
   /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 `null`，帧里没有为 `undefined`。 */
   rttMs?: number | null;
+  /**
+   * `transport === 'relay'` 时这条链路走的那台中继（契约 §C）。
+   * 线上编码尚未扩到这一段（`packages/shared` 的 borsh schema 还是 v3），这里先按可选透传：
+   * 帧里没有解出 `undefined`，投影时保留上一次列表里的值。
+   */
+  viaRelay?: string | null;
+  /** 该对端当前在线的全部中继地址；帧里没有为 `undefined`。 */
+  relayPresence?: string[];
   /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
   inventory: unknown;
   version?: string | null;
@@ -88,6 +97,28 @@ function rttFromWire(rttMs: unknown): number | null | undefined {
   return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0 ? rttMs : null;
 }
 
+/**
+ * 中继那两段（契约 §C）。线上是 `Option`，**没报告**与「报告了空」都编成 `null`——
+ * 老 node 的帧、hub 模式、以及新 node 一时说不清走哪台，解出来是同一个值。分不开就一律按
+ * 「没报告」处理：整个键不出现，投影侧的 `carry` / `pick` 据此留用列表里已有的值，
+ * 而不是把一台好好的机器的中继信息抹成未知。
+ *
+ * 真正的「换了链路」由 `transport` 变化带出来，那条路径本来就会清掉这两段。
+ * 名册是个数组，空数组是**确凿的**「一条中继都不在线」，与 `null` 区分得开，照原样带进去。
+ */
+export function relayFromWire(payload: { viaRelay?: unknown; relayPresence?: unknown }): {
+  viaRelay?: string;
+  relayPresence?: string[];
+} {
+  const out: { viaRelay?: string; relayPresence?: string[] } = {};
+  const via = viaRelayOf(payload.viaRelay);
+  if (via !== null) out.viaRelay = via;
+  if (Array.isArray(payload.relayPresence)) {
+    out.relayPresence = relayPresenceOf(payload.relayPresence);
+  }
+  return out;
+}
+
 function parseInventory(raw: string | null): unknown {
   if (raw == null) return null;
   try {
@@ -106,10 +137,16 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
     const envelope = wsBorsh.decodeEnvelope(data);
     if (envelope.version !== wsBorsh.CURRENT_VERSION) return null;
     if (envelope.kind === wsBorsh.KIND_NODE_EVENT) {
-      // `transport` / `rttMs` 是后加的线上字段：老 node 发来的帧里没有，解出为 undefined。
+      // `transport` / `rttMs` / `viaRelay` / `relayPresence` 都是后加的线上字段：
+      // 老 node（以及尚未扩容的 borsh schema）发来的帧里没有，解出为 undefined。
       const payload = wsBorsh.decodeNodeEvent(envelope.payload) as ReturnType<
         typeof wsBorsh.decodeNodeEvent
-      > & { transport?: unknown; rttMs?: unknown };
+      > & {
+        transport?: unknown;
+        rttMs?: unknown;
+        viaRelay?: unknown;
+        relayPresence?: unknown;
+      };
       const status = statusFromWire(payload.status);
       if (!status) return null;
       return {
@@ -120,6 +157,7 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
           reach: reachFromWire(payload.reach),
           transport: transportFromWire(payload.transport),
           rttMs: rttFromWire(payload.rttMs),
+          ...relayFromWire(payload),
           inventory: parseInventory(payload.inventory),
           version: payload.version,
           direct_capable: payload.directCapable,

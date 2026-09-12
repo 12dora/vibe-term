@@ -14,6 +14,7 @@ import { useRef, useState, useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { relayLabel } from './relay-rows';
+import { relaySwitchDoneKey } from './relay-switch-dialog';
 import { relayErrorText } from './use-relay-actions';
 
 export interface RelaySwitchState {
@@ -31,6 +32,8 @@ export interface RelaySwitchController extends RelaySwitchState {
 export interface RelaySwitchDeps {
   relayApi?: RelayTenantApi;
   onChanged?: () => void;
+  /** 多条中继同时挂载：切换改的是主中继，成功提示另走一套文案。 */
+  multiAttach?: boolean;
 }
 
 export interface RelaySwitchCoreDeps {
@@ -103,7 +106,9 @@ export function useRelaySwitch(deps: RelaySwitchDeps = {}): RelaySwitchControlle
         switchMeshRelay(url, latest.current.deps.relayApi ?? defaultRelayTenantApi),
       onDone: (relay) => {
         const cur = latest.current;
-        toast.success(cur.t('relay.tenant.switch.done', { host: relayLabel(relay.url) }));
+        toast.success(
+          cur.t(relaySwitchDoneKey(cur.deps.multiAttach === true), { host: relayLabel(relay.url) })
+        );
         cur.deps.onChanged?.();
       },
       onError: (err) => toast.error(relaySwitchErrorText(latest.current.t, err)),

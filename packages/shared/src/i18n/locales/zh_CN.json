@@ -2763,7 +2763,9 @@
           "prflx": "对端发现",
           "relay": "TURN 中转"
         },
-        "unknown": "未知"
+        "unknown": "未知",
+        "transportRelayVia": "中转（经 {{host}}）",
+        "relayPresence": "在线于"
       },
       "setup": {
         "title": "设置本机",
@@ -3251,7 +3253,15 @@
           "error": "错误：{{message}}",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
-          "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
+          "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
+          "rolePrimary": "主中继",
+          "roleSecondary": "副中继",
+          "roleDetached": "未连接",
+          "peersOnline": "{{n}} 台在线",
+          "turn": "TURN",
+          "turnReachable": "可达",
+          "turnUnreachable": "不可达",
+          "turnUnprobed": "未探测"
         },
         "linkErrors": {
           "connect-failed": "无法连接中继",
@@ -3271,7 +3281,11 @@
           "title": "切换到 {{host}}？",
           "description": "本机将改为经此中继连接，其余节点不受影响。",
           "confirm": "切换",
-          "done": "已切换到 {{host}}。"
+          "done": "已切换到 {{host}}。",
+          "setPrimary": "设为主中继",
+          "primaryTitle": "把 {{host}} 设为主中继？",
+          "primaryDescription": "本机将改用此中继写入新记录、读取成员名册，其余中继保持连接。",
+          "primaryDone": "已将 {{host}} 设为主中继。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
@@ -3543,6 +3557,20 @@
           "invalidBandwidth": "总带宽上限须为 1–{{max}} 的整数（KB/s），留空即不限。",
           "saved": "中继限额已更新。",
           "failed": "限额更新失败：{{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "直连打不通时，浏览器与节点经这台中继的 TURN 转发媒体流。",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "内置",
+          "sourceExternal": "外部",
+          "sourceOff": "关闭",
+          "stateListening": "监听中",
+          "stateStopped": "未监听",
+          "stateOff": "已关闭",
+          "externalIp": "外网地址 {{ip}}",
+          "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
+          "failed": "TURN 未能启动：{{message}}"
         }
       }
     },

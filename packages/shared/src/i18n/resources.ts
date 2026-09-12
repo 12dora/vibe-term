@@ -2774,7 +2774,9 @@ export const I18N_RESOURCES = {
           "prflx": "Peer-discovered",
           "relay": "TURN relay"
         },
-        "unknown": "unknown"
+        "unknown": "unknown",
+        "transportRelayVia": "Relay (via {{host}})",
+        "relayPresence": "Online on"
       },
       "setup": {
         "title": "Set up this machine",
@@ -3263,7 +3265,15 @@ export const I18N_RESOURCES = {
           "error": "Error: {{message}}",
           "empty": "Not connected to a relay.",
           "tenantId": "Tenant ID",
-          "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
+          "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
+          "rolePrimary": "Primary",
+          "roleSecondary": "Secondary",
+          "roleDetached": "Not connected",
+          "peersOnline": "{{n}} online",
+          "turn": "TURN",
+          "turnReachable": "Reachable",
+          "turnUnreachable": "Unreachable",
+          "turnUnprobed": "Not probed"
         },
         "linkErrors": {
           "connect-failed": "Cannot reach the relay",
@@ -3283,7 +3293,11 @@ export const I18N_RESOURCES = {
           "title": "Switch to {{host}}?",
           "description": "This machine will connect through this relay. Other nodes are unaffected.",
           "confirm": "Switch",
-          "done": "Switched to {{host}}."
+          "done": "Switched to {{host}}.",
+          "setPrimary": "Set as Primary",
+          "primaryTitle": "Set {{host}} as the primary relay?",
+          "primaryDescription": "This machine will write new records and read the member roster through this relay. The other relays stay connected.",
+          "primaryDone": "{{host}} is now the primary relay."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
@@ -3555,6 +3569,20 @@ export const I18N_RESOURCES = {
           "invalidBandwidth": "Total bandwidth must be an integer between 1 and {{max}} KB/s, or empty for no limit.",
           "saved": "Relay limits updated.",
           "failed": "Could not update limits: {{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "When a direct link fails, browsers and nodes relay media through this relay’s TURN server.",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "Built-in",
+          "sourceExternal": "External",
+          "sourceOff": "Off",
+          "stateListening": "Listening",
+          "stateStopped": "Not listening",
+          "stateOff": "Off",
+          "externalIp": "External address {{ip}}",
+          "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
+          "failed": "TURN failed to start: {{message}}"
         }
       }
     },
@@ -6390,7 +6418,9 @@ export const I18N_RESOURCES = {
           "prflx": "对端发现",
           "relay": "TURN 中转"
         },
-        "unknown": "未知"
+        "unknown": "未知",
+        "transportRelayVia": "中转（经 {{host}}）",
+        "relayPresence": "在线于"
       },
       "setup": {
         "title": "设置本机",
@@ -6878,7 +6908,15 @@ export const I18N_RESOURCES = {
           "error": "错误：{{message}}",
           "empty": "未接入中继。",
           "tenantId": "租户编号",
-          "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。"
+          "tenantIdHint": "另一台机器用中继地址、租户编号与账号密码即可加入同一租户。",
+          "rolePrimary": "主中继",
+          "roleSecondary": "副中继",
+          "roleDetached": "未连接",
+          "peersOnline": "{{n}} 台在线",
+          "turn": "TURN",
+          "turnReachable": "可达",
+          "turnUnreachable": "不可达",
+          "turnUnprobed": "未探测"
         },
         "linkErrors": {
           "connect-failed": "无法连接中继",
@@ -6898,7 +6936,11 @@ export const I18N_RESOURCES = {
           "title": "切换到 {{host}}？",
           "description": "本机将改为经此中继连接，其余节点不受影响。",
           "confirm": "切换",
-          "done": "已切换到 {{host}}。"
+          "done": "已切换到 {{host}}。",
+          "setPrimary": "设为主中继",
+          "primaryTitle": "把 {{host}} 设为主中继？",
+          "primaryDescription": "本机将改用此中继写入新记录、读取成员名册，其余中继保持连接。",
+          "primaryDone": "已将 {{host}} 设为主中继。"
         },
         "notAttached": "未连上中继，加入、移除等管理操作暂不可用。",
         "reauth": {
@@ -7170,6 +7212,20 @@ export const I18N_RESOURCES = {
           "invalidBandwidth": "总带宽上限须为 1–{{max}} 的整数（KB/s），留空即不限。",
           "saved": "中继限额已更新。",
           "failed": "限额更新失败：{{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "直连打不通时，浏览器与节点经这台中继的 TURN 转发媒体流。",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "内置",
+          "sourceExternal": "外部",
+          "sourceOff": "关闭",
+          "stateListening": "监听中",
+          "stateStopped": "未监听",
+          "stateOff": "已关闭",
+          "externalIp": "外网地址 {{ip}}",
+          "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
+          "failed": "TURN 未能启动：{{message}}"
         }
       }
     },
@@ -10005,7 +10061,9 @@ export const I18N_RESOURCES = {
           "prflx": "対向検出",
           "relay": "TURN 中継"
         },
-        "unknown": "不明"
+        "unknown": "不明",
+        "transportRelayVia": "中継（{{host}} 経由）",
+        "relayPresence": "オンラインの中継"
       },
       "setup": {
         "title": "このマシンのセットアップ",
@@ -10493,7 +10551,15 @@ export const I18N_RESOURCES = {
           "error": "エラー：{{message}}",
           "empty": "中継に接続していません。",
           "tenantId": "テナント ID",
-          "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。"
+          "tenantIdHint": "別のマシンは中継アドレス、テナント ID、アカウントのパスワードで同じテナントに参加できます。",
+          "rolePrimary": "主中継",
+          "roleSecondary": "副中継",
+          "roleDetached": "未接続",
+          "peersOnline": "{{n}} 台オンライン",
+          "turn": "TURN",
+          "turnReachable": "到達可能",
+          "turnUnreachable": "到達不可",
+          "turnUnprobed": "未検査"
         },
         "linkErrors": {
           "connect-failed": "中継に接続できません",
@@ -10513,7 +10579,11 @@ export const I18N_RESOURCES = {
           "title": "{{host}} に切り替えますか？",
           "description": "本機はこの中継経由で接続します。他のノードには影響しません。",
           "confirm": "切り替え",
-          "done": "{{host}} に切り替えました。"
+          "done": "{{host}} に切り替えました。",
+          "setPrimary": "主中継に設定",
+          "primaryTitle": "{{host}} を主中継にしますか？",
+          "primaryDescription": "本機はこの中継で新しい記録を書き込み、メンバー名簿を読み取ります。他の中継は接続を維持します。",
+          "primaryDone": "{{host}} を主中継に設定しました。"
         },
         "notAttached": "中継に接続していないため、追加や削除などの管理操作は利用できません。",
         "reauth": {
@@ -10785,6 +10855,20 @@ export const I18N_RESOURCES = {
           "invalidBandwidth": "合計帯域の上限は 1〜{{max}} の整数（KB/s）です。空欄で無制限になります。",
           "saved": "中継の上限を更新しました。",
           "failed": "上限の更新に失敗しました：{{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "直接接続できない場合、ブラウザとノードはこの中継の TURN 経由でメディアを転送します。",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "内蔵",
+          "sourceExternal": "外部",
+          "sourceOff": "無効",
+          "stateListening": "待ち受け中",
+          "stateStopped": "待ち受けなし",
+          "stateOff": "無効",
+          "externalIp": "外部アドレス {{ip}}",
+          "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
+          "failed": "TURN を起動できません：{{message}}"
         }
       }
     },

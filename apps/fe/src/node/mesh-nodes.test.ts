@@ -163,6 +163,73 @@ describe('patchNodesWithEvent', () => {
     expect(next[1].rttMs).toBe(7);
   });
 
+  test('事件带上 viaRelay / relayPresence 时就地更新，没带则留用上一份', () => {
+    const first = patchNodesWithEvent(nodes, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'relay',
+      transport: 'relay',
+      viaRelay: 'https://sh.example.com:8443',
+      relayPresence: ['https://sh.example.com:8443', 'https://tokyo.example.com'],
+      inventory: null,
+    });
+    const row = first[0] as (typeof first)[number] & {
+      viaRelay?: string | null;
+      relayPresence?: string[];
+    };
+    expect(row.viaRelay).toBe('https://sh.example.com:8443');
+    expect(row.relayPresence).toEqual(['https://sh.example.com:8443', 'https://tokyo.example.com']);
+
+    // 老 node 的帧里没有这两段：不能把已知信息清成未知
+    const kept = patchNodesWithEvent(first, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'relay',
+      transport: 'relay',
+      inventory: null,
+    });
+    const keptRow = kept[0] as (typeof kept)[number] & {
+      viaRelay?: string | null;
+      relayPresence?: string[];
+    };
+    expect(keptRow.viaRelay).toBe('https://sh.example.com:8443');
+    expect(keptRow.relayPresence).toHaveLength(2);
+  });
+
+  test('换了承载或已离线时，走哪台中继与在线名册一并清掉', () => {
+    const relayed = patchNodesWithEvent(nodes, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'relay',
+      transport: 'relay',
+      viaRelay: 'https://sh.example.com:8443',
+      relayPresence: ['https://sh.example.com:8443'],
+      inventory: null,
+    });
+    const direct = patchNodesWithEvent(relayed, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      transport: 'dc',
+      inventory: null,
+    });
+    const directRow = direct[0] as (typeof direct)[number] & { viaRelay?: string | null };
+    expect(directRow.viaRelay).toBeNull();
+
+    const offline = patchNodesWithEvent(relayed, {
+      nodeId: 'a',
+      status: 'offline',
+      reach: 'relay',
+      inventory: null,
+    });
+    const offlineRow = offline[0] as (typeof offline)[number] & {
+      viaRelay?: string | null;
+      relayPresence?: string[];
+    };
+    expect(offlineRow.viaRelay).toBeNull();
+    expect(offlineRow.relayPresence).toEqual([]);
+  });
+
   const linked = () => [
     node({
       id: 'a',

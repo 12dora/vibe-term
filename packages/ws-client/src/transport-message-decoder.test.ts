@@ -278,6 +278,8 @@ describe('decodeGatewayTransportMessage', () => {
       name: 'studio',
       transport: null,
       rttMs: null,
+      viaRelay: null,
+      relayPresence: null,
     });
     expect(decodeNodeEventMessage(payload)).toEqual({
       type: 'node-event',

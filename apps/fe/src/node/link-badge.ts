@@ -4,6 +4,7 @@
 import type { MeshNodeReach, MeshNodeTransport } from '@vibeterm/api-client/auth/index';
 import type { DirectCarrierPath } from '@vibeterm/ws-client/direct/types';
 import type { NodeLatency, NodeLink } from './direct-diagnostics';
+import { relayHostLabel, relayHostList } from './relay-extras';
 
 const REACH_LABEL_KEYS = {
   lan: 'nodes.reach.lan',
@@ -23,6 +24,30 @@ export function reachLabelKey(reach: MeshNodeReach): string {
 
 export function transportLabelKey(transport: MeshNodeTransport): string | null {
   return transport ? TRANSPORT_LABEL_KEYS[transport] : null;
+}
+
+export interface TransportLabel {
+  key: string;
+  params?: { host: string };
+}
+
+/**
+ * 承载行的文案。多中继之后「中转」两个字已经不够用了——同一张 mesh 里两条链路可能各走各的
+ * 中继，得说清这条走的是哪台。旧网关不下发 `viaRelay`，退回原来的「中转」。
+ */
+export function transportLabel(link: NodeLink): TransportLabel | null {
+  const key = transportLabelKey(link.transport);
+  if (!key) return null;
+  if (link.transport !== 'relay' || !link.viaRelay) return { key };
+  return {
+    key: 'nodes.badge.transportRelayVia',
+    params: { host: relayHostLabel(link.viaRelay) },
+  };
+}
+
+/** 「在线于」那一行：该对端当前在线的中继；只有一台也照写，看得出它够不够冗余。 */
+export function relayPresenceLabel(link: NodeLink): string | null {
+  return link.relayPresence.length > 0 ? relayHostList(link.relayPresence) : null;
 }
 
 /** 到这个数就变色。 */

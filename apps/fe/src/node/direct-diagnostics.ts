@@ -22,6 +22,7 @@ import { resolveDirectDiagnostics } from '@vibeterm/ws-client/direct/types';
 import { useMemo, useSyncExternalStore } from 'react';
 import { getMeshNodesState, subscribeMeshNodes } from './mesh-nodes';
 import { appNodeRuntimes } from './node-runtimes';
+import { relayPresenceOf, viaRelayOf } from './relay-extras';
 
 /** 浏览器 ↔ 该 node 的承载诊断。 */
 export function useDirectDiagnostics(nodeId: string): DirectDiagnostics {
@@ -44,6 +45,10 @@ export interface NodeLink {
   linkSinceAt: number | null;
   /** 最近一次直连尝试的失败原因；已直连或从未尝试为 `null`。 */
   directFailure: MeshNodeDirectFailure | null;
+  /** `transport === 'relay'` 时这条链路走的那台中继；其余情况（含旧网关）为 `null`。 */
+  viaRelay: string | null;
+  /** 该对端当前在线的全部中继；旧网关或 hub 模式为空数组。 */
+  relayPresence: string[];
 }
 
 const UNREACHABLE_LINK: NodeLink = {
@@ -53,6 +58,8 @@ const UNREACHABLE_LINK: NodeLink = {
   peerAddress: null,
   linkSinceAt: null,
   directFailure: null,
+  viaRelay: null,
+  relayPresence: [],
 };
 
 export function useNodeLink(nodeId: string): NodeLink {
@@ -71,6 +78,8 @@ export function useNodeLink(nodeId: string): NodeLink {
         ? node.linkSinceAt
         : null,
     directFailure: normalizeDirectFailure(node.directFailure),
+    viaRelay: viaRelayOf(node.viaRelay),
+    relayPresence: relayPresenceOf(node.relayPresence),
   };
 }
 

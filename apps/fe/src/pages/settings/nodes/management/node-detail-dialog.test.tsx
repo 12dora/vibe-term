@@ -22,6 +22,8 @@ const {
   domainAccessNote,
   domainAccessSwitchDisabled,
   nodeNotifySettingsPath,
+  nodeRelayPresenceText,
+  nodeTransportText,
 } = await import('./node-detail-dialog');
 const { NodeDirectBody, NodeDirectRemoveConfirm } = await import('./node-direct-section');
 const {
@@ -512,6 +514,72 @@ describe('详情正文', () => {
     const html = body({ errors: ['nodes.detail.renameFailed'] });
     expect(html).toContain(`data-testid="nodes-detail-errors-${REMOTE.id}"`);
     expect(html).toContain('nodes.detail.renameFailed');
+  });
+});
+
+describe('走哪台中继（多中继）', () => {
+  test('中继承载且知道走哪台时写明主机名，旧网关退回原来的「中转」', () => {
+    expect(
+      nodeTransportText({
+        ...REMOTE,
+        transport: 'relay',
+        viaRelay: 'https://tokyo.example.com:8443',
+      })
+    ).toEqual({ key: 'nodes.badge.transportRelayVia', params: { host: 'tokyo.example.com' } });
+    expect(nodeTransportText({ ...REMOTE, transport: 'relay' })).toEqual({
+      key: 'nodes.badge.transportRelay',
+    });
+    expect(nodeTransportText({ ...REMOTE, transport: null })).toBeNull();
+  });
+
+  test('「在线于」按主机名列出，没有名册时不出这一行', () => {
+    expect(
+      nodeRelayPresenceText({
+        ...REMOTE,
+        relayPresence: ['https://sh.example.com:8443', 'https://tokyo.example.com'],
+      })
+    ).toBe('sh.example.com、tokyo.example.com');
+    expect(nodeRelayPresenceText({ ...REMOTE, relayPresence: [] })).toBeNull();
+    expect(nodeRelayPresenceText(REMOTE)).toBeNull();
+  });
+
+  test('正文里多出「在线于」一行；旧网关一字不差还是今天的样子', () => {
+    const withPresence = renderToStaticMarkup(
+      <NodeDetailBody
+        row={{
+          ...REMOTE,
+          transport: 'relay',
+          viaRelay: 'https://tokyo.example.com:8443',
+          relayPresence: ['https://tokyo.example.com:8443'],
+        }}
+        name={REMOTE.name}
+        onNameChange={() => undefined}
+        renameAvailable
+        domainAccess={{ kind: 'ready', allowed: true, viaDomain: false, hosts: [] }}
+        allowed={true}
+        onAllowedChange={() => undefined}
+        errors={[]}
+      />
+    );
+    expect(withPresence).toContain('nodes.badge.transportRelayVia');
+    expect(withPresence).toContain(`data-testid="nodes-detail-relay-presence-${REMOTE.id}"`);
+    expect(withPresence).toContain('tokyo.example.com');
+
+    const plain = renderToStaticMarkup(
+      <NodeDetailBody
+        row={{ ...REMOTE, transport: 'relay' }}
+        name={REMOTE.name}
+        onNameChange={() => undefined}
+        renameAvailable
+        domainAccess={{ kind: 'ready', allowed: true, viaDomain: false, hosts: [] }}
+        allowed={true}
+        onAllowedChange={() => undefined}
+        errors={[]}
+      />
+    );
+    expect(plain).toContain('nodes.badge.transportRelay');
+    expect(plain).not.toContain('nodes.badge.transportRelayVia');
+    expect(plain).not.toContain('nodes-detail-relay-presence-');
   });
 });
 

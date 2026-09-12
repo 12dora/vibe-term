@@ -56,7 +56,10 @@ describe('RelayTenantApi 状态', () => {
         priority: 0,
         online: false,
         attached: false,
+        role: null,
         rttMs: null,
+        peersOnline: null,
+        turn: null,
         lastError: null,
         lastErrorCode: null,
         lastErrorAt: null,
@@ -66,6 +69,7 @@ describe('RelayTenantApi 状态', () => {
     ]);
     expect(status.metaEpoch).toBe(0);
     expect(status.nodesViaRelay).toBe(0);
+    expect(status.multiAttach).toBe(false);
     expect(status.reauthRequired).toBe(false);
     expect(status.quota).toBeNull();
   });
@@ -119,7 +123,10 @@ describe('RelayTenantApi 状态', () => {
       priority: 1,
       online: false,
       attached: false,
+      role: null,
       rttMs: null,
+      peersOnline: null,
+      turn: null,
       lastError: 'client-too-old',
       lastErrorCode: null,
       lastErrorAt: 7,
@@ -127,6 +134,81 @@ describe('RelayTenantApi 状态', () => {
       kickedReason: null,
     });
     expect(normalizeRelayStatus({ quota }).quota).toEqual({ ...quota, usage: null });
+    expect(normalizeRelayStatus({}).multiAttach).toBe(false);
+    expect(
+      normalizeRelayStatus({
+        multiAttach: true,
+        relays: [
+          {
+            url: 'https://sh.example',
+            priority: 0,
+            online: true,
+            attached: true,
+            role: 'primary',
+            rttMs: 18,
+            peersOnline: 4,
+            turn: { url: 'turn:sh.example:3478?transport=udp', probeOk: true },
+          },
+          {
+            url: 'https://ty.example',
+            priority: 1,
+            online: true,
+            attached: false,
+            role: 'secondary',
+            rttMs: 40,
+            peersOnline: 2,
+            turn: { url: 'turn:ty.example:3478?transport=udp', probeOk: false },
+          },
+        ],
+      }).relays
+    ).toEqual([
+      {
+        url: 'https://sh.example',
+        priority: 0,
+        online: true,
+        attached: true,
+        role: 'primary',
+        rttMs: 18,
+        peersOnline: 4,
+        turn: { url: 'turn:sh.example:3478?transport=udp', probeOk: true },
+        lastError: null,
+        lastErrorCode: null,
+        lastErrorAt: null,
+        kicked: false,
+        kickedReason: null,
+      },
+      {
+        url: 'https://ty.example',
+        priority: 1,
+        online: true,
+        attached: false,
+        role: 'secondary',
+        rttMs: 40,
+        peersOnline: 2,
+        turn: { url: 'turn:ty.example:3478?transport=udp', probeOk: false },
+        lastError: null,
+        lastErrorCode: null,
+        lastErrorAt: null,
+        kicked: false,
+        kickedReason: null,
+      },
+    ]);
+    expect(
+      normalizeRelayStatus({
+        relays: [
+          {
+            url: 'https://old.example',
+            priority: 0,
+            online: false,
+            attached: false,
+          },
+        ],
+      }).relays[0]
+    ).toMatchObject({
+      role: null,
+      peersOnline: null,
+      turn: null,
+    });
     expect(
       normalizeRelayStatus({
         quota: {

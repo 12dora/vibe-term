@@ -24,8 +24,10 @@ const {
   hostHopExpiryDelayMs,
   linkDetailKind,
   reachLabelKey,
+  relayPresenceLabel,
   resolveLinkBadge,
   totalLatencyMs,
+  transportLabel,
   transportLabelKey,
 } = await import('./link-badge');
 
@@ -37,6 +39,8 @@ function link(overrides: Partial<NodeLink> = {}): NodeLink {
     peerAddress: null,
     linkSinceAt: null,
     directFailure: null,
+    viaRelay: null,
+    relayPresence: [],
     ...overrides,
   };
 }
@@ -319,6 +323,43 @@ describe('reachLabelKey / transportLabelKey', () => {
   });
 });
 
+describe('transportLabel / relayPresenceLabel（多中继）', () => {
+  test('中继承载且知道走哪台时，承载行写明主机名（只写主机名，不带协议与端口）', () => {
+    expect(
+      transportLabel(link({ transport: 'relay', viaRelay: 'https://tokyo.example.com:8443' }))
+    ).toEqual({ key: 'nodes.badge.transportRelayVia', params: { host: 'tokyo.example.com' } });
+  });
+
+  test('旧网关不下发 viaRelay 时退回原来的「中转」', () => {
+    expect(transportLabel(link({ transport: 'relay' }))).toEqual({
+      key: 'nodes.badge.transportRelay',
+    });
+  });
+
+  test('非中继承载不写中继主机名，未知承载没有这一行', () => {
+    expect(
+      transportLabel(link({ transport: 'dc', viaRelay: 'https://tokyo.example.com' }))
+    ).toEqual({ key: 'nodes.badge.transportDc' });
+    expect(transportLabel(link({ transport: null }))).toBeNull();
+  });
+
+  test('地址畸形时原样展示，绝不把整行弄丢', () => {
+    expect(transportLabel(link({ transport: 'relay', viaRelay: 'not a url' }))).toEqual({
+      key: 'nodes.badge.transportRelayVia',
+      params: { host: 'not a url' },
+    });
+  });
+
+  test('「在线于」按主机名用顿号拼接；一条都没有时不出这一行', () => {
+    expect(
+      relayPresenceLabel(
+        link({ relayPresence: ['https://sh.example.com:8443', 'https://tokyo.example.com'] })
+      )
+    ).toBe('sh.example.com、tokyo.example.com');
+    expect(relayPresenceLabel(link())).toBeNull();
+  });
+});
+
 describe('linkDetailKind', () => {
   test('浏览器直连压过 entry 侧承载，其余按承载分类', () => {
     expect(linkDetailKind('direct', 'relay')).toBe('browser-direct');
@@ -340,6 +381,44 @@ describe('formatLinkSince', () => {
   test('负数 / NaN 不出行', () => {
     expect(formatLinkSince(-1)).toBeNull();
     expect(formatLinkSince(Number.NaN)).toBeNull();
+  });
+});
+
+describe('NodeLinkDiagnostics（多中继）', () => {
+  test('中转链路写明经哪台中继，并另起一行列出它还在哪几条中继上在线', () => {
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics
+        diagnostics={diagnostics()}
+        link={link({
+          reach: 'relay',
+          transport: 'relay',
+          rttMs: 90,
+          peerAddress: 'sh.example.com',
+          viaRelay: 'https://sh.example.com:8443',
+          relayPresence: ['https://sh.example.com:8443', 'https://tokyo.example.com'],
+        })}
+        latency={latency({ browserToNodeMs: 40 })}
+        now={NOW}
+      />
+    );
+    expect(html).toContain('nodes.badge.transportRelayVia');
+    expect(html).not.toContain('>nodes.badge.transportRelay<');
+    expect(html).toContain('nodes.badge.relayPresence');
+    expect(html).toContain('sh.example.com、tokyo.example.com');
+  });
+
+  test('旧网关不下发这两段时，浮层与今天一模一样', () => {
+    const html = renderToStaticMarkup(
+      <NodeLinkDiagnostics
+        diagnostics={diagnostics()}
+        link={link({ reach: 'relay', transport: 'relay', peerAddress: 'hub.example.com' })}
+        latency={latency({ browserToNodeMs: 40 })}
+        now={NOW}
+      />
+    );
+    expect(html).toContain('nodes.badge.transportRelay');
+    expect(html).not.toContain('nodes.badge.transportRelayVia');
+    expect(html).not.toContain('nodes.badge.relayPresence');
   });
 });
 

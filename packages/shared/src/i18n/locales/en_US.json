@@ -2768,7 +2768,9 @@
           "prflx": "Peer-discovered",
           "relay": "TURN relay"
         },
-        "unknown": "unknown"
+        "unknown": "unknown",
+        "transportRelayVia": "Relay (via {{host}})",
+        "relayPresence": "Online on"
       },
       "setup": {
         "title": "Set up this machine",
@@ -3257,7 +3259,15 @@
           "error": "Error: {{message}}",
           "empty": "Not connected to a relay.",
           "tenantId": "Tenant ID",
-          "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password."
+          "tenantIdHint": "Another machine joins the same tenant with the relay address, tenant ID and account password.",
+          "rolePrimary": "Primary",
+          "roleSecondary": "Secondary",
+          "roleDetached": "Not connected",
+          "peersOnline": "{{n}} online",
+          "turn": "TURN",
+          "turnReachable": "Reachable",
+          "turnUnreachable": "Unreachable",
+          "turnUnprobed": "Not probed"
         },
         "linkErrors": {
           "connect-failed": "Cannot reach the relay",
@@ -3277,7 +3287,11 @@
           "title": "Switch to {{host}}?",
           "description": "This machine will connect through this relay. Other nodes are unaffected.",
           "confirm": "Switch",
-          "done": "Switched to {{host}}."
+          "done": "Switched to {{host}}.",
+          "setPrimary": "Set as Primary",
+          "primaryTitle": "Set {{host}} as the primary relay?",
+          "primaryDescription": "This machine will write new records and read the member roster through this relay. The other relays stay connected.",
+          "primaryDone": "{{host}} is now the primary relay."
         },
         "notAttached": "No relay connected; joining and removing nodes are unavailable.",
         "reauth": {
@@ -3549,6 +3563,20 @@
           "invalidBandwidth": "Total bandwidth must be an integer between 1 and {{max}} KB/s, or empty for no limit.",
           "saved": "Relay limits updated.",
           "failed": "Could not update limits: {{message}}"
+        },
+        "turn": {
+          "title": "TURN",
+          "hint": "When a direct link fails, browsers and nodes relay media through this relay’s TURN server.",
+          "sub": "{{mode}} · {{state}}",
+          "sourceBuiltin": "Built-in",
+          "sourceExternal": "External",
+          "sourceOff": "Off",
+          "stateListening": "Listening",
+          "stateStopped": "Not listening",
+          "stateOff": "Off",
+          "externalIp": "External address {{ip}}",
+          "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
+          "failed": "TURN failed to start: {{message}}"
         }
       }
     },

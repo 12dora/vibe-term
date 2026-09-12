@@ -1,13 +1,25 @@
-// 中继链路：一条一行。行内只留两样东西——地址与一枚状态徽标；错误按稳定错误码查表，
-// 原始错误串（`ECONNRESET` 之类）从不上屏。
+// 中继链路：一条一行。错误按稳定错误码查表，原始错误串（`ECONNRESET` 之类）从不上屏。
 //
-// 多于一条时行本身是选择器：当前挂载的那条高亮，点其余任意一条即切过去。
+// 两种形态（判据见 `relay-row-model.ts` 的 `isMultiAttachView`）：
+// - 单条中继 / 旧网关：行内只留地址与一枚状态徽标；多于一条时行本身是选择器，点哪条切哪条。
+// - 多条同时挂载：每条都连着，行不再是单选——各自摆身份、延迟、在线对端数与 TURN，
+//   行尾一个「设为主中继」，主中继那条禁用。
 
 import type { RelayLinkErrorCode, RelayLinkStatus } from '@vibeterm/api-client/relay/tenant-api';
 import { cn } from '@vibeterm/ui';
 import { Badge } from '@vibeterm/ui/badge';
+import { Button } from '@vibeterm/ui/button';
 import { Check } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
+import {
+  type RelayBadgeSpec,
+  canSetPrimary,
+  isMultiAttachView,
+  relayPeersBadge,
+  relayRoleBadge,
+  relayRttBadge,
+  relayTurnChip,
+} from './relay-row-model';
 
 /** 行首正文：主机名（带端口）；地址畸形时退回原串。 */
 export function relayLabel(url: string): string {
@@ -51,11 +63,13 @@ export function relayFailing(relay: RelayLinkStatus): boolean {
 
 export interface RelayRowsProps {
   relays: RelayLinkStatus[];
-  /** 传了且多于一条时行可选：点非当前那条即请求切过去。 */
+  /** 传了且多于一条时可切主：单挂载形态是点行，多挂载形态是行尾的按钮。 */
   onSelect?: (relay: RelayLinkStatus) => void;
+  /** 网关报告本机同时挂着多条中继；缺席（旧网关）按单挂载渲染。 */
+  multiAttach?: boolean;
 }
 
-export function RelayRows({ relays, onSelect }: RelayRowsProps) {
+export function RelayRows({ relays, onSelect, multiAttach }: RelayRowsProps) {
   const { t } = useTranslation();
   if (relays.length === 0) {
     return (
@@ -64,12 +78,52 @@ export function RelayRows({ relays, onSelect }: RelayRowsProps) {
       </p>
     );
   }
+  const multi = isMultiAttachView(multiAttach, relays);
   const selectable = relays.length > 1 && onSelect !== undefined;
   return (
     <div className="flex flex-col gap-1" data-testid="nodes-relay-rows">
-      {relays.map((relay) => (
-        <RelayRow key={relay.url} relay={relay} selectable={selectable} onSelect={onSelect} />
-      ))}
+      {relays.map((relay) =>
+        multi ? (
+          <RelayAttachedRow key={relay.url} relay={relay} onSelect={onSelect} />
+        ) : (
+          <RelayRow key={relay.url} relay={relay} selectable={selectable} onSelect={onSelect} />
+        )
+      )}
+    </div>
+  );
+}
+
+/** 行外壳：`data-*` 是各屏单测与 e2e 的抓手，两种形态共用同一套。 */
+function RelayRowShell({
+  relay,
+  host,
+  children,
+}: {
+  relay: RelayLinkStatus;
+  host: string;
+  children: React.ReactNode;
+}) {
+  const { t } = useTranslation();
+  const errorKey = relayLinkErrorKey(relay);
+  return (
+    <div
+      className="flex flex-col gap-0.5"
+      data-testid={`nodes-relay-row-${host}`}
+      data-relay-attached={relay.attached ? 'true' : 'false'}
+      data-relay-online={relay.online ? 'true' : 'false'}
+      data-relay-failing={relayFailing(relay) ? 'true' : 'false'}
+    >
+      {children}
+      {relay.kicked && (
+        <span className="text-[11px] text-destructive" data-testid={`nodes-relay-kicked-${host}`}>
+          {t('relay.tenant.strip.kicked')}
+        </span>
+      )}
+      {errorKey && (
+        <span className="text-[11px] text-destructive" data-testid={`nodes-relay-error-${host}`}>
+          {t('relay.tenant.strip.error', { message: t(errorKey) })}
+        </span>
+      )}
     </div>
   );
 }
@@ -83,18 +137,10 @@ function RelayRow({
   selectable: boolean;
   onSelect?: (relay: RelayLinkStatus) => void;
 }) {
-  const { t } = useTranslation();
   const host = relayLabel(relay.url);
-  const errorKey = relayLinkErrorKey(relay);
   const line = <RelayLine relay={relay} host={host} current={selectable && relay.attached} />;
   return (
-    <div
-      className="flex flex-col gap-0.5"
-      data-testid={`nodes-relay-row-${host}`}
-      data-relay-attached={relay.attached ? 'true' : 'false'}
-      data-relay-online={relay.online ? 'true' : 'false'}
-      data-relay-failing={relayFailing(relay) ? 'true' : 'false'}
-    >
+    <RelayRowShell relay={relay} host={host}>
       {selectable && !relay.attached ? (
         <button
           type="button"
@@ -112,17 +158,80 @@ function RelayRow({
           {line}
         </span>
       )}
-      {relay.kicked && (
-        <span className="text-[11px] text-destructive" data-testid={`nodes-relay-kicked-${host}`}>
-          {t('relay.tenant.strip.kicked')}
+    </RelayRowShell>
+  );
+}
+
+/** 多条同时挂载时的一行：身份 / 延迟 / 在线对端数 / TURN 各一枚，行尾一个「设为主中继」。 */
+function RelayAttachedRow({
+  relay,
+  onSelect,
+}: {
+  relay: RelayLinkStatus;
+  onSelect?: (relay: RelayLinkStatus) => void;
+}) {
+  const { t } = useTranslation();
+  const host = relayLabel(relay.url);
+  const role = relayRoleBadge(relay);
+  const rtt = relayRttBadge(relay);
+  const peers = relayPeersBadge(relay);
+  const turn = relayTurnChip(relay);
+  return (
+    <RelayRowShell relay={relay} host={host}>
+      <span
+        className="flex flex-wrap items-center gap-2 py-0.5"
+        data-relay-role={role.key}
+        aria-current={relay.attached ? 'true' : undefined}
+      >
+        <span
+          className={cn(
+            'min-w-0 truncate rounded-md bg-muted px-1.5 py-0.5 font-mono text-[11px]',
+            relay.attached && 'ring-1 ring-primary'
+          )}
+          data-testid={`nodes-relay-host-${host}`}
+        >
+          {host}
         </span>
-      )}
-      {errorKey && (
-        <span className="text-[11px] text-destructive" data-testid={`nodes-relay-error-${host}`}>
-          {t('relay.tenant.strip.error', { message: t(errorKey) })}
-        </span>
-      )}
-    </div>
+        <RowBadge spec={role} testId={`nodes-relay-role-${host}`} />
+        {rtt && <RowBadge spec={rtt} testId={`nodes-relay-rtt-${host}`} />}
+        {peers && <RowBadge spec={peers} testId={`nodes-relay-peers-${host}`} />}
+        {turn && (
+          <span
+            className={cn(
+              'inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-[11px] leading-none',
+              turn.reachable === false ? 'border-destructive/40 text-destructive' : 'border-border'
+            )}
+            data-testid={`nodes-relay-turn-${host}`}
+          >
+            <span className="text-muted-foreground">{t('relay.tenant.strip.turn')}</span>
+            <span className="min-w-0 truncate font-mono">{turn.endpoint}</span>
+            <span className="text-muted-foreground">{t(turn.verdictKey)}</span>
+          </span>
+        )}
+        {onSelect && (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            className="ml-auto"
+            disabled={!canSetPrimary(relay)}
+            onClick={() => onSelect(relay)}
+            data-testid={`nodes-relay-switch-${host}`}
+          >
+            {t('relay.tenant.switch.setPrimary')}
+          </Button>
+        )}
+      </span>
+    </RelayRowShell>
+  );
+}
+
+function RowBadge({ spec, testId }: { spec: RelayBadgeSpec; testId: string }) {
+  const { t } = useTranslation();
+  return (
+    <Badge variant={spec.variant} data-testid={testId}>
+      {t(spec.key, spec.params)}
+    </Badge>
   );
 }
 

@@ -36,7 +36,10 @@ export type RelayStatusRelay = {
   priority: number;
   online: boolean;
   attached: boolean;
+  role: 'primary' | 'secondary' | null;
   rttMs: number | null;
+  peersOnline: number | null;
+  turn: { url: string; probeOk: boolean | null } | null;
   lastError: string | null;
   lastErrorCode: string | null;
   lastErrorAt: number | null;
@@ -49,6 +52,7 @@ export type RelayStatusResponse = {
   relays: RelayStatusRelay[];
   metaEpoch: number;
   nodesViaRelay: number;
+  multiAttach: boolean;
   reauthRequired: boolean;
   readmitPending: number;
   raw: Record<string, unknown>;
@@ -284,14 +288,25 @@ export async function signAndSubmitRelayRecord(
   }
 }
 
+function relayTurnFromJson(value: unknown): RelayStatusRelay['turn'] {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  if (typeof raw.url !== 'string' || !raw.url) return null;
+  return { url: raw.url, probeOk: typeof raw.probeOk === 'boolean' ? raw.probeOk : null };
+}
+
 function relayRowFromJson(value: unknown): RelayStatusRelay {
   const raw = (value ?? {}) as Record<string, unknown>;
+  const role = raw.role;
   return {
     url: asText(raw.url),
     priority: asNumber(raw.priority),
     online: raw.online === true,
     attached: raw.attached === true,
+    role: role === 'primary' || role === 'secondary' ? role : null,
     rttMs: typeof raw.rttMs === 'number' ? raw.rttMs : null,
+    peersOnline: typeof raw.peersOnline === 'number' ? raw.peersOnline : null,
+    turn: relayTurnFromJson(raw.turn),
     lastError: typeof raw.lastError === 'string' ? raw.lastError : null,
     lastErrorCode: typeof raw.lastErrorCode === 'string' ? raw.lastErrorCode : null,
     lastErrorAt: typeof raw.lastErrorAt === 'number' ? raw.lastErrorAt : null,
@@ -307,6 +322,7 @@ export function parseRelayStatus(body: Record<string, unknown>): RelayStatusResp
     relays: Array.isArray(body.relays) ? body.relays.map(relayRowFromJson) : [],
     metaEpoch: asNumber(body.metaEpoch),
     nodesViaRelay: asNumber(body.nodesViaRelay),
+    multiAttach: body.multiAttach === true,
     reauthRequired: body.reauthRequired === true,
     readmitPending: asNumber(body.readmitPending),
     raw: body,

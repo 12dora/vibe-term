@@ -9,6 +9,8 @@ import { Badge } from '@vibeterm/ui/badge';
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useSearchParams } from 'react-router';
+import { relayTurnStatusOf } from '../relay/relay-turn-model';
+import { RelayTurnTile } from '../relay/relay-turn-tile';
 import { CopyableValue, Row } from './copy-feedback';
 import { RelayServiceMetrics } from './relay/relay-service-metrics';
 import { UnsetAddress } from './uplink/hub-uplink-panel';
@@ -37,6 +39,8 @@ export function useOpenRelayConsole(): () => void {
 export function RelayServiceSection({ service }: RelayServiceSectionProps) {
   const { t } = useTranslation();
   const openConsole = useOpenRelayConsole();
+  // 契约 §D：旧中继不下发 `turn`，这一格整块不出现。
+  const turn = relayTurnStatusOf(service.turn);
   return (
     <div className="flex flex-col gap-3" data-testid="local-relay-service">
       <Row label={t('nodes.machine.relayServiceAddress')}>
@@ -54,6 +58,12 @@ export function RelayServiceSection({ service }: RelayServiceSectionProps) {
           </Badge>
         </span>
       </Row>
+
+      {turn && (
+        <div className="sm:max-w-xs">
+          <RelayTurnTile turn={turn} />
+        </div>
+      )}
 
       <RelayServiceMetrics
         publicUrl={service.publicUrl}

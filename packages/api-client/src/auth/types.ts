@@ -303,6 +303,10 @@ export interface MeshNode {
   transport?: MeshNodeTransport;
   /** entry ↔ node 最近一次 ping/pong 往返毫秒数；未测得为 null。 */
   rttMs?: number | null;
+  /** `transport==='relay'` 时实际经过的中继公网 URL；直连或未知为缺省 / null。 */
+  viaRelay?: string | null;
+  /** 对端当前在线的中继 URL；hub 模式不下发，多中继下可能为空数组。 */
+  relayPresence?: string[];
   /** 当前链路的对端地址：`ws-secure` / `dc` 为对端主机，`relay` 为 hub 主机；未知为 null。 */
   peerAddress?: string | null;
   /** 当前这条链路建立的时刻（epoch 毫秒）；未知为 null。 */

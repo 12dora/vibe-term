@@ -3,7 +3,8 @@
 // 操作分三级：主按钮「追加中继」是常用且无损的；重新输入接入密码 / 逐条移除收进「更多」，
 // 它们低频且各自带确认；「离开中继」单独摆在右侧的危险区，它会让本机与各节点一起失去上级。
 //
-// 多条中继时切换不在菜单里：链路行本身就是选择器，点哪条就切到哪条。
+// 多条中继时切换不在菜单里：单挂载下链路行本身就是选择器，点哪条就切到哪条；
+// 多条同时挂载时行不再是单选，改由行尾的「设为主中继」发起（见 `relay-rows.tsx`）。
 
 import type { UseMeshRelayResult } from '@/node/mesh-relay';
 import { Button } from '@vibeterm/ui/button';
@@ -65,11 +66,12 @@ export function RelayUplinkPanel({
 }: RelayUplinkPanelProps) {
   const { t } = useTranslation();
   const { refresh } = relay;
-  const switching = useRelaySwitch({ onChanged: refresh });
+  const multiAttach = relay.multiAttach === true;
+  const switching = useRelaySwitch({ onChanged: refresh, multiAttach });
   return (
     <div className="flex flex-col gap-3" data-testid="local-uplink-relay-panel">
-      <RelayRows relays={relay.ordered} onSelect={switching.request} />
-      <RelaySwitchDialog controller={switching} />
+      <RelayRows relays={relay.ordered} onSelect={switching.request} multiAttach={multiAttach} />
+      <RelaySwitchDialog controller={switching} multiAttach={multiAttach} />
       <RelayNoticeList relay={relay} actions={actions} />
       {!relay.unsupported && (
         <>

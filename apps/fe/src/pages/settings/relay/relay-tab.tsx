@@ -20,6 +20,8 @@ import { RelayLimitsDialog } from './relay-limits-dialog';
 import { RelayAdminMenu } from './relay-menus';
 import { RelayMetricsPanel } from './relay-metrics-panel';
 import { useRelayMetrics } from './relay-metrics-store';
+import { relayTurnStatusOf } from './relay-turn-model';
+import { RelayTurnTile } from './relay-turn-tile';
 import {
   DeleteTenantConfirm,
   KickTenantConfirm,
@@ -147,11 +149,22 @@ function RelayTabBody({
   if (selectedTenantId !== null && selectedTenant === null) setSelectedTenantId(null);
   const clearSelection = () => setSelectedTenantId(null);
 
+  // 契约 §D：旧中继不下发这一段，整块不出现。
+  const turn = relayTurnStatusOf((status as RelayStatusResponse & { turn?: unknown }).turn);
+
   return (
     <>
       <Reveal>
         <RelayMetricsPanel metrics={metrics} />
       </Reveal>
+
+      {turn && (
+        <Reveal delayMs={30}>
+          <div className="sm:max-w-xs">
+            <RelayTurnTile turn={turn} stale={relay.error !== null} />
+          </div>
+        </Reveal>
+      )}
 
       <Reveal delayMs={60}>
         <TenantsCard

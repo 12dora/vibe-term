@@ -19,6 +19,7 @@ import {
   onFirstTerminalPaint,
   resetFirstTerminalPaintForTest,
 } from './mesh-events';
+import { relayFromWire } from './mesh-events-codec';
 
 function nodeEventFrame(payload: {
   nodeId: string;
@@ -925,5 +926,58 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
     recover();
     expect(sockets).toHaveLength(1);
     source.stop();
+  });
+});
+
+describe('NODE_EVENT 的中继两段（契约 §C）', () => {
+  test('线上的 null 分不清「没报告」与「报告了空」：一律按没报告，键不出现', () => {
+    expect(relayFromWire({})).toEqual({});
+    expect(relayFromWire({ viaRelay: null, relayPresence: null })).toEqual({});
+    expect(relayFromWire({ viaRelay: '' })).toEqual({});
+  });
+
+  test('带了就归一化；名册的空数组是确凿的「一条都不在线」，照原样带进去', () => {
+    expect(
+      relayFromWire({
+        viaRelay: 'https://sh.example.com:8443',
+        relayPresence: ['https://sh.example.com:8443', '', 7],
+      })
+    ).toEqual({
+      viaRelay: 'https://sh.example.com:8443',
+      relayPresence: ['https://sh.example.com:8443'],
+    });
+    expect(relayFromWire({ relayPresence: [] })).toEqual({ relayPresence: [] });
+  });
+
+  test('新帧解得出这两段；老 node 的帧里没有，解出来一个键都不多', () => {
+    const decode = (data: Parameters<typeof wsBorsh.encodeNodeEvent>[0]) =>
+      decodeMeshFrame(
+        wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, wsBorsh.encodeNodeEvent(data), 0)
+      );
+
+    const carried = decode({
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'relay',
+      transport: 'relay',
+      viaRelay: 'https://tokyo.example.com:8443',
+      relayPresence: ['https://tokyo.example.com:8443'],
+    });
+    expect(carried?.kind === 'node-event' ? carried.payload.viaRelay : null).toBe(
+      'https://tokyo.example.com:8443'
+    );
+    expect(carried?.kind === 'node-event' ? carried.payload.relayPresence : null).toEqual([
+      'https://tokyo.example.com:8443',
+    ]);
+
+    const plain = decode({
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'relay',
+      transport: 'relay',
+    });
+    const payload = plain?.kind === 'node-event' ? plain.payload : null;
+    expect(payload && 'viaRelay' in payload).toBe(false);
+    expect(payload && 'relayPresence' in payload).toBe(false);
   });
 });
