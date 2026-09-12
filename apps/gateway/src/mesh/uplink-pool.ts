@@ -490,6 +490,11 @@ export class UplinkPool {
     return this.attached;
   }
 
+  /** 候选由 `opts.candidates()` 惰性读库，这里只按新候选数重算 RTT 探测节奏，不动在线客户端。 */
+  refreshCandidates(): void {
+    this.syncRttProbe();
+  }
+
   candidates(): UplinkCandidate[] {
     const list = this.opts.candidates();
     const base = list.length > 0 ? list : [fallbackCandidate()];

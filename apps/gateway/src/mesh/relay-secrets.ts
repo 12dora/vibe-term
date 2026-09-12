@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import type { StoredRelayList } from '@vibeterm/shared/auth';
 import { encodeBase64url } from '@vibeterm/shared/auth';
 import { type WrapEntry, findWrapEntry, unwrapKeyForNode } from '@vibeterm/shared/relay';
@@ -11,7 +12,11 @@ import {
 } from '../auth/mesh-relay-store';
 import type { AuthDb } from '../auth/types';
 import { stamp } from './mesh-log';
-import { readPreferredRelayUrl, writePreferredRelayUrl } from './relay-preferred';
+import {
+  orderRelaysByPreferred,
+  readPreferredRelayUrl,
+  writePreferredRelayUrl,
+} from './relay-preferred';
 
 export const RELAY_PENDING_KEY_TTL_MS = 10 * 60 * 1000;
 export const RELAY_PENDING_KEY_LIMIT = 8;
@@ -25,10 +30,25 @@ export type PendingRelayKeys = {
 
 export type RelayReconcileResult = {
   kind: UplinkKind;
-  /** 中继目标（url/priority）发生变化，需要重建 uplink 池。 */
+  /** 池会选中的那条主中继（url/tenantId/token）变了，或 hub↔relay 翻转，必须重建 uplink 池。 */
+  primaryChanged: boolean;
+  /** 只有 secondary 行增删或优先级重排，主链路不受影响。 */
+  rowsChanged: boolean;
+  /** `primaryChanged || rowsChanged`，保留给只关心「有无变化」的调用方。 */
   targetsChanged: boolean;
   metaEpoch: number;
 };
+
+type RelayTargetsFingerprint = {
+  primary: string;
+  rows: string;
+  rowKeys: Set<string>;
+};
+
+function relayRowKey(relay: StoredRelayList['relays'][number], kind: UplinkKind): string {
+  const token = createHash('sha256').update(relay.token).digest('base64url');
+  return `${kind}|${relay.url}|${relay.tenantId}|${token}`;
+}
 
 export type RelaySecretsOptions = {
   db: AuthDb;
@@ -53,7 +73,8 @@ export class RelaySecrets {
   private readonly metaCache = new Map<number, Uint8Array>();
   private logKeyCache: Uint8Array | null = null;
   private metaEpoch = 0;
-  private lastTargetsKey = '';
+  private lastPrimaryKey = '';
+  private lastRowsKey = '';
 
   constructor(opts: RelaySecretsOptions) {
     this.db = opts.db;
@@ -141,15 +162,35 @@ export class RelaySecrets {
     const kind: UplinkKind = projection.relays ? 'relay' : 'hub';
     await this.writeTargets(projection.relays, now);
     if (this.store.uplinkKind() !== kind) this.store.setUplinkKind(kind);
-    const targetsKey = this.targetsKey();
-    const targetsChanged = targetsKey !== this.lastTargetsKey;
-    this.lastTargetsKey = targetsKey;
-    return { kind, targetsChanged, metaEpoch: this.metaEpoch };
+    const print = this.targetsFingerprint(projection.relays, kind);
+    // 主中继行原样还在（只是被新的 preferred / priority 挤下第一位）时不算主链路变化：
+    // 池此刻连的就是它，重启只会白白排空在途流，让 nearest-switch 自己决定要不要 promote。
+    const primaryChanged =
+      print.primary !== this.lastPrimaryKey && !print.rowKeys.has(this.lastPrimaryKey);
+    const rowsChanged = print.rows !== this.lastRowsKey;
+    this.lastPrimaryKey = print.primary;
+    this.lastRowsKey = print.rows;
+    return {
+      kind,
+      primaryChanged,
+      rowsChanged,
+      targetsChanged: primaryChanged || rowsChanged,
+      metaEpoch: this.metaEpoch,
+    };
   }
 
-  private targetsKey(): string {
-    const rows = this.store.listRelayRows();
-    return `${this.store.uplinkKind()}|${rows.map((row) => `${row.priority}:${row.url}`).join(',')}`;
+  private targetsFingerprint(
+    list: StoredRelayList | null,
+    kind: UplinkKind
+  ): RelayTargetsFingerprint {
+    const relays = list ? [...list.relays].sort((a, b) => a.priority - b.priority) : [];
+    const keyed = relays.map((relay) => ({ url: relay.url, key: relayRowKey(relay, kind) }));
+    const preferredFirst = orderRelaysByPreferred(keyed, this.preferredRelayUrl());
+    return {
+      primary: preferredFirst[0]?.key ?? `${kind}|`,
+      rows: `${kind}|${relays.map((relay, i) => `${relay.priority}:${keyed[i]?.key ?? ''}`).join(',')}`,
+      rowKeys: new Set(keyed.map((row) => row.key)),
+    };
   }
 
   private async writeTargets(list: StoredRelayList | null, now: number): Promise<void> {

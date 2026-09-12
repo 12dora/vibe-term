@@ -22,6 +22,7 @@ import {
   type UplinkPoolOptions,
   defaultProbeHealthz,
 } from './uplink-pool';
+import { sameHubUrl } from './uplink-pool-url';
 
 const RELAY_RECORD_TYPES: ReadonlySet<string> = new Set(['set-relays', 'meta-key']);
 
@@ -65,13 +66,15 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
     const result = await wiring.secrets.reconcile();
     // 切到中继后不再保留 hub 集合，`/api/mesh/hubs` 自然返回空表
     if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
-    if (allowRestart && bound && (result.targetsChanged || (await relayTokenChanged(bound)))) {
+    if (allowRestart && bound && (result.primaryChanged || (await relayTokenChanged(bound)))) {
       bound.metaEpoch = result.metaEpoch;
       await bound.attach?.stop();
       await reconfigureUplinkPool(bound.uplink);
       bound.attach?.start();
       return;
     }
+    // 只动了 secondary 行：池的候选是惰性读库的，刷一下探测节奏 + 让 attach 立刻增删挂载即可
+    if (allowRestart && bound && result.rowsChanged) applyRelayRowsInPlace(wiring, bound);
     if (!bound || result.metaEpoch === bound.metaEpoch) return;
     bound.metaEpoch = result.metaEpoch;
     // 新世代到手才第一次封得出状态块；不立刻重发的话对端要等到下一次心跳才看得见本节点
@@ -81,6 +84,30 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
     }
   } catch (err) {
     console.error(stamp('[relay] reconcile failed'), err);
+  }
+}
+
+function applyRelayRowsInPlace(wiring: RelayWiring, bound: RelayBinding): void {
+  bound.uplink.refreshCandidates();
+  void bound.attach?.reconcile();
+  const rows = wiring.secrets.relayRows();
+  const primaryUrl = bound.uplink.attachedHub()?.publicUrl ?? null;
+  const secondaries = rows.filter(
+    (row) => !row.kicked && !(primaryUrl && sameHubUrl(row.url, primaryUrl))
+  ).length;
+  console.info(
+    stamp(
+      `[relay] targets updated rows=${rows.length} primary=${hostOf(primaryUrl)} secondaries=${secondaries} (no restart)`
+    )
+  );
+}
+
+function hostOf(url: string | null): string {
+  if (!url) return '-';
+  try {
+    return new URL(url).host;
+  } catch {
+    return url;
   }
 }
 

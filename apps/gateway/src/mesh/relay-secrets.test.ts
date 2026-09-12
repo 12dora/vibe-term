@@ -12,6 +12,7 @@ import { buildMetaKeyPayload, buildSetRelaysPayload, listRelayNodeKeys } from '.
 import { RelaySecrets } from './relay-secrets';
 
 const RELAY_URL = 'https://relay.example';
+const RELAY_URL_B = 'https://relay-b.example';
 const TENANT_ID = 'ab'.repeat(16);
 
 async function boot() {
@@ -44,6 +45,24 @@ function relayTarget(token: Uint8Array, priority = 0) {
   return { url: RELAY_URL, tenantId: TENANT_ID, token, priority };
 }
 
+async function applyRelays(
+  b: Awaited<ReturnType<typeof boot>>,
+  relays: readonly { url: string; tenantId: string; token: Uint8Array; priority: number }[]
+) {
+  const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
+    type: 'set-relays',
+    payload: await buildSetRelaysPayload({
+      relays,
+      logKey: generateTenantKey(),
+      metaKey: generateTenantKey(),
+      metaEpoch: 1,
+      nodes: listRelayNodeKeys(b.userStore, b.user.userId),
+    }),
+  });
+  expect(applied.ok).toBe(true);
+  return b.secrets.reconcile();
+}
+
 describe('RelaySecrets', () => {
   test('set-relays 落库中继目标与租户密钥并切到 relay 模式', async () => {
     const b = await boot();
@@ -69,6 +88,7 @@ describe('RelaySecrets', () => {
       const result = await b.secrets.reconcile();
       expect(result.kind).toBe('relay');
       expect(result.targetsChanged).toBe(true);
+      expect(result.primaryChanged).toBe(true);
       expect(result.metaEpoch).toBe(1);
       expect(b.secrets.uplinkKind()).toBe('relay');
       expect(b.secrets.relayRows()).toEqual([
@@ -117,6 +137,8 @@ describe('RelaySecrets', () => {
       const result = await b.secrets.reconcile();
       expect(result.metaEpoch).toBe(2);
       expect(result.targetsChanged).toBe(false);
+      expect(result.primaryChanged).toBe(false);
+      expect(result.rowsChanged).toBe(false);
       expect(await b.secrets.metaKey(1)).toEqual(metaKey1);
       expect(await b.secrets.metaKey(2)).toEqual(metaKey2);
       expect(b.secrets.store.listSecretEpochs('meta')).toEqual([1, 2]);
@@ -186,6 +208,7 @@ describe('RelaySecrets', () => {
       const result = await b.secrets.reconcile();
       expect(result.kind).toBe('hub');
       expect(result.targetsChanged).toBe(true);
+      expect(result.primaryChanged).toBe(true);
       expect(b.secrets.relayRows()).toEqual([]);
       expect(b.secrets.uplinkKind()).toBe('hub');
     } finally {
@@ -241,6 +264,102 @@ describe('RelaySecrets', () => {
       expect(result.metaEpoch).toBe(1);
       expect(await b.secrets.metaKey(1)).toEqual(metaKey);
       expect(await b.secrets.logKey()).toEqual(logKey);
+    } finally {
+      b.close();
+    }
+  });
+});
+
+describe('RelaySecrets reconcile 粒度', () => {
+  test('新增 secondary 只算 rowsChanged，主链路不用重启', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      const first = await applyRelays(b, [relayTarget(token)]);
+      expect(first.primaryChanged).toBe(true);
+
+      const result = await applyRelays(b, [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: new Uint8Array(32).fill(6), priority: 1 },
+      ]);
+      expect(result.primaryChanged).toBe(false);
+      expect(result.rowsChanged).toBe(true);
+      expect(result.targetsChanged).toBe(true);
+      expect(b.secrets.relayRows()).toHaveLength(2);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('摘掉 secondary 同样只算 rowsChanged', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      await applyRelays(b, [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: new Uint8Array(32).fill(6), priority: 1 },
+      ]);
+      const result = await applyRelays(b, [relayTarget(token)]);
+      expect(result.primaryChanged).toBe(false);
+      expect(result.rowsChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('主中继换令牌算 primaryChanged', async () => {
+    const b = await boot();
+    try {
+      await applyRelays(b, [relayTarget(new Uint8Array(32).fill(5))]);
+      const result = await applyRelays(b, [relayTarget(new Uint8Array(32).fill(8))]);
+      expect(result.primaryChanged).toBe(true);
+      expect(result.rowsChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('换掉主中继 URL 算 primaryChanged', async () => {
+    const b = await boot();
+    try {
+      await applyRelays(b, [relayTarget(new Uint8Array(32).fill(5))]);
+      const result = await applyRelays(b, [
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: new Uint8Array(32).fill(6), priority: 0 },
+      ]);
+      expect(result.primaryChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('hub → relay 翻转算 primaryChanged', async () => {
+    const b = await boot();
+    try {
+      const hubFirst = await b.secrets.reconcile();
+      expect(hubFirst.kind).toBe('hub');
+      const result = await applyRelays(b, [relayTarget(new Uint8Array(32).fill(5))]);
+      expect(result.kind).toBe('relay');
+      expect(result.primaryChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('首选中继把 B 顶到第一位不算 primaryChanged——池已经连在 B 上了', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      const tokenB = new Uint8Array(32).fill(6);
+      const rows = [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
+      ];
+      await applyRelays(b, rows);
+      b.secrets.setPreferredRelayUrl(canonicalHubUrl(RELAY_URL_B));
+      const result = await applyRelays(b, rows);
+      expect(result.primaryChanged).toBe(false);
+      expect(result.rowsChanged).toBe(false);
+      expect(result.targetsChanged).toBe(false);
     } finally {
       b.close();
     }
