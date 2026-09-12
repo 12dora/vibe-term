@@ -60,7 +60,7 @@ import {
   UPLINK_PING_INTERVAL_MS,
   type UplinkWsFactory,
 } from './uplink-client';
-import { createUplinkPathHeartbeat, trackCountedStream } from './uplink-path-sampler';
+import { UplinkStreamGate, createUplinkPathHeartbeat } from './uplink-path-sampler';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
 import { closeTransport } from './uplink-reconnect';
 
@@ -119,7 +119,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly keyLog: RelayKeyLogSync;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
-  private readonly relayStreams = new Set<LinkStream>();
+  private readonly relayGate = new UplinkStreamGate();
   private acceptingRelayStreams = true;
   private connectionToken: string | null = null;
   private loop: Promise<void> | null = null;
@@ -151,7 +151,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       onSample: (rttMs) => this.opts.onRtt?.(rttMs),
       url: () => this.hubUrl,
       linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
-      inFlight: () => this.inFlightRelayStreams,
+      inFlight: () => this.relayGate.count(this.keyLog.pendingOps()),
+      generation: () => this.connectGeneration,
     });
     this.enroll = new RelayEnrollChannel((msg) => this.rawSend(msg));
     this.keyLog = new RelayKeyLogSync({
@@ -220,7 +221,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   get inFlightRelayStreams(): number {
-    return this.relayStreams.size;
+    return this.relayGate.streams.size;
   }
 
   nodeName(): string {
@@ -358,16 +359,11 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       throw new Error('uplink is not online');
     }
     const generation = this.connectGeneration;
-    const stream = await link.openStream(encodeRelayOpenStream({ to: toNodeId }));
-    if (
-      !this.acceptingRelayStreams ||
-      this.link !== link ||
-      generation !== this.connectGeneration
-    ) {
-      stream.reset('uplink-retiring');
-      throw new Error('uplink is not online');
-    }
-    return this.trackRelayStream(stream);
+    return this.relayGate.open(
+      () => link.openStream(encodeRelayOpenStream({ to: toNodeId })),
+      () =>
+        this.acceptingRelayStreams && this.link === link && generation === this.connectGeneration
+    );
   }
 
   async queryHubHead(): Promise<{ seq: bigint; hash: Uint8Array } | null> {
@@ -567,7 +563,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   private trackRelayStream(stream: LinkStream): LinkStream {
-    return trackCountedStream(this.relayStreams, stream);
+    return this.relayGate.track(stream);
   }
 
   tearDownLink(reason: string): void {

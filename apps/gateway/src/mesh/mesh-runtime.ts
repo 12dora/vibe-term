@@ -1485,7 +1485,7 @@ function assembleMeshRuntime(
         previous: stopReach,
       });
       uplink.start();
-      startUplinkPathSamplingFromCandidates(d.scheduler, () => uplink.candidates());
+      startUplinkPathSamplingFromCandidates(d.scheduler, uplink, d.relay);
       relayMultiAttachOf(d.relay)?.start();
       kickHubPeerDiscovery(hub, uplink);
       startMeshRtcProbes(rtc, d.scheduler);

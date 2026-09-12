@@ -88,6 +88,7 @@ export class UplinkKeyLogSync {
   get pendingKeyLogId(): string | undefined {
     return this.pendingKeyLog?.id;
   }
+  pendingOps = (): number => (this.pendingKeyLog ? 1 : 0) + this.pendingAcks.size;
 
   snapshotTasks(generation: number): CatchUpSnapshot {
     return {
@@ -663,6 +664,4 @@ export class UplinkKeyLogSync {
   }
 }
 
-function errMsg(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+const errMsg = (err: unknown) => (err instanceof Error ? err.message : String(err));

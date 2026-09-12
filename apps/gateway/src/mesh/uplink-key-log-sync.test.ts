@@ -251,6 +251,38 @@ describe('UplinkKeyLogSync', () => {
     expect(heads).toBeGreaterThan(afterList);
   });
 
+  test('pendingOps 计入未完成的 req 与 append ack', async () => {
+    const { host, sent } = makeHost();
+    const sync = new UplinkKeyLogSync({
+      host,
+      applier: dummyApplier({ seq: 0n, hash: new Uint8Array(32) }),
+      scheduler: new ImmediateScheduler(),
+      timeoutMs: 5_000,
+      retryLimit: 1,
+    });
+    sync.reset('init');
+    expect(sync.pendingOps()).toBe(0);
+    const req = sync.queryKeyLogAt(2n, 5_000);
+    await waitUntil(() => sent.length === 1);
+    expect(sync.pendingOps()).toBe(1);
+    const reqMsg = decodeUplinkCtl(sent[0] ?? new Uint8Array());
+    if (reqMsg.t === 'key.log.req') {
+      sync.handleKeyLogRes({ t: 'key.log.res', records: [], id: reqMsg.id });
+    }
+    await req;
+    expect(sync.pendingOps()).toBe(0);
+
+    const pending = sync.appendAndAck({ bytes: randomBytes(8), sig: randomBytes(64) }, 5_000);
+    await waitUntil(() => sent.length === 2);
+    expect(sync.pendingOps()).toBe(1);
+    const append = decodeUplinkCtl(sent[1] ?? new Uint8Array());
+    if (append.t === 'key.log.append' && append.id) {
+      sync.handleKeyLogAck({ t: 'key.log.ack', id: append.id, ok: true, seq: 1n });
+    }
+    await pending;
+    expect(sync.pendingOps()).toBe(0);
+  });
+
   test('reset rejects pending append acks as offline', async () => {
     const { host, sent } = makeHost();
     const sync = new UplinkKeyLogSync({

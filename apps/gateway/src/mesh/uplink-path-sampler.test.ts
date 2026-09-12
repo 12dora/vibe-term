@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkSession } from '@vibeterm/shared/link';
 import type { TcpProbeResult } from './port-reach-probe';
 import type { MeshScheduler } from './types';
 import {
@@ -9,9 +10,13 @@ import {
   UPLINK_PATH_RERACE_REASON,
   UPLINK_PATH_SAMPLE_CONNECTS,
   UPLINK_PATH_SAMPLE_INTERVAL_MS,
+  type UplinkHeartbeatSample,
   type UplinkPathProbeFn,
   UplinkPathSampler,
+  UplinkStreamGate,
+  collectUplinkPathTargets,
   considerUplinkPathRerace,
+  createUplinkPathHeartbeat,
   isUplinkPathRerace,
   resetUplinkPathSamplerForTest,
   sleepAfterUplinkSession,
@@ -66,6 +71,30 @@ class ManualScheduler implements MeshScheduler {
     const queued = this.sleepers.splice(0);
     for (const row of queued) row.resolve();
   }
+}
+
+function hb(
+  over: Partial<UplinkHeartbeatSample> & Pick<UplinkHeartbeatSample, 'url' | 'rttMs' | 'now'>
+): UplinkHeartbeatSample {
+  return {
+    linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS,
+    inFlightStreams: 0,
+    clientId: 'c1',
+    generation: 1,
+    ...over,
+  };
+}
+
+function stubStream() {
+  let close!: () => void;
+  return {
+    closed: new Promise<void>((resolve) => {
+      close = resolve;
+    }),
+    reset() {
+      close();
+    },
+  };
 }
 
 function pendingProbe() {
@@ -167,15 +196,10 @@ describe('heartbeat + degrade re-race', () => {
       log: (line) => lines.push(line),
     });
     sampler.memory.record('relay.example', { kind: 'tcp-connect', rttMs: 80, at: scheduler.nowMs });
-    const beat = (rttMs: number, extra: Partial<Parameters<typeof sampler.onHeartbeat>[0]> = {}) =>
-      sampler.onHeartbeat({
-        url: 'https://relay.example',
-        rttMs,
-        linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS,
-        inFlightStreams: 0,
-        now: scheduler.nowMs,
-        ...extra,
-      });
+    const beat = (rttMs: number, extra: Partial<UplinkHeartbeatSample> = {}) =>
+      sampler.onHeartbeat(
+        hb({ url: 'https://relay.example', rttMs, now: scheduler.nowMs, ...extra })
+      );
 
     expect(beat(200)).toBe(false);
     expect(beat(210)).toBe(false);
@@ -186,11 +210,11 @@ describe('heartbeat + degrade re-race', () => {
     expect(sampler.reraceCount('https://relay.example')).toBe(1);
 
     scheduler.nowMs += 1_000;
-    expect(beat(90)).toBe(false);
+    expect(beat(90, { generation: 2 })).toBe(false);
     scheduler.nowMs += 1_000;
-    expect(beat(70)).toBe(false);
+    expect(beat(70, { generation: 2 })).toBe(false);
     scheduler.nowMs += 1_000;
-    expect(beat(60)).toBe(false);
+    expect(beat(60, { generation: 2 })).toBe(false);
     expect(lines[1]).toBe(
       '[uplink] path re-race_result url=relay.example old_ms=220 new_ms=60 better=true'
     );
@@ -202,13 +226,9 @@ describe('heartbeat + degrade re-race', () => {
     const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
     sampler.memory.record('hub.example', { kind: 'tcp-connect', rttMs: 50, at: scheduler.nowMs });
     const beat = (inFlightStreams: number) =>
-      sampler.onHeartbeat({
-        url: 'https://hub.example',
-        rttMs: 200,
-        linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS,
-        inFlightStreams,
-        now: scheduler.nowMs,
-      });
+      sampler.onHeartbeat(
+        hb({ url: 'https://hub.example', rttMs: 200, now: scheduler.nowMs, inFlightStreams })
+      );
     expect(beat(1)).toBe(false);
     expect(beat(2)).toBe(false);
     expect(beat(3)).toBe(false);
@@ -220,13 +240,7 @@ describe('heartbeat + degrade re-race', () => {
     const sampler = new UplinkPathSampler({ scheduler, targets: () => [] });
     sampler.memory.record('relay.example', { kind: 'tcp-connect', rttMs: 200, at: 0 });
     const beat = (rttMs: number) =>
-      sampler.onHeartbeat({
-        url: 'https://relay.example',
-        rttMs,
-        linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS,
-        inFlightStreams: 0,
-        now: scheduler.now(),
-      });
+      sampler.onHeartbeat(hb({ url: 'https://relay.example', rttMs, now: scheduler.now() }));
     expect(beat(40)).toBe(false);
     expect(sampler.bestMs('relay.example')).toBe(40);
     expect(beat(40)).toBe(false);
@@ -244,15 +258,9 @@ describe('module wiring / env', () => {
         targets: () => ['https://relay.example'],
       })
     ).toBeNull();
-    expect(
-      considerUplinkPathRerace({
-        url: 'https://relay.example',
-        rttMs: 500,
-        linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS,
-        inFlightStreams: 0,
-        now: 1,
-      })
-    ).toBe(false);
+    expect(considerUplinkPathRerace(hb({ url: 'https://relay.example', rttMs: 500, now: 1 }))).toBe(
+      false
+    );
   });
 
   test('start 后 heartbeat 写入参考并出现在 pathView', async () => {
@@ -263,13 +271,9 @@ describe('module wiring / env', () => {
       probe: async () => ({ verdict: 'ok', connectMs: 18 }),
     });
     expect(
-      considerUplinkPathRerace({
-        url: 'https://relay.example',
-        rttMs: 22,
-        linkAgeMs: 1_000,
-        inFlightStreams: 0,
-        now: scheduler.now(),
-      })
+      considerUplinkPathRerace(
+        hb({ url: 'https://relay.example', rttMs: 22, now: scheduler.now(), linkAgeMs: 1_000 })
+      )
     ).toBe(false);
     expect(uplinkPathView('https://relay.example')).toEqual({ pathBestMs: 22 });
     stopUplinkPathSampling();
@@ -307,10 +311,10 @@ describe('re-race budget', () => {
     const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
     sampler.memory.record('r.example', { kind: 'tcp-connect', rttMs: 40, at: scheduler.nowMs });
     const fire = () => {
-      const slow = { rttMs: 200, linkAgeMs: UPLINK_DEGRADE_MIN_LINK_AGE_MS, inFlightStreams: 0 };
-      sampler.onHeartbeat({ url: 'https://r.example', now: scheduler.nowMs, ...slow });
-      sampler.onHeartbeat({ url: 'https://r.example', now: scheduler.nowMs, ...slow });
-      return sampler.onHeartbeat({ url: 'https://r.example', now: scheduler.nowMs, ...slow });
+      const slow = hb({ url: 'https://r.example', rttMs: 200, now: scheduler.nowMs });
+      sampler.onHeartbeat(slow);
+      sampler.onHeartbeat(slow);
+      return sampler.onHeartbeat(slow);
     };
     expect(fire()).toBe(true);
     scheduler.nowMs += UPLINK_DEGRADE_MIN_INTERVAL_MS;
@@ -320,5 +324,160 @@ describe('re-race budget', () => {
     scheduler.nowMs += UPLINK_DEGRADE_MIN_INTERVAL_MS;
     expect(fire()).toBe(false);
     expect(sampler.reraceCount('https://r.example')).toBe(3);
+  });
+});
+
+describe('relay + hub sampling targets', () => {
+  test('两个中继行、无 hub 时每个公网 host 每拍 3 次 connect，行变更下一拍才生效', async () => {
+    const scheduler = new ManualScheduler();
+    const fake = pendingProbe();
+    const rows: Array<{ url: string }> = [
+      { url: 'https://relay-a.example' },
+      { url: 'https://relay-b.example' },
+    ];
+    const hub = { candidates: () => [] as Array<{ publicUrl: string }> };
+    const relay = { secrets: { relayRows: () => rows } };
+    expect(collectUplinkPathTargets(hub.candidates(), relay.secrets.relayRows())).toEqual([
+      'https://relay-a.example',
+      'https://relay-b.example',
+    ]);
+    const sampler = new UplinkPathSampler({
+      scheduler,
+      targets: () => collectUplinkPathTargets(hub.candidates(), relay.secrets.relayRows()),
+      probe: fake.probe,
+    });
+    const takeTick = async (expectedHosts: string[]) => {
+      const seen = new Map<string, number>();
+      const sampling = sampler.sampleAll();
+      const deadline = Date.now() + 1_000;
+      while (
+        expectedHosts.some((host) => (seen.get(host) ?? 0) < UPLINK_PATH_SAMPLE_CONNECTS) &&
+        Date.now() < deadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        const batch = fake.pending.splice(0);
+        for (const row of batch) {
+          seen.set(row.host, (seen.get(row.host) ?? 0) + 1);
+          row.resolve({ verdict: 'ok', connectMs: 20 });
+        }
+      }
+      await sampling;
+      for (const host of expectedHosts) expect(seen.get(host)).toBe(UPLINK_PATH_SAMPLE_CONNECTS);
+    };
+    await takeTick(['relay-a.example', 'relay-b.example']);
+    rows.splice(0, rows.length, { url: 'https://relay-c.example' });
+    await takeTick(['relay-c.example']);
+  });
+});
+
+describe('pending open 计入 in-flight', () => {
+  test('openStream 未完成时重赛判定 busy', async () => {
+    const scheduler = new ManualScheduler();
+    scheduler.nowMs = 5_000_000;
+    const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
+    sampler.memory.record('hub.example', { kind: 'tcp-connect', rttMs: 50, at: scheduler.nowMs });
+    const gate = new UplinkStreamGate<ReturnType<typeof stubStream>>();
+    let release!: (stream: ReturnType<typeof stubStream>) => void;
+    const opening = gate.open(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        })
+    );
+    expect(gate.count()).toBe(1);
+    const beat = () =>
+      sampler.onHeartbeat(
+        hb({
+          url: 'https://hub.example',
+          rttMs: 200,
+          now: scheduler.nowMs,
+          inFlightStreams: gate.count(),
+        })
+      );
+    expect(beat()).toBe(false);
+    expect(beat()).toBe(false);
+    expect(beat()).toBe(false);
+    const stream = stubStream();
+    release(stream);
+    await opening;
+    expect(gate.count()).toBe(1);
+    stream.reset();
+    await stream.closed;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(gate.count()).toBe(0);
+    expect(beat()).toBe(true);
+  });
+});
+
+describe('re-race_result 按连接结算', () => {
+  test('同 host 另一条连接的心跳不结算，只有被重赛客户端的新代心跳才打 result', () => {
+    const scheduler = new ManualScheduler();
+    scheduler.nowMs = 3_000_000;
+    const lines: string[] = [];
+    const sampler = new UplinkPathSampler({
+      scheduler,
+      targets: () => [],
+      log: (line) => lines.push(line),
+    });
+    sampler.memory.record('relay.example', { kind: 'tcp-connect', rttMs: 80, at: scheduler.nowMs });
+    const beat = (clientId: string, generation: number, rttMs = 200) =>
+      sampler.onHeartbeat(
+        hb({ url: 'https://relay.example', rttMs, now: scheduler.nowMs, clientId, generation })
+      );
+    expect(beat('primary', 1)).toBe(false);
+    expect(beat('primary', 1)).toBe(false);
+    expect(beat('primary', 1)).toBe(true);
+    expect(lines).toHaveLength(1);
+
+    expect(beat('secondary', 1)).toBe(false);
+    expect(beat('secondary', 2)).toBe(false);
+    expect(beat('secondary', 3)).toBe(false);
+    expect(lines).toHaveLength(1);
+
+    expect(beat('primary', 1, 50)).toBe(false);
+    expect(lines).toHaveLength(1);
+    expect(beat('primary', 2, 90)).toBe(false);
+    expect(beat('primary', 2, 70)).toBe(false);
+    expect(beat('primary', 2, 60)).toBe(false);
+    expect(lines[1]).toBe(
+      '[uplink] path re-race_result url=relay.example old_ms=200 new_ms=60 better=true'
+    );
+  });
+});
+
+describe('createUplinkPathHeartbeat in-flight', () => {
+  test('pending open / key-log 计入 inFlight 时判定 busy，空闲后才 tearDown', () => {
+    const scheduler = new ManualScheduler();
+    scheduler.nowMs = 4_000_000;
+    let inFlight = 1;
+    const torn: string[] = [];
+    startUplinkPathSampling({ scheduler, targets: () => [], log: () => {} })?.memory.record(
+      'relay.example',
+      { kind: 'tcp-connect', rttMs: 40, at: scheduler.nowMs }
+    );
+    const hb = createUplinkPathHeartbeat({
+      scheduler,
+      intervalMs: 15_000,
+      sendPing: () => {},
+      tearDown: (reason) => torn.push(reason),
+      url: () => 'https://relay.example',
+      linkAgeMs: () => UPLINK_DEGRADE_MIN_LINK_AGE_MS,
+      inFlight: () => inFlight,
+      generation: () => 4,
+    });
+    hb.start({} as LinkSession, () => true);
+    const ping = () => {
+      const handle = scheduler.intervals[scheduler.intervals.length - 1];
+      handle?.fn();
+      scheduler.nowMs += 200;
+      hb.onPong();
+    };
+    ping();
+    ping();
+    ping();
+    expect(torn).toEqual([]);
+    inFlight = 0;
+    ping();
+    expect(torn).toEqual([UPLINK_PATH_RERACE_REASON]);
   });
 });

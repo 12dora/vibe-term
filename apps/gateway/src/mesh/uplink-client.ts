@@ -29,9 +29,9 @@ import type {
 } from './types';
 import { UplinkKeyLogSync } from './uplink-key-log-sync';
 import {
+  UplinkStreamGate,
   createUplinkPathHeartbeat,
   isUplinkPathRerace,
-  trackCountedStream,
 } from './uplink-path-sampler';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
 import {
@@ -151,7 +151,7 @@ export class UplinkClient {
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
   private heartbeat!: ReturnType<typeof createUplinkPathHeartbeat>;
-  private readonly hubRelayStreams = new Set<LinkStream>();
+  private readonly hubRelay = new UplinkStreamGate();
   private lastStatusJson = '';
   private connectGeneration = 0;
   private authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
@@ -194,16 +194,6 @@ export class UplinkClient {
     this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
-    this.heartbeat = createUplinkPathHeartbeat({
-      scheduler: this.scheduler,
-      intervalMs: this.pingIntervalMs,
-      sendPing: (link) => link.ctl.send(encodeUplinkCtl({ t: 'ping' })),
-      tearDown: (reason) => this.tearDownLink(reason),
-      onTick: () => this.sendStatusIfChanged(),
-      url: () => this.hubUrl,
-      linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
-      inFlight: () => this.hubRelayStreams.size,
-    });
     this.connectTimeoutMs =
       opts.connectTimeoutMs ??
       envPositiveMs('UPLINK_CONNECT_TIMEOUT_MS', UPLINK_CONNECT_TIMEOUT_MS);
@@ -229,6 +219,17 @@ export class UplinkClient {
       retryLimit: opts.keyLogRetryLimit ?? UPLINK_KEY_LOG_RETRY_LIMIT,
       onFork: opts.onKeyLogFork,
       warnCatchUp: (err) => this.warnCtl('handler', 'key-log.catch-up', 0, err),
+    });
+    this.heartbeat = createUplinkPathHeartbeat({
+      scheduler: this.scheduler,
+      intervalMs: this.pingIntervalMs,
+      sendPing: (link) => link.ctl.send(encodeUplinkCtl({ t: 'ping' })),
+      tearDown: (reason) => this.tearDownLink(reason),
+      onTick: () => this.sendStatusIfChanged(),
+      url: () => this.hubUrl,
+      linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
+      inFlight: () => this.hubRelay.count(this.keyLog.pendingOps()),
+      generation: () => this.connectGeneration,
     });
   }
 
@@ -367,9 +368,8 @@ export class UplinkClient {
     if (!link || this.state !== 'online' || !this.isAuthenticated()) {
       throw new Error('uplink is not online');
     }
-    return trackCountedStream(
-      this.hubRelayStreams,
-      await link.openStream(new TextEncoder().encode(JSON.stringify({ to: toNodeId })))
+    return this.hubRelay.open(() =>
+      link.openStream(new TextEncoder().encode(JSON.stringify({ to: toNodeId })))
     );
   }
 
@@ -522,7 +522,7 @@ export class UplinkClient {
       }
       const open = parseOpenPayload(stream.openPayload);
       if (open?.kind === 'hub-relay') {
-        this.onHubRelayStreamCb?.(trackCountedStream(this.hubRelayStreams, stream));
+        this.onHubRelayStreamCb?.(this.hubRelay.track(stream));
         return;
       }
       const from = typeof open?.from === 'string' ? open.from : '';

@@ -111,6 +111,8 @@ export class RelayKeyLogSync {
   } | null = null;
   private chain: Promise<void> = Promise.resolve();
 
+  pendingOps = (): number => (this.pendingReq ? 1 : 0) + this.pendingAcks.size;
+
   constructor(opts: RelayKeyLogSyncOptions) {
     this.host = opts.host;
     this.applier = opts.applier;

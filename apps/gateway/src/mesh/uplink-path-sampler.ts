@@ -1,4 +1,4 @@
-import type { LinkSession } from '@vibeterm/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyRemoteAddress, hostFromWsUrl } from './address-class';
 import { backoffDelayMs } from './ctl';
 import { stamp } from './mesh-log';
@@ -32,6 +32,10 @@ export type UplinkHeartbeatSample = {
   linkAgeMs: number;
   inFlightStreams: number;
   now: number;
+  /** 每条上行连接一份，primary / secondary 同 host 也不能串台。 */
+  clientId: string;
+  /** 重赛时记下当前代；只有更大 generation 的心跳才结算 re-race_result。 */
+  generation: number;
 };
 
 export type UplinkPathSamplerOptions = {
@@ -43,7 +47,7 @@ export type UplinkPathSamplerOptions = {
   log?: (line: string) => void;
 };
 
-type PendingResult = { oldMs: number; samples: number };
+type PendingResult = { oldMs: number; samples: number; clientId: string; generation: number };
 
 type HostWatch = {
   consecutiveSlow: number;
@@ -168,7 +172,7 @@ export class UplinkPathSampler {
   onHeartbeat(sample: UplinkHeartbeatSample): boolean {
     const host = uplinkPathHostKey(sample.url);
     if (!host) return false;
-    this.settlePending(host, sample.rttMs);
+    this.settlePending(host, sample);
     const watch = this.watchOf(host, sample.now);
     const bestKnownMs = this.memory.bestMs(host);
     if (bestKnownMs != null && isUplinkHeartbeatSlow(sample.rttMs, bestKnownMs)) {
@@ -193,7 +197,12 @@ export class UplinkPathSampler {
     watch.reraces = budget;
     watch.lastReraceAt = sample.now;
     watch.consecutiveSlow = 0;
-    watch.pending = { oldMs: decision.currentMs, samples: 0 };
+    watch.pending = {
+      oldMs: decision.currentMs,
+      samples: 0,
+      clientId: sample.clientId,
+      generation: sample.generation,
+    };
     this.log(
       `[uplink] path re-race url=${host} cur_ms=${roundMs(decision.currentMs)} best_ms=${roundMs(decision.bestMs)} try=${budget.count}/${UPLINK_DEGRADE_MAX_PER_HOUR}`
     );
@@ -249,16 +258,18 @@ export class UplinkPathSampler {
     return prev;
   }
 
-  private settlePending(host: string, rttMs: number): void {
+  private settlePending(host: string, sample: UplinkHeartbeatSample): void {
     const watch = this.watch.get(host);
     const pending = watch?.pending;
     if (!pending) return;
+    if (pending.clientId !== sample.clientId) return;
+    if (sample.generation <= pending.generation) return;
     pending.samples += 1;
     if (pending.samples < UPLINK_DEGRADE_RESULT_SAMPLES) return;
     const oldMs = pending.oldMs;
     watch.pending = null;
     this.log(
-      `[uplink] path re-race_result url=${host} old_ms=${roundMs(oldMs)} new_ms=${roundMs(rttMs)} better=${rttMs < oldMs}`
+      `[uplink] path re-race_result url=${host} old_ms=${roundMs(oldMs)} new_ms=${roundMs(sample.rttMs)} better=${sample.rttMs < oldMs}`
     );
   }
 }
@@ -277,13 +288,21 @@ export function startUplinkPathSampling(opts: UplinkPathSamplerOptions): UplinkP
   return active;
 }
 
+export function collectUplinkPathTargets(
+  candidates: ReadonlyArray<{ publicUrl: string }>,
+  relayRows: ReadonlyArray<{ url: string }>
+): string[] {
+  return [...relayRows.map((row) => row.url), ...candidates.map((row) => row.publicUrl)];
+}
+
 export function startUplinkPathSamplingFromCandidates(
   scheduler: MeshScheduler,
-  candidates: () => ReadonlyArray<{ publicUrl: string }>
-): void {
-  startUplinkPathSampling({
+  hub: { candidates(): ReadonlyArray<{ publicUrl: string }> },
+  relay?: { secrets: { relayRows(): ReadonlyArray<{ url: string }> } }
+): UplinkPathSampler | null {
+  return startUplinkPathSampling({
     scheduler,
-    targets: () => candidates().map((row) => row.publicUrl),
+    targets: () => collectUplinkPathTargets(hub.candidates(), relay?.secrets.relayRows() ?? []),
   });
 }
 
@@ -298,14 +317,10 @@ export function considerUplinkPathRerace(sample: UplinkHeartbeatSample): boolean
 }
 
 export function noteUplinkHeartbeatAndRerace(
-  url: string,
-  rttMs: number,
-  linkAgeMs: number,
-  inFlightStreams: number,
-  now: number,
+  sample: UplinkHeartbeatSample,
   tearDown: (reason: string) => void
 ): void {
-  if (considerUplinkPathRerace({ url, rttMs, linkAgeMs, inFlightStreams, now })) {
+  if (considerUplinkPathRerace(sample)) {
     tearDown(UPLINK_PATH_RERACE_REASON);
   }
 }
@@ -329,6 +344,38 @@ export function trackCountedStream<T extends { closed: Promise<unknown> }>(
   return stream;
 }
 
+type CountedStream = { closed: Promise<unknown>; reset(reason?: string): void };
+
+/** 已建立流 + 正在 openStream 的计数；重赛 in-flight 门用 established + pending。 */
+export class UplinkStreamGate<T extends CountedStream = LinkStream> {
+  readonly streams = new Set<T>();
+  pendingOpen = 0;
+
+  count(pendingKeyLog = 0): number {
+    return this.streams.size + this.pendingOpen + pendingKeyLog;
+  }
+
+  track(stream: T): T {
+    return trackCountedStream(this.streams, stream);
+  }
+
+  async open(start: () => Promise<T>, accept?: () => boolean): Promise<T> {
+    this.pendingOpen += 1;
+    try {
+      const stream = await start();
+      if (accept && !accept()) {
+        stream.reset('uplink-retiring');
+        throw new Error('uplink is not online');
+      }
+      return this.track(stream);
+    } finally {
+      this.pendingOpen -= 1;
+    }
+  }
+}
+
+let pathClientSeq = 0;
+
 export function createUplinkPathHeartbeat(input: {
   scheduler: MeshScheduler;
   intervalMs: number;
@@ -339,7 +386,9 @@ export function createUplinkPathHeartbeat(input: {
   url: () => string;
   linkAgeMs: () => number;
   inFlight: () => number;
+  generation: () => number;
 }): RelayUplinkHeartbeat {
+  const clientId = `uplink:${++pathClientSeq}`;
   return new RelayUplinkHeartbeat({
     scheduler: input.scheduler,
     intervalMs: input.intervalMs,
@@ -350,11 +399,15 @@ export function createUplinkPathHeartbeat(input: {
     onRtt: (rttMs) => {
       input.onSample?.(rttMs);
       noteUplinkHeartbeatAndRerace(
-        input.url(),
-        rttMs,
-        input.linkAgeMs(),
-        input.inFlight(),
-        input.scheduler.now(),
+        {
+          url: input.url(),
+          rttMs,
+          linkAgeMs: input.linkAgeMs(),
+          inFlightStreams: input.inFlight(),
+          now: input.scheduler.now(),
+          clientId,
+          generation: input.generation(),
+        },
         input.tearDown
       );
     },
