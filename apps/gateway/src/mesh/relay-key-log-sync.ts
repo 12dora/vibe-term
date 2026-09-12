@@ -83,7 +83,8 @@ export type RelayKeyLogSyncOptions = {
 
 /**
  * 中继侧密钥日志双向同步：本地 head 落后就拉取解密应用，超前就上传缺失记录。
- * 与 hub 版本的区别是中继只有 seq、没有链哈希，因此不做 fork 判定（由本地 applier 兜底）。
+ * 中继线协议只带 `key_log_head_seq`（没有 head hash），fork 由本地 applier 与
+ * secondary 的前缀校验兜底。记录本身是 `prev_hash` 哈希链，见 `remoteIsLocalPrefix`。
  * secondary 的 `prefix-verified` 模式禁止把本机新记录推到可能已分叉的中继上。
  */
 export class RelayKeyLogSync {
@@ -348,6 +349,12 @@ export class RelayKeyLogSync {
     return false;
   }
 
+  /**
+   * 记录是 prev_hash 哈希链：每条 bytes 含前驱 `hash = sha256(pred.bytes ‖ pred.sig)`，
+   * sig 覆盖整条 bytes。比对远端 head 的 bytes+sig 即提交了整个 `1..head` 前缀——
+   * 中间被截断、重排或分叉都会改变后续 prev_hash，head 必然对不上。
+   * 另校验远端 head seq ≤ 本地，且解出的 seq 与声称的 head 一致（`readKeyLogAt`）。
+   */
   private async remoteIsLocalPrefix(
     generation: number,
     userId: string,

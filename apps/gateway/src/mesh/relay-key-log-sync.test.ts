@@ -33,16 +33,20 @@ import type { KeyLogApplier } from './types';
 
 const LOG_KEY = generateTenantKey();
 
+function totpPayload(fill = 2): ReturnType<typeof encodeSetTotpPayload> {
+  return encodeSetTotpPayload({
+    alg: 'A256GCM',
+    nonce: new Uint8Array(12).fill(1),
+    ciphertext: new Uint8Array(8).fill(fill),
+    tag: new Uint8Array(16).fill(3),
+  });
+}
+
 function totpRecordBytes(seq: bigint): Uint8Array {
   const record = buildKeyLogRecord({ seq: seq - 1n, hash: genesisHead().hash }, 1, {
     uid: 'user-1',
     type: 'set-totp',
-    payload: encodeSetTotpPayload({
-      alg: 'A256GCM',
-      nonce: new Uint8Array(12).fill(1),
-      ciphertext: new Uint8Array(8).fill(2),
-      tag: new Uint8Array(16).fill(3),
-    }),
+    payload: totpPayload(),
     signer: 'root',
     credential_id: null,
   });
@@ -89,6 +93,52 @@ type Harness = {
 };
 
 const LOCAL_SIG = new Uint8Array(64).fill(9);
+
+function chainedTotpRecords(
+  count: number
+): Array<{ seq: bigint; bytes: Uint8Array; hash: Uint8Array }> {
+  let head = genesisHead();
+  const rows: Array<{ seq: bigint; bytes: Uint8Array; hash: Uint8Array }> = [];
+  for (let i = 1; i <= count; i += 1) {
+    const record = buildKeyLogRecord(head, 1, {
+      uid: 'user-1',
+      type: 'set-totp',
+      payload: totpPayload(),
+      signer: 'root',
+      credential_id: null,
+    });
+    const bytes = encodeKeyLogRecord(record);
+    const hash = computeRecordHash(bytes, LOCAL_SIG);
+    rows.push({ seq: BigInt(i), bytes, hash });
+    head = { seq: BigInt(i), hash };
+  }
+  return rows;
+}
+
+/** 篡改 seq=2 后重算后续链，head 的 bytes 与本地不同。 */
+function forkedHeadFromTamperedMiddle(
+  local: Array<{ seq: bigint; bytes: Uint8Array; hash: Uint8Array }>
+): Uint8Array {
+  const first = local[0];
+  if (!first) throw new Error('empty chain');
+  const tampered = buildKeyLogRecord({ seq: 1n, hash: first.hash }, 1, {
+    uid: 'user-1',
+    type: 'set-totp',
+    payload: totpPayload(9),
+    signer: 'root',
+    credential_id: null,
+  });
+  const tamperedBytes = encodeKeyLogRecord(tampered);
+  const tamperedHash = computeRecordHash(tamperedBytes, LOCAL_SIG);
+  const head = buildKeyLogRecord({ seq: 2n, hash: tamperedHash }, 1, {
+    uid: 'user-1',
+    type: 'set-totp',
+    payload: totpPayload(),
+    signer: 'root',
+    credential_id: null,
+  });
+  return encodeKeyLogRecord(head);
+}
 
 function harness(
   localSeq: bigint,
@@ -443,6 +493,30 @@ describe('RelayKeyLogSync prefix-verified secondary', () => {
     if (first?.t !== 'relay.keylog.append') throw new Error('missing append');
     expect(relaySeqFromWire(first.seq)).toBe(1n);
     expect(h.sync.diverged).toBe(false);
+  });
+
+  test('中间记录被篡改导致 head 对不上时标 diverged', async () => {
+    const local = chainedTotpRecords(3);
+    const remoteHead = forkedHeadFromTamperedMiddle(local);
+    const h = harness(
+      3n,
+      local.map((row) => ({ seq: row.seq, bytes: row.bytes })),
+      prefixOpts
+    );
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      h.sync.noteRemoteHead(3n);
+      await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+      h.sync.handleRes({
+        t: 'relay.keylog.res',
+        records: [{ seq: 3, blob: await sealAt(3n, remoteHead) }],
+      });
+      await waitUntil(() => h.sync.diverged);
+      expect(h.sent.some((msg) => msg.t === 'relay.keylog.append')).toBe(false);
+      expect(h.sync.caughtUp).toBe(false);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test('分叉时不 push，只记一次日志并标 diverged', async () => {

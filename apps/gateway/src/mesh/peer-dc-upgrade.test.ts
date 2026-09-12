@@ -5,7 +5,7 @@ import {
   type DcUpgradeLivePeer,
   type DcUpgradePorts,
 } from './peer-dc-upgrade';
-import { PERMANENT_FAILURE_HOLD_MS } from './peer-dc-upgrade-gate';
+import { PERMANENT_FAILURE_HOLD_MS, isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
 import { RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
 import type { MeshScheduler, PeerTransportKind } from './types';
 
@@ -246,6 +246,35 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     expect(dials).toEqual([peer]);
 
     await scheduler.advance(PERMANENT_FAILURE_HOLD_MS);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer, peer]);
+    coordinator.dispose();
+  });
+
+  test('released probe 建 DC 后立刻清 hold，不等 noteHealthy；新永久失败再武装', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const peer = 'peer-established';
+    live.set(peer, livePeer(peer, 'relay'));
+    coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'e1');
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    await scheduler.advance(PERMANENT_FAILURE_HOLD_MS);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+    expect(isBackgroundDcUpgradeBlocked(coordinator.dcBreaker, peer, scheduler.now())).toBe(true);
+
+    coordinator.dcBreaker.noteChannelEstablished(peer, 'ok');
+    expect(isBackgroundDcUpgradeBlocked(coordinator.dcBreaker, peer, scheduler.now())).toBe(false);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer, peer]);
+
+    coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'e2');
+    expect(isBackgroundDcUpgradeBlocked(coordinator.dcBreaker, peer, scheduler.now())).toBe(true);
     coordinator.maybeUpgrade(peer, { cooldown: false });
     await flushMicrotasks();
     expect(dials).toEqual([peer, peer]);

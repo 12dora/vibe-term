@@ -121,6 +121,11 @@ export class RelayPresence implements RelayPresenceIndex {
     return ids;
   }
 
+  listedPeerIds(url: string): string[] {
+    const row = this.rows.get(keyOf(url));
+    return row ? [...row.peers.keys()] : [];
+  }
+
   listedNodes(exceptUrl?: string | null): Array<{
     id: string;
     online: boolean;

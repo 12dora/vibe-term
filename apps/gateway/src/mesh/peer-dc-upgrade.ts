@@ -2,6 +2,7 @@ import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs, isRecord } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import {
+  attachPermanentHoldClear,
   isBackgroundDcUpgradeBlocked,
   noteBackgroundDcUpgradeAttempt,
 } from './peer-dc-upgrade-gate';
@@ -30,12 +31,10 @@ export type UpgradeGate = {
   coalesced: boolean;
   scheduled: boolean;
 };
-
 export type DcUpgradeRetry = {
   attempt: number;
   abort: AbortController | null;
 };
-
 export type DcUpgradeLivePeer = {
   retiring: boolean;
   transport: PeerTransportKind;
@@ -78,7 +77,10 @@ export class DcUpgradeCoordinator {
 
   constructor(ports: DcUpgradePorts) {
     this.ports = ports;
-    this.dcBreaker = createGatewayRtcDialBreaker({ now: () => this.ports.scheduler.now() });
+    this.dcBreaker = attachPermanentHoldClear(
+      createGatewayRtcDialBreaker({ now: () => this.ports.scheduler.now() }),
+      () => this.ports.scheduler.now()
+    );
   }
 
   startScan(tick: () => void): void {
@@ -521,7 +523,6 @@ export function parseEndpoints(endpointsJson: string, fallbackPort?: number): st
   }
   return urls;
 }
-
 export abstract class PeerCollaboratorHost {
   protected abstract readonly dcUpgrade: DcUpgradeCoordinator;
   protected abstract readonly rtcWake: RtcWakeGate;

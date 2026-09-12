@@ -7,7 +7,9 @@ import {
   type NodeListApplyDeps,
   applyUplinkNodeList,
   emitRenameNodeEvent,
+  mergeAppliedNodeList,
   mergeListedRtc,
+  overlayOnlineUnion,
   reconcileHubStoreFromNodeList,
 } from './node-list-apply';
 import type { UplinkNodeList } from './uplink-protocol';
@@ -389,4 +391,53 @@ describe('applyUplinkNodeList STUN distribution', () => {
       close();
     }
   });
+
+  test('secondary-only retained 节点不在并集时 overlay 为 offline，primary 清单保留自身标志', () => {
+    const extra = listedNode(PEER, true, 'tokyo-only');
+    const primaryPeer = listedNode(SELF, true, 'self');
+    const overlaid = overlayOnlineUnion([primaryPeer, extra], [], [SELF]);
+    expect(overlaid.find((node) => node.id === PEER)?.online).toBe(false);
+    expect(overlaid.find((node) => node.id === SELF)?.online).toBe(true);
+  });
+
+  test('并集报 online 时 primary 标 offline 的节点仍升为 online', () => {
+    const listed = listedNode(PEER, false);
+    expect(overlayOnlineUnion([listed], [PEER], [PEER])[0]?.online).toBe(true);
+  });
+
+  test('extraListedNodes 陈旧 online 不会在并集为空时复活', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const events: string[] = [];
+      const d = applyDeps(hubStore, userStore);
+      d.retainPeerIds = () => [PEER];
+      d.extraListedNodes = () => [listedNode(PEER, true, 'tokyo-only')];
+      d.onlineUnionIds = () => [];
+      d.emitListNodeEvent = (event) => {
+        events.push(`${event.nodeId}:${event.status}`);
+      };
+      const incoming = listOf([]);
+      const merged = mergeAppliedNodeList(incoming, d.extraListedNodes(), d.onlineUnionIds());
+      expect(merged.nodes.find((node) => node.id === PEER)?.online).toBe(false);
+      applyUplinkNodeList(d, incoming, () => false);
+      expect(d.state.lastNodeList?.nodes.find((node) => node.id === PEER)?.online).toBe(false);
+      expect(events).toEqual([`${PEER}:offline`]);
+    } finally {
+      close();
+    }
+  });
 });
+
+function listedNode(id: string, online: boolean, name = 'peer'): UplinkNodeList['nodes'][number] {
+  return {
+    id,
+    name,
+    online,
+    endpoints: [],
+    inventory: {},
+    direct_capable: false,
+    version: '2.2.4',
+  };
+}

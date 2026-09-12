@@ -78,30 +78,12 @@ export function createRelayMultiAttach(input: {
 
   const relayMode = () => input.wiring.secrets.uplinkKind() === 'relay';
 
-  const spawnSecondary = (url: string): SecondaryUplink =>
-    input.spawn({
-      ...input.baseClient,
-      hubUrl: url,
-      keyLogCatchUp: 'prefix-verified',
-      onNodeList: (list) => applySecondaryList(url, list),
-    });
+  const emitExclusiveOffline = (peerIds: string[]): void => {
+    markCachedNodesOffline(input.rtc, peerIds);
+    input.onExclusiveOffline(peerIds);
+  };
 
-  const opener = new RelaySecondaryAttach({
-    rows: () => input.wiring.secrets.relayRows(),
-    primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? presence.primaryUrl(),
-    spawn: spawnSecondary,
-    presence,
-    scheduler: input.scheduler,
-    openPrimary: (peer) => input.uplink.openRelay(peer),
-    onRelayStream: input.onRelayStream,
-    onExclusiveOffline: input.onExclusiveOffline,
-    staleMs,
-  } satisfies RelaySecondaryAttachOptions);
-
-  function applySecondaryList(url: string, list: UplinkNodeList): void {
-    mergeSecondaryRoster(presence, input.rtc, url, list, input.scheduler.now());
-    input.noteStun?.();
-  }
+  const opener = openSecondaryAttach(input, presence, staleMs, emitExclusiveOffline);
 
   function clearDecay(url: string): void {
     decays.get(url)?.clear();
@@ -115,7 +97,7 @@ export function createRelayMultiAttach(input: {
       handle.clear();
       decays.delete(url);
       const exclusive = presence.decay(url, input.scheduler.now());
-      if (exclusive.length > 0) input.onExclusiveOffline(exclusive);
+      if (exclusive.length > 0) emitExclusiveOffline(exclusive);
     }, staleMs);
     decays.set(url, handle);
   }
@@ -180,6 +162,34 @@ export function createRelayMultiAttach(input: {
   return api;
 }
 
+function openSecondaryAttach(
+  input: Parameters<typeof createRelayMultiAttach>[0],
+  presence: RelayPresence,
+  staleMs: number,
+  onExclusiveOffline: (peerIds: string[]) => void
+): RelaySecondaryAttach {
+  return new RelaySecondaryAttach({
+    rows: () => input.wiring.secrets.relayRows(),
+    primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? presence.primaryUrl(),
+    spawn: (url) =>
+      input.spawn({
+        ...input.baseClient,
+        hubUrl: url,
+        keyLogCatchUp: 'prefix-verified',
+        onNodeList: (list) => {
+          mergeSecondaryRoster(presence, input.rtc, url, list, input.scheduler.now());
+          input.noteStun?.();
+        },
+      }),
+    presence,
+    scheduler: input.scheduler,
+    openPrimary: (peer) => input.uplink.openRelay(peer),
+    onRelayStream: input.onRelayStream,
+    onExclusiveOffline,
+    staleMs,
+  } satisfies RelaySecondaryAttachOptions);
+}
+
 function mergeSecondaryRoster(
   presence: RelayPresence,
   rtc: RelayRtcHolder,
@@ -195,7 +205,9 @@ function mergeSecondaryRoster(
   const unioned = rtc.lastNodeList
     ? unionListedNodes(rtc.lastNodeList.nodes, list.nodes)
     : list.nodes;
-  const nodes = overlayOnlineUnion(unioned, presence.onlineUnion(now));
+  const primaryUrl = presence.primaryUrl();
+  const primaryIds = primaryUrl ? presence.listedPeerIds(primaryUrl) : [];
+  const nodes = overlayOnlineUnion(unioned, presence.onlineUnion(now), primaryIds);
   rtc.lastNodeList = rtc.lastNodeList ? { ...rtc.lastNodeList, nodes } : { ...list, nodes };
 }
 
@@ -270,6 +282,20 @@ export function withdrawRelayRtcOnDrop(rtc: RelayRtcHolder, url: string): void {
   rtc.lastRtc = withdrawListedRtc(rtc.lastRtc, normalizeHubEndpointUrl(url));
 }
 
+/** secondary/primary decay 到期：缓存清单里只经该中继在线的节点立刻落 offline。 */
+export function markCachedNodesOffline(rtc: RelayRtcHolder, peerIds: readonly string[]): void {
+  const list = rtc.lastNodeList;
+  if (!list || peerIds.length === 0) return;
+  const drop = new Set(peerIds);
+  let changed = false;
+  const nodes = list.nodes.map((node) => {
+    if (!drop.has(node.id) || !node.online) return node;
+    changed = true;
+    return { ...node, online: false };
+  });
+  if (changed) rtc.lastNodeList = { ...list, nodes };
+}
+
 export function installRelayMultiAttach(input: {
   wiring: RelayWiring;
   uplink: UplinkPool;
@@ -337,9 +363,14 @@ export function primaryNodeListApplyPatch(
     extraListedNodes: () => {
       if (!attach) return [];
       const known = attach.presence.knownPeerIds();
-      return lastNodes.filter(
-        (node) => !incoming.nodes.some((row) => row.id === node.id) && known.has(node.id)
-      );
+      const online = attach.presence.onlineUnion();
+      const have = new Set(incoming.nodes.map((row) => row.id));
+      return lastNodes
+        .filter((node) => !have.has(node.id) && known.has(node.id))
+        .map((node) => {
+          const isOnline = online.has(node.id);
+          return node.online === isOnline ? node : { ...node, online: isOnline };
+        });
     },
     onlineUnionIds: () => attach?.presence.onlineUnion() ?? [],
   };

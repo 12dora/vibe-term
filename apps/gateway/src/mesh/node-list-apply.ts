@@ -375,17 +375,30 @@ export function unionListedNodes(
   return added.length === 0 ? primary : [...primary, ...added];
 }
 
+/**
+ * 并集内的节点强制 online。retained（不在 primary 清单）且不在并集的节点强制 offline，
+ * 避免 secondary decay 后仍被缓存清单复活。primary 清单保留自身标志，除非并集报 online。
+ */
 export function overlayOnlineUnion(
   nodes: UplinkNodeList['nodes'],
-  onlineIds: Iterable<string>
+  onlineIds: Iterable<string>,
+  primaryIds?: Iterable<string>
 ): UplinkNodeList['nodes'] {
   const online = onlineIds instanceof Set ? onlineIds : new Set(onlineIds);
-  if (online.size === 0) return nodes;
+  const primary =
+    primaryIds == null ? null : primaryIds instanceof Set ? primaryIds : new Set(primaryIds);
   let changed = false;
   const next = nodes.map((node) => {
-    if (node.online || !online.has(node.id)) return node;
-    changed = true;
-    return { ...node, online: true };
+    if (online.has(node.id)) {
+      if (node.online) return node;
+      changed = true;
+      return { ...node, online: true };
+    }
+    if (primary && !primary.has(node.id) && node.online) {
+      changed = true;
+      return { ...node, online: false };
+    }
+    return node;
   });
   return changed ? next : nodes;
 }
@@ -396,7 +409,13 @@ export function mergeAppliedNodeList(
   onlineIds?: Iterable<string>
 ): UplinkNodeList {
   const unioned = extras.length > 0 ? unionListedNodes(list.nodes, extras) : list.nodes;
-  const nodes = onlineIds ? overlayOnlineUnion(unioned, onlineIds) : unioned;
+  const nodes = onlineIds
+    ? overlayOnlineUnion(
+        unioned,
+        onlineIds,
+        list.nodes.map((node) => node.id)
+      )
+    : unioned;
   return nodes === list.nodes ? list : { ...list, nodes };
 }
 

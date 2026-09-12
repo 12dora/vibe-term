@@ -19,6 +19,8 @@ type PermanentHold = {
   failures: number;
   since: number;
   probeReleased: boolean;
+  /** 探测已建 DC：忽略残留 lastFailureKind，直到新的永久失败再武装。 */
+  established?: boolean;
 };
 
 const holdsByBreaker = new WeakMap<RtcDialBreaker, Map<string, PermanentHold>>();
@@ -54,6 +56,9 @@ function syncPermanentHold(
     return null;
   }
   const prev = map.get(nodeId);
+  if (prev?.established && prev.code === code && snap.failures <= prev.failures) {
+    return prev;
+  }
   if (!prev || prev.code !== code || snap.failures > prev.failures) {
     const next: PermanentHold = { code, failures: snap.failures, since: now, probeReleased: false };
     map.set(nodeId, next);
@@ -70,7 +75,7 @@ export function isBackgroundDcUpgradeBlocked(
 ): boolean {
   if (breaker.isDisabled(nodeId)) return true;
   const hold = syncPermanentHold(breaker, nodeId, now);
-  if (!hold) return false;
+  if (!hold || hold.established) return false;
   if (now - hold.since < PERMANENT_FAILURE_HOLD_MS) return true;
   return hold.probeReleased;
 }
@@ -82,7 +87,50 @@ export function noteBackgroundDcUpgradeAttempt(
   now = Date.now()
 ): void {
   const hold = syncPermanentHold(breaker, nodeId, now);
-  if (!hold) return;
+  if (!hold || hold.established) return;
   if (now - hold.since < PERMANENT_FAILURE_HOLD_MS) return;
   hold.probeReleased = true;
+}
+
+/**
+ * 探测已建 DC：立刻清 hold（不等 `noteHealthy`）。残留 lastFailureKind 在下次
+ * 永久失败（failures 增加或 code 变化）之前不会重新武装。
+ */
+export function noteBackgroundDcUpgradeEstablished(
+  breaker: RtcDialBreaker,
+  nodeId: string,
+  now = Date.now()
+): void {
+  const map = holdMap(breaker);
+  const snap = breaker.snapshot(nodeId, now);
+  const kind = snap.lastFailureKind;
+  if (!kind) {
+    map.delete(nodeId);
+    return;
+  }
+  const code = dcFailureCode(kind);
+  if (!isPermanentDcFailureCode(code)) {
+    map.delete(nodeId);
+    return;
+  }
+  map.set(nodeId, {
+    code,
+    failures: snap.failures,
+    since: now,
+    probeReleased: false,
+    established: true,
+  });
+}
+
+/** 把 breaker 的 `noteChannelEstablished` 接到 hold 清除上。 */
+export function attachPermanentHoldClear(
+  breaker: RtcDialBreaker,
+  now: () => number
+): RtcDialBreaker {
+  const established = breaker.noteChannelEstablished.bind(breaker);
+  breaker.noteChannelEstablished = (peer, attemptId, at) => {
+    established(peer, attemptId, at);
+    noteBackgroundDcUpgradeEstablished(breaker, peer, at ?? now());
+  };
+  return breaker;
 }
