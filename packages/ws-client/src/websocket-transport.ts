@@ -108,7 +108,8 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       maxPendingBytes: limits.maxBytes,
       maxPendingFrames: limits.maxFrames,
     });
-    client.setHelloScreenIntentProvider(() => this.canonical.peekHelloScreenIntent());
+    // 测试里注入的精简 client 可能没有该方法；生产 BorshWebSocketClient 一定有
+    client.setHelloScreenIntentProvider?.(() => this.canonical.peekHelloScreenIntent());
     this.disposers = [
       client.onStateChange((state) => this.handleStateChange(state)),
       client.onLatency((latencyMs, rawMs) => this.emit({ type: 'latency', latencyMs, rawMs })),
