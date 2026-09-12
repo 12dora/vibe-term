@@ -227,6 +227,7 @@ export class PeerLiveRegistry {
       linkSinceAt: this.state.scheduler.now(),
       dcAttemptId: transport === 'dc' ? (dcAttemptId ?? this.deps.nextDcAttemptId()) : null,
       rttSamples: 0,
+      rttMinMs: undefined,
       ...(transport === 'dc' && rtcEpoch !== undefined ? { rtcEpoch } : {}),
     };
     this.state.live.set(peerNodeId, live);
@@ -554,6 +555,7 @@ export class PeerLiveRegistry {
     best.pingSentAt = null;
     best.rttSpikeIgnored = false;
     best.rttSamples = 0;
+    best.rttMinMs = undefined;
     best.lastEmittedRttMs = null;
     best.lastRttEmitAt = 0;
     this.state.live.set(nodeId, best);

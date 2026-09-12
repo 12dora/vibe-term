@@ -12,7 +12,7 @@
  * - 已能拨 DC 且 DC 升级在途 / 熔断放行时，不浪费预算去再赛一条 ws-secure（DC 升级会换掉它）。
  */
 export const DC_REROLL_MIN_SAMPLES = 3;
-export const DC_REROLL_MIN_LINK_AGE_MS = 20_000;
+export const DC_REROLL_MIN_LINK_AGE_MS = 60_000;
 export const DC_REROLL_MULTIPLIER = 1.5;
 export const DC_REROLL_ADDITIVE_MS = 40;
 export const DC_REROLL_MAX_PER_HOUR = 3;

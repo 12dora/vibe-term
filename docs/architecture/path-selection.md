@@ -72,7 +72,7 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 |---|---|
 | 慢的定义 | `rtt > max(1.5 × best, best + 40 ms)` |
 | 最少 ping 样本 | 3 |
-| 最小链龄 | 20 s |
+| 最小链龄 | 60 s |
 | 每对端每滚动小时 | ≤ 3 次 |
 | 两次间隔 | ≥ 60 s |
 | 角色 | 拨号仅 offerer；应答侧在对端报过 `reroll` 时可发 `link.reroll-request`。需已协商 `quiesce` |

@@ -313,7 +313,7 @@ describe('DC 重掷（make-before-break）', () => {
     expect(live).toBeTruthy();
     live!.rttMs = 190;
     live!.rttSamples = 3;
-    live!.linkSinceAt = Date.now() - 30_000;
+    live!.linkSinceAt = Date.now() - 90_000;
     rerollOf(pair.managerLarge).onRttSample(live as LivePeer, 190);
     await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
     await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
@@ -352,7 +352,7 @@ describe('DC 重掷（make-before-break）', () => {
     pair.managerLarge.pathRttMemory.record(pair.small.nodeId, { kind: 'tcp-connect', rttMs: 90 });
     live!.rttMs = 190;
     live!.rttSamples = 3;
-    live!.linkSinceAt = Date.now() - 30_000;
+    live!.linkSinceAt = Date.now() - 90_000;
     rerollOf(pair.managerLarge).onRttSample(live as LivePeer, 190);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(sent.some((row) => row.includes('link.reroll-request'))).toBe(false);

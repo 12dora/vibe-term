@@ -16,7 +16,7 @@ function input(patch: Partial<DcRerollInput> = {}): DcRerollInput {
     transport: 'dc',
     rttMs: 200,
     samples: 3,
-    linkAgeMs: 20_000,
+    linkAgeMs: 60_000,
     bestKnownMs: 100,
     rerolls: { count: 0, windowStartedAt: NOW },
     lastRerollAt: null,

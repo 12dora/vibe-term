@@ -40,6 +40,8 @@ export type LivePeer = {
   dcAttemptId: string | null;
   /** 本条链路安装以来收到的 pong 样本数；DC 重掷判定用。 */
   rttSamples: number;
+  /** 本条链路安装以来的最小 pong RTT；重掷结算用它而不是 EWMA，避免搬流回放冲高误判。 */
+  rttMinMs?: number;
   /** 对端在 link.hello 里报过 reroll 能力。 */
   rerollCapable?: boolean;
   /** 产出本条 DC 的 ICE epoch；ws-secure / relay 或旧路径未带回时缺省。 */

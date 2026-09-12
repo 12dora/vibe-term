@@ -6,9 +6,12 @@ _2026-09-13_
 
 - **Answerer-requested direct-link re-roll.** When the NAT'd answerer sees live DC / ws-secure RTT well above the peer's best-path memory (typically TCP-connect to the offerer's public 39001) and the peer advertised `reroll`, it sends `link.reroll-request`; the offerer re-dials the same make-before-break path (`reason=peer-request`). Both sides keep the 3/hour budget. 2.3.1 peers never advertise `reroll` and never receive the ctl.
 
+- Re-roll results are judged by the new link's minimum RTT (not the EWMA, which the stream re-home replay inflates), and a link must be 60 s old before it can be re-rolled (was 20 s).
+
 ## 中文
 
 - **应答侧可请求重拨直连。** NAT 后的应答侧若发现 live DC / ws-secure 明显慢于该对端最佳路径（通常是对 offerer 公网 39001 的 TCP connect），且对端报过 `reroll`，则发 `link.reroll-request`，由 offerer 走同一条 make-before-break 重拨（`reason=peer-request`）。两端预算仍各 3 次/小时。2.3.1 对端不报 `reroll`，不会收到该 ctl。
+- 重掷结算改用新链路的最小 RTT（EWMA 会被搬流回放冲高），链路存活 60 s 后才参与重掷判定（原 20 s）。
 
 # 2.3.4
 

@@ -105,6 +105,7 @@ export class DcRerollCoordinator {
   /** 每个 pong：写路径 RTT 记忆 → 结算上一次重掷 → 判定是否再掷。 */
   onRttSample(live: LivePeer, sampleMs: number): void {
     live.rttSamples += 1;
+    live.rttMinMs = Math.min(live.rttMinMs ?? Number.POSITIVE_INFINITY, Math.max(0, sampleMs));
     if (live.transport === 'dc' || live.transport === 'ws-secure') {
       this.state.pathRtt.record(live.peerNodeId, { kind: live.transport, rttMs: sampleMs });
     }
@@ -392,7 +393,7 @@ export class DcRerollCoordinator {
     if (live.transport !== rec.transport || live.session === rec.prevSession) return;
     if (live.linkSinceAt < rec.lastAt || live.rttSamples < DC_REROLL_RESULT_SAMPLES) return;
     const oldMs = rec.oldMs;
-    const newMs = live.rttMs ?? oldMs;
+    const newMs = live.rttMinMs ?? live.rttMs ?? oldMs;
     const prevSession = rec.prevSession;
     const transport = rec.transport;
     rec.oldMs = null;
