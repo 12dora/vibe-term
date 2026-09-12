@@ -65,3 +65,21 @@ describe('unionSelectionViewportRect', () => {
     expect(unionSelectionViewportRect([{ row: 0, x: 2, width: 0 }], SCREEN, CELL)).toBeNull();
   });
 });
+
+describe('unionSelectionViewportRect clipping', () => {
+  test('clips cells outside the visible screen and drops fully hidden rects', () => {
+    const screen = { left: 100, top: 50, right: 140, bottom: 90 };
+    const cell = { width: 10, height: 20 };
+    const rect = unionSelectionViewportRect(
+      [
+        { row: 0, x: -2, width: 4 },
+        { row: 1, x: 3, width: 3 },
+        { row: 5, x: 0, width: 2 },
+      ],
+      screen,
+      cell
+    );
+    expect(rect).toEqual({ left: 100, top: 50, width: 40, height: 40 });
+    expect(unionSelectionViewportRect([{ row: 5, x: 0, width: 2 }], screen, cell)).toBeNull();
+  });
+});

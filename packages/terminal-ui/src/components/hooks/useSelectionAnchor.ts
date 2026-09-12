@@ -50,7 +50,15 @@ export function useSelectionAnchor({
     }
 
     recompute();
-    const rafId = requestAnimationFrame(recompute);
+    let rafId: number | null = null;
+    const scheduleRecompute = () => {
+      if (rafId !== null) return;
+      rafId = requestAnimationFrame(() => {
+        rafId = null;
+        recompute();
+      });
+    };
+    scheduleRecompute();
     const container = containerRef.current;
     const observers: ResizeObserver[] = [];
 
@@ -68,12 +76,11 @@ export function useSelectionAnchor({
     view?.visualViewport?.addEventListener('scroll', onLayout);
     container?.addEventListener('scroll', onLayout, { capture: true, passive: true });
 
-    const disposable = instance?.onSelectionChange?.(() => {
-      requestAnimationFrame(recompute);
-    });
+    const disposable = instance?.onSelectionChange?.(scheduleRecompute);
 
     return () => {
-      cancelAnimationFrame(rafId);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = null;
       for (const observer of observers) observer.disconnect();
       view?.removeEventListener('scroll', onLayout, true);
       view?.removeEventListener('resize', onLayout);

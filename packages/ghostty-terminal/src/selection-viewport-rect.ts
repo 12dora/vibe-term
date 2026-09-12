@@ -7,9 +7,12 @@ import type {
 export interface SelectionScreenOrigin {
   left: number;
   top: number;
+  /** 画布可见区右/下边（client 坐标）；给了就把每块矩形裁到可见区内。 */
+  right?: number;
+  bottom?: number;
 }
 
-/** 把视口相对的单元格选区矩形并成 client 坐标系包围盒；无可见矩形时 null。 */
+/** 把视口相对的单元格选区矩形并成 client 坐标系包围盒，裁到画布可见区；无可见矩形时 null。 */
 export function unionSelectionViewportRect(
   rects: readonly GhosttySelectionRect[],
   screen: SelectionScreenOrigin,
@@ -28,12 +31,23 @@ export function unionSelectionViewportRect(
     if (rect.width <= 0) {
       continue;
     }
-    const rectLeft = screen.left + rect.x * cell.width;
-    const rectTop = screen.top + rect.row * cell.height;
+    const rectLeft = Math.max(screen.left + rect.x * cell.width, screen.left);
+    const rectTop = Math.max(screen.top + rect.row * cell.height, screen.top);
+    const rectRight = Math.min(
+      screen.left + (rect.x + rect.width) * cell.width,
+      screen.right ?? Number.POSITIVE_INFINITY
+    );
+    const rectBottom = Math.min(
+      screen.top + (rect.row + 1) * cell.height,
+      screen.bottom ?? Number.POSITIVE_INFINITY
+    );
+    if (rectRight <= rectLeft || rectBottom <= rectTop) {
+      continue;
+    }
     left = Math.min(left, rectLeft);
     top = Math.min(top, rectTop);
-    right = Math.max(right, rectLeft + rect.width * cell.width);
-    bottom = Math.max(bottom, rectTop + cell.height);
+    right = Math.max(right, rectRight);
+    bottom = Math.max(bottom, rectBottom);
   }
 
   if (!Number.isFinite(left) || right <= left || bottom <= top) {

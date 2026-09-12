@@ -103,7 +103,7 @@ export class TerminalSelection {
     offset: number,
     rows: number,
     host: {
-      screenBounds: () => { left: number; top: number } | null;
+      screenBounds: () => { left: number; top: number; right?: number; bottom?: number } | null;
       cell: GhosttyCellDimensions;
     }
   ): GhosttySelectionViewportRect | null {
