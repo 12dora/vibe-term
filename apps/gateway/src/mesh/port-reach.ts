@@ -22,6 +22,7 @@ import { stunProbeSnapshot } from './rtc/stun-probe';
 export const PORT_PROBE_CADENCE_MS = 5 * 60 * 1_000;
 export const PORT_PROBE_TICK_MS = 30_000;
 export const DC_HISTORY_MS = 24 * 60 * 60 * 1_000;
+export const PEER_REPORT_TTL_MS = 30 * 60 * 1_000;
 export const GATHER_BLOCKED_WINDOW = 3;
 
 export type MeshPortReachStatus = MeshPortReach['status'];
@@ -293,7 +294,9 @@ function selfPeerSignaling(): Pick<MeshPortReach, 'status' | 'code' | 'checkedAt
   if (state.peerServerListening === false) {
     return { status: 'blocked', code: 'peer_refused' };
   }
-  const reports = [...state.reports.values()];
+  // 成员报告只在有效期内计数：对端已移除或网络恢复后，旧的 refused/timeout 不能一直把本机判成 blocked
+  const freshAfter = state.now() - PEER_REPORT_TTL_MS;
+  const reports = [...state.reports.values()].filter((row) => row.at >= freshAfter);
   const checkedAt = reports.reduce((max, row) => Math.max(max, row.at), 0) || undefined;
   if (reports.some((row) => row.verdict === 'ok')) return { status: 'open', checkedAt };
   const fails = reports.filter((row) => row.verdict === 'refused' || row.verdict === 'timeout');

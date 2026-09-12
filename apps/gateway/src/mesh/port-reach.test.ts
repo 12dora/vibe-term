@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { MeshNodeDto } from './node-list-projection';
 import {
+  PEER_REPORT_TTL_MS,
   ingestPeerReachMap,
   ingestTurnOk,
   isProbeablePeerEndpoint,
@@ -115,6 +116,16 @@ describe('port reach aggregation', () => {
     notePeerServerBind(false);
     expect(signaling(SELF)?.status).toBe('blocked');
     expect(signaling(SELF)?.code).toBe('peer_refused');
+  });
+
+  test('self peer-signaling: stale member reports expire after the TTL', () => {
+    let now = 1_000;
+    resetPortReachForTest({ now: () => now });
+    ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'refused' }, SELF);
+    ingestPeerReachMap(PEER_B, { [SELF.slice(0, 8)]: 'refused' }, SELF);
+    expect(signaling(SELF)?.status).toBe('blocked');
+    now += PEER_REPORT_TTL_MS + 1;
+    expect(signaling(SELF)?.status).toBe('unknown');
   });
 
   test('rtc-ice self: srflx/DC open; three no-srflx gathers with STUN ok → blocked', () => {

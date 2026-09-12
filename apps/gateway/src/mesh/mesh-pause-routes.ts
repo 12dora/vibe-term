@@ -74,10 +74,12 @@ function handlePauseResume(
   if (!isEnrolledMember(host.userStore, nodeId)) {
     return jsonError('NODE_NOT_FOUND', 404);
   }
+  // 先确认节点仍在列表里再落库，避免校验与收集之间节点被移除时留下孤立偏好
+  const listed = host.collectNodes(req).find((row) => row.id === nodeId);
+  if (!listed) return jsonError('NODE_NOT_FOUND', 404);
   setNodePaused(nodeId, paused);
   if (paused) dropPausedPeerLink(nodeId);
-  const node = host.collectNodes(req).find((row) => row.id === nodeId);
-  if (!node) return jsonError('NODE_NOT_FOUND', 404);
+  const node = { ...listed, paused: paused || undefined };
   host.broadcastNodeEvent(eventFromNode(node, paused));
   return jsonBody({ ok: true, node: { ...node, operation: readNodeOperation(node.id) } });
 }
