@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import type { LinkSession } from '@vibeterm/shared/link';
 import type { TcpProbeResult } from './port-reach-probe';
+import { TCP_CANARY_PORT, resetTcpSamplingTrustForTest } from './tcp-sampling-trust';
+
+const TRUSTED = async () => true;
+const settleMicrotasks = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 import type { MeshScheduler } from './types';
 import {
   UPLINK_DEGRADE_MIN_INTERVAL_MS,
@@ -142,11 +146,13 @@ describe('UplinkPathSampler TCP sampling', () => {
     const scheduler = new ManualScheduler();
     const fake = pendingProbe();
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => ['https://relay.example', 'https://10.0.0.1', 'https://relay.example/dup'],
       probe: fake.probe,
     });
     const sampling = sampler.sampleAll();
+    await settleMicrotasks();
     expect(fake.pending).toHaveLength(UPLINK_PATH_SAMPLE_CONNECTS);
     expect(new Set(fake.pending.map((row) => `${row.host}:${row.port}`))).toEqual(
       new Set(['relay.example:443'])
@@ -166,6 +172,7 @@ describe('UplinkPathSampler TCP sampling', () => {
     const scheduler = new ManualScheduler();
     let calls = 0;
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => ['https://hub.example'],
       probe: async () => {
@@ -191,6 +198,7 @@ describe('heartbeat + degrade re-race', () => {
     scheduler.nowMs = 1_000_000;
     const lines: string[] = [];
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => [],
       log: (line) => lines.push(line),
@@ -223,7 +231,12 @@ describe('heartbeat + degrade re-race', () => {
   test('有在途流时等待，空闲后下一次心跳才重赛', () => {
     const scheduler = new ManualScheduler();
     scheduler.nowMs = 5_000_000;
-    const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
+    const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
+      scheduler,
+      targets: () => [],
+      log: () => {},
+    });
     sampler.memory.record('hub.example', { kind: 'tcp-connect', rttMs: 50, at: scheduler.nowMs });
     const beat = (inFlightStreams: number) =>
       sampler.onHeartbeat(
@@ -237,7 +250,11 @@ describe('heartbeat + degrade re-race', () => {
 
   test('好的心跳自己拉低参考，之后同样 RTT 不再触发', () => {
     const scheduler = new ManualScheduler();
-    const sampler = new UplinkPathSampler({ scheduler, targets: () => [] });
+    const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
+      scheduler,
+      targets: () => [],
+    });
     sampler.memory.record('relay.example', { kind: 'tcp-connect', rttMs: 200, at: 0 });
     const beat = (rttMs: number) =>
       sampler.onHeartbeat(hb({ url: 'https://relay.example', rttMs, now: scheduler.now() }));
@@ -308,7 +325,12 @@ describe('re-race budget', () => {
   test('同一主机一小时内最多 3 次，两次间隔至少 2 分钟', () => {
     const scheduler = new ManualScheduler();
     scheduler.nowMs = 8_000_000;
-    const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
+    const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
+      scheduler,
+      targets: () => [],
+      log: () => {},
+    });
     sampler.memory.record('r.example', { kind: 'tcp-connect', rttMs: 40, at: scheduler.nowMs });
     const fire = () => {
       const slow = hb({ url: 'https://r.example', rttMs: 200, now: scheduler.nowMs });
@@ -342,6 +364,7 @@ describe('relay + hub sampling targets', () => {
       'https://relay-b.example',
     ]);
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => collectUplinkPathTargets(hub.candidates(), relay.secrets.relayRows()),
       probe: fake.probe,
@@ -374,7 +397,12 @@ describe('pending open 计入 in-flight', () => {
   test('openStream 未完成时重赛判定 busy', async () => {
     const scheduler = new ManualScheduler();
     scheduler.nowMs = 5_000_000;
-    const sampler = new UplinkPathSampler({ scheduler, targets: () => [], log: () => {} });
+    const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
+      scheduler,
+      targets: () => [],
+      log: () => {},
+    });
     sampler.memory.record('hub.example', { kind: 'tcp-connect', rttMs: 50, at: scheduler.nowMs });
     const gate = new UplinkStreamGate<ReturnType<typeof stubStream>>();
     let release!: (stream: ReturnType<typeof stubStream>) => void;
@@ -415,6 +443,7 @@ describe('re-race_result 按连接结算', () => {
     scheduler.nowMs = 3_000_000;
     const lines: string[] = [];
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => [],
       log: (line) => lines.push(line),
@@ -449,6 +478,7 @@ describe('re-race_result 按连接结算', () => {
     scheduler.nowMs = 3_000_000;
     const lines: string[] = [];
     const sampler = new UplinkPathSampler({
+      trust: TRUSTED,
       scheduler,
       targets: () => [],
       log: (line) => lines.push(line),
@@ -505,5 +535,32 @@ describe('createUplinkPathHeartbeat in-flight', () => {
     inFlight = 0;
     ping();
     expect(torn).toEqual([UPLINK_PATH_RERACE_REASON]);
+  });
+});
+
+describe('UplinkPathSampler canary', () => {
+  test('a stack that completes the canary handshake disables TCP sampling and logs once', async () => {
+    resetTcpSamplingTrustForTest();
+    const scheduler = new ManualScheduler();
+    const lines: string[] = [];
+    const ports: number[] = [];
+    const sampler = new UplinkPathSampler({
+      scheduler,
+      targets: () => ['https://hub.example'],
+      probe: async (_host, port) => {
+        ports.push(port);
+        return { verdict: 'ok', connectMs: 9 };
+      },
+      log: (line) => lines.push(line),
+    });
+    try {
+      await sampler.sampleAll();
+      await sampler.sampleAll();
+      expect(ports).toEqual([TCP_CANARY_PORT]);
+      expect(sampler.memory.bestMs('hub.example')).toBeNull();
+      expect(lines.filter((line) => line.includes('tcp path sampling disabled'))).toHaveLength(1);
+    } finally {
+      resetTcpSamplingTrustForTest();
+    }
   });
 });

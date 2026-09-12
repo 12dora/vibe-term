@@ -5,6 +5,7 @@ import { stamp } from './mesh-log';
 import { PeerPathRttMemory } from './peer-path-rtt';
 import { PORT_PROBE_DEADLINE_MS, type TcpProbeResult, probeTcpConnect } from './port-reach-probe';
 import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
+import { ensureTcpSamplingTrust } from './tcp-sampling-trust';
 import type { MeshScheduler } from './types';
 import {
   UPLINK_DEGRADE_MAX_PER_HOUR,
@@ -42,6 +43,8 @@ export type UplinkPathSamplerOptions = {
   scheduler: MeshScheduler;
   targets: () => readonly string[];
   probe?: UplinkPathProbeFn;
+  /** 金丝雀信任判定；测试注入，默认走 ensureTcpSamplingTrust（进程内共享） */
+  trust?: (host: string, now: number) => Promise<boolean>;
   intervalMs?: number;
   connects?: number;
   log?: (line: string) => void;
@@ -118,6 +121,7 @@ export class UplinkPathSampler {
   private readonly scheduler: MeshScheduler;
   private readonly targets: () => readonly string[];
   private readonly probe: UplinkPathProbeFn;
+  private readonly trust: (host: string, now: number) => Promise<boolean>;
   private readonly intervalMs: number;
   private readonly connects: number;
   private readonly log: (line: string) => void;
@@ -129,6 +133,15 @@ export class UplinkPathSampler {
     this.scheduler = opts.scheduler;
     this.targets = opts.targets;
     this.probe = opts.probe ?? probeTcpConnect;
+    this.trust =
+      opts.trust ??
+      ((host, now) =>
+        ensureTcpSamplingTrust(
+          host,
+          now,
+          (h, p, deadline) => this.probe(h, p, deadline),
+          this.log
+        ));
     this.intervalMs = opts.intervalMs ?? UPLINK_PATH_SAMPLE_INTERVAL_MS;
     this.connects = opts.connects ?? UPLINK_PATH_SAMPLE_CONNECTS;
     this.log = opts.log ?? ((line) => console.info(stamp(line)));
@@ -235,6 +248,7 @@ export class UplinkPathSampler {
   }
 
   private async sampleHost(host: string, port: number): Promise<void> {
+    if (!(await this.trust(host, this.scheduler.now()))) return;
     const results = await Promise.all(
       Array.from({ length: this.connects }, () =>
         this.probe(host, port, PORT_PROBE_DEADLINE_MS).catch(

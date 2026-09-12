@@ -14,6 +14,7 @@ import {
   isFakeIpv4,
   isFakeIpv4PeerEndpoint,
 } from './address-class';
+import { logLine } from './mesh-log';
 import type { MeshNodeDirectFailure, MeshNodeDto, MeshPortReach } from './node-list-projection';
 import type { PeerPathRttMemory } from './peer-path-rtt';
 import {
@@ -24,6 +25,7 @@ import {
 } from './port-reach-probe';
 import { matchingTurnProbe } from './rtc/stun-effective';
 import { stunProbeSnapshot } from './rtc/stun-probe';
+import { ensureTcpSamplingTrust } from './tcp-sampling-trust';
 
 export const PORT_PROBE_CADENCE_MS = 5 * 60 * 1_000;
 export const PORT_PROBE_TICK_MS = 30_000;
@@ -76,6 +78,7 @@ type PortReachState = {
   stunOk: boolean | null;
   now: () => number;
   probeFn: ProbeFn;
+  trust: (host: string, now: number, probe: ProbeFn) => Promise<boolean>;
 };
 
 const state: PortReachState = createState();
@@ -93,16 +96,19 @@ function createState(): PortReachState {
     stunOk: null,
     now: Date.now,
     probeFn: probeTcpConnect,
+    trust: (host, now, probe) => ensureTcpSamplingTrust(host, now, probe, (line) => logLine(line)),
   };
 }
 
 export function resetPortReachForTest(opts?: {
   now?: () => number;
   probeFn?: ProbeFn;
+  trust?: (host: string, now: number, probe: ProbeFn) => Promise<boolean>;
 }): void {
   const next = createState();
   if (opts?.now) next.now = opts.now;
   if (opts?.probeFn) next.probeFn = opts.probeFn;
+  if (opts?.trust) next.trust = opts.trust;
   state.probes = next.probes;
   state.dc = next.dc;
   state.reports = next.reports;
@@ -114,6 +120,7 @@ export function resetPortReachForTest(opts?: {
   state.stunOk = next.stunOk;
   state.now = next.now;
   state.probeFn = next.probeFn;
+  state.trust = next.trust;
 }
 
 export function setStunOkForTest(ok: boolean | null): void {
@@ -255,8 +262,12 @@ export async function probePeerEndpoints(
       state.probeFn(target.host, target.port, PORT_PROBE_DEADLINE_MS)
     )
   );
+  const trusted =
+    opts?.pathRttMemory && results.some((result) => result.verdict === 'ok')
+      ? await state.trust(target.host, at, state.probeFn)
+      : false;
   for (const result of results) {
-    if (result.verdict !== 'ok' || result.connectMs === null) continue;
+    if (!trusted || result.verdict !== 'ok' || result.connectMs === null) continue;
     if (result.remoteAddress && isFakeIpv4(result.remoteAddress)) continue;
     opts?.pathRttMemory?.record(nodeId, { kind: 'tcp-connect', rttMs: result.connectMs });
   }

@@ -62,6 +62,7 @@ describe('port reach aggregation', () => {
   test('peer signaling: success is open; one fail keeps previous; two fails become blocked', async () => {
     let verdict: 'ok' | 'refused' | 'timeout' = 'ok';
     resetPortReachForTest({
+      trust: async () => true,
       probeFn: async () => ({ verdict, connectMs: verdict === 'ok' ? 90 : null }),
     });
     expect((await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true })).status).toBe('open');
@@ -81,6 +82,7 @@ describe('port reach aggregation', () => {
   test('peer signaling: refused code after two consecutive refusals; cadence skips', async () => {
     let now = 1_000;
     resetPortReachForTest({
+      trust: async () => true,
       now: () => now,
       probeFn: async () => ({ verdict: 'refused', connectMs: null }),
     });
@@ -125,7 +127,10 @@ describe('port reach aggregation', () => {
 
   test('self peer-signaling: stale member reports expire after the TTL', () => {
     let now = 1_000;
-    resetPortReachForTest({ now: () => now });
+    resetPortReachForTest({
+      trust: async () => true,
+      now: () => now,
+    });
     ingestPeerReachMap(PEER, { [SELF.slice(0, 8)]: 'refused' }, SELF);
     ingestPeerReachMap(PEER_B, { [SELF.slice(0, 8)]: 'refused' }, SELF);
     expect(signaling(SELF)?.status).toBe('blocked');

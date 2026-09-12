@@ -14,6 +14,8 @@ export const PEER_PATH_RTT_TTL_MS = 24 * 60 * 60 * 1000;
 /**
  * TCP connect 样本低于真实链路（dc / ws-secure 心跳）最佳 RTT 的这个比例时，视为握手被本机
  * TUN / 代理（Surge、mihomo 等）就地终结的假样本，不进记忆；已记的也在真实样本到来时清掉。
+ * 比例只能兜底：ECMP 慢路径本身就可能是快路径的 2 倍，所以主判定靠 `tcp-sampling-trust.ts`
+ * 的金丝雀探测（连一个必然关闭的端口也能「握手成功」= 本机就地终结）。
  */
 export const TCP_CONNECT_FLOOR_RATIO = 0.2;
 const REAL_KINDS: readonly PathRttKind[] = ['dc', 'ws-secure'];

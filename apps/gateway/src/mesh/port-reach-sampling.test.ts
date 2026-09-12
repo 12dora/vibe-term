@@ -53,6 +53,7 @@ describe('TCP path RTT sampling', () => {
     const fake = fakeConnect();
     const memory = new PeerPathRttMemory();
     resetPortReachForTest({
+      trust: async () => true,
       probeFn: (host, port, deadlineMs) => probeTcpConnect(host, port, deadlineMs, fake.connect),
     });
     const result = probePeerEndpoints(PEER, [ENDPOINT], { pathRttMemory: memory });
@@ -75,6 +76,7 @@ describe('TCP path RTT sampling', () => {
     const fake = fakeConnect();
     const memory = new PeerPathRttMemory();
     resetPortReachForTest({
+      trust: async () => true,
       probeFn: (host, port, deadlineMs) => probeTcpConnect(host, port, deadlineMs, fake.connect),
     });
     const result = probePeerEndpoints(PEER, [ENDPOINT], { pathRttMemory: memory });
@@ -90,6 +92,7 @@ describe('TCP path RTT sampling', () => {
     let calls = 0;
     const memory = new PeerPathRttMemory();
     resetPortReachForTest({
+      trust: async () => true,
       now: () => now,
       probeFn: async () => {
         calls += 1;
@@ -114,6 +117,7 @@ describe('TCP path RTT sampling', () => {
       listPeers: () => [{ nodeId: PEER, endpointsJson: JSON.stringify([ENDPOINT]) }],
     } as UserStore;
     resetPortReachForTest({
+      trust: async () => true,
       now: () => now,
       probeFn: async () => ({ verdict: 'ok', connectMs: 90 }),
     });
