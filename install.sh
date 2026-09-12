@@ -219,9 +219,17 @@ vibeterm_run_init() {
   # 安装来源记进 install-meta.json，网页「关于」页据此显示安装方式
   export VIBETERM_INSTALL_SOURCE=install.sh
   if command -v node >/dev/null 2>&1 && vibeterm_node_version_ok "$(node --version 2>/dev/null || true)"; then
-    node "$cli_js" init "$@"
+    if [ -n "${VIBETERM_INIT_LOG:-}" ]; then
+      node "$cli_js" init "$@" | tee -a "$VIBETERM_INIT_LOG"
+    else
+      node "$cli_js" init "$@"
+    fi
   else
-    bun "$cli_js" init "$@"
+    if [ -n "${VIBETERM_INIT_LOG:-}" ]; then
+      bun "$cli_js" init "$@" | tee -a "$VIBETERM_INIT_LOG"
+    else
+      bun "$cli_js" init "$@"
+    fi
   fi
 }
 
@@ -337,6 +345,8 @@ vibeterm_install() {
     exit 1
   fi
 
+  local init_log="${VIBETERM_INSTALL_TMP}/init.log"
+  VIBETERM_INIT_LOG="$init_log"
   if [ ! -t 0 ]; then
     if { exec 3</dev/tty; } 2>/dev/null; then
       echo "vibeterm install: stdin is not a TTY; attaching /dev/tty for prompts"
@@ -353,7 +363,7 @@ vibeterm_install() {
   echo
   echo "vibeterm install: done. The vibeterm command is installed to ~/.local/bin/vibeterm"
   if vibeterm_init_role_is_relay "${init_args[@]+"${init_args[@]}"}"; then
-    vibeterm_print_relay_turn_firewall_hint
+    vibeterm_print_relay_turn_firewall_hint "$(cat "$init_log" 2>/dev/null || true)"
   fi
   vibeterm_print_path_hint
 }
@@ -371,8 +381,19 @@ vibeterm_init_role_is_relay() {
   return 1
 }
 
+# 数字来自 CLI `init` 打印的 formatPortList，禁止在此写死 3478。
+vibeterm_extract_port_list() {
+  printf '%s' "$1" | grep -oE '[0-9]+(-[0-9]+)?/(tcp|udp)(, [0-9]+(-[0-9]+)?/(tcp|udp))+' | tail -n 1
+}
+
 vibeterm_print_relay_turn_firewall_hint() {
-  echo "open UDP 3478 and UDP 49160-49259 on the cloud security group / ufw"
+  local list control range
+  list="$(vibeterm_extract_port_list "${1:-}")"
+  [ -n "$list" ] || return 0
+  control="$(printf '%s' "$list" | grep -oE '(^|, )[0-9]+/udp' | head -n 1 | grep -oE '[0-9]+')"
+  range="$(printf '%s' "$list" | grep -oE '[0-9]+-[0-9]+/udp' | head -n 1 | cut -d/ -f1)"
+  [ -n "$control" ] && [ -n "$range" ] || return 0
+  echo "open UDP ${control} and UDP ${range} on the cloud security group / ufw"
 }
 
 # When sourced (unit tests), functions stay defined and main does not run.

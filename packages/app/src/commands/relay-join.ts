@@ -17,6 +17,7 @@ import {
   decodeRelayJoinToken,
   normalizeRelayUrl,
 } from '../../../shared/src/relay';
+import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from '../lib/env-file';
 import { withEnvLock } from '../lib/env-mutation';
 import { errorMessage } from '../lib/error-message';
@@ -28,6 +29,7 @@ import { openRelayKeyLogPage, parseRelayKeyLogPage } from '../lib/relay-keylog';
 import { persistRelayUplink } from '../lib/relay-store';
 import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { asString } from '../lib/validate';
+import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import type { ParsedArgs } from '../types';
 import { enableDirectForOnboarding } from './direct';
 import { type HubIo, JoinError, maybeRestart } from './hub';
@@ -435,6 +437,13 @@ export async function runRelayJoin(
     if (!committed.admitted) {
       log(io, 'this node is pending; confirm it from the Nodes page of an existing node');
     }
+    const list = formatPortPlanForEnv({
+      ...ctx.env,
+      VIBETERM_ROLES: relayJoinRoleName(
+        ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? undefined
+      ),
+    });
+    if (list) log(io, t('relay.join.portsHint', { list }));
     return {
       userId: committed.userId,
       relayUrl: attempt.entry.url,

@@ -86,6 +86,8 @@ export const zhCN: Record<string, string> = {
   'init.summary.autostart.off': '关闭',
   'init.summary.serviceHint': '服务状态命令',
   'init.summary.turnFirewall': '请在云安全组 / ufw 放行 UDP {{port}} 与 UDP {{range}}',
+  'init.summary.ports': '入站端口',
+  'init.summary.portsHint': '请在防火墙或安全组放行',
 
   'doctor.platform.supported': '平台：{{platform}}',
   'doctor.platform.unsupported':
@@ -128,6 +130,10 @@ export const zhCN: Record<string, string> = {
     '已有通行密钥，但 {{origin}} 上没有：该地址登录只有密码把关。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
   'doctor.passkey.otherOriginTotp':
     '已有通行密钥，但 {{origin}} 上没有：该地址登录由密码与两步验证把关。登录后可为该地址添加；已有的通行密钥若无法使用，执行 vibeterm mesh passkey remove-all 全部移除。',
+  'doctor.ports.plan': '入站端口：{{list}}',
+  'doctor.ports.peerListening': 'PEER：已在 {{port}}/tcp 监听',
+  'doctor.ports.peerNotListening': 'PEER：未在 {{port}}/tcp 监听',
+  'doctor.ports.blocked': '端口不可达：{{list}}',
 
   'mesh.passkey.removed':
     '已移除 {{username}} 的 {{count}} 把通行密钥；两步验证与密码会话保持不变，用这些通行密钥建立的会话已注销。',
@@ -181,6 +187,8 @@ export const zhCN: Record<string, string> = {
   'upgrade.signatureHttpFailed': '获取 SHA256SUMS.sig 失败：{{detail}}',
   'upgrade.pidNotOwned': 'PID {{pid}} 不属于此安装目录的 VibeTerm 运行时（{{installDir}}）。',
   'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
+  'upgrade.portEnvMigrated': 'app.env：已写入 {{keys}}（备份：{{backup}}）',
+  'upgrade.rtcPortRangeFixed': '已固定 P2P 端口段 {{range}}/udp，请在防火墙放行',
 
   'cli.shim.pathHint':
     '{{binDir}} 不在 PATH 中。加入后即可使用 vibeterm 命令：export PATH="{{binDir}}:$PATH"',
@@ -224,6 +232,8 @@ export const zhCN: Record<string, string> = {
   'hub.join.replacedStale':
     '已替换本机账号「{{username}}」的旧 hub 状态；密钥日志、通行密钥、TOTP、会话与旧节点证书已清除。',
   'hub.join.admitPending': '已加入，等待已登录的浏览器批准',
+  'hub.join.portsHint': '请放行入站 {{list}} 以便直连',
+  'relay.join.portsHint': '请放行入站 {{list}}',
 
   'hub.standby.missingPublicUrl': 'hub standby 需要 --public-url',
   'hub.standby.notJoined': '本机尚未加入 mesh（缺少 node_identity）。请先执行 vibeterm hub join。',

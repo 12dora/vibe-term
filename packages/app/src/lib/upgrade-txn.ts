@@ -37,6 +37,7 @@ import {
   isLegacyLabelVersion,
 } from './upgrade-migrate-dir';
 import { ensureCandidateNativeAddon } from './upgrade-native';
+import { applyPortPlanEnvMigration } from './upgrade-port-env';
 import {
   type UpgradeServiceControl,
   commandLineContains,
@@ -565,12 +566,11 @@ export async function executeUpgradeTxn(
           }) ?? state.service;
       }
     }
-
     journal = await advanceJournal(state.installDir, journal, 'backup', {
       keepBackup: ctx.keepBackup,
     });
-    // 目录迁移备份之后、切 current 之前：STUN 键迁移，并提示遗留外部 TURN 三元组。
     await applyStunEnvMigration(state.installDir, ctx.log);
+    await applyPortPlanEnvMigration(state.installDir, ctx.log);
     journal = await backupAndSwitch(
       state.installDir,
       journal,

@@ -37,6 +37,11 @@ import {
   withUpgradeLock,
 } from '../lib/upgrade-apply';
 import { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from '../lib/upgrade-flags';
+import {
+  clearWrittenPortEnvKeys,
+  printRtcPortRangeFixedNotice,
+  takeWrittenPortEnvKeys,
+} from '../lib/upgrade-port-env';
 import { assertReleaseIntegrity, assertReleaseSignature } from '../lib/upgrade-verify';
 import { asBoolean, asString } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
@@ -196,6 +201,9 @@ function printUpgradeDone(
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
   console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
+  printRtcPortRangeFixedNotice(takeWrittenPortEnvKeys(), (message) =>
+    console.log(`[vibeterm] ${message}`)
+  );
 }
 
 export function assertKnownUpgradeFlags(parsed: ParsedArgs): void {
@@ -214,6 +222,7 @@ export type RunUpgradeDeps = {
 
 export async function runUpgrade(parsed: ParsedArgs, deps: RunUpgradeDeps = {}): Promise<void> {
   assertKnownUpgradeFlags(parsed);
+  clearWrittenPortEnvKeys();
   if (parsed.flags.help) {
     console.log(UPGRADE_USAGE);
     return;

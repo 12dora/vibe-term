@@ -1,3 +1,4 @@
+import { t } from '../i18n';
 import { resolvePassword } from '../lib/password';
 import {
   RelayPasswordJoinError,
@@ -5,6 +6,7 @@ import {
   performRelayPasswordJoin,
 } from '../lib/relay-password-join';
 import { asString } from '../lib/validate';
+import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import { applyRelayPasswordJoinEnv, commitRelayPasswordJoinEnv } from '../runtime/setup-shared';
 import type { ParsedArgs } from '../types';
 import { enableDirectForOnboarding } from './direct';
@@ -85,6 +87,11 @@ export async function runRelayPasswordJoin(
       await maybeRestart(parsed, io, ctx.installDir);
     }
     (io.log ?? console.log)(`joined relay ${result.relayUrl} (tenant ${result.tenantId})`);
+    const next = applyRelayPasswordJoinEnv({
+      VIBETERM_ROLES: ctx.env?.VIBETERM_ROLES ?? process.env.VIBETERM_ROLES ?? '',
+    });
+    const list = formatPortPlanForEnv({ ...ctx.env, VIBETERM_ROLES: next.VIBETERM_ROLES });
+    if (list) (io.log ?? console.log)(t('relay.join.portsHint', { list }));
     return result;
   });
 }

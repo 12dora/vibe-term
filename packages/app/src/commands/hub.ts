@@ -54,15 +54,11 @@ import { assertRootKeyMatches, deriveRootKey, resolvePassword } from '../lib/pas
 import { parseAndValidateCaPem, readBoundedResponseText } from '../lib/pem';
 import { type ServiceManagerKind, detectServiceManager } from '../lib/platform';
 import { isInteractiveStdin, promptConfirm } from '../lib/prompt';
-import {
-  DEFAULT_PEER_PORT,
-  type VibeTermRoles,
-  parseVibeTermRoles,
-  roleNameFromFlags,
-} from '../lib/roles';
+import { type VibeTermRoles, parseVibeTermRoles, roleNameFromFlags } from '../lib/roles';
 import { restartService, startService, stopService } from '../lib/service';
 import { fingerprintPublicKey, totpOtpauthUri } from '../lib/totp-uri';
 import { asString } from '../lib/validate';
+import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import type { ParsedArgs } from '../types';
 import type { InstallMeta } from '../types';
 import {
@@ -663,12 +659,12 @@ export async function runHubJoin(
         await maybeRestart(parsed, io, ctx.installDir);
       }
       log(io, `joined hub ${joined.hubUrl}`);
-      const peerPort =
-        ctx.env.VIBETERM_PEER_PORT || process.env.VIBETERM_PEER_PORT || String(DEFAULT_PEER_PORT);
-      log(
-        io,
-        `allow inbound VIBETERM_PEER_PORT (${peerPort}) on the LAN firewall for direct links`
-      );
+      const list = formatPortPlanForEnv({
+        ...ctx.env,
+        VIBETERM_ROLES: nextRole,
+        VIBETERM_PEER_PORT: ctx.env.VIBETERM_PEER_PORT || process.env.VIBETERM_PEER_PORT,
+      });
+      if (list) log(io, t('hub.join.portsHint', { list }));
       return {
         userId: joined.userId,
         hubUrl: joined.hubUrl,

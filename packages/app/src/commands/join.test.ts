@@ -193,7 +193,7 @@ describe('hub join against fake hub', () => {
       }
     );
     expect(joined.userId).toBe(user.id);
-    expect(logs.some((line) => /VIBETERM_PEER_PORT/.test(line) && /firewall/i.test(line))).toBe(
+    expect(logs.some((line) => /39001\/tcp/.test(line) && /40000-40099\/udp/.test(line))).toBe(
       true
     );
     const nodeUser = node.userStore.getById(user.id);

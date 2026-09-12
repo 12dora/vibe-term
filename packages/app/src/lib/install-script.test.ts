@@ -207,10 +207,20 @@ describe('install.sh helpers', () => {
     expect(relay.status).toBe(0);
     const node = sourceEval('vibeterm_init_role_is_relay --role node');
     expect(node.status).toBe(1);
-    const hint = sourceEval('vibeterm_print_relay_turn_firewall_hint');
+    const hint = sourceEval(
+      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 3478/udp, 49160-49259/udp"'
+    );
     expect(hint.status).toBe(0);
     expect(hint.stdout).toContain('UDP 3478');
     expect(hint.stdout).toContain('UDP 49160-49259');
+    const custom = sourceEval(
+      'vibeterm_print_relay_turn_firewall_hint "443/tcp, 3479/udp, 50000-50099/udp"'
+    );
+    expect(custom.stdout).toContain('UDP 3479');
+    expect(custom.stdout).toContain('UDP 50000-50099');
+    const empty = sourceEval('vibeterm_print_relay_turn_firewall_hint');
+    expect(empty.status).toBe(0);
+    expect(empty.stdout.trim()).toBe('');
   });
 
   test('vibeterm_parse_tag_name reads compact and pretty GitHub JSON', () => {

@@ -454,6 +454,9 @@ describe('hub join with an r3 token', () => {
     const stored = await store.getRelay(RELAY_A);
     expect(stored?.token).toEqual(TOKEN_A);
     expect(logs[0]).toContain('joined relay');
+    expect(logs.some((line) => /39001\/tcp/.test(line) && /40000-40099\/udp/.test(line))).toBe(
+      true
+    );
   });
 
   test('the node identity keeps no hub url and carries the joined certificate', async () => {

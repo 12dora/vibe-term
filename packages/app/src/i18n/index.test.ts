@@ -132,6 +132,13 @@ describe('i18n', () => {
       expect(t('init.summary.turnFirewall', { port: 3478, range: '49160-49259' })).toContain(
         '3478'
       );
+      expect(t('init.summary.ports')).not.toBe('init.summary.ports');
+      expect(t('init.summary.portsHint')).not.toBe('init.summary.portsHint');
+      expect(t('hub.join.portsHint', { list: '39001/tcp' })).toContain('39001/tcp');
+      expect(t('relay.join.portsHint', { list: '443/tcp, 3478/udp' })).toContain('3478/udp');
+      expect(t('doctor.ports.plan', { list: '39001/tcp' })).toContain('39001/tcp');
+      expect(t('doctor.ports.peerListening', { port: 39001 })).toContain('39001');
+      expect(t('doctor.ports.blocked', { list: '39001/tcp' })).toContain('39001/tcp');
       expect(t('upgrade.turnExternalNotice')).not.toBe('upgrade.turnExternalNotice');
     }
     setLang('zh-CN');

@@ -4,8 +4,6 @@ import { canonicalHubUrl } from '../../../shared/src/auth';
 import {
   DEFAULT_PUBLIC_HTTPS_PORT,
   DEFAULT_TLS_PORT,
-  DEFAULT_TURN_PORT,
-  DEFAULT_TURN_RELAY_PORT_RANGE,
   isLoopbackHostname,
   parseProbeTarget,
   pickSuggestedPortAvoiding,
@@ -61,6 +59,7 @@ import { readJournal } from '../lib/upgrade-state';
 import { switchCurrent } from '../lib/upgrade-switch';
 import { asBoolean, asString, assertNonEmpty, parsePort } from '../lib/validate';
 import { readPackageVersion } from '../lib/version';
+import { formatPortPlanForEnv } from '../runtime/local-port-plan';
 import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
 import { type DirectOnboardingDeps, enableDirectForOnboarding } from './direct';
 
@@ -450,13 +449,28 @@ function printInitSummary(
       `- relay admin token: VIBETERM_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
     );
     console.log('- run "vibeterm relay status" on this machine to manage tenants');
-    console.log(
-      `- ${t('init.summary.turnFirewall', {
-        port: DEFAULT_TURN_PORT,
-        range: `${DEFAULT_TURN_RELAY_PORT_RANGE.begin}-${DEFAULT_TURN_RELAY_PORT_RANGE.end}`,
-      })}`
-    );
   }
+  const list = initPortPlanList(config);
+  if (list) {
+    console.log(`- ${t('init.summary.ports')}: ${list}`);
+    console.log(`- ${t('init.summary.portsHint')}`);
+  }
+}
+
+export function initPortPlanList(
+  config: Pick<
+    InitConfig,
+    'role' | 'host' | 'port' | 'peerPort' | 'hubPublicUrl' | 'relayPublicUrl'
+  >
+): string {
+  return formatPortPlanForEnv({
+    VIBETERM_ROLES: config.role,
+    GATEWAY_PORT: String(config.port),
+    VIBETERM_BIND_HOST: config.host,
+    VIBETERM_PEER_PORT: String(config.peerPort),
+    VIBETERM_HUB_PUBLIC_URL: config.hubPublicUrl,
+    VIBETERM_RELAY_PUBLIC_URL: config.relayPublicUrl,
+  });
 }
 
 export async function runInit(parsed: ParsedArgs): Promise<void> {

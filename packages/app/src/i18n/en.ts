@@ -94,6 +94,8 @@ export const en: Record<string, string> = {
   'init.summary.serviceHint': 'Service status command',
   'init.summary.turnFirewall':
     'open UDP {{port}} and UDP {{range}} on the cloud security group / ufw',
+  'init.summary.ports': 'Inbound ports',
+  'init.summary.portsHint': 'Allow them in the firewall or security group',
 
   'doctor.platform.supported': 'Platform: {{platform}}',
   'doctor.platform.unsupported':
@@ -137,6 +139,10 @@ export const en: Record<string, string> = {
     'Passkeys exist, but none is registered for {{origin}}; signing in there is protected by the password alone. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
   'doctor.passkey.otherOriginTotp':
     'Passkeys exist, but none is registered for {{origin}}; signing in there is protected by the password and two-step verification. Add one after signing in, or run "vibeterm mesh passkey remove-all" if the existing passkeys are unusable.',
+  'doctor.ports.plan': 'Inbound ports: {{list}}',
+  'doctor.ports.peerListening': 'PEER: listening {{port}}/tcp',
+  'doctor.ports.peerNotListening': 'PEER: not listening {{port}}/tcp',
+  'doctor.ports.blocked': 'Unreachable ports: {{list}}',
 
   'mesh.passkey.removed':
     'Removed {{count}} passkey(s) for {{username}}. Two-step verification and password sessions stay; sessions created with those passkeys are signed out.',
@@ -196,6 +202,8 @@ export const en: Record<string, string> = {
   'upgrade.pidNotOwned':
     'PID {{pid}} is not the VibeTerm runtime for this install ({{installDir}}).',
   'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
+  'upgrade.portEnvMigrated': 'app.env: wrote {{keys}} (backup: {{backup}})',
+  'upgrade.rtcPortRangeFixed': 'P2P port range fixed to {{range}}/udp — allow it in the firewall',
 
   'cli.shim.pathHint':
     '{{binDir}} is not on PATH. Add it so the vibeterm command is available: export PATH="{{binDir}}:$PATH"',
@@ -242,6 +250,8 @@ export const en: Record<string, string> = {
   'hub.join.replacedStale':
     'Replaced local account "{{username}}" from a previous hub; key log, passkeys, TOTP, sessions, and old node certs were wiped.',
   'hub.join.admitPending': 'Joined; waiting for approval from a signed-in browser',
+  'hub.join.portsHint': 'Allow inbound {{list}} for direct links',
+  'relay.join.portsHint': 'Allow inbound {{list}}',
 
   'hub.standby.missingPublicUrl': 'hub standby requires --public-url',
   'hub.standby.notJoined':

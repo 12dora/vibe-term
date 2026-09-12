@@ -15,6 +15,11 @@ import { getServiceStatus } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { LEGACY_SERVICE_NAME } from '../lib/upgrade-migrate-dir';
 import type { DoctorCheck } from '../types';
+import {
+  meshSelfBlockedPortChecks,
+  peerPortDoctorCheck,
+  portPlanDoctorChecks,
+} from './doctor-ports';
 import { relayTurnDoctorCheck } from './doctor-turn';
 
 export interface DoctorEnvironmentResult {
@@ -152,9 +157,15 @@ export async function checkEnvironment(input: {
     });
 
     const env = await readEnvFile(input.envPath);
-    installChecks.push(stunServersDoctorCheck(env));
-    const turnCheck = await relayTurnDoctorCheck(env);
-    if (turnCheck) installChecks.push(turnCheck);
+    const [peerCheck, turnCheck] = await Promise.all([
+      peerPortDoctorCheck(env),
+      relayTurnDoctorCheck(env),
+    ]);
+    installChecks.push(
+      stunServersDoctorCheck(env),
+      ...portPlanDoctorChecks(env),
+      ...[peerCheck, turnCheck].filter((check): check is DoctorCheck => check != null)
+    );
     const required = ['VIBETERM_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'VIBETERM_BIND_HOST'];
     for (const key of required) {
       if (!env[key]) {
@@ -329,21 +340,22 @@ export async function checkHealth(host: string, port: string): Promise<DoctorChe
   const healthResponse = await fetch(url, {
     signal: AbortSignal.timeout(3000),
   }).catch(() => null);
-  if (healthResponse?.ok) {
+  if (!healthResponse?.ok) {
     return [
       {
         id: 'healthz',
-        level: 'pass',
-        message: t('doctor.health.pass', { url }),
+        level: 'warn',
+        message: t('doctor.health.fail', { url }),
       },
     ];
   }
   return [
     {
       id: 'healthz',
-      level: 'warn',
-      message: t('doctor.health.fail', { url }),
+      level: 'pass',
+      message: t('doctor.health.pass', { url }),
     },
+    ...(await meshSelfBlockedPortChecks({ host, port })),
   ];
 }
 

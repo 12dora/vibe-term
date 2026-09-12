@@ -1,6 +1,9 @@
 import type { AuthenticateResult } from '../../../../apps/gateway/src/mesh/session-middleware';
 import type { TlsMode } from '../../../../apps/gateway/src/tls/types';
+import type { PortSpec } from '../../../shared/src/net';
+import { roleNameFromFlags } from '../lib/roles';
 import { jsonErr, jsonOk, mapError, readJsonBody } from './http';
+import { type PortPlanEnv, portPlanFromEnv } from './local-port-plan';
 import { isLeavableRoleName, leaveMesh, parseLeaveTargetRole } from './membership-reset';
 import {
   type DirectSetResult,
@@ -26,10 +29,20 @@ export type LocalRouteDeps = SetupServiceDeps & {
   authenticate: (req: Request) => AuthenticateResult;
   tlsStatus: () => Promise<LocalTlsStatus>;
   domainAccess?: (req: Request) => DomainAccessStatus;
+  /** 未注入时读 process.env（运行中的 gateway 即 live env）。 */
+  portPlanEnv?: PortPlanEnv;
 };
 
 function defaultDomainAccess(): DomainAccessStatus {
   return { allowed: true, viaDomain: false, hosts: [] };
+}
+
+function livePortPlan(deps: LocalRouteDeps): PortSpec[] {
+  return portPlanFromEnv({
+    ...(deps.portPlanEnv ?? process.env),
+    VIBETERM_ROLES: roleNameFromFlags(deps.roles),
+    ...(deps.hubPublicUrl ? { VIBETERM_HUB_PUBLIC_URL: deps.hubPublicUrl } : {}),
+  });
 }
 
 async function handleLeave(req: Request, deps: LocalRouteDeps): Promise<Response> {
@@ -90,6 +103,7 @@ export async function handleLocalRequest(
           tlsPort: tls.tlsPort,
         },
         domainAccess: (deps.domainAccess ?? defaultDomainAccess)(req),
+        portPlan: livePortPlan(deps),
       });
     } catch (error) {
       return mapError(error, 'direct_failed');

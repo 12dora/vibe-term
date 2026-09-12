@@ -95,6 +95,7 @@ describe('stunServersDoctorCheck', () => {
       DATABASE_URL: join(installDir, 'db'),
       GATEWAY_PORT: '9883',
       VIBETERM_BIND_HOST: '127.0.0.1',
+      VIBETERM_PEER_PORT: '39991',
       VIBETERM_STUN_SERVERS: 'none',
     });
     const result = await checkEnvironment({ installDir, envPath });
@@ -104,6 +105,9 @@ describe('stunServersDoctorCheck', () => {
       level: 'pass',
       message: t('doctor.stun.disabled'),
     });
+    const plan = result.installChecks.find((check) => check.id === 'ports.plan');
+    expect(plan?.level).toBe('pass');
+    expect(plan?.message).toContain('39991/tcp');
   });
 
   test('checkEnvironment includes a TURN row for relay roles', async () => {
@@ -118,6 +122,7 @@ describe('stunServersDoctorCheck', () => {
       VIBETERM_BIND_HOST: '127.0.0.1',
       VIBETERM_ROLES: 'relay',
       VIBETERM_TURN_PORT: 'off',
+      VIBETERM_RELAY_PUBLIC_URL: 'https://relay.example.com',
     });
     const result = await checkEnvironment({ installDir, envPath });
     const turn = result.installChecks.find((check) => check.id === 'turn');

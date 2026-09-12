@@ -8,6 +8,7 @@ import { authenticateRequest } from '../../../../apps/gateway/src/mesh/session-m
 import { parseEnvContent } from '../lib/env-file';
 import type { LocalAuthContext } from '../lib/local-auth';
 import { openLocalAuth } from '../lib/local-auth';
+import { portPlanFromEnv } from './local-port-plan';
 import { handleLocalRequest } from './local-routes';
 import type { LocalRouteDeps } from './local-routes';
 import type { DirectStatus } from './setup-service';
@@ -57,6 +58,7 @@ function deps(overrides: Partial<LocalRouteDeps> = {}): LocalRouteDeps {
     ...base,
     authenticate: okAuth,
     tlsStatus: async () => ({ mode: 'none', listenerRunning: false, tlsPort: 9443 }),
+    portPlanEnv: {},
     ...overrides,
   };
 }
@@ -88,6 +90,7 @@ describe('GET /api/local/status', () => {
       tls: { mode: 'none', listenerRunning: false, tlsPort: 9443 },
       domainAccess: { allowed: true, viaDomain: false, hosts: [] },
       relay: null,
+      portPlan: portPlanFromEnv({ VIBETERM_ROLES: 'standalone' }),
     });
   });
 
@@ -165,6 +168,36 @@ describe('GET /api/local/status', () => {
     );
     expect(status).toBe(200);
     expect((body as { role: string }).role).toBe('hub,node');
+    expect(
+      (body as { portPlan: Array<{ purpose: string; port?: number }> }).portPlan[0]
+    ).toMatchObject({ purpose: 'public-https', port: 443 });
+  });
+
+  test('portPlan uses live env values including an exposed gateway', async () => {
+    const { status, body } = await jsonOf(
+      await handleLocalRequest(
+        new Request('http://127.0.0.1/api/local/status'),
+        deps({
+          roles: { hub: false, node: true, relay: false },
+          portPlanEnv: {
+            VIBETERM_BIND_HOST: '0.0.0.0',
+            GATEWAY_PORT: '19663',
+            VIBETERM_PEER_PORT: '39002',
+            VIBETERM_RTC_PORT_RANGE: '41000-41099',
+          },
+        })
+      )
+    );
+    expect(status).toBe(200);
+    const plan = (
+      body as {
+        portPlan: Array<{ purpose: string; port?: number; range?: { begin: number; end: number } }>;
+      }
+    ).portPlan;
+    expect(plan.map((item) => item.purpose)).toEqual(['peer-signaling', 'rtc-ice', 'gateway-http']);
+    expect(plan[0]?.port).toBe(39002);
+    expect(plan[1]?.range).toEqual({ begin: 41000, end: 41099 });
+    expect(plan[2]?.port).toBe(19663);
   });
 
   test('enabled is false when env says false even if addon is installed', async () => {

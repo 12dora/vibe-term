@@ -417,6 +417,9 @@ describe('runRelayPasswordJoin', () => {
         expect(result.userId).toBe(owner.userStore.listUsers()[0]?.id);
         expect(installed).toBe(true);
         expect(restarted).toBe(!failure);
+        expect(logs.some((line) => /39001\/tcp/.test(line) && /40000-40099\/udp/.test(line))).toBe(
+          true
+        );
         const env = await readEnvFile(auth.envPath);
         expect(env.OTHER).toBe('keep');
         if (failure) expect(logs.some((line) => line.includes('registry offline'))).toBe(true);

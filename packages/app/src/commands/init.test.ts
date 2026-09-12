@@ -5,6 +5,7 @@ import type { DirectEnableResult } from './direct';
 import {
   applyPublicPort,
   enableDirectAfterInit,
+  initPortPlanList,
   normalizeHubPublicUrl,
   normalizeRelayPublicUrl,
   resolveInitStunServers,
@@ -92,6 +93,47 @@ describe('applyPublicPort', () => {
 
   test('无法解析的地址原样交给后面的校验', () => {
     expect(applyPublicPort('ftp://hub.example.com', 13443)).toBe('ftp://hub.example.com');
+  });
+});
+
+describe('initPortPlanList', () => {
+  test('relay summary uses the plan (TURN numbers, not literals)', () => {
+    expect(
+      initPortPlanList({
+        role: 'relay',
+        host: '127.0.0.1',
+        port: 9883,
+        peerPort: 39001,
+        hubPublicUrl: '',
+        relayPublicUrl: 'https://relay.example.com',
+      })
+    ).toBe('443/tcp, 3478/udp, 49160-49259/udp');
+  });
+
+  test('hub,node includes public https from the URL and the peer/rtc plan', () => {
+    expect(
+      initPortPlanList({
+        role: 'hub,node',
+        host: '127.0.0.1',
+        port: 9883,
+        peerPort: 39002,
+        hubPublicUrl: 'https://hub.example.com:13443',
+        relayPublicUrl: '',
+      })
+    ).toBe('13443/tcp, 39002/tcp, 40000-40099/udp');
+  });
+
+  test('exposed bind host appends the gateway port', () => {
+    expect(
+      initPortPlanList({
+        role: 'node',
+        host: '0.0.0.0',
+        port: 19663,
+        peerPort: 39001,
+        hubPublicUrl: '',
+        relayPublicUrl: '',
+      })
+    ).toBe('39001/tcp, 40000-40099/udp, 19663/tcp');
   });
 });
 
