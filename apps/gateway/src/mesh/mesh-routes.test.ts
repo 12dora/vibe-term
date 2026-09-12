@@ -139,12 +139,16 @@ describe('mesh-routes', () => {
       expect(peer?.version).toBe('1.2.3');
       expect((self as { isHub?: boolean })?.isHub).toBe(false);
       expect((peer as { isHub?: boolean })?.isHub).toBe(false);
-      expect((self as { ports?: Array<{ purpose: string }> }).ports?.some((row) => row.purpose === 'peer-signaling')).toBe(
-        true
-      );
-      expect((peer as { ports?: Array<{ purpose: string }> }).ports?.some((row) => row.purpose === 'rtc-ice')).toBe(
-        true
-      );
+      expect(
+        (self as { ports?: Array<{ purpose: string }> }).ports?.some(
+          (row) => row.purpose === 'peer-signaling'
+        )
+      ).toBe(true);
+      expect(
+        (peer as { ports?: Array<{ purpose: string }> }).ports?.some(
+          (row) => row.purpose === 'rtc-ice'
+        )
+      ).toBe(true);
     } finally {
       mesh.close();
     }

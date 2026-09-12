@@ -17,7 +17,6 @@ import {
   resolveMeshUserId,
 } from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
-import { dispatchMeshSocketMessage } from './mesh-socket-message';
 import {
   type CachedRtcConfig,
   type ConnectionLookup,
@@ -39,6 +38,7 @@ import {
 import { serializeHubCandidate } from './mesh-hub-candidates';
 import { matchMeshPauseRoute } from './mesh-pause-routes';
 import { matchMeshPortsRoute, overlayMeshList } from './mesh-ports-routes';
+import { dispatchMeshSocketMessage } from './mesh-socket-message';
 import { type NodeEventWireInput, encodeNodeEventFrame } from './node-event-wire';
 import {
   type MeshNodeDto,
