@@ -37,6 +37,9 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
   也只中继 UDP/IPv4（IPv6 peer 直接 400）。本机 UDP 出不去时（KI-13）仍只能走中继流。
 - **防火墙必须人工放行**：用户级服务碰不了云安全组 / ufw，`init`、`install.sh --role relay|relay,node` 与 `vibeterm doctor` 只能打印
   要放行的端口（控制口 + **整段**中继端口）。少放一段的表现是节点探测失败、TURN 不进 ICE，日志里没有任何报错。
+- **宿主跑 TUN 代理时必须绑具体地址**：2.3.0 内置 TURN 绑 `0.0.0.0`，在 mihomo / clash `auto-route` 的宿主（如上海中继）上回包
+  被 `from 0.0.0.0 iif lo` 策略路由吸进 TUN、以 `198.18.0.1` 源地址发出，全网探测超时且无任何报错。2.3.1 起默认
+  `VIBETERM_TURN_BIND_HOST=auto`（主出站 IPv4）；显式设回 `0.0.0.0` 会复现该问题。
 - **最多两条 TURN 进 ICE**：节点对每条下发的 TURN URL 做 STUN Binding 可达探测，只有探测 `ok` 的按 RTT 取前两条进
   `iceServers`；失败或尚未探测一律排除（早期「先纳入、探测后再说」会让 gathering 连 srflx 一起挂死）。列表里真有 TURN 时才关
   UDP mux（libjuice mux 不支持 TURN）。探测只证明 UDP 通，不等于带凭证的 Allocate 能成。

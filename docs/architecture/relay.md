@@ -62,6 +62,7 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
 | `VIBETERM_TURN_RELAY_PORT_RANGE` | `49160-49259` | 中继端口段，每个 allocation 占一个 UDP 端口。耗尽回 508 |
 | `VIBETERM_TURN_EXTERNAL_IP` | 未设 | 写进 `XOR-RELAYED-ADDRESS` 的公网 IPv4。云主机网卡上通常只有私网地址，未设时自动解析 |
 | `VIBETERM_TURN_HOST` | 未设 | 广告出去的 host。未设时广告解析到的公网 IPv4 字面量 |
+| `VIBETERM_TURN_BIND_HOST` | `auto` | 控制口与分配口绑定的本机地址：`auto` = 主出站 IPv4（对 `1.1.1.1:53` 做 UDP `connect()` 取本地地址，跳过 fake-IP / 回环，再退到第一块非内部网卡，最后才 `0.0.0.0` 并告警）；也可写 IPv4 字面量或 `0.0.0.0`。绑到具体地址时 `EADDRNOTAVAIL` 回退通配并告警 |
 | `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` | 空 | 三者齐全 = 用外部 TURN，内置**不启动**（`source: 'external'`） |
 
 - **凭据**：首启生成（用户名 `vt-<node_id 前 8 位或随机 4 字节>`、口令 32 随机字节 b64url），存 `gateway_kv` 的
@@ -71,6 +72,9 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
   `turn: null`、状态里带 `error`。每 30 min 复核一次；IP 变了只更新 `XOR-RELAYED-ADDRESS` 与广告 URL，**不重启、不重绑**，
   已有 allocation 不断。端口被占（`EADDRINUSE`）按 5 s → 60 s 退避重试；与 `VIBETERM_RTC_PORT_RANGE` / `VIBETERM_PEER_PORT`
   冲突时直接不起并记 `error`。
+- **绑定地址**：默认不再绑 `0.0.0.0`。2.3.0 的通配绑定在跑 mihomo / clash 一类 TUN 代理（`auto-route`）的宿主上会让回包命中
+  `from 0.0.0.0 iif lo lookup <tun>` 策略路由、以 fake-IP 源地址从 TUN 发出，成员的 Binding 探测全部超时而日志无异常；
+  绑到主出站地址后回包按主表走物理网卡。状态 `turn.bindHost`、启动日志 `bind=<host>`、`vibeterm doctor` 都会显示实际绑定地址。
 - **广告**：`turn:<host>:<port>?transport=udp`，在 `createRelayRuntime` 返回前就绪，因此第一帧 `auth.ok` / `relay.list` 就带得上。
 - **协议**：RFC 5389 Binding（不鉴权）+ RFC 5766/8656 Allocate / Refresh / CreatePermission / ChannelBind /
   Send / Data / ChannelData，长期凭据（HMAC-SHA1），所有响应带 FINGERPRINT。只做 **UDP/IPv4** 中继。
