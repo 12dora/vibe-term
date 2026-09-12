@@ -618,7 +618,7 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 - **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
 - `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
   若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
-- **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继行（URL / tenantId / token）变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。主行还在、只是被 `preferred` / priority 挤下第一位时也归轻路径，不在这里强制切换。
+- **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继被重排但仍挂在旧主上 → 排空重建；已经挂在新主上（例如手动 `switch` 先切过去）→ 仍走轻路径，只刷副中继。主中继行凭证变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。同 URL 副中继的租户 / 令牌轮换按凭证摘要拆掉该 slot 并重挂，不重启主 uplink。
 
 **当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。`apps/gateway/src/mesh/relay-link-error.ts` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
 
@@ -632,8 +632,8 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 ### 记录应用与重连
 
 `set-relays` / `meta-key` 应用后触发 `RelaySecrets.reconcile()`：重放密钥日志 → 解出自己的 `K_log` / `K_meta`
-入 `mesh_secrets` → 整表写 `mesh_relays` → 设 `uplink_kind`。仅副中继行集合变化走轻路径（刷新候选、增删挂载，不重启主 uplink）；
-主中继行 / 令牌需重认证才 `uplink.stop()` + `start()`。只是世代变了就立刻 `sendStatus()` 重发状态块（否则对端要等下一个心跳才看得见本节点）。
+入 `mesh_secrets` → 整表写 `mesh_relays` → 设 `uplink_kind`。仅副中继行集合变化、或主中继已经挂在新主上时走轻路径（刷新候选、增删挂载，不重启主 uplink）；
+主中继被重排却仍挂旧主、主行凭证变化或令牌需重认证才 `uplink.stop()` + `start()`。同 URL 副中继凭证轮换只拆该 slot 重挂。只是世代变了就立刻 `sendStatus()` 重发状态块（否则对端要等下一个心跳才看得见本节点）。
 
 ### 密钥日志双向同步
 

@@ -12,11 +12,13 @@ _2026-09-13_
 
 - **WebSocket open race.** Peer ws-secure, hub uplink and relay uplink open `VIBETERM_WS_DIAL_RACE` sockets at once (default 2, clamp 1..4) and keep the first to `open`; losers close before any byte is sent. LAN targets do not race. Peer inbound handshake limit is 30/IP/min.
 - **Slow-path re-roll on direct links.** When live DC or ws-secure RTT is above `max(1.5×best, best+40ms)` versus the peer’s 30-minute best-path memory, the offerer dials a new 5-tuple (DC needs the `reroll` hello cap; 2.3.1 peers never get a re-roll offer). Make-before-break; streams re-home at ≥30% gain. `VIBETERM_DC_REROLL=off` disables.
+- **ws-secure re-roll skip.** Yields only when a DC dial is in flight, `state.upgrading` is set, or the upgrade coordinator has already coalesced/scheduled that peer (breaker health is not a skip). Shares the in-flight ws slot with foreground dials; a session that is no longer live is closed with `reroll-stale`.
 - **Uplink path sampling.** Every 5 min the node TCP-connects each public hub/relay host three ways (30 min TTL). Three consecutive slow idle heartbeats close the live link with `path-rerace` (no failure / no backoff) and re-dial through the open race. `VIBETERM_UPLINK_PATH_SAMPLING=off` disables. `vibeterm relay list` grows a `BEST` column; `GET /api/mesh/relay/status` rows may include `pathBestMs` / `reraces`. `nodes` is unchanged.
+- **Uplink re-race.** Sampling targets are configured relay rows ∪ hub candidates (hostname-deduped, read lazily each tick). Idle counts established streams + opens in flight + in-flight key-log ops. `re-race_result` is settled only by the first post-re-race generation of the same connection.
 
 ### Relay
 
-- Adding or removing a secondary relay only refreshes candidates and attach slots (`[relay] targets updated … (no restart)`). Token/tenant rotation and a real primary-row change still drain and rebuild.
+- Adding or removing a secondary relay only refreshes candidates and attach slots (`[relay] targets updated … (no restart)`). Re-prioritising the primary while still attached to the old one drains and rebuilds; already attached to the new primary stays on the light path. Same-URL secondary credential rotation drops and respawns that slot.
 
 ### Terminal
 
@@ -40,11 +42,13 @@ _2026-09-13_
 
 - **WebSocket 开链竞速。** peer ws-secure / hub / 中继上行同时开 `VIBETERM_WS_DIAL_RACE` 条（默认 2，夹紧 1..4），取最先 `open` 的一条，其余不发字节即关。局域网不竞速。peer 入站握手限流 30/IP/min。
 - **直连慢路径重掷。** live DC / ws-secure 的 RTT 高于该对端 30 min 窗内 best（`max(1.5×best, best+40ms)`）时，offerer 再拨一条新五元组（DC 需对端报 `reroll` 能力位；2.3.1 对端不会收到重掷 offer）。make-before-break；提升 ≥ 30 % 时搬流。`VIBETERM_DC_REROLL=off` 关闭。
+- **ws-secure 重掷让路。** 仅在 DC 拨号在途、`state.upgrading` 已置或升级协调器已 coalesced/scheduled 时让路（熔断健康不算）。与前台 ws 拨号共享在途槽；live 已换人则以 `reroll-stale` 关闭，不二次记预算。
 - **上行路径采样。** 每 5 min 对每条公网 hub/中继主机三路 TCP connect（30 min TTL）。连续 3 次空闲心跳偏慢则以 `path-rerace` 关链（不计失败、不退避）并走开链竞速重连。`VIBETERM_UPLINK_PATH_SAMPLING=off` 关闭。`vibeterm relay list` 增 `BEST` 列；`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`。`nodes` 不变。
+- **上行重赛。** 采样目标为已配置中继行 ∪ hub 候选（hostname 去重，每拍懒读）。空闲计入已建立流 + 建流中 + 在途密钥日志操作。`re-race_result` 只由同一连接重赛后第一代结算。
 
 ### 中继
 
-- 增删副中继只刷新候选与挂载（`[relay] targets updated … (no restart)`）。令牌 / 租户轮换与主中继行真正变化仍排空重建。
+- 增删副中继只刷新候选与挂载（`[relay] targets updated … (no restart)`）。主中继被重排但仍挂旧主则排空重建；已挂新主走轻路径。同 URL 副中继凭证轮换拆 slot 重挂。
 
 ### 终端
 

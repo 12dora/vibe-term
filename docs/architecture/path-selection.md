@@ -75,14 +75,15 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 | 两次间隔 | ≥ 60 s |
 | 角色 | 仅 offerer；需已协商 `quiesce` |
 | DC 额外 | 对端 `link.hello` 报过 `reroll` 能力位；熔断放行 |
-| ws-secure 额外 | 入站本就会接新连接，不依赖 `reroll` 位；**已能拨 DC 且升级在途 / 熔断放行时不浪费预算**再赛 ws-secure |
+| ws-secure 额外 | 入站本就会接新连接，不依赖 `reroll` 位。已能拨 DC 时，只在 **DC 拨号在途 / `state.upgrading` / 升级协调器已 coalesced-scheduled** 让路，**熔断健康不算**。与前台 ws 拨号共享 `wsInflight`（前台复用在途 Promise，重掷遇在途则放弃）；track 前若 live 已换人，以 `reroll-stale` 关闭且不二次记预算 |
 | 结算 | 新链路 `linkSinceAt` ≥ 触发时刻且攒够 3 个样本；90 s 时限 |
 | 搬流 | 相对提升 ≥ 30 %（`DC_REROLL_REHOME_GAIN`）且旧 session 还带流 → `finishRetire(old, 'retired')` |
 
 ### 兼容与开关
 
 - 2.3.1 及更早只在 `link.hello` 里报 `quiesce`，不报 `reroll`。策略因此**永不对旧节点发 DC 重掷 offer**（应答侧常规路径在「已是 dc」时不会再建 PC）。ws-secure 重赛不受这个位限制。
-- 应答侧靠 `DcRerollCoordinator.interceptOffer()` 接住更高 epoch 的 offer：先投给旧 attempt 让它 `superseded` 退订，再绕开 `wantsUpgrade` / `aboveDc` 起应答拨号。旧 live session 不被关。
+- 应答侧靠 `DcRerollCoordinator.interceptOffer()` 接住 **epoch 高于 `LivePeer.rtcEpoch`** 的 offer：先投给旧 attempt 让它 `superseded` 退订，再绕开 `wantsUpgrade` / `aboveDc` 起应答拨号。旧 live session 不被关。epoch ≤ 当前 live epoch 的迟到 offer **不接管、不耗预算、不起 attempt**。
+- 重掷 offer 尚未到达时，更高 epoch 的 ICE 候选写入 `rtcInbox`（`LivePeer.rtcEpoch`，条目 30 s TTL，候选最多 16 条），避免被旧 attempt 监听吞掉；offer 落定后清掉 epoch 不匹配的候选。
 - `VIBETERM_DC_REROLL=off`：本端既不触发，也不报 `reroll` 能力位——任一端关掉，这对节点就不会 DC 重掷。采样（path RTT 记忆）不受影响。需重启。
 - 手动入口：`PeerManager.rerollDc(nodeId)`（只跳过 RTT 阈值，其余门照旧）。
 
@@ -95,28 +96,28 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 [mesh][rtc] dc reroll disabled by VIBETERM_DC_REROLL=off
 ```
 
-配套：`[mesh][rtc] dial start … port_range=… epoch=…`（debug，看新端口对）、`signal dropped … cause=superseded|epoch-mismatch`（旧 attempt 被淘汰、旧链路仍在）、`[mesh][stream] failover_start … cause=stream_close close_reason=retired` / `failover_done`（搬流生效）。
+配套：`[mesh][rtc] dial start … port_range=… epoch=…`（debug，看新端口对）、`signal dropped … cause=superseded|epoch-mismatch`（旧 attempt 被淘汰、旧链路仍在）、`reroll_stale`（ws-secure 重掷 track 前 live 已换人）、`[mesh][stream] failover_start … cause=stream_close close_reason=retired` / `failover_done`（搬流生效）。
 
 `GET /api/mesh/nodes` **不**暴露 reroll 计数；看日志即可。
 
 ## 3. 上行路径周期采样与劣化重赛
 
-中继 / hub 上行是一条长寿 WebSocket。它可能一开链就落在慢五元组上，或中途被运营商改路。节点对每条公网候选做参考采样，心跳连续偏慢且链路空闲时以 `path-rerace` 关掉活链、走第 1 条的开链竞速重连。
+中继 / hub 上行是一条长寿 WebSocket。它可能一开链就落在慢五元组上，或中途被运营商改路。节点对已配置中继行与 hub 候选（hostname 去重，每拍懒读）做参考采样，心跳连续偏慢且链路空闲时以 `path-rerace` 关掉活链、走第 1 条的开链竞速重连。
 
 | 名 | 值 |
 |---|---|
 | 采样周期 | 每 5 min |
-| 每次 | 对 `uplink.candidates()` 里每个公网 host 并行 3 次 TCP connect（跳过 LAN；目标端口取 URL，https/wss 默认 443） |
+| 每次 | 对「已配置中继行 ∪ hub 候选」里每个公网 host 并行 3 次 TCP connect（hostname 去重；目标列表每拍懒读；跳过 LAN；目标端口取 URL，https/wss 默认 443） |
 | 参考 TTL | 30 min（`UPLINK_PATH_RTT_TTL_MS`） |
 | 心跳样本 | 活链 RTT 记 `ws-secure`；判定用的是**写入前**的 best，避免当前样本把自己变成参考 |
 | 慢的定义 | 与直连相同：`rtt > max(1.5 × best, best + 40 ms)` |
 | 连续慢 | ≥ 3 次心跳（中继 15 s → ≥ 45 s） |
 | 最小链龄 | 60 s |
-| 空闲 | `inFlightStreams === 0`；忙只回 `busy`，连续慢计数保留，下一拍空闲再判 |
+| 空闲 | `inFlightStreams === 0`（已建立流 + 建流中 + 在途密钥日志操作）；忙只回 `busy`，连续慢计数保留，下一拍空闲再判 |
 | 每 host 每滚动小时 | ≤ 3 次 |
 | 两次间隔 | ≥ 2 min |
 | 关链 reason | `'path-rerace'`：池不 `noteFailure`、不走会话后最小退避；client `retryAttempt = 0`；副中继 `slot.attempt = 0` 且跳过 backoff |
-| 结算 | 新链 ≥ 3 个心跳后打 `re-race_result` |
+| 结算 | `re-race_result` 只由**同一连接**重赛后第一代结算：新链攒够 3 个心跳才打；再换代（普通重连）即作废，不让后续连接补足旧重赛 |
 | 开关 | `VIBETERM_UPLINK_PATH_SAMPLING=off` 不启动采样、心跳也不触发重赛 |
 
 日志（info，`stamp` 前缀 ISO 时间）：
