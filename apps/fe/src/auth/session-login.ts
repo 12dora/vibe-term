@@ -5,6 +5,7 @@
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type {
   AuthApi,
+  AuthChallengeResponse,
   AuthenticationResponseJSON,
   MeshNode,
   PasskeySummary,
@@ -479,6 +480,8 @@ interface LoginToNodeOptions {
    * 只有用户主动发起的登录能给 true；后台静默登录一律把码交回调用方，不弹系统仪式。
    */
   allowPasskeyPrompt?: boolean;
+  /** 已在途的 challenge（与钥恢复 / 登录 chunk 并行）。重试必须另取。 */
+  challenge?: Promise<AuthChallengeResponse>;
 }
 
 /** self bootstrap 登录时用过的 nodePk，登录后必须与 mesh 列表里的公钥核对。 */
@@ -495,6 +498,47 @@ function resolveTotp(session: SessionKeyInfo) {
 const pinnedPkOk = (targetPk: Uint8Array, node: MeshNode | undefined): boolean =>
   !node || bytesEqual(targetPk, decodeBase64url(node.publicKey));
 
+async function lookupLoginNode(
+  api: AuthApi,
+  nodeId: string,
+  knownNode: MeshNode | undefined,
+  selfBootstrap: boolean | undefined
+): Promise<{ ok: true; node: MeshNode | undefined } | { ok: false; code: string }> {
+  if (knownNode || (selfBootstrap === true && nodeId === SELF_NODE_ID)) {
+    return { ok: true, node: knownNode };
+  }
+  const nodes = await api.listNodes().catch(() => null);
+  if (!nodes) return { ok: false, code: 'NETWORK_ERROR' };
+  const node = nodes.find((item) => item.id === nodeId);
+  return node ? { ok: true, node } : { ok: false, code: 'UNKNOWN_NODE' };
+}
+
+async function retryLoginWithPasskey(
+  first: LoginNodeResult,
+  args: {
+    api: AuthApi;
+    session: SessionKeyInfo;
+    secrets: SessionKeySecrets;
+    allowPasskeyPrompt?: boolean;
+    attempt: () => Promise<LoginNodeResult>;
+  }
+): Promise<LoginNodeResult> {
+  if (first.ok || first.code !== 'PASSKEY_REQUIRED') return first;
+  if (!args.allowPasskeyPrompt || args.secrets.passkeySig) return first;
+  try {
+    const passkey = await runPasskeySecondFactor({
+      api: args.api,
+      uid: args.session.uid,
+      delegationBytes: args.secrets.delegationBytes,
+    });
+    if (!passkey) return { ok: false, code: 'NO_PASSKEY_FOR_ORIGIN' };
+    setPasskeyAssertion(passkey.credentialId, passkey.sig);
+  } catch (err) {
+    return { ok: false, code: secondFactorFailureCode(err) };
+  }
+  return args.attempt();
+}
+
 /**
  * 对单台 node 执行设计 §2「登录」的 1–3 步。
  * 第 1 步拿到的 `nodePk` 必须与 `/api/mesh/nodes` 中该 node 的公钥一致，
@@ -507,43 +551,30 @@ export async function loginToNode(
     node: knownNode,
     selfBootstrap,
     allowPasskeyPrompt,
+    challenge,
   }: LoginToNodeOptions = {}
 ): Promise<LoginNodeResult> {
   const session = getSessionKey();
   const secrets = readSessionSecrets();
   if (!secrets || !session) return { ok: false, code: 'NO_SESSION_KEY' };
 
-  let node = knownNode;
-  if (!node && !(selfBootstrap && nodeId === SELF_NODE_ID)) {
-    const nodes = await api.listNodes().catch(() => null);
-    if (!nodes) return { ok: false, code: 'NETWORK_ERROR' };
-    node = nodes.find((item) => item.id === nodeId);
-    if (!node) return { ok: false, code: 'UNKNOWN_NODE' };
-  }
-
   const totp = resolveTotp(session);
   if (totp === null) return { ok: false, code: 'TOTP_REQUIRED' };
 
-  const attempt = () => signAndLogin({ api, nodeId, session, secrets, node, totp });
-  const first = await attempt();
-  if (first.ok || first.code !== 'PASSKEY_REQUIRED') return first;
+  // challenge 与随后可能的 listNodes 并行：nonce 一次性，重试不能复用这份。
+  const pendingChallenge = challenge ?? api.challenge(nodeId, session.uid);
+  const found = await lookupLoginNode(api, nodeId, knownNode, selfBootstrap);
+  if (!found.ok) return found;
 
-  // mode 快照过期：这次登录没带二次验证断言。会话钥本身是好的，补一次仪式后用**新的**
-  // challenge 重试一次即可——绝不把它当成凭证失败去丢钥。
-  if (!allowPasskeyPrompt || secrets.passkeySig) return first;
-  try {
-    const passkey = await runPasskeySecondFactor({
-      api,
-      uid: session.uid,
-      delegationBytes: secrets.delegationBytes,
-    });
-    // 服务端刚要过断言，这里却说本地址没有凭证：重试也只会再拿一次 PASSKEY_REQUIRED。
-    if (!passkey) return { ok: false, code: 'NO_PASSKEY_FOR_ORIGIN' };
-    setPasskeyAssertion(passkey.credentialId, passkey.sig);
-  } catch (err) {
-    return { ok: false, code: secondFactorFailureCode(err) };
-  }
-  return await attempt();
+  const attempt = (prefetched?: Promise<AuthChallengeResponse>) =>
+    signAndLogin({ api, nodeId, session, secrets, node: found.node, totp, challenge: prefetched });
+  return retryLoginWithPasskey(await attempt(pendingChallenge), {
+    api,
+    session,
+    secrets,
+    allowPasskeyPrompt,
+    attempt,
+  });
 }
 
 /**
@@ -578,9 +609,10 @@ async function signAndLogin(args: {
   secrets: SessionKeySecrets;
   node: MeshNode | undefined;
   totp: { code: string; k_totp: string } | undefined;
+  challenge?: Promise<AuthChallengeResponse>;
 }): Promise<LoginNodeResult> {
   const { api, nodeId, session, secrets, node, totp } = args;
-  const challenge = await api.challenge(nodeId, session.uid).then(
+  const challenge = await (args.challenge ?? api.challenge(nodeId, session.uid)).then(
     (value) => ({ ok: true as const, value }),
     (err: unknown) => ({ ok: false as const, code: transportFailureCode(err) })
   );

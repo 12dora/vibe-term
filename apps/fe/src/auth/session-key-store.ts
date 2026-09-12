@@ -12,7 +12,12 @@
 // `./session-login`，由 `ensureNodeLogin()` 在真的要登录时才 `import()` 进来。
 
 import { markLoggedIn } from '@/node/mesh-nodes';
-import type { AuthApi, MeshNode } from '@vibeterm/api-client/auth/index';
+import {
+  type AuthApi,
+  type AuthChallengeResponse,
+  type MeshNode,
+  defaultAuthApi,
+} from '@vibeterm/api-client/auth/index';
 import type { Delegation } from '@vibeterm/shared/auth';
 import { resetDirectAuthorizeBreakers } from '@vibeterm/ws-client/direct/direct-authorize-breaker';
 import {
@@ -397,10 +402,33 @@ interface EnsureNodeLoginOptions {
    * 只有**用户主动发起**的登录能给 true——后台静默登录弹系统仪式是惊吓，不是功能。
    */
   allowPasskeyPrompt?: boolean;
+  /** 已在途的 challenge，与钥恢复 / 登录 chunk 并行发起。 */
+  challenge?: Promise<AuthChallengeResponse>;
 }
+
+/** 同一会话钥下多 node 登录的并发上限：challenge+login 都是转发 REST。 */
+export const NODE_LOGIN_FANOUT = 3;
 
 /** 每个 node 同时只允许一次登录请求在途，重复调用共享同一个 Promise。 */
 const nodeLoginsInFlight = new Map<string, Promise<LoginNodeResult>>();
+let loginLanes = 0;
+const loginWaiters: Array<() => void> = [];
+
+function acquireLoginLane(): Promise<void> {
+  if (loginLanes < NODE_LOGIN_FANOUT) {
+    loginLanes += 1;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => {
+    loginWaiters.push(resolve);
+  });
+}
+
+function releaseLoginLane(): void {
+  const next = loginWaiters.shift();
+  if (next) next();
+  else loginLanes = Math.max(0, loginLanes - 1);
+}
 
 type LoginModule = {
   loginToNode: (nodeId: string, opts: EnsureNodeLoginOptions) => Promise<LoginNodeResult>;
@@ -440,32 +468,61 @@ export function ensureNodeLogin(
   const existing = nodeLoginsInFlight.get(nodeId);
   if (existing) return existing;
 
-  const task = restoreSessionKey()
-    .then(async (session): Promise<LoginNodeResult> => {
-      if (!session) return { ok: false, code: 'NO_SESSION_KEY' };
-      const mod = await loadLogin();
-      const result = await mod.loginToNode(nodeId, opts);
-      if (result.ok) {
-        markLoggedIn(nodeId);
-        return result;
-      }
-      // 等盘上那份真的改掉再返回，否则刷新一下这把已被拒的断言又回来了。
-      if (result.code === 'PASSKEY_INVALID') await clearPasskeyAssertion();
-      return result;
-    })
-    // chunk 拉不下来（离线 / 部署换了 hash）也得给调用方一个结果，否则门闸永远停在 pending。
-    .catch((): LoginNodeResult => ({ ok: false, code: 'NETWORK_ERROR' }))
-    .finally(() => {
-      nodeLoginsInFlight.delete(nodeId);
-    });
+  const task = runEnsureNodeLogin(nodeId, opts).finally(() => {
+    nodeLoginsInFlight.delete(nodeId);
+  });
   nodeLoginsInFlight.set(nodeId, task);
   return task;
+}
+
+/**
+ * 登录 chunk 与钥恢复并行；uid 已在内存时 challenge 也一起发。
+ * 真正占用转发槽的 challenge+login 走扇出上限。
+ */
+async function runEnsureNodeLogin(
+  nodeId: string,
+  opts: EnsureNodeLoginOptions
+): Promise<LoginNodeResult> {
+  const chunk = loadLogin();
+  const live = getSessionKey();
+  let held = false;
+  if (live) {
+    await acquireLoginLane();
+    held = true;
+  }
+  try {
+    const session = await restoreSessionKey();
+    if (!session) return { ok: false, code: 'NO_SESSION_KEY' };
+    if (!held) {
+      await acquireLoginLane();
+      held = true;
+    }
+    const api = opts.api ?? defaultAuthApi;
+    const challenge = opts.challenge ?? api.challenge(nodeId, session.uid);
+    // chunk 失败时不会 await 这份 challenge，必须接住，否则变成未处理拒绝。
+    void challenge.catch(() => undefined);
+    const mod = await chunk;
+    const result = await mod.loginToNode(nodeId, { ...opts, challenge });
+    if (result.ok) {
+      markLoggedIn(nodeId);
+      return result;
+    }
+    if (result.code === 'PASSKEY_INVALID') await clearPasskeyAssertion();
+    return result;
+  } catch {
+    // chunk 拉不下来（离线 / 部署换了 hash）也得给调用方一个结果，否则门闸永远停在 pending。
+    return { ok: false, code: 'NETWORK_ERROR' };
+  } finally {
+    if (held) releaseLoginLane();
+  }
 }
 
 /** 仅测试使用：丢弃在途的单 node 登录与恢复结果，避免用例之间互相串。 */
 export function resetNodeLoginsForTest(): void {
   nodeLoginsInFlight.clear();
   restorePromise = null;
+  loginLanes = 0;
+  loginWaiters.length = 0;
 }
 
 /**

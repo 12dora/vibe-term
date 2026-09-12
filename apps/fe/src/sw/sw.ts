@@ -194,7 +194,8 @@ async function precacheGeneration(): Promise<void> {
   const cache = await caches.open(CACHE_NAME);
   // 首屏那一批缺一不可：任一失败即放弃本代安装，宁可继续用旧代也不留半套壳
   await cache.addAll([...__SW_PRECACHE__.core]);
-  // 弱网 / 省流量下跳过 lazy 档（≈ 7.5 MB），只留标记，等链路转好再补；字体照装
+  // 没有链路提示（iOS）或明确慢/省流量：不装 lazy 档（≈ 7.5 MB），只留标记；
+  // 等页面报来明确的 4g 再补。字体照装。
   const precacheLazy = shouldPrecacheLazy(await currentLinkHints());
   if (!precacheLazy) await cache.put(DEFERRED_LAZY_URL, new Response('1'));
   // 懒 chunk 与字体是渐进增强：先逐个补，失败的整体重试一轮再判定

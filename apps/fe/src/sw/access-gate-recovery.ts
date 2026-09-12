@@ -1,3 +1,5 @@
+import { ensureAuthMode, getMeshNodesState } from '@/node/mesh-nodes-store';
+
 // 服务端导航门与缓存壳的冲突兜底。
 //
 // SW 的导航策略已经把 600 ms 预算让给网络（Cloudflare Access 302、guardEntryAccess 403、
@@ -80,6 +82,11 @@ export interface AccessGateWatchDeps extends AccessGateRecoveryDeps {
   controlled: boolean;
   /** 探测用的 fetch（redirect:'manual'），只在被 SW 控制时发一次 */
   probe: () => Promise<{ type: string; status: number }>;
+  /**
+   * 复用 in-flight 的 `ensureAuthMode`（同一条 `/api/auth/mode`）。
+   * 成功（拿到 mode）就不必再探；失败才用 redirect:'manual' 分辨 Access 302。
+   */
+  awaitMode?: () => Promise<boolean>;
 }
 
 /**
@@ -88,6 +95,13 @@ export interface AccessGateWatchDeps extends AccessGateRecoveryDeps {
  */
 export async function probeAccessGate(deps: AccessGateWatchDeps): Promise<boolean> {
   if (!deps.controlled) return false;
+  if (deps.awaitMode) {
+    try {
+      if (await deps.awaitMode()) return false;
+    } catch {
+      // mode 拉失败：可能是 Access 302，落到下面的 manual 探测
+    }
+  }
   let result: { type: string; status: number };
   try {
     result = await deps.probe();
@@ -155,6 +169,10 @@ export function browserAccessGateDeps(
   return {
     addResponseHook,
     controlled: Boolean(nav?.serviceWorker?.controller),
+    awaitMode: async () => {
+      await ensureAuthMode();
+      return getMeshNodesState().mode !== null;
+    },
     probe: () =>
       fetch(GATE_PROBE_PATH, { redirect: 'manual', credentials: 'include' }).then((res) => ({
         type: res.type,

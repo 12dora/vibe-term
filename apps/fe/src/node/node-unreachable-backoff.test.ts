@@ -3,12 +3,14 @@ import { ApiError } from '@vibeterm/api-client';
 import { HubApiError } from './hub-api';
 import {
   BACKOFF_FIRST_MS,
+  BACKOFF_HARD_FIRST_MS,
   BACKOFF_MAX_MS,
   NodeBackoffSkippedError,
   clearAllNodeBackoff,
   isNodeRequestBlocked,
   isUnreachableFailure,
   nodeBackoffRemainingMs,
+  nodeUnreachableReason,
   noteMeshNodesOnline,
   noteNodeQueryErrorAt,
   noteNodeQuerySuccessAt,
@@ -16,6 +18,7 @@ import {
   noteNodeUnreachable,
   setNodeBackoffTimersForTest,
   subscribeNodeBackoff,
+  unreachableBackoffKind,
 } from './node-unreachable-backoff';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
@@ -42,6 +45,7 @@ function installClock(): FakeClock {
       timers.delete(handle as number);
     },
     now: () => now,
+    random: () => 0,
   });
   return {
     delays,
@@ -119,12 +123,39 @@ describe('每 node 退避', () => {
   });
 
   test('连续失败逐次翻倍并封顶 10 分钟', () => {
-    for (let i = 0; i < 8; i++) {
+    for (let i = 0; i < 12; i++) {
       noteNodeUnreachable(NODE_A);
       clock.advance(BACKOFF_MAX_MS);
     }
-    expect(clock.delays.slice(0, 4)).toEqual([60_000, 120_000, 240_000, 480_000]);
+    expect(clock.delays.slice(0, 4)).toEqual([2_000, 4_000, 8_000, 16_000]);
     expect(clock.delays.at(-1)).toBe(BACKOFF_MAX_MS);
+  });
+
+  test('503 timeout 走 2–5s 短退避；no_link 走更长的硬退避', () => {
+    noteNodeUnreachable(
+      NODE_A,
+      new ApiError(503, 'unreachable', { code: 'NODE_UNREACHABLE', reason: 'timeout' })
+    );
+    expect(clock.delays[0]).toBe(BACKOFF_FIRST_MS);
+    expect(nodeUnreachableReason(NODE_A)).toBe('timeout');
+
+    noteNodeUnreachable(
+      NODE_B,
+      new ApiError(503, 'unreachable', { code: 'NODE_UNREACHABLE', reason: 'no_link' })
+    );
+    expect(clock.delays[1]).toBe(BACKOFF_HARD_FIRST_MS);
+    expect(nodeUnreachableReason(NODE_B)).toBe('no_link');
+  });
+
+  test('短路错误带上最近一次 reason，给已有 UI 的 {{reason}} 插值', () => {
+    noteNodeUnreachable(
+      NODE_A,
+      new ApiError(503, 'unreachable', { code: 'NODE_UNREACHABLE', reason: 'timeout' })
+    );
+    const skipped = new NodeBackoffSkippedError(NODE_A);
+    expect(skipped.reason).toBe('timeout');
+    expect(skipped.status).toBe(503);
+    expect(skipped.code).toBe('NODE_UNREACHABLE');
   });
 
   test('退避按 node 隔离', () => {
@@ -227,5 +258,26 @@ describe('失败水位', () => {
     expect(nodeBackoffRemainingMs(NODE_A)).toBe(BACKOFF_FIRST_MS / 2);
     clock.advance(BACKOFF_FIRST_MS / 2);
     expect(nodeBackoffRemainingMs(NODE_A)).toBe(0);
+  });
+});
+
+describe('unreachableBackoffKind', () => {
+  test('TimeoutError 与 reason=timeout 走短退避', () => {
+    const timedOut = new Error('timeout');
+    timedOut.name = 'TimeoutError';
+    expect(unreachableBackoffKind(timedOut)).toBe('timeout');
+    expect(
+      unreachableBackoffKind(
+        new ApiError(503, 'x', { code: 'NODE_UNREACHABLE', reason: 'timeout' })
+      )
+    ).toBe('timeout');
+  });
+
+  test('no_link / 离线 / 未接纳走硬退避', () => {
+    for (const reason of ['no_link', 'not_admitted', 'relay_reset:offline']) {
+      expect(
+        unreachableBackoffKind(new ApiError(503, 'x', { code: 'NODE_UNREACHABLE', reason }))
+      ).toBe('hard');
+    }
   });
 });

@@ -111,12 +111,12 @@ export function parseLinkHints(data: unknown): SwLinkHints | null {
 }
 
 /**
- * 要不要装 lazy 档（214 条 ≈ 7.5 MB）。只有**明确**省流量或**明确**慢才跳过：
- * 拿不到提示（桌面浏览器普遍不给 effectiveType、iOS 压根没有这套 API）时照装，
- * 行为与分级之前完全一致。跳过之后懒 chunk 仍由运行时 cache-first 按需回填。
+ * 要不要装 lazy 档（214 条 ≈ 7.5 MB）。只在**明确的快速提示**（4g）时预缓存：
+ * 拿不到提示（iOS 没有 Network Information API、首次安装页面还没报到）一律跳过，
+ * 否则会在弱网首屏背后再拖 7.5 MB。跳过之后懒 chunk 仍由运行时 cache-first
+ * 按需回填，或等页面随后报来 4g 再补装。
  */
 export function shouldPrecacheLazy(hints: SwLinkHints | null): boolean {
-  if (!hints) return true;
-  if (hints.saveData) return false;
-  return hints.effectiveType === null || hints.effectiveType === '4g';
+  if (!hints || hints.saveData) return false;
+  return hints.effectiveType === '4g';
 }

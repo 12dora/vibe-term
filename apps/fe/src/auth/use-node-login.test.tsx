@@ -84,6 +84,58 @@ describe('useNodeLoginGate', () => {
     expect(statusOf(NODE_A)).toBe('pending');
   });
 
+  test('首帧缓存已登录：不等 loadedAt / mode，当场放行', () => {
+    setMeshNodesStateForTest({
+      cachedMesh: true,
+      entryNodeId: ENTRY,
+      stale: true,
+      nodes: [meshNode({ id: NODE_A, loggedIn: true })],
+    });
+    expect(statusOf(NODE_A)).toBe('ready');
+  });
+
+  test('首帧缓存未登录：不等列表 REST，直接走登录', () => {
+    setMeshNodesStateForTest({
+      cachedMesh: true,
+      entryNodeId: ENTRY,
+      stale: true,
+      nodes: [meshNode({ id: NODE_A, loggedIn: false })],
+    });
+    expect(statusOf(NODE_A)).toBe('pending');
+  });
+
+  test('首帧缓存离线：不挡页面', () => {
+    setMeshNodesStateForTest({
+      cachedMesh: true,
+      entryNodeId: ENTRY,
+      stale: true,
+      nodes: [meshNode({ id: NODE_A, online: false, loggedIn: false })],
+    });
+    expect(statusOf(NODE_A)).toBe('ready');
+  });
+
+  test('缓存和列表都没有这一行：仍等 REST', () => {
+    setMeshNodesStateForTest({
+      cachedMesh: true,
+      entryNodeId: ENTRY,
+      stale: true,
+      nodes: [meshNode({ id: ENTRY, loggedIn: true })],
+    });
+    expect(statusOf(NODE_A)).toBe('pending');
+  });
+
+  test('mode 已落地的缓存已登录行：loadedAt 仍为空也放行', () => {
+    setMeshNodesStateForTest({
+      mode: MESH_MODE,
+      modeLoaded: true,
+      entryNodeId: ENTRY,
+      cachedMesh: true,
+      stale: true,
+      nodes: [meshNode({ id: NODE_A, loggedIn: true })],
+    });
+    expect(statusOf(NODE_A)).toBe('ready');
+  });
+
   test('列表拉取失败时放行，不做无限转圈', () => {
     setMeshNodesStateForTest({
       mode: MESH_MODE,

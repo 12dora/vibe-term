@@ -5,8 +5,10 @@
 // 「登录此节点」按钮 → `/login?node=`。
 
 import {
+  type MeshNodesState,
   ensureAuthMode,
   getMeshNodesState,
+  meshEnabledOf,
   refreshMeshNodes,
   subscribeMeshNodes,
 } from '@/node/mesh-nodes';
@@ -65,43 +67,64 @@ function useSilentLogin(
   return { code, retry: useCallback(() => setFailure(null), []) };
 }
 
+function isRemoteGateActive(
+  runtimeNodeId: string,
+  enabled: boolean,
+  entryNodeId: string | null
+): boolean {
+  return enabled && runtimeNodeId !== SELF_NODE_ID && runtimeNodeId !== entryNodeId;
+}
+
+function meshRowOf(
+  snapshot: MeshNodesState,
+  runtimeNodeId: string,
+  active: boolean
+): MeshNode | null {
+  if (!active || !meshEnabledOf(snapshot)) return null;
+  return snapshot.nodes.find((node) => node.id === runtimeNodeId) ?? null;
+}
+
+function isMeshListPending(snapshot: MeshNodesState, meshOn: boolean): boolean {
+  return meshOn && snapshot.loadedAt === null && snapshot.error === null;
+}
+
+function resolveNodeLoginStatus(
+  waiting: boolean,
+  needsLogin: boolean,
+  code: LoginFailureCode | null
+): NodeLoginGateStatus {
+  if (waiting) return 'pending';
+  if (!needsLogin) return 'ready';
+  return code === null ? 'pending' : 'blocked';
+}
+
 /**
  * `runtimeNodeId`：路由 / 运行时用的 id（entry 自身为 `self`）。
  *
  * 本机与 standalone 永远 `ready`——单 node 形态不该因为这个门闸多发一个请求，也不该被挡住。
- * 远端 node 在「还不知道它是不是已登录」期间是 `pending`：先渲染子树再抽走会把整棵树重挂一遍
- * （终端、WS 全部重连），所以宁可先等那两个必定会落地的请求（`/api/auth/mode`、`/api/mesh/nodes`）。
- * 两者任一失败都会落回 `ready`，不会无限转圈。
+ * 远端 node：首帧缓存里已有这一行就按 `loggedIn` 当场判定（true 直接放行，false 走登录），
+ * 不必等 `/api/mesh/nodes` 的 `loadedAt`。缓存偶发过期由 4401 / NodeSessionGuard 收回。
+ * 这一行在缓存和列表里都没有时才 `pending` 等 REST；mode / 列表任一失败都落回 `ready`，
+ * 不会无限转圈。
  */
 export function useNodeLoginGate(
   runtimeNodeId: string,
   options: UseNodeLoginGateOptions = {}
 ): NodeLoginGate {
   const snapshot = useSyncExternalStore(subscribeMeshNodes, getMeshNodesState, getMeshNodesState);
-  const active =
-    (options.enabled ?? true) &&
-    runtimeNodeId !== SELF_NODE_ID &&
-    runtimeNodeId !== snapshot.entryNodeId;
-  const meshEnabled = active && snapshot.mode?.mode === 'mesh';
-  const row = meshEnabled
-    ? (snapshot.nodes.find((node) => node.id === runtimeNodeId) ?? null)
-    : null;
-  const modeUnknown = active && !snapshot.modeLoaded;
-  const listUnknown = meshEnabled && snapshot.loadedAt === null && snapshot.error === null;
+  const active = isRemoteGateActive(runtimeNodeId, options.enabled ?? true, snapshot.entryNodeId);
+  const row = meshRowOf(snapshot, runtimeNodeId, active);
+  const listPending = isMeshListPending(snapshot, active && meshEnabledOf(snapshot));
+  const waiting = (active && !snapshot.modeLoaded && row === null) || (listPending && row === null);
 
   useEffect(() => {
     if (active) void ensureAuthMode();
   }, [active]);
   useEffect(() => {
-    if (listUnknown) void refreshMeshNodes();
-  }, [listUnknown]);
+    if (listPending) void refreshMeshNodes();
+  }, [listPending]);
 
   const needsLogin = row?.online === true && !row.loggedIn;
   const { code, retry } = useSilentLogin(runtimeNodeId, row, needsLogin);
-
-  let status: NodeLoginGateStatus = 'ready';
-  if (modeUnknown || listUnknown) status = 'pending';
-  else if (needsLogin) status = code === null ? 'pending' : 'blocked';
-
-  return { status, code, retry };
+  return { status: resolveNodeLoginStatus(waiting, needsLogin, code), code, retry };
 }

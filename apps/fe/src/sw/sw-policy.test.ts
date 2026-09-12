@@ -135,9 +135,9 @@ describe('precachePathSet / requestPathname / withGapFilled', () => {
 });
 
 describe('链路提示与 lazy 档分级', () => {
-  test('拿不到提示时照装：桌面浏览器普遍不给 effectiveType，行为必须与分级之前一致', () => {
-    expect(shouldPrecacheLazy(null)).toBe(true);
-    expect(shouldPrecacheLazy({ saveData: false, effectiveType: null })).toBe(true);
+  test('拿不到提示时不装 lazy：iOS 没有 Network Information API，7.5 MB 会抢首屏', () => {
+    expect(shouldPrecacheLazy(null)).toBe(false);
+    expect(shouldPrecacheLazy({ saveData: false, effectiveType: null })).toBe(false);
   });
 
   test('省流量一律跳过，哪怕报的是 4g', () => {
@@ -178,10 +178,10 @@ describe('链路提示与 lazy 档分级', () => {
     expect(parseLinkHints('vibeterm:sw-link-hints')).toBeNull();
   });
 
-  test('提示缺字段时按未知处理，仍然照装', () => {
+  test('提示缺字段时按未知处理，不装 lazy', () => {
     const hints = parseLinkHints({ type: SW_LINK_HINTS_MESSAGE });
     expect(hints).toEqual({ saveData: false, effectiveType: null });
-    expect(shouldPrecacheLazy(hints)).toBe(true);
+    expect(shouldPrecacheLazy(hints)).toBe(false);
   });
 });
 

@@ -26,6 +26,7 @@ import {
   verifyLogin,
 } from '@vibeterm/shared/auth';
 import {
+  NODE_LOGIN_FANOUT,
   clearSessionKey,
   ensureNodeLogin,
   getSessionKey,
@@ -583,6 +584,18 @@ describe('loginToNode', () => {
     ).toEqual({ ok: true });
   });
 
+  test('传入已在途的 challenge 不再另取一次', async () => {
+    await establishRoot();
+    const { api, captured } = mockApi({ nodes: [{ id: NODE_A, publicKey: NODE_A_PK }] });
+    const challenge = api.challenge(NODE_A, UID);
+    expect(await loginToNode(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK), challenge })).toEqual(
+      {
+        ok: true,
+      }
+    );
+    expect(captured.challengeCalls).toEqual([NODE_A]);
+  });
+
   test('目标公钥与 mesh 列表不一致时中止，不发送 login', async () => {
     await establishRoot();
     const { api, captured } = mockApi({ nodePkOverride: { [NODE_A]: fill(32, 0x99) } });
@@ -794,6 +807,57 @@ describe('ensureNodeLogin', () => {
     expect(await Promise.all([first, second])).toEqual([{ ok: true }, { ok: true }]);
     expect(loads).toBe(1);
     expect(logins).toBe(1);
+  });
+
+  test('登录 chunk 落地前就发出 challenge，且只发一次', async () => {
+    await establishRoot();
+    let releaseChunk = (): void => {};
+    const chunkGate = new Promise<void>((resolve) => {
+      releaseChunk = resolve;
+    });
+    setLoginLoaderForTest(async () => {
+      await chunkGate;
+      return import('./session-login');
+    });
+    const { api, captured } = mockApi({ nodes: [{ id: NODE_A, publicKey: NODE_A_PK }] });
+    const pending = ensureNodeLogin(NODE_A, { api, node: meshRow(NODE_A, NODE_A_PK) });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(captured.challengeCalls).toEqual([NODE_A]);
+    releaseChunk();
+    expect(await pending).toEqual({ ok: true });
+    expect(captured.challengeCalls).toEqual([NODE_A]);
+    expect(captured.loginCalls).toHaveLength(1);
+  });
+
+  test(`同一会话钥下多 node 登录扇出上限为 ${NODE_LOGIN_FANOUT}`, async () => {
+    await establishRoot();
+    const NODE_C = '0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c';
+    const NODE_D = '0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d';
+    let releaseChunk = (): void => {};
+    const chunkGate = new Promise<void>((resolve) => {
+      releaseChunk = resolve;
+    });
+    setLoginLoaderForTest(async () => {
+      await chunkGate;
+      return { loginToNode: async () => ({ ok: true }) as const };
+    });
+    const { api, captured } = mockApi({
+      nodes: [
+        { id: NODE_A, publicKey: NODE_A_PK },
+        { id: NODE_B, publicKey: NODE_B_PK },
+        { id: NODE_C, publicKey: fill(32, 0xc0) },
+        { id: NODE_D, publicKey: fill(32, 0xd0) },
+      ],
+    });
+    const ids = [NODE_A, NODE_B, NODE_C, NODE_D];
+    const pending = ids.map((id) => ensureNodeLogin(id, { api, node: meshRow(id, NODE_A_PK) }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(captured.challengeCalls).toHaveLength(NODE_LOGIN_FANOUT);
+    releaseChunk();
+    expect(await Promise.all(pending)).toEqual(ids.map(() => ({ ok: true })));
   });
 });
 

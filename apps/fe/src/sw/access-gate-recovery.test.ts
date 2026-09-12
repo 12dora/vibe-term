@@ -127,6 +127,48 @@ describe('probeAccessGate', () => {
     expect(h.state.probes).toBe(0);
   });
 
+  test('awaitMode 成功则复用 in-flight 的 /api/auth/mode，不再探一次', async () => {
+    let modeCalls = 0;
+    const h = harness({
+      awaitMode: async () => {
+        modeCalls += 1;
+        return true;
+      },
+    });
+    expect(await probeAccessGate(h.deps)).toBe(false);
+    expect(modeCalls).toBe(1);
+    expect(h.state.probes).toBe(0);
+    expect(h.state.reloads).toBe(0);
+  });
+
+  test('awaitMode 失败才发 redirect:manual 探测（分辨 Access 302）', async () => {
+    let probed = 0;
+    const h = harness({
+      awaitMode: async () => false,
+      probe: async () => {
+        probed += 1;
+        return { type: 'opaqueredirect', status: 0 };
+      },
+    });
+    expect(await probeAccessGate(h.deps)).toBe(true);
+    expect(probed).toBe(1);
+    expect(h.state.reloads).toBe(1);
+  });
+
+  test('未被 SW 控制时连 awaitMode 都不跑', async () => {
+    let modeCalls = 0;
+    const h = harness({
+      controlled: false,
+      awaitMode: async () => {
+        modeCalls += 1;
+        return false;
+      },
+    });
+    expect(await probeAccessGate(h.deps)).toBe(false);
+    expect(modeCalls).toBe(0);
+    expect(h.state.probes).toBe(0);
+  });
+
   test('与响应钩子共用 once 守卫，两条路径同时命中只刷一次', async () => {
     const h = harness({ probe: async () => ({ type: 'opaqueredirect', status: 0 }) });
     expect(await probeAccessGate(h.deps)).toBe(true);

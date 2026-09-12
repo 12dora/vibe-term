@@ -4,8 +4,9 @@
 // 503 `NODE_UNREACHABLE`。而界面上重复发的那几条（设备列表、hub 管理面轮询）各有各的节奏，
 // 一台离线的 node 于是被稳定地按原速轰下去：请求全额付出，答案永远是同一句。
 //
-// 这里给「打不通」记一份每 node 的退避：1 分钟起步，逐次翻倍，封顶 10 分钟；退避窗口内
-// 该 node 的重复 GET 由 `node-runtimes` 的门（`createGatedNodeApiClient`）就地短路，不进网络。
+// 这里给「打不通」记一份每 node 的退避：超时类 2–5 秒抖动起步、硬失败（no_link / offline）
+// 更长，逐次翻倍，封顶 10 分钟；退避窗口内该 node 的重复 GET 由 `node-runtimes` 的门
+// （`createGatedNodeApiClient`）就地短路，不进网络。
 // 解除只认三件事——**又成功了一次**、`/api/mesh/nodes` 报出这台 node 从离线转成在线、
 // 页面重新可见 / 网络恢复。
 //
@@ -15,15 +16,23 @@
 // `self` 永远豁免：entry 就是浏览器直连的那台，网关重启期间挡住它自己的设备列表，
 // 换来的只是一个连本地都刷不出来的界面。
 
-import { isSelfNode } from '@vibeterm/api-client';
+import { ApiError, isSelfNode } from '@vibeterm/api-client';
 import { useEffect, useSyncExternalStore } from 'react';
 import { onPageRecovery } from './mesh-recovery';
 
-/** 第一次退避时长。 */
-export const BACKOFF_FIRST_MS = 60_000;
+/** 超时类第一次退避下限（再叠加抖动）。 */
+export const BACKOFF_FIRST_MS = 2_000;
+
+/** 超时类第一次退避上限。 */
+export const BACKOFF_FIRST_MAX_MS = 5_000;
+
+/** 硬失败（no_link / 离线）第一次退避。 */
+export const BACKOFF_HARD_FIRST_MS = 15_000;
 
 /** 退避上限。 */
 export const BACKOFF_MAX_MS = 600_000;
+
+const HARD_UNREACHABLE_REASONS = new Set(['no_link', 'not_admitted', 'relay_reset:offline']);
 
 /** 转发器打不通目标 node 时的契约错误码。 */
 const NODE_UNREACHABLE_CODE = 'NODE_UNREACHABLE';
@@ -34,18 +43,27 @@ interface BackoffEntry {
   /** 退避窗口的到期时刻（用于算「还要等多久」）。 */
   until: number;
   timer: unknown;
+  /** 上一次实际用的延迟，下一次翻倍的基数。 */
+  lastDelay: number;
+  /** 最近一次 503 的 reason（给 UI 插值）。 */
+  reason: string | null;
 }
+
+export type UnreachableBackoffKind = 'timeout' | 'hard';
 
 export interface BackoffTimers {
   schedule: (fn: () => void, ms: number) => unknown;
   cancel: (handle: unknown) => void;
   now: () => number;
+  /** `[0, 1)`，用于首次超时退避抖动；缺省 `Math.random`。 */
+  random?: () => number;
 }
 
 const realTimers: BackoffTimers = {
   schedule: (fn, ms) => setTimeout(fn, ms),
   cancel: (handle) => clearTimeout(handle as ReturnType<typeof setTimeout>),
   now: () => Date.now(),
+  random: Math.random,
 };
 
 let timers: BackoffTimers = realTimers;
@@ -63,12 +81,15 @@ function notify(): void {
  * 退避窗口里被就地短路的请求：它连网络都没碰，绝不能再算一次失败去加倍退避。
  * 携带 `NODE_UNREACHABLE` 码是给调用方看的——语义上它就是「这台 node 现在打不通」。
  */
-export class NodeBackoffSkippedError extends Error {
-  readonly code = NODE_UNREACHABLE_CODE;
+export class NodeBackoffSkippedError extends ApiError {
   readonly skippedByBackoff = true;
 
-  constructor(readonly nodeId: string) {
-    super(NODE_UNREACHABLE_CODE);
+  constructor(nodeId: string) {
+    super(503, NODE_UNREACHABLE_CODE, {
+      code: NODE_UNREACHABLE_CODE,
+      nodeId,
+      reason: entries.get(nodeId)?.reason ?? null,
+    });
     this.name = 'NodeBackoffSkippedError';
   }
 }
@@ -99,20 +120,47 @@ export function isUnreachableFailure(error: unknown): boolean {
 function entryOf(nodeId: string): BackoffEntry {
   let entry = entries.get(nodeId);
   if (!entry) {
-    entry = { failures: 0, blocked: false, until: 0, timer: null };
+    entry = { failures: 0, blocked: false, until: 0, timer: null, lastDelay: 0, reason: null };
     entries.set(nodeId, entry);
   }
   return entry;
 }
 
+function errorReason(error: unknown): string | null {
+  const reason = (error as { reason?: unknown } | null)?.reason;
+  return typeof reason === 'string' && reason !== '' ? reason : null;
+}
+
+/** 超时 / link_lost 走短退避；no_link、离线、未接纳走长退避。无 reason 的 503 按超时（冷拨常见）。 */
+export function unreachableBackoffKind(error: unknown): UnreachableBackoffKind {
+  if (error instanceof Error && error.name === 'TimeoutError') return 'timeout';
+  const reason = errorReason(error);
+  if (reason && HARD_UNREACHABLE_REASONS.has(reason)) return 'hard';
+  return 'timeout';
+}
+
+function jitterMs(min: number, max: number): number {
+  const span = Math.max(0, max - min);
+  const unit = timers.random?.() ?? Math.random();
+  return min + Math.floor(unit * (span + 1));
+}
+
+function nextBackoffDelayMs(entry: BackoffEntry, kind: UnreachableBackoffKind): number {
+  if (entry.lastDelay > 0) return Math.min(entry.lastDelay * 2, BACKOFF_MAX_MS);
+  if (kind === 'hard') return BACKOFF_HARD_FIRST_MS;
+  return jitterMs(BACKOFF_FIRST_MS, BACKOFF_FIRST_MAX_MS);
+}
+
 /** 记一次「打不通」并进入退避；同一 node 连续失败逐次翻倍。`self` 不参与。 */
-export function noteNodeUnreachable(nodeId: string): void {
+export function noteNodeUnreachable(nodeId: string, error?: unknown): void {
   if (isSelfNode(nodeId)) return;
   const entry = entryOf(nodeId);
   if (entry.timer !== null) timers.cancel(entry.timer);
   entry.failures += 1;
   entry.blocked = true;
-  const delay = Math.min(BACKOFF_FIRST_MS * 2 ** (entry.failures - 1), BACKOFF_MAX_MS);
+  entry.reason = errorReason(error) ?? entry.reason;
+  const delay = nextBackoffDelayMs(entry, unreachableBackoffKind(error));
+  entry.lastDelay = delay;
   entry.until = timers.now() + delay;
   entry.timer = timers.schedule(() => {
     entry.timer = null;
@@ -143,7 +191,7 @@ export function noteNodeRequestOutcome(nodeId: string, error: unknown): void {
     noteNodeReachable(nodeId);
     return;
   }
-  if (isUnreachableFailure(error)) noteNodeUnreachable(nodeId);
+  if (isUnreachableFailure(error)) noteNodeUnreachable(nodeId, error);
 }
 
 /** 该 node 此刻在退避窗口里（重复请求应当跳过）。`self` 永远为 false。 */
@@ -157,6 +205,11 @@ export function nodeBackoffRemainingMs(nodeId: string): number {
   const entry = entries.get(nodeId);
   if (!entry?.blocked) return 0;
   return Math.max(0, entry.until - timers.now());
+}
+
+/** 最近一次打不通的 reason；没在记账里为 null。已有 UI 用 `{{reason}}` 插值。 */
+export function nodeUnreachableReason(nodeId: string): string | null {
+  return entries.get(nodeId)?.reason ?? null;
 }
 
 export function subscribeNodeBackoff(listener: () => void): () => void {
