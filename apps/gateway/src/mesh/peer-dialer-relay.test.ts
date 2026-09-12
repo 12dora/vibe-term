@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { type LinkStream, createInMemoryLinkPair } from '@vibeterm/shared/link';
 import {
+  completeRelayDial,
   formatRelayChooseLog,
   isRetryableRelayOpenReason,
   openRelayStreamForPeer,
@@ -8,6 +9,7 @@ import {
   rstReasonOf,
 } from './peer-dialer-relay';
 import type { RelayChoice, RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
+import { NodeUnreachableError } from './types';
 
 function fakePresence(opts: {
   choice?: RelayChoice | null;
@@ -217,5 +219,66 @@ describe('openRelayStreamForPeer', () => {
     expect(formatRelayChooseLog('ab'.repeat(16), 'https://sh.example', null, 1)).toContain(
       'score_ms=-'
     );
+  });
+});
+
+describe('completeRelayDial abort', () => {
+  const nodeId = 'aa'.repeat(16);
+  const identity = { nodeId: 'bb'.repeat(16), edSecretKey: new Uint8Array(64) };
+
+  test('already-aborted signal does not open a stream', async () => {
+    const abort = new AbortController();
+    abort.abort();
+    let opened = 0;
+    await expect(
+      completeRelayDial({
+        nodeId,
+        gen: 1,
+        identity: identity as never,
+        userStore: {} as never,
+        openFallback: async () => {
+          opened += 1;
+          throw new Error('should-not-open');
+        },
+        rememberKeys: () => undefined,
+        track: (session) => session,
+        liveOf: () => undefined,
+        signal: abort.signal,
+      })
+    ).rejects.toBeInstanceOf(NodeUnreachableError);
+    expect(opened).toBe(0);
+  });
+
+  test('abort while openFallback hangs resets the late stream', async () => {
+    const abort = new AbortController();
+    const [local] = createInMemoryLinkPair();
+    const stream = await local.openStream(new Uint8Array([1]));
+    let resetReason: string | undefined;
+    const origReset = stream.reset.bind(stream);
+    stream.reset = (reason?: string) => {
+      resetReason = reason;
+      origReset(reason);
+    };
+    let finishOpen: ((s: LinkStream) => void) | undefined;
+    const pending = completeRelayDial({
+      nodeId,
+      gen: 1,
+      identity: identity as never,
+      userStore: {} as never,
+      openFallback: () =>
+        new Promise((resolve) => {
+          finishOpen = resolve;
+        }),
+      rememberKeys: () => undefined,
+      track: (session) => session,
+      liveOf: () => undefined,
+      signal: abort.signal,
+    });
+    await Bun.sleep(0);
+    abort.abort();
+    await expect(pending).rejects.toMatchObject({ message: 'aborted' });
+    finishOpen?.(stream);
+    await Bun.sleep(0);
+    expect(resetReason).toBe('dial-race-lost');
   });
 });

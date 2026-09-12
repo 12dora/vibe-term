@@ -50,6 +50,7 @@ describe('peer RTT EWMA and lookup', () => {
     state.live.clear();
     expect(lookupPeerRttMs(undefined, scheduler)).toBe(90);
     expect(lookupPeerRttMs()).toBe(DEFAULT_DIAL_RTT_MS);
+    expect(DEFAULT_DIAL_RTT_MS).toBe(800);
   });
 
   test('DC idle is 30 min and relay idle stays 5 min', () => {

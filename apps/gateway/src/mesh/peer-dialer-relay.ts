@@ -32,6 +32,14 @@ function quietReset(stream: LinkStream, reason: string): void {
   }
 }
 
+function quietClose(session: { close(reason?: string): void }, reason: string): void {
+  try {
+    session.close(reason);
+  } catch {
+    // already closed
+  }
+}
+
 async function openVia(
   opener: RelayStreamOpener,
   url: string,
@@ -108,6 +116,76 @@ async function handshakeWithPrimaryRetry(
   }
 }
 
+function throwIfRelayAborted(signal: AbortSignal | undefined, nodeId: string): void {
+  if (!signal?.aborted) return;
+  throw new NodeUnreachableError(nodeId, 'aborted');
+}
+
+async function awaitUnlessAborted<T>(
+  pending: Promise<T>,
+  signal: AbortSignal | undefined,
+  nodeId: string,
+  onLate: (value: T) => void
+): Promise<T> {
+  if (!signal) return pending;
+  throwIfRelayAborted(signal, nodeId);
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = (): void => {
+      void pending.then(onLate, () => undefined);
+      reject(new NodeUnreachableError(nodeId, 'aborted'));
+    };
+    signal.addEventListener('abort', onAbort, { once: true });
+    pending.then(
+      (value) => {
+        signal.removeEventListener('abort', onAbort);
+        if (signal.aborted) {
+          onLate(value);
+          reject(new NodeUnreachableError(nodeId, 'aborted'));
+          return;
+        }
+        resolve(value);
+      },
+      (err) => {
+        signal.removeEventListener('abort', onAbort);
+        reject(err);
+      }
+    );
+  });
+}
+
+export type PeerRelayDialHost = {
+  identity: MeshIdentity;
+  userStore: UserStore;
+  relayPresence?: RelayPresenceIndex;
+  relayOpener?: RelayStreamOpener;
+  uplink: { openRelay(nodeId: string): Promise<LinkStream> };
+  live: { get(nodeId: string): { transport: string; viaRelay?: string } | undefined };
+};
+
+export function openPeerRelaySession(input: {
+  host: PeerRelayDialHost;
+  nodeId: string;
+  gen: number;
+  rememberKeys: (session: LinkSession, sendKey?: Uint8Array, recvKey?: Uint8Array) => void;
+  track: (session: LinkSession, peerNodeId: string, gen: number) => LinkSession | null;
+  signal?: AbortSignal;
+}): Promise<LinkSession> {
+  const { host } = input;
+  return completeRelayDial({
+    nodeId: input.nodeId,
+    gen: input.gen,
+    identity: host.identity,
+    userStore: host.userStore,
+    presence: host.relayPresence,
+    opener: host.relayOpener,
+    openFallback: (id) => host.uplink.openRelay(id),
+    rememberKeys: input.rememberKeys,
+    track: input.track,
+    liveOf: (peerNodeId) => host.live.get(peerNodeId),
+    signal: input.signal,
+  });
+}
+
 export async function completeRelayDial(input: {
   nodeId: string;
   gen: number;
@@ -119,21 +197,44 @@ export async function completeRelayDial(input: {
   rememberKeys: (session: LinkSession, sendKey?: Uint8Array, recvKey?: Uint8Array) => void;
   track: (session: LinkSession, peerNodeId: string, gen: number) => LinkSession | null;
   liveOf: (peerNodeId: string) => { transport: string; viaRelay?: string } | undefined;
+  signal?: AbortSignal;
 }): Promise<LinkSession> {
-  const opened = await openRelayStreamForPeer({
-    nodeId: input.nodeId,
-    presence: input.presence,
-    opener: input.opener,
-    openFallback: input.openFallback,
-  });
-  const { result, viaRelay } = await handshakeWithPrimaryRetry(
-    opened,
+  throwIfRelayAborted(input.signal, input.nodeId);
+  const opened = await awaitUnlessAborted(
+    openRelayStreamForPeer({
+      nodeId: input.nodeId,
+      presence: input.presence,
+      opener: input.opener,
+      openFallback: input.openFallback,
+    }),
+    input.signal,
     input.nodeId,
-    input.identity,
-    input.userStore,
-    input.presence,
-    input.opener
+    (late) => quietReset(late.stream, 'dial-race-lost')
   );
+  let handshake: Awaited<ReturnType<typeof handshakeWithPrimaryRetry>>;
+  try {
+    handshake = await awaitUnlessAborted(
+      handshakeWithPrimaryRetry(
+        opened,
+        input.nodeId,
+        input.identity,
+        input.userStore,
+        input.presence,
+        input.opener
+      ),
+      input.signal,
+      input.nodeId,
+      (late) => quietClose(late.result.session, 'dial-race-lost')
+    );
+  } catch (err) {
+    if (input.signal?.aborted) quietReset(opened.stream, 'dial-race-lost');
+    throw err;
+  }
+  const { result, viaRelay } = handshake;
+  if (input.signal?.aborted) {
+    quietClose(result.session, 'dial-race-lost');
+    throw new NodeUnreachableError(input.nodeId, 'aborted');
+  }
   if (result.peerNodeId !== input.nodeId) {
     result.session.close('peer-id-mismatch');
     throw new NodeUnreachableError(input.nodeId, 'relay peer id mismatch');

@@ -17,7 +17,7 @@ import type { MeshIdentity } from './types';
  * 用户路径拨号竞速：DC 的 15 s 预算只属于后台升级扫描，前台 `getLink()` 最多等一个短预算
  * （`FOREGROUND_DC_BUDGET_MS`）就并行开 ws-secure，整段直连再压一个总截止时间，超时即让位给中继。
  */
-export const FOREGROUND_DC_BUDGET_MS = 2_500;
+export const FOREGROUND_DC_BUDGET_MS = nestedDialBudgetsMs(undefined).foregroundDcMs;
 export const FOREGROUND_DIRECT_DEADLINE_MS = 4_000;
 
 export type DialRaceLegKind = 'dc' | 'ws';
@@ -260,6 +260,7 @@ export type ForegroundDialPorts<T> = {
   log: (event: string, fields: Record<string, unknown>) => void;
   /** 调用方自定义 socket 超时；缺省或等于 `PEER_CONNECT_TIMEOUT_MS` 时走 RTT 自适应。 */
   connectTimeoutMs?: number;
+  nodeId?: string;
 };
 
 function nestedBudgetsForConnect(
@@ -277,16 +278,17 @@ function nestedBudgetsForConnect(
 export function raceForegroundDial<T>(
   ports: ForegroundDialPorts<T>
 ): Promise<DirectDialRaceOutcome<T>> {
+  const budgets = nestedBudgetsForConnect(
+    lookupPeerRttMs(ports.nodeId, ports.scheduler),
+    ports.connectTimeoutMs
+  );
   return runDirectDialRace<T>({
     dc: ports.dc,
     ws: ports.ws,
     wsFirst: ports.wsFirst,
     signal: ports.signal,
-    budgetMs: FOREGROUND_DC_BUDGET_MS,
-    deadlineMs: nestedBudgetsForConnect(
-      lookupPeerRttMs(undefined, ports.scheduler),
-      ports.connectTimeoutMs
-    ).directMs,
+    budgetMs: budgets.foregroundDcMs,
+    deadlineMs: budgets.directMs,
     now: () => ports.scheduler.now(),
     sleep: (ms, signal) => ports.scheduler.sleep(ms, signal),
     log: ports.log,

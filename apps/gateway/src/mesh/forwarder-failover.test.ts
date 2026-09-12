@@ -1,15 +1,14 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { wsBorsh } from '@vibeterm/shared';
 import type { LinkSession } from '@vibeterm/shared/link';
 import {
   type ForwardPump,
-  STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
-  STREAM_FAILOVER_HELLO_WAIT_MS,
   STREAM_FAILOVER_NO_HELLO_LIMIT,
   STREAM_STALE_INPUT_TTL_MS,
   type StreamFailoverHost,
   dropStaleQueuedInput,
   runStreamFailover,
+  streamStaleInputTtlMs,
 } from './forwarder-failover';
 import {
   type OpenedWsStream,
@@ -257,7 +256,7 @@ describe('dropStaleQueuedInput', () => {
       queueBytes: stale.byteLength + structural.byteLength + fresh.byteLength,
     };
 
-    const result = dropStaleQueuedInput(pump, now);
+    const result = dropStaleQueuedInput(pump, now, STREAM_STALE_INPUT_TTL_MS);
 
     expect(result.droppedFrames).toBe(1);
     expect(result.droppedBytes).toBe(stale.byteLength);
@@ -274,7 +273,7 @@ describe('dropStaleQueuedInput', () => {
       queuedAt: [now - STREAM_STALE_INPUT_TTL_MS],
       queueBytes: frame.byteLength,
     };
-    expect(dropStaleQueuedInput(pump, now).droppedFrames).toBe(0);
+    expect(dropStaleQueuedInput(pump, now, STREAM_STALE_INPUT_TTL_MS).droppedFrames).toBe(0);
     expect(pump.queue).toHaveLength(1);
   });
 
@@ -292,11 +291,55 @@ describe('dropStaleQueuedInput', () => {
 });
 
 describe('runStreamFailover 丢弃过期排队输入', () => {
+  test.each([
+    [1_000, 10_000],
+    [2_500, 10_000],
+    [6_900, 27_600],
+    [11_250, 45_000],
+    [30_000, 45_000],
+  ])('budget=%i ms 的输入 TTL 为 %i ms', (budget, ttl) => {
+    expect(streamStaleInputTtlMs(budget)).toBe(ttl);
+  });
+
+  test.each([
+    [10, 20_000],
+    [800, 27_600],
+    [4_000, 45_000],
+    [null, 27_600],
+    [0, 27_600],
+    [Number.NaN, 27_600],
+  ])('RTT=%s 的续流按 TTL=%i ms 筛选输入，再刷新队列', async (rtt, ttl) => {
+    const clock = spyOn(Date, 'now').mockReturnValue(100_000);
+    try {
+      const pump = makePump();
+      const input = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1]), 1);
+      const structural = wsBorsh.encodeEnvelope(
+        wsBorsh.KIND_DEVICE_CONNECT,
+        new Uint8Array([7]),
+        2
+      );
+      pump.queue = [input, input, input, structural];
+      pump.queuedAt = [100_000 - ttl! - 1, 100_000 - ttl!, 85_000, 0];
+      pump.queueBytes = input.byteLength * 3 + structural.byteLength;
+      const fixture = trackingHost();
+      fixture.host.peers.rttOf = () => rtt;
+
+      await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
+
+      expect(pump.queue).toEqual([input, input, structural]);
+      expect(pump.queueBytes).toBe(input.byteLength * 2 + structural.byteLength);
+      expect(pump.queuedAt).toEqual([100_000 - ttl!, 85_000, 0]);
+      expect(fixture.flushed).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
   test('恢复后不补发过期输入，并打一行日志', async () => {
     const pump = makePump();
     const stale = wsBorsh.encodeEnvelope(wsBorsh.KIND_TERM_INPUT, new Uint8Array([1]), 1);
     pump.queue = [stale];
-    pump.queuedAt = [Date.now() - STREAM_STALE_INPUT_TTL_MS - 500];
+    pump.queuedAt = [Date.now() - 45_500];
     pump.queueBytes = stale.byteLength;
     const lines: string[] = [];
     const tracked = trackingHost({ log: (line) => lines.push(line) });
@@ -367,18 +410,18 @@ describe('续流握手失败的归因', () => {
     // 静默重试有上限：不再把浏览器晾满 9 轮退避。
     expect(fixture.opened.length).toBe(STREAM_FAILOVER_NO_HELLO_LIMIT);
     expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
-    // 第一轮给足 2 s，之后每轮只等 500 ms。
-    const helloWaits = waits.filter((ms) =>
-      [STREAM_FAILOVER_HELLO_WAIT_MS, STREAM_FAILOVER_HELLO_RETRY_WAIT_MS].includes(ms)
-    );
-    expect(helloWaits).toEqual([
-      STREAM_FAILOVER_HELLO_WAIT_MS,
-      STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
-      STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
-    ]);
+    expect(waits).toEqual([3_200, 50, 1_600, 100, 1_600]);
+    expect(fixture.opened.every((stream) => stream.closedWith !== null)).toBe(true);
   });
 
-  test('HELLO retry wait scales with peer RTT and stays ≥ 500 ms', async () => {
+  test.each([
+    [10, 2_000, 500],
+    [800, 3_200, 1_600],
+    [4_000, 8_000, 4_000],
+    [null, 3_200, 1_600],
+    [0, 3_200, 1_600],
+    [Number.NaN, 3_200, 1_600],
+  ])('RTT=%s 的首次 HELLO 等 %i ms，重试等 %i ms', async (rtt, first, retry) => {
     const pump = makePump();
     pump.stream = null;
     pump.streamAlive = false;
@@ -398,15 +441,12 @@ describe('续流握手失败的归因', () => {
         listReach: () => new Map(),
         onNodeEvent: () => () => {},
         transportOf: () => 'relay',
-        rttOf: () => 800,
+        rttOf: () => rtt,
       },
     });
     await runStreamFailover(fixture.host, pump, { code: 1011, reason: 'reset' });
-    expect(waits.filter((ms) => ms === 1_600 || ms === STREAM_FAILOVER_HELLO_WAIT_MS)).toEqual([
-      STREAM_FAILOVER_HELLO_WAIT_MS,
-      1_600,
-      1_600,
-    ]);
+    expect(waits).toEqual([first, 50, retry, 100, retry]);
+    expect(fixture.closed).toEqual([{ code: 1011, reason: 'failover-no-hello' }]);
   });
 
   test('中间有一轮答上了 HELLO：没回音的计数清零，重试预算不被前面几轮吃掉', async () => {

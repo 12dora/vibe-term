@@ -1,5 +1,5 @@
 import { wsBorsh } from '@vibeterm/shared';
-import { adaptiveDeadlineMs } from '@vibeterm/shared/net';
+import { DEFAULT_DIAL_RTT_MS, adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { gatewayEventLoopLag } from '../ws/event-loop-lag';
 import {
   failoverCauseOf,
@@ -57,15 +57,38 @@ export type StreamFailoverHost = {
   flushQueue(pump: ForwardPump): void;
 };
 
-/** 与前端 `STALE_INPUT_TTL_MS` 同值：failover 期间排队超过它的终端输入不再补发。 */
+/** 输入 TTL 下限；实际值与客户端一致，按取链预算放大到最多 45 s。 */
 export const STREAM_STALE_INPUT_TTL_MS = 10_000;
 
-/** 首次续流等 HELLO 的上限；对端只是慢，值给得宽一点。 */
+/** 首次续流等 HELLO 的下限。 */
 export const STREAM_FAILOVER_HELLO_WAIT_MS = 2_000;
-/** 已经有一轮一个字节都没答上来：后续每轮只等这么久，别把浏览器晾在那里。 */
+/** 连续无 HELLO 回应时，后续续流等待的下限。 */
 export const STREAM_FAILOVER_HELLO_RETRY_WAIT_MS = 500;
 /** 连续这么多轮拿不到 HELLO 就不再静默重试，直接把这条转发流收掉让浏览器重连。 */
 export const STREAM_FAILOVER_NO_HELLO_LIMIT = 3;
+
+export function streamStaleInputTtlMs(budgetMs: number): number {
+  return adaptiveDeadlineMs({
+    rttMs: budgetMs,
+    factor: 4,
+    minMs: STREAM_STALE_INPUT_TTL_MS,
+    maxMs: 45_000,
+  });
+}
+
+function peerRttMs(host: StreamFailoverHost, pump: ForwardPump): number {
+  const rtt = host.peers.rttOf?.(pump.nodeId);
+  return typeof rtt === 'number' && Number.isFinite(rtt) && rtt > 0 ? rtt : DEFAULT_DIAL_RTT_MS;
+}
+
+function helloWaitBudgetMs(rttMs: number, retry: boolean): number {
+  return adaptiveDeadlineMs({
+    rttMs,
+    factor: retry ? 2 : 4,
+    minMs: retry ? STREAM_FAILOVER_HELLO_RETRY_WAIT_MS : STREAM_FAILOVER_HELLO_WAIT_MS,
+    maxMs: retry ? 4_000 : 8_000,
+  });
+}
 
 /** 一轮续流的结果：done = 不再重试；retry = 换一条再来；retry-no-hello = 对端一声没吭。 */
 type FailoverAttemptOutcome = 'done' | 'retry' | 'retry-no-hello';
@@ -105,7 +128,7 @@ export type StaleQueueDrop = { droppedFrames: number; droppedBytes: number; olde
 export function dropStaleQueuedInput(
   pump: Pick<ForwardPump, 'queue' | 'queuedAt' | 'queueBytes'>,
   now: number,
-  ttlMs: number = STREAM_STALE_INPUT_TTL_MS
+  ttlMs: number = streamStaleInputTtlMs(nestedDialBudgetsMs(DEFAULT_DIAL_RTT_MS).forwardMs)
 ): StaleQueueDrop {
   const keptFrames: Uint8Array[] = [];
   const keptAt: number[] = [];
@@ -218,15 +241,7 @@ async function runFailoverAttempts(
     const opened = await openFailoverStream(host, pump, base.signal, attempt);
     if (opened === 'aborted') return 'settled';
     if (!opened) continue;
-    const helloWaitMs =
-      noHelloStreak === 0
-        ? STREAM_FAILOVER_HELLO_WAIT_MS
-        : adaptiveDeadlineMs({
-            rttMs: host.peers.rttOf?.(pump.nodeId) ?? 0,
-            factor: 2,
-            minMs: STREAM_FAILOVER_HELLO_RETRY_WAIT_MS,
-            maxMs: 4_000,
-          });
+    const helloWaitMs = helloWaitBudgetMs(peerRttMs(host, pump), noHelloStreak > 0);
     const outcome = await completeFailover(host, pump, opened, { ...base, helloWaitMs });
     if (outcome === 'done') return 'settled';
     if (outcome !== 'retry-no-hello') {
@@ -388,7 +403,8 @@ async function completeFailover(
   );
   pump.failingOver = false;
   pump.failoverAbort = null;
-  const stale = dropStaleQueuedInput(pump, Date.now());
+  const budgetMs = nestedDialBudgetsMs(peerRttMs(host, pump)).forwardMs;
+  const stale = dropStaleQueuedInput(pump, Date.now(), streamStaleInputTtlMs(budgetMs));
   if (stale.droppedFrames > 0) {
     safeLog(
       host,

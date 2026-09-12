@@ -48,20 +48,28 @@ function fakeClock() {
 }
 
 describe('nested dial budgets', () => {
-  test('connect < direct < forward and LAN defaults match historic constants', () => {
-    const lan = nestedDialBudgetsMs(0);
+  test('connect < direct < forward; LAN stays 3/4/5 s, no-sample uses 800 ms proxy', () => {
+    const lan = nestedDialBudgetsMs(50);
     expect(lan.connectMs).toBe(PEER_CONNECT_TIMEOUT_MS);
     expect(lan.directMs).toBe(FOREGROUND_DIRECT_DEADLINE_MS);
     expect(lan.forwardMs).toBe(5_000);
-    for (const rtt of [0, 300, 800, 2_000]) {
-      const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(rtt);
+    expect(lan.foregroundDcMs).toBe(1_000);
+    const none = nestedDialBudgetsMs(undefined);
+    expect(none.foregroundDcMs).toBe(FOREGROUND_DC_BUDGET_MS);
+    expect(none.foregroundDcMs).toBe(2_400);
+    expect(none.connectMs).toBe(4_800);
+    expect(none.directMs).toBe(5_300);
+    expect(none.forwardMs).toBe(6_900);
+    for (const rtt of [undefined, 50, 300, 800, 2_000] as const) {
+      const { connectMs, directMs, forwardMs, foregroundDcMs } = nestedDialBudgetsMs(rtt);
       expect(connectMs).toBeLessThan(directMs);
       expect(directMs).toBeLessThan(forwardMs);
+      expect(foregroundDcMs).toBeLessThan(directMs);
     }
   });
 
-  test('custom connectTimeoutMs 20 s at RTT 0 still nests connect < direct < forward', () => {
-    const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(0, 20_000);
+  test('custom connectTimeoutMs 20 s at LAN RTT still nests connect < direct < forward', () => {
+    const { connectMs, directMs, forwardMs } = nestedDialBudgetsMs(50, 20_000);
     expect(connectMs).toBe(20_000);
     expect(directMs).toBe(20_500);
     expect(connectMs).toBeLessThan(directMs);

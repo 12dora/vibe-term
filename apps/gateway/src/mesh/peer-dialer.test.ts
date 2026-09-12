@@ -7,8 +7,10 @@ import { gateDcDial, noteDialDcFailure } from './peer-dialer-dc-gate';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PeerManager } from './peer-manager';
 import { createPeerManagerState } from './peer-manager-state';
+import { handshakeRelay } from './peer-protocol';
 import { dummyUplink } from './peer-test-fixtures';
 import { DirectDialLimiter } from './peer-ws-race';
+import type { RelayPresenceIndex } from './relay-presence-types';
 import type { RtcPeerManager } from './rtc';
 import type { RtcDialBreaker } from './rtc/rtc-dial-breaker';
 import { ImmediateScheduler, seedNodeIdentity, seedUser } from './test-support';
@@ -346,5 +348,110 @@ describe('PeerDialer peer-initiated DC while breaker cooling', () => {
     expect(answered).toBeTruthy();
     expect(dcCalls).toBe(1);
     for (const remote of remotes) remote.close('test');
+  });
+
+  test('foreground dial races relay in parallel when presence lists the peer', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    store.upsertPeer({
+      nodeId: peer.nodeId,
+      name: 'peer',
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+    const [outerA, outerB] = createInMemoryLinkPair();
+    const incoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      outerB.onStream(resolve)
+    );
+    const scheduler = new ImmediateScheduler();
+    const state = createPeerManagerState({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store, async () =>
+        outerA.openStream(
+          new TextEncoder().encode(JSON.stringify({ to: peer.nodeId, from: self.nodeId }))
+        )
+      ),
+      scheduler,
+      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+    });
+    state.relayPresence = {
+      snapshot: () => [],
+      primaryUrl: () => 'https://relay.example',
+      relaysFor: (id) => (id === peer.nodeId ? ['https://relay.example'] : []),
+      chooseRelay: () => ({ url: 'https://relay.example', role: 'primary', scoreMs: 40 }),
+      onlineUnion: () => new Set([peer.nodeId]),
+    } as RelayPresenceIndex;
+    const tracked: string[] = [];
+    const rtc = {
+      available: true,
+      ready: async () => true,
+      currentIceConfig: () => ({ stun: [] as string[], turn: null }),
+      connectToPeer: () => new Promise(() => {}),
+    } as unknown as RtcPeerManager;
+    const dialer = new PeerDialer(state, {
+      rtc,
+      linkFactory: null,
+      wsFactory: () => {
+        throw new Error('no-ws');
+      },
+      connectTimeoutMs: 20,
+      dialLimiter: new DirectDialLimiter(4),
+      interfacesFn: () => ({}),
+      refreshLocalInterfaces: null,
+      deps: {
+        dcBreaker: {
+          shouldTry: () => ({
+            allow: true,
+            cooling: false,
+            until: null,
+            failures: 0,
+            level: 0,
+            disabled: false,
+          }),
+          snapshot: () => ({
+            cooling: false,
+            until: null,
+            failures: 0,
+            level: 0,
+            lastFailureKind: null,
+            disabled: false,
+          }),
+          beginAttempt: () => undefined,
+          noteFailure: () => ({ counted: false, opened: false, open: true }),
+        } as unknown as RtcDialBreaker,
+        track: (session, _id, transport) => {
+          tracked.push(transport);
+          return session;
+        },
+        requireTrusted: () => undefined,
+        getLink: async () => {
+          throw new Error('unused');
+        },
+        maybeUpgrade: () => undefined,
+        nextDcAttemptId: () => 'dc:1',
+        signalingFor: () => ({ send: () => undefined, onMessage: () => () => undefined }),
+        dispatchRtcWake: () => undefined,
+        releaseRtcWakeAttempt: () => undefined,
+        onLocalFingerprintChanged: () => undefined,
+        onPeerEndpointChanged: () => undefined,
+        listenPort: () => undefined,
+      },
+    });
+    const acceptP = incoming.then((stream) =>
+      handshakeRelay({ stream, role: 'acceptor', identity: peer, userStore: store })
+    );
+    const started = Date.now();
+    const [session] = await Promise.all([dialer.dial(peer.nodeId, { foreground: true }), acceptP]);
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(session).toBeTruthy();
+    expect(tracked).toEqual(['relay']);
   });
 });

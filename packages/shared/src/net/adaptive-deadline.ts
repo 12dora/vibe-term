@@ -14,7 +14,7 @@ export function adaptiveDeadlineMs(opts: {
 }
 
 /** 从未观测到 RTT 时的拨号代理值（偏保守的跨区下限，不是 LAN）。 */
-export const DEFAULT_DIAL_RTT_MS = 300;
+export const DEFAULT_DIAL_RTT_MS = 800;
 
 const CONNECT_MIN_MS = 3_000;
 const CONNECT_MAX_MS = 15_000;
@@ -24,36 +24,69 @@ const FORWARD_MIN_MS = 5_000;
 const FORWARD_MAX_MS = 20_000;
 const RELAY_HANDSHAKE_MIN_MS = 1_000;
 const RELAY_HANDSHAKE_MAX_MS = 8_000;
+const FOREGROUND_DC_MIN_MS = 1_000;
+const FOREGROUND_DC_MAX_MS = 4_000;
 /** 嵌套预算之间至少留出的余量，保证 connect < direct < forward。 */
 const NEST_SLACK_MS = 500;
 
 export type NestedDialBudgets = {
+  foregroundDcMs: number;
   connectMs: number;
   directMs: number;
   forwardMs: number;
 };
 
+function positiveRttMs(rttMs: number | null | undefined): number | null {
+  return typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs > 0 ? rttMs : null;
+}
+
+/** 拨号用 RTT：有样本用样本，否则 800 ms 跨区代理（不要退回 LAN 下限）。 */
+export function dialRttOrProxyMs(rttMs: number | null | undefined): number {
+  return positiveRttMs(rttMs) ?? DEFAULT_DIAL_RTT_MS;
+}
+
 function nestFromConnect(
   connectMs: number,
   directMs: number,
   handshakeMs: number
-): NestedDialBudgets {
+): Omit<NestedDialBudgets, 'foregroundDcMs'> {
   const nestedDirect = Math.max(directMs, connectMs + NEST_SLACK_MS);
   let forwardMs = Math.max(FORWARD_MIN_MS, nestedDirect + handshakeMs);
   if (forwardMs <= nestedDirect) forwardMs = nestedDirect + NEST_SLACK_MS;
   return { connectMs, directMs: nestedDirect, forwardMs };
 }
 
+function withForegroundDc(
+  budgets: Omit<NestedDialBudgets, 'foregroundDcMs'>,
+  rtt: number
+): NestedDialBudgets {
+  const raw = adaptiveDeadlineMs({
+    rttMs: rtt,
+    factor: 3,
+    minMs: FOREGROUND_DC_MIN_MS,
+    maxMs: FOREGROUND_DC_MAX_MS,
+  });
+  return {
+    ...budgets,
+    foregroundDcMs: Math.min(Math.max(FOREGROUND_DC_MIN_MS, budgets.directMs - NEST_SLACK_MS), raw),
+  };
+}
+
 /**
  * 嵌套拨号预算：socket ⊂ 直连竞速 ⊂ 转发取链。
- * 各档先按因子独立 clamp，再抬外层 / 压内层，使对任意 RTT 都有 connect < direct < forward。
+ * 无有效样本按 `DEFAULT_DIAL_RTT_MS`（800 ms），不要用 rtt=0 退回 3/4/5 s LAN 档。
+ * 公式（各档先独立 clamp，再抬外层 / 压内层，保证 connect < direct < forward）：
+ * - socket = clamp(6×RTT, 3 s, 15 s)
+ * - direct = clamp(5×RTT, 4 s, 12 s)
+ * - DC 独跑 = clamp(3×RTT, 1 s, 4 s)，且至少比 direct 早 500 ms
+ * - forward ≥ direct + clamp(2×RTT, 1 s, 8 s)，夹在 5–20 s
  * `connectTimeoutMs` 为调用方显式 socket 超时（可大于自适应值）；此时不再压 connect，只抬外层。
  */
 export function nestedDialBudgetsMs(
   rttMs: number | null | undefined,
   connectTimeoutMs?: number | null
 ): NestedDialBudgets {
-  const rtt = typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs > 0 ? rttMs : 0;
+  const rtt = dialRttOrProxyMs(rttMs);
   const adaptiveConnect = adaptiveDeadlineMs({
     rttMs: rtt,
     factor: 6,
@@ -77,7 +110,7 @@ export function nestedDialBudgetsMs(
     Number.isFinite(connectTimeoutMs) &&
     connectTimeoutMs > 0
   ) {
-    return nestFromConnect(connectTimeoutMs, adaptiveDirect, handshakeMs);
+    return withForegroundDc(nestFromConnect(connectTimeoutMs, adaptiveDirect, handshakeMs), rtt);
   }
   let connectMs = adaptiveConnect;
   let directMs = adaptiveDirect;
@@ -91,5 +124,5 @@ export function nestedDialBudgetsMs(
   if (forwardMs <= directMs) {
     forwardMs = Math.min(FORWARD_MAX_MS, directMs + NEST_SLACK_MS);
   }
-  return { connectMs, directMs, forwardMs };
+  return withForegroundDc({ connectMs, directMs, forwardMs }, rtt);
 }

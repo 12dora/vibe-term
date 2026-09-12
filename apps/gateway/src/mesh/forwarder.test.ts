@@ -15,6 +15,9 @@ import {
 } from './auth-routes.test';
 import {
   DEFAULT_PENDING_FORWARD_STREAM_TTL_MS,
+  FORWARD_WS_LINK_FAILURE_CODE,
+  FORWARD_WS_LINK_FAILURE_REASON,
+  FORWARD_WS_LINK_TIMEOUT_REASON,
   Forwarder,
   expirePendingForwardStream,
   getSelfRewrite,
@@ -115,25 +118,122 @@ describe('forwarder', () => {
     }
   });
 
-  test('websocket 转发同样受墙钟上限约束', async () => {
+  test('websocket 转发先 101，取链超时再以 1011 关掉，不把 101 堵在 getLink 后面', async () => {
     const peers = new FakePeers();
     peers.getLink = () => new Promise<LinkSession>(() => {});
     const mesh = await bootMesh({ peers });
     setForwardLinkDeadlineMs(60);
     try {
       const started = Date.now();
-      const res = asResponse(
-        await mesh.runtime.handleRequest(
-          new Request(`http://localhost/n/${OTHER}/ws`, {
-            headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
-          }),
-          dummyServer
-        )
+      let data: { kind?: string; token?: string } | undefined;
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        {
+          upgrade(_req, opts) {
+            data = opts?.data as typeof data;
+            return true;
+          },
+        }
       );
-      expect(res.status).toBe(503);
-      expect(Date.now() - started).toBeLessThan(2_000);
+      expect(upgrade).toBeUndefined();
+      expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      expect(Date.now() - started).toBeLessThan(60);
+      let closed: { code?: number; reason?: string } | undefined;
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send() {
+          return 1;
+        },
+        close(code?: number, reason?: string) {
+          closed = { code, reason };
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      await waitUntil(() => closed !== undefined, 2_000);
+      expect(closed).toEqual({
+        code: FORWARD_WS_LINK_FAILURE_CODE,
+        reason: FORWARD_WS_LINK_TIMEOUT_REASON,
+      });
+      expect(closed?.code).not.toBe(WS_CLOSE_LOGIN_REQUIRED);
     } finally {
       setForwardLinkDeadlineMs(0);
+      mesh.close();
+    }
+  });
+
+  test('/n/:id/ws 在 getLink 未完成时已经 upgrade 成 101', async () => {
+    const peers = new FakePeers();
+    let release: ((link: LinkSession) => void) | undefined;
+    peers.getLink = () =>
+      new Promise<LinkSession>((resolve) => {
+        release = resolve;
+      });
+    const streams = new FakeStreams();
+    const mesh = await bootMesh({ peers, streams });
+    try {
+      let data: { kind?: string } | undefined;
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        {
+          upgrade(_req, opts) {
+            data = opts?.data as typeof data;
+            return true;
+          },
+        }
+      );
+      expect(upgrade).toBeUndefined();
+      expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      expect(streams.lastWs).toBeNull();
+      release?.(dummyLink);
+      await waitForwardOpen(streams);
+      expect(streams.wsAuth).toBe('remote-sid');
+    } finally {
+      mesh.close();
+    }
+  });
+
+  test('getLink 在 101 之后失败用 1011 node-unreachable，不是 4401', async () => {
+    const peers = new FakePeers();
+    peers.getLink = async () => {
+      throw new NodeUnreachableError(OTHER);
+    };
+    const mesh = await bootMesh({ peers });
+    try {
+      let data: { kind?: string } | undefined;
+      const upgrade = await mesh.runtime.handleRequest(
+        new Request(`http://localhost/n/${OTHER}/ws`, {
+          headers: { cookie: `vibeterm_s_${OTHER}=remote-sid` },
+        }),
+        {
+          upgrade(_req, opts) {
+            data = opts?.data as typeof data;
+            return true;
+          },
+        }
+      );
+      expect(upgrade).toBeUndefined();
+      let closed: { code?: number; reason?: string } | undefined;
+      const ws = {
+        data: data ?? { kind: MESH_FORWARD_WS_KIND },
+        send() {
+          return 1;
+        },
+        close(code?: number, reason?: string) {
+          closed = { code, reason };
+        },
+      } as MeshServerWebSocket;
+      mesh.runtime.handleWebSocket.open(ws);
+      await waitUntil(() => closed !== undefined);
+      expect(closed).toEqual({
+        code: FORWARD_WS_LINK_FAILURE_CODE,
+        reason: FORWARD_WS_LINK_FAILURE_REASON,
+      });
+      expect(closed?.code).not.toBe(WS_CLOSE_LOGIN_REQUIRED);
+    } finally {
       mesh.close();
     }
   });
@@ -542,6 +642,7 @@ describe('forwarder', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      await waitForwardOpen(streams);
       expect(streams.wsAuth).toBe('remote-sid');
       expect(streams.wsCid).toBeUndefined();
 
@@ -584,6 +685,7 @@ describe('forwarder', () => {
         }),
         server
       );
+      await waitForwardOpen(streams);
       const sent: Uint8Array[] = [];
       const closed: Array<{ code?: number; reason?: string }> = [];
       let sendResult = 2;
@@ -642,6 +744,7 @@ describe('forwarder', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      await waitForwardOpen(streams);
       expect(streams.wsAuth).toBe('remote-sid');
       expect(streams.wsCid).toBe('tab-nonce');
     } finally {
@@ -671,8 +774,8 @@ describe('forwarder', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(pendingForwardStreamCount()).toBe(prior + 1);
-      const remote = streams.lastWs;
-      expect(remote?.closedOnce).toBe(false);
+      const remote = await waitForwardOpen(streams);
+      expect(remote.closedOnce).toBe(false);
       const ws = {
         data: data ?? { kind: MESH_FORWARD_WS_KIND },
         send() {
@@ -709,8 +812,8 @@ describe('forwarder', () => {
         server
       );
       const token = data?.token;
-      const remote = streams.lastWs;
-      if (!remote || typeof token !== 'string') throw new Error('expected pending stream');
+      const remote = await waitForwardOpen(streams);
+      if (typeof token !== 'string') throw new Error('expected pending stream');
       const other = new FakeWs();
       expirePendingForwardStream(token, other);
       expect(pendingForwardStreamCount()).toBe(prior + 1);
@@ -747,7 +850,7 @@ describe('forwarder', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(pendingForwardStreamCount()).toBe(prior + 1);
-      const remote = streams.lastWs;
+      const remote = await waitForwardOpen(streams);
       await new Promise((resolve) => setTimeout(resolve, 15_000 / scale + 5));
       expect(pendingForwardStreamCount()).toBe(prior + 1);
       expect(remote?.closedOnce).toBe(false);
@@ -1113,6 +1216,7 @@ describe('forwarder', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(data?.cid).toBe('tab-ameshstreamforgedline');
+      await waitForwardOpen(streams);
       expect(streams.wsOpens[0]?.cid).toBe('tab-ameshstreamforgedline');
 
       const ws = {
@@ -1164,6 +1268,7 @@ describe('forwarder', () => {
         server
       );
       expect(upgrade).toBeUndefined();
+      await waitForwardOpen(streams);
       let browserClosed: { code?: number; reason?: string } | undefined;
       const sent: Uint8Array[] = [];
       const ws = {
@@ -2791,10 +2896,18 @@ async function beginBlockedFailover(): Promise<{
   };
 }
 
+async function waitForwardOpen(streams: FakeStreams): Promise<FakeWs> {
+  await waitUntil(() => streams.lastWs != null);
+  await Promise.resolve();
+  const ws = streams.lastWs;
+  if (!ws) throw new Error('expected forward stream');
+  return ws;
+}
+
 async function openForwardWs(
   runtime: Awaited<ReturnType<typeof bootMesh>>['runtime'],
   _peers: FakePeers,
-  _streams: FakeStreams,
+  streams: FakeStreams,
   nodeId: string
 ): Promise<{
   ws: MeshServerWebSocket;
@@ -2813,6 +2926,7 @@ async function openForwardWs(
     }),
     server
   );
+  await waitForwardOpen(streams);
   let browserClosed: { code?: number; reason?: string } | undefined;
   const ws = {
     data: data ?? { kind: MESH_FORWARD_WS_KIND },
@@ -3003,6 +3117,7 @@ describe('forwarder 分享凭证', () => {
       );
       expect(upgrade).toBeUndefined();
       expect(data?.kind).toBe(MESH_FORWARD_WS_KIND);
+      await waitForwardOpen(streams);
       expect(streams.wsAuth).toBe(`share:${SHARE_TOKEN}`);
     } finally {
       mesh.close();
@@ -3022,6 +3137,7 @@ describe('forwarder 分享凭证', () => {
         dummyServer
       );
       expect(upgrade).toBeUndefined();
+      await waitForwardOpen(streams);
       expect(streams.wsAuth).toBe(`share:${SHARE_TOKEN}`);
       expect(streams.wsShare).toBe('sh-1');
     } finally {
@@ -3075,6 +3191,7 @@ describe('forwarder 分享凭证', () => {
         }),
         server
       );
+      await waitForwardOpen(streams);
       const closes: Array<{ code?: number; reason?: string }> = [];
       const ws = {
         data: data ?? { kind: MESH_FORWARD_WS_KIND },

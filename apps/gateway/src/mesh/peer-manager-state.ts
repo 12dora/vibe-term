@@ -154,7 +154,7 @@ function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
   return finiteRtt((uplink as { rttMs?: number | null }).rttMs);
 }
 
-/** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 300 ms。无 nodeId 时不用全局 max。 */
+/** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 800 ms。无 nodeId 时不用全局 max。 */
 export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
   const state = scheduler ? rttByScheduler.get(scheduler) : undefined;
   if (!state) return DEFAULT_DIAL_RTT_MS;

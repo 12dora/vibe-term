@@ -1,4 +1,15 @@
-import { wsBorsh } from '@vibeterm/shared';
+import { ForwardWsPumps } from './forwarder-ws-pump';
+import { type PendingForwardOpen, upgradeRemoteWs } from './forwarder-ws-upgrade';
+export {
+  DEFAULT_PENDING_FORWARD_STREAM_TTL_MS,
+  FORWARD_WS_LINK_FAILURE_CODE,
+  FORWARD_WS_LINK_FAILURE_REASON,
+  FORWARD_WS_LINK_TIMEOUT_REASON,
+  expirePendingForwardStream,
+  pendingForwardStreamCount,
+  setPendingForwardStreamTtlMs,
+  takePendingForwardStream,
+} from './forwarder-ws-upgrade';
 import { adaptiveDeadlineMs, nestedDialBudgetsMs } from '@vibeterm/shared/net';
 import { readJsonObjectBody } from '../api/http';
 import { parseCookies, readNodeSessionCookie } from '../auth/cookies';
@@ -19,39 +30,28 @@ import {
   peekJsonCode,
 } from './forwarder-auth-policy';
 import { cancelForwardBody, countStreamBytes, throttledProgress } from './forwarder-body';
-import { type ForwardPump as FailoverPump, runStreamFailover } from './forwarder-failover';
 import { copyUpstreamHeaders, filterRequestHeaders } from './forwarder-headers';
 import { parseNodePrefix } from './forwarder-path';
 import { nodeUnreachableResponse } from './forwarder-unreachable';
-import { rejectRemoteWs, remoteWsAuthFor } from './forwarder-ws-auth';
 import { buildJsonStreamBody } from './json-stream-body';
 import {
   HTTP_FAILOVER_MAX_ATTEMPTS,
-  MESH_FORWARD_WS_KIND,
-  MESH_REJECT_4401_KIND,
   MESH_VIA_SELF,
   type MeshHandleResult,
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type OpenedWsStream,
   type PeerLinkProvider,
-  type PeerTransportKind,
   STREAM_FAILOVER_BACKOFF_MS,
-  STREAM_QUEUE_MAX_BYTES,
-  STREAM_QUEUE_MAX_FRAMES,
-  STREAM_QUEUE_OVERFLOW_REASON,
   type StreamOpener,
   getMeshRequestContext,
   setMeshRequestContext,
 } from './mesh-deps';
 import { stamp } from './mesh-log';
-import { sanitizeCid } from './mesh-session-registry';
 import { lookupPeerRttMs } from './peer-manager-state';
 import { jsonError } from './session-middleware';
-import { readShareCookie, shareAuthValue, shareWsParam } from './share-credential';
+import { readShareCookie, shareAuthValue } from './share-credential';
 import { ShareLoginQuota, shareLoginShareId } from './share-login-quota';
-import { isTerminalStreamClose } from './stream-close-code';
-import { StreamReplayState, rejectStaleNodeStream } from './stream-replay-state';
 
 type ForwarderDeps = {
   nodeId: string;
@@ -62,23 +62,6 @@ type ForwarderDeps = {
   authRateLimits?: AuthRateLimits | null;
 };
 
-type ForwardMeta = {
-  nodeId: string;
-  auth: string;
-  cid?: string;
-  share?: string;
-  transport: PeerTransportKind | null;
-};
-
-type ForwardPump = FailoverPump & {
-  ws: MeshServerWebSocket;
-  generation: number;
-  browserPaused: boolean;
-  inboundHold: Uint8Array[];
-  inboundHoldBytes: number;
-};
-
-const pendingMeta = new WeakMap<OpenedWsStream, ForwardMeta>();
 const IDEMPOTENT_HTTP = new Set(['GET', 'HEAD']);
 /** 取链路的墙钟上限（LAN 缺省）；高 RTT 时按 nestedDialBudgetsMs 放大。 */
 export const FORWARD_LINK_DEADLINE_MS = 5_000;
@@ -151,7 +134,7 @@ function rewriteRequest(req: Request, rewrite: string): Request {
 }
 
 export class Forwarder {
-  private readonly pumps = new Map<MeshServerWebSocket, ForwardPump>();
+  private readonly wsPumps: ForwardWsPumps;
   private readonly shareLoginQuota = new ShareLoginQuota();
   private readonly sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
   readonly log: (line: string) => void;
@@ -162,6 +145,23 @@ export class Forwarder {
     const sink = deps.log ?? ((line: string) => console.info(line));
     this.log = (line) => sink(stamp(line));
     this.authRateLimits = deps.authRateLimits ?? null;
+    this.wsPumps = new ForwardWsPumps({ ...deps, sleep: this.sleep, log: this.log });
+  }
+
+  handleForwardSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
+    this.wsPumps.handleForwardSocketMessage(ws, message);
+  }
+
+  handleForwardSocketDrain(ws: MeshServerWebSocket): void {
+    this.wsPumps.handleForwardSocketDrain(ws);
+  }
+
+  handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
+    this.wsPumps.handleForwardSocketClose(ws, code, reason);
+  }
+
+  attachForwardPump(ws: MeshServerWebSocket, stream: OpenedWsStream | PendingForwardOpen): void {
+    this.wsPumps.attachForwardPump(ws, stream);
   }
 
   setAuthRateLimits(limits: AuthRateLimits | null): void {
@@ -185,68 +185,6 @@ export class Forwarder {
       return this.handleRemoteHttp(req, parsed.nodeId, parsed.rest, url.search);
     }
     return null;
-  }
-
-  handleForwardSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
-    const pump = this.pumps.get(ws);
-    if (!pump || pump.browserClosed) return;
-    const bytes = toBytes(message);
-    if (!bytes) return;
-    pump.replay.noteOutbound(bytes);
-    if (pump.failingOver || !pump.stream) {
-      if (!enqueueFrame(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
-      return;
-    }
-    this.sendToStream(pump, pump.stream, bytes);
-  }
-
-  handleForwardSocketDrain(ws: MeshServerWebSocket): void {
-    const pump = this.pumps.get(ws);
-    if (!pump || pump.browserClosed) return;
-    pump.browserPaused = false;
-    this.flushInbound(pump);
-  }
-
-  handleForwardSocketClose(ws: MeshServerWebSocket, code?: number, reason?: string): void {
-    const pump = this.pumps.get(ws);
-    this.pumps.delete(ws);
-    if (!pump) {
-      discardPendingStream(ws.data?.token);
-      return;
-    }
-    pump.browserClosed = true;
-    this.closePump(pump, { code, reason });
-  }
-
-  attachForwardPump(ws: MeshServerWebSocket, stream: OpenedWsStream): void {
-    const meta = pendingMeta.get(stream);
-    const pump: ForwardPump = {
-      id: crypto.randomUUID().slice(0, 8),
-      ws,
-      nodeId: meta?.nodeId ?? ws.data.nodeId ?? '',
-      auth: meta?.auth ?? ws.data.auth ?? '',
-      cid: meta?.cid ?? ws.data.cid,
-      ...(meta?.share ? { share: meta.share } : {}),
-      stream: null,
-      boundTransport: meta?.transport ?? null,
-      replay: new StreamReplayState(),
-      generation: 0,
-      browserClosed: false,
-      failingOver: false,
-      failoverAbort: null,
-      queue: [],
-      queuedAt: [],
-      helloWait: null,
-      resumeWait: null,
-      streamAlive: true,
-      inflight: null,
-      queueBytes: 0,
-      browserPaused: false,
-      inboundHold: [],
-      inboundHoldBytes: 0,
-    };
-    this.pumps.set(ws, pump);
-    this.bindStream(pump, stream, meta?.transport ?? null);
   }
 
   /**
@@ -387,7 +325,7 @@ export class Forwarder {
           parent: abort,
           linkBudgetMs: Math.min(remaining, budgets.linkMs),
           transferBudgetMs: Math.min(remaining, budgets.transferMs),
-          getLink: this.deps.peers.getLink(input.nodeId),
+          getLink: this.deps.peers.getLink(input.nodeId, { purpose: 'management' }),
           transfer: (link, signal) => {
             const origin = req.headers.get('origin') ?? new URL(req.url).origin;
             return this.deps.streams
@@ -429,181 +367,6 @@ export class Forwarder {
     );
   }
 
-  private bindStream(
-    pump: ForwardPump,
-    stream: OpenedWsStream,
-    transport: PeerTransportKind | null
-  ): void {
-    pump.generation += 1;
-    const generation = pump.generation;
-    pump.stream = stream;
-    pump.boundTransport = transport;
-    pump.streamAlive = true;
-    stream.onMessage((bytes) => {
-      if (generation !== pump.generation || pump.browserClosed) return;
-      this.handleRemoteBytes(pump, bytes);
-    });
-    stream.onClose((info) => {
-      if (generation !== pump.generation || pump.browserClosed) return;
-      pump.streamAlive = false;
-      pump.helloWait?.();
-      pump.helloWait = null;
-      // 节点端主动终止（会话失效 / 分享结束）：重连也不会成功，直接把关闭码透到浏览器。
-      if (isTerminalStreamClose(info)) {
-        this.closePump(pump, info);
-        return;
-      }
-      if (pump.failingOver) return;
-      void this.failover(pump, info ?? {});
-    });
-  }
-
-  private handleRemoteBytes(pump: ForwardPump, bytes: Uint8Array): void {
-    const noted = pump.replay.noteInbound(bytes);
-    if (pump.resumeWait && pump.replay.isResumeReady()) {
-      pump.resumeWait();
-      pump.resumeWait = null;
-    }
-    if (noted.kind === wsBorsh.KIND_HELLO_S2C) {
-      pump.helloWait?.();
-      pump.helloWait = null;
-      if (rejectStaleNodeStream(noted.peerUnsupported, pump, this)) return;
-      if (pump.replay.helloForwarded) return;
-      pump.replay.helloForwarded = true;
-    }
-    if (noted.kind === wsBorsh.KIND_DEVICE_CONNECTED && noted.deviceId) {
-      if (pump.replay.connectedForwarded.has(noted.deviceId)) return;
-      pump.replay.connectedForwarded.add(noted.deviceId);
-    }
-    this.sendToBrowser(pump, bytes);
-  }
-
-  sendToBrowser(pump: ForwardPump, bytes: Uint8Array): void {
-    if (pump.browserClosed) return;
-    if (pump.browserPaused) {
-      if (!holdInbound(pump, bytes)) this.failPump(pump, STREAM_QUEUE_OVERFLOW_REASON);
-      return;
-    }
-    let result: number | undefined;
-    try {
-      result = pump.ws.send(bytes);
-    } catch {
-      pump.stream?.close();
-      return;
-    }
-    if (result === 0) {
-      this.closeBrowser(pump, { code: 1011, reason: 'forward-ws-closed' });
-      return;
-    }
-    if (result === -1) {
-      pump.browserPaused = true;
-    }
-  }
-
-  private flushInbound(pump: ForwardPump): void {
-    while (!pump.browserPaused && !pump.browserClosed && pump.inboundHold.length > 0) {
-      const next = pump.inboundHold.shift();
-      if (!next) break;
-      pump.inboundHoldBytes = Math.max(0, pump.inboundHoldBytes - next.byteLength);
-      this.sendToBrowser(pump, next);
-    }
-  }
-
-  private async failover(
-    pump: ForwardPump,
-    info: { code?: number; reason?: string }
-  ): Promise<void> {
-    await runStreamFailover(
-      {
-        sleep: this.sleep,
-        log: this.log,
-        peers: this.deps.peers,
-        streams: this.deps.streams,
-        bindStream: (p, stream, transport) => this.bindStream(p as ForwardPump, stream, transport),
-        discardStream: (p, stream) => this.discardStream(p as ForwardPump, stream),
-        closePump: (p, closeInfo) => this.closePump(p as ForwardPump, closeInfo),
-        sendToStream: (p, stream, bytes) => this.sendToStream(p as ForwardPump, stream, bytes),
-        sendToBrowser: (p, bytes) => this.sendToBrowser(p as ForwardPump, bytes),
-        flushQueue: (p) => this.flushQueue(p as ForwardPump),
-      },
-      pump,
-      info
-    );
-  }
-
-  private flushQueue(pump: ForwardPump): void {
-    const queued = pump.queue.splice(0);
-    pump.queuedAt.length = 0;
-    pump.queueBytes = 0;
-    const stream = pump.stream;
-    if (!stream) return;
-    for (const bytes of queued) {
-      const out = pump.replay.rewriteQueuedFrame(bytes);
-      if (out) this.sendToStream(pump, stream, out);
-    }
-  }
-
-  private sendToStream(pump: ForwardPump, stream: OpenedWsStream, bytes: Uint8Array): void {
-    let pending: Promise<void>;
-    try {
-      pending = Promise.resolve(stream.send(bytes));
-    } catch {
-      this.onSendFailed(pump, stream);
-      return;
-    }
-    void pending.then(undefined, () => this.onSendFailed(pump, stream));
-  }
-
-  private onSendFailed(pump: ForwardPump, stream: OpenedWsStream): void {
-    if (pump.browserClosed || pump.stream !== stream) return;
-    pump.streamAlive = false;
-    try {
-      stream.close(1011, 'send-failed');
-    } catch {}
-    if (pump.failingOver) return;
-    void this.failover(pump, { code: 1011, reason: 'send-failed' });
-  }
-
-  private failPump(pump: ForwardPump, reason: string): void {
-    this.closePump(pump, { code: 1011, reason });
-  }
-
-  /** 整条转发流拆解：先断上游（当前流 + 在途流），再断浏览器，避免留下无主的 mesh 流。 */
-  closePump(pump: ForwardPump, info: { code?: number; reason?: string }): void {
-    pump.failoverAbort?.abort();
-    pump.helloWait?.();
-    pump.helloWait = null;
-    pump.resumeWait?.();
-    pump.resumeWait = null;
-    const inflight = pump.inflight;
-    pump.inflight = null;
-    inflight?.close(info.code, info.reason);
-    pump.stream?.close(info.code, info.reason);
-    pump.stream = null;
-    pump.streamAlive = false;
-    this.closeBrowser(pump, info);
-  }
-
-  private discardStream(pump: ForwardPump, stream: OpenedWsStream): void {
-    if (pump.inflight === stream) pump.inflight = null;
-    if (pump.stream === stream) {
-      pump.stream = null;
-      pump.streamAlive = false;
-    }
-    try {
-      stream.close();
-    } catch {}
-  }
-
-  closeBrowser(pump: ForwardPump, info: { code?: number; reason?: string }): void {
-    if (pump.browserClosed) return;
-    pump.browserClosed = true;
-    this.pumps.delete(pump.ws);
-    try {
-      pump.ws.close(info.code, info.reason);
-    } catch {}
-  }
-
   private isLocalNode(id: string): boolean {
     return id === MESH_VIA_SELF || id === this.deps.nodeId;
   }
@@ -635,10 +398,12 @@ export class Forwarder {
   }
 
   /** 取链路，最多等到 deadline；超时抛 ForwardDeadlineError，未认领的链路留给下次复用。 */
-  private async linkBefore(nodeId: string, deadlineAt: number) {
+  private async linkBefore(nodeId: string, deadlineAt: number, rest?: string) {
     const remaining = deadlineAt - Date.now();
     if (remaining <= 0) throw new ForwardDeadlineError();
-    const pending = this.deps.peers.getLink(nodeId);
+    // 节点详情里的域名访问 / 直连插件等管理调用对已暂停节点也要能通
+    const purpose = rest?.startsWith('/api/system/') ? 'management' : 'user';
+    const pending = this.deps.peers.getLink(nodeId, { purpose });
     const timeout = new AbortController();
     const expired = this.sleep(remaining, timeout.signal).then(
       () => null,
@@ -685,7 +450,7 @@ export class Forwarder {
         }
       }
       try {
-        const link = await this.linkBefore(nodeId, deadlineAt);
+        const link = await this.linkBefore(nodeId, deadlineAt, rest);
         const upstream = await this.adaptResponse(
           req,
           await withHttpStreamUploadDeadline(signal, floorMs, headers, Boolean(body), (s) =>
@@ -777,65 +542,12 @@ export class Forwarder {
     limits.recordLoginFailure(gated.uidHint, gated.ip);
   }
 
-  private async handleRemoteWs(
-    req: Request,
-    server: MeshUpgradeServer,
-    nodeId: string
-  ): Promise<Response | undefined> {
-    const url = new URL(req.url);
-    const boundShareId = shareWsParam(url);
-    const auth = remoteWsAuthFor(req, nodeId, boundShareId);
-    if (!auth) {
-      return rejectRemoteWs(req, server, nodeId, boundShareId);
-    }
-    if (req.signal.aborted) {
-      return nodeUnreachableResponse(nodeId, true);
-    }
-    let linkError: unknown;
-    const link = await this.linkBefore(
-      nodeId,
-      Date.now() + forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId))
-    ).catch((err) => {
-      linkError = err;
-      return null;
+  private handleRemoteWs(req: Request, server: MeshUpgradeServer, nodeId: string) {
+    return upgradeRemoteWs(req, server, nodeId, {
+      peers: this.deps.peers,
+      streams: this.deps.streams,
+      deadlineMs: forwardLinkDeadlineFor(nodeId, this.deps.peers.rttOf?.(nodeId)),
     });
-    if (!link || req.signal.aborted) {
-      return nodeUnreachableResponse(nodeId, req.signal.aborted, linkError);
-    }
-    // cid 由浏览器给：净化后再进 OPEN 载荷、pump、ws.data 与日志，四处必须是同一个值。
-    const cid = sanitizeCid(url.searchParams.get('cid')) || undefined;
-    let streamError: unknown;
-    const share = boundShareId ?? undefined;
-    const stream = await this.deps.streams.openWsStream(link, auth, cid, share).catch((err) => {
-      streamError = err;
-      return null;
-    });
-    if (!stream) {
-      return nodeUnreachableResponse(nodeId, false, streamError);
-    }
-    if (req.signal.aborted) {
-      stream.close();
-      return nodeUnreachableResponse(nodeId, true);
-    }
-    const token = crypto.randomUUID();
-    pendingStreams.set(token, stream);
-    pendingMeta.set(stream, {
-      nodeId,
-      auth,
-      cid,
-      ...(share ? { share } : {}),
-      transport: this.deps.peers.transportOf?.(nodeId) ?? null,
-    });
-    const ok = server.upgrade(req, {
-      data: { kind: MESH_FORWARD_WS_KIND, nodeId, auth, token, cid },
-    });
-    if (!ok) {
-      pendingStreams.delete(token);
-      stream.close();
-      return jsonError('upgrade_failed', 500);
-    }
-    if (pendingStreams.get(token) === stream) armPendingExpiry(token, stream);
-    return undefined;
   }
 
   private async adaptResponse(req: Request, upstream: Response, nodeId: string): Promise<Response> {
@@ -853,87 +565,6 @@ export class Forwarder {
   }
 }
 
-const pendingStreams = new Map<string, OpenedWsStream>();
-const pendingExpiry = new Map<string, ReturnType<typeof setTimeout>>();
-export const DEFAULT_PENDING_FORWARD_STREAM_TTL_MS = 60_000;
-let pendingForwardStreamTtlMs = DEFAULT_PENDING_FORWARD_STREAM_TTL_MS;
-
-export function setPendingForwardStreamTtlMs(ms: number): void {
-  pendingForwardStreamTtlMs = ms;
-}
-
-export function pendingForwardStreamCount(): number {
-  return pendingStreams.size;
-}
-
-export function takePendingForwardStream(token: string | undefined): OpenedWsStream | undefined {
-  if (!token) return undefined;
-  const stream = pendingStreams.get(token);
-  pendingStreams.delete(token);
-  clearPendingExpiry(token);
-  return stream;
-}
-
-function discardPendingStream(token: string | undefined): void {
-  if (!token) return;
-  const stream = pendingStreams.get(token);
-  pendingStreams.delete(token);
-  clearPendingExpiry(token);
-  if (!stream) return;
-  try {
-    stream.close();
-  } catch {}
-}
-
-function clearPendingExpiry(token: string): void {
-  const timer = pendingExpiry.get(token);
-  if (timer === undefined) return;
-  clearTimeout(timer);
-  pendingExpiry.delete(token);
-}
-
-function armPendingExpiry(token: string, stream: OpenedWsStream): void {
-  const timer = setTimeout(() => {
-    expirePendingForwardStream(token, stream);
-  }, pendingForwardStreamTtlMs);
-  timer.unref?.();
-  pendingExpiry.set(token, timer);
-}
-
-export function expirePendingForwardStream(token: string, stream: OpenedWsStream): void {
-  if (pendingStreams.get(token) !== stream) return;
-  pendingStreams.delete(token);
-  clearPendingExpiry(token);
-  try {
-    stream.close();
-  } catch {}
-}
-
-function holdInbound(pump: ForwardPump, bytes: Uint8Array): boolean {
-  if (
-    pump.inboundHold.length >= STREAM_QUEUE_MAX_FRAMES ||
-    pump.inboundHoldBytes + bytes.byteLength > STREAM_QUEUE_MAX_BYTES
-  ) {
-    return false;
-  }
-  pump.inboundHold.push(bytes.slice());
-  pump.inboundHoldBytes += bytes.byteLength;
-  return true;
-}
-
-function enqueueFrame(pump: ForwardPump, bytes: Uint8Array): boolean {
-  if (
-    pump.queue.length >= STREAM_QUEUE_MAX_FRAMES ||
-    pump.queueBytes + bytes.byteLength > STREAM_QUEUE_MAX_BYTES
-  ) {
-    return false;
-  }
-  pump.queue.push(bytes.slice());
-  pump.queuedAt.push(Date.now());
-  pump.queueBytes += bytes.byteLength;
-  return true;
-}
-
 async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return;
   if (signal?.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
@@ -948,13 +579,4 @@ async function defaultSleep(ms: number, signal?: AbortSignal): Promise<void> {
     }, ms);
     signal?.addEventListener('abort', onAbort, { once: true });
   });
-}
-
-function toBytes(message: unknown): Uint8Array | null {
-  if (message instanceof Uint8Array) return message;
-  if (message instanceof ArrayBuffer) return new Uint8Array(message);
-  if (ArrayBuffer.isView(message)) {
-    return new Uint8Array(message.buffer, message.byteOffset, message.byteLength);
-  }
-  return null;
 }

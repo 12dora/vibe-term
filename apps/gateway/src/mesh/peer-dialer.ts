@@ -16,6 +16,7 @@ import {
 } from './address-class';
 import { stamp } from './mesh-log';
 import { parseEndpoints } from './peer-dc-upgrade';
+import { peerKnownRelayOnline, settleDialWithRelay } from './peer-dial-plan';
 import {
   type DialRaceLeg,
   raceForegroundDial,
@@ -28,7 +29,7 @@ import {
   gateDcDial,
   noteDialDcFailure,
 } from './peer-dialer-dc-gate';
-import { completeRelayDial } from './peer-dialer-relay';
+import { openPeerRelaySession } from './peer-dialer-relay';
 import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
@@ -357,7 +358,7 @@ export class PeerDialer {
     };
     const tryWs = async (wsSignal: AbortSignal) =>
       above('ws-secure') ? await this.dialWsSecure(nodeId, gen, wsSignal, attempt) : null;
-    const direct = await this.dialDirect(nodeId, gen, signal, {
+    const directP = this.dialDirect(nodeId, gen, signal, {
       tryDc,
       tryWs,
       wsFirst:
@@ -370,37 +371,39 @@ export class PeerDialer {
       skipDcFirst,
       foreground: opts?.foreground === true,
     });
-    finishDirectAttemptRecord(
-      this.state,
+    const rtcOn = this.rtc?.available === true;
+    return settleDialWithRelay({
       nodeId,
-      attempt,
-      direct.session,
-      dcError,
-      dcCoolingUntil,
-      this.rtc?.available === true
-    );
-    if (direct.session) return direct.session;
-    try {
-      return await completeRelayDial({
-        nodeId,
-        gen,
-        identity: this.state.identity,
-        userStore: this.state.userStore,
-        presence: this.state.relayPresence,
-        opener: this.state.relayOpener,
-        openFallback: (id) => this.state.uplink.openRelay(id),
-        rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
-        track: (session, peerNodeId, trackGen) =>
-          this.deps.track(session, peerNodeId, 'relay', this.state.identity.nodeId, trackGen),
-        liveOf: (peerNodeId) => this.state.live.get(peerNodeId),
-      });
-    } catch (err) {
-      // 中继也不通：竞速超时后仍在跑的直连腿是最后一根稻草，等它把话说完。
-      const late = direct.pending ? await direct.pending : null;
-      if (late) return late;
-      if (err instanceof NodeUnreachableError) throw err;
-      throw new NodeUnreachableError(nodeId, err instanceof Error ? err.message : 'unreachable');
-    }
+      raceRelay:
+        opts?.foreground === true &&
+        !existingLive &&
+        peerKnownRelayOnline({
+          nodeId,
+          relaysFor: (id) => this.state.relayPresence?.relaysFor(id) ?? [],
+          onlineUnion: () => this.state.relayPresence?.onlineUnion() ?? new Set(),
+        }),
+      direct: directP,
+      startRelay: (sig) =>
+        openPeerRelaySession({
+          host: this.state,
+          nodeId,
+          gen,
+          rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
+          track: (session, id, g) =>
+            this.deps.track(session, id, 'relay', this.state.identity.nodeId, g),
+          signal: sig,
+        }),
+      onDirectSettled: (direct) =>
+        finishDirectAttemptRecord(
+          this.state,
+          nodeId,
+          attempt,
+          direct.session,
+          dcError,
+          dcCoolingUntil,
+          rtcOn
+        ),
+    });
   }
 
   /** 直连阶段：前台走 DC/ws-secure 竞速；后台升级两条腿并行，ws-secure 不等 DC 超时。 */
@@ -424,6 +427,7 @@ export class PeerDialer {
         wsFirst: legs.wsFirst,
         signal,
         scheduler: this.state.scheduler,
+        nodeId,
         live: () => this.state.live.get(nodeId)?.session ?? null,
         close: (session, reason) => quiet(() => session.close(reason)),
         log: (event, fields) => rtcLog(event, { peer: nodeId, ...fields }),
@@ -556,7 +560,6 @@ export class PeerDialer {
     }
   }
 
-  /** 入站 OPEN：调用方把该 uplink 的公网 URL 传进 viaRelay，缺省不写 LivePeer.viaRelay。 */
   async acceptRelay(stream: LinkStream, from: string, viaRelay?: string): Promise<void> {
     const gen = this.state.generation;
     try {
@@ -581,7 +584,6 @@ export class PeerDialer {
       quiet(() => stream.reset('handshake-failed'));
     }
   }
-
   clearDirectFailure(nodeId: string): void {
     const prev = this.state.lastDirectAttempt.get(nodeId);
     if (prev) this.state.lastDirectAttempt.set(nodeId, clearedDirectAttempt(prev));
