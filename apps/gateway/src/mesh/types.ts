@@ -121,7 +121,11 @@ export type TcpStreamOpenPayload = {
   port: number;
 };
 
-export type InboundRelayHandler = (stream: LinkStream, fromNodeId: string) => void;
+export type InboundRelayHandler = (
+  stream: LinkStream,
+  fromNodeId: string,
+  viaRelay?: string
+) => void;
 
 /**
  * `UplinkPool` 消费的上行客户端公开面。`UplinkClient`（hub）与 `RelayUplinkClient`（中继）

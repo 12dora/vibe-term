@@ -47,9 +47,35 @@ describe('buildRelayStatusRow', () => {
       url: 'https://b.example',
       attached: false,
       online: false,
+      role: null,
       lastError: 'client-too-old',
       lastErrorCode: 'protocol',
       lastErrorAt: 7,
+    });
+  });
+
+  test('secondary 在线行填 rtt / peersOnline / role，attached 仍为 false', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://b.example', priority: 1, kicked: false },
+      'https://a.example',
+      null,
+      null,
+      [],
+      {
+        connected: true,
+        rttMs: 33,
+        peersOnline: 4,
+        turn: { url: 'turn:b:3478', probeOk: null },
+      }
+    );
+    expect(row).toMatchObject({
+      attached: false,
+      online: true,
+      role: 'secondary',
+      rttMs: 33,
+      peersOnline: 4,
+      turn: { url: 'turn:b:3478', probeOk: null },
+      lastError: null,
     });
   });
 
@@ -64,6 +90,7 @@ describe('buildRelayStatusRow', () => {
     expect(row).toMatchObject({
       online: true,
       attached: true,
+      role: 'primary',
       rttMs: 12,
       lastError: null,
       lastErrorCode: null,

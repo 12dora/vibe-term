@@ -156,6 +156,111 @@ describe('node-list-projection', () => {
     expect(dto?.reach).toBe('wan');
     expect(dto?.transport).toBe('ws-secure');
     expect(dto?.rttMs).toBe(80);
+    expect(dto?.viaRelay).toBeUndefined();
+    expect(dto?.relayPresence).toBeUndefined();
+  });
+
+  test('relay transport projects viaRelay and relayPresence; hub mode omits presence', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'cc'.repeat(16);
+    const cert = {
+      certificateBytes: encodeCertificate({
+        domain: DOMAIN_CERTIFICATE,
+        uid: 'user-1',
+        node_id: hexToBytes(peerId),
+        ed_pk: new Uint8Array(32).fill(4),
+        x25519_pk: new Uint8Array(32).fill(5),
+        enroll_pk: new Uint8Array(32).fill(6),
+        issued_at: 1n,
+      }),
+    };
+    const dto = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'relay']]),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map([[peerId, { inventoryJson: '{}', directCapable: false }]]),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null,
+      () => 'relay',
+      () => 90,
+      () => ({
+        peerAddress: 'sh.example',
+        linkSinceAt: 1,
+        endpoints: [],
+        directFailure: null,
+        viaRelay: 'https://from-detail.example',
+        relayPresence: ['https://ignored-detail.example'],
+      }),
+      undefined,
+      undefined,
+      undefined,
+      () => 'https://sh.example',
+      () => ['https://sh.example', 'https://ty.example']
+    );
+    expect(dto?.transport).toBe('relay');
+    expect(dto?.viaRelay).toBe('https://sh.example');
+    expect(dto?.relayPresence).toEqual(['https://sh.example', 'https://ty.example']);
+
+    const fromDetail = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'relay']]),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map(),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null,
+      () => 'relay',
+      () => 12,
+      () => ({
+        peerAddress: null,
+        linkSinceAt: 1,
+        endpoints: [],
+        directFailure: null,
+        viaRelay: 'https://ty.example',
+        relayPresence: ['https://ty.example'],
+      })
+    );
+    expect(fromDetail?.viaRelay).toBe('https://ty.example');
+    expect(fromDetail?.relayPresence).toEqual(['https://ty.example']);
+
+    const ws = projectMeshListNode(
+      peerId,
+      selfId,
+      new Uint8Array(32).fill(1),
+      new Map(),
+      new Map([[peerId, 'lan']]),
+      new Set(),
+      new Map([[peerId, cert]]),
+      new Map(),
+      new Map([[peerId, 'studio']]),
+      new Map(),
+      null,
+      undefined,
+      null,
+      () => 'ws-secure',
+      () => 8,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      () => 'https://should-omit.example',
+      () => []
+    );
+    expect(ws?.viaRelay).toBeUndefined();
+    expect(ws?.relayPresence).toEqual([]);
   });
 
   test('includes link diagnostics and leaves them empty for self', () => {

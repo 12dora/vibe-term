@@ -261,7 +261,7 @@ class FakeUplink {
   start(): void {}
 
   emitRelay(fromNodeId = ID.c): void {
-    this.relayHandler?.({} as never, fromNodeId);
+    this.relayHandler?.({} as never, fromNodeId, this.hubUrl);
   }
 
   queueRelayStream(stream: LinkStream): void {

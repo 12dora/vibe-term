@@ -61,6 +61,23 @@ describe('relay.status 明文块', () => {
     });
   });
 
+  it('可选 rtt_ms：合法值 round-trip，缺省/非法则忽略', () => {
+    expect(decodeRelayStatusBlob(encodeRelayStatusBlob({ ...blob, rtt_ms: 42.6 }))).toEqual({
+      ...blob,
+      rtt_ms: 43,
+    });
+    expect(decodeRelayStatusBlob(encodeRelayStatusBlob(blob)).rtt_ms).toBeUndefined();
+    const extra = {
+      ...blob,
+      rtt_ms: Number.NaN,
+    };
+    expect(decodeRelayStatusBlob(encodeRelayStatusBlob(extra)).rtt_ms).toBeUndefined();
+    const encoded = new TextEncoder().encode(
+      JSON.stringify({ ...blob, rtt_ms: -3, extra: 'ignored' })
+    );
+    expect(decodeRelayStatusBlob(encoded).rtt_ms).toBeUndefined();
+  });
+
   it('拒绝超量 endpoints、超长 name 与畸形结构', () => {
     const endpoints = Array.from({ length: RELAY_STATUS_MAX_ENDPOINTS + 1 }, () => ({ host: 'h' }));
     expect(() => encodeRelayStatusBlob({ ...blob, endpoints })).toThrow(RelayCtlError);

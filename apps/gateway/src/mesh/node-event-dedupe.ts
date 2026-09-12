@@ -28,6 +28,8 @@ export class NodeEventDedupe {
       version: event.version ?? null,
       direct_capable: event.direct_capable ?? false,
       name: event.name ?? '',
+      viaRelay: event.viaRelay ?? null,
+      relayPresence: event.relayPresence ?? null,
       dcBreaker: event.dcBreaker
         ? {
             cooling: event.dcBreaker.cooling,

@@ -1,6 +1,9 @@
 import { describe, expect, test } from 'bun:test';
+import { encodeRelayStatusBlob, generateTenantKey, sealEnvelope } from '@vibeterm/shared/relay';
+import { MeshHubStore } from '../auth/mesh-hub-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
+import { applyUplinkNodeList } from './node-list-apply';
 import { relayListToNodeList } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 
@@ -130,6 +133,164 @@ describe('relayListToNodeList', () => {
         }
       );
       expect(listed.nodes.map((n) => n.id)).toEqual([admitted]);
+    } finally {
+      close();
+    }
+  });
+
+  test('可解密状态块在单中继模式下写入 peer_cache.version', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const metaKey = generateTenantKey();
+      const sealed = await sealEnvelope(
+        metaKey,
+        'status',
+        encodeRelayStatusBlob({
+          name: 'peer-b',
+          version: '2.2.4',
+          tmux: true,
+          direct_capable: true,
+          inventory: { version: '2.2.4' },
+          endpoints: [],
+        }),
+        1
+      );
+      const listed = await relayListToNodeList(
+        {
+          t: 'relay.list',
+          version: 4,
+          nodes: [
+            {
+              id: nodeId,
+              online: true,
+              status: 'admitted',
+              epoch: 1,
+              blob: sealed,
+            },
+          ],
+          rtc: { stun: [], turn: null },
+          key_log_head_seq: 0,
+        },
+        {
+          selfNodeId: 'cd'.repeat(16),
+          userId: 'user-1',
+          userStore,
+          secrets: {
+            metaKey: async (epoch: number) => (epoch === 1 ? metaKey : null),
+          } as unknown as RelaySecrets,
+          now: 2,
+        }
+      );
+      expect(listed.nodes[0]?.version).toBe('2.2.4');
+      expect(userStore.getPeer(nodeId)?.version).toBe('2.2.4');
+
+      const hubStore = new MeshHubStore(db);
+      const primaryUrl = 'https://relay.example';
+      applyUplinkNodeList(
+        {
+          state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
+          rtcSourceUrl: primaryUrl,
+          retainPeerIds: () => [nodeId],
+          extraListedNodes: () => [],
+          identity: { nodeIdHex: 'cd'.repeat(16) },
+          hubStore,
+          scheduler: { now: () => 3 },
+          userIdOf: () => 'user-1',
+          userStore,
+          peerHolder: { manager: null },
+          emitListNodeEvent: () => {},
+          opts: {},
+        },
+        listed,
+        () => false
+      );
+      expect(userStore.getPeer(nodeId)?.version).toBe('2.2.4');
+    } finally {
+      close();
+    }
+  });
+
+  test('解不开状态块且 cache 无 version 时不写入空 version 行', async () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const userStore = new UserStore(db);
+      userStore.create({
+        id: 'user-1',
+        username: 'alice',
+        rootPublicKey: new Uint8Array(32),
+        rootEpoch: 0,
+        kdfParamsJson: '{}',
+        keyLogHeadSeq: 0,
+        keyLogHeadHash: new Uint8Array(32),
+        now: 1,
+      });
+      const nodeId = 'ab'.repeat(16);
+      userStore.upsertCert({
+        nodeId,
+        userId: 'user-1',
+        admitRecordSeq: 1,
+        certificateBytes: new Uint8Array(8),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const listed = await relayListToNodeList(
+        {
+          t: 'relay.list',
+          version: 5,
+          nodes: [{ id: nodeId, online: true, status: 'admitted' }],
+          rtc: { stun: [], turn: null },
+          key_log_head_seq: 0,
+        },
+        {
+          selfNodeId: 'cd'.repeat(16),
+          userId: 'user-1',
+          userStore,
+          secrets: { metaKey: async () => null } as unknown as RelaySecrets,
+          now: 2,
+        }
+      );
+      const hubStore = new MeshHubStore(db);
+      applyUplinkNodeList(
+        {
+          state: { lastNodeList: null, hubPresenceLive: false, hubGeneration: 0, lastRtc: null },
+          rtcSourceUrl: 'https://relay.example',
+          retainPeerIds: () => [],
+          extraListedNodes: () => [],
+          identity: { nodeIdHex: 'cd'.repeat(16) },
+          hubStore,
+          scheduler: { now: () => 3 },
+          userIdOf: () => 'user-1',
+          userStore,
+          peerHolder: { manager: null },
+          emitListNodeEvent: () => {},
+          opts: {},
+        },
+        listed,
+        () => false
+      );
+      expect(userStore.getPeer(nodeId)).toBeNull();
     } finally {
       close();
     }

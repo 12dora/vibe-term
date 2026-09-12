@@ -6,6 +6,7 @@ import { lookupSignedHubAuthorization, resolveMeshUserId } from '../hub/hub-auth
 import { isRemoteNodePresent } from './mesh-agent-bridge';
 import type { NodeEventProjection } from './node-event-dedupe';
 import type { PeerReach, PeerTransportKind } from './types';
+import { persistUplinkPeerCache } from './uplink-peer-persist';
 import { recordsFromNodeList } from './uplink-pool';
 import type { UplinkNodeList } from './uplink-protocol';
 
@@ -51,15 +52,103 @@ export function attachKeyLogHeadNotify(
 
 export type ListedRtcConfig = { stun: string[]; turn: unknown };
 
+export type RelayTurnEntry = { url: string; username: string; credential: string };
+
+export type MergeListedRtcOpts = {
+  /** 有值时按中继 URL 合并 TURN/STUN；缺省（hub）仍是整表覆盖。 */
+  sourceUrl?: string;
+  primary?: boolean;
+};
+
+type RtcSourceBag = {
+  primaryUrl: string | null;
+  byUrl: Map<string, { stun: string[]; turn: RelayTurnEntry | null }>;
+};
+
+const rtcSources = new WeakMap<object, RtcSourceBag>();
+
+function parseRelayTurn(turn: unknown): RelayTurnEntry | null {
+  if (!turn || typeof turn !== 'object' || Array.isArray(turn)) return null;
+  const rec = turn as Record<string, unknown>;
+  const url =
+    typeof rec.url === 'string'
+      ? rec.url
+      : Array.isArray(rec.urls) && typeof rec.urls[0] === 'string'
+        ? rec.urls[0]
+        : null;
+  if (!url) return null;
+  if (typeof rec.username !== 'string' || typeof rec.credential !== 'string') return null;
+  return { url, username: rec.username, credential: rec.credential };
+}
+
+function composeRelayRtc(bag: RtcSourceBag): ListedRtcConfig {
+  const order: string[] = [];
+  if (bag.primaryUrl && bag.byUrl.has(bag.primaryUrl)) order.push(bag.primaryUrl);
+  for (const url of bag.byUrl.keys()) {
+    if (url !== bag.primaryUrl) order.push(url);
+  }
+  const stun: string[] = [];
+  const seenStun = new Set<string>();
+  for (const url of order) {
+    for (const item of bag.byUrl.get(url)?.stun ?? []) {
+      if (seenStun.has(item)) continue;
+      seenStun.add(item);
+      stun.push(item);
+    }
+  }
+  const turn: RelayTurnEntry[] = [];
+  const seenTurn = new Set<string>();
+  for (const url of order) {
+    const entry = bag.byUrl.get(url)?.turn;
+    if (!entry) continue;
+    const key = `${entry.url}\0${entry.username}\0${entry.credential}`;
+    if (seenTurn.has(key)) continue;
+    seenTurn.add(key);
+    turn.push(entry);
+  }
+  return { stun, turn: turn.length > 0 ? turn : null };
+}
+
 /** 记下 hub/中继下发的 STUN（空列表表示没有自定义列表）；TURN 始终采用下发值。 */
 export function mergeListedRtc(
-  _prev: ListedRtcConfig | null,
-  listed: { stun: string[]; turn?: unknown }
+  prev: ListedRtcConfig | null,
+  listed: { stun: string[]; turn?: unknown },
+  opts?: MergeListedRtcOpts
 ): ListedRtcConfig {
-  return {
-    stun: [...listed.stun],
-    turn: listed.turn ?? null,
+  if (!opts?.sourceUrl) {
+    return {
+      stun: [...listed.stun],
+      turn: listed.turn ?? null,
+    };
+  }
+  const prevBag = prev ? rtcSources.get(prev) : undefined;
+  const byUrl = new Map(prevBag?.byUrl ?? []);
+  let primaryUrl = prevBag?.primaryUrl ?? null;
+  if (opts.primary) primaryUrl = opts.sourceUrl;
+  byUrl.set(opts.sourceUrl, { stun: [...listed.stun], turn: parseRelayTurn(listed.turn) });
+  const bag: RtcSourceBag = { primaryUrl, byUrl };
+  const next = composeRelayRtc(bag);
+  rtcSources.set(next, bag);
+  return next;
+}
+
+/** 某台中继断开或撤回 TURN 时只删它自己的条目。 */
+export function withdrawListedRtc(
+  prev: ListedRtcConfig | null,
+  sourceUrl: string
+): ListedRtcConfig | null {
+  if (!prev) return prev;
+  const bag = rtcSources.get(prev);
+  if (!bag?.byUrl.has(sourceUrl)) return prev;
+  const byUrl = new Map(bag.byUrl);
+  byUrl.delete(sourceUrl);
+  const nextBag: RtcSourceBag = {
+    primaryUrl: bag.primaryUrl === sourceUrl ? null : bag.primaryUrl,
+    byUrl,
   };
+  const next = composeRelayRtc(nextBag);
+  rtcSources.set(next, nextBag);
+  return next;
 }
 
 export type NodeListRejectPeerFn = (nodeId: string, alwaysDelete: boolean) => boolean;
@@ -71,6 +160,10 @@ export type NodeListApplyDeps = {
     hubGeneration: number;
     lastRtc: { stun: string[]; turn: unknown } | null;
   };
+  /** 中继 URL：primary 清单按此合并 TURN/STUN，而不是覆盖。 */
+  rtcSourceUrl?: string | null;
+  retainPeerIds?: () => Iterable<string>;
+  extraListedNodes?: () => UplinkNodeList['nodes'];
   identity: { nodeIdHex: string };
   hubStore: Pick<MeshHubStore, 'remove' | 'replaceAll' | 'list'>;
   scheduler: { now: () => number };
@@ -81,6 +174,8 @@ export type NodeListApplyDeps = {
       listReach: () => Map<string, PeerReach>;
       transportOf: (nodeId: string) => PeerTransportKind | null;
       rttOf: (nodeId: string) => number | null;
+      viaRelayOf?: (nodeId: string) => string | null;
+      relayPresenceOf?: (nodeId: string) => string[] | undefined;
       notifyPeerEndpointsChanged: (nodeId: string) => void;
     } | null;
   };
@@ -167,8 +262,7 @@ export function emitListedNodeEvents(
       nodeId: node.id,
       status: isRemoteNodePresent(node.online, reach.get(node.id)) ? 'online' : 'offline',
       reach: reach.get(node.id) ?? null,
-      transport: d.peerHolder.manager?.transportOf(node.id) ?? null,
-      rttMs: d.peerHolder.manager?.rttOf(node.id) ?? null,
+      ...listedLinkFields(d, node.id),
       inventory:
         typeof node.inventory === 'string'
           ? node.inventory
@@ -191,8 +285,7 @@ export function emitRenameNodeEvent(d: NodeListApplyDeps, nodeId: string, name: 
     nodeId,
     status: online ? 'online' : 'offline',
     reach,
-    transport: d.peerHolder.manager?.transportOf(nodeId) ?? null,
-    rttMs: d.peerHolder.manager?.rttOf(nodeId) ?? null,
+    ...listedLinkFields(d, nodeId),
     inventory:
       listed?.inventory == null
         ? undefined
@@ -229,8 +322,7 @@ export function emitUnlistedHubEvents(
           nodeId: hubId,
           status: 'online',
           reach: reach.get(hubId) ?? null,
-          transport: d.peerHolder.manager?.transportOf(hubId) ?? null,
-          rttMs: d.peerHolder.manager?.rttOf(hubId) ?? null,
+          ...listedLinkFields(d, hubId),
           name,
         });
       }
@@ -248,16 +340,37 @@ export function pruneStaleListedPeers(
   hubIds: ReadonlySet<string>,
   rejectPeer: NodeListRejectPeerFn
 ): void {
+  const retain = new Set(d.retainPeerIds?.() ?? []);
   for (const peer of d.userStore.listPeers()) {
     if (
       peer.nodeId === d.identity.nodeIdHex ||
       peer.nodeId === HUB_META_PEER_ID ||
-      hubIds.has(peer.nodeId)
+      hubIds.has(peer.nodeId) ||
+      retain.has(peer.nodeId)
     ) {
       continue;
     }
     rejectPeer(peer.nodeId, false);
   }
+}
+
+function listedLinkFields(d: NodeListApplyDeps, nodeId: string) {
+  return {
+    transport: d.peerHolder.manager?.transportOf(nodeId) ?? null,
+    rttMs: d.peerHolder.manager?.rttOf(nodeId) ?? null,
+    viaRelay: d.peerHolder.manager?.viaRelayOf?.(nodeId) ?? null,
+    relayPresence: d.peerHolder.manager?.relayPresenceOf?.(nodeId),
+  };
+}
+
+export function unionListedNodes(
+  primary: UplinkNodeList['nodes'],
+  extra: UplinkNodeList['nodes']
+): UplinkNodeList['nodes'] {
+  if (extra.length === 0) return primary;
+  const have = new Set(primary.map((node) => node.id));
+  const added = extra.filter((node) => !have.has(node.id));
+  return added.length === 0 ? primary : [...primary, ...added];
 }
 
 export function applyUplinkNodeList(
@@ -266,10 +379,23 @@ export function applyUplinkNodeList(
   rejectPeer: NodeListRejectPeerFn
 ): void {
   const { state, identity } = d;
-  state.lastNodeList = list;
+  const extras = d.extraListedNodes?.() ?? [];
+  state.lastNodeList =
+    extras.length > 0 ? { ...list, nodes: unionListedNodes(list.nodes, extras) } : list;
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
-  state.lastRtc = mergeListedRtc(state.lastRtc, list.rtc);
+  state.lastRtc = mergeListedRtc(
+    state.lastRtc,
+    list.rtc,
+    d.rtcSourceUrl ? { sourceUrl: d.rtcSourceUrl, primary: true } : undefined
+  );
+  persistUplinkPeerCache({
+    userStore: d.userStore,
+    userId: d.userIdOf(),
+    selfNodeId: identity.nodeIdHex,
+    list,
+    now: d.scheduler.now(),
+  });
   reconcileHubStoreFromNodeList(d, list);
   const reach = d.peerHolder.manager?.listReach() ?? new Map();
   const hubIds = new Set([

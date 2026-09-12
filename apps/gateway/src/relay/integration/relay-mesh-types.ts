@@ -10,9 +10,15 @@ import type { MeshRuntime } from '../../mesh/mesh-runtime';
 import type { RelayUplinkClient } from '../../mesh/relay-uplink-client';
 import type { MeshScheduler } from '../../mesh/types';
 import type { UplinkWsFactory } from '../../mesh/uplink-client';
-import { RELAY_TEST_PUBLIC_URL, type RelayHarness } from '../relay-test-harness';
+import {
+  RELAY_TEST_PUBLIC_URL,
+  type RelayHarness,
+  type RelayHarnessOptions,
+} from '../relay-test-harness';
 
 export { RELAY_TEST_PUBLIC_URL, waitUntil };
+
+export const RELAY_TEST_PUBLIC_URL_2 = 'https://relay-b.example';
 
 /** `waitUntil` 只认同步断言，异步探针（要打 HTTP）走这个。 */
 export async function waitUntilAsync(
@@ -100,6 +106,7 @@ export type RelayMeshHarness = {
   wsFactory: UplinkWsFactory;
   createTenant(label: string, opts?: TenantOptions): Promise<RelayTenant>;
   bootNode(label: string, boot: NodeBoot): Promise<RelayMeshNode>;
+  addRelay(publicUrl: string, opts?: RelayHarnessOptions): Promise<RelayHarness>;
   stop(): Promise<void>;
 };
 

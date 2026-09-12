@@ -21,6 +21,10 @@ export function persistUplinkPeerCache(input: {
     if (node.id === selfNodeId) continue;
     const cert = userStore.getCert(node.id);
     if (!cert || cert.userId !== userId || cert.revokedLogSeq != null) continue;
+    const existing = userStore.getPeer(node.id);
+    const version = node.version ?? existing?.version ?? null;
+    // 没有版本的新行会让 rotate-root-keep / set-relays 的 fail-closed 门把「未握过手」当成旧节点。
+    if (!existing && !version) continue;
     userStore.upsertPeer({
       nodeId: node.id,
       name: node.name,
@@ -29,7 +33,7 @@ export function persistUplinkPeerCache(input: {
       directCapable: node.direct_capable,
       lastSeenAt: now,
       listVersion: list.version,
-      version: node.version ?? null,
+      version,
     });
   }
   persistHubPeer(input);

@@ -7,6 +7,7 @@ import {
   type NodeListApplyDeps,
   applyUplinkNodeList,
   emitRenameNodeEvent,
+  mergeListedRtc,
   reconcileHubStoreFromNodeList,
 } from './node-list-apply';
 import type { UplinkNodeList } from './uplink-protocol';
@@ -207,6 +208,136 @@ describe('applyUplinkNodeList STUN distribution', () => {
       const fresh = applyDeps(hubStore, userStore);
       applyUplinkNodeList(fresh, { ...listOf([]), rtc: { stun: [], turn } }, () => false);
       expect(fresh.state.lastRtc).toEqual({ stun: [], turn });
+    } finally {
+      close();
+    }
+  });
+
+  test('多中继 TURN 按 URL 合并为数组，null 只撤回本行', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const d = applyDeps(hubStore, userStore);
+      d.rtcSourceUrl = 'https://sh.example';
+      const shTurn = { url: 'turn:sh:3478', username: 'a', credential: 'a' };
+      applyUplinkNodeList(
+        d,
+        { ...listOf([]), rtc: { stun: ['stun:sh'], turn: shTurn } },
+        () => false
+      );
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:sh'], turn: [shTurn] });
+
+      d.rtcSourceUrl = undefined;
+      d.state.lastRtc = mergeListedRtc(
+        d.state.lastRtc,
+        {
+          stun: ['stun:tk'],
+          turn: { url: 'turn:tk:3478', username: 'b', credential: 'b' },
+        },
+        { sourceUrl: 'https://tk.example', primary: false }
+      );
+      expect(d.state.lastRtc?.stun).toEqual(['stun:sh', 'stun:tk']);
+      expect(d.state.lastRtc?.turn).toEqual([
+        shTurn,
+        { url: 'turn:tk:3478', username: 'b', credential: 'b' },
+      ]);
+
+      d.state.lastRtc = mergeListedRtc(
+        d.state.lastRtc,
+        { stun: ['stun:tk'], turn: null },
+        {
+          sourceUrl: 'https://tk.example',
+          primary: false,
+        }
+      );
+      expect(d.state.lastRtc).toEqual({ stun: ['stun:sh', 'stun:tk'], turn: [shTurn] });
+    } finally {
+      close();
+    }
+  });
+
+  test('primary 清单不剪掉只出现在 secondary 的 peer', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      userStore.upsertPeer({
+        nodeId: PEER,
+        name: 'tokyo-only',
+        endpointsJson: '[]',
+        inventoryJson: '{}',
+        directCapable: false,
+        lastSeenAt: 1,
+        listVersion: 1,
+        version: '2.2.4',
+      });
+      const d = applyDeps(hubStore, userStore);
+      d.retainPeerIds = () => [PEER];
+      d.extraListedNodes = () => [
+        {
+          id: PEER,
+          name: 'tokyo-only',
+          online: true,
+          endpoints: [],
+          inventory: {},
+          direct_capable: false,
+          version: '2.2.4',
+        },
+      ];
+      applyUplinkNodeList(d, listOf([]), () => false);
+      expect(userStore.getPeer(PEER)?.name).toBe('tokyo-only');
+      expect(d.state.lastNodeList?.nodes.some((node) => node.id === PEER)).toBe(true);
+    } finally {
+      close();
+    }
+  });
+
+  test('清单事件带上 viaRelay / relayPresence，仅中继选择变化也会发出', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const events: Array<{ viaRelay?: string | null; relayPresence?: string[] }> = [];
+      const d = applyDeps(hubStore, userStore);
+      d.peerHolder.manager = {
+        listReach: () => new Map(),
+        transportOf: () => 'relay',
+        rttOf: () => 12,
+        viaRelayOf: () => 'https://sh.example',
+        relayPresenceOf: () => ['https://sh.example', 'https://tk.example'],
+        notifyPeerEndpointsChanged: () => {},
+      };
+      d.emitListNodeEvent = (event) => {
+        events.push({
+          viaRelay: event.viaRelay,
+          relayPresence: event.relayPresence ?? undefined,
+        });
+      };
+      applyUplinkNodeList(
+        d,
+        {
+          ...listOf([]),
+          nodes: [
+            {
+              id: PEER,
+              name: 'peer',
+              online: true,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: '2.2.4',
+            },
+          ],
+        },
+        () => false
+      );
+      expect(events).toEqual([
+        {
+          viaRelay: 'https://sh.example',
+          relayPresence: ['https://sh.example', 'https://tk.example'],
+        },
+      ]);
     } finally {
       close();
     }

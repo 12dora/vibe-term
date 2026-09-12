@@ -31,7 +31,7 @@ export class UplinkRelayDrain {
   }
 
   bind(client: PooledUplink, isLive: () => boolean): void {
-    client.setOnRelayStream((stream, fromNodeId) => {
+    client.setOnRelayStream((stream, fromNodeId, viaRelay) => {
       if (!isLive()) {
         stream.reset('stale');
         return;
@@ -41,7 +41,7 @@ export class UplinkRelayDrain {
         stream.reset('relay-unhandled');
         return;
       }
-      handler(this.track(client, stream), fromNodeId);
+      handler(this.track(client, stream), fromNodeId, viaRelay ?? client.hubUrl);
     });
   }
 

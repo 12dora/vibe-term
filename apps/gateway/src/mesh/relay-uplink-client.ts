@@ -17,7 +17,7 @@ import {
 } from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
 import { getDisplayVersion } from '../system/version';
-import { defaultScheduler, jsonStable } from './ctl';
+import { defaultScheduler } from './ctl';
 import { stamp } from './mesh-log';
 import { parseOpenPayload } from './peer-protocol';
 import {
@@ -27,7 +27,7 @@ import {
   resolveRelayDialUrl,
 } from './relay-dial';
 import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
-import { emitRelayRtcSignal, relayStatusBlobOf } from './relay-node-list';
+import { emitRelayRtcSignal } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
 import {
   type RelayEnrollAck,
@@ -42,6 +42,7 @@ import {
   authenticateRelayLink,
   dispatchRelayAuthedCtl,
   sendRelayStatusNow,
+  shouldResendRelayStatus,
 } from './relay-uplink-ctl';
 import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
 import { defaultRelayWsFactory, relayUplinkWsUrl } from './relay-uplink-http';
@@ -78,6 +79,7 @@ export type RelayUplinkClientOptions = {
   onEnrollRedeemed?: (msg: UplinkEnrollRedeemed) => void;
   onKicked?: (reason: RelayKickReason) => void;
   onQuota?: (quota: RelayQuota) => void;
+  onRtt?: (rttMs: number | null) => void;
   wsFactory?: UplinkWsFactory;
   tlsCa?: string[] | null;
   scheduler?: MeshScheduler;
@@ -126,6 +128,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   authPhase: AuthPhase = 'idle';
   authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
   lastStatusJson = '';
+  lastRttSentMs: number | null = null;
+  lastRttSentAt = 0;
   rtcConfig: RelayRtcConfig = { stun: [], turn: null };
 
   constructor(opts: RelayUplinkClientOptions) {
@@ -277,8 +281,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     await authenticateRelayLink(this, link, effective, generation);
     if (effective.aborted || generation !== this.connectGeneration) throw new Error('aborted');
     this.lastConnectError = null;
-    this.setState('online');
     await sendRelayStatusNow(this);
+    this.setState('online');
     this.heartbeat.start(
       link,
       () => generation === this.connectGeneration && this.state === 'online'
@@ -331,9 +335,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   sendStatusIfChanged(): boolean {
-    if (this.state !== 'online' || !this.link) return false;
-    const blob = relayStatusBlobOf(this.opts.statusProvider(), this.nodeName());
-    if (jsonStable(blob) === this.lastStatusJson) return false;
+    if (!shouldResendRelayStatus(this)) return false;
     void sendRelayStatusNow(this);
     return true;
   }
@@ -497,7 +499,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         stream.reset('relay-unhandled');
         return;
       }
-      handler(this.trackRelayStream(stream), from);
+      handler(this.trackRelayStream(stream), from, this.hubUrl);
     });
     void link.closed.then((info) => {
       if (generation !== this.connectGeneration) return;
@@ -521,6 +523,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         this.awaitingToken = true;
       }
       this.heartbeat.onPong();
+      this.opts.onRtt?.(this.heartbeat.rttMs);
       return;
     }
     if (msg.t === 'ping') {
@@ -548,6 +551,8 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     this.connectionToken = null;
     this.awaitingToken = false;
     this.lastStatusJson = '';
+    this.lastRttSentMs = null;
+    this.lastRttSentAt = 0;
     this.enroll.reset('RELAY_OFFLINE');
     if (this.state === 'online') this.setState('connecting');
   }

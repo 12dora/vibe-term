@@ -100,6 +100,8 @@ export type NodeEventPayload = {
   version?: string | null;
   direct_capable?: boolean;
   name?: string;
+  viaRelay?: string | null;
+  relayPresence?: string[] | null;
   /** 进程内诊断；WS NODE_EVENT 帧暂不编码该字段（mesh-routes 超出本变更范围）。 */
   dcBreaker?: MeshNodeDcBreaker | null;
 };
@@ -110,6 +112,8 @@ export type PeerLinkProvider = {
   listHubOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;
   rttOf?(nodeId: string): number | null;
+  viaRelayOf?(nodeId: string): string | null;
+  relayPresenceOf?(nodeId: string): string[] | undefined;
   linkSinceAtOf?(nodeId: string): number | null;
   onNodeEvent(cb: (event: NodeEventPayload) => void): () => void;
 };

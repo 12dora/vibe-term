@@ -49,7 +49,7 @@ import {
   readProof,
 } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
-import { buildRelayStatusRow } from './relay-status-row';
+import { buildRelayStatusPayload } from './relay-status-row';
 import { handleRelaySwitch } from './relay-switch-route';
 import type { RelayUplinkView } from './relay-switch-route';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -158,26 +158,24 @@ export class RelayRoutes {
     const uid = userId || this.deps.secrets.userId();
     const readmitPending = uid ? (await this.readmitPrepareFor(uid)).entries.length : 0;
     const candidates = this.deps.uplink.candidates();
-    return jsonBody({
-      mode,
-      tenantId: this.deps.secrets.tenantId(),
-      relays: rows.map((row) =>
-        buildRelayStatusRow(row, attached?.publicUrl ?? null, client, live, candidates)
-      ),
-      metaEpoch: this.deps.secrets.currentMetaEpoch(),
-      nodesViaRelay: client?.nodesViaRelay ?? 0,
-      reauthRequired: rows.some((row) => row.kicked),
-      // 令牌换代：本节点无从自救，只能等持根钥的一方把新令牌经 `set-relays` 发下来
-      awaitingToken:
-        client?.awaitingToken === true ||
-        rows.some((row) => row.kicked && row.kickedReason === 'password_rotated'),
-      readmitPending,
-      // 成员密钥没送达的那些：新节点解不开元数据块，名字/版本一律上报不了（见 relay-meta-lag.ts）
-      metaKeyLagging: mode === 'relay' && uid ? this.metaKeyLaggingFor(uid) : [],
-      quota: client?.quota ?? null,
-      // 中继上的密钥日志由同租户节点写入；解不开的记录会被跳过，这里把健康度暴露给前端
-      keyLog: client?.keyLogHealth() ?? { skipped: 0, blockedSeq: null, caughtUp: false },
-    });
+    return jsonBody(
+      buildRelayStatusPayload({
+        mode,
+        tenantId: this.deps.secrets.tenantId(),
+        rows,
+        attachedUrl: attached?.publicUrl ?? null,
+        primary: client,
+        live,
+        candidates,
+        secondaryOf: (url) => this.deps.uplink.secondaryClient?.(url) ?? null,
+        presence: this.deps.uplink.presence?.() ?? null,
+        multiAttach: this.deps.uplink.multiAttach?.() === true,
+        metaEpoch: this.deps.secrets.currentMetaEpoch(),
+        reauthRequired: rows.some((row) => row.kicked),
+        readmitPending,
+        metaKeyLagging: mode === 'relay' && uid ? this.metaKeyLaggingFor(uid) : [],
+      })
+    );
   }
 
   /** 已接纳但没拿到当前世代 `K_meta` 的成员；非中继模式恒为空。 */

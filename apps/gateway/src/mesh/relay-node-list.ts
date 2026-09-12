@@ -97,7 +97,8 @@ export async function relayListToNodeList(
       inventory: blob.inventory,
       direct_capable: blob.direct_capable,
       version: blob.version || null,
-    });
+      ...(blob.rtt_ms != null ? { rtt_ms: blob.rtt_ms } : {}),
+    } as ListEntry);
   }
   return {
     t: 'node.list',
@@ -184,7 +185,15 @@ function safeJson(raw: string | null | undefined, fallback: unknown): unknown {
   }
 }
 
-export function relayStatusBlobOf(status: UplinkStatus, name: string): RelayStatusBlob {
+export function relayStatusBlobOf(
+  status: UplinkStatus,
+  name: string,
+  rttMs?: number | null
+): RelayStatusBlob {
+  const rtt =
+    typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0
+      ? Math.round(rttMs)
+      : undefined;
   return {
     name,
     version: status.version,
@@ -192,6 +201,7 @@ export function relayStatusBlobOf(status: UplinkStatus, name: string): RelayStat
     direct_capable: status.direct_capable,
     inventory: status.inventory,
     endpoints: status.endpoints,
+    ...(rtt !== undefined ? { rtt_ms: rtt } : {}),
   };
 }
 
@@ -199,11 +209,12 @@ export function relayStatusBlobOf(status: UplinkStatus, name: string): RelayStat
 export async function buildRelayStatusMessage(
   secrets: RelaySecrets,
   status: UplinkStatus,
-  name: string
+  name: string,
+  rttMs?: number | null
 ): Promise<{ msg: Extract<RelayCtlMessage, { t: 'relay.status' }>; json: string } | null> {
   const meta = await secrets.currentMetaKey();
   if (!meta) return null;
-  const blob = relayStatusBlobOf(status, name);
+  const blob = relayStatusBlobOf(status, name, rttMs);
   const sealed = await sealEnvelope(meta.key, 'status', encodeRelayStatusBlob(blob), meta.epoch);
   return {
     msg: { t: 'relay.status', blob: sealed, epoch: meta.epoch },

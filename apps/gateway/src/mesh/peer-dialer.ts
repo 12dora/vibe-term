@@ -28,6 +28,7 @@ import {
   gateDcDial,
   noteDialDcFailure,
 } from './peer-dialer-dc-gate';
+import { completeRelayDial } from './peer-dialer-relay';
 import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
@@ -380,27 +381,19 @@ export class PeerDialer {
     );
     if (direct.session) return direct.session;
     try {
-      const stream = await this.state.uplink.openRelay(nodeId);
-      const result = await handshakeRelay({
-        stream,
-        role: 'initiator',
+      return await completeRelayDial({
+        nodeId,
+        gen,
         identity: this.state.identity,
         userStore: this.state.userStore,
+        presence: this.state.relayPresence,
+        opener: this.state.relayOpener,
+        openFallback: (id) => this.state.uplink.openRelay(id),
+        rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
+        track: (session, peerNodeId, trackGen) =>
+          this.deps.track(session, peerNodeId, 'relay', this.state.identity.nodeId, trackGen),
+        liveOf: (peerNodeId) => this.state.live.get(peerNodeId),
       });
-      if (result.peerNodeId !== nodeId) {
-        result.session.close('peer-id-mismatch');
-        throw new NodeUnreachableError(nodeId, 'relay peer id mismatch');
-      }
-      this.rememberKeys(result.session, result.sendKey, result.recvKey);
-      const kept = this.deps.track(
-        result.session,
-        result.peerNodeId,
-        'relay',
-        this.state.identity.nodeId,
-        gen
-      );
-      if (!kept) throw new NodeUnreachableError(nodeId, 'simultaneous-dial');
-      return kept;
     } catch (err) {
       // 中继也不通：竞速超时后仍在跑的直连腿是最后一根稻草，等它把话说完。
       const late = direct.pending ? await direct.pending : null;
@@ -563,7 +556,8 @@ export class PeerDialer {
     }
   }
 
-  async acceptRelay(stream: LinkStream, from: string): Promise<void> {
+  /** 入站 OPEN：调用方把该 uplink 的公网 URL 传进 viaRelay，缺省不写 LivePeer.viaRelay。 */
+  async acceptRelay(stream: LinkStream, from: string, viaRelay?: string): Promise<void> {
     const gen = this.state.generation;
     try {
       const result = await handshakeRelay({
@@ -578,6 +572,10 @@ export class PeerDialer {
       }
       this.rememberKeys(result.session, result.sendKey, result.recvKey);
       this.deps.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
+      if (viaRelay) {
+        const live = this.state.live.get(result.peerNodeId);
+        if (live?.transport === 'relay') live.viaRelay = viaRelay;
+      }
     } catch (err) {
       console.warn(stamp(`[mesh][relay] accept failed node=${from} ${formatSafeErrorLog(err)}`));
       quiet(() => stream.reset('handshake-failed'));

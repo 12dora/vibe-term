@@ -1,8 +1,10 @@
 import { readJsonObjectBody } from '../api/http';
 import { classifyRelayLinkError } from './relay-link-error';
+import type { RelayPresence } from './relay-presence';
 import { normalizeUrlOrNull } from './relay-routes-input';
 import type { RelaySecrets } from './relay-secrets';
 import type { RelayStatusCandidate } from './relay-status-row';
+import type { RelayUplinkClient } from './relay-uplink-client';
 import { jsonError } from './session-middleware';
 import type { PooledUplink } from './types';
 import { type AttachedHub, sameHubUrl } from './uplink-pool';
@@ -16,6 +18,10 @@ export type RelayUplinkView = {
   reconfigure(): Promise<void>;
   candidates(): RelayStatusCandidate[];
   switchTo(url: string, signal?: AbortSignal): Promise<UplinkSwitchResult>;
+  secondaryClient?(url: string): RelayUplinkClient | null;
+  presence?(): RelayPresence | null;
+  prepareSwitch?(url: string): Promise<void>;
+  multiAttach?(): boolean;
 };
 
 export type RelaySwitchDeps = {
@@ -42,6 +48,7 @@ export async function handleRelaySwitch(
   if (attached && sameHubUrl(attached.publicUrl, url) && live?.state === 'online') {
     return jsonError('RELAY_ALREADY_ATTACHED', 409);
   }
+  await deps.uplink.prepareSwitch?.(url);
   const switched = await runRelaySwitch(deps, url);
   if (!switched.ok) {
     return jsonError('RELAY_SWITCH_FAILED', 502, {

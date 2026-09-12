@@ -284,6 +284,67 @@ describe('mesh-routes', () => {
     }
   });
 
+  test('GET /api/mesh/nodes reports viaRelay and relayPresence for relay links', async () => {
+    const peers = new FakePeers();
+    peers.reach.set(PEER_ID, 'relay');
+    peers.transport.set(PEER_ID, 'relay');
+    peers.rtt.set(PEER_ID, 44);
+    (
+      peers as FakePeers & {
+        viaRelayOf: (id: string) => string | null;
+        relayPresenceOf: (id: string) => string[] | undefined;
+      }
+    ).viaRelayOf = (id) => (id === PEER_ID ? 'https://sh.example' : null);
+    (
+      peers as FakePeers & {
+        viaRelayOf: (id: string) => string | null;
+        relayPresenceOf: (id: string) => string[] | undefined;
+      }
+    ).relayPresenceOf = (id) =>
+      id === PEER_ID ? ['https://sh.example', 'https://ty.example'] : undefined;
+    const mesh = await bootMesh({ peers });
+    try {
+      mesh.userStore.upsertCert({
+        nodeId: PEER_ID,
+        userId: mesh.boot.userId,
+        admitRecordSeq: 2,
+        certificateBytes: encodeCertificate({
+          domain: DOMAIN_CERTIFICATE,
+          uid: mesh.boot.userId,
+          node_id: hexToBytes(PEER_ID),
+          ed_pk: new Uint8Array(32).fill(4),
+          x25519_pk: new Uint8Array(32).fill(5),
+          enroll_pk: new Uint8Array(32).fill(6),
+          issued_at: 1n,
+        }),
+        certSig: new Uint8Array(64),
+        authorizationBytes: new Uint8Array(8),
+        authorizationSig: new Uint8Array(64),
+      });
+      const { sid } = await challengeAndLogin(mesh.runtime, mesh.boot);
+      const list = await call(mesh.runtime, 'http://localhost/api/mesh/nodes', {
+        headers: { cookie: `vibeterm_s_self=${sid}` },
+      });
+      const body = (await list.json()) as {
+        nodes: Array<{
+          id: string;
+          transport: string | null;
+          viaRelay?: string | null;
+          relayPresence?: string[];
+        }>;
+      };
+      const peer = body.nodes.find((n) => n.id === PEER_ID);
+      expect(peer?.transport).toBe('relay');
+      expect(peer?.viaRelay).toBe('https://sh.example');
+      expect(peer?.relayPresence).toEqual(['https://sh.example', 'https://ty.example']);
+      const self = body.nodes.find((n) => n.id === NODE_ID);
+      expect(self?.viaRelay).toBeUndefined();
+      expect(self?.relayPresence).toBeUndefined();
+    } finally {
+      mesh.close();
+    }
+  });
+
   test('GET /api/mesh/nodes returns peerAddress, linkSinceAt, endpoints and directFailure', async () => {
     const peers = new FakePeers();
     peers.reach.set(PEER_ID, 'relay');
@@ -941,7 +1002,7 @@ describe('mesh-routes', () => {
   test('GET /api/mesh/rtc-config and POST /api/rtc/authorize', async () => {
     const mesh = await bootMesh({
       rtc: {
-        config: { getRtcConfig: () => ({ stun: ['stun:ex'], turn: null }) },
+        config: { getRtcConfig: () => ({ stun: ['stun:ex'], turn: [] }) },
       },
     });
     try {
@@ -951,7 +1012,7 @@ describe('mesh-routes', () => {
       const cfg = await call(mesh.runtime, 'http://localhost/api/mesh/rtc-config', {
         headers: { cookie: `vibeterm_s_self=${sid}` },
       });
-      expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null });
+      expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: [] });
     } finally {
       mesh.close();
     }
@@ -961,7 +1022,7 @@ describe('mesh-routes', () => {
         config: {
           getRtcConfig: () => ({
             stun: ['stun:ex'],
-            turn: null,
+            turn: [],
             source: 'builtin',
           }),
         },
@@ -972,7 +1033,7 @@ describe('mesh-routes', () => {
       const cfg = await call(withSource.runtime, 'http://localhost/api/mesh/rtc-config', {
         headers: { cookie: `vibeterm_s_self=${sid}` },
       });
-      expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: null, source: 'builtin' });
+      expect(await cfg.json()).toEqual({ stun: ['stun:ex'], turn: [], source: 'builtin' });
     } finally {
       withSource.close();
     }
@@ -983,12 +1044,14 @@ describe('mesh-routes', () => {
           getRtcConfig: () =>
             ({
               stun: ['stun:ex'],
-              turn: null,
-              turnConfigured: {
-                url: 'turn:relay.example:3478',
-                username: 'u',
-                credential: 'p',
-              },
+              turn: [],
+              turnConfigured: [
+                {
+                  url: 'turn:relay.example:3478',
+                  username: 'u',
+                  credential: 'p',
+                },
+              ],
               turnProbe: {
                 url: 'turn:relay.example:3478',
                 ok: false,
@@ -996,6 +1059,15 @@ describe('mesh-routes', () => {
                 error: 'timeout',
                 probedAt: 1,
               },
+              turnProbes: [
+                {
+                  url: 'turn:relay.example:3478',
+                  ok: false,
+                  rttMs: 2000,
+                  error: 'timeout',
+                  probedAt: 1,
+                },
+              ],
               probes: [],
             }) as CachedRtcConfig,
         },
@@ -1008,12 +1080,14 @@ describe('mesh-routes', () => {
       });
       expect(await cfg.json()).toEqual({
         stun: ['stun:ex'],
-        turn: null,
-        turnConfigured: {
-          url: 'turn:relay.example:3478',
-          username: 'u',
-          credential: 'p',
-        },
+        turn: [],
+        turnConfigured: [
+          {
+            url: 'turn:relay.example:3478',
+            username: 'u',
+            credential: 'p',
+          },
+        ],
         turnProbe: {
           url: 'turn:relay.example:3478',
           ok: false,
@@ -1021,6 +1095,15 @@ describe('mesh-routes', () => {
           error: 'timeout',
           probedAt: 1,
         },
+        turnProbes: [
+          {
+            url: 'turn:relay.example:3478',
+            ok: false,
+            rttMs: 2000,
+            error: 'timeout',
+            probedAt: 1,
+          },
+        ],
         probes: [],
       });
     } finally {
@@ -1312,6 +1395,23 @@ describe('mesh-routes', () => {
       expect(env.kind).toBe(wsBorsh.KIND_NODE_EVENT);
       const decoded = wsBorsh.decodeNodeEvent(env.payload);
       expect(decoded.reach).toBe('wan');
+      expect(decoded.viaRelay).toBeNull();
+      expect(decoded.relayPresence).toBeNull();
+
+      peers.emit({
+        nodeId: PEER_ID,
+        status: 'online',
+        reach: 'relay',
+        transport: 'relay',
+        rttMs: 40,
+        viaRelay: 'https://ty.example',
+        relayPresence: ['https://sh.example', 'https://ty.example'],
+      });
+      const relayFrame = frames[1];
+      if (!relayFrame) throw new Error('missing relay NODE_EVENT frame');
+      const relayDecoded = wsBorsh.decodeNodeEvent(wsBorsh.decodeEnvelope(relayFrame).payload);
+      expect(relayDecoded.viaRelay).toBe('https://ty.example');
+      expect(relayDecoded.relayPresence).toEqual(['https://sh.example', 'https://ty.example']);
 
       const logout = await call(mesh.runtime, 'http://localhost/api/auth/logout', {
         method: 'POST',

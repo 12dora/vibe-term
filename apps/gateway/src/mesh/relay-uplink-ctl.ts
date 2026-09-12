@@ -4,9 +4,11 @@ import {
   type RelayKickReason,
   type RelayQuota,
   type RelayRtcConfig,
+  type RelayStatusBlob,
   relaySeqFromWire,
 } from '@vibeterm/shared/relay';
 import type { UserStore } from '../auth/user-store';
+import { jsonStable } from './ctl';
 import { stamp } from './mesh-log';
 import type { RelayKeyLogSync } from './relay-key-log-sync';
 import {
@@ -14,8 +16,14 @@ import {
   acceptRelayRtcSignal,
   buildRelayStatusMessage,
   relayListToNodeList,
+  relayStatusBlobOf,
 } from './relay-node-list';
 import type { RelaySecrets } from './relay-secrets';
+import {
+  RELAY_RTT_RESEND_INTERVAL_MS,
+  rttChangedMaterially,
+  statusBlobWithoutRtt,
+} from './relay-status-rtt';
 import {
   type RelayAuthContext,
   type RelayEnrollChannel,
@@ -45,6 +53,9 @@ export type RelayUplinkCtlHost = {
   listVersion: number;
   nodesViaRelay: number;
   lastStatusJson: string;
+  lastRttSentMs: number | null;
+  lastRttSentAt: number;
+  rttMs: number | null;
   listChain: Promise<void>;
   state: UplinkState;
   link: LinkSession | null;
@@ -114,19 +125,34 @@ export function enqueueRelayList(
 }
 
 export async function sendRelayStatusNow(host: RelayUplinkCtlHost): Promise<void> {
-  if (host.state !== 'online' || !host.link || !host.isAuthenticated()) return;
+  if (!host.link || !host.isAuthenticated()) return;
   try {
     const built = await buildRelayStatusMessage(
       host.secrets,
       host.statusProvider(),
-      host.nodeName()
+      host.nodeName(),
+      host.rttMs
     );
     if (!built) return;
     host.rawSend(built.msg);
-    host.lastStatusJson = built.json;
+    host.lastStatusJson = jsonStable(
+      statusBlobWithoutRtt(JSON.parse(built.json) as RelayStatusBlob)
+    );
+    host.lastRttSentMs = host.rttMs;
+    host.lastRttSentAt = host.scheduler.now();
   } catch (err) {
     console.warn(stamp(`[relay] status seal failed err=${errMessage(err)}`));
   }
+}
+
+export function shouldResendRelayStatus(host: RelayUplinkCtlHost): boolean {
+  if (host.state !== 'online' || !host.link) return false;
+  const blob = relayStatusBlobOf(host.statusProvider(), host.nodeName(), host.rttMs);
+  const content = jsonStable(statusBlobWithoutRtt(blob));
+  if (content !== host.lastStatusJson) return true;
+  if (!rttChangedMaterially(host.lastRttSentMs, host.rttMs)) return false;
+  if (host.lastRttSentMs == null) return true;
+  return host.scheduler.now() - host.lastRttSentAt >= RELAY_RTT_RESEND_INTERVAL_MS;
 }
 
 export function acceptRelayAuthOk(

@@ -36,6 +36,8 @@ export interface RelayPresenceIndex {
   /** 按 rtt(self,R)+rtt(peer,R) 最小选中继；无样本的行排在有样本之后，同分优先 primary。 */
   chooseRelay(peerId: string, opts?: { exclude?: readonly string[] }): RelayChoice | null;
   onlineUnion(): Set<string>;
+  /** 该中继最新清单里 online 的 admitted 对端数；未连接时为 null。 */
+  peersOnlineOn?(url: string): number | null;
 }
 
 export interface RelayStreamOpener {

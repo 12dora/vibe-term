@@ -36,6 +36,8 @@ type RelayBinding = {
   uplink: UplinkPool;
   hubStore: Pick<MeshHubStore, 'replaceAll'>;
   metaEpoch: number;
+  createClient: RelayUplinkOverrides['createClient'] | null;
+  attach: import('./relay-multi-attach').RelayMultiAttach | null;
 };
 
 const RELAY_BINDINGS = new WeakMap<RelayWiring, RelayBinding>();
@@ -65,13 +67,18 @@ async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise
     if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
     if (allowRestart && bound && (result.targetsChanged || (await relayTokenChanged(bound)))) {
       bound.metaEpoch = result.metaEpoch;
+      await bound.attach?.stop();
       await reconfigureUplinkPool(bound.uplink);
+      bound.attach?.start();
       return;
     }
     if (!bound || result.metaEpoch === bound.metaEpoch) return;
     bound.metaEpoch = result.metaEpoch;
     // 新世代到手才第一次封得出状态块；不立刻重发的话对端要等到下一次心跳才看得见本节点
-    if (allowRestart) bound.uplink.liveClient()?.sendStatus();
+    if (allowRestart) {
+      bound.uplink.liveClient()?.sendStatus();
+      bound.attach?.sendStatusAll();
+    }
   } catch (err) {
     console.error(stamp('[relay] reconcile failed'), err);
   }
@@ -113,7 +120,44 @@ export function bindRelayReconcile(
   uplink: UplinkPool,
   hubStore: Pick<MeshHubStore, 'replaceAll'>
 ): void {
-  RELAY_BINDINGS.set(wiring, { uplink, hubStore, metaEpoch: wiring.secrets.currentMetaEpoch() });
+  RELAY_BINDINGS.set(wiring, {
+    uplink,
+    hubStore,
+    metaEpoch: wiring.secrets.currentMetaEpoch(),
+    createClient: null,
+    attach: null,
+  });
+}
+
+export function bindRelayUplinkFactory(
+  wiring: RelayWiring,
+  createClient: RelayUplinkOverrides['createClient']
+): void {
+  const bound = RELAY_BINDINGS.get(wiring);
+  if (bound) bound.createClient = createClient;
+}
+
+export function bindRelayMultiAttach(
+  wiring: RelayWiring,
+  attach: import('./relay-multi-attach').RelayMultiAttach
+): void {
+  const bound = RELAY_BINDINGS.get(wiring);
+  if (bound) bound.attach = attach;
+}
+
+export function relayMultiAttachOf(
+  wiring: RelayWiring
+): import('./relay-multi-attach').RelayMultiAttach | null {
+  return RELAY_BINDINGS.get(wiring)?.attach ?? null;
+}
+
+export function spawnRelayUplink(
+  wiring: RelayWiring,
+  opts: Parameters<RelayUplinkOverrides['createClient']>[0]
+) {
+  const create = RELAY_BINDINGS.get(wiring)?.createClient;
+  if (!create) throw new Error('relay uplink factory unbound');
+  return create(opts);
 }
 
 export type RelayUplinkOverrides = {
@@ -162,7 +206,12 @@ export function relayUplinkOverrides(
             tlsCa: o.tlsCa ?? null,
             ...(o.scheduler ? { scheduler: o.scheduler } : {}),
             ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
-            onKicked: (reason) => markRelayKicked(wiring, o.hubUrl, reason),
+            onKicked: (reason) => {
+              markRelayKicked(wiring, o.hubUrl, reason);
+              RELAY_BINDINGS.get(wiring)?.attach?.opener.noteKicked(o.hubUrl);
+            },
+            onRtt: (rttMs) =>
+              RELAY_BINDINGS.get(wiring)?.attach?.presence.setSelfRtt(o.hubUrl, rttMs),
             dial,
           })
         : new UplinkClient(o),
@@ -200,7 +249,9 @@ export function createRelayRoutes(input: {
   // 文件传输的单文件上限要读中继下发的配额，而 files 侧拿不到 uplink 池，这里做一次注入。
   setRelayQuotaProvider(() => {
     const live = input.uplink.liveClient();
-    return live instanceof RelayUplinkClient ? live.quota : null;
+    const primary = live instanceof RelayUplinkClient ? live.quota : null;
+    const attach = RELAY_BINDINGS.get(input.wiring)?.attach;
+    return attach ? attach.minMaxFileBytes(primary) : primary;
   });
   return new RelayRoutes({
     session: {
@@ -219,6 +270,17 @@ export function createRelayRoutes(input: {
       reconfigure: () => reconfigureUplinkPool(input.uplink),
       candidates: () => input.uplink.candidates(),
       switchTo: (url, signal) => input.uplink.switchTo(url, signal),
+      secondaryClient: (url) => {
+        const client = RELAY_BINDINGS.get(input.wiring)?.attach?.secondaryClient(url);
+        return client instanceof RelayUplinkClient ? client : null;
+      },
+      presence: () => RELAY_BINDINGS.get(input.wiring)?.attach?.presence ?? null,
+      prepareSwitch: (url) =>
+        RELAY_BINDINGS.get(input.wiring)?.attach?.prepareSwitch(url) ?? Promise.resolve(),
+      multiAttach: () => {
+        const rows = input.wiring.secrets.relayRows();
+        return rows.filter((row) => !row.kicked).length >= 2;
+      },
     },
   });
 }

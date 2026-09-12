@@ -489,7 +489,9 @@ export class UplinkClient {
         return;
       }
       const from = typeof open?.from === 'string' ? open.from : '';
-      if (open?.to === this.identity.nodeId && from) this.relayHandler?.(stream, from);
+      if (open?.to === this.identity.nodeId && from) {
+        this.relayHandler?.(stream, from, this.hubUrl);
+      }
     });
   }
 

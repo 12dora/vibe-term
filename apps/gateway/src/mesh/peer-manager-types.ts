@@ -127,6 +127,10 @@ export type PeerLinkDetail = {
   endpoints: string[];
   directFailure: DirectFailureView | null;
   dcBreaker: RtcDialBreakerSnapshot;
+  /** transport=relay 时经过的中继公网 URL；直连或未知为 null。 */
+  viaRelay?: string | null;
+  /** 对端当前在线的中继 URL；未注入多中继索引时为 undefined。 */
+  relayPresence?: string[];
 };
 
 export type ParkedInbound = {

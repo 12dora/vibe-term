@@ -36,6 +36,7 @@ import {
   getMeshRequestContext,
 } from './mesh-deps';
 import { serializeHubCandidate } from './mesh-hub-candidates';
+import { encodeNodeEventFrame } from './node-event-wire';
 import {
   type MeshNodeDto,
   type MeshNodeLinkDetail,
@@ -70,6 +71,8 @@ export type MeshRoutesDeps = {
   nodeSessionStore: NodeSessionStore;
   peers: PeerLinkProvider & {
     linkDetailOf?(nodeId: string): MeshNodeLinkDetail | null;
+    viaRelayOf?(nodeId: string): string | null;
+    relayPresenceOf?(nodeId: string): string[] | undefined;
   };
   rtcFingerprint?: RtcFingerprintProvider;
   rtcSignals?: RtcSignalRouter;
@@ -89,12 +92,6 @@ export type MeshRoutesDeps = {
     req: Request,
     input: { nodeId: string; method: string; path: string; query?: string; body?: unknown }
   ) => Promise<Response>;
-};
-
-const STATUS_TO_U8: Record<string, number> = {
-  online: wsBorsh.NODE_EVENT_STATUS_ONLINE,
-  offline: wsBorsh.NODE_EVENT_STATUS_OFFLINE,
-  revoked: wsBorsh.NODE_EVENT_STATUS_REVOKED,
 };
 
 export class MeshRoutes {
@@ -437,7 +434,9 @@ export class MeshRoutes {
           (nid) => this.deps.peers.linkDetailOf?.(nid) ?? null,
           hubIds,
           (nid) => hubModeById.get(nid),
-          (nid) => this.deps.attachedHubIdOf?.(nid)
+          (nid) => this.deps.attachedHubIdOf?.(nid),
+          (nid) => this.deps.peers.viaRelayOf?.(nid) ?? null,
+          (nid) => this.deps.peers.relayPresenceOf?.(nid)
         )
       )
       .filter((n) => n != null);
@@ -446,18 +445,20 @@ export class MeshRoutes {
   private handleRtcConfig(): Response {
     const cfg = (this.deps.rtcConfig?.getRtcConfig() ?? {
       stun: [],
-      turn: null,
+      turn: [],
     }) as CachedRtcConfig & {
       turnConfigured?: unknown;
       turnProbe?: unknown;
+      turnProbes?: unknown;
     };
     return jsonBody({
       stun: cfg.stun,
-      turn: cfg.turn ?? null,
+      turn: cfg.turn ?? [],
       ...(cfg.turnConfigured !== undefined ? { turnConfigured: cfg.turnConfigured } : {}),
       ...(cfg.source ? { source: cfg.source } : {}),
       ...(Array.isArray(cfg.probes) ? { probes: cfg.probes } : {}),
       ...(cfg.turnProbe !== undefined ? { turnProbe: cfg.turnProbe } : {}),
+      ...(Array.isArray(cfg.turnProbes) ? { turnProbes: cfg.turnProbes } : {}),
     });
   }
 
@@ -534,20 +535,10 @@ export class MeshRoutes {
     version?: string | null;
     direct_capable?: boolean;
     name?: string;
+    viaRelay?: string | null;
+    relayPresence?: string[] | null;
   }): void {
-    const payload = wsBorsh.encodeNodeEvent({
-      nodeId: event.nodeId,
-      status: STATUS_TO_U8[event.status] ?? wsBorsh.NODE_EVENT_STATUS_OFFLINE,
-      reach: event.reach ?? null,
-      inventory: event.inventory ?? null,
-      version: event.version ?? null,
-      directCapable: event.direct_capable ?? null,
-      name: event.name ?? null,
-      transport: event.transport ?? null,
-      rttMs: event.rttMs ?? null,
-    });
-    const frame = wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, payload, ++this.seq);
-    this.broadcast(frame);
+    this.broadcast(encodeNodeEventFrame(event, ++this.seq, this.deps.peers));
   }
 
   private broadcastRtcSignal(signal: RtcSignalMessage): void {

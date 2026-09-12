@@ -1,11 +1,11 @@
 import os from 'node:os';
-import type { LinkSession } from '@vibeterm/shared/link';
+import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
-import { defaultScheduler, encodeJsonBytes } from './ctl';
+import { defaultScheduler } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
 import { DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
 import { PeerDialer } from './peer-dialer';
-import { directFailureView, winningDialInitiator } from './peer-direct-attempt';
+import { winningDialInitiator } from './peer-direct-attempt';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import { PeerLinkDrain } from './peer-link-drain';
 import { PeerLinkWaiters } from './peer-link-waiters';
@@ -20,6 +20,14 @@ import {
   isPeerTrusted,
 } from './peer-manager-state';
 import type { PeerLinkDetail, PeerManagerOptions, TransportWaiter } from './peer-manager-types';
+import {
+  liveSessionOf,
+  peerLinkDetailFromState,
+  relayPresenceOfIndex,
+  requirePeerAdmitted,
+  sendPeerCtlQuiet,
+  viaRelayOfLive,
+} from './peer-path-view';
 import { parseOpenPayload } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import {
@@ -33,7 +41,8 @@ import {
 } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
 import { PeerStatusSync } from './peer-status-sync';
-import { quiet, sharedDirectDialLimiter } from './peer-ws-race';
+import { sharedDirectDialLimiter } from './peer-ws-race';
+import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { isRtcWakeSdp } from './rtc/ice';
 import { rtcLog } from './rtc/rtc-log';
 import {
@@ -162,7 +171,7 @@ export class PeerManager extends PeerCollaboratorHost {
       rtcListeners: () => this.rtcListeners,
       rtcInbox: () => this.state.rtcInbox,
       hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
-      sendPeerCtl: (live, payload) => this.sendPeerCtl(live as LivePeer, payload),
+      sendPeerCtl: (live, payload) => sendPeerCtlQuiet(live as LivePeer, payload),
       ensureDcSession: this.ensureDcSession,
       uplinkSendCtl: (payload) => this.state.uplink.sendCtl(payload),
     });
@@ -170,7 +179,7 @@ export class PeerManager extends PeerCollaboratorHost {
       keyLogApplier: opts.keyLogApplier,
       statusProvider: opts.statusProvider,
       deps: {
-        sendPeerCtl: (live, msg) => this.sendPeerCtl(live, msg),
+        sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
         notifyPeerEndpointsChanged: (nodeId) => this.notifyPeerEndpointsChanged(nodeId),
         listenPort: () => this.server?.port,
       },
@@ -180,7 +189,7 @@ export class PeerManager extends PeerCollaboratorHost {
     });
     this.drain = new PeerLinkDrain(this.state, {
       clearIdle: (live) => this.registry.clearIdle(live),
-      sendPeerCtl: (live, msg) => this.sendPeerCtl(live, msg),
+      sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
       maybeUpgrade: (nodeId, upgradeOpts) => this.maybeUpgrade(nodeId, upgradeOpts),
       armDcUpgradeRetry: (nodeId) => this.armDcUpgradeRetry(nodeId),
       onPeerReconnected: (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId),
@@ -198,7 +207,7 @@ export class PeerManager extends PeerCollaboratorHost {
       onLinkInfo: opts.onLinkInfo ?? null,
       deps: {
         dcBreaker: this.dcUpgrade.dcBreaker,
-        sendPeerCtl: (live, msg) => this.sendPeerCtl(live, msg),
+        sendPeerCtl: (live, msg) => sendPeerCtlQuiet(live, msg),
         handlePeerCtl: (live, bytes) => this.handlePeerCtl(live, bytes),
         sendPeerStatus: (live) => this.statusSync.sendPeerStatus(live),
         sendLinkHello: (live) => this.drain.sendLinkHello(live),
@@ -248,8 +257,8 @@ export class PeerManager extends PeerCollaboratorHost {
         listenPort: () => this.server?.port,
       },
     });
-    this.state.uplink.setOnRelayStream((stream, from) => {
-      void this.dialer.acceptRelay(stream, from);
+    this.state.uplink.setOnRelayStream((stream, from, viaRelay) => {
+      void this.dialer.acceptRelay(stream, from, viaRelay);
     });
     if (opts.startServer === false) {
       this.server = null;
@@ -271,6 +280,15 @@ export class PeerManager extends PeerCollaboratorHost {
 
   get listenPort(): number | null {
     return this.server?.listening ? this.server.port : null;
+  }
+
+  bindRelayPresence(presence: RelayPresenceIndex, opener: RelayStreamOpener): void {
+    this.state.relayPresence = presence;
+    this.state.relayOpener = opener;
+  }
+
+  acceptInboundRelay(stream: LinkStream, fromNodeId: string, viaRelay?: string): void {
+    void this.dialer.acceptRelay(stream, fromNodeId, viaRelay);
   }
   quiesceCapableOf(nodeId: string): boolean {
     return this.state.live.get(nodeId)?.quiesceCapable === true;
@@ -319,13 +337,7 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   getLive(nodeId: string): LinkSession | null {
-    if (!this.isTrusted(nodeId)) {
-      if (this.state.userStore.getCert(nodeId)?.revokedLogSeq != null) {
-        this.onRevoked(nodeId);
-      }
-      return null;
-    }
-    return this.state.live.get(nodeId)?.session ?? null;
+    return liveSessionOf(this.state, nodeId, (id) => this.onRevoked(id));
   }
 
   transportOf(nodeId: string): PeerTransportKind | null {
@@ -334,18 +346,21 @@ export class PeerManager extends PeerCollaboratorHost {
   rttOf(nodeId: string): number | null {
     return this.state.live.get(nodeId)?.rttMs ?? null;
   }
-
-  linkDetailOf(nodeId: string): PeerLinkDetail {
-    const live = this.state.live.get(nodeId);
-    return {
-      peerAddress: live?.transport === 'relay' ? this.hubHostOf() : (live?.remoteAddress ?? null),
-      linkSinceAt: live?.linkSinceAt ?? null,
-      endpoints: [],
-      directFailure: directFailureView(this.state.lastDirectAttempt.get(nodeId)),
-      dcBreaker: this.dcBreaker.snapshot(nodeId),
-    };
+  viaRelayOf(nodeId: string): string | null {
+    return viaRelayOfLive(this.state.live.get(nodeId));
+  }
+  relayPresenceOf(nodeId: string): string[] | undefined {
+    return relayPresenceOfIndex(this.state.relayPresence, nodeId);
   }
 
+  linkDetailOf(nodeId: string): PeerLinkDetail {
+    return peerLinkDetailFromState(
+      this.state,
+      nodeId,
+      this.hubHostOf(),
+      this.dcBreaker.snapshot(nodeId)
+    );
+  }
   onHubSwitched(): void {
     if (this.state.stopped) return;
     this.dcUpgrade.onHubSwitched();
@@ -531,19 +546,10 @@ export class PeerManager extends PeerCollaboratorHost {
     });
   }
 
-  private isTrusted(nodeId: string): boolean {
-    return isPeerTrusted(this.state, nodeId);
-  }
+  private isTrusted = (nodeId: string): boolean => isPeerTrusted(this.state, nodeId);
 
   private requireTrusted(nodeId: string): void {
-    const cert = this.state.userStore.getCert(nodeId);
-    if (cert?.revokedLogSeq != null) {
-      this.onRevoked(nodeId);
-      throw new NodeUnreachableError(nodeId, 'revoked');
-    }
-    if (!cert || !this.state.uplink.userId || cert.userId !== this.state.uplink.userId) {
-      throw new NodeUnreachableError(nodeId, 'not admitted');
-    }
+    requirePeerAdmitted(this.state, nodeId, (id) => this.onRevoked(id));
   }
 
   private handlePeerCtl(live: LivePeer, bytes: Uint8Array): void {
@@ -557,7 +563,7 @@ export class PeerManager extends PeerCollaboratorHost {
     } as const;
     const work = asyncCtl[t as keyof typeof asyncCtl];
     if (work) this.runCtlAsync(t, live.peerNodeId, work);
-    else if (t === 'ping') this.sendPeerCtl(live, { t: 'pong' });
+    else if (t === 'ping') sendPeerCtlQuiet(live, { t: 'pong' });
     else if (t === 'pong') this.registry.onPeerPong(live);
     else if (t === 'link.hello') {
       if ((Array.isArray(msg.caps) ? msg.caps : []).includes('quiesce')) {
@@ -569,12 +575,12 @@ export class PeerManager extends PeerCollaboratorHost {
       }
     } else if (t === 'link.quiesce.probe') {
       this.drain.markQuiesceCapable(live);
-      this.sendPeerCtl(live, { t: 'link.quiesce.probe.ack' });
+      sendPeerCtlQuiet(live, { t: 'link.quiesce.probe.ack' });
     } else if (t === 'link.quiesce.probe.ack') this.drain.markQuiesceCapable(live);
     else if (t === 'link.quiesce' || t === 'link.quiesce.ack') {
       if (t === 'link.quiesce') {
         live.gotPeerQuiesce = true;
-        this.sendPeerCtl(live, { t: 'link.quiesce.ack' });
+        sendPeerCtlQuiet(live, { t: 'link.quiesce.ack' });
       } else live.gotQuiesceAck = true;
       this.drain.markQuiesceCapable(live);
       if (live.retiring) this.drain.maybeFinishRetire(live);
@@ -589,11 +595,5 @@ export class PeerManager extends PeerCollaboratorHost {
       if (signal.from === 'browser') this.onBrowserSignal?.(signal, live.peerNodeId);
       else this.receiveRtcSignal(live.peerNodeId, signal);
     }
-  }
-
-  private sendPeerCtl(live: LivePeer, msg: Record<string, unknown>): void {
-    quiet(() => {
-      void Promise.resolve(live.session.ctl.send(encodeJsonBytes(msg))).catch(() => undefined);
-    });
   }
 }

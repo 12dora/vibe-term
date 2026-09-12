@@ -35,6 +35,8 @@ export type MeshNodeLinkDetail = {
   endpoints: string[];
   directFailure: MeshNodeDirectFailure | null;
   dcBreaker?: MeshNodeDcBreaker | null;
+  viaRelay?: string | null;
+  relayPresence?: string[];
 };
 
 export type MeshNodeDto = {
@@ -57,6 +59,8 @@ export type MeshNodeDto = {
   endpoints?: string[];
   directFailure?: MeshNodeDirectFailure | null;
   dcBreaker?: MeshNodeDcBreaker | null;
+  viaRelay?: string | null;
+  relayPresence?: string[];
 };
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
@@ -197,6 +201,23 @@ function meshPathFields(
   return { transport: transportOf?.(id) ?? null, rttMs: rttOf?.(id) ?? null };
 }
 
+function meshRelayFields(
+  isSelf: boolean,
+  id: string,
+  transport: 'ws-secure' | 'relay' | 'dc' | null,
+  detail: MeshNodeLinkDetail | null,
+  viaRelayOf?: (id: string) => string | null,
+  relayPresenceOf?: (id: string) => string[] | undefined
+): Pick<MeshNodeDto, 'viaRelay' | 'relayPresence'> {
+  if (isSelf) return {};
+  const viaRelay = viaRelayOf?.(id) ?? detail?.viaRelay;
+  const relayPresence = relayPresenceOf?.(id) ?? detail?.relayPresence;
+  return {
+    ...(transport === 'relay' ? { viaRelay: viaRelay ?? null } : {}),
+    ...(relayPresence !== undefined ? { relayPresence } : {}),
+  };
+}
+
 export function projectMeshListNode(
   id: string,
   selfId: string,
@@ -219,7 +240,9 @@ export function projectMeshListNode(
   linkDetailOf?: (id: string) => MeshNodeLinkDetail | null,
   hubIds?: ReadonlySet<string>,
   hubModeOf?: (id: string) => 'active' | 'standby' | undefined,
-  attachedHubIdOf?: (id: string) => string | null | undefined
+  attachedHubIdOf?: (id: string) => string | null | undefined,
+  viaRelayOf?: (id: string) => string | null,
+  relayPresenceOf?: (id: string) => string[] | undefined
 ): MeshNodeDto | null {
   const publicKey = publicKeyForMeshNode(id, selfId, selfPk, certById);
   if (!publicKey) return null;
@@ -262,6 +285,7 @@ export function projectMeshListNode(
     ...(hubModeOf?.(id) ? { hubMode: hubModeOf(id) } : {}),
     ...(attachedHubIdOf?.(id) ? { attachedHubId: attachedHubIdOf(id) ?? undefined } : {}),
     ...meshLinkFields(isSelf, detail, endpointsFromJson(peer?.endpointsJson)),
+    ...meshRelayFields(isSelf, id, path.transport, detail, viaRelayOf, relayPresenceOf),
   };
 }
 

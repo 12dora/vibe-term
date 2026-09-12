@@ -24,6 +24,8 @@ export type RelayStatusBlob = {
   direct_capable: boolean;
   inventory: unknown;
   endpoints: unknown;
+  /** 发送方到「收到这块的那台中继」的 uplink 心跳 RTT；缺省表示未知（2.2.x 对端）。 */
+  rtt_ms?: number;
 };
 
 export type RelayRtcBlob = { sdp?: string; candidate?: string };
@@ -80,6 +82,7 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
   if (Array.isArray(blob.endpoints) && blob.endpoints.length > RELAY_STATUS_MAX_ENDPOINTS) {
     throw new RelayCtlError('too many endpoints');
   }
+  const rttMs = normalizeStatusRtt(blob.rtt_ms);
   return encodeJson(
     {
       name: blob.name,
@@ -88,6 +91,7 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
       direct_capable: blob.direct_capable,
       inventory: blob.inventory ?? null,
       endpoints: blob.endpoints ?? null,
+      ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
     },
     RELAY_STATUS_BLOB_MAX_BYTES,
     'status blob'
@@ -111,6 +115,7 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
   if (Array.isArray(parsed.endpoints) && parsed.endpoints.length > RELAY_STATUS_MAX_ENDPOINTS) {
     throw new RelayCtlError('too many endpoints');
   }
+  const rttMs = normalizeStatusRtt(parsed.rtt_ms);
   return {
     name,
     version,
@@ -118,7 +123,13 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
     direct_capable: parsed.direct_capable,
     inventory: parsed.inventory ?? null,
     endpoints: parsed.endpoints ?? null,
+    ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
   };
+}
+
+function normalizeStatusRtt(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
+  return Math.round(value);
 }
 
 export function encodeRelayRtcBlob(blob: RelayRtcBlob): Uint8Array {
