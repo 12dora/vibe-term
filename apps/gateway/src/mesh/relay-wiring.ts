@@ -63,7 +63,7 @@ export function createRelayWiring(input: {
 async function runReconcile(wiring: RelayWiring, allowRestart: boolean): Promise<void> {
   const bound = RELAY_BINDINGS.get(wiring);
   try {
-    const result = await wiring.secrets.reconcile();
+    const result = await wiring.secrets.reconcile(bound?.uplink.attachedHub()?.publicUrl ?? null);
     // 切到中继后不再保留 hub 集合，`/api/mesh/hubs` 自然返回空表
     if (result.kind === 'relay') bound?.hubStore.replaceAll([], Date.now());
     if (allowRestart && bound && (result.primaryChanged || (await relayTokenChanged(bound)))) {

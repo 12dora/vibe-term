@@ -47,7 +47,8 @@ function relayTarget(token: Uint8Array, priority = 0) {
 
 async function applyRelays(
   b: Awaited<ReturnType<typeof boot>>,
-  relays: readonly { url: string; tenantId: string; token: Uint8Array; priority: number }[]
+  relays: readonly { url: string; tenantId: string; token: Uint8Array; priority: number }[],
+  attachedPrimaryUrl?: string | null
 ) {
   const applied = await b.service.signAndApply(b.user.userId, b.user.rootKey, {
     type: 'set-relays',
@@ -60,7 +61,7 @@ async function applyRelays(
     }),
   });
   expect(applied.ok).toBe(true);
-  return b.secrets.reconcile();
+  return b.secrets.reconcile(attachedPrimaryUrl);
 }
 
 describe('RelaySecrets', () => {
@@ -345,7 +346,56 @@ describe('RelaySecrets reconcile 粒度', () => {
     }
   });
 
-  test('首选中继把 B 顶到第一位不算 primaryChanged——池已经连在 B 上了', async () => {
+  test('主中继重排但仍挂在旧主上：primaryChanged 走重启', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      const tokenB = new Uint8Array(32).fill(6);
+      await applyRelays(b, [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
+      ]);
+      const result = await applyRelays(
+        b,
+        [
+          { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 0 },
+          { url: RELAY_URL, tenantId: TENANT_ID, token, priority: 1 },
+        ],
+        canonicalHubUrl(RELAY_URL)
+      );
+      expect(result.primaryChanged).toBe(true);
+      expect(result.rowsChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('主中继重排但已挂在新主上：只 rowsChanged', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      const tokenB = new Uint8Array(32).fill(6);
+      await applyRelays(b, [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
+      ]);
+      const result = await applyRelays(
+        b,
+        [
+          { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 0 },
+          { url: RELAY_URL, tenantId: TENANT_ID, token, priority: 1 },
+        ],
+        canonicalHubUrl(RELAY_URL_B)
+      );
+      expect(result.primaryChanged).toBe(false);
+      expect(result.rowsChanged).toBe(true);
+      expect(result.targetsChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('首选把 B 顶到第一位但池仍挂 A：primaryChanged', async () => {
     const b = await boot();
     try {
       const token = new Uint8Array(32).fill(5);
@@ -356,10 +406,27 @@ describe('RelaySecrets reconcile 粒度', () => {
       ];
       await applyRelays(b, rows);
       b.secrets.setPreferredRelayUrl(canonicalHubUrl(RELAY_URL_B));
-      const result = await applyRelays(b, rows);
+      const result = await applyRelays(b, rows, canonicalHubUrl(RELAY_URL));
+      expect(result.primaryChanged).toBe(true);
+    } finally {
+      b.close();
+    }
+  });
+
+  test('首选把 B 顶到第一位且池已挂 B：只 rowsChanged', async () => {
+    const b = await boot();
+    try {
+      const token = new Uint8Array(32).fill(5);
+      const tokenB = new Uint8Array(32).fill(6);
+      const rows = [
+        relayTarget(token),
+        { url: RELAY_URL_B, tenantId: TENANT_ID, token: tokenB, priority: 1 },
+      ];
+      await applyRelays(b, rows);
+      b.secrets.setPreferredRelayUrl(canonicalHubUrl(RELAY_URL_B));
+      const result = await applyRelays(b, rows, canonicalHubUrl(RELAY_URL_B));
       expect(result.primaryChanged).toBe(false);
-      expect(result.rowsChanged).toBe(false);
-      expect(result.targetsChanged).toBe(false);
+      expect(result.rowsChanged).toBe(true);
     } finally {
       b.close();
     }

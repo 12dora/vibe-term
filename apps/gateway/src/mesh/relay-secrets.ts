@@ -17,6 +17,7 @@ import {
   readPreferredRelayUrl,
   writePreferredRelayUrl,
 } from './relay-preferred';
+import { sameHubUrl } from './uplink-pool-url';
 
 export const RELAY_PENDING_KEY_TTL_MS = 10 * 60 * 1000;
 export const RELAY_PENDING_KEY_LIMIT = 8;
@@ -30,9 +31,9 @@ export type PendingRelayKeys = {
 
 export type RelayReconcileResult = {
   kind: UplinkKind;
-  /** 池会选中的那条主中继（url/tenantId/token）变了，或 hub↔relay 翻转，必须重建 uplink 池。 */
+  /** 池会选中的那条主中继变了且当前并未挂在新主上，或 hub↔relay 翻转，必须重建 uplink 池。 */
   primaryChanged: boolean;
-  /** 只有 secondary 行增删或优先级重排，主链路不受影响。 */
+  /** secondary 增删/重排，或已经挂在新主上只需刷挂载；主链路不重启。 */
   rowsChanged: boolean;
   /** `primaryChanged || rowsChanged`，保留给只关心「有无变化」的调用方。 */
   targetsChanged: boolean;
@@ -41,13 +42,33 @@ export type RelayReconcileResult = {
 
 type RelayTargetsFingerprint = {
   primary: string;
+  primaryUrl: string | null;
   rows: string;
-  rowKeys: Set<string>;
 };
 
 function relayRowKey(relay: StoredRelayList['relays'][number], kind: UplinkKind): string {
   const token = createHash('sha256').update(relay.token).digest('base64url');
   return `${kind}|${relay.url}|${relay.tenantId}|${token}`;
+}
+
+/** sha256(tenantId || token) 的 hex；给 secondary slot 判断凭证是否换过，不落明文。 */
+export function hashRelayCredential(tenantId: string, token: Uint8Array): string {
+  return createHash('sha256').update(tenantId).update(token).digest('hex');
+}
+
+function classifyPrimaryShift(
+  print: RelayTargetsFingerprint,
+  lastPrimaryKey: string,
+  lastRowsKey: string,
+  attachedPrimaryUrl: string | null | undefined
+): { primaryChanged: boolean; rowsChanged: boolean } {
+  const rowsChanged = print.rows !== lastRowsKey;
+  if (print.primary === lastPrimaryKey) return { primaryChanged: false, rowsChanged };
+  // 已经挂在新主上（手动 /relay/switch 先切过去了）→ 只刷 secondary；否则走重启。
+  if (print.primaryUrl && attachedPrimaryUrl && sameHubUrl(attachedPrimaryUrl, print.primaryUrl)) {
+    return { primaryChanged: false, rowsChanged: true };
+  }
+  return { primaryChanged: true, rowsChanged };
 }
 
 export type RelaySecretsOptions = {
@@ -75,6 +96,7 @@ export class RelaySecrets {
   private metaEpoch = 0;
   private lastPrimaryKey = '';
   private lastRowsKey = '';
+  private readonly credentialKeys = new Map<string, string>();
 
   constructor(opts: RelaySecretsOptions) {
     this.db = opts.db;
@@ -100,6 +122,11 @@ export class RelaySecrets {
 
   relayRows(): StoredMeshRelayRow[] {
     return this.store.listRelayRows();
+  }
+
+  /** 最近一次 `reconcile()` 写入的行凭证摘要；进程内缓存，不含明文 token。 */
+  credentialKeyFor(url: string): string {
+    return this.credentialKeys.get(url) ?? '';
   }
 
   preferredRelayUrl(): string | null {
@@ -154,8 +181,9 @@ export class RelaySecrets {
   /**
    * 重放密钥日志投影 → 写 `mesh_relays` / `mesh_secrets` / `node_identity.uplink_kind`。
    * 记录应用后与进程启动时各调用一次；返回是否需要重建 uplink 池。
+   * `attachedPrimaryUrl` 是池此刻真正挂上的主中继；其它调用方可省略。
    */
-  async reconcile(): Promise<RelayReconcileResult> {
+  async reconcile(attachedPrimaryUrl?: string | null): Promise<RelayReconcileResult> {
     const projection = this.projection();
     const now = this.now();
     await this.absorbKeys(projection, now);
@@ -163,11 +191,12 @@ export class RelaySecrets {
     await this.writeTargets(projection.relays, now);
     if (this.store.uplinkKind() !== kind) this.store.setUplinkKind(kind);
     const print = this.targetsFingerprint(projection.relays, kind);
-    // 主中继行原样还在（只是被新的 preferred / priority 挤下第一位）时不算主链路变化：
-    // 池此刻连的就是它，重启只会白白排空在途流，让 nearest-switch 自己决定要不要 promote。
-    const primaryChanged =
-      print.primary !== this.lastPrimaryKey && !print.rowKeys.has(this.lastPrimaryKey);
-    const rowsChanged = print.rows !== this.lastRowsKey;
+    const { primaryChanged, rowsChanged } = classifyPrimaryShift(
+      print,
+      this.lastPrimaryKey,
+      this.lastRowsKey,
+      attachedPrimaryUrl
+    );
     this.lastPrimaryKey = print.primary;
     this.lastRowsKey = print.rows;
     return {
@@ -188,25 +217,28 @@ export class RelaySecrets {
     const preferredFirst = orderRelaysByPreferred(keyed, this.preferredRelayUrl());
     return {
       primary: preferredFirst[0]?.key ?? `${kind}|`,
+      primaryUrl: preferredFirst[0]?.url ?? null,
       rows: `${kind}|${relays.map((relay, i) => `${relay.priority}:${keyed[i]?.key ?? ''}`).join(',')}`,
-      rowKeys: new Set(keyed.map((row) => row.key)),
     };
   }
 
   private async writeTargets(list: StoredRelayList | null, now: number): Promise<void> {
+    this.credentialKeys.clear();
     if (!list || list.relays.length === 0) {
       this.store.clearRelays();
       return;
     }
+    const sorted = [...list.relays].sort((a, b) => a.priority - b.priority);
+    for (const relay of sorted) {
+      this.credentialKeys.set(relay.url, hashRelayCredential(relay.tenantId, relay.token));
+    }
     await this.store.replaceRelays(
-      [...list.relays]
-        .sort((a, b) => a.priority - b.priority)
-        .map((relay) => ({
-          url: relay.url,
-          tenantId: relay.tenantId,
-          token: relay.token,
-          priority: relay.priority,
-        })),
+      sorted.map((relay) => ({
+        url: relay.url,
+        tenantId: relay.tenantId,
+        token: relay.token,
+        priority: relay.priority,
+      })),
       now
     );
   }

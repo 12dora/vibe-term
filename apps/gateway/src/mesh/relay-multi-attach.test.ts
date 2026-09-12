@@ -203,6 +203,7 @@ function stubWiring(): RelayWiring {
         { url: SH, priority: 0 },
         { url: TK, priority: 1 },
       ],
+      credentialKeyFor: () => '',
     },
   } as unknown as RelayWiring;
 }

@@ -29,7 +29,13 @@ export type SecondaryUplink = {
   onStateChange(cb: (state: UplinkState) => void): () => void;
 };
 
-export type RelaySecondaryRow = { url: string; priority: number; kicked: boolean };
+export type RelaySecondaryRow = {
+  url: string;
+  priority: number;
+  kicked: boolean;
+  /** sha256(tenantId || token) hex；与 spawn 时记下的值不同则拆掉重挂。 */
+  credentialKey: string;
+};
 
 export type RelaySecondaryAttachOptions = {
   rows: () => readonly RelaySecondaryRow[];
@@ -45,6 +51,7 @@ export type RelaySecondaryAttachOptions = {
 
 type Slot = {
   url: string;
+  credentialKey: string;
   abort: AbortController;
   client: SecondaryUplink | null;
   loop: Promise<void>;
@@ -130,12 +137,16 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     return next;
   }
 
-  private secondaryUrls(rows: readonly RelaySecondaryRow[], primary: string | null): Set<string> {
-    const wanted = new Set<string>();
+  private wantedSecondaries(
+    rows: readonly RelaySecondaryRow[],
+    primary: string | null
+  ): Map<string, string> {
+    const wanted = new Map<string, string>();
     // 主中继尚未挂上时不要把所有行当 secondary，否则会和池抢同一 URL（单中继也会双连）。
     if (!primary) return wanted;
     for (const row of rows) {
-      if (!sameHubUrl(row.url, primary)) wanted.add(normalizeHubEndpointUrl(row.url));
+      if (sameHubUrl(row.url, primary)) continue;
+      wanted.set(normalizeHubEndpointUrl(row.url), row.credentialKey);
     }
     return wanted;
   }
@@ -145,25 +156,38 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
     this.opts.presence.setPrimary(primary);
     const rows = this.running ? this.opts.rows().filter((row) => !row.kicked) : [];
     for (const row of rows) this.opts.presence.setPriority(row.url, row.priority);
-    const wanted = this.secondaryUrls(rows, primary);
+    const wanted = this.wantedSecondaries(rows, primary);
     const keepPresence = [...(primary ? [primary] : []), ...rows.map((row) => row.url)];
     this.opts.presence.retainUrls(keepPresence);
-    for (const key of [...this.slots.keys()]) {
-      if (!wanted.has(key)) {
-        await this.drop(key, primary && sameHubUrl(key, primary) ? 'promoted' : 'gone');
-      }
-    }
+    await this.dropStaleSlots(wanted, primary);
     if (!this.running) return;
-    for (const url of wanted) {
-      if (!this.slots.has(url)) this.spawnLoop(url);
+    for (const [url, credentialKey] of wanted) {
+      if (!this.slots.has(url)) this.spawnLoop(url, credentialKey);
     }
   }
 
-  private spawnLoop(url: string): void {
+  private async dropStaleSlots(wanted: Map<string, string>, primary: string | null): Promise<void> {
+    for (const key of [...this.slots.keys()]) {
+      const nextKey = wanted.get(key);
+      if (nextKey !== undefined && this.slots.get(key)?.credentialKey === nextKey) continue;
+      const reason: 'gone' | 'promoted' =
+        nextKey === undefined && primary && sameHubUrl(key, primary) ? 'promoted' : 'gone';
+      await this.drop(key, reason);
+    }
+  }
+
+  private spawnLoop(url: string, credentialKey: string): void {
     const key = normalizeHubEndpointUrl(url);
     if (this.slots.has(key)) return;
     const abort = new AbortController();
-    const slot: Slot = { url: key, abort, client: null, loop: Promise.resolve(), attempt: 0 };
+    const slot: Slot = {
+      url: key,
+      credentialKey,
+      abort,
+      client: null,
+      loop: Promise.resolve(),
+      attempt: 0,
+    };
     this.slots.set(key, slot);
     slot.loop = this.runLoop(slot);
   }

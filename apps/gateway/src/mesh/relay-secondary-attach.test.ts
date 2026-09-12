@@ -159,6 +159,19 @@ class FakeSecondary implements SecondaryUplink {
   }
 }
 
+function row(
+  url: string,
+  priority: number,
+  extra: Partial<Pick<RelaySecondaryRow, 'kicked' | 'credentialKey'>> = {}
+): RelaySecondaryRow {
+  return {
+    url,
+    priority,
+    kicked: extra.kicked ?? false,
+    credentialKey: extra.credentialKey ?? 'k',
+  };
+}
+
 function setup(
   rows: RelaySecondaryRow[],
   primary: string | null,
@@ -192,7 +205,7 @@ function setup(
 
 describe('RelaySecondaryAttach', () => {
   test('单中继不造 secondary', async () => {
-    const { manager, spawned } = setup([{ url: SH, priority: 0, kicked: false }], SH);
+    const { manager, spawned } = setup([row(SH, 0)], SH);
     manager.start();
     await manager.reconcile();
     expect(spawned).toHaveLength(0);
@@ -200,10 +213,7 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('primary 尚未挂上时不把唯一行当 secondary', async () => {
-    const { manager, spawned, livePrimary } = setup(
-      [{ url: SH, priority: 0, kicked: false }],
-      null
-    );
+    const { manager, spawned, livePrimary } = setup([row(SH, 0)], null);
     manager.start();
     await manager.reconcile();
     expect(spawned).toHaveLength(0);
@@ -214,31 +224,18 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('行变化时挂上/拆掉 secondary', async () => {
-    const { manager, spawned, liveRows, presence } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, liveRows, presence } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
     expect(spawned.map((c) => c.hubUrl)).toEqual([TK]);
-    expect(presence.snapshot().find((row) => row.url === TK)?.connected).toBe(true);
+    expect(presence.snapshot().find((entry) => entry.url === TK)?.connected).toBe(true);
 
-    liveRows.current = [
-      { url: SH, priority: 0, kicked: false },
-      { url: TK, priority: 1, kicked: false },
-      { url: SG, priority: 2, kicked: false },
-    ];
+    liveRows.current = [row(SH, 0), row(TK, 1), row(SG, 2)];
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === SG && c.state === 'online'));
 
-    liveRows.current = [
-      { url: SH, priority: 0, kicked: false },
-      { url: SG, priority: 2, kicked: false },
-    ];
+    liveRows.current = [row(SH, 0), row(SG, 2)];
     await manager.reconcile();
     await waitUntil(() => manager.client(TK) == null);
     expect(manager.client(SG)?.state).toBe('online');
@@ -246,13 +243,7 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('primary 切换：旧 primary 变 secondary，新 primary 从 secondary 提升', async () => {
-    const { manager, spawned, livePrimary } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, livePrimary } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
@@ -266,13 +257,7 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('连接失败后退避重连', async () => {
-    const { manager, spawned, scheduler } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, scheduler } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.length >= 1);
@@ -287,20 +272,11 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('kicked 行拆掉且不再重连', async () => {
-    const { manager, spawned, liveRows } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, liveRows } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.state === 'online'));
-    liveRows.current = [
-      { url: SH, priority: 0, kicked: false },
-      { url: TK, priority: 1, kicked: true },
-    ];
+    liveRows.current = [row(SH, 0), row(TK, 1, { kicked: true })];
     manager.noteKicked(TK);
     await waitUntil(() => manager.client(TK) == null);
     expect(spawned.filter((c) => c.hubUrl === TK).length).toBe(1);
@@ -308,13 +284,7 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('openRelayVia：primary 走 openPrimary，secondary 走该 client', async () => {
-    const { manager, spawned, primaryOpens } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, primaryOpens } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.state === 'online'));
@@ -327,18 +297,11 @@ describe('RelaySecondaryAttach', () => {
 
   test('入站 OPEN 把该 secondary 的 URL 传给 onRelayStream', async () => {
     const inbound: Array<{ from: string; viaRelay?: string }> = [];
-    const { manager, spawned } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH,
-      {
-        onRelayStream: (_stream, from, viaRelay) => {
-          inbound.push({ from, viaRelay });
-        },
-      }
-    );
+    const { manager, spawned } = setup([row(SH, 0), row(TK, 1)], SH, {
+      onRelayStream: (_stream, from, viaRelay) => {
+        inbound.push({ from, viaRelay });
+      },
+    });
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
@@ -349,13 +312,7 @@ describe('RelaySecondaryAttach', () => {
   });
 
   test('path-rerace 把 slot.attempt 归零并立刻重连', async () => {
-    const { manager, spawned, scheduler } = setup(
-      [
-        { url: SH, priority: 0, kicked: false },
-        { url: TK, priority: 1, kicked: false },
-      ],
-      SH
-    );
+    const { manager, spawned, scheduler } = setup([row(SH, 0), row(TK, 1)], SH);
     manager.start();
     await manager.reconcile();
     await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
@@ -366,6 +323,43 @@ describe('RelaySecondaryAttach', () => {
     await waitUntil(() => spawned.filter((c) => c.hubUrl === TK).length >= 2);
     expect(scheduler.sleeps).toEqual([]);
     expect(spawned.filter((c) => c.hubUrl === TK).at(-1)?.state).toBe('online');
+    await manager.stop();
+  });
+
+  test('secondary 令牌轮换：拆掉旧 slot 并用新凭证重挂，其他行不动', async () => {
+    const { manager, spawned, liveRows } = setup(
+      [
+        row(SH, 0, { credentialKey: 'p' }),
+        row(TK, 1, { credentialKey: 'tk-1' }),
+        row(SG, 2, { credentialKey: 'sg-1' }),
+      ],
+      SH
+    );
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.filter((c) => c.state === 'online').length >= 2);
+    const tokyo = spawned.find((c) => c.hubUrl === TK);
+    const singapore = spawned.find((c) => c.hubUrl === SG);
+    if (!tokyo || !singapore) throw new Error('missing secondary');
+    expect(tokyo.state).toBe('online');
+    expect(singapore.state).toBe('online');
+
+    liveRows.current = [
+      row(SH, 0, { credentialKey: 'p' }),
+      row(TK, 1, { credentialKey: 'tk-2' }),
+      row(SG, 2, { credentialKey: 'sg-1' }),
+    ];
+    await manager.reconcile();
+    await waitUntil(() => tokyo.stopped > 0);
+    await waitUntil(() =>
+      spawned.some((c) => c.hubUrl === TK && c !== tokyo && c.state === 'online')
+    );
+    expect(manager.client(TK)).not.toBe(tokyo);
+    expect(manager.client(TK)?.state).toBe('online');
+    expect(manager.client(SG)).toBe(singapore);
+    expect(singapore.stopped).toBe(0);
+    expect(spawned.filter((c) => c.hubUrl === TK)).toHaveLength(2);
+    expect(spawned.filter((c) => c.hubUrl === SG)).toHaveLength(1);
     await manager.stop();
   });
 });

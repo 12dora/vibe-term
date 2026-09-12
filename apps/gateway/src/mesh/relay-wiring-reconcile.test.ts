@@ -17,6 +17,7 @@ type Calls = {
   attachStop: number;
   attachStart: number;
   attachReconcile: number;
+  reconcileAttached: Array<string | null | undefined>;
 };
 
 function harness(result: RelayReconcileResult) {
@@ -28,6 +29,7 @@ function harness(result: RelayReconcileResult) {
     attachStop: 0,
     attachStart: 0,
     attachReconcile: 0,
+    reconcileAttached: [],
   };
   const pool = {
     waitForRelayStreamsToDrain: async () => {
@@ -65,7 +67,10 @@ function harness(result: RelayReconcileResult) {
   });
   wiring.secrets = {
     currentMetaEpoch: () => result.metaEpoch,
-    reconcile: async () => result,
+    reconcile: async (attached?: string | null) => {
+      calls.reconcileAttached.push(attached);
+      return result;
+    },
     relayRows: () => [
       { url: PRIMARY_URL, tenantId: 'ab'.repeat(16), priority: 0, kicked: false },
       { url: SECONDARY_URL, tenantId: 'ab'.repeat(16), priority: 1, kicked: false },
@@ -98,6 +103,7 @@ describe('runReconcile 的重启粒度', () => {
     expect(calls.poolStop).toBe(0);
     expect(calls.poolStart).toBe(0);
     expect(calls.attachStop).toBe(0);
+    expect(calls.reconcileAttached).toEqual([PRIMARY_URL]);
   });
 
   test('主中继变化：仍走排空 + 重建池 + attach 重挂', async () => {

@@ -169,7 +169,13 @@ function openSecondaryAttach(
   onExclusiveOffline: (peerIds: string[]) => void
 ): RelaySecondaryAttach {
   return new RelaySecondaryAttach({
-    rows: () => input.wiring.secrets.relayRows(),
+    rows: () =>
+      input.wiring.secrets.relayRows().map((row) => ({
+        url: row.url,
+        priority: row.priority,
+        kicked: row.kicked,
+        credentialKey: input.wiring.secrets.credentialKeyFor?.(row.url) ?? '',
+      })),
     primaryUrl: () => input.uplink.attachedHub()?.publicUrl ?? presence.primaryUrl(),
     spawn: (url) =>
       input.spawn({
