@@ -1,5 +1,5 @@
 import { isIP } from 'node:net';
-import { clientKey } from './allocation-table';
+import { clientKey, peerKey } from './allocation-table';
 import {
   ATTR,
   CLASS,
@@ -21,10 +21,17 @@ import {
   CHANNEL_MAX,
   CHANNEL_MIN,
   DEFAULT_LIFETIME_SEC,
+  MAX_PERMISSIONS_PER_ALLOCATION,
+  MAX_XOR_PEERS_PER_REQUEST,
   UDP_PROTOCOL,
   grantLifetimeSec,
 } from './turn-limits';
-import { handlePeerDatagram, handleSendIndication, isDeniedPeer } from './turn-relay-io';
+import {
+  guardTurnHandler,
+  handlePeerDatagram,
+  handleSendIndication,
+  isDeniedPeer,
+} from './turn-relay-io';
 
 const ERROR_REASON: Record<number, string> = {
   400: 'Bad Request',
@@ -111,6 +118,7 @@ function dispatchAuthenticated(
 
 function handleBinding(ctx: TurnContext, msg: StunMessage, addr: SocketAddress): void {
   ctx.stats.bindingRequests++;
+  if (!allowUnauth(ctx, addr)) return;
   sendStun(
     ctx,
     msg,
@@ -125,6 +133,12 @@ function handleBinding(ctx: TurnContext, msg: StunMessage, addr: SocketAddress):
     ],
     undefined
   );
+}
+
+function allowUnauth(ctx: TurnContext, addr: SocketAddress): boolean {
+  if (ctx.unauthLimit.allow(addr.address)) return true;
+  ctx.stats.droppedUnauthRateLimit++;
+  return false;
 }
 
 function validateAllocate(msg: StunMessage): number | null {
@@ -193,9 +207,11 @@ async function finishAllocate(
     relayPort: bound.port,
     lifetimeSec: granted,
   });
-  bound.socket.on('message', (buf, peer) =>
-    handlePeerDatagram(ctx, allocation, buf, { address: peer.address, port: peer.port })
-  );
+  bound.socket.on('message', (buf, peer) => {
+    guardTurnHandler(ctx, () =>
+      handlePeerDatagram(ctx, allocation, buf, { address: peer.address, port: peer.port })
+    );
+  });
   bound.socket.on('error', () => ctx.table.remove(allocation));
   ctx.options.log(`turn: allocate ${auth.user} relay ${bound.port}`);
   sendStun(
@@ -280,14 +296,30 @@ function handleCreatePermission(
     return;
   }
   const peers = parseXorPeers(msg);
-  if (!peers) {
+  if (!peers || peers.length > MAX_XOR_PEERS_PER_REQUEST) {
     sendError(ctx, msg, addr, 400, auth.key);
     return;
   }
   if (rejectDenied(ctx, msg, addr, auth, peers)) return;
+  if (permissionCapExceeded(allocation, peers)) {
+    sendError(ctx, msg, addr, 400, auth.key);
+    return;
+  }
   const now = ctx.options.now();
   for (const peer of peers) ctx.table.installPermission(allocation, peer.address, peer.port, now);
   sendStun(ctx, msg, addr, CLASS.SUCCESS, [], auth.key);
+}
+
+function permissionCapExceeded(
+  allocation: { permissions: Map<string, unknown> },
+  peers: StunAddress[]
+): boolean {
+  const fresh = new Set<string>();
+  for (const peer of peers) {
+    const key = peerKey(peer.address, peer.port);
+    if (!allocation.permissions.has(key)) fresh.add(key);
+  }
+  return allocation.permissions.size + fresh.size > MAX_PERMISSIONS_PER_ALLOCATION;
 }
 
 function rejectDenied(
@@ -330,7 +362,7 @@ function handleChannelBind(
     parsed.peer.port,
     ctx.options.now()
   );
-  if (result === 'conflict') {
+  if (result === 'conflict' || result === 'full') {
     sendError(ctx, msg, addr, 400, auth.key);
     return;
   }

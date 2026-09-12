@@ -29,6 +29,8 @@ export type TurnServerStats = {
   startedAt: number | null;
   droppedNoPermission?: number;
   droppedRateLimit?: number;
+  droppedOversized?: number;
+  droppedUnauthRateLimit?: number;
 };
 export type TurnServer = {
   start(): Promise<{ port: number }>;

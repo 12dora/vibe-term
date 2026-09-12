@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { isIP } from 'node:net';
-import type { Allocation } from './allocation-table';
+import type { Allocation, ChannelBinding } from './allocation-table';
 import { peerKey } from './allocation-table';
 import { normalizePeerAddress } from './denied-peers';
 import {
@@ -14,8 +14,10 @@ import {
   encodeChannelData,
   encodeMessage,
   getAttribute,
+  maxDataIndicationPayload,
 } from './stun-message';
 import type { SocketAddress, TurnContext } from './turn-context';
+import { MAX_CHANNEL_DATA_PAYLOAD } from './turn-limits';
 
 export function consumeTokens(
   allocation: Allocation,
@@ -91,6 +93,16 @@ export function handleClientChannelData(ctx: TurnContext, buf: Buffer, addr: Soc
   forwardClientToPeer(ctx, allocation, decoded.data, channel.address, channel.port);
 }
 
+export function guardTurnHandler(ctx: TurnContext, fn: () => void): void {
+  try {
+    fn();
+  } catch (err) {
+    ctx.stats.droppedOversized++;
+    const text = err instanceof Error ? err.message : String(err);
+    ctx.options.log(`turn: drop ${text}`);
+  }
+}
+
 export function handlePeerDatagram(
   ctx: TurnContext,
   allocation: Allocation,
@@ -106,11 +118,16 @@ export function handlePeerDatagram(
     ctx.stats.droppedNoPermission++;
     return;
   }
+  const channel = liveChannel(allocation, peer, now);
+  if (buf.length > maxPeerPayload(peer, !!channel)) {
+    ctx.stats.droppedOversized++;
+    return;
+  }
   if (!consumeTokens(allocation, buf.length, now, ctx.options.bytesPerSecPerAllocation)) {
     ctx.stats.droppedRateLimit++;
     return;
   }
-  const out = encodePeerToClient(allocation, buf, peer, now);
+  const out = encodePeerToClient(allocation, buf, peer, now, channel);
   ctx.send(out, allocation.client);
   ctx.stats.bytesRelayedIn += buf.length;
 }
@@ -144,12 +161,10 @@ function encodePeerToClient(
   allocation: Allocation,
   buf: Buffer,
   peer: SocketAddress,
-  now: number
+  now: number,
+  channel = liveChannel(allocation, peer, now)
 ): Buffer {
-  const key = peerKey(peer.address, peer.port);
-  const number = allocation.peerToChannel.get(key);
-  const channel = number === undefined ? undefined : allocation.channels.get(number);
-  if (channel && channel.expiresAt > now) return encodeChannelData(channel.number, buf);
+  if (channel) return encodeChannelData(channel.number, buf);
   const tx = randomBytes(12);
   return encodeMessage({
     method: METHOD.DATA,
@@ -161,4 +176,21 @@ function encodePeerToClient(
     ],
     fingerprint: true,
   });
+}
+
+function liveChannel(
+  allocation: Allocation,
+  peer: SocketAddress,
+  now: number
+): ChannelBinding | undefined {
+  const number = allocation.peerToChannel.get(peerKey(peer.address, peer.port));
+  if (number === undefined) return undefined;
+  const channel = allocation.channels.get(number);
+  if (!channel || channel.expiresAt <= now) return undefined;
+  return channel;
+}
+
+function maxPeerPayload(peer: SocketAddress, hasChannel: boolean): number {
+  if (hasChannel) return MAX_CHANNEL_DATA_PAYLOAD;
+  return maxDataIndicationPayload(isIP(peer.address) === 6 ? 6 : 4);
 }

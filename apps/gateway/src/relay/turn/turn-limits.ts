@@ -11,6 +11,15 @@ export const DEFAULT_MAX_ALLOCATIONS_PER_USER = 32;
 export const DEFAULT_MAX_LIFETIME_SEC = 3600;
 export const HOUSEKEEPING_MS = 1_000;
 export const MAX_UDP_PACKET = 65_535;
+export const MAX_PERMISSIONS_PER_ALLOCATION = 32;
+export const MAX_XOR_PEERS_PER_REQUEST = 16;
+export const MAX_CHANNEL_DATA_PAYLOAD = MAX_UDP_PACKET - 4;
+export const UNAUTH_PER_IP_RATE = 20;
+export const UNAUTH_PER_IP_BURST = 40;
+export const UNAUTH_GLOBAL_RATE = 2_000;
+export const UNAUTH_GLOBAL_BURST = 2_000;
+export const UNAUTH_IDLE_MS = 60_000;
+export const UNAUTH_MAX_IPS = 4_096;
 
 export function grantLifetimeSec(requested: number | undefined, maxSec: number): number {
   if (requested === 0) return 0;

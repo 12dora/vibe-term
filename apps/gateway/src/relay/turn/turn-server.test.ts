@@ -26,6 +26,12 @@ import {
   verifyFingerprint,
   verifyIntegrity,
 } from './stun-message';
+import type { TurnContext } from './turn-context';
+import {
+  MAX_PERMISSIONS_PER_ALLOCATION,
+  MAX_XOR_PEERS_PER_REQUEST,
+  UNAUTH_PER_IP_BURST,
+} from './turn-limits';
 import { closeSocket, listenUdp } from './turn-udp';
 
 const USER = 'alice';
@@ -619,5 +625,214 @@ describe('nonce rotation, expiry, rate limit, garbage', () => {
     const msg = await recvStun(client.inbox);
     expect(msg.class).toBe(CLASS.SUCCESS);
     expect(verifyFingerprint(msg)).toBe(true);
+  });
+});
+
+function serverCtx(server: TurnServer): TurnContext {
+  return (server as unknown as { ctx: TurnContext }).ctx;
+}
+
+function bindingRequest(): Buffer {
+  return encodeMessage({
+    method: METHOD.BINDING,
+    class: CLASS.REQUEST,
+    fingerprint: true,
+  });
+}
+
+async function permitPeers(
+  client: UdpClient,
+  port: number,
+  nonce: string,
+  peers: Array<{ address: string; port: number }>
+): Promise<StunMessage> {
+  const tx = randomBytes(12);
+  client.send(
+    authed(
+      METHOD.CREATE_PERMISSION,
+      nonce,
+      peers.map((peer) => addressAttribute(ATTR.XOR_PEER_ADDRESS, peer, tx)),
+      tx
+    ),
+    port
+  );
+  return recvStun(client.inbox);
+}
+
+describe('oversized peer datagrams', () => {
+  test('65507-byte datagram without a channel is dropped; Binding still answers', async () => {
+    const { server, port } = await boot();
+    const client = await openClient();
+    const peer = await openClient();
+    const { nonce } = await allocate(client, port);
+    expect((await permitPeers(client, port, nonce, [peer])).class).toBe(CLASS.SUCCESS);
+    const allocation = serverCtx(server).table.getByClient({
+      address: client.address,
+      port: client.port,
+    });
+    expect(allocation).toBeDefined();
+    allocation?.socket.emit('message', Buffer.alloc(65_507, 3), {
+      address: peer.address,
+      family: 'IPv4',
+      port: peer.port,
+      size: 65_507,
+    });
+    expect(server.snapshot().droppedOversized).toBe(1);
+    expect(server.snapshot().bytesRelayedIn).toBe(0);
+    client.send(bindingRequest(), port);
+    const msg = await recvStun(client.inbox);
+    expect(msg.class).toBe(CLASS.SUCCESS);
+    expect(verifyFingerprint(msg)).toBe(true);
+  });
+
+  test('65507-byte datagram with a channel does not crash; Binding still answers', async () => {
+    const { server, port } = await boot();
+    const client = await openClient();
+    const peer = await openClient();
+    const { nonce } = await allocate(client, port);
+    const tx = randomBytes(12);
+    client.send(
+      authed(
+        METHOD.CHANNEL_BIND,
+        nonce,
+        [
+          addressAttribute(ATTR.XOR_PEER_ADDRESS, { address: peer.address, port: peer.port }, tx),
+          channelNumberAttribute(0x4008),
+        ],
+        tx
+      ),
+      port
+    );
+    expect((await recvStun(client.inbox)).class).toBe(CLASS.SUCCESS);
+    const allocation = serverCtx(server).table.getByClient({
+      address: client.address,
+      port: client.port,
+    });
+    allocation?.socket.emit('message', Buffer.alloc(65_507, 4), {
+      address: peer.address,
+      family: 'IPv4',
+      port: peer.port,
+      size: 65_507,
+    });
+    allocation?.socket.emit('message', Buffer.alloc(65_532, 5), {
+      address: peer.address,
+      family: 'IPv4',
+      port: peer.port,
+      size: 65_532,
+    });
+    expect(server.snapshot().droppedOversized ?? 0).toBeGreaterThanOrEqual(1);
+    client.send(bindingRequest(), port);
+    expect((await recvStun(client.inbox)).class).toBe(CLASS.SUCCESS);
+    expect(server.snapshot().listening).toBe(true);
+  });
+});
+
+describe('permission caps', () => {
+  test('17 XOR-PEER-ADDRESS in one CreatePermission is 400', async () => {
+    const { server, port } = await boot();
+    const client = await openClient();
+    const { nonce } = await allocate(client, port);
+    const peers = Array.from({ length: MAX_XOR_PEERS_PER_REQUEST + 1 }, (_, i) => ({
+      address: '203.0.113.1',
+      port: 40_000 + i,
+    }));
+    expect(errorCodeOf(await permitPeers(client, port, nonce, peers))).toBe(400);
+    expect(server.snapshot().permissions).toBe(0);
+  });
+
+  test('32 permissions per allocation; excess is 400; existing still refresh', async () => {
+    const { server, port, advance } = await boot();
+    const client = await openClient();
+    const { nonce } = await allocate(client, port);
+    const batch = (from: number, count: number) =>
+      Array.from({ length: count }, (_, i) => ({
+        address: '203.0.113.2',
+        port: 41_000 + from + i,
+      }));
+    expect((await permitPeers(client, port, nonce, batch(0, 16))).class).toBe(CLASS.SUCCESS);
+    expect((await permitPeers(client, port, nonce, batch(16, 16))).class).toBe(CLASS.SUCCESS);
+    expect(server.snapshot().permissions).toBe(MAX_PERMISSIONS_PER_ALLOCATION);
+    expect(errorCodeOf(await permitPeers(client, port, nonce, batch(32, 1)))).toBe(400);
+    expect(server.snapshot().permissions).toBe(MAX_PERMISSIONS_PER_ALLOCATION);
+    expect((await permitPeers(client, port, nonce, batch(0, 16))).class).toBe(CLASS.SUCCESS);
+    expect(server.snapshot().permissions).toBe(MAX_PERMISSIONS_PER_ALLOCATION);
+    const tx = randomBytes(12);
+    client.send(
+      authed(
+        METHOD.CHANNEL_BIND,
+        nonce,
+        [
+          addressAttribute(ATTR.XOR_PEER_ADDRESS, { address: '203.0.113.9', port: 9 }, tx),
+          channelNumberAttribute(0x4010),
+        ],
+        tx
+      ),
+      port
+    );
+    expect(errorCodeOf(await recvStun(client.inbox))).toBe(400);
+    advance(200_000);
+    expect((await permitPeers(client, port, nonce, batch(0, 1))).class).toBe(CLASS.SUCCESS);
+    advance(150_000);
+    expect(server.snapshot().permissions).toBe(1);
+  });
+});
+
+describe('unauthenticated response rate limit', () => {
+  test('Binding success is token-bucketed per source IP', async () => {
+    const { server, port, advance } = await boot();
+    const client = await openClient();
+    for (let i = 0; i < UNAUTH_PER_IP_BURST; i++) client.send(bindingRequest(), port);
+    for (let i = 0; i < UNAUTH_PER_IP_BURST; i++) {
+      expect((await recvStun(client.inbox)).class).toBe(CLASS.SUCCESS);
+    }
+    client.send(bindingRequest(), port);
+    await expect(client.inbox.take(200)).rejects.toThrow('udp timeout');
+    expect(server.snapshot().droppedUnauthRateLimit).toBe(1);
+    advance(1_000);
+    client.send(bindingRequest(), port);
+    expect((await recvStun(client.inbox)).class).toBe(CLASS.SUCCESS);
+  });
+
+  test('401 challenges share the unauth bucket; Send indications are not limited', async () => {
+    const { server, port } = await boot();
+    const client = await openClient();
+    const peer = await openClient();
+    const { nonce } = await allocate(client, port);
+    expect((await permitPeers(client, port, nonce, [peer])).class).toBe(CLASS.SUCCESS);
+    for (let i = 0; i < UNAUTH_PER_IP_BURST - 1; i++) client.send(bindingRequest(), port);
+    for (let i = 0; i < UNAUTH_PER_IP_BURST - 1; i++) {
+      expect((await recvStun(client.inbox)).class).toBe(CLASS.SUCCESS);
+    }
+    client.send(
+      encodeMessage({
+        method: METHOD.ALLOCATE,
+        class: CLASS.REQUEST,
+        attributes: [requestedTransportAttribute()],
+        fingerprint: true,
+      }),
+      port
+    );
+    await expect(client.inbox.take(200)).rejects.toThrow('udp timeout');
+    expect(server.snapshot().droppedUnauthRateLimit ?? 0).toBeGreaterThanOrEqual(1);
+    const sendTx = randomBytes(12);
+    client.send(
+      encodeMessage({
+        method: METHOD.SEND,
+        class: CLASS.INDICATION,
+        transactionId: sendTx,
+        attributes: [
+          addressAttribute(
+            ATTR.XOR_PEER_ADDRESS,
+            { address: peer.address, port: peer.port },
+            sendTx
+          ),
+          { type: ATTR.DATA, value: Buffer.from('still-ok') },
+        ],
+        fingerprint: true,
+      }),
+      port
+    );
+    const incoming = await peer.inbox.take();
+    expect(incoming.msg.equals(Buffer.from('still-ok'))).toBe(true);
   });
 });

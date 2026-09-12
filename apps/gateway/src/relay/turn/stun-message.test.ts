@@ -14,6 +14,7 @@ import {
   getAttribute,
   isChannelData,
   longTermKey,
+  maxDataIndicationPayload,
   textAttribute,
   verifyFingerprint,
   verifyIntegrity,
@@ -89,4 +90,22 @@ test('ChannelData round-trip and error-code encode', () => {
   expect(decodeChannelData(packed)).toEqual({ channel: 0x4001, data: Buffer.from('hi') });
   const err = errorAttribute(438, 'Stale Nonce');
   expect(decodeErrorCode(err.value)).toEqual({ code: 438, reason: 'Stale Nonce' });
+});
+
+test('Data indication max payload encodes within 65535 bytes', () => {
+  const tx = Buffer.alloc(12, 1);
+  const max = maxDataIndicationPayload(4);
+  const encoded = encodeMessage({
+    method: METHOD.DATA,
+    class: CLASS.INDICATION,
+    transactionId: tx,
+    attributes: [
+      addressAttribute(ATTR.XOR_PEER_ADDRESS, { address: '203.0.113.1', port: 9 }, tx),
+      { type: ATTR.DATA, value: Buffer.alloc(max) },
+    ],
+    fingerprint: true,
+  });
+  expect(encoded.length).toBeLessThanOrEqual(65535);
+  expect(maxDataIndicationPayload(4)).toBe(65488);
+  expect(encodeChannelData(0x4000, Buffer.alloc(65531)).length).toBe(65535);
 });

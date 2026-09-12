@@ -1,6 +1,7 @@
 import type { AllocationTable } from './allocation-table';
 import type { TurnCredentialLookup, TurnServerStats } from './index';
 import type { NonceStore } from './turn-auth';
+import type { UnauthResponseLimiter } from './turn-unauth-limit';
 
 export type SocketAddress = { address: string; port: number };
 
@@ -23,6 +24,8 @@ export type ResolvedTurnOptions = {
 export type MutableStats = TurnServerStats & {
   droppedNoPermission: number;
   droppedRateLimit: number;
+  droppedOversized: number;
+  droppedUnauthRateLimit: number;
 };
 
 export type TurnContext = {
@@ -30,6 +33,7 @@ export type TurnContext = {
   stats: MutableStats;
   table: AllocationTable;
   nonce: NonceStore;
+  unauthLimit: UnauthResponseLimiter;
   denied: (address: string) => boolean;
   send: (buf: Buffer, addr: SocketAddress) => void;
 };

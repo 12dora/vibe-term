@@ -86,6 +86,10 @@ export function sendChallenge(
   addr: SocketAddress,
   code: 401 | 438
 ): void {
+  if (!ctx.unauthLimit.allow(addr.address)) {
+    ctx.stats.droppedUnauthRateLimit++;
+    return;
+  }
   ctx.stats.authFailures++;
   const reason = code === 438 ? 'Stale Nonce' : 'Unauthorized';
   ctx.send(

@@ -13,8 +13,9 @@ import {
   HOUSEKEEPING_MS,
   MAX_UDP_PACKET,
 } from './turn-limits';
-import { handleClientChannelData } from './turn-relay-io';
+import { guardTurnHandler, handleClientChannelData } from './turn-relay-io';
 import { closeSocket, listenUdp } from './turn-udp';
+import { UnauthResponseLimiter } from './turn-unauth-limit';
 
 class TurnServerImpl implements TurnServer {
   private control: dgram.Socket | null = null;
@@ -30,6 +31,7 @@ class TurnServerImpl implements TurnServer {
       stats,
       table: new AllocationTable(resolved),
       nonce: new NonceStore(resolved.now),
+      unauthLimit: new UnauthResponseLimiter(resolved.now),
       denied: createPeerPolicy(resolved.deniedPeerCidrs),
       send: (buf, addr) => {
         this.control?.send(buf, addr.port, addr.address);
@@ -71,7 +73,9 @@ class TurnServerImpl implements TurnServer {
 
   private attachControl(socket: dgram.Socket): void {
     this.control = socket;
-    socket.on('message', (buf, rinfo) => this.onMessage(buf, rinfo));
+    socket.on('message', (buf, rinfo) => {
+      guardTurnHandler(this.ctx, () => this.onMessage(buf, rinfo));
+    });
     socket.on('error', (err) => this.ctx.options.log(`turn: control ${err.message}`));
     this.started = true;
     const port = socket.address().port;
@@ -84,12 +88,7 @@ class TurnServerImpl implements TurnServer {
   }
 
   private onMessage(buf: Buffer, rinfo: dgram.RemoteInfo): void {
-    try {
-      this.dispatchDatagram(buf, { address: rinfo.address, port: rinfo.port });
-    } catch (err) {
-      const text = err instanceof Error ? err.message : String(err);
-      this.ctx.options.log(`turn: drop ${text}`);
-    }
+    this.dispatchDatagram(buf, { address: rinfo.address, port: rinfo.port });
   }
 
   private dispatchDatagram(buf: Buffer, addr: SocketAddress): void {
@@ -143,6 +142,8 @@ function emptyStats(port: number, externalIp: string): MutableStats {
     startedAt: null,
     droppedNoPermission: 0,
     droppedRateLimit: 0,
+    droppedOversized: 0,
+    droppedUnauthRateLimit: 0,
   };
 }
 

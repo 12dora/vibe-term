@@ -303,11 +303,18 @@ export function isChannelData(data: Uint8Array): boolean {
 
 export function encodeChannelData(channel: number, data: Uint8Array): Buffer {
   if (channel < 0x4000 || channel > 0x7fff) throw new RangeError('Invalid TURN channel');
+  if (data.length > 65535) throw new RangeError('ChannelData payload too large');
   const result = Buffer.alloc(4 + data.length);
   result.writeUInt16BE(channel, 0);
   result.writeUInt16BE(data.length, 2);
   result.set(data, 4);
   return result;
+}
+
+export function maxDataIndicationPayload(family: 4 | 6 = 4): number {
+  const xorAttr = family === 4 ? 12 : 24;
+  const overhead = 20 + xorAttr + 4 + 8;
+  return (65535 - overhead) & ~3;
 }
 
 export function decodeChannelData(data: Uint8Array): { channel: number; data: Buffer } | null {

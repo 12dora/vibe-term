@@ -1,7 +1,11 @@
 import type dgram from 'node:dgram';
 import { normalizePeerAddress } from './denied-peers';
 import type { SocketAddress } from './turn-context';
-import { CHANNEL_LIFETIME_MS, PERMISSION_LIFETIME_MS } from './turn-limits';
+import {
+  CHANNEL_LIFETIME_MS,
+  MAX_PERMISSIONS_PER_ALLOCATION,
+  PERMISSION_LIFETIME_MS,
+} from './turn-limits';
 import { closeSocket, tryBindUdp } from './turn-udp';
 
 export type Permission = {
@@ -156,13 +160,20 @@ export class AllocationTable {
     return allocation;
   }
 
-  installPermission(allocation: Allocation, address: string, port: number, now: number): void {
+  installPermission(allocation: Allocation, address: string, port: number, now: number): boolean {
     const key = peerKey(address, port);
+    if (
+      !allocation.permissions.has(key) &&
+      allocation.permissions.size >= MAX_PERMISSIONS_PER_ALLOCATION
+    ) {
+      return false;
+    }
     allocation.permissions.set(key, {
       address,
       port,
       expiresAt: now + PERMISSION_LIFETIME_MS,
     });
+    return true;
   }
 
   bindChannel(
@@ -171,12 +182,18 @@ export class AllocationTable {
     address: string,
     port: number,
     now: number
-  ): 'ok' | 'conflict' {
+  ): 'ok' | 'conflict' | 'full' {
     const key = peerKey(address, port);
     const existing = allocation.channels.get(number);
     if (existing && existing.peerKey !== key) return 'conflict';
     const bound = allocation.peerToChannel.get(key);
     if (bound !== undefined && bound !== number) return 'conflict';
+    if (
+      !allocation.permissions.has(key) &&
+      allocation.permissions.size >= MAX_PERMISSIONS_PER_ALLOCATION
+    ) {
+      return 'full';
+    }
     allocation.channels.set(number, {
       number,
       address,
