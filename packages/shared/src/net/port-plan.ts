@@ -3,9 +3,13 @@
 
 export const DEFAULT_GATEWAY_PORT = 9883;
 export const DEFAULT_PEER_PORT = 39001;
+export const UNIFIED_UDP_RANGE = { begin: 40000, end: 40099 } as const;
 export const DEFAULT_RTC_PORT_RANGE = { begin: 40000, end: 40099 } as const;
-export const DEFAULT_TURN_PORT = 3478;
-export const DEFAULT_TURN_RELAY_PORT_RANGE = { begin: 49160, end: 49259 } as const;
+export const DEFAULT_TURN_PORT = 40000;
+export const DEFAULT_TURN_RELAY_PORT_RANGE = { begin: 40001, end: 40049 } as const;
+export const DEFAULT_RELAY_HOST_RTC_PORT_RANGE = { begin: 40050, end: 40099 } as const;
+export const LEGACY_TURN_PORT = 3478;
+export const LEGACY_TURN_RELAY_PORT_RANGE = { begin: 49160, end: 49259 } as const;
 export const DEFAULT_TLS_PORT = 9443;
 export const DEFAULT_PUBLIC_HTTPS_PORT = 443;
 
@@ -67,10 +71,22 @@ function peerSpec(live: PortPlanLive, required: boolean): PortSpec {
   };
 }
 
-function rtcSpec(live: PortPlanLive, required: boolean): PortSpec {
+/** `'relay,node'` / `'relay'` → true（逗号分隔，trim 每段）。 */
+export function rolesIncludeRelay(roles: string): boolean {
+  return roles.split(',').some((part) => part.trim() === 'relay');
+}
+
+/** TURN 角色 ICE 用 40050-40099，其余角色用整段 40000-40099。 */
+export function defaultRtcPortRange(role: PortRole): PortRange {
+  return copyRange(
+    TURN_ROLES.has(role) ? DEFAULT_RELAY_HOST_RTC_PORT_RANGE : DEFAULT_RTC_PORT_RANGE
+  );
+}
+
+function rtcSpec(live: PortPlanLive, required: boolean, role: PortRole): PortSpec {
   return {
     proto: 'udp',
-    range: copyRange(live.rtcRange ?? DEFAULT_RTC_PORT_RANGE),
+    range: copyRange(live.rtcRange ?? defaultRtcPortRange(role)),
     purpose: 'rtc-ice',
     requiredFor: 'wan-direct',
     envKey: 'VIBETERM_RTC_PORT_RANGE',
@@ -117,7 +133,7 @@ export function portPlanForRole(role: PortRole, live: PortPlanLive): PortSpec[] 
   const nodeRequired = role !== 'standalone';
   if (PUBLIC_HTTPS_ROLES.has(role)) specs.push(publicHttpsSpec(live));
   if (NODE_ROLES.has(role)) {
-    specs.push(peerSpec(live, nodeRequired), rtcSpec(live, nodeRequired));
+    specs.push(peerSpec(live, nodeRequired), rtcSpec(live, nodeRequired, role));
   }
   // 内置 TURN 关闭（turnPort=0）时不列 TURN 口，否则防火墙提示会带上 0/udp 这种无效规则
   if (TURN_ROLES.has(role) && live.turnPort !== 0)

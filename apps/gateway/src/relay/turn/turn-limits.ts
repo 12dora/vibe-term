@@ -8,6 +8,23 @@ export const CHANNEL_MIN = 0x4000;
 export const CHANNEL_MAX = 0x7fff;
 export const DEFAULT_MAX_ALLOCATIONS = 64;
 export const DEFAULT_MAX_ALLOCATIONS_PER_USER = 32;
+
+export function turnRelayRangeSize(range: { begin: number; end: number }): number {
+  return range.end - range.begin + 1;
+}
+
+/** 默认配额封顶到中继段端口数，避免 64 配额打 49 口时提前 508。显式传入的配额不改。 */
+export function clampTurnAllocations(
+  range: { begin: number; end: number },
+  caps: { maxAllocations?: number; maxAllocationsPerUser?: number } = {}
+): { maxAllocations: number; maxAllocationsPerUser: number } {
+  const size = turnRelayRangeSize(range);
+  return {
+    maxAllocations: caps.maxAllocations ?? Math.min(DEFAULT_MAX_ALLOCATIONS, size),
+    maxAllocationsPerUser:
+      caps.maxAllocationsPerUser ?? Math.min(DEFAULT_MAX_ALLOCATIONS_PER_USER, size),
+  };
+}
 export const DEFAULT_MAX_LIFETIME_SEC = 3600;
 export const HOUSEKEEPING_MS = 1_000;
 export const MAX_UDP_PACKET = 65_535;

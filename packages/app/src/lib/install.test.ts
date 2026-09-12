@@ -43,6 +43,31 @@ describe('buildAppEnvValues', () => {
     expect(values.VIBETERM_HUB_PUBLIC_URL).toBe('https://hub.example');
     expect(values.VIBETERM_STUN_SERVERS).toBeUndefined();
     expect(values.VIBETERM_DIRECT_ENABLED).toBe('true');
+    expect(values.VIBETERM_RTC_PORT_RANGE).toBe('40000-40099');
+    expect(values.VIBETERM_TURN_PORT).toBeUndefined();
+  });
+
+  test('writes role-aware RTC/TURN port keys', () => {
+    const base = {
+      host: '127.0.0.1',
+      port: 9883,
+      databasePath: '/tmp/vibeterm.db',
+      masterKey: 'key',
+    };
+    const node = buildAppEnvValues({ ...base, role: 'node' });
+    expect(node.VIBETERM_RTC_PORT_RANGE).toBe('40000-40099');
+    expect(node.VIBETERM_TURN_PORT).toBeUndefined();
+    expect(node.VIBETERM_TURN_RELAY_PORT_RANGE).toBeUndefined();
+
+    const relay = buildAppEnvValues({ ...base, role: 'relay' });
+    expect(relay.VIBETERM_RTC_PORT_RANGE).toBe('40050-40099');
+    expect(relay.VIBETERM_TURN_PORT).toBe('40000');
+    expect(relay.VIBETERM_TURN_RELAY_PORT_RANGE).toBe('40001-40049');
+
+    const relayNode = buildAppEnvValues({ ...base, role: 'relay,node' });
+    expect(relayNode.VIBETERM_RTC_PORT_RANGE).toBe('40050-40099');
+    expect(relayNode.VIBETERM_TURN_PORT).toBe('40000');
+    expect(relayNode.VIBETERM_TURN_RELAY_PORT_RANGE).toBe('40001-40049');
   });
 
   test('omits VIBETERM_STUN_SERVERS unless an explicit override is passed', () => {

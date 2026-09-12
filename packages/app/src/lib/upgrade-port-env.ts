@@ -4,8 +4,14 @@ import {
   DEFAULT_RTC_PORT_RANGE,
   DEFAULT_TURN_PORT,
   DEFAULT_TURN_RELAY_PORT_RANGE,
+  LEGACY_TURN_PORT,
+  LEGACY_TURN_RELAY_PORT_RANGE,
   type PortRange,
+  type PortRole,
+  defaultRtcPortRange,
+  rolesIncludeRelay,
 } from '../../../shared/src/net/port-plan';
+import { isVibeTermRoleName } from '../../../shared/src/roles';
 import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from './env-file';
 import { ensureDir, pathExists, writeText } from './fs-utils';
@@ -39,6 +45,15 @@ export function takeWrittenPortEnvKeys(): string[] {
   return keys;
 }
 
+export function printUdpSegmentUnifiedNotice(
+  writtenKeys: string[],
+  log: (message: string) => void
+): boolean {
+  if (writtenKeys.length === 0) return false;
+  log(t('upgrade.udpSegmentUnified'));
+  return true;
+}
+
 export function printRtcPortRangeFixedNotice(
   writtenKeys: string[],
   log: (message: string) => void
@@ -56,22 +71,71 @@ function isBlank(value: string | undefined): boolean {
   return value === undefined || value.trim() === '';
 }
 
-function rolesIncludeRelay(values: Record<string, string>): boolean {
-  return (values.VIBETERM_ROLES ?? '').split(',').some((part) => part.trim() === 'relay');
+function trimmed(value: string | undefined): string {
+  return value?.trim() ?? '';
+}
+
+function isOffOrZero(value: string | undefined): boolean {
+  const text = trimmed(value).toLowerCase();
+  return text === '0' || text === 'off';
+}
+
+function portRoleOf(values: Record<string, string>): PortRole {
+  const raw = trimmed(values.VIBETERM_ROLES);
+  return isVibeTermRoleName(raw) ? raw : 'standalone';
+}
+
+function equalsLegacy(value: string | undefined, legacy: string): boolean {
+  return trimmed(value) === legacy;
+}
+
+function plannedRtcRange(values: Record<string, string>, role: PortRole): string | undefined {
+  const next = formatPortRangeValue(defaultRtcPortRange(role));
+  const current = trimmed(values.VIBETERM_RTC_PORT_RANGE);
+  if (current === '') return next;
+  if (
+    rolesIncludeRelay(values.VIBETERM_ROLES ?? '') &&
+    current === formatPortRangeValue(DEFAULT_RTC_PORT_RANGE)
+  ) {
+    return next;
+  }
+  return undefined;
+}
+
+function plannedTurnPort(values: Record<string, string>): string | undefined {
+  if (!rolesIncludeRelay(values.VIBETERM_ROLES ?? '')) return undefined;
+  if (isOffOrZero(values.VIBETERM_TURN_PORT)) return undefined;
+  if (
+    isBlank(values.VIBETERM_TURN_PORT) ||
+    equalsLegacy(values.VIBETERM_TURN_PORT, String(LEGACY_TURN_PORT))
+  ) {
+    return String(DEFAULT_TURN_PORT);
+  }
+  return undefined;
+}
+
+function plannedTurnRelayRange(values: Record<string, string>): string | undefined {
+  if (!rolesIncludeRelay(values.VIBETERM_ROLES ?? '')) return undefined;
+  if (isOffOrZero(values.VIBETERM_TURN_RELAY_PORT_RANGE)) return undefined;
+  const legacy = formatPortRangeValue(LEGACY_TURN_RELAY_PORT_RANGE);
+  if (
+    isBlank(values.VIBETERM_TURN_RELAY_PORT_RANGE) ||
+    equalsLegacy(values.VIBETERM_TURN_RELAY_PORT_RANGE, legacy)
+  ) {
+    return formatPortRangeValue(DEFAULT_TURN_RELAY_PORT_RANGE);
+  }
+  return undefined;
 }
 
 function plannedPortEnvWrites(values: Record<string, string>): Record<string, string> {
   const planned: Record<string, string> = {};
-  if (isBlank(values.VIBETERM_RTC_PORT_RANGE)) {
-    planned.VIBETERM_RTC_PORT_RANGE = formatPortRangeValue(DEFAULT_RTC_PORT_RANGE);
-  }
-  if (!rolesIncludeRelay(values)) return planned;
-  if (isBlank(values.VIBETERM_TURN_PORT)) {
-    planned.VIBETERM_TURN_PORT = String(DEFAULT_TURN_PORT);
-  }
-  if (isBlank(values.VIBETERM_TURN_RELAY_PORT_RANGE)) {
-    planned.VIBETERM_TURN_RELAY_PORT_RANGE = formatPortRangeValue(DEFAULT_TURN_RELAY_PORT_RANGE);
-  }
+  const role = portRoleOf(values);
+  const rtc = plannedRtcRange(values, role);
+  if (rtc !== undefined) planned.VIBETERM_RTC_PORT_RANGE = rtc;
+  const turnPort = plannedTurnPort(values);
+  if (turnPort !== undefined) planned.VIBETERM_TURN_PORT = turnPort;
+  const turnRelay = plannedTurnRelayRange(values);
+  if (turnRelay !== undefined) planned.VIBETERM_TURN_RELAY_PORT_RANGE = turnRelay;
   return planned;
 }
 
@@ -80,7 +144,7 @@ function writtenKeysOf(planned: Record<string, string>): string[] {
 }
 
 /**
- * 升级时把统一 RTC/TURN 默认写入 app.env：缺键（RTC 含空值）才写，已有值不动。
+ * 升级时把统一 UDP 段写入 app.env：空值与恰好等于旧默认才改，自定义 / 0 / off 不动。
  * 可读备份只记相对名；事务级还原走 `backups/<txnId>/app.env`。
  */
 export async function migratePortEnv(envPath: string): Promise<MigratePortEnvResult> {

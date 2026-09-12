@@ -1,6 +1,6 @@
 import dgram from 'node:dgram';
 const host = process.argv[2] ?? '';
-const port = Number(process.argv[3] ?? 3478);
+const port = Number(process.argv[3] ?? 40000);
 if (!host) throw new Error('usage: udp-probe.ts <host> [port]');
 const socket = dgram.createSocket('udp4');
 const request = Buffer.alloc(20);

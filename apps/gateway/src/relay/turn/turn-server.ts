@@ -8,11 +8,10 @@ import { NonceStore } from './turn-auth';
 import type { MutableStats, ResolvedTurnOptions, SocketAddress, TurnContext } from './turn-context';
 import { dispatchStun } from './turn-dispatch';
 import {
-  DEFAULT_MAX_ALLOCATIONS,
-  DEFAULT_MAX_ALLOCATIONS_PER_USER,
   DEFAULT_MAX_LIFETIME_SEC,
   HOUSEKEEPING_MS,
   MAX_UDP_PACKET,
+  clampTurnAllocations,
 } from './turn-limits';
 import { guardTurnHandler, handleClientChannelData } from './turn-relay-io';
 import { closeSocket, listenUdpOrWildcard } from './turn-udp';
@@ -124,6 +123,10 @@ export function createTurnServer(options: TurnServerOptions): TurnServer {
 }
 
 function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
+  const caps = clampTurnAllocations(options.relayPortRange, {
+    maxAllocations: options.maxAllocations,
+    maxAllocationsPerUser: options.maxAllocationsPerUser,
+  });
   return {
     listenHost: options.listenHost ?? 'auto',
     listenPort: options.listenPort,
@@ -131,8 +134,8 @@ function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
     externalIp: options.externalIp,
     realm: options.realm,
     credentials: options.credentials,
-    maxAllocations: options.maxAllocations ?? DEFAULT_MAX_ALLOCATIONS,
-    maxAllocationsPerUser: options.maxAllocationsPerUser ?? DEFAULT_MAX_ALLOCATIONS_PER_USER,
+    maxAllocations: caps.maxAllocations,
+    maxAllocationsPerUser: caps.maxAllocationsPerUser,
     maxLifetimeSec: options.maxLifetimeSec ?? DEFAULT_MAX_LIFETIME_SEC,
     deniedPeerCidrs: options.deniedPeerCidrs ?? DEFAULT_DENIED_PEER_CIDRS,
     bytesPerSecPerAllocation: options.bytesPerSecPerAllocation ?? 0,

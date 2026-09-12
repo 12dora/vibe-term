@@ -23,7 +23,7 @@ describe('relayTurnDoctorCheck', () => {
       level: 'pass',
       message: t('doctor.turn.external'),
     });
-    expect(external?.detail).toContain('UDP 3478');
+    expect(external?.detail).toContain('UDP 40000');
 
     const off = await relayTurnDoctorCheck({
       VIBETERM_ROLES: 'relay,node',
@@ -39,9 +39,9 @@ describe('relayTurnDoctorCheck', () => {
     expect(listening).toMatchObject({
       id: 'turn',
       level: 'pass',
-      message: t('doctor.turn.builtinListening', { port: 3478, bind: '10.0.0.3 (auto)' }),
+      message: t('doctor.turn.builtinListening', { port: 40000, bind: '10.0.0.3 (auto)' }),
     });
-    expect(listening?.detail).toContain('UDP 49160-49259');
+    expect(listening?.detail).toContain('UDP 40001-40049');
 
     const down = await relayTurnDoctorCheck(
       { VIBETERM_ROLES: 'relay' },
@@ -50,7 +50,7 @@ describe('relayTurnDoctorCheck', () => {
     );
     expect(down?.level).toBe('warn');
     expect(down?.message).toBe(
-      t('doctor.turn.builtinNotListening', { port: 3478, bind: '10.0.0.3 (auto)' })
+      t('doctor.turn.builtinNotListening', { port: 40000, bind: '10.0.0.3 (auto)' })
     );
   });
 
@@ -65,9 +65,9 @@ describe('relayTurnDoctorCheck', () => {
       },
       resolve
     );
-    expect(urls).toEqual(['stun:192.0.2.8:3478']);
+    expect(urls).toEqual(['stun:192.0.2.8:40000']);
     expect(check?.message).toBe(
-      t('doctor.turn.builtinListening', { port: 3478, bind: '192.0.2.8' })
+      t('doctor.turn.builtinListening', { port: 40000, bind: '192.0.2.8' })
     );
   });
 
@@ -81,6 +81,6 @@ describe('relayTurnDoctorCheck', () => {
       },
       resolve
     );
-    expect(urls).toEqual(['stun:127.0.0.1:3478']);
+    expect(urls).toEqual(['stun:127.0.0.1:40000']);
   });
 });

@@ -62,13 +62,13 @@ const STATUS = {
   turn: {
     enabled: true,
     source: 'builtin',
-    url: 'turn:relay.example:3478?transport=udp',
-    port: 3478,
+    url: 'turn:relay.example:40000?transport=udp',
+    port: 40000,
     externalIp: '203.0.113.9',
     listening: true,
     allocations: 3,
     error: null,
-    relayPortRange: '49160-49259',
+    relayPortRange: '40001-40049',
   },
 };
 
@@ -114,7 +114,7 @@ describe('relay status / tenants', () => {
     expect(logs).toContain('nodes: 2 online / 4 known');
     expect(logs).toContain('traffic: 2.0 KiB in / 4.0 KiB out');
     expect(logs).toContain(
-      'turn: builtin enabled listening url=turn:relay.example:3478?transport=udp port=3478 external_ip=203.0.113.9 relay_range=49160-49259 allocations=3'
+      'turn: builtin enabled listening url=turn:relay.example:40000?transport=udp port=40000 external_ip=203.0.113.9 relay_range=40001-40049 allocations=3'
     );
   });
 

@@ -58,7 +58,7 @@ services:
     network_mode: host
     restart: unless-stopped
     command: >
-      --listening-port=3478 --min-port=49160 --max-port=49200
+      --listening-port=40000 --min-port=40001 --max-port=40049
       --external-ip=${VIBETERM_E2E_TURN_EXTERNAL_IP:-${VIBETERM_E2E_HUB_IP:-4.2.2.1}}
       --realm=vibeterm --user=${VIBETERM_E2E_TURN_USERNAME:-vibeterm}:${VIBETERM_E2E_TURN_CREDENTIAL:-vibeterm-e2e}
       --lt-cred-mech --fingerprint --no-tls --no-dtls --no-cli --log-file=stdout

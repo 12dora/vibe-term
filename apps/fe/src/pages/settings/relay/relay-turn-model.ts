@@ -134,7 +134,7 @@ function stateKeyOf(turn: RelayTurnStatus): string {
 
 /**
  * 防火墙提示只在内置 TURN 且两个端口段都知道时出：少一半的提示比没有更糟，
- * 用户会以为只放行 3478 就够了（`relayPortRange` 才是媒体真正走的那一段）。
+ * 用户会以为只放行控制口就够了（`relayPortRange` 才是媒体真正走的那一段）。
  */
 function firewallOf(turn: RelayTurnStatus): RelayTurnFirewallHint | null {
   if (turn.source !== 'builtin' || !turn.enabled) return null;

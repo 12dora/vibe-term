@@ -2,6 +2,13 @@ import { randomBytes } from 'node:crypto';
 import { chmod, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
+import {
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
+  type PortRole,
+  defaultRtcPortRange,
+  rolesIncludeRelay,
+} from '../../../shared/src/net/port-plan';
 import { formatHttpEndpoint } from '../../../shared/src/network';
 import type { InstallMeta } from '../types';
 import { copyDirectory, ensureDir, pathExists, readText, writeTextAtomic } from './fs-utils';
@@ -101,6 +108,19 @@ export function relayEnvDefaults(input?: {
   };
 }
 
+function portEnvDefaults(role?: VibeTermRoleName): Record<string, string> {
+  const resolved: PortRole = role ?? 'standalone';
+  const rtc = defaultRtcPortRange(resolved);
+  const values: Record<string, string> = {
+    VIBETERM_RTC_PORT_RANGE: `${rtc.begin}-${rtc.end}`,
+  };
+  if (rolesIncludeRelay(resolved)) {
+    values.VIBETERM_TURN_PORT = String(DEFAULT_TURN_PORT);
+    values.VIBETERM_TURN_RELAY_PORT_RANGE = `${DEFAULT_TURN_RELAY_PORT_RANGE.begin}-${DEFAULT_TURN_RELAY_PORT_RANGE.end}`;
+  }
+  return values;
+}
+
 export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
   return {
     NODE_ENV: 'production',
@@ -113,6 +133,7 @@ export function buildAppEnvValues(input: AppEnvInput): Record<string, string> {
     VIBETERM_DIRECT_ENABLED: 'true',
     ...hubEnvDefaults(input),
     ...relayEnvDefaults(input),
+    ...portEnvDefaults(input.role),
   };
 }
 

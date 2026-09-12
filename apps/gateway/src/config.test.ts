@@ -305,9 +305,9 @@ describe('parseRtcPortRange', () => {
 });
 
 describe('parseTurnPort', () => {
-  test('defaults to 3478 and treats 0/off as disabled', () => {
-    expect(parseTurnPort(undefined)).toBe(3478);
-    expect(parseTurnPort('')).toBe(3478);
+  test('defaults to 40000 and treats 0/off as disabled', () => {
+    expect(parseTurnPort(undefined)).toBe(40000);
+    expect(parseTurnPort('')).toBe(40000);
     expect(parseTurnPort('0')).toBe(0);
     expect(parseTurnPort('off')).toBe(0);
     expect(parseTurnPort('OFF')).toBe(0);
@@ -321,9 +321,9 @@ describe('parseTurnPort', () => {
 });
 
 describe('parseTurnRelayPortRange', () => {
-  test('defaults to 49160-49259', () => {
-    expect(parseTurnRelayPortRange(undefined)).toEqual({ begin: 49160, end: 49259 });
-    expect(parseTurnRelayPortRange('')).toEqual({ begin: 49160, end: 49259 });
+  test('defaults to 40001-40049', () => {
+    expect(parseTurnRelayPortRange(undefined)).toEqual({ begin: 40001, end: 40049 });
+    expect(parseTurnRelayPortRange('')).toEqual({ begin: 40001, end: 40049 });
     expect(parseTurnRelayPortRange(' 50000 - 50010 ')).toEqual({ begin: 50000, end: 50010 });
   });
 
@@ -416,8 +416,8 @@ describe('config hub/node env', () => {
       VIBETERM_TURN_HOST: undefined,
       VIBETERM_TURN_BIND_HOST: undefined,
     });
-    expect(defaults.turnPort).toBe(3478);
-    expect(defaults.turnRelayPortRange).toEqual({ begin: 49160, end: 49259 });
+    expect(defaults.turnPort).toBe(40000);
+    expect(defaults.turnRelayPortRange).toEqual({ begin: 40001, end: 40049 });
     expect(defaults.turnExternalIp).toBeNull();
     expect(defaults.turnHost).toBeNull();
     expect(defaults.turnBindHost).toBe('auto');

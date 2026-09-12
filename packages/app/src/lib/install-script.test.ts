@@ -208,11 +208,11 @@ describe('install.sh helpers', () => {
     const node = sourceEval('vibeterm_init_role_is_relay --role node');
     expect(node.status).toBe(1);
     const hint = sourceEval(
-      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 3478/udp, 49160-49259/udp"'
+      'vibeterm_print_relay_turn_firewall_hint "Inbound ports: 443/tcp, 40000/udp, 40001-40049/udp"'
     );
     expect(hint.status).toBe(0);
-    expect(hint.stdout).toContain('UDP 3478');
-    expect(hint.stdout).toContain('UDP 49160-49259');
+    expect(hint.stdout).toContain('UDP 40000');
+    expect(hint.stdout).toContain('UDP 40001-40049');
     const custom = sourceEval(
       'vibeterm_print_relay_turn_firewall_hint "443/tcp, 3479/udp, 50000-50099/udp"'
     );

@@ -3,6 +3,7 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
+  DEFAULT_RELAY_HOST_RTC_PORT_RANGE,
   DEFAULT_RTC_PORT_RANGE,
   DEFAULT_TURN_PORT,
   DEFAULT_TURN_RELAY_PORT_RANGE,
@@ -15,13 +16,14 @@ import {
   clearWrittenPortEnvKeys,
   formatPortRangeValue,
   migratePortEnv,
-  printRtcPortRangeFixedNotice,
+  printUdpSegmentUnifiedNotice,
   takeWrittenPortEnvKeys,
 } from './upgrade-port-env';
 import { backupEnvFile, restoreEnvFile } from './upgrade-stun-env';
 
 const tempDirs: string[] = [];
 const RTC_DEFAULT = formatPortRangeValue(DEFAULT_RTC_PORT_RANGE);
+const RELAY_RTC_DEFAULT = formatPortRangeValue(DEFAULT_RELAY_HOST_RTC_PORT_RANGE);
 const TURN_RELAY_DEFAULT = formatPortRangeValue(DEFAULT_TURN_RELAY_PORT_RANGE);
 
 afterEach(async () => {
@@ -80,7 +82,16 @@ describe('migratePortEnv', () => {
     expect((await readEnvFile(envPath)).VIBETERM_RTC_PORT_RANGE).toBe('31000-31099');
   });
 
-  test('relay role missing TURN keys writes 3478 and the relay range', async () => {
+  test('non-relay 40000-40099 is left untouched', async () => {
+    const { dir, envPath } = await tempEnv(
+      `GATEWAY_PORT=9883\nVIBETERM_ROLES=node\nVIBETERM_RTC_PORT_RANGE=${RTC_DEFAULT}\n`
+    );
+    expect(await migratePortEnv(envPath)).toEqual({ written: [] });
+    expect(await portBackups(dir)).toEqual([]);
+    expect((await readEnvFile(envPath)).VIBETERM_RTC_PORT_RANGE).toBe(RTC_DEFAULT);
+  });
+
+  test('relay role missing TURN keys writes 40000 and the relay range', async () => {
     const { dir, envPath } = await tempEnv(
       'GATEWAY_PORT=9883\nVIBETERM_ROLES=relay\nVIBETERM_RTC_PORT_RANGE=31000-31099\n'
     );
@@ -93,7 +104,7 @@ describe('migratePortEnv', () => {
     expect(await portBackups(dir)).toHaveLength(1);
   });
 
-  test('relay,node missing RTC and TURN writes all three keys', async () => {
+  test('relay,node missing RTC and TURN writes the split ICE slice and TURN keys', async () => {
     const { envPath } = await tempEnv('VIBETERM_ROLES=relay,node\nGATEWAY_PORT=9883\n');
     const result = await migratePortEnv(envPath);
     expect(result.written).toEqual([
@@ -102,9 +113,43 @@ describe('migratePortEnv', () => {
       'VIBETERM_TURN_RELAY_PORT_RANGE',
     ]);
     const env = await readEnvFile(envPath);
-    expect(env.VIBETERM_RTC_PORT_RANGE).toBe(RTC_DEFAULT);
+    expect(env.VIBETERM_RTC_PORT_RANGE).toBe(RELAY_RTC_DEFAULT);
     expect(env.VIBETERM_TURN_PORT).toBe(String(DEFAULT_TURN_PORT));
     expect(env.VIBETERM_TURN_RELAY_PORT_RANGE).toBe(TURN_RELAY_DEFAULT);
+  });
+
+  test('relay host 40000-40099 is rewritten to the ICE slice', async () => {
+    const { envPath } = await tempEnv(
+      [
+        'VIBETERM_ROLES=relay,node',
+        `VIBETERM_RTC_PORT_RANGE= ${RTC_DEFAULT} `,
+        `VIBETERM_TURN_PORT=${DEFAULT_TURN_PORT}`,
+        `VIBETERM_TURN_RELAY_PORT_RANGE=${TURN_RELAY_DEFAULT}`,
+        '',
+      ].join('\n')
+    );
+    const result = await migratePortEnv(envPath);
+    expect(result.written).toEqual(['VIBETERM_RTC_PORT_RANGE']);
+    expect((await readEnvFile(envPath)).VIBETERM_RTC_PORT_RANGE).toBe(RELAY_RTC_DEFAULT);
+  });
+
+  test('legacy TURN 3478 / 49160-49259 on a relay are rewritten', async () => {
+    const { dir, envPath } = await tempEnv(
+      [
+        'VIBETERM_ROLES=relay',
+        'VIBETERM_RTC_PORT_RANGE=31000-31099',
+        'VIBETERM_TURN_PORT= 3478 ',
+        'VIBETERM_TURN_RELAY_PORT_RANGE=49160-49259',
+        '',
+      ].join('\n')
+    );
+    const result = await migratePortEnv(envPath);
+    expect(result.written).toEqual(['VIBETERM_TURN_PORT', 'VIBETERM_TURN_RELAY_PORT_RANGE']);
+    const env = await readEnvFile(envPath);
+    expect(env.VIBETERM_TURN_PORT).toBe(String(DEFAULT_TURN_PORT));
+    expect(env.VIBETERM_TURN_RELAY_PORT_RANGE).toBe(TURN_RELAY_DEFAULT);
+    expect(env.VIBETERM_RTC_PORT_RANGE).toBe('31000-31099');
+    expect(await portBackups(dir)).toHaveLength(1);
   });
 
   test('keeps custom TURN keys on a relay and does not rewrite them', async () => {
@@ -125,6 +170,23 @@ describe('migratePortEnv', () => {
     expect(env.VIBETERM_RTC_PORT_RANGE).toBe('31000-31099');
   });
 
+  test('0/off TURN keys are never rewritten', async () => {
+    for (const value of ['0', 'off', 'OFF']) {
+      const { dir, envPath } = await tempEnv(
+        [
+          'VIBETERM_ROLES=relay',
+          'VIBETERM_RTC_PORT_RANGE=31000-31099',
+          `VIBETERM_TURN_PORT=${value}`,
+          'VIBETERM_TURN_RELAY_PORT_RANGE=50000-50099',
+          '',
+        ].join('\n')
+      );
+      expect(await migratePortEnv(envPath)).toEqual({ written: [] });
+      expect(await portBackups(dir)).toEqual([]);
+      expect((await readEnvFile(envPath)).VIBETERM_TURN_PORT).toBe(value);
+    }
+  });
+
   test('non-relay roles do not receive TURN keys', async () => {
     for (const roles of ['standalone', 'node', 'hub,node']) {
       const { dir, envPath } = await tempEnv(`GATEWAY_PORT=9883\nVIBETERM_ROLES=${roles}\n`);
@@ -137,7 +199,7 @@ describe('migratePortEnv', () => {
     }
   });
 
-  test('writes only the missing TURN key when the other is already set', async () => {
+  test('rewrites a legacy TURN port and fills the missing relay range', async () => {
     const { envPath } = await tempEnv(
       [
         'VIBETERM_ROLES=relay',
@@ -147,9 +209,9 @@ describe('migratePortEnv', () => {
       ].join('\n')
     );
     const result = await migratePortEnv(envPath);
-    expect(result.written).toEqual(['VIBETERM_TURN_RELAY_PORT_RANGE']);
+    expect(result.written).toEqual(['VIBETERM_TURN_PORT', 'VIBETERM_TURN_RELAY_PORT_RANGE']);
     const env = await readEnvFile(envPath);
-    expect(env.VIBETERM_TURN_PORT).toBe('3478');
+    expect(env.VIBETERM_TURN_PORT).toBe(String(DEFAULT_TURN_PORT));
     expect(env.VIBETERM_TURN_RELAY_PORT_RANGE).toBe(TURN_RELAY_DEFAULT);
   });
 
@@ -157,6 +219,20 @@ describe('migratePortEnv', () => {
     const dir = await mkdtemp(join(tmpdir(), 'vibeterm-port-env-missing-'));
     tempDirs.push(dir);
     expect(await migratePortEnv(join(dir, 'app.env'))).toEqual({ written: [] });
+    expect(await portBackups(dir)).toEqual([]);
+  });
+
+  test('relay already on the unified segment is a no-op', async () => {
+    const { dir, envPath } = await tempEnv(
+      [
+        'VIBETERM_ROLES=relay,node',
+        `VIBETERM_RTC_PORT_RANGE=${RELAY_RTC_DEFAULT}`,
+        `VIBETERM_TURN_PORT=${DEFAULT_TURN_PORT}`,
+        `VIBETERM_TURN_RELAY_PORT_RANGE=${TURN_RELAY_DEFAULT}`,
+        '',
+      ].join('\n')
+    );
+    expect(await migratePortEnv(envPath)).toEqual({ written: [] });
     expect(await portBackups(dir)).toEqual([]);
   });
 
@@ -213,9 +289,9 @@ describe('applyPortPlanEnvMigration', () => {
     );
     const notices: string[] = [];
     expect(
-      printRtcPortRangeFixedNotice(takeWrittenPortEnvKeys(), (line) => notices.push(line))
+      printUdpSegmentUnifiedNotice(takeWrittenPortEnvKeys(), (line) => notices.push(line))
     ).toBe(true);
-    expect(notices).toEqual([t('upgrade.rtcPortRangeFixed', { range: RTC_DEFAULT })]);
+    expect(notices).toEqual([t('upgrade.udpSegmentUnified')]);
     expect(takeWrittenPortEnvKeys()).toEqual([]);
   });
 
@@ -229,7 +305,7 @@ describe('applyPortPlanEnvMigration', () => {
     expect(takeWrittenPortEnvKeys()).toEqual([]);
   });
 
-  test('does not print the RTC notice when only TURN keys were written', async () => {
+  test('prints the unified notice when only TURN keys were written', async () => {
     setLang('en');
     const { dir } = await tempEnv('VIBETERM_ROLES=relay\nVIBETERM_RTC_PORT_RANGE=31000-31099\n');
     const logs: string[] = [];
@@ -239,24 +315,22 @@ describe('applyPortPlanEnvMigration', () => {
     expect(logs[0]).toContain('VIBETERM_TURN_PORT');
     const notices: string[] = [];
     expect(
-      printRtcPortRangeFixedNotice(takeWrittenPortEnvKeys(), (line) => notices.push(line))
-    ).toBe(false);
-    expect(notices).toEqual([]);
+      printUdpSegmentUnifiedNotice(takeWrittenPortEnvKeys(), (line) => notices.push(line))
+    ).toBe(true);
+    expect(notices).toEqual([t('upgrade.udpSegmentUnified')]);
   });
 
   test('zh-CN notice is terse and avoids 你/您', () => {
     setLang('zh-CN');
-    expect(t('upgrade.rtcPortRangeFixed', { range: RTC_DEFAULT })).toBe(
-      `已固定 P2P 端口段 ${RTC_DEFAULT}/udp，请在防火墙放行`
-    );
-    expect(t('upgrade.rtcPortRangeFixed', { range: RTC_DEFAULT })).not.toContain('你');
-    expect(t('upgrade.rtcPortRangeFixed', { range: RTC_DEFAULT })).not.toContain('您');
+    expect(t('upgrade.udpSegmentUnified')).toBe('UDP 已统一为 40000-40099，请在防火墙放行该段');
+    expect(t('upgrade.udpSegmentUnified')).not.toContain('你');
+    expect(t('upgrade.udpSegmentUnified')).not.toContain('您');
     expect(
       t('upgrade.portEnvMigrated', { keys: 'VIBETERM_RTC_PORT_RANGE', backup: 'x' })
     ).not.toContain('你');
     setLang('en');
-    expect(t('upgrade.rtcPortRangeFixed', { range: RTC_DEFAULT })).toBe(
-      `P2P port range fixed to ${RTC_DEFAULT}/udp — allow it in the firewall`
+    expect(t('upgrade.udpSegmentUnified')).toBe(
+      'UDP unified to 40000-40099 — allow this range in the firewall'
     );
   });
 });

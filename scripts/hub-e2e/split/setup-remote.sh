@@ -86,7 +86,7 @@ log "compose down (vibeterm-split only)"
 log "compose up hub"
 "${COMPOSE[@]}" up -d hub
 if [[ -n "${VIBETERM_E2E_TURN_URL:-}" ]]; then
-  log "compose up turn (coturn, host network :3478 + 49160-49200/udp)"
+  log "compose up turn (coturn, host network :40000 + 40001-40049/udp)"
   "${COMPOSE[@]}" up -d turn || log "turn failed to start (image coturn/coturn:latest missing?) — continuing without TURN"
 fi
 wait_healthy hub

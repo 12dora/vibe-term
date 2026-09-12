@@ -15,13 +15,13 @@ function status(overrides: Partial<RelayTurnStatus> = {}): RelayTurnStatus {
   return {
     enabled: true,
     source: 'builtin',
-    url: 'turn:sh.example.com:3478?transport=udp',
-    port: 3478,
+    url: 'turn:sh.example.com:40000?transport=udp',
+    port: 40000,
     externalIp: '203.0.113.7',
     listening: true,
     allocations: 2,
     error: null,
-    relayPortRange: '49160-49259',
+    relayPortRange: '40001-40049',
     ...overrides,
   };
 }
@@ -70,10 +70,10 @@ describe('relayTurnView', () => {
       stateKey: 'relay.admin.turn.stateListening',
       tone: 'default',
       allocations: 2,
-      endpoint: 'turn:sh.example.com:3478',
+      endpoint: 'turn:sh.example.com:40000',
       externalIp: '203.0.113.7',
       error: null,
-      firewall: { port: 3478, range: '49160-49259' },
+      firewall: { port: 40000, range: '40001-40049' },
       membersProbe: null,
     });
   });
@@ -98,7 +98,7 @@ describe('relayTurnView', () => {
     expect(relayTurnView(status({ source: 'external' })).firewall).toBeNull();
   });
 
-  test('端口段缺一半时宁可不提示：只放行 3478 反而误导', () => {
+  test('端口段缺一半时宁可不提示：只放行控制口反而误导', () => {
     expect(relayTurnView(status({ relayPortRange: null })).firewall).toBeNull();
     expect(relayTurnView(status({ port: null })).firewall).toBeNull();
   });
@@ -145,7 +145,7 @@ describe('RelayTurnTile', () => {
   test('地址、外网地址、放行提示各占一行', () => {
     const html = renderToStaticMarkup(<RelayTurnTile turn={status()} />);
     expect(html).toContain('data-testid="relay-metric-turn"');
-    expect(html).toContain('turn:sh.example.com:3478');
+    expect(html).toContain('turn:sh.example.com:40000');
     expect(html).toContain('relay.admin.turn.externalIp');
     expect(html).toContain('data-testid="relay-turn-firewall"');
     expect(html).not.toContain('data-testid="relay-turn-error"');

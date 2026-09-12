@@ -457,6 +457,7 @@ describe('TURN error codes', () => {
     const { port } = await boot({
       relayPortRange: { begin: only, end: only },
       maxAllocations: 8,
+      maxAllocationsPerUser: 8,
     });
     const a = await openClient();
     const b = await openClient();

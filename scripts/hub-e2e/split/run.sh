@@ -563,7 +563,7 @@ sync_clocks() {
 
 # 直连/TURN 依赖 UDP 能到公网 hub 机；macOS 上 TUN 代理会把 UDP 吞掉，绕过办法是加一条主机路由。
 preflight_udp() {
-  local target_port="${1:-3478}"
+  local target_port="${1:-40000}"
   local probe
   probe="$(docker exec vibeterm-split-driver bun /workspace/scripts/hub-e2e/split/udp-probe.ts "${HUB_IP}" "${target_port}" 2>/dev/null || true)"
   if [[ "${probe}" == reply* ]]; then
@@ -637,7 +637,7 @@ VIBETERM_TARBALL="${TARBALL}" VIBETERM_E2E_SKIP_BUILD="${VIBETERM_E2E_SKIP_BUILD
   bash "${ROOT}/setup-local.sh"
 
 sync_clocks || log "clock sync imperfect, login may hit DELEGATION_ISSUED_IN_FUTURE"
-preflight_udp "${VIBETERM_E2E_UDP_PROBE_PORT:-3478}" || true
+preflight_udp "${VIBETERM_E2E_UDP_PROBE_PORT:-40000}" || true
 
 # ---------- A ----------
 set +e

@@ -1,5 +1,11 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  DEFAULT_RELAY_HOST_RTC_PORT_RANGE,
+  DEFAULT_RTC_PORT_RANGE,
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
+} from '@vibeterm/shared/net';
+import {
   advertisedTurnHost,
   decideTurnMode,
   describeTurnPortConflict,
@@ -32,26 +38,37 @@ describe('decideTurnMode', () => {
   test('port 0/undefined is off; otherwise builtin', () => {
     expect(decideTurnMode({ turnPort: 0 })).toBe('off');
     expect(decideTurnMode({})).toBe('off');
-    expect(decideTurnMode({ turnPort: 3478 })).toBe('builtin');
+    expect(decideTurnMode({ turnPort: DEFAULT_TURN_PORT })).toBe('builtin');
   });
 });
 
 describe('describeTurnPortConflict', () => {
-  const range = { begin: 49160, end: 49259 };
+  const range = { ...DEFAULT_TURN_RELAY_PORT_RANGE };
 
   test('detects overlap with peer port and rtc range', () => {
-    expect(describeTurnPortConflict(3478, range, null, 3478)).toContain('VIBETERM_PEER_PORT');
-    expect(describeTurnPortConflict(3478, range, null, 49170)).toContain('VIBETERM_PEER_PORT');
-    expect(describeTurnPortConflict(3478, range, { begin: 3400, end: 3500 }, 39001)).toContain(
-      'VIBETERM_RTC_PORT_RANGE'
+    expect(describeTurnPortConflict(DEFAULT_TURN_PORT, range, null, DEFAULT_TURN_PORT)).toContain(
+      'VIBETERM_PEER_PORT'
     );
-    expect(describeTurnPortConflict(3478, range, { begin: 49100, end: 49200 }, 39001)).toContain(
-      'VIBETERM_RTC_PORT_RANGE'
+    expect(describeTurnPortConflict(DEFAULT_TURN_PORT, range, null, 40010)).toContain(
+      'VIBETERM_PEER_PORT'
     );
+    expect(
+      describeTurnPortConflict(DEFAULT_TURN_PORT, range, { ...DEFAULT_RTC_PORT_RANGE }, 39001)
+    ).toContain('VIBETERM_RTC_PORT_RANGE');
+    expect(
+      describeTurnPortConflict(DEFAULT_TURN_PORT, range, { begin: 40020, end: 40080 }, 39001)
+    ).toContain('VIBETERM_RTC_PORT_RANGE');
   });
 
   test('returns null when ports are disjoint', () => {
-    expect(describeTurnPortConflict(3478, range, { begin: 40000, end: 40100 }, 39001)).toBeNull();
+    expect(
+      describeTurnPortConflict(
+        DEFAULT_TURN_PORT,
+        range,
+        { ...DEFAULT_RELAY_HOST_RTC_PORT_RANGE },
+        39001
+      )
+    ).toBeNull();
   });
 });
 
@@ -68,8 +85,8 @@ describe('advertisedTurnHost / helpers', () => {
   });
 
   test('formats firewall hint and mapped IPv4', () => {
-    expect(turnFirewallHint()).toContain('UDP 3478');
-    expect(turnFirewallHint()).toContain('UDP 49160-49259');
+    expect(turnFirewallHint()).toContain(`UDP ${DEFAULT_TURN_PORT}`);
+    expect(turnFirewallHint()).toContain('UDP 40001-40049');
     expect(formatTurnPortRange({ begin: 1, end: 2 })).toBe('1-2');
     expect(ipv4FromMappedAddress('203.0.113.9:40000')).toBe('203.0.113.9');
     expect(ipv4FromMappedAddress('[2001:db8::1]:9')).toBeNull();

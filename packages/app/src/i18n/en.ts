@@ -204,6 +204,7 @@ export const en: Record<string, string> = {
   'upgrade.healthTlsListenerDown': 'TLS listener is not running (mode {{mode}}).',
   'upgrade.portEnvMigrated': 'app.env: wrote {{keys}} (backup: {{backup}})',
   'upgrade.rtcPortRangeFixed': 'P2P port range fixed to {{range}}/udp — allow it in the firewall',
+  'upgrade.udpSegmentUnified': 'UDP unified to 40000-40099 — allow this range in the firewall',
 
   'cli.shim.pathHint':
     '{{binDir}} is not on PATH. Add it so the vibeterm command is available: export PATH="{{binDir}}:$PATH"',

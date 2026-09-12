@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { formatPortList } from '@vibeterm/shared/net';
 import {
   asPortRole,
   blockedPortReaches,
@@ -74,5 +75,14 @@ describe('portPlanFromStatus', () => {
     ]);
     expect(asPortRole('relay,node', 'node')).toBe('relay,node');
     expect(asPortRole('whatever', 'hub,node')).toBe('hub,node');
+    expect(formatPortList(portPlanOrFallback(undefined, 'relay'))).toBe(
+      '443/tcp, 40000/udp, 40001-40049/udp'
+    );
+    expect(formatPortList(portPlanOrFallback(undefined, 'relay,node'))).toBe(
+      '443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp'
+    );
+    expect(formatPortList(portPlanOrFallback(undefined, 'node'))).toBe(
+      '39001/tcp, 40000-40099/udp'
+    );
   });
 });

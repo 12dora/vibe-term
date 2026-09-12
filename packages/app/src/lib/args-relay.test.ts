@@ -224,5 +224,8 @@ describe('relay env keys', () => {
     expect(relay.VIBETERM_ROLES).toBe('relay');
     expect(relay.VIBETERM_RELAY_PUBLIC_URL).toBe('https://r.example');
     expect(relay.VIBETERM_RELAY_ADMIN_TOKEN).toBeTruthy();
+    expect(relay.VIBETERM_TURN_PORT).toBe('40000');
+    expect(relay.VIBETERM_TURN_RELAY_PORT_RANGE).toBe('40001-40049');
+    expect(relay.VIBETERM_RTC_PORT_RANGE).toBe('40050-40099');
   });
 });

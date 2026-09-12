@@ -39,7 +39,7 @@ import {
 import { UPGRADE_FLAGS, UPGRADE_PASSTHROUGH_FLAGS, UPGRADE_USAGE } from '../lib/upgrade-flags';
 import {
   clearWrittenPortEnvKeys,
-  printRtcPortRangeFixedNotice,
+  printUdpSegmentUnifiedNotice,
   takeWrittenPortEnvKeys,
 } from '../lib/upgrade-port-env';
 import { assertReleaseIntegrity, assertReleaseSignature } from '../lib/upgrade-verify';
@@ -201,7 +201,7 @@ function printUpgradeDone(
   console.log(`- ${t('upgrade.summary.targetVersion')}: ${targetVersion}`);
   console.log(`- ${t('upgrade.summary.installDir')}: ${installDir}`);
   console.log(`- healthz: ${formatHttpEndpoint(host, port, '/healthz')}`);
-  printRtcPortRangeFixedNotice(takeWrittenPortEnvKeys(), (message) =>
+  printUdpSegmentUnifiedNotice(takeWrittenPortEnvKeys(), (message) =>
     console.log(`[vibeterm] ${message}`)
   );
 }

@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { DEFAULT_TURN_PORT, DEFAULT_TURN_RELAY_PORT_RANGE } from '@vibeterm/shared/net';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { createRelayTurnService } from './relay-turn-service';
 import type { TurnServer, TurnServerOptions, TurnServerStats } from './turn';
@@ -14,10 +15,10 @@ function baseConfig(over: Partial<RelayRuntimeConfig> = {}): RelayRuntimeConfig 
   return {
     publicUrl: 'https://relay.example',
     stun: [],
-    turnPort: 3478,
+    turnPort: DEFAULT_TURN_PORT,
     turnExternalIp: '203.0.113.9',
     turnHost: 'relay.example',
-    turnRelayPortRange: { begin: 49160, end: 49259 },
+    turnRelayPortRange: { ...DEFAULT_TURN_RELAY_PORT_RANGE },
     peerPort: 39001,
     ...over,
   };
@@ -26,7 +27,7 @@ function baseConfig(over: Partial<RelayRuntimeConfig> = {}): RelayRuntimeConfig 
 function fakeStats(over: Partial<TurnServerStats> = {}): TurnServerStats {
   return {
     listening: true,
-    port: 3478,
+    port: DEFAULT_TURN_PORT,
     bindHost: '127.0.0.1',
     externalIp: '203.0.113.9',
     allocations: 0,
@@ -127,22 +128,23 @@ describe('RelayTurnService builtin', () => {
     });
     await svc.start();
     const adv = svc.advertisement();
-    expect(adv?.url).toBe('turn:relay.example:3478?transport=udp');
-    expect(svc.status().url).toBe('turn:relay.example:3478?transport=udp');
+    expect(adv?.url).toBe('turn:relay.example:40000?transport=udp');
+    expect(svc.status().url).toBe('turn:relay.example:40000?transport=udp');
     expect(adv?.username.startsWith('vt-')).toBe(true);
     expect(captured?.listenHost).toBe('auto');
     expect(svc.status()).toMatchObject({
       enabled: true,
       source: 'builtin',
       listening: true,
-      port: 3478,
+      port: DEFAULT_TURN_PORT,
       bindHost: 'auto',
       externalIp: '203.0.113.9',
-      relayPortRange: '49160-49259',
+      relayPortRange: '40001-40049',
       error: null,
     });
     expect(logs.some((line) => line.includes('[relay][turn] builtin turn listening'))).toBe(true);
     expect(logs.some((line) => line.includes('bind=auto'))).toBe(true);
+    expect(logs.some((line) => line.includes('relay_range=40001-40049 max_alloc=49'))).toBe(true);
     const again = createRelayTurnService({
       db: handle.db,
       config: baseConfig(),
@@ -161,7 +163,7 @@ describe('RelayTurnService builtin', () => {
     const logs: string[] = [];
     const svc = createRelayTurnService({
       db: handle.db,
-      config: baseConfig({ rtcPortRange: { begin: 3470, end: 3480 } }),
+      config: baseConfig({ rtcPortRange: { begin: 40000, end: 40099 } }),
       log: (line) => logs.push(line),
       createServer: () => fakeServer(),
     });
@@ -207,7 +209,7 @@ describe('RelayTurnService builtin', () => {
           start: async () => {
             attempts += 1;
             if (attempts === 1) throw inUse;
-            return { port: 3478 };
+            return { port: DEFAULT_TURN_PORT };
           },
         }),
     });
@@ -215,7 +217,7 @@ describe('RelayTurnService builtin', () => {
     await Bun.sleep(20);
     expect(attempts).toBeGreaterThan(1);
     expect(sleeps[0]).toBe(5_000);
-    expect(svc.advertisement()?.url).toBe('turn:relay.example:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:relay.example:40000?transport=udp');
     expect(svc.status().error).toBeNull();
     await svc.stop();
   });
@@ -243,7 +245,7 @@ describe('RelayTurnService builtin', () => {
     ip = '203.0.113.9';
     await Bun.sleep(50);
     expect(created).toHaveLength(1);
-    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:40000?transport=udp');
     expect(svc.status().listening).toBe(true);
     await svc.stop();
   });
@@ -278,8 +280,8 @@ describe('RelayTurnService builtin', () => {
       createServer: () => fakeServer(),
     });
     await svc.start();
-    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
-    expect(svc.status().url).toBe('turn:203.0.113.9:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:40000?transport=udp');
+    expect(svc.status().url).toBe('turn:203.0.113.9:40000?transport=udp');
     await svc.stop();
   });
 
@@ -312,14 +314,14 @@ describe('RelayTurnService builtin', () => {
       },
     });
     await svc.start();
-    expect(svc.advertisement()?.url).toBe('turn:relay.example:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:relay.example:40000?transport=udp');
     ip = '203.0.113.10';
     await Bun.sleep(50);
     expect(created).toHaveLength(1);
     expect(stops).toBe(0);
     expect(setIps).toContain('203.0.113.10');
     expect(svc.status().externalIp).toBe('203.0.113.10');
-    expect(svc.advertisement()?.url).toBe('turn:relay.example:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:relay.example:40000?transport=udp');
     await svc.stop();
   });
 
@@ -344,17 +346,17 @@ describe('RelayTurnService builtin', () => {
       },
     });
     await svc.start();
-    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:40000?transport=udp');
     ip = '203.0.113.10';
     await Bun.sleep(50);
     expect(created).toHaveLength(1);
-    expect(svc.advertisement()?.url).toBe('turn:203.0.113.10:3478?transport=udp');
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.10:40000?transport=udp');
     expect(svc.status()).toMatchObject({
-      url: 'turn:203.0.113.10:3478?transport=udp',
+      url: 'turn:203.0.113.10:40000?transport=udp',
       externalIp: '203.0.113.10',
       listening: true,
     });
-    expect(ads).toContain('turn:203.0.113.10:3478?transport=udp');
+    expect(ads).toContain('turn:203.0.113.10:40000?transport=udp');
     await svc.stop();
   });
 });

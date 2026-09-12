@@ -140,6 +140,7 @@ describe('i18n', () => {
       expect(t('doctor.ports.peerListening', { port: 39001 })).toContain('39001');
       expect(t('doctor.ports.blocked', { list: '39001/tcp' })).toContain('39001/tcp');
       expect(t('upgrade.turnExternalNotice')).not.toBe('upgrade.turnExternalNotice');
+      expect(t('upgrade.udpSegmentUnified')).not.toBe('upgrade.udpSegmentUnified');
     }
     setLang('zh-CN');
     expect(t('upgrade.turnExternalNotice')).not.toContain('你');

@@ -107,7 +107,20 @@ describe('initPortPlanList', () => {
         hubPublicUrl: '',
         relayPublicUrl: 'https://relay.example.com',
       })
-    ).toBe('443/tcp, 3478/udp, 49160-49259/udp');
+    ).toBe('443/tcp, 40000/udp, 40001-40049/udp');
+  });
+
+  test('relay,node splits ICE away from TURN on the unified UDP segment', () => {
+    expect(
+      initPortPlanList({
+        role: 'relay,node',
+        host: '127.0.0.1',
+        port: 9883,
+        peerPort: 39001,
+        hubPublicUrl: '',
+        relayPublicUrl: 'https://relay.example.com',
+      })
+    ).toBe('443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp');
   });
 
   test('hub,node includes public https from the URL and the peer/rtc plan', () => {

@@ -6,7 +6,6 @@ import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_PEER_PORT,
   DEFAULT_PUBLIC_HTTPS_PORT,
-  DEFAULT_RTC_PORT_RANGE,
   DEFAULT_TURN_PORT,
   DEFAULT_TURN_RELAY_PORT_RANGE,
   type PortPlanLive,
@@ -34,7 +33,7 @@ export const DEFAULT_PORT_PLAN_LIVE: PortPlanLive = {
   gatewayPort: DEFAULT_GATEWAY_PORT,
   gatewayExposed: false,
   peerPort: DEFAULT_PEER_PORT,
-  rtcRange: { begin: DEFAULT_RTC_PORT_RANGE.begin, end: DEFAULT_RTC_PORT_RANGE.end },
+  rtcRange: null,
   turnPort: DEFAULT_TURN_PORT,
   turnRelayRange: {
     begin: DEFAULT_TURN_RELAY_PORT_RANGE.begin,

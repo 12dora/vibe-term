@@ -108,4 +108,12 @@ describe('portPlanFromEnv', () => {
     expect(portPlanLiveFromEnv({}).turnPort).toBe(DEFAULT_TURN_PORT);
     expect(portPlanLiveFromEnv({ VIBETERM_TURN_PORT: 'off' }).turnPort).toBe(0);
   });
+
+  test('blank rtc on relay,node uses the relay-host ICE slice', () => {
+    const live = portPlanLiveFromEnv({ VIBETERM_ROLES: 'relay,node' });
+    expect(live.rtcRange).toEqual({ begin: 40050, end: 40099 });
+    expect(formatPortPlanForEnv({ VIBETERM_ROLES: 'relay,node' })).toBe(
+      '443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp'
+    );
+  });
 });

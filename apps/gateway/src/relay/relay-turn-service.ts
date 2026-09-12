@@ -30,6 +30,7 @@ import {
   resolveTurnExternalIp,
 } from './relay-turn-resolve';
 import { type TurnServer, createTurnServer, turnUrlFor } from './turn';
+import { clampTurnAllocations } from './turn/turn-limits';
 import type { RelayRuntimeConfig } from './types';
 
 export type RelayTurnServiceLog = (line: string) => void;
@@ -196,8 +197,10 @@ export class RelayTurnService {
   }
 
   private logListening(): void {
+    const range = this.relayRange;
+    const maxAlloc = range ? clampTurnAllocations(range).maxAllocations : '-';
     this.log(
-      `builtin turn listening port=${this.listenPort ?? '-'} bind=${this.server?.snapshot().bindHost ?? '-'} external_ip=${this.externalIp ?? '-'} host=${this.host ?? '-'} relay_range=${this.relayRange ? formatTurnPortRange(this.relayRange) : '-'}`
+      `builtin turn listening port=${this.listenPort ?? '-'} bind=${this.server?.snapshot().bindHost ?? '-'} external_ip=${this.externalIp ?? '-'} host=${this.host ?? '-'} relay_range=${range ? formatTurnPortRange(range) : '-'} max_alloc=${maxAlloc}`
     );
   }
 

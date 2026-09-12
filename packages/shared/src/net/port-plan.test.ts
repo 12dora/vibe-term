@@ -3,17 +3,23 @@ import {
   DEFAULT_GATEWAY_PORT,
   DEFAULT_PEER_PORT,
   DEFAULT_PUBLIC_HTTPS_PORT,
+  DEFAULT_RELAY_HOST_RTC_PORT_RANGE,
   DEFAULT_RTC_PORT_RANGE,
   DEFAULT_TLS_PORT,
   DEFAULT_TURN_PORT,
   DEFAULT_TURN_RELAY_PORT_RANGE,
+  LEGACY_TURN_PORT,
+  LEGACY_TURN_RELAY_PORT_RANGE,
   type PortPlanLive,
   type PortPurpose,
   type PortSpec,
+  UNIFIED_UDP_RANGE,
+  defaultRtcPortRange,
   formatPortList,
   formatPortSpec,
   parsePortRange,
   portPlanForRole,
+  rolesIncludeRelay,
 } from './port-plan';
 
 function live(over: Partial<PortPlanLive> = {}): PortPlanLive {
@@ -41,11 +47,32 @@ describe('port-plan defaults', () => {
   test('pins the fleet-wide default numbers', () => {
     expect(DEFAULT_GATEWAY_PORT).toBe(9883);
     expect(DEFAULT_PEER_PORT).toBe(39001);
+    expect(UNIFIED_UDP_RANGE).toEqual({ begin: 40000, end: 40099 });
     expect(DEFAULT_RTC_PORT_RANGE).toEqual({ begin: 40000, end: 40099 });
-    expect(DEFAULT_TURN_PORT).toBe(3478);
-    expect(DEFAULT_TURN_RELAY_PORT_RANGE).toEqual({ begin: 49160, end: 49259 });
+    expect(DEFAULT_TURN_PORT).toBe(40000);
+    expect(DEFAULT_TURN_RELAY_PORT_RANGE).toEqual({ begin: 40001, end: 40049 });
+    expect(DEFAULT_RELAY_HOST_RTC_PORT_RANGE).toEqual({ begin: 40050, end: 40099 });
+    expect(LEGACY_TURN_PORT).toBe(3478);
+    expect(LEGACY_TURN_RELAY_PORT_RANGE).toEqual({ begin: 49160, end: 49259 });
     expect(DEFAULT_TLS_PORT).toBe(9443);
     expect(DEFAULT_PUBLIC_HTTPS_PORT).toBe(443);
+  });
+
+  test('defaultRtcPortRange splits ICE away from TURN on relay hosts', () => {
+    expect(defaultRtcPortRange('node')).toEqual({ begin: 40000, end: 40099 });
+    expect(defaultRtcPortRange('hub,node')).toEqual({ begin: 40000, end: 40099 });
+    expect(defaultRtcPortRange('standalone')).toEqual({ begin: 40000, end: 40099 });
+    expect(defaultRtcPortRange('relay')).toEqual({ begin: 40050, end: 40099 });
+    expect(defaultRtcPortRange('relay,node')).toEqual({ begin: 40050, end: 40099 });
+  });
+
+  test('rolesIncludeRelay trims comma-separated tokens', () => {
+    expect(rolesIncludeRelay('relay')).toBe(true);
+    expect(rolesIncludeRelay('relay,node')).toBe(true);
+    expect(rolesIncludeRelay(' node, relay ')).toBe(true);
+    expect(rolesIncludeRelay('node')).toBe(false);
+    expect(rolesIncludeRelay('hub,node')).toBe(false);
+    expect(rolesIncludeRelay('')).toBe(false);
   });
 });
 
@@ -99,7 +126,7 @@ describe('portPlanForRole', () => {
     });
     expect(specs[2]).toMatchObject({
       proto: 'udp',
-      range: { begin: 49160, end: 49259 },
+      range: { begin: 40001, end: 40049 },
       envKey: 'VIBETERM_TURN_RELAY_PORT_RANGE',
       requiredFor: 'turn-fallback',
     });
@@ -129,6 +156,13 @@ describe('portPlanForRole', () => {
     );
     expect(spec?.range).toEqual({ begin: 40000, end: 40099 });
     expect(spec?.envKey).toBe('VIBETERM_RTC_PORT_RANGE');
+  });
+
+  test('null rtcRange on relay,node uses the relay-host ICE slice', () => {
+    const spec = portPlanForRole('relay,node', live({ rtcRange: null })).find(
+      (item) => item.purpose === 'rtc-ice'
+    );
+    expect(spec?.range).toEqual({ begin: 40050, end: 40099 });
   });
 
   test('live values override defaults, including public-https and turn', () => {
@@ -209,7 +243,10 @@ describe('formatPortSpec / formatPortList', () => {
       '443/tcp, 39001/tcp, 40000-40099/udp'
     );
     expect(formatPortList(portPlanForRole('relay', live()))).toBe(
-      '443/tcp, 3478/udp, 49160-49259/udp'
+      '443/tcp, 40000/udp, 40001-40049/udp'
+    );
+    expect(formatPortList(portPlanForRole('relay,node', live()))).toBe(
+      '443/tcp, 39001/tcp, 40050-40099/udp, 40000/udp, 40001-40049/udp'
     );
     expect(formatPortList([])).toBe('');
   });
@@ -251,7 +288,7 @@ test('relay with builtin TURN disabled lists no TURN specs', () => {
     peerPort: 39001,
     rtcRange: null,
     turnPort: 0,
-    turnRelayRange: { begin: 49160, end: 49259 },
+    turnRelayRange: { ...DEFAULT_TURN_RELAY_PORT_RANGE },
     publicHttpsPort: 443,
   });
   expect(specs.map((item) => item.purpose)).toEqual(['public-https']);

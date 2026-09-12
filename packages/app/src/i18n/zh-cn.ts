@@ -189,6 +189,7 @@ export const zhCN: Record<string, string> = {
   'upgrade.healthTlsListenerDown': 'TLS 监听未运行（mode {{mode}}）。',
   'upgrade.portEnvMigrated': 'app.env：已写入 {{keys}}（备份：{{backup}}）',
   'upgrade.rtcPortRangeFixed': '已固定 P2P 端口段 {{range}}/udp，请在防火墙放行',
+  'upgrade.udpSegmentUnified': 'UDP 已统一为 40000-40099，请在防火墙放行该段',
 
   'cli.shim.pathHint':
     '{{binDir}} 不在 PATH 中。加入后即可使用 vibeterm 命令：export PATH="{{binDir}}:$PATH"',
