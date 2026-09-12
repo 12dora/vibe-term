@@ -55,6 +55,18 @@ export type PeerLinkRerollRequest = {
   bestMs: number;
 };
 
+/** RTT 上限：跨洲绕行也不会到这个量级，超过即视为伪造/损坏。 */
+export const PEER_RTT_PLAUSIBLE_MAX_MS = 60_000;
+
+function isPlausibleRttMs(value: unknown): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= PEER_RTT_PLAUSIBLE_MAX_MS
+  );
+}
+
 /** 应答侧请求 offerer 重拨；字段非法时返回 null，调用方按未知 ctl 丢掉。 */
 export function parseLinkRerollRequest(msg: Record<string, unknown>): PeerLinkRerollRequest | null {
   if (msg.t !== PEER_LINK_REROLL_REQUEST) return null;
@@ -62,8 +74,9 @@ export function parseLinkRerollRequest(msg: Record<string, unknown>): PeerLinkRe
   if (transport !== 'dc' && transport !== 'ws-secure') return null;
   const currentMs = msg.currentMs;
   const bestMs = msg.bestMs;
-  if (typeof currentMs !== 'number' || !Number.isFinite(currentMs)) return null;
-  if (typeof bestMs !== 'number' || !Number.isFinite(bestMs)) return null;
+  if (!isPlausibleRttMs(currentMs) || !isPlausibleRttMs(bestMs)) return null;
+  // 对端声称的当前值必须高于它的最佳值，否则没有重拨理由；也挡住用超大 currentMs 诱导搬流。
+  if (currentMs <= bestMs) return null;
   return { t: PEER_LINK_REROLL_REQUEST, transport, currentMs, bestMs };
 }
 

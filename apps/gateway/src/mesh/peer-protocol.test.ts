@@ -184,10 +184,22 @@ describe('parseLinkRerollRequest', () => {
       parseLinkRerollRequest({
         t: 'link.reroll-request',
         transport: 'ws-secure',
-        currentMs: 1,
-        bestMs: 0,
+        currentMs: 2,
+        bestMs: 1,
       })?.transport
     ).toBe('ws-secure');
+    for (const bad of [
+      { currentMs: 90, bestMs: 190 },
+      { currentMs: 90, bestMs: 90 },
+      { currentMs: Number.MAX_VALUE, bestMs: 90 },
+      { currentMs: 190, bestMs: 0 },
+      { currentMs: -1, bestMs: -2 },
+      { currentMs: 70_000, bestMs: 90 },
+    ]) {
+      expect(
+        parseLinkRerollRequest({ t: 'link.reroll-request', transport: 'dc', ...bad })
+      ).toBeNull();
+    }
     expect(parseLinkRerollRequest({ t: 'link.hello', caps: ['reroll'] })).toBeNull();
     expect(
       parseLinkRerollRequest({
