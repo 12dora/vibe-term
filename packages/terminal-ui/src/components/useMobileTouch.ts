@@ -1,13 +1,20 @@
 import { useEffect, useRef } from 'react';
+import { useLatestRef } from './hooks/useLatestRef';
 import { MobileTouchGestureMachine } from './touch/gesture-machine';
 import { isMobileTouchEnvironment } from './touch/touch-geometry';
 import type { TerminalScroller } from './touch/types';
 
+export interface UseMobileTouchOptions {
+  onSelectionCommitted?: () => void;
+}
+
 export function useMobileTouch(
   containerRef: React.RefObject<HTMLElement | null>,
-  getTerminal?: () => TerminalScroller | null
+  getTerminal?: () => TerminalScroller | null,
+  options?: UseMobileTouchOptions
 ) {
   const isActiveRef = useRef(false);
+  const onSelectionCommittedRef = useLatestRef(options?.onSelectionCommitted);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -18,6 +25,7 @@ export function useMobileTouch(
     const machine = new MobileTouchGestureMachine({
       container,
       resolveTerminal: () => getTerminal?.() ?? null,
+      onSelectionCommitted: () => onSelectionCommittedRef.current?.(),
     });
 
     container.addEventListener('touchstart', machine.handleTouchStart, { passive: true });
@@ -36,7 +44,7 @@ export function useMobileTouch(
       container.removeEventListener('touchcancel', machine.handleTouchCancel);
       container.removeEventListener('contextmenu', machine.handleContextMenu);
     };
-  }, [containerRef, getTerminal]);
+  }, [containerRef, getTerminal, onSelectionCommittedRef]);
 
   return isActiveRef;
 }

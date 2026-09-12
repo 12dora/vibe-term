@@ -520,3 +520,35 @@ describe('cross-tab theme sync', () => {
     expect(store.getState().themePreset).toBe(VALID_PRESET);
   });
 });
+
+describe('terminal copy mode', () => {
+  beforeEach(() => {
+    storage.clear();
+  });
+
+  test('defaults to button', () => {
+    expect(createStore().getState().terminalCopyMode).toBe('button');
+  });
+
+  test('persists across store instances', () => {
+    const prefix = `ui-copy-mode-${Date.now()}-`;
+    const store = createUIStore({ storagePrefix: prefix });
+    store.getState().setTerminalCopyMode('auto');
+    expect(store.getState().terminalCopyMode).toBe('auto');
+
+    const persisted = JSON.parse(storage.getItem(`${prefix}vibeterm-ui`) ?? '{}') as {
+      state?: { terminalCopyMode?: string };
+    };
+    expect(persisted.state?.terminalCopyMode).toBe('auto');
+    expect(createUIStore({ storagePrefix: prefix }).getState().terminalCopyMode).toBe('auto');
+  });
+
+  test('falls back to button when the persisted value is unknown', () => {
+    const prefix = `ui-copy-mode-bad-${Date.now()}-`;
+    storage.setItem(
+      `${prefix}vibeterm-ui`,
+      JSON.stringify({ state: { terminalCopyMode: 'clipboard' }, version: 0 })
+    );
+    expect(createUIStore({ storagePrefix: prefix }).getState().terminalCopyMode).toBe('button');
+  });
+});

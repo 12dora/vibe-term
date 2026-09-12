@@ -119,6 +119,7 @@ function createHarness(options: {
   container?: FakeElement;
   /** 最近一帧的光标视口行号；省略 = 读不到光标（轻点永远不聚焦） */
   cursorRow?: number;
+  onSelectionCommitted?: () => void;
 }): Harness {
   const calls: string[] = [];
   let reporting = options.reporting;
@@ -179,6 +180,7 @@ function createHarness(options: {
     container: (options.container ?? new FakeElement()) as unknown as Element,
     resolveTerminal: () => terminal,
     elementFromPoint: () => null,
+    onSelectionCommitted: options.onSelectionCommitted,
   });
 
   return {
@@ -444,6 +446,19 @@ describe('tap on the canvas only wakes the keyboard on the cursor row', () => {
 
     expect(calls).toEqual([]);
     expect(end.defaultPrevented).toBe(false);
+    expect(machine.currentState()).toBe('idle');
+  });
+
+  test('上报模式下点选区工具条不发鼠标、不清选区、不 preventDefault', () => {
+    const { machine, calls } = createHarness({ reporting: true });
+    const toolbar = new FakeElement(['[data-testid="terminal-selection-toolbar"]']);
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, toolbar)));
+    const end = touchEvent([], [touch(1, 100, 200)], toolbar);
+    machine.handleTouchEnd(asTouchEvent(end));
+
+    expect(calls).toEqual([]);
+    expect(end.defaultPrevented).toBe(false);
+    expect(machine.currentState()).toBe('idle');
   });
 });
 
@@ -469,6 +484,33 @@ describe('long-press selection', () => {
     expect(move.defaultPrevented).toBe(true);
     expect(end.defaultPrevented).toBe(true);
     expect(machine.currentState()).toBe('idle');
+  });
+
+  test('select 抬指同步回调 onSelectionCommitted', () => {
+    jest.useFakeTimers();
+    const committed: string[] = [];
+    const { machine } = createHarness({
+      reporting: false,
+      onSelectionCommitted: () => committed.push('committed'),
+    });
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 100)])));
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS);
+    machine.handleTouchEnd(asTouchEvent(touchEvent([], [touch(1, 100, 100)])));
+    expect(committed).toEqual(['committed']);
+  });
+
+  test('工具条上的长按不会起新选区', () => {
+    jest.useFakeTimers();
+    const { machine, calls } = createHarness({ reporting: true });
+    const toolbar = new FakeElement(['[data-testid="terminal-selection-toolbar"]']);
+    machine.handleTouchStart(asTouchEvent(touchEvent([touch(1, 100, 200)], undefined, toolbar)));
+    jest.advanceTimersByTime(LONG_PRESS_SELECT_MS * 2);
+    expect(machine.currentState()).toBe('idle');
+    expect(calls.some((call) => call.startsWith('startSelection'))).toBe(false);
+    const end = touchEvent([], [touch(1, 100, 200)], toolbar);
+    machine.handleTouchEnd(asTouchEvent(end));
+    expect(end.defaultPrevented).toBe(false);
+    expect(calls).toEqual([]);
   });
 
   test('crossing the scroll threshold disarms the long press', () => {

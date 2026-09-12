@@ -1,4 +1,4 @@
-import type { KeyboardBehaviorMode } from '@vibeterm/stores';
+import type { KeyboardBehaviorMode, TerminalCopyMode } from '@vibeterm/stores';
 import { useUIStore } from '@vibeterm/stores/react';
 import { FONT_MANIFEST, getFontEntry } from '@vibeterm/theme';
 import { cn } from '@vibeterm/ui';
@@ -52,6 +52,81 @@ const KEYBOARD_MODE_ITEMS = [
   labelKey: string;
   descKey: string;
 }>;
+
+const COPY_MODE_ITEMS = [
+  {
+    value: 'auto',
+    labelKey: 'settings.terminal.copyMode.auto',
+  },
+  {
+    value: 'button',
+    labelKey: 'settings.terminal.copyMode.button',
+  },
+] as const satisfies ReadonlyArray<{
+  value: TerminalCopyMode;
+  labelKey: string;
+}>;
+
+function PreferenceOptionList<T extends string>({
+  label,
+  hint,
+  items,
+  value,
+  onChange,
+  testIdPrefix,
+}: {
+  label: string;
+  hint?: string;
+  items: ReadonlyArray<{ value: T; labelKey: string; descKey?: string }>;
+  value: T;
+  onChange: (next: T) => void;
+  testIdPrefix: string;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-2">
+      <span className="block text-sm font-medium">{label}</span>
+      {hint ? <p className="text-muted-foreground text-xs">{hint}</p> : null}
+      <div className="flex flex-col gap-2">
+        {items.map((item) => {
+          const selected = value === item.value;
+          return (
+            <button
+              key={item.value}
+              type="button"
+              onClick={() => onChange(item.value)}
+              aria-pressed={selected}
+              data-testid={`${testIdPrefix}-${item.value}`}
+              className={cn(
+                'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
+                selected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
+              )}
+            >
+              <span
+                className={cn(
+                  'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
+                  selected
+                    ? 'border-primary bg-primary text-primary-foreground'
+                    : 'border-muted-foreground/40'
+                )}
+              >
+                {selected && <Check className="h-3.5 w-3.5" />}
+              </span>
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium">{t(item.labelKey)}</span>
+                {item.descKey ? (
+                  <span className="text-muted-foreground text-xs leading-snug">
+                    {t(item.descKey)}
+                  </span>
+                ) : null}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function TerminalPreviewSection() {
   const { t } = useTranslation();
@@ -151,6 +226,8 @@ export function TerminalSettingsPanel({
   const setTerminalFontId = useUIStore((state) => state.setTerminalFontId);
   const keyboardMode = useUIStore((state) => state.keyboardBehaviorMode);
   const setKeyboardMode = useUIStore((state) => state.setKeyboardBehaviorMode);
+  const copyMode = useUIStore((state) => state.terminalCopyMode);
+  const setCopyMode = useUIStore((state) => state.setTerminalCopyMode);
 
   const fontSizeField = useNumericSetting(
     terminalFontSize,
@@ -240,47 +317,23 @@ export function TerminalSettingsPanel({
         </Select>
       </div>
 
-      <div className="space-y-2">
-        <span className="block text-sm font-medium">{t('terminal.keyboardBehavior.title')}</span>
-        <p className="text-muted-foreground text-xs">
-          {t('terminal.keyboardBehavior.description')}
-        </p>
-        <div className="flex flex-col gap-2">
-          {KEYBOARD_MODE_ITEMS.map((item) => {
-            const selected = keyboardMode === item.value;
-            return (
-              <button
-                key={item.value}
-                type="button"
-                onClick={() => setKeyboardMode(item.value)}
-                aria-pressed={selected}
-                data-testid={`keyboard-behavior-option-${item.value}`}
-                className={cn(
-                  'flex items-start gap-3 rounded-lg border p-3 text-left transition-colors',
-                  selected ? 'border-primary bg-primary/5' : 'border-border hover:bg-muted/50'
-                )}
-              >
-                <span
-                  className={cn(
-                    'mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border',
-                    selected
-                      ? 'border-primary bg-primary text-primary-foreground'
-                      : 'border-muted-foreground/40'
-                  )}
-                >
-                  {selected && <Check className="h-3.5 w-3.5" />}
-                </span>
-                <span className="flex min-w-0 flex-col gap-0.5">
-                  <span className="text-sm font-medium">{t(item.labelKey)}</span>
-                  <span className="text-muted-foreground text-xs leading-snug">
-                    {t(item.descKey)}
-                  </span>
-                </span>
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <PreferenceOptionList
+        label={t('settings.terminal.copyMode.label')}
+        hint={t('settings.terminal.copyMode.hint')}
+        items={COPY_MODE_ITEMS}
+        value={copyMode}
+        onChange={setCopyMode}
+        testIdPrefix="copy-mode-option"
+      />
+
+      <PreferenceOptionList
+        label={t('terminal.keyboardBehavior.title')}
+        hint={t('terminal.keyboardBehavior.description')}
+        items={KEYBOARD_MODE_ITEMS}
+        value={keyboardMode}
+        onChange={setKeyboardMode}
+        testIdPrefix="keyboard-behavior-option"
+      />
 
       <p className="text-muted-foreground text-xs">{t('settings.terminal.savedInBrowser')}</p>
 

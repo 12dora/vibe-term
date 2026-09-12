@@ -473,6 +473,12 @@
         "fontSize": "フォントサイズ",
         "lineHeight": "行の高さ",
         "fontFamily": "フォント",
+        "copyMode": {
+          "label": "コピー方法",
+          "auto": "選択時に自動コピー",
+          "button": "ボタンでコピー",
+          "hint": "選択が終わると自動でクリップボードに書き込みます"
+        },
         "preview": "プレビュー",
         "savedInBrowser": "これらの設定はこのブラウザにのみ保存されます。",
         "loading": "ターミナル設定を読み込み中…",

@@ -271,6 +271,12 @@
         "fontSize": "Font Size",
         "lineHeight": "Line Height",
         "fontFamily": "Font",
+        "copyMode": {
+          "label": "Copy mode",
+          "auto": "Copy on select",
+          "button": "Copy with button",
+          "hint": "Auto copies to the clipboard when the selection ends"
+        },
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
         "shortcuts": {

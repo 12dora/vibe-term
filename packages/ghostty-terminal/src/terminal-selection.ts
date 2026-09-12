@@ -11,7 +11,12 @@ import {
   serializeSelectionText,
   updateSelectionFocus,
 } from './selection-model';
-import type { GhosttySelectionRect } from './types';
+import { unionSelectionViewportRect } from './selection-viewport-rect';
+import type {
+  GhosttyCellDimensions,
+  GhosttySelectionRect,
+  GhosttySelectionViewportRect,
+} from './types';
 
 const AUTO_SCROLL_INTERVAL_MS = 48;
 
@@ -92,6 +97,23 @@ export class TerminalSelection {
     return projectSelectionRects(this.state, offset, rows, (line) =>
       this.context.getLineModel(line)
     );
+  }
+
+  viewportRect(
+    offset: number,
+    rows: number,
+    host: {
+      screenBounds: () => { left: number; top: number } | null;
+      cell: GhosttyCellDimensions;
+    }
+  ): GhosttySelectionViewportRect | null {
+    if (!this.hasSelection()) {
+      return null;
+    }
+    const screen = host.screenBounds();
+    return screen
+      ? unionSelectionViewportRect(this.projectRects(offset, rows), screen, host.cell)
+      : null;
   }
 
   reset(): void {

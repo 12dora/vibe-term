@@ -2238,6 +2238,30 @@ describe('GhosttyTerminalController clipboard and selection API', () => {
     disposable.dispose();
   });
 
+  test('getSelectionViewportRect returns the visible selection union in client coordinates', async () => {
+    dom = installCanvasDom();
+    const bindings = createFakeBindings();
+    const { terminal } = await setupTerminal(bindings);
+    const screen = findElementByClass(terminal.element as unknown as FakeElement, 'xterm-screen');
+    screen?.setBoundingClientRect({ width: 960, height: 480, left: 12, top: 24 });
+
+    expect(terminal.getSelectionViewportRect()).toBeNull();
+
+    expect(terminal.startTouchSelection(16, 28, 'word')).toBeTrue();
+    terminal.endTouchSelection();
+
+    const cell = terminal.cellDimensions();
+    const rect = terminal.getSelectionViewportRect();
+    expect(rect).not.toBeNull();
+    expect(rect!.width).toBeGreaterThan(0);
+    expect(rect!.height).toBe(cell.height);
+    expect(rect!.left).toBeGreaterThanOrEqual(12);
+    expect(rect!.top).toBeGreaterThanOrEqual(24);
+
+    terminal.clearSelection();
+    expect(terminal.getSelectionViewportRect()).toBeNull();
+  });
+
   test('render suspension keeps writes warm and paints exactly once on resume', async () => {
     dom = installCanvasDom();
     const bindings = createFakeBindings();

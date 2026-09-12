@@ -473,6 +473,12 @@
         "fontSize": "字号",
         "lineHeight": "行高",
         "fontFamily": "字体",
+        "copyMode": {
+          "label": "复制方式",
+          "auto": "选中后自动复制",
+          "button": "点击按钮复制",
+          "hint": "自动复制在选区完成时写入剪贴板"
+        },
         "preview": "预览",
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
         "loading": "正在加载终端设置……",

@@ -479,6 +479,12 @@ export const I18N_RESOURCES = {
         "fontSize": "Font Size",
         "lineHeight": "Line Height",
         "fontFamily": "Font",
+        "copyMode": {
+          "label": "Copy mode",
+          "auto": "Copy on select",
+          "button": "Copy with button",
+          "hint": "Auto copies to the clipboard when the selection ends"
+        },
         "preview": "Preview",
         "savedInBrowser": "These settings are saved in this browser only.",
         "loading": "Loading terminal settings…",
@@ -4165,6 +4171,12 @@ export const I18N_RESOURCES = {
         "fontSize": "字号",
         "lineHeight": "行高",
         "fontFamily": "字体",
+        "copyMode": {
+          "label": "复制方式",
+          "auto": "选中后自动复制",
+          "button": "点击按钮复制",
+          "hint": "自动复制在选区完成时写入剪贴板"
+        },
         "preview": "预览",
         "savedInBrowser": "这些设置仅保存在当前浏览器中。",
         "loading": "正在加载终端设置……",
@@ -7845,6 +7857,12 @@ export const I18N_RESOURCES = {
         "fontSize": "フォントサイズ",
         "lineHeight": "行の高さ",
         "fontFamily": "フォント",
+        "copyMode": {
+          "label": "コピー方法",
+          "auto": "選択時に自動コピー",
+          "button": "ボタンでコピー",
+          "hint": "選択が終わると自動でクリップボードに書き込みます"
+        },
         "preview": "プレビュー",
         "savedInBrowser": "これらの設定はこのブラウザにのみ保存されます。",
         "loading": "ターミナル設定を読み込み中…",

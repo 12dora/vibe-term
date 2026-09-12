@@ -28,7 +28,13 @@ export {
   type RuntimeFeatures,
 } from './runtime';
 
-export { createUIStore, type KeyboardBehaviorMode, type SidebarTab, type UIStore } from './ui';
+export {
+  createUIStore,
+  type KeyboardBehaviorMode,
+  type SidebarTab,
+  type TerminalCopyMode,
+  type UIStore,
+} from './ui';
 export {
   isSidebarDeviceVisible,
   isSidebarFilesVisible,

@@ -7,7 +7,7 @@ export interface SelectionDismissIntent {
   target: unknown;
 }
 
-function hitsToolbar(target: unknown): boolean {
+export function hitsSelectionToolbar(target: unknown): boolean {
   if (!target || typeof target !== 'object') return false;
   const closest = (target as { closest?: unknown }).closest;
   if (typeof closest !== 'function') return false;
@@ -23,5 +23,5 @@ export function shouldDismissSelectionOnPointerDown(intent: SelectionDismissInte
   if (!intent.hasSelection) return false;
   if (intent.pointerType === 'touch') return false;
   if (intent.button !== 0) return false;
-  return !hitsToolbar(intent.target);
+  return !hitsSelectionToolbar(intent.target);
 }

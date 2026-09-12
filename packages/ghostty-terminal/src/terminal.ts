@@ -611,6 +611,12 @@ export class GhosttyTerminalController implements CompatibleTerminalLike {
     return { top, bottom: top + height };
   }
 
+  getSelectionViewportRect() {
+    if (this.disposed) return null;
+    const { selection, buffer, rows, dom } = this;
+    return selection.viewportRect(buffer.active.viewportY, rows, dom);
+  }
+
   getRendererKind(): string {
     return this.renderCoordinator.rendererKind;
   }

@@ -105,6 +105,16 @@ const DEFAULT_TERMINAL_LINE_HEIGHT = 1.2;
 // follow=光标对齐（按光标位置上移，光标始终在键盘上方，终端尺寸不变）。
 export type KeyboardBehaviorMode = 'lift' | 'resize' | 'follow';
 
+export type TerminalCopyMode = 'button' | 'auto';
+
+const TERMINAL_COPY_MODES: readonly TerminalCopyMode[] = ['button', 'auto'];
+
+function normalizeTerminalCopyMode(value: unknown): TerminalCopyMode {
+  return TERMINAL_COPY_MODES.includes(value as TerminalCopyMode)
+    ? (value as TerminalCopyMode)
+    : 'button';
+}
+
 export interface UIState {
   sidebarCollapsed: boolean;
   sidebarTab: SidebarTab;
@@ -128,6 +138,7 @@ export interface UIState {
   theme: 'light' | 'dark';
   themePreset: ThemePreset | null;
   keyboardBehaviorMode: KeyboardBehaviorMode;
+  terminalCopyMode: TerminalCopyMode;
   editorHistory: string[];
   editorDrafts: Record<string, string>;
   // 终端字体（每设备本地持久化）：字号/行高仅作用于终端，字体族经 --font-mono 全应用统一。
@@ -147,6 +158,7 @@ export interface UIState {
   setSidebarNodeExpansion: (key: string, expanded: boolean) => void;
   setInputMode: (mode: 'direct' | 'editor') => void;
   setKeyboardBehaviorMode: (mode: KeyboardBehaviorMode) => void;
+  setTerminalCopyMode: (mode: TerminalCopyMode) => void;
   setEditorSendWithEnter: (enabled: boolean) => void;
   setTheme: (theme: 'light' | 'dark') => void;
   setThemePreset: (preset: ThemePreset | null) => void;
@@ -177,12 +189,14 @@ function mergePersistedUIState(persisted: unknown, current: UIState): UIState {
     sidebarNodeOrder,
     sidebarNodeExpansion,
     themePreset,
+    terminalCopyMode,
     ...rest
   } = (persisted ?? {}) as Partial<UIState> & { sidebarSections?: unknown };
   return {
     ...current,
     ...rest,
     sidebarTab: normalizeSidebarTab(sidebarTab),
+    terminalCopyMode: normalizeTerminalCopyMode(terminalCopyMode),
     sidebarDeviceExpanded: normalizeBooleanMap(sidebarDeviceExpanded),
     sidebarDeviceVisibility: normalizeBooleanMap(sidebarDeviceVisibility),
     sidebarFilesVisibility: normalizeBooleanMap(sidebarFilesVisibility),
@@ -209,6 +223,7 @@ type UIPersistedState = Pick<
   | 'theme'
   | 'themePreset'
   | 'keyboardBehaviorMode'
+  | 'terminalCopyMode'
   | 'editorHistory'
   | 'editorDrafts'
   | 'terminalFontSize'
@@ -232,6 +247,7 @@ function partializeUIState(state: UIState): UIPersistedState {
     theme: state.theme,
     themePreset: state.themePreset,
     keyboardBehaviorMode: state.keyboardBehaviorMode,
+    terminalCopyMode: state.terminalCopyMode,
     editorHistory: state.editorHistory,
     editorDrafts: state.editorDrafts,
     terminalFontSize: state.terminalFontSize,
@@ -285,6 +301,7 @@ export function createUIStore(
         theme: 'dark',
         themePreset: null,
         keyboardBehaviorMode: 'follow',
+        terminalCopyMode: 'button',
         editorHistory: [],
         editorDrafts: {},
         terminalFontSize: DEFAULT_TERMINAL_FONT_SIZE,
@@ -316,6 +333,7 @@ export function createUIStore(
           })),
         setInputMode: (mode) => set({ inputMode: mode }),
         setKeyboardBehaviorMode: (mode) => set({ keyboardBehaviorMode: mode }),
+        setTerminalCopyMode: (mode) => set({ terminalCopyMode: mode }),
         setEditorSendWithEnter: (enabled) => set({ editorSendWithEnter: enabled }),
         setTheme: (theme) => set({ theme }),
         setThemePreset: (preset) => set({ themePreset: normalizeThemePreset(preset) }),

@@ -6,14 +6,12 @@ import { SelectionToolbar } from './SelectionToolbar';
 import { useContainerResizeObserver } from './hooks/useContainerResizeObserver';
 import { usePaneSinkRegistration } from './hooks/usePaneSinkRegistration';
 import { useTerminalBootSurface } from './hooks/useTerminalBootSurface';
-import { useTerminalClipboard } from './hooks/useTerminalClipboard';
 import { useTerminalFileLinks } from './hooks/useTerminalFileLinks';
 import { useTerminalHandle } from './hooks/useTerminalHandle';
 import { useTerminalInput } from './hooks/useTerminalInput';
-import { shouldDismissSelectionOnPointerDown } from './selection-dismiss';
+import { useTerminalSelectionChrome } from './hooks/useTerminalSelectionChrome';
 import { resolveTerminalThemeProp } from './theme';
 import type { TerminalProps, TerminalRef } from './types';
-import { useMobileTouch } from './useMobileTouch';
 import { useTerminalResize } from './useTerminalResize';
 
 export type TerminalComponentProps = TerminalProps & {
@@ -96,8 +94,17 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
         runPostSelectResize,
       });
 
-    const getTerminalForTouch = useCallback(() => instance, [instance]);
-    useMobileTouch(containerRef, getTerminalForTouch);
+    const {
+      toolbarRef,
+      hasSelection,
+      showCopyButton,
+      copySelection,
+      pasteClipboard,
+      dismissSelection,
+      selectionAnchor,
+      handlePointerDownCapture,
+      handlePointerUp,
+    } = useTerminalSelectionChrome(instance, containerRef);
 
     useEffect(() => {
       instance?.setViewportPan?.(viewportPan);
@@ -156,26 +163,6 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
 
     useTerminalFileLinks({ deviceId, paneId, instance, onOpenFile });
 
-    const { hasSelection, copySelection, pasteClipboard, dismissSelection } = useTerminalClipboard({
-      instance,
-    });
-
-    const handlePointerDownCapture = useCallback(
-      (event: React.PointerEvent<HTMLDivElement>) => {
-        if (
-          shouldDismissSelectionOnPointerDown({
-            hasSelection,
-            pointerType: event.pointerType,
-            button: event.button,
-            target: event.target,
-          })
-        ) {
-          dismissSelection();
-        }
-      },
-      [hasSelection, dismissSelection]
-    );
-
     useTerminalHandle({
       ref,
       instance,
@@ -199,6 +186,7 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
           ref={containerRef}
           className="relative min-h-0 w-full flex-1"
           onPointerDownCapture={handlePointerDownCapture}
+          onPointerUp={handlePointerUp}
         >
           <div
             ref={generationHostRef}
@@ -233,8 +221,11 @@ const TerminalView = forwardRef<TerminalRef, TerminalComponentProps>(
             </div>
           )}
           <SelectionToolbar
+            ref={toolbarRef}
             visible={hasSelection}
+            showCopy={showCopyButton}
             canPaste={inputMode === 'direct' && deviceConnected && !isSelectionInvalid}
+            style={selectionAnchor ?? undefined}
             onCopy={copySelection}
             onPaste={pasteClipboard}
             onDismiss={dismissSelection}

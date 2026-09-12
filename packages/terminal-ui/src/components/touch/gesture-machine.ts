@@ -1,3 +1,4 @@
+import { hitsSelectionToolbar } from '../selection-dismiss';
 import { MouseReportGesture } from './mouse-report-gesture';
 import { TouchPanAnchor, planPan } from './pan-gesture';
 import {
@@ -31,6 +32,7 @@ export interface GestureMachineOptions {
   container: Element;
   resolveTerminal: ResolveTerminal;
   elementFromPoint?: ElementFromPoint;
+  onSelectionCommitted?: () => void;
 }
 
 function preventIfCancelable(event: Event): void {
@@ -51,6 +53,7 @@ export class MobileTouchGestureMachine {
   private readonly container: Element;
   private readonly resolveTerminal: ResolveTerminal;
   private readonly elementFromPoint: ElementFromPoint;
+  private readonly onSelectionCommitted?: () => void;
   private readonly scroll: TouchScrollGesture;
   private readonly pan = new TouchPanAnchor();
   private readonly selection = new LongPressSelectionGesture();
@@ -60,6 +63,7 @@ export class MobileTouchGestureMachine {
     this.container = options.container;
     this.resolveTerminal = options.resolveTerminal;
     this.elementFromPoint = options.elementFromPoint ?? documentElementFromPoint;
+    this.onSelectionCommitted = options.onSelectionCommitted;
     this.scroll = new TouchScrollGesture(options.container);
   }
 
@@ -148,6 +152,11 @@ export class MobileTouchGestureMachine {
       this.selection.clear();
       const touch = event.touches.item(0);
       if (!touch) return;
+
+      if (hitsSelectionToolbar(event.target)) {
+        this.resetGesture();
+        return;
+      }
 
       this.touchId = touch.identifier;
       this.touchStartX = touch.clientX;
@@ -287,6 +296,7 @@ export class MobileTouchGestureMachine {
       // 抑制合成 mousedown：否则它会命中鼠标上报/本地选择分支，清掉刚建立的选择
       terminal?.noteTouchHandled?.();
       preventIfCancelable(event);
+      this.onSelectionCommitted?.();
       this.resetGesture();
       return;
     }
