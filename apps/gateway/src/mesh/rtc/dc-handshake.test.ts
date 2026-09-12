@@ -593,4 +593,91 @@ describeRtc('handshakeDataChannel', () => {
     expect(pair.fanA.isOpen()).toBe(true);
     expect(pair.fanB.isOpen()).toBe(true);
   });
+
+  test('malformed JSON ctl is dropped; valid ctl is queued with binary mux in arrival order', () => {
+    const { pc } = setup();
+    const [local, remote] = pairDataChannels('peer');
+    const queue = attachHandshakeRecv(local, pc, { peer: 'peer' });
+    const binPayload = new Uint8Array([9, 8, 7, 6]);
+    const binFrame = fragmentFrame(1, binPayload)[0];
+    expect(binFrame).toBeDefined();
+    local.emitMessage('{not-json');
+    remote.sendMessage(JSON.stringify({ t: 'ping' }));
+    remote.sendMessageBinary(Buffer.from(binFrame as Uint8Array));
+    const leftovers = queue.stop();
+    expect(leftovers).toHaveLength(2);
+    expect(ctlType(leftovers[0] as string | Buffer | ArrayBuffer)).toBe('ping');
+    expect(Uint8Array.from(leftovers[1] as Buffer)).toEqual(
+      Uint8Array.from(binFrame as Uint8Array)
+    );
+    expect(pc.closed).toBe(false);
+  });
+
+  test('mid-handshake ping JSON and a binary frame arrive on DataChannelLink in order', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const a = seedNodeIdentity(store, 'user-1');
+    const b = seedNodeIdentity(store, 'user-1');
+    const fake = createFakeNativeModule();
+    const pcA = new fake.module.PeerConnection('hs-a', { iceServers: [] }) as FakePeerConnection;
+    const pcB = new fake.module.PeerConnection('hs-b', { iceServers: [] }) as FakePeerConnection;
+    pcA.remoteFp = pcB.fingerprint;
+    pcB.remoteFp = pcA.fingerprint;
+    fixtures.push({ close: () => pcA.close() });
+    fixtures.push({ close: () => pcB.close() });
+    const [dcA, dcB] = pairDataChannels('peer');
+    const heldB = holdDoneMessages(dcB);
+    const fanA = fanoutDataChannel(dcA);
+    const fanB = fanoutDataChannel(heldB);
+
+    const hsA = handshakeDataChannel({
+      channel: fanA,
+      pc: pcA,
+      identity: a,
+      userStore: store,
+      localFingerprint: pcA.fingerprint,
+      timeoutMs: 1_000,
+    });
+    const hsB = handshakeDataChannel({
+      channel: fanB,
+      pc: pcB,
+      identity: b,
+      userStore: store,
+      localFingerprint: pcB.fingerprint,
+      timeoutMs: 1_000,
+    });
+    await hsA;
+
+    const pingJson = JSON.stringify({ t: 'ping' });
+    const binPayload = new Uint8Array([4, 3, 2, 1]);
+    const binFrame = fragmentFrame(1, binPayload)[0];
+    expect(binFrame).toBeDefined();
+    fanA.sendMessage(pingJson);
+    fanA.sendMessageBinary(Buffer.from(binFrame as Uint8Array));
+    heldB.release();
+    await hsB;
+
+    const handoff: Array<string | Buffer | ArrayBuffer> = [];
+    for (;;) {
+      const next = fanB.shiftPendingMessage();
+      if (next === undefined) break;
+      handoff.push(next);
+    }
+    expect(handoff.map((row) => ctlType(row) ?? 'binary')).toEqual(['ping', 'binary']);
+    fanB.reinjectMessages(handoff);
+    const arrived: Uint8Array[] = [];
+    const linkB = new DataChannelLink(fanB, { liveness: false });
+    const got = new Promise<void>((resolve) => {
+      linkB.onData((bytes) => {
+        arrived.push(bytes);
+        resolve();
+      });
+    });
+    await got;
+    expect(arrived).toEqual([binPayload]);
+    expect(fanB.isOpen()).toBe(true);
+    linkB.close();
+  });
 });

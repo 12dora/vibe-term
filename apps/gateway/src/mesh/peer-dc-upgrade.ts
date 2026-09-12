@@ -1,7 +1,10 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs, isRecord } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
-import { isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
+import {
+  isBackgroundDcUpgradeBlocked,
+  noteBackgroundDcUpgradeAttempt,
+} from './peer-dc-upgrade-gate';
 import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';
 import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
@@ -133,7 +136,9 @@ export class DcUpgradeCoordinator {
   wantsUpgrade(live: DcUpgradeLivePeer): boolean {
     if (live.retiring) return false;
     if (live.transport === 'dc') return false;
-    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, live.peerNodeId)) return false;
+    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, live.peerNodeId, this.ports.scheduler.now())) {
+      return false;
+    }
     return (
       this.ports.shouldTryDc(live.peerNodeId) ||
       (live.transport === 'relay' && this.ports.hasWsSecureCandidate(live.peerNodeId))
@@ -217,7 +222,7 @@ export class DcUpgradeCoordinator {
   maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
     if (this.ports.stopped()) return;
     if (!this.ports.isTrusted(nodeId)) return;
-    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, nodeId)) return;
+    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, nodeId, this.ports.scheduler.now())) return;
     const live = this.ports.live().get(nodeId);
     if (!live || !this.wantsUpgrade(live)) return;
     if (!live.quiesceCapable) {
@@ -246,6 +251,7 @@ export class DcUpgradeCoordinator {
     this.queueUpgrade(nodeId);
   }
   queueUpgrade(nodeId: string): void {
+    noteBackgroundDcUpgradeAttempt(this.dcBreaker, nodeId, this.ports.scheduler.now());
     const upgrading = this.ports.upgrading();
     const live = this.ports.live().get(nodeId);
     const wsSecure = live?.transport === 'relay' && this.ports.hasWsSecureCandidate(nodeId);

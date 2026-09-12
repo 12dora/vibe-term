@@ -5,6 +5,7 @@ import {
   type DcUpgradeLivePeer,
   type DcUpgradePorts,
 } from './peer-dc-upgrade';
+import { PERMANENT_FAILURE_HOLD_MS } from './peer-dc-upgrade-gate';
 import { RTC_DIAL_FORCE_PROBE_MS } from './rtc/rtc-dial-breaker';
 import type { MeshScheduler, PeerTransportKind } from './types';
 
@@ -212,6 +213,60 @@ describe('DcUpgradeCoordinator disabled DC upgrade', () => {
     coordinator.maybeUpgrade(peer, { cooldown: false });
     await flushMicrotasks();
     expect(dials).toEqual([]);
+    coordinator.dispose();
+  });
+
+  test('permanent failure hold expires after 60 min then one probe; a fresh failure re-arms', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const peer = 'peer-hold';
+    live.set(peer, livePeer(peer, 'relay'));
+    coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'h1');
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+
+    await scheduler.advance(PERMANENT_FAILURE_HOLD_MS - 1);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+
+    await scheduler.advance(1);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+
+    coordinator.dcBreaker.noteFailure(peer, 'no srflx candidates', 'h2');
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
+
+    await scheduler.advance(PERMANENT_FAILURE_HOLD_MS);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([peer, peer]);
+    coordinator.dispose();
+  });
+
+  test('breaker disabled stays blocked after the permanent-failure hold until rearm', async () => {
+    const scheduler = new ManualScheduler();
+    const { coordinator, live, dials } = makeCoordinator({ scheduler });
+    const peer = 'peer-disabled-hold';
+    live.set(peer, livePeer(peer));
+    disablePeer(coordinator, peer);
+    expect(coordinator.dcBreaker.isDisabled(peer)).toBe(true);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await scheduler.advance(PERMANENT_FAILURE_HOLD_MS);
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    await flushMicrotasks();
+    expect(dials).toEqual([]);
+    coordinator.onPeerReconnected(peer);
+    await flushMicrotasks();
+    expect(dials).toEqual([peer]);
     coordinator.dispose();
   });
 

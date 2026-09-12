@@ -16,7 +16,7 @@ import {
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
 } from './peer-manager';
-import { PEER_DC_IDLE_MS, PEER_IDLE_MS } from './peer-manager-state';
+import { PEER_DC_IDLE_MS, PEER_IDLE_MS, PEER_RETIRE_STREAM_LEAK_MS } from './peer-manager-state';
 import { dummyUplink, echoQuiesceCaps } from './peer-test-fixtures';
 import { ImmediateScheduler, seedNodeIdentity, seedUser, waitUntil } from './test-support';
 
@@ -1111,5 +1111,82 @@ describe('PeerManager upgrade review fixes', () => {
     expect(raced).toBe('open');
     expect(stream.closed).toBeInstanceOf(Promise);
     await stream.end();
+  });
+
+  test('replaced session with streams survives PEER_RETIRE_MAX_MS; new outbound uses live; inbound on retiring is kept', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      sessionStore: dummySessionStore(),
+      dispatchHttp: () => new Promise(() => {}),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    expect(manager.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const inflight = await relayA.openStream(HTTP_OPEN);
+    const relayClosed = relayA.closed.then((info) => info.reason);
+
+    const [dcA, dcB] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcB);
+    expect(manager.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId)).toBe(dcA);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+    expect(await manager.getLink(peer.nodeId)).toBe(dcA);
+
+    const dcIncoming = new Promise<import('@vibeterm/shared/link').LinkStream>((resolve) =>
+      dcB.onStream(resolve)
+    );
+    const liveSession = await manager.getLink(peer.nodeId);
+    expect(liveSession).toBe(dcA);
+    const outbound = await liveSession.openStream(HTTP_OPEN);
+    const dcStream = await dcIncoming;
+    const token = new TextEncoder().encode('live-outbound');
+    await outbound.write(token);
+    const chunk = await dcStream.readable.getReader().read();
+    expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('live-outbound');
+    outbound.end();
+    dcStream.end();
+
+    const inbound = await relayB.openStream(HTTP_OPEN);
+    const inboundClosed = inbound.closed.then((info) => info.reason);
+    const inboundStillOpen = await Promise.race([
+      inboundClosed,
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(inboundStillOpen).toBe('open');
+
+    scheduler.advance(PEER_RETIRE_MAX_MS);
+    const stillOpen = await Promise.race([
+      relayClosed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 20)),
+    ]);
+    expect(stillOpen).toBe('open');
+    expect(inflight.closed).toBeInstanceOf(Promise);
+
+    const warns: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (...args: unknown[]) => {
+      warns.push(String(args[0] ?? ''));
+    };
+    try {
+      scheduler.advance(PEER_RETIRE_STREAM_LEAK_MS - PEER_RETIRE_MAX_MS + 1);
+      expect(await relayClosed).toBe('retired');
+    } finally {
+      console.warn = origWarn;
+    }
+    expect(warns.some((line) => line.includes('retire leak-guard'))).toBe(true);
+    await inbound.end();
   });
 });

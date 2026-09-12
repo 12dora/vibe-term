@@ -31,6 +31,8 @@ export const KEY_LOG_STATUS_DEBOUNCE_MS = 100;
 export const PEER_RETIRE_MIN_MS = 5_000;
 export const PEER_RETIRE_QUIET_MS = 2_000;
 export const PEER_RETIRE_MAX_MS = 30_000;
+/** 退役 session 仍有内层流时的泄漏上限：到期后以 `retired` 强制关闭。 */
+export const PEER_RETIRE_STREAM_LEAK_MS = 30 * 60 * 1000;
 export const RTC_PEER_INBOX_MAX_MESSAGES = 32;
 
 export const PEER_TRANSPORT_RANK: Record<PeerTransportKind, number> = {
@@ -83,6 +85,30 @@ export type PeerRttSampleTarget = {
   rttMs: number | null;
   rttSpikeIgnored?: boolean;
 };
+
+/** ping.sentAt 是发送端 monotonic 不透明值；非有限数字一律忽略。 */
+export function parseEchoedSentAt(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined;
+}
+
+/**
+ * 只有发出 ping 的那一端用同一把 monotonic 时钟算 RTT。
+ * 回显必须 ≤ now；未来值 / 非有限值退回本地 pingSentAt，再不行丢弃。
+ */
+export function measurePingRttMs(
+  now: number,
+  echoedSentAt: number | undefined,
+  localSentAt: number | null | undefined
+): number | null {
+  const echoed =
+    echoedSentAt != null && Number.isFinite(echoedSentAt) && echoedSentAt <= now
+      ? echoedSentAt
+      : undefined;
+  const local = localSentAt != null && Number.isFinite(localSentAt) ? localSentAt : undefined;
+  const sentAt = echoed ?? local;
+  if (sentAt == null || !Number.isFinite(now) || sentAt > now) return null;
+  return now - sentAt;
+}
 
 /** 一次样本：α=0.3 EWMA；超过当前 EWMA 3 倍的尖峰忽略一次。 */
 export function applyPeerRttSample(live: PeerRttSampleTarget, sampleMs: number): number {

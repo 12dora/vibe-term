@@ -1,8 +1,10 @@
 import type { LinkSession } from '@vibeterm/shared/link';
+import { warnLine } from './mesh-log';
 import {
   PEER_RETIRE_MAX_MS,
   PEER_RETIRE_MIN_MS,
   PEER_RETIRE_QUIET_MS,
+  PEER_RETIRE_STREAM_LEAK_MS,
   type PeerManagerState,
   isPeerTrusted,
 } from './peer-manager-state';
@@ -160,8 +162,15 @@ export class PeerLinkDrain {
 
   private nextRetireDelayMs(live: LivePeer): number {
     const now = this.state.scheduler.now();
+    if (live.streams > 0) {
+      if (isDrainRetireReason(live.retireReason)) {
+        return Math.max(1, live.retiredAt + PEER_RETIRE_MAX_MS - now);
+      }
+      const leakDue = live.retiredAt + PEER_RETIRE_STREAM_LEAK_MS;
+      return Math.max(1, Math.min(PEER_RETIRE_QUIET_MS, leakDue - now));
+    }
     let due = live.retiredAt + PEER_RETIRE_MAX_MS;
-    if (live.streams === 0 && live.zeroStreamsSince > 0) {
+    if (live.zeroStreamsSince > 0) {
       due = Math.min(
         due,
         Math.max(live.retiredAt + PEER_RETIRE_MIN_MS, live.zeroStreamsSince + PEER_RETIRE_QUIET_MS)
@@ -188,8 +197,18 @@ export class PeerLinkDrain {
       this.finishRetire(live, reason);
       return;
     }
-    // make-before-break：有内层流时绝不 close/reset 旧 session（replaced 会 RST 整条 relay uplink）。
-    if (live.streams > 0) return;
+    // make-before-break：replaced 等有内层流时保持旧 session，按 QUIET 轮询；30 min 泄漏上限才强制 retired。
+    if (live.streams > 0) {
+      // 严格大于 30 min：与 DC idle（恰好 30 min 时 promote retiring relay）错开同一时刻。
+      if (elapsed > PEER_RETIRE_STREAM_LEAK_MS) {
+        warnLine(
+          '[mesh]',
+          `retire leak-guard peer=${live.peerNodeId} streams=${live.streams} elapsed_ms=${elapsed}`
+        );
+        this.finishRetire(live, 'retired');
+      }
+      return;
+    }
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
     if (
       (live.gotQuiesceAck && live.gotPeerQuiesce) ||

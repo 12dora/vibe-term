@@ -4,9 +4,12 @@ import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import {
   PEER_DC_IDLE_MS,
   PEER_IDLE_MS,
+  PEER_RETIRE_STREAM_LEAK_MS,
   applyPeerRttSample,
   createPeerManagerState,
   lookupPeerRttMs,
+  measurePingRttMs,
+  parseEchoedSentAt,
 } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { ImmediateScheduler } from './test-support';
@@ -52,5 +55,49 @@ describe('peer RTT EWMA and lookup', () => {
   test('DC idle is 30 min and relay idle stays 5 min', () => {
     expect(PEER_IDLE_MS).toBe(5 * 60 * 1000);
     expect(PEER_DC_IDLE_MS).toBe(30 * 60 * 1000);
+    expect(PEER_RETIRE_STREAM_LEAK_MS).toBe(30 * 60 * 1000);
+  });
+
+  test('RTT is computed by the ping sender; a 1e6 ms peer clock offset does not leak', () => {
+    const skew = 1_000_000;
+    const trip = 42;
+    const a = { now: 1_000, pingSentAt: null as number | null, rttMs: null as number | null };
+    const b = {
+      now: 1_000 + skew,
+      pingSentAt: null as number | null,
+      rttMs: null as number | null,
+    };
+    const onPing = (sentAt: unknown) => ({ t: 'pong' as const, sentAt });
+    a.pingSentAt = a.now;
+    const pingA = { t: 'ping' as const, sentAt: a.pingSentAt };
+    const pongA = onPing(pingA.sentAt);
+    expect(b.rttMs).toBeNull();
+    a.now += trip;
+    b.now += trip;
+    const sampleA = measurePingRttMs(a.now, parseEchoedSentAt(pongA.sentAt), a.pingSentAt);
+    expect(sampleA).toBe(trip);
+    applyPeerRttSample(a, sampleA as number);
+    expect(a.rttMs).toBe(trip);
+
+    b.pingSentAt = b.now;
+    const pingB = { t: 'ping' as const, sentAt: b.pingSentAt };
+    const pongB = onPing(pingB.sentAt);
+    a.now += trip;
+    b.now += trip;
+    const sampleB = measurePingRttMs(b.now, parseEchoedSentAt(pongB.sentAt), b.pingSentAt);
+    expect(sampleB).toBe(trip);
+    expect(sampleB).not.toBe(trip + skew);
+  });
+
+  test('measurePingRttMs ignores non-finite and future echoed sentAt', () => {
+    expect(measurePingRttMs(100, Number.NaN, 90)).toBe(10);
+    expect(measurePingRttMs(100, Number.POSITIVE_INFINITY, 90)).toBe(10);
+    expect(measurePingRttMs(100, 200, 90)).toBe(10);
+    expect(measurePingRttMs(100, 80, 90)).toBe(20);
+    expect(measurePingRttMs(100, undefined, null)).toBeNull();
+    expect(measurePingRttMs(100, 200, 200)).toBeNull();
+    expect(parseEchoedSentAt('1')).toBeUndefined();
+    expect(parseEchoedSentAt(Number.NaN)).toBeUndefined();
+    expect(parseEchoedSentAt(12.5)).toBe(12.5);
   });
 });

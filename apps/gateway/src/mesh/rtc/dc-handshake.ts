@@ -28,7 +28,7 @@ export const DC_HANDSHAKE_MAX_QUEUE = 64;
 export const DC_HANDSHAKE_HELLO_INTERVAL_MS = 500;
 export const DC_HANDSHAKE_JSON_PROBE_BYTES = 16 * 1024;
 
-export type DcHandshakeType = 'hello' | 'sig' | 'done' | 'ctl';
+export type DcHandshakeType = 'hello' | 'sig' | 'done' | 'ctl' | 'malformed';
 
 function fingerprintsEqual(a: DtlsFingerprint, b: DtlsFingerprint): boolean {
   const left = normalizeFingerprint(a);
@@ -101,7 +101,7 @@ export function dcHandshakeType(
 ): DcHandshakeType | null {
   if (typeof msg === 'string') {
     const parsed = tryParseJson(msg);
-    if (parsed === null) return 'ctl';
+    if (parsed === null) return 'malformed';
     return handshakeTypeFromParsed(parsed);
   }
   const bytes = toUint8Array(msg);
@@ -110,12 +110,14 @@ export function dcHandshakeType(
   try {
     return handshakeTypeFromParsed(decodeJsonBytes(bytes));
   } catch {
-    return null;
+    // mux 帧偶发以 0x7b 开头且含 NUL；无 NUL 的纯文本才当损坏 JSON 丢掉。
+    return bytes.includes(0) ? null : 'malformed';
   }
 }
 
 export function isDcHandshakeWire(msg: string | Buffer | ArrayBuffer | ArrayBufferView): boolean {
-  return dcHandshakeType(msg) !== null;
+  const kind = dcHandshakeType(msg);
+  return kind !== null && kind !== 'malformed';
 }
 
 function messageByteLength(msg: string | Buffer | ArrayBuffer): number {
@@ -233,7 +235,7 @@ function recvQueue(
       deliverHandshake(bytes);
       return;
     }
-    if (kind === 'ctl') return;
+    if (kind === 'malformed') return;
     enqueuePayload(msg);
   });
   const unsubClosed: unknown = channel.onClosed(() => {

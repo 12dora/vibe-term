@@ -17,6 +17,8 @@ import {
   applyPeerRttSample,
   comparePeerTransport,
   isPeerTrusted,
+  measurePingRttMs,
+  parseEchoedSentAt,
   peerStale,
 } from './peer-manager-state';
 import { parseOpenPayload } from './peer-protocol';
@@ -265,6 +267,7 @@ export class PeerLiveRegistry {
         stream.reset('stale-link');
         return;
       }
+      // 对端可能尚未切到新 live：退役中的 session 仍接受其入站流。本端新出站走当前 live。
       const kind = classifyOpenPayload(stream.openPayload);
       if (kind === 'unknown' || kind === 'relay') {
         stream.reset('unknown-stream-type');
@@ -361,6 +364,7 @@ export class PeerLiveRegistry {
     live.missedPongs = 0;
     live.lastInboundFrameAt = live.session.lastFrameAt ?? live.lastInboundFrameAt;
     const sendPing = () => {
+      // sentAt 是本端 monotonic 不透明值；对端原样回显，本端在 pong 上算 RTT。
       live.pingSentAt = performance.now();
       this.deps.sendPeerCtl(live, { t: 'ping', sentAt: live.pingSentAt });
     };
@@ -381,30 +385,24 @@ export class PeerLiveRegistry {
 
   onPeerPong(live: LivePeer, echoedSentAt?: number): void {
     live.missedPongs = 0;
-    const sentAt =
-      typeof echoedSentAt === 'number' && Number.isFinite(echoedSentAt)
-        ? echoedSentAt
-        : live.pingSentAt;
+    const sample = measurePingRttMs(performance.now(), echoedSentAt, live.pingSentAt);
     live.pingSentAt = null;
-    if (sentAt == null) return;
-    applyPeerRttSample(live, performance.now() - sentAt);
+    if (sample == null) return;
+    applyPeerRttSample(live, sample);
     this.maybeEmitRtt(live);
   }
 
-  /** 新节点在 ping 里带 sentAt、pong 回显；旧节点不回显则退回本地 pingSentAt。拦截后不再走 peer-manager 的裸 pong。 */
+  /** ping 只回显 sentAt，不在收 ping 时算 RTT（那会混入对端时钟）。pong 由发送端用本进程 monotonic 计算。 */
   private handleRttCtl(live: LivePeer, bytes: Uint8Array): boolean {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return false;
     if (msg.t === 'ping') {
-      const sentAt =
-        typeof msg.sentAt === 'number' && Number.isFinite(msg.sentAt) ? msg.sentAt : undefined;
+      const sentAt = parseEchoedSentAt(msg.sentAt);
       this.deps.sendPeerCtl(live, sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt });
       return true;
     }
     if (msg.t !== 'pong') return false;
-    const echoed =
-      typeof msg.sentAt === 'number' && Number.isFinite(msg.sentAt) ? msg.sentAt : undefined;
-    this.onPeerPong(live, echoed);
+    this.onPeerPong(live, parseEchoedSentAt(msg.sentAt));
     return true;
   }
 
