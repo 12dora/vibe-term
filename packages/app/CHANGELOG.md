@@ -1,4 +1,4 @@
-# 2.3.3
+# 2.3.4
 
 _2026-09-13_
 
@@ -6,13 +6,13 @@ _2026-09-13_
 
 ### Fixes
 
-- **Path sampling ignores TCP handshakes terminated by a local TUN/proxy.** A machine behind Surge/mihomo-style fake-IP proxies completed TCP connects locally in a few ms; 2.3.2 recorded those as the "best path" and wrongly re-raced healthy relay uplinks and direct links. Connects to fake-IP addresses are no longer sampled, and a TCP sample below 20 % of the real link RTT is discarded (already recorded ones are purged when a real heartbeat/DC sample arrives).
+- **Path sampling ignores TCP handshakes terminated by a local TUN/proxy.** A machine behind Surge/mihomo-style fake-IP proxies completed TCP connects locally in a few ms; 2.3.2 recorded those as the "best path" and wrongly re-raced healthy relay uplinks and direct links. Connects to fake-IP addresses are no longer sampled, and a TCP sample below 50 % of the real link RTT is discarded (already recorded ones are purged when a real heartbeat/DC sample arrives).
 
 ## 中文
 
 ### 修复
 
-- **路径抽样剔除被本机 TUN/代理就地终结的 TCP 握手。** Surge/mihomo 一类 fake-IP 代理会在本机几毫秒内完成 TCP connect，2.3.2 把它记成「最佳路径」，误把健康的中继上行与直连判为劣化并重连。现在 fake-IP 对端不记样本，低于真实链路 RTT 20% 的 connect 样本丢弃，真实心跳/DC 样本到来时清除已记的假样本。
+- **路径抽样剔除被本机 TUN/代理就地终结的 TCP 握手。** Surge/mihomo 一类 fake-IP 代理会在本机几毫秒内完成 TCP connect，2.3.2 把它记成「最佳路径」，误把健康的中继上行与直连判为劣化并重连。现在 fake-IP 对端不记样本，低于真实链路 RTT 50% 的 connect 样本丢弃，真实心跳/DC 样本到来时清除已记的假样本。
 
 # 2.3.2
 
