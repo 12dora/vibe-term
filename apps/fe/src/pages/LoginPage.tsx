@@ -244,7 +244,11 @@ function TotpField({
         data-testid="login-totp"
       />
       {hintKey ? (
-        <p className="text-xs text-muted-foreground" id="login-totp-hint" data-testid="login-totp-hint">
+        <p
+          className="text-xs text-muted-foreground"
+          id="login-totp-hint"
+          data-testid="login-totp-hint"
+        >
           {t(hintKey)}
         </p>
       ) : null}
