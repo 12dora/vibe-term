@@ -74,4 +74,26 @@ describe('RelayUplinkHeartbeat', () => {
     scheduler.ticks[0]?.();
     expect(timeouts).toEqual(['missed-pong']);
   });
+
+  test('onPong 把 RTT 交给 onRtt', () => {
+    const nowMs = { value: 5_000 };
+    const scheduler = fakeScheduler(nowMs);
+    const rtts: number[] = [];
+    const hb = new RelayUplinkHeartbeat({
+      scheduler,
+      intervalMs: 15_000,
+      missedLimit: 3,
+      sendPing: () => {},
+      onTimeout: () => {},
+      onRtt: (rttMs) => {
+        rtts.push(rttMs);
+      },
+    });
+    hb.start({} as LinkSession, () => true);
+    scheduler.ticks[0]?.();
+    nowMs.value = 5_033;
+    hb.onPong();
+    expect(rtts).toEqual([33]);
+    expect(hb.rttMs).toBe(33);
+  });
 });

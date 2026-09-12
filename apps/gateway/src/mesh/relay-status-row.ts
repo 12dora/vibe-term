@@ -3,6 +3,7 @@ import type { RelayPresence } from './relay-presence';
 import type { RelayUplinkClient } from './relay-uplink-client';
 import { matchingTurnProbe } from './rtc/stun-effective';
 import type { PooledUplink } from './types';
+import { isUplinkPathRerace, uplinkPathView } from './uplink-path-sampler';
 
 export type RelayCandidateError = {
   lastError: string | null;
@@ -44,6 +45,8 @@ export type RelayStatusRowExtras = {
   turn?: RelayStatusTurnView | null;
   lastError?: { reason: string; at: number } | null;
   keyLog?: RelayStatusRowKeyLog;
+  pathBestMs?: number;
+  reraces?: number;
 };
 
 function statusRowOnline(
@@ -90,6 +93,8 @@ export function buildRelayStatusRow(
     kicked: row.kicked,
     kickedReason: row.kicked ? (row.kickedReason ?? null) : null,
     ...(extras?.keyLog?.diverged === true ? { keyLog: { diverged: true as const } } : {}),
+    ...(extras?.pathBestMs != null ? { pathBestMs: extras.pathBestMs } : {}),
+    ...(extras?.reraces != null ? { reraces: extras.reraces } : {}),
   };
 }
 
@@ -108,6 +113,9 @@ function statusRowErrors(
       lastErrorAt: cand?.lastErrorAt ?? null,
     },
   });
+  if (isUplinkPathRerace(err.lastError)) {
+    return { lastError: null, lastErrorCode: null, lastErrorAt: null };
+  }
   const code = classifyRelayLinkError(err.lastError);
   if (online || code === null) {
     return { lastError: null, lastErrorCode: null, lastErrorAt: null };
@@ -145,6 +153,7 @@ export function collectRelayStatusRows(input: {
       turn: input.turnOf(client),
       ...(client && !attached ? { lastError: client.lastConnectError } : {}),
       ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
+      ...uplinkPathView(row.url),
     });
   });
 }

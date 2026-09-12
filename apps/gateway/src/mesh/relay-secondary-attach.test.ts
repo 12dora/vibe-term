@@ -347,4 +347,25 @@ describe('RelaySecondaryAttach', () => {
     expect(inbound).toEqual([{ from: PEER, viaRelay: TK }]);
     await manager.stop();
   });
+
+  test('path-rerace 把 slot.attempt 归零并立刻重连', async () => {
+    const { manager, spawned, scheduler } = setup(
+      [
+        { url: SH, priority: 0, kicked: false },
+        { url: TK, priority: 1, kicked: false },
+      ],
+      SH
+    );
+    manager.start();
+    await manager.reconcile();
+    await waitUntil(() => spawned.some((c) => c.hubUrl === TK && c.state === 'online'));
+    const first = spawned.find((c) => c.hubUrl === TK);
+    expect(first).toBeTruthy();
+    first!.lastConnectError = { reason: 'path-rerace', at: 1 };
+    first!.disconnect();
+    await waitUntil(() => spawned.filter((c) => c.hubUrl === TK).length >= 2);
+    expect(scheduler.sleeps).toEqual([]);
+    expect(spawned.filter((c) => c.hubUrl === TK).at(-1)?.state).toBe('online');
+    await manager.stop();
+  });
 });

@@ -133,6 +133,7 @@ import type {
   PeerReach,
 } from './types';
 import { UplinkClient, type UplinkWsFactory } from './uplink-client';
+import { startUplinkPathSamplingFromCandidates } from './uplink-path-sampler';
 import {
   type AttachedHub,
   type UplinkCandidate,
@@ -1484,6 +1485,7 @@ function assembleMeshRuntime(
         previous: stopReach,
       });
       uplink.start();
+      startUplinkPathSamplingFromCandidates(d.scheduler, () => uplink.candidates());
       relayMultiAttachOf(d.relay)?.start();
       kickHubPeerDiscovery(hub, uplink);
       startMeshRtcProbes(rtc, d.scheduler);

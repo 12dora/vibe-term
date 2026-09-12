@@ -40,6 +40,7 @@ import {
   selectNearestUplink,
   writerHubIdOf,
 } from './uplink-nearest-switch';
+import { isUplinkPathRerace, sleepAfterUplinkSession } from './uplink-path-sampler';
 import { type UrlDiag, emptyUplinkDiag, mergeUplinkDiag } from './uplink-pool-diag';
 import { defaultFetchCaPem, defaultProbeHealthz } from './uplink-pool-http';
 import { type UplinkSwitchResult, runUplinkSwitch, terminalErrorOf } from './uplink-pool-switch';
@@ -410,6 +411,7 @@ export class UplinkPool {
   private readonly rttSwitchDwellMs: number;
   private readonly relayDrain: UplinkRelayDrain;
   private lastRttSwitchAt = 0;
+  private lastSessionReason = '';
 
   private live: PooledUplink | null = null;
   pending: PooledUplink | null = null;
@@ -693,14 +695,10 @@ export class UplinkPool {
       if (signal.aborted) return;
       if (session) {
         this.wrapAttempt = 0;
-        try {
-          await this.scheduler.sleep(
-            backoffDelayMs(0, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS),
-            signal
-          );
-        } catch {
+        if (
+          (await sleepAfterUplinkSession(this.scheduler, signal, this.lastSessionReason)) === 'stop'
+        )
           return;
-        }
         continue;
       }
       const delay = backoffDelayMs(this.wrapAttempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
@@ -775,7 +773,7 @@ export class UplinkPool {
           if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
           deadline.abort();
           await this.promote(client, cand, token);
-          await this.waitActiveSession(this.live ?? client, signal);
+          await this.rememberSessionEnd(client, signal);
           return true;
         } catch (err) {
           if (!this.isSwitchCurrent(token)) return await this.followLiveSession(signal);
@@ -1061,12 +1059,15 @@ export class UplinkPool {
     return ended;
   }
 
+  private async rememberSessionEnd(client: PooledUplink, signal: AbortSignal): Promise<void> {
+    this.lastSessionReason =
+      (await this.waitActiveSession(this.live ?? client, signal))?.reason ?? '';
+  }
   private persistTerminalError(client: PooledUplink, publicUrl: string): void {
     const reason = terminalErrorOf(client);
-    if (!reason) return;
+    if (!reason || isUplinkPathRerace(reason)) return;
     this.noteFailure({ publicUrl }, reason);
   }
-
   private async waitWhileLive(client: PooledUplink, signal: AbortSignal): Promise<void> {
     if (this.live !== client || signal.aborted) return;
     await new Promise<void>((resolve) => {

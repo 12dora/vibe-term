@@ -44,7 +44,6 @@ import {
   sendRelayStatusNow,
   shouldResendRelayStatus,
 } from './relay-uplink-ctl';
-import { RelayUplinkHeartbeat } from './relay-uplink-heartbeat';
 import { defaultRelayWsFactory, relayUplinkWsUrl } from './relay-uplink-http';
 import type {
   InboundRelayHandler,
@@ -58,10 +57,10 @@ import {
   UPLINK_AUTH_TIMEOUT_MS,
   UPLINK_CONNECT_TIMEOUT_MS,
   UPLINK_KEY_LOG_ACK_TIMEOUT_MS,
-  UPLINK_MISSED_PONG_LIMIT,
   UPLINK_PING_INTERVAL_MS,
   type UplinkWsFactory,
 } from './uplink-client';
+import { createUplinkPathHeartbeat, trackCountedStream } from './uplink-path-sampler';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
 import { closeTransport } from './uplink-reconnect';
 
@@ -116,7 +115,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   readonly relayHost: string;
   private readonly userIdOf: () => string;
   readonly scheduler: MeshScheduler;
-  private readonly heartbeat: RelayUplinkHeartbeat;
+  private readonly heartbeat: ReturnType<typeof createUplinkPathHeartbeat>;
   readonly keyLog: RelayKeyLogSync;
   private readonly stateListeners: Array<(state: UplinkState) => void> = [];
   private relayHandler: InboundRelayHandler | null = null;
@@ -132,6 +131,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   lastStatusJson = '';
   lastRttSentMs: number | null = null;
   lastRttSentAt = 0;
+  onlineAt = 0;
   rtcConfig: RelayRtcConfig = { stun: [], turn: null };
 
   constructor(opts: RelayUplinkClientOptions) {
@@ -142,15 +142,16 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     const uid = opts.userId;
     this.userIdOf = typeof uid === 'function' ? uid : () => uid;
     this.scheduler = opts.scheduler ?? defaultScheduler();
-    this.heartbeat = new RelayUplinkHeartbeat({
+    this.heartbeat = createUplinkPathHeartbeat({
       scheduler: this.scheduler,
       intervalMs: opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS,
-      missedLimit: UPLINK_MISSED_PONG_LIMIT,
-      sendPing: (link) => {
-        link.ctl.send(encodeRelayCtl({ t: 'ping' }));
-      },
-      onTimeout: (reason) => this.tearDownLink(reason),
+      sendPing: (link) => link.ctl.send(encodeRelayCtl({ t: 'ping' })),
+      tearDown: (reason) => this.tearDownLink(reason),
       onTick: () => this.sendStatusIfChanged(),
+      onSample: (rttMs) => this.opts.onRtt?.(rttMs),
+      url: () => this.hubUrl,
+      linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
+      inFlight: () => this.inFlightRelayStreams,
     });
     this.enroll = new RelayEnrollChannel((msg) => this.rawSend(msg));
     this.keyLog = new RelayKeyLogSync({
@@ -435,6 +436,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
 
   private setState(state: UplinkState): void {
     if (this.state === state) return;
+    if (state === 'online') this.onlineAt = this.scheduler.now();
     this.state = state;
     for (const cb of this.stateListeners) {
       try {
@@ -485,7 +487,9 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       try {
         this.handleCtl(decodeRelayCtl(bytes), generation);
       } catch (err) {
-        console.warn(stamp(`[relay] ctl error err=${errMessage(err)}`));
+        console.warn(
+          stamp(`[relay] ctl error err=${err instanceof Error ? err.message : String(err)}`)
+        );
       }
     });
     link.onStream((stream) => {
@@ -529,7 +533,6 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         this.awaitingToken = true;
       }
       this.heartbeat.onPong();
-      this.opts.onRtt?.(this.heartbeat.rttMs);
       return;
     }
     if (msg.t === 'ping') {
@@ -564,11 +567,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
   }
 
   private trackRelayStream(stream: LinkStream): LinkStream {
-    if (this.relayStreams.has(stream)) return stream;
-    this.relayStreams.add(stream);
-    const remove = () => this.relayStreams.delete(stream);
-    void stream.closed.then(remove, remove);
-    return stream;
+    return trackCountedStream(this.relayStreams, stream);
   }
 
   tearDownLink(reason: string): void {
@@ -585,10 +584,6 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       /* already closed */
     }
   }
-}
-
-function errMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function connectFailureReason(err: unknown): string {

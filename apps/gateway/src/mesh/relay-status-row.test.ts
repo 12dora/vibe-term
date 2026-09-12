@@ -135,4 +135,31 @@ describe('buildRelayStatusRow', () => {
       lastErrorAt: null,
     });
   });
+
+  test('path-rerace 不当成当前错误', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'offline', rttMs: null },
+      { lastConnectError: { reason: 'path-rerace', at: 3 } },
+      []
+    );
+    expect(row).toMatchObject({
+      lastError: null,
+      lastErrorCode: null,
+      lastErrorAt: null,
+    });
+  });
+
+  test('可选 pathBestMs / reraces 原样带出', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://a.example', priority: 0, kicked: false },
+      'https://a.example',
+      { state: 'online', rttMs: 90 },
+      null,
+      [],
+      { connected: true, pathBestMs: 42, reraces: 1 }
+    );
+    expect(row).toMatchObject({ pathBestMs: 42, reraces: 1, rttMs: 90 });
+  });
 });

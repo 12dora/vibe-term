@@ -945,4 +945,38 @@ describe('formatting helpers', () => {
       true
     );
   });
+
+  test('formatRelayStatusLines 在有 pathBestMs 时打印 BEST 列', () => {
+    const lines = formatRelayStatusLines({
+      mode: 'relay',
+      tenantId: null,
+      relays: [
+        {
+          url: 'https://sh.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          role: 'primary',
+          rttMs: 90,
+          peersOnline: 1,
+          turn: null,
+          lastError: null,
+          lastErrorCode: null,
+          lastErrorAt: null,
+          kicked: false,
+        },
+      ],
+      metaEpoch: 1,
+      nodesViaRelay: 1,
+      multiAttach: false,
+      reauthRequired: false,
+      readmitPending: 0,
+      raw: {
+        relays: [{ url: 'https://sh.example', pathBestMs: 40, reraces: 1 }],
+      },
+    });
+    const header = lines.find((line) => line.includes('PRI') && line.includes('BEST'));
+    expect(header).toBeTruthy();
+    expect(lines.some((line) => line.includes('40 ms') && line.includes('90 ms'))).toBe(true);
+  });
 });

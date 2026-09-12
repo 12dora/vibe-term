@@ -32,6 +32,8 @@ export interface RelayLinkStatus {
   /** 多中继同时挂载时的角色；未连接为 `null`。旧节点不下发。 */
   role?: RelayAttachRole | null;
   rttMs?: number | null;
+  pathBestMs?: number;
+  reraces?: number;
   peersOnline?: number | null;
   turn?: RelayTurnProbe | null;
   /** 当前（未恢复的）连接错误原文；在线时为 `null`。 */
@@ -394,6 +396,8 @@ export function normalizeRelayStatus(
       attached: row.attached === true,
       role: row.role === 'primary' || row.role === 'secondary' ? row.role : null,
       rttMs: row.rttMs ?? null,
+      ...(typeof row.pathBestMs === 'number' ? { pathBestMs: row.pathBestMs } : {}),
+      ...(typeof row.reraces === 'number' ? { reraces: row.reraces } : {}),
       peersOnline: typeof row.peersOnline === 'number' ? row.peersOnline : null,
       turn: normalizeRelayTurn(row.turn),
       lastError: row.online === true ? null : (row.lastError ?? null),
@@ -576,20 +580,16 @@ export class RelayTenantApi {
     });
   }
 
-  /**
-   * `POST /api/mesh/relay/pack`：把密封包交给本机节点，由它转发到各中继。
-   * 一台都没转发成功时服务端回 502 `RELAY_PACK_FORWARD_FAILED`。
-   */
+  /** `POST /api/mesh/relay/pack`：转发密封包；全失败时 502 `RELAY_PACK_FORWARD_FAILED`。 */
   uploadPack(body: RelayPackUpload): Promise<RelayPackUploadResult> {
     return this.json<RelayPackUploadResult>(`${BASE}/pack`, 'relay_pack_upload_failed', {
       method: 'POST',
       body,
     });
   }
-
-  /** `GET /api/mesh/relay/enrollments/:id`：证书字段与 hub 同形，供证书轮询复用。 */
+  /** `GET /api/mesh/relay/enrollments/:id` */
   getEnrollment(id: string): Promise<RelayEnrollmentStatus> {
-    return this.json<RelayEnrollmentStatus>(
+    return this.json(
       `${BASE}/enrollments/${encodeURIComponent(id)}`,
       'relay_enrollment_status_failed'
     );

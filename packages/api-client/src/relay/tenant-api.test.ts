@@ -101,6 +101,23 @@ describe('RelayTenantApi 状态', () => {
     });
   });
 
+  test('normalizeRelayStatus 保留可选 pathBestMs / reraces', () => {
+    const row = normalizeRelayStatus({
+      relays: [
+        {
+          url: 'https://r.example',
+          priority: 0,
+          online: true,
+          attached: true,
+          pathBestMs: 41,
+          reraces: 2,
+        },
+      ],
+    }).relays[0];
+    expect(row?.pathBestMs).toBe(41);
+    expect(row?.reraces).toBe(2);
+  });
+
   test('normalizeRelayStatus 对空响应给出 none 模式', () => {
     expect(normalizeRelayStatus(null).mode).toBe('none');
     expect(normalizeRelayStatus({ reauthRequired: true }).reauthRequired).toBe(true);

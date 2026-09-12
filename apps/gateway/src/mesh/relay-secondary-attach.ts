@@ -5,6 +5,7 @@ import { RELAY_PRESENCE_STALE_MS, type RelayPresence } from './relay-presence';
 import type { RelayStreamOpener } from './relay-presence-types';
 import type { InboundRelayHandler, MeshScheduler, UplinkState } from './types';
 import { UPLINK_BACKOFF_MAX_MS, UPLINK_BACKOFF_MIN_MS } from './uplink-client';
+import { isUplinkPathRerace } from './uplink-path-sampler';
 import { normalizeHubEndpointUrl, sameHubUrl } from './uplink-pool-url';
 import type { UplinkCtlMessage } from './uplink-protocol';
 
@@ -190,6 +191,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
         );
       }
       const unsub = client.onStateChange((state) => this.onClientState(slot, client, state));
+      let closeReason = '';
       try {
         client.start();
         await client.attemptConnect(slot.abort.signal);
@@ -202,6 +204,7 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
         /* 连接失败或 aborted：下面统一拆掉再退避 */
       } finally {
         unsub();
+        closeReason = client.lastConnectError?.reason ?? '';
         const now = this.opts.scheduler.now();
         this.opts.presence.markDisconnected(slot.url, now, this.staleMs());
         slot.client = null;
@@ -212,14 +215,23 @@ export class RelaySecondaryAttach implements RelayStreamOpener {
         }
       }
       if (!this.running || slot.abort.signal.aborted || !this.stillWanted(slot.url)) break;
-      this.scheduleDecay(slot.url);
-      const delay = backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
-      slot.attempt += 1;
-      try {
-        await this.opts.scheduler.sleep(delay, slot.abort.signal);
-      } catch {
-        break;
-      }
+      if (await this.sleepBeforeRetry(slot, closeReason)) break;
+    }
+  }
+
+  private async sleepBeforeRetry(slot: Slot, closeReason: string): Promise<boolean> {
+    if (isUplinkPathRerace(closeReason)) {
+      slot.attempt = 0;
+      return false;
+    }
+    this.scheduleDecay(slot.url);
+    const delay = backoffDelayMs(slot.attempt, UPLINK_BACKOFF_MIN_MS, UPLINK_BACKOFF_MAX_MS);
+    slot.attempt += 1;
+    try {
+      await this.opts.scheduler.sleep(delay, slot.abort.signal);
+      return false;
+    } catch {
+      return true;
     }
   }
 

@@ -2,6 +2,7 @@ import type { MeshHttpRuntime } from './mesh-http';
 import type { PeerManager } from './peer-manager';
 import { type RelayWiring, relayMultiAttachOf } from './relay-wiring';
 import { stopMeshRtcProbes } from './rtc/stun-effective';
+import { stopUplinkPathSampling } from './uplink-path-sampler';
 import type { UplinkPool } from './uplink-pool';
 
 export function meshStopTasks(input: {
@@ -16,6 +17,7 @@ export function meshStopTasks(input: {
 }): Array<[string, () => Promise<void> | void]> {
   return [
     ['peer', () => input.peerManager.stop()],
+    ['path-sample', () => stopUplinkPathSampling()],
     ['relay-secondaries', () => relayMultiAttachOf(input.wiring)?.stop() ?? Promise.resolve()],
     ['uplink', () => input.uplink.stop()],
     ['hub', () => input.hubStop()],

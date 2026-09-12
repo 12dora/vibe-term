@@ -1495,6 +1495,26 @@ describe('UplinkPool', () => {
     await second.pool.stop();
   });
 
+  test('path-rerace 立刻重连且不记候选失败', async () => {
+    const scheduler = new ManualScheduler();
+    const { pool, created } = boot({
+      urls: ['https://relay.example'],
+      scheduler,
+    });
+    pool.start();
+    await waitMicro();
+    expect(created).toHaveLength(1);
+    expect(pool.attachedHub()?.publicUrl).toBe('https://relay.example');
+    created[0]?.terminate('path-rerace');
+    await waitMicro();
+    expect(
+      pool.candidates().find((row) => row.publicUrl === 'https://relay.example')?.lastError
+    ).toBeNull();
+    expect(created.length).toBeGreaterThanOrEqual(2);
+    expect(created.at(-1)?.state).toBe('online');
+    await pool.stop();
+  });
+
   test('overlapping probe ticks are in-flight-guarded and the period is jittered ±20%', async () => {
     const scheduler = new ManualScheduler();
     let probeStarted = 0;

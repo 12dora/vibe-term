@@ -377,6 +377,16 @@ function formatRelayTurn(turn: RelayStatusResponse['relays'][number]['turn']): s
   return turn.probeOk === false ? `${turn.url} (down)` : turn.url;
 }
 
+function pathBestMsOf(status: RelayStatusResponse, url: string): number | undefined {
+  const raw = Array.isArray(status.raw.relays) ? status.raw.relays : [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const row = entry as { url?: unknown; pathBestMs?: unknown };
+    if (row.url === url && typeof row.pathBestMs === 'number') return row.pathBestMs;
+  }
+  return undefined;
+}
+
 export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
   const lines = [`mode: ${status.mode}`];
   if (status.tenantId) lines.push(`tenant: ${status.tenantId}`);
@@ -388,17 +398,30 @@ export function formatRelayStatusLines(status: RelayStatusResponse): string[] {
     lines.push('no relays configured');
     return lines;
   }
-  const rows = status.relays.map((relay) => [
-    String(relay.priority),
-    relay.url,
-    formatRelayRole(relay.role),
-    relay.online ? 'online' : 'offline',
-    relay.rttMs == null ? '-' : `${relay.rttMs} ms`,
-    relay.peersOnline == null ? '-' : String(relay.peersOnline),
-    formatRelayTurn(relay.turn),
-    relay.kicked ? 'kicked' : (relay.lastError ?? '-'),
-  ]);
-  lines.push(...formatTable(['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'PEERS', 'TURN', 'NOTE'], rows));
+  const showBest = status.relays.some((relay) => pathBestMsOf(status, relay.url) != null);
+  const rows = status.relays.map((relay) => {
+    const cells = [
+      String(relay.priority),
+      relay.url,
+      formatRelayRole(relay.role),
+      relay.online ? 'online' : 'offline',
+      relay.rttMs == null ? '-' : `${relay.rttMs} ms`,
+    ];
+    if (showBest) {
+      const best = pathBestMsOf(status, relay.url);
+      cells.push(best == null ? '-' : `${best} ms`);
+    }
+    cells.push(
+      relay.peersOnline == null ? '-' : String(relay.peersOnline),
+      formatRelayTurn(relay.turn),
+      relay.kicked ? 'kicked' : (relay.lastError ?? '-')
+    );
+    return cells;
+  });
+  const headers = showBest
+    ? ['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'BEST', 'PEERS', 'TURN', 'NOTE']
+    : ['PRI', 'URL', 'ROLE', 'STATE', 'RTT', 'PEERS', 'TURN', 'NOTE'];
+  lines.push(...formatTable(headers, rows));
   return lines;
 }
 

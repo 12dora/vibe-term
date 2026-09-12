@@ -8,6 +8,7 @@ export type RelayUplinkHeartbeatOptions = {
   sendPing: (link: LinkSession) => void;
   onTimeout: (reason: 'missed-pong' | 'ping-failed') => void;
   onTick?: () => void;
+  onRtt?: (rttMs: number) => void;
 };
 
 /** ping→pong 测 RTT（取最新一次）；重连时 `start`/`reset` 会清零。 */
@@ -47,6 +48,7 @@ export class RelayUplinkHeartbeat {
     if (this.pingAt === null) return;
     this.rttMs = Math.max(0, this.opts.scheduler.now() - this.pingAt);
     this.pingAt = null;
+    this.opts.onRtt?.(this.rttMs);
   }
 
   reset(): void {

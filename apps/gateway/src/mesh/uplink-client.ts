@@ -28,6 +28,11 @@ import type {
   UplinkStatus,
 } from './types';
 import { UplinkKeyLogSync } from './uplink-key-log-sync';
+import {
+  createUplinkPathHeartbeat,
+  isUplinkPathRerace,
+  trackCountedStream,
+} from './uplink-path-sampler';
 import { persistUplinkPeerCache } from './uplink-peer-persist';
 import {
   type UplinkCtlMessage,
@@ -145,8 +150,8 @@ export class UplinkClient {
   private relayHandler: InboundRelayHandler | null = null;
   private loop: Promise<void> | null = null;
   private stopAbort: AbortController | null = null;
-  private heartbeat: { clear: () => void } | null = null;
-  private missedPongs = 0;
+  private heartbeat!: ReturnType<typeof createUplinkPathHeartbeat>;
+  private readonly hubRelayStreams = new Set<LinkStream>();
   private lastStatusJson = '';
   private connectGeneration = 0;
   private authWaiter: { resolve: () => void; reject: (err: Error) => void } | null = null;
@@ -164,6 +169,10 @@ export class UplinkClient {
 
   get lastKeyLogHead() {
     return this.keyLog.lastKeyLogHead;
+  }
+
+  get rttMs() {
+    return this.heartbeat.rttMs;
   }
 
   constructor(opts: UplinkClientOptions) {
@@ -185,6 +194,16 @@ export class UplinkClient {
     this.wsFactory = opts.wsFactory ?? defaultWsFactory(opts.tlsCa);
     this.scheduler = opts.scheduler ?? defaultScheduler();
     this.pingIntervalMs = opts.pingIntervalMs ?? UPLINK_PING_INTERVAL_MS;
+    this.heartbeat = createUplinkPathHeartbeat({
+      scheduler: this.scheduler,
+      intervalMs: this.pingIntervalMs,
+      sendPing: (link) => link.ctl.send(encodeUplinkCtl({ t: 'ping' })),
+      tearDown: (reason) => this.tearDownLink(reason),
+      onTick: () => this.sendStatusIfChanged(),
+      url: () => this.hubUrl,
+      linkAgeMs: () => (this.onlineAt > 0 ? this.scheduler.now() - this.onlineAt : 0),
+      inFlight: () => this.hubRelayStreams.size,
+    });
     this.connectTimeoutMs =
       opts.connectTimeoutMs ??
       envPositiveMs('UPLINK_CONNECT_TIMEOUT_MS', UPLINK_CONNECT_TIMEOUT_MS);
@@ -287,13 +306,15 @@ export class UplinkClient {
     this.lastConnectError = null;
     this.setState('online');
     this.sendStatus();
-    this.startHeartbeat(link, generation);
+    this.heartbeat.start(
+      link,
+      () => generation === this.connectGeneration && this.state === 'online'
+    );
   }
 
   async stop(): Promise<void> {
     this.stopAbort?.abort();
     this.stopAbort = null;
-    this.stopHeartbeat();
     this.tearDownLink('stopped');
     this.setState('offline');
     const loop = this.loop;
@@ -346,7 +367,10 @@ export class UplinkClient {
     if (!link || this.state !== 'online' || !this.isAuthenticated()) {
       throw new Error('uplink is not online');
     }
-    return link.openStream(new TextEncoder().encode(JSON.stringify({ to: toNodeId })));
+    return trackCountedStream(
+      this.hubRelayStreams,
+      await link.openStream(new TextEncoder().encode(JSON.stringify({ to: toNodeId })))
+    );
   }
 
   private setState(state: UplinkState): void {
@@ -355,6 +379,7 @@ export class UplinkClient {
     if (state === 'connecting') this.connectingAt = this.scheduler.now();
     this.state = state;
     if (state === 'online') {
+      this.onlineAt = this.scheduler.now();
       this.lastTearDownReason = '';
       this.logDiag(
         'online',
@@ -387,7 +412,9 @@ export class UplinkClient {
         const offlineReason = this.lastTearDownReason || 'disconnected';
         this.tearDownLink(offlineReason);
         this.setState('offline');
-        if (uptime >= UPLINK_STABLE_UPTIME_MS) this.retryAttempt = 0;
+        if (uptime >= UPLINK_STABLE_UPTIME_MS || isUplinkPathRerace(offlineReason))
+          this.retryAttempt = 0;
+        if (isUplinkPathRerace(offlineReason)) continue;
         if (!(await this.backoffSleep(signal))) return;
       } catch (err) {
         this.tearDownLink('connect-failed');
@@ -495,7 +522,7 @@ export class UplinkClient {
       }
       const open = parseOpenPayload(stream.openPayload);
       if (open?.kind === 'hub-relay') {
-        this.onHubRelayStreamCb?.(stream);
+        this.onHubRelayStreamCb?.(trackCountedStream(this.hubRelayStreams, stream));
         return;
       }
       const from = typeof open?.from === 'string' ? open.from : '';
@@ -559,7 +586,7 @@ export class UplinkClient {
         this.authenticatedGeneration = generation;
         this.authWaiter?.resolve();
       }
-    } else if (msg.t === 'pong') this.missedPongs = 0;
+    } else if (msg.t === 'pong') this.heartbeat.onPong();
     else if (msg.t === 'ping') this.link?.ctl.send(encodeUplinkCtl({ t: 'pong' }));
     else if (this.authenticatedGeneration !== generation) return;
     else if (msg.t === 'node.list') this.keyLog.ingestNodeList(msg);
@@ -639,43 +666,21 @@ export class UplinkClient {
     this.keyLog.requestCatchUpNow();
   }
 
-  private startHeartbeat(link: LinkSession, generation: number): void {
-    this.stopHeartbeat();
-    this.missedPongs = 0;
-    this.heartbeat = this.scheduler.interval(() => {
-      if (generation !== this.connectGeneration || this.state !== 'online') return;
-      if (this.missedPongs >= UPLINK_MISSED_PONG_LIMIT) {
-        this.tearDownLink('missed-pong');
-        return;
-      }
-      this.missedPongs += 1;
-      try {
-        link.ctl.send(encodeUplinkCtl({ t: 'ping' }));
-      } catch {
-        this.tearDownLink('ping-failed');
-      }
-      this.sendStatusIfChanged();
-    }, this.pingIntervalMs);
-  }
-
-  private stopHeartbeat(): void {
-    this.heartbeat?.clear();
-    this.heartbeat = null;
-    this.missedPongs = 0;
-  }
-
   private resetConnectionState(reason = 'reconnect'): void {
     this.keyLog.reset(reason);
-    this.stopHeartbeat();
+    this.heartbeat.reset();
     this.authPhase = 'idle';
     this.authenticatedGeneration = 0;
     this.lastStatusJson = '';
-    this.missedPongs = 0;
     if (this.state === 'online') this.setState('connecting');
   }
 
   private tearDownLink(reason: string): void {
     this.lastTearDownReason = reason;
+    if (isUplinkPathRerace(reason)) {
+      this.lastConnectError = { reason, at: this.scheduler.now() };
+      this.retryAttempt = 0;
+    }
     this.resetConnectionState(reason);
     const link = this.link;
     this.link = null;
