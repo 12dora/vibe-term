@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { gateTurnByProbe, resetTurnGateLogForTest } from './stun-effective';
 import {
   STUN_MAGIC_COOKIE,
   type StunProbeResult,
@@ -28,6 +29,7 @@ import {
 afterEach(() => {
   resetTurnProbeForTest();
   resetStunResolverForTest();
+  resetTurnGateLogForTest();
 });
 
 const TXID = Uint8Array.of(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
@@ -227,6 +229,58 @@ describe('probeTurnServer', () => {
     }
   });
 
+  test('mixed batch never probes turns/tcp as stun: and does not count them as failures', async () => {
+    const urls = [
+      'turns:relay.example:5349',
+      'turn:relay.example:3478?transport=tcp',
+      'turn:relay.example:3478?transport=udp',
+    ];
+    const sock = new FakeSocket();
+    const results = await probeTurnServers(urls, {
+      lookup: async () => ['203.0.113.50'],
+      createSocket: () => {
+        queueMicrotask(() => {
+          const sent = sock.sent[0];
+          if (!sent) return;
+          sock.emitMessage(
+            encodeSuccess(sent.msg.subarray(8, 20), xorMappedIpv4('198.51.100.7', 9))
+          );
+        });
+        return sock;
+      },
+      timeoutMs: 200,
+    });
+    expect(results[0]).toEqual({
+      url: urls[0],
+      ok: false,
+      rttMs: 0,
+      skipped: 'unsupported-scheme',
+    });
+    expect(results[1]).toEqual({
+      url: urls[1],
+      ok: false,
+      rttMs: 0,
+      skipped: 'unsupported-scheme',
+    });
+    expect(results[2]).toMatchObject({ url: urls[2], ok: true });
+    expect(sock.sent).toHaveLength(1);
+    expect(sock.sent[0]?.port).toBe(3478);
+    const gated = gateTurnByProbe(
+      urls.map((url) => ({ url, username: 'u', credential: 'p' })),
+      results.map((row) => ({ ...row, probedAt: 1 }))
+    );
+    expect(gated.turn.map((row) => row.url)).toEqual(['turn:relay.example:3478?transport=udp']);
+    expect(gated.turnProbeOk).toBe(true);
+    const onlyUnsupported = gateTurnByProbe(
+      [
+        { url: 'turns:relay.example:5349', username: 'u', credential: 'p' },
+        { url: 'turn:relay.example:3478?transport=tcp', username: 'u', credential: 'p' },
+      ],
+      results.slice(0, 2).map((row) => ({ ...row, probedAt: 1 }))
+    );
+    expect(onlyUnsupported).toEqual({ turn: [], turnProbeOk: false });
+  });
+
   test('returns url error without opening a socket', async () => {
     const result = await probeTurnServer('not-a-url', {
       createSocket: () => {
@@ -412,6 +466,40 @@ describe('mesh TURN probe loop', () => {
     wait!.fn();
     await flush();
     expect(calls).toEqual([['turn:a:3478'], ['turn:b:3478']]);
+  });
+
+  test('all-skipped turns/tcp does not warn turn unreachable', async () => {
+    const warns: string[] = [];
+    const origWarn = console.warn;
+    console.warn = (line?: unknown) => {
+      warns.push(String(line));
+    };
+    try {
+      loopOpts(async (urls) =>
+        urls.map((url) => ({
+          url,
+          ok: false as const,
+          rttMs: 0,
+          skipped: 'unsupported-scheme' as const,
+        }))
+      );
+      startMeshTurnProbe(
+        {
+          currentIceConfig: () => ({
+            turn: [
+              { url: 'turns:relay.example:5349', username: 'u', credential: 'p' },
+              { url: 'turn:relay.example:3478?transport=tcp', username: 'u', credential: 'p' },
+            ],
+          }),
+        },
+        { interval: () => ({ clear() {} }) }
+      );
+      await flush();
+    } finally {
+      console.warn = origWarn;
+    }
+    expect(turnProbeSnapshot().every((row) => row.skipped === 'unsupported-scheme')).toBe(true);
+    expect(warns.some((line) => line.includes('turn unreachable'))).toBe(false);
   });
 
   test('logs info per probe and warns when unreachable', async () => {

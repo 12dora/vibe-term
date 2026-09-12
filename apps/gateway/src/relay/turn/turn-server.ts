@@ -71,6 +71,14 @@ class TurnServerImpl implements TurnServer {
     return { ...this.ctx.stats, ...counts, listening: this.started };
   }
 
+  setExternalIp(ip: string): void {
+    const next = ip.trim();
+    if (!next || next === this.ctx.options.externalIp) return;
+    this.ctx.options.externalIp = next;
+    this.ctx.stats.externalIp = next;
+    this.ctx.options.log(`turn: external ip ${next}`);
+  }
+
   private attachControl(socket: dgram.Socket): void {
     this.control = socket;
     socket.on('message', (buf, rinfo) => {

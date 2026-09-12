@@ -55,6 +55,9 @@ function fakeServer(
       current = { ...current, listening: false, allocations: 0 };
     },
     snapshot: () => ({ ...current }),
+    setExternalIp: (ip: string) => {
+      current = { ...current, externalIp: ip };
+    },
     ...over,
   };
 }
@@ -120,6 +123,7 @@ describe('RelayTurnService builtin', () => {
     await svc.start();
     const adv = svc.advertisement();
     expect(adv?.url).toBe('turn:relay.example:3478?transport=udp');
+    expect(svc.status().url).toBe('turn:relay.example:3478?transport=udp');
     expect(adv?.username.startsWith('vt-')).toBe(true);
     expect(svc.status()).toMatchObject({
       enabled: true,
@@ -208,32 +212,120 @@ describe('RelayTurnService builtin', () => {
     await svc.stop();
   });
 
-  test('re-resolves external IP and only rotates the URL when the host changes', async () => {
+  test('refresh starts the server once an external IP becomes available', async () => {
     const handle = createMigratedAuthDb();
     dbs.push(handle);
+    let ip: string | null = null;
     const created: TurnServerOptions[] = [];
-    let ip = '203.0.113.9';
-    const config = baseConfig({ turnExternalIp: null, turnHost: 'relay.example' });
     const svc = createRelayTurnService({
       db: handle.db,
-      config,
+      config: baseConfig({ turnExternalIp: null, turnHost: null }),
       refreshIntervalMs: 15,
       resolveHost: async () => ip,
+      probeStun: async () => ({ ok: false }),
+      stunServers: ['stun:example:3478'],
       createServer: (opts) => {
         created.push(opts);
         return fakeServer({}, { externalIp: opts.externalIp, port: opts.listenPort });
       },
     });
     await svc.start();
+    expect(svc.advertisement()).toBeNull();
+    expect(created).toHaveLength(0);
+    ip = '203.0.113.9';
+    await Bun.sleep(50);
+    expect(created).toHaveLength(1);
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
+    expect(svc.status().listening).toBe(true);
+    await svc.stop();
+  });
+
+  test('without TURN_HOST advertises the resolved IPv4 literal', async () => {
+    const handle = createMigratedAuthDb();
+    dbs.push(handle);
+    const svc = createRelayTurnService({
+      db: handle.db,
+      config: baseConfig({ turnHost: null }),
+      createServer: () => fakeServer(),
+    });
+    await svc.start();
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
+    expect(svc.status().url).toBe('turn:203.0.113.9:3478?transport=udp');
+    await svc.stop();
+  });
+
+  test('IP change calls setExternalIp and does not re-bind', async () => {
+    const handle = createMigratedAuthDb();
+    dbs.push(handle);
+    const created: TurnServerOptions[] = [];
+    const setIps: string[] = [];
+    let stops = 0;
+    let ip = '203.0.113.9';
+    const svc = createRelayTurnService({
+      db: handle.db,
+      config: baseConfig({ turnExternalIp: null, turnHost: 'relay.example' }),
+      refreshIntervalMs: 15,
+      resolveHost: async () => ip,
+      createServer: (opts) => {
+        created.push(opts);
+        const server = fakeServer({}, { externalIp: opts.externalIp, port: opts.listenPort });
+        const stop = server.stop;
+        const setExternalIp = server.setExternalIp;
+        server.stop = async () => {
+          stops += 1;
+          await stop();
+        };
+        server.setExternalIp = (next) => {
+          setIps.push(next);
+          setExternalIp(next);
+        };
+        return server;
+      },
+    });
+    await svc.start();
     expect(svc.advertisement()?.url).toBe('turn:relay.example:3478?transport=udp');
     ip = '203.0.113.10';
     await Bun.sleep(50);
-    expect(created.length).toBeGreaterThan(1);
-    expect(created.at(-1)?.externalIp).toBe('203.0.113.10');
+    expect(created).toHaveLength(1);
+    expect(stops).toBe(0);
+    expect(setIps).toContain('203.0.113.10');
+    expect(svc.status().externalIp).toBe('203.0.113.10');
     expect(svc.advertisement()?.url).toBe('turn:relay.example:3478?transport=udp');
-    config.turnHost = 'turn.example';
+    await svc.stop();
+  });
+
+  test('IP change without TURN_HOST re-advertises the new IPv4 URL', async () => {
+    const handle = createMigratedAuthDb();
+    dbs.push(handle);
+    const created: TurnServerOptions[] = [];
+    let ip = '203.0.113.9';
+    const ads: string[] = [];
+    const svc = createRelayTurnService({
+      db: handle.db,
+      config: baseConfig({ turnExternalIp: null, turnHost: null }),
+      refreshIntervalMs: 15,
+      resolveHost: async () => ip,
+      onAdvertisementChange: () => {
+        const url = svc.advertisement()?.url;
+        if (url) ads.push(url);
+      },
+      createServer: (opts) => {
+        created.push(opts);
+        return fakeServer({}, { externalIp: opts.externalIp, port: opts.listenPort });
+      },
+    });
+    await svc.start();
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
+    ip = '203.0.113.10';
     await Bun.sleep(50);
-    expect(svc.advertisement()?.url).toBe('turn:turn.example:3478?transport=udp');
+    expect(created).toHaveLength(1);
+    expect(svc.advertisement()?.url).toBe('turn:203.0.113.10:3478?transport=udp');
+    expect(svc.status()).toMatchObject({
+      url: 'turn:203.0.113.10:3478?transport=udp',
+      externalIp: '203.0.113.10',
+      listening: true,
+    });
+    expect(ads).toContain('turn:203.0.113.10:3478?transport=udp');
     await svc.stop();
   });
 });

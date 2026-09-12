@@ -21,6 +21,7 @@ import {
   formatTurnPortRange,
   isRetryableBindError,
   parsePortFromTurnUrl,
+  turnResolveHost,
 } from './relay-turn-config';
 import { type TurnLongTermCredential, loadOrCreateTurnCredentials } from './relay-turn-credentials';
 import {
@@ -226,7 +227,6 @@ export class RelayTurnService {
       this.logDisabled(conflict);
       return;
     }
-    this.host = advertisedTurnHost(this.config.publicUrl, this.config.turnHost);
     this.creds = loadOrCreateTurnCredentials(this.db);
     const resolved = await this.resolveIp();
     if (!resolved.ip) {
@@ -235,7 +235,8 @@ export class RelayTurnService {
       this.armRefresh();
       return;
     }
-    this.externalIp = resolved.ip;
+    this.applyExternalIp(resolved.ip);
+    this.applyAdvertisedHost();
     const bound = await this.tryStartServer();
     if (bound) {
       this.armRefresh();
@@ -247,7 +248,7 @@ export class RelayTurnService {
   private async resolveIp(): Promise<{ ip: string | null; error: string | null }> {
     return resolveTurnExternalIp({
       overrideIp: this.config.turnExternalIp,
-      advertisedHost: this.host ?? advertisedTurnHost(this.config.publicUrl, this.config.turnHost),
+      advertisedHost: turnResolveHost(this.config.publicUrl, this.config.turnHost),
       resolveHost: this.resolveHost,
       probeStun: this.probeStun,
       stunServers: this.stunServers,
@@ -283,12 +284,7 @@ export class RelayTurnService {
       this.error = null;
       this.retrying = false;
       this.logListening();
-      if (!this.host) return true;
-      this.publish({
-        url: turnUrlFor(this.host, port),
-        username: creds.username,
-        credential: creds.credential,
-      });
+      this.reAdvertise();
       return true;
     } catch (err) {
       await server.stop().catch(() => undefined);
@@ -330,30 +326,42 @@ export class RelayTurnService {
     this.refreshTimer = timer;
   }
 
+  private applyExternalIp(ip: string): boolean {
+    if (ip === this.externalIp) return false;
+    this.externalIp = ip;
+    this.server?.setExternalIp(ip);
+    return true;
+  }
+
+  private applyAdvertisedHost(): boolean {
+    if (!this.externalIp) return false;
+    const next = advertisedTurnHost(this.config.turnHost, this.externalIp);
+    if (next === this.host) return false;
+    this.host = next;
+    return true;
+  }
+
+  private reAdvertise(): void {
+    if (this.listenPort == null || !this.creds || !this.host) return;
+    this.publish({
+      url: turnUrlFor(this.host, this.listenPort),
+      username: this.creds.username,
+      credential: this.creds.credential,
+    });
+  }
+
   private async refresh(): Promise<void> {
     if (this.stopped || this.source !== 'builtin') return;
     this.logAllocations();
     const resolved = await this.resolveIp();
     if (!resolved.ip) return;
-    const prevHost = this.host;
-    this.host = advertisedTurnHost(this.config.publicUrl, this.config.turnHost);
-    const ipChanged = resolved.ip !== this.externalIp;
-    const hostChanged = this.host !== prevHost;
-    if (!ipChanged && !hostChanged) return;
-    this.externalIp = resolved.ip;
-    if (this.server && ipChanged) {
-      await this.server.stop();
-      this.server = null;
-      const bound = await this.tryStartServer();
-      if (!bound) return;
+    const ipChanged = this.applyExternalIp(resolved.ip);
+    const hostChanged = this.applyAdvertisedHost();
+    if (!this.server) {
+      await this.tryStartServer();
+      return;
     }
-    if (hostChanged && this.advertised && this.listenPort != null && this.creds) {
-      this.publish({
-        url: turnUrlFor(this.host, this.listenPort),
-        username: this.creds.username,
-        credential: this.creds.credential,
-      });
-    }
+    if (ipChanged || hostChanged) this.reAdvertise();
   }
 }
 

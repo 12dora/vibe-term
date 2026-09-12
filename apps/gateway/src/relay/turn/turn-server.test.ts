@@ -279,6 +279,50 @@ describe('STUN Binding and Allocate', () => {
     expect(server.snapshot().bindingRequests).toBe(1);
   });
 
+  test('setExternalIp changes XOR-RELAYED-ADDRESS without dropping allocations', async () => {
+    const begin = 32000 + Math.floor(Math.random() * 10000);
+    const { server, port } = await boot({
+      externalIp: '198.51.100.1',
+      relayPortRange: { begin, end: begin + 15 },
+    });
+    const first = await openClient();
+    const { msg: firstMsg, nonce } = await allocate(first, port);
+    const firstRelayed = decodeAddress(
+      getAttribute(firstMsg, ATTR.XOR_RELAYED_ADDRESS) ?? Buffer.alloc(0),
+      firstMsg.transactionId
+    );
+    expect(firstRelayed?.address).toBe('198.51.100.1');
+    const listenPort = server.snapshot().port;
+    expect(server.snapshot().allocations).toBe(1);
+
+    server.setExternalIp('203.0.113.9');
+    expect(server.snapshot()).toMatchObject({
+      externalIp: '203.0.113.9',
+      listening: true,
+      port: listenPort,
+      allocations: 1,
+    });
+
+    first.send(authed(METHOD.REFRESH, nonce, [uint32Attribute(ATTR.LIFETIME, 600)]), port);
+    expect((await recvStun(first.inbox)).class).toBe(CLASS.SUCCESS);
+    expect(server.snapshot().allocations).toBe(1);
+
+    const second = await openClient();
+    const { msg: secondMsg } = await allocate(second, port);
+    const secondRelayed = decodeAddress(
+      getAttribute(secondMsg, ATTR.XOR_RELAYED_ADDRESS) ?? Buffer.alloc(0),
+      secondMsg.transactionId
+    );
+    expect(secondRelayed?.address).toBe('203.0.113.9');
+    expect(secondRelayed?.port).not.toBe(firstRelayed?.port);
+    expect(server.snapshot()).toMatchObject({
+      allocations: 2,
+      listening: true,
+      port: listenPort,
+      externalIp: '203.0.113.9',
+    });
+  });
+
   test('401 then authenticated Allocate with relayed address in range', async () => {
     const begin = 31000 + Math.floor(Math.random() * 10000);
     const { port } = await boot({ relayPortRange: { begin, end: begin + 15 } });

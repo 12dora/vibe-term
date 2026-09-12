@@ -100,9 +100,20 @@ export function formatTurnPortRange(range: TurnPortRange): string {
   return `${range.begin}-${range.end}`;
 }
 
-export function advertisedTurnHost(publicUrl: string, turnHost: string | null | undefined): string {
-  if (turnHost?.trim()) return turnHost.trim();
+/** DNS/STUN 解析输入：显式 TURN_HOST，否则用 public URL 的 hostname。 */
+export function turnResolveHost(publicUrl: string, turnHost: string | null | undefined): string {
+  const explicit = turnHost?.trim();
+  if (explicit) return explicit;
   return new URL(publicUrl).hostname;
+}
+
+/** 广告进 turn: URL 的 host：显式 TURN_HOST，否则用已解析的公网 IPv4 字面量。 */
+export function advertisedTurnHost(
+  turnHost: string | null | undefined,
+  externalIp: string
+): string {
+  const explicit = turnHost?.trim();
+  return explicit || externalIp;
 }
 
 export function hasExternalTurnTriple(

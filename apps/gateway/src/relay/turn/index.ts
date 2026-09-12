@@ -36,6 +36,8 @@ export type TurnServer = {
   start(): Promise<{ port: number }>;
   stop(): Promise<void>;
   snapshot(): TurnServerStats;
+  /** 已有 allocation 保留 relay 端口；之后的 Allocate 使用新的 XOR-RELAYED-ADDRESS。 */
+  setExternalIp(ip: string): void;
 };
 export { createTurnServer } from './turn-server';
 export function turnUrlFor(host: string, port: number): string {

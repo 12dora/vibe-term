@@ -8,6 +8,7 @@ import {
   ipv4FromMappedAddress,
   parsePortFromTurnUrl,
   turnFirewallHint,
+  turnResolveHost,
 } from './relay-turn-config';
 
 describe('decideTurnMode', () => {
@@ -55,9 +56,15 @@ describe('describeTurnPortConflict', () => {
 });
 
 describe('advertisedTurnHost / helpers', () => {
-  test('prefers TURN_HOST then public URL hostname', () => {
-    expect(advertisedTurnHost('https://relay.example:8443', 'turn.example')).toBe('turn.example');
-    expect(advertisedTurnHost('https://relay.example:8443', null)).toBe('relay.example');
+  test('resolve host prefers TURN_HOST then public URL hostname', () => {
+    expect(turnResolveHost('https://relay.example:8443', 'turn.example')).toBe('turn.example');
+    expect(turnResolveHost('https://relay.example:8443', null)).toBe('relay.example');
+  });
+
+  test('advertised host prefers TURN_HOST then the resolved IPv4 literal', () => {
+    expect(advertisedTurnHost('turn.example', '203.0.113.9')).toBe('turn.example');
+    expect(advertisedTurnHost(null, '203.0.113.9')).toBe('203.0.113.9');
+    expect(advertisedTurnHost('  ', '198.51.100.7')).toBe('198.51.100.7');
   });
 
   test('formats firewall hint and mapped IPv4', () => {

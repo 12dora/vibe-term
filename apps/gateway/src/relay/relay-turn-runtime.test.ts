@@ -11,6 +11,7 @@ afterEach(async () => {
 
 function fakeTurnServer(): TurnServer {
   let listening = false;
+  let externalIp = '203.0.113.9';
   return {
     start: async () => {
       listening = true;
@@ -22,7 +23,7 @@ function fakeTurnServer(): TurnServer {
     snapshot: () => ({
       listening,
       port: 3478,
-      externalIp: '203.0.113.9',
+      externalIp,
       allocations: 2,
       permissions: 0,
       channels: 0,
@@ -33,6 +34,9 @@ function fakeTurnServer(): TurnServer {
       bindingRequests: 0,
       startedAt: listening ? 1 : null,
     }),
+    setExternalIp: (ip: string) => {
+      externalIp = ip;
+    },
   };
 }
 
@@ -86,5 +90,26 @@ describe('relay runtime TURN wiring', () => {
     expect(list.t === 'relay.list' && list.rtc.turn?.url).toBe(
       'turn:relay.example:3478?transport=udp'
     );
+  });
+
+  test('builtin without TURN_HOST advertises turn:<ipv4> in status and auth.ok', async () => {
+    harness = await bootRelayHarness({
+      config: {
+        turnPort: 3478,
+        turnExternalIp: '203.0.113.9',
+      },
+      turnDeps: { createServer: () => fakeTurnServer() },
+    });
+    expect(harness.runtime.snapshotForLocalStatus().turn).toMatchObject({
+      enabled: true,
+      source: 'builtin',
+      url: 'turn:203.0.113.9:3478?transport=udp',
+      externalIp: '203.0.113.9',
+    });
+    const tenant = await harness.createTenant();
+    const node = tenant.addNode();
+    const client = await tenant.connect(node);
+    const ok = await client.inbox.takeOf('auth.ok');
+    expect(ok.t === 'auth.ok' && ok.rtc.turn?.url).toBe('turn:203.0.113.9:3478?transport=udp');
   });
 });
