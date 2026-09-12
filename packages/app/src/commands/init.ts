@@ -1,5 +1,9 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
+import {
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_RANGE_TEXT,
+} from '../../../../apps/gateway/src/relay/relay-turn-config';
 import { DEFAULT_TLS_PORT } from '../../../../apps/gateway/src/tls/types';
 import { canonicalHubUrl } from '../../../shared/src/auth';
 import {
@@ -448,6 +452,9 @@ function printInitSummary(
       `- relay admin token: VIBETERM_RELAY_ADMIN_TOKEN in ${join(config.installDir, 'app.env')}`
     );
     console.log('- run "vibeterm relay status" on this machine to manage tenants');
+    console.log(
+      `- ${t('init.summary.turnFirewall', { port: DEFAULT_TURN_PORT, range: DEFAULT_TURN_RELAY_RANGE_TEXT })}`
+    );
   }
 }
 

@@ -29,6 +29,12 @@ import type { RelaySleep } from './relay-quota';
 import { RelayRegistry } from './relay-registry';
 import type { RelayPublicRoutesDeps } from './relay-routes';
 import { RelayTenantStore } from './relay-tenant-store';
+import type { RelayTurnStatus } from './relay-turn-config';
+import {
+  type RelayTurnService,
+  type RelayTurnServiceOptions,
+  createRelayTurnService,
+} from './relay-turn-service';
 import { RelayUplinkServer } from './relay-uplink-server';
 import {
   RELAY_UPLINK_PATH,
@@ -60,6 +66,8 @@ export type RelayRuntimeOptions = {
   /** 测试钩子：precondition 通过之后、注册 live 连接之前。 */
   authBarrier?: () => Promise<void>;
   log?: (line: string) => void;
+  turn?: RelayTurnService;
+  turnDeps?: Omit<RelayTurnServiceOptions, 'db' | 'config' | 'log' | 'now' | 'sleep'>;
 };
 
 /** 与 hub 的 BunServerWsAdapter 等价，只是挂在 relay 的 socket data 上。 */
@@ -123,6 +131,7 @@ export class RelayRuntime {
   readonly uplink: RelayUplinkServer;
   readonly limiter: RelayEnrollLimiter;
   readonly adminAuth: RelayAdminAuth;
+  readonly turn: RelayTurnService;
   private readonly now: () => number;
   private readonly startedAt: number;
   private readonly version: string;
@@ -130,7 +139,7 @@ export class RelayRuntime {
   private readonly publicDeps: RelayPublicRoutesDeps;
   private readonly adminDeps: RelayAdminDeps;
 
-  constructor(opts: RelayRuntimeOptions, adminAuth: RelayAdminAuth) {
+  constructor(opts: RelayRuntimeOptions, adminAuth: RelayAdminAuth, turn: RelayTurnService) {
     this.now = opts.now ?? Date.now;
     this.startedAt = opts.startedAt ?? this.now();
     this.version = opts.version ?? opts.config.version ?? 'unknown';
@@ -144,6 +153,7 @@ export class RelayRuntime {
     );
     this.limiter = new RelayEnrollLimiter(this.now);
     this.adminAuth = adminAuth;
+    this.turn = turn;
     this.uplink = new RelayUplinkServer({
       db: opts.db,
       tenants: this.tenants,
@@ -160,6 +170,7 @@ export class RelayRuntime {
       listDebounceMs: opts.listDebounceMs,
       minClientVersion: opts.minClientVersion,
       authBarrier: opts.authBarrier,
+      turnProvider: () => this.turn.advertisement(),
     });
     this.publicDeps = {
       tenants: this.tenants,
@@ -194,6 +205,7 @@ export class RelayRuntime {
       metrics: this.metrics,
       uplink: this.uplink,
       now: this.now,
+      turnStatus: () => this.turn.status(),
     };
     this.metering.start();
     this.metrics.start();
@@ -260,6 +272,7 @@ export class RelayRuntime {
     tenantCount: number;
     nodesOnline: number;
     currentNodes: number;
+    turn: RelayTurnStatus;
   } {
     const config = this.configStore.ensure(this.now());
     let currentNodes = 0;
@@ -273,6 +286,7 @@ export class RelayRuntime {
       tenantCount: this.tenants.count(),
       nodesOnline: this.registry.onlineCount(),
       currentNodes,
+      turn: this.turn.status(),
     };
   }
 
@@ -302,6 +316,7 @@ export class RelayRuntime {
     this.metrics.stop();
     await this.uplink.stop();
     this.metering.stop();
+    await this.turn.stop();
   }
 }
 
@@ -355,5 +370,20 @@ export async function createRelayRuntime(opts: RelayRuntimeOptions): Promise<Rel
     now,
     isLocalUserAuthenticated: opts.isLocalUserAuthenticated,
   });
-  return new RelayRuntime(opts, adminAuth);
+  const turn =
+    opts.turn ??
+    createRelayTurnService({
+      db: opts.db,
+      config: opts.config,
+      now,
+      sleep: opts.sleep,
+      log: opts.log,
+      ...opts.turnDeps,
+    });
+  const runtime = new RelayRuntime(opts, adminAuth, turn);
+  turn.setOnAdvertisementChange(() => {
+    for (const tenant of runtime.tenants.list()) runtime.uplink.scheduleList(tenant.id);
+  });
+  await turn.start();
+  return runtime;
 }

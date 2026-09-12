@@ -105,6 +105,26 @@ describe('stunServersDoctorCheck', () => {
       message: t('doctor.stun.disabled'),
     });
   });
+
+  test('checkEnvironment includes a TURN row for relay roles', async () => {
+    setLang('en');
+    const installDir = await mkdtemp(join(tmpdir(), 'vibeterm-doctor-turn-'));
+    doctorTempDirs.push(installDir);
+    const envPath = join(installDir, 'app.env');
+    await writeEnvFile(envPath, {
+      VIBETERM_MASTER_KEY: 'k',
+      DATABASE_URL: join(installDir, 'db'),
+      GATEWAY_PORT: '9883',
+      VIBETERM_BIND_HOST: '127.0.0.1',
+      VIBETERM_ROLES: 'relay',
+      VIBETERM_TURN_PORT: 'off',
+    });
+    const result = await checkEnvironment({ installDir, envPath });
+    const turn = result.installChecks.find((check) => check.id === 'turn');
+    expect(turn?.level).toBe('pass');
+    expect(turn?.message).toBe(t('doctor.turn.off'));
+    expect(turn?.detail).toContain('UDP');
+  });
 });
 
 describe('DOCTOR_CHECK_TABLE', () => {

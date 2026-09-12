@@ -1,6 +1,7 @@
 import type { StunEnvSource } from '@vibeterm/shared/net';
 import type { RelayQuota, RelayRtcConfig } from '@vibeterm/shared/relay';
 import type { RelayPreviousToken } from './relay-token-grace';
+import type { TurnPortRange } from './relay-turn-config';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_UPLINK_WS_KIND = 'relay-uplink';
@@ -53,6 +54,16 @@ export type RelayRuntimeConfig = {
   stun: string[];
   stunSource?: StunEnvSource;
   turn?: RelayRtcConfig['turn'];
+  turnUrl?: string | null;
+  turnUsername?: string | null;
+  turnCredential?: string | null;
+  /** 未传 = 测试默认不启内置 TURN；`0` 关闭；正数为监听端口。 */
+  turnPort?: number;
+  turnRelayPortRange?: TurnPortRange;
+  turnExternalIp?: string | null;
+  turnHost?: string | null;
+  rtcPortRange?: TurnPortRange | null;
+  peerPort?: number;
   /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */
   adminToken?: string | null;
   version?: string;

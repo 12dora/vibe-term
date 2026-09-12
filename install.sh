@@ -352,7 +352,27 @@ vibeterm_install() {
 
   echo
   echo "vibeterm install: done. The vibeterm command is installed to ~/.local/bin/vibeterm"
+  if vibeterm_init_role_is_relay "${init_args[@]+"${init_args[@]}"}"; then
+    vibeterm_print_relay_turn_firewall_hint
+  fi
   vibeterm_print_path_hint
+}
+
+vibeterm_init_role_is_relay() {
+  local prev="" arg
+  for arg in "$@"; do
+    if [ "$prev" = "--role" ]; then
+      case "$arg" in
+        relay|relay,node) return 0 ;;
+      esac
+    fi
+    prev="$arg"
+  done
+  return 1
+}
+
+vibeterm_print_relay_turn_firewall_hint() {
+  echo "open UDP 3478 and UDP 49160-49259 on the cloud security group / ufw"
 }
 
 # When sourced (unit tests), functions stay defined and main does not run.

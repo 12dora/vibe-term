@@ -3,9 +3,11 @@ import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { LEGACY_DEFAULT_STUN_LISTS } from '../../../shared/src/net/stun-defaults';
+import { t } from '../i18n';
 import { readEnvFile } from './env-file';
 import { pathExists } from './fs-utils';
 import {
+  applyStunEnvMigration,
   backupEnvFile,
   envFileBackupPath,
   migrateStunEnv,
@@ -135,5 +137,20 @@ describe('txn app.env backup', () => {
     const { dir, envPath } = await tempEnv('GATEWAY_PORT=9883\n');
     expect(await restoreEnvFile(dir, 'missing-txn')).toBe(false);
     expect((await readEnvFile(envPath)).GATEWAY_PORT).toBe('9883');
+  });
+});
+
+describe('applyStunEnvMigration TURN notice', () => {
+  test('logs the external TURN notice without deleting legacy keys', async () => {
+    const { dir, envPath } = await tempEnv(
+      'VIBETERM_TURN_URL=turn:ext.example:3478\nVIBETERM_TURN_USERNAME=u\nVIBETERM_TURN_CREDENTIAL=p\n'
+    );
+    const logs: string[] = [];
+    await applyStunEnvMigration(dir, (line) => logs.push(line));
+    expect(logs).toContain(t('upgrade.turnExternalNotice'));
+    const env = await readEnvFile(envPath);
+    expect(env.VIBETERM_TURN_URL).toBe('turn:ext.example:3478');
+    expect(env.VIBETERM_TURN_USERNAME).toBe('u');
+    expect(env.VIBETERM_TURN_CREDENTIAL).toBe('p');
   });
 });

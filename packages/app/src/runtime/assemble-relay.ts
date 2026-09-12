@@ -1,7 +1,17 @@
 import { PROCESS_STARTED_AT } from '../../../../apps/gateway/src/api/system-routes';
-import { config as gatewayConfig } from '../../../../apps/gateway/src/config';
+import {
+  config as gatewayConfig,
+  parsePeerPort,
+  parseRtcPortRange,
+} from '../../../../apps/gateway/src/config';
 import { clientIpFromRequest } from '../../../../apps/gateway/src/mesh/client-ip';
 import { type RelayRuntime, createRelayRuntime } from '../../../../apps/gateway/src/relay';
+import {
+  parseTurnExternalIp,
+  parseTurnHost,
+  parseTurnPort,
+  parseTurnRelayPortRange,
+} from '../../../../apps/gateway/src/relay/relay-turn-config';
 import type { GatewayRuntime } from '../../../../apps/gateway/src/runtime';
 import { getBaseVersion } from '../../../../apps/gateway/src/system/version';
 import { readNodeEnv } from '../../../../packages/shared/src/env/load-env';
@@ -25,8 +35,19 @@ async function patchRelayEnv(patch: Record<string, string>): Promise<void> {
   });
 }
 
+function envOrConfig(envValue: string | undefined, configured: string | null): string | null {
+  const fromEnv = envValue?.trim();
+  if (fromEnv) return fromEnv;
+  return configured;
+}
+
 function relayTurnConfig(): { url: string; username: string; credential: string } | null {
-  const { turnUrl, turnUsername, turnCredential } = gatewayConfig;
+  const turnUrl = envOrConfig(process.env.VIBETERM_TURN_URL, gatewayConfig.turnUrl);
+  const turnUsername = envOrConfig(process.env.VIBETERM_TURN_USERNAME, gatewayConfig.turnUsername);
+  const turnCredential = envOrConfig(
+    process.env.VIBETERM_TURN_CREDENTIAL,
+    gatewayConfig.turnCredential
+  );
   if (!turnUrl || !turnUsername || !turnCredential) return null;
   return { url: turnUrl, username: turnUsername, credential: turnCredential };
 }
@@ -50,6 +71,21 @@ export function createAssembledRelay(input: {
       stun: gatewayConfig.stunServers,
       stunSource: gatewayConfig.stunSource,
       turn: relayTurnConfig(),
+      turnPort: parseTurnPort(process.env.VIBETERM_TURN_PORT),
+      turnRelayPortRange: parseTurnRelayPortRange(process.env.VIBETERM_TURN_RELAY_PORT_RANGE),
+      turnExternalIp:
+        process.env.VIBETERM_TURN_EXTERNAL_IP !== undefined
+          ? parseTurnExternalIp(process.env.VIBETERM_TURN_EXTERNAL_IP)
+          : gatewayConfig.turnExternalIp,
+      turnHost:
+        process.env.VIBETERM_TURN_HOST !== undefined
+          ? parseTurnHost(process.env.VIBETERM_TURN_HOST)
+          : gatewayConfig.turnHost,
+      rtcPortRange:
+        process.env.VIBETERM_RTC_PORT_RANGE !== undefined
+          ? parseRtcPortRange(process.env.VIBETERM_RTC_PORT_RANGE)
+          : gatewayConfig.rtcPortRange,
+      peerPort: parsePeerPort(process.env.VIBETERM_PEER_PORT),
       adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN?.trim() || gatewayConfig.relayAdminToken,
     },
     version: getBaseVersion(),

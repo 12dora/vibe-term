@@ -147,6 +147,17 @@ describe('becomeRelay', () => {
       tenantCount: 0,
       nodesOnline: 0,
       currentNodes: 0,
+      turn: {
+        enabled: false,
+        source: 'off',
+        url: null,
+        port: null,
+        externalIp: null,
+        listening: false,
+        allocations: 0,
+        error: null,
+        relayPortRange: null,
+      },
     });
   });
 

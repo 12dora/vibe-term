@@ -23,12 +23,25 @@ export interface LocalDomainAccessStatus {
   hosts: string[];
 }
 
+export interface LocalRelayTurnStatus {
+  enabled: boolean;
+  source: 'builtin' | 'external' | 'off';
+  url: string | null;
+  port: number | null;
+  externalIp: string | null;
+  listening: boolean;
+  allocations: number;
+  error: string | null;
+  relayPortRange: string | null;
+}
+
 export interface LocalRelayStatus {
   publicUrl: string | null;
   hasPassword: boolean;
   tenantCount: number;
   nodesOnline: number;
   currentNodes: number;
+  turn?: LocalRelayTurnStatus;
 }
 
 export interface LocalStatusResponse {

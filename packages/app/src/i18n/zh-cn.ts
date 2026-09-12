@@ -85,6 +85,7 @@ export const zhCN: Record<string, string> = {
   'init.summary.autostart.on': '开启',
   'init.summary.autostart.off': '关闭',
   'init.summary.serviceHint': '服务状态命令',
+  'init.summary.turnFirewall': '请在云安全组 / ufw 放行 UDP {{port}} 与 UDP {{range}}',
 
   'doctor.platform.supported': '平台：{{platform}}',
   'doctor.platform.unsupported':
@@ -109,6 +110,11 @@ export const zhCN: Record<string, string> = {
   'doctor.stun.builtin': 'app.env 未设置：使用发行版内置列表（hub/中继下发自定义列表时以其为准）',
   'doctor.stun.custom': 'STUN 服务器：自定义（app.env）',
   'doctor.stun.disabled': 'STUN 服务器：已禁用',
+  'doctor.turn.external': 'TURN：外部（已配置 VIBETERM_TURN_URL 三元组，内置 TURN 未启动）',
+  'doctor.turn.off': 'TURN：内置已关闭（VIBETERM_TURN_PORT=0/off）',
+  'doctor.turn.builtinListening': 'TURN：内置已在 UDP {{port}} 监听',
+  'doctor.turn.builtinNotListening':
+    'TURN：内置配置为 UDP {{port}}，但对 127.0.0.1 的 Binding 探测失败',
   'doctor.db.missing': '数据库文件不存在（首次启动前可能正常）：{{path}}',
   'doctor.db.exists': '数据库文件存在：{{path}}',
   'doctor.port.invalid': '配置端口非法：{{value}}',
@@ -147,6 +153,7 @@ export const zhCN: Record<string, string> = {
   'upgrade.repairDone': '升级修复完成（{{action}}）。',
   'upgrade.stunEnvMigrated':
     'app.env：VIBETERM_STUN_SERVERS 为旧版内置默认值，已移除以便使用本发行版内置列表（备份：{{backup}}）',
+  'upgrade.turnExternalNotice': '已配置外部 TURN，内置 TURN 未启动',
   'upgrade.rolledBack': '已回滚到 {{version}}：{{error}}',
   'upgrade.preflightFailed': '预启动 {{version}} 失败：{{error}}',
   'upgrade.serviceDidNotStop': '服务未在 {{timeout}}ms 内退出。',

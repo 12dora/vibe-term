@@ -202,6 +202,17 @@ describe('install.sh helpers', () => {
     expect(result.stderr).toBe('');
   });
 
+  test('prints the TURN firewall hint for relay-role init args', () => {
+    const relay = sourceEval('vibeterm_init_role_is_relay --role relay --no-interactive');
+    expect(relay.status).toBe(0);
+    const node = sourceEval('vibeterm_init_role_is_relay --role node');
+    expect(node.status).toBe(1);
+    const hint = sourceEval('vibeterm_print_relay_turn_firewall_hint');
+    expect(hint.status).toBe(0);
+    expect(hint.stdout).toContain('UDP 3478');
+    expect(hint.stdout).toContain('UDP 49160-49259');
+  });
+
   test('vibeterm_parse_tag_name reads compact and pretty GitHub JSON', () => {
     const compact = sourceEval(`vibeterm_parse_tag_name '{"tag_name":"v1.1.0","name":"x"}'`);
     expect(compact.status).toBe(0);

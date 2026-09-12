@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { parseArgs } from '../lib/args';
 import {
   formatTenantRows,
+  formatTurnStatus,
   mergeLimits,
   mergeQuota,
   readLimitsFlags,
@@ -58,6 +59,17 @@ const STATUS = {
     },
   ],
   totals: { tenants: 2 },
+  turn: {
+    enabled: true,
+    source: 'builtin',
+    url: 'turn:relay.example:3478?transport=udp',
+    port: 3478,
+    externalIp: '203.0.113.9',
+    listening: true,
+    allocations: 3,
+    error: null,
+    relayPortRange: '49160-49259',
+  },
 };
 
 type Call = { url: string; method: string; headers: Record<string, string>; body: unknown };
@@ -101,6 +113,17 @@ describe('relay status / tenants', () => {
     expect(logs).toContain('tenants: 2');
     expect(logs).toContain('nodes: 2 online / 4 known');
     expect(logs).toContain('traffic: 2.0 KiB in / 4.0 KiB out');
+    expect(logs).toContain(
+      'turn: builtin enabled listening url=turn:relay.example:3478?transport=udp port=3478 external_ip=203.0.113.9 relay_range=49160-49259 allocations=3'
+    );
+  });
+
+  test('formatTurnStatus covers off / error', () => {
+    expect(formatTurnStatus(null)).toBe('turn: off');
+    expect(formatTurnStatus({ source: 'off', enabled: false })).toBe('turn: off');
+    expect(formatTurnStatus({ source: 'builtin', error: 'EADDRINUSE: address in use' })).toBe(
+      'turn: builtin error=EADDRINUSE: address in use'
+    );
   });
 
   test('--json prints the raw body', async () => {

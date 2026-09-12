@@ -4,7 +4,7 @@ import { type RelayCtlMessage, type RelayEnvelope, decodeRelayCtl } from '@vibet
 import { createMigratedAuthDb } from '../auth/test-db';
 import type { AuthDb } from '../auth/types';
 import { RELAY_TOKEN_HEADER } from './relay-routes';
-import { type RelayRuntime, createRelayRuntime } from './relay-runtime';
+import { type RelayRuntime, type RelayRuntimeOptions, createRelayRuntime } from './relay-runtime';
 import { type RelayTenantHandle, createTenant } from './relay-test-tenant';
 import type { RelayRuntimeConfig } from './types';
 
@@ -30,6 +30,8 @@ export type RelayHarnessOptions = {
   clientIp?: (req: Request) => string;
   password?: string;
   authBarrier?: () => Promise<void>;
+  turn?: RelayRuntimeOptions['turn'];
+  turnDeps?: RelayRuntimeOptions['turnDeps'];
 };
 
 export type RelayHarness = {
@@ -131,6 +133,8 @@ export async function bootRelayHarness(opts: RelayHarnessOptions = {}): Promise<
     authBarrier: opts.authBarrier,
     sleep: () => Promise.resolve(),
     log: () => {},
+    turn: opts.turn,
+    turnDeps: opts.turnDeps,
   });
   const harness: RelayHarness = {
     runtime,

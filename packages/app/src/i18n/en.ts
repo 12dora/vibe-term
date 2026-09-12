@@ -92,6 +92,8 @@ export const en: Record<string, string> = {
   'init.summary.autostart.on': 'on',
   'init.summary.autostart.off': 'off',
   'init.summary.serviceHint': 'Service status command',
+  'init.summary.turnFirewall':
+    'open UDP {{port}} and UDP {{range}} on the cloud security group / ufw',
 
   'doctor.platform.supported': 'Platform: {{platform}}',
   'doctor.platform.unsupported':
@@ -117,6 +119,11 @@ export const en: Record<string, string> = {
     'app.env not set: using the release built-in list (a custom list from hub/relay takes precedence)',
   'doctor.stun.custom': 'STUN servers: custom (app.env)',
   'doctor.stun.disabled': 'STUN servers: disabled',
+  'doctor.turn.external': 'TURN: external (VIBETERM_TURN_URL triple; builtin disabled)',
+  'doctor.turn.off': 'TURN: builtin disabled (VIBETERM_TURN_PORT=0/off)',
+  'doctor.turn.builtinListening': 'TURN: builtin listening on UDP {{port}}',
+  'doctor.turn.builtinNotListening':
+    'TURN: builtin configured on UDP {{port}} but Binding probe to 127.0.0.1 failed',
   'doctor.db.missing': 'Database file not found (may be normal before first start): {{path}}',
   'doctor.db.exists': 'Database file exists: {{path}}',
   'doctor.port.invalid': 'Invalid port in config: {{value}}',
@@ -158,6 +165,7 @@ export const en: Record<string, string> = {
   'upgrade.repairDone': 'Upgrade repair finished ({{action}}).',
   'upgrade.stunEnvMigrated':
     "app.env: VIBETERM_STUN_SERVERS was the old built-in default; removed so the release's built-in list applies (backup: {{backup}})",
+  'upgrade.turnExternalNotice': 'external TURN configured; builtin TURN disabled',
   'upgrade.rolledBack': 'Upgrade rolled back to {{version}}: {{error}}',
   'upgrade.preflightFailed': 'Preflight of {{version}} failed: {{error}}',
   'upgrade.serviceDidNotStop': 'Service did not stop within {{timeout}}ms.',

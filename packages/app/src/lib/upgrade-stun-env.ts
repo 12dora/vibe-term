@@ -5,6 +5,7 @@ import { t } from '../i18n';
 import { readEnvFile, writeEnvFile } from './env-file';
 import { ensureDir, pathExists, writeText } from './fs-utils';
 import { createInstallLayout } from './install-layout';
+import { applyTurnEnvNotice } from './upgrade-turn-env';
 
 const STUN_KEYS = ['VIBETERM_STUN_SERVERS', 'TMEX_STUN_SERVERS'] as const;
 
@@ -71,4 +72,5 @@ export async function applyStunEnvMigration(
   if (result.migrated && result.backupPath) {
     log(t('upgrade.stunEnvMigrated', { backup: result.backupPath }));
   }
+  await applyTurnEnvNotice(installDir, log);
 }

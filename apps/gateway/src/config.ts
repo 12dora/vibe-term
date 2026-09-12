@@ -8,6 +8,12 @@ import {
 } from '@vibeterm/shared';
 import { parseStunServersEnv } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
+import {
+  parseTurnExternalIp,
+  parseTurnHost,
+  parseTurnPort,
+  parseTurnRelayPortRange,
+} from './relay/relay-turn-config';
 
 export type { VibeTermRoles };
 
@@ -138,6 +144,16 @@ export type RtcPortRange = {
   begin: number;
   end: number;
 };
+
+export {
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
+  DEFAULT_TURN_RELAY_RANGE_TEXT,
+  parseTurnExternalIp,
+  parseTurnHost,
+  parseTurnPort,
+  parseTurnRelayPortRange,
+} from './relay/relay-turn-config';
 
 export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null {
   if (raw === undefined || raw.trim() === '') return null;
@@ -387,6 +403,10 @@ export const config = {
   turnUrl: getOptionalEnv('VIBETERM_TURN_URL'),
   turnUsername: getOptionalEnv('VIBETERM_TURN_USERNAME'),
   turnCredential: getOptionalEnv('VIBETERM_TURN_CREDENTIAL'),
+  turnPort: parseTurnPort(process.env.VIBETERM_TURN_PORT),
+  turnRelayPortRange: parseTurnRelayPortRange(process.env.VIBETERM_TURN_RELAY_PORT_RANGE),
+  turnExternalIp: parseTurnExternalIp(process.env.VIBETERM_TURN_EXTERNAL_IP),
+  turnHost: parseTurnHost(process.env.VIBETERM_TURN_HOST),
   // When true, local Bun-socket requests (via=self) honour x-forwarded-proto /
   // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
   // Never applied to forwarded (via ≠ self) requests. Default false.

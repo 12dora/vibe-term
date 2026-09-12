@@ -11,6 +11,10 @@ import {
   parsePeerBindHost,
   parsePeerPort,
   parseRtcPortRange,
+  parseTurnExternalIp,
+  parseTurnHost,
+  parseTurnPort,
+  parseTurnRelayPortRange,
   parseUplinkPreferNearest,
   parseVibeTermRoles,
   resolveTmuxBin,
@@ -41,6 +45,10 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   turnUrl: string | null;
   turnUsername: string | null;
   turnCredential: string | null;
+  turnPort: number;
+  turnRelayPortRange: { begin: number; end: number };
+  turnExternalIp: string | null;
+  turnHost: string | null;
   originUrl: string;
   trustProxy: boolean;
 }> {
@@ -77,6 +85,10 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnUrl: string | null;
         turnUsername: string | null;
         turnCredential: string | null;
+        turnPort: number;
+        turnRelayPortRange: { begin: number; end: number };
+        turnExternalIp: string | null;
+        turnHost: string | null;
         trustProxy: boolean;
         originUrl: string;
       };
@@ -289,6 +301,45 @@ describe('parseRtcPortRange', () => {
   });
 });
 
+describe('parseTurnPort', () => {
+  test('defaults to 3478 and treats 0/off as disabled', () => {
+    expect(parseTurnPort(undefined)).toBe(3478);
+    expect(parseTurnPort('')).toBe(3478);
+    expect(parseTurnPort('0')).toBe(0);
+    expect(parseTurnPort('off')).toBe(0);
+    expect(parseTurnPort('OFF')).toBe(0);
+    expect(parseTurnPort('3479')).toBe(3479);
+  });
+
+  test('rejects malformed values', () => {
+    expect(() => parseTurnPort('abc')).toThrow('VIBETERM_TURN_PORT');
+    expect(() => parseTurnPort('65536')).toThrow('VIBETERM_TURN_PORT');
+  });
+});
+
+describe('parseTurnRelayPortRange', () => {
+  test('defaults to 49160-49259', () => {
+    expect(parseTurnRelayPortRange(undefined)).toEqual({ begin: 49160, end: 49259 });
+    expect(parseTurnRelayPortRange('')).toEqual({ begin: 49160, end: 49259 });
+    expect(parseTurnRelayPortRange(' 50000 - 50010 ')).toEqual({ begin: 50000, end: 50010 });
+  });
+
+  test('rejects malformed values', () => {
+    expect(() => parseTurnRelayPortRange('50000')).toThrow('VIBETERM_TURN_RELAY_PORT_RANGE');
+    expect(() => parseTurnRelayPortRange('2-1')).toThrow('VIBETERM_TURN_RELAY_PORT_RANGE');
+  });
+});
+
+describe('parseTurnExternalIp / parseTurnHost', () => {
+  test('accepts IPv4 and treats empty as unset', () => {
+    expect(parseTurnExternalIp(undefined)).toBeNull();
+    expect(parseTurnExternalIp(' 203.0.113.9 ')).toBe('203.0.113.9');
+    expect(() => parseTurnExternalIp('relay.example')).toThrow('VIBETERM_TURN_EXTERNAL_IP');
+    expect(parseTurnHost(undefined)).toBeNull();
+    expect(parseTurnHost(' turn.example ')).toBe('turn.example');
+  });
+});
+
 describe('config hub/node env', () => {
   test('defaults roles to standalone and peerPort to 39001', async () => {
     const config = await loadConfigWith({
@@ -336,6 +387,30 @@ describe('config hub/node env', () => {
     expect(config.turnUrl).toBe('turn:turn.example:3478');
     expect(config.turnUsername).toBe('u');
     expect(config.turnCredential).toBe('p');
+  });
+
+  test('parses builtin TURN env keys with defaults', async () => {
+    const defaults = await loadConfigWith({
+      VIBETERM_TURN_PORT: undefined,
+      VIBETERM_TURN_RELAY_PORT_RANGE: undefined,
+      VIBETERM_TURN_EXTERNAL_IP: undefined,
+      VIBETERM_TURN_HOST: undefined,
+    });
+    expect(defaults.turnPort).toBe(3478);
+    expect(defaults.turnRelayPortRange).toEqual({ begin: 49160, end: 49259 });
+    expect(defaults.turnExternalIp).toBeNull();
+    expect(defaults.turnHost).toBeNull();
+
+    const custom = await loadConfigWith({
+      VIBETERM_TURN_PORT: '0',
+      VIBETERM_TURN_RELAY_PORT_RANGE: '50000-50010',
+      VIBETERM_TURN_EXTERNAL_IP: '203.0.113.9',
+      VIBETERM_TURN_HOST: 'turn.example',
+    });
+    expect(custom.turnPort).toBe(0);
+    expect(custom.turnRelayPortRange).toEqual({ begin: 50000, end: 50010 });
+    expect(custom.turnExternalIp).toBe('203.0.113.9');
+    expect(custom.turnHost).toBe('turn.example');
   });
 
   test('VIBETERM_STUN_SERVERS=none disables the local STUN list', async () => {

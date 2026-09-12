@@ -96,12 +96,37 @@ export type DirectStatus = {
   platform: string;
 };
 
+export type LocalRelayTurnStatus = {
+  enabled: boolean;
+  source: 'builtin' | 'external' | 'off';
+  url: string | null;
+  port: number | null;
+  externalIp: string | null;
+  listening: boolean;
+  allocations: number;
+  error: string | null;
+  relayPortRange: string | null;
+};
+
 export type LocalRelayStatus = {
   publicUrl: string | null;
   hasPassword: boolean;
   tenantCount: number;
   nodesOnline: number;
   currentNodes: number;
+  turn: LocalRelayTurnStatus;
+};
+
+const EMPTY_RELAY_TURN: LocalRelayTurnStatus = {
+  enabled: false,
+  source: 'off',
+  url: null,
+  port: null,
+  externalIp: null,
+  listening: false,
+  allocations: 0,
+  error: null,
+  relayPortRange: null,
 };
 
 const EMPTY_RELAY_STATUS: LocalRelayStatus = {
@@ -110,6 +135,7 @@ const EMPTY_RELAY_STATUS: LocalRelayStatus = {
   tenantCount: 0,
   nodesOnline: 0,
   currentNodes: 0,
+  turn: EMPTY_RELAY_TURN,
 };
 
 export type LocalStatus = {

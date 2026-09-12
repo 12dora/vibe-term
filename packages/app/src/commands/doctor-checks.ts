@@ -15,6 +15,7 @@ import { getServiceStatus } from '../lib/service';
 import { checkTmuxVersion } from '../lib/tmux';
 import { LEGACY_SERVICE_NAME } from '../lib/upgrade-migrate-dir';
 import type { DoctorCheck } from '../types';
+import { relayTurnDoctorCheck } from './doctor-turn';
 
 export interface DoctorEnvironmentResult {
   platformChecks: DoctorCheck[];
@@ -152,6 +153,8 @@ export async function checkEnvironment(input: {
 
     const env = await readEnvFile(input.envPath);
     installChecks.push(stunServersDoctorCheck(env));
+    const turnCheck = await relayTurnDoctorCheck(env);
+    if (turnCheck) installChecks.push(turnCheck);
     const required = ['VIBETERM_MASTER_KEY', 'DATABASE_URL', 'GATEWAY_PORT', 'VIBETERM_BIND_HOST'];
     for (const key of required) {
       if (!env[key]) {

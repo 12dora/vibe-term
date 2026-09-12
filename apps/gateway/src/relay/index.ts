@@ -54,3 +54,12 @@ export {
   serializeRelayQuota,
 } from './relay-quota';
 export { verifyRelayMemberProof, type RelayMemberResult } from './relay-member';
+export {
+  EMPTY_RELAY_TURN_STATUS,
+  type RelayTurnStatus,
+  type TurnSource,
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_RANGE_TEXT,
+  turnFirewallHint,
+} from './relay-turn-config';
+export { RelayTurnService, createRelayTurnService } from './relay-turn-service';

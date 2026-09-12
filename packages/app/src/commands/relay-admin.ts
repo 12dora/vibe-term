@@ -125,6 +125,37 @@ function formatLastSeen(value: number | null): string {
   return new Date(value).toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function turnFieldBit(label: string, value: unknown): string | null {
+  if (typeof value === 'string' && value.length > 0) return `${label}=${value}`;
+  if (typeof value === 'number') return `${label}=${value}`;
+  return null;
+}
+
+function turnStatusBits(turn: Record<string, unknown>): string[] {
+  const bits: string[] = [];
+  if (turn.enabled === true) bits.push('enabled');
+  if (turn.listening === true) bits.push('listening');
+  for (const [label, value] of [
+    ['url', turn.url],
+    ['port', turn.port],
+    ['external_ip', turn.externalIp],
+    ['relay_range', turn.relayPortRange],
+    ['allocations', turn.allocations],
+    ['error', turn.error],
+  ] as const) {
+    const bit = turnFieldBit(label, value);
+    if (bit) bits.push(bit);
+  }
+  return bits;
+}
+
+export function formatTurnStatus(raw: unknown): string {
+  const turn = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : null;
+  if (!turn) return 'turn: off';
+  const source = typeof turn.source === 'string' ? turn.source : 'off';
+  return [`turn: ${source}`, ...turnStatusBits(turn)].join(' ');
+}
+
 export function formatTenantRows(tenants: RelayAdminTenant[]): string[] {
   if (tenants.length === 0) return ['no tenants'];
   const rows = tenants.map((tenant) => [
@@ -157,6 +188,7 @@ export async function runRelayStatus(parsed: ParsedArgs, io: RelayIo = {}): Prom
     `password epoch: ${status.config.passwordEpoch} (min token epoch ${status.config.minTokenEpoch})`
   );
   relayLog(io, `default quota: ${formatQuota(status.config.defaultQuota)}`);
+  relayLog(io, formatTurnStatus(status.raw.turn));
   relayLog(io, `tenants: ${status.tenants.length}`);
   const online = status.tenants.reduce((sum, tenant) => sum + tenant.nodesOnline, 0);
   const nodes = status.tenants.reduce((sum, tenant) => sum + tenant.nodes, 0);

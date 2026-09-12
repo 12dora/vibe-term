@@ -121,6 +121,22 @@ describe('i18n', () => {
     expect(t('upgrade.stunEnvMigrated', { backup: 'x' })).not.toContain('您');
   });
 
+  test('TURN doctor / init / upgrade keys exist in both languages', () => {
+    for (const lang of ['en', 'zh-CN'] as const) {
+      setLang(lang);
+      expect(t('doctor.turn.external')).not.toBe('doctor.turn.external');
+      expect(t('doctor.turn.off')).not.toBe('doctor.turn.off');
+      expect(t('doctor.turn.builtinListening', { port: 3478 })).toContain('3478');
+      expect(t('init.summary.turnFirewall', { port: 3478, range: '49160-49259' })).toContain(
+        '3478'
+      );
+      expect(t('upgrade.turnExternalNotice')).not.toBe('upgrade.turnExternalNotice');
+    }
+    setLang('zh-CN');
+    expect(t('upgrade.turnExternalNotice')).not.toContain('你');
+    expect(t('upgrade.turnExternalNotice')).not.toContain('您');
+  });
+
   test('doctor.passkey origin hints exist in both languages', () => {
     for (const lang of ['en', 'zh-CN'] as const) {
       setLang(lang);

@@ -1185,6 +1185,17 @@ describe('direct status and setLocalDirect', () => {
         tenantCount: 2,
         nodesOnline: 3,
         currentNodes: 5,
+        turn: {
+          enabled: true,
+          source: 'builtin',
+          url: 'turn:relay.example:3478?transport=udp',
+          port: 3478,
+          externalIp: '203.0.113.9',
+          listening: true,
+          allocations: 0,
+          error: null,
+          relayPortRange: '49160-49259',
+        },
       }),
     });
     const status = await getLocalStatus(deps);
@@ -1195,6 +1206,17 @@ describe('direct status and setLocalDirect', () => {
       tenantCount: 2,
       nodesOnline: 3,
       currentNodes: 5,
+      turn: {
+        enabled: true,
+        source: 'builtin',
+        url: 'turn:relay.example:3478?transport=udp',
+        port: 3478,
+        externalIp: '203.0.113.9',
+        listening: true,
+        allocations: 0,
+        error: null,
+        relayPortRange: '49160-49259',
+      },
     });
     expect(JSON.stringify(status)).not.toContain('token');
   });

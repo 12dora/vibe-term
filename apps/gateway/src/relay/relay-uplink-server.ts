@@ -66,6 +66,7 @@ export type RelayUplinkServerOptions = {
     bytesOutPerSec: number;
     bandwidthBytesPerSec: number;
   };
+  turnProvider?: () => RelayRtcConfig['turn'];
 };
 
 export class RelayUplinkServer implements RelayUplinkHost {
@@ -105,6 +106,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
       })
     | undefined;
   private readonly lastUsagePush = new Map<string, string>();
+  private readonly turnProvider: (() => RelayRtcConfig['turn']) | undefined;
 
   constructor(opts: RelayUplinkServerOptions) {
     this.db = opts.db;
@@ -124,6 +126,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
     this.minClientVersion = opts.minClientVersion ?? MIN_RELAY_CLIENT_VERSION;
     this.authBarrier = opts.authBarrier;
     this.tenantRates = opts.tenantRates;
+    this.turnProvider = opts.turnProvider;
     this.bandwidth = createRelayBandwidthLimiter(
       this.configStore.ensure(this.now()).limits,
       this.now,
@@ -169,7 +172,7 @@ export class RelayUplinkServer implements RelayUplinkHost {
   rtcConfig(): RelayRtcConfig {
     return {
       stun: listedStun(this.config.stun, this.config.stunSource),
-      turn: this.config.turn ?? null,
+      turn: this.turnProvider ? this.turnProvider() : (this.config.turn ?? null),
     };
   }
 

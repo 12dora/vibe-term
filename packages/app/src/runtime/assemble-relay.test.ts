@@ -11,16 +11,19 @@ const RELAY_ADMIN_TOKEN = 'assemble-test-relay-admin-token';
 const savedEnv = {
   publicUrl: process.env.VIBETERM_RELAY_PUBLIC_URL,
   adminToken: process.env.VIBETERM_RELAY_ADMIN_TOKEN,
+  turnPort: process.env.VIBETERM_TURN_PORT,
 };
 
 beforeAll(() => {
   process.env.VIBETERM_RELAY_PUBLIC_URL = RELAY_PUBLIC_URL;
   process.env.VIBETERM_RELAY_ADMIN_TOKEN = RELAY_ADMIN_TOKEN;
+  process.env.VIBETERM_TURN_PORT = 'off';
 });
 
 afterAll(() => {
   process.env.VIBETERM_RELAY_PUBLIC_URL = savedEnv.publicUrl;
   process.env.VIBETERM_RELAY_ADMIN_TOKEN = savedEnv.adminToken;
+  process.env.VIBETERM_TURN_PORT = savedEnv.turnPort;
 });
 
 function gatewayWith(db: GatewayRuntime['db']): GatewayRuntime {

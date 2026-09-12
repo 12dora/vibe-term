@@ -603,6 +603,17 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
             tenantCount: 1,
             nodesOnline: 0,
             currentNodes: 2,
+            turn: {
+              enabled: false,
+              source: 'off',
+              url: null,
+              port: null,
+              externalIp: null,
+              listening: false,
+              allocations: 0,
+              error: null,
+              relayPortRange: null,
+            },
           }),
         })
       )
@@ -614,6 +625,17 @@ describe('GET /api/local/status mesh gating with NodeSessionStore', () => {
       tenantCount: 1,
       nodesOnline: 0,
       currentNodes: 2,
+      turn: {
+        enabled: false,
+        source: 'off',
+        url: null,
+        port: null,
+        externalIp: null,
+        listening: false,
+        allocations: 0,
+        error: null,
+        relayPortRange: null,
+      },
     });
   });
 });

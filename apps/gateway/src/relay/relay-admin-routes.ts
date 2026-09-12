@@ -9,6 +9,7 @@ import { hashRelayPassword, relayPasswordTooShort } from './relay-password';
 import { normalizeRelayQuota } from './relay-quota';
 import type { RelayRegistry } from './relay-registry';
 import type { RelayTenantStore } from './relay-tenant-store';
+import { EMPTY_RELAY_TURN_STATUS, type RelayTurnStatus } from './relay-turn-config';
 import type { RelayUplinkServer } from './relay-uplink-server';
 
 export const RELAY_LABEL_MAX_LENGTH = 128;
@@ -22,6 +23,7 @@ export type RelayAdminDeps = {
   metrics: RelayMetricsCollector;
   uplink: RelayUplinkServer;
   now: () => number;
+  turnStatus?: () => RelayTurnStatus;
 };
 
 export function relayStatusPayload(deps: RelayAdminDeps): Response {
@@ -69,6 +71,7 @@ export function relayStatusPayload(deps: RelayAdminDeps): Response {
     },
     tenants,
     totals,
+    turn: deps.turnStatus?.() ?? EMPTY_RELAY_TURN_STATUS,
   });
 }
 
