@@ -26,6 +26,11 @@ export interface NodeEventPayload {
   viaRelay?: string | null;
   /** 该对端当前在线的全部中继地址；帧里没有为 `undefined`。 */
   relayPresence?: string[];
+  /**
+   * entry 本机暂停旗标。optional 尾字段：帧里没有 / option none 解出 `undefined`，
+   * 投影时保留列表里已有的值；明确 `true` / `false` 才覆盖。
+   */
+  paused?: boolean;
   /** node.status 上报的 inventory（JSON 字符串已解析）；不可解析时保留原串。 */
   inventory: unknown;
   version?: string | null;
@@ -98,6 +103,44 @@ function rttFromWire(rttMs: unknown): number | null | undefined {
 }
 
 /**
+ * 暂停旗标：只认明确的布尔值。`null` / 缺席解成 `undefined`，投影侧据此留用旧值。
+ */
+export function pausedFromWire(paused: unknown): boolean | undefined {
+  if (paused === true) return true;
+  if (paused === false) return false;
+  return undefined;
+}
+
+/**
+ * schema 尚未带 paused 时，从 NODE_EVENT 正文尾部读 optional bool。
+ * 新 schema 已消费该字段时不要走这里（`pausedFromWire` 已给出结论）。
+ *
+ * 编码与 viaRelay 同一套 optional-tail：none = 单字节 0；Some(v) = 1 + bool。
+ * 也兼容「只在有值时追加一个 bool」：单字节 1 = true。
+ */
+function pausedFromTrailing(raw: Uint8Array): boolean | undefined {
+  try {
+    const decoded = wsBorsh.decodeNodeEvent(raw);
+    const without = wsBorsh.encodeNodeEvent(decoded);
+    if (raw.length <= without.length) return undefined;
+    const extra = raw.subarray(without.length);
+    if (extra.length === 0 || extra[0] === 0) return undefined;
+    if (extra[0] === 1 && extra.length === 1) return true;
+    if (extra[0] === 1 && extra.length >= 2) return extra[1] === 1;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function pausedFromDecoded(payload: { paused?: unknown }, raw: Uint8Array): boolean | undefined {
+  const fromField = pausedFromWire(payload.paused);
+  if (fromField !== undefined) return fromField;
+  if (payload.paused === null) return undefined;
+  return pausedFromTrailing(raw);
+}
+
+/**
  * 中继那两段（契约 §C）。线上是 `Option`，**没报告**与「报告了空」都编成 `null`——
  * 老 node 的帧、hub 模式、以及新 node 一时说不清走哪台，解出来是同一个值。分不开就一律按
  * 「没报告」处理：整个键不出现，投影侧的 `carry` / `pick` 据此留用列表里已有的值，
@@ -146,9 +189,11 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
         rttMs?: unknown;
         viaRelay?: unknown;
         relayPresence?: unknown;
+        paused?: unknown;
       };
       const status = statusFromWire(payload.status);
       if (!status) return null;
+      const paused = pausedFromDecoded(payload, envelope.payload);
       return {
         kind: 'node-event',
         payload: {
@@ -162,6 +207,7 @@ export function decodeMeshFrame(data: Uint8Array): MeshFrame | null {
           version: payload.version,
           direct_capable: payload.directCapable,
           name: payload.name,
+          ...(paused !== undefined ? { paused } : {}),
         },
       };
     }

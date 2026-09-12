@@ -1,6 +1,7 @@
 // 侧边栏设备区：standalone / 单 node 下就是今天的单运行时设备树（零新增请求）；
 // mesh 下拍平所有 node 的设备（self 在最前），每行带 node 徽标。
 
+import { isMeshNodePaused } from '@/node/merge-nodes';
 import { sortNodes, useMeshNodes, useSharedAuthMode } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
@@ -67,7 +68,10 @@ export function toSidebarEntries(
   entryNodeId: string | null,
   order: readonly string[] = []
 ): SidebarNodeEntry[] {
-  const entries = sortNodes(nodes, entryNodeId).map((node) => {
+  const entries = sortNodes(
+    nodes.filter((node) => !isMeshNodePaused(node)),
+    entryNodeId
+  ).map((node) => {
     const isSelf = entryNodeId != null && node.id === entryNodeId;
     return {
       id: node.id,

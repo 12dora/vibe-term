@@ -6,6 +6,8 @@ import { encodeBase64url } from '@vibeterm/shared/auth';
 import {
   type EnrollRedeemedPayload,
   KIND_ENROLL_REDEEMED,
+  MESH_WS_PING_INTERVAL_MS,
+  MESH_WS_PING_TIMEOUT_MS,
   MESH_WS_SILENCE_RECONNECT_MS,
   MESH_WS_START_DELAY_MS,
   MeshEventSource,
@@ -19,7 +21,7 @@ import {
   onFirstTerminalPaint,
   resetFirstTerminalPaintForTest,
 } from './mesh-events';
-import { relayFromWire } from './mesh-events-codec';
+import { pausedFromWire, relayFromWire } from './mesh-events-codec';
 
 function nodeEventFrame(payload: {
   nodeId: string;
@@ -387,6 +389,7 @@ describe('MeshEventSource', () => {
       maxDelayMs: options.maxDelayMs ?? 1000,
       stableAfterMs: 10_000,
       startDelayMs: options.startDelayMs ?? 0,
+      pingIntervalMs: 0,
       ...(options.firstPaint ? { firstPaint: options.firstPaint } : {}),
       ...(options.silenceReconnectMs === undefined
         ? {}
@@ -607,6 +610,7 @@ describe('MeshEventSource 恢复重连', () => {
       visibleMaxDelayMs: 5_000,
       stableAfterMs: 10_000,
       startDelayMs: options.startDelayMs ?? 0,
+      pingIntervalMs: 0,
       ...(options.silenceReconnectMs === undefined
         ? {}
         : { silenceReconnectMs: options.silenceReconnectMs }),
@@ -686,6 +690,7 @@ describe('MeshEventSource 恢复重连', () => {
     const source = new MeshEventSource({
       url: 'ws://x/mesh/ws',
       socketFactory: () => new FakeSocket(),
+      pingIntervalMs: 0,
       setTimeoutFn: () => 1,
       clearTimeoutFn: () => undefined,
     });
@@ -711,6 +716,7 @@ describe('MeshEventSource 首次打开的闸门（P8）', () => {
       },
       baseDelayMs: 100,
       startDelayMs: options.startDelayMs ?? MESH_WS_START_DELAY_MS,
+      pingIntervalMs: 0,
       firstPaint: (listener) => {
         paintListeners.add(listener);
         return () => paintListeners.delete(listener);
@@ -819,6 +825,7 @@ describe('MeshEventSource 静默换连（P8：/mesh/ws 没有应用层心跳）'
       },
       baseDelayMs: 100,
       startDelayMs: 0,
+      pingIntervalMs: 0,
       nowFn: () => clock.now,
       visible: () => visibility.value,
       ...(options.silenceReconnectMs === undefined
@@ -979,5 +986,138 @@ describe('NODE_EVENT 的中继两段（契约 §C）', () => {
     const payload = plain?.kind === 'node-event' ? plain.payload : null;
     expect(payload && 'viaRelay' in payload).toBe(false);
     expect(payload && 'relayPresence' in payload).toBe(false);
+  });
+});
+
+function meshPongFrame(nonce = 1): Uint8Array {
+  const payload = wsBorsh.encodePayload(wsBorsh.schema.PingPongSchema, {
+    nonce,
+    timeMs: 0n,
+  });
+  return wsBorsh.encodeEnvelope(wsBorsh.KIND_PONG, payload, 1);
+}
+
+describe('MeshEventSource 应用层 ping', () => {
+  function harness() {
+    const sockets: FakeSocket[] = [];
+    const timers: { fn: () => void; ms: number }[] = [];
+    const clock = { now: 1_000_000 };
+    const recoveryListeners = new Set<() => void>();
+    const source = new MeshEventSource({
+      url: 'ws://x/mesh/ws',
+      socketFactory: () => {
+        const socket = new FakeSocket();
+        sockets.push(socket);
+        return socket;
+      },
+      baseDelayMs: 100,
+      startDelayMs: 0,
+      pingIntervalMs: MESH_WS_PING_INTERVAL_MS,
+      pingTimeoutMs: MESH_WS_PING_TIMEOUT_MS,
+      nowFn: () => clock.now,
+      visible: () => true,
+      recovery: (listener) => {
+        recoveryListeners.add(listener);
+        return () => recoveryListeners.delete(listener);
+      },
+      setTimeoutFn: (fn, ms) => {
+        timers.push({ fn, ms });
+        return timers.length;
+      },
+      clearTimeoutFn: () => undefined,
+    });
+    const recover = () => {
+      for (const listener of recoveryListeners) listener();
+    };
+    const fire = (ms: number) => {
+      const idx = timers.findIndex((row) => row.ms === ms);
+      const timer = idx >= 0 ? timers.splice(idx, 1)[0] : undefined;
+      timer?.fn();
+    };
+    return { source, sockets, timers, clock, recover, fire };
+  }
+
+  test('连上后按间隔发 PING；老网关不回 PONG 时不因静默换线', () => {
+    const { source, sockets, fire } = harness();
+    source.start();
+    sockets[0].open();
+    fire(MESH_WS_PING_INTERVAL_MS);
+    expect(sockets[0].sent.length).toBe(1);
+    expect(wsBorsh.decodeEnvelope(sockets[0].sent[0] as Uint8Array).kind).toBe(wsBorsh.KIND_PING);
+
+    fire(MESH_WS_PING_TIMEOUT_MS);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0].closed).toBe(false);
+    source.stop();
+  });
+
+  test('对端回过 PONG 之后再 ping 超时：换一条 socket', () => {
+    const { source, sockets, clock, fire } = harness();
+    source.start();
+    sockets[0].open();
+    sockets[0].emit(meshPongFrame());
+    fire(MESH_WS_PING_INTERVAL_MS);
+    expect(sockets[0].sent.length).toBe(1);
+
+    clock.now += MESH_WS_PING_TIMEOUT_MS;
+    fire(MESH_WS_PING_TIMEOUT_MS);
+    expect(sockets[0].closed).toBe(true);
+    expect(sockets).toHaveLength(2);
+    source.stop();
+  });
+
+  test('pageshow / 恢复时立刻发一帧 ping', () => {
+    const { source, sockets, recover } = harness();
+    source.start();
+    sockets[0].open();
+    recover();
+    expect(sockets[0].sent.length).toBe(1);
+    expect(wsBorsh.decodeEnvelope(sockets[0].sent[0] as Uint8Array).kind).toBe(wsBorsh.KIND_PING);
+    source.stop();
+  });
+});
+
+describe('NODE_EVENT 的 paused 尾字段', () => {
+  test('pausedFromWire 只认明确布尔值', () => {
+    expect(pausedFromWire(true)).toBe(true);
+    expect(pausedFromWire(false)).toBe(false);
+    expect(pausedFromWire(undefined)).toBeUndefined();
+    expect(pausedFromWire(null)).toBeUndefined();
+    expect(pausedFromWire('true')).toBeUndefined();
+  });
+
+  test('schema 尚未带 paused 时从正文尾部读 Option bool；老帧一个键都不多', () => {
+    const decode = (data: Parameters<typeof wsBorsh.encodeNodeEvent>[0], extra?: Uint8Array) => {
+      const body = wsBorsh.encodeNodeEvent(data);
+      const payload =
+        extra && extra.length > 0
+          ? (() => {
+              const merged = new Uint8Array(body.length + extra.length);
+              merged.set(body);
+              merged.set(extra, body.length);
+              return merged;
+            })()
+          : body;
+      return decodeMeshFrame(wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, payload, 0));
+    };
+    const base = {
+      nodeId: 'a',
+      status: wsBorsh.NODE_EVENT_STATUS_ONLINE,
+      reach: 'lan' as const,
+    };
+
+    const absent = decode(base);
+    const absentPayload = absent?.kind === 'node-event' ? absent.payload : null;
+    expect(absentPayload && 'paused' in absentPayload).toBe(false);
+
+    const paused = decode(base, Uint8Array.of(1, 1));
+    expect(paused?.kind === 'node-event' ? paused.payload.paused : undefined).toBe(true);
+
+    const resumed = decode(base, Uint8Array.of(1, 0));
+    expect(resumed?.kind === 'node-event' ? resumed.payload.paused : undefined).toBe(false);
+
+    const none = decode(base, Uint8Array.of(0));
+    const nonePayload = none?.kind === 'node-event' ? none.payload : null;
+    expect(nonePayload && 'paused' in nonePayload).toBe(false);
   });
 });

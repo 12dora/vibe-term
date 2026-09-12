@@ -17,6 +17,7 @@ import { defaultAuthApi } from '@vibeterm/api-client/auth/index';
 import { errorMessage } from '@vibeterm/shared';
 import { createStateStore } from './create-polling-store';
 import { clearDirectLinkUnavailableFor } from './direct-link-availability';
+import { isMeshNodePaused } from './merge-nodes';
 import type { NodeEventPayload } from './mesh-events';
 import { clearMeshNodesCache, readMeshNodesCache, writeMeshNodesCache } from './mesh-nodes-cache';
 import { type RetrySchedulerOptions, createRetryScheduler, onPageRecovery } from './mesh-recovery';
@@ -58,7 +59,9 @@ export function patchNodesWithEvent(nodes: MeshNode[], event: NodeEventPayload):
       version: event.version ?? versionOf(event.inventory) ?? node.version,
       direct_capable: event.direct_capable ?? node.direct_capable,
       name: event.name ?? node.name,
-    } satisfies MeshNode;
+      // 事件没带 paused（hub roster / 老壳）时保留当前旗标，避免上下线把暂停机冲回侧栏。
+      paused: pick(event.paused, isMeshNodePaused(node) ? true : undefined) === true,
+    } as MeshNode;
   });
   return changed ? next : nodes;
 }
@@ -302,8 +305,25 @@ export function applyMeshNodeEvent(event: NodeEventPayload, api: AuthApi = defau
   if (next !== snapshot.nodes) {
     setState({ nodes: next });
     noteMeshNodesOnline(snapshot.nodes, next);
+    // pause/resume 广播带 paused：立刻落盘，刷新第一帧才不会把暂停机闪进侧栏。
+    if (event.paused !== undefined) persistMeshNodes();
   }
   if (shouldRefreshPendingMembers(snapshot, event, inFlight !== null)) ensureFreshMeshNodes(api);
+}
+
+/** 乐观更新暂停旗标；列表里没有这一行时什么都不做。 */
+export function setNodePaused(nodeId: string, paused: boolean): boolean {
+  const snapshot = store.get();
+  let changed = false;
+  const next = snapshot.nodes.map((node) => {
+    if (node.id !== nodeId || isMeshNodePaused(node) === paused) return node;
+    changed = true;
+    return { ...node, paused } as MeshNode;
+  });
+  if (!changed) return false;
+  setState({ nodes: next });
+  persistMeshNodes();
+  return true;
 }
 
 let inFlight: Promise<void> | null = null;

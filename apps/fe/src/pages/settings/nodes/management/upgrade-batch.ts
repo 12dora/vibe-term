@@ -7,6 +7,7 @@
 // 本机重启必然带来一次页面刷新，编排却只活在页面里：所以每台机器落定都把结论写进持久化的
 // 计划（`upgrade-batch-storage`），刷新后按同一份 `order` 接着跑，最后仍然只弹一条汇总。
 
+import { isMeshNodePaused } from '@/node/merge-nodes';
 import type { NodeRow } from '@/node/mesh-nodes';
 import { compareSemver } from '@vibeterm/shared';
 import type { UpgradeRunOutcome } from './types';
@@ -66,6 +67,7 @@ export function upgradeBlockReason(
 /** 批量升级的候选：可点 + 版本可解析且**严格低于** latest。版本未知的节点不进批量。 */
 export function isBatchEligible(row: NodeRow, latestVersion: string | null): boolean {
   if (!latestVersion || !row.version) return false;
+  if (isMeshNodePaused(row)) return false;
   if (upgradeBlockReason(row, latestVersion) !== null) return false;
   return compareSemver(row.version, latestVersion) === -1;
 }

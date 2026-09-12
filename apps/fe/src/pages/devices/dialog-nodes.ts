@@ -4,6 +4,7 @@
 // 两个 id 都要留着：拼 `/n/<id>` 路径用运行时 id（entry 自身退化成 `self`），而 grant 的
 // `fromNodeId`、放行记录的 `fromNodeId` 要的是对端认得的真实 mesh id。
 
+import { isMeshNodePaused } from '@/node/merge-nodes';
 import { sortNodes, toRuntimeNodeId } from '@/node/mesh-nodes';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
@@ -50,7 +51,10 @@ export function toDialogNodeOptions(
 ): DialogNodeOption[] {
   if (options.loading) return [];
   if (nodes.length === 0) return [selfOnly(selfName, entryNodeId)];
-  return sortNodes(nodes, entryNodeId).map((node) => {
+  return sortNodes(
+    nodes.filter((node) => !isMeshNodePaused(node)),
+    entryNodeId
+  ).map((node) => {
     const runtimeNodeId = toRuntimeNodeId(node.id, entryNodeId);
     const isSelf = runtimeNodeId === SELF_NODE_ID;
     return {

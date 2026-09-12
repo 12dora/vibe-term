@@ -71,6 +71,19 @@ describe('toDialogNodeOptions', () => {
     expect(nodeUnavailableReason(byId.get(REMOTE) as never)).toBe('signedOut');
     expect(nodeUnavailableReason(byId.get('self') as never)).toBeNull();
   });
+
+  test('paused 节点不进下拉，即使在线已登录', () => {
+    const paused = {
+      ...node({ id: REMOTE, name: 'studio' }),
+      paused: true,
+    } as MeshNode;
+    const options = toDialogNodeOptions(
+      [node({ id: ENTRY, name: 'entry' }), paused],
+      ENTRY,
+      '本机'
+    );
+    expect(options.map((option) => option.id)).toEqual(['self']);
+  });
 });
 
 describe('findDialogNode / firstUsableNode', () => {

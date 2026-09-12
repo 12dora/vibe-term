@@ -2489,7 +2489,8 @@
         "online": "在线",
         "offline": "离线",
         "revoked": "已移除",
-        "pending": "待批准"
+        "pending": "待批准",
+        "paused": "已暂停"
       },
       "reach": {
         "lan": "局域网",
@@ -2504,7 +2505,13 @@
         "refresh": "刷新",
         "copy": "复制",
         "copied": "已复制",
-        "admit": "批准加入"
+        "admit": "批准加入",
+        "pause": "暂停",
+        "resume": "恢复"
+      },
+      "pause": {
+        "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
+        "failed": "操作失败：{{error}}"
       },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",

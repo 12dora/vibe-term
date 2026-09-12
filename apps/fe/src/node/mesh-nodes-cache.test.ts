@@ -88,6 +88,22 @@ describe('mesh-nodes-cache', () => {
     expect(row?.directFailure).toBeUndefined();
   });
 
+  test('paused 落盘并读回来，链路现场仍然清空', () => {
+    const storage = memoryStorage();
+    writeMeshNodesCache(
+      {
+        mesh: true,
+        entryNodeId: 'entry',
+        nodes: [{ ...node({ id: 'n1', name: '书房', reach: 'wan' }), paused: true } as MeshNode],
+        savedAt: NOW,
+      },
+      storage
+    );
+    const cached = readMeshNodesCache(storage, NOW + 1000);
+    expect(cached?.nodes[0] && 'paused' in cached.nodes[0] && cached.nodes[0].paused).toBe(true);
+    expect(cached?.nodes[0]?.reach).toBeNull();
+  });
+
   test('过期、未来时刻、版本不符、畸形 JSON 一律返回 null', () => {
     const storage = memoryStorage();
     writeMeshNodesCache(

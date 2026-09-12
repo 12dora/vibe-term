@@ -102,6 +102,21 @@ describe('mergeNodes 的待批准行', () => {
     expect(rows[1].admissionStatus).toBe('pending');
   });
 
+  test('mesh 行的 paused 透传到 NodeRow；pending 行没有该字段', () => {
+    const paused = { ...meshNode(OTHER, 'other'), paused: true } as MeshNode;
+    const rows = mergeNodes(
+      [meshNode(ENTRY, 'entry'), paused],
+      [
+        hubRow(ENTRY),
+        hubRow(PENDING_ID, { admission_status: 'pending', name: 'laptop', ...MATERIAL }),
+      ],
+      CONTEXT
+    );
+    expect(rows.find((row) => row.id === OTHER)?.paused).toBe(true);
+    expect(rows.find((row) => row.id === ENTRY)?.paused).toBeUndefined();
+    expect(rows.find((row) => row.id === PENDING_ID)?.paused).toBeUndefined();
+  });
+
   test('旧 Hub 不下发 admission_status：一行都不追加，行为与从前一致', () => {
     const rows = mergeNodes([meshNode(ENTRY, 'entry')], [hubRow(ENTRY), hubRow(OTHER)], CONTEXT);
     expect(rows.map((row) => row.id)).toEqual([ENTRY]);

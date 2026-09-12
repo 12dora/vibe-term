@@ -634,6 +634,26 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(buttonTag(html, 'node-upgrade-hh')).not.toContain('disabled=""');
   });
 
+  test('暂停行：状态列带已暂停标记，行内按钮为恢复，升级仍可点', () => {
+    const html = renderTable([nodeRow({ id: 'pp', version: '1.1.9', paused: true })], '1.2.0');
+    expect(html).toContain('data-testid="nodes-status-pp"');
+    expect(html).toContain('nodes.status.paused');
+    const pause = buttonTag(html, 'node-pause-toggle');
+    expect(pause).toContain('data-paused="true"');
+    expect(html).toContain('nodes.actions.resume');
+    expect(buttonTag(html, 'node-upgrade-pp')).not.toContain('disabled=""');
+    expect(elementTag(html, 'nodes-select-pp')).not.toContain('aria-disabled="true"');
+  });
+
+  test('未暂停行显示暂停按钮；self 不渲染该按钮', () => {
+    const remote = renderTable([nodeRow({ id: 'qq', version: '1.1.9' })], '1.2.0');
+    expect(buttonTag(remote, 'node-pause-toggle')).toContain('data-paused="false"');
+    expect(remote).toContain('nodes.actions.pause');
+
+    const self = renderTable([nodeRow({ id: 'self', isSelf: true, version: '1.1.9' })], '1.2.0');
+    expect(self).not.toContain('data-testid="node-pause-toggle"');
+  });
+
   test('正在卸载的行：状态列改显「卸载中」，升级锁住，移除仍可点', () => {
     const html = renderTable(
       [nodeRow({ id: 'uu', version: '1.1.9' })],
@@ -893,6 +913,12 @@ describe('多选的纯逻辑', () => {
     expect(selectableRows(rows, new Set()).map((item) => item.id)).toEqual(['a', 'c']);
     // 乐观标记同样算「正在卸载」
     expect(selectableRows(rows, new Set(['c'])).map((item) => item.id)).toEqual(['a']);
+  });
+
+  test('paused 行仍可勾选（批量移除 / 卸载要用）', () => {
+    expect(
+      selectableRows([row('paused', { paused: true })], new Set()).map((item) => item.id)
+    ).toEqual(['paused']);
   });
 
   test('toggle 在选中与未选中之间来回', () => {

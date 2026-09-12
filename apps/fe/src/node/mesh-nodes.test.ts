@@ -12,6 +12,7 @@ import {
 } from './direct-link-availability';
 import { HubApiError, type HubNodeRow } from './hub-api';
 import { HUB_STALE_MS, startHubPolling } from './hub-polling';
+import { isMeshNodePaused } from './merge-nodes';
 import { type NodeEventPayload, decodeMeshFrame } from './mesh-events';
 import {
   MESH_NODES_POLL_MS,
@@ -35,6 +36,7 @@ import {
   sortNodes,
   toRuntimeNodeId,
 } from './mesh-nodes';
+import { setNodePaused } from './mesh-nodes-store';
 
 function node(overrides: Partial<MeshNode> & { id: string }): MeshNode {
   return {
@@ -228,6 +230,59 @@ describe('patchNodesWithEvent', () => {
     };
     expect(offlineRow.viaRelay).toBeNull();
     expect(offlineRow.relayPresence).toEqual([]);
+  });
+
+  test('paused 行不因 online/offline 事件被摘掉；没带 paused 的事件保留旗标', () => {
+    const paused = [node({ id: 'a' }), node({ id: 'b' })].map((row, index) =>
+      index === 0 ? ({ ...row, paused: true } as MeshNode) : row
+    );
+    const online = patchNodesWithEvent(paused, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+    });
+    expect(online.map((row) => row.id)).toEqual(['a', 'b']);
+    expect(isMeshNodePaused(online[0])).toBe(true);
+    expect(online[0].online).toBe(true);
+
+    const offline = patchNodesWithEvent(online, {
+      nodeId: 'a',
+      status: 'offline',
+      reach: 'lan',
+      inventory: null,
+    });
+    expect(isMeshNodePaused(offline[0])).toBe(true);
+    expect(offline[0].online).toBe(false);
+  });
+
+  test('事件明确带 paused 才覆盖；revoked 仍删行', () => {
+    const paused = [{ ...node({ id: 'a' }), paused: true } as MeshNode, node({ id: 'b' })];
+    const resumed = patchNodesWithEvent(paused, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+      paused: false,
+    });
+    expect(isMeshNodePaused(resumed[0])).toBe(false);
+
+    const marked = patchNodesWithEvent(resumed, {
+      nodeId: 'a',
+      status: 'online',
+      reach: 'lan',
+      inventory: null,
+      paused: true,
+    });
+    expect(isMeshNodePaused(marked[0])).toBe(true);
+
+    const revoked = patchNodesWithEvent(marked, {
+      nodeId: 'a',
+      status: 'revoked',
+      reach: null,
+      inventory: null,
+    });
+    expect(revoked.map((row) => row.id)).toEqual(['b']);
   });
 
   const linked = () => [
@@ -1079,6 +1134,18 @@ function hubPollingHarness() {
   };
   return { state, options };
 }
+
+describe('setNodePaused', () => {
+  test('只改已知行的旗标，未知 id 返回 false', () => {
+    setMeshNodesStateForTest({ nodes: [node({ id: 'a' }), node({ id: 'b' })] });
+    expect(setNodePaused('a', true)).toBe(true);
+    expect(isMeshNodePaused(getMeshNodesState().nodes[0])).toBe(true);
+    expect(isMeshNodePaused(getMeshNodesState().nodes[1])).toBe(false);
+    expect(setNodePaused('a', true)).toBe(false);
+    expect(setNodePaused('zzz', true)).toBe(false);
+    resetMeshNodesStateForTest();
+  });
+});
 
 describe('markLoggedIn 与直连负缓存', () => {
   const ENTRY = 'e'.repeat(32);

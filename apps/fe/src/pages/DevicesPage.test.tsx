@@ -196,6 +196,19 @@ describe('toNodeDeviceGroups', () => {
     );
     expect(groups[0]).toMatchObject({ isHub: true, version: '1.2.3' });
   });
+
+  test('paused 节点不进设备页分组，含 pending 占位', () => {
+    const paused = {
+      ...meshNode({ id: REMOTE_ID, name: 'studio' }),
+      paused: true,
+    } as MeshNode;
+    const groups = toNodeDeviceGroups(
+      [meshNode({ id: ENTRY_ID, name: 'entry' }), paused],
+      ENTRY_ID,
+      new Set([REMOTE_ID])
+    );
+    expect(groups.map((group) => group.id)).toEqual([ENTRY_ID]);
+  });
 });
 
 describe('nodeDeviceGroupState', () => {

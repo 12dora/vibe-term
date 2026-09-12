@@ -18,6 +18,7 @@ import { loginErrorKey } from '@/auth/login-errors';
 import { type LoginFailureCode, getSessionKey } from '@/auth/session-key-store';
 import { useNodeLoginGate } from '@/auth/use-node-login';
 import { useGlobalDevice } from '@/components/global-device-provider';
+import { isMeshNodePaused } from '@/node/merge-nodes';
 import { NodeRuntimeScope } from '@/node/node-runtime-scope';
 import { SELF_NODE_ID } from '@vibeterm/api-client';
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
@@ -71,22 +72,24 @@ export function toNodeDeviceGroups(
   entryNodeId: string | null,
   pendingIds?: ReadonlySet<string>
 ): NodeDeviceGroupEntry[] {
-  const entries = nodes.map((node) => {
-    const isSelf = entryNodeId != null && node.id === entryNodeId;
-    return {
-      id: node.id,
-      runtimeNodeId: isSelf ? SELF_NODE_ID : node.id,
-      name: node.name,
-      online: node.online,
-      // self 永远视为已登录：本地 UI 已经过 localUiGuard，再显示登录按钮是死循环。
-      loggedIn: isSelf ? true : node.loggedIn,
-      isSelf,
-      isHub: node.isHub === true,
-      version: node.version ?? null,
-      inventory: node.inventory ?? null,
-      pending: !isSelf && pendingIds?.has(node.id) === true,
-    } satisfies NodeDeviceGroupEntry;
-  });
+  const entries = nodes
+    .filter((node) => !isMeshNodePaused(node))
+    .map((node) => {
+      const isSelf = entryNodeId != null && node.id === entryNodeId;
+      return {
+        id: node.id,
+        runtimeNodeId: isSelf ? SELF_NODE_ID : node.id,
+        name: node.name,
+        online: node.online,
+        // self 永远视为已登录：本地 UI 已经过 localUiGuard，再显示登录按钮是死循环。
+        loggedIn: isSelf ? true : node.loggedIn,
+        isSelf,
+        isHub: node.isHub === true,
+        version: node.version ?? null,
+        inventory: node.inventory ?? null,
+        pending: !isSelf && pendingIds?.has(node.id) === true,
+      } satisfies NodeDeviceGroupEntry;
+    });
   return entries.sort((a, b) => {
     if (a.isSelf !== b.isSelf) return a.isSelf ? -1 : 1;
     return a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' });

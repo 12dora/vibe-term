@@ -168,6 +168,16 @@ describe('toSidebarEntries', () => {
     const nodes = [meshNode({ id: 'a' }), meshNode({ id: 'b' }), meshNode({ id: 'd' })];
     expect(toSidebarEntries(nodes, 'a', ['b', 'a']).map((e) => e.id)).toEqual(['b', 'a', 'd']);
   });
+
+  test('paused 节点不进侧栏，手工顺序里的 id 也跳过', () => {
+    const paused = {
+      ...meshNode({ id: 'p', name: 'paused', online: true }),
+      paused: true,
+    } as MeshNode;
+    const nodes = [meshNode({ id: 'a', name: 'a' }), paused, meshNode({ id: 'b', name: 'b' })];
+    expect(toSidebarEntries(nodes, 'a').map((e) => e.id)).toEqual(['a', 'b']);
+    expect(toSidebarEntries(nodes, 'a', ['p', 'b', 'a']).map((e) => e.id)).toEqual(['b', 'a']);
+  });
 });
 
 describe('applySidebarNodeOrder', () => {

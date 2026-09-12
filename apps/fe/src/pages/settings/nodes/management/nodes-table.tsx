@@ -13,6 +13,8 @@ import {
   Download,
   Ellipsis,
   Loader2,
+  Pause,
+  Play,
   ShieldAlert,
   Square,
   SquareCheckBig,
@@ -26,11 +28,12 @@ import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { PendingNodeRow } from './pending-node-row';
 import { RevokeDialog } from './revoke-dialog';
-import { MetaKeyLagTag, Tag, Td, Th, rowBlockedHint } from './row-cells';
+import { MetaKeyLagTag, PausedTag, Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
 import { hubRoleBlockedText } from './use-hub-role-switch';
+import { useNodePause } from './use-node-pause';
 import { useNodeRowActions } from './use-node-row-actions';
 import { isUninstalling } from './use-node-uninstall';
 import { isUpgradeBusy, upgradePhaseText } from './use-node-upgrade';
@@ -199,6 +202,7 @@ function NodeRowView({
         <div className="flex items-center gap-1">
           <UpgradeButton row={row} upgrade={deps.upgrade} blocked={uninstalling} />
           <UpgradeCancelButton row={row} upgrade={deps.upgrade} />
+          <PauseButton row={row} onChanged={deps.onChanged} />
           {/* 详情里既有只读信息也有节点本地的域名访问策略，hub 不可写时照样能开。 */}
           <Button
             type="button"
@@ -317,9 +321,41 @@ function StatusCell({
   }
 
   return (
-    <span data-testid={`nodes-status-${row.id}`} className={view.statusClass}>
+    <span
+      data-testid={`nodes-status-${row.id}`}
+      className={`inline-flex items-center gap-1.5 ${view.statusClass}`}
+    >
       {view.statusText}
+      {row.paused === true && <PausedTag />}
     </span>
+  );
+}
+
+/** 行内暂停 / 恢复：self 与待批准行不渲染。暂停不禁用行内升级。 */
+function PauseButton({ row, onChanged }: { row: NodeRow; onChanged: () => void }) {
+  const { t } = useTranslation();
+  const { busy, paused, toggle } = useNodePause(row, onChanged);
+  if (row.isSelf || row.pending) return null;
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      disabled={busy}
+      title={t('nodes.pause.hint')}
+      onClick={() => void toggle()}
+      data-testid="node-pause-toggle"
+      data-paused={paused ? 'true' : 'false'}
+    >
+      {busy ? (
+        <Loader2 className="animate-spin motion-reduce:animate-none" />
+      ) : paused ? (
+        <Play />
+      ) : (
+        <Pause />
+      )}
+      {t(paused ? 'nodes.actions.resume' : 'nodes.actions.pause')}
+    </Button>
   );
 }
 

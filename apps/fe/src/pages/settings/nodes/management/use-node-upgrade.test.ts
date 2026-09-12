@@ -193,6 +193,19 @@ describe('批量候选', () => {
     expect(eligibleUpgradeRows([row({ id: 'a', version: '1.1.0' })], null)).toEqual([]);
     expect(isBatchEligible(row({ id: 'a', version: '1.1.0' }), null)).toBe(false);
   });
+
+  test('paused 行不进批量升级', () => {
+    expect(isBatchEligible(row({ id: 'ok', version: '1.1.9', paused: true }), '1.2.0')).toBe(false);
+    expect(
+      eligibleUpgradeRows(
+        [
+          row({ id: 'ok', version: '1.1.9' }),
+          row({ id: 'paused', version: '1.1.9', paused: true }),
+        ],
+        '1.2.0'
+      ).map((item) => item.id)
+    ).toEqual(['ok']);
+  });
 });
 
 describe('orderUpgradeGroups', () => {

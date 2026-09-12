@@ -10,6 +10,7 @@
 
 import type { MeshNode } from '@vibeterm/api-client/auth/index';
 import { migrateStorageKey } from '@vibeterm/stores';
+import { isMeshNodePaused } from './merge-nodes';
 
 const CACHE_KEY = 'vibeterm:mesh-nodes';
 /** 改名前的键，读缓存时顺手搬一次 */
@@ -44,9 +45,9 @@ function defaultStorage(): MeshNodesCacheStorage | null {
   }
 }
 
-/** 落盘前把链路现场清掉，只留身份与在线态。 */
+/** 落盘前把链路现场清掉，只留身份、在线态与暂停旗标。 */
 function toCachedNode(node: MeshNode): MeshNode {
-  return {
+  const cached: MeshNode & { paused?: boolean } = {
     id: node.id,
     name: node.name,
     publicKey: node.publicKey,
@@ -58,6 +59,9 @@ function toCachedNode(node: MeshNode): MeshNode {
     loggedIn: node.loggedIn === true,
     isHub: node.isHub === true ? true : undefined,
   };
+  // 暂停是本机偏好，冷启动第一帧就必须带着，否则侧栏会闪出再被 REST 摘掉。
+  if (isMeshNodePaused(node)) cached.paused = true;
+  return cached;
 }
 
 function isCachedNode(value: unknown): value is MeshNode {

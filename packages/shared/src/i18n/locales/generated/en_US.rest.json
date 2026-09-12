@@ -1728,7 +1728,8 @@
         "online": "Online",
         "offline": "Offline",
         "revoked": "Removed",
-        "pending": "Pending"
+        "pending": "Pending",
+        "paused": "Paused"
       },
       "reach": {
         "lan": "Local network",
@@ -1741,7 +1742,13 @@
         "more": "More",
         "revoke": "Remove",
         "refresh": "Refresh",
-        "admit": "Admit"
+        "admit": "Admit",
+        "pause": "Pause",
+        "resume": "Resume"
+      },
+      "pause": {
+        "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
+        "failed": "Action failed: {{error}}"
       },
       "admit": {
         "blocked": "Admit this node before managing it.",

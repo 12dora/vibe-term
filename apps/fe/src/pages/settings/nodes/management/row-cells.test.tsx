@@ -7,7 +7,7 @@ import { installWindowStorage } from '@vibeterm/stores/test-utils';
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { MetaKeyLagTag } = await import('./row-cells');
+const { MetaKeyLagTag, PausedTag } = await import('./row-cells');
 
 const LAGGING = 'aa'.repeat(16);
 const FINE = 'bb'.repeat(16);
@@ -41,5 +41,11 @@ describe('MetaKeyLagTag', () => {
 
   test('没有欠账时什么都不渲染', () => {
     expect(renderToStaticMarkup(<MetaKeyLagTag nodeId={LAGGING} />)).toBe('');
+  });
+});
+
+describe('PausedTag', () => {
+  test('渲染 nodes.status.paused', () => {
+    expect(renderToStaticMarkup(<PausedTag />)).toContain('nodes.status.paused');
   });
 });

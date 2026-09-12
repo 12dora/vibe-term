@@ -2495,7 +2495,8 @@ export const I18N_RESOURCES = {
         "online": "Online",
         "offline": "Offline",
         "revoked": "Removed",
-        "pending": "Pending"
+        "pending": "Pending",
+        "paused": "Paused"
       },
       "reach": {
         "lan": "Local network",
@@ -2510,7 +2511,13 @@ export const I18N_RESOURCES = {
         "refresh": "Refresh",
         "copy": "Copy",
         "copied": "Copied",
-        "admit": "Admit"
+        "admit": "Admit",
+        "pause": "Pause",
+        "resume": "Resume"
+      },
+      "pause": {
+        "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
+        "failed": "Action failed: {{error}}"
       },
       "admit": {
         "blocked": "Admit this node before managing it.",
@@ -6144,7 +6151,8 @@ export const I18N_RESOURCES = {
         "online": "在线",
         "offline": "离线",
         "revoked": "已移除",
-        "pending": "待批准"
+        "pending": "待批准",
+        "paused": "已暂停"
       },
       "reach": {
         "lan": "局域网",
@@ -6159,7 +6167,13 @@ export const I18N_RESOURCES = {
         "refresh": "刷新",
         "copy": "复制",
         "copied": "已复制",
-        "admit": "批准加入"
+        "admit": "批准加入",
+        "pause": "暂停",
+        "resume": "恢复"
+      },
+      "pause": {
+        "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
+        "failed": "操作失败：{{error}}"
       },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",
@@ -9787,7 +9801,8 @@ export const I18N_RESOURCES = {
         "online": "オンライン",
         "offline": "オフライン",
         "revoked": "削除済み",
-        "pending": "承認待ち"
+        "pending": "承認待ち",
+        "paused": "一時停止"
       },
       "reach": {
         "lan": "ローカル",
@@ -9802,7 +9817,13 @@ export const I18N_RESOURCES = {
         "refresh": "更新",
         "copy": "コピー",
         "copied": "コピーしました",
-        "admit": "参加を承認"
+        "admit": "参加を承認",
+        "pause": "一時停止",
+        "resume": "再開"
+      },
+      "pause": {
+        "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
+        "failed": "操作に失敗しました：{{error}}"
       },
       "admit": {
         "blocked": "先に参加を承認してください。",

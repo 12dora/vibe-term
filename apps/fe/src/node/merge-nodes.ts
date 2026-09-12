@@ -102,6 +102,17 @@ export interface NodeRow {
   pending?: boolean;
   /** 待批准行的 admit 材料；材料不全时为 `null`（此时只显示状态，批不了）。 */
   admitMaterial?: PendingAdmitMaterial | null;
+  /**
+   * entry 本机偏好：暂停后不再向该成员发起用户面连接，聚合列表（侧栏 / 设备页 / 弹窗）
+   * 把它藏起来；管理表仍显示。缺省 / self / pending 视为未暂停。
+   */
+  paused?: boolean;
+}
+
+/** entry 本机偏好；缺省、旧网关、self 一律视为未暂停。 */
+export function isMeshNodePaused(node: unknown): boolean {
+  if (!node || typeof node !== 'object') return false;
+  return (node as { paused?: unknown }).paused === true;
 }
 
 function reachOf(reach: string | null | undefined): MeshNodeReach {
@@ -167,6 +178,7 @@ function toAdmittedRow(node: MeshNode, hub: HubNodeRow | null, context: MergeCon
     ...hubColumns(hub),
     pending: false,
     admitMaterial: null,
+    paused: isMeshNodePaused(node) ? true : undefined,
   };
 }
 
