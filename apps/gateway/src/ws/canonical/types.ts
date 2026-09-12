@@ -13,7 +13,7 @@ import type {
 import type { SharePaneOracle, ShareScope } from '../share-scope';
 
 export const CANONICAL_MAX_SCREEN_BYTES = 512 * 1024;
-export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 256 * 1024;
+export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 1024 * 1024;
 export const CANONICAL_MAX_PENDING_PANE_GAPS = 256;
 export const CANONICAL_MAX_INPUT_DEDUP_IDS = 1_024;
 

@@ -66,7 +66,7 @@ interface SwMessageTargetLike {
  * 链路提示只有页面拿得到（iOS 的 worker 作用域没有 `navigator.connection`），而 SW 要靠它
  * 决定装不装 7.5 MB 的懒 chunk 档。注册后与每次回到前台各报一次：前者覆盖「装下一代之前」，
  * 后者覆盖「从蜂窝切到 Wi-Fi」。首次安装时还没有 controller，发不出去也不要紧——
- * 那一代按未知处理（照装），下一次加载就能报上。
+ * 那一代按未知处理（不装懒档，等页面报上 4g 再补），下一次加载就能报上。
  */
 function postLinkHints(container: SwMessageTargetLike | undefined): void {
   const connection = (navigator as { connection?: NavigatorConnectionLike }).connection;
