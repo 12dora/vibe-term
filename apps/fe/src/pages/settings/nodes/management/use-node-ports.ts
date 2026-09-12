@@ -19,10 +19,16 @@ export function useNodePorts(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seenId, setSeenId] = useState(nodeId);
+  const [seenInitial, setSeenInitial] = useState(initial);
   if (seenId !== nodeId) {
     setSeenId(nodeId);
+    setSeenInitial(initial);
     setPorts(initial);
     setError(null);
+  } else if (seenInitial !== initial) {
+    // 同一节点的行数据刷新（列表轮询 / NODE_EVENT）也要同步进来；探测进行中以探测结果为准
+    setSeenInitial(initial);
+    if (!busy) setPorts(initial);
   }
 
   const recheck = useCallback(async () => {

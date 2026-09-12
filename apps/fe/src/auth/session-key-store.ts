@@ -484,6 +484,8 @@ async function runEnsureNodeLogin(
   opts: EnsureNodeLoginOptions
 ): Promise<LoginNodeResult> {
   const chunk = loadLogin();
+  // 无会话钥时下面会提前返回，chunk 的失败要有人接住，否则成未处理拒绝
+  void chunk.catch(() => undefined);
   const live = getSessionKey();
   let held = false;
   if (live) {

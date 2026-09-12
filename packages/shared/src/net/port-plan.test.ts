@@ -243,3 +243,16 @@ describe('parsePortRange', () => {
     }
   });
 });
+
+test('relay with builtin TURN disabled lists no TURN specs', () => {
+  const specs = portPlanForRole('relay', {
+    gatewayPort: 9883,
+    gatewayExposed: false,
+    peerPort: 39001,
+    rtcRange: null,
+    turnPort: 0,
+    turnRelayRange: { begin: 49160, end: 49259 },
+    publicHttpsPort: 443,
+  });
+  expect(specs.map((item) => item.purpose)).toEqual(['public-https']);
+});

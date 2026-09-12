@@ -119,7 +119,9 @@ export function portPlanForRole(role: PortRole, live: PortPlanLive): PortSpec[] 
   if (NODE_ROLES.has(role)) {
     specs.push(peerSpec(live, nodeRequired), rtcSpec(live, nodeRequired));
   }
-  if (TURN_ROLES.has(role)) specs.push(turnControlSpec(live), turnRelaySpec(live));
+  // 内置 TURN 关闭（turnPort=0）时不列 TURN 口，否则防火墙提示会带上 0/udp 这种无效规则
+  if (TURN_ROLES.has(role) && live.turnPort !== 0)
+    specs.push(turnControlSpec(live), turnRelaySpec(live));
   if (live.gatewayExposed) specs.push(gatewaySpec(live));
   return specs;
 }
