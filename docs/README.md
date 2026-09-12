@@ -16,7 +16,7 @@
 ## 快速定位
 
 - 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md) → 需要第二台入口时 [多 hub 主/备](./operations/multi-hub-standby.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
-- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)。
+- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
@@ -30,8 +30,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、直连授权、角色装配、失陷边界 |
-| [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、WebRTC 熔断、信令代次与活性、失败码与链路信息窗 |
+| [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、paused 本机可见性例外、端口计划、角色装配、失陷边界 |
+| [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码与链路信息窗 |
 | [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
 | [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
 | [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |
@@ -65,7 +65,7 @@
 | [mesh-operations.md](./operations/mesh-operations.md) | mesh 运维：角色矩阵、环境变量、搭 hub、加入 / 吊销、账号安全、直连、反代、灾难恢复、排障表 |
 | [multi-hub-standby.md](./operations/multi-hub-standby.md) | 多 hub 主 / 备：同步、跨 hub relay、failover、写入围栏、promote / demote 手册 |
 | [docker-node.md](./operations/docker-node.md) | 可升级的容器节点 |
-| [nonstandard-ports.md](./operations/nonstandard-ports.md) | 80/443 不可用时的非标端口部署与端口探测 |
+| [nonstandard-ports.md](./operations/nonstandard-ports.md) | 按角色列出应放行的 TCP/UDP 口；80/443 不可用时的 HTTPS 候选与探测 |
 | [https-and-acme.md](./operations/https-and-acme.md) | 对外有效 HTTPS 判定、ACME dns-01 提供商（Cloudflare / DNSPod）、80/443 被占场景 |
 | [tunnel-edge-fake-ip.md](./operations/tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行与排查 |
 | [tmux-process-survival.md](./operations/tmux-process-survival.md) | 服务 kill 策略、linger、tmux 3.6 pane scope 与 systemd OOMPolicy |
@@ -94,9 +94,9 @@
 | [cli-architecture.md](./development/cli-architecture.md) | 客户端 CLI（`packages/cli`）的模块契约：命令组怎么加、ctx 形状、退出码、会话文件、与安装版二进制的接线 |
 | [workspace-packages.md](./development/workspace-packages.md) | 前端 workspace 包结构、两层工厂与嵌入用法 |
 | [app-error-boundary.md](./development/app-error-boundary.md) | 路由 / 面板级错误边界与 chunk 重试 |
-| [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存、重试、前台拨号竞速 |
+| [sidebar-node-first-paint.md](./development/sidebar-node-first-paint.md) | 冷启动侧栏节点首屏：占位、缓存（含 paused）、门闸认 stale `loggedIn`、前台拨号竞速 |
 | [files-sidebar-visibility.md](./development/files-sidebar-visibility.md) | 文件侧栏可见性缺省与纵向拖拽 |
-| [connect-devices-panel.md](./development/connect-devices-panel.md) | 「接入更多设备」面板与远程访问向导 |
+| [connect-devices-panel.md](./development/connect-devices-panel.md) | 「接入更多设备」面板、放行端口步与远程访问向导 |
 | [font-pipeline.md](./development/font-pipeline.md) | 终端字体打包流水线 |
 | [performance-hot-paths.md](./development/performance-hot-paths.md) | 热路径优化、基准脚本与 Rust / WASM 评估 |
 | [performance-frontend.md](./development/performance-frontend.md) | 前端流畅度、WS 重连、设置页加载、静态资源缓存 |

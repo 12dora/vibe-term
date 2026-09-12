@@ -77,7 +77,7 @@ peer link 传输选择（自动，按序）：
 网络路径诊断（设备页徽标）对浏览器↔目标 node 与 entry↔目标 node 各显示一个：`lan / v6 / v4-p2p / turn / relay`。
 中继模式下走中继的那条会标出**具体是哪台中继**：`/api/mesh/nodes` 与 `NODE_EVENT` 上的 `viaRelay`（当前链路所经中继的公开地址，
 仅 `transport === 'relay'` 时有值）与 `relayPresence`（该对端当前在线的中继地址列表，hub 模式不下发）。
-`NODE_EVENT` 的 borsh schema 随之升到 v4，旧前端按 v3 解码并忽略尾部多出的字节。
+`NODE_EVENT` 的 borsh schema 升到 v5：v4 加了 `viaRelay` / `relayPresence`，v5 再在尾部加可选 `paused`；旧壳按较短 schema 解码并忽略尾部字节。
 
 ### NAT 穿透策略（ICE 并行尝试，自动选优）
 
@@ -242,16 +242,16 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
 
 `nestedDialBudgetsMs(rtt)` 保证**嵌套不变式 connect < direct < forward**（socket 拨号 ⊂ 直连竞速 ⊂ 转发取链）：
 
-| 观测 RTT | connect（单个 socket） | direct（前台竞速） | forward（取链路总期限） |
-|---|---|---|---|
-| 0 / 300 ms | 3000 ms | 4000 ms | 5000 ms |
-| 800 ms | 4800 ms | 5300 ms | 6900 ms |
-| 2000 ms | 11 500 ms | 12 000 ms | 16 000 ms |
+| 观测 RTT | connect（单个 socket） | DC 独跑 `foregroundDcMs` | direct（前台竞速） | forward（取链路总期限） |
+|---|---|---|---|---|
+| 50 ms（LAN 样本） | 3000 ms | 1000 ms | 4000 ms | 5000 ms |
+| 无样本 / 800 ms | 4800 ms | 2400 ms | 5300 ms | 6900 ms |
+| 2000 ms | 11 500 ms | 4000 ms | 12 000 ms | 16 000 ms |
 
-因子分别是 6× / 5× / （direct + 2×RTT 中继握手），各档独立 clamp 后再抬外层或压内层，使任意 RTT 都满足不变式。0 / 300 ms 一列与改动前的 LAN 常量完全一致，即局域网行为不变。
+因子分别是 6× / 3× / 5× / （direct + 2×RTT 中继握手），DC 独跑还须比 direct 早 ≥ 500 ms；各档独立 clamp 后再抬外层或压内层，使任意 RTT 都满足不变式。有 LAN 样本时与改动前的 3/4/5 s 常量一致；**无有效样本一律按 800 ms 代理，不要退回 LAN 下限**。`FOREGROUND_DC_BUDGET_MS = nestedDialBudgetsMs(undefined).foregroundDcMs`（无样本即 2400 ms）。
 
 RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live 链路的 RTT → 否则取**全部 live 链路样本的中位数**（早期用全局最大值，
-一条慢链路会把所有预算顶到上限）→ uplink pong / 连接池最近候选 → 缺省 300 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
+一条慢链路会把所有预算顶到上限）→ uplink pong / 连接池最近候选 → 缺省 800 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
 单条链路的 `rttMs` 是 ctl ping/pong 的 EWMA（α = 0.3，超过当前值 3 倍的尖峰忽略一次）：ping 带发送时刻、对端原样回显、由发送端计算，
 因此**不含本端发送队列的排队时间**。它只用来放大拨号/转发预算与显示，不参与链路选择。
 
@@ -259,7 +259,7 @@ RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live �
 
 - `readHttpHead` 的响应头等待 = 当前 forward 预算；超时 `stream.reset('head-timeout')`。
 - `forwardAuthorizedHttp` 的总期限 `clamp(8×RTT, 10 s, 30 s)`：每次尝试用 `armAttemptDeadline` 单独武装一个 `AbortController`（`min(剩余总期限, 单次预算)`），到点就 abort 掉取链路与开流，不会出现「单次尝试无限等，总期限形同虚设」。
-- failover 重开流后等 HELLO 的时间：首次仍是固定值，后续重试 `clamp(2×RTT, 500 ms, 4 s)`。
+- failover 重开流后等 HELLO：首次 `clamp(4×RTT, 2 s, 8 s)`（无样本 3.2 s），后续 `clamp(2×RTT, 500 ms, 4 s)`（无样本 1.6 s）。TTL `clamp(4×forwardMs, 10 s, 45 s)`（无样本约 27.6 s）。
 - STUN 探针：DNS ≤ 1.5 s、Binding 至少 1 s、合计 ≤ 3.5 s。
 - 浏览器侧 `ApiClient`：调用方没给 `signal` 时挂 `AbortSignal.timeout`，期限 `clamp(8×EWMA, 8 s, 45 s)`，转发路径（`/n/<id>/`）再 ×1.5；EWMA 按每次请求的实测耗时更新（α = 0.2）。该 signal 会连响应体一起中止，所以 NDJSON 事件流、文件上传 / 下载这类长流必须显式传 `timeout: false` 或自己的 `signal`。会话探测 `clamp(8×EWMA, 8 s, 30 s)`，WS 待发有序输入 TTL `clamp(4×重连预算, 10 s, 45 s)`（缺省预算 30 s ⇒ 45 s）——重连窗口内不丢用户按键。
 
@@ -289,10 +289,11 @@ RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live �
 ### entry 侧路由
 
 - `/api/auth/*`、`/api/mesh/*`、`/mesh/ws` **先于** gateway 路由；hub 角色再加 `/api/hub/*`、`/hub/uplink`。
-- `/n/self/*` 或旧路由 → 本地 gateway（`auth` 为 `vibeterm_s_self`，`via = self`）；`/n/:id/api/*`、`/n/:id/ws` → `PeerManager.getLink(id)`（已有 peer link → 复用；否则按 §1 顺序建链，失败回 hub `relay`；全部失败 503 `NODE_UNREACHABLE`）→ 开流。目标返回 401 时 entry 原样透传并附 `{code:'NODE_LOGIN_REQUIRED', nodeId}`。
-- `/api/mesh/nodes`：合并 `node_certs`（公钥）、`peer_cache`（元数据）与实时链路状态：`id, name, publicKey, online, reach, version, direct_capable, inventory, loggedIn`；未 admit 的节点不出现。
-- `/api/mesh/rtc-config`：把本机 env、`peer_cache` 里最近一次 `node.list` / `relay.list` 下发的配置与发行版内置列表合成**有效 ICE 配置**（`resolveEffectiveStun`），离线可用；回包带 `source`（`node-custom` / `node-disabled` / `hub-custom` / `builtin`）与最近一次 STUN 探针结果 `probes`。
-- `/mesh/ws`（需 `vibeterm_s_self`）：Borsh 新 kind `NODE_EVENT{nodeId, status, reach, inventory?}`、`RTC_SIGNAL`。
+- `/n/self/*` 或旧路由 → 本地 gateway（`auth` 为 `vibeterm_s_self`，`via = self`）；`/n/:id/api/*`、`/n/:id/ws` → `PeerManager.getLink(id, opts?)`（已有 peer link → 复用；否则按 §1 顺序建链，失败回 hub `relay`；全部失败 503 `NODE_UNREACHABLE`）→ 开流。`opts.purpose` 默认 `'user'`；升级 / 卸载 / `/n/:id/api/system/*` 走 `'management'`。目标返回 401 时 entry 原样透传并附 `{code:'NODE_LOGIN_REQUIRED', nodeId}`。浏览器 `/n/:id/ws` 鉴权失败在 Upgrade 101 **之前**关 4401；101 之后 `getLink` 失败关 **1011**（`node-unreachable` / `forward-link-timeout`），前端不得当成登录失效（见 [已知问题](../known-issues.md) KI-12）。
+- `/api/mesh/nodes`：合并 `node_certs`（公钥）、`peer_cache`（元数据）与实时链路状态：`id, name, publicKey, online, reach, version, direct_capable, inventory, loggedIn`；未 admit 的节点不出现。每行（含 self）另带可选 `ports?: MeshPortReach[]`（入站口可达性，见 [节点直连](./peer-direct-connect.md)）；paused 行每次都带 `paused: true`（self 缺省 / false）。`POST /api/mesh/nodes/:id/pause|resume`（`requireSession`，幂等；self → 400 `CANNOT_PAUSE_SELF`；未知/已吊销 → 404 `NODE_NOT_FOUND`）只改 **entry 本机** SQLite `node_local_prefs`，不进 `peer_cache` / hub roster / 密钥日志。`POST /api/mesh/nodes/:id/ports/probe` 立刻重探并回 `{ ports }`。
+- **paused 是 entry 本机可见性例外**：成员仍出现在 `GET /api/mesh/nodes` 与节点管理表，侧栏设备 / 文件分节、设备页分组、传输下拉等聚合面过滤；后台拨号、通知汇聚、公网登录列表 `publicNodes()` 跳过。入站链路仍接受（服务对端自己的请求）；uplink 不碰。`getLink(..., { purpose: 'user' })` 即使 inbound live 也抛 `NodeUnreachableError`；`'management'` 不闸。resume **不主动拨号**。
+- `/api/mesh/rtc-config`：把本机 env、`peer_cache` 里最近一次 `node.list` / `relay.list` 下发的配置与发行版内置列表合成**有效 ICE 配置**（`resolveEffectiveStun`），离线可用；回包带 `source`（`node-custom` / `node-disabled` / `hub-custom` / `builtin`）与最近一次 STUN 探针结果 `probes`。浏览器直连协商打 **entry** 这一份，不转发到目标 node。
+- `/mesh/ws`（需 `vibeterm_s_self`）：Borsh `NODE_EVENT`、`RTC_SIGNAL`，以及应用层 `PING`/`PONG`（浏览器不能发 WebSocket ping；客户端前台每 2.5 s 发 `KIND_PING`，对端回过 PONG 后 4 s 无活动换线。2.3.0 网关忽略非 RTC_SIGNAL 入站 → `sawPong` 一直为假 → 仍走 30 s 静默门槛）。`HELLO_S2C.capabilities` 可含 `connection-id:<id>`（登记后的会话 id，不是独立 Borsh 字段；旧壳忽略未知串）。
 
 ### node 侧
 
@@ -353,6 +354,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 ### 配置
 
 - hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔；未设置 = 发行版内置列表，`none` 禁用）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`（hub 角色只支持这套外部 TURN）。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
+- 入站端口默认值单一来源：`@vibeterm/shared/net`（`packages/shared/src/net/port-plan.ts`）。生产 HTTP 9883、peer 信令 39001/tcp、ICE UDP `40000-40099`、TURN 控制 3478/udp、TURN 中继 `49160-49259`、内置 HTTPS 9443、公网 HTTPS 443。`portPlanForRole(role, live)` 按角色给出应放行清单（`node`：peer+rtc；`hub,node` 再加公网 HTTPS；`relay`：HTTPS+TURN；`relay,node` 并集；`standalone` 列 peer/rtc 且 `required:false`）。运行时未设 `VIBETERM_RTC_PORT_RANGE` 时 ICE 仍走系统临时口；`upgrade` 缺键写入 `40000-40099`。
 - node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
 - STUN/TURN：hub / 中继配置 → `node.list` / `relay.list` 下发 → 节点求有效列表 → 浏览器 `GET /api/mesh/rtc-config`。
   - **STUN**：内置列表随发行版分发（`packages/shared/src/net/stun-defaults.ts`），hub / 中继**只在自己设了自定义列表时**才下发，否则下发空数组。节点按「节点自定义 > 节点禁用 > hub 下发的自定义列表 > 内置列表」求有效列表，再按 STUN 探针 RTT 排序。空下发**不会**清掉节点自己的列表。
@@ -369,7 +371,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 - `hub join <https-url> --token <join 串> [--name <n>]`（仅接受系统信任链验证的 HTTPS）/ `hub leave`
 - `direct enable|disable`：按 `platform / arch / libc` 查 pinned manifest（`packages/app/src/lib/native-manifest.ts`：包名、addon 文件名、`integrity`、N-API 版本），从 npm registry 下载单平台 tarball，校验后解出 `.node` 到 `<installDir>/native/`（`install-layout` 新增 `nativeDir`）。缺失则 `direct_capable=false`。`init` 对所有角色（含 `standalone`、`relay`）默认安装并启用，最多等待 60 秒，失败不阻断初始化。CLI `hub join`／`relay join` 在重启前补装缺失插件；Web setup 省略 `directEnable` 时默认启用，失败通过 `direct`／`directError` 返回且不阻断接入。
 - `init --role <roles>`；`upgrade` manifest 变化时重下。
-- `hub join` 提示放行 `VIBETERM_PEER_PORT`（仅内网直连需要）。
+- `hub join` / `relay join` 成功后打印本机角色的完整端口计划（`formatPortList`，含 peer / ICE UDP / 公网 HTTPS / TURN，视角色而定），不再只提示 peer 口。
 
 ### 兼容与迁移
 

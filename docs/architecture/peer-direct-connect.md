@@ -48,7 +48,15 @@ endpoint recovered node=<id> addr=<host:port>
 
 ### 强制探测
 
-`PeerManager.forceProbe(nodeId, endpoints?)` 绕过负向缓存直接拨（仍要求 peer 可信，仍走正常签名握手）。它只是 gateway 内部方法，没有 HTTP 入口，也没有设置页按钮；排查时只能改地址集合 / 重启来触发清空。
+`PeerManager.forceProbe(nodeId, endpoints?)` 绕过负向缓存直接拨（仍要求 peer 可信，仍走正常签名握手）。paused 节点直接返回 `null`，不拨。它只是 gateway 内部方法，没有 HTTP 入口，也没有设置页按钮；排查时只能改地址集合 / 重启来触发清空。
+
+### paused 不发起
+
+`paused` 是 **entry 本机偏好**（表 `node_local_prefs`），不是对端状态。对该 entry 而言：
+
+- `getLink(nodeId, opts?)`：`opts.purpose` 默认 `'user'`，paused 时即使 inbound live 也抛 `NodeUnreachableError`（Forwarder 映射 503 `NODE_UNREACHABLE`）；`'management'` 不闸，给升级 / 卸载 / `/api/system/*` 用。
+- pause 退役已有链路（`dropPeer(id, 'paused')` + 清 DC gate / RTC wake / backoff），**不** `deletePeer`。resume 不主动拨号。
+- 后台发起方一律跳过：`maybeUpgrade` / `wantsUpgrade`（非 `userPath` / `peerInitiated`）、`forceProbe` / `forceDcProbe`、非对端发起的 RTC wake。入站 `acceptDirect` / `acceptRelay` 不闸。
 
 ## 2. WebRTC 直连熔断器
 
@@ -88,9 +96,9 @@ endpoint recovered node=<id> addr=<host:port>
 
 ### 浏览器侧：协商起点与 authorize 熔断
 
-- **协商在 primary `READY`（收到 `HELLO_S2C`）之后才开始**。此前 `?cid=` 还没登记，`GET /api/mesh/connection` 必然 404，controller 只会白打几次转发请求——高延迟链路上每台挂着的远端 node 都要烧掉几个 RTT。`open` 分支等 primary 进入 READY；`reconnect` 分支必须先看到 primary 掉出 READY 再回到 READY（同一 sid 的新旧连接分布在不同 socket 上）。
-- 服务端配合：`/api/mesh/connection` 带 `cid` 但尚未登记时返回 404 `NO_CONNECTION` **加 `retryAfterMs: 500`**，客户端据此退避而不是立刻重打。
-- `/api/rtc/authorize` 返回 5xx 时进 per-node **authorize 熔断**（`direct-authorize-breaker.ts`）：连续 3 次失败后冷却 30 s 起跳、封顶 5 min，冷却中不再发起协商。熔断器是**模块级、按 nodeId 共享**的，切路由重建 controller 不会把计数清零；`retryDirect()` 仍放行一次探测。熔断 key 带**登录世代**：登出 / 重新登录（`NodeSessionGuard` 重登成功）时 `resetDirectAuthorizeBreakers()` 让世代 +1 并清空全部冷却，上一个会话留下的冷却不会压住新会话。
+- **协商在 primary `READY`（收到 `HELLO_S2C`）之后才开始**。新网关在 `HELLO_S2C.capabilities` 捎带 `connection-id:<id>`（登记后的会话 id）：客户端跳过转发的 `GET /api/mesh/connection`，`rtc-config` 打 **entry** 的 `/api/mesh/rtc-config`（可与本地 `createOffer` 重叠），只剩 **1 次转发** `POST /n/:T/api/rtc/authorize`。老网关无该能力串时仍先 `GET connection`（转发）再 authorize，共 2 次转发。`/mesh/ws` 的 3 s 首屏闸门不再把直连 attempt 判失败：`signalingReady() === false` 时 REST/ICE 照开，offer 进 outbox，mesh 连上后泵一次。
+- 服务端配合：`/api/mesh/connection` 带 `cid` 但尚未登记时返回 404 `NO_CONNECTION` **加 `retryAfterMs: 500`**，客户端据此退避而不是立刻重打（无 `connection-id:` 的旧路径仍走这条）。
+- `/api/rtc/authorize` 返回 5xx 时进 per-node **authorize 熔断**（`direct-authorize-breaker.ts`）：连续 3 次失败后冷却 30 s 起跳、封顶 5 min，冷却中不再发起协商。熔断器是**模块级、按 nodeId 共享**的，切路由重建 controller 不会把计数清零；`retryDirect()` 仍放行一次探测。熔断 key 带**登录世代**：登出 / 重新登录（`NodeSessionGuard` 重登成功）时 `resetDirectAuthorizeBreakers()` 让世代 +1 并清空全部冷却，上一个会话留下的冷却不会压住新会话。`pageshow` / 可见恢复时若直连非 `active` 也会 `retryDirect()`。
 
 ### 环境变量
 
@@ -130,6 +138,28 @@ MeshNode.dcBreaker?: {
 
 熔断只关 DataChannel 这一档，不改 transport 优先级，也不改 `directCapable !== false` 的门闩：ws-secure 与 relay 不受影响，用户看到的是链路徽标从「直连」退到「局域网 / 中继」。UI 不单独展示熔断状态，排查请看日志或直接读 REST。
 
+### 入站端口可达性 `ports`
+
+`GET /api/mesh/nodes` 每行（含 self）带可选 `ports?: MeshPortReach[]`：
+
+```ts
+{ purpose: PortPurpose; proto: 'tcp' | 'udp'; port?: number; range?: PortRange;
+  status: 'open' | 'blocked' | 'unknown';
+  code?: 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+  checkedAt?: number }
+```
+
+探测只打公网可广告 endpoint（`classifyRemoteAddress !== 'lan'`，跳过 CGNAT / fake-IP）。私网 / 容器 / `198.18` 不探。2.3.0 对端无字段 → `unknown`。从不因单次失败显示 `blocked`。
+
+| 行 | purpose | `open` | `blocked` | 否则 |
+|---|---|---|---|---|
+| peer | `peer-signaling` | 最近探测成功 | 连续两次失败（`peer_refused` / `peer_timeout`）或 `directFailure.wsCode === 'refused'` | 无公网 endpoint / 单次失败保持原状 → `unknown` |
+| peer | `rtc-ice` | 当前 DC 或 24 h 内曾 DC | 从不 | `unknown` |
+| self | `peer-signaling` | 任一成员报 `ok` | 本机 PeerServer bind 失败；或 ≥2 人报 refused/timeout 且无人 ok | `unknown`（单样本不够） |
+| self | `rtc-ice` | 本进程曾有 srflx 或曾 DC | STUN 探针成功且最近 3 次 gather 都无 srflx → `no_srflx` | `unknown` |
+
+成员互报走 relay 状态块 / hub `node.status` 的可选 `peer_reach`（键为 nodeId 前 8 hex，≤32 条）。`POST /api/mesh/nodes/:id/ports/probe`（`requireSession`）立刻重探并回 `{ ports }`。进程内结果，peer TCP 探测 3 s 截止、每 peer 至多 5 min 一次。节点表只在 `status === 'blocked'` 时警告；详情框可「重新检测」。
+
 ## 3. 信令代次、ICE 配置、链路活性与在途流保护
 
 ### 信令
@@ -144,7 +174,7 @@ MeshNode.dcBreaker?: {
 - 未绑定信令进 `rtcInbox` 时：该 peer 的 inbox 非空即视为「尝试正在建立」，紧随 offer 之后到达的 candidate 不会被当成无主信令丢掉。
 - `bindSignaling` 带 `expect: 'offer' | 'answer'`，错类型丢弃，offerer 每次尝试只应用一个 answer；`setRemoteDescription` 失败打 info 且不再把 candidate 喂给 libdatachannel（先排队，等远端描述应用成功再 flush）。
 - `bindSignaling` 与 `trackPc` 纳入 `connectToPeer` 统一清理区；inbox 重放走 microtask 且先返回 unsubscribe；inbox 条目带 `receivedAt`，30 s 过期；offerer 无监听时不缓存 answer，无尝试时不缓存 candidate。
-- `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过 DC、不另开 PC。single-flight 只去重 DC，不挡住 ws-secure；后台升级 DC 与 ws-secure 并行。前台 4 s 竞速截止不 abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 live 已建立时清掉 `pending`（DC 去重交给 `dcInflight`）。
+- `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过 DC、不另开 PC。single-flight 只去重 DC，不挡住 ws-secure；后台升级 DC 与 ws-secure 并行。前台直连截止不 abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 live 已建立时清掉 `pending`（DC 去重交给 `dcInflight`）。
 - 测试假件 `FakePeerConnection` 实现 `stable / have-local-offer / have-remote-offer` 状态机并复现 libdatachannel 的异常。
 
 ### DataChannel 握手
@@ -166,9 +196,9 @@ hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected �
 - ICE 服务器列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
 - **TURN 按条门控**：hub / 中继下发的 TURN 可能有多条（每台中继至多一条，中继角色自带 TURN）。每个 URL 各做一次 STUN Binding 可达探测（并发 2），**只有探测 `ok` 的条目**按 RTT 升序取前两条进 `iceServers`；探测失败、尚未探测、`turns:` / `?transport=tcp`（libjuice 不支持）一律排除。日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`（used 集合变化才打）。`GET /api/mesh/rtc-config` 的 `turn` 是实际进 ICE 的数组，`turnConfigured` 是全部已知条目，`turnProbes` 每条 configured URL 一份探测记录（`turnProbe` 保留第一条，兼容旧前端）。
 - **丢弃 fake-IP 候选**：地址落在 `198.18.0.0/15`（Surge / Clash 增强模式的 fake-IP）的 host 候选**收发两侧**都丢弃，日志 `signal dropped … cause=fake-ip`；RFC1918（`10/8`、`192.168/16` 等）保留，局域网直连不受影响。单边升级即生效。
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当列表里真有可达 TURN 时才为 false**：libjuice mux 不支持 TURN。没有可达 TURN 就保持 mux 并把 TURN 全部从 `iceServers` 剥掉——早期「先纳入、探测后再说」会让 gathering 挂死、srflx 一起消失。Binding 探测只证明 UDP 通，不能代替带凭证的 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当列表里真有可达 TURN 时才为 false**：libjuice mux 不支持 TURN。没有可达 TURN 就保持 mux 并把 TURN 全部从 `iceServers` 剥掉——早期「先纳入、探测后再说」会让 gathering 挂死、srflx 一起消失。Binding 探测只证明 UDP 通，不能代替带凭证的 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（缺省计划 `40000-40099`，见 `@vibeterm/shared/net`；**未设该键时 ICE 仍走系统临时口**。`upgrade` 缺键写入默认段。node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
 
-- `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
+- `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。已知该 peer 在中继 presence 上时，前台无 live 链路会**并行**开中继：直连先成则 abort 中继；中继先成则让直连继续，晚到 DC/ws-secure 走 `track()` 升级。无 presence 时仍「直连竞速 → 再 `completeRelayDial`」。`waitLocalFingerprint` 为回调扇出。
 - node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
 
 ### 活性与在途流

@@ -74,18 +74,19 @@
 - 安装版 `vibeterm doctor` 会报「使用发行版内置列表 / 自定义（app.env）/ 已禁用」。
 - 升级：`vibeterm upgrade` 在升级事务内识别 `VIBETERM_STUN_SERVERS`（含遗留 `TMEX_STUN_SERVERS`）是否等于**历史内置默认串**，是则删除该键让新内置列表生效；自定义值原样保留。详见 [升级事务](./upgrade-transaction.md)。
 
-### 需手写进 `app.env` 的键
+### 需手写或由 upgrade 补齐的键
 
-下列键运行时会读，但 **`init` / `upgrade` 不会写入**，缺省即关闭或走代码默认。
+下列键运行时会读。**`init` 不写入** RTC / TURN 监听键（摘要会打印角色端口计划）。跨版本 `upgrade` 在 backup 阶段：缺 / 空的 `VIBETERM_RTC_PORT_RANGE` 写入 `40000-40099`；角色含 `relay` 且 TURN 键缺 / 空时写入 `3478` / `49160-49259`。已有非空值不覆盖。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `VIBETERM_PEER_BIND_HOST` | 未设 | peer 口绑定。空 / 未设 → dual-stack `::` 与 `0.0.0.0`。不进 `config.ts`，mesh 直接读 env |
 | `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` | 空 | **外部** TURN，三者齐全才下发。hub 角色只有这一种；中继角色配了它就不启动内置 TURN。节点侧只用 UDP（`turns:` / `?transport=tcp` 不产生候选） |
-| `VIBETERM_TURN_PORT` | `3478` | **仅中继角色**：内置 TURN 的控制口（UDP），同口也应答 STUN Binding。`0` / `off` 关闭 |
-| `VIBETERM_TURN_RELAY_PORT_RANGE` | `49160-49259` | **仅中继角色**：内置 TURN 的中继端口段，每个 allocation 占一个 UDP 端口 |
+| `VIBETERM_TURN_PORT` | `3478` | **仅中继角色**：内置 TURN 的控制口（UDP），同口也应答 STUN Binding。`0` / `off` 关闭。upgrade 缺键补写 |
+| `VIBETERM_TURN_RELAY_PORT_RANGE` | `49160-49259` | **仅中继角色**：内置 TURN 的中继端口段，每个 allocation 占一个 UDP 端口。upgrade 缺键补写 |
 | `VIBETERM_TURN_EXTERNAL_IP` | 未设 | **仅中继角色**：写进 `XOR-RELAYED-ADDRESS` 的公网 IPv4；未设时自动解析（DNS + STUN 自检） |
 | `VIBETERM_TURN_HOST` | 未设 | **仅中继角色**：广告出去的 host；未设时广告解析到的公网 IPv4 字面量 |
+| `VIBETERM_TURN_BIND_HOST` | `auto` | **仅中继角色**：控制口与分配口绑定的本机地址。`auto` = 主出站 IPv4；也可写 IPv4 或 `0.0.0.0`（TUN 宿主上通配会吞 Binding 回包，见 [KI-4](../known-issues.md)） |
 | `VIBETERM_TRUST_PROXY` | `false` | 仅 **本机 Bun socket（via=self）** 信任 `X-Forwarded-Proto` / `X-Forwarded-Host`，用于公网 origin、`Secure` cookie、passkey 可用性。转发请求永不信任。Cloudflare Tunnel 等反代场景必须设 `true` |
 | `VIBETERM_HUB_MODE` | `active`（hub 角色启用时） | hub 角色：`active` 或 `standby`。其它值启动失败 |
 | `VIBETERM_HUB_PRIORITY` | active `100` / standby `200` | 同 mode 下越小越优先，整数 ≥ 0 |
@@ -95,7 +96,7 @@
 | `VIBETERM_NATIVE_DIR` | `run.sh` 导出 `<installDir>/native` | native addon 目录。未设则 loader 返回 `null`，`direct_capable=false`。不要指向本机生产安装目录去做开发验证 |
 | `RTC_LIVENESS_INTERVAL_MS` | `3000` | node↔node DataChannel 空闲时发 ping 的间隔。通道上有入站流量则重置，不给忙通道加 ping |
 | `RTC_LIVENESS_TIMEOUT_MS` | `10000` | 连续无任何入站（含 ping/pong 与业务帧）超过此时长则判定直连死亡，关闭 DC/PC 并回落 relay。须大于 `RTC_LIVENESS_INTERVAL_MS` |
-| `VIBETERM_RTC_PORT_RANGE` | 未设 | `begin-end`，限制 node 侧 WebRTC 的 UDP 端口范围，便于只放行一段端口。格式非法或越界启动失败 |
+| `VIBETERM_RTC_PORT_RANGE` | `40000-40099`（upgrade 缺键写入；未设时 ICE 走临时口） | `begin-end`，限制 node 侧 WebRTC 的 UDP 端口范围。格式非法或越界启动失败。自定义段原样保留 |
 | `VIBETERM_EVENT_LOOP_LAG_WARN_MS` | `250` | event loop 采样滞后超过该值时打告警（10 s 至多一条） |
 | `VIBETERM_RTC_DIAL_BREAKER_MS` | `30000`（30 s） | DataChannel 熔断的**起始**冷却。连续 3 次失败（含拨号失败与通道打开后异常关闭 / liveness timeout / missed pong）后跳过 DC dial，冷却按 30 s → 60 s → 120 s … 指数递增，上限 30 min；`cooldownLevel` 在冷却过期后仍保留。通道保持健康 ≥ 60 s 才复位。本变量覆盖起始冷却，不改失败次数与上限。ws-secure / relay 不受影响 |
 | `VIBETERM_PEER_DIRECT_DIAL_CONCURRENCY` | `4` | 进程内同时进行的直连 endpoint 拨号数上限（整数 ≥ 1）。LAN 候选另有 4 s 总预算，失败地址按 1 min → 6 h 退避，见 [节点直连](../architecture/peer-direct-connect.md) |
@@ -225,7 +226,7 @@ vibeterm hub join https://vibeterm.example.com --token <join 串> [--name 书房
 
 路由 `/nodes`，任意已登录的 mesh 入口可用。standalone 整页不渲染。
 
-表格：在线 / 离线、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。self 行不能吊销当前入口。
+表格：在线 / 离线（旁可挂「已暂停」标，不替换在线态）、到达路径、版本、直连能力、登录状态、公钥指纹（sha256 前 16 hex）。self 行不能吊销当前入口，也没有暂停按钮。paused 是 **entry 本机偏好**：行留在管理表，侧栏 / 设备页 / 传输下拉过滤；行内升级仍可点，批量升级排除，批量移除/卸载可选。`ports[].status === 'blocked'` 时名字下警告「端口不可达」；详情框有完整端口表与「重新检测」（`POST /api/mesh/nodes/:id/ports/probe`）。本机卡网络区「入站端口」带 self 行状态点。
 
 `GET /api/mesh/nodes` 除兼容字段 `reach`（`lan` / `relay` / `null`，`lan` 不区分 WS 与 DataChannel）外还有 `transport`：`ws-secure` | `relay` | `dc` | `null`。要确认跨 NAT 直连是否真的建起来，看对端 `transport === "dc"`，不要只看 `reach=lan` 或 `direct_capable=true`（后者只表示允许尝试 DC）。
 
@@ -237,6 +238,7 @@ node↔node WebRTC 由 **nodeId 字典序较小的一侧发 offer**。业务请�
 | 自动 admit | 对端 `hub join` redeem 后，`/mesh/ws` 推 `ENROLL_REDEEMED`（只给创建该 enrollment 的会话），并按 enrollment id 轮询 `GET /api/hub/enrollments/:id` 兜底。**仅根钥签名者**会在证书到达时后台自动签 `admit-node`；passkey 必须用户点「确认」（浏览器 user activation） |
 | 待确认 / 重试 | 页面已关、窗口过期、或 `POST /api/auth/keylog?hub=sync` 未拿到 `hubAck:true` 时保留 pending。409 / 504 不当成成功 |
 | 重命名 | hub 在线时可改 `nodes.name` |
+| 暂停 / 恢复 | `POST /api/mesh/nodes/:id/pause|resume`，幂等；self → 400 `CANNOT_PAUSE_SELF`。pause 退役对本端的出站链路，resume 不主动拨号。CLI：`vibeterm nodes pause|resume` |
 | 吊销 | 每次都要当场确认凭据（不进复用窗口），只走 `keylog?hub=sync` 写 `revoke-node`。hub 未确认则告警、不刷新列表 |
 
 ### 中继模式：「成员密钥未送达」
@@ -338,15 +340,15 @@ UDP 3478             # VIBETERM_TURN_PORT，控制口 + STUN Binding（节点探
 UDP 49160-49259      # VIBETERM_TURN_RELAY_PORT_RANGE，整段都要放
 ```
 
-云厂商安全组、面板防火墙、`ufw` 三层各放一次。`vibeterm init --role relay`（或 `relay,node`）与 `install.sh --role relay|relay,node` 结束时会打印一行提示，列出要放行的这两段端口。
+云厂商安全组、面板防火墙、`ufw` 三层各放一次。`vibeterm init` / `hub join` / `relay join` / `install.sh` 结束时打印角色完整 `formatPortList`（不再写死 3478）。节点管理表在 `ports[].status === 'blocked'` 时于名字下警告；详情框可「重新检测」。TURN 磁贴有 `membersProbe` 时显示「成员可达 ok/total」。
 
 排查顺序：
 
 1. `vibeterm relay status`（中继机本地）的 `turn:` 行：
-   `turn: builtin enabled listening url=turn:<ip>:3478?transport=udp port=3478 external_ip=… relay_range=49160-49259 allocations=N`。
-   开头的来源是 `external` 说明三元组还在 `app.env` 里压着内置，是 `off` 说明 `VIBETERM_TURN_PORT=0/off`；起不来时行尾带 `error=…`。
-2. `vibeterm doctor` 的 `turn` 检查：模式 + 对 `127.0.0.1:<port>` 的 Binding 探测 + 该放行哪些端口。探测过但节点还是用不上 = 防火墙。
-3. 中继日志 `[relay][turn]`：`builtin turn listening …` / `builtin turn disabled reason=…`（常见 reason：`external ip unknown`
+   `turn: builtin enabled listening url=turn:<ip>:3478?transport=udp port=3478 bind=… external_ip=… relay_range=49160-49259 allocations=N`。
+   开头的来源是 `external` 说明三元组还在 `app.env` 里压着内置，是 `off` 说明 `VIBETERM_TURN_PORT=0/off`；起不来时行尾带 `error=…`。`bindHost` 为实际绑定地址。
+2. `vibeterm doctor`：端口计划恒 pass；peer TCP 本机是否在听；`turn` 检查（模式 + Binding 探测 + 该放行哪些端口）；有会话时拉 mesh self 行的 `blocked` 口（无会话静默跳过）。探测过但节点还是用不上 = 防火墙。
+3. 中继日志 `[relay][turn]`：`builtin turn listening … bind=…` / `builtin turn disabled reason=…`（常见 reason：`external ip unknown`
    —— 公网 IP 既没配也解析不出；`EADDRINUSE port=…` —— 端口被占，5 s → 60 s 退避重试；与 `VIBETERM_RTC_PORT_RANGE` /
    `VIBETERM_PEER_PORT` 冲突），以及每 30 min 一条 `turn allocations=N`。
 4. 租户节点侧：`GET /api/mesh/rtc-config` 的 `turnConfigured` / `turnProbes`，日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`。

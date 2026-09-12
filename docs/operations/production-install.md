@@ -46,7 +46,7 @@ vibeterm init --role standalone --no-interactive \
   --autostart true
 ```
 
-全局还支持 `--install-dir`、`--lang en|zh-CN`、`--bun-path`。`doctor` 可检查安装；`--fix` 尝试修复。
+全局还支持 `--install-dir`、`--lang en|zh-CN`、`--bun-path`。`init` 结束打印角色入站端口计划（`formatPortList`）与一行放行提示；`install.sh` 从 `init` stdout 解析该清单，不再写死 TURN 口。`doctor` 可检查安装（含端口计划、peer TCP 是否在听、有会话时 self 行 blocked 口）；`--fix` 尝试修复。
 
 > 改名前（1.1.x，产品名 tmex）安装的实例在升到 2.0.0 时**由升级器整体迁移到新路径**：安装目录 `~/Library/Application Support/tmex/` → `.../vibeterm/`（Linux `~/.local/share/tmex/` → `~/.local/share/vibeterm/`），`data/tmex.db{,-wal,-shm}` → `data/vibeterm.db*`，`app.env` 的 `TMEX_*` 键改写为 `VIBETERM_*`（原文件备份进 `backups/`），服务名 `tmex` 改为 `vibeterm` 并显式卸载旧 label。用 `--install-dir` 指定过自定义目录的安装**不迁移**，只改服务与 env 键。迁移细节与回滚见 [改名迁移](./rename-migration.md)。
 

@@ -55,7 +55,7 @@ shim（`~/.local/bin/vibeterm`、`~/.bun/bin/vibeterm`）指向 `<installDir>/cu
 
 ## app.env 与 STUN 迁移
 
-`upgrade` 对 `app.env` 只做两件事：`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值），以及 2.2.0 引入的 STUN 键迁移。
+`upgrade` 对 `app.env` 做：`mergeMissingEnvFileKeys` **追加缺失键**（不覆盖已有值）、STUN 键迁移，以及 RTC / TURN 默认段写入。
 
 STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operations.md)），装机时冻进 `app.env` 的旧默认串会一直压住新列表。迁移逻辑（`packages/app/src/lib/upgrade-stun-env.ts`）：
 
@@ -65,10 +65,22 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - 事务级回滚走 `backups/<txnId>/app.env`：`rollbackToOld` 与失败处理（包括还没到切 `current` 就失败的情形）都会把它拷回，冻结的旧默认不会因为一次失败的升级被悄悄丢掉。
 - 相同版本的 `upgrade` 是 no-op，不走事务，因而**不做**这次迁移；真正跨版本升级才会拆。
 
-### TURN 键：只提示，不改
+### RTC / TURN 监听键：缺则写入默认
 
-2.3.0 起中继角色自带 TURN（见 [mesh 运维](./mesh-operations.md)）。升级**不删**遗留的 `VIBETERM_TURN_URL` / `_USERNAME` /
-`_CREDENTIAL`——它们可能是有意配的外部 TURN，而且 hub 角色只有这一种。三个键齐全时 `applyTurnEnvNotice`（挂在 STUN 迁移那个钩子位）
+`applyPortPlanEnvMigration`（`packages/app/src/lib/upgrade-port-env.ts`）挂在 STUN 迁移之后、切 `current` 之前：
+
+- 所有角色：`VIBETERM_RTC_PORT_RANGE` 缺或 trim 后为空 → 写入 `40000-40099`。自定义段（如 `31000-31099`）原样保留。
+- 角色含 `relay`：`VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE` 缺或空 → 写入 `3478` / `49160-49259`。`0` / 自定义口 / 已有段不覆盖。非 relay 不写 TURN 键。
+- **不碰** `GATEWAY_PORT`、`VIBETERM_PEER_PORT`。
+- 确有写入时把整份 `app.env` 另存 `backups/app.env.<ISO>.ports`（0600），日志一条列出键 + 备份相对路径。幂等：第二遍 `written: []`，不再备份。
+- 事务回滚仍走 `backups/<txnId>/app.env`。
+- 本次事务确实写入了 RTC 键时，`upgrade` 结束打印「已固定 P2P 端口段 40000-40099/udp，请在防火墙放行」。只写 TURN 或幂等跳过不打。
+- 同版本 no-op 不跑事务，因而**不做**这次迁移。
+
+### 外部 TURN 三元组：只提示，不改
+
+中继角色自带 TURN（见 [mesh 运维](./mesh-operations.md)）。升级**不删**遗留的 `VIBETERM_TURN_URL` / `_USERNAME` /
+`_CREDENTIAL`——它们可能是有意配的外部 TURN，而且 hub 角色只有这一种。三个键齐全时 `applyTurnEnvNotice`
 打一行提示：`external TURN configured; builtin TURN disabled`。想改用内置 TURN 就自己把这三个键删掉再重启。
 
 ## 旧布局迁移

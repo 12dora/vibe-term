@@ -37,10 +37,9 @@ CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在
 
 `VIBETERM_TRUST_PROXY` **不会**被 `init` 写入，需要时手改 `app.env`（或在设置页的远程访问向导里拨开关，它会写回 `app.env`）。改完任何键都要重启服务才生效。
 
-中继角色的内置 TURN 同样**不写任何键**：凭据自动生成并落库，`VIBETERM_TURN_PORT`（默认 3478）/ `VIBETERM_TURN_RELAY_PORT_RANGE`
-（默认 49160-49259）/ `VIBETERM_TURN_EXTERNAL_IP` / `VIBETERM_TURN_HOST` 只在要改默认值时手加。
+中继角色的内置 TURN 凭据自动生成并落库。监听默认：`VIBETERM_TURN_PORT=3478`、`VIBETERM_TURN_RELAY_PORT_RANGE=49160-49259`、`VIBETERM_TURN_BIND_HOST=auto`（主出站 IPv4）；`VIBETERM_TURN_EXTERNAL_IP` / `VIBETERM_TURN_HOST` 只在要改默认值时手加。跨版本 `upgrade` 会给缺键写入 RTC 段与（relay 角色）TURN 口。
 
-默认端口：HTTP `9883`（绑 `127.0.0.1`）、node↔node 信令 `VIBETERM_PEER_PORT=39001`、内置 HTTPS 监听器 `9443`。
+默认端口单一来源 `@vibeterm/shared/net`：HTTP `9883`（绑 `127.0.0.1`）、node↔node 信令 `39001/tcp`、ICE UDP `40000-40099`（`upgrade` 写入 `VIBETERM_RTC_PORT_RANGE`；未设时 ICE 走临时口）、内置 HTTPS 监听器 `9443`。`init` 结束打印角色 `formatPortList`。
 
 `VIBETERM_MASTER_KEY` 与数据库 `data/vibeterm.db` 必须成对备份，丢了 key 就打不开库。
 
@@ -332,7 +331,7 @@ vibeterm hub ca fingerprint
 - **通行密钥用不了**：IP 字面量 origin 无法注册 WebAuthn 凭证，这是协议限制。想要通行密钥就得用域名。
 - **CA 轮换后节点连不上**：`vibeterm hub ca rotate` 会让全网断连。轮换前确保每台成员都留有本机终端或独立 SSH 入口；轮换并重启 Hub 后，通过可信渠道把新指纹发给各节点，在各节点执行 `vibeterm hub trust refresh https://<Hub 地址> --fingerprint <64-hex>` 再重启。指纹不符时保留旧信任，不要从没核实过的页面复制指纹。
 - **运营商封了家宽入站端口**：换一个高位端口再试；全封就只能走 Cloudflare Tunnel。
-- **直连（WebRTC）建不起来**：`VIBETERM_PEER_PORT`（默认 39001）只在内网直连时需要放行，与公网 HTTPS 端口无关。
+- **直连（WebRTC）建不起来**：内网放行 `VIBETERM_PEER_PORT`（默认 39001/tcp）；WAN 打洞另放行 ICE UDP 段（默认 40000-40099，见 `init` / `doctor` 打印的 plan）。与公网 HTTPS 端口无关。
 
 ## Hub：Cloudflare Tunnel
 
@@ -514,16 +513,16 @@ vibeterm doctor
    - **80/443 可用**：反代 `https://<中继域名>` → `127.0.0.1:9883`，升级 WebSocket（至少 `/relay/uplink`），并在 `app.env` 加 `VIBETERM_TRUST_PROXY=true` 后重启——中继按客户端 IP 对注册做限流，不开这个开关反代后面所有人共用一个桶。
    - **80/443 不可用**：`relay,node` 可以在设置页配内置 Let's Encrypt dns-01 + 高位端口（同 Hub 情况 B）；纯 `relay` 没有前端，只能靠反代。放行防火墙上的对外端口。
 
-   另外放行**内置 TURN 的 UDP 端口**（中继进程自带 TURN，不需要配任何环境变量，但用户级服务打不开防火墙）：
+   另外按 `init` 打印的端口计划放行入站口。内置 TURN 是裸 UDP、**不经反代**（用户级服务打不开防火墙）：
 
    ```
    UDP 3478            # 控制口，节点的可达探测打的就是它
    UDP 49160-49259     # 中继端口段，整段都要放
    ```
 
-   云厂商安全组、面板防火墙、`ufw` 三层各放一次。TURN 是裸 UDP，**不经反代**。端口要改就在 `app.env` 里设
+   云厂商安全组、面板防火墙、`ufw` 三层各放一次。端口要改就在 `app.env` 里设
    `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE`（`VIBETERM_TURN_PORT=off` 关掉内置 TURN）；机器网卡上只有私网地址而
-   自动解析不出公网 IP 时补 `VIBETERM_TURN_EXTERNAL_IP`。`install.sh --role relay|relay,node` 与 `vibeterm init` 结束时也会打印一行提示，列出要放行的这两段端口。
+   自动解析不出公网 IP 时补 `VIBETERM_TURN_EXTERNAL_IP`。TUN 代理宿主不要把 `VIBETERM_TURN_BIND_HOST` 设回 `0.0.0.0`。`install.sh` / `vibeterm init` 结束时打印完整 plan，不再写死 3478。
 
 3. `init` 结束时会打印管理令牌所在的 `app.env` 路径。管理令牌键名 `VIBETERM_RELAY_ADMIN_TOKEN`，缺失时首启自动生成一枚写回 `app.env`，库里只存它的 sha256。所有 `relay status` / `relay tenants` / `relay quota` / `relay limits` / `relay-admin *` 命令都在**中继机本地**执行，读这个令牌打 `http://127.0.0.1:<GATEWAY_PORT>`。
 

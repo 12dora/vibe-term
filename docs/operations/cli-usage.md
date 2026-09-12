@@ -6,7 +6,7 @@
 
 `vibeterm login|whoami|api|nodes|devices|tmux|term|files|cp|port|share|watch|settings` 这些**客户端命令**只经 HTTP / WebSocket 访问网关，权限与一个浏览器会话完全等价，因此可以指向任意 entry，也可以装在没有 VibeTerm 服务的机器上。
 
-`vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。
+`vibeterm init|doctor|upgrade|uninstall|hub|relay|mesh|tls|enroll|direct` 是**本机运维**命令，直接读本机安装目录、库与主密钥，只能在装了服务的机器上跑。两类命令共用一个二进制，但边界完全不同。`init` / `hub join` / `relay join` 打印角色入站端口计划；`doctor` 核对该计划、peer TCP 是否在听，有会话时再报 self 行 blocked 口。
 
 ## 登录
 
@@ -158,12 +158,16 @@ vibeterm term send prod-1/app:logs C-c
 
 ```bash
 vibeterm nodes ls
+vibeterm nodes pause <node>
+vibeterm nodes resume <node>
 vibeterm nodes enroll --name studio
 vibeterm nodes allow <node>
 vibeterm nodes meta-key admit <node-id>
 vibeterm nodes meta-key rotate [--exclude <node>...]
 vibeterm nodes revoke <node> --yes
 ```
+
+`pause` / `resume` 打当前 entry 的 `POST /api/mesh/nodes/:id/pause|resume`（本机偏好，幂等）。`ls` 有 PAUSED 列；`--json` 透传 `paused`。`upgrade --all` 跳过 paused 行（行内单台升级仍可）。
 
 签名操作（`enroll` 默认路径、`allow` 的接纳、`revoke`、`meta-key`）用账户密码派生根钥，与网页端同一条 key-log：TTY 下隐藏输入，非交互用 `VIBETERM_PASSWORD`。
 

@@ -241,7 +241,7 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 
 ### HELLO_C2S（0x0001）
 
-字段：
+字段（`HelloC2SSchema` 五字段冻结，2.3.0 解码器忽略尾部多余字节）：
 
 - `clientImpl: string`（例：`vibeterm-fe`）
 - `clientVersion: string`（例：`0.1.0`）
@@ -249,9 +249,15 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 - `supportsCompression: bool`（v1 固定 false）
 - `supportsDiffSnapshot: bool`（v1 固定 false，保留）
 
+尾部可选（`encodeHelloC2S` / `decodeHelloC2S`：先试带尾部的 schema，失败回退五字段）：
+
+- `clientCapabilities: vec(string)`——客户端能力位，当前用 `hello-screen-intent-v1`
+- `screenIntent: option({ requestId, deviceId, windowId, paneId, byteLimit })`——与 `RequestScreenIntent` 同形
+
 约束：
 
 - 客户端必须在 WS open 后第一条发送 HELLO_C2S。
+- 无尾部字段的旧壳仍走五字段；新客户端在 open 前已挂载终端时才带 `screenIntent`。
 
 ### HELLO_S2C（0x0002）
 
@@ -262,7 +268,9 @@ canonical-state-v1.1 required: node <nodeId> version <peerVersion> < <minVersion
 - `selectedVersion: u16`（当前 1）
 - `maxFrameBytes: u32`（服务端可接收最大帧）
 - `heartbeatIntervalMs: u32`（默认 15000）
-- `capabilities: vec(string)`——唯一真源是 `packages/shared/src/capabilities.ts` 的 `GATEWAY_CAPABILITIES`，REST `GET /api/capabilities` 与 WS `HELLO_S2C` 共用该常量。当前为 `canonical-state-v1`、`canonical-state-v1.1`、`canonical-screen-intent-v1`。
+- `capabilities: vec(string)`——`GATEWAY_CAPABILITIES`（`packages/shared/src/capabilities.ts`）是 REST `GET /api/capabilities` 与 HELLO 的常量表：`canonical-state-v1`、`canonical-state-v1.1`、`device-latency-v1`、`canonical-screen-intent-v1`。HELLO 还可**额外**追加：
+  - `connection-id:<id>`：该条 WS 已在 mesh 会话表登记后的 id（不是独立 Borsh 字段；旧壳忽略未知串）
+  - `hello-screen-intent-v1`：**仅当**客户端声明了该能力且 `screenIntent` 为 Some、网关消费成功时回显。不进 `GATEWAY_CAPABILITIES`，避免未消费时客户端误跳过 post-HELLO 意图
 
 ### PING/PONG（0x0003/0x0004）
 
@@ -755,6 +763,9 @@ device / `serverEpoch` / pane 任一解析不出来，一律回 `Error(ERROR_TMU
 - 网关在 `HELLO_S2C.capabilities` 播报 `canonical-screen-intent-v1`，客户端**只有看到它才允许发送**该命令。
   判定是**按节点**的：远端设备的 HELLO 由该节点自己答，hub 只转发，所以混版本 mesh 下每条连接各自判定。
 - 未播报时客户端回退旧时序（等 metadata → `RequestScreen`），一个新命令都不发。
+- HELLO 内嵌：客户端还可在 `HELLO_C2S` 尾部带同一形状的 `screenIntent` 并声明 `hello-screen-intent-v1`。
+  网关消费成功才在 `HELLO_S2C` 回显该串；客户端看到回显就不再发 post-HELLO `RequestScreenIntent`。
+  2.3.0 网关忽略尾部 → 不回显 → 客户端仍发 post-HELLO 意图，不会双发。
 - 新变体追加在枚举尾部（0..5 的编号冻结）。2.1.0 对端即使收到也只会解码失败回一帧
   `ERROR_PAYLOAD_DECODE_FAILED`（不会断连），而能力门保证它根本不会被发出去。
 - golden 用例：`packages/shared/src/ws-borsh/canonical-screen-intent.test.ts`（0..5 逐个断言未变、
@@ -869,10 +880,12 @@ C2S 不带 clientTimestamp，避免多端时钟漂移导致顺序错乱。细节
 - `name: option(string)`
 - `transport: option(string)`
 - `rttMs: option(u32)`
+- `viaRelay: option(string)` / `relayPresence: option(vec(string))`（v4）
+- `paused: option(bool)`（v5，仅 entry → 浏览器；缺省表示「本事件不改旗标」）
 
 语义：
 
-- 该 payload 已演进三代（原始四字段 / V2 七字段 / 当前九字段）。解码按新→旧依次尝试（`decodeNodeEvent`），老 node 发来的帧缺后加字段时补 null。
+- 该 payload 已演进到 v5（原始四字段 / V2 / V3 / V4 九字段加中继 / V5 可选 `paused`）。解码按新→旧依次尝试（`decodeNodeEvent`），老 node 发来的帧缺后加字段时补 null。无 `paused` 字段的事件必须保留客户端当前旗标（`pick(event.paused, previous)`）。`revoked` 仍删行。
 
 ### RTC_SIGNAL（0x0A02）
 

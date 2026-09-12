@@ -1,6 +1,6 @@
-# 非标端口部署（80/443 不可用时）
+# 角色入站端口与非标 HTTPS 部署
 
-本文说明把 Hub / 中继架在 443 以外端口时谁绑公网端口、内置候选端口表、地址没写端口时的探测行为与安装期选端口；面向家宽被封 80/443、云厂商拦截或端口被别的服务占用的运维。首发版本 **1.1.37**。
+本文给出各角色应放行的 TCP / UDP 入站口，以及把 Hub / 中继架在 443 以外端口时谁绑公网口、内置候选表、地址没写端口时的探测与安装期选端口；面向组网放行防火墙、家宽被封 80/443、云厂商拦截或端口被占用的运维。HTTPS 候选与探测自 **1.1.37**。
 
 ## 背景
 
@@ -23,13 +23,27 @@ VibeTerm 的数据面本来就是端口透明的：`canonicalHubUrl` / `normaliz
 | 纯 HTTP 直接暴露（`VIBETERM_BIND_HOST=0.0.0.0`） | VibeTerm gateway | 改 `app.env` 的 `GATEWAY_PORT`（或 `vibeterm init --port`）。没有 TLS，只适合内网或隧道后面 |
 | Cloudflare Tunnel | Cloudflare 边缘（443） | 边缘端口不可改，与本文无关；连接器只需要出站 7844 |
 | Cloudflare 橙云代理自己的服务器 | 代理或 VibeTerm 的 HTTPS 监听器 | 端口**必须**是 `2053 / 2083 / 2087 / 2096 / 8443` 之一，这也是内置候选表把它们排在前面的原因 |
-| Docker 节点 | 宿主的端口映射 | 改 `-p <宿主端口>:9883`，容器内仍是 9883 / 39001 |
+| Docker 节点 | 宿主的端口映射 | 改 `-p <宿主端口>:9883`，容器内仍是 9883 / 39001；WAN 直连另映射 `40000-40099/udp`，见 [容器节点](./docker-node.md) |
 
 低于 1024 的端口需要 root，Linux 用户级 systemd 服务绑不上，一律不要选。
 
-本文只讲 HTTP(S) 入口这一个 **TCP** 端口。中继角色另有内置 TURN 的 **UDP** 端口（默认 3478 与 49160-49259），它是裸 UDP、
-不经反代、也不在下面的候选表里，要单独放行或用 `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE` 改，见
-[mesh 运维](./mesh-operations.md)「中继内置 TURN 与多中继」。
+## 角色入站端口
+
+默认值单一来源：`@vibeterm/shared/net`（`packages/shared/src/net/port-plan.ts`）。`portPlanForRole` 顺序：公网 HTTPS → peer 信令 → ICE UDP → TURN 控制 → TURN 中继 → gateway HTTP（仅 bind host 非回环时）。`GET /api/local/status.portPlan`、`init` / `hub join` / `relay join` / `doctor` / 接入向导「放行端口」步打印同一张清单。
+
+| 角色 | 必放 | 默认 |
+|---|---|---|
+| `standalone` | 无（peer / ICE 列出但 `required:false`） | 39001/tcp，40000-40099/udp |
+| `node` | peer + ICE | 39001/tcp，40000-40099/udp |
+| `hub,node` | node + 公网 HTTPS | 另加 443/tcp（或 `VIBETERM_HUB_PUBLIC_URL` 上的端口） |
+| `relay` | 公网 HTTPS + TURN 控制 + TURN 中继 | 443/tcp，3478/udp，49160-49259/udp |
+| `relay,node` | 并集 | 上两行之和 |
+
+ICE UDP 段：`VIBETERM_RTC_PORT_RANGE` 未设时 **ICE 仍走系统临时口**；plan 展示仍用默认 `40000-40099`。`upgrade` 缺键写入该段（已有自定义值不覆盖）。舰队升完后未在防火墙放行该段，WAN 直连可能变差（回落中继）。ICE-TCP 与 UDP 段相同，mux 开启时常与 UDP 同口，不单独列；KI-6 仍缺真实 NAT 实测。
+
+TURN 是裸 UDP、不经反代、也不在下面的 HTTPS 候选表里。gateway HTTP（默认 9883）只在 bind host 非回环时进 plan。
+
+下面各节只讲 HTTP(S) 入口这一个 **TCP** 端口。TURN 细节见 [mesh 运维](./mesh-operations.md)「中继内置 TURN 与多中继」。
 
 ## 内置候选端口
 
@@ -88,7 +102,7 @@ Hub 公网地址这一轮起与中继同规则：必须是 https（回环允许 
 ## 防火墙与证书
 
 - 云厂商安全组 / 宝塔面板防火墙 / `ufw` 都要显式放行选定的 TCP 端口；只改 VibeTerm 配置不改防火墙是最常见的失败原因。
-- 直连（WebRTC）另需放行 `VIBETERM_PEER_PORT`（默认 39001），它与公网 HTTPS 端口无关。
+- 直连另需按上表放行 peer TCP 与 ICE UDP 段，与公网 HTTPS 端口无关。
 - 用 VibeTerm 自带 HTTPS 监听器时，证书必须走 ACME **dns-01**（Cloudflare / DNSPod，见
   [HTTPS 与 ACME](./https-and-acme.md)）：http-01 需要 80 端口可达，封了 80 就签不下来。
 - 端口映射功能不会占用 TLS 监听端口（保留端口集合含 `GATEWAY_PORT`、`VIBETERM_PEER_PORT` 与当前 `tls_port`）。

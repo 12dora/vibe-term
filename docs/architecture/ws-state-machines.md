@@ -79,8 +79,8 @@
 
 ### 恢复探测（回前台 / 联网 / bfcache）
 
-`visibilitychange → visible`、`pageshow{persisted:true}`、`online`、`navigator.connection.change`
-四条信号统一走 `handleResumeSignal()`，1 s 内的多条合并成一次：
+`visibilitychange → visible`、`pageshow`（**不论 `persisted`**：iOS 切网常打一发不带 persisted 的 pageshow）、`online`、`navigator.connection.change`
+四条信号统一走 `handleResumeSignal()`，1 s 内的多条合并成一次。浏览器宿主另有前台 2.5 s 节拍（`network-wake.ts`）：只在上一拍标了 trouble（`navigator.onLine === false` 或定时器漂移 ≥ 1 s）时才 `onWake`；健康时不额外 PING，走常规 15 s/30 s PONG。非浏览器宿主不启节拍。
 
 - 状态为 `READY`：发一次**短期限 PING**，期限 `min(常规 PONG 超时, clamp(4 × 中位 RTT, 2 s, 6 s))`，
   在途探测一律作废重发。收到 PONG 就什么都不做（不误杀活链路），下一拍回到常规节奏；
@@ -127,19 +127,21 @@
 
 ### 流程（能力 `canonical-screen-intent-v1`：首屏合并为一次往返）
 
-网关播报该能力时，客户端在 **HELLO 之后的同一批次**里一起发出：
-`SetPaneSubscriptions(generation, 零 epoch 占位)` → `connect-device` → `RequestScreenIntent`。
-网关 attach 之后在**同一个回复 burst** 里返回 `SourceMetadataSnapshot` + `SubscriptionApplied` +
-首屏事务（`ScreenBegin/Chunk/Commit`）。首个 `ScreenCommit` 落地前的交换次数：**意图路径 2 次
-（HELLO + 合并批次），旧时序 3 次**。
+终端在 WS READY 之前就挂载时，新客户端把 `screenIntent` 写进 `HELLO_C2S` 尾部（并声明能力 `hello-screen-intent-v1`）。
+网关消费了 hello intent 时：`HELLO_S2C` 回显 `hello-screen-intent-v1`，并在**同一回复 burst** 里发出
+`SubscriptionApplied` + 首屏事务（`ScreenBegin/Chunk/Commit`）。首帧 **1 R**，可打字与 Screen* 同一 burst。
+客户端看到回显能力就不再发 post-HELLO `RequestScreenIntent`。
+
+HELLO 未带 intent（READY 后才挂载、或旧网关）：仍走 HELLO 之后同一批次
+`SetPaneSubscriptions` → `connect-device` → `RequestScreenIntent`。网关未回显 `hello-screen-intent-v1`
+时客户端必须发 post-HELLO 意图，避免漏屏。
 
 首屏请求的触发条件是 **canonical 能力协商完成**（transport 的 `state-feed-mode` 翻到 canonical），
-不再是 `device-connected`——终端现在先于 WS READY 挂载，用 `device-connected` 做条件会永远等不到。
+不再是 `device-connected`。
 
-占位订阅的收敛：零 `serverEpoch` 的订阅会被网关按 `epoch_changed` 拒绝。客户端看不到这次拒绝——
-它在 metadata 落地时立刻以**更大的 generation** 重发带真 epoch 的订阅，随后到达的旧代次
-`SubscriptionApplied` 按代次丢弃。**首屏不因此多花往返**，但实时输出仍要等第二批订阅被 apply
-（与改动前一致，不是回归）。
+占位订阅的收敛：空或全零 epoch（`isPlaceholderEpoch`）由网关**改写成当前 `serverEpoch` 并 apply**，
+不再按 `epoch_changed` 拒绝。真实非零 epoch 不一致仍 `SUBSCRIPTION_REJECTED_EPOCH_CHANGED`；pane 重建仍 `SourceGap`。
+客户端仍允许 metadata 后再发一代（兼容，不再是 live 的前置条件）。
 
 `requestId` 幂等：网关只对**在途**的同 `requestId` 去重。错误或 `SourceGap` 之后客户端会用同一个 id
 重试，网关必须放行（详见 [ws-borsh v1 规范](./ws-borsh-v1-spec.md)）。

@@ -35,12 +35,12 @@
 **H4 —— 首帧缓存 + mode 不再「失败即永久记住」**
 
 - 新增 `mesh-nodes-cache.ts`：localStorage `vibeterm:mesh-nodes`（版本号 + `savedAt`，7 天过期、≤64 行、
-  读写全部 try/catch）。**只落身份与在线态**，链路现场（reach / transport / rttMs / peerAddress /
+  读写全部 try/catch）。**只落身份、在线态与 `paused: true`**（否则冷启动侧栏会闪出已暂停节点），链路现场（reach / transport / rttMs / peerAddress /
   linkSinceAt / directFailure）一律清空——它们描述上一次会话的那条链路，冷启动后必然是错的。
   也不落整份 `mode`（含 `passkeySecondFactorWaived` 等鉴权语义字段），只留 `mesh: boolean` 与 `entryNodeId`。
 - 模块加载时 `hydrateMeshNodesFromCache()` 同步把上次列表读回来并标 `stale: true`；`meshEnabledOf(state)`
   在 mode 未落地时退回缓存值，于是**冷启动第一帧就能渲染聚合视图，`/api/mesh/nodes` 与 `/api/auth/mode`
-  并发发出**（原本串行两次往返）。
+  并发发出**（原本串行两次往返）。远端门闸在 `meshEnabledOf` 下若缓存/列表**已有这一行**，按 `loggedIn` 当场判定（`true` → `ready`，不等 `loadedAt` / mode；在线且未登录 → 静默登录；离线 → `ready`）。缓存和列表都没有这一行才 `pending` 等 REST。
 - 缓存作废的唯一入口：mode 落地为 standalone、或 entry nodeId 与缓存不一致，外加 7 天过期。
 - `ensureAuthMode` 的 catch 里清掉 `modePromise` 并排一次有界重试。
 
@@ -68,17 +68,19 @@ attempt 清零 + 撤在途定时器 + 立刻 open；已连上或正在连时不�
 **H2-a 前台拨号竞速**（新文件 `mesh/peer-dial-race.ts`）
 
 `PeerManager.dial()` 增加 `opts.foreground`，只有 `getLink()` 传 true；后台升级扫描仍走顺序拨号，
-DC 照拿满 `CONNECT_TIMEOUT_MS = 15 s`。前台预算：
+DC 照拿满 `CONNECT_TIMEOUT_MS = 15 s`。前台预算全部进 `nestedDialBudgetsMs(rtt)`（无样本按 800 ms，不是 LAN）：
 
-| 常量 | 值 | 含义 |
+| 常量 | 无样本 | 含义 |
 |---|---|---|
-| `FOREGROUND_DC_BUDGET_MS` | 2500 | DC 先独跑 2.5 s，到点并行开 ws-secure；DC 提前失败也立刻开，不空等 |
-| `FOREGROUND_DIRECT_DEADLINE_MS` | 4000 | 整段直连的墙钟上限（LAN 值），到点去中继。2.2.0 起实际取 `nestedDialBudgetsMs(rtt).directMs`：RTT ≤ 300 ms 仍是 4 s，800 ms 抬到 5.3 s，见 [多节点架构](../architecture/mesh-architecture.md)「自适应预算」 |
+| `FOREGROUND_DC_BUDGET_MS` | `nestedDialBudgetsMs(undefined).foregroundDcMs` = **2400** | DC 先独跑，到点并行开 ws-secure；DC 提前失败也立刻开。LAN 样本 50 ms 时为 1000 ms |
+| 直连墙钟 `directMs` | 5300 | 整段直连上限，到点去中继。LAN 仍 4 s |
 | `RECENT_DC_FAILURE_MS` | 10 min | `lostDirect` 命中或此窗口内 DC 失败过 → `wsFirst`，两条腿同时起跑 |
-| `FORWARD_LINK_DEADLINE_MS` | 5000 | forwarder 取链路的总 deadline（LAN 值，同样按 RTT 自适应到 `forwardMs`） |
+| 取链 `forwardMs` | 6900 | forwarder 取链路总 deadline。LAN 仍 5 s |
+
+已知该 peer 在中继 presence 上（`peerKnownRelayOnline`）且前台无 live 时，直连与中继**并行**：直连先成 abort 中继；中继先成让直连继续，晚到 DC/ws-secure 走 `track()` 升级。无 presence 时仍「直连竞速 → 再中继」。
 
 赢家采纳、输家 abort（`DOMException('dial-race-lost','AbortError')`）；晚到的会话走 discard。
-命中 4 s 总截止时**不砍腿**：还在跑的直连腿交回 `dial()`，中继成功就让它稍后自己升级，中继也不通才回头
+命中直连截止时**不砍腿**：还在跑的直连腿交回 `dial()`，中继成功就让它稍后自己升级，中继也不通才回头
 await——否则「只有 DC 可达、没有中继」的对端会永远连不上。`dialDc()` 被取消时晚到的 `pc` 自己 `close()`，
 晚到的失败照记进熔断器（否则「取消」会把 DC 坏掉这件事从账上抹掉，熔断器永远不 trip）。
 熔断因 `local-fingerprint` rearm 后不再有 15 s 前台惩罚：前台永远只用短预算。
@@ -102,7 +104,7 @@ false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil
 
 ## 陈旧窗口与验证
 
-- 首帧缓存：7 天过期、entry nodeId 变化即作废；显示的是**身份与上次在线态**，链路徽标一律「测量中」。
+- 首帧缓存：7 天过期、entry nodeId 变化即作废；显示的是**身份、上次在线态与 paused**，链路徽标一律「测量中」。paused 行不进侧栏聚合。
 - hub presence：uplink 抖动 90 s 内维持原判，超时才降级到 peer 可达性。
 - 设备行占位：只在 `/n/<id>/api/devices` pending 期间出现，落地即替换；占位数据不会触发 `ensureDeviceSubscribed`。
 
@@ -113,7 +115,7 @@ false，但**不再立刻补发离线事件**，而是记 `hubPresenceStaleUntil
 2. 弱网设备列表：给 `/n/<id>/api/devices` 加延迟（devtools 限速），分节头必须立刻在、设备行是占位。
 3. 断网重连：断网 → 等 mesh WS 断 → 恢复网络，重连应在 5 s 内发生（而不是 60 s）。
 4. 拨号预算：`bun test src/mesh/peer-dial-race.test.ts src/mesh/peer-manager.test.ts`；实机看
-   `[mesh][rtc] dial race won` 与 `getLink` 耗时应 < 3 s。
+   `[mesh][rtc] dial race won`。无样本前台 DC 独跑约 2.4 s，不要按 2.5 s 常量对拍。
 5. hub 抖动：`bun test src/mesh/mesh-runtime.test.ts`（陈旧窗口内仍 online，超窗才转 offline）。
 
 ## 遗留

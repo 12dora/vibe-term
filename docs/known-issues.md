@@ -35,8 +35,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 
 - **只有 UDP**：节点侧 ICE 由 node-datachannel（libjuice）实现，`turns:` 与 `?transport=tcp` 不产生 relay 候选；内置 TURN
   也只中继 UDP/IPv4（IPv6 peer 直接 400）。本机 UDP 出不去时（KI-13）仍只能走中继流。
-- **防火墙必须人工放行**：用户级服务碰不了云安全组 / ufw，`init`、`install.sh --role relay|relay,node` 与 `vibeterm doctor` 只能打印
-  要放行的端口（控制口 + **整段**中继端口）。少放一段的表现是节点探测失败、TURN 不进 ICE，日志里没有任何报错。
+- **防火墙必须人工放行**：用户级服务碰不了云安全组 / ufw。`init` / join / `doctor` / 接入向导会打印角色端口计划；`GET /api/mesh/nodes[].ports` 与 `POST …/ports/probe` 把 peer / ICE 标成 `open|blocked|unknown`（连续两次失败才 `blocked`）；TURN 磁贴有 `membersProbe`（成员 Binding 可达 ok/total）。少放一段仍是节点探测失败、TURN 不进 ICE，日志里没有任何报错——探测与 UI 只让问题可见，改不了防火墙。
 - **宿主跑 TUN 代理时必须绑具体地址**：2.3.0 内置 TURN 绑 `0.0.0.0`，在 mihomo / clash `auto-route` 的宿主（如上海中继）上回包
   被 `from 0.0.0.0 iif lo` 策略路由吸进 TUN、以 `198.18.0.1` 源地址发出，全网探测超时且无任何报错。2.3.1 起默认
   `VIBETERM_TURN_BIND_HOST=auto`（主出站 IPv4）；显式设回 `0.0.0.0` 会复现该问题。
@@ -55,7 +54,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 ## KI-6：待现网实测的两项
 
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
-2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE` 目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。
+2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE`（upgrade 缺键写入 `40000-40099`）目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。UI 不承诺 ICE-TCP 单独可达。
 
 ## KI-8：Hub 转发不把浏览器来源 IP 带给节点
 
@@ -99,6 +98,8 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 误报的 4401。2.0.8 起前端收到 4401 会先用带会话的 HTTP 探测再下结论，能把症状压成一次退避重连，
 但根治要把全网节点升到 ≥ 2.0.8。
 
+**不要把 1011 当成 4401。** 新入口在 Upgrade 101 **之后** `getLink` 失败关的是 **1011**（reason `node-unreachable` / `forward-link-timeout`），鉴权失败才在 101 之前关 4401。前端须按链路失败短退避，不得走登录探测。HTTP `/n/:id/api/*` 冷拨仍可能 503 `NODE_UNREACHABLE`。
+
 ## KI-13：本机代理 TUN 不转发境外 UDP 时拿不到 srflx
 
 Surge / Clash 等增强模式把 UDP 收进 TUN 后，若代理链路本身不中继境外 UDP，Google `:19302` /
@@ -107,7 +108,9 @@ fake-IP 解析器只解决「主机名被解析成 `198.18.x`」，解决不了�
 国内可达的 `stun.miwifi.com` / `stun.chat.bilibili.com`（自定义 `VIBETERM_STUN_SERVERS` 时至少留一条
 可达的），或者在代理里给 UDP 3478 / 19302 加 DIRECT 规则。判定看 `[mesh][rtc] stun probe … ok=false
 error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走浏览器自己的网络栈，同样要求
-本机 UDP 出得去。详见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)。
+本机 UDP 出得去。直连协商已减到 1 次转发 REST（HELLO `connection-id:` + entry `rtc-config`），建立变快，但**不保证**移动网 ICE 成功。详见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)。
+
+iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不论 persisted）。`/mesh/ws` 在会回 PONG 的网关上前台 2.5–4 s 发现僵尸；2.3.0 网关忽略应用层 PING，仍可能要等 30 s 静默门槛。
 
 ## KI-14：混合版本网内的直连抖动
 

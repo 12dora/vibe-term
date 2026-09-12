@@ -57,6 +57,7 @@ signer = root | passkey                                // KEY_LOG_SIGNER_MATRIX
 `mesh/notification-sink-set.ts` 据此产出 `MeshNotificationSink[]`：远端节点只看声明，
 本机要求「声明 + 开关」同时成立；`peer_cache` / `user_nodes` / `node.list` 三处只用来取显示名
 与在线态，**inventory 里的 `notifySink` 已经删除，新版本一概不读**。
+`collectMeshNotificationSinks` 跳过 entry 本机 `paused` 的远端汇聚机（self 不受 paused 影响）：暂停节点不收、也不往那边转发。
 
 ### 节点侧转发
 

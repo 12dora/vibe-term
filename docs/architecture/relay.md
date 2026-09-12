@@ -82,7 +82,7 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
   `XOR-PEER-ADDRESS`（超额整请求 400）；租期请求值与 600 s 取大、封顶 3600 s；nonce 1 h 轮换、上一枚有 5 min 宽限（超期 438）；
   peer 地址落在私网 / 回环 / fake-IP / 组播等默认拒绝段或本机控制口时回 403（防环）；超长报文静默丢弃；
   未认证应答（Binding 与 401/438 challenge）按每源 20/s（突发 40）、全局 2000/s 限流，挡反射放大。
-- **日志**（`[relay][turn]`）：`builtin turn listening port=… external_ip=… host=… relay_range=…`、
+- **日志**（`[relay][turn]`）：`builtin turn listening port=… bind=<host> external_ip=… host=… relay_range=…`、
   `builtin turn disabled reason=…`、30 min 一条 `turn allocations=N`。
 
 ## 2. 隐私边界
@@ -96,6 +96,7 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
 | | relay 流的内层（`SecureChannelLink`，与 hub 现状一致） |
 
 `direct_capable` 不是 `relay.status` / `relay.list` 上的明文字段，而在 K_meta 封里的状态块（`RelayStatusBlob`）中。
+同一块还可带两个**可选**字段（2.3.0 解码器忽略未知键）：`peer_reach?: { [nodeIdPrefix8]: 'ok' | 'refused' | 'timeout' }`（≤32 条，发送方对其他成员 peer 口的探测结论）与 `turn_ok?: boolean`（发送方对该中继 TURN 控制口的 Binding 结论；`undefined` = 未探测）。hub `node.status` / `node.list` 同样可选透传 `peer_reach`。`relay,node` 把成员 blob 里的布尔 `turn_ok` 聚成管理面 `turn.membersProbe: { ok, total, updatedAt }`（`total` 只计写出了布尔值的成员）；`GET /api/relay/status` 与 `GET /api/local/status` 的 TURN 快照都带它。TURN 磁贴有该字段时显示「成员可达 ok/total」。
 
 ## 3. 租户密钥
 
@@ -748,7 +749,7 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 补签失败会留一条持久化的「欠账」并在挂上中继时自动重试一次，告警条上也有手动重试按钮。
 
 **运营者侧（设置 → 中继管理，`relay.admin.tabLabel`，在 `SETTINGS_TAB_BAR` 中紧随 `nodes`，属 `OPTIONAL_SETTINGS_TABS`）**：仅在探针成功时出现。页头三点菜单：修改接入密码、中继限额；未设密码时页头下一条警告。租户卡三点菜单：默认配额。租户行可选（`aria-selected`），选中后接入节点卡只显示该租户成员；接入节点卡带检索（名称 / nodeId / tenantId）、七列排序（`aria-sort` 只落在当前列）与状态筛选，纯函数在 `relay-metrics-model.ts`；中继是盲中继，成员 `name` 恒为 `null`，排序键实际是 `name ?? nodeId`。改口令对话框（清除开关 + 踢/留单选，默认「保留」），踢出与删除确认框（删除需逐字敲出租户编号）。
-页头另有一块 TURN 磁贴（内置 / 外部 / 关闭、监听状态、`turn:<host>:<port>`、公网 IP、当前分配数、错误，以及内置模式下该放行的端口），
+页头另有一块 TURN 磁贴（内置 / 外部 / 关闭、监听状态、`turn:<host>:<port>`、公网 IP、当前分配数、错误，内置模式下该放行的端口，以及有 `membersProbe` 时的「成员可达 ok/total」：部分失败警告、全失败危险），
 数据来自 `GET /api/relay/status` 的 `turn` 段。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)。
 
 **接入向导**（`apps/fe/src/components/side-panels/connect-devices/`）覆盖「经中继 / 经 Hub / SSH 直连」三条路径，见 [接入设备面板](../development/connect-devices-panel.md)。追加中继时中继返回的 `RELAY_*` 401 由 `session-interceptor` 豁免，不当作本机会话失效。
@@ -805,8 +806,7 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
   注意被吊销节点如果在吊销当时中继正好离线，中继侧会留一条陈旧的 `admitted` 行，需要运营者手动 `kick`。
 - **健康探针**：`GET /api/relay/health` 无鉴权，反代健康检查与节点拨号前探测都用它。
 - **TURN 端口**：内置 TURN 要放行 UDP 控制口（默认 3478）与**整段**中继端口（默认 49160-49259）；云安全组、面板防火墙、
-  `ufw` 三层都要单独放。`vibeterm doctor` 在 relay 角色上有一条 `turn` 检查（模式 + 本机 Binding 探测 + 该放行哪些端口），
-  `vibeterm relay status` 的 `turn:` 行给监听状态与分配数，日志前缀 `[relay][turn]`。
+  `ufw` 三层都要单独放。角色完整入站清单见 `@vibeterm/shared/net` 的 `portPlanForRole`（`init` / `hub join` / `relay join` / `doctor` / 接入向导「放行端口」步打印同一张）。`vibeterm doctor` 在 relay 角色上有一条 `turn` 检查（模式 + 本机 Binding 探测 + 该放行哪些端口），另打印端口计划、peer TCP 是否在听、以及有会话时 self 行 `ports[].status === 'blocked'`；无会话则静默跳过 mesh 探测。`vibeterm relay status` 的 `turn:` 行给监听状态与分配数，日志前缀 `[relay][turn]`。
 - **反代 / Access 豁免**：`/relay/uplink`、`/api/relay/health`、`/api/relay/enroll` 在
   `ACCESS_EXEMPT_EXACT_PATHS` 里；`/api/relay/tenants/` 前缀只做 origin 守卫豁免，**不建 Cloudflare bypass 应用**。
   管理面 `/api/relay/status|password|config|tenants/:id` **不豁免**——它们本就该走浏览器会话或管理令牌。

@@ -6,8 +6,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [mesh-architecture.md](./mesh-architecture.md) | 拓扑、身份与鉴权（根钥、密钥日志、节点证书、会话）、链路多路复用与载体、前端多运行时、角色装配、失陷边界 |
-| [peer-direct-connect.md](./peer-direct-connect.md) | 直连地址退避、WebRTC 熔断、信令代次与链路活性、失败码 |
+| [mesh-architecture.md](./mesh-architecture.md) | 拓扑、身份与鉴权、链路多路复用与载体、paused 本机可见性例外、端口计划、前端多运行时、角色装配、失陷边界 |
+| [peer-direct-connect.md](./peer-direct-connect.md) | 直连地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码 |
 | [relay.md](./relay.md) | 公共中继角色的完整参考 |
 | [relay-limits-and-metrics.md](./relay-limits-and-metrics.md) | 中继级限额、带宽公平分配、指标接口 |
 | [port-mapping.md](./port-mapping.md) | 节点间 TCP 端口映射 |

@@ -16,7 +16,7 @@
 
 | 文档 | 内容 |
 | --- | --- |
-| [nonstandard-ports.md](./nonstandard-ports.md) | 80/443 不可用时的端口选择与探测 |
+| [nonstandard-ports.md](./nonstandard-ports.md) | 角色入站端口（含 UDP）与 80/443 不可用时的 HTTPS 候选 / 探测 |
 | [https-and-acme.md](./https-and-acme.md) | 对外有效 HTTPS、ACME dns-01 提供商、80/443 被占场景 |
 | [tunnel-edge-fake-ip.md](./tunnel-edge-fake-ip.md) | Cloudflare Tunnel 边缘与 ICE STUN/TURN 的 fake-IP 绕行 |
 
