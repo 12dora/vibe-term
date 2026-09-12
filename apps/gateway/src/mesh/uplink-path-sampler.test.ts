@@ -443,6 +443,32 @@ describe('re-race_result 按连接结算', () => {
       '[uplink] path re-race_result url=relay.example old_ms=200 new_ms=60 better=true'
     );
   });
+
+  test('重赛后的连接不满 3 拍就断线，普通重连的新代心跳不会补足旧重赛的 result', () => {
+    const scheduler = new ManualScheduler();
+    scheduler.nowMs = 3_000_000;
+    const lines: string[] = [];
+    const sampler = new UplinkPathSampler({
+      scheduler,
+      targets: () => [],
+      log: (line) => lines.push(line),
+    });
+    sampler.memory.record('relay.example', { kind: 'tcp-connect', rttMs: 80, at: scheduler.nowMs });
+    const beat = (generation: number, rttMs = 200) =>
+      sampler.onHeartbeat(
+        hb({ url: 'https://relay.example', rttMs, now: scheduler.nowMs, clientId: 'p', generation })
+      );
+    beat(1);
+    beat(1);
+    expect(beat(1)).toBe(true);
+    expect(lines).toHaveLength(1);
+    expect(beat(2, 90)).toBe(false);
+    expect(beat(2, 90)).toBe(false);
+    expect(beat(3, 60)).toBe(false);
+    expect(beat(3, 60)).toBe(false);
+    expect(beat(3, 60)).toBe(false);
+    expect(lines).toHaveLength(1);
+  });
 });
 
 describe('createUplinkPathHeartbeat in-flight', () => {

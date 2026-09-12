@@ -47,7 +47,14 @@ export type UplinkPathSamplerOptions = {
   log?: (line: string) => void;
 };
 
-type PendingResult = { oldMs: number; samples: number; clientId: string; generation: number };
+type PendingResult = {
+  oldMs: number;
+  samples: number;
+  clientId: string;
+  generation: number;
+  /** 重赛后第一条心跳所属的代：结果只由这一代结算，再换代（普通重连）即作废。 */
+  resultGeneration: number | null;
+};
 
 type HostWatch = {
   consecutiveSlow: number;
@@ -202,6 +209,7 @@ export class UplinkPathSampler {
       samples: 0,
       clientId: sample.clientId,
       generation: sample.generation,
+      resultGeneration: null,
     };
     this.log(
       `[uplink] path re-race url=${host} cur_ms=${roundMs(decision.currentMs)} best_ms=${roundMs(decision.bestMs)} try=${budget.count}/${UPLINK_DEGRADE_MAX_PER_HOUR}`
@@ -264,6 +272,11 @@ export class UplinkPathSampler {
     if (!pending) return;
     if (pending.clientId !== sample.clientId) return;
     if (sample.generation <= pending.generation) return;
+    if (pending.resultGeneration === null) pending.resultGeneration = sample.generation;
+    if (sample.generation !== pending.resultGeneration) {
+      watch.pending = null;
+      return;
+    }
     pending.samples += 1;
     if (pending.samples < UPLINK_DEGRADE_RESULT_SAMPLES) return;
     const oldMs = pending.oldMs;
