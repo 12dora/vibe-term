@@ -7,7 +7,11 @@ import {
   DC_REROLL_WINDOW_MS,
 } from './dc-reroll-policy';
 import type { RtcSignalMessage } from './mesh-deps';
-import { DcRerollCoordinator, resetDcRerollEnvLogForTest } from './peer-dc-reroll';
+import {
+  DC_REROLL_CANDIDATE_INBOX_CAP,
+  DcRerollCoordinator,
+  resetDcRerollEnvLogForTest,
+} from './peer-dc-reroll';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import {
   type PeerManagerState,
@@ -117,12 +121,12 @@ function harness(selfNodeId = SELF): Harness {
   };
 }
 
-function offer(): RtcSignalMessage {
+function offer(epoch = 4_096): RtcSignalMessage {
   return {
     rtcSession: 'dc',
     from: 'node',
     to: SELF,
-    sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch: 4_096 }),
+    sdp: encodeSdpSignal({ type: 'offer', sdp: 'v=0', epoch }),
     candidate: null,
   };
 }
@@ -470,6 +474,17 @@ describe('DcRerollCoordinator 应答侧', () => {
     expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
   });
 
+  test('epoch 不高于 live.rtcEpoch 的迟到 offer 不接管、不耗预算', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    makeLive(h.state, { peerNodeId: peerId, rtcEpoch: 9 });
+    expect(h.coordinator.interceptOffer(peerId, offer(9))).toBe(false);
+    expect(h.coordinator.interceptOffer(peerId, offer(3))).toBe(false);
+    expect(h.dials).toHaveLength(0);
+    expect(h.state.rerolls.get(peerId)?.count ?? 0).toBe(0);
+    expect(h.coordinator.interceptOffer(peerId, offer(10))).toBe(true);
+  });
+
   test('应答侧同样受每小时 3 次的预算约束，answer 不是 offer 也不接管', () => {
     const h = harness('ff'.repeat(16));
     const peerId = '11'.repeat(16);
@@ -555,6 +570,26 @@ describe('DcRerollCoordinator interceptCandidate', () => {
     process.env.VIBETERM_DC_REROLL = 'off';
     expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(false);
     expect(h.state.rtcInbox.get(peerId)).toBeUndefined();
+  });
+
+  test('候选最多占 DC_REROLL_CANDIDATE_INBOX_CAP 条，之后到达的 offer 仍能入队', () => {
+    const { h, peerId } = answerer(5);
+    for (let i = 0; i < RTC_PEER_INBOX_MAX_MESSAGES; i += 1) {
+      h.coordinator.interceptCandidate(peerId, iceCandidate(6));
+    }
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(DC_REROLL_CANDIDATE_INBOX_CAP);
+    expect(h.coordinator.interceptOffer(peerId, offer(6))).toBe(true);
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(DC_REROLL_CANDIDATE_INBOX_CAP + 1);
+  });
+
+  test('offer 落定 epoch 后清掉按 fallback 入队、epoch 对不上的候选', () => {
+    const { h, peerId } = answerer();
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(7))).toBe(true);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(9))).toBe(true);
+    expect(h.coordinator.interceptOffer(peerId, offer(9))).toBe(true);
+    const inbox = h.state.rtcInbox.get(peerId) ?? [];
+    expect(inbox).toHaveLength(2);
+    expect(inbox.some((entry) => entry.message.sdp)).toBe(true);
   });
 
   test('inbox 满员后不再追加', () => {

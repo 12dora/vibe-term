@@ -18,6 +18,9 @@ import { RTC_SIGNAL_INBOX_TTL_MS, type RtcSignalInboxEntry } from './peer-rtc-wa
 import { decodeCandidateSignal, decodeSdpSignal } from './rtc/ice';
 import { rtcLog } from './rtc/rtc-log';
 
+/** 候选在 rtcInbox 里最多占的条数（总上限 RTC_PEER_INBOX_MAX_MESSAGES=32），其余留给 offer。 */
+export const DC_REROLL_CANDIDATE_INBOX_CAP = 16;
+
 export type DcRerollRecord = {
   count: number;
   windowStartedAt: number;
@@ -148,11 +151,17 @@ export class DcRerollCoordinator {
     if (!dcRerollEnabled() || !msg.sdp) return false;
     const live = this.state.live.get(nodeId);
     if (!live || live.transport !== 'dc' || live.rerollCapable !== true) return false;
-    if (decodeSdpSignal(msg.sdp)?.type !== 'offer') return false;
+    const offer = decodeSdpSignal(msg.sdp);
+    if (offer?.type !== 'offer') return false;
+    // 旧 attempt 的迟到 offer（epoch 不高于当前 live）不是重掷，不能耗预算、不能起 attempt。
+    if (live.rtcEpoch !== undefined && offer.epoch !== undefined && offer.epoch <= live.rtcEpoch) {
+      return false;
+    }
     if (this.deps.hasDcInflight(nodeId)) return false;
     const now = this.state.scheduler.now();
     const rec = this.recordOf(nodeId, now);
     if (rec.count >= DC_REROLL_MAX_PER_HOUR) return false;
+    if (offer.epoch !== undefined) this.dropForeignCandidates(nodeId, offer.epoch);
     if (!this.enqueueInbox(nodeId, msg)) return false;
     rec.count += 1;
     rec.lastAt = now;
@@ -174,6 +183,10 @@ export class DcRerollCoordinator {
     if (!decoded || decoded.epoch === undefined) return false;
     const inbox = this.prunedInbox(nodeId);
     if (!this.candidateEpochEligible(live, decoded.epoch, inbox)) return false;
+    // 候选只能占 inbox 的一部分，给随后到达的 offer 留位置；否则迟到/重放候选会把 offer 挤出去。
+    if (inbox.filter((entry) => !entry.message.sdp).length >= DC_REROLL_CANDIDATE_INBOX_CAP) {
+      return false;
+    }
     if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return false;
     inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
     this.state.rtcInbox.set(nodeId, inbox);
@@ -320,6 +333,16 @@ export class DcRerollCoordinator {
   ): boolean {
     if (live.rtcEpoch !== undefined) return epoch > live.rtcEpoch;
     return !inbox.some((entry) => decodeSdpSignal(entry.message.sdp ?? '')?.epoch === epoch);
+  }
+
+  /** offer 落定 epoch 后，把之前按 fallback 入队、epoch 对不上的候选清掉。 */
+  private dropForeignCandidates(nodeId: string, epoch: number): void {
+    const inbox = this.prunedInbox(nodeId).filter((entry) => {
+      if (entry.message.sdp || !entry.message.candidate) return true;
+      return decodeCandidateSignal(entry.message.candidate)?.epoch === epoch;
+    });
+    if (inbox.length === 0) this.state.rtcInbox.delete(nodeId);
+    else this.state.rtcInbox.set(nodeId, inbox);
   }
 
   private prunedInbox(nodeId: string): RtcSignalInboxEntry[] {
