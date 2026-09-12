@@ -342,4 +342,51 @@ describe('applyUplinkNodeList STUN distribution', () => {
       close();
     }
   });
+
+  test('primary 标 offline、secondary 仍在线时不发 offline，节点按 online 应用', () => {
+    const { db, close } = createMigratedAuthDb();
+    try {
+      const hubStore = new MeshHubStore(db);
+      const userStore = new UserStore(db);
+      const events: Array<{ status: string; relayPresence?: string[] }> = [];
+      const d = applyDeps(hubStore, userStore);
+      d.onlineUnionIds = () => [PEER];
+      d.peerHolder.manager = {
+        listReach: () => new Map(),
+        transportOf: () => 'relay',
+        rttOf: () => 8,
+        viaRelayOf: () => 'https://tk.example',
+        relayPresenceOf: () => ['https://tk.example'],
+        notifyPeerEndpointsChanged: () => {},
+      };
+      d.emitListNodeEvent = (event) => {
+        events.push({
+          status: event.status,
+          relayPresence: event.relayPresence ?? undefined,
+        });
+      };
+      applyUplinkNodeList(
+        d,
+        {
+          ...listOf([]),
+          nodes: [
+            {
+              id: PEER,
+              name: 'peer',
+              online: false,
+              endpoints: [],
+              inventory: {},
+              direct_capable: false,
+              version: '2.2.4',
+            },
+          ],
+        },
+        () => false
+      );
+      expect(d.state.lastNodeList?.nodes.find((node) => node.id === PEER)?.online).toBe(true);
+      expect(events).toEqual([{ status: 'online', relayPresence: ['https://tk.example'] }]);
+    } finally {
+      close();
+    }
+  });
 });

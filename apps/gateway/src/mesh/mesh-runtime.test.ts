@@ -2217,6 +2217,32 @@ describe('key-log head notify wiring', () => {
     publisher.publish(record);
     expect(notified).toBe(1);
   });
+
+  test('createKeyLogPublisher 只向传入的 uplink（primary 池）发布', async () => {
+    const calls: string[] = [];
+    const publisher = createKeyLogPublisher(
+      {
+        sendCtl(msg) {
+          calls.push(`sendCtl:${msg.t}`);
+        },
+        async appendAndAck() {
+          calls.push('appendAndAck');
+          return { ok: true, seq: 4n };
+        },
+        async queryHubHead() {
+          return null;
+        },
+        async queryKeyLogAt() {
+          return null;
+        },
+      },
+      () => {}
+    );
+    publisher.publish(record);
+    const ack = await publisher.publishAndAck?.(record);
+    expect(ack).toEqual({ ok: true, seq: 4n });
+    expect(calls).toEqual(['sendCtl:key.log.append', 'appendAndAck']);
+  });
 });
 
 describe('createTtlCache', () => {

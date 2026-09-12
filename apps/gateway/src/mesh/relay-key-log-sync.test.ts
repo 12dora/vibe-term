@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import {
   buildKeyLogRecord,
   computeRecordHash,
@@ -23,7 +23,11 @@ import {
   sealEnvelope,
   sealRelayKeyLogRecord,
 } from '@vibeterm/shared/relay';
-import { RelayKeyLogSync, relayMemberFromRecord } from './relay-key-log-sync';
+import {
+  type RelayKeyLogPushMode,
+  RelayKeyLogSync,
+  relayMemberFromRecord,
+} from './relay-key-log-sync';
 import { waitUntil } from './test-support';
 import type { KeyLogApplier } from './types';
 
@@ -84,9 +88,12 @@ type Harness = {
   setHead: (seq: bigint) => void;
 };
 
+const LOCAL_SIG = new Uint8Array(64).fill(9);
+
 function harness(
   localSeq: bigint,
-  stored: Array<{ seq: bigint; bytes: Uint8Array }> = []
+  stored: Array<{ seq: bigint; bytes: Uint8Array }> = [],
+  opts?: { pushMode?: RelayKeyLogPushMode; url?: string }
 ): Harness {
   const sent: RelayCtlMessage[] = [];
   const applied: Array<{ bytes: Uint8Array; sig: Uint8Array }> = [];
@@ -105,7 +112,7 @@ function harness(
     async list(_userId, fromSeq, _signal, limit) {
       const rows = stored
         .filter((row) => row.seq >= fromSeq)
-        .map((row) => ({ seq: row.seq, bytes: row.bytes, sig: new Uint8Array(64).fill(9) }));
+        .map((row) => ({ seq: row.seq, bytes: row.bytes, sig: LOCAL_SIG }));
       return limit === undefined ? rows : rows.slice(0, limit);
     },
   };
@@ -123,9 +130,11 @@ function harness(
       onSynced: () => {
         syncedCount += 1;
       },
+      url: () => opts?.url ?? 'https://relay-b.example',
     },
     applier,
     timeoutMs: 200,
+    ...(opts?.pushMode ? { pushMode: opts.pushMode } : {}),
   });
   return {
     sync,
@@ -379,5 +388,117 @@ describe('RelayKeyLogSync 健壮性', () => {
     await waitUntil(() => h.sync.remoteHead === BigInt(total + 1), 2_000);
     await waitUntil(() => h.synced() > 0, 2_000);
     expect(h.sync.caughtUp).toBe(true);
+  });
+});
+
+describe('RelayKeyLogSync prefix-verified secondary', () => {
+  const prefixOpts = { pushMode: 'prefix-verified' as const, url: 'https://relay-b.example' };
+
+  async function sealAt(seq: bigint, bytes: Uint8Array, sig = LOCAL_SIG) {
+    return sealRelayKeyLogRecord(LOG_KEY, { bytes, sig });
+  }
+
+  test('远端是本地前缀时才 pushMissing', async () => {
+    const bytes1 = totpRecordBytes(1n);
+    const bytes2 = totpRecordBytes(2n);
+    const bytes3 = totpRecordBytes(3n);
+    const h = harness(
+      3n,
+      [
+        { seq: 1n, bytes: bytes1 },
+        { seq: 2n, bytes: bytes2 },
+        { seq: 3n, bytes: bytes3 },
+      ],
+      prefixOpts
+    );
+    h.sync.noteRemoteHead(1n);
+    await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+    expect(h.sent.some((msg) => msg.t === 'relay.keylog.append')).toBe(false);
+    h.sync.handleRes({
+      t: 'relay.keylog.res',
+      records: [{ seq: 1, blob: await sealAt(1n, bytes1) }],
+    });
+    await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.append'));
+    const first = h.sent.find((msg) => msg.t === 'relay.keylog.append');
+    if (first?.t !== 'relay.keylog.append') throw new Error('missing append');
+    expect(relaySeqFromWire(first.seq)).toBe(2n);
+    expect(h.sync.diverged).toBe(false);
+  });
+
+  test('空远端日志视为前缀，引导新中继', async () => {
+    const bytes1 = totpRecordBytes(1n);
+    const bytes2 = totpRecordBytes(2n);
+    const h = harness(
+      2n,
+      [
+        { seq: 1n, bytes: bytes1 },
+        { seq: 2n, bytes: bytes2 },
+      ],
+      prefixOpts
+    );
+    h.sync.noteRemoteHead(0n);
+    await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.append'));
+    expect(h.sent.some((msg) => msg.t === 'relay.keylog.req')).toBe(false);
+    const first = h.sent.find((msg) => msg.t === 'relay.keylog.append');
+    if (first?.t !== 'relay.keylog.append') throw new Error('missing append');
+    expect(relaySeqFromWire(first.seq)).toBe(1n);
+    expect(h.sync.diverged).toBe(false);
+  });
+
+  test('分叉时不 push，只记一次日志并标 diverged', async () => {
+    const bytes1 = totpRecordBytes(1n);
+    const bytes2 = totpRecordBytes(2n);
+    const h = harness(
+      2n,
+      [
+        { seq: 1n, bytes: bytes1 },
+        { seq: 2n, bytes: bytes2 },
+      ],
+      prefixOpts
+    );
+    const warn = spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      h.sync.noteRemoteHead(1n);
+      await waitUntil(() => h.sent.some((msg) => msg.t === 'relay.keylog.req'));
+      h.sync.handleRes({
+        t: 'relay.keylog.res',
+        records: [
+          {
+            seq: 1,
+            blob: await sealAt(1n, totpRecordBytes(1n), new Uint8Array(64).fill(3)),
+          },
+        ],
+      });
+      await waitUntil(() => h.sync.diverged);
+      expect(h.sent.some((msg) => msg.t === 'relay.keylog.append')).toBe(false);
+      expect(h.sync.caughtUp).toBe(false);
+      const lines = warn.mock.calls.map((args) => String(args[0]));
+      expect(
+        lines.some((line) =>
+          line.includes(
+            '[mesh][relay] key-log diverged url=https://relay-b.example remote_head=1 local_head=2'
+          )
+        )
+      ).toBe(true);
+      const before = lines.filter((line) => line.includes('key-log diverged')).length;
+      h.sync.noteRemoteHead(1n);
+      await waitUntil(() => h.sent.filter((msg) => msg.t === 'relay.keylog.req').length >= 2);
+      h.sync.handleRes({
+        t: 'relay.keylog.res',
+        records: [
+          {
+            seq: 1,
+            blob: await sealAt(1n, totpRecordBytes(1n), new Uint8Array(64).fill(3)),
+          },
+        ],
+      });
+      await waitUntil(() => h.sync.diverged);
+      const after = warn.mock.calls
+        .map((args) => String(args[0]))
+        .filter((line) => line.includes('key-log diverged')).length;
+      expect(after).toBe(before);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

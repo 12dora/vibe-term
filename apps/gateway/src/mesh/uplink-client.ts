@@ -90,6 +90,8 @@ export type UplinkClientOptions = {
   authTimeoutMs?: number;
   keyLogTimeoutMs?: number;
   keyLogRetryLimit?: number;
+  /** 中继 secondary：catch-up 只向已验证前缀补推，不经 sendCtl 发布新记录。 */
+  keyLogCatchUp?: 'publish' | 'prefix-verified';
 };
 
 export function uplinkWebSocketTls(

@@ -23,8 +23,9 @@ export function persistUplinkPeerCache(input: {
     if (!cert || cert.userId !== userId || cert.revokedLogSeq != null) continue;
     const existing = userStore.getPeer(node.id);
     const version = node.version ?? existing?.version ?? null;
-    // 没有版本的新行会让 rotate-root-keep / set-relays 的 fail-closed 门把「未握过手」当成旧节点。
-    if (!existing && !version) continue;
+    // 无 blob、只知道 online 的新行会让 rotate-root-keep / set-relays 把未握过手当成旧节点。
+    // 已解密出 endpoints/inventory 的 2.2.x 对端可以没有 version，仍要建缓存行。
+    if (!existing && !version && !hasDecryptablePeerPayload(node)) continue;
     userStore.upsertPeer({
       nodeId: node.id,
       name: node.name,
@@ -37,6 +38,13 @@ export function persistUplinkPeerCache(input: {
     });
   }
   persistHubPeer(input);
+}
+
+function hasDecryptablePeerPayload(node: UplinkNodeList['nodes'][number]): boolean {
+  if (node.direct_capable) return true;
+  if (node.name && node.name !== node.id) return true;
+  if (Array.isArray(node.endpoints) && node.endpoints.length > 0) return true;
+  return node.inventory != null;
 }
 
 function persistHubPeer(input: {

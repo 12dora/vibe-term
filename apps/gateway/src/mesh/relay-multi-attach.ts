@@ -1,5 +1,10 @@
 import type { RelayQuota } from '@vibeterm/shared/relay';
-import { mergeListedRtc, unionListedNodes, withdrawListedRtc } from './node-list-apply';
+import {
+  mergeListedRtc,
+  overlayOnlineUnion,
+  unionListedNodes,
+  withdrawListedRtc,
+} from './node-list-apply';
 import {
   RELAY_PRESENCE_STALE_MS,
   RelayPresence,
@@ -77,6 +82,7 @@ export function createRelayMultiAttach(input: {
     input.spawn({
       ...input.baseClient,
       hubUrl: url,
+      keyLogCatchUp: 'prefix-verified',
       onNodeList: (list) => applySecondaryList(url, list),
     });
 
@@ -186,14 +192,11 @@ function mergeSecondaryRoster(
     sourceUrl: normalizeHubEndpointUrl(url),
     primary: false,
   });
-  if (rtc.lastNodeList) {
-    rtc.lastNodeList = {
-      ...rtc.lastNodeList,
-      nodes: unionListedNodes(rtc.lastNodeList.nodes, list.nodes),
-    };
-  } else {
-    rtc.lastNodeList = list;
-  }
+  const unioned = rtc.lastNodeList
+    ? unionListedNodes(rtc.lastNodeList.nodes, list.nodes)
+    : list.nodes;
+  const nodes = overlayOnlineUnion(unioned, presence.onlineUnion(now));
+  rtc.lastNodeList = rtc.lastNodeList ? { ...rtc.lastNodeList, nodes } : { ...list, nodes };
 }
 
 function sendRtcViaPresence(
@@ -214,16 +217,21 @@ function sendRtcViaPresence(
   return true;
 }
 
-function minQuotaFileBytes(
+export function minQuotaFileBytes(
   primary: RelayQuota | null,
-  connected: readonly SecondaryUplink[]
+  connected: readonly { quota: RelayQuota | null }[]
 ): RelayQuota | null {
-  if (!primary) return null;
-  const caps = [primary, ...connected.map((client) => client.quota)]
-    .map((quota) => quota?.maxFileBytes)
+  const quotas = [primary, ...connected.map((client) => client.quota)].filter(
+    (quota): quota is RelayQuota => quota != null
+  );
+  const caps = quotas
+    .map((quota) => quota.maxFileBytes)
     .filter((n): n is number => typeof n === 'number' && n >= 0);
   if (caps.length === 0) return primary;
-  return { ...primary, maxFileBytes: Math.min(...caps) };
+  const maxFileBytes = Math.min(...caps);
+  if (primary) return { ...primary, maxFileBytes };
+  const source = quotas.find((quota) => quota.maxFileBytes === maxFileBytes) ?? quotas[0];
+  return { ...source, maxFileBytes };
 }
 
 function bindPrimaryLifecycle(input: {
@@ -333,5 +341,6 @@ export function primaryNodeListApplyPatch(
         (node) => !incoming.nodes.some((row) => row.id === node.id) && known.has(node.id)
       );
     },
+    onlineUnionIds: () => attach?.presence.onlineUnion() ?? [],
   };
 }

@@ -34,6 +34,8 @@ export function relayLinkError(input: {
 
 export type RelayStatusTurnView = { url: string; probeOk: boolean | null };
 
+export type RelayStatusRowKeyLog = { diverged?: boolean };
+
 export type RelayStatusRowExtras = {
   /** 该行当前已认证（primary 或 secondary）。缺省时退回「仅 attached 行」。 */
   connected?: boolean;
@@ -41,6 +43,7 @@ export type RelayStatusRowExtras = {
   peersOnline?: number | null;
   turn?: RelayStatusTurnView | null;
   lastError?: { reason: string; at: number } | null;
+  keyLog?: RelayStatusRowKeyLog;
 };
 
 function statusRowOnline(
@@ -86,6 +89,7 @@ export function buildRelayStatusRow(
     ...errors,
     kicked: row.kicked,
     kickedReason: row.kicked ? (row.kickedReason ?? null) : null,
+    ...(extras?.keyLog?.diverged === true ? { keyLog: { diverged: true as const } } : {}),
   };
 }
 
@@ -140,6 +144,7 @@ export function collectRelayStatusRows(input: {
       peersOnline: connected ? input.peersOnlineOn(row.url) : null,
       turn: input.turnOf(client),
       ...(client && !attached ? { lastError: client.lastConnectError } : {}),
+      ...(client?.keyLog.diverged === true ? { keyLog: { diverged: true as const } } : {}),
     });
   });
 }

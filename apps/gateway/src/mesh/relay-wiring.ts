@@ -206,6 +206,7 @@ export function relayUplinkOverrides(
             tlsCa: o.tlsCa ?? null,
             ...(o.scheduler ? { scheduler: o.scheduler } : {}),
             ...(o.pingIntervalMs !== undefined ? { pingIntervalMs: o.pingIntervalMs } : {}),
+            ...(o.keyLogCatchUp ? { keyLogCatchUp: o.keyLogCatchUp } : {}),
             onKicked: (reason) => {
               markRelayKicked(wiring, o.hubUrl, reason);
               RELAY_BINDINGS.get(wiring)?.attach?.opener.noteKicked(o.hubUrl);

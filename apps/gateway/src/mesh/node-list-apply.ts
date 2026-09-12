@@ -164,6 +164,8 @@ export type NodeListApplyDeps = {
   rtcSourceUrl?: string | null;
   retainPeerIds?: () => Iterable<string>;
   extraListedNodes?: () => UplinkNodeList['nodes'];
+  /** 多中继在线并集：primary 标 offline 但 secondary 仍在线的节点按 online 应用。 */
+  onlineUnionIds?: () => Iterable<string>;
   identity: { nodeIdHex: string };
   hubStore: Pick<MeshHubStore, 'remove' | 'replaceAll' | 'list'>;
   scheduler: { now: () => number };
@@ -373,15 +375,39 @@ export function unionListedNodes(
   return added.length === 0 ? primary : [...primary, ...added];
 }
 
+export function overlayOnlineUnion(
+  nodes: UplinkNodeList['nodes'],
+  onlineIds: Iterable<string>
+): UplinkNodeList['nodes'] {
+  const online = onlineIds instanceof Set ? onlineIds : new Set(onlineIds);
+  if (online.size === 0) return nodes;
+  let changed = false;
+  const next = nodes.map((node) => {
+    if (node.online || !online.has(node.id)) return node;
+    changed = true;
+    return { ...node, online: true };
+  });
+  return changed ? next : nodes;
+}
+
+export function mergeAppliedNodeList(
+  list: UplinkNodeList,
+  extras: UplinkNodeList['nodes'],
+  onlineIds?: Iterable<string>
+): UplinkNodeList {
+  const unioned = extras.length > 0 ? unionListedNodes(list.nodes, extras) : list.nodes;
+  const nodes = onlineIds ? overlayOnlineUnion(unioned, onlineIds) : unioned;
+  return nodes === list.nodes ? list : { ...list, nodes };
+}
+
 export function applyUplinkNodeList(
   d: NodeListApplyDeps,
   list: UplinkNodeList,
   rejectPeer: NodeListRejectPeerFn
 ): void {
   const { state, identity } = d;
-  const extras = d.extraListedNodes?.() ?? [];
-  state.lastNodeList =
-    extras.length > 0 ? { ...list, nodes: unionListedNodes(list.nodes, extras) } : list;
+  const applied = mergeAppliedNodeList(list, d.extraListedNodes?.() ?? [], d.onlineUnionIds?.());
+  state.lastNodeList = applied;
   if (!state.hubPresenceLive) state.hubGeneration += 1;
   state.hubPresenceLive = true;
   state.lastRtc = mergeListedRtc(
@@ -393,7 +419,7 @@ export function applyUplinkNodeList(
     userStore: d.userStore,
     userId: d.userIdOf(),
     selfNodeId: identity.nodeIdHex,
-    list,
+    list: applied,
     now: d.scheduler.now(),
   });
   reconcileHubStoreFromNodeList(d, list);
@@ -402,8 +428,8 @@ export function applyUplinkNodeList(
     ...listedHubNodeIds(list),
     ...d.hubStore.list().map((row) => row.hubNodeId),
   ]);
-  emitListedNodeEvents(d, list, reach, rejectPeer);
-  const selfListed = list.nodes.find((node) => node.id === identity.nodeIdHex);
+  emitListedNodeEvents(d, applied, reach, rejectPeer);
+  const selfListed = applied.nodes.find((node) => node.id === identity.nodeIdHex);
   if (selfListed?.name) {
     try {
       d.opts.onLocalNodeName?.(selfListed.name);

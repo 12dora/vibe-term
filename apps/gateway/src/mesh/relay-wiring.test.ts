@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import type { UserStore } from '../auth/user-store';
 import { RelayUplinkClient } from './relay-uplink-client';
 import { type RelayWiring, relayUplinkOverrides } from './relay-wiring';
@@ -115,6 +115,31 @@ describe('relayUplinkOverrides dial', () => {
     ac.abort();
     await connecting.catch(() => undefined);
     expect(dialed).toEqual(['ws://127.0.0.1:19993/relay/uplink']);
+  });
+
+  test('secondary keyLogCatchUp 不经 sendCtl 发布新密钥日志', () => {
+    const [ws] = fakeSocketPair();
+    const overrides = relayUplinkOverrides(stubWiring(), { nameProvider: () => 'n' });
+    const secondary = overrides.createClient({
+      ...baseClientOpts(() => ws),
+      keyLogCatchUp: 'prefix-verified',
+    }) as RelayUplinkClient;
+    const append = spyOn(secondary.keyLog, 'appendAndAck');
+    secondary.sendCtl({
+      t: 'key.log.append',
+      bytes: new Uint8Array(8),
+      sig: new Uint8Array(64),
+    });
+    expect(append).not.toHaveBeenCalled();
+
+    const primary = overrides.createClient(baseClientOpts(() => ws)) as RelayUplinkClient;
+    const primaryAppend = spyOn(primary.keyLog, 'appendAndAck');
+    primary.sendCtl({
+      t: 'key.log.append',
+      bytes: new Uint8Array(8),
+      sig: new Uint8Array(64),
+    });
+    expect(primaryAppend).toHaveBeenCalledTimes(1);
   });
 
   test('健康探测使用同一份 dial 快照', async () => {

@@ -79,6 +79,28 @@ describe('buildRelayStatusRow', () => {
     });
   });
 
+  test('secondary 分叉时带可选 keyLog.diverged', () => {
+    const row = buildRelayStatusRow(
+      { url: 'https://b.example', priority: 1, kicked: false },
+      'https://a.example',
+      null,
+      null,
+      [],
+      {
+        connected: true,
+        rttMs: 20,
+        peersOnline: 1,
+        keyLog: { diverged: true },
+      }
+    );
+    expect(row).toMatchObject({
+      attached: false,
+      online: true,
+      role: 'secondary',
+      keyLog: { diverged: true },
+    });
+  });
+
   test('online row 强制清空 lastError / lastErrorCode', () => {
     const row = buildRelayStatusRow(
       { url: 'https://a.example', priority: 0, kicked: false },

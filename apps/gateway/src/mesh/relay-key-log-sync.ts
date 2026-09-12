@@ -1,4 +1,5 @@
 import {
+  bytesEqual,
   computeRecordHash,
   decodeKeyLogRecord,
   encodeBase64url,
@@ -65,18 +66,25 @@ export type RelayKeyLogSyncHost = {
   /** admit/revoke 记录要额外把明文记录交给中继建注册表。 */
   memberFor(record: RelayKeyLogRecord): RelayKeylogMember | undefined;
   onSynced?(): void;
+  /** 诊断日志用；secondary 分叉时写入 `url=`。 */
+  url?(): string;
 };
+
+/** `publish` = 主中继，可无条件补推；`prefix-verified` = secondary，只向已验证前缀补推。 */
+export type RelayKeyLogPushMode = 'publish' | 'prefix-verified';
 
 export type RelayKeyLogSyncOptions = {
   host: RelayKeyLogSyncHost;
   applier: KeyLogApplier;
   scheduler?: MeshScheduler;
   timeoutMs?: number;
+  pushMode?: RelayKeyLogPushMode;
 };
 
 /**
  * 中继侧密钥日志双向同步：本地 head 落后就拉取解密应用，超前就上传缺失记录。
  * 与 hub 版本的区别是中继只有 seq、没有链哈希，因此不做 fork 判定（由本地 applier 兜底）。
+ * secondary 的 `prefix-verified` 模式禁止把本机新记录推到可能已分叉的中继上。
  */
 export class RelayKeyLogSync {
   remoteHead: bigint | null = null;
@@ -86,10 +94,14 @@ export class RelayKeyLogSync {
   blockedSeq: bigint | null = null;
   /** 上一轮追平是否真的追平了（`onSynced` 只在追平时触发）。 */
   caughtUp = false;
+  /** secondary 发现远端日志不是本地前缀；仅本连接有效，重连后清掉。 */
+  diverged = false;
 
   private readonly host: RelayKeyLogSyncHost;
   private readonly applier: KeyLogApplier;
   private readonly timeoutMs: number;
+  private readonly pushMode: RelayKeyLogPushMode;
+  private divergedLogged = false;
   private readonly pendingAcks = new Map<string, (ack: RelayKeyLogAck) => void>();
   private pendingReq: {
     from: bigint;
@@ -102,6 +114,7 @@ export class RelayKeyLogSync {
     this.host = opts.host;
     this.applier = opts.applier;
     this.timeoutMs = opts.timeoutMs ?? RELAY_KEYLOG_ACK_TIMEOUT_MS;
+    this.pushMode = opts.pushMode ?? 'publish';
   }
 
   reset(reason = 'reconnect'): void {
@@ -109,6 +122,8 @@ export class RelayKeyLogSync {
     // 重连后重试一次：卡住的原因可能是密钥还没到（`set-relays` / `meta-key` 迟到）
     this.blockedSeq = null;
     this.caughtUp = false;
+    this.diverged = false;
+    this.divergedLogged = false;
     const req = this.pendingReq;
     this.pendingReq = null;
     req?.reject(new Error(reason));
@@ -287,14 +302,80 @@ export class RelayKeyLogSync {
       local = await this.applier.head(userId);
     }
     if (generation !== this.host.generation()) return;
-    if (local.seq > (this.remoteHead ?? remote)) {
-      await this.pushMissing(generation, userId, this.remoteHead ?? remote);
-      local = await this.applier.head(userId);
-    }
-    if (generation !== this.host.generation()) return;
-    this.caughtUp = local.seq === (this.remoteHead ?? remote);
+    const pushed = await this.maybePushAhead(
+      generation,
+      userId,
+      this.remoteHead ?? remote,
+      local.seq
+    );
+    if (pushed === null || generation !== this.host.generation()) return;
+    this.caughtUp = !this.diverged && pushed === (this.remoteHead ?? remote);
     // 只有真的两边一致才算同步完成：卡住的日志不该让上层以为一切正常
     if (this.caughtUp) this.host.onSynced?.();
+  }
+
+  /** 本地超前才补推；secondary 还要先确认远端是本地前缀。失败返回 null。 */
+  private async maybePushAhead(
+    generation: number,
+    userId: string,
+    remoteNow: bigint,
+    localSeq: bigint
+  ): Promise<bigint | null> {
+    const verify = this.pushMode === 'prefix-verified' && localSeq >= remoteNow;
+    if (verify && !(await this.canPushMissing(generation, userId, remoteNow, localSeq))) {
+      return null;
+    }
+    if (localSeq <= remoteNow) return localSeq;
+    await this.pushMissing(generation, userId, remoteNow);
+    return (await this.applier.head(userId)).seq;
+  }
+
+  /**
+   * secondary 只向「远端是本地前缀」的中继补推：空日志可引导新中继；对不上则记分叉、不 push。
+   * 主中继仍无条件补推（它是本机新记录的发布路径）。
+   */
+  private async canPushMissing(
+    generation: number,
+    userId: string,
+    remote: bigint,
+    localSeq: bigint
+  ): Promise<boolean> {
+    if (this.pushMode !== 'prefix-verified') return true;
+    const prefix = await this.remoteIsLocalPrefix(generation, userId, remote, localSeq);
+    if (prefix === 'prefix') return true;
+    if (prefix === 'diverged') this.noteDiverged(remote, localSeq);
+    this.caughtUp = false;
+    return false;
+  }
+
+  private async remoteIsLocalPrefix(
+    generation: number,
+    userId: string,
+    remote: bigint,
+    localSeq: bigint
+  ): Promise<'prefix' | 'diverged' | 'unknown'> {
+    if (remote > localSeq) return 'unknown';
+    if (remote === 0n) return 'prefix';
+    const remoteRec = await this.readKeyLogAt(remote);
+    if (!remoteRec || generation !== this.host.generation()) return 'unknown';
+    const localRows = (await this.applier.list?.(userId, remote, undefined, 1)) ?? [];
+    const localRec = localRows.find((row) => row.seq === remote);
+    if (!localRec) return 'diverged';
+    return bytesEqual(remoteRec.bytes, localRec.bytes) && bytesEqual(remoteRec.sig, localRec.sig)
+      ? 'prefix'
+      : 'diverged';
+  }
+
+  private noteDiverged(remote: bigint, local: bigint): void {
+    this.diverged = true;
+    if (this.divergedLogged) return;
+    this.divergedLogged = true;
+    const url = this.host.url?.() ?? '';
+    console.warn(
+      stamp(
+        `[mesh][relay] key-log diverged url=${url} remote_head=${String(remote)} local_head=${String(local)}`
+      )
+    );
   }
 
   /**

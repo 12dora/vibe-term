@@ -88,6 +88,8 @@ export type RelayUplinkClientOptions = {
   authTimeoutMs?: number;
   clientVersion?: string;
   dial?: RelayDialContext;
+  /** secondary 只做前缀校验补推，禁止经 sendCtl 发布本机新记录。 */
+  keyLogCatchUp?: 'publish' | 'prefix-verified';
 };
 
 /**
@@ -160,8 +162,10 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
         send: (msg) => this.rawSend(msg),
         logKey: () => this.opts.secrets.logKey(),
         memberFor: (record) => relayMemberFromRecord(record),
+        url: () => this.hubUrl,
       },
       applier: opts.keyLogApplier,
+      pushMode: opts.keyLogCatchUp === 'prefix-verified' ? 'prefix-verified' : 'publish',
     });
   }
 
@@ -320,7 +324,9 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
       return;
     }
     if (msg.t === 'key.log.append') {
-      void this.keyLog.appendAndAck({ bytes: msg.bytes, sig: msg.sig });
+      if (this.opts.keyLogCatchUp !== 'prefix-verified') {
+        void this.keyLog.appendAndAck({ bytes: msg.bytes, sig: msg.sig });
+      }
       return;
     }
     if (msg.t === 'ping' || msg.t === 'pong') {
