@@ -1,6 +1,7 @@
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
+import { DEFAULT_GATEWAY_PORT } from '../../shared/src/net';
 
 export const MIN_BUN_VERSION = '1.3.0';
 export const DEFAULT_SERVICE_NAME = 'vibeterm';
@@ -51,5 +52,5 @@ export function defaultHost(): string {
 }
 
 export function defaultPort(): number {
-  return 9883;
+  return DEFAULT_GATEWAY_PORT;
 }

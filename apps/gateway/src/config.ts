@@ -6,7 +6,7 @@ import {
   rolesFromName,
   validateRoles,
 } from '@vibeterm/shared';
-import { parseStunServersEnv } from '@vibeterm/shared/net';
+import { DEFAULT_PEER_PORT, parsePortRange, parseStunServersEnv } from '@vibeterm/shared/net';
 import type { HubMode } from '@vibeterm/shared/uplink';
 import {
   parseTurnExternalIp,
@@ -117,7 +117,8 @@ export function resolveLiveRoles(env: NodeJS.ProcessEnv = process.env): VibeTerm
 }
 
 export function parsePeerPort(raw: string | undefined): number {
-  const value = (raw ?? '39001').trim() || '39001';
+  const fallback = String(DEFAULT_PEER_PORT);
+  const value = (raw ?? fallback).trim() || fallback;
   if (!/^\d+$/.test(value)) {
     throw new Error('VIBETERM_PEER_PORT must be a decimal integer');
   }
@@ -159,22 +160,12 @@ export { parseTurnBindHost } from './relay/turn/local-address';
 
 export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null {
   if (raw === undefined || raw.trim() === '') return null;
-  const match = /^(\d+)\s*-\s*(\d+)$/.exec(raw.trim());
-  if (!match?.[1] || !match[2]) {
+  const parsed = parsePortRange(raw);
+  if (parsed) return parsed;
+  if (!/^(\d+)\s*-\s*(\d+)$/.test(raw.trim())) {
     throw new Error('VIBETERM_RTC_PORT_RANGE must use begin-end format');
   }
-  const begin = Number(match[1]);
-  const end = Number(match[2]);
-  if (
-    !Number.isInteger(begin) ||
-    !Number.isInteger(end) ||
-    begin < 1 ||
-    end > 65535 ||
-    begin > end
-  ) {
-    throw new Error('VIBETERM_RTC_PORT_RANGE must be an ordered range within 1..65535');
-  }
-  return { begin, end };
+  throw new Error('VIBETERM_RTC_PORT_RANGE must be an ordered range within 1..65535');
 }
 
 export function originUrlFromBindHost(bindHost: string, port: number): string {

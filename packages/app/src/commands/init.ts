@@ -1,16 +1,15 @@
 import { readdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import {
-  DEFAULT_TURN_PORT,
-  DEFAULT_TURN_RELAY_RANGE_TEXT,
-} from '../../../../apps/gateway/src/relay/relay-turn-config';
-import { DEFAULT_TLS_PORT } from '../../../../apps/gateway/src/tls/types';
 import { canonicalHubUrl } from '../../../shared/src/auth';
 import {
+  DEFAULT_PUBLIC_HTTPS_PORT,
+  DEFAULT_TLS_PORT,
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
   isLoopbackHostname,
   parseProbeTarget,
   pickSuggestedPortAvoiding,
-} from '../../../shared/src/net/port-candidates';
+} from '../../../shared/src/net';
 import { normalizeRelayUrl } from '../../../shared/src/relay';
 import {
   DEFAULT_SERVICE_NAME,
@@ -66,6 +65,7 @@ import type { InitConfig, InstallMeta, ParsedArgs } from '../types';
 import { type DirectOnboardingDeps, enableDirectForOnboarding } from './direct';
 
 export type { InitConfig };
+export { DEFAULT_PUBLIC_HTTPS_PORT };
 
 /** `--stun-servers` 显式覆盖才写入 app.env；缺省或空白表示使用发行版内置列表。 */
 export function resolveInitStunServers(flags: ParsedArgs['flags']): string | undefined {
@@ -217,8 +217,6 @@ async function buildUplinkConfig(
     : '';
   return { role, hubUrl, hubPublicUrl, relayPublicUrl, peerPort };
 }
-
-export const DEFAULT_PUBLIC_HTTPS_PORT = 443;
 
 /**
  * 公网 HTTPS 端口。运营商封 443 时改用高位端口；建议值避开本机已占用的端口。
@@ -453,7 +451,10 @@ function printInitSummary(
     );
     console.log('- run "vibeterm relay status" on this machine to manage tenants');
     console.log(
-      `- ${t('init.summary.turnFirewall', { port: DEFAULT_TURN_PORT, range: DEFAULT_TURN_RELAY_RANGE_TEXT })}`
+      `- ${t('init.summary.turnFirewall', {
+        port: DEFAULT_TURN_PORT,
+        range: `${DEFAULT_TURN_RELAY_PORT_RANGE.begin}-${DEFAULT_TURN_RELAY_PORT_RANGE.end}`,
+      })}`
     );
   }
 }

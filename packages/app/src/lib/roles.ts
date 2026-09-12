@@ -10,8 +10,7 @@ import {
 
 export type { VibeTermRoleName, VibeTermRoles };
 export { isStandaloneRoles, roleNameFromFlags, rolesFromName, validateRoles };
-
-export const DEFAULT_PEER_PORT = 39001;
+export { DEFAULT_PEER_PORT } from '../../../shared/src/net';
 
 export function parseVibeTermRoleName(raw: string | undefined): VibeTermRoleName {
   const value = (raw ?? 'standalone').trim();

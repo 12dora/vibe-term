@@ -1,13 +1,14 @@
 import { isIP } from 'node:net';
+import {
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
+  parsePortRange,
+} from '@vibeterm/shared/net';
 import type { RelayRtcConfig } from '@vibeterm/shared/relay';
 
-export const DEFAULT_TURN_PORT = 3478;
-export const DEFAULT_TURN_RELAY_PORT_BEGIN = 49_160;
-export const DEFAULT_TURN_RELAY_PORT_END = 49_259;
-export const DEFAULT_TURN_RELAY_PORT_RANGE: TurnPortRange = {
-  begin: DEFAULT_TURN_RELAY_PORT_BEGIN,
-  end: DEFAULT_TURN_RELAY_PORT_END,
-};
+export { DEFAULT_TURN_PORT, DEFAULT_TURN_RELAY_PORT_RANGE };
+export const DEFAULT_TURN_RELAY_PORT_BEGIN = DEFAULT_TURN_RELAY_PORT_RANGE.begin;
+export const DEFAULT_TURN_RELAY_PORT_END = DEFAULT_TURN_RELAY_PORT_RANGE.end;
 export const DEFAULT_TURN_RELAY_RANGE_TEXT = `${DEFAULT_TURN_RELAY_PORT_BEGIN}-${DEFAULT_TURN_RELAY_PORT_END}`;
 export const TURN_REALM = 'vibeterm';
 export const TURN_BIND_RETRY_MIN_MS = 5_000;
@@ -65,22 +66,12 @@ export function parseTurnPort(raw: string | undefined): number {
 
 export function parseTurnRelayPortRange(raw: string | undefined): TurnPortRange {
   if (raw === undefined || raw.trim() === '') return { ...DEFAULT_TURN_RELAY_PORT_RANGE };
-  const match = /^(\d+)\s*-\s*(\d+)$/.exec(raw.trim());
-  if (!match?.[1] || !match[2]) {
+  const parsed = parsePortRange(raw);
+  if (parsed) return parsed;
+  if (!/^(\d+)\s*-\s*(\d+)$/.test(raw.trim())) {
     throw new Error('VIBETERM_TURN_RELAY_PORT_RANGE must use begin-end format');
   }
-  const begin = Number(match[1]);
-  const end = Number(match[2]);
-  if (
-    !Number.isInteger(begin) ||
-    !Number.isInteger(end) ||
-    begin < 1 ||
-    end > 65_535 ||
-    begin > end
-  ) {
-    throw new Error('VIBETERM_TURN_RELAY_PORT_RANGE must be an ordered range within 1..65535');
-  }
-  return { begin, end };
+  throw new Error('VIBETERM_TURN_RELAY_PORT_RANGE must be an ordered range within 1..65535');
 }
 
 export function parseTurnExternalIp(raw: string | undefined): string | null {

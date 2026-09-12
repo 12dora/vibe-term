@@ -18,6 +18,25 @@ export {
   type ProbeTarget,
 } from './port-candidates';
 export {
+  DEFAULT_GATEWAY_PORT,
+  DEFAULT_PEER_PORT,
+  DEFAULT_PUBLIC_HTTPS_PORT,
+  DEFAULT_RTC_PORT_RANGE,
+  DEFAULT_TLS_PORT,
+  DEFAULT_TURN_PORT,
+  DEFAULT_TURN_RELAY_PORT_RANGE,
+  formatPortList,
+  formatPortSpec,
+  parsePortRange,
+  portPlanForRole,
+  type PortPlanLive,
+  type PortProto,
+  type PortPurpose,
+  type PortRange,
+  type PortRole,
+  type PortSpec,
+} from './port-plan';
+export {
   socketCloseError,
   socketErrorEvent,
   waitSocketOpen,

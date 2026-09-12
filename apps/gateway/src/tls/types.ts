@@ -7,7 +7,7 @@ export const TLS_CONFIG_ROW_ID = 1;
 export const TLS_CONFIG_SCOPE = 'tls_config';
 export const TLS_CONFIG_ENTITY_ID = '1';
 
-export const DEFAULT_TLS_PORT = 9443;
+export { DEFAULT_TLS_PORT } from '@vibeterm/shared/net';
 export const DEFAULT_TLS_BIND_HOST = '0.0.0.0';
 
 export type TlsConfigPublic = {
