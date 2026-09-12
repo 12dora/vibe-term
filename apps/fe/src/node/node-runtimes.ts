@@ -7,7 +7,8 @@
 // - 非 self 的 node 在建连时同时起一个 `DirectCarrierController`（F3-1）：信令走
 //   `/mesh/ws` 的 `RTC_SIGNAL`，诊断挂到 `connection.directDiagnostics` 供设备页徽标读取，
 //   并把 `BulkClient`（F3-2 的文件直传）按 nodeId 登记给文件面板。控制器拿本连接当前 socket
-//   的 client nonce（WS URL 上的 `?cid=`）去换服务端 `connectionId`（F3-5）。
+//   的 client nonce（WS URL 上的 `?cid=`）去换服务端 `connectionId`（F3-5）；HELLO
+//   已捎带 id 时跳过这条 REST。rtc-config 打 entry，不转发。
 //   `self` 是浏览器直接连的 entry，没有第二跳，永远不建直连。
 // - 直连栈（`@vibeterm/ws-client/direct`，约 19 KB gz）**按需加载**：只有真的要给远端 node
 //   升级链路时才 `import()`。加载失败不影响 WS（只记一条日志），下一次建连再试；加载
@@ -70,8 +71,8 @@ function entryNodeIdNow(): string | null {
  * 而每个非 self 的 node 各有一个控制器，所以这里做一层扇出：信令按 `rtcSession` 由
  * 各控制器自行过滤，扇出不会让某个控制器抢答别人的 answer。
  *
- * `send` 如实返回 `sendRtcSignal` 的结果，并透出 `isReady` / `onReady`：`/mesh/ws` 正在
- * 退避重连时控制器不会白开 attempt，信令排队；连上后立刻重置直连退避重试一次。
+ * `send` 如实返回 `sendRtcSignal` 的结果，并透出 `isReady` / `onReady`：`/mesh/ws` 未连上时
+ * 控制器把 offer 排进 outbox，不把 attempt 判失败；连上后泵出信令。
  */
 class MeshRtcSignalHub {
   private readonly handlers = new Set<(signal: DirectSignalMessage) => void>();
@@ -163,6 +164,8 @@ export interface NodeDirectWiring {
   resolveRuntime?: (nodeId: string) => AppRuntime | null;
   /** 直连断开提示的出口（测试注入）；缺省用 runtime 自己的 sink。 */
   notifications?: NotificationSink;
+  /** 页面恢复（visibility / pageshow）；测试注入。 */
+  pageResume?: (listener: () => void) => () => void;
 }
 
 function defaultController(
@@ -179,6 +182,16 @@ function defaultController(
     connection,
     cid,
   });
+}
+
+function onPageshow(listener: () => void): () => void {
+  const g = globalThis as {
+    addEventListener?: (type: string, cb: () => void) => void;
+    removeEventListener?: (type: string, cb: () => void) => void;
+  };
+  if (typeof g.addEventListener !== 'function') return () => undefined;
+  g.addEventListener('pageshow', listener);
+  return () => g.removeEventListener?.('pageshow', listener);
 }
 
 /**
@@ -320,7 +333,13 @@ function attachDirectLink(
             nodeId,
             connection,
             cid,
-            watchDirectNegotiation(nodeId, createNodeApiClient(nodeId), stopDirect, entryNodeIdNow)
+            watchDirectNegotiation(
+              nodeId,
+              createNodeApiClient(nodeId),
+              stopDirect,
+              entryNodeIdNow,
+              createNodeApiClient('self')
+            )
           );
       if (!created) return;
       direct = loaded;
@@ -335,10 +354,28 @@ function attachDirectLink(
 
   const cancelReadyWatch = whenConnectionReady(connection, startDirect);
 
+  const retryDirectIfDown = () => {
+    if (disposed || !controller) return;
+    if (controller.getState() === 'active') return;
+    controller.retryDirect();
+  };
+  const subscribeResume =
+    wiring.pageResume ??
+    ((listener: () => void) => {
+      const offRecovery = onPageRecovery(listener);
+      const offPageshow = onPageshow(listener);
+      return () => {
+        offRecovery();
+        offPageshow();
+      };
+    });
+  const stopPageResume = subscribeResume(retryDirectIfDown);
+
   const baseDispose = connection.dispose.bind(connection);
   connection.dispose = () => {
     disposed = true;
     cancelReadyWatch();
+    stopPageResume();
     connection.setResumeSubscribedPanes(null);
     stopDirect();
     diagnostics.attach(null);

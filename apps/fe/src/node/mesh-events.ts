@@ -12,6 +12,12 @@ import {
   encodeRtcSignal,
 } from './mesh-events-codec';
 import { type RecoverySubscribe, isPageVisible, onPageRecovery } from './mesh-recovery';
+import {
+  MESH_WS_PING_INTERVAL_MS,
+  MESH_WS_PING_TIMEOUT_MS,
+  MeshWsLiveness,
+  isMeshPong,
+} from './mesh-ws-ping';
 
 // 帧编解码与页面侧类型都在 `mesh-events-codec.ts`；这里原样转出去，调用方不必改 import。
 export type {
@@ -24,6 +30,7 @@ export type {
   RtcSignalPayload,
 } from './mesh-events-codec';
 export { KIND_ENROLL_REDEEMED, decodeMeshFrame, encodeRtcSignal } from './mesh-events-codec';
+export { MESH_WS_PING_INTERVAL_MS, MESH_WS_PING_TIMEOUT_MS } from './mesh-ws-ping';
 
 /** 会话在连接期间失效时服务端的关闭码（B2-2b 契约）。 */
 export const WS_UNAUTHORIZED_CLOSE_CODE = 4401;
@@ -81,6 +88,12 @@ export interface MeshEventSourceOptions {
   firstPaint?: (listener: () => void) => () => void;
   /** 回前台时认定这条流已不可信的静默时长（测试注入）。 */
   silenceReconnectMs?: number;
+  /** 前台应用层 ping 间隔；0 关闭（测试注入）。 */
+  pingIntervalMs?: number;
+  /** 已确认对端会回 PONG 后，超时未活动则换线。 */
+  pingTimeoutMs?: number;
+  /** `pageshow`（测试注入）；缺省订 window。iOS 回前台常走这条而不是 visibilitychange。 */
+  pageshow?: RecoverySubscribe;
 }
 
 const DEFAULT_BASE_DELAY_MS = 1000;
@@ -101,10 +114,8 @@ export const MESH_WS_START_DELAY_MS = 3_000;
 /**
  * 回前台时认定「这条 mesh 流已经不可信」的静默时长。
  *
- * `/mesh/ws` 上没有任何应用层心跳——服务端只在节点状态变化 / 信令时发帧，浏览器因此无法
- * 判断一条静默的连接是「没事发生」还是「对端早没了」（P0 审计 §3.3）。iOS 回前台后这两种
- * 情况的代价完全不对称：白换一条连接只花一次握手，而错信一条僵尸流会漏掉所有节点上下线。
- * 所以恢复时只要静默超过这个值就直接换一条。
+ * 后台挂起足够久时 socket 多半已死。前台切网改走应用层 ping（见 `MESH_WS_PING_INTERVAL_MS`）：
+ * 对端回 PONG 后，几秒无活动就换线；老网关不回 PONG 时仍用这条 30 s 静默门槛，避免误杀活连接。
  */
 export const MESH_WS_SILENCE_RECONNECT_MS = 30_000;
 
@@ -151,6 +162,16 @@ function onVisibilityChanged(listener: () => void): () => void {
   return () => doc.removeEventListener('visibilitychange', listener);
 }
 
+function onPageshow(listener: () => void): () => void {
+  const g = globalThis as {
+    addEventListener?: (type: string, cb: () => void) => void;
+    removeEventListener?: (type: string, cb: () => void) => void;
+  };
+  if (typeof g.addEventListener !== 'function') return () => undefined;
+  g.addEventListener('pageshow', listener);
+  return () => g.removeEventListener?.('pageshow', listener);
+}
+
 function closeCodeOf(event: unknown): number | null {
   const code = (event as { code?: unknown } | null | undefined)?.code;
   return typeof code === 'number' ? code : null;
@@ -194,9 +215,12 @@ export class MeshEventSource {
   private readonly startDelayMs: number;
   private readonly firstPaint: (listener: () => void) => () => void;
   private readonly silenceReconnectMs: number;
+  private readonly pageshow: RecoverySubscribe;
   private stopRecovery: (() => void) | null = null;
   private stopFirstPaint: (() => void) | null = null;
   private stopVisibility: (() => void) | null = null;
+  private stopPageshow: (() => void) | null = null;
+  private readonly liveness: MeshWsLiveness;
   private startTimer: unknown = null;
   private lastActivityAt = 0;
   /** 页面转入后台的时刻；一直在前台为 null。 */
@@ -237,6 +261,23 @@ export class MeshEventSource {
     this.startDelayMs = options.startDelayMs ?? MESH_WS_START_DELAY_MS;
     this.firstPaint = options.firstPaint ?? onFirstTerminalPaint;
     this.silenceReconnectMs = options.silenceReconnectMs ?? MESH_WS_SILENCE_RECONNECT_MS;
+    this.pageshow = options.pageshow ?? onPageshow;
+    const pingIntervalMs = options.pingIntervalMs ?? MESH_WS_PING_INTERVAL_MS;
+    const pingTimeoutMs = options.pingTimeoutMs ?? MESH_WS_PING_TIMEOUT_MS;
+    this.liveness = new MeshWsLiveness({
+      intervalMs: pingIntervalMs,
+      timeoutMs: pingTimeoutMs,
+      now: () => this.now(),
+      visible: () => this.visible(),
+      isSilent: () => this.now() - this.lastActivityAt >= pingTimeoutMs,
+      schedule: (fn, ms) => this.schedule(fn, ms),
+      cancel: (handle) => this.cancel(handle),
+      send: (bytes) => {
+        if (!this.socket || !this.connectedFlag) throw new Error('mesh-ws-closed');
+        this.socket.send(bytes);
+      },
+      onZombie: () => this.cycleSocket(),
+    });
   }
 
   get connected(): boolean {
@@ -272,6 +313,7 @@ export class MeshEventSource {
     this.attempt = 0;
     this.unauthorizedFlag = false;
     this.stopRecovery ??= this.recovery(() => this.onRecovery());
+    this.stopPageshow ??= this.pageshow(() => this.onRecovery());
     this.stopVisibility ??= this.visibilityChange(() => this.noteVisibility());
     this.hiddenSince = this.visible() ? null : this.now();
     if (this.startDelayMs <= 0) {
@@ -305,6 +347,7 @@ export class MeshEventSource {
   private noteVisibility(): void {
     if (this.visible()) return;
     this.hiddenSince ??= this.now();
+    this.liveness.pause();
   }
 
   /**
@@ -325,6 +368,8 @@ export class MeshEventSource {
     const hiddenFor = this.hiddenSince === null ? 0 : this.now() - this.hiddenSince;
     this.hiddenSince = null;
     if (this.connectedFlag && this.socket) {
+      this.liveness.arm();
+      this.liveness.sendNow();
       if (hiddenFor < this.silenceReconnectMs) return;
       if (this.now() - this.lastActivityAt < this.silenceReconnectMs) return;
       this.cycleSocket();
@@ -345,6 +390,7 @@ export class MeshEventSource {
 
   /** 摘掉当前 socket 并立刻建一条新的（不经退避、不派发 4401 判定）。 */
   private cycleSocket(): void {
+    this.liveness.stop();
     const socket = this.socket;
     this.socket = null;
     this.setConnected(false);
@@ -367,8 +413,11 @@ export class MeshEventSource {
     this.started = false;
     this.stopRecovery?.();
     this.stopRecovery = null;
+    this.stopPageshow?.();
+    this.stopPageshow = null;
     this.stopVisibility?.();
     this.stopVisibility = null;
+    this.liveness.stop();
     this.hiddenSince = null;
     this.clearStartTimer();
     if (this.timer != null) {
@@ -447,12 +496,14 @@ export class MeshEventSource {
       this.lastActivityAt = this.openedAt;
       this.sawValidFrame = false;
       this.setConnected(true);
+      this.liveness.start();
     };
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
       // 任何一帧（哪怕解不出来）都证明这条流此刻还通，足以刷新静默计时。
       this.lastActivityAt = this.now();
       const bytes = toBytes(event.data);
+      if (bytes && isMeshPong(bytes)) this.liveness.notePong();
       if (!bytes) return;
       const frame = decodeMeshFrame(bytes);
       if (!frame) return;
@@ -475,6 +526,7 @@ export class MeshEventSource {
     socket.onclose = (event) => {
       if (this.socket !== socket) return;
       this.socket = null;
+      this.liveness.stop();
       const wasConnected = this.connectedFlag;
       this.setConnected(false);
       if (closeCodeOf(event) === WS_UNAUTHORIZED_CLOSE_CODE) {

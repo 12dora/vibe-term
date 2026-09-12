@@ -95,6 +95,7 @@ export class SessionRegistry {
     };
     this.byConnection.set(connectionId, stored);
     this.bySession.set(entry.session, connectionId);
+    entry.session.connectionId = connectionId;
     let set = this.connectionsBySid.get(entry.sid);
     if (!set) {
       set = new Set();

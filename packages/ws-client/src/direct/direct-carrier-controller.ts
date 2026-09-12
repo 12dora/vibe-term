@@ -1,5 +1,6 @@
 // 浏览器 ↔ 目标 node 的直连控制器。每次尝试都是全新 generation / rtcSession / PC。
-// 协商在 primary HELLO_S2C（READY）之后才开始；authorize 5xx 走进程内 per-node 熔断。
+// 协商在 primary HELLO_S2C（READY）之后才开始；HELLO 可捎带 connectionId。
+// rtc-config 与 connection 查找并行；authorize 5xx 走进程内 per-node 熔断。
 // attempt 必须在任何 await 之前登记；指纹不一致立即放弃；信令 FIFO。
 
 import { CONNECTION_HEADER, assignHeaderPair } from '@vibeterm/shared/http/mesh-headers';
@@ -30,7 +31,9 @@ import {
   DirectDialBreaker,
   classifyDirectDialFailure,
 } from './direct-dial-breaker';
+import { connectionIdFromCapabilities } from './direct-hello-connection';
 import { buildIceServers } from './direct-ice-servers';
+import { fetchRtcConfig } from './direct-negotiate';
 import { type DtlsFingerprint, fingerprintsEqual, parseSdpFingerprint } from './fingerprint';
 import {
   type DirectRoute,
@@ -46,7 +49,6 @@ import type {
   IceServerLike,
   RTCPeerConnectionLike,
   RtcAuthorizeResponse,
-  RtcConfigResponse,
   RtcPeerConnectionFactory,
 } from './rtc-types';
 import {
@@ -61,7 +63,7 @@ export { buildIceServers } from './direct-ice-servers';
 export type DirectCarrierState = 'idle' | 'connecting' | 'active' | 'failed';
 
 export const SESS_CHANNEL_LABEL = 'sess';
-export const RTC_CONFIG_PATH = '/api/mesh/rtc-config';
+export { RTC_CONFIG_PATH } from './direct-negotiate';
 export const RTC_AUTHORIZE_PATH = '/api/rtc/authorize';
 export const MESH_CONNECTION_PATH = '/api/mesh/connection';
 export { CONNECTION_HEADER };
@@ -91,6 +93,11 @@ const DEFAULT_NETWORK_CHANGE_DEBOUNCE_MS = 800;
 export interface PrimaryStatusLike {
   isReady?(): boolean;
   onStateChange?(handler: (state: string) => void): () => void;
+  /**
+   * 最近一次 HELLO_S2C 的能力集。含 `connection-id:<id>` 时本轮不必再
+   * `GET /api/mesh/connection`；老网关没有该串，走原来的 REST。
+   */
+  readonly serverCapabilities?: readonly string[];
 }
 
 /** 控制器只用到连接的这几个成员，避免与 `GatewayConnection` 循环依赖。 */
@@ -383,11 +390,8 @@ export class DirectCarrierController {
   private connect(): void {
     if (!this.started) return;
     if (this.attempt) return;
-    // 信令没通就别浪费一次 attempt：offer 发不出去，只会走到超时再退避。
-    if (!this.signalingReady()) {
-      this.setState('failed', 'signaling not ready');
-      return;
-    }
+    // 信令没通也开 attempt：REST / ICE 与 `/mesh/ws` 握手重叠，offer 进 outbox，
+    // ready 再泵。这里 fail 会把 3 s 的 mesh 闸门变成一次「直连失败」。
     // HELLO_S2C 之前 connection 还没登记：先等 primary READY，避免 404 空转。
     if (!this.primaryReady()) {
       this.failWaitingPrimary('primary not ready', 'open');
@@ -464,12 +468,15 @@ export class DirectCarrierController {
   }
 
   private async runAttempt(attempt: Attempt): Promise<void> {
-    // 先定位本标签页的 Gateway WS：拿不到就根本不该建 PeerConnection（省一次 ICE 收集）。
-    attempt.connectionId = await this.fetchConnectionId(attempt);
+    // connectionId 与 rtc-config 并行：HELLO 已捎带 id 时跳过转发 GET，
+    // rtc-config 打 entry（宿主把该路径指到不带 `/n/<id>` 的客户端）。
+    const helloId = this.helloConnectionId();
+    const [connectionId, config] = await Promise.all([
+      helloId ? Promise.resolve(helloId) : this.fetchConnectionId(attempt),
+      fetchRtcConfig(this.options.apiClient, attempt.abort.signal),
+    ]);
     if (this.stale(attempt)) return;
-
-    const config = await this.fetchRtcConfig(attempt);
-    if (this.stale(attempt)) return;
+    attempt.connectionId = connectionId;
 
     const factory = this.options.rtcFactory ?? defaultRtcFactory;
     const pc = factory({ iceServers: buildIceServers(config) });
@@ -545,27 +552,22 @@ export class DirectCarrierController {
     };
   }
 
-  private async fetchRtcConfig(attempt: Attempt): Promise<RtcConfigResponse | null> {
-    try {
-      const res = await this.options.apiClient.fetch(RTC_CONFIG_PATH, {
-        signal: attempt.abort.signal,
-      });
-      if (!res.ok) return null;
-      return (await res.json()) as RtcConfigResponse;
-    } catch {
-      // ICE 配置拿不到时仍尝试建连（同内网 host 候选不需要 STUN）
-      return null;
-    }
+  /**
+   * HELLO_S2C 捎带的本条 WS `connectionId`（能力串 `connection-id:`）。
+   * 每次 attempt 现读：primary 重连会换一条 socket，HELLO 也会换一个 id。
+   */
+  private helloConnectionId(): string | null {
+    return connectionIdFromCapabilities(this.options.connection.client?.serverCapabilities);
   }
 
   /**
    * `GET /api/mesh/connection?cid=<nonce>`：取本标签页那条 Gateway WS 在目标 node 上的
-   * `connectionId`。**每次尝试都要重取**——primary 重连会换一条 WS（连带换 nonce），
-   * 缓存下来的旧值会把直连挂到已死的会话上。
+   * `connectionId`。HELLO 已带 id 的网关跳过这条（见 `runAttempt`）。**每次尝试都要重取**
+   * ——primary 重连会换一条 WS（连带换 nonce），缓存下来的旧值会把直连挂到已死的会话上。
    *
    * 浏览器的 `WebSocket` 构造函数不能带自定义请求头，也读不到 upgrade 响应头，
-   * HELLO 帧（Borsh）在 B2-10 里也明确不改，所以身份只能靠握手 URL 上的 `?cid=` nonce
-   * 加这一条 REST 换取。返回的是 node **自己生成**的 id，nonce 绝不能拿去 authorize。
+   * 老网关的 HELLO 也不带 id，所以身份只能靠握手 URL 上的 `?cid=` nonce 加这一条 REST 换取。
+   * 返回的是 node **自己生成**的 id，nonce 绝不能拿去 authorize。
    *
    * 非 2xx 时：`NO_CONNECTION` / `MULTIPLE_CONNECTIONS` 交给 `throwIfPrimaryWait` 转成等待，
    * 5xx 退避重试，其余（老 node 上该路由返回的 405 等）退化成不带 connectionId 的旧行为

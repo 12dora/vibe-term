@@ -160,6 +160,46 @@ describe('watchDirectNegotiation', () => {
     expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
   });
 
+  test('rtc-config 走 entry 客户端、不带 `/n/<id>` 前缀', async () => {
+    const nodeCalls: string[] = [];
+    const entryCalls: string[] = [];
+    const node = {
+      fetch(path: string) {
+        nodeCalls.push(path);
+        return Promise.resolve(new Response('{}', { status: 200 }));
+      },
+    };
+    const entry = {
+      fetch(path: string) {
+        entryCalls.push(path);
+        return Promise.resolve(new Response(JSON.stringify({ stun: [] }), { status: 200 }));
+      },
+    };
+    const client = watchDirectNegotiation(
+      NODE_A,
+      node,
+      () => undefined,
+      () => ENTRY_B,
+      entry
+    );
+    const res = await client.fetch(`/n/${NODE_A}/api/mesh/rtc-config`);
+    expect(await res.json()).toEqual({ stun: [] });
+    expect(entryCalls).toEqual(['/api/mesh/rtc-config']);
+    expect(nodeCalls).toEqual([]);
+  });
+
+  test('rtc-config 被别人代答的 401 不进负缓存（不是协商端点）', async () => {
+    const client = watchDirectNegotiation(
+      NODE_A,
+      clientReturning(() => new Response(JSON.stringify({ nodeId: ENTRY_B }), { status: 401 })),
+      () => undefined,
+      () => ENTRY_B
+    );
+    await client.fetch('/api/mesh/rtc-config');
+    await flush();
+    expect(isDirectLinkUnavailable(NODE_A, ENTRY_B)).toBe(false);
+  });
+
   test('成功的协商照常透传，body 不被消费', async () => {
     const client = watchDirectNegotiation(
       NODE_A,

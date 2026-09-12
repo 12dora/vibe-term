@@ -90,6 +90,8 @@ function fakeConnection(mountedPanes: string[] = [], ready = true): FakeConnecti
 interface FakeController {
   starts: number;
   stops: number;
+  retries: number;
+  carrierState: 'idle' | 'connecting' | 'active' | 'failed';
   diagSnapshot: DirectDiagnostics;
   emitDiag: () => void;
   diagnosticsSource: { get: () => unknown; subscribe: (listener: () => void) => () => void };
@@ -130,7 +132,6 @@ function fakeController(): FakeController & DirectCarrierController {
         };
       },
     },
-    getState: () => 'idle',
     createDataChannel: () => {
       throw new Error('direct carrier not active');
     },
@@ -140,6 +141,12 @@ function fakeController(): FakeController & DirectCarrierController {
     stop() {
       controller.stops += 1;
     },
+    retries: 0,
+    carrierState: 'idle' as FakeController['carrierState'],
+    retryDirect() {
+      controller.retries += 1;
+    },
+    getState: () => controller.carrierState,
   };
   return controller as unknown as FakeController & DirectCarrierController;
 }
@@ -294,6 +301,30 @@ describe('createNodeConnection', () => {
     await directLinkSettled(connection);
     expect(loads).toBe(1);
     expect(controller.starts).toBe(1);
+  });
+
+  test('pageshow / 可见恢复时直连未 active 则 retryDirect；active 不拨', async () => {
+    const down = fakeController();
+    down.carrierState = 'failed';
+    const resume: Array<() => void> = [];
+    const connection = createNodeConnection('node-resume-direct', {
+      createConnection: () => fakeConnection(),
+      loadDirect: async () => fakeDirectModule(),
+      createController: () => down,
+      pageResume: (listener) => {
+        resume.push(listener);
+        return () => undefined;
+      },
+    });
+    await directLinkSettled(connection);
+    expect(down.retries).toBe(0);
+    resume[0]?.();
+    expect(down.retries).toBe(1);
+
+    down.carrierState = 'active';
+    resume[0]?.();
+    expect(down.retries).toBe(1);
+    connection.dispose();
   });
 
   test('等 READY 期间被 dispose：订阅摘掉，之后再 READY 也不起控制器', async () => {

@@ -1587,6 +1587,41 @@ describe('WebSocketServer carrier drain isolation', () => {
   });
 });
 
+describe('HELLO_S2C connectionId capability', () => {
+  test('session.connectionId 写入 HELLO 能力串；未登记时不加', async () => {
+    const helloC2s = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, {
+      clientImpl: 'vibeterm-fe',
+      clientVersion: '1.1.23',
+      maxFrameBytes: wsBorsh.DEFAULT_MAX_FRAME_BYTES,
+      supportsCompression: false,
+      supportsDiffSnapshot: false,
+    });
+
+    const withId = new WebSocketServer();
+    const identified = createBorshTestWs();
+    identified.connectionId = 'conn-tab-hello';
+    withId.handleOpen(identified);
+    await withId.handleBorshMessage(identified, wsBorsh.KIND_HELLO_C2S, 1, helloC2s);
+    const identifiedHello = wsBorsh.decodePayload(
+      wsBorsh.schema.HelloS2CSchema,
+      wsBorsh.decodeEnvelope(identified.sent[0] as Uint8Array).payload
+    );
+    expect(identifiedHello.capabilities).toContain('connection-id:conn-tab-hello');
+    withId.closeSession(identified, 1000, 'test cleanup');
+
+    const withoutId = new WebSocketServer();
+    const anonymous = createBorshTestWs();
+    withoutId.handleOpen(anonymous);
+    await withoutId.handleBorshMessage(anonymous, wsBorsh.KIND_HELLO_C2S, 1, helloC2s);
+    const anonymousHello = wsBorsh.decodePayload(
+      wsBorsh.schema.HelloS2CSchema,
+      wsBorsh.decodeEnvelope(anonymous.sent[0] as Uint8Array).payload
+    );
+    expect(anonymousHello.capabilities.some((cap) => cap.startsWith('connection-id:'))).toBe(false);
+    withoutId.closeSession(anonymous, 1000, 'test cleanup');
+  });
+});
+
 describe('WebSocketServer.attachStreamSession', () => {
   test('creates a GatewaySession with the given carrier as primary and routes HELLO', async () => {
     const server = new WebSocketServer();

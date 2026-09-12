@@ -5,7 +5,7 @@ import type {
   ThemeMode,
   WebhookEvent,
 } from '@vibeterm/shared';
-import { GATEWAY_CAPABILITIES, wsBorsh } from '@vibeterm/shared';
+import { wsBorsh } from '@vibeterm/shared';
 import type { Server, ServerWebSocket } from 'bun';
 import { agentWsHub } from '../agent/ws-hub';
 import type { DeviceTreeOrderRecord } from '../db';
@@ -41,6 +41,7 @@ import {
   recordPingProbe,
 } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
+import { helloS2CCapabilities } from './hello-connection-id';
 import { closeGatewaySession, logWsClientConnected } from './session-close';
 import type { ShareScope } from './share-scope';
 import { ShareSessionIndex } from './share-session-index';
@@ -592,7 +593,7 @@ export class WebSocketServer
       selectedVersion: wsBorsh.CURRENT_VERSION,
       maxFrameBytes: serverMaxFrameBytes,
       heartbeatIntervalMs: 15000,
-      capabilities: [...GATEWAY_CAPABILITIES],
+      capabilities: helloS2CCapabilities(ws.connectionId),
     };
 
     const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, helloS2C);

@@ -302,8 +302,10 @@ export class FakeConnection {
   private primaryState = 'READY';
   /** 是否暴露 `client`（模拟不带 primary 状态源的老宿主）。 */
   exposePrimaryStatus = true;
+  /** 模拟 HELLO_S2C 能力集（含 `connection-id:<id>` 时跳过 GET connection）。 */
+  helloCapabilities: string[] = [];
 
-  /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange`。 */
+  /** 与 `GatewayConnection.client` 同形：控制器只用 `isReady` / `onStateChange` / 能力集。 */
   get client(): PrimaryStatusLike | undefined {
     if (!this.exposePrimaryStatus) return undefined;
     return {
@@ -314,6 +316,7 @@ export class FakeConnection {
           this.primaryHandlers.delete(cb);
         };
       },
+      serverCapabilities: this.helloCapabilities,
     };
   }
 

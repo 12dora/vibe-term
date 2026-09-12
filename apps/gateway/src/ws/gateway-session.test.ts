@@ -34,6 +34,7 @@ describe('GatewaySession', () => {
     const session = new GatewaySession({ primary });
     expect(session.activeCarrier).toBe(primary);
     expect(session.direct).toBeNull();
+    expect(session.connectionId).toBeNull();
     expect(session.closed).toBe(false);
     expect(session.borshState.seqGen()).toBe(1);
     expect(session.borshState.seqGen()).toBe(2);

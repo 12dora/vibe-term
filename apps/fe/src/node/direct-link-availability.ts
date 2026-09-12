@@ -24,6 +24,9 @@ export const DIRECT_LINK_NEGATIVE_TTL_MS = 30 * 60_000;
 /** 直连协商的两条端点（相对目标 node 的路径，不含 `/n/<id>` 前缀）。 */
 const NEGOTIATION_PATHS = new Set(['/api/mesh/connection', '/api/rtc/authorize']);
 
+/** ICE 配置打 **entry** 的 `/api/mesh/rtc-config`，不必转发到目标 node。 */
+export const RTC_CONFIG_RELATIVE_PATH = '/api/mesh/rtc-config';
+
 const unavailableUntil = new Map<string, number>();
 
 function cacheKey(entryNodeId: string, nodeId: string): string {
@@ -102,12 +105,16 @@ export function watchDirectNegotiation(
   nodeId: string,
   client: DirectLinkClientLike,
   onUnavailable: () => void,
-  entryNodeId: () => string | null
+  entryNodeId: () => string | null,
+  entryClient?: DirectLinkClientLike
 ): DirectLinkClientLike {
   return {
     fetch(path, init) {
-      return client.fetch(path, init).then((res) => {
-        if (res.status !== 401 || !NEGOTIATION_PATHS.has(nodeRelativePath(path))) return res;
+      const relative = nodeRelativePath(path);
+      const target = relative === RTC_CONFIG_RELATIVE_PATH && entryClient ? entryClient : client;
+      const routed = relative === RTC_CONFIG_RELATIVE_PATH ? RTC_CONFIG_RELATIVE_PATH : path;
+      return target.fetch(routed, init).then((res) => {
+        if (res.status !== 401 || !NEGOTIATION_PATHS.has(relative)) return res;
         void answeredByForeignNode(res, nodeId).then((foreign) => {
           if (!foreign) return;
           markDirectLinkUnavailable(nodeId, entryNodeId());

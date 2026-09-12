@@ -11,6 +11,11 @@ const DIRECT_REPLACED_CLOSE_REASON = 'direct carrier replaced';
 
 export class GatewaySession {
   readonly id: string;
+  /**
+   * 本条 Gateway WS 在 SessionRegistry 里的服务端 id。登记后写回；HELLO_S2C
+   * 用它生成 `connection-id:` 能力串。未登记时为 null（老路径走 GET connection）。
+   */
+  connectionId: string | null = null;
   borshState: BorshSessionState;
   readonly state: SessionState;
   readonly primary: Carrier;

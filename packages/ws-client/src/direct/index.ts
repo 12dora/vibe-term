@@ -15,6 +15,14 @@ export {
   type GatewayConnectionLike,
 } from './direct-carrier-controller';
 
+export { RTC_CONFIG_PATH } from './direct-negotiate';
+
+export {
+  CONNECTION_ID_CAPABILITY_PREFIX,
+  connectionIdFromCapabilities,
+  formatConnectionIdCapability,
+} from './direct-hello-connection';
+
 export {
   AUTHORIZE_BREAKER_BASE_MS,
   AUTHORIZE_BREAKER_MAX_MS,
