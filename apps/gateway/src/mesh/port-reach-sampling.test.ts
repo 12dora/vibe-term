@@ -129,3 +129,15 @@ describe('TCP path RTT sampling', () => {
     expect(memory.samplesOf(PEER)).toHaveLength(3);
   });
 });
+
+import { aggregateProbeVerdicts } from './port-reach';
+
+describe('aggregateProbeVerdicts', () => {
+  test('any ok wins, all refused stays refused, mixed failures resolve to timeout regardless of order', () => {
+    expect(aggregateProbeVerdicts(['timeout', 'ok', 'refused'])).toBe('ok');
+    expect(aggregateProbeVerdicts(['refused', 'refused', 'refused'])).toBe('refused');
+    expect(aggregateProbeVerdicts(['refused', 'timeout', 'timeout'])).toBe('timeout');
+    expect(aggregateProbeVerdicts(['timeout', 'timeout', 'refused'])).toBe('timeout');
+    expect(aggregateProbeVerdicts([])).toBe('timeout');
+  });
+});

@@ -28,6 +28,14 @@ import { stunProbeSnapshot } from './rtc/stun-probe';
 export const PORT_PROBE_CADENCE_MS = 5 * 60 * 1_000;
 export const PORT_PROBE_TICK_MS = 30_000;
 export const PORT_PROBE_CONNECTS = 3;
+
+/** 三口并发的裁决合并：任一成功即 ok；全失败时只有全部 refused 才算 refused，否则按 timeout（被过滤）处理。 */
+export function aggregateProbeVerdicts(verdicts: readonly TcpProbeVerdict[]): TcpProbeVerdict {
+  if (verdicts.some((verdict) => verdict === 'ok')) return 'ok';
+  return verdicts.length > 0 && verdicts.every((verdict) => verdict === 'refused')
+    ? 'refused'
+    : 'timeout';
+}
 export const DC_HISTORY_MS = 24 * 60 * 60 * 1_000;
 export const PEER_REPORT_TTL_MS = 30 * 60 * 1_000;
 export const GATHER_BLOCKED_WINDOW = 3;
@@ -252,7 +260,7 @@ export async function probePeerEndpoints(
       opts?.pathRttMemory?.record(nodeId, { kind: 'tcp-connect', rttMs: result.connectMs });
     }
   }
-  const verdict = results.some((result) => result.verdict === 'ok') ? 'ok' : results[0].verdict;
+  const verdict = aggregateProbeVerdicts(results.map((result) => result.verdict));
   const next = applyProbeVerdict(prev, verdict, at);
   state.probes.set(nodeId, next);
   return next;
