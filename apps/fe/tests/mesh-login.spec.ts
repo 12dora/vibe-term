@@ -49,8 +49,8 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   await expect(page.getByTestId(`sidebar-node-header-${state.remoteNodeId}`)).toHaveCount(0);
 
   // 侧边栏渲染的成员集就是 entry 的 /api/mesh/nodes：两台、远端在线。
-  // `loggedIn` 看的是浏览器有没有该 node 的会话 cookie；登录页只登录 entry 自身
-  // （`loginSelf` 明确不做 fan-out），所以这时远端仍是未登录。
+  // 登录页只登录 entry 自身（`loginSelf` 不做 fan-out）；远端的 `loggedIn` 取决于设备页
+  // 静默登录（会话钥在手时自动登）是否已经跑完，与时序相关，这里不断言它。
   const nodes = await page.evaluate(() =>
     fetch('/api/mesh/nodes', { credentials: 'include' })
       .then((res) => res.json())
@@ -59,7 +59,6 @@ test('mesh: other nodes join the sidebar only after one of their devices is enab
   expect(nodes.map((node) => node.id).sort()).toEqual([state.hubNodeId, state.remoteNodeId].sort());
   const remote = nodes.find((node) => node.id === state.remoteNodeId);
   expect(remote?.online).toBe(true);
-  expect(remote?.loggedIn).toBe(false);
 
   // 「管理设备」里登录远端 node：登录成功后它在设备页可管理，但侧边栏仍然不列出——
   // 一台设备都没打开侧边栏显示。
