@@ -14,7 +14,8 @@ import { logLine } from './mesh-log';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
-import { decodeSdpSignal } from './rtc/ice';
+import { RTC_SIGNAL_INBOX_TTL_MS, type RtcSignalInboxEntry } from './peer-rtc-wake';
+import { decodeCandidateSignal, decodeSdpSignal } from './rtc/ice';
 import { rtcLog } from './rtc/rtc-log';
 
 export type DcRerollRecord = {
@@ -130,6 +131,11 @@ export class DcRerollCoordinator {
     return true;
   }
 
+  /** `receiveRtcSignal` 用：offer 与提前到达的 ICE 候选都在这里接管。 */
+  interceptRtc(nodeId: string, msg: RtcSignalMessage): boolean {
+    return this.interceptOffer(nodeId, msg) || this.interceptCandidate(nodeId, msg);
+  }
+
   /**
    * 应答侧入口：已是 dc 时常规路径不会再建 PC（`wantsUpgrade` 为 false、`aboveDc` 不成立），
    * 重掷 offer 因此必须在这里单独接住——入队后直接起应答拨号。只接对端在 `link.hello` 里
@@ -145,13 +151,30 @@ export class DcRerollCoordinator {
     const now = this.state.scheduler.now();
     const rec = this.recordOf(nodeId, now);
     if (rec.count >= DC_REROLL_MAX_PER_HOUR) return false;
-    const inbox = this.state.rtcInbox.get(nodeId) ?? [];
-    if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return false;
+    if (!this.enqueueInbox(nodeId, msg)) return false;
     rec.count += 1;
     rec.lastAt = now;
-    inbox.push({ message: msg, receivedAt: now });
-    this.state.rtcInbox.set(nodeId, inbox);
     void this.deps.dialReroll(nodeId, { answer: true, transport: 'dc' }).catch(() => undefined);
+    return true;
+  }
+
+  /**
+   * 新 epoch 的 ICE 候选可能先于 offer 到达。旧 live 监听会把它丢掉但 `delivered`
+   * 仍为 true，这里另写入 inbox，留给随后 interceptOffer 起的应答 attempt drain。
+   * live.rtcEpoch 缺省时：候选带 epoch，且 inbox 里还没有该 epoch 的 offer。
+   */
+  interceptCandidate(nodeId: string, msg: RtcSignalMessage): boolean {
+    if (!dcRerollEnabled() || !msg.candidate || msg.sdp) return false;
+    const live = this.state.live.get(nodeId);
+    if (!live || live.transport !== 'dc' || live.rerollCapable !== true) return false;
+    if (this.deps.hasDcInflight(nodeId)) return false;
+    const decoded = decodeCandidateSignal(msg.candidate);
+    if (!decoded || decoded.epoch === undefined) return false;
+    const inbox = this.prunedInbox(nodeId);
+    if (!this.candidateEpochEligible(live, decoded.epoch, inbox)) return false;
+    if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return false;
+    inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
+    this.state.rtcInbox.set(nodeId, inbox);
     return true;
   }
 
@@ -285,6 +308,31 @@ export class DcRerollCoordinator {
       this.state.upgrading.has(live.peerNodeId) ||
       this.deps.breakerAllows(live.peerNodeId)
     );
+  }
+
+  private candidateEpochEligible(
+    live: LivePeer,
+    epoch: number,
+    inbox: RtcSignalInboxEntry[]
+  ): boolean {
+    if (live.rtcEpoch !== undefined) return epoch > live.rtcEpoch;
+    return !inbox.some((entry) => decodeSdpSignal(entry.message.sdp ?? '')?.epoch === epoch);
+  }
+
+  private prunedInbox(nodeId: string): RtcSignalInboxEntry[] {
+    const cutoff = this.state.scheduler.now() - RTC_SIGNAL_INBOX_TTL_MS;
+    const inbox = (this.state.rtcInbox.get(nodeId) ?? []).filter((row) => row.receivedAt >= cutoff);
+    if (inbox.length === 0) this.state.rtcInbox.delete(nodeId);
+    else this.state.rtcInbox.set(nodeId, inbox);
+    return inbox;
+  }
+
+  private enqueueInbox(nodeId: string, msg: RtcSignalMessage): boolean {
+    const inbox = this.prunedInbox(nodeId);
+    if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return false;
+    inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
+    this.state.rtcInbox.set(nodeId, inbox);
+    return true;
   }
 
   private canForce(live: LivePeer | undefined): live is LivePeer {

@@ -32,7 +32,8 @@ export type PeerLinkDrainDeps = {
     gen: number,
     quiesceCapable?: boolean,
     remoteAddress?: string | null,
-    dcAttemptId?: string | null
+    dcAttemptId?: string | null,
+    rtcEpoch?: number
   ) => LinkSession | null;
 };
 

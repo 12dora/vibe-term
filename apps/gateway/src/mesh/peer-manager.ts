@@ -442,7 +442,7 @@ export class PeerManager extends PeerCollaboratorHost {
     }
     // 先投给现有监听者：旧 attempt 的残留监听会把更高 epoch 的 offer 判成 superseded 并自行退订。
     const delivered = deliverRtcSignal(this.rtcListeners.get(fromNodeId), msg);
-    if (this.reroll.interceptOffer(fromNodeId, msg)) return;
+    if (this.reroll.interceptRtc(fromNodeId, msg)) return;
     if (delivered) return;
     const pending = this.state.pending.has(fromNodeId);
     const upgrading = this.state.upgrading.has(fromNodeId);

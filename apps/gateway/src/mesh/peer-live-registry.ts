@@ -138,7 +138,8 @@ export class PeerLiveRegistry {
     gen: number,
     quiesceCapable = false,
     remoteAddress: string | null = null,
-    dcAttemptId: string | null = null
+    dcAttemptId: string | null = null,
+    rtcEpoch?: number
   ): LinkSession | null {
     const reject = (reason: string, keep: LinkSession | null = null) => {
       quiet(() => session.close(reason));
@@ -173,7 +174,8 @@ export class PeerLiveRegistry {
       gen,
       quiesceCapable,
       resolvedAddress,
-      dcAttemptId
+      dcAttemptId,
+      rtcEpoch
     );
   }
 
@@ -185,7 +187,8 @@ export class PeerLiveRegistry {
     gen: number,
     quiesceCapable: boolean,
     remoteAddress: string | null,
-    dcAttemptId: string | null = null
+    dcAttemptId: string | null = null,
+    rtcEpoch?: number
   ): LinkSession {
     const keys = this.state.sessionKeys.get(session);
     const live: LivePeer = {
@@ -224,6 +227,7 @@ export class PeerLiveRegistry {
       linkSinceAt: this.state.scheduler.now(),
       dcAttemptId: transport === 'dc' ? (dcAttemptId ?? this.deps.nextDcAttemptId()) : null,
       rttSamples: 0,
+      ...(transport === 'dc' && rtcEpoch !== undefined ? { rtcEpoch } : {}),
     };
     this.state.live.set(peerNodeId, live);
     if (transport === 'dc') {

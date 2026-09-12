@@ -66,7 +66,8 @@ export type PeerDialerDeps = {
     gen: number,
     quiesceCapable?: boolean,
     remoteAddress?: string | null,
-    dcAttemptId?: string | null
+    dcAttemptId?: string | null,
+    rtcEpoch?: number
   ) => LinkSession | null;
   requireTrusted: (nodeId: string) => void;
   getLink: (nodeId: string) => Promise<LinkSession>;
@@ -322,7 +323,8 @@ export class PeerDialer {
         gen,
         false,
         remoteAddress,
-        attemptId
+        attemptId,
+        result.epoch
       );
       if (kept === session) {
         const live = this.state.live.get(result.peerNodeId);

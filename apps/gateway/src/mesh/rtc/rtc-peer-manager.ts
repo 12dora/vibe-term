@@ -100,6 +100,8 @@ export type DcPeerConnectResult = {
   pc: PeerConnectionLike;
   peerNodeId: string;
   role: 'initiator' | 'acceptor';
+  /** 本轮 attempt 的 ICE epoch；应答侧在 offer 落地前可能仍缺省。 */
+  epoch?: number;
 };
 
 export type AuthorizeBrowserInput = RtcAuthorizeBrowserInput;

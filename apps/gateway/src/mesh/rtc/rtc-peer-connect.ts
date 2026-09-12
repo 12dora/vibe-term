@@ -213,6 +213,7 @@ export async function runPeerConnectAttempt(opts: {
   pc: PeerConnectionLike;
   peerNodeId: string;
   role: 'initiator' | 'acceptor';
+  epoch?: number;
 }> {
   const { pc, peerNodeId, offerer, deadline, ctx, ice, hooks } = opts;
   const trace = createIceCandidateTrace();
@@ -275,7 +276,7 @@ export async function runPeerConnectAttempt(opts: {
       unsubDiag();
       hooks.untrackAndClose(pc);
     });
-    return result;
+    return { ...result, epoch: ctx.epoch ?? opts.epoch };
   } catch (err) {
     if (!summaryNoted && !isSupersededDcLoss(err)) {
       hooks.noteSummary('failure', performance.now() - opts.dialStartedAt);

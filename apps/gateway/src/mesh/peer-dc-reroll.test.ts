@@ -9,9 +9,14 @@ import {
 import type { RtcSignalMessage } from './mesh-deps';
 import { DcRerollCoordinator, resetDcRerollEnvLogForTest } from './peer-dc-reroll';
 import { PeerEndpointBackoff } from './peer-endpoint-backoff';
-import { type PeerManagerState, createPeerManagerState } from './peer-manager-state';
+import {
+  type PeerManagerState,
+  RTC_PEER_INBOX_MAX_MESSAGES,
+  createPeerManagerState,
+} from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
-import { encodeSdpSignal } from './rtc/ice';
+import { RTC_SIGNAL_INBOX_TTL_MS } from './peer-rtc-wake';
+import { encodeCandidateSignal, encodeSdpSignal } from './rtc/ice';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity, PeerTransportKind } from './types';
 
@@ -448,5 +453,100 @@ describe('DcRerollCoordinator 应答侧', () => {
     }
     expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
     expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR);
+  });
+});
+
+function iceCandidate(epoch?: number): RtcSignalMessage {
+  return {
+    rtcSession: 'dc',
+    from: 'node',
+    to: 'ff'.repeat(16),
+    sdp: null,
+    candidate: encodeCandidateSignal('candidate:1 1 UDP 1 10.0.0.1 9 typ host', '0', epoch),
+  };
+}
+
+describe('DcRerollCoordinator interceptCandidate', () => {
+  afterEach(() => {
+    process.env.VIBETERM_DC_REROLL = undefined;
+    resetDcRerollEnvLogForTest();
+  });
+
+  function answerer(rtcEpoch?: number) {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    const live = makeLive(h.state, {
+      peerNodeId: peerId,
+      ...(rtcEpoch === undefined ? {} : { rtcEpoch }),
+    });
+    return { h, peerId, live };
+  }
+
+  test('epoch 低于或等于 live.rtcEpoch 不入队', () => {
+    const { h, peerId } = answerer(5);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(4))).toBe(false);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(5))).toBe(false);
+    expect(h.state.rtcInbox.get(peerId)).toBeUndefined();
+  });
+
+  test('epoch 高于 live.rtcEpoch 写入 inbox，不起拨号', () => {
+    const { h, peerId } = answerer(5);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(true);
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(1);
+    expect(h.dials).toHaveLength(0);
+  });
+
+  test('live.rtcEpoch 缺省时，未见该 epoch 的 offer 则入队', () => {
+    const { h, peerId } = answerer();
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(9))).toBe(true);
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(1);
+  });
+
+  test('live.rtcEpoch 缺省且 inbox 已有该 epoch 的 offer 则不再堆候选', () => {
+    const { h, peerId } = answerer();
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(4_096))).toBe(false);
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(1);
+  });
+
+  test('已有应答 attempt 在途、无 epoch、非 dc、未报 reroll、开关关闭都不接管', () => {
+    const { h, peerId, live } = answerer(5);
+    h.inflight.add(peerId);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(false);
+    h.inflight.delete(peerId);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate())).toBe(false);
+    live.transport = 'ws-secure';
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(false);
+    live.transport = 'dc';
+    live.rerollCapable = false;
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(false);
+    live.rerollCapable = true;
+    process.env.VIBETERM_DC_REROLL = 'off';
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(6))).toBe(false);
+    expect(h.state.rtcInbox.get(peerId)).toBeUndefined();
+  });
+
+  test('inbox 满员后不再追加', () => {
+    const { h, peerId } = answerer(5);
+    h.state.rtcInbox.set(
+      peerId,
+      Array.from({ length: RTC_PEER_INBOX_MAX_MESSAGES }, () => ({
+        message: iceCandidate(6),
+        receivedAt: h.scheduler.now(),
+      }))
+    );
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(7))).toBe(false);
+    expect(h.state.rtcInbox.get(peerId)).toHaveLength(RTC_PEER_INBOX_MAX_MESSAGES);
+  });
+
+  test('触碰 inbox 时丢掉超过 30s 的旧条目', () => {
+    const { h, peerId } = answerer(5);
+    h.state.rtcInbox.set(peerId, [
+      { message: iceCandidate(6), receivedAt: h.scheduler.now() - RTC_SIGNAL_INBOX_TTL_MS - 1 },
+    ]);
+    expect(h.coordinator.interceptCandidate(peerId, iceCandidate(7))).toBe(true);
+    const inbox = h.state.rtcInbox.get(peerId) ?? [];
+    expect(inbox).toHaveLength(1);
+    expect(inbox[0]?.message.candidate).toBe(iceCandidate(7).candidate);
   });
 });

@@ -5,7 +5,9 @@ import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { DC_REROLL_MAX_PER_HOUR } from './dc-reroll-policy';
 import { PeerManager } from './peer-manager';
+import type { LivePeer } from './peer-reconnect-wake';
 import { dummyUplink } from './peer-test-fixtures';
+import { decodeSdpSignal } from './rtc/ice';
 import { seedNodeIdentity, seedUser, waitUntil } from './test-support';
 import type { PeerTransportKind } from './types';
 
@@ -86,7 +88,39 @@ async function setupRerollPair(fixtures: Fixture[]) {
   };
   const uplinkSmall = dummyUplink(small, store);
   uplinkSmall.state = 'online';
-  uplinkSmall.sendCtl = (msg) => forward(holderLarge, small.nodeId, msg as never);
+  const holdOffers: Array<{
+    t: string;
+    rtcSession?: string;
+    from?: string;
+    to?: string;
+    sdp?: string;
+    candidate?: string;
+  }> = [];
+  const reorder = { offerAfterCandidate: false };
+  uplinkSmall.sendCtl = (msg) => {
+    const payload = msg as {
+      t: string;
+      rtcSession?: string;
+      from?: string;
+      to?: string;
+      sdp?: string;
+      candidate?: string;
+    };
+    if (
+      reorder.offerAfterCandidate &&
+      payload.t === 'rtc.signal' &&
+      payload.sdp &&
+      decodeSdpSignal(payload.sdp)?.type === 'offer'
+    ) {
+      holdOffers.push(payload);
+      return;
+    }
+    forward(holderLarge, small.nodeId, payload);
+    if (reorder.offerAfterCandidate && payload.t === 'rtc.signal' && payload.candidate) {
+      const held = holdOffers.shift();
+      if (held) forward(holderLarge, small.nodeId, held);
+    }
+  };
   const uplinkLarge = dummyUplink(large, store);
   uplinkLarge.state = 'online';
   uplinkLarge.sendCtl = (msg) => forward(holderSmall, large.nodeId, msg as never);
@@ -127,7 +161,12 @@ async function setupRerollPair(fixtures: Fixture[]) {
     transportsLarge,
     httpStreamsOf: () => httpStreams,
     connections: fake.connections,
+    reorder,
   };
+}
+
+function livePeerOf(manager: PeerManager, nodeId: string): LivePeer | undefined {
+  return (manager as unknown as { state: { live: Map<string, LivePeer> } }).state.live.get(nodeId);
 }
 
 async function establishDc(
@@ -219,6 +258,26 @@ describe('DC 重掷（make-before-break）', () => {
     const pair = await setupRerollPair(fixtures);
     await establishDc(pair);
     expect(pair.managerLarge.rerollDc(pair.small.nodeId)).toBe(false);
+  }, 20_000);
+
+  test('live DC 记下 ICE epoch；候选先于 offer 到达时重掷仍能建起新 DC', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+    const oldEpochSmall = livePeerOf(pair.managerSmall, pair.large.nodeId)?.rtcEpoch;
+    const oldEpochLarge = livePeerOf(pair.managerLarge, pair.small.nodeId)?.rtcEpoch;
+    expect(oldEpochSmall).toEqual(expect.any(Number));
+    expect(oldEpochLarge).toBe(oldEpochSmall);
+
+    pair.reorder.offerAfterCandidate = true;
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
+    await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
+    expect(pair.managerSmall.transportOf(pair.large.nodeId)).toBe('dc');
+    expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('dc');
+    const nextEpoch = livePeerOf(pair.managerLarge, pair.small.nodeId)?.rtcEpoch;
+    expect(nextEpoch).toBeGreaterThan(oldEpochLarge as number);
   }, 20_000);
 });
 

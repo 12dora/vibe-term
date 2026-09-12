@@ -42,6 +42,8 @@ export type LivePeer = {
   rttSamples: number;
   /** 对端在 link.hello 里报过 reroll 能力。 */
   rerollCapable?: boolean;
+  /** 产出本条 DC 的 ICE epoch；ws-secure / relay 或旧路径未带回时缺省。 */
+  rtcEpoch?: number;
 };
 
 const DRAIN_DROP_REASONS = new Set(['missed-pong', 'idle']);
