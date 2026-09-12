@@ -17,6 +17,7 @@ import {
   resolveMeshUserId,
 } from '../hub/hub-authorization';
 import type { PublicAuthNode } from './auth-routes';
+import { dispatchMeshSocketMessage } from './mesh-socket-message';
 import {
   type CachedRtcConfig,
   type ConnectionLookup,
@@ -36,7 +37,9 @@ import {
   getMeshRequestContext,
 } from './mesh-deps';
 import { serializeHubCandidate } from './mesh-hub-candidates';
-import { encodeNodeEventFrame } from './node-event-wire';
+import { matchMeshPauseRoute } from './mesh-pause-routes';
+import { matchMeshPortsRoute, overlayMeshList } from './mesh-ports-routes';
+import { type NodeEventWireInput, encodeNodeEventFrame } from './node-event-wire';
 import {
   type MeshNodeDto,
   type MeshNodeLinkDetail,
@@ -50,6 +53,7 @@ import {
   readNodeOperation,
   sweepStaleNodeOperations,
 } from './node-operations';
+import { pausedNodeIds } from './node-pause';
 import {
   type AuthenticateOk,
   type SessionMiddlewareDeps,
@@ -160,11 +164,9 @@ export class MeshRoutes {
   }
 
   publicNodes(): PublicAuthNode[] {
-    return this.collectNodes(null).map((n) => ({
-      id: n.id,
-      name: n.name,
-      online: n.online,
-    }));
+    return this.collectNodes(null)
+      .filter((n) => n.paused !== true)
+      .map((n) => ({ id: n.id, name: n.name, online: n.online }));
   }
 
   handleMeshSocketOpen(ws: MeshServerWebSocket): void {
@@ -175,27 +177,17 @@ export class MeshRoutes {
   }
 
   handleMeshSocketMessage(ws: MeshServerWebSocket, message: unknown): void {
-    if (!this.deps.rtcSignals) return;
     const bytes = toBytes(message);
     if (!bytes) return;
-    try {
-      const env = wsBorsh.decodeEnvelope(bytes);
-      if (env.kind !== wsBorsh.KIND_RTC_SIGNAL) return;
-      const payload = wsBorsh.decodePayload(wsBorsh.schema.RtcSignalSchema, env.payload);
-      if (payload.from === wsBorsh.RTC_SIGNAL_FROM_NODE) return;
-      const uid = ws.data.uid;
-      const sid = ws.data.sid;
-      this.deps.rtcSignals.send(
-        {
-          rtcSession: payload.rtcSession,
-          from: 'browser',
-          to: payload.to,
-          sdp: payload.sdp,
-          candidate: payload.candidate,
-        },
-        uid && sid ? { uid, sid } : undefined
-      );
-    } catch {}
+    dispatchMeshSocketMessage(
+      {
+        rtcSignals: this.deps.rtcSignals,
+        send: (target, frame) => this.sendToMeshClient(target, frame),
+        nextSeq: () => ++this.seq,
+      },
+      ws,
+      bytes
+    );
   }
 
   handleMeshSocketClose(ws: MeshServerWebSocket): void {
@@ -322,6 +314,15 @@ export class MeshRoutes {
   }
 
   private matchNodeOperationRoute(req: Request, path: string): Promise<Response> | undefined {
+    const host = {
+      sessionDeps: this.sessionDeps,
+      selfNodeId: this.deps.nodeId,
+      userStore: this.deps.userStore,
+      collectNodes: (r: Request) => this.collectNodes(r),
+      broadcastNodeEvent: (event: NodeEventWireInput) => this.broadcastNodeEvent(event),
+    };
+    const extra = matchMeshPauseRoute(req, path, host) ?? matchMeshPortsRoute(req, path, host);
+    if (extra) return extra;
     const match = path.match(/^\/api\/mesh\/nodes\/([^/]+)\/operation$/);
     if (!match) return undefined;
     const nodeId = decodeURIComponent(match[1] ?? '');
@@ -413,7 +414,7 @@ export class MeshRoutes {
       ? this.deps.nodeId
       : (pickWriterHub(usableHubs) ?? this.deps.userStore.getHubMeta()?.nodeId ?? null);
     if (hubNodeId) hubIds.add(hubNodeId);
-    return [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
+    const nodes = [...new Set([this.deps.nodeId, ...certs.map((c) => c.nodeId)])]
       .map((id) =>
         projectMeshListNode(
           id,
@@ -440,6 +441,7 @@ export class MeshRoutes {
         )
       )
       .filter((n) => n != null);
+    return overlayMeshList(nodes, this.deps.nodeId, pausedNodeIds());
   }
 
   private handleRtcConfig(): Response {
@@ -537,6 +539,7 @@ export class MeshRoutes {
     name?: string;
     viaRelay?: string | null;
     relayPresence?: string[] | null;
+    paused?: boolean;
   }): void {
     this.broadcast(encodeNodeEventFrame(event, ++this.seq, this.deps.peers));
   }
@@ -616,7 +619,6 @@ function rtcAuthFields(body: Record<string, unknown> | null, req: Request) {
       null,
   };
 }
-
 function toBytes(message: unknown): Uint8Array | null {
   if (message instanceof Uint8Array) return message;
   if (message instanceof ArrayBuffer) return new Uint8Array(message);

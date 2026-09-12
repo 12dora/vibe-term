@@ -59,6 +59,7 @@ import {
   type MeshServerWebSocket,
   type MeshUpgradeServer,
   type NodeEventPayload,
+  type PeerLinkGetOpts,
   type RtcFingerprintProvider,
   type RtcSignalMessage,
   type StreamOpener,
@@ -96,6 +97,7 @@ import { buildMeshNotificationBridge } from './notification-bridge-wiring';
 import { setMeshNotificationBridge } from './notification-mesh-bridge';
 import { listNotificationSinkNodeIds } from './notification-sink-records';
 import { type PeerLinkFactory, PeerManager } from './peer-manager';
+import { bootPortReach, notePeerTransport, peerReachPayload } from './port-reach';
 import { installRelayMultiAttach, primaryNodeListApplyPatch } from './relay-multi-attach';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { RelayUplinkClient } from './relay-uplink-client';
@@ -806,6 +808,8 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
   const ifaceCache = createTtlCache(stores.interfacesFn, STATUS_IFACE_CACHE_TTL_MS);
   const statusProvider = () => {
     const version = getDisplayVersion();
+    const ids = stores.userStore.listPeers().map((row) => row.nodeId);
+    const peerReach = peerReachPayload(stores.identity.nodeIdHex, ids);
     return {
       version,
       tmux: true,
@@ -816,6 +820,7 @@ async function constructMeshDeps(opts: CreateMeshRuntimeOptions) {
         ifaceCache.get()
       ),
       hub: hubRoleAdvertisement(stores.config, stores.state.caFingerprint, stores.hub),
+      ...(Object.keys(peerReach).length > 0 ? { peer_reach: peerReach } : {}),
     };
   };
   const refreshLocalInterfaces = () => ifaceCache.refresh();
@@ -1017,6 +1022,7 @@ function createPeerWiring(d: MeshDeps, uplink: UplinkPool, ensureDc: EnsureDcFn)
     },
     ensureDcSession: ensureDc,
     onLinkInfo: (info) => {
+      notePeerTransport(info.nodeId, info.transport);
       const listed = state.lastNodeList?.nodes.find((node) => node.id === info.nodeId);
       const peer = userStore.listPeers().find((row) => row.nodeId === info.nodeId);
       const hubOnline = listed?.online === true;
@@ -1254,7 +1260,7 @@ function wireMeshHttp(
   const { config, identity, userStore, state } = d;
   const { uplink, peerManager, fingerprint, signals } = w;
   const peers = {
-    getLink: (nodeId: string) => peerManager.getLink(nodeId),
+    getLink: (nodeId: string, opts?: PeerLinkGetOpts) => peerManager.getLink(nodeId, opts),
     listReach: () => peerManager.listReach(),
     transportOf: (nodeId: string) => peerManager.transportOf(nodeId),
     rttOf: (nodeId: string) => peerManager.rttOf(nodeId),
@@ -1398,6 +1404,7 @@ function assembleMeshRuntime(
   const { uplink, peerManager } = w;
   const unbindPortMap = bindPortMaps(d, peerManager);
   let stopPromise: Promise<void> | null = null;
+  let stopReach: (() => void) | null = null;
   let tlsPoll: { clear: () => void } | null = null;
   const refreshTlsAndAdvertise = createTlsRefresher(d, uplink);
   const unsubscribeHubMode = hub?.onModeChange(() => uplink.sendStatusIfChanged()) ?? null;
@@ -1439,9 +1446,7 @@ function assembleMeshRuntime(
     },
     onNodeEvent(cb) {
       d.nodeEvents.add(cb);
-      return () => {
-        d.nodeEvents.delete(cb);
-      };
+      return () => d.nodeEvents.delete(cb);
     },
     onNodeList(cb) {
       return uplink.onNodeList(cb);
@@ -1472,6 +1477,14 @@ function assembleMeshRuntime(
       }
       await d.relay.reconcileQuietly();
       await peerManager.start();
+      stopReach = bootPortReach({
+        startPeerServer: opts.startPeerServer,
+        listenPort: peerManager.listenPort,
+        selfNodeId: identity.nodeIdHex,
+        userStore,
+        now: () => d.scheduler.now(),
+        previous: stopReach,
+      });
       uplink.start();
       relayMultiAttachOf(d.relay)?.start();
       kickHubPeerDiscovery(hub, uplink);
@@ -1484,6 +1497,8 @@ function assembleMeshRuntime(
       stopPromise = (async () => {
         tlsPoll?.clear();
         tlsPoll = null;
+        stopReach?.();
+        stopReach = null;
         w.unsubscribeUplinkState();
         clearHubPresenceDecay(d.state);
         unsubscribeHubMode?.();

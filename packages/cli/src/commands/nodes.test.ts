@@ -42,6 +42,34 @@ describe('vibeterm nodes', () => {
     expect(payload.nodes[0].id).toBe(NODE);
   });
 
+  test('ls --json passes paused', async () => {
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode({ paused: true })] }),
+    });
+    await nodes.run(cli, ['ls']);
+    const payload = JSON.parse(stdout.text()) as { nodes: Array<{ paused?: boolean }> };
+    expect(payload.nodes[0]?.paused).toBe(true);
+  });
+
+  test('pause and resume POST to the entry', async () => {
+    const seen: string[] = [];
+    const { ctx: cli, stdout } = await ctx({
+      'GET /api/mesh/nodes': () => ({ nodes: [meshNode()] }),
+      [`POST /api/mesh/nodes/${NODE}/pause`]: () => {
+        seen.push('pause');
+        return { ok: true, node: meshNode({ paused: true }) };
+      },
+      [`POST /api/mesh/nodes/${NODE}/resume`]: () => {
+        seen.push('resume');
+        return { ok: true, node: meshNode() };
+      },
+    });
+    await nodes.run(cli, ['pause', 'office']);
+    await nodes.run(cli, ['resume', 'office']);
+    expect(seen).toEqual(['pause', 'resume']);
+    expect(stdout.text()).toContain('paused');
+  });
+
   test('show returns the full row', async () => {
     const row = meshNode({
       directFailure: { at: 1, ws: 'timeout' },
@@ -254,6 +282,14 @@ describe('vibeterm nodes', () => {
             version: '2.0.8',
             online: false,
             loggedIn: true,
+          }),
+          meshNode({
+            id: 'e'.repeat(32),
+            name: 'paused',
+            version: '2.0.8',
+            online: true,
+            loggedIn: true,
+            paused: true,
           }),
         ],
       }),

@@ -3,6 +3,7 @@
 
 import type { AuthTotpRecordResponse, LocalAuthStatus, MeshNodeOperation } from '@vibeterm/shared';
 import { CONNECTION_HEADER } from '@vibeterm/shared/http/mesh-headers';
+import type { PortPurpose, PortRange } from '@vibeterm/shared/net';
 import type { HubEndpointInfo, HubMode } from '@vibeterm/shared/uplink';
 
 // hub 集合的契约类型来自 uplink codec（hub 广播 `node.list.hubs[]` 用的同一份），
@@ -216,6 +217,16 @@ export const NODE_LOGIN_REQUIRED = 'NODE_LOGIN_REQUIRED';
 export type MeshNodeReach = 'lan' | 'wan' | 'relay' | null;
 export type MeshNodeTransport = 'ws-secure' | 'relay' | 'dc' | null;
 
+export type MeshPortReach = {
+  purpose: PortPurpose;
+  proto: 'tcp' | 'udp';
+  port?: number;
+  range?: PortRange;
+  status: 'open' | 'blocked' | 'unknown';
+  code?: 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+  checkedAt?: number;
+};
+
 /**
  * 直连失败的稳定分类码。前端按 `nodes.badge.failure.<code>` 翻译；旧网关不下发 code 时
  * 回落到 `ws` / `dc` 的原文。新增码必须同时补三语文案，否则前端会显示 key。
@@ -329,6 +340,12 @@ export interface MeshNode {
   attachedHubId?: string;
   /** 入口记录的进行中长事务（卸载 / 主备切换）；无则缺省或 null。 */
   operation?: MeshNodeOperation | null;
+  /**
+   * 入口本机暂停了该成员。缺省 / 旧网关 / self 视为 false。
+   * `true` 时本入口不再向该节点发起用户流量。
+   */
+  paused?: boolean;
+  ports?: MeshPortReach[];
 }
 
 export interface MeshNodesResponse {

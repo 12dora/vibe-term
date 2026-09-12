@@ -1,4 +1,4 @@
-import { type CtlDecodeProfile, decodeUplinkCtl } from './codec-decode';
+import { type CtlDecodeProfile, decodeUplinkCtl, parsePeerReachMap } from './codec-decode';
 import {
   type EncodeUplinkCtlOptions,
   type RtcSignalFrom,
@@ -39,6 +39,7 @@ export type NodeStatusMessage = {
   inventory: unknown;
   endpoints: unknown;
   hub?: HubAdvertisement;
+  peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 export type NodeListEntry = {
   id: string;
@@ -49,6 +50,7 @@ export type NodeListEntry = {
   direct_capable: boolean;
   version: string | null;
   attachedHubId?: string;
+  peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 type NodeListHubInfo = { nodeId: string; publicUrl: string; name?: string };
 export type NodeListMessage = {
@@ -180,6 +182,8 @@ function decodeHubNodeEntry(value: unknown): NodeListEntry {
   if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
     entry.attachedHubId = hubRead.nodeId(value.attachedHubId, 'attachedHubId');
   }
+  const peerReach = parsePeerReachMap(value.peer_reach);
+  if (peerReach) entry.peer_reach = peerReach;
   return entry;
 }
 

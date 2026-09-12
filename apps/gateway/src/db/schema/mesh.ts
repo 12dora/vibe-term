@@ -134,4 +134,11 @@ export const userHubAuthorizations = sqliteTable(
   ]
 );
 
+/** 入口本机对成员的偏好；不进 `peer_cache` / hub roster，避免被 node.list 覆盖。 */
+export const nodeLocalPrefs = sqliteTable('node_local_prefs', {
+  nodeId: text('node_id').primaryKey(),
+  paused: integer('paused', { mode: 'boolean' }).notNull().default(false),
+  updatedAt: integer('updated_at').notNull(),
+});
+
 export type NodeRow = typeof nodes.$inferSelect;

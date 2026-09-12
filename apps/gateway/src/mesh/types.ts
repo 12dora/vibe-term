@@ -18,6 +18,7 @@ export type UplinkStatus = {
   direct_capable: boolean;
   inventory: unknown;
   endpoints: unknown;
+  peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 
 export type KeyLogApplier = {

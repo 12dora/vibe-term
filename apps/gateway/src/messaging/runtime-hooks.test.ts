@@ -4,6 +4,7 @@ import {
   AgentConfirmationAlreadyDecidedError,
   AgentConfirmationNotFoundError,
 } from '../agent/supervisor';
+import { resetNodePauseForTests, setNodePaused } from '../mesh/node-pause';
 import {
   type MeshPresenceSource,
   type MessagingDeviceRuntime,
@@ -15,6 +16,7 @@ import {
 
 afterEach(() => {
   setMessagingMeshRuntime(null);
+  resetNodePauseForTests();
 });
 
 const snapshot: StateSnapshotPayload = {
@@ -379,5 +381,18 @@ describe('createMessagingRuntimeHooks', () => {
     const listed = viaAccessor.listMeshNodes?.() ?? [];
     expect(listed.some((node) => node.current && node.name === 'Home')).toBe(true);
     expect(listed.some((node) => node.id === 'bb'.repeat(16) && node.online)).toBe(true);
+  });
+
+  test('listMeshNodes skips paused remote members', () => {
+    const mesh = fakeMesh();
+    setNodePaused('bb'.repeat(16), true);
+    const hooks = createMessagingRuntimeHooks({
+      getMesh: () => mesh,
+      getLocalName: () => 'Home',
+      getVersion: () => '1.1.24',
+    });
+    const listed = hooks.listMeshNodes?.() ?? [];
+    expect(listed.some((node) => node.current)).toBe(true);
+    expect(listed.some((node) => node.id === 'bb'.repeat(16))).toBe(false);
   });
 });

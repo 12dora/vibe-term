@@ -61,6 +61,7 @@ const MIGRATIONS = [
   '0053_pane_grant_server_epoch.sql',
   '0054_relay_prev_token.sql',
   '0055_relay_token_ring.sql',
+  '0056_node_local_prefs.sql',
 ] as const;
 
 /** 打包运行时嵌入的迁移清单；必须与 drizzle 目录 / journal 完全一致（见同名测试）。 */

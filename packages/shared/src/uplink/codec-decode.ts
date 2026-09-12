@@ -62,6 +62,7 @@ export type UplinkCtlDecoded<Bytes, Seq> =
       inventory: unknown;
       endpoints: unknown;
       hub?: HubAdvertisement;
+      peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
     }
   | { t: 'key.log.req'; from_seq: Seq; id?: string; limit?: number }
   | {
@@ -208,7 +209,25 @@ function decodeNodeStatus<B, S, NL, ER>(
   if (parsed.hub !== undefined && parsed.hub !== null) {
     status.hub = parseHubAdvertisement(parsed.hub);
   }
+  const peerReach = parsePeerReachMap(parsed.peer_reach);
+  if (peerReach) status.peer_reach = peerReach;
   return status;
+}
+
+const PEER_REACH_KEY_RE = /^[0-9a-f]{8}$/;
+
+export function parsePeerReachMap(
+  value: unknown
+): Record<string, 'ok' | 'refused' | 'timeout'> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, 'ok' | 'refused' | 'timeout'> = {};
+  for (const [rawKey, raw] of Object.entries(value)) {
+    if (Object.keys(out).length >= 32) break;
+    const key = rawKey.toLowerCase();
+    if (!PEER_REACH_KEY_RE.test(key)) continue;
+    if (raw === 'ok' || raw === 'refused' || raw === 'timeout') out[key] = raw;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
 }
 
 function decodeKeyLogReq<B, S, NL, ER>(

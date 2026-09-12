@@ -446,7 +446,44 @@ export const NodeEventSchema = b.struct({
   relayPresence: b.option(b.vec(b.string())),
 });
 
+/** 2.3.0 线格式；decode 时作 V4 回退。 */
+export const NodeEventV4Schema = NodeEventSchema;
+
+export const NodeEventV5Schema = b.struct({
+  nodeId: b.string(),
+  status: b.u8(),
+  reach: OptionStringSchema,
+  inventory: OptionStringSchema,
+  version: OptionStringSchema,
+  directCapable: OptionBoolSchema,
+  name: OptionStringSchema,
+  transport: OptionStringSchema,
+  rttMs: OptionU32Schema,
+  viaRelay: OptionStringSchema,
+  relayPresence: b.option(b.vec(b.string())),
+  paused: OptionBoolSchema,
+});
+
 export type NodeEventWire = {
+  nodeId: string;
+  status: number;
+  reach: string | null;
+  inventory: string | null;
+  version: string | null;
+  directCapable: boolean | null;
+  name: string | null;
+  transport: string | null;
+  rttMs: number | null;
+  viaRelay: string | null;
+  relayPresence: string[] | null;
+  paused?: boolean;
+};
+
+function emptyRelayFields(): { viaRelay: null; relayPresence: null } {
+  return { viaRelay: null, relayPresence: null };
+}
+
+type NodeEventFields = {
   nodeId: string;
   status: number;
   reach: string | null;
@@ -460,8 +497,33 @@ export type NodeEventWire = {
   relayPresence: string[] | null;
 };
 
-function emptyRelayFields(): { viaRelay: null; relayPresence: null } {
-  return { viaRelay: null, relayPresence: null };
+function nodeEventFields(data: {
+  nodeId: string;
+  status: number;
+  reach?: string | null;
+  inventory?: string | null;
+  version?: string | null;
+  directCapable?: boolean | null;
+  name?: string | null;
+  transport?: string | null;
+  rttMs?: number | null;
+  viaRelay?: string | null;
+  relayPresence?: string[] | null;
+}): NodeEventFields {
+  const rtt = data.rttMs;
+  return {
+    nodeId: data.nodeId,
+    status: data.status,
+    reach: data.reach ?? null,
+    inventory: data.inventory ?? null,
+    version: data.version ?? null,
+    directCapable: data.directCapable ?? null,
+    name: data.name ?? null,
+    transport: data.transport ?? null,
+    rttMs: typeof rtt === 'number' && Number.isFinite(rtt) && rtt >= 0 ? Math.round(rtt) : null,
+    viaRelay: data.viaRelay ?? null,
+    relayPresence: data.relayPresence ?? null,
+  };
 }
 
 export function encodeNodeEvent(data: {
@@ -476,25 +538,21 @@ export function encodeNodeEvent(data: {
   rttMs?: number | null;
   viaRelay?: string | null;
   relayPresence?: string[] | null;
+  paused?: boolean;
 }): Uint8Array {
-  const rtt = data.rttMs;
-  return NodeEventSchema.serialize({
-    nodeId: data.nodeId,
-    status: data.status,
-    reach: data.reach ?? null,
-    inventory: data.inventory ?? null,
-    version: data.version ?? null,
-    directCapable: data.directCapable ?? null,
-    name: data.name ?? null,
-    transport: data.transport ?? null,
-    rttMs: typeof rtt === 'number' && Number.isFinite(rtt) && rtt >= 0 ? Math.round(rtt) : null,
-    viaRelay: data.viaRelay ?? null,
-    relayPresence: data.relayPresence ?? null,
-  });
+  const fields = nodeEventFields(data);
+  if (typeof data.paused === 'boolean') {
+    return NodeEventV5Schema.serialize({ ...fields, paused: data.paused });
+  }
+  return NodeEventSchema.serialize(fields);
 }
 
-// 四代帧按新→旧依次尝试；老 node 发来的帧缺后加字段时补 null。zorsh 忽略尾部多余字节，2.2.x 解码器仍能解出旧字段。
+// 五代帧按新→旧依次尝试；老 node 发来的帧缺后加字段时补 null。zorsh 忽略尾部多余字节，2.3.0 解码器仍能解出旧字段。
 export function decodeNodeEvent(bytes: Uint8Array): NodeEventWire {
+  try {
+    const v5 = NodeEventV5Schema.deserialize(bytes);
+    return { ...v5, paused: v5.paused ?? undefined };
+  } catch {}
   try {
     return NodeEventSchema.deserialize(bytes);
   } catch {}

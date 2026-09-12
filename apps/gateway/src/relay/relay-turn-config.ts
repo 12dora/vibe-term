@@ -36,6 +36,7 @@ export type RelayTurnStatus = {
   allocations: number;
   error: string | null;
   relayPortRange: string | null;
+  membersProbe?: { ok: number; total: number; updatedAt: number } | null;
 };
 
 export const EMPTY_RELAY_TURN_STATUS: RelayTurnStatus = {

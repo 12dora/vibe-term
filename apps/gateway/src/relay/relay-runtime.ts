@@ -16,6 +16,7 @@ import {
   handleRelayTenantKick,
   handleRelayTenantPatch,
   relayStatusPayload,
+  withMembersProbe,
 } from './relay-admin-routes';
 import { RelayConfigStore } from './relay-config-store';
 import { RelayEnrollLimiter } from './relay-enroll-limiter';
@@ -286,7 +287,7 @@ export class RelayRuntime {
       tenantCount: this.tenants.count(),
       nodesOnline: this.registry.onlineCount(),
       currentNodes,
-      turn: this.turn.status(),
+      turn: withMembersProbe(this.turn.status()),
     };
   }
 

@@ -1,6 +1,7 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs, isRecord } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
+import { isNodePaused } from './node-pause';
 import {
   attachPermanentHoldClear,
   isBackgroundDcUpgradeBlocked,
@@ -15,7 +16,6 @@ import {
   createGatewayRtcDialBreaker,
 } from './rtc/rtc-dial-breaker';
 import type { MeshScheduler, PeerTransportKind } from './types';
-
 export const PEER_UPGRADE_COOLDOWN_MS = 10_000;
 export const PEER_UPGRADE_SCAN_MS = 15_000;
 export const PEER_UPGRADE_BACKOFF_CAP_MS = 5 * 60 * 1000;
@@ -136,7 +136,7 @@ export class DcUpgradeCoordinator {
   }
 
   wantsUpgrade(live: DcUpgradeLivePeer): boolean {
-    if (live.retiring) return false;
+    if (live.retiring || isNodePaused(live.peerNodeId)) return false;
     if (live.transport === 'dc') return false;
     if (isBackgroundDcUpgradeBlocked(this.dcBreaker, live.peerNodeId, this.ports.scheduler.now())) {
       return false;

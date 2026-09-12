@@ -78,6 +78,25 @@ describe('relay.status 明文块', () => {
     expect(decodeRelayStatusBlob(encoded).rtt_ms).toBeUndefined();
   });
 
+  it('可选 peer_reach / turn_ok：合法值 round-trip，缺省/非法则忽略', () => {
+    const peer_reach = { abcdabcd: 'ok' as const, deadbeef: 'timeout' as const };
+    expect(
+      decodeRelayStatusBlob(encodeRelayStatusBlob({ ...blob, peer_reach, turn_ok: true }))
+    ).toEqual({ ...blob, peer_reach, turn_ok: true });
+    const decoded = decodeRelayStatusBlob(encodeRelayStatusBlob(blob));
+    expect(decoded.peer_reach).toBeUndefined();
+    expect(decoded.turn_ok).toBeUndefined();
+    const encoded = new TextEncoder().encode(
+      JSON.stringify({
+        ...blob,
+        peer_reach: { nope: 'ok', ABCDABCD: 'refused', zz: 1 },
+        turn_ok: 'yes',
+      })
+    );
+    expect(decodeRelayStatusBlob(encoded).peer_reach).toEqual({ abcdabcd: 'refused' });
+    expect(decodeRelayStatusBlob(encoded).turn_ok).toBeUndefined();
+  });
+
   it('拒绝超量 endpoints、超长 name 与畸形结构', () => {
     const endpoints = Array.from({ length: RELAY_STATUS_MAX_ENDPOINTS + 1 }, () => ({ host: 'h' }));
     expect(() => encodeRelayStatusBlob({ ...blob, endpoints })).toThrow(RelayCtlError);

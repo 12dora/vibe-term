@@ -7,6 +7,8 @@ import type { ApiClient } from '@vibeterm/api-client';
 import {
   PREFETCHABLE_TABS,
   SETTINGS_STALE_MS,
+  SITE_SETTINGS_QUERY_KEY,
+  prefetchSettingsLanding,
   prefetchTabData,
   tabPrefetchSpecs,
 } from './data-prefetch';
@@ -27,6 +29,12 @@ function fakeQueryClient() {
 const ALL_TABS = ['general', 'nodes', 'share', 'notifications', 'ai', 'terminal', 'remoteAccess'];
 
 describe('tabPrefetchSpecs', () => {
+  test('通用标签预取站点设置', () => {
+    const specs = tabPrefetchSpecs('general', apiClient);
+    expect(specs.map((s) => s.queryKey)).toEqual([SITE_SETTINGS_QUERY_KEY]);
+    expect(specs[0]?.staleTime).toBe(SETTINGS_STALE_MS);
+  });
+
   test('AI 标签预取 providers 与 settings 两条', () => {
     const specs = tabPrefetchSpecs('ai', apiClient);
     expect(specs.map((s) => s.queryKey)).toEqual([['llm-providers'], ['llm-settings']]);
@@ -61,7 +69,7 @@ describe('tabPrefetchSpecs', () => {
   });
 
   test('设置类数据给长 staleTime，实时状态不给（走默认值，各自还带轮询）', () => {
-    for (const tab of ['ai', 'terminal']) {
+    for (const tab of ['general', 'ai', 'terminal']) {
       for (const spec of tabPrefetchSpecs(tab, apiClient)) {
         expect(spec.staleTime).toBe(SETTINGS_STALE_MS);
       }
@@ -114,9 +122,17 @@ describe('prefetchTabData', () => {
   test('没有 spec 的标签既不发请求，也不占用去重名额', () => {
     const { client, calls } = fakeQueryClient();
     const done = new Set<string>();
-    prefetchTabData(client, 'general', apiClient, done);
+    prefetchTabData(client, 'notifications', apiClient, done);
     expect(calls).toHaveLength(0);
     expect(done.size).toBe(0);
+  });
+
+  test('prefetchSettingsLanding 预取 general 的站点设置', () => {
+    const { client, calls } = fakeQueryClient();
+    const done = new Set<string>();
+    prefetchSettingsLanding(client, apiClient, done);
+    expect(calls.map((c) => c.queryKey)).toEqual([SITE_SETTINGS_QUERY_KEY]);
+    expect(done).toEqual(new Set(['general']));
   });
 
   test('不同标签各自预取，互不影响', () => {

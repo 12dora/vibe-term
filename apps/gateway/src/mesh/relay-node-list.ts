@@ -15,6 +15,7 @@ import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { jsonText } from './json-text';
 import { stamp } from './mesh-log';
+import { ingestPeerReachMap, ingestTurnOk } from './port-reach';
 import type { RelaySecrets } from './relay-secrets';
 import type { UplinkStatus } from './types';
 import type { UplinkCtlMessage, UplinkEnrollRedeemed, UplinkNodeList } from './uplink-protocol';
@@ -89,6 +90,8 @@ export async function relayListToNodeList(
       listVersion: msg.version,
       version: blob.version || null,
     });
+    ingestPeerReachMap(node.id, blob.peer_reach, ctx.selfNodeId);
+    ingestTurnOk(node.id, blob.turn_ok);
     nodes.push({
       id: node.id,
       name: blob.name || node.id,
@@ -188,12 +191,14 @@ function safeJson(raw: string | null | undefined, fallback: unknown): unknown {
 export function relayStatusBlobOf(
   status: UplinkStatus,
   name: string,
-  rttMs?: number | null
+  rttMs?: number | null,
+  extras?: { turn_ok?: boolean }
 ): RelayStatusBlob {
   const rtt =
     typeof rttMs === 'number' && Number.isFinite(rttMs) && rttMs >= 0
       ? Math.round(rttMs)
       : undefined;
+  const peerReach = status.peer_reach;
   return {
     name,
     version: status.version,
@@ -202,6 +207,8 @@ export function relayStatusBlobOf(
     inventory: status.inventory,
     endpoints: status.endpoints,
     ...(rtt !== undefined ? { rtt_ms: rtt } : {}),
+    ...(peerReach && Object.keys(peerReach).length > 0 ? { peer_reach: peerReach } : {}),
+    ...(extras?.turn_ok !== undefined ? { turn_ok: extras.turn_ok } : {}),
   };
 }
 
@@ -210,11 +217,12 @@ export async function buildRelayStatusMessage(
   secrets: RelaySecrets,
   status: UplinkStatus,
   name: string,
-  rttMs?: number | null
+  rttMs?: number | null,
+  extras?: { turn_ok?: boolean }
 ): Promise<{ msg: Extract<RelayCtlMessage, { t: 'relay.status' }>; json: string } | null> {
   const meta = await secrets.currentMetaKey();
   if (!meta) return null;
-  const blob = relayStatusBlobOf(status, name, rttMs);
+  const blob = relayStatusBlobOf(status, name, rttMs, extras);
   const sealed = await sealEnvelope(meta.key, 'status', encodeRelayStatusBlob(blob), meta.epoch);
   return {
     msg: { t: 'relay.status', blob: sealed, epoch: meta.epoch },

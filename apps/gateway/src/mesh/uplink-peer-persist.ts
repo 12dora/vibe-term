@@ -1,5 +1,6 @@
 import type { UserStore } from '../auth/user-store';
 import { jsonText } from './json-text';
+import { ingestPeerReachMap } from './port-reach';
 import type { UplinkNodeList } from './uplink-protocol';
 
 function usablePeerName(name: string | null | undefined, nodeId: string): string | null {
@@ -36,6 +37,7 @@ export function persistUplinkPeerCache(input: {
       listVersion: list.version,
       version,
     });
+    ingestPeerReachMap(node.id, node.peer_reach, selfNodeId);
   }
   persistHubPeer(input);
 }

@@ -46,4 +46,24 @@ describe('encodeNodeEventFrame', () => {
     expect(fromDetail.viaRelay).toBe('https://detail.example');
     expect(fromDetail.relayPresence).toEqual(['https://detail.example']);
   });
+
+  test('optional paused round-trips when present and is absent otherwise', () => {
+    const withFlag = wsBorsh.decodeNodeEvent(
+      wsBorsh.decodeEnvelope(
+        encodeNodeEventFrame({ nodeId: 'aa'.repeat(16), status: 'online', paused: true }, 4)
+      ).payload
+    );
+    expect(withFlag.paused).toBe(true);
+    const resumed = wsBorsh.decodeNodeEvent(
+      wsBorsh.decodeEnvelope(
+        encodeNodeEventFrame({ nodeId: 'aa'.repeat(16), status: 'offline', paused: false }, 5)
+      ).payload
+    );
+    expect(resumed.paused).toBe(false);
+    const omitted = wsBorsh.decodeNodeEvent(
+      wsBorsh.decodeEnvelope(encodeNodeEventFrame({ nodeId: 'aa'.repeat(16), status: 'online' }, 6))
+        .payload
+    );
+    expect(omitted.paused).toBeUndefined();
+  });
 });

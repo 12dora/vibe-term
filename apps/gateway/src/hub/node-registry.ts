@@ -7,6 +7,7 @@ export type NodeRegistryMeta = {
   directCapable: boolean;
   inventory: unknown;
   endpoints: unknown;
+  peerReach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 
 export type RegisteredNode = {

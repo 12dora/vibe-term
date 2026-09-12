@@ -7,6 +7,7 @@
 import type { MeshNotificationSink } from '@vibeterm/shared';
 import { isPeerReachable } from './address-class';
 import { pickMeshNodeName } from './node-list-projection';
+import { isNodePaused } from './node-pause';
 import type { PeerReach } from './types';
 
 export type SinkSetInput = {
@@ -40,6 +41,7 @@ export function collectMeshNotificationSinks(input: SinkSetInput): MeshNotificat
     const isSelf = id === input.selfNodeId;
     if (!input.declared.has(id)) continue;
     if (isSelf && !input.selfEnabled) continue;
+    if (!isSelf && isNodePaused(id)) continue;
     const listed = listedById.get(id);
     const stored = nodeById.get(id);
     const peer = peerById.get(id);

@@ -8,6 +8,7 @@ type Meta = {
   inventory?: unknown;
   directCapable?: boolean;
   version?: string | null;
+  peerReach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 
 export type MeshNodeDcBreaker = {
@@ -39,6 +40,22 @@ export type MeshNodeLinkDetail = {
   relayPresence?: string[];
 };
 
+export type MeshPortReach = {
+  purpose:
+    | 'gateway-http'
+    | 'peer-signaling'
+    | 'rtc-ice'
+    | 'turn-control'
+    | 'turn-relay'
+    | 'public-https';
+  proto: 'tcp' | 'udp';
+  port?: number;
+  range?: { begin: number; end: number };
+  status: 'open' | 'blocked' | 'unknown';
+  code?: 'peer_refused' | 'peer_timeout' | 'no_srflx' | 'turn_unreachable';
+  checkedAt?: number;
+};
+
 export type MeshNodeDto = {
   id: string;
   name: string;
@@ -61,6 +78,10 @@ export type MeshNodeDto = {
   dcBreaker?: MeshNodeDcBreaker | null;
   viaRelay?: string | null;
   relayPresence?: string[];
+  /** 入口本机暂停了该成员时为 true；self 与未暂停行缺省。 */
+  paused?: boolean;
+  /** 入站口可达性；self 行也下发。旧入口无此字段。 */
+  ports?: MeshPortReach[];
 };
 
 export function parseJson(raw: string | null | undefined, fallback: unknown): unknown {
@@ -95,6 +116,9 @@ export function projectNode(
     direct_capable: live?.directCapable ?? stored.directCapable ?? false,
     version: live?.version ?? stored.version ?? null,
     ...(attachedHubId ? { attachedHubId } : {}),
+    ...((live?.peerReach ?? stored.peerReach)
+      ? { peer_reach: live?.peerReach ?? stored.peerReach }
+      : {}),
   };
 }
 
@@ -216,6 +240,17 @@ function meshRelayFields(
     ...(transport === 'relay' ? { viaRelay: viaRelay ?? null } : {}),
     ...(relayPresence !== undefined ? { relayPresence } : {}),
   };
+}
+
+export function overlayPausedMeshNodes(
+  nodes: MeshNodeDto[],
+  selfId: string,
+  pausedIds: ReadonlySet<string>
+): MeshNodeDto[] {
+  return nodes.map((node) => {
+    if (node.id === selfId || !pausedIds.has(node.id)) return node;
+    return { ...node, paused: true };
+  });
 }
 
 export function projectMeshListNode(

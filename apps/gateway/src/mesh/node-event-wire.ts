@@ -18,6 +18,7 @@ export type NodeEventWireInput = {
   name?: string;
   viaRelay?: string | null;
   relayPresence?: string[] | null;
+  paused?: boolean;
 };
 
 export type NodeEventRelayLookup = {
@@ -53,6 +54,7 @@ export function encodeNodeEventFrame(
     rttMs: event.rttMs ?? null,
     viaRelay,
     relayPresence,
+    paused: event.paused,
   });
   return wsBorsh.encodeEnvelope(wsBorsh.KIND_NODE_EVENT, payload, seq);
 }

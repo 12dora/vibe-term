@@ -10,8 +10,12 @@ export const RELAY_STATUS_BLOB_MAX_BYTES = 32 * 1024;
 export const RELAY_RTC_BLOB_MAX_BYTES = 16 * 1024;
 export const RELAY_STATUS_MAX_ENDPOINTS = 32;
 export const RELAY_STATUS_MAX_NAME_LEN = 256;
+export const RELAY_STATUS_MAX_PEER_REACH = 32;
+export const PEER_REACH_PREFIX_LEN = 8;
 
 export type RelayOpenStream = { to: string };
+
+export type PeerReachVerdict = 'ok' | 'refused' | 'timeout';
 
 /**
  * `relay.status` 信封里的明文：中继看不到，只有同租户节点解得开。
@@ -26,6 +30,10 @@ export type RelayStatusBlob = {
   endpoints: unknown;
   /** 发送方到「收到这块的那台中继」的 uplink 心跳 RTT；缺省表示未知（2.2.x 对端）。 */
   rtt_ms?: number;
+  /** 本机对其他成员 peer 口的探测结论；键为 nodeId 前 8 位 hex，最多 32 条。缺省 = 2.3.0 对端。 */
+  peer_reach?: Record<string, PeerReachVerdict>;
+  /** 本机对「收到这块的那台中继」TURN 控制口的 Binding 结论；缺省 = 未探测。 */
+  turn_ok?: boolean;
 };
 
 export type RelayRtcBlob = { sdp?: string; candidate?: string };
@@ -83,6 +91,8 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
     throw new RelayCtlError('too many endpoints');
   }
   const rttMs = normalizeStatusRtt(blob.rtt_ms);
+  const peerReach = normalizePeerReach(blob.peer_reach);
+  const turnOk = normalizeTurnOk(blob.turn_ok);
   return encodeJson(
     {
       name: blob.name,
@@ -92,6 +102,8 @@ export function encodeRelayStatusBlob(blob: RelayStatusBlob): Uint8Array {
       inventory: blob.inventory ?? null,
       endpoints: blob.endpoints ?? null,
       ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
+      ...(peerReach !== undefined ? { peer_reach: peerReach } : {}),
+      ...(turnOk !== undefined ? { turn_ok: turnOk } : {}),
     },
     RELAY_STATUS_BLOB_MAX_BYTES,
     'status blob'
@@ -116,6 +128,8 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
     throw new RelayCtlError('too many endpoints');
   }
   const rttMs = normalizeStatusRtt(parsed.rtt_ms);
+  const peerReach = normalizePeerReach(parsed.peer_reach);
+  const turnOk = normalizeTurnOk(parsed.turn_ok);
   return {
     name,
     version,
@@ -124,12 +138,39 @@ export function decodeRelayStatusBlob(bytes: Uint8Array): RelayStatusBlob {
     inventory: parsed.inventory ?? null,
     endpoints: parsed.endpoints ?? null,
     ...(rttMs !== undefined ? { rtt_ms: rttMs } : {}),
+    ...(peerReach !== undefined ? { peer_reach: peerReach } : {}),
+    ...(turnOk !== undefined ? { turn_ok: turnOk } : {}),
   };
 }
 
 function normalizeStatusRtt(value: unknown): number | undefined {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return undefined;
   return Math.round(value);
+}
+
+const PEER_REACH_VERDICTS = new Set<PeerReachVerdict>(['ok', 'refused', 'timeout']);
+const PEER_REACH_KEY_RE = new RegExp(`^[0-9a-f]{${PEER_REACH_PREFIX_LEN}}$`);
+
+export function nodeIdPrefix8(nodeId: string): string {
+  return nodeId.slice(0, PEER_REACH_PREFIX_LEN).toLowerCase();
+}
+
+/** 缺省 / 非法整体忽略；条目最多 32、键须 8-hex、值须 ok|refused|timeout。 */
+export function normalizePeerReach(value: unknown): Record<string, PeerReachVerdict> | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: Record<string, PeerReachVerdict> = {};
+  for (const [rawKey, raw] of Object.entries(value)) {
+    if (Object.keys(out).length >= RELAY_STATUS_MAX_PEER_REACH) break;
+    const key = rawKey.toLowerCase();
+    if (!PEER_REACH_KEY_RE.test(key)) continue;
+    if (typeof raw !== 'string' || !PEER_REACH_VERDICTS.has(raw as PeerReachVerdict)) continue;
+    out[key] = raw as PeerReachVerdict;
+  }
+  return Object.keys(out).length > 0 ? out : undefined;
+}
+
+export function normalizeTurnOk(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined;
 }
 
 export function encodeRelayRtcBlob(blob: RelayRtcBlob): Uint8Array {

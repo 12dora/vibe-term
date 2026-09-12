@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
+import { resetNodePauseForTests, setNodePaused } from './node-pause';
 import { type SinkSetInput, collectMeshNotificationSinks } from './notification-sink-set';
 
 function input(overrides: Partial<SinkSetInput> = {}): SinkSetInput {
@@ -16,6 +17,10 @@ function input(overrides: Partial<SinkSetInput> = {}): SinkSetInput {
     ...overrides,
   };
 }
+
+afterEach(() => {
+  resetNodePauseForTests();
+});
 
 describe('collectMeshNotificationSinks', () => {
   test('本机有签名声明且开关打开时进集合并标 self/online', () => {
@@ -109,5 +114,19 @@ describe('collectMeshNotificationSinks', () => {
       })
     );
     expect(sinks.map((s) => s.name)).toEqual(['本机', 'Alpha', 'Zulu']);
+  });
+
+  test('skips paused remote sinks but keeps self', () => {
+    setNodePaused('bb', true);
+    const sinks = collectMeshNotificationSinks(
+      input({
+        selfEnabled: true,
+        declared: new Set(['aa', 'bb']),
+        certs: [{ nodeId: 'bb', revokedLogSeq: null }],
+        listed: [{ id: 'bb', name: 'B' }],
+        hubOnline: new Set(['bb']),
+      })
+    );
+    expect(sinks.map((s) => s.nodeId)).toEqual(['aa']);
   });
 });

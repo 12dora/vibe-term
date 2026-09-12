@@ -47,6 +47,11 @@ export {
   RELAY_STATUS_BLOB_MAX_BYTES,
   RELAY_STATUS_MAX_ENDPOINTS,
   RELAY_STATUS_MAX_NAME_LEN,
+  RELAY_STATUS_MAX_PEER_REACH,
+  PEER_REACH_PREFIX_LEN,
+  nodeIdPrefix8,
+  normalizePeerReach,
+  normalizeTurnOk,
   decodeRelayOpenStream,
   decodeRelayRtcBlob,
   decodeRelayStatusBlob,
@@ -54,7 +59,7 @@ export {
   encodeRelayRtcBlob,
   encodeRelayStatusBlob,
 } from './blobs';
-export type { RelayOpenStream, RelayRtcBlob, RelayStatusBlob } from './blobs';
+export type { PeerReachVerdict, RelayOpenStream, RelayRtcBlob, RelayStatusBlob } from './blobs';
 
 export {
   DOMAIN_RELAY_ENROLL,

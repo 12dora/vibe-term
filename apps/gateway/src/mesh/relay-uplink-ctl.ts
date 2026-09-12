@@ -10,6 +10,7 @@ import {
 import type { UserStore } from '../auth/user-store';
 import { jsonStable } from './ctl';
 import { stamp } from './mesh-log';
+import { turnOkForConfigured } from './port-reach';
 import type { RelayKeyLogSync } from './relay-key-log-sync';
 import {
   acceptRelayEnrollRedeemed,
@@ -131,7 +132,8 @@ export async function sendRelayStatusNow(host: RelayUplinkCtlHost): Promise<void
       host.secrets,
       host.statusProvider(),
       host.nodeName(),
-      host.rttMs
+      host.rttMs,
+      { turn_ok: turnOkForConfigured(host.rtcConfig?.turn) }
     );
     if (!built) return;
     host.rawSend(built.msg);
@@ -147,7 +149,9 @@ export async function sendRelayStatusNow(host: RelayUplinkCtlHost): Promise<void
 
 export function shouldResendRelayStatus(host: RelayUplinkCtlHost): boolean {
   if (host.state !== 'online' || !host.link) return false;
-  const blob = relayStatusBlobOf(host.statusProvider(), host.nodeName(), host.rttMs);
+  const blob = relayStatusBlobOf(host.statusProvider(), host.nodeName(), host.rttMs, {
+    turn_ok: turnOkForConfigured(host.rtcConfig?.turn),
+  });
   const content = jsonStable(statusBlobWithoutRtt(blob));
   if (content !== host.lastStatusJson) return true;
   if (!rttChangedMaterially(host.lastRttSentMs, host.rttMs)) return false;

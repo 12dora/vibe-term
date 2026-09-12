@@ -5,6 +5,7 @@ import {
   parseSdpFingerprint,
 } from '@vibeterm/shared/auth';
 import { withPeerHandshakeTimeout } from '../peer-handshake-timeout';
+import { noteRtcGather } from '../port-reach';
 import { PeerHandshakeError } from '../types';
 import type { FanoutDataChannel } from './channel-fanout';
 import { maskIceAddress, parseIceCandidateType } from './ice';
@@ -225,6 +226,7 @@ export function attachPcDiagnostics(
       stun_count: ice?.stun.length ?? 0,
       turn: Boolean(ice?.turn),
     });
+    noteRtcGather({ srflx: trace.localCounts.srflx });
   });
   pc.onIceStateChange?.((state) => {
     rtcLog('ice', { ...ctx, peer, state });

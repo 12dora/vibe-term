@@ -324,6 +324,9 @@ export class UplinkClient {
         inventory: status.inventory,
         endpoints: status.endpoints,
         ...(status.hub ? { hub: status.hub } : {}),
+        ...(status.peer_reach && Object.keys(status.peer_reach).length > 0
+          ? { peer_reach: status.peer_reach }
+          : {}),
       })
     );
   }

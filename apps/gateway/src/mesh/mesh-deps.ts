@@ -104,10 +104,16 @@ export type NodeEventPayload = {
   relayPresence?: string[] | null;
   /** 进程内诊断；WS NODE_EVENT 帧暂不编码该字段（mesh-routes 超出本变更范围）。 */
   dcBreaker?: MeshNodeDcBreaker | null;
+  /** 入口本机暂停偏好；缺席表示本帧不改客户端已有值。 */
+  paused?: boolean;
 };
 
+export type PeerLinkPurpose = 'user' | 'management';
+
+export type PeerLinkGetOpts = { purpose?: PeerLinkPurpose };
+
 export type PeerLinkProvider = {
-  getLink(nodeId: string): Promise<LinkSession>;
+  getLink(nodeId: string, opts?: PeerLinkGetOpts): Promise<LinkSession>;
   listReach(): Map<string, PeerReachKind>;
   listHubOnline?(): ReadonlySet<string>;
   transportOf?(nodeId: string): PeerTransportKind | null;

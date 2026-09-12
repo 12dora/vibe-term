@@ -1,5 +1,10 @@
 import { encodeBase64url } from '../auth/encoding';
-import { type CtlDecodeProfile, decodeUplinkCtl, isHubFrameCtlType } from './codec-decode';
+import {
+  type CtlDecodeProfile,
+  decodeUplinkCtl,
+  isHubFrameCtlType,
+  parsePeerReachMap,
+} from './codec-decode';
 import {
   type EncodeUplinkCtlOptions,
   KEY_LOG_PAGE_MAX_BYTES,
@@ -31,6 +36,7 @@ type MeshNodeInfo = {
   direct_capable: boolean;
   version: string | null;
   attachedHubId?: string;
+  peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
 };
 
 type MeshHubInfo = { nodeId: string; publicUrl: string; name?: string };
@@ -86,6 +92,7 @@ export type MeshUplinkCtlMessage =
       inventory: unknown;
       endpoints: unknown;
       hub?: HubAdvertisement;
+      peer_reach?: Record<string, 'ok' | 'refused' | 'timeout'>;
     }
   | MeshUplinkNodeList
   | { t: 'key.log.req'; from_seq: bigint; id?: string; limit?: number }
@@ -120,6 +127,8 @@ function parseMeshNode(value: unknown): MeshNodeInfo {
   if (value.attachedHubId !== undefined && value.attachedHubId !== null) {
     node.attachedHubId = ctlRead.nodeId(value.attachedHubId, 'nodes[].attachedHubId');
   }
+  const peerReach = parsePeerReachMap(value.peer_reach);
+  if (peerReach) node.peer_reach = peerReach;
   return node;
 }
 

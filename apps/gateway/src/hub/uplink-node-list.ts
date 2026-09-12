@@ -287,6 +287,7 @@ export class UplinkNodeList {
           directCapable: msg.direct_capable,
           inventory: msg.inventory,
           endpoints: msg.endpoints,
+          peerReach: msg.peer_reach,
         },
         now
       );

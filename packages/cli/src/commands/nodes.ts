@@ -85,6 +85,8 @@ const USAGE = [
   '                             rotate K_meta, excluding nodes (relay)',
   '  upgrade <node>|--all [--version] [--wait]',
   '  uninstall <node> [--yes]   POST …/uninstall then signed revoke-node',
+  '  pause <node>               POST …/pause (entry local; skips user traffic)',
+  '  resume <node>              POST …/resume',
   '  rtc-config                 GET /api/mesh/rtc-config (includes probes)',
   '',
   '--json shapes:',
@@ -98,6 +100,8 @@ const USAGE = [
   '  meta-key    { op: "admit"|"rotate", epoch, seq }',
   '  upgrade     { latest, outcomes: UpgradeOutcome[] }  outcome: done|failed|timeout|alreadyLatest|cancelled|unconfirmed',
   '  uninstall   { node, scheduled: true, revoked: true }',
+  '  pause       { ok, node }',
+  '  resume      { ok, node }',
   '  rtc-config  { stun, turn, probes? }',
 ].join('\n');
 
@@ -117,6 +121,7 @@ const ls: SubHandler = async (ctx, _flags, positionals) => {
       { header: 'REACH', value: reachOf },
       { header: 'VERSION', value: (row) => dash(row.version) },
       { header: 'ONLINE', value: (row) => yn(row.online) },
+      { header: 'PAUSED', value: (row) => yn(row.paused) },
       { header: 'RTT', value: rtt },
     ]);
   });
@@ -345,10 +350,12 @@ const upgrade: SubHandler = async (ctx, flags, positionals) => {
   const mode = await fetchAuthMode(ctx.http, SELF_NODE_ID);
   const latestVersion = latest?.latestVersion ?? null;
   const targets = all
-    ? roster.filter((node) =>
-        isBatchEligible(node, latestVersion, mode?.nodeId, (id) =>
-          hasCliNodeSession(ctx.http.jar, id)
-        )
+    ? roster.filter(
+        (node) =>
+          node.paused !== true &&
+          isBatchEligible(node, latestVersion, mode?.nodeId, (id) =>
+            hasCliNodeSession(ctx.http.jar, id)
+          )
       )
     : [await findMeshNode(ctx, positionals[0])];
   if (all && targets.length === 0) {
@@ -387,6 +394,30 @@ const uninstall: SubHandler = async (ctx, flags, positionals) => {
   );
 };
 
+async function postPauseResume(
+  ctx: CliContext,
+  action: 'pause' | 'resume',
+  positionals: string[]
+): Promise<void> {
+  const ref = requireArg(positionals, 0, 'node');
+  rejectExtra(positionals, 1);
+  const node = await findMeshNode(ctx, ref);
+  const result = await ctx.http.json(
+    SELF_NODE_ID,
+    'POST',
+    `/api/mesh/nodes/${encodeURIComponent(node.id)}/${action}`
+  );
+  emit(ctx, result, () => ctx.out.line(`${action}d ${node.name} (${node.id})`));
+}
+
+const pause: SubHandler = async (ctx, _flags, positionals) => {
+  await postPauseResume(ctx, 'pause', positionals);
+};
+
+const resume: SubHandler = async (ctx, _flags, positionals) => {
+  await postPauseResume(ctx, 'resume', positionals);
+};
+
 const rtcConfig: SubHandler = async (ctx, _flags, positionals) => {
   rejectExtra(positionals, 0);
   const payload = await ctx.http.json(SELF_NODE_ID, 'GET', '/api/mesh/rtc-config');
@@ -405,6 +436,8 @@ const HANDLERS: Record<string, SubHandler> = {
   'meta-key': metaKey,
   upgrade,
   uninstall,
+  pause,
+  resume,
   'rtc-config': rtcConfig,
 };
 

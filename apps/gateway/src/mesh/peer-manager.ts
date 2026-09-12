@@ -3,6 +3,14 @@ import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
 import { classifyPeerReach } from './address-class';
 import { defaultScheduler } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
+import {
+  type PeerLinkPurpose,
+  bindPausedPeerDrop,
+  isNodePaused,
+  peerDialRetireOf,
+  rejectPausedUserLink,
+  retirePeerDialState,
+} from './node-pause';
 import { DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
 import { PeerDialer } from './peer-dialer';
 import { winningDialInitiator } from './peer-direct-attempt';
@@ -272,16 +280,15 @@ export class PeerManager extends PeerCollaboratorHost {
         },
       });
     }
+    bindPausedPeerDrop((nodeId) => this.dropPausedPeer(nodeId));
   }
 
   private get dcBreaker() {
     return this.dcUpgrade.dcBreaker;
   }
-
   get listenPort(): number | null {
     return this.server?.listening ? this.server.port : null;
   }
-
   bindRelayPresence(presence: RelayPresenceIndex, opener: RelayStreamOpener): void {
     this.state.relayPresence = presence;
     this.state.relayOpener = opener;
@@ -292,6 +299,9 @@ export class PeerManager extends PeerCollaboratorHost {
   }
   quiesceCapableOf(nodeId: string): boolean {
     return this.state.live.get(nodeId)?.quiesceCapable === true;
+  }
+  dropPausedPeer(nodeId: string): void {
+    retirePeerDialState(peerDialRetireOf(this), nodeId, 'paused');
   }
 
   async start(): Promise<void> {
@@ -306,6 +316,7 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   async stop(): Promise<void> {
+    bindPausedPeerDrop(null);
     if (this.state.stopped) return;
     this.state.stopped = true;
     this.state.generation += 1;
@@ -339,20 +350,18 @@ export class PeerManager extends PeerCollaboratorHost {
   getLive(nodeId: string): LinkSession | null {
     return liveSessionOf(this.state, nodeId, (id) => this.onRevoked(id));
   }
-
-  transportOf(nodeId: string): PeerTransportKind | null {
-    return this.state.live.get(nodeId)?.transport ?? null;
+  transportOf(n: string): PeerTransportKind | null {
+    return this.state.live.get(n)?.transport ?? null;
   }
-  rttOf(nodeId: string): number | null {
-    return this.state.live.get(nodeId)?.rttMs ?? null;
+  rttOf(n: string): number | null {
+    return this.state.live.get(n)?.rttMs ?? null;
   }
-  viaRelayOf(nodeId: string): string | null {
-    return viaRelayOfLive(this.state.live.get(nodeId));
+  viaRelayOf(n: string): string | null {
+    return viaRelayOfLive(this.state.live.get(n));
   }
-  relayPresenceOf(nodeId: string): string[] | undefined {
-    return relayPresenceOfIndex(this.state.relayPresence, nodeId);
+  relayPresenceOf(n: string): string[] | undefined {
+    return relayPresenceOfIndex(this.state.relayPresence, n);
   }
-
   linkDetailOf(nodeId: string): PeerLinkDetail {
     return peerLinkDetailFromState(
       this.state,
@@ -365,9 +374,8 @@ export class PeerManager extends PeerCollaboratorHost {
     if (this.state.stopped) return;
     this.dcUpgrade.onHubSwitched();
   }
-
   forceDcProbe(nodeId: string): void {
-    this.dialer.forceDcProbe(nodeId);
+    if (!isNodePaused(nodeId)) this.dialer.forceDcProbe(nodeId);
   }
 
   async waitForTransport(
@@ -444,11 +452,13 @@ export class PeerManager extends PeerCollaboratorHost {
     }
   }
   protected maybeUpgrade(nodeId: string, opts: PeerUpgradeOpts): void {
+    if (isNodePaused(nodeId) && !opts.peerInitiated && !opts.userPath) return;
     if (!opts.peerInitiated) super.maybeUpgrade(nodeId, opts);
     else void this.dialer.dial(nodeId, { peerInitiated: true }).catch(() => undefined);
   }
 
-  async getLink(nodeId: string): Promise<LinkSession> {
+  async getLink(nodeId: string, opts?: { purpose?: PeerLinkPurpose }): Promise<LinkSession> {
+    rejectPausedUserLink(nodeId, opts?.purpose ?? 'user');
     if (this.state.stopped) throw new NodeUnreachableError(nodeId, 'peer manager stopped');
     this.requireTrusted(nodeId);
     const existing = this.state.live.get(nodeId);
@@ -481,20 +491,7 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   onRevoked(nodeId: string): void {
-    this.drain.dropParked(nodeId, 'revoked');
-    this.registry.dropPeer(nodeId, 'revoked');
-    this.drain.forceCloseRetiring(nodeId, 'revoked');
-    this.state.userStore.deletePeer(nodeId);
-    this.dcUpgrade.upgradeGate.delete(nodeId);
-    this.rtcWake.forgetPeer(nodeId);
-    this.cancelDcUpgradeRetry(nodeId);
-    this.state.lostDirect.delete(nodeId);
-    this.state.lastDirectAttempt.delete(nodeId);
-    this.state.upgrading.delete(nodeId);
-    this.state.liveWaiters.delete(nodeId);
-    this.waiters.failTransportWaiters(nodeId);
-    this.state.endpointBackoff.resetNode(nodeId);
-    this.state.advertisedEndpointSet.delete(nodeId);
+    retirePeerDialState(peerDialRetireOf(this), nodeId, 'revoked');
   }
 
   notifyPeerEndpointsChanged(nodeId?: string): void {
@@ -509,6 +506,7 @@ export class PeerManager extends PeerCollaboratorHost {
   }
 
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
+    if (isNodePaused(nodeId)) return null;
     return this.dialer.forceProbe(nodeId, endpoints);
   }
 

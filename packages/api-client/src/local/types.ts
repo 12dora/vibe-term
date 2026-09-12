@@ -33,6 +33,7 @@ export interface LocalRelayTurnStatus {
   allocations: number;
   error: string | null;
   relayPortRange: string | null;
+  membersProbe?: { ok: number; total: number; updatedAt: number } | null;
 }
 
 export interface LocalRelayStatus {

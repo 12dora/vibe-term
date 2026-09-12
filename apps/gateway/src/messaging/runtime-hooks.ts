@@ -8,6 +8,7 @@ import { config } from '../config';
 import { getSiteSettings } from '../db/site-settings';
 import { isPeerReachable } from '../mesh/address-class';
 import { pickMeshNodeName } from '../mesh/node-list-projection';
+import { isNodePaused } from '../mesh/node-pause';
 import { getDisplayVersion } from '../system/version';
 import { tmuxRuntimeRegistry } from '../tmux-client/registry';
 import { getDeviceSnapshot } from '../tmux/snapshot-directory';
@@ -196,9 +197,11 @@ function listMeshNodesFromMesh(
   const registry = new Map(mesh.userStore.listNodes().map((node) => [node.id, node]));
   const hubOnline = hubOnlineIds(mesh);
   const reach = mesh.peers.listReach();
-  return collectMeshNodeIds(mesh).map((id) =>
-    toMeshNodeView(id, mesh, listed, registry, hubOnline, reach, localName, localVersion)
-  );
+  return collectMeshNodeIds(mesh)
+    .filter((id) => id === mesh.nodeId || !isNodePaused(id))
+    .map((id) =>
+      toMeshNodeView(id, mesh, listed, registry, hubOnline, reach, localName, localVersion)
+    );
 }
 
 async function withDeviceRuntime<T>(

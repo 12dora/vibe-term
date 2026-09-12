@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { DOMAIN_CERTIFICATE, encodeCertificate, hexToBytes } from '@vibeterm/shared/auth';
 import {
   meshListReadiness,
+  overlayPausedMeshNodes,
   parseJson,
   pickMeshNodeName,
   pickSelfDisplayName,
@@ -399,6 +400,47 @@ describe('node-list-projection', () => {
     );
     expect(dto?.isHub).toBe(true);
     expect(dto?.hubMode).toBe('standby');
+  });
+
+  test('overlayPausedMeshNodes marks paused members and never self', () => {
+    const selfId = 'aa'.repeat(16);
+    const peerId = 'bb'.repeat(16);
+    const rows = overlayPausedMeshNodes(
+      [
+        {
+          id: selfId,
+          name: 'home',
+          publicKey: 'pk',
+          online: true,
+          reach: null,
+          transport: null,
+          rttMs: null,
+          version: null,
+          direct_capable: false,
+          inventory: null,
+          loggedIn: true,
+          isHub: false,
+        },
+        {
+          id: peerId,
+          name: 'studio',
+          publicKey: 'pk2',
+          online: true,
+          reach: 'lan',
+          transport: 'dc',
+          rttMs: 1,
+          version: '1',
+          direct_capable: true,
+          inventory: null,
+          loggedIn: false,
+          isHub: false,
+        },
+      ],
+      selfId,
+      new Set([selfId, peerId])
+    );
+    expect(rows[0]?.paused).toBeUndefined();
+    expect(rows[1]?.paused).toBe(true);
   });
 });
 

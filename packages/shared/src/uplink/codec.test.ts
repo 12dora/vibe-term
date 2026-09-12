@@ -205,6 +205,34 @@ describe('multi-hub wire contract', () => {
     });
   });
 
+  test('node.status 可选 peer_reach 往返；未知键忽略', () => {
+    const msg = statusMsg({
+      peer_reach: { abcdabcd: 'ok', deadbeef: 'timeout' },
+    });
+    const round = decodeHubUplinkCtl(encodeHubUplinkCtl(msg));
+    expect(round.t).toBe('node.status');
+    if (round.t === 'node.status') {
+      expect(round.peer_reach).toEqual({ abcdabcd: 'ok', deadbeef: 'timeout' });
+    }
+    const extra = new TextEncoder().encode(
+      JSON.stringify({
+        t: 'node.status',
+        version: '1',
+        tmux: true,
+        direct_capable: false,
+        inventory: {},
+        endpoints: [],
+        mystery: true,
+      })
+    );
+    const decoded = decodeHubUplinkCtl(extra);
+    expect(decoded.t).toBe('node.status');
+    if (decoded.t === 'node.status') {
+      expect((decoded as { mystery?: unknown }).mystery).toBeUndefined();
+      expect(decoded.peer_reach).toBeUndefined();
+    }
+  });
+
   test('node.status hub 广告往返', () => {
     const msg = statusMsg({ hub: SAMPLE_AD });
     expect(decodeMeshUplinkCtl(encodeMeshUplinkCtl(msg))).toMatchObject({
