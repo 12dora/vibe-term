@@ -10,8 +10,20 @@ import { envInt } from './mesh-log';
 import { type ReachabilityFailureKind, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
 import { type PeerHandshakeResult, handshakeWsDirect } from './peer-protocol';
 import { type MeshIdentity, PeerHandshakeError } from './types';
+import { type WsDialContext, withWsOpenRace } from './ws-open-race';
 
 export { isReachabilityFailureKind } from './peer-endpoint-backoff';
+
+/** 拨号 factory：第二参可选，注入过 factory 的调用方（测试）忽略它即可。 */
+export type WsDialFactory = (
+  url: string,
+  ctx?: WsDialContext
+) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
+
+/** peer ws-secure 默认拨号器：公网目标按 `VIBETERM_WS_DIAL_RACE` 竞速，局域网只开一条。 */
+export function defaultPeerWsFactory(): WsDialFactory {
+  return withWsOpenRace((url: string) => new WebSocket(url));
+}
 
 export type WsSecureCandidate = {
   session: LinkSession;
@@ -234,12 +246,14 @@ export function formatWsDialFailure(url: string, err: unknown): string {
 }
 
 export async function connectWsTransport(opts: {
-  factory: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
+  factory: WsDialFactory;
   url: string;
   signal: AbortSignal;
   connectTimeoutMs: number;
 }): Promise<WebSocketTransportInput> {
-  const pending = Promise.resolve(opts.factory(opts.url));
+  const pending = Promise.resolve(
+    opts.factory(opts.url, { signal: opts.signal, timeoutMs: opts.connectTimeoutMs })
+  );
   const abandon = () => {
     void pending.then(
       (ws) => closeWsTransport(ws),
@@ -385,7 +399,7 @@ export async function dialWsSecureCandidate(opts: {
   connectTimeoutMs: number;
   totalTimeoutMs?: number;
   handshakeTimeoutMs?: number;
-  factory: (url: string) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
+  factory: WsDialFactory;
   identity: MeshIdentity;
   userStore: UserStore;
   limiter?: DirectDialLimiter;

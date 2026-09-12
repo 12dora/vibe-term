@@ -550,6 +550,40 @@ describe('UplinkServer', () => {
     }
   });
 
+  test('竞速输家：握手后未认证就断开，不注册、不替换、不告警', async () => {
+    const { db, close } = createMigratedAuthDb();
+    const orig = console.warn;
+    const warnings: string[] = [];
+    console.warn = (...args: unknown[]) => {
+      warnings.push(args.map(String).join(' '));
+    };
+    try {
+      const { userStore, keyLogSource } = createHubTestStack(db);
+      const user = seedUser(userStore);
+      const { server, registry } = makeServer(db, userStore, keyLogSource);
+      const live = await authNode(server, userStore, user.id);
+      let liveClosed = false;
+      void live.hubLink.closed.then(() => {
+        liveClosed = true;
+      });
+      const [loserNode, loserHub] = createInMemoryLinkPair();
+      const loserInbox = ctlInbox(loserNode);
+      server.accept(loserHub);
+      const challenge = await loserInbox.take();
+      expect(challenge.t).toBe('auth.challenge');
+      loserNode.close('ws-race-loser');
+      await loserHub.closed;
+      await Bun.sleep(5);
+      expect(liveClosed).toBe(false);
+      expect(registry.get(live.nodeId)?.link).toBe(live.hubLink);
+      expect(warnings.filter((row) => row.includes('[hub][uplink]'))).toEqual([]);
+      server.stop();
+    } finally {
+      console.warn = orig;
+      close();
+    }
+  });
+
   test('同一 node id 重复连接会替换旧链路', async () => {
     const { db, close } = createMigratedAuthDb();
     try {

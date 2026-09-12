@@ -50,6 +50,7 @@ import {
   sameHubUrl,
 } from './uplink-pool-url';
 import { UplinkRelayDrain } from './uplink-relay-drain';
+import { withWsOpenRace } from './ws-open-race';
 
 export type { UplinkSwitchResult } from './uplink-pool-switch';
 export {
@@ -1587,8 +1588,8 @@ function isTlsCertificateError(err: unknown): boolean {
 }
 
 function defaultWsFactory(tlsCa: string[] | null): UplinkWsFactory {
-  return (url) => {
+  return withWsOpenRace((url) => {
     const tls = uplinkWebSocketTls(tlsCa);
     return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
-  };
+  });
 }

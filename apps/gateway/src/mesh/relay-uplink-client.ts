@@ -459,7 +459,7 @@ export class RelayUplinkClient implements RelayUplinkCtlHost {
     else signal.addEventListener('abort', onParentAbort, { once: true });
     let ws: WebSocketTransportInput | null = null;
     try {
-      ws = await wsFactory(relayUplinkWsUrl(dialUrl));
+      ws = await wsFactory(relayUplinkWsUrl(dialUrl), { signal: timeout.signal, timeoutMs });
       if (timeout.signal.aborted) {
         closeTransport(ws);
         throw new Error('connect-timeout');

@@ -47,6 +47,7 @@ import {
   sanitizeUplinkCtlType,
   sanitizeUplinkReason,
 } from './uplink-reconnect';
+import { type WsDialContext, withWsOpenRace } from './ws-open-race';
 
 export { classifyUplinkConnectError };
 
@@ -63,7 +64,8 @@ export const UPLINK_CTL_WARN_INTERVAL_MS = 5_000;
 export const UPLINK_CONNECT_LOG_INTERVAL_MS = 30_000;
 
 export type UplinkWsFactory = (
-  url: string
+  url: string,
+  ctx?: WsDialContext
 ) => WebSocketTransportInput | Promise<WebSocketTransportInput>;
 
 export type UplinkClientOptions = {
@@ -101,10 +103,10 @@ export function uplinkWebSocketTls(
 }
 
 function defaultWsFactory(tlsCa?: string[] | null): UplinkWsFactory {
-  return (url) => {
+  return withWsOpenRace((url: string) => {
     const tls = uplinkWebSocketTls(tlsCa);
     return tls ? new WebSocket(url, tls as never) : new WebSocket(url);
-  };
+  });
 }
 
 type AuthPhase = 'idle' | 'awaiting-challenge' | 'challenge-accepted';
@@ -433,7 +435,10 @@ export class UplinkClient {
     else signal.addEventListener('abort', onParentAbort, { once: true });
     try {
       const url = uplinkWsUrl(this.hubUrl);
-      const ws = await this.wsFactory(url);
+      const ws = await this.wsFactory(url, {
+        signal: timeout.signal,
+        timeoutMs: this.connectTimeoutMs,
+      });
       if (timeout.signal.aborted) {
         closeTransport(ws);
         throw new Error('connect-timeout');

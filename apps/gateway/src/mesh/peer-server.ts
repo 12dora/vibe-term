@@ -4,7 +4,8 @@ import { defaultScheduler } from './ctl';
 import { wrapBunPeerSocket } from './peer-protocol';
 import { DEFAULT_PEER_BIND_HOSTS, type MeshScheduler, type PeerBindHost } from './types';
 
-export const PEER_HANDSHAKE_RATE_LIMIT = 10;
+/** 每 IP 每分钟允许的 WS 升级数：一次拨号最多开 `VIBETERM_WS_DIAL_RACE` 条竞速连接，故留出余量。 */
+export const PEER_HANDSHAKE_RATE_LIMIT = 30;
 export const PEER_HANDSHAKE_RATE_WINDOW_MS = 60_000;
 export const PEER_RATE_LIMIT_MAX_KEYS = 4096;
 

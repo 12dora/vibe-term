@@ -12,6 +12,7 @@ import {
 } from './relay-dial';
 import { type UplinkWsFactory, uplinkWebSocketTls } from './uplink-client';
 import { closeTransport } from './uplink-reconnect';
+import { withWsOpenRace } from './ws-open-race';
 
 export const RELAY_UPLINK_PATH = '/relay/uplink';
 export const RELAY_HEALTH_PATH = '/api/relay/health';
@@ -68,7 +69,7 @@ export async function openRelayLink(
   if (signal.aborted) onParentAbort();
   else signal.addEventListener('abort', onParentAbort, { once: true });
   try {
-    const ws = await wsFactory(relayUplinkWsUrl(relayUrl));
+    const ws = await wsFactory(relayUplinkWsUrl(relayUrl), { signal: timeout.signal, timeoutMs });
     if (timeout.signal.aborted) {
       closeTransport(ws);
       throw new Error('connect-timeout');
@@ -85,8 +86,8 @@ export async function openRelayLink(
 }
 
 export function defaultRelayWsFactory(tlsCa?: string[] | null): UplinkWsFactory {
-  return (url) => {
+  return withWsOpenRace((url: string) => {
     const tls = uplinkWebSocketTls(tlsCa);
     return (tls ? new WebSocket(url, tls as never) : new WebSocket(url)) as WebSocketTransportInput;
-  };
+  });
 }

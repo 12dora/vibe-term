@@ -1,11 +1,15 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { PeerServer } from './peer-server';
+import { PEER_HANDSHAKE_RATE_LIMIT, PeerServer } from './peer-server';
 import { DEFAULT_PEER_BIND_HOSTS } from './types';
 
 describe('PeerServer', () => {
   const servers: PeerServer[] = [];
   afterEach(() => {
     while (servers.length) servers.pop()?.stop();
+  });
+
+  test('每 IP 每分钟的握手上限给竞速拨号留出余量', () => {
+    expect(PEER_HANDSHAKE_RATE_LIMIT).toBe(30);
   });
 
   test('defaults to dual-stack bind hosts', () => {
