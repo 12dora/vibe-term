@@ -65,17 +65,19 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - 事务级回滚走 `backups/<txnId>/app.env`：`rollbackToOld` 与失败处理（包括还没到切 `current` 就失败的情形）都会把它拷回，冻结的旧默认不会因为一次失败的升级被悄悄丢掉。
 - 相同版本的 `upgrade` 是 no-op，不走事务，因而**不做**这次迁移；真正跨版本升级才会拆。
 
-### RTC / TURN 监听键：缺则写入默认
+### RTC / TURN 监听键：空值或旧默认才改写
 
-`applyPortPlanEnvMigration`（`packages/app/src/lib/upgrade-port-env.ts`）挂在 STUN 迁移之后、切 `current` 之前：
+`applyPortPlanEnvMigration`（`packages/app/src/lib/upgrade-port-env.ts`）挂在 STUN 迁移之后、切 `current` 之前。比较前 trim；角色按 `VIBETERM_ROLES` 逗号分词去空白（`"relay, node"` 仍算中继）。规则：
 
-- 所有角色：`VIBETERM_RTC_PORT_RANGE` 缺或 trim 后为空 → 写入 `40000-40099`。自定义段（如 `31000-31099`）原样保留。
-- 角色含 `relay`：`VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE` 缺或空 → 写入 `3478` / `49160-49259`。`0` / 自定义口 / 已有段不覆盖。非 relay 不写 TURN 键。
-- **不碰** `GATEWAY_PORT`、`VIBETERM_PEER_PORT`。
-- 确有写入时把整份 `app.env` 另存 `backups/app.env.<ISO>.ports`（0600），日志一条列出键 + 备份相对路径。幂等：第二遍 `written: []`，不再备份。
-- 事务回滚仍走 `backups/<txnId>/app.env`。
-- 本次事务确实写入了 RTC 键时，`upgrade` 结束打印「已固定 P2P 端口段 40000-40099/udp，请在防火墙放行」。只写 TURN 或幂等跳过不打。
-- 同版本 no-op 不跑事务，因而**不做**这次迁移。
+1. `VIBETERM_RTC_PORT_RANGE` 空 → 写入角色缺省（非中继 `40000-40099`，`relay` / `relay,node` `40050-40099`）。
+2. 中继角色且当前值恰好是 `40000-40099`（2.3.1 写入、与 TURN 重叠）→ 改成 `40050-40099`。
+3. 中继角色：`VIBETERM_TURN_PORT` 空或 `3478` → `40000`；`VIBETERM_TURN_RELAY_PORT_RANGE` 空或 `49160-49259` → `40001-40049`。
+4. **`0` / `off` / 其它自定义值一律不碰**。非中继不写 TURN 键；非中继上已有的 `40000-40099` RTC 段也不改。
+5. **不碰** `GATEWAY_PORT`、`VIBETERM_PEER_PORT`。
+
+确有写入时把整份 `app.env` 另存 `backups/app.env.<ISO>.ports`（0600），日志 `upgrade.portEnvMigrated` 列出键 + 备份相对路径。幂等：第二遍 `written: []`，不再备份。事务回滚仍走 `backups/<txnId>/app.env`。
+
+任一上述键被写入 / 改写时，`upgrade` 结束打印「UDP 已统一为 40000-40099，请在防火墙放行该段」（`upgrade.udpSegmentUnified`）。同版本 no-op 不跑事务，因而**不做**这次迁移。
 
 ### 外部 TURN 三元组：只提示，不改
 

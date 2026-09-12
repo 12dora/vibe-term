@@ -162,7 +162,8 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 - `.xterm`、`.xterm-screen`、`.xterm-helper-textarea` 等 DOM 类名（canvas 直接挂在 `.xterm-screen` 上）；
 - `buffer.active.baseY / viewportY / length / getLine()`（`TerminalBuffer` 只保存当前视口文本）；
 - `_core._renderService.dimensions.css.cell`；
-- `FitAddon`（`proposeDimensions()` 仍是尺寸测量入口）。
+- `FitAddon`（`proposeDimensions()` 仍是尺寸测量入口）；
+- `getSelectionViewportRect()`：当前选区在 **client 坐标** 的并集包围盒（`unionSelectionViewportRect`，裁到画布可见区）；无选区或已滚出视口时 `null`。类型 `GhosttySelectionViewportRect` 从包入口导出。选区工具条用它锚定，见 [移动端软键盘](./mobile-keyboard.md) §3。
 
 这样做的目的不是继续依赖 xterm，而是降低页面层、移动端交互逻辑和既有 E2E 的迁移成本。
 
@@ -171,7 +172,9 @@ WebUI 终端底座已从原先的 xterm 直连实现切换为 Ghostty wasm 兼�
 - `packages/ghostty-terminal/src/ghostty-wasm.ts`
   - Ghostty wasm 导出封装、结构体布局读写、formatter / key / mouse / paste 调用。
 - `packages/ghostty-terminal/src/terminal.ts`
-  - 终端控制器、DOM 适配、输入事件桥接、渲染调度入口。
+  - 终端控制器、DOM 适配、输入事件桥接、渲染调度入口；`getSelectionViewportRect()` 经 `TerminalSelection.viewportRect` 接线。
+- `packages/ghostty-terminal/src/selection-viewport-rect.ts`
+  - `unionSelectionViewportRect`：选区单元格矩形并成 client 包围盒，裁到画布可见区。
 - `packages/ghostty-terminal/src/{render-state,canvas-renderer,terminal-render-coordinator}.ts`
   - 渲染状态读回与行级 dirty 判定、canvas 绘制（含选区层 / 光标层）、帧调度。
 - `packages/ghostty-terminal/src/headless.ts`

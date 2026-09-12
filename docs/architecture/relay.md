@@ -58,8 +58,8 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `VIBETERM_TURN_PORT` | `3478` | 控制口（UDP）。同一个口也应答 STUN Binding，节点的可达探测打的就是它。`0` / `off` 关闭内置 TURN |
-| `VIBETERM_TURN_RELAY_PORT_RANGE` | `49160-49259` | 中继端口段，每个 allocation 占一个 UDP 端口。耗尽回 508 |
+| `VIBETERM_TURN_PORT` | `40000` | 控制口（UDP）。同一个口也应答 STUN Binding，节点的可达探测打的就是它。`0` / `off` 关闭内置 TURN。旧默认 `3478` |
+| `VIBETERM_TURN_RELAY_PORT_RANGE` | `40001-40049` | 中继端口段，每个 allocation 占一个 UDP 端口。耗尽回 508。旧默认 `49160-49259` |
 | `VIBETERM_TURN_EXTERNAL_IP` | 未设 | 写进 `XOR-RELAYED-ADDRESS` 的公网 IPv4。云主机网卡上通常只有私网地址，未设时自动解析 |
 | `VIBETERM_TURN_HOST` | 未设 | 广告出去的 host。未设时广告解析到的公网 IPv4 字面量 |
 | `VIBETERM_TURN_BIND_HOST` | `auto` | 控制口与分配口绑定的本机地址：`auto` = 主出站 IPv4（对 `1.1.1.1:53` 做 UDP `connect()` 取本地地址，跳过 fake-IP / 回环，再退到第一块非内部网卡，最后才 `0.0.0.0` 并告警）；也可写 IPv4 字面量或 `0.0.0.0`。绑到具体地址时 `EADDRNOTAVAIL` 回退通配并告警 |
@@ -71,19 +71,19 @@ STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下�
   DoH 感知解析（fake-IP `198.18/15` 与私网地址不算数）→ 对内置 STUN 列表做自检。三者都拿不到就不起服务，
   `turn: null`、状态里带 `error`。每 30 min 复核一次；IP 变了只更新 `XOR-RELAYED-ADDRESS` 与广告 URL，**不重启、不重绑**，
   已有 allocation 不断。端口被占（`EADDRINUSE`）按 5 s → 60 s 退避重试；与 `VIBETERM_RTC_PORT_RANGE` / `VIBETERM_PEER_PORT`
-  冲突时直接不起并记 `error`。
+  冲突时直接不起并记 `error`。中继主机上 ICE 缺省 `40050-40099`（`DEFAULT_RELAY_HOST_RTC_PORT_RANGE`），与 TURN 控制口 / 分配段错开；`describeTurnPortConflict` 拒绝重叠。
 - **绑定地址**：默认不再绑 `0.0.0.0`。2.3.0 的通配绑定在跑 mihomo / clash 一类 TUN 代理（`auto-route`）的宿主上会让回包命中
   `from 0.0.0.0 iif lo lookup <tun>` 策略路由、以 fake-IP 源地址从 TUN 发出，成员的 Binding 探测全部超时而日志无异常；
   绑到主出站地址后回包按主表走物理网卡。状态 `turn.bindHost`、启动日志 `bind=<host>`、`vibeterm doctor` 都会显示实际绑定地址。
 - **广告**：`turn:<host>:<port>?transport=udp`，在 `createRelayRuntime` 返回前就绪，因此第一帧 `auth.ok` / `relay.list` 就带得上。
 - **协议**：RFC 5389 Binding（不鉴权）+ RFC 5766/8656 Allocate / Refresh / CreatePermission / ChannelBind /
   Send / Data / ChannelData，长期凭据（HMAC-SHA1），所有响应带 FINGERPRINT。只做 **UDP/IPv4** 中继。
-- **边界**：allocation 总数 64、单用户 32；permission 每 allocation 32、单个 CreatePermission 最多 16 个
+- **边界**：未指定配额时 allocation 总数与单用户上限夹紧到中继段端口数（默认段 49 口 → `max_alloc=49`，单用户仍 32）；显式传入的配额不夹。permission 每 allocation 32、单个 CreatePermission 最多 16 个
   `XOR-PEER-ADDRESS`（超额整请求 400）；租期请求值与 600 s 取大、封顶 3600 s；nonce 1 h 轮换、上一枚有 5 min 宽限（超期 438）；
   peer 地址落在私网 / 回环 / fake-IP / 组播等默认拒绝段或本机控制口时回 403（防环）；超长报文静默丢弃；
   未认证应答（Binding 与 401/438 challenge）按每源 20/s（突发 40）、全局 2000/s 限流，挡反射放大。
-- **日志**（`[relay][turn]`）：`builtin turn listening port=… bind=<host> external_ip=… host=… relay_range=…`、
-  `builtin turn disabled reason=…`、30 min 一条 `turn allocations=N`。
+- **日志**（`[relay][turn]`）：`builtin turn listening port=… bind=<host> external_ip=… host=… relay_range=40001-40049 max_alloc=49`、
+  `builtin turn disabled reason=…`、30 min 一条 `turn allocations=N`。跨境节点如何挑快路上行见 [路径优选](./path-selection.md)。
 
 ## 2. 隐私边界
 
@@ -618,6 +618,7 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 - **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
 - `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
   若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
+- **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继行（URL / tenantId / token）变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。主行还在、只是被 `preferred` / priority 挤下第一位时也归轻路径，不在这里强制切换。
 
 **当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。`apps/gateway/src/mesh/relay-link-error.ts` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
 
@@ -631,8 +632,8 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 ### 记录应用与重连
 
 `set-relays` / `meta-key` 应用后触发 `RelaySecrets.reconcile()`：重放密钥日志 → 解出自己的 `K_log` / `K_meta`
-入 `mesh_secrets` → 整表写 `mesh_relays` → 设 `uplink_kind`。目标有变则 `uplink.stop()` + `start()`；
-只是世代变了就立刻 `sendStatus()` 重发状态块（否则对端要等下一个心跳才看得见本节点）。
+入 `mesh_secrets` → 整表写 `mesh_relays` → 设 `uplink_kind`。仅副中继行集合变化走轻路径（刷新候选、增删挂载，不重启主 uplink）；
+主中继行 / 令牌需重认证才 `uplink.stop()` + `start()`。只是世代变了就立刻 `sendStatus()` 重发状态块（否则对端要等下一个心跳才看得见本节点）。
 
 ### 密钥日志双向同步
 
@@ -805,7 +806,7 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 - **踢租户 / 删租户**：`kick` 只作废令牌与断链，数据留着；`remove` 连注册表、enrollment、密钥日志一起删。
   注意被吊销节点如果在吊销当时中继正好离线，中继侧会留一条陈旧的 `admitted` 行，需要运营者手动 `kick`。
 - **健康探针**：`GET /api/relay/health` 无鉴权，反代健康检查与节点拨号前探测都用它。
-- **TURN 端口**：内置 TURN 要放行 UDP 控制口（默认 3478）与**整段**中继端口（默认 49160-49259）；云安全组、面板防火墙、
+- **TURN 端口**：内置 TURN 要放行 UDP 控制口（默认 40000）与**整段**中继端口（默认 40001-40049）；中继兼 node 时再放行 ICE `40050-40099`。云安全组、面板防火墙、
   `ufw` 三层都要单独放。角色完整入站清单见 `@vibeterm/shared/net` 的 `portPlanForRole`（`init` / `hub join` / `relay join` / `doctor` / 接入向导「放行端口」步打印同一张）。`vibeterm doctor` 在 relay 角色上有一条 `turn` 检查（模式 + 本机 Binding 探测 + 该放行哪些端口），另打印端口计划、peer TCP 是否在听、以及有会话时 self 行 `ports[].status === 'blocked'`；无会话则静默跳过 mesh 探测。`vibeterm relay status` 的 `turn:` 行给监听状态与分配数，日志前缀 `[relay][turn]`。
 - **反代 / Access 豁免**：`/relay/uplink`、`/api/relay/health`、`/api/relay/enroll` 在
   `ACCESS_EXEMPT_EXACT_PATHS` 里；`/api/relay/tenants/` 前缀只做 origin 守卫豁免，**不建 Cloudflare bypass 应用**。
@@ -940,7 +941,7 @@ bun packages/app/src/runtime/server.ts
 | 第四次换发淘汰后重新连接（evicted-after-4th-rotation） | `false` / `false` | `false` | `false` | `false` / `null` | 未收到踢出帧的新连接以 `bad-token` / `auth-rejected` 失败 |
 
 最后一行描述无既存踢出状态的节点；离线节点在 kick 后首次认证被 `token-epoch` 拒绝时也不会凭认证失败推断已收到 `relay.kicked`。
-宽限内成员应用带新令牌的 `set-relays` 后，按连接重配置流程排空在途流并重新认证；当前令牌的 `auth.ok` 会清除等待状态，即使其中没有 `token_rotated` 字段。旧节点按原有解码规则忽略可选字段。
+宽限内成员应用带新令牌的 `set-relays` 后，仍按连接重配置流程排空在途流并重新认证（主中继行的 URL / tenantId / token 变了才走这条，判定已从「整张目标表变了」收紧）；当前令牌的 `auth.ok` 会清除等待状态，即使其中没有 `token_rotated` 字段。旧节点按原有解码规则忽略可选字段。
 宽限期内链路保持可用以追平日志，不能为了发送换代提示而主动断链；心跳与开流仍执行相同准入复查。
 
 `mesh_relays` 加了 `kicked_reason`。`relay.kicked` 的 `password_rotated` 表示改密使旧令牌失效并断链，与在线心跳的宽限提示不同。成员没有中继接入口令、也签不出 enroll proof，需要持账户密码的一方完成恢复。

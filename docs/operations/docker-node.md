@@ -27,7 +27,7 @@ scripts/docker-node/
 | `/opt/vibeterm` | 安装目录：`app.env`、`run.sh`、`install-meta.json`、`current -> versions/<ver>`、`vibeterm.pid` | `<name>-opt` |
 | `/var/lib/vibeterm` | `vibeterm.db` 三件套 | `<name>-data` |
 
-端口：容器内固定 `9883`（HTTP）/ `39001`（peer 信令），宿主默认映射到 `127.0.0.1:29883` / `39001`。HTTP 只发布到回环，因为 standalone 阶段的 `/api/setup/*` 无鉴权；确需远程访问时设 `VIBETERM_DOCKER_HTTP_BIND=0.0.0.0`。WAN 直连还要映射 ICE UDP `40000-40099`（`VIBETERM_RTC_PORT_RANGE`，upgrade 缺键写入；未设则容器内 ICE 走临时口，宿主映射对不上）。中继角色另映射 TURN `3478/udp` 与 `49160-49259/udp`。完整清单见 [角色入站端口](./nonstandard-ports.md)。
+端口：容器内固定 `9883`（HTTP）/ `39001`（peer 信令），宿主默认映射到 `127.0.0.1:29883` / `39001`。HTTP 只发布到回环，因为 standalone 阶段的 `/api/setup/*` 无鉴权；确需远程访问时设 `VIBETERM_DOCKER_HTTP_BIND=0.0.0.0`。WAN 直连与内置 TURN 都落在统一 UDP 段 `40000-40099`（`init` 按角色写入 `VIBETERM_RTC_PORT_RANGE`；中继另写 TURN 控制 40000 + 分配 40001-40049，中继主机 ICE 为 40050-40099）。未设 RTC 键则容器内 ICE 走临时口，宿主映射对不上。完整清单见 [角色入站端口](./nonstandard-ports.md)。
 
 ## 首启做了什么
 

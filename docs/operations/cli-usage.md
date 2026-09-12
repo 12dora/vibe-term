@@ -180,7 +180,8 @@ CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
 `vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
 接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
 `RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址（本机探测不通时标 `(down)`）。
-配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。
+该行有 `pathBestMs` 时在 `RTT` 后多一列 `BEST`（已知最佳路径 RTT，毫秒）。`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`（缺省兼容 2.3.1；`reraces` 为 0 时不下发）。`vibeterm nodes` 不受影响。
+配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。路径采样语义见 [路径优选](../architecture/path-selection.md)。
 
 ## 文件拷贝
 

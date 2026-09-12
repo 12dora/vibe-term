@@ -64,7 +64,7 @@ i18n：`terminal.keyboardBehavior.*`（三语）。旧版 iOS（`offsetTop>0`）
 | 触屏 | 轻点画布（上报模式 TUI） | 仅光标行弹出 | 照常发 press+release |
 | 触屏 | 单指滑动 / 双指滑动 | 不变 | 滚动 / 平移 / 滚轮上报照旧 |
 | 触屏 | 长按 | 不弹 | 本地 word 选择 + 选区工具条 |
-| 触屏 | 选区工具条的复制 / 粘贴 / 取消 | 不弹 | 动作本身不变 |
+| 触屏 | 选区工具条的复制 / 粘贴 / 取消 | 不弹 | 工具条锚在选区上/下方；点「复制」走手势机旁路 + `pointerup`（见 §3） |
 | 触屏 | 点快捷键栏的「隐藏键盘」 | 收起 | 该按钮只在键盘弹着时出现 |
 
 触屏判定：视口 < 768px 或带触摸能力（`isTouchFirstEnvironment`，与 `useMobileViewport` 同源），因此平板 / 触屏本也走触屏语义，但它们上的**真鼠标点击仍照常聚焦**。
@@ -79,7 +79,26 @@ i18n：`terminal.keyboardBehavior.*`（三语）。旧版 iOS（`offsetTop>0`）
 - `packages/panels/src/device-console/terminal-shortcuts-slot.tsx`：`ShortcutsBar` 增 `keyboardToggle`；有它时即使一条快捷键都没配置也渲染 `.terminal-shortcuts-strip`，键盘避让测量的浮条高度因此始终包含该按钮。
 - i18n：`terminal.hideKeyboard`。
 
+## 3. 选区工具条与复制方式
+
+选区出现后，工具条锚在选区包围盒的**上方**（上方空间不够则下方），水平居中并在容器内 8 px 夹取。几何来自 Ghostty 的 `getSelectionViewportRect()`（client 坐标并集，裁到画布可见区）；旧壳没有该方法时回退顶栏居中。选区变化、容器 / 窗口 / `visualViewport` resize 后重算。
+
+触屏点「复制」必须绕过长按手势机，否则 `touchend` 会 `preventDefault`、合成鼠标序列把选区清掉或根本点不中按钮：
+
+- `touchstart` 命中 `[data-testid="terminal-selection-toolbar"]` → `resetGesture()`，不 arm 长按、不进 pending/scroll、`touchend` 不 `preventDefault`、不发鼠标上报。
+- 按钮：touch 走 `onPointerUp` + `preventDefault`；鼠标走 `onClick`。合成 `mousedown` 不再 `preventDefault`（防 WebKit 吞 click）。
+- 空选区复制打 `terminal.copyFailed`，不再静默。`writeClipboardText` 仍在手势栈上同步调用。
+
+设置 → 终端「复制方式」（`terminalCopyMode`，持久化键 `vibeterm-ui`，默认 `'button'`，非法值归一成 `'button'`）：
+
+| 值 | 行为 |
+|---|---|
+| `button` | 点工具条「复制」才写入剪贴板 |
+| `auto` | 选区 **committed** 时同步写剪贴板并 toast「已复制」；工具条仍出现但隐藏复制按钮。同一段文本不重复复制（清空选区后可再复制）。不 `clearSelection` |
+
+提交路径：鼠标 = 容器 `pointerup`（非 touch）；触摸 = 手势机 `endTouchSelection` 上的 `onSelectionCommitted`。
+
 ## 测试
 
-- 单测：`virtualKeyboard`（`computeCursorFollowOffset` 边界）、`tap-focus`、`gesture-machine`（画布轻点压序列、滚动不压、工具条放行、光标行 ±1 聚焦、滚回历史不聚焦、上报模式点光标行既发字节又聚焦）、`terminal-input-focus`、`terminal-pointer-handlers`、`TerminalHideKeyboardButton` 首帧形态。
+- 单测：`virtualKeyboard`（`computeCursorFollowOffset` 边界）、`tap-focus`、`gesture-machine`（画布轻点压序列、滚动不压、工具条放行 / 命中工具条不 arm 长按、光标行 ±1 聚焦、滚回历史不聚焦、上报模式点光标行既发字节又聚焦）、`selection-anchor` / `selection-toolbar-action`、`terminal-input-focus`、`terminal-pointer-handlers`、`TerminalHideKeyboardButton` 首帧形态。
 - e2e：`mobile-keyboard-avoidance.spec.ts`（三模式 DOM 契约）、`mobile-terminal-interactions.spec.ts`（挂载不聚焦 → 点远离光标的行不聚焦 → 点光标行聚焦且按钮出现 → 键盘弹着时点别的行焦点不丢 → 点「隐藏键盘」收起）。行坐标在页内按 `lastCursor` + `.xterm-screen` 实算，不写死行号。

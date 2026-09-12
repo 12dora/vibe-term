@@ -16,7 +16,7 @@
 ## 快速定位
 
 - 想搭一台公网入口把多台机器连起来：[部署指南](./operations/production-install.md) → [mesh 运维](./operations/mesh-operations.md) → 需要第二台入口时 [多 hub 主/备](./operations/multi-hub-standby.md)；想给别人提供转发服务：[公共中继角色](./architecture/relay.md)。
-- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。
+- 直连建不起来 / 徽标显示中继：[节点直连](./architecture/peer-direct-connect.md) 与 [mesh 运维「常见排障」](./operations/mesh-operations.md)；放行哪些口：[角色入站端口](./operations/nonstandard-ports.md)。跨境 RTT 差一倍：[路径优选](./architecture/path-selection.md)。
 - 登录相关（密码、通行密钥、TOTP、限流、公网暴露）：[登录面安全](./security/login-security.md)。
 - 发一个版本：[发布流程](./operations/release-process.md) → [发行包签名](./operations/release-signing.md)；升级出问题：[升级事务](./operations/upgrade-transaction.md)。
 - 改 WebSocket 协议：[ws-borsh v1 规范](./architecture/ws-borsh-v1-spec.md) 与 [状态机](./architecture/ws-state-machines.md)。
@@ -32,6 +32,7 @@
 | --- | --- |
 | [mesh-architecture.md](./architecture/mesh-architecture.md) | 多节点互联架构：拓扑、用户自持根钥与密钥日志、节点证书、链路多路复用、paused 本机可见性例外、端口计划、角色装配、失陷边界 |
 | [peer-direct-connect.md](./architecture/peer-direct-connect.md) | 节点直连：地址退避、paused 不拨号、WebRTC 熔断、信令代次、`ports` 可达性、失败码与链路信息窗 |
+| [path-selection.md](./architecture/path-selection.md) | 跨境路径优选：五元组 ECMP、WS 开链竞速、直连慢路径重掷、上行采样与 `path-rerace` |
 | [relay.md](./architecture/relay.md) | 公共中继角色：盲中继协议、租户密钥、密钥日志记录、加入串与密码加入、存储、HTTP / uplink 接口、CLI 与网页、运维、边界、令牌换发 |
 | [relay-limits-and-metrics.md](./architecture/relay-limits-and-metrics.md) | 中继运营限额（租户数、总带宽、公平分配、单文件上限）与 `/api/relay/metrics` |
 | [port-mapping.md](./architecture/port-mapping.md) | 端口映射：node A 的 TCP 监听经 peer 流复用器隧道到 node B |

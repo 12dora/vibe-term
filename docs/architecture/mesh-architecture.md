@@ -354,7 +354,7 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 ### 配置
 
 - hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔；未设置 = 发行版内置列表，`none` 禁用）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`（hub 角色只支持这套外部 TURN）。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
-- 入站端口默认值单一来源：`@vibeterm/shared/net`（`packages/shared/src/net/port-plan.ts`）。生产 HTTP 9883、peer 信令 39001/tcp、ICE UDP `40000-40099`、TURN 控制 3478/udp、TURN 中继 `49160-49259`、内置 HTTPS 9443、公网 HTTPS 443。`portPlanForRole(role, live)` 按角色给出应放行清单（`node`：peer+rtc；`hub,node` 再加公网 HTTPS；`relay`：HTTPS+TURN；`relay,node` 并集；`standalone` 列 peer/rtc 且 `required:false`）。运行时未设 `VIBETERM_RTC_PORT_RANGE` 时 ICE 仍走系统临时口；`upgrade` 缺键写入 `40000-40099`。
+- 入站端口默认值单一来源：`@vibeterm/shared/net`（`packages/shared/src/net/port-plan.ts`）。生产 HTTP 9883、peer 信令 39001/tcp、ICE UDP 非中继 `40000-40099` / 中继主机 `40050-40099`、TURN 控制 40000/udp、TURN 分配 `40001-40049`、内置 HTTPS 9443、公网 HTTPS 443。全部 UDP 落在 40000-40099。`portPlanForRole(role, live)` 按角色给出应放行清单（`node`：peer+rtc；`hub,node` 再加公网 HTTPS；`relay`：HTTPS+TURN；`relay,node` 并集且 ICE 与 TURN 分段；`standalone` 列 peer/rtc 且 `required:false`）。运行时未设 `VIBETERM_RTC_PORT_RANGE` 时 ICE 仍走系统临时口；`init` / `upgrade` 按角色写入（空值或旧默认才改，见 [升级事务](../operations/upgrade-transaction.md)）。跨境选路见 [路径优选](./path-selection.md)。
 - node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
 - STUN/TURN：hub / 中继配置 → `node.list` / `relay.list` 下发 → 节点求有效列表 → 浏览器 `GET /api/mesh/rtc-config`。
   - **STUN**：内置列表随发行版分发（`packages/shared/src/net/stun-defaults.ts`），hub / 中继**只在自己设了自定义列表时**才下发，否则下发空数组。节点按「节点自定义 > 节点禁用 > hub 下发的自定义列表 > 内置列表」求有效列表，再按 STUN 探针 RTT 排序。空下发**不会**清掉节点自己的列表。

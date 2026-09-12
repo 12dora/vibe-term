@@ -1,3 +1,63 @@
+# 2.3.2
+
+_2026-09-13_
+
+## English
+
+### Ports
+
+- **All VibeTerm UDP lives in 40000–40099.** Built-in TURN control is UDP 40000 (was 3478), allocations 40001–40049 (was 49160–49259); ICE on a relay host is 40050–40099 so it never overlaps TURN. Non-relay ICE stays 40000–40099. `init` writes the three keys by role; `upgrade` rewrites blank values and exact legacy defaults (`3478` / `49160-49259` / relay-host `40000-40099`) and prints “UDP unified to 40000-40099 — allow this range in the firewall”. Custom values and `0`/`off` are left alone. Default TURN allocation cap is clamped to the range size (`max_alloc=49`). Public STUN `:3478` is unchanged.
+
+### Path selection
+
+- **WebSocket open race.** Peer ws-secure, hub uplink and relay uplink open `VIBETERM_WS_DIAL_RACE` sockets at once (default 2, clamp 1..4) and keep the first to `open`; losers close before any byte is sent. LAN targets do not race. Peer inbound handshake limit is 30/IP/min.
+- **Slow-path re-roll on direct links.** When live DC or ws-secure RTT is above `max(1.5×best, best+40ms)` versus the peer’s 30-minute best-path memory, the offerer dials a new 5-tuple (DC needs the `reroll` hello cap; 2.3.1 peers never get a re-roll offer). Make-before-break; streams re-home at ≥30% gain. `VIBETERM_DC_REROLL=off` disables.
+- **Uplink path sampling.** Every 5 min the node TCP-connects each public hub/relay host three ways (30 min TTL). Three consecutive slow idle heartbeats close the live link with `path-rerace` (no failure / no backoff) and re-dial through the open race. `VIBETERM_UPLINK_PATH_SAMPLING=off` disables. `vibeterm relay list` grows a `BEST` column; `GET /api/mesh/relay/status` rows may include `pathBestMs` / `reraces`. `nodes` is unchanged.
+
+### Relay
+
+- Adding or removing a secondary relay only refreshes candidates and attach slots (`[relay] targets updated … (no restart)`). Token/tenant rotation and a real primary-row change still drain and rebuild.
+
+### Terminal
+
+- Selection toolbar anchors above/below the selection (`getSelectionViewportRect`). Touch copy uses a gesture-machine bypass plus `pointerup`. Settings → Terminal “copy mode” (`terminalCopyMode` in `vibeterm-ui`, default `button`): copy on commit, or via the button.
+
+### Fixes
+
+- Three-way TCP probes now merge verdicts deterministically (all `refused` → `refused`, otherwise `timeout`), independent of completion order.
+
+### Upgrade notes
+
+- Allow UDP **40000–40099** on every node’s firewall / security group (replaces 3478 + 49160–49259 on relays). Custom TURN/ICE ports are not rewritten.
+
+## 中文
+
+### 端口
+
+- **全部 VibeTerm UDP 落在 40000–40099。** 内置 TURN 控制口 40000（原 3478）、分配段 40001–40049（原 49160–49259）；中继主机 ICE 为 40050–40099，与 TURN 错开。非中继 ICE 仍是 40000–40099。`init` 按角色写入三键；`upgrade` 只改写空值与恰好等于旧默认的项（`3478` / `49160-49259` / 中继主机 `40000-40099`），结束提示「UDP 已统一为 40000-40099，请在防火墙放行该段」。自定义与 `0`/`off` 不动。默认 TURN 分配上限夹紧到段大小（`max_alloc=49`）。公网 STUN `:3478` 不变。
+
+### 网络路径优选
+
+- **WebSocket 开链竞速。** peer ws-secure / hub / 中继上行同时开 `VIBETERM_WS_DIAL_RACE` 条（默认 2，夹紧 1..4），取最先 `open` 的一条，其余不发字节即关。局域网不竞速。peer 入站握手限流 30/IP/min。
+- **直连慢路径重掷。** live DC / ws-secure 的 RTT 高于该对端 30 min 窗内 best（`max(1.5×best, best+40ms)`）时，offerer 再拨一条新五元组（DC 需对端报 `reroll` 能力位；2.3.1 对端不会收到重掷 offer）。make-before-break；提升 ≥ 30 % 时搬流。`VIBETERM_DC_REROLL=off` 关闭。
+- **上行路径采样。** 每 5 min 对每条公网 hub/中继主机三路 TCP connect（30 min TTL）。连续 3 次空闲心跳偏慢则以 `path-rerace` 关链（不计失败、不退避）并走开链竞速重连。`VIBETERM_UPLINK_PATH_SAMPLING=off` 关闭。`vibeterm relay list` 增 `BEST` 列；`GET /api/mesh/relay/status` 行可选 `pathBestMs` / `reraces`。`nodes` 不变。
+
+### 中继
+
+- 增删副中继只刷新候选与挂载（`[relay] targets updated … (no restart)`）。令牌 / 租户轮换与主中继行真正变化仍排空重建。
+
+### 终端
+
+- 选区工具条锚在选区上/下方（`getSelectionViewportRect`）。触屏复制走手势机旁路 + `pointerup`。设置 → 终端「复制方式」（`terminalCopyMode`，持久化 `vibeterm-ui`，默认 `button`）：选中即复制，或点按钮复制。
+
+### 修复
+
+- 三口并发 TCP 探测的失败裁决改为确定性合并（全 `refused` 才 `refused`，否则 `timeout`），不再取决于完成顺序。
+
+### 升级说明
+
+- 在每台节点的防火墙 / 云安全组放行 UDP **40000–40099**（取代中继上的 3478 + 49160–49259）。自定义 TURN / ICE 端口不会被改写。
+
 # 2.3.1
 
 _2026-09-12_

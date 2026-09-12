@@ -28,8 +28,8 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 
 ## KI-4：TURN 只走 UDP，端口要运营者自己放行
 
-中继角色**自带 TURN**（`VIBETERM_TURN_PORT`，默认 `3478`/UDP；中继端口段 `VIBETERM_TURN_RELAY_PORT_RANGE`，默认
-`49160-49259`），长期凭据首启生成后落 `gateway_kv`，随 `auth.ok` / `relay.list` 下发给租户节点，不再需要手配三个环境变量。
+中继角色**自带 TURN**（`VIBETERM_TURN_PORT`，默认 `40000`/UDP；中继端口段 `VIBETERM_TURN_RELAY_PORT_RANGE`，默认
+`40001-40049`），长期凭据首启生成后落 `gateway_kv`，随 `auth.ok` / `relay.list` 下发给租户节点，不再需要手配三个环境变量。中继主机 ICE 缺省 `40050-40099`，与 TURN 错开；全部 UDP 落在 40000-40099。
 配齐 `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` 则改用外部 TURN、内置不启动；**hub 角色仍只支持这套外部三元组**。
 部署与排查见 [mesh 运维](./operations/mesh-operations.md)，协议与状态字段见 [公共中继角色](./architecture/relay.md)。剩下的边界：
 
@@ -54,7 +54,7 @@ STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在
 ## KI-6：待现网实测的两项
 
 1. 推包途中重启中继 / 让节点顶号，确认 `.part` 保留、只补发剩余字节、最终升级成功。
-2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE`（upgrade 缺键写入 `40000-40099`）目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。UI 不承诺 ICE-TCP 单独可达。
+2. 直连的 ICE-TCP 与 `VIBETERM_RTC_PORT_RANGE`（`init` / upgrade 按角色写入统一段 40000-40099）目前只有 fake / 内存传输的测试，缺真实 NAT 环境的集成验证。UI 不承诺 ICE-TCP 单独可达。
 
 ## KI-8：Hub 转发不把浏览器来源 IP 带给节点
 

@@ -36,10 +36,20 @@ VibeTerm 的数据面本来就是端口透明的：`canonicalHubUrl` / `normaliz
 | `standalone` | 无（peer / ICE 列出但 `required:false`） | 39001/tcp，40000-40099/udp |
 | `node` | peer + ICE | 39001/tcp，40000-40099/udp |
 | `hub,node` | node + 公网 HTTPS | 另加 443/tcp（或 `VIBETERM_HUB_PUBLIC_URL` 上的端口） |
-| `relay` | 公网 HTTPS + TURN 控制 + TURN 中继 | 443/tcp，3478/udp，49160-49259/udp |
-| `relay,node` | 并集 | 上两行之和 |
+| `relay` | 公网 HTTPS + TURN 控制 + TURN 中继 | 443/tcp，40000/udp，40001-40049/udp |
+| `relay,node` | 并集；ICE 与 TURN 分段以免重叠 | 443/tcp，39001/tcp，40050-40099/udp（ICE），40000/udp（TURN 控制），40001-40049/udp（TURN 分配） |
 
-ICE UDP 段：`VIBETERM_RTC_PORT_RANGE` 未设时 **ICE 仍走系统临时口**；plan 展示仍用默认 `40000-40099`。`upgrade` 缺键写入该段（已有自定义值不覆盖）。舰队升完后未在防火墙放行该段，WAN 直连可能变差（回落中继）。ICE-TCP 与 UDP 段相同，mux 开启时常与 UDP 同口，不单独列；KI-6 仍缺真实 NAT 实测。
+全部 VibeTerm UDP 落在统一段 **40000-40099**（`UNIFIED_UDP_RANGE`）。环境变量：
+
+| 键 | 角色缺省 | 旧默认（2.3.1） |
+|---|---|---|
+| `VIBETERM_RTC_PORT_RANGE` | 非中继 `40000-40099`；`relay` / `relay,node` `40050-40099` | 非中继同；中继主机曾写 `40000-40099`（与 TURN 重叠） |
+| `VIBETERM_TURN_PORT` | `40000`（仅中继角色） | `3478` |
+| `VIBETERM_TURN_RELAY_PORT_RANGE` | `40001-40049`（仅中继角色） | `49160-49259` |
+
+`init` 按角色显式写入上表。运行时 `VIBETERM_RTC_PORT_RANGE` 仍未设时 **ICE 走系统临时口**。`upgrade` 迁移规则（trim 后比较）：**空值或恰好等于旧默认 → 改写；`0` / `off` / 其它自定义值不动**。中继角色上等于 `40000-40099` 的 RTC 段（2.3.1 写入值）改写成 `40050-40099`。详见 [升级事务](./upgrade-transaction.md)。舰队升完后未在防火墙放行 40000-40099，WAN 直连与内置 TURN 都会失败。ICE-TCP 与 UDP 段相同，mux 开启时常与 UDP 同口，不单独列；KI-6 仍缺真实 NAT 实测。
+
+公网 STUN 仍是第三方的 `:3478` / `:19302`（`stun-defaults.ts`），与本机监听口无关。
 
 TURN 是裸 UDP、不经反代、也不在下面的 HTTPS 候选表里。gateway HTTP（默认 9883）只在 bind host 非回环时进 plan。
 
