@@ -38,24 +38,33 @@ export async function discoverPrimaryOutboundIPv4(deps: LocalAddressDeps = {}): 
   return '0.0.0.0';
 }
 
+/** 容器网桥 / veth / TUN / 虚拟机与 overlay 网卡：宿主的公网 NAT 不会映射到它们，自动发现时排在最后。 */
+const VIRTUAL_IFACE_RE =
+  /^(docker|br-|lxdbr|lxcbr|virbr|veth|vnet|tun|tap|utun|wg|mihomo|clash|sing|tailscale|zt|nebula|wt|vmnet|vboxnet|cni|flannel|cali|kube|ham)/i;
+
 function firstNonInternalIPv4(ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>): string | null {
-  for (const addrs of Object.values(ifaces)) {
+  let virtualFallback: string | null = null;
+  for (const [name, addrs] of Object.entries(ifaces)) {
     if (!addrs) continue;
     for (const info of addrs) {
       if (info.internal) continue;
       if (!isIpv4Family(info.family)) continue;
       if (!isUsableOutboundIPv4(info.address)) continue;
+      if (VIRTUAL_IFACE_RE.test(name)) {
+        virtualFallback ??= info.address;
+        continue;
+      }
       return info.address;
     }
   }
-  return null;
+  return virtualFallback;
 }
 
 function isIpv4Family(family: string | number): boolean {
   return family === 'IPv4' || family === 4;
 }
 
-/** 丢弃未指定、回环、以及代理 TUN 的 fake-IP（198.18/15），避免 auto 绑到不可达地址。 */
+/** 丢弃未指定、回环、代理 TUN 的 fake-IP（198.18/15）与 CGNAT overlay 地址，避免 auto 绑到不可达地址。 */
 function isUsableOutboundIPv4(ip: string): boolean {
   if (isIP(ip) !== 4) return false;
   if (ip === '0.0.0.0') return false;
@@ -64,6 +73,8 @@ function isUsableOutboundIPv4(ip: string): boolean {
   const b = Number(octets[1]);
   if (a === 127) return false;
   if (a === 198 && (b === 18 || b === 19)) return false;
+  // CGNAT 100.64/10：tailscale / netbird 一类 overlay 地址，公网 NAT 不会映射到它
+  if (a === 100 && b >= 64 && b <= 127) return false;
   return true;
 }
 

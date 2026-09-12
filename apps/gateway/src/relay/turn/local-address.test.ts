@@ -92,6 +92,34 @@ describe('discoverPrimaryOutboundIPv4', () => {
     expect(ip).toBe('203.0.113.8');
   });
 
+  test('bridge / TUN / overlay interfaces rank after physical ones and CGNAT is skipped', async () => {
+    const ip = await discoverPrimaryOutboundIPv4({
+      connectUdp: async () => '198.18.0.1',
+      listInterfaces: () => ({
+        lxdbr0: [
+          { address: '10.108.57.1', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+        ],
+        wt0: [
+          { address: '100.75.213.124', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+        ],
+        mihomo: [
+          { address: '198.18.0.1', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+        ],
+        eth0: [{ address: '10.0.0.3', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo],
+      }),
+    });
+    expect(ip).toBe('10.0.0.3');
+    const onlyBridge = await discoverPrimaryOutboundIPv4({
+      connectUdp: async () => null,
+      listInterfaces: () => ({
+        docker0: [
+          { address: '172.17.0.1', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+        ],
+      }),
+    });
+    expect(onlyBridge).toBe('172.17.0.1');
+  });
+
   test('no usable address returns 0.0.0.0 and warns', async () => {
     const warns: string[] = [];
     const ip = await discoverPrimaryOutboundIPv4({
