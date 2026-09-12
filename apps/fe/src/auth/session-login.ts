@@ -563,6 +563,8 @@ export async function loginToNode(
 
   // challenge 与随后可能的 listNodes 并行：nonce 一次性，重试不能复用这份。
   const pendingChallenge = challenge ?? api.challenge(nodeId, session.uid);
+  // 查找节点失败时 challenge 仍在飞，先兜住 rejection，否则会变成未处理的 Promise 拒绝
+  void pendingChallenge.catch(() => undefined);
   const found = await lookupLoginNode(api, nodeId, knownNode, selfBootstrap);
   if (!found.ok) return found;
 

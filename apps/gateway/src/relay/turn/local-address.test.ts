@@ -120,6 +120,31 @@ describe('discoverPrimaryOutboundIPv4', () => {
     expect(onlyBridge).toBe('172.17.0.1');
   });
 
+  test('UDP probe landing on a private-address TUN yields to a physical interface', async () => {
+    const ifaces = () => ({
+      tun0: [{ address: '172.19.0.1', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo],
+      eth0: [
+        { address: '192.168.1.8', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+      ],
+    });
+    expect(
+      await discoverPrimaryOutboundIPv4({
+        connectUdp: async () => '172.19.0.1',
+        listInterfaces: ifaces,
+      })
+    ).toBe('192.168.1.8');
+    expect(
+      await discoverPrimaryOutboundIPv4({
+        connectUdp: async () => '172.19.0.1',
+        listInterfaces: () => ({
+          tun0: [
+            { address: '172.19.0.1', family: 'IPv4', internal: false } as os.NetworkInterfaceInfo,
+          ],
+        }),
+      })
+    ).toBe('172.19.0.1');
+  });
+
   test('no usable address returns 0.0.0.0 and warns', async () => {
     const warns: string[] = [];
     const ip = await discoverPrimaryOutboundIPv4({

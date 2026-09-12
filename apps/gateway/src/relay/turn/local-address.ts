@@ -30,19 +30,40 @@ export async function resolveTurnListenHost(
 
 export async function discoverPrimaryOutboundIPv4(deps: LocalAddressDeps = {}): Promise<string> {
   const connect = deps.connectUdp ?? connectUdpProbe;
+  const ifaces = (deps.listInterfaces ?? os.networkInterfaces)();
   const routed = await connect(UDP_PROBE_HOST, UDP_PROBE_PORT);
-  if (routed && isUsableOutboundIPv4(routed)) return routed;
-  const fromIfaces = firstNonInternalIPv4((deps.listInterfaces ?? os.networkInterfaces)());
+  if (routed && isUsableOutboundIPv4(routed)) {
+    // 默认路由指向 TUN（普通私网地址的 tun0/utun 一样会命中）时，公网 NAT 映射的是物理网卡，优先物理网卡
+    const routedIface = interfaceNameOf(ifaces, routed);
+    if (routedIface === null || !VIRTUAL_IFACE_RE.test(routedIface)) return routed;
+    const physical = firstNonInternalIPv4(ifaces, { physicalOnly: true });
+    if (physical) return physical;
+    return routed;
+  }
+  const fromIfaces = firstNonInternalIPv4(ifaces);
   if (fromIfaces) return fromIfaces;
   deps.warn?.('turn: no primary outbound IPv4; binding 0.0.0.0');
   return '0.0.0.0';
+}
+
+function interfaceNameOf(
+  ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>,
+  ip: string
+): string | null {
+  for (const [name, addrs] of Object.entries(ifaces)) {
+    if (addrs?.some((info) => info.address === ip)) return name;
+  }
+  return null;
 }
 
 /** 容器网桥 / veth / TUN / 虚拟机与 overlay 网卡：宿主的公网 NAT 不会映射到它们，自动发现时排在最后。 */
 const VIRTUAL_IFACE_RE =
   /^(docker|br-|lxdbr|lxcbr|virbr|veth|vnet|tun|tap|utun|wg|mihomo|clash|sing|tailscale|zt|nebula|wt|vmnet|vboxnet|cni|flannel|cali|kube|ham)/i;
 
-function firstNonInternalIPv4(ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>): string | null {
+function firstNonInternalIPv4(
+  ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>,
+  opts: { physicalOnly?: boolean } = {}
+): string | null {
   let virtualFallback: string | null = null;
   for (const [name, addrs] of Object.entries(ifaces)) {
     if (!addrs) continue;
@@ -51,7 +72,7 @@ function firstNonInternalIPv4(ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]>): s
       if (!isIpv4Family(info.family)) continue;
       if (!isUsableOutboundIPv4(info.address)) continue;
       if (VIRTUAL_IFACE_RE.test(name)) {
-        virtualFallback ??= info.address;
+        if (!opts.physicalOnly) virtualFallback ??= info.address;
         continue;
       }
       return info.address;

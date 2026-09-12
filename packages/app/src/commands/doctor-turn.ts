@@ -60,10 +60,15 @@ export async function relayTurnDoctorCheck(
   const spec = parseTurnBindHost(env.VIBETERM_TURN_BIND_HOST);
   const resolved = await resolveBind(spec);
   const bind = spec === 'auto' ? `${resolved} (auto)` : resolved;
-  const probeHost = resolved === '0.0.0.0' ? '127.0.0.1' : resolved;
-  const bound = await probe(`stun:${probeHost}:${turnPort}`)
-    .then((result) => result.ok)
-    .catch(() => false);
+  // 绑定到具体地址失败时服务会回退到 0.0.0.0，所以具体地址探不到再探回环，避免误报未监听
+  const probeHosts = resolved === '0.0.0.0' ? ['127.0.0.1'] : [resolved, '127.0.0.1'];
+  let bound = false;
+  for (const host of probeHosts) {
+    bound = await probe(`stun:${host}:${turnPort}`)
+      .then((result) => result.ok)
+      .catch(() => false);
+    if (bound) break;
+  }
   return {
     id: 'turn',
     level: bound ? 'pass' : 'warn',
