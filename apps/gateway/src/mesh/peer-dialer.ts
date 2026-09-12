@@ -37,6 +37,7 @@ import {
   emptyDirectAttempt,
   noteNoEndpoints,
   noteWsRaceFailure,
+  winningDialInitiator,
 } from './peer-direct-attempt';
 import { canonicalEndpointSet, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
 import {
@@ -106,6 +107,7 @@ export class PeerDialer {
     | null;
   private localFingerprint = '';
   private readonly dcInflight = new Map<string, Promise<LinkSession | null>>();
+  private readonly wsRerollInflight = new Set<string>();
 
   constructor(state: PeerManagerState, opts: PeerDialerOptions) {
     this.state = state;
@@ -147,12 +149,17 @@ export class PeerDialer {
     return this.dcInflight.has(nodeId);
   }
 
-  /**
-   * DC 重掷拨号：绕过 `wantsUpgrade` 与 `aboveDc`（已是 dc 时两者都为假），仍受 dcInflight
-   * （upgrade 模式下 `dialDc` 直接返回 null）、字典序角色与熔断约束。
-   * `answer` 是应答侧（字典序较大的一端），沿用 peerInitiated 语义：熔断冷却中也要建 PC。
-   */
-  dialDcReroll(nodeId: string, opts?: { answer?: boolean }): Promise<LinkSession | null> {
+  hasWsRerollInflight(nodeId: string): boolean {
+    return this.wsRerollInflight.has(nodeId);
+  }
+
+  /** 直连重掷：DC 绕过 wantsUpgrade；ws-secure 走 raced factory。answer 仅 DC 应答侧。 */
+  dialDcReroll(
+    nodeId: string,
+    opts?: { answer?: boolean; transport?: 'dc' | 'ws-secure' }
+  ): Promise<LinkSession | null> {
+    const transport = opts?.transport ?? this.state.live.get(nodeId)?.transport;
+    if (transport === 'ws-secure') return this.dialWsReroll(nodeId);
     const answer = opts?.answer === true;
     const self = this.state.identity.nodeId.toLowerCase();
     const peer = nodeId.toLowerCase();
@@ -165,6 +172,21 @@ export class PeerDialer {
     if (!ok) return Promise.resolve(null);
     const { generation, stopAbort } = this.state;
     return this.dialDc(nodeId, generation, stopAbort.signal, 'upgrade', answer);
+  }
+
+  dialWsReroll(nodeId: string): Promise<LinkSession | null> {
+    const self = this.state.identity.nodeId;
+    const blocked =
+      this.state.stopped ||
+      this.state.live.get(nodeId)?.transport !== 'ws-secure' ||
+      winningDialInitiator(self, nodeId) !== self ||
+      this.wsRerollInflight.has(nodeId);
+    if (blocked) return Promise.resolve(null);
+    this.wsRerollInflight.add(nodeId);
+    const attempt = emptyDirectAttempt(this.state.scheduler.now());
+    return this.dialWsSecure(nodeId, this.state.generation, this.state.stopAbort.signal, attempt)
+      .catch(() => null)
+      .finally(() => this.wsRerollInflight.delete(nodeId));
   }
 
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {

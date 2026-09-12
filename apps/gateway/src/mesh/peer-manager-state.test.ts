@@ -11,6 +11,7 @@ import {
   measurePingRttMs,
   parseEchoedSentAt,
 } from './peer-manager-state';
+import { PEER_PATH_RTT_WINDOW_MS } from './peer-path-rtt';
 import type { LivePeer } from './peer-reconnect-wake';
 import { ImmediateScheduler } from './test-support';
 import type { MeshIdentity } from './types';
@@ -57,6 +58,21 @@ describe('peer RTT EWMA and lookup', () => {
     expect(PEER_IDLE_MS).toBe(5 * 60 * 1000);
     expect(PEER_DC_IDLE_MS).toBe(30 * 60 * 1000);
     expect(PEER_RETIRE_STREAM_LEAK_MS).toBe(30 * 60 * 1000);
+  });
+
+  test('path RTT memory uses a 30 min sliding window so stale best does not stick', () => {
+    const scheduler = new ImmediateScheduler();
+    const state = createPeerManagerState({
+      identity: identity(),
+      userStore: { getCert: () => null } as never,
+      uplink: { rttMs: null } as never,
+      scheduler,
+      endpointBackoff: new PeerEndpointBackoff({ now: () => scheduler.now() }),
+    });
+    state.pathRtt.record('p', { kind: 'dc', rttMs: 40 });
+    expect(state.pathRtt.bestMs('p')).toBe(40);
+    scheduler.nowMs += PEER_PATH_RTT_WINDOW_MS + 1;
+    expect(state.pathRtt.bestMs('p')).toBeNull();
   });
 
   test('RTT is computed by the ping sender; a 1e6 ms peer clock offset does not leak', () => {

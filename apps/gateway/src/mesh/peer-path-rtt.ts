@@ -11,6 +11,8 @@ export type PeerPathRttMemoryOptions = {
 };
 
 export const PEER_PATH_RTT_TTL_MS = 24 * 60 * 60 * 1000;
+/** 对端最佳路径的滑动窗口：过期样本不再触发重掷，避免全路径一起劣化时被陈旧 best 反复误伤。 */
+export const PEER_PATH_RTT_WINDOW_MS = 30 * 60 * 1000;
 const DEFAULT_PER_KIND_LIMIT = 16;
 
 /**

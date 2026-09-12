@@ -20,7 +20,7 @@ export type PeerLinkDrainDeps = {
   armDcUpgradeRetry: (nodeId: string) => void;
   onPeerReconnected: (nodeId: string) => void;
   hasCoalescedUpgrade: (nodeId: string) => boolean;
-  /** link.hello 里本端要报的额外能力位（目前只有 reroll）。 */
+  /** link.hello 里本端要报的额外能力位（reroll：对端认 DC 重掷 offer）。 */
   extraHelloCaps: () => string[];
   /** 对端 link.hello 的能力位。 */
   noteHelloCaps: (live: LivePeer, caps: readonly unknown[]) => void;

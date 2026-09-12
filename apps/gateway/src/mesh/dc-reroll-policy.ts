@@ -1,14 +1,14 @@
 /**
- * DC 重掷（re-roll）策略：DataChannel 是一条 UDP 流，本地端口在建 PeerConnection 时才抽签，
- * 跨运营商边界时约三分之一的五元组会落在慢路径上。策略只看测量值：当前链路稳态 RTT 明显高于
- * 该对端已知的最佳路径 RTT 时，重新拨一条 DC（新 PC → 新端口对），make-before-break 换过去。
+ * 直连重掷策略：DC 与 ws-secure 共用同一套阈值 / 预算。外部路由变化会把已经很好的五元组
+ * 改到慢路上，所以 live 链路要持续对照「该对端已知的最佳路径 RTT」再决定要不要重拨。
  *
  * 阈值口径：
  * - 至少 `DC_REROLL_MIN_SAMPLES` 个 ping 样本、链路存活 `DC_REROLL_MIN_LINK_AGE_MS`，避免抖动误判；
  * - 慢的定义是 `rtt > max(1.5 × best, best + 40ms)`，同时挡住小 RTT 的相对噪声与大 RTT 的绝对噪声；
- * - 每对端每滚动小时最多 `DC_REROLL_MAX_PER_HOUR` 次，两次间隔至少 `DC_REROLL_MIN_INTERVAL_MS`；
- * - 只有 offerer（字典序较小的 nodeId）发起，且当前链路已协商 quiesce（换链才是 MBB 而不是 park），
- *   对端还必须在 `link.hello` 里报过 `reroll` 能力（2.3.1 及更早不认重掷 offer，拨了必然白拨）。
+ * - 每对端每滚动小时最多 `DC_REROLL_MAX_PER_HOUR` 次（DC 与 ws-secure 共用），间隔 ≥ 60 s；
+ * - 只有 dial-initiator（`winningDialInitiator`，字典序较小的 nodeId）发起，且已协商 quiesce；
+ * - DC 还要求对端报过 `reroll` 能力（2.3.1 不认更高 epoch 的 offer）；ws-secure 入站本来就会接新连接；
+ * - 已能拨 DC 且 DC 升级在途 / 熔断放行时，不浪费预算去再赛一条 ws-secure（DC 升级会换掉它）。
  */
 export const DC_REROLL_MIN_SAMPLES = 3;
 export const DC_REROLL_MIN_LINK_AGE_MS = 20_000;
@@ -28,6 +28,8 @@ export const DC_REROLL_CAP = 'reroll';
 
 export type DcRerollBudget = { count: number; windowStartedAt: number };
 
+export type DirectRerollTransport = 'dc' | 'ws-secure';
+
 export type DcRerollInput = {
   transport: string;
   /** 稳态 EWMA RTT。 */
@@ -39,10 +41,13 @@ export type DcRerollInput = {
   rerolls: DcRerollBudget;
   lastRerollAt: number | null;
   quiesceCapable: boolean;
-  /** 对端在 link.hello 里报过 reroll 能力。 */
+  /** 对端在 link.hello 里报过 reroll 能力。DC 重掷需要；ws-secure 入站不依赖它。 */
   peerCapable: boolean;
+  /** dial-initiator（winningDialInitiator / 字典序较小的 nodeId）。 */
   isOfferer: boolean;
   breakerAllows: boolean;
+  /** ws-secure：DC 可拨且升级已在途 / 熔断放行时为 true，避免白烧预算。 */
+  dcUpgradePending?: boolean;
   now: number;
 };
 
@@ -64,8 +69,12 @@ export function dcRerollBudgetInWindow(budget: DcRerollBudget, now: number): DcR
   return budget;
 }
 
+function isDirectRerollTransport(transport: string): transport is DirectRerollTransport {
+  return transport === 'dc' || transport === 'ws-secure';
+}
+
 function measurementReason(input: DcRerollInput): string | null {
-  if (input.transport !== 'dc') return 'transport';
+  if (!isDirectRerollTransport(input.transport)) return 'transport';
   if (input.rttMs == null || !Number.isFinite(input.rttMs)) return 'no-rtt';
   if (input.samples < DC_REROLL_MIN_SAMPLES) return 'samples';
   if (input.linkAgeMs < DC_REROLL_MIN_LINK_AGE_MS) return 'age';
@@ -75,8 +84,11 @@ function measurementReason(input: DcRerollInput): string | null {
 
 function roleReason(input: DcRerollInput): string | null {
   if (!input.quiesceCapable) return 'quiesce';
-  if (!input.peerCapable) return 'peer-cap';
   if (!input.isOfferer) return 'answerer';
+  if (input.transport === 'ws-secure') {
+    return input.dcUpgradePending ? 'dc-upgrade' : null;
+  }
+  if (!input.peerCapable) return 'peer-cap';
   if (!input.breakerAllows) return 'breaker';
   return null;
 }

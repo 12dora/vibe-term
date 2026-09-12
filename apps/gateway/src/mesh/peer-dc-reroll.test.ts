@@ -63,11 +63,13 @@ type Harness = {
   state: PeerManagerState;
   scheduler: ImmediateScheduler;
   coordinator: DcRerollCoordinator;
-  dials: Array<{ nodeId: string; answer: boolean }>;
+  dials: Array<{ nodeId: string; answer: boolean; transport?: string }>;
   retired: Array<{ live: LivePeer; reason: string }>;
   settle: (session: LinkSession | null) => void;
   inflight: Set<string>;
+  wsInflight: Set<string>;
   breaker: { allow: boolean };
+  dcCapable: { value: boolean };
 };
 
 function harness(selfNodeId = SELF): Harness {
@@ -75,13 +77,17 @@ function harness(selfNodeId = SELF): Harness {
   const dials: Harness['dials'] = [];
   const retired: Harness['retired'] = [];
   const inflight = new Set<string>();
+  const wsInflight = new Set<string>();
   const breaker = { allow: true };
+  const dcCapable = { value: false };
   let settle: (session: LinkSession | null) => void = () => {};
   const coordinator = new DcRerollCoordinator(state, {
     breakerAllows: () => breaker.allow,
     hasDcInflight: (nodeId) => inflight.has(nodeId),
+    hasWsRerollInflight: (nodeId) => wsInflight.has(nodeId),
+    dcCapable: () => dcCapable.value,
     dialReroll: (nodeId, opts) => {
-      dials.push({ nodeId, answer: opts.answer });
+      dials.push({ nodeId, answer: opts.answer, transport: opts.transport });
       return new Promise((resolve) => {
         settle = resolve;
       });
@@ -96,7 +102,9 @@ function harness(selfNodeId = SELF): Harness {
     retired,
     settle: (session) => settle(session),
     inflight,
+    wsInflight,
     breaker,
+    dcCapable,
   };
 }
 
@@ -120,6 +128,12 @@ describe('DcRerollCoordinator 采样与触发', () => {
     const h = harness();
     const dc = makeLive(h.state, { rttSamples: 0 });
     h.coordinator.onRttSample(dc, 90);
+    const ws = makeLive(h.state, {
+      peerNodeId: 'cd'.repeat(16),
+      transport: 'ws-secure',
+      rttSamples: 0,
+    });
+    h.coordinator.onRttSample(ws, 80);
     const relay = makeLive(h.state, {
       peerNodeId: 'ab'.repeat(16),
       transport: 'relay',
@@ -127,7 +141,9 @@ describe('DcRerollCoordinator 采样与触发', () => {
     });
     h.coordinator.onRttSample(relay, 300);
     expect(dc.rttSamples).toBe(1);
+    expect(ws.rttSamples).toBe(1);
     expect(h.state.pathRtt.samplesOf(PEER).map((s) => s.kind)).toEqual(['dc']);
+    expect(h.state.pathRtt.samplesOf('cd'.repeat(16)).map((s) => s.kind)).toEqual(['ws-secure']);
     expect(h.state.pathRtt.samplesOf('ab'.repeat(16))).toHaveLength(0);
   });
 
@@ -136,8 +152,60 @@ describe('DcRerollCoordinator 采样与触发', () => {
     h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
     const live = makeLive(h.state);
     h.coordinator.onRttSample(live, 200);
-    expect(h.dials).toEqual([{ nodeId: PEER, answer: false }]);
+    expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'dc' }]);
     expect(h.state.rerolls.get(PEER)?.count).toBe(1);
+  });
+
+  test('ws-secure 慢路径同样触发，走 ws-secure 拨号', () => {
+    const h = harness();
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    const live = makeLive(h.state, { transport: 'ws-secure' });
+    h.coordinator.onRttSample(live, 200);
+    expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'ws-secure' }]);
+    expect(h.state.rerolls.get(PEER)?.count).toBe(1);
+  });
+
+  test('ws-secure 不要求对端 reroll 能力；非 initiator 不拨', () => {
+    const h = harness();
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    h.coordinator.onRttSample(
+      makeLive(h.state, { transport: 'ws-secure', rerollCapable: false }),
+      200
+    );
+    expect(h.dials).toHaveLength(1);
+    const answerer = harness('ff'.repeat(16));
+    answerer.state.pathRtt.record('11'.repeat(16), { kind: 'tcp-connect', rttMs: 90 });
+    answerer.coordinator.onRttSample(
+      makeLive(answerer.state, { peerNodeId: '11'.repeat(16), transport: 'ws-secure' }),
+      200
+    );
+    expect(answerer.dials).toHaveLength(0);
+  });
+
+  test('DC 可拨且熔断放行时不重赛 ws-secure', () => {
+    const h = harness();
+    h.dcCapable.value = true;
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toHaveLength(0);
+    h.breaker.allow = false;
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'ws-secure' }]);
+  });
+
+  test('DC 重掷与 ws 重赛共用每对端每小时 3 次预算', () => {
+    const h = harness();
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    h.coordinator.onRttSample(makeLive(h.state), 200);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(makeLive(h.state), 200);
+    expect(h.dials.map((d) => d.transport)).toEqual(['dc', 'ws-secure', 'dc']);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR);
   });
 
   test('同一条链路上连续 pong 不会重复触发（cooldown 幂等）', () => {
@@ -167,6 +235,8 @@ describe('DcRerollCoordinator 采样与触发', () => {
     expect(rec?.count).toBe(DC_REROLL_MAX_PER_HOUR);
     // 窗口起点自触发那刻算起：走满一小时后预算归零、窗口重开。
     h.scheduler.nowMs = (rec?.windowStartedAt ?? 0) + DC_REROLL_WINDOW_MS;
+    // 预算窗 1 h 长于路径 RTT 滑动窗 30 min：过期的 90 ms 样本要重新写入，否则 best 被 200 ms 顶掉。
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
     h.coordinator.onRttSample(live, 200);
     expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR + 1);
     expect(h.state.rerolls.get(PEER)?.count).toBe(1);
@@ -183,6 +253,25 @@ describe('DcRerollCoordinator 采样与触发', () => {
     const live = makeLive(answerer.state, { peerNodeId: '11'.repeat(16) });
     answerer.coordinator.onRttSample(live, 200);
     expect(answerer.dials).toHaveLength(0);
+  });
+
+  test('日志带 transport= 字段', () => {
+    const h = harness();
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    } finally {
+      console.log = orig;
+    }
+    const line = lines.find((row) => row.includes(' reroll '));
+    expect(line).toContain('transport=ws-secure');
+    expect(line).toContain('reason=slow-path');
+    expect(line).toContain(`peer=${PEER.slice(0, 8)}`);
   });
 
   test('VIBETERM_DC_REROLL=off 既不触发也不报能力位', () => {
@@ -266,6 +355,41 @@ describe('DcRerollCoordinator 结算与搬流', () => {
     expect(h.state.rerolls.get(PEER)?.prevSession).toBeNull();
   });
 
+  test('ws-secure 新链路攒够样本后同样结算并搬流', () => {
+    const h = harness();
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    const old = makeLive(h.state, { transport: 'ws-secure' });
+    h.coordinator.onRttSample(old, 200);
+    old.streams = 1;
+    old.retiring = true;
+    h.state.retiring.set(PEER, new Set([old]));
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      const next = makeLive(h.state, {
+        transport: 'ws-secure',
+        rttSamples: 0,
+        rttMs: 90,
+        linkSinceAt: h.scheduler.nowMs,
+      });
+      h.coordinator.onRttSample(next, 90);
+      h.coordinator.onRttSample(next, 90);
+      h.coordinator.onRttSample(next, 90);
+    } finally {
+      console.log = orig;
+    }
+    expect(h.retired).toEqual([{ live: old, reason: 'retired' }]);
+    expect(
+      lines.some((row) => row.includes('reroll_result') && row.includes('transport=ws-secure'))
+    ).toBe(true);
+    expect(
+      lines.some((row) => row.includes('reroll_rehome') && row.includes('transport=ws-secure'))
+    ).toBe(true);
+  });
+
   test('新链路没快多少就只记结果，不动在途流', () => {
     const { h, old } = triggered();
     old.streams = 1;
@@ -293,7 +417,7 @@ describe('DcRerollCoordinator 应答侧', () => {
     const peerId = '11'.repeat(16);
     makeLive(h.state, { peerNodeId: peerId });
     expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
-    expect(h.dials).toEqual([{ nodeId: peerId, answer: true }]);
+    expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
     expect(h.state.rtcInbox.get(peerId)).toHaveLength(1);
   });
 

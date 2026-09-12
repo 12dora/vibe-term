@@ -211,6 +211,8 @@ export class PeerManager extends PeerCollaboratorHost {
     this.reroll = new DcRerollCoordinator(this.state, {
       breakerAllows: (nodeId) => this.dcUpgrade.dcBreaker.shouldTry(nodeId).allow,
       hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
+      hasWsRerollInflight: (nodeId) => this.dialer.hasWsRerollInflight(nodeId),
+      dcCapable: (nodeId) => this.dialer.dcCapable(nodeId),
       dialReroll: (nodeId, rerollOpts) => this.dialer.dialDcReroll(nodeId, rerollOpts),
       finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
     });
@@ -388,11 +390,10 @@ export class PeerManager extends PeerCollaboratorHost {
   forceDcProbe(nodeId: string): void {
     if (!isNodePaused(nodeId)) this.dialer.forceDcProbe(nodeId);
   }
-  /** 每对端的「最佳已知路径 RTT」记忆；端口可达性探测把 TCP connect 样本也写进来。 */
+  /** 对端最佳路径 RTT 记忆（含 TCP connect 样本）。 */
   get pathRttMemory() {
     return this.state.pathRtt;
   }
-  /** 手动触发一次 DC 重掷（诊断 / 测试）；除 RTT 阈值外的门与自动触发完全一致。 */
   rerollDc(nodeId: string): boolean {
     return this.reroll.forceReroll(nodeId);
   }

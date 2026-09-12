@@ -52,7 +52,6 @@ describe('decideDcReroll', () => {
   });
 
   test('测量门：transport / rtt / 样本数 / 链路年龄 / 最佳值', () => {
-    expect(reasonOf({ transport: 'ws-secure' })).toBe('transport');
     expect(reasonOf({ transport: 'relay' })).toBe('transport');
     expect(reasonOf({ rttMs: null })).toBe('no-rtt');
     expect(reasonOf({ rttMs: Number.NaN })).toBe('no-rtt');
@@ -61,11 +60,30 @@ describe('decideDcReroll', () => {
     expect(reasonOf({ bestKnownMs: null })).toBe('no-best');
   });
 
+  test('ws-secure 与 dc 共用慢路径阈值，relay 仍拒绝', () => {
+    expect(reasonOf({ transport: 'ws-secure' })).toBe('reroll');
+    expect(reasonOf({ transport: 'ws-secure', rttMs: 150, bestKnownMs: 100 })).toBe(
+      'within-threshold'
+    );
+    expect(reasonOf({ transport: 'relay' })).toBe('transport');
+  });
+
   test('角色门：quiesce / 对端能力 / offerer / 熔断', () => {
     expect(reasonOf({ quiesceCapable: false })).toBe('quiesce');
     expect(reasonOf({ peerCapable: false })).toBe('peer-cap');
     expect(reasonOf({ isOfferer: false })).toBe('answerer');
     expect(reasonOf({ breakerAllows: false })).toBe('breaker');
+  });
+
+  test('ws-secure 只认 initiator，不要求 reroll 能力位 / 熔断', () => {
+    expect(reasonOf({ transport: 'ws-secure', isOfferer: false })).toBe('answerer');
+    expect(reasonOf({ transport: 'ws-secure', peerCapable: false })).toBe('reroll');
+    expect(reasonOf({ transport: 'ws-secure', breakerAllows: false })).toBe('reroll');
+  });
+
+  test('ws-secure 在 DC 升级待处理时不重赛', () => {
+    expect(reasonOf({ transport: 'ws-secure', dcUpgradePending: true })).toBe('dc-upgrade');
+    expect(reasonOf({ transport: 'dc', dcUpgradePending: true })).toBe('reroll');
   });
 
   test('阈值：max(1.5×best, best+40) 之内不动', () => {

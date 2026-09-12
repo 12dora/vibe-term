@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { PeerPathRttMemory } from './peer-path-rtt';
+import { PEER_PATH_RTT_WINDOW_MS, PeerPathRttMemory } from './peer-path-rtt';
 
 describe('PeerPathRttMemory', () => {
   test('bestMs takes the minimum across kinds and ignores expired samples', () => {
@@ -33,6 +33,24 @@ describe('PeerPathRttMemory', () => {
     memory.record('p', { kind: 'dc', rttMs: 70 });
     expect(memory.samplesOf('p').map((s) => s.rttMs)).toEqual([60, 70]);
     expect(memory.bestMs('p')).toBe(60);
+  });
+
+  test('30 min window: a 40-minute-old fast sample no longer counts', () => {
+    let now = 0;
+    const memory = new PeerPathRttMemory({ now: () => now, ttlMs: PEER_PATH_RTT_WINDOW_MS });
+    memory.record('p', { kind: 'dc', rttMs: 40 });
+    now += 40 * 60 * 1000;
+    memory.record('p', { kind: 'ws-secure', rttMs: 200 });
+    expect(memory.bestMs('p')).toBe(200);
+    expect(PEER_PATH_RTT_WINDOW_MS).toBe(30 * 60 * 1000);
+  });
+
+  test('class default ttl stays 24 h so other callers keep long-lived samples', () => {
+    let now = 0;
+    const memory = new PeerPathRttMemory({ now: () => now });
+    memory.record('p', { kind: 'dc', rttMs: 40 });
+    now += 40 * 60 * 1000;
+    expect(memory.bestMs('p')).toBe(40);
   });
 
   test('prune drops expired samples and empty peers', () => {

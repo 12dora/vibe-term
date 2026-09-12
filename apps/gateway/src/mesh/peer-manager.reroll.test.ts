@@ -221,3 +221,109 @@ describe('DC 重掷（make-before-break）', () => {
     expect(pair.managerLarge.rerollDc(pair.small.nodeId)).toBe(false);
   }, 20_000);
 });
+
+async function setupWsRerollPair(fixtures: Fixture[]) {
+  const { db, close } = createMigratedAuthDb();
+  fixtures.push({ close });
+  const store = new UserStore(db);
+  seedUser(store);
+  const small = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0x01) });
+  const large = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0xff) });
+  let httpStreams = 0;
+  const managerLarge = new PeerManager({
+    identity: large,
+    userStore: store,
+    uplink: dummyUplink(large, store),
+    peerPort: 0,
+    hostname: '127.0.0.1',
+    startServer: true,
+    idleMs: 60_000,
+    sessionStore: dummySessionStore(),
+    dispatchHttp: () => {
+      httpStreams += 1;
+      return new Promise(() => {});
+    },
+  });
+  fixtures.push({ close, stop: () => managerLarge.stop() });
+  await managerLarge.start();
+  const port = managerLarge.listenPort;
+  expect(port).toBeGreaterThan(0);
+  store.upsertPeer({
+    nodeId: large.nodeId,
+    name: 'large',
+    endpointsJson: JSON.stringify([`ws://127.0.0.1:${port}/peer`]),
+    inventoryJson: '{}',
+    directCapable: false,
+    lastSeenAt: Date.now(),
+    listVersion: 1,
+  });
+  store.upsertPeer({
+    nodeId: small.nodeId,
+    name: 'small',
+    endpointsJson: '[]',
+    inventoryJson: '{}',
+    directCapable: false,
+    lastSeenAt: Date.now(),
+    listVersion: 1,
+  });
+  const managerSmall = new PeerManager({
+    identity: small,
+    userStore: store,
+    uplink: dummyUplink(small, store),
+    peerPort: 0,
+    startServer: false,
+    idleMs: 60_000,
+  });
+  fixtures.push({ close, stop: () => managerSmall.stop() });
+  return { small, large, managerSmall, managerLarge, httpStreamsOf: () => httpStreams };
+}
+
+describe('ws-secure 重赛（make-before-break）', () => {
+  const fixtures: Fixture[] = [];
+  afterEach(async () => {
+    while (fixtures.length) {
+      const item = fixtures.pop();
+      await item?.stop?.();
+      item?.close();
+    }
+  });
+
+  test('重赛换上新 ws-secure：旧 session 退役但不关，在途流继续跑', async () => {
+    const pair = await setupWsRerollPair(fixtures);
+    const link = await pair.managerSmall.getLink(pair.large.nodeId);
+    await waitUntil(() => pair.managerSmall.transportOf(pair.large.nodeId) === 'ws-secure', 5_000);
+    await waitUntil(() => pair.managerLarge.transportOf(pair.small.nodeId) === 'ws-secure', 5_000);
+    await waitUntil(() => pair.managerSmall.quiesceCapableOf(pair.large.nodeId), 5_000);
+    await waitUntil(() => pair.managerLarge.quiesceCapableOf(pair.small.nodeId), 5_000);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+    expect(oldSmall).toBe(link);
+
+    const inflight = await (oldSmall as LinkSession).openStream(HTTP_OPEN);
+    await waitUntil(() => pair.httpStreamsOf() === 1, 2_000);
+    let inflightClosed = false;
+    void inflight.closed.then(() => {
+      inflightClosed = true;
+    });
+
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
+    await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
+    expect(pair.managerSmall.transportOf(pair.large.nodeId)).toBe('ws-secure');
+    expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('ws-secure');
+    expect(inflightClosed).toBe(false);
+    const raced = await Promise.race([
+      (oldSmall as LinkSession).closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 50)),
+    ]);
+    expect(raced).toBe('open');
+    expect(pair.httpStreamsOf()).toBe(1);
+  }, 20_000);
+
+  test('应答侧不会自己发起 ws-secure 重赛', async () => {
+    const pair = await setupWsRerollPair(fixtures);
+    await pair.managerSmall.getLink(pair.large.nodeId);
+    await waitUntil(() => pair.managerLarge.quiesceCapableOf(pair.small.nodeId), 5_000);
+    expect(pair.managerLarge.rerollDc(pair.small.nodeId)).toBe(false);
+  }, 20_000);
+});

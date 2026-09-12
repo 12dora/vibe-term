@@ -5,7 +5,7 @@ import type { DcRerollRecord } from './peer-dc-reroll';
 import type { DirectAttemptRecord } from './peer-direct-attempt';
 import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import type { LiveWaiter, ParkedInbound, TransportWaiter } from './peer-manager-types';
-import { PeerPathRttMemory } from './peer-path-rtt';
+import { PEER_PATH_RTT_WINDOW_MS, PeerPathRttMemory } from './peer-path-rtt';
 import { type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
 import type { RtcSignalInboxEntry } from './peer-rtc-wake';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
@@ -209,7 +209,10 @@ export function createPeerManagerState(opts: {
     advertisedEndpointSet: new Map(),
     endpointBackoff: opts.endpointBackoff,
     peerReconnectWake: new PeerReconnectWake(),
-    pathRtt: new PeerPathRttMemory({ now: () => opts.scheduler.now() }),
+    pathRtt: new PeerPathRttMemory({
+      now: () => opts.scheduler.now(),
+      ttlMs: PEER_PATH_RTT_WINDOW_MS,
+    }),
     rerolls: new Map(),
   };
   rttByScheduler.set(opts.scheduler, state);

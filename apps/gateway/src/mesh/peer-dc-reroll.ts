@@ -6,10 +6,12 @@ import {
   DC_REROLL_RESULT_DEADLINE_MS,
   DC_REROLL_RESULT_SAMPLES,
   DC_REROLL_WINDOW_MS,
+  type DirectRerollTransport,
   decideDcReroll,
 } from './dc-reroll-policy';
 import type { RtcSignalMessage } from './mesh-deps';
 import { logLine } from './mesh-log';
+import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
 import type { LivePeer } from './peer-reconnect-wake';
 import { decodeSdpSignal } from './rtc/ice';
@@ -23,13 +25,19 @@ export type DcRerollRecord = {
   oldMs: number | null;
   /** 触发时的旧 session：新 session 换上来才说明重掷成功。 */
   prevSession: LinkSession | null;
+  /** 触发时的 transport；结算必须对上，避免把无关的 dc/ws 当成这一轮成果。 */
+  transport: DirectRerollTransport | null;
 };
+
+export type DirectRerollOpts = { answer: boolean; transport?: DirectRerollTransport };
 
 export type DcRerollDeps = {
   breakerAllows: (nodeId: string) => boolean;
   hasDcInflight: (nodeId: string) => boolean;
-  /** 绕过 wantsUpgrade / aboveDc 的 DC 拨号；`answer` 为应答侧。 */
-  dialReroll: (nodeId: string, opts: { answer: boolean }) => Promise<LinkSession | null>;
+  hasWsRerollInflight?: (nodeId: string) => boolean;
+  dcCapable?: (nodeId: string) => boolean;
+  /** 绕过 wantsUpgrade / aboveDc 的直连拨号；`answer` 仅 DC 应答侧使用。 */
+  dialReroll: (nodeId: string, opts: DirectRerollOpts) => Promise<LinkSession | null>;
   finishRetire: (live: LivePeer, reason: string) => void;
 };
 
@@ -58,7 +66,7 @@ function round(ms: number): number {
 }
 
 /**
- * DC 重掷的触发、应答与结算。挂在 PeerManager 上，被三处调用：
+ * 直连重掷的触发、应答与结算。挂在 PeerManager 上，被三处调用：
  * live 链路每个 pong（采样 + 判定）、`link.hello` 的能力位、收到对端 rtc 信令。
  */
 export class DcRerollCoordinator {
@@ -86,7 +94,7 @@ export class DcRerollCoordinator {
       this.state.pathRtt.record(live.peerNodeId, { kind: live.transport, rttMs: sampleMs });
     }
     this.settleResult(live);
-    if (!dcRerollEnabled() || this.deps.hasDcInflight(live.peerNodeId)) return;
+    if (!dcRerollEnabled() || this.busy(live.peerNodeId)) return;
     const now = this.state.scheduler.now();
     const rec = this.recordOf(live.peerNodeId, now);
     const decision = decideDcReroll({
@@ -99,25 +107,22 @@ export class DcRerollCoordinator {
       lastRerollAt: rec.lastAt,
       quiesceCapable: live.quiesceCapable,
       peerCapable: live.rerollCapable === true,
-      isOfferer: this.state.identity.nodeId.toLowerCase() < live.peerNodeId.toLowerCase(),
+      isOfferer: this.isInitiator(live.peerNodeId),
       breakerAllows: this.deps.breakerAllows(live.peerNodeId),
+      dcUpgradePending: this.dcUpgradePending(live),
       now,
     });
     if (decision.reroll) this.start(live, rec, decision.currentMs, decision.bestMs, now);
   }
 
   /**
-   * 手动重掷：跳过 RTT 阈值，其余门（dcInflight / offerer / quiesce / 对端能力 / 熔断 / 预算）照旧。
-   * 用于诊断与测试，走的是与自动触发完全相同的拨号与换链路径。
+   * 手动重掷：跳过 RTT 阈值，其余门（inflight / initiator / quiesce / 对端能力 / 熔断 / 预算）照旧。
+   * 用于诊断与测试，走的是与自动触发完全相同的拨号与换链路径。DC 与 ws-secure 都认。
    */
   forceReroll(nodeId: string): boolean {
     if (!dcRerollEnabled()) return false;
     const live = this.state.live.get(nodeId);
-    if (!live || live.transport !== 'dc') return false;
-    if (!live.quiesceCapable || live.rerollCapable !== true) return false;
-    if (this.deps.hasDcInflight(nodeId)) return false;
-    if (this.state.identity.nodeId.toLowerCase() >= nodeId.toLowerCase()) return false;
-    if (!this.deps.breakerAllows(nodeId)) return false;
+    if (!this.canForce(live)) return false;
     const now = this.state.scheduler.now();
     const rec = this.recordOf(nodeId, now);
     if (rec.count >= DC_REROLL_MAX_PER_HOUR) return false;
@@ -146,7 +151,7 @@ export class DcRerollCoordinator {
     rec.lastAt = now;
     inbox.push({ message: msg, receivedAt: now });
     this.state.rtcInbox.set(nodeId, inbox);
-    void this.deps.dialReroll(nodeId, { answer: true }).catch(() => undefined);
+    void this.deps.dialReroll(nodeId, { answer: true, transport: 'dc' }).catch(() => undefined);
     return true;
   }
 
@@ -160,6 +165,7 @@ export class DcRerollCoordinator {
         lastAt: null,
         oldMs: null,
         prevSession: null,
+        transport: null,
       };
       this.state.rerolls.set(nodeId, fresh);
       return fresh;
@@ -178,20 +184,23 @@ export class DcRerollCoordinator {
     bestMs: number,
     now: number
   ): void {
+    const transport: DirectRerollTransport = live.transport === 'ws-secure' ? 'ws-secure' : 'dc';
     rec.count += 1;
     rec.lastAt = now;
     rec.oldMs = currentMs;
     rec.prevSession = live.session;
+    rec.transport = transport;
     const nodeId = live.peerNodeId;
     rtcLog('reroll', {
       peer: id8(nodeId),
+      transport,
       reason: 'slow-path',
       cur_ms: round(currentMs),
       best_ms: round(bestMs),
       try: `${rec.count}/${DC_REROLL_MAX_PER_HOUR}`,
     });
     void this.deps
-      .dialReroll(nodeId, { answer: false })
+      .dialReroll(nodeId, { answer: false, transport })
       .then((session) => {
         if (!session) this.clearPending(nodeId);
       })
@@ -204,48 +213,89 @@ export class DcRerollCoordinator {
     if (!rec) return;
     rec.oldMs = null;
     rec.prevSession = null;
+    rec.transport = null;
   }
 
   private settleResult(live: LivePeer): void {
     const rec = this.state.rerolls.get(live.peerNodeId);
-    if (!rec?.prevSession || rec.oldMs == null || rec.lastAt == null) return;
-    // 超时未换上新链路：这一轮不再结算，免得把之后某条无关的 dc 当成重掷成果。
+    if (!rec?.prevSession || rec.oldMs == null || rec.lastAt == null || !rec.transport) return;
+    // 超时未换上新链路：这一轮不再结算，免得把之后某条无关的链路当成重掷成果。
     if (this.state.scheduler.now() - rec.lastAt > DC_REROLL_RESULT_DEADLINE_MS) {
       this.clearPending(live.peerNodeId);
       return;
     }
-    if (live.transport !== 'dc' || live.session === rec.prevSession) return;
+    if (live.transport !== rec.transport || live.session === rec.prevSession) return;
     if (live.linkSinceAt < rec.lastAt || live.rttSamples < DC_REROLL_RESULT_SAMPLES) return;
     const oldMs = rec.oldMs;
     const newMs = live.rttMs ?? oldMs;
     const prevSession = rec.prevSession;
+    const transport = rec.transport;
     rec.oldMs = null;
     rec.prevSession = null;
+    rec.transport = null;
     const gain = oldMs > 0 ? (oldMs - newMs) / oldMs : 0;
     rtcLog('reroll_result', {
       peer: id8(live.peerNodeId),
+      transport,
       old_ms: round(oldMs),
       new_ms: round(newMs),
       better: newMs < oldMs,
     });
-    if (gain >= DC_REROLL_REHOME_GAIN) this.rehome(live.peerNodeId, prevSession, gain);
+    if (gain >= DC_REROLL_REHOME_GAIN) this.rehome(live.peerNodeId, prevSession, gain, transport);
   }
 
   /**
    * 新链路确实更快时把旧链路上的在途流搬过去：用 `retired` 关旧 session，
    * 转发层的 failover 会在当前 live 上重开流并按 canonical 回放，hub/relay 侧不会 abortBoth。
    */
-  private rehome(nodeId: string, prevSession: LinkSession, gain: number): void {
+  private rehome(
+    nodeId: string,
+    prevSession: LinkSession,
+    gain: number,
+    transport: DirectRerollTransport
+  ): void {
     const set = this.state.retiring.get(nodeId);
     if (!set) return;
     for (const row of [...set]) {
       if (row.session !== prevSession || row.streams === 0) continue;
       rtcLog('reroll_rehome', {
         peer: id8(nodeId),
+        transport,
         streams: row.streams,
         gain_pct: Math.round(gain * 100),
       });
       this.deps.finishRetire(row, 'retired');
     }
+  }
+
+  private busy(nodeId: string): boolean {
+    return this.deps.hasDcInflight(nodeId) || this.deps.hasWsRerollInflight?.(nodeId) === true;
+  }
+
+  private isInitiator(nodeId: string): boolean {
+    return winningDialInitiator(this.state.identity.nodeId, nodeId) === this.state.identity.nodeId;
+  }
+
+  private dcUpgradePending(live: LivePeer): boolean {
+    if (live.transport !== 'ws-secure' || this.deps.dcCapable?.(live.peerNodeId) !== true) {
+      return false;
+    }
+    return (
+      this.deps.hasDcInflight(live.peerNodeId) ||
+      this.state.upgrading.has(live.peerNodeId) ||
+      this.deps.breakerAllows(live.peerNodeId)
+    );
+  }
+
+  private canForce(live: LivePeer | undefined): live is LivePeer {
+    if (!live) return false;
+    if (live.transport !== 'dc' && live.transport !== 'ws-secure') return false;
+    if (!live.quiesceCapable || this.busy(live.peerNodeId) || !this.isInitiator(live.peerNodeId)) {
+      return false;
+    }
+    if (live.transport === 'dc') {
+      return live.rerollCapable === true && this.deps.breakerAllows(live.peerNodeId);
+    }
+    return !this.dcUpgradePending(live);
   }
 }

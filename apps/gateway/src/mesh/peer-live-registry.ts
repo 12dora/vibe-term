@@ -69,7 +69,7 @@ export type PeerLiveRegistryDeps = {
   onPeerReconnected: (nodeId: string) => void;
   notifyTransport: (nodeId: string) => void;
   notifyLive: (nodeId: string, session: LinkSession) => void;
-  /** 每个 pong 的稳态样本：写路径 RTT 记忆并判定是否重掷 DC。 */
+  /** 每个 pong 的稳态样本：写路径 RTT 记忆并判定是否重掷直连（dc / ws-secure）。 */
   onRttSample: (live: LivePeer, sampleMs: number) => void;
 };
 
