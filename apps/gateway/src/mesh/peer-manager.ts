@@ -213,6 +213,7 @@ export class PeerManager extends PeerCollaboratorHost {
       hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
       hasWsRerollInflight: (nodeId) => this.dialer.hasWsRerollInflight(nodeId),
       dcCapable: (nodeId) => this.dialer.dcCapable(nodeId),
+      willAttemptUpgrade: (nodeId) => this.dcUpgrade.willAttemptUpgrade(nodeId),
       dialReroll: (nodeId, rerollOpts) => this.dialer.dialDcReroll(nodeId, rerollOpts),
       finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
     });
@@ -295,7 +296,6 @@ export class PeerManager extends PeerCollaboratorHost {
     }
     bindPausedPeerDrop((nodeId) => this.dropPausedPeer(nodeId));
   }
-
   private get dcBreaker() {
     return this.dcUpgrade.dcBreaker;
   }

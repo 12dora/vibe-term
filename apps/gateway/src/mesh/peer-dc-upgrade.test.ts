@@ -359,3 +359,42 @@ describe('DcUpgradeCoordinator ws-secure vs DC inflight', () => {
     coordinator.dispose();
   });
 });
+
+describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
+  test('熔断健康且无排队升级时不算 pending', () => {
+    const { coordinator, live } = makeCoordinator();
+    const peer = 'peer-idle';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    expect(coordinator.wantsUpgrade(live.get(peer)!)).toBe(true);
+    expect(coordinator.willAttemptUpgrade(peer)).toBe(false);
+    coordinator.dispose();
+  });
+
+  test('coalesced / scheduled 且未冷却、非 lost-direct 时为 true', () => {
+    const { coordinator, live } = makeCoordinator({ dcInflight: () => true });
+    const peer = 'peer-queued';
+    live.set(peer, livePeer(peer, 'ws-secure'));
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    expect(coordinator.upgradeGate.get(peer)?.coalesced).toBe(true);
+    expect(coordinator.willAttemptUpgrade(peer)).toBe(true);
+    coordinator.dispose();
+  });
+
+  test('冷却中或 lost-direct 退避时不算即将拨号', () => {
+    const scheduler = new ManualScheduler();
+    const cooling = makeCoordinator({ scheduler, dcInflight: () => true });
+    const peer = 'peer-hold';
+    cooling.live.set(peer, livePeer(peer, 'ws-secure'));
+    cooling.coordinator.maybeUpgrade(peer, { cooldown: false });
+    cooling.coordinator.ensureGate(peer).nextEligibleAt = scheduler.nowMs + 10_000;
+    expect(cooling.coordinator.willAttemptUpgrade(peer)).toBe(false);
+
+    const lost = makeCoordinator({ scheduler });
+    lost.live.set(peer, livePeer(peer, 'ws-secure'));
+    lost.coordinator.ensureGate(peer).coalesced = true;
+    lost.lostDirect.add(peer);
+    expect(lost.coordinator.willAttemptUpgrade(peer)).toBe(false);
+    cooling.coordinator.dispose();
+    lost.coordinator.dispose();
+  });
+});

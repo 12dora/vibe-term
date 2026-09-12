@@ -169,6 +169,17 @@ function livePeerOf(manager: PeerManager, nodeId: string): LivePeer | undefined 
   return (manager as unknown as { state: { live: Map<string, LivePeer> } }).state.live.get(nodeId);
 }
 
+function meshInternals(manager: PeerManager) {
+  return manager as unknown as {
+    state: {
+      live: Map<string, LivePeer>;
+      parked: Map<string, { session: LinkSession }>;
+      retiring: Map<string, Set<LivePeer>>;
+    };
+    dialer: { hasWsRerollInflight: (nodeId: string) => boolean };
+  };
+}
+
 async function establishDc(
   pair: Awaited<ReturnType<typeof setupRerollPair>>
 ): Promise<LinkSession> {
@@ -384,5 +395,56 @@ describe('ws-secure 重赛（make-before-break）', () => {
     await pair.managerSmall.getLink(pair.large.nodeId);
     await waitUntil(() => pair.managerLarge.quiesceCapableOf(pair.small.nodeId), 5_000);
     expect(pair.managerLarge.rerollDc(pair.small.nodeId)).toBe(false);
+  }, 20_000);
+
+  test('foreground ws dial 与重赛竞速：一条 live、无 parked', async () => {
+    const pair = await setupWsRerollPair(fixtures);
+    await pair.managerSmall.getLink(pair.large.nodeId);
+    await waitUntil(() => pair.managerSmall.quiesceCapableOf(pair.large.nodeId), 5_000);
+    await waitUntil(() => pair.managerLarge.quiesceCapableOf(pair.small.nodeId), 5_000);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    expect(meshInternals(pair.managerSmall).dialer.hasWsRerollInflight(pair.large.nodeId)).toBe(
+      true
+    );
+    const probe = pair.managerSmall.forceProbe(pair.large.nodeId);
+    const probed = await probe;
+    await waitUntil(() => {
+      const live = pair.managerSmall.getLive(pair.large.nodeId);
+      return live != null && (live !== oldSmall || probed === live);
+    }, 5_000);
+    await waitUntil(() => pair.managerLarge.transportOf(pair.small.nodeId) === 'ws-secure', 5_000);
+
+    const liveSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    expect(liveSmall).toBeTruthy();
+    expect(probed).toBe(liveSmall);
+    expect(meshInternals(pair.managerSmall).state.parked.size).toBe(0);
+    expect(meshInternals(pair.managerLarge).state.parked.size).toBe(0);
+    expect(pair.managerSmall.transportOf(pair.large.nodeId)).toBe('ws-secure');
+    const retired = meshInternals(pair.managerSmall).state.retiring.get(pair.large.nodeId);
+    const oldRetired = Boolean(retired && [...retired].some((row) => row.session === oldSmall));
+    const rerollDropped = liveSmall === oldSmall;
+    expect(oldRetired || rerollDropped || liveSmall !== oldSmall).toBe(true);
+    expect(oldLarge).toBeTruthy();
+  }, 20_000);
+
+  test('已有 foreground ws 在途时 rerollDc 放弃，无 parked', async () => {
+    const pair = await setupWsRerollPair(fixtures);
+    await pair.managerSmall.getLink(pair.large.nodeId);
+    await waitUntil(() => pair.managerSmall.quiesceCapableOf(pair.large.nodeId), 5_000);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const probe = pair.managerSmall.forceProbe(pair.large.nodeId);
+    expect(meshInternals(pair.managerSmall).dialer.hasWsRerollInflight(pair.large.nodeId)).toBe(
+      true
+    );
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(false);
+    const probed = await probe;
+    expect(probed).toBeTruthy();
+    expect(meshInternals(pair.managerSmall).state.parked.size).toBe(0);
+    expect(meshInternals(pair.managerLarge).state.parked.size).toBe(0);
+    expect(pair.managerSmall.getLive(pair.large.nodeId)).toBeTruthy();
+    expect(oldSmall).toBeTruthy();
   }, 20_000);
 });

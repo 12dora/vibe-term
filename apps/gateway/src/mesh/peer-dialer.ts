@@ -8,19 +8,11 @@ import {
 import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
-  dropFakeIpv4PeerEndpoints,
-  hostFromWsUrl,
   localNetworkFingerprint,
-  rankPeerEndpoints,
 } from './address-class';
 import { parseEndpoints } from './peer-dc-upgrade';
 import { peerKnownRelayOnline, settleDialWithRelay } from './peer-dial-plan';
-import {
-  type DialRaceLeg,
-  raceForegroundDial,
-  raceWsSecureDial,
-  runBackgroundDirect,
-} from './peer-dial-race';
+import { type DialRaceLeg, raceForegroundDial, runBackgroundDirect } from './peer-dial-race';
 import { type AcceptDeps, acceptDirectSession, acceptRelaySession } from './peer-dialer-accept';
 import {
   ensureRtcReady,
@@ -33,23 +25,24 @@ import {
   type DirectAttemptRecord,
   clearedDirectAttempt,
   dcRecentlyFailed,
-  eligiblePeerEndpoints,
   emptyDirectAttempt,
-  noteNoEndpoints,
-  noteWsRaceFailure,
   winningDialInitiator,
 } from './peer-direct-attempt';
-import { canonicalEndpointSet, dedupeRankedPeerEndpoints } from './peer-endpoint-backoff';
+import { canonicalEndpointSet } from './peer-endpoint-backoff';
 import {
-  PEER_LAN_DIAL_TIMEOUT_MS,
   PEER_TRANSPORT_RANK,
-  PEER_WS_DIAL_STAGGER_MS,
   type PeerManagerState,
   peerStale,
   throwIfPeerStopped,
 } from './peer-manager-state';
 import type { PeerLinkFactory } from './peer-manager-types';
 import { type DirectDialLimiter, abortable, quiet } from './peer-ws-race';
+import {
+  type WsSecureDialHost,
+  type WsSecureDialOpts,
+  connectWsSecure,
+  sharePeerDialInflight,
+} from './peer-ws-reroll-dial';
 import type { RtcPeerManager } from './rtc';
 import type { RtcSignaling } from './rtc/ice';
 import type { RtcDialBreaker } from './rtc/rtc-dial-breaker';
@@ -108,7 +101,7 @@ export class PeerDialer {
     | null;
   private localFingerprint = '';
   private readonly dcInflight = new Map<string, Promise<LinkSession | null>>();
-  private readonly wsRerollInflight = new Set<string>();
+  private readonly wsInflight = new Map<string, Promise<LinkSession | null>>();
 
   constructor(state: PeerManagerState, opts: PeerDialerOptions) {
     this.state = state;
@@ -151,7 +144,7 @@ export class PeerDialer {
   }
 
   hasWsRerollInflight(nodeId: string): boolean {
-    return this.wsRerollInflight.has(nodeId);
+    return this.wsInflight.has(nodeId);
   }
 
   /** 直连重掷：DC 绕过 wantsUpgrade；ws-secure 走 raced factory。answer 仅 DC 应答侧。 */
@@ -176,18 +169,17 @@ export class PeerDialer {
   }
 
   dialWsReroll(nodeId: string): Promise<LinkSession | null> {
-    const self = this.state.identity.nodeId;
+    const live = this.state.live.get(nodeId);
     const blocked =
       this.state.stopped ||
-      this.state.live.get(nodeId)?.transport !== 'ws-secure' ||
-      winningDialInitiator(self, nodeId) !== self ||
-      this.wsRerollInflight.has(nodeId);
-    if (blocked) return Promise.resolve(null);
-    this.wsRerollInflight.add(nodeId);
+      live?.transport !== 'ws-secure' ||
+      winningDialInitiator(this.state.identity.nodeId, nodeId) !== this.state.identity.nodeId;
+    if (blocked || !live) return Promise.resolve(null);
     const attempt = emptyDirectAttempt(this.state.scheduler.now());
-    return this.dialWsSecure(nodeId, this.state.generation, this.state.stopAbort.signal, attempt)
-      .catch(() => null)
-      .finally(() => this.wsRerollInflight.delete(nodeId));
+    return this.dialWsSecure(nodeId, this.state.generation, this.state.stopAbort.signal, attempt, {
+      mode: 'reroll',
+      expectedLive: live.session,
+    }).catch(() => null);
   }
 
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
@@ -489,88 +481,32 @@ export class PeerDialer {
     });
   }
 
-  private async dialWsSecure(
+  private wsHost(): WsSecureDialHost {
+    return {
+      state: this.state,
+      linkFactory: this.linkFactory,
+      wsFactory: this.wsFactory,
+      connectTimeoutMs: this.connectTimeoutMs,
+      dialLimiter: this.dialLimiter,
+      interfacesFn: this.interfacesFn,
+      listenPort: this.deps.listenPort,
+      rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
+      track: this.deps.track,
+    };
+  }
+
+  private dialWsSecure(
     nodeId: string,
     gen: number,
     signal: AbortSignal,
     attempt: DirectAttemptRecord,
-    opts?: { bypassBackoff?: boolean; endpoints?: string[] }
+    opts?: WsSecureDialOpts
   ): Promise<LinkSession | null> {
-    if (this.linkFactory && !opts?.endpoints) {
-      try {
-        const session = await abortable(Promise.resolve(this.linkFactory(nodeId, signal)), signal);
-        if (session) {
-          if (peerStale(this.state, gen)) {
-            quiet(() => session.close('stopped'));
-            throw new NodeUnreachableError(nodeId, 'peer manager stopped');
-          }
-          const kept = this.deps.track(
-            session,
-            nodeId,
-            'ws-secure',
-            this.state.identity.nodeId,
-            gen,
-            false,
-            null
-          );
-          if (kept) return kept;
-        }
-      } catch (err) {
-        throwIfPeerStopped(this.state, nodeId, gen, err);
-      }
-    }
-    const cached = this.state.userStore.getPeer(nodeId);
-    const parsed = dropFakeIpv4PeerEndpoints(
-      opts?.endpoints ??
-        (cached ? parseEndpoints(cached.endpointsJson, this.deps.listenPort()) : []),
-      nodeId
-    );
-    const endpoints = dedupeRankedPeerEndpoints(rankPeerEndpoints(parsed, this.interfacesFn()));
-    if (endpoints.length === 0) {
-      noteNoEndpoints(attempt);
-      return null;
-    }
-    const eligible = eligiblePeerEndpoints(
-      this.state.endpointBackoff,
+    return sharePeerDialInflight(
+      this.wsInflight,
       nodeId,
-      endpoints,
-      attempt,
-      this.state.scheduler.now(),
-      opts?.bypassBackoff
-    );
-    if (eligible.length === 0) return null;
-    const raced = await raceWsSecureDial({
-      nodeId,
-      gen,
-      urls: eligible,
-      signal,
-      staggerMs: PEER_WS_DIAL_STAGGER_MS,
-      connectTimeoutMs: this.connectTimeoutMs,
-      lanTimeoutMs: PEER_LAN_DIAL_TIMEOUT_MS,
-      identity: this.state.identity,
-      userStore: this.state.userStore,
-      limiter: this.dialLimiter,
-      backoff: this.state.endpointBackoff,
-      wsFactory: this.wsFactory,
-      stale: (g) => peerStale(this.state, g),
-      sleep: (ms, sig) => this.state.scheduler.sleep(ms, sig),
-    });
-    noteWsRaceFailure(attempt, raced, endpoints);
-    if (peerStale(this.state, gen)) {
-      quiet(() => raced.winner?.session.close('stopped'));
-      throwIfPeerStopped(this.state, nodeId, gen);
-    }
-    const winner = raced.winner;
-    if (!winner) return null;
-    this.rememberKeys(winner.session, winner.sendKey, winner.recvKey);
-    return this.deps.track(
-      winner.session,
-      winner.peerNodeId,
-      'ws-secure',
-      this.state.identity.nodeId,
-      gen,
-      false,
-      hostFromWsUrl(winner.url)
+      opts?.mode === 'reroll' ? 'background' : 'foreground',
+      () => connectWsSecure(this.wsHost(), nodeId, gen, signal, attempt, opts)
     );
   }
 

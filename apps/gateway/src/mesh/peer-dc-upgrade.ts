@@ -373,22 +373,7 @@ export class DcUpgradeCoordinator {
           this.armDcUpgradeRetry(nodeId);
           return;
         }
-        this.maybeUpgrade(nodeId, { cooldown: true });
-        const pending = this.ports.upgrading().get(nodeId) ?? this.ports.pending().get(nodeId);
-        if (pending) {
-          void pending
-            .finally(() => {
-              if (this.ports.live().get(nodeId)?.transport === 'dc') {
-                this.ports.lostDirect().delete(nodeId);
-                this.cancelDcUpgradeRetry(nodeId);
-                return;
-              }
-              this.armDcUpgradeRetry(nodeId);
-            })
-            .catch(() => undefined);
-        } else {
-          this.armDcUpgradeRetry(nodeId);
-        }
+        this.followUpgradeRetry(nodeId);
       },
       () => {
         this.ports.stopSignal().removeEventListener('abort', onStop);
@@ -429,28 +414,41 @@ export class DcUpgradeCoordinator {
           if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
           return;
         }
-        this.maybeUpgrade(nodeId, { cooldown: true });
-        const pending = this.ports.upgrading().get(nodeId) ?? this.ports.pending().get(nodeId);
-        if (pending) {
-          void pending
-            .finally(() => {
-              if (this.ports.live().get(nodeId)?.transport === 'dc') {
-                this.ports.lostDirect().delete(nodeId);
-                this.cancelDcUpgradeRetry(nodeId);
-                return;
-              }
-              this.armDcUpgradeRetry(nodeId);
-            })
-            .catch(() => undefined);
-        } else {
-          this.armDcUpgradeRetry(nodeId);
-        }
+        this.followUpgradeRetry(nodeId);
       },
       () => {
         this.ports.stopSignal().removeEventListener('abort', onStop);
         if (rec.abort === abort) rec.abort = null;
       }
     );
+  }
+
+  /** 已 coalesced/scheduled 且 wantsUpgrade、未冷却、非 lost-direct。熔断健康不算。 */
+  willAttemptUpgrade(nodeId: string): boolean {
+    const live = this.ports.live().get(nodeId);
+    if (!live || !this.wantsUpgrade(live) || this.ports.lostDirect().has(nodeId)) return false;
+    const gate = this.upgradeGate.get(nodeId);
+    if (gate && this.ports.scheduler.now() < gate.nextEligibleAt) return false;
+    return gate?.scheduled === true || gate?.coalesced === true;
+  }
+
+  private followUpgradeRetry(nodeId: string): void {
+    this.maybeUpgrade(nodeId, { cooldown: true });
+    const pending = this.ports.upgrading().get(nodeId) ?? this.ports.pending().get(nodeId);
+    if (!pending) {
+      this.armDcUpgradeRetry(nodeId);
+      return;
+    }
+    void pending
+      .finally(() => {
+        if (this.ports.live().get(nodeId)?.transport === 'dc') {
+          this.ports.lostDirect().delete(nodeId);
+          this.cancelDcUpgradeRetry(nodeId);
+          return;
+        }
+        this.armDcUpgradeRetry(nodeId);
+      })
+      .catch(() => undefined);
   }
 
   private liveForDcRetry(nodeId: string): DcUpgradeLivePeer | null {

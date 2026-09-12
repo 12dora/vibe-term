@@ -37,6 +37,8 @@ export type DcRerollDeps = {
   hasDcInflight: (nodeId: string) => boolean;
   hasWsRerollInflight?: (nodeId: string) => boolean;
   dcCapable?: (nodeId: string) => boolean;
+  /** 升级协调器：下一次扫描会拨这个对端（已 coalesced / scheduled）。 */
+  willAttemptUpgrade?: (nodeId: string) => boolean;
   /** 绕过 wantsUpgrade / aboveDc 的直连拨号；`answer` 仅 DC 应答侧使用。 */
   dialReroll: (nodeId: string, opts: DirectRerollOpts) => Promise<LinkSession | null>;
   finishRetire: (live: LivePeer, reason: string) => void;
@@ -303,10 +305,11 @@ export class DcRerollCoordinator {
     if (live.transport !== 'ws-secure' || this.deps.dcCapable?.(live.peerNodeId) !== true) {
       return false;
     }
+    const nodeId = live.peerNodeId;
     return (
-      this.deps.hasDcInflight(live.peerNodeId) ||
-      this.state.upgrading.has(live.peerNodeId) ||
-      this.deps.breakerAllows(live.peerNodeId)
+      this.deps.hasDcInflight(nodeId) ||
+      this.state.upgrading.has(nodeId) ||
+      this.deps.willAttemptUpgrade?.(nodeId) === true
     );
   }
 

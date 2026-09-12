@@ -75,6 +75,7 @@ type Harness = {
   wsInflight: Set<string>;
   breaker: { allow: boolean };
   dcCapable: { value: boolean };
+  willAttempt: { value: boolean };
 };
 
 function harness(selfNodeId = SELF): Harness {
@@ -85,12 +86,14 @@ function harness(selfNodeId = SELF): Harness {
   const wsInflight = new Set<string>();
   const breaker = { allow: true };
   const dcCapable = { value: false };
+  const willAttempt = { value: false };
   let settle: (session: LinkSession | null) => void = () => {};
   const coordinator = new DcRerollCoordinator(state, {
     breakerAllows: () => breaker.allow,
     hasDcInflight: (nodeId) => inflight.has(nodeId),
     hasWsRerollInflight: (nodeId) => wsInflight.has(nodeId),
     dcCapable: () => dcCapable.value,
+    willAttemptUpgrade: () => willAttempt.value,
     dialReroll: (nodeId, opts) => {
       dials.push({ nodeId, answer: opts.answer, transport: opts.transport });
       return new Promise((resolve) => {
@@ -110,6 +113,7 @@ function harness(selfNodeId = SELF): Harness {
     wsInflight,
     breaker,
     dcCapable,
+    willAttempt,
   };
 }
 
@@ -187,14 +191,41 @@ describe('DcRerollCoordinator 采样与触发', () => {
     expect(answerer.dials).toHaveLength(0);
   });
 
-  test('DC 可拨且熔断放行时不重赛 ws-secure', () => {
+  test('forceReroll 在 DC 可拨但无升级活动时放行 ws-secure', () => {
+    const h = harness();
+    h.dcCapable.value = true;
+    makeLive(h.state, { transport: 'ws-secure' });
+    expect(h.coordinator.forceReroll(PEER)).toBe(true);
+    h.state.upgrading.set(PEER, Promise.resolve(createInMemoryLinkPair()[0]));
+    expect(h.coordinator.forceReroll(PEER)).toBe(false);
+  });
+
+  test('DC 可拨且熔断健康、无升级活动时允许重赛 ws-secure', () => {
+    const h = harness();
+    h.dcCapable.value = true;
+    h.breaker.allow = true;
+    h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'ws-secure' }]);
+  });
+
+  test('DC 升级在途或即将扫描拨号时不重赛 ws-secure', () => {
     const h = harness();
     h.dcCapable.value = true;
     h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
+    h.inflight.add(PEER);
     h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
     expect(h.dials).toHaveLength(0);
-    h.breaker.allow = false;
+    h.inflight.delete(PEER);
+    h.state.upgrading.set(PEER, Promise.resolve(createInMemoryLinkPair()[0]));
     h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toHaveLength(0);
+    h.state.upgrading.delete(PEER);
+    h.willAttempt.value = true;
+    h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
+    expect(h.dials).toHaveLength(0);
+    h.willAttempt.value = false;
     h.coordinator.onRttSample(makeLive(h.state, { transport: 'ws-secure' }), 200);
     expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'ws-secure' }]);
   });
