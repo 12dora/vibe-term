@@ -132,6 +132,10 @@ curl 走 `--cacert`（curl 不认 `NODE_EXTRA_CA_CERTS`）。
 - 本机 compose 项目 `vibeterm-split-local`：`node-a` / `node-b` / `driver`。所有容器 `extra_hosts: ${VIBETERM_E2E_HUB_HOST}=${VIBETERM_E2E_HUB_IP}`（本机默认解析会给出 198.18.x.x 假 IP，不能靠宿主 DNS）。Let's Encrypt 走系统 CA；private-ca 把 `ca/ca.crt` 挂到 `/ca/ca.crt` 并设 `NODE_EXTRA_CA_CERTS=/ca/ca.crt`。
 - **不要**占用远端 nginx 的 80/443。脚本不做端口探测；`split/run.sh` 开头打印：需放行入站 TCP `${VIBETERM_E2E_HUB_PORT}`（必需）与 TCP 39001（可选，含云安全组 / 面板防火墙 / ufw）。
 - 远端可能同时跑单机项目 `vibeterm-e2e`（`127.0.0.1:18543`），两边互不 `down`。
+- 远端起了一个 coturn 容器当外部 TURN：这套 harness 的拓扑是 `hub,node`，**hub 角色没有内置 TURN**，只认
+  `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` 三元组。2.3.0 起 `relay` / `relay,node` 角色的进程自带 TURN（端口默认
+  UDP 3478 + 49160-49259，凭据自动生成），要测中继拓扑就不必再起 coturn，改成放行这两段 UDP，见
+  [mesh 运维](../operations/mesh-operations.md)「中继内置 TURN 与多中继」。
 
 ### 运行
 

@@ -173,6 +173,11 @@ CLI 用 `GET /api/mesh/relay/status` 的 `mode` 区分中继 / hub：
 - **中继**（`mode: 'relay'`）：`enroll` 打 `/api/mesh/relay/join-material` 与 `POST /api/mesh/relay/enrollments`，打印 `r3.` 加入码，形如 `vibeterm hub join <relayUrl> --token r3.… --name <name>`。`meta-key admit <node>` 把当前世代的 `K_meta` 封装给该节点（网页端 admit 之后那条常漏掉的补发）；`meta-key rotate` 换新世代，`--exclude` 可重复或逗号分隔。`--json` 形状 `{ op, epoch, seq }`。
 - 中继上 `allow <node>`：若 hub 仍下发了待批准行，先签 `admit-node` 再立刻补一条 `meta-key admit`（同一把根钥，不二次要密码）；若节点已在 `pendingMemberIds`（已接纳但解不开状态块），只补 `meta-key`。网页在别的标签页生成的加入码，证书材料只在那次浏览器会话里，CLI 签不出 `admit-node`——那种情况请用 `meta-key admit`。
 
+`vibeterm relay list [--json]` 打印本机的上级链路：`mode` / 租户编号 / 元数据密钥世代 / 经中继可见的对端数（所有中继的并集），
+接着是中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE`——`ROLE` 是 `primary`（写记录、出名册的那台）/ `secondary` / `-`（未连接），
+`RTT` 是该条 uplink 自己的心跳时延，`PEERS` 是该中继上在线的对端数，`TURN` 是它下发的 TURN 地址（本机探测不通时标 `(down)`）。
+配了两台以上中继时另有一行 `multi-attach: yes`。打本机回环时先免密读，401 才要登录。
+
 ## 文件拷贝
 
 ```bash

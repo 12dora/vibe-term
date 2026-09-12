@@ -19,19 +19,29 @@
 [节点直连](./architecture/peer-direct-connect.md)。本地 gathering 完成时会打 info
 `[mesh][rtc] gather summary … host= srflx= relay= stun_count= turn=`，用来确认实际进 ICE 的候选类型。
 
+代理 fake-IP（`198.18.0.0/15`）的 host 候选已在**信令层收发两侧**丢弃（日志 `signal dropped … cause=fake-ip`），
+RFC1918 地址保留，局域网直连不受影响。
+
 STUN 主机名被本机代理解析成 fake-IP、从而零 srflx 的问题已在节点侧 ICE 配置路径绕开
 （见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)）；代理 TUN 吞掉境外 UDP
 的情形见 KI-13。本条只剩「多余 host 候选无法按网卡丢掉」。
 
-## KI-4：TURN 仍需手工配置三个环境变量
+## KI-4：TURN 只走 UDP，端口要运营者自己放行
 
-`VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL` 必须齐备才会下发 TURN，且 node 侧
-libjuice 只支持 UDP（`turns:` / `transport=tcp` 不产生 relay 候选），且 **UDP mux 模式下不支持 TURN**（libjuice 告警 `TURN servers are not supported in mux mode`，只出 host 候选）——2.2.2 之前网关写死 `enableIceUdpMux: true`，TURN 配置从未生效；2.2.2 起配置了 TURN 就关 mux。现网随后发现：节点 UDP 到不了 TURN 时 gathering 会挂死且 **连 srflx 也不出**（`local_types=[host]`，没有 `gather summary`），全网一条不可达的 TURN 等于毁掉所有打洞。因此改为对本机 TURN 做 STUN Binding 可达探测（coturn 会应答 Binding；这只证明 UDP 通，不是带凭证的 Allocate）：探测成功才把 TURN 纳入 `iceServers` 并关 mux；失败则从 ICE 里拿掉 TURN、保持 mux；尚未探测时先纳入 TURN 但 mux 仍开。`GET /api/mesh/rtc-config` 的 `turn` 是实际在用的值，下发/本地原值在 `turnConfigured`，探测结果在 `turnProbe`（与 STUN 的 `probes` 并列）。是否内建 TURN 待按
-`[mesh][rtc] summary` / `gather summary` 与 STUN 自检（`[mesh][rtc] stun probe`，结果挂在
-`GET /api/mesh/rtc-config` 的 `probes`）的现网数据再定。STUN 列表 2.2.0 起随发行版内置分发（小米 / Bilibili 打头 + Google / Cloudflare 冗余），
-`VIBETERM_STUN_SERVERS` 未设置即用内置列表、`none` 禁用；hub / 中继只在自己设了自定义列表时才下发，
-下发空列表表示「没有自定义」，节点回到自己的内置列表。TURN 相反：hub / 中继下发过就以它为准，
-显式 `turn: null` 即撤回，节点不再回落本机 `VIBETERM_TURN_*`。超时失败会标 `stun_unconfigured` 或 `no_srflx`。
+中继角色**自带 TURN**（`VIBETERM_TURN_PORT`，默认 `3478`/UDP；中继端口段 `VIBETERM_TURN_RELAY_PORT_RANGE`，默认
+`49160-49259`），长期凭据首启生成后落 `gateway_kv`，随 `auth.ok` / `relay.list` 下发给租户节点，不再需要手配三个环境变量。
+配齐 `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` 则改用外部 TURN、内置不启动；**hub 角色仍只支持这套外部三元组**。
+部署与排查见 [mesh 运维](./operations/mesh-operations.md)，协议与状态字段见 [公共中继角色](./architecture/relay.md)。剩下的边界：
+
+- **只有 UDP**：节点侧 ICE 由 node-datachannel（libjuice）实现，`turns:` 与 `?transport=tcp` 不产生 relay 候选；内置 TURN
+  也只中继 UDP/IPv4（IPv6 peer 直接 400）。本机 UDP 出不去时（KI-13）仍只能走中继流。
+- **防火墙必须人工放行**：用户级服务碰不了云安全组 / ufw，`init`、`install.sh --role relay|relay,node` 与 `vibeterm doctor` 只能打印
+  要放行的端口（控制口 + **整段**中继端口）。少放一段的表现是节点探测失败、TURN 不进 ICE，日志里没有任何报错。
+- **最多两条 TURN 进 ICE**：节点对每条下发的 TURN URL 做 STUN Binding 可达探测，只有探测 `ok` 的按 RTT 取前两条进
+  `iceServers`；失败或尚未探测一律排除（早期「先纳入、探测后再说」会让 gathering 连 srflx 一起挂死）。列表里真有 TURN 时才关
+  UDP mux（libjuice mux 不支持 TURN）。探测只证明 UDP 通，不等于带凭证的 Allocate 能成。
+- `GET /api/mesh/rtc-config`：`turn` 是实际进 ICE 的数组（0–2 条），`turnConfigured` 是全部已知条目，`turnProbes` 每条
+  configured URL 一份探测记录（`turnProbe` 保留为第一条的记录，兼容旧前端）。
 
 ## KI-5：中继在途流保护的代价
 
@@ -95,3 +105,14 @@ fake-IP 解析器只解决「主机名被解析成 `198.18.x`」，解决不了�
 可达的），或者在代理里给 UDP 3478 / 19302 加 DIRECT 规则。判定看 `[mesh][rtc] stun probe … ok=false
 error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走浏览器自己的网络栈，同样要求
 本机 UDP 出得去。详见 [隧道边缘与 STUN 的 fake-IP 绕行](./operations/tunnel-edge-fake-ip.md)。
+
+## KI-14：混合版本网内的直连抖动
+
+2.3.0 修掉了三处「一升级直连就抖」的成因：DC 握手先挂接收队列并按类型去重（hello 间隔 500 ms、队列 64）、DC 取代中继/ws-secure
+时 make-before-break（还有内层流就不发 `replaced` RST 去砸整条中继 uplink）、DC 空闲拆链从 5 min 放宽到 30 min。修复在**各自节点侧**，
+混合版本网里仍有残留：
+
+- 旧对端（≤ 2.2.x）作为 offerer 仍按 40 ms 狂发 hello，作为被取代方仍会立刻 `reset('replaced')`，对面那条中继流照样被 RST；
+- 旧对端的 ctl ping 不回显 `sentAt`，新节点只能退回本地发送时刻算 RTT，样本里仍含发送队列等待。
+
+处置只有一个：把两端都升到 ≥ 2.3.0。

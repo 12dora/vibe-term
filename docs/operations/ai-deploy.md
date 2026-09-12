@@ -37,6 +37,9 @@ CLI 落在 `~/.local/bin/vibeterm`（`tmex` 为等价别名）。该目录不在
 
 `VIBETERM_TRUST_PROXY` **不会**被 `init` 写入，需要时手改 `app.env`（或在设置页的远程访问向导里拨开关，它会写回 `app.env`）。改完任何键都要重启服务才生效。
 
+中继角色的内置 TURN 同样**不写任何键**：凭据自动生成并落库，`VIBETERM_TURN_PORT`（默认 3478）/ `VIBETERM_TURN_RELAY_PORT_RANGE`
+（默认 49160-49259）/ `VIBETERM_TURN_EXTERNAL_IP` / `VIBETERM_TURN_HOST` 只在要改默认值时手加。
+
 默认端口：HTTP `9883`（绑 `127.0.0.1`）、node↔node 信令 `VIBETERM_PEER_PORT=39001`、内置 HTTPS 监听器 `9443`。
 
 `VIBETERM_MASTER_KEY` 与数据库 `data/vibeterm.db` 必须成对备份，丢了 key 就打不开库。
@@ -511,6 +514,17 @@ vibeterm doctor
    - **80/443 可用**：反代 `https://<中继域名>` → `127.0.0.1:9883`，升级 WebSocket（至少 `/relay/uplink`），并在 `app.env` 加 `VIBETERM_TRUST_PROXY=true` 后重启——中继按客户端 IP 对注册做限流，不开这个开关反代后面所有人共用一个桶。
    - **80/443 不可用**：`relay,node` 可以在设置页配内置 Let's Encrypt dns-01 + 高位端口（同 Hub 情况 B）；纯 `relay` 没有前端，只能靠反代。放行防火墙上的对外端口。
 
+   另外放行**内置 TURN 的 UDP 端口**（中继进程自带 TURN，不需要配任何环境变量，但用户级服务打不开防火墙）：
+
+   ```
+   UDP 3478            # 控制口，节点的可达探测打的就是它
+   UDP 49160-49259     # 中继端口段，整段都要放
+   ```
+
+   云厂商安全组、面板防火墙、`ufw` 三层各放一次。TURN 是裸 UDP，**不经反代**。端口要改就在 `app.env` 里设
+   `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE`（`VIBETERM_TURN_PORT=off` 关掉内置 TURN）；机器网卡上只有私网地址而
+   自动解析不出公网 IP 时补 `VIBETERM_TURN_EXTERNAL_IP`。`install.sh --role relay|relay,node` 与 `vibeterm init` 结束时也会打印一行提示，列出要放行的这两段端口。
+
 3. `init` 结束时会打印管理令牌所在的 `app.env` 路径。管理令牌键名 `VIBETERM_RELAY_ADMIN_TOKEN`，缺失时首启自动生成一枚写回 `app.env`，库里只存它的 sha256。所有 `relay status` / `relay tenants` / `relay quota` / `relay limits` / `relay-admin *` 命令都在**中继机本地**执行，读这个令牌打 `http://127.0.0.1:<GATEWAY_PORT>`。
 
 4. 设置接入口令（强烈建议，否则任何人都能注册租户）：
@@ -556,7 +570,9 @@ vibeterm relay tenants --json
 curl -sS https://<中继域名>/api/relay/health
 ```
 
-`relay status` 应打印 `password: set`、口令世代、默认配额、租户数、在线 / 已知节点数与累计流量。`/api/relay/health` 是免鉴权探针，返回 `ok: true`；反代健康检查也用它。
+`relay status` 应打印 `password: set`、口令世代、默认配额、租户数、在线 / 已知节点数与累计流量，以及一行
+`turn: builtin enabled listening url=turn:<公网 IP>:3478?transport=udp …`；`vibeterm doctor` 的 `turn` 检查同时给出该放行的端口。
+`turn:` 行缺 `listening` 或带 `error=` 时看中继日志的 `[relay][turn]`。`/api/relay/health` 是免鉴权探针，返回 `ok: true`；反代健康检查也用它。
 
 在租户节点上 `vibeterm relay list` 应显示 `mode` 为中继模式、租户编号与该中继在线。
 
@@ -873,6 +889,7 @@ vibeterm port rm <映射 id>
 | 改中继口令被 409 `relay_members_offline` 拒绝 | `vibeterm relay status` | 有成员离线，强改会让他们再也接不回来。可达节点先 `relay reauth`，离线成员改用 `relay join --tenant --password`；确实要强改再加 `--force`（需用户确认） |
 | 租户加入报 404 `RELAY_TENANT_NOT_FOUND` | `vibeterm relay tenants`（中继本地） | 租户编号写错，或密封包被根钥轮换清空。持有根种子的节点执行 `vibeterm relay pack upload` 或 `relay reauth` 刷新 |
 | 云上放行了端口仍不通 | 云厂商安全组 / 宝塔防火墙 / `ufw status` | 三层防火墙都要显式放行选定的 TCP 端口，这是最常见的失败原因 |
+| 中继在跑但节点拿不到 TURN | 中继机 `vibeterm relay status` 的 `turn:` 行、`vibeterm doctor`；节点侧日志 `[mesh][rtc] turn gate … reachable=0` | 本机监听正常而节点探测不通 = UDP 端口没放行：控制口（默认 3478）与**整段**中继端口（默认 49160-49259）都要放，三层防火墙各放一次 |
 
 ## 参考
 

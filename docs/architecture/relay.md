@@ -46,12 +46,40 @@ WS 升级也先判 `relay.isUplinkSocket`，停机时先 `relay.stop()`。
 那里也说明了内置候选端口表与「地址没写端口时自动探测」的行为（`vibeterm relay enroll` / `relay join` 与网页接入表单共用一套）。
 
 两个键只有 `relay` / `relay,node` 角色才会被 `init` 写进 `app.env`（`relayEnvDefaults()`）；其它角色的 `app.env` 不含它们。
-STUN/TURN 复用既有 `VIBETERM_STUN_SERVERS` / `VIBETERM_TURN_URL` / `VIBETERM_TURN_USERNAME` / `VIBETERM_TURN_CREDENTIAL`，
-随 `auth.ok` 与 `relay.list` 下发给租户节点。**STUN 只在中继自己设了自定义列表时才下发**，否则下发空数组
-（表示「我没有自定义」，租户节点用自己的 env 或发行版内置列表）；TURN 一旦下发过就以下发为准，
-`turn: null` 即显式撤回。语义见 [mesh 运维](../operations/mesh-operations.md)。
+STUN 复用既有 `VIBETERM_STUN_SERVERS`，随 `auth.ok` 与 `relay.list` 下发给租户节点：**只在中继自己设了自定义列表时才下发**，
+否则下发空数组（表示「我没有自定义」，租户节点用自己的 env 或发行版内置列表）。TURN 见下一节。
 
 中继自己**不需要**链路身份密钥、不写 `users` / `node_certs` / `nodes` / `peer_cache` 任何 hub 表。
+
+### 内置 TURN
+
+中继进程自带一台纯 TS 实现的 TURN/STUN 服务器（`apps/gateway/src/relay/turn/`，`node:dgram`，无新依赖），
+和中继同生共死，运营者只需放行端口。**hub 角色不带 TURN**，仍只认下面的外部三元组。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `VIBETERM_TURN_PORT` | `3478` | 控制口（UDP）。同一个口也应答 STUN Binding，节点的可达探测打的就是它。`0` / `off` 关闭内置 TURN |
+| `VIBETERM_TURN_RELAY_PORT_RANGE` | `49160-49259` | 中继端口段，每个 allocation 占一个 UDP 端口。耗尽回 508 |
+| `VIBETERM_TURN_EXTERNAL_IP` | 未设 | 写进 `XOR-RELAYED-ADDRESS` 的公网 IPv4。云主机网卡上通常只有私网地址，未设时自动解析 |
+| `VIBETERM_TURN_HOST` | 未设 | 广告出去的 host。未设时广告解析到的公网 IPv4 字面量 |
+| `VIBETERM_TURN_URL` / `_USERNAME` / `_CREDENTIAL` | 空 | 三者齐全 = 用外部 TURN，内置**不启动**（`source: 'external'`） |
+
+- **凭据**：首启生成（用户名 `vt-<node_id 前 8 位或随机 4 字节>`、口令 32 随机字节 b64url），存 `gateway_kv` 的
+  `relay.turn.credentials`，重启不变、不自动轮换。realm 固定 `vibeterm`。
+- **公网 IP**：`VIBETERM_TURN_EXTERNAL_IP` → 对 `VIBETERM_TURN_HOST`（未设则 `VIBETERM_RELAY_PUBLIC_URL` 的 hostname）做
+  DoH 感知解析（fake-IP `198.18/15` 与私网地址不算数）→ 对内置 STUN 列表做自检。三者都拿不到就不起服务，
+  `turn: null`、状态里带 `error`。每 30 min 复核一次；IP 变了只更新 `XOR-RELAYED-ADDRESS` 与广告 URL，**不重启、不重绑**，
+  已有 allocation 不断。端口被占（`EADDRINUSE`）按 5 s → 60 s 退避重试；与 `VIBETERM_RTC_PORT_RANGE` / `VIBETERM_PEER_PORT`
+  冲突时直接不起并记 `error`。
+- **广告**：`turn:<host>:<port>?transport=udp`，在 `createRelayRuntime` 返回前就绪，因此第一帧 `auth.ok` / `relay.list` 就带得上。
+- **协议**：RFC 5389 Binding（不鉴权）+ RFC 5766/8656 Allocate / Refresh / CreatePermission / ChannelBind /
+  Send / Data / ChannelData，长期凭据（HMAC-SHA1），所有响应带 FINGERPRINT。只做 **UDP/IPv4** 中继。
+- **边界**：allocation 总数 64、单用户 32；permission 每 allocation 32、单个 CreatePermission 最多 16 个
+  `XOR-PEER-ADDRESS`（超额整请求 400）；租期请求值与 600 s 取大、封顶 3600 s；nonce 1 h 轮换、上一枚有 5 min 宽限（超期 438）；
+  peer 地址落在私网 / 回环 / fake-IP / 组播等默认拒绝段或本机控制口时回 403（防环）；超长报文静默丢弃；
+  未认证应答（Binding 与 401/438 challenge）按每源 20/s（突发 40）、全局 2000/s 限流，挡反射放大。
+- **日志**（`[relay][turn]`）：`builtin turn listening port=… external_ip=… host=… relay_range=…`、
+  `builtin turn disabled reason=…`、30 min 一条 `turn allocations=N`。
 
 ## 2. 隐私边界
 
@@ -419,16 +447,35 @@ standalone 机器也能用（本机登录门生效时），这是「一台机器
   "mode": "relay" | "hub" | "none",
   "tenantId": "<32hex>" | null,
   "relays": [{ "url": "...", "priority": 0, "online": false, "attached": false,
-               "rttMs": null, "lastError": null, "kicked": false }],
+               "role": "primary" | "secondary" | null,
+               "rttMs": null, "peersOnline": null,
+               "turn": { "url": "turn:…", "probeOk": true } | null,
+               "lastError": null, "kicked": false }],
   "metaEpoch": 1,
   "nodesViaRelay": 0,
+  "multiAttach": false,
   "reauthRequired": false,
   "quota": { "maxNodes": 16, "maxStreams": 64, "bandwidthBytesPerSec": null, "currentNodes": 3 } | null,
   "keyLog": { "skipped": 0, "blockedSeq": null, "caughtUp": true }
 }
 ```
 
-`keyLog.blockedSeq` 是字符串化的 u64 或 null（见 [§13](#13-已知边界) 的投毒边界）。`rttMs` 是 attached 那条 uplink 最近一次 ping→pong 的时延（毫秒；重连清零；尚未测到为 null）。`quota.currentNodes` 是中继在 `relay.quota` 里下发的当前占用（pending+admitted）。
+`keyLog.blockedSeq` 是字符串化的 u64 或 null（见 [§13](#13-已知边界) 的投毒边界）。`quota.currentNodes` 是中继在 `relay.quota` 里下发的当前占用（pending+admitted）。
+
+多中继相关字段（语义见 [§9](#9-节点侧行为)）：
+
+| 字段 | 含义 |
+|---|---|
+| `role` | `primary`（写新记录、出名册、`switch` 的目标）/ `secondary` / `null`（未连接） |
+| `online` | **该行**已认证。`attached` 仍只对 primary 为真（2.2.x 前端靠它画「已挂载」） |
+| `rttMs` | 每条已连接 uplink 各自最近一次 ping→pong 时延（毫秒；重连清零；未测到为 null） |
+| `peersOnline` | 该中继最近一份清单里在线的已准入对端数；未连接为 null |
+| `turn` | 该中继下发的 TURN 与本机探测结论（`probeOk: null` = 还没探） |
+| `nodesViaRelay`（顶层） | 全部已连接中继的**在线对端并集**，不是某一条的数字 |
+| `multiAttach`（顶层） | 配了 ≥ 2 条未被踢的中继（副中继已启用） |
+
+`quota` / `keyLog` 仍是 primary 的原值，`awaitingToken` 在任一副中继待换令牌时也为真。
+文件传输**实际生效**的 `maxFileBytes` 另取全部已连接中继里的最小值（`setRelayQuotaProvider`，见 [§11](#11-配额与计量)）。
 
 所有待签 payload 都由调用方（浏览器或 CLI）自己 `buildKeyLogRecord` + 签名 + `POST /api/auth/keylog?hub=sync` 提交；
 节点在记录**被应用**时才真正切换上级。
@@ -541,11 +588,35 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 `RelayUplinkClient` 把 hub 的 ctl 翻译成 `relay/v1`：`rtc.signal` → `relay.rtc`（K_meta 封装 `{sdp, candidate}`）、
 `key.log.append` → `relay.keylog.append`、`ping/pong` 直通，其余 `hub.*` 抛错。
 因此 `createKeyLogPublisher` 与 `MeshRtcSignalRouter` 一行未改就能在中继模式工作。
-心跳 ping→pong 记下最新 RTT，经 `/api/mesh/relay/status` 的 attached 行 `rttMs` 暴露；重连清零。
+心跳 ping→pong 记下最新 RTT，经 `/api/mesh/relay/status` 的对应行 `rttMs` 暴露；重连清零。
+
+### 多中继：主 + 副全连（2.3.0 起）
+
+配了 ≥ 2 条未被踢的中继时，节点对**每一条**都保持一条活的 uplink。池里那条 live client 是**主中继**，其余是副中继
+（`relay-secondary-attach.ts`，各自 1 s → 60 s 退避重连）。单中继配置不产生副中继。
+
+| | 主中继 | 副中继 |
+|---|---|---|
+| 新密钥日志记录 | 只由它 `appendAndAck`（单写者，避免分叉） | 只做追平：拉取缺失记录、推送已应用的记录 |
+| 成员名册 | `relay.list` 的权威来源，写 `peer_cache` | 只更新在线状态索引（presence） |
+| 入站中继流 / `relay.rtc` 信令 | 受理 | 同样受理 |
+| `POST /api/mesh/relay/switch` | 切换的就是它 | 不受影响，继续连着 |
+
+- **按对选中继**（`chooseRelay`）：在「已连接、且该对端在其清单里在线」的中继里取 `rtt(本机,R) + rtt(对端,R)` 最小的一条；
+  缺样本的行排在有样本的行之后，并列回落主中继与 `priority`。对端 RTT 来自加密状态块新增的可选字段 `rtt_ms`
+  （每条 uplink 上报自己到该中继的心跳 RTT，2.2.x 解码器忽略它）。开流失败且原因恰为 `offline` / `unknown-target` 时，
+  在主中继上重试一次。日志 `[mesh][peer] relay choose peer=… via=… score_ms=… candidates=N`。
+- **在线名册取并集**：中继模式下 mesh 的「在线」= 各中继清单的并集；某条 uplink 掉线后它那份在线状态保留 90 s（与 hub 同一 hold），
+  到期只把**仅在该中继上可见**的对端置离线。
+- **TURN / STUN 合并**：每条中继各贡献至多一条 TURN，按主中继优先去重成数组；某条中继下发 `turn: null` 或断开，
+  只撤回**它自己**那条。STUN 取并集。
+- **被踢**：`relay.kicked` 只标它自己那一行，其余中继不受影响。
+- `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
+  若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
 
 **当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。`apps/gateway/src/mesh/relay-link-error.ts` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
 
-**手动切换中继**：`POST /api/mesh/relay/switch { url }`（node-session 鉴权，`apps/gateway/src/mesh/relay-switch-route.ts`）：规范化 URL → 未配置 404 `RELAY_UNKNOWN` / 被踢 409 `RELAY_KICKED` / 已挂载 409 `RELAY_ALREADY_ATTACHED` → `UplinkPool.switchTo(url, signal)` make-before-break，10 s 超时即取消该次切换并回 502 `RELAY_SWITCH_FAILED`（body 带 `lastError` / `lastErrorCode`）；被并发切换取代的调用返回结构化失败。成功后把 URL 写入本机 `gateway_kv` 键 `relay.preferredUrl`，`relay-wiring` 启动时把首选排在候选首位；不改签名的 `set-relays` 记录。前端 `apps/fe/src/node/mesh-relay.ts` 的状态 store 带代数：切换成功后 +1，旧代的轮询结果与在途去重一律丢弃。
+**手动切换主中继**：`POST /api/mesh/relay/switch { url }`（node-session 鉴权，`apps/gateway/src/mesh/relay-switch-route.ts`）：规范化 URL → 未配置 404 `RELAY_UNKNOWN` / 被踢 409 `RELAY_KICKED` / 已是在线主中继 409 `RELAY_ALREADY_ATTACHED` → `UplinkPool.switchTo(url, signal)` make-before-break，10 s 超时即取消该次切换并回 502 `RELAY_SWITCH_FAILED`（body 带 `lastError` / `lastErrorCode`）；被并发切换取代的调用返回结构化失败。成功后把 URL 写入本机 `gateway_kv` 键 `relay.preferredUrl`，`relay-wiring` 启动时把首选排在候选首位；不改签名的 `set-relays` 记录。前端 `apps/fe/src/node/mesh-relay.ts` 的状态 store 带代数：切换成功后 +1，旧代的轮询结果与在途去重一律丢弃。
 
 **实时用量**：`relay.quota` 帧可带 `usage`，节点侧只对当前 attached 的中继有值，见 [限额与指标](./relay-limits-and-metrics.md)。
 
@@ -602,7 +673,7 @@ Hub 模式收到该记录时同样写 `nodes.name` 并广播 `node.list`，所�
 
 | 命令 | HTTP |
 |---|---|
-| `vibeterm relay status [--json]` | `GET /api/relay/status` |
+| `vibeterm relay status [--json]` | `GET /api/relay/status`；末尾一行 `turn: builtin\|external\|off …`（监听状态、地址、公网 IP、端口段、分配数、错误） |
 | `vibeterm relay tenants [--json]` | 同上，打印租户表 |
 | `vibeterm relay passwd [--clear] [--kick\|--keep]` | `POST /api/relay/password`；默认 `keep`，先打印后果说明再隐藏输入两遍 |
 | `vibeterm relay kick <tenantId>` | `POST /api/relay/tenants/:id/kick` |
@@ -630,7 +701,7 @@ vibeterm relay remove abcd…ef --yes
 | `vibeterm relay enroll <url> [--password <p>] [--username <n>]` | 探 `GET <url>/api/relay/health` → 无本地用户则先建 → `GET /api/auth/mode` + 登录 → `proof-material` → 本地签 proof → `POST /api/mesh/relay/enroll` → 签 `set-relays` 提交 `?hub=sync` → 轮询 `status` 直到 `mode==='relay'` 且在线（≤30 s） |
 | `vibeterm relay reauth <url> [--password <p>]` | 与 enroll 同一条链路（按 url 去重，租户不变、令牌换新），只是提示语不同 |
 | `vibeterm relay leave` | `leave/prepare` → 签 `set-relays`（空列表）→ 提交 → 轮询直到 `mode !== 'relay'` |
-| `vibeterm relay list [--json]` | `GET /api/mesh/relay/status`，打印 mode / tenant / meta 世代 / peers + 中继表 |
+| `vibeterm relay list [--json]` | `GET /api/mesh/relay/status`，打印 mode / tenant / meta 世代 / peers（并集）/ `multi-attach` + 中继表，列为 `PRI URL ROLE STATE RTT PEERS TURN NOTE` |
 
 ```bash
 vibeterm relay enroll https://relay.example --password '<中继口令>'
@@ -665,13 +736,16 @@ vibeterm init --role relay,node --relay-public-url https://relay.example
 `POST /api/local/leave` 增加可选 `targetRole: 'standalone' | 'relay'`（默认 standalone）。`relay,node → relay` 清 mesh 成员，并删掉 `root_public_key` 等于本机用户根公钥的那条 `relay_tenants`（级联清该租户的 nodes / enrollments / key_log），其它租户与中继 env 键保留；leave 随后立刻重启，本机幽灵租户上的在线 uplink 随进程断开。去 standalone 则两边都清，并删掉 `VIBETERM_RELAY_*`。`node` / `hub,node` 不能直接 `targetRole: relay`（400 `invalid_target`）。`GET /api/local/status` 在本机含 relay 角色时多一块 `relay: { publicUrl, hasPassword, tenantCount, nodesOnline, currentNodes }`，不含令牌或口令哈希。
 
 **租户侧（设置 → 节点）**：原 `HubStrip` 泛化成上级链路区块，中继模式下显示每条中继的
-url / 在线 / attached / 优先级 / 最近错误 / 被踢标记，外加「元数据密钥第 N 代」「经中继可见 N 个节点」「配额」。
+url / 在线 / 主中继·副中继 / 该行 RTT / 在线对端数 / TURN 标签 / 优先级 / 最近错误 / 被踢标记，外加「元数据密钥第 N 代」
+「经中继可见 N 个节点」「配额」；每行都有「设为主中继」按钮，已是主中继或被踢的行置灰。节点徽标在走中继时标出「中转（经 <host>）」。
 菜单项：接入中继、hub → 中继迁移、追加中继、移除某条中继（多于一条时逐条列出）、重新输入口令、轮换元数据密钥、离开中继。
 hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下不渲染。
 加节点向导生成 `r3.` join 串，admit 成功后自动补签 `meta-key {op:'admit'}`，吊销成功后自动补签 `{op:'rotate'}`；
 补签失败会留一条持久化的「欠账」并在挂上中继时自动重试一次，告警条上也有手动重试按钮。
 
-**运营者侧（设置 → 中继管理，`relay.admin.tabLabel`，在 `SETTINGS_TAB_BAR` 中紧随 `nodes`，属 `OPTIONAL_SETTINGS_TABS`）**：仅在探针成功时出现。页头三点菜单：修改接入密码、中继限额；未设密码时页头下一条警告。租户卡三点菜单：默认配额。租户行可选（`aria-selected`），选中后接入节点卡只显示该租户成员；接入节点卡带检索（名称 / nodeId / tenantId）、七列排序（`aria-sort` 只落在当前列）与状态筛选，纯函数在 `relay-metrics-model.ts`；中继是盲中继，成员 `name` 恒为 `null`，排序键实际是 `name ?? nodeId`。改口令对话框（清除开关 + 踢/留单选，默认「保留」），踢出与删除确认框（删除需逐字敲出租户编号）。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)。
+**运营者侧（设置 → 中继管理，`relay.admin.tabLabel`，在 `SETTINGS_TAB_BAR` 中紧随 `nodes`，属 `OPTIONAL_SETTINGS_TABS`）**：仅在探针成功时出现。页头三点菜单：修改接入密码、中继限额；未设密码时页头下一条警告。租户卡三点菜单：默认配额。租户行可选（`aria-selected`），选中后接入节点卡只显示该租户成员；接入节点卡带检索（名称 / nodeId / tenantId）、七列排序（`aria-sort` 只落在当前列）与状态筛选，纯函数在 `relay-metrics-model.ts`；中继是盲中继，成员 `name` 恒为 `null`，排序键实际是 `name ?? nodeId`。改口令对话框（清除开关 + 踢/留单选，默认「保留」），踢出与删除确认框（删除需逐字敲出租户编号）。
+页头另有一块 TURN 磁贴（内置 / 外部 / 关闭、监听状态、`turn:<host>:<port>`、公网 IP、当前分配数、错误，以及内置模式下该放行的端口），
+数据来自 `GET /api/relay/status` 的 `turn` 段。指标瓦片见 [限额与指标](./relay-limits-and-metrics.md)。
 
 **接入向导**（`apps/fe/src/components/side-panels/connect-devices/`）覆盖「经中继 / 经 Hub / SSH 直连」三条路径，见 [接入设备面板](../development/connect-devices-panel.md)。追加中继时中继返回的 `RELAY_*` 401 由 `session-interceptor` 豁免，不当作本机会话失效。
 
@@ -726,6 +800,9 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
 - **踢租户 / 删租户**：`kick` 只作废令牌与断链，数据留着；`remove` 连注册表、enrollment、密钥日志一起删。
   注意被吊销节点如果在吊销当时中继正好离线，中继侧会留一条陈旧的 `admitted` 行，需要运营者手动 `kick`。
 - **健康探针**：`GET /api/relay/health` 无鉴权，反代健康检查与节点拨号前探测都用它。
+- **TURN 端口**：内置 TURN 要放行 UDP 控制口（默认 3478）与**整段**中继端口（默认 49160-49259）；云安全组、面板防火墙、
+  `ufw` 三层都要单独放。`vibeterm doctor` 在 relay 角色上有一条 `turn` 检查（模式 + 本机 Binding 探测 + 该放行哪些端口），
+  `vibeterm relay status` 的 `turn:` 行给监听状态与分配数，日志前缀 `[relay][turn]`。
 - **反代 / Access 豁免**：`/relay/uplink`、`/api/relay/health`、`/api/relay/enroll` 在
   `ACCESS_EXEMPT_EXACT_PATHS` 里；`/api/relay/tenants/` 前缀只做 origin 守卫豁免，**不建 Cloudflare bypass 应用**。
   管理面 `/api/relay/status|password|config|tenants/:id` **不豁免**——它们本就该走浏览器会话或管理令牌。
@@ -760,9 +837,10 @@ hub 专属的主备切换、admit/retire hub、写转发状态在中继模式下
   运营者的硬保护是中继级带宽闸。
 - **中继看得到租户根公钥、节点数、在线时段与流量模式**，以及完整的 `certificate` / `authorization` 明文字段
   （admit sidecar 与 `relay.enroll.create` 都要它来建注册表）。
-- **多中继为有序 failover**：同一时刻只连一台。不同节点落在不同中继时互不可见（无跨中继转发），
-  `relay.list` 只含同一台中继上的同租户节点。enrollment 会扇出到全部已配置中继（见 §5），r3 串只编码接受了创建的那些；
-  加入方某台 404 时换下一台，活路上行仍只挂一台。
+- **多中继全连，但仍无跨中继转发**：2.3.0 起节点对每条中继都保持 uplink（§9），因此落在不同中继上的节点**互相可见**、
+  可按对选路。中继之间仍不互转：一对节点必须在**同一台**中继上都在线才有中继路径；某个对端只挂在旧版本单连模式下时，
+  能用的就只有它那一台。enrollment 会扇出到全部已配置中继（见 §5），r3 串只编码接受了创建的那些；加入方某台 404 时换下一台。
+  新记录、名册与配额仍只认主中继（单写者）。
 - **中继不再仲裁 `seq`**：hub 模式靠 `publishAndAck` 挡住并发同 seq 的写，中继模式不挡——
   两台节点同时写会各自落本地、其中一台在中继上被 `SEQ_MISMATCH` 拒，之后 catch-up 里报 fork 并打 warn。
   这是「本地成员表权威、中继注册表可重建」的直接后果。实际风险低（前端所有写都在 `withKeyLogLock` 里）。

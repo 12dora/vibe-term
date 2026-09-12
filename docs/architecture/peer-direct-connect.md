@@ -73,7 +73,15 @@ endpoint recovered node=<id> addr=<host:port>
 
 ### 冷却期间
 
-不自动拨 DC，保持 ws-secure / relay。`armDcUpgradeRetry` 只在 `until` 时刻排**一次**探测。强制探测各有一个入口：
+不自动拨 DC，保持 ws-secure / relay。`armDcUpgradeRetry` 只在 `until` 时刻排**一次**探测；熔断处于 `disabled` 时不再排周期探测，
+要等显式 rearm（peer 重连、指纹 / endpoint 变化、hub 切换、手动探测）。
+
+**后台升级扫描的门闩**（`peer-dc-upgrade-gate.ts`）：熔断 `disabled`，或最近一次失败码属于重试也打不穿的永久码
+（`no_srflx` / `no_candidates` / `stun_unconfigured` / `not_direct_capable` / `rtc_unavailable`）时，15 s 的 endpoint 扫描
+**不再拨号**。永久码只抑制 `PERMANENT_FAILURE_HOLD_MS = 60 min`，到期放行一次探测（真拨了才算消耗），再失败重新武装——
+一次瞬时的 `no_srflx` 不会把该 peer 永久钉死。前台 `getLink` 与入站 wake 走 `peerInitiated` 分支，不受这个门闩影响。
+
+强制探测各有一个入口：
 
 - gateway：`PeerManager.forceDcProbe(nodeId)`（无 HTTP 接口 / UI 按钮）。
 - 浏览器：`GatewayConnection.retryDirect()` → `DirectCarrierController.retryDirect()`，冷却中恰好放行一次。`retry()` 走同一条路径，不清零失败计数；连接 ACTIVE 本身也不清零，仍要满 60s 才 reset。
@@ -139,10 +147,26 @@ MeshNode.dcBreaker?: {
 - `PeerDialer` 对每个 peer 只有一条在途 `connectToPeer`（single-flight）：前台 `getLink` 复用 in-flight Promise，后台升级看到 in-flight 就跳过 DC、不另开 PC。single-flight 只去重 DC，不挡住 ws-secure；后台升级 DC 与 ws-secure 并行。前台 4 s 竞速截止不 abort DC 腿，以便中继也失败时还能吃到 late winner；`getLink` 在 live 已建立时清掉 `pending`（DC 去重交给 `dcInflight`）。
 - 测试假件 `FakePeerConnection` 实现 `stable / have-local-offer / have-remote-offer` 状态机并复现 libdatachannel 的异常。
 
+### DataChannel 握手
+
+通道打开到 mux 接管之间有一段自定义握手（hello / sig / done）。旧实现在 `waitChannelOpen` 之后才挂接收回调，对端在这之前发来的
+hello 全落进 fanout 的 8 槽 dump 缓冲，跨 NAT、offerer 先 connected 的一对能稳定把它撑爆并关掉 PeerConnection。现在：
+
+- `runPeerHandshake` 在等待通道打开 / 本地指纹**之前**就 `attachHandshakeRecv`，早到的帧进握手队列。
+- 握手队列按类型去重（`hello` / `sig` / `done` 各只留最新一条），上限 `DC_HANDSHAKE_MAX_QUEUE = 64`。
+- hello 重发间隔 `DC_HANDSHAKE_HELLO_INTERVAL_MS = 500`（旧版是 40 ms），收到对端 hello 或 sig 即停。
+- 非握手的 ctl JSON（如 `{t:'ping'}`）不占握手槽，按原顺序进 payload 缓冲，握手完成后 reinject 给 `DataChannelLink`，
+  不会让认为握手已完成的旧对端丢掉 mux 控制帧；无法解析的帧直接丢弃。
+- fanout 的 `onOpen` 去重：通道已 open 时同步触发一次，native 再回调忽略。
+
+兼容：≤ 2.2.x 的 offerer 仍按 40 ms 狂发 hello，新的 answerer 靠「先挂队列 + 按类型去重」吞得下；线格式没变。
+
 ### ICE / 拨号
 
 - ICE 服务器列表按「节点自定义 > 节点禁用 > hub/中继下发的自定义列表 > 发行版内置列表」求解，并按 STUN 探针 RTT 排序（新鲜可达的靠前，失败只降权不删除）。浏览器读 `GET /api/mesh/rtc-config`，回包带 `source` 字段说明这四档里的哪一档；语义与排查见 [mesh 运维](../operations/mesh-operations.md)。
-- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当 TURN 可达探测成功时为 false**：libjuice mux 不支持 TURN；探测失败或尚未探测则保持 mux，并把不可达 TURN 从 `iceServers` 拿掉，避免 gathering 挂死、srflx 一起消失。探测是对 TURN 端口的 STUN Binding，不能代替 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。`GET /api/mesh/rtc-config` 的 `turn` 是实际纳入 ICE 的值，`turnConfigured` 保留下发/本地原值，`turnProbe` 是最近一次 Binding 探测。
+- **TURN 按条门控**：hub / 中继下发的 TURN 可能有多条（每台中继至多一条，中继角色自带 TURN）。每个 URL 各做一次 STUN Binding 可达探测（并发 2），**只有探测 `ok` 的条目**按 RTT 升序取前两条进 `iceServers`；探测失败、尚未探测、`turns:` / `?transport=tcp`（libjuice 不支持）一律排除。日志 `[mesh][rtc] turn gate configured=N reachable=M used=[…]`（used 集合变化才打）。`GET /api/mesh/rtc-config` 的 `turn` 是实际进 ICE 的数组，`turnConfigured` 是全部已知条目，`turnProbes` 每条 configured URL 一份探测记录（`turnProbe` 保留第一条，兼容旧前端）。
+- **丢弃 fake-IP 候选**：地址落在 `198.18.0.0/15`（Surge / Clash 增强模式的 fake-IP）的 host 候选**收发两侧**都丢弃，日志 `signal dropped … cause=fake-ip`；RFC1918（`10/8`、`192.168/16` 等）保留，局域网直连不受影响。单边升级即生效。
+- `buildRtcIceConfig`：`enableIceTcp`、`enableIceUdpMux`（**仅当列表里真有可达 TURN 时才为 false**：libjuice mux 不支持 TURN。没有可达 TURN 就保持 mux 并把 TURN 全部从 `iceServers` 剥掉——早期「先纳入、探测后再说」会让 gathering 挂死、srflx 一起消失。Binding 探测只证明 UDP 通，不能代替带凭证的 Allocate，见 [KI-4](../known-issues.md)）、`mtu: 1200`；`peerBindHost` 为单一具体地址时写入 `bindAddress`；`VIBETERM_RTC_PORT_RANGE=begin-end` 映射 UDP 端口范围（node-datachannel 0.33 无网卡过滤 API，未做接口过滤，见 [已知问题](../known-issues.md) KI-3）。`connectToPeer` 走 `buildRtcIceConfigResolved`：STUN/TURN 主机名先系统 DNS、再在 fake-IP 时 DoH，把 IP 字面量交给 libdatachannel，避免 Surge 增强模式把 STUN 打进 TUN（见 [隧道边缘与 STUN 的 fake-IP 绕行](../operations/tunnel-edge-fake-ip.md)）。
 
 - `connectToPeer` 四阶段共用一个 15 s deadline（后台升级扫描）；前台 `getLink()` 走更短的竞速预算（`nestedDialBudgetsMs(rtt).directMs`），见 [侧栏节点首屏](../development/sidebar-node-first-paint.md)。`waitLocalFingerprint` 为回调扇出。
 - node↔node 由 nodeId 字典序较小的一侧发 offer；业务请求只发生在较大 id 一侧时，该侧经 hub `rtc.signal` 发签名 wake（详见 [mesh 运维](../operations/mesh-operations.md)「Nodes 页」）。
@@ -152,6 +176,13 @@ MeshNode.dcBreaker?: {
 - ws-secure / relay 链路 ping 5 s × 3 次；`LinkMux.lastFrameAt` 让任意入站帧重置漏计。
 - node↔node DataChannel 空闲时每 `RTC_LIVENESS_INTERVAL_MS`（默认 3 s）发 ping/pong，任意入站流量重置计时；连续 `RTC_LIVENESS_TIMEOUT_MS`（默认 10 s）无入站则关闭该 DC/PeerConnection 并回落，日志 `[mesh][rtc] liveness timeout peer=… idle_ms=…`。不能只等 ICE `disconnected`→`closed`（约 35 s）。
 - `dropPeer` 的 `missed-pong` / `idle` 在 `live.streams > 0` 时走退休宽限（保留原因），`revoked` / `stopped` 仍立即关闭。
+- **DC 取代中继 / ws-secure 是 make-before-break**：新 session 立刻成为 live（新流走新链路），旧 session 标 `retiring` 并排空。
+  旧实现同一毫秒就 `stream.reset('replaced')`，而 `replaced` 会让 hub / 中继侧 `abortBoth`，正在跑的终端流当场断——「一升级直连就掉」
+  的直接成因。现在只要 `streams > 0` 就不结束退役，按 quiet / min / max 规则等排空；防泄漏硬上限
+  `PEER_RETIRE_STREAM_LEAK_MS = 30 min`，到点强制关闭且原因改成 `retired`（不再用 `replaced` 砸整条 uplink）。
+  心跳失活 / 闲置这类退役仍有 `PEER_RETIRE_MAX_MS = 30 s` 的硬截止，先于流数判断。
+- **DC 空闲拆链 30 min**（`PEER_DC_IDLE_MS`），relay / ws-secure 仍是 `PEER_IDLE_MS = 5 min`：5 min 对「用户刚用过、马上还要用」
+  太短，反复重建 DC 本身就是抖动源。DC 因 idle 结束时只关它自己那条 session，仍在排空的中继会被 promote 回 live。
 - relay client / pool 双层追踪在途隧道流；就近切换、回切、reconfigure 等待排空（每 3 s 复查，10 min 硬上限，到期剩余流被 reset）；`retireClient` 停止接新流并排空后再 `stop()`；死链仍立即处理。
 - 中继 registry 记录 `lastByteAt`，心跳期间有流量不累加 miss；令牌桶按逻辑流独立排队、4 KiB quantum 轮转，≤ 4 KiB 帧走优先通道；`pumpMetered` 单向失败先 half-close，RST 原因细化为 `relay-rst:src-read` / `relay-rst:dst-write` / `relay-rst:peer-abort`（保留 `relay-rst` 前缀）。
 - 发送分片 16 KiB（接收上限仍 64 KiB，向后兼容）；`MAX_LINK_UNACKED` 为 65 × 1 MiB，覆盖默认 64 条中继流——代价是单 mux 最坏内存占用上升（KI-5）。

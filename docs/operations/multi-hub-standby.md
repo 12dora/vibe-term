@@ -28,6 +28,11 @@
 
 节点侧按 RTT 挂载（`VIBETERM_UPLINK_PREFER_NEAREST`，多 hub 时默认开）与 opt-in 自动 promote（`VIBETERM_HUB_AUTO_PROMOTE`，默认关）已做，见下文。挂在不同 hub 上的 node 可以通过写者 uplink 做跨 hub relay。
 
+> **与「多中继全连」不是一回事。** hub 主备是**有序 failover**：一个 mesh 同一时刻只有一台写者 hub，节点只挂一台，
+> 跨 hub 的可达性靠 hub 之间的 `hub.attachments` 转发。公共中继模式下节点对**每一条**已配置中继都保持 uplink，按对端逐对选路，
+> 中继之间**不互转**（见 [公共中继角色 §9](../architecture/relay.md)）。`POST /api/mesh/relay/switch` 是「换主中继」，
+> 不是 `hub promote`：它不涉及写者世代与围栏，也不断开其它中继。
+
 ## 拓扑
 
 ```text

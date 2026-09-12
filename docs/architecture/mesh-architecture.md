@@ -70,9 +70,14 @@ peer link 传输选择（自动，按序）：
 
 1. **内网 / v6 / 公网直达**：目标 node 的 **peer 监听端口**（`VIBETERM_PEER_PORT`，默认 39001，绑定 `0.0.0.0` / `::`）只承载 **签名信令**（明文 WS）；数据面走 node↔node WebRTC DataChannel（DTLS 加密、ICE host 候选零跳）。hub 不可达时这是唯一路径，地址来自 `peer_cache`。
 2. **hub 信令 + ICE**：peer 端口不可达时，信令经 hub `ctl` 流转发，ICE 走 STUN / v6 / TURN。
-3. **hub relay**：ICE 失败或任一端 `direct_capable=false`，经 hub `relay` 流中转（`SecureChannel` 加密）。
+3. **hub / 中继转发**：ICE 失败或任一端 `direct_capable=false`，经 hub 或公共中继的 `relay` 流中转（`SecureChannel` 加密）。
+   中继模式下节点同时挂在全部已配置中继上，**这一跳按对端逐对选路**（选双方都在线、`rtt(本机,R)+rtt(对端,R)` 最小的一台），
+   不一定是主中继；见 [公共中继角色 §9](./relay.md)。
 
 网络路径诊断（设备页徽标）对浏览器↔目标 node 与 entry↔目标 node 各显示一个：`lan / v6 / v4-p2p / turn / relay`。
+中继模式下走中继的那条会标出**具体是哪台中继**：`/api/mesh/nodes` 与 `NODE_EVENT` 上的 `viaRelay`（当前链路所经中继的公开地址，
+仅 `transport === 'relay'` 时有值）与 `relayPresence`（该对端当前在线的中继地址列表，hub 模式不下发）。
+`NODE_EVENT` 的 borsh schema 随之升到 v4，旧前端按 v3 解码并忽略尾部多出的字节。
 
 ### NAT 穿透策略（ICE 并行尝试，自动选优）
 
@@ -245,7 +250,10 @@ CLI：`vibeterm hub join <https-url> --password [<p>]`（与 `--token` 互斥；
 
 因子分别是 6× / 5× / （direct + 2×RTT 中继握手），各档独立 clamp 后再抬外层或压内层，使任意 RTT 都满足不变式。0 / 300 ms 一列与改动前的 LAN 常量完全一致，即局域网行为不变。
 
-RTT 取值顺序（网关侧 `lookupPeerRttMs`）：peer live 链路的 ping/pong RTT → uplink pong / 连接池最近候选 → 缺省 300 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
+RTT 取值顺序（网关侧 `lookupPeerRttMs`）：指定 peer 时用该 live 链路的 RTT → 否则取**全部 live 链路样本的中位数**（早期用全局最大值，
+一条慢链路会把所有预算顶到上限）→ uplink pong / 连接池最近候选 → 缺省 300 ms（`DEFAULT_DIAL_RTT_MS`，偏保守的跨区代理值，不是 LAN）。
+单条链路的 `rttMs` 是 ctl ping/pong 的 EWMA（α = 0.3，超过当前值 3 倍的尖峰忽略一次）：ping 带发送时刻、对端原样回显、由发送端计算，
+因此**不含本端发送队列的排队时间**。它只用来放大拨号/转发预算与显示，不参与链路选择。
 
 同一套自适应还接到：
 
@@ -344,11 +352,13 @@ relay 角色的协议、接口与运维见 [公共中继（relay）角色](./rel
 
 ### 配置
 
-- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔；未设置 = 发行版内置列表，`none` 禁用）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
+- hub：`VIBETERM_HUB_PUBLIC_URL`、`VIBETERM_STUN_SERVERS`（逗号分隔；未设置 = 发行版内置列表，`none` 禁用）、`VIBETERM_TURN_URL / USERNAME / CREDENTIAL`（hub 角色只支持这套外部 TURN）。hub 链路签名私钥首次启动生成，用 `VIBETERM_MASTER_KEY` 加密落库。
 - node：`VIBETERM_HUB_URL`、`VIBETERM_PEER_PORT`（默认 39001）；`node_identity` 私钥加密落库。passkey 的 RP ID / origin 取自注册时的实际请求（同一 node 可从多个域名 origin 各注册一个 credential），不需要额外配置。
 - STUN/TURN：hub / 中继配置 → `node.list` / `relay.list` 下发 → 节点求有效列表 → 浏览器 `GET /api/mesh/rtc-config`。
   - **STUN**：内置列表随发行版分发（`packages/shared/src/net/stun-defaults.ts`），hub / 中继**只在自己设了自定义列表时**才下发，否则下发空数组。节点按「节点自定义 > 节点禁用 > hub 下发的自定义列表 > 内置列表」求有效列表，再按 STUN 探针 RTT 排序。空下发**不会**清掉节点自己的列表。
-  - **TURN**：一旦收到过下发就以下发为准，`turn: null` 表示**显式撤回**，此后不再回落本机 `VIBETERM_TURN_*`；从未收到过下发才用本机配置。
+  - **TURN**：一旦收到过下发就以下发为准，此后不再回落本机 `VIBETERM_TURN_*`；从未收到过下发才用本机配置。
+    中继角色**自带 TURN**（见 [公共中继角色](./relay.md)），撤回语义按中继**逐台**计：某台下发 `turn: null` 或掉线，只撤回它那一条，
+    其余中继的条目仍在。节点侧把各台的条目合成数组，逐条做 Binding 可达探测，只把探测成功的按 RTT 取前两条交给 ICE（见 [已知问题](../known-issues.md) KI-4）。
   - 运维语义、env 取值与升级迁移见 [mesh 运维](../operations/mesh-operations.md)。
 
 ### CLI 新命令（`packages/app/src/commands/`）

@@ -27,6 +27,10 @@ VibeTerm 的数据面本来就是端口透明的：`canonicalHubUrl` / `normaliz
 
 低于 1024 的端口需要 root，Linux 用户级 systemd 服务绑不上，一律不要选。
 
+本文只讲 HTTP(S) 入口这一个 **TCP** 端口。中继角色另有内置 TURN 的 **UDP** 端口（默认 3478 与 49160-49259），它是裸 UDP、
+不经反代、也不在下面的候选表里，要单独放行或用 `VIBETERM_TURN_PORT` / `VIBETERM_TURN_RELAY_PORT_RANGE` 改，见
+[mesh 运维](./mesh-operations.md)「中继内置 TURN 与多中继」。
+
 ## 内置候选端口
 
 `packages/shared/src/net/port-candidates.ts`：

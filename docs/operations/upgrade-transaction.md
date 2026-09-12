@@ -65,6 +65,12 @@ STUN 列表改为随发行版内置分发后（见 [mesh 运维](./mesh-operatio
 - 事务级回滚走 `backups/<txnId>/app.env`：`rollbackToOld` 与失败处理（包括还没到切 `current` 就失败的情形）都会把它拷回，冻结的旧默认不会因为一次失败的升级被悄悄丢掉。
 - 相同版本的 `upgrade` 是 no-op，不走事务，因而**不做**这次迁移；真正跨版本升级才会拆。
 
+### TURN 键：只提示，不改
+
+2.3.0 起中继角色自带 TURN（见 [mesh 运维](./mesh-operations.md)）。升级**不删**遗留的 `VIBETERM_TURN_URL` / `_USERNAME` /
+`_CREDENTIAL`——它们可能是有意配的外部 TURN，而且 hub 角色只有这一种。三个键齐全时 `applyTurnEnvNotice`（挂在 STUN 迁移那个钩子位）
+打一行提示：`external TURN configured; builtin TURN disabled`。想改用内置 TURN 就自己把这三个键删掉再重启。
+
 ## 旧布局迁移
 
 已有机器是顶层 `cli/ runtime/ resources/ native/`。第一次 apply 在升级前做崩溃安全转换：按 `install-meta.json` 的 `cliVersion` 复制到 `versions/<from>/`，原子创建 `current`，原子重写 `run.sh` 与 shim。旧服务继续用原文件直到下次重启。仅在本次升级 `committed` 后删除顶层旧目录。缺少 `cliVersion` 则中止并给出明确错误。`init` 直接写新布局。`--no-service` 跳过 launchd/systemd，只管理进程（测试与无服务环境）。
