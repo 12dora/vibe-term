@@ -88,6 +88,7 @@ const RTC_DEBUG_EVENTS = new Set<string>([
   'selected pair',
   'upgrade retry',
   'dial race won',
+  'reroll_request_ignored',
 ]);
 
 export function rtcLogLevel(event: string): LogLevel {

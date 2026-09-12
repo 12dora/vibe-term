@@ -1,7 +1,9 @@
 import type { LinkSession } from '@vibeterm/shared/link';
+import { encodeJsonBytes } from './ctl';
 import {
   DC_REROLL_CAP,
   DC_REROLL_MAX_PER_HOUR,
+  DC_REROLL_MIN_INTERVAL_MS,
   DC_REROLL_REHOME_GAIN,
   DC_REROLL_RESULT_DEADLINE_MS,
   DC_REROLL_RESULT_SAMPLES,
@@ -13,6 +15,7 @@ import type { RtcSignalMessage } from './mesh-deps';
 import { logLine } from './mesh-log';
 import { winningDialInitiator } from './peer-direct-attempt';
 import { type PeerManagerState, RTC_PEER_INBOX_MAX_MESSAGES } from './peer-manager-state';
+import { PEER_LINK_REROLL_REQUEST, parseLinkRerollRequest } from './peer-protocol';
 import type { LivePeer } from './peer-reconnect-wake';
 import { RTC_SIGNAL_INBOX_TTL_MS, type RtcSignalInboxEntry } from './peer-rtc-wake';
 import { decodeCandidateSignal, decodeSdpSignal } from './rtc/ice';
@@ -31,6 +34,8 @@ export type DcRerollRecord = {
   prevSession: LinkSession | null;
   /** 触发时的 transport；结算必须对上，避免把无关的 dc/ws 当成这一轮成果。 */
   transport: DirectRerollTransport | null;
+  /** 本端刚发出 reroll-request，对端随后的 offer 不再二次记预算。 */
+  pendingPeerRequest?: boolean;
 };
 
 export type DirectRerollOpts = { answer: boolean; transport?: DirectRerollTransport };
@@ -45,6 +50,8 @@ export type DcRerollDeps = {
   /** 绕过 wantsUpgrade / aboveDc 的直连拨号；`answer` 仅 DC 应答侧使用。 */
   dialReroll: (nodeId: string, opts: DirectRerollOpts) => Promise<LinkSession | null>;
   finishRetire: (live: LivePeer, reason: string) => void;
+  /** 应答侧发 `link.reroll-request`；测试可注入。缺省走 session.ctl。 */
+  sendPeerCtl?: (live: LivePeer, msg: Record<string, unknown>) => void;
 };
 
 let disabledLogged = false;
@@ -78,6 +85,8 @@ function round(ms: number): number {
 export class DcRerollCoordinator {
   private readonly state: PeerManagerState;
   private readonly deps: DcRerollDeps;
+  /** 入站 `link.reroll-request` 每对端 60 s 至多处理一条，不论是否通过校验。 */
+  private readonly inboundRequestAt = new Map<string, number>();
 
   constructor(state: PeerManagerState, deps: DcRerollDeps) {
     this.state = state;
@@ -114,11 +123,17 @@ export class DcRerollCoordinator {
       quiesceCapable: live.quiesceCapable,
       peerCapable: live.rerollCapable === true,
       isOfferer: this.isInitiator(live.peerNodeId),
+      canRequest: live.rerollCapable === true,
       breakerAllows: this.deps.breakerAllows(live.peerNodeId),
       dcUpgradePending: this.dcUpgradePending(live),
       now,
     });
-    if (decision.reroll) this.start(live, rec, decision.currentMs, decision.bestMs, now);
+    if (!decision.reroll) return;
+    if (this.isInitiator(live.peerNodeId)) {
+      this.start(live, rec, decision.currentMs, decision.bestMs, now);
+    } else {
+      this.requestReroll(live, rec, decision.currentMs, decision.bestMs, now);
+    }
   }
 
   /**
@@ -134,6 +149,36 @@ export class DcRerollCoordinator {
     if (rec.count >= DC_REROLL_MAX_PER_HOUR) return false;
     this.start(live, rec, live.rttMs ?? 0, this.state.pathRtt.bestMs(nodeId) ?? 0, now);
     return true;
+  }
+
+  /**
+   * 入站 `link.reroll-request`：先按对端 60 s 限流（不论校验成败），再走 forceReroll 同款门闩。
+   * 通过则 `reason=peer-request` 起拨；否则 debug 丢掉。
+   */
+  handlePeerRequest(live: LivePeer, msg: Record<string, unknown>): void {
+    if (!dcRerollEnabled()) return;
+    const now = this.state.scheduler.now();
+    const nodeId = live.peerNodeId;
+    const prevAt = this.inboundRequestAt.get(nodeId);
+    if (prevAt != null && now - prevAt < DC_REROLL_MIN_INTERVAL_MS) {
+      rtcLog('reroll_request_ignored', { peer: id8(nodeId), reason: 'rate' });
+      return;
+    }
+    this.inboundRequestAt.set(nodeId, now);
+    const parsed = parseLinkRerollRequest(msg);
+    const reason = this.peerRequestRejectReason(live, parsed, now);
+    if (reason || !parsed) {
+      rtcLog('reroll_request_ignored', { peer: id8(nodeId), reason: reason ?? 'malformed' });
+      return;
+    }
+    this.start(
+      live,
+      this.recordOf(nodeId, now),
+      parsed.currentMs,
+      parsed.bestMs,
+      now,
+      'peer-request'
+    );
   }
 
   /** `receiveRtcSignal` 用：offer 与提前到达的 ICE 候选都在这里接管。 */
@@ -160,11 +205,10 @@ export class DcRerollCoordinator {
     if (this.deps.hasDcInflight(nodeId)) return false;
     const now = this.state.scheduler.now();
     const rec = this.recordOf(nodeId, now);
-    if (rec.count >= DC_REROLL_MAX_PER_HOUR) return false;
+    if (!this.canAcceptRerollOffer(rec, now)) return false;
     if (offer.epoch !== undefined) this.dropForeignCandidates(nodeId, offer.epoch);
     if (!this.enqueueInbox(nodeId, msg)) return false;
-    rec.count += 1;
-    rec.lastAt = now;
+    this.noteRerollOfferAccepted(rec, now);
     void this.deps.dialReroll(nodeId, { answer: true, transport: 'dc' }).catch(() => undefined);
     return true;
   }
@@ -204,6 +248,7 @@ export class DcRerollCoordinator {
         oldMs: null,
         prevSession: null,
         transport: null,
+        pendingPeerRequest: false,
       };
       this.state.rerolls.set(nodeId, fresh);
       return fresh;
@@ -220,7 +265,8 @@ export class DcRerollCoordinator {
     rec: DcRerollRecord,
     currentMs: number,
     bestMs: number,
-    now: number
+    now: number,
+    reason: 'slow-path' | 'peer-request' = 'slow-path'
   ): void {
     const transport: DirectRerollTransport = live.transport === 'ws-secure' ? 'ws-secure' : 'dc';
     rec.count += 1;
@@ -232,7 +278,7 @@ export class DcRerollCoordinator {
     rtcLog('reroll', {
       peer: id8(nodeId),
       transport,
-      reason: 'slow-path',
+      reason,
       cur_ms: round(currentMs),
       best_ms: round(bestMs),
       try: `${rec.count}/${DC_REROLL_MAX_PER_HOUR}`,
@@ -243,6 +289,87 @@ export class DcRerollCoordinator {
         if (!session) this.clearPending(nodeId);
       })
       .catch(() => this.clearPending(nodeId));
+  }
+
+  private requestReroll(
+    live: LivePeer,
+    rec: DcRerollRecord,
+    currentMs: number,
+    bestMs: number,
+    now: number
+  ): void {
+    const transport: DirectRerollTransport = live.transport === 'ws-secure' ? 'ws-secure' : 'dc';
+    rec.count += 1;
+    rec.lastAt = now;
+    rec.pendingPeerRequest = true;
+    rtcLog('reroll_request', {
+      peer: id8(live.peerNodeId),
+      transport,
+      cur_ms: round(currentMs),
+      best_ms: round(bestMs),
+      try: `${rec.count}/${DC_REROLL_MAX_PER_HOUR}`,
+    });
+    this.emitCtl(live, {
+      t: PEER_LINK_REROLL_REQUEST,
+      transport,
+      currentMs,
+      bestMs,
+    });
+  }
+
+  private emitCtl(live: LivePeer, msg: Record<string, unknown>): void {
+    if (this.deps.sendPeerCtl) {
+      this.deps.sendPeerCtl(live, msg);
+      return;
+    }
+    try {
+      void Promise.resolve(live.session.ctl.send(encodeJsonBytes(msg))).catch(() => undefined);
+    } catch {
+      // 对端已关
+    }
+  }
+
+  private peerRequestRejectReason(
+    live: LivePeer,
+    parsed: ReturnType<typeof parseLinkRerollRequest>,
+    now: number
+  ): string | null {
+    if (!parsed) return 'malformed';
+    if (this.state.live.get(live.peerNodeId) !== live) return 'not-live';
+    if (parsed.transport !== live.transport) return 'transport';
+    if (!this.isInitiator(live.peerNodeId)) return 'not-offerer';
+    if (!live.quiesceCapable) return 'quiesce';
+    if (this.busy(live.peerNodeId)) return 'inflight';
+    if (live.transport === 'dc') {
+      if (live.rerollCapable !== true) return 'peer-cap';
+      if (!this.deps.breakerAllows(live.peerNodeId)) return 'breaker';
+    } else if (this.dcUpgradePending(live)) {
+      return 'dc-upgrade';
+    }
+    const rec = this.recordOf(live.peerNodeId, now);
+    if (rec.count >= DC_REROLL_MAX_PER_HOUR) return 'budget';
+    if (rec.lastAt != null && now - rec.lastAt < DC_REROLL_MIN_INTERVAL_MS) return 'cooldown';
+    return null;
+  }
+
+  private isAnsweringOwnRequest(rec: DcRerollRecord, now: number): boolean {
+    return (
+      rec.pendingPeerRequest === true &&
+      rec.lastAt != null &&
+      now - rec.lastAt < DC_REROLL_RESULT_DEADLINE_MS
+    );
+  }
+
+  private canAcceptRerollOffer(rec: DcRerollRecord, now: number): boolean {
+    return this.isAnsweringOwnRequest(rec, now) || rec.count < DC_REROLL_MAX_PER_HOUR;
+  }
+
+  private noteRerollOfferAccepted(rec: DcRerollRecord, now: number): void {
+    const answeringOwn = this.isAnsweringOwnRequest(rec, now);
+    rec.pendingPeerRequest = false;
+    if (answeringOwn) return;
+    rec.count += 1;
+    rec.lastAt = now;
   }
 
   /** 拨失败：旧链路原样留着，预算已经记过，不再等新链路结算。 */

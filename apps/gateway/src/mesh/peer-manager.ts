@@ -206,6 +206,7 @@ export class PeerManager extends PeerCollaboratorHost {
       hasCoalescedUpgrade: (nodeId) => this.dcUpgrade.upgradeGate.get(nodeId)?.coalesced === true,
       extraHelloCaps: () => this.reroll.helloCaps(),
       noteHelloCaps: (live, caps) => this.reroll.noteHelloCaps(live, caps),
+      onRerollRequest: (live, msg) => this.reroll.handlePeerRequest(live, msg),
       track: (...args) => this.registry.track(...args),
     });
     this.reroll = new DcRerollCoordinator(this.state, {
@@ -569,7 +570,6 @@ export class PeerManager extends PeerCollaboratorHost {
   private requireTrusted(nodeId: string): void {
     requirePeerAdmitted(this.state, nodeId, (id) => this.onRevoked(id));
   }
-
   private handlePeerCtl(live: LivePeer, bytes: Uint8Array): void {
     const msg = parseOpenPayload(bytes);
     if (!msg || typeof msg.t !== 'string') return;

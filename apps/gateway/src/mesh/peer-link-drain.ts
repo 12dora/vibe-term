@@ -24,6 +24,8 @@ export type PeerLinkDrainDeps = {
   extraHelloCaps: () => string[];
   /** 对端 link.hello 的能力位。 */
   noteHelloCaps: (live: LivePeer, caps: readonly unknown[]) => void;
+  /** 入站 `link.reroll-request`：offerer 校验后起重掷拨号。 */
+  onRerollRequest: (live: LivePeer, msg: Record<string, unknown>) => void;
   track: (
     session: LinkSession,
     peerNodeId: string,
@@ -284,6 +286,10 @@ export class PeerLinkDrain {
         live.helloReplied = true;
         this.sendLinkHello(live);
       }
+      return;
+    }
+    if (t === 'link.reroll-request') {
+      this.deps.onRerollRequest(live, msg);
       return;
     }
     this.handleQuiesceCtl(live, t);

@@ -75,6 +75,29 @@ describe('decideDcReroll', () => {
     expect(reasonOf({ breakerAllows: false })).toBe('breaker');
   });
 
+  test('应答侧 canRequest：同阈值 / 预算 / 冷却，DC 不查熔断', () => {
+    expect(reasonOf({ isOfferer: false, canRequest: true })).toBe('reroll');
+    expect(reasonOf({ isOfferer: false, canRequest: false })).toBe('answerer');
+    expect(reasonOf({ isOfferer: false, canRequest: true, breakerAllows: false })).toBe('reroll');
+    expect(reasonOf({ isOfferer: false, canRequest: true, peerCapable: false })).toBe('peer-cap');
+    expect(
+      reasonOf({ transport: 'ws-secure', isOfferer: false, canRequest: true, peerCapable: false })
+    ).toBe('reroll');
+    expect(
+      reasonOf({
+        transport: 'ws-secure',
+        isOfferer: false,
+        canRequest: true,
+        dcUpgradePending: true,
+      })
+    ).toBe('dc-upgrade');
+    expect(reasonOf({ isOfferer: false, canRequest: true, lastRerollAt: NOW - 1 })).toBe(
+      'cooldown'
+    );
+    const full = { count: DC_REROLL_MAX_PER_HOUR, windowStartedAt: NOW };
+    expect(reasonOf({ isOfferer: false, canRequest: true, rerolls: full })).toBe('budget');
+  });
+
   test('ws-secure 只认 initiator，不要求 reroll 能力位 / 熔断', () => {
     expect(reasonOf({ transport: 'ws-secure', isOfferer: false })).toBe('answerer');
     expect(reasonOf({ transport: 'ws-secure', peerCapable: false })).toBe('reroll');

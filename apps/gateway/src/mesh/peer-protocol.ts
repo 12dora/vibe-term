@@ -46,6 +46,27 @@ export type PeerSigWire = {
 export type PeerCtlPing = { t: 'ping' };
 export type PeerCtlPong = { t: 'pong' };
 
+export const PEER_LINK_REROLL_REQUEST = 'link.reroll-request' as const;
+
+export type PeerLinkRerollRequest = {
+  t: typeof PEER_LINK_REROLL_REQUEST;
+  transport: 'dc' | 'ws-secure';
+  currentMs: number;
+  bestMs: number;
+};
+
+/** 应答侧请求 offerer 重拨；字段非法时返回 null，调用方按未知 ctl 丢掉。 */
+export function parseLinkRerollRequest(msg: Record<string, unknown>): PeerLinkRerollRequest | null {
+  if (msg.t !== PEER_LINK_REROLL_REQUEST) return null;
+  const transport = msg.transport;
+  if (transport !== 'dc' && transport !== 'ws-secure') return null;
+  const currentMs = msg.currentMs;
+  const bestMs = msg.bestMs;
+  if (typeof currentMs !== 'number' || !Number.isFinite(currentMs)) return null;
+  if (typeof bestMs !== 'number' || !Number.isFinite(bestMs)) return null;
+  return { t: PEER_LINK_REROLL_REQUEST, transport, currentMs, bestMs };
+}
+
 export type PeerNodeStatusMsg = {
   t: 'node.status';
   version: string;
@@ -76,6 +97,7 @@ export type PeerCtlMessage =
   | PeerSigWire
   | PeerCtlPing
   | PeerCtlPong
+  | PeerLinkRerollRequest
   | PeerNodeStatusMsg
   | PeerKeyLogReq
   | PeerKeyLogRes

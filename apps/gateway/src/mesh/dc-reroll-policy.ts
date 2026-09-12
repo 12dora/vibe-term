@@ -6,7 +6,8 @@
  * - 至少 `DC_REROLL_MIN_SAMPLES` 个 ping 样本、链路存活 `DC_REROLL_MIN_LINK_AGE_MS`，避免抖动误判；
  * - 慢的定义是 `rtt > max(1.5 × best, best + 40ms)`，同时挡住小 RTT 的相对噪声与大 RTT 的绝对噪声；
  * - 每对端每滚动小时最多 `DC_REROLL_MAX_PER_HOUR` 次（DC 与 ws-secure 共用），间隔 ≥ 60 s；
- * - 只有 dial-initiator（`winningDialInitiator`，字典序较小的 nodeId）发起，且已协商 quiesce；
+ * - 拨号仍只有 dial-initiator（`winningDialInitiator`，字典序较小的 nodeId）发起，且已协商 quiesce；
+ * - 应答侧在对端报过 `reroll`（`canRequest`）时走同一套阈值 / 预算 / 冷却，发 `link.reroll-request` 而不是自己拨；
  * - DC 还要求对端报过 `reroll` 能力（2.3.1 不认更高 epoch 的 offer）；ws-secure 入站本来就会接新连接；
  * - 已能拨 DC 且 DC 升级在途 / 熔断放行时，不浪费预算去再赛一条 ws-secure（DC 升级会换掉它）。
  */
@@ -45,6 +46,11 @@ export type DcRerollInput = {
   peerCapable: boolean;
   /** dial-initiator（winningDialInitiator / 字典序较小的 nodeId）。 */
   isOfferer: boolean;
+  /**
+   * 应答侧：对端在 link.hello 里报过 `reroll` 时为 true，允许发 `link.reroll-request`。
+   * offerer 忽略此字段。
+   */
+  canRequest?: boolean;
   breakerAllows: boolean;
   /** ws-secure：DC 可拨且升级已在途 / 熔断放行时为 true，避免白烧预算。 */
   dcUpgradePending?: boolean;
@@ -84,12 +90,12 @@ function measurementReason(input: DcRerollInput): string | null {
 
 function roleReason(input: DcRerollInput): string | null {
   if (!input.quiesceCapable) return 'quiesce';
-  if (!input.isOfferer) return 'answerer';
+  if (!input.isOfferer && !input.canRequest) return 'answerer';
   if (input.transport === 'ws-secure') {
     return input.dcUpgradePending ? 'dc-upgrade' : null;
   }
   if (!input.peerCapable) return 'peer-cap';
-  if (!input.breakerAllows) return 'breaker';
+  if (input.isOfferer && !input.breakerAllows) return 'breaker';
   return null;
 }
 

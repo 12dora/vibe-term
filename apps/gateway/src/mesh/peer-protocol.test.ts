@@ -3,7 +3,7 @@ import { generateEd25519KeyPair } from '@vibeterm/shared/auth';
 import { createInMemoryLinkPair } from '@vibeterm/shared/link';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
-import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
+import { handshakeRelay, handshakeWsDirect, parseLinkRerollRequest } from './peer-protocol';
 import { fakeSocketPair, seedNodeIdentity, seedUser } from './test-support';
 import { PeerHandshakeError } from './types';
 
@@ -162,5 +162,56 @@ describe('peer handshake', () => {
     const chunk = await reader.read();
     expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('hello-relay');
     peerStream.end();
+  });
+});
+
+describe('parseLinkRerollRequest', () => {
+  test('合法字段解析；非法 / 未知 ctl 返回 null', () => {
+    expect(
+      parseLinkRerollRequest({
+        t: 'link.reroll-request',
+        transport: 'dc',
+        currentMs: 190,
+        bestMs: 90,
+      })
+    ).toEqual({
+      t: 'link.reroll-request',
+      transport: 'dc',
+      currentMs: 190,
+      bestMs: 90,
+    });
+    expect(
+      parseLinkRerollRequest({
+        t: 'link.reroll-request',
+        transport: 'ws-secure',
+        currentMs: 1,
+        bestMs: 0,
+      })?.transport
+    ).toBe('ws-secure');
+    expect(parseLinkRerollRequest({ t: 'link.hello', caps: ['reroll'] })).toBeNull();
+    expect(
+      parseLinkRerollRequest({
+        t: 'link.reroll-request',
+        transport: 'relay',
+        currentMs: 1,
+        bestMs: 1,
+      })
+    ).toBeNull();
+    expect(
+      parseLinkRerollRequest({
+        t: 'link.reroll-request',
+        transport: 'dc',
+        currentMs: '190',
+        bestMs: 90,
+      })
+    ).toBeNull();
+    expect(
+      parseLinkRerollRequest({
+        t: 'link.reroll-request',
+        transport: 'dc',
+        currentMs: Number.NaN,
+        bestMs: 90,
+      })
+    ).toBeNull();
   });
 });

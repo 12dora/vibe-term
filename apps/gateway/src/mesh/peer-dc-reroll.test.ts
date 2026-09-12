@@ -73,6 +73,7 @@ type Harness = {
   scheduler: ImmediateScheduler;
   coordinator: DcRerollCoordinator;
   dials: Array<{ nodeId: string; answer: boolean; transport?: string }>;
+  sentCtl: Record<string, unknown>[];
   retired: Array<{ live: LivePeer; reason: string }>;
   settle: (session: LinkSession | null) => void;
   inflight: Set<string>;
@@ -85,6 +86,7 @@ type Harness = {
 function harness(selfNodeId = SELF): Harness {
   const { state, scheduler } = makeState(selfNodeId);
   const dials: Harness['dials'] = [];
+  const sentCtl: Harness['sentCtl'] = [];
   const retired: Harness['retired'] = [];
   const inflight = new Set<string>();
   const wsInflight = new Set<string>();
@@ -105,12 +107,16 @@ function harness(selfNodeId = SELF): Harness {
       });
     },
     finishRetire: (live, reason) => retired.push({ live, reason }),
+    sendPeerCtl: (_live, msg) => {
+      sentCtl.push(msg);
+    },
   });
   return {
     state,
     scheduler,
     coordinator,
     dials,
+    sentCtl,
     retired,
     settle: (session) => settle(session),
     inflight,
@@ -193,6 +199,9 @@ describe('DcRerollCoordinator 采样与触发', () => {
       200
     );
     expect(answerer.dials).toHaveLength(0);
+    expect(answerer.sentCtl).toEqual([
+      { t: 'link.reroll-request', transport: 'ws-secure', currentMs: 200, bestMs: 90 },
+    ]);
   });
 
   test('forceReroll 在 DC 可拨但无升级活动时放行 ws-secure', () => {
@@ -288,11 +297,57 @@ describe('DcRerollCoordinator 采样与触发', () => {
     h.state.pathRtt.record(PEER, { kind: 'tcp-connect', rttMs: 90 });
     h.coordinator.onRttSample(makeLive(h.state, { rerollCapable: false }), 200);
     expect(h.dials).toHaveLength(0);
+    expect(h.sentCtl).toHaveLength(0);
     const answerer = harness('ff'.repeat(16));
     answerer.state.pathRtt.record('11'.repeat(16), { kind: 'tcp-connect', rttMs: 90 });
     const live = makeLive(answerer.state, { peerNodeId: '11'.repeat(16) });
     answerer.coordinator.onRttSample(live, 200);
     expect(answerer.dials).toHaveLength(0);
+    expect(answerer.sentCtl).toHaveLength(1);
+  });
+
+  test('应答侧慢路径发 reroll-request，冷却内只发一次', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    h.state.pathRtt.record(peerId, { kind: 'tcp-connect', rttMs: 90 });
+    const live = makeLive(h.state, { peerNodeId: peerId });
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      h.coordinator.onRttSample(live, 200);
+      h.coordinator.onRttSample(live, 200);
+    } finally {
+      console.log = orig;
+    }
+    expect(h.dials).toHaveLength(0);
+    expect(h.sentCtl).toEqual([
+      { t: 'link.reroll-request', transport: 'dc', currentMs: 200, bestMs: 90 },
+    ]);
+    expect(h.state.rerolls.get(peerId)?.count).toBe(1);
+    expect(h.state.rerolls.get(peerId)?.pendingPeerRequest).toBe(true);
+    expect(h.state.rerolls.get(peerId)?.prevSession).toBeNull();
+    const line = lines.find((row) => row.includes('reroll_request'));
+    expect(line).toContain(`peer=${peerId.slice(0, 8)}`);
+    expect(line).toContain('transport=dc');
+    expect(line).toContain('cur_ms=200');
+    expect(line).toContain('best_ms=90');
+    expect(line).toContain('try=1/3');
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.onRttSample(live, 200);
+    expect(h.sentCtl).toHaveLength(2);
+    expect(h.state.rerolls.get(peerId)?.count).toBe(2);
+  });
+
+  test('对端没报 reroll 能力时应答侧不发 request', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    h.state.pathRtt.record(peerId, { kind: 'tcp-connect', rttMs: 90 });
+    h.coordinator.onRttSample(makeLive(h.state, { peerNodeId: peerId, rerollCapable: false }), 200);
+    expect(h.sentCtl).toHaveLength(0);
+    expect(h.dials).toHaveLength(0);
   });
 
   test('日志带 transport= 字段', () => {
@@ -499,6 +554,137 @@ describe('DcRerollCoordinator 应答侧', () => {
     }
     expect(h.coordinator.interceptOffer(peerId, offer())).toBe(false);
     expect(h.dials).toHaveLength(DC_REROLL_MAX_PER_HOUR);
+  });
+
+  test('发出 request 后对端 offer 不二次记预算，满预算仍接管', () => {
+    const h = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    h.state.pathRtt.record(peerId, { kind: 'tcp-connect', rttMs: 90 });
+    const live = makeLive(h.state, { peerNodeId: peerId });
+    h.coordinator.onRttSample(live, 200);
+    const rec = h.state.rerolls.get(peerId);
+    expect(rec?.count).toBe(1);
+    rec!.count = DC_REROLL_MAX_PER_HOUR;
+    expect(h.coordinator.interceptOffer(peerId, offer())).toBe(true);
+    expect(h.state.rerolls.get(peerId)?.count).toBe(DC_REROLL_MAX_PER_HOUR);
+    expect(h.state.rerolls.get(peerId)?.pendingPeerRequest).toBe(false);
+    expect(h.dials).toEqual([{ nodeId: peerId, answer: true, transport: 'dc' }]);
+  });
+});
+
+function rerollRequest(patch: Record<string, unknown> = {}): Record<string, unknown> {
+  return { t: 'link.reroll-request', transport: 'dc', currentMs: 190, bestMs: 90, ...patch };
+}
+
+describe('DcRerollCoordinator 入站 reroll-request', () => {
+  afterEach(() => {
+    process.env.VIBETERM_DC_REROLL = undefined;
+    resetDcRerollEnvLogForTest();
+  });
+
+  test('合法请求按 forceReroll 路径拨号，reason=peer-request，oldMs 取对端 currentMs', () => {
+    const h = harness();
+    makeLive(h.state);
+    const lines: string[] = [];
+    const orig = console.log;
+    console.log = (...args: unknown[]) => {
+      lines.push(args.map(String).join(' '));
+    };
+    try {
+      h.coordinator.handlePeerRequest(h.state.live.get(PEER) as LivePeer, rerollRequest());
+    } finally {
+      console.log = orig;
+    }
+    expect(h.dials).toEqual([{ nodeId: PEER, answer: false, transport: 'dc' }]);
+    expect(h.state.rerolls.get(PEER)?.count).toBe(1);
+    expect(h.state.rerolls.get(PEER)?.oldMs).toBe(190);
+    const line = lines.find((row) => row.includes(' reroll '));
+    expect(line).toContain('reason=peer-request');
+    expect(line).toContain('cur_ms=190');
+    expect(line).toContain('best_ms=90');
+  });
+
+  test('重复请求 60 s 内丢掉，不论第一次是否通过校验', () => {
+    const h = harness();
+    makeLive(h.state);
+    h.coordinator.handlePeerRequest(
+      h.state.live.get(PEER) as LivePeer,
+      rerollRequest({ transport: 'ws-secure' })
+    );
+    expect(h.dials).toHaveLength(0);
+    h.coordinator.handlePeerRequest(h.state.live.get(PEER) as LivePeer, rerollRequest());
+    expect(h.dials).toHaveLength(0);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.handlePeerRequest(h.state.live.get(PEER) as LivePeer, rerollRequest());
+    expect(h.dials).toHaveLength(1);
+  });
+
+  test('非法请求静默丢掉：非 offerer / 传输不符 / 无 quiesce / 在途 / 熔断 / 预算 / 冷却', () => {
+    const answerer = harness('ff'.repeat(16));
+    const peerId = '11'.repeat(16);
+    makeLive(answerer.state, { peerNodeId: peerId });
+    answerer.coordinator.handlePeerRequest(
+      answerer.state.live.get(peerId) as LivePeer,
+      rerollRequest()
+    );
+    expect(answerer.dials).toHaveLength(0);
+
+    const h = harness();
+    const live = makeLive(h.state);
+    h.coordinator.handlePeerRequest(live, rerollRequest({ transport: 'ws-secure' }));
+    expect(h.dials).toHaveLength(0);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    live.quiesceCapable = false;
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(0);
+    live.quiesceCapable = true;
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.inflight.add(PEER);
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(0);
+    h.inflight.delete(PEER);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.breaker.allow = false;
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(0);
+    h.breaker.allow = true;
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.state.rerolls.set(PEER, {
+      count: DC_REROLL_MAX_PER_HOUR,
+      windowStartedAt: h.scheduler.nowMs,
+      lastAt: null,
+      oldMs: null,
+      prevSession: null,
+      transport: null,
+    });
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(0);
+    h.state.rerolls.set(PEER, {
+      count: 1,
+      windowStartedAt: h.scheduler.nowMs,
+      lastAt: h.scheduler.nowMs,
+      oldMs: null,
+      prevSession: null,
+      transport: null,
+    });
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS;
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(1);
+    h.scheduler.nowMs += DC_REROLL_MIN_INTERVAL_MS - 1;
+    h.coordinator.handlePeerRequest(live, rerollRequest());
+    expect(h.dials).toHaveLength(1);
+  });
+
+  test('未知 ctl 形状不当作请求', () => {
+    const h = harness();
+    makeLive(h.state);
+    h.coordinator.handlePeerRequest(h.state.live.get(PEER) as LivePeer, {
+      t: 'link.reroll-please',
+      transport: 'dc',
+      currentMs: 190,
+      bestMs: 90,
+    });
+    expect(h.dials).toHaveLength(0);
   });
 });
 

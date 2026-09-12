@@ -4,6 +4,7 @@ import type { NodeSessionStore } from '../auth/node-session-store';
 import { createMigratedAuthDb } from '../auth/test-db';
 import { UserStore } from '../auth/user-store';
 import { DC_REROLL_MAX_PER_HOUR } from './dc-reroll-policy';
+import type { DcRerollCoordinator } from './peer-dc-reroll';
 import { PeerManager } from './peer-manager';
 import type { LivePeer } from './peer-reconnect-wake';
 import { dummyUplink } from './peer-test-fixtures';
@@ -169,6 +170,10 @@ function livePeerOf(manager: PeerManager, nodeId: string): LivePeer | undefined 
   return (manager as unknown as { state: { live: Map<string, LivePeer> } }).state.live.get(nodeId);
 }
 
+function rerollOf(manager: PeerManager): DcRerollCoordinator {
+  return (manager as unknown as { reroll: DcRerollCoordinator }).reroll;
+}
+
 function meshInternals(manager: PeerManager) {
   return manager as unknown as {
     state: {
@@ -289,6 +294,70 @@ describe('DC 重掷（make-before-break）', () => {
     expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('dc');
     const nextEpoch = livePeerOf(pair.managerLarge, pair.small.nodeId)?.rtcEpoch;
     expect(nextEpoch).toBeGreaterThan(oldEpochLarge as number);
+  }, 20_000);
+
+  test('NAT 应答侧仅有 TCP 样本时请求 offerer 重掷：新 DC、旧链退役、搬流', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+    const inflight = await (oldSmall as LinkSession).openStream(HTTP_OPEN);
+    await waitUntil(() => pair.httpStreamsOf() === 1, 2_000);
+    let inflightClosed = false;
+    void inflight.closed.then(() => {
+      inflightClosed = true;
+    });
+    const pcsBefore = pair.connections.length;
+    pair.managerLarge.pathRttMemory.record(pair.small.nodeId, { kind: 'tcp-connect', rttMs: 90 });
+    const live = livePeerOf(pair.managerLarge, pair.small.nodeId);
+    expect(live).toBeTruthy();
+    live!.rttMs = 190;
+    live!.rttSamples = 3;
+    live!.linkSinceAt = Date.now() - 30_000;
+    rerollOf(pair.managerLarge).onRttSample(live as LivePeer, 190);
+    await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
+    await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
+    expect(pair.connections.length).toBeGreaterThan(pcsBefore);
+    expect(pair.managerSmall.transportOf(pair.large.nodeId)).toBe('dc');
+    expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('dc');
+    const next = livePeerOf(pair.managerSmall, pair.large.nodeId);
+    expect(next).toBeTruthy();
+    next!.rttMs = 90;
+    const offerer = rerollOf(pair.managerSmall);
+    offerer.onRttSample(next as LivePeer, 90);
+    offerer.onRttSample(next as LivePeer, 90);
+    offerer.onRttSample(next as LivePeer, 90);
+    await waitUntil(() => inflightClosed, 5_000);
+    const raced = await Promise.race([
+      (oldSmall as LinkSession).closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 50)),
+    ]);
+    expect(raced).toBe('closed');
+  }, 20_000);
+
+  test('2.3.1 对端（无 reroll 能力）收不到 reroll-request', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const live = livePeerOf(pair.managerLarge, pair.small.nodeId);
+    expect(live).toBeTruthy();
+    live!.rerollCapable = false;
+    const sent: string[] = [];
+    const orig = live!.session.ctl.send.bind(live!.session.ctl);
+    live!.session.ctl.send = (bytes: Uint8Array) => {
+      sent.push(new TextDecoder().decode(bytes));
+      return orig(bytes);
+    };
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const pcs = pair.connections.length;
+    pair.managerLarge.pathRttMemory.record(pair.small.nodeId, { kind: 'tcp-connect', rttMs: 90 });
+    live!.rttMs = 190;
+    live!.rttSamples = 3;
+    live!.linkSinceAt = Date.now() - 30_000;
+    rerollOf(pair.managerLarge).onRttSample(live as LivePeer, 190);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(sent.some((row) => row.includes('link.reroll-request'))).toBe(false);
+    expect(pair.connections.length).toBe(pcs);
+    expect(pair.managerSmall.getLive(pair.large.nodeId)).toBe(oldSmall);
   }, 20_000);
 });
 

@@ -50,6 +50,8 @@
 
 live 链路每个 pong 对照「该对端已知的最佳路径 RTT」。当前稳态 RTT 明显差于 best 时，由 **offerer**（`winningDialInitiator`，字典序较小的 nodeId）再拨一条新链（新 ICE 端口对 / 新 TCP 源端口），make-before-break 换上，旧链路上的在途流再搬过去。
 
+NAT 后的应答侧往往采得到 offerer 的公网 peer 口，offerer 却采不到应答侧——只有应答侧能看出「当前 DC 比 TCP 参考慢一倍」。此时应答侧跑同一套 `decideDcReroll`（`isOfferer=false`，对端 `link.hello` 报过 `reroll` 则 `canRequest=true`），命中后发 `{ t: 'link.reroll-request', transport, currentMs, bestMs }`，由 offerer 校验后走与本地触发相同的重拨路径（`reason=peer-request`）。
+
 ### 最佳路径记忆
 
 `PeerPathRttMemory` 按对端收集三类样本，取未过期样本的最小值：
@@ -73,15 +75,15 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 | 最小链龄 | 20 s |
 | 每对端每滚动小时 | ≤ 3 次 |
 | 两次间隔 | ≥ 60 s |
-| 角色 | 仅 offerer；需已协商 `quiesce` |
-| DC 额外 | 对端 `link.hello` 报过 `reroll` 能力位；熔断放行 |
+| 角色 | 拨号仅 offerer；应答侧在对端报过 `reroll` 时可发 `link.reroll-request`。需已协商 `quiesce` |
+| DC 额外 | 对端 `link.hello` 报过 `reroll` 能力位；熔断放行（应答侧发请求不查本端熔断；offerer 收请求时查） |
 | ws-secure 额外 | 入站本就会接新连接，不依赖 `reroll` 位。已能拨 DC 时，只在 **DC 拨号在途 / `state.upgrading` / 升级协调器已 coalesced-scheduled** 让路，**熔断健康不算**。与前台 ws 拨号共享 `wsInflight`（前台复用在途 Promise，重掷遇在途则放弃）；track 前若 live 已换人，以 `reroll-stale` 关闭且不二次记预算 |
 | 结算 | 新链路 `linkSinceAt` ≥ 触发时刻且攒够 3 个样本；90 s 时限 |
 | 搬流 | 相对提升 ≥ 30 %（`DC_REROLL_REHOME_GAIN`）且旧 session 还带流 → `finishRetire(old, 'retired')` |
 
 ### 兼容与开关
 
-- 2.3.1 及更早只在 `link.hello` 里报 `quiesce`，不报 `reroll`。策略因此**永不对旧节点发 DC 重掷 offer**（应答侧常规路径在「已是 dc」时不会再建 PC）。ws-secure 重赛不受这个位限制。
+- 2.3.1 及更早只在 `link.hello` 里报 `quiesce`，不报 `reroll`。策略因此**永不对旧节点发 DC 重掷 offer**，也**永不发 `link.reroll-request`**（旧节点即使收到未知 `link.*` ctl 也会忽略）。ws-secure 重赛不受这个位限制，但应答侧请求仍要求对端报过 `reroll`。
 - 应答侧靠 `DcRerollCoordinator.interceptOffer()` 接住 **epoch 高于 `LivePeer.rtcEpoch`** 的 offer：先投给旧 attempt 让它 `superseded` 退订，再绕开 `wantsUpgrade` / `aboveDc` 起应答拨号。旧 live session 不被关。epoch ≤ 当前 live epoch 的迟到 offer **不接管、不耗预算、不起 attempt**。
 - 重掷 offer 尚未到达时，更高 epoch 的 ICE 候选写入 `rtcInbox`（`LivePeer.rtcEpoch`，条目 30 s TTL，候选最多 16 条），避免被旧 attempt 监听吞掉；offer 落定后清掉 epoch 不匹配的候选。
 - `VIBETERM_DC_REROLL=off`：本端既不触发，也不报 `reroll` 能力位——任一端关掉，这对节点就不会 DC 重掷。采样（path RTT 记忆）不受影响。需重启。
@@ -90,11 +92,14 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 ### 日志
 
 ```
-[mesh][rtc] reroll peer=<id8> transport=dc|ws-secure reason=slow-path cur_ms=<n> best_ms=<n> try=<k>/3
+[mesh][rtc] reroll peer=<id8> transport=dc|ws-secure reason=slow-path|peer-request cur_ms=<n> best_ms=<n> try=<k>/3
+[mesh][rtc] reroll_request peer=<id8> transport=dc|ws-secure cur_ms=<n> best_ms=<n> try=<k>/3
 [mesh][rtc] reroll_result peer=<id8> transport=dc|ws-secure old_ms=<n> new_ms=<n> better=<true|false>
 [mesh][rtc] reroll_rehome peer=<id8> transport=dc|ws-secure streams=<n> gain_pct=<n>
 [mesh][rtc] dc reroll disabled by VIBETERM_DC_REROLL=off
 ```
+
+`reroll_request` 在应答侧发出请求时打（预算在此时消耗）。offerer 收到后校验（活链路、transport 一致、本端是 initiator、已协商 quiesce、无在途拨号、熔断放行、本端预算未尽、距上次重掷 ≥ 60 s）；通过则 `reroll … reason=peer-request`，`old_ms` 取请求里的 `currentMs`。两端预算各 3/小时，peer-request 也记入 offerer 的次数。接收端不论校验成败，每对端 60 s 最多处理 1 条请求（多余 debug `reroll_request_ignored reason=rate`）。
 
 配套：`[mesh][rtc] dial start … port_range=… epoch=…`（debug，看新端口对）、`signal dropped … cause=superseded|epoch-mismatch`（旧 attempt 被淘汰、旧链路仍在）、`reroll_stale`（ws-secure 重掷 track 前 live 已换人）、`[mesh][stream] failover_start … cause=stream_close close_reason=retired` / `failover_done`（搬流生效）。
 
@@ -135,7 +140,8 @@ DC 与 ws-secure **共用**同一套阈值与每对端每小时预算（`dc-rero
 2. **直连是否在换五元组**：`grep '[mesh][rtc] reroll ' <log>`。完整「换到更快路径并把流搬过去」长这样：
 
    ```
-   reroll peer=ab12cd34 transport=dc reason=slow-path cur_ms=198 best_ms=91 try=1/3
+   reroll_request peer=ab12cd34 transport=dc cur_ms=198 best_ms=91 try=1/3
+   reroll peer=ab12cd34 transport=dc reason=slow-path|peer-request cur_ms=198 best_ms=91 try=1/3
    signal dropped ... cause=superseded expected_epoch=E received_epoch=E+1
    reroll_result peer=ab12cd34 transport=dc old_ms=198 new_ms=93 better=true
    reroll_rehome peer=ab12cd34 transport=dc streams=2 gain_pct=53
