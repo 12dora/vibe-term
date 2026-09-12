@@ -41,6 +41,7 @@ function live(partial: Partial<LivePeer> & Pick<LivePeer, 'transport'>): LivePee
     lastEmittedRttMs: null,
     linkSinceAt: 1,
     dcAttemptId: null,
+    rttSamples: 0,
     ...partial,
   };
 }

@@ -1,0 +1,223 @@
+import { afterEach, describe, expect, test } from 'bun:test';
+import type { LinkSession } from '@vibeterm/shared/link';
+import type { NodeSessionStore } from '../auth/node-session-store';
+import { createMigratedAuthDb } from '../auth/test-db';
+import { UserStore } from '../auth/user-store';
+import { DC_REROLL_MAX_PER_HOUR } from './dc-reroll-policy';
+import { PeerManager } from './peer-manager';
+import { dummyUplink } from './peer-test-fixtures';
+import { seedNodeIdentity, seedUser, waitUntil } from './test-support';
+import type { PeerTransportKind } from './types';
+
+const HTTP_OPEN = new TextEncoder().encode(
+  JSON.stringify({ type: 'http', method: 'GET', path: '/api/auth/challenge' })
+);
+
+function dummySessionStore(): NodeSessionStore {
+  return {
+    verify: () => ({ ok: true, session: { userId: 'user-1' } }),
+  } as unknown as NodeSessionStore;
+}
+
+type Fixture = { close: () => void; stop?: () => Promise<void> };
+
+/** 两台真实 PeerManager + 假 node-datachannel：重掷会在同一对节点间再建一条独立的 PC。 */
+async function setupRerollPair(fixtures: Fixture[]) {
+  const { db, close } = createMigratedAuthDb();
+  fixtures.push({ close });
+  const store = new UserStore(db);
+  seedUser(store);
+  const small = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0x01) });
+  const large = seedNodeIdentity(store, 'user-1', { nodeId: new Uint8Array(16).fill(0xff) });
+  for (const [id, name] of [
+    [small.nodeId, 'small'],
+    [large.nodeId, 'large'],
+  ] as const) {
+    store.upsertPeer({
+      nodeId: id,
+      name,
+      endpointsJson: '[]',
+      inventoryJson: '{}',
+      directCapable: true,
+      lastSeenAt: Date.now(),
+      listVersion: 1,
+    });
+  }
+  const { createFakeNativeModule } = await import('./rtc/test-fakes');
+  const { RtcPeerManager } = await import('./rtc');
+  const fake = createFakeNativeModule();
+  const iceConfigProvider = () => ({ stun: [] as string[], turn: null });
+  const rtcOf = (identity: typeof small) =>
+    new RtcPeerManager({
+      loadNative: async () => fake.module,
+      iceConfigProvider,
+      identity,
+      userStore: store,
+      handshakeTimeoutMs: 2_000,
+    });
+  const rtcSmall = rtcOf(small);
+  const rtcLarge = rtcOf(large);
+  fixtures.push({ close: () => rtcSmall.close() });
+  fixtures.push({ close: () => rtcLarge.close() });
+  await Promise.all([rtcSmall.ready(), rtcLarge.ready()]);
+
+  const holderSmall: { manager: PeerManager | null } = { manager: null };
+  const holderLarge: { manager: PeerManager | null } = { manager: null };
+  const forward = (
+    target: { manager: PeerManager | null },
+    fromId: string,
+    msg: {
+      t: string;
+      rtcSession?: string;
+      from?: string;
+      to?: string;
+      sdp?: string;
+      candidate?: string;
+    }
+  ) => {
+    if (msg.t !== 'rtc.signal' || !target.manager) return;
+    target.manager.receiveRtcSignal(fromId, {
+      rtcSession: msg.rtcSession ?? '',
+      from: msg.from === 'browser' ? 'browser' : 'node',
+      to: msg.to ?? '',
+      sdp: msg.sdp ?? null,
+      candidate: msg.candidate ?? null,
+    });
+  };
+  const uplinkSmall = dummyUplink(small, store);
+  uplinkSmall.state = 'online';
+  uplinkSmall.sendCtl = (msg) => forward(holderLarge, small.nodeId, msg as never);
+  const uplinkLarge = dummyUplink(large, store);
+  uplinkLarge.state = 'online';
+  uplinkLarge.sendCtl = (msg) => forward(holderSmall, large.nodeId, msg as never);
+
+  const transportsLarge: Array<PeerTransportKind | null> = [];
+  let httpStreams = 0;
+  const managerSmall = new PeerManager({
+    identity: small,
+    userStore: store,
+    uplink: uplinkSmall,
+    peerPort: 0,
+    startServer: false,
+    rtc: rtcSmall,
+  });
+  const managerLarge = new PeerManager({
+    identity: large,
+    userStore: store,
+    uplink: uplinkLarge,
+    peerPort: 0,
+    startServer: false,
+    rtc: rtcLarge,
+    sessionStore: dummySessionStore(),
+    dispatchHttp: () => {
+      httpStreams += 1;
+      return new Promise(() => {});
+    },
+    onLinkInfo: (info) => transportsLarge.push(info.transport),
+  });
+  holderSmall.manager = managerSmall;
+  holderLarge.manager = managerLarge;
+  fixtures.push({ close, stop: () => managerSmall.stop() });
+  fixtures.push({ close, stop: () => managerLarge.stop() });
+  return {
+    small,
+    large,
+    managerSmall,
+    managerLarge,
+    transportsLarge,
+    httpStreamsOf: () => httpStreams,
+    connections: fake.connections,
+  };
+}
+
+async function establishDc(
+  pair: Awaited<ReturnType<typeof setupRerollPair>>
+): Promise<LinkSession> {
+  const link = await pair.managerLarge.getLink(pair.small.nodeId);
+  await waitUntil(() => pair.managerSmall.transportOf(pair.large.nodeId) === 'dc', 5_000);
+  await waitUntil(() => pair.managerLarge.transportOf(pair.small.nodeId) === 'dc', 5_000);
+  // link.hello 双向走完后，两端都拿到 quiesce + reroll 能力。
+  await waitUntil(() => pair.managerSmall.quiesceCapableOf(pair.large.nodeId), 5_000);
+  await waitUntil(() => pair.managerLarge.quiesceCapableOf(pair.small.nodeId), 5_000);
+  return link;
+}
+
+describe('DC 重掷（make-before-break）', () => {
+  const fixtures: Fixture[] = [];
+  afterEach(async () => {
+    while (fixtures.length) {
+      const item = fixtures.pop();
+      await item?.stop?.();
+      item?.close();
+    }
+  });
+
+  test('重掷换上新 DC：旧 session 退役但不关，在途流继续跑，应答侧不掉线', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const oldLarge = pair.managerLarge.getLive(pair.small.nodeId);
+    expect(oldSmall).toBeTruthy();
+
+    // 旧链路上先挂一条一直不结束的 HTTP 流。
+    const inflight = await (oldSmall as LinkSession).openStream(HTTP_OPEN);
+    await waitUntil(() => pair.httpStreamsOf() === 1, 2_000);
+    let inflightClosed = false;
+    void inflight.closed.then(() => {
+      inflightClosed = true;
+    });
+
+    const pcsBefore = pair.connections.length;
+    pair.transportsLarge.length = 0;
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
+    await waitUntil(() => pair.managerLarge.getLive(pair.small.nodeId) !== oldLarge, 5_000);
+
+    // 新建了一对 PC（新端口对），两端仍是 dc。
+    expect(pair.connections.length).toBeGreaterThan(pcsBefore);
+    expect(pair.managerSmall.transportOf(pair.large.nodeId)).toBe('dc');
+    expect(pair.managerLarge.transportOf(pair.small.nodeId)).toBe('dc');
+    // 应答侧从头到尾没有报过离线：更高 epoch 的 offer 只淘汰在途 attempt，不动 live。
+    expect(pair.transportsLarge).not.toContain(null);
+
+    // 旧 session 退役中而不是被关掉，在途流照旧。
+    expect(inflightClosed).toBe(false);
+    const raced = await Promise.race([
+      (oldSmall as LinkSession).closed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 50)),
+    ]);
+    expect(raced).toBe('open');
+    expect(inflightClosed).toBe(false);
+    expect(pair.httpStreamsOf()).toBe(1);
+  }, 20_000);
+
+  test('已有 DC 在途时重掷是空操作：只建一对新 PC', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    const oldSmall = pair.managerSmall.getLive(pair.large.nodeId);
+    const before = pair.connections.length;
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(false);
+    await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== oldSmall, 5_000);
+    await waitUntil(() => pair.managerLarge.transportOf(pair.small.nodeId) === 'dc', 5_000);
+    expect(pair.connections.length - before).toBe(2);
+  }, 20_000);
+
+  test('每对端每小时最多 3 次', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    for (let i = 0; i < DC_REROLL_MAX_PER_HOUR; i += 1) {
+      const prev = pair.managerSmall.getLive(pair.large.nodeId);
+      expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(true);
+      await waitUntil(() => pair.managerSmall.getLive(pair.large.nodeId) !== prev, 5_000);
+      await waitUntil(() => pair.managerSmall.quiesceCapableOf(pair.large.nodeId), 5_000);
+    }
+    expect(pair.managerSmall.rerollDc(pair.large.nodeId)).toBe(false);
+  }, 30_000);
+
+  test('应答侧（字典序较大的一端）不会自己发起重掷', async () => {
+    const pair = await setupRerollPair(fixtures);
+    await establishDc(pair);
+    expect(pair.managerLarge.rerollDc(pair.small.nodeId)).toBe(false);
+  }, 20_000);
+});

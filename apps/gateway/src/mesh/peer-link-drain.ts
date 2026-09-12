@@ -20,6 +20,10 @@ export type PeerLinkDrainDeps = {
   armDcUpgradeRetry: (nodeId: string) => void;
   onPeerReconnected: (nodeId: string) => void;
   hasCoalescedUpgrade: (nodeId: string) => boolean;
+  /** link.hello 里本端要报的额外能力位（目前只有 reroll）。 */
+  extraHelloCaps: () => string[];
+  /** 对端 link.hello 的能力位。 */
+  noteHelloCaps: (live: LivePeer, caps: readonly unknown[]) => void;
   track: (
     session: LinkSession,
     peerNodeId: string,
@@ -263,7 +267,44 @@ export class PeerLinkDrain {
   }
 
   sendLinkHello(live: LivePeer): void {
-    this.deps.sendPeerCtl(live, { t: 'link.hello', caps: ['quiesce'] });
+    this.deps.sendPeerCtl(live, {
+      t: 'link.hello',
+      caps: ['quiesce', ...this.deps.extraHelloCaps()],
+    });
+  }
+
+  /** `link.*` 控制消息的统一入口：quiesce 能力协商、退役握手与重掷预告。 */
+  handleLinkCtl(live: LivePeer, t: string, msg: Record<string, unknown>): void {
+    if (t === 'link.hello') {
+      const caps = Array.isArray(msg.caps) ? msg.caps : [];
+      this.deps.noteHelloCaps(live, caps);
+      if (caps.includes('quiesce')) this.markQuiesceCapable(live);
+      if (!live.helloReplied) {
+        live.helloReplied = true;
+        this.sendLinkHello(live);
+      }
+      return;
+    }
+    this.handleQuiesceCtl(live, t);
+  }
+
+  private handleQuiesceCtl(live: LivePeer, t: string): void {
+    if (t === 'link.quiesce.probe') {
+      this.markQuiesceCapable(live);
+      this.deps.sendPeerCtl(live, { t: 'link.quiesce.probe.ack' });
+      return;
+    }
+    if (t === 'link.quiesce.probe.ack') {
+      this.markQuiesceCapable(live);
+      return;
+    }
+    if (t !== 'link.quiesce' && t !== 'link.quiesce.ack') return;
+    if (t === 'link.quiesce') {
+      live.gotPeerQuiesce = true;
+      this.deps.sendPeerCtl(live, { t: 'link.quiesce.ack' });
+    } else live.gotQuiesceAck = true;
+    this.markQuiesceCapable(live);
+    if (live.retiring) this.maybeFinishRetire(live);
   }
 
   probeQuiesce(live: LivePeer): void {

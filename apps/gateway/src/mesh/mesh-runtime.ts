@@ -1448,12 +1448,8 @@ function assembleMeshRuntime(
       d.nodeEvents.add(cb);
       return () => d.nodeEvents.delete(cb);
     },
-    onNodeList(cb) {
-      return uplink.onNodeList(cb);
-    },
-    attachedHub() {
-      return uplink.attachedHub();
-    },
+    onNodeList: (cb) => uplink.onNodeList(cb),
+    attachedHub: () => uplink.attachedHub(),
     relayPresence: relayMultiAttachOf(d.relay)?.presence ?? null,
     relayOpener: relayMultiAttachOf(d.relay)?.opener ?? null,
     reconfigureUplink: () => reconfigureRelayUplink(d.relay, uplink),
@@ -1482,6 +1478,8 @@ function assembleMeshRuntime(
         listenPort: peerManager.listenPort,
         selfNodeId: identity.nodeIdHex,
         userStore,
+        // TCP connect 的 RTT 也是同一对主机的路径样本，喂给 DC 重掷判定用的 best。
+        pathRttMemory: peerManager.pathRttMemory,
         now: () => d.scheduler.now(),
         previous: stopReach,
       });

@@ -38,6 +38,10 @@ export type LivePeer = {
   lastEmittedRttMs: number | null;
   linkSinceAt: number;
   dcAttemptId: string | null;
+  /** 本条链路安装以来收到的 pong 样本数；DC 重掷判定用。 */
+  rttSamples: number;
+  /** 对端在 link.hello 里报过 reroll 能力。 */
+  rerollCapable?: boolean;
 };
 
 const DRAIN_DROP_REASONS = new Set(['missed-pong', 'idle']);

@@ -11,6 +11,7 @@ import {
   rejectPausedUserLink,
   retirePeerDialState,
 } from './node-pause';
+import { DcRerollCoordinator } from './peer-dc-reroll';
 import { DcUpgradeCoordinator, PeerCollaboratorHost } from './peer-dc-upgrade';
 import { PeerDialer } from './peer-dialer';
 import { winningDialInitiator } from './peer-direct-attempt';
@@ -49,7 +50,7 @@ import {
 } from './peer-rtc-wake';
 import { PeerServer } from './peer-server';
 import { PeerStatusSync } from './peer-status-sync';
-import { sharedDirectDialLimiter } from './peer-ws-race';
+import { defaultPeerWsFactory, sharedDirectDialLimiter } from './peer-ws-race';
 import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import { isRtcWakeSdp } from './rtc/ice';
 import { rtcLog } from './rtc/rtc-log';
@@ -114,6 +115,7 @@ export class PeerManager extends PeerCollaboratorHost {
   private dispatchHttp?: DispatchHttp;
   protected readonly dcUpgrade: DcUpgradeCoordinator;
   protected readonly rtcWake: RtcWakeGate;
+  private readonly reroll: DcRerollCoordinator;
 
   constructor(opts: PeerManagerOptions) {
     super();
@@ -202,7 +204,15 @@ export class PeerManager extends PeerCollaboratorHost {
       armDcUpgradeRetry: (nodeId) => this.armDcUpgradeRetry(nodeId),
       onPeerReconnected: (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId),
       hasCoalescedUpgrade: (nodeId) => this.dcUpgrade.upgradeGate.get(nodeId)?.coalesced === true,
+      extraHelloCaps: () => this.reroll.helloCaps(),
+      noteHelloCaps: (live, caps) => this.reroll.noteHelloCaps(live, caps),
       track: (...args) => this.registry.track(...args),
+    });
+    this.reroll = new DcRerollCoordinator(this.state, {
+      breakerAllows: (nodeId) => this.dcUpgrade.dcBreaker.shouldTry(nodeId).allow,
+      hasDcInflight: (nodeId) => this.dialer.hasDcInflight(nodeId),
+      dialReroll: (nodeId, rerollOpts) => this.dialer.dialDcReroll(nodeId, rerollOpts),
+      finishRetire: (live, reason) => this.drain.finishRetire(live, reason),
     });
     this.registry = new PeerLiveRegistry(this.state, {
       idleMs: opts.idleMs ?? PEER_IDLE_MS,
@@ -240,12 +250,13 @@ export class PeerManager extends PeerCollaboratorHost {
         onPeerReconnected: (nodeId) => this.dcUpgrade.onPeerReconnected(nodeId),
         notifyTransport: (nodeId) => this.waiters.notifyTransport(nodeId),
         notifyLive: (nodeId, session) => this.waiters.notifyLive(nodeId, session),
+        onRttSample: (live, sampleMs) => this.reroll.onRttSample(live, sampleMs),
       },
     });
     this.dialer = new PeerDialer(this.state, {
       rtc: opts.rtc ?? null,
       linkFactory: opts.linkFactory ?? null,
-      wsFactory: opts.wsFactory ?? ((url: string) => new WebSocket(url)),
+      wsFactory: opts.wsFactory ?? defaultPeerWsFactory(),
       connectTimeoutMs: opts.connectTimeoutMs ?? PEER_CONNECT_TIMEOUT_MS,
       dialLimiter: opts.dialLimiter ?? sharedDirectDialLimiter(),
       interfacesFn: opts.interfacesFn ?? (() => os.networkInterfaces()),
@@ -377,6 +388,14 @@ export class PeerManager extends PeerCollaboratorHost {
   forceDcProbe(nodeId: string): void {
     if (!isNodePaused(nodeId)) this.dialer.forceDcProbe(nodeId);
   }
+  /** 每对端的「最佳已知路径 RTT」记忆；端口可达性探测把 TCP connect 样本也写进来。 */
+  get pathRttMemory() {
+    return this.state.pathRtt;
+  }
+  /** 手动触发一次 DC 重掷（诊断 / 测试）；除 RTT 阈值外的门与自动触发完全一致。 */
+  rerollDc(nodeId: string): boolean {
+    return this.reroll.forceReroll(nodeId);
+  }
 
   async waitForTransport(
     nodeId: string,
@@ -420,7 +439,10 @@ export class PeerManager extends PeerCollaboratorHost {
       this.handleIncomingRtcWake(fromNodeId, msg);
       return;
     }
-    if (deliverRtcSignal(this.rtcListeners.get(fromNodeId), msg)) return;
+    // 先投给现有监听者：旧 attempt 的残留监听会把更高 epoch 的 offer 判成 superseded 并自行退订。
+    const delivered = deliverRtcSignal(this.rtcListeners.get(fromNodeId), msg);
+    if (this.reroll.interceptOffer(fromNodeId, msg)) return;
+    if (delivered) return;
     const pending = this.state.pending.has(fromNodeId);
     const upgrading = this.state.upgrading.has(fromNodeId);
     const inflight = this.dialer.hasDcInflight(fromNodeId);
@@ -438,16 +460,13 @@ export class PeerManager extends PeerCollaboratorHost {
     if (inbox.length >= RTC_PEER_INBOX_MAX_MESSAGES) return;
     inbox.push({ message: msg, receivedAt: this.state.scheduler.now() });
     this.state.rtcInbox.set(fromNodeId, inbox);
-    if (
-      shouldStartRtcAttempt(
-        peerInitiatedRtcAttemptInput({
-          dcCapable: this.dialer.dcCapable(fromNodeId),
-          dcInflight: inflight,
-          upgrading,
-          live: this.state.live.get(fromNodeId),
-        })
-      )
-    ) {
+    const attempt = peerInitiatedRtcAttemptInput({
+      dcCapable: this.dialer.dcCapable(fromNodeId),
+      dcInflight: inflight,
+      upgrading,
+      live: this.state.live.get(fromNodeId),
+    });
+    if (shouldStartRtcAttempt(attempt)) {
       this.maybeUpgrade(fromNodeId, { cooldown: false, userPath: true, peerInitiated: true });
     }
   }
@@ -563,26 +582,8 @@ export class PeerManager extends PeerCollaboratorHost {
     if (work) this.runCtlAsync(t, live.peerNodeId, work);
     else if (t === 'ping') sendPeerCtlQuiet(live, { t: 'pong' });
     else if (t === 'pong') this.registry.onPeerPong(live);
-    else if (t === 'link.hello') {
-      if ((Array.isArray(msg.caps) ? msg.caps : []).includes('quiesce')) {
-        this.drain.markQuiesceCapable(live);
-      }
-      if (!live.helloReplied) {
-        live.helloReplied = true;
-        this.drain.sendLinkHello(live);
-      }
-    } else if (t === 'link.quiesce.probe') {
-      this.drain.markQuiesceCapable(live);
-      sendPeerCtlQuiet(live, { t: 'link.quiesce.probe.ack' });
-    } else if (t === 'link.quiesce.probe.ack') this.drain.markQuiesceCapable(live);
-    else if (t === 'link.quiesce' || t === 'link.quiesce.ack') {
-      if (t === 'link.quiesce') {
-        live.gotPeerQuiesce = true;
-        sendPeerCtlQuiet(live, { t: 'link.quiesce.ack' });
-      } else live.gotQuiesceAck = true;
-      this.drain.markQuiesceCapable(live);
-      if (live.retiring) this.drain.maybeFinishRetire(live);
-    } else if (t === 'rtc.signal') {
+    else if (t.startsWith('link.')) this.drain.handleLinkCtl(live, t, msg);
+    else if (t === 'rtc.signal') {
       const signal: RtcSignalMessage = {
         rtcSession: typeof msg.rtcSession === 'string' ? msg.rtcSession : '',
         from: msg.from === 'browser' ? 'browser' : 'node',

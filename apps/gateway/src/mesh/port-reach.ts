@@ -15,12 +15,19 @@ import {
   isFakeIpv4PeerEndpoint,
 } from './address-class';
 import type { MeshNodeDirectFailure, MeshNodeDto, MeshPortReach } from './node-list-projection';
-import { PORT_PROBE_DEADLINE_MS, type TcpProbeVerdict, probeTcpConnect } from './port-reach-probe';
+import type { PeerPathRttMemory } from './peer-path-rtt';
+import {
+  PORT_PROBE_DEADLINE_MS,
+  type TcpProbeResult,
+  type TcpProbeVerdict,
+  probeTcpConnect,
+} from './port-reach-probe';
 import { matchingTurnProbe } from './rtc/stun-effective';
 import { stunProbeSnapshot } from './rtc/stun-probe';
 
 export const PORT_PROBE_CADENCE_MS = 5 * 60 * 1_000;
 export const PORT_PROBE_TICK_MS = 30_000;
+export const PORT_PROBE_CONNECTS = 3;
 export const DC_HISTORY_MS = 24 * 60 * 60 * 1_000;
 export const PEER_REPORT_TTL_MS = 30 * 60 * 1_000;
 export const GATHER_BLOCKED_WINDOW = 3;
@@ -30,7 +37,7 @@ export type MeshPortReachCode = NonNullable<MeshPortReach['code']>;
 
 export type MembersProbeSnapshot = { ok: number; total: number; updatedAt: number };
 
-type ProbeFn = (host: string, port: number, deadlineMs?: number) => Promise<TcpProbeVerdict>;
+type ProbeFn = (host: string, port: number, deadlineMs?: number) => Promise<TcpProbeResult>;
 
 type PeerProbeSlot = {
   lastVerdict: TcpProbeVerdict | null;
@@ -213,7 +220,7 @@ function applyProbeVerdict(
 export async function probePeerEndpoints(
   nodeId: string,
   endpoints: readonly string[],
-  opts?: { force?: boolean }
+  opts?: { force?: boolean; pathRttMemory?: PeerPathRttMemory }
 ): Promise<PeerProbeSlot> {
   const at = state.now();
   const prev = state.probes.get(nodeId) ?? {
@@ -235,7 +242,17 @@ export async function probePeerEndpoints(
     state.probes.set(nodeId, skipped);
     return skipped;
   }
-  const verdict = await state.probeFn(target.host, target.port, PORT_PROBE_DEADLINE_MS);
+  const results = await Promise.all(
+    Array.from({ length: PORT_PROBE_CONNECTS }, () =>
+      state.probeFn(target.host, target.port, PORT_PROBE_DEADLINE_MS)
+    )
+  );
+  for (const result of results) {
+    if (result.verdict === 'ok' && result.connectMs !== null) {
+      opts?.pathRttMemory?.record(nodeId, { kind: 'tcp-connect', rttMs: result.connectMs });
+    }
+  }
+  const verdict = results.some((result) => result.verdict === 'ok') ? 'ok' : results[0].verdict;
   const next = applyProbeVerdict(prev, verdict, at);
   state.probes.set(nodeId, next);
   return next;
@@ -425,6 +442,7 @@ export function bootPortReach(input: {
   listenPort: number | null;
   selfNodeId: string;
   userStore: UserStore;
+  pathRttMemory?: PeerPathRttMemory;
   now?: () => number;
   previous?: (() => void) | null;
 }): () => void {
@@ -436,13 +454,17 @@ export function bootPortReach(input: {
 export function attachPortReachToMesh(input: {
   selfNodeId: string;
   userStore: UserStore;
+  /** 每次 TCP connect 成功都作为一条 `tcp-connect` 路径样本写进来；DC 重掷判定的 best 之一。 */
+  pathRttMemory?: PeerPathRttMemory;
   now?: () => number;
 }): () => void {
   if (input.now) state.now = input.now;
   const tick = () => {
     for (const peer of input.userStore.listPeers()) {
       if (peer.nodeId === input.selfNodeId) continue;
-      void probePeerEndpoints(peer.nodeId, endpointsFromPeer(peer.endpointsJson));
+      void probePeerEndpoints(peer.nodeId, endpointsFromPeer(peer.endpointsJson), {
+        pathRttMemory: input.pathRttMemory,
+      });
     }
   };
   const timer = setInterval(tick, PORT_PROBE_TICK_MS);

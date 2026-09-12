@@ -3,6 +3,7 @@ import net from 'node:net';
 export const PORT_PROBE_DEADLINE_MS = 3_000;
 
 export type TcpProbeVerdict = 'ok' | 'refused' | 'timeout';
+export type TcpProbeResult = { verdict: TcpProbeVerdict; connectMs: number | null };
 
 export type TcpProbeSocket = {
   once(event: 'connect', listener: () => void): void;
@@ -25,16 +26,18 @@ export function probeTcpConnect(
   port: number,
   deadlineMs = PORT_PROBE_DEADLINE_MS,
   connect: TcpConnectFn = defaultConnect
-): Promise<TcpProbeVerdict> {
+): Promise<TcpProbeResult> {
   const target = stripHostBrackets(host);
   return new Promise((resolve) => {
     let settled = false;
+    const startedAt = performance.now();
     const finish = (verdict: TcpProbeVerdict) => {
       if (settled) return;
       settled = true;
+      const connectMs = verdict === 'ok' ? performance.now() - startedAt : null;
       clearTimeout(timer);
       socket.destroy();
-      resolve(verdict);
+      resolve({ verdict, connectMs });
     };
     const socket = connect({ host: target, port });
     const timer = setTimeout(() => finish('timeout'), deadlineMs);

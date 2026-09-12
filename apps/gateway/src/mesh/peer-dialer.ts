@@ -5,7 +5,6 @@ import {
   type ServerSocketAdapter,
   type WebSocketTransportInput,
 } from '@vibeterm/shared/link';
-import { formatSafeErrorLog } from '../auth/cookies';
 import {
   type RankableIfaceAddr,
   addressFromIceCandidate,
@@ -14,7 +13,6 @@ import {
   localNetworkFingerprint,
   rankPeerEndpoints,
 } from './address-class';
-import { stamp } from './mesh-log';
 import { parseEndpoints } from './peer-dc-upgrade';
 import { peerKnownRelayOnline, settleDialWithRelay } from './peer-dial-plan';
 import {
@@ -23,6 +21,7 @@ import {
   raceWsSecureDial,
   runBackgroundDirect,
 } from './peer-dial-race';
+import { type AcceptDeps, acceptDirectSession, acceptRelaySession } from './peer-dialer-accept';
 import {
   ensureRtcReady,
   finishDirectAttemptRecord,
@@ -49,7 +48,6 @@ import {
   throwIfPeerStopped,
 } from './peer-manager-state';
 import type { PeerLinkFactory } from './peer-manager-types';
-import { handshakeRelay, handshakeWsDirect } from './peer-protocol';
 import { type DirectDialLimiter, abortable, quiet } from './peer-ws-race';
 import type { RtcPeerManager } from './rtc';
 import type { RtcSignaling } from './rtc/ice';
@@ -147,6 +145,26 @@ export class PeerDialer {
 
   hasDcInflight(nodeId: string): boolean {
     return this.dcInflight.has(nodeId);
+  }
+
+  /**
+   * DC 重掷拨号：绕过 `wantsUpgrade` 与 `aboveDc`（已是 dc 时两者都为假），仍受 dcInflight
+   * （upgrade 模式下 `dialDc` 直接返回 null）、字典序角色与熔断约束。
+   * `answer` 是应答侧（字典序较大的一端），沿用 peerInitiated 语义：熔断冷却中也要建 PC。
+   */
+  dialDcReroll(nodeId: string, opts?: { answer?: boolean }): Promise<LinkSession | null> {
+    const answer = opts?.answer === true;
+    const self = this.state.identity.nodeId.toLowerCase();
+    const peer = nodeId.toLowerCase();
+    const ok =
+      !this.state.stopped &&
+      this.state.live.get(nodeId)?.transport === 'dc' &&
+      this.dcCapable(nodeId) &&
+      (answer ? self > peer : self < peer) &&
+      (answer || this.deps.dcBreaker.shouldTry(nodeId).allow);
+    if (!ok) return Promise.resolve(null);
+    const { generation, stopAbort } = this.state;
+    return this.dialDc(nodeId, generation, stopAbort.signal, 'upgrade', answer);
   }
 
   async forceProbe(nodeId: string, endpoints?: string[]): Promise<LinkSession | null> {
@@ -533,57 +551,21 @@ export class PeerDialer {
   }
 
   async acceptDirect(socket: ServerSocketAdapter, remoteAddress: string | null): Promise<void> {
-    const gen = this.state.generation;
-    try {
-      const result = await handshakeWsDirect({
-        socket,
-        role: 'acceptor',
-        identity: this.state.identity,
-        userStore: this.state.userStore,
-      });
-      if (peerStale(this.state, gen)) {
-        quiet(() => result.session.close('stopped'));
-        return;
-      }
-      this.rememberKeys(result.session, result.sendKey, result.recvKey);
-      this.deps.track(
-        result.session,
-        result.peerNodeId,
-        'ws-secure',
-        result.peerNodeId,
-        gen,
-        false,
-        remoteAddress
-      );
-    } catch {
-      quiet(() => socket.close(1000, 'handshake-failed'));
-    }
+    await acceptDirectSession(this.acceptDeps(), socket, remoteAddress);
   }
 
   async acceptRelay(stream: LinkStream, from: string, viaRelay?: string): Promise<void> {
-    const gen = this.state.generation;
-    try {
-      const result = await handshakeRelay({
-        stream,
-        role: 'acceptor',
-        identity: this.state.identity,
-        userStore: this.state.userStore,
-      });
-      if (peerStale(this.state, gen)) {
-        quiet(() => result.session.close('stopped'));
-        return;
-      }
-      this.rememberKeys(result.session, result.sendKey, result.recvKey);
-      this.deps.track(result.session, result.peerNodeId, 'relay', from || result.peerNodeId, gen);
-      if (viaRelay) {
-        const live = this.state.live.get(result.peerNodeId);
-        if (live?.transport === 'relay') live.viaRelay = viaRelay;
-      }
-    } catch (err) {
-      console.warn(stamp(`[mesh][relay] accept failed node=${from} ${formatSafeErrorLog(err)}`));
-      quiet(() => stream.reset('handshake-failed'));
-    }
+    await acceptRelaySession(this.acceptDeps(), stream, from, viaRelay);
   }
+
+  private acceptDeps(): AcceptDeps {
+    return {
+      state: this.state,
+      track: this.deps.track,
+      rememberKeys: (session, sendKey, recvKey) => this.rememberKeys(session, sendKey, recvKey),
+    };
+  }
+
   clearDirectFailure(nodeId: string): void {
     const prev = this.state.lastDirectAttempt.get(nodeId);
     if (prev) this.state.lastDirectAttempt.set(nodeId, clearedDirectAttempt(prev));

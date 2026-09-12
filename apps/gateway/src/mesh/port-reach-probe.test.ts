@@ -25,7 +25,9 @@ describe('probeTcpConnect', () => {
   test('open against a local listener', async () => {
     const server = await listen();
     servers.push(server);
-    expect(await probeTcpConnect('127.0.0.1', boundPort(server), 500)).toBe('ok');
+    const result = await probeTcpConnect('127.0.0.1', boundPort(server), 500);
+    expect(result.verdict).toBe('ok');
+    expect(result.connectMs).toBeGreaterThanOrEqual(0);
   });
 
   test('refused when nothing is listening', async () => {
@@ -34,7 +36,10 @@ describe('probeTcpConnect', () => {
     await new Promise<void>((resolve, reject) =>
       server.close((err) => (err ? reject(err) : resolve()))
     );
-    expect(await probeTcpConnect('127.0.0.1', port, 500)).toBe('refused');
+    expect(await probeTcpConnect('127.0.0.1', port, 500)).toEqual({
+      verdict: 'refused',
+      connectMs: null,
+    });
   });
 
   test('timeout when the handshake never completes', async () => {
@@ -43,6 +48,6 @@ describe('probeTcpConnect', () => {
         once() {},
         destroy() {},
       }))
-    ).toBe('timeout');
+    ).toEqual({ verdict: 'timeout', connectMs: null });
   });
 });

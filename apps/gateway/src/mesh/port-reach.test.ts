@@ -61,7 +61,9 @@ describe('port reach aggregation', () => {
 
   test('peer signaling: success is open; one fail keeps previous; two fails become blocked', async () => {
     let verdict: 'ok' | 'refused' | 'timeout' = 'ok';
-    resetPortReachForTest({ probeFn: async () => verdict });
+    resetPortReachForTest({
+      probeFn: async () => ({ verdict, connectMs: verdict === 'ok' ? 90 : null }),
+    });
     expect((await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true })).status).toBe('open');
     expect(signaling(PEER, { endpoints: [PUBLIC_EP] })?.status).toBe('open');
 
@@ -78,7 +80,10 @@ describe('port reach aggregation', () => {
 
   test('peer signaling: refused code after two consecutive refusals; cadence skips', async () => {
     let now = 1_000;
-    resetPortReachForTest({ now: () => now, probeFn: async () => 'refused' });
+    resetPortReachForTest({
+      now: () => now,
+      probeFn: async () => ({ verdict: 'refused', connectMs: null }),
+    });
     await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true });
     const first = await probePeerEndpoints(PEER, [PUBLIC_EP], { force: true });
     expect(first.status).toBe('blocked');

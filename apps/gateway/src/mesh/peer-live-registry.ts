@@ -69,6 +69,8 @@ export type PeerLiveRegistryDeps = {
   onPeerReconnected: (nodeId: string) => void;
   notifyTransport: (nodeId: string) => void;
   notifyLive: (nodeId: string, session: LinkSession) => void;
+  /** 每个 pong 的稳态样本：写路径 RTT 记忆并判定是否重掷 DC。 */
+  onRttSample: (live: LivePeer, sampleMs: number) => void;
 };
 
 export type PeerLiveRegistryOptions = {
@@ -221,6 +223,7 @@ export class PeerLiveRegistry {
       lastEmittedRttMs: null,
       linkSinceAt: this.state.scheduler.now(),
       dcAttemptId: transport === 'dc' ? (dcAttemptId ?? this.deps.nextDcAttemptId()) : null,
+      rttSamples: 0,
     };
     this.state.live.set(peerNodeId, live);
     if (transport === 'dc') {
@@ -389,6 +392,7 @@ export class PeerLiveRegistry {
     live.pingSentAt = null;
     if (sample == null) return;
     applyPeerRttSample(live, sample);
+    this.deps.onRttSample(live, sample);
     this.maybeEmitRtt(live);
   }
 
@@ -545,6 +549,7 @@ export class PeerLiveRegistry {
     best.rttMs = null;
     best.pingSentAt = null;
     best.rttSpikeIgnored = false;
+    best.rttSamples = 0;
     best.lastEmittedRttMs = null;
     best.lastRttEmitAt = 0;
     this.state.live.set(nodeId, best);
