@@ -256,9 +256,9 @@ export async function probePeerEndpoints(
     )
   );
   for (const result of results) {
-    if (result.verdict === 'ok' && result.connectMs !== null) {
-      opts?.pathRttMemory?.record(nodeId, { kind: 'tcp-connect', rttMs: result.connectMs });
-    }
+    if (result.verdict !== 'ok' || result.connectMs === null) continue;
+    if (result.remoteAddress && isFakeIpv4(result.remoteAddress)) continue;
+    opts?.pathRttMemory?.record(nodeId, { kind: 'tcp-connect', rttMs: result.connectMs });
   }
   const verdict = aggregateProbeVerdicts(results.map((result) => result.verdict));
   const next = applyProbeVerdict(prev, verdict, at);

@@ -1,5 +1,5 @@
 import type { LinkSession, LinkStream } from '@vibeterm/shared/link';
-import { classifyRemoteAddress, hostFromWsUrl } from './address-class';
+import { classifyRemoteAddress, hostFromWsUrl, isFakeIpv4 } from './address-class';
 import { backoffDelayMs } from './ctl';
 import { stamp } from './mesh-log';
 import { PeerPathRttMemory } from './peer-path-rtt';
@@ -244,9 +244,10 @@ export class UplinkPathSampler {
     );
     const at = this.scheduler.now();
     for (const result of results) {
-      if (result.verdict === 'ok' && result.connectMs != null) {
-        this.memory.record(host, { kind: 'tcp-connect', rttMs: result.connectMs, at });
-      }
+      if (result.verdict !== 'ok' || result.connectMs == null) continue;
+      // fake-IP（Surge / mihomo 的 198.18/15）说明握手在本机代理就地完成，不是路径样本。
+      if (result.remoteAddress && isFakeIpv4(result.remoteAddress)) continue;
+      this.memory.record(host, { kind: 'tcp-connect', rttMs: result.connectMs, at });
     }
   }
 

@@ -3,9 +3,15 @@ import net from 'node:net';
 export const PORT_PROBE_DEADLINE_MS = 3_000;
 
 export type TcpProbeVerdict = 'ok' | 'refused' | 'timeout';
-export type TcpProbeResult = { verdict: TcpProbeVerdict; connectMs: number | null };
+export type TcpProbeResult = {
+  verdict: TcpProbeVerdict;
+  connectMs: number | null;
+  /** 握手成功时对端地址（fake-IP / 本地代理终结判定用）；探不到时 null */
+  remoteAddress?: string | null;
+};
 
 export type TcpProbeSocket = {
+  remoteAddress?: string;
   once(event: 'connect', listener: () => void): void;
   once(event: 'error', listener: (err: NodeJS.ErrnoException) => void): void;
   destroy(): void;
@@ -35,9 +41,10 @@ export function probeTcpConnect(
       if (settled) return;
       settled = true;
       const connectMs = verdict === 'ok' ? performance.now() - startedAt : null;
+      const remoteAddress = verdict === 'ok' ? (socket.remoteAddress ?? null) : null;
       clearTimeout(timer);
       socket.destroy();
-      resolve({ verdict, connectMs });
+      resolve({ verdict, connectMs, remoteAddress });
     };
     const socket = connect({ host: target, port });
     const timer = setTimeout(() => finish('timeout'), deadlineMs);

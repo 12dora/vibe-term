@@ -68,3 +68,16 @@ describe('PeerPathRttMemory', () => {
     expect(memory.bestMs('b')).toBeNull();
   });
 });
+
+describe('PeerPathRttMemory local-terminated TCP samples', () => {
+  test('tcp-connect far below the real link RTT is ignored, and existing ones are purged when a real sample lands', () => {
+    const memory = new PeerPathRttMemory({ now: () => 1_000 });
+    expect(memory.record('p', { kind: 'tcp-connect', rttMs: 8 })).toBe(true);
+    expect(memory.bestMs('p')).toBe(8);
+    expect(memory.record('p', { kind: 'ws-secure', rttMs: 60 })).toBe(true);
+    expect(memory.bestMs('p')).toBe(60);
+    expect(memory.record('p', { kind: 'tcp-connect', rttMs: 9 })).toBe(false);
+    expect(memory.record('p', { kind: 'tcp-connect', rttMs: 45 })).toBe(true);
+    expect(memory.bestMs('p')).toBe(45);
+  });
+});

@@ -39,6 +39,7 @@ describe('probeTcpConnect', () => {
     expect(await probeTcpConnect('127.0.0.1', port, 500)).toEqual({
       verdict: 'refused',
       connectMs: null,
+      remoteAddress: null,
     });
   });
 
@@ -48,6 +49,6 @@ describe('probeTcpConnect', () => {
         once() {},
         destroy() {},
       }))
-    ).toEqual({ verdict: 'timeout', connectMs: null });
+    ).toEqual({ verdict: 'timeout', connectMs: null, remoteAddress: null });
   });
 });

@@ -11,6 +11,12 @@ export type PeerPathRttMemoryOptions = {
 };
 
 export const PEER_PATH_RTT_TTL_MS = 24 * 60 * 60 * 1000;
+/**
+ * TCP connect 样本低于真实链路（dc / ws-secure 心跳）最佳 RTT 的这个比例时，视为握手被本机
+ * TUN / 代理（Surge、mihomo 等）就地终结的假样本，不进记忆；已记的也在真实样本到来时清掉。
+ */
+export const TCP_CONNECT_FLOOR_RATIO = 0.2;
+const REAL_KINDS: readonly PathRttKind[] = ['dc', 'ws-secure'];
 /** 对端最佳路径的滑动窗口：过期样本不再触发重掷，避免全路径一起劣化时被陈旧 best 反复误伤。 */
 export const PEER_PATH_RTT_WINDOW_MS = 30 * 60 * 1000;
 const DEFAULT_PER_KIND_LIMIT = 16;
@@ -32,8 +38,13 @@ export class PeerPathRttMemory {
     this.perKindLimit = opts.perKindLimit ?? DEFAULT_PER_KIND_LIMIT;
   }
 
-  record(peerId: string, sample: Omit<PathRttSample, 'at'> & { at?: number }): void {
-    if (!Number.isFinite(sample.rttMs) || sample.rttMs < 0) return;
+  /** 返回是否真的记下了（被判为本地终结的 TCP 样本返回 false）。 */
+  record(peerId: string, sample: Omit<PathRttSample, 'at'> & { at?: number }): boolean {
+    if (!Number.isFinite(sample.rttMs) || sample.rttMs < 0) return false;
+    if (sample.kind === 'tcp-connect') {
+      const realBest = this.bestMs(peerId, REAL_KINDS);
+      if (realBest !== null && sample.rttMs < realBest * TCP_CONNECT_FLOOR_RATIO) return false;
+    }
     const at = sample.at ?? this.now();
     let byKind = this.samples.get(peerId);
     if (!byKind) {
@@ -44,6 +55,17 @@ export class PeerPathRttMemory {
     list.push({ kind: sample.kind, rttMs: sample.rttMs, at });
     while (list.length > this.perKindLimit) list.shift();
     byKind.set(sample.kind, list);
+    if (sample.kind !== 'tcp-connect') this.dropLocalTerminatedTcp(byKind, sample.rttMs);
+    return true;
+  }
+
+  private dropLocalTerminatedTcp(byKind: Map<PathRttKind, PathRttSample[]>, realMs: number): void {
+    const tcp = byKind.get('tcp-connect');
+    if (!tcp) return;
+    const floor = realMs * TCP_CONNECT_FLOOR_RATIO;
+    const kept = tcp.filter((entry) => entry.rttMs >= floor);
+    if (kept.length === 0) byKind.delete('tcp-connect');
+    else byKind.set('tcp-connect', kept);
   }
 
   /** 未过期样本中的最小 RTT；可限定来源种类。没有样本时返回 null。 */
