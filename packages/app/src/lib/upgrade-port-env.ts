@@ -81,7 +81,11 @@ function isOffOrZero(value: string | undefined): boolean {
 }
 
 function portRoleOf(values: Record<string, string>): PortRole {
-  const raw = trimmed(values.VIBETERM_ROLES);
+  const raw = trimmed(values.VIBETERM_ROLES)
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .join(',');
   return isVibeTermRoleName(raw) ? raw : 'standalone';
 }
 

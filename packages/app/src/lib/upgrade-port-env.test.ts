@@ -334,3 +334,14 @@ describe('applyPortPlanEnvMigration', () => {
     );
   });
 });
+
+test('roles with whitespace around tokens still resolve the relay-host RTC default', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'vibeterm-port-env-'));
+  const envPath = join(dir, 'app.env');
+  await writeFile(envPath, 'VIBETERM_ROLES=relay, node\n', 'utf8');
+  await migratePortEnv(envPath);
+  const values = await readEnvFile(envPath);
+  expect(values.VIBETERM_RTC_PORT_RANGE).toBe('40050-40099');
+  expect(values.VIBETERM_TURN_PORT).toBe('40000');
+  expect(values.VIBETERM_TURN_RELAY_PORT_RANGE).toBe('40001-40049');
+});
