@@ -380,6 +380,16 @@ describe('DcUpgradeCoordinator.willAttemptUpgrade', () => {
     coordinator.dispose();
   });
 
+  test('只是在等 quiesce 探测回包时不算即将拨号', () => {
+    const { coordinator, live } = makeCoordinator();
+    const peer = 'peer-quiesce';
+    live.set(peer, { ...livePeer(peer, 'ws-secure'), quiesceCapable: false });
+    coordinator.maybeUpgrade(peer, { cooldown: false });
+    expect(coordinator.upgradeGate.get(peer)?.coalesced).toBe(true);
+    expect(coordinator.willAttemptUpgrade(peer)).toBe(false);
+    coordinator.dispose();
+  });
+
   test('冷却中或 lost-direct 退避时不算即将拨号', () => {
     const scheduler = new ManualScheduler();
     const cooling = makeCoordinator({ scheduler, dcInflight: () => true });

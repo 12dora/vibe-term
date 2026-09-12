@@ -40,15 +40,17 @@ export function sharePeerDialInflight<T>(
 ): Promise<T | null> {
   const existing = map.get(nodeId);
   if (existing) return mode === 'foreground' ? existing : Promise.resolve(null);
+  // 首个与复用方拿到同一个 Promise：失败照样 reject 给每个调用方自己归因，不能吞成 null。
   const work = run();
-  const shared = work.then(
-    (value) => value,
-    () => null
+  map.set(nodeId, work);
+  work.then(
+    () => {
+      if (map.get(nodeId) === work) map.delete(nodeId);
+    },
+    () => {
+      if (map.get(nodeId) === work) map.delete(nodeId);
+    }
   );
-  map.set(nodeId, shared);
-  void shared.finally(() => {
-    if (map.get(nodeId) === shared) map.delete(nodeId);
-  });
   return work;
 }
 

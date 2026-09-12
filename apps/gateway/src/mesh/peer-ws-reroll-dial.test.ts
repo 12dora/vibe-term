@@ -32,6 +32,18 @@ describe('sharePeerDialInflight', () => {
     expect(await foreground).toBe('first');
     expect(map.has(PEER)).toBe(false);
   });
+
+  test('首个与复用方拿到同一个 Promise，失败照样 reject 给双方，槽位随后释放', async () => {
+    const map = new Map<string, Promise<string | null>>();
+    const first = sharePeerDialInflight(map, PEER, 'background', () =>
+      Promise.reject(new Error('dial failed'))
+    );
+    const foreground = sharePeerDialInflight(map, PEER, 'foreground', async () => 'second');
+    expect(foreground).toBe(first);
+    await expect(first).rejects.toThrow('dial failed');
+    await expect(foreground).rejects.toThrow('dial failed');
+    expect(map.has(PEER)).toBe(false);
+  });
 });
 
 describe('dropStaleWsReroll', () => {

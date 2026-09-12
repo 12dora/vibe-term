@@ -427,6 +427,8 @@ export class DcUpgradeCoordinator {
   willAttemptUpgrade(nodeId: string): boolean {
     const live = this.ports.live().get(nodeId);
     if (!live || !this.wantsUpgrade(live) || this.ports.lostDirect().has(nodeId)) return false;
+    // 还在等 quiesce 探测回包时 coalesced 只是占位，扫描循环并不会拨号。
+    if (!live.quiesceCapable) return false;
     const gate = this.upgradeGate.get(nodeId);
     if (gate && this.ports.scheduler.now() < gate.nextEligibleAt) return false;
     return gate?.scheduled === true || gate?.coalesced === true;
