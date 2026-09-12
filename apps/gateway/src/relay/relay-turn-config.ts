@@ -30,6 +30,7 @@ export type RelayTurnStatus = {
   url: string | null;
   port: number | null;
   externalIp: string | null;
+  bindHost?: string | null;
   listening: boolean;
   allocations: number;
   error: string | null;

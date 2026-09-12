@@ -1,7 +1,8 @@
-import dgram from 'node:dgram';
+import type dgram from 'node:dgram';
 import { AllocationTable } from './allocation-table';
 import { DEFAULT_DENIED_PEER_CIDRS, createPeerPolicy } from './denied-peers';
 import type { TurnServer, TurnServerOptions, TurnServerStats } from './index';
+import { resolveTurnListenHost } from './local-address';
 import { decodeMessage, isChannelData, verifyFingerprint } from './stun-message';
 import { NonceStore } from './turn-auth';
 import type { MutableStats, ResolvedTurnOptions, SocketAddress, TurnContext } from './turn-context';
@@ -14,7 +15,7 @@ import {
   MAX_UDP_PACKET,
 } from './turn-limits';
 import { guardTurnHandler, handleClientChannelData } from './turn-relay-io';
-import { closeSocket, listenUdp } from './turn-udp';
+import { closeSocket, listenUdpOrWildcard } from './turn-udp';
 import { UnauthResponseLimiter } from './turn-unauth-limit';
 
 class TurnServerImpl implements TurnServer {
@@ -25,7 +26,7 @@ class TurnServerImpl implements TurnServer {
 
   constructor(options: TurnServerOptions) {
     const resolved = resolveOptions(options);
-    const stats = emptyStats(options.listenPort, options.externalIp);
+    const stats = emptyStats(options.listenPort, options.externalIp, resolved.listenHost);
     this.ctx = {
       options: resolved,
       stats,
@@ -41,14 +42,17 @@ class TurnServerImpl implements TurnServer {
 
   async start(): Promise<{ port: number }> {
     if (this.started && this.control) return { port: this.ctx.stats.port };
-    const socket = dgram.createSocket('udp4');
-    try {
-      await listenUdp(socket, this.ctx.options.listenPort, this.ctx.options.listenHost);
-    } catch (err) {
-      socket.close();
-      throw err;
-    }
-    this.attachControl(socket);
+    const resolved = await resolveTurnListenHost(this.ctx.options.listenHost, {
+      warn: (line) => this.ctx.options.log(line),
+    });
+    this.ctx.options.listenHost = resolved;
+    this.ctx.stats.bindHost = resolved;
+    const bound = await listenUdpOrWildcard(this.ctx.options.listenPort, resolved, (line) =>
+      this.ctx.options.log(line)
+    );
+    this.ctx.options.listenHost = bound.host;
+    this.ctx.stats.bindHost = bound.host;
+    this.attachControl(bound.socket);
     return { port: this.ctx.stats.port };
   }
 
@@ -92,7 +96,10 @@ class TurnServerImpl implements TurnServer {
     this.ctx.stats.startedAt = this.ctx.options.now();
     this.timer = setInterval(() => this.ctx.table.expireAll(), HOUSEKEEPING_MS);
     this.timer.unref();
-    this.ctx.options.log(`turn: listening ${this.ctx.options.listenHost}:${port}`);
+    this.ctx.stats.bindHost = this.ctx.options.listenHost;
+    this.ctx.options.log(
+      `turn: listening ${this.ctx.options.listenHost}:${port} bind=${this.ctx.options.listenHost}`
+    );
   }
 
   private onMessage(buf: Buffer, rinfo: dgram.RemoteInfo): void {
@@ -118,7 +125,7 @@ export function createTurnServer(options: TurnServerOptions): TurnServer {
 
 function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
   return {
-    listenHost: options.listenHost ?? '0.0.0.0',
+    listenHost: options.listenHost ?? 'auto',
     listenPort: options.listenPort,
     relayPortRange: options.relayPortRange,
     externalIp: options.externalIp,
@@ -134,10 +141,11 @@ function resolveOptions(options: TurnServerOptions): ResolvedTurnOptions {
   };
 }
 
-function emptyStats(port: number, externalIp: string): MutableStats {
+function emptyStats(port: number, externalIp: string, bindHost: string): MutableStats {
   return {
     listening: false,
     port,
+    bindHost,
     externalIp,
     allocations: 0,
     permissions: 0,

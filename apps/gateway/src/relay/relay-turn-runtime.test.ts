@@ -23,6 +23,7 @@ function fakeTurnServer(): TurnServer {
     snapshot: () => ({
       listening,
       port: 3478,
+      bindHost: '127.0.0.1',
       externalIp,
       allocations: 2,
       permissions: 0,

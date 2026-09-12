@@ -6,7 +6,7 @@ import {
   MAX_PERMISSIONS_PER_ALLOCATION,
   PERMISSION_LIFETIME_MS,
 } from './turn-limits';
-import { closeSocket, tryBindUdp } from './turn-udp';
+import { bindUdpResult, closeSocket } from './turn-udp';
 
 export type Permission = {
   address: string;
@@ -54,6 +54,7 @@ type TableOptions = {
   maxAllocationsPerUser: number;
   bytesPerSecPerAllocation: number;
   now: () => number;
+  log?: (line: string) => void;
 };
 
 export function peerKey(address: string, port: number): string {
@@ -132,10 +133,21 @@ export class AllocationTable {
     const { begin, end } = this.options.relayPortRange;
     for (let port = begin; port <= end; port++) {
       if (this.usedPorts.has(port)) continue;
-      const socket = await tryBindUdp(this.options.listenHost, port);
+      const socket = await this.bindRelayPort(port);
       if (socket) return { socket, port };
     }
     return null;
+  }
+
+  private async bindRelayPort(port: number): Promise<dgram.Socket | null> {
+    const host = this.options.listenHost;
+    const first = await bindUdpResult(host, port);
+    if (first.ok) return first.socket;
+    if (first.code !== 'EADDRNOTAVAIL' || host === '0.0.0.0') return null;
+    this.options.log?.(`turn: bind ${host} failed (EADDRNOTAVAIL), falling back to 0.0.0.0`);
+    this.options.listenHost = '0.0.0.0';
+    const fallback = await bindUdpResult('0.0.0.0', port);
+    return fallback.ok ? fallback.socket : null;
   }
 
   insert(input: AllocationCreate): Allocation {

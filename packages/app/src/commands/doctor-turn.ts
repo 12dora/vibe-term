@@ -6,11 +6,16 @@ import {
   parseTurnRelayPortRange,
   turnFirewallHint,
 } from '../../../../apps/gateway/src/relay/relay-turn-config';
+import {
+  parseTurnBindHost,
+  resolveTurnListenHost,
+} from '../../../../apps/gateway/src/relay/turn/local-address';
 import { t } from '../i18n';
 import { parseVibeTermRoles } from '../lib/roles';
 import type { DoctorCheck } from '../types';
 
 export type RelayTurnDoctorProbe = (url: string) => Promise<{ ok: boolean }>;
+export type RelayTurnDoctorResolveBind = (spec: string) => Promise<string>;
 
 function envRolesAreRelay(env: Record<string, string>): boolean {
   try {
@@ -22,7 +27,8 @@ function envRolesAreRelay(env: Record<string, string>): boolean {
 
 export async function relayTurnDoctorCheck(
   env: Record<string, string>,
-  probe: RelayTurnDoctorProbe = (url) => probeStunServer(url)
+  probe: RelayTurnDoctorProbe = (url) => probeStunServer(url),
+  resolveBind: RelayTurnDoctorResolveBind = (spec) => resolveTurnListenHost(spec)
 ): Promise<DoctorCheck | null> {
   if (!envRolesAreRelay(env)) return null;
   const turnPort = parseTurnPort(env.VIBETERM_TURN_PORT);
@@ -51,7 +57,11 @@ export async function relayTurnDoctorCheck(
       detail: firewall,
     };
   }
-  const bound = await probe(`stun:127.0.0.1:${turnPort}`)
+  const spec = parseTurnBindHost(env.VIBETERM_TURN_BIND_HOST);
+  const resolved = await resolveBind(spec);
+  const bind = spec === 'auto' ? `${resolved} (auto)` : resolved;
+  const probeHost = resolved === '0.0.0.0' ? '127.0.0.1' : resolved;
+  const bound = await probe(`stun:${probeHost}:${turnPort}`)
     .then((result) => result.ok)
     .catch(() => false);
   return {
@@ -59,6 +69,7 @@ export async function relayTurnDoctorCheck(
     level: bound ? 'pass' : 'warn',
     message: t(bound ? 'doctor.turn.builtinListening' : 'doctor.turn.builtinNotListening', {
       port: turnPort,
+      bind,
     }),
     detail: firewall,
   };

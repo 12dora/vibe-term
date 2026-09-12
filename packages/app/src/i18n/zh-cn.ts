@@ -112,9 +112,9 @@ export const zhCN: Record<string, string> = {
   'doctor.stun.disabled': 'STUN 服务器：已禁用',
   'doctor.turn.external': 'TURN：外部（已配置 VIBETERM_TURN_URL 三元组，内置 TURN 未启动）',
   'doctor.turn.off': 'TURN：内置已关闭（VIBETERM_TURN_PORT=0/off）',
-  'doctor.turn.builtinListening': 'TURN：内置已在 UDP {{port}} 监听',
+  'doctor.turn.builtinListening': 'TURN：内置已在 UDP {{port}} 监听，绑定 {{bind}}',
   'doctor.turn.builtinNotListening':
-    'TURN：内置配置为 UDP {{port}}，但对 127.0.0.1 的 Binding 探测失败',
+    'TURN：内置配置为 UDP {{port}} 绑定 {{bind}}，但 Binding 探测失败',
   'doctor.db.missing': '数据库文件不存在（首次启动前可能正常）：{{path}}',
   'doctor.db.exists': '数据库文件存在：{{path}}',
   'doctor.port.invalid': '配置端口非法：{{value}}',

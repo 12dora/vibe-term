@@ -121,9 +121,9 @@ export const en: Record<string, string> = {
   'doctor.stun.disabled': 'STUN servers: disabled',
   'doctor.turn.external': 'TURN: external (VIBETERM_TURN_URL triple; builtin disabled)',
   'doctor.turn.off': 'TURN: builtin disabled (VIBETERM_TURN_PORT=0/off)',
-  'doctor.turn.builtinListening': 'TURN: builtin listening on UDP {{port}}',
+  'doctor.turn.builtinListening': 'TURN: builtin listening on UDP {{port}} bind {{bind}}',
   'doctor.turn.builtinNotListening':
-    'TURN: builtin configured on UDP {{port}} but Binding probe to 127.0.0.1 failed',
+    'TURN: builtin configured on UDP {{port}} bind {{bind}} but Binding probe failed',
   'doctor.db.missing': 'Database file not found (may be normal before first start): {{path}}',
   'doctor.db.exists': 'Database file exists: {{path}}',
   'doctor.port.invalid': 'Invalid port in config: {{value}}',

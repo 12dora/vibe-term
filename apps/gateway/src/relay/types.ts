@@ -62,6 +62,8 @@ export type RelayRuntimeConfig = {
   turnRelayPortRange?: TurnPortRange;
   turnExternalIp?: string | null;
   turnHost?: string | null;
+  /** `auto` | `0.0.0.0` | IPv4。缺省 `auto`（本机主出口地址）。 */
+  turnBindHost?: string | null;
   rtcPortRange?: TurnPortRange | null;
   peerPort?: number;
   /** `VIBETERM_RELAY_ADMIN_TOKEN`；缺失时首启生成。 */

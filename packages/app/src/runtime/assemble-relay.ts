@@ -3,6 +3,7 @@ import {
   config as gatewayConfig,
   parsePeerPort,
   parseRtcPortRange,
+  parseTurnBindHost,
 } from '../../../../apps/gateway/src/config';
 import { clientIpFromRequest } from '../../../../apps/gateway/src/mesh/client-ip';
 import { type RelayRuntime, createRelayRuntime } from '../../../../apps/gateway/src/relay';
@@ -81,6 +82,10 @@ export function createAssembledRelay(input: {
         process.env.VIBETERM_TURN_HOST !== undefined
           ? parseTurnHost(process.env.VIBETERM_TURN_HOST)
           : gatewayConfig.turnHost,
+      turnBindHost:
+        process.env.VIBETERM_TURN_BIND_HOST !== undefined
+          ? parseTurnBindHost(process.env.VIBETERM_TURN_BIND_HOST)
+          : gatewayConfig.turnBindHost,
       rtcPortRange:
         process.env.VIBETERM_RTC_PORT_RANGE !== undefined
           ? parseRtcPortRange(process.env.VIBETERM_RTC_PORT_RANGE)

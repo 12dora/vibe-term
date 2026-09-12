@@ -11,6 +11,7 @@ import {
   parsePeerBindHost,
   parsePeerPort,
   parseRtcPortRange,
+  parseTurnBindHost,
   parseTurnExternalIp,
   parseTurnHost,
   parseTurnPort,
@@ -49,6 +50,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
   turnRelayPortRange: { begin: number; end: number };
   turnExternalIp: string | null;
   turnHost: string | null;
+  turnBindHost: string;
   originUrl: string;
   trustProxy: boolean;
 }> {
@@ -89,6 +91,7 @@ async function loadConfigWith(env: Record<string, string | undefined>): Promise<
         turnRelayPortRange: { begin: number; end: number };
         turnExternalIp: string | null;
         turnHost: string | null;
+        turnBindHost: string;
         trustProxy: boolean;
         originUrl: string;
       };
@@ -340,6 +343,22 @@ describe('parseTurnExternalIp / parseTurnHost', () => {
   });
 });
 
+describe('parseTurnBindHost', () => {
+  test('defaults to auto and accepts IPv4 / 0.0.0.0', () => {
+    expect(parseTurnBindHost(undefined)).toBe('auto');
+    expect(parseTurnBindHost('')).toBe('auto');
+    expect(parseTurnBindHost('auto')).toBe('auto');
+    expect(parseTurnBindHost('0.0.0.0')).toBe('0.0.0.0');
+    expect(parseTurnBindHost('10.0.0.3')).toBe('10.0.0.3');
+  });
+
+  test('rejects invalid values', () => {
+    expect(() => parseTurnBindHost('relay.example')).toThrow('VIBETERM_TURN_BIND_HOST');
+    expect(() => parseTurnBindHost('::1')).toThrow('VIBETERM_TURN_BIND_HOST');
+    expect(() => parseTurnBindHost('1.2.3.4.5')).toThrow('VIBETERM_TURN_BIND_HOST');
+  });
+});
+
 describe('config hub/node env', () => {
   test('defaults roles to standalone and peerPort to 39001', async () => {
     const config = await loadConfigWith({
@@ -395,22 +414,26 @@ describe('config hub/node env', () => {
       VIBETERM_TURN_RELAY_PORT_RANGE: undefined,
       VIBETERM_TURN_EXTERNAL_IP: undefined,
       VIBETERM_TURN_HOST: undefined,
+      VIBETERM_TURN_BIND_HOST: undefined,
     });
     expect(defaults.turnPort).toBe(3478);
     expect(defaults.turnRelayPortRange).toEqual({ begin: 49160, end: 49259 });
     expect(defaults.turnExternalIp).toBeNull();
     expect(defaults.turnHost).toBeNull();
+    expect(defaults.turnBindHost).toBe('auto');
 
     const custom = await loadConfigWith({
       VIBETERM_TURN_PORT: '0',
       VIBETERM_TURN_RELAY_PORT_RANGE: '50000-50010',
       VIBETERM_TURN_EXTERNAL_IP: '203.0.113.9',
       VIBETERM_TURN_HOST: 'turn.example',
+      VIBETERM_TURN_BIND_HOST: '10.0.0.3',
     });
     expect(custom.turnPort).toBe(0);
     expect(custom.turnRelayPortRange).toEqual({ begin: 50000, end: 50010 });
     expect(custom.turnExternalIp).toBe('203.0.113.9');
     expect(custom.turnHost).toBe('turn.example');
+    expect(custom.turnBindHost).toBe('10.0.0.3');
   });
 
   test('VIBETERM_STUN_SERVERS=none disables the local STUN list', async () => {

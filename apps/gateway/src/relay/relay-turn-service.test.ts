@@ -27,6 +27,7 @@ function fakeStats(over: Partial<TurnServerStats> = {}): TurnServerStats {
   return {
     listening: true,
     port: 3478,
+    bindHost: '127.0.0.1',
     externalIp: '203.0.113.9',
     allocations: 0,
     permissions: 0,
@@ -114,27 +115,34 @@ describe('RelayTurnService builtin', () => {
     const handle = createMigratedAuthDb();
     dbs.push(handle);
     const logs: string[] = [];
+    let captured: TurnServerOptions | undefined;
     const svc = createRelayTurnService({
       db: handle.db,
       config: baseConfig(),
       log: (line) => logs.push(line),
-      createServer: () => fakeServer(),
+      createServer: (opts) => {
+        captured = opts;
+        return fakeServer({}, { bindHost: opts.listenHost ?? 'auto' });
+      },
     });
     await svc.start();
     const adv = svc.advertisement();
     expect(adv?.url).toBe('turn:relay.example:3478?transport=udp');
     expect(svc.status().url).toBe('turn:relay.example:3478?transport=udp');
     expect(adv?.username.startsWith('vt-')).toBe(true);
+    expect(captured?.listenHost).toBe('auto');
     expect(svc.status()).toMatchObject({
       enabled: true,
       source: 'builtin',
       listening: true,
       port: 3478,
+      bindHost: 'auto',
       externalIp: '203.0.113.9',
       relayPortRange: '49160-49259',
       error: null,
     });
     expect(logs.some((line) => line.includes('[relay][turn] builtin turn listening'))).toBe(true);
+    expect(logs.some((line) => line.includes('bind=auto'))).toBe(true);
     const again = createRelayTurnService({
       db: handle.db,
       config: baseConfig(),
@@ -237,6 +245,27 @@ describe('RelayTurnService builtin', () => {
     expect(created).toHaveLength(1);
     expect(svc.advertisement()?.url).toBe('turn:203.0.113.9:3478?transport=udp');
     expect(svc.status().listening).toBe(true);
+    await svc.stop();
+  });
+
+  test('passes a literal turnBindHost through as listenHost', async () => {
+    const handle = createMigratedAuthDb();
+    dbs.push(handle);
+    const logs: string[] = [];
+    let captured: TurnServerOptions | undefined;
+    const svc = createRelayTurnService({
+      db: handle.db,
+      config: baseConfig({ turnBindHost: '10.0.0.3' }),
+      log: (line) => logs.push(line),
+      createServer: (opts) => {
+        captured = opts;
+        return fakeServer({}, { bindHost: opts.listenHost ?? 'auto' });
+      },
+    });
+    await svc.start();
+    expect(captured?.listenHost).toBe('10.0.0.3');
+    expect(svc.status().bindHost).toBe('10.0.0.3');
+    expect(logs.some((line) => line.includes('bind=10.0.0.3'))).toBe(true);
     await svc.stop();
   });
 

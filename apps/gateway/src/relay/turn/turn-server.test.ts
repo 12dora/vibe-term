@@ -277,6 +277,46 @@ describe('STUN Binding and Allocate', () => {
     );
     expect(mapped).toEqual({ address: '127.0.0.1', port: client.port });
     expect(server.snapshot().bindingRequests).toBe(1);
+    expect(server.snapshot().bindHost).toBe('127.0.0.1');
+  });
+
+  test('Binding reply is sourced from the bound listen host', async () => {
+    const { server, port } = await boot({ listenHost: '127.0.0.1' });
+    const client = await openClient();
+    client.send(
+      encodeMessage({
+        method: METHOD.BINDING,
+        class: CLASS.REQUEST,
+        fingerprint: true,
+      }),
+      port
+    );
+    const packet = await client.inbox.take();
+    expect(packet.rinfo.address).toBe('127.0.0.1');
+    const msg = decodeMessage(packet.msg);
+    expect(msg?.class).toBe(CLASS.SUCCESS);
+    expect(server.snapshot().bindHost).toBe('127.0.0.1');
+  });
+
+  test('EADDRNOTAVAIL at bind time falls back to 0.0.0.0', async () => {
+    const logs: string[] = [];
+    const { server, port } = await boot({
+      listenHost: '203.0.113.99',
+      log: (line) => logs.push(line),
+    });
+    expect(server.snapshot().bindHost).toBe('0.0.0.0');
+    expect(logs.some((line) => line.includes('EADDRNOTAVAIL'))).toBe(true);
+    const client = await openClient();
+    client.send(
+      encodeMessage({
+        method: METHOD.BINDING,
+        class: CLASS.REQUEST,
+        fingerprint: true,
+      }),
+      port
+    );
+    const msg = await recvStun(client.inbox);
+    expect(msg.class).toBe(CLASS.SUCCESS);
   });
 
   test('setExternalIp changes XOR-RELAYED-ADDRESS without dropping allocations', async () => {

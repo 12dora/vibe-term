@@ -17,6 +17,7 @@ export type TurnServerOptions = {
 export type TurnServerStats = {
   listening: boolean;
   port: number;
+  bindHost: string;
   externalIp: string;
   allocations: number;
   permissions: number;

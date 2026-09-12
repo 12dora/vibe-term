@@ -148,6 +148,7 @@ export class RelayTurnService {
       url: this.advertised?.url ?? null,
       port: snap?.port ?? this.listenPort,
       externalIp: snap?.externalIp ?? this.externalIp,
+      bindHost: snap?.bindHost ?? null,
       listening,
       allocations: snap?.allocations ?? 0,
       error: this.error,
@@ -196,7 +197,7 @@ export class RelayTurnService {
 
   private logListening(): void {
     this.log(
-      `builtin turn listening port=${this.listenPort ?? '-'} external_ip=${this.externalIp ?? '-'} host=${this.host ?? '-'} relay_range=${this.relayRange ? formatTurnPortRange(this.relayRange) : '-'}`
+      `builtin turn listening port=${this.listenPort ?? '-'} bind=${this.server?.snapshot().bindHost ?? '-'} external_ip=${this.externalIp ?? '-'} host=${this.host ?? '-'} relay_range=${this.relayRange ? formatTurnPortRange(this.relayRange) : '-'}`
     );
   }
 
@@ -269,6 +270,7 @@ export class RelayTurnService {
     }
     const creds = this.creds;
     const server = this.createServer({
+      listenHost: this.config.turnBindHost ?? 'auto',
       listenPort: this.listenPort,
       relayPortRange: this.relayRange,
       externalIp: this.externalIp,

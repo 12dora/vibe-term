@@ -1,8 +1,19 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import dgram from 'node:dgram';
 import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { type TurnServer, createTurnServer } from './index';
+import {
+  ATTR,
+  CLASS,
+  METHOD,
+  decodeAddress,
+  decodeMessage,
+  encodeMessage,
+  getAttribute,
+} from './stun-message';
+import { closeSocket, listenUdp } from './turn-udp';
 
 type NativePc = {
   close(): void;
@@ -85,6 +96,56 @@ async function loadNativeFromEnv(): Promise<NativeMod | null> {
 }
 
 const nativeMod = await loadNativeFromEnv();
+
+describe('TURN control socket Binding', () => {
+  test('listener bound to 127.0.0.1 answers a Binding request', async () => {
+    const server = createTurnServer({
+      listenHost: '127.0.0.1',
+      listenPort: 0,
+      relayPortRange: { begin: 1, end: 1 },
+      externalIp: '127.0.0.1',
+      realm: 'vibeterm',
+      credentials: () => null,
+      deniedPeerCidrs: [],
+    });
+    const client = dgram.createSocket('udp4');
+    try {
+      const { port } = await server.start();
+      await listenUdp(client, 0, '127.0.0.1');
+      const reply = await new Promise<{ msg: Buffer; rinfo: dgram.RemoteInfo }>(
+        (resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error('Binding timeout')), 1500);
+          client.once('message', (msg, rinfo) => {
+            clearTimeout(timer);
+            resolve({ msg, rinfo });
+          });
+          client.send(
+            encodeMessage({
+              method: METHOD.BINDING,
+              class: CLASS.REQUEST,
+              fingerprint: true,
+            }),
+            port,
+            '127.0.0.1'
+          );
+        }
+      );
+      expect(reply.rinfo.address).toBe('127.0.0.1');
+      const decoded = decodeMessage(reply.msg);
+      expect(decoded?.class).toBe(CLASS.SUCCESS);
+      if (!decoded) throw new Error('missing STUN');
+      const mapped = decodeAddress(
+        getAttribute(decoded, ATTR.XOR_MAPPED_ADDRESS) ?? Buffer.alloc(0),
+        decoded.transactionId
+      );
+      expect(mapped?.address).toBe('127.0.0.1');
+      expect(server.snapshot().bindHost).toBe('127.0.0.1');
+    } finally {
+      await closeSocket(client);
+      await server.stop();
+    }
+  });
+});
 
 function couple(left: NativePc, right: NativePc): void {
   left.onLocalDescription((sdp, type) => right.setRemoteDescription(sdp, type));

@@ -126,7 +126,9 @@ describe('i18n', () => {
       setLang(lang);
       expect(t('doctor.turn.external')).not.toBe('doctor.turn.external');
       expect(t('doctor.turn.off')).not.toBe('doctor.turn.off');
-      expect(t('doctor.turn.builtinListening', { port: 3478 })).toContain('3478');
+      expect(t('doctor.turn.builtinListening', { port: 3478, bind: '10.0.0.3 (auto)' })).toContain(
+        '3478'
+      );
       expect(t('init.summary.turnFirewall', { port: 3478, range: '49160-49259' })).toContain(
         '3478'
       );

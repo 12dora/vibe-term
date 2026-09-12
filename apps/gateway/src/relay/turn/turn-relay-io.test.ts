@@ -19,6 +19,7 @@ function emptyStats(): MutableStats {
   return {
     listening: true,
     port: 3478,
+    bindHost: '127.0.0.1',
     externalIp: '203.0.113.10',
     allocations: 0,
     permissions: 0,

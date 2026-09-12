@@ -14,6 +14,7 @@ import {
   parseTurnPort,
   parseTurnRelayPortRange,
 } from './relay/relay-turn-config';
+import { parseTurnBindHost } from './relay/turn/local-address';
 
 export type { VibeTermRoles };
 
@@ -154,6 +155,7 @@ export {
   parseTurnPort,
   parseTurnRelayPortRange,
 } from './relay/relay-turn-config';
+export { parseTurnBindHost } from './relay/turn/local-address';
 
 export function parseRtcPortRange(raw: string | undefined): RtcPortRange | null {
   if (raw === undefined || raw.trim() === '') return null;
@@ -407,6 +409,7 @@ export const config = {
   turnRelayPortRange: parseTurnRelayPortRange(process.env.VIBETERM_TURN_RELAY_PORT_RANGE),
   turnExternalIp: parseTurnExternalIp(process.env.VIBETERM_TURN_EXTERNAL_IP),
   turnHost: parseTurnHost(process.env.VIBETERM_TURN_HOST),
+  turnBindHost: parseTurnBindHost(process.env.VIBETERM_TURN_BIND_HOST),
   // When true, local Bun-socket requests (via=self) honour x-forwarded-proto /
   // x-forwarded-host for public origin, Secure cookies, and passkeyAvailable.
   // Never applied to forwarded (via ≠ self) requests. Default false.
