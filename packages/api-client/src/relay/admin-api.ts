@@ -8,6 +8,7 @@
 
 import { type ApiClient, defaultApiClient } from '../client';
 import { type JsonRequestOptions, readCodedError, requestJson, requestOk } from '../json-mutation';
+import type { LocalRelayTurnStatus } from '../local/types';
 import type { RelayMetricsResponse } from './metrics-types';
 
 export type {
@@ -100,6 +101,8 @@ export interface RelayStatusResponse {
   config: RelayConfigSummary;
   tenants: RelayTenantSummary[];
   totals: RelayTotals;
+  /** 内置/外部 TURN 状态；旧中继无此字段。 */
+  turn?: LocalRelayTurnStatus;
 }
 
 /** `GET /api/relay/health`（无鉴权）。 */

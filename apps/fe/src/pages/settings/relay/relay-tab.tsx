@@ -150,7 +150,7 @@ function RelayTabBody({
   const clearSelection = () => setSelectedTenantId(null);
 
   // 契约 §D：旧中继不下发这一段，整块不出现。
-  const turn = relayTurnStatusOf((status as RelayStatusResponse & { turn?: unknown }).turn);
+  const turn = relayTurnStatusOf(status.turn);
 
   return (
     <>
