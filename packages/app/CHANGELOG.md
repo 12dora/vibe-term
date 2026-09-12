@@ -1,3 +1,59 @@
+# 2.3.1
+
+_2026-09-12_
+
+## English
+
+### Features
+
+- **Pause / resume nodes.** Settings → Nodes gains an inline Pause / Resume action per node. A paused node stays in the management table (tagged "Paused") and can still be upgraded, uninstalled or resumed, but this entry no longer opens links to it and hides it from the sidebar devices / files sections, the devices page, transfer / port-map / share targets, notification aggregation and "upgrade all". The preference is local to the entry node (`node_local_prefs`), never written to the hub roster, relay lists or the key log. API: `POST /api/mesh/nodes/:id/pause|resume`, `GET /api/mesh/nodes[].paused`, optional `paused` on `NODE_EVENT`; CLI `vibeterm nodes pause|resume`, `nodes ls` PAUSED column, `nodes upgrade --all` skips paused nodes.
+- **One port plan for every role.** Defaults now live in a single shared module (`@vibeterm/shared/net`): peer 39001/tcp, P2P (ICE) 40000–40099/udp, TURN 3478/udp + 49160–49259/udp, public HTTPS 443, gateway 9883, built-in TLS 9443. `vibeterm init`, `hub join`, `relay join`, `install.sh` and `doctor` print the same list for the machine's role; `GET /api/local/status.portPlan` exposes it; the connect-devices guide gains an "Open ports" step on the hub-host, relay-host and join paths.
+- **Port reachability detection.** The entry probes each peer's advertised public peer port (TCP, every 5 min, two consecutive failures before "blocked"), infers ICE UDP reachability from srflx / DataChannel history, and members report what they saw about each other (`peer_reach` / `turn_ok`, optional fields in the relay status blob and hub `node.status`) so a node's own row shows whether its ports are reachable from outside. `GET /api/mesh/nodes[].ports`, `POST /api/mesh/nodes/:id/ports/probe`; the nodes table shows an "Unreachable ports: …" warning, the node detail dialog has a port table with Re-check, the local machine card lists inbound ports with status, and the relay TURN tile shows "reachable from N/M members".
+- **Upgrade converges the fleet.** The upgrade transaction writes `VIBETERM_RTC_PORT_RANGE=40000-40099` when the key is missing (custom values are kept; relay roles also get the TURN keys), backs up `app.env` and prints the firewall reminder. **After upgrading, allow UDP 40000–40099 on every node's firewall / security group**, otherwise WAN direct links fall back to relay.
+
+### Performance (high-latency / lossy networks)
+
+- First link to a remote node: when the peer is known online on a relay, the relay stream is dialled in parallel with the direct race instead of after it; the foreground DataChannel budget joins the adaptive nested budget and a peer with no RTT sample is budgeted as 800 ms, not LAN; `/n/:id/ws` upgrades to 101 first and closes with 1011 (`node-unreachable` / `forward-link-timeout`) when the link fails — never 4401. First 503 back-off in the browser drops from 60 s to 2–5 s (timeout) / 15 s (hard failure). Failover stale-input TTL and first HELLO wait follow the same adaptive formula as the client.
+- Opening a remote node: the route gate trusts the cached node row (`loggedIn`) instead of waiting for the node list; login chunk, session-key restore and challenge run in parallel (fan-out ≤ 3); access-gate probe reuses the in-flight `auth/mode` request.
+- Direct link: `HELLO_S2C` carries `connection-id:<id>` (no `GET connection` round trip), `rtc-config` is fetched from the entry and in parallel, so ICE starts after one forwarded request instead of three serial ones; an attempt no longer fails while `/mesh/ws` is still connecting; `/mesh/ws` has an application-level PING/PONG (zombie detected in seconds after a network switch) and `pageshow` / visibility resume retries the direct link.
+- First frame: `HELLO_C2S` can carry the screen intent (`hello-screen-intent-v1`) so the gateway answers HELLO + screen in one burst, and placeholder subscriptions (epoch 0) are rewritten to the current epoch instead of rejected — typing works right after the first frame. Both directions stay compatible with 2.3.0 shells and gateways.
+- Files sidebar: remote sections are collapsed by default (no WebSocket until expanded), secondary queries are deferred, root fetches capped at 2, no refetch on window focus. History paging grows toward 1 MiB at high RTT. iOS Wi-Fi ↔ cellular switches are detected in 2–6 s via `pageshow` / visibility / offline / timer-drift signals. Settings General tab is prefetched. The lazy precache tier is no longer installed when the browser gives no network hint (iOS).
+
+### Fixes
+
+- **Built-in TURN binds to the primary outbound address** (`VIBETERM_TURN_BIND_HOST=auto|<IPv4>|0.0.0.0`). With `0.0.0.0`, hosts running a TUN proxy (mihomo / clash `auto-route`) routed the replies into the tunnel with a fake-IP source, so every member's TURN probe timed out silently. Discovery skips fake-IP / CGNAT addresses and prefers physical interfaces over bridges, veth and TUN devices; `EADDRNOTAVAIL` falls back to the wildcard with a warning. `doctor`, logs and `GET /api/relay/status` show the bind host.
+
+### Upgrade notes
+
+- Allow UDP 40000–40099 (and, on relays, UDP 3478 + 49160–49259) in every node's firewall / cloud security group. Upgraded nodes without a custom `VIBETERM_RTC_PORT_RANGE` switch from OS-ephemeral ICE ports to this fixed range.
+- Relay operators behind a TUN proxy no longer need any manual routing change; members' TURN probes turn green once the relay is on 2.3.1.
+
+## 中文
+
+### 新功能
+
+- **节点暂停 / 恢复。**设置 → 节点新增行内「暂停 / 恢复」。已暂停节点保留在管理表（标「已暂停」），仍可升级、卸载、恢复；本入口不再向它发起连接，侧栏设备 / 文件、设备页、传输 / 端口映射 / 分享目标、通知汇聚与「全部升级」均不包含它。偏好只存入口本机（`node_local_prefs`），不进 hub 花名册、中继列表或密钥日志。接口 `POST /api/mesh/nodes/:id/pause|resume`、`GET /api/mesh/nodes[].paused`、`NODE_EVENT` 可选 `paused`；CLI `vibeterm nodes pause|resume`、`nodes ls` PAUSED 列、`nodes upgrade --all` 跳过已暂停节点。
+- **统一端口计划。**默认值收口到共享模块 `@vibeterm/shared/net`：peer 39001/tcp、P2P（ICE）40000–40099/udp、TURN 3478/udp + 49160–49259/udp、公网 HTTPS 443、网关 9883、内置 TLS 9443。`vibeterm init`、`hub join`、`relay join`、`install.sh`、`doctor` 按角色打印同一份清单；`GET /api/local/status.portPlan` 下发；接入向导在 Hub 宿主、中继宿主与加入路径新增「放行端口」步。
+- **端口可达性检测。**入口对各对端公开的 peer 口做 TCP 探测（5 分钟一次，连续两次失败才判不可达），按 srflx / DataChannel 历史推断 ICE UDP 段，成员之间互报观测结果（中继状态 blob 与 hub `node.status` 的可选字段 `peer_reach` / `turn_ok`），本机行因此能显示自己的端口是否可被外部访问。`GET /api/mesh/nodes[].ports`、`POST /api/mesh/nodes/:id/ports/probe`；节点表显示「端口不可达：…」警告，节点详情有端口表与「重新检测」，本机卡列出入站端口与状态，中继 TURN 磁贴显示「成员可达 N/M」。
+- **升级收敛舰队端口。**升级事务在缺键时写入 `VIBETERM_RTC_PORT_RANGE=40000-40099`（自定义值保留；中继角色补 TURN 键），备份 `app.env` 并在结束时提示放行防火墙。**升级后请在每台节点的防火墙 / 安全组放行 UDP 40000–40099**，否则公网直连回落中继。
+
+### 性能（高延迟 / 弱网）
+
+- 远端首链：对端在中继在线时，中继流与直连竞速并行而非排在其后；前台 DataChannel 预算并入自适应嵌套预算，无 RTT 样本按 800 ms 而非局域网档；`/n/:id/ws` 先 101 再取链，取链失败以 1011（`node-unreachable` / `forward-link-timeout`）关闭而非 4401。浏览器首次 503 退避从 60 s 降到 2–5 s（超时）/ 15 s（硬失败）。failover 的陈旧输入 TTL 与首次 HELLO 等待与客户端同一自适应公式。
+- 打开远端节点：路由门闸认首帧缓存行（`loggedIn`），不再等节点列表；登录 chunk、会话钥恢复与 challenge 并行（扇出 ≤ 3）；access-gate 探针复用在途 `auth/mode`。
+- 直连：`HELLO_S2C` 捎带 `connection-id:<id>`（省掉 `GET connection`），`rtc-config` 改打入口并与查找并行，ICE 前的转发请求从 3 次串行降到 1 次；`/mesh/ws` 未就绪不再让协商失败；`/mesh/ws` 应用层 PING/PONG（切网后数秒内发现僵尸连接），`pageshow` / 可见恢复时重试直连。
+- 首帧：`HELLO_C2S` 可携带首屏意图（`hello-screen-intent-v1`），网关在同一批回 HELLO 与画面；占位订阅（epoch 0）由网关改写为当前 epoch 而非拒绝，首帧后即可打字。与 2.3.0 壳 / 网关双向兼容。
+- 文件侧栏：远端分节缺省折叠（展开才建 WebSocket），次要查询延后、根目录并发 2、不在窗口聚焦时重取。历史翻页在高 RTT 下页大小提到 1 MiB。iOS Wi-Fi ↔ 蜂窝切换 2–6 s 内发现（`pageshow` / 可见性 / offline / 计时漂移）。设置「通用」页预取。浏览器无网络提示（iOS）时不再安装懒加载预缓存层。
+
+### 修复
+
+- **内置 TURN 绑定主出站地址**（`VIBETERM_TURN_BIND_HOST=auto|<IPv4>|0.0.0.0`）。绑 `0.0.0.0` 时，跑 TUN 代理（mihomo / clash `auto-route`）的宿主会把回包路由进隧道并以 fake-IP 源地址发出，所有成员的 TURN 探测静默超时。自动发现跳过 fake-IP / CGNAT 地址，物理网卡优先于网桥、veth 与 TUN；`EADDRNOTAVAIL` 回退通配并告警。`doctor`、日志与 `GET /api/relay/status` 显示绑定地址。
+
+### 升级说明
+
+- 在每台节点的防火墙 / 云安全组放行 UDP 40000–40099（中继另放行 UDP 3478 + 49160–49259）。未自定义 `VIBETERM_RTC_PORT_RANGE` 的节点升级后 ICE 从系统临时端口切到该固定段。
+- 位于 TUN 代理后的中继无需再改路由；中继升到 2.3.1 后成员的 TURN 探测即恢复。
+
 # 2.3.0
 
 _2026-09-12_
