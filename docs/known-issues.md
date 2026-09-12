@@ -112,6 +112,15 @@ error=timeout` 与 `GET /api/mesh/rtc-config` 的 `probes`。浏览器 ICE 走�
 
 iOS 切网：`/ws` 与 `/n/:id/ws` 走 2–6 s 短期限探测（`pageshow` 不论 persisted）。`/mesh/ws` 在会回 PONG 的网关上前台 2.5–4 s 发现僵尸；2.3.0 网关忽略应用层 PING，仍可能要等 30 s 静默门槛。
 
+## KI-15：TUN 主机对部分中继 TURN 的探测报 timeout，但 UDP 实际可达
+
+本机代理 TUN（Surge / mihomo 一类）下，节点对某个中继 TURN 控制口的 STUN Binding 探测可能一直 `error=timeout`，
+而同一台机上用裸 `dgram` 发 Binding 有回包、无 TUN 的节点探测 `ok`。现网例：本机（Surge）与 hub B（mihomo）探
+东京中继 `turn:4.2.2.2:40000` 超时，demo-app 探测 `ok=100 ms`；oracle 侧监听、防火墙、allocate 日志都正常。
+疑 TUN 改写回包的源地址/端口，探测器按 `rinfo` 与目标 host:port 严格比对时丢弃。影响：该节点不把这个 TURN 纳入
+ICE（`turn gate … reachable=` 少一条），走另一中继的 TURN 或中继流；不影响其它节点。处置：暂无，待抓包定位后再决定
+是否放宽 `rinfo` 校验。判定看 `[mesh][rtc] turn probe url=… ok=false error=timeout` 与手工 STUN 对比。
+
 ## KI-14：混合版本网内的直连抖动
 
 2.3.0 修掉了三处「一升级直连就抖」的成因：DC 握手先挂接收队列并按类型去重（hello 间隔 500 ms、队列 64）、DC 取代中继/ws-secure
