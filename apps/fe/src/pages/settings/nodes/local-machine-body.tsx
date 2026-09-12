@@ -17,6 +17,7 @@ import type { DomainAccessApi } from './domain-access-row';
 import type { SetupIntent } from './membership/intent';
 import { isRelayRole } from './membership/role-transition';
 import { NetworkSection } from './network-section';
+import { asPortRole, portPlanFromStatus, portPlanOrFallback } from './port-reach';
 import { RelayServiceSection } from './relay-service-section';
 import type { RestartGateway } from './restart/use-restart-now';
 import type { LocalUplinkController } from './uplink/local-uplink-controller';
@@ -86,6 +87,7 @@ export function LocalMachineBody(props: LocalMachineBodyProps) {
           domainAccess={props.domainAccess}
           domainApi={props.domainApi}
           onRefresh={props.onRefresh}
+          portPlan={portPlanOrFallback(portPlanFromStatus(status), asPortRole(status.role, 'node'))}
         />
       </CardSection>
     </>

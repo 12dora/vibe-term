@@ -37,6 +37,7 @@ import { Bell, Loader2, Save } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Link } from 'react-router';
 import { CopyButton } from '../copy-feedback';
+import { type MeshPortReach, formatPortReach, resolveNodePorts } from '../port-reach';
 import { hubModeLabel } from '../uplink/hub-strip';
 import {
   type DomainAccessState,
@@ -47,6 +48,7 @@ import {
 import { type NodeDirectIo, useNodeDirectPlugin } from './node-direct-plugin';
 import { NodeDirectBody, NodeDirectRemoveConfirm } from './node-direct-section';
 import { useNodeDetailState } from './use-node-detail-state';
+import { useNodePorts } from './use-node-ports';
 
 // ---------------------------------------------------------------------------
 // 渲染
@@ -141,6 +143,66 @@ function DetailTag({ children }: { children: React.ReactNode }) {
   );
 }
 
+/** 详情里的端口表。单独导出：静态渲染测表体，不跑「重新检测」。 */
+export function NodePortsTable({
+  nodeId,
+  ports,
+  busy = false,
+  error,
+  onRecheck,
+}: {
+  nodeId: string;
+  ports: MeshPortReach[];
+  busy?: boolean;
+  error?: string | null;
+  onRecheck?: () => void;
+}) {
+  const { t } = useTranslation();
+  return (
+    <div className="space-y-1.5" data-testid={`nodes-detail-ports-${nodeId}`}>
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium">{t('localMachine.ports.title')}</span>
+        {onRecheck && (
+          <Button
+            type="button"
+            size="xs"
+            variant="outline"
+            disabled={busy}
+            onClick={onRecheck}
+            data-testid={`nodes-ports-recheck-${nodeId}`}
+          >
+            {busy && <Loader2 className="animate-spin motion-reduce:animate-none" />}
+            {t('nodes.ports.recheck')}
+          </Button>
+        )}
+      </div>
+      <table className="w-full text-[11px]">
+        <tbody>
+          {ports.map((item) => (
+            <tr key={item.purpose} data-testid={`nodes-detail-port-${item.purpose}`}>
+              <td className="py-0.5 pr-2 text-muted-foreground">
+                {t(`ports.purpose.${item.purpose}`)}
+              </td>
+              <td className="py-0.5 pr-2 font-mono">{formatPortReach(item)}</td>
+              <td className="py-0.5" data-port-status={item.status}>
+                {t(`nodes.ports.status.${item.status}`)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {error && (
+        <p
+          className="text-[11px] text-destructive"
+          data-testid={`nodes-detail-ports-error-${nodeId}`}
+        >
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /** 域名访问那一段的辅助文字：读取中 / 不支持 / 失败原因 / 生效的域名。 */
 export function domainAccessNote(state: DomainAccessState, t: Translate): string {
   if (state.kind === 'loading') return t('nodes.detail.domainAccessLoading');
@@ -177,6 +239,10 @@ export interface NodeDetailBodyProps {
   allowed: boolean | null;
   onAllowedChange: (next: boolean) => void;
   errors: string[];
+  ports?: MeshPortReach[] | null;
+  portsBusy?: boolean;
+  portsError?: string | null;
+  onRecheckPorts?: () => void;
 }
 
 /** 对话框正文。单独导出，供静态渲染的单测直接断言。 */
@@ -189,13 +255,27 @@ export function NodeDetailBody({
   allowed,
   onAllowedChange,
   errors,
+  ports,
+  portsBusy,
+  portsError,
+  onRecheckPorts,
 }: NodeDetailBodyProps) {
   const { t } = useTranslation();
   const switchDisabled = domainAccessSwitchDisabled(domainAccess, allowed);
+  const portRows = ports ?? resolveNodePorts(row);
 
   return (
     <div className="flex flex-col gap-4" data-testid={`nodes-detail-body-${row.id}`}>
       <NodeDetailInfo row={row} />
+      {portRows && (
+        <NodePortsTable
+          nodeId={row.id}
+          ports={portRows}
+          busy={portsBusy}
+          error={portsError}
+          onRecheck={onRecheckPorts}
+        />
+      )}
 
       <div className="space-y-1.5">
         <label className="block text-xs font-medium" htmlFor={`nodes-detail-name-${row.id}`}>
@@ -297,6 +377,7 @@ export function NodeDetailDialog({
 }: NodeDetailDialogProps) {
   const { t } = useTranslation();
   const direct = useNodeDirectPlugin(row, open, directIo);
+  const ports = useNodePorts(row.id, resolveNodePorts(row));
   const { state, patch, plan, save, onAllowedChange } = useNodeDetailState(row, open, {
     io,
     rename,
@@ -322,6 +403,10 @@ export function NodeDetailDialog({
           allowed={state.allowed}
           onAllowedChange={onAllowedChange}
           errors={state.errors}
+          ports={ports.ports}
+          portsBusy={ports.busy}
+          portsError={ports.error}
+          onRecheckPorts={() => void ports.recheck()}
         />
 
         <NodeDirectBody

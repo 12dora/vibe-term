@@ -87,6 +87,10 @@ export const I18N_RESOURCES = {
         "mobile": "Mobile device (control only)",
         "computer": "Server or computer"
       },
+      "ports": {
+        "title": "Open ports",
+        "desc": "Allow these inbound ports in the firewall or cloud security group:"
+      },
       "mobile": {
         "intro": "A phone or tablet acts as a controller: it operates connected machines through the browser and does not run a terminal itself. Add VibeTerm to the home screen for a full-screen, app-like experience.",
         "platform": {
@@ -2519,6 +2523,16 @@ export const I18N_RESOURCES = {
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
         "failed": "Action failed: {{error}}"
       },
+      "ports": {
+        "blocked": "Unreachable ports: {{list}}",
+        "hint": "Allow them in the machine's firewall or security group",
+        "recheck": "Re-check",
+        "status": {
+          "open": "Open",
+          "blocked": "Blocked",
+          "unknown": "Unknown"
+        }
+      },
       "admit": {
         "blocked": "Admit this node before managing it.",
         "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
@@ -3589,6 +3603,7 @@ export const I18N_RESOURCES = {
           "stateOff": "Off",
           "externalIp": "External address {{ip}}",
           "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
+          "membersProbe": "Reachable from {{ok}}/{{total}} members",
           "failed": "TURN failed to start: {{message}}"
         }
       }
@@ -3656,6 +3671,21 @@ export const I18N_RESOURCES = {
         "SHARE_ORIGIN_INVALID": "Invalid share address.",
         "SHARE_ENDED": "Sharing has ended.",
         "SHARE_AUTH_REQUIRED": "Enable login protection before sharing."
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "Direct link",
+        "rtc-ice": "P2P (ICE)",
+        "turn-control": "TURN",
+        "turn-relay": "TURN relay",
+        "public-https": "Public entry",
+        "gateway-http": "Gateway"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "Inbound ports"
       }
     }
   }
@@ -3742,6 +3772,10 @@ export const I18N_RESOURCES = {
       "tabs": {
         "mobile": "移动设备（仅控制）",
         "computer": "服务器或电脑"
+      },
+      "ports": {
+        "title": "放行端口",
+        "desc": "在防火墙或云安全组放行以下入站端口："
       },
       "mobile": {
         "intro": "手机或平板只作为控制端：通过浏览器操作已接入的机器，不在本机运行终端。添加到主屏幕后可获得全屏、接近原生应用的体验。",
@@ -6175,6 +6209,16 @@ export const I18N_RESOURCES = {
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
         "failed": "操作失败：{{error}}"
       },
+      "ports": {
+        "blocked": "端口不可达：{{list}}",
+        "hint": "请在该机防火墙或安全组放行",
+        "recheck": "重新检测",
+        "status": {
+          "open": "可达",
+          "blocked": "不可达",
+          "unknown": "未知"
+        }
+      },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",
         "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
@@ -7239,6 +7283,7 @@ export const I18N_RESOURCES = {
           "stateOff": "已关闭",
           "externalIp": "外网地址 {{ip}}",
           "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
+          "membersProbe": "成员可达 {{ok}}/{{total}}",
           "failed": "TURN 未能启动：{{message}}"
         }
       }
@@ -7306,6 +7351,21 @@ export const I18N_RESOURCES = {
         "SHARE_ORIGIN_INVALID": "分享地址无效。",
         "SHARE_ENDED": "分享已结束。",
         "SHARE_AUTH_REQUIRED": "须先启用登录保护才能分享。"
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "节点直连",
+        "rtc-ice": "P2P 打洞",
+        "turn-control": "TURN",
+        "turn-relay": "TURN 中继",
+        "public-https": "公网入口",
+        "gateway-http": "网关"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "入站端口"
       }
     }
   }
@@ -7392,6 +7452,10 @@ export const I18N_RESOURCES = {
       "tabs": {
         "mobile": "モバイル端末（操作のみ）",
         "computer": "サーバーまたはパソコン"
+      },
+      "ports": {
+        "title": "ポートを開放",
+        "desc": "ファイアウォールまたはクラウドのセキュリティグループで、次の受信ポートを許可してください："
       },
       "mobile": {
         "intro": "スマートフォンやタブレットは操作端末として動作します。ブラウザーから接続済みのマシンを操作し、端末上でターミナルを実行することはありません。ホーム画面に追加すると、全画面のネイティブアプリに近い操作感になります。",
@@ -9825,6 +9889,16 @@ export const I18N_RESOURCES = {
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
         "failed": "操作に失敗しました：{{error}}"
       },
+      "ports": {
+        "blocked": "到達不能なポート：{{list}}",
+        "hint": "ファイアウォールまたはセキュリティグループで許可してください",
+        "recheck": "再チェック",
+        "status": {
+          "open": "到達可",
+          "blocked": "到達不能",
+          "unknown": "不明"
+        }
+      },
       "admit": {
         "blocked": "先に参加を承認してください。",
         "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
@@ -10889,6 +10963,7 @@ export const I18N_RESOURCES = {
           "stateOff": "無効",
           "externalIp": "外部アドレス {{ip}}",
           "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
+          "membersProbe": "メンバー到達 {{ok}}/{{total}}",
           "failed": "TURN を起動できません：{{message}}"
         }
       }
@@ -10956,6 +11031,21 @@ export const I18N_RESOURCES = {
         "SHARE_ORIGIN_INVALID": "共有アドレスが無効です。",
         "SHARE_ENDED": "共有は終了しました。",
         "SHARE_AUTH_REQUIRED": "共有する前にログイン保護を有効にしてください。"
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "ノード直接接続",
+        "rtc-ice": "P2P（ICE）",
+        "turn-control": "TURN",
+        "turn-relay": "TURN リレー",
+        "public-https": "公開エントリ",
+        "gateway-http": "ゲートウェイ"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "受信ポート"
       }
     }
   }

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ApiClient } from '../client';
 import { InvalidNodeIdError } from '../node-url';
 import { AuthApi, nodeAuthPath } from './auth-api';
-import { NoPasskeyForOriginError } from './types';
+import { type MeshNode, NoPasskeyForOriginError } from './types';
 
 const NODE_A = '0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a0a';
 
@@ -197,6 +197,32 @@ describe('AuthApi', () => {
       hubAck: false,
       hubError: 'uplink down',
     });
+  });
+
+  test('probeNodePorts POST 到 ports/probe 并原样带回 ports 数组', async () => {
+    const ports = [{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'open' }];
+    const { api, calls } = recorder([new Response(JSON.stringify({ ports }), { status: 200 })]);
+    expect(await api.probeNodePorts(NODE_A)).toEqual({ ports });
+    expect(calls[0]).toMatchObject({
+      url: `/api/mesh/nodes/${NODE_A}/ports/probe`,
+      init: { method: 'POST' },
+    });
+  });
+
+  test('pauseNode / resumeNode POST 到 entry 的 pause/resume 路由', async () => {
+    const node = { id: NODE_A, name: 'studio', paused: true } as MeshNode;
+    const { api, calls } = recorder([
+      new Response(JSON.stringify({ ok: true, node }), { status: 200 }),
+      new Response(JSON.stringify({ ok: true, node: { ...node, paused: false } }), { status: 200 }),
+    ]);
+    expect(await api.pauseNode(NODE_A)).toEqual({ ok: true, node });
+    expect(calls[0]).toMatchObject({
+      url: `/api/mesh/nodes/${NODE_A}/pause`,
+      init: { method: 'POST' },
+    });
+    const resumed = await api.resumeNode(NODE_A);
+    expect(resumed.node.paused).toBe(false);
+    expect(calls[1]?.url).toBe(`/api/mesh/nodes/${NODE_A}/resume`);
   });
 
   test('listNodes 解包 nodes 字段', async () => {

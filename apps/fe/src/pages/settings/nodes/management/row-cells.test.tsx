@@ -3,11 +3,12 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { resetMeshRelayStateForTest, setMeshRelayStateForTest } from '@/node/mesh-relay';
 import { installWindowStorage } from '@vibeterm/stores/test-utils';
+import type { MeshPortReach } from '../port-reach';
 
 installWindowStorage();
 
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { MetaKeyLagTag, PausedTag } = await import('./row-cells');
+const { MetaKeyLagTag, PausedTag, PortsWarning } = await import('./row-cells');
 
 const LAGGING = 'aa'.repeat(16);
 const FINE = 'bb'.repeat(16);
@@ -47,5 +48,34 @@ describe('MetaKeyLagTag', () => {
 describe('PausedTag', () => {
   test('渲染 nodes.status.paused', () => {
     expect(renderToStaticMarkup(<PausedTag />)).toContain('nodes.status.paused');
+  });
+});
+
+describe('PortsWarning', () => {
+  const blocked: MeshPortReach = {
+    purpose: 'peer-signaling',
+    proto: 'tcp',
+    port: 39001,
+    status: 'blocked',
+  };
+  const unknown: MeshPortReach = {
+    purpose: 'rtc-ice',
+    proto: 'udp',
+    range: { begin: 40000, end: 40099 },
+    status: 'unknown',
+  };
+
+  test('有 blocked 时给出清单与放行提示', () => {
+    const html = renderToStaticMarkup(<PortsWarning nodeId="aa" ports={[blocked, unknown]} />);
+    expect(html).toContain('nodes-ports-warning-aa');
+    expect(html).toContain('nodes.ports.blocked');
+    expect(html).toContain('nodes.ports.hint');
+  });
+
+  test('缺失或全 unknown 不渲染', () => {
+    expect(renderToStaticMarkup(<PortsWarning nodeId="aa" />)).toBe('');
+    expect(renderToStaticMarkup(<PortsWarning nodeId="aa" ports={null} />)).toBe('');
+    expect(renderToStaticMarkup(<PortsWarning nodeId="aa" ports={[unknown]} />)).toBe('');
+    expect(renderToStaticMarkup(<PortsWarning nodeId="aa" ports={[]} />)).toBe('');
   });
 });

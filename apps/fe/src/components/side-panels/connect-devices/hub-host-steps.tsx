@@ -4,10 +4,12 @@
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { TUNNEL_STATUS_QUERY_KEY, fetchSelfTunnelStatus } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
+import type { PortSpec } from '@vibeterm/shared/net';
 import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { GuideLink, GuideNote, GuideStep } from './guide-step';
 import { type EntryStatus, type HubStatus, entryStatus, hubStatus } from './host-status';
+import { PortsStep } from './ports-step';
 
 /** 一级选择占第 1 步，本机自建的步骤从 2 开始。 */
 export const HOST_STEP_OFFSET = 2;
@@ -165,18 +167,21 @@ function HostInviteStep({
 export function HostSteps({
   onSwitchToJoin,
   startIndex = HOST_STEP_OFFSET,
+  portPlan,
 }: {
   onSwitchToJoin: () => void;
   startIndex?: number;
+  portPlan?: PortSpec[] | null;
 }) {
   const { entry, hub } = useHostStatus();
   return (
     <>
       <HostEntryStep entry={entry} index={startIndex} />
       <HostHubStep entry={entry} hub={hub} index={startIndex + 1} />
+      <PortsStep index={startIndex + 2} fallbackRole="hub,node" portPlan={portPlan} />
       <HostInviteStep
         isHub={hub.role === 'self'}
-        index={startIndex + 2}
+        index={startIndex + 3}
         onSwitchToJoin={onSwitchToJoin}
       />
     </>

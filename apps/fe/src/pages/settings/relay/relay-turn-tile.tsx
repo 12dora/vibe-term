@@ -6,7 +6,13 @@
 import { Skeleton } from '@vibeterm/ui/skeleton';
 import { StatTile } from '@vibeterm/ui/stat-tile';
 import { useTranslation } from 'react-i18next';
-import { type RelayTurnView, relayTurnStatusOf, relayTurnView } from './relay-turn-model';
+import {
+  type RelayTurnMembersProbe,
+  type RelayTurnView,
+  membersProbeTone,
+  relayTurnStatusOf,
+  relayTurnView,
+} from './relay-turn-model';
 
 export interface RelayTurnTileProps {
   /** 契约 §D 的那一段；旧中继不下发时整块不出现。 */
@@ -60,6 +66,17 @@ export function RelayTurnDetails({ view }: { view: RelayTurnView }) {
           {t('relay.admin.turn.externalIp', { ip: view.externalIp })}
         </span>
       )}
+      {view.membersProbe && (
+        <span
+          className={membersProbeClass(view.membersProbe)}
+          data-testid="relay-turn-members-probe"
+        >
+          {t('relay.admin.turn.membersProbe', {
+            ok: view.membersProbe.ok,
+            total: view.membersProbe.total,
+          })}
+        </span>
+      )}
       {view.firewall && (
         <span data-testid="relay-turn-firewall">
           {t('relay.admin.turn.firewall', { port: view.firewall.port, range: view.firewall.range })}
@@ -72,4 +89,11 @@ export function RelayTurnDetails({ view }: { view: RelayTurnView }) {
       )}
     </div>
   );
+}
+
+function membersProbeClass(probe: RelayTurnMembersProbe): string {
+  const tone = membersProbeTone(probe);
+  if (tone === 'destructive') return 'text-destructive';
+  if (tone === 'warning') return 'text-amber-600 dark:text-amber-400';
+  return '';
 }

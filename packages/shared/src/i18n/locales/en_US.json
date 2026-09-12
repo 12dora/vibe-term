@@ -81,6 +81,10 @@
         "mobile": "Mobile device (control only)",
         "computer": "Server or computer"
       },
+      "ports": {
+        "title": "Open ports",
+        "desc": "Allow these inbound ports in the firewall or cloud security group:"
+      },
       "mobile": {
         "intro": "A phone or tablet acts as a controller: it operates connected machines through the browser and does not run a terminal itself. Add VibeTerm to the home screen for a full-screen, app-like experience.",
         "platform": {
@@ -2513,6 +2517,16 @@
         "hint": "Paused nodes are not connected and their devices are hidden. Resume at any time.",
         "failed": "Action failed: {{error}}"
       },
+      "ports": {
+        "blocked": "Unreachable ports: {{list}}",
+        "hint": "Allow them in the machine's firewall or security group",
+        "recheck": "Re-check",
+        "status": {
+          "open": "Open",
+          "blocked": "Blocked",
+          "unknown": "Unknown"
+        }
+      },
       "admit": {
         "blocked": "Admit this node before managing it.",
         "unavailable": "Hub did not send the material needed to admit this node. Refresh and try again.",
@@ -3583,6 +3597,7 @@
           "stateOff": "Off",
           "externalIp": "External address {{ip}}",
           "firewall": "Allow UDP {{port}} and UDP {{range}} in the cloud security group or firewall.",
+          "membersProbe": "Reachable from {{ok}}/{{total}} members",
           "failed": "TURN failed to start: {{message}}"
         }
       }
@@ -3650,6 +3665,21 @@
         "SHARE_ORIGIN_INVALID": "Invalid share address.",
         "SHARE_ENDED": "Sharing has ended.",
         "SHARE_AUTH_REQUIRED": "Enable login protection before sharing."
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "Direct link",
+        "rtc-ice": "P2P (ICE)",
+        "turn-control": "TURN",
+        "turn-relay": "TURN relay",
+        "public-https": "Public entry",
+        "gateway-http": "Gateway"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "Inbound ports"
       }
     }
   }

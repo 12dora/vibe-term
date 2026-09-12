@@ -261,6 +261,10 @@ describe('LocalMachineCard 的四段版式', () => {
     // 两个上级 tab 与「通用设置」标题都没有了
     expect(html).not.toContain('data-testid="local-uplink-tabs"');
     expect(html).not.toContain('nodes.machine.general');
+    expect(html).toContain('data-testid="local-machine-ports"');
+    expect(html).toContain('localMachine.ports.title');
+    expect(html).toContain('39001/tcp');
+    expect(html).toContain('40000-40099/udp');
   });
 
   test('mesh：卡头给角色徽标 + 状态徽标 + 操作菜单', () => {

@@ -57,6 +57,7 @@ describe('relayTurnStatusOf', () => {
       allocations: 0,
       error: null,
       relayPortRange: null,
+      membersProbe: null,
     });
   });
 });
@@ -73,6 +74,7 @@ describe('relayTurnView', () => {
       externalIp: '203.0.113.7',
       error: null,
       firewall: { port: 3478, range: '49160-49259' },
+      membersProbe: null,
     });
   });
 
@@ -107,6 +109,23 @@ describe('relayTurnView', () => {
     expect(view.error).toBe('EADDRINUSE');
   });
 
+  test('成员探测：部分失败警告，全失败危险，报错仍压过', () => {
+    expect(relayTurnView(status({ membersProbe: { ok: 1, total: 3, updatedAt: 1 } })).tone).toBe(
+      'warning'
+    );
+    expect(relayTurnView(status({ membersProbe: { ok: 0, total: 3, updatedAt: 1 } })).tone).toBe(
+      'destructive'
+    );
+    expect(
+      relayTurnView(
+        status({ error: 'EADDRINUSE', membersProbe: { ok: 0, total: 3, updatedAt: 1 } })
+      ).tone
+    ).toBe('destructive');
+    expect(relayTurnView(status({ membersProbe: { ok: 3, total: 3, updatedAt: 1 } })).tone).toBe(
+      'default'
+    );
+  });
+
   test('地址去掉查询串', () => {
     expect(turnEndpointText('turn:a:3478?transport=udp')).toBe('turn:a:3478');
     expect(turnEndpointText('turn:a:3478')).toBe('turn:a:3478');
@@ -138,5 +157,32 @@ describe('RelayTurnTile', () => {
     );
     expect(html).toContain('data-testid="relay-turn-error"');
     expect(html).toContain('relay.admin.turn.failed');
+  });
+
+  test('成员探测：部分失败警告，全失败危险，全可达不改色', () => {
+    const partial = renderToStaticMarkup(
+      <RelayTurnTile turn={status({ membersProbe: { ok: 2, total: 5, updatedAt: 1 } })} />
+    );
+    expect(partial).toContain('data-testid="relay-turn-members-probe"');
+    expect(partial).toContain('relay.admin.turn.membersProbe');
+    expect(partial).toContain('text-amber-600');
+
+    const none = renderToStaticMarkup(
+      <RelayTurnTile turn={status({ membersProbe: { ok: 0, total: 3, updatedAt: 1 } })} />
+    );
+    expect(none).toContain('text-destructive');
+
+    const all = renderToStaticMarkup(
+      <RelayTurnTile turn={status({ membersProbe: { ok: 3, total: 3, updatedAt: 1 } })} />
+    );
+    expect(all).toContain('data-testid="relay-turn-members-probe"');
+    expect(all).not.toContain('text-amber-600');
+    expect(all.split('text-destructive').length - 1).toBe(0);
+  });
+
+  test('不下发 membersProbe 时不出现该行，放行提示仍在', () => {
+    const html = renderToStaticMarkup(<RelayTurnTile turn={status()} />);
+    expect(html).not.toContain('data-testid="relay-turn-members-probe"');
+    expect(html).toContain('data-testid="relay-turn-firewall"');
   });
 });

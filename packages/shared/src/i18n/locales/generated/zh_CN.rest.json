@@ -5,6 +5,10 @@
         "mobile": "移动设备（仅控制）",
         "computer": "服务器或电脑"
       },
+      "ports": {
+        "title": "放行端口",
+        "desc": "在防火墙或云安全组放行以下入站端口："
+      },
       "mobile": {
         "intro": "手机或平板只作为控制端：通过浏览器操作已接入的机器，不在本机运行终端。添加到主屏幕后可获得全屏、接近原生应用的体验。",
         "platform": {
@@ -1750,6 +1754,16 @@
         "hint": "暂停后不再连接该节点，其设备不显示；可随时恢复。",
         "failed": "操作失败：{{error}}"
       },
+      "ports": {
+        "blocked": "端口不可达：{{list}}",
+        "hint": "请在该机防火墙或安全组放行",
+        "recheck": "重新检测",
+        "status": {
+          "open": "可达",
+          "blocked": "不可达",
+          "unknown": "未知"
+        }
+      },
       "admit": {
         "blocked": "须先批准加入，才能管理这台节点。",
         "unavailable": "Hub 未下发批准所需材料，请刷新后重试。",
@@ -2814,6 +2828,7 @@
           "stateOff": "已关闭",
           "externalIp": "外网地址 {{ip}}",
           "firewall": "需在云安全组或防火墙放行 UDP {{port}} 与 UDP {{range}}。",
+          "membersProbe": "成员可达 {{ok}}/{{total}}",
           "failed": "TURN 未能启动：{{message}}"
         }
       }
@@ -2881,6 +2896,21 @@
         "SHARE_ORIGIN_INVALID": "分享地址无效。",
         "SHARE_ENDED": "分享已结束。",
         "SHARE_AUTH_REQUIRED": "须先启用登录保护才能分享。"
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "节点直连",
+        "rtc-ice": "P2P 打洞",
+        "turn-control": "TURN",
+        "turn-relay": "TURN 中继",
+        "public-https": "公网入口",
+        "gateway-http": "网关"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "入站端口"
       }
     }
   }

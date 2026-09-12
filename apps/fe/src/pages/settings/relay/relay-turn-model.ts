@@ -8,11 +8,19 @@ import type { StatTileTone } from '@vibeterm/ui/stat-tile';
 
 export type RelayTurnSource = LocalRelayTurnStatus['source'];
 
+export interface RelayTurnMembersProbe {
+  ok: number;
+  total: number;
+  updatedAt: number;
+}
+
 /**
  * `GET /api/relay/status` 与本机状态里新增的那一段（契约 §D）；旧中继不下发。
- * 两处同形，类型跟着本机状态那份走。
+ * 两处同形，类型跟着本机状态那份走。`membersProbe` 是 WP-G 新增的可选字段。
  */
-export type RelayTurnStatus = LocalRelayTurnStatus;
+export type RelayTurnStatus = LocalRelayTurnStatus & {
+  membersProbe?: RelayTurnMembersProbe | null;
+};
 
 export interface RelayTurnFirewallHint {
   port: number;
@@ -33,6 +41,8 @@ export interface RelayTurnView {
   error: string | null;
   /** 只有内置 TURN 才需要放行端口：外部 TURN 的端口不归这台机器管。 */
   firewall: RelayTurnFirewallHint | null;
+  /** 成员侧 TURN 探测汇总；旧中继不下发。 */
+  membersProbe: RelayTurnMembersProbe | null;
 }
 
 const SOURCE_KEYS: Record<RelayTurnSource, string> = {
@@ -81,12 +91,39 @@ export function relayTurnStatusOf(value: unknown): RelayTurnStatus | null {
     allocations: countOf(raw.allocations),
     error: textOf(raw.error),
     relayPortRange: textOf(raw.relayPortRange),
+    membersProbe: membersProbeOf(raw.membersProbe),
   };
+}
+
+function nonNegInt(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  const n = Math.floor(value);
+  return n >= 0 ? n : null;
+}
+
+function membersProbeOf(value: unknown): RelayTurnMembersProbe | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as Record<string, unknown>;
+  const ok = nonNegInt(raw.ok);
+  const total = nonNegInt(raw.total);
+  if (ok === null || total === null) return null;
+  const updatedAt = nonNegInt(raw.updatedAt) ?? 0;
+  return { ok, total, updatedAt };
+}
+
+/** 全员可达不改色；部分失败警告；全失败危险。 */
+export function membersProbeTone(probe: RelayTurnMembersProbe): 'warning' | 'destructive' | null {
+  if (probe.total > 0 && probe.ok === 0) return 'destructive';
+  if (probe.ok < probe.total) return 'warning';
+  return null;
 }
 
 function toneOf(turn: RelayTurnStatus): StatTileTone {
   if (turn.error) return 'destructive';
+  const probeTone = turn.membersProbe ? membersProbeTone(turn.membersProbe) : null;
+  if (probeTone === 'destructive') return 'destructive';
   if (!turn.enabled || turn.source === 'off') return 'muted';
+  if (probeTone === 'warning') return 'warning';
   return turn.listening ? 'default' : 'warning';
 }
 
@@ -116,5 +153,6 @@ export function relayTurnView(turn: RelayTurnStatus): RelayTurnView {
     externalIp: turn.externalIp,
     error: turn.error,
     firewall: firewallOf(turn),
+    membersProbe: turn.membersProbe ?? null,
   };
 }

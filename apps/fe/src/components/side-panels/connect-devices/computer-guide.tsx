@@ -18,6 +18,7 @@ import { GuideStep } from './guide-step';
 import { GuideTabList } from './guide-tabs';
 import { HostSteps } from './hub-host-steps';
 import { InstallStep } from './install-step';
+import { PortsStep } from './ports-step';
 import { RelayHostSteps } from './relay-host-steps';
 import { SshSteps } from './ssh-steps';
 import { type ConnectMachine, useConnectMachine } from './use-connect-machine';
@@ -100,6 +101,7 @@ export function RelayPath({ machine }: { machine: ConnectMachine }) {
     <SideTabs path="relay" side={side} onSide={setChosen}>
       <TabsContent value="join" className="space-y-2">
         <InstallStep index={INSTALL_STEP_INDEX} />
+        <PortsStep index={INSTALL_STEP_INDEX + 1} fallbackRole="node" portPlan={machine.portPlan} />
         <JoinSteps variant="relay" machine={machine} />
       </TabsContent>
       <TabsContent value="host" className="space-y-2">
@@ -116,10 +118,11 @@ export function HubPath({ machine }: { machine: ConnectMachine }) {
     <SideTabs path="hub" side={side} onSide={setChosen}>
       <TabsContent value="join" className="space-y-2">
         <InstallStep index={INSTALL_STEP_INDEX} />
+        <PortsStep index={INSTALL_STEP_INDEX + 1} fallbackRole="node" portPlan={machine.portPlan} />
         <JoinSteps variant="hub" machine={machine} />
       </TabsContent>
       <TabsContent value="host" className="space-y-2">
-        <HostSteps onSwitchToJoin={() => setChosen('join')} />
+        <HostSteps onSwitchToJoin={() => setChosen('join')} portPlan={machine.portPlan} />
       </TabsContent>
     </SideTabs>
   );

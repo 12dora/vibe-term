@@ -19,6 +19,7 @@ const {
   DomainAccessConfirmBody,
   NodeDetailBody,
   NodeNotifySettingsLink,
+  NodePortsTable,
   domainAccessNote,
   domainAccessSwitchDisabled,
   nodeNotifySettingsPath,
@@ -514,6 +515,49 @@ describe('详情正文', () => {
     const html = body({ errors: ['nodes.detail.renameFailed'] });
     expect(html).toContain(`data-testid="nodes-detail-errors-${REMOTE.id}"`);
     expect(html).toContain('nodes.detail.renameFailed');
+  });
+
+  test('行上没有 ports 时不出现端口表', () => {
+    const html = body();
+    expect(html).not.toContain(`data-testid="nodes-detail-ports-${REMOTE.id}"`);
+  });
+
+  test('有 ports 时列出 purpose / 端口 / 状态，并给出重新检测', () => {
+    const html = body({
+      ports: [
+        { purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'blocked' },
+        {
+          purpose: 'rtc-ice',
+          proto: 'udp',
+          range: { begin: 40000, end: 40099 },
+          status: 'unknown',
+        },
+      ],
+      onRecheckPorts: () => undefined,
+    });
+    expect(html).toContain(`data-testid="nodes-detail-ports-${REMOTE.id}"`);
+    expect(html).toContain('data-testid="nodes-detail-port-peer-signaling"');
+    expect(html).toContain('39001/tcp');
+    expect(html).toContain('nodes.ports.status.blocked');
+    expect(html).toContain('40000-40099/udp');
+    expect(html).toContain('nodes.ports.status.unknown');
+    expect(html).toContain(`data-testid="nodes-ports-recheck-${REMOTE.id}"`);
+    expect(html).toContain('nodes.ports.recheck');
+  });
+});
+
+describe('NodePortsTable', () => {
+  test('busy 时重新检测按钮转圈并禁用', () => {
+    const html = renderToStaticMarkup(
+      <NodePortsTable
+        nodeId="n1"
+        ports={[{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'open' }]}
+        busy
+        onRecheck={() => undefined}
+      />
+    );
+    expect(html).toContain('disabled=""');
+    expect(html).toContain('animate-spin');
   });
 });
 

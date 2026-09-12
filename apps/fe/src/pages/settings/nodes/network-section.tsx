@@ -3,11 +3,14 @@
 
 import type { DomainAccessPolicy } from '@vibeterm/api-client';
 import type { LocalDirectAction, LocalDirectStatus } from '@vibeterm/api-client/local/types';
+import type { PortSpec } from '@vibeterm/shared/net';
 import { Button } from '@vibeterm/ui/button';
 import { Loader2, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { DirectSection } from './direct-section';
 import { type DomainAccessApi, DomainAccessRow } from './domain-access-row';
+import type { MeshPortReach } from './port-reach';
+import { PortsSection } from './ports-section';
 import type { RestartGateway, RestartState } from './restart/use-restart-now';
 
 const RESTART_TEXT_KEY: Partial<Record<RestartState, string>> = {
@@ -26,6 +29,8 @@ export interface NetworkSectionProps {
   domainAccess: DomainAccessPolicy | null;
   domainApi: DomainAccessApi;
   onRefresh: () => void;
+  portPlan?: PortSpec[];
+  portReach?: MeshPortReach[] | null;
 }
 
 export function NetworkSection({
@@ -39,9 +44,12 @@ export function NetworkSection({
   domainAccess,
   domainApi,
   onRefresh,
+  portPlan,
+  portReach,
 }: NetworkSectionProps) {
   return (
     <div className="flex flex-col gap-3">
+      {portPlan && <PortsSection plan={portPlan} reach={portReach} />}
       <DirectSection
         direct={direct}
         busy={busy}

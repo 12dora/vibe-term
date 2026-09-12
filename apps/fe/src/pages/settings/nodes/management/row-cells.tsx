@@ -4,6 +4,7 @@ import { getMeshRelayState, subscribeMeshRelay } from '@/node/mesh-relay';
 import { cn } from '@vibeterm/ui';
 import { useSyncExternalStore } from 'react';
 import { useTranslation } from 'react-i18next';
+import { type MeshPortReach, blockedPortReaches, formatPortReach } from '../port-reach';
 import type { NodeActionDeps } from './types';
 
 type Translate = (key: string, options?: Record<string, unknown>) => string;
@@ -70,6 +71,32 @@ export function MetaKeyLagTag({ nodeId }: { nodeId: string }) {
       data-testid={`nodes-meta-lag-${nodeId}`}
     >
       {t('relay.tenant.metaKey.lagging.rowTag')}
+    </span>
+  );
+}
+
+/**
+ * 名字下的端口警告：仅 `blocked` 才出。`ports` 缺失或全是 unknown / open 时不渲染，
+ * 避免旧网关把「没探测」显示成故障。
+ */
+export function PortsWarning({
+  nodeId,
+  ports,
+}: {
+  nodeId: string;
+  ports?: MeshPortReach[] | null;
+}) {
+  const { t } = useTranslation();
+  const blocked = blockedPortReaches(ports);
+  if (blocked.length === 0) return null;
+  const list = blocked.map(formatPortReach).join(', ');
+  return (
+    <span
+      className="block max-w-[16rem] whitespace-normal text-[10px] leading-snug text-amber-700 dark:text-amber-400"
+      data-testid={`nodes-ports-warning-${nodeId}`}
+    >
+      {t('nodes.ports.blocked', { list })}
+      <span className="mt-0.5 block text-muted-foreground">{t('nodes.ports.hint')}</span>
     </span>
   );
 }

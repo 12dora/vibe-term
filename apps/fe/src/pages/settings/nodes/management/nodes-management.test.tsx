@@ -654,6 +654,30 @@ describe('节点表的升级按钮（注入升级控制器）', () => {
     expect(self).not.toContain('data-testid="node-pause-toggle"');
   });
 
+  test('端口 blocked 时名字下给出警告；缺失或全 unknown 不警告', () => {
+    const blocked = Object.assign(nodeRow({ id: 'pb' }), {
+      ports: [
+        { purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'blocked' },
+        {
+          purpose: 'rtc-ice',
+          proto: 'udp',
+          range: { begin: 40000, end: 40099 },
+          status: 'unknown',
+        },
+      ],
+    });
+    const html = renderTable([blocked], '1.2.0');
+    expect(html).toContain('data-testid="nodes-ports-warning-pb"');
+    expect(html).toContain('nodes.ports.blocked');
+    expect(html).toContain('nodes.ports.hint');
+
+    const unknown = Object.assign(nodeRow({ id: 'pu' }), {
+      ports: [{ purpose: 'peer-signaling', proto: 'tcp', port: 39001, status: 'unknown' }],
+    });
+    expect(renderTable([unknown], '1.2.0')).not.toContain('nodes-ports-warning');
+    expect(renderTable([nodeRow({ id: 'pn' })], '1.2.0')).not.toContain('nodes-ports-warning');
+  });
+
   test('正在卸载的行：状态列改显「卸载中」，升级锁住，移除仍可点', () => {
     const html = renderTable(
       [nodeRow({ id: 'uu', version: '1.1.9' })],

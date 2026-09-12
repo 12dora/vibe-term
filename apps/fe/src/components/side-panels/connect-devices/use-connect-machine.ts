@@ -7,6 +7,7 @@
 
 import { useSharedAuthMode } from '@/node/mesh-nodes';
 import { useMeshRelay } from '@/node/mesh-relay';
+import { portPlanFromStatus } from '@/pages/settings/nodes/port-reach';
 import { LOCAL_STATUS_QUERY_KEY } from '@/pages/settings/status-queries';
 import { useQuery } from '@tanstack/react-query';
 import type { AuthModeResponse } from '@vibeterm/api-client/auth/index';
@@ -16,6 +17,7 @@ import {
   defaultLocalApi,
 } from '@vibeterm/api-client/local/local-api';
 import type { LocalStatusResponse } from '@vibeterm/api-client/local/types';
+import type { PortSpec } from '@vibeterm/shared/net';
 import type { ConnectStatus } from './connect-path';
 
 /** 指引专用的查询键：口径与设置页不同，不能共用同一份缓存。 */
@@ -53,6 +55,8 @@ export interface ConnectMachine extends ConnectStatus {
   relayPublicUrl: string | null;
   /** 本机作为中继时是否已设接入密码。 */
   relayHasPassword: boolean;
+  /** 本机 live 端口计划；旧节点不下发或缺省时为 null，步骤退回角色默认。 */
+  portPlan?: PortSpec[] | null;
 }
 
 export function useConnectMachine(api: LocalApi = defaultLocalApi): ConnectMachine {
@@ -72,5 +76,6 @@ export function useConnectMachine(api: LocalApi = defaultLocalApi): ConnectMachi
     hubUrl: mode?.mode === 'mesh' && !relay.relayMode ? (mode.hubPublicUrl ?? null) : null,
     relayPublicUrl: status?.relay?.publicUrl ?? null,
     relayHasPassword: status?.relay?.hasPassword ?? false,
+    portPlan: portPlanFromStatus(status) ?? null,
   };
 }

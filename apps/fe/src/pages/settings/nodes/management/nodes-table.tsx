@@ -24,11 +24,12 @@ import {
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { WideTableScroll, stickyActionColumn } from '../../components/wide-table';
+import { resolveNodePorts } from '../port-reach';
 import { hubDetailText, hubModeLabel } from '../uplink/hub-strip';
 import { NodeDetailDialog } from './node-detail-dialog';
 import { PendingNodeRow } from './pending-node-row';
 import { RevokeDialog } from './revoke-dialog';
-import { MetaKeyLagTag, PausedTag, Tag, Td, Th, rowBlockedHint } from './row-cells';
+import { MetaKeyLagTag, PausedTag, PortsWarning, Tag, Td, Th, rowBlockedHint } from './row-cells';
 import type { NodeActionDeps, NodeSelection, NodeUninstallController } from './types';
 import { upgradeBlockReason } from './upgrade-batch';
 import type { HubRoleSwitchController } from './use-hub-role-switch';
@@ -114,6 +115,38 @@ export function NodesTable({ rows, selection, uninstall, roleSwitch, ...deps }: 
   );
 }
 
+function NameCell({
+  row,
+  hubDetails,
+  roleSwitch,
+  rowBusy,
+}: {
+  row: NodeRow;
+  hubDetails: NodeActionDeps['hubDetails'];
+  roleSwitch: HubRoleSwitchController;
+  rowBusy: boolean;
+}) {
+  const { t } = useTranslation();
+  return (
+    <Td className="whitespace-normal">
+      <div className="flex min-w-0 flex-col gap-0.5">
+        <span className="flex items-center gap-1.5 whitespace-nowrap">
+          <span className="truncate font-medium">{row.name}</span>
+          {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
+          <MetaKeyLagTag nodeId={row.id} />
+          {row.isHub && (
+            <>
+              <HubTag row={row} hubDetails={hubDetails} />
+              <HubRoleSwitchButton row={row} roleSwitch={roleSwitch} rowBusy={rowBusy} />
+            </>
+          )}
+        </span>
+        <PortsWarning nodeId={row.id} ports={resolveNodePorts(row)} />
+      </div>
+    </Td>
+  );
+}
+
 function deriveNodeRow(row: NodeRow, t: (key: string) => string) {
   return {
     statusClass: row.online ? 'text-emerald-500' : 'text-muted-foreground',
@@ -156,23 +189,12 @@ function NodeRowView({
           data-testid={`nodes-select-${row.id}`}
         />
       </td>
-      <Td>
-        <span className="flex items-center gap-1.5">
-          <span className="truncate font-medium">{row.name}</span>
-          {row.isSelf && <Tag>{t('nodes.self')}</Tag>}
-          <MetaKeyLagTag nodeId={row.id} />
-          {row.isHub && (
-            <>
-              <HubTag row={row} hubDetails={deps.hubDetails} />
-              <HubRoleSwitchButton
-                row={row}
-                roleSwitch={roleSwitch}
-                rowBusy={uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
-              />
-            </>
-          )}
-        </span>
-      </Td>
+      <NameCell
+        row={row}
+        hubDetails={deps.hubDetails}
+        roleSwitch={roleSwitch}
+        rowBusy={uninstalling || isUpgradeBusy(deps.upgrade.entryOf(row.id).phase)}
+      />
       <Td>
         <StatusCell
           row={row}

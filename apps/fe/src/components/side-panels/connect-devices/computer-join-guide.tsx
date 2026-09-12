@@ -14,8 +14,8 @@ import type { ConnectMachine } from './use-connect-machine';
 
 const PREFIX = 'connectDevices.computer.join';
 
-/** 一级选择固定占第 1 步，安装占第 2 步，加入步骤从 3 开始。 */
-export const JOIN_STEP_OFFSET = 3;
+/** 一级选择占第 1 步，安装占第 2 步，放行端口占第 3 步，加入步骤从 4 开始。 */
+export const JOIN_STEP_OFFSET = 4;
 
 export type JoinVariant = 'relay' | 'hub';
 

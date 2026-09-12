@@ -81,6 +81,10 @@
         "mobile": "モバイル端末（操作のみ）",
         "computer": "サーバーまたはパソコン"
       },
+      "ports": {
+        "title": "ポートを開放",
+        "desc": "ファイアウォールまたはクラウドのセキュリティグループで、次の受信ポートを許可してください："
+      },
       "mobile": {
         "intro": "スマートフォンやタブレットは操作端末として動作します。ブラウザーから接続済みのマシンを操作し、端末上でターミナルを実行することはありません。ホーム画面に追加すると、全画面のネイティブアプリに近い操作感になります。",
         "platform": {
@@ -2513,6 +2517,16 @@
         "hint": "一時停止中は接続せず、デバイスも表示しません。いつでも再開できます。",
         "failed": "操作に失敗しました：{{error}}"
       },
+      "ports": {
+        "blocked": "到達不能なポート：{{list}}",
+        "hint": "ファイアウォールまたはセキュリティグループで許可してください",
+        "recheck": "再チェック",
+        "status": {
+          "open": "到達可",
+          "blocked": "到達不能",
+          "unknown": "不明"
+        }
+      },
       "admit": {
         "blocked": "先に参加を承認してください。",
         "unavailable": "承認に必要な情報が Hub から届いていません。更新してからもう一度お試しください。",
@@ -3577,6 +3591,7 @@
           "stateOff": "無効",
           "externalIp": "外部アドレス {{ip}}",
           "firewall": "クラウドのセキュリティグループまたはファイアウォールで UDP {{port}} と UDP {{range}} を許可してください。",
+          "membersProbe": "メンバー到達 {{ok}}/{{total}}",
           "failed": "TURN を起動できません：{{message}}"
         }
       }
@@ -3644,6 +3659,21 @@
         "SHARE_ORIGIN_INVALID": "共有アドレスが無効です。",
         "SHARE_ENDED": "共有は終了しました。",
         "SHARE_AUTH_REQUIRED": "共有する前にログイン保護を有効にしてください。"
+      }
+    },
+    "ports": {
+      "purpose": {
+        "peer-signaling": "ノード直接接続",
+        "rtc-ice": "P2P（ICE）",
+        "turn-control": "TURN",
+        "turn-relay": "TURN リレー",
+        "public-https": "公開エントリ",
+        "gateway-http": "ゲートウェイ"
+      }
+    },
+    "localMachine": {
+      "ports": {
+        "title": "受信ポート"
       }
     }
   }

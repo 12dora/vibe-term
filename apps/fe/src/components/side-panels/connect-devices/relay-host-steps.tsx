@@ -4,12 +4,14 @@
 // 第三步不能省：租户编号是本机接入这条中继之后才有的，没有它，新机器拿到的 relay join 命令
 // 只能是带占位符的半成品。
 
+import { asPortRole } from '@/pages/settings/nodes/port-reach';
 import { Button } from '@vibeterm/ui/button';
 import { useTranslation } from 'react-i18next';
 import { CommandBlock } from './command-block';
 import { isRelayRole } from './connect-path';
 import { GuideLink, GuideNote, GuideStep } from './guide-step';
 import { relayEnrollCommand } from './join-command-preview';
+import { PortsStep } from './ports-step';
 import type { ConnectMachine } from './use-connect-machine';
 
 const PREFIX = 'connectDevices.computer.relayHost';
@@ -175,11 +177,16 @@ export function RelayHostSteps({
   return (
     <>
       <SetupStep machine={machine} index={startIndex} />
-      <PasswordStep machine={machine} index={startIndex + 1} />
-      <EnrollStep machine={machine} index={startIndex + 2} />
+      <PortsStep
+        index={startIndex + 1}
+        fallbackRole={asPortRole(machine.role, 'relay')}
+        portPlan={machine.portPlan}
+      />
+      <PasswordStep machine={machine} index={startIndex + 2} />
+      <EnrollStep machine={machine} index={startIndex + 3} />
       <InviteStep
         ready={relayHostEnrolled(machine)}
-        index={startIndex + 3}
+        index={startIndex + 4}
         onSwitchToJoin={onSwitchToJoin}
       />
     </>

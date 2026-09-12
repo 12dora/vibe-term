@@ -270,6 +270,7 @@ describe('ComputerGuide 的路径选择', () => {
     for (const step of ['setup', 'password', 'enroll', 'invite']) {
       expect(html).toContain(`data-testid="connect-step-relay-${step}"`);
     }
+    expect(html).toContain('data-testid="connect-step-ports"');
     expect(html).not.toContain('data-testid="connect-step-install"');
     expect(html).not.toContain('data-testid="connect-step-join-uplink"');
     // 未选中的路径不进 DOM。
@@ -286,7 +287,8 @@ describe('ComputerGuide 的路径选择', () => {
     expect(html).toContain(INSTALL_COMMAND);
     expect(html).toContain('export PATH=');
     expect(stepIndex(html, 'connect-step-install')).toBe('2');
-    expect(stepIndex(html, 'connect-step-join-password')).toBe('4');
+    expect(stepIndex(html, 'connect-step-ports')).toBe('3');
+    expect(stepIndex(html, 'connect-step-join-password')).toBe('5');
     expect(html).toContain('connectDevices.computer.join.uplink.hubUrl');
     expect(html).toContain(HUB_URL);
     expect(html).toContain('data-testid="connect-join-token-advanced"');
@@ -320,10 +322,11 @@ describe('本机自建中继的三步', () => {
     // 还不是中继：不给中继管理的死链。
     expect(html).not.toContain('data-testid="connect-relay-password-link"');
     expect(html).not.toContain('data-step-state="done"');
-    expect(html.split('data-step-state="todo"').length - 1).toBe(4);
+    expect(html.split('data-step-state="todo"').length - 1).toBe(5);
     expect(stepIndex(html, 'connect-step-relay-setup')).toBe('2');
-    expect(stepIndex(html, 'connect-step-relay-enroll')).toBe('4');
-    expect(stepIndex(html, 'connect-step-relay-invite')).toBe('5');
+    expect(stepIndex(html, 'connect-step-ports')).toBe('3');
+    expect(stepIndex(html, 'connect-step-relay-enroll')).toBe('5');
+    expect(stepIndex(html, 'connect-step-relay-invite')).toBe('6');
   });
 
   test('本机已是中继但没设接入密码：第一步打勾，第二步给中继管理入口', () => {
@@ -405,6 +408,7 @@ describe('本机设为 Hub 的三步', () => {
     for (const step of ['entry', 'hub', 'invite']) {
       expect(html).toContain(`data-testid="connect-step-host-${step}"`);
     }
+    expect(html).toContain('data-testid="connect-step-ports"');
     expect(html).toContain('data-testid="connect-host-hub-warning"');
     expect(html).toContain('connectDevices.computer.host.hub.warning');
     expect(html).toContain('connectDevices.computer.host.entry.description');
@@ -412,10 +416,11 @@ describe('本机设为 Hub 的三步', () => {
     expect(html).toContain('href="/settings?tab=remoteAccess"');
     expect(html).toContain('href="/settings?tab=nodes"');
     // 隧道状态与 auth mode 都没到：三步一律停在待办，不闪任何「已完成」。
-    expect(html.split('data-step-state="todo"').length - 1).toBe(3);
+    expect(html.split('data-step-state="todo"').length - 1).toBe(4);
     expect(html).not.toContain('data-step-state="done"');
     expect(html).not.toContain('data-testid="connect-host-goto-join"');
     expect(stepIndex(html, 'connect-step-host-entry')).toBe('2');
+    expect(stepIndex(html, 'connect-step-ports')).toBe('4');
   });
 
   test('本机已是 Hub：入口与 Hub 两步打勾，给出公开地址并可直接去加入', () => {
@@ -448,6 +453,44 @@ describe('本机设为 Hub 的三步', () => {
     expect(html).not.toContain('data-testid="connect-host-entry-status"');
     expect(html).not.toContain('connectDevices.computer.host.entry.status.hubUrl');
     expect(html).not.toContain('data-step-state="done"');
+  });
+});
+
+describe('放行端口步骤', () => {
+  test('本机自建中继：设为中继之后列出 TURN 与公网入口默认口', () => {
+    const html = render(<RelayHostSteps machine={machine()} onSwitchToJoin={() => undefined} />);
+    expect(html).toContain('data-testid="connect-step-ports"');
+    expect(html).toContain('connectDevices.ports.title');
+    expect(html).toContain('connectDevices.ports.desc');
+    expect(html).toContain('data-testid="connect-port-public-https"');
+    expect(html).toContain('443/tcp');
+    expect(html).toContain('data-testid="connect-port-turn-control"');
+    expect(html).toContain('3478/udp');
+    expect(html).toContain('data-testid="connect-port-turn-relay"');
+    expect(html).toContain('49160-49259/udp');
+    expect(html).toContain('ports.purpose.turn-control');
+  });
+
+  test('本机设为 Hub：设为 Hub 之后列出公网入口、节点直连与 P2P 段', () => {
+    const html = render(<HostSteps onSwitchToJoin={() => undefined} />);
+    expect(stepIndex(html, 'connect-step-ports')).toBe('4');
+    expect(html).toContain('data-testid="connect-port-public-https"');
+    expect(html).toContain('data-testid="connect-port-peer-signaling"');
+    expect(html).toContain('39001/tcp');
+    expect(html).toContain('data-testid="connect-port-rtc-ice"');
+    expect(html).toContain('40000-40099/udp');
+    expect(html).not.toContain('data-testid="connect-port-turn-control"');
+  });
+
+  test('加入路径：安装之后列出节点直连与 P2P 段，不含 TURN', () => {
+    setMeshNodesStateForTest({ mode: MESH_MODE, modeLoaded: true, entryNodeId: ENTRY });
+    const html = render(<ComputerGuide />);
+    expect(html).toContain('data-testid="connect-step-install"');
+    expect(stepIndex(html, 'connect-step-ports')).toBe('3');
+    expect(html).toContain('39001/tcp');
+    expect(html).toContain('40000-40099/udp');
+    expect(html).not.toContain('data-testid="connect-port-turn-control"');
+    expect(html).not.toContain('data-testid="connect-port-public-https"');
   });
 });
 

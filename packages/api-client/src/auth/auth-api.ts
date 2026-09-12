@@ -377,6 +377,45 @@ export class AuthApi {
       return { ok: true };
     }
   }
+
+  /**
+   * `POST /api/mesh/nodes/:id/ports/probe`（需会话）。
+   * 形状由网关定义（`MeshPortReach[]`）；此处不强绑 types.ts——WP-G 尚未落地时 FE 自行解析。
+   */
+  async probeNodePorts(nodeId: string): Promise<{ ports: unknown[] }> {
+    const res = await this.client.fetch(
+      `/api/mesh/nodes/${encodeURIComponent(nodeId)}/ports/probe`,
+      { method: 'POST' }
+    );
+    if (!res.ok) {
+      const envelope = await readErrorEnvelope(res, 'Failed to probe node ports');
+      throw requestError(envelope.code, res.status, envelope.message);
+    }
+    const payload = (await res.json()) as { ports?: unknown };
+    return { ports: Array.isArray(payload.ports) ? payload.ports : [] };
+  }
+
+  async pauseNode(nodeId: string): Promise<{ ok: true; node: MeshNode }> {
+    return this.postNodePauseResume(nodeId, 'pause');
+  }
+
+  async resumeNode(nodeId: string): Promise<{ ok: true; node: MeshNode }> {
+    return this.postNodePauseResume(nodeId, 'resume');
+  }
+
+  private async postNodePauseResume(
+    nodeId: string,
+    action: 'pause' | 'resume'
+  ): Promise<{ ok: true; node: MeshNode }> {
+    const res = await this.client.fetch(`/api/mesh/nodes/${encodeURIComponent(nodeId)}/${action}`, {
+      method: 'POST',
+    });
+    if (!res.ok) {
+      const envelope = await readErrorEnvelope(res, `Failed to ${action} node`);
+      throw requestError(envelope.code, res.status, envelope.message);
+    }
+    return (await res.json()) as { ok: true; node: MeshNode };
+  }
 }
 
 export const defaultAuthApi = new AuthApi();
