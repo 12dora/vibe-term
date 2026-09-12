@@ -8,11 +8,14 @@ import {
 } from './stun-probe';
 import { resetStunResolverForTest } from './stun-resolver';
 import {
+  TURN_PROBE_CONCURRENCY,
   TURN_PROBE_INTERVAL_MS,
   TURN_PROBE_MIN_INTERVAL_MS,
   configuredTurnUrls,
+  flattenTurnConfigs,
   parseTurnProbeTarget,
   probeTurnServer,
+  probeTurnServers,
   resetTurnProbeForTest,
   setTurnProbeLoopForTest,
   startMeshTurnProbe,
@@ -137,6 +140,15 @@ describe('turnUrlOf / parseTurnProbeTarget', () => {
     expect(turnUrlOf(null)).toBeNull();
   });
 
+  test('turnUrlOf still returns only the first URL of an array', () => {
+    expect(
+      turnUrlOf([
+        { url: 'turn:a.example:3478', username: 'u', credential: 'p' },
+        { url: 'turn:b.example:3478', username: 'u', credential: 'p' },
+      ])
+    ).toBe('turn:a.example:3478');
+  });
+
   test('parses UDP turn: and rejects turns / tcp', () => {
     expect(parseTurnProbeTarget('turn:relay.example:3478')).toEqual({
       hostname: 'relay.example',
@@ -154,6 +166,48 @@ describe('turnUrlOf / parseTurnProbeTarget', () => {
     expect(parseTurnProbeTarget('turn:relay.example:3478?transport=tcp')).toBeNull();
     expect(parseTurnProbeTarget('stun:stun.example:3478')).toBeNull();
     expect(parseTurnProbeTarget('not-a-url')).toBeNull();
+  });
+});
+
+describe('configuredTurnUrls / flattenTurnConfigs', () => {
+  test('flattens object, array, string; dedupes; keeps order', () => {
+    expect(
+      configuredTurnUrls({ url: 'turn:a.example:3478', username: 'u', credential: 'p' })
+    ).toEqual(['turn:a.example:3478']);
+    expect(
+      configuredTurnUrls([
+        { url: 'turn:a.example:3478', username: 'ua', credential: 'pa' },
+        { url: 'turn:b.example:3478', username: 'ub', credential: 'pb' },
+        { url: 'turn:a.example:3478', username: 'x', credential: 'y' },
+      ])
+    ).toEqual(['turn:a.example:3478', 'turn:b.example:3478']);
+    expect(configuredTurnUrls('turn:c.example:3478')).toEqual(['turn:c.example:3478']);
+    expect(
+      configuredTurnUrls({
+        urls: ['turn:d.example:3478', 'turn:e.example:3478', 'turn:d.example:3478'],
+        username: 'u',
+        credential: 'p',
+      })
+    ).toEqual(['turn:d.example:3478', 'turn:e.example:3478']);
+    expect(configuredTurnUrls(null)).toEqual([]);
+  });
+
+  test('keeps credentials when flattening', () => {
+    expect(
+      flattenTurnConfigs([
+        { url: 'turn:a.example:3478', username: 'ua', credential: 'pa' },
+        {
+          hostname: '203.0.113.9',
+          port: 40250,
+          username: 'ub',
+          password: 'pb',
+          relayType: 'TurnUdp',
+        },
+      ])
+    ).toEqual([
+      { url: 'turn:a.example:3478', username: 'ua', credential: 'pa' },
+      { url: 'turn:203.0.113.9:40250', username: 'ub', credential: 'pb' },
+    ]);
   });
 });
 
@@ -208,6 +262,40 @@ describe('probeTurnServer', () => {
     });
     expect(sock.closed).toBe(true);
   });
+
+  test(`probes every URL with concurrency ${TURN_PROBE_CONCURRENCY}`, async () => {
+    let inflight = 0;
+    let maxInflight = 0;
+    const results = await probeTurnServers(
+      ['turn:a.example:3478', 'turn:b.example:3478', 'turn:c.example:3478'],
+      {
+        lookup: async () => ['203.0.113.1'],
+        createSocket: () => {
+          inflight += 1;
+          maxInflight = Math.max(maxInflight, inflight);
+          const sock = new FakeSocket();
+          const origClose = sock.close.bind(sock);
+          sock.close = () => {
+            inflight -= 1;
+            origClose();
+          };
+          queueMicrotask(() => {
+            const sent = sock.sent[0];
+            if (!sent) return;
+            sock.emitMessage(
+              encodeSuccess(sent.msg.subarray(8, 20), xorMappedIpv4('198.51.100.7', 9))
+            );
+          });
+          return sock;
+        },
+        timeoutMs: 200,
+      }
+    );
+    expect(results).toHaveLength(3);
+    expect(results.every((row) => row.ok)).toBe(true);
+    expect(maxInflight).toBeLessThanOrEqual(TURN_PROBE_CONCURRENCY);
+    expect(maxInflight).toBe(TURN_PROBE_CONCURRENCY);
+  });
 });
 
 describe('mesh TURN probe loop', () => {
@@ -247,7 +335,7 @@ describe('mesh TURN probe loop', () => {
       error: 'timeout',
       probedAt: 50_000,
     });
-    expect(configuredTurnUrls(rtc)).toEqual(['turn:relay.example:3478']);
+    expect(configuredTurnUrls(ice.turnConfigured)).toEqual(['turn:relay.example:3478']);
 
     ice.turnConfigured = { url: 'turn:other.example:3478', username: 'u', credential: 'p' };
     syncTurnProbe(rtc);
@@ -377,5 +465,39 @@ describe('mesh TURN probe loop', () => {
     );
     await flush();
     expect(turnProbeSnapshot()).toEqual([]);
+  });
+
+  test('probes every configured URL and keeps one latest record per URL', async () => {
+    const calls: string[][] = [];
+    loopOpts(async (urls) => {
+      calls.push([...urls]);
+      return urls.map((url, i) => ({ url, ok: true, rttMs: i + 1 }));
+    });
+    const ice = {
+      turn: [
+        { url: 'turn:a.example:3478', username: 'u', credential: 'p' },
+        { url: 'turn:b.example:3478', username: 'u', credential: 'p' },
+        { url: 'turn:c.example:3478', username: 'u', credential: 'p' },
+      ] as unknown,
+    };
+    const rtc = { currentIceConfig: () => ice };
+    startMeshTurnProbe(rtc, { interval: () => ({ clear() {} }) });
+    await flush();
+    expect(calls).toEqual([['turn:a.example:3478', 'turn:b.example:3478', 'turn:c.example:3478']]);
+    expect(turnProbeSnapshot().map((row) => row.url)).toEqual([
+      'turn:a.example:3478',
+      'turn:b.example:3478',
+      'turn:c.example:3478',
+    ]);
+
+    ice.turn = [{ url: 'turn:a.example:3478', username: 'u', credential: 'p' }];
+    syncTurnProbe(rtc);
+    await flush();
+    expect(calls[1]).toEqual(['turn:a.example:3478']);
+    const a = turnProbeSnapshot().find((row) => row.url === 'turn:a.example:3478');
+    const b = turnProbeSnapshot().find((row) => row.url === 'turn:b.example:3478');
+    expect(a?.ok).toBe(true);
+    expect(b?.url).toBe('turn:b.example:3478');
+    expect(turnProbeSnapshot().filter((row) => row.url === 'turn:a.example:3478')).toHaveLength(1);
   });
 });

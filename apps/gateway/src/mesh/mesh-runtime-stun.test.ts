@@ -59,12 +59,16 @@ describe('mesh-runtime STUN resolution', () => {
       turnUsername: 'u',
       turnCredential: 'p',
     };
-    expect(resolveMeshRtcConfig(local, null).turn).toEqual({
-      url: 'turn:local:3478',
-      username: 'u',
-      credential: 'p',
-    });
-    expect(resolveMeshRtcConfig(local, { stun: [], turn: null }).turn).toBeNull();
+    expect(resolveMeshRtcConfig(local, null).turnConfigured).toEqual([
+      {
+        url: 'turn:local:3478',
+        username: 'u',
+        credential: 'p',
+      },
+    ]);
+    expect(resolveMeshRtcConfig(local, null).turn).toEqual([]);
+    expect(resolveMeshRtcConfig(local, { stun: [], turn: null }).turn).toEqual([]);
+    expect(resolveMeshRtcConfig(local, { stun: [], turn: null }).turnConfigured).toEqual([]);
   });
 
   test('hub custom ⇒ hub list', () => {

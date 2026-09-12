@@ -29,6 +29,7 @@ export type BuiltRtcIceConfig = RtcIceConfig & {
 
 const DEFAULT_TURN_PORT = 3478;
 const DEFAULT_TURNS_PORT = 5349;
+export const MAX_TURN_ICE_ENTRIES = 2;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -167,10 +168,32 @@ function concreteBindAddress(hosts: readonly string[]): string | undefined {
 
 export type IceConfigBuildInput = IceServerConfig & { turnProbeOk?: boolean };
 
+function isTurnServer(server: string | IceServer): boolean {
+  return typeof server === 'string' ? /^turns?:/i.test(server.trim()) : Boolean(server.relayType);
+}
+
 export function hasTurnServer(servers: ReadonlyArray<string | IceServer>): boolean {
-  return servers.some((server) =>
-    typeof server === 'string' ? /^turns?:/i.test(server.trim()) : Boolean(server.relayType)
-  );
+  return servers.some(isTurnServer);
+}
+
+function stripTurnServers(servers: ReadonlyArray<string | IceServer>): Array<string | IceServer> {
+  return servers.filter((server) => !isTurnServer(server));
+}
+
+function capTurnServers(
+  servers: ReadonlyArray<string | IceServer>,
+  max = MAX_TURN_ICE_ENTRIES
+): Array<string | IceServer> {
+  const out: Array<string | IceServer> = [];
+  let turns = 0;
+  for (const server of servers) {
+    if (isTurnServer(server)) {
+      if (turns >= max) continue;
+      turns += 1;
+    }
+    out.push(server);
+  }
+  return out;
 }
 
 export function turnProbeOkOf(cfg: IceConfigBuildInput): boolean {
@@ -186,14 +209,15 @@ export function buildRtcIceConfig(
 ): BuiltRtcIceConfig {
   const bindAddress = concreteBindAddress(runtime.peerBindHost);
   const portRange = runtime.rtcPortRange;
-  const iceServers = collectIceServers(cfg);
-  const turnIncluded = hasTurnServer(iceServers);
   const turnProbeOk = turnProbeOkOf(cfg);
+  let iceServers = capTurnServers(collectIceServers(cfg));
+  // 未探测成功绝不把 TURN 交给 ICE：mux 开着时 libjuice gathering 会卡住。
+  if (!turnProbeOk && hasTurnServer(iceServers)) iceServers = stripTurnServers(iceServers);
+  const turnIncluded = hasTurnServer(iceServers);
   return {
     iceServers,
     enableIceTcp: true,
-    // libjuice mux 不支持 TURN。仅当 TURN 已纳入且可达探测成功时关 mux；
-    // 未探测或探测失败保持 mux，避免不可达 TURN 拖死 gathering / 丢掉 srflx。
+    // libjuice mux 不支持 TURN。仅当 TURN 已纳入且可达探测成功时关 mux。
     enableIceUdpMux: !(turnIncluded && turnProbeOk),
     mtu: 1200,
     ...(bindAddress ? { bindAddress } : {}),

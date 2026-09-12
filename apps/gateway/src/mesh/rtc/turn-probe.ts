@@ -1,3 +1,4 @@
+import type { RelayTurnConfig } from '@vibeterm/shared/relay';
 import { logAt } from '../../log/level';
 import { stamp } from '../mesh-log';
 import { parseTurnUri } from './ice';
@@ -16,6 +17,7 @@ import { formatHostForIceUrl } from './stun-resolver';
 
 export const TURN_PROBE_INTERVAL_MS = STUN_PROBE_INTERVAL_MS;
 export const TURN_PROBE_MIN_INTERVAL_MS = STUN_PROBE_MIN_INTERVAL_MS;
+export const TURN_PROBE_CONCURRENCY = 2;
 
 export type TurnProbeResult = StunProbeResult;
 export type TurnProbeRecord = TurnProbeResult & { probedAt: number };
@@ -57,12 +59,28 @@ export function setTurnProbeSnapshotForTest(rows: readonly TurnProbeRecord[]): v
   lastResults = rows.map((row) => ({ ...row }));
 }
 
-/** 从下发/本地 TURN 配置取出要探测的 URL（只取第一条）。 */
+/** 从下发/本地 TURN 配置取出要探测的 URL（只取第一条，兼容旧调用）。 */
 export function turnUrlOf(turn: unknown): string | null {
   if (typeof turn === 'string') return nonempty(turn);
   if (Array.isArray(turn)) return firstTurnUrl(turn);
   if (typeof turn !== 'object' || turn === null) return null;
   return turnUrlFromRecord(turn as Record<string, unknown>);
+}
+
+/** 展平 object / array / string，按出现顺序去重。 */
+export function flattenTurnConfigs(turn: unknown): RelayTurnConfig[] {
+  const out: RelayTurnConfig[] = [];
+  const seen = new Set<string>();
+  walkTurnConfigs(turn, (hit) => {
+    if (seen.has(hit.url)) return;
+    seen.add(hit.url);
+    out.push(hit);
+  });
+  return out;
+}
+
+export function configuredTurnUrls(turn: unknown): string[] {
+  return flattenTurnConfigs(turn).map((row) => row.url);
 }
 
 export function parseTurnProbeTarget(url: string): StunTarget | null {
@@ -90,11 +108,21 @@ export async function probeTurnServer(
   return { ...result, url };
 }
 
-export function configuredTurnUrls(rtc: TurnProbeRtc): string[] {
+export async function probeTurnServers(
+  urls: readonly string[],
+  deps: StunProbeDeps = {}
+): Promise<TurnProbeResult[]> {
+  const out: TurnProbeResult[] = [];
+  for (let i = 0; i < urls.length; i += TURN_PROBE_CONCURRENCY) {
+    const chunk = urls.slice(i, i + TURN_PROBE_CONCURRENCY);
+    out.push(...(await Promise.all(chunk.map((url) => probeTurnServer(url, deps)))));
+  }
+  return out;
+}
+
+function rtcTurnConfig(rtc: TurnProbeRtc): unknown {
   const ice = rtc.currentIceConfig();
-  const configured = ice.turnConfigured !== undefined ? ice.turnConfigured : ice.turn;
-  const url = turnUrlOf(configured);
-  return url ? [url] : [];
+  return ice.turnConfigured !== undefined ? ice.turnConfigured : ice.turn;
 }
 
 export function startMeshTurnProbe(
@@ -135,7 +163,7 @@ class MeshTurnProbe {
   ) {}
 
   start(): void {
-    void this.runCycle(configuredTurnUrls(this.rtc));
+    void this.runCycle(configuredTurnUrls(rtcTurnConfig(this.rtc)));
     this.armTick();
   }
 
@@ -149,7 +177,7 @@ class MeshTurnProbe {
   }
 
   sync(rtc: TurnProbeRtc): void {
-    const urls = configuredTurnUrls(rtc);
+    const urls = configuredTurnUrls(rtcTurnConfig(rtc));
     if (stunListKey(urls) === this.lastKey) return;
     const min = this.opts.minIntervalMs ?? TURN_PROBE_MIN_INTERVAL_MS;
     const elapsed = (this.opts.now ?? Date.now)() - this.lastCycleAt;
@@ -166,7 +194,7 @@ class MeshTurnProbe {
     const rand = this.opts.random ?? Math.random;
     const ms = Math.round(TURN_PROBE_INTERVAL_MS * (1 + (rand() * 2 - 1) * 0.1));
     this.tick = this.scheduler.interval(() => {
-      if (!this.stopped) void this.runCycle(configuredTurnUrls(this.rtc));
+      if (!this.stopped) void this.runCycle(configuredTurnUrls(rtcTurnConfig(this.rtc)));
     }, ms);
   }
 
@@ -177,7 +205,7 @@ class MeshTurnProbe {
     this.waitH = this.scheduler.interval(() => {
       this.waitH?.clear();
       this.waitH = null;
-      const next = this.pending ?? configuredTurnUrls(this.rtc);
+      const next = this.pending ?? configuredTurnUrls(rtcTurnConfig(this.rtc));
       this.pending = null;
       if (!this.stopped && stunListKey(next) !== this.lastKey) void this.runCycle(next);
     }, ms);
@@ -202,9 +230,7 @@ class MeshTurnProbe {
     const probeAll =
       this.opts.probeAll ??
       ((list: readonly string[]) =>
-        Promise.all(
-          list.map((url) => probeTurnServer(url, { signal: this.ac.signal, now: this.opts.now }))
-        ));
+        probeTurnServers(list, { signal: this.ac.signal, now: this.opts.now }));
     for (;;) {
       if (this.stopped || this.ac.signal.aborted) return;
       this.lastKey = stunListKey(current);
@@ -217,9 +243,10 @@ class MeshTurnProbe {
         results = current.map((url) => ({ url, ok: false, rttMs: 0, error: 'error' }));
       }
       if (this.stopped) return;
-      lastResults = results.map((row) => ({ ...row, probedAt: clock() }));
+      const records = results.map((row) => ({ ...row, probedAt: clock() }));
+      lastResults = mergeLatestByUrl(lastResults, records);
       try {
-        logTurnProbeBatch(lastResults);
+        logTurnProbeBatch(records);
       } catch {}
       if (!this.queued) break;
       current = this.queued;
@@ -238,6 +265,71 @@ class MeshTurnProbe {
 function nonempty(value: string): string | null {
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function walkTurnConfigs(turn: unknown, emit: (hit: RelayTurnConfig) => void): void {
+  if (typeof turn === 'string') {
+    const url = nonempty(turn);
+    if (url) emit({ url, username: '', credential: '' });
+    return;
+  }
+  if (Array.isArray(turn)) {
+    for (const item of turn) walkTurnConfigs(item, emit);
+    return;
+  }
+  if (typeof turn !== 'object' || turn === null) return;
+  walkTurnRecord(turn as Record<string, unknown>, emit);
+}
+
+function walkTurnRecord(rec: Record<string, unknown>, emit: (hit: RelayTurnConfig) => void): void {
+  const username = typeof rec.username === 'string' ? rec.username : '';
+  const credential =
+    typeof rec.credential === 'string'
+      ? rec.credential
+      : typeof rec.password === 'string'
+        ? rec.password
+        : '';
+  for (const url of urlsOfRecord(rec)) emit({ url, username, credential });
+}
+
+function urlsOfRecord(rec: Record<string, unknown>): string[] {
+  if (typeof rec.hostname === 'string' && rec.hostname.length > 0) {
+    const url = hostnameTurnUrl(rec);
+    return url ? [url] : [];
+  }
+  if (typeof rec.url === 'string') {
+    const url = nonempty(rec.url);
+    if (url) return [url];
+  }
+  if (typeof rec.urls === 'string') {
+    const url = nonempty(rec.urls);
+    return url ? [url] : [];
+  }
+  if (Array.isArray(rec.urls)) return stringUrls(rec.urls);
+  return [];
+}
+
+function stringUrls(items: readonly unknown[]): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const item of items) {
+    if (typeof item !== 'string') continue;
+    const url = nonempty(item);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    out.push(url);
+  }
+  return out;
+}
+
+function mergeLatestByUrl(
+  prev: readonly TurnProbeRecord[],
+  next: readonly TurnProbeRecord[]
+): TurnProbeRecord[] {
+  const map = new Map<string, TurnProbeRecord>();
+  for (const row of prev) map.set(row.url, row);
+  for (const row of next) map.set(row.url, row);
+  return [...map.values()];
 }
 
 function firstTurnUrl(items: readonly unknown[]): string | null {

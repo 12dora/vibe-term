@@ -4,6 +4,7 @@ import {
   type StunEnvSource,
   resolveEffectiveStun,
 } from '@vibeterm/shared/net';
+import type { RelayTurnConfig } from '@vibeterm/shared/relay';
 import type { CachedRtcConfig } from '../mesh-deps';
 import { rtcLog } from './rtc-log';
 import {
@@ -20,12 +21,16 @@ import {
 import {
   type TurnProbeRecord,
   type TurnProbeRtc,
+  configuredTurnUrls,
+  flattenTurnConfigs,
   startMeshTurnProbe,
   stopMeshTurnProbe,
   syncTurnProbe,
   turnProbeSnapshot,
   turnUrlOf,
 } from './turn-probe';
+
+export const MAX_GATED_TURN = 2;
 
 export type MeshStunConfig = {
   stunServers: string[];
@@ -37,15 +42,17 @@ export type MeshStunConfig = {
 
 export type ResolvedMeshRtcConfig = {
   stun: string[];
-  turn: unknown;
-  turnConfigured: unknown;
+  turn: RelayTurnConfig[];
+  turnConfigured: RelayTurnConfig[];
   turnProbeOk: boolean;
   source: StunEffectiveSource;
 };
 
-export type MeshRtcConfigBody = CachedRtcConfig & {
-  turnConfigured: unknown;
+export type MeshRtcConfigBody = Omit<CachedRtcConfig, 'turn'> & {
+  turn: RelayTurnConfig[];
+  turnConfigured: RelayTurnConfig[];
   turnProbe: TurnProbeRecord | null;
+  turnProbes: TurnProbeRecord[];
 };
 
 export function localStunEnv(config: MeshStunConfig): StunEnvConfig {
@@ -80,16 +87,68 @@ export function matchingTurnProbe(
   return null;
 }
 
-/** 探测成功才纳入 TURN；从未探测则先纳入但 turnProbeOk=false（保持 mux）。 */
+/** 探测成功才纳入 TURN；未探测或失败一律排除，按 RTT 升序最多 2 条。 */
 export function gateTurnByProbe(
   configured: unknown,
   probes: readonly TurnProbeRecord[] = turnProbeSnapshot()
-): { turn: unknown; turnProbeOk: boolean } {
-  if (!configured) return { turn: null, turnProbeOk: false };
-  const probe = matchingTurnProbe(configured, probes);
-  if (!probe) return { turn: configured, turnProbeOk: false };
-  if (probe.ok) return { turn: configured, turnProbeOk: true };
-  return { turn: null, turnProbeOk: false };
+): { turn: RelayTurnConfig[]; turnProbeOk: boolean } {
+  const entries = flattenTurnConfigs(configured);
+  const turn = pickReachableTurns(entries, probes);
+  logTurnGate(entries.length, turn);
+  return { turn, turnProbeOk: turn.length > 0 };
+}
+
+export function resetTurnGateLogForTest(): void {
+  lastTurnGateUsedKey = null;
+}
+
+let lastTurnGateUsedKey: string | null = null;
+
+function latestProbeByUrl(probes: readonly TurnProbeRecord[]): Map<string, TurnProbeRecord> {
+  const map = new Map<string, TurnProbeRecord>();
+  for (const row of probes) map.set(row.url, row);
+  return map;
+}
+
+function pickReachableTurns(
+  entries: readonly RelayTurnConfig[],
+  probes: readonly TurnProbeRecord[]
+): RelayTurnConfig[] {
+  const latest = latestProbeByUrl(probes);
+  const ranked: Array<{ entry: RelayTurnConfig; rttMs: number; index: number }> = [];
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i];
+    if (!entry) continue;
+    const probe = latest.get(entry.url);
+    if (!probe?.ok) continue;
+    ranked.push({ entry, rttMs: probe.rttMs, index: i });
+  }
+  ranked.sort((a, b) => a.rttMs - b.rttMs || a.index - b.index);
+  return ranked.slice(0, MAX_GATED_TURN).map((row) => row.entry);
+}
+
+function logTurnGate(configured: number, used: readonly RelayTurnConfig[]): void {
+  const key = used.map((row) => row.url).join('\0');
+  if (key === lastTurnGateUsedKey) return;
+  lastTurnGateUsedKey = key;
+  rtcLog('turn gate', {
+    configured,
+    reachable: used.length,
+    used: used.map((row) => row.url),
+  });
+}
+
+function turnProbesForConfigured(
+  configured: unknown,
+  probes: readonly TurnProbeRecord[] = turnProbeSnapshot()
+): TurnProbeRecord[] {
+  const latest = latestProbeByUrl(probes);
+  const out: TurnProbeRecord[] = [];
+  for (const url of configuredTurnUrls(configured)) {
+    const row = latest.get(url);
+    if (row) out.push(row);
+  }
+  return out;
 }
 
 export function resolveMeshRtcConfig(
@@ -102,7 +161,7 @@ export function resolveMeshRtcConfig(
     local: localStunEnv(config),
     distributed: lastRtc?.stun ?? null,
   });
-  const turnConfigured = lastRtc ? lastRtc.turn : turnFromMesh(config);
+  const turnConfigured = flattenTurnConfigs(lastRtc ? lastRtc.turn : turnFromMesh(config));
   const gated = gateTurnByProbe(turnConfigured);
   return {
     stun: rankStunByProbes(resolved.stun, probes, now),
@@ -118,11 +177,15 @@ export function meshRtcConfigResponse(
   lastRtc: CachedRtcConfig | null
 ): MeshRtcConfigBody {
   const resolved = resolveMeshRtcConfig(config, lastRtc);
+  const withProbes = withStunProbes({ stun: resolved.stun, turn: resolved.turn });
   return {
-    ...withStunProbes({ stun: resolved.stun, turn: resolved.turn }),
+    stun: withProbes.stun,
+    turn: resolved.turn,
+    probes: withProbes.probes,
     source: resolved.source,
     turnConfigured: resolved.turnConfigured,
     turnProbe: matchingTurnProbe(resolved.turnConfigured),
+    turnProbes: turnProbesForConfigured(resolved.turnConfigured),
   };
 }
 

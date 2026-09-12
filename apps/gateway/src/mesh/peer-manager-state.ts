@@ -6,6 +6,7 @@ import type { PeerEndpointBackoff } from './peer-endpoint-backoff';
 import type { LiveWaiter, ParkedInbound, TransportWaiter } from './peer-manager-types';
 import { type LivePeer, PeerReconnectWake } from './peer-reconnect-wake';
 import type { RtcSignalInboxEntry } from './peer-rtc-wake';
+import type { RelayPresenceIndex, RelayStreamOpener } from './relay-presence-types';
 import {
   type MeshIdentity,
   type MeshScheduler,
@@ -51,6 +52,9 @@ export type PeerManagerState = {
   readonly scheduler: MeshScheduler;
   readonly live: Map<string, LivePeer>;
   readonly parked: Map<string, ParkedInbound>;
+  /** 多中继同时挂载时由 relay wiring 注入；缺省（单中继/hub 模式）为 undefined。 */
+  relayPresence?: RelayPresenceIndex;
+  relayOpener?: RelayStreamOpener;
   readonly retiring: Map<string, Set<LivePeer>>;
   readonly pending: Map<string, Promise<LinkSession>>;
   readonly upgrading: Map<string, Promise<LinkSession>>;

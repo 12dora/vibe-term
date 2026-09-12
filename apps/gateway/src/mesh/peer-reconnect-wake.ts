@@ -26,6 +26,8 @@ export type LivePeer = {
   sendKey?: Uint8Array;
   recvKey?: Uint8Array;
   quiesceCapable: boolean;
+  /** transport=relay 时实际经过的中继公网 URL；直连/ws-secure 为 undefined。 */
+  viaRelay?: string;
   helloReplied: boolean;
   probeSent: boolean;
   remoteAddress: string | null;

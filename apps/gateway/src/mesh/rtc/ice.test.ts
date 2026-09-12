@@ -142,6 +142,7 @@ describe('ice helpers', () => {
       {
         stun: ['stun:stun.example:19302'],
         turn: { url: 'turn:turn.example:3478?transport=udp', username: 'u', credential: 'p' },
+        turnProbeOk: true,
       },
       { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null },
       {
@@ -170,6 +171,7 @@ describe('ice helpers', () => {
       {
         stun: ['stuns:secure.example:5349'],
         turn: { url: 'turns:relay.example:5349', username: 'u', credential: 'p' },
+        turnProbeOk: true,
       },
       { peerBindHost: ['::', '0.0.0.0'], rtcPortRange: null },
       {
@@ -404,10 +406,20 @@ describe('buildRtcIceConfig UDP mux vs TURN', () => {
     expect(built.enableIceUdpMux).toBe(true);
   });
 
-  test('keeps UDP mux when TURN is present but not yet probed', () => {
+  test('strips unprobed TURN and keeps UDP mux', () => {
     const built = buildRtcIceConfig({ stun: ['stun:stun.example:3478'], turn }, runtime);
     expect(built.enableIceUdpMux).toBe(true);
-    expect(hasTurnServer(built.iceServers)).toBe(true);
+    expect(hasTurnServer(built.iceServers)).toBe(false);
+    expect(built.iceServers).toEqual(['stun:stun.example:3478']);
+  });
+
+  test('strips TURN when turnProbeOk is false even if entries are present', () => {
+    const built = buildRtcIceConfig(
+      { stun: ['stun:stun.example:3478'], turn, turnProbeOk: false },
+      runtime
+    );
+    expect(hasTurnServer(built.iceServers)).toBe(false);
+    expect(built.enableIceUdpMux).toBe(true);
   });
 
   test('disables UDP mux only when TURN probe succeeded', () => {
@@ -416,6 +428,27 @@ describe('buildRtcIceConfig UDP mux vs TURN', () => {
       runtime
     );
     expect(built.enableIceUdpMux).toBe(false);
+    expect(hasTurnServer(built.iceServers)).toBe(true);
+  });
+
+  test('flattens a TURN array and caps ICE TURN entries at 2', () => {
+    const built = buildRtcIceConfig(
+      {
+        stun: ['stun:a:1'],
+        turn: [
+          { url: 'turn:a.example:3478', username: 'ua', credential: 'pa' },
+          { url: 'turn:b.example:3478', username: 'ub', credential: 'pb' },
+          { url: 'turn:c.example:3478', username: 'uc', credential: 'pc' },
+        ],
+        turnProbeOk: true,
+      },
+      runtime
+    );
+    expect(built.iceServers).toEqual([
+      'stun:a:1',
+      { hostname: 'a.example', port: 3478, username: 'ua', password: 'pa', relayType: 'TurnUdp' },
+      { hostname: 'b.example', port: 3478, username: 'ub', password: 'pb', relayType: 'TurnUdp' },
+    ]);
     expect(hasTurnServer(built.iceServers)).toBe(true);
   });
 });
