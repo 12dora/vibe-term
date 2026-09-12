@@ -1,10 +1,13 @@
 import { Brand } from '@/components/brand';
+import { useRouteNodeId } from '@/node/node-runtime-boundary';
+import { nodeQueryClient } from '@/node/node-runtimes';
 import { settingsPageModule } from '@/page-modules';
-import { useSiteStore } from '@vibeterm/stores/react';
+import { prefetchSettingsLanding } from '@/pages/settings/data-prefetch';
+import { useOptionalRuntime, useSiteStore } from '@vibeterm/stores/react';
 import { IconTooltip } from '@vibeterm/ui/icon-tooltip';
 import { useSidebar } from '@vibeterm/ui/sidebar';
 import { Settings, X } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { NavLink } from './nav-link';
 import { ThemeMenu } from './theme-menu';
@@ -18,6 +21,9 @@ const ACTION_BUTTON_CLASS =
 export function SidebarTitle() {
   const { t } = useTranslation();
   const { isMobile, setOpenMobile } = useSidebar();
+  const routeNodeId = useRouteNodeId();
+  const runtime = useOptionalRuntime();
+  const prefetchedTabs = useRef(new Set<string>());
 
   // Fetch settings on mount if not loaded
   const fetchSettings = useSiteStore((state) => state.fetchSettings);
@@ -25,6 +31,16 @@ export function SidebarTitle() {
   useEffect(() => {
     fetchSettings();
   }, [fetchSettings]);
+
+  const warmSettings = () => {
+    if (!runtime) return;
+    prefetchSettingsLanding(
+      nodeQueryClient(routeNodeId),
+      runtime.apiClient,
+      prefetchedTabs.current,
+      routeNodeId
+    );
+  };
 
   return (
     <div className="flex items-center gap-1 px-2">
@@ -48,6 +64,8 @@ export function SidebarTitle() {
           <NavLink
             to="/settings"
             preload={settingsPageModule}
+            onPointerEnter={warmSettings}
+            onTouchStart={warmSettings}
             className={ACTION_BUTTON_CLASS}
             data-testid="sidebar-settings"
             aria-label={t('sidebar.settings')}

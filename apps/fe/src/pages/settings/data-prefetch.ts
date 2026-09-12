@@ -25,6 +25,7 @@ import {
   SELF_NODE_ID,
   fetchAgentLlmSettings,
   fetchLlmProviders,
+  fetchSiteSettings,
   fetchTerminalShortcuts,
   llmProvidersQueryKey,
   llmSettingsQueryKey,
@@ -46,6 +47,7 @@ import {
  * 实时状态（隧道 / 本机运行态 / TLS）不用这个值，它们各自带轮询。
  */
 export const SETTINGS_STALE_MS = 30_000;
+export const SITE_SETTINGS_QUERY_KEY = ['site-settings'] as const;
 
 export interface TabPrefetchSpec {
   queryKey: readonly unknown[];
@@ -63,6 +65,15 @@ export function tabPrefetchSpecs(
   apiClient: ApiClient,
   nodeId: string = SELF_NODE_ID
 ): TabPrefetchSpec[] {
+  if (tab === 'general') {
+    return [
+      {
+        queryKey: SITE_SETTINGS_QUERY_KEY,
+        queryFn: () => fetchSiteSettings(apiClient),
+        staleTime: SETTINGS_STALE_MS,
+      },
+    ];
+  }
   if (tab === 'ai') {
     return [
       {
@@ -107,6 +118,7 @@ export function tabPrefetchSpecs(
 
 /** 能预取的标签，供测试与调用方判断（避免为没有 spec 的标签白跑一趟）。 */
 export const PREFETCHABLE_TABS: readonly string[] = [
+  'general',
   'ai',
   'terminal',
   'nodes',
@@ -132,4 +144,15 @@ export function prefetchTabData(
   for (const spec of specs) {
     void queryClient.prefetchQuery(spec).catch(() => undefined);
   }
+}
+
+/** 设置入口悬停：拉 general 的 chunk，并预取站点设置（与标签栏 nodes/remoteAccess 同一套）。 */
+export function prefetchSettingsLanding(
+  queryClient: QueryClient,
+  apiClient: ApiClient,
+  done: Set<string>,
+  nodeId: string = SELF_NODE_ID
+): void {
+  void import('./general-settings-tab').catch(() => undefined);
+  prefetchTabData(queryClient, 'general', apiClient, done, nodeId);
 }

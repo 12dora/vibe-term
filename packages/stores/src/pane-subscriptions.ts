@@ -5,7 +5,33 @@ import { type GatewayHistoryCursor, generateSelectToken } from '@vibeterm/ws-cli
 import type { RuntimeCore } from './runtime';
 
 const SCREEN_BYTE_LIMIT = 512 * 1024;
-const HISTORY_PAGE_BYTE_LIMIT = 256 * 1024;
+/** LAN / 未知 RTT 的页大小。 */
+export const HISTORY_PAGE_BYTE_LIMIT = 256 * 1024;
+/**
+ * 高 RTT 时向这个上限靠。网关 `CANONICAL_MAX_HISTORY_PAGE_BYTES` 会再 clamp 一次；
+ * 请求超过服务端 cap 不会被拒。
+ */
+export const CANONICAL_MAX_HISTORY_PAGE_BYTES = 1024 * 1024;
+const HISTORY_PAGE_RTT_FLOOR_MS = 200;
+const HISTORY_PAGE_RTT_CEILING_MS = 800;
+
+/**
+ * 按链路 RTT 选 history 页字节上限：低延迟保持 256 KiB，800 ms 用满 cap，减少翻页往返。
+ * 游标契约不变，调用方仍一次只发一页。
+ */
+export function historyPageByteLimit(
+  rttMs: number | null | undefined,
+  maxBytes: number = CANONICAL_MAX_HISTORY_PAGE_BYTES
+): number {
+  const cap = Math.max(HISTORY_PAGE_BYTE_LIMIT, maxBytes);
+  if (cap === HISTORY_PAGE_BYTE_LIMIT) return HISTORY_PAGE_BYTE_LIMIT;
+  if (rttMs == null || !Number.isFinite(rttMs) || rttMs <= HISTORY_PAGE_RTT_FLOOR_MS) {
+    return HISTORY_PAGE_BYTE_LIMIT;
+  }
+  const span = HISTORY_PAGE_RTT_CEILING_MS - HISTORY_PAGE_RTT_FLOOR_MS;
+  const t = Math.min(1, (rttMs - HISTORY_PAGE_RTT_FLOOR_MS) / span);
+  return Math.round(HISTORY_PAGE_BYTE_LIMIT + t * (cap - HISTORY_PAGE_BYTE_LIMIT));
+}
 
 export interface PaneSubscriptionManager {
   /** 当前应订阅的 pane（手动订阅 ∪ 挂载中 pane），已排序去重 */
@@ -92,7 +118,7 @@ export function createPaneSubscriptionManager(core: RuntimeCore): PaneSubscripti
         deviceId,
         paneId,
         cursor,
-        byteLimit: HISTORY_PAGE_BYTE_LIMIT,
+        byteLimit: historyPageByteLimit(core.transport.latencyMs),
       });
     },
 

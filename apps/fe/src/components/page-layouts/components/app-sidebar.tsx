@@ -61,18 +61,24 @@ function renderNodeLogin(node: FilesNodeInfo) {
 }
 
 /** 该分节能挂运行时（在线且已登录）。 */
-function isFilesSectionMounted(entry: SidebarNodeEntry): boolean {
+function isFilesSectionMounted(entry: Pick<SidebarNodeEntry, 'online' | 'loggedIn'>): boolean {
   return entry.online && entry.loggedIn;
 }
 
+/** 用户没表过态时：self 展开，远端折叠——避免打开文件 tab 就给每台 node 建一条 WS。 */
+export function filesSectionDefaultExpanded(isSelf: boolean): boolean {
+  return isSelf;
+}
+
 /** 此刻确实挂着运行时：还要求分节没被折叠——只有这些 node 有自己的 QueryClient 与事件订阅。 */
-function hasMountedFilesRuntime(
-  entry: SidebarNodeEntry,
+export function hasMountedFilesRuntime(
+  entry: Pick<SidebarNodeEntry, 'online' | 'loggedIn' | 'isSelf' | 'runtimeNodeId'>,
   expansion: Record<string, boolean>
 ): boolean {
   return (
     isFilesSectionMounted(entry) &&
-    (sidebarSectionExpanded(expansion, 'files', entry.runtimeNodeId) ?? true)
+    (sidebarSectionExpanded(expansion, 'files', entry.runtimeNodeId) ??
+      filesSectionDefaultExpanded(entry.isSelf))
   );
 }
 
@@ -81,9 +87,12 @@ function SortableFilesNodeSection({ entry }: { entry: SidebarNodeEntry }) {
   const sortable = useSortableRow(sidebarNodeSortableId(entry.id));
   const drag = { sortable, dragHandleLabel: t('sidebar.node.dragHandle') };
   const node = filesNodeInfo(entry);
-  // 文件栏的分节缺省展开（用户切到这个标签就是要看文件），折叠后连运行时一起摘掉：
-  // 收起的远端 node 不该继续占着一条 WS 与直连协商。
-  const [expanded, setExpanded] = useSidebarSectionExpanded('files', node.runtimeNodeId, true);
+  // 远端缺省折叠：展开才挂 NodeRuntimeScope（一条 /n/<id>/ws）。self 本来就在入口运行时里。
+  const [expanded, setExpanded] = useSidebarSectionExpanded(
+    'files',
+    node.runtimeNodeId,
+    filesSectionDefaultExpanded(node.isSelf)
+  );
 
   // 离线 / 未登录 / 已折叠的 node 不挂运行时：不建连接，也不发它的 files 查询。
   if (!isFilesSectionMounted(entry) || !expanded) {

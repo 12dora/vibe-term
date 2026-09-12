@@ -23,6 +23,7 @@ import { type DirectoryDragHandle, DirectoryNodeView } from './directory-node-vi
 import { fileIconColor, fileIconFor } from './file-icon';
 import { FileLeafContextMenu } from './file-leaf-menu';
 import { FilesNoRootsHint } from './files-empty-hint';
+import { runCappedFileRootsFetch } from './files-roots-fetch';
 import { NodeError } from './node-menu';
 import {
   FILE_ROOTS_QUERY_KEY,
@@ -45,6 +46,8 @@ const DISPLAY_CAP = 500;
 
 /** 超过这个条数才给子行加 content-visibility：小目录加了只是白白多一层跳渲判定 */
 export const FILE_ROW_SKIP_RENDER_THRESHOLD = 100;
+/** 回前台不重打 roots，靠 SETTINGS_UPDATE 与用户展开后的列表轮询。 */
+export const FILE_ROOTS_REFETCH_ON_WINDOW_FOCUS = false;
 
 /** 与 settings/directory-picker-modal 同法：视口外的行只保留占位高度，不做布局与绘制 */
 const SKIPPED_ROW_STYLE: CSSProperties = {
@@ -96,8 +99,8 @@ export function useVisibleFileRoots() {
   const { apiClient, nodeId } = useRuntime();
   const rootsQuery = useQuery({
     queryKey: FILE_ROOTS_QUERY_KEY,
-    queryFn: () => fetchFileRoots(apiClient),
-    refetchOnWindowFocus: true,
+    queryFn: () => runCappedFileRootsFetch(() => fetchFileRoots(apiClient)),
+    refetchOnWindowFocus: FILE_ROOTS_REFETCH_ON_WINDOW_FOCUS,
   });
   const filesVisibility = useUIStore((state) => state.sidebarFilesVisibility);
   const deviceConnected = useTmuxStore((state) => state.deviceConnected);
@@ -115,20 +118,21 @@ export function useVisibleFileRoots() {
   return { rootsQuery, allRoots, roots };
 }
 
-export function FilesNodeRoots() {
-  const { t } = useTranslation();
+/** devices / llm / system-info 只在目录真正展开时才拉，打开文件 tab 先只打 roots。 */
+function useFileTreeAuxiliary(enabled: boolean): TreeContext {
   const { apiClient } = useRuntime();
-  const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
-
-  const { rootsQuery, allRoots, roots } = useVisibleFileRoots();
   const devicesQuery = useQuery({
     queryKey: ['devices'],
     queryFn: () => fetchDevices(apiClient),
+    enabled,
+    refetchOnWindowFocus: false,
   });
   const providersQuery = useQuery({
     queryKey: ['llm-providers'],
     queryFn: () => fetchLlmProviders(undefined, apiClient),
     throwOnError: false,
+    enabled,
+    refetchOnWindowFocus: false,
   });
   const systemInfoQuery = useQuery({
     queryKey: ['system', 'info'],
@@ -138,7 +142,26 @@ export function FilesNodeRoots() {
       return (await res.json()) as SystemInfo;
     },
     throwOnError: false,
+    enabled,
+    refetchOnWindowFocus: false,
   });
+  return useMemo<TreeContext>(
+    () => ({
+      llmConfigured: (providersQuery.data?.providers ?? []).length > 0,
+      localDeviceId: devicesQuery.data?.devices.find((d) => d.type === 'local')?.id ?? null,
+      transferMaxBytes: systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES,
+    }),
+    [providersQuery.data, devicesQuery.data, systemInfoQuery.data]
+  );
+}
+
+export function FilesNodeRoots() {
+  const { t } = useTranslation();
+  const pruneStaleRoots = useFileTreeStore((s) => s.pruneStaleRoots);
+  const anyExpanded = useFileTreeStore((s) => Object.values(s.expanded).some(Boolean));
+  const ctx = useFileTreeAuxiliary(anyExpanded);
+
+  const { rootsQuery, allRoots, roots } = useVisibleFileRoots();
 
   const visibleIds = useMemo(() => roots.map((root) => root.id), [roots]);
   const reorder = useFileRootReorder(allRoots, visibleIds);
@@ -147,16 +170,6 @@ export function FilesNodeRoots() {
   useEffect(() => {
     if (rootsQuery.data) pruneStaleRoots(rootsQuery.data.roots.map((r) => r.id));
   }, [rootsQuery.data, pruneStaleRoots]);
-
-  // 每次渲染都新建 ctx 会让整棵树的 memo 失效
-  const ctx = useMemo<TreeContext>(
-    () => ({
-      llmConfigured: (providersQuery.data?.providers ?? []).length > 0,
-      localDeviceId: devicesQuery.data?.devices.find((d) => d.type === 'local')?.id ?? null,
-      transferMaxBytes: systemInfoQuery.data?.transferMaxBytes ?? DEFAULT_TRANSFER_MAX_BYTES,
-    }),
-    [providersQuery.data, devicesQuery.data, systemInfoQuery.data]
-  );
 
   return (
     <SelectedFileProvider>

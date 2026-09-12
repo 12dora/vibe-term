@@ -11,6 +11,8 @@ import { staleChildExpansionPaths } from './file-tree-logic';
 
 const LIST_STALE_MS = 2000; // 收起+展开重试的防抖窗口
 const LIST_POLL_MS = 30_000; // 仅对健康的已展开目录轮询
+/** 回前台靠 SETTINGS_UPDATE / 30 s 轮询，不再跟窗口聚焦重打目录树。 */
+export const DIRECTORY_LISTING_REFETCH_ON_WINDOW_FOCUS = false;
 
 /** 目录列表的查询键；树根的共享右键菜单也按它回查命中行的 entry */
 export function fileListQueryKey(rootId: string, path: string): readonly unknown[] {
@@ -40,7 +42,7 @@ export function useDirectoryListing(rootId: string, path: string): DirectoryList
     enabled: expanded,
     staleTime: LIST_STALE_MS,
     retry: false,
-    refetchOnWindowFocus: true,
+    refetchOnWindowFocus: DIRECTORY_LISTING_REFETCH_ON_WINDOW_FOCUS,
     refetchInterval: (q) => (q.state.status === 'error' ? false : LIST_POLL_MS),
     refetchIntervalInBackground: false,
   });

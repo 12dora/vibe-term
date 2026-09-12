@@ -26,7 +26,9 @@ const { FilesTab } = await import('./files-tab');
 const { FILE_LEAF_PATH_ATTR, FILE_LIST_DIR_ATTR, FILE_LIST_ROOT_ATTR } = await import(
   './file-leaf-target'
 );
-const { FILE_ROW_SKIP_RENDER_THRESHOLD } = await import('./files-node-roots');
+const { FILE_ROOTS_REFETCH_ON_WINDOW_FOCUS, FILE_ROW_SKIP_RENDER_THRESHOLD } = await import(
+  './files-node-roots'
+);
 
 const i18n = i18next.createInstance();
 await i18n.init({
@@ -107,6 +109,12 @@ function renderExpandedRoot(entries: FileEntryDto[]): string {
 }
 
 const count = (html: string, needle: string): number => html.split(needle).length - 1;
+
+describe('文件树查询策略', () => {
+  test('roots 不在窗口聚焦时重拉', () => {
+    expect(FILE_ROOTS_REFETCH_ON_WINDOW_FOCUS).toBe(false);
+  });
+});
 
 describe('文件树的共享右键菜单', () => {
   test('500 行只有一个树级 Trigger，行数再多也不涨（目录行各自那一个除外）', () => {

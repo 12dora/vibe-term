@@ -329,7 +329,7 @@ describe('回前台的僵尸链路探测', () => {
     }
   });
 
-  test('persisted 的 pageshow 与回前台同等对待，普通 pageshow 不动', async () => {
+  test('pageshow 不论 persisted 都做短期限探测（iOS 切网常不带 persisted）', async () => {
     const browser = stubBrowser();
     try {
       const { client, sockets } = readyClient(80);
@@ -337,9 +337,6 @@ describe('回前台的僵尸链路探测', () => {
       const before = pingNonces(socket).length;
 
       browser.pageshow(false);
-      expect(pingNonces(socket).length).toBe(before);
-
-      browser.pageshow(true);
       expect(pingNonces(socket).length).toBe(before + 1);
 
       await sleep(200);

@@ -10,6 +10,7 @@ import {
   buildIceServers,
   meshConnectionPath,
 } from './direct-carrier-controller';
+import { formatConnectionIdCapability } from './direct-hello-connection';
 import {
   FP_BROWSER_VALUE,
   FP_NODE_VALUE,
@@ -176,10 +177,9 @@ describe('DirectCarrierController happy path', () => {
     await flush();
 
     // connectionId 先取：拿不到就不该白建一条 PeerConnection
-    expect(s.api.calls.map((c) => c.path).slice(0, 2)).toEqual([
-      MESH_CONNECTION_PATH,
-      RTC_CONFIG_PATH,
-    ]);
+    expect(new Set(s.api.calls.map((c) => c.path).slice(0, 2))).toEqual(
+      new Set([MESH_CONNECTION_PATH, RTC_CONFIG_PATH])
+    );
     const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
     expect(authorize?.body).toEqual({
       rtcSession: s.session(),
@@ -244,6 +244,91 @@ describe('DirectCarrierController happy path', () => {
     s.signaling.deliver({ ...answerSignal(s), from: 'browser' });
     await flush();
     expect(s.pc().remoteDescription).toBeNull();
+  });
+});
+
+describe('DirectCarrierController HELLO connectionId 与并行 REST', () => {
+  test('HELLO 已带 connectionId 时跳过 GET connection，仍打 rtc-config 与 authorize', async () => {
+    const s = setup();
+    s.connection.helloCapabilities = [formatConnectionIdCapability(CONNECTION_ID)];
+    s.controller.start();
+    await flush();
+
+    expect(s.api.calls.some((c) => c.path.startsWith(MESH_CONNECTION_PATH))).toBe(false);
+    expect(s.api.calls.some((c) => c.path === RTC_CONFIG_PATH)).toBe(true);
+    const authorize = s.api.calls.find((c) => c.path === RTC_AUTHORIZE_PATH);
+    expect((authorize?.body as { connectionId?: string }).connectionId).toBe(CONNECTION_ID);
+    expect(authorize?.headers[CONNECTION_HEADER.name]).toBe(CONNECTION_ID);
+  });
+
+  test('老网关（HELLO 无 id）仍走 GET connection?cid=', async () => {
+    const s = setup({ cid: () => 'cid-tab-1' });
+    s.controller.start();
+    await flush();
+    expect(s.api.calls.some((c) => c.path === `${MESH_CONNECTION_PATH}?cid=cid-tab-1`)).toBe(true);
+  });
+
+  test('connection lookup 与 rtc-config 并行：rtc-config 不等 connection 返回', async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const s = setup();
+    const originalFetch = s.api.fetch.bind(s.api);
+    s.api.fetch = async (path: string, init?: RequestInit) => {
+      if (path === MESH_CONNECTION_PATH || path.startsWith(`${MESH_CONNECTION_PATH}?`)) {
+        await gate;
+      }
+      return originalFetch(path, init);
+    };
+
+    s.controller.start();
+    await flush(1);
+    expect(s.api.calls.some((c) => c.path === RTC_CONFIG_PATH)).toBe(true);
+    expect(s.api.calls.some((c) => c.path === RTC_AUTHORIZE_PATH)).toBe(false);
+    expect(s.peers.length).toBe(0);
+
+    release();
+    await flush();
+    expect(s.api.calls.some((c) => c.path === RTC_AUTHORIZE_PATH)).toBe(true);
+    expect(s.controller.getState()).toBe('connecting');
+  });
+});
+
+describe('DirectCarrierController 信令未就绪', () => {
+  test('signaling 未 ready 时仍协商，ready 后只泵一次 offer（无双 offer）', async () => {
+    const s = setup();
+    s.signaling.setReady(false);
+    s.controller.start();
+    await flush();
+
+    expect(s.controller.getState()).toBe('connecting');
+    expect(s.controller.reason).not.toBe('signaling not ready');
+    expect(s.signaling.sent).toHaveLength(0);
+    expect(s.peers.length).toBe(1);
+
+    s.signaling.setReady(true);
+    await flush();
+    const offers = s.signaling.sent.filter((row) => row.sdp);
+    expect(offers).toHaveLength(1);
+
+    s.signaling.setReady(false);
+    s.signaling.setReady(true);
+    await flush();
+    expect(s.signaling.sent.filter((row) => row.sdp)).toHaveLength(1);
+  });
+
+  test('信令恢复时已有 attempt：只泵 outbox，不开第二条 PC', async () => {
+    const s = setup();
+    s.signaling.setReady(false);
+    s.controller.start();
+    await flush();
+    expect(s.peers.length).toBe(1);
+
+    s.signaling.setReady(true);
+    await flush();
+    expect(s.peers.length).toBe(1);
+    expect(s.signaling.sent.filter((row) => row.sdp)).toHaveLength(1);
   });
 });
 
@@ -625,18 +710,20 @@ describe('DirectCarrierController attempt 生命周期', () => {
 });
 
 describe('DirectCarrierController 信令就绪', () => {
-  test('信令未就绪时不开 attempt；恢复后重置退避并重连', async () => {
+  test('信令未就绪时仍开 attempt（REST/ICE 并行），ready 后泵 offer 且不建第二条 PC', async () => {
     const s = setup();
     s.signaling.setReady(false);
     s.controller.start();
     await flush();
-    expect(s.peers.length).toBe(0);
-    expect(s.controller.getState()).toBe('failed');
+    expect(s.peers.length).toBe(1);
+    expect(s.controller.getState()).toBe('connecting');
+    expect(s.signaling.sent).toHaveLength(0);
 
     s.signaling.setReady(true);
     await flush();
     expect(s.peers.length).toBe(1);
     expect(s.controller.getState()).toBe('connecting');
+    expect(s.signaling.sent.filter((row) => row.sdp)).toHaveLength(1);
   });
 
   test('attempt 中途信令断开：信令排队，恢复后按序补发（offer 在候选之前）', async () => {
@@ -664,7 +751,7 @@ describe('DirectCarrierController 信令就绪', () => {
     s.signaling.setReady(false);
     s.controller.start();
     await flush();
-    // 未就绪 → 连 attempt 都没开
+    // 未就绪：offer 留在 outbox，还没发出
     expect(s.signaling.sent.length).toBe(0);
 
     s.signaling.setReady(true);
@@ -976,11 +1063,14 @@ describe('DirectCarrierController 退避与网络变化', () => {
     s.controller.start();
     await flush();
     expect(s.controller.diagnostics().failures).toBe(0);
-    expect(s.peers.length).toBe(0);
+    // REST / ICE 照开，offer 等信令 ready 再泵（不再把 attempt 判失败）。
+    expect(s.controller.getState()).toBe('connecting');
+    expect(s.signaling.sent).toHaveLength(0);
 
     s.signaling.setReady(true);
     await flush();
     expect(s.peers.length).toBe(1);
+    expect(s.signaling.sent.some((row) => row.sdp)).toBe(true);
 
     s.api.routes.set(RTC_AUTHORIZE_PATH, { status: 503, body: {} });
     s.pc().channel.simulateClose();

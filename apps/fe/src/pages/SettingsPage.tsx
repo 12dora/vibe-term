@@ -293,6 +293,11 @@ export default function SettingsPage() {
     [runtime, routeNodeId]
   );
 
+  // 当前标签的 chunk 与数据并行：挂载时 general 不再先下 chunk 再打 /api/settings/site。
+  useEffect(() => {
+    warmTab(activeTab);
+  }, [warmTab, activeTab]);
+
   const selectTab = useCallback(
     (value: SettingsTab) => {
       setSearchParams(

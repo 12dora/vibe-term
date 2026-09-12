@@ -1,8 +1,9 @@
-// 恢复信号源：`visibilitychange` 与 `pageshow`（bfcache）。
+// 恢复信号源：`visibilitychange` 与 `pageshow`。
 // 与 `network-wake.ts` 同一形状：宿主拿不到 document / window 时装了就是空操作。
 //
 // 为什么两条都要：iOS 从 bfcache 恢复不一定伴随 visibilitychange，而这恰恰是链路最可能
-// 已经断掉的一种恢复。非 persisted 的 pageshow 是普通导航，与恢复无关，不上报。
+// 已经断掉的一种恢复。pageshow 不论 persisted：iOS 切网/短暂冻住后常打一发不带 persisted
+// 的 pageshow，正是可见标签上该做短期限探测的时刻。SPA 客户端路由不会触发 pageshow。
 
 interface DocumentLike {
   visibilityState: string;
@@ -56,8 +57,7 @@ export class ResumeSignalListeners {
 
     const win = windowSource();
     if (win) {
-      const onPageShow = (event?: unknown) => {
-        if ((event as { persisted?: unknown } | undefined)?.persisted !== true) return;
+      const onPageShow = () => {
         this.handlers.onVisibilityChange();
         this.handlers.onResume();
       };
