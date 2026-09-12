@@ -27,6 +27,26 @@ function addListener<T>(list: T[], item: T): () => void {
   };
 }
 
+function replayQueuedMessages(
+  queued: Array<string | Buffer | ArrayBuffer>,
+  cb: (msg: string | Buffer | ArrayBuffer) => void,
+  message: Array<(msg: string | Buffer | ArrayBuffer) => void>,
+  pendingMessages: Array<string | Buffer | ArrayBuffer>
+): number {
+  let pendingBytes = 0;
+  for (let i = 0; i < queued.length; i++) {
+    if (!message.includes(cb)) {
+      const rest = queued.slice(i);
+      pendingMessages.push(...rest);
+      for (const held of rest) pendingBytes += messageByteLength(held);
+      break;
+    }
+    const next = queued[i];
+    if (next !== undefined) cb(next);
+  }
+  return pendingBytes;
+}
+
 export function fanoutDataChannel(
   channel: DataChannelLike,
   opts?: FanoutOptions
@@ -40,6 +60,7 @@ export function fanoutDataChannel(
   const pendingMessages: Array<string | Buffer | ArrayBuffer> = [];
   let pendingBytes = 0;
   let closedFired = false;
+  let openFired = false;
   let errorFired: string | null = null;
 
   const overflow = (dropped: number) => {
@@ -68,7 +89,8 @@ export function fanoutDataChannel(
   };
 
   channel.onOpen(() => {
-    if (closedFired) return;
+    if (closedFired || openFired) return;
+    openFired = true;
     for (const cb of [...open]) cb();
   });
   channel.onClosed(() => {
@@ -105,7 +127,10 @@ export function fanoutDataChannel(
     },
     onOpen: (cb) => {
       const unsub = addListener(open, cb);
-      if (!closedFired && channel.isOpen()) cb();
+      if (!closedFired && (openFired || channel.isOpen())) {
+        openFired = true;
+        cb();
+      }
       return unsub;
     },
     onClosed: (cb) => {
@@ -121,17 +146,7 @@ export function fanoutDataChannel(
     onMessage: (cb) => {
       const unsub = addListener(message, cb);
       const queued = pendingMessages.splice(0);
-      pendingBytes = 0;
-      for (let i = 0; i < queued.length; i++) {
-        if (!message.includes(cb)) {
-          const rest = queued.slice(i);
-          pendingMessages.push(...rest);
-          for (const held of rest) pendingBytes += messageByteLength(held);
-          break;
-        }
-        const next = queued[i];
-        if (next !== undefined) cb(next);
-      }
+      pendingBytes = replayQueuedMessages(queued, cb, message, pendingMessages);
       return unsub;
     },
     getLabel: channel.getLabel ? () => channel.getLabel?.() ?? '' : undefined,

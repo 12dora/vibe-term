@@ -1,12 +1,12 @@
 import type { LinkSession } from '@vibeterm/shared/link';
 import { backoffDelayMs, isRecord } from './ctl';
 import type { RtcSignalMessage } from './mesh-deps';
+import { isBackgroundDcUpgradeBlocked } from './peer-dc-upgrade-gate';
 import type { IncomingWakeGate, RtcWakeGate, WakeGate } from './peer-rtc-wake';
 import type { RtcSignaling, RtcWakeFields } from './rtc/ice';
 import {
   type DcRearmSource,
   RTC_DIAL_BREAKER_HEALTHY_MS,
-  RTC_DIAL_FORCE_PROBE_MS,
   type RtcDialBreaker,
   createGatewayRtcDialBreaker,
 } from './rtc/rtc-dial-breaker';
@@ -133,6 +133,7 @@ export class DcUpgradeCoordinator {
   wantsUpgrade(live: DcUpgradeLivePeer): boolean {
     if (live.retiring) return false;
     if (live.transport === 'dc') return false;
+    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, live.peerNodeId)) return false;
     return (
       this.ports.shouldTryDc(live.peerNodeId) ||
       (live.transport === 'relay' && this.ports.hasWsSecureCandidate(live.peerNodeId))
@@ -216,6 +217,7 @@ export class DcUpgradeCoordinator {
   maybeUpgrade(nodeId: string, opts: { cooldown: boolean; userPath?: boolean }): void {
     if (this.ports.stopped()) return;
     if (!this.ports.isTrusted(nodeId)) return;
+    if (isBackgroundDcUpgradeBlocked(this.dcBreaker, nodeId)) return;
     const live = this.ports.live().get(nodeId);
     if (!live || !this.wantsUpgrade(live)) return;
     if (!live.quiesceCapable) {
@@ -334,10 +336,7 @@ export class DcUpgradeCoordinator {
     const live = this.liveForDcRetry(nodeId);
     if (!live) return;
     const decision = this.dcBreaker.shouldTry(nodeId);
-    if (decision.disabled && !decision.allow) {
-      this.scheduleDcBreakerProbe(nodeId, this.ports.scheduler.now() + RTC_DIAL_FORCE_PROBE_MS);
-      return;
-    }
+    if (this.dcBreaker.isDisabled(nodeId) && !decision.allow) return;
     if (!decision.allow) {
       this.scheduleDcBreakerProbe(nodeId, decision.until);
       return;
@@ -418,13 +417,7 @@ export class DcUpgradeCoordinator {
         if (!this.liveForDcRetry(nodeId)) return;
         if (!this.ports.shouldTryDc(nodeId)) {
           const next = this.dcBreaker.shouldTry(nodeId);
-          if (next.disabled) {
-            this.scheduleDcBreakerProbe(
-              nodeId,
-              this.ports.scheduler.now() + RTC_DIAL_FORCE_PROBE_MS
-            );
-            return;
-          }
+          if (next.disabled) return;
           if (next.cooling) this.scheduleDcBreakerProbe(nodeId, next.until);
           return;
         }

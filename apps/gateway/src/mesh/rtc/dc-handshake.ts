@@ -24,8 +24,8 @@ import { rtcLog } from './rtc-log';
 
 export const DC_HANDSHAKE_TIMEOUT_MS = 10_000;
 export const DC_HANDSHAKE_MAX_MESSAGE_BYTES = 4 * 1024;
-export const DC_HANDSHAKE_MAX_QUEUE = 8;
-export const DC_HANDSHAKE_HELLO_INTERVAL_MS = 40;
+export const DC_HANDSHAKE_MAX_QUEUE = 64;
+export const DC_HANDSHAKE_HELLO_INTERVAL_MS = 500;
 export const DC_HANDSHAKE_JSON_PROBE_BYTES = 16 * 1024;
 
 export type DcHandshakeType = 'hello' | 'sig' | 'done' | 'ctl';
@@ -123,14 +123,48 @@ function messageByteLength(msg: string | Buffer | ArrayBuffer): number {
   return msg.byteLength;
 }
 
+export type HandshakeRecv = {
+  recv: () => Promise<Uint8Array>;
+  stop: () => Array<string | Buffer | ArrayBuffer>;
+};
+
+function isHandshakeSlot(kind: DcHandshakeType | null): kind is 'hello' | 'sig' | 'done' {
+  return kind === 'hello' || kind === 'sig' || kind === 'done';
+}
+
+function enqueueHandshakeSlot(
+  pending: Uint8Array[],
+  bytes: Uint8Array,
+  kind: 'hello' | 'sig' | 'done',
+  maxQueue: number,
+  abort: (message: string) => void
+): void {
+  const prev = pending.findIndex((row) => dcHandshakeType(row) === kind);
+  if (prev >= 0) pending.splice(prev, 1);
+  if (pending.length >= maxQueue) {
+    abort('dc handshake receive queue overflow');
+    return;
+  }
+  pending.push(bytes);
+}
+
+export function attachHandshakeRecv(
+  channel: DataChannelLike,
+  pc: PeerConnectionLike,
+  opts?: { peer?: string }
+): HandshakeRecv {
+  return recvQueue(channel, pc, {
+    maxMessageBytes: DC_HANDSHAKE_MAX_MESSAGE_BYTES,
+    maxQueue: DC_HANDSHAKE_MAX_QUEUE,
+    peer: opts?.peer,
+  });
+}
+
 function recvQueue(
   channel: DataChannelLike,
   pc: PeerConnectionLike,
   limits: { maxMessageBytes: number; maxQueue: number; peer?: string }
-): {
-  recv: () => Promise<Uint8Array>;
-  stop: () => Array<string | Buffer | ArrayBuffer>;
-} {
+): HandshakeRecv {
   const pendingHandshake: Uint8Array[] = [];
   const pendingPayload: Array<string | Buffer | ArrayBuffer> = [];
   let pendingPayloadBytes = 0;
@@ -168,11 +202,9 @@ function recvQueue(
       waiter.resolve(bytes);
       return;
     }
-    if (pendingHandshake.length >= limits.maxQueue) {
-      abort('dc handshake receive queue overflow');
-      return;
-    }
-    pendingHandshake.push(bytes);
+    const kind = dcHandshakeType(bytes);
+    if (!isHandshakeSlot(kind)) return;
+    enqueueHandshakeSlot(pendingHandshake, bytes, kind, limits.maxQueue, abort);
   };
 
   const enqueuePayload = (msg: string | Buffer | ArrayBuffer) => {
@@ -192,7 +224,7 @@ function recvQueue(
   const unsubMessage: unknown = channel.onMessage((msg) => {
     if (stopped) return;
     const kind = dcHandshakeType(msg);
-    if (kind !== null) {
+    if (isHandshakeSlot(kind)) {
       const bytes = toUint8Array(msg).slice();
       if (bytes.byteLength > limits.maxMessageBytes) {
         abort('dc handshake message too large');
@@ -201,6 +233,7 @@ function recvQueue(
       deliverHandshake(bytes);
       return;
     }
+    if (kind === 'ctl') return;
     enqueuePayload(msg);
   });
   const unsubClosed: unknown = channel.onClosed(() => {
@@ -253,6 +286,116 @@ function sendHandshake(
   channel.sendMessage(JSON.stringify(msg));
 }
 
+function buildSelfHello(identity: MeshIdentity, localFp: DtlsFingerprint): PeerHello {
+  const selfId = hexToBytes(identity.nodeId);
+  if (selfId.byteLength !== 16) {
+    throw new PeerHandshakeError('protocol', 'identity.nodeId must be 16 bytes hex');
+  }
+  return {
+    node_id: selfId,
+    nonce: crypto.getRandomValues(new Uint8Array(32)),
+    eph_x25519_pk: null,
+    dtls_fingerprint: localFp,
+  };
+}
+
+function startHelloRetransmit(
+  channel: DataChannelLike,
+  helloMsg: { t: string } & Record<string, unknown>
+): () => void {
+  let helloTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
+    if (!channel.isOpen()) return;
+    sendHandshake(channel, helloMsg);
+  }, DC_HANDSHAKE_HELLO_INTERVAL_MS);
+  return () => {
+    if (helloTimer === null) return;
+    clearInterval(helloTimer);
+    helloTimer = null;
+  };
+}
+
+type HandshakeProgress = {
+  peerHello: PeerHello | null;
+  peerFingerprint: DtlsFingerprint | null;
+  peerNodeId: string;
+  gotSig: Uint8Array | null;
+  sentSig: boolean;
+  gotDone: boolean;
+  verified: boolean;
+};
+
+async function exchangeHandshake(opts: {
+  queue: HandshakeRecv;
+  channel: DataChannelLike;
+  pc: PeerConnectionLike;
+  identity: MeshIdentity;
+  userStore: UserStore;
+  selfHello: PeerHello;
+  stopHello: () => void;
+}): Promise<HandshakeProgress> {
+  const progress: HandshakeProgress = {
+    peerHello: null,
+    peerFingerprint: null,
+    peerNodeId: '',
+    gotSig: null,
+    sentSig: false,
+    gotDone: false,
+    verified: false,
+  };
+  const send = (msg: { t: string } & Record<string, unknown>) => sendHandshake(opts.channel, msg);
+  const sendSigIfReady = () => {
+    if (progress.sentSig || !progress.peerHello) return;
+    const transcript = buildPeerTranscript('dc', opts.selfHello, progress.peerHello);
+    progress.sentSig = true;
+    send({ t: 'sig', sig: encodeBase64url(signTranscript(opts.identity.edSecretKey, transcript)) });
+  };
+  const verifyAndAck = () => {
+    if (progress.verified || !progress.peerHello || !progress.gotSig) return;
+    const edPk = lookupPeerEdPk(opts.userStore, progress.peerNodeId);
+    const transcript = buildPeerTranscript('dc', opts.selfHello, progress.peerHello);
+    if (!verifyTranscript(encodePeerTranscript(transcript), progress.gotSig, edPk)) {
+      throw new PeerHandshakeError('bad_signature', 'peer transcript signature failed');
+    }
+    if (!progress.peerFingerprint) {
+      throw new PeerHandshakeError('protocol', 'peer hello missing dtls_fingerprint');
+    }
+    if (!fingerprintsEqual(progress.peerFingerprint, opts.pc.remoteFingerprint())) {
+      throw new PeerHandshakeError('protocol', 'dtls fingerprint mismatch');
+    }
+    progress.verified = true;
+    send({ t: 'done' });
+  };
+  while (!progress.verified || !progress.gotDone) {
+    if (progress.peerHello && progress.gotSig && !progress.verified) {
+      sendSigIfReady();
+      verifyAndAck();
+      continue;
+    }
+    const bytes = await opts.queue.recv();
+    let parsed: unknown;
+    try {
+      parsed = decodeJsonBytes(bytes);
+    } catch {
+      continue;
+    }
+    if (!isRecord(parsed) || typeof parsed.t !== 'string') continue;
+    if (parsed.t === 'hello') {
+      opts.stopHello();
+      const hello = parseHello(parsed);
+      progress.peerHello = hello.hello;
+      progress.peerFingerprint = hello.fingerprint;
+      progress.peerNodeId = hello.nodeIdHex;
+      sendSigIfReady();
+    } else if (parsed.t === 'sig') {
+      opts.stopHello();
+      progress.gotSig = decodeBase64url(requireString(parsed.sig, 'sig'));
+    } else if (parsed.t === 'done') {
+      progress.gotDone = true;
+    }
+  }
+  return progress;
+}
+
 export async function handshakeDataChannel(opts: {
   channel: DataChannelLike;
   pc: PeerConnectionLike;
@@ -260,113 +403,35 @@ export async function handshakeDataChannel(opts: {
   userStore: UserStore;
   localFingerprint: DtlsFingerprint;
   timeoutMs?: number;
+  queue?: HandshakeRecv;
 }): Promise<{ peerNodeId: string; peerHello: PeerHello }> {
   const timeoutMs = opts.timeoutMs ?? DC_HANDSHAKE_TIMEOUT_MS;
-  const selfId = hexToBytes(opts.identity.nodeId);
-  if (selfId.byteLength !== 16) {
-    throw new PeerHandshakeError('protocol', 'identity.nodeId must be 16 bytes hex');
-  }
   const localFp = normalizeFingerprint(opts.localFingerprint);
-  const selfHello: PeerHello = {
-    node_id: selfId,
-    nonce: crypto.getRandomValues(new Uint8Array(32)),
-    eph_x25519_pk: null,
-    dtls_fingerprint: localFp,
-  };
-  const queue = recvQueue(opts.channel, opts.pc, {
-    maxMessageBytes: DC_HANDSHAKE_MAX_MESSAGE_BYTES,
-    maxQueue: DC_HANDSHAKE_MAX_QUEUE,
-    peer: nodeIdToHex(selfId),
-  });
-  const send = (msg: { t: string } & Record<string, unknown>) => {
-    sendHandshake(opts.channel, msg);
-  };
-
+  const selfHello = buildSelfHello(opts.identity, localFp);
+  const queue =
+    opts.queue ??
+    attachHandshakeRecv(opts.channel, opts.pc, { peer: nodeIdToHex(selfHello.node_id) });
   const helloMsg = {
     t: 'hello',
     node_id: nodeIdToHex(selfHello.node_id),
     nonce: encodeBase64url(selfHello.nonce),
     dtls_fingerprint: localFp,
   };
-  send(helloMsg);
-  let helloTimer: ReturnType<typeof setInterval> | null = setInterval(() => {
-    if (!opts.channel.isOpen()) return;
-    send(helloMsg);
-  }, DC_HANDSHAKE_HELLO_INTERVAL_MS);
-
-  const stopHello = () => {
-    if (helloTimer === null) return;
-    clearInterval(helloTimer);
-    helloTimer = null;
-  };
-
-  let peerHello: PeerHello | null = null;
-  let peerFingerprint: DtlsFingerprint | null = null;
-  let peerNodeId = '';
-  let gotSig: Uint8Array | null = null;
-  let sentSig = false;
-  let gotDone = false;
-  let verified = false;
+  sendHandshake(opts.channel, helloMsg);
+  const stopHello = startHelloRetransmit(opts.channel, helloMsg);
   let leftovers: Array<string | Buffer | ArrayBuffer> = [];
-
-  const sendSigIfReady = () => {
-    if (sentSig || !peerHello) return;
-    const transcript = buildPeerTranscript('dc', selfHello, peerHello);
-    const sig = signTranscript(opts.identity.edSecretKey, transcript);
-    sentSig = true;
-    send({ t: 'sig', sig: encodeBase64url(sig) });
-  };
-
-  const verifyAndAck = () => {
-    if (verified || !peerHello || !gotSig) return;
-    const edPk = lookupPeerEdPk(opts.userStore, peerNodeId);
-    const transcript = buildPeerTranscript('dc', selfHello, peerHello);
-    if (!verifyTranscript(encodePeerTranscript(transcript), gotSig, edPk)) {
-      throw new PeerHandshakeError('bad_signature', 'peer transcript signature failed');
-    }
-    const advertised = peerFingerprint;
-    if (!advertised) {
-      throw new PeerHandshakeError('protocol', 'peer hello missing dtls_fingerprint');
-    }
-    const remote = opts.pc.remoteFingerprint();
-    if (!fingerprintsEqual(advertised, remote)) {
-      throw new PeerHandshakeError('protocol', 'dtls fingerprint mismatch');
-    }
-    verified = true;
-    send({ t: 'done' });
-  };
-
+  let progress: HandshakeProgress | null = null;
   try {
-    await withPeerHandshakeTimeout(
-      (async () => {
-        while (!verified || !gotDone) {
-          if (peerHello && gotSig && !verified) {
-            sendSigIfReady();
-            verifyAndAck();
-            continue;
-          }
-          const bytes = await queue.recv();
-          let parsed: unknown;
-          try {
-            parsed = decodeJsonBytes(bytes);
-          } catch {
-            continue;
-          }
-          if (!isRecord(parsed) || typeof parsed.t !== 'string') continue;
-          if (parsed.t === 'hello') {
-            const hello = parseHello(parsed);
-            peerHello = hello.hello;
-            peerFingerprint = hello.fingerprint;
-            peerNodeId = hello.nodeIdHex;
-            sendSigIfReady();
-          } else if (parsed.t === 'sig') {
-            stopHello();
-            gotSig = decodeBase64url(requireString(parsed.sig, 'sig'));
-          } else if (parsed.t === 'done') {
-            gotDone = true;
-          }
-        }
-      })(),
+    progress = await withPeerHandshakeTimeout(
+      exchangeHandshake({
+        queue,
+        channel: opts.channel,
+        pc: opts.pc,
+        identity: opts.identity,
+        userStore: opts.userStore,
+        selfHello,
+        stopHello,
+      }),
       timeoutMs,
       'dc handshake timed out'
     );
@@ -374,10 +439,9 @@ export async function handshakeDataChannel(opts: {
     stopHello();
     leftovers = queue.stop();
   }
-
-  if (!verified || !gotDone || !peerHello) {
+  if (!progress?.verified || !progress.gotDone || !progress.peerHello) {
     throw new PeerHandshakeError('protocol', 'incomplete dc handshake');
   }
   reinjectPayloads(opts.channel, leftovers);
-  return { peerNodeId, peerHello };
+  return { peerNodeId: progress.peerNodeId, peerHello: progress.peerHello };
 }

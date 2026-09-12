@@ -10,13 +10,16 @@ import {
 import type { UpgradeGate } from './peer-dc-upgrade';
 import { winningDialInitiator } from './peer-direct-attempt';
 import {
+  PEER_DC_IDLE_MS,
   PEER_MISSED_PONG_LIMIT,
   PEER_PING_INTERVAL_MS,
   type PeerManagerState,
+  applyPeerRttSample,
   comparePeerTransport,
   isPeerTrusted,
   peerStale,
 } from './peer-manager-state';
+import { parseOpenPayload } from './peer-protocol';
 import { type LivePeer, peerDropPlan } from './peer-reconnect-wake';
 import { type IncomingWakeGate, PEER_RTC_WAKE_COOLDOWN_MS } from './peer-rtc-wake';
 import { quiet } from './peer-ws-race';
@@ -211,6 +214,7 @@ export class PeerLiveRegistry {
       remoteAddress,
       rttMs: null,
       pingSentAt: null,
+      rttSpikeIgnored: false,
       lastRttEmitAt: 0,
       lastEmittedRttMs: null,
       linkSinceAt: this.state.scheduler.now(),
@@ -274,6 +278,7 @@ export class PeerLiveRegistry {
       this.handleInboundStream(peerNodeId, stream);
     });
     session.ctl.onMessage((bytes) => {
+      if (this.handleRttCtl(live, bytes)) return;
       this.deps.handlePeerCtl(live, bytes);
     });
     void session.closed.then((info) => {
@@ -357,7 +362,7 @@ export class PeerLiveRegistry {
     live.lastInboundFrameAt = live.session.lastFrameAt ?? live.lastInboundFrameAt;
     const sendPing = () => {
       live.pingSentAt = performance.now();
-      this.deps.sendPeerCtl(live, { t: 'ping' });
+      this.deps.sendPeerCtl(live, { t: 'ping', sentAt: live.pingSentAt });
     };
     live.pingTimer = this.state.scheduler.interval(() => {
       if (this.state.live.get(live.peerNodeId) !== live) return;
@@ -374,12 +379,33 @@ export class PeerLiveRegistry {
     }, PEER_PING_INTERVAL_MS);
   }
 
-  onPeerPong(live: LivePeer): void {
+  onPeerPong(live: LivePeer, echoedSentAt?: number): void {
     live.missedPongs = 0;
-    if (live.pingSentAt == null) return;
-    live.rttMs = Math.max(0, Math.round(performance.now() - live.pingSentAt));
+    const sentAt =
+      typeof echoedSentAt === 'number' && Number.isFinite(echoedSentAt)
+        ? echoedSentAt
+        : live.pingSentAt;
     live.pingSentAt = null;
+    if (sentAt == null) return;
+    applyPeerRttSample(live, performance.now() - sentAt);
     this.maybeEmitRtt(live);
+  }
+
+  /** 新节点在 ping 里带 sentAt、pong 回显；旧节点不回显则退回本地 pingSentAt。拦截后不再走 peer-manager 的裸 pong。 */
+  private handleRttCtl(live: LivePeer, bytes: Uint8Array): boolean {
+    const msg = parseOpenPayload(bytes);
+    if (!msg || typeof msg.t !== 'string') return false;
+    if (msg.t === 'ping') {
+      const sentAt =
+        typeof msg.sentAt === 'number' && Number.isFinite(msg.sentAt) ? msg.sentAt : undefined;
+      this.deps.sendPeerCtl(live, sentAt == null ? { t: 'pong' } : { t: 'pong', sentAt });
+      return true;
+    }
+    if (msg.t !== 'pong') return false;
+    const echoed =
+      typeof msg.sentAt === 'number' && Number.isFinite(msg.sentAt) ? msg.sentAt : undefined;
+    this.onPeerPong(live, echoed);
+    return true;
   }
 
   emitLinkInfo(live: LivePeer): void {
@@ -419,19 +445,20 @@ export class PeerLiveRegistry {
     this.clearIdle(live);
     if (this.state.live.get(live.peerNodeId) !== live) return;
     if (live.streams > 0) return;
+    const idleMs = live.transport === 'dc' ? PEER_DC_IDLE_MS : this.idleMs;
     const startedAt = this.state.scheduler.now();
     live.idleTimer = this.state.scheduler.interval(
       () => {
         if (this.state.live.get(live.peerNodeId) !== live) return;
         if (live.streams > 0) return;
         if (
-          this.state.scheduler.now() - live.lastStreamAt >= this.idleMs &&
-          this.state.scheduler.now() - startedAt >= this.idleMs
+          this.state.scheduler.now() - live.lastStreamAt >= idleMs &&
+          this.state.scheduler.now() - startedAt >= idleMs
         ) {
           this.dropPeer(live.peerNodeId, 'idle');
         }
       },
-      Math.max(1, this.idleMs)
+      Math.max(1, idleMs)
     );
   }
 
@@ -519,6 +546,7 @@ export class PeerLiveRegistry {
     best.gotPeerQuiesce = false;
     best.rttMs = null;
     best.pingSentAt = null;
+    best.rttSpikeIgnored = false;
     best.lastEmittedRttMs = null;
     best.lastRttEmitAt = 0;
     this.state.live.set(nodeId, best);

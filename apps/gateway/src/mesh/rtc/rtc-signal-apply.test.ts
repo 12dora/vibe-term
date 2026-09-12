@@ -6,6 +6,7 @@ import {
   RTC_PENDING_CANDIDATE_MAX,
   createRtcSignalApplier,
   createSignalingAttemptState,
+  isFakeIpv4IceCandidate,
 } from './rtc-signal-apply';
 
 function fakePc(opts?: { throwOnRemote?: boolean; throwOnCandidate?: boolean }) {
@@ -240,5 +241,36 @@ describe('createRtcSignalApplier', () => {
     });
     expect(ok.remote).toHaveLength(1);
     expect(ok.candidates).toHaveLength(1);
+  });
+
+  test('drops 198.18/15 fake-IP remote candidates and keeps RFC1918', () => {
+    expect(isFakeIpv4IceCandidate('candidate:1 1 UDP 1 198.18.0.1 9 typ host')).toBe(true);
+    expect(isFakeIpv4IceCandidate('candidate:1 1 UDP 1 198.19.255.255 9 typ host')).toBe(true);
+    expect(isFakeIpv4IceCandidate('candidate:1 1 UDP 1 192.168.31.36 9 typ host')).toBe(false);
+    expect(isFakeIpv4IceCandidate('candidate:1 1 UDP 1 10.0.0.148 9 typ host')).toBe(false);
+    const { pc, candidates } = fakePc();
+    const state = createSignalingAttemptState(1);
+    const apply = createRtcSignalApplier(pc, 'peer', 'answer', state, createIceCandidateTrace());
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      sdp: encodeSdpSignal({ type: 'answer', sdp: 'v=0', epoch: 1 }),
+    });
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      candidate: encodeCandidateSignal('candidate:1 1 UDP 1 198.18.0.1 54321 typ host', '0', 1),
+    });
+    apply({
+      rtcSession: 'dc:a:b',
+      from: 'node',
+      to: 'peer',
+      candidate: encodeCandidateSignal('candidate:2 1 UDP 1 192.168.1.8 9 typ host', '0', 1),
+    });
+    expect(candidates).toEqual([
+      { candidate: 'candidate:2 1 UDP 1 192.168.1.8 9 typ host', mid: '0' },
+    ]);
   });
 });

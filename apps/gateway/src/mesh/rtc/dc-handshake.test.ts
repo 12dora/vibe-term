@@ -14,6 +14,7 @@ import {
   DC_HANDSHAKE_HELLO_INTERVAL_MS,
   DC_HANDSHAKE_MAX_MESSAGE_BYTES,
   DC_HANDSHAKE_MAX_QUEUE,
+  attachHandshakeRecv,
   handshakeDataChannel,
 } from './dc-handshake';
 import { fragmentFrame } from './fragmenter';
@@ -146,12 +147,13 @@ describeRtc('handshakeDataChannel', () => {
     expect(local.closed).toBe(true);
   });
 
-  test('aborts and closes the PC when more than 8 handshake messages are queued', async () => {
+  test('hello flood is deduped so a late answerer does not overflow', async () => {
     const { store, identity, pc } = setup();
     const [local, remote] = pairDataChannels('peer');
-    expect(DC_HANDSHAKE_MAX_QUEUE).toBe(8);
+    expect(DC_HANDSHAKE_MAX_QUEUE).toBe(64);
+    expect(DC_HANDSHAKE_HELLO_INTERVAL_MS).toBeGreaterThanOrEqual(500);
     remote.onMessage(() => {
-      for (let i = 0; i < DC_HANDSHAKE_MAX_QUEUE + 1; i++) {
+      for (let i = 0; i < 50; i++) {
         remote.sendMessage(
           JSON.stringify({
             t: 'hello',
@@ -162,6 +164,7 @@ describeRtc('handshakeDataChannel', () => {
           })
         );
       }
+      remote.sendMessage(JSON.stringify({ t: 'ping' }));
     });
     const hs = handshakeDataChannel({
       channel: local,
@@ -169,11 +172,11 @@ describeRtc('handshakeDataChannel', () => {
       identity,
       userStore: store,
       localFingerprint: pc.fingerprint,
-      timeoutMs: 1_000,
+      timeoutMs: 200,
     });
     await expect(hs).rejects.toBeInstanceOf(PeerHandshakeError);
-    expect(pc.closed).toBe(true);
-    expect(local.closed).toBe(true);
+    expect(pc.closed).toBe(false);
+    expect(local.closed).toBe(false);
   });
 
   test('aborts and closes the PC when the channel closes during handshake', async () => {
@@ -397,7 +400,7 @@ describeRtc('handshakeDataChannel', () => {
       identity: a,
       userStore: store,
       localFingerprint: pcA.fingerprint,
-      timeoutMs: 1_000,
+      timeoutMs: 3_000,
     });
     const hsB = handshakeDataChannel({
       channel: fanB,
@@ -405,7 +408,7 @@ describeRtc('handshakeDataChannel', () => {
       identity: b,
       userStore: store,
       localFingerprint: pcB.fingerprint,
-      timeoutMs: 1_000,
+      timeoutMs: 3_000,
     });
     await waitUntil(() => dcA.sent.some((chunk) => ctlType(chunk) === 'done'));
 
@@ -419,7 +422,14 @@ describeRtc('handshakeDataChannel', () => {
       linkClosedReason: undefined,
       channelOpen: true,
     });
-    expect(dcB.sent.filter((chunk) => ctlType(chunk) === 'hello').length).toBeGreaterThan(1);
+    fanB.sendMessage(
+      JSON.stringify({
+        t: 'hello',
+        node_id: b.nodeId,
+        nonce: encodeBase64url(new Uint8Array(32)),
+        dtls_fingerprint: pcB.fingerprint,
+      })
+    );
 
     heldB.release();
     await Promise.all([hsA, hsB]);
@@ -530,7 +540,7 @@ describeRtc('handshakeDataChannel', () => {
       identity: a,
       userStore: store,
       localFingerprint: pcA.fingerprint,
-      timeoutMs: 1_000,
+      timeoutMs: 3_000,
     });
     const hsB = handshakeDataChannel({
       channel: fanB,
@@ -538,7 +548,7 @@ describeRtc('handshakeDataChannel', () => {
       identity: b,
       userStore: store,
       localFingerprint: pcB.fingerprint,
-      timeoutMs: 1_000,
+      timeoutMs: 3_000,
     });
     await hsA;
     const hellos = dcA.sent.filter((chunk) => ctlType(chunk) === 'hello').length;
@@ -547,5 +557,40 @@ describeRtc('handshakeDataChannel', () => {
     expect(dcA.sent.filter((chunk) => ctlType(chunk) === 'hello').length).toBe(hellos);
     heldB.release();
     await hsB;
+  });
+
+  test('offerer 40 ms hello flood for 2 s is queued, not overflowed, when answerer attaches late', async () => {
+    const pair = setupPair();
+    const queue = attachHandshakeRecv(pair.fanB, pair.pcB, { peer: pair.b.nodeId });
+    const hsA = handshakeDataChannel({
+      channel: pair.fanA,
+      pc: pair.pcA,
+      identity: pair.a,
+      userStore: pair.store,
+      localFingerprint: pair.pcA.fingerprint,
+      timeoutMs: 2_000,
+    });
+    await waitUntil(() => pair.dcA.sent.some((chunk) => ctlType(chunk) === 'hello'));
+    const hello = pair.dcA.sent.find((chunk) => ctlType(chunk) === 'hello');
+    expect(hello).toBeDefined();
+    const helloText = typeof hello === 'string' ? hello : new TextDecoder().decode(hello);
+    for (let i = 0; i < 50; i++) {
+      pair.fanA.sendMessage(helloText);
+      pair.fanA.sendMessage(JSON.stringify({ t: 'ping' }));
+    }
+    const hsB = handshakeDataChannel({
+      channel: pair.fanB,
+      pc: pair.pcB,
+      identity: pair.b,
+      userStore: pair.store,
+      localFingerprint: pair.pcB.fingerprint,
+      timeoutMs: 2_000,
+      queue,
+    });
+    await expect(Promise.all([hsA, hsB])).resolves.toHaveLength(2);
+    expect(pair.pcA.closed).toBe(false);
+    expect(pair.pcB.closed).toBe(false);
+    expect(pair.fanA.isOpen()).toBe(true);
+    expect(pair.fanB.isOpen()).toBe(true);
   });
 });

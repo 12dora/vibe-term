@@ -17,6 +17,10 @@ import type { UplinkClient } from './uplink-client';
 import type { UplinkPool } from './uplink-pool';
 
 export const PEER_IDLE_MS = 5 * 60 * 1000;
+/** DataChannel 建连成本高，空闲拆链给 30 min；relay / ws-secure 仍用 PEER_IDLE_MS。 */
+export const PEER_DC_IDLE_MS = 30 * 60 * 1000;
+export const PEER_RTT_EWMA_ALPHA = 0.3;
+export const PEER_RTT_SPIKE_MULT = 3;
 export const PEER_CONNECT_TIMEOUT_MS = 3_000;
 export const PEER_LAN_DIAL_TIMEOUT_MS = 4_000;
 export const PEER_WS_DIAL_STAGGER_MS = 250;
@@ -75,6 +79,37 @@ function finiteRtt(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
 }
 
+export type PeerRttSampleTarget = {
+  rttMs: number | null;
+  rttSpikeIgnored?: boolean;
+};
+
+/** 一次样本：α=0.3 EWMA；超过当前 EWMA 3 倍的尖峰忽略一次。 */
+export function applyPeerRttSample(live: PeerRttSampleTarget, sampleMs: number): number {
+  const sample = Math.max(0, Math.round(sampleMs));
+  if (live.rttMs == null) {
+    live.rttMs = sample;
+    live.rttSpikeIgnored = false;
+    return sample;
+  }
+  if (sample > PEER_RTT_SPIKE_MULT * live.rttMs && !live.rttSpikeIgnored) {
+    live.rttSpikeIgnored = true;
+    return live.rttMs;
+  }
+  live.rttSpikeIgnored = false;
+  live.rttMs = Math.round(PEER_RTT_EWMA_ALPHA * sample + (1 - PEER_RTT_EWMA_ALPHA) * live.rttMs);
+  return live.rttMs;
+}
+
+function medianRtt(values: number[]): number {
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 0) {
+    return Math.round(((sorted[mid - 1] ?? 0) + (sorted[mid] ?? 0)) / 2);
+  }
+  return sorted[mid] ?? 0;
+}
+
 function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
   const pooled = uplink as UplinkPool;
   if (typeof pooled.candidates === 'function') {
@@ -93,7 +128,7 @@ function readUplinkRtt(uplink: UplinkClient | UplinkPool): number | null {
   return finiteRtt((uplink as { rttMs?: number | null }).rttMs);
 }
 
-/** 已测节点 RTT → uplink 代理 → 300 ms。`scheduler` 用于前台竞速这种没有 nodeId 的调用。 */
+/** 已测节点 RTT → 全网 live 中位数 → uplink 代理 → 300 ms。无 nodeId 时不用全局 max。 */
 export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
   const state = scheduler ? rttByScheduler.get(scheduler) : undefined;
   if (!state) return DEFAULT_DIAL_RTT_MS;
@@ -101,13 +136,12 @@ export function lookupPeerRttMs(nodeId?: string, scheduler?: object): number {
     const peer = finiteRtt(state.live.get(nodeId)?.rttMs);
     if (peer != null) return peer;
   }
-  let maxLive: number | null = null;
+  const samples: number[] = [];
   for (const live of state.live.values()) {
     const rtt = finiteRtt(live.rttMs);
-    if (rtt == null) continue;
-    maxLive = maxLive == null ? rtt : Math.max(maxLive, rtt);
+    if (rtt != null) samples.push(rtt);
   }
-  if (maxLive != null) return maxLive;
+  if (samples.length > 0) return medianRtt(samples);
   return readUplinkRtt(state.uplink) ?? DEFAULT_DIAL_RTT_MS;
 }
 

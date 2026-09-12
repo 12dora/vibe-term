@@ -33,6 +33,7 @@ export type LivePeer = {
   remoteAddress: string | null;
   rttMs: number | null;
   pingSentAt: number | null;
+  rttSpikeIgnored?: boolean;
   lastRttEmitAt: number;
   lastEmittedRttMs: number | null;
   linkSinceAt: number;

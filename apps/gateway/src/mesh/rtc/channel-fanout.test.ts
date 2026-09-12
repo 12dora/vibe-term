@@ -159,6 +159,42 @@ describe('fanoutDataChannel', () => {
     ]);
   });
 
+  test('already-open channel fires onOpen once even if native open fires again', () => {
+    const nativeOpen: Array<() => void> = [];
+    const inner = {
+      close() {},
+      sendMessage() {
+        return true;
+      },
+      sendMessageBinary() {
+        return true;
+      },
+      isOpen: () => true,
+      bufferedAmount: () => 0,
+      maxMessageSize: () => 1024,
+      setBufferedAmountLowThreshold() {},
+      onBufferedAmountLow() {},
+      onOpen: (cb: () => void) => {
+        nativeOpen.push(cb);
+      },
+      onClosed() {},
+      onError() {},
+      onMessage() {},
+    };
+    const fan = fanoutDataChannel(inner);
+    let opens = 0;
+    fan.onOpen(() => {
+      opens += 1;
+    });
+    expect(opens).toBe(1);
+    for (const cb of nativeOpen) cb();
+    expect(opens).toBe(1);
+    fan.onOpen(() => {
+      opens += 1;
+    });
+    expect(opens).toBe(2);
+  });
+
   test('reinjectMessages prepends leftovers ahead of frames that arrived after detach', () => {
     const [a, b] = pairDataChannels('peer');
     const fan = fanoutDataChannel(b);

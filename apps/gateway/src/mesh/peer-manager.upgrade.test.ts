@@ -16,6 +16,7 @@ import {
   PEER_UPGRADE_COOLDOWN_MS,
   PeerManager,
 } from './peer-manager';
+import { PEER_DC_IDLE_MS, PEER_IDLE_MS } from './peer-manager-state';
 import { dummyUplink, echoQuiesceCaps } from './peer-test-fixtures';
 import { ImmediateScheduler, seedNodeIdentity, seedUser, waitUntil } from './test-support';
 
@@ -995,5 +996,120 @@ describe('PeerManager upgrade review fixes', () => {
     const chunk = await reader.read();
     expect(new TextDecoder().decode(chunk.value?.bytes)).toBe('held-link');
     inbound.end();
+  });
+
+  test('DC track of a live relay with an http stream does not reset the old session within 5s', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    let accepted = 0;
+    const managerA = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: dummyUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      sessionStore: dummySessionStore(),
+      dispatchHttp: () => new Promise(() => {}),
+    });
+    const managerB = new PeerManager({
+      identity: peer,
+      userStore: store,
+      uplink: dummyUplink(peer, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      sessionStore: dummySessionStore(),
+      dispatchHttp: async () => {
+        accepted += 1;
+        return new Promise(() => {});
+      },
+    });
+    fixtures.push({ close, stop: () => managerA.stop() });
+    fixtures.push({ close, stop: () => managerB.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    echoQuiesceCaps(relayA);
+    expect(managerA.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    expect(managerB.adoptLink(self.nodeId, relayB, 'relay', self.nodeId)).toBe(relayB);
+    await waitUntil(
+      () => managerA.quiesceCapableOf(peer.nodeId) && managerB.quiesceCapableOf(self.nodeId)
+    );
+    const inflight = await relayA.openStream(HTTP_OPEN);
+    await waitUntil(() => accepted === 1);
+    const retired = relayA.closed;
+    let retiredDone = false;
+    void retired.then(() => {
+      retiredDone = true;
+    });
+
+    const [dcA, dcB] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcB);
+    expect(managerA.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId)).toBe(dcA);
+    expect(managerA.transportOf(peer.nodeId)).toBe('dc');
+
+    scheduler.advance(5_000);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(retiredDone).toBe(false);
+    expect(accepted).toBe(1);
+
+    inflight.reset('done');
+    await inflight.closed;
+    scheduler.advance(PEER_RETIRE_QUIET_MS - 1);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(retiredDone).toBe(false);
+    scheduler.advance(1);
+    expect((await retired).reason).toBe('replaced');
+  });
+
+  test('idle-close of a DC does not close a retiring relay session that still has a stream', async () => {
+    const { db, close } = createMigratedAuthDb();
+    fixtures.push({ close });
+    const store = new UserStore(db);
+    seedUser(store);
+    const self = seedNodeIdentity(store, 'user-1');
+    const peer = seedNodeIdentity(store, 'user-1');
+    const scheduler = new ImmediateScheduler();
+    const manager = new PeerManager({
+      identity: self,
+      userStore: store,
+      uplink: failingUplink(self, store),
+      peerPort: 0,
+      startServer: false,
+      scheduler,
+      sessionStore: dummySessionStore(),
+      dispatchHttp: () => new Promise(() => {}),
+    });
+    fixtures.push({ close, stop: () => manager.stop() });
+    const [relayA, relayB] = createInMemoryLinkPair();
+    echoQuiesceCaps(relayB);
+    expect(manager.adoptLink(peer.nodeId, relayA, 'relay', self.nodeId)).toBe(relayA);
+    await waitUntil(() => manager.quiesceCapableOf(peer.nodeId));
+    const stream = await relayA.openStream(HTTP_OPEN);
+    const relayClosed = relayA.closed.then((info) => info.reason);
+
+    const [dcA, dcB] = createInMemoryLinkPair();
+    echoQuiesceCaps(dcB);
+    expect(manager.adoptLink(peer.nodeId, dcA, 'dc', self.nodeId)).toBe(dcA);
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+
+    scheduler.nowMs += PEER_IDLE_MS;
+    scheduler.tickIntervals();
+    expect(manager.transportOf(peer.nodeId)).toBe('dc');
+    scheduler.nowMs += PEER_DC_IDLE_MS - PEER_IDLE_MS;
+    scheduler.tickIntervals();
+    await waitUntil(() => manager.transportOf(peer.nodeId) === 'relay');
+    const raced = await Promise.race([
+      relayClosed.then(() => 'closed' as const),
+      new Promise<'open'>((resolve) => setTimeout(() => resolve('open'), 30)),
+    ]);
+    expect(raced).toBe('open');
+    expect(stream.closed).toBeInstanceOf(Promise);
+    await stream.end();
   });
 });

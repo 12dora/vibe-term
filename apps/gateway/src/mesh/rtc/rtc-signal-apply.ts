@@ -1,3 +1,4 @@
+import { isFakeIpv4 } from '../address-class';
 import type { RtcSignalMessage } from '../mesh-deps';
 import { decodeCandidateSignal, decodeSdpSignal, isEmptyCandidate } from './ice';
 import type { PeerConnectionLike } from './native';
@@ -146,6 +147,19 @@ export function applyRemoteSdp(
   }
 }
 
+/** ICE 候选里的 connection-address；198.18/15 fake-IP 在收发两侧都丢掉。 */
+export function iceCandidateConnectionAddress(candidate: string): string | null {
+  const trimmed = candidate.trim().replace(/^a=/i, '');
+  const parts = trimmed.split(/\s+/);
+  if (parts[0]?.toLowerCase().startsWith('candidate:') && parts[4]) return parts[4];
+  return candidate.match(/\b(?:\d{1,3}\.){3}\d{1,3}\b/)?.[0] ?? null;
+}
+
+export function isFakeIpv4IceCandidate(candidate: string): boolean {
+  const addr = iceCandidateConnectionAddress(candidate);
+  return addr != null && isFakeIpv4(addr);
+}
+
 export function applyRemoteCandidate(
   pc: PeerConnectionLike,
   peer: string,
@@ -155,6 +169,10 @@ export function applyRemoteCandidate(
 ): void {
   const decoded = decodeCandidateSignal(raw);
   if (!decoded || isEmptyCandidate(decoded.candidate)) return;
+  if (isFakeIpv4IceCandidate(decoded.candidate)) {
+    logSignal('signal dropped', { peer, kind: 'candidate', cause: 'fake-ip' }, state);
+    return;
+  }
   // offer 未到之前应答侧还不知道 epoch：先入队，等 offer 定下 epoch 再筛，别当成陈旧信令丢掉。
   const beforeOffer = state.epoch === undefined && !state.remoteDescriptionApplied;
   if (

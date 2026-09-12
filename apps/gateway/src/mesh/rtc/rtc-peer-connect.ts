@@ -3,7 +3,7 @@ import type { MeshIdentity } from '../types';
 import { PeerHandshakeError } from '../types';
 import { fanoutDataChannel } from './channel-fanout';
 import { DataChannelLink, type DataChannelLinkOptions } from './data-channel-link';
-import { handshakeDataChannel } from './dc-handshake';
+import { attachHandshakeRecv, handshakeDataChannel } from './dc-handshake';
 import { type RtcSignaling, encodeCandidateSignal, encodeSdpSignal, isEmptyCandidate } from './ice';
 import type { DtlsFingerprint, IceServerConfig, PeerConnectionLike } from './native';
 import {
@@ -34,6 +34,7 @@ import {
   waitChannelOpen,
   waitDataChannel,
 } from './rtc-peer-helpers';
+import { isFakeIpv4IceCandidate } from './rtc-signal-apply';
 
 export type BindPeerSignalingHooks = {
   ctx?: RtcLogContext;
@@ -81,6 +82,15 @@ export function bindPeerSignaling(
   });
   pc.onLocalCandidate((candidate, mid) => {
     if (isEmptyCandidate(candidate)) return;
+    if (isFakeIpv4IceCandidate(candidate)) {
+      rtcLog('signal dropped', {
+        ...state.logFields,
+        peer: to,
+        kind: 'candidate',
+        cause: 'fake-ip',
+      });
+      return;
+    }
     rtcLogCandidate('send', to, candidate, iceTrace);
     signaling.send({
       rtcSession,
@@ -129,37 +139,44 @@ export async function runPeerHandshake(opts: {
       );
   const channel = fanoutDataChannel(await channelP, { peer: peerNodeId });
   bindChannelDiagnostics(channel, peerNodeId);
-  await waitChannelOpen(channel, remainingDeadlineMs(deadline, 'datachannel open timeout'));
-  progress.channelOpen = true;
-  const localFp = await opts.waitLocalFingerprint(
-    pc,
-    remainingDeadlineMs(deadline, 'local DTLS fingerprint unavailable')
-  );
-  progress.handshakeStarted = true;
-  const hs = await handshakeDataChannel({
-    channel,
-    pc,
-    identity: opts.identity,
-    userStore: opts.userStore,
-    localFingerprint: localFp,
-    timeoutMs: remainingDeadlineMs(deadline, 'peer handshake timeout'),
-  });
-  if (!channel.isOpen()) {
-    throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
+  const queue = attachHandshakeRecv(channel, pc, { peer: peerNodeId });
+  try {
+    await waitChannelOpen(channel, remainingDeadlineMs(deadline, 'datachannel open timeout'));
+    progress.channelOpen = true;
+    const localFp = await opts.waitLocalFingerprint(
+      pc,
+      remainingDeadlineMs(deadline, 'local DTLS fingerprint unavailable')
+    );
+    progress.handshakeStarted = true;
+    const hs = await handshakeDataChannel({
+      channel,
+      pc,
+      identity: opts.identity,
+      userStore: opts.userStore,
+      localFingerprint: localFp,
+      timeoutMs: remainingDeadlineMs(deadline, 'peer handshake timeout'),
+      queue,
+    });
+    if (!channel.isOpen()) {
+      throw new PeerHandshakeError('protocol', 'datachannel closed during handshake handoff');
+    }
+    const link = new DataChannelLink(channel, {
+      peer: peerNodeId,
+      ...(opts.liveness === false ? { liveness: false as const } : opts.liveness),
+    });
+    if (hs.peerNodeId !== peerNodeId.toLowerCase()) {
+      throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
+    }
+    return {
+      link,
+      pc,
+      peerNodeId: hs.peerNodeId,
+      role: offerer ? 'initiator' : 'acceptor',
+    };
+  } catch (err) {
+    queue.stop();
+    throw err;
   }
-  const link = new DataChannelLink(channel, {
-    peer: peerNodeId,
-    ...(opts.liveness === false ? { liveness: false as const } : opts.liveness),
-  });
-  if (hs.peerNodeId !== peerNodeId.toLowerCase()) {
-    throw new PeerHandshakeError('protocol', 'connected peer node_id mismatch');
-  }
-  return {
-    link,
-    pc,
-    peerNodeId: hs.peerNodeId,
-    role: offerer ? 'initiator' : 'acceptor',
-  };
 }
 
 export type PeerConnectAttemptHooks = {

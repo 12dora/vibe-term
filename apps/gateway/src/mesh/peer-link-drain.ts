@@ -188,6 +188,7 @@ export class PeerLinkDrain {
       this.finishRetire(live, reason);
       return;
     }
+    // make-before-break：有内层流时绝不 close/reset 旧 session（replaced 会 RST 整条 relay uplink）。
     if (live.streams > 0) return;
     const quietFor = live.zeroStreamsSince > 0 ? now - live.zeroStreamsSince : 0;
     if (
@@ -221,7 +222,9 @@ export class PeerLinkDrain {
     this.deps.clearIdle(live);
     live.pingTimer?.clear();
     live.pingTimer = null;
-    quiet(() => live.session.close(reason));
+    // 仍有内层流时不要用 replaced 关 relay：hub pump 会 abortBoth。
+    const closeReason = live.streams > 0 && reason === 'replaced' ? 'retired' : reason;
+    quiet(() => live.session.close(closeReason));
   }
 
   forceCloseRetiring(nodeId: string, reason: string): void {
