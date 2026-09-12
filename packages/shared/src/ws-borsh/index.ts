@@ -144,6 +144,16 @@ export {
 } from './canonical-tree-order';
 
 export {
+  HelloC2SWithIntentSchema,
+  HelloScreenIntentSchema,
+  decodeHelloC2S,
+  encodeHelloC2S,
+  helloC2SHasCapability,
+  type HelloC2S,
+  type HelloScreenIntent,
+} from './hello-c2s';
+
+export {
   STATE_SNAPSHOT_DIFF_FORMAT_ABSOLUTE_JSON,
   applyLegacyStateSnapshotDiff,
   decodeLegacyStateSnapshotDiff,

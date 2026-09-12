@@ -23,6 +23,11 @@ import {
 } from './canonical-metadata-identity';
 import { CanonicalMetadataRecovery } from './canonical-metadata-recovery';
 import { CanonicalPendingCommands } from './canonical-pending-commands';
+import {
+  acknowledgeHelloScreenIntent,
+  screenCommandToHelloIntent,
+  shouldSkipPostHelloScreenIntent,
+} from './canonical-screen-intent';
 import { CanonicalSizeEpochs } from './canonical-size-epochs';
 import {
   type CanonicalEvent,
@@ -96,6 +101,7 @@ export class CanonicalStateClient {
   private readonly maxPendingBytes: number;
   private readonly maxPendingFrames: number;
   private serverCapabilities: readonly string[] = [];
+  private helloScreenIntent: wsBorsh.HelloScreenIntent | null = null;
 
   constructor(private readonly options: CanonicalStateClientOptions) {
     this.createId = options.createId ?? newId;
@@ -170,6 +176,10 @@ export class CanonicalStateClient {
     return this.sendSubscriptions(true);
   }
 
+  peekHelloScreenIntent(): wsBorsh.HelloScreenIntent | null {
+    return this.helloScreenIntent;
+  }
+
   suspend(): void {
     this.active = false;
     const retry = [...this.content.pendingRequests(), ...this.contentRetry.takeScheduled()];
@@ -180,6 +190,7 @@ export class CanonicalStateClient {
 
   dispose(): void {
     this.suspend();
+    this.helloScreenIntent = null;
     this.desired.clear();
     this.metadata.clear();
     this.terminalCursors.clear();
@@ -219,6 +230,8 @@ export class CanonicalStateClient {
       this.metadataRecovery.resolved(command.deviceId);
       this.clearPaneStateForDevice(command.deviceId);
       this.pending.dropDevice(command.deviceId);
+    } else if (command.type === 'request-pane-screen') {
+      this.helloScreenIntent ??= screenCommandToHelloIntent(command);
     }
   }
 
@@ -299,6 +312,12 @@ export class CanonicalStateClient {
       return this.sendResize(command, allowQueue);
     }
     if (command.type === 'request-pane-screen') {
+      if (
+        shouldSkipPostHelloScreenIntent(this.serverCapabilities, this.helloScreenIntent, command)
+      ) {
+        this.helloScreenIntent = null;
+        return acknowledgeHelloScreenIntent(this.contentRequestContext(), command);
+      }
       return sendScreenRequest(this.contentRequestContext(), command, allowQueue);
     }
     if (command.type === 'request-pane-history') {

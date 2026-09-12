@@ -1,7 +1,11 @@
 // FE Borsh WebSocket 客户端
 // 门面：组合心跳、重连退避与协议分发，对外维持连接状态与订阅接口
 
-import { GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1, wsBorsh } from '@vibeterm/shared';
+import {
+  CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1,
+  GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
+  wsBorsh,
+} from '@vibeterm/shared';
 import {
   type ActiveCarrier,
   type AttachDirectOptions,
@@ -190,6 +194,7 @@ export class BorshWebSocketClient {
   serverVersion: string | null = null;
   stateFeedMode: StateFeedMode = 'pending';
   private serverMaxFrameBytes: number | null = null;
+  private helloScreenIntentProvider: (() => wsBorsh.HelloScreenIntent | null) | null = null;
 
   get effectiveMaxFrameBytes(): number {
     return Math.min(
@@ -217,6 +222,10 @@ export class BorshWebSocketClient {
 
   getClientVersion(): string {
     return this.options.clientVersion;
+  }
+
+  setHelloScreenIntentProvider(provider: (() => wsBorsh.HelloScreenIntent | null) | null): void {
+    this.helloScreenIntentProvider = provider;
   }
 
   constructor(options: Partial<BorshClientOptions> = {}) {
@@ -494,19 +503,17 @@ export class BorshWebSocketClient {
 
   private sendHello(): void {
     this.resetNegotiatedServerState();
-    const hello = {
+    const payload = wsBorsh.encodeHelloC2S({
       clientImpl: this.options.clientImpl,
       clientVersion: this.options.clientVersion,
       maxFrameBytes: this.options.maxFrameBytes,
       supportsCompression: false,
       supportsDiffSnapshot: false,
-    };
-
-    const payload = wsBorsh.encodePayload(wsBorsh.schema.HelloC2SSchema, hello);
+      clientCapabilities: [CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1],
+      screenIntent: this.helloScreenIntentProvider?.() ?? null,
+    });
     const seq = this.nextSeq();
-    const envelope = wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, seq);
-
-    this.sendRaw(envelope);
+    this.sendRaw(wsBorsh.encodeEnvelope(wsBorsh.KIND_HELLO_C2S, payload, seq));
     this.setState('HELLO_NEGOTIATING');
   }
 

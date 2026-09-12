@@ -178,6 +178,49 @@ describe('canonical feed session share scope', () => {
     session.close();
   });
 
+  test('占位 epoch 0 的 in-scope 订阅被改写，out-of-scope 仍 NOT_FOUND', async () => {
+    const runtime = new ShareFakeRuntime();
+    const { session, events } = createSession(runtime);
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [
+          {
+            pane: {
+              deviceId: SCOPE.deviceId,
+              serverEpoch: new Uint8Array(16),
+              paneId: IN_SCOPE_PANE,
+            },
+            cursor: null,
+          },
+          {
+            pane: {
+              deviceId: SCOPE.deviceId,
+              serverEpoch: new Uint8Array(16),
+              paneId: OUT_OF_SCOPE_PANE,
+            },
+            cursor: null,
+          },
+        ],
+        hotPanes: [],
+      },
+    });
+    const applied = subscriptionApplied(events);
+    expect(applied.activePanes.map((pane) => pane.paneId)).toEqual([IN_SCOPE_PANE]);
+    expect(applied.activePanes[0]?.serverEpoch).toEqual(SERVER_EPOCH);
+    expect(applied.rejected).toEqual([
+      {
+        pane: {
+          deviceId: SCOPE.deviceId,
+          serverEpoch: new Uint8Array(16),
+          paneId: OUT_OF_SCOPE_PANE,
+        },
+        reason: wsBorsh.SUBSCRIPTION_REJECTED_NOT_FOUND,
+      },
+    ]);
+    session.close();
+  });
+
   test('scope 外 pane 的输入按 pane not found 拒绝', async () => {
     const runtime = new ShareFakeRuntime();
     const { session, events } = createSession(runtime);

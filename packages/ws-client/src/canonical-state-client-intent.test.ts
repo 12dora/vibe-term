@@ -213,27 +213,25 @@ describe('首屏意图 ↔ 网关', () => {
     harness.client.dispose();
   });
 
-  // 占位订阅只能带全零 serverEpoch：网关按 epoch 不匹配拒掉，metadata 落地后客户端自动补发一次真
-  // epoch 的订阅（第二批）。首屏不受影响（意图自带解析），但实时输出要多等一个往返。
-  test('占位订阅被拒后由 metadata 触发的那一批补上，最终订阅成功', async () => {
+  // 占位订阅带全零 serverEpoch：网关改写成当前 epoch 并在首屏同一批 apply。
+  // metadata 落地后客户端仍可再发一代（兼容），但不需要靠那一代才有 live。
+  test('占位订阅被网关改写，首屏同一批即可订阅成功', async () => {
     const harness = createHarness([GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1]);
     mountPane(harness.client);
     await harness.pump();
 
     const subscriptions = harness.sent.filter((item) => item.name === 'SetPaneSubscriptions');
     expect(subscriptions[0]?.flush).toBe(1);
-    expect(subscriptions.at(-1)?.flush).toBe(2);
-    // 被拒的那一条回包代次已经落后（客户端在 metadata 落地时就发了更新的订阅），按代次直接丢弃，
-    // UI 看不到这次拒绝，只看到最终生效的那一条
     const applied = harness.events.filter((event) => event.type === 'subscription-applied');
+    expect(applied.length).toBeGreaterThan(0);
     expect(
       applied.every(
         (event) => event.type === 'subscription-applied' && event.rejectedPaneIds.length === 0
       )
     ).toBe(true);
-    const last = applied.at(-1);
-    expect(last?.type === 'subscription-applied' && last.paneIds).toEqual(['%1']);
-    expect(last?.type === 'subscription-applied' && last.rejectedPaneIds).toEqual([]);
+    const first = applied[0];
+    expect(first?.type === 'subscription-applied' && first.paneIds).toEqual(['%1']);
+    expect(harness.screenFlush()).toBe(1);
     harness.server.close();
     harness.client.dispose();
   });

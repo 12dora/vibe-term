@@ -173,6 +173,28 @@ function intent(overrides: Partial<{ windowId: string | null; paneId: string | n
   };
 }
 
+describe('HELLO 内嵌 screenIntent', () => {
+  test('同一 burst 里先 SubscriptionApplied（当前 epoch）再 Screen*', async () => {
+    const runtime = new IntentRuntime();
+    const { session, events } = createSession(runtime);
+    await session.applyHelloScreenIntent(intent().RequestScreenIntent);
+    expect(names(events)).toEqual([
+      'FeedReady',
+      'SourceMetadataSnapshot',
+      'SubscriptionApplied',
+      'ScreenBegin',
+      'ScreenChunk',
+      'ScreenCommit',
+    ]);
+    const applied = events.find((event) => 'SubscriptionApplied' in event);
+    expect(
+      applied && 'SubscriptionApplied' in applied ? applied.SubscriptionApplied.activePanes : []
+    ).toEqual([{ deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' }]);
+    expect(screenBegin(events)?.requestId).toEqual(REQUEST_ID);
+    session.close();
+  });
+});
+
 describe('canonical RequestScreenIntent', () => {
   test('attach 后解析出 pane，并在同一 burst 里回 metadata 与首屏事务', async () => {
     const runtime = new IntentRuntime();
@@ -282,9 +304,9 @@ describe('canonical RequestScreenIntent', () => {
     session.close();
   });
 
-  // 客户端在 metadata 未到达时只能用全零 serverEpoch 占位订阅：网关按 epoch 不匹配拒掉，
-  // 首屏不受影响（意图自带解析），实时输出要等客户端拿到 metadata 后补发的那一次订阅。
-  test('占位订阅（零 serverEpoch）按 epoch_changed 拒绝，不会误当成当前 epoch', async () => {
+  // 客户端在 metadata 未到达时只能用全零 serverEpoch 占位：网关改写成当前 epoch 并 apply，
+  // 首屏同一 burst 里 live 订阅已经生效。
+  test('占位订阅（零 serverEpoch）改写成当前 epoch 并 apply', async () => {
     const runtime = new IntentRuntime();
     const { session, events } = createSession(runtime);
     await session.handleCommand({
@@ -295,6 +317,29 @@ describe('canonical RequestScreenIntent', () => {
             pane: { deviceId: 'device-a', serverEpoch: new Uint8Array(16), paneId: '%1' },
             cursor: null,
           },
+        ],
+        hotPanes: [],
+      },
+    });
+    const applied = events.find((event) => 'SubscriptionApplied' in event);
+    const payload =
+      applied && 'SubscriptionApplied' in applied ? applied.SubscriptionApplied : null;
+    expect(payload?.rejected).toEqual([]);
+    expect(payload?.activePanes).toEqual([
+      { deviceId: 'device-a', serverEpoch: SERVER_EPOCH, paneId: '%1' },
+    ]);
+    session.close();
+  });
+
+  test('真实非零 epoch 不一致仍按 epoch_changed 拒绝', async () => {
+    const runtime = new IntentRuntime();
+    const { session, events } = createSession(runtime);
+    const stale = new Uint8Array(16).fill(0x99);
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [
+          { pane: { deviceId: 'device-a', serverEpoch: stale, paneId: '%1' }, cursor: null },
         ],
         hotPanes: [],
       },

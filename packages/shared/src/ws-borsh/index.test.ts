@@ -70,6 +70,7 @@ import {
   NodeEventSchema,
   NodeEventV2Schema,
   NodeEventV3Schema,
+  NodeEventV4Schema,
   PingPongSchema,
   RTC_SIGNAL_FROM_BROWSER,
   RTC_SIGNAL_FROM_NODE,
@@ -909,6 +910,46 @@ describe('mesh / hub 协议消息', () => {
     );
     expect(v3Decoder.nodeId).toBe('n6');
     expect(v3Decoder.transport).toBeNull();
+
+    const withoutPaused = decodeNodeEvent(
+      encodePayload(NodeEventV4Schema, {
+        nodeId: 'n7',
+        status: NODE_EVENT_STATUS_ONLINE,
+        reach: 'lan',
+        inventory: null,
+        version: null,
+        directCapable: null,
+        name: null,
+        transport: null,
+        rttMs: null,
+        viaRelay: null,
+        relayPresence: null,
+      })
+    );
+    expect(withoutPaused.paused).toBeUndefined();
+    expect(withoutPaused.nodeId).toBe('n7');
+
+    const withPaused = decodeNodeEvent(
+      encodeNodeEvent({
+        nodeId: 'n8',
+        status: NODE_EVENT_STATUS_ONLINE,
+        paused: true,
+      })
+    );
+    expect(withPaused.paused).toBe(true);
+    expect(
+      decodeNodeEvent(
+        encodeNodeEvent({ nodeId: 'n8', status: NODE_EVENT_STATUS_OFFLINE, paused: false })
+      ).paused
+    ).toBe(false);
+    expect(
+      decodeNodeEvent(encodeNodeEvent({ nodeId: 'n8', status: NODE_EVENT_STATUS_ONLINE })).paused
+    ).toBeUndefined();
+
+    const v4Decoder = NodeEventV4Schema.deserialize(
+      encodeNodeEvent({ nodeId: 'n9', status: NODE_EVENT_STATUS_ONLINE, paused: true })
+    );
+    expect(v4Decoder.nodeId).toBe('n9');
   });
 
   it('RTC_SIGNAL payload roundtrip', () => {

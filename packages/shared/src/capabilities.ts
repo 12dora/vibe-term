@@ -13,6 +13,11 @@ export const GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1 = 'canonical-state-v1.1';
 export const GATEWAY_CAPABILITY_DEVICE_LATENCY_V1 = 'device-latency-v1';
 export const GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1 = 'canonical-screen-intent-v1';
 
+// HELLO_C2S 携带 screenIntent 时客户端声明、网关处理成功后在 HELLO_S2C 回显。
+// 不进 GATEWAY_CAPABILITIES：未消费 hello intent 时不得让客户端误跳过 post-HELLO 意图。
+export const GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1 = 'hello-screen-intent-v1';
+export const CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1 = GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1;
+
 export const GATEWAY_CAPABILITIES = [
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,

@@ -3,8 +3,10 @@
 
 import { describe, expect, test } from 'bun:test';
 import {
+  CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1,
   GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1,
   GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
+  GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1,
   wsBorsh,
 } from '@vibeterm/shared';
 import { buildScreenIntentCommand, supportsScreenIntent } from './canonical-screen-intent';
@@ -129,5 +131,63 @@ describe('HELLO 之后的第一批发送', () => {
     const { frames } = createHarness([]);
     const sent = frames.map(frameName);
     expect(sent).toEqual([`kind:${wsBorsh.KIND_DEVICE_CONNECT}`]);
+  });
+
+  test('挂载发生在 open 之前：HELLO_C2S 带上 screenIntent', () => {
+    const socket = createFakeSocket({ binary: true });
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      heartbeatIntervalMs: 60_000,
+    });
+    const transport = new WebSocketGatewayTransport(client);
+    transport.connect();
+    transport.send({ type: 'connect-device', deviceId: 'device-a' });
+    transport.send(SCREEN_COMMAND);
+    socket.open();
+    const hello = wsBorsh.decodeHelloC2S(
+      wsBorsh.decodeEnvelope(socket.sent[0] as Uint8Array).payload
+    );
+    expect(hello.clientCapabilities).toContain(CLIENT_CAPABILITY_HELLO_SCREEN_INTENT_V1);
+    expect(hello.screenIntent?.paneId).toBe('%1');
+    expect(hello.screenIntent?.requestId).toEqual(SCREEN_REQUEST);
+    client.disconnect();
+  });
+
+  test('网关回显 hello-screen-intent-v1：第一批不再发 RequestScreenIntent', () => {
+    const socket = createFakeSocket({ binary: true });
+    const client = new BorshWebSocketClient({
+      url: 'ws://example.test/ws',
+      socketFactory: () => socket,
+      heartbeatIntervalMs: 60_000,
+    });
+    const transport = new WebSocketGatewayTransport(client);
+    transport.connect();
+    transport.send({ type: 'connect-device', deviceId: 'device-a' });
+    transport.send({
+      type: 'set-pane-subscriptions',
+      deviceId: 'device-a',
+      generation: 1n,
+      paneIds: ['%1'],
+    });
+    transport.send(SCREEN_COMMAND);
+    socket.open();
+    socket.sent.length = 0;
+    socket.deliver(
+      helloFrame({
+        serverVersion: '2.3.0',
+        capabilities: [
+          GATEWAY_CAPABILITY_CANONICAL_STATE_V1_1,
+          GATEWAY_CAPABILITY_CANONICAL_SCREEN_INTENT_V1,
+          GATEWAY_CAPABILITY_HELLO_SCREEN_INTENT_V1,
+        ],
+      })
+    );
+    const sent = socket.sent.filter((frame) => frameName(frame) !== 'kind:3').map(frameName);
+    expect(sent).toContain(`kind:${wsBorsh.KIND_DEVICE_CONNECT}`);
+    expect(sent).toContain('SetPaneSubscriptions');
+    expect(sent).not.toContain('RequestScreenIntent');
+    expect(sent).not.toContain('RequestScreen');
+    client.disconnect();
   });
 });

@@ -108,6 +108,7 @@ export class WebSocketGatewayTransport implements GatewayTransport {
       maxPendingBytes: limits.maxBytes,
       maxPendingFrames: limits.maxFrames,
     });
+    client.setHelloScreenIntentProvider(() => this.canonical.peekHelloScreenIntent());
     this.disposers = [
       client.onStateChange((state) => this.handleStateChange(state)),
       client.onLatency((latencyMs, rawMs) => this.emit({ type: 'latency', latencyMs, rawMs })),

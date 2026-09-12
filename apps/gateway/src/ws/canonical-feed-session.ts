@@ -488,12 +488,41 @@ export class CanonicalFeedSession {
       );
       return;
     }
-    this.screenJobs.start(
+    void this.screenJobs.start(
       target.device,
       target.pane,
       command.requestId,
       Math.min(command.byteLimit, CANONICAL_MAX_SCREEN_BYTES)
     );
+  }
+
+  /**
+   * HELLO_C2S 内嵌的首屏意图：attach 后先落地订阅再抓屏，
+   * SubscriptionApplied 与 Screen* 落在同一回复 burst。
+   */
+  async applyHelloScreenIntent(command: CanonicalScreenIntentCommand): Promise<void> {
+    if (this.closed) return;
+    this.ensureReady();
+    await this.bootstrapInitialDevices();
+    const device = await this.ensureDevice(command.deviceId);
+    const serverEpoch = device?.runtime.getServerEpoch() ?? null;
+    const paneId = device
+      ? ((command.paneId && device.runtime.getPaneIdentity(command.paneId)
+          ? command.paneId
+          : null) ?? resolveIntentPaneId(device.runtime, command.windowId))
+      : null;
+    if (!device || !serverEpoch || !paneId) {
+      await this.handleRequestScreenIntent(command);
+      return;
+    }
+    if (this.shareGuard.allowsPane(command.deviceId, paneId)) {
+      await this.handleSetPaneSubscriptions({
+        generation: 1n,
+        activePanes: [{ pane: { deviceId: command.deviceId, serverEpoch, paneId }, cursor: null }],
+        hotPanes: [],
+      });
+    }
+    await this.handleRequestScreenIntent(command);
   }
 
   private async handleRequestScreenIntent(command: CanonicalScreenIntentCommand): Promise<void> {

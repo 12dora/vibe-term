@@ -245,6 +245,52 @@ function installDelayedScreenCapture(runtime: FakeRuntime): {
 }
 
 describe('canonical feed session', () => {
+  test('placeholder epoch 0 subscription is rewritten and live output starts before screen commit', async () => {
+    const runtime = new FakeRuntime();
+    const events: wsBorsh.CanonicalEvent[] = [];
+    const session = new CanonicalFeedSession({
+      maxFrameBytes: wsBorsh.CANONICAL_STATE_MAX_FRAME_BYTES,
+      sendEvent: (event) => {
+        events.push(event);
+        return true;
+      },
+      resolveRuntime: async () => runtime,
+    });
+    await session.handleCommand({
+      SetPaneSubscriptions: {
+        generation: 1n,
+        activePanes: [
+          {
+            pane: { deviceId: 'device-a', serverEpoch: new Uint8Array(16), paneId: '%1' },
+            cursor: null,
+          },
+        ],
+        hotPanes: [],
+      },
+    });
+    const applied = events.find((event) => 'SubscriptionApplied' in event);
+    expect(
+      applied && 'SubscriptionApplied' in applied ? applied.SubscriptionApplied.rejected : null
+    ).toEqual([]);
+    expect(
+      applied && 'SubscriptionApplied' in applied ? applied.SubscriptionApplied.activePanes : null
+    ).toEqual([target()]);
+    runtime.output('x');
+    await awaitPaneDataFlush();
+    await session.handleCommand({
+      RequestScreen: {
+        requestId: REQUEST_ID,
+        pane: target(),
+        byteLimit: CANONICAL_MAX_SCREEN_BYTES,
+      },
+    });
+    const kinds = events.map((event) => Object.keys(event)[0]);
+    expect(kinds.indexOf('SubscriptionApplied')).toBeGreaterThan(-1);
+    expect(kinds.indexOf('PaneData')).toBeGreaterThan(kinds.indexOf('SubscriptionApplied'));
+    expect(kinds.indexOf('ScreenCommit')).toBeGreaterThan(kinds.indexOf('PaneData'));
+    session.close();
+  });
+
   test('subscription only acks and passes live through; first screen is client-driven', async () => {
     const runtime = new FakeRuntime();
     const events: wsBorsh.CanonicalEvent[] = [];

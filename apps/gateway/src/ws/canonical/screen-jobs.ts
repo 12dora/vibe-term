@@ -47,7 +47,7 @@ export class CanonicalScreenJobs {
     pane: PaneIdentity,
     requestId: Uint8Array,
     byteLimit: number
-  ): void {
+  ): Promise<void> {
     const key = paneKey(device.deviceId, pane.paneId);
     const existing = this.jobs.get(key);
     if (existing) this.cancel(existing);
@@ -55,7 +55,7 @@ export class CanonicalScreenJobs {
     const job: ScreenJob = { key, requestId: copyBytes(requestId), cancelled: false };
     this.jobs.set(key, job);
     this.started += 1;
-    void this.run(job, device, pane, byteLimit);
+    return this.run(job, device, pane, byteLimit);
   }
 
   /** 这一 requestId 的抓屏是否还在途；用于挡住同一请求的重复投递（意图 + 迟到的旧式请求）。 */

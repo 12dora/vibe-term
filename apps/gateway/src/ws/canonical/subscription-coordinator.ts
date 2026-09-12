@@ -14,6 +14,19 @@ function rejectionReason(reason: string): number {
   return wsBorsh.SUBSCRIPTION_REJECTED_NOT_FOUND;
 }
 
+/** 全零 / 空 epoch 是首屏占位：改写成服务端当前值，而不是按不一致拒绝。 */
+export function isPlaceholderEpoch(epoch: Uint8Array | null | undefined): boolean {
+  if (!epoch || epoch.byteLength === 0) return true;
+  for (let i = 0; i < epoch.byteLength; i++) {
+    if (epoch[i] !== 0) return false;
+  }
+  return true;
+}
+
+function epochMatchesOrPlaceholder(client: Uint8Array, server: Uint8Array): boolean {
+  return isPlaceholderEpoch(client) || bytesEqual(client, server);
+}
+
 export interface CanonicalSubscriptionApplyResult {
   generation: bigint;
   activePanes: CanonicalPaneTarget[];
@@ -101,9 +114,10 @@ export class CanonicalSubscriptionCoordinator {
           rejected.push({ pane: target, reason: wsBorsh.SUBSCRIPTION_REJECTED_NOT_FOUND });
           continue;
         }
+        const clientPaneEpoch = subscription.cursor?.paneEpoch ?? pane.paneEpoch;
         if (
-          !bytesEqual(serverEpoch, target.serverEpoch) ||
-          !bytesEqual(pane.paneEpoch, subscription.cursor?.paneEpoch ?? pane.paneEpoch)
+          !epochMatchesOrPlaceholder(target.serverEpoch, serverEpoch) ||
+          !epochMatchesOrPlaceholder(clientPaneEpoch, pane.paneEpoch)
         ) {
           rejected.push({ pane: target, reason: wsBorsh.SUBSCRIPTION_REJECTED_EPOCH_CHANGED });
           continue;

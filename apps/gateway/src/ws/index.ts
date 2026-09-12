@@ -7,10 +7,10 @@ import type {
 } from '@vibeterm/shared';
 import { wsBorsh } from '@vibeterm/shared';
 import type { Server, ServerWebSocket } from 'bun';
-import { agentWsHub } from '../agent/ws-hub';
+
 import type { DeviceTreeOrderRecord } from '../db';
 import type { SettingsNamespace } from '../settings/broadcaster';
-import { getDisplayVersion } from '../system/version';
+
 import type {
   DeviceSessionRuntime,
   DeviceSessionRuntimeListener,
@@ -25,7 +25,7 @@ import {
 import { encodePayloadFrames, sendToClient } from './borsh/codec-borsh';
 import { sessionStateStore } from './borsh/session-state';
 import { CanonicalFeedSession } from './canonical-feed-session';
-import { ERROR_CANONICAL_V11_REQUIRED, clientTooOldMessage } from './canonical-gate';
+
 import type { Carrier } from './carrier';
 import { BunSocketCarrier } from './carrier';
 import {
@@ -41,7 +41,7 @@ import {
   recordPingProbe,
 } from './gateway-metrics-log';
 import { GatewaySession } from './gateway-session';
-import { helloS2CCapabilities } from './hello-connection-id';
+import { negotiateHello } from './hello-negotiate';
 import { closeGatewaySession, logWsClientConnected } from './session-close';
 import type { ShareScope } from './share-scope';
 import { ShareSessionIndex } from './share-session-index';
@@ -516,7 +516,7 @@ export class WebSocketServer
       }
 
       if (kind === wsBorsh.KIND_HELLO_C2S) {
-        this.handleHello(ws, refSeq, payload);
+        await negotiateHello(this, ws, refSeq, payload);
         return;
       }
 
@@ -546,58 +546,6 @@ export class WebSocketServer
         false
       );
     }
-  }
-
-  private handleHello(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
-    let hello: wsBorsh.b.infer<typeof wsBorsh.schema.HelloC2SSchema>;
-    try {
-      hello = wsBorsh.decodePayload(wsBorsh.schema.HelloC2SSchema, payload);
-    } catch (err) {
-      const e = err instanceof wsBorsh.WsBorshError ? err : null;
-      this.sendError(
-        ws,
-        refSeq,
-        e?.code ?? wsBorsh.ERROR_PAYLOAD_DECODE_FAILED,
-        e?.message ?? 'HELLO payload decode failed',
-        e?.retryable ?? false
-      );
-      return;
-    }
-
-    const clientVersion = hello.clientVersion.slice(0, 64);
-    if (!wsBorsh.peerSupportsCanonicalV11(clientVersion)) {
-      // fail-closed：不回退 legacy 状态流，直接拒绝并关闭。
-      this.sendError(
-        ws,
-        refSeq,
-        ERROR_CANONICAL_V11_REQUIRED,
-        clientTooOldMessage(clientVersion),
-        false
-      );
-      this.closeSession(ws, 1002, 'canonical-state-v1.1 required');
-      return;
-    }
-
-    const serverMaxFrameBytes = wsBorsh.DEFAULT_MAX_FRAME_BYTES;
-    const effectiveMaxFrameBytes = Math.min(hello.maxFrameBytes, serverMaxFrameBytes);
-
-    ws.borshState.negotiated = true;
-    ws.borshState.clientImpl = hello.clientImpl.slice(0, 64);
-    ws.borshState.clientVersion = clientVersion;
-    ws.borshState.maxFrameBytes = effectiveMaxFrameBytes;
-    if (!ws.shareScope) agentWsHub.registerClient(ws);
-
-    const helloS2C: wsBorsh.b.infer<typeof wsBorsh.schema.HelloS2CSchema> = {
-      serverImpl: 'vibeterm-gateway',
-      serverVersion: getDisplayVersion(),
-      selectedVersion: wsBorsh.CURRENT_VERSION,
-      maxFrameBytes: serverMaxFrameBytes,
-      heartbeatIntervalMs: 15000,
-      capabilities: helloS2CCapabilities(ws.connectionId),
-    };
-
-    const payloadBytes = wsBorsh.encodePayload(wsBorsh.schema.HelloS2CSchema, helloS2C);
-    this.sendEnvelope(ws, wsBorsh.KIND_HELLO_S2C, payloadBytes);
   }
 
   private handlePing(ws: GatewaySession, refSeq: number, payload: Uint8Array): void {
