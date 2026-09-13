@@ -384,7 +384,7 @@ vibeterm watch rules state <id> [on|off]
 ## 安全说明
 
 - **边界与网页端完全一致**。CLI 没有任何「本机特权」：它拿的是和浏览器一样的会话 cookie，能做的事一条不多。访问别的节点走 entry 的 `/n/<nodeId>/…` 转发并带**那个节点自己的**会话，和网页端一模一样；CLI 从不使用本机节点的 mesh 身份、数据库或主密钥去碰别的机器。
-- **会话随时可撤销**。`vibeterm logout` 会让服务端撤销该账号的会话，等同于网页端退出登录。会话文件里只有 sid 与到期时刻，拿到它也只等于拿到一个浏览器会话；真要止血就 `logout`，必要时再在网页端改密码。
+- **会话随时可撤销**。`vibeterm logout` 会让服务端撤销该账号的会话，等同于网页端退出登录。会话文件里只有 sid 与到期时刻，拿到它也只等于拿到一个浏览器会话；真要止血就 `logout`，必要时再在网页端改密码。`exec` 没有短时 scoped bearer，`$VIBETERM_SESSION_FILE` 只换路径、不缩小权限（见 [KI-16](../known-issues.md)）。
 - **窗格是共享的**。`term send` / `term run` 打进去的字符和真人敲的没有区别，会被同一个窗格的其他观看者看到，也会进 shell 历史。别把口令、令牌当按键发；要传密钥用 `vibeterm cp`。
 - **`term run` 会执行任意命令**。给 AI agent 用之前想清楚它能碰到哪些节点——权限就是那个账号的权限。需要收紧就为它单独建账号 / 单独的节点授权，而不是共用管理员会话。
 - 非交互场景把密码放 `VIBETERM_PASSWORD`、TOTP 放 `VIBETERM_TOTP`，不要写进命令行参数（会进 shell 历史与进程列表）。
@@ -395,7 +395,7 @@ vibeterm watch rules state <id> [on|off]
 | --- | --- |
 | 退出码 3 | 会话过期或没登录：`vibeterm login`（跨节点加 `--node`） |
 | 退出码 4 | node / device / 窗口 / 窗格不存在：`vibeterm nodes ls`、`vibeterm devices ls`、`vibeterm tmux ls` 逐层确认 |
-| 退出码 5 | 连不上、握手超时，或改动没在 `--timeout` 内落地 |
+| 退出码 5 | 连不上、握手超时，或改动没在 `--timeout` 内落地。`exec` 在收到 `exit` 前被掐断也是 5（`EXEC_STREAM_CLOSED`） |
 | `attach` 退出码 2 | 当前不是交互终端：脚本里请用 `term run|send|capture` |
 | `run` 的输出里混着提示符 | 见上面的「尽力而为」说明，加 `--marker` |
 | `run` 退出码 1、`reason` 是 timeout / truncated | 输出没收全：加大 `--timeout`、缩小输出，或明确接受半截结果时加 `--allow-timeout` |

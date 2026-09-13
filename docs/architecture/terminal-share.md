@@ -54,9 +54,14 @@
   **自动候选过滤非公网地址，用户显式填的 `custom` 不过滤**（内网演示分享要能用）。
   每个候选都带 `accessUrl = origin + 转发前缀`，即浏览器实际要打开的地址（如 `https://relay/n/<nodeId>`）；
   设置页的「本机可被访问的地址」直接用这份候选（`GET /api/settings/site` 的 `siteAccessOrigins`，不含 `custom`）。
-  另外两条去重规则：**站点 URL 与隧道域名同源时不再单独产出 `site`**（由 `tunnel` 候选代表，避免同一地址
-  以更高优先级的 kind 出现两次）；**站点 URL 由 hub 托管时（`siteUrlManaged()`）也不产出 `site`**，
-  它已经等于 `hub` 候选。手填的「默认分享地址」若与某个转发型候选（`hub` / `relay`）同主机，
+  另外几条去重规则（`shouldOfferSite` / `uniqueByAccessUrl`）：
+  - **站点 URL 由 hub 托管时（`siteUrlManaged()`）不产出 `site`**，它已经等于 `hub` 候选。
+  - **origin 级**：站点 URL 的 origin 若等于任一基础设施候选（隧道 / Hub / 中继 / 公网 IP）的 origin，
+    不再单独产出「自建域名」`site`。用户点选中继 / Hub 胶囊保存的是带 `/n/<nodeId>` 的 `accessUrl`，
+    若只按 origin 与隧道去重，下次 GET 会多出一颗同主机的 site 候选，并与中继胶囊撞 React key。
+  - **accessUrl 级（防御）**：前缀补上后 `accessUrl` 可能撞车（site 存的是中继 `/n/<id>`，中继候选却是裸 origin）。
+    同地址只留一条，**自建域名让路**。前端 key 加 `kind` 前缀，展示层再滤一遍。
+  手填的「默认分享地址」若与某个转发型候选（`hub` / `relay`）同主机，
   会继承该候选的 `/n/<nodeId>` 前缀，否则生成的是打不开的死链。
 - `share-rate-limit.ts` —— `ShareLoginLimiter`：按（shareId, IP）15 min 窗口 10 次失败锁 15 min。
 - 巡检：开机全扫一遍，之后每 5 s 判到期（`expired`）、设备消失（`device_removed`）、window 关闭
@@ -229,9 +234,26 @@ hash。选 fragment 而非 query 是因为 fragment 不会进 Referer、不进�
 带 cols/rows），之后 `out` 追加输出、`in` 记输入、`resize` 记尺寸变化，全部带 `at` 时间戳与 `pane_id`。
 超过 `logMaxBytes` 停记并标 `logTruncated`。
 
-回放（设置 → 分享 → 历史 → 回放）在只读 ghostty 终端里按时间轴重放：跳转往前接着播、往回从最近的
-checkpoint 重建；倍速 1x/2x/4x/8x；`in` 条目**只**进终端下方的标记条（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。
-回放尺寸由录像决定，终端开启 `setViewportPan(true)`，大尺寸录像可平移到右下角而不是被容器裁掉。
+回放（设置 → 分享 → 历史 → 回放）走 `packages/terminal-ui` 的共享组件 `ReadOnlyTerminal`
+（`apps/fe` 侧适配层 `use-replay-terminal.ts` 只转发 `write` / `resize` / `reset` / `fit` 与就绪态），
+与普通终端同一套设置：字体 / 字号 / 行高 / 主题 / 复制方式，同一套选区与复制 chrome
+（禁粘贴，`Cmd`/`Ctrl+C` 复制）。设置页的 `TerminalPreview` 是该组件的薄封装。
+
+跳转往前接着播、往回从最近的 checkpoint 重建；倍速 1x/2x/4x/8x；`in` 条目**只**进终端下方的标记条
+（`⏎ ⇥ ⌫ ⎋ ^X`），绝不写回终端。回放尺寸由录像决定：先 `fit` 再开平移视口（`setViewportPan(true)`），
+resize 后回到原点；大尺寸录像可平移到右下角而不是被容器裁掉。首次 `fit` 跳过零尺寸容器
+（对话框还在 zoom / 尚未拿到真实布局），等 ResizeObserver 见到正尺寸再 fit，避免按 0×0 算出错误网格。
+
+进度条是带刻度的时间轴（`replay-timeline.ts` 纯计算：墙钟格式化、刻度规划、位置换算）：
+保留原生 `range` 做可访问性，外层画主 / 次刻度与起止墙钟（跨日补日期）；墙钟 = `startAt + t`
+（`startAt` 是日志最早一条的 `at`）；拖动与悬停显示预览气泡，时钟旁并列当前墙钟。
+
+曾踩过的两个显示 bug：
+
+1. **左侧列被裁**：Ghostty 主画布设了像素宽高后仍留 `inset: 0`，绝对定位被右锚定，平移视口时裁掉左列；
+   对话框 zoom 期间对零尺寸容器 `fit` 会把网格算错。现已清掉 `inset`/`right`/`bottom`（保留 `left`/`top = 0`），
+   并把首次 fit 推迟到容器有真实尺寸。
+2. **不能复制**：回放窗没挂选区 chrome。现与普通终端共用 `useTerminalSelectionChrome`。
 
 ## 限速与开放模式
 

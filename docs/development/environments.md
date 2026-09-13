@@ -81,6 +81,15 @@
 
 读侧代码一律只读 `VIBETERM_*`，不要再判断前缀。全网升级到 ≥ 2.0 之后可以删掉整层别名，见 [改名迁移](../operations/rename-migration.md)。
 
+## 可选运行时开关（不进 `app.env` 缺省）
+
+下列键运行时会读，**`init` / `upgrade` 不写入**。生产要改就手写 `app.env` 后重启；dev / test 可写 `env/*.env.local`。完整 mesh 表见 [mesh 运维](../operations/mesh-operations.md)。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `VIBETERM_DIAL_DNS_FALLBACK` | 开 | `off` / `0` / `false` / `no` 关闭上联 / 中继拨号的 DoH 回退。见 [公共中继](../architecture/relay.md) |
+| `VIBETERM_DOH_ENDPOINTS` | IP 字面量列表 | 逗号分隔的 https URL，覆盖缺省 `https://223.5.5.5/resolve,https://120.53.53.53/dns-query,https://1.1.1.1/dns-query,https://8.8.8.8/resolve`（境内优先）。系统解析器坏掉时域名端点自己也解析不出来，所以默认不用主机名。隧道边缘与 STUN 解析共用 |
+
 ## 注意事项
 
 - **生产路径键保护**：`applyProductionEnv()` 的早返回必须在净化逻辑之前——否则会删掉生产正确的 `VIBETERM_MIGRATIONS_DIR`/`VIBETERM_FE_DIST_DIR`，搞崩常驻服务。单测已钉死该行为。

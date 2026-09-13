@@ -601,6 +601,10 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 
 配了 ≥ 2 条未被踢的中继时，节点对**每一条**都保持一条活的 uplink。池里那条 live client 是**主中继**，其余是副中继
 （`relay-secondary-attach.ts`，各自 1 s → 60 s 退避重连）。单中继配置不产生副中继。
+`primaryUrl` **只认池当前挂载**（`uplink.attachedHub()?.publicUrl`），不要回退到 presence 里的旧值——
+否则故障转移后 secondary 会与池抢同一 URL。池会话之间（`attach.stop()` → 重配 → `attach.start()`）会拆掉全部副中继，
+重新挂上时再按当前主中继 spawn；循环自然退出必须释放槽位并 `reconcile`，否则残留僵尸槽不再重试。
+detach 时清 presence 的 primary。
 
 | | 主中继 | 副中继 |
 |---|---|---|
@@ -621,6 +625,8 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 - `POST /api/mesh/relay/switch { url }` 的语义因此变成**换主中继**：目标已是在线主中继回 409 `RELAY_ALREADY_ATTACHED`；
   若它当前是副中继，先释放该副连接再由池 promote。副中继在 promote 完成后重新分配。
 - **增删副中继不重启主 uplink**（2.3.2）：`set-relays` 只改动非主行时，`runReconcile()` 走轻路径——`uplink.refreshCandidates()` + `RelaySecondaryAttach.reconcile()` 增删 slot，**不碰 live client**。日志 `[relay] targets updated rows=<n> primary=<host> secondaries=<n> (no restart)`（`primary` 取 `attachedHub()` 的 host，未挂上为 `-`）。主中继被重排但仍挂在旧主上 → 排空重建；已经挂在新主上（例如手动 `switch` 先切过去）→ 仍走轻路径，只刷副中继。主中继行凭证变化、令牌需重认证、hub↔relay 翻转或中继集合清空，仍走排空重建（`attach.stop()` → `reconfigureUplinkPool()` → `attach.start()`）。同 URL 副中继的租户 / 令牌轮换按凭证摘要拆掉该 slot 并重挂，不重启主 uplink。
+- **failback 探测顺序**：`probePreferred` 先对更优先候选做 `healthz`，打 `[uplink] probe ok hub=…` / `[uplink] probe fail hub=…`，**命中才**打 `[uplink] probe waiting drain reason=switch-back …` 并等当前上行排空再 switch-back。不要把健康检查藏在最长 10 分钟的排空等待之后。
+- **副中继日志**：连接失败打 `[uplink] secondary connect failed hub=… attempt=… reason=… next_retry_ms=…`，上线打 `[uplink] secondary online hub=…`；失败日志与主 uplink 同一套 30 s 节流（`UPLINK_CONNECT_LOG_INTERVAL_MS`）。`waitUntilClosed` 对已中止信号与离线状态也能返回。
 
 **当前错误**：`RelayUplinkClient` / `UplinkClient` 认证成功即清空 `lastConnectError`；`UplinkPool` 在 promote 时清空该 URL 的诊断；live 链路终止原因（心跳丢失、被踢、远端关闭）在清理前写回该 URL 的诊断。码表在 `packages/shared/src/relay/link-error.ts`（`RELAY_LINK_ERROR_CODES`）；gateway `relay-link-error.ts` 的 `classifyRelayLinkError` 把原始错误归一化为闭集 `RelayLinkErrorCode`（`connect-failed` / `connect-timeout` / `auth-timeout` / `auth-rejected` / `heartbeat-lost` / `kicked` / `revoked` / `dns` / `refused` / `tls` / `protocol` / `unknown`），`stopped` / `aborted` 视为无错误。状态行 DTO 在 `packages/shared/src/relay/status-row.ts`。`GET /api/mesh/relay/status.relays[n]` 带 `lastErrorCode`；`online === true` 时 `lastError` / `lastErrorCode` / `lastErrorAt` 一律为 `null`（api-client 的 `normalizeRelayStatus` 再兜底一次）。前端只在离线时按 `relay.tenant.linkErrors.<code>` 显示。
 
@@ -630,6 +636,17 @@ failover / fail-back / 退避机制一字未改（`preferNearest` 因为 `hubNod
 
 本机同时跑 `relay,node` 时，`resolveRelayDialUrl` 若发现目标 host 等于本机 `VIBETERM_RELAY_PUBLIC_URL` 的 host，
 把 HTTP/WS 拨号改成 `http://127.0.0.1:<GATEWAY_PORT>`（避开 hairpin NAT）。认证签名仍绑公网 host；回环拨号跳过 CA pin。
+
+### 系统 DNS 失败时的 DoH 重拨（`dial-resolve.ts`）
+
+上联 / 中继拨号与 `healthz` / CA 探测共用 `resolveDialHost`：先系统 lookup（3 s），失败再走 DoH，
+按解析到的 IP 重拨，TLS `serverName` 与 HTTP `Host` 仍是原主机名，证书继续按主机名校验；
+**只对 DNS 类失败重拨**（`ENOTFOUND` / `EAI_AGAIN` 等），`ECONNREFUSED`、鉴权拒绝、协议错误原样抛出。
+正缓存 60 s、负缓存 15 s。日志 `[uplink] dns fallback host=… ip=… via=doh` 与
+`[uplink] dns recovered host=…`（系统解析恢复后）。默认开；`VIBETERM_DIAL_DNS_FALLBACK=off` 关闭。
+DoH 端点必须是 **https 的 IP 字面量**（系统解析器坏掉时域名端点自己也解析不出来），缺省
+`223.5.5.5` → `120.53.53.53` → `1.1.1.1` → `8.8.8.8`（境内优先），`VIBETERM_DOH_ENDPOINTS` 可覆盖；
+隧道边缘与 STUN 解析共用同一份列表。动机与排障见 [mesh 运维「常见排障」](../operations/mesh-operations.md)。
 
 ### 记录应用与重连
 
